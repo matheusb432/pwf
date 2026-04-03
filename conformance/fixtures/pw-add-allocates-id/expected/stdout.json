@@ -1,0 +1,11 @@
+{
+  "id": "GLP-0001",
+  "itemFile": "{{NOTES}}/glep-shimeji/GLP-0001.md",
+  "note": "{{NOTES}}/glep-shimeji/glep-shimeji.md",
+  "project": "glep-shimeji",
+  "prompt": "add startup toggle",
+  "repo": "{{REPO}}",
+  "session": "tray gui",
+  "status": "added",
+  "title": "tray gui"
+}

@@ -1,0 +1,6 @@
+{
+  "engine": "handoff",
+  "args": ["cancel", "--id", "cancel-me", "--reason", "scope dropped", "--json"],
+  "compareTree": "repo",
+  "compareStdout": true
+}

@@ -1,0 +1,16 @@
+# Force LF in every worktree regardless of core.autocrlf, so text files are
+# byte-identical across OSes — CRLF breaks exact \n-string test asserts (Pester)
+# and tooling that round-trips these files.
+* text=auto eol=lf
+# Shell scripts especially: CRLF makes Ubuntu bash fail with "bad interpreter".
+*.sh text eol=lf
+
+# Binaries Git must never line-ending-convert.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.gz binary

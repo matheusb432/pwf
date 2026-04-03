@@ -1,0 +1,5 @@
+{
+  "engine": "pw",
+  "args": ["launch", "--id", "GLP-0001", "--json"],
+  "compareStdout": true
+}

@@ -1,0 +1,5 @@
+{
+  "engine": "pw",
+  "args": ["new", "--project", "glep-shimeji", "--prompt", "do a thing", "--json"],
+  "compareStdout": true
+}

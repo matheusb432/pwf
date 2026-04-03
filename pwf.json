@@ -1,0 +1,20 @@
+{
+  "version": "0.1.0",
+  "description": "pwf - pending-work / handoff / migrate engine",
+  "homepage": "https://localhost/pwf",
+  "license": "MIT",
+  "architecture": {
+    "64bit": {
+      "url": "file:///C:/Users/mathe/tools/pwf/Cargo.toml"
+    }
+  },
+  "bin": "pwf.exe",
+  "env_set": {
+    "PWF_CONFIG": "$env:USERPROFILE\\tools\\pwf\\config\\pending-work.json"
+  },
+  "pre_install": [
+    "$src = Join-Path $env:USERPROFILE 'tools\\pwf'",
+    "cargo build --release --manifest-path (Join-Path $src 'Cargo.toml')",
+    "Copy-Item (Join-Path $src 'target\\release\\pwf.exe') (Join-Path $dir 'pwf.exe') -Force"
+  ]
+}

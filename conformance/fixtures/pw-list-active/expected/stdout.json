@@ -1,0 +1,30 @@
+[
+  {
+    "id": "GLP-0002",
+    "project": "glep-shimeji",
+    "session": "status bar",
+    "prompt": "add current mood indicator",
+    "repo": "{{REPO}}",
+    "note": "{{NOTES}}/glep-shimeji/glep-shimeji.md",
+    "itemFile": "{{NOTES}}/glep-shimeji/GLP-0002.md",
+    "line": 4,
+    "format": "file",
+    "launchable": true,
+    "needsPrompt": false,
+    "issues": []
+  },
+  {
+    "id": "GLP-0001",
+    "project": "glep-shimeji",
+    "session": "tray gui",
+    "prompt": "add startup toggle",
+    "repo": "{{REPO}}",
+    "note": "{{NOTES}}/glep-shimeji/glep-shimeji.md",
+    "itemFile": "{{NOTES}}/glep-shimeji/GLP-0001.md",
+    "line": 2,
+    "format": "file",
+    "launchable": true,
+    "needsPrompt": false,
+    "issues": []
+  }
+]

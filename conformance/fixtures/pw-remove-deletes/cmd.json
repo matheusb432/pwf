@@ -1,0 +1,11 @@
+{
+  "engine": "pw",
+  "args": [
+    "remove",
+    "--id",
+    "pwf-0001",
+    "--json"
+  ],
+  "compareTree": "notes",
+  "compareStdout": true
+}

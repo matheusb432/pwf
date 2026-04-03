@@ -1,0 +1,52 @@
+use std::fs;
+use std::io;
+use std::path::Path;
+
+/// Write `content` to `path` atomically (temp sibling + rename). UTF-8 (no BOM);
+/// callers must pass `\n`-delimited content. Never leaves a `.bak` — notes-pro is
+/// git-tracked, so prior content is recoverable from git.
+pub fn write_text_atomic(path: &Path, content: &str) -> io::Result<()> {
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+        && !parent.exists()
+    {
+        fs::create_dir_all(parent)?;
+    }
+    let tmp = path.with_extension(format!(
+        "tmp-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::write(&tmp, content.as_bytes())?;
+    fs::rename(&tmp, path)?; // same-volume atomic replace
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn writes_file_and_never_leaves_a_bak() {
+        let dir = tempdir();
+        let p = dir.join("a.md");
+        fs::write(&p, "old content\n").unwrap();
+        write_text_atomic(&p, "new\n").unwrap();
+        assert_eq!(fs::read_to_string(&p).unwrap(), "new\n");
+        assert!(!dir.join("a.md.bak").exists());
+    }
+
+    fn tempdir() -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("pwtest_{}", uniq()));
+        fs::create_dir_all(&d).unwrap();
+        d
+    }
+    fn uniq() -> u128 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    }
+}

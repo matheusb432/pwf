@@ -1,0 +1,6 @@
+{
+  "engine": "pw",
+  "args": ["add", "glep-shimeji", "add current mood indicator", "--title", "status bar", "--json"],
+  "compareTree": "notes",
+  "compareStdout": true
+}

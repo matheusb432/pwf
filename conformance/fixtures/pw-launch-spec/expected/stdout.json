@@ -1,0 +1,19 @@
+{
+  "id": "GLP-0001",
+  "launchPrompt": "Thread title: tray gui\nPending-work ID: GLP-0001\nProject: glep-shimeji\n\nadd startup toggle\n\nCloseout: if no handoff or plan is the source of truth for this item, check it done with a one-line report:\npwf pw check --id GLP-0001 --report \"<brief result>\"",
+  "line": 2,
+  "name": "tray gui",
+  "note": "{{NOTES}}/glep-shimeji/glep-shimeji.md",
+  "project": "glep-shimeji",
+  "prompt": "add startup toggle",
+  "session": "tray gui",
+  "successLabel": "[pending-work GLP-0001] glep-shimeji :: tray gui",
+  "target": {
+    "environment": {
+      "type": "local"
+    },
+    "projectPath": "{{REPO}}",
+    "type": "project"
+  },
+  "title": "tray gui"
+}

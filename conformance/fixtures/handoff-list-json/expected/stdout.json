@@ -1,0 +1,5 @@
+{
+  "content": "# Handoff ledger - active only\n\n| ID | Handoff | Goals | Created |\n| --- | --- | --- | --- |\n| CFG-0001 | [Alpha](2026-01-01-alpha.md) | 1/2 | 2026-01-01 |\n",
+  "exists": true,
+  "ledger": "{{REPO}}/docs/handoffs/LEDGER.md"
+}

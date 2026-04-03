@@ -1,0 +1,6 @@
+{
+  "engine": "handoff",
+  "args": ["new", "--title", "Managed Flow", "--slug", "managed-flow", "--json"],
+  "compareTree": "repo",
+  "compareStdout": true
+}

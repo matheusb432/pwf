@@ -1,0 +1,5 @@
+{
+  "engine": "handoff",
+  "args": ["list", "--json"],
+  "compareStdout": true
+}

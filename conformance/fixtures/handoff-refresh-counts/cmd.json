@@ -1,0 +1,6 @@
+{
+  "engine": "handoff",
+  "args": ["refresh", "--json"],
+  "compareTree": "repo",
+  "compareStdout": true
+}
