@@ -3,13 +3,15 @@
 // asserted byte-for-byte by the conformance handoff fixture — do not reword them.
 
 use super::naming::pathdiff_forward;
-use super::parse::newest_handoff;
+use super::parse::newest_handoff_typed;
 use super::text::{get_title_from_continue_path, handoff_title_from_path};
 
 /// `(title, prompt)` for `add <project> --continue-handoff`: continue the repo's
 /// newest handoff. `repo` is the project's mapped repo root.
-pub(super) fn continue_handoff_prompt(repo: &str) -> Result<(String, String), String> {
-    let handoff = newest_handoff(repo)?;
+pub(super) fn continue_handoff_prompt(
+    repo: &str,
+) -> Result<(String, String), super::errors::PendingWorkError> {
+    let handoff = newest_handoff_typed(repo)?;
     let rel = pathdiff_forward(repo, &handoff); // forward-slash relative path
     let title = handoff_title_from_path(&handoff.to_string_lossy());
     let prompt = format!("Continue the handoff at @{rel}.");
@@ -27,6 +29,7 @@ pub(super) fn continue_plan_prompt(project_name: &str, path: &str) -> (String, S
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engines::pending_work::errors::PendingWorkError;
     use std::fs;
 
     fn nanos() -> u128 {
@@ -62,5 +65,25 @@ mod tests {
         );
 
         fs::remove_dir_all(&repo).ok();
+    }
+
+    #[test]
+    fn missing_handoff_directory_returns_typed_error_with_legacy_display() {
+        let repo = std::env::temp_dir().join(format!("pwcontinue_missing_{}", nanos()));
+        let expected = repo.join("docs").join("handoffs");
+
+        let err = continue_handoff_prompt(&repo.to_string_lossy()).unwrap_err();
+
+        assert!(matches!(
+            err,
+            PendingWorkError::NoHandoffDirectory { ref path } if path == &expected
+        ));
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "No handoff directory found for project at {}.",
+                expected.display()
+            )
+        );
     }
 }

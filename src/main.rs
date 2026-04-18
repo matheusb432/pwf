@@ -16,9 +16,9 @@ fn main() {
         return;
     }
 
-    // Canonical path: subcommand-default injection -> clap -> Args -> dispatch.
-    match command::parse_argv(argv) {
-        Ok((engine, args)) => match engines::run(&engine, &args) {
+    // Canonical path: subcommand-default injection -> clap -> typed dispatch.
+    match command::parse_command_argv(argv) {
+        Ok(parsed) => match run_parsed(parsed) {
             Ok(out) => {
                 if !out.is_empty() {
                     println!("{out}");
@@ -31,6 +31,14 @@ fn main() {
         },
         // clap renders help/version/parse errors with the right exit codes.
         Err(e) => e.exit(),
+    }
+}
+
+fn run_parsed(parsed: command::ParsedCommand) -> Result<String, String> {
+    match parsed {
+        command::ParsedCommand::PendingWork(command) => engines::pending_work::run(&command),
+        command::ParsedCommand::Handoff(args) => engines::handoff::run(&args),
+        command::ParsedCommand::Migrate(args) => engines::migrate::run(&args),
     }
 }
 

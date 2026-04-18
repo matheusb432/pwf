@@ -27,6 +27,10 @@ update *args:
 format:
     @just pwf format
 
+# Report production Rust error-handling smells.
+smell-check-errors:
+    @just pwf smell-check-errors
+
 # Slim default: in-process unit + integration tests.
 test:
     @just pwf test

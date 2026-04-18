@@ -5,6 +5,99 @@ use crate::fs_atomic::write_text_atomic;
 use regex::Regex;
 use std::path::{Path, PathBuf};
 
+#[derive(Debug, thiserror::Error)]
+pub enum HandoffError {
+    #[error("--repo-root does not exist: {root}")]
+    RepoRootDoesNotExist { root: String },
+    #[error("{source}")]
+    CurrentDir { source: std::io::Error },
+    #[error("--title is required for new.")]
+    MissingTitle,
+    #[error("--id is required for {action}.")]
+    MissingId { action: String },
+    #[error("a handoff subcommand is required.")]
+    MissingSubcommand,
+    #[error("unknown handoff action: {action}")]
+    UnknownAction { action: String },
+    #[error("Handoff already exists: {}", path.display())]
+    HandoffAlreadyExists { path: PathBuf },
+    #[error("No active handoff found for '{key}' in {}.", dir.display())]
+    ActiveHandoffNotFound { key: String, dir: PathBuf },
+    #[error("Archived handoff already exists: {}", path.display())]
+    ArchiveAlreadyExists { path: PathBuf },
+    #[error("Cannot remove active handoff after archiving: {source}")]
+    RemoveActiveAfterArchive {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("{source}")]
+    CreateDir {
+        action: &'static str,
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("{source}")]
+    Read {
+        action: &'static str,
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("{source}")]
+    Write {
+        action: &'static str,
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("{source}")]
+    Rename {
+        action: &'static str,
+        from: PathBuf,
+        to: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("pw-add JSON parse error: {source} (stdout: {stdout})")]
+    PwAddJsonParse {
+        stdout: String,
+        source: serde_json::Error,
+    },
+    #[error("{message}")]
+    PendingWork { message: String },
+    #[error("{source}")]
+    SubprocessSpawn {
+        operation: &'static str,
+        script: String,
+        source: std::io::Error,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HandoffReadStatus {
+    Complete,
+    Degraded,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HandoffRead<T> {
+    pub status: HandoffReadStatus,
+    pub value: T,
+}
+
+impl<T> HandoffRead<T> {
+    fn complete(value: T) -> Self {
+        Self {
+            status: HandoffReadStatus::Complete,
+            value,
+        }
+    }
+
+    fn degraded(value: T) -> Self {
+        Self {
+            status: HandoffReadStatus::Degraded,
+            value,
+        }
+    }
+}
+
 // ── helpers ────────────────────────────────────────────────────────────────
 
 pub fn get_today(date: &Option<String>) -> String {
@@ -28,10 +121,14 @@ pub fn slug(value: &str) -> String {
 
 /// --repo-root arg, else `git rev-parse --show-toplevel`, else cwd.
 pub fn repo_root(args: &Args) -> Result<PathBuf, String> {
+    repo_root_typed(args).map_err(|e| e.to_string())
+}
+
+fn repo_root_typed(args: &Args) -> Result<PathBuf, HandoffError> {
     if let Some(r) = &args.repo_root {
         let p = Path::new(r);
         if !p.exists() {
-            return Err(format!("--repo-root does not exist: {r}"));
+            return Err(HandoffError::RepoRootDoesNotExist { root: r.clone() });
         }
         // Use the path as provided — no \\?\ prefix on Windows.
         return Ok(p.to_path_buf());
@@ -47,7 +144,7 @@ pub fn repo_root(args: &Args) -> Result<PathBuf, String> {
             return Ok(PathBuf::from(s));
         }
     }
-    std::env::current_dir().map_err(|e| e.to_string())
+    std::env::current_dir().map_err(|source| HandoffError::CurrentDir { source })
 }
 
 /// Reverse-match config.projects by normalized path.
@@ -88,11 +185,21 @@ fn path_str(p: &std::path::Path) -> String {
 /// Parse the config JSON from the --config-path arg, defaulting so `just handoff-*`
 /// resolves the project without an explicit --config-path.
 fn load_handoff_config(args: &Args) -> Option<config::Config> {
+    load_handoff_config_typed(args).value
+}
+
+fn load_handoff_config_typed(args: &Args) -> HandoffRead<Option<config::Config>> {
     let path = args
         .config_path
         .clone()
-        .or_else(config::default_config_path)?;
-    config::load(&path, None).ok()
+        .or_else(config::default_config_path);
+    let Some(path) = path else {
+        return HandoffRead::complete(None);
+    };
+    match config::load(&path, None) {
+        Ok(cfg) => HandoffRead::complete(Some(cfg)),
+        Err(_) => HandoffRead::degraded(None),
+    }
 }
 
 pub struct HandoffPaths {
@@ -183,15 +290,27 @@ struct HandoffEntry {
 
 /// *.md in dir, not LEDGER.md/README.md, with parsed frontmatter.
 fn read_handoff_entries(dir: &Path) -> Vec<HandoffEntry> {
+    read_handoff_entries_typed(dir).value
+}
+
+fn read_handoff_entries_typed(dir: &Path) -> HandoffRead<Vec<HandoffEntry>> {
     if !dir.exists() {
-        return Vec::new();
+        return HandoffRead::complete(Vec::new());
     }
     let mut entries = Vec::new();
+    let mut status = HandoffReadStatus::Complete;
     let read = match std::fs::read_dir(dir) {
         Ok(r) => r,
-        Err(_) => return Vec::new(),
+        Err(_) => return HandoffRead::degraded(Vec::new()),
     };
-    for entry in read.flatten() {
+    for entry in read {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(_) => {
+                status = HandoffReadStatus::Degraded;
+                continue;
+            }
+        };
         let p = entry.path();
         if p.extension().and_then(|e| e.to_str()) != Some("md") {
             continue;
@@ -207,7 +326,10 @@ fn read_handoff_entries(dir: &Path) -> Vec<HandoffEntry> {
         }
         let content = match std::fs::read_to_string(&p) {
             Ok(c) => c,
-            Err(_) => continue,
+            Err(_) => {
+                status = HandoffReadStatus::Degraded;
+                continue;
+            }
         };
         let parsed = frontmatter::parse(&content);
         let base_name = p
@@ -223,7 +345,10 @@ fn read_handoff_entries(dir: &Path) -> Vec<HandoffEntry> {
             frontmatter: parsed.frontmatter,
         });
     }
-    entries
+    HandoffRead {
+        status,
+        value: entries,
+    }
 }
 
 fn get_active_handoff_files(dir: &Path) -> Vec<HandoffEntry> {
@@ -235,9 +360,17 @@ fn get_active_handoff_files(dir: &Path) -> Vec<HandoffEntry> {
 
 /// Rebuild LEDGER.md from active handoffs.
 pub fn refresh_ledger(root: &Path) -> Result<(PathBuf, usize), String> {
+    refresh_ledger_typed(root).map_err(|e| e.to_string())
+}
+
+fn refresh_ledger_typed(root: &Path) -> Result<(PathBuf, usize), HandoffError> {
     let paths = handoff_paths(root);
     if !paths.dir.exists() {
-        std::fs::create_dir_all(&paths.dir).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&paths.dir).map_err(|source| HandoffError::CreateDir {
+            action: "refresh-ledger",
+            path: paths.dir.clone(),
+            source,
+        })?;
     }
     let active = get_active_handoff_files(&paths.dir);
     let mut rows: Vec<Row> = active
@@ -268,7 +401,11 @@ pub fn refresh_ledger(root: &Path) -> Result<(PathBuf, usize), String> {
     });
     let count = rows.len();
     let text = ledger_text(&rows);
-    write_text_atomic(&paths.ledger, &text).map_err(|e| e.to_string())?;
+    write_text_atomic(&paths.ledger, &text).map_err(|source| HandoffError::Write {
+        action: "refresh-ledger",
+        path: paths.ledger.clone(),
+        source,
+    })?;
     Ok((paths.ledger, count))
 }
 
@@ -290,7 +427,7 @@ fn ledger_text(rows: &[Row]) -> String {
 /// not a full reconcile — a stranded `status: done` file must also move).
 /// Files without a `status:` key are left alone (could be drafts); an existing
 /// archive of the same name is never overwritten — reported as a conflict.
-fn archive_stranded(paths: &HandoffPaths) -> Result<(usize, Vec<String>), String> {
+fn archive_stranded(paths: &HandoffPaths) -> Result<(usize, Vec<String>), HandoffError> {
     let mut moved = 0usize;
     let mut conflicts = Vec::new();
     for e in read_handoff_entries(&paths.dir) {
@@ -304,9 +441,18 @@ fn archive_stranded(paths: &HandoffPaths) -> Result<(usize, Vec<String>), String
             continue;
         }
         if !paths.archive.exists() {
-            std::fs::create_dir_all(&paths.archive).map_err(|e2| e2.to_string())?;
+            std::fs::create_dir_all(&paths.archive).map_err(|source| HandoffError::CreateDir {
+                action: "archive-stranded",
+                path: paths.archive.clone(),
+                source,
+            })?;
         }
-        std::fs::rename(&e.full_path, &dest).map_err(|e2| e2.to_string())?;
+        std::fs::rename(&e.full_path, &dest).map_err(|source| HandoffError::Rename {
+            action: "archive-stranded",
+            from: e.full_path.clone(),
+            to: dest,
+            source,
+        })?;
         moved += 1;
     }
     Ok((moved, conflicts))
@@ -314,11 +460,8 @@ fn archive_stranded(paths: &HandoffPaths) -> Result<(usize, Vec<String>), String
 
 // ── new ────────────────────────────────────────────────────────────────────
 
-fn invoke_new(root: &Path, args: &Args) -> Result<String, String> {
-    let title = args
-        .title
-        .as_deref()
-        .ok_or_else(|| "--title is required for new.".to_string())?;
+fn invoke_new(root: &Path, args: &Args) -> Result<String, HandoffError> {
+    let title = args.title.as_deref().ok_or(HandoffError::MissingTitle)?;
     let today = get_today(&args.date);
     let slug_val = if let Some(s) = &args.slug {
         slug(s)
@@ -327,11 +470,15 @@ fn invoke_new(root: &Path, args: &Args) -> Result<String, String> {
     };
     let paths = handoff_paths(root);
     if !paths.dir.exists() {
-        std::fs::create_dir_all(&paths.dir).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&paths.dir).map_err(|source| HandoffError::CreateDir {
+            action: "new",
+            path: paths.dir.clone(),
+            source,
+        })?;
     }
     let file_path = paths.dir.join(format!("{today}-{slug_val}.md"));
     if file_path.exists() {
-        return Err(format!("Handoff already exists: {}", file_path.display()));
+        return Err(HandoffError::HandoffAlreadyExists { path: file_path });
     }
     let project = resolve_project_for_repo(root, args);
     let project_label = project
@@ -339,8 +486,13 @@ fn invoke_new(root: &Path, args: &Args) -> Result<String, String> {
         .unwrap_or_else(|| leaf_name(root).to_string());
 
     // Write initial scaffold without pw
-    write_text_atomic(&file_path, &scaffold(title, &project_label, &today, None))
-        .map_err(|e| e.to_string())?;
+    write_text_atomic(&file_path, &scaffold(title, &project_label, &today, None)).map_err(
+        |source| HandoffError::Write {
+            action: "new",
+            path: file_path.clone(),
+            source,
+        },
+    )?;
 
     // If the repo is managed, allocate a pw work-item id: spawn the injected script
     // (tests inject pw-stub.sh) or, in production, call the pending-work engine in-process.
@@ -359,19 +511,28 @@ fn invoke_new(root: &Path, args: &Args) -> Result<String, String> {
             None
         } else {
             // Insert pw: <id> after the created: line
-            let content = std::fs::read_to_string(&file_path).map_err(|e| e.to_string())?;
+            let content =
+                std::fs::read_to_string(&file_path).map_err(|source| HandoffError::Read {
+                    action: "new",
+                    path: file_path.clone(),
+                    source,
+                })?;
             let re = Regex::new(r"(?m)^(created: .*)$").unwrap();
             let new_content = re
                 .replace(&content, format!("$1\npw: {id}").as_str())
                 .into_owned();
-            write_text_atomic(&file_path, &new_content).map_err(|e| e.to_string())?;
+            write_text_atomic(&file_path, &new_content).map_err(|source| HandoffError::Write {
+                action: "new",
+                path: file_path.clone(),
+                source,
+            })?;
             Some(id)
         }
     } else {
         None
     };
 
-    refresh_ledger(root)?;
+    refresh_ledger_typed(root)?;
 
     if args.json {
         let obj = serde_json::json!({
@@ -397,7 +558,12 @@ fn leaf_name(p: &Path) -> &str {
 /// Spawn the external `--pending-work-script` allocator with the canonical
 /// `add` protocol (`<script> add --config-path <cfg> --json --date <today>
 /// <project> --continue-handoff`) and parse the `id` field from its stdout JSON.
-fn spawn_pw_add(script: &str, cfg: &str, today: &str, project: &str) -> Result<String, String> {
+fn spawn_pw_add(
+    script: &str,
+    cfg: &str,
+    today: &str,
+    project: &str,
+) -> Result<String, HandoffError> {
     let output = std::process::Command::new(script)
         .args([
             "add",
@@ -410,11 +576,18 @@ fn spawn_pw_add(script: &str, cfg: &str, today: &str, project: &str) -> Result<S
             "--continue-handoff",
         ])
         .output()
-        .map_err(|e| e.to_string())?;
+        .map_err(|source| HandoffError::SubprocessSpawn {
+            operation: "pw-add",
+            script: script.to_string(),
+            source,
+        })?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     // Parse the id from JSON - stdout may have trailing newline/whitespace
-    let v: serde_json::Value = serde_json::from_str(stdout.trim())
-        .map_err(|e| format!("pw-add JSON parse error: {e} (stdout: {stdout})"))?;
+    let v: serde_json::Value =
+        serde_json::from_str(stdout.trim()).map_err(|source| HandoffError::PwAddJsonParse {
+            stdout: stdout.to_string(),
+            source,
+        })?;
     Ok(v["id"].as_str().unwrap_or("").to_string())
 }
 
@@ -427,7 +600,7 @@ fn spawn_pw_check(
     today: &str,
     commits: &[String],
     review: bool,
-) -> Result<(), String> {
+) -> Result<(), HandoffError> {
     let mut argv: Vec<String> = ["check", "--config-path", cfg, "--id", pw, "--date", today]
         .iter()
         .map(|s| s.to_string())
@@ -443,13 +616,17 @@ fn spawn_pw_check(
     std::process::Command::new(script)
         .args(&argv)
         .output()
-        .map_err(|e| e.to_string())?;
+        .map_err(|source| HandoffError::SubprocessSpawn {
+            operation: "pw-check",
+            script: script.to_string(),
+            source,
+        })?;
     Ok(())
 }
 
 /// In-process equivalent of spawn_pw_add for production (no --pending-work-script):
 /// run the pending-work engine's `add <project> --continue-handoff` and read the id.
-fn inprocess_pw_add(args: &Args, today: &str, project: &str) -> Result<String, String> {
+fn inprocess_pw_add(args: &Args, today: &str, project: &str) -> Result<String, HandoffError> {
     let a = crate::cli::Args {
         action: Some("add".to_string()),
         json: true,
@@ -462,9 +639,13 @@ fn inprocess_pw_add(args: &Args, today: &str, project: &str) -> Result<String, S
         continue_handoff: true,
         ..Default::default()
     };
-    let out = crate::engines::pending_work::run(&a)?;
-    let v: serde_json::Value = serde_json::from_str(out.trim())
-        .map_err(|e| format!("pw-add JSON parse error: {e} (stdout: {out})"))?;
+    let out = crate::engines::pending_work::run_args(&a)
+        .map_err(|message| HandoffError::PendingWork { message })?;
+    let v: serde_json::Value =
+        serde_json::from_str(out.trim()).map_err(|source| HandoffError::PwAddJsonParse {
+            stdout: out.clone(),
+            source,
+        })?;
     Ok(v["id"].as_str().unwrap_or("").to_string())
 }
 
@@ -485,7 +666,7 @@ fn pw_item_is_open(args: &Args, pw: &str) -> bool {
 }
 
 /// In-process equivalent of spawn_pw_check for production (no --pending-work-script).
-fn inprocess_pw_check(args: &Args, today: &str, pw: &str) -> Result<(), String> {
+fn inprocess_pw_check(args: &Args, today: &str, pw: &str) -> Result<(), HandoffError> {
     let a = crate::cli::Args {
         action: Some("check".to_string()),
         id: Some(pw.to_string()),
@@ -500,29 +681,40 @@ fn inprocess_pw_check(args: &Args, today: &str, pw: &str) -> Result<(), String> 
         review: args.review,
         ..Default::default()
     };
-    crate::engines::pending_work::run(&a)?;
+    crate::engines::pending_work::run_args(&a)
+        .map_err(|message| HandoffError::PendingWork { message })?;
     Ok(())
 }
 
 // ── done / cancel ──────────────────────────────────────────────────────────
 
 /// Search active handoffs for id match (exact basename, contains, or frontmatter pw).
-fn find_handoff_file(dir: &Path, key: &str) -> Result<(PathBuf, String), String> {
+fn find_handoff_file(dir: &Path, key: &str) -> Result<(PathBuf, String), HandoffError> {
     let active = get_active_handoff_files(dir);
     for e in &active {
         if e.base_name == key || e.base_name.contains(key) {
-            let content = std::fs::read_to_string(&e.full_path).map_err(|e2| e2.to_string())?;
+            let content =
+                std::fs::read_to_string(&e.full_path).map_err(|source| HandoffError::Read {
+                    action: "find-handoff",
+                    path: e.full_path.clone(),
+                    source,
+                })?;
             return Ok((e.full_path.clone(), content));
         }
         if e.frontmatter.get("pw").map(|s| s.as_str()) == Some(key) {
-            let content = std::fs::read_to_string(&e.full_path).map_err(|e2| e2.to_string())?;
+            let content =
+                std::fs::read_to_string(&e.full_path).map_err(|source| HandoffError::Read {
+                    action: "find-handoff",
+                    path: e.full_path.clone(),
+                    source,
+                })?;
             return Ok((e.full_path.clone(), content));
         }
     }
-    Err(format!(
-        "No active handoff found for '{key}' in {}.",
-        dir.display()
-    ))
+    Err(HandoffError::ActiveHandoffNotFound {
+        key: key.to_string(),
+        dir: dir.to_path_buf(),
+    })
 }
 
 /// Insert/replace a field after `status:`.
@@ -541,12 +733,9 @@ fn set_frontmatter_field(content: &str, field: &str, value: &str) -> String {
     }
 }
 
-fn complete_handoff(root: &Path, status: &str, args: &Args) -> Result<String, String> {
-    let id = args.id.as_deref().ok_or_else(|| {
-        format!(
-            "--id is required for {}.",
-            args.action.as_deref().unwrap_or("")
-        )
+fn complete_handoff(root: &Path, status: &str, args: &Args) -> Result<String, HandoffError> {
+    let id = args.id.as_deref().ok_or_else(|| HandoffError::MissingId {
+        action: args.action.clone().unwrap_or_default(),
     })?;
     let paths = handoff_paths(root);
     let (file_path, original) = find_handoff_file(&paths.dir, id)?;
@@ -578,13 +767,14 @@ fn complete_handoff(root: &Path, status: &str, args: &Args) -> Result<String, St
         .to_string();
     let dest = paths.archive.join(&file_name);
     if dest.exists() {
-        return Err(format!(
-            "Archived handoff already exists: {}",
-            dest.display()
-        ));
+        return Err(HandoffError::ArchiveAlreadyExists { path: dest });
     }
     if !paths.archive.exists() {
-        std::fs::create_dir_all(&paths.archive).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&paths.archive).map_err(|source| HandoffError::CreateDir {
+            action: "complete-handoff",
+            path: paths.archive.clone(),
+            source,
+        })?;
     }
 
     let parsed = frontmatter::parse(&content);
@@ -618,12 +808,19 @@ fn complete_handoff(root: &Path, status: &str, args: &Args) -> Result<String, St
     let drop_dest = || {
         let _ = std::fs::remove_file(&dest);
     };
-    write_text_atomic(&dest, &content).map_err(|e| e.to_string())?;
+    write_text_atomic(&dest, &content).map_err(|source| HandoffError::Write {
+        action: "complete-handoff",
+        path: dest.clone(),
+        source,
+    })?;
     if let Err(e) = std::fs::remove_file(&file_path) {
         drop_dest();
-        return Err(format!("Cannot remove active handoff after archiving: {e}"));
+        return Err(HandoffError::RemoveActiveAfterArchive {
+            path: file_path,
+            source: e,
+        });
     }
-    if let Err(e) = refresh_ledger(root) {
+    if let Err(e) = refresh_ledger_typed(root) {
         let _ = write_text_atomic(&file_path, &original);
         drop_dest();
         return Err(e);
@@ -667,23 +864,44 @@ fn complete_handoff(root: &Path, status: &str, args: &Args) -> Result<String, St
 
 // ── list ───────────────────────────────────────────────────────────────────
 
-fn invoke_list(root: &Path, args: &Args) -> Result<String, String> {
+struct LedgerRead {
+    exists: bool,
+    content: HandoffRead<String>,
+}
+
+fn read_ledger_content(ledger: &Path) -> LedgerRead {
+    let exists = ledger.exists();
+    if !exists {
+        return LedgerRead {
+            exists,
+            content: HandoffRead::complete(String::new()),
+        };
+    }
+    match std::fs::read_to_string(ledger) {
+        Ok(content) => LedgerRead {
+            exists,
+            content: HandoffRead::complete(content),
+        },
+        Err(_) => LedgerRead {
+            exists,
+            content: HandoffRead::degraded(String::new()),
+        },
+    }
+}
+
+fn invoke_list(root: &Path, args: &Args) -> Result<String, HandoffError> {
     let paths = handoff_paths(root);
-    let exists = paths.ledger.exists();
-    let content = if exists {
-        std::fs::read_to_string(&paths.ledger).unwrap_or_default()
-    } else {
-        String::new()
-    };
+    let ledger = read_ledger_content(&paths.ledger);
+    let content = ledger.content.value;
     if args.json {
         let obj = serde_json::json!({
             "ledger": path_str(&paths.ledger),
-            "exists": exists,
-            "content": if exists { Some(content.clone()) } else { None }
+            "exists": ledger.exists,
+            "content": if ledger.exists { Some(content.clone()) } else { None }
         });
         return Ok(serde_json::to_string_pretty(&obj).unwrap());
     }
-    if exists {
+    if ledger.exists {
         Ok(content)
     } else {
         Ok("No active handoffs (LEDGER.md not found).".to_string())
@@ -693,16 +911,20 @@ fn invoke_list(root: &Path, args: &Args) -> Result<String, String> {
 // ── dispatch ───────────────────────────────────────────────────────────────
 
 pub fn run(args: &Args) -> Result<String, String> {
+    run_typed(args).map_err(|e| e.to_string())
+}
+
+pub fn run_typed(args: &Args) -> Result<String, HandoffError> {
     let action = args
         .action
         .as_deref()
-        .ok_or_else(|| "a handoff subcommand is required.".to_string())?;
-    let root = repo_root(args)?;
+        .ok_or(HandoffError::MissingSubcommand)?;
+    let root = repo_root_typed(args)?;
 
     match action {
         "refresh" => {
             let (archived, conflicts) = archive_stranded(&handoff_paths(&root))?;
-            let (ledger, count) = refresh_ledger(&root)?;
+            let (ledger, count) = refresh_ledger_typed(&root)?;
             if args.json {
                 let obj = serde_json::json!({
                     "Ledger": path_str(&ledger),
@@ -727,7 +949,9 @@ pub fn run(args: &Args) -> Result<String, String> {
         "done" => complete_handoff(&root, "done", args),
         "cancel" => complete_handoff(&root, "cancelled", args),
         "list" => invoke_list(&root, args),
-        other => Err(format!("unknown handoff action: {other}")),
+        other => Err(HandoffError::UnknownAction {
+            action: other.to_string(),
+        }),
     }
 }
 
@@ -815,5 +1039,130 @@ mod tests {
         assert!(
             text.contains("| TST-0001 | [My Title](2026-01-01-my-title.md) | 1/2 | 2026-01-01 |")
         );
+    }
+
+    fn tempdir() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "pwf_handoff_test_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn run_typed_preserves_missing_title_text_with_variant() {
+        let root = tempdir();
+        let args = Args {
+            action: Some("new".to_string()),
+            repo_root: Some(root.to_string_lossy().into_owned()),
+            ..Default::default()
+        };
+
+        let err = run_typed(&args).unwrap_err();
+
+        assert!(matches!(err, HandoffError::MissingTitle));
+        assert_eq!(err.to_string(), "--title is required for new.");
+    }
+
+    #[test]
+    fn run_typed_preserves_missing_id_text_with_action_field() {
+        let root = tempdir();
+        let args = Args {
+            action: Some("done".to_string()),
+            repo_root: Some(root.to_string_lossy().into_owned()),
+            ..Default::default()
+        };
+
+        let err = run_typed(&args).unwrap_err();
+
+        assert!(matches!(err, HandoffError::MissingId { ref action } if action == "done"));
+        assert_eq!(err.to_string(), "--id is required for done.");
+    }
+
+    #[test]
+    fn run_typed_preserves_unknown_action_text_with_action_field() {
+        let root = tempdir();
+        let args = Args {
+            action: Some("wat".to_string()),
+            repo_root: Some(root.to_string_lossy().into_owned()),
+            ..Default::default()
+        };
+
+        let err = run_typed(&args).unwrap_err();
+
+        assert!(matches!(err, HandoffError::UnknownAction { ref action } if action == "wat"));
+        assert_eq!(err.to_string(), "unknown handoff action: wat");
+    }
+
+    #[test]
+    fn repo_root_typed_preserves_missing_root_text_with_root_field() {
+        let root = tempdir().join("missing");
+        let args = Args {
+            repo_root: Some(root.to_string_lossy().into_owned()),
+            ..Default::default()
+        };
+
+        let err = repo_root_typed(&args).unwrap_err();
+
+        assert!(
+            matches!(err, HandoffError::RepoRootDoesNotExist { ref root } if root.ends_with("missing"))
+        );
+        assert_eq!(
+            err.to_string(),
+            format!("--repo-root does not exist: {}", root.display())
+        );
+    }
+
+    #[test]
+    fn read_handoff_entries_reports_degraded_when_file_read_is_ignored() {
+        let dir = tempdir();
+        std::fs::create_dir(dir.join("2026-01-01-unreadable.md")).unwrap();
+
+        let read = read_handoff_entries_typed(&dir);
+
+        assert_eq!(read.status, HandoffReadStatus::Degraded);
+        assert!(read.value.is_empty());
+    }
+
+    #[test]
+    fn read_handoff_entries_reports_degraded_when_read_dir_is_ignored() {
+        let dir = tempdir().join("not-a-directory.md");
+        std::fs::write(&dir, "not a directory\n").unwrap();
+
+        let read = read_handoff_entries_typed(&dir);
+
+        assert_eq!(read.status, HandoffReadStatus::Degraded);
+        assert!(read.value.is_empty());
+    }
+
+    #[test]
+    fn read_ledger_reports_degraded_when_existing_ledger_is_unreadable() {
+        let dir = tempdir();
+        let ledger = dir.join("LEDGER.md");
+        std::fs::create_dir(&ledger).unwrap();
+
+        let read = read_ledger_content(&ledger);
+
+        assert!(read.exists);
+        assert_eq!(read.content.status, HandoffReadStatus::Degraded);
+        assert_eq!(read.content.value, "");
+    }
+
+    #[test]
+    fn load_handoff_config_reports_degraded_when_config_load_falls_back() {
+        let dir = tempdir();
+        let args = Args {
+            config_path: Some(dir.join("missing.json").to_string_lossy().into_owned()),
+            ..Default::default()
+        };
+
+        let read = load_handoff_config_typed(&args);
+
+        assert_eq!(read.status, HandoffReadStatus::Degraded);
+        assert!(read.value.is_none());
     }
 }

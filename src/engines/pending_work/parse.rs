@@ -1,7 +1,9 @@
 // Index/note parsing: project-task extraction + newest-handoff resolution.
 
+use super::errors::PendingWorkError;
 use super::model::Item;
 use super::naming::path_str;
+use super::obsidian::store::ObsidianStore;
 use super::text::{is_placeholder_prompt, line_number};
 use regex::Regex;
 use std::path::{Path, PathBuf};
@@ -14,17 +16,21 @@ const ISSUE_PLACEHOLDER_PROMPT: &str =
 /// Scan `<repo>/docs/handoffs/*.md`, exclude LEDGER.md/README.md (case-insensitive),
 /// sort by (LastWriteTime, Name) DESC, take first.
 pub fn newest_handoff(repo: &str) -> Result<PathBuf, String> {
+    newest_handoff_typed(repo).map_err(String::from)
+}
+
+pub(super) fn newest_handoff_typed(repo: &str) -> Result<PathBuf, PendingWorkError> {
     let handoff_dir = Path::new(repo).join("docs").join("handoffs");
     if !handoff_dir.exists() {
-        return Err(format!(
-            "No handoff directory found for project at {}.",
-            handoff_dir.display()
-        ));
+        return Err(PendingWorkError::NoHandoffDirectory { path: handoff_dir });
     }
     let excluded = ["LEDGER.md", "README.md"];
     let mut entries: Vec<(std::time::SystemTime, String, PathBuf)> = Vec::new();
     for entry in std::fs::read_dir(&handoff_dir)
-        .map_err(|e| e.to_string())?
+        .map_err(|source| PendingWorkError::ReadHandoffDirectory {
+            path: handoff_dir.clone(),
+            source,
+        })?
         .flatten()
     {
         let p = entry.path();
@@ -46,10 +52,7 @@ pub fn newest_handoff(repo: &str) -> Result<PathBuf, String> {
         entries.push((mtime, name, p));
     }
     if entries.is_empty() {
-        return Err(format!(
-            "No handoff Markdown files found in {}.",
-            handoff_dir.display()
-        ));
+        return Err(PendingWorkError::NoHandoffMarkdown { path: handoff_dir });
     }
     // Sort by (LastWriteTime, Name) descending — Name is the deterministic tiebreak.
     entries.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
@@ -76,10 +79,23 @@ fn section_at(text: &str, offset: usize) -> Option<String> {
 
 /// Parse file-model links + legacy checkbox items.
 pub fn get_project_tasks(project: &str, repo: Option<&str>, index_path: &Path) -> Vec<Item> {
-    let text = match std::fs::read_to_string(index_path) {
-        Ok(t) => t,
-        Err(_) => return Vec::new(),
+    let Some(text) = ObsidianStore::read_text_optional(index_path) else {
+        return Vec::new();
     };
+    parse_project_tasks_from_text(project, repo, index_path, &text, |item_path| {
+        item_path
+            .exists()
+            .then(|| ObsidianStore::read_text_or_default(item_path))
+    })
+}
+
+fn parse_project_tasks_from_text(
+    project: &str,
+    repo: Option<&str>,
+    index_path: &Path,
+    text: &str,
+    load_item_note: impl Fn(&Path) -> Option<String>,
+) -> Vec<Item> {
     let dir = index_path.parent().unwrap_or(Path::new("."));
     let note = path_str(index_path);
     let mut items: Vec<Item> = Vec::new();
@@ -92,7 +108,7 @@ pub fn get_project_tasks(project: &str, repo: Option<&str>, index_path: &Path) -
         r"(?m)^\s*-\s*(?:\[ \]\s*)?\[\[(?P<id>[A-Z]{2,4}-\d{4})(?:\|(?P<alias>[^\]]+))?\]\].*$",
     )
     .unwrap();
-    for m in link_re.captures_iter(&text) {
+    for m in link_re.captures_iter(text) {
         let id = m["id"].to_string();
         let alias = m
             .name("alias")
@@ -109,8 +125,7 @@ pub fn get_project_tasks(project: &str, repo: Option<&str>, index_path: &Path) -
         let mut prompt = String::new();
         let mut prereq: Option<String> = None;
 
-        if item_path.exists() {
-            let raw = std::fs::read_to_string(&item_path).unwrap_or_default();
+        if let Some(raw) = load_item_note(&item_path) {
             let parsed = crate::frontmatter::parse(&raw);
             if let Some(t) = parsed.frontmatter.get("title")
                 && !t.is_empty()
@@ -146,14 +161,14 @@ pub fn get_project_tasks(project: &str, repo: Option<&str>, index_path: &Path) -
             repo: repo.map(|r| r.to_string()),
             note: note.clone(),
             item_file: Some(path_str(&item_path)),
-            line: line_number(&text, match_start),
+            line: line_number(text, match_start),
             format: "file".to_string(),
             marker_index: match_start,
             marker_length: match_len,
             launchable,
             needs_prompt,
             issues,
-            section: section_at(&text, match_start),
+            section: section_at(text, match_start),
             prereq,
         });
     }
@@ -174,7 +189,7 @@ pub fn get_project_tasks(project: &str, repo: Option<&str>, index_path: &Path) -
         prompt: String,
     }
     let mut legacy: Vec<LegacyMatch> = Vec::new();
-    for m in inline_re.captures_iter(&text) {
+    for m in inline_re.captures_iter(text) {
         legacy.push(LegacyMatch {
             start: m.get(0).unwrap().start(),
             len: m.get(0).unwrap().len(),
@@ -182,7 +197,7 @@ pub fn get_project_tasks(project: &str, repo: Option<&str>, index_path: &Path) -
             prompt: m["prompt"].trim().to_string(),
         });
     }
-    for m in fenced_re.captures_iter(&text) {
+    for m in fenced_re.captures_iter(text) {
         legacy.push(LegacyMatch {
             start: m.get(0).unwrap().start(),
             len: m.get(0).unwrap().len(),
@@ -212,17 +227,48 @@ pub fn get_project_tasks(project: &str, repo: Option<&str>, index_path: &Path) -
             repo: repo.map(|r| r.to_string()),
             note: note.clone(),
             item_file: None,
-            line: line_number(&text, item.start),
+            line: line_number(text, item.start),
             format: "legacy".to_string(),
             marker_index: item.start,
             marker_length: item.len,
             launchable,
             needs_prompt,
             issues,
-            section: section_at(&text, item.start),
+            section: section_at(text, item.start),
             prereq: None,
         });
     }
 
     items
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_project_tasks_from_text_uses_supplied_item_note_text() {
+        let index_path = Path::new("notes/glep-shimeji/glep-shimeji.md");
+        let index_text = "# glep-shimeji\n- [[GLP-0001|fallback title]]\n";
+        let items = parse_project_tasks_from_text(
+            "glep-shimeji",
+            Some("/repo"),
+            index_path,
+            index_text,
+            |item_path| {
+                assert_eq!(item_path, Path::new("notes/glep-shimeji/GLP-0001.md"));
+                Some(
+                    "---\nstatus: active\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\nprereq: \"[[GLP-0000]]\"\n---\n\nadd startup toggle\n"
+                        .to_string(),
+                )
+            },
+        );
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, "GLP-0001");
+        assert_eq!(items[0].session, "tray gui");
+        assert_eq!(items[0].prompt, "add startup toggle");
+        assert_eq!(items[0].prereq.as_deref(), Some("\"[[GLP-0000]]\""));
+        assert!(items[0].launchable);
+    }
 }

@@ -7,6 +7,7 @@
 //! the conformance corpus injects the sandbox flags (`--config-path`, `--notes-dir`
 //! / `--repo-root`, `--date`, …) onto every command — matching the old flat parser.
 
+use crate::engines::pending_work::{Action as PendingWorkAction, PendingWorkCommand};
 use clap::{Args, Parser, Subcommand};
 
 /// pwf — pending-work / handoff / migrate engine for managed repos.
@@ -343,6 +344,28 @@ pub struct MigrateArgs {
 // `Args` derive imported above.
 use crate::cli::Args as EngineArgs;
 
+#[derive(Debug, Clone)]
+pub enum ParsedCommand {
+    PendingWork(PendingWorkCommand),
+    Handoff(EngineArgs),
+    Migrate(EngineArgs),
+}
+
+/// Parse a full post-binary argv into a typed engine command.
+///
+/// The pending-work branch preserves the clap-derived action enum all the way to
+/// the engine; handoff/migrate keep using the flat DTO until their boundaries are
+/// refactored.
+///
+/// # Errors
+///
+/// Returns the `clap::Error` from a parse failure, help, or version request.
+pub fn parse_command_argv(argv: Vec<String>) -> Result<ParsedCommand, clap::Error> {
+    let norm = crate::preprocess::normalize(argv);
+    let cli = Cli::try_parse_from(std::iter::once("pwf".to_string()).chain(norm))?;
+    Ok(cli.into_parsed_command())
+}
+
 /// Parse a full post-binary argv (engine + args) through subcommand-default
 /// injection + clap, returning the engine name and the `Args` DTO the engines
 /// consume. clap errors (incl. `--help`/`--version`) propagate as `clap::Error`.
@@ -357,13 +380,32 @@ pub fn parse_argv(argv: Vec<String>) -> Result<(String, EngineArgs), clap::Error
 }
 
 impl Cli {
+    pub fn into_parsed_command(self) -> ParsedCommand {
+        match self.engine {
+            Engine::Pw { action } => ParsedCommand::PendingWork(fill_pw_command(action)),
+            Engine::Handoff { action } => {
+                let mut a = EngineArgs::default();
+                fill_handoff(&mut a, action);
+                ParsedCommand::Handoff(a)
+            }
+            Engine::Migrate(m) => ParsedCommand::Migrate(EngineArgs {
+                config_path: m.config_path,
+                notes_dir: m.notes_dir,
+                date: m.date,
+                dry_run: m.dry_run,
+                ..Default::default()
+            }),
+        }
+    }
+
     /// Flatten the parsed clap tree into the engine name + engine `Args`.
-    /// `// !` Temporary bridge; PR2 may push typed inputs into the engines.
+    /// `// !` Temporary bridge kept for handoff/migrate compatibility.
     pub fn into_engine_args(self) -> (String, EngineArgs) {
         let mut a = EngineArgs::default();
         let engine = match self.engine {
             Engine::Pw { action } => {
-                fill_pw(&mut a, action);
+                let action = fill_pw(&mut a, action);
+                a.action = Some(action.as_str().into());
                 "pw"
             }
             Engine::Handoff { action } => {
@@ -382,6 +424,12 @@ impl Cli {
     }
 }
 
+fn fill_pw_command(action: PwAction) -> PendingWorkCommand {
+    let mut a = EngineArgs::default();
+    let action = fill_pw(&mut a, action);
+    PendingWorkCommand::new(action, a)
+}
+
 fn apply_pw_common(a: &mut EngineArgs, c: PwCommon) {
     a.config_path = c.config_path;
     a.notes_dir = c.notes_dir;
@@ -389,7 +437,7 @@ fn apply_pw_common(a: &mut EngineArgs, c: PwCommon) {
     a.json = c.json;
 }
 
-fn fill_pw(a: &mut EngineArgs, action: PwAction) {
+fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
     match action {
         PwAction::Add {
             project,
@@ -402,7 +450,6 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) {
             prereq,
             common,
         } => {
-            a.action = Some("add".into());
             a.project = project;
             a.prompt = (!prompt.is_empty()).then(|| prompt.join(" "));
             a.continue_handoff = continue_handoff;
@@ -412,6 +459,7 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) {
             a.human = human;
             a.prereq = prereq;
             apply_pw_common(a, common);
+            PendingWorkAction::Add
         }
         PwAction::List {
             project,
@@ -421,13 +469,13 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) {
             number,
             common,
         } => {
-            a.action = Some("list".into());
             a.project = project;
             a.long = long;
             a.future = future;
             a.human = human;
             a.number = number;
             apply_pw_common(a, common);
+            PendingWorkAction::List
         }
         PwAction::Check {
             id,
@@ -436,12 +484,12 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) {
             review,
             common,
         } => {
-            a.action = Some("check".into());
             a.id = id;
             a.report = report;
             a.commits = commits;
             a.review = review;
             apply_pw_common(a, common);
+            PendingWorkAction::Check
         }
         PwAction::Update {
             id,
@@ -451,18 +499,18 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) {
             clear_prereq,
             common,
         } => {
-            a.action = Some("update".into());
             a.id = id;
             a.prompt = prompt;
             a.title = title;
             a.prereq = prereq;
             a.clear_prereq = clear_prereq;
             apply_pw_common(a, common);
+            PendingWorkAction::Update
         }
         PwAction::Resolve { id, common } => {
-            a.action = Some("resolve".into());
             a.id = id;
             apply_pw_common(a, common);
+            PendingWorkAction::Resolve
         }
         PwAction::Clean {
             project,
@@ -470,16 +518,16 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) {
             dry_run,
             common,
         } => {
-            a.action = Some("clean".into());
             a.project = project;
             a.force = force;
             a.dry_run = dry_run;
             apply_pw_common(a, common);
+            PendingWorkAction::Clean
         }
         PwAction::Verify { id, common } => {
-            a.action = Some("verify".into());
             a.id = id;
             apply_pw_common(a, common);
+            PendingWorkAction::Verify
         }
         PwAction::Launch {
             id,
@@ -487,17 +535,17 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) {
             thinking,
             common,
         } => {
-            a.action = Some("launch".into());
             a.id = id;
             a.model = model;
             a.thinking = thinking;
             apply_pw_common(a, common);
+            PendingWorkAction::Launch
         }
         PwAction::LaunchClaude { id, force, common } => {
-            a.action = Some("launch-claude".into());
             a.id = id;
             a.force = force;
             apply_pw_common(a, common);
+            PendingWorkAction::LaunchClaude
         }
         PwAction::Route {
             words,
@@ -508,7 +556,6 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) {
             prereq,
             common,
         } => {
-            a.action = Some("route".into());
             a.words = words;
             a.long = long;
             a.future = future;
@@ -516,6 +563,7 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) {
             a.number = number;
             a.prereq = prereq;
             apply_pw_common(a, common);
+            PendingWorkAction::Route
         }
         PwAction::New {
             project,
@@ -525,18 +573,18 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) {
             thinking,
             common,
         } => {
-            a.action = Some("new".into());
             a.project = project;
             a.prompt = prompt;
             a.title = title;
             a.model = model;
             a.thinking = thinking;
             apply_pw_common(a, common);
+            PendingWorkAction::New
         }
         PwAction::Remove { id, common } => {
-            a.action = Some("remove".into());
             a.id = id;
             apply_pw_common(a, common);
+            PendingWorkAction::Remove
         }
     }
 }
@@ -663,5 +711,22 @@ mod tests {
         assert_eq!(a.action.as_deref(), Some("check"));
         assert_eq!(a.commits, vec!["a..b", "c..d"]);
         assert!(a.review);
+    }
+
+    #[test]
+    fn typed_pw_parse_keeps_action_out_of_flat_args() {
+        let argv = ["pw", "check", "--id", "GLP-0001"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let ParsedCommand::PendingWork(command) = parse_command_argv(argv).expect("parse") else {
+            panic!("expected pending-work command");
+        };
+        assert_eq!(
+            command.action(),
+            &crate::engines::pending_work::Action::Check
+        );
+        assert_eq!(command.args().id.as_deref(), Some("GLP-0001"));
+        assert!(command.args().action.is_none());
     }
 }

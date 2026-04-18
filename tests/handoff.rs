@@ -411,7 +411,7 @@ fn done_skips_already_checked_pw_item_and_archives() {
         "--date",
         "2026-01-01",
     ]);
-    pwf::engines::pending_work::run(&check_args).unwrap();
+    pwf::engines::pending_work::run_args(&check_args).unwrap();
 
     // done must treat the already-checked item as success (skip with a note).
     let done_args = parse_args(&[
@@ -509,7 +509,7 @@ fn done_dest_conflict_leaves_no_partial_state() {
         "--date",
         "2026-01-02",
     ]);
-    let out = pwf::engines::pending_work::run(&list_args).unwrap();
+    let out = pwf::engines::pending_work::run_args(&list_args).unwrap();
     assert!(
         out.contains("TST-0001"),
         "pw item must remain open on failure: {out}"

@@ -32,7 +32,7 @@ fn add_allocates_first_id_and_writes_files() {
         "--date",
         "2026-01-01",
     ]);
-    let out = pwk::run(&args).unwrap();
+    let out = pwk::run_args(&args).unwrap();
     let v: serde_json::Value = serde_json::from_str(&out).unwrap();
     assert_eq!(v["id"], "GLP-0001");
     assert_eq!(v["status"], "added");
@@ -71,7 +71,7 @@ fn add_text_output_points_to_pwf_launch_command() {
         "--date",
         "2026-01-01",
     ]);
-    let out = pwk::run(&args).unwrap();
+    let out = pwk::run_args(&args).unwrap();
     assert!(out.contains("launch with: pwf pw launch --id GLP-0001"));
     assert!(!out.contains("just pending-work-launch"), "got: {out}");
 }
@@ -123,7 +123,7 @@ fn add_skips_ids_already_present_in_archive() {
         "2026-01-01",
     ]);
 
-    let out = pwk::run(&args).unwrap();
+    let out = pwk::run_args(&args).unwrap();
     let v: serde_json::Value = serde_json::from_str(&out).unwrap();
     assert_eq!(v["id"], "CFG-0090");
     assert!(proj.join("CFG-0090.md").exists());
@@ -161,7 +161,7 @@ fn add_caps_inferred_title_for_long_prompt_without_ampersand() {
         "--date",
         "2026-01-01",
     ]);
-    pwk::run(&args).unwrap();
+    pwk::run_args(&args).unwrap();
 
     let item = fs::read_to_string(stage.join("notes/config-handler/CFG-0001.md")).unwrap();
     let title = item
@@ -228,7 +228,7 @@ fn add_human_flag_routes_item_under_human_section() {
         "--date",
         "2026-01-01",
     ]);
-    pwk::run(&args).unwrap();
+    pwk::run_args(&args).unwrap();
     let index = fs::read_to_string(proj.join("glep-shimeji.md")).unwrap();
     let human_idx = index
         .find("## Human")
@@ -293,7 +293,7 @@ fn add_with_prereq_writes_validated_frontmatter() {
         "--date",
         "2026-01-01",
     ]);
-    let out = pwk::run(&args).unwrap();
+    let out = pwk::run_args(&args).unwrap();
     let v: serde_json::Value = serde_json::from_str(&out).unwrap();
     assert_eq!(v["id"], "GLP-0002");
     let item = fs::read_to_string(proj.join("GLP-0002.md")).unwrap();
@@ -334,7 +334,7 @@ fn add_rejects_unknown_prereq_without_writing_item() {
         "--date",
         "2026-01-01",
     ]);
-    let err = pwk::run(&args).unwrap_err();
+    let err = pwk::run_args(&args).unwrap_err();
     assert!(err.contains("GLP-9999"), "got: {err}");
     assert!(
         !proj.join("GLP-0001.md").exists(),
@@ -370,7 +370,7 @@ fn add_unmanaged_project_returns_error() {
         "--date",
         "2026-01-01",
     ]);
-    let err = pwk::run(&args).unwrap_err();
+    let err = pwk::run_args(&args).unwrap_err();
     assert!(err.contains("no work-item prefix"), "got: {err}");
 }
 
@@ -408,7 +408,7 @@ fn list_returns_json_array_with_issues_as_empty_array() {
         "--date",
         "2026-01-01",
     ]);
-    let out = pwk::run(&args).unwrap();
+    let out = pwk::run_args(&args).unwrap();
     let arr: serde_json::Value = serde_json::from_str(&out).unwrap();
     assert!(arr.is_array());
     let first = &arr[0];
@@ -463,7 +463,7 @@ fn list_hides_future_and_human_by_default_flags_reveal() {
         let mut argv = vec!["list"];
         argv.extend_from_slice(extra);
         argv.extend_from_slice(&base);
-        pwk::run(&parse_args(&argv)).unwrap()
+        pwk::run_args(&parse_args(&argv)).unwrap()
     };
     // Default: normal + Low-prio shown; Future + Human hidden.
     let def = run(&[]);
@@ -516,7 +516,7 @@ fn list_long_shows_per_item_metadata() {
         "--date",
         "2026-01-01",
     ]);
-    let out = pwk::run(&args).unwrap();
+    let out = pwk::run_args(&args).unwrap();
     assert!(
         out.contains("[GLP-0001] glep-shimeji :: tray gui"),
         "got: {out}"
@@ -571,7 +571,7 @@ fn list_run(cfg: &std::path::Path, notes: &std::path::Path, extra: &[&str]) -> S
         "--date",
         "2026-01-01",
     ]);
-    pwk::run(&parse_args(&argv)).unwrap()
+    pwk::run_args(&parse_args(&argv)).unwrap()
 }
 
 #[test]
@@ -711,7 +711,7 @@ fn list_long_shows_prereq_status() {
         "--date",
         "2026-01-01",
     ]);
-    let out = pwk::run(&args).unwrap();
+    let out = pwk::run_args(&args).unwrap();
     assert!(out.contains("prereq: CFG-0014 (done)"), "got: {out}");
 }
 
@@ -750,7 +750,7 @@ fn check_keeps_done_link_in_index_in_place_without_bak() {
         "--date",
         "2026-01-01",
     ]);
-    let out = pwk::run(&args).unwrap();
+    let out = pwk::run_args(&args).unwrap();
     let v: serde_json::Value = serde_json::from_str(&out).unwrap();
     assert_eq!(v["id"], "GLP-0001");
     assert_eq!(v["status"], "checked");
@@ -815,7 +815,7 @@ fn check_evicts_and_archives_oldest_beyond_general_cap() {
         "--date",
         "2026-06-13",
     ]);
-    pwk::run(&args).unwrap();
+    pwk::run_args(&args).unwrap();
     let index = fs::read_to_string(proj.join("glep-shimeji.md")).unwrap();
     // Oldest (GLP-0001) evicted from the index; GLP-0007 kept; six done remain.
     assert!(!index.contains("GLP-0001"), "oldest unlinked: {index}");
@@ -875,7 +875,7 @@ fn update_rewrites_body_via_note_body_and_preserves_frontmatter() {
         "--date",
         "2026-01-01",
     ]);
-    let out = pwk::run(&args).unwrap();
+    let out = pwk::run_args(&args).unwrap();
     let v: serde_json::Value = serde_json::from_str(&out).unwrap();
     assert_eq!(v["id"], "GLP-0001");
     assert_eq!(v["status"], "updated");
@@ -911,7 +911,7 @@ fn update_title_only_leaves_body_untouched() {
         "--notes-dir",
         &notes.to_string_lossy(),
     ]);
-    pwk::run(&args).unwrap();
+    pwk::run_args(&args).unwrap();
     let item = fs::read_to_string(proj.join("GLP-0001.md")).unwrap();
     assert!(item.contains("title: new title"), "title replaced: {item}");
     assert!(!item.contains("title: tray gui"));
@@ -932,7 +932,7 @@ fn update_prompt_only_leaves_title_untouched() {
         "--notes-dir",
         &notes.to_string_lossy(),
     ]);
-    pwk::run(&args).unwrap();
+    pwk::run_args(&args).unwrap();
     let item = fs::read_to_string(proj.join("GLP-0001.md")).unwrap();
     assert!(item.contains("title: tray gui"), "title untouched: {item}");
     assert!(item.contains("Goals:\n- fresh prompt"));
@@ -952,7 +952,7 @@ fn update_keeps_placeholder_prompt_raw_so_it_stays_detectable() {
         "--notes-dir",
         &notes.to_string_lossy(),
     ]);
-    pwk::run(&args).unwrap();
+    pwk::run_args(&args).unwrap();
     let item = fs::read_to_string(proj.join("GLP-0001.md")).unwrap();
     // Placeholder must NOT be Goals-wrapped, else is_placeholder_prompt can't flag it.
     assert!(!item.contains("Goals:"), "placeholder stored raw: {item}");
@@ -971,7 +971,7 @@ fn update_requires_at_least_one_field() {
         "--notes-dir",
         &notes.to_string_lossy(),
     ]);
-    let err = pwk::run(&args).unwrap_err();
+    let err = pwk::run_args(&args).unwrap_err();
     assert!(err.contains("nothing to update"), "got: {err}");
 }
 
@@ -989,7 +989,7 @@ fn update_unknown_id_errors() {
         "--notes-dir",
         &notes.to_string_lossy(),
     ]);
-    assert!(pwk::run(&args).is_err());
+    assert!(pwk::run_args(&args).is_err());
 }
 
 #[test]
@@ -1030,7 +1030,7 @@ fn check_with_report_appends_report_section() {
         "--date",
         "2026-01-01",
     ]);
-    pwk::run(&args).unwrap();
+    pwk::run_args(&args).unwrap();
     let item = fs::read_to_string(proj.join("GLP-0001.md")).unwrap();
     assert!(
         item.contains("status: done\ncompleted: 2026-01-01\n"),
@@ -1092,7 +1092,7 @@ fn remove_deletes_pwf_item_file_and_index_link_with_id_only() {
         "--notes-dir",
         &notes.to_string_lossy(),
     ]);
-    let out = pwk::run(&args).unwrap();
+    let out = pwk::run_args(&args).unwrap();
     let v: serde_json::Value = serde_json::from_str(&out).unwrap();
     assert_eq!(v["id"], "PWF-0001");
     assert_eq!(v["status"], "removed");
@@ -1147,7 +1147,7 @@ fn add_continue_handoff_builds_handoff_prompt() {
         "--date",
         "2026-01-01",
     ]);
-    let out = pwk::run(&args).unwrap();
+    let out = pwk::run_args(&args).unwrap();
     let v: serde_json::Value = serde_json::from_str(&out).unwrap();
     assert_eq!(v["id"], "GLP-0001");
     assert_eq!(v["title"], "continue api cleanup");
@@ -1200,7 +1200,7 @@ fn add_with_title_flag_accepts_prereq() {
         "--date",
         "2026-01-01",
     ]);
-    pwk::run(&args).unwrap();
+    pwk::run_args(&args).unwrap();
     let item = fs::read_to_string(proj.join("GLP-0002.md")).unwrap();
     assert!(
         item.contains("prereq: \"[[GLP-0001]]\"\n---"),
@@ -1242,7 +1242,7 @@ fn route_create_verbs_error_with_add_hint() {
         let mut argv = vec!["route", "--config-path", &cfg_s, "--notes-dir", &notes_s];
         argv.extend(words);
         let args = parse_args(&argv);
-        let err = pwk::run(&args).unwrap_err();
+        let err = pwk::run_args(&args).unwrap_err();
         assert_eq!(err, expected);
     }
 }
@@ -1277,7 +1277,7 @@ fn new_action_returns_launch_spec_json() {
         "--date",
         "2026-01-01",
     ]);
-    let out = pwk::run(&args).unwrap();
+    let out = pwk::run_args(&args).unwrap();
     let v: serde_json::Value = serde_json::from_str(&out).unwrap();
     assert_eq!(v["id"], "adhoc:glep-shimeji");
     assert_eq!(v["project"], "glep-shimeji");
@@ -1327,7 +1327,7 @@ fn launch_action_returns_spec_for_existing_item() {
         "--date",
         "2026-01-01",
     ]);
-    let out = pwk::run(&args).unwrap();
+    let out = pwk::run_args(&args).unwrap();
     let v: serde_json::Value = serde_json::from_str(&out).unwrap();
     assert_eq!(v["id"], "GLP-0001");
     assert_eq!(v["session"], "tray gui");
@@ -1383,7 +1383,7 @@ fn resolve_args(cfg: &std::path::Path, notes: &std::path::Path, extra: &[&str]) 
 #[test]
 fn resolve_prints_item_note_path_plain() {
     let (notes, proj, cfg) = resolve_stage();
-    let out = pwk::run(&resolve_args(&cfg, &notes, &[])).unwrap();
+    let out = pwk::run_args(&resolve_args(&cfg, &notes, &[])).unwrap();
     assert_eq!(
         out.trim(),
         proj.join("GLP-0001.md").to_string_lossy().as_ref()
@@ -1393,7 +1393,7 @@ fn resolve_prints_item_note_path_plain() {
 #[test]
 fn resolve_json_returns_id_project_note_path_title() {
     let (notes, proj, cfg) = resolve_stage();
-    let out = pwk::run(&resolve_args(&cfg, &notes, &["--json"])).unwrap();
+    let out = pwk::run_args(&resolve_args(&cfg, &notes, &["--json"])).unwrap();
     let v: serde_json::Value = serde_json::from_str(&out).unwrap();
     assert_eq!(v["id"], "GLP-0001");
     assert_eq!(v["project"], "glep-shimeji");
@@ -1411,7 +1411,7 @@ fn resolve_unknown_id_errors() {
     let (notes, _proj, cfg) = resolve_stage();
     let mut args = resolve_args(&cfg, &notes, &[]);
     args.id = Some("GLP-0099".to_string());
-    let err = pwk::run(&args).unwrap_err();
+    let err = pwk::run_args(&args).unwrap_err();
     assert!(err.contains("GLP-0099"), "error should name the id: {err}");
 }
 
@@ -1420,7 +1420,7 @@ fn resolve_requires_id() {
     let (notes, _proj, cfg) = resolve_stage();
     let mut args = resolve_args(&cfg, &notes, &[]);
     args.id = None;
-    let err = pwk::run(&args).unwrap_err();
+    let err = pwk::run_args(&args).unwrap_err();
     assert!(err.contains("--id"), "error should mention --id: {err}");
 }
 
@@ -1499,7 +1499,7 @@ fn clean_sweeps_checked_links_sets_done_and_unlinks() {
         "--date",
         "2026-01-01",
     ]);
-    let out = pwk::run(&args).unwrap();
+    let out = pwk::run_args(&args).unwrap();
     let v: serde_json::Value = serde_json::from_str(&out).unwrap();
     assert_eq!(v.as_array().unwrap().len(), 1);
     assert_eq!(v[0]["id"], "CFG-0012");
@@ -1538,7 +1538,7 @@ fn clean_dry_run_writes_nothing() {
         "--date",
         "2026-01-01",
     ]);
-    let out = pwk::run(&args).unwrap();
+    let out = pwk::run_args(&args).unwrap();
     assert!(out.contains("WOULD CLEAN"), "got: {out}");
     let item = fs::read_to_string(proj.join("CFG-0012.md")).unwrap();
     assert!(item.contains("status: active"), "file mutated: {item}");
@@ -1569,7 +1569,7 @@ fn clean_skips_when_item_file_missing() {
         "--date",
         "2026-01-01",
     ]);
-    let out = pwk::run(&args).unwrap();
+    let out = pwk::run_args(&args).unwrap();
     let v: serde_json::Value = serde_json::from_str(&out).unwrap();
     let ghost = v
         .as_array()
@@ -1604,7 +1604,7 @@ fn clean_falls_back_to_date_without_checkmark() {
         "--date",
         "2026-03-03",
     ]);
-    let out = pwk::run(&args).unwrap();
+    let out = pwk::run_args(&args).unwrap();
     let v: serde_json::Value = serde_json::from_str(&out).unwrap();
     assert_eq!(v[0]["completed"], "2026-03-03");
     let item = fs::read_to_string(proj.join("CFG-0012.md")).unwrap();
@@ -1656,7 +1656,7 @@ fn clean_project_filter_limits_sweep() {
         "--date",
         "2026-01-01",
     ]);
-    let out = pwk::run(&args).unwrap();
+    let out = pwk::run_args(&args).unwrap();
     let v: serde_json::Value = serde_json::from_str(&out).unwrap();
     assert_eq!(v.as_array().unwrap().len(), 1);
     assert_eq!(v[0]["id"], "CFG-0012");
@@ -1686,7 +1686,7 @@ fn route_clean_verb_sweeps_project() {
         "clean",
         "config-handler",
     ]);
-    let out = pwk::run(&args).unwrap();
+    let out = pwk::run_args(&args).unwrap();
     let v: serde_json::Value = serde_json::from_str(&out).unwrap();
     assert_eq!(v[0]["id"], "CFG-0012");
     assert_eq!(v[0]["status"], "cleaned");
@@ -1713,12 +1713,12 @@ fn clean_reports_nothing_when_no_checked_links() {
     // JSON: empty array.
     let mut json_argv = vec!["clean", "--json"];
     json_argv.extend_from_slice(&base);
-    let out = pwk::run(&parse_args(&json_argv)).unwrap();
+    let out = pwk::run_args(&parse_args(&json_argv)).unwrap();
     assert_eq!(out.trim(), "[]", "got: {out}");
     // Text: the "nothing to clean" message.
     let mut text_argv = vec!["clean"];
     text_argv.extend_from_slice(&base);
-    let out2 = pwk::run(&parse_args(&text_argv)).unwrap();
+    let out2 = pwk::run_args(&parse_args(&text_argv)).unwrap();
     assert!(out2.contains("No done work-item links"), "got: {out2}");
     // Nothing mutated, no backup written.
     let idx = fs::read_to_string(proj.join("config-handler.md")).unwrap();

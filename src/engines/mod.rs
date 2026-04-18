@@ -49,7 +49,7 @@ impl FromStr for Engine {
 /// Returns an error string if `engine` is unknown or the selected engine fails.
 pub fn run(engine: &str, args: &Args) -> Result<String, String> {
     match engine.parse::<Engine>() {
-        Ok(Engine::PendingWork) => pending_work::run(args),
+        Ok(Engine::PendingWork) => pending_work::run_args(args),
         Ok(Engine::Handoff) => handoff::run(args),
         Ok(Engine::Migrate) => migrate::run(args),
         Err(()) => Err(format!("unknown engine: {engine}")),

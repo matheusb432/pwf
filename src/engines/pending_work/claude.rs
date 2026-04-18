@@ -1,7 +1,7 @@
 // Claude CLI probe, command construction, verify output, and the direct
 // claude launch.
 
-use super::errors;
+use super::errors::PendingWorkError;
 use super::launch::new_launch_prompt;
 use super::model::Item;
 use super::query::find_pending_item;
@@ -200,18 +200,18 @@ pub(super) fn invoke_claude_launch(
     id: &str,
     probe: &dyn ClaudeProbe,
     force: bool,
-) -> Result<String, String> {
+) -> Result<String, PendingWorkError> {
     // ! Notice on stderr keeps stdout machine-output clean.
     eprintln!("note: launch-claude emits a direct claude launch.");
     let item = find_pending_item(cfg, id)?;
     if !item.launchable {
-        return Err(errors::not_launchable(&item.id, &item.issues));
+        return Err(PendingWorkError::NotLaunchable {
+            id: item.id,
+            issues: item.issues,
+        });
     }
     if !probe.available() {
-        return Err(format!(
-            "Claude CLI not found on PATH; cannot launch. Run 'pwf pw verify --id {}' for details.",
-            id
-        ));
+        return Err(PendingWorkError::ClaudeNotFound { id: id.to_string() });
     }
     let title = item.session.clone();
     let prompt = new_launch_prompt(&item);
@@ -234,9 +234,62 @@ pub(super) fn invoke_claude_launch(
         .args(rest)
         .current_dir(repo)
         .status()
-        .map_err(|e| format!("Failed to spawn claude: {e}"))?;
+        .map_err(|source| PendingWorkError::FailedToSpawnClaude { source })?;
     if !status.success() {
-        return Err(format!("claude exited with status {}", status));
+        return Err(PendingWorkError::ClaudeExited { status });
     }
     Ok(String::new())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engines::pending_work::errors::PendingWorkError;
+    use std::fs;
+
+    fn nanos() -> u128 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    }
+
+    fn cfg_with_item() -> (std::path::PathBuf, Config) {
+        let stage = std::env::temp_dir().join(format!("pwf_claude_{}", nanos()));
+        let notes = stage.join("notes");
+        let project = notes.join("pwf");
+        fs::create_dir_all(&project).unwrap();
+        fs::write(
+            project.join("PWF-0001.md"),
+            "---\nstatus: active\ntitle: cli launch\nproject: pwf\ncreated: 2026-01-01\n---\n\nlaunch claude\n",
+        )
+        .unwrap();
+        fs::write(project.join("pwf.md"), "- [[PWF-0001|cli launch]]\n").unwrap();
+        let cfg = crate::config::from_json(
+            &format!(
+                r#"{{ "notesDir": "{}", "projects": {{ "pwf": "{}" }}, "prefixes": {{ "pwf": "PWF" }} }}"#,
+                notes.to_string_lossy().replace('\\', "\\\\"),
+                stage.to_string_lossy().replace('\\', "\\\\")
+            ),
+            None,
+        )
+        .unwrap();
+        (stage, cfg)
+    }
+
+    #[test]
+    fn failed_claude_spawn_returns_typed_error_with_legacy_display() {
+        let (_stage, cfg) = cfg_with_item();
+        let probe = FakeProbe {
+            available: true,
+            path: Some("/definitely/not/claude".to_string()),
+            version: None,
+            interactive: true,
+        };
+
+        let err = invoke_claude_launch(&cfg, "PWF-0001", &probe, false).unwrap_err();
+
+        assert!(matches!(err, PendingWorkError::FailedToSpawnClaude { .. }));
+        assert!(err.to_string().starts_with("Failed to spawn claude: "));
+    }
 }

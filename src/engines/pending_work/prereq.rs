@@ -1,12 +1,12 @@
 // Resolve `prereq` frontmatter wikilinks to their work-item status, so launch can
 // warn when a prerequisite item is not done yet.
 
+use super::domain::types::WorkItemId;
+use super::errors::PendingWorkError;
 use super::model::Item;
 use super::naming::project_dir;
 use crate::config::Config;
 use regex::Regex;
-
-const PREREQ_ID_PATTERN: &str = r"^(?:\[\[)?(?P<id>[A-Z]{2,4}-\d{4})(?:\]\])?$";
 
 // Regex reading bare ids out of an existing `prereq` frontmatter value.
 const PREREQ_VALUE_PATTERN: &str = r"\[\[([A-Z]{2,4}-\d{4})";
@@ -25,7 +25,10 @@ pub(super) struct Prereqs {
 }
 
 impl Prereqs {
-    pub(super) fn from_flags(cfg: &Config, values: &[String]) -> Result<Option<Self>, String> {
+    pub(super) fn from_flags(
+        cfg: &Config,
+        values: &[String],
+    ) -> Result<Option<Self>, PendingWorkError> {
         if values.is_empty() {
             return Ok(None);
         }
@@ -36,7 +39,7 @@ impl Prereqs {
             .cloned()
             .collect();
         if !missing.is_empty() {
-            return Err(format!("Unknown --prereq id(s): {}.", missing.join(", ")));
+            return Err(PendingWorkError::UnknownPrereqIds { ids: missing });
         }
         Ok(Some(Self { ids }))
     }
@@ -58,7 +61,7 @@ pub(super) fn append_to_frontmatter(
     cfg: &Config,
     existing: Option<&str>,
     values: &[String],
-) -> Result<String, String> {
+) -> Result<String, PendingWorkError> {
     let value_re = Regex::new(PREREQ_VALUE_PATTERN).unwrap();
     let mut ids: Vec<String> = existing
         .into_iter()
@@ -78,27 +81,34 @@ pub(super) fn append_to_frontmatter(
 pub(super) fn frontmatter_from_flags(
     cfg: &Config,
     values: &[String],
-) -> Result<Option<String>, String> {
+) -> Result<Option<String>, PendingWorkError> {
     Ok(Prereqs::from_flags(cfg, values)?.map(|p| p.frontmatter_value()))
 }
 
-fn parse_flag_ids(values: &[String]) -> Result<Vec<String>, String> {
-    let id_re = Regex::new(PREREQ_ID_PATTERN).unwrap();
+fn parse_flag_ids(values: &[String]) -> Result<Vec<String>, PendingWorkError> {
     let mut ids = Vec::new();
     for value in values {
         for raw in value.split(',') {
             let raw = raw.trim();
-            let caps = id_re
-                .captures(raw)
-                .ok_or_else(|| format!("Invalid --prereq id: {raw}."))?;
-            let id = caps["id"].to_string();
+            if raw.is_empty() {
+                continue;
+            }
+            let id = raw
+                .strip_prefix("[[")
+                .and_then(|id| id.strip_suffix("]]"))
+                .unwrap_or(raw);
+            let id = WorkItemId::try_new(id)
+                .map_err(|_| PendingWorkError::InvalidPrereqId {
+                    raw: raw.to_string(),
+                })?
+                .to_string();
             if !ids.contains(&id) {
                 ids.push(id);
             }
         }
     }
     if ids.is_empty() {
-        return Err("--prereq requires an id.".to_string());
+        return Err(PendingWorkError::MissingPrereqId);
     }
     Ok(ids)
 }
@@ -184,6 +194,7 @@ pub(super) fn warn_unsatisfied_on_launch(cfg: &Config, item: &Item) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engines::pending_work::errors::PendingWorkError;
     use std::fs;
 
     fn nanos() -> u128 {
@@ -247,10 +258,48 @@ mod tests {
     }
 
     #[test]
+    fn prereqs_reject_invalid_ids_with_typed_error_and_legacy_display() {
+        let err = parse_flag_ids(&["cfg-0014".to_string()]).unwrap_err();
+
+        assert!(matches!(
+            err,
+            PendingWorkError::InvalidPrereqId { ref raw } if raw == "cfg-0014"
+        ));
+        assert_eq!(err.to_string(), "Invalid --prereq id: cfg-0014.");
+    }
+
+    #[test]
+    fn prereqs_reject_empty_values_with_typed_error_and_legacy_display() {
+        let err = parse_flag_ids(&[]).unwrap_err();
+
+        assert!(matches!(err, PendingWorkError::MissingPrereqId));
+        assert_eq!(err.to_string(), "--prereq requires an id.");
+    }
+
+    #[test]
+    fn prereqs_reject_blank_or_comma_only_values_as_missing_ids() {
+        for values in [
+            vec!["".to_string()],
+            vec![", ,".to_string()],
+            vec![" ".to_string(), ",".to_string()],
+        ] {
+            let err = parse_flag_ids(&values).unwrap_err();
+
+            assert!(matches!(err, PendingWorkError::MissingPrereqId));
+            assert_eq!(err.to_string(), "--prereq requires an id.");
+        }
+    }
+
+    #[test]
     fn prereqs_reject_missing_ids() {
         let (_d, cfg) = stage_cfg();
         let err = Prereqs::from_flags(&cfg, &["CFG-9999".to_string()]).unwrap_err();
-        assert!(err.contains("CFG-9999"), "got: {err}");
+        assert!(matches!(
+            err,
+            PendingWorkError::UnknownPrereqIds { ref ids }
+                if ids == &vec!["CFG-9999".to_string()]
+        ));
+        assert_eq!(err.to_string(), "Unknown --prereq id(s): CFG-9999.");
     }
 
     #[test]
@@ -276,6 +325,11 @@ mod tests {
     fn append_rejects_unknown() {
         let (_d, cfg) = stage_cfg();
         let err = append_to_frontmatter(&cfg, None, &["CFG-9999".to_string()]).unwrap_err();
-        assert!(err.contains("CFG-9999"), "got: {err}");
+        assert!(matches!(
+            err,
+            PendingWorkError::UnknownPrereqIds { ref ids }
+                if ids == &vec!["CFG-9999".to_string()]
+        ));
+        assert_eq!(err.to_string(), "Unknown --prereq id(s): CFG-9999.");
     }
 }

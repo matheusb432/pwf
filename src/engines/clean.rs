@@ -11,6 +11,29 @@ use std::path::{Path, PathBuf};
 
 use super::pending_work::{project_index_path, set_status_text};
 
+#[derive(Debug, thiserror::Error)]
+pub enum CleanError {
+    #[error("Notes directory not found: {path}")]
+    NotesDirectoryNotFound { path: String },
+    #[error("Cannot read index: {source}")]
+    ReadIndex {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("Cannot read item file: {source}")]
+    ReadItemFile {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("No TTY to confirm a clean. Re-run with --dry-run to preview or --force to apply.")]
+    NoTtyToConfirm,
+    #[error("Cannot write {}: {source}", path.display())]
+    Write {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+}
+
 /// One `- [x] [[KEY-NNNN|…]]` line located in an index note. The span covers the
 /// whole line plus its trailing newline so it can be excised cleanly.
 #[derive(Debug, Clone, PartialEq)]
@@ -139,9 +162,11 @@ impl Confirm for FakeConfirm {
 }
 
 /// Compute (without writing) what a clean would do for one project.
-fn plan_project(project: &str, index_path: &Path, date: &str) -> Result<ProjectPlan, String> {
-    let content =
-        std::fs::read_to_string(index_path).map_err(|e| format!("Cannot read index: {e}"))?;
+fn plan_project(project: &str, index_path: &Path, date: &str) -> Result<ProjectPlan, CleanError> {
+    let content = std::fs::read_to_string(index_path).map_err(|source| CleanError::ReadIndex {
+        path: index_path.to_path_buf(),
+        source,
+    })?;
     let dir = index_path.parent().unwrap_or(Path::new("."));
     let note = index_path.to_string_lossy().into_owned();
 
@@ -165,7 +190,10 @@ fn plan_project(project: &str, index_path: &Path, date: &str) -> Result<ProjectP
             continue;
         }
         let raw = std::fs::read_to_string(&item_path)
-            .map_err(|e| format!("Cannot read item file: {e}"))?;
+            .map_err(|source| CleanError::ReadItemFile {
+                path: item_path.clone(),
+                source,
+            })?;
         let fm_completed = frontmatter::parse(&raw)
             .frontmatter
             .get("completed")
@@ -253,8 +281,23 @@ pub fn run_clean(
     force: bool,
     confirmer: &dyn Confirm,
 ) -> Result<String, String> {
+    run_clean_typed(cfg, only_project, date, dry_run, json, force, confirmer)
+        .map_err(|error| error.to_string())
+}
+
+pub(crate) fn run_clean_typed(
+    cfg: &Config,
+    only_project: Option<&str>,
+    date: &str,
+    dry_run: bool,
+    json: bool,
+    force: bool,
+    confirmer: &dyn Confirm,
+) -> Result<String, CleanError> {
     if !Path::new(&cfg.notes_dir).exists() {
-        return Err(format!("Notes directory not found: {}", cfg.notes_dir));
+        return Err(CleanError::NotesDirectoryNotFound {
+            path: cfg.notes_dir.clone(),
+        });
     }
     let projects: Vec<String> = match only_project {
         Some(p) => vec![p.to_string()],
@@ -290,18 +333,19 @@ pub fn run_clean(
                 "Clean {cleanable} done work-item(s)? Edits notes-pro (git-tracked; no .bak)"
             ))
         } else {
-            return Err(
-                "No TTY to confirm a clean. Re-run with --dry-run to preview or --force to apply."
-                    .to_string(),
-            );
+            return Err(CleanError::NoTtyToConfirm);
         };
         if !apply {
             return Ok("Aborted; nothing changed.\n".to_string());
         }
         for p in &mut plans {
             for w in &p.writes {
-                fs_atomic::write_text_atomic(&w.path, &w.content)
-                    .map_err(|e| format!("Cannot write {}: {e}", w.path.display()))?;
+                fs_atomic::write_text_atomic(&w.path, &w.content).map_err(|source| {
+                    CleanError::Write {
+                        path: w.path.clone(),
+                        source,
+                    }
+                })?;
             }
             for r in &mut p.results {
                 if r.status == "wouldClean" {
@@ -329,6 +373,7 @@ pub fn run_clean(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::error::Error;
 
     #[test]
     fn finds_checked_wikilinks_only() {
@@ -363,5 +408,37 @@ mod tests {
             resolve_completed(Some("  "), Some("2026-02-02"), "2026-01-01"),
             "2026-02-02"
         );
+    }
+
+    #[test]
+    fn clean_error_preserves_legacy_display_text() {
+        let err = CleanError::NotesDirectoryNotFound {
+            path: "/tmp/missing-notes".to_string(),
+        };
+        assert!(matches!(err, CleanError::NotesDirectoryNotFound { .. }));
+        assert_eq!(
+            err.to_string(),
+            "Notes directory not found: /tmp/missing-notes"
+        );
+
+        let err = CleanError::NoTtyToConfirm;
+        assert!(matches!(err, CleanError::NoTtyToConfirm));
+        assert_eq!(
+            err.to_string(),
+            "No TTY to confirm a clean. Re-run with --dry-run to preview or --force to apply."
+        );
+    }
+
+    #[test]
+    fn clean_io_error_variants_preserve_source() {
+        let source = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "nope");
+        let err = CleanError::Write {
+            path: PathBuf::from("/tmp/item.md"),
+            source,
+        };
+
+        assert!(matches!(err, CleanError::Write { .. }));
+        assert_eq!(err.to_string(), "Cannot write /tmp/item.md: nope");
+        assert_eq!(err.source().unwrap().to_string(), "nope");
     }
 }

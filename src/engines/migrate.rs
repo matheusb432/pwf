@@ -1,7 +1,39 @@
 use crate::cli::Args;
 use crate::config;
 use crate::fs_atomic::write_text_atomic;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+#[derive(Debug, thiserror::Error)]
+pub enum MigrateError {
+    #[error("Missing --config-path")]
+    MissingConfigPath,
+    #[error("{0}")]
+    Config(
+        #[from]
+        #[source]
+        crate::config::ConfigError,
+    ),
+    #[error("Failed to read {}: {source}", path.display())]
+    Read {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("Failed to create {}: {source}", path.display())]
+    Create {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("Failed to write {}: {source}", path.display())]
+    Write {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("Failed to delete {}: {source}", path.display())]
+    Delete {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+}
 
 /// Parsed result from `convert_to_agent_items`.
 struct ParsedNote {
@@ -208,11 +240,16 @@ fn new_item_content(
 
 /// Migrate flat per-project notes into folder-based index + item files.
 pub fn run(args: &Args) -> Result<String, String> {
+    run_typed(args).map_err(|e| e.to_string())
+}
+
+/// Migrate flat per-project notes into folder-based index + item files.
+pub fn run_typed(args: &Args) -> Result<String, MigrateError> {
     let config_path = args
         .config_path
         .clone()
         .or_else(config::default_config_path)
-        .ok_or("Missing --config-path")?;
+        .ok_or(MigrateError::MissingConfigPath)?;
     let cfg = config::load(&config_path, args.notes_dir.as_deref())?;
     let notes_root = Path::new(&cfg.notes_dir);
     let created_default = args
@@ -236,8 +273,10 @@ pub fn run(args: &Args) -> Result<String, String> {
             continue;
         }
 
-        let content = std::fs::read_to_string(&flat_note)
-            .map_err(|e| format!("Failed to read {}: {e}", flat_note.display()))?;
+        let content = std::fs::read_to_string(&flat_note).map_err(|source| MigrateError::Read {
+            path: flat_note.clone(),
+            source,
+        })?;
         let parsed = convert_to_agent_items(&content);
 
         // Reverse items, then number 1..n
@@ -279,8 +318,10 @@ pub fn run(args: &Args) -> Result<String, String> {
         }
 
         // Create folder
-        std::fs::create_dir_all(&folder)
-            .map_err(|e| format!("Failed to create {}: {e}", folder.display()))?;
+        std::fs::create_dir_all(&folder).map_err(|source| MigrateError::Create {
+            path: folder.clone(),
+            source,
+        })?;
 
         // Write each item file
         for (i, item) in ordered.iter().enumerate() {
@@ -295,17 +336,23 @@ pub fn run(args: &Args) -> Result<String, String> {
                 item.completed.as_deref(),
                 &item.body,
             );
-            write_text_atomic(&item_path, &content)
-                .map_err(|e| format!("Failed to write {}: {e}", item_path.display()))?;
+            write_text_atomic(&item_path, &content).map_err(|source| MigrateError::Write {
+                path: item_path,
+                source,
+            })?;
         }
 
         // Write index
-        write_text_atomic(&index_path, &index_content)
-            .map_err(|e| format!("Failed to write {}: {e}", index_path.display()))?;
+        write_text_atomic(&index_path, &index_content).map_err(|source| MigrateError::Write {
+            path: index_path.clone(),
+            source,
+        })?;
 
         // Delete flat note
-        std::fs::remove_file(&flat_note)
-            .map_err(|e| format!("Failed to delete {}: {e}", flat_note.display()))?;
+        std::fs::remove_file(&flat_note).map_err(|source| MigrateError::Delete {
+            path: flat_note.clone(),
+            source,
+        })?;
     }
 
     Ok(String::new())

@@ -20,13 +20,11 @@ pub fn project_index_path(notes_dir: &str, name: &str) -> PathBuf {
     project_dir(notes_dir, name).join(format!("{name}.md"))
 }
 
-pub fn project_key<'a>(cfg: &'a Config, name: &str) -> Result<&'a str, String> {
-    match cfg.prefixes.get(name) {
-        Some(k) if !k.trim().is_empty() => Ok(k.as_str()),
-        _ => Err(format!(
-            "Project '{name}' has no work-item prefix in config/pending-work.json (prefixes)."
-        )),
-    }
+pub fn project_key<'a>(cfg: &'a Config, name: &str) -> Option<&'a str> {
+    cfg.prefixes
+        .get(name)
+        .map(String::as_str)
+        .filter(|key| !key.trim().is_empty())
 }
 
 pub fn stamp_date(date: &Option<String>) -> String {

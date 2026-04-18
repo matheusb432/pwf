@@ -1,5 +1,6 @@
 use pwf::cli;
 use pwf::engines::migrate;
+use std::error::Error;
 use std::fs;
 
 fn nanos() -> u128 {
@@ -208,5 +209,104 @@ fn migrate_skips_when_folder_index_exists() {
     assert_eq!(
         fs::read_to_string(folder.join("glep-shimeji.md")).unwrap(),
         "already migrated\n"
+    );
+}
+
+#[test]
+fn run_typed_wraps_config_errors_with_legacy_display() {
+    let stage = stage_dir();
+    let cfg_path = stage.join("missing-config.json");
+    let args = parse_args(&["--config-path", cfg_path.to_str().unwrap()]);
+
+    let err = migrate::run_typed(&args).unwrap_err();
+
+    assert!(matches!(err, migrate::MigrateError::Config(_)));
+    assert_eq!(
+        err.to_string(),
+        format!("Pending work config not found: {}", cfg_path.display())
+    );
+    assert_eq!(
+        err.source().map(ToString::to_string),
+        Some(format!(
+            "Pending work config not found: {}",
+            cfg_path.display()
+        ))
+    );
+    assert_eq!(migrate::run(&args).unwrap_err(), err.to_string());
+}
+
+#[test]
+fn run_typed_returns_read_variant_with_legacy_display_and_source() {
+    let stage = stage_dir();
+    let notes_dir = stage.join("notes");
+    fs::create_dir_all(&notes_dir).unwrap();
+
+    let flat_note = notes_dir.join("glep-shimeji.md");
+    fs::create_dir(&flat_note).unwrap();
+
+    let cfg_path = stage.join("config.json");
+    fs::write(
+        &cfg_path,
+        format!(
+            r#"{{"notesDir": {notes_json}, "projects": {{}}, "prefixes": {{"glep-shimeji": "GLP"}}}}"#,
+            notes_json = serde_json::to_string(notes_dir.to_str().unwrap()).unwrap()
+        ),
+    )
+    .unwrap();
+
+    let args = parse_args(&[
+        "--config-path",
+        cfg_path.to_str().unwrap(),
+        "--notes-dir",
+        notes_dir.to_str().unwrap(),
+    ]);
+
+    let err = migrate::run_typed(&args).unwrap_err();
+
+    assert!(matches!(
+        &err,
+        migrate::MigrateError::Read { path, .. } if path == &flat_note
+    ));
+    let io_source_text = match &err {
+        migrate::MigrateError::Read { source, .. } => source.to_string(),
+        other => panic!("expected read error, got {other:?}"),
+    };
+    assert_eq!(
+        err.to_string(),
+        format!("Failed to read {}: {io_source_text}", flat_note.display())
+    );
+    assert_eq!(err.source().map(ToString::to_string), Some(io_source_text));
+    assert_eq!(migrate::run(&args).unwrap_err(), err.to_string());
+}
+
+#[test]
+fn migrate_io_errors_preserve_operation_display_text() {
+    let source = || std::io::Error::other("disk said no");
+
+    let err = migrate::MigrateError::Create {
+        path: "/tmp/pwf-migrate/project".into(),
+        source: source(),
+    };
+    assert_eq!(
+        err.to_string(),
+        "Failed to create /tmp/pwf-migrate/project: disk said no"
+    );
+
+    let err = migrate::MigrateError::Write {
+        path: "/tmp/pwf-migrate/item.md".into(),
+        source: source(),
+    };
+    assert_eq!(
+        err.to_string(),
+        "Failed to write /tmp/pwf-migrate/item.md: disk said no"
+    );
+
+    let err = migrate::MigrateError::Delete {
+        path: "/tmp/pwf-migrate/flat.md".into(),
+        source: source(),
+    };
+    assert_eq!(
+        err.to_string(),
+        "Failed to delete /tmp/pwf-migrate/flat.md: disk said no"
     );
 }

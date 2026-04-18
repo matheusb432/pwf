@@ -33,6 +33,7 @@ serde_json = "1"
 chrono = "0.4"
 regex = "1"
 thiserror = "2.0.18"
+nutype = { version = "0.7.0", features = ["serde", "regex"] }
 
 [dev-dependencies]
 assert_cmd = "2"

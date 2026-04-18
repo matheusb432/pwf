@@ -1,39 +1,39 @@
 // Top-level dispatcher for `pwf pw <verb>`. The `route` verb is delegated to the
 // `pw` word-router in `route`; everything else dispatches here.
 
-use super::actions::{run_check, run_list_action, run_remove, run_update};
-use super::add::{NewItemSpec, add_pending_work_item};
+use super::actions::{
+    NewItemSpec, add_pending_work_item, run_check, run_list_action, run_remove, run_update,
+};
 use super::claude::{RealProbe, invoke_claude_launch, verify_json_with_probe};
 use super::continue_prompt::{continue_handoff_prompt, continue_plan_prompt};
+use super::domain::commands::PendingWorkCommand;
 use super::errors;
 use super::launch::{new_launch_spec, write_launch_spec};
 use super::model::{Action, Item};
 use super::naming::{project_index_path, stamp_date};
 use super::new_add::NewAddInputs;
 use super::query::{
-    find_pending_item, load_config, resolve_managed_project_name, resolve_project_repo,
+    find_pending_item, load_config, resolve_managed_project_name_typed, resolve_project_repo,
 };
 use super::route::run_route;
 use super::section::Section;
 use crate::cli::Args;
 use crate::config::Config;
 
-pub fn run(args: &crate::cli::Args) -> Result<String, String> {
-    let action_raw = args
-        .action
-        .as_deref()
-        .ok_or("a pw subcommand is required.")?
-        .to_ascii_lowercase();
+pub fn run(command: &PendingWorkCommand) -> Result<String, String> {
+    run_typed(command).map_err(String::from)
+}
+
+pub(in crate::engines::pending_work) fn run_typed(
+    command: &PendingWorkCommand,
+) -> Result<String, errors::PendingWorkError> {
+    let args = command.args();
 
     let cfg = load_config(args)?;
     let date = stamp_date(&args.date);
 
-    let action: Action = action_raw
-        .parse()
-        .map_err(|_| format!("Unknown action: {action_raw}"))?;
-
-    match &action {
-        Action::Route => run_route(&cfg, args, &date),
+    match command.action() {
+        Action::Route => Ok(run_route(&cfg, args, &date)?),
 
         Action::New => {
             // Build ad-hoc item + launch spec (no file writes).
@@ -71,15 +71,15 @@ pub fn run(args: &crate::cli::Args) -> Result<String, String> {
             ))
         }
 
-        Action::Add => run_add(&cfg, args, &date),
+        Action::Add => Ok(run_add(&cfg, args, &date)?),
 
         Action::List => {
             let only_project = if let Some(p) = args.project.as_deref() {
-                Some(resolve_managed_project_name(&cfg, p)?)
+                Some(resolve_managed_project_name_typed(&cfg, p)?)
             } else {
                 None
             };
-            run_list_action(
+            Ok(run_list_action(
                 &cfg,
                 only_project.as_deref(),
                 args.json,
@@ -87,16 +87,16 @@ pub fn run(args: &crate::cli::Args) -> Result<String, String> {
                 args.future,
                 args.human,
                 args.number,
-            )
+            )?)
         }
 
         Action::Clean => {
             let only = if let Some(p) = args.project.as_deref() {
-                Some(resolve_managed_project_name(&cfg, p)?)
+                Some(resolve_managed_project_name_typed(&cfg, p)?)
             } else {
                 None
             };
-            crate::engines::clean::run_clean(
+            Ok(crate::engines::clean::run_clean_typed(
                 &cfg,
                 only.as_deref(),
                 &date,
@@ -104,7 +104,7 @@ pub fn run(args: &crate::cli::Args) -> Result<String, String> {
                 args.json,
                 args.force,
                 &crate::engines::clean::RealConfirm,
-            )
+            )?)
         }
 
         Action::Verify => {
@@ -118,18 +118,15 @@ pub fn run(args: &crate::cli::Args) -> Result<String, String> {
         }
 
         Action::LaunchClaude => {
-            let id = args
-                .id
-                .as_deref()
-                .ok_or("--id is required for launch-claude.")?;
+            let id = require_id(args, "launch-claude")?;
             let probe = RealProbe::resolve();
-            invoke_claude_launch(&cfg, id, &probe, args.force)
+            Ok(invoke_claude_launch(&cfg, id, &probe, args.force)?)
         }
 
-        Action::Check => run_check(&cfg, args),
+        Action::Check => Ok(run_check(&cfg, args)?),
 
         Action::Resolve => {
-            let id = args.id.as_deref().ok_or("--id is required for resolve.")?;
+            let id = require_id(args, "resolve")?;
             let item = find_pending_item(&cfg, id)?;
             // ? File-model items carry the per-item note; legacy inline items only the index.
             let note_path = item.item_file.as_deref().unwrap_or(&item.note).to_string();
@@ -147,11 +144,9 @@ pub fn run(args: &crate::cli::Args) -> Result<String, String> {
         }
 
         Action::Launch => {
-            let id = args.id.as_deref().ok_or("--id is required for launch.")?;
+            let id = require_id(args, "launch")?;
             let item = find_pending_item(&cfg, id)?;
-            if !item.launchable {
-                return Err(errors::not_launchable(&item.id, &item.issues));
-            }
+            ensure_launchable(&item)?;
             super::prereq::warn_unsatisfied_on_launch(&cfg, &item);
             let launch = new_launch_spec(&item, args.model.as_deref(), args.thinking.as_deref());
             Ok(write_launch_spec(
@@ -163,37 +158,75 @@ pub fn run(args: &crate::cli::Args) -> Result<String, String> {
             ))
         }
 
-        Action::Remove => run_remove(&cfg, args),
+        Action::Remove => Ok(run_remove(&cfg, args)?),
 
-        Action::Update => run_update(&cfg, args),
+        Action::Update => Ok(run_update(&cfg, args)?),
     }
 }
 
+pub fn run_args(args: &crate::cli::Args) -> Result<String, String> {
+    run_args_typed(args).map_err(String::from)
+}
+
+pub(in crate::engines::pending_work) fn run_args_typed(
+    args: &crate::cli::Args,
+) -> Result<String, errors::PendingWorkError> {
+    let command = PendingWorkCommand::from_args_typed(args)?;
+    run_typed(&command)
+}
+
 /// Resolve the create section from `--section` (wins) or the `--human` shorthand.
-fn resolve_add_section(args: &Args) -> Result<Option<Section>, String> {
+fn resolve_add_section(args: &Args) -> Result<Option<Section>, errors::PendingWorkError> {
     if let Some(raw) = args.section.as_deref() {
-        return Section::from_flag(raw)
-            .map(Some)
-            .ok_or_else(|| errors::bad_section(raw));
+        return Section::from_flag(raw).map(Some).ok_or_else(|| {
+            errors::PendingWorkError::BadSection {
+                value: raw.to_string(),
+            }
+        });
     }
     Ok(args.human.then_some(Section::Human))
+}
+
+fn ensure_launchable(item: &Item) -> Result<(), errors::PendingWorkError> {
+    if item.launchable {
+        return Ok(());
+    }
+    Err(errors::PendingWorkError::NotLaunchable {
+        id: item.id.clone(),
+        issues: item.issues.clone(),
+    })
+}
+
+fn require_id<'args>(
+    args: &'args Args,
+    action: &'static str,
+) -> Result<&'args str, errors::PendingWorkError> {
+    args.id
+        .as_deref()
+        .ok_or(errors::PendingWorkError::MissingId { action })
 }
 
 /// `pwf pw add` — create a pending-work item. The prompt comes from positional
 /// words, the repo's newest handoff (`--continue-handoff`), or a plan path
 /// (`--continue <path>`); the clap layer makes those three mutually exclusive.
-fn run_add(cfg: &Config, args: &Args, date: &str) -> Result<String, String> {
+fn run_add(cfg: &Config, args: &Args, date: &str) -> Result<String, errors::PendingWorkError> {
     let section = resolve_add_section(args)?;
     let prereq = super::prereq::frontmatter_from_flags(cfg, &args.prereq)?;
 
     // Resolve (project_name, title, prompt) per the chosen prompt source.
     let (project_name, title, prompt): (String, Option<String>, String) = if args.continue_handoff {
-        let raw = args.project.as_deref().ok_or(errors::ADD_HINT)?;
+        let raw = args
+            .project
+            .as_deref()
+            .ok_or(errors::PendingWorkError::AddUsage)?;
         let (project_name, repo) = resolve_project_repo(cfg, raw)?;
         let (title, prompt) = continue_handoff_prompt(&repo)?;
         (project_name, Some(title), prompt)
     } else if let Some(path) = args.continue_path.as_deref() {
-        let raw = args.project.as_deref().ok_or(errors::ADD_HINT)?;
+        let raw = args
+            .project
+            .as_deref()
+            .ok_or(errors::PendingWorkError::AddUsage)?;
         let (project_name, _repo) = resolve_project_repo(cfg, raw)?;
         let (title, prompt) = continue_plan_prompt(&project_name, path);
         (project_name, Some(title), prompt)
@@ -223,6 +256,92 @@ fn run_add(cfg: &Config, args: &Args, date: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn command_for(action: Action) -> PendingWorkCommand {
+        let stage = std::env::temp_dir().join(format!("pwf_run_{}", nanos()));
+        std::fs::create_dir_all(&stage).unwrap();
+        let config = stage.join("config.json");
+        std::fs::write(
+            &config,
+            format!(
+                r#"{{ "notesDir": "{}", "projects": {{ "pwf": "/repo" }}, "prefixes": {{ "pwf": "PWF" }} }}"#,
+                stage.to_string_lossy().replace('\\', "\\\\")
+            ),
+        )
+        .unwrap();
+        PendingWorkCommand::new(
+            action,
+            Args {
+                config_path: Some(config.to_string_lossy().into_owned()),
+                ..Args::default()
+            },
+        )
+    }
+
+    fn nanos() -> u128 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    }
+
+    #[test]
+    fn launch_missing_id_returns_typed_error_with_legacy_display() {
+        let command = command_for(Action::Launch);
+        let err = require_id(command.args(), "launch").unwrap_err();
+
+        assert!(matches!(
+            err,
+            errors::PendingWorkError::MissingId { action } if action == "launch"
+        ));
+        assert_eq!(err.to_string(), "--id is required for launch.");
+        assert_eq!(
+            run(&command_for(Action::Launch)).unwrap_err(),
+            "--id is required for launch."
+        );
+    }
+
+    #[test]
+    fn run_args_stringifies_missing_action_at_public_edge() {
+        assert_eq!(
+            run_args(&Args::default()).unwrap_err(),
+            "a pw subcommand is required."
+        );
+    }
+
+    #[test]
+    fn run_args_stringifies_unknown_action_at_public_edge() {
+        let args = Args {
+            action: Some("nope".to_string()),
+            ..Args::default()
+        };
+
+        assert_eq!(run_args(&args).unwrap_err(), "Unknown action: nope");
+    }
+
+    #[test]
+    fn resolve_missing_id_returns_typed_error_with_legacy_display() {
+        let command = command_for(Action::Resolve);
+        let err = require_id(command.args(), "resolve").unwrap_err();
+
+        assert!(matches!(
+            err,
+            errors::PendingWorkError::MissingId { action } if action == "resolve"
+        ));
+        assert_eq!(err.to_string(), "--id is required for resolve.");
+    }
+
+    #[test]
+    fn launch_claude_missing_id_returns_typed_error_with_legacy_display() {
+        let command = command_for(Action::LaunchClaude);
+        let err = require_id(command.args(), "launch-claude").unwrap_err();
+
+        assert!(matches!(
+            err,
+            errors::PendingWorkError::MissingId { action } if action == "launch-claude"
+        ));
+        assert_eq!(err.to_string(), "--id is required for launch-claude.");
+    }
 
     #[test]
     fn section_flag_wins_over_human_shorthand() {
@@ -254,9 +373,53 @@ mod tests {
             section: Some("bogus".into()),
             ..Args::default()
         };
+
+        let err = resolve_add_section(&args).unwrap_err();
+
+        assert!(matches!(
+            err,
+            errors::PendingWorkError::BadSection { ref value } if value == "bogus"
+        ));
         assert_eq!(
-            resolve_add_section(&args).unwrap_err(),
-            errors::bad_section("bogus")
+            err.to_string(),
+            "Unknown --section value 'bogus'. Use one of: future, human, low-prio."
+        );
+    }
+
+    #[test]
+    fn not_launchable_item_returns_typed_error_with_legacy_display() {
+        let item = Item {
+            id: "PWF-0001".to_string(),
+            project: "pwf".to_string(),
+            session: "blocked item".to_string(),
+            prompt: "do work".to_string(),
+            repo: Some("/repo/pwf".to_string()),
+            note: "/notes/pwf/pwf.md".to_string(),
+            item_file: None,
+            line: 1,
+            format: "index".to_string(),
+            marker_index: 0,
+            marker_length: 0,
+            launchable: false,
+            needs_prompt: true,
+            issues: vec!["missing prompt".to_string(), "missing repo".to_string()],
+            section: None,
+            prereq: None,
+        };
+
+        let err = ensure_launchable(&item).unwrap_err();
+
+        assert!(matches!(
+            err,
+            errors::PendingWorkError::NotLaunchable {
+                ref id,
+                ref issues
+            } if id == "PWF-0001"
+                && issues == &vec!["missing prompt".to_string(), "missing repo".to_string()]
+        ));
+        assert_eq!(
+            err.to_string(),
+            "Pending-work item 'PWF-0001' is not launchable: missing prompt; missing repo"
         );
     }
 }

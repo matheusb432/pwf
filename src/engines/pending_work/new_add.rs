@@ -3,7 +3,7 @@
 // `add` takes them positionally (its missing-input error points at the positional
 // form); the hidden `new` verb still takes `--project`/`--prompt` flags.
 
-use super::errors;
+use super::errors::PendingWorkError;
 use super::model::Action;
 use super::query::resolve_project_repo;
 use super::text::{inferred_title, normalize_title};
@@ -23,10 +23,13 @@ pub(super) struct NewAddInputs<'a> {
 
 /// Missing project/prompt error, phrased for the verb the user actually ran:
 /// `add` takes positional args (point at the canonical form), `new` takes flags.
-fn missing_input_err(action: &Action, field: &str) -> String {
+fn missing_input_err(action: &Action, field: &'static str) -> PendingWorkError {
     match action {
-        Action::Add => errors::ADD_HINT.to_string(),
-        _ => format!("--{field} is required for {}.", action.as_str()),
+        Action::Add => PendingWorkError::AddUsage,
+        _ => PendingWorkError::MissingNewInput {
+            action: action.as_str(),
+            field,
+        },
     }
 }
 
@@ -34,7 +37,11 @@ impl<'a> NewAddInputs<'a> {
     /// Validate `--project`/`--prompt`, resolve the managed project + its repo path,
     /// and derive the session title (explicit `--title`, else inferred from the
     /// prompt). `action` only shapes the "required for <verb>" error text.
-    pub(super) fn resolve(cfg: &Config, args: &'a Args, action: Action) -> Result<Self, String> {
+    pub(super) fn resolve(
+        cfg: &Config,
+        args: &'a Args,
+        action: Action,
+    ) -> Result<Self, PendingWorkError> {
         let project_raw = args
             .project
             .as_deref()
@@ -119,7 +126,14 @@ mod tests {
         let cfg = cfg();
         let args = args(None, Some("do x"), None);
         let err = NewAddInputs::resolve(&cfg, &args, Action::New).unwrap_err();
-        assert_eq!(err, "--project is required for new.");
+        assert!(matches!(
+            err,
+            errors::PendingWorkError::MissingNewInput {
+                action: "new",
+                field: "project",
+            }
+        ));
+        assert_eq!(err.to_string(), "--project is required for new.");
     }
 
     #[test]
@@ -128,7 +142,14 @@ mod tests {
         for prompt in [None, Some("   ")] {
             let args = args(Some("alpha"), prompt, None);
             let err = NewAddInputs::resolve(&cfg, &args, Action::New).unwrap_err();
-            assert_eq!(err, "--prompt is required for new.");
+            assert!(matches!(
+                err,
+                errors::PendingWorkError::MissingNewInput {
+                    action: "new",
+                    field: "prompt",
+                }
+            ));
+            assert_eq!(err.to_string(), "--prompt is required for new.");
         }
     }
 
@@ -137,15 +158,14 @@ mod tests {
         let cfg = cfg();
         // `add` takes positional args — the error must not name removed flags.
         let no_project = args(None, Some("do x"), None);
-        assert_eq!(
-            NewAddInputs::resolve(&cfg, &no_project, Action::Add).unwrap_err(),
-            errors::ADD_HINT
-        );
+        let err = NewAddInputs::resolve(&cfg, &no_project, Action::Add).unwrap_err();
+        assert!(matches!(err, errors::PendingWorkError::AddUsage));
+        assert_eq!(err.to_string(), errors::ADD_HINT);
+
         let no_prompt = args(Some("alpha"), None, None);
-        assert_eq!(
-            NewAddInputs::resolve(&cfg, &no_prompt, Action::Add).unwrap_err(),
-            errors::ADD_HINT
-        );
+        let err = NewAddInputs::resolve(&cfg, &no_prompt, Action::Add).unwrap_err();
+        assert!(matches!(err, errors::PendingWorkError::AddUsage));
+        assert_eq!(err.to_string(), errors::ADD_HINT);
     }
 
     #[test]
@@ -153,6 +173,9 @@ mod tests {
         let cfg = cfg();
         let args = args(Some("blank"), Some("do x"), None);
         let err = NewAddInputs::resolve(&cfg, &args, Action::Add).unwrap_err();
-        assert_eq!(err, errors::not_mapped_to_repo("blank"));
+        assert_eq!(
+            err.to_string(),
+            "Project 'blank' is not mapped to a repo in config/pending-work.json."
+        );
     }
 }

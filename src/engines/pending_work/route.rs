@@ -3,13 +3,13 @@
 // create form is `pwf pw add <project> "<prompt>"`; bare words error with a hint.
 
 use super::actions::run_list_action;
-use super::claude::{RealProbe, invoke_claude_launch, verify_json_with_probe};
-use super::errors;
-use super::query::{find_pending_item, resolve_managed_project_name};
+use super::claude::{invoke_claude_launch, verify_json_with_probe, RealProbe};
+use super::errors::PendingWorkError;
+use super::query::{find_pending_item, resolve_managed_project_name_typed};
 use crate::cli::Args;
 use crate::config::Config;
 
-pub(super) fn run_route(cfg: &Config, args: &Args, date: &str) -> Result<String, String> {
+pub(super) fn run_route(cfg: &Config, args: &Args, date: &str) -> Result<String, PendingWorkError> {
     let route_words: Vec<&str> = args
         .words
         .iter()
@@ -34,7 +34,7 @@ pub(super) fn run_route(cfg: &Config, args: &Args, date: &str) -> Result<String,
 
     // ! Create via bare words / sub-verbs was the duplicate-item footgun (PWF-0034).
     if matches!(verb.as_str(), "add" | "a" | "add-titled" | "at") {
-        return Err(errors::ADD_HINT.to_string());
+        return Err(PendingWorkError::RouteCreateRejected);
     }
 
     if verb == "verify" || verb == "v" {
@@ -54,7 +54,7 @@ pub(super) fn run_route(cfg: &Config, args: &Args, date: &str) -> Result<String,
 
     if verb == "launch-claude" || verb == "lc" {
         if route_words.len() < 2 {
-            return Err("Usage: pwf pw launch-claude --id <id>".to_string());
+            return Err(PendingWorkError::RouteLaunchClaudeUsage);
         }
         let probe = RealProbe::resolve();
         return invoke_claude_launch(cfg, route_words[1], &probe, args.force);
@@ -62,11 +62,11 @@ pub(super) fn run_route(cfg: &Config, args: &Args, date: &str) -> Result<String,
 
     if verb == "clean" || verb == "cl" {
         let only = if route_words.len() >= 2 {
-            Some(resolve_managed_project_name(cfg, route_words[1])?)
+            Some(resolve_managed_project_name_typed(cfg, route_words[1])?)
         } else {
             None
         };
-        return crate::engines::clean::run_clean(
+        return Ok(crate::engines::clean::run_clean_typed(
             cfg,
             only.as_deref(),
             date,
@@ -74,12 +74,12 @@ pub(super) fn run_route(cfg: &Config, args: &Args, date: &str) -> Result<String,
             args.json,
             args.force,
             &crate::engines::clean::RealConfirm,
-        );
+        )?);
     }
 
     // Otherwise: treat word[0] as a project name. A single word lists that
     // project; trailing words error (create is `pw add` only — no silent route create).
-    let project_name = resolve_managed_project_name(cfg, &verb)?;
+    let project_name = resolve_managed_project_name_typed(cfg, &verb)?;
     if route_words.len() == 1 {
         return run_list_action(
             cfg,
@@ -92,5 +92,50 @@ pub(super) fn run_route(cfg: &Config, args: &Args, date: &str) -> Result<String,
         );
     }
 
-    Err(errors::ADD_HINT.to_string())
+    Err(PendingWorkError::RouteCreateRejected)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engines::pending_work::errors;
+
+    fn cfg() -> Config {
+        crate::config::from_json(
+            r#"{ "notesDir": "/tmp/pwf-route-notes", "projects": { "glep-shimeji": "/repo" }, "prefixes": { "glep-shimeji": "GLP" } }"#,
+            None,
+        )
+        .unwrap()
+    }
+
+    fn args(words: &[&str]) -> Args {
+        Args {
+            words: words.iter().map(|word| (*word).to_string()).collect(),
+            ..Args::default()
+        }
+    }
+
+    #[test]
+    fn removed_create_route_returns_typed_error_with_add_hint() {
+        let cfg = cfg();
+
+        let err =
+            run_route(&cfg, &args(&["add", "glep-shimeji", "do it"]), "2026-01-01").unwrap_err();
+
+        assert!(matches!(err, errors::PendingWorkError::RouteCreateRejected));
+        assert_eq!(err.to_string(), errors::ADD_HINT);
+    }
+
+    #[test]
+    fn route_launch_claude_without_id_returns_typed_usage_error() {
+        let cfg = cfg();
+
+        let err = run_route(&cfg, &args(&["launch-claude"]), "2026-01-01").unwrap_err();
+
+        assert!(matches!(
+            err,
+            errors::PendingWorkError::RouteLaunchClaudeUsage
+        ));
+        assert_eq!(err.to_string(), "Usage: pwf pw launch-claude --id <id>");
+    }
 }
