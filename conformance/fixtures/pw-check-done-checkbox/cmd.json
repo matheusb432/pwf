@@ -1,6 +1,0 @@
-{
-  "engine": "pw",
-  "args": ["check", "--id", "GLP-0001", "--json"],
-  "compareTree": "notes",
-  "compareStdout": true
-}

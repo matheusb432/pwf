@@ -15,6 +15,8 @@ pub(in crate::engines::pending_work) struct OpenItem {
     pub launchable: bool,
     pub needs_prompt: bool,
     pub issues: Vec<String>,
+    #[serde(skip_serializing)]
+    pub section: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prereq: Option<String>,
 }
@@ -34,6 +36,7 @@ impl From<Item> for OpenItem {
             launchable: item.launchable,
             needs_prompt: item.needs_prompt,
             issues: item.issues,
+            section: item.section,
             prereq: item.prereq,
         }
     }
@@ -88,7 +91,10 @@ mod tests {
             prereq: Some("\"[[GLP-0002]]\"".to_string()),
         };
 
-        let value = serde_json::to_value(OpenItem::from(item)).unwrap();
+        let open = OpenItem::from(item);
+        assert_eq!(open.section.as_deref(), Some("Future"));
+
+        let value = serde_json::to_value(open).unwrap();
 
         assert_eq!(value["id"], "GLP-0001");
         assert_eq!(value["itemFile"], "/notes/GLP-0001.md");

@@ -1,7 +1,0 @@
-{
-  "engine": "pw",
-  "args": ["add", "rogue-project", "do work", "--title", "unmapped item", "--json"],
-  "expectedExitCode": 1,
-  "compareStderr": true,
-  "compareTree": "notes"
-}

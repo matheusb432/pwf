@@ -1,6 +1,14 @@
 use std::fs;
 use std::io;
 use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+fn temp_suffix(now: SystemTime) -> String {
+    match now.duration_since(UNIX_EPOCH) {
+        Ok(duration) => format!("tmp-{}", duration.as_nanos()),
+        Err(error) => format!("tmp-before-{}", error.duration().as_nanos()),
+    }
+}
 
 /// Write `content` to `path` atomically (temp sibling + rename). UTF-8 (no BOM);
 /// callers must pass `\n`-delimited content. Never leaves a `.bak` — notes-pro is
@@ -12,13 +20,7 @@ pub fn write_text_atomic(path: &Path, content: &str) -> io::Result<()> {
     {
         fs::create_dir_all(parent)?;
     }
-    let tmp = path.with_extension(format!(
-        "tmp-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let tmp = path.with_extension(temp_suffix(SystemTime::now()));
     fs::write(&tmp, content.as_bytes())?;
     fs::rename(&tmp, path)?; // same-volume atomic replace
     Ok(())
@@ -48,5 +50,12 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos()
+    }
+
+    #[test]
+    fn temp_suffix_handles_pre_epoch_clock() {
+        let before_epoch = std::time::UNIX_EPOCH - std::time::Duration::from_nanos(7);
+
+        assert_eq!(temp_suffix(before_epoch), "tmp-before-7");
     }
 }

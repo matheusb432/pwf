@@ -62,15 +62,21 @@ fn stage_remove_item() -> (std::path::PathBuf, std::path::PathBuf, std::path::Pa
 }
 
 #[test]
-fn per_engine_help_is_scoped_and_succeeds() {
-    let (pw, ok) = run(&["pw", "--help"]);
-    assert!(ok, "pwf pw --help should exit 0");
+fn per_action_help_is_scoped_and_succeeds() {
+    let (pw_help, ok) = run(&["add", "--help"]);
+    assert!(ok, "pwf add --help should exit 0");
     assert!(
-        pw.contains("launch-claude"),
-        "pw --help should list pw actions"
+        pw_help.contains("Add a pwf task"),
+        "add --help should include pending-work description"
     );
-    assert!(pw.contains("remove"), "pw --help should list remove");
-    assert!(!pw.contains("handoff ledger"), "pw help is scoped to pw");
+    assert!(
+        pw_help.contains("project"),
+        "add --help should include the project arg name"
+    );
+    assert!(
+        !pw_help.contains("handoff ledger"),
+        "pw help should stay pending-work scoped"
+    );
 
     let (ho, ok) = run(&["handoff", "--help"]);
     assert!(ok);
@@ -90,7 +96,6 @@ fn canonical_remove_deletes_item_from_cli() {
 
     let out = Command::new(env!("CARGO_BIN_EXE_pwf"))
         .args([
-            "pw",
             "remove",
             "--id",
             "pwf-0001",
@@ -119,7 +124,7 @@ fn canonical_remove_deletes_item_from_cli() {
 }
 
 #[test]
-fn bare_pw_engine_lists_pending_work() {
+fn default_engine_lists_pending_work() {
     let stage = stage_dir();
     let notes = stage.join("notes");
     let proj = notes.join("glep-shimeji");
@@ -145,7 +150,7 @@ fn bare_pw_engine_lists_pending_work() {
     .unwrap();
 
     let out = Command::new(env!("CARGO_BIN_EXE_pwf"))
-        .arg("pw")
+        .args(["list"])
         .env("PWF_CONFIG", &cfg)
         .output()
         .expect("run pwf");
@@ -156,7 +161,7 @@ fn bare_pw_engine_lists_pending_work() {
 }
 
 #[test]
-fn bare_pw_engine_treats_next_arg_as_project() {
+fn default_engine_treats_next_arg_as_project() {
     let stage = stage_dir();
     let notes = stage.join("notes");
     let glep = notes.join("glep-shimeji");
@@ -194,7 +199,7 @@ fn bare_pw_engine_treats_next_arg_as_project() {
     .unwrap();
 
     let out = Command::new(env!("CARGO_BIN_EXE_pwf"))
-        .args(["pw", "config-handler"])
+        .args(["config-handler"])
         .env("PWF_CONFIG", &cfg)
         .output()
         .expect("run pwf");
@@ -213,9 +218,39 @@ fn list_is_an_alias_for_help() {
 }
 
 #[test]
+fn top_level_help_groups_default_commands_and_engines() {
+    let (help, ok) = run(&["--help"]);
+    assert!(ok, "pwf --help should exit 0");
+    assert!(
+        help.contains("PENDING-WORK COMMANDS (default engine)"),
+        "top help should group default commands: {help}"
+    );
+    assert!(
+        help.contains("check --id <id>"),
+        "top help should include pw-level commands: {help}"
+    );
+    assert!(
+        help.contains("ENGINES"),
+        "top help should keep non-default engines visible: {help}"
+    );
+    assert!(
+        help.contains("handoff"),
+        "top help should mention handoff engine: {help}"
+    );
+    assert!(
+        help.contains("migrate"),
+        "top help should mention migrate engine: {help}"
+    );
+    assert!(
+        !help.contains("LEGACY"),
+        "top help should not advertise the removed legacy surface: {help}"
+    );
+}
+
+#[test]
 fn terse_help_is_lean_and_succeeds() {
-    let (terse, ok) = run(&["pw", "--help", "--terse"]);
-    assert!(ok, "pwf pw --help --terse should exit 0");
+    let (terse, ok) = run(&["--help", "--terse"]);
+    assert!(ok, "pwf --help --terse should exit 0");
     assert!(
         terse.contains("add <project> <prompt>"),
         "terse should list verbs+args"
@@ -226,11 +261,28 @@ fn terse_help_is_lean_and_succeeds() {
         "terse should drop descriptions"
     );
 
-    let (full, _) = run(&["pw", "--help"]);
+    let (full, _) = run(&["--help"]);
     assert!(
         terse.len() < full.len(),
         "terse ({}) should be leaner than the rich clap help ({})",
         terse.len(),
         full.len()
+    );
+}
+
+#[test]
+fn list_help_mentions_all_scope() {
+    let (list_help, ok) = run(&["list", "--help"]);
+    assert!(ok, "pwf list --help should exit 0");
+    assert!(
+        list_help.contains("--all"),
+        "list --help should document --all: {list_help}"
+    );
+
+    let (terse, ok) = run(&["--help", "--terse"]);
+    assert!(ok, "pwf --help --terse should exit 0");
+    assert!(
+        terse.contains("[--all]"),
+        "terse help should document --all: {terse}"
     );
 }

@@ -50,6 +50,10 @@ fn parse_pw(tokens: &[&str]) -> pwf::cli::Args {
     pwf::command::parse_argv(v).unwrap().1
 }
 
+fn pw_stub_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pw-stub.sh")
+}
+
 // ── Task 18: scaffold + slug ────────────────────────────────────────────────
 
 #[test]
@@ -185,15 +189,14 @@ fn new_unmanaged_no_pw() {
 
 #[test]
 fn new_managed_calls_pw_stub() {
-    // This test uses the actual pw-stub.sh to verify the spawn path
+    // This test uses the actual pw-stub.sh fixture to verify the spawn path.
     let stage = tmpdir("hf_new_mgd");
     let repo = stage.join("repo");
     fs::create_dir_all(&repo).unwrap();
     let notes = stage.join("notes");
     let cfg = write_config(&stage, &repo, &notes);
 
-    // pw-stub.sh path (relative to crate root)
-    let stub = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("conformance/pw-stub.sh");
+    let stub = pw_stub_path();
     let args = parse_args(&[
         "new",
         "--title",
@@ -280,7 +283,7 @@ fn done_archives_and_updates_frontmatter() {
 
     let notes = stage.join("notes");
     let cfg = write_config(&stage, &repo, &notes);
-    let stub = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("conformance/pw-stub.sh");
+    let stub = pw_stub_path();
     let args = parse_args(&[
         "done",
         "--id",
@@ -687,7 +690,10 @@ fn done_forwards_commits_and_review_to_linked_pw_item() {
     };
     assert!(archived.exists(), "handoff should be archived");
     let content = fs::read_to_string(&archived).unwrap();
-    assert!(content.contains("status: done"), "status not done: {content}");
+    assert!(
+        content.contains("status: done"),
+        "status not done: {content}"
+    );
 }
 
 // ── Task 22: list + refresh dispatch ───────────────────────────────────────

@@ -11,6 +11,79 @@ use crate::config::Config;
 /// flooded with tokens (PWF-0020). `-n 0` overrides to unlimited.
 const DEFAULT_LIST_CAP: usize = 10;
 
+/// Selects which pending-work sections a list command includes.
+///
+/// This stays local to the pending-work list action unless another
+/// pending-work list caller needs to reason about the selected scope.
+///
+/// # Examples
+///
+/// ```ignore
+/// let scope = ListScope::All;
+/// assert!(matches!(scope, ListScope::All));
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::engines::pending_work) enum ListScope {
+    Default,
+    HumanOnly,
+    FutureOnly,
+    All,
+}
+
+impl ListScope {
+    /// Builds a [`ListScope`] from the mutually exclusive list flags.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PendingWorkError::ConflictingListScopes`] when more than one of
+    /// `human`, `future`, or `all` is `true`.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// assert_eq!(ListScope::from_flags(false, false, false)?, ListScope::Default);
+    /// assert_eq!(ListScope::from_flags(true, false, false)?, ListScope::HumanOnly);
+    /// assert!(ListScope::from_flags(true, true, false).is_err());
+    /// # Ok::<(), PendingWorkError>(())
+    /// ```
+    pub(in crate::engines::pending_work) fn from_flags(
+        human: bool,
+        future: bool,
+        all: bool,
+    ) -> Result<Self, PendingWorkError> {
+        match (human, future, all) {
+            (false, false, false) => Ok(Self::Default),
+            (true, false, false) => Ok(Self::HumanOnly),
+            (false, true, false) => Ok(Self::FutureOnly),
+            (false, false, true) => Ok(Self::All),
+            _ => Err(PendingWorkError::ConflictingListScopes),
+        }
+    }
+
+    fn includes(self, section: Option<&str>) -> bool {
+        match self {
+            Self::Default => section.is_none(),
+            Self::HumanOnly => matches!(section, Some("Human")),
+            Self::FutureOnly => matches!(section, Some("Future")),
+            Self::All => true,
+        }
+    }
+
+    fn groups_output(self) -> bool {
+        matches!(self, Self::All)
+    }
+}
+
+fn section_group_rank(section: Option<&str>) -> u8 {
+    match section {
+        None => 0,
+        Some("Low-prio") => 1,
+        Some("Human") => 2,
+        Some("Future") => 3,
+        Some(_) => 4,
+    }
+}
+
 /// Numeric ID suffix (digits after the last `-`), or 0 when unparseable. Zero-padded
 /// per-prefix counters mean higher = newer inside a project group.
 fn id_suffix(id: &str) -> u64 {
@@ -30,6 +103,16 @@ fn sort_by_project_then_newest(items: &mut [Item]) {
     });
 }
 
+fn sort_by_group_then_project_then_newest(items: &mut [Item]) {
+    items.sort_by(|a, b| {
+        section_group_rank(a.section.as_deref())
+            .cmp(&section_group_rank(b.section.as_deref()))
+            .then_with(|| a.project.cmp(&b.project))
+            .then_with(|| id_suffix(&b.id).cmp(&id_suffix(&a.id)))
+            .then_with(|| b.id.cmp(&a.id))
+    });
+}
+
 /// Keep at most `cap` items (`cap == 0` means unlimited). Returns `(kept, hidden)`;
 /// `kept.len() + hidden` always equals the input length.
 fn apply_cap(items: Vec<Item>, cap: usize) -> (Vec<Item>, usize) {
@@ -42,30 +125,37 @@ fn apply_cap(items: Vec<Item>, cap: usize) -> (Vec<Item>, usize) {
     (kept, hidden)
 }
 
-/// List action implementation. `## Future` and `## Human` items are hidden unless
-/// `show_future` / `show_human` re-include them.
+/// List action implementation. Scoped sections are hidden unless a list scope
+/// flag re-includes them.
 pub(in crate::engines::pending_work) fn run_list_action(
     cfg: &Config,
     only_project: Option<&str>,
     json: bool,
     long: bool,
-    show_future: bool,
-    show_human: bool,
+    scope: ListScope,
     number: Option<usize>,
 ) -> Result<String, PendingWorkError> {
     let mut items: Vec<_> = get_pending_work(cfg, only_project)?
         .into_iter()
-        .filter(|i| match i.section.as_deref() {
-            Some("Future") => show_future,
-            Some("Human") => show_human,
-            _ => true,
-        })
+        .filter(|i| scope.includes(i.section.as_deref()))
         .collect();
-    // Order + cap before the JSON branch so `--json` follows the same selection.
-    sort_by_project_then_newest(&mut items);
+    // Order + cap before rendering so human and JSON outputs share the same
+    // selected/capped sequence.
+    if scope.groups_output() {
+        sort_by_group_then_project_then_newest(&mut items);
+    } else {
+        sort_by_project_then_newest(&mut items);
+    }
     let (items, hidden) = apply_cap(items, number.unwrap_or(DEFAULT_LIST_CAP));
     let result = ListResult::from_items(items, hidden);
-    Ok(render_list(&result, cfg, only_project, json, long))
+    Ok(render_list(
+        &result,
+        cfg,
+        only_project,
+        json,
+        long,
+        scope.groups_output(),
+    ))
 }
 
 #[cfg(test)]
@@ -121,14 +211,17 @@ mod tests {
         )
         .unwrap();
 
-        let err = run_list_action(&cfg, None, false, false, false, false, None).unwrap_err();
+        let err = run_list_action(&cfg, None, false, false, ListScope::Default, None).unwrap_err();
 
         assert!(matches!(
             err,
             PendingWorkError::NotesDirectoryNotFound { ref path }
                 if path == &missing
         ));
-        assert_eq!(err.to_string(), format!("Notes directory not found: {missing}"));
+        assert_eq!(
+            err.to_string(),
+            format!("Notes directory not found: {missing}")
+        );
     }
 
     #[test]

@@ -1,5 +1,0 @@
-{
-  "engine": "pending-work",
-  "args": ["list", "--json"],
-  "compareStdout": true
-}

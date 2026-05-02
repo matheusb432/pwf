@@ -59,8 +59,7 @@ pub(super) fn newest_handoff_typed(repo: &str) -> Result<PathBuf, PendingWorkErr
     Ok(entries.into_iter().next().unwrap().2)
 }
 
-/// Normalized hide-section (`Future`/`Human`) governing byte `offset`, or `None` for
-/// the normal region and any always-visible section (Low-prio, unknown headers).
+/// Normalized section governing byte `offset`, or `None` for the normal region.
 fn section_at(text: &str, offset: usize) -> Option<String> {
     let header_re = Regex::new(r"(?m)^##\s+(?P<name>.+?)\s*$").unwrap();
     let mut current: Option<String> = None;
@@ -68,10 +67,11 @@ fn section_at(text: &str, offset: usize) -> Option<String> {
         if m.get(0).unwrap().start() >= offset {
             break;
         }
-        current = match m["name"].to_lowercase().as_str() {
+        current = match m["name"].trim().to_lowercase().as_str() {
             "future" | "futuro" => Some("Future".to_string()),
             "human" => Some("Human".to_string()),
-            _ => None,
+            "low-prio" | "low-priority" => Some("Low-prio".to_string()),
+            _ => Some(m["name"].trim().to_string()),
         };
     }
     current
@@ -270,5 +270,29 @@ mod tests {
         assert_eq!(items[0].prompt, "add startup toggle");
         assert_eq!(items[0].prereq.as_deref(), Some("\"[[GLP-0000]]\""));
         assert!(items[0].launchable);
+    }
+
+    #[test]
+    fn parse_project_tasks_from_text_preserves_low_prio_human_and_future_sections() {
+        let index_path = Path::new("notes/glep-shimeji/glep-shimeji.md");
+        let index_text = "- [ ] [[GLP-0001|normal]]\n\n## Low-prio\n- [ ] [[GLP-0002|low]]\n\n## Human\n- [ ] [[GLP-0003|human]]\n\n## Future\n- [ ] [[GLP-0004|future]]\n";
+        let items = parse_project_tasks_from_text(
+            "glep-shimeji",
+            Some("/repo"),
+            index_path,
+            index_text,
+            |_| {
+                Some(
+                    "---\nstatus: active\ntitle: title\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\nbody\n"
+                        .to_string(),
+                )
+            },
+        );
+
+        assert_eq!(items.len(), 4);
+        assert_eq!(items[0].section, None);
+        assert_eq!(items[1].section.as_deref(), Some("Low-prio"));
+        assert_eq!(items[2].section.as_deref(), Some("Human"));
+        assert_eq!(items[3].section.as_deref(), Some("Future"));
     }
 }

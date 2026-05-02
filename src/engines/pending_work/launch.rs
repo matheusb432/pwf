@@ -7,7 +7,7 @@ fn is_adhoc(item: &Item) -> bool {
 }
 
 fn report_closeout_command(id: &str) -> String {
-    format!("pwf pw check --id {id} --report \"<brief result>\"")
+    format!("pwf check --id {id} --report \"<brief result>\"")
 }
 
 fn report_closeout_text(item: &Item) -> Option<String> {

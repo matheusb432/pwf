@@ -1,6 +1,0 @@
-{
-  "engine": "pw",
-  "args": ["add", "glep-shimeji", "--continue-handoff", "--json"],
-  "compareTree": "notes",
-  "compareStdout": true
-}

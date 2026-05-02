@@ -1,6 +1,6 @@
 //! Behavior-level checks of the built binary (clap surface), per the
 //! rust-cli-tooling testing matrix: exit codes, that the retired legacy flag
-//! surface now errors, and a flag the conformance corpus does not exercise.
+//! surface now errors, and canonical-only flags.
 
 use assert_cmd::Command;
 use predicates::prelude::PredicateBooleanExt;
@@ -127,7 +127,7 @@ fn staged_many(count: usize) -> (TempDir, std::path::PathBuf) {
 fn add_positional_quoted_prompt_creates_item() {
     let (d, cfg) = staged();
     pwf()
-        .args(["pw", "add", "glep-shimeji", "x y z", "--config-path"])
+        .args(["add", "glep-shimeji", "x y z", "--config-path"])
         .arg(&cfg)
         .assert()
         .success();
@@ -140,15 +140,7 @@ fn add_positional_quoted_prompt_creates_item() {
 fn add_bare_words_joined_into_prompt() {
     let (d, cfg) = staged();
     pwf()
-        .args([
-            "pw",
-            "add",
-            "glep-shimeji",
-            "do",
-            "a",
-            "thing",
-            "--config-path",
-        ])
+        .args(["add", "glep-shimeji", "do", "a", "thing", "--config-path"])
         .arg(&cfg)
         .assert()
         .success();
@@ -160,7 +152,7 @@ fn add_bare_words_joined_into_prompt() {
 fn add_human_flag_files_under_human_section() {
     let (d, cfg) = staged();
     pwf()
-        .args(["pw", "add", "glep-shimeji", "x", "--human", "--config-path"])
+        .args(["add", "glep-shimeji", "x", "--human", "--config-path"])
         .arg(&cfg)
         .assert()
         .success();
@@ -175,7 +167,6 @@ fn add_section_future_files_under_future_section() {
     let (d, cfg) = staged();
     pwf()
         .args([
-            "pw",
             "add",
             "glep-shimeji",
             "x",
@@ -193,11 +184,20 @@ fn add_section_future_files_under_future_section() {
 }
 
 #[test]
+fn e2e_list_scope_flags_conflict() {
+    Command::cargo_bin("pwf")
+        .unwrap()
+        .args(["list", "--human", "--all"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("cannot be used with"));
+}
+
+#[test]
 fn add_continue_handoff_builds_handoff_prompt() {
     let (d, cfg) = staged_with_handoff();
     let out = pwf()
         .args([
-            "pw",
             "add",
             "glep-shimeji",
             "--continue-handoff",
@@ -221,12 +221,56 @@ fn add_continue_handoff_builds_handoff_prompt() {
 fn bare_words_route_errors_and_writes_nothing() {
     let (d, cfg) = staged();
     pwf()
-        .args(["pw", "glep-shimeji", "make", "a", "thing", "--config-path"])
+        .args(["glep-shimeji", "make", "a", "thing", "--config-path"])
         .arg(&cfg)
         .assert()
         .failure()
-        .stderr(contains("pwf pw add"));
+        .stderr(contains("pwf add"));
     // The footgun is dead: no item was written.
+    assert!(!d.path().join("notes/glep-shimeji/GLP-0002.md").exists());
+}
+
+#[test]
+fn deprecated_pw_prefix_warns_and_fails() {
+    let (_d, cfg) = staged();
+    pwf()
+        .args(["pw", "list", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .failure()
+        .stderr(contains("warning: `pwf pw ...` is deprecated"))
+        .stderr(contains("use `pwf list`"));
+}
+
+#[test]
+fn pending_work_alias_warns_and_fails() {
+    let (_d, cfg) = staged();
+    pwf()
+        .args(["pending-work", "list", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .failure()
+        .stderr(contains("warning: `pwf pending-work ...` is deprecated"))
+        .stderr(contains("use `pwf list`"));
+}
+
+#[test]
+fn deprecated_pw_prefix_fails_for_action_usage_without_writing() {
+    let (d, cfg) = staged();
+    pwf()
+        .args([
+            "pw",
+            "add",
+            "glep-shimeji",
+            "legacy add",
+            "--json",
+            "--config-path",
+        ])
+        .arg(&cfg)
+        .assert()
+        .failure()
+        .stderr(contains("warning: `pwf pw ...` is deprecated"))
+        .stderr(contains("use `pwf add`"));
     assert!(!d.path().join("notes/glep-shimeji/GLP-0002.md").exists());
 }
 
@@ -234,7 +278,7 @@ fn bare_words_route_errors_and_writes_nothing() {
 fn single_word_route_lists_project() {
     let (_d, cfg) = staged();
     pwf()
-        .args(["pw", "glep-shimeji", "--config-path"])
+        .args(["glep-shimeji", "--config-path"])
         .arg(&cfg)
         .assert()
         .success()
@@ -265,7 +309,7 @@ fn unknown_engine_fails() {
 fn canonical_list_succeeds() {
     let (_d, cfg) = staged();
     let canon = pwf()
-        .args(["pw", "list", "--config-path"])
+        .args(["list", "--config-path"])
         .arg(&cfg)
         .assert()
         .success();
@@ -274,10 +318,27 @@ fn canonical_list_succeeds() {
 }
 
 #[test]
+fn ls_alias_matches_list_output() {
+    let (_d, cfg) = staged();
+    let list = pwf()
+        .args(["list", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .success();
+    let ls = pwf()
+        .args(["ls", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .success();
+
+    assert_eq!(ls.get_output().stdout, list.get_output().stdout);
+}
+
+#[test]
 fn list_default_caps_and_shows_more() {
     let (_d, cfg) = staged_many(12);
     pwf()
-        .args(["pw", "list", "--config-path"])
+        .args(["list", "--config-path"])
         .arg(&cfg)
         .assert()
         .success()
@@ -291,7 +352,7 @@ fn list_default_caps_and_shows_more() {
 fn list_n_zero_shows_all() {
     let (_d, cfg) = staged_many(12);
     pwf()
-        .args(["pw", "list", "-n", "0", "--config-path"])
+        .args(["list", "-n", "0", "--config-path"])
         .arg(&cfg)
         .assert()
         .success()
@@ -304,7 +365,7 @@ fn list_n_zero_shows_all() {
 fn shorthand_project_forwards_number() {
     let (_d, cfg) = staged_many(12);
     pwf()
-        .args(["pw", "glep-shimeji", "-n", "2", "--config-path"])
+        .args(["glep-shimeji", "-n", "2", "--config-path"])
         .arg(&cfg)
         .assert()
         .success()
@@ -317,7 +378,7 @@ fn shorthand_project_forwards_number() {
 fn json_list_is_capped() {
     let (_d, cfg) = staged_many(12);
     let out = pwf()
-        .args(["pw", "list", "--json", "--config-path"])
+        .args(["list", "--json", "--config-path"])
         .arg(&cfg)
         .assert()
         .success();
@@ -333,19 +394,18 @@ fn retired_legacy_flag_surface_errors() {
     // fails (unknown project) rather than silently listing.
     let (_d, cfg) = staged();
     pwf()
-        .args(["pw", "-Action", "list", "-ConfigPath"])
+        .args(["-Action", "list", "-ConfigPath"])
         .arg(&cfg)
         .assert()
         .failure();
 }
 
 #[test]
-fn canonical_only_flag_not_in_corpus_works() {
-    // `--prereq` is not exercised by the conformance corpus; cover it here.
+fn canonical_only_prereq_flag_works() {
+    // `--prereq` is a canonical CLI-only surface; cover it through the binary.
     let (_d, cfg) = staged();
     pwf()
         .args([
-            "pw",
             "add",
             "glep-shimeji",
             "do the thing",
@@ -359,8 +419,7 @@ fn canonical_only_flag_not_in_corpus_works() {
 }
 
 // ── PWF-0031: post-port e2e coverage (assert file CONTENTS, not just exit) ──────
-// The frozen ShellSpec corpus predates these behaviors and cannot catch them; the
-// in-process tests in tests/pending_work.rs mirror these, here we run the binary.
+// The in-process tests in tests/pending_work.rs mirror these; here we run the binary.
 
 /// Read a staged item file under the glep-shimeji project.
 fn read_item(dir: &TempDir, id: &str) -> String {
@@ -381,7 +440,6 @@ fn e2e_update_prompt_rewrites_body_and_preserves_frontmatter() {
     let (d, cfg) = staged();
     pwf()
         .args([
-            "pw",
             "update",
             "--id",
             "GLP-0001",
@@ -415,7 +473,6 @@ fn e2e_update_title_only_leaves_body_untouched() {
     let (d, cfg) = staged();
     pwf()
         .args([
-            "pw",
             "update",
             "--id",
             "GLP-0001",
@@ -436,7 +493,6 @@ fn e2e_update_prompt_only_leaves_title_untouched() {
     let (d, cfg) = staged();
     pwf()
         .args([
-            "pw",
             "update",
             "--id",
             "GLP-0001",
@@ -456,7 +512,7 @@ fn e2e_update_prompt_only_leaves_title_untouched() {
 fn e2e_update_requires_a_field() {
     let (_d, cfg) = staged();
     pwf()
-        .args(["pw", "update", "--id", "GLP-0001", "--config-path"])
+        .args(["update", "--id", "GLP-0001", "--config-path"])
         .arg(&cfg)
         .assert()
         .failure();
@@ -467,7 +523,6 @@ fn e2e_update_unknown_id_fails() {
     let (_d, cfg) = staged();
     pwf()
         .args([
-            "pw",
             "update",
             "--id",
             "GLP-9999",
@@ -487,7 +542,6 @@ fn e2e_add_cuts_title_at_ampersand_and_splits_goals() {
     let (d, cfg) = staged();
     pwf()
         .args([
-            "pw",
             "add",
             "glep-shimeji",
             "lead clause & goal two & goal three",
@@ -514,7 +568,7 @@ fn e2e_add_caps_long_title_without_ampersand() {
     // >120 chars, no `&`; the tail "smallest first" must be dropped from the title.
     let long = "Continue the PowerShell to Rust port into the cfgtool CLI using the shipped gaming domain as the template porting smallest first";
     pwf()
-        .args(["pw", "add", "glep-shimeji", long, "--config-path"])
+        .args(["add", "glep-shimeji", long, "--config-path"])
         .arg(&cfg)
         .assert()
         .success();
@@ -548,7 +602,6 @@ fn e2e_add_lowercases_inferred_title() {
     let (d, cfg) = staged();
     pwf()
         .args([
-            "pw",
             "add",
             "glep-shimeji",
             "Refactor Help Command",
@@ -566,7 +619,6 @@ fn e2e_add_lowercases_explicit_title() {
     let (d, cfg) = staged();
     pwf()
         .args([
-            "pw",
             "add",
             "glep-shimeji",
             "x",
@@ -586,7 +638,6 @@ fn e2e_update_lowercases_explicit_title() {
     let (d, cfg) = staged();
     pwf()
         .args([
-            "pw",
             "update",
             "--id",
             "GLP-0001",
@@ -612,7 +663,6 @@ fn e2e_check_rotates_done_queue_past_general_cap() {
         let id = format!("GLP-{n:04}");
         pwf()
             .args([
-                "pw",
                 "check",
                 "--id",
                 &id,
@@ -657,7 +707,6 @@ fn e2e_add_with_prereq_writes_validated_frontmatter() {
     let (d, cfg) = staged();
     pwf()
         .args([
-            "pw",
             "add",
             "glep-shimeji",
             "x",
@@ -680,7 +729,6 @@ fn e2e_add_rejects_unknown_prereq_without_writing_item() {
     let (d, cfg) = staged();
     pwf()
         .args([
-            "pw",
             "add",
             "glep-shimeji",
             "x",
@@ -704,7 +752,6 @@ fn e2e_update_prereq_writes_validated_frontmatter() {
     let (d, cfg) = staged_two();
     pwf()
         .args([
-            "pw",
             "update",
             "--id",
             "GLP-0002",
@@ -734,7 +781,6 @@ fn e2e_update_prereq_appends_and_dedups() {
     .unwrap();
     pwf()
         .args([
-            "pw",
             "update",
             "--id",
             "GLP-0002",
@@ -766,7 +812,6 @@ fn e2e_update_clear_prereq_empties_it() {
     .unwrap();
     pwf()
         .args([
-            "pw",
             "update",
             "--id",
             "GLP-0002",
@@ -790,7 +835,6 @@ fn e2e_update_prereq_rejects_unknown() {
     let before = read_item(&d, "GLP-0002");
     pwf()
         .args([
-            "pw",
             "update",
             "--id",
             "GLP-0002",
@@ -811,7 +855,6 @@ fn e2e_update_prereq_and_clear_conflict() {
     // clap rejects the mutually-exclusive flags before the engine runs.
     pwf()
         .args([
-            "pw",
             "update",
             "--id",
             "GLP-0002",
@@ -840,7 +883,6 @@ fn e2e_add_default_section_lands_before_any_header() {
     fs::write(&index_path, seeded).unwrap();
     pwf()
         .args([
-            "pw",
             "add",
             "glep-shimeji",
             "default placed item",
@@ -862,7 +904,6 @@ fn e2e_check_commits_writes_provenance_frontmatter() {
     let (d, cfg) = staged();
     pwf()
         .args([
-            "pw",
             "check",
             "--id",
             "GLP-0001",
@@ -887,7 +928,6 @@ fn e2e_check_commits_repeated_and_comma_join_and_dedup() {
     let (d, cfg) = staged();
     pwf()
         .args([
-            "pw",
             "check",
             "--id",
             "GLP-0001",
@@ -911,7 +951,6 @@ fn e2e_check_commits_repeated_and_comma_join_and_dedup() {
     let (d2, cfg2) = staged();
     pwf()
         .args([
-            "pw",
             "check",
             "--id",
             "GLP-0001",
@@ -936,7 +975,6 @@ fn e2e_check_without_commits_writes_no_commits_line() {
     let (d, cfg) = staged();
     pwf()
         .args([
-            "pw",
             "check",
             "--id",
             "GLP-0001",
@@ -958,7 +996,6 @@ fn e2e_check_review_spawns_human_task_scoped_to_range() {
     let (d, cfg) = staged();
     pwf()
         .args([
-            "pw",
             "check",
             "--id",
             "GLP-0001",
@@ -999,7 +1036,6 @@ fn e2e_check_review_json_nests_review_task_as_object() {
     let (_d, cfg) = staged();
     let out = pwf()
         .args([
-            "pw",
             "check",
             "--id",
             "GLP-0001",
@@ -1017,7 +1053,10 @@ fn e2e_check_review_json_nests_review_task_as_object() {
     let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
     let v: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     let review = &v["reviewTask"];
-    assert!(review.is_object(), "reviewTask must nest an object: {stdout}");
+    assert!(
+        review.is_object(),
+        "reviewTask must nest an object: {stdout}"
+    );
     assert_eq!(review["id"], "GLP-0002", "spawned review id: {stdout}");
     assert_eq!(review["status"], "added", "spawned status: {stdout}");
 }
@@ -1027,7 +1066,6 @@ fn e2e_check_review_without_commits_uses_bare_diff_fallback() {
     let (d, cfg) = staged();
     pwf()
         .args([
-            "pw",
             "check",
             "--id",
             "GLP-0001",

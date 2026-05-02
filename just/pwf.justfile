@@ -228,16 +228,9 @@ smell-check-errors: _require-rg
 test:
     cargo test
 
-# Binary-e2e Rust suites plus the ShellSpec conformance corpus.
+# Binary-e2e Rust suites.
 test-e2e: _preflight
     cargo test --test cli_e2e --test help_cli
-    just pwf test-conformance
 
-# Everything: the slim suite, then the e2e + conformance suite.
+# Everything: the slim suite, then binary e2e.
 test-all: test test-e2e
-
-# Run only the ShellSpec conformance corpus. Extra args pass through to shellspec.
-test-conformance *args: _preflight
-    #!/usr/bin/env sh
-    cd conformance
-    exec shellspec {{ args }}

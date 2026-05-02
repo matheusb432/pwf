@@ -4,8 +4,8 @@
 //! the implicit `pw` `list`/`route` subcommand defaults clap can't derive.
 //!
 //! The per-engine `*Common` flag groups are flattened into every action because
-//! the conformance corpus injects the sandbox flags (`--config-path`, `--notes-dir`
-//! / `--repo-root`, `--date`, …) onto every command — matching the old flat parser.
+//! tests and scripts inject sandbox flags (`--config-path`, `--notes-dir` /
+//! `--repo-root`, `--date`, …) onto individual commands — matching the old flat parser.
 
 use crate::engines::pending_work::{Action as PendingWorkAction, PendingWorkCommand};
 use clap::{Args, Parser, Subcommand};
@@ -55,10 +55,10 @@ pub struct PwCommon {
     pub json: bool,
 }
 
-/// pending-work verbs (`pwf pw <verb>`).
+/// pending-work verbs (`pwf <verb>`).
 #[derive(Subcommand, Debug)]
 pub enum PwAction {
-    /// Add a pwf task: `pwf pw add <project> "<prompt>"`.
+    /// Add a pwf task: `pwf add <project> "<prompt>"`.
     ///
     /// Prompt words are joined with single spaces, so quotes are optional.
     /// `--continue-handoff` / `--continue <path>` build the prompt from the
@@ -91,7 +91,8 @@ pub enum PwAction {
         #[command(flatten)]
         common: PwCommon,
     },
-    /// List open items (`## Future`/`## Human` hidden unless re-included).
+    /// List open normal items (scoped sections hidden unless scoped or `--all`).
+    #[command(alias = "ls")]
     List {
         /// Limit to one project.
         #[arg(long)]
@@ -99,12 +100,15 @@ pub enum PwAction {
         /// Long form with per-item metadata.
         #[arg(long)]
         long: bool,
-        /// Include `## Future` items.
-        #[arg(long)]
+        /// Show only `## Future` items.
+        #[arg(long, conflicts_with_all = ["human", "all"])]
         future: bool,
-        /// Include `## Human` items.
-        #[arg(long)]
+        /// Show only `## Human` items.
+        #[arg(long, conflicts_with_all = ["future", "all"])]
         human: bool,
+        /// Include every list section.
+        #[arg(long, conflicts_with_all = ["human", "future"])]
+        all: bool,
         /// Cap to N listed items (default 10; `-n 0` = all).
         #[arg(short = 'n', long, value_name = "N")]
         number: Option<usize>,
@@ -117,6 +121,23 @@ pub enum PwAction {
         #[arg(long)]
         id: Option<String>,
         /// Append a one-line completion report.
+        #[arg(long)]
+        report: Option<String>,
+        /// Commit range(s) to record as provenance (repeat or comma-separate).
+        #[arg(long)]
+        commits: Vec<String>,
+        /// Also spawn a `## Human` review task with prepped git-tools diff commands.
+        #[arg(long)]
+        review: bool,
+        #[command(flatten)]
+        common: PwCommon,
+    },
+    /// Mark an item cancelled in place, keeping the same capped queue as check.
+    Cancel {
+        /// Item id (e.g. PWF-0001).
+        #[arg(long)]
+        id: Option<String>,
+        /// Required cancellation report: what was tried and why work stopped.
         #[arg(long)]
         report: Option<String>,
         /// Commit range(s) to record as provenance (repeat or comma-separate).
@@ -195,7 +216,7 @@ pub enum PwAction {
 
     // `// !` Hidden internal verbs — reachable but absent from help, matching the
     // current hand-curated help which omits route/new.
-    /// Internal: word-router behind bare `pwf pw <words…>`.
+    /// Internal: word-router behind bare `pwf <words…>`.
     #[command(hide = true)]
     Route {
         /// Free-form route words (project + prompt, or a sub-verb).
@@ -204,11 +225,15 @@ pub enum PwAction {
         /// Long form with per-item metadata (forwarded to the list it routes to).
         #[arg(long)]
         long: bool,
-        /// Include `## Future` items (forwarded to the list it routes to).
-        #[arg(long)]
+        /// Show only `## Future` items (forwarded to the list it routes to).
+        #[arg(long, conflicts_with_all = ["human", "all"])]
         future: bool,
-        #[arg(long)]
+        /// Show only `## Human` items (forwarded to the list it routes to).
+        #[arg(long, conflicts_with_all = ["future", "all"])]
         human: bool,
+        /// Include every list section (forwarded to the list it routes to).
+        #[arg(long, conflicts_with_all = ["human", "future"])]
+        all: bool,
         /// Cap to N listed items (forwarded to the list it routes to).
         #[arg(short = 'n', long, value_name = "N")]
         number: Option<usize>,
@@ -466,6 +491,7 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             long,
             future,
             human,
+            all,
             number,
             common,
         } => {
@@ -473,6 +499,7 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             a.long = long;
             a.future = future;
             a.human = human;
+            a.all = all;
             a.number = number;
             apply_pw_common(a, common);
             PendingWorkAction::List
@@ -490,6 +517,20 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             a.review = review;
             apply_pw_common(a, common);
             PendingWorkAction::Check
+        }
+        PwAction::Cancel {
+            id,
+            report,
+            commits,
+            review,
+            common,
+        } => {
+            a.id = id;
+            a.report = report;
+            a.commits = commits;
+            a.review = review;
+            apply_pw_common(a, common);
+            PendingWorkAction::Cancel
         }
         PwAction::Update {
             id,
@@ -552,6 +593,7 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             long,
             future,
             human,
+            all,
             number,
             prereq,
             common,
@@ -560,6 +602,7 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             a.long = long;
             a.future = future;
             a.human = human;
+            a.all = all;
             a.number = number;
             a.prereq = prereq;
             apply_pw_common(a, common);
@@ -660,6 +703,29 @@ mod tests {
         args
     }
 
+    fn parse_top_level(tokens: &[&str]) -> (String, EngineArgs) {
+        let argv = tokens.iter().map(|s| s.to_string()).collect();
+        parse_argv(argv).expect("parse")
+    }
+
+    #[test]
+    fn default_engine_when_omitted() {
+        let (engine, args) = parse_top_level(&["add", "glep-shimeji", "x"]);
+        assert_eq!(engine, "pw");
+        assert_eq!(args.action.as_deref(), Some("add"));
+        assert_eq!(args.project.as_deref(), Some("glep-shimeji"));
+    }
+
+    #[test]
+    fn default_project_route_with_flags() {
+        let (engine, args) = parse_top_level(&["glep-shimeji", "--long", "-n", "2"]);
+        assert_eq!(engine, "pw");
+        assert_eq!(args.action.as_deref(), Some("route"));
+        assert_eq!(args.words, vec!["glep-shimeji"]);
+        assert!(args.long);
+        assert_eq!(args.number, Some(2));
+    }
+
     // ! PWF-0041: the `pw <project>` shorthand routes through the hidden `route`
     // verb; its list flags must be forwarded, not swallowed into the route words.
     #[test]
@@ -675,6 +741,13 @@ mod tests {
         let a = pw_args(&["pw", "pwf", "--future"]);
         assert_eq!(a.words, vec!["pwf"]);
         assert!(a.future);
+    }
+
+    #[test]
+    fn route_shorthand_forwards_all_flag() {
+        let a = pw_args(&["pw", "pwf", "--all"]);
+        assert_eq!(a.words, vec!["pwf"]);
+        assert!(a.all);
     }
 
     #[test]
@@ -706,11 +779,34 @@ mod tests {
     #[test]
     fn check_parses_commits_and_review() {
         let a = pw_args(&[
-            "pw", "check", "--id", "GLP-0001", "--commits", "a..b", "--commits", "c..d", "--review",
+            "pw",
+            "check",
+            "--id",
+            "GLP-0001",
+            "--commits",
+            "a..b",
+            "--commits",
+            "c..d",
+            "--review",
         ]);
         assert_eq!(a.action.as_deref(), Some("check"));
         assert_eq!(a.commits, vec!["a..b", "c..d"]);
         assert!(a.review);
+    }
+
+    #[test]
+    fn cancel_parses_required_report_surface() {
+        let a = pw_args(&[
+            "pw",
+            "cancel",
+            "--id",
+            "GLP-0001",
+            "--report",
+            "blocked by changed scope",
+        ]);
+        assert_eq!(a.action.as_deref(), Some("cancel"));
+        assert_eq!(a.id.as_deref(), Some("GLP-0001"));
+        assert_eq!(a.report.as_deref(), Some("blocked by changed scope"));
     }
 
     #[test]

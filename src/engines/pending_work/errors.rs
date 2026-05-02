@@ -35,6 +35,9 @@ pub(super) enum PendingWorkError {
         /// The raw section flag value.
         value: String,
     },
+    /// More than one list scope flag was supplied.
+    #[error("Choose only one list scope flag: --human, --future, or --all.")]
+    ConflictingListScopes,
     /// A managed project has no configured repository path.
     #[error("Project '{project}' is not mapped to a repo in config/pending-work.json.")]
     ProjectNotMappedToRepo {
@@ -104,6 +107,9 @@ pub(super) enum PendingWorkError {
     /// A check report was supplied but contained no content.
     #[error("--report cannot be empty.")]
     EmptyReport,
+    /// Cancel requires a report explaining what was tried and why work stopped.
+    #[error("--report is required for cancel.")]
+    MissingCancelReport,
     /// Remove only supports the file-model pending-work format.
     #[error("remove only supports file-model pending-work items.")]
     RemoveRequiresFileModel,
@@ -175,12 +181,10 @@ pub(super) enum PendingWorkError {
     #[error("{}", ADD_HINT)]
     RouteCreateRejected,
     /// Route launch-claude was invoked without its id word.
-    #[error("Usage: pwf pw launch-claude --id <id>")]
+    #[error("Usage: pwf launch-claude --id <id>")]
     RouteLaunchClaudeUsage,
     /// Claude CLI is unavailable for a direct launch.
-    #[error(
-        "Claude CLI not found on PATH; cannot launch. Run 'pwf pw verify --id {id}' for details."
-    )]
+    #[error("Claude CLI not found on PATH; cannot launch. Run 'pwf verify --id {id}' for details.")]
     ClaudeNotFound {
         /// The id the caller tried to launch.
         id: String,
@@ -218,7 +222,7 @@ impl From<PendingWorkError> for String {
 
 /// The canonical create form. Pointed at by the route guards that reject the
 /// removed silent-create paths (PWF-0034).
-pub(super) const ADD_HINT: &str = r#"Use: pwf pw add <project> "<prompt>""#;
+pub(super) const ADD_HINT: &str = r#"Use: pwf add <project> "<prompt>""#;
 
 #[cfg(test)]
 mod tests {

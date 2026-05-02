@@ -33,6 +33,10 @@ fn justfile_is_split_into_bash_domain_modules() {
         !root.contains(r#"set shell := ["pwsh""#),
         "PowerShell must not remain the default recipe shell"
     );
+    assert!(
+        !root.contains("test-conformance"),
+        "retired conformance recipe should not remain in the root justfile"
+    );
 
     for module in ["pwf", "handoffs", "agents"] {
         let path = format!("just/{module}.justfile");
@@ -46,6 +50,14 @@ fn justfile_is_split_into_bash_domain_modules() {
         assert!(
             body.contains("set working-directory := '..'"),
             "{path} should run recipes from the repo root"
+        );
+        assert!(
+            !body.contains("test-conformance"),
+            "retired conformance recipe should not remain in {path}"
+        );
+        assert!(
+            !body.contains("ShellSpec conformance"),
+            "retired conformance wording should not remain in {path}"
         );
     }
 }

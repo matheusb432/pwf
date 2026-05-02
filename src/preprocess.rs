@@ -1,7 +1,8 @@
-//! argv preprocessing for the two implicit-subcommand defaults clap can't derive
-//! natively: bare `pw` -> `pw list`, and `pw <words…>` (a non-verb lead) ->
-//! `pw route <words…>` (the word-router). Canonical `pw` verbs and the
-//! `handoff`/`migrate` engines pass through untouched for clap to parse.
+//! argv preprocessing for top-level pending-work defaults and the two implicit
+//! subcommand defaults clap can't derive: bare `pw` -> `pw list`, and `pw
+//! <words…>` (a non-verb lead) -> `pw route <words…>` (the word-router). Canonical
+//! `pw` verbs and the `handoff`/`migrate` engines pass through untouched for
+//! clap to parse.
 
 /// pw verbs reachable as clap subcommands (incl. the hidden `route`/`new`). A
 /// leading positional matching one passes through; anything else is treated as
@@ -10,7 +11,9 @@ fn pw_subcommands() -> &'static [&'static str] {
     &[
         "add",
         "list",
+        "ls",
         "check",
+        "cancel",
         "update",
         "resolve",
         "clean",
@@ -21,6 +24,22 @@ fn pw_subcommands() -> &'static [&'static str] {
         "route",
         "new",
     ]
+}
+
+fn is_root_engine(token: &str) -> bool {
+    matches!(
+        token,
+        "pw" | "pending-work"
+            | "handoff"
+            | "migrate"
+            | "--help"
+            | "-h"
+            | "help"
+            | "--list"
+            | "--version"
+            | "-V"
+            | "--terse"
+    )
 }
 
 /// Whether `flag` consumes the following token as its value. Keeps a flag's value
@@ -64,6 +83,12 @@ pub fn normalize(argv: Vec<String>) -> Vec<String> {
         return argv;
     }
     let engine_lower = argv[0].to_ascii_lowercase();
+    if !is_root_engine(&engine_lower) && !argv[0].starts_with('-') {
+        let mut with_default = Vec::with_capacity(argv.len() + 1);
+        with_default.push("pw".to_string());
+        with_default.extend(argv);
+        return normalize(with_default);
+    }
     let is_pw = engine_lower == "pw" || engine_lower == "pending-work";
     if !is_pw {
         return argv;
@@ -136,8 +161,26 @@ mod tests {
     }
 
     #[test]
+    fn bare_pw_verb_defaults_to_pending_work() {
+        assert_eq!(
+            n(&["add", "glep-shimeji", "x"]),
+            vec!["pw", "add", "glep-shimeji", "x"]
+        );
+    }
+
+    #[test]
+    fn bare_project_defaults_to_route() {
+        assert_eq!(n(&["glep-shimeji"]), vec!["pw", "route", "glep-shimeji"]);
+    }
+
+    #[test]
     fn flags_only_without_word_lists() {
         assert_eq!(n(&["pw", "--json"]), vec!["pw", "list", "--json"]);
+    }
+
+    #[test]
+    fn top_level_version_flag_passes_to_clap() {
+        assert_eq!(n(&["--version"]), vec!["--version"]);
     }
 
     #[test]
@@ -183,6 +226,14 @@ mod tests {
     }
 
     #[test]
+    fn route_shorthand_forwards_all_flag() {
+        assert_eq!(
+            n(&["pw", "glep", "--all"]),
+            vec!["pw", "route", "--all", "glep"]
+        );
+    }
+
+    #[test]
     fn section_value_is_consumed_with_its_flag() {
         // `--section future` precedes the positional words on `add`; `future` is the
         // flag value, not a route/positional word (PWF-0034).
@@ -221,10 +272,24 @@ mod tests {
     fn commits_value_stays_with_its_flag_on_check() {
         assert_eq!(
             n(&[
-                "pw", "check", "--id", "GLP-0001", "--commits", "a..b", "--commits", "c..d",
+                "pw",
+                "check",
+                "--id",
+                "GLP-0001",
+                "--commits",
+                "a..b",
+                "--commits",
+                "c..d",
             ]),
             vec![
-                "pw", "check", "--id", "GLP-0001", "--commits", "a..b", "--commits", "c..d",
+                "pw",
+                "check",
+                "--id",
+                "GLP-0001",
+                "--commits",
+                "a..b",
+                "--commits",
+                "c..d",
             ]
         );
     }

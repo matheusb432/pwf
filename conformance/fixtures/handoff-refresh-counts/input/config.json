@@ -1,1 +1,0 @@
-{ "notesDir": "{{NOTES}}", "projects": { "test-project": "{{REPO}}" }, "prefixes": { "test-project": "TST" } }

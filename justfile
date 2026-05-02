@@ -35,17 +35,13 @@ smell-check-errors:
 test:
     @just pwf test
 
-# Binary-e2e Rust suites plus ShellSpec conformance.
+# Binary-e2e Rust suites.
 test-e2e:
     @just pwf test-e2e
 
-# Everything: slim suite, then e2e + conformance.
+# Everything: slim suite, then binary e2e.
 test-all:
     @just pwf test-all
-
-# Run only the ShellSpec conformance corpus.
-test-conformance *args:
-    @just pwf test-conformance {{ args }}
 
 # List active handoffs from the invocation repo.
 handoff *args:

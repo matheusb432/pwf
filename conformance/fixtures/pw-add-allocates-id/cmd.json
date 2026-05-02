@@ -1,6 +1,0 @@
-{
-  "engine": "pw",
-  "args": ["add", "glep-shimeji", "add startup toggle", "--title", "tray gui", "--json"],
-  "compareTree": "notes",
-  "compareStdout": true
-}

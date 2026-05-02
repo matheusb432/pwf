@@ -32,10 +32,11 @@ pub struct Args {
     pub dry_run: bool,
     // ? list: cap to N items (None = default cap; Some(0) = unlimited).
     pub number: Option<usize>,
-    // ? list: include `## Future` / `## Human` items (hidden by default).
+    // ? list: include scoped sections (hidden by default).
     // ? add: `human` also routes the new item under the `## Human` section.
     pub future: bool,
     pub human: bool,
+    pub all: bool,
     pub words: Vec<String>,
     // ? add: build the prompt from the repo's newest handoff / a plan path.
     pub continue_handoff: bool,

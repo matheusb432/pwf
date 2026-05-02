@@ -72,7 +72,7 @@ fn add_text_output_points_to_pwf_launch_command() {
         "2026-01-01",
     ]);
     let out = pwk::run_args(&args).unwrap();
-    assert!(out.contains("launch with: pwf pw launch --id GLP-0001"));
+    assert!(out.contains("launch with: pwf launch --id GLP-0001"));
     assert!(!out.contains("just pending-work-launch"), "got: {out}");
 }
 
@@ -134,9 +134,8 @@ fn add_skips_ids_already_present_in_archive() {
 fn add_caps_inferred_title_for_long_prompt_without_ampersand() {
     // CFG-0075 regression, end-to-end: a long prompt with no '&' marker and no
     // explicit --title must not write the whole prompt as the frontmatter title.
-    // This is the e2e gap the conformance corpus could not catch — its goldens
-    // predate the '&' title logic, so the regression only surfaces by running the
-    // real add path with a realistic long prompt.
+    // Keep this on the real add path with a realistic long prompt; the failure is
+    // visible only after title inference and note writing meet.
     let stage = stage_dir();
     let notes = stage.join("notes");
     fs::create_dir_all(&notes).unwrap();
@@ -418,7 +417,7 @@ fn list_returns_json_array_with_issues_as_empty_array() {
 }
 
 #[test]
-fn list_hides_future_and_human_by_default_flags_reveal() {
+fn list_scopes_select_default_human_future_and_all() {
     let stage = stage_dir();
     let notes = stage.join("notes");
     let proj = notes.join("glep-shimeji");
@@ -465,20 +464,319 @@ fn list_hides_future_and_human_by_default_flags_reveal() {
         argv.extend_from_slice(&base);
         pwk::run_args(&parse_args(&argv)).unwrap()
     };
-    // Default: normal + Low-prio shown; Future + Human hidden.
+    // Default: only normal tasks shown; scoped sections hidden.
     let def = run(&[]);
     assert!(def.contains("GLP-0001"), "normal missing: {def}");
-    assert!(def.contains("GLP-0002"), "low-prio missing: {def}");
+    assert!(
+        !def.contains("GLP-0002"),
+        "Low-prio shown by default: {def}"
+    );
     assert!(!def.contains("GLP-0003"), "Human shown by default: {def}");
     assert!(!def.contains("GLP-0004"), "Future shown by default: {def}");
-    // --human reveals Human only.
+
     let h = run(&["--human"]);
-    assert!(h.contains("GLP-0003"), "Human not revealed: {h}");
+    assert!(!h.contains("GLP-0001"), "normal leaked with --human: {h}");
+    assert!(!h.contains("GLP-0002"), "low-prio leaked with --human: {h}");
+    assert!(h.contains("GLP-0003"), "Human not shown with --human: {h}");
     assert!(!h.contains("GLP-0004"), "Future leaked with --human: {h}");
-    // --future reveals Future only.
+
     let f = run(&["--future"]);
-    assert!(f.contains("GLP-0004"), "Future not revealed: {f}");
+    assert!(!f.contains("GLP-0001"), "normal leaked with --future: {f}");
+    assert!(
+        !f.contains("GLP-0002"),
+        "low-prio leaked with --future: {f}"
+    );
     assert!(!f.contains("GLP-0003"), "Human leaked with --future: {f}");
+    assert!(
+        f.contains("GLP-0004"),
+        "Future not shown with --future: {f}"
+    );
+
+    let all = run(&["--all"]);
+    assert!(all.contains("GLP-0001"), "normal missing with --all: {all}");
+    assert!(
+        all.contains("GLP-0002"),
+        "low-prio missing with --all: {all}"
+    );
+    assert!(all.contains("GLP-0003"), "Human missing with --all: {all}");
+    assert!(all.contains("GLP-0004"), "Future missing with --all: {all}");
+    let normal_idx = all.find("GLP-0001").unwrap();
+    let low_prio_header_idx = all.find("Low-prio").unwrap();
+    let low_prio_idx = all.find("GLP-0002").unwrap();
+    let human_header_idx = all.find("Human").unwrap();
+    let human_idx = all.find("GLP-0003").unwrap();
+    let future_header_idx = all.find("Future").unwrap();
+    let future_idx = all.find("GLP-0004").unwrap();
+    assert!(
+        normal_idx < low_prio_header_idx,
+        "normal group should lead: {all}"
+    );
+    assert!(
+        low_prio_header_idx < low_prio_idx,
+        "Low-prio header misplaced: {all}"
+    );
+    assert!(
+        low_prio_idx < human_header_idx,
+        "Human header misplaced: {all}"
+    );
+    assert!(human_header_idx < human_idx, "Human item misplaced: {all}");
+    assert!(
+        human_idx < future_header_idx,
+        "Future header misplaced: {all}"
+    );
+    assert!(
+        future_header_idx < future_idx,
+        "Future item misplaced: {all}"
+    );
+}
+
+#[test]
+fn list_all_json_remains_flat_without_section_field() {
+    let stage = stage_dir();
+    let notes = stage.join("notes");
+    let proj = notes.join("glep-shimeji");
+    fs::create_dir_all(&proj).unwrap();
+    fs::write(
+        proj.join("GLP-0001.md"),
+        "---\nstatus: active\ntitle: human task\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\nbody\n",
+    )
+    .unwrap();
+    fs::write(
+        proj.join("glep-shimeji.md"),
+        "## Human\n- [ ] [[GLP-0001|human task]]\n",
+    )
+    .unwrap();
+    let cfg = stage.join("config.json");
+    fs::write(
+        &cfg,
+        format!(
+            r#"{{ "notesDir": "{}", "projects": {{ "glep-shimeji": "/repo" }}, "prefixes": {{ "glep-shimeji": "GLP" }} }}"#,
+            json_path(&notes)
+        ),
+    )
+    .unwrap();
+    let cfg_s = cfg.to_string_lossy().into_owned();
+    let notes_s = notes.to_string_lossy().into_owned();
+    let out = pwk::run_args(&parse_args(&[
+        "list",
+        "--all",
+        "--json",
+        "--config-path",
+        &cfg_s,
+        "--notes-dir",
+        &notes_s,
+        "--date",
+        "2026-01-01",
+    ]))
+    .unwrap();
+    let value: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let arr = value.as_array().expect("json list array");
+    assert_eq!(arr.len(), 1, "got: {value}");
+    assert_eq!(arr[0]["id"], "GLP-0001");
+    assert!(
+        arr[0].get("section").is_none(),
+        "section leaked into JSON: {value}"
+    );
+}
+
+#[test]
+fn list_all_json_follows_grouped_human_order_while_staying_flat() {
+    let stage = stage_dir();
+    let notes = stage.join("notes");
+    let cfg_proj = notes.join("config-handler");
+    let glp_proj = notes.join("glep-shimeji");
+    fs::create_dir_all(&cfg_proj).unwrap();
+    fs::create_dir_all(&glp_proj).unwrap();
+
+    for (project_dir, project, id, title) in [
+        (&cfg_proj, "config-handler", "CFG-0002", "normal newer"),
+        (&cfg_proj, "config-handler", "CFG-0001", "human task"),
+        (&glp_proj, "glep-shimeji", "GLP-0002", "low-prio task"),
+        (&glp_proj, "glep-shimeji", "GLP-0001", "future task"),
+    ] {
+        fs::write(
+            project_dir.join(format!("{id}.md")),
+            format!(
+                "---\nstatus: active\ntitle: {title}\nproject: {project}\ncreated: 2026-01-01\n---\n\nbody\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    fs::write(
+        cfg_proj.join("config-handler.md"),
+        "- [ ] [[CFG-0002|normal newer]]\n\n## Human\n- [ ] [[CFG-0001|human task]]\n",
+    )
+    .unwrap();
+    fs::write(
+        glp_proj.join("glep-shimeji.md"),
+        "## Low-prio\n- [ ] [[GLP-0002|low-prio task]]\n\n## Future\n- [ ] [[GLP-0001|future task]]\n",
+    )
+    .unwrap();
+
+    let cfg = stage.join("config.json");
+    fs::write(
+        &cfg,
+        format!(
+            r#"{{ "notesDir": "{}", "projects": {{ "config-handler": "/repo/cfg", "glep-shimeji": "/repo/glp" }}, "prefixes": {{ "config-handler": "CFG", "glep-shimeji": "GLP" }} }}"#,
+            json_path(&notes)
+        ),
+    )
+    .unwrap();
+    let cfg_s = cfg.to_string_lossy().into_owned();
+    let notes_s = notes.to_string_lossy().into_owned();
+    let out = pwk::run_args(&parse_args(&[
+        "list",
+        "--all",
+        "--json",
+        "--config-path",
+        &cfg_s,
+        "--notes-dir",
+        &notes_s,
+        "--date",
+        "2026-01-01",
+    ]))
+    .unwrap();
+
+    let value: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let arr = value.as_array().expect("json list array");
+    let ids: Vec<_> = arr
+        .iter()
+        .map(|item| item["id"].as_str().expect("string id"))
+        .collect();
+
+    assert_eq!(ids, ["CFG-0002", "GLP-0002", "CFG-0001", "GLP-0001"]);
+    assert!(
+        arr.iter().all(|item| item.get("section").is_none()),
+        "section leaked into JSON: {value}"
+    );
+}
+
+#[test]
+fn list_all_long_keeps_metadata_on_its_own_line_in_every_group() {
+    let stage = stage_dir();
+    let notes = stage.join("notes");
+    let proj = notes.join("glep-shimeji");
+    fs::create_dir_all(&proj).unwrap();
+    for (id, title) in [
+        ("GLP-0001", "normal"),
+        ("GLP-0002", "lowp"),
+        ("GLP-0003", "human task"),
+        ("GLP-0004", "future task"),
+    ] {
+        fs::write(
+            proj.join(format!("{id}.md")),
+            format!("---\nstatus: active\ntitle: {title}\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\nbody\n"),
+        )
+        .unwrap();
+    }
+    fs::write(
+        proj.join("glep-shimeji.md"),
+        "- [ ] [[GLP-0001|normal]]\n\n## Low-prio\n- [ ] [[GLP-0002|lowp]]\n\n## Human\n- [ ] [[GLP-0003|human task]]\n\n## Future\n- [ ] [[GLP-0004|future task]]\n",
+    )
+    .unwrap();
+    let cfg = stage.join("config.json");
+    fs::write(
+        &cfg,
+        format!(
+            r#"{{ "notesDir": "{}", "projects": {{ "glep-shimeji": "/repo" }}, "prefixes": {{ "glep-shimeji": "GLP" }} }}"#,
+            json_path(&notes)
+        ),
+    )
+    .unwrap();
+    let cfg_s = cfg.to_string_lossy().into_owned();
+    let notes_s = notes.to_string_lossy().into_owned();
+    let out = pwk::run_args(&parse_args(&[
+        "list",
+        "--all",
+        "--long",
+        "--config-path",
+        &cfg_s,
+        "--notes-dir",
+        &notes_s,
+        "--date",
+        "2026-01-01",
+    ]))
+    .unwrap();
+
+    for expected in [
+        "[GLP-0001] glep-shimeji :: normal\n  status:",
+        "[GLP-0002] glep-shimeji :: lowp\n  status:",
+        "[GLP-0003] glep-shimeji :: human task\n  status:",
+        "[GLP-0004] glep-shimeji :: future task\n  status:",
+    ] {
+        assert!(
+            out.contains(expected),
+            "expected long metadata on its own line: {expected}\n\n{out}"
+        );
+    }
+}
+
+#[test]
+fn route_project_shortcut_uses_list_scopes() {
+    let stage = stage_dir();
+    let notes = stage.join("notes");
+    let proj = notes.join("config-handler");
+    fs::create_dir_all(&proj).unwrap();
+    for (id, title) in [
+        ("CFG-0001", "normal"),
+        ("CFG-0002", "lowp"),
+        ("CFG-0003", "human task"),
+        ("CFG-0004", "future task"),
+    ] {
+        fs::write(
+            proj.join(format!("{id}.md")),
+            format!("---\nstatus: active\ntitle: {title}\nproject: config-handler\ncreated: 2026-01-01\n---\n\nbody\n"),
+        )
+        .unwrap();
+    }
+    fs::write(
+        proj.join("config-handler.md"),
+        "- [ ] [[CFG-0001|normal]]\n\n## Low-prio\n- [ ] [[CFG-0002|lowp]]\n\n## Human\n- [ ] [[CFG-0003|human task]]\n\n## Future\n- [ ] [[CFG-0004|future task]]\n",
+    )
+    .unwrap();
+    let cfg = stage.join("config.json");
+    fs::write(
+        &cfg,
+        format!(
+            r#"{{ "notesDir": "{}", "projects": {{ "config-handler": "/repo" }}, "prefixes": {{ "config-handler": "CFG" }} }}"#,
+            json_path(&notes)
+        ),
+    )
+    .unwrap();
+    let cfg_s = cfg.to_string_lossy().into_owned();
+    let notes_s = notes.to_string_lossy().into_owned();
+    let run = |extra: &[&str]| {
+        let mut argv = vec!["cfg"];
+        argv.extend_from_slice(extra);
+        argv.extend_from_slice(&[
+            "--config-path",
+            &cfg_s,
+            "--notes-dir",
+            &notes_s,
+            "--date",
+            "2026-01-01",
+        ]);
+        pwk::run_args(&parse_args(&argv)).unwrap()
+    };
+
+    let def = run(&[]);
+    assert!(def.contains("CFG-0001"), "normal missing: {def}");
+    assert!(!def.contains("CFG-0002"), "low-prio leaked: {def}");
+    assert!(!def.contains("CFG-0003"), "human leaked: {def}");
+    assert!(!def.contains("CFG-0004"), "future leaked: {def}");
+
+    let human = run(&["--human"]);
+    assert!(!human.contains("CFG-0001"), "normal leaked: {human}");
+    assert!(!human.contains("CFG-0002"), "low-prio leaked: {human}");
+    assert!(human.contains("CFG-0003"), "human missing: {human}");
+    assert!(!human.contains("CFG-0004"), "future leaked: {human}");
+
+    let all = run(&["--all"]);
+    assert!(all.contains("CFG-0001"), "normal missing: {all}");
+    assert!(all.contains("CFG-0002"), "low-prio missing: {all}");
+    assert!(all.contains("CFG-0003"), "human missing: {all}");
+    assert!(all.contains("CFG-0004"), "future missing: {all}");
 }
 
 #[test]
@@ -1044,6 +1342,103 @@ fn check_with_report_appends_report_section() {
     );
 }
 
+#[test]
+fn cancel_requires_report() {
+    let stage = stage_dir();
+    let notes = stage.join("notes");
+    let proj = notes.join("glep-shimeji");
+    fs::create_dir_all(&proj).unwrap();
+    fs::write(
+        proj.join("GLP-0001.md"),
+        "---\nstatus: active\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\nadd startup toggle\n",
+    )
+    .unwrap();
+    fs::write(proj.join("glep-shimeji.md"), "- [ ] [[GLP-0001]]\n").unwrap();
+    let cfg = stage.join("config.json");
+    fs::write(
+        &cfg,
+        format!(
+            r#"{{ "notesDir": "{}", "projects": {{ "glep-shimeji": "/repo" }}, "prefixes": {{ "glep-shimeji": "GLP" }} }}"#,
+            json_path(&notes)
+        ),
+    )
+    .unwrap();
+    let args = parse_args(&[
+        "cancel",
+        "--id",
+        "GLP-0001",
+        "--config-path",
+        &cfg.to_string_lossy(),
+        "--notes-dir",
+        &notes.to_string_lossy(),
+    ]);
+
+    let err = pwk::run_args(&args).unwrap_err();
+
+    assert_eq!(err, "--report is required for cancel.");
+}
+
+#[test]
+fn cancel_with_report_marks_item_cancelled_and_rotates_done_queue() {
+    let stage = stage_dir();
+    let notes = stage.join("notes");
+    let proj = notes.join("glep-shimeji");
+    fs::create_dir_all(&proj).unwrap();
+    fs::write(
+        proj.join("GLP-0001.md"),
+        "---\nstatus: active\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\nadd startup toggle\n",
+    )
+    .unwrap();
+    fs::write(
+        proj.join("glep-shimeji.md"),
+        "# glep-shimeji\n\n- [ ] [[GLP-0001|tray gui]]\n",
+    )
+    .unwrap();
+    let cfg = stage.join("config.json");
+    fs::write(
+        &cfg,
+        format!(
+            r#"{{ "notesDir": "{}", "projects": {{ "glep-shimeji": "/repo" }}, "prefixes": {{ "glep-shimeji": "GLP" }} }}"#,
+            json_path(&notes)
+        ),
+    )
+    .unwrap();
+    let args = parse_args(&[
+        "cancel",
+        "--id",
+        "GLP-0001",
+        "--report",
+        "  tried the implementation\nblocked by upstream scope  ",
+        "--json",
+        "--config-path",
+        &cfg.to_string_lossy(),
+        "--notes-dir",
+        &notes.to_string_lossy(),
+        "--date",
+        "2026-01-01",
+    ]);
+
+    let out = pwk::run_args(&args).unwrap();
+
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v["id"], "GLP-0001");
+    assert_eq!(v["status"], "cancelled");
+    let item = fs::read_to_string(proj.join("GLP-0001.md")).unwrap();
+    assert!(
+        item.contains("status: cancelled\ncompleted: 2026-01-01\n"),
+        "got: {item}"
+    );
+    assert!(
+        item.ends_with("\n### Report\n\ntried the implementation blocked by upstream scope\n"),
+        "got: {item}"
+    );
+    let index = fs::read_to_string(proj.join("glep-shimeji.md")).unwrap();
+    assert_eq!(
+        index,
+        "# glep-shimeji\n\n- [x] [[GLP-0001]] ✅ 2026-01-01\n"
+    );
+}
+
 fn remove_stage() -> (
     std::path::PathBuf,
     std::path::PathBuf,
@@ -1229,15 +1624,12 @@ fn route_create_verbs_error_with_add_hint() {
     let notes_s = notes.to_string_lossy();
 
     for (words, expected) in [
-        (&["add"][..], r#"Use: pwf pw add <project> "<prompt>""#),
+        (&["add"][..], r#"Use: pwf add <project> "<prompt>""#),
         (
             &["add-titled", "glep-shimeji"][..],
-            r#"Use: pwf pw add <project> "<prompt>""#,
+            r#"Use: pwf add <project> "<prompt>""#,
         ),
-        (
-            &["launch-claude"][..],
-            "Usage: pwf pw launch-claude --id <id>",
-        ),
+        (&["launch-claude"][..], "Usage: pwf launch-claude --id <id>"),
     ] {
         let mut argv = vec!["route", "--config-path", &cfg_s, "--notes-dir", &notes_s];
         argv.extend(words);
@@ -1334,7 +1726,7 @@ fn launch_action_returns_spec_for_existing_item() {
     assert_eq!(v["target"]["type"], "project");
     let launch_prompt = v["launchPrompt"].as_str().unwrap();
     assert!(
-        launch_prompt.contains("pwf pw check --id GLP-0001 --report"),
+        launch_prompt.contains("pwf check --id GLP-0001 --report"),
         "launch prompt should teach report closeout: {launch_prompt}"
     );
 }

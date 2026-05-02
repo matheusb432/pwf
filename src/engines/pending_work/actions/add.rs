@@ -126,7 +126,7 @@ pub(in crate::engines::pending_work) fn add_pending_work_item(
     // Text form
     let mut out = format!("ADDED PWF TASK [{id}] {project_name} :: {session}\n");
     out.push_str(&format!("  file: {}\n", item_path.display()));
-    out.push_str(&format!("  launch with: pwf pw launch --id {id}\n"));
+    out.push_str(&format!("  launch with: pwf launch --id {id}\n"));
     Ok(out)
 }
 
@@ -206,9 +206,7 @@ mod tests {
             err,
             PendingWorkError::Store(StoreError::AddWriteItemFile { .. })
         ));
-        assert!(err
-            .to_string()
-            .starts_with("Failed to write item file: "));
+        assert!(err.to_string().starts_with("Failed to write item file: "));
     }
 
     #[test]
@@ -225,8 +223,6 @@ mod tests {
             err,
             PendingWorkError::Store(StoreError::AddWriteIndexFile { .. })
         ));
-        assert!(err
-            .to_string()
-            .starts_with("Failed to write index file: "));
+        assert!(err.to_string().starts_with("Failed to write index file: "));
     }
 }

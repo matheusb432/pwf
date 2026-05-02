@@ -4,3 +4,7 @@
 /.artifacts
 /.claude/.active-transcript
 .claude/skills
+
+
+/.worktrees/**
+!/.worktrees/.gitkeep

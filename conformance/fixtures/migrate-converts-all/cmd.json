@@ -1,6 +1,0 @@
-{
-  "engine": "migrate",
-  "args": [],
-  "compareTree": "notes",
-  "compareStdout": false
-}

@@ -1,8 +1,10 @@
-// Top-level dispatcher for `pwf pw <verb>`. The `route` verb is delegated to the
+// Top-level dispatcher for `pwf <verb>`. The `route` verb is delegated to the
 // `pw` word-router in `route`; everything else dispatches here.
 
+use super::actions::list::ListScope;
 use super::actions::{
-    NewItemSpec, add_pending_work_item, run_check, run_list_action, run_remove, run_update,
+    NewItemSpec, add_pending_work_item, run_cancel, run_check, run_list_action, run_remove,
+    run_update,
 };
 use super::claude::{RealProbe, invoke_claude_launch, verify_json_with_probe};
 use super::continue_prompt::{continue_handoff_prompt, continue_plan_prompt};
@@ -79,13 +81,13 @@ pub(in crate::engines::pending_work) fn run_typed(
             } else {
                 None
             };
+            let scope = ListScope::from_flags(args.human, args.future, args.all)?;
             Ok(run_list_action(
                 &cfg,
                 only_project.as_deref(),
                 args.json,
                 args.long,
-                args.future,
-                args.human,
+                scope,
                 args.number,
             )?)
         }
@@ -124,6 +126,8 @@ pub(in crate::engines::pending_work) fn run_typed(
         }
 
         Action::Check => Ok(run_check(&cfg, args)?),
+
+        Action::Cancel => Ok(run_cancel(&cfg, args)?),
 
         Action::Resolve => {
             let id = require_id(args, "resolve")?;
@@ -206,7 +210,7 @@ fn require_id<'args>(
         .ok_or(errors::PendingWorkError::MissingId { action })
 }
 
-/// `pwf pw add` — create a pending-work item. The prompt comes from positional
+/// `pwf add` — create a pending-work item. The prompt comes from positional
 /// words, the repo's newest handoff (`--continue-handoff`), or a plan path
 /// (`--continue <path>`); the clap layer makes those three mutually exclusive.
 fn run_add(cfg: &Config, args: &Args, date: &str) -> Result<String, errors::PendingWorkError> {

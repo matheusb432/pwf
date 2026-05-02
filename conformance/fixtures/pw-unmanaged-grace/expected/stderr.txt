@@ -1,1 +1,0 @@
-Error: Project 'rogue-project' has no work-item prefix in config/pending-work.json (prefixes).

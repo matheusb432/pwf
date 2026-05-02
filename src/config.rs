@@ -4,7 +4,7 @@ use std::path::Path;
 use thiserror::Error;
 
 /// Errors at the config boundary. Display text is frozen to the pre-clap strings
-/// so engine stderr stays byte-identical (the conformance gate).
+/// so existing CLI diagnostics stay stable.
 #[derive(Debug, Error)]
 pub enum ConfigError {
     /// The config file could not be read at the given path.
@@ -185,7 +185,7 @@ mod tests {
     #[test]
     fn config_error_display_is_byte_identical_to_legacy_strings() {
         // PR2 invariant: typed errors must Display to the exact pre-refactor text
-        // so stderr stays byte-identical (conformance gate).
+        // so stderr stays byte-identical for callers.
         let not_found = ConfigError::NotFound("/x/pending-work.json".to_string());
         assert_eq!(
             not_found.to_string(),

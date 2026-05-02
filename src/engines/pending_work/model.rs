@@ -39,6 +39,7 @@ pub enum Action {
     Verify,
     LaunchClaude,
     Check,
+    Cancel,
     Launch,
     Resolve,
     Remove,
@@ -53,6 +54,7 @@ const CLEAN: &str = "clean";
 const VERIFY: &str = "verify";
 const LAUNCH_CLAUDE: &str = "launch-claude";
 const CHECK: &str = "check";
+const CANCEL: &str = "cancel";
 const LAUNCH: &str = "launch";
 const RESOLVE: &str = "resolve";
 const REMOVE: &str = "remove";
@@ -69,6 +71,7 @@ impl Action {
             Action::Verify => VERIFY,
             Action::LaunchClaude => LAUNCH_CLAUDE,
             Action::Check => CHECK,
+            Action::Cancel => CANCEL,
             Action::Launch => LAUNCH,
             Action::Resolve => RESOLVE,
             Action::Remove => REMOVE,
@@ -89,6 +92,7 @@ impl FromStr for Action {
             VERIFY => Ok(Action::Verify),
             LAUNCH_CLAUDE => Ok(Action::LaunchClaude),
             CHECK => Ok(Action::Check),
+            CANCEL => Ok(Action::Cancel),
             LAUNCH => Ok(Action::Launch),
             RESOLVE => Ok(Action::Resolve),
             REMOVE => Ok(Action::Remove),

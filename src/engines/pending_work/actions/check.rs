@@ -14,14 +14,67 @@ use crate::config::Config;
 use regex::Regex;
 use std::path::Path;
 
+#[derive(Clone, Copy)]
+enum CloseAction {
+    Check,
+    Cancel,
+}
+
+impl CloseAction {
+    fn verb(self) -> &'static str {
+        match self {
+            CloseAction::Check => "check",
+            CloseAction::Cancel => "cancel",
+        }
+    }
+
+    fn frontmatter_status(self) -> &'static str {
+        match self {
+            CloseAction::Check => "done",
+            CloseAction::Cancel => "cancelled",
+        }
+    }
+
+    fn json_status(self) -> &'static str {
+        match self {
+            CloseAction::Check => "checked",
+            CloseAction::Cancel => "cancelled",
+        }
+    }
+
+    fn past_tense(self) -> &'static str {
+        match self {
+            CloseAction::Check => "Checked",
+            CloseAction::Cancel => "Cancelled",
+        }
+    }
+
+    fn requires_report(self) -> bool {
+        matches!(self, CloseAction::Cancel)
+    }
+}
+
 pub(in crate::engines::pending_work) fn run_check(
     cfg: &Config,
     args: &Args,
 ) -> Result<String, PendingWorkError> {
-    let id = args
-        .id
-        .as_deref()
-        .ok_or(PendingWorkError::MissingId { action: "check" })?;
+    run_close(cfg, args, CloseAction::Check)
+}
+
+pub(in crate::engines::pending_work) fn run_cancel(
+    cfg: &Config,
+    args: &Args,
+) -> Result<String, PendingWorkError> {
+    run_close(cfg, args, CloseAction::Cancel)
+}
+
+fn run_close(cfg: &Config, args: &Args, action: CloseAction) -> Result<String, PendingWorkError> {
+    let id = args.id.as_deref().ok_or(PendingWorkError::MissingId {
+        action: action.verb(),
+    })?;
+    if action.requires_report() && args.report.is_none() {
+        return Err(PendingWorkError::MissingCancelReport);
+    }
     let item = find_pending_item(cfg, id)?;
     let date = stamp_date(&args.date);
 
@@ -34,17 +87,17 @@ pub(in crate::engines::pending_work) fn run_check(
         } else {
             content
         };
-        // Record commit-range provenance only when supplied — the default path stays
-        // byte-identical so the frozen conformance goldens don't move (PWF-0017).
+        // Record commit-range provenance only when supplied so the default check
+        // output stays unchanged (PWF-0017).
         let commits_value = commits::frontmatter_value(&args.commits);
         let content = match commits_value.as_deref() {
             Some(v) => set_commits_text(&content, Some(v)),
             None => content,
         };
-        let updated = set_status_text(&content, "done", &date);
+        let updated = set_status_text(&content, action.frontmatter_status(), &date);
         ObsidianStore::write_item_file(item_path, &updated)?;
 
-        // Keep the item in the index as a capped, rotating done-queue (PWF-0026).
+        // Keep closed items in the index as a capped, rotating done-queue (PWF-0026).
         let notes_dir = cfg.notes_dir_for(&item.project);
         let index_path = project_index_path(notes_dir, &item.project);
         if index_path.exists() {
@@ -102,14 +155,17 @@ pub(in crate::engines::pending_work) fn run_check(
                 "project": item.project,
                 "session": item.session,
                 "note": file,
-                "status": "checked",
+                "status": action.json_status(),
                 "reviewTask": review_obj,
             });
             return Ok(serde_json::to_string_pretty(&obj).unwrap());
         }
         let mut out = format!(
-            "Checked {} ({} :: {})\n",
-            item.id, item.project, item.session
+            "{} {} ({} :: {})\n",
+            action.past_tense(),
+            item.id,
+            item.project,
+            item.session
         );
         if let Some(review) = review {
             out.push_str(&review);
@@ -157,13 +213,16 @@ pub(in crate::engines::pending_work) fn run_check(
             "session": item.session,
             "note": item.note,
             "line": item.line,
-            "status": "checked"
+            "status": action.json_status()
         });
         return Ok(serde_json::to_string_pretty(&obj).unwrap());
     }
     Ok(format!(
-        "Checked {} ({} :: {})\n",
-        item.id, item.project, item.session
+        "{} {} ({} :: {})\n",
+        action.past_tense(),
+        item.id,
+        item.project,
+        item.session
     ))
 }
 

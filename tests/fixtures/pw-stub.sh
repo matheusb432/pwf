@@ -1,8 +1,5 @@
 #!/bin/sh
-# Conformance stub for the handoff `--pending-work-script` seam: a minimal external
-# pending-work allocator that speaks pwf's canonical CLI protocol
-# (`<verb> --config-path … --id … --json --date … <words…>`). `add` emits a fixed
-# id as JSON; `check` is a no-op. Both append to $HANDOFF_STUB_LOG when set.
+# Minimal pending-work stub for handoff tests that exercise --pending-work-script.
 set -u
 
 verb=${1:-}
@@ -13,9 +10,9 @@ words=
 while [ $# -gt 0 ]; do
   case $1 in
     --id) shift; id=${1:-} ;;
-    --config-path|--date) shift ;; # consume + ignore the value
+    --config-path|--date) shift ;;
     --json) : ;;
-    --*) : ;;                       # ignore any other flag
+    --*) : ;;
     *) words="${words:+$words }$1" ;;
   esac
   shift

@@ -156,7 +156,7 @@ mod tests {
 
     #[test]
     fn add_link_below_leading_h1() {
-        // Frozen golden (pw-route-adds-handoff): item lands below the H1 title.
+        // Preserve migrated behavior: item lands below the H1 title.
         assert_eq!(
             add_link_to_index("# glep-shimeji\n", NEW),
             "# glep-shimeji\n\n- [ ] [[GLP-0003|new task]]\n"

@@ -1,5 +1,4 @@
-//! pw-workflow engines: pending-work, handoff, and migrate. Behavior is pinned by
-//! the language-neutral golden harness in `conformance/`.
+//! pw-workflow engines: pending-work, handoff, and migrate.
 #![warn(clippy::all)]
 
 pub mod cli;

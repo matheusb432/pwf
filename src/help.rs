@@ -7,10 +7,11 @@
 // Terse help: verbs + required args only, no prose/recipe-hints/route-shortcuts.
 // Tuned for AI agents driving the engine (the skills point them here, not at the
 // rich `--help`), so keep it token-lean.
-const PW_TERSE: &str = r#"pw [<project>]   (alias: pending-work; bare pw lists all; pw <project> [-n <N>] [--long|--future|--human] lists that project)
-  list [-n <N>] [--long] [--future] [--human]
+const PW_TERSE: &str = r#"pw [<project>]   (alias: pending-work; bare pw lists all; pw <project> [-n <N>] [--long|--future|--human|--all] lists that project)
+  list [-n <N>] [--long] [--future] [--human] [--all]
   add <project> <prompt> [--title] [--human] [--section <s>] [--prereq <id>] [--continue-handoff] [--continue <path>]
   check --id [--report] [--commits <range>] [--review]
+  cancel --id --report [--commits <range>] [--review]
   update --id [--prompt] [--title] [--prereq <id>] [--clear-prereq]
   resolve --id [--json]
   clean [--dry-run|--force]
@@ -28,6 +29,43 @@ const HANDOFF_TERSE: &str = r#"handoff <verb> [--repo-root <path>]
 
 const MIGRATE_TERSE: &str =
     r#"migrate [--config-path <path>]   (migrates flat <project>.md into <project>/<project>.md)"#;
+
+/// Curated top-level rich help. Per-command and per-engine detail still comes
+/// from clap (`pwf <verb> --help`, `pwf handoff --help`); this page is the
+/// readable map for the default pending-work surface plus the non-default engines.
+pub fn rich_top_help() -> &'static str {
+    r#"pwf - pending-work / handoff / migrate
+
+USAGE
+  pwf <pending-work command> [args]
+  pwf <project> [-n <N>] [--long|--future|--human|--all]
+  pwf <engine> <command> [args]
+
+PENDING-WORK COMMANDS (default engine)
+  add <project> <prompt>       Create a task
+  list                         List open tasks
+  <project>                    List one project's open tasks
+  check --id <id>              Mark a task done
+  cancel --id <id> --report    Mark a task cancelled
+  update --id <id>             Replace task text/title or prereqs
+  resolve --id <id>            Print the task note path
+  clean                        Archive or clear done tasks
+  verify --id <id>             Probe whether a task can launch
+  launch --id <id>             Emit a launch spec
+  launch-claude --id <id>      Emit a direct claude launch
+  remove --id <id>             Delete a task note and index link
+
+ENGINES
+  handoff                      Per-repo handoff ledgers
+  migrate                      Migrate a flat project note into the folder model
+
+HELP
+  pwf <command> --help         Detailed pending-work command help
+  pwf handoff --help           Handoff command help
+  pwf migrate --help           Migrate command help
+  pwf --help --terse           Token-lean agent help
+"#
+}
 
 /// Terse, token-lean help for one engine (verbs + required args). `None` for an
 /// unknown engine; the `pw`/`pending-work` alias resolves via `Engine::from_str`.
@@ -84,6 +122,7 @@ mod tests {
         // Keeps verbs + required args...
         assert!(terse.contains("add <project> <prompt>"));
         assert!(terse.contains("check --id [--report]"));
+        assert!(terse.contains("cancel --id --report"));
         assert!(!terse.contains("launch-orca"), "orca verbs are removed");
         assert!(terse.contains("resolve --id"));
         // ...but drops human-only prose: descriptions, recipe hints, route shortcuts.

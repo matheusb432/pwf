@@ -1,9 +1,10 @@
-// `pw` word-based routing: the read-only sub-dispatcher behind `pwf pw route` (and
-// bare `pwf pw <words…>`). Create paths were removed in PWF-0034 — the only
-// create form is `pwf pw add <project> "<prompt>"`; bare words error with a hint.
+// `pw` word-based routing: the read-only sub-dispatcher behind `pwf route` (and
+// bare `pwf <words…>`). Create paths were removed in PWF-0034 — the only
+// create form is `pwf add <project> "<prompt>"`; bare words error with a hint.
 
+use super::actions::list::ListScope;
 use super::actions::run_list_action;
-use super::claude::{invoke_claude_launch, verify_json_with_probe, RealProbe};
+use super::claude::{RealProbe, invoke_claude_launch, verify_json_with_probe};
 use super::errors::PendingWorkError;
 use super::query::{find_pending_item, resolve_managed_project_name_typed};
 use crate::cli::Args;
@@ -19,15 +20,8 @@ pub(super) fn run_route(cfg: &Config, args: &Args, date: &str) -> Result<String,
 
     if route_words.is_empty() {
         // list all
-        return run_list_action(
-            cfg,
-            None,
-            args.json,
-            args.long,
-            args.future,
-            args.human,
-            args.number,
-        );
+        let scope = ListScope::from_flags(args.human, args.future, args.all)?;
+        return run_list_action(cfg, None, args.json, args.long, scope, args.number);
     }
 
     let verb = route_words[0].to_ascii_lowercase();
@@ -81,13 +75,13 @@ pub(super) fn run_route(cfg: &Config, args: &Args, date: &str) -> Result<String,
     // project; trailing words error (create is `pw add` only — no silent route create).
     let project_name = resolve_managed_project_name_typed(cfg, &verb)?;
     if route_words.len() == 1 {
+        let scope = ListScope::from_flags(args.human, args.future, args.all)?;
         return run_list_action(
             cfg,
             Some(&project_name),
             args.json,
             args.long,
-            args.future,
-            args.human,
+            scope,
             args.number,
         );
     }
@@ -136,6 +130,6 @@ mod tests {
             err,
             errors::PendingWorkError::RouteLaunchClaudeUsage
         ));
-        assert_eq!(err.to_string(), "Usage: pwf pw launch-claude --id <id>");
+        assert_eq!(err.to_string(), "Usage: pwf launch-claude --id <id>");
     }
 }

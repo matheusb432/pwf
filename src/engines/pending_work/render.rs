@@ -8,7 +8,7 @@ fn more_footer(hidden: usize) -> String {
     if hidden == 0 {
         return String::new();
     }
-    format!("... and {hidden} more; run 'pwf pw -n 0' to show all")
+    format!("... and {hidden} more; run 'pwf -n 0' to show all")
 }
 
 pub(super) fn render_list(
@@ -17,6 +17,7 @@ pub(super) fn render_list(
     only_project: Option<&str>,
     json: bool,
     long: bool,
+    grouped: bool,
 ) -> String {
     if json {
         return serde_json::to_string_pretty(result.items()).unwrap();
@@ -28,9 +29,13 @@ pub(super) fn render_list(
         return format!("No open pending-work prompts found in {target}.\n");
     }
     let mut out = String::new();
-    let last_idx = result.items().len() - 1;
-    for (idx, item) in result.items().iter().enumerate() {
-        render_list_item(&mut out, item, cfg, long, idx == last_idx);
+    if grouped {
+        render_grouped_list(&mut out, result.items(), cfg, long);
+    } else {
+        let last_idx = result.items().len() - 1;
+        for (idx, item) in result.items().iter().enumerate() {
+            render_list_item(&mut out, item, cfg, long, idx == last_idx);
+        }
     }
     if result.hidden() > 0 {
         // ? Short mode leaves the last item without a trailing newline (preserved when
@@ -43,8 +48,71 @@ pub(super) fn render_list(
     out
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RenderGroup {
+    Default,
+    LowPrio,
+    Human,
+    Future,
+    Other,
+}
+
+impl RenderGroup {
+    fn from_section(section: Option<&str>) -> Self {
+        match section {
+            None => Self::Default,
+            Some("Low-prio") => Self::LowPrio,
+            Some("Human") => Self::Human,
+            Some("Future") => Self::Future,
+            Some(_) => Self::Other,
+        }
+    }
+
+    fn title(self) -> Option<&'static str> {
+        match self {
+            Self::Default => None,
+            Self::LowPrio => Some("Low-prio"),
+            Self::Human => Some("Human"),
+            Self::Future => Some("Future"),
+            Self::Other => Some("Other"),
+        }
+    }
+}
+
+const RENDER_GROUPS: [RenderGroup; 5] = [
+    RenderGroup::Default,
+    RenderGroup::LowPrio,
+    RenderGroup::Human,
+    RenderGroup::Future,
+    RenderGroup::Other,
+];
+
+fn render_grouped_list(out: &mut String, items: &[OpenItem], cfg: &Config, long: bool) {
+    let mut rendered_any = false;
+    for group in RENDER_GROUPS {
+        let group_items: Vec<&OpenItem> = items
+            .iter()
+            .filter(|item| RenderGroup::from_section(item.section.as_deref()) == group)
+            .collect();
+        if group_items.is_empty() {
+            continue;
+        }
+        if rendered_any {
+            out.push_str("\n\n");
+        }
+        if let Some(title) = group.title() {
+            out.push_str(title);
+            out.push('\n');
+        }
+        for (idx, item) in group_items.iter().enumerate() {
+            render_list_item(out, item, cfg, long, idx + 1 == group_items.len());
+        }
+        rendered_any = true;
+    }
+}
+
 fn render_list_item(out: &mut String, item: &OpenItem, cfg: &Config, long: bool, last: bool) {
-    let formatted = if last {
+    let formatted = if last && !long {
         format!("[{}] {} :: {}", item.id, item.project, item.session)
     } else {
         format!("[{}] {} :: {}\n", item.id, item.project, item.session)

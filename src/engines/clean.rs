@@ -189,8 +189,8 @@ fn plan_project(project: &str, index_path: &Path, date: &str) -> Result<ProjectP
             });
             continue;
         }
-        let raw = std::fs::read_to_string(&item_path)
-            .map_err(|source| CleanError::ReadItemFile {
+        let raw =
+            std::fs::read_to_string(&item_path).map_err(|source| CleanError::ReadItemFile {
                 path: item_path.clone(),
                 source,
             })?;

@@ -1,6 +1,6 @@
 // Builders for the "continue" task prompts. Relocated from the route word-grammar
 // (PWF-0034) so they survive only as explicit `add` flags. The output strings are
-// asserted byte-for-byte by the conformance handoff fixture — do not reword them.
+// asserted byte-for-byte by Rust tests — do not reword them casually.
 
 use super::naming::pathdiff_forward;
 use super::parse::newest_handoff_typed;

@@ -1,6 +1,0 @@
-{
-  "engine": "handoff",
-  "args": ["done", "--id", "TST-0001", "--json"],
-  "compareTree": "repo",
-  "compareStdout": true
-}
