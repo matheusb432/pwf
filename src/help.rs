@@ -13,10 +13,10 @@ const PW_TERSE: &str = r#"pw [<project>]   (alias: pending-work; bare pw lists a
   check --id [--report] [--commits <range>] [--review]
   cancel --id --report [--commits <range>] [--review]
   update --id [--prompt] [--title] [--prereq <id>] [--clear-prereq]
-  resolve --id [--json]
+  resolve --id [--show]
   clean [--dry-run|--force]
   verify [--id]
-  launch --id [--json]
+  launch --id
   launch-claude --id [--force]
   remove --id"#;
 

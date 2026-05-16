@@ -69,16 +69,6 @@ pub(in crate::engines::pending_work) fn run_update(
 
     ObsidianStore::write_item_file(item_path, &content)?;
 
-    if args.json {
-        let obj = serde_json::json!({
-            "id": item.id,
-            "project": item.project,
-            "session": new_title,
-            "note": item_file,
-            "status": "updated"
-        });
-        return Ok(serde_json::to_string_pretty(&obj).unwrap());
-    }
     Ok(format!(
         "Updated {} ({} :: {})\n",
         item.id, item.project, new_title

@@ -25,7 +25,8 @@ pub struct Args {
     pub model: Option<String>,
     pub thinking: Option<String>,
     pub pending_work_script: Option<String>,
-    pub json: bool,
+    // ? resolve: emit the note as markdown (frontmatter minus exec-irrelevant keys + body).
+    pub show: bool,
     pub no_commit: bool,
     pub long: bool,
     pub force: bool,

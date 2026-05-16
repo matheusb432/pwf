@@ -15,10 +15,6 @@ _preflight:
 _require-rg:
     @command -v rg >/dev/null 2>&1 || { printf '%s\n' "ripgrep (rg) is required for error smell checks." >&2; exit 127; }
 
-# Print the pwf engine's command reference.
-help: _preflight
-    @"{{ _bin }}" --help
-
 # Build the release binary at target/release/pwf.exe.
 build:
     cargo build --release

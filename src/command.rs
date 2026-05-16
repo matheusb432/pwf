@@ -50,9 +50,6 @@ pub struct PwCommon {
     /// Date stamp (YYYY-MM-DD); defaults to today.
     #[arg(long)]
     pub date: Option<String>,
-    /// Emit machine-readable JSON.
-    #[arg(long)]
-    pub json: bool,
 }
 
 /// pending-work verbs (`pwf <verb>`).
@@ -166,10 +163,13 @@ pub enum PwAction {
         #[command(flatten)]
         common: PwCommon,
     },
-    /// Print an item's note path (--json adds id/project/title).
+    /// Print an item's note path; `--show` prints the note as markdown instead.
     Resolve {
         #[arg(long)]
         id: Option<String>,
+        /// Emit the task note as markdown (frontmatter minus exec-irrelevant keys + body).
+        #[arg(long)]
+        show: bool,
         #[command(flatten)]
         common: PwCommon,
     },
@@ -287,9 +287,6 @@ pub struct HandoffCommon {
     /// Path to a pending-work allocation script (testing).
     #[arg(long)]
     pub pending_work_script: Option<String>,
-    /// Emit machine-readable JSON.
-    #[arg(long)]
-    pub json: bool,
 }
 
 /// handoff verbs (`pwf handoff <verb>`).
@@ -459,7 +456,10 @@ fn apply_pw_common(a: &mut EngineArgs, c: PwCommon) {
     a.config_path = c.config_path;
     a.notes_dir = c.notes_dir;
     a.date = c.date;
-    a.json = c.json;
+}
+
+fn normalize_pending_work_id(id: Option<String>) -> Option<String> {
+    id.map(|id| id.to_ascii_uppercase())
 }
 
 fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
@@ -511,7 +511,7 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             review,
             common,
         } => {
-            a.id = id;
+            a.id = normalize_pending_work_id(id);
             a.report = report;
             a.commits = commits;
             a.review = review;
@@ -525,7 +525,7 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             review,
             common,
         } => {
-            a.id = id;
+            a.id = normalize_pending_work_id(id);
             a.report = report;
             a.commits = commits;
             a.review = review;
@@ -540,7 +540,7 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             clear_prereq,
             common,
         } => {
-            a.id = id;
+            a.id = normalize_pending_work_id(id);
             a.prompt = prompt;
             a.title = title;
             a.prereq = prereq;
@@ -548,8 +548,9 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             apply_pw_common(a, common);
             PendingWorkAction::Update
         }
-        PwAction::Resolve { id, common } => {
-            a.id = id;
+        PwAction::Resolve { id, show, common } => {
+            a.id = normalize_pending_work_id(id);
+            a.show = show;
             apply_pw_common(a, common);
             PendingWorkAction::Resolve
         }
@@ -566,7 +567,7 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             PendingWorkAction::Clean
         }
         PwAction::Verify { id, common } => {
-            a.id = id;
+            a.id = normalize_pending_work_id(id);
             apply_pw_common(a, common);
             PendingWorkAction::Verify
         }
@@ -576,14 +577,14 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             thinking,
             common,
         } => {
-            a.id = id;
+            a.id = normalize_pending_work_id(id);
             a.model = model;
             a.thinking = thinking;
             apply_pw_common(a, common);
             PendingWorkAction::Launch
         }
         PwAction::LaunchClaude { id, force, common } => {
-            a.id = id;
+            a.id = normalize_pending_work_id(id);
             a.force = force;
             apply_pw_common(a, common);
             PendingWorkAction::LaunchClaude
@@ -625,7 +626,7 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             PendingWorkAction::New
         }
         PwAction::Remove { id, common } => {
-            a.id = id;
+            a.id = normalize_pending_work_id(id);
             apply_pw_common(a, common);
             PendingWorkAction::Remove
         }
@@ -638,7 +639,6 @@ fn apply_handoff_common(a: &mut EngineArgs, c: HandoffCommon) {
     a.date = c.date;
     a.no_commit = c.no_commit;
     a.pending_work_script = c.pending_work_script;
-    a.json = c.json;
 }
 
 fn fill_handoff(a: &mut EngineArgs, action: HandoffAction) {
@@ -752,11 +752,10 @@ mod tests {
 
     #[test]
     fn route_shorthand_forwards_combined_flags() {
-        let a = pw_args(&["pw", "pwf", "--long", "--future", "--json"]);
+        let a = pw_args(&["pw", "pwf", "--long", "--future"]);
         assert_eq!(a.words, vec!["pwf"]);
         assert!(a.long);
         assert!(a.future);
-        assert!(a.json);
     }
 
     // ! PWF-0020: `-n`/`--number` must reach the list both via the `pw <project>`
@@ -807,6 +806,12 @@ mod tests {
         assert_eq!(a.action.as_deref(), Some("cancel"));
         assert_eq!(a.id.as_deref(), Some("GLP-0001"));
         assert_eq!(a.report.as_deref(), Some("blocked by changed scope"));
+    }
+
+    #[test]
+    fn pending_work_id_flags_parse_to_uppercase() {
+        let a = pw_args(&["pw", "check", "--id", "gLp-0001"]);
+        assert_eq!(a.id.as_deref(), Some("GLP-0001"));
     }
 
     #[test]

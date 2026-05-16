@@ -15,13 +15,9 @@ pub(super) fn render_list(
     result: &ListResult,
     cfg: &Config,
     only_project: Option<&str>,
-    json: bool,
     long: bool,
     grouped: bool,
 ) -> String {
-    if json {
-        return serde_json::to_string_pretty(result.items()).unwrap();
-    }
     if result.items().is_empty() {
         let target = only_project
             .map(|p| format!("{p} in {}", cfg.notes_dir))

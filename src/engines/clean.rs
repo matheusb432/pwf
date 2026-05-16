@@ -81,17 +81,14 @@ pub fn resolve_completed(
 }
 
 /// Per-item outcome of a clean sweep.
-#[derive(Debug, Clone, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct CleanResult {
     pub id: String,
     pub project: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub completed: Option<String>,
     pub note: String,
     pub item_file: String,
     pub status: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub issue: Option<String>,
 }
 
@@ -269,7 +266,7 @@ fn render_text(plans: &[ProjectPlan], dry_run: bool) -> String {
 /// managed projects.
 ///
 /// notes-pro is git-tracked, so writes do NOT leave `.bak` files. A real
-/// (non-dry-run) clean is gated: `--dry-run` previews; `--json`/`--force` apply
+/// (non-dry-run) clean is gated: `--dry-run` previews; `--force` applies
 /// without asking; an interactive run prints the plan and asks to confirm; a
 /// non-interactive run without `--force` refuses rather than mutate silently.
 pub fn run_clean(
@@ -277,11 +274,10 @@ pub fn run_clean(
     only_project: Option<&str>,
     date: &str,
     dry_run: bool,
-    json: bool,
     force: bool,
     confirmer: &dyn Confirm,
 ) -> Result<String, String> {
-    run_clean_typed(cfg, only_project, date, dry_run, json, force, confirmer)
+    run_clean_typed(cfg, only_project, date, dry_run, force, confirmer)
         .map_err(|error| error.to_string())
 }
 
@@ -290,7 +286,6 @@ pub(crate) fn run_clean_typed(
     only_project: Option<&str>,
     date: &str,
     dry_run: bool,
-    json: bool,
     force: bool,
     confirmer: &dyn Confirm,
 ) -> Result<String, CleanError> {
@@ -325,7 +320,7 @@ pub(crate) fn run_clean_typed(
 
     // Confirmation gate — only when a real run would actually mutate something.
     if !dry_run && cleanable > 0 {
-        let apply = if json || force {
+        let apply = if force {
             true
         } else if confirmer.interactive() {
             eprint!("{}", render_text(&plans, true));
@@ -355,11 +350,6 @@ pub(crate) fn run_clean_typed(
         }
     }
 
-    if json {
-        let flat: Vec<&CleanResult> = plans.iter().flat_map(|p| p.results.iter()).collect();
-        return Ok(serde_json::to_string_pretty(&flat).unwrap());
-    }
-
     let mut out = render_text(&plans, dry_run);
     if out.is_empty() {
         let target = only_project
@@ -373,7 +363,85 @@ pub(crate) fn run_clean_typed(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config;
     use std::error::Error;
+
+    fn nanos() -> u128 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .subsec_nanos() as u128
+    }
+
+    /// Build a minimal Config pointing at a temp notes dir with one done link.
+    fn stage_clean_fixture() -> (std::path::PathBuf, config::Config) {
+        let stage = std::env::temp_dir().join(format!("pwf_clean_{}", nanos()));
+        let notes = stage.join("notes");
+        let proj = notes.join("cfg");
+        std::fs::create_dir_all(&proj).unwrap();
+        // Index has one checked wikilink.
+        std::fs::write(
+            proj.join("cfg.md"),
+            "- [x] [[CFG-0001|test item]] ✅ 2026-06-01\n",
+        )
+        .unwrap();
+        // Backing item file.
+        std::fs::write(
+            proj.join("CFG-0001.md"),
+            "---\nstatus: active\ntitle: test item\nproject: cfg\ncreated: 2026-01-01\n---\n\nbody\n",
+        )
+        .unwrap();
+        let cfg = config::from_json(
+            &format!(
+                r#"{{ "notesDir": "{}", "projects": {{ "cfg": "/repo" }}, "prefixes": {{ "cfg": "CFG" }} }}"#,
+                notes.to_string_lossy().replace('\\', "\\\\")
+            ),
+            None,
+        )
+        .unwrap();
+        (stage, cfg)
+    }
+
+    #[test]
+    fn noninteractive_clean_without_force_errors() {
+        // Non-interactive + no --force must refuse rather than mutate silently.
+        let (_stage, cfg) = stage_clean_fixture();
+        let err = run_clean_typed(
+            &cfg,
+            None,
+            "2026-06-20",
+            false,
+            false,
+            &FakeConfirm {
+                interactive: false,
+                answer: false,
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(err, CleanError::NoTtyToConfirm));
+    }
+
+    #[test]
+    fn force_applies_and_returns_text_summary() {
+        // --force bypasses the confirm gate and returns the CLEANED text line.
+        let (_stage, cfg) = stage_clean_fixture();
+        let out = run_clean_typed(
+            &cfg,
+            None,
+            "2026-06-20",
+            false,
+            true, // force
+            &FakeConfirm {
+                interactive: false,
+                answer: false,
+            },
+        )
+        .unwrap();
+        assert!(
+            out.contains("CLEANED"),
+            "expected CLEANED in output, got: {out}"
+        );
+    }
 
     #[test]
     fn finds_checked_wikilinks_only() {

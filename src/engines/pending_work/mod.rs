@@ -24,7 +24,7 @@ mod run;
 mod section;
 mod text;
 
-pub use claude::{ClaudeProbe, FakeProbe, RealProbe, verify_json_with_probe};
+pub use claude::{ClaudeProbe, FakeProbe, RealProbe, verify_text_with_probe};
 pub use domain::commands::PendingWorkCommand;
 pub use index::{
     add_link_to_index, add_section_block, find_section_index, remove_index_link, section_exists,

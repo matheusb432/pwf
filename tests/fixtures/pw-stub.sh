@@ -11,7 +11,6 @@ while [ $# -gt 0 ]; do
   case $1 in
     --id) shift; id=${1:-} ;;
     --config-path|--date) shift ;;
-    --json) : ;;
     --*) : ;;
     *) words="${words:+$words }$1" ;;
   esac
@@ -21,7 +20,7 @@ done
 case $verb in
   add)
     if [ -n "${HANDOFF_STUB_LOG:-}" ]; then printf 'add %s\n' "$words" >>"$HANDOFF_STUB_LOG"; fi
-    printf '{"id":"TST-0001"}\n'
+    printf 'ADDED PWF TASK [TST-0001] test-project :: continue managed flow\n'
     ;;
   check)
     if [ -n "${HANDOFF_STUB_LOG:-}" ]; then printf 'check %s\n' "$id" >>"$HANDOFF_STUB_LOG"; fi

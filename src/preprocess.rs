@@ -175,7 +175,7 @@ mod tests {
 
     #[test]
     fn flags_only_without_word_lists() {
-        assert_eq!(n(&["pw", "--json"]), vec!["pw", "list", "--json"]);
+        assert_eq!(n(&["pw", "--long"]), vec!["pw", "list", "--long"]);
     }
 
     #[test]

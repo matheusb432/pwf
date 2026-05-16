@@ -6,14 +6,15 @@ use super::actions::{
     NewItemSpec, add_pending_work_item, run_cancel, run_check, run_list_action, run_remove,
     run_update,
 };
-use super::claude::{RealProbe, invoke_claude_launch, verify_json_with_probe};
+use super::claude::{RealProbe, invoke_claude_launch, verify_text_with_probe};
 use super::continue_prompt::{continue_handoff_prompt, continue_plan_prompt};
 use super::domain::commands::PendingWorkCommand;
 use super::errors;
-use super::launch::{new_launch_spec, write_launch_spec};
+use super::launch::write_launch_spec;
 use super::model::{Action, Item};
 use super::naming::{project_index_path, stamp_date};
 use super::new_add::NewAddInputs;
+use super::obsidian::store::ObsidianStore;
 use super::query::{
     find_pending_item, load_config, resolve_managed_project_name_typed, resolve_project_repo,
 };
@@ -21,6 +22,9 @@ use super::route::run_route;
 use super::section::Section;
 use crate::cli::Args;
 use crate::config::Config;
+
+// ? Frontmatter keys irrelevant to *executing* a task — dropped by `resolve --show`.
+const SHOW_FRONTMATTER_DENYLIST: &[&str] = &["created"];
 
 pub fn run(command: &PendingWorkCommand) -> Result<String, String> {
     run_typed(command).map_err(String::from)
@@ -63,11 +67,8 @@ pub(in crate::engines::pending_work) fn run_typed(
                 section: None,
                 prereq: None,
             };
-            let launch = new_launch_spec(&item, args.model.as_deref(), args.thinking.as_deref());
             Ok(write_launch_spec(
                 &item,
-                &launch,
-                args.json,
                 args.model.as_deref(),
                 args.thinking.as_deref(),
             ))
@@ -85,7 +86,6 @@ pub(in crate::engines::pending_work) fn run_typed(
             Ok(run_list_action(
                 &cfg,
                 only_project.as_deref(),
-                args.json,
                 args.long,
                 scope,
                 args.number,
@@ -103,7 +103,6 @@ pub(in crate::engines::pending_work) fn run_typed(
                 only.as_deref(),
                 &date,
                 args.dry_run,
-                args.json,
                 args.force,
                 &crate::engines::clean::RealConfirm,
             )?)
@@ -116,7 +115,7 @@ pub(in crate::engines::pending_work) fn run_typed(
             } else {
                 None
             };
-            Ok(verify_json_with_probe(item.as_ref(), &probe))
+            Ok(verify_text_with_probe(item.as_ref(), &probe))
         }
 
         Action::LaunchClaude => {
@@ -134,17 +133,21 @@ pub(in crate::engines::pending_work) fn run_typed(
             let item = find_pending_item(&cfg, id)?;
             // ? File-model items carry the per-item note; legacy inline items only the index.
             let note_path = item.item_file.as_deref().unwrap_or(&item.note).to_string();
-            if args.json {
-                let obj = serde_json::json!({
-                    "id": item.id,
-                    "project": item.project,
-                    "notePath": note_path,
-                    "title": item.session,
-                });
-                Ok(serde_json::to_string_pretty(&obj).unwrap())
-            } else {
-                Ok(note_path)
+            if args.show {
+                // File-model: stream the note as markdown, minus exec-irrelevant frontmatter.
+                // Legacy inline items have no standalone file → emit the parsed body.
+                return match item.item_file.as_deref() {
+                    Some(file) => {
+                        let raw = ObsidianStore::read_item_file(std::path::Path::new(file))?;
+                        Ok(crate::frontmatter::strip_frontmatter_keys(
+                            &raw,
+                            SHOW_FRONTMATTER_DENYLIST,
+                        ))
+                    }
+                    None => Ok(item.prompt.clone()),
+                };
             }
+            Ok(note_path)
         }
 
         Action::Launch => {
@@ -152,11 +155,8 @@ pub(in crate::engines::pending_work) fn run_typed(
             let item = find_pending_item(&cfg, id)?;
             ensure_launchable(&item)?;
             super::prereq::warn_unsatisfied_on_launch(&cfg, &item);
-            let launch = new_launch_spec(&item, args.model.as_deref(), args.thinking.as_deref());
             Ok(write_launch_spec(
                 &item,
-                &launch,
-                args.json,
                 args.model.as_deref(),
                 args.thinking.as_deref(),
             ))
@@ -252,7 +252,6 @@ fn run_add(cfg: &Config, args: &Args, date: &str) -> Result<String, errors::Pend
             created: date,
             section,
             prereq: prereq.as_deref(),
-            json: args.json,
         },
     )
 }

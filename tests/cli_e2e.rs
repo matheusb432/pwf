@@ -197,22 +197,23 @@ fn e2e_list_scope_flags_conflict() {
 fn add_continue_handoff_builds_handoff_prompt() {
     let (d, cfg) = staged_with_handoff();
     let out = pwf()
-        .args([
-            "add",
-            "glep-shimeji",
-            "--continue-handoff",
-            "--json",
-            "--config-path",
-        ])
+        .args(["add", "glep-shimeji", "--continue-handoff", "--config-path"])
         .arg(&cfg)
         .assert()
         .success();
     let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
-    let v: serde_json::Value = serde_json::from_str(&stdout).unwrap();
-    assert_eq!(v["title"], "continue api cleanup");
-    assert_eq!(
-        v["prompt"],
-        "Continue the handoff at @docs/handoffs/2026-01-01-api-cleanup.md."
+    assert!(
+        stdout.starts_with("ADDED PWF TASK [GLP-0001]"),
+        "got: {stdout}"
+    );
+    assert!(
+        stdout.contains(":: continue api cleanup"),
+        "title not in output: {stdout}"
+    );
+    let item = std::fs::read_to_string(d.path().join("notes/glep-shimeji/GLP-0001.md")).unwrap();
+    assert!(
+        item.contains("Continue the handoff at @docs/handoffs/2026-01-01-api-cleanup.md."),
+        "prompt not in item: {item}"
     );
     assert!(d.path().join("notes/glep-shimeji/GLP-0001.md").exists());
 }
@@ -258,14 +259,7 @@ fn pending_work_alias_warns_and_fails() {
 fn deprecated_pw_prefix_fails_for_action_usage_without_writing() {
     let (d, cfg) = staged();
     pwf()
-        .args([
-            "pw",
-            "add",
-            "glep-shimeji",
-            "legacy add",
-            "--json",
-            "--config-path",
-        ])
+        .args(["pw", "add", "glep-shimeji", "legacy add", "--config-path"])
         .arg(&cfg)
         .assert()
         .failure()
@@ -372,19 +366,6 @@ fn shorthand_project_forwards_number() {
         .stdout(contains("GLP-0012"))
         .stdout(contains("GLP-0011"))
         .stdout(contains("GLP-0010").not());
-}
-
-#[test]
-fn json_list_is_capped() {
-    let (_d, cfg) = staged_many(12);
-    let out = pwf()
-        .args(["list", "--json", "--config-path"])
-        .arg(&cfg)
-        .assert()
-        .success();
-    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
-    let arr: Vec<serde_json::Value> = serde_json::from_str(&stdout).unwrap();
-    assert_eq!(arr.len(), 10, "json not capped: {stdout}");
 }
 
 #[test]
@@ -900,6 +881,30 @@ fn e2e_add_default_section_lands_before_any_header() {
 // 8. PWF-0017: commit-range provenance on `check` + the explicit `--review` task.
 
 #[test]
+fn e2e_check_normalizes_mixed_case_id() {
+    let (d, cfg) = staged();
+    pwf()
+        .args([
+            "check",
+            "--id",
+            "glp-0001",
+            "--date",
+            "2026-01-01",
+            "--config-path",
+        ])
+        .arg(&cfg)
+        .assert()
+        .success();
+    let item = read_item(&d, "GLP-0001");
+    assert!(item.contains("status: done"), "item not checked: {item}");
+    let index = read_index(&d);
+    assert!(
+        index.contains("[x] [[GLP-0001]]"),
+        "index did not use canonical id: {index}"
+    );
+}
+
+#[test]
 fn e2e_check_commits_writes_provenance_frontmatter() {
     let (d, cfg) = staged();
     pwf()
@@ -1029,10 +1034,8 @@ fn e2e_check_review_spawns_human_task_scoped_to_range() {
 }
 
 #[test]
-fn e2e_check_review_json_nests_review_task_as_object() {
-    // --review --json must nest the spawned add's JSON as an object (not a human
-    // text block) so the surface stays structured — handoff done --review hits this
-    // path (json: true). PWF-0017.
+fn e2e_check_review_appends_review_task_as_text() {
+    // check is now text-only (PWF-0059).
     let (_d, cfg) = staged();
     let out = pwf()
         .args([
@@ -1042,7 +1045,6 @@ fn e2e_check_review_json_nests_review_task_as_object() {
             "--commits",
             "a..b",
             "--review",
-            "--json",
             "--date",
             "2026-01-01",
             "--config-path",
@@ -1051,14 +1053,14 @@ fn e2e_check_review_json_nests_review_task_as_object() {
         .assert()
         .success();
     let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
-    let v: serde_json::Value = serde_json::from_str(&stdout).unwrap();
-    let review = &v["reviewTask"];
     assert!(
-        review.is_object(),
-        "reviewTask must nest an object: {stdout}"
+        stdout.starts_with("Checked GLP-0001"),
+        "expected text output: {stdout}"
     );
-    assert_eq!(review["id"], "GLP-0002", "spawned review id: {stdout}");
-    assert_eq!(review["status"], "added", "spawned status: {stdout}");
+    assert!(
+        stdout.contains("ADDED PWF TASK [GLP-0002]"),
+        "review task appended as text: {stdout}"
+    );
 }
 
 #[test]
@@ -1089,5 +1091,115 @@ fn e2e_check_review_without_commits_uses_bare_diff_fallback() {
     assert!(
         !spawned.contains(".."),
         "fallback review task carried a range: {spawned}"
+    );
+}
+
+// 9. resolve --show: markdown emitter (PWF-0059).
+
+/// Stage a single-project notes dir with a custom item file and return (dir, cfg).
+/// The index entry uses the canonical `- [ ] [[<id>|<title>]]` format.
+fn staged_with_item(
+    project: &str,
+    prefix: &str,
+    id: &str,
+    title: &str,
+    content: &str,
+) -> (TempDir, std::path::PathBuf) {
+    let dir = TempDir::new().unwrap();
+    let notes = dir.path().join("notes");
+    let proj = notes.join(project);
+    fs::create_dir_all(&proj).unwrap();
+    fs::write(proj.join(format!("{id}.md")), content).unwrap();
+    fs::write(
+        proj.join(format!("{project}.md")),
+        format!("- [ ] [[{id}|{title}]]\n"),
+    )
+    .unwrap();
+    let cfg = dir.path().join("cfg.json");
+    fs::write(
+        &cfg,
+        format!(
+            r#"{{ "notesDir": {:?}, "projects": {{ {:?}: "/repo" }}, "prefixes": {{ {:?}: {:?} }} }}"#,
+            notes.to_string_lossy(),
+            project,
+            project,
+            prefix
+        ),
+    )
+    .unwrap();
+    (dir, cfg)
+}
+
+#[test]
+fn resolve_show_emits_markdown_without_created_key() {
+    let (_d, cfg) = staged_with_item(
+        "pwf",
+        "PWF",
+        "PWF-0001",
+        "do the thing",
+        "---\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\nGoals:\n- do the thing\n",
+    );
+    let out = pwf()
+        .args(["resolve", "--show", "--id", "PWF-0001", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .success();
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    assert!(
+        stdout.contains("status: active"),
+        "missing status: {stdout}"
+    );
+    assert!(
+        stdout.contains("title: do the thing"),
+        "missing title: {stdout}"
+    );
+    assert!(stdout.contains("Goals:"), "missing body: {stdout}");
+    assert!(stdout.contains("- do the thing"), "missing goal: {stdout}");
+    assert!(
+        !stdout.contains("created:"),
+        "created key must be stripped: {stdout}"
+    );
+}
+
+#[test]
+fn resolve_show_legacy_item_emits_body_only() {
+    // Legacy inline items use the backtick-checkbox format; item_file = None, so
+    // resolve --show falls back to the parsed prompt string (no frontmatter to strip).
+    let dir = TempDir::new().unwrap();
+    let notes = dir.path().join("notes");
+    let proj = notes.join("glep-shimeji");
+    fs::create_dir_all(&proj).unwrap();
+    // Inline legacy format: `- [ ] \`session\` <- prompt` (no per-item .md file).
+    fs::write(
+        proj.join("glep-shimeji.md"),
+        "- [ ] `legacy task` <- do the legacy thing\n",
+    )
+    .unwrap();
+    let cfg = dir.path().join("cfg.json");
+    fs::write(
+        &cfg,
+        format!(
+            r#"{{ "notesDir": {:?}, "projects": {{ "glep-shimeji": "/repo" }}, "prefixes": {{ "glep-shimeji": "GLP" }} }}"#,
+            notes.to_string_lossy()
+        ),
+    )
+    .unwrap();
+    // Legacy items get ids like "glep-shimeji:1" (ordinal is 1-based).
+    let out = pwf()
+        .args([
+            "resolve",
+            "--show",
+            "--id",
+            "glep-shimeji:1",
+            "--config-path",
+        ])
+        .arg(&cfg)
+        .assert()
+        .success();
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    // Prompt text emitted.
+    assert!(
+        stdout.contains("do the legacy thing"),
+        "prompt not in output: {stdout}"
     );
 }

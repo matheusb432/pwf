@@ -35,13 +35,6 @@ impl CloseAction {
         }
     }
 
-    fn json_status(self) -> &'static str {
-        match self {
-            CloseAction::Check => "checked",
-            CloseAction::Cancel => "cancelled",
-        }
-    }
-
     fn past_tense(self) -> &'static str {
         match self {
             CloseAction::Check => "Checked",
@@ -135,8 +128,6 @@ fn run_close(cfg: &Config, args: &Args, action: CloseAction) -> Result<String, P
                     task_title: None,
                     created: &date,
                     section: Some(Section::Human),
-                    // ? mirror the caller's format so --json nests an object, not a text block.
-                    json: args.json,
                     prereq: None,
                 },
             )?)
@@ -144,22 +135,6 @@ fn run_close(cfg: &Config, args: &Args, action: CloseAction) -> Result<String, P
             None
         };
 
-        if args.json {
-            // The spawned add returns JSON here (json: args.json), so nest it as an
-            // object rather than a string to match the rest of the surface (PWF-0017).
-            let review_obj = review.as_deref().map(|r| {
-                serde_json::from_str(r).unwrap_or_else(|_| serde_json::Value::String(r.to_string()))
-            });
-            let obj = serde_json::json!({
-                "id": item.id,
-                "project": item.project,
-                "session": item.session,
-                "note": file,
-                "status": action.json_status(),
-                "reviewTask": review_obj,
-            });
-            return Ok(serde_json::to_string_pretty(&obj).unwrap());
-        }
         let mut out = format!(
             "{} {} ({} :: {})\n",
             action.past_tense(),
@@ -206,17 +181,6 @@ fn run_close(cfg: &Config, args: &Args, action: CloseAction) -> Result<String, P
     );
     ObsidianStore::write_note(note_path, &updated)?;
 
-    if args.json {
-        let obj = serde_json::json!({
-            "id": item.id,
-            "project": item.project,
-            "session": item.session,
-            "note": item.note,
-            "line": item.line,
-            "status": action.json_status()
-        });
-        return Ok(serde_json::to_string_pretty(&obj).unwrap());
-    }
     Ok(format!(
         "{} {} ({} :: {})\n",
         action.past_tense(),
@@ -290,5 +254,22 @@ mod tests {
 
         assert!(matches!(err, PendingWorkError::EmptyReport));
         assert_eq!(err.to_string(), "--report cannot be empty.");
+    }
+
+    #[test]
+    fn check_with_review_appends_review_task_as_text() {
+        // --review should append the added task as text, never JSON (PWF-0059).
+        let (_stage, cfg) = stage_file_item();
+        let args = Args {
+            id: Some("GLP-0001".to_string()),
+            review: true,
+            date: Some("2026-01-01".to_string()),
+            ..Args::default()
+        };
+
+        let out = run_check(&cfg, &args).unwrap();
+
+        assert!(out.starts_with("Checked GLP-0001"), "got: {out}");
+        assert!(out.contains("ADDED PWF TASK ["), "got: {out}");
     }
 }

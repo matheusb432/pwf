@@ -99,7 +99,6 @@ fn canonical_remove_deletes_item_from_cli() {
             "remove",
             "--id",
             "pwf-0001",
-            "--json",
             "--notes-dir",
             &notes.to_string_lossy(),
         ])
@@ -109,8 +108,10 @@ fn canonical_remove_deletes_item_from_cli() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "stdout: {stdout}\nstderr: {stderr}");
-    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
-    assert_eq!(json["status"], "removed");
+    assert!(
+        stdout.contains("REMOVED PWF TASK [PWF-0001]") && stdout.contains("pwf :: stale task"),
+        "expected remove confirmation for PWF-0001: {stdout}"
+    );
     assert!(!project.join("PWF-0001.md").exists());
     let index = fs::read_to_string(project.join("pwf.md")).unwrap();
     assert!(
@@ -284,5 +285,19 @@ fn list_help_mentions_all_scope() {
     assert!(
         terse.contains("[--all]"),
         "terse help should document --all: {terse}"
+    );
+}
+
+#[test]
+fn json_flag_is_rejected() {
+    let out = Command::new(env!("CARGO_BIN_EXE_pwf"))
+        .args(["list", "--json"])
+        .output()
+        .expect("run pwf");
+    assert!(!out.status.success(), "pwf list --json should fail");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("unexpected argument") || stderr.contains("--json"),
+        "stderr should mention --json: {stderr}"
     );
 }

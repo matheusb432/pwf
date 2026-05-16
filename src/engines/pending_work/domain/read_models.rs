@@ -1,7 +1,6 @@
 use super::super::model::Item;
 
-#[derive(PartialEq, Eq, Debug, Clone, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(PartialEq, Eq, Debug, Clone)]
 pub(in crate::engines::pending_work) struct OpenItem {
     pub id: String,
     pub project: String,
@@ -15,9 +14,7 @@ pub(in crate::engines::pending_work) struct OpenItem {
     pub launchable: bool,
     pub needs_prompt: bool,
     pub issues: Vec<String>,
-    #[serde(skip_serializing)]
     pub section: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub prereq: Option<String>,
 }
 
@@ -62,45 +59,5 @@ impl ListResult {
 
     pub(in crate::engines::pending_work) fn hidden(&self) -> usize {
         self.hidden
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::engines::pending_work::model::Item;
-
-    #[test]
-    fn open_item_json_excludes_cursor_and_section_internals() {
-        let item = Item {
-            id: "GLP-0001".to_string(),
-            project: "glep-shimeji".to_string(),
-            session: "tray gui".to_string(),
-            prompt: "do it".to_string(),
-            repo: Some("/repo".to_string()),
-            note: "/notes/glep-shimeji.md".to_string(),
-            item_file: Some("/notes/GLP-0001.md".to_string()),
-            line: 7,
-            format: "file".to_string(),
-            marker_index: 99,
-            marker_length: 12,
-            launchable: true,
-            needs_prompt: false,
-            issues: vec![],
-            section: Some("Future".to_string()),
-            prereq: Some("\"[[GLP-0002]]\"".to_string()),
-        };
-
-        let open = OpenItem::from(item);
-        assert_eq!(open.section.as_deref(), Some("Future"));
-
-        let value = serde_json::to_value(open).unwrap();
-
-        assert_eq!(value["id"], "GLP-0001");
-        assert_eq!(value["itemFile"], "/notes/GLP-0001.md");
-        assert_eq!(value["prereq"], "\"[[GLP-0002]]\"");
-        assert!(value.get("markerIndex").is_none(), "{value}");
-        assert!(value.get("markerLength").is_none(), "{value}");
-        assert!(value.get("section").is_none(), "{value}");
     }
 }

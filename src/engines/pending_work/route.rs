@@ -4,7 +4,7 @@
 
 use super::actions::list::ListScope;
 use super::actions::run_list_action;
-use super::claude::{RealProbe, invoke_claude_launch, verify_json_with_probe};
+use super::claude::{RealProbe, invoke_claude_launch, verify_text_with_probe};
 use super::errors::PendingWorkError;
 use super::query::{find_pending_item, resolve_managed_project_name_typed};
 use crate::cli::Args;
@@ -21,7 +21,7 @@ pub(super) fn run_route(cfg: &Config, args: &Args, date: &str) -> Result<String,
     if route_words.is_empty() {
         // list all
         let scope = ListScope::from_flags(args.human, args.future, args.all)?;
-        return run_list_action(cfg, None, args.json, args.long, scope, args.number);
+        return run_list_action(cfg, None, args.long, scope, args.number);
     }
 
     let verb = route_words[0].to_ascii_lowercase();
@@ -43,7 +43,7 @@ pub(super) fn run_route(cfg: &Config, args: &Args, date: &str) -> Result<String,
         } else {
             None
         };
-        return Ok(verify_json_with_probe(item.as_ref(), &probe));
+        return Ok(verify_text_with_probe(item.as_ref(), &probe));
     }
 
     if verb == "launch-claude" || verb == "lc" {
@@ -65,7 +65,6 @@ pub(super) fn run_route(cfg: &Config, args: &Args, date: &str) -> Result<String,
             only.as_deref(),
             date,
             args.dry_run,
-            args.json,
             args.force,
             &crate::engines::clean::RealConfirm,
         )?);
@@ -76,14 +75,7 @@ pub(super) fn run_route(cfg: &Config, args: &Args, date: &str) -> Result<String,
     let project_name = resolve_managed_project_name_typed(cfg, &verb)?;
     if route_words.len() == 1 {
         let scope = ListScope::from_flags(args.human, args.future, args.all)?;
-        return run_list_action(
-            cfg,
-            Some(&project_name),
-            args.json,
-            args.long,
-            scope,
-            args.number,
-        );
+        return run_list_action(cfg, Some(&project_name), args.long, scope, args.number);
     }
 
     Err(PendingWorkError::RouteCreateRejected)

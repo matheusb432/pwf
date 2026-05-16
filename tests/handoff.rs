@@ -123,7 +123,6 @@ fn refresh_counts_active_only() {
     let cfg = write_config(&stage, &repo, &notes);
     let args = parse_args(&[
         "refresh",
-        "--json",
         "--config-path",
         cfg.to_str().unwrap(),
         "--repo-root",
@@ -132,8 +131,10 @@ fn refresh_counts_active_only() {
         "2026-01-01",
     ]);
     let out = handoff::run(&args).unwrap();
-    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
-    assert_eq!(v["Count"], 1, "count should be 1");
+    assert!(
+        out.starts_with("LEDGER refreshed."),
+        "expected refresh text, got: {out}"
+    );
 
     let ledger = fs::read_to_string(handoff_dir.join("LEDGER.md")).unwrap();
     assert!(ledger.contains("TST-0002"), "ledger missing TST-0002");
@@ -141,6 +142,17 @@ fn refresh_counts_active_only() {
     assert!(
         !ledger.contains("TST-0001"),
         "done handoff should not appear"
+    );
+
+    // active-only count proxy: one table data row (header excluded; `---` separator excluded)
+    let active_rows = ledger
+        .lines()
+        .filter(|l| l.starts_with("| ") && !l.contains("---"))
+        .count()
+        - 1; // subtract the `| ID | Handoff | … |` header row
+    assert_eq!(
+        active_rows, 1,
+        "expected exactly 1 active handoff row, ledger:\n{ledger}"
     );
 }
 
@@ -158,7 +170,6 @@ fn new_unmanaged_no_pw() {
         "Unmanaged Flow",
         "--slug",
         "unmanaged-flow",
-        "--json",
         "--config-path",
         cfg.to_str().unwrap(),
         "--repo-root",
@@ -167,15 +178,14 @@ fn new_unmanaged_no_pw() {
         "2026-01-01",
     ]);
     let out = handoff::run(&args).unwrap();
-    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
-    assert_eq!(v["status"], "created");
-    // project null when unmanaged
     assert!(
-        v["project"].is_null(),
-        "project should be null for unmanaged"
+        out.starts_with("Created handoff "),
+        "expected created text, got: {out}"
     );
-    // pw null
-    assert!(v["pw"].is_null(), "pw should be null for unmanaged");
+    assert!(
+        out.contains("2026-01-01-unmanaged-flow.md"),
+        "file path missing: {out}"
+    );
 
     let file_path = repo.join("docs/handoffs/2026-01-01-unmanaged-flow.md");
     assert!(file_path.exists(), "handoff file not created");
@@ -203,7 +213,6 @@ fn new_managed_calls_pw_stub() {
         "Managed Flow",
         "--slug",
         "managed-flow",
-        "--json",
         "--config-path",
         cfg.to_str().unwrap(),
         "--repo-root",
@@ -214,10 +223,11 @@ fn new_managed_calls_pw_stub() {
         stub.to_str().unwrap(),
     ]);
     let out = handoff::run(&args).unwrap();
-    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
-    assert_eq!(v["status"], "created");
-    assert_eq!(v["project"], "test-project");
-    assert_eq!(v["pw"], "TST-0001");
+    assert!(
+        out.starts_with("Created handoff "),
+        "expected created text, got: {out}"
+    );
+    assert!(out.contains("TST-0001"), "pw id missing from output: {out}");
 
     let file_path = repo.join("docs/handoffs/2026-01-01-managed-flow.md");
     let content = fs::read_to_string(&file_path).unwrap();
@@ -242,7 +252,6 @@ fn new_managed_links_pw_in_process_without_script() {
         "Managed Flow",
         "--slug",
         "managed-flow",
-        "--json",
         "--config-path",
         cfg.to_str().unwrap(),
         "--repo-root",
@@ -252,8 +261,11 @@ fn new_managed_links_pw_in_process_without_script() {
         // no --pending-work-script → in-process fallback
     ]);
     let out = handoff::run(&args).unwrap();
-    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
-    assert_eq!(v["pw"], "TST-0001");
+    assert!(
+        out.starts_with("Created handoff "),
+        "expected created text, got: {out}"
+    );
+    assert!(out.contains("TST-0001"), "pw id missing from output: {out}");
     let content =
         fs::read_to_string(repo.join("docs/handoffs/2026-01-01-managed-flow.md")).unwrap();
     assert!(
@@ -288,7 +300,6 @@ fn done_archives_and_updates_frontmatter() {
         "done",
         "--id",
         "TST-0001",
-        "--json",
         "--config-path",
         cfg.to_str().unwrap(),
         "--repo-root",
@@ -300,9 +311,10 @@ fn done_archives_and_updates_frontmatter() {
         stub.to_str().unwrap(),
     ]);
     let out = handoff::run(&args).unwrap();
-    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
-    assert_eq!(v["pw"], "TST-0001");
-    assert_eq!(v["status"], "done");
+    assert!(
+        out.contains("done handoff "),
+        "expected 'done handoff' text, got: {out}"
+    );
 
     let archived = repo.join("docs/handoffs/archived/2026-01-01-managed-flow.md");
     assert!(archived.exists(), "archived file should exist");
@@ -348,7 +360,6 @@ fn cancel_archives_with_reason() {
         "cancel-me",
         "--reason",
         "scope dropped",
-        "--json",
         "--config-path",
         cfg.to_str().unwrap(),
         "--repo-root",
@@ -358,9 +369,10 @@ fn cancel_archives_with_reason() {
         "--no-commit",
     ]);
     let out = handoff::run(&args).unwrap();
-    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
-    assert_eq!(v["status"], "cancelled");
-    assert_eq!(v["pw"], "", "no pw in frontmatter");
+    assert!(
+        out.contains("cancelled handoff "),
+        "expected 'cancelled handoff' text, got: {out}"
+    );
 
     let archived = repo.join("docs/handoffs/archived/2026-01-01-cancel-me.md");
     assert!(archived.exists(), "archived file should exist");
@@ -393,7 +405,6 @@ fn done_skips_already_checked_pw_item_and_archives() {
         "Managed Flow",
         "--slug",
         "managed-flow",
-        "--json",
         "--config-path",
         cfg.to_str().unwrap(),
         "--repo-root",
@@ -408,7 +419,6 @@ fn done_skips_already_checked_pw_item_and_archives() {
         "check",
         "--id",
         "TST-0001",
-        "--json",
         "--config-path",
         cfg.to_str().unwrap(),
         "--date",
@@ -421,7 +431,6 @@ fn done_skips_already_checked_pw_item_and_archives() {
         "done",
         "--id",
         "TST-0001",
-        "--json",
         "--config-path",
         cfg.to_str().unwrap(),
         "--repo-root",
@@ -432,8 +441,14 @@ fn done_skips_already_checked_pw_item_and_archives() {
     ]);
     let out = handoff::run(&done_args)
         .unwrap_or_else(|e| panic!("done should succeed when pw item already checked: {e}"));
-    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
-    assert_eq!(v["pwClose"], "skipped-already-closed");
+    assert!(
+        out.contains("done handoff "),
+        "expected 'done handoff' text, got: {out}"
+    );
+    assert!(
+        out.contains("already checked"),
+        "expected skipped note in output, got: {out}"
+    );
 
     let active = repo.join("docs/handoffs/2026-01-01-managed-flow.md");
     let archived = repo.join("docs/handoffs/archived/2026-01-01-managed-flow.md");
@@ -461,7 +476,6 @@ fn done_dest_conflict_leaves_no_partial_state() {
         "Managed Flow",
         "--slug",
         "managed-flow",
-        "--json",
         "--config-path",
         cfg.to_str().unwrap(),
         "--repo-root",
@@ -486,7 +500,6 @@ fn done_dest_conflict_leaves_no_partial_state() {
         "done",
         "--id",
         "TST-0001",
-        "--json",
         "--config-path",
         cfg.to_str().unwrap(),
         "--repo-root",
@@ -506,7 +519,6 @@ fn done_dest_conflict_leaves_no_partial_state() {
     assert_eq!(before, after, "active handoff must be untouched on failure");
     let list_args = parse_args(&[
         "list",
-        "--json",
         "--config-path",
         cfg.to_str().unwrap(),
         "--date",
@@ -541,7 +553,6 @@ fn refresh_archives_stranded_non_active_handoffs() {
     let cfg = write_empty_config(&stage);
     let args = parse_args(&[
         "refresh",
-        "--json",
         "--config-path",
         cfg.to_str().unwrap(),
         "--repo-root",
@@ -550,9 +561,14 @@ fn refresh_archives_stranded_non_active_handoffs() {
         "2026-01-03",
     ]);
     let out = handoff::run(&args).unwrap();
-    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
-    assert_eq!(v["Count"], 1, "only the active handoff counts");
-    assert_eq!(v["Archived"], 1, "stranded file should be swept");
+    assert!(
+        out.starts_with("LEDGER refreshed."),
+        "expected refresh text, got: {out}"
+    );
+    assert!(
+        out.contains("archived 1 stranded"),
+        "expected archive count in output, got: {out}"
+    );
 
     assert!(
         handoff_dir.join("archived/2026-01-01-stranded.md").exists(),
@@ -591,7 +607,6 @@ fn refresh_reports_archive_conflict_without_moving() {
     let cfg = write_empty_config(&stage);
     let args = parse_args(&[
         "refresh",
-        "--json",
         "--config-path",
         cfg.to_str().unwrap(),
         "--repo-root",
@@ -600,9 +615,18 @@ fn refresh_reports_archive_conflict_without_moving() {
         "2026-01-02",
     ]);
     let out = handoff::run(&args).unwrap();
-    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
-    assert_eq!(v["Archived"], 0, "conflicting file must not be moved");
-    assert_eq!(v["Conflicts"][0], "2026-01-01-clash.md");
+    assert!(
+        out.starts_with("LEDGER refreshed."),
+        "expected refresh text, got: {out}"
+    );
+    assert!(
+        !out.contains("archived 1"),
+        "conflicting file must not be counted as archived, got: {out}"
+    );
+    assert!(
+        out.contains("2026-01-01-clash.md"),
+        "conflict filename missing from output: {out}"
+    );
     assert!(
         handoff_dir.join("2026-01-01-clash.md").exists(),
         "conflicting file stays in place"
@@ -631,7 +655,6 @@ fn done_forwards_commits_and_review_to_linked_pw_item() {
         "Managed Flow",
         "--slug",
         "managed-flow",
-        "--json",
         "--config-path",
         cfg.to_str().unwrap(),
         "--repo-root",
@@ -649,7 +672,6 @@ fn done_forwards_commits_and_review_to_linked_pw_item() {
         "--commits",
         "aaaa..bbbb",
         "--review",
-        "--json",
         "--config-path",
         cfg.to_str().unwrap(),
         "--repo-root",
@@ -699,7 +721,7 @@ fn done_forwards_commits_and_review_to_linked_pw_item() {
 // ── Task 22: list + refresh dispatch ───────────────────────────────────────
 
 #[test]
-fn list_json_returns_ledger_content() {
+fn list_returns_ledger_content() {
     let stage = tmpdir("hf_list");
     let repo = stage.join("repo");
     let handoff_dir = repo.join("docs/handoffs");
@@ -710,7 +732,6 @@ fn list_json_returns_ledger_content() {
     let cfg = write_empty_config(&stage);
     let args = parse_args(&[
         "list",
-        "--json",
         "--config-path",
         cfg.to_str().unwrap(),
         "--repo-root",
@@ -719,20 +740,20 @@ fn list_json_returns_ledger_content() {
         "2026-01-01",
     ]);
     let out = handoff::run(&args).unwrap();
-    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
-    assert_eq!(v["exists"], true);
-    assert_eq!(v["content"], ledger_content);
+    assert_eq!(
+        out, ledger_content,
+        "list should return ledger content verbatim"
+    );
 }
 
 #[test]
-fn list_json_no_ledger() {
+fn list_no_ledger() {
     let stage = tmpdir("hf_list_empty");
     let repo = stage.join("repo");
     fs::create_dir_all(&repo).unwrap();
     let cfg = write_empty_config(&stage);
     let args = parse_args(&[
         "list",
-        "--json",
         "--config-path",
         cfg.to_str().unwrap(),
         "--repo-root",
@@ -741,6 +762,5 @@ fn list_json_no_ledger() {
         "2026-01-01",
     ]);
     let out = handoff::run(&args).unwrap();
-    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
-    assert_eq!(v["exists"], false);
+    assert_eq!(out, "No active handoffs (LEDGER.md not found).");
 }

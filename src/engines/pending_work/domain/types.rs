@@ -3,64 +3,28 @@ use nutype::nutype;
 #[nutype(
     sanitize(trim),
     validate(regex = "^[A-Z]{2,4}-\\d{4}$"),
-    derive(
-        Debug,
-        Clone,
-        PartialEq,
-        Eq,
-        PartialOrd,
-        Ord,
-        Hash,
-        AsRef,
-        Display,
-        Serialize,
-        Deserialize
-    )
+    derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, AsRef, Display,)
 )]
 pub struct WorkItemId(String);
 
 #[nutype(
     sanitize(trim),
     validate(not_empty),
-    derive(
-        Debug,
-        Clone,
-        PartialEq,
-        Eq,
-        PartialOrd,
-        Ord,
-        Hash,
-        AsRef,
-        Display,
-        Serialize,
-        Deserialize
-    )
+    derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, AsRef, Display,)
 )]
 pub struct ProjectName(String);
 
 #[nutype(
     sanitize(trim, uppercase),
     validate(regex = "^[A-Z]{2,4}$"),
-    derive(
-        Debug,
-        Clone,
-        PartialEq,
-        Eq,
-        PartialOrd,
-        Ord,
-        Hash,
-        AsRef,
-        Display,
-        Serialize,
-        Deserialize
-    )
+    derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, AsRef, Display,)
 )]
 pub struct ProjectPrefix(String);
 
 #[nutype(
     sanitize(trim, with = |raw: String| crate::engines::pending_work::text::normalize_title(&raw)),
     validate(not_empty),
-    derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, AsRef, Display, Serialize, Deserialize),
+    derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, AsRef, Display),
 )]
 pub struct TaskTitle(String);
 
@@ -106,12 +70,5 @@ mod tests {
             "fix the thing"
         );
         assert!(TaskTitle::try_new(" \n ").is_err());
-    }
-
-    #[test]
-    fn validated_types_serialize_as_strings_and_deserialize_through_validation() {
-        let id = WorkItemId::try_new("PWF-0047").unwrap();
-        assert_eq!(serde_json::to_string(&id).unwrap(), "\"PWF-0047\"");
-        assert!(serde_json::from_str::<WorkItemId>("\"bad\"").is_err());
     }
 }

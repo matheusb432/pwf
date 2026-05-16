@@ -130,7 +130,6 @@ fn apply_cap(items: Vec<Item>, cap: usize) -> (Vec<Item>, usize) {
 pub(in crate::engines::pending_work) fn run_list_action(
     cfg: &Config,
     only_project: Option<&str>,
-    json: bool,
     long: bool,
     scope: ListScope,
     number: Option<usize>,
@@ -139,8 +138,7 @@ pub(in crate::engines::pending_work) fn run_list_action(
         .into_iter()
         .filter(|i| scope.includes(i.section.as_deref()))
         .collect();
-    // Order + cap before rendering so human and JSON outputs share the same
-    // selected/capped sequence.
+    // Order + cap before rendering so the selected/capped sequence is consistent.
     if scope.groups_output() {
         sort_by_group_then_project_then_newest(&mut items);
     } else {
@@ -152,7 +150,6 @@ pub(in crate::engines::pending_work) fn run_list_action(
         &result,
         cfg,
         only_project,
-        json,
         long,
         scope.groups_output(),
     ))
@@ -211,7 +208,7 @@ mod tests {
         )
         .unwrap();
 
-        let err = run_list_action(&cfg, None, false, false, ListScope::Default, None).unwrap_err();
+        let err = run_list_action(&cfg, None, false, ListScope::Default, None).unwrap_err();
 
         assert!(matches!(
             err,

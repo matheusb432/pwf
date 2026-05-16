@@ -4,9 +4,7 @@ use super::super::errors::PendingWorkError;
 use super::super::index::{
     add_link_to_index, add_section_block, section_exists, work_item_content,
 };
-use super::super::naming::{
-    next_work_item_id, path_str, project_dir, project_index_path, project_key,
-};
+use super::super::naming::{next_work_item_id, project_dir, project_index_path, project_key};
 use super::super::obsidian::store::ObsidianStore;
 use super::super::section::Section;
 use super::super::text::{inferred_title, normalize_title, note_body};
@@ -23,7 +21,6 @@ pub(in crate::engines::pending_work) struct NewItemSpec<'a> {
     pub created: &'a str,
     pub section: Option<Section>,
     pub prereq: Option<&'a str>,
-    pub json: bool,
 }
 
 /// Create a pending-work item file and link it into the project index.
@@ -43,7 +40,6 @@ pub(in crate::engines::pending_work) fn add_pending_work_item(
         created,
         section,
         prereq,
-        json,
     } = *spec;
     let repo = cfg
         .projects
@@ -108,22 +104,6 @@ pub(in crate::engines::pending_work) fn add_pending_work_item(
     };
     ObsidianStore::write_add_index_file(&index, &updated)?;
 
-    if json {
-        let obj = serde_json::json!({
-            "id": id,
-            "project": project_name,
-            "title": session,
-            "session": session,
-            "prompt": task_prompt,
-            "repo": repo,
-            "note": path_str(&index),
-            "itemFile": path_str(&item_path),
-            "status": "added"
-        });
-        return Ok(serde_json::to_string_pretty(&obj).unwrap());
-    }
-
-    // Text form
     let mut out = format!("ADDED PWF TASK [{id}] {project_name} :: {session}\n");
     out.push_str(&format!("  file: {}\n", item_path.display()));
     out.push_str(&format!("  launch with: pwf launch --id {id}\n"));
@@ -168,7 +148,6 @@ mod tests {
             created: "2026-01-01",
             section: None,
             prereq: None,
-            json: false,
         }
     }
 

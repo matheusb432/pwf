@@ -18,10 +18,6 @@ fn justfile_is_split_into_bash_domain_modules() {
         "root justfile should include the pwf domain module"
     );
     assert!(
-        root.contains("mod handoffs 'just/handoffs.justfile'"),
-        "root justfile should include the handoffs domain module"
-    );
-    assert!(
         root.contains("mod agents 'just/agents.justfile'"),
         "root justfile should include the agents domain module"
     );
@@ -38,7 +34,7 @@ fn justfile_is_split_into_bash_domain_modules() {
         "retired conformance recipe should not remain in the root justfile"
     );
 
-    for module in ["pwf", "handoffs", "agents"] {
+    for module in ["pwf", "agents"] {
         let path = format!("just/{module}.justfile");
         let body = fs::read_to_string(repo_path(&path)).unwrap_or_else(|err| {
             panic!("read {path}: {err}");

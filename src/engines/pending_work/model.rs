@@ -1,8 +1,7 @@
 use std::str::FromStr;
 
 /// Task model shared across the pending-work submodules.
-#[derive(PartialEq, Eq, Debug, Clone, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(PartialEq, Eq, Debug, Clone)]
 pub struct Item {
     pub id: String,
     pub project: String,
@@ -13,19 +12,16 @@ pub struct Item {
     pub item_file: Option<String>,
     pub line: usize,
     pub format: String,
-    #[serde(skip)]
+    // ? Internal cursor fields for index rewriting; not part of the data model.
     pub marker_index: usize,
-    #[serde(skip)]
     pub marker_length: usize,
     pub launchable: bool,
     pub needs_prompt: bool,
     pub issues: Vec<String>,
     // ? Index section governing this item (`Future`/`Human`), or `None` for the
     // ? normal/visible region. Internal-only: drives default list filtering.
-    #[serde(skip)]
     pub section: Option<String>,
-    // ? Raw `prereq` frontmatter (e.g. "[[CFG-0014]]"). Omitted from JSON when absent.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    // ? Raw `prereq` frontmatter (e.g. "[[CFG-0014]]").
     pub prereq: Option<String>,
 }
 
@@ -76,6 +72,30 @@ impl Action {
             Action::Resolve => RESOLVE,
             Action::Remove => REMOVE,
             Action::Update => UPDATE,
+        }
+    }
+}
+
+#[cfg(test)]
+impl Item {
+    pub fn default_for_test(id: &str, session: &str) -> Self {
+        Item {
+            id: id.to_string(),
+            project: "pwf".to_string(),
+            session: session.to_string(),
+            prompt: String::new(),
+            repo: None,
+            note: String::new(),
+            item_file: None,
+            line: 0,
+            format: "file".to_string(),
+            marker_index: 0,
+            marker_length: 0,
+            launchable: true,
+            needs_prompt: false,
+            issues: vec![],
+            section: None,
+            prereq: None,
         }
     }
 }

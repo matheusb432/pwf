@@ -55,13 +55,10 @@ pub enum HandoffError {
         to: PathBuf,
         source: std::io::Error,
     },
-    #[error("pw-add JSON parse error: {source} (stdout: {stdout})")]
-    PwAddJsonParse {
-        stdout: String,
-        source: serde_json::Error,
-    },
     #[error("{message}")]
     PendingWork { message: String },
+    #[error("pw-add output parse error (stdout: {stdout})")]
+    PwAddParse { stdout: String },
     #[error("{source}")]
     SubprocessSpawn {
         operation: &'static str,
@@ -177,13 +174,8 @@ fn home() -> String {
         .or_else(|_| std::env::var("HOME"))
         .unwrap_or_default()
 }
-/// Convert a Path to a forward-slash string for JSON output (portable across OSes).
-fn path_str(p: &std::path::Path) -> String {
-    p.to_string_lossy().replace('\\', "/")
-}
-
-/// Parse the config JSON from the --config-path arg, defaulting so `just handoff-*`
-/// resolves the project without an explicit --config-path.
+/// Parse the config JSON from the --config-path arg, defaulting so handoff commands
+/// resolve the project without an explicit --config-path.
 fn load_handoff_config(args: &Args) -> Option<config::Config> {
     load_handoff_config_typed(args).value
 }
@@ -507,42 +499,28 @@ fn invoke_new(root: &Path, args: &Args) -> Result<String, HandoffError> {
         } else {
             inprocess_pw_add(args, &today, proj)?
         };
-        if id.is_empty() {
-            None
-        } else {
-            // Insert pw: <id> after the created: line
-            let content =
-                std::fs::read_to_string(&file_path).map_err(|source| HandoffError::Read {
-                    action: "new",
-                    path: file_path.clone(),
-                    source,
-                })?;
-            let re = Regex::new(r"(?m)^(created: .*)$").unwrap();
-            let new_content = re
-                .replace(&content, format!("$1\npw: {id}").as_str())
-                .into_owned();
-            write_text_atomic(&file_path, &new_content).map_err(|source| HandoffError::Write {
-                action: "new",
-                path: file_path.clone(),
-                source,
-            })?;
-            Some(id)
-        }
+        // Insert pw: <id> after the created: line
+        let content = std::fs::read_to_string(&file_path).map_err(|source| HandoffError::Read {
+            action: "new",
+            path: file_path.clone(),
+            source,
+        })?;
+        let re = Regex::new(r"(?m)^(created: .*)$").unwrap();
+        let new_content = re
+            .replace(&content, format!("$1\npw: {id}").as_str())
+            .into_owned();
+        write_text_atomic(&file_path, &new_content).map_err(|source| HandoffError::Write {
+            action: "new",
+            path: file_path.clone(),
+            source,
+        })?;
+        Some(id)
     } else {
         None
     };
 
     refresh_ledger_typed(root)?;
 
-    if args.json {
-        let obj = serde_json::json!({
-            "file": path_str(&file_path),
-            "project": project,
-            "pw": pw,
-            "status": "created"
-        });
-        return Ok(serde_json::to_string_pretty(&obj).unwrap());
-    }
     let mut out = format!("Created handoff {}", file_path.display());
     if let Some(p) = pw {
         out.push_str(&format!("\n  pw: {p}"));
@@ -555,9 +533,18 @@ fn leaf_name(p: &Path) -> &str {
     p.file_name().and_then(|n| n.to_str()).unwrap_or("repo")
 }
 
+/// Extract the item id from `add` text output: `ADDED PWF TASK [<id>] …`.
+fn parse_added_id(text: &str) -> Option<String> {
+    text.lines()
+        .next()
+        .and_then(|l| l.split('[').nth(1))
+        .and_then(|s| s.split(']').next())
+        .map(|s| s.to_string())
+}
+
 /// Spawn the external `--pending-work-script` allocator with the canonical
-/// `add` protocol (`<script> add --config-path <cfg> --json --date <today>
-/// <project> --continue-handoff`) and parse the `id` field from its stdout JSON.
+/// `add` protocol (`<script> add --config-path <cfg> --date <today>
+/// <project> --continue-handoff`) and parse the id from its stdout text.
 fn spawn_pw_add(
     script: &str,
     cfg: &str,
@@ -569,7 +556,6 @@ fn spawn_pw_add(
             "add",
             "--config-path",
             cfg,
-            "--json",
             "--date",
             today,
             project,
@@ -582,13 +568,9 @@ fn spawn_pw_add(
             source,
         })?;
     let stdout = String::from_utf8_lossy(&output.stdout);
-    // Parse the id from JSON - stdout may have trailing newline/whitespace
-    let v: serde_json::Value =
-        serde_json::from_str(stdout.trim()).map_err(|source| HandoffError::PwAddJsonParse {
-            stdout: stdout.to_string(),
-            source,
-        })?;
-    Ok(v["id"].as_str().unwrap_or("").to_string())
+    parse_added_id(stdout.trim()).ok_or_else(|| HandoffError::PwAddParse {
+        stdout: stdout.to_string(),
+    })
 }
 
 /// Spawn the external `--pending-work-script` allocator with the canonical
@@ -629,7 +611,6 @@ fn spawn_pw_check(
 fn inprocess_pw_add(args: &Args, today: &str, project: &str) -> Result<String, HandoffError> {
     let a = crate::cli::Args {
         action: Some("add".to_string()),
-        json: true,
         date: Some(today.to_string()),
         config_path: args
             .config_path
@@ -641,12 +622,9 @@ fn inprocess_pw_add(args: &Args, today: &str, project: &str) -> Result<String, H
     };
     let out = crate::engines::pending_work::run_args(&a)
         .map_err(|message| HandoffError::PendingWork { message })?;
-    let v: serde_json::Value =
-        serde_json::from_str(out.trim()).map_err(|source| HandoffError::PwAddJsonParse {
-            stdout: out.clone(),
-            source,
-        })?;
-    Ok(v["id"].as_str().unwrap_or("").to_string())
+    parse_added_id(out.trim()).ok_or_else(|| HandoffError::PwAddParse {
+        stdout: out.clone(),
+    })
 }
 
 /// True when the linked pw item is still open. Probe failures (missing config or
@@ -670,7 +648,6 @@ fn inprocess_pw_check(args: &Args, today: &str, pw: &str) -> Result<(), HandoffE
     let a = crate::cli::Args {
         action: Some("check".to_string()),
         id: Some(pw.to_string()),
-        json: true,
         date: Some(today.to_string()),
         config_path: args
             .config_path
@@ -846,15 +823,6 @@ fn complete_handoff(root: &Path, status: &str, args: &Args) -> Result<String, Ha
             .output();
     }
 
-    if args.json {
-        let obj = serde_json::json!({
-            "file": path_str(&dest),
-            "pw": pw,
-            "pwClose": pw_close,
-            "status": status
-        });
-        return Ok(serde_json::to_string_pretty(&obj).unwrap());
-    }
     let mut out = format!("{status} handoff {} -> {}", file_name, dest.display());
     if pw_close == Some("skipped-already-closed") {
         out.push_str(&format!("\n  note: {pw} already checked \u{2014} skipped"));
@@ -889,18 +857,10 @@ fn read_ledger_content(ledger: &Path) -> LedgerRead {
     }
 }
 
-fn invoke_list(root: &Path, args: &Args) -> Result<String, HandoffError> {
+fn invoke_list(root: &Path, _args: &Args) -> Result<String, HandoffError> {
     let paths = handoff_paths(root);
     let ledger = read_ledger_content(&paths.ledger);
     let content = ledger.content.value;
-    if args.json {
-        let obj = serde_json::json!({
-            "ledger": path_str(&paths.ledger),
-            "exists": ledger.exists,
-            "content": if ledger.exists { Some(content.clone()) } else { None }
-        });
-        return Ok(serde_json::to_string_pretty(&obj).unwrap());
-    }
     if ledger.exists {
         Ok(content)
     } else {
@@ -924,16 +884,7 @@ pub fn run_typed(args: &Args) -> Result<String, HandoffError> {
     match action {
         "refresh" => {
             let (archived, conflicts) = archive_stranded(&handoff_paths(&root))?;
-            let (ledger, count) = refresh_ledger_typed(&root)?;
-            if args.json {
-                let obj = serde_json::json!({
-                    "Ledger": path_str(&ledger),
-                    "Count": count,
-                    "Archived": archived,
-                    "Conflicts": conflicts
-                });
-                return Ok(serde_json::to_string_pretty(&obj).unwrap());
-            }
+            let (_ledger, _count) = refresh_ledger_typed(&root)?;
             let mut out = "LEDGER refreshed.".to_string();
             if archived > 0 {
                 out.push_str(&format!("\n  archived {archived} stranded handoff(s)"));
@@ -960,6 +911,15 @@ pub fn run_typed(args: &Args) -> Result<String, HandoffError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_added_id_extracts_id() {
+        assert_eq!(
+            parse_added_id("ADDED PWF TASK [PWF-0001] pwf :: title"),
+            Some("PWF-0001".to_string())
+        );
+        assert_eq!(parse_added_id("oops something went wrong"), None);
+    }
 
     #[test]
     fn slug_converts_title() {

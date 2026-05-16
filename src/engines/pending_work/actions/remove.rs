@@ -47,17 +47,6 @@ pub(in crate::engines::pending_work) fn run_remove(
     ObsidianStore::write_index(&index_path, &removed)?;
     ObsidianStore::remove_item_file(item_path)?;
 
-    if args.json {
-        let obj = serde_json::json!({
-            "id": item.id,
-            "project": item.project,
-            "title": item.session,
-            "note": item.note,
-            "itemFile": item_file,
-            "status": "removed"
-        });
-        return Ok(serde_json::to_string_pretty(&obj).unwrap());
-    }
     Ok(format!(
         "REMOVED PWF TASK [{}] {} :: {}\n  deleted: {}\n  unlinked: {}\n",
         item.id,

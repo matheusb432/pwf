@@ -1,15 +1,10 @@
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 
 mod agents 'just/agents.justfile'
-mod handoffs 'just/handoffs.justfile'
 mod pwf 'just/pwf.justfile'
 
 _default:
     @just --list --unsorted --list-submodules
-
-# Print the pwf engine's command reference.
-help:
-    @just pwf help
 
 # Build the release binary.
 build:
@@ -42,19 +37,6 @@ test-e2e:
 # Everything: slim suite, then binary e2e.
 test-all:
     @just pwf test-all
-
-# List active handoffs from the invocation repo.
-handoff *args:
-    @just handoffs list {{ args }}
-
-handoff-new title *args:
-    @just handoffs new "{{ title }}" {{ args }}
-
-handoff-done id *args:
-    @just handoffs done "{{ id }}" {{ args }}
-
-handoff-refresh *args:
-    @just handoffs refresh {{ args }}
 
 # One-time repo setup for cross-agent skills.
 bootstrap *flags:

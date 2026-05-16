@@ -131,68 +131,61 @@ fn get_claude_command_display(title: &str, prompt: &str) -> String {
     format!("claude --name \"{title}\" \"{shown}\"")
 }
 
-/// Build the verify JSON output given an optional item and a probe.
-pub fn verify_json_with_probe(item: Option<&Item>, probe: &dyn ClaudeProbe) -> String {
-    let (id, project, title, repo, prompt, launchable, issues) = match item {
-        Some(it) => {
-            let p = new_launch_prompt(it);
-            let l = it.launchable;
-            let iss: Vec<serde_json::Value> =
-                it.issues.iter().map(|s| serde_json::json!(s)).collect();
-            (
-                Some(it.id.clone()),
-                it.project.clone(),
-                it.session.clone(),
-                it.repo.clone(),
-                p,
-                l,
-                iss,
-            )
-        }
-        None => (
-            None,
-            serde_json::Value::Null
-                .as_str()
-                .map(|s| s.to_string())
-                .unwrap_or_default(),
-            "pending-work claude check".to_string(),
-            None,
-            "Verify Claude Code session launch.".to_string(),
-            true,
-            vec![],
-        ),
-    };
-    let command = new_claude_launch_command(&title, &prompt, probe.path());
-    let display = get_claude_command_display(&title, &prompt);
+/// Render the verify result as markdown given an optional item and a probe.
+/// The `pass`/`fail` token sits in the heading so an agent can branch on one read.
+pub fn verify_text_with_probe(item: Option<&Item>, probe: &dyn ClaudeProbe) -> String {
+    let (id, title, prompt, launchable, issues): (Option<&str>, &str, String, bool, Vec<String>) =
+        match item {
+            Some(it) => (
+                Some(it.id.as_str()),
+                it.session.as_str(),
+                new_launch_prompt(it),
+                it.launchable,
+                it.issues.clone(),
+            ),
+            None => (
+                None,
+                "pending-work claude check",
+                "Verify Claude Code session launch.".to_string(),
+                true,
+                vec![],
+            ),
+        };
+    let display = get_claude_command_display(title, &prompt);
     let result = if probe.available() && launchable {
         "pass"
     } else {
         "fail"
     };
 
-    let mut map = serde_json::Map::new();
-    if let Some(ref i) = id {
-        map.insert("id".into(), serde_json::json!(i));
+    let mut out = match id {
+        Some(i) => format!("# verify {i} \u{2014} {result}\n"),
+        None => format!("# verify \u{2014} {result}\n"),
+    };
+    if probe.available() {
+        let ver = probe
+            .version()
+            .map(|v| format!(" ({v})"))
+            .unwrap_or_default();
+        let path = probe.path().map(|p| format!(" at {p}")).unwrap_or_default();
+        out.push_str(&format!("claude: available{ver}{path}\n"));
+    } else {
+        out.push_str("claude: not found on PATH\n");
     }
-    map.insert("project".into(), serde_json::json!(project));
-    map.insert("session".into(), serde_json::json!(title));
-    map.insert("title".into(), serde_json::json!(title));
-    map.insert("repo".into(), serde_json::json!(repo));
-    map.insert(
-        "claude".into(),
-        serde_json::json!({
-            "available": probe.available(),
-            "path": probe.path(),
-            "version": probe.version()
-        }),
-    );
-    map.insert("sessionTitleFlag".into(), serde_json::json!("--name"));
-    map.insert("command".into(), serde_json::json!(command));
-    map.insert("commandDisplay".into(), serde_json::json!(display));
-    map.insert("launchable".into(), serde_json::json!(launchable));
-    map.insert("result".into(), serde_json::json!(result));
-    map.insert("issues".into(), serde_json::json!(issues));
-    serde_json::to_string_pretty(&serde_json::Value::Object(map)).unwrap()
+    out.push_str(&format!(
+        "launchable: {}\n",
+        if launchable { "yes" } else { "no" }
+    ));
+    out.push_str(&format!("command: {display}\n"));
+    if issues.is_empty() {
+        out.push_str("issues: none\n");
+    } else {
+        out.push_str("issues:\n");
+        for iss in &issues {
+            out.push_str(&format!("- {iss}\n"));
+        }
+    }
+    out
 }
 
 pub(super) fn invoke_claude_launch(
@@ -275,6 +268,69 @@ mod tests {
         )
         .unwrap();
         (stage, cfg)
+    }
+
+    #[test]
+    fn verify_text_pass_has_result_in_heading() {
+        let probe = FakeProbe {
+            available: true,
+            path: Some("/usr/bin/claude".to_string()),
+            version: Some("1.2.3".to_string()),
+            interactive: true,
+        };
+        let item = Item {
+            launchable: true,
+            issues: vec![],
+            ..crate::engines::pending_work::model::Item::default_for_test("PWF-0001", "cli launch")
+        };
+        let out = verify_text_with_probe(Some(&item), &probe);
+        assert!(out.starts_with("# verify PWF-0001 \u{2014} pass"));
+        assert!(out.contains("claude: available (1.2.3) at /usr/bin/claude"));
+        assert!(out.contains("launchable: yes"));
+        assert!(out.contains("command: "));
+        assert!(out.contains("issues: none"));
+    }
+
+    #[test]
+    fn verify_text_fail_lists_issues() {
+        let probe = FakeProbe {
+            available: false,
+            path: None,
+            version: None,
+            interactive: false,
+        };
+        let item = Item {
+            launchable: false,
+            issues: vec!["Prompt is a placeholder".to_string()],
+            ..crate::engines::pending_work::model::Item::default_for_test("PWF-0002", "broken")
+        };
+        let out = verify_text_with_probe(Some(&item), &probe);
+        assert!(out.starts_with("# verify PWF-0002 \u{2014} fail"));
+        assert!(out.contains("claude: not found on PATH"));
+        assert!(out.contains("issues:\n"));
+        assert!(out.contains("- Prompt is a placeholder"));
+    }
+
+    #[test]
+    fn verify_text_available_claude_non_launchable_item_fails() {
+        let probe = FakeProbe {
+            available: true,
+            path: Some("/usr/bin/claude".to_string()),
+            version: Some("1.2.3".to_string()),
+            interactive: true,
+        };
+        let item = Item {
+            launchable: false,
+            issues: vec!["Prompt is a placeholder".to_string()],
+            ..crate::engines::pending_work::model::Item::default_for_test(
+                "PWF-0003",
+                "non-launchable",
+            )
+        };
+        let out = verify_text_with_probe(Some(&item), &probe);
+        assert!(out.starts_with("# verify PWF-0003 \u{2014} fail"));
+        assert!(out.contains("launchable: no"));
+        assert!(out.contains("command: "));
     }
 
     #[test]
