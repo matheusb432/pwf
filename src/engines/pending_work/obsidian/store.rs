@@ -122,7 +122,7 @@ impl ObsidianStore {
         if !src.exists() {
             return Ok(());
         }
-        let archive_dir = project_dir.join("_archive");
+        let archive_dir = project_dir.join(super::super::naming::ARCHIVE_DIR);
         std::fs::create_dir_all(&archive_dir)
             .map_err(|source| StoreError::CreateArchiveDir { source })?;
         std::fs::rename(&src, archive_dir.join(format!("{id}.md"))).map_err(|source| {

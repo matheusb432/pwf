@@ -12,11 +12,12 @@ use super::domain::commands::PendingWorkCommand;
 use super::errors;
 use super::launch::write_launch_spec;
 use super::model::{Action, Item};
-use super::naming::{project_index_path, stamp_date};
+use super::naming::{path_str, project_index_path, stamp_date};
 use super::new_add::NewAddInputs;
 use super::obsidian::store::ObsidianStore;
 use super::query::{
-    find_pending_item, load_config, resolve_managed_project_name_typed, resolve_project_repo,
+    find_item_note_file, find_pending_item, load_config, resolve_managed_project_name_typed,
+    resolve_project_repo,
 };
 use super::route::run_route;
 use super::section::Section;
@@ -130,24 +131,21 @@ pub(in crate::engines::pending_work) fn run_typed(
 
         Action::Resolve => {
             let id = require_id(args, "resolve")?;
-            let item = find_pending_item(&cfg, id)?;
-            // ? File-model items carry the per-item note; legacy inline items only the index.
-            let note_path = item.item_file.as_deref().unwrap_or(&item.note).to_string();
-            if args.show {
-                // File-model: stream the note as markdown, minus exec-irrelevant frontmatter.
-                // Legacy inline items have no standalone file → emit the parsed body.
-                return match item.item_file.as_deref() {
-                    Some(file) => {
-                        let raw = ObsidianStore::read_item_file(std::path::Path::new(file))?;
-                        Ok(crate::frontmatter::strip_frontmatter_keys(
-                            &raw,
-                            SHOW_FRONTMATTER_DENYLIST,
-                        ))
+            match find_pending_item(&cfg, id) {
+                Ok(item) => resolve_active_item(&item, args.show),
+                // ? Done/cancelled items are skipped by the index parser (`- [x]`), so
+                // ? find_pending_item misses them. Fall back to the note file on disk —
+                // ? project dir or `_archive` — so resolve shows tasks regardless of
+                // ? status; the `status:` frontmatter tells done from active (PWF-0061).
+                // ? Ambiguous/other errors propagate unchanged.
+                Err(errors::PendingWorkError::ItemNotFound { id }) => {
+                    match find_item_note_file(&cfg, &id) {
+                        Some(file) => resolve_file(&file, args.show),
+                        None => Err(errors::PendingWorkError::ItemNotFound { id }),
                     }
-                    None => Ok(item.prompt.clone()),
-                };
+                }
+                Err(other) => Err(other),
             }
-            Ok(note_path)
         }
 
         Action::Launch => {
@@ -166,6 +164,33 @@ pub(in crate::engines::pending_work) fn run_typed(
 
         Action::Update => Ok(run_update(&cfg, args)?),
     }
+}
+
+/// Render an active index item for `resolve`: the note path, or with `show` the
+/// note markdown (file-model) / parsed body (legacy inline).
+fn resolve_active_item(item: &Item, show: bool) -> Result<String, errors::PendingWorkError> {
+    if show {
+        // File-model: stream the note as markdown, minus exec-irrelevant frontmatter.
+        // Legacy inline items have no standalone file → emit the parsed body.
+        return match item.item_file.as_deref() {
+            Some(file) => resolve_file(std::path::Path::new(file), true),
+            None => Ok(item.prompt.clone()),
+        };
+    }
+    Ok(item.item_file.as_deref().unwrap_or(&item.note).to_string())
+}
+
+/// Render a per-item note file for `resolve`: its forward-slash path, or with
+/// `show` the note markdown minus exec-irrelevant frontmatter.
+fn resolve_file(file: &std::path::Path, show: bool) -> Result<String, errors::PendingWorkError> {
+    if show {
+        let raw = ObsidianStore::read_item_file(file)?;
+        return Ok(crate::frontmatter::strip_frontmatter_keys(
+            &raw,
+            SHOW_FRONTMATTER_DENYLIST,
+        ));
+    }
+    Ok(path_str(file))
 }
 
 pub fn run_args(args: &crate::cli::Args) -> Result<String, String> {

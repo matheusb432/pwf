@@ -14,7 +14,7 @@ name = "pwf"
 path = "src/lib.rs"
 
 # ! Binary-e2e suites: excluded from the default `cargo test` (`just test`) so the
-# ! default stays slim/in-process. Run explicitly via `just test-e2e` / `cargo test
+# ! default stays slim/in-process. Run explicitly via `just test --e2e` / `cargo test
 # ! --test <name>` — explicit target selection still runs them despite `test = false`.
 [[test]]
 name = "cli_e2e"

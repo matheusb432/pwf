@@ -146,7 +146,8 @@ pub enum PwAction {
         #[command(flatten)]
         common: PwCommon,
     },
-    /// Replace an item's prompt body and/or title; append or clear its prereqs.
+    /// Replace an item's prompt body and/or title; append or clear its prereqs;
+    /// or amend its `commits:` provenance (the only edit allowed on a closed item).
     Update {
         #[arg(long)]
         id: Option<String>,
@@ -160,10 +161,15 @@ pub enum PwAction {
         /// Clear all prereqs on the item.
         #[arg(long, conflicts_with = "prereq")]
         clear_prereq: bool,
+        /// Overwrite the `commits:` provenance range(s) (repeat or comma-separate);
+        /// works on closed done/cancelled items too.
+        #[arg(long)]
+        commits: Vec<String>,
         #[command(flatten)]
         common: PwCommon,
     },
-    /// Print an item's note path; `--show` prints the note as markdown instead.
+    /// Print an item's note path (any status, incl. archived done/cancelled);
+    /// `--show` prints the note as markdown instead.
     Resolve {
         #[arg(long)]
         id: Option<String>,
@@ -538,6 +544,7 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             title,
             prereq,
             clear_prereq,
+            commits,
             common,
         } => {
             a.id = normalize_pending_work_id(id);
@@ -545,6 +552,7 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             a.title = title;
             a.prereq = prereq;
             a.clear_prereq = clear_prereq;
+            a.commits = commits;
             apply_pw_common(a, common);
             PendingWorkAction::Update
         }

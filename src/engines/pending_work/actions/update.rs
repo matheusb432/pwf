@@ -1,10 +1,12 @@
 // Action: update.
 
+use super::super::commits;
 use super::super::errors::PendingWorkError;
-use super::super::index::set_prereq_text;
+use super::super::index::{set_commits_text, set_prereq_text};
+use super::super::model::Item;
 use super::super::obsidian::store::ObsidianStore;
 use super::super::prereq;
-use super::super::query::find_pending_item;
+use super::super::query::{find_item_note_file, find_pending_item};
 use super::super::text::{normalize_title, note_body};
 use crate::cli::Args;
 use crate::config::Config;
@@ -34,13 +36,35 @@ pub(in crate::engines::pending_work) fn run_update(
         .id
         .as_deref()
         .ok_or(PendingWorkError::MissingId { action: "update" })?;
-    let prompt = args.prompt.as_deref();
-    let title = args.title.as_deref();
-    if prompt.is_none() && title.is_none() && args.prereq.is_empty() && !args.clear_prereq {
+    let commits_value = commits::frontmatter_value(&args.commits);
+    // Body edits (title/prompt/prereq) need the parsed open Item; commits only need
+    // the note file, so it can be amended on closed (done/cancelled) items too.
+    let edits_body =
+        args.prompt.is_some() || args.title.is_some() || !args.prereq.is_empty() || args.clear_prereq;
+    if !edits_body && commits_value.is_none() {
         return Err(PendingWorkError::NothingToUpdate);
     }
 
-    let item = find_pending_item(cfg, id)?;
+    match find_pending_item(cfg, id) {
+        Ok(item) => update_open_item(cfg, args, &item, commits_value.as_deref()),
+        // Closed items are skipped by the index parser; allow a commits-only amend
+        // via the note file on disk (PWF-0062). Body edits still require an open item.
+        Err(PendingWorkError::ItemNotFound { id }) => match find_item_note_file(cfg, &id) {
+            Some(_) if edits_body => Err(PendingWorkError::ClosedItemCommitsOnly { id }),
+            Some(path) => amend_commits_only(&path, commits_value.as_deref(), &id),
+            None => Err(PendingWorkError::ItemNotFound { id }),
+        },
+        Err(other) => Err(other),
+    }
+}
+
+/// Apply title/prompt/prereq and/or commits edits to an open file-model item.
+fn update_open_item(
+    cfg: &Config,
+    args: &Args,
+    item: &Item,
+    commits_value: Option<&str>,
+) -> Result<String, PendingWorkError> {
     let item_file = item
         .item_file
         .as_deref()
@@ -48,16 +72,18 @@ pub(in crate::engines::pending_work) fn run_update(
     let item_path = Path::new(item_file);
     let mut content = ObsidianStore::read_item_file(item_path)?;
 
-    let new_title = title
+    let new_title = args
+        .title
+        .as_deref()
         .map(normalize_title)
         .unwrap_or_else(|| item.session.clone());
-    if title.is_some() {
+    if args.title.is_some() {
         let title_re = Regex::new(r"(?m)^title:.*$").unwrap();
         content = title_re
             .replace(&content, format!("title: {new_title}").as_str())
             .into_owned();
     }
-    if let Some(p) = prompt {
+    if let Some(p) = args.prompt.as_deref() {
         content = replace_body(&content, &note_body(p));
     }
     if args.clear_prereq {
@@ -66,6 +92,9 @@ pub(in crate::engines::pending_work) fn run_update(
         let merged = prereq::append_to_frontmatter(cfg, item.prereq.as_deref(), &args.prereq)?;
         content = set_prereq_text(&content, Some(&merged));
     }
+    if let Some(range) = commits_value {
+        content = set_commits_text(&content, Some(range));
+    }
 
     ObsidianStore::write_item_file(item_path, &content)?;
 
@@ -73,6 +102,19 @@ pub(in crate::engines::pending_work) fn run_update(
         "Updated {} ({} :: {})\n",
         item.id, item.project, new_title
     ))
+}
+
+/// Overwrite only the `commits:` provenance on a note file — no queue rotation,
+/// no `completed:` re-stamp — so closed items' provenance can be corrected.
+fn amend_commits_only(
+    path: &Path,
+    range: Option<&str>,
+    id: &str,
+) -> Result<String, PendingWorkError> {
+    let content = ObsidianStore::read_item_file(path)?;
+    let updated = set_commits_text(&content, range);
+    ObsidianStore::write_item_file(path, &updated)?;
+    Ok(format!("Updated {id} (commits: {})\n", range.unwrap_or("")))
 }
 
 #[cfg(test)]
@@ -138,7 +180,7 @@ mod tests {
         assert!(matches!(err, PendingWorkError::NothingToUpdate));
         assert_eq!(
             err.to_string(),
-            "nothing to update (pass --prompt, --title, --prereq, and/or --clear-prereq)."
+            "nothing to update (pass --prompt, --title, --prereq, --clear-prereq, and/or --commits)."
         );
     }
 

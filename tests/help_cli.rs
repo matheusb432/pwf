@@ -272,6 +272,38 @@ fn terse_help_is_lean_and_succeeds() {
 }
 
 #[test]
+fn verb_terse_help_is_scoped_to_that_verb() {
+    // PWF-0063: `pwf <verb> --help --terse` must show only that verb, not every engine.
+    let (terse, ok) = run(&["update", "--help", "--terse"]);
+    assert!(ok, "pwf update --help --terse should exit 0");
+    assert!(
+        terse.trim_start().starts_with("update --id"),
+        "should lead with the update verb line: {terse}"
+    );
+    assert!(
+        !terse.contains("handoff <verb>"),
+        "verb-scoped terse must not dump the handoff engine: {terse}"
+    );
+    assert!(
+        !terse.contains("resolve --id"),
+        "verb-scoped terse must not dump sibling verbs: {terse}"
+    );
+
+    // The engine forms and the top-level map still emit their full blocks.
+    let (engine, ok) = run(&["handoff", "--help", "--terse"]);
+    assert!(ok);
+    assert!(
+        engine.contains("handoff <verb>"),
+        "engine terse stays full: {engine}"
+    );
+    let (top, _) = run(&["--help", "--terse"]);
+    assert!(
+        top.contains("handoff <verb>") && top.contains("resolve --id"),
+        "top-level terse stays full: {top}"
+    );
+}
+
+#[test]
 fn list_help_mentions_all_scope() {
     let (list_help, ok) = run(&["list", "--help"]);
     assert!(ok, "pwf list --help should exit 0");

@@ -129,8 +129,16 @@ pub(super) enum PendingWorkError {
         id: String,
     },
     /// Update was invoked without any field mutations.
-    #[error("nothing to update (pass --prompt, --title, --prereq, and/or --clear-prereq).")]
+    #[error(
+        "nothing to update (pass --prompt, --title, --prereq, --clear-prereq, and/or --commits)."
+    )]
     NothingToUpdate,
+    /// A closed (done/cancelled) item only supports `--commits` amendment.
+    #[error("only --commits can amend closed item {id} (done/cancelled); body/title/prereq need an open item.")]
+    ClosedItemCommitsOnly {
+        /// The selected item id.
+        id: String,
+    },
     /// A prereq flag value is not a canonical work-item id.
     #[error("Invalid --prereq id: {raw}.")]
     InvalidPrereqId {

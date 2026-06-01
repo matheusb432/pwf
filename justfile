@@ -26,17 +26,9 @@ format:
 smell-check-errors:
     @just pwf smell-check-errors
 
-# Slim default: in-process unit + integration tests.
-test:
-    @just pwf test
-
-# Binary-e2e Rust suites.
-test-e2e:
-    @just pwf test-e2e
-
-# Everything: slim suite, then binary e2e.
-test-all:
-    @just pwf test-all
+# Test gate. Default: slim in-process unit + integration. --e2e: binary suites. --all: both. --verbose: nocapture.
+test *flags:
+    @just pwf test {{ flags }}
 
 # One-time repo setup for cross-agent skills.
 bootstrap *flags:

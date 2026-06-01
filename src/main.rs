@@ -59,9 +59,14 @@ fn print_top_help(terse: bool) {
 
 fn print_engine_help(engine: &str, terse: bool) {
     if terse {
+        // `engine` may be an engine name OR a pending-work verb: scope to the verb
+        // line when it isn't an engine, falling back to the full map only for an
+        // unrecognized token.
         println!(
             "{}",
-            help::terse_engine(engine).unwrap_or_else(help::terse_text)
+            help::terse_engine(engine)
+                .or_else(|| help::terse_verb(engine))
+                .unwrap_or_else(help::terse_text)
         );
         return;
     }

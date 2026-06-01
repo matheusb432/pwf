@@ -12,7 +12,7 @@ const PW_TERSE: &str = r#"pw [<project>]   (alias: pending-work; bare pw lists a
   add <project> <prompt> [--title] [--human] [--section <s>] [--prereq <id>] [--continue-handoff] [--continue <path>]
   check --id [--report] [--commits <range>] [--review]
   cancel --id --report [--commits <range>] [--review]
-  update --id [--prompt] [--title] [--prereq <id>] [--clear-prereq]
+  update --id [--prompt] [--title] [--prereq <id>] [--clear-prereq] [--commits <range>]
   resolve --id [--show]
   clean [--dry-run|--force]
   verify [--id]
@@ -47,7 +47,7 @@ PENDING-WORK COMMANDS (default engine)
   <project>                    List one project's open tasks
   check --id <id>              Mark a task done
   cancel --id <id> --report    Mark a task cancelled
-  update --id <id>             Replace task text/title or prereqs
+  update --id <id>             Replace task text/title/prereqs or amend commits
   resolve --id <id>            Print the task note path
   clean                        Archive or clear done tasks
   verify --id <id>             Probe whether a task can launch
@@ -82,6 +82,22 @@ pub fn terse_engine(engine: &str) -> Option<String> {
 /// Terse help for every engine (top-level `pwf --help --terse`).
 pub fn terse_text() -> String {
     format!("{PW_TERSE}\n\n{HANDOFF_TERSE}\n\n{MIGRATE_TERSE}")
+}
+
+/// Terse help for one pending-work verb (e.g. `update`): the single matching line
+/// from `PW_TERSE`, trimmed. `None` if `verb` is not a pending-work verb. Lets
+/// `pwf <verb> --help --terse` scope to that verb instead of dumping every engine.
+pub fn terse_verb(verb: &str) -> Option<String> {
+    PW_TERSE
+        .lines()
+        .skip(1) // first line is the `pw [<project>]` engine header, not a verb
+        .map(str::trim)
+        .find(|line| {
+            line.split([' ', '\t'])
+                .next()
+                .is_some_and(|head| head.eq_ignore_ascii_case(verb))
+        })
+        .map(str::to_string)
 }
 
 /// True if `tok` requests help (`--help`/`-h`/`help`) or its `--list` alias.
@@ -144,6 +160,23 @@ mod tests {
         assert!(!terse_engine("handoff").unwrap().contains("launch-claude"));
         assert_eq!(terse_engine("pw"), terse_engine("pending-work"));
         assert!(terse_engine("bogus").is_none());
+    }
+
+    #[test]
+    fn terse_verb_scopes_to_one_pending_work_verb() {
+        // A verb returns only its own line — no other verbs, no other engines.
+        let u = terse_verb("update").expect("update verb");
+        assert!(u.starts_with("update --id"));
+        assert!(!u.contains("resolve"), "must not bleed other verbs: {u}");
+        assert!(!u.contains("handoff"), "must not bleed engines: {u}");
+        // Case-insensitive.
+        assert_eq!(terse_verb("UPDATE"), terse_verb("update"));
+        // `launch` matches its own line, not the `launch-claude` line.
+        assert_eq!(terse_verb("launch").as_deref(), Some("launch --id"));
+        assert!(terse_verb("launch-claude").unwrap().contains("--force"));
+        // The `pw [<project>]` header is not a verb.
+        assert_eq!(terse_verb("pw"), None);
+        assert_eq!(terse_verb("bogus"), None);
     }
 
     #[test]

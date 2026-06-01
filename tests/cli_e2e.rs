@@ -1203,3 +1203,256 @@ fn resolve_show_legacy_item_emits_body_only() {
         "prompt not in output: {stdout}"
     );
 }
+
+/// Stage a single-project notes dir with a done item parked under `_archive/`
+/// (no index entry, mirroring `check`/`cancel`) and return (dir, cfg).
+fn staged_with_archived_item(
+    project: &str,
+    prefix: &str,
+    id: &str,
+    content: &str,
+) -> (TempDir, std::path::PathBuf) {
+    let dir = TempDir::new().unwrap();
+    let notes = dir.path().join("notes");
+    let archive = notes.join(project).join("_archive");
+    fs::create_dir_all(&archive).unwrap();
+    fs::write(archive.join(format!("{id}.md")), content).unwrap();
+    let cfg = dir.path().join("cfg.json");
+    fs::write(
+        &cfg,
+        format!(
+            r#"{{ "notesDir": {:?}, "projects": {{ {:?}: "/repo" }}, "prefixes": {{ {:?}: {:?} }} }}"#,
+            notes.to_string_lossy(),
+            project,
+            project,
+            prefix
+        ),
+    )
+    .unwrap();
+    (dir, cfg)
+}
+
+/// Stage a single-project notes dir with a done item whose note still sits in the
+/// project dir while its index link is checked (`- [x]`), as `check` leaves it until
+/// the done-queue cap evicts it to `_archive`. Returns (dir, cfg).
+fn staged_with_done_item(
+    project: &str,
+    prefix: &str,
+    id: &str,
+    content: &str,
+) -> (TempDir, std::path::PathBuf) {
+    let dir = TempDir::new().unwrap();
+    let notes = dir.path().join("notes");
+    let proj = notes.join(project);
+    fs::create_dir_all(&proj).unwrap();
+    fs::write(proj.join(format!("{id}.md")), content).unwrap();
+    // Checked link → the index parser skips it, so find_pending_item misses it.
+    fs::write(
+        proj.join(format!("{project}.md")),
+        format!("- [x] [[{id}]] ✅ 2026-06-20\n"),
+    )
+    .unwrap();
+    let cfg = dir.path().join("cfg.json");
+    fs::write(
+        &cfg,
+        format!(
+            r#"{{ "notesDir": {:?}, "projects": {{ {:?}: "/repo" }}, "prefixes": {{ {:?}: {:?} }} }}"#,
+            notes.to_string_lossy(),
+            project,
+            project,
+            prefix
+        ),
+    )
+    .unwrap();
+    (dir, cfg)
+}
+
+#[test]
+fn resolve_show_finds_done_item_still_in_project_dir() {
+    // PWF-0061: a freshly-checked item keeps its note in the project dir but its
+    // index link is `- [x]`, so the parser skips it. resolve must still find it.
+    let (_d, cfg) = staged_with_done_item(
+        "pwf",
+        "PWF",
+        "PWF-0003",
+        "---\nstatus: done\ntitle: just done\nproject: pwf\ncompleted: 2026-06-20\n---\n\nGoals:\n- just done\n",
+    );
+    let out = pwf()
+        .args(["resolve", "--show", "--id", "PWF-0003", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .success();
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("status: done"), "missing status: {stdout}");
+    assert!(stdout.contains("- just done"), "missing body: {stdout}");
+}
+
+#[test]
+fn resolve_show_finds_archived_done_item() {
+    // PWF-0061: done items are unlinked from the index and parked under `_archive`.
+    // resolve --show must still find them so it shows tasks regardless of status.
+    let (_d, cfg) = staged_with_archived_item(
+        "pwf",
+        "PWF",
+        "PWF-0002",
+        "---\nstatus: done\ntitle: finished thing\nproject: pwf\ncreated: 2026-06-20\n---\n\nGoals:\n- finished thing\n",
+    );
+    let out = pwf()
+        // Lowercase id also exercises the case-insensitive archive match.
+        .args(["resolve", "--show", "--id", "pwf-0002", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .success();
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("status: done"), "missing status: {stdout}");
+    assert!(
+        stdout.contains("- finished thing"),
+        "missing body: {stdout}"
+    );
+    assert!(
+        !stdout.contains("created:"),
+        "created key must be stripped: {stdout}"
+    );
+}
+
+#[test]
+fn resolve_prints_archived_item_path() {
+    let (_d, cfg) = staged_with_archived_item(
+        "pwf",
+        "PWF",
+        "PWF-0002",
+        "---\nstatus: cancelled\ntitle: dropped\nproject: pwf\n---\n\nGoals:\n- dropped\n",
+    );
+    let out = pwf()
+        .args(["resolve", "--id", "PWF-0002", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .success();
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    assert!(
+        stdout.contains("_archive/PWF-0002.md"),
+        "path should point at the archived note: {stdout}"
+    );
+}
+
+#[test]
+fn resolve_errors_when_id_absent_from_index_and_archive() {
+    let (_d, cfg) = staged_with_archived_item(
+        "pwf",
+        "PWF",
+        "PWF-0002",
+        "---\nstatus: done\ntitle: t\nproject: pwf\n---\n\nbody\n",
+    );
+    pwf()
+        .args(["resolve", "--id", "PWF-9999", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .failure();
+}
+
+// 10. update --commits: amend provenance, incl. on closed items (PWF-0062).
+
+#[test]
+fn update_commits_amends_done_item_in_project_dir() {
+    // PWF-0062: a closed item (checked `- [x]` link, note still in project dir) is
+    // skipped by find_pending_item; update --commits must still amend its provenance.
+    let (_d, cfg) = staged_with_done_item(
+        "pwf",
+        "PWF",
+        "PWF-0003",
+        "---\nstatus: done\ntitle: t\nproject: pwf\ncompleted: 2026-06-20\ncommits: \"old..HEAD\"\n---\n\nbody\n",
+    );
+    pwf()
+        .args([
+            "update", "--id", "pwf-0003", "--commits", "aaa111..bbb222", "--config-path",
+        ])
+        .arg(&cfg)
+        .assert()
+        .success();
+    // Verify via resolve --show: the commits line is overwritten, status untouched.
+    let out = pwf()
+        .args(["resolve", "--show", "--id", "PWF-0003", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .success();
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    assert!(
+        stdout.contains("commits: \"aaa111..bbb222\""),
+        "commits not amended: {stdout}"
+    );
+    assert!(!stdout.contains("old..HEAD"), "stale range left: {stdout}");
+    assert!(stdout.contains("status: done"), "status changed: {stdout}");
+}
+
+#[test]
+fn update_commits_amends_archived_item() {
+    let (_d, cfg) = staged_with_archived_item(
+        "pwf",
+        "PWF",
+        "PWF-0002",
+        "---\nstatus: done\ntitle: t\nproject: pwf\ncompleted: 2026-06-20\n---\n\nbody\n",
+    );
+    pwf()
+        .args([
+            "update", "--id", "PWF-0002", "--commits", "c0ffee..d00d", "--config-path",
+        ])
+        .arg(&cfg)
+        .assert()
+        .success();
+    let out = pwf()
+        .args(["resolve", "--show", "--id", "PWF-0002", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .success();
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    assert!(
+        stdout.contains("commits: \"c0ffee..d00d\""),
+        "commits not inserted on archived item: {stdout}"
+    );
+}
+
+#[test]
+fn update_commits_amends_open_item() {
+    let (_d, cfg) = staged_with_item(
+        "pwf",
+        "PWF",
+        "PWF-0001",
+        "do the thing",
+        "---\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\nGoals:\n- do the thing\n",
+    );
+    pwf()
+        .args([
+            "update", "--id", "PWF-0001", "--commits", "1a2b..3c4d", "--config-path",
+        ])
+        .arg(&cfg)
+        .assert()
+        .success();
+    let out = pwf()
+        .args(["resolve", "--show", "--id", "PWF-0001", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .success();
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    assert!(
+        stdout.contains("commits: \"1a2b..3c4d\""),
+        "commits not set on open item: {stdout}"
+    );
+}
+
+#[test]
+fn update_body_edit_on_closed_item_is_rejected() {
+    let (_d, cfg) = staged_with_done_item(
+        "pwf",
+        "PWF",
+        "PWF-0003",
+        "---\nstatus: done\ntitle: t\nproject: pwf\ncompleted: 2026-06-20\n---\n\nbody\n",
+    );
+    pwf()
+        .args([
+            "update", "--id", "PWF-0003", "--title", "new title", "--config-path",
+        ])
+        .arg(&cfg)
+        .assert()
+        .failure()
+        .stderr(contains("only --commits can amend closed item"));
+}

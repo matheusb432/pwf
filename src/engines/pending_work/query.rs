@@ -2,10 +2,10 @@
 
 use super::errors;
 use super::model::Item;
-use super::naming::project_index_path;
+use super::naming::{project_archive_dir, project_dir, project_index_path};
 use super::parse::get_project_tasks;
 use crate::config::Config;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub(super) fn load_config(args: &crate::cli::Args) -> Result<Config, errors::PendingWorkError> {
     let cfg_path = resolve_config_path_with_default(args, crate::config::default_config_path)?;
@@ -148,6 +148,46 @@ pub(super) fn find_pending_item(cfg: &Config, id: &str) -> Result<Item, errors::
         1 => Ok(selected[0].clone()),
         _ => Err(errors::PendingWorkError::AmbiguousId { id: id.to_string() }),
     }
+}
+
+/// Locate an item's note file by id (case-insensitive) outside the active index.
+/// Done/cancelled items are skipped by the index parser (`- [x]` links), so they
+/// are invisible to `find_pending_item`: a freshly-checked item still sits as
+/// `<ID>.md` in the project dir, while one evicted past the done-queue cap is moved
+/// to `_archive/`. `resolve` falls back here to show tasks regardless of status —
+/// project dir first, then archive (PWF-0061).
+pub(super) fn find_item_note_file(cfg: &Config, id: &str) -> Option<PathBuf> {
+    for project in cfg.projects.keys() {
+        let base = cfg.notes_dir_for(project);
+        for dir in [
+            project_dir(base, project),
+            project_archive_dir(base, project),
+        ] {
+            if let Some(path) = scan_dir_for_item_note(&dir, id) {
+                return Some(path);
+            }
+        }
+    }
+    None
+}
+
+/// First `<dir>/*.md` whose stem matches `id` case-insensitively. The index file
+/// (`<project>.md`) and sibling items have different stems, so only `<ID>.md` hits.
+fn scan_dir_for_item_note(dir: &Path, id: &str) -> Option<PathBuf> {
+    for entry in std::fs::read_dir(dir).ok()?.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("md") {
+            continue;
+        }
+        if path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .is_some_and(|stem| stem.eq_ignore_ascii_case(id))
+        {
+            return Some(path);
+        }
+    }
+    None
 }
 
 #[cfg(test)]

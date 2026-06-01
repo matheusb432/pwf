@@ -5,10 +5,15 @@ use chrono::Local;
 use regex::Regex;
 use std::path::{Path, PathBuf};
 
-const ARCHIVE_DIR: &str = "_archive";
+pub(in crate::engines::pending_work) const ARCHIVE_DIR: &str = "_archive";
 
 pub fn project_dir(notes_dir: &str, name: &str) -> PathBuf {
     Path::new(notes_dir).join(name)
+}
+
+/// `<notes_dir>/<name>/_archive` — where `check`/`cancel` park done items.
+pub(in crate::engines::pending_work) fn project_archive_dir(notes_dir: &str, name: &str) -> PathBuf {
+    project_dir(notes_dir, name).join(ARCHIVE_DIR)
 }
 
 /// Convert a Path to a forward-slash string for JSON output (portable across OSes).
