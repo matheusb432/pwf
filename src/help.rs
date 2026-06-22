@@ -14,6 +14,7 @@ const PW_TERSE: &str = r#"pw [<project>]   (alias: pending-work; bare pw lists a
   cancel --id --report [--commits <range>] [--review]
   update --id [--prompt] [--title] [--prereq <id>] [--clear-prereq] [--commits <range>]
   resolve --id [--show]
+  show --id   (shorthand for resolve --show)
   clean [--dry-run|--force]
   verify [--id]
   launch --id
@@ -49,6 +50,7 @@ PENDING-WORK COMMANDS (default engine)
   cancel --id <id> --report    Mark a task cancelled
   update --id <id>             Replace task text/title/prereqs or amend commits
   resolve --id <id>            Print the task note path
+  show --id <id>               Stream the task note (alias for resolve --show)
   clean                        Archive or clear done tasks
   verify --id <id>             Probe whether a task can launch
   launch --id <id>             Emit a launch spec
@@ -141,6 +143,8 @@ mod tests {
         assert!(terse.contains("cancel --id --report"));
         assert!(!terse.contains("launch-orca"), "orca verbs are removed");
         assert!(terse.contains("resolve --id"));
+        // PWF-0065: the `show` shorthand for `resolve --show` is its own terse line.
+        assert!(terse.contains("show --id"));
         // ...but drops human-only prose: descriptions, recipe hints, route shortcuts.
         assert!(terse.contains("remove --id"));
         assert!(!terse.contains("[just "), "terse must drop recipe hints");

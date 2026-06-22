@@ -26,10 +26,14 @@ format:
 smell-check-errors:
     @just pwf smell-check-errors
 
-# Test gate. Default: slim in-process unit + integration. --e2e: binary suites. --all: both. --verbose: nocapture.
+# Test gate. Default: slim in-process unit + integration (quiet). --e2e: binary suites. --all: both. --verbose: full per-test output + nocapture.
 test *flags:
     @just pwf test {{ flags }}
 
 # One-time repo setup for cross-agent skills.
 bootstrap *flags:
     @just agents bootstrap {{ flags }}
+
+# Read-only readiness check: required tools/versions + optional health (see doctor.toml). Run first on a new clone. --json for machine output.
+doctor *args:
+    doctor-rs {{ args }}

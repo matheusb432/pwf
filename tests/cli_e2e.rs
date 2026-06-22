@@ -308,7 +308,7 @@ fn canonical_list_succeeds() {
         .assert()
         .success();
     let canon_out = String::from_utf8(canon.get_output().stdout.clone()).unwrap();
-    assert!(canon_out.contains("[GLP-0001] glep-shimeji :: tray gui"));
+    assert!(canon_out.contains("GLP-0001 :: tray gui"));
 }
 
 #[test]
@@ -1350,6 +1350,75 @@ fn resolve_errors_when_id_absent_from_index_and_archive() {
         .failure();
 }
 
+// 9b. show: shorthand alias for `resolve --show` (PWF-0065).
+
+#[test]
+fn show_streams_note_markdown_like_resolve_show() {
+    // `show --id` == `resolve --show --id`: emit the note markdown, minus the
+    // execution-irrelevant `created` key.
+    let (_d, cfg) = staged_with_item(
+        "pwf",
+        "PWF",
+        "PWF-0001",
+        "do the thing",
+        "---\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\nGoals:\n- do the thing\n",
+    );
+    let out = pwf()
+        .args(["show", "--id", "PWF-0001", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .success();
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    assert!(
+        stdout.contains("status: active"),
+        "missing status: {stdout}"
+    );
+    assert!(stdout.contains("Goals:"), "missing body: {stdout}");
+    assert!(
+        !stdout.contains("created:"),
+        "created key must be stripped: {stdout}"
+    );
+}
+
+#[test]
+fn show_finds_archived_done_item_regardless_of_status() {
+    // The alias inherits resolve's status-agnostic lookup: a done item evicted to
+    // `_archive` (no index link) is still found and streamed.
+    let (_d, cfg) = staged_with_archived_item(
+        "pwf",
+        "PWF",
+        "PWF-0002",
+        "---\nstatus: done\ntitle: finished thing\nproject: pwf\ncreated: 2026-06-20\n---\n\nGoals:\n- finished thing\n",
+    );
+    let out = pwf()
+        // Lowercase id also exercises the case-insensitive archive match.
+        .args(["show", "--id", "pwf-0002", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .success();
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("status: done"), "missing status: {stdout}");
+    assert!(
+        stdout.contains("- finished thing"),
+        "missing body: {stdout}"
+    );
+}
+
+#[test]
+fn show_errors_when_id_absent() {
+    let (_d, cfg) = staged_with_archived_item(
+        "pwf",
+        "PWF",
+        "PWF-0002",
+        "---\nstatus: done\ntitle: t\nproject: pwf\n---\n\nbody\n",
+    );
+    pwf()
+        .args(["show", "--id", "PWF-9999", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .failure();
+}
+
 // 10. update --commits: amend provenance, incl. on closed items (PWF-0062).
 
 #[test]
@@ -1364,7 +1433,12 @@ fn update_commits_amends_done_item_in_project_dir() {
     );
     pwf()
         .args([
-            "update", "--id", "pwf-0003", "--commits", "aaa111..bbb222", "--config-path",
+            "update",
+            "--id",
+            "pwf-0003",
+            "--commits",
+            "aaa111..bbb222",
+            "--config-path",
         ])
         .arg(&cfg)
         .assert()
@@ -1394,7 +1468,12 @@ fn update_commits_amends_archived_item() {
     );
     pwf()
         .args([
-            "update", "--id", "PWF-0002", "--commits", "c0ffee..d00d", "--config-path",
+            "update",
+            "--id",
+            "PWF-0002",
+            "--commits",
+            "c0ffee..d00d",
+            "--config-path",
         ])
         .arg(&cfg)
         .assert()
@@ -1422,7 +1501,12 @@ fn update_commits_amends_open_item() {
     );
     pwf()
         .args([
-            "update", "--id", "PWF-0001", "--commits", "1a2b..3c4d", "--config-path",
+            "update",
+            "--id",
+            "PWF-0001",
+            "--commits",
+            "1a2b..3c4d",
+            "--config-path",
         ])
         .arg(&cfg)
         .assert()
@@ -1449,7 +1533,12 @@ fn update_body_edit_on_closed_item_is_rejected() {
     );
     pwf()
         .args([
-            "update", "--id", "PWF-0003", "--title", "new title", "--config-path",
+            "update",
+            "--id",
+            "PWF-0003",
+            "--title",
+            "new title",
+            "--config-path",
         ])
         .arg(&cfg)
         .assert()

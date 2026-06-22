@@ -12,6 +12,10 @@ _manifest := "pwf.json"
 _require-rg:
     @command -v rg >/dev/null 2>&1 || { printf '%s\n' "ripgrep (rg) is required for error smell checks." >&2; exit 127; }
 
+[private]
+_require-shellspec:
+    @command -v shellspec >/dev/null 2>&1 || { printf '%s\n' "shellspec is required for recipe specs (install: https://github.com/shellspec/shellspec)." >&2; exit 127; }
+
 # Build the release binary at target/release/pwf.exe.
 build:
     cargo build --release
@@ -109,7 +113,11 @@ format:
 smell-check-errors: _require-rg
     bash scripts/smell-check-errors.sh
 
-# Test gate. Default: slim in-process unit + integration (cargo test). --e2e: binary suites (cli_e2e, help_cli). --all: both. --verbose: nocapture.
+# Recipe-behavior specs (ShellSpec): assert the `just test` flag contract.
+spec: _require-shellspec
+    shellspec
+
+# Test gate. Default: slim in-process unit + integration (cargo test --quiet). --e2e: binary suites (cli_e2e, help_cli). --all: both + recipe specs. --verbose: full per-test output + nocapture.
 test *flags:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -128,17 +136,20 @@ test *flags:
         esac
     done
 
+    # Terse by default (cargo --quiet → dots, not one line per test); --verbose
+    # restores cargo's full per-test listing and uncaptured test stdout.
+    quiet=(--quiet)
     nocapture=()
-    [ "$verbose" -eq 1 ] && nocapture=(-- --nocapture)
+    [ "$verbose" -eq 1 ] && { quiet=(); nocapture=(-- --nocapture); }
 
-    run_slim() { cargo test "${nocapture[@]}"; }
+    run_slim() { cargo test "${quiet[@]}" "${nocapture[@]}"; }
     run_e2e() {
         [ -f "{{ _bin }}" ] || cargo build --release
-        cargo test --test cli_e2e --test help_cli "${nocapture[@]}"
+        cargo test "${quiet[@]}" --test cli_e2e --test help_cli "${nocapture[@]}"
     }
 
     case "$scope" in
         default) run_slim ;;
         e2e) run_e2e ;;
-        all) run_slim; run_e2e ;;
+        all) run_slim; run_e2e; just pwf spec ;;
     esac

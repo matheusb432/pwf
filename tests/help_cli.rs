@@ -158,7 +158,7 @@ fn default_engine_lists_pending_work() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "stderr: {stderr}");
-    assert!(stdout.contains("[GLP-0001] glep-shimeji :: tray gui"));
+    assert!(stdout.contains("GLP-0001 :: tray gui"));
 }
 
 #[test]
@@ -207,8 +207,8 @@ fn default_engine_treats_next_arg_as_project() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "stderr: {stderr}");
-    assert!(stdout.contains("[CFG-0001] config-handler :: config task"));
-    assert!(!stdout.contains("[GLP-0001]"), "got: {stdout}");
+    assert!(stdout.contains("CFG-0001 :: config task"));
+    assert!(!stdout.contains("GLP-0001"), "got: {stdout}");
 }
 
 #[test]

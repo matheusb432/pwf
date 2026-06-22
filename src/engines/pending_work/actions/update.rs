@@ -39,8 +39,10 @@ pub(in crate::engines::pending_work) fn run_update(
     let commits_value = commits::frontmatter_value(&args.commits);
     // Body edits (title/prompt/prereq) need the parsed open Item; commits only need
     // the note file, so it can be amended on closed (done/cancelled) items too.
-    let edits_body =
-        args.prompt.is_some() || args.title.is_some() || !args.prereq.is_empty() || args.clear_prereq;
+    let edits_body = args.prompt.is_some()
+        || args.title.is_some()
+        || !args.prereq.is_empty()
+        || args.clear_prereq;
     if !edits_body && commits_value.is_none() {
         return Err(PendingWorkError::NothingToUpdate);
     }

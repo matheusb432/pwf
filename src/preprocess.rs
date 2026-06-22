@@ -16,6 +16,7 @@ fn pw_subcommands() -> &'static [&'static str] {
         "cancel",
         "update",
         "resolve",
+        "show",
         "clean",
         "verify",
         "launch",
@@ -240,6 +241,16 @@ mod tests {
         assert_eq!(
             n(&["pw", "add", "glep", "--section", "future", "do", "x"]),
             vec!["pw", "add", "--section", "future", "glep", "do", "x"]
+        );
+    }
+
+    // ! PWF-0065: `show` is a canonical verb — it must pass through to clap, not be
+    // misread as a route word (which would list the "show" project instead).
+    #[test]
+    fn canonical_show_subcommand_passes_through() {
+        assert_eq!(
+            n(&["pw", "show", "--id", "PWF-0001"]),
+            vec!["pw", "show", "--id", "PWF-0001"]
         );
     }
 

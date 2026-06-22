@@ -12,7 +12,10 @@ pub fn project_dir(notes_dir: &str, name: &str) -> PathBuf {
 }
 
 /// `<notes_dir>/<name>/_archive` — where `check`/`cancel` park done items.
-pub(in crate::engines::pending_work) fn project_archive_dir(notes_dir: &str, name: &str) -> PathBuf {
+pub(in crate::engines::pending_work) fn project_archive_dir(
+    notes_dir: &str,
+    name: &str,
+) -> PathBuf {
     project_dir(notes_dir, name).join(ARCHIVE_DIR)
 }
 

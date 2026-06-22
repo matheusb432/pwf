@@ -403,8 +403,10 @@ fn list_shows_item_in_text() {
         "2026-01-01",
     ]);
     let out = pwk::run_args(&args).unwrap();
-    assert!(out.contains("GLP-0001"), "item id missing: {out}");
-    assert!(out.contains("glep-shimeji"), "project name missing: {out}");
+    assert!(
+        out.contains("GLP-0001 :: tray gui"),
+        "item line missing: {out}"
+    );
 }
 
 #[test]
@@ -559,8 +561,10 @@ fn list_all_shows_human_section_item_in_text() {
         "2026-01-01",
     ]))
     .unwrap();
-    assert!(out.contains("GLP-0001"), "item id missing: {out}");
-    assert!(out.contains("glep-shimeji"), "project missing: {out}");
+    assert!(
+        out.contains("GLP-0001 :: human task"),
+        "item line missing: {out}"
+    );
 }
 
 #[test]
@@ -688,10 +692,10 @@ fn list_all_long_keeps_metadata_on_its_own_line_in_every_group() {
     .unwrap();
 
     for expected in [
-        "[GLP-0001] glep-shimeji :: normal\n  status:",
-        "[GLP-0002] glep-shimeji :: lowp\n  status:",
-        "[GLP-0003] glep-shimeji :: human task\n  status:",
-        "[GLP-0004] glep-shimeji :: future task\n  status:",
+        "GLP-0001 :: normal\n  status:",
+        "GLP-0002 :: lowp\n  status:",
+        "GLP-0003 :: human task\n  status:",
+        "GLP-0004 :: future task\n  status:",
     ] {
         assert!(
             out.contains(expected),
@@ -803,10 +807,7 @@ fn list_long_shows_per_item_metadata() {
         "2026-01-01",
     ]);
     let out = pwk::run_args(&args).unwrap();
-    assert!(
-        out.contains("[GLP-0001] glep-shimeji :: tray gui"),
-        "got: {out}"
-    );
+    assert!(out.contains("GLP-0001 :: tray gui"), "got: {out}");
     assert!(out.contains("  status: READY"), "got: {out}");
     assert!(out.contains("  repo: /repo"), "got: {out}");
     assert!(out.contains("  prompt: add startup toggle"), "got: {out}");
@@ -902,9 +903,9 @@ fn list_groups_projects_before_sorting_by_number() {
     assert_eq!(
         out.lines().map(str::to_string).collect::<Vec<_>>(),
         [
-            "[CFG-0002] config-handler :: cfg newer",
-            "[CFG-0001] config-handler :: cfg older",
-            "[PWF-9999] pwf :: pwf newest",
+            "CFG-0002 :: cfg newer",
+            "CFG-0001 :: cfg older",
+            "PWF-9999 :: pwf newest",
         ]
     );
 }

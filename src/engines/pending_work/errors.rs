@@ -134,7 +134,9 @@ pub(super) enum PendingWorkError {
     )]
     NothingToUpdate,
     /// A closed (done/cancelled) item only supports `--commits` amendment.
-    #[error("only --commits can amend closed item {id} (done/cancelled); body/title/prereq need an open item.")]
+    #[error(
+        "only --commits can amend closed item {id} (done/cancelled); body/title/prereq need an open item."
+    )]
     ClosedItemCommitsOnly {
         /// The selected item id.
         id: String,

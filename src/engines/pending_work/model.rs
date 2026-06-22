@@ -38,6 +38,7 @@ pub enum Action {
     Cancel,
     Launch,
     Resolve,
+    Show,
     Remove,
     Update,
 }
@@ -53,6 +54,7 @@ const CHECK: &str = "check";
 const CANCEL: &str = "cancel";
 const LAUNCH: &str = "launch";
 const RESOLVE: &str = "resolve";
+const SHOW: &str = "show";
 const REMOVE: &str = "remove";
 const UPDATE: &str = "update";
 
@@ -70,6 +72,7 @@ impl Action {
             Action::Cancel => CANCEL,
             Action::Launch => LAUNCH,
             Action::Resolve => RESOLVE,
+            Action::Show => SHOW,
             Action::Remove => REMOVE,
             Action::Update => UPDATE,
         }
@@ -115,6 +118,7 @@ impl FromStr for Action {
             CANCEL => Ok(Action::Cancel),
             LAUNCH => Ok(Action::Launch),
             RESOLVE => Ok(Action::Resolve),
+            SHOW => Ok(Action::Show),
             REMOVE => Ok(Action::Remove),
             UPDATE => Ok(Action::Update),
             _ => Err(()),

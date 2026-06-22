@@ -1,0 +1,21 @@
+# pwf dev-environment readiness. Engine: the shared `doctor-rs` binary (CODE DOC).
+# Run `just doctor`. Read-only — it never installs; provisioning owns that.
+
+[[tool]]
+name = "cargo"
+min = "1.75"
+hint = "install rust via rustup: https://rustup.rs"
+
+[[tool]]
+name = "just"
+hint = "cargo install just"
+
+[[tool]]
+name = "shellspec"
+required = false # only for `just test --all` / `just pwf spec` recipe specs
+hint = "ShellSpec recipe specs: https://github.com/shellspec/shellspec"
+
+[[tool]]
+name = "rg"
+required = false # only for `just smell-check-errors`
+hint = "ripgrep: cargo install ripgrep"

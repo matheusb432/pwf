@@ -179,6 +179,13 @@ pub enum PwAction {
         #[command(flatten)]
         common: PwCommon,
     },
+    /// Shorthand for `pwf resolve --show --id <id>`. shows the .md file content of a pwf task.
+    Show {
+        #[arg(long)]
+        id: Option<String>,
+        #[command(flatten)]
+        common: PwCommon,
+    },
     /// Archive/clear done items.
     Clean {
         #[arg(long)]
@@ -562,6 +569,11 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             apply_pw_common(a, common);
             PendingWorkAction::Resolve
         }
+        PwAction::Show { id, common } => {
+            a.id = normalize_pending_work_id(id);
+            apply_pw_common(a, common);
+            PendingWorkAction::Show
+        }
         PwAction::Clean {
             project,
             force,
@@ -820,6 +832,24 @@ mod tests {
     fn pending_work_id_flags_parse_to_uppercase() {
         let a = pw_args(&["pw", "check", "--id", "gLp-0001"]);
         assert_eq!(a.id.as_deref(), Some("GLP-0001"));
+    }
+
+    // ! PWF-0065: `show` is the shorthand verb for `resolve --show`; it parses to
+    // its own action and shares `--id` normalization with the other id verbs.
+    #[test]
+    fn show_parses_to_show_action_with_uppercased_id() {
+        let argv = ["pw", "show", "--id", "pwf-0001"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let ParsedCommand::PendingWork(command) = parse_command_argv(argv).expect("parse") else {
+            panic!("expected pending-work command");
+        };
+        assert_eq!(
+            command.action(),
+            &crate::engines::pending_work::Action::Show
+        );
+        assert_eq!(command.args().id.as_deref(), Some("PWF-0001"));
     }
 
     #[test]

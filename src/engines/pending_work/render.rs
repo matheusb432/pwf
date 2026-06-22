@@ -109,9 +109,9 @@ fn render_grouped_list(out: &mut String, items: &[OpenItem], cfg: &Config, long:
 
 fn render_list_item(out: &mut String, item: &OpenItem, cfg: &Config, long: bool, last: bool) {
     let formatted = if last && !long {
-        format!("[{}] {} :: {}", item.id, item.project, item.session)
+        format!("{} :: {}", item.id, item.session)
     } else {
-        format!("[{}] {} :: {}\n", item.id, item.project, item.session)
+        format!("{} :: {}\n", item.id, item.session)
     };
     out.push_str(&formatted);
     if !long {
@@ -153,6 +153,46 @@ fn render_list_item(out: &mut String, item: &OpenItem, cfg: &Config, long: bool,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sample_item() -> OpenItem {
+        OpenItem {
+            id: "PWF-0064".to_string(),
+            project: "pwf".to_string(),
+            session: "make list commands formatting less redundant".to_string(),
+            prompt: String::new(),
+            repo: None,
+            note: "pwf.md".to_string(),
+            item_file: None,
+            line: 1,
+            format: String::new(),
+            launchable: true,
+            needs_prompt: false,
+            issues: Vec::new(),
+            section: None,
+            prereq: None,
+        }
+    }
+
+    fn empty_cfg() -> Config {
+        Config {
+            notes_dir: String::new(),
+            projects: Default::default(),
+            prefixes: Default::default(),
+            work_prefix: String::new(),
+            notes_dir_overrides: Default::default(),
+        }
+    }
+
+    #[test]
+    fn short_line_is_id_then_session_without_brackets_or_project() {
+        let cfg = empty_cfg();
+        let mut out = String::new();
+        render_list_item(&mut out, &sample_item(), &cfg, false, true);
+        assert_eq!(
+            out,
+            "PWF-0064 :: make list commands formatting less redundant"
+        );
+    }
 
     #[test]
     fn more_footer_empty_when_nothing_hidden() {
