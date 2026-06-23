@@ -1,11 +1,8 @@
 // Claude CLI probe, command construction, verify output, and the direct
 // claude launch.
 
-use super::errors::PendingWorkError;
 use super::launch::new_launch_prompt;
 use super::model::Item;
-use super::query::find_pending_item;
-use crate::config::Config;
 
 // ── ClaudeProbe trait + impls ─────────────────────────────────────────────────
 
@@ -46,17 +43,35 @@ impl RealProbe {
 }
 
 fn which_claude() -> Option<String> {
-    // Windows-only: resolve `claude` on PATH via `where` (this engine ships as pw.exe).
-    let output = std::process::Command::new("where")
-        .arg("claude")
-        .output()
-        .ok()?;
-    if output.status.success() {
-        let s = String::from_utf8_lossy(&output.stdout);
-        let first = s.lines().next()?;
-        return Some(first.trim().to_string());
+    #[cfg(windows)]
+    {
+        let output = std::process::Command::new("where")
+            .arg("claude")
+            .output()
+            .ok()?;
+        if output.status.success() {
+            let s = String::from_utf8_lossy(&output.stdout);
+            return s.lines().next().map(|l| l.trim().to_string());
+        }
+        None
     }
-    None
+    #[cfg(not(windows))]
+    {
+        // `command -v` is a shell builtin → run it under `sh`. Prints the resolved
+        // path on success; uses pwf's inherited PATH (best-effort preflight).
+        let output = std::process::Command::new("sh")
+            .args(["-c", "command -v claude"])
+            .output()
+            .ok()?;
+        if output.status.success() {
+            let s = String::from_utf8_lossy(&output.stdout);
+            let first = s.lines().next()?.trim();
+            if !first.is_empty() {
+                return Some(first.to_string());
+            }
+        }
+        None
+    }
 }
 
 fn run_claude_version(path: &str) -> Option<String> {
@@ -109,16 +124,6 @@ impl ClaudeProbe for FakeProbe {
     fn interactive(&self) -> bool {
         self.interactive
     }
-}
-
-fn new_claude_launch_command(title: &str, prompt: &str, claude_path: Option<&str>) -> Vec<String> {
-    let exe = claude_path.unwrap_or("claude").to_string();
-    vec![
-        exe,
-        "--name".to_string(),
-        title.to_string(),
-        prompt.to_string(),
-    ]
 }
 
 fn get_claude_command_display(title: &str, prompt: &str) -> String {
@@ -188,87 +193,9 @@ pub fn verify_text_with_probe(item: Option<&Item>, probe: &dyn ClaudeProbe) -> S
     out
 }
 
-pub(super) fn invoke_claude_launch(
-    cfg: &Config,
-    id: &str,
-    probe: &dyn ClaudeProbe,
-    force: bool,
-) -> Result<String, PendingWorkError> {
-    // ! Notice on stderr keeps stdout machine-output clean.
-    eprintln!("note: launch-claude emits a direct claude launch.");
-    let item = find_pending_item(cfg, id)?;
-    if !item.launchable {
-        return Err(PendingWorkError::NotLaunchable {
-            id: item.id,
-            issues: item.issues,
-        });
-    }
-    if !probe.available() {
-        return Err(PendingWorkError::ClaudeNotFound { id: id.to_string() });
-    }
-    let title = item.session.clone();
-    let prompt = new_launch_prompt(&item);
-    let can_spawn = force || probe.interactive();
-    if !can_spawn {
-        let display = get_claude_command_display(&title, &prompt);
-        let repo = item.repo.as_deref().unwrap_or(".");
-        let mut out = String::from("No interactive TTY detected; not spawning Claude.\n");
-        out.push_str(&format!("Run this in your terminal (cwd: {repo}):\n"));
-        out.push_str(&format!("  {display}\n"));
-        out.push_str("Or re-run with --force to spawn anyway.\n");
-        return Ok(out);
-    }
-    // Real spawn — not exercised in tests; returned as informational text.
-    let command = new_claude_launch_command(&title, &prompt, probe.path());
-    let exe = &command[0];
-    let rest = &command[1..];
-    let repo = item.repo.as_deref().unwrap_or(".");
-    let status = std::process::Command::new(exe)
-        .args(rest)
-        .current_dir(repo)
-        .status()
-        .map_err(|source| PendingWorkError::FailedToSpawnClaude { source })?;
-    if !status.success() {
-        return Err(PendingWorkError::ClaudeExited { status });
-    }
-    Ok(String::new())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engines::pending_work::errors::PendingWorkError;
-    use std::fs;
-
-    fn nanos() -> u128 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    }
-
-    fn cfg_with_item() -> (std::path::PathBuf, Config) {
-        let stage = std::env::temp_dir().join(format!("pwf_claude_{}", nanos()));
-        let notes = stage.join("notes");
-        let project = notes.join("pwf");
-        fs::create_dir_all(&project).unwrap();
-        fs::write(
-            project.join("PWF-0001.md"),
-            "---\nstatus: active\ntitle: cli launch\nproject: pwf\ncreated: 2026-01-01\n---\n\nlaunch claude\n",
-        )
-        .unwrap();
-        fs::write(project.join("pwf.md"), "- [[PWF-0001|cli launch]]\n").unwrap();
-        let cfg = crate::config::from_json(
-            &format!(
-                r#"{{ "notesDir": "{}", "projects": {{ "pwf": "{}" }}, "prefixes": {{ "pwf": "PWF" }} }}"#,
-                notes.to_string_lossy().replace('\\', "\\\\"),
-                stage.to_string_lossy().replace('\\', "\\\\")
-            ),
-            None,
-        )
-        .unwrap();
-        (stage, cfg)
-    }
 
     #[test]
     fn verify_text_pass_has_result_in_heading() {
@@ -331,21 +258,5 @@ mod tests {
         assert!(out.starts_with("# verify PWF-0003 \u{2014} fail"));
         assert!(out.contains("launchable: no"));
         assert!(out.contains("command: "));
-    }
-
-    #[test]
-    fn failed_claude_spawn_returns_typed_error_with_legacy_display() {
-        let (_stage, cfg) = cfg_with_item();
-        let probe = FakeProbe {
-            available: true,
-            path: Some("/definitely/not/claude".to_string()),
-            version: None,
-            interactive: true,
-        };
-
-        let err = invoke_claude_launch(&cfg, "PWF-0001", &probe, false).unwrap_err();
-
-        assert!(matches!(err, PendingWorkError::FailedToSpawnClaude { .. }));
-        assert!(err.to_string().starts_with("Failed to spawn claude: "));
     }
 }

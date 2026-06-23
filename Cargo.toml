@@ -1,6 +1,6 @@
 [package]
 name = "pwf"
-version = "4.1.0"
+version = "5.0.0"
 edition = "2024"
 publish = false
 description = "pwf — pending-work / handoff / migrate engine for managed repos"
@@ -34,6 +34,7 @@ chrono = "0.4"
 regex = "1"
 thiserror = "2.0.18"
 nutype = { version = "0.7.0", features = ["serde", "regex"] }
+anstyle = "1"
 
 [dev-dependencies]
 assert_cmd = "2"

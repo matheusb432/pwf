@@ -10,6 +10,14 @@
 use crate::engines::pending_work::{Action as PendingWorkAction, PendingWorkCommand};
 use clap::{Args, Parser, Subcommand};
 
+/// `--color` choices (clap-facing; mapped to `cli::ColorChoice` in `fill_pw`).
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+pub enum ColorArg {
+    Auto,
+    Always,
+    Never,
+}
+
 /// pwf — pending-work / handoff / migrate engine for managed repos.
 #[derive(Parser, Debug)]
 #[command(name = "pwf", version, about, long_about = None)]
@@ -179,10 +187,13 @@ pub enum PwAction {
         #[command(flatten)]
         common: PwCommon,
     },
-    /// Shorthand for `pwf resolve --show --id <id>`. shows the .md file content of a pwf task.
+    /// Shorthand for `pwf resolve --show <id>`: stream a task note's markdown.
+    ///
+    /// The id is a bare positional — `pwf show <id>`, no `--id` flag.
     Show {
-        #[arg(long)]
-        id: Option<String>,
+        /// Item id (e.g. PWF-0001).
+        #[arg(value_name = "ID")]
+        id: String,
         #[command(flatten)]
         common: PwCommon,
     },
@@ -206,29 +217,8 @@ pub enum PwAction {
         #[command(flatten)]
         common: PwCommon,
     },
-    /// Emit a launch spec for an item.
-    Launch {
-        #[arg(long)]
-        id: Option<String>,
-        #[arg(long)]
-        model: Option<String>,
-        #[arg(long)]
-        thinking: Option<String>,
-        #[command(flatten)]
-        common: PwCommon,
-    },
-    /// Emit a direct `claude` launch.
-    LaunchClaude {
-        #[arg(long)]
-        id: Option<String>,
-        #[arg(long)]
-        force: bool,
-        #[command(flatten)]
-        common: PwCommon,
-    },
-
     // `// !` Hidden internal verbs — reachable but absent from help, matching the
-    // current hand-curated help which omits route/new.
+    // current hand-curated help which omits route.
     /// Internal: word-router behind bare `pwf <words…>`.
     #[command(hide = true)]
     Route {
@@ -255,26 +245,25 @@ pub enum PwAction {
         #[command(flatten)]
         common: PwCommon,
     },
-    /// Internal: ad-hoc launch spec (no file writes).
-    #[command(hide = true)]
-    New {
-        #[arg(long)]
-        project: Option<String>,
-        #[arg(long)]
-        prompt: Option<String>,
-        #[arg(long)]
-        title: Option<String>,
-        #[arg(long)]
-        model: Option<String>,
-        #[arg(long)]
-        thinking: Option<String>,
-        #[command(flatten)]
-        common: PwCommon,
-    },
     /// Delete a task note and remove its index link.
     Remove {
         #[arg(long)]
         id: Option<String>,
+        #[command(flatten)]
+        common: PwCommon,
+    },
+    /// Dispatch a real agent session into the item's zellij session as a new tab.
+    ///
+    /// The id is a bare positional — `pwf session <id>` — or `--id`.
+    Session {
+        /// Item id (e.g. PWF-0038). Bare positional; `--id` also accepted.
+        #[arg(value_name = "ID")]
+        id: Option<String>,
+        #[arg(long = "id", value_name = "ID", conflicts_with = "id")]
+        id_flag: Option<String>,
+        /// Color policy for the dispatch output.
+        #[arg(long, value_enum, default_value_t = ColorArg::Auto)]
+        color: ColorArg,
         #[command(flatten)]
         common: PwCommon,
     },
@@ -472,7 +461,7 @@ fn apply_pw_common(a: &mut EngineArgs, c: PwCommon) {
 }
 
 fn normalize_pending_work_id(id: Option<String>) -> Option<String> {
-    id.map(|id| id.to_ascii_uppercase())
+    id.map(|id| crate::engines::pending_work::canonical_pending_id(&id))
 }
 
 fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
@@ -570,7 +559,7 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             PendingWorkAction::Resolve
         }
         PwAction::Show { id, common } => {
-            a.id = normalize_pending_work_id(id);
+            a.id = normalize_pending_work_id(Some(id));
             apply_pw_common(a, common);
             PendingWorkAction::Show
         }
@@ -590,24 +579,6 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             a.id = normalize_pending_work_id(id);
             apply_pw_common(a, common);
             PendingWorkAction::Verify
-        }
-        PwAction::Launch {
-            id,
-            model,
-            thinking,
-            common,
-        } => {
-            a.id = normalize_pending_work_id(id);
-            a.model = model;
-            a.thinking = thinking;
-            apply_pw_common(a, common);
-            PendingWorkAction::Launch
-        }
-        PwAction::LaunchClaude { id, force, common } => {
-            a.id = normalize_pending_work_id(id);
-            a.force = force;
-            apply_pw_common(a, common);
-            PendingWorkAction::LaunchClaude
         }
         PwAction::Route {
             words,
@@ -629,26 +600,25 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             apply_pw_common(a, common);
             PendingWorkAction::Route
         }
-        PwAction::New {
-            project,
-            prompt,
-            title,
-            model,
-            thinking,
-            common,
-        } => {
-            a.project = project;
-            a.prompt = prompt;
-            a.title = title;
-            a.model = model;
-            a.thinking = thinking;
-            apply_pw_common(a, common);
-            PendingWorkAction::New
-        }
         PwAction::Remove { id, common } => {
             a.id = normalize_pending_work_id(id);
             apply_pw_common(a, common);
             PendingWorkAction::Remove
+        }
+        PwAction::Session {
+            id,
+            id_flag,
+            color,
+            common,
+        } => {
+            a.id = normalize_pending_work_id(id.or(id_flag));
+            a.color = match color {
+                ColorArg::Auto => crate::cli::ColorChoice::Auto,
+                ColorArg::Always => crate::cli::ColorChoice::Always,
+                ColorArg::Never => crate::cli::ColorChoice::Never,
+            };
+            apply_pw_common(a, common);
+            PendingWorkAction::Session
         }
     }
 }
@@ -834,11 +804,11 @@ mod tests {
         assert_eq!(a.id.as_deref(), Some("GLP-0001"));
     }
 
-    // ! PWF-0065: `show` is the shorthand verb for `resolve --show`; it parses to
-    // its own action and shares `--id` normalization with the other id verbs.
+    // ! PWF-0065: `show` is the shorthand verb for `resolve --show`; it takes the id
+    // as a bare positional (no `--id`) and still normalizes it to uppercase.
     #[test]
-    fn show_parses_to_show_action_with_uppercased_id() {
-        let argv = ["pw", "show", "--id", "pwf-0001"]
+    fn show_parses_positional_id_to_show_action_uppercased() {
+        let argv = ["pw", "show", "pwf-0001"]
             .iter()
             .map(|s| s.to_string())
             .collect();

@@ -34,7 +34,7 @@ fn add_allocates_first_id_and_writes_files() {
     let out = pwk::run_args(&args).unwrap();
     assert!(out.starts_with("ADDED PWF TASK [GLP-0001]"), "got: {out}");
     assert!(
-        out.contains("launch with: pwf launch --id GLP-0001"),
+        out.contains("dispatch with: pwf session GLP-0001"),
         "got: {out}"
     );
     let item = fs::read_to_string(stage.join("notes/glep-shimeji/GLP-0001.md")).unwrap();
@@ -48,7 +48,7 @@ fn add_allocates_first_id_and_writes_files() {
 }
 
 #[test]
-fn add_text_output_points_to_pwf_launch_command() {
+fn add_text_output_points_to_pwf_session_command() {
     let stage = stage_dir();
     let notes = stage.join("notes");
     fs::create_dir_all(&notes).unwrap();
@@ -73,7 +73,7 @@ fn add_text_output_points_to_pwf_launch_command() {
         "2026-01-01",
     ]);
     let out = pwk::run_args(&args).unwrap();
-    assert!(out.contains("launch with: pwf launch --id GLP-0001"));
+    assert!(out.contains("dispatch with: pwf session GLP-0001"));
     assert!(!out.contains("just pending-work-launch"), "got: {out}");
 }
 
@@ -1597,8 +1597,7 @@ fn add_with_title_flag_accepts_prereq() {
 #[test]
 fn route_create_verbs_error_with_add_hint() {
     // The old route create verbs (add/a/add-titled/at) no longer create; they
-    // error pointing at the single canonical `pw add` form. launch-claude keeps
-    // its own usage error.
+    // error pointing at the single canonical `pw add` form.
     let stage = stage_dir();
     let notes = stage.join("notes");
     fs::create_dir_all(&notes).unwrap();
@@ -1620,7 +1619,6 @@ fn route_create_verbs_error_with_add_hint() {
             &["add-titled", "glep-shimeji"][..],
             r#"Use: pwf add <project> "<prompt>""#,
         ),
-        (&["launch-claude"][..], "Usage: pwf launch-claude --id <id>"),
     ] {
         let mut argv = vec!["route", "--config-path", &cfg_s, "--notes-dir", &notes_s];
         argv.extend(words);
@@ -1628,88 +1626,6 @@ fn route_create_verbs_error_with_add_hint() {
         let err = pwk::run_args(&args).unwrap_err();
         assert_eq!(err, expected);
     }
-}
-
-// ── Task 16 ──────────────────────────────────────────────────────────────────
-
-#[test]
-fn new_action_returns_launch_spec_text() {
-    let stage = stage_dir();
-    let notes = stage.join("notes");
-    fs::create_dir_all(&notes).unwrap();
-    let cfg = stage.join("config.json");
-    fs::write(
-        &cfg,
-        format!(
-            r#"{{ "notesDir": "{}", "projects": {{ "glep-shimeji": "/repo" }}, "prefixes": {{ "glep-shimeji": "GLP" }} }}"#,
-            json_path(&notes)
-        ),
-    )
-    .unwrap();
-    let args = parse_args(&[
-        "new",
-        "--project",
-        "glep-shimeji",
-        "--prompt",
-        "do a thing",
-        "--config-path",
-        &cfg.to_string_lossy(),
-        "--notes-dir",
-        &notes.to_string_lossy(),
-        "--date",
-        "2026-01-01",
-    ]);
-    let out = pwk::run_args(&args).unwrap();
-    assert!(out.contains("READY TO LAUNCH [pending-work "), "got: {out}");
-    assert!(out.contains("glep-shimeji"), "got: {out}");
-    assert!(out.contains("prompt: "), "got: {out}");
-    assert!(out.contains("do a thing"), "got: {out}");
-    // adhoc items must not show closeout command
-    assert!(
-        !out.contains("--report"),
-        "adhoc launch should not mention closeout: {out}"
-    );
-}
-
-#[test]
-fn launch_action_returns_spec_for_existing_item() {
-    let stage = stage_dir();
-    let notes = stage.join("notes");
-    let proj = notes.join("glep-shimeji");
-    fs::create_dir_all(&proj).unwrap();
-    fs::write(
-        proj.join("GLP-0001.md"),
-        "---\nstatus: active\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\nadd startup toggle\n",
-    )
-    .unwrap();
-    fs::write(proj.join("glep-shimeji.md"), "- [[GLP-0001|tray gui]]\n").unwrap();
-    let cfg = stage.join("config.json");
-    fs::write(
-        &cfg,
-        format!(
-            r#"{{ "notesDir": "{}", "projects": {{ "glep-shimeji": "/repo" }}, "prefixes": {{ "glep-shimeji": "GLP" }} }}"#,
-            json_path(&notes)
-        ),
-    )
-    .unwrap();
-    let args = parse_args(&[
-        "launch",
-        "--id",
-        "GLP-0001",
-        "--config-path",
-        &cfg.to_string_lossy(),
-        "--notes-dir",
-        &notes.to_string_lossy(),
-        "--date",
-        "2026-01-01",
-    ]);
-    let out = pwk::run_args(&args).unwrap();
-    assert!(out.contains("READY TO LAUNCH [pending-work "), "got: {out}");
-    assert!(out.contains("prompt: "), "got: {out}");
-    assert!(
-        out.contains("pwf check --id GLP-0001 --report"),
-        "launch spec should teach report closeout: {out}"
-    );
 }
 
 // ── resolve action ───────────────────────────────────────────────────────────

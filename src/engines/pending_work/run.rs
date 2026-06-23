@@ -6,13 +6,12 @@ use super::actions::{
     NewItemSpec, add_pending_work_item, run_cancel, run_check, run_list_action, run_remove,
     run_update,
 };
-use super::claude::{RealProbe, invoke_claude_launch, verify_text_with_probe};
+use super::claude::{ClaudeProbe, RealProbe, verify_text_with_probe};
 use super::continue_prompt::{continue_handoff_prompt, continue_plan_prompt};
 use super::domain::commands::PendingWorkCommand;
 use super::errors;
-use super::launch::write_launch_spec;
-use super::model::{Action, Item};
-use super::naming::{project_index_path, stamp_date};
+use super::model::Action;
+use super::naming::stamp_date;
 use super::new_add::NewAddInputs;
 use super::query::{
     find_pending_item, load_config, resolve_managed_project_name_typed, resolve_project_repo,
@@ -37,39 +36,6 @@ pub(in crate::engines::pending_work) fn run_typed(
 
     match command.action() {
         Action::Route => Ok(run_route(&cfg, args, &date)?),
-
-        Action::New => {
-            // Build ad-hoc item + launch spec (no file writes).
-            let input = NewAddInputs::resolve(&cfg, args, Action::New)?;
-            let item = Item {
-                id: format!("adhoc:{}", input.project_name),
-                project: input.project_name.clone(),
-                session: input.session.clone(),
-                prompt: input.prompt.to_string(),
-                repo: Some(input.repo.clone()),
-                note: project_index_path(
-                    cfg.notes_dir_for(&input.project_name),
-                    &input.project_name,
-                )
-                .to_string_lossy()
-                .into_owned(),
-                item_file: None,
-                line: 0,
-                format: "adhoc".to_string(),
-                marker_index: 0,
-                marker_length: 0,
-                launchable: true,
-                needs_prompt: false,
-                issues: vec![],
-                section: None,
-                prereq: None,
-            };
-            Ok(write_launch_spec(
-                &item,
-                args.model.as_deref(),
-                args.thinking.as_deref(),
-            ))
-        }
 
         Action::Add => Ok(run_add(&cfg, args, &date)?),
 
@@ -115,12 +81,6 @@ pub(in crate::engines::pending_work) fn run_typed(
             Ok(verify_text_with_probe(item.as_ref(), &probe))
         }
 
-        Action::LaunchClaude => {
-            let id = require_id(args, "launch-claude")?;
-            let probe = RealProbe::resolve();
-            Ok(invoke_claude_launch(&cfg, id, &probe, args.force)?)
-        }
-
         Action::Check => Ok(run_check(&cfg, args)?),
 
         Action::Cancel => Ok(run_cancel(&cfg, args)?),
@@ -129,21 +89,24 @@ pub(in crate::engines::pending_work) fn run_typed(
 
         Action::Show => Ok(run_show(&cfg, args)?),
 
-        Action::Launch => {
-            let id = require_id(args, "launch")?;
-            let item = find_pending_item(&cfg, id)?;
-            ensure_launchable(&item)?;
-            super::prereq::warn_unsatisfied_on_launch(&cfg, &item);
-            Ok(write_launch_spec(
-                &item,
-                args.model.as_deref(),
-                args.thinking.as_deref(),
-            ))
-        }
-
         Action::Remove => Ok(run_remove(&cfg, args)?),
 
         Action::Update => Ok(run_update(&cfg, args)?),
+
+        Action::Session => {
+            let id = require_id(args, "session")?;
+            let probe = RealProbe::resolve();
+            if !probe.available() {
+                eprintln!(
+                    "note: claude not found on PATH from here; the new tab will surface the error if it can't run."
+                );
+            }
+            let driver = crate::engines::pending_work::session::RealZellij;
+            let launcher = crate::engines::pending_work::session::ClaudeLauncher;
+            Ok(crate::engines::pending_work::session::run_session(
+                &cfg, id, args.color, &driver, &launcher,
+            )?)
+        }
     }
 }
 
@@ -168,16 +131,6 @@ fn resolve_add_section(args: &Args) -> Result<Option<Section>, errors::PendingWo
         });
     }
     Ok(args.human.then_some(Section::Human))
-}
-
-fn ensure_launchable(item: &Item) -> Result<(), errors::PendingWorkError> {
-    if item.launchable {
-        return Ok(());
-    }
-    Err(errors::PendingWorkError::NotLaunchable {
-        id: item.id.clone(),
-        issues: item.issues.clone(),
-    })
 }
 
 pub(in crate::engines::pending_work) fn require_id<'args>(
@@ -214,7 +167,7 @@ fn run_add(cfg: &Config, args: &Args, date: &str) -> Result<String, errors::Pend
         let (title, prompt) = continue_plan_prompt(&project_name, path);
         (project_name, Some(title), prompt)
     } else {
-        let input = NewAddInputs::resolve(cfg, args, Action::Add)?;
+        let input = NewAddInputs::resolve(cfg, args)?;
         (
             input.project_name,
             Some(input.session),
@@ -268,22 +221,6 @@ mod tests {
     }
 
     #[test]
-    fn launch_missing_id_returns_typed_error_with_legacy_display() {
-        let command = command_for(Action::Launch);
-        let err = require_id(command.args(), "launch").unwrap_err();
-
-        assert!(matches!(
-            err,
-            errors::PendingWorkError::MissingId { action } if action == "launch"
-        ));
-        assert_eq!(err.to_string(), "--id is required for launch.");
-        assert_eq!(
-            run(&command_for(Action::Launch)).unwrap_err(),
-            "--id is required for launch."
-        );
-    }
-
-    #[test]
     fn run_args_stringifies_missing_action_at_public_edge() {
         assert_eq!(
             run_args(&Args::default()).unwrap_err(),
@@ -311,30 +248,6 @@ mod tests {
             errors::PendingWorkError::MissingId { action } if action == "resolve"
         ));
         assert_eq!(err.to_string(), "--id is required for resolve.");
-    }
-
-    #[test]
-    fn show_missing_id_returns_typed_error_with_legacy_display() {
-        let command = command_for(Action::Show);
-        let err = require_id(command.args(), "show").unwrap_err();
-
-        assert!(matches!(
-            err,
-            errors::PendingWorkError::MissingId { action } if action == "show"
-        ));
-        assert_eq!(err.to_string(), "--id is required for show.");
-    }
-
-    #[test]
-    fn launch_claude_missing_id_returns_typed_error_with_legacy_display() {
-        let command = command_for(Action::LaunchClaude);
-        let err = require_id(command.args(), "launch-claude").unwrap_err();
-
-        assert!(matches!(
-            err,
-            errors::PendingWorkError::MissingId { action } if action == "launch-claude"
-        ));
-        assert_eq!(err.to_string(), "--id is required for launch-claude.");
     }
 
     #[test]
@@ -377,43 +290,6 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "Unknown --section value 'bogus'. Use one of: future, human, low-prio."
-        );
-    }
-
-    #[test]
-    fn not_launchable_item_returns_typed_error_with_legacy_display() {
-        let item = Item {
-            id: "PWF-0001".to_string(),
-            project: "pwf".to_string(),
-            session: "blocked item".to_string(),
-            prompt: "do work".to_string(),
-            repo: Some("/repo/pwf".to_string()),
-            note: "/notes/pwf/pwf.md".to_string(),
-            item_file: None,
-            line: 1,
-            format: "index".to_string(),
-            marker_index: 0,
-            marker_length: 0,
-            launchable: false,
-            needs_prompt: true,
-            issues: vec!["missing prompt".to_string(), "missing repo".to_string()],
-            section: None,
-            prereq: None,
-        };
-
-        let err = ensure_launchable(&item).unwrap_err();
-
-        assert!(matches!(
-            err,
-            errors::PendingWorkError::NotLaunchable {
-                ref id,
-                ref issues
-            } if id == "PWF-0001"
-                && issues == &vec!["missing prompt".to_string(), "missing repo".to_string()]
-        ));
-        assert_eq!(
-            err.to_string(),
-            "Pending-work item 'PWF-0001' is not launchable: missing prompt; missing repo"
         );
     }
 }

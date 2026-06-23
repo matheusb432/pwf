@@ -2,6 +2,15 @@
 //! this is the flattened result it produces. PR2 may replace this flat struct with
 //! typed per-engine inputs.
 
+/// Color policy for `pwf session` output. Default `Auto` (TTY-gated).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ColorChoice {
+    #[default]
+    Auto,
+    Always,
+    Never,
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct Args {
     pub action: Option<String>,
@@ -22,8 +31,6 @@ pub struct Args {
     pub slug: Option<String>,
     pub reason: Option<String>,
     pub report: Option<String>,
-    pub model: Option<String>,
-    pub thinking: Option<String>,
     pub pending_work_script: Option<String>,
     // ? resolve: emit the note as markdown (frontmatter minus exec-irrelevant keys + body).
     pub show: bool,
@@ -44,4 +51,5 @@ pub struct Args {
     pub continue_path: Option<String>,
     // ? add: file the item under future|human|low-prio (--human is a shorthand).
     pub section: Option<String>,
+    pub color: ColorChoice,
 }

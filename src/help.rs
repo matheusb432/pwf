@@ -14,11 +14,10 @@ const PW_TERSE: &str = r#"pw [<project>]   (alias: pending-work; bare pw lists a
   cancel --id --report [--commits <range>] [--review]
   update --id [--prompt] [--title] [--prereq <id>] [--clear-prereq] [--commits <range>]
   resolve --id [--show]
-  show --id   (shorthand for resolve --show)
+  show <id>   (shorthand for resolve --show)
+  session <id>   dispatch an agent into the project's zellij session
   clean [--dry-run|--force]
   verify [--id]
-  launch --id
-  launch-claude --id [--force]
   remove --id"#;
 
 const HANDOFF_TERSE: &str = r#"handoff <verb> [--repo-root <path>]
@@ -50,11 +49,10 @@ PENDING-WORK COMMANDS (default engine)
   cancel --id <id> --report    Mark a task cancelled
   update --id <id>             Replace task text/title/prereqs or amend commits
   resolve --id <id>            Print the task note path
-  show --id <id>               Stream the task note (alias for resolve --show)
+  show <id>                    Stream the task note (alias for resolve --show)
+  session <id>                 Dispatch an agent into zellij session
   clean                        Archive or clear done tasks
   verify --id <id>             Probe whether a task can launch
-  launch --id <id>             Emit a launch spec
-  launch-claude --id <id>      Emit a direct claude launch
   remove --id <id>             Delete a task note and index link
 
 ENGINES
@@ -143,8 +141,9 @@ mod tests {
         assert!(terse.contains("cancel --id --report"));
         assert!(!terse.contains("launch-orca"), "orca verbs are removed");
         assert!(terse.contains("resolve --id"));
-        // PWF-0065: the `show` shorthand for `resolve --show` is its own terse line.
-        assert!(terse.contains("show --id"));
+        // PWF-0065: the `show` shorthand for `resolve --show` is its own terse line,
+        // taking a bare positional id.
+        assert!(terse.contains("show <id>"));
         // ...but drops human-only prose: descriptions, recipe hints, route shortcuts.
         assert!(terse.contains("remove --id"));
         assert!(!terse.contains("[just "), "terse must drop recipe hints");
@@ -175,9 +174,6 @@ mod tests {
         assert!(!u.contains("handoff"), "must not bleed engines: {u}");
         // Case-insensitive.
         assert_eq!(terse_verb("UPDATE"), terse_verb("update"));
-        // `launch` matches its own line, not the `launch-claude` line.
-        assert_eq!(terse_verb("launch").as_deref(), Some("launch --id"));
-        assert!(terse_verb("launch-claude").unwrap().contains("--force"));
         // The `pw [<project>]` header is not a verb.
         assert_eq!(terse_verb("pw"), None);
         assert_eq!(terse_verb("bogus"), None);

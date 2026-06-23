@@ -106,7 +106,7 @@ pub(in crate::engines::pending_work) fn add_pending_work_item(
 
     let mut out = format!("ADDED PWF TASK [{id}] {project_name} :: {session}\n");
     out.push_str(&format!("  file: {}\n", item_path.display()));
-    out.push_str(&format!("  launch with: pwf launch --id {id}\n"));
+    out.push_str(&format!("  dispatch with: pwf session {id}\n"));
     Ok(out)
 }
 

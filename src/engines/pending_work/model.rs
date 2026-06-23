@@ -28,53 +28,47 @@ pub struct Item {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action {
     Route,
-    New,
     Add,
     List,
     Clean,
     Verify,
-    LaunchClaude,
     Check,
     Cancel,
-    Launch,
     Resolve,
     Show,
     Remove,
     Update,
+    Session,
 }
 
 const ROUTE: &str = "route";
-const NEW: &str = "new";
 const ADD: &str = "add";
 const LIST: &str = "list";
 const CLEAN: &str = "clean";
 const VERIFY: &str = "verify";
-const LAUNCH_CLAUDE: &str = "launch-claude";
 const CHECK: &str = "check";
 const CANCEL: &str = "cancel";
-const LAUNCH: &str = "launch";
 const RESOLVE: &str = "resolve";
 const SHOW: &str = "show";
 const REMOVE: &str = "remove";
 const UPDATE: &str = "update";
+const SESSION: &str = "session";
 
 impl Action {
     pub fn as_str(&self) -> &'static str {
         match self {
             Action::Route => ROUTE,
-            Action::New => NEW,
             Action::Add => ADD,
             Action::List => LIST,
             Action::Clean => CLEAN,
             Action::Verify => VERIFY,
-            Action::LaunchClaude => LAUNCH_CLAUDE,
             Action::Check => CHECK,
             Action::Cancel => CANCEL,
-            Action::Launch => LAUNCH,
             Action::Resolve => RESOLVE,
             Action::Show => SHOW,
             Action::Remove => REMOVE,
             Action::Update => UPDATE,
+            Action::Session => SESSION,
         }
     }
 }
@@ -108,19 +102,17 @@ impl FromStr for Action {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             ROUTE => Ok(Action::Route),
-            NEW => Ok(Action::New),
             ADD => Ok(Action::Add),
             LIST => Ok(Action::List),
             CLEAN => Ok(Action::Clean),
             VERIFY => Ok(Action::Verify),
-            LAUNCH_CLAUDE => Ok(Action::LaunchClaude),
             CHECK => Ok(Action::Check),
             CANCEL => Ok(Action::Cancel),
-            LAUNCH => Ok(Action::Launch),
             RESOLVE => Ok(Action::Resolve),
             SHOW => Ok(Action::Show),
             REMOVE => Ok(Action::Remove),
             UPDATE => Ok(Action::Update),
+            SESSION => Ok(Action::Session),
             _ => Err(()),
         }
     }

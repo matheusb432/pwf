@@ -37,8 +37,21 @@ fn main() {
             }
         },
         // clap renders help/version/parse errors with the right exit codes.
-        Err(e) => e.exit(),
+        Err(e) => exit_with_clap_error(e),
     }
+}
+
+/// Print a clap-rendered help/version/parse error and exit with clap's code,
+/// stripping the internal `pw` engine token the preprocess injects so usage reads
+/// `pwf <verb> …` instead of leaking the retired `pwf pw …` surface.
+fn exit_with_clap_error(e: clap::Error) -> ! {
+    let rendered = e.render().to_string().replace("pwf pw ", "pwf ");
+    if e.use_stderr() {
+        eprint!("{rendered}");
+    } else {
+        print!("{rendered}");
+    }
+    std::process::exit(e.exit_code());
 }
 
 fn run_parsed(parsed: command::ParsedCommand) -> Result<String, String> {

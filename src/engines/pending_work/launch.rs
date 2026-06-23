@@ -1,4 +1,4 @@
-// Launch-spec construction for the launch/new actions.
+// Launch prompt construction shared by session and verify.
 
 use super::model::Item;
 
@@ -30,36 +30,4 @@ pub(super) fn new_launch_prompt(item: &Item) -> String {
         out.push_str(&closeout);
     }
     out.trim().to_string()
-}
-
-pub(super) fn write_launch_spec(
-    item: &Item,
-    model: Option<&str>,
-    thinking: Option<&str>,
-) -> String {
-    let success_label = format!(
-        "[pending-work {}] {} :: {}",
-        item.id, item.project, item.session
-    );
-    let mut out = format!("READY TO LAUNCH {success_label}\n");
-    if let Some(repo) = &item.repo {
-        out.push_str(&format!("  repo: {repo}\n"));
-    }
-    out.push_str(&format!("  title: {}\n", item.session));
-    out.push_str(&format!(
-        "  model: {}\n",
-        model.unwrap_or("repo/user default")
-    ));
-    out.push_str(&format!(
-        "  thinking: {}\n",
-        thinking.unwrap_or("repo/user default")
-    ));
-    let prompt_inline = item.prompt.replace('\n', " / ");
-    out.push_str(&format!("  prompt: {prompt_inline}\n"));
-    if !is_adhoc(item) {
-        out.push_str("After the new thread is visible/running, mark this note checked with:\n");
-        out.push_str(&format!("  {}\n", report_closeout_command(&item.id)));
-        out.push_str("If a handoff or plan is the source of truth, close that out instead.\n");
-    }
-    out
 }

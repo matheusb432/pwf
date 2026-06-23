@@ -1364,7 +1364,8 @@ fn show_streams_note_markdown_like_resolve_show() {
         "---\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\nGoals:\n- do the thing\n",
     );
     let out = pwf()
-        .args(["show", "--id", "PWF-0001", "--config-path"])
+        // Bare positional id — no `--id` flag.
+        .args(["show", "PWF-0001", "--config-path"])
         .arg(&cfg)
         .assert()
         .success();
@@ -1391,8 +1392,8 @@ fn show_finds_archived_done_item_regardless_of_status() {
         "---\nstatus: done\ntitle: finished thing\nproject: pwf\ncreated: 2026-06-20\n---\n\nGoals:\n- finished thing\n",
     );
     let out = pwf()
-        // Lowercase id also exercises the case-insensitive archive match.
-        .args(["show", "--id", "pwf-0002", "--config-path"])
+        // Lowercase positional id also exercises the case-insensitive archive match.
+        .args(["show", "pwf-0002", "--config-path"])
         .arg(&cfg)
         .assert()
         .success();
@@ -1413,10 +1414,26 @@ fn show_errors_when_id_absent() {
         "---\nstatus: done\ntitle: t\nproject: pwf\n---\n\nbody\n",
     );
     pwf()
-        .args(["show", "--id", "PWF-9999", "--config-path"])
+        .args(["show", "PWF-9999", "--config-path"])
         .arg(&cfg)
         .assert()
         .failure();
+}
+
+#[test]
+fn show_without_id_errors_with_clean_usage_hiding_pw_engine() {
+    // PWF-0065: missing the required positional is a clap error; its usage must read
+    // `pwf show …`, never leaking the internal `pw` engine token the preprocess injects.
+    let out = pwf().arg("show").assert().failure();
+    let stderr = String::from_utf8(out.get_output().stderr.clone()).unwrap();
+    assert!(
+        stderr.contains("pwf show"),
+        "usage should name the verb: {stderr}"
+    );
+    assert!(
+        !stderr.contains("pwf pw"),
+        "usage must not leak the internal pw engine: {stderr}"
+    );
 }
 
 // 10. update --commits: amend provenance, incl. on closed items (PWF-0062).
@@ -1544,4 +1561,49 @@ fn update_body_edit_on_closed_item_is_rejected() {
         .assert()
         .failure()
         .stderr(contains("only --commits can amend closed item"));
+}
+
+// 11. session verb: zellij-independent error surfaces (PWF-0038).
+
+#[test]
+fn session_missing_id_errors() {
+    // `pwf session` with no id → MissingId, before any zellij probe.
+    pwf()
+        .arg("session")
+        .assert()
+        .failure()
+        .stderr(contains("--id is required for session"));
+}
+
+#[test]
+fn session_unknown_id_errors_not_found() {
+    // Unknown id resolves to not-found before the zellij availability check.
+    let (_dir, cfg) = staged();
+    pwf()
+        .args(["session", "GLP-9999", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .failure()
+        .stderr(contains("not found"));
+}
+
+#[test]
+fn retired_launch_verb_treated_as_unknown_project() {
+    // `launch` is no longer a clap subcommand; the preprocessor treats it as a
+    // route word (project name), which fails as an unknown managed project.
+    pwf()
+        .args(["launch", "--id", "GLP-0001"])
+        .assert()
+        .failure()
+        .stderr(contains("Unknown managed project identifier"));
+}
+
+#[test]
+fn retired_launch_claude_verb_treated_as_unknown_project() {
+    // `launch-claude` is no longer a clap subcommand; same routing as above.
+    pwf()
+        .args(["launch-claude", "--id", "GLP-0001"])
+        .assert()
+        .failure()
+        .stderr(contains("Unknown managed project identifier"));
 }

@@ -1,64 +1,38 @@
-// Shared input resolution for the `new` and `add` verbs: both validate the project
-// + prompt, resolve the managed project + its repo, and derive a session title.
-// `add` takes them positionally (its missing-input error points at the positional
-// form); the hidden `new` verb still takes `--project`/`--prompt` flags.
+// Input resolution for the `add` verb: validates project + prompt, resolves the
+// managed project + its repo, and derives a session title.
 
 use super::errors::PendingWorkError;
-use super::model::Action;
 use super::query::resolve_project_repo;
 use super::text::{inferred_title, normalize_title};
 use crate::cli::Args;
 use crate::config::Config;
 
-/// Resolved, validated inputs shared by the `new` and `add` verbs. The prompt is
-/// borrowed from `args` (zero-copy); the rest are resolved owned strings, so the
-/// struct is a thin grouping the compiler lays out with no extra indirection.
+/// Resolved, validated inputs for `add`. The prompt is borrowed from `args`
+/// (zero-copy); the rest are resolved owned strings.
 #[derive(Debug)]
 pub(super) struct NewAddInputs<'a> {
     pub project_name: String,
-    pub repo: String,
     pub session: String,
     pub prompt: &'a str,
 }
 
-/// Missing project/prompt error, phrased for the verb the user actually ran:
-/// `add` takes positional args (point at the canonical form), `new` takes flags.
-fn missing_input_err(action: &Action, field: &'static str) -> PendingWorkError {
-    match action {
-        Action::Add => PendingWorkError::AddUsage,
-        _ => PendingWorkError::MissingNewInput {
-            action: action.as_str(),
-            field,
-        },
-    }
-}
-
 impl<'a> NewAddInputs<'a> {
     /// Validate `--project`/`--prompt`, resolve the managed project + its repo path,
-    /// and derive the session title (explicit `--title`, else inferred from the
-    /// prompt). `action` only shapes the "required for <verb>" error text.
-    pub(super) fn resolve(
-        cfg: &Config,
-        args: &'a Args,
-        action: Action,
-    ) -> Result<Self, PendingWorkError> {
-        let project_raw = args
-            .project
-            .as_deref()
-            .ok_or_else(|| missing_input_err(&action, "project"))?;
+    /// and derive the session title (explicit `--title`, else inferred from the prompt).
+    pub(super) fn resolve(cfg: &Config, args: &'a Args) -> Result<Self, PendingWorkError> {
+        let project_raw = args.project.as_deref().ok_or(PendingWorkError::AddUsage)?;
         let prompt = args
             .prompt
             .as_deref()
             .filter(|p| !p.trim().is_empty())
-            .ok_or_else(|| missing_input_err(&action, "prompt"))?;
-        let (project_name, repo) = resolve_project_repo(cfg, project_raw)?;
+            .ok_or(PendingWorkError::AddUsage)?;
+        let (project_name, _repo) = resolve_project_repo(cfg, project_raw)?;
         let session = match args.title.as_deref() {
             Some(t) if !t.trim().is_empty() => normalize_title(t),
             _ => inferred_title(prompt),
         };
         Ok(Self {
             project_name,
-            repo,
             session,
             prompt,
         })
@@ -89,9 +63,8 @@ mod tests {
     fn resolves_project_repo_prompt_and_inferred_session() {
         let cfg = cfg();
         let args = args(Some("alpha"), Some("fix the bug to satisfy CI"), None);
-        let got = NewAddInputs::resolve(&cfg, &args, Action::Add).unwrap();
+        let got = NewAddInputs::resolve(&cfg, &args).unwrap();
         assert_eq!(got.project_name, "alpha");
-        assert_eq!(got.repo, "/repo/a");
         assert_eq!(got.prompt, "fix the bug to satisfy CI");
         assert_eq!(got.session, inferred_title("fix the bug to satisfy CI"));
     }
@@ -100,7 +73,7 @@ mod tests {
     fn explicit_title_overrides_inferred_session() {
         let cfg = cfg();
         let args = args(Some("alpha"), Some("do x"), Some("Custom Title"));
-        let got = NewAddInputs::resolve(&cfg, &args, Action::New).unwrap();
+        let got = NewAddInputs::resolve(&cfg, &args).unwrap();
         // Explicit titles are normalized to lowercase, same as inferred ones.
         assert_eq!(got.session, "custom title");
     }
@@ -109,7 +82,7 @@ mod tests {
     fn blank_title_falls_back_to_inferred_session() {
         let cfg = cfg();
         let args = args(Some("alpha"), Some("do x"), Some("   "));
-        let got = NewAddInputs::resolve(&cfg, &args, Action::New).unwrap();
+        let got = NewAddInputs::resolve(&cfg, &args).unwrap();
         assert_eq!(got.session, inferred_title("do x"));
     }
 
@@ -117,40 +90,8 @@ mod tests {
     fn unique_prefix_resolves_to_full_project_name() {
         let cfg = cfg();
         let args = args(Some("al"), Some("do x"), None);
-        let got = NewAddInputs::resolve(&cfg, &args, Action::Add).unwrap();
+        let got = NewAddInputs::resolve(&cfg, &args).unwrap();
         assert_eq!(got.project_name, "alpha");
-    }
-
-    #[test]
-    fn missing_project_errors_with_verb_label() {
-        let cfg = cfg();
-        let args = args(None, Some("do x"), None);
-        let err = NewAddInputs::resolve(&cfg, &args, Action::New).unwrap_err();
-        assert!(matches!(
-            err,
-            errors::PendingWorkError::MissingNewInput {
-                action: "new",
-                field: "project",
-            }
-        ));
-        assert_eq!(err.to_string(), "--project is required for new.");
-    }
-
-    #[test]
-    fn missing_or_blank_prompt_on_new_names_the_flag() {
-        let cfg = cfg();
-        for prompt in [None, Some("   ")] {
-            let args = args(Some("alpha"), prompt, None);
-            let err = NewAddInputs::resolve(&cfg, &args, Action::New).unwrap_err();
-            assert!(matches!(
-                err,
-                errors::PendingWorkError::MissingNewInput {
-                    action: "new",
-                    field: "prompt",
-                }
-            ));
-            assert_eq!(err.to_string(), "--prompt is required for new.");
-        }
     }
 
     #[test]
@@ -158,12 +99,12 @@ mod tests {
         let cfg = cfg();
         // `add` takes positional args — the error must not name removed flags.
         let no_project = args(None, Some("do x"), None);
-        let err = NewAddInputs::resolve(&cfg, &no_project, Action::Add).unwrap_err();
+        let err = NewAddInputs::resolve(&cfg, &no_project).unwrap_err();
         assert!(matches!(err, errors::PendingWorkError::AddUsage));
         assert_eq!(err.to_string(), errors::ADD_HINT);
 
         let no_prompt = args(Some("alpha"), None, None);
-        let err = NewAddInputs::resolve(&cfg, &no_prompt, Action::Add).unwrap_err();
+        let err = NewAddInputs::resolve(&cfg, &no_prompt).unwrap_err();
         assert!(matches!(err, errors::PendingWorkError::AddUsage));
         assert_eq!(err.to_string(), errors::ADD_HINT);
     }
@@ -172,7 +113,7 @@ mod tests {
     fn managed_project_without_repo_mapping_errors() {
         let cfg = cfg();
         let args = args(Some("blank"), Some("do x"), None);
-        let err = NewAddInputs::resolve(&cfg, &args, Action::Add).unwrap_err();
+        let err = NewAddInputs::resolve(&cfg, &args).unwrap_err();
         assert_eq!(
             err.to_string(),
             "Project 'blank' is not mapped to a repo in config/pending-work.json."

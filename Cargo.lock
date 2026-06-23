@@ -543,8 +543,9 @@ dependencies = [
 
 [[package]]
 name = "pwf"
-version = "4.1.0"
+version = "5.0.0"
 dependencies = [
+ "anstyle",
  "assert_cmd",
  "chrono",
  "clap",

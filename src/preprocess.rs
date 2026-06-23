@@ -4,26 +4,13 @@
 //! `pw` verbs and the `handoff`/`migrate` engines pass through untouched for
 //! clap to parse.
 
-/// pw verbs reachable as clap subcommands (incl. the hidden `route`/`new`). A
+/// pw verbs reachable as clap subcommands (incl. the hidden `route`). A
 /// leading positional matching one passes through; anything else is treated as
 /// router words. The route sub-verb abbreviations still fall through to `route`.
 fn pw_subcommands() -> &'static [&'static str] {
     &[
-        "add",
-        "list",
-        "ls",
-        "check",
-        "cancel",
-        "update",
-        "resolve",
-        "show",
-        "clean",
-        "verify",
-        "launch",
-        "launch-claude",
-        "remove",
-        "route",
-        "new",
+        "add", "list", "ls", "check", "cancel", "update", "resolve", "show", "session", "clean",
+        "verify", "remove", "route",
     ]
 }
 
@@ -61,12 +48,11 @@ fn is_value_flag(flag: &str) -> bool {
             | "--slug"
             | "--reason"
             | "--report"
-            | "--model"
-            | "--thinking"
             | "--date"
             | "--section"
             | "--continue"
             | "--number"
+            | "--color"
     )
 }
 
@@ -245,12 +231,13 @@ mod tests {
     }
 
     // ! PWF-0065: `show` is a canonical verb — it must pass through to clap, not be
-    // misread as a route word (which would list the "show" project instead).
+    // misread as a route word (which would list the "show" project instead). Its id
+    // is a bare positional that stays attached behind the verb.
     #[test]
     fn canonical_show_subcommand_passes_through() {
         assert_eq!(
-            n(&["pw", "show", "--id", "PWF-0001"]),
-            vec!["pw", "show", "--id", "PWF-0001"]
+            n(&["pw", "show", "pwf-0001"]),
+            vec!["pw", "show", "pwf-0001"]
         );
     }
 

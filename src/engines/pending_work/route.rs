@@ -4,7 +4,7 @@
 
 use super::actions::list::ListScope;
 use super::actions::run_list_action;
-use super::claude::{RealProbe, invoke_claude_launch, verify_text_with_probe};
+use super::claude::{RealProbe, verify_text_with_probe};
 use super::errors::PendingWorkError;
 use super::query::{find_pending_item, resolve_managed_project_name_typed};
 use crate::cli::Args;
@@ -44,14 +44,6 @@ pub(super) fn run_route(cfg: &Config, args: &Args, date: &str) -> Result<String,
             None
         };
         return Ok(verify_text_with_probe(item.as_ref(), &probe));
-    }
-
-    if verb == "launch-claude" || verb == "lc" {
-        if route_words.len() < 2 {
-            return Err(PendingWorkError::RouteLaunchClaudeUsage);
-        }
-        let probe = RealProbe::resolve();
-        return invoke_claude_launch(cfg, route_words[1], &probe, args.force);
     }
 
     if verb == "clean" || verb == "cl" {
@@ -110,18 +102,5 @@ mod tests {
 
         assert!(matches!(err, errors::PendingWorkError::RouteCreateRejected));
         assert_eq!(err.to_string(), errors::ADD_HINT);
-    }
-
-    #[test]
-    fn route_launch_claude_without_id_returns_typed_usage_error() {
-        let cfg = cfg();
-
-        let err = run_route(&cfg, &args(&["launch-claude"]), "2026-01-01").unwrap_err();
-
-        assert!(matches!(
-            err,
-            errors::PendingWorkError::RouteLaunchClaudeUsage
-        ));
-        assert_eq!(err.to_string(), "Usage: pwf launch-claude --id <id>");
     }
 }

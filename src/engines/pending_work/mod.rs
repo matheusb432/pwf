@@ -22,10 +22,12 @@ mod render;
 mod route;
 mod run;
 mod section;
+mod session;
 mod text;
 
 pub use claude::{ClaudeProbe, FakeProbe, RealProbe, verify_text_with_probe};
 pub use domain::commands::PendingWorkCommand;
+pub use domain::types::canonical_pending_id;
 pub use index::{
     add_link_to_index, add_section_block, find_section_index, remove_index_link, section_exists,
     set_status_text, work_item_content,

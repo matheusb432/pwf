@@ -1,7 +1,7 @@
 use nutype::nutype;
 
 #[nutype(
-    sanitize(trim),
+    sanitize(trim, uppercase),
     validate(regex = "^[A-Z]{2,4}-\\d{4}$"),
     derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, AsRef, Display,)
 )]
@@ -28,23 +28,38 @@ pub struct ProjectPrefix(String);
 )]
 pub struct TaskTitle(String);
 
+/// Canonical form of a raw task id: the validated `WorkItemId` rendering when the
+/// shape parses (case-insensitive), else the trimmed-uppercased input so unknown
+/// shapes still flow downstream to a not-found error rather than a parse failure.
+pub fn canonical_pending_id(raw: &str) -> String {
+    WorkItemId::try_new(raw)
+        .map(|id| id.to_string())
+        .unwrap_or_else(|_| raw.trim().to_ascii_uppercase())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn work_item_id_accepts_uppercase_prefix_and_four_digits() {
-        let id = WorkItemId::try_new("PWF-0047").unwrap();
+    fn work_item_id_normalizes_lowercase_prefix() {
+        let id = WorkItemId::try_new("pwf-0047").unwrap();
         assert_eq!(id.as_ref(), "PWF-0047");
-        assert_eq!(id.to_string(), "PWF-0047");
     }
 
     #[test]
     fn work_item_id_rejects_noncanonical_shapes() {
-        assert!(WorkItemId::try_new("pwf-0047").is_err());
         assert!(WorkItemId::try_new("PWF-47").is_err());
         assert!(WorkItemId::try_new("PWF-0047-extra").is_err());
         assert!(WorkItemId::try_new("TOOLONG-0047").is_err());
+        assert!(WorkItemId::try_new("nope").is_err());
+    }
+
+    #[test]
+    fn canonical_pending_id_normalizes_valid_and_passes_through_invalid() {
+        assert_eq!(canonical_pending_id("pwf-0047"), "PWF-0047");
+        assert_eq!(canonical_pending_id("  pwf-0047  "), "PWF-0047");
+        assert_eq!(canonical_pending_id("garbage"), "GARBAGE");
     }
 
     #[test]

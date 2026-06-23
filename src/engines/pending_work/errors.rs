@@ -159,14 +159,6 @@ pub(super) enum PendingWorkError {
     /// Add was invoked without the positional project/prompt form.
     #[error("{}", ADD_HINT)]
     AddUsage,
-    /// New was invoked without one of its required flags.
-    #[error("--{field} is required for {action}.")]
-    MissingNewInput {
-        /// The action label used in the legacy message.
-        action: &'static str,
-        /// The missing flag name without `--`.
-        field: &'static str,
-    },
     /// `--continue-handoff` could not find a handoff directory.
     #[error("No handoff directory found for project at {}.", path.display())]
     NoHandoffDirectory {
@@ -190,27 +182,6 @@ pub(super) enum PendingWorkError {
     /// Route attempted one of the removed create forms.
     #[error("{}", ADD_HINT)]
     RouteCreateRejected,
-    /// Route launch-claude was invoked without its id word.
-    #[error("Usage: pwf launch-claude --id <id>")]
-    RouteLaunchClaudeUsage,
-    /// Claude CLI is unavailable for a direct launch.
-    #[error("Claude CLI not found on PATH; cannot launch. Run 'pwf verify --id {id}' for details.")]
-    ClaudeNotFound {
-        /// The id the caller tried to launch.
-        id: String,
-    },
-    /// Spawning `claude` failed.
-    #[error("Failed to spawn claude: {source}")]
-    FailedToSpawnClaude {
-        /// The underlying process spawn error.
-        source: std::io::Error,
-    },
-    /// The spawned `claude` process returned a failing status.
-    #[error("claude exited with status {status}")]
-    ClaudeExited {
-        /// Process exit status.
-        status: std::process::ExitStatus,
-    },
     /// The clean engine failed.
     #[error(transparent)]
     Clean(#[from] crate::engines::clean::CleanError),
@@ -221,6 +192,25 @@ pub(super) enum PendingWorkError {
         note: String,
         /// The line reported for the legacy task.
         line: usize,
+    },
+    /// `zellij` is not installed / not on PATH.
+    #[error("zellij not found on PATH; cannot dispatch a pwf session (Linux-only feature).")]
+    ZellijNotFound,
+    /// The resolved repo directory does not exist.
+    #[error("Repo directory for project '{project}' does not exist: {path}")]
+    RepoMissing {
+        /// The managed project name.
+        project: String,
+        /// The missing repo path.
+        path: String,
+    },
+    /// `new-tab` failed even after creating the session.
+    #[error("Failed to dispatch into zellij session '{session}': {message}")]
+    SessionDispatchFailed {
+        /// The target session name.
+        session: String,
+        /// Underlying zellij error text.
+        message: String,
     },
 }
 

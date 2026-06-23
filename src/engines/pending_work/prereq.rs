@@ -1,9 +1,8 @@
-// Resolve `prereq` frontmatter wikilinks to their work-item status, so launch can
-// warn when a prerequisite item is not done yet.
+// Resolve `prereq` frontmatter wikilinks to their work-item status for list and
+// other consumers that need to know whether prerequisite items are complete.
 
 use super::domain::types::WorkItemId;
 use super::errors::PendingWorkError;
-use super::model::Item;
 use super::naming::project_dir;
 use crate::config::Config;
 use regex::Regex;
@@ -121,10 +120,6 @@ pub(super) struct PrereqStatus {
 }
 
 impl PrereqStatus {
-    pub(super) fn is_done(&self) -> bool {
-        self.status.as_deref() == Some("done")
-    }
-
     /// Human label: the raw status, or "missing" when the note is absent.
     fn label(&self) -> &str {
         self.status.as_deref().unwrap_or("missing")
@@ -170,27 +165,6 @@ pub(super) fn list_summary(statuses: &[PrereqStatus]) -> String {
         .join(", ")
 }
 
-/// A stderr warning naming each unsatisfied (non-done) prerequisite, or None when all
-/// are done (or there are none).
-pub(super) fn launch_warning(statuses: &[PrereqStatus]) -> Option<String> {
-    let lines: Vec<String> = statuses
-        .iter()
-        .filter(|s| !s.is_done())
-        .map(|s| format!("WARN: prereq {} is not done ({}).", s.id, s.label()))
-        .collect();
-    (!lines.is_empty()).then(|| lines.join("\n"))
-}
-
-/// Resolves an item's `prereq` (if any) and prints a stderr warning for each
-/// unsatisfied prerequisite. Launch proceeds regardless (warn-only).
-pub(super) fn warn_unsatisfied_on_launch(cfg: &Config, item: &Item) {
-    if let Some(pq) = &item.prereq
-        && let Some(w) = launch_warning(&resolve(cfg, pq))
-    {
-        eprintln!("{w}");
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -223,11 +197,11 @@ mod tests {
         let (_d, cfg) = stage_cfg();
         let got = resolve(&cfg, "[[CFG-0014]] [[CFG-0015]] [[CFG-9999]]");
         assert_eq!(got.len(), 3);
-        assert!(got[0].is_done());
+        assert_eq!(got[0].status.as_deref(), Some("done"));
         assert_eq!(got[0].label(), "done");
-        assert!(!got[1].is_done());
+        assert_eq!(got[1].status.as_deref(), Some("active"));
         assert_eq!(got[1].label(), "active");
-        assert!(!got[2].is_done());
+        assert_eq!(got[2].status, None);
         assert_eq!(got[2].label(), "missing");
     }
 
@@ -239,17 +213,6 @@ mod tests {
     }
 
     #[test]
-    fn launch_warning_only_for_unsatisfied() {
-        let (_d, cfg) = stage_cfg();
-        assert!(launch_warning(&resolve(&cfg, "[[CFG-0014]]")).is_none());
-        let w = launch_warning(&resolve(&cfg, "[[CFG-0015]]")).unwrap();
-        assert!(
-            w.contains("WARN: prereq CFG-0015 is not done (active)."),
-            "got: {w}"
-        );
-    }
-
-    #[test]
     fn prereqs_accept_repeatable_and_comma_values() {
         let (_d, cfg) = stage_cfg();
         let values = vec!["CFG-0014, CFG-0015".to_string(), "[[CFG-0014]]".to_string()];
@@ -258,14 +221,20 @@ mod tests {
     }
 
     #[test]
-    fn prereqs_reject_invalid_ids_with_typed_error_and_legacy_display() {
-        let err = parse_flag_ids(&["cfg-0014".to_string()]).unwrap_err();
-
+    fn prereqs_reject_malformed_ids_with_typed_error_and_legacy_display() {
+        let err = parse_flag_ids(&["CFG-12".to_string()]).unwrap_err();
         assert!(matches!(
             err,
-            PendingWorkError::InvalidPrereqId { ref raw } if raw == "cfg-0014"
+            PendingWorkError::InvalidPrereqId { ref raw } if raw == "CFG-12"
         ));
-        assert_eq!(err.to_string(), "Invalid --prereq id: cfg-0014.");
+        assert_eq!(err.to_string(), "Invalid --prereq id: CFG-12.");
+    }
+
+    #[test]
+    fn prereqs_normalize_lowercase_ids() {
+        // lowercase is accepted and canonicalized (PWF-0038 / PWF-FR-012).
+        let ids = parse_flag_ids(&["cfg-0014".to_string()]).unwrap();
+        assert_eq!(ids, vec!["CFG-0014".to_string()]);
     }
 
     #[test]
