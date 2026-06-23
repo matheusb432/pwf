@@ -97,6 +97,7 @@ pub(in crate::engines::pending_work) fn run_typed(
             &cfg,
             require_id(args, "session")?,
             args.color,
+            args.assume_yes,
         )?),
     }
 }

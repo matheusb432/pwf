@@ -304,6 +304,28 @@ fn verb_terse_help_is_scoped_to_that_verb() {
 }
 
 #[test]
+fn session_help_documents_yes_flag() {
+    // PWF-0074: `--yes`/`-y` skips the [Y/n] dispatch confirmation.
+    let (help, ok) = run(&["session", "--help"]);
+    assert!(ok, "pwf session --help should exit 0");
+    assert!(
+        help.contains("--yes"),
+        "session help should list --yes: {help}"
+    );
+    assert!(
+        help.contains("confirmation"),
+        "session help should describe the confirmation: {help}"
+    );
+
+    let (terse, ok) = run(&["session", "--help", "--terse"]);
+    assert!(ok, "pwf session --help --terse should exit 0");
+    assert!(
+        terse.contains("-y"),
+        "session terse should mention the -y shortcut: {terse}"
+    );
+}
+
+#[test]
 fn list_help_mentions_all_scope() {
     let (list_help, ok) = run(&["list", "--help"]);
     assert!(ok, "pwf list --help should exit 0");

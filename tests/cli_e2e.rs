@@ -1612,6 +1612,19 @@ fn session_unknown_id_errors_not_found() {
 }
 
 #[test]
+fn session_accepts_yes_flag() {
+    // PWF-0074: `--yes` is a valid session flag; it doesn't alter id resolution,
+    // so an unknown id still fails not-found (proving the flag parsed, not errored).
+    let (_dir, cfg) = staged();
+    pwf()
+        .args(["session", "GLP-9999", "--yes", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .failure()
+        .stderr(contains("not found"));
+}
+
+#[test]
 fn retired_launch_verb_treated_as_unknown_project() {
     // `launch` is no longer a clap subcommand; the preprocessor treats it as a
     // route word (project name), which fails as an unknown managed project.

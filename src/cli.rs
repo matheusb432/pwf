@@ -52,4 +52,6 @@ pub struct Args {
     // ? add: file the item under future|human|low-prio (--human is a shorthand).
     pub section: Option<String>,
     pub color: ColorChoice,
+    // ? session: skip the [Y/n] dispatch confirmation (assume yes).
+    pub assume_yes: bool,
 }

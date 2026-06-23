@@ -15,7 +15,7 @@ const PW_TERSE: &str = r#"pw [<project>]   (alias: pending-work; bare pw lists a
   update --id [--prompt] [--title] [--prereq <id>] [--clear-prereq] [--commits <range>]
   resolve --id [--show]
   show <id>   (shorthand for resolve --show)
-  session <id>   dispatch an agent into the project's zellij session
+  session <id> [-y]   dispatch an agent into the project's zellij session (-y skips the [Y/n] confirm)
   clean [--dry-run|--force]
   verify [--id]
   remove --id"#;

@@ -2,10 +2,14 @@
 //! zellij session. Dispatch logic sits behind the `ZellijDriver` and
 //! `AgentLauncher` seams so orchestration/rendering are tested with fakes.
 
+mod confirm;
 mod launcher;
 mod render;
 mod zellij;
 
+#[cfg(test)]
+use confirm::FakeConfirm;
+pub(in crate::engines::pending_work) use confirm::{Confirm, RealConfirm};
 pub(in crate::engines::pending_work) use launcher::{AgentLauncher, ClaudeLauncher};
 pub(super) use render::{DispatchOutcome, render, use_color};
 pub(in crate::engines::pending_work) use zellij::{NewTabError, RealZellij, ZellijDriver};
@@ -25,13 +29,22 @@ pub(in crate::engines::pending_work) fn dispatch(
     cfg: &Config,
     id: &str,
     color: ColorChoice,
+    assume_yes: bool,
 ) -> Result<String, PendingWorkError> {
     if !RealProbe::resolve().available() {
         eprintln!(
             "note: claude not found on PATH from here; the new tab will surface the error if it can't run."
         );
     }
-    run_session(cfg, id, color, &RealZellij, &ClaudeLauncher)
+    run_session(
+        cfg,
+        id,
+        color,
+        assume_yes,
+        &RealZellij,
+        &ClaudeLauncher,
+        &RealConfirm,
+    )
 }
 
 /// Zellij session name for an item: the lowercased id prefix (`CFG-0009` → `cfg`),
@@ -50,8 +63,10 @@ pub(in crate::engines::pending_work) fn run_session(
     cfg: &Config,
     id: &str,
     color: ColorChoice,
+    assume_yes: bool,
     driver: &dyn ZellijDriver,
     launcher: &dyn AgentLauncher,
+    confirmer: &dyn Confirm,
 ) -> Result<String, PendingWorkError> {
     // Validate the request BEFORE probing the external tool, so an unknown id or
     // bad repo errors deterministically even where zellij is absent (e.g. CI).
@@ -73,6 +88,23 @@ pub(in crate::engines::pending_work) fn run_session(
         return Err(PendingWorkError::ZellijNotFound);
     }
     let session = session_name_for(&item);
+
+    // Default-yes confirmation gate: an interactive operator can abort a mistaken
+    // dispatch. `--yes` skips it; a non-interactive caller (agentic dispatch,
+    // pipes, CI) proceeds without prompting so the fire-and-forget path is intact.
+    if !assume_yes && confirmer.interactive() {
+        let question = format!(
+            "Dispatch {} \"{}\" into zellij session {session}?",
+            item.id, item.session
+        );
+        if !confirmer.confirm(&question) {
+            return Ok(format!(
+                "# session {} — aborted\nnothing dispatched.\n",
+                item.id
+            ));
+        }
+    }
+
     let tab = launcher.tab_name(&item);
     let argv = launcher.argv(&item);
 
@@ -151,8 +183,13 @@ mod tests {
             &cfg,
             "PWF-0001",
             ColorChoice::Never,
+            true,
             &driver,
             &ClaudeLauncher,
+            &FakeConfirm {
+                interactive: false,
+                answer: false,
+            },
         )
         .unwrap();
         assert!(out.contains("— dispatched"));
@@ -168,8 +205,13 @@ mod tests {
             &cfg,
             "PWF-0001",
             ColorChoice::Never,
+            true,
             &driver,
             &ClaudeLauncher,
+            &FakeConfirm {
+                interactive: false,
+                answer: false,
+            },
         )
         .unwrap();
         assert!(out.contains("— created session + dispatched"));
@@ -193,8 +235,13 @@ mod tests {
             &cfg,
             "PWF-0001",
             ColorChoice::Never,
+            true,
             &driver,
             &ClaudeLauncher,
+            &FakeConfirm {
+                interactive: false,
+                answer: false,
+            },
         )
         .unwrap();
         assert!(out.contains("— failed"));
@@ -209,10 +256,106 @@ mod tests {
             &cfg,
             "PWF-0001",
             ColorChoice::Never,
+            true,
             &driver,
             &ClaudeLauncher,
+            &FakeConfirm {
+                interactive: false,
+                answer: false,
+            },
         )
         .unwrap_err();
         assert!(matches!(err, PendingWorkError::ZellijNotFound));
+    }
+
+    #[test]
+    fn interactive_decline_aborts_without_dispatch() {
+        // On a TTY, answering no returns the aborted note and never touches zellij.
+        let (_s, cfg) = staged();
+        let driver = FakeZellij::new(true, vec![]);
+        let out = run_session(
+            &cfg,
+            "PWF-0001",
+            ColorChoice::Never,
+            false,
+            &driver,
+            &ClaudeLauncher,
+            &FakeConfirm {
+                interactive: true,
+                answer: false,
+            },
+        )
+        .unwrap();
+        assert!(out.contains("— aborted"));
+        assert!(out.contains("nothing dispatched"));
+        assert!(driver.calls.borrow().is_empty());
+    }
+
+    #[test]
+    fn interactive_accept_dispatches() {
+        // On a TTY, answering yes proceeds exactly like the unconfirmed path.
+        let (_s, cfg) = staged();
+        let driver = FakeZellij::new(true, vec![Ok(())]);
+        let out = run_session(
+            &cfg,
+            "PWF-0001",
+            ColorChoice::Never,
+            false,
+            &driver,
+            &ClaudeLauncher,
+            &FakeConfirm {
+                interactive: true,
+                answer: true,
+            },
+        )
+        .unwrap();
+        assert!(out.contains("— dispatched"));
+        assert_eq!(driver.calls.borrow().len(), 1);
+    }
+
+    #[test]
+    fn noninteractive_auto_proceeds_without_prompting() {
+        // Agentic dispatch / pipes / CI: no TTY → proceed without consulting the
+        // operator, keeping the fire-and-forget path intact. A `false` answer is
+        // ignored because `interactive` is false.
+        let (_s, cfg) = staged();
+        let driver = FakeZellij::new(true, vec![Ok(())]);
+        let out = run_session(
+            &cfg,
+            "PWF-0001",
+            ColorChoice::Never,
+            false,
+            &driver,
+            &ClaudeLauncher,
+            &FakeConfirm {
+                interactive: false,
+                answer: false,
+            },
+        )
+        .unwrap();
+        assert!(out.contains("— dispatched"));
+        assert_eq!(driver.calls.borrow().len(), 1);
+    }
+
+    #[test]
+    fn assume_yes_skips_prompt_even_when_interactive() {
+        // `--yes` bypasses the gate: a declining confirmer is never consulted.
+        let (_s, cfg) = staged();
+        let driver = FakeZellij::new(true, vec![Ok(())]);
+        let out = run_session(
+            &cfg,
+            "PWF-0001",
+            ColorChoice::Never,
+            true,
+            &driver,
+            &ClaudeLauncher,
+            &FakeConfirm {
+                interactive: true,
+                answer: false,
+            },
+        )
+        .unwrap();
+        assert!(out.contains("— dispatched"));
+        assert_eq!(driver.calls.borrow().len(), 1);
     }
 }

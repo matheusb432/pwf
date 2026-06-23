@@ -264,6 +264,9 @@ pub enum PwAction {
         /// Color policy for the dispatch output.
         #[arg(long, value_enum, default_value_t = ColorArg::Auto)]
         color: ColorArg,
+        /// Skip the [Y/n] dispatch confirmation (assume yes).
+        #[arg(long = "yes", short = 'y')]
+        yes: bool,
         #[command(flatten)]
         common: PwCommon,
     },
@@ -609,6 +612,7 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             id,
             id_flag,
             color,
+            yes,
             common,
         } => {
             a.id = normalize_pending_work_id(id.or(id_flag));
@@ -617,6 +621,7 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
                 ColorArg::Always => crate::cli::ColorChoice::Always,
                 ColorArg::Never => crate::cli::ColorChoice::Never,
             };
+            a.assume_yes = yes;
             apply_pw_common(a, common);
             PendingWorkAction::Session
         }
