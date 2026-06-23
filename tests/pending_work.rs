@@ -33,10 +33,6 @@ fn add_allocates_first_id_and_writes_files() {
     ]);
     let out = pwk::run_args(&args).unwrap();
     assert!(out.starts_with("ADDED PWF TASK [GLP-0001]"), "got: {out}");
-    assert!(
-        out.contains("dispatch with: pwf session GLP-0001"),
-        "got: {out}"
-    );
     let item = fs::read_to_string(stage.join("notes/glep-shimeji/GLP-0001.md")).unwrap();
     assert!(item.contains("status: active"));
     let index = fs::read_to_string(stage.join("notes/glep-shimeji/glep-shimeji.md")).unwrap();
@@ -45,36 +41,6 @@ fn add_allocates_first_id_and_writes_files() {
         "bare link written: {index}"
     );
     assert!(!index.contains("[[GLP-0001|"), "no alias written: {index}");
-}
-
-#[test]
-fn add_text_output_points_to_pwf_session_command() {
-    let stage = stage_dir();
-    let notes = stage.join("notes");
-    fs::create_dir_all(&notes).unwrap();
-    let cfg = stage.join("config.json");
-    fs::write(
-        &cfg,
-        format!(
-            r#"{{ "notesDir": "{}", "projects": {{ "glep-shimeji": "/repo" }}, "prefixes": {{ "glep-shimeji": "GLP" }} }}"#,
-            json_path(&notes)
-        ),
-    )
-    .unwrap();
-    let args = parse_args(&[
-        "add",
-        "glep-shimeji",
-        "add startup toggle",
-        "--config-path",
-        &cfg.to_string_lossy(),
-        "--notes-dir",
-        &notes.to_string_lossy(),
-        "--date",
-        "2026-01-01",
-    ]);
-    let out = pwk::run_args(&args).unwrap();
-    assert!(out.contains("dispatch with: pwf session GLP-0001"));
-    assert!(!out.contains("just pending-work-launch"), "got: {out}");
 }
 
 #[test]

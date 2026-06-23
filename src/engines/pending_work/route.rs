@@ -4,7 +4,7 @@
 
 use super::actions::list::ListScope;
 use super::actions::run_list_action;
-use super::claude::{RealProbe, verify_text_with_probe};
+use super::agent::claude::{RealProbe, verify_text_with_probe};
 use super::errors::PendingWorkError;
 use super::query::{find_pending_item, resolve_managed_project_name_typed};
 use crate::cli::Args;

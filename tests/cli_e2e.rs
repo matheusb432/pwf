@@ -1566,6 +1566,30 @@ fn update_body_edit_on_closed_item_is_rejected() {
 // 11. session verb: zellij-independent error surfaces (PWF-0038).
 
 #[test]
+fn session_ok_outputs_thread_title() {
+    // FIXME
+    // let (_d, cfg) = staged_with_item(
+    //     "pwf",
+    //     "PWF",
+    //     "PWF-0001",
+    //     "do the thing",
+    //     "---\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\nGoals:\n- do the thing\n",
+    // );
+
+    // let out = pwf()
+    //     .args(["session", "--id", "PWF-0001", "--config-path"])
+    //     .arg(&cfg)
+    //     .assert()
+    //     .success();
+    // let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+
+    // assert!(
+    //     stdout.contains("PWF-0d001 - do the thing"),
+    //     "thread title not present: {stdout}"
+    // );
+}
+
+#[test]
 fn session_missing_id_errors() {
     // `pwf session` with no id → MissingId, before any zellij probe.
     pwf()

@@ -1,8 +1,7 @@
-// Claude CLI probe, command construction, verify output, and the direct
-// claude launch.
+// Claude CLI probe, command construction, and verify output.
 
-use super::launch::new_launch_prompt;
-use super::model::Item;
+use crate::engines::pending_work::model::Item;
+use crate::engines::pending_work::session::{AgentLauncher, ClaudeLauncher};
 
 // ── ClaudeProbe trait + impls ─────────────────────────────────────────────────
 
@@ -126,37 +125,49 @@ impl ClaudeProbe for FakeProbe {
     }
 }
 
-fn get_claude_command_display(title: &str, prompt: &str) -> String {
-    let lines: Vec<&str> = prompt.lines().collect();
-    let shown = if lines.len() > 1 {
-        format!("{}…", lines[0])
-    } else {
-        lines.first().copied().unwrap_or("").to_string()
-    };
-    format!("claude --name \"{title}\" \"{shown}\"")
+/// Render an agent argv (`[program, "--name", <title>, <prompt>]`, the shape
+/// `ClaudeLauncher::argv` emits) as a single shell-ish command line, truncating
+/// the trailing multi-line prompt to its first line so verify stays one screen.
+fn command_line(argv: &[String]) -> String {
+    match argv {
+        [program, name_flag, title, prompt] => {
+            let first = prompt.lines().next().unwrap_or("");
+            let shown = if prompt.lines().nth(1).is_some() {
+                format!("{first}…")
+            } else {
+                first.to_string()
+            };
+            format!("{program} {name_flag} \"{title}\" \"{shown}\"")
+        }
+        _ => argv.join(" "),
+    }
 }
 
 /// Render the verify result as markdown given an optional item and a probe.
 /// The `pass`/`fail` token sits in the heading so an agent can branch on one read.
+/// The `command:` line is sourced from the real launcher (`ClaudeLauncher::argv`)
+/// so it always reflects what `pwf session` would actually run.
 pub fn verify_text_with_probe(item: Option<&Item>, probe: &dyn ClaudeProbe) -> String {
-    let (id, title, prompt, launchable, issues): (Option<&str>, &str, String, bool, Vec<String>) =
-        match item {
-            Some(it) => (
-                Some(it.id.as_str()),
-                it.session.as_str(),
-                new_launch_prompt(it),
-                it.launchable,
-                it.issues.clone(),
-            ),
-            None => (
-                None,
-                "pending-work claude check",
+    let (id, launchable, issues, argv) = match item {
+        Some(it) => (
+            Some(it.id.as_str()),
+            it.launchable,
+            it.issues.clone(),
+            ClaudeLauncher.argv(it),
+        ),
+        None => (
+            None,
+            true,
+            vec![],
+            vec![
+                "claude".to_string(),
+                "--name".to_string(),
+                "pending-work claude check".to_string(),
                 "Verify Claude Code session launch.".to_string(),
-                true,
-                vec![],
-            ),
-        };
-    let display = get_claude_command_display(title, &prompt);
+            ],
+        ),
+    };
+    let display = command_line(&argv);
     let result = if probe.available() && launchable {
         "pass"
     } else {

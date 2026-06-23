@@ -25,6 +25,29 @@ pub struct Item {
     pub prereq: Option<String>,
 }
 
+impl Item {
+    pub fn empty() -> Self {
+        Item {
+            id: "".into(),
+            project: "".into(),
+            session: "".into(),
+            prompt: "".into(),
+            repo: None,
+            note: "".into(),
+            item_file: None,
+            line: 0,
+            format: "".into(),
+            marker_index: 0,
+            marker_length: 0,
+            launchable: false,
+            needs_prompt: false,
+            issues: vec![],
+            section: None,
+            prereq: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action {
     Route,

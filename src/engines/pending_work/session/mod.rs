@@ -12,9 +12,27 @@ pub(in crate::engines::pending_work) use zellij::{NewTabError, RealZellij, Zelli
 
 use crate::cli::ColorChoice;
 use crate::config::Config;
+use crate::engines::pending_work::agent::claude::{ClaudeProbe, RealProbe};
 use crate::engines::pending_work::errors::PendingWorkError;
 use crate::engines::pending_work::model::Item;
 use crate::engines::pending_work::query::find_pending_item;
+
+/// Real-world entrypoint for `pwf session <id>`: resolves the live claude probe
+/// and zellij/agent drivers, warns once if claude is absent from this PATH, then
+/// dispatches. Keeps `run.rs` a thin match arm — the wiring lives here, beside
+/// the orchestration it drives.
+pub(in crate::engines::pending_work) fn dispatch(
+    cfg: &Config,
+    id: &str,
+    color: ColorChoice,
+) -> Result<String, PendingWorkError> {
+    if !RealProbe::resolve().available() {
+        eprintln!(
+            "note: claude not found on PATH from here; the new tab will surface the error if it can't run."
+        );
+    }
+    run_session(cfg, id, color, &RealZellij, &ClaudeLauncher)
+}
 
 /// Zellij session name for an item: the lowercased id prefix (`CFG-0009` → `cfg`),
 /// which equals the per-project session name in the managed zellij stack.

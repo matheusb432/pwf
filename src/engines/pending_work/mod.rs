@@ -3,7 +3,7 @@
 //! focused submodules below.
 
 mod actions;
-mod claude;
+mod agent;
 mod commits;
 mod continue_prompt;
 mod domain;
@@ -25,7 +25,7 @@ mod section;
 mod session;
 mod text;
 
-pub use claude::{ClaudeProbe, FakeProbe, RealProbe, verify_text_with_probe};
+pub use agent::claude::{ClaudeProbe, FakeProbe, RealProbe, verify_text_with_probe};
 pub use domain::commands::PendingWorkCommand;
 pub use domain::types::canonical_pending_id;
 pub use index::{

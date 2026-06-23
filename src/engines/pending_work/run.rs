@@ -6,7 +6,7 @@ use super::actions::{
     NewItemSpec, add_pending_work_item, run_cancel, run_check, run_list_action, run_remove,
     run_update,
 };
-use super::claude::{ClaudeProbe, RealProbe, verify_text_with_probe};
+use super::agent::claude::{RealProbe, verify_text_with_probe};
 use super::continue_prompt::{continue_handoff_prompt, continue_plan_prompt};
 use super::domain::commands::PendingWorkCommand;
 use super::errors;
@@ -93,20 +93,11 @@ pub(in crate::engines::pending_work) fn run_typed(
 
         Action::Update => Ok(run_update(&cfg, args)?),
 
-        Action::Session => {
-            let id = require_id(args, "session")?;
-            let probe = RealProbe::resolve();
-            if !probe.available() {
-                eprintln!(
-                    "note: claude not found on PATH from here; the new tab will surface the error if it can't run."
-                );
-            }
-            let driver = crate::engines::pending_work::session::RealZellij;
-            let launcher = crate::engines::pending_work::session::ClaudeLauncher;
-            Ok(crate::engines::pending_work::session::run_session(
-                &cfg, id, args.color, &driver, &launcher,
-            )?)
-        }
+        Action::Session => Ok(super::session::dispatch(
+            &cfg,
+            require_id(args, "session")?,
+            args.color,
+        )?),
     }
 }
 

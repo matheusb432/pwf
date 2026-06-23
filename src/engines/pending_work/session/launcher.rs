@@ -1,6 +1,7 @@
 //! How an agent is run inside the new zellij tab. `ClaudeLauncher` is the only
 //! impl today; codex slots in behind the same trait (PWF-0068).
 
+use crate::engines::pending_work::agent::query::get_thread_title;
 use crate::engines::pending_work::launch::new_launch_prompt;
 use crate::engines::pending_work::model::Item;
 
@@ -20,11 +21,13 @@ impl AgentLauncher for ClaudeLauncher {
         item.id.clone()
     }
 
+    // TODO: refactor this, far too imperative and confusing to know that THIS is the thing that names the session!
     fn argv(&self, item: &Item) -> Vec<String> {
+        let thread_title = get_thread_title::handle(item.into());
         vec![
             "claude".to_string(),
             "--name".to_string(),
-            item.session.clone(),
+            thread_title,
             new_launch_prompt(item),
         ]
     }
@@ -46,7 +49,7 @@ mod tests {
         let argv = l.argv(&item);
         assert_eq!(argv[0], "claude");
         assert_eq!(argv[1], "--name");
-        assert_eq!(argv[2], "zellij dispatches");
+        assert_eq!(argv[2], "PWF-0038 - zellij dispatches");
         // argv[3] is new_launch_prompt(item) — a single element, no splitting.
         assert!(argv[3].contains("do the thing"));
         assert_eq!(argv.len(), 4);
