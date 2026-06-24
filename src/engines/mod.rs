@@ -3,8 +3,9 @@ pub mod handoff;
 pub mod migrate;
 pub mod pending_work;
 
-use crate::cli::Args;
 use std::str::FromStr;
+
+use crate::cli::Args;
 
 /// The CLI engine selector — the first positional token (`pwf <engine> …`).
 #[derive(Debug, Clone, PartialEq)]

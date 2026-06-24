@@ -2,10 +2,10 @@
 //! rust-cli-tooling testing matrix: exit codes, that the retired legacy flag
 //! surface now errors, and canonical-only flags.
 
-use assert_cmd::Command;
-use predicates::prelude::PredicateBooleanExt;
-use predicates::str::contains;
 use std::fs;
+
+use assert_cmd::Command;
+use predicates::{prelude::PredicateBooleanExt, str::contains};
 use tempfile::TempDir;
 
 fn pwf() -> Command {
@@ -1565,28 +1565,128 @@ fn update_body_edit_on_closed_item_is_rejected() {
 
 // 11. session verb: zellij-independent error surfaces (PWF-0038).
 
+/// Stage a launchable PWF-0001 item with a real repo dir plus a recording `zellij`
+/// stub on a child PATH. Returns the cfg path, the child `PATH`, and the argv log
+/// the stub appends to — the shared rig for the session argv-capture e2e tests.
+#[cfg(unix)]
+fn stage_session_with_zellij_stub(
+    dir: &TempDir,
+) -> (std::path::PathBuf, String, std::path::PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+
+    // A REAL repo dir: the session preflight RepoMissing-rejects a nonexistent repo.
+    let notes = dir.path().join("notes");
+    let proj = notes.join("pwf");
+    let repo = dir.path().join("repo");
+    fs::create_dir_all(&proj).unwrap();
+    fs::create_dir_all(&repo).unwrap();
+    fs::write(
+        proj.join("PWF-0001.md"),
+        "---\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\nGoals:\n- do the thing\n",
+    )
+    .unwrap();
+    fs::write(proj.join("pwf.md"), "- [ ] [[PWF-0001|do the thing]]\n").unwrap();
+    let cfg = dir.path().join("cfg.json");
+    fs::write(
+        &cfg,
+        format!(
+            r#"{{ "notesDir": {:?}, "projects": {{ "pwf": {:?} }}, "prefixes": {{ "pwf": "PWF" }} }}"#,
+            notes.to_string_lossy(),
+            repo.to_string_lossy()
+        ),
+    )
+    .unwrap();
+
+    // A recording `zellij` on the child's PATH: copy the fixture to <bin>/zellij, +x.
+    let bin = dir.path().join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let stub = bin.join("zellij");
+    fs::copy("tests/fixtures/zellij-stub.sh", &stub).unwrap();
+    fs::set_permissions(&stub, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let log = dir.path().join("argv.log");
+    let path = format!(
+        "{}:{}",
+        bin.to_string_lossy(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    (cfg, path, log)
+}
+
 #[test]
+#[cfg(unix)]
 fn session_ok_outputs_thread_title() {
-    // FIXME
-    // let (_d, cfg) = staged_with_item(
-    //     "pwf",
-    //     "PWF",
-    //     "PWF-0001",
-    //     "do the thing",
-    //     "---\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\nGoals:\n- do the thing\n",
-    // );
+    let dir = TempDir::new().unwrap();
+    let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
 
-    // let out = pwf()
-    //     .args(["session", "--id", "PWF-0001", "--config-path"])
-    //     .arg(&cfg)
-    //     .assert()
-    //     .success();
-    // let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    pwf()
+        .args(["session", "--id", "PWF-0001", "--yes", "--config-path"])
+        .arg(&cfg)
+        .env("PATH", path)
+        .env("ZELLIJ_STUB_LOG", &log)
+        .assert()
+        .success()
+        .stdout(contains("dispatched"));
 
-    // assert!(
-    //     stdout.contains("PWF-0d001 - do the thing"),
-    //     "thread title not present: {stdout}"
-    // );
+    // The title travels ONLY in zellij's argv (claude's --name value), never stdout.
+    let argv = fs::read_to_string(&log).unwrap();
+    assert!(
+        argv.contains("PWF-0001 - do the thing"),
+        "thread title not in captured zellij argv: {argv}"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn session_worktree_flag_injects_instruction_into_argv() {
+    // PWF-0076: `-w`/`--worktree` augments the launch prompt with a git-worktree
+    // setup step naming the item id. It rides ONLY in the dispatched agent's argv.
+    let dir = TempDir::new().unwrap();
+    let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
+
+    pwf()
+        .args([
+            "session",
+            "--id",
+            "PWF-0001",
+            "--yes",
+            "-w",
+            "--config-path",
+        ])
+        .arg(&cfg)
+        .env("PATH", path)
+        .env("ZELLIJ_STUB_LOG", &log)
+        .assert()
+        .success()
+        .stdout(contains("dispatched"));
+
+    let argv = fs::read_to_string(&log).unwrap();
+    assert!(
+        argv.contains("git-worktrees skill") && argv.contains("named `PWF-0001`"),
+        "worktree instruction not in captured zellij argv: {argv}"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn session_without_worktree_flag_omits_instruction() {
+    // Without `-w`, the launch prompt carries no worktree step (default-off).
+    let dir = TempDir::new().unwrap();
+    let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
+
+    pwf()
+        .args(["session", "--id", "PWF-0001", "--yes", "--config-path"])
+        .arg(&cfg)
+        .env("PATH", path)
+        .env("ZELLIJ_STUB_LOG", &log)
+        .assert()
+        .success();
+
+    let argv = fs::read_to_string(&log).unwrap();
+    assert!(
+        !argv.contains("worktree"),
+        "worktree step leaked without -w: {argv}"
+    );
 }
 
 #[test]
@@ -1622,6 +1722,47 @@ fn session_accepts_yes_flag() {
         .assert()
         .failure()
         .stderr(contains("not found"));
+}
+
+#[test]
+fn session_accepts_inline_short_flag() {
+    // PWF-0073: `-i` is a valid session flag; it doesn't alter id resolution, so an
+    // unknown id still fails not-found (proving the flag parsed and validation runs
+    // before any exec — no zellij/claude needed in CI).
+    let (_dir, cfg) = staged();
+    pwf()
+        .args(["session", "GLP-9999", "-i", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .failure()
+        .stderr(contains("not found"));
+}
+
+#[test]
+fn session_accepts_inline_long_flag() {
+    // PWF-0073: the long `--inline` form parses identically.
+    let (_dir, cfg) = staged();
+    pwf()
+        .args(["session", "GLP-9999", "--inline", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .failure()
+        .stderr(contains("not found"));
+}
+
+#[test]
+fn session_accepts_worktree_flags() {
+    // PWF-0076: `-w`/`--worktree` is a valid session flag; it doesn't alter id
+    // resolution, so an unknown id still fails not-found (proving the flag parsed).
+    let (_dir, cfg) = staged();
+    for flag in ["-w", "--worktree"] {
+        pwf()
+            .args(["session", "GLP-9999", flag, "--config-path"])
+            .arg(&cfg)
+            .assert()
+            .failure()
+            .stderr(contains("not found"));
+    }
 }
 
 #[test]

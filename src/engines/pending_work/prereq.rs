@@ -1,11 +1,10 @@
 // Resolve `prereq` frontmatter wikilinks to their work-item status for list and
 // other consumers that need to know whether prerequisite items are complete.
 
-use super::domain::types::WorkItemId;
-use super::errors::PendingWorkError;
-use super::naming::project_dir;
-use crate::config::Config;
 use regex::Regex;
+
+use super::{domain::types::WorkItemId, errors::PendingWorkError, naming::project_dir};
+use crate::config::Config;
 
 // Regex reading bare ids out of an existing `prereq` frontmatter value.
 const PREREQ_VALUE_PATTERN: &str = r"\[\[([A-Z]{2,4}-\d{4})";
@@ -167,9 +166,10 @@ pub(super) fn list_summary(statuses: &[PrereqStatus]) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
     use crate::engines::pending_work::errors::PendingWorkError;
-    use std::fs;
 
     fn nanos() -> u128 {
         std::time::SystemTime::now()

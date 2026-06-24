@@ -1,12 +1,16 @@
 // Index/note parsing: project-task extraction + newest-handoff resolution.
 
-use super::errors::PendingWorkError;
-use super::model::Item;
-use super::naming::path_str;
-use super::obsidian::store::ObsidianStore;
-use super::text::{is_placeholder_prompt, line_number};
-use regex::Regex;
 use std::path::{Path, PathBuf};
+
+use regex::Regex;
+
+use super::{
+    errors::PendingWorkError,
+    model::Item,
+    naming::path_str,
+    obsidian::store::ObsidianStore,
+    text::{is_placeholder_prompt, line_number},
+};
 
 const ISSUE_NO_REPO: &str =
     "Project note is not mapped to a repo; add it to config/pending-work.json.";

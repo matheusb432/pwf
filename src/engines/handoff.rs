@@ -1,9 +1,8 @@
-use crate::cli::Args;
-use crate::config;
-use crate::frontmatter;
-use crate::fs_atomic::write_text_atomic;
-use regex::Regex;
 use std::path::{Path, PathBuf};
+
+use regex::Regex;
+
+use crate::{cli::Args, config, frontmatter, fs_atomic::write_text_atomic};
 
 #[derive(Debug, thiserror::Error)]
 pub enum HandoffError {

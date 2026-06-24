@@ -1,5 +1,7 @@
-use super::domain::read_models::{ListResult, OpenItem};
-use super::prereq;
+use super::{
+    domain::read_models::{ListResult, OpenItem},
+    prereq,
+};
 use crate::config::Config;
 
 /// "More" footer (no trailing newline); empty when nothing is hidden. Mentions the

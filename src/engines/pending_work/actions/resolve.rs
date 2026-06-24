@@ -1,13 +1,13 @@
-use super::super::errors::PendingWorkError;
-use super::super::obsidian::store::ObsidianStore;
-use super::super::query::find_pending_item;
-use crate::cli::Args;
-use crate::config::Config;
-use crate::engines::pending_work::Item;
-use crate::engines::pending_work::errors;
-use crate::engines::pending_work::naming::path_str;
-use crate::engines::pending_work::query::find_item_note_file;
-use crate::engines::pending_work::run::require_id;
+use super::super::{
+    errors::PendingWorkError, obsidian::store::ObsidianStore, query::find_pending_item,
+};
+use crate::{
+    cli::Args,
+    config::Config,
+    engines::pending_work::{
+        Item, errors, naming::path_str, query::find_item_note_file, run::require_id,
+    },
+};
 
 /// Frontmatter keys irrelevant to *executing* a task — dropped by `resolve --show`.
 const SHOW_FRONTMATTER_DENYLIST: &[&str] = &["created"];

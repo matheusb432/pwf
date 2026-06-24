@@ -1,6 +1,6 @@
+use std::{collections::BTreeMap, path::Path};
+
 use serde::Deserialize;
-use std::collections::BTreeMap;
-use std::path::Path;
 use thiserror::Error;
 
 /// Errors at the config boundary. Display text is frozen to the pre-clap strings

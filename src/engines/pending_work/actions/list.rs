@@ -1,10 +1,9 @@
 // Action: list.
 
-use super::super::domain::read_models::ListResult;
-use super::super::errors::PendingWorkError;
-use super::super::model::Item;
-use super::super::query::get_pending_work;
-use super::super::render::render_list;
+use super::super::{
+    domain::read_models::ListResult, errors::PendingWorkError, model::Item,
+    query::get_pending_work, render::render_list,
+};
 use crate::config::Config;
 
 /// Default item cap for `pw list` when `-n` is absent; keeps agents from being

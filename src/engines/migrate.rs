@@ -1,7 +1,6 @@
-use crate::cli::Args;
-use crate::config;
-use crate::fs_atomic::write_text_atomic;
 use std::path::{Path, PathBuf};
+
+use crate::{cli::Args, config, fs_atomic::write_text_atomic};
 
 #[derive(Debug, thiserror::Error)]
 pub enum MigrateError {

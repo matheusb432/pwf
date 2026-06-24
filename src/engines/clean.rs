@@ -2,14 +2,16 @@
 //! links, stamp the backing file done+completed, and remove the link.
 //! File-model analogue of scripts/notes-todo-cleaner (the legacy checkbox model).
 
-use crate::config::Config;
-use crate::frontmatter;
-use crate::fs_atomic;
-use regex::Regex;
-use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
+use regex::Regex;
+
 use super::pending_work::{project_index_path, set_status_text};
+use crate::{
+    config::Config,
+    confirm::{Confirm, DefaultAnswer},
+    frontmatter, fs_atomic,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum CleanError {
@@ -117,45 +119,6 @@ struct ProjectPlan {
     project: String,
     results: Vec<CleanResult>,
     writes: Vec<PendingWrite>,
-}
-
-/// Confirmation gate for real (non-dry-run) cleans. Injectable so tests can
-/// drive the yes / no / non-interactive paths without a terminal.
-pub trait Confirm {
-    fn interactive(&self) -> bool;
-    fn confirm(&self, question: &str) -> bool;
-}
-
-/// Real gate: prompts on stderr, reads a line from stdin, accepts `y`/`yes`.
-pub struct RealConfirm;
-impl Confirm for RealConfirm {
-    fn interactive(&self) -> bool {
-        std::io::stdin().is_terminal()
-    }
-    fn confirm(&self, question: &str) -> bool {
-        use std::io::Write;
-        eprint!("{question} [y/N] ");
-        let _ = std::io::stderr().flush();
-        let mut line = String::new();
-        if std::io::stdin().read_line(&mut line).is_err() {
-            return false;
-        }
-        matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes")
-    }
-}
-
-/// Fake gate for tests.
-pub struct FakeConfirm {
-    pub interactive: bool,
-    pub answer: bool,
-}
-impl Confirm for FakeConfirm {
-    fn interactive(&self) -> bool {
-        self.interactive
-    }
-    fn confirm(&self, _question: &str) -> bool {
-        self.answer
-    }
 }
 
 /// Compute (without writing) what a clean would do for one project.
@@ -324,9 +287,12 @@ pub(crate) fn run_clean_typed(
             true
         } else if confirmer.interactive() {
             eprint!("{}", render_text(&plans, true));
-            confirmer.confirm(&format!(
-                "Clean {cleanable} done work-item(s)? Edits notes-pro (git-tracked; no .bak)"
-            ))
+            confirmer.confirm(
+                &format!(
+                    "Clean {cleanable} done work-item(s)? Edits notes-pro (git-tracked; no .bak)"
+                ),
+                DefaultAnswer::No,
+            )
         } else {
             return Err(CleanError::NoTtyToConfirm);
         };
@@ -362,9 +328,10 @@ pub(crate) fn run_clean_typed(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::config;
     use std::error::Error;
+
+    use super::*;
+    use crate::{config, confirm::FakeConfirm};
 
     fn nanos() -> u128 {
         std::time::SystemTime::now()

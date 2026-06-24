@@ -1,18 +1,22 @@
 // Action: check (mark done).
 
-use super::super::commits;
-use super::super::done_queue;
-use super::super::errors::PendingWorkError;
-use super::super::index::{append_report_text, set_commits_text, set_status_text};
-use super::super::naming::{project_dir, project_index_path, stamp_date};
-use super::super::obsidian::store::ObsidianStore;
-use super::super::query::find_pending_item;
-use super::super::section::Section;
-use super::add::{NewItemSpec, add_pending_work_item};
-use crate::cli::Args;
-use crate::config::Config;
-use regex::Regex;
 use std::path::Path;
+
+use regex::Regex;
+
+use super::{
+    super::{
+        commits, done_queue,
+        errors::PendingWorkError,
+        index::{append_report_text, set_commits_text, set_status_text},
+        naming::{project_dir, project_index_path, stamp_date},
+        obsidian::store::ObsidianStore,
+        query::find_pending_item,
+        section::Section,
+    },
+    add::{NewItemSpec, add_pending_work_item},
+};
+use crate::{cli::Args, config::Config};
 
 #[derive(Clone, Copy)]
 enum CloseAction {

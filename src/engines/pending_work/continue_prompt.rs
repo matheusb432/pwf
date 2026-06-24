@@ -2,9 +2,11 @@
 // (PWF-0034) so they survive only as explicit `add` flags. The output strings are
 // asserted byte-for-byte by Rust tests — do not reword them casually.
 
-use super::naming::pathdiff_forward;
-use super::parse::newest_handoff_typed;
-use super::text::{get_title_from_continue_path, handoff_title_from_path};
+use super::{
+    naming::pathdiff_forward,
+    parse::newest_handoff_typed,
+    text::{get_title_from_continue_path, handoff_title_from_path},
+};
 
 /// `(title, prompt)` for `add <project> --continue-handoff`: continue the repo's
 /// newest handoff. `repo` is the project's mapped repo root.
@@ -28,9 +30,10 @@ pub(super) fn continue_plan_prompt(project_name: &str, path: &str) -> (String, S
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
     use crate::engines::pending_work::errors::PendingWorkError;
-    use std::fs;
 
     fn nanos() -> u128 {
         std::time::SystemTime::now()

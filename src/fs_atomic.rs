@@ -1,7 +1,8 @@
-use std::fs;
-use std::io;
-use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+    fs, io,
+    path::Path,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 fn temp_suffix(now: SystemTime) -> String {
     match now.duration_since(UNIX_EPOCH) {

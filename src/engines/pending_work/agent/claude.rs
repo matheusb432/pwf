@@ -1,7 +1,10 @@
 // Claude CLI probe, command construction, and verify output.
 
-use crate::engines::pending_work::model::Item;
-use crate::engines::pending_work::session::{AgentLauncher, ClaudeLauncher};
+use crate::engines::pending_work::{
+    launch::Worktree,
+    model::Item,
+    session::{AgentLauncher, ClaudeLauncher},
+};
 
 // ── ClaudeProbe trait + impls ─────────────────────────────────────────────────
 
@@ -153,7 +156,7 @@ pub fn verify_text_with_probe(item: Option<&Item>, probe: &dyn ClaudeProbe) -> S
             Some(it.id.as_str()),
             it.launchable,
             it.issues.clone(),
-            ClaudeLauncher.argv(it),
+            ClaudeLauncher.argv(it, Worktree::default()),
         ),
         None => (
             None,

@@ -1,25 +1,70 @@
 //! `pwf session` — spawn a real agent as a new tab in the item's per-project
-//! zellij session. Dispatch logic sits behind the `ZellijDriver` and
+//! zellij session. Dispatch logic sits behind the `MultiplexerDriver` and
 //! `AgentLauncher` seams so orchestration/rendering are tested with fakes.
 
-mod confirm;
+mod inline;
 mod launcher;
+mod multiplexer;
 mod render;
-mod zellij;
+
+pub(in crate::engines::pending_work) use inline::{InlineExec, RealExec};
+pub(in crate::engines::pending_work) use launcher::{AgentLauncher, ClaudeLauncher};
+pub(in crate::engines::pending_work) use multiplexer::{
+    MultiplexerDriver, NewTabError, RealZellij,
+};
+pub(super) use render::{DispatchOutcome, render, use_color};
 
 #[cfg(test)]
-use confirm::FakeConfirm;
-pub(in crate::engines::pending_work) use confirm::{Confirm, RealConfirm};
-pub(in crate::engines::pending_work) use launcher::{AgentLauncher, ClaudeLauncher};
-pub(super) use render::{DispatchOutcome, render, use_color};
-pub(in crate::engines::pending_work) use zellij::{NewTabError, RealZellij, ZellijDriver};
+use crate::confirm::FakeConfirm;
+use crate::{
+    cli::ColorChoice,
+    config::Config,
+    confirm::{Confirm, DefaultAnswer, RealConfirm},
+    engines::pending_work::{
+        agent::claude::{ClaudeProbe, RealProbe},
+        errors::PendingWorkError,
+        launch::Worktree,
+        model::Item,
+        query::find_pending_item,
+    },
+};
 
-use crate::cli::ColorChoice;
-use crate::config::Config;
-use crate::engines::pending_work::agent::claude::{ClaudeProbe, RealProbe};
-use crate::engines::pending_work::errors::PendingWorkError;
-use crate::engines::pending_work::model::Item;
-use crate::engines::pending_work::query::find_pending_item;
+/// Scalar dispatch policy flags, bundled so `dispatch`/`run_session` take one
+/// named value instead of four loose scalars (no adjacent-bool transposition,
+/// and under clippy's argument-count threshold).
+#[derive(Debug, Clone, Copy)]
+pub(in crate::engines::pending_work) struct DispatchOpts {
+    pub color: ColorChoice,
+    pub assume_yes: bool,
+    pub inline: bool,
+    /// Augment the launch prompt with a git-worktree setup step (`-w`/`--worktree`).
+    pub worktree: Worktree,
+}
+
+#[cfg(test)]
+impl DispatchOpts {
+    /// Baseline test policy: never-color, non-interactive, no worktree. The
+    /// chainable setters flip one flag each, so a test states only what it varies
+    /// and adding a field to `DispatchOpts` touches just this constructor.
+    fn test() -> Self {
+        DispatchOpts {
+            color: ColorChoice::Never,
+            assume_yes: false,
+            inline: false,
+            worktree: Worktree::from(false),
+        }
+    }
+
+    fn assume_yes(mut self) -> Self {
+        self.assume_yes = true;
+        self
+    }
+
+    fn inline(mut self) -> Self {
+        self.inline = true;
+        self
+    }
+}
 
 /// Real-world entrypoint for `pwf session <id>`: resolves the live claude probe
 /// and zellij/agent drivers, warns once if claude is absent from this PATH, then
@@ -28,21 +73,20 @@ use crate::engines::pending_work::query::find_pending_item;
 pub(in crate::engines::pending_work) fn dispatch(
     cfg: &Config,
     id: &str,
-    color: ColorChoice,
-    assume_yes: bool,
+    opts: DispatchOpts,
 ) -> Result<String, PendingWorkError> {
     if !RealProbe::resolve().available() {
         eprintln!(
-            "note: claude not found on PATH from here; the new tab will surface the error if it can't run."
+            "note: claude not found on PATH from here; the agent will surface the error if it can't run."
         );
     }
     run_session(
         cfg,
         id,
-        color,
-        assume_yes,
+        opts,
         &RealZellij,
         &ClaudeLauncher,
+        &RealExec,
         &RealConfirm,
     )
 }
@@ -62,14 +106,14 @@ fn session_name_for(item: &Item) -> String {
 pub(in crate::engines::pending_work) fn run_session(
     cfg: &Config,
     id: &str,
-    color: ColorChoice,
-    assume_yes: bool,
-    driver: &dyn ZellijDriver,
+    opts: DispatchOpts,
+    driver: &dyn MultiplexerDriver,
     launcher: &dyn AgentLauncher,
+    exec: &dyn InlineExec,
     confirmer: &dyn Confirm,
 ) -> Result<String, PendingWorkError> {
-    // Validate the request BEFORE probing the external tool, so an unknown id or
-    // bad repo errors deterministically even where zellij is absent (e.g. CI).
+    // Validate the request BEFORE probing any external tool, so an unknown id or
+    // bad repo errors deterministically even where the tool is absent (e.g. CI).
     let item = find_pending_item(cfg, id)?;
     if !item.launchable {
         return Err(PendingWorkError::NotLaunchable {
@@ -84,20 +128,28 @@ pub(in crate::engines::pending_work) fn run_session(
             path: repo,
         });
     }
-    if !driver.available() {
+    // zellij liveness is only relevant to the multiplexer path.
+    if !opts.inline && !driver.available() {
         return Err(PendingWorkError::ZellijNotFound);
     }
     let session = session_name_for(&item);
 
     // Default-yes confirmation gate: an interactive operator can abort a mistaken
-    // dispatch. `--yes` skips it; a non-interactive caller (agentic dispatch,
-    // pipes, CI) proceeds without prompting so the fire-and-forget path is intact.
-    if !assume_yes && confirmer.interactive() {
-        let question = format!(
-            "Dispatch {} \"{}\" into zellij session {session}?",
-            item.id, item.session
-        );
-        if !confirmer.confirm(&question) {
+    // dispatch. `--yes` skips it; a non-interactive caller proceeds without
+    // prompting so the fire-and-forget path is intact.
+    if !opts.assume_yes && confirmer.interactive() {
+        let question = if opts.inline {
+            format!(
+                "Run {} \"{}\" inline in the current terminal?",
+                item.id, item.session
+            )
+        } else {
+            format!(
+                "Dispatch {} \"{}\" into zellij session {session}?",
+                item.id, item.session
+            )
+        };
+        if !confirmer.confirm(&question, DefaultAnswer::Yes) {
             return Ok(format!(
                 "# session {} — aborted\nnothing dispatched.\n",
                 item.id
@@ -105,9 +157,19 @@ pub(in crate::engines::pending_work) fn run_session(
         }
     }
 
-    let tab = launcher.tab_name(&item);
-    let argv = launcher.argv(&item);
+    let argv = launcher.argv(&item, opts.worktree);
 
+    if opts.inline {
+        // Breadcrumb to stderr: on Unix this is pwf's last word before exec
+        // replaces it; on the spawn-and-wait fallback it precedes the child.
+        eprintln!("running {} inline in {repo}…", item.id);
+        exec.run(&argv, &repo)
+            .map_err(|message| PendingWorkError::InlineExecFailed { message })?;
+        // Reached only on the non-Unix success path (Unix exec never returns).
+        return Ok(format!("# session {} — ran inline\n", item.id));
+    }
+
+    let tab = launcher.tab_name(&item);
     let outcome = match driver.new_tab(&session, &repo, &tab, &argv) {
         Ok(()) => DispatchOutcome::Success { session, tab },
         Err(NewTabError::SessionNotFound) => {
@@ -133,14 +195,17 @@ pub(in crate::engines::pending_work) fn run_session(
         },
     };
     let agent = argv.first().cloned().unwrap_or_default();
-    Ok(render(&outcome, &agent, &repo, use_color(color)))
+    Ok(render(&outcome, &agent, &repo, use_color(opts.color)))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::engines::pending_work::session::zellij::fake::FakeZellij;
     use std::fs;
+
+    use super::*;
+    use crate::engines::pending_work::session::{
+        inline::fake::FakeExec, multiplexer::fake::FakeMux,
+    };
 
     fn nanos() -> u128 {
         std::time::SystemTime::now()
@@ -178,14 +243,14 @@ mod tests {
     #[test]
     fn alive_session_yields_success_one_call() {
         let (_s, cfg) = staged();
-        let driver = FakeZellij::new(true, vec![Ok(())]);
+        let driver = FakeMux::new(true, vec![Ok(())]);
         let out = run_session(
             &cfg,
             "PWF-0001",
-            ColorChoice::Never,
-            true,
+            DispatchOpts::test().assume_yes(),
             &driver,
             &ClaudeLauncher,
+            &FakeExec::ok(),
             &FakeConfirm {
                 interactive: false,
                 answer: false,
@@ -200,14 +265,14 @@ mod tests {
     #[test]
     fn dead_session_creates_then_retries_yielding_fallback() {
         let (_s, cfg) = staged();
-        let driver = FakeZellij::new(true, vec![Err(NewTabError::SessionNotFound), Ok(())]);
+        let driver = FakeMux::new(true, vec![Err(NewTabError::SessionNotFound), Ok(())]);
         let out = run_session(
             &cfg,
             "PWF-0001",
-            ColorChoice::Never,
-            true,
+            DispatchOpts::test().assume_yes(),
             &driver,
             &ClaudeLauncher,
+            &FakeExec::ok(),
             &FakeConfirm {
                 interactive: false,
                 answer: false,
@@ -224,7 +289,7 @@ mod tests {
     #[test]
     fn retry_failure_yields_error_outcome() {
         let (_s, cfg) = staged();
-        let driver = FakeZellij::new(
+        let driver = FakeMux::new(
             true,
             vec![
                 Err(NewTabError::SessionNotFound),
@@ -234,10 +299,10 @@ mod tests {
         let out = run_session(
             &cfg,
             "PWF-0001",
-            ColorChoice::Never,
-            true,
+            DispatchOpts::test().assume_yes(),
             &driver,
             &ClaudeLauncher,
+            &FakeExec::ok(),
             &FakeConfirm {
                 interactive: false,
                 answer: false,
@@ -251,14 +316,14 @@ mod tests {
     #[test]
     fn unavailable_zellij_is_typed_error() {
         let (_s, cfg) = staged();
-        let driver = FakeZellij::new(false, vec![]);
+        let driver = FakeMux::new(false, vec![]);
         let err = run_session(
             &cfg,
             "PWF-0001",
-            ColorChoice::Never,
-            true,
+            DispatchOpts::test().assume_yes(),
             &driver,
             &ClaudeLauncher,
+            &FakeExec::ok(),
             &FakeConfirm {
                 interactive: false,
                 answer: false,
@@ -272,14 +337,14 @@ mod tests {
     fn interactive_decline_aborts_without_dispatch() {
         // On a TTY, answering no returns the aborted note and never touches zellij.
         let (_s, cfg) = staged();
-        let driver = FakeZellij::new(true, vec![]);
+        let driver = FakeMux::new(true, vec![]);
         let out = run_session(
             &cfg,
             "PWF-0001",
-            ColorChoice::Never,
-            false,
+            DispatchOpts::test(),
             &driver,
             &ClaudeLauncher,
+            &FakeExec::ok(),
             &FakeConfirm {
                 interactive: true,
                 answer: false,
@@ -295,14 +360,14 @@ mod tests {
     fn interactive_accept_dispatches() {
         // On a TTY, answering yes proceeds exactly like the unconfirmed path.
         let (_s, cfg) = staged();
-        let driver = FakeZellij::new(true, vec![Ok(())]);
+        let driver = FakeMux::new(true, vec![Ok(())]);
         let out = run_session(
             &cfg,
             "PWF-0001",
-            ColorChoice::Never,
-            false,
+            DispatchOpts::test(),
             &driver,
             &ClaudeLauncher,
+            &FakeExec::ok(),
             &FakeConfirm {
                 interactive: true,
                 answer: true,
@@ -319,14 +384,14 @@ mod tests {
         // operator, keeping the fire-and-forget path intact. A `false` answer is
         // ignored because `interactive` is false.
         let (_s, cfg) = staged();
-        let driver = FakeZellij::new(true, vec![Ok(())]);
+        let driver = FakeMux::new(true, vec![Ok(())]);
         let out = run_session(
             &cfg,
             "PWF-0001",
-            ColorChoice::Never,
-            false,
+            DispatchOpts::test(),
             &driver,
             &ClaudeLauncher,
+            &FakeExec::ok(),
             &FakeConfirm {
                 interactive: false,
                 answer: false,
@@ -341,14 +406,14 @@ mod tests {
     fn assume_yes_skips_prompt_even_when_interactive() {
         // `--yes` bypasses the gate: a declining confirmer is never consulted.
         let (_s, cfg) = staged();
-        let driver = FakeZellij::new(true, vec![Ok(())]);
+        let driver = FakeMux::new(true, vec![Ok(())]);
         let out = run_session(
             &cfg,
             "PWF-0001",
-            ColorChoice::Never,
-            true,
+            DispatchOpts::test().assume_yes(),
             &driver,
             &ClaudeLauncher,
+            &FakeExec::ok(),
             &FakeConfirm {
                 interactive: true,
                 answer: false,
@@ -357,5 +422,91 @@ mod tests {
         .unwrap();
         assert!(out.contains("— dispatched"));
         assert_eq!(driver.calls.borrow().len(), 1);
+    }
+
+    #[test]
+    fn inline_runs_agent_in_current_terminal_with_guarded_argv() {
+        // `-i`: the agent runs via the InlineExec seam with the launcher's argv and
+        // the validated repo cwd; the multiplexer is never consulted.
+        let (_s, cfg) = staged();
+        let mux = FakeMux::new(true, vec![]);
+        let exec = FakeExec::ok();
+        let out = run_session(
+            &cfg,
+            "PWF-0001",
+            DispatchOpts::test().assume_yes().inline(),
+            &mux,
+            &ClaudeLauncher,
+            &exec,
+            &FakeConfirm {
+                interactive: false,
+                answer: false,
+            },
+        )
+        .unwrap();
+        assert!(out.contains("— ran inline"));
+        assert!(
+            mux.calls.borrow().is_empty(),
+            "inline must not touch zellij"
+        );
+        let calls = exec.calls.borrow();
+        assert_eq!(calls.len(), 1);
+        let (argv, cwd) = &calls[0];
+        assert_eq!(argv[0], "claude");
+        assert!(
+            argv.contains(&"--".to_string()),
+            "guard present in inline argv"
+        );
+        assert!(
+            cwd.ends_with("repo"),
+            "cwd is the validated repo dir: {cwd}"
+        );
+    }
+
+    #[test]
+    fn inline_decline_aborts_without_exec() {
+        // On a TTY, answering no returns the aborted note and never execs.
+        let (_s, cfg) = staged();
+        let exec = FakeExec::ok();
+        let out = run_session(
+            &cfg,
+            "PWF-0001",
+            DispatchOpts::test().inline(),
+            &FakeMux::new(true, vec![]),
+            &ClaudeLauncher,
+            &exec,
+            &FakeConfirm {
+                interactive: true,
+                answer: false,
+            },
+        )
+        .unwrap();
+        assert!(out.contains("— aborted"));
+        assert!(exec.calls.borrow().is_empty());
+    }
+
+    #[test]
+    fn inline_exec_failure_is_typed_error() {
+        // A failed inline run (non-Unix non-zero exit, or a Unix exec error) maps
+        // to InlineExecFailed (stderr, non-zero pwf exit).
+        let (_s, cfg) = staged();
+        let exec = FakeExec {
+            result: std::cell::RefCell::new(Some(Err("boom".into()))),
+            calls: std::cell::RefCell::new(vec![]),
+        };
+        let err = run_session(
+            &cfg,
+            "PWF-0001",
+            DispatchOpts::test().assume_yes().inline(),
+            &FakeMux::new(true, vec![]),
+            &ClaudeLauncher,
+            &exec,
+            &FakeConfirm {
+                interactive: false,
+                answer: false,
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(err, PendingWorkError::InlineExecFailed { .. }));
     }
 }

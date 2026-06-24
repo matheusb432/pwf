@@ -7,8 +7,9 @@
 //! tests and scripts inject sandbox flags (`--config-path`, `--notes-dir` /
 //! `--repo-root`, `--date`, …) onto individual commands — matching the old flat parser.
 
-use crate::engines::pending_work::{Action as PendingWorkAction, PendingWorkCommand};
 use clap::{Args, Parser, Subcommand};
+
+use crate::engines::pending_work::{Action as PendingWorkAction, PendingWorkCommand};
 
 /// `--color` choices (clap-facing; mapped to `cli::ColorChoice` in `fill_pw`).
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
@@ -267,6 +268,12 @@ pub enum PwAction {
         /// Skip the [Y/n] dispatch confirmation (assume yes).
         #[arg(long = "yes", short = 'y')]
         yes: bool,
+        /// Run the agent inline in the current terminal instead of a zellij tab.
+        #[arg(long = "inline", short = 'i')]
+        inline: bool,
+        /// Tell the dispatched agent to isolate its work in a git worktree named after the item id.
+        #[arg(long = "worktree", short = 'w')]
+        worktree: bool,
         #[command(flatten)]
         common: PwCommon,
     },
@@ -613,6 +620,8 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             id_flag,
             color,
             yes,
+            inline,
+            worktree,
             common,
         } => {
             a.id = normalize_pending_work_id(id.or(id_flag));
@@ -622,6 +631,8 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
                 ColorArg::Never => crate::cli::ColorChoice::Never,
             };
             a.assume_yes = yes;
+            a.inline = inline;
+            a.worktree = worktree;
             apply_pw_common(a, common);
             PendingWorkAction::Session
         }
@@ -681,8 +692,9 @@ fn fill_handoff(a: &mut EngineArgs, action: HandoffAction) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use clap::CommandFactory;
+
+    use super::*;
 
     // clap's own structural validation: catches duplicate args, bad flatten,
     // invalid trailing_var_arg, etc. at test time rather than first parse.

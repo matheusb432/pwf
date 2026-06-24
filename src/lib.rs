@@ -4,6 +4,7 @@
 pub mod cli;
 pub mod command;
 pub mod config;
+pub mod confirm;
 pub mod engines;
 pub mod frontmatter;
 pub mod fs_atomic;

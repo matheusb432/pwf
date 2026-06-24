@@ -1,6 +1,9 @@
-use pwf::engines::clean;
-use pwf::engines::pending_work as pwk;
 use std::fs;
+
+use pwf::{
+    confirm::FakeConfirm,
+    engines::{clean, pending_work as pwk},
+};
 
 // ── Task 12 ──────────────────────────────────────────────────────────────────
 
@@ -1973,7 +1976,7 @@ fn stage_one_done() -> (std::path::PathBuf, std::path::PathBuf) {
 #[test]
 fn clean_confirm_yes_applies_without_bak() {
     let (proj, cfg) = stage_one_done();
-    let confirmer = clean::FakeConfirm {
+    let confirmer = FakeConfirm {
         interactive: true,
         answer: true,
     };
@@ -2000,7 +2003,7 @@ fn clean_confirm_yes_applies_without_bak() {
 #[test]
 fn clean_confirm_no_aborts_and_keeps_everything() {
     let (proj, cfg) = stage_one_done();
-    let confirmer = clean::FakeConfirm {
+    let confirmer = FakeConfirm {
         interactive: true,
         answer: false,
     };
@@ -2026,7 +2029,7 @@ fn clean_confirm_no_aborts_and_keeps_everything() {
 #[test]
 fn clean_non_interactive_without_force_refuses() {
     let (proj, cfg) = stage_one_done();
-    let confirmer = clean::FakeConfirm {
+    let confirmer = FakeConfirm {
         interactive: false,
         answer: true,
     };
@@ -2051,7 +2054,7 @@ fn clean_non_interactive_without_force_refuses() {
 fn clean_force_applies_without_prompt() {
     let (proj, cfg) = stage_one_done();
     // answer:false would refuse, but --force bypasses the gate entirely.
-    let confirmer = clean::FakeConfirm {
+    let confirmer = FakeConfirm {
         interactive: false,
         answer: false,
     };

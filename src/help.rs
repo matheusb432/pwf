@@ -15,7 +15,7 @@ const PW_TERSE: &str = r#"pw [<project>]   (alias: pending-work; bare pw lists a
   update --id [--prompt] [--title] [--prereq <id>] [--clear-prereq] [--commits <range>]
   resolve --id [--show]
   show <id>   (shorthand for resolve --show)
-  session <id> [-y]   dispatch an agent into the project's zellij session (-y skips the [Y/n] confirm)
+  session <id> [-i] [-w] [-y]   dispatch an agent into the project's zellij session, or inline in the current terminal with -i (-w tells it to work in a git worktree named after the id; -y skips the [Y/n] confirm)
   clean [--dry-run|--force]
   verify [--id]
   remove --id"#;
@@ -50,7 +50,7 @@ PENDING-WORK COMMANDS (default engine)
   update --id <id>             Replace task text/title/prereqs or amend commits
   resolve --id <id>            Print the task note path
   show <id>                    Stream the task note (alias for resolve --show)
-  session <id>                 Dispatch an agent into zellij session
+  session <id> [-i] [-w]       Dispatch an agent into the zellij session (-i inline; -w isolates work in a git worktree named after the id)
   clean                        Archive or clear done tasks
   verify --id <id>             Probe whether a task can launch
   remove --id <id>             Delete a task note and index link

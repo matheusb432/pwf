@@ -212,6 +212,12 @@ pub(super) enum PendingWorkError {
         /// Underlying zellij error text.
         message: String,
     },
+    /// Inline (`-i`) dispatch failed to run the agent in the current terminal.
+    #[error("Failed to run agent inline: {message}")]
+    InlineExecFailed {
+        /// Underlying exec/spawn error text.
+        message: String,
+    },
 }
 
 impl From<PendingWorkError> for String {
@@ -226,8 +232,9 @@ pub(super) const ADD_HINT: &str = r#"Use: pwf add <project> "<prompt>""#;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::error::Error;
+
+    use super::*;
 
     #[test]
     fn clean_error_bridge_preserves_display_and_source() {

@@ -106,7 +106,7 @@ update *args: build
 
 # Format the code and lint with clippy.
 format:
-    cargo fmt
+    cargo +"$(cat .rustfmt-nightly)" fmt
     cargo clippy --all-targets -- -D warnings
 
 # Report production Rust error-handling smells.

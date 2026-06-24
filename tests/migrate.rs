@@ -1,7 +1,6 @@
-use pwf::cli;
-use pwf::engines::migrate;
-use std::error::Error;
-use std::fs;
+use std::{error::Error, fs};
+
+use pwf::{cli, engines::migrate};
 
 fn nanos() -> u128 {
     std::time::SystemTime::now()
@@ -93,7 +92,8 @@ fn migrate_converts_all() {
         "completed must come after created in frontmatter"
     );
 
-    // Index: active links prepended (with "- [ ]" Obsidian checkbox), legacy inline agent items converted
+    // Index: active links prepended (with "- [ ]" Obsidian checkbox), legacy inline agent items
+    // converted
     let index = fs::read_to_string(notes_dir.join("glep-shimeji/glep-shimeji.md")).unwrap();
     assert!(
         index.starts_with("- [ ] [[GLP-0001]]"),

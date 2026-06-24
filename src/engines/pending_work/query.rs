@@ -1,11 +1,14 @@
 // Config loading + read-side store: project-name resolution and item enumeration.
 
-use super::errors;
-use super::model::Item;
-use super::naming::{project_archive_dir, project_dir, project_index_path};
-use super::parse::get_project_tasks;
-use crate::config::Config;
 use std::path::{Path, PathBuf};
+
+use super::{
+    errors,
+    model::Item,
+    naming::{project_archive_dir, project_dir, project_index_path},
+    parse::get_project_tasks,
+};
+use crate::config::Config;
 
 pub(super) fn load_config(args: &crate::cli::Args) -> Result<Config, errors::PendingWorkError> {
     let cfg_path = resolve_config_path_with_default(args, crate::config::default_config_path)?;
@@ -192,9 +195,10 @@ fn scan_dir_for_item_note(dir: &Path, id: &str) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
     use crate::cli::Args;
-    use std::collections::BTreeMap;
 
     fn cfg() -> Config {
         let json = r#"{

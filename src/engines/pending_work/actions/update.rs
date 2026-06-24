@@ -1,17 +1,20 @@
 // Action: update.
 
-use super::super::commits;
-use super::super::errors::PendingWorkError;
-use super::super::index::{set_commits_text, set_prereq_text};
-use super::super::model::Item;
-use super::super::obsidian::store::ObsidianStore;
-use super::super::prereq;
-use super::super::query::{find_item_note_file, find_pending_item};
-use super::super::text::{normalize_title, note_body};
-use crate::cli::Args;
-use crate::config::Config;
-use regex::Regex;
 use std::path::Path;
+
+use regex::Regex;
+
+use super::super::{
+    commits,
+    errors::PendingWorkError,
+    index::{set_commits_text, set_prereq_text},
+    model::Item,
+    obsidian::store::ObsidianStore,
+    prereq,
+    query::{find_item_note_file, find_pending_item},
+    text::{normalize_title, note_body},
+};
+use crate::{cli::Args, config::Config};
 
 /// Replace the body (after frontmatter) with `body`, preserving the frontmatter
 /// block byte-for-byte. Mirrors `work_item_content`'s `---\n\n<body>\n` shape.

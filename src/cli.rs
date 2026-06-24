@@ -54,4 +54,8 @@ pub struct Args {
     pub color: ColorChoice,
     // ? session: skip the [Y/n] dispatch confirmation (assume yes).
     pub assume_yes: bool,
+    // ? session: run the agent inline in the current terminal instead of a zellij tab.
+    pub inline: bool,
+    // ? session: augment the launch prompt with a git-worktree setup step.
+    pub worktree: bool,
 }

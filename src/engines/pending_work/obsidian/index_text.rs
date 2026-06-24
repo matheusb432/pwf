@@ -1,7 +1,8 @@
 // Project-index string transforms.
 
-use super::super::section::Section;
 use regex::Regex;
+
+use super::super::section::Section;
 
 /// Insert `link\n` at the top of the normal-item region: before the first
 /// `^- \[` line that precedes any `## ` section, else after the leading preamble

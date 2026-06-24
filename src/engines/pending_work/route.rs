@@ -2,13 +2,13 @@
 // bare `pwf <words…>`). Create paths were removed in PWF-0034 — the only
 // create form is `pwf add <project> "<prompt>"`; bare words error with a hint.
 
-use super::actions::list::ListScope;
-use super::actions::run_list_action;
-use super::agent::claude::{RealProbe, verify_text_with_probe};
-use super::errors::PendingWorkError;
-use super::query::{find_pending_item, resolve_managed_project_name_typed};
-use crate::cli::Args;
-use crate::config::Config;
+use super::{
+    actions::{list::ListScope, run_list_action},
+    agent::claude::{RealProbe, verify_text_with_probe},
+    errors::PendingWorkError,
+    query::{find_pending_item, resolve_managed_project_name_typed},
+};
+use crate::{cli::Args, config::Config};
 
 pub(super) fn run_route(cfg: &Config, args: &Args, date: &str) -> Result<String, PendingWorkError> {
     let route_words: Vec<&str> = args
@@ -58,7 +58,7 @@ pub(super) fn run_route(cfg: &Config, args: &Args, date: &str) -> Result<String,
             date,
             args.dry_run,
             args.force,
-            &crate::engines::clean::RealConfirm,
+            &crate::confirm::RealConfirm,
         )?);
     }
 

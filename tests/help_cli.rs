@@ -1,7 +1,6 @@
 //! Exec-level checks for help dispatch. `CARGO_BIN_EXE_pwf` is injected by Cargo
 //! for integration tests of the `pwf` binary.
-use std::fs;
-use std::process::Command;
+use std::{fs, process::Command};
 
 fn run(args: &[&str]) -> (String, bool) {
     let out = Command::new(env!("CARGO_BIN_EXE_pwf"))
@@ -322,6 +321,28 @@ fn session_help_documents_yes_flag() {
     assert!(
         terse.contains("-y"),
         "session terse should mention the -y shortcut: {terse}"
+    );
+}
+
+#[test]
+fn session_help_documents_worktree_flag() {
+    // PWF-0076: `-w`/`--worktree` augments the launch prompt with a worktree step.
+    let (help, ok) = run(&["session", "--help"]);
+    assert!(ok, "pwf session --help should exit 0");
+    assert!(
+        help.contains("--worktree"),
+        "session help should list --worktree: {help}"
+    );
+    assert!(
+        help.contains("worktree"),
+        "session help should describe the worktree behavior: {help}"
+    );
+
+    let (terse, ok) = run(&["session", "--help", "--terse"]);
+    assert!(ok, "pwf session --help --terse should exit 0");
+    assert!(
+        terse.contains("-w"),
+        "session terse should mention the -w shortcut: {terse}"
     );
 }
 

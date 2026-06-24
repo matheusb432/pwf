@@ -1,6 +1,5 @@
 use super::super::model::Action;
-use crate::cli::Args;
-use crate::engines::pending_work::errors::PendingWorkError;
+use crate::{cli::Args, engines::pending_work::errors::PendingWorkError};
 
 #[derive(Debug, Clone)]
 pub struct PendingWorkCommand {

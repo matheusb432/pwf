@@ -1,8 +1,9 @@
 // Pure string helpers: title inference, placeholder detection, section keywords,
 // line-number math. No I/O.
 
-use regex::Regex;
 use std::path::Path;
+
+use regex::Regex;
 
 /// Upper bound (in `char`s) on an auto-inferred title. Without it, a long prompt
 /// with no `&` cut marker became the entire title (CFG-0075). Chosen to render as

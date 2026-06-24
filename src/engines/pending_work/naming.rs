@@ -1,9 +1,11 @@
 // Date, id allocation, and path/key helpers.
 
-use crate::config::Config;
+use std::path::{Path, PathBuf};
+
 use chrono::Local;
 use regex::Regex;
-use std::path::{Path, PathBuf};
+
+use crate::config::Config;
 
 pub(in crate::engines::pending_work) const ARCHIVE_DIR: &str = "_archive";
 

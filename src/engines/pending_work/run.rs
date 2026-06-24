@@ -1,26 +1,29 @@
 // Top-level dispatcher for `pwf <verb>`. The `route` verb is delegated to the
 // `pw` word-router in `route`; everything else dispatches here.
 
-use super::actions::list::ListScope;
-use super::actions::{
-    NewItemSpec, add_pending_work_item, run_cancel, run_check, run_list_action, run_remove,
-    run_update,
+use super::{
+    actions::{
+        NewItemSpec, add_pending_work_item, list::ListScope, run_cancel, run_check,
+        run_list_action, run_remove, run_update,
+    },
+    agent::claude::{RealProbe, verify_text_with_probe},
+    continue_prompt::{continue_handoff_prompt, continue_plan_prompt},
+    domain::commands::PendingWorkCommand,
+    errors,
+    model::Action,
+    naming::stamp_date,
+    new_add::NewAddInputs,
+    query::{
+        find_pending_item, load_config, resolve_managed_project_name_typed, resolve_project_repo,
+    },
+    route::run_route,
+    section::Section,
 };
-use super::agent::claude::{RealProbe, verify_text_with_probe};
-use super::continue_prompt::{continue_handoff_prompt, continue_plan_prompt};
-use super::domain::commands::PendingWorkCommand;
-use super::errors;
-use super::model::Action;
-use super::naming::stamp_date;
-use super::new_add::NewAddInputs;
-use super::query::{
-    find_pending_item, load_config, resolve_managed_project_name_typed, resolve_project_repo,
+use crate::{
+    cli::Args,
+    config::Config,
+    engines::pending_work::actions::{run_resolve, run_show},
 };
-use super::route::run_route;
-use super::section::Section;
-use crate::cli::Args;
-use crate::config::Config;
-use crate::engines::pending_work::actions::{run_resolve, run_show};
 
 pub fn run(command: &PendingWorkCommand) -> Result<String, String> {
     run_typed(command).map_err(String::from)
@@ -67,7 +70,7 @@ pub(in crate::engines::pending_work) fn run_typed(
                 &date,
                 args.dry_run,
                 args.force,
-                &crate::engines::clean::RealConfirm,
+                &crate::confirm::RealConfirm,
             )?)
         }
 
@@ -96,8 +99,12 @@ pub(in crate::engines::pending_work) fn run_typed(
         Action::Session => Ok(super::session::dispatch(
             &cfg,
             require_id(args, "session")?,
-            args.color,
-            args.assume_yes,
+            super::session::DispatchOpts {
+                color: args.color,
+                assume_yes: args.assume_yes,
+                inline: args.inline,
+                worktree: args.worktree.into(),
+            },
         )?),
     }
 }

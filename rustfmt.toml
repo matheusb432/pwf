@@ -1,0 +1,13 @@
+# Shared rustfmt config — synced into every Rust repo by `cfgtool repos sync-rustfmt`.
+# FORMAT WITH the pinned nightly: `cargo +"$(cat .rustfmt-nightly)" fmt`.
+# Stable `cargo fmt` warns-and-ignores the unstable keys below (group_imports, imports_granularity,
+# wrap_comments, comment_width, format_code_in_doc_comments) — use the pinned nightly to apply them.
+edition = "2024"
+style_edition = "2024"
+newline_style = "Unix"
+use_field_init_shorthand = true
+group_imports = "StdExternalCrate"
+imports_granularity = "Crate"
+wrap_comments = true
+comment_width = 100
+format_code_in_doc_comments = true

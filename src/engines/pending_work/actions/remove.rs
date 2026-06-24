@@ -1,13 +1,12 @@
 // Action: remove.
 
-use super::super::errors::PendingWorkError;
-use super::super::index::remove_index_link;
-use super::super::naming::project_index_path;
-use super::super::obsidian::store::ObsidianStore;
-use super::super::query::find_pending_item;
-use crate::cli::Args;
-use crate::config::Config;
 use std::path::Path;
+
+use super::super::{
+    errors::PendingWorkError, index::remove_index_link, naming::project_index_path,
+    obsidian::store::ObsidianStore, query::find_pending_item,
+};
+use crate::{cli::Args, config::Config};
 
 fn remove_link_from_index_content(
     index_content: &str,

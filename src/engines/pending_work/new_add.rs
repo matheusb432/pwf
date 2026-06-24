@@ -1,11 +1,12 @@
 // Input resolution for the `add` verb: validates project + prompt, resolves the
 // managed project + its repo, and derives a session title.
 
-use super::errors::PendingWorkError;
-use super::query::resolve_project_repo;
-use super::text::{inferred_title, normalize_title};
-use crate::cli::Args;
-use crate::config::Config;
+use super::{
+    errors::PendingWorkError,
+    query::resolve_project_repo,
+    text::{inferred_title, normalize_title},
+};
+use crate::{cli::Args, config::Config};
 
 /// Resolved, validated inputs for `add`. The prompt is borrowed from `args`
 /// (zero-copy); the rest are resolved owned strings.
@@ -41,8 +42,7 @@ impl<'a> NewAddInputs<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::errors;
-    use super::*;
+    use super::{super::errors, *};
 
     fn cfg() -> Config {
         // "a" maps to a repo; "blank" is managed but has no repo mapping.

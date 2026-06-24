@@ -1,15 +1,16 @@
 // Write-side store: create a pending-work item file + link it into the index.
 
-use super::super::errors::PendingWorkError;
-use super::super::index::{
-    add_link_to_index, add_section_block, section_exists, work_item_content,
-};
-use super::super::naming::{next_work_item_id, project_dir, project_index_path, project_key};
-use super::super::obsidian::store::ObsidianStore;
-use super::super::section::Section;
-use super::super::text::{inferred_title, normalize_title, note_body};
-use crate::config::Config;
 use std::path::Path;
+
+use super::super::{
+    errors::PendingWorkError,
+    index::{add_link_to_index, add_section_block, section_exists, work_item_content},
+    naming::{next_work_item_id, project_dir, project_index_path, project_key},
+    obsidian::store::ObsidianStore,
+    section::Section,
+    text::{inferred_title, normalize_title, note_body},
+};
+use crate::config::Config;
 
 /// The inputs for creating one pending-work item. Grouped so the writer takes a
 /// single spec instead of a long positional argument list.
@@ -112,8 +113,7 @@ pub(in crate::engines::pending_work) fn add_pending_work_item(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engines::pending_work::errors::PendingWorkError;
-    use crate::engines::pending_work::obsidian::store::StoreError;
+    use crate::engines::pending_work::{errors::PendingWorkError, obsidian::store::StoreError};
 
     fn nanos() -> u128 {
         std::time::SystemTime::now()

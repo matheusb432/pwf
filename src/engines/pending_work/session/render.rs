@@ -2,8 +2,9 @@
 //! is rendered separately from coloring so both are unit-tested; ANSI is gated
 //! by an explicit `on` bool resolved once at the edge (`use_color`).
 
-use crate::cli::ColorChoice;
 use anstyle::{AnsiColor, Style};
+
+use crate::cli::ColorChoice;
 
 /// What a dispatch attempt produced.
 #[derive(Debug, PartialEq, Eq)]
