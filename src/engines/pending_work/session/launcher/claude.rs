@@ -1,59 +1,47 @@
-//! How an agent is run inside the new zellij tab. `ClaudeLauncher` is the only
-//! impl today; codex slots in behind the same trait (PWF-0068).
+//! Claude Code harness: runs `claude --name <thread-title> -- <prompt>` in the tab.
+//! Claude carries the item's thread title via `--name`; the prompt rides as the
+//! single `--`-guarded trailing positional.
 
+use super::{AgentLauncher, argv::LaunchArgv};
 use crate::engines::pending_work::{
     agent::query::get_thread_title,
     launch::{Worktree, new_launch_prompt},
     model::Item,
 };
 
-/// Builds the tab name and the argv that runs an agent in the new zellij tab.
-pub(in crate::engines::pending_work) trait AgentLauncher {
-    /// Name for the new tab (the canonical item id).
-    fn tab_name(&self, item: &Item) -> String;
-    /// argv after `zellij … new-tab … --`, e.g. `["claude","--name",<title>,"--",<prompt>]`.
-    /// `worktree` augments the launch prompt with a git-worktree setup step.
-    fn argv(&self, item: &Item, worktree: Worktree) -> Vec<String>;
-}
+const BINARY: &str = "claude";
 
-/// Launches Claude Code with the item's launch prompt.
+/// Launches Claude Code with the item's launch prompt and `--name`-tagged thread title.
 pub(in crate::engines::pending_work) struct ClaudeLauncher;
 
 impl AgentLauncher for ClaudeLauncher {
-    fn tab_name(&self, item: &Item) -> String {
-        item.id.clone()
+    fn binary(&self) -> &str {
+        BINARY
     }
 
-    // TODO: refactor this, far too imperative and confusing to know that THIS is the thing that
-    // names the session!
     fn argv(&self, item: &Item, worktree: Worktree) -> Vec<String> {
-        let thread_title = get_thread_title::handle(item.into());
-        vec![
-            "claude".to_string(),
-            "--name".to_string(),
-            thread_title,
-            // End-of-options guard: store-derived prompt can never be parsed as a
-            // claude flag (argument injection), it is forced to a positional.
-            "--".to_string(),
-            new_launch_prompt(item, worktree),
-        ]
+        LaunchArgv::new(BINARY)
+            .flag("--name", get_thread_title::handle(item.into()))
+            .into_guarded(new_launch_prompt(item, worktree))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engines::pending_work::model::Item;
 
     #[test]
-    fn claude_launcher_builds_named_argv_with_guard_and_prompt() {
+    fn binary_is_claude() {
+        assert_eq!(ClaudeLauncher.binary(), "claude");
+    }
+
+    #[test]
+    fn builds_named_argv_with_guard_and_prompt() {
         let item = Item {
             prompt: "do the thing".to_string(),
             ..Item::default_for_test("PWF-0038", "zellij dispatches")
         };
-        let l = ClaudeLauncher;
-        assert_eq!(l.tab_name(&item), "PWF-0038");
-        let argv = l.argv(&item, Worktree::from(false));
+        let argv = ClaudeLauncher.argv(&item, Worktree::from(false));
         assert_eq!(argv[0], "claude");
         assert_eq!(argv[1], "--name");
         assert_eq!(argv[2], "PWF-0038 - zellij dispatches");

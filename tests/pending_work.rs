@@ -1666,34 +1666,9 @@ fn resolve_requires_id() {
     assert!(err.contains("--id"), "error should mention --id: {err}");
 }
 
-// ── Task 17 ──────────────────────────────────────────────────────────────────
-
-#[test]
-fn verify_text_reports_pass_when_claude_present_and_launchable() {
-    let probe = pwk::FakeProbe {
-        available: true,
-        path: Some("/bin/claude".into()),
-        version: Some("1.2.3".into()),
-        interactive: false,
-    };
-    let out = pwk::verify_text_with_probe(None, &probe);
-    assert!(out.starts_with("# verify \u{2014} pass"), "heading: {out}");
-    assert!(out.contains("claude: available (1.2.3) at /bin/claude"));
-    assert!(out.contains("launchable: yes"));
-}
-
-#[test]
-fn verify_text_reports_fail_when_claude_missing() {
-    let probe = pwk::FakeProbe {
-        available: false,
-        path: None,
-        version: None,
-        interactive: false,
-    };
-    let out = pwk::verify_text_with_probe(None, &probe);
-    assert!(out.starts_with("# verify \u{2014} fail"), "heading: {out}");
-    assert!(out.contains("claude: not found on PATH"));
-}
+// `verify` rendering (claude + codex, item-present and item-absent) is covered
+// white-box in `agent/verify.rs`, where the crate-internal `AgentLauncher` seam is
+// reachable; no integration duplicate is kept here.
 
 // ── clean action ──────────────────────────────────────────────────────────────
 

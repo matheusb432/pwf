@@ -347,6 +347,42 @@ fn session_help_documents_worktree_flag() {
 }
 
 #[test]
+fn session_help_documents_agent_flag() {
+    // PWF-0068: `-a`/`--agent <claude|codex>` selects the agent (claude default).
+    let (help, ok) = run(&["session", "--help"]);
+    assert!(ok, "pwf session --help should exit 0");
+    assert!(
+        help.contains("--agent"),
+        "session help should list --agent: {help}"
+    );
+
+    let (terse, ok) = run(&["session", "--help", "--terse"]);
+    assert!(ok, "pwf session --help --terse should exit 0");
+    assert!(
+        terse.contains("-a"),
+        "session terse should mention the -a shortcut: {terse}"
+    );
+}
+
+#[test]
+fn verify_help_documents_agent_flag() {
+    // PWF-0068: `pwf verify` probes the selected agent (claude default).
+    let (help, ok) = run(&["verify", "--help"]);
+    assert!(ok, "pwf verify --help should exit 0");
+    assert!(
+        help.contains("--agent"),
+        "verify help should list --agent: {help}"
+    );
+
+    let (terse, ok) = run(&["verify", "--help", "--terse"]);
+    assert!(ok, "pwf verify --help --terse should exit 0");
+    assert!(
+        terse.contains("-a"),
+        "verify terse should mention the -a shortcut: {terse}"
+    );
+}
+
+#[test]
 fn list_help_mentions_all_scope() {
     let (list_help, ok) = run(&["list", "--help"]);
     assert!(ok, "pwf list --help should exit 0");

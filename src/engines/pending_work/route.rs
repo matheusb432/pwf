@@ -4,7 +4,7 @@
 
 use super::{
     actions::{list::ListScope, run_list_action},
-    agent::claude::{RealProbe, verify_text_with_probe},
+    agent::{probe::RealProbe, verify::verify_text_with_probe},
     errors::PendingWorkError,
     query::{find_pending_item, resolve_managed_project_name_typed},
 };
@@ -37,13 +37,14 @@ pub(super) fn run_route(cfg: &Config, args: &Args, date: &str) -> Result<String,
         } else {
             None
         };
-        let probe = RealProbe::resolve();
+        let launcher = super::session::launcher_for(crate::cli::Agent::Claude);
+        let probe = RealProbe::resolve(launcher.binary());
         let item = if let Some(vid) = verify_id {
             Some(find_pending_item(cfg, vid)?)
         } else {
             None
         };
-        return Ok(verify_text_with_probe(item.as_ref(), &probe));
+        return Ok(verify_text_with_probe(item.as_ref(), launcher, &probe));
     }
 
     if verb == "clean" || verb == "cl" {

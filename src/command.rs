@@ -19,6 +19,20 @@ pub enum ColorArg {
     Never,
 }
 
+/// `--agent` choices (clap-facing; mapped to `cli::Agent` in `fill_pw`). Default claude.
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+pub enum AgentArg {
+    Claude,
+    Codex,
+}
+
+fn agent_choice(a: AgentArg) -> crate::cli::Agent {
+    match a {
+        AgentArg::Claude => crate::cli::Agent::Claude,
+        AgentArg::Codex => crate::cli::Agent::Codex,
+    }
+}
+
 /// pwf — pending-work / handoff / migrate engine for managed repos.
 #[derive(Parser, Debug)]
 #[command(name = "pwf", version, about, long_about = None)]
@@ -211,10 +225,13 @@ pub enum PwAction {
         #[command(flatten)]
         common: PwCommon,
     },
-    /// Probe whether `claude` is launchable.
+    /// Probe whether an agent is launchable.
     Verify {
         #[arg(long)]
         id: Option<String>,
+        /// Which agent to probe (claude default).
+        #[arg(long = "agent", short = 'a', value_enum, default_value_t = AgentArg::Claude)]
+        agent: AgentArg,
         #[command(flatten)]
         common: PwCommon,
     },
@@ -274,6 +291,9 @@ pub enum PwAction {
         /// Tell the dispatched agent to isolate its work in a git worktree named after the item id.
         #[arg(long = "worktree", short = 'w')]
         worktree: bool,
+        /// Which agent to dispatch (claude default).
+        #[arg(long = "agent", short = 'a', value_enum, default_value_t = AgentArg::Claude)]
+        agent: AgentArg,
         #[command(flatten)]
         common: PwCommon,
     },
@@ -585,8 +605,9 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             apply_pw_common(a, common);
             PendingWorkAction::Clean
         }
-        PwAction::Verify { id, common } => {
+        PwAction::Verify { id, agent, common } => {
             a.id = normalize_pending_work_id(id);
+            a.agent = agent_choice(agent);
             apply_pw_common(a, common);
             PendingWorkAction::Verify
         }
@@ -622,6 +643,7 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             yes,
             inline,
             worktree,
+            agent,
             common,
         } => {
             a.id = normalize_pending_work_id(id.or(id_flag));
@@ -633,6 +655,7 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             a.assume_yes = yes;
             a.inline = inline;
             a.worktree = worktree;
+            a.agent = agent_choice(agent);
             apply_pw_common(a, common);
             PendingWorkAction::Session
         }

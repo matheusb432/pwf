@@ -11,6 +11,14 @@ pub enum ColorChoice {
     Never,
 }
 
+/// Which agent `pwf session`/`pwf verify` targets (`-a`/`--agent`). Default `Claude`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Agent {
+    #[default]
+    Claude,
+    Codex,
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct Args {
     pub action: Option<String>,
@@ -58,4 +66,6 @@ pub struct Args {
     pub inline: bool,
     // ? session: augment the launch prompt with a git-worktree setup step.
     pub worktree: bool,
+    // ? session/verify: which agent to dispatch/probe (default claude).
+    pub agent: Agent,
 }

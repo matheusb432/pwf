@@ -8,7 +8,11 @@ mod multiplexer;
 mod render;
 
 pub(in crate::engines::pending_work) use inline::{InlineExec, RealExec};
-pub(in crate::engines::pending_work) use launcher::{AgentLauncher, ClaudeLauncher};
+pub(in crate::engines::pending_work) use launcher::{AgentLauncher, launcher_for};
+// The concrete launchers are referenced by name only in tests (orchestration + verify
+// rendering); production code selects via `launcher_for` and holds `&dyn AgentLauncher`.
+#[cfg(test)]
+pub(in crate::engines::pending_work) use launcher::{ClaudeLauncher, CodexLauncher};
 pub(in crate::engines::pending_work) use multiplexer::{
     MultiplexerDriver, NewTabError, RealZellij,
 };
@@ -21,7 +25,7 @@ use crate::{
     config::Config,
     confirm::{Confirm, DefaultAnswer, RealConfirm},
     engines::pending_work::{
-        agent::claude::{ClaudeProbe, RealProbe},
+        agent::probe::{AgentProbe, RealProbe},
         errors::PendingWorkError,
         launch::Worktree,
         model::Item,
@@ -39,6 +43,8 @@ pub(in crate::engines::pending_work) struct DispatchOpts {
     pub inline: bool,
     /// Augment the launch prompt with a git-worktree setup step (`-w`/`--worktree`).
     pub worktree: Worktree,
+    /// Which agent to dispatch (`-a`/`--agent`).
+    pub agent: crate::cli::Agent,
 }
 
 #[cfg(test)]
@@ -52,6 +58,7 @@ impl DispatchOpts {
             assume_yes: false,
             inline: false,
             worktree: Worktree::from(false),
+            agent: crate::cli::Agent::Claude,
         }
     }
 
@@ -75,9 +82,11 @@ pub(in crate::engines::pending_work) fn dispatch(
     id: &str,
     opts: DispatchOpts,
 ) -> Result<String, PendingWorkError> {
-    if !RealProbe::resolve().available() {
+    let launcher = launcher_for(opts.agent);
+    if !RealProbe::resolve(launcher.binary()).available() {
         eprintln!(
-            "note: claude not found on PATH from here; the agent will surface the error if it can't run."
+            "note: {} not found on PATH from here; the agent will surface the error if it can't run.",
+            launcher.binary()
         );
     }
     run_session(
@@ -85,7 +94,7 @@ pub(in crate::engines::pending_work) fn dispatch(
         id,
         opts,
         &RealZellij,
-        &ClaudeLauncher,
+        launcher,
         &RealExec,
         &RealConfirm,
     )
@@ -99,6 +108,13 @@ fn session_name_for(item: &Item) -> String {
         .next()
         .unwrap_or_default()
         .to_ascii_lowercase()
+}
+
+/// The new tab's name: the canonical item id. Agent-independent — every harness
+/// runs under a tab named for the item it dispatches, so this is not part of the
+/// `AgentLauncher` seam.
+fn tab_name(item: &Item) -> String {
+    item.id.clone()
 }
 
 /// Dispatch `id` into its project's zellij session as a new tab. Try-then-fallback:
@@ -169,7 +185,7 @@ pub(in crate::engines::pending_work) fn run_session(
         return Ok(format!("# session {} — ran inline\n", item.id));
     }
 
-    let tab = launcher.tab_name(&item);
+    let tab = tab_name(&item);
     let outcome = match driver.new_tab(&session, &repo, &tab, &argv) {
         Ok(()) => DispatchOutcome::Success { session, tab },
         Err(NewTabError::SessionNotFound) => {

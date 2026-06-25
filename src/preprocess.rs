@@ -53,13 +53,14 @@ fn is_value_flag(flag: &str) -> bool {
             | "--continue"
             | "--number"
             | "--color"
+            | "--agent"
     )
 }
 
 /// Short value-flags (single-dash, consume the following token). Mirrors
 /// `is_value_flag` so the implicit list/route forms don't misread the value as a word.
 fn is_short_value_flag(tok: &str) -> bool {
-    tok == "-n"
+    tok == "-n" || tok == "-a"
 }
 
 /// Inject the implicit `list`/`route` subcommand for the `pw` engine when no
@@ -145,6 +146,27 @@ mod tests {
     #[test]
     fn bare_pw_defaults_to_list() {
         assert_eq!(n(&["pw"]), vec!["pw", "list"]);
+    }
+
+    #[test]
+    fn session_agent_long_flag_keeps_its_value() {
+        // `--agent` consumes the following token; a trailing flag must not strand the
+        // value as a positional (the bug a no-trailing-flag case hides by coincidence).
+        assert_eq!(
+            n(&["session", "--id", "PWF-0001", "--agent", "codex", "--yes"]),
+            vec![
+                "pw", "session", "--id", "PWF-0001", "--agent", "codex", "--yes"
+            ]
+        );
+    }
+
+    #[test]
+    fn session_agent_short_flag_keeps_its_value() {
+        // `-a codex` must keep its value through the flag/positional split.
+        assert_eq!(
+            n(&["session", "PWF-0001", "-a", "codex"]),
+            vec!["pw", "session", "-a", "codex", "PWF-0001"]
+        );
     }
 
     #[test]

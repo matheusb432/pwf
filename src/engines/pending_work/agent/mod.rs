@@ -1,2 +1,3 @@
-pub mod claude;
+pub mod probe;
 pub mod query;
+pub mod verify;

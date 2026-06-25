@@ -15,9 +15,9 @@ const PW_TERSE: &str = r#"pw [<project>]   (alias: pending-work; bare pw lists a
   update --id [--prompt] [--title] [--prereq <id>] [--clear-prereq] [--commits <range>]
   resolve --id [--show]
   show <id>   (shorthand for resolve --show)
-  session <id> [-i] [-w] [-y]   dispatch an agent into the project's zellij session, or inline in the current terminal with -i (-w tells it to work in a git worktree named after the id; -y skips the [Y/n] confirm)
+  session <id> [-a claude|codex] [-i] [-w] [-y]   dispatch an agent into the project's zellij session, or inline in the current terminal with -i (-a picks the agent, claude default; -w tells it to work in a git worktree named after the id; -y skips the [Y/n] confirm)
   clean [--dry-run|--force]
-  verify [--id]
+  verify [--id] [-a claude|codex]
   remove --id"#;
 
 const HANDOFF_TERSE: &str = r#"handoff <verb> [--repo-root <path>]
@@ -50,9 +50,9 @@ PENDING-WORK COMMANDS (default engine)
   update --id <id>             Replace task text/title/prereqs or amend commits
   resolve --id <id>            Print the task note path
   show <id>                    Stream the task note (alias for resolve --show)
-  session <id> [-i] [-w]       Dispatch an agent into the zellij session (-i inline; -w isolates work in a git worktree named after the id)
+  session <id> [-a] [-i] [-w]   Dispatch an agent into the zellij session (-a claude|codex, claude default; -i inline; -w isolates work in a git worktree named after the id)
   clean                        Archive or clear done tasks
-  verify --id <id>             Probe whether a task can launch
+  verify --id <id> [-a]        Probe whether an agent (claude|codex) can launch
   remove --id <id>             Delete a task note and index link
 
 ENGINES

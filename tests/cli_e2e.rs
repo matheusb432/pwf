@@ -1690,6 +1690,75 @@ fn session_without_worktree_flag_omits_instruction() {
 }
 
 #[test]
+#[cfg(unix)]
+fn session_codex_agent_emits_codex_argv() {
+    // PWF-0068: `--agent codex` dispatches `codex -- <prompt>` (no `--name`); the
+    // prompt rides only in zellij's captured argv.
+    let dir = TempDir::new().unwrap();
+    let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
+
+    pwf()
+        .args([
+            "session",
+            "--id",
+            "PWF-0001",
+            "--agent",
+            "codex",
+            "--yes",
+            "--config-path",
+        ])
+        .arg(&cfg)
+        .env("PATH", path)
+        .env("ZELLIJ_STUB_LOG", &log)
+        .assert()
+        .success()
+        .stdout(contains("dispatched"));
+
+    let argv = fs::read_to_string(&log).unwrap();
+    // `-- codex --` proves codex runs with the prompt as a `--`-guarded positional.
+    // (zellij's own `--name <tab>` is always present; codex itself gets no `--name`,
+    // unlike claude — assert on the codex segment, not the whole line.)
+    assert!(
+        argv.contains("-- codex --"),
+        "codex argv tail not captured: {argv}"
+    );
+    assert!(
+        !argv.contains("codex --name"),
+        "codex must not get a --name flag: {argv}"
+    );
+}
+
+#[test]
+fn session_rejects_unknown_agent() {
+    // clap ValueEnum rejects an unknown --agent value before any dispatch.
+    pwf()
+        .args([
+            "session",
+            "PWF-0001",
+            "--agent",
+            "bogus",
+            "--config-path",
+            "x",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("invalid value 'bogus'"));
+}
+
+#[test]
+fn verify_codex_agent_reports_codex() {
+    // PWF-0068: `pwf verify --agent codex` probes codex and renders the codex
+    // command. `command: codex` is host-independent (no item → binary-only command);
+    // `codex:` appears whether or not codex resolves on this host's PATH.
+    pwf()
+        .args(["verify", "--agent", "codex"])
+        .assert()
+        .success()
+        .stdout(contains("codex:"))
+        .stdout(contains("command: codex"));
+}
+
+#[test]
 fn session_missing_id_errors() {
     // `pwf session` with no id → MissingId, before any zellij probe.
     pwf()

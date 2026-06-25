@@ -6,7 +6,7 @@ use super::{
         NewItemSpec, add_pending_work_item, list::ListScope, run_cancel, run_check,
         run_list_action, run_remove, run_update,
     },
-    agent::claude::{RealProbe, verify_text_with_probe},
+    agent::{probe::RealProbe, verify::verify_text_with_probe},
     continue_prompt::{continue_handoff_prompt, continue_plan_prompt},
     domain::commands::PendingWorkCommand,
     errors,
@@ -75,13 +75,14 @@ pub(in crate::engines::pending_work) fn run_typed(
         }
 
         Action::Verify => {
-            let probe = RealProbe::resolve();
+            let launcher = super::session::launcher_for(args.agent);
+            let probe = RealProbe::resolve(launcher.binary());
             let item = if let Some(vid) = args.id.as_deref() {
                 Some(find_pending_item(&cfg, vid)?)
             } else {
                 None
             };
-            Ok(verify_text_with_probe(item.as_ref(), &probe))
+            Ok(verify_text_with_probe(item.as_ref(), launcher, &probe))
         }
 
         Action::Check => Ok(run_check(&cfg, args)?),
@@ -104,6 +105,7 @@ pub(in crate::engines::pending_work) fn run_typed(
                 assume_yes: args.assume_yes,
                 inline: args.inline,
                 worktree: args.worktree.into(),
+                agent: args.agent,
             },
         )?),
     }
