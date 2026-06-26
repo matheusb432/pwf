@@ -6,6 +6,9 @@ const DEPRECATED_PW_PREFIX_WARNING: &str =
 
 fn main() {
     let argv: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(code) = pwf::codex_thread_title::maybe_run(&argv) {
+        std::process::exit(code);
+    }
     if let Some(prefix) = retired_pending_work_prefix(&argv) {
         print_retired_pending_work_prefix_error(prefix, &argv);
         std::process::exit(1);

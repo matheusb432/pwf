@@ -138,6 +138,8 @@ impl ObsidianStore {
 
 #[cfg(test)]
 mod tests {
+    use std::assert_matches;
+
     use super::*;
 
     fn missing_path(name: &str) -> std::path::PathBuf {
@@ -168,7 +170,7 @@ mod tests {
 
         let err = ObsidianStore::create_project_dir(&parent_file.join("child")).unwrap_err();
 
-        assert!(matches!(err, StoreError::CreateProjectDir { .. }));
+        assert_matches!(err, StoreError::CreateProjectDir { .. });
         assert_has_source(&err);
         assert!(err.to_string().starts_with("Cannot create project dir: "));
     }
@@ -177,7 +179,7 @@ mod tests {
     fn read_item_file_error_is_matchable_and_preserves_text() {
         let err = ObsidianStore::read_item_file(&missing_path("read_item_file")).unwrap_err();
 
-        assert!(matches!(err, StoreError::ReadItemFile { .. }));
+        assert_matches!(err, StoreError::ReadItemFile { .. });
         assert_has_source(&err);
         assert!(err.to_string().starts_with("Cannot read item file: "));
     }
@@ -188,7 +190,7 @@ mod tests {
 
         let err = ObsidianStore::write_item_file(&dir, "content").unwrap_err();
 
-        assert!(matches!(err, StoreError::WriteItemFile { .. }));
+        assert_matches!(err, StoreError::WriteItemFile { .. });
         assert_has_source(&err);
         assert!(err.to_string().starts_with("Cannot write item file: "));
     }
@@ -199,7 +201,7 @@ mod tests {
 
         let err = ObsidianStore::write_add_item_file(&dir, "content").unwrap_err();
 
-        assert!(matches!(err, StoreError::AddWriteItemFile { .. }));
+        assert_matches!(err, StoreError::AddWriteItemFile { .. });
         assert_has_source(&err);
         assert!(err.to_string().starts_with("Failed to write item file: "));
     }
@@ -208,7 +210,7 @@ mod tests {
     fn read_index_error_is_matchable_and_preserves_text() {
         let err = ObsidianStore::read_index(&missing_path("read_index")).unwrap_err();
 
-        assert!(matches!(err, StoreError::ReadIndex { .. }));
+        assert_matches!(err, StoreError::ReadIndex { .. });
         assert_has_source(&err);
         assert!(err.to_string().starts_with("Cannot read index: "));
     }
@@ -219,7 +221,7 @@ mod tests {
 
         let err = ObsidianStore::write_index(&dir, "content").unwrap_err();
 
-        assert!(matches!(err, StoreError::WriteIndex { .. }));
+        assert_matches!(err, StoreError::WriteIndex { .. });
         assert_has_source(&err);
         assert!(err.to_string().starts_with("Cannot write index: "));
     }
@@ -230,7 +232,7 @@ mod tests {
 
         let err = ObsidianStore::write_add_index_file(&dir, "content").unwrap_err();
 
-        assert!(matches!(err, StoreError::AddWriteIndexFile { .. }));
+        assert_matches!(err, StoreError::AddWriteIndexFile { .. });
         assert_has_source(&err);
         assert!(err.to_string().starts_with("Failed to write index file: "));
     }
@@ -243,10 +245,10 @@ mod tests {
 
         let err = ObsidianStore::archive_item_file(&project_dir, "GLP-0001").unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             StoreError::ArchiveItem { ref id, .. } if id == "GLP-0001"
-        ));
+        );
         assert_has_source(&err);
         assert!(err.to_string().starts_with("Cannot archive GLP-0001: "));
     }

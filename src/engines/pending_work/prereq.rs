@@ -1,6 +1,8 @@
 // Resolve `prereq` frontmatter wikilinks to their work-item status for list and
 // other consumers that need to know whether prerequisite items are complete.
 
+use std::sync::LazyLock;
+
 use regex::Regex;
 
 use super::{domain::types::WorkItemId, errors::PendingWorkError, naming::project_dir};
@@ -8,6 +10,8 @@ use crate::config::Config;
 
 // Regex reading bare ids out of an existing `prereq` frontmatter value.
 const PREREQ_VALUE_PATTERN: &str = r"\[\[([A-Z]{2,4}-\d{4})";
+static PREREQ_VALUE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(PREREQ_VALUE_PATTERN).unwrap());
 
 /// Renders `ids` as `[[X]], [[Y]]`, the canonical `prereq` frontmatter value.
 fn render_ids(ids: &[String]) -> String {
@@ -60,10 +64,9 @@ pub(super) fn append_to_frontmatter(
     existing: Option<&str>,
     values: &[String],
 ) -> Result<String, PendingWorkError> {
-    let value_re = Regex::new(PREREQ_VALUE_PATTERN).unwrap();
     let mut ids: Vec<String> = existing
         .into_iter()
-        .flat_map(|v| value_re.captures_iter(v).map(|c| c[1].to_string()))
+        .flat_map(|v| PREREQ_VALUE_RE.captures_iter(v).map(|c| c[1].to_string()))
         .collect();
     let new = Prereqs::from_flags(cfg, values)?
         .map(|p| p.ids)
@@ -127,8 +130,7 @@ impl PrereqStatus {
 
 /// Resolves every `[[AAA-NNNN]]` wikilink in `prereq` to its status.
 pub(super) fn resolve(cfg: &Config, prereq: &str) -> Vec<PrereqStatus> {
-    let id_re = Regex::new(PREREQ_VALUE_PATTERN).unwrap();
-    id_re
+    PREREQ_VALUE_RE
         .captures_iter(prereq)
         .map(|c| {
             let id = c[1].to_string();
@@ -166,7 +168,7 @@ pub(super) fn list_summary(statuses: &[PrereqStatus]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
+    use std::{assert_matches, fs};
 
     use super::*;
     use crate::engines::pending_work::errors::PendingWorkError;
@@ -223,10 +225,10 @@ mod tests {
     #[test]
     fn prereqs_reject_malformed_ids_with_typed_error_and_legacy_display() {
         let err = parse_flag_ids(&["CFG-12".to_string()]).unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             err,
             PendingWorkError::InvalidPrereqId { ref raw } if raw == "CFG-12"
-        ));
+        );
         assert_eq!(err.to_string(), "Invalid --prereq id: CFG-12.");
     }
 
@@ -241,7 +243,7 @@ mod tests {
     fn prereqs_reject_empty_values_with_typed_error_and_legacy_display() {
         let err = parse_flag_ids(&[]).unwrap_err();
 
-        assert!(matches!(err, PendingWorkError::MissingPrereqId));
+        assert_matches!(err, PendingWorkError::MissingPrereqId);
         assert_eq!(err.to_string(), "--prereq requires an id.");
     }
 
@@ -254,7 +256,7 @@ mod tests {
         ] {
             let err = parse_flag_ids(&values).unwrap_err();
 
-            assert!(matches!(err, PendingWorkError::MissingPrereqId));
+            assert_matches!(err, PendingWorkError::MissingPrereqId);
             assert_eq!(err.to_string(), "--prereq requires an id.");
         }
     }
@@ -263,11 +265,11 @@ mod tests {
     fn prereqs_reject_missing_ids() {
         let (_d, cfg) = stage_cfg();
         let err = Prereqs::from_flags(&cfg, &["CFG-9999".to_string()]).unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             err,
             PendingWorkError::UnknownPrereqIds { ref ids }
                 if ids == &vec!["CFG-9999".to_string()]
-        ));
+        );
         assert_eq!(err.to_string(), "Unknown --prereq id(s): CFG-9999.");
     }
 
@@ -294,11 +296,11 @@ mod tests {
     fn append_rejects_unknown() {
         let (_d, cfg) = stage_cfg();
         let err = append_to_frontmatter(&cfg, None, &["CFG-9999".to_string()]).unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             err,
             PendingWorkError::UnknownPrereqIds { ref ids }
                 if ids == &vec!["CFG-9999".to_string()]
-        ));
+        );
         assert_eq!(err.to_string(), "Unknown --prereq id(s): CFG-9999.");
     }
 }

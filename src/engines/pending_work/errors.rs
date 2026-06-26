@@ -232,7 +232,7 @@ pub(super) const ADD_HINT: &str = r#"Use: pwf add <project> "<prompt>""#;
 
 #[cfg(test)]
 mod tests {
-    use std::error::Error;
+    use std::{assert_matches, error::Error};
 
     use super::*;
 
@@ -243,7 +243,7 @@ mod tests {
             source: std::io::Error::new(std::io::ErrorKind::PermissionDenied, "locked"),
         });
 
-        assert!(matches!(err, PendingWorkError::Clean(_)));
+        assert_matches!(err, PendingWorkError::Clean(_));
         assert_eq!(err.to_string(), "Cannot read index: locked");
         assert_eq!(err.source().unwrap().to_string(), "locked");
     }

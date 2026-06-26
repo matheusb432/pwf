@@ -39,6 +39,8 @@ impl PendingWorkCommand {
 
 #[cfg(test)]
 mod tests {
+    use std::assert_matches;
+
     use super::*;
     use crate::engines::pending_work::errors::PendingWorkError;
 
@@ -48,7 +50,7 @@ mod tests {
 
         let err = PendingWorkCommand::from_args_typed(&args).unwrap_err();
 
-        assert!(matches!(err, PendingWorkError::MissingSubcommand));
+        assert_matches!(err, PendingWorkError::MissingSubcommand);
         assert_eq!(err.to_string(), "a pw subcommand is required.");
     }
 
@@ -61,10 +63,10 @@ mod tests {
 
         let err = PendingWorkCommand::from_args_typed(&args).unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             PendingWorkError::UnknownAction { ref action } if action == "nope"
-        ));
+        );
         assert_eq!(err.to_string(), "Unknown action: nope");
     }
 }

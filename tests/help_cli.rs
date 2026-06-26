@@ -347,6 +347,28 @@ fn session_help_documents_worktree_flag() {
 }
 
 #[test]
+fn session_help_documents_auto_flag() {
+    // PWF-0077: `--auto` appends an autonomy directive for unattended dispatch.
+    let (help, ok) = run(&["session", "--help"]);
+    assert!(ok, "pwf session --help should exit 0");
+    assert!(
+        help.contains("--auto"),
+        "session help should list --auto: {help}"
+    );
+    assert!(
+        help.to_lowercase().contains("autonom"),
+        "session help should describe the autonomy behavior: {help}"
+    );
+
+    let (terse, ok) = run(&["session", "--help", "--terse"]);
+    assert!(ok, "pwf session --help --terse should exit 0");
+    assert!(
+        terse.contains("--auto"),
+        "session terse should mention --auto: {terse}"
+    );
+}
+
+#[test]
 fn session_help_documents_agent_flag() {
     // PWF-0068: `-a`/`--agent <claude|codex>` selects the agent (claude default).
     let (help, ok) = run(&["session", "--help"]);

@@ -104,9 +104,13 @@ update *args: build
     cp -f "{{ _bin }}" "$dest"
     printf '%s\n' "Refreshed global pwf shim -> $dest"
 
-# Format the code and lint with clippy.
-format:
+# Format Rust sources in place.
+fmt:
     cargo +"$(cat .rustfmt-nightly)" fmt
+
+# Check Rust formatting and lint with clippy -D warnings; non-zero on drift or lint failures.
+fmt-check:
+    cargo +"$(cat .rustfmt-nightly)" fmt --check
     cargo clippy --all-targets -- -D warnings
 
 # Report production Rust error-handling smells.

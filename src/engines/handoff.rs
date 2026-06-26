@@ -1,8 +1,23 @@
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::LazyLock,
+};
 
 use regex::Regex;
 
 use crate::{cli::Args, config, frontmatter, fs_atomic::write_text_atomic};
+
+static SLUG_NON_ALNUM_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[^a-z0-9]+").unwrap());
+static CHECKBOX_ANY_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)^\s*-\s+\[[ xX]\]").unwrap());
+static CHECKBOX_DONE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)^\s*-\s+\[[xX]\]").unwrap());
+static CREATED_LINE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)^(created: .*)$").unwrap());
+/// Capturing `status:` variant (group `$1`); distinct from the shared,
+/// non-capturing `crate::regexes::STATUS_LINE_RE`.
+static STATUS_CAPTURE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)^(status:.*)$").unwrap());
 
 #[derive(Debug, thiserror::Error)]
 pub enum HandoffError {
@@ -106,7 +121,7 @@ pub fn get_today(date: &Option<String>) -> String {
 /// Lowercase, replace non-alphanum with `-`, trim dashes.
 pub fn slug(value: &str) -> String {
     let lower = value.trim().to_lowercase();
-    let dashed = Regex::new(r"[^a-z0-9]+").unwrap().replace_all(&lower, "-");
+    let dashed = SLUG_NON_ALNUM_RE.replace_all(&lower, "-");
     let trimmed = dashed.trim_matches('-').to_string();
     if trimmed.is_empty() {
         "handoff".to_string()
@@ -242,13 +257,11 @@ struct Row {
 fn goal_count(content: &str) -> String {
     let mut total = 0usize;
     let mut done = 0usize;
-    let total_re = Regex::new(r"(?m)^\s*-\s+\[[ xX]\]").unwrap();
-    let done_re = Regex::new(r"(?m)^\s*-\s+\[[xX]\]").unwrap();
     for line in content.split('\n') {
-        if total_re.is_match(line) {
+        if CHECKBOX_ANY_RE.is_match(line) {
             total += 1;
         }
-        if done_re.is_match(line) {
+        if CHECKBOX_DONE_RE.is_match(line) {
             done += 1;
         }
     }
@@ -504,8 +517,7 @@ fn invoke_new(root: &Path, args: &Args) -> Result<String, HandoffError> {
             path: file_path.clone(),
             source,
         })?;
-        let re = Regex::new(r"(?m)^(created: .*)$").unwrap();
-        let new_content = re
+        let new_content = CREATED_LINE_RE
             .replace(&content, format!("$1\npw: {id}").as_str())
             .into_owned();
         write_text_atomic(&file_path, &new_content).map_err(|source| HandoffError::Write {
@@ -702,8 +714,7 @@ fn set_frontmatter_field(content: &str, field: &str, value: &str) -> String {
             .into_owned()
     } else {
         // Insert after the first status: line
-        let status_re = Regex::new(r"(?m)^(status:.*)$").unwrap();
-        status_re
+        STATUS_CAPTURE_RE
             .replace(content, format!("$1\n{field}: {value}").as_str())
             .into_owned()
     }
@@ -718,8 +729,7 @@ fn complete_handoff(root: &Path, status: &str, args: &Args) -> Result<String, Ha
     let today = get_today(&args.date);
 
     // Compute the completed content — no writes until every precondition holds.
-    let status_re = Regex::new(r"(?m)^status:.*$").unwrap();
-    let content = status_re
+    let content = crate::regexes::STATUS_LINE_RE
         .replace(&original, format!("status: {status}").as_str())
         .into_owned();
     // Insert/replace completed: after status:
@@ -909,6 +919,8 @@ pub fn run_typed(args: &Args) -> Result<String, HandoffError> {
 
 #[cfg(test)]
 mod tests {
+    use std::assert_matches;
+
     use super::*;
 
     #[test]
@@ -1023,7 +1035,7 @@ mod tests {
 
         let err = run_typed(&args).unwrap_err();
 
-        assert!(matches!(err, HandoffError::MissingTitle));
+        assert_matches!(err, HandoffError::MissingTitle);
         assert_eq!(err.to_string(), "--title is required for new.");
     }
 
@@ -1038,7 +1050,7 @@ mod tests {
 
         let err = run_typed(&args).unwrap_err();
 
-        assert!(matches!(err, HandoffError::MissingId { ref action } if action == "done"));
+        assert_matches!(err, HandoffError::MissingId { ref action } if action == "done");
         assert_eq!(err.to_string(), "--id is required for done.");
     }
 
@@ -1053,7 +1065,7 @@ mod tests {
 
         let err = run_typed(&args).unwrap_err();
 
-        assert!(matches!(err, HandoffError::UnknownAction { ref action } if action == "wat"));
+        assert_matches!(err, HandoffError::UnknownAction { ref action } if action == "wat");
         assert_eq!(err.to_string(), "unknown handoff action: wat");
     }
 

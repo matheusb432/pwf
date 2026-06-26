@@ -1,8 +1,7 @@
 //! `pwf verify` rendering: probe a selected agent and report launchability as markdown.
 
-use crate::engines::pending_work::{launch::Worktree, model::Item, session::AgentLauncher};
-
 use super::probe::AgentProbe;
+use crate::engines::pending_work::{launch::LaunchPolicy, model::Item, session::AgentLauncher};
 
 /// Render an agent argv as a single shell-ish command line, truncating a multi-line
 /// trailing prompt to its first line so `verify` stays one screen. Works for any argv
@@ -46,7 +45,7 @@ pub fn verify_text_with_probe(
             Some(it.id.as_str()),
             it.launchable,
             it.issues.clone(),
-            command_line(&launcher.argv(it, Worktree::default())),
+            command_line(&launcher.argv(it, LaunchPolicy::default())),
         ),
         // No item → no concrete command; show the binary that would run.
         None => (None, true, vec![], binary.to_string()),
@@ -168,7 +167,10 @@ mod tests {
         let out = verify_text_with_probe(Some(&item), &CodexLauncher, &probe);
         assert!(out.starts_with("# verify PWF-0068 \u{2014} pass"));
         assert!(out.contains("codex: available (0.142.0) at /usr/bin/codex"));
-        assert!(out.contains("command: codex"));
+        assert!(out.contains("command: "));
+        assert!(out.contains("__codex-thread-title"));
+        assert!(out.contains("PWF-0068 - codex verify"));
+        assert!(out.contains(" codex -- "));
         assert!(out.contains("launchable: yes"));
     }
 

@@ -156,6 +156,8 @@ pub(in crate::engines::pending_work) fn run_list_action(
 
 #[cfg(test)]
 mod tests {
+    use std::assert_matches;
+
     use super::*;
     use crate::engines::pending_work::errors::PendingWorkError;
 
@@ -209,11 +211,11 @@ mod tests {
 
         let err = run_list_action(&cfg, None, false, ListScope::Default, None).unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             PendingWorkError::NotesDirectoryNotFound { ref path }
                 if path == &missing
-        ));
+        );
         assert_eq!(
             err.to_string(),
             format!("Notes directory not found: {missing}")

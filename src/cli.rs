@@ -66,6 +66,8 @@ pub struct Args {
     pub inline: bool,
     // ? session: augment the launch prompt with a git-worktree setup step.
     pub worktree: bool,
+    // ? session: append an autonomy directive so the agent runs without prompting (--auto).
+    pub auto: bool,
     // ? session/verify: which agent to dispatch/probe (default claude).
     pub agent: Agent,
 }

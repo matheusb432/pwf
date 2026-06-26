@@ -30,7 +30,7 @@ pub(super) fn continue_plan_prompt(project_name: &str, path: &str) -> (String, S
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
+    use std::{assert_matches, fs};
 
     use super::*;
     use crate::engines::pending_work::errors::PendingWorkError;
@@ -77,10 +77,10 @@ mod tests {
 
         let err = continue_handoff_prompt(&repo.to_string_lossy()).unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             PendingWorkError::NoHandoffDirectory { ref path } if path == &expected
-        ));
+        );
         assert_eq!(
             err.to_string(),
             format!(

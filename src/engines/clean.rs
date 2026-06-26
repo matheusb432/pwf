@@ -2,7 +2,10 @@
 //! links, stamp the backing file done+completed, and remove the link.
 //! File-model analogue of scripts/notes-todo-cleaner (the legacy checkbox model).
 
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::LazyLock,
+};
 
 use regex::Regex;
 
@@ -12,6 +15,13 @@ use crate::{
     confirm::{Confirm, DefaultAnswer},
     frontmatter, fs_atomic,
 };
+
+static DONE_INDEX_LINK_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?m)^[ \t]*-[ \t]*\[[xX]\][ \t]*\[\[(?P<id>[A-Z]{2,4}-\d{4})(?:\|[^\]]*)?\]\][^\r\n]*\r?\n?",
+    )
+    .unwrap()
+});
 
 #[derive(Debug, thiserror::Error)]
 pub enum CleanError {
@@ -49,15 +59,13 @@ pub struct DoneLink {
 /// Find checked work-item links. Ignores open (`- [ ]`), bare (`- [[…]]`), and
 /// plain checkbox lines without a wikilink.
 pub fn find_done_index_links(content: &str) -> Vec<DoneLink> {
-    let re = Regex::new(
-        r"(?m)^[ \t]*-[ \t]*\[[xX]\][ \t]*\[\[(?P<id>[A-Z]{2,4}-\d{4})(?:\|[^\]]*)?\]\][^\r\n]*\r?\n?",
-    )
-    .unwrap();
-    let date_re = Regex::new(r"✅\s*(\d{4}-\d{2}-\d{2})").unwrap();
-    re.captures_iter(content)
+    DONE_INDEX_LINK_RE
+        .captures_iter(content)
         .map(|m| {
             let whole = m.get(0).unwrap();
-            let completed = date_re.captures(whole.as_str()).map(|c| c[1].to_string());
+            let completed = crate::regexes::DATE_STAMP_RE
+                .captures(whole.as_str())
+                .map(|c| c[1].to_string());
             DoneLink {
                 id: m["id"].to_string(),
                 completed,
@@ -328,7 +336,7 @@ pub(crate) fn run_clean_typed(
 
 #[cfg(test)]
 mod tests {
-    use std::error::Error;
+    use std::{assert_matches, error::Error};
 
     use super::*;
     use crate::{config, confirm::FakeConfirm};
@@ -385,7 +393,7 @@ mod tests {
             },
         )
         .unwrap_err();
-        assert!(matches!(err, CleanError::NoTtyToConfirm));
+        assert_matches!(err, CleanError::NoTtyToConfirm);
     }
 
     #[test]
@@ -450,14 +458,14 @@ mod tests {
         let err = CleanError::NotesDirectoryNotFound {
             path: "/tmp/missing-notes".to_string(),
         };
-        assert!(matches!(err, CleanError::NotesDirectoryNotFound { .. }));
+        assert_matches!(err, CleanError::NotesDirectoryNotFound { .. });
         assert_eq!(
             err.to_string(),
             "Notes directory not found: /tmp/missing-notes"
         );
 
         let err = CleanError::NoTtyToConfirm;
-        assert!(matches!(err, CleanError::NoTtyToConfirm));
+        assert_matches!(err, CleanError::NoTtyToConfirm);
         assert_eq!(
             err.to_string(),
             "No TTY to confirm a clean. Re-run with --dry-run to preview or --force to apply."
@@ -472,7 +480,7 @@ mod tests {
             source,
         };
 
-        assert!(matches!(err, CleanError::Write { .. }));
+        assert_matches!(err, CleanError::Write { .. });
         assert_eq!(err.to_string(), "Cannot write /tmp/item.md: nope");
         assert_eq!(err.source().unwrap().to_string(), "nope");
     }

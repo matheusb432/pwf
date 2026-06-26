@@ -3,7 +3,16 @@
 // section instead of deleting the link, evicting the oldest past the cap. Pure
 // string transforms — the caller does the item-file stamping and archiving.
 
+use std::sync::LazyLock;
+
 use regex::Regex;
+
+static HEADER_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^##\s+(?P<label>.+?)\s*$").unwrap());
+static FUTURO_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^##\s+futuro\s*$").unwrap());
+static DONE_LINK_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^\s*-\s*\[[xX]\]\s*\[\[(?P<id>[A-Z]{2,4}-\d{4})(?:\|[^\]]*)?\]\]").unwrap()
+});
 
 // ! Per-section retention caps. "General" is the default region before the first
 // ! `## ` header. Easy-to-read source-of-truth table; a ≤4-entry linear scan with
@@ -45,8 +54,6 @@ pub struct DoneQueue {
 /// section, then evict the oldest done entries beyond the section cap. Also
 /// normalizes any `## Futuro` header to `## Future`.
 pub fn mark_done(content: &str, id: &str, date: &str) -> DoneQueue {
-    let header_re = Regex::new(r"^##\s+(?P<label>.+?)\s*$").unwrap();
-    let futuro_re = Regex::new(r"(?i)^##\s+futuro\s*$").unwrap();
     // Open/bare link for this id (not a `[x]` done line); tolerates a legacy
     // `|title` alias.
     let open_re = Regex::new(&format!(
@@ -54,11 +61,6 @@ pub fn mark_done(content: &str, id: &str, date: &str) -> DoneQueue {
         regex::escape(id)
     ))
     .unwrap();
-    // Any done link, capturing its id (for eviction/archival); alias-tolerant.
-    let done_re =
-        Regex::new(r"^\s*-\s*\[[xX]\]\s*\[\[(?P<id>[A-Z]{2,4}-\d{4})(?:\|[^\]]*)?\]\]").unwrap();
-
-    let date_re = Regex::new(r"✅\s*(\d{4}-\d{2}-\d{2})").unwrap();
 
     let had_trailing_nl = content.ends_with('\n');
     let mut lines: Vec<String> = content.split('\n').map(str::to_string).collect();
@@ -69,7 +71,7 @@ pub fn mark_done(content: &str, id: &str, date: &str) -> DoneQueue {
     // Normalize `## Futuro` → `## Future` before anything else.
     let mut futuro_renamed = false;
     for line in &mut lines {
-        if futuro_re.is_match(line) {
+        if FUTURO_RE.is_match(line) {
             *line = "## Future".to_string();
             futuro_renamed = true;
         }
@@ -85,7 +87,7 @@ pub fn mark_done(content: &str, id: &str, date: &str) -> DoneQueue {
         };
     };
     lines[target] = format!("- [x] [[{id}]] ✅ {date}");
-    let section = section_at_line(&lines, target, &header_re);
+    let section = section_at_line(&lines, target, &HEADER_RE);
 
     // Evict the oldest done entries in the touched section beyond its cap.
     let mut evicted = Vec::new();
@@ -95,10 +97,10 @@ pub fn mark_done(content: &str, id: &str, date: &str) -> DoneQueue {
             .iter()
             .enumerate()
             .filter(|(i, l)| {
-                done_re.is_match(l) && section_at_line(&lines, *i, &header_re) == section
+                DONE_LINK_RE.is_match(l) && section_at_line(&lines, *i, &HEADER_RE) == section
             })
             .map(|(i, l)| {
-                let d = date_re
+                let d = crate::regexes::DATE_STAMP_RE
                     .captures(l)
                     .map(|c| c[1].to_string())
                     .unwrap_or_default();
@@ -114,7 +116,7 @@ pub fn mark_done(content: &str, id: &str, date: &str) -> DoneQueue {
                 .map(|(i, _)| *i)
                 .collect();
             for &i in &victims {
-                if let Some(c) = done_re.captures(&lines[i]) {
+                if let Some(c) = DONE_LINK_RE.captures(&lines[i]) {
                     evicted.push(c["id"].to_string());
                 }
             }

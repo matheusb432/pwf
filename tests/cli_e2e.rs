@@ -1692,8 +1692,9 @@ fn session_without_worktree_flag_omits_instruction() {
 #[test]
 #[cfg(unix)]
 fn session_codex_agent_emits_codex_argv() {
-    // PWF-0068: `--agent codex` dispatches `codex -- <prompt>` (no `--name`); the
-    // prompt rides only in zellij's captured argv.
+    // PWF-0079: Codex has no `--name` flag. `pwf` launches it through a small
+    // title-aware shim that renames the Codex thread via Codex's app-server API,
+    // then runs `codex -- <prompt>`.
     let dir = TempDir::new().unwrap();
     let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
 
@@ -1715,9 +1716,17 @@ fn session_codex_agent_emits_codex_argv() {
         .stdout(contains("dispatched"));
 
     let argv = fs::read_to_string(&log).unwrap();
-    // `-- codex --` proves codex runs with the prompt as a `--`-guarded positional.
-    // (zellij's own `--name <tab>` is always present; codex itself gets no `--name`,
-    // unlike claude — assert on the codex segment, not the whole line.)
+    assert!(
+        argv.contains("__codex-thread-title"),
+        "codex title shim not captured: {argv}"
+    );
+    assert!(
+        argv.contains("PWF-0001 - do the thing"),
+        "codex title shim did not receive get_thread_title text: {argv}"
+    );
+    // The real Codex command still runs with the prompt as a `--`-guarded
+    // positional. zellij's own `--name <tab>` is always present; assert on the
+    // codex segment rather than the whole line.
     assert!(
         argv.contains("-- codex --"),
         "codex argv tail not captured: {argv}"

@@ -1,4 +1,4 @@
-use std::{error::Error, fs};
+use std::{assert_matches, error::Error, fs};
 
 use pwf::{cli, engines::migrate};
 
@@ -220,7 +220,7 @@ fn run_typed_wraps_config_errors_with_legacy_display() {
 
     let err = migrate::run_typed(&args).unwrap_err();
 
-    assert!(matches!(err, migrate::MigrateError::Config(_)));
+    assert_matches!(err, migrate::MigrateError::Config(_));
     assert_eq!(
         err.to_string(),
         format!("Pending work config not found: {}", cfg_path.display())
@@ -263,10 +263,10 @@ fn run_typed_returns_read_variant_with_legacy_display_and_source() {
 
     let err = migrate::run_typed(&args).unwrap_err();
 
-    assert!(matches!(
+    assert_matches!(
         &err,
         migrate::MigrateError::Read { path, .. } if path == &flat_note
-    ));
+    );
     let io_source_text = match &err {
         migrate::MigrateError::Read { source, .. } => source.to_string(),
         other => panic!("expected read error, got {other:?}"),

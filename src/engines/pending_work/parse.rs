@@ -1,8 +1,32 @@
 // Index/note parsing: project-task extraction + newest-handoff resolution.
 
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::LazyLock,
+};
 
 use regex::Regex;
+
+static SECTION_HEADER_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)^##\s+(?P<name>.+?)\s*$").unwrap());
+static LINK_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?m)^\s*-\s*(?:\[ \]\s*)?\[\[(?P<id>[A-Z]{2,4}-\d{4})(?:\|(?P<alias>[^\]]+))?\]\].*$",
+    )
+    .unwrap()
+});
+static INLINE_LEGACY_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?m)^(?P<indent>\s*)- \[ \] `(?P<session>[^`]+)`\s*(?:<-+|::)\s*(?P<prompt>.+?)\s*$",
+    )
+    .unwrap()
+});
+static FENCED_SESSION_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?ms)^(?P<indent>\s*)- \[ \] `(?P<session>[^`]+)`\s*\r?\n```text\r?\n(?P<prompt>.*?)\r?\n```",
+    )
+    .unwrap()
+});
 
 use super::{
     errors::PendingWorkError,
@@ -65,9 +89,8 @@ pub(super) fn newest_handoff_typed(repo: &str) -> Result<PathBuf, PendingWorkErr
 
 /// Normalized section governing byte `offset`, or `None` for the normal region.
 fn section_at(text: &str, offset: usize) -> Option<String> {
-    let header_re = Regex::new(r"(?m)^##\s+(?P<name>.+?)\s*$").unwrap();
     let mut current: Option<String> = None;
-    for m in header_re.captures_iter(text) {
+    for m in SECTION_HEADER_RE.captures_iter(text) {
         if m.get(0).unwrap().start() >= offset {
             break;
         }
@@ -108,11 +131,7 @@ fn parse_project_tasks_from_text(
     // ! Width [A-Z]{2,4} is intentional, though current prefixes are all 3 letters.
     // * Optional "- [ ] " prefix matches the Obsidian checkbox form; "- [x]" (done) is
     // * deliberately not matched, so ticking the box in Obsidian drops the item from open lists.
-    let link_re = Regex::new(
-        r"(?m)^\s*-\s*(?:\[ \]\s*)?\[\[(?P<id>[A-Z]{2,4}-\d{4})(?:\|(?P<alias>[^\]]+))?\]\].*$",
-    )
-    .unwrap();
-    for m in link_re.captures_iter(text) {
+    for m in LINK_RE.captures_iter(text) {
         let id = m["id"].to_string();
         let alias = m
             .name("alias")
@@ -178,14 +197,8 @@ fn parse_project_tasks_from_text(
     }
 
     // Legacy safety net: inline backtick checkboxes.
-    let inline_re = Regex::new(
-        r"(?m)^(?P<indent>\s*)- \[ \] `(?P<session>[^`]+)`\s*(?:<-+|::)\s*(?P<prompt>.+?)\s*$",
-    )
-    .unwrap();
     // The Rust regex crate does not support lookahead, so the fenced form is split:
     // first try the normal closing ``` fence, then the checkpoint-at-next-checkbox form.
-    let fenced_re = Regex::new(r"(?ms)^(?P<indent>\s*)- \[ \] `(?P<session>[^`]+)`\s*\r?\n```text\r?\n(?P<prompt>.*?)\r?\n```").unwrap();
-
     struct LegacyMatch {
         start: usize,
         len: usize,
@@ -193,7 +206,7 @@ fn parse_project_tasks_from_text(
         prompt: String,
     }
     let mut legacy: Vec<LegacyMatch> = Vec::new();
-    for m in inline_re.captures_iter(text) {
+    for m in INLINE_LEGACY_RE.captures_iter(text) {
         legacy.push(LegacyMatch {
             start: m.get(0).unwrap().start(),
             len: m.get(0).unwrap().len(),
@@ -201,7 +214,7 @@ fn parse_project_tasks_from_text(
             prompt: m["prompt"].trim().to_string(),
         });
     }
-    for m in fenced_re.captures_iter(text) {
+    for m in FENCED_SESSION_RE.captures_iter(text) {
         legacy.push(LegacyMatch {
             start: m.get(0).unwrap().start(),
             len: m.get(0).unwrap().len(),

@@ -10,7 +10,7 @@ mod codex;
 pub(in crate::engines::pending_work) use claude::ClaudeLauncher;
 pub(in crate::engines::pending_work) use codex::CodexLauncher;
 
-use crate::engines::pending_work::{launch::Worktree, model::Item};
+use crate::engines::pending_work::{launch::LaunchPolicy, model::Item};
 
 /// Builds the argv that runs an agent in the new zellij tab. The trait models only
 /// what genuinely varies between harnesses — the binary and the argv shape.
@@ -19,8 +19,8 @@ pub(in crate::engines::pending_work) trait AgentLauncher {
     /// preflight warning, the `verify` availability line, and the PATH probe all read it.
     fn binary(&self) -> &str;
     /// argv after `zellij … new-tab … --`, e.g. `["claude","--name",<title>,"--",<prompt>]`.
-    /// `worktree` augments the launch prompt with a git-worktree setup step.
-    fn argv(&self, item: &Item, worktree: Worktree) -> Vec<String>;
+    /// `policy` selects which optional instruction blocks ride in the launch prompt.
+    fn argv(&self, item: &Item, policy: LaunchPolicy) -> Vec<String>;
 }
 
 /// Resolve the selected agent to its launcher. Both impls are unit structs, so the

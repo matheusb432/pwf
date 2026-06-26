@@ -58,6 +58,8 @@ pub(in crate::engines::pending_work) fn run_remove(
 
 #[cfg(test)]
 mod tests {
+    use std::assert_matches;
+
     use super::*;
     use crate::engines::pending_work::errors::PendingWorkError;
 
@@ -100,10 +102,10 @@ mod tests {
 
         let err = run_remove(&cfg, &Args::default()).unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             PendingWorkError::MissingId { action } if action == "remove"
-        ));
+        );
         assert_eq!(err.to_string(), "--id is required for remove.");
     }
 
@@ -122,7 +124,7 @@ mod tests {
 
         let err = run_remove(&cfg, &args).unwrap_err();
 
-        assert!(matches!(err, PendingWorkError::RemoveRequiresFileModel));
+        assert_matches!(err, PendingWorkError::RemoveRequiresFileModel);
         assert_eq!(
             err.to_string(),
             "remove only supports file-model pending-work items."
@@ -141,10 +143,10 @@ mod tests {
 
         let err = run_remove(&cfg, &args).unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             PendingWorkError::WorkItemNoteMissing { ref path } if path == &missing
-        ));
+        );
         assert_eq!(
             err.to_string(),
             format!("Work-item note missing: {}", missing.display())
@@ -155,10 +157,10 @@ mod tests {
     fn missing_index_link_returns_typed_error_with_legacy_display() {
         let err = remove_link_from_index_content("- [ ] [[GLP-9999]]\n", "GLP-0001").unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             PendingWorkError::IndexLinkNotFound { ref id } if id == "GLP-0001"
-        ));
+        );
         assert_eq!(err.to_string(), "Index link not found for GLP-0001.");
     }
 }

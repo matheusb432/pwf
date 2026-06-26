@@ -112,6 +112,8 @@ pub(in crate::engines::pending_work) fn add_pending_work_item(
 
 #[cfg(test)]
 mod tests {
+    use std::assert_matches;
+
     use super::*;
     use crate::engines::pending_work::{errors::PendingWorkError, obsidian::store::StoreError};
 
@@ -161,10 +163,10 @@ mod tests {
 
         let err = add_pending_work_item(&cfg, &spec).unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             PendingWorkError::ProjectNotMappedToRepo { ref project } if project == "pwf"
-        ));
+        );
         assert_eq!(
             err.to_string(),
             "Project 'pwf' is not mapped to a repo in config/pending-work.json."
@@ -180,10 +182,10 @@ mod tests {
 
         let err = add_pending_work_item(&cfg, &spec).unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             PendingWorkError::Store(StoreError::AddWriteItemFile { .. })
-        ));
+        );
         assert!(err.to_string().starts_with("Failed to write item file: "));
     }
 
@@ -197,10 +199,10 @@ mod tests {
 
         let err = add_pending_work_item(&cfg, &spec).unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             PendingWorkError::Store(StoreError::AddWriteIndexFile { .. })
-        ));
+        );
         assert!(err.to_string().starts_with("Failed to write index file: "));
     }
 }

@@ -2,6 +2,8 @@
 *.exe
 *.pdb
 /.artifacts
+# rustc's default output name (`rustc foo.rs` with no -o) — a throwaway, never committed
+/rust_out
 /.claude/.active-transcript
 .claude/skills
 

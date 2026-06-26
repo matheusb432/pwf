@@ -1,6 +1,20 @@
 // Work-item note rendering and frontmatter string transforms.
 
+use std::sync::LazyLock;
+
 use regex::Regex;
+
+static COMPLETED_LINE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)^completed:.*$").unwrap());
+static CREATED_LINE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)^created:.*$").unwrap());
+static PREREQ_LINE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^prereq:.*$").unwrap());
+static PREREQ_LINE_NL_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)^prereq:.*\n?").unwrap());
+static COMMITS_LINE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)^commits:.*$").unwrap());
+static COMMITS_LINE_NL_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)^commits:.*\n?").unwrap());
 
 const REPORT_HEADER: &str = "### Report";
 
@@ -62,13 +76,11 @@ pub fn append_report_text(content: &str, report: &str) -> Option<String> {
 /// Replace first `status:` line; insert/replace `completed:` (insert right after
 /// the new status line when absent).
 pub fn set_status_text(content: &str, status: &str, completed: &str) -> String {
-    let status_re = Regex::new(r"(?m)^status:.*$").unwrap();
-    let c = status_re
+    let c = crate::regexes::STATUS_LINE_RE
         .replace(content, format!("status: {status}").as_str())
         .into_owned();
-    let completed_re = Regex::new(r"(?m)^completed:.*$").unwrap();
-    if completed_re.is_match(&c) {
-        completed_re
+    if COMPLETED_LINE_RE.is_match(&c) {
+        COMPLETED_LINE_RE
             .replace(&c, format!("completed: {completed}").as_str())
             .into_owned()
     } else {
@@ -89,26 +101,22 @@ pub fn set_status_text(content: &str, status: &str, completed: &str) -> String {
 /// before the closing `---`). `None` deletes the whole line, leaving no `prereq: ""`
 /// residue.
 pub fn set_prereq_text(content: &str, value: Option<&str>) -> String {
-    let prereq_re = Regex::new(r"(?m)^prereq:.*$").unwrap();
     let Some(v) = value else {
         // Drop the line and its trailing newline so no blank line is left behind.
-        let drop_re = Regex::new(r"(?m)^prereq:.*\n?").unwrap();
-        return drop_re.replace(content, "").into_owned();
+        return PREREQ_LINE_NL_RE.replace(content, "").into_owned();
     };
     let line = format!("prereq: \"{v}\"");
-    if prereq_re.is_match(content) {
-        return prereq_re.replace(content, line.as_str()).into_owned();
+    if PREREQ_LINE_RE.is_match(content) {
+        return PREREQ_LINE_RE.replace(content, line.as_str()).into_owned();
     }
     // Anchor after `completed:` (when present), else after `created:`.
-    for anchor in [r"(?m)^completed:.*$", r"(?m)^created:.*$"] {
-        let re = Regex::new(anchor).unwrap();
+    for re in [&*COMPLETED_LINE_RE, &*CREATED_LINE_RE] {
         if let Some(m) = re.find(content) {
             return format!("{}\n{line}{}", &content[..m.end()], &content[m.end()..]);
         }
     }
     // Fallback: insert before the closing `---`.
-    let close_re = Regex::new(r"(?m)^---[ \t]*$").unwrap();
-    let mut fences = close_re.find_iter(content);
+    let mut fences = crate::regexes::FRONTMATTER_FENCE_RE.find_iter(content);
     if let (Some(_), Some(close)) = (fences.next(), fences.next()) {
         return format!(
             "{}{line}\n{}",
@@ -125,23 +133,19 @@ pub fn set_prereq_text(content: &str, value: Option<&str>) -> String {
 /// else before the closing `---`), but stores the raw commit range verbatim; a range
 /// is provenance, never a wikilink, so the value is never wrapped.
 pub fn set_commits_text(content: &str, value: Option<&str>) -> String {
-    let commits_re = Regex::new(r"(?m)^commits:.*$").unwrap();
     let Some(v) = value else {
-        let drop_re = Regex::new(r"(?m)^commits:.*\n?").unwrap();
-        return drop_re.replace(content, "").into_owned();
+        return COMMITS_LINE_NL_RE.replace(content, "").into_owned();
     };
     let line = format!("commits: \"{v}\"");
-    if commits_re.is_match(content) {
-        return commits_re.replace(content, line.as_str()).into_owned();
+    if COMMITS_LINE_RE.is_match(content) {
+        return COMMITS_LINE_RE.replace(content, line.as_str()).into_owned();
     }
-    for anchor in [r"(?m)^completed:.*$", r"(?m)^created:.*$"] {
-        let re = Regex::new(anchor).unwrap();
+    for re in [&*COMPLETED_LINE_RE, &*CREATED_LINE_RE] {
         if let Some(m) = re.find(content) {
             return format!("{}\n{line}{}", &content[..m.end()], &content[m.end()..]);
         }
     }
-    let close_re = Regex::new(r"(?m)^---[ \t]*$").unwrap();
-    let mut fences = close_re.find_iter(content);
+    let mut fences = crate::regexes::FRONTMATTER_FENCE_RE.find_iter(content);
     if let (Some(_), Some(close)) = (fences.next(), fences.next()) {
         return format!(
             "{}{line}\n{}",

@@ -195,7 +195,7 @@ fn scan_dir_for_item_note(dir: &Path, id: &str) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use std::{assert_matches, collections::BTreeMap};
 
     use super::*;
     use crate::cli::Args;
@@ -263,7 +263,7 @@ mod tests {
 
         let err = resolve_config_path_with_default(&args, || None).unwrap_err();
 
-        assert!(matches!(err, errors::PendingWorkError::MissingConfigPath));
+        assert_matches!(err, errors::PendingWorkError::MissingConfigPath);
         assert_eq!(err.to_string(), "missing --config-path");
     }
 
@@ -284,7 +284,7 @@ mod tests {
 
         let err = load_config(&args).unwrap_err();
 
-        assert!(matches!(err, errors::PendingWorkError::Config(_)));
+        assert_matches!(err, errors::PendingWorkError::Config(_));
         assert!(std::error::Error::source(&err).is_some());
         assert_eq!(
             err.to_string(),
@@ -301,14 +301,14 @@ mod tests {
 
         let err = resolve_managed_project_name_typed(&c, "g").unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             errors::PendingWorkError::AmbiguousManagedProject {
                 ref identifier,
                 ref matches
             } if identifier == "g"
                 && matches == &vec!["git-tools".to_string(), "glep-shimeji".to_string()]
-        ));
+        );
         assert_eq!(
             err.to_string(),
             "'g' is ambiguous. Managed project identifiers matching it: git-tools, glep-shimeji."
@@ -325,7 +325,7 @@ mod tests {
 
         let err = resolve_managed_project_name_typed(&c, "zzz").unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             errors::PendingWorkError::UnknownManagedProject {
                 ref identifier,
@@ -337,7 +337,7 @@ mod tests {
                     "git-tools".to_string(),
                     "glep-shimeji".to_string()
                 ]
-        ));
+        );
         assert_eq!(
             err.to_string(),
             "Unknown managed project identifier: zzz\nManaged project identifiers: alpha, beta, git-tools, glep-shimeji"
@@ -355,11 +355,11 @@ mod tests {
 
         let err = resolve_project_repo(&c, "empty").unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             errors::PendingWorkError::ProjectNotMappedToRepo { ref project }
                 if project == "empty"
-        ));
+        );
         assert_eq!(
             err.to_string(),
             "Project 'empty' is not mapped to a repo in config/pending-work.json."
@@ -378,11 +378,11 @@ mod tests {
 
         let err = is_item_open_typed(&c, "PWF-0001").unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             errors::PendingWorkError::NotesDirectoryNotFound { ref path }
                 if path == "/path/that/does/not/exist"
-        ));
+        );
         assert_eq!(
             is_item_open(&c, "PWF-0001").unwrap_err(),
             "Notes directory not found: /path/that/does/not/exist"
@@ -401,11 +401,11 @@ mod tests {
 
         let err = get_pending_work(&c, None).unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             errors::PendingWorkError::NotesDirectoryNotFound { ref path }
                 if path == "/path/that/does/not/exist"
-        ));
+        );
         assert_eq!(
             err.to_string(),
             "Notes directory not found: /path/that/does/not/exist"
@@ -432,10 +432,10 @@ mod tests {
 
         let err = find_pending_item(&c, "PWF-9999").unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             errors::PendingWorkError::ItemNotFound { ref id } if id == "PWF-9999"
-        ));
+        );
         assert_eq!(
             err.to_string(),
             "Open pending-work item not found: PWF-9999"
@@ -481,10 +481,10 @@ mod tests {
 
         let err = find_pending_item(&c, "pwf-0001").unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             errors::PendingWorkError::AmbiguousId { ref id } if id == "pwf-0001"
-        ));
+        );
         assert_eq!(err.to_string(), "Pending-work id is ambiguous: pwf-0001");
 
         std::fs::remove_dir_all(dir).unwrap();

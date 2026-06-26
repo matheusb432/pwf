@@ -76,6 +76,8 @@ pub(super) fn run_route(cfg: &Config, args: &Args, date: &str) -> Result<String,
 
 #[cfg(test)]
 mod tests {
+    use std::assert_matches;
+
     use super::*;
     use crate::engines::pending_work::errors;
 
@@ -101,7 +103,7 @@ mod tests {
         let err =
             run_route(&cfg, &args(&["add", "glep-shimeji", "do it"]), "2026-01-01").unwrap_err();
 
-        assert!(matches!(err, errors::PendingWorkError::RouteCreateRejected));
+        assert_matches!(err, errors::PendingWorkError::RouteCreateRejected);
         assert_eq!(err.to_string(), errors::ADD_HINT);
     }
 }

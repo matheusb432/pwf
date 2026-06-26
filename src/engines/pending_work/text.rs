@@ -1,9 +1,16 @@
 // Pure string helpers: title inference, placeholder detection, section keywords,
 // line-number math. No I/O.
 
-use std::path::Path;
+use std::{path::Path, sync::LazyLock};
 
 use regex::Regex;
+
+static PLACEHOLDER_PROMPT_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)(^\s*\[!\]\s*TODO\b|^\s*TODO\b|definir prompt|define prompt|tbd)").unwrap()
+});
+static DASH_UNDERSCORE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[-_]+").unwrap());
+static DATE_SLUG_PREFIX_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\d{4}-\d{2}-\d{2}-").unwrap());
 
 /// Upper bound (in `char`s) on an auto-inferred title. Without it, a long prompt
 /// with no `&` cut marker became the entire title (CFG-0075). Chosen to render as
@@ -15,9 +22,7 @@ pub fn is_placeholder_prompt(prompt: &str) -> bool {
     if prompt.trim().is_empty() {
         return true;
     }
-    let re = Regex::new(r"(?i)(^\s*\[!\]\s*TODO\b|^\s*TODO\b|definir prompt|define prompt|tbd)")
-        .unwrap();
-    re.is_match(prompt)
+    PLACEHOLDER_PROMPT_RE.is_match(prompt)
 }
 
 /// Collapses internal whitespace runs to single spaces and trims the ends.
@@ -119,8 +124,8 @@ pub fn note_body(prompt: &str) -> String {
 
 /// "glep-shimeji" -> "glep shimeji"
 pub fn project_title_prefix(name: &str) -> String {
-    let re = Regex::new(r"[-_]+").unwrap();
-    re.replace_all(name, " ")
+    DASH_UNDERSCORE_RE
+        .replace_all(name, " ")
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
@@ -133,11 +138,8 @@ pub fn handoff_title_from_path(path: &str) -> String {
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("");
-    let slug = Regex::new(r"^\d{4}-\d{2}-\d{2}-")
-        .unwrap()
-        .replace(stem, "");
-    let words: Vec<&str> = Regex::new(r"[-_]+")
-        .unwrap()
+    let slug = DATE_SLUG_PREFIX_RE.replace(stem, "");
+    let words: Vec<&str> = DASH_UNDERSCORE_RE
         .split(&slug)
         .filter(|w| !w.is_empty())
         .collect();
@@ -153,12 +155,9 @@ pub fn get_title_from_continue_path(project_name: &str, path: &str) -> String {
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("");
-    let slug = Regex::new(r"^\d{4}-\d{2}-\d{2}-")
-        .unwrap()
-        .replace(stem, "");
+    let slug = DATE_SLUG_PREFIX_RE.replace(stem, "");
     let excluded = ["kickoff", "handoff", "plan"];
-    let words: Vec<String> = Regex::new(r"[-_]+")
-        .unwrap()
+    let words: Vec<String> = DASH_UNDERSCORE_RE
         .split(&slug)
         .filter(|w| !w.is_empty())
         .map(|w| w.to_lowercase())

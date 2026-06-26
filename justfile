@@ -2,6 +2,7 @@ set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 
 mod agents 'just/agents.justfile'
 mod pwf 'just/pwf.justfile'
+mod md 'just/md.justfile'
 
 _default:
     @just --list --unsorted --list-submodules
@@ -18,9 +19,15 @@ install:
 update *args:
     @just pwf update {{ args }}
 
-# Format the code and lint with clippy.
-format:
-    @just pwf format
+# Format Rust sources and Markdown in place.
+fmt:
+    @just pwf fmt
+    @just md fmt
+
+# Check Rust formatting + clippy -D warnings and Markdown; non-zero on drift.
+fmt-check:
+    @just pwf fmt-check
+    @just md fmt-check
 
 # Report production Rust error-handling smells.
 smell-check-errors:

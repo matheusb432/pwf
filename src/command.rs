@@ -288,9 +288,14 @@ pub enum PwAction {
         /// Run the agent inline in the current terminal instead of a zellij tab.
         #[arg(long = "inline", short = 'i')]
         inline: bool,
-        /// Tell the dispatched agent to isolate its work in a git worktree named after the item id.
+        /// Tell the dispatched agent to isolate its work in a git worktree named after the item
+        /// id.
         #[arg(long = "worktree", short = 'w')]
         worktree: bool,
+        /// Append an autonomy directive so the agent runs without prompting the user (for
+        /// unattended dispatch).
+        #[arg(long = "auto")]
+        auto: bool,
         /// Which agent to dispatch (claude default).
         #[arg(long = "agent", short = 'a', value_enum, default_value_t = AgentArg::Claude)]
         agent: AgentArg,
@@ -643,6 +648,7 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             yes,
             inline,
             worktree,
+            auto,
             agent,
             common,
         } => {
@@ -655,6 +661,7 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             a.assume_yes = yes;
             a.inline = inline;
             a.worktree = worktree;
+            a.auto = auto;
             a.agent = agent_choice(agent);
             apply_pw_common(a, common);
             PendingWorkAction::Session

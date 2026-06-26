@@ -92,6 +92,8 @@ impl MultiplexerDriver for RealZellij {
 
 #[cfg(test)]
 mod tests {
+    use std::assert_matches;
+
     use super::*;
 
     #[test]
@@ -134,7 +136,7 @@ mod tests {
 
     #[test]
     fn classify_treats_live_success_as_ok() {
-        assert!(matches!(classify_new_tab(true, ""), Ok(())));
+        assert_matches!(classify_new_tab(true, ""), Ok(()));
     }
 
     #[test]
@@ -143,10 +145,10 @@ mod tests {
         // and writes "not found" to stderr. Trusting the status reported a phantom
         // dispatch into a dead session; the message must win.
         let stderr = "Session 'ssh' not found. The following sessions are active:";
-        assert!(matches!(
+        assert_matches!(
             classify_new_tab(true, stderr),
             Err(NewTabError::SessionNotFound)
-        ));
+        );
     }
 
     #[test]

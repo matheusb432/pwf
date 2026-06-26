@@ -2,6 +2,7 @@
 //! zellij session. Dispatch logic sits behind the `MultiplexerDriver` and
 //! `AgentLauncher` seams so orchestration/rendering are tested with fakes.
 
+mod confirmation;
 mod inline;
 mod launcher;
 mod multiplexer;
@@ -27,7 +28,7 @@ use crate::{
     engines::pending_work::{
         agent::probe::{AgentProbe, RealProbe},
         errors::PendingWorkError,
-        launch::Worktree,
+        launch::LaunchPolicy,
         model::Item,
         query::find_pending_item,
     },
@@ -41,23 +42,23 @@ pub(in crate::engines::pending_work) struct DispatchOpts {
     pub color: ColorChoice,
     pub assume_yes: bool,
     pub inline: bool,
-    /// Augment the launch prompt with a git-worktree setup step (`-w`/`--worktree`).
-    pub worktree: Worktree,
+    /// Which optional instruction blocks ride in the launch prompt (`-w`, `--auto`).
+    pub launch: LaunchPolicy,
     /// Which agent to dispatch (`-a`/`--agent`).
     pub agent: crate::cli::Agent,
 }
 
 #[cfg(test)]
 impl DispatchOpts {
-    /// Baseline test policy: never-color, non-interactive, no worktree. The
-    /// chainable setters flip one flag each, so a test states only what it varies
-    /// and adding a field to `DispatchOpts` touches just this constructor.
+    /// Baseline test policy: never-color, non-interactive, default launch prompt.
+    /// The chainable setters flip one flag each, so a test states only what it
+    /// varies and adding a field to `DispatchOpts` touches just this constructor.
     fn test() -> Self {
         DispatchOpts {
             color: ColorChoice::Never,
             assume_yes: false,
             inline: false,
-            worktree: Worktree::from(false),
+            launch: LaunchPolicy::default(),
             agent: crate::cli::Agent::Claude,
         }
     }
@@ -153,18 +154,10 @@ pub(in crate::engines::pending_work) fn run_session(
     // Default-yes confirmation gate: an interactive operator can abort a mistaken
     // dispatch. `--yes` skips it; a non-interactive caller proceeds without
     // prompting so the fire-and-forget path is intact.
+    let argv = launcher.argv(&item, opts.launch);
+
     if !opts.assume_yes && confirmer.interactive() {
-        let question = if opts.inline {
-            format!(
-                "Run {} \"{}\" inline in the current terminal?",
-                item.id, item.session
-            )
-        } else {
-            format!(
-                "Dispatch {} \"{}\" into zellij session {session}?",
-                item.id, item.session
-            )
-        };
+        let question = confirmation::question(&item, &session, opts, launcher.binary());
         if !confirmer.confirm(&question, DefaultAnswer::Yes) {
             return Ok(format!(
                 "# session {} — aborted\nnothing dispatched.\n",
@@ -172,8 +165,6 @@ pub(in crate::engines::pending_work) fn run_session(
             ));
         }
     }
-
-    let argv = launcher.argv(&item, opts.worktree);
 
     if opts.inline {
         // Breadcrumb to stderr: on Unix this is pwf's last word before exec
@@ -210,17 +201,22 @@ pub(in crate::engines::pending_work) fn run_session(
             message,
         },
     };
-    let agent = argv.first().cloned().unwrap_or_default();
-    Ok(render(&outcome, &agent, &repo, use_color(opts.color)))
+    Ok(render(
+        &outcome,
+        launcher.binary(),
+        &repo,
+        use_color(opts.color),
+    ))
 }
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
+    use std::{assert_matches, cell::RefCell, fs};
 
     use super::*;
-    use crate::engines::pending_work::session::{
-        inline::fake::FakeExec, multiplexer::fake::FakeMux,
+    use crate::engines::pending_work::{
+        launch::{Auto, Worktree},
+        session::{inline::fake::FakeExec, multiplexer::fake::FakeMux},
     };
 
     fn nanos() -> u128 {
@@ -254,6 +250,30 @@ mod tests {
         )
         .unwrap();
         (stage, cfg)
+    }
+
+    struct RecordingConfirm {
+        interactive: bool,
+        answer: bool,
+        questions: RefCell<Vec<String>>,
+    }
+
+    impl Confirm for RecordingConfirm {
+        fn interactive(&self) -> bool {
+            self.interactive
+        }
+
+        fn confirm(&self, question: &str, _default: DefaultAnswer) -> bool {
+            self.questions.borrow_mut().push(question.to_string());
+            self.answer
+        }
+    }
+
+    fn policy(worktree: bool, auto: bool) -> LaunchPolicy {
+        LaunchPolicy {
+            worktree: Worktree::from(worktree),
+            auto: Auto::from(auto),
+        }
     }
 
     #[test]
@@ -346,7 +366,7 @@ mod tests {
             },
         )
         .unwrap_err();
-        assert!(matches!(err, PendingWorkError::ZellijNotFound));
+        assert_matches!(err, PendingWorkError::ZellijNotFound);
     }
 
     #[test]
@@ -392,6 +412,45 @@ mod tests {
         .unwrap();
         assert!(out.contains("— dispatched"));
         assert_eq!(driver.calls.borrow().len(), 1);
+    }
+
+    #[test]
+    fn interactive_confirmation_shows_dispatch_context_table_without_prompt_body() {
+        let (_s, cfg) = staged();
+        let confirm = RecordingConfirm {
+            interactive: true,
+            answer: true,
+            questions: RefCell::new(vec![]),
+        };
+
+        let out = run_session(
+            &cfg,
+            "PWF-0001",
+            DispatchOpts {
+                inline: true,
+                launch: policy(true, true),
+                agent: crate::cli::Agent::Codex,
+                ..DispatchOpts::test()
+            },
+            &FakeMux::new(true, vec![]),
+            &CodexLauncher,
+            &FakeExec::ok(),
+            &confirm,
+        )
+        .unwrap();
+
+        assert!(out.contains("— ran inline"));
+        let questions = confirm.questions.borrow();
+        assert_eq!(questions.len(), 1);
+        let question = &questions[0];
+        assert!(question.contains("| id | title | mode | agent | autonomy | worktree | target |"));
+        assert!(question.contains(
+            "| PWF-0001 | dispatch me | inline | codex | yes | yes | current terminal |"
+        ));
+        assert!(
+            !question.contains("do work"),
+            "confirmation must not flood the TUI with the prompt body: {question}"
+        );
     }
 
     #[test]
@@ -523,6 +582,6 @@ mod tests {
             },
         )
         .unwrap_err();
-        assert!(matches!(err, PendingWorkError::InlineExecFailed { .. }));
+        assert_matches!(err, PendingWorkError::InlineExecFailed { .. });
     }
 }

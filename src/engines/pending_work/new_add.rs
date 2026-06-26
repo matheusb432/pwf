@@ -42,6 +42,8 @@ impl<'a> NewAddInputs<'a> {
 
 #[cfg(test)]
 mod tests {
+    use std::assert_matches;
+
     use super::{super::errors, *};
 
     fn cfg() -> Config {
@@ -100,12 +102,12 @@ mod tests {
         // `add` takes positional args — the error must not name removed flags.
         let no_project = args(None, Some("do x"), None);
         let err = NewAddInputs::resolve(&cfg, &no_project).unwrap_err();
-        assert!(matches!(err, errors::PendingWorkError::AddUsage));
+        assert_matches!(err, errors::PendingWorkError::AddUsage);
         assert_eq!(err.to_string(), errors::ADD_HINT);
 
         let no_prompt = args(Some("alpha"), None, None);
         let err = NewAddInputs::resolve(&cfg, &no_prompt).unwrap_err();
-        assert!(matches!(err, errors::PendingWorkError::AddUsage));
+        assert_matches!(err, errors::PendingWorkError::AddUsage);
         assert_eq!(err.to_string(), errors::ADD_HINT);
     }
 

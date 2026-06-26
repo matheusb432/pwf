@@ -10,6 +10,7 @@ use super::{
     continue_prompt::{continue_handoff_prompt, continue_plan_prompt},
     domain::commands::PendingWorkCommand,
     errors,
+    launch::LaunchPolicy,
     model::Action,
     naming::stamp_date,
     new_add::NewAddInputs,
@@ -104,7 +105,10 @@ pub(in crate::engines::pending_work) fn run_typed(
                 color: args.color,
                 assume_yes: args.assume_yes,
                 inline: args.inline,
-                worktree: args.worktree.into(),
+                launch: LaunchPolicy {
+                    worktree: args.worktree.into(),
+                    auto: args.auto.into(),
+                },
                 agent: args.agent,
             },
         )?),
@@ -191,6 +195,8 @@ fn run_add(cfg: &Config, args: &Args, date: &str) -> Result<String, errors::Pend
 
 #[cfg(test)]
 mod tests {
+    use std::assert_matches;
+
     use super::*;
 
     fn command_for(action: Action) -> PendingWorkCommand {
@@ -244,10 +250,10 @@ mod tests {
         let command = command_for(Action::Resolve);
         let err = require_id(command.args(), "resolve").unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             errors::PendingWorkError::MissingId { action } if action == "resolve"
-        ));
+        );
         assert_eq!(err.to_string(), "--id is required for resolve.");
     }
 
@@ -284,10 +290,10 @@ mod tests {
 
         let err = resolve_add_section(&args).unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             errors::PendingWorkError::BadSection { ref value } if value == "bogus"
-        ));
+        );
         assert_eq!(
             err.to_string(),
             "Unknown --section value 'bogus'. Use one of: future, human, low-prio."

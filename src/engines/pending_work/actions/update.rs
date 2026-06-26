@@ -1,8 +1,10 @@
 // Action: update.
 
-use std::path::Path;
+use std::{path::Path, sync::LazyLock};
 
 use regex::Regex;
+
+static TITLE_LINE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^title:.*$").unwrap());
 
 use super::super::{
     commits,
@@ -19,8 +21,7 @@ use crate::{cli::Args, config::Config};
 /// Replace the body (after frontmatter) with `body`, preserving the frontmatter
 /// block byte-for-byte. Mirrors `work_item_content`'s `---\n\n<body>\n` shape.
 fn replace_body(content: &str, body: &str) -> String {
-    let fence_re = Regex::new(r"(?m)^---[ \t]*$").unwrap();
-    let mut fences = fence_re.find_iter(content);
+    let mut fences = crate::regexes::FRONTMATTER_FENCE_RE.find_iter(content);
     // Opening + closing `---` lines delimit the frontmatter; body follows the closer.
     match (fences.next(), fences.next()) {
         (Some(_), Some(close)) => {
@@ -83,8 +84,7 @@ fn update_open_item(
         .map(normalize_title)
         .unwrap_or_else(|| item.session.clone());
     if args.title.is_some() {
-        let title_re = Regex::new(r"(?m)^title:.*$").unwrap();
-        content = title_re
+        content = TITLE_LINE_RE
             .replace(&content, format!("title: {new_title}").as_str())
             .into_owned();
     }
@@ -124,6 +124,8 @@ fn amend_commits_only(
 
 #[cfg(test)]
 mod tests {
+    use std::assert_matches;
+
     use super::*;
     use crate::engines::pending_work::errors::PendingWorkError;
 
@@ -165,10 +167,10 @@ mod tests {
 
         let err = run_update(&cfg, &args).unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             PendingWorkError::MissingId { action } if action == "update"
-        ));
+        );
         assert_eq!(err.to_string(), "--id is required for update.");
     }
 
@@ -182,7 +184,7 @@ mod tests {
 
         let err = run_update(&cfg, &args).unwrap_err();
 
-        assert!(matches!(err, PendingWorkError::NothingToUpdate));
+        assert_matches!(err, PendingWorkError::NothingToUpdate);
         assert_eq!(
             err.to_string(),
             "nothing to update (pass --prompt, --title, --prereq, --clear-prereq, and/or --commits)."
@@ -200,7 +202,7 @@ mod tests {
 
         let err = run_update(&cfg, &args).unwrap_err();
 
-        assert!(matches!(err, PendingWorkError::UpdateRequiresFileModel));
+        assert_matches!(err, PendingWorkError::UpdateRequiresFileModel);
         assert_eq!(
             err.to_string(),
             "update only supports file-model pending-work items."

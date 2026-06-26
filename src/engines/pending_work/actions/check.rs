@@ -2,8 +2,6 @@
 
 use std::path::Path;
 
-use regex::Regex;
-
 use super::{
     super::{
         commits, done_queue,
@@ -173,8 +171,7 @@ fn run_close(cfg: &Config, args: &Args, action: CloseAction) -> Result<String, P
     let line_text = &content[item.marker_index..line_end];
     let mut checked_line = format!("- [x]{}", &line_text[5..]);
     // Add checkmark if not already present
-    let checkmark_re = Regex::new(r"✅\s*\d{4}-\d{2}-\d{2}").unwrap();
-    if !checkmark_re.is_match(&checked_line) {
+    if !crate::regexes::DATE_STAMP_RE.is_match(&checked_line) {
         checked_line.push_str(&format!(" ✅ {date}"));
     }
     let updated = format!(
@@ -196,6 +193,8 @@ fn run_close(cfg: &Config, args: &Args, action: CloseAction) -> Result<String, P
 
 #[cfg(test)]
 mod tests {
+    use std::assert_matches;
+
     use super::*;
     use crate::engines::pending_work::errors::PendingWorkError;
 
@@ -238,10 +237,10 @@ mod tests {
 
         let err = run_check(&cfg, &Args::default()).unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err,
             PendingWorkError::MissingId { action } if action == "check"
-        ));
+        );
         assert_eq!(err.to_string(), "--id is required for check.");
     }
 
@@ -256,7 +255,7 @@ mod tests {
 
         let err = run_check(&cfg, &args).unwrap_err();
 
-        assert!(matches!(err, PendingWorkError::EmptyReport));
+        assert_matches!(err, PendingWorkError::EmptyReport);
         assert_eq!(err.to_string(), "--report cannot be empty.");
     }
 

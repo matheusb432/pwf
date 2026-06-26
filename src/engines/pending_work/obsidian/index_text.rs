@@ -1,8 +1,14 @@
 // Project-index string transforms.
 
+use std::sync::LazyLock;
+
 use regex::Regex;
 
 use super::super::section::Section;
+
+static SECTION_MARK_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^##\s").unwrap());
+static ANCHOR_WIKILINK_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^- \[\[").unwrap());
+static ANCHOR_CHECKBOX_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^- \[").unwrap());
 
 /// Insert `link\n` at the top of the normal-item region: before the first
 /// `^- \[` line that precedes any `## ` section, else after the leading preamble
@@ -15,18 +21,15 @@ use super::super::section::Section;
 pub fn add_link_to_index(content: &str, link: &str) -> String {
     let block = format!("{link}\n");
 
-    let section_re = Regex::new(r"(?m)^##\s").unwrap();
-    let normal_end = section_re
+    let normal_end = SECTION_MARK_RE
         .find(content)
         .map(|m| m.start())
         .unwrap_or(content.len());
     let region = &content[..normal_end];
 
-    let anchor_wikilink = Regex::new(r"(?m)^- \[\[").unwrap();
-    let anchor_checkbox = Regex::new(r"(?m)^- \[").unwrap();
-    let insert_at = anchor_wikilink
+    let insert_at = ANCHOR_WIKILINK_RE
         .find(region)
-        .or_else(|| anchor_checkbox.find(region))
+        .or_else(|| ANCHOR_CHECKBOX_RE.find(region))
         .map(|m| m.start())
         .unwrap_or(normal_end);
 
