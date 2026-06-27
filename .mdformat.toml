@@ -1,8 +1,8 @@
-# House Markdown formatter: mdformat (not prettier; CFG-0138). No `exclude` key — git-ls-files
-# driving in the recipes keeps gitignored files (vendored skills, build dirs) out of scope.
-# wrap=no soft-wraps prose; number renumbers ordered lists; end_of_line=lf is Linux-first.
 
 wrap = "no"
 number = true
 end_of_line = "lf"
 extensions = ["gfm", "gfm_alerts", "wikilink", "frontmatter"]
+
+[plugin.tables]
+compact_tables = true

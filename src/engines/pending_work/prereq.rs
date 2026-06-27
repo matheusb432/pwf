@@ -234,7 +234,7 @@ mod tests {
 
     #[test]
     fn prereqs_normalize_lowercase_ids() {
-        // lowercase is accepted and canonicalized (PWF-0038 / PWF-FR-012).
+        // lowercase is accepted and canonicalized (PWF-0038 / BR-0001).
         let ids = parse_flag_ids(&["cfg-0014".to_string()]).unwrap();
         assert_eq!(ids, vec!["CFG-0014".to_string()]);
     }

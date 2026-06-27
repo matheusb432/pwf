@@ -30,7 +30,7 @@ fn new_tab_argv(session: &str, cwd: &str, tab: &str, argv: &[String]) -> Vec<Str
 /// `Session '<s>' not found` to stderr — so a successful exit status is necessary
 /// but not sufficient. The stderr message is the authoritative failure signal; a
 /// bare status check reports a phantom success and skips the resurrect-and-retry
-/// fallback (PWF-FR-004).
+/// fallback (FR-0009).
 fn classify_new_tab(success: bool, stderr: &str) -> Result<(), NewTabError> {
     if stderr.contains("not found") {
         return Err(NewTabError::SessionNotFound);

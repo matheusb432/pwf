@@ -551,10 +551,22 @@ dependencies = [
  "clap",
  "nutype",
  "predicates",
+ "pwf-core",
  "regex",
  "serde",
  "serde_json",
  "tempfile",
+ "thiserror",
+]
+
+[[package]]
+name = "pwf-core"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "regex",
+ "serde",
+ "serde_json",
  "thiserror",
 ]
 

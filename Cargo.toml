@@ -5,6 +5,10 @@ edition = "2024"
 publish = false
 description = "pwf — pending-work / handoff / migrate engine for managed repos"
 
+[workspace]
+members = ["crates/pwf-core"]
+resolver = "2"
+
 [[bin]]
 name = "pwf"
 path = "src/main.rs"
@@ -27,6 +31,7 @@ path = "tests/help_cli.rs"
 test = false
 
 [dependencies]
+pwf-core = { path = "crates/pwf-core" }
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

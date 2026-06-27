@@ -4,11 +4,11 @@
 pub mod cli;
 pub mod codex_thread_title;
 pub mod command;
-pub mod config;
+pub use pwf_core::config;
 pub mod confirm;
 pub mod engines;
-pub mod frontmatter;
-pub mod fs_atomic;
+pub use pwf_core::frontmatter;
+pub use pwf_core::fs_atomic;
 pub mod help;
 pub mod preprocess;
 pub mod regexes;
