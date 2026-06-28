@@ -1863,3 +1863,87 @@ fn retired_launch_claude_verb_treated_as_unknown_project() {
         .failure()
         .stderr(contains("Unknown managed project identifier"));
 }
+
+// ── PWF-0081: note engine — add/ls/remove e2e ────────────────────────────────
+
+#[test]
+fn note_add_list_update_remove_preserves_tasks_and_header() {
+    // Stage a `pwf` project with a seeded task; verifies note mutations leave the
+    // task line and `### Notes` header intact across the full add→ls→update→remove cycle.
+    let (dir, cfg) = staged_with_item(
+        "pwf",
+        "PWF",
+        "PWF-0001",
+        "real task",
+        "---\nstatus: active\ntitle: real task\nproject: pwf\ncreated: 2026-01-01\n---\n\nbody\n",
+    );
+
+    pwf()
+        .args(["note", "pwf", "--config-path"])
+        .arg(&cfg)
+        .args(["add", "remember the milk"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains(
+            "PWF-NOTE-0001 :: remember the milk",
+        ));
+
+    let index = fs::read_to_string(dir.path().join("notes/pwf/pwf.md")).unwrap();
+    assert!(
+        index.contains("- [ ] [[PWF-0001|real task]]"),
+        "task clobbered: {index}"
+    );
+    assert!(index.contains("### Notes"), "notes header missing: {index}");
+    assert!(
+        index.contains("- [[PWF-NOTE-0001]]"),
+        "note link missing: {index}"
+    );
+
+    pwf()
+        .args(["note", "pwf", "--config-path"])
+        .arg(&cfg)
+        .args(["update", "1", "remember oat milk"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains(
+            "Updated PWF-NOTE-0001 :: remember oat milk",
+        ));
+
+    pwf()
+        .args(["note", "pwf", "--config-path"])
+        .arg(&cfg)
+        .arg("ls")
+        .assert()
+        .success()
+        .stdout(predicates::str::contains(
+            "PWF-NOTE-0001 :: remember oat milk",
+        ));
+
+    let updated_index = fs::read_to_string(dir.path().join("notes/pwf/pwf.md")).unwrap();
+    assert_eq!(
+        updated_index.matches("- [[PWF-NOTE-0001]]").count(),
+        1,
+        "update duplicated note link: {updated_index}"
+    );
+
+    pwf()
+        .args(["note", "pwf", "--config-path"])
+        .arg(&cfg)
+        .args(["remove", "1"])
+        .assert()
+        .success();
+
+    let after = fs::read_to_string(dir.path().join("notes/pwf/pwf.md")).unwrap();
+    assert!(
+        after.contains("- [ ] [[PWF-0001|real task]]"),
+        "task lost on remove: {after}"
+    );
+    assert!(
+        !after.contains("- [[PWF-NOTE-0001]]"),
+        "note line lingered: {after}"
+    );
+    assert!(
+        after.contains("### Notes"),
+        "notes header stripped on remove: {after}"
+    );
+}

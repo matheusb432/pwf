@@ -2,13 +2,14 @@
 
 use std::sync::LazyLock;
 
+pub use pwf_core::index::edit::{find_section_index, remove_index_link};
 use regex::Regex;
 
 use super::super::section::Section;
 
-pub use pwf_core::index::edit::{find_section_index, remove_index_link};
-
 static SECTION_MARK_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^##\s").unwrap());
+static NOTES_HEADER_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)^###\s+Notes\s*$").unwrap());
 static ANCHOR_WIKILINK_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^- \[\[").unwrap());
 static ANCHOR_CHECKBOX_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^- \[").unwrap());
 
@@ -20,13 +21,21 @@ static ANCHOR_CHECKBOX_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^
 /// `## Future`/`## Human` when those sections held the only checkboxes; bounding
 /// the search to the region before the first `## ` header keeps it in the normal
 /// region. A leading H1 or blockquote is preamble; the item lands after it.
+/// The region also stops at a `### Notes` H3, so a new task never anchors onto
+/// a note line.
 pub fn add_link_to_index(content: &str, link: &str) -> String {
     let block = format!("{link}\n");
 
-    let normal_end = SECTION_MARK_RE
-        .find(content)
-        .map(|m| m.start())
-        .unwrap_or(content.len());
+    // The task region ends at the first H2 section OR the `### Notes` H3,
+    // whichever comes first — so a new task never anchors onto a note line.
+    let normal_end = [
+        SECTION_MARK_RE.find(content).map(|m| m.start()),
+        NOTES_HEADER_RE.find(content).map(|m| m.start()),
+    ]
+    .into_iter()
+    .flatten()
+    .min()
+    .unwrap_or(content.len());
     let region = &content[..normal_end];
 
     let insert_at = ANCHOR_WIKILINK_RE
@@ -248,4 +257,23 @@ mod tests {
         );
     }
 
+    #[test]
+    fn add_link_lands_above_notes_section_when_no_tasks() {
+        // A project with only notes (no open tasks, no H2 sections): a new task must
+        // land in the normal region ABOVE `### Notes`, never anchored onto a note line.
+        let content = "# pwf\n\n### Notes\n- [[PWF-NOTE-0001]]\n";
+        assert_eq!(
+            add_link_to_index(content, NEW),
+            "# pwf\n\n- [ ] [[GLP-0003|new task]]\n\n### Notes\n- [[PWF-NOTE-0001]]\n"
+        );
+    }
+
+    #[test]
+    fn add_link_preserves_trailing_notes_section_with_tasks_present() {
+        let content = "- [ ] [[GLP-0001|first]]\n\n### Notes\n- [[PWF-NOTE-0001]]\n";
+        assert_eq!(
+            add_link_to_index(content, NEW),
+            "- [ ] [[GLP-0003|new task]]\n- [ ] [[GLP-0001|first]]\n\n### Notes\n- [[PWF-NOTE-0001]]\n"
+        );
+    }
 }

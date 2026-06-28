@@ -552,6 +552,7 @@ dependencies = [
  "nutype",
  "predicates",
  "pwf-core",
+ "pwf-note",
  "regex",
  "serde",
  "serde_json",
@@ -567,6 +568,15 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "pwf-note"
+version = "0.1.0"
+dependencies = [
+ "pwf-core",
+ "regex",
  "thiserror",
 ]
 

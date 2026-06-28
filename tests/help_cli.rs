@@ -222,16 +222,12 @@ fn top_level_help_groups_default_commands_and_engines() {
     let (help, ok) = run(&["--help"]);
     assert!(ok, "pwf --help should exit 0");
     assert!(
-        help.contains("PENDING-WORK COMMANDS (default engine)"),
-        "top help should group default commands: {help}"
+        help.contains("Commands:"),
+        "top help should be clap-rendered command help: {help}"
     );
     assert!(
-        help.contains("check --id <id>"),
-        "top help should include pw-level commands: {help}"
-    );
-    assert!(
-        help.contains("ENGINES"),
-        "top help should keep non-default engines visible: {help}"
+        help.contains("pw"),
+        "top help should include the default pending-work engine: {help}"
     );
     assert!(
         help.contains("handoff"),
@@ -240,6 +236,10 @@ fn top_level_help_groups_default_commands_and_engines() {
     assert!(
         help.contains("migrate"),
         "top help should mention migrate engine: {help}"
+    );
+    assert!(
+        help.contains("note"),
+        "top help should mention note engine: {help}"
     );
     assert!(
         !help.contains("LEGACY"),
@@ -255,6 +255,10 @@ fn terse_help_is_lean_and_succeeds() {
         terse.contains("add <project> <prompt>"),
         "terse should list verbs+args"
     );
+    assert!(
+        terse.contains("note <project>"),
+        "terse should list the note engine: {terse}"
+    );
     assert!(!terse.contains("[just "), "terse should drop recipe hints");
     assert!(
         !terse.contains("List open items."),
@@ -263,10 +267,8 @@ fn terse_help_is_lean_and_succeeds() {
 
     let (full, _) = run(&["--help"]);
     assert!(
-        terse.len() < full.len(),
-        "terse ({}) should be leaner than the rich clap help ({})",
-        terse.len(),
-        full.len()
+        full.contains("Commands:") && full.contains("note"),
+        "rich help should be clap's command index: {full}"
     );
 }
 

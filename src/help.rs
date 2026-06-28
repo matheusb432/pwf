@@ -1,8 +1,6 @@
 //! Custom help surfaces clap's derive does not provide: the token-lean `--terse`
-//! agent help, plus the `--help`/`-h`/`help`/`--list` and `--terse` token
-//! predicates `main` uses to route to clap-rendered help vs the terse text. The
-//! rich per-command help is now derived by clap (`command.rs`) — the single
-//! source of truth (PWF-0030).
+//! agent help plus the small token predicates `main` uses before handing rich
+//! help to clap. Rich help is rendered from `command.rs`.
 
 // Terse help: verbs + required args only, no prose/recipe-hints/route-shortcuts.
 // Tuned for AI agents driving the engine (the skills point them here, not at the
@@ -30,58 +28,30 @@ const HANDOFF_TERSE: &str = r#"handoff <verb> [--repo-root <path>]
 const MIGRATE_TERSE: &str =
     r#"migrate [--config-path <path>]   (migrates flat <project>.md into <project>/<project>.md)"#;
 
-/// Curated top-level rich help. Per-command and per-engine detail still comes
-/// from clap (`pwf <verb> --help`, `pwf handoff --help`); this page is the
-/// readable map for the default pending-work surface plus the non-default engines.
-pub fn rich_top_help() -> &'static str {
-    r#"pwf - pending-work / handoff / migrate
-
-USAGE
-  pwf <pending-work command> [args]
-  pwf <project> [-n <N>] [--long|--future|--human|--all]
-  pwf <engine> <command> [args]
-
-PENDING-WORK COMMANDS (default engine)
-  add <project> <prompt>       Create a task
-  list                         List open tasks
-  <project>                    List one project's open tasks
-  check --id <id>              Mark a task done
-  cancel --id <id> --report    Mark a task cancelled
-  update --id <id>             Replace task text/title/prereqs or amend commits
-  resolve --id <id>            Print the task note path
-  show <id>                    Stream the task note (alias for resolve --show)
-  session <id> [-a] [-i] [-w] [--auto]   Dispatch an agent into the zellij session (-a claude|codex, claude default; -i inline; -w isolates work in a git worktree named after the id; --auto runs autonomously without prompting)
-  clean                        Archive or clear done tasks
-  verify --id <id> [-a]        Probe whether an agent (claude|codex) can launch
-  remove --id <id>             Delete a task note and index link
-
-ENGINES
-  handoff                      Per-repo handoff ledgers
-  migrate                      Migrate a flat project note into the folder model
-
-HELP
-  pwf <command> --help         Detailed pending-work command help
-  pwf handoff --help           Handoff command help
-  pwf migrate --help           Migrate command help
-  pwf --help --terse           Token-lean agent help
-"#
-}
+const NOTE_TERSE: &str = r#"note <project> [verb]
+  ls [-n <N>]
+  add <message>
+  update <id> <message>
+  remove <id>"#;
 
 /// Terse, token-lean help for one engine (verbs + required args). `None` for an
 /// unknown engine; the `pw`/`pending-work` alias resolves via `Engine::from_str`.
 pub fn terse_engine(engine: &str) -> Option<String> {
     use crate::engines::Engine;
-    let block = match engine.parse::<Engine>().ok()? {
-        Engine::PendingWork => PW_TERSE,
-        Engine::Handoff => HANDOFF_TERSE,
-        Engine::Migrate => MIGRATE_TERSE,
+    let block = match engine.to_ascii_lowercase().as_str() {
+        "note" => NOTE_TERSE,
+        other => match other.parse::<Engine>().ok()? {
+            Engine::PendingWork => PW_TERSE,
+            Engine::Handoff => HANDOFF_TERSE,
+            Engine::Migrate => MIGRATE_TERSE,
+        },
     };
     Some(block.to_string())
 }
 
 /// Terse help for every engine (top-level `pwf --help --terse`).
 pub fn terse_text() -> String {
-    format!("{PW_TERSE}\n\n{HANDOFF_TERSE}\n\n{MIGRATE_TERSE}")
+    format!("{PW_TERSE}\n\n{HANDOFF_TERSE}\n\n{MIGRATE_TERSE}\n\n{NOTE_TERSE}")
 }
 
 /// Terse help for one pending-work verb (e.g. `update`): the single matching line
@@ -100,8 +70,8 @@ pub fn terse_verb(verb: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-/// True if `tok` requests help (`--help`/`-h`/`help`) or its `--list` alias.
-fn wants_help(tok: &str) -> bool {
+/// True if `tok` is a rich-help token or the legacy `--list` top-level alias.
+pub fn is_help_token(tok: &str) -> bool {
     matches!(
         tok.to_ascii_lowercase().as_str(),
         "--help" | "-h" | "help" | "--list"
@@ -113,22 +83,17 @@ pub fn is_terse(tok: &str) -> bool {
     tok.eq_ignore_ascii_case("--terse")
 }
 
-/// True if `tok` requests help in any form — `wants_help` tokens or `--terse`.
-pub fn help_request(tok: &str) -> bool {
-    wants_help(tok) || is_terse(tok)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn wants_help_matches_help_tokens_and_list_alias() {
+    fn help_token_matches_rich_help_tokens_and_list_alias() {
         for t in ["--help", "-h", "help", "--list", "--HELP", "-H"] {
-            assert!(wants_help(t), "'{t}' should be a help token");
+            assert!(is_help_token(t), "'{t}' should be a help token");
         }
         for t in ["--long", "add", "list", "pw"] {
-            assert!(!wants_help(t), "'{t}' should not be a help token");
+            assert!(!is_help_token(t), "'{t}' should not be a help token");
         }
     }
 
@@ -161,6 +126,12 @@ mod tests {
     fn terse_engine_scoped_alias_and_unknown() {
         assert!(terse_engine("handoff").unwrap().contains("done --id"));
         assert!(!terse_engine("handoff").unwrap().contains("launch-claude"));
+        assert!(terse_engine("note").unwrap().contains("add <message>"));
+        assert!(
+            terse_engine("note")
+                .unwrap()
+                .contains("update <id> <message>")
+        );
         assert_eq!(terse_engine("pw"), terse_engine("pending-work"));
         assert!(terse_engine("bogus").is_none());
     }
@@ -185,19 +156,16 @@ mod tests {
         assert!(t.contains("pw [<project>"));
         assert!(t.contains("handoff <verb>"));
         assert!(t.contains("migrate"));
+        assert!(t.contains("note <project>"));
     }
 
     #[test]
     fn terse_and_help_request_tokens() {
         for t in ["--terse", "--TERSE"] {
             assert!(is_terse(t), "'{t}' should be the terse modifier");
-            assert!(help_request(t), "'{t}' should be a help request");
         }
         assert!(!is_terse("--help"));
-        assert!(
-            help_request("--help"),
-            "wants_help still triggers a request"
-        );
-        assert!(!help_request("list"));
+        assert!(is_help_token("--help"));
+        assert!(!is_help_token("list"));
     }
 }

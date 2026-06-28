@@ -20,6 +20,7 @@ fn is_root_engine(token: &str) -> bool {
         "pw" | "pending-work"
             | "handoff"
             | "migrate"
+            | "note"
             | "--help"
             | "-h"
             | "help"
@@ -268,6 +269,14 @@ mod tests {
         assert_eq!(
             n(&["handoff", "done", "--id", "h1"]),
             vec!["handoff", "done", "--id", "h1"]
+        );
+    }
+
+    #[test]
+    fn note_passes_through_untouched() {
+        assert_eq!(
+            n(&["note", "pwf", "add", "buy", "milk"]),
+            vec!["note", "pwf", "add", "buy", "milk"]
         );
     }
 

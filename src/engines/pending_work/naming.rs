@@ -3,8 +3,10 @@
 
 use std::path::{Path, PathBuf};
 
-pub use pwf_core::date::stamp_date;
-pub use pwf_core::paths::{project_dir, project_index_path, project_key};
+pub use pwf_core::{
+    date::stamp_date,
+    paths::{project_dir, project_index_path, project_key},
+};
 
 pub(in crate::engines::pending_work) const ARCHIVE_DIR: &str = "_archive";
 

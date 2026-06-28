@@ -1,4 +1,3 @@
-use clap::CommandFactory;
 use pwf::{command, engines, help};
 
 const DEPRECATED_PW_PREFIX_WARNING: &str =
@@ -14,17 +13,11 @@ fn main() {
         std::process::exit(1);
     }
 
-    // Custom help surfaces clap does not derive: `--terse` (token-lean agent
-    // help), `--list` (alias for `--help`), and bare `help`. Handle before clap.
-    let terse = argv.iter().any(|a| help::is_terse(a));
-    if argv.first().map(|a| help::help_request(a)).unwrap_or(true) {
-        print_top_help(terse);
+    if argv.iter().any(|a| help::is_terse(a)) {
+        print_terse_help(&argv);
         return;
     }
-    if argv.get(1).map(|a| help::help_request(a)).unwrap_or(false) {
-        print_engine_help(&argv[0], terse);
-        return;
-    }
+    let argv = normalize_rich_help_aliases(argv);
 
     // Canonical path: subcommand-default injection -> clap -> typed dispatch.
     match command::parse_command_argv(argv) {
@@ -62,41 +55,25 @@ fn run_parsed(parsed: command::ParsedCommand) -> Result<String, String> {
         command::ParsedCommand::PendingWork(command) => engines::pending_work::run(&command),
         command::ParsedCommand::Handoff(args) => engines::handoff::run(&args),
         command::ParsedCommand::Migrate(args) => engines::migrate::run(&args),
+        command::ParsedCommand::Note(command) => pwf_note::run(&command),
     }
 }
 
-fn print_top_help(terse: bool) {
-    if terse {
-        println!("{}", help::terse_text());
-    } else {
-        print!("{}", help::rich_top_help());
+fn normalize_rich_help_aliases(argv: Vec<String>) -> Vec<String> {
+    if argv.is_empty() || argv.first().is_some_and(|arg| arg == "--list") {
+        return vec!["--help".to_string()];
     }
+    argv
 }
 
-fn print_engine_help(engine: &str, terse: bool) {
-    if terse {
-        // `engine` may be an engine name OR a pending-work verb: scope to the verb
-        // line when it isn't an engine, falling back to the full map only for an
-        // unrecognized token.
-        println!(
-            "{}",
-            help::terse_engine(engine)
-                .or_else(|| help::terse_verb(engine))
-                .unwrap_or_else(help::terse_text)
-        );
-        return;
-    }
-    let mut cmd = command::Cli::command();
-    match cmd.find_subcommand_mut(engine) {
-        Some(sub) => print!("{}", sub.render_help()),
-        None => match cmd
-            .find_subcommand_mut("pw")
-            .and_then(|pw| pw.find_subcommand_mut(engine))
-        {
-            Some(sub) => print!("{}", sub.render_help()),
-            None => print!("{}", cmd.render_help()),
-        },
-    }
+fn print_terse_help(argv: &[String]) {
+    let scope = argv
+        .iter()
+        .find(|arg| !help::is_terse(arg) && !help::is_help_token(arg));
+    let text = scope
+        .and_then(|arg| help::terse_engine(arg).or_else(|| help::terse_verb(arg)))
+        .unwrap_or_else(help::terse_text);
+    println!("{text}");
 }
 
 fn retired_pending_work_prefix(argv: &[String]) -> Option<&str> {
@@ -118,7 +95,9 @@ fn print_retired_pending_work_prefix_error(prefix: &str, argv: &[String]) {
 
 fn pending_work_prefix_replacement(argv: &[String]) -> String {
     match argv.get(1).map(String::as_str) {
-        Some(token) if help::help_request(token) => "pwf --help".to_string(),
+        Some(token) if help::is_help_token(token) || help::is_terse(token) => {
+            "pwf --help".to_string()
+        }
         Some(token) if !token.starts_with('-') => format!("pwf {token}"),
         _ => "pwf".to_string(),
     }

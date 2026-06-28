@@ -8,6 +8,7 @@
 //! `--repo-root`, `--date`, …) onto individual commands — matching the old flat parser.
 
 use clap::{Args, Parser, Subcommand};
+use pwf_note::{NoteCommand, NoteVerb};
 
 use crate::engines::pending_work::{Action as PendingWorkAction, PendingWorkCommand};
 
@@ -57,6 +58,8 @@ pub enum Engine {
     },
     /// One-shot: migrate a flat `<project>.md` note into the folder model.
     Migrate(MigrateArgs),
+    /// One-liner project notes: `pwf note <proj> [ls|add <msg>|remove <id>]`.
+    Note(NoteArgs),
 }
 
 // ── pw engine ───────────────────────────────────────────────────────────────
@@ -397,6 +400,68 @@ pub struct MigrateArgs {
     pub dry_run: bool,
 }
 
+// ── note engine ───────────────────────────────────────────────────────────────
+
+/// `pwf note <proj> …` — the project is a required positional; an omitted verb
+/// lists (alias for `ls`).
+#[derive(Args, Debug)]
+pub struct NoteArgs {
+    /// Managed project (name).
+    #[arg(value_name = "PROJECT")]
+    pub project: String,
+    #[command(subcommand)]
+    pub action: Option<NoteAction>,
+    #[command(flatten)]
+    pub common: NoteCommon,
+}
+
+/// Config/sandbox overrides accepted by every `note` command (flattened).
+#[derive(Args, Debug, Default)]
+pub struct NoteCommon {
+    /// Path to the pwf config JSON (overrides $PWF_CONFIG).
+    #[arg(long)]
+    pub config_path: Option<String>,
+    /// Override the notes directory.
+    #[arg(long)]
+    pub notes_dir: Option<String>,
+    /// Date stamp (YYYY-MM-DD); defaults to today.
+    #[arg(long)]
+    pub date: Option<String>,
+}
+
+/// note verbs (`pwf note <proj> <verb>`).
+#[derive(Subcommand, Debug)]
+pub enum NoteAction {
+    /// List the project's notes, newest-first (default when no verb is given).
+    #[command(alias = "ls")]
+    List {
+        /// Cap to N listed notes (default 10; `-n 0` = all).
+        #[arg(short = 'n', long, value_name = "N")]
+        number: Option<usize>,
+    },
+    /// Add a one-liner note: `pwf note <proj> add "<message>"`.
+    Add {
+        /// Note message words (joined with single spaces).
+        #[arg(value_name = "MESSAGE", required = true)]
+        message: Vec<String>,
+    },
+    /// Delete a note and strip its index link: `pwf note <proj> remove <id>`.
+    Remove {
+        /// Note id: full `PWF-NOTE-0001`, `NOTE-0001`, or a bare `1`.
+        #[arg(value_name = "ID")]
+        id: String,
+    },
+    /// Replace a note's message: `pwf note <proj> update <id> "<message>"`.
+    Update {
+        /// Note id: full `PWF-NOTE-0001`, `NOTE-0001`, or a bare `1`.
+        #[arg(value_name = "ID")]
+        id: String,
+        /// Replacement note message words (joined with single spaces).
+        #[arg(value_name = "MESSAGE", required = true)]
+        message: Vec<String>,
+    },
+}
+
 // ── bridge to the engines ─────────────────────────────────────────────────────
 
 // `crate::cli::Args` is the engine DTO; aliased to avoid clashing with clap's
@@ -408,6 +473,7 @@ pub enum ParsedCommand {
     PendingWork(PendingWorkCommand),
     Handoff(EngineArgs),
     Migrate(EngineArgs),
+    Note(NoteCommand),
 }
 
 /// Parse a full post-binary argv into a typed engine command.
@@ -454,6 +520,7 @@ impl Cli {
                 dry_run: m.dry_run,
                 ..Default::default()
             }),
+            Engine::Note(n) => ParsedCommand::Note(fill_note(n)),
         }
     }
 
@@ -478,6 +545,9 @@ impl Cli {
                 a.dry_run = m.dry_run;
                 "migrate"
             }
+            Engine::Note(_) => {
+                unreachable!("note is dispatched via parse_command_argv / ParsedCommand::Note")
+            }
         };
         (engine.to_string(), a)
     }
@@ -487,6 +557,28 @@ fn fill_pw_command(action: PwAction) -> PendingWorkCommand {
     let mut a = EngineArgs::default();
     let action = fill_pw(&mut a, action);
     PendingWorkCommand::new(action, a)
+}
+
+fn fill_note(n: NoteArgs) -> NoteCommand {
+    let verb = match n.action {
+        None | Some(NoteAction::List { number: None }) => NoteVerb::Ls { number: None },
+        Some(NoteAction::List { number }) => NoteVerb::Ls { number },
+        Some(NoteAction::Add { message }) => NoteVerb::Add {
+            message: message.join(" "),
+        },
+        Some(NoteAction::Remove { id }) => NoteVerb::Remove { id },
+        Some(NoteAction::Update { id, message }) => NoteVerb::Update {
+            id,
+            message: message.join(" "),
+        },
+    };
+    NoteCommand {
+        project: n.project,
+        verb,
+        config_path: n.common.config_path,
+        notes_dir: n.common.notes_dir,
+        date: n.common.date,
+    }
 }
 
 fn apply_pw_common(a: &mut EngineArgs, c: PwCommon) {
@@ -884,5 +976,38 @@ mod tests {
         );
         assert_eq!(command.args().id.as_deref(), Some("GLP-0001"));
         assert!(command.args().action.is_none());
+    }
+
+    fn parse_note(tokens: &[&str]) -> NoteCommand {
+        let argv = tokens.iter().map(|s| s.to_string()).collect();
+        match parse_command_argv(argv).expect("parse") {
+            ParsedCommand::Note(c) => c,
+            other => panic!("expected note command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn note_bare_project_is_ls() {
+        let c = parse_note(&["note", "pwf"]);
+        assert_eq!(c.project, "pwf");
+        assert!(matches!(c.verb, NoteVerb::Ls { number: None }));
+    }
+
+    #[test]
+    fn note_add_joins_message_words() {
+        let c = parse_note(&["note", "pwf", "add", "buy", "milk"]);
+        assert!(matches!(c.verb, NoteVerb::Add { ref message } if message == "buy milk"));
+    }
+
+    #[test]
+    fn note_remove_takes_bare_id() {
+        let c = parse_note(&["note", "pwf", "remove", "3"]);
+        assert!(matches!(c.verb, NoteVerb::Remove { ref id } if id == "3"));
+    }
+
+    #[test]
+    fn note_ls_number_flag() {
+        let c = parse_note(&["note", "pwf", "ls", "-n", "0"]);
+        assert!(matches!(c.verb, NoteVerb::Ls { number: Some(0) }));
     }
 }
