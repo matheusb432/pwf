@@ -160,6 +160,13 @@ pub(super) fn find_pending_item(cfg: &Config, id: &str) -> Result<Item, errors::
 /// to `_archive/`. `resolve` falls back here to show tasks regardless of status —
 /// project dir first, then archive (PWF-0061).
 pub(super) fn find_item_note_file(cfg: &Config, id: &str) -> Option<PathBuf> {
+    find_item_note_with_project(cfg, id).map(|(_, path)| path)
+}
+
+/// Like [`find_item_note_file`], but also returns the managed project the note
+/// belongs to — needed when a verb (e.g. `reopen`) must rewrite the project index
+/// and possibly move the note out of `_archive` back into the project dir.
+pub(super) fn find_item_note_with_project(cfg: &Config, id: &str) -> Option<(String, PathBuf)> {
     for project in cfg.projects.keys() {
         let base = cfg.notes_dir_for(project);
         for dir in [
@@ -167,7 +174,7 @@ pub(super) fn find_item_note_file(cfg: &Config, id: &str) -> Option<PathBuf> {
             project_archive_dir(base, project),
         ] {
             if let Some(path) = scan_dir_for_item_note(&dir, id) {
-                return Some(path);
+                return Some((project.clone(), path));
             }
         }
     }

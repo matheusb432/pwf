@@ -1,0 +1,8 @@
+[package]
+name = "prompt-lanes"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "prompt-lanes — domain-agnostic one-line lane-syntax task-prompt parser with pluggable render adapters"
+
+[dependencies]

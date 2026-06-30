@@ -464,6 +464,169 @@ fn done_skips_already_checked_pw_item_and_archives() {
     );
 }
 
+// ── PWF-0054: reopen ─────────────────────────────────────────────────────────
+
+#[test]
+fn reopen_un_archives_handoff_and_reopens_linked_pw_item() {
+    // The full inverse of `done`: new → done → reopen must flip BOTH the handoff and
+    // its linked pw item back to active, via the in-process production path.
+    let stage = tmpdir("hf_reopen_paired");
+    let repo = stage.join("repo");
+    fs::create_dir_all(&repo).unwrap();
+    let notes = stage.join("notes");
+    let cfg = write_config(&stage, &repo, &notes);
+
+    let new_args = parse_args(&[
+        "new",
+        "--title",
+        "Managed Flow",
+        "--slug",
+        "managed-flow",
+        "--config-path",
+        cfg.to_str().unwrap(),
+        "--repo-root",
+        repo.to_str().unwrap(),
+        "--date",
+        "2026-01-01",
+    ]);
+    handoff::run(&new_args).unwrap();
+
+    let done_args = parse_args(&[
+        "done",
+        "--id",
+        "TST-0001",
+        "--config-path",
+        cfg.to_str().unwrap(),
+        "--repo-root",
+        repo.to_str().unwrap(),
+        "--date",
+        "2026-01-02",
+        "--no-commit",
+    ]);
+    handoff::run(&done_args).unwrap();
+
+    // Preconditions: handoff archived (done), pw item closed.
+    let archived = repo.join("docs/handoffs/archived/2026-01-01-managed-flow.md");
+    assert!(archived.exists(), "precondition: handoff archived");
+    let pw_note = notes.join("test-project/TST-0001.md");
+    assert!(
+        fs::read_to_string(&pw_note)
+            .unwrap()
+            .contains("status: done"),
+        "precondition: pw item done"
+    );
+
+    // Reopen — by the linked pw id, which find_archived matches via frontmatter.
+    let reopen_args = parse_args(&[
+        "reopen",
+        "--id",
+        "TST-0001",
+        "--config-path",
+        cfg.to_str().unwrap(),
+        "--repo-root",
+        repo.to_str().unwrap(),
+        "--no-commit",
+    ]);
+    let out = handoff::run(&reopen_args).unwrap();
+    assert!(
+        out.contains("reopened handoff "),
+        "expected 'reopened handoff', got: {out}"
+    );
+    assert!(
+        out.contains("pw: reopened TST-0001"),
+        "pw note missing: {out}"
+    );
+
+    // Handoff: un-archived, active, no completed stamp.
+    let active = repo.join("docs/handoffs/2026-01-01-managed-flow.md");
+    assert!(active.exists(), "handoff should be back in active dir");
+    assert!(!archived.exists(), "archived copy should be gone");
+    let hf = fs::read_to_string(&active).unwrap();
+    assert!(hf.contains("status: active"), "handoff status: {hf}");
+    assert!(!hf.contains("completed:"), "completed lingered: {hf}");
+
+    // Linked pw item: reopened (note active, no provenance, index link open).
+    let note = fs::read_to_string(&pw_note).unwrap();
+    assert!(note.contains("status: active"), "pw note status: {note}");
+    assert!(
+        !note.contains("completed:"),
+        "pw completed lingered: {note}"
+    );
+    let index = fs::read_to_string(notes.join("test-project/test-project.md")).unwrap();
+    assert!(
+        index.contains("- [ ] [[TST-0001]]"),
+        "pw index link not reopened: {index}"
+    );
+
+    // LEDGER row restored (handoff is active again).
+    let ledger = fs::read_to_string(repo.join("docs/handoffs/LEDGER.md")).unwrap();
+    assert!(
+        ledger.contains("2026-01-01-managed-flow.md"),
+        "LEDGER row not restored: {ledger}"
+    );
+}
+
+#[test]
+fn reopen_conflict_when_active_file_exists_leaves_archived_intact() {
+    let stage = tmpdir("hf_reopen_conflict");
+    let repo = stage.join("repo");
+    let handoff_dir = repo.join("docs/handoffs");
+    let archive_dir = handoff_dir.join("archived");
+    fs::create_dir_all(&archive_dir).unwrap();
+    let archived = archive_dir.join("2026-01-01-managed-flow.md");
+    fs::write(
+        &archived,
+        "---\nstatus: done\ncompleted: 2026-01-02\nproject: test-project\ncreated: 2026-01-01\n---\n\n# Managed Flow\n",
+    )
+    .unwrap();
+    // An active file of the same name already exists → conflict.
+    let active = handoff_dir.join("2026-01-01-managed-flow.md");
+    fs::write(&active, "frozen active\n").unwrap();
+
+    let cfg = write_empty_config(&stage);
+    let args = parse_args(&[
+        "reopen",
+        "--id",
+        "managed-flow",
+        "--config-path",
+        cfg.to_str().unwrap(),
+        "--repo-root",
+        repo.to_str().unwrap(),
+        "--no-commit",
+    ]);
+    let err = handoff::run(&args).unwrap_err();
+    assert!(
+        err.contains("Handoff already exists"),
+        "unexpected error: {err}"
+    );
+    // No partial state: archived untouched, active untouched.
+    assert!(archived.exists(), "archived must survive a conflict");
+    assert_eq!(fs::read_to_string(&active).unwrap(), "frozen active\n");
+}
+
+#[test]
+fn reopen_unknown_id_errors() {
+    let stage = tmpdir("hf_reopen_missing");
+    let repo = stage.join("repo");
+    fs::create_dir_all(repo.join("docs/handoffs/archived")).unwrap();
+    let cfg = write_empty_config(&stage);
+    let args = parse_args(&[
+        "reopen",
+        "--id",
+        "nope",
+        "--config-path",
+        cfg.to_str().unwrap(),
+        "--repo-root",
+        repo.to_str().unwrap(),
+        "--no-commit",
+    ]);
+    let err = handoff::run(&args).unwrap_err();
+    assert!(
+        err.contains("No archived handoff found"),
+        "unexpected error: {err}"
+    );
+}
+
 #[test]
 fn done_dest_conflict_leaves_no_partial_state() {
     let stage = tmpdir("hf_done_atomic");

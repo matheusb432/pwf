@@ -542,6 +542,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "prompt-lanes"
+version = "0.1.0"
+
+[[package]]
 name = "pwf"
 version = "4.1.0"
 dependencies = [
@@ -551,6 +555,7 @@ dependencies = [
  "clap",
  "nutype",
  "predicates",
+ "prompt-lanes",
  "pwf-core",
  "pwf-note",
  "regex",

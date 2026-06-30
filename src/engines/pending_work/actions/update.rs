@@ -9,7 +9,7 @@ static TITLE_LINE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^title
 use super::super::{
     commits,
     errors::PendingWorkError,
-    index::{set_commits_text, set_prereq_text},
+    index::{append_report_block_text, set_commits_text, set_prereq_text},
     model::Item,
     obsidian::store::ObsidianStore,
     prereq,
@@ -41,35 +41,40 @@ pub(in crate::engines::pending_work) fn run_update(
         .as_deref()
         .ok_or(PendingWorkError::MissingId { action: "update" })?;
     let commits_value = commits::frontmatter_value(&args.commits);
-    // Body edits (title/prompt/prereq) need the parsed open Item; commits only need
-    // the note file, so it can be amended on closed (done/cancelled) items too.
+    let append_report = args.append_report.as_deref();
+    // Body edits (title/prompt/prereq) need the parsed open Item; `--commits` and
+    // `--append-report` only touch the note file on disk, so they amend closed
+    // (done/cancelled) items too.
     let edits_body = args.prompt.is_some()
         || args.title.is_some()
         || !args.prereq.is_empty()
         || args.clear_prereq;
-    if !edits_body && commits_value.is_none() {
+    if !edits_body && commits_value.is_none() && append_report.is_none() {
         return Err(PendingWorkError::NothingToUpdate);
     }
 
     match find_pending_item(cfg, id) {
-        Ok(item) => update_open_item(cfg, args, &item, commits_value.as_deref()),
-        // Closed items are skipped by the index parser; allow a commits-only amend
-        // via the note file on disk (PWF-0062). Body edits still require an open item.
+        Ok(item) => update_open_item(cfg, args, &item, commits_value.as_deref(), append_report),
+        // Closed items are skipped by the index parser; allow a commits and/or
+        // append-report amend via the note file on disk (PWF-0062, PWF-0065). Body
+        // edits still require an open item.
         Err(PendingWorkError::ItemNotFound { id }) => match find_item_note_file(cfg, &id) {
-            Some(_) if edits_body => Err(PendingWorkError::ClosedItemCommitsOnly { id }),
-            Some(path) => amend_commits_only(&path, commits_value.as_deref(), &id),
+            Some(_) if edits_body => Err(PendingWorkError::ClosedItemAmendOnly { id }),
+            Some(path) => amend_closed_item(&path, commits_value.as_deref(), append_report, &id),
             None => Err(PendingWorkError::ItemNotFound { id }),
         },
         Err(other) => Err(other),
     }
 }
 
-/// Apply title/prompt/prereq and/or commits edits to an open file-model item.
+/// Apply title/prompt/prereq, commits, and/or append-report edits to an open
+/// file-model item.
 fn update_open_item(
     cfg: &Config,
     args: &Args,
     item: &Item,
     commits_value: Option<&str>,
+    append_report: Option<&str>,
 ) -> Result<String, PendingWorkError> {
     let item_file = item
         .item_file
@@ -100,6 +105,10 @@ fn update_open_item(
     if let Some(range) = commits_value {
         content = set_commits_text(&content, Some(range));
     }
+    if let Some(report) = append_report {
+        content =
+            append_report_block_text(&content, report).ok_or(PendingWorkError::EmptyReport)?;
+    }
 
     ObsidianStore::write_item_file(item_path, &content)?;
 
@@ -109,17 +118,29 @@ fn update_open_item(
     ))
 }
 
-/// Overwrite only the `commits:` provenance on a note file — no queue rotation,
-/// no `completed:` re-stamp — so closed items' provenance can be corrected.
-fn amend_commits_only(
+/// Apply the closed-item-safe amendments directly to the note file — overwrite the
+/// `commits:` provenance and/or append a verbatim closeout report — with no queue
+/// rotation, no `completed:` re-stamp, and no title/Goals regeneration, so a closed
+/// item's provenance and narrative report can be corrected (PWF-0062, PWF-0065).
+fn amend_closed_item(
     path: &Path,
     range: Option<&str>,
+    append_report: Option<&str>,
     id: &str,
 ) -> Result<String, PendingWorkError> {
-    let content = ObsidianStore::read_item_file(path)?;
-    let updated = set_commits_text(&content, range);
-    ObsidianStore::write_item_file(path, &updated)?;
-    Ok(format!("Updated {id} (commits: {})\n", range.unwrap_or("")))
+    let mut content = ObsidianStore::read_item_file(path)?;
+    let mut changes: Vec<String> = Vec::new();
+    if let Some(r) = range {
+        content = set_commits_text(&content, Some(r));
+        changes.push(format!("commits: {r}"));
+    }
+    if let Some(report) = append_report {
+        content =
+            append_report_block_text(&content, report).ok_or(PendingWorkError::EmptyReport)?;
+        changes.push("report appended".to_string());
+    }
+    ObsidianStore::write_item_file(path, &content)?;
+    Ok(format!("Updated {id} ({})\n", changes.join(", ")))
 }
 
 #[cfg(test)]
@@ -187,7 +208,7 @@ mod tests {
         assert_matches!(err, PendingWorkError::NothingToUpdate);
         assert_eq!(
             err.to_string(),
-            "nothing to update (pass --prompt, --title, --prereq, --clear-prereq, and/or --commits)."
+            "nothing to update (pass --prompt, --title, --prereq, --clear-prereq, --commits, and/or --append-report)."
         );
     }
 

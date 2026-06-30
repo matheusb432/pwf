@@ -83,7 +83,8 @@ pub struct PwCommon {
 pub enum PwAction {
     /// Add a pwf task: `pwf add <project> "<prompt>"`.
     ///
-    /// Prompt words are joined with single spaces, so quotes are optional.
+    /// Prompt words are joined with single spaces, so quotes are optional. Rich
+    /// prompts use lanes: `<title> / <goal> /c <context> /n <constraint> /d <done>`.
     /// `--continue-handoff` / `--continue <path>` build the prompt from the
     /// repo's newest handoff or a plan path instead of positional words.
     Add {
@@ -172,8 +173,18 @@ pub enum PwAction {
         #[command(flatten)]
         common: PwCommon,
     },
+    /// Reopen a closed item: flip done/cancelled back to active, drop its
+    /// completed/commits provenance, and restore its index link.
+    Reopen {
+        /// Item id (e.g. PWF-0001).
+        #[arg(long)]
+        id: Option<String>,
+        #[command(flatten)]
+        common: PwCommon,
+    },
     /// Replace an item's prompt body and/or title; append or clear its prereqs;
-    /// or amend its `commits:` provenance (the only edit allowed on a closed item).
+    /// amend its `commits:` provenance; or append a closeout report — the last two
+    /// being the only edits allowed on a closed item.
     Update {
         #[arg(long)]
         id: Option<String>,
@@ -191,6 +202,11 @@ pub enum PwAction {
         /// works on closed done/cancelled items too.
         #[arg(long)]
         commits: Vec<String>,
+        /// Append a free-form, multi-line Markdown closeout report to the body
+        /// verbatim, under `### Report` — never reruns title/Goals regeneration, so
+        /// it is safe on closed done/cancelled items.
+        #[arg(long)]
+        append_report: Option<String>,
         #[command(flatten)]
         common: PwCommon,
     },
@@ -371,6 +387,13 @@ pub enum HandoffAction {
         /// Cancellation note.
         #[arg(long)]
         reason: Option<String>,
+        #[command(flatten)]
+        common: HandoffCommon,
+    },
+    /// Reopen an archived handoff (and its linked pw item) back to active.
+    Reopen {
+        #[arg(long)]
+        id: Option<String>,
         #[command(flatten)]
         common: HandoffCommon,
     },
@@ -661,6 +684,11 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             apply_pw_common(a, common);
             PendingWorkAction::Cancel
         }
+        PwAction::Reopen { id, common } => {
+            a.id = normalize_pending_work_id(id);
+            apply_pw_common(a, common);
+            PendingWorkAction::Reopen
+        }
         PwAction::Update {
             id,
             prompt,
@@ -668,6 +696,7 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             prereq,
             clear_prereq,
             commits,
+            append_report,
             common,
         } => {
             a.id = normalize_pending_work_id(id);
@@ -676,6 +705,7 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             a.prereq = prereq;
             a.clear_prereq = clear_prereq;
             a.commits = commits;
+            a.append_report = append_report;
             apply_pw_common(a, common);
             PendingWorkAction::Update
         }
@@ -803,6 +833,11 @@ fn fill_handoff(a: &mut EngineArgs, action: HandoffAction) {
             a.action = Some("cancel".into());
             a.id = id;
             a.reason = reason;
+            apply_handoff_common(a, common);
+        }
+        HandoffAction::Reopen { id, common } => {
+            a.action = Some("reopen".into());
+            a.id = id;
             apply_handoff_common(a, common);
         }
         HandoffAction::List { common } => {

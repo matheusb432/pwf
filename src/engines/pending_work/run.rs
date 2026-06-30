@@ -4,7 +4,7 @@
 use super::{
     actions::{
         NewItemSpec, add_pending_work_item, list::ListScope, run_cancel, run_check,
-        run_list_action, run_remove, run_update,
+        run_list_action, run_remove, run_reopen, run_update,
     },
     agent::{probe::RealProbe, verify::verify_text_with_probe},
     continue_prompt::{continue_handoff_prompt, continue_plan_prompt},
@@ -89,6 +89,8 @@ pub(in crate::engines::pending_work) fn run_typed(
         Action::Check => Ok(run_check(&cfg, args)?),
 
         Action::Cancel => Ok(run_cancel(&cfg, args)?),
+
+        Action::Reopen => Ok(run_reopen(&cfg, args)?),
 
         Action::Resolve => Ok(run_resolve(&cfg, args)?),
 

@@ -33,33 +33,11 @@ pub(crate) struct LaunchPolicy {
     pub auto: Auto,
 }
 
-fn is_adhoc(item: &Item) -> bool {
-    item.id.starts_with("adhoc:")
-}
-
-fn report_closeout_command(id: &str) -> String {
-    format!("pwf check --id {id} --report \"<brief result>\"")
-}
-
-fn report_closeout_text(item: &Item) -> Option<String> {
-    if is_adhoc(item) {
-        return None;
-    }
-    Some(format!(
-        "Closeout: if no handoff or plan is the source of truth for this item, check it done with a one-line report:\n{}",
-        report_closeout_command(&item.id)
-    ))
-}
-
 pub(super) fn new_launch_prompt(item: &Item, policy: LaunchPolicy) -> String {
     let mut out = format_prompt(item, policy.auto);
     if policy.worktree.into_inner() {
         out.push_str("\n\n");
         out.push_str(&worktree_instruction(&item.id));
-    }
-    if let Some(closeout) = report_closeout_text(item) {
-        out.push_str("\n\n");
-        out.push_str(&closeout);
     }
     out.trim().to_string()
 }
@@ -125,11 +103,19 @@ mod tests {
     }
 
     #[test]
-    fn worktree_instruction_precedes_closeout() {
-        let out = new_launch_prompt(&item(), policy(true, false));
-        let wt = out.find("Workspace:").expect("worktree line present");
-        let co = out.find("Closeout:").expect("closeout line present");
-        assert!(wt < co, "worktree setup comes before the closeout report");
+    fn prompt_never_carries_a_closeout_line() {
+        let plain = new_launch_prompt(&item(), LaunchPolicy::default());
+        let augmented = new_launch_prompt(&item(), policy(true, true));
+        for out in [&plain, &augmented] {
+            assert!(
+                !out.contains("Closeout:"),
+                "no closeout instruction rides in the launch prompt: {out}"
+            );
+            assert!(
+                !out.contains("pwf check"),
+                "no closeout command rides in the launch prompt: {out}"
+            );
+        }
     }
 
     #[test]

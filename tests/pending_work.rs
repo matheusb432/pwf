@@ -1126,7 +1126,7 @@ fn update_rewrites_body_via_note_body_and_preserves_frontmatter() {
         "--id",
         "GLP-0001",
         "--prompt",
-        "new prompt & second goal",
+        "new prompt / second goal",
         "--config-path",
         &cfg.to_string_lossy(),
         "--notes-dir",
@@ -1141,9 +1141,9 @@ fn update_rewrites_body_via_note_body_and_preserves_frontmatter() {
     );
 
     let item = fs::read_to_string(proj.join("GLP-0001.md")).unwrap();
-    // Body is note_body-wrapped (Goals template, one bullet per `&` segment).
+    // Body is note_body-wrapped (Goals template, one bullet per slash lane).
     assert!(
-        item.contains("Goals:\n- new prompt\n- second goal"),
+        item.contains("## Goals\n- new prompt\n- second goal"),
         "body should be note_body-wrapped: {item}"
     );
     assert!(!item.contains("old prompt"), "old body replaced: {item}");
@@ -1159,7 +1159,7 @@ fn update_rewrites_body_via_note_body_and_preserves_frontmatter() {
 
 #[test]
 fn update_title_only_leaves_body_untouched() {
-    let (notes, proj, cfg) = stage_update_item("Goals:\n- keep me");
+    let (notes, proj, cfg) = stage_update_item("## Goals\n- keep me");
     let args = parse_args(&[
         "update",
         "--id",
@@ -1175,7 +1175,10 @@ fn update_title_only_leaves_body_untouched() {
     let item = fs::read_to_string(proj.join("GLP-0001.md")).unwrap();
     assert!(item.contains("title: new title"), "title replaced: {item}");
     assert!(!item.contains("title: tray gui"));
-    assert!(item.contains("Goals:\n- keep me"), "body untouched: {item}");
+    assert!(
+        item.contains("## Goals\n- keep me"),
+        "body untouched: {item}"
+    );
 }
 
 #[test]
@@ -1195,12 +1198,12 @@ fn update_prompt_only_leaves_title_untouched() {
     pwk::run_args(&args).unwrap();
     let item = fs::read_to_string(proj.join("GLP-0001.md")).unwrap();
     assert!(item.contains("title: tray gui"), "title untouched: {item}");
-    assert!(item.contains("Goals:\n- fresh prompt"));
+    assert!(item.contains("## Goals\n- fresh prompt"));
 }
 
 #[test]
 fn update_keeps_placeholder_prompt_raw_so_it_stays_detectable() {
-    let (notes, proj, cfg) = stage_update_item("Goals:\n- old");
+    let (notes, proj, cfg) = stage_update_item("## Goals\n- old");
     let args = parse_args(&[
         "update",
         "--id",
@@ -1215,7 +1218,7 @@ fn update_keeps_placeholder_prompt_raw_so_it_stays_detectable() {
     pwk::run_args(&args).unwrap();
     let item = fs::read_to_string(proj.join("GLP-0001.md")).unwrap();
     // Placeholder must NOT be Goals-wrapped, else is_placeholder_prompt can't flag it.
-    assert!(!item.contains("Goals:"), "placeholder stored raw: {item}");
+    assert!(!item.contains("## Goals"), "placeholder stored raw: {item}");
     assert!(item.trim_end().ends_with("TODO"), "raw TODO body: {item}");
 }
 

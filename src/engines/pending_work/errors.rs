@@ -130,14 +130,14 @@ pub(super) enum PendingWorkError {
     },
     /// Update was invoked without any field mutations.
     #[error(
-        "nothing to update (pass --prompt, --title, --prereq, --clear-prereq, and/or --commits)."
+        "nothing to update (pass --prompt, --title, --prereq, --clear-prereq, --commits, and/or --append-report)."
     )]
     NothingToUpdate,
-    /// A closed (done/cancelled) item only supports `--commits` amendment.
+    /// A closed (done/cancelled) item only supports `--commits`/`--append-report`.
     #[error(
-        "only --commits can amend closed item {id} (done/cancelled); body/title/prereq need an open item."
+        "only --commits / --append-report can amend closed item {id} (done/cancelled); body/title/prereq need an open item."
     )]
-    ClosedItemCommitsOnly {
+    ClosedItemAmendOnly {
         /// The selected item id.
         id: String,
     },

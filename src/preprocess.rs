@@ -9,8 +9,8 @@
 /// router words. The route sub-verb abbreviations still fall through to `route`.
 fn pw_subcommands() -> &'static [&'static str] {
     &[
-        "add", "list", "ls", "check", "cancel", "update", "resolve", "show", "session", "clean",
-        "verify", "remove", "route",
+        "add", "list", "ls", "check", "cancel", "reopen", "update", "resolve", "show", "session",
+        "clean", "verify", "remove", "route",
     ]
 }
 
@@ -49,6 +49,7 @@ fn is_value_flag(flag: &str) -> bool {
             | "--slug"
             | "--reason"
             | "--report"
+            | "--append-report"
             | "--date"
             | "--section"
             | "--continue"
@@ -265,6 +266,19 @@ mod tests {
     }
 
     #[test]
+    fn canonical_reopen_subcommand_passes_through() {
+        assert_eq!(
+            n(&["pw", "reopen", "--id", "PWF-0001"]),
+            vec!["pw", "reopen", "--id", "PWF-0001"]
+        );
+        // Also via the bare top-level form (no explicit `pw`).
+        assert_eq!(
+            n(&["reopen", "--id", "PWF-0001"]),
+            vec!["pw", "reopen", "--id", "PWF-0001"]
+        );
+    }
+
+    #[test]
     fn handoff_passes_through_untouched() {
         assert_eq!(
             n(&["handoff", "done", "--id", "h1"]),
@@ -319,6 +333,31 @@ mod tests {
                 "a..b",
                 "--commits",
                 "c..d",
+            ]
+        );
+    }
+
+    // ! PWF-0065: `--append-report` is a value-flag; its multi-line Markdown value
+    // (which leads with `#`/`-`-style tokens, not `--`) must stay attached to the flag
+    // rather than being reordered into the positional stream behind the verb.
+    #[test]
+    fn append_report_value_stays_with_its_flag_on_update() {
+        assert_eq!(
+            n(&[
+                "pw",
+                "update",
+                "--id",
+                "PWF-0003",
+                "--append-report",
+                "## Outcome\n\nshipped it",
+            ]),
+            vec![
+                "pw",
+                "update",
+                "--id",
+                "PWF-0003",
+                "--append-report",
+                "## Outcome\n\nshipped it",
             ]
         );
     }

@@ -73,6 +73,10 @@ fn per_action_help_is_scoped_and_succeeds() {
         "add --help should include the project arg name"
     );
     assert!(
+        pw_help.contains("/c <context>") && pw_help.contains("/n <constraint>"),
+        "add --help should mention rich prompt lane markers: {pw_help}"
+    );
+    assert!(
         !pw_help.contains("handoff ledger"),
         "pw help should stay pending-work scoped"
     );
@@ -254,6 +258,10 @@ fn terse_help_is_lean_and_succeeds() {
     assert!(
         terse.contains("add <project> <prompt>"),
         "terse should list verbs+args"
+    );
+    assert!(
+        terse.contains("/ <goal>") && terse.contains("/d <done>"),
+        "terse should advertise prompt lanes: {terse}"
     );
     assert!(
         terse.contains("note <project>"),

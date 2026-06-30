@@ -7,10 +7,11 @@
 // rich `--help`), so keep it token-lean.
 const PW_TERSE: &str = r#"pw [<project>]   (alias: pending-work; bare pw lists all; pw <project> [-n <N>] [--long|--future|--human|--all] lists that project)
   list [-n <N>] [--long] [--future] [--human] [--all]
-  add <project> <prompt> [--title] [--human] [--section <s>] [--prereq <id>] [--continue-handoff] [--continue <path>]
+  add <project> <prompt>   prompt lanes: <title> / <goal> /c <context> /n <constraint> /d <done>; plus [--title] [--human] [--section <s>] [--prereq <id>] [--continue-handoff] [--continue <path>]
   check --id [--report] [--commits <range>] [--review]
   cancel --id --report [--commits <range>] [--review]
-  update --id [--prompt] [--title] [--prereq <id>] [--clear-prereq] [--commits <range>]
+  reopen --id   (inverse of check/cancel: done|cancelled -> active)
+  update --id [--prompt] [--title] [--prereq <id>] [--clear-prereq] [--commits <range>] [--append-report <md>]   (--commits/--append-report also amend a closed item)
   resolve --id [--show]
   show <id>   (shorthand for resolve --show)
   session <id> [-a claude|codex] [-i] [-w] [--auto] [-y]   dispatch an agent into the project's zellij session, or inline in the current terminal with -i (-a picks the agent, claude default; -w tells it to work in a git worktree named after the id; --auto runs it autonomously without prompting the user; -y skips the [Y/n] confirm)
@@ -23,6 +24,7 @@ const HANDOFF_TERSE: &str = r#"handoff <verb> [--repo-root <path>]
   new [--title] [--slug]
   done --id
   cancel --id
+  reopen --id   (inverse of done/cancel: un-archives + reopens the linked pw item)
   list"#;
 
 const MIGRATE_TERSE: &str =

@@ -6,7 +6,7 @@ publish = false
 description = "pwf — pending-work / handoff / migrate engine for managed repos"
 
 [workspace]
-members = ["crates/pwf-core", "crates/pwf-note"]
+members = ["crates/pwf-core", "crates/pwf-note", "shared/prompt-lanes"]
 resolver = "2"
 
 [[bin]]
@@ -33,6 +33,7 @@ test = false
 [dependencies]
 pwf-core = { path = "crates/pwf-core" }
 pwf-note = { path = "crates/pwf-note" }
+prompt-lanes = { path = "shared/prompt-lanes" }
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

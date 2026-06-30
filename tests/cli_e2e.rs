@@ -425,7 +425,7 @@ fn e2e_update_prompt_rewrites_body_and_preserves_frontmatter() {
             "--id",
             "GLP-0001",
             "--prompt",
-            "a & b",
+            "a / b /c context /n no manual edit /d tests pass",
             "--date",
             "2026-01-01",
             "--config-path",
@@ -434,10 +434,19 @@ fn e2e_update_prompt_rewrites_body_and_preserves_frontmatter() {
         .assert()
         .success();
     let item = read_item(&d, "GLP-0001");
-    // Body is the Goals template, one bullet per `&` segment.
+    // Body is the Goals template, one bullet per slash lane.
     assert!(
-        item.contains("Goals:\n- a\n- b"),
+        item.contains("## Goals\n- a\n- b"),
         "body not Goals-wrapped: {item}"
+    );
+    assert!(item.contains("## Context\n- context"), "context: {item}");
+    assert!(
+        item.contains("## Constraints\n- no manual edit"),
+        "constraints: {item}"
+    );
+    assert!(
+        item.contains("## Done When\n- tests pass"),
+        "done when: {item}"
     );
     assert!(!item.contains("add toggle"), "old body replaced: {item}");
     // Frontmatter preserved untouched.
@@ -486,7 +495,7 @@ fn e2e_update_prompt_only_leaves_title_untouched() {
         .success();
     let item = read_item(&d, "GLP-0001");
     assert_eq!(title_of(&item), "tray gui", "title untouched: {item}");
-    assert!(item.contains("Goals:\n- fresh prompt"), "body: {item}");
+    assert!(item.contains("## Goals\n- fresh prompt"), "body: {item}");
 }
 
 #[test]
@@ -516,28 +525,39 @@ fn e2e_update_unknown_id_fails() {
         .failure();
 }
 
-// 2. `&` cut + Goals split via the binary (mirrors pending_work.rs:134-189).
+// 2. Rich prompt lanes via the binary.
 
 #[test]
-fn e2e_add_cuts_title_at_ampersand_and_splits_goals() {
+fn e2e_add_rich_prompt_lanes_render_sections() {
     let (d, cfg) = staged();
     pwf()
         .args([
             "add",
             "glep-shimeji",
-            "lead clause & goal two & goal three",
+            "lead clause / goal two / goal three /c context one /n no parser crate /d tests pass",
             "--config-path",
         ])
         .arg(&cfg)
         .assert()
         .success();
     let item = read_item(&d, "GLP-0002");
-    // Title is the lead clause, lowercased, cut at the first `&`.
+    // Title is the lead clause, lowercased, cut at the first lane marker.
     assert_eq!(title_of(&item), "lead clause", "title not cut: {item}");
-    // One bullet per `&` segment.
     assert!(
-        item.contains("Goals:\n- lead clause\n- goal two\n- goal three"),
-        "goals not split per segment: {item}"
+        item.contains("## Goals\n- lead clause\n- goal two\n- goal three"),
+        "goals not rendered: {item}"
+    );
+    assert!(
+        item.contains("## Context\n- context one"),
+        "context not rendered: {item}"
+    );
+    assert!(
+        item.contains("## Constraints\n- no parser crate"),
+        "constraints not rendered: {item}"
+    );
+    assert!(
+        item.contains("## Done When\n- tests pass"),
+        "done-when not rendered: {item}"
     );
 }
 
@@ -1137,7 +1157,7 @@ fn resolve_show_emits_markdown_without_created_key() {
         "PWF",
         "PWF-0001",
         "do the thing",
-        "---\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\nGoals:\n- do the thing\n",
+        "---\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- do the thing\n",
     );
     let out = pwf()
         .args(["resolve", "--show", "--id", "PWF-0001", "--config-path"])
@@ -1153,7 +1173,7 @@ fn resolve_show_emits_markdown_without_created_key() {
         stdout.contains("title: do the thing"),
         "missing title: {stdout}"
     );
-    assert!(stdout.contains("Goals:"), "missing body: {stdout}");
+    assert!(stdout.contains("## Goals"), "missing body: {stdout}");
     assert!(stdout.contains("- do the thing"), "missing goal: {stdout}");
     assert!(
         !stdout.contains("created:"),
@@ -1268,6 +1288,54 @@ fn staged_with_done_item(
 }
 
 #[test]
+fn e2e_reopen_flips_done_item_back_to_active_and_restores_index() {
+    // PWF-0054: reopen is the inverse of check — done → active, drop provenance,
+    // flip the done-queue link back to an open `- [ ]`.
+    let (dir, cfg) = staged_with_done_item(
+        "pwf",
+        "PWF",
+        "PWF-0003",
+        "---\nstatus: done\ntitle: just done\nproject: pwf\ncreated: 2026-06-20\ncompleted: 2026-06-20\ncommits: \"a..b\"\n---\n\n## Goals\n- finish it\n",
+    );
+    pwf()
+        // Lowercase id exercises the case-insensitive match + canonical output.
+        .args(["reopen", "--id", "pwf-0003", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .success()
+        .stdout(contains("Reopened PWF-0003"));
+
+    let note = fs::read_to_string(dir.path().join("notes/pwf/PWF-0003.md")).unwrap();
+    assert!(note.contains("status: active"), "status: {note}");
+    assert!(!note.contains("completed:"), "completed lingered: {note}");
+    assert!(!note.contains("commits:"), "commits lingered: {note}");
+    let index = fs::read_to_string(dir.path().join("notes/pwf/pwf.md")).unwrap();
+    assert_eq!(index, "- [ ] [[PWF-0003]]\n", "index not reopened: {index}");
+}
+
+#[test]
+fn e2e_reopen_already_active_item_skips() {
+    let (_d, cfg) = staged();
+    pwf()
+        .args(["reopen", "--id", "GLP-0001", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .success()
+        .stdout(contains("already active"));
+}
+
+#[test]
+fn e2e_reopen_unknown_id_errors() {
+    let (_d, cfg) = staged();
+    pwf()
+        .args(["reopen", "--id", "GLP-9999", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .failure()
+        .stderr(contains("not found"));
+}
+
+#[test]
 fn resolve_show_finds_done_item_still_in_project_dir() {
     // PWF-0061: a freshly-checked item keeps its note in the project dir but its
     // index link is `- [x]`, so the parser skips it. resolve must still find it.
@@ -1275,7 +1343,7 @@ fn resolve_show_finds_done_item_still_in_project_dir() {
         "pwf",
         "PWF",
         "PWF-0003",
-        "---\nstatus: done\ntitle: just done\nproject: pwf\ncompleted: 2026-06-20\n---\n\nGoals:\n- just done\n",
+        "---\nstatus: done\ntitle: just done\nproject: pwf\ncompleted: 2026-06-20\n---\n\n## Goals\n- just done\n",
     );
     let out = pwf()
         .args(["resolve", "--show", "--id", "PWF-0003", "--config-path"])
@@ -1295,7 +1363,7 @@ fn resolve_show_finds_archived_done_item() {
         "pwf",
         "PWF",
         "PWF-0002",
-        "---\nstatus: done\ntitle: finished thing\nproject: pwf\ncreated: 2026-06-20\n---\n\nGoals:\n- finished thing\n",
+        "---\nstatus: done\ntitle: finished thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- finished thing\n",
     );
     let out = pwf()
         // Lowercase id also exercises the case-insensitive archive match.
@@ -1321,7 +1389,7 @@ fn resolve_prints_archived_item_path() {
         "pwf",
         "PWF",
         "PWF-0002",
-        "---\nstatus: cancelled\ntitle: dropped\nproject: pwf\n---\n\nGoals:\n- dropped\n",
+        "---\nstatus: cancelled\ntitle: dropped\nproject: pwf\n---\n\n## Goals\n- dropped\n",
     );
     let out = pwf()
         .args(["resolve", "--id", "PWF-0002", "--config-path"])
@@ -1361,7 +1429,7 @@ fn show_streams_note_markdown_like_resolve_show() {
         "PWF",
         "PWF-0001",
         "do the thing",
-        "---\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\nGoals:\n- do the thing\n",
+        "---\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- do the thing\n",
     );
     let out = pwf()
         // Bare positional id — no `--id` flag.
@@ -1374,7 +1442,7 @@ fn show_streams_note_markdown_like_resolve_show() {
         stdout.contains("status: active"),
         "missing status: {stdout}"
     );
-    assert!(stdout.contains("Goals:"), "missing body: {stdout}");
+    assert!(stdout.contains("## Goals"), "missing body: {stdout}");
     assert!(
         !stdout.contains("created:"),
         "created key must be stripped: {stdout}"
@@ -1389,7 +1457,7 @@ fn show_finds_archived_done_item_regardless_of_status() {
         "pwf",
         "PWF",
         "PWF-0002",
-        "---\nstatus: done\ntitle: finished thing\nproject: pwf\ncreated: 2026-06-20\n---\n\nGoals:\n- finished thing\n",
+        "---\nstatus: done\ntitle: finished thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- finished thing\n",
     );
     let out = pwf()
         // Lowercase positional id also exercises the case-insensitive archive match.
@@ -1514,7 +1582,7 @@ fn update_commits_amends_open_item() {
         "PWF",
         "PWF-0001",
         "do the thing",
-        "---\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\nGoals:\n- do the thing\n",
+        "---\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- do the thing\n",
     );
     pwf()
         .args([
@@ -1541,6 +1609,60 @@ fn update_commits_amends_open_item() {
 }
 
 #[test]
+fn update_append_report_attaches_verbatim_report_to_closed_item() {
+    // PWF-0065: a closed item needs a multi-section narrative closeout report;
+    // --append-report must append it verbatim to the body without rerunning the
+    // title/Goals regeneration that --prompt does.
+    let (_d, cfg) = staged_with_done_item(
+        "pwf",
+        "PWF",
+        "PWF-0003",
+        "---\nstatus: done\ntitle: t\nproject: pwf\ncompleted: 2026-06-20\n---\n\n## Goals\n\n- ship it\n",
+    );
+    let report =
+        "## Outcome\n\nShipped `--append-report`.\n\n## Follow-ups\n\n- write the FSD card";
+    pwf()
+        .args(["update", "--id", "pwf-0003", "--append-report"])
+        .arg(report)
+        .arg("--config-path")
+        .arg(&cfg)
+        .assert()
+        .success()
+        .stdout(contains("report appended"));
+    let note = fs::read_to_string(_d.path().join("notes/pwf/PWF-0003.md")).unwrap();
+    // Body and frontmatter untouched; status stays done (no regeneration).
+    assert!(note.contains("status: done"), "status changed: {note}");
+    assert!(
+        note.contains("## Goals\n\n- ship it\n"),
+        "body altered: {note}"
+    );
+    // Report appended verbatim — headings, blank lines, and list survive.
+    assert!(
+        note.contains(
+            "### Report\n\n## Outcome\n\nShipped `--append-report`.\n\n## Follow-ups\n\n- write the FSD card\n"
+        ),
+        "report not appended verbatim: {note}"
+    );
+}
+
+#[test]
+fn update_append_report_rejects_whitespace_only() {
+    let (_d, cfg) = staged_with_done_item(
+        "pwf",
+        "PWF",
+        "PWF-0003",
+        "---\nstatus: done\ntitle: t\nproject: pwf\ncompleted: 2026-06-20\n---\n\nbody\n",
+    );
+    pwf()
+        .args(["update", "--id", "PWF-0003", "--append-report", "   \n\t"])
+        .arg("--config-path")
+        .arg(&cfg)
+        .assert()
+        .failure()
+        .stderr(contains("--report cannot be empty"));
+}
+
+#[test]
 fn update_body_edit_on_closed_item_is_rejected() {
     let (_d, cfg) = staged_with_done_item(
         "pwf",
@@ -1560,7 +1682,7 @@ fn update_body_edit_on_closed_item_is_rejected() {
         .arg(&cfg)
         .assert()
         .failure()
-        .stderr(contains("only --commits can amend closed item"));
+        .stderr(contains("can amend closed item"));
 }
 
 // 11. session verb: zellij-independent error surfaces (PWF-0038).
@@ -1582,7 +1704,7 @@ fn stage_session_with_zellij_stub(
     fs::create_dir_all(&repo).unwrap();
     fs::write(
         proj.join("PWF-0001.md"),
-        "---\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\nGoals:\n- do the thing\n",
+        "---\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- do the thing\n",
     )
     .unwrap();
     fs::write(proj.join("pwf.md"), "- [ ] [[PWF-0001|do the thing]]\n").unwrap();

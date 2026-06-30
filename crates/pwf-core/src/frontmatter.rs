@@ -136,7 +136,7 @@ mod tests {
 
     #[test]
     fn strip_passes_through_text_without_frontmatter() {
-        let note = "Goals:\n- do a thing\n";
+        let note = "## Goals\n- do a thing\n";
         assert_eq!(strip_frontmatter_keys(note, &["created"]), note);
     }
 

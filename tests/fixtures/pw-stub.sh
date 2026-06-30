@@ -25,4 +25,7 @@ case $verb in
   check)
     if [ -n "${HANDOFF_STUB_LOG:-}" ]; then printf 'check %s\n' "$id" >>"$HANDOFF_STUB_LOG"; fi
     ;;
+  reopen)
+    if [ -n "${HANDOFF_STUB_LOG:-}" ]; then printf 'reopen %s\n' "$id" >>"$HANDOFF_STUB_LOG"; fi
+    ;;
 esac

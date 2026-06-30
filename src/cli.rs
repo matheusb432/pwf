@@ -39,6 +39,9 @@ pub struct Args {
     pub slug: Option<String>,
     pub reason: Option<String>,
     pub report: Option<String>,
+    // ? update: free-form multi-line Markdown closeout report appended to the body
+    // verbatim (closed-item safe; never reruns title/Goals regeneration).
+    pub append_report: Option<String>,
     pub pending_work_script: Option<String>,
     // ? resolve: emit the note as markdown (frontmatter minus exec-irrelevant keys + body).
     pub show: bool,

@@ -135,6 +135,23 @@ pub fn mark_done(content: &str, id: &str, date: &str) -> DoneQueue {
     }
 }
 
+/// Flip `id`'s done-queue link (`- [x] [[id]] ✅ date`) back to an open
+/// `- [ ] [[id]]` line in place, preserving its section position. Returns the
+/// rewritten content, or `None` when `id` has no done link (evicted or missing) —
+/// the caller then re-adds an open link. The inverse of [`mark_done`]'s rewrite.
+pub fn reopen_done_link(content: &str, id: &str) -> Option<String> {
+    let done_re = Regex::new(&format!(
+        r"(?m)^(?P<indent>\s*)-\s*\[[xX]\]\s*\[\[{}(?:\|[^\]]*)?\]\].*$",
+        regex::escape(id)
+    ))
+    .unwrap();
+    if !done_re.is_match(content) {
+        return None;
+    }
+    let open_line = format!("${{indent}}- [ ] [[{id}]]");
+    Some(done_re.replace(content, open_line.as_str()).into_owned())
+}
+
 /// Canonical section name governing line `idx` (the nearest `## ` header above
 /// it), or `General` for the pre-header region.
 fn section_at_line(lines: &[String], idx: usize, header_re: &Regex) -> String {
@@ -235,6 +252,35 @@ mod tests {
         let content = "- [ ] [[GLP-0001|tray gui]]\n";
         let out = mark_done(content, "GLP-0001", "2026-06-13");
         assert_eq!(out.content, "- [x] [[GLP-0001]] ✅ 2026-06-13\n");
+    }
+
+    #[test]
+    fn reopen_flips_done_link_back_to_open_in_place() {
+        let content = "- [ ] [[PWF-0002]]\n- [x] [[PWF-0001]] ✅ 2026-06-13\n";
+        let out = reopen_done_link(content, "PWF-0001").unwrap();
+        assert_eq!(out, "- [ ] [[PWF-0002]]\n- [ ] [[PWF-0001]]\n");
+    }
+
+    #[test]
+    fn reopen_preserves_section_indentation() {
+        let content = "## Future\n  - [X] [[GLP-0007]] ✅ 2026-06-13\n";
+        let out = reopen_done_link(content, "GLP-0007").unwrap();
+        assert_eq!(out, "## Future\n  - [ ] [[GLP-0007]]\n");
+    }
+
+    #[test]
+    fn reopen_returns_none_when_done_link_absent() {
+        let content = "- [ ] [[PWF-0001]]\n";
+        assert!(reopen_done_link(content, "PWF-0099").is_none());
+        // An already-open link is not a done link → None (caller leaves it alone).
+        assert!(reopen_done_link(content, "PWF-0001").is_none());
+    }
+
+    #[test]
+    fn reopen_matches_aliased_done_link() {
+        let content = "- [x] [[GLP-0001|tray gui]] ✅ 2026-06-13\n";
+        let out = reopen_done_link(content, "GLP-0001").unwrap();
+        assert_eq!(out, "- [ ] [[GLP-0001]]\n");
     }
 
     #[test]

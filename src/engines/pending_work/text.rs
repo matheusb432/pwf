@@ -12,57 +12,12 @@ static DASH_UNDERSCORE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[-_]+
 static DATE_SLUG_PREFIX_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\d{4}-\d{2}-\d{2}-").unwrap());
 
-/// Upper bound (in `char`s) on an auto-inferred title. Without it, a long prompt
-/// with no `&` cut marker became the entire title (CFG-0075). Chosen to render as
-/// a single readable index/list entry.
-const MAX_TITLE_CHARS: usize = 80;
-
 /// True for an empty prompt or a recognized placeholder (TODO, tbd, "define prompt").
 pub fn is_placeholder_prompt(prompt: &str) -> bool {
     if prompt.trim().is_empty() {
         return true;
     }
     PLACEHOLDER_PROMPT_RE.is_match(prompt)
-}
-
-/// Collapses internal whitespace runs to single spaces and trims the ends.
-fn single_line(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-/// Splits a prompt into trimmed, single-line, non-empty goal segments on `&`.
-fn goal_segments(prompt: &str) -> Vec<String> {
-    prompt
-        .split('&')
-        .map(single_line)
-        .filter(|s| !s.is_empty())
-        .collect()
-}
-
-/// Caps a single-line title at [`MAX_TITLE_CHARS`], breaking on a word boundary
-/// and appending an ellipsis when truncated. Counts `char`s (not bytes) so the
-/// cut is always valid UTF-8. A first word already over the cap (e.g. a URL with
-/// no spaces) is hard-cut on a char boundary. Inputs at/under the cap pass through.
-fn cap_title(title: &str) -> String {
-    if title.chars().count() <= MAX_TITLE_CHARS {
-        return title.to_string();
-    }
-    let mut out = String::new();
-    for word in title.split(' ') {
-        let with_word =
-            out.chars().count() + if out.is_empty() { 0 } else { 1 } + word.chars().count();
-        if with_word > MAX_TITLE_CHARS {
-            break;
-        }
-        if !out.is_empty() {
-            out.push(' ');
-        }
-        out.push_str(word);
-    }
-    if out.is_empty() {
-        out = title.chars().take(MAX_TITLE_CHARS).collect(); // overlong first word
-    }
-    format!("{out}…")
 }
 
 /// Casefolds a title to its canonical lowercase form. Single source of truth so
@@ -72,54 +27,21 @@ pub fn normalize_title(title: &str) -> String {
     title.to_lowercase()
 }
 
-/// Returns the inferred title: the prompt text before the first `&`, collapsed
-/// to one line, capped to `MAX_TITLE_CHARS`, then lowercased via
-/// `normalize_title`.
-///
-/// `&` is the explicit "cut the title here" marker; without it the lead is the
-/// whole prompt, so the length cap is what keeps a no-`&` prompt from becoming a
-/// giant title (CFG-0075). A leading `&` (empty lead) falls back to the first
-/// goal segment.
+/// Returns the inferred title for a pending-work prompt.
 pub fn inferred_title(text: &str) -> String {
-    let lead = single_line(text.split('&').next().unwrap_or(""));
-    let raw = if !lead.is_empty() {
-        lead
-    } else {
-        goal_segments(text)
-            .into_iter()
-            .next()
-            .unwrap_or_else(|| "pending work".to_string())
-    };
-    normalize_title(&cap_title(&raw))
+    super::prompt_format::inferred_title(text)
 }
 
 /// Renders the standard pending-work note body from a prompt.
-///
-/// Each `&`-separated segment becomes one `Goals:` bullet; a prompt with no `&`
-/// yields a single bullet (intentionally duplicating the title — the base
-/// template). An all-whitespace prompt yields one `pending work` bullet.
 pub fn goals_body(prompt: &str) -> String {
-    let segments = goal_segments(prompt);
-    let mut out = String::from("Goals:");
-    if segments.is_empty() {
-        out.push_str("\n- pending work");
-    } else {
-        for seg in &segments {
-            out.push_str(&format!("\n- {seg}"));
-        }
-    }
-    out
+    super::prompt_format::goals_body(prompt)
 }
 
-/// The note body stored for a new item: the `Goals:` template, unless the prompt
+/// The note body stored for a new item: the `## Goals` template, unless the prompt
 /// is a placeholder — those are stored verbatim so `is_placeholder_prompt` still
 /// flags the item as needing a real prompt (the Goals wrapper would hide it).
 pub fn note_body(prompt: &str) -> String {
-    if is_placeholder_prompt(prompt) {
-        prompt.to_string()
-    } else {
-        goals_body(prompt)
-    }
+    super::prompt_format::note_body(prompt)
 }
 
 /// "glep-shimeji" -> "glep shimeji"
@@ -182,6 +104,8 @@ pub fn line_number(text: &str, index: usize) -> usize {
 mod tests {
     use super::*;
 
+    const MAX_RENDERED_TITLE_CHARS: usize = 81;
+
     #[test]
     fn inferred_title_keeps_full_prompt_without_ampersand() {
         // No '&' → the whole prompt is the title: no word cut, lowercased.
@@ -193,13 +117,12 @@ mod tests {
     }
 
     #[test]
-    fn inferred_title_cuts_at_first_ampersand_only() {
-        // '&' is the only cut marker; the first '&' wins.
+    fn inferred_title_cuts_at_first_lane_marker_only() {
         assert_eq!(
-            inferred_title("create engine feature to add update task & make it idempotent"),
+            inferred_title("create engine feature to add update task / make it idempotent"),
             "create engine feature to add update task"
         );
-        assert_eq!(inferred_title("a & b & c"), "a");
+        assert_eq!(inferred_title("a / b / c"), "a");
         // Comma / colon / semicolon are NOT cut markers anymore.
         assert_eq!(
             inferred_title("fix bug: empty prompt"),
@@ -216,14 +139,13 @@ mod tests {
     }
 
     #[test]
-    fn inferred_title_empty_lead_falls_back_to_first_segment() {
-        // Leading '&' → empty lead clause; fall back to the first goal segment.
-        assert_eq!(inferred_title("& only second"), "only second");
+    fn inferred_title_empty_lead_uses_pending_work_fallback() {
+        assert_eq!(inferred_title("/ only second"), "pending work");
     }
 
     #[test]
-    fn inferred_title_caps_long_prompt_without_ampersand_at_word_boundary() {
-        // CFG-0075 regression: a long prompt with no '&' must NOT become a giant
+    fn inferred_title_caps_long_prompt_without_marker_at_word_boundary() {
+        // CFG-0075 regression: a long prompt with no marker must NOT become a giant
         // title. Cap on a word boundary, append an ellipsis, lowercase.
         let prompt = "Continue the PowerShell to Rust port into the cfgtool CLI (scripts/cfgtool), using the shipped gaming domain as the template, porting domain-by-domain smallest first";
         let title = inferred_title(prompt);
@@ -232,7 +154,7 @@ mod tests {
             "continue the powershell to rust port into the cfgtool cli (scripts/cfgtool),…"
         );
         // Whole title (incl. ellipsis) stays bounded for any input.
-        assert!(title.chars().count() <= MAX_TITLE_CHARS + 1);
+        assert!(title.chars().count() <= MAX_RENDERED_TITLE_CHARS);
         // The kept text is a genuine prefix of the source (no mid-word cut).
         assert!(
             prompt
@@ -242,16 +164,14 @@ mod tests {
     }
 
     #[test]
-    fn inferred_title_caps_long_lead_clause_before_ampersand() {
-        // AZC-0003 regression: agents use '&' as "and", so the lead clause before
-        // the first '&' can still be a whole sentence — the cap must apply there too.
-        let prompt = "HUMAN: Start studying AZ-104 Section 02 - Storage. Begin with the Storage MOC, then cover Storage Accounts & Redundancy & Security";
+    fn inferred_title_caps_long_lead_clause_before_marker() {
+        let prompt = "HUMAN: Start studying AZ-104 Section 02 - Storage. Begin with the Storage MOC, then cover Storage Accounts / Redundancy / Security";
         let title = inferred_title(prompt);
         assert_eq!(
             title,
             "human: start studying az-104 section 02 - storage. begin with the storage moc,…"
         );
-        assert!(title.chars().count() <= MAX_TITLE_CHARS + 1);
+        assert!(title.chars().count() <= MAX_RENDERED_TITLE_CHARS);
     }
 
     #[test]
@@ -270,27 +190,27 @@ mod tests {
         let word = "x".repeat(200);
         let title = inferred_title(&word);
         assert!(title.ends_with('…'));
-        assert_eq!(title.chars().count(), MAX_TITLE_CHARS + 1);
+        assert_eq!(title.chars().count(), MAX_RENDERED_TITLE_CHARS);
     }
 
     #[test]
     fn inferred_title_is_always_bounded() {
         // PWF-0031 invariant: for any input, the inferred title's char count never
-        // exceeds MAX_TITLE_CHARS + 1 (the +1 is the appended ellipsis). A
+        // exceeds the cap plus the appended ellipsis. A
         // deterministic adversarial table (no proptest dep): long no-boundary, long
-        // lead before `&`, all separators, multi-byte emoji, many spaces, empty.
+        // lead before marker, all separators, multi-byte emoji, many spaces, empty.
         let cases = [
-            "x".repeat(500),                          // long, no boundary
-            format!("{}& tail", "word ".repeat(200)), // long lead before `&`
-            "&".repeat(300),                          // all separators
-            "💥".repeat(300),                         // multi-byte, no spaces
-            "a ".repeat(300),                         // many word boundaries
-            String::new(),                            // empty
+            "x".repeat(500),                           // long, no boundary
+            format!("{} / tail", "word ".repeat(200)), // long lead before marker
+            "/ ".repeat(300),                          // all separators
+            "💥".repeat(300),                          // multi-byte, no spaces
+            "a ".repeat(300),                          // many word boundaries
+            String::new(),                             // empty
         ];
         for input in cases {
             let t = inferred_title(&input);
             assert!(
-                t.chars().count() <= MAX_TITLE_CHARS + 1,
+                t.chars().count() <= MAX_RENDERED_TITLE_CHARS,
                 "input bound violated ({} chars): {t}",
                 t.chars().count()
             );
@@ -323,30 +243,30 @@ mod tests {
     fn goals_body_single_segment_without_ampersand() {
         assert_eq!(
             goals_body("add startup toggle"),
-            "Goals:\n- add startup toggle"
+            "## Goals\n- add startup toggle"
         );
     }
 
     #[test]
-    fn goals_body_one_bullet_per_ampersand_segment() {
+    fn goals_body_one_bullet_per_slash_lane() {
         assert_eq!(
-            goals_body("create engine feature to add update task & make it idempotent"),
-            "Goals:\n- create engine feature to add update task\n- make it idempotent"
+            goals_body("create engine feature to add update task / make it idempotent"),
+            "## Goals\n- create engine feature to add update task\n- make it idempotent"
         );
     }
 
     #[test]
-    fn goals_body_trims_and_drops_empty_segments() {
-        assert_eq!(goals_body("  a  &&  b  & "), "Goals:\n- a\n- b");
+    fn goals_body_preserves_ampersands_as_text() {
+        assert_eq!(goals_body("a & b"), "## Goals\n- a & b");
     }
 
     #[test]
     fn note_body_wraps_a_normal_prompt() {
         assert_eq!(
             note_body("add startup toggle"),
-            "Goals:\n- add startup toggle"
+            "## Goals\n- add startup toggle"
         );
-        assert_eq!(note_body("a & b"), "Goals:\n- a\n- b");
+        assert_eq!(note_body("a / b"), "## Goals\n- a\n- b");
     }
 
     #[test]

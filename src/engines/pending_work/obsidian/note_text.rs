@@ -6,6 +6,8 @@ use regex::Regex;
 
 static COMPLETED_LINE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?m)^completed:.*$").unwrap());
+static COMPLETED_LINE_NL_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)^completed:.*\n?").unwrap());
 static CREATED_LINE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?m)^created:.*$").unwrap());
 static PREREQ_LINE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^prereq:.*$").unwrap());
@@ -17,6 +19,9 @@ static COMMITS_LINE_NL_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?m)^commits:.*\n?").unwrap());
 
 const REPORT_HEADER: &str = "### Report";
+
+static REPORT_HEADER_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)^### Report\s*$").unwrap());
 
 /// For brand-new items `completed` is None.
 pub fn work_item_content(
@@ -62,6 +67,10 @@ fn normalized_report(report: &str) -> Option<String> {
 }
 
 /// Append the standard completion report section to a work-item note.
+///
+/// Collapses the report to a single normalized line (BR-0005); used by the
+/// `check`/`cancel` close path. For a multi-section closeout report that must keep
+/// its Markdown structure, use [`append_report_block_text`] instead.
 pub fn append_report_text(content: &str, report: &str) -> Option<String> {
     let report = normalized_report(report)?;
     let mut out = content.trim_end().to_string();
@@ -69,6 +78,31 @@ pub fn append_report_text(content: &str, report: &str) -> Option<String> {
     out.push_str(REPORT_HEADER);
     out.push_str("\n\n");
     out.push_str(&report);
+    out.push('\n');
+    Some(out)
+}
+
+/// Append a free-form, multi-line Markdown closeout report to a note's body
+/// **verbatim** — newlines, headings, lists, and blank lines are preserved.
+///
+/// Unlike [`append_report_text`] (which collapses to one line for the close path),
+/// this is the `update --append-report` path for attaching a narrative report to an
+/// already-closed item without rerunning title/Goals regeneration. Returns `None`
+/// when the report is whitespace-only. When the note already has a `### Report`
+/// section the verbatim block is appended after it (separated by a blank line);
+/// otherwise a fresh `### Report` header is created.
+pub fn append_report_block_text(content: &str, report: &str) -> Option<String> {
+    let report = report.trim();
+    if report.is_empty() {
+        return None;
+    }
+    let mut out = content.trim_end().to_string();
+    if !REPORT_HEADER_RE.is_match(&out) {
+        out.push_str("\n\n");
+        out.push_str(REPORT_HEADER);
+    }
+    out.push_str("\n\n");
+    out.push_str(report);
     out.push('\n');
     Some(out)
 }
@@ -92,6 +126,17 @@ pub fn set_status_text(content: &str, status: &str, completed: &str) -> String {
             )
             .into_owned()
     }
+}
+
+/// Reopen a closed note: flip `status:` back to `active` and drop the `completed:`
+/// line (with its newline, leaving no blank residue). The inverse of
+/// [`set_status_text`]; `commits:` is dropped separately via
+/// [`set_commits_text`]`(.., None)`.
+pub fn reopen_status_text(content: &str) -> String {
+    let c = crate::regexes::STATUS_LINE_RE
+        .replace(content, "status: active")
+        .into_owned();
+    COMPLETED_LINE_NL_RE.replace(&c, "").into_owned()
 }
 
 /// Sets the `prereq:` frontmatter line to `value`, or removes it when `None`.
@@ -171,6 +216,45 @@ mod tests {
     }
 
     #[test]
+    fn append_report_block_preserves_multiline_markdown_verbatim() {
+        let content = "---\nstatus: done\ntitle: t\n---\n\n## Goals\n\n- ship it\n";
+        let report = "## Outcome\n\nShipped `--append-report`.\n\n## Follow-ups\n\n- write the FSD card\n- 50% faster";
+        let got = append_report_block_text(content, report).unwrap();
+        assert_eq!(
+            got,
+            "---\nstatus: done\ntitle: t\n---\n\n## Goals\n\n- ship it\n\n### Report\n\n## Outcome\n\nShipped `--append-report`.\n\n## Follow-ups\n\n- write the FSD card\n- 50% faster\n"
+        );
+        // The original body section is untouched.
+        assert!(
+            got.contains("## Goals\n\n- ship it\n"),
+            "body altered: {got}"
+        );
+    }
+
+    #[test]
+    fn append_report_block_rejects_whitespace_only() {
+        let content = "---\nstatus: done\n---\n\nbody\n";
+        assert!(append_report_block_text(content, "  \n\t\n ").is_none());
+    }
+
+    #[test]
+    fn append_report_block_extends_existing_report_section() {
+        // An item closed with `check --report` already carries a one-line `### Report`;
+        // a later closeout append lands under that same section, not a duplicate header.
+        let content = "---\nstatus: done\n---\n\nbody\n\n### Report\n\none-line close note\n";
+        let got = append_report_block_text(content, "## Detail\n\nfull writeup").unwrap();
+        assert_eq!(
+            got,
+            "---\nstatus: done\n---\n\nbody\n\n### Report\n\none-line close note\n\n## Detail\n\nfull writeup\n"
+        );
+        assert_eq!(
+            REPORT_HEADER_RE.find_iter(&got).count(),
+            1,
+            "duplicate ### Report header: {got}"
+        );
+    }
+
+    #[test]
     fn set_commits_inserts_when_absent_storing_value_raw() {
         let content = work_item_content(
             "t",
@@ -207,6 +291,33 @@ mod tests {
         let content = "---\nstatus: active\ncreated: 2026-01-01\ncommits: \"a..b\"\n---\n\nbody\n";
         let got = set_commits_text(content, None);
         assert!(!got.contains("commits:"), "commits line lingered: {got}");
+    }
+
+    #[test]
+    fn reopen_status_flips_to_active_and_drops_completed() {
+        let content = "---\nstatus: done\ncompleted: 2026-01-02\ntitle: t\ncreated: 2026-01-01\ncommits: \"a..b\"\n---\n\nbody\n";
+        let got = reopen_status_text(content);
+        assert!(got.contains("status: active"), "status not flipped: {got}");
+        assert!(!got.contains("status: done"), "done lingered: {got}");
+        assert!(!got.contains("completed:"), "completed lingered: {got}");
+        // No blank line left where `completed:` was.
+        assert!(
+            got.contains("status: active\ntitle: t\n"),
+            "blank residue: {got}"
+        );
+        // `commits:` is dropped separately, not by this transform.
+        assert!(
+            got.contains("commits:"),
+            "commits should be untouched: {got}"
+        );
+    }
+
+    #[test]
+    fn reopen_status_without_completed_line_is_idempotent_on_status() {
+        let content = "---\nstatus: cancelled\ntitle: t\ncreated: 2026-01-01\n---\n\nbody\n";
+        let got = reopen_status_text(content);
+        assert!(got.contains("status: active"));
+        assert!(!got.contains("status: cancelled"));
     }
 
     #[test]

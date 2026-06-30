@@ -5,6 +5,7 @@ pub use super::obsidian::{
         add_link_to_index, add_section_block, find_section_index, remove_index_link, section_exists,
     },
     note_text::{
-        append_report_text, set_commits_text, set_prereq_text, set_status_text, work_item_content,
+        append_report_block_text, append_report_text, reopen_status_text, set_commits_text,
+        set_prereq_text, set_status_text, work_item_content,
     },
 };

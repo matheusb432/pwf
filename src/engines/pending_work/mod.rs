@@ -17,6 +17,7 @@ mod new_add;
 mod obsidian;
 mod parse;
 mod prereq;
+mod prompt_format;
 mod query;
 mod render;
 mod route;

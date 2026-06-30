@@ -57,6 +57,7 @@ pub enum Action {
     Verify,
     Check,
     Cancel,
+    Reopen,
     Resolve,
     Show,
     Remove,
@@ -71,6 +72,7 @@ const CLEAN: &str = "clean";
 const VERIFY: &str = "verify";
 const CHECK: &str = "check";
 const CANCEL: &str = "cancel";
+const REOPEN: &str = "reopen";
 const RESOLVE: &str = "resolve";
 const SHOW: &str = "show";
 const REMOVE: &str = "remove";
@@ -87,6 +89,7 @@ impl Action {
             Action::Verify => VERIFY,
             Action::Check => CHECK,
             Action::Cancel => CANCEL,
+            Action::Reopen => REOPEN,
             Action::Resolve => RESOLVE,
             Action::Show => SHOW,
             Action::Remove => REMOVE,
@@ -131,6 +134,7 @@ impl FromStr for Action {
             VERIFY => Ok(Action::Verify),
             CHECK => Ok(Action::Check),
             CANCEL => Ok(Action::Cancel),
+            REOPEN => Ok(Action::Reopen),
             RESOLVE => Ok(Action::Resolve),
             SHOW => Ok(Action::Show),
             REMOVE => Ok(Action::Remove),
