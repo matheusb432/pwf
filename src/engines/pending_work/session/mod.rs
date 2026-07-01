@@ -22,7 +22,9 @@ pub(in crate::engines::pending_work) use model_tiers::{
 pub(in crate::engines::pending_work) use multiplexer::{
     MultiplexerDriver, NewTabError, RealZellij,
 };
-pub(super) use render::{DispatchOutcome, render, use_color};
+pub(super) use render::{DispatchOutcome, render};
+
+use super::color::use_color;
 
 #[cfg(test)]
 use crate::confirm::FakeConfirm;

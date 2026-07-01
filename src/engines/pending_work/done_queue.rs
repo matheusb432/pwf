@@ -92,8 +92,11 @@ pub fn mark_done(content: &str, id: &str, date: &str) -> DoneQueue {
     // Evict the oldest done entries in the touched section beyond its cap.
     let mut evicted = Vec::new();
     if let Some(cap) = section_cap(&section) {
-        // (line index, completion date) for each done entry in this section.
-        let mut done: Vec<(usize, String)> = lines
+        // (line index, completion date, task id) for each done entry in this
+        // section. Line position reflects insertion order (newest-on-top), not
+        // completion order, so it must never break a date tie — the task id
+        // does, since ids are assigned sequentially and a lower id is older.
+        let mut done: Vec<(usize, String, String)> = lines
             .iter()
             .enumerate()
             .filter(|(i, l)| {
@@ -104,16 +107,20 @@ pub fn mark_done(content: &str, id: &str, date: &str) -> DoneQueue {
                     .captures(l)
                     .map(|c| c[1].to_string())
                     .unwrap_or_default();
-                (i, d)
+                let task_id = DONE_LINK_RE
+                    .captures(l)
+                    .map(|c| c["id"].to_string())
+                    .unwrap_or_default();
+                (i, d, task_id)
             })
             .collect();
         if done.len() > cap {
-            // Oldest first by date; line index is the deterministic tiebreak.
-            done.sort_by(|a, b| a.1.cmp(&b.1).then(a.0.cmp(&b.0)));
+            // Oldest first by completion date, then by task id on a tie.
+            done.sort_by(|a, b| a.1.cmp(&b.1).then(a.2.cmp(&b.2)));
             let mut victims: Vec<usize> = done
                 .iter()
                 .take(done.len() - cap)
-                .map(|(i, _)| *i)
+                .map(|(i, _, _)| *i)
                 .collect();
             for &i in &victims {
                 if let Some(c) = DONE_LINK_RE.captures(&lines[i]) {
@@ -206,6 +213,24 @@ mod tests {
         assert!(out.content.contains("- [x] [[PWF-0007]] ✅ 2026-06-13"));
         // Still six done after eviction.
         assert_eq!(out.content.matches("- [x]").count(), 6);
+    }
+
+    #[test]
+    fn same_date_tie_breaks_by_task_id_not_file_position() {
+        // New items land at the top of a section (newest-on-top), so a lower
+        // line index does not mean an older task. PWF-0004 sits above PWF-0002
+        // in the file despite having a higher (newer) id; both close on the
+        // same date. The lower id (PWF-0002, the older task) must be the one
+        // evicted, not whichever happens to sit at a lower line index.
+        let content = format!(
+            "## Low-prio\n{}\n{}\n{}\n- [ ] [[PWF-0005]]\n",
+            done("PWF-0004", 1), // same date as PWF-0002, higher id, sits on top
+            done("PWF-0003", 5), // later date, never the eviction candidate
+            done("PWF-0002", 1), // same date as PWF-0004, lower (older) id
+        );
+        let out = mark_done(&content, "PWF-0005", "2026-06-13");
+        assert_eq!(out.evicted, vec!["PWF-0002"]);
+        assert!(out.content.contains("PWF-0004"), "newer-id task kept");
     }
 
     #[test]

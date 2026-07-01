@@ -60,6 +60,9 @@ pub struct Args {
     pub dry_run: bool,
     // ? list: cap to N items (None = default cap; Some(0) = unlimited).
     pub number: Option<usize>,
+    // ? list: `-o`/`--order` raw tokens (0-2 of created|id|asc|desc), resolved to
+    // an `OrderSpec` by the engine. Empty = default (created desc).
+    pub order: Vec<String>,
     // ? list: include scoped sections (hidden by default).
     // ? add: `human` also routes the new item under the `## Human` section.
     pub future: bool,

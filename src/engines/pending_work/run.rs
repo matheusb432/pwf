@@ -3,10 +3,13 @@
 
 use super::{
     actions::{
-        NewItemSpec, add_pending_work_item, list::ListScope, run_cancel, run_check,
-        run_list_action, run_remove, run_reopen, run_update,
+        NewItemSpec, add_pending_work_item,
+        list::{ListScope, OrderSpec},
+        render_add_confirmation, run_cancel, run_check, run_list_action, run_remove, run_reopen,
+        run_update,
     },
     agent::{probe::RealProbe, verify::verify_text_with_probe},
+    color::use_color,
     continue_prompt::{continue_handoff_prompt, continue_plan_prompt},
     domain::commands::PendingWorkCommand,
     errors,
@@ -26,8 +29,20 @@ use crate::{
     engines::pending_work::actions::{run_resolve, run_show},
 };
 
+/// Top-level entry for a directly-parsed `pwf <verb>` command (main.rs only).
+/// `Add`'s confirmation gets a presentation-only reformat here — never inside
+/// `run_typed`, which `run_args` also calls for the handoff/check in-process
+/// seams that parse `add`'s plain-text id out (see `add_render`'s doc comment).
 pub fn run(command: &PendingWorkCommand) -> Result<String, String> {
-    run_typed(command).map_err(String::from)
+    let out = run_typed(command).map_err(String::from)?;
+    if matches!(command.action(), Action::Add) {
+        Ok(render_add_confirmation(
+            &out,
+            use_color(command.args().color),
+        ))
+    } else {
+        Ok(out)
+    }
 }
 
 pub(in crate::engines::pending_work) fn run_typed(
@@ -50,6 +65,7 @@ pub(in crate::engines::pending_work) fn run_typed(
                 None
             };
             let scope = ListScope::from_flags(args.human, args.future, args.all)?;
+            let order = OrderSpec::from_tokens(&args.order)?;
             Ok(run_list_action(
                 &cfg,
                 only_project.as_deref(),
@@ -57,6 +73,7 @@ pub(in crate::engines::pending_work) fn run_typed(
                 scope,
                 args.number,
                 args.effort,
+                order,
             )?)
         }
 

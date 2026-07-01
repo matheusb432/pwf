@@ -73,6 +73,116 @@ impl ListScope {
     }
 }
 
+/// `-o`/`--order` sort field (default [`OrderField::Created`]). `Created`/`Id`
+/// sort flat across every listed project (no project grouping); `ProjectId` is
+/// the explicit opt-in that reproduces the pre-PWF-0096 default — project-name
+/// ascending, then newest-id-first within each project.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::engines::pending_work) enum OrderField {
+    Created,
+    Id,
+    ProjectId,
+}
+
+/// `-o`/`--order` sort direction. Its default depends on the field —
+/// [`OrderField::default_direction`] — since "newest first" (`Desc`) is the
+/// intuitive default for `created`/`id`, while `project-id` defaults to `Asc`
+/// (project-name ascending) to match the pre-PWF-0096 convention it reproduces.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::engines::pending_work) enum OrderDirection {
+    Asc,
+    Desc,
+}
+
+impl OrderField {
+    /// The direction assumed when `--order`'s tokens name this field but no
+    /// direction keyword.
+    fn default_direction(self) -> OrderDirection {
+        match self {
+            OrderField::Created | OrderField::Id => OrderDirection::Desc,
+            OrderField::ProjectId => OrderDirection::Asc,
+        }
+    }
+}
+
+/// `pwf list -o`/`--order`'s resolved sort key: which field, and which direction.
+/// Default is `Created` + `Desc` (newest-created-first, flat across every listed
+/// project); `--order project-id` reproduces the pre-PWF-0096 grouped ordering
+/// (project-name ascending, then newest-id-first within a project).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::engines::pending_work) struct OrderSpec {
+    pub(in crate::engines::pending_work) field: OrderField,
+    pub(in crate::engines::pending_work) direction: OrderDirection,
+}
+
+impl Default for OrderSpec {
+    fn default() -> Self {
+        Self {
+            field: OrderField::Created,
+            direction: OrderField::Created.default_direction(),
+        }
+    }
+}
+
+impl OrderSpec {
+    /// Builds an [`OrderSpec`] from `--order`'s raw tokens. Each token is
+    /// independently a field (`created`/`id`/`project-id`) or a direction
+    /// (`asc`/`desc`) keyword, in either order; a missing field defaults to
+    /// `created`, and a missing direction defaults per the *resolved* field
+    /// ([`OrderField::default_direction`]).
+    ///
+    /// # Errors
+    ///
+    /// Returns a `PendingWorkError` when two tokens name the same category
+    /// (e.g. `--order created id` or `--order asc desc`), or a token is neither.
+    pub(in crate::engines::pending_work) fn from_tokens(
+        tokens: &[String],
+    ) -> Result<Self, PendingWorkError> {
+        let mut field: Option<(OrderField, &str)> = None;
+        let mut direction: Option<(OrderDirection, &str)> = None;
+        for token in tokens {
+            match token.as_str() {
+                t @ ("created" | "id" | "project-id") => {
+                    if let Some((_, first)) = field {
+                        return Err(PendingWorkError::ConflictingOrderField {
+                            first: first.to_string(),
+                            second: t.to_string(),
+                        });
+                    }
+                    let parsed = match t {
+                        "created" => OrderField::Created,
+                        "id" => OrderField::Id,
+                        _ => OrderField::ProjectId,
+                    };
+                    field = Some((parsed, t));
+                }
+                t @ ("asc" | "desc") => {
+                    if let Some((_, first)) = direction {
+                        return Err(PendingWorkError::ConflictingOrderDirection {
+                            first: first.to_string(),
+                            second: t.to_string(),
+                        });
+                    }
+                    let parsed = if t == "asc" {
+                        OrderDirection::Asc
+                    } else {
+                        OrderDirection::Desc
+                    };
+                    direction = Some((parsed, t));
+                }
+                other => {
+                    return Err(PendingWorkError::BadOrderValue {
+                        value: other.to_string(),
+                    });
+                }
+            }
+        }
+        let field = field.map_or(OrderField::Created, |(f, _)| f);
+        let direction = direction.map_or(field.default_direction(), |(d, _)| d);
+        Ok(Self { field, direction })
+    }
+}
+
 fn section_group_rank(section: Option<&str>) -> u8 {
     match section {
         None => 0,
@@ -102,24 +212,54 @@ fn id_suffix(id: &str) -> u64 {
         .unwrap_or(0)
 }
 
-/// Reorder items by project, then newest-first inside each project. The full id
-/// string tiebreaks so the order is deterministic across runs.
-fn sort_by_project_then_newest(items: &mut [Item]) {
-    items.sort_by(|a, b| {
-        a.project
-            .cmp(&b.project)
-            .then_with(|| id_suffix(&b.id).cmp(&id_suffix(&a.id)))
-            .then_with(|| b.id.cmp(&a.id))
-    });
+/// An item's `created:` frontmatter value, or `""` when absent (legacy inline
+/// items, or a hand-corrupted note) — sorts first ascending / last descending.
+fn created_key(item: &Item) -> &str {
+    item.created.as_deref().unwrap_or("")
 }
 
-fn sort_by_group_then_project_then_newest(items: &mut [Item]) {
+/// Order comparison for `order.field`. `Created`/`Id` are flat across every
+/// listed project: computed ascending, tiebroken by the full id string (also
+/// ascending), then flipped whole when `order.direction` is `Desc` — flipping
+/// the *entire* chain (not just the primary key) keeps the tiebreak
+/// deterministic in the requested direction. `ProjectId` groups by project
+/// instead: `order.direction` controls the project axis only (default `Desc`
+/// still means "reverse of ascending", i.e. Z-A), while the id sub-key stays
+/// fixed newest-first — reproducing the pre-PWF-0096 default exactly.
+fn item_order_cmp(order: OrderSpec, a: &Item, b: &Item) -> std::cmp::Ordering {
+    if order.field == OrderField::ProjectId {
+        let project_cmp = match order.direction {
+            OrderDirection::Asc => a.project.cmp(&b.project),
+            OrderDirection::Desc => b.project.cmp(&a.project),
+        };
+        return project_cmp
+            .then_with(|| id_suffix(&b.id).cmp(&id_suffix(&a.id)))
+            .then_with(|| b.id.cmp(&a.id));
+    }
+    let ascending = match order.field {
+        OrderField::Created => created_key(a).cmp(created_key(b)),
+        OrderField::Id => id_suffix(&a.id).cmp(&id_suffix(&b.id)),
+        OrderField::ProjectId => unreachable!("handled above"),
+    }
+    .then_with(|| a.id.cmp(&b.id));
+    match order.direction {
+        OrderDirection::Asc => ascending,
+        OrderDirection::Desc => ascending.reverse(),
+    }
+}
+
+/// Reorder items by `order` — flat across every listed project for
+/// `Created`/`Id`; grouped by project for the explicit `ProjectId` opt-in
+/// (the pre-PWF-0096 default).
+fn sort_by_order(items: &mut [Item], order: OrderSpec) {
+    items.sort_by(|a, b| item_order_cmp(order, a, b));
+}
+
+fn sort_by_group_then_order(items: &mut [Item], order: OrderSpec) {
     items.sort_by(|a, b| {
         section_group_rank(a.section.as_deref())
             .cmp(&section_group_rank(b.section.as_deref()))
-            .then_with(|| a.project.cmp(&b.project))
-            .then_with(|| id_suffix(&b.id).cmp(&id_suffix(&a.id)))
-            .then_with(|| b.id.cmp(&a.id))
+            .then_with(|| item_order_cmp(order, a, b))
     });
 }
 
@@ -144,6 +284,7 @@ pub(in crate::engines::pending_work) fn run_list_action(
     scope: ListScope,
     number: Option<usize>,
     effort: Option<u8>,
+    order: OrderSpec,
 ) -> Result<String, PendingWorkError> {
     let mut items: Vec<_> = get_pending_work(cfg, only_project)?
         .into_iter()
@@ -152,9 +293,9 @@ pub(in crate::engines::pending_work) fn run_list_action(
         .collect();
     // Order + cap before rendering so the selected/capped sequence is consistent.
     if scope.groups_output() {
-        sort_by_group_then_project_then_newest(&mut items);
+        sort_by_group_then_order(&mut items, order);
     } else {
-        sort_by_project_then_newest(&mut items);
+        sort_by_order(&mut items, order);
     }
     let (items, hidden) = apply_cap(items, number.unwrap_or(DEFAULT_LIST_CAP));
     let result = ListResult::from_items(items, hidden);
@@ -194,6 +335,7 @@ mod tests {
             section: None,
             prereq: None,
             effort: None,
+            created: None,
         }
     }
 
@@ -223,7 +365,16 @@ mod tests {
         )
         .unwrap();
 
-        let err = run_list_action(&cfg, None, false, ListScope::Default, None, None).unwrap_err();
+        let err = run_list_action(
+            &cfg,
+            None,
+            false,
+            ListScope::Default,
+            None,
+            None,
+            OrderSpec::default(),
+        )
+        .unwrap_err();
 
         assert_matches!(
             err,
@@ -236,15 +387,34 @@ mod tests {
         );
     }
 
-    #[test]
-    fn sort_by_project_then_newest_orders_one_project_by_descending_id() {
-        let mut items = vec![item("GLP-0001"), item("GLP-0003"), item("GLP-0002")];
-        sort_by_project_then_newest(&mut items);
-        assert_eq!(ids(&items), ["GLP-0003", "GLP-0002", "GLP-0001"]);
+    fn dated(id: &str, created: &str) -> Item {
+        let mut i = item(id);
+        i.created = Some(created.to_string());
+        i
     }
 
     #[test]
-    fn sort_by_project_then_newest_groups_by_project_before_descending_id() {
+    fn sort_by_order_id_is_flat_across_projects() {
+        // OrderField::Id is not grouped by project: "config-handler" sorts
+        // before "pwf" alphabetically, but the higher id suffix (PWF-0099)
+        // still wins under a flat id-desc order — proving project plays no
+        // part, unlike the ProjectId opt-in.
+        let mut cfg_item = item("CFG-0001");
+        cfg_item.project = "config-handler".to_string();
+        let mut pwf_item = item("PWF-0099");
+        pwf_item.project = "pwf".to_string();
+
+        let order = OrderSpec {
+            field: OrderField::Id,
+            direction: OrderDirection::Desc,
+        };
+        let mut items = vec![cfg_item, pwf_item];
+        sort_by_order(&mut items, order);
+        assert_eq!(ids(&items), ["PWF-0099", "CFG-0001"]);
+    }
+
+    #[test]
+    fn sort_by_order_project_id_reproduces_legacy_grouped_ordering() {
         let mut cfg_item = item("CFG-0001");
         cfg_item.project = "config-handler".to_string();
         let mut pwf_item = item("PWF-9999");
@@ -252,10 +422,83 @@ mod tests {
         let mut cfg_newer_item = item("CFG-0002");
         cfg_newer_item.project = "config-handler".to_string();
 
+        let order = OrderSpec {
+            field: OrderField::ProjectId,
+            direction: OrderDirection::Asc,
+        };
         let mut items = vec![pwf_item, cfg_item, cfg_newer_item];
-        sort_by_project_then_newest(&mut items);
+        sort_by_order(&mut items, order);
 
+        // project-name ascending ("config-handler" < "pwf"), then newest-id-first
+        // within each project.
         assert_eq!(ids(&items), ["CFG-0002", "CFG-0001", "PWF-9999"]);
+    }
+
+    #[test]
+    fn sort_by_order_project_id_desc_reverses_only_the_project_axis() {
+        let mut cfg_item = item("CFG-0001");
+        cfg_item.project = "config-handler".to_string();
+        let mut pwf_item = item("PWF-9999");
+        pwf_item.project = "pwf".to_string();
+
+        let order = OrderSpec {
+            field: OrderField::ProjectId,
+            direction: OrderDirection::Desc,
+        };
+        let mut items = vec![cfg_item, pwf_item];
+        sort_by_order(&mut items, order);
+        // "pwf" > "config-handler", so desc puts pwf's project first; the id
+        // sub-key stays fixed newest-first regardless of direction.
+        assert_eq!(ids(&items), ["PWF-9999", "CFG-0001"]);
+    }
+
+    #[test]
+    fn sort_by_order_default_orders_newest_created_first_across_projects() {
+        let mut cfg_item = dated("CFG-0001", "2026-03-01");
+        cfg_item.project = "config-handler".to_string();
+        let mut pwf_item = dated("PWF-0001", "2026-01-01");
+        pwf_item.project = "pwf".to_string();
+
+        // "config-handler" < "pwf" alphabetically, but CFG-0001 was created
+        // later, so the (project-flat) created-desc default must still put it
+        // first — this is the exact bug report: date must win over project.
+        let mut items = vec![pwf_item, cfg_item];
+        sort_by_order(&mut items, OrderSpec::default());
+        assert_eq!(ids(&items), ["CFG-0001", "PWF-0001"]);
+    }
+
+    #[test]
+    fn sort_by_order_created_asc_orders_oldest_first() {
+        let order = OrderSpec {
+            field: OrderField::Created,
+            direction: OrderDirection::Asc,
+        };
+        let mut items = vec![
+            dated("GLP-0001", "2026-01-01"),
+            dated("GLP-0002", "2026-03-01"),
+            dated("GLP-0003", "2026-02-01"),
+        ];
+        sort_by_order(&mut items, order);
+        assert_eq!(ids(&items), ["GLP-0001", "GLP-0003", "GLP-0002"]);
+    }
+
+    #[test]
+    fn sort_by_order_created_ties_tiebreak_by_id() {
+        // Items sharing a `created:` value (e.g. same-day adds) still sort
+        // deterministically, by full id, direction-consistent with the primary key.
+        let mut items = vec![
+            dated("GLP-0002", "2026-01-01"),
+            dated("GLP-0001", "2026-01-01"),
+        ];
+        sort_by_order(&mut items, OrderSpec::default());
+        assert_eq!(ids(&items), ["GLP-0002", "GLP-0001"]);
+    }
+
+    #[test]
+    fn from_tokens_project_id_alone_defaults_direction_to_asc() {
+        let spec = OrderSpec::from_tokens(&["project-id".to_string()]).unwrap();
+        assert_eq!(spec.field, OrderField::ProjectId);
+        assert_eq!(spec.direction, OrderDirection::Asc);
     }
 
     #[test]
@@ -312,5 +555,69 @@ mod tests {
             .collect();
 
         assert_eq!(ids(&filtered), ["GLP-0001", "GLP-0002"]);
+    }
+
+    #[test]
+    fn order_spec_defaults_to_created_desc_when_no_tokens() {
+        let spec = OrderSpec::from_tokens(&[]).unwrap();
+        assert_eq!(spec, OrderSpec::default());
+        assert_eq!(spec.field, OrderField::Created);
+        assert_eq!(spec.direction, OrderDirection::Desc);
+    }
+
+    #[test]
+    fn order_spec_field_only_defaults_direction_to_desc() {
+        let spec = OrderSpec::from_tokens(&["id".to_string()]).unwrap();
+        assert_eq!(spec.field, OrderField::Id);
+        assert_eq!(spec.direction, OrderDirection::Desc);
+
+        let spec = OrderSpec::from_tokens(&["created".to_string()]).unwrap();
+        assert_eq!(spec.field, OrderField::Created);
+        assert_eq!(spec.direction, OrderDirection::Desc);
+    }
+
+    #[test]
+    fn order_spec_direction_only_defaults_field_to_created() {
+        let spec = OrderSpec::from_tokens(&["asc".to_string()]).unwrap();
+        assert_eq!(spec.field, OrderField::Created);
+        assert_eq!(spec.direction, OrderDirection::Asc);
+    }
+
+    #[test]
+    fn order_spec_accepts_field_and_direction_in_either_order() {
+        let a = OrderSpec::from_tokens(&["id".to_string(), "asc".to_string()]).unwrap();
+        let b = OrderSpec::from_tokens(&["asc".to_string(), "id".to_string()]).unwrap();
+        assert_eq!(a, b);
+        assert_eq!(a.field, OrderField::Id);
+        assert_eq!(a.direction, OrderDirection::Asc);
+    }
+
+    #[test]
+    fn order_spec_rejects_duplicate_field_tokens() {
+        let err = OrderSpec::from_tokens(&["created".to_string(), "id".to_string()]).unwrap_err();
+        assert_matches!(
+            err,
+            PendingWorkError::ConflictingOrderField { ref first, ref second }
+                if first == "created" && second == "id"
+        );
+    }
+
+    #[test]
+    fn order_spec_rejects_duplicate_direction_tokens() {
+        let err = OrderSpec::from_tokens(&["asc".to_string(), "desc".to_string()]).unwrap_err();
+        assert_matches!(
+            err,
+            PendingWorkError::ConflictingOrderDirection { ref first, ref second }
+                if first == "asc" && second == "desc"
+        );
+    }
+
+    #[test]
+    fn order_spec_rejects_unknown_token() {
+        let err = OrderSpec::from_tokens(&["bogus".to_string()]).unwrap_err();
+        assert_matches!(
+            err,
+            PendingWorkError::BadOrderValue { ref value } if value == "bogus"
+        );
     }
 }

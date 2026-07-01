@@ -148,6 +148,7 @@ fn parse_project_tasks_from_text(
         let mut prompt = String::new();
         let mut prereq: Option<String> = None;
         let mut effort: Option<String> = None;
+        let mut created: Option<String> = None;
 
         if let Some(raw) = load_item_note(&item_path) {
             let parsed = crate::frontmatter::parse(&raw);
@@ -164,6 +165,11 @@ fn parse_project_tasks_from_text(
             effort = parsed
                 .frontmatter
                 .get("effort")
+                .filter(|v| !v.trim().is_empty())
+                .cloned();
+            created = parsed
+                .frontmatter
+                .get("created")
                 .filter(|v| !v.trim().is_empty())
                 .cloned();
             prompt = parsed.body.trim().to_string();
@@ -200,6 +206,7 @@ fn parse_project_tasks_from_text(
             section: section_at(text, match_start),
             prereq,
             effort,
+            created,
         });
     }
 
@@ -261,6 +268,7 @@ fn parse_project_tasks_from_text(
             section: section_at(text, item.start),
             prereq: None,
             effort: None,
+            created: None,
         });
     }
 
@@ -316,6 +324,26 @@ mod tests {
         );
 
         assert_eq!(items[0].effort.as_deref(), Some("3"));
+    }
+
+    #[test]
+    fn parse_project_tasks_from_text_reads_created_frontmatter() {
+        let index_path = Path::new("notes/glep-shimeji/glep-shimeji.md");
+        let index_text = "# glep-shimeji\n- [[GLP-0001|tray gui]]\n";
+        let items = parse_project_tasks_from_text(
+            "glep-shimeji",
+            Some("/repo"),
+            index_path,
+            index_text,
+            |_| {
+                Some(
+                    "---\nstatus: active\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\nadd startup toggle\n"
+                        .to_string(),
+                )
+            },
+        );
+
+        assert_eq!(items[0].created.as_deref(), Some("2026-01-01"));
     }
 
     #[test]

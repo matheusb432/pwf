@@ -49,6 +49,32 @@ pub(super) enum PendingWorkError {
     /// More than one list scope flag was supplied.
     #[error("Choose only one list scope flag: --human, --future, or --all.")]
     ConflictingListScopes,
+    /// `--order` was given two field tokens (e.g. `--order created id`).
+    #[error(
+        "--order field conflict: choose either 'created' or 'id', not both ('{first}' and '{second}')."
+    )]
+    ConflictingOrderField {
+        /// The first field token seen.
+        first: String,
+        /// The second, conflicting field token.
+        second: String,
+    },
+    /// `--order` was given two direction tokens (e.g. `--order asc desc`).
+    #[error(
+        "--order direction conflict: choose either 'asc' or 'desc', not both ('{first}' and '{second}')."
+    )]
+    ConflictingOrderDirection {
+        /// The first direction token seen.
+        first: String,
+        /// The second, conflicting direction token.
+        second: String,
+    },
+    /// An `--order` token isn't a recognized field or direction keyword.
+    #[error("Unknown --order value '{value}'. Use one of: created, id, asc, desc.")]
+    BadOrderValue {
+        /// The raw, unrecognized token.
+        value: String,
+    },
     /// A managed project has no configured repository path.
     #[error("Project '{project}' is not mapped to a repo in config/pending-work.json.")]
     ProjectNotMappedToRepo {

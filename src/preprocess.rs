@@ -67,6 +67,13 @@ fn is_short_value_flag(tok: &str) -> bool {
     tok == "-n" || tok == "-a"
 }
 
+/// `list`'s `-o`/`--order`: unlike the fixed-arity value-flags above, it takes
+/// 0-2 following values (clap's `num_args = 0..=2`), so it needs its own
+/// bounded consumption rather than the unconditional single-value grab.
+fn is_order_flag(tok: &str) -> bool {
+    tok == "--order" || tok == "-o"
+}
+
 /// Inject the implicit `list`/`route` subcommand for the `pw` engine when no
 /// canonical verb leads. Idempotent on input that already names a verb; a no-op
 /// for `handoff`/`migrate` (clap reports a missing subcommand itself).
@@ -92,7 +99,22 @@ pub fn normalize(argv: Vec<String>) -> Vec<String> {
     let mut i = 1;
     while i < argv.len() {
         let tok = &argv[i];
-        if tok.starts_with("--") {
+        if is_order_flag(tok) {
+            opts.push(tok.clone());
+            i += 1;
+            // Up to 2 bare-word values (clap's own value_parser rejects an
+            // invalid one later); stop at the first token that looks like a
+            // flag, or after 2, whichever comes first.
+            for _ in 0..2 {
+                match argv.get(i) {
+                    Some(val) if !val.starts_with('-') => {
+                        opts.push(val.clone());
+                        i += 1;
+                    }
+                    _ => break,
+                }
+            }
+        } else if tok.starts_with("--") {
             opts.push(tok.clone());
             if is_value_flag(tok)
                 && let Some(val) = argv.get(i + 1)
@@ -266,6 +288,41 @@ mod tests {
         assert_eq!(
             n(&["pw", "add", "glep", "--effort", "3", "do", "x"]),
             vec!["pw", "add", "--effort", "3", "glep", "do", "x"]
+        );
+    }
+
+    // ! PWF-0096: `--order` takes 0-2 bare-word values (created|id|asc|desc); they
+    // must stay attached to the flag, not be reordered as positional route words
+    // behind a trailing flag like `--long`.
+    #[test]
+    fn order_values_stay_with_its_flag_on_list() {
+        assert_eq!(
+            n(&["list", "--order", "created", "desc", "--long"]),
+            vec!["pw", "list", "--order", "created", "desc", "--long"]
+        );
+    }
+
+    #[test]
+    fn order_single_value_stays_with_its_flag_on_list() {
+        assert_eq!(
+            n(&["list", "--order", "id", "--long"]),
+            vec!["pw", "list", "--order", "id", "--long"]
+        );
+    }
+
+    #[test]
+    fn bare_order_flag_consumes_no_values() {
+        assert_eq!(
+            n(&["list", "--order", "--long"]),
+            vec!["pw", "list", "--order", "--long"]
+        );
+    }
+
+    #[test]
+    fn short_order_flag_values_stay_attached() {
+        assert_eq!(
+            n(&["list", "-o", "id", "asc", "--long"]),
+            vec!["pw", "list", "-o", "id", "asc", "--long"]
         );
     }
 

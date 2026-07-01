@@ -1,10 +1,10 @@
 //! Dispatch outcome model and its colored Markdown rendering. The outcome enum
 //! is rendered separately from coloring so both are unit-tested; ANSI is gated
-//! by an explicit `on` bool resolved once at the edge (`use_color`).
+//! by an explicit `on` bool resolved once at the edge (`color::use_color`).
 
-use anstyle::{AnsiColor, Style};
+use anstyle::AnsiColor;
 
-use crate::cli::ColorChoice;
+use super::super::color::paint;
 
 /// What a dispatch attempt produced.
 #[derive(Debug, PartialEq, Eq)]
@@ -19,31 +19,6 @@ pub(in crate::engines::pending_work) enum DispatchOutcome {
         tab: String,
         message: String,
     },
-}
-
-/// Resolve the effective color setting once, at the edge. `NO_COLOR` wins;
-/// `CLICOLOR_FORCE` forces on; `Auto` falls back to stdout TTY detection.
-pub(in crate::engines::pending_work) fn use_color(choice: ColorChoice) -> bool {
-    use std::io::IsTerminal;
-    if std::env::var_os("NO_COLOR").is_some() {
-        return false;
-    }
-    if std::env::var_os("CLICOLOR_FORCE").is_some() {
-        return true;
-    }
-    match choice {
-        ColorChoice::Always => true,
-        ColorChoice::Never => false,
-        ColorChoice::Auto => std::io::stdout().is_terminal(),
-    }
-}
-
-fn paint(text: &str, color: AnsiColor, on: bool) -> String {
-    if !on {
-        return format!("**{text}**");
-    }
-    let style = Style::new().bold().fg_color(Some(color.into()));
-    format!("{}{}{}", style.render(), text, style.render_reset())
 }
 
 /// Render the outcome: a heading with a branchable token, the bold+colored
@@ -139,11 +114,5 @@ mod tests {
         };
         let out = render(&o, "claude", "/repo", true);
         assert!(out.contains('\u{1b}')); // ANSI present when on
-    }
-
-    #[test]
-    fn use_color_never_returns_false() {
-        assert!(!use_color(ColorChoice::Never));
-        // Auto/Always depend on env/TTY and are not asserted here.
     }
 }

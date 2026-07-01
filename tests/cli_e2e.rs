@@ -59,6 +59,87 @@ fn staged_two() -> (TempDir, std::path::PathBuf) {
     (dir, cfg)
 }
 
+/// Two items whose `created:` order is the *reverse* of their id-suffix order
+/// (GLP-0001 is created later than GLP-0002) — distinguishes `--order created`
+/// from `--order id` in a way `staged_two()` can't, since there id and created
+/// order agree.
+fn staged_two_diverging_created() -> (TempDir, std::path::PathBuf) {
+    let dir = TempDir::new().unwrap();
+    let notes = dir.path().join("notes");
+    let proj = notes.join("glep-shimeji");
+    fs::create_dir_all(&proj).unwrap();
+    fs::write(
+        proj.join("GLP-0001.md"),
+        "---\nstatus: active\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-03-01\n---\n\nadd toggle\n",
+    )
+    .unwrap();
+    fs::write(
+        proj.join("GLP-0002.md"),
+        "---\nstatus: active\ntitle: second\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\ndo more\n",
+    )
+    .unwrap();
+    fs::write(
+        proj.join("glep-shimeji.md"),
+        "- [ ] [[GLP-0001|tray gui]]\n- [ ] [[GLP-0002|second]]\n",
+    )
+    .unwrap();
+    let cfg = dir.path().join("cfg.json");
+    fs::write(
+        &cfg,
+        format!(
+            r#"{{ "notesDir": {:?}, "projects": {{ "glep-shimeji": "/repo" }}, "prefixes": {{ "glep-shimeji": "GLP" }} }}"#,
+            notes.to_string_lossy()
+        ),
+    )
+    .unwrap();
+    (dir, cfg)
+}
+
+/// Two *different* projects: `config-handler` (CFG-0001, created earlier) and
+/// `glep-shimeji` (GLP-0099, created later). "config-handler" sorts
+/// alphabetically *before* "glep-shimeji" — so a project-grouped default would
+/// still put CFG-0001 first, while a flat created-desc default puts GLP-0099
+/// (the newer item) first. The two predictions diverge, distinguishing "does
+/// the default group by project" from "does it order by created date".
+fn staged_two_projects_diverging_created() -> (TempDir, std::path::PathBuf) {
+    let dir = TempDir::new().unwrap();
+    let notes = dir.path().join("notes");
+    let cfg_proj = notes.join("config-handler");
+    let glp_proj = notes.join("glep-shimeji");
+    fs::create_dir_all(&cfg_proj).unwrap();
+    fs::create_dir_all(&glp_proj).unwrap();
+    fs::write(
+        cfg_proj.join("CFG-0001.md"),
+        "---\nstatus: active\ntitle: cfg item\nproject: config-handler\ncreated: 2026-01-01\n---\n\ndo cfg\n",
+    )
+    .unwrap();
+    fs::write(
+        cfg_proj.join("config-handler.md"),
+        "- [ ] [[CFG-0001|cfg item]]\n",
+    )
+    .unwrap();
+    fs::write(
+        glp_proj.join("GLP-0099.md"),
+        "---\nstatus: active\ntitle: glp item\nproject: glep-shimeji\ncreated: 2026-03-01\n---\n\ndo glp\n",
+    )
+    .unwrap();
+    fs::write(
+        glp_proj.join("glep-shimeji.md"),
+        "- [ ] [[GLP-0099|glp item]]\n",
+    )
+    .unwrap();
+    let cfg = dir.path().join("cfg.json");
+    fs::write(
+        &cfg,
+        format!(
+            r#"{{ "notesDir": {:?}, "projects": {{ "config-handler": "/repo/cfg", "glep-shimeji": "/repo/glp" }}, "prefixes": {{ "config-handler": "CFG", "glep-shimeji": "GLP" }} }}"#,
+            notes.to_string_lossy()
+        ),
+    )
+    .unwrap();
+    (dir, cfg)
+}
+
 /// Like `staged()`, but maps glep-shimeji at a real repo dir holding one handoff
 /// note — needed by `--continue-handoff`, which reads `<repo>/docs/handoffs/`.
 fn staged_with_handoff() -> (TempDir, std::path::PathBuf) {
@@ -137,6 +218,23 @@ fn add_positional_quoted_prompt_creates_item() {
 }
 
 #[test]
+fn add_confirmation_leads_with_id_after_a_blank_line() {
+    let (_d, cfg) = staged();
+    let out = pwf()
+        .args(["add", "glep-shimeji", "x y z", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .success();
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    // staged() already holds GLP-0001, so the new item is GLP-0002.
+    assert!(
+        stdout.starts_with("\n**GLP-0002** glep-shimeji ::"),
+        "got: {stdout}"
+    );
+    assert!(stdout.contains("file:"), "got: {stdout}");
+}
+
+#[test]
 fn add_bare_words_joined_into_prompt() {
     let (d, cfg) = staged();
     pwf()
@@ -203,8 +301,8 @@ fn add_continue_handoff_builds_handoff_prompt() {
         .success();
     let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
     assert!(
-        stdout.starts_with("ADDED PWF TASK [GLP-0001]"),
-        "got: {stdout}"
+        stdout.starts_with("\n**GLP-0001**"),
+        "id not moved to the front: {stdout}"
     );
     assert!(
         stdout.contains(":: continue api cleanup"),
@@ -366,6 +464,149 @@ fn shorthand_project_forwards_number() {
         .stdout(contains("GLP-0012"))
         .stdout(contains("GLP-0011"))
         .stdout(contains("GLP-0010").not());
+}
+
+#[test]
+fn e2e_list_default_orders_by_created_desc_not_id() {
+    let (_d, cfg) = staged_two_diverging_created();
+    let out = pwf()
+        .args(["list", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let stdout = String::from_utf8(out).unwrap();
+    // GLP-0001 was created later, so the created-desc default puts it first
+    // even though its id suffix is lower.
+    assert!(
+        stdout.find("GLP-0001").unwrap() < stdout.find("GLP-0002").unwrap(),
+        "expected newest-created (GLP-0001) first: {stdout}"
+    );
+}
+
+#[test]
+fn e2e_list_order_id_desc_reproduces_legacy_ordering() {
+    let (_d, cfg) = staged_two_diverging_created();
+    let out = pwf()
+        .args(["list", "--order", "id", "desc", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let stdout = String::from_utf8(out).unwrap();
+    // Same fixture, but id-desc puts GLP-0002 first regardless of created dates.
+    assert!(
+        stdout.find("GLP-0002").unwrap() < stdout.find("GLP-0001").unwrap(),
+        "expected highest id (GLP-0002) first: {stdout}"
+    );
+}
+
+#[test]
+fn e2e_list_order_created_asc_orders_oldest_first() {
+    let (_d, cfg) = staged_two_diverging_created();
+    let out = pwf()
+        .args(["list", "--order", "created", "asc", "--config-path"])
+        .arg(&cfg)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        stdout.find("GLP-0002").unwrap() < stdout.find("GLP-0001").unwrap(),
+        "expected oldest-created (GLP-0002) first: {stdout}"
+    );
+}
+
+#[test]
+fn e2e_list_order_tokens_work_in_either_order() {
+    let (_d, cfg) = staged_two_diverging_created();
+    let a = pwf()
+        .args(["list", "--order", "id", "asc", "--config-path"])
+        .arg(&cfg)
+        .output()
+        .unwrap()
+        .stdout;
+    let b = pwf()
+        .args(["list", "--order", "asc", "id", "--config-path"])
+        .arg(&cfg)
+        .output()
+        .unwrap()
+        .stdout;
+    assert_eq!(a, b);
+}
+
+#[test]
+fn e2e_list_order_rejects_conflicting_field_tokens() {
+    let (_d, cfg) = staged_two();
+    pwf()
+        .args(["list", "--order", "created", "id", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .failure()
+        .stderr(contains("conflict"));
+}
+
+#[test]
+fn e2e_list_order_rejects_unknown_token() {
+    let (_d, cfg) = staged_two();
+    pwf()
+        .args(["list", "--order", "bogus", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .failure()
+        .stderr(contains("invalid value"));
+}
+
+#[test]
+fn e2e_list_default_across_all_projects_is_flat_by_created_not_grouped_by_project() {
+    // Reproduces the reported bug: bare `pwf list`/`pwf ls` across multiple
+    // projects must order by created date first, not group by project name.
+    let (_d, cfg) = staged_two_projects_diverging_created();
+    let out = pwf()
+        .args(["list", "--config-path"])
+        .arg(&cfg)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        stdout.find("GLP-0099").unwrap() < stdout.find("CFG-0001").unwrap(),
+        "expected the newer item (GLP-0099) first, ignoring project grouping: {stdout}"
+    );
+}
+
+#[test]
+fn e2e_list_order_project_id_reproduces_legacy_grouped_default() {
+    let (_d, cfg) = staged_two_projects_diverging_created();
+    let out = pwf()
+        .args(["list", "--order", "project-id", "--config-path"])
+        .arg(&cfg)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        stdout.find("CFG-0001").unwrap() < stdout.find("GLP-0099").unwrap(),
+        "--order project-id must group by project ascending, regardless of created date: {stdout}"
+    );
+}
+
+#[test]
+fn e2e_route_project_shorthand_ignores_created_stays_id_desc() {
+    // AC-0004.6: `pwf <project>` (the word-router) has no --order flag and must
+    // keep the legacy id-descending order even though GLP-0001 was created later.
+    let (_d, cfg) = staged_two_diverging_created();
+    let out = pwf()
+        .args(["glep-shimeji", "--config-path"])
+        .arg(&cfg)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        stdout.find("GLP-0002").unwrap() < stdout.find("GLP-0001").unwrap(),
+        "route shorthand must stay id-descending: {stdout}"
+    );
 }
 
 #[test]

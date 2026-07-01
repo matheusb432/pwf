@@ -830,8 +830,11 @@ fn list_run(cfg: &std::path::Path, notes: &std::path::Path, extra: &[&str]) -> S
     pwk::run_args(&parse_args(&argv)).unwrap()
 }
 
-#[test]
-fn list_groups_projects_before_sorting_by_number() {
+/// Stages CFG-0001/CFG-0002 under `config-handler` and PWF-9999 under `pwf`,
+/// all sharing the same `created:` date, so ties fall to the deterministic
+/// full-id tiebreak (see [`list_default_is_flat_across_projects`] and
+/// [`list_order_project_id_reproduces_legacy_grouped_ordering`]).
+fn stage_two_projects_same_created_date() -> (std::path::PathBuf, std::path::PathBuf) {
     let stage = stage_dir();
     let notes = stage.join("notes");
     for (project, id, title) in [
@@ -866,8 +869,37 @@ fn list_groups_projects_before_sorting_by_number() {
         ),
     )
     .unwrap();
+    (cfg, notes)
+}
+
+// ! PWF-0096 (re-scoped): the default listing is flat across projects — created
+// date wins over project grouping. When created dates tie (as here), the
+// deterministic tiebreak is the full id string, reversed with the (default
+// desc) direction, so it has no relation to project name.
+#[test]
+fn list_default_is_flat_across_projects() {
+    let (cfg, notes) = stage_two_projects_same_created_date();
 
     let out = list_run(&cfg, &notes, &["-n", "0"]);
+
+    assert_eq!(
+        out.lines().map(str::to_string).collect::<Vec<_>>(),
+        [
+            "PWF-9999 :: pwf newest",
+            "CFG-0002 :: cfg newer",
+            "CFG-0001 :: cfg older",
+        ]
+    );
+}
+
+// `--order project-id` is the explicit opt-in that reproduces the
+// pre-PWF-0096 default: project-name ascending, then newest-id-first within
+// each project.
+#[test]
+fn list_order_project_id_reproduces_legacy_grouped_ordering() {
+    let (cfg, notes) = stage_two_projects_same_created_date();
+
+    let out = list_run(&cfg, &notes, &["-n", "0", "--order", "project-id"]);
 
     assert_eq!(
         out.lines().map(str::to_string).collect::<Vec<_>>(),

@@ -3,12 +3,23 @@
 // create form is `pwf add <project> "<prompt>"`; bare words error with a hint.
 
 use super::{
-    actions::{list::ListScope, run_list_action},
+    actions::{
+        list::{ListScope, OrderDirection, OrderField, OrderSpec},
+        run_list_action,
+    },
     agent::{probe::RealProbe, verify::verify_text_with_probe},
     errors::PendingWorkError,
     query::{find_pending_item, resolve_managed_project_name_typed},
 };
 use crate::{cli::Args, config::Config};
+
+/// Fixed legacy order for the `route` word-router (bare `pwf`/`pwf <project>`):
+/// project-name ascending, then id-suffix descending within a project — never
+/// affected by `--order`, since `route` has no `--order` flag to forward.
+const ROUTE_ORDER: OrderSpec = OrderSpec {
+    field: OrderField::ProjectId,
+    direction: OrderDirection::Asc,
+};
 
 pub(super) fn run_route(cfg: &Config, args: &Args, date: &str) -> Result<String, PendingWorkError> {
     let route_words: Vec<&str> = args
@@ -21,7 +32,15 @@ pub(super) fn run_route(cfg: &Config, args: &Args, date: &str) -> Result<String,
     if route_words.is_empty() {
         // list all
         let scope = ListScope::from_flags(args.human, args.future, args.all)?;
-        return run_list_action(cfg, None, args.long, scope, args.number, args.effort);
+        return run_list_action(
+            cfg,
+            None,
+            args.long,
+            scope,
+            args.number,
+            args.effort,
+            ROUTE_ORDER,
+        );
     }
 
     let verb = route_words[0].to_ascii_lowercase();
@@ -83,6 +102,7 @@ pub(super) fn run_route(cfg: &Config, args: &Args, date: &str) -> Result<String,
             scope,
             args.number,
             args.effort,
+            ROUTE_ORDER,
         );
     }
 

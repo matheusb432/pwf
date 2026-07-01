@@ -1,6 +1,7 @@
 // Leaf action implementations: check (mark done), remove, and list.
 
 mod add;
+mod add_render;
 mod check;
 pub(super) mod list;
 mod remove;
@@ -10,6 +11,7 @@ mod show;
 mod update;
 
 pub(super) use add::{NewItemSpec, add_pending_work_item};
+pub(super) use add_render::render_add_confirmation;
 pub(super) use check::{run_cancel, run_check};
 pub(super) use list::run_list_action;
 pub(super) use remove::run_remove;

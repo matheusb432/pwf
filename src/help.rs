@@ -6,7 +6,7 @@
 // Tuned for AI agents driving the engine (the skills point them here, not at the
 // rich `--help`), so keep it token-lean.
 const PW_TERSE: &str = r#"pw [<project>]   (alias: pending-work; bare pw lists all; pw <project> [-n <N>] [--long|--future|--human|--all] lists that project)
-  list [-n <N>] [--long] [--future] [--human] [--all]
+  list [-n <N>] [--long] [--future] [--human] [--all] [-o/--order <created|id|project-id> <asc|desc>]   (--order default: created desc, flat across every project; --order project-id reproduces the pre-PWF-0096 project-grouped default)
   add <project> <prompt>   prompt lanes: <title> / <goal> /c <context> /n <constraint> /d <done>; plus [--title] [--human] [--section <s>] [--prereq <id>] [--continue-handoff] [--continue <path>]
   check --id [--report] [--commits <range>] [--review]
   cancel --id --report [--commits <range>] [--review]

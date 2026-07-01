@@ -144,6 +144,13 @@ pub enum PwAction {
         /// Show only items tagged with this exact effort/complexity tier (1-4).
         #[arg(long, value_parser = clap::value_parser!(u8).range(1..=4))]
         effort: Option<u8>,
+        /// Sort key: field (created|id|project-id) and/or direction
+        /// (asc|desc), each independently optional, in either order. Default:
+        /// created desc, flat across every listed project. `project-id`
+        /// groups by project (default asc), then newest-id-first within it —
+        /// the pre-PWF-0096 default.
+        #[arg(short = 'o', long, num_args = 0..=2, value_name = "ORDER", value_parser = ["created", "id", "project-id", "asc", "desc"])]
+        order: Vec<String>,
         #[command(flatten)]
         common: PwCommon,
     },
@@ -671,6 +678,7 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             all,
             number,
             effort,
+            order,
             common,
         } => {
             a.project = project;
@@ -680,6 +688,7 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             a.all = all;
             a.number = number;
             a.effort = effort;
+            a.order = order;
             apply_pw_common(a, common);
             PendingWorkAction::List
         }

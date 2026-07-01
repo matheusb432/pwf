@@ -4,6 +4,7 @@
 
 mod actions;
 mod agent;
+mod color;
 mod commits;
 mod continue_prompt;
 mod domain;

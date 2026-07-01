@@ -26,6 +26,9 @@ pub struct Item {
     // ? Raw `effort` frontmatter (e.g. "3"); unvalidated here — EffortTier::parse
     // ? validates it at resolution time (session/verify).
     pub effort: Option<String>,
+    // ? Raw `created` frontmatter (e.g. "2026-01-01"); `None` for legacy inline
+    // ? items, which have no backing note. Drives `list --order created`.
+    pub created: Option<String>,
 }
 
 impl Item {
@@ -48,6 +51,7 @@ impl Item {
             section: None,
             prereq: None,
             effort: None,
+            created: None,
         }
     }
 }
@@ -124,6 +128,7 @@ impl Item {
             section: None,
             prereq: None,
             effort: None,
+            created: None,
         }
     }
 }
