@@ -10,7 +10,8 @@
   },
   "bin": "pwf.exe",
   "env_set": {
-    "PWF_CONFIG": "$env:USERPROFILE\\tools\\pwf\\config\\pending-work.json"
+    "PWF_CONFIG": "$env:USERPROFILE\\tools\\pwf\\config\\pending-work.json",
+    "PWF_MODEL_TIERS": "$env:USERPROFILE\\tools\\pwf\\config\\model-tiers.toml"
   },
   "pre_install": [
     "$src = Join-Path $env:USERPROFILE 'tools\\pwf'",

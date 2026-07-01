@@ -34,22 +34,37 @@ fn command_line(argv: &[String]) -> String {
 /// The `pass`/`fail` token sits in the heading so an agent can branch on one read. The
 /// command line is sourced from `launcher.argv`, so it always reflects what `pwf
 /// session` would actually run for the selected agent.
+///
+/// `claude_model` is the outcome of `session::resolve_claude_model` for `item`: `None`
+/// when not applicable (no effort tag, or a non-Claude agent), `Some(Ok(model))` folds
+/// the resolved model into the rendered command, and `Some(Err(message))` folds
+/// `message` into `issues` and forces `launchable: no` — unlike `pwf session`, `verify`
+/// never hard-errors on a broken `model-tiers.toml`, it just reports the failure.
 pub fn verify_text_with_probe(
     item: Option<&Item>,
     launcher: &dyn AgentLauncher,
     probe: &dyn AgentProbe,
+    claude_model: Option<Result<String, String>>,
 ) -> String {
     let binary = launcher.binary();
-    let (id, launchable, issues, display) = match item {
+    let resolved_model = match &claude_model {
+        Some(Ok(m)) => Some(m.as_str()),
+        _ => None,
+    };
+    let (id, mut launchable, mut issues, display) = match item {
         Some(it) => (
             Some(it.id.as_str()),
             it.launchable,
             it.issues.clone(),
-            command_line(&launcher.argv(it, LaunchPolicy::default())),
+            command_line(&launcher.argv(it, LaunchPolicy::default(), resolved_model)),
         ),
         // No item → no concrete command; show the binary that would run.
         None => (None, true, vec![], binary.to_string()),
     };
+    if let Some(Err(message)) = &claude_model {
+        launchable = false;
+        issues.push(message.clone());
+    }
     let result = if probe.available() && launchable {
         "pass"
     } else {
@@ -107,7 +122,7 @@ mod tests {
             issues: vec![],
             ..Item::default_for_test("PWF-0001", "cli launch")
         };
-        let out = verify_text_with_probe(Some(&item), &ClaudeLauncher, &probe);
+        let out = verify_text_with_probe(Some(&item), &ClaudeLauncher, &probe, None);
         assert!(out.starts_with("# verify PWF-0001 \u{2014} pass"));
         assert!(out.contains("claude: available (1.2.3) at /usr/bin/claude"));
         assert!(out.contains("launchable: yes"));
@@ -127,7 +142,7 @@ mod tests {
             issues: vec!["Prompt is a placeholder".to_string()],
             ..Item::default_for_test("PWF-0002", "broken")
         };
-        let out = verify_text_with_probe(Some(&item), &ClaudeLauncher, &probe);
+        let out = verify_text_with_probe(Some(&item), &ClaudeLauncher, &probe, None);
         assert!(out.starts_with("# verify PWF-0002 \u{2014} fail"));
         assert!(out.contains("claude: not found on PATH"));
         assert!(out.contains("issues:\n"));
@@ -146,7 +161,7 @@ mod tests {
             issues: vec!["Prompt is a placeholder".to_string()],
             ..Item::default_for_test("PWF-0003", "non-launchable")
         };
-        let out = verify_text_with_probe(Some(&item), &ClaudeLauncher, &probe);
+        let out = verify_text_with_probe(Some(&item), &ClaudeLauncher, &probe, None);
         assert!(out.starts_with("# verify PWF-0003 \u{2014} fail"));
         assert!(out.contains("launchable: no"));
         assert!(out.contains("command: "));
@@ -164,7 +179,7 @@ mod tests {
             issues: vec![],
             ..Item::default_for_test("PWF-0068", "codex verify")
         };
-        let out = verify_text_with_probe(Some(&item), &CodexLauncher, &probe);
+        let out = verify_text_with_probe(Some(&item), &CodexLauncher, &probe, None);
         assert!(out.starts_with("# verify PWF-0068 \u{2014} pass"));
         assert!(out.contains("codex: available (0.142.0) at /usr/bin/codex"));
         assert!(out.contains("command: "));
@@ -181,7 +196,7 @@ mod tests {
             path: Some("/bin/claude".into()),
             version: Some("1.2.3".into()),
         };
-        let out = verify_text_with_probe(None, &ClaudeLauncher, &probe);
+        let out = verify_text_with_probe(None, &ClaudeLauncher, &probe, None);
         assert!(out.starts_with("# verify \u{2014} pass"), "heading: {out}");
         assert!(out.contains("claude: available (1.2.3) at /bin/claude"));
         assert!(out.contains("launchable: yes"));
@@ -194,7 +209,7 @@ mod tests {
             path: None,
             version: None,
         };
-        let out = verify_text_with_probe(None, &ClaudeLauncher, &probe);
+        let out = verify_text_with_probe(None, &ClaudeLauncher, &probe, None);
         assert!(out.starts_with("# verify \u{2014} fail"), "heading: {out}");
         assert!(out.contains("claude: not found on PATH"));
     }
@@ -206,8 +221,75 @@ mod tests {
             path: Some("/usr/bin/codex".to_string()),
             version: Some("0.142.0".to_string()),
         };
-        let out = verify_text_with_probe(None, &CodexLauncher, &probe);
+        let out = verify_text_with_probe(None, &CodexLauncher, &probe, None);
         assert!(out.starts_with("# verify \u{2014} pass"));
         assert!(out.contains("command: codex\n"));
+    }
+
+    #[test]
+    fn verify_text_shows_resolved_model_in_command() {
+        let probe = FakeProbe {
+            available: true,
+            path: Some("/usr/bin/claude".to_string()),
+            version: Some("1.2.3".to_string()),
+        };
+        let item = Item {
+            launchable: true,
+            issues: vec![],
+            ..Item::default_for_test("PWF-0001", "cli launch")
+        };
+        let out = verify_text_with_probe(
+            Some(&item),
+            &ClaudeLauncher,
+            &probe,
+            Some(Ok("opus".to_string())),
+        );
+        assert!(out.starts_with("# verify PWF-0001 \u{2014} pass"));
+        assert!(out.contains("--model"), "got: {out}");
+        assert!(out.contains("opus"), "got: {out}");
+        assert!(out.contains("issues: none"));
+    }
+
+    #[test]
+    fn verify_text_fails_and_lists_issue_on_broken_model_tiers() {
+        let probe = FakeProbe {
+            available: true,
+            path: Some("/usr/bin/claude".to_string()),
+            version: Some("1.2.3".to_string()),
+        };
+        let item = Item {
+            launchable: true,
+            issues: vec![],
+            ..Item::default_for_test("PWF-0002", "cli launch")
+        };
+        let out = verify_text_with_probe(
+            Some(&item),
+            &ClaudeLauncher,
+            &probe,
+            Some(Err("tier 4 has no claude_model set".to_string())),
+        );
+        assert!(
+            out.starts_with("# verify PWF-0002 \u{2014} fail"),
+            "got: {out}"
+        );
+        assert!(out.contains("launchable: no"));
+        assert!(out.contains("- tier 4 has no claude_model set"));
+    }
+
+    #[test]
+    fn verify_text_unaffected_when_model_check_not_applicable() {
+        let probe = FakeProbe {
+            available: true,
+            path: Some("/usr/bin/claude".to_string()),
+            version: Some("1.2.3".to_string()),
+        };
+        let item = Item {
+            launchable: true,
+            issues: vec![],
+            ..Item::default_for_test("PWF-0003", "cli launch")
+        };
+        let out = verify_text_with_probe(Some(&item), &ClaudeLauncher, &probe, None);
+        assert!(out.starts_with("# verify PWF-0003 \u{2014} pass"));
+        assert!(out.contains("issues: none"));
     }
 }

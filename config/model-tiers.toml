@@ -1,0 +1,17 @@
+# Effort tier -> per-provider model mapping, read by `pwf session`/`pwf verify`
+# when a task carries an `effort:` frontmatter tag. Edit freely — no code change
+# needed to repoint a tier to a different model. Only `claude_model` is read
+# today (codex is out of scope); a future provider gets its own sibling key
+# (e.g. `codex_model`) on the same tier.
+
+[tiers.1]
+claude_model = "sonnet"
+
+[tiers.2]
+claude_model = "sonnet"
+
+[tiers.3]
+claude_model = "sonnet"
+
+[tiers.4]
+claude_model = "opus"

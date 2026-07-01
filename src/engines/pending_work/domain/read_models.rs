@@ -16,6 +16,7 @@ pub(in crate::engines::pending_work) struct OpenItem {
     pub issues: Vec<String>,
     pub section: Option<String>,
     pub prereq: Option<String>,
+    pub effort: Option<String>,
 }
 
 impl From<Item> for OpenItem {
@@ -35,6 +36,7 @@ impl From<Item> for OpenItem {
             issues: item.issues,
             section: item.section,
             prereq: item.prereq,
+            effort: item.effort,
         }
     }
 }

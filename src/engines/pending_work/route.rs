@@ -21,7 +21,7 @@ pub(super) fn run_route(cfg: &Config, args: &Args, date: &str) -> Result<String,
     if route_words.is_empty() {
         // list all
         let scope = ListScope::from_flags(args.human, args.future, args.all)?;
-        return run_list_action(cfg, None, args.long, scope, args.number);
+        return run_list_action(cfg, None, args.long, scope, args.number, args.effort);
     }
 
     let verb = route_words[0].to_ascii_lowercase();
@@ -44,7 +44,15 @@ pub(super) fn run_route(cfg: &Config, args: &Args, date: &str) -> Result<String,
         } else {
             None
         };
-        return Ok(verify_text_with_probe(item.as_ref(), launcher, &probe));
+        let claude_model = item.as_ref().and_then(|it| {
+            super::session::resolve_claude_model_for_verify(crate::cli::Agent::Claude, it)
+        });
+        return Ok(verify_text_with_probe(
+            item.as_ref(),
+            launcher,
+            &probe,
+            claude_model,
+        ));
     }
 
     if verb == "clean" || verb == "cl" {
@@ -68,7 +76,14 @@ pub(super) fn run_route(cfg: &Config, args: &Args, date: &str) -> Result<String,
     let project_name = resolve_managed_project_name_typed(cfg, &verb)?;
     if route_words.len() == 1 {
         let scope = ListScope::from_flags(args.human, args.future, args.all)?;
-        return run_list_action(cfg, Some(&project_name), args.long, scope, args.number);
+        return run_list_action(
+            cfg,
+            Some(&project_name),
+            args.long,
+            scope,
+            args.number,
+            args.effort,
+        );
     }
 
     Err(PendingWorkError::RouteCreateRejected)

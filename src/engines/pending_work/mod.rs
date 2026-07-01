@@ -8,6 +8,7 @@ mod commits;
 mod continue_prompt;
 mod domain;
 mod done_queue;
+mod effort;
 mod errors;
 mod index;
 mod launch;

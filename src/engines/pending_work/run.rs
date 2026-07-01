@@ -56,6 +56,7 @@ pub(in crate::engines::pending_work) fn run_typed(
                 args.long,
                 scope,
                 args.number,
+                args.effort,
             )?)
         }
 
@@ -83,7 +84,15 @@ pub(in crate::engines::pending_work) fn run_typed(
             } else {
                 None
             };
-            Ok(verify_text_with_probe(item.as_ref(), launcher, &probe))
+            let claude_model = item
+                .as_ref()
+                .and_then(|it| super::session::resolve_claude_model_for_verify(args.agent, it));
+            Ok(verify_text_with_probe(
+                item.as_ref(),
+                launcher,
+                &probe,
+                claude_model,
+            ))
         }
 
         Action::Check => Ok(run_check(&cfg, args)?),
@@ -100,20 +109,28 @@ pub(in crate::engines::pending_work) fn run_typed(
 
         Action::Update => Ok(run_update(&cfg, args)?),
 
-        Action::Session => Ok(super::session::dispatch(
-            &cfg,
-            require_id(args, "session")?,
-            super::session::DispatchOpts {
-                color: args.color,
-                assume_yes: args.assume_yes,
-                inline: args.inline,
-                launch: LaunchPolicy {
-                    worktree: args.worktree.into(),
-                    auto: args.auto.into(),
+        Action::Session => {
+            let id = require_id(args, "session")?;
+            // `-a`/`--append`: extend the body via the same path as `update -a`/
+            // `--append` before dispatch, so the launch prompt carries the extension.
+            if args.append.is_some() {
+                run_update(&cfg, args)?;
+            }
+            Ok(super::session::dispatch(
+                &cfg,
+                id,
+                super::session::DispatchOpts {
+                    color: args.color,
+                    assume_yes: args.assume_yes,
+                    inline: args.inline,
+                    launch: LaunchPolicy {
+                        worktree: args.worktree.into(),
+                        auto: args.auto.into(),
+                    },
+                    agent: args.agent,
                 },
-                agent: args.agent,
-            },
-        )?),
+            )?)
+        }
     }
 }
 
@@ -191,6 +208,7 @@ fn run_add(cfg: &Config, args: &Args, date: &str) -> Result<String, errors::Pend
             created: date,
             section,
             prereq: prereq.as_deref(),
+            effort: args.effort,
         },
     )
 }

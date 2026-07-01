@@ -2128,6 +2128,7 @@ fn work_item_content_active_then_done_field_order() {
         "2026-01-01",
         None,
         None,
+        None,
     );
     assert!(active.starts_with(
         "---\nstatus: active\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n"

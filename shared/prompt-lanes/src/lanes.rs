@@ -2,6 +2,16 @@
 
 use crate::{model::ParsedPrompt, title::single_line};
 
+const PENDING_WORK_TITLE: &str = "pending work";
+
+fn or_pending_work(title: String) -> String {
+    if title.is_empty() {
+        PENDING_WORK_TITLE.to_string()
+    } else {
+        title
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Section {
     Goals,
@@ -44,11 +54,7 @@ fn push(parsed: &mut ParsedPrompt, section: Section, text: String) {
 
 fn plain(prompt: &str) -> ParsedPrompt {
     let title = single_line(prompt);
-    let title = if title.is_empty() {
-        "pending work".to_string()
-    } else {
-        title
-    };
+    let title = or_pending_work(title);
     ParsedPrompt {
         title: title.clone(),
         goals: vec![title],
@@ -74,12 +80,7 @@ pub fn parse(prompt: &str) -> ParsedPrompt {
     for token in tokens {
         if is_marker(token) {
             if !seen_first_marker {
-                let title = words_to_text(&buffer);
-                parsed.title = if title.is_empty() {
-                    "pending work".to_string()
-                } else {
-                    title
-                };
+                parsed.title = or_pending_work(words_to_text(&buffer));
                 parsed.goals.push(parsed.title.clone());
             } else {
                 push(&mut parsed, current, words_to_text(&buffer));
@@ -94,9 +95,6 @@ pub fn parse(prompt: &str) -> ParsedPrompt {
         }
     }
 
-    if !seen_first_marker {
-        return plain(prompt);
-    }
     push(&mut parsed, current, words_to_text(&buffer));
     parsed
 }

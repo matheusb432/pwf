@@ -141,6 +141,9 @@ fn render_list_item(out: &mut String, item: &OpenItem, cfg: &Config, long: bool,
             out.push_str(&format!("  prereq: {}\n", prereq::list_summary(&statuses)));
         }
     }
+    if let Some(e) = &item.effort {
+        out.push_str(&format!("  effort: {e}\n"));
+    }
     for issue in &item.issues {
         out.push_str(&format!("  issue: {issue}\n"));
     }
@@ -172,6 +175,7 @@ mod tests {
             issues: Vec::new(),
             section: None,
             prereq: None,
+            effort: None,
         }
     }
 
@@ -194,6 +198,24 @@ mod tests {
             out,
             "PWF-0064 :: make list commands formatting less redundant"
         );
+    }
+
+    #[test]
+    fn long_form_shows_effort_line_when_present() {
+        let cfg = empty_cfg();
+        let mut item = sample_item();
+        item.effort = Some("3".to_string());
+        let mut out = String::new();
+        render_list_item(&mut out, &item, &cfg, true, true);
+        assert!(out.contains("  effort: 3\n"), "got: {out}");
+    }
+
+    #[test]
+    fn long_form_omits_effort_line_when_absent() {
+        let cfg = empty_cfg();
+        let mut out = String::new();
+        render_list_item(&mut out, &sample_item(), &cfg, true, true);
+        assert!(!out.contains("effort:"), "got: {out}");
     }
 
     #[test]

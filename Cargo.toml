@@ -42,6 +42,7 @@ regex = "1"
 thiserror = "2.0.18"
 nutype = { version = "0.7.0", features = ["serde", "regex"] }
 anstyle = "1"
+toml = "1.1.2"
 
 [dev-dependencies]
 assert_cmd = "2"

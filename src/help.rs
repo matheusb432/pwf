@@ -11,10 +11,10 @@ const PW_TERSE: &str = r#"pw [<project>]   (alias: pending-work; bare pw lists a
   check --id [--report] [--commits <range>] [--review]
   cancel --id --report [--commits <range>] [--review]
   reopen --id   (inverse of check/cancel: done|cancelled -> active)
-  update --id [--prompt] [--title] [--prereq <id>] [--clear-prereq] [--commits <range>] [--append-report <md>]   (--commits/--append-report also amend a closed item)
+  update --id [--prompt] [--title] [--prereq <id>] [--clear-prereq] [--commits <range>] [--append-report <md>] [-a/--append <lanes>]   (--commits/--append-report also amend a closed item; -a/--append splices lane-syntax bullets into Goals/Context/Constraints/Done When, conflicts with --prompt)
   resolve --id [--show]
   show <id>   (shorthand for resolve --show)
-  session <id> [-a claude|codex] [-i] [-w] [--auto] [-y]   dispatch an agent into the project's zellij session, or inline in the current terminal with -i (-a picks the agent, claude default; -w tells it to work in a git worktree named after the id; --auto runs it autonomously without prompting the user; -y skips the [Y/n] confirm)
+  session <id> [--agent claude|codex] [-a/--append <lanes>] [-i] [-w] [--auto] [-y]   dispatch an agent into the project's zellij session, or inline in the current terminal with -i (--agent picks the agent, claude default; -a/--append splices lane-syntax bullets into the body before dispatch, same as update; -w tells it to work in a git worktree named after the id; --auto runs it autonomously without prompting the user; -y skips the [Y/n] confirm)
   clean [--dry-run|--force]
   verify [--id] [-a claude|codex]
   remove --id"#;

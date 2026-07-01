@@ -42,15 +42,18 @@ pub(super) fn new_launch_prompt(item: &Item, policy: LaunchPolicy) -> String {
     out.trim().to_string()
 }
 
-/// The prompt header (`Pending-work ID:` / `Project:`) and task body. With `auto`
-/// set, the autonomy directive rides as the final header line, before the body.
+/// The prompt header (`Pending-work ID:` / `Project:`) and a thin pointer to start
+/// the task, rather than the note's full body: the dispatched agent's first step
+/// (the pw-workflow skill) already resolves the item and reads the body in full,
+/// so inlining it here would just be redundant. With `auto` set, the autonomy
+/// directive rides as the final header line, before the pointer.
 fn format_prompt(item: &Item, auto: Auto) -> String {
     let mut header = format!("Pending-work ID: {}\nProject: {}", item.id, item.project);
     if auto.into_inner() {
         header.push('\n');
         header.push_str(AUTONOMY_DIRECTIVE);
     }
-    format!("{header}\n\n{}", item.prompt)
+    format!("{header}\n\ndo {}", item.id)
 }
 
 /// Prepended workspace step for `pwf session -w`: instruct the agent to isolate
@@ -68,7 +71,7 @@ mod tests {
 
     fn item() -> Item {
         Item {
-            prompt: "do the thing".to_string(),
+            prompt: "assemble the widget".to_string(),
             ..Item::default_for_test("PWF-0076", "make session -w")
         }
     }
@@ -83,14 +86,18 @@ mod tests {
     #[test]
     fn worktree_false_leaves_prompt_unaugmented() {
         let out = new_launch_prompt(&item(), LaunchPolicy::default());
-        assert!(out.contains("do the thing"));
+        assert!(out.contains("do PWF-0076"), "carries the thin pointer");
+        assert!(
+            !out.contains("assemble the widget"),
+            "note body must not be inlined: {out}"
+        );
         assert!(!out.to_lowercase().contains("worktree"));
     }
 
     #[test]
     fn worktree_true_appends_named_worktree_instruction() {
         let out = new_launch_prompt(&item(), policy(true, false));
-        assert!(out.contains("do the thing"), "keeps the task prompt");
+        assert!(out.contains("do PWF-0076"), "keeps the thin pointer");
         assert!(
             out.contains("git-worktrees skill"),
             "points at the worktree skill"
@@ -127,15 +134,18 @@ mod tests {
     #[test]
     fn auto_true_writes_exact_directive_into_header() {
         let out = new_launch_prompt(&item(), policy(false, true));
-        assert!(out.contains("do the thing"), "keeps the task prompt");
+        assert!(out.contains("do PWF-0076"), "keeps the thin pointer");
         assert!(
             out.contains(AUTONOMY_DIRECTIVE),
             "carries the exact autonomy directive: {out}"
         );
-        // The directive rides in the header, ahead of the task body.
+        // The directive rides in the header, ahead of the pointer.
         let dir = out.find(AUTONOMY_DIRECTIVE).expect("directive present");
-        let body = out.find("do the thing").expect("body present");
-        assert!(dir < body, "directive is a header line, before the body");
+        let pointer = out.find("do PWF-0076").expect("pointer present");
+        assert!(
+            dir < pointer,
+            "directive is a header line, before the pointer"
+        );
     }
 
     #[test]

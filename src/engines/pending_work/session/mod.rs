@@ -5,6 +5,7 @@
 mod confirmation;
 mod inline;
 mod launcher;
+mod model_tiers;
 mod multiplexer;
 mod render;
 
@@ -14,6 +15,10 @@ pub(in crate::engines::pending_work) use launcher::{AgentLauncher, launcher_for}
 // rendering); production code selects via `launcher_for` and holds `&dyn AgentLauncher`.
 #[cfg(test)]
 pub(in crate::engines::pending_work) use launcher::{ClaudeLauncher, CodexLauncher};
+pub(in crate::engines::pending_work) use model_tiers::ModelTiersError;
+pub(in crate::engines::pending_work) use model_tiers::{
+    resolve_claude_model, resolve_claude_model_for_verify,
+};
 pub(in crate::engines::pending_work) use multiplexer::{
     MultiplexerDriver, NewTabError, RealZellij,
 };
@@ -138,6 +143,7 @@ pub(in crate::engines::pending_work) fn run_session(
             issues: item.issues,
         });
     }
+    let claude_model = resolve_claude_model(opts.agent, &item)?;
     let repo = item.repo.clone().unwrap_or_default();
     if !std::path::Path::new(&repo).is_dir() {
         return Err(PendingWorkError::RepoMissing {
@@ -154,7 +160,7 @@ pub(in crate::engines::pending_work) fn run_session(
     // Default-yes confirmation gate: an interactive operator can abort a mistaken
     // dispatch. `--yes` skips it; a non-interactive caller proceeds without
     // prompting so the fire-and-forget path is intact.
-    let argv = launcher.argv(&item, opts.launch);
+    let argv = launcher.argv(&item, opts.launch, claude_model.as_deref());
 
     if !opts.assume_yes && confirmer.interactive() {
         let question = confirmation::question(&item, &session, opts, launcher.binary());

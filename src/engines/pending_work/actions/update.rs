@@ -9,7 +9,10 @@ static TITLE_LINE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^title
 use super::super::{
     commits,
     errors::PendingWorkError,
-    index::{append_report_block_text, set_commits_text, set_prereq_text},
+    index::{
+        append_lanes_text, append_report_block_text, set_commits_text, set_effort_text,
+        set_prereq_text,
+    },
     model::Item,
     obsidian::store::ObsidianStore,
     prereq,
@@ -42,13 +45,15 @@ pub(in crate::engines::pending_work) fn run_update(
         .ok_or(PendingWorkError::MissingId { action: "update" })?;
     let commits_value = commits::frontmatter_value(&args.commits);
     let append_report = args.append_report.as_deref();
-    // Body edits (title/prompt/prereq) need the parsed open Item; `--commits` and
-    // `--append-report` only touch the note file on disk, so they amend closed
+    // Body edits (title/prompt/prereq/append) need the parsed open Item; `--commits`
+    // and `--append-report` only touch the note file on disk, so they amend closed
     // (done/cancelled) items too.
     let edits_body = args.prompt.is_some()
         || args.title.is_some()
         || !args.prereq.is_empty()
-        || args.clear_prereq;
+        || args.clear_prereq
+        || args.append.is_some()
+        || args.effort.is_some();
     if !edits_body && commits_value.is_none() && append_report.is_none() {
         return Err(PendingWorkError::NothingToUpdate);
     }
@@ -96,6 +101,9 @@ fn update_open_item(
     if let Some(p) = args.prompt.as_deref() {
         content = replace_body(&content, &note_body(p));
     }
+    if let Some(p) = args.append.as_deref() {
+        content = append_lanes_text(&content, p).ok_or(PendingWorkError::EmptyAppend)?;
+    }
     if args.clear_prereq {
         content = set_prereq_text(&content, None);
     } else if !args.prereq.is_empty() {
@@ -104,6 +112,9 @@ fn update_open_item(
     }
     if let Some(range) = commits_value {
         content = set_commits_text(&content, Some(range));
+    }
+    if let Some(tier) = args.effort {
+        content = set_effort_text(&content, Some(tier));
     }
     if let Some(report) = append_report {
         content =
@@ -208,7 +219,7 @@ mod tests {
         assert_matches!(err, PendingWorkError::NothingToUpdate);
         assert_eq!(
             err.to_string(),
-            "nothing to update (pass --prompt, --title, --prereq, --clear-prereq, --commits, and/or --append-report)."
+            "nothing to update (pass --prompt, --title, --prereq, --clear-prereq, --commits, --append-report, --append, and/or --effort)."
         );
     }
 

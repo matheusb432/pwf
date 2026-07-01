@@ -11,7 +11,8 @@ pub enum ColorChoice {
     Never,
 }
 
-/// Which agent `pwf session`/`pwf verify` targets (`-a`/`--agent`). Default `Claude`.
+/// Which agent `pwf session`/`pwf verify` targets (`--agent`; `-a` short only on
+/// `verify` — `session`'s `-a` is `--append`). Default `Claude`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Agent {
     #[default]
@@ -31,6 +32,9 @@ pub struct Args {
     pub prompt: Option<String>,
     pub prereq: Vec<String>,
     pub clear_prereq: bool,
+    // ? add: optional effort/complexity tier (1-4); update also reads it to gate
+    // ? edits_body, list reads it as an exact-match filter.
+    pub effort: Option<u8>,
     // ? check: commit range(s) recorded as `commits:` provenance frontmatter (PWF-0017).
     pub commits: Vec<String>,
     // ? check: also spawn a `## Human` review task prepped with git-tools diff commands.
@@ -42,6 +46,11 @@ pub struct Args {
     // ? update: free-form multi-line Markdown closeout report appended to the body
     // verbatim (closed-item safe; never reruns title/Goals regeneration).
     pub append_report: Option<String>,
+    // ? update/session: rich lane-syntax bullets spliced into the body's Goals/
+    // Context/Constraints/Done When sections (`-a`/`--append`); open items only.
+    // `session` runs the same splice before dispatch, so the launch prompt
+    // carries the extension.
+    pub append: Option<String>,
     pub pending_work_script: Option<String>,
     // ? resolve: emit the note as markdown (frontmatter minus exec-irrelevant keys + body).
     pub show: bool,

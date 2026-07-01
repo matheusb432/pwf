@@ -23,6 +23,9 @@ pub struct Item {
     pub section: Option<String>,
     // ? Raw `prereq` frontmatter (e.g. "[[CFG-0014]]").
     pub prereq: Option<String>,
+    // ? Raw `effort` frontmatter (e.g. "3"); unvalidated here — EffortTier::parse
+    // ? validates it at resolution time (session/verify).
+    pub effort: Option<String>,
 }
 
 impl Item {
@@ -44,6 +47,7 @@ impl Item {
             issues: vec![],
             section: None,
             prereq: None,
+            effort: None,
         }
     }
 }
@@ -119,6 +123,7 @@ impl Item {
             issues: vec![],
             section: None,
             prereq: None,
+            effort: None,
         }
     }
 }

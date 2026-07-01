@@ -20,7 +20,9 @@ pub(in crate::engines::pending_work) trait AgentLauncher {
     fn binary(&self) -> &str;
     /// argv after `zellij … new-tab … --`, e.g. `["claude","--name",<title>,"--",<prompt>]`.
     /// `policy` selects which optional instruction blocks ride in the launch prompt.
-    fn argv(&self, item: &Item, policy: LaunchPolicy) -> Vec<String>;
+    /// `model`, when `Some`, is a resolved per-tier model (Claude only today —
+    /// codex ignores it) to pass through as a `--model` flag.
+    fn argv(&self, item: &Item, policy: LaunchPolicy, model: Option<&str>) -> Vec<String>;
 }
 
 /// Resolve the selected agent to its launcher. Both impls are unit structs, so the

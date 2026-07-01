@@ -1,7 +1,7 @@
 // Action: list.
 
 use super::super::{
-    domain::read_models::ListResult, errors::PendingWorkError, model::Item,
+    domain::read_models::ListResult, effort::EffortTier, errors::PendingWorkError, model::Item,
     query::get_pending_work, render::render_list,
 };
 use crate::config::Config;
@@ -83,6 +83,17 @@ fn section_group_rank(section: Option<&str>) -> u8 {
     }
 }
 
+/// `true` when `wanted` is `None` (no filter), or `item.effort` parses to exactly
+/// `wanted`. A hand-corrupted/unparseable `effort:` value never matches a filter.
+fn effort_matches(item: &Item, wanted: Option<u8>) -> bool {
+    let Some(wanted) = wanted else { return true };
+    item.effort
+        .as_deref()
+        .and_then(EffortTier::parse)
+        .map(u8::from)
+        == Some(wanted)
+}
+
 /// Numeric ID suffix (digits after the last `-`), or 0 when unparseable. Zero-padded
 /// per-prefix counters mean higher = newer inside a project group.
 fn id_suffix(id: &str) -> u64 {
@@ -132,10 +143,12 @@ pub(in crate::engines::pending_work) fn run_list_action(
     long: bool,
     scope: ListScope,
     number: Option<usize>,
+    effort: Option<u8>,
 ) -> Result<String, PendingWorkError> {
     let mut items: Vec<_> = get_pending_work(cfg, only_project)?
         .into_iter()
         .filter(|i| scope.includes(i.section.as_deref()))
+        .filter(|i| effort_matches(i, effort))
         .collect();
     // Order + cap before rendering so the selected/capped sequence is consistent.
     if scope.groups_output() {
@@ -180,6 +193,7 @@ mod tests {
             issues: vec![],
             section: None,
             prereq: None,
+            effort: None,
         }
     }
 
@@ -209,7 +223,7 @@ mod tests {
         )
         .unwrap();
 
-        let err = run_list_action(&cfg, None, false, ListScope::Default, None).unwrap_err();
+        let err = run_list_action(&cfg, None, false, ListScope::Default, None, None).unwrap_err();
 
         assert_matches!(
             err,
@@ -266,5 +280,37 @@ mod tests {
         let (kept, hidden) = apply_cap(items, 10);
         assert_eq!(kept.len(), 3);
         assert_eq!(hidden, 0);
+    }
+
+    #[test]
+    fn effort_filter_keeps_only_matching_tier() {
+        let mut low = item("GLP-0001");
+        low.effort = Some("1".to_string());
+        let mut high = item("GLP-0002");
+        high.effort = Some("4".to_string());
+        let untagged = item("GLP-0003");
+
+        let items = vec![low, high, untagged];
+        let filtered: Vec<_> = items
+            .into_iter()
+            .filter(|i| effort_matches(i, Some(1)))
+            .collect();
+
+        assert_eq!(ids(&filtered), ["GLP-0001"]);
+    }
+
+    #[test]
+    fn effort_filter_none_keeps_everything() {
+        let mut tagged = item("GLP-0001");
+        tagged.effort = Some("2".to_string());
+        let untagged = item("GLP-0002");
+
+        let items = vec![tagged, untagged];
+        let filtered: Vec<_> = items
+            .into_iter()
+            .filter(|i| effort_matches(i, None))
+            .collect();
+
+        assert_eq!(ids(&filtered), ["GLP-0001", "GLP-0002"]);
     }
 }

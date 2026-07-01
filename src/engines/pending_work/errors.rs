@@ -20,6 +20,17 @@ pub(super) enum PendingWorkError {
     /// Store I/O failed.
     #[error(transparent)]
     Store(#[from] crate::engines::pending_work::obsidian::store::StoreError),
+    /// A tier→model TOML mapping failed to load or resolve for a claude dispatch.
+    #[error(transparent)]
+    ModelTiers(#[from] crate::engines::pending_work::session::ModelTiersError),
+    /// An item's `effort:` frontmatter value isn't a valid 1-4 integer (hand-edited/corrupted).
+    #[error("item {id} has an invalid effort value '{value}' (expected an integer 1-4).")]
+    BadEffortValue {
+        /// The item whose frontmatter is corrupted.
+        id: String,
+        /// The raw, unparseable value.
+        value: String,
+    },
     /// The caller did not provide a pending-work subcommand.
     #[error("a pw subcommand is required.")]
     MissingSubcommand,
@@ -107,6 +118,9 @@ pub(super) enum PendingWorkError {
     /// A check report was supplied but contained no content.
     #[error("--report cannot be empty.")]
     EmptyReport,
+    /// An `--append`/`-a` value was supplied but contained no content.
+    #[error("--append cannot be empty.")]
+    EmptyAppend,
     /// Cancel requires a report explaining what was tried and why work stopped.
     #[error("--report is required for cancel.")]
     MissingCancelReport,
@@ -130,7 +144,7 @@ pub(super) enum PendingWorkError {
     },
     /// Update was invoked without any field mutations.
     #[error(
-        "nothing to update (pass --prompt, --title, --prereq, --clear-prereq, --commits, and/or --append-report)."
+        "nothing to update (pass --prompt, --title, --prereq, --clear-prereq, --commits, --append-report, --append, and/or --effort)."
     )]
     NothingToUpdate,
     /// A closed (done/cancelled) item only supports `--commits`/`--append-report`.

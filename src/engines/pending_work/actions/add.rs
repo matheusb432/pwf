@@ -22,6 +22,7 @@ pub(in crate::engines::pending_work) struct NewItemSpec<'a> {
     pub created: &'a str,
     pub section: Option<Section>,
     pub prereq: Option<&'a str>,
+    pub effort: Option<u8>,
 }
 
 /// Create a pending-work item file and link it into the project index.
@@ -41,6 +42,7 @@ pub(in crate::engines::pending_work) fn add_pending_work_item(
         created,
         section,
         prereq,
+        effort,
     } = *spec;
     let repo = cfg
         .projects
@@ -76,6 +78,7 @@ pub(in crate::engines::pending_work) fn add_pending_work_item(
         created,
         None,
         prereq,
+        effort,
     );
     ObsidianStore::write_add_item_file(&item_path, &content)?;
 
@@ -149,6 +152,7 @@ mod tests {
             created: "2026-01-01",
             section: None,
             prereq: None,
+            effort: None,
         }
     }
 

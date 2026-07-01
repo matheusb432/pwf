@@ -726,6 +726,35 @@ fn e2e_add_with_prereq_writes_validated_frontmatter() {
 }
 
 #[test]
+fn e2e_add_with_effort_writes_frontmatter() {
+    let (d, cfg) = staged();
+    pwf()
+        .args(["add", "glep-shimeji", "x", "--effort", "3", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .success();
+    let item = read_item(&d, "GLP-0002");
+    assert!(
+        item.contains("effort: 3\n"),
+        "effort frontmatter missing: {item}"
+    );
+}
+
+#[test]
+fn e2e_add_effort_out_of_range_is_rejected() {
+    let (d, cfg) = staged();
+    pwf()
+        .args(["add", "glep-shimeji", "x", "--effort", "5", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .failure();
+    assert!(
+        !d.path().join("notes/glep-shimeji/GLP-0002.md").exists(),
+        "failed add wrote a new item"
+    );
+}
+
+#[test]
 fn e2e_add_rejects_unknown_prereq_without_writing_item() {
     let (d, cfg) = staged();
     pwf()
@@ -768,6 +797,89 @@ fn e2e_update_prereq_writes_validated_frontmatter() {
         item.contains("prereq: \"[[GLP-0001]]\""),
         "prereq frontmatter missing: {item}"
     );
+}
+
+#[test]
+fn e2e_update_effort_writes_frontmatter() {
+    let (d, cfg) = staged();
+    pwf()
+        .args([
+            "update",
+            "--id",
+            "GLP-0001",
+            "--effort",
+            "4",
+            "--config-path",
+        ])
+        .arg(&cfg)
+        .assert()
+        .success();
+    let item = read_item(&d, "GLP-0001");
+    assert!(
+        item.contains("effort: 4\n"),
+        "effort frontmatter missing: {item}"
+    );
+}
+
+#[test]
+fn e2e_list_effort_filter_shows_only_matching_tier() {
+    let (_d, cfg) = staged_two();
+    pwf()
+        .args([
+            "update",
+            "--id",
+            "GLP-0001",
+            "--effort",
+            "1",
+            "--config-path",
+        ])
+        .arg(&cfg)
+        .assert()
+        .success();
+    pwf()
+        .args([
+            "update",
+            "--id",
+            "GLP-0002",
+            "--effort",
+            "4",
+            "--config-path",
+        ])
+        .arg(&cfg)
+        .assert()
+        .success();
+
+    pwf()
+        .args(["list", "--effort", "4", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .success()
+        .stdout(contains("second"))
+        .stdout(contains("tray gui").not());
+}
+
+#[test]
+fn e2e_list_long_shows_effort_line() {
+    let (_d, cfg) = staged();
+    pwf()
+        .args([
+            "update",
+            "--id",
+            "GLP-0001",
+            "--effort",
+            "2",
+            "--config-path",
+        ])
+        .arg(&cfg)
+        .assert()
+        .success();
+
+    pwf()
+        .args(["list", "--long", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .success()
+        .stdout(contains("effort: 2"));
 }
 
 #[test]
@@ -1685,6 +1797,113 @@ fn update_body_edit_on_closed_item_is_rejected() {
         .stderr(contains("can amend closed item"));
 }
 
+// 10a. update --append/-a: splice lane-syntax bullets into the body (PWF-0090).
+
+#[test]
+fn update_append_splices_bullets_into_an_existing_section() {
+    let (_d, cfg) = staged_with_item(
+        "pwf",
+        "PWF",
+        "PWF-0001",
+        "do the thing",
+        "---\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- do the thing\n",
+    );
+    pwf()
+        .args(["update", "--id", "PWF-0001", "-a", "also this"])
+        .arg("--config-path")
+        .arg(&cfg)
+        .assert()
+        .success();
+    let note = fs::read_to_string(_d.path().join("notes/pwf/PWF-0001.md")).unwrap();
+    assert!(
+        note.contains("## Goals\n- do the thing\n- also this\n"),
+        "bullet not spliced in: {note}"
+    );
+}
+
+#[test]
+fn update_append_creates_a_missing_section_via_lane_syntax() {
+    let (_d, cfg) = staged_with_item(
+        "pwf",
+        "PWF",
+        "PWF-0001",
+        "do the thing",
+        "---\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- do the thing\n",
+    );
+    pwf()
+        .args([
+            "update",
+            "--id",
+            "PWF-0001",
+            "--append",
+            "another goal /c new context",
+        ])
+        .arg("--config-path")
+        .arg(&cfg)
+        .assert()
+        .success();
+    let note = fs::read_to_string(_d.path().join("notes/pwf/PWF-0001.md")).unwrap();
+    assert!(
+        note.contains("## Goals\n- do the thing\n- another goal\n\n## Context\n- new context\n"),
+        "section not created: {note}"
+    );
+}
+
+#[test]
+fn update_append_rejects_whitespace_only() {
+    let (_d, cfg) = staged_with_item(
+        "pwf",
+        "PWF",
+        "PWF-0001",
+        "do the thing",
+        "---\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- do the thing\n",
+    );
+    pwf()
+        .args(["update", "--id", "PWF-0001", "--append", "   \n\t"])
+        .arg("--config-path")
+        .arg(&cfg)
+        .assert()
+        .failure()
+        .stderr(contains("--append cannot be empty"));
+}
+
+#[test]
+fn update_append_conflicts_with_prompt() {
+    let (_d, cfg) = staged_with_item(
+        "pwf",
+        "PWF",
+        "PWF-0001",
+        "do the thing",
+        "---\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- do the thing\n",
+    );
+    pwf()
+        .args([
+            "update", "--id", "PWF-0001", "--prompt", "x", "--append", "y",
+        ])
+        .arg("--config-path")
+        .arg(&cfg)
+        .assert()
+        .failure()
+        .stderr(contains("cannot be used with"));
+}
+
+#[test]
+fn update_append_on_closed_item_is_rejected() {
+    let (_d, cfg) = staged_with_done_item(
+        "pwf",
+        "PWF",
+        "PWF-0003",
+        "---\nstatus: done\ntitle: t\nproject: pwf\ncompleted: 2026-06-20\n---\n\nbody\n",
+    );
+    pwf()
+        .args(["update", "--id", "PWF-0003", "--append", "more work"])
+        .arg("--config-path")
+        .arg(&cfg)
+        .assert()
+        .failure()
+        .stderr(contains("can amend closed item"));
+}
+
 // 11. session verb: zellij-independent error surfaces (PWF-0038).
 
 /// Stage a launchable PWF-0001 item with a real repo dir plus a recording `zellij`
@@ -1813,6 +2032,63 @@ fn session_without_worktree_flag_omits_instruction() {
 
 #[test]
 #[cfg(unix)]
+fn session_with_effort_passes_model_flag_to_claude() {
+    let dir = TempDir::new().unwrap();
+    let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
+    // Re-stage the item note with an effort tag (stage_session_with_zellij_stub's
+    // PWF-0001.md has no effort: line; append one so this test doesn't need its
+    // own full staging duplicate).
+    let notes = dir.path().join("notes");
+    fs::write(
+        notes.join("pwf").join("PWF-0001.md"),
+        "---\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\neffort: 4\n---\n\n## Goals\n- do the thing\n",
+    )
+    .unwrap();
+    let tiers = dir.path().join("model-tiers.toml");
+    fs::write(&tiers, "[tiers.4]\nclaude_model = \"opus\"\n").unwrap();
+
+    pwf()
+        .args(["session", "--id", "PWF-0001", "--yes", "--config-path"])
+        .arg(&cfg)
+        .env("PATH", path)
+        .env("ZELLIJ_STUB_LOG", &log)
+        .env("PWF_MODEL_TIERS", &tiers)
+        .assert()
+        .success();
+
+    let argv = fs::read_to_string(&log).unwrap();
+    assert!(argv.contains("--model"), "no --model in argv: {argv}");
+    assert!(argv.contains("opus"), "model value missing: {argv}");
+}
+
+#[test]
+#[cfg(unix)]
+fn session_with_effort_and_broken_tiers_config_fails_before_dispatch() {
+    let dir = TempDir::new().unwrap();
+    let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
+    let notes = dir.path().join("notes");
+    fs::write(
+        notes.join("pwf").join("PWF-0001.md"),
+        "---\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\neffort: 4\n---\n\n## Goals\n- do the thing\n",
+    )
+    .unwrap();
+    let missing_tiers = dir.path().join("does-not-exist.toml");
+
+    pwf()
+        .args(["session", "--id", "PWF-0001", "--yes", "--config-path"])
+        .arg(&cfg)
+        .env("PATH", path)
+        .env("ZELLIJ_STUB_LOG", &log)
+        .env("PWF_MODEL_TIERS", &missing_tiers)
+        .assert()
+        .failure();
+
+    // Nothing dispatched: the stub never logged a zellij call.
+    assert!(!log.exists() || fs::read_to_string(&log).unwrap().is_empty());
+}
+
+#[test]
+#[cfg(unix)]
 fn session_codex_agent_emits_codex_argv() {
     // PWF-0079: Codex has no `--name` flag. `pwf` launches it through a small
     // title-aware shim that renames the Codex thread via Codex's app-server API,
@@ -1860,6 +2136,144 @@ fn session_codex_agent_emits_codex_argv() {
 }
 
 #[test]
+#[cfg(unix)]
+fn session_append_extends_the_note_before_dispatch() {
+    // PWF-0088: `-a`/`--append` on session reuses `update`'s lane-syntax splice to
+    // extend the body in place before dispatching. PWF-0093: the launch prompt is
+    // a thin pointer, not the note body, so the extension lands in the note (which
+    // the dispatched agent resolves itself) rather than riding in the argv.
+    let dir = TempDir::new().unwrap();
+    let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
+
+    pwf()
+        .args([
+            "session",
+            "--id",
+            "PWF-0001",
+            "--yes",
+            "--append",
+            "one more thing in the moment",
+            "--config-path",
+        ])
+        .arg(&cfg)
+        .env("PATH", path)
+        .env("ZELLIJ_STUB_LOG", &log)
+        .assert()
+        .success()
+        .stdout(contains("dispatched"));
+
+    let note = fs::read_to_string(dir.path().join("notes/pwf/PWF-0001.md")).unwrap();
+    assert!(
+        note.contains("- one more thing in the moment"),
+        "append did not extend the note body: {note}"
+    );
+
+    let argv = fs::read_to_string(&log).unwrap();
+    assert!(
+        argv.contains("do PWF-0001"),
+        "dispatched prompt did not carry the thin pointer: {argv}"
+    );
+    assert!(
+        !argv.contains("one more thing in the moment"),
+        "the note body must not be inlined into the dispatched prompt: {argv}"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn session_dispatches_a_thin_pointer_not_the_note_body() {
+    // PWF-0093: the pw-workflow skill's first step already resolves the item and
+    // reads its body in full, so the launch prompt just names the id/project and
+    // points the agent at the task — it must not inline the note's Goals/Context.
+    let dir = TempDir::new().unwrap();
+    let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
+
+    pwf()
+        .args(["session", "--id", "PWF-0001", "--yes", "--config-path"])
+        .arg(&cfg)
+        .env("PATH", path)
+        .env("ZELLIJ_STUB_LOG", &log)
+        .assert()
+        .success()
+        .stdout(contains("dispatched"));
+
+    let argv = fs::read_to_string(&log).unwrap();
+    assert!(
+        argv.contains("Pending-work ID: PWF-0001") && argv.contains("Project: pwf"),
+        "dispatched prompt lost its id/project headers: {argv}"
+    );
+    assert!(
+        argv.contains("do PWF-0001"),
+        "dispatched prompt is missing the thin pointer: {argv}"
+    );
+    assert!(
+        !argv.contains("## Goals"),
+        "the note body must not be inlined into the dispatched prompt: {argv}"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn session_append_short_flag_extends_body_not_the_agent() {
+    // PWF-0088: session's `-a` is `--append`, not `--agent` (the agent shorthand
+    // was removed to free it). `-a <text>` must splice into the body and still
+    // dispatch the default claude launcher.
+    let dir = TempDir::new().unwrap();
+    let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
+
+    pwf()
+        .args(["session", "--id", "PWF-0001", "--yes", "-a", "extra note"])
+        .arg("--config-path")
+        .arg(&cfg)
+        .env("PATH", path)
+        .env("ZELLIJ_STUB_LOG", &log)
+        .assert()
+        .success()
+        .stdout(contains("dispatched"));
+
+    let note = fs::read_to_string(dir.path().join("notes/pwf/PWF-0001.md")).unwrap();
+    assert!(
+        note.contains("- extra note"),
+        "-a did not splice into the body: {note}"
+    );
+
+    let argv = fs::read_to_string(&log).unwrap();
+    assert!(
+        argv.contains("claude"),
+        "default agent must stay claude: {argv}"
+    );
+    assert!(
+        !argv.contains("codex"),
+        "-a must not select codex as an agent: {argv}"
+    );
+}
+
+#[test]
+fn session_append_rejects_whitespace_only_before_any_dispatch() {
+    let (dir, cfg) = staged();
+    let note_path = dir.path().join("notes/glep-shimeji/GLP-0001.md");
+    let before = fs::read_to_string(&note_path).unwrap();
+
+    pwf()
+        .args([
+            "session",
+            "--id",
+            "GLP-0001",
+            "--yes",
+            "--append",
+            "   \n\t",
+            "--config-path",
+        ])
+        .arg(&cfg)
+        .assert()
+        .failure()
+        .stderr(contains("--append cannot be empty"));
+
+    let after = fs::read_to_string(&note_path).unwrap();
+    assert_eq!(before, after, "note must be untouched on a rejected append");
+}
+
+#[test]
 fn session_rejects_unknown_agent() {
     // clap ValueEnum rejects an unknown --agent value before any dispatch.
     pwf()
@@ -1887,6 +2301,61 @@ fn verify_codex_agent_reports_codex() {
         .success()
         .stdout(contains("codex:"))
         .stdout(contains("command: codex"));
+}
+
+#[test]
+fn e2e_verify_reports_resolved_model_for_effort_tagged_item() {
+    let (d, cfg) = staged();
+    pwf()
+        .args([
+            "update",
+            "--id",
+            "GLP-0001",
+            "--effort",
+            "1",
+            "--config-path",
+        ])
+        .arg(&cfg)
+        .assert()
+        .success();
+    let tiers = d.path().join("model-tiers.toml");
+    fs::write(&tiers, "[tiers.1]\nclaude_model = \"sonnet\"\n").unwrap();
+
+    pwf()
+        .args(["verify", "--id", "GLP-0001", "--config-path"])
+        .arg(&cfg)
+        .env("PWF_MODEL_TIERS", &tiers)
+        .assert()
+        .success()
+        .stdout(contains("--model"))
+        .stdout(contains("sonnet"));
+}
+
+#[test]
+fn e2e_verify_fails_on_broken_model_tiers_for_effort_tagged_item() {
+    let (d, cfg) = staged();
+    pwf()
+        .args([
+            "update",
+            "--id",
+            "GLP-0001",
+            "--effort",
+            "1",
+            "--config-path",
+        ])
+        .arg(&cfg)
+        .assert()
+        .success();
+    let missing_tiers = d.path().join("does-not-exist.toml");
+
+    pwf()
+        .args(["verify", "--id", "GLP-0001", "--config-path"])
+        .arg(&cfg)
+        .env("PWF_MODEL_TIERS", &missing_tiers)
+        .assert()
+        .success() // `verify` itself still exits 0 — it reports "fail" in its markdown, doesn't hard-error.
+        .stdout(contains("\u{2014} fail"))
+        .stdout(contains("launchable: no"));
 }
 
 #[test]

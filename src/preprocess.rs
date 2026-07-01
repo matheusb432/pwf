@@ -50,12 +50,14 @@ fn is_value_flag(flag: &str) -> bool {
             | "--reason"
             | "--report"
             | "--append-report"
+            | "--append"
             | "--date"
             | "--section"
             | "--continue"
             | "--number"
             | "--color"
             | "--agent"
+            | "--effort"
     )
 }
 
@@ -163,11 +165,13 @@ mod tests {
     }
 
     #[test]
-    fn session_agent_short_flag_keeps_its_value() {
-        // `-a codex` must keep its value through the flag/positional split.
+    fn session_append_short_flag_keeps_its_value() {
+        // PWF-0088: session's `-a` is `--append` (the `--agent` shorthand was
+        // dropped to free it). `-a "more context"` must keep its value through
+        // the flag/positional split.
         assert_eq!(
-            n(&["session", "PWF-0001", "-a", "codex"]),
-            vec!["pw", "session", "-a", "codex", "PWF-0001"]
+            n(&["session", "PWF-0001", "-a", "more context"]),
+            vec!["pw", "session", "-a", "more context", "PWF-0001"]
         );
     }
 
@@ -251,6 +255,17 @@ mod tests {
         assert_eq!(
             n(&["pw", "add", "glep", "--section", "future", "do", "x"]),
             vec!["pw", "add", "--section", "future", "glep", "do", "x"]
+        );
+    }
+
+    // ! PWF-0091: `--effort` is a value-flag on `add`; its numeric value must stay
+    // attached to the flag rather than being reordered into the positional stream
+    // behind the verb.
+    #[test]
+    fn effort_value_stays_with_its_flag_on_add() {
+        assert_eq!(
+            n(&["pw", "add", "glep", "--effort", "3", "do", "x"]),
+            vec!["pw", "add", "--effort", "3", "glep", "do", "x"]
         );
     }
 
@@ -359,6 +374,38 @@ mod tests {
                 "--append-report",
                 "## Outcome\n\nshipped it",
             ]
+        );
+    }
+
+    // ! PWF-0090: `--append`/`-a` is a value-flag whose lane-syntax value leads with
+    // `/`-style tokens; it must stay attached to its flag through the same split.
+    #[test]
+    fn append_long_flag_value_stays_with_its_flag_on_update() {
+        assert_eq!(
+            n(&[
+                "pw",
+                "update",
+                "--id",
+                "PWF-0090",
+                "--append",
+                "another goal /c new context",
+            ]),
+            vec![
+                "pw",
+                "update",
+                "--id",
+                "PWF-0090",
+                "--append",
+                "another goal /c new context",
+            ]
+        );
+    }
+
+    #[test]
+    fn append_short_flag_value_stays_with_its_flag_on_update() {
+        assert_eq!(
+            n(&["update", "PWF-0090", "-a", "more work"]),
+            vec!["pw", "update", "-a", "more work", "PWF-0090"]
         );
     }
 

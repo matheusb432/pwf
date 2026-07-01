@@ -112,6 +112,11 @@ pub enum PwAction {
         /// Prereq item id; repeat or comma-separate for several.
         #[arg(long)]
         prereq: Vec<String>,
+        /// Effort/complexity tier (1=easy .. 4=xhard); optional. Picks a Claude model
+        /// via config/model-tiers.toml when the item is later dispatched with `pwf
+        /// session` (codex ignores it).
+        #[arg(long, value_parser = clap::value_parser!(u8).range(1..=4))]
+        effort: Option<u8>,
         #[command(flatten)]
         common: PwCommon,
     },
@@ -136,6 +141,9 @@ pub enum PwAction {
         /// Cap to N listed items (default 10; `-n 0` = all).
         #[arg(short = 'n', long, value_name = "N")]
         number: Option<usize>,
+        /// Show only items tagged with this exact effort/complexity tier (1-4).
+        #[arg(long, value_parser = clap::value_parser!(u8).range(1..=4))]
+        effort: Option<u8>,
         #[command(flatten)]
         common: PwCommon,
     },
@@ -183,8 +191,9 @@ pub enum PwAction {
         common: PwCommon,
     },
     /// Replace an item's prompt body and/or title; append or clear its prereqs;
-    /// amend its `commits:` provenance; or append a closeout report — the last two
-    /// being the only edits allowed on a closed item.
+    /// splice rich lane-syntax bullets into the body; amend its `commits:`
+    /// provenance; or append a closeout report — the last two being the only edits
+    /// allowed on a closed item.
     Update {
         #[arg(long)]
         id: Option<String>,
@@ -207,6 +216,15 @@ pub enum PwAction {
         /// it is safe on closed done/cancelled items.
         #[arg(long)]
         append_report: Option<String>,
+        /// Splice rich lane-syntax bullets (same syntax as `add`'s prompt) into the
+        /// body's Goals/Context/Constraints/Done When sections, growing an existing
+        /// section or creating a missing one; open items only.
+        #[arg(short = 'a', long, conflicts_with = "prompt")]
+        append: Option<String>,
+        /// Set (or overwrite) the item's effort/complexity tier (1=easy .. 4=xhard).
+        /// Optional; open items only, same rule as title/body/prereq edits.
+        #[arg(long, value_parser = clap::value_parser!(u8).range(1..=4))]
+        effort: Option<u8>,
         #[command(flatten)]
         common: PwCommon,
     },
@@ -316,8 +334,13 @@ pub enum PwAction {
         #[arg(long = "auto")]
         auto: bool,
         /// Which agent to dispatch (claude default).
-        #[arg(long = "agent", short = 'a', value_enum, default_value_t = AgentArg::Claude)]
+        #[arg(long = "agent", value_enum, default_value_t = AgentArg::Claude)]
         agent: AgentArg,
+        /// Splice rich lane-syntax bullets (same syntax as `update -a`/`--append`) into the
+        /// item's body before dispatch, growing an existing section or creating a missing one,
+        /// then dispatch with the full updated prompt as usual.
+        #[arg(short = 'a', long)]
+        append: Option<String>,
         #[command(flatten)]
         common: PwCommon,
     },
@@ -625,6 +648,7 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             title,
             human,
             prereq,
+            effort,
             common,
         } => {
             a.project = project;
@@ -635,6 +659,7 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             a.title = title;
             a.human = human;
             a.prereq = prereq;
+            a.effort = effort;
             apply_pw_common(a, common);
             PendingWorkAction::Add
         }
@@ -645,6 +670,7 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             human,
             all,
             number,
+            effort,
             common,
         } => {
             a.project = project;
@@ -653,6 +679,7 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             a.human = human;
             a.all = all;
             a.number = number;
+            a.effort = effort;
             apply_pw_common(a, common);
             PendingWorkAction::List
         }
@@ -697,6 +724,8 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             clear_prereq,
             commits,
             append_report,
+            append,
+            effort,
             common,
         } => {
             a.id = normalize_pending_work_id(id);
@@ -706,6 +735,8 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             a.clear_prereq = clear_prereq;
             a.commits = commits;
             a.append_report = append_report;
+            a.append = append;
+            a.effort = effort;
             apply_pw_common(a, common);
             PendingWorkAction::Update
         }
@@ -772,6 +803,7 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             worktree,
             auto,
             agent,
+            append,
             common,
         } => {
             a.id = normalize_pending_work_id(id.or(id_flag));
@@ -785,6 +817,7 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             a.worktree = worktree;
             a.auto = auto;
             a.agent = agent_choice(agent);
+            a.append = append;
             apply_pw_common(a, common);
             PendingWorkAction::Session
         }
@@ -970,6 +1003,22 @@ mod tests {
         assert_eq!(a.action.as_deref(), Some("cancel"));
         assert_eq!(a.id.as_deref(), Some("GLP-0001"));
         assert_eq!(a.report.as_deref(), Some("blocked by changed scope"));
+    }
+
+    // ! PWF-0088: `session -a`/`--append` reuses `update`'s append field on the
+    // shared DTO — no duplicate field/parsing.
+    #[test]
+    fn session_parses_append_short_flag_into_shared_update_field() {
+        let a = pw_args(&["pw", "session", "PWF-0001", "-a", "extra context"]);
+        assert_eq!(a.action.as_deref(), Some("session"));
+        assert_eq!(a.append.as_deref(), Some("extra context"));
+    }
+
+    #[test]
+    fn session_agent_flag_is_long_only_now_that_short_is_append() {
+        let a = pw_args(&["pw", "session", "PWF-0001", "--agent", "codex"]);
+        assert_eq!(a.agent, crate::cli::Agent::Codex);
+        assert_eq!(a.append, None);
     }
 
     #[test]

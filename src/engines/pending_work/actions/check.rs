@@ -131,6 +131,7 @@ fn run_close(cfg: &Config, args: &Args, action: CloseAction) -> Result<String, P
                     created: &date,
                     section: Some(Section::Human),
                     prereq: None,
+                    effort: None,
                 },
             )?)
         } else {

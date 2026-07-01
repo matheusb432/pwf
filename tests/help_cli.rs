@@ -379,20 +379,37 @@ fn session_help_documents_auto_flag() {
 }
 
 #[test]
-fn session_help_documents_agent_flag() {
-    // PWF-0068: `-a`/`--agent <claude|codex>` selects the agent (claude default).
+fn session_help_documents_agent_flag_long_only() {
+    // PWF-0088: `--agent <claude|codex>` selects the agent (claude default); its
+    // `-a` shorthand was dropped so `-a` can mean `--append` on session instead.
     let (help, ok) = run(&["session", "--help"]);
     assert!(ok, "pwf session --help should exit 0");
     assert!(
         help.contains("--agent"),
         "session help should list --agent: {help}"
     );
+    assert!(
+        !help.contains("-a, --agent"),
+        "session's --agent must be long-only, -a now means --append: {help}"
+    );
+}
+
+#[test]
+fn session_help_documents_append_flag() {
+    // PWF-0088: `-a`/`--append <lanes>` reuses `update`'s lane-syntax splice to
+    // extend the body before dispatch.
+    let (help, ok) = run(&["session", "--help"]);
+    assert!(ok, "pwf session --help should exit 0");
+    assert!(
+        help.contains("-a, --append <APPEND>"),
+        "session help should list -a/--append: {help}"
+    );
 
     let (terse, ok) = run(&["session", "--help", "--terse"]);
     assert!(ok, "pwf session --help --terse should exit 0");
     assert!(
-        terse.contains("-a"),
-        "session terse should mention the -a shortcut: {terse}"
+        terse.contains("-a/--append"),
+        "session terse should mention -a/--append: {terse}"
     );
 }
 

@@ -17,13 +17,90 @@ static COMMITS_LINE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?m)^commits:.*$").unwrap());
 static COMMITS_LINE_NL_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?m)^commits:.*\n?").unwrap());
+static EFFORT_LINE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^effort:.*$").unwrap());
+static EFFORT_LINE_NL_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)^effort:.*\n?").unwrap());
 
 const REPORT_HEADER: &str = "### Report";
 
 static REPORT_HEADER_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?m)^### Report\s*$").unwrap());
 
+/// The four canonical body sections, in [`prompt_lanes::adapters::MarkdownAdapter`]'s
+/// render order.
+const LANE_SECTION_HEADERS: [&str; 4] =
+    ["## Goals", "## Context", "## Constraints", "## Done When"];
+
+/// Any Markdown heading line (H1-H6) — the boundary a spliced-in section stops at, so
+/// a trailing `### Report` block never gets swallowed into the section above it.
+static HEADING_LINE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)^#{1,6}\s.*$").unwrap());
+
+/// Splices rich lane-syntax bullets into a note body's Goals/Context/Constraints/Done
+/// When sections — an existing section grows in place; a missing one is created at the
+/// end of the note. Unlike [`work_item_content`]'s full-body regeneration, existing
+/// bullets and any trailing `### Report` block are left untouched. Used by `update
+/// --append`/`-a` (FR-0002). Returns `None` when `prompt` is whitespace-only.
+pub fn append_lanes_text(content: &str, prompt: &str) -> Option<String> {
+    let prompt = prompt.trim();
+    if prompt.is_empty() {
+        return None;
+    }
+    let parsed = prompt_lanes::parse(prompt);
+    let sections: [&[String]; 4] = [
+        &parsed.goals,
+        &parsed.context,
+        &parsed.constraints,
+        &parsed.done_when,
+    ];
+    let mut out = content.to_string();
+    for (header, bullets) in LANE_SECTION_HEADERS.iter().zip(sections) {
+        out = append_bullets_to_section(&out, header, bullets);
+    }
+    Some(out)
+}
+
+/// Appends `bullets` under `header` in `content`, splicing into the section when the
+/// header already exists (stopping before the next heading of any level) or creating a
+/// fresh section at the end otherwise. A no-op when `bullets` is empty.
+fn append_bullets_to_section(content: &str, header: &str, bullets: &[String]) -> String {
+    if bullets.is_empty() {
+        return content.to_string();
+    }
+    let header_re = Regex::new(&format!(r"(?m)^{}\s*$", regex::escape(header))).unwrap();
+    let Some(header_match) = header_re.find(content) else {
+        let mut out = content.trim_end().to_string();
+        out.push_str("\n\n");
+        out.push_str(header);
+        for bullet in bullets {
+            out.push_str(&format!("\n- {bullet}"));
+        }
+        out.push('\n');
+        return out;
+    };
+    let rest = &content[header_match.end()..];
+    let section_end = header_match.end()
+        + HEADING_LINE_RE
+            .find(rest)
+            .map(|m| m.start())
+            .unwrap_or(rest.len());
+    let before = content[..section_end].trim_end_matches('\n');
+    let after = content[section_end..].trim_start_matches('\n');
+    let mut out = before.to_string();
+    for bullet in bullets {
+        out.push_str(&format!("\n- {bullet}"));
+    }
+    if after.is_empty() {
+        out.push('\n');
+    } else {
+        out.push_str("\n\n");
+        out.push_str(after);
+    }
+    out
+}
+
 /// For brand-new items `completed` is None.
+#[allow(clippy::too_many_arguments)]
 pub fn work_item_content(
     title: &str,
     project: &str,
@@ -32,6 +109,7 @@ pub fn work_item_content(
     created: &str,
     completed: Option<&str>,
     prereq: Option<&str>,
+    effort: Option<u8>,
 ) -> String {
     let mut out = String::new();
     out.push_str("---\n");
@@ -44,6 +122,9 @@ pub fn work_item_content(
     }
     if let Some(p) = prereq {
         out.push_str(&format!("prereq: \"{p}\"\n"));
+    }
+    if let Some(e) = effort {
+        out.push_str(&format!("effort: {e}\n"));
     }
     out.push_str("---\n\n");
     out.push_str(prompt.trim_end());
@@ -201,6 +282,35 @@ pub fn set_commits_text(content: &str, value: Option<&str>) -> String {
     content.to_string()
 }
 
+/// Sets the `effort:` frontmatter line to `value` (1-4), or removes it when `None`.
+///
+/// Mirrors [`set_prereq_text`]'s placement (after `completed:`, else after `created:`,
+/// else before the closing `---`), but the value is a bare unquoted integer — an
+/// effort tier is a plain number, never a wikilink or provenance range.
+pub fn set_effort_text(content: &str, value: Option<u8>) -> String {
+    let Some(v) = value else {
+        return EFFORT_LINE_NL_RE.replace(content, "").into_owned();
+    };
+    let line = format!("effort: {v}");
+    if EFFORT_LINE_RE.is_match(content) {
+        return EFFORT_LINE_RE.replace(content, line.as_str()).into_owned();
+    }
+    for re in [&*COMPLETED_LINE_RE, &*CREATED_LINE_RE] {
+        if let Some(m) = re.find(content) {
+            return format!("{}\n{line}{}", &content[..m.end()], &content[m.end()..]);
+        }
+    }
+    let mut fences = crate::regexes::FRONTMATTER_FENCE_RE.find_iter(content);
+    if let (Some(_), Some(close)) = (fences.next(), fences.next()) {
+        return format!(
+            "{}{line}\n{}",
+            &content[..close.start()],
+            &content[close.start()..]
+        );
+    }
+    content.to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -238,6 +348,55 @@ mod tests {
     }
 
     #[test]
+    fn append_lanes_splices_into_an_existing_section() {
+        let content = "---\nstatus: active\n---\n\n## Goals\n- x\n";
+        let got = append_lanes_text(content, "more work").unwrap();
+        assert_eq!(
+            got,
+            "---\nstatus: active\n---\n\n## Goals\n- x\n- more work\n"
+        );
+    }
+
+    #[test]
+    fn append_lanes_creates_a_missing_section_and_keeps_goals_intact() {
+        let content = "---\nstatus: active\n---\n\n## Goals\n- x\n";
+        let got = append_lanes_text(content, "some title /c new context").unwrap();
+        assert_eq!(
+            got,
+            "---\nstatus: active\n---\n\n## Goals\n- x\n- some title\n\n## Context\n- new context\n"
+        );
+    }
+
+    #[test]
+    fn append_lanes_populates_all_four_sections_in_canonical_order() {
+        let content = "---\nstatus: active\n---\n\n## Goals\n- x\n";
+        let prompt = "another goal /c more context /n a constraint /d a done condition";
+        let got = append_lanes_text(content, prompt).unwrap();
+        assert_eq!(
+            got,
+            "---\nstatus: active\n---\n\n## Goals\n- x\n- another goal\n\n## Context\n- more context\n\n## Constraints\n- a constraint\n\n## Done When\n- a done condition\n"
+        );
+    }
+
+    #[test]
+    fn append_lanes_stops_before_a_trailing_report_block() {
+        // A closeout report may already sit below the body; a new Goals bullet must
+        // land above it, not get swallowed into the section it follows.
+        let content = "---\nstatus: active\n---\n\n## Goals\n- x\n\n### Report\n\nsome note\n";
+        let got = append_lanes_text(content, "more work").unwrap();
+        assert_eq!(
+            got,
+            "---\nstatus: active\n---\n\n## Goals\n- x\n- more work\n\n### Report\n\nsome note\n"
+        );
+    }
+
+    #[test]
+    fn append_lanes_rejects_whitespace_only_prompt() {
+        let content = "---\nstatus: active\n---\n\n## Goals\n- x\n";
+        assert!(append_lanes_text(content, "   \n\t").is_none());
+    }
+
+    #[test]
     fn append_report_block_extends_existing_report_section() {
         // An item closed with `check --report` already carries a one-line `### Report`;
         // a later closeout append lands under that same section, not a duplicate header.
@@ -262,6 +421,7 @@ mod tests {
             "body",
             "active",
             "2026-01-01",
+            None,
             None,
             None,
         );
@@ -330,6 +490,7 @@ mod tests {
             "2026-01-01",
             None,
             None,
+            None,
         );
         let got = set_prereq_text(&content, Some("[[GLP-0001]]"));
         assert!(
@@ -354,6 +515,7 @@ mod tests {
             "2026-01-01",
             None,
             Some("[[GLP-0001]]"),
+            None,
         );
         let got = set_prereq_text(&content, Some("[[GLP-0002]]"));
         assert_eq!(got.matches("prereq:").count(), 1, "duplicate prereq: {got}");
@@ -374,6 +536,7 @@ mod tests {
             "2026-01-01",
             None,
             Some("[[GLP-0001]]"),
+            None,
         );
         let got = set_prereq_text(&content, None);
         assert!(!got.contains("prereq:"), "prereq line lingered: {got}");
@@ -394,5 +557,84 @@ mod tests {
             parsed.frontmatter.get("created").map(String::as_str),
             Some("2026-01-01")
         );
+    }
+
+    #[test]
+    fn work_item_content_writes_effort_when_present() {
+        let content = work_item_content(
+            "t",
+            "glep-shimeji",
+            "body",
+            "active",
+            "2026-01-01",
+            None,
+            None,
+            Some(3),
+        );
+        assert!(content.contains("effort: 3\n"), "got: {content}");
+    }
+
+    #[test]
+    fn work_item_content_omits_effort_when_absent() {
+        let content = work_item_content(
+            "t",
+            "glep-shimeji",
+            "body",
+            "active",
+            "2026-01-01",
+            None,
+            None,
+            None,
+        );
+        assert!(!content.contains("effort:"), "got: {content}");
+    }
+
+    #[test]
+    fn set_effort_inserts_when_absent() {
+        let content = work_item_content(
+            "t",
+            "glep-shimeji",
+            "body",
+            "active",
+            "2026-01-01",
+            None,
+            None,
+            None,
+        );
+        let got = set_effort_text(&content, Some(4));
+        assert!(got.contains("effort: 4\n"), "effort line missing: {got}");
+    }
+
+    #[test]
+    fn set_effort_replaces_existing() {
+        let content = work_item_content(
+            "t",
+            "glep-shimeji",
+            "body",
+            "active",
+            "2026-01-01",
+            None,
+            None,
+            Some(1),
+        );
+        let got = set_effort_text(&content, Some(2));
+        assert_eq!(got.matches("effort:").count(), 1, "duplicate effort: {got}");
+        assert!(got.contains("effort: 2"), "got: {got}");
+    }
+
+    #[test]
+    fn set_effort_none_removes_line() {
+        let content = work_item_content(
+            "t",
+            "glep-shimeji",
+            "body",
+            "active",
+            "2026-01-01",
+            None,
+            None,
+            Some(2),
+        );
+        let got = set_effort_text(&content, None);
+        assert!(!got.contains("effort:"), "effort line lingered: {got}");
     }
 }
