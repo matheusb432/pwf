@@ -1,7 +1,10 @@
 //! `handoff done` / `handoff cancel` — close a handoff: flip its status,
 //! archive the file, and close its linked pw item.
 
-use std::path::{Path, PathBuf};
+use std::{
+    fmt::Write,
+    path::{Path, PathBuf},
+};
 
 use regex::Regex;
 
@@ -37,7 +40,7 @@ fn find_handoff_file(dir: &Path, key: &str) -> Result<(PathBuf, String), Handoff
                 })?;
             return Ok((e.full_path.clone(), content));
         }
-        if e.frontmatter.get("pw").map(|s| s.as_str()) == Some(key) {
+        if e.frontmatter.get("pw").map(std::string::String::as_str) == Some(key) {
             let content =
                 std::fs::read_to_string(&e.full_path).map_err(|source| HandoffError::Read {
                     action: "find-handoff",
@@ -78,7 +81,7 @@ pub(in crate::engines::handoff) fn complete_handoff(
     })?;
     let paths = handoff_paths(root);
     let (file_path, original) = find_handoff_file(&paths.dir, id)?;
-    let today = get_today(&args.date);
+    let today = get_today(args.date.as_deref());
 
     // Compute the completed content — no writes until every precondition holds.
     let content = STATUS_LINE_RE
@@ -186,7 +189,7 @@ pub(in crate::engines::handoff) fn complete_handoff(
 
     let mut out = format!("{status} handoff {} -> {}", file_name, dest.display());
     if pw_close == Some("skipped-already-closed") {
-        out.push_str(&format!("\n  note: {pw} already done \u{2014} skipped"));
+        let _ = write!(out, "\n  note: {pw} already done \u{2014} skipped");
     }
     Ok(out)
 }

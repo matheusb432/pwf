@@ -1,3 +1,5 @@
+use std::fmt::Write;
+
 use super::Adapter;
 use crate::model::ParsedPrompt;
 
@@ -10,7 +12,7 @@ impl Adapter for MarkdownAdapter {
     fn render(&self, parsed: &ParsedPrompt) -> String {
         let mut out = String::from("## Goals");
         for goal in &parsed.goals {
-            out.push_str(&format!("\n- {goal}"));
+            let _ = write!(out, "\n- {goal}");
         }
         append_section(&mut out, "Context", &parsed.context);
         append_section(&mut out, "Constraints", &parsed.constraints);
@@ -26,7 +28,7 @@ fn append_section(out: &mut String, title: &str, items: &[String]) {
     out.push_str("\n\n## ");
     out.push_str(title);
     for item in items {
-        out.push_str(&format!("\n- {item}"));
+        let _ = write!(out, "\n- {item}");
     }
 }
 

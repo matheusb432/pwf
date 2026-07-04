@@ -1,10 +1,10 @@
 // Action: done (mark done).
 
-use std::path::Path;
+use std::{fmt::Write, path::Path};
 
 use super::{
     super::{
-        commits, done_queue,
+        Item, commits, done_queue,
         errors::PendingWorkError,
         index::{append_report_text, set_commits_text, set_status_text},
         naming::{project_dir, project_index_path, stamp_date},
@@ -71,87 +71,113 @@ fn run_close(cfg: &Config, args: &Args, action: CloseAction) -> Result<String, P
         return Err(PendingWorkError::MissingCancelReport);
     }
     let item = find_pending_item(cfg, id)?;
-    let date = stamp_date(&args.date);
+    let date = stamp_date(args.date.as_deref());
 
-    if let Some(ref file) = item.item_file {
-        // File-model path
-        let item_path = Path::new(file);
-        let content = ObsidianStore::read_item_file(item_path)?;
-        let content = if let Some(report) = args.report.as_deref() {
-            append_report_text(&content, report).ok_or(PendingWorkError::EmptyReport)?
-        } else {
-            content
-        };
-        // Record commit-range provenance only when supplied so the default done
-        // output stays unchanged (PWF-0017).
-        let commits_value = commits::frontmatter_value(&args.commits);
-        let content = match commits_value.as_deref() {
-            Some(v) => set_commits_text(&content, Some(v)),
-            None => content,
-        };
-        let updated = set_status_text(&content, action.frontmatter_status(), &date);
-        ObsidianStore::write_item_file(item_path, &updated)?;
+    if item.file_path.is_some() {
+        close_file_model_item(cfg, args, action, &item, id, &date)
+    } else {
+        close_legacy_item(item, action, &date)
+    }
+}
 
-        // Keep closed items in the index as a capped, rotating done-queue (PWF-0026).
-        let notes_dir = cfg.notes_dir_for(&item.project);
-        let index_path = project_index_path(notes_dir, &item.project);
-        if index_path.exists() {
-            let idx_content = ObsidianStore::read_index(&index_path)?;
-            let queue = done_queue::mark_done(&idx_content, id, &date);
-            ObsidianStore::write_index(&index_path, &queue.content)?;
-            if queue.futuro_renamed {
-                eprintln!(
-                    "info: normalized `## Futuro` header to `## Future` in {}",
-                    item.project
-                );
-            }
-            let dir = project_dir(notes_dir, &item.project);
-            for ev in &queue.evicted {
-                ObsidianStore::archive_item_file(&dir, ev)?;
-            }
-            if !queue.evicted.is_empty() {
-                eprintln!(
-                    "info: archived {} done item(s) past the section cap: {}",
-                    queue.evicted.len(),
-                    queue.evicted.join(", ")
-                );
-            }
+/// Close a file-model item: rewrite its `status:`/`completed:` frontmatter, rotate
+/// the index's done-queue (archiving anything evicted past the section cap), and
+/// optionally spawn a `## Human` review task for the recorded commit range.
+fn close_file_model_item(
+    cfg: &Config,
+    args: &Args,
+    action: CloseAction,
+    item: &Item,
+    id: &str,
+    date: &str,
+) -> Result<String, PendingWorkError> {
+    let item_path = Path::new(
+        item.file_path
+            .as_deref()
+            .expect("caller only dispatches here when file_path is Some"),
+    );
+    let content = ObsidianStore::read_item_file(item_path)?;
+    let content = if let Some(report) = args.report.as_deref() {
+        append_report_text(&content, report).ok_or(PendingWorkError::EmptyReport)?
+    } else {
+        content
+    };
+    // Record commit-range provenance only when supplied so the default done
+    // output stays unchanged (PWF-0017).
+    let commits_value = commits::frontmatter_value(&args.commits);
+    let content = match commits_value.as_deref() {
+        Some(v) => set_commits_text(&content, Some(v)),
+        None => content,
+    };
+    let updated = set_status_text(&content, action.frontmatter_status(), date);
+    ObsidianStore::write_item_file(item_path, &updated)?;
+
+    // Keep closed items in the index as a capped, rotating done-queue (PWF-0026).
+    let notes_dir = cfg.notes_dir_for(&item.project);
+    let index_path = project_index_path(notes_dir, &item.project);
+    if index_path.exists() {
+        let idx_content = ObsidianStore::read_index(&index_path)?;
+        let queue = done_queue::mark_done(&idx_content, id, date);
+        ObsidianStore::write_index(&index_path, &queue.content)?;
+        if queue.futuro_renamed {
+            eprintln!(
+                "info: normalized `## Futuro` header to `## Future` in {}",
+                item.project
+            );
         }
-
-        // Explicit-only: spawn a `## Human` review task prepped with git-tools diff
-        // commands for the recorded range (or the unpushed fallback) (PWF-0017).
-        let review = if args.review {
-            let prompt = commits::review_task_prompt(&item.id, commits_value.as_deref());
-            Some(add_pending_work_item(
-                cfg,
-                &NewItemSpec {
-                    project_name: &item.project,
-                    task_prompt: &prompt,
-                    task_title: None,
-                    created: &date,
-                    section: Some(Section::Human),
-                    prereq: None,
-                    effort: None,
-                },
-            )?)
-        } else {
-            None
-        };
-
-        let mut out = format!(
-            "{} {} ({} :: {})\n",
-            action.past_tense(),
-            item.id,
-            item.project,
-            item.session
-        );
-        if let Some(review) = review {
-            out.push_str(&review);
+        let dir = project_dir(notes_dir, &item.project);
+        for ev in &queue.evicted {
+            ObsidianStore::archive_item_file(&dir, ev)?;
         }
-        return Ok(out);
+        if !queue.evicted.is_empty() {
+            eprintln!(
+                "info: archived {} done item(s) past the section cap: {}",
+                queue.evicted.len(),
+                queue.evicted.join(", ")
+            );
+        }
     }
 
-    // Legacy checkbox path
+    // Explicit-only: spawn a `## Human` review task prepped with git-tools diff
+    // commands for the recorded range (or the unpushed fallback) (PWF-0017).
+    let review = if args.review {
+        let prompt = commits::review_task_prompt(&item.id, commits_value.as_deref());
+        Some(add_pending_work_item(
+            cfg,
+            &NewItemSpec {
+                project_name: &item.project,
+                task_prompt: &prompt,
+                task_title: None,
+                created: date,
+                section: Some(Section::Human),
+                prereq: None,
+                effort: None,
+            },
+        )?)
+    } else {
+        None
+    };
+
+    let mut out = format!(
+        "{} {} ({} :: {})\n",
+        action.past_tense(),
+        item.id,
+        item.project,
+        item.session
+    );
+    if let Some(review) = review {
+        out.push_str(&review);
+    }
+    Ok(out)
+}
+
+/// Close a legacy inline-checkbox item: tick its `- [ ]` marker to `- [x]` (plus a
+/// completion-date stamp) directly in the project index, in place.
+fn close_legacy_item(
+    item: Item,
+    action: CloseAction,
+    date: &str,
+) -> Result<String, PendingWorkError> {
     let note_path = Path::new(&item.note);
     let content = ObsidianStore::read_note(note_path)?;
     // Bounds-checked slice: if the note shrank since it was listed, return the
@@ -167,13 +193,12 @@ fn run_close(cfg: &Config, args: &Args, action: CloseAction) -> Result<String, P
     }
     let line_end = content[item.marker_index..]
         .find(['\r', '\n'])
-        .map(|i| item.marker_index + i)
-        .unwrap_or(content.len());
+        .map_or(content.len(), |i| item.marker_index + i);
     let line_text = &content[item.marker_index..line_end];
     let mut checked_line = format!("- [x]{}", &line_text[5..]);
     // Add checkmark if not already present
     if !crate::regexes::DATE_STAMP_RE.is_match(&checked_line) {
-        checked_line.push_str(&format!(" ✅ {date}"));
+        let _ = write!(checked_line, " ✅ {date}");
     }
     let updated = format!(
         "{}{}{}",

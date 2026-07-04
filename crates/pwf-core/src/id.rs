@@ -7,6 +7,10 @@ use regex::Regex;
 /// Allocate `"{key}-{max+1:04}"` by scanning every dir in `dirs` for `*.md`
 /// files whose stem matches `^{key}-(\d{4})$`. Missing dirs are skipped; gaps
 /// are preserved (allocation is `max + 1`, never a gap-fill).
+///
+/// # Panics
+/// Panics if the internal id-matching regex fails to compile — unreachable in
+/// practice since `key` is escaped via [`regex::escape`].
 pub fn next_id(dirs: &[&Path], key: &str) -> String {
     let re = Regex::new(&format!(r"^{}-(\d{{4}})$", regex::escape(key))).unwrap();
     let mut max = 0;

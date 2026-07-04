@@ -3,6 +3,7 @@
 //! File-model analogue of scripts/notes-todo-cleaner (the legacy checkbox model).
 
 use std::{
+    fmt::Write,
     path::{Path, PathBuf},
     sync::LazyLock,
 };
@@ -58,6 +59,10 @@ pub struct DoneLink {
 
 /// Find checked work-item links. Ignores open (`- [ ]`), bare (`- [[…]]`), and
 /// plain checkbox lines without a wikilink.
+///
+/// # Panics
+/// Panics if a `DONE_INDEX_LINK_RE` capture has no group 0 — unreachable in
+/// practice, since group 0 is the whole match and is always present.
 pub fn find_done_index_links(content: &str) -> Vec<DoneLink> {
     DONE_INDEX_LINK_RE
         .captures_iter(content)
@@ -210,23 +215,26 @@ fn render_text(plans: &[ProjectPlan], dry_run: bool) -> String {
         let skipped = p.results.iter().filter(|r| r.status == "skipped").count();
         let verb = if dry_run { "WOULD CLEAN" } else { "CLEANED" };
         let label = if dry_run { "would clean" } else { "cleaned" };
-        out.push_str(&format!(
-            "{verb} {}: {cleaned} {label}, {skipped} skipped\n",
+        let _ = writeln!(
+            out,
+            "{verb} {}: {cleaned} {label}, {skipped} skipped",
             p.project
-        ));
+        );
         for r in &p.results {
             if r.status == "skipped" {
-                out.push_str(&format!(
-                    "  {} skipped ({})\n",
+                let _ = writeln!(
+                    out,
+                    "  {} skipped ({})",
                     r.id,
                     r.issue.as_deref().unwrap_or("skipped")
-                ));
+                );
             } else {
-                out.push_str(&format!(
-                    "  {} done (completed {})\n",
+                let _ = writeln!(
+                    out,
+                    "  {} done (completed {})",
                     r.id,
                     r.completed.as_deref().unwrap_or("")
-                ));
+                );
             }
         }
     }
@@ -265,13 +273,12 @@ pub(crate) fn run_clean_typed(
             path: cfg.notes_dir.clone(),
         });
     }
-    let projects: Vec<String> = match only_project {
-        Some(p) => vec![p.to_string()],
-        None => {
-            let mut v: Vec<String> = cfg.projects.keys().cloned().collect();
-            v.sort();
-            v
-        }
+    let projects: Vec<String> = if let Some(p) = only_project {
+        vec![p.to_string()]
+    } else {
+        let mut v: Vec<String> = cfg.projects.keys().cloned().collect();
+        v.sort();
+        v
     };
 
     let mut plans: Vec<ProjectPlan> = Vec::new();
@@ -326,10 +333,9 @@ pub(crate) fn run_clean_typed(
 
     let mut out = render_text(&plans, dry_run);
     if out.is_empty() {
-        let target = only_project
-            .map(|p| p.to_string())
-            .unwrap_or_else(|| cfg.notes_dir.clone());
-        out.push_str(&format!("No done work-item links to clean in {target}.\n"));
+        let target =
+            only_project.map_or_else(|| cfg.notes_dir.clone(), std::string::ToString::to_string);
+        let _ = writeln!(out, "No done work-item links to clean in {target}.");
     }
     Ok(out)
 }

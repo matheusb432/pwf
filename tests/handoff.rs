@@ -41,7 +41,7 @@ fn write_empty_config(dir: &Path) -> PathBuf {
 
 fn parse_args(tokens: &[&str]) -> pwf::cli::Args {
     let mut v = vec!["handoff".to_string()];
-    v.extend(tokens.iter().map(|s| s.to_string()));
+    v.extend(tokens.iter().map(std::string::ToString::to_string));
     pwf::command::parse_argv(v).unwrap().1
 }
 
@@ -49,7 +49,10 @@ fn parse_args(tokens: &[&str]) -> pwf::cli::Args {
 // step; pending-work verbs are top-level clap subcommands, so this just parses
 // the verb directly.
 fn parse_pw(tokens: &[&str]) -> pwf::cli::Args {
-    let v = tokens.iter().map(|s| s.to_string()).collect();
+    let v = tokens
+        .iter()
+        .map(std::string::ToString::to_string)
+        .collect();
     pwf::command::parse_argv(v).unwrap().1
 }
 
@@ -89,8 +92,7 @@ fn scaffold_with_pw_inserted_after_created() {
     );
     assert!(
         s.contains("created: 2026-01-01\npw: TST-0001\n---"),
-        "pw line not after created: {:?}",
-        s
+        "pw line not after created: {s:?}"
     );
 }
 

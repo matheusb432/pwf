@@ -1,5 +1,4 @@
 //! pw-workflow engines: pending-work, handoff, and migrate.
-#![warn(clippy::all)]
 
 pub mod cli;
 pub mod codex_thread_title;

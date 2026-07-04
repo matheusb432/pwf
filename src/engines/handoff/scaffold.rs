@@ -1,15 +1,17 @@
 //! The markdown template for a freshly-created handoff.
 
+use std::fmt::Write;
+
 /// Build the markdown content for a new handoff.
 pub fn scaffold(title: &str, project: &str, today: &str, pw: Option<&str>) -> String {
     let mut s = String::new();
     s.push_str("---\nstatus: active\n");
-    s.push_str(&format!("project: {project}\ncreated: {today}\n"));
+    let _ = write!(s, "project: {project}\ncreated: {today}\n");
     if let Some(p) = pw {
-        s.push_str(&format!("pw: {p}\n"));
+        let _ = writeln!(s, "pw: {p}");
     }
     s.push_str("---\n\n");
-    s.push_str(&format!("# {title}\n\n"));
+    let _ = write!(s, "# {title}\n\n");
     s.push_str("## Goals\n- [ ] <task title> :: <task description>\n\n");
     s.push_str("## Context\n\n## Next steps\n-\n\n");
     s.push_str("<!-- Lifecycle: while active, this is a LIVE document \u{2014} check off Goals as you finish them.\n");

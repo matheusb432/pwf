@@ -14,8 +14,7 @@ pub(crate) fn cap_title(title: &str, max_chars: usize) -> String {
     }
     let mut out = String::new();
     for word in title.split(' ') {
-        let with_word =
-            out.chars().count() + if out.is_empty() { 0 } else { 1 } + word.chars().count();
+        let with_word = out.chars().count() + usize::from(!out.is_empty()) + word.chars().count();
         if with_word > max_chars {
             break;
         }

@@ -53,7 +53,7 @@ pub(in crate::engines::pending_work) fn run_remove(
 
     let item = find_pending_item(cfg, id)?;
     let item_file = item
-        .item_file
+        .file_path
         .as_deref()
         .ok_or(PendingWorkError::RemoveRequiresFileModel)?;
     let item_path = Path::new(item_file);

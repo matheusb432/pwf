@@ -2,7 +2,6 @@ set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 
 mod agents 'just/agents.justfile'
 mod pwf 'just/pwf.justfile'
-mod md 'just/md.justfile'
 
 _default:
     @just --list --unsorted --list-submodules
@@ -22,18 +21,20 @@ update *args:
 # Format Rust sources and Markdown in place.
 fmt:
     @just pwf fmt
-    @just md fmt
 
-# Check Rust formatting + clippy -D warnings and Markdown; non-zero on drift.
+# Check formatting + clippy -D warnings + Markdown; non-zero on drift.
 fmt-check:
     @just pwf fmt-check
-    @just md fmt-check
+
+# Apply clippy's machine-applicable fixes, then reformat.
+fix *args:
+    @just pwf fix {{ args }}
 
 # Report production Rust error-handling smells.
 smell-check-errors:
     @just pwf smell-check-errors
 
-# Test gate. Default: slim in-process unit + integration (quiet). --e2e: binary suites. --all: both. --verbose: full per-test output + nocapture.
+# Test gate. Default: slim unit+integration. --e2e: binary suites. --all: both. --verbose: full output.
 test *flags:
     @just pwf test {{ flags }}
 
@@ -41,6 +42,6 @@ test *flags:
 bootstrap *flags:
     @just agents bootstrap {{ flags }}
 
-# Read-only readiness check: required tools/versions + optional health (see doctor.toml). Run first on a new clone. --json for machine output.
+# Read-only readiness check: required tools/versions + optional health (see doctor.toml).
 doctor *args:
     doctor-rs {{ args }}

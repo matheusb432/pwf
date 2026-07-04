@@ -1,7 +1,7 @@
 //! Note files on disk: create, enumerate (newest-first), and delete. The note
 //! body is the message verbatim; frontmatter records `type: note`.
 
-use std::path::Path;
+use std::{fmt::Write, path::Path};
 
 use regex::Regex;
 
@@ -16,6 +16,10 @@ pub struct Note {
 }
 
 /// Allocate the next `{prefix}-NOTE-NNNN` id by scanning `project_dir`.
+///
+/// # Panics
+/// Panics if [`pwf_core::id::next_id`]'s output does not match the canonical
+/// `{prefix}-NOTE-NNNN` shape it guarantees.
 pub fn allocate_id(project_dir: &Path, prefix: &str) -> NoteId {
     let key = format!("{prefix}-NOTE");
     let raw = pwf_core::id::next_id(&[project_dir], &key);
@@ -67,8 +71,8 @@ fn note_content(project: &str, created: &str, message: &str) -> String {
     let mut out = String::new();
     out.push_str("---\n");
     out.push_str("type: note\n");
-    out.push_str(&format!("project: {project}\n"));
-    out.push_str(&format!("created: {created}\n"));
+    let _ = writeln!(out, "project: {project}");
+    let _ = writeln!(out, "created: {created}");
     out.push_str("---\n\n");
     out.push_str(message.trim());
     out.push('\n');
@@ -83,6 +87,10 @@ fn replace_body(raw: &str, message: &str) -> String {
 }
 
 /// Enumerate notes in `project_dir`, newest-first (number descending).
+///
+/// # Panics
+/// Panics if the internal id-matching regex fails to compile — unreachable in
+/// practice since `prefix` is escaped via [`regex::escape`].
 pub fn list(project_dir: &Path, prefix: &str) -> Vec<Note> {
     let re = Regex::new(&format!(r"^{}-NOTE-(\d{{4}})$", regex::escape(prefix))).unwrap();
     let mut notes: Vec<Note> = Vec::new();

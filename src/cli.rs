@@ -20,6 +20,16 @@ pub enum Agent {
     Codex,
 }
 
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "flat cross-engine CLI flag bag (see module doc: 'PR2 may replace this flat \
+              struct with typed per-engine inputs'); each bool is a distinct --flag read by \
+              exactly one engine, not adjacent state describing one thing multiple ways, so \
+              two-variant enums would only add ceremony at every read site across the engines \
+              without reducing the transposition risk the lint targets. Splitting into typed \
+              per-engine structs is the real fix, tracked as the noted future PR2, not a \
+              same-task rename."
+)]
 #[derive(Debug, Default, Clone)]
 pub struct Args {
     pub action: Option<String>,

@@ -243,7 +243,7 @@ mod tests {
     #[test]
     fn prereqs_reject_blank_or_comma_only_values_as_missing_ids() {
         for values in [
-            vec!["".to_string()],
+            vec![String::new()],
             vec![", ,".to_string()],
             vec![" ".to_string(), ",".to_string()],
         ] {

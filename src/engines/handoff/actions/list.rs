@@ -4,10 +4,7 @@ use std::path::Path;
 
 use crate::{
     cli::Args,
-    engines::handoff::{
-        errors::{HandoffError, HandoffRead},
-        paths::handoff_paths,
-    },
+    engines::handoff::{errors::HandoffRead, paths::handoff_paths},
 };
 
 struct LedgerRead {
@@ -35,17 +32,14 @@ fn read_ledger_content(ledger: &Path) -> LedgerRead {
     }
 }
 
-pub(in crate::engines::handoff) fn invoke_list(
-    root: &Path,
-    _args: &Args,
-) -> Result<String, HandoffError> {
+pub(in crate::engines::handoff) fn invoke_list(root: &Path, _args: &Args) -> String {
     let paths = handoff_paths(root);
     let ledger = read_ledger_content(&paths.ledger);
     let content = ledger.content.value;
     if ledger.exists {
-        Ok(content)
+        content
     } else {
-        Ok("No active handoffs (LEDGER.md not found).".to_string())
+        "No active handoffs (LEDGER.md not found).".to_string()
     }
 }
 

@@ -1,7 +1,10 @@
 //! `handoff reopen` — the inverse of `done`/`cancel`: flip an archived handoff
 //! back to active and reopen its linked pw item.
 
-use std::path::{Path, PathBuf};
+use std::{
+    fmt::Write,
+    path::{Path, PathBuf},
+};
 
 use regex::Regex;
 
@@ -158,7 +161,7 @@ pub(in crate::engines::handoff) fn reopen_handoff(
 
     let mut out = format!("reopened handoff {} -> {}", file_name, dest.display());
     if !pw.is_empty() {
-        out.push_str(&format!("\n  pw: reopened {pw}"));
+        let _ = write!(out, "\n  pw: reopened {pw}");
     }
     Ok(out)
 }

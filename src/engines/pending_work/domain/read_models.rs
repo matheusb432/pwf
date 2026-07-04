@@ -28,7 +28,7 @@ impl From<Item> for OpenItem {
             prompt: item.prompt,
             repo: item.repo,
             note: item.note,
-            item_file: item.item_file,
+            item_file: item.file_path,
             line: item.line,
             format: item.format,
             launchable: item.launchable,

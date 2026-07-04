@@ -6,8 +6,17 @@ publish = false
 description = "pwf — pending-work / handoff / migrate engine for managed repos"
 
 [workspace]
-members = ["crates/pwf-core", "crates/pwf-note", "shared/prompt-lanes"]
+members = ["crates/pwf-core", "crates/pwf-note", "shared/prompt-lanes", "xtask"]
 resolver = "2"
+
+[workspace.lints.clippy]
+all         = { level = "warn", priority = -2 }
+pedantic    = { level = "warn", priority = -2 }
+correctness = { level = "deny", priority = -1 } # stays fatal despite all = warn
+# --- opt-outs ---
+must_use_candidate = "allow" # heuristic over-flags; real "ignored value" safety is rustc's
+                             # unused_must_use (already a hard error under -D warnings)
+missing_errors_doc = "allow" # fleet-uniform for now; selective per-crate opt-in is a later effort
 
 [[bin]]
 name = "pwf"
@@ -48,6 +57,9 @@ toml = "1.1.2"
 assert_cmd = "2"
 predicates = "3"
 tempfile = "3"
+
+[lints]
+workspace = true
 
 [profile.release]
 strip = true

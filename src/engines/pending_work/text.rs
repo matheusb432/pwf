@@ -82,7 +82,7 @@ pub fn get_title_from_continue_path(project_name: &str, path: &str) -> String {
     let words: Vec<String> = DASH_UNDERSCORE_RE
         .split(&slug)
         .filter(|w| !w.is_empty())
-        .map(|w| w.to_lowercase())
+        .map(str::to_lowercase)
         .filter(|w| !excluded.contains(&w.as_str()))
         .collect();
     if words.is_empty() {

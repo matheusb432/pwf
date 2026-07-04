@@ -42,7 +42,7 @@ const ISSUE_PLACEHOLDER_PROMPT: &str =
     "Prompt is a placeholder; define a real prompt before launching.";
 
 /// Scan `<repo>/docs/handoffs/*.md`, exclude LEDGER.md/README.md (case-insensitive),
-/// sort by (LastWriteTime, Name) DESC, take first.
+/// sort by (`LastWriteTime`, Name) DESC, take first.
 pub fn newest_handoff(repo: &str) -> Result<PathBuf, String> {
     newest_handoff_typed(repo).map_err(String::from)
 }
@@ -116,6 +116,14 @@ pub fn get_project_tasks(project: &str, repo: Option<&str>, index_path: &Path) -
     })
 }
 
+/// One legacy inline-checkbox match: byte span + parsed session/prompt.
+struct LegacyMatch {
+    start: usize,
+    len: usize,
+    session: String,
+    prompt: String,
+}
+
 fn parse_project_tasks_from_text(
     project: &str,
     repo: Option<&str>,
@@ -125,9 +133,23 @@ fn parse_project_tasks_from_text(
 ) -> Vec<Item> {
     let dir = index_path.parent().unwrap_or(Path::new("."));
     let note = path_str(index_path);
+    let mut items = parse_file_model_items(project, repo, dir, &note, text, load_item_note);
+    items.extend(parse_legacy_items(project, repo, &note, text));
+    items
+}
+
+/// File-model items: `- [[ID|alias]]` / `- [[ID]]` wikilinks, one [`Item`] per
+/// link, backed by an on-disk `{ID}.md` note read via `load_item_note`.
+fn parse_file_model_items(
+    project: &str,
+    repo: Option<&str>,
+    dir: &Path,
+    note: &str,
+    text: &str,
+    load_item_note: impl Fn(&Path) -> Option<String>,
+) -> Vec<Item> {
     let mut items: Vec<Item> = Vec::new();
 
-    // File-model items: aliased or bare wikilinks.
     // ! Width [A-Z]{2,4} is intentional, though current prefixes are all 3 letters.
     // * Optional "- [ ] " prefix matches the Obsidian checkbox form; "- [x]" (done) is
     // * deliberately not matched, so ticking the box in Obsidian drops the item from open lists.
@@ -140,7 +162,7 @@ fn parse_project_tasks_from_text(
         let item_path = dir.join(format!("{id}.md"));
         let mut issues: Vec<String> = Vec::new();
 
-        if repo.map(|r| r.trim().is_empty()).unwrap_or(true) {
+        if repo.is_none_or(|r| r.trim().is_empty()) {
             issues.push(ISSUE_NO_REPO.to_string());
         }
 
@@ -155,7 +177,7 @@ fn parse_project_tasks_from_text(
             if let Some(t) = parsed.frontmatter.get("title")
                 && !t.is_empty()
             {
-                title = t.clone();
+                title.clone_from(t);
             }
             prereq = parsed
                 .frontmatter
@@ -177,7 +199,7 @@ fn parse_project_tasks_from_text(
             issues.push(format!("Work-item note missing: {}", item_path.display()));
         }
         if title.trim().is_empty() {
-            title = id.clone();
+            title.clone_from(&id);
         }
         if is_placeholder_prompt(&prompt) {
             issues.push(ISSUE_PLACEHOLDER_PROMPT.to_string());
@@ -193,9 +215,9 @@ fn parse_project_tasks_from_text(
             project: project.to_string(),
             session: title,
             prompt,
-            repo: repo.map(|r| r.to_string()),
-            note: note.clone(),
-            item_file: Some(path_str(&item_path)),
+            repo: repo.map(std::string::ToString::to_string),
+            note: note.to_string(),
+            file_path: Some(path_str(&item_path)),
             line: line_number(text, match_start),
             format: "file".to_string(),
             marker_index: match_start,
@@ -209,16 +231,13 @@ fn parse_project_tasks_from_text(
             created,
         });
     }
+    items
+}
 
-    // Legacy safety net: inline backtick checkboxes.
-    // The Rust regex crate does not support lookahead, so the fenced form is split:
-    // first try the normal closing ``` fence, then the checkpoint-at-next-checkbox form.
-    struct LegacyMatch {
-        start: usize,
-        len: usize,
-        session: String,
-        prompt: String,
-    }
+/// Legacy safety net: inline backtick checkboxes.
+/// The Rust regex crate does not support lookahead, so the fenced form is split:
+/// first try the normal closing fence, then the checkpoint-at-next-checkbox form.
+fn parse_legacy_items(project: &str, repo: Option<&str>, note: &str, text: &str) -> Vec<Item> {
     let mut legacy: Vec<LegacyMatch> = Vec::new();
     for m in INLINE_LEGACY_RE.captures_iter(text) {
         legacy.push(LegacyMatch {
@@ -238,11 +257,12 @@ fn parse_project_tasks_from_text(
     }
     legacy.sort_by_key(|l| l.start);
 
+    let mut items: Vec<Item> = Vec::new();
     let mut ordinal = 0usize;
     for item in legacy {
         ordinal += 1;
         let mut issues: Vec<String> = Vec::new();
-        if repo.map(|r| r.trim().is_empty()).unwrap_or(true) {
+        if repo.is_none_or(|r| r.trim().is_empty()) {
             issues.push(ISSUE_NO_REPO.to_string());
         }
         if is_placeholder_prompt(&item.prompt) {
@@ -255,9 +275,9 @@ fn parse_project_tasks_from_text(
             project: project.to_string(),
             session: item.session,
             prompt: item.prompt,
-            repo: repo.map(|r| r.to_string()),
-            note: note.clone(),
-            item_file: None,
+            repo: repo.map(std::string::ToString::to_string),
+            note: note.to_string(),
+            file_path: None,
             line: line_number(text, item.start),
             format: "legacy".to_string(),
             marker_index: item.start,

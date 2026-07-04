@@ -1530,7 +1530,7 @@ fn resolve_show_emits_markdown_without_created_key() {
 
 #[test]
 fn resolve_show_legacy_item_emits_body_only() {
-    // Legacy inline items use the backtick-checkbox format; item_file = None, so
+    // Legacy inline items use the backtick-checkbox format; file_path = None, so
     // resolve --show falls back to the parsed prompt string (no frontmatter to strip).
     let dir = TempDir::new().unwrap();
     let notes = dir.path().join("notes");

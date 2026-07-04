@@ -1,7 +1,7 @@
 //! `handoff new` — scaffold a handoff file and, for a managed repo, allocate its
 //! linked pw work item.
 
-use std::{path::Path, sync::LazyLock};
+use std::{fmt::Write, path::Path, sync::LazyLock};
 
 use regex::Regex;
 
@@ -26,7 +26,7 @@ pub(in crate::engines::handoff) fn invoke_new(
     args: &Args,
 ) -> Result<String, HandoffError> {
     let title = args.title.as_deref().ok_or(HandoffError::MissingTitle)?;
-    let today = get_today(&args.date);
+    let today = get_today(args.date.as_deref());
     let slug_val = if let Some(s) = &args.slug {
         slug(s)
     } else {
@@ -94,7 +94,7 @@ pub(in crate::engines::handoff) fn invoke_new(
 
     let mut out = format!("Created handoff {}", file_path.display());
     if let Some(p) = pw {
-        out.push_str(&format!("\n  pw: {p}"));
+        let _ = write!(out, "\n  pw: {p}");
     }
     out.push_str("\n  Now fill the Goals + Context, then run: handoff done <id> when complete.");
     Ok(out)

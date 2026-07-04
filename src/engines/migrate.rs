@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    fmt::Write,
+    path::{Path, PathBuf},
+};
 
 use crate::{cli::Args, config, fs_atomic::write_text_atomic};
 
@@ -48,8 +51,11 @@ struct AgentItem {
     completed: Option<String>,
 }
 
-/// Checkbox regex: `^\s*-\s+\[(?P<mark>[ xX])\]\s+`(?P<title>[^`]+)`(?P<rest>.*)$`
-/// Strips leading `<-+` or `:: ` from rest; absorbs a following ```text fenced block.
+/// Checkbox regex:
+/// ```text
+/// ^\s*-\s+\[(?P<mark>[ xX])\]\s+`(?P<title>[^`]+)`(?P<rest>.*)$
+/// ```
+/// Strips leading `<-+` or `:: ` from rest; absorbs a following fenced code block.
 fn convert_to_agent_items(content: &str) -> ParsedNote {
     // Normalise CRLF → LF then split
     let content_lf = content.replace("\r\n", "\n");
@@ -180,13 +186,14 @@ fn strip_leading_marker(s: &str) -> String {
     t.to_string()
 }
 
-/// Returns true if the line is an opening fence (```text or ```).
+/// Returns true if `line` is an opening code-fence line: three backticks,
+/// optionally followed by `text`.
 fn is_fence_open(line: &str) -> bool {
     let t = line.trim();
     t == "```text" || t == "```"
 }
 
-/// Returns true if the line is a closing fence (```).
+/// Returns true if `line` is a bare closing code-fence line (three backticks).
 fn is_fence_close(line: &str) -> bool {
     line.trim() == "```"
 }
@@ -197,11 +204,11 @@ fn extract_date(text: &str) -> Option<String> {
     let bytes = text.as_bytes();
     let mut i = 0;
     while i + 10 <= bytes.len() {
-        if bytes[i..i + 4].iter().all(|b| b.is_ascii_digit())
+        if bytes[i..i + 4].iter().all(u8::is_ascii_digit)
             && bytes[i + 4] == b'-'
-            && bytes[i + 5..i + 7].iter().all(|b| b.is_ascii_digit())
+            && bytes[i + 5..i + 7].iter().all(u8::is_ascii_digit)
             && bytes[i + 7] == b'-'
-            && bytes[i + 8..i + 10].iter().all(|b| b.is_ascii_digit())
+            && bytes[i + 8..i + 10].iter().all(u8::is_ascii_digit)
         {
             return Some(std::str::from_utf8(&bytes[i..i + 10]).unwrap().to_string());
         }
@@ -222,12 +229,12 @@ fn new_item_content(
 ) -> String {
     let mut out = String::new();
     out.push_str("---\n");
-    out.push_str(&format!("status: {status}\n"));
-    out.push_str(&format!("title: {title}\n"));
-    out.push_str(&format!("project: {project}\n"));
-    out.push_str(&format!("created: {created}\n"));
+    let _ = writeln!(out, "status: {status}");
+    let _ = writeln!(out, "title: {title}");
+    let _ = writeln!(out, "project: {project}");
+    let _ = writeln!(out, "created: {created}");
     if let Some(c) = completed {
-        out.push_str(&format!("completed: {c}\n"));
+        let _ = writeln!(out, "completed: {c}");
     }
     out.push_str("---\n\n");
     if !body.is_empty() {
@@ -298,7 +305,9 @@ pub fn run_typed(args: &Args) -> Result<String, MigrateError> {
             .index_content
             .trim_end_matches('\n')
             .trim_end_matches('\r');
-        let index_content = if !active_links.is_empty() {
+        let index_content = if active_links.is_empty() {
+            format!("{index_base}\n")
+        } else {
             // Both parts are non-empty here; join with \n\n, then append \n
             let links_block = active_links.join("\n");
             if index_base.is_empty() {
@@ -306,8 +315,6 @@ pub fn run_typed(args: &Args) -> Result<String, MigrateError> {
             } else {
                 format!("{links_block}\n\n{index_base}\n")
             }
-        } else {
-            format!("{index_base}\n")
         };
 
         if args.dry_run {

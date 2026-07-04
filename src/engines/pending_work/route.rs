@@ -4,6 +4,7 @@
 
 use super::{
     actions::{
+        ListParams,
         list::{ListScope, OrderDirection, OrderField, OrderSpec},
         run_list_action,
     },
@@ -26,7 +27,7 @@ pub(super) fn run_route(cfg: &Config, args: &Args, date: &str) -> Result<String,
     let route_words: Vec<&str> = args
         .words
         .iter()
-        .map(|s| s.as_str())
+        .map(std::string::String::as_str)
         .filter(|s| !s.trim().is_empty())
         .collect();
 
@@ -35,13 +36,15 @@ pub(super) fn run_route(cfg: &Config, args: &Args, date: &str) -> Result<String,
         let scope = ListScope::from_flags(args.human, args.future, args.all)?;
         return run_list_action(
             cfg,
-            None,
-            args.long,
-            scope,
-            args.number,
-            args.effort,
-            ROUTE_ORDER,
-            use_color(args.color),
+            ListParams {
+                only_project: None,
+                long: args.long,
+                scope,
+                number: args.number,
+                effort: args.effort,
+                order: ROUTE_ORDER,
+                color_on: use_color(args.color),
+            },
         );
     }
 
@@ -72,7 +75,7 @@ pub(super) fn run_route(cfg: &Config, args: &Args, date: &str) -> Result<String,
             item.as_ref(),
             launcher,
             &probe,
-            claude_model,
+            claude_model.as_ref(),
         ));
     }
 
@@ -99,13 +102,15 @@ pub(super) fn run_route(cfg: &Config, args: &Args, date: &str) -> Result<String,
         let scope = ListScope::from_flags(args.human, args.future, args.all)?;
         return run_list_action(
             cfg,
-            Some(&project_name),
-            args.long,
-            scope,
-            args.number,
-            args.effort,
-            ROUTE_ORDER,
-            use_color(args.color),
+            ListParams {
+                only_project: Some(&project_name),
+                long: args.long,
+                scope,
+                number: args.number,
+                effort: args.effort,
+                order: ROUTE_ORDER,
+                color_on: use_color(args.color),
+            },
         );
     }
 

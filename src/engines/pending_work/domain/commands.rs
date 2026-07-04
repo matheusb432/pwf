@@ -22,7 +22,7 @@ impl PendingWorkCommand {
             .to_ascii_lowercase();
         let action: Action = action_raw
             .parse()
-            .map_err(|_| PendingWorkError::UnknownAction {
+            .map_err(|()| PendingWorkError::UnknownAction {
                 action: action_raw.clone(),
             })?;
         Ok(Self::new(action, args.clone()))

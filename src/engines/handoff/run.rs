@@ -1,5 +1,7 @@
 //! Top-level dispatcher for `pwf handoff <action>`.
 
+use std::fmt::Write;
+
 use super::{
     actions::{complete_handoff, invoke_list, invoke_new, reopen_handoff},
     errors::HandoffError,
@@ -25,12 +27,13 @@ pub(super) fn run_typed(args: &Args) -> Result<String, HandoffError> {
             let (_ledger, _count) = refresh_ledger_typed(&root)?;
             let mut out = "LEDGER refreshed.".to_string();
             if archived > 0 {
-                out.push_str(&format!("\n  archived {archived} stranded handoff(s)"));
+                let _ = write!(out, "\n  archived {archived} stranded handoff(s)");
             }
             for c in &conflicts {
-                out.push_str(&format!(
+                let _ = write!(
+                    out,
                     "\n  conflict: {c} already exists in archived/ \u{2014} left in place"
-                ));
+                );
             }
             Ok(out)
         }
@@ -38,7 +41,7 @@ pub(super) fn run_typed(args: &Args) -> Result<String, HandoffError> {
         "done" => complete_handoff(&root, "done", args),
         "cancel" => complete_handoff(&root, "cancelled", args),
         "reopen" => reopen_handoff(&root, args),
-        "list" => invoke_list(&root, args),
+        "list" => Ok(invoke_list(&root, args)),
         other => Err(HandoffError::UnknownAction {
             action: other.to_string(),
         }),

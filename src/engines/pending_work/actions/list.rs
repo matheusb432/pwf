@@ -275,18 +275,34 @@ fn apply_cap(items: Vec<Item>, cap: usize) -> (Vec<Item>, usize) {
     (kept, hidden)
 }
 
+/// The selection + rendering options for a list run. Groups the arguments that overflowed
+/// `run_list_action`'s signature so each call site names its intent.
+#[derive(Clone, Copy)]
+pub(in crate::engines::pending_work) struct ListParams<'a> {
+    pub only_project: Option<&'a str>,
+    pub long: bool,
+    pub scope: ListScope,
+    pub number: Option<usize>,
+    pub effort: Option<u8>,
+    pub order: OrderSpec,
+    pub color_on: bool,
+}
+
 /// List action implementation. Scoped sections are hidden unless a list scope
 /// flag re-includes them.
 pub(in crate::engines::pending_work) fn run_list_action(
     cfg: &Config,
-    only_project: Option<&str>,
-    long: bool,
-    scope: ListScope,
-    number: Option<usize>,
-    effort: Option<u8>,
-    order: OrderSpec,
-    color_on: bool,
+    params: ListParams<'_>,
 ) -> Result<String, PendingWorkError> {
+    let ListParams {
+        only_project,
+        long,
+        scope,
+        number,
+        effort,
+        order,
+        color_on,
+    } = params;
     let mut items: Vec<_> = get_pending_work(cfg, only_project)?
         .into_iter()
         .filter(|i| scope.includes(i.section.as_deref()))
@@ -326,7 +342,7 @@ mod tests {
             prompt: String::new(),
             repo: None,
             note: String::new(),
-            item_file: None,
+            file_path: None,
             line: 0,
             format: String::new(),
             marker_index: 0,
@@ -362,13 +378,15 @@ mod tests {
 
         let err = run_list_action(
             &cfg,
-            None,
-            false,
-            ListScope::Default,
-            None,
-            None,
-            OrderSpec::default(),
-            false,
+            ListParams {
+                only_project: None,
+                long: false,
+                scope: ListScope::Default,
+                number: None,
+                effort: None,
+                order: OrderSpec::default(),
+                color_on: false,
+            },
         )
         .unwrap_err();
 

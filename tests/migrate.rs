@@ -17,7 +17,7 @@ fn stage_dir() -> std::path::PathBuf {
 
 fn parse_args(v: &[&str]) -> cli::Args {
     let mut owned = vec!["migrate".to_string()];
-    owned.extend(v.iter().map(|s| s.to_string()));
+    owned.extend(v.iter().map(std::string::ToString::to_string));
     pwf::command::parse_argv(owned).unwrap().1
 }
 

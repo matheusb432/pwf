@@ -41,8 +41,7 @@ pub fn add_link_to_index(content: &str, link: &str) -> String {
     let insert_at = ANCHOR_WIKILINK_RE
         .find(region)
         .or_else(|| ANCHOR_CHECKBOX_RE.find(region))
-        .map(|m| m.start())
-        .unwrap_or(normal_end);
+        .map_or(normal_end, |m| m.start());
 
     let prefix = content[..insert_at].trim_end();
     let suffix = &content[insert_at..];
@@ -67,14 +66,13 @@ pub fn section_exists(content: &str, section: Section) -> bool {
 fn line_end_after(content: &str, idx: usize) -> usize {
     content[idx..]
         .find('\n')
-        .map(|i| idx + i + 1)
-        .unwrap_or(content.len())
+        .map_or(content.len(), |i| idx + i + 1)
 }
 
 fn skip_blank_lines(content: &str, mut idx: usize) -> usize {
     while idx < content.len() {
         let rest = &content[idx..];
-        let line_len = rest.find('\n').map(|i| i + 1).unwrap_or(rest.len());
+        let line_len = rest.find('\n').map_or(rest.len(), |i| i + 1);
         let line = &rest[..line_len];
         if !line.trim().is_empty() {
             break;

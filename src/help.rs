@@ -5,7 +5,7 @@
 // Terse help: verbs + required args only, no prose/recipe-hints/route-shortcuts.
 // Tuned for AI agents driving the engine (the skills point them here, not at the
 // rich `--help`), so keep it token-lean.
-const PW_TERSE: &str = r#"<project> [-n <N>] [--long|--future|--human|--all]   (routes to that project's open items; `pwf list` lists every project)
+const PW_TERSE: &str = r"<project> [-n <N>] [--long|--future|--human|--all]   (routes to that project's open items; `pwf list` lists every project)
   list [-n <N>] [--long] [--future] [--human] [--all] [-o/--order <created|id|project-id> <asc|desc>]   (--order default: created desc, flat across every project; --order project-id reproduces the pre-PWF-0096 project-grouped default)
   add <project> <prompt>   prompt lanes: <title> / <goal> /c <context> /n <constraint> /d <done>; plus [--title] [--human] [--section <s>] [--prereq <id>] [--continue-handoff] [--continue <path>]
   done --id [--report] [--commits <range>] [--review]
@@ -17,24 +17,24 @@ const PW_TERSE: &str = r#"<project> [-n <N>] [--long|--future|--human|--all]   (
   session <id> [--agent claude|codex] [--model <name>] [-a/--append <lanes>] [-i] [-w] [--auto] [-y]   dispatch an agent into the project's zellij session, or inline in the current terminal with -i (--agent picks the agent, claude default; --model forwards a raw model override to the agent's own --model flag, no validation, wins over effort-tier resolution; -a/--append splices lane-syntax bullets into the body before dispatch, same as update; -w tells it to work in a git worktree named after the id; --auto runs it autonomously without prompting the user; -y skips the [Y/n] confirm)
   clean [--dry-run|--force]
   verify [--id] [-a claude|codex] [--model <name>]
-  remove --id"#;
+  remove --id";
 
-const HANDOFF_TERSE: &str = r#"handoff <verb> [--repo-root <path>]
+const HANDOFF_TERSE: &str = r"handoff <verb> [--repo-root <path>]
   refresh
   new [--title] [--slug]
   done --id
   cancel --id
   reopen --id   (inverse of done/cancel: un-archives + reopens the linked pw item)
-  list"#;
+  list";
 
 const MIGRATE_TERSE: &str =
-    r#"migrate [--config-path <path>]   (migrates flat <project>.md into <project>/<project>.md)"#;
+    r"migrate [--config-path <path>]   (migrates flat <project>.md into <project>/<project>.md)";
 
-const NOTE_TERSE: &str = r#"note <project> [verb]
+const NOTE_TERSE: &str = r"note <project> [verb]
   ls [-n <N>]
   add <message>
   update <id> <message>
-  remove <id>"#;
+  remove <id>";
 
 /// Terse, token-lean help for one non-default engine (`handoff`, `migrate`,
 /// `note`). `None` for anything else — pending-work verbs aren't a named

@@ -26,7 +26,7 @@ impl NoteId {
             .unwrap_or(&up);
         let number: u32 = digits
             .parse()
-            .map_err(|_| NoteError::BadId(input.to_string(), prefix.to_string()))?;
+            .map_err(|_| NoteError::BadId(input.to_string(), prefix.clone()))?;
         Ok(NoteId {
             canonical: format!("{prefix}-NOTE-{number:04}"),
             number,

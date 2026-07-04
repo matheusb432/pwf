@@ -68,7 +68,7 @@ pub enum Engine {
 /// Config/sandbox overrides accepted by every `pw` command (flattened).
 #[derive(Args, Debug, Default)]
 pub struct PwCommon {
-    /// Path to the pwf config JSON (overrides $PWF_CONFIG).
+    /// Path to the pwf config JSON (overrides $`PWF_CONFIG`).
     #[arg(long)]
     pub config_path: Option<String>,
     /// Override the notes directory.
@@ -384,7 +384,7 @@ pub enum PwAction {
 /// Config/sandbox overrides accepted by every `handoff` command (flattened).
 #[derive(Args, Debug, Default)]
 pub struct HandoffCommon {
-    /// Path to the pwf config JSON (overrides $PWF_CONFIG).
+    /// Path to the pwf config JSON (overrides $`PWF_CONFIG`).
     #[arg(long)]
     pub config_path: Option<String>,
     /// Repo root (else `git rev-parse --show-toplevel`, else cwd).
@@ -465,7 +465,7 @@ pub enum HandoffAction {
 /// One-shot migration of a flat `<project>.md` note into the folder model.
 #[derive(Args, Debug, Default)]
 pub struct MigrateArgs {
-    /// Path to the pwf config JSON (overrides $PWF_CONFIG).
+    /// Path to the pwf config JSON (overrides $`PWF_CONFIG`).
     #[arg(long)]
     pub config_path: Option<String>,
     /// Override the notes directory.
@@ -497,7 +497,7 @@ pub struct NoteArgs {
 /// Config/sandbox overrides accepted by every `note` command (flattened).
 #[derive(Args, Debug, Default)]
 pub struct NoteCommon {
-    /// Path to the pwf config JSON (overrides $PWF_CONFIG).
+    /// Path to the pwf config JSON (overrides $`PWF_CONFIG`).
     #[arg(long)]
     pub config_path: Option<String>,
     /// Override the notes directory.
@@ -670,6 +670,41 @@ fn normalize_pending_work_id(id: Option<String>) -> Option<String> {
     id.map(|id| crate::engines::pending_work::canonical_pending_id(&id))
 }
 
+/// Shared body of `PwAction::Done`/`PwAction::Cancel`, which parse identically —
+/// only the resulting [`PendingWorkAction`] differs.
+fn fill_pw_close(
+    a: &mut EngineArgs,
+    id: IdArg,
+    report: Option<String>,
+    commits: Vec<String>,
+    review: bool,
+    common: PwCommon,
+) {
+    a.id = normalize_pending_work_id(id.resolve());
+    a.report = report;
+    a.commits = commits;
+    a.review = review;
+    apply_pw_common(a, common);
+}
+
+/// Shared body of `PwAction::Reopen`/`PwAction::Show`, which parse identically —
+/// only the resulting [`PendingWorkAction`] differs.
+fn fill_pw_id_only(a: &mut EngineArgs, id: IdArg, common: PwCommon) {
+    a.id = normalize_pending_work_id(id.resolve());
+    apply_pw_common(a, common);
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "one flat match arm per clap-derived PwAction variant, translating its fields \
+              1:1 into EngineArgs; identical-body arms (Done/Cancel, Reopen/Show) are already \
+              deduped via fill_pw_close/fill_pw_id_only. The remaining arms (Add/List/Update/ \
+              Route/Session) each have 8-10 distinct fields, so extracting them into helpers \
+              would need >7 positional params (reintroducing too_many_arguments) or a \
+              per-variant argument-grouping struct that only shadow-duplicates the PwAction \
+              variant shape clap already owns as the single source of truth (command.rs's own \
+              module doc). A single flat match stays the clearer, less-duplicated shape."
+)]
 fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
     match action {
         PwAction::Add {
@@ -725,11 +760,7 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             review,
             common,
         } => {
-            a.id = normalize_pending_work_id(id.resolve());
-            a.report = report;
-            a.commits = commits;
-            a.review = review;
-            apply_pw_common(a, common);
+            fill_pw_close(a, id, report, commits, review, common);
             PendingWorkAction::Done
         }
         PwAction::Cancel {
@@ -739,16 +770,11 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             review,
             common,
         } => {
-            a.id = normalize_pending_work_id(id.resolve());
-            a.report = report;
-            a.commits = commits;
-            a.review = review;
-            apply_pw_common(a, common);
+            fill_pw_close(a, id, report, commits, review, common);
             PendingWorkAction::Cancel
         }
         PwAction::Reopen { id, common } => {
-            a.id = normalize_pending_work_id(id.resolve());
-            apply_pw_common(a, common);
+            fill_pw_id_only(a, id, common);
             PendingWorkAction::Reopen
         }
         PwAction::Update {
@@ -782,8 +808,7 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             PendingWorkAction::Resolve
         }
         PwAction::Show { id, common } => {
-            a.id = normalize_pending_work_id(id.resolve());
-            apply_pw_common(a, common);
+            fill_pw_id_only(a, id, common);
             PendingWorkAction::Show
         }
         PwAction::Clean {
@@ -937,14 +962,20 @@ mod tests {
     }
 
     fn pw_args(tokens: &[&str]) -> EngineArgs {
-        let argv = tokens.iter().map(|s| s.to_string()).collect();
-        let (engine, args) = parse_argv(argv).expect("parse");
+        let argv = tokens
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect();
+        let (engine, parsed_args) = parse_argv(argv).expect("parse");
         assert_eq!(engine, "pw");
-        args
+        parsed_args
     }
 
     fn parse_top_level(tokens: &[&str]) -> (String, EngineArgs) {
-        let argv = tokens.iter().map(|s| s.to_string()).collect();
+        let argv = tokens
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect();
         parse_argv(argv).expect("parse")
     }
 
@@ -1114,7 +1145,7 @@ mod tests {
     fn positional_and_id_flag_conflict() {
         let argv = ["done", "GLP-0001", "--id", "GLP-0002"]
             .iter()
-            .map(|s| s.to_string())
+            .map(std::string::ToString::to_string)
             .collect();
         assert!(parse_argv(argv).is_err());
     }
@@ -1123,7 +1154,10 @@ mod tests {
     // as a bare positional or `--id` and still normalizes it to uppercase.
     #[test]
     fn show_parses_positional_id_to_show_action_uppercased() {
-        let argv = ["show", "pwf-0001"].iter().map(|s| s.to_string()).collect();
+        let argv = ["show", "pwf-0001"]
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect();
         let ParsedCommand::PendingWork(command) = parse_command_argv(argv).expect("parse") else {
             panic!("expected pending-work command");
         };
@@ -1138,7 +1172,7 @@ mod tests {
     fn typed_pw_parse_keeps_action_out_of_flat_args() {
         let argv = ["done", "--id", "GLP-0001"]
             .iter()
-            .map(|s| s.to_string())
+            .map(std::string::ToString::to_string)
             .collect();
         let ParsedCommand::PendingWork(command) = parse_command_argv(argv).expect("parse") else {
             panic!("expected pending-work command");
@@ -1152,7 +1186,10 @@ mod tests {
     }
 
     fn parse_note(tokens: &[&str]) -> NoteCommand {
-        let argv = tokens.iter().map(|s| s.to_string()).collect();
+        let argv = tokens
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect();
         match parse_command_argv(argv).expect("parse") {
             ParsedCommand::Note(c) => c,
             other => panic!("expected note command, got {other:?}"),

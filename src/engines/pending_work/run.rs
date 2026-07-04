@@ -5,7 +5,7 @@ use anstyle::AnsiColor;
 
 use super::{
     actions::{
-        NewItemSpec, add_pending_work_item,
+        ListParams, NewItemSpec, add_pending_work_item,
         list::{ListScope, OrderSpec},
         render_confirmation, run_cancel, run_done, run_list_action, run_remove, run_reopen,
         run_update,
@@ -68,7 +68,7 @@ pub(in crate::engines::pending_work) fn run_typed(
     let args = command.args();
 
     let cfg = load_config(args)?;
-    let date = stamp_date(&args.date);
+    let date = stamp_date(args.date.as_deref());
 
     match command.action() {
         Action::Route => Ok(run_route(&cfg, args, &date)?),
@@ -85,13 +85,15 @@ pub(in crate::engines::pending_work) fn run_typed(
             let order = OrderSpec::from_tokens(&args.order)?;
             Ok(run_list_action(
                 &cfg,
-                only_project.as_deref(),
-                args.long,
-                scope,
-                args.number,
-                args.effort,
-                order,
-                use_color(args.color),
+                ListParams {
+                    only_project: only_project.as_deref(),
+                    long: args.long,
+                    scope,
+                    number: args.number,
+                    effort: args.effort,
+                    order,
+                    color_on: use_color(args.color),
+                },
             )?)
         }
 
@@ -126,7 +128,7 @@ pub(in crate::engines::pending_work) fn run_typed(
                 item.as_ref(),
                 launcher,
                 &probe,
-                claude_model,
+                claude_model.as_ref(),
             ))
         }
 
@@ -154,7 +156,7 @@ pub(in crate::engines::pending_work) fn run_typed(
             Ok(super::session::dispatch(
                 &cfg,
                 id,
-                super::session::DispatchOpts {
+                &super::session::DispatchOpts {
                     color: args.color,
                     assume_yes: args.assume_yes,
                     inline: args.inline,

@@ -1,6 +1,6 @@
 // Work-item note rendering and frontmatter string transforms.
 
-use std::sync::LazyLock;
+use std::{fmt::Write, sync::LazyLock};
 
 use regex::Regex;
 
@@ -73,22 +73,19 @@ fn append_bullets_to_section(content: &str, header: &str, bullets: &[String]) ->
         out.push_str("\n\n");
         out.push_str(header);
         for bullet in bullets {
-            out.push_str(&format!("\n- {bullet}"));
+            let _ = write!(out, "\n- {bullet}");
         }
         out.push('\n');
         return out;
     };
     let rest = &content[header_match.end()..];
-    let section_end = header_match.end()
-        + HEADING_LINE_RE
-            .find(rest)
-            .map(|m| m.start())
-            .unwrap_or(rest.len());
+    let section_end =
+        header_match.end() + HEADING_LINE_RE.find(rest).map_or(rest.len(), |m| m.start());
     let before = content[..section_end].trim_end_matches('\n');
     let after = content[section_end..].trim_start_matches('\n');
     let mut out = before.to_string();
     for bullet in bullets {
-        out.push_str(&format!("\n- {bullet}"));
+        let _ = write!(out, "\n- {bullet}");
     }
     if after.is_empty() {
         out.push('\n');
@@ -113,18 +110,18 @@ pub fn work_item_content(
 ) -> String {
     let mut out = String::new();
     out.push_str("---\n");
-    out.push_str(&format!("status: {status}\n"));
-    out.push_str(&format!("title: {title}\n"));
-    out.push_str(&format!("project: {project}\n"));
-    out.push_str(&format!("created: {created}\n"));
+    let _ = writeln!(out, "status: {status}");
+    let _ = writeln!(out, "title: {title}");
+    let _ = writeln!(out, "project: {project}");
+    let _ = writeln!(out, "created: {created}");
     if let Some(c) = completed {
-        out.push_str(&format!("completed: {c}\n"));
+        let _ = writeln!(out, "completed: {c}");
     }
     if let Some(p) = prereq {
-        out.push_str(&format!("prereq: \"{p}\"\n"));
+        let _ = writeln!(out, "prereq: \"{p}\"");
     }
     if let Some(e) = effort {
-        out.push_str(&format!("effort: {e}\n"));
+        let _ = writeln!(out, "effort: {e}");
     }
     out.push_str("---\n\n");
     out.push_str(prompt.trim_end());
@@ -190,6 +187,10 @@ pub fn append_report_block_text(content: &str, report: &str) -> Option<String> {
 
 /// Replace first `status:` line; insert/replace `completed:` (insert right after
 /// the new status line when absent).
+///
+/// # Panics
+/// Panics if the internal status-matching regex fails to compile — unreachable
+/// in practice since `status` is escaped via [`regex::escape`].
 pub fn set_status_text(content: &str, status: &str, completed: &str) -> String {
     let c = crate::regexes::STATUS_LINE_RE
         .replace(content, format!("status: {status}").as_str())

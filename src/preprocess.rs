@@ -170,8 +170,7 @@ pub fn normalize(argv: Vec<String>) -> Vec<String> {
 
     let first_is_verb = positionals
         .first()
-        .map(|w| pw_subcommands().contains(&w.as_str()))
-        .unwrap_or(false);
+        .is_some_and(|w| pw_subcommands().contains(&w.as_str()));
 
     let mut out = Vec::with_capacity(argv.len());
     if first_is_verb {
@@ -208,7 +207,12 @@ mod tests {
     use super::*;
 
     fn n(tokens: &[&str]) -> Vec<String> {
-        normalize(tokens.iter().map(|s| s.to_string()).collect())
+        normalize(
+            tokens
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
+        )
     }
 
     #[test]

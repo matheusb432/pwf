@@ -1,6 +1,5 @@
 //! pwf-note — one-liner project notes: `pwf note <proj> [ls|add|remove]`.
 //! Indexed under a `### Notes` section, disjoint from pending-work tasks.
-#![warn(clippy::all)]
 
 pub mod errors;
 pub mod id;
@@ -52,7 +51,7 @@ pub fn run(command: &NoteCommand) -> Result<String, String> {
             &command.project,
             &prefix,
             message,
-            &command.date,
+            command.date.as_deref(),
         ),
         NoteVerb::Remove { id } => remove_note(&project_dir, &index_path, &prefix, id),
         NoteVerb::Update { id, message } => update_note(&project_dir, &prefix, id, message),
@@ -83,7 +82,7 @@ fn add_note(
     project: &str,
     prefix: &str,
     message: &str,
-    date: &Option<String>,
+    date: Option<&str>,
 ) -> Result<String, String> {
     if message.trim().is_empty() {
         return Err(NoteError::EmptyMessage.into());

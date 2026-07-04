@@ -93,11 +93,11 @@ pub fn parse(prompt: &str) -> ParsedPrompt {
 
     for token in tokens {
         if is_marker(token) {
-            if !seen_first_marker {
+            if seen_first_marker {
+                push(&mut parsed, current, words_to_text(&buffer));
+            } else {
                 parsed.title = or_pending_work(words_to_text(&buffer));
                 parsed.goals.push(parsed.title.clone());
-            } else {
-                push(&mut parsed, current, words_to_text(&buffer));
             }
             buffer.clear();
             seen_first_marker = true;

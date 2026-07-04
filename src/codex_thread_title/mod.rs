@@ -71,9 +71,8 @@ fn run_launcher(args: &[String]) -> i32 {
 }
 
 fn run_worker(args: &[String]) -> i32 {
-    let invocation = match Invocation::parse(args) {
-        Ok(invocation) => invocation,
-        Err(_) => return 2,
+    let Ok(invocation) = Invocation::parse(args) else {
+        return 2;
     };
     match rename_when_thread_appears(
         &invocation.title,
@@ -149,10 +148,10 @@ fn rename_when_thread_appears(
 }
 
 fn current_pwf_exe() -> String {
-    std::env::current_exe()
-        .ok()
-        .map(|path| path.to_string_lossy().into_owned())
-        .unwrap_or_else(|| PWF_FALLBACK_BINARY.to_string())
+    std::env::current_exe().ok().map_or_else(
+        || PWF_FALLBACK_BINARY.to_string(),
+        |path| path.to_string_lossy().into_owned(),
+    )
 }
 
 fn now_unix_seconds() -> u64 {

@@ -41,12 +41,12 @@ fn resolve_active_item(item: &Item, show: bool) -> Result<String, errors::Pendin
     if show {
         // File-model: stream the note as markdown, minus exec-irrelevant frontmatter.
         // Legacy inline items have no standalone file → emit the parsed body.
-        return match item.item_file.as_deref() {
+        return match item.file_path.as_deref() {
             Some(file) => resolve_file(std::path::Path::new(file), true),
             None => Ok(item.prompt.clone()),
         };
     }
-    Ok(item.item_file.as_deref().unwrap_or(&item.note).to_string())
+    Ok(item.file_path.as_deref().unwrap_or(&item.note).to_string())
 }
 
 /// Render a per-item note file for `resolve`: its forward-slash path, or with

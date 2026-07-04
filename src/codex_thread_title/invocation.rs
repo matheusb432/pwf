@@ -1,5 +1,5 @@
-//! Pure argv parsing for the shim's launcher/worker protocol: `--title <t> --cwd
-//! <dir> --since <unix-secs> -- <codex argv…>`.
+//! Pure argv parsing for the shim's launcher/worker protocol:
+//! `--title <t> --cwd <dir> --since <unix-secs> -- <codex argv…>`.
 
 use super::{ARG_SEPARATOR, CWD_FLAG, SINCE_FLAG, TITLE_FLAG};
 

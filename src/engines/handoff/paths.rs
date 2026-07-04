@@ -14,9 +14,9 @@ use crate::{cli::Args, config};
 
 static SLUG_NON_ALNUM_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[^a-z0-9]+").unwrap());
 
-pub(super) fn get_today(date: &Option<String>) -> String {
+pub(super) fn get_today(date: Option<&str>) -> String {
     match date {
-        Some(d) => d.clone(),
+        Some(d) => d.to_string(),
         None => chrono::Local::now().format("%Y-%m-%d").to_string(),
     }
 }

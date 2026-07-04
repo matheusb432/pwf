@@ -33,12 +33,12 @@ fn main() {
             }
         },
         // clap renders help/version/parse errors with the right exit codes.
-        Err(e) => exit_with_clap_error(e),
+        Err(e) => exit_with_clap_error(&e),
     }
 }
 
 /// Print a clap-rendered help/version/parse error and exit with clap's code.
-fn exit_with_clap_error(e: clap::Error) -> ! {
+fn exit_with_clap_error(e: &clap::Error) -> ! {
     let rendered = e.render().to_string();
     if e.use_stderr() {
         eprint!("{rendered}");

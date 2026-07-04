@@ -4,6 +4,10 @@ use regex::Regex;
 
 /// Return byte offset of the first matching header, or `None`. Accepts headers
 /// in preference order. Matching is case-insensitive (PWF-0026).
+///
+/// # Panics
+/// Panics if a header's regex fails to compile — unreachable in practice since
+/// each header is escaped via [`regex::escape`].
 pub fn find_section_index(content: &str, headers: &[&str]) -> Option<usize> {
     for h in headers {
         let pattern = format!(r"(?im)^{}\s*$", regex::escape(h));
@@ -16,6 +20,10 @@ pub fn find_section_index(content: &str, headers: &[&str]) -> Option<usize> {
 
 /// Remove the line matching `[[<id>|...]]` or `[[<id>]]`, with or without a
 /// leading `- [ ] ` Obsidian checkbox.
+///
+/// # Panics
+/// Panics if the link-matching regex fails to compile — unreachable in
+/// practice since `id` is escaped via [`regex::escape`].
 pub fn remove_index_link(content: &str, id: &str) -> String {
     let pattern = format!(
         r"(?m)^\s*-\s*(?:\[ \]\s*)?\[\[{}(?:\|[^\]]*)?\]\].*(?:\r?\n)?",

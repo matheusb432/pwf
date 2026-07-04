@@ -53,7 +53,7 @@ impl AppServerClient {
         };
         client.request(
             INITIALIZE,
-            json!({
+            &json!({
                 "clientInfo": {
                     "name": CLIENT_NAME,
                     "title": CLIENT_TITLE,
@@ -61,7 +61,7 @@ impl AppServerClient {
                 }
             }),
         )?;
-        client.notify(INITIALIZED, json!({}))?;
+        client.notify(INITIALIZED, &json!({}))?;
         Ok(client)
     }
 
@@ -73,7 +73,7 @@ impl AppServerClient {
     ) -> Result<Option<String>, String> {
         let result = self.request(
             THREAD_LIST,
-            json!({
+            &json!({
                 "cwd": cwd,
                 "limit": 10,
                 "sortKey": "created_at",
@@ -93,7 +93,7 @@ impl AppServerClient {
     pub(super) fn set_thread_name(&mut self, thread_id: &str, title: &str) -> Result<(), String> {
         self.request(
             THREAD_NAME_SET,
-            json!({
+            &json!({
                 "threadId": thread_id,
                 "name": title
             }),
@@ -101,7 +101,7 @@ impl AppServerClient {
         Ok(())
     }
 
-    fn request(&mut self, method: &str, params: Value) -> Result<Value, String> {
+    fn request(&mut self, method: &str, params: &Value) -> Result<Value, String> {
         let id = self.next_id;
         self.next_id += 1;
         let request = json!({
@@ -113,7 +113,7 @@ impl AppServerClient {
         self.read_response(id)
     }
 
-    fn notify(&mut self, method: &str, params: Value) -> Result<(), String> {
+    fn notify(&mut self, method: &str, params: &Value) -> Result<(), String> {
         self.write_json(&json!({
             "method": method,
             "params": params

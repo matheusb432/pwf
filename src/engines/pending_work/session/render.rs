@@ -2,6 +2,8 @@
 //! is rendered separately from coloring so both are unit-tested; ANSI is gated
 //! by an explicit `on` bool resolved once at the edge (`color::use_color`).
 
+use std::fmt::Write;
+
 use anstyle::AnsiColor;
 
 use super::super::color::paint;
@@ -55,9 +57,10 @@ pub(in crate::engines::pending_work) fn render(
     let line = paint(&format!("session: {session}  ·  tab: {tab}"), color, on);
     let mut out = format!("# session {tab} — {token}\n{line}\n");
     if !matches!(outcome, DispatchOutcome::Error { .. }) {
-        out.push_str(&format!(
+        let _ = write!(
+            out,
             "agent: {agent} · cwd: {cwd}\nattach with: zellij attach {session}\n"
-        ));
+        );
     }
     if let Some(n) = note {
         out.push_str(&n);

@@ -82,7 +82,7 @@ fn update_open_item(
     append_report: Option<&str>,
 ) -> Result<String, PendingWorkError> {
     let item_file = item
-        .item_file
+        .file_path
         .as_deref()
         .ok_or(PendingWorkError::UpdateRequiresFileModel)?;
     let item_path = Path::new(item_file);
@@ -91,8 +91,7 @@ fn update_open_item(
     let new_title = args
         .title
         .as_deref()
-        .map(normalize_title)
-        .unwrap_or_else(|| item.session.clone());
+        .map_or_else(|| item.session.clone(), normalize_title);
     if args.title.is_some() {
         content = TITLE_LINE_RE
             .replace(&content, format!("title: {new_title}").as_str())

@@ -1,6 +1,6 @@
 // Write-side store: create a pending-work item file + link it into the index.
 
-use std::path::Path;
+use std::{fmt::Write, path::Path};
 
 use super::super::{
     errors::PendingWorkError,
@@ -47,8 +47,7 @@ pub(in crate::engines::pending_work) fn add_pending_work_item(
     let repo = cfg
         .projects
         .get(project_name)
-        .map(|s| s.as_str())
-        .unwrap_or("");
+        .map_or("", std::string::String::as_str);
     if repo.trim().is_empty() {
         return Err(PendingWorkError::ProjectNotMappedToRepo {
             project: project_name.to_string(),
@@ -109,7 +108,7 @@ pub(in crate::engines::pending_work) fn add_pending_work_item(
     ObsidianStore::write_add_index_file(&index, &updated)?;
 
     let mut out = format!("ADDED PWF TASK [{id}] {project_name} :: {session}\n");
-    out.push_str(&format!("  file: {}\n", item_path.display()));
+    let _ = writeln!(out, "  file: {}", item_path.display());
     Ok(out)
 }
 

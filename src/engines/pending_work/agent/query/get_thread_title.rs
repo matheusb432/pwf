@@ -1,5 +1,6 @@
 use crate::engines::pending_work::Item;
 
+#[derive(Clone, Copy)]
 pub struct GetThreadTitle<'a> {
     work_item_id: &'a str,
     task_title: &'a str,

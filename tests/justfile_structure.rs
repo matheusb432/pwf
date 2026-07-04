@@ -5,54 +5,56 @@ fn repo_path(path: &str) -> std::path::PathBuf {
 }
 
 #[test]
-fn justfile_is_split_into_bash_domain_modules() {
+fn justfile_forwards_logic_to_the_xtask_crate() {
     let root = fs::read_to_string(repo_path("justfile")).expect("read root justfile");
-
     assert!(
         root.contains(r#"set shell := ["bash", "-eu", "-o", "pipefail", "-c"]"#),
         "root justfile should use the bash recipe shell"
     );
+    assert!(root.contains("mod pwf 'just/pwf.justfile'"));
+    assert!(root.contains("mod agents 'just/agents.justfile'"));
     assert!(
-        root.contains("mod pwf 'just/pwf.justfile'"),
-        "root justfile should include the pwf domain module"
-    );
-    assert!(
-        root.contains("mod agents 'just/agents.justfile'"),
-        "root justfile should include the agents domain module"
-    );
-    assert!(
-        !root.contains("[group('quality')]"),
-        "quality must not remain as a junk-drawer recipe group"
-    );
-    assert!(
-        !root.contains(r#"set shell := ["pwsh""#),
-        "PowerShell must not remain the default recipe shell"
-    );
-    assert!(
-        !root.contains("test-conformance"),
-        "retired conformance recipe should not remain in the root justfile"
+        !root.contains("mod md"),
+        "the md module is retired (xtask owns Markdown fmt)"
     );
 
-    for module in ["pwf", "agents"] {
-        let path = format!("just/{module}.justfile");
-        let body = fs::read_to_string(repo_path(&path)).unwrap_or_else(|err| {
-            panic!("read {path}: {err}");
-        });
+    let pwf = fs::read_to_string(repo_path("just/pwf.justfile")).expect("read pwf module");
+    assert!(
+        pwf.contains("set working-directory := '..'"),
+        "pwf module should run recipes from the repo root"
+    );
+    for verb in [
+        "fmt",
+        "fmt-check",
+        "fix",
+        "test",
+        "smell-check-errors",
+        "install",
+        "update",
+    ] {
+        let forwarded =
+            pwf.contains(&format!("-- {verb}\n")) || pwf.contains(&format!("-- {verb} "));
         assert!(
-            body.contains(r#"set shell := ["bash", "-eu", "-o", "pipefail", "-c"]"#),
-            "{path} should use the bash recipe shell"
-        );
-        assert!(
-            body.contains("set working-directory := '..'"),
-            "{path} should run recipes from the repo root"
-        );
-        assert!(
-            !body.contains("test-conformance"),
-            "retired conformance recipe should not remain in {path}"
-        );
-        assert!(
-            !body.contains("ShellSpec conformance"),
-            "retired conformance wording should not remain in {path}"
+            forwarded,
+            "`{verb}` recipe should forward into the xtask crate"
         );
     }
+    assert!(!pwf.contains("shellspec"), "ShellSpec is retired");
+    assert!(
+        !pwf.contains("_require-shellspec"),
+        "ShellSpec guard is retired"
+    );
+}
+
+#[test]
+fn shellspec_suite_is_removed() {
+    assert!(
+        !repo_path(".shellspec").exists(),
+        ".shellspec should be deleted"
+    );
+    assert!(!repo_path("spec").exists(), "spec/ should be deleted");
+    assert!(
+        !repo_path("just/md.justfile").exists(),
+        "just/md.justfile should be deleted"
+    );
 }

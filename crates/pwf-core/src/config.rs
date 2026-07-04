@@ -37,8 +37,7 @@ impl Config {
     pub fn notes_dir_for(&self, project: &str) -> &str {
         self.notes_dir_overrides
             .get(project)
-            .map(String::as_str)
-            .unwrap_or(&self.notes_dir)
+            .map_or(&self.notes_dir, String::as_str)
     }
 }
 

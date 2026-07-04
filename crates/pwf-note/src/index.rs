@@ -10,25 +10,21 @@ const NOTES_HEADER: &str = "### Notes";
 /// end of the file when absent. The rest of the document is preserved verbatim.
 pub fn add_note_link(content: &str, id: &str) -> String {
     let line = format!("- [[{id}]]");
-    match find_section_index(content, &[NOTES_HEADER]) {
-        Some(idx) => {
-            // Insert immediately after the header line (newest-first).
-            let after_header = content[idx..]
-                .find('\n')
-                .map(|i| idx + i + 1)
-                .unwrap_or(content.len());
-            let prefix = &content[..after_header];
-            let suffix = &content[after_header..];
-            format!("{prefix}{line}\n{suffix}")
-        }
-        None => {
-            // Create the section at the very end of the file.
-            let prefix = content.trim_end();
-            if prefix.is_empty() {
-                format!("{NOTES_HEADER}\n\n{line}\n")
-            } else {
-                format!("{prefix}\n\n{NOTES_HEADER}\n\n{line}\n")
-            }
+    if let Some(idx) = find_section_index(content, &[NOTES_HEADER]) {
+        // Insert immediately after the header line (newest-first).
+        let after_header = content[idx..]
+            .find('\n')
+            .map_or(content.len(), |i| idx + i + 1);
+        let prefix = &content[..after_header];
+        let suffix = &content[after_header..];
+        format!("{prefix}{line}\n{suffix}")
+    } else {
+        // Create the section at the very end of the file.
+        let prefix = content.trim_end();
+        if prefix.is_empty() {
+            format!("{NOTES_HEADER}\n\n{line}\n")
+        } else {
+            format!("{prefix}\n\n{NOTES_HEADER}\n\n{line}\n")
         }
     }
 }

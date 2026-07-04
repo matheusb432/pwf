@@ -92,7 +92,10 @@ pub(super) fn resolve_project_repo(
     raw: &str,
 ) -> Result<(String, String), errors::PendingWorkError> {
     let project = resolve_managed_project_name_typed(cfg, raw)?;
-    let repo = cfg.projects.get(&project).map(|s| s.as_str()).unwrap_or("");
+    let repo = cfg
+        .projects
+        .get(&project)
+        .map_or("", std::string::String::as_str);
     if repo.trim().is_empty() {
         return Err(errors::PendingWorkError::ProjectNotMappedToRepo { project });
     }
@@ -122,7 +125,7 @@ pub(super) fn get_pending_work(
         if !index.exists() {
             continue;
         }
-        let repo = cfg.projects.get(project).map(|s| s.as_str());
+        let repo = cfg.projects.get(project).map(std::string::String::as_str);
         items.extend(get_project_tasks(project, repo, &index));
     }
     Ok(items)

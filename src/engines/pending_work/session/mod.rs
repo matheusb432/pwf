@@ -96,7 +96,7 @@ impl DispatchOpts {
 pub(in crate::engines::pending_work) fn dispatch(
     cfg: &Config,
     id: &str,
-    opts: DispatchOpts,
+    opts: &DispatchOpts,
 ) -> Result<String, PendingWorkError> {
     let launcher = launcher_for(opts.agent);
     if !RealProbe::resolve(launcher.binary()).available() {
@@ -138,7 +138,7 @@ fn tab_name(item: &Item) -> String {
 pub(in crate::engines::pending_work) fn run_session(
     cfg: &Config,
     id: &str,
-    opts: DispatchOpts,
+    opts: &DispatchOpts,
     driver: &dyn MultiplexerDriver,
     launcher: &dyn AgentLauncher,
     exec: &dyn InlineExec,
@@ -173,7 +173,7 @@ pub(in crate::engines::pending_work) fn run_session(
     let argv = launcher.argv(&item, opts.launch, model.as_deref());
 
     if !opts.assume_yes && confirmer.interactive() {
-        let question = confirmation::question(&item, &session, &opts, launcher.binary());
+        let question = confirmation::question(&item, &session, opts, launcher.binary());
         if !confirmer.confirm(&question, DefaultAnswer::Yes) {
             return Ok(format!(
                 "# session {} — aborted\nnothing dispatched.\n",
@@ -292,7 +292,7 @@ mod tests {
         let out = run_session(
             &cfg,
             "PWF-0001",
-            DispatchOpts::test().assume_yes(),
+            &DispatchOpts::test().assume_yes(),
             &driver,
             &ClaudeLauncher,
             &FakeExec::ok(),
@@ -314,7 +314,7 @@ mod tests {
         let out = run_session(
             &cfg,
             "PWF-0001",
-            DispatchOpts::test().assume_yes(),
+            &DispatchOpts::test().assume_yes(),
             &driver,
             &ClaudeLauncher,
             &FakeExec::ok(),
@@ -344,7 +344,7 @@ mod tests {
         let out = run_session(
             &cfg,
             "PWF-0001",
-            DispatchOpts::test().assume_yes(),
+            &DispatchOpts::test().assume_yes(),
             &driver,
             &ClaudeLauncher,
             &FakeExec::ok(),
@@ -365,7 +365,7 @@ mod tests {
         let err = run_session(
             &cfg,
             "PWF-0001",
-            DispatchOpts::test().assume_yes(),
+            &DispatchOpts::test().assume_yes(),
             &driver,
             &ClaudeLauncher,
             &FakeExec::ok(),
@@ -386,7 +386,7 @@ mod tests {
         let out = run_session(
             &cfg,
             "PWF-0001",
-            DispatchOpts::test(),
+            &DispatchOpts::test(),
             &driver,
             &ClaudeLauncher,
             &FakeExec::ok(),
@@ -409,7 +409,7 @@ mod tests {
         let out = run_session(
             &cfg,
             "PWF-0001",
-            DispatchOpts::test(),
+            &DispatchOpts::test(),
             &driver,
             &ClaudeLauncher,
             &FakeExec::ok(),
@@ -435,7 +435,7 @@ mod tests {
         let out = run_session(
             &cfg,
             "PWF-0001",
-            DispatchOpts {
+            &DispatchOpts {
                 inline: true,
                 launch: policy(true, true),
                 agent: crate::cli::Agent::Codex,
@@ -476,7 +476,7 @@ mod tests {
         let out = run_session(
             &cfg,
             "PWF-0001",
-            DispatchOpts::test(),
+            &DispatchOpts::test(),
             &driver,
             &ClaudeLauncher,
             &FakeExec::ok(),
@@ -498,7 +498,7 @@ mod tests {
         let out = run_session(
             &cfg,
             "PWF-0001",
-            DispatchOpts::test().assume_yes(),
+            &DispatchOpts::test().assume_yes(),
             &driver,
             &ClaudeLauncher,
             &FakeExec::ok(),
@@ -522,7 +522,7 @@ mod tests {
         let out = run_session(
             &cfg,
             "PWF-0001",
-            DispatchOpts::test().assume_yes().inline(),
+            &DispatchOpts::test().assume_yes().inline(),
             &mux,
             &ClaudeLauncher,
             &exec,
@@ -561,7 +561,7 @@ mod tests {
         run_session(
             &cfg,
             "PWF-0001",
-            DispatchOpts::test()
+            &DispatchOpts::test()
                 .assume_yes()
                 .inline()
                 .model_override("fable"),
@@ -588,7 +588,7 @@ mod tests {
         let out = run_session(
             &cfg,
             "PWF-0001",
-            DispatchOpts::test().inline(),
+            &DispatchOpts::test().inline(),
             &FakeMux::new(true, vec![]),
             &ClaudeLauncher,
             &exec,
@@ -614,7 +614,7 @@ mod tests {
         let err = run_session(
             &cfg,
             "PWF-0001",
-            DispatchOpts::test().assume_yes().inline(),
+            &DispatchOpts::test().assume_yes().inline(),
             &FakeMux::new(true, vec![]),
             &ClaudeLauncher,
             &exec,

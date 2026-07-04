@@ -1,5 +1,7 @@
 //! `ls` output: `<ID> :: <message>`, newest-first, capped with a `-n 0` footer.
 
+use std::fmt::Write;
+
 use crate::store::Note;
 
 /// Render up to `cap` notes (`cap == 0` → all), newest-first, with a hidden-count
@@ -15,13 +17,14 @@ pub fn render_list(notes: &[Note], cap: usize) -> String {
     };
     let mut out = String::new();
     for note in &notes[..shown] {
-        out.push_str(&format!("{} :: {}\n", note.id, note.message));
+        let _ = writeln!(out, "{} :: {}", note.id, note.message);
     }
     let hidden = notes.len() - shown;
     if hidden > 0 {
-        out.push_str(&format!(
-            "... and {hidden} more; run 'pwf note <proj> ls -n 0' to show all\n"
-        ));
+        let _ = writeln!(
+            out,
+            "... and {hidden} more; run 'pwf note <proj> ls -n 0' to show all"
+        );
     }
     out
 }

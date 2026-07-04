@@ -1,3 +1,5 @@
+use std::fmt::Write;
+
 use super::{
     color::{ID_ORANGE, paint},
     domain::read_models::{ListResult, OpenItem},
@@ -23,9 +25,10 @@ pub(super) fn render_list(
     on: bool,
 ) -> String {
     if result.items().is_empty() {
-        let target = only_project
-            .map(|p| format!("{p} in {}", cfg.notes_dir))
-            .unwrap_or_else(|| cfg.notes_dir.clone());
+        let target = only_project.map_or_else(
+            || cfg.notes_dir.clone(),
+            |p| format!("{p} in {}", cfg.notes_dir),
+        );
         return format!("No open pending-work prompts found in {target}.\n");
     }
     let mut out = String::new();
@@ -141,39 +144,40 @@ fn render_list_item(
     } else {
         "NEEDS ATTENTION"
     };
-    out.push_str(&format!("  status: {status}\n"));
+    let _ = writeln!(out, "  status: {status}");
     if item.needs_prompt {
         out.push_str("  status: NEEDS PROMPT\n");
     }
     match &item.repo {
-        Some(r) if !r.is_empty() => out.push_str(&format!("  repo: {r}\n")),
+        Some(r) if !r.is_empty() => {
+            let _ = writeln!(out, "  repo: {r}");
+        }
         _ => out.push_str("  repo: (not configured)\n"),
     }
-    out.push_str(&format!("  note: {}:{}\n", item.note, item.line));
+    let _ = writeln!(out, "  note: {}:{}", item.note, item.line);
     let prompt = item.prompt.replace("\r\n", " / ").replace('\n', " / ");
-    out.push_str(&format!("  prompt: {prompt}\n"));
+    let _ = writeln!(out, "  prompt: {prompt}");
     if let Some(pq) = &item.prereq {
         let statuses = prereq::resolve(cfg, pq);
         if !statuses.is_empty() {
-            out.push_str(&format!("  prereq: {}\n", prereq::list_summary(&statuses)));
+            let _ = writeln!(out, "  prereq: {}", prereq::list_summary(&statuses));
         }
     }
     if let Some(e) = &item.effort {
-        out.push_str(&format!("  effort: {e}\n"));
+        let _ = writeln!(out, "  effort: {e}");
     }
     for issue in &item.issues {
-        out.push_str(&format!("  issue: {issue}\n"));
+        let _ = writeln!(out, "  issue: {issue}");
     }
     if !item.launchable {
-        out.push_str(&format!(
-            "  fix: edit {} or config/pending-work.json\n",
-            item.note
-        ));
+        let _ = writeln!(out, "  fix: edit {} or config/pending-work.json", item.note);
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
 
     fn sample_item() -> OpenItem {
@@ -199,10 +203,10 @@ mod tests {
     fn empty_cfg() -> Config {
         Config {
             notes_dir: String::new(),
-            projects: Default::default(),
-            prefixes: Default::default(),
+            projects: BTreeMap::default(),
+            prefixes: BTreeMap::default(),
             work_prefix: String::new(),
-            notes_dir_overrides: Default::default(),
+            notes_dir_overrides: BTreeMap::default(),
         }
     }
 

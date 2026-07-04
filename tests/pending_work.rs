@@ -1,4 +1,4 @@
-use std::fs;
+use std::{fmt::Write, fs};
 
 use pwf::{
     confirm::FakeConfirm,
@@ -378,8 +378,10 @@ fn list_shows_item_in_text() {
     );
 }
 
-#[test]
-fn list_scopes_select_default_human_future_and_all() {
+/// Shared fixture for the `list_*_scope_*` tests below: a glep-shimeji project
+/// with one item in each of the normal/Low-prio/Human/Future sections. Returns
+/// `(config-path, notes-dir)` as strings, ready for `list_scopes_run`.
+fn list_scopes_fixture() -> (String, String) {
     let stage = stage_dir();
     let notes = stage.join("notes");
     let proj = notes.join("glep-shimeji");
@@ -410,24 +412,32 @@ fn list_scopes_select_default_human_future_and_all() {
         ),
     )
     .unwrap();
-    let cfg_s = cfg.to_string_lossy().into_owned();
-    let notes_s = notes.to_string_lossy().into_owned();
+    (
+        cfg.to_string_lossy().into_owned(),
+        notes.to_string_lossy().into_owned(),
+    )
+}
+
+/// Runs `pwf list <extra>` against the `list_scopes_fixture` project.
+fn list_scopes_run(cfg_s: &str, notes_s: &str, extra: &[&str]) -> String {
     let base = [
         "--config-path",
-        &cfg_s,
+        cfg_s,
         "--notes-dir",
-        &notes_s,
+        notes_s,
         "--date",
         "2026-01-01",
     ];
-    let run = |extra: &[&str]| {
-        let mut argv = vec!["list"];
-        argv.extend_from_slice(extra);
-        argv.extend_from_slice(&base);
-        pwk::run_args(&parse_args(&argv)).unwrap()
-    };
-    // Default: only normal tasks shown; scoped sections hidden.
-    let def = run(&[]);
+    let mut argv = vec!["list"];
+    argv.extend_from_slice(extra);
+    argv.extend_from_slice(&base);
+    pwk::run_args(&parse_args(&argv)).unwrap()
+}
+
+#[test]
+fn list_default_scope_hides_low_prio_human_and_future() {
+    let (cfg_s, notes_s) = list_scopes_fixture();
+    let def = list_scopes_run(&cfg_s, &notes_s, &[]);
     assert!(def.contains("GLP-0001"), "normal missing: {def}");
     assert!(
         !def.contains("GLP-0002"),
@@ -435,14 +445,22 @@ fn list_scopes_select_default_human_future_and_all() {
     );
     assert!(!def.contains("GLP-0003"), "Human shown by default: {def}");
     assert!(!def.contains("GLP-0004"), "Future shown by default: {def}");
+}
 
-    let h = run(&["--human"]);
+#[test]
+fn list_human_scope_shows_only_human() {
+    let (cfg_s, notes_s) = list_scopes_fixture();
+    let h = list_scopes_run(&cfg_s, &notes_s, &["--human"]);
     assert!(!h.contains("GLP-0001"), "normal leaked with --human: {h}");
     assert!(!h.contains("GLP-0002"), "low-prio leaked with --human: {h}");
     assert!(h.contains("GLP-0003"), "Human not shown with --human: {h}");
     assert!(!h.contains("GLP-0004"), "Future leaked with --human: {h}");
+}
 
-    let f = run(&["--future"]);
+#[test]
+fn list_future_scope_shows_only_future() {
+    let (cfg_s, notes_s) = list_scopes_fixture();
+    let f = list_scopes_run(&cfg_s, &notes_s, &["--future"]);
     assert!(!f.contains("GLP-0001"), "normal leaked with --future: {f}");
     assert!(
         !f.contains("GLP-0002"),
@@ -453,8 +471,12 @@ fn list_scopes_select_default_human_future_and_all() {
         f.contains("GLP-0004"),
         "Future not shown with --future: {f}"
     );
+}
 
-    let all = run(&["--all"]);
+#[test]
+fn list_all_scope_shows_and_orders_every_section() {
+    let (cfg_s, notes_s) = list_scopes_fixture();
+    let all = list_scopes_run(&cfg_s, &notes_s, &["--all"]);
     assert!(all.contains("GLP-0001"), "normal missing with --all: {all}");
     assert!(
         all.contains("GLP-0002"),
@@ -799,7 +821,7 @@ fn stage_many(count: usize) -> (std::path::PathBuf, std::path::PathBuf) {
             format!("---\nstatus: active\ntitle: t{n}\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\nbody\n"),
         )
         .unwrap();
-        index.push_str(&format!("- [ ] [[{id}|t{n}]]\n"));
+        let _ = writeln!(index, "- [ ] [[{id}|t{n}]]");
     }
     fs::write(proj.join("glep-shimeji.md"), index).unwrap();
     let cfg = stage.join("config.json");
@@ -1077,7 +1099,7 @@ fn done_evicts_and_archives_oldest_beyond_general_cap() {
             format!("---\nstatus: done\ncompleted: 2026-01-{n:02}\ntitle: t{n}\nproject: glep-shimeji\ncreated: 2026-01-{n:02}\n---\n\nbody\n"),
         )
         .unwrap();
-        index.push_str(&format!("- [x] [[{id}]] ✅ 2026-01-{n:02}\n"));
+        let _ = writeln!(index, "- [x] [[{id}]] ✅ 2026-01-{n:02}");
     }
     // The open 7th item we will close.
     fs::write(
@@ -1626,8 +1648,8 @@ fn route_create_verbs_error_with_add_hint() {
     ] {
         let mut argv = vec!["route", "--config-path", &cfg_s, "--notes-dir", &notes_s];
         argv.extend(words);
-        let args = parse_args(&argv);
-        let err = pwk::run_args(&args).unwrap_err();
+        let parsed = parse_args(&argv);
+        let err = pwk::run_args(&parsed).unwrap_err();
         assert_eq!(err, expected);
     }
 }
@@ -2091,7 +2113,7 @@ fn stage_dir() -> std::path::PathBuf {
 }
 
 fn parse_args(argv: &[&str]) -> pwf::cli::Args {
-    let v = argv.iter().map(|s| s.to_string()).collect();
+    let v = argv.iter().map(std::string::ToString::to_string).collect();
     pwf::command::parse_argv(v).unwrap().1
 }
 

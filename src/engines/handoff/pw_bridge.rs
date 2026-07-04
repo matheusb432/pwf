@@ -14,7 +14,7 @@ pub(super) fn parse_added_id(text: &str) -> Option<String> {
         .next()
         .and_then(|l| l.split('[').nth(1))
         .and_then(|s| s.split(']').next())
-        .map(|s| s.to_string())
+        .map(std::string::ToString::to_string)
 }
 
 /// Spawn the external `--pending-work-script` allocator with the canonical
@@ -60,7 +60,7 @@ pub(super) fn spawn_pw_done(
 ) -> Result<(), HandoffError> {
     let mut argv: Vec<String> = ["done", "--config-path", cfg, "--id", pw, "--date", today]
         .iter()
-        .map(|s| s.to_string())
+        .map(std::string::ToString::to_string)
         .collect();
     // Forward commit-range provenance + the review-task request (PWF-0017).
     for range in commits {
@@ -81,7 +81,7 @@ pub(super) fn spawn_pw_done(
     Ok(())
 }
 
-/// In-process equivalent of spawn_pw_add for production (no --pending-work-script):
+/// In-process equivalent of `spawn_pw_add` for production (no --pending-work-script):
 /// run the pending-work engine's `add <project> --continue-handoff` and read the id.
 pub(super) fn inprocess_pw_add(
     args: &Args,
@@ -136,7 +136,7 @@ pub(super) fn spawn_pw_reopen(script: &str, cfg: &str, pw: &str) -> Result<(), H
     Ok(())
 }
 
-/// In-process equivalent of spawn_pw_reopen for production (no --pending-work-script).
+/// In-process equivalent of `spawn_pw_reopen` for production (no --pending-work-script).
 /// `reopen` is idempotent, so an already-active linked item is a no-op skip.
 pub(super) fn inprocess_pw_reopen(args: &Args, pw: &str) -> Result<(), HandoffError> {
     let a = crate::cli::Args {
@@ -153,7 +153,7 @@ pub(super) fn inprocess_pw_reopen(args: &Args, pw: &str) -> Result<(), HandoffEr
     Ok(())
 }
 
-/// In-process equivalent of spawn_pw_done for production (no --pending-work-script).
+/// In-process equivalent of `spawn_pw_done` for production (no --pending-work-script).
 pub(super) fn inprocess_pw_done(args: &Args, today: &str, pw: &str) -> Result<(), HandoffError> {
     let a = crate::cli::Args {
         action: Some("done".to_string()),

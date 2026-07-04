@@ -3,6 +3,7 @@
 
 use std::{
     collections::BTreeMap,
+    fmt::Write,
     path::{Path, PathBuf},
     sync::LazyLock,
 };
@@ -78,17 +79,13 @@ fn read_handoff_entries_typed(dir: &Path) -> HandoffRead<Vec<HandoffEntry>> {
     }
     let mut entries = Vec::new();
     let mut status = HandoffReadStatus::Complete;
-    let read = match std::fs::read_dir(dir) {
-        Ok(r) => r,
-        Err(_) => return HandoffRead::degraded(Vec::new()),
+    let Ok(read) = std::fs::read_dir(dir) else {
+        return HandoffRead::degraded(Vec::new());
     };
     for entry in read {
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(_) => {
-                status = HandoffReadStatus::Degraded;
-                continue;
-            }
+        let Ok(entry) = entry else {
+            status = HandoffReadStatus::Degraded;
+            continue;
         };
         let p = entry.path();
         if p.extension().and_then(|e| e.to_str()) != Some("md") {
@@ -103,12 +100,9 @@ fn read_handoff_entries_typed(dir: &Path) -> HandoffRead<Vec<HandoffEntry>> {
         if lower == "ledger.md" || lower == "readme.md" {
             continue;
         }
-        let content = match std::fs::read_to_string(&p) {
-            Ok(c) => c,
-            Err(_) => {
-                status = HandoffReadStatus::Degraded;
-                continue;
-            }
+        let Ok(content) = std::fs::read_to_string(&p) else {
+            status = HandoffReadStatus::Degraded;
+            continue;
         };
         let parsed = frontmatter::parse(&content);
         let base_name = p
@@ -190,10 +184,11 @@ fn ledger_text(rows: &[Row]) -> String {
     l.push_str("Only handoffs with status: active are listed.\n\n");
     l.push_str("| ID | Handoff | Goals | Created |\n| --- | --- | --- | --- |\n");
     for r in rows {
-        l.push_str(&format!(
-            "| {} | [{}]({}) | {} | {} |\n",
+        let _ = writeln!(
+            l,
+            "| {} | [{}]({}) | {} | {} |",
             r.id, r.title, r.file_name, r.goals, r.created
-        ));
+        );
     }
     l
 }

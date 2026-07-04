@@ -1,5 +1,7 @@
 //! `pwf verify` rendering: probe a selected agent and report launchability as markdown.
 
+use std::fmt::Write;
+
 use super::probe::AgentProbe;
 use crate::engines::pending_work::{launch::LaunchPolicy, model::Item, session::AgentLauncher};
 
@@ -45,10 +47,10 @@ pub fn verify_text_with_probe(
     item: Option<&Item>,
     launcher: &dyn AgentLauncher,
     probe: &dyn AgentProbe,
-    claude_model: Option<Result<String, String>>,
+    claude_model: Option<&Result<String, String>>,
 ) -> String {
     let binary = launcher.binary();
-    let resolved_model = match &claude_model {
+    let resolved_model = match claude_model {
         Some(Ok(m)) => Some(m.as_str()),
         _ => None,
     };
@@ -62,7 +64,7 @@ pub fn verify_text_with_probe(
         // No item → no concrete command; show the binary that would run.
         None => (None, true, vec![], binary.to_string()),
     };
-    if let Some(Err(message)) = &claude_model {
+    if let Some(Err(message)) = claude_model {
         launchable = false;
         issues.push(message.clone());
     }
@@ -82,21 +84,18 @@ pub fn verify_text_with_probe(
             .map(|v| format!(" ({v})"))
             .unwrap_or_default();
         let path = probe.path().map(|p| format!(" at {p}")).unwrap_or_default();
-        out.push_str(&format!("{binary}: available{ver}{path}\n"));
+        let _ = writeln!(out, "{binary}: available{ver}{path}");
     } else {
-        out.push_str(&format!("{binary}: not found on PATH\n"));
+        let _ = writeln!(out, "{binary}: not found on PATH");
     }
-    out.push_str(&format!(
-        "launchable: {}\n",
-        if launchable { "yes" } else { "no" }
-    ));
-    out.push_str(&format!("command: {display}\n"));
+    let _ = writeln!(out, "launchable: {}", if launchable { "yes" } else { "no" });
+    let _ = writeln!(out, "command: {display}");
     if issues.is_empty() {
         out.push_str("issues: none\n");
     } else {
         out.push_str("issues:\n");
         for iss in &issues {
-            out.push_str(&format!("- {iss}\n"));
+            let _ = writeln!(out, "- {iss}");
         }
     }
     out
@@ -243,7 +242,7 @@ mod tests {
             Some(&item),
             &ClaudeLauncher,
             &probe,
-            Some(Ok("opus".to_string())),
+            Some(&Ok("opus".to_string())),
         );
         assert!(out.starts_with("# verify PWF-0001 \u{2014} pass"));
         assert!(out.contains("--model"), "got: {out}");
@@ -267,7 +266,7 @@ mod tests {
             Some(&item),
             &ClaudeLauncher,
             &probe,
-            Some(Err("tier 4 has no claude_model set".to_string())),
+            Some(&Err("tier 4 has no claude_model set".to_string())),
         );
         assert!(
             out.starts_with("# verify PWF-0002 \u{2014} fail"),
