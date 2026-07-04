@@ -10,7 +10,7 @@ pub use pwf_core::{
 
 pub(in crate::engines::pending_work) const ARCHIVE_DIR: &str = "_archive";
 
-/// `<notes_dir>/<name>/_archive` — where `check`/`cancel` park done items.
+/// `<notes_dir>/<name>/_archive` — where `done`/`cancel` park done items.
 pub(in crate::engines::pending_work) fn project_archive_dir(
     notes_dir: &str,
     name: &str,

@@ -35,9 +35,9 @@ pub struct Args {
     // ? add: optional effort/complexity tier (1-4); update also reads it to gate
     // ? edits_body, list reads it as an exact-match filter.
     pub effort: Option<u8>,
-    // ? check: commit range(s) recorded as `commits:` provenance frontmatter (PWF-0017).
+    // ? done: commit range(s) recorded as `commits:` provenance frontmatter (PWF-0017).
     pub commits: Vec<String>,
-    // ? check: also spawn a `## Human` review task prepped with git-tools diff commands.
+    // ? done: also spawn a `## Human` review task prepped with git-tools diff commands.
     pub review: bool,
     pub title: Option<String>,
     pub slug: Option<String>,
@@ -85,4 +85,8 @@ pub struct Args {
     pub auto: bool,
     // ? session/verify: which agent to dispatch/probe (default claude).
     pub agent: Agent,
+    // ? session/verify: explicit model override (e.g. "opus", "fable"), forwarded
+    // verbatim to the selected agent's `--model` flag with no validation — new
+    // models ship too often to hardcode a check. Wins over effort-tier resolution.
+    pub model: Option<String>,
 }

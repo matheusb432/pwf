@@ -57,7 +57,7 @@ mod tests {
     #[test]
     fn read_ledger_reports_degraded_when_existing_ledger_is_unreadable() {
         let dir = tempdir();
-        let ledger = dir.join("LEDGER.md");
+        let ledger = dir.path().join("LEDGER.md");
         std::fs::create_dir(&ledger).unwrap();
 
         let read = read_ledger_content(&ledger);

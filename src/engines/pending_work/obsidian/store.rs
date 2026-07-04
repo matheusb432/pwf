@@ -142,21 +142,8 @@ mod tests {
 
     use super::*;
 
-    fn missing_path(name: &str) -> std::path::PathBuf {
-        std::env::temp_dir().join(format!("pwf_store_{name}_{}", nanos()))
-    }
-
-    fn temp_dir(name: &str) -> std::path::PathBuf {
-        let path = missing_path(name);
-        std::fs::create_dir_all(&path).unwrap();
-        path
-    }
-
-    fn nanos() -> u128 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
+    fn tempdir() -> tempfile::TempDir {
+        tempfile::tempdir().unwrap()
     }
 
     fn assert_has_source(err: &StoreError) {
@@ -165,7 +152,8 @@ mod tests {
 
     #[test]
     fn create_project_dir_error_is_matchable_and_preserves_text() {
-        let parent_file = missing_path("create_project_parent_file");
+        let dir = tempdir();
+        let parent_file = dir.path().join("parent_file");
         std::fs::write(&parent_file, "not a dir").unwrap();
 
         let err = ObsidianStore::create_project_dir(&parent_file.join("child")).unwrap_err();
@@ -177,7 +165,8 @@ mod tests {
 
     #[test]
     fn read_item_file_error_is_matchable_and_preserves_text() {
-        let err = ObsidianStore::read_item_file(&missing_path("read_item_file")).unwrap_err();
+        let dir = tempdir();
+        let err = ObsidianStore::read_item_file(&dir.path().join("missing.md")).unwrap_err();
 
         assert_matches!(err, StoreError::ReadItemFile { .. });
         assert_has_source(&err);
@@ -186,9 +175,9 @@ mod tests {
 
     #[test]
     fn write_item_file_error_is_matchable_and_preserves_text() {
-        let dir = temp_dir("write_item_file");
+        let dir = tempdir();
 
-        let err = ObsidianStore::write_item_file(&dir, "content").unwrap_err();
+        let err = ObsidianStore::write_item_file(dir.path(), "content").unwrap_err();
 
         assert_matches!(err, StoreError::WriteItemFile { .. });
         assert_has_source(&err);
@@ -197,9 +186,9 @@ mod tests {
 
     #[test]
     fn add_write_item_file_error_is_matchable_and_preserves_text() {
-        let dir = temp_dir("add_write_item_file");
+        let dir = tempdir();
 
-        let err = ObsidianStore::write_add_item_file(&dir, "content").unwrap_err();
+        let err = ObsidianStore::write_add_item_file(dir.path(), "content").unwrap_err();
 
         assert_matches!(err, StoreError::AddWriteItemFile { .. });
         assert_has_source(&err);
@@ -208,7 +197,8 @@ mod tests {
 
     #[test]
     fn read_index_error_is_matchable_and_preserves_text() {
-        let err = ObsidianStore::read_index(&missing_path("read_index")).unwrap_err();
+        let dir = tempdir();
+        let err = ObsidianStore::read_index(&dir.path().join("missing.md")).unwrap_err();
 
         assert_matches!(err, StoreError::ReadIndex { .. });
         assert_has_source(&err);
@@ -217,9 +207,9 @@ mod tests {
 
     #[test]
     fn write_index_error_is_matchable_and_preserves_text() {
-        let dir = temp_dir("write_index");
+        let dir = tempdir();
 
-        let err = ObsidianStore::write_index(&dir, "content").unwrap_err();
+        let err = ObsidianStore::write_index(dir.path(), "content").unwrap_err();
 
         assert_matches!(err, StoreError::WriteIndex { .. });
         assert_has_source(&err);
@@ -228,9 +218,9 @@ mod tests {
 
     #[test]
     fn add_write_index_file_error_is_matchable_and_preserves_text() {
-        let dir = temp_dir("add_write_index_file");
+        let dir = tempdir();
 
-        let err = ObsidianStore::write_add_index_file(&dir, "content").unwrap_err();
+        let err = ObsidianStore::write_add_index_file(dir.path(), "content").unwrap_err();
 
         assert_matches!(err, StoreError::AddWriteIndexFile { .. });
         assert_has_source(&err);
@@ -239,11 +229,12 @@ mod tests {
 
     #[test]
     fn archive_item_error_is_matchable_and_preserves_text() {
-        let project_dir = temp_dir("archive_item");
+        let dir = tempdir();
+        let project_dir = dir.path();
         std::fs::write(project_dir.join("GLP-0001.md"), "content").unwrap();
         std::fs::create_dir_all(project_dir.join("_archive/GLP-0001.md")).unwrap();
 
-        let err = ObsidianStore::archive_item_file(&project_dir, "GLP-0001").unwrap_err();
+        let err = ObsidianStore::archive_item_file(project_dir, "GLP-0001").unwrap_err();
 
         assert_matches!(
             err,

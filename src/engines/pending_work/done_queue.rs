@@ -1,4 +1,4 @@
-// Rotating done-queue for the project index (PWF-0026): `check` keeps a capped,
+// Rotating done-queue for the project index (PWF-0026): `done` keeps a capped,
 // per-section queue of `- [x] [[ID]] ✅ date` entries at the bottom of each
 // section instead of deleting the link, evicting the oldest past the cap. Pure
 // string transforms — the caller does the item-file stamping and archiving.
@@ -203,7 +203,7 @@ mod tests {
 
     #[test]
     fn general_section_evicts_oldest_beyond_cap_of_six() {
-        // Six existing done + check a seventh → oldest (topmost) evicted.
+        // Six existing done + close a seventh → oldest (topmost) evicted.
         let mut body: Vec<String> = (1..=6).map(|n| done(&format!("PWF-{n:04}"), n)).collect();
         body.push("- [ ] [[PWF-0007]]".to_string());
         let content = format!("{}\n", body.join("\n"));

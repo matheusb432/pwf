@@ -173,22 +173,15 @@ mod tests {
     use super::*;
     use crate::engines::pending_work::errors::PendingWorkError;
 
-    fn nanos() -> u128 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    }
-
-    fn stage_cfg() -> (std::path::PathBuf, Config) {
-        let dir = std::env::temp_dir().join(format!("pwprereq_{}", nanos()));
-        let proj = dir.join("config-handler");
+    fn stage_cfg() -> (tempfile::TempDir, Config) {
+        let dir = tempfile::tempdir().unwrap();
+        let proj = dir.path().join("config-handler");
         fs::create_dir_all(&proj).unwrap();
         fs::write(proj.join("CFG-0014.md"), "---\nstatus: done\n---\nbody\n").unwrap();
         fs::write(proj.join("CFG-0015.md"), "---\nstatus: active\n---\nbody\n").unwrap();
         let json = format!(
             r#"{{ "notesDir": "{}", "projects": {{ "config-handler": "/r" }}, "prefixes": {{ "config-handler": "CFG" }} }}"#,
-            dir.to_string_lossy().replace('\\', "\\\\")
+            dir.path().to_string_lossy().replace('\\', "\\\\")
         );
         let cfg = crate::config::from_json(&json, None).unwrap();
         (dir, cfg)

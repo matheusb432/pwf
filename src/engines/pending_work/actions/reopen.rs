@@ -1,4 +1,4 @@
-// Action: reopen (the inverse of check/cancel).
+// Action: reopen (the inverse of done/cancel).
 //
 // Flips a closed item's status back to `active`, drops its `completed:`/`commits:`
 // provenance, moves an evicted note out of `_archive` back into the project dir,
@@ -75,7 +75,7 @@ pub(in crate::engines::pending_work) fn run_reopen(
 
 #[cfg(test)]
 mod tests {
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
 
     use super::*;
 
@@ -90,18 +90,11 @@ mod tests {
         .unwrap()
     }
 
-    fn nanos() -> u128 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    }
-
     /// Stage a project with one done item still in the project dir, marked done in
     /// the index done-queue.
-    fn stage_done_item() -> (PathBuf, Config) {
-        let stage = std::env::temp_dir().join(format!("pwf_reopen_{}", nanos()));
-        let notes = stage.join("notes");
+    fn stage_done_item() -> (tempfile::TempDir, Config) {
+        let stage = tempfile::tempdir().unwrap();
+        let notes = stage.path().join("notes");
         let project = notes.join("glep-shimeji");
         std::fs::create_dir_all(&project).unwrap();
         std::fs::write(
@@ -128,7 +121,7 @@ mod tests {
     #[test]
     fn reopen_flips_status_drops_provenance_and_restores_index() {
         let (stage, cfg) = stage_done_item();
-        let project = stage.join("notes/glep-shimeji");
+        let project = stage.path().join("notes/glep-shimeji");
 
         let out = run_reopen(&cfg, &args("GLP-0001")).unwrap();
 
@@ -144,7 +137,7 @@ mod tests {
     #[test]
     fn reopen_moves_archived_note_back_to_project_dir() {
         let (stage, cfg) = stage_done_item();
-        let project = stage.join("notes/glep-shimeji");
+        let project = stage.path().join("notes/glep-shimeji");
         let archive = project.join("_archive");
         std::fs::create_dir_all(&archive).unwrap();
         // Simulate an eviction: note lives in _archive, index link is gone.
@@ -172,7 +165,7 @@ mod tests {
     #[test]
     fn reopen_already_active_item_skips() {
         let (stage, cfg) = stage_done_item();
-        let project = stage.join("notes/glep-shimeji");
+        let project = stage.path().join("notes/glep-shimeji");
         std::fs::write(
             project.join("GLP-0001.md"),
             "---\nstatus: active\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\nbody\n",

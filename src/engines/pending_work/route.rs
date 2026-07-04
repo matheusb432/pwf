@@ -8,6 +8,7 @@ use super::{
         run_list_action,
     },
     agent::{probe::RealProbe, verify::verify_text_with_probe},
+    color::use_color,
     errors::PendingWorkError,
     query::{find_pending_item, resolve_managed_project_name_typed},
 };
@@ -40,6 +41,7 @@ pub(super) fn run_route(cfg: &Config, args: &Args, date: &str) -> Result<String,
             args.number,
             args.effort,
             ROUTE_ORDER,
+            use_color(args.color),
         );
     }
 
@@ -64,7 +66,7 @@ pub(super) fn run_route(cfg: &Config, args: &Args, date: &str) -> Result<String,
             None
         };
         let claude_model = item.as_ref().and_then(|it| {
-            super::session::resolve_claude_model_for_verify(crate::cli::Agent::Claude, it)
+            super::session::resolve_model_for_verify(crate::cli::Agent::Claude, it, None)
         });
         return Ok(verify_text_with_probe(
             item.as_ref(),
@@ -103,6 +105,7 @@ pub(super) fn run_route(cfg: &Config, args: &Args, date: &str) -> Result<String,
             args.number,
             args.effort,
             ROUTE_ORDER,
+            use_color(args.color),
         );
     }
 

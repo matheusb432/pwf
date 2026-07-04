@@ -63,7 +63,7 @@ pub enum Action {
     List,
     Clean,
     Verify,
-    Check,
+    Done,
     Cancel,
     Reopen,
     Resolve,
@@ -78,7 +78,7 @@ const ADD: &str = "add";
 const LIST: &str = "list";
 const CLEAN: &str = "clean";
 const VERIFY: &str = "verify";
-const CHECK: &str = "check";
+const DONE: &str = "done";
 const CANCEL: &str = "cancel";
 const REOPEN: &str = "reopen";
 const RESOLVE: &str = "resolve";
@@ -95,7 +95,7 @@ impl Action {
             Action::List => LIST,
             Action::Clean => CLEAN,
             Action::Verify => VERIFY,
-            Action::Check => CHECK,
+            Action::Done => DONE,
             Action::Cancel => CANCEL,
             Action::Reopen => REOPEN,
             Action::Resolve => RESOLVE,
@@ -142,7 +142,7 @@ impl FromStr for Action {
             LIST => Ok(Action::List),
             CLEAN => Ok(Action::Clean),
             VERIFY => Ok(Action::Verify),
-            CHECK => Ok(Action::Check),
+            DONE => Ok(Action::Done),
             CANCEL => Ok(Action::Cancel),
             REOPEN => Ok(Action::Reopen),
             RESOLVE => Ok(Action::Resolve),

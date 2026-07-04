@@ -6,6 +6,7 @@ pub mod codex_thread_title;
 pub mod command;
 pub use pwf_core::config;
 pub mod confirm;
+pub mod confirm_prompt;
 pub mod engines;
 pub use pwf_core::{frontmatter, fs_atomic};
 pub mod help;

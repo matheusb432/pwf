@@ -341,17 +341,10 @@ mod tests {
     use super::*;
     use crate::{config, confirm::FakeConfirm};
 
-    fn nanos() -> u128 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .subsec_nanos() as u128
-    }
-
     /// Build a minimal Config pointing at a temp notes dir with one done link.
-    fn stage_clean_fixture() -> (std::path::PathBuf, config::Config) {
-        let stage = std::env::temp_dir().join(format!("pwf_clean_{}", nanos()));
-        let notes = stage.join("notes");
+    fn stage_clean_fixture() -> (tempfile::TempDir, config::Config) {
+        let stage = tempfile::tempdir().unwrap();
+        let notes = stage.path().join("notes");
         let proj = notes.join("cfg");
         std::fs::create_dir_all(&proj).unwrap();
         // Index has one checked wikilink.

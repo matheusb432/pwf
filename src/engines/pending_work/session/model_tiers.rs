@@ -34,7 +34,8 @@ pub(in crate::engines::pending_work) enum ModelTiersError {
         /// The resolved model-tiers config path.
         path: String,
     },
-    /// The tier exists but has no `claude_model` set.
+    /// The tier's `claude_model` key is entirely absent — distinct from an explicit
+    /// empty string, which is the deliberate "no override" sentinel.
     #[error("tier {tier} in {path} has no claude_model set")]
     MissingClaudeModel {
         /// The effort tier that was looked up.
@@ -81,7 +82,13 @@ fn load(path: &str) -> Result<RawModelTiers, ModelTiersError> {
     Ok(toml::from_str(&text)?)
 }
 
-fn resolve_claude_model_at(path: &str, tier: EffortTier) -> Result<String, ModelTiersError> {
+/// Resolves a tier to its configured Claude model. `claude_model = ""` is a
+/// deliberate sentinel for "no override" and resolves to `Ok(None)` — distinct
+/// from an absent `claude_model` key, which stays a `MissingClaudeModel` error.
+fn resolve_claude_model_at(
+    path: &str,
+    tier: EffortTier,
+) -> Result<Option<String>, ModelTiersError> {
     let raw = load(path)?;
     let tier_num: u8 = tier.into();
     let entry = raw
@@ -91,21 +98,23 @@ fn resolve_claude_model_at(path: &str, tier: EffortTier) -> Result<String, Model
             tier: tier_num,
             path: path.to_string(),
         })?;
-    entry
+    let model = entry
         .claude_model
         .clone()
         .ok_or_else(|| ModelTiersError::MissingClaudeModel {
             tier: tier_num,
             path: path.to_string(),
-        })
+        })?;
+    Ok(if model.is_empty() { None } else { Some(model) })
 }
 
 /// If `agent` is Claude and `item` carries a valid `effort` tag, resolve the
 /// Claude model to dispatch with via `config/model-tiers.toml`. `Ok(None)` when
-/// not applicable (no `effort` tag, or a non-claude agent) — the common case,
-/// zero behavior change. `Err` on a corrupted `effort:` value or a missing/
-/// malformed/incomplete `config/model-tiers.toml`.
-pub(in crate::engines::pending_work) fn resolve_claude_model(
+/// not applicable (no `effort` tag, a non-claude agent, or a tier configured
+/// with `claude_model = ""`) — no `--model` flag rides in either case. `Err` on
+/// a corrupted `effort:` value or a missing/malformed/incomplete
+/// `config/model-tiers.toml`.
+fn resolve_claude_model(
     agent: crate::cli::Agent,
     item: &Item,
 ) -> Result<Option<String>, PendingWorkError> {
@@ -120,19 +129,37 @@ pub(in crate::engines::pending_work) fn resolve_claude_model(
         value: raw.to_string(),
     })?;
     let path = default_model_tiers_path().ok_or(ModelTiersError::PathUnresolvable)?;
-    Ok(Some(resolve_claude_model_at(&path, tier)?))
+    Ok(resolve_claude_model_at(&path, tier)?)
 }
 
-/// `resolve_claude_model` mapped into the `Option<Result<String, String>>` shape
+/// Resolves the model to pass through `AgentLauncher::argv`. An explicit
+/// `--model` override always wins: it is forwarded verbatim with no lookup and
+/// no validation against `config/model-tiers.toml` — provider model catalogs
+/// change too often to hardcode a check, and each `AgentLauncher` already
+/// decides for itself whether to use the value (codex ignores it). Absent an
+/// override, falls back to the effort-tier resolution (`resolve_claude_model`).
+pub(in crate::engines::pending_work) fn resolve_model(
+    agent: crate::cli::Agent,
+    item: &Item,
+    model_override: Option<&str>,
+) -> Result<Option<String>, PendingWorkError> {
+    if let Some(m) = model_override {
+        return Ok(Some(m.to_string()));
+    }
+    resolve_claude_model(agent, item)
+}
+
+/// `resolve_model` mapped into the `Option<Result<String, String>>` shape
 /// `verify_text_with_probe` expects: `None` when not applicable, `Some(Ok(model))`
 /// on a resolved model, `Some(Err(display))` on a resolution error. Shared by
 /// `pwf verify` and the bare-word `verify`/`v` route alias, which both need this
 /// exact mapping.
-pub(in crate::engines::pending_work) fn resolve_claude_model_for_verify(
+pub(in crate::engines::pending_work) fn resolve_model_for_verify(
     agent: crate::cli::Agent,
     item: &Item,
+    model_override: Option<&str>,
 ) -> Option<Result<String, String>> {
-    match resolve_claude_model(agent, item) {
+    match resolve_model(agent, item, model_override) {
         Ok(None) => None,
         Ok(Some(m)) => Some(Ok(m)),
         Err(e) => Some(Err(e.to_string())),
@@ -145,32 +172,39 @@ mod tests {
 
     use super::*;
 
-    fn nanos() -> u128 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    }
-
-    fn stage(toml: &str) -> std::path::PathBuf {
-        let path = std::env::temp_dir().join(format!("pwf_model_tiers_{}.toml", nanos()));
+    fn stage(toml: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("model-tiers.toml");
         std::fs::write(&path, toml).unwrap();
-        path
+        (dir, path)
     }
 
     #[test]
     fn resolves_configured_tier() {
-        let path = stage("[tiers.3]\nclaude_model = \"sonnet\"\n");
+        let (_dir, path) = stage("[tiers.3]\nclaude_model = \"sonnet\"\n");
         let tier = EffortTier::try_from(3u8).unwrap();
         assert_eq!(
             resolve_claude_model_at(path.to_str().unwrap(), tier).unwrap(),
-            "sonnet"
+            Some("sonnet".to_string())
+        );
+    }
+
+    #[test]
+    fn empty_claude_model_resolves_to_no_override() {
+        // `claude_model = ""` is a deliberate sentinel for "no --model flag" —
+        // distinct from an absent key, which stays an error.
+        let (_dir, path) = stage("[tiers.2]\nclaude_model = \"\"\n");
+        let tier = EffortTier::try_from(2u8).unwrap();
+        assert_eq!(
+            resolve_claude_model_at(path.to_str().unwrap(), tier).unwrap(),
+            None
         );
     }
 
     #[test]
     fn missing_file_is_not_found() {
-        let missing = std::env::temp_dir().join("pwf_model_tiers_does_not_exist.toml");
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("pwf_model_tiers_does_not_exist.toml");
         let tier = EffortTier::try_from(1u8).unwrap();
         let err = resolve_claude_model_at(missing.to_str().unwrap(), tier).unwrap_err();
         assert_matches!(err, ModelTiersError::NotFound(_));
@@ -178,7 +212,7 @@ mod tests {
 
     #[test]
     fn malformed_toml_is_parse_error() {
-        let path = stage("this is not toml [[[");
+        let (_dir, path) = stage("this is not toml [[[");
         let tier = EffortTier::try_from(1u8).unwrap();
         let err = resolve_claude_model_at(path.to_str().unwrap(), tier).unwrap_err();
         assert_matches!(err, ModelTiersError::Parse(_));
@@ -186,7 +220,7 @@ mod tests {
 
     #[test]
     fn tier_absent_from_table_is_missing_tier() {
-        let path = stage("[tiers.1]\nclaude_model = \"sonnet\"\n");
+        let (_dir, path) = stage("[tiers.1]\nclaude_model = \"sonnet\"\n");
         let tier = EffortTier::try_from(2u8).unwrap();
         let err = resolve_claude_model_at(path.to_str().unwrap(), tier).unwrap_err();
         assert_matches!(err, ModelTiersError::MissingTier { tier: 2, .. });
@@ -194,7 +228,7 @@ mod tests {
 
     #[test]
     fn tier_present_without_claude_model_is_missing_claude_model() {
-        let path = stage("[tiers.1]\n");
+        let (_dir, path) = stage("[tiers.1]\n");
         let tier = EffortTier::try_from(1u8).unwrap();
         let err = resolve_claude_model_at(path.to_str().unwrap(), tier).unwrap_err();
         assert_matches!(err, ModelTiersError::MissingClaudeModel { tier: 1, .. });
@@ -233,5 +267,57 @@ mod tests {
             crate::engines::pending_work::errors::PendingWorkError::BadEffortValue { ref id, ref value }
                 if id == "PWF-0001" && value == "nine"
         );
+    }
+
+    #[test]
+    fn resolve_model_override_wins_over_no_effort_tag() {
+        let item = Item::default_for_test("PWF-0001", "t");
+        assert_eq!(
+            resolve_model(crate::cli::Agent::Claude, &item, Some("fable")).unwrap(),
+            Some("fable".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_model_override_bypasses_tier_resolution_entirely() {
+        // A corrupted effort tag would normally error out of resolve_claude_model;
+        // an explicit override short-circuits before that lookup ever runs.
+        let item = Item {
+            effort: Some("nine".to_string()),
+            ..Item::default_for_test("PWF-0001", "t")
+        };
+        assert_eq!(
+            resolve_model(crate::cli::Agent::Claude, &item, Some("opus")).unwrap(),
+            Some("opus".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_model_falls_back_to_tier_resolution_when_no_override() {
+        let item = Item::default_for_test("PWF-0001", "t");
+        assert_eq!(
+            resolve_model(crate::cli::Agent::Claude, &item, None).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn resolve_model_for_verify_folds_error_when_no_override() {
+        let item = Item {
+            effort: Some("nine".to_string()),
+            ..Item::default_for_test("PWF-0001", "t")
+        };
+        let out = resolve_model_for_verify(crate::cli::Agent::Claude, &item, None);
+        assert_matches!(out, Some(Err(_)));
+    }
+
+    #[test]
+    fn resolve_model_for_verify_prefers_override_over_broken_effort() {
+        let item = Item {
+            effort: Some("nine".to_string()),
+            ..Item::default_for_test("PWF-0001", "t")
+        };
+        let out = resolve_model_for_verify(crate::cli::Agent::Claude, &item, Some("fable"));
+        assert_eq!(out, Some(Ok("fable".to_string())));
     }
 }

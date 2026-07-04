@@ -138,7 +138,8 @@ mod tests {
 
     #[test]
     fn repo_root_typed_preserves_missing_root_text_with_root_field() {
-        let root = tempdir().join("missing");
+        let dir = tempdir();
+        let root = dir.path().join("missing");
         let args = Args {
             repo_root: Some(root.to_string_lossy().into_owned()),
             ..Default::default()
@@ -159,7 +160,12 @@ mod tests {
     fn load_handoff_config_reports_degraded_when_config_load_falls_back() {
         let dir = tempdir();
         let args = Args {
-            config_path: Some(dir.join("missing.json").to_string_lossy().into_owned()),
+            config_path: Some(
+                dir.path()
+                    .join("missing.json")
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
             ..Default::default()
         };
 

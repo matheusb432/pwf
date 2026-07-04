@@ -112,7 +112,7 @@ fn canonical_remove_deletes_item_from_cli() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "stdout: {stdout}\nstderr: {stderr}");
     assert!(
-        stdout.contains("REMOVED PWF TASK [PWF-0001]") && stdout.contains("pwf :: stale task"),
+        stdout.contains("Removed pwf task: **PWF-0001") && stdout.contains("pwf :: stale task"),
         "expected remove confirmation for PWF-0001: {stdout}"
     );
     assert!(!project.join("PWF-0001.md").exists());
@@ -230,8 +230,13 @@ fn top_level_help_groups_default_commands_and_engines() {
         "top help should be clap-rendered command help: {help}"
     );
     assert!(
-        help.contains("pw"),
-        "top help should include the default pending-work engine: {help}"
+        help.contains("add") && help.contains("list"),
+        "pending-work verbs are flattened, top-level commands — no dead `pw` \
+         grouping should be listed: {help}"
+    );
+    assert!(
+        !help.lines().any(|l| l.trim_start().starts_with("pw ")),
+        "top help must not advertise the retired `pwf pw …` prefix: {help}"
     );
     assert!(
         help.contains("handoff"),

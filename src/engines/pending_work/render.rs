@@ -1,4 +1,5 @@
 use super::{
+    color::{ID_ORANGE, paint},
     domain::read_models::{ListResult, OpenItem},
     prereq,
 };
@@ -19,6 +20,7 @@ pub(super) fn render_list(
     only_project: Option<&str>,
     long: bool,
     grouped: bool,
+    on: bool,
 ) -> String {
     if result.items().is_empty() {
         let target = only_project
@@ -28,11 +30,11 @@ pub(super) fn render_list(
     }
     let mut out = String::new();
     if grouped {
-        render_grouped_list(&mut out, result.items(), cfg, long);
+        render_grouped_list(&mut out, result.items(), cfg, long, on);
     } else {
         let last_idx = result.items().len() - 1;
         for (idx, item) in result.items().iter().enumerate() {
-            render_list_item(&mut out, item, cfg, long, idx == last_idx);
+            render_list_item(&mut out, item, cfg, long, idx == last_idx, on);
         }
     }
     if result.hidden() > 0 {
@@ -85,7 +87,7 @@ const RENDER_GROUPS: [RenderGroup; 5] = [
     RenderGroup::Other,
 ];
 
-fn render_grouped_list(out: &mut String, items: &[OpenItem], cfg: &Config, long: bool) {
+fn render_grouped_list(out: &mut String, items: &[OpenItem], cfg: &Config, long: bool, on: bool) {
     let mut rendered_any = false;
     for group in RENDER_GROUPS {
         let group_items: Vec<&OpenItem> = items
@@ -103,17 +105,32 @@ fn render_grouped_list(out: &mut String, items: &[OpenItem], cfg: &Config, long:
             out.push('\n');
         }
         for (idx, item) in group_items.iter().enumerate() {
-            render_list_item(out, item, cfg, long, idx + 1 == group_items.len());
+            render_list_item(out, item, cfg, long, idx + 1 == group_items.len(), on);
         }
         rendered_any = true;
     }
 }
 
-fn render_list_item(out: &mut String, item: &OpenItem, cfg: &Config, long: bool, last: bool) {
-    let formatted = if last && !long {
-        format!("{} :: {}", item.id, item.session)
+fn render_list_item(
+    out: &mut String,
+    item: &OpenItem,
+    cfg: &Config,
+    long: bool,
+    last: bool,
+    on: bool,
+) {
+    // List ids stay plain text when color is off — unlike `add`'s confirmation,
+    // `<ID> :: <title>` is a documented raw-text contract (AGENTS.md), so no
+    // markdown-bold degrade here; `paint` only kicks in with real ANSI.
+    let id = if on {
+        paint(&item.id, ID_ORANGE, true)
     } else {
-        format!("{} :: {}\n", item.id, item.session)
+        item.id.clone()
+    };
+    let formatted = if last && !long {
+        format!("{id} :: {}", item.session)
+    } else {
+        format!("{id} :: {}\n", item.session)
     };
     out.push_str(&formatted);
     if !long {
@@ -193,11 +210,20 @@ mod tests {
     fn short_line_is_id_then_session_without_brackets_or_project() {
         let cfg = empty_cfg();
         let mut out = String::new();
-        render_list_item(&mut out, &sample_item(), &cfg, false, true);
+        render_list_item(&mut out, &sample_item(), &cfg, false, true, false);
         assert_eq!(
             out,
             "PWF-0064 :: make list commands formatting less redundant"
         );
+    }
+
+    #[test]
+    fn colored_id_is_orange_and_bold() {
+        let cfg = empty_cfg();
+        let mut out = String::new();
+        render_list_item(&mut out, &sample_item(), &cfg, false, true, true);
+        assert!(out.contains('\u{1b}'), "got: {out}");
+        assert!(out.contains("PWF-0064"), "got: {out}");
     }
 
     #[test]
@@ -206,7 +232,7 @@ mod tests {
         let mut item = sample_item();
         item.effort = Some("3".to_string());
         let mut out = String::new();
-        render_list_item(&mut out, &item, &cfg, true, true);
+        render_list_item(&mut out, &item, &cfg, true, true, false);
         assert!(out.contains("  effort: 3\n"), "got: {out}");
     }
 
@@ -214,7 +240,7 @@ mod tests {
     fn long_form_omits_effort_line_when_absent() {
         let cfg = empty_cfg();
         let mut out = String::new();
-        render_list_item(&mut out, &sample_item(), &cfg, true, true);
+        render_list_item(&mut out, &sample_item(), &cfg, true, true, false);
         assert!(!out.contains("effort:"), "got: {out}");
     }
 

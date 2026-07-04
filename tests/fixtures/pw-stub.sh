@@ -22,8 +22,8 @@ case $verb in
     if [ -n "${HANDOFF_STUB_LOG:-}" ]; then printf 'add %s\n' "$words" >>"$HANDOFF_STUB_LOG"; fi
     printf 'ADDED PWF TASK [TST-0001] test-project :: continue managed flow\n'
     ;;
-  check)
-    if [ -n "${HANDOFF_STUB_LOG:-}" ]; then printf 'check %s\n' "$id" >>"$HANDOFF_STUB_LOG"; fi
+  done)
+    if [ -n "${HANDOFF_STUB_LOG:-}" ]; then printf 'done %s\n' "$id" >>"$HANDOFF_STUB_LOG"; fi
     ;;
   reopen)
     if [ -n "${HANDOFF_STUB_LOG:-}" ]; then printf 'reopen %s\n' "$id" >>"$HANDOFF_STUB_LOG"; fi

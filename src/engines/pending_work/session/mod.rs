@@ -15,9 +15,8 @@ pub(in crate::engines::pending_work) use launcher::{AgentLauncher, launcher_for}
 // rendering); production code selects via `launcher_for` and holds `&dyn AgentLauncher`.
 #[cfg(test)]
 pub(in crate::engines::pending_work) use launcher::{ClaudeLauncher, CodexLauncher};
-pub(in crate::engines::pending_work) use model_tiers::ModelTiersError;
 pub(in crate::engines::pending_work) use model_tiers::{
-    resolve_claude_model, resolve_claude_model_for_verify,
+    ModelTiersError, resolve_model, resolve_model_for_verify,
 };
 pub(in crate::engines::pending_work) use multiplexer::{
     MultiplexerDriver, NewTabError, RealZellij,
@@ -25,7 +24,6 @@ pub(in crate::engines::pending_work) use multiplexer::{
 pub(super) use render::{DispatchOutcome, render};
 
 use super::color::use_color;
-
 #[cfg(test)]
 use crate::confirm::FakeConfirm;
 use crate::{
@@ -41,10 +39,12 @@ use crate::{
     },
 };
 
-/// Scalar dispatch policy flags, bundled so `dispatch`/`run_session` take one
-/// named value instead of four loose scalars (no adjacent-bool transposition,
-/// and under clippy's argument-count threshold).
-#[derive(Debug, Clone, Copy)]
+/// Dispatch policy flags, bundled so `dispatch`/`run_session` take one named
+/// value instead of loose scalars (no adjacent-bool transposition, and under
+/// clippy's argument-count threshold). Not `Copy` — `model_override` is owned —
+/// so call sites that need it after passing it on (e.g. `confirmation::question`)
+/// take it by reference.
+#[derive(Debug, Clone)]
 pub(in crate::engines::pending_work) struct DispatchOpts {
     pub color: ColorChoice,
     pub assume_yes: bool,
@@ -53,6 +53,8 @@ pub(in crate::engines::pending_work) struct DispatchOpts {
     pub launch: LaunchPolicy,
     /// Which agent to dispatch (`-a`/`--agent`).
     pub agent: crate::cli::Agent,
+    /// Explicit `--model` override; wins over effort-tier resolution when set.
+    pub model_override: Option<String>,
 }
 
 #[cfg(test)]
@@ -67,6 +69,7 @@ impl DispatchOpts {
             inline: false,
             launch: LaunchPolicy::default(),
             agent: crate::cli::Agent::Claude,
+            model_override: None,
         }
     }
 
@@ -77,6 +80,11 @@ impl DispatchOpts {
 
     fn inline(mut self) -> Self {
         self.inline = true;
+        self
+    }
+
+    fn model_override(mut self, model: &str) -> Self {
+        self.model_override = Some(model.to_string());
         self
     }
 }
@@ -145,7 +153,7 @@ pub(in crate::engines::pending_work) fn run_session(
             issues: item.issues,
         });
     }
-    let claude_model = resolve_claude_model(opts.agent, &item)?;
+    let model = resolve_model(opts.agent, &item, opts.model_override.as_deref())?;
     let repo = item.repo.clone().unwrap_or_default();
     if !std::path::Path::new(&repo).is_dir() {
         return Err(PendingWorkError::RepoMissing {
@@ -162,10 +170,10 @@ pub(in crate::engines::pending_work) fn run_session(
     // Default-yes confirmation gate: an interactive operator can abort a mistaken
     // dispatch. `--yes` skips it; a non-interactive caller proceeds without
     // prompting so the fire-and-forget path is intact.
-    let argv = launcher.argv(&item, opts.launch, claude_model.as_deref());
+    let argv = launcher.argv(&item, opts.launch, model.as_deref());
 
     if !opts.assume_yes && confirmer.interactive() {
-        let question = confirmation::question(&item, &session, opts, launcher.binary());
+        let question = confirmation::question(&item, &session, &opts, launcher.binary());
         if !confirmer.confirm(&question, DefaultAnswer::Yes) {
             return Ok(format!(
                 "# session {} — aborted\nnothing dispatched.\n",
@@ -227,19 +235,12 @@ mod tests {
         session::{inline::fake::FakeExec, multiplexer::fake::FakeMux},
     };
 
-    fn nanos() -> u128 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    }
-
     /// Stage a config + one launchable item whose repo dir exists.
-    fn staged() -> (std::path::PathBuf, Config) {
-        let stage = std::env::temp_dir().join(format!("pwf_session_{}", nanos()));
-        let notes = stage.join("notes");
+    fn staged() -> (tempfile::TempDir, Config) {
+        let stage = tempfile::tempdir().unwrap();
+        let notes = stage.path().join("notes");
         let project = notes.join("pwf");
-        let repo = stage.join("repo");
+        let repo = stage.path().join("repo");
         fs::create_dir_all(&project).unwrap();
         fs::create_dir_all(&repo).unwrap();
         fs::write(
@@ -423,7 +424,7 @@ mod tests {
     }
 
     #[test]
-    fn interactive_confirmation_shows_dispatch_context_table_without_prompt_body() {
+    fn interactive_confirmation_shows_dispatch_context_metadata_without_prompt_body() {
         let (_s, cfg) = staged();
         let confirm = RecordingConfirm {
             interactive: true,
@@ -451,10 +452,14 @@ mod tests {
         let questions = confirm.questions.borrow();
         assert_eq!(questions.len(), 1);
         let question = &questions[0];
-        assert!(question.contains("| id | title | mode | agent | autonomy | worktree | target |"));
-        assert!(question.contains(
-            "| PWF-0001 | dispatch me | inline | codex | yes | yes | current terminal |"
-        ));
+        assert!(question.contains("# Confirm session dispatch"));
+        assert!(question.contains("task_id: PWF-0001"));
+        assert!(question.contains("title: dispatch me"));
+        assert!(question.contains("mode: inline"));
+        assert!(question.contains("agent: codex"));
+        assert!(question.contains("autonomy: yes"));
+        assert!(question.contains("worktree: yes"));
+        assert!(question.contains("target: current terminal"));
         assert!(
             !question.contains("do work"),
             "confirmation must not flood the TUI with the prompt body: {question}"
@@ -544,6 +549,35 @@ mod tests {
             cwd.ends_with("repo"),
             "cwd is the validated repo dir: {cwd}"
         );
+    }
+
+    #[test]
+    fn explicit_model_override_reaches_launch_argv() {
+        // `--model` forwards straight through to the launcher's argv, with no
+        // effort tag or model-tiers.toml lookup involved at all.
+        let (_s, cfg) = staged();
+        let mux = FakeMux::new(true, vec![]);
+        let exec = FakeExec::ok();
+        run_session(
+            &cfg,
+            "PWF-0001",
+            DispatchOpts::test()
+                .assume_yes()
+                .inline()
+                .model_override("fable"),
+            &mux,
+            &ClaudeLauncher,
+            &exec,
+            &FakeConfirm {
+                interactive: false,
+                answer: false,
+            },
+        )
+        .unwrap();
+        let calls = exec.calls.borrow();
+        let (argv, _cwd) = &calls[0];
+        assert!(argv.contains(&"--model".to_string()));
+        assert!(argv.contains(&"fable".to_string()));
     }
 
     #[test]

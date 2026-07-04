@@ -33,24 +33,12 @@ mod tests {
 
     #[test]
     fn writes_file_and_never_leaves_a_bak() {
-        let dir = tempdir();
-        let p = dir.join("a.md");
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("a.md");
         fs::write(&p, "old content\n").unwrap();
         write_text_atomic(&p, "new\n").unwrap();
         assert_eq!(fs::read_to_string(&p).unwrap(), "new\n");
-        assert!(!dir.join("a.md.bak").exists());
-    }
-
-    fn tempdir() -> std::path::PathBuf {
-        let d = std::env::temp_dir().join(format!("pwtest_{}", uniq()));
-        fs::create_dir_all(&d).unwrap();
-        d
-    }
-    fn uniq() -> u128 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
+        assert!(!dir.path().join("a.md.bak").exists());
     }
 
     #[test]

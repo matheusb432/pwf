@@ -12,7 +12,7 @@ use crate::{
         errors::HandoffError,
         ledger::{get_active_handoff_files, refresh_ledger_typed},
         paths::{get_today, handoff_paths},
-        pw_bridge::{inprocess_pw_check, pw_item_is_open, spawn_pw_check},
+        pw_bridge::{inprocess_pw_done, pw_item_is_open, spawn_pw_done},
     },
     frontmatter,
     fs_atomic::write_text_atomic,
@@ -118,7 +118,7 @@ pub(in crate::engines::handoff) fn complete_handoff(
     let parsed = frontmatter::parse(&content);
     let pw = parsed.frontmatter.get("pw").cloned().unwrap_or_default();
 
-    // Close the linked pw item. Already-checked (or missing) counts as success:
+    // Close the linked pw item. Already-done (or missing) counts as success:
     // already-done is the goal state, so skip with a note instead of failing.
     let mut pw_close: Option<&str> = None;
     if !pw.is_empty() {
@@ -129,11 +129,11 @@ pub(in crate::engines::handoff) fn complete_handoff(
                     .clone()
                     .or_else(config::default_config_path)
                     .unwrap_or_default();
-                spawn_pw_check(script, &cfg, &pw, &today, &args.commits, args.review)?;
+                spawn_pw_done(script, &cfg, &pw, &today, &args.commits, args.review)?;
             } else {
-                inprocess_pw_check(args, &today, &pw)?;
+                inprocess_pw_done(args, &today, &pw)?;
             }
-            pw_close = Some("checked");
+            pw_close = Some("done");
         } else {
             pw_close = Some("skipped-already-closed");
         }
@@ -186,7 +186,7 @@ pub(in crate::engines::handoff) fn complete_handoff(
 
     let mut out = format!("{status} handoff {} -> {}", file_name, dest.display());
     if pw_close == Some("skipped-already-closed") {
-        out.push_str(&format!("\n  note: {pw} already checked \u{2014} skipped"));
+        out.push_str(&format!("\n  note: {pw} already done \u{2014} skipped"));
     }
     Ok(out)
 }

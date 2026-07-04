@@ -40,41 +40,33 @@ fn scan_max(dir: &Path, re: &Regex, max: &mut i32) {
 mod tests {
     use super::*;
 
-    fn tempdir(tag: &str) -> std::path::PathBuf {
-        let d = std::env::temp_dir().join(format!("pwf_core_id_{tag}_{}", nanos()));
-        std::fs::create_dir_all(&d).unwrap();
-        d
-    }
-    fn nanos() -> u128 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
+    fn tempdir() -> tempfile::TempDir {
+        tempfile::tempdir().unwrap()
     }
 
     #[test]
     fn allocates_one_when_empty() {
-        let d = tempdir("empty");
-        assert_eq!(next_id(&[d.as_path()], "PWF"), "PWF-0001");
+        let d = tempdir();
+        assert_eq!(next_id(&[d.path()], "PWF"), "PWF-0001");
     }
 
     #[test]
     fn allocates_max_plus_one_across_dirs() {
-        let d = tempdir("max");
-        let arch = d.join("_archive");
+        let d = tempdir();
+        let arch = d.path().join("_archive");
         std::fs::create_dir_all(&arch).unwrap();
-        std::fs::write(d.join("PWF-0002.md"), "x").unwrap();
+        std::fs::write(d.path().join("PWF-0002.md"), "x").unwrap();
         std::fs::write(arch.join("PWF-0005.md"), "x").unwrap();
-        assert_eq!(next_id(&[d.as_path(), arch.as_path()], "PWF"), "PWF-0006");
+        assert_eq!(next_id(&[d.path(), arch.as_path()], "PWF"), "PWF-0006");
     }
 
     #[test]
     fn disjoint_keys_do_not_perturb_each_other() {
         // A task file must not bump a NOTE allocation and vice-versa.
-        let d = tempdir("disjoint");
-        std::fs::write(d.join("PWF-0007.md"), "x").unwrap();
-        std::fs::write(d.join("PWF-NOTE-0003.md"), "x").unwrap();
-        assert_eq!(next_id(&[d.as_path()], "PWF-NOTE"), "PWF-NOTE-0004");
-        assert_eq!(next_id(&[d.as_path()], "PWF"), "PWF-0008");
+        let d = tempdir();
+        std::fs::write(d.path().join("PWF-0007.md"), "x").unwrap();
+        std::fs::write(d.path().join("PWF-NOTE-0003.md"), "x").unwrap();
+        assert_eq!(next_id(&[d.path()], "PWF-NOTE"), "PWF-NOTE-0004");
+        assert_eq!(next_id(&[d.path()], "PWF"), "PWF-0008");
     }
 }

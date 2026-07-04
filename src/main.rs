@@ -37,11 +37,9 @@ fn main() {
     }
 }
 
-/// Print a clap-rendered help/version/parse error and exit with clap's code,
-/// stripping the internal `pw` engine token the preprocess injects so usage reads
-/// `pwf <verb> …` instead of leaking the retired `pwf pw …` surface.
+/// Print a clap-rendered help/version/parse error and exit with clap's code.
 fn exit_with_clap_error(e: clap::Error) -> ! {
-    let rendered = e.render().to_string().replace("pwf pw ", "pwf ");
+    let rendered = e.render().to_string();
     if e.use_stderr() {
         eprint!("{rendered}");
     } else {

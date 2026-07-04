@@ -49,8 +49,8 @@ pub(super) fn spawn_pw_add(
 }
 
 /// Spawn the external `--pending-work-script` allocator with the canonical
-/// `check` protocol (`<script> check --config-path <cfg> --id <pw> --date <today>`).
-pub(super) fn spawn_pw_check(
+/// `done` protocol (`<script> done --config-path <cfg> --id <pw> --date <today>`).
+pub(super) fn spawn_pw_done(
     script: &str,
     cfg: &str,
     pw: &str,
@@ -58,7 +58,7 @@ pub(super) fn spawn_pw_check(
     commits: &[String],
     review: bool,
 ) -> Result<(), HandoffError> {
-    let mut argv: Vec<String> = ["check", "--config-path", cfg, "--id", pw, "--date", today]
+    let mut argv: Vec<String> = ["done", "--config-path", cfg, "--id", pw, "--date", today]
         .iter()
         .map(|s| s.to_string())
         .collect();
@@ -74,7 +74,7 @@ pub(super) fn spawn_pw_check(
         .args(&argv)
         .output()
         .map_err(|source| HandoffError::SubprocessSpawn {
-            operation: "pw-check",
+            operation: "pw-done",
             script: script.to_string(),
             source,
         })?;
@@ -107,7 +107,7 @@ pub(super) fn inprocess_pw_add(
 }
 
 /// True when the linked pw item is still open. Probe failures (missing config or
-/// notes dir) fall back to "open" so the check step keeps its existing error surface.
+/// notes dir) fall back to "open" so the done step keeps its existing error surface.
 pub(super) fn pw_item_is_open(args: &Args, pw: &str) -> bool {
     let Some(path) = args
         .config_path
@@ -153,10 +153,10 @@ pub(super) fn inprocess_pw_reopen(args: &Args, pw: &str) -> Result<(), HandoffEr
     Ok(())
 }
 
-/// In-process equivalent of spawn_pw_check for production (no --pending-work-script).
-pub(super) fn inprocess_pw_check(args: &Args, today: &str, pw: &str) -> Result<(), HandoffError> {
+/// In-process equivalent of spawn_pw_done for production (no --pending-work-script).
+pub(super) fn inprocess_pw_done(args: &Args, today: &str, pw: &str) -> Result<(), HandoffError> {
     let a = crate::cli::Args {
-        action: Some("check".to_string()),
+        action: Some("done".to_string()),
         id: Some(pw.to_string()),
         date: Some(today.to_string()),
         config_path: args

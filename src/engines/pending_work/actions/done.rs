@@ -1,4 +1,4 @@
-// Action: check (mark done).
+// Action: done (mark done).
 
 use std::path::Path;
 
@@ -18,28 +18,28 @@ use crate::{cli::Args, config::Config};
 
 #[derive(Clone, Copy)]
 enum CloseAction {
-    Check,
+    Done,
     Cancel,
 }
 
 impl CloseAction {
     fn verb(self) -> &'static str {
         match self {
-            CloseAction::Check => "check",
+            CloseAction::Done => "done",
             CloseAction::Cancel => "cancel",
         }
     }
 
     fn frontmatter_status(self) -> &'static str {
         match self {
-            CloseAction::Check => "done",
+            CloseAction::Done => "done",
             CloseAction::Cancel => "cancelled",
         }
     }
 
     fn past_tense(self) -> &'static str {
         match self {
-            CloseAction::Check => "Checked",
+            CloseAction::Done => "Done",
             CloseAction::Cancel => "Cancelled",
         }
     }
@@ -49,11 +49,11 @@ impl CloseAction {
     }
 }
 
-pub(in crate::engines::pending_work) fn run_check(
+pub(in crate::engines::pending_work) fn run_done(
     cfg: &Config,
     args: &Args,
 ) -> Result<String, PendingWorkError> {
-    run_close(cfg, args, CloseAction::Check)
+    run_close(cfg, args, CloseAction::Done)
 }
 
 pub(in crate::engines::pending_work) fn run_cancel(
@@ -82,7 +82,7 @@ fn run_close(cfg: &Config, args: &Args, action: CloseAction) -> Result<String, P
         } else {
             content
         };
-        // Record commit-range provenance only when supplied so the default check
+        // Record commit-range provenance only when supplied so the default done
         // output stays unchanged (PWF-0017).
         let commits_value = commits::frontmatter_value(&args.commits);
         let content = match commits_value.as_deref() {
@@ -210,9 +210,9 @@ mod tests {
         .unwrap()
     }
 
-    fn stage_file_item() -> (std::path::PathBuf, Config) {
-        let stage = std::env::temp_dir().join(format!("pwf_check_{}", nanos()));
-        let notes = stage.join("notes");
+    fn stage_file_item() -> (tempfile::TempDir, Config) {
+        let stage = tempfile::tempdir().unwrap();
+        let notes = stage.path().join("notes");
         let project = notes.join("glep-shimeji");
         std::fs::create_dir_all(&project).unwrap();
         std::fs::write(
@@ -225,24 +225,17 @@ mod tests {
         (stage, cfg)
     }
 
-    fn nanos() -> u128 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    }
-
     #[test]
     fn missing_id_returns_typed_error_with_legacy_display() {
         let (_stage, cfg) = stage_file_item();
 
-        let err = run_check(&cfg, &Args::default()).unwrap_err();
+        let err = run_done(&cfg, &Args::default()).unwrap_err();
 
         assert_matches!(
             err,
-            PendingWorkError::MissingId { action } if action == "check"
+            PendingWorkError::MissingId { action } if action == "done"
         );
-        assert_eq!(err.to_string(), "--id is required for check.");
+        assert_eq!(err.to_string(), "--id is required for done.");
     }
 
     #[test]
@@ -254,14 +247,14 @@ mod tests {
             ..Args::default()
         };
 
-        let err = run_check(&cfg, &args).unwrap_err();
+        let err = run_done(&cfg, &args).unwrap_err();
 
         assert_matches!(err, PendingWorkError::EmptyReport);
         assert_eq!(err.to_string(), "--report cannot be empty.");
     }
 
     #[test]
-    fn check_with_review_appends_review_task_as_text() {
+    fn done_with_review_appends_review_task_as_text() {
         // --review should append the added task as text, never JSON (PWF-0059).
         let (_stage, cfg) = stage_file_item();
         let args = Args {
@@ -271,9 +264,9 @@ mod tests {
             ..Args::default()
         };
 
-        let out = run_check(&cfg, &args).unwrap();
+        let out = run_done(&cfg, &args).unwrap();
 
-        assert!(out.starts_with("Checked GLP-0001"), "got: {out}");
+        assert!(out.starts_with("Done GLP-0001"), "got: {out}");
         assert!(out.contains("ADDED PWF TASK ["), "got: {out}");
     }
 }

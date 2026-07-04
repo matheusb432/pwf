@@ -32,8 +32,22 @@ impl Section {
     }
 }
 
+/// A `/`-shaped token the caller plainly meant as a lane marker, even if the
+/// letter isn't one of the recognized sections — e.g. `/x`. Matches the exact
+/// shape of a real marker (`/` + one ASCII letter) so ordinary prose tokens
+/// like absolute paths (`/etc/hosts`) are never mistaken for one.
+fn is_marker_shaped(token: &str) -> bool {
+    let mut chars = token.chars();
+    chars.next() == Some('/')
+        && chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+        && chars.next().is_none()
+}
+
+/// A token that should flush the current bullet buffer: `/` alone, a
+/// recognized section marker, or an unrecognized-but-marker-shaped token
+/// (which flushes the buffer without switching section, like bare `/`).
 fn is_marker(token: &str) -> bool {
-    token == "/" || Section::from_marker(token).is_some()
+    token == "/" || Section::from_marker(token).is_some() || is_marker_shaped(token)
 }
 
 fn words_to_text(words: &[&str]) -> String {
@@ -176,5 +190,47 @@ mod tests {
     fn empty_lead_before_marker_falls_back_to_pending_work() {
         let parsed = parse("/ only second");
         assert_eq!(parsed.title, "pending work");
+    }
+
+    #[test]
+    fn unrecognized_marker_shaped_token_starts_a_bullet_without_switching_section() {
+        // `/x` isn't a known section letter, but it's shaped exactly like one
+        // (`/` + one letter) — it must still break the bullet, not get folded
+        // into it as literal text.
+        let parsed = parse("title /c context one /x context two");
+        assert_eq!(
+            parsed.context,
+            vec!["context one".to_string(), "context two".to_string()]
+        );
+    }
+
+    #[test]
+    fn two_unrecognized_markers_do_not_corrupt_surrounding_bullets() {
+        // Regression: a prompt using an unrecognized marker (`/x`) twice, once
+        // before the first real marker and once mid-section, used to leak the
+        // literal `/x` token into the running text and merge two unrelated
+        // clauses into one bullet.
+        let prompt = "alpha beta /x gamma delta /g epsilon zeta /c eta theta /x iota kappa /c lambda mu / nu xi";
+        let parsed = parse(prompt);
+        assert_eq!(
+            parsed.goals,
+            vec![
+                "alpha beta".to_string(),
+                "gamma delta".to_string(),
+                "epsilon zeta".to_string(),
+            ]
+        );
+        assert_eq!(
+            parsed.context,
+            vec![
+                "eta theta".to_string(),
+                "iota kappa".to_string(),
+                "lambda mu".to_string(),
+                "nu xi".to_string(),
+            ]
+        );
+        for bullet in parsed.goals.iter().chain(parsed.context.iter()) {
+            assert!(!bullet.contains('/'), "marker leaked into bullet: {bullet}");
+        }
     }
 }

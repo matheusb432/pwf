@@ -35,13 +35,6 @@ mod tests {
     use super::*;
     use crate::engines::pending_work::errors::PendingWorkError;
 
-    fn nanos() -> u128 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    }
-
     #[test]
     fn continue_plan_prompt_reproduces_legacy_strings() {
         let (title, prompt) =
@@ -55,24 +48,23 @@ mod tests {
 
     #[test]
     fn continue_handoff_prompt_reproduces_legacy_strings() {
-        let repo = std::env::temp_dir().join(format!("pwcontinue_{}", nanos()));
-        let handoff_dir = repo.join("docs").join("handoffs");
+        let repo = tempfile::tempdir().unwrap();
+        let handoff_dir = repo.path().join("docs").join("handoffs");
         fs::create_dir_all(&handoff_dir).unwrap();
         fs::write(handoff_dir.join("2026-01-01-api-cleanup.md"), "body\n").unwrap();
 
-        let (title, prompt) = continue_handoff_prompt(&repo.to_string_lossy()).unwrap();
+        let (title, prompt) = continue_handoff_prompt(&repo.path().to_string_lossy()).unwrap();
         assert_eq!(title, "continue api cleanup");
         assert_eq!(
             prompt,
             "Continue the handoff at @docs/handoffs/2026-01-01-api-cleanup.md."
         );
-
-        fs::remove_dir_all(&repo).ok();
     }
 
     #[test]
     fn missing_handoff_directory_returns_typed_error_with_legacy_display() {
-        let repo = std::env::temp_dir().join(format!("pwcontinue_missing_{}", nanos()));
+        let guard = tempfile::tempdir().unwrap();
+        let repo = guard.path().join("missing_repo");
         let expected = repo.join("docs").join("handoffs");
 
         let err = continue_handoff_prompt(&repo.to_string_lossy()).unwrap_err();

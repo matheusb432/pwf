@@ -1,13 +1,12 @@
 //! Top-level dispatcher for `pwf handoff <action>`.
 
-use crate::cli::Args;
-
 use super::{
     actions::{complete_handoff, invoke_list, invoke_new, reopen_handoff},
     errors::HandoffError,
     ledger::{archive_stranded, refresh_ledger_typed},
     paths::{handoff_paths, repo_root_typed},
 };
+use crate::cli::Args;
 
 pub fn run(args: &Args) -> Result<String, String> {
     run_typed(args).map_err(|e| e.to_string())
@@ -58,7 +57,7 @@ mod tests {
         let root = tempdir();
         let args = Args {
             action: Some("new".to_string()),
-            repo_root: Some(root.to_string_lossy().into_owned()),
+            repo_root: Some(root.path().to_string_lossy().into_owned()),
             ..Default::default()
         };
 
@@ -73,7 +72,7 @@ mod tests {
         let root = tempdir();
         let args = Args {
             action: Some("done".to_string()),
-            repo_root: Some(root.to_string_lossy().into_owned()),
+            repo_root: Some(root.path().to_string_lossy().into_owned()),
             ..Default::default()
         };
 
@@ -88,7 +87,7 @@ mod tests {
         let root = tempdir();
         let args = Args {
             action: Some("wat".to_string()),
-            repo_root: Some(root.to_string_lossy().into_owned()),
+            repo_root: Some(root.path().to_string_lossy().into_owned()),
             ..Default::default()
         };
 

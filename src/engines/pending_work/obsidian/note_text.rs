@@ -150,7 +150,7 @@ fn normalized_report(report: &str) -> Option<String> {
 /// Append the standard completion report section to a work-item note.
 ///
 /// Collapses the report to a single normalized line (BR-0005); used by the
-/// `check`/`cancel` close path. For a multi-section closeout report that must keep
+/// `done`/`cancel` close path. For a multi-section closeout report that must keep
 /// its Markdown structure, use [`append_report_block_text`] instead.
 pub fn append_report_text(content: &str, report: &str) -> Option<String> {
     let report = normalized_report(report)?;
@@ -220,20 +220,22 @@ pub fn reopen_status_text(content: &str) -> String {
     COMPLETED_LINE_NL_RE.replace(&c, "").into_owned()
 }
 
-/// Sets the `prereq:` frontmatter line to `value`, or removes it when `None`.
-///
-/// `Some(v)` replaces an existing `prereq:` line, or inserts `prereq: "{v}"` matching
-/// [`work_item_content`]'s placement (after `completed:`, else after `created:`, else
-/// before the closing `---`). `None` deletes the whole line, leaving no `prereq: ""`
-/// residue.
-pub fn set_prereq_text(content: &str, value: Option<&str>) -> String {
-    let Some(v) = value else {
-        // Drop the line and its trailing newline so no blank line is left behind.
-        return PREREQ_LINE_NL_RE.replace(content, "").into_owned();
+/// Sets a single frontmatter line: `Some(line)` replaces an existing `line_re`
+/// match, or inserts `line` matching [`work_item_content`]'s placement (after
+/// `completed:` when present, else after `created:`, else before the closing
+/// `---`); `None` deletes the whole line via `line_nl_re` (with its trailing
+/// newline, leaving no blank residue).
+fn set_frontmatter_line(
+    content: &str,
+    line_re: &Regex,
+    line_nl_re: &Regex,
+    line: Option<String>,
+) -> String {
+    let Some(line) = line else {
+        return line_nl_re.replace(content, "").into_owned();
     };
-    let line = format!("prereq: \"{v}\"");
-    if PREREQ_LINE_RE.is_match(content) {
-        return PREREQ_LINE_RE.replace(content, line.as_str()).into_owned();
+    if line_re.is_match(content) {
+        return line_re.replace(content, line.as_str()).into_owned();
     }
     // Anchor after `completed:` (when present), else after `created:`.
     for re in [&*COMPLETED_LINE_RE, &*CREATED_LINE_RE] {
@@ -253,62 +255,39 @@ pub fn set_prereq_text(content: &str, value: Option<&str>) -> String {
     content.to_string()
 }
 
-/// Sets the `commits:` frontmatter line to `value`, or removes it when `None`.
-///
-/// Mirrors [`set_prereq_text`]'s placement (after `completed:`, else after `created:`,
-/// else before the closing `---`), but stores the raw commit range verbatim; a range
-/// is provenance, never a wikilink, so the value is never wrapped.
-pub fn set_commits_text(content: &str, value: Option<&str>) -> String {
-    let Some(v) = value else {
-        return COMMITS_LINE_NL_RE.replace(content, "").into_owned();
-    };
-    let line = format!("commits: \"{v}\"");
-    if COMMITS_LINE_RE.is_match(content) {
-        return COMMITS_LINE_RE.replace(content, line.as_str()).into_owned();
-    }
-    for re in [&*COMPLETED_LINE_RE, &*CREATED_LINE_RE] {
-        if let Some(m) = re.find(content) {
-            return format!("{}\n{line}{}", &content[..m.end()], &content[m.end()..]);
-        }
-    }
-    let mut fences = crate::regexes::FRONTMATTER_FENCE_RE.find_iter(content);
-    if let (Some(_), Some(close)) = (fences.next(), fences.next()) {
-        return format!(
-            "{}{line}\n{}",
-            &content[..close.start()],
-            &content[close.start()..]
-        );
-    }
-    content.to_string()
+/// Sets the `prereq:` frontmatter line to `value` (double-quoted, wikilink-shaped),
+/// or removes it when `None` — see [`set_frontmatter_line`] for placement.
+pub fn set_prereq_text(content: &str, value: Option<&str>) -> String {
+    set_frontmatter_line(
+        content,
+        &PREREQ_LINE_RE,
+        &PREREQ_LINE_NL_RE,
+        value.map(|v| format!("prereq: \"{v}\"")),
+    )
 }
 
-/// Sets the `effort:` frontmatter line to `value` (1-4), or removes it when `None`.
-///
-/// Mirrors [`set_prereq_text`]'s placement (after `completed:`, else after `created:`,
-/// else before the closing `---`), but the value is a bare unquoted integer — an
-/// effort tier is a plain number, never a wikilink or provenance range.
+/// Sets the `commits:` frontmatter line to `value`, or removes it when `None` —
+/// see [`set_frontmatter_line`] for placement. The raw commit range is stored
+/// verbatim (double-quoted); a range is provenance, never a wikilink.
+pub fn set_commits_text(content: &str, value: Option<&str>) -> String {
+    set_frontmatter_line(
+        content,
+        &COMMITS_LINE_RE,
+        &COMMITS_LINE_NL_RE,
+        value.map(|v| format!("commits: \"{v}\"")),
+    )
+}
+
+/// Sets the `effort:` frontmatter line to `value` (1-4), or removes it when `None`
+/// — see [`set_frontmatter_line`] for placement. The value is a bare unquoted
+/// integer — an effort tier is a plain number, never a wikilink or provenance range.
 pub fn set_effort_text(content: &str, value: Option<u8>) -> String {
-    let Some(v) = value else {
-        return EFFORT_LINE_NL_RE.replace(content, "").into_owned();
-    };
-    let line = format!("effort: {v}");
-    if EFFORT_LINE_RE.is_match(content) {
-        return EFFORT_LINE_RE.replace(content, line.as_str()).into_owned();
-    }
-    for re in [&*COMPLETED_LINE_RE, &*CREATED_LINE_RE] {
-        if let Some(m) = re.find(content) {
-            return format!("{}\n{line}{}", &content[..m.end()], &content[m.end()..]);
-        }
-    }
-    let mut fences = crate::regexes::FRONTMATTER_FENCE_RE.find_iter(content);
-    if let (Some(_), Some(close)) = (fences.next(), fences.next()) {
-        return format!(
-            "{}{line}\n{}",
-            &content[..close.start()],
-            &content[close.start()..]
-        );
-    }
-    content.to_string()
+    set_frontmatter_line(
+        content,
+        &EFFORT_LINE_RE,
+        &EFFORT_LINE_NL_RE,
+        value.map(|v| format!("effort: {v}")),
+    )
 }
 
 #[cfg(test)]
@@ -398,7 +377,7 @@ mod tests {
 
     #[test]
     fn append_report_block_extends_existing_report_section() {
-        // An item closed with `check --report` already carries a one-line `### Report`;
+        // An item closed with `done --report` already carries a one-line `### Report`;
         // a later closeout append lands under that same section, not a duplicate header.
         let content = "---\nstatus: done\n---\n\nbody\n\n### Report\n\none-line close note\n";
         let got = append_report_block_text(content, "## Detail\n\nfull writeup").unwrap();

@@ -1,7 +1,9 @@
 //! Declarative clap command tree — the single source of truth for parsing AND
 //! `--help` (PWF-0030). Doc comments on each command/arg ARE the help text; keep
-//! them tight. The only argv preprocessing left is `preprocess.rs`, which injects
-//! the implicit `pw` `list`/`route` subcommand defaults clap can't derive.
+//! them tight. Pending-work verbs (`PwAction`) are flattened onto `Engine` so
+//! `add`/`list`/`done`/… render as direct top-level commands, matching what
+//! actually parses. The only argv preprocessing left is `preprocess.rs`, which
+//! injects the implicit `route` default clap can't derive.
 //!
 //! The per-engine `*Common` flag groups are flattened into every action because
 //! tests and scripts inject sandbox flags (`--config-path`, `--notes-dir` /
@@ -45,12 +47,11 @@ pub struct Cli {
 /// Top-level engines.
 #[derive(Subcommand, Debug)]
 pub enum Engine {
-    /// Track on-demand agent prompts ("pwf tasks") across managed repos.
-    #[command(alias = "pending-work")]
-    Pw {
-        #[command(subcommand)]
-        action: PwAction,
-    },
+    // `// !` Flattened (not a named subcommand) so `add`/`list`/`done`/… render
+    // as direct top-level Commands: entries — matching what actually parses,
+    // since `pwf pw …` itself is a retired prefix main.rs rejects pre-parse.
+    #[command(flatten)]
+    Pw(PwAction),
     /// Per-repo handoff ledgers (resume notes between sessions).
     Handoff {
         #[command(subcommand)]
@@ -76,6 +77,27 @@ pub struct PwCommon {
     /// Date stamp (YYYY-MM-DD); defaults to today.
     #[arg(long)]
     pub date: Option<String>,
+}
+
+/// The id-input surface shared by every id-facing pending-work verb: a bare
+/// positional id or the `--id` flag (mutually exclusive). Flattened into each
+/// verb so the positional-or-flag logic lives in exactly one place. The compact
+/// split form (`cfg 57`) is collapsed to one token in `preprocess.rs` before
+/// clap, and `canonical_pending_id` normalizes whatever token lands here.
+#[derive(Args, Debug, Default)]
+pub struct IdArg {
+    /// Item id (bare positional; `--id` also accepted). E.g. `PWF-0001`, `cfg57`.
+    #[arg(value_name = "ID")]
+    pos: Option<String>,
+    #[arg(long = "id", value_name = "ID", conflicts_with = "pos")]
+    flag: Option<String>,
+}
+
+impl IdArg {
+    /// The supplied id, preferring the positional; `None` if neither was given.
+    fn resolve(self) -> Option<String> {
+        self.pos.or(self.flag)
+    }
 }
 
 /// pending-work verbs (`pwf <verb>`).
@@ -155,10 +177,9 @@ pub enum PwAction {
         common: PwCommon,
     },
     /// Mark an item done in place, keeping a capped done-queue.
-    Check {
-        /// Item id (e.g. PWF-0001).
-        #[arg(long)]
-        id: Option<String>,
+    Done {
+        #[command(flatten)]
+        id: IdArg,
         /// Append a one-line completion report.
         #[arg(long)]
         report: Option<String>,
@@ -171,11 +192,10 @@ pub enum PwAction {
         #[command(flatten)]
         common: PwCommon,
     },
-    /// Mark an item cancelled in place, keeping the same capped queue as check.
+    /// Mark an item cancelled in place, keeping the same capped queue as done.
     Cancel {
-        /// Item id (e.g. PWF-0001).
-        #[arg(long)]
-        id: Option<String>,
+        #[command(flatten)]
+        id: IdArg,
         /// Required cancellation report: what was tried and why work stopped.
         #[arg(long)]
         report: Option<String>,
@@ -191,9 +211,8 @@ pub enum PwAction {
     /// Reopen a closed item: flip done/cancelled back to active, drop its
     /// completed/commits provenance, and restore its index link.
     Reopen {
-        /// Item id (e.g. PWF-0001).
-        #[arg(long)]
-        id: Option<String>,
+        #[command(flatten)]
+        id: IdArg,
         #[command(flatten)]
         common: PwCommon,
     },
@@ -202,8 +221,8 @@ pub enum PwAction {
     /// provenance; or append a closeout report — the last two being the only edits
     /// allowed on a closed item.
     Update {
-        #[arg(long)]
-        id: Option<String>,
+        #[command(flatten)]
+        id: IdArg,
         #[arg(long)]
         prompt: Option<String>,
         #[arg(long)]
@@ -238,8 +257,8 @@ pub enum PwAction {
     /// Print an item's note path (any status, incl. archived done/cancelled);
     /// `--show` prints the note as markdown instead.
     Resolve {
-        #[arg(long)]
-        id: Option<String>,
+        #[command(flatten)]
+        id: IdArg,
         /// Emit the task note as markdown (frontmatter minus exec-irrelevant keys + body).
         #[arg(long)]
         show: bool,
@@ -248,11 +267,10 @@ pub enum PwAction {
     },
     /// Shorthand for `pwf resolve --show <id>`: stream a task note's markdown.
     ///
-    /// The id is a bare positional — `pwf show <id>`, no `--id` flag.
+    /// The id is a bare positional — `pwf show <id>` — or `--id`.
     Show {
-        /// Item id (e.g. PWF-0001).
-        #[arg(value_name = "ID")]
-        id: String,
+        #[command(flatten)]
+        id: IdArg,
         #[command(flatten)]
         common: PwCommon,
     },
@@ -271,11 +289,15 @@ pub enum PwAction {
     },
     /// Probe whether an agent is launchable.
     Verify {
-        #[arg(long)]
-        id: Option<String>,
+        #[command(flatten)]
+        id: IdArg,
         /// Which agent to probe (claude default).
         #[arg(long = "agent", short = 'a', value_enum, default_value_t = AgentArg::Claude)]
         agent: AgentArg,
+        /// Explicit model override, forwarded verbatim to the agent's `--model` flag
+        /// (no validation — wins over any effort-tier resolution).
+        #[arg(long)]
+        model: Option<String>,
         #[command(flatten)]
         common: PwCommon,
     },
@@ -309,8 +331,11 @@ pub enum PwAction {
     },
     /// Delete a task note and remove its index link.
     Remove {
-        #[arg(long)]
-        id: Option<String>,
+        #[command(flatten)]
+        id: IdArg,
+        /// Skip the [Y/n] removal confirmation (assume yes).
+        #[arg(long = "yes", short = 'y')]
+        yes: bool,
         #[command(flatten)]
         common: PwCommon,
     },
@@ -318,11 +343,8 @@ pub enum PwAction {
     ///
     /// The id is a bare positional — `pwf session <id>` — or `--id`.
     Session {
-        /// Item id (e.g. PWF-0038). Bare positional; `--id` also accepted.
-        #[arg(value_name = "ID")]
-        id: Option<String>,
-        #[arg(long = "id", value_name = "ID", conflicts_with = "id")]
-        id_flag: Option<String>,
+        #[command(flatten)]
+        id: IdArg,
         /// Color policy for the dispatch output.
         #[arg(long, value_enum, default_value_t = ColorArg::Auto)]
         color: ColorArg,
@@ -348,6 +370,10 @@ pub enum PwAction {
         /// then dispatch with the full updated prompt as usual.
         #[arg(short = 'a', long)]
         append: Option<String>,
+        /// Explicit model override, forwarded verbatim to the agent's `--model` flag
+        /// (no validation — wins over any effort-tier resolution).
+        #[arg(long)]
+        model: Option<String>,
         #[command(flatten)]
         common: PwCommon,
     },
@@ -560,7 +586,7 @@ pub fn parse_argv(argv: Vec<String>) -> Result<(String, EngineArgs), clap::Error
 impl Cli {
     pub fn into_parsed_command(self) -> ParsedCommand {
         match self.engine {
-            Engine::Pw { action } => ParsedCommand::PendingWork(fill_pw_command(action)),
+            Engine::Pw(action) => ParsedCommand::PendingWork(fill_pw_command(action)),
             Engine::Handoff { action } => {
                 let mut a = EngineArgs::default();
                 fill_handoff(&mut a, action);
@@ -582,7 +608,7 @@ impl Cli {
     pub fn into_engine_args(self) -> (String, EngineArgs) {
         let mut a = EngineArgs::default();
         let engine = match self.engine {
-            Engine::Pw { action } => {
+            Engine::Pw(action) => {
                 let action = fill_pw(&mut a, action);
                 a.action = Some(action.as_str().into());
                 "pw"
@@ -692,19 +718,19 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             apply_pw_common(a, common);
             PendingWorkAction::List
         }
-        PwAction::Check {
+        PwAction::Done {
             id,
             report,
             commits,
             review,
             common,
         } => {
-            a.id = normalize_pending_work_id(id);
+            a.id = normalize_pending_work_id(id.resolve());
             a.report = report;
             a.commits = commits;
             a.review = review;
             apply_pw_common(a, common);
-            PendingWorkAction::Check
+            PendingWorkAction::Done
         }
         PwAction::Cancel {
             id,
@@ -713,7 +739,7 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             review,
             common,
         } => {
-            a.id = normalize_pending_work_id(id);
+            a.id = normalize_pending_work_id(id.resolve());
             a.report = report;
             a.commits = commits;
             a.review = review;
@@ -721,7 +747,7 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             PendingWorkAction::Cancel
         }
         PwAction::Reopen { id, common } => {
-            a.id = normalize_pending_work_id(id);
+            a.id = normalize_pending_work_id(id.resolve());
             apply_pw_common(a, common);
             PendingWorkAction::Reopen
         }
@@ -737,7 +763,7 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             effort,
             common,
         } => {
-            a.id = normalize_pending_work_id(id);
+            a.id = normalize_pending_work_id(id.resolve());
             a.prompt = prompt;
             a.title = title;
             a.prereq = prereq;
@@ -750,13 +776,13 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             PendingWorkAction::Update
         }
         PwAction::Resolve { id, show, common } => {
-            a.id = normalize_pending_work_id(id);
+            a.id = normalize_pending_work_id(id.resolve());
             a.show = show;
             apply_pw_common(a, common);
             PendingWorkAction::Resolve
         }
         PwAction::Show { id, common } => {
-            a.id = normalize_pending_work_id(Some(id));
+            a.id = normalize_pending_work_id(id.resolve());
             apply_pw_common(a, common);
             PendingWorkAction::Show
         }
@@ -772,9 +798,15 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             apply_pw_common(a, common);
             PendingWorkAction::Clean
         }
-        PwAction::Verify { id, agent, common } => {
-            a.id = normalize_pending_work_id(id);
+        PwAction::Verify {
+            id,
+            agent,
+            model,
+            common,
+        } => {
+            a.id = normalize_pending_work_id(id.resolve());
             a.agent = agent_choice(agent);
+            a.model = model;
             apply_pw_common(a, common);
             PendingWorkAction::Verify
         }
@@ -798,14 +830,14 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             apply_pw_common(a, common);
             PendingWorkAction::Route
         }
-        PwAction::Remove { id, common } => {
-            a.id = normalize_pending_work_id(id);
+        PwAction::Remove { id, yes, common } => {
+            a.id = normalize_pending_work_id(id.resolve());
+            a.assume_yes = yes;
             apply_pw_common(a, common);
             PendingWorkAction::Remove
         }
         PwAction::Session {
             id,
-            id_flag,
             color,
             yes,
             inline,
@@ -813,9 +845,10 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             auto,
             agent,
             append,
+            model,
             common,
         } => {
-            a.id = normalize_pending_work_id(id.or(id_flag));
+            a.id = normalize_pending_work_id(id.resolve());
             a.color = match color {
                 ColorArg::Auto => crate::cli::ColorChoice::Auto,
                 ColorArg::Always => crate::cli::ColorChoice::Always,
@@ -827,6 +860,7 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             a.auto = auto;
             a.agent = agent_choice(agent);
             a.append = append;
+            a.model = model;
             apply_pw_common(a, common);
             PendingWorkAction::Session
         }
@@ -936,7 +970,7 @@ mod tests {
     // verb; its list flags must be forwarded, not swallowed into the route words.
     #[test]
     fn route_shorthand_forwards_long_flag() {
-        let a = pw_args(&["pw", "pwf", "--long"]);
+        let a = pw_args(&["pwf", "--long"]);
         assert_eq!(a.action.as_deref(), Some("route"));
         assert_eq!(a.words, vec!["pwf"]);
         assert!(a.long);
@@ -944,21 +978,21 @@ mod tests {
 
     #[test]
     fn route_shorthand_forwards_future_flag() {
-        let a = pw_args(&["pw", "pwf", "--future"]);
+        let a = pw_args(&["pwf", "--future"]);
         assert_eq!(a.words, vec!["pwf"]);
         assert!(a.future);
     }
 
     #[test]
     fn route_shorthand_forwards_all_flag() {
-        let a = pw_args(&["pw", "pwf", "--all"]);
+        let a = pw_args(&["pwf", "--all"]);
         assert_eq!(a.words, vec!["pwf"]);
         assert!(a.all);
     }
 
     #[test]
     fn route_shorthand_forwards_combined_flags() {
-        let a = pw_args(&["pw", "pwf", "--long", "--future"]);
+        let a = pw_args(&["pwf", "--long", "--future"]);
         assert_eq!(a.words, vec!["pwf"]);
         assert!(a.long);
         assert!(a.future);
@@ -968,7 +1002,7 @@ mod tests {
     // shorthand (Route) and the explicit `pw list` verb.
     #[test]
     fn route_shorthand_forwards_number_flag() {
-        let a = pw_args(&["pw", "pwf", "-n", "3"]);
+        let a = pw_args(&["pwf", "-n", "3"]);
         assert_eq!(a.action.as_deref(), Some("route"));
         assert_eq!(a.words, vec!["pwf"]);
         assert_eq!(a.number, Some(3));
@@ -976,16 +1010,15 @@ mod tests {
 
     #[test]
     fn list_parses_number_short_and_long() {
-        assert_eq!(pw_args(&["pw", "list", "-n", "5"]).number, Some(5));
-        assert_eq!(pw_args(&["pw", "list", "--number", "5"]).number, Some(5));
+        assert_eq!(pw_args(&["list", "-n", "5"]).number, Some(5));
+        assert_eq!(pw_args(&["list", "--number", "5"]).number, Some(5));
     }
 
-    // ! PWF-0017: `pw check` accepts the new provenance flags into the DTO.
+    // ! PWF-0017: `pw done` accepts the new provenance flags into the DTO.
     #[test]
-    fn check_parses_commits_and_review() {
+    fn done_parses_commits_and_review() {
         let a = pw_args(&[
-            "pw",
-            "check",
+            "done",
             "--id",
             "GLP-0001",
             "--commits",
@@ -994,7 +1027,7 @@ mod tests {
             "c..d",
             "--review",
         ]);
-        assert_eq!(a.action.as_deref(), Some("check"));
+        assert_eq!(a.action.as_deref(), Some("done"));
         assert_eq!(a.commits, vec!["a..b", "c..d"]);
         assert!(a.review);
     }
@@ -1002,7 +1035,6 @@ mod tests {
     #[test]
     fn cancel_parses_required_report_surface() {
         let a = pw_args(&[
-            "pw",
             "cancel",
             "--id",
             "GLP-0001",
@@ -1018,32 +1050,80 @@ mod tests {
     // shared DTO — no duplicate field/parsing.
     #[test]
     fn session_parses_append_short_flag_into_shared_update_field() {
-        let a = pw_args(&["pw", "session", "PWF-0001", "-a", "extra context"]);
+        let a = pw_args(&["session", "PWF-0001", "-a", "extra context"]);
         assert_eq!(a.action.as_deref(), Some("session"));
         assert_eq!(a.append.as_deref(), Some("extra context"));
     }
 
     #[test]
     fn session_agent_flag_is_long_only_now_that_short_is_append() {
-        let a = pw_args(&["pw", "session", "PWF-0001", "--agent", "codex"]);
+        let a = pw_args(&["session", "PWF-0001", "--agent", "codex"]);
         assert_eq!(a.agent, crate::cli::Agent::Codex);
         assert_eq!(a.append, None);
     }
 
     #[test]
     fn pending_work_id_flags_parse_to_uppercase() {
-        let a = pw_args(&["pw", "check", "--id", "gLp-0001"]);
+        let a = pw_args(&["done", "--id", "gLp-0001"]);
         assert_eq!(a.id.as_deref(), Some("GLP-0001"));
     }
 
-    // ! PWF-0065: `show` is the shorthand verb for `resolve --show`; it takes the id
-    // as a bare positional (no `--id`) and still normalizes it to uppercase.
     #[test]
-    fn show_parses_positional_id_to_show_action_uppercased() {
-        let argv = ["pw", "show", "pwf-0001"]
+    fn done_accepts_bare_positional_id() {
+        assert_eq!(
+            pw_args(&["done", "GLP-0001"]).id.as_deref(),
+            Some("GLP-0001")
+        );
+    }
+
+    #[test]
+    fn done_still_accepts_id_flag() {
+        assert_eq!(
+            pw_args(&["done", "--id", "GLP-0001"]).id.as_deref(),
+            Some("GLP-0001")
+        );
+    }
+
+    #[test]
+    fn remove_accepts_bare_positional_id() {
+        assert_eq!(
+            pw_args(&["remove", "pwf-0002"]).id.as_deref(),
+            Some("PWF-0002")
+        );
+    }
+
+    #[test]
+    fn resolve_accepts_glued_positional_id() {
+        assert_eq!(
+            pw_args(&["resolve", "cfg57"]).id.as_deref(),
+            Some("CFG-0057")
+        );
+    }
+
+    #[test]
+    fn update_accepts_split_id_form() {
+        assert_eq!(
+            pw_args(&["update", "cfg", "57", "--title", "x"])
+                .id
+                .as_deref(),
+            Some("CFG-0057")
+        );
+    }
+
+    #[test]
+    fn positional_and_id_flag_conflict() {
+        let argv = ["done", "GLP-0001", "--id", "GLP-0002"]
             .iter()
             .map(|s| s.to_string())
             .collect();
+        assert!(parse_argv(argv).is_err());
+    }
+
+    // ! PWF-0065: `show` is the shorthand verb for `resolve --show`; it takes the id
+    // as a bare positional or `--id` and still normalizes it to uppercase.
+    #[test]
+    fn show_parses_positional_id_to_show_action_uppercased() {
+        let argv = ["show", "pwf-0001"].iter().map(|s| s.to_string()).collect();
         let ParsedCommand::PendingWork(command) = parse_command_argv(argv).expect("parse") else {
             panic!("expected pending-work command");
         };
@@ -1056,7 +1136,7 @@ mod tests {
 
     #[test]
     fn typed_pw_parse_keeps_action_out_of_flat_args() {
-        let argv = ["pw", "check", "--id", "GLP-0001"]
+        let argv = ["done", "--id", "GLP-0001"]
             .iter()
             .map(|s| s.to_string())
             .collect();
@@ -1065,7 +1145,7 @@ mod tests {
         };
         assert_eq!(
             command.action(),
-            &crate::engines::pending_work::Action::Check
+            &crate::engines::pending_work::Action::Done
         );
         assert_eq!(command.args().id.as_deref(), Some("GLP-0001"));
         assert!(command.args().action.is_none());

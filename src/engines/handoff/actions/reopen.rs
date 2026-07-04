@@ -184,7 +184,7 @@ mod tests {
     #[test]
     fn find_archived_handoff_matches_by_pw_and_skips_active() {
         let dir = tempdir();
-        let archive = dir.join("archived");
+        let archive = dir.path().join("archived");
         std::fs::create_dir_all(&archive).unwrap();
         std::fs::write(
             archive.join("2026-01-01-managed-flow.md"),

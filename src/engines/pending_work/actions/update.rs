@@ -124,7 +124,7 @@ fn update_open_item(
     ObsidianStore::write_item_file(item_path, &content)?;
 
     Ok(format!(
-        "Updated {} ({} :: {})\n",
+        "UPDATED PWF TASK [{}] {} :: {}\n",
         item.id, item.project, new_title
     ))
 }
@@ -151,7 +151,7 @@ fn amend_closed_item(
         changes.push("report appended".to_string());
     }
     ObsidianStore::write_item_file(path, &content)?;
-    Ok(format!("Updated {id} ({})\n", changes.join(", ")))
+    Ok(format!("UPDATED PWF TASK [{id}] {}\n", changes.join(", ")))
 }
 
 #[cfg(test)]
@@ -172,21 +172,14 @@ mod tests {
         .unwrap()
     }
 
-    fn stage_legacy_item() -> (std::path::PathBuf, Config) {
-        let stage = std::env::temp_dir().join(format!("pwf_update_{}", nanos()));
-        let notes = stage.join("notes");
+    fn stage_legacy_item() -> (tempfile::TempDir, Config) {
+        let stage = tempfile::tempdir().unwrap();
+        let notes = stage.path().join("notes");
         let project = notes.join("glep-shimeji");
         std::fs::create_dir_all(&project).unwrap();
         std::fs::write(project.join("glep-shimeji.md"), "- [ ] `legacy` :: do it\n").unwrap();
         let cfg = cfg(&notes);
         (stage, cfg)
-    }
-
-    fn nanos() -> u128 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
     }
 
     #[test]

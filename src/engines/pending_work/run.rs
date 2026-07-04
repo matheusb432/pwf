@@ -1,11 +1,13 @@
 // Top-level dispatcher for `pwf <verb>`. The `route` verb is delegated to the
 // `pw` word-router in `route`; everything else dispatches here.
 
+use anstyle::AnsiColor;
+
 use super::{
     actions::{
         NewItemSpec, add_pending_work_item,
         list::{ListScope, OrderSpec},
-        render_add_confirmation, run_cancel, run_check, run_list_action, run_remove, run_reopen,
+        render_confirmation, run_cancel, run_done, run_list_action, run_remove, run_reopen,
         run_update,
     },
     agent::{probe::RealProbe, verify::verify_text_with_probe},
@@ -30,18 +32,33 @@ use crate::{
 };
 
 /// Top-level entry for a directly-parsed `pwf <verb>` command (main.rs only).
-/// `Add`'s confirmation gets a presentation-only reformat here — never inside
-/// `run_typed`, which `run_args` also calls for the handoff/check in-process
-/// seams that parse `add`'s plain-text id out (see `add_render`'s doc comment).
+/// `Add`/`Remove`/`Update`'s confirmations get a presentation-only reformat
+/// here — never inside `run_typed`, which `run_args` also calls for the
+/// handoff/done in-process seams that parse `add`'s plain-text id out (see
+/// `confirm_render`'s doc comment).
 pub fn run(command: &PendingWorkCommand) -> Result<String, String> {
     let out = run_typed(command).map_err(String::from)?;
-    if matches!(command.action(), Action::Add) {
-        Ok(render_add_confirmation(
+    let on = use_color(command.args().color);
+    match command.action() {
+        Action::Add => Ok(render_confirmation(
             &out,
-            use_color(command.args().color),
-        ))
-    } else {
-        Ok(out)
+            "Added pwf task",
+            AnsiColor::Green,
+            on,
+        )),
+        Action::Remove => Ok(render_confirmation(
+            &out,
+            "Removed pwf task",
+            AnsiColor::Red,
+            on,
+        )),
+        Action::Update => Ok(render_confirmation(
+            &out,
+            "Updated pwf task",
+            AnsiColor::Blue,
+            on,
+        )),
+        _ => Ok(out),
     }
 }
 
@@ -74,6 +91,7 @@ pub(in crate::engines::pending_work) fn run_typed(
                 args.number,
                 args.effort,
                 order,
+                use_color(args.color),
             )?)
         }
 
@@ -101,9 +119,9 @@ pub(in crate::engines::pending_work) fn run_typed(
             } else {
                 None
             };
-            let claude_model = item
-                .as_ref()
-                .and_then(|it| super::session::resolve_claude_model_for_verify(args.agent, it));
+            let claude_model = item.as_ref().and_then(|it| {
+                super::session::resolve_model_for_verify(args.agent, it, args.model.as_deref())
+            });
             Ok(verify_text_with_probe(
                 item.as_ref(),
                 launcher,
@@ -112,7 +130,7 @@ pub(in crate::engines::pending_work) fn run_typed(
             ))
         }
 
-        Action::Check => Ok(run_check(&cfg, args)?),
+        Action::Done => Ok(run_done(&cfg, args)?),
 
         Action::Cancel => Ok(run_cancel(&cfg, args)?),
 
@@ -122,7 +140,7 @@ pub(in crate::engines::pending_work) fn run_typed(
 
         Action::Show => Ok(run_show(&cfg, args)?),
 
-        Action::Remove => Ok(run_remove(&cfg, args)?),
+        Action::Remove => Ok(run_remove(&cfg, args, &crate::confirm::RealConfirm)?),
 
         Action::Update => Ok(run_update(&cfg, args)?),
 
@@ -145,6 +163,7 @@ pub(in crate::engines::pending_work) fn run_typed(
                         auto: args.auto.into(),
                     },
                     agent: args.agent,
+                    model_override: args.model.clone(),
                 },
             )?)
         }
@@ -236,32 +255,25 @@ mod tests {
 
     use super::*;
 
-    fn command_for(action: Action) -> PendingWorkCommand {
-        let stage = std::env::temp_dir().join(format!("pwf_run_{}", nanos()));
-        std::fs::create_dir_all(&stage).unwrap();
-        let config = stage.join("config.json");
+    fn command_for(action: Action) -> (tempfile::TempDir, PendingWorkCommand) {
+        let stage = tempfile::tempdir().unwrap();
+        let config = stage.path().join("config.json");
         std::fs::write(
             &config,
             format!(
                 r#"{{ "notesDir": "{}", "projects": {{ "pwf": "/repo" }}, "prefixes": {{ "pwf": "PWF" }} }}"#,
-                stage.to_string_lossy().replace('\\', "\\\\")
+                stage.path().to_string_lossy().replace('\\', "\\\\")
             ),
         )
         .unwrap();
-        PendingWorkCommand::new(
+        let command = PendingWorkCommand::new(
             action,
             Args {
                 config_path: Some(config.to_string_lossy().into_owned()),
                 ..Args::default()
             },
-        )
-    }
-
-    fn nanos() -> u128 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
+        );
+        (stage, command)
     }
 
     #[test]
@@ -284,7 +296,7 @@ mod tests {
 
     #[test]
     fn resolve_missing_id_returns_typed_error_with_legacy_display() {
-        let command = command_for(Action::Resolve);
+        let (_stage, command) = command_for(Action::Resolve);
         let err = require_id(command.args(), "resolve").unwrap_err();
 
         assert_matches!(

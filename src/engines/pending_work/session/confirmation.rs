@@ -1,54 +1,35 @@
-//! Confirmation text for interactive `pwf session` dispatches.
+//! Confirmation text for interactive `pwf session` dispatches — builds the
+//! frontmatter-style metadata block from the dispatch's operator context and
+//! delegates rendering to the domain-agnostic [`crate::confirm_prompt`].
 
 use super::DispatchOpts;
+use crate::confirm_prompt::{Field, confirmation_prompt};
 use crate::engines::pending_work::model::Item;
 
 const CURRENT_TERMINAL_TARGET: &str = "current terminal";
 
-pub(super) fn question(item: &Item, session: &str, opts: DispatchOpts, agent: &str) -> String {
-    let details = ConfirmationDetails::new(item, session, opts, agent);
-    format!(
-        "# Confirm session dispatch\n\n{}\n\nProceed with session dispatch?",
-        details.table()
+pub(super) fn question(item: &Item, session: &str, opts: &DispatchOpts, agent: &str) -> String {
+    let mode = DispatchMode::new(opts.inline, session);
+    let fields = [
+        Field::new("task_id", item.id.clone()),
+        Field::new("title", item.session.clone()),
+        Field::new("mode", mode.label()),
+        Field::new("agent", agent),
+        Field::new(
+            "autonomy",
+            Enabled::from(opts.launch.auto.into_inner()).label(),
+        ),
+        Field::new(
+            "worktree",
+            Enabled::from(opts.launch.worktree.into_inner()).label(),
+        ),
+        Field::new("target", mode.target()),
+    ];
+    confirmation_prompt(
+        "Confirm session dispatch",
+        &fields,
+        "Proceed with session dispatch?",
     )
-}
-
-struct ConfirmationDetails<'a> {
-    id: &'a str,
-    title: &'a str,
-    mode: DispatchMode<'a>,
-    agent: &'a str,
-    autonomy: Enabled,
-    worktree: Enabled,
-}
-
-impl<'a> ConfirmationDetails<'a> {
-    fn new(item: &'a Item, session: &'a str, opts: DispatchOpts, agent: &'a str) -> Self {
-        ConfirmationDetails {
-            id: &item.id,
-            title: &item.session,
-            mode: DispatchMode::new(opts.inline, session),
-            agent,
-            autonomy: Enabled::from(opts.launch.auto.into_inner()),
-            worktree: Enabled::from(opts.launch.worktree.into_inner()),
-        }
-    }
-
-    fn table(&self) -> String {
-        let target = self.mode.target();
-        format!(
-            "| id | title | mode | agent | autonomy | worktree | target |\n\
-             |---|---|---|---|---|---|---|\n\
-             | {} | {} | {} | {} | {} | {} | {} |",
-            cell(self.id),
-            cell(self.title),
-            self.mode.label(),
-            cell(self.agent),
-            self.autonomy.label(),
-            self.worktree.label(),
-            cell(&target),
-        )
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -100,8 +81,4 @@ impl From<bool> for Enabled {
     fn from(value: bool) -> Self {
         if value { Enabled::Yes } else { Enabled::No }
     }
-}
-
-fn cell(value: &str) -> String {
-    value.replace(['\r', '\n'], " ").replace('|', "\\|")
 }

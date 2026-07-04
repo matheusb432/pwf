@@ -141,7 +141,7 @@ pub(super) enum PendingWorkError {
         /// The pending-work action name.
         action: &'static str,
     },
-    /// A check report was supplied but contained no content.
+    /// A close report was supplied but contained no content.
     #[error("--report cannot be empty.")]
     EmptyReport,
     /// An `--append`/`-a` value was supplied but contained no content.

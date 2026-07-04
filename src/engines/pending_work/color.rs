@@ -3,9 +3,13 @@
 //! outcomes, `add` confirmations). ANSI is gated by an explicit `on` bool
 //! resolved once at the edge (`use_color`) so callers stay unit-testable.
 
-use anstyle::Style;
+use anstyle::{Ansi256Color, Style};
 
 use crate::cli::ColorChoice;
+
+/// A common "orange" in the 256-color palette (no orange in the basic 16).
+/// Used for task ids in list output (`render_list_item`).
+pub(in crate::engines::pending_work) const ID_ORANGE: Ansi256Color = Ansi256Color(208);
 
 /// Resolve the effective color setting once, at the edge. `NO_COLOR` wins;
 /// `CLICOLOR_FORCE` forces on; `Auto` falls back to stdout TTY detection.

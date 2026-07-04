@@ -35,11 +35,12 @@ fn command_line(argv: &[String]) -> String {
 /// command line is sourced from `launcher.argv`, so it always reflects what `pwf
 /// session` would actually run for the selected agent.
 ///
-/// `claude_model` is the outcome of `session::resolve_claude_model` for `item`: `None`
-/// when not applicable (no effort tag, or a non-Claude agent), `Some(Ok(model))` folds
-/// the resolved model into the rendered command, and `Some(Err(message))` folds
-/// `message` into `issues` and forces `launchable: no` — unlike `pwf session`, `verify`
-/// never hard-errors on a broken `model-tiers.toml`, it just reports the failure.
+/// `claude_model` is the outcome of `session::resolve_model_for_verify` for `item`:
+/// `None` when not applicable (no effort tag and no `--model` override, or a
+/// non-Claude agent), `Some(Ok(model))` folds the resolved/override model into the
+/// rendered command, and `Some(Err(message))` folds `message` into `issues` and
+/// forces `launchable: no` — unlike `pwf session`, `verify` never hard-errors on a
+/// broken `model-tiers.toml`, it just reports the failure.
 pub fn verify_text_with_probe(
     item: Option<&Item>,
     launcher: &dyn AgentLauncher,

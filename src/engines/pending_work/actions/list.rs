@@ -285,6 +285,7 @@ pub(in crate::engines::pending_work) fn run_list_action(
     number: Option<usize>,
     effort: Option<u8>,
     order: OrderSpec,
+    color_on: bool,
 ) -> Result<String, PendingWorkError> {
     let mut items: Vec<_> = get_pending_work(cfg, only_project)?
         .into_iter()
@@ -305,6 +306,7 @@ pub(in crate::engines::pending_work) fn run_list_action(
         only_project,
         long,
         scope.groups_output(),
+        color_on,
     ))
 }
 
@@ -343,17 +345,10 @@ mod tests {
         items.iter().map(|i| i.id.as_str()).collect()
     }
 
-    fn unique_missing_notes_dir(name: &str) -> std::path::PathBuf {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        std::env::temp_dir().join(format!("pwf_list_{name}_{nanos}"))
-    }
-
     #[test]
     fn missing_notes_dir_returns_typed_error_with_legacy_display() {
-        let missing = unique_missing_notes_dir("missing_notes");
+        let guard = tempfile::tempdir().unwrap();
+        let missing = guard.path().join("missing_notes");
         assert!(!missing.exists());
         let missing = missing.to_string_lossy().into_owned();
         let missing_json = serde_json::to_string(&missing).unwrap();
@@ -373,6 +368,7 @@ mod tests {
             None,
             None,
             OrderSpec::default(),
+            false,
         )
         .unwrap_err();
 

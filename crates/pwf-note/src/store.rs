@@ -144,33 +144,27 @@ pub fn delete(project_dir: &Path, id: &NoteId) -> Result<(), NoteError> {
 mod tests {
     use super::*;
 
-    fn tempdir(tag: &str) -> std::path::PathBuf {
-        let d = std::env::temp_dir().join(format!("pwf_note_store_{tag}_{}", nanos()));
-        std::fs::create_dir_all(&d).unwrap();
-        d
-    }
-    fn nanos() -> u128 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
+    fn tempdir() -> tempfile::TempDir {
+        tempfile::tempdir().unwrap()
     }
 
     #[test]
     fn allocate_ignores_task_files() {
-        let d = tempdir("alloc");
+        let dir = tempdir();
+        let d = dir.path();
         std::fs::write(d.join("PWF-0007.md"), "task").unwrap();
-        assert_eq!(allocate_id(&d, "PWF").canonical, "PWF-NOTE-0001");
+        assert_eq!(allocate_id(d, "PWF").canonical, "PWF-NOTE-0001");
     }
 
     #[test]
     fn create_then_list_round_trips_message_newest_first() {
-        let d = tempdir("rt");
+        let dir = tempdir();
+        let d = dir.path();
         let one = NoteId::resolve("1", "PWF").unwrap();
         let two = NoteId::resolve("2", "PWF").unwrap();
-        create(&d, &one, "pwf", "first note", "2026-06-28").unwrap();
-        create(&d, &two, "pwf", "second note", "2026-06-28").unwrap();
-        let notes = list(&d, "PWF");
+        create(d, &one, "pwf", "first note", "2026-06-28").unwrap();
+        create(d, &two, "pwf", "second note", "2026-06-28").unwrap();
+        let notes = list(d, "PWF");
         assert_eq!(notes.len(), 2);
         assert_eq!(notes[0].id, "PWF-NOTE-0002");
         assert_eq!(notes[0].message, "second note");
@@ -186,21 +180,23 @@ mod tests {
 
     #[test]
     fn delete_removes_file_and_errors_when_absent() {
-        let d = tempdir("del");
+        let dir = tempdir();
+        let d = dir.path();
         let id = NoteId::resolve("1", "PWF").unwrap();
-        create(&d, &id, "pwf", "x", "2026-06-28").unwrap();
-        delete(&d, &id).unwrap();
+        create(d, &id, "pwf", "x", "2026-06-28").unwrap();
+        delete(d, &id).unwrap();
         assert!(!d.join("PWF-NOTE-0001.md").exists());
-        assert!(matches!(delete(&d, &id), Err(NoteError::NoSuchNote { .. })));
+        assert!(matches!(delete(d, &id), Err(NoteError::NoSuchNote { .. })));
     }
 
     #[test]
     fn update_replaces_message_and_preserves_frontmatter() {
-        let d = tempdir("update");
+        let dir = tempdir();
+        let d = dir.path();
         let id = NoteId::resolve("1", "PWF").unwrap();
-        create(&d, &id, "pwf", "old message", "2026-06-28").unwrap();
+        create(d, &id, "pwf", "old message", "2026-06-28").unwrap();
 
-        update(&d, &id, "new message").unwrap();
+        update(d, &id, "new message").unwrap();
 
         let raw = std::fs::read_to_string(d.join("PWF-NOTE-0001.md")).unwrap();
         assert!(raw.contains("type: note"), "frontmatter lost: {raw}");
@@ -215,11 +211,11 @@ mod tests {
 
     #[test]
     fn update_errors_when_note_is_absent() {
-        let d = tempdir("update_missing");
+        let dir = tempdir();
         let id = NoteId::resolve("1", "PWF").unwrap();
 
         assert!(matches!(
-            update(&d, &id, "new message"),
+            update(dir.path(), &id, "new message"),
             Err(NoteError::NoSuchNote { .. })
         ));
     }

@@ -119,7 +119,7 @@ mod tests {
                 "no closeout instruction rides in the launch prompt: {out}"
             );
             assert!(
-                !out.contains("pwf check"),
+                !out.contains("pwf done"),
                 "no closeout command rides in the launch prompt: {out}"
             );
         }

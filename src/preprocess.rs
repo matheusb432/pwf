@@ -1,24 +1,30 @@
-//! argv preprocessing for top-level pending-work defaults and the two implicit
-//! subcommand defaults clap can't derive: bare `pw` -> `pw list`, and `pw
-//! <words…>` (a non-verb lead) -> `pw route <words…>` (the word-router). Canonical
-//! `pw` verbs and the `handoff`/`migrate` engines pass through untouched for
-//! clap to parse.
+//! argv preprocessing for the two implicit pending-work defaults clap can't
+//! derive: bare `pwf <words…>` (a non-verb lead) -> `pwf route <words…>` (the
+//! hidden word-router), and a flags-only positional gap on an explicit verb ->
+//! that verb's own flag/value reordering. Pending-work verbs (`add`, `list`, …)
+//! are flattened top-level clap subcommands (`command.rs`) — there is no
+//! separate `pw` engine token to inject or detect here. `handoff`/`migrate`/
+//! `note` and help/version tokens pass through untouched for clap (or
+//! `help.rs`) to handle; `pwf pw …`/`pwf pending-work …` themselves are a
+//! retired compatibility surface `main::retired_pending_work_prefix` rejects
+//! before this module ever runs.
 
 /// pw verbs reachable as clap subcommands (incl. the hidden `route`). A
 /// leading positional matching one passes through; anything else is treated as
 /// router words. The route sub-verb abbreviations still fall through to `route`.
 fn pw_subcommands() -> &'static [&'static str] {
     &[
-        "add", "list", "ls", "check", "cancel", "reopen", "update", "resolve", "show", "session",
+        "add", "list", "ls", "done", "cancel", "reopen", "update", "resolve", "show", "session",
         "clean", "verify", "remove", "route",
     ]
 }
 
-fn is_root_engine(token: &str) -> bool {
+/// Non-pending-work top-level tokens: the dedicated engines and help/version
+/// requests. These pass through untouched — clap or `help.rs` handles them.
+fn is_other_root_token(token: &str) -> bool {
     matches!(
         token,
-        "pw" | "pending-work"
-            | "handoff"
+        "handoff"
             | "migrate"
             | "note"
             | "--help"
@@ -58,11 +64,12 @@ fn is_value_flag(flag: &str) -> bool {
             | "--color"
             | "--agent"
             | "--effort"
+            | "--model"
     )
 }
 
 /// Short value-flags (single-dash, consume the following token). Mirrors
-/// `is_value_flag` so the implicit list/route forms don't misread the value as a word.
+/// `is_value_flag` so the implicit route form doesn't misread the value as a word.
 fn is_short_value_flag(tok: &str) -> bool {
     tok == "-n" || tok == "-a"
 }
@@ -74,29 +81,45 @@ fn is_order_flag(tok: &str) -> bool {
     tok == "--order" || tok == "-o"
 }
 
-/// Inject the implicit `list`/`route` subcommand for the `pw` engine when no
-/// canonical verb leads. Idempotent on input that already names a verb; a no-op
-/// for `handoff`/`migrate` (clap reports a missing subcommand itself).
+/// Pending-work verbs that take a task id (and so accept the compact split form).
+/// A strict subset of `pw_subcommands` — excludes `add`/`list`/`ls`/`clean`/`route`,
+/// which take a project/word positional, not an id.
+fn is_id_facing_verb(verb: &str) -> bool {
+    matches!(
+        verb,
+        "done" | "cancel" | "reopen" | "update" | "resolve" | "show" | "session" | "verify"
+            | "remove"
+    )
+}
+
+/// A bare 2–4 letter project code (the prefix half of the compact split id form).
+fn is_code_token(tok: &str) -> bool {
+    (2..=4).contains(&tok.len()) && tok.chars().all(|c| c.is_ascii_alphabetic())
+}
+
+/// An all-digits token (the number half of the compact split id form).
+fn is_number_token(tok: &str) -> bool {
+    !tok.is_empty() && tok.chars().all(|c| c.is_ascii_digit())
+}
+
+/// Inject the implicit `route` verb when no canonical pending-work verb leads,
+/// and reorder a canonical verb's positional words ahead of its flags/values
+/// (clap's own trailing-`Vec<String>` args expect the words contiguous). A
+/// no-op for `handoff`/`migrate`/`note`/help/version — clap or `help.rs`
+/// handles those directly — and for a leading flag, which clap rejects itself
+/// (there's no top-level flag without a subcommand first).
 pub fn normalize(argv: Vec<String>) -> Vec<String> {
-    if argv.is_empty() {
+    if argv.is_empty() || argv[0].starts_with('-') {
         return argv;
     }
-    let engine_lower = argv[0].to_ascii_lowercase();
-    if !is_root_engine(&engine_lower) && !argv[0].starts_with('-') {
-        let mut with_default = Vec::with_capacity(argv.len() + 1);
-        with_default.push("pw".to_string());
-        with_default.extend(argv);
-        return normalize(with_default);
-    }
-    let is_pw = engine_lower == "pw" || engine_lower == "pending-work";
-    if !is_pw {
+    if is_other_root_token(&argv[0].to_ascii_lowercase()) {
         return argv;
     }
 
     // Split flags (and their values) from true positional words.
     let mut opts: Vec<String> = Vec::new();
     let mut positionals: Vec<String> = Vec::new();
-    let mut i = 1;
+    let mut i = 0;
     while i < argv.len() {
         let tok = &argv[i];
         if is_order_flag(tok) {
@@ -143,16 +166,28 @@ pub fn normalize(argv: Vec<String>) -> Vec<String> {
         .map(|w| pw_subcommands().contains(&w.as_str()))
         .unwrap_or(false);
 
-    let mut out = vec![argv[0].clone()];
+    let mut out = Vec::with_capacity(argv.len());
     if first_is_verb {
         // clap needs the verb before its options; emit it first.
-        let mut rest = positionals.into_iter();
-        out.push(rest.next().unwrap());
+        let mut rest = positionals;
+        let verb = rest.remove(0);
+        // Strict compact split id form: `<verb> <code> <digits> [flags…]` ->
+        // `<verb> <code>-<digits> [flags…]`, for id-facing verbs only. Trailing
+        // bare short flags (e.g. `-i`) are tolerated; anything else blocks the join.
+        if is_id_facing_verb(&verb)
+            && rest.len() >= 2
+            && is_code_token(&rest[0])
+            && is_number_token(&rest[1])
+            && rest[2..].iter().all(|t| t.starts_with('-'))
+        {
+            let joined = format!("{}-{}", rest[0], rest[1]);
+            let mut new_rest = vec![joined];
+            new_rest.extend_from_slice(&rest[2..]);
+            rest = new_rest;
+        }
+        out.push(verb);
         out.extend(opts);
         out.extend(rest);
-    } else if positionals.is_empty() {
-        out.push("list".to_string());
-        out.extend(opts);
     } else {
         out.push("route".to_string());
         out.extend(opts);
@@ -170,19 +205,22 @@ mod tests {
     }
 
     #[test]
-    fn bare_pw_defaults_to_list() {
-        assert_eq!(n(&["pw"]), vec!["pw", "list"]);
-    }
-
-    #[test]
     fn session_agent_long_flag_keeps_its_value() {
         // `--agent` consumes the following token; a trailing flag must not strand the
         // value as a positional (the bug a no-trailing-flag case hides by coincidence).
         assert_eq!(
             n(&["session", "--id", "PWF-0001", "--agent", "codex", "--yes"]),
-            vec![
-                "pw", "session", "--id", "PWF-0001", "--agent", "codex", "--yes"
-            ]
+            vec!["session", "--id", "PWF-0001", "--agent", "codex", "--yes"]
+        );
+    }
+
+    #[test]
+    fn session_model_long_flag_keeps_its_value() {
+        // Same pitfall as `--agent`: an unregistered value-flag lets its value get
+        // stranded as a bare positional and reordered after a trailing flag.
+        assert_eq!(
+            n(&["session", "--id", "PWF-0001", "--model", "fable", "--yes"]),
+            vec!["session", "--id", "PWF-0001", "--model", "fable", "--yes"]
         );
     }
 
@@ -193,7 +231,7 @@ mod tests {
         // the flag/positional split.
         assert_eq!(
             n(&["session", "PWF-0001", "-a", "more context"]),
-            vec!["pw", "session", "-a", "more context", "PWF-0001"]
+            vec!["session", "-a", "more context", "PWF-0001"]
         );
     }
 
@@ -201,18 +239,13 @@ mod tests {
     fn bare_pw_verb_defaults_to_pending_work() {
         assert_eq!(
             n(&["add", "glep-shimeji", "x"]),
-            vec!["pw", "add", "glep-shimeji", "x"]
+            vec!["add", "glep-shimeji", "x"]
         );
     }
 
     #[test]
     fn bare_project_defaults_to_route() {
-        assert_eq!(n(&["glep-shimeji"]), vec!["pw", "route", "glep-shimeji"]);
-    }
-
-    #[test]
-    fn flags_only_without_word_lists() {
-        assert_eq!(n(&["pw", "--long"]), vec!["pw", "list", "--long"]);
+        assert_eq!(n(&["glep-shimeji"]), vec!["route", "glep-shimeji"]);
     }
 
     #[test]
@@ -223,51 +256,35 @@ mod tests {
     #[test]
     fn leading_non_verb_word_routes() {
         assert_eq!(
-            n(&["pw", "glep-shimeji", "do", "x"]),
-            vec!["pw", "route", "glep-shimeji", "do", "x"]
+            n(&["glep-shimeji", "do", "x"]),
+            vec!["route", "glep-shimeji", "do", "x"]
         );
     }
 
     #[test]
     fn canonical_subcommand_passes_through() {
-        assert_eq!(
-            n(&["pw", "add", "--project", "x"]),
-            vec!["pw", "add", "--project", "x"]
-        );
+        assert_eq!(n(&["add", "--project", "x"]), vec!["add", "--project", "x"]);
     }
 
     #[test]
     fn canonical_remove_subcommand_passes_through() {
         assert_eq!(
-            n(&["pw", "remove", "--id", "PWF-0001"]),
-            vec!["pw", "remove", "--id", "PWF-0001"]
-        );
-    }
-
-    #[test]
-    fn value_flag_value_is_not_mistaken_for_a_route_word() {
-        // `--config-path /foo` precedes the verb; its value must not become the
-        // first positional (which would wrongly trigger the router).
-        assert_eq!(
-            n(&["pw", "--config-path", "/foo", "list"]),
-            vec!["pw", "list", "--config-path", "/foo"]
+            n(&["remove", "--id", "PWF-0001"]),
+            vec!["remove", "--id", "PWF-0001"]
         );
     }
 
     #[test]
     fn route_keeps_flags_and_words() {
         assert_eq!(
-            n(&["pw", "glep", "do", "x", "--human"]),
-            vec!["pw", "route", "--human", "glep", "do", "x"]
+            n(&["glep", "do", "x", "--human"]),
+            vec!["route", "--human", "glep", "do", "x"]
         );
     }
 
     #[test]
     fn route_shorthand_forwards_all_flag() {
-        assert_eq!(
-            n(&["pw", "glep", "--all"]),
-            vec!["pw", "route", "--all", "glep"]
-        );
+        assert_eq!(n(&["glep", "--all"]), vec!["route", "--all", "glep"]);
     }
 
     #[test]
@@ -275,8 +292,8 @@ mod tests {
         // `--section future` precedes the positional words on `add`; `future` is the
         // flag value, not a route/positional word (PWF-0034).
         assert_eq!(
-            n(&["pw", "add", "glep", "--section", "future", "do", "x"]),
-            vec!["pw", "add", "--section", "future", "glep", "do", "x"]
+            n(&["add", "glep", "--section", "future", "do", "x"]),
+            vec!["add", "--section", "future", "glep", "do", "x"]
         );
     }
 
@@ -286,8 +303,8 @@ mod tests {
     #[test]
     fn effort_value_stays_with_its_flag_on_add() {
         assert_eq!(
-            n(&["pw", "add", "glep", "--effort", "3", "do", "x"]),
-            vec!["pw", "add", "--effort", "3", "glep", "do", "x"]
+            n(&["add", "glep", "--effort", "3", "do", "x"]),
+            vec!["add", "--effort", "3", "glep", "do", "x"]
         );
     }
 
@@ -298,7 +315,7 @@ mod tests {
     fn order_values_stay_with_its_flag_on_list() {
         assert_eq!(
             n(&["list", "--order", "created", "desc", "--long"]),
-            vec!["pw", "list", "--order", "created", "desc", "--long"]
+            vec!["list", "--order", "created", "desc", "--long"]
         );
     }
 
@@ -306,7 +323,7 @@ mod tests {
     fn order_single_value_stays_with_its_flag_on_list() {
         assert_eq!(
             n(&["list", "--order", "id", "--long"]),
-            vec!["pw", "list", "--order", "id", "--long"]
+            vec!["list", "--order", "id", "--long"]
         );
     }
 
@@ -314,7 +331,7 @@ mod tests {
     fn bare_order_flag_consumes_no_values() {
         assert_eq!(
             n(&["list", "--order", "--long"]),
-            vec!["pw", "list", "--order", "--long"]
+            vec!["list", "--order", "--long"]
         );
     }
 
@@ -322,7 +339,7 @@ mod tests {
     fn short_order_flag_values_stay_attached() {
         assert_eq!(
             n(&["list", "-o", "id", "asc", "--long"]),
-            vec!["pw", "list", "-o", "id", "asc", "--long"]
+            vec!["list", "-o", "id", "asc", "--long"]
         );
     }
 
@@ -331,22 +348,14 @@ mod tests {
     // is a bare positional that stays attached behind the verb.
     #[test]
     fn canonical_show_subcommand_passes_through() {
-        assert_eq!(
-            n(&["pw", "show", "pwf-0001"]),
-            vec!["pw", "show", "pwf-0001"]
-        );
+        assert_eq!(n(&["show", "pwf-0001"]), vec!["show", "pwf-0001"]);
     }
 
     #[test]
     fn canonical_reopen_subcommand_passes_through() {
         assert_eq!(
-            n(&["pw", "reopen", "--id", "PWF-0001"]),
-            vec!["pw", "reopen", "--id", "PWF-0001"]
-        );
-        // Also via the bare top-level form (no explicit `pw`).
-        assert_eq!(
             n(&["reopen", "--id", "PWF-0001"]),
-            vec!["pw", "reopen", "--id", "PWF-0001"]
+            vec!["reopen", "--id", "PWF-0001"]
         );
     }
 
@@ -366,29 +375,13 @@ mod tests {
         );
     }
 
-    // ! PWF-0020: the short value-flag `-n` and its value must land in opts, not the
-    // positional stream — else the implicit list/route forms misroute.
-    #[test]
-    fn bare_pw_with_number_defaults_to_list() {
-        assert_eq!(n(&["pw", "-n", "5"]), vec!["pw", "list", "-n", "5"]);
-    }
-
-    #[test]
-    fn number_value_is_not_mistaken_for_a_route_word() {
-        assert_eq!(
-            n(&["pw", "-n", "5", "glep-shimeji"]),
-            vec!["pw", "route", "-n", "5", "glep-shimeji"]
-        );
-    }
-
     // ! PWF-0017: `--commits` is a value-flag; its range value must stay attached and
     // not be reordered into the positional stream behind the verb.
     #[test]
-    fn commits_value_stays_with_its_flag_on_check() {
+    fn commits_value_stays_with_its_flag_on_done() {
         assert_eq!(
             n(&[
-                "pw",
-                "check",
+                "done",
                 "--id",
                 "GLP-0001",
                 "--commits",
@@ -397,8 +390,7 @@ mod tests {
                 "c..d",
             ]),
             vec![
-                "pw",
-                "check",
+                "done",
                 "--id",
                 "GLP-0001",
                 "--commits",
@@ -416,7 +408,6 @@ mod tests {
     fn append_report_value_stays_with_its_flag_on_update() {
         assert_eq!(
             n(&[
-                "pw",
                 "update",
                 "--id",
                 "PWF-0003",
@@ -424,7 +415,6 @@ mod tests {
                 "## Outcome\n\nshipped it",
             ]),
             vec![
-                "pw",
                 "update",
                 "--id",
                 "PWF-0003",
@@ -440,7 +430,6 @@ mod tests {
     fn append_long_flag_value_stays_with_its_flag_on_update() {
         assert_eq!(
             n(&[
-                "pw",
                 "update",
                 "--id",
                 "PWF-0090",
@@ -448,7 +437,6 @@ mod tests {
                 "another goal /c new context",
             ]),
             vec![
-                "pw",
                 "update",
                 "--id",
                 "PWF-0090",
@@ -462,15 +450,42 @@ mod tests {
     fn append_short_flag_value_stays_with_its_flag_on_update() {
         assert_eq!(
             n(&["update", "PWF-0090", "-a", "more work"]),
-            vec!["pw", "update", "-a", "more work", "PWF-0090"]
+            vec!["update", "-a", "more work", "PWF-0090"]
         );
     }
 
     #[test]
-    fn long_number_flag_routes_too() {
+    fn split_id_form_collapses_for_id_facing_verb() {
+        assert_eq!(n(&["done", "cfg", "57"]), vec!["done", "cfg-57"]);
+        assert_eq!(n(&["resolve", "wne", "48"]), vec!["resolve", "wne-48"]);
+    }
+
+    #[test]
+    fn split_id_form_tolerates_trailing_short_flags() {
+        // Bare short flags (`-i`) land in the positional stream; the join must
+        // still fire and keep the flag.
         assert_eq!(
-            n(&["pw", "--number", "5"]),
-            vec!["pw", "list", "--number", "5"]
+            n(&["session", "wne", "48", "-i"]),
+            vec!["session", "wne-48", "-i"]
         );
+    }
+
+    #[test]
+    fn split_id_form_does_not_collapse_when_second_token_is_not_digits() {
+        assert_eq!(n(&["done", "cfg", "five"]), vec!["done", "cfg", "five"]);
+    }
+
+    #[test]
+    fn split_id_form_does_not_collapse_three_words() {
+        assert_eq!(
+            n(&["done", "cfg", "57", "99"]),
+            vec!["done", "cfg", "57", "99"]
+        );
+    }
+
+    #[test]
+    fn split_id_form_does_not_collapse_for_non_id_verb() {
+        // `add cfg 57` = add to project cfg with prompt "57"; must not become an id.
+        assert_eq!(n(&["add", "cfg", "57"]), vec!["add", "cfg", "57"]);
     }
 }

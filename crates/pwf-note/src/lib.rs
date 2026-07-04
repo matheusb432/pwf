@@ -139,25 +139,19 @@ fn update_note(
 mod run_tests {
     use super::*;
 
-    fn sandbox() -> (std::path::PathBuf, String) {
-        let root = std::env::temp_dir().join(format!(
-            "pwf_note_run_{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&root).unwrap();
-        let cfg = root.join("pending-work.json");
+    fn sandbox() -> (tempfile::TempDir, String) {
+        let root = tempfile::tempdir().unwrap();
+        let cfg = root.path().join("pending-work.json");
         std::fs::write(
             &cfg,
             format!(
                 r#"{{ "notesDir": "{}", "projects": {{ "pwf": "/repo" }}, "prefixes": {{ "pwf": "PWF" }} }}"#,
-                root.join("notes").to_string_lossy().replace('\\', "/")
+                root.path().join("notes").to_string_lossy().replace('\\', "/")
             ),
         )
         .unwrap();
-        (root, cfg.to_string_lossy().into_owned())
+        let cfg = cfg.to_string_lossy().into_owned();
+        (root, cfg)
     }
 
     fn cmd(project: &str, verb: NoteVerb, config_path: &str) -> NoteCommand {
@@ -206,7 +200,7 @@ mod run_tests {
     #[test]
     fn add_rejects_empty_message() {
         let (root, cfg) = sandbox();
-        let notes_dir = root.join("notes");
+        let notes_dir = root.path().join("notes");
         let note_path = notes_dir.join("pwf").join("PWF-NOTE-0001.md");
         let index_path = notes_dir.join("pwf").join("index.md");
 
@@ -248,7 +242,11 @@ mod run_tests {
             &cfg,
         ))
         .unwrap();
-        let note_path = root.join("notes").join("pwf").join("PWF-NOTE-0001.md");
+        let note_path = root
+            .path()
+            .join("notes")
+            .join("pwf")
+            .join("PWF-NOTE-0001.md");
         let content = std::fs::read_to_string(&note_path)
             .unwrap_or_else(|e| panic!("could not read {}: {e}", note_path.display()));
         assert!(
@@ -272,7 +270,7 @@ mod run_tests {
             &cfg,
         ))
         .unwrap();
-        let index_path = root.join("notes").join("pwf").join("pwf.md");
+        let index_path = root.path().join("notes").join("pwf").join("pwf.md");
         let before_index = std::fs::read_to_string(&index_path).unwrap();
 
         let out = run(&cmd(
@@ -309,7 +307,11 @@ mod run_tests {
             &cfg,
         ))
         .unwrap();
-        let note_path = root.join("notes").join("pwf").join("PWF-NOTE-0001.md");
+        let note_path = root
+            .path()
+            .join("notes")
+            .join("pwf")
+            .join("PWF-NOTE-0001.md");
         let before = std::fs::read_to_string(&note_path).unwrap();
 
         let err = run(&cmd(

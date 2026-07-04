@@ -9,3 +9,6 @@ description = "pwf-note — one-liner project notes engine over pwf-core"
 pwf-core = { path = "../pwf-core" }
 regex = "1"
 thiserror = "2.0.18"
+
+[dev-dependencies]
+tempfile = "3"

@@ -1013,8 +1013,8 @@ fn list_long_shows_prereq_status() {
 // ── Task 14 ──────────────────────────────────────────────────────────────────
 
 #[test]
-fn check_keeps_done_link_in_index_in_place_without_bak() {
-    // PWF-0026: check now KEEPS the item as `- [x] [[ID]] ✅ date` in place
+fn done_keeps_done_link_in_index_in_place_without_bak() {
+    // PWF-0026: done now KEEPS the item as `- [x] [[ID]] ✅ date` in place
     // (a rotating done-queue), instead of deleting the index link.
     let stage = stage_dir();
     let notes = stage.join("notes");
@@ -1034,7 +1034,7 @@ fn check_keeps_done_link_in_index_in_place_without_bak() {
     )
     .unwrap();
     let args = parse_args(&[
-        "check",
+        "done",
         "--id",
         "GLP-0001",
         "--config-path",
@@ -1045,7 +1045,7 @@ fn check_keeps_done_link_in_index_in_place_without_bak() {
         "2026-01-01",
     ]);
     let out = pwk::run_args(&args).unwrap();
-    assert!(out.starts_with("Checked GLP-0001"), "got: {out}");
+    assert!(out.starts_with("Done GLP-0001"), "got: {out}");
     // item file should now have status: done + completed
     let item = fs::read_to_string(proj.join("GLP-0001.md")).unwrap();
     assert!(item.contains("status: done"));
@@ -1062,7 +1062,7 @@ fn check_keeps_done_link_in_index_in_place_without_bak() {
 }
 
 #[test]
-fn check_evicts_and_archives_oldest_beyond_general_cap() {
+fn done_evicts_and_archives_oldest_beyond_general_cap() {
     // General cap is 6: with 6 done + a 7th checked, the oldest is unlinked and
     // its backing note moved to _archive/.
     let stage = stage_dir();
@@ -1079,7 +1079,7 @@ fn check_evicts_and_archives_oldest_beyond_general_cap() {
         .unwrap();
         index.push_str(&format!("- [x] [[{id}]] ✅ 2026-01-{n:02}\n"));
     }
-    // The open 7th item we will check.
+    // The open 7th item we will close.
     fs::write(
         proj.join("GLP-0007.md"),
         "---\nstatus: active\ntitle: seven\nproject: glep-shimeji\ncreated: 2026-06-13\n---\n\nbody\n",
@@ -1097,7 +1097,7 @@ fn check_evicts_and_archives_oldest_beyond_general_cap() {
     )
     .unwrap();
     let args = parse_args(&[
-        "check",
+        "done",
         "--id",
         "GLP-0007",
         "--config-path",
@@ -1168,7 +1168,7 @@ fn update_rewrites_body_via_note_body_and_preserves_frontmatter() {
     ]);
     let out = pwk::run_args(&args).unwrap();
     assert!(
-        out.contains("Updated GLP-0001") && out.contains("glep-shimeji :: tray gui"),
+        out.contains("UPDATED PWF TASK [GLP-0001]") && out.contains("glep-shimeji :: tray gui"),
         "expected update confirmation for GLP-0001: {out}"
     );
 
@@ -1288,7 +1288,7 @@ fn update_unknown_id_errors() {
 }
 
 #[test]
-fn check_with_report_appends_report_section() {
+fn done_with_report_appends_report_section() {
     let stage = stage_dir();
     let notes = stage.join("notes");
     let proj = notes.join("glep-shimeji");
@@ -1313,7 +1313,7 @@ fn check_with_report_appends_report_section() {
     )
     .unwrap();
     let args = parse_args(&[
-        "check",
+        "done",
         "--id",
         "GLP-0001",
         "--report",
@@ -2091,8 +2091,7 @@ fn stage_dir() -> std::path::PathBuf {
 }
 
 fn parse_args(argv: &[&str]) -> pwf::cli::Args {
-    let mut v = vec!["pw".to_string()];
-    v.extend(argv.iter().map(|s| s.to_string()));
+    let v = argv.iter().map(|s| s.to_string()).collect();
     pwf::command::parse_argv(v).unwrap().1
 }
 

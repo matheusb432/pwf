@@ -15,6 +15,9 @@
 # superpowers audit artifacts
 .superpowers/
 
+# Per-machine agent config (skill scoping settings.local.json, CLAUDE.local.md) — never committed
+*.local.*
+
 # Ephemeral AI implementation plans — relevant only to the task that produced them, not
 # git history. Specs/ADRs + commit history are the durable record. (Rationale:
 # config-handler docs/planning/plans/README.md.)

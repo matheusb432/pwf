@@ -276,13 +276,8 @@ mod tests {
 
     #[test]
     fn load_config_returns_typed_config_error_with_legacy_display() {
-        let missing_config = std::env::temp_dir().join(format!(
-            "pw_query_missing_config_{}.json",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let guard = tempfile::tempdir().unwrap();
+        let missing_config = guard.path().join("missing_config.json");
         assert!(!missing_config.exists());
         let args = Args {
             config_path: Some(missing_config.to_string_lossy().into_owned()),
@@ -421,16 +416,9 @@ mod tests {
 
     #[test]
     fn find_pending_item_not_found_returns_typed_error_with_legacy_display() {
-        let dir = std::env::temp_dir().join(format!(
-            "pw_query_missing_{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = tempfile::tempdir().unwrap();
         let c = Config {
-            notes_dir: dir.to_string_lossy().into_owned(),
+            notes_dir: dir.path().to_string_lossy().into_owned(),
             projects: BTreeMap::new(),
             prefixes: BTreeMap::new(),
             work_prefix: "WRK".to_string(),
@@ -449,21 +437,13 @@ mod tests {
         );
         let as_string: String = err.into();
         assert_eq!(as_string, "Open pending-work item not found: PWF-9999");
-
-        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn find_pending_item_ambiguous_returns_typed_error_with_legacy_display() {
-        let dir = std::env::temp_dir().join(format!(
-            "pw_query_ambiguous_{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        let alpha = dir.join("alpha");
-        let beta = dir.join("beta");
+        let dir = tempfile::tempdir().unwrap();
+        let alpha = dir.path().join("alpha");
+        let beta = dir.path().join("beta");
         std::fs::create_dir_all(&alpha).unwrap();
         std::fs::create_dir_all(&beta).unwrap();
         for project_dir in [&alpha, &beta] {
@@ -479,7 +459,7 @@ mod tests {
         projects.insert("alpha".to_string(), "/repo/alpha".to_string());
         projects.insert("beta".to_string(), "/repo/beta".to_string());
         let c = Config {
-            notes_dir: dir.to_string_lossy().into_owned(),
+            notes_dir: dir.path().to_string_lossy().into_owned(),
             projects,
             prefixes: BTreeMap::new(),
             work_prefix: "WRK".to_string(),
@@ -493,7 +473,5 @@ mod tests {
             errors::PendingWorkError::AmbiguousId { ref id } if id == "pwf-0001"
         );
         assert_eq!(err.to_string(), "Pending-work id is ambiguous: pwf-0001");
-
-        std::fs::remove_dir_all(dir).unwrap();
     }
 }

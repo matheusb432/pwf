@@ -218,7 +218,7 @@ fn add_positional_quoted_prompt_creates_item() {
 }
 
 #[test]
-fn add_confirmation_leads_with_id_after_a_blank_line() {
+fn add_confirmation_leads_with_added_task_prefix_and_no_blank_line() {
     let (_d, cfg) = staged();
     let out = pwf()
         .args(["add", "glep-shimeji", "x y z", "--config-path"])
@@ -228,7 +228,7 @@ fn add_confirmation_leads_with_id_after_a_blank_line() {
     let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
     // staged() already holds GLP-0001, so the new item is GLP-0002.
     assert!(
-        stdout.starts_with("\n**GLP-0002** glep-shimeji ::"),
+        stdout.starts_with("Added pwf task: **GLP-0002 glep-shimeji ::"),
         "got: {stdout}"
     );
     assert!(stdout.contains("file:"), "got: {stdout}");
@@ -301,7 +301,7 @@ fn add_continue_handoff_builds_handoff_prompt() {
         .success();
     let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
     assert!(
-        stdout.starts_with("\n**GLP-0001**"),
+        stdout.starts_with("Added pwf task: **GLP-0001"),
         "id not moved to the front: {stdout}"
     );
     assert!(
@@ -383,7 +383,8 @@ fn help_and_version_exit_zero() {
         .arg("--help")
         .assert()
         .success()
-        .stdout(contains("pw"))
+        .stdout(contains("add"))
+        .stdout(contains("list"))
         .stdout(contains("handoff"));
     pwf()
         .arg("--version")
@@ -894,24 +895,17 @@ fn e2e_update_lowercases_explicit_title() {
     assert_eq!(title_of(&item), "upper thing", "explicit update: {item}");
 }
 
-// 5. Done-queue rotation via `check` (mirrors pending_work.rs:720-833).
+// 5. Done-queue rotation via `done` (mirrors pending_work.rs:720-833).
 
 #[test]
-fn e2e_check_rotates_done_queue_past_general_cap() {
-    // staged_many(7): seven open items. Check all seven; the General cap is 6, so
+fn e2e_done_rotates_done_queue_past_general_cap() {
+    // staged_many(7): seven open items. Close all seven; the General cap is 6, so
     // the oldest done entry (GLP-0001) is evicted past the cap.
     let (d, cfg) = staged_many(7);
     for n in 1..=7 {
         let id = format!("GLP-{n:04}");
         pwf()
-            .args([
-                "check",
-                "--id",
-                &id,
-                "--date",
-                "2026-01-01",
-                "--config-path",
-            ])
+            .args(["done", "--id", &id, "--date", "2026-01-01", "--config-path"])
             .arg(&cfg)
             .assert()
             .success();
@@ -1251,14 +1245,14 @@ fn e2e_add_default_section_lands_before_any_header() {
     assert!(item < header, "item not before first header: {index}");
 }
 
-// 8. PWF-0017: commit-range provenance on `check` + the explicit `--review` task.
+// 8. PWF-0017: commit-range provenance on `done` + the explicit `--review` task.
 
 #[test]
-fn e2e_check_normalizes_mixed_case_id() {
+fn e2e_done_normalizes_mixed_case_id() {
     let (d, cfg) = staged();
     pwf()
         .args([
-            "check",
+            "done",
             "--id",
             "glp-0001",
             "--date",
@@ -1278,11 +1272,11 @@ fn e2e_check_normalizes_mixed_case_id() {
 }
 
 #[test]
-fn e2e_check_commits_writes_provenance_frontmatter() {
+fn e2e_done_commits_writes_provenance_frontmatter() {
     let (d, cfg) = staged();
     pwf()
         .args([
-            "check",
+            "done",
             "--id",
             "GLP-0001",
             "--commits",
@@ -1302,11 +1296,11 @@ fn e2e_check_commits_writes_provenance_frontmatter() {
 }
 
 #[test]
-fn e2e_check_commits_repeated_and_comma_join_and_dedup() {
+fn e2e_done_commits_repeated_and_comma_join_and_dedup() {
     let (d, cfg) = staged();
     pwf()
         .args([
-            "check",
+            "done",
             "--id",
             "GLP-0001",
             "--commits",
@@ -1329,7 +1323,7 @@ fn e2e_check_commits_repeated_and_comma_join_and_dedup() {
     let (d2, cfg2) = staged();
     pwf()
         .args([
-            "check",
+            "done",
             "--id",
             "GLP-0001",
             "--commits",
@@ -1348,12 +1342,12 @@ fn e2e_check_commits_repeated_and_comma_join_and_dedup() {
 }
 
 #[test]
-fn e2e_check_without_commits_writes_no_commits_line() {
+fn e2e_done_without_commits_writes_no_commits_line() {
     // Byte-identical default path: no `--commits` ⇒ no `commits:` frontmatter.
     let (d, cfg) = staged();
     pwf()
         .args([
-            "check",
+            "done",
             "--id",
             "GLP-0001",
             "--date",
@@ -1365,16 +1359,16 @@ fn e2e_check_without_commits_writes_no_commits_line() {
         .success();
     assert!(
         !read_item(&d, "GLP-0001").contains("commits:"),
-        "default check path leaked a commits line"
+        "default done path leaked a commits line"
     );
 }
 
 #[test]
-fn e2e_check_review_spawns_human_task_scoped_to_range() {
+fn e2e_done_review_spawns_human_task_scoped_to_range() {
     let (d, cfg) = staged();
     pwf()
         .args([
-            "check",
+            "done",
             "--id",
             "GLP-0001",
             "--commits",
@@ -1407,12 +1401,12 @@ fn e2e_check_review_spawns_human_task_scoped_to_range() {
 }
 
 #[test]
-fn e2e_check_review_appends_review_task_as_text() {
-    // check is now text-only (PWF-0059).
+fn e2e_done_review_appends_review_task_as_text() {
+    // done is now text-only (PWF-0059).
     let (_d, cfg) = staged();
     let out = pwf()
         .args([
-            "check",
+            "done",
             "--id",
             "GLP-0001",
             "--commits",
@@ -1427,7 +1421,7 @@ fn e2e_check_review_appends_review_task_as_text() {
         .success();
     let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
     assert!(
-        stdout.starts_with("Checked GLP-0001"),
+        stdout.starts_with("Done GLP-0001"),
         "expected text output: {stdout}"
     );
     assert!(
@@ -1437,11 +1431,11 @@ fn e2e_check_review_appends_review_task_as_text() {
 }
 
 #[test]
-fn e2e_check_review_without_commits_uses_bare_diff_fallback() {
+fn e2e_done_review_without_commits_uses_bare_diff_fallback() {
     let (d, cfg) = staged();
     pwf()
         .args([
-            "check",
+            "done",
             "--id",
             "GLP-0001",
             "--review",
@@ -1578,7 +1572,7 @@ fn resolve_show_legacy_item_emits_body_only() {
 }
 
 /// Stage a single-project notes dir with a done item parked under `_archive/`
-/// (no index entry, mirroring `check`/`cancel`) and return (dir, cfg).
+/// (no index entry, mirroring `done`/`cancel`) and return (dir, cfg).
 fn staged_with_archived_item(
     project: &str,
     prefix: &str,
@@ -1606,7 +1600,7 @@ fn staged_with_archived_item(
 }
 
 /// Stage a single-project notes dir with a done item whose note still sits in the
-/// project dir while its index link is checked (`- [x]`), as `check` leaves it until
+/// project dir while its index link is checked (`- [x]`), as `done` leaves it until
 /// the done-queue cap evicts it to `_archive`. Returns (dir, cfg).
 fn staged_with_done_item(
     project: &str,
@@ -1642,7 +1636,7 @@ fn staged_with_done_item(
 
 #[test]
 fn e2e_reopen_flips_done_item_back_to_active_and_restores_index() {
-    // PWF-0054: reopen is the inverse of check — done → active, drop provenance,
+    // PWF-0054: reopen is the inverse of done — done → active, drop provenance,
     // flip the done-queue link back to an open `- [ ]`.
     let (dir, cfg) = staged_with_done_item(
         "pwf",
@@ -1771,6 +1765,41 @@ fn resolve_errors_when_id_absent_from_index_and_archive() {
         .failure();
 }
 
+#[test]
+fn id_input_forms_all_resolve_to_the_same_item() {
+    let (_d, cfg) = staged_with_item(
+        "pwf",
+        "PWF",
+        "PWF-0001",
+        "do the thing",
+        "---\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\nbody\n",
+    );
+
+    // Baseline: the canonical --id form.
+    let canonical = pwf()
+        .args(["resolve", "--id", "PWF-0001", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .success();
+    let baseline = String::from_utf8(canonical.get_output().stdout.clone()).unwrap();
+
+    // Each shorthand must produce byte-identical output.
+    for form in [
+        vec!["resolve", "pwf-0001"], // bare positional, lowercase canonical
+        vec!["resolve", "pwf1"],     // glued + unpadded
+        vec!["resolve", "pwf", "1"], // split two-token
+    ] {
+        let out = pwf()
+            .args(&form)
+            .args(["--config-path"])
+            .arg(&cfg)
+            .assert()
+            .success();
+        let got = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+        assert_eq!(got, baseline, "form {form:?} did not resolve like --id");
+    }
+}
+
 // 9b. show: shorthand alias for `resolve --show` (PWF-0065).
 
 #[test]
@@ -1843,17 +1872,19 @@ fn show_errors_when_id_absent() {
 
 #[test]
 fn show_without_id_errors_with_clean_usage_hiding_pw_engine() {
-    // PWF-0065: missing the required positional is a clap error; its usage must read
-    // `pwf show …`, never leaking the internal `pw` engine token the preprocess injects.
+    // `show`'s id is now a shared optional `IdArg`, so a missing id is no longer a
+    // clap usage error — it is the engine-level "--id is required for show." message,
+    // shared across all id-facing verbs. It must still never leak the internal `pw`
+    // engine token the preprocess injects.
     let out = pwf().arg("show").assert().failure();
     let stderr = String::from_utf8(out.get_output().stderr.clone()).unwrap();
     assert!(
-        stderr.contains("pwf show"),
-        "usage should name the verb: {stderr}"
+        stderr.contains("--id is required for show"),
+        "missing-id message should name the verb: {stderr}"
     );
     assert!(
         !stderr.contains("pwf pw"),
-        "usage must not leak the internal pw engine: {stderr}"
+        "error must not leak the internal pw engine: {stderr}"
     );
 }
 
@@ -2304,6 +2335,142 @@ fn session_with_effort_passes_model_flag_to_claude() {
 
 #[test]
 #[cfg(unix)]
+fn session_with_effort_and_empty_claude_model_omits_model_flag() {
+    // `claude_model = ""` is the deliberate "use claude's own default" sentinel —
+    // dispatch must succeed with no `--model` flag, not error and not pass "".
+    let dir = TempDir::new().unwrap();
+    let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
+    let notes = dir.path().join("notes");
+    fs::write(
+        notes.join("pwf").join("PWF-0001.md"),
+        "---\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\neffort: 4\n---\n\n## Goals\n- do the thing\n",
+    )
+    .unwrap();
+    let tiers = dir.path().join("model-tiers.toml");
+    fs::write(&tiers, "[tiers.4]\nclaude_model = \"\"\n").unwrap();
+
+    pwf()
+        .args(["session", "--id", "PWF-0001", "--yes", "--config-path"])
+        .arg(&cfg)
+        .env("PATH", path)
+        .env("ZELLIJ_STUB_LOG", &log)
+        .env("PWF_MODEL_TIERS", &tiers)
+        .assert()
+        .success();
+
+    let argv = fs::read_to_string(&log).unwrap();
+    assert!(
+        !argv.contains("--model"),
+        "unexpected --model in argv: {argv}"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn session_with_explicit_model_flag_forwards_it_verbatim() {
+    // No effort tag, no model-tiers.toml at all — `--model` is a raw forward
+    // with no lookup, so dispatch succeeds and the value rides straight through.
+    let dir = TempDir::new().unwrap();
+    let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
+
+    pwf()
+        .args([
+            "session",
+            "--id",
+            "PWF-0001",
+            "--yes",
+            "--model",
+            "fable",
+            "--config-path",
+        ])
+        .arg(&cfg)
+        .env("PATH", path)
+        .env("ZELLIJ_STUB_LOG", &log)
+        .assert()
+        .success();
+
+    let argv = fs::read_to_string(&log).unwrap();
+    assert!(argv.contains("--model"), "no --model in argv: {argv}");
+    assert!(argv.contains("fable"), "model value missing: {argv}");
+}
+
+#[test]
+#[cfg(unix)]
+fn session_with_explicit_model_flag_wins_over_effort_tier() {
+    let dir = TempDir::new().unwrap();
+    let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
+    let notes = dir.path().join("notes");
+    fs::write(
+        notes.join("pwf").join("PWF-0001.md"),
+        "---\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\neffort: 4\n---\n\n## Goals\n- do the thing\n",
+    )
+    .unwrap();
+    let tiers = dir.path().join("model-tiers.toml");
+    fs::write(&tiers, "[tiers.4]\nclaude_model = \"opus\"\n").unwrap();
+
+    pwf()
+        .args([
+            "session",
+            "--id",
+            "PWF-0001",
+            "--yes",
+            "--model",
+            "fable",
+            "--config-path",
+        ])
+        .arg(&cfg)
+        .env("PATH", path)
+        .env("ZELLIJ_STUB_LOG", &log)
+        .env("PWF_MODEL_TIERS", &tiers)
+        .assert()
+        .success();
+
+    let argv = fs::read_to_string(&log).unwrap();
+    assert!(argv.contains("fable"), "override should win: {argv}");
+    assert!(
+        !argv.contains("opus"),
+        "tier model should be shadowed: {argv}"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn session_with_explicit_model_flag_survives_broken_tiers_config() {
+    // The override never touches model-tiers.toml, so a broken/missing config
+    // must not block dispatch when `--model` is explicitly given.
+    let dir = TempDir::new().unwrap();
+    let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
+    let notes = dir.path().join("notes");
+    fs::write(
+        notes.join("pwf").join("PWF-0001.md"),
+        "---\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\neffort: 4\n---\n\n## Goals\n- do the thing\n",
+    )
+    .unwrap();
+    let missing_tiers = dir.path().join("does-not-exist.toml");
+
+    pwf()
+        .args([
+            "session",
+            "--id",
+            "PWF-0001",
+            "--yes",
+            "--model",
+            "fable",
+            "--config-path",
+        ])
+        .arg(&cfg)
+        .env("PATH", path)
+        .env("ZELLIJ_STUB_LOG", &log)
+        .env("PWF_MODEL_TIERS", &missing_tiers)
+        .assert()
+        .success();
+
+    let argv = fs::read_to_string(&log).unwrap();
+    assert!(argv.contains("fable"), "override should win: {argv}");
+}
+
+#[test]
+#[cfg(unix)]
 fn session_with_effort_and_broken_tiers_config_fails_before_dispatch() {
     let dir = TempDir::new().unwrap();
     let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
@@ -2570,6 +2737,79 @@ fn e2e_verify_reports_resolved_model_for_effort_tagged_item() {
         .success()
         .stdout(contains("--model"))
         .stdout(contains("sonnet"));
+}
+
+#[test]
+fn e2e_verify_omits_model_for_empty_claude_model_tier() {
+    // `claude_model = ""` resolves to no override — verify passes with no
+    // `--model` in the rendered command, same as an untagged item.
+    let (d, cfg) = staged();
+    pwf()
+        .args([
+            "update",
+            "--id",
+            "GLP-0001",
+            "--effort",
+            "1",
+            "--config-path",
+        ])
+        .arg(&cfg)
+        .assert()
+        .success();
+    let tiers = d.path().join("model-tiers.toml");
+    fs::write(&tiers, "[tiers.1]\nclaude_model = \"\"\n").unwrap();
+
+    let out = pwf()
+        .args(["verify", "--id", "GLP-0001", "--config-path"])
+        .arg(&cfg)
+        .env("PWF_MODEL_TIERS", &tiers)
+        .assert()
+        .success()
+        .stdout(contains("launchable: yes"))
+        .get_output()
+        .stdout
+        .clone();
+    let stdout = String::from_utf8(out).unwrap();
+    assert!(
+        !stdout.contains("--model"),
+        "unexpected --model in verify output: {stdout}"
+    );
+}
+
+#[test]
+fn e2e_verify_with_explicit_model_flag_wins_over_effort_tier() {
+    let (d, cfg) = staged();
+    pwf()
+        .args([
+            "update",
+            "--id",
+            "GLP-0001",
+            "--effort",
+            "1",
+            "--config-path",
+        ])
+        .arg(&cfg)
+        .assert()
+        .success();
+    let tiers = d.path().join("model-tiers.toml");
+    fs::write(&tiers, "[tiers.1]\nclaude_model = \"sonnet\"\n").unwrap();
+
+    pwf()
+        .args([
+            "verify",
+            "--id",
+            "GLP-0001",
+            "--model",
+            "fable",
+            "--config-path",
+        ])
+        .arg(&cfg)
+        .env("PWF_MODEL_TIERS", &tiers)
+        .assert()
+        .success()
+        .stdout(contains("--model"))
+        .stdout(contains("fable"))
+        .stdout(contains("sonnet").not());
 }
 
 #[test]

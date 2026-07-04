@@ -120,17 +120,8 @@ mod tests {
     use super::*;
     use crate::engines::pending_work::{errors::PendingWorkError, obsidian::store::StoreError};
 
-    fn nanos() -> u128 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    }
-
-    fn temp_notes_dir(name: &str) -> std::path::PathBuf {
-        let path = std::env::temp_dir().join(format!("pwf_add_{name}_{}", nanos()));
-        std::fs::create_dir_all(&path).unwrap();
-        path
+    fn temp_notes_dir() -> tempfile::TempDir {
+        tempfile::tempdir().unwrap()
     }
 
     fn cfg_for_notes(notes_dir: &std::path::Path) -> crate::config::Config {
@@ -179,9 +170,10 @@ mod tests {
 
     #[test]
     fn add_item_write_error_preserves_legacy_display() {
-        let notes_dir = temp_notes_dir("item_write");
+        let notes = temp_notes_dir();
+        let notes_dir = notes.path();
         std::fs::write(notes_dir.join("pwf"), "not a dir").unwrap();
-        let cfg = cfg_for_notes(&notes_dir);
+        let cfg = cfg_for_notes(notes_dir);
         let spec = spec();
 
         let err = add_pending_work_item(&cfg, &spec).unwrap_err();
@@ -195,10 +187,11 @@ mod tests {
 
     #[test]
     fn add_index_write_error_preserves_legacy_display() {
-        let notes_dir = temp_notes_dir("index_write");
+        let notes = temp_notes_dir();
+        let notes_dir = notes.path();
         let project_dir = notes_dir.join("pwf");
         std::fs::create_dir_all(project_dir.join("pwf.md")).unwrap();
-        let cfg = cfg_for_notes(&notes_dir);
+        let cfg = cfg_for_notes(notes_dir);
         let spec = spec();
 
         let err = add_pending_work_item(&cfg, &spec).unwrap_err();

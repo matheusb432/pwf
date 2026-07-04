@@ -274,9 +274,9 @@ mod tests {
     #[test]
     fn read_handoff_entries_reports_degraded_when_file_read_is_ignored() {
         let dir = tempdir();
-        std::fs::create_dir(dir.join("2026-01-01-unreadable.md")).unwrap();
+        std::fs::create_dir(dir.path().join("2026-01-01-unreadable.md")).unwrap();
 
-        let read = read_handoff_entries_typed(&dir);
+        let read = read_handoff_entries_typed(dir.path());
 
         assert_eq!(read.status, HandoffReadStatus::Degraded);
         assert!(read.value.is_empty());
@@ -284,7 +284,8 @@ mod tests {
 
     #[test]
     fn read_handoff_entries_reports_degraded_when_read_dir_is_ignored() {
-        let dir = tempdir().join("not-a-directory.md");
+        let guard = tempdir();
+        let dir = guard.path().join("not-a-directory.md");
         std::fs::write(&dir, "not a directory\n").unwrap();
 
         let read = read_handoff_entries_typed(&dir);

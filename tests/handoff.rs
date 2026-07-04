@@ -45,11 +45,11 @@ fn parse_args(tokens: &[&str]) -> pwf::cli::Args {
     pwf::command::parse_argv(v).unwrap().1
 }
 
-// A few handoff tests drive a pending-work command (e.g. `check`) as a setup
-// step; clap is engine-rooted, so those parse under the `pw` engine.
+// A few handoff tests drive a pending-work command (e.g. `done`) as a setup
+// step; pending-work verbs are top-level clap subcommands, so this just parses
+// the verb directly.
 fn parse_pw(tokens: &[&str]) -> pwf::cli::Args {
-    let mut v = vec!["pw".to_string()];
-    v.extend(tokens.iter().map(|s| s.to_string()));
+    let v = tokens.iter().map(|s| s.to_string()).collect();
     pwf::command::parse_argv(v).unwrap().1
 }
 
@@ -394,7 +394,7 @@ fn cancel_archives_with_reason() {
 // ── PWF-0012: idempotent + atomic done ──────────────────────────────────────
 
 #[test]
-fn done_skips_already_checked_pw_item_and_archives() {
+fn done_skips_already_closed_pw_item_and_archives() {
     let stage = tmpdir("hf_done_idem");
     let repo = stage.join("repo");
     fs::create_dir_all(&repo).unwrap();
@@ -417,9 +417,9 @@ fn done_skips_already_checked_pw_item_and_archives() {
     ]);
     handoff::run(&new_args).unwrap();
 
-    // Check the linked item directly — the live reproduction step.
-    let check_args = parse_pw(&[
-        "check",
+    // Close the linked item directly — the live reproduction step.
+    let done_pw_args = parse_pw(&[
+        "done",
         "--id",
         "TST-0001",
         "--config-path",
@@ -427,9 +427,9 @@ fn done_skips_already_checked_pw_item_and_archives() {
         "--date",
         "2026-01-01",
     ]);
-    pwf::engines::pending_work::run_args(&check_args).unwrap();
+    pwf::engines::pending_work::run_args(&done_pw_args).unwrap();
 
-    // done must treat the already-checked item as success (skip with a note).
+    // done must treat the already-closed item as success (skip with a note).
     let done_args = parse_args(&[
         "done",
         "--id",
@@ -443,13 +443,13 @@ fn done_skips_already_checked_pw_item_and_archives() {
         "--no-commit",
     ]);
     let out = handoff::run(&done_args)
-        .unwrap_or_else(|e| panic!("done should succeed when pw item already checked: {e}"));
+        .unwrap_or_else(|e| panic!("done should succeed when pw item already done: {e}"));
     assert!(
         out.contains("done handoff "),
         "expected 'done handoff' text, got: {out}"
     );
     assert!(
-        out.contains("already checked"),
+        out.contains("already done"),
         "expected skipped note in output, got: {out}"
     );
 
@@ -830,7 +830,7 @@ fn done_forwards_commits_and_review_to_linked_pw_item() {
     ]);
     handoff::run(&new_args).unwrap();
 
-    // done with provenance, in-process (no --pending-work-script → inprocess_pw_check).
+    // done with provenance, in-process (no --pending-work-script → inprocess_pw_done).
     let done_args = parse_args(&[
         "done",
         "--id",
