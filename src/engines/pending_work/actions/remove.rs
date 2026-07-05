@@ -10,7 +10,7 @@ use crate::{
     cli::Args,
     config::Config,
     confirm::{Confirm, DefaultAnswer},
-    confirm_prompt::{Field, confirmation_prompt},
+    confirm_prompt::{ConfirmationPrompt, Field},
 };
 
 fn remove_link_from_index_content(
@@ -33,17 +33,18 @@ fn confirmation_question(item: &Item, item_path: &Path) -> String {
         Field::new("title", item.session.clone()),
         Field::new("note", item_path.display().to_string()),
     ];
-    confirmation_prompt(
+    ConfirmationPrompt::new(
         "Confirm task removal",
         &fields,
         "Remove this pending-work task?",
     )
+    .to_string()
 }
 
 pub(in crate::engines::pending_work) fn run_remove(
     cfg: &Config,
     args: &Args,
-    confirmer: &dyn Confirm,
+    confirmer: &impl Confirm,
 ) -> Result<String, PendingWorkError> {
     let id = args
         .id
@@ -96,8 +97,7 @@ mod tests {
     use std::assert_matches;
 
     use super::*;
-    use crate::confirm::FakeConfirm;
-    use crate::engines::pending_work::errors::PendingWorkError;
+    use crate::{confirm::FakeConfirm, engines::pending_work::errors::PendingWorkError};
 
     /// Non-interactive confirmer: the removal gate proceeds without prompting,
     /// matching an agentic / piped run.

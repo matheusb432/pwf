@@ -87,7 +87,14 @@ fn is_order_flag(tok: &str) -> bool {
 fn is_id_facing_verb(verb: &str) -> bool {
     matches!(
         verb,
-        "done" | "cancel" | "reopen" | "update" | "resolve" | "show" | "session" | "verify"
+        "done"
+            | "cancel"
+            | "reopen"
+            | "update"
+            | "resolve"
+            | "show"
+            | "session"
+            | "verify"
             | "remove"
     )
 }

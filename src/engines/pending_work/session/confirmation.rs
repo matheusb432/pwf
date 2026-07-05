@@ -3,8 +3,10 @@
 //! delegates rendering to the domain-agnostic [`crate::confirm_prompt`].
 
 use super::DispatchOpts;
-use crate::confirm_prompt::{Field, confirmation_prompt};
-use crate::engines::pending_work::model::Item;
+use crate::{
+    confirm_prompt::{ConfirmationPrompt, Field},
+    engines::pending_work::model::Item,
+};
 
 const CURRENT_TERMINAL_TARGET: &str = "current terminal";
 
@@ -25,11 +27,12 @@ pub(super) fn question(item: &Item, session: &str, opts: &DispatchOpts, agent: &
         ),
         Field::new("target", mode.target()),
     ];
-    confirmation_prompt(
+    ConfirmationPrompt::new(
         "Confirm session dispatch",
         &fields,
         "Proceed with session dispatch?",
     )
+    .to_string()
 }
 
 #[derive(Clone, Copy)]
