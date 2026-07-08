@@ -1,0 +1,20 @@
+[package]
+name = "pwf-infra"
+version = "4.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+pwf-application = { path = "../application" }
+pwf-domain = { path = "../domain" }
+pwf-core = { path = "../pwf-core" }
+prompt-lanes = { path = "../../shared/prompt-lanes" }
+regex = "1"
+thiserror = "2.0.18"
+
+[dev-dependencies]
+serde_json = "1"
+tempfile = "3"
+
+[lints]
+workspace = true

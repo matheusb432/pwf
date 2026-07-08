@@ -9,5 +9,5 @@ _require-pwsh:
 
 # One-time repo setup: link .claude/skills -> .agents/skills.
 bootstrap *flags: _require-pwsh
-    @[ -f "{{ _linker }}" ] || { printf '%s\n' "deploy the helper first: config-handler 'just sync-agents-shared'" >&2; exit 1; }
+    @[ -f "{{ _linker }}" ] || { printf '%s\n' "deploy the helper first: repository 'just sync-agents-shared'" >&2; exit 1; }
     @pwsh -NoProfile -File "{{ _linker }}" -Repo "$(pwd)" {{ flags }}

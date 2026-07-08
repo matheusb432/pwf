@@ -20,7 +20,7 @@
 
 # Ephemeral AI implementation plans — relevant only to the task that produced them, not
 # git history. Specs/ADRs + commit history are the durable record. (Rationale:
-# config-handler docs/planning/plans/README.md.)
+# repository docs/planning/plans/README.md.)
 docs/planning/plans/*.md
 !docs/planning/plans/README.md
 

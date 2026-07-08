@@ -211,6 +211,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 
 [[package]]
+name = "cqrsy"
+version = "0.3.0"
+source = "git+ssh://git@github.com/matheusb432/cqrsy.git?tag=v0.3.0#a6ec57886bf6dc7405a32011c146bc6d510eb1eb"
+dependencies = [
+ "cqrsy-core",
+ "cqrsy-macros",
+]
+
+[[package]]
+name = "cqrsy-core"
+version = "0.3.0"
+source = "git+ssh://git@github.com/matheusb432/cqrsy.git?tag=v0.3.0#a6ec57886bf6dc7405a32011c146bc6d510eb1eb"
+
+[[package]]
+name = "cqrsy-macros"
+version = "0.3.0"
+source = "git+ssh://git@github.com/matheusb432/cqrsy.git?tag=v0.3.0#a6ec57886bf6dc7405a32011c146bc6d510eb1eb"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "difflib"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -553,10 +577,14 @@ dependencies = [
  "assert_cmd",
  "chrono",
  "clap",
+ "cqrsy",
  "nutype",
  "predicates",
  "prompt-lanes",
+ "pwf-application",
  "pwf-core",
+ "pwf-domain",
+ "pwf-infra",
  "pwf-note",
  "regex",
  "serde",
@@ -564,6 +592,17 @@ dependencies = [
  "tempfile",
  "thiserror",
  "toml",
+ "walkdir",
+]
+
+[[package]]
+name = "pwf-application"
+version = "4.1.0"
+dependencies = [
+ "cqrsy",
+ "pwf-domain",
+ "tempfile",
+ "thiserror",
 ]
 
 [[package]]
@@ -573,6 +612,28 @@ dependencies = [
  "chrono",
  "regex",
  "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
+name = "pwf-domain"
+version = "4.1.0"
+dependencies = [
+ "nutype",
+ "thiserror",
+]
+
+[[package]]
+name = "pwf-infra"
+version = "4.1.0"
+dependencies = [
+ "prompt-lanes",
+ "pwf-application",
+ "pwf-core",
+ "pwf-domain",
+ "regex",
  "serde_json",
  "tempfile",
  "thiserror",
@@ -590,9 +651,9 @@ dependencies = [
 
 [[package]]
 name = "quote"
-version = "1.0.45"
+version = "1.0.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41f2619966050689382d2b44f664f4bc593e129785a36d6ee376ddf37259b924"
+checksum = "dfbc457d0c7a0759a614551b11a6409e5951f6c7537be1f1b7682b9ae9230368"
 dependencies = [
  "proc-macro2",
 ]
@@ -659,6 +720,15 @@ name = "rustversion"
 version = "1.0.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
+
+[[package]]
+name = "same-file"
+version = "1.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "93fc1dc3aaa9bfed95e02e6eadabb4baf7e3078b0bd1b4d7b6b0b68378900502"
+dependencies = [
+ "winapi-util",
+]
 
 [[package]]
 name = "semver"
@@ -738,9 +808,9 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
 name = "syn"
-version = "2.0.117"
+version = "2.0.118"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e665b8803e7b1d2a727f4023456bbbbe74da67099c585258af0ad9c5013b9b99"
+checksum = "1b9ae57f904213ebb649ce6895b8a66c66f0203b9319718f69a5612a065b1422"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -865,6 +935,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "walkdir"
+version = "2.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "29790946404f91d9c5d06f9874efddea1dc06c5efe94541a7d6863108e3a5e4b"
+dependencies = [
+ "same-file",
+ "winapi-util",
+]
+
+[[package]]
 name = "wasip2"
 version = "1.0.4+wasi-0.2.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -959,6 +1039,15 @@ dependencies = [
  "hashbrown 0.15.5",
  "indexmap",
  "semver",
+]
+
+[[package]]
+name = "winapi-util"
+version = "0.1.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
+dependencies = [
+ "windows-sys",
 ]
 
 [[package]]

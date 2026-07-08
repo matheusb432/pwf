@@ -1,0 +1,54 @@
+[package]
+name = "pwf"
+version = "4.1.0"
+edition = "2024"
+publish = false
+description = "pwf — pending-work / handoff / migrate engine for managed repos"
+
+[[bin]]
+name = "pwf"
+path = "src/main.rs"
+
+[lib]
+name = "pwf"
+path = "src/lib.rs"
+
+# ! Binary-e2e suites: excluded from the default `cargo test` (`just test`) so the
+# ! default stays slim/in-process. Run explicitly via `just test --e2e` / `cargo test
+# ! --test <name>` — explicit target selection still runs them despite `test = false`.
+[[test]]
+name = "cli_e2e"
+path = "tests/cli_e2e.rs"
+test = false
+
+[[test]]
+name = "help_cli"
+path = "tests/help_cli.rs"
+test = false
+
+[dependencies]
+pwf-application = { path = "../application" }
+pwf-core = { path = "../pwf-core" }
+pwf-domain = { path = "../domain" }
+pwf-infra = { path = "../infra" }
+pwf-note = { path = "../pwf-note" }
+prompt-lanes = { path = "../../shared/prompt-lanes" }
+cqrsy = { workspace = true, features = ["derive"] }
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = "0.4"
+regex = "1"
+thiserror = "2.0.18"
+nutype = { version = "0.7.0", features = ["serde", "regex"] }
+anstyle = "1"
+toml = "1.1.2"
+walkdir = "2"
+
+[dev-dependencies]
+assert_cmd = "2"
+predicates = "3"
+tempfile = "3"
+
+[lints]
+workspace = true

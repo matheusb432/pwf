@@ -1,65 +1,22 @@
-[package]
-name = "pwf"
-version = "4.1.0"
-edition = "2024"
-publish = false
-description = "pwf — pending-work / handoff / migrate engine for managed repos"
-
 [workspace]
-members = ["crates/pwf-core", "crates/pwf-note", "shared/prompt-lanes", "xtask"]
+members = ["crates/application", "crates/cli", "crates/domain", "crates/infra", "crates/pwf-core", "crates/pwf-note", "shared/prompt-lanes", "xtask"]
+default-members = ["crates/cli"]
 resolver = "2"
 
+[workspace.dependencies]
+cqrsy = { git = "ssh://git@github.com/matheusb432/cqrsy.git", tag = "v0.3.0" }
+
+# Real delta over clippy defaults is `pedantic = warn`; group levels sit low so per-lint overrides win.
 [workspace.lints.clippy]
-all         = { level = "warn", priority = -2 }
-pedantic    = { level = "warn", priority = -2 }
-correctness = { level = "deny", priority = -1 } # stays fatal despite all = warn
-# --- opt-outs ---
-must_use_candidate = "allow" # heuristic over-flags; real "ignored value" safety is rustc's
-                             # unused_must_use (already a hard error under -D warnings)
-missing_errors_doc = "allow" # fleet-uniform for now; selective per-crate opt-in is a later effort
-
-[[bin]]
-name = "pwf"
-path = "src/main.rs"
-
-[lib]
-name = "pwf"
-path = "src/lib.rs"
-
-# ! Binary-e2e suites: excluded from the default `cargo test` (`just test`) so the
-# ! default stays slim/in-process. Run explicitly via `just test --e2e` / `cargo test
-# ! --test <name>` — explicit target selection still runs them despite `test = false`.
-[[test]]
-name = "cli_e2e"
-path = "tests/cli_e2e.rs"
-test = false
-
-[[test]]
-name = "help_cli"
-path = "tests/help_cli.rs"
-test = false
-
-[dependencies]
-pwf-core = { path = "crates/pwf-core" }
-pwf-note = { path = "crates/pwf-note" }
-prompt-lanes = { path = "shared/prompt-lanes" }
-clap = { version = "4", features = ["derive"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-chrono = "0.4"
-regex = "1"
-thiserror = "2.0.18"
-nutype = { version = "0.7.0", features = ["serde", "regex"] }
-anstyle = "1"
-toml = "1.1.2"
-
-[dev-dependencies]
-assert_cmd = "2"
-predicates = "3"
-tempfile = "3"
-
-[lints]
-workspace = true
+all = { level = "warn", priority = -2 }
+pedantic = { level = "warn", priority = -2 }
+# Stays fatal despite `all = warn`.
+correctness = { level = "deny", priority = -1 }
+# Keeps clippy.toml's disallowed methods hard errors in local runs, not just under `-D warnings`.
+disallowed_methods = "deny"
+# Heuristic and over-flags; real "ignored value" safety is rustc's `unused_must_use`.
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
 
 [profile.release]
 strip = true

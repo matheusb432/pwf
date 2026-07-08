@@ -1,5 +1,6 @@
-//! `test` — pwf's test suite. Slim in-process unit/integration by default; `--e2e` runs the
-//! binary suites (`cli_e2e`, `help_cli`); `--all` runs both. `--verbose` streams uncaptured logs.
+//! `test` — pwf's test suite. Workspace in-process unit/integration by default; `--e2e`
+//! runs the binary suites (`cli_e2e`, `help_cli`); `--all` runs both. `--verbose` streams
+//! uncaptured logs.
 //! Migrates the former `just pwf test` bash recipe.
 
 use anyhow::Result;
@@ -42,7 +43,8 @@ pub(crate) enum Scope {
 }
 
 /// The binary-e2e targets, excluded from the default `cargo test` (they carry `test = false`).
-const E2E_TARGETS: &[&str] = &["--test", "cli_e2e", "--test", "help_cli"];
+const E2E_TARGETS: &[&str] = &["-p", "pwf", "--test", "cli_e2e", "--test", "help_cli"];
+const UNIT_TARGETS: &[&str] = &["--workspace"];
 
 /// One `cargo test` invocation: terse (`--quiet`) unless `verbose`, which instead streams
 /// uncaptured output (`-- --nocapture`). `targets` selects explicit test binaries (empty =
@@ -61,7 +63,7 @@ fn cargo_test_step(label: &str, targets: &[&str], verbose: bool) -> Step {
 
 /// The ordered `cargo test` steps for a scope. Pure — no I/O, so it is unit-tested directly.
 fn plan(scope: Scope, verbose: bool) -> Vec<Step> {
-    let unit = || cargo_test_step("test", &[], verbose);
+    let unit = || cargo_test_step("test", UNIT_TARGETS, verbose);
     let e2e = || cargo_test_step("test:e2e", E2E_TARGETS, verbose);
     match scope {
         Scope::Unit => vec![unit()],
@@ -101,13 +103,16 @@ mod tests {
     fn unit_default_is_terse() {
         let steps = plan(Scope::Unit, false);
         assert_eq!(steps.len(), 1);
-        assert_eq!(argv(&steps[0]), ["test", "--quiet"]);
+        assert_eq!(argv(&steps[0]), ["test", "--quiet", "--workspace"]);
     }
 
     #[test]
     fn verbose_drops_quiet_and_adds_nocapture() {
         let steps = plan(Scope::Unit, true);
-        assert_eq!(argv(&steps[0]), ["test", "--", "--nocapture"]);
+        assert_eq!(
+            argv(&steps[0]),
+            ["test", "--workspace", "--", "--nocapture"]
+        );
     }
 
     #[test]
@@ -115,7 +120,9 @@ mod tests {
         let steps = plan(Scope::E2e, false);
         assert_eq!(
             argv(&steps[0]),
-            ["test", "--quiet", "--test", "cli_e2e", "--test", "help_cli"]
+            [
+                "test", "--quiet", "-p", "pwf", "--test", "cli_e2e", "--test", "help_cli"
+            ]
         );
     }
 
@@ -123,7 +130,7 @@ mod tests {
     fn all_runs_unit_then_e2e() {
         let steps = plan(Scope::All, false);
         assert_eq!(steps.len(), 2);
-        assert_eq!(argv(&steps[0]), ["test", "--quiet"]);
+        assert_eq!(argv(&steps[0]), ["test", "--quiet", "--workspace"]);
         assert!(argv(&steps[1]).contains(&"cli_e2e"));
     }
 

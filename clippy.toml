@@ -1,7 +1,14 @@
-# Clippy tuning for pwf's crates. One root file; Clippy discovers it from each crate's manifest
-# dir. It tunes only the *configurable* lints; lint LEVELS (the pedantic policy + opt-outs) are
-# inherited workspace-wide via `[workspace.lints.clippy]` in the root Cargo.toml. These crates are
-# internal binaries, never published libraries. `msrv` is intentionally unset — pwf tracks latest
-# stable, so Clippy is free to suggest the newest APIs.
-avoid-breaking-exported-api = false # internal binaries: let Clippy suggest better signatures freely
-allow-unwrap-in-tests = true        # unwrap()/expect() are idiomatic in test bodies
+# Fleet clippy tuning — synced from repository `templates/clippy.toml` (edit there, then
+# `just repos sync-clippy`; local edits here are overwritten). One root file; Clippy discovers it
+# from each crate's manifest dir. It tunes only the *configurable* lints; lint LEVELS (the
+# pedantic policy + opt-outs) live in the root Cargo.toml `[workspace.lints.clippy]`. `msrv` is
+# intentionally unset — the fleet tracks latest stable, so Clippy is free to suggest the newest
+# APIs. Comments sit above keys, never trailing, so a repo's TOML formatter (taplo) can't reflow
+# them and fight the sync.
+# Internal binaries: let Clippy suggest better signatures freely. Wrong for a repo publishing a
+# library crate — grow a which-variant override before opting one in.
+avoid-breaking-exported-api = false
+disallowed-methods = [
+  { path = "cqrsy_core::Handler::handle", reason = "call requests through cqrsy::Sender or cqrsy::send/send_now so pipelines run" },
+  { path = "cqrsy_core::EventListener::handle", reason = "publish events through cqrsy::Publisher or cqrsy::publish/publish_now so fan-out semantics run" },
+]
