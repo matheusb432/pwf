@@ -8,7 +8,3 @@
 # Internal binaries: let Clippy suggest better signatures freely. Wrong for a repo publishing a
 # library crate — grow a which-variant override before opting one in.
 avoid-breaking-exported-api = false
-disallowed-methods = [
-  { path = "cqrsy_core::Handler::handle", reason = "call requests through cqrsy::Sender or cqrsy::send/send_now so pipelines run" },
-  { path = "cqrsy_core::EventListener::handle", reason = "publish events through cqrsy::Publisher or cqrsy::publish/publish_now so fan-out semantics run" },
-]

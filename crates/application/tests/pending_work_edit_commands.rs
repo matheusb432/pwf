@@ -15,7 +15,7 @@ use pwf_application::{
     ReopenPendingWorkHandler, ReopenedItem, StatusTransitionDiagnostics, UpdateItemSpec,
     UpdatePendingWorkError, UpdatePendingWorkItem, UpdatePendingWorkItemHandler,
 };
-use pwf_domain::pending_work::{AddedItem, RemovedItem, UpdatedItem};
+use pwf_domain::pending_work::{AddedItem, RemovedItem, Tags, UpdatedItem};
 
 #[derive(Clone, Default)]
 struct RecordingWriteStore {
@@ -228,6 +228,7 @@ impl cqrsy::Handler<AddPendingWorkItem> for RecordingAddHandler {
 fn add_command_forwards_spec_to_write_store() {
     let store = RecordingWriteStore::default();
     let handler = AddPendingWorkItemHandler::new(store.clone());
+    let tags = Tags::parse_values(&["SQLite,csharp-export".to_string()]).unwrap();
 
     let got = send_now(
         &(),
@@ -240,6 +241,7 @@ fn add_command_forwards_spec_to_write_store() {
             section: Some("Human".to_string()),
             prereq: Some("[[PWF-0001]]".to_string()),
             effort: Some(2),
+            tags: Some(tags.clone()),
         },
     )
     .unwrap();
@@ -255,8 +257,10 @@ fn add_command_forwards_spec_to_write_store() {
             section: Some("Human".to_string()),
             prereq: Some("[[PWF-0001]]".to_string()),
             effort: Some(2),
+            tags: Some(tags.clone()),
         }]
     );
+    assert_eq!(store.add_specs()[0].tags, Some(tags));
 }
 
 #[test]
@@ -274,6 +278,7 @@ fn add_command_maps_store_error() {
             section: None,
             prereq: None,
             effort: None,
+            tags: None,
         },
     )
     .unwrap_err();
@@ -286,6 +291,7 @@ fn add_command_maps_store_error() {
 fn update_command_forwards_spec_to_write_store() {
     let store = RecordingWriteStore::default();
     let handler = UpdatePendingWorkItemHandler::new(store.clone());
+    let tags = Tags::parse_values(&["SQLite,csharp-export".to_string()]).unwrap();
 
     let got = send_now(
         &(),
@@ -300,6 +306,8 @@ fn update_command_forwards_spec_to_write_store() {
             commits: Some("a..b".to_string()),
             append_report: Some("done".to_string()),
             effort: Some(3),
+            tags: Some(tags.clone()),
+            tags_clear: true,
         },
     )
     .unwrap();
@@ -324,8 +332,12 @@ fn update_command_forwards_spec_to_write_store() {
             commits: Some("a..b".to_string()),
             append_report: Some("done".to_string()),
             effort: Some(3),
+            tags: Some(tags.clone()),
+            tags_clear: true,
         }]
     );
+    assert_eq!(store.update_specs()[0].tags, Some(tags));
+    assert!(store.update_specs()[0].tags_clear);
 }
 
 #[test]
@@ -345,6 +357,8 @@ fn update_command_maps_store_error() {
             commits: None,
             append_report: None,
             effort: None,
+            tags: None,
+            tags_clear: false,
         },
     )
     .unwrap_err();

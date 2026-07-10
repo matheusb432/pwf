@@ -94,6 +94,61 @@ fn per_action_help_is_scoped_and_succeeds() {
 }
 
 #[test]
+fn tag_help_is_scoped_to_supported_commands() {
+    let (add, add_ok) = run(&["add", "--help"]);
+    assert!(add_ok, "pwf add --help should exit 0");
+    assert!(add.contains("--tag"), "add help should expose --tag: {add}");
+    assert!(
+        !add.contains("--tags-clear"),
+        "add help must not expose update-only --tags-clear: {add}"
+    );
+
+    let (update, update_ok) = run(&["update", "--help"]);
+    assert!(update_ok, "pwf update --help should exit 0");
+    assert!(
+        update.contains("--tag") && update.contains("--tags-clear"),
+        "update help should expose tag append and clear: {update}"
+    );
+
+    let (list, list_ok) = run(&["list", "--help"]);
+    assert!(list_ok, "pwf list --help should exit 0");
+    assert!(
+        list.contains("--tag"),
+        "list help should expose tag filtering: {list}"
+    );
+
+    let (add_terse, add_terse_ok) = run(&["add", "--help", "--terse"]);
+    assert!(add_terse_ok, "pwf add --help --terse should exit 0");
+    assert!(
+        add_terse.contains("[--tag <tag>]"),
+        "add terse help should expose --tag: {add_terse}"
+    );
+
+    let (update_terse, update_terse_ok) = run(&["update", "--help", "--terse"]);
+    assert!(update_terse_ok, "pwf update --help --terse should exit 0");
+    assert!(
+        update_terse.contains("[--tag <tag>]") && update_terse.contains("[--tags-clear]"),
+        "update terse help should expose tag append and clear: {update_terse}"
+    );
+
+    let (list_terse, list_terse_ok) = run(&["list", "--help", "--terse"]);
+    assert!(list_terse_ok, "pwf list --help --terse should exit 0");
+    assert!(
+        list_terse.contains("[--tag <tag>]"),
+        "list terse help should expose tag filtering: {list_terse}"
+    );
+
+    let (all_terse, all_terse_ok) = run(&["--help", "--terse"]);
+    assert!(all_terse_ok, "pwf --help --terse should exit 0");
+    assert!(
+        all_terse.contains(
+            "<project> [-n <N>] [--long|--future|--human|--all]   (routes to that project's open items; `pwf list` lists every project)"
+        ),
+        "route shorthand must remain unchanged and tag-free: {all_terse}"
+    );
+}
+
+#[test]
 fn canonical_remove_deletes_item_from_cli() {
     let (notes, project, cfg) = stage_remove_item();
 

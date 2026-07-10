@@ -1,5 +1,5 @@
 use cqrsy::Handler;
-use pwf_domain::pending_work::AddedItem;
+use pwf_domain::pending_work::{AddedItem, Tags};
 
 use crate::ports::{AddItemSpec, PendingWorkWriteStore};
 
@@ -13,6 +13,7 @@ pub struct AddPendingWorkItem {
     pub section: Option<String>,
     pub prereq: Option<String>,
     pub effort: Option<u8>,
+    pub tags: Option<Tags>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -46,6 +47,7 @@ where
                 section: req.section,
                 prereq: req.prereq,
                 effort: req.effort,
+                tags: req.tags,
             })
             .map_err(|error| AddPendingWorkError::WriteStore(Box::new(error)))
     }

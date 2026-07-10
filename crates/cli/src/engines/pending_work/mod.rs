@@ -25,6 +25,7 @@ mod route;
 mod run;
 mod section;
 mod session;
+mod tags;
 mod text;
 
 pub(crate) use actions::{

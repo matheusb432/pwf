@@ -1,6 +1,6 @@
 use cqrsy::Handler;
 use pwf_domain::pending_work::{
-    ListResult, ListScope, OpenItem, OrderDirection, OrderField, OrderSpec,
+    ListResult, ListScope, OpenItem, OrderDirection, OrderField, OrderSpec, ParseTagsError, Tags,
 };
 
 use crate::ports::PendingWorkReadStore;
@@ -11,16 +11,23 @@ const DEFAULT_LIST_CAP: usize = 10;
 #[query(out = pwf_domain::pending_work::ListResult, err = GetPendingWorkError)]
 pub struct GetPendingWork {
     pub only_project: Option<String>,
-    pub scope: pwf_domain::pending_work::ListScope,
+    pub scope: ListScope,
     pub number: Option<usize>,
     pub effort: Option<u8>,
-    pub order: pwf_domain::pending_work::OrderSpec,
+    pub tags: Option<Tags>,
+    pub order: OrderSpec,
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum GetPendingWorkError {
     #[error("pending-work read failed: {0}")]
     ReadStore(Box<dyn std::error::Error + Send + Sync>),
+    #[error("item {id} has invalid tags frontmatter: {source}")]
+    InvalidTags {
+        id: String,
+        #[source]
+        source: ParseTagsError,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -46,6 +53,25 @@ where
 
         items.retain(|item| scope_includes(req.scope, item.section.as_deref()));
         items.retain(|item| effort_matches(item, req.effort));
+
+        if let Some(requested) = req.tags.as_ref() {
+            let mut matched = Vec::with_capacity(items.len());
+            for item in items {
+                let Some(raw) = item.tags.as_deref() else {
+                    continue;
+                };
+                let stored = Tags::parse_frontmatter(raw).map_err(|source| {
+                    GetPendingWorkError::InvalidTags {
+                        id: item.id.clone(),
+                        source,
+                    }
+                })?;
+                if stored.contains_all(requested) {
+                    matched.push(item);
+                }
+            }
+            items = matched;
+        }
 
         if scope_groups_output(req.scope) {
             sort_by_group_then_order(&mut items, req.order);
@@ -154,9 +180,11 @@ fn apply_cap(items: Vec<OpenItem>, cap: usize) -> (Vec<OpenItem>, usize) {
 #[cfg(test)]
 mod tests {
     use cqrsy::send_now;
-    use pwf_domain::pending_work::{ListScope, OpenItem, OrderDirection, OrderField, OrderSpec};
+    use pwf_domain::pending_work::{
+        ListScope, OpenItem, OrderDirection, OrderField, OrderSpec, Tags,
+    };
 
-    use super::{GetPendingWork, GetPendingWorkHandler};
+    use super::{GetPendingWork, GetPendingWorkError, GetPendingWorkHandler};
     use crate::testing::InMemoryPendingWorkReadStore;
 
     fn item(id: &str) -> OpenItem {
@@ -176,6 +204,7 @@ mod tests {
             section: None,
             prereq: None,
             effort: None,
+            tags: None,
             created: Some("2026-07-07".to_string()),
         }
     }
@@ -208,6 +237,13 @@ mod tests {
         }
     }
 
+    fn tagged_item(id: &str, tags: &str) -> OpenItem {
+        OpenItem {
+            tags: Some(tags.to_string()),
+            ..item(id)
+        }
+    }
+
     fn project_item(project: &str, id: &str) -> OpenItem {
         OpenItem {
             id: id.to_string(),
@@ -231,6 +267,7 @@ mod tests {
             scope: ListScope::Default,
             number: None,
             effort: None,
+            tags: None,
             order: OrderSpec::default(),
         }
     }
@@ -401,6 +438,114 @@ mod tests {
         .unwrap();
 
         assert!(got.items.is_empty());
+    }
+
+    #[test]
+    fn tag_filter_requires_every_requested_tag() {
+        let store = InMemoryPendingWorkReadStore::with_items(vec![
+            tagged_item("PWF-0004", "[sqlite_tools, godot]"),
+            tagged_item("PWF-0003", "[sqlite, godot]"),
+            tagged_item("PWF-0002", "[sqlite]"),
+            item("PWF-0001"),
+        ]);
+
+        let got = send_now(
+            &(),
+            &GetPendingWorkHandler::new(store),
+            GetPendingWork {
+                tags: Some(Tags::parse_values(&["SQLite,godot".to_string()]).unwrap()),
+                ..default_query()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(listed_ids(&got), ["PWF-0003"]);
+    }
+
+    #[test]
+    fn corrupt_tags_fail_only_when_a_tag_filter_is_requested() {
+        let store = InMemoryPendingWorkReadStore::with_items(vec![tagged_item(
+            "PWF-0001",
+            "sqlite, godot",
+        )]);
+        assert!(
+            send_now(
+                &(),
+                &GetPendingWorkHandler::new(store.clone()),
+                default_query()
+            )
+            .is_ok()
+        );
+
+        let error = send_now(
+            &(),
+            &GetPendingWorkHandler::new(store),
+            GetPendingWork {
+                tags: Some(Tags::parse_values(&["sqlite".to_string()]).unwrap()),
+                ..default_query()
+            },
+        )
+        .unwrap_err();
+
+        let GetPendingWorkError::InvalidTags { id, source } = error else {
+            panic!("expected invalid tags error");
+        };
+        assert_eq!(id, "PWF-0001");
+        assert_eq!(source.raw(), "sqlite, godot");
+    }
+
+    #[test]
+    fn scope_and_effort_filters_exclude_corrupt_tags_before_parsing() {
+        let store = InMemoryPendingWorkReadStore::with_items(vec![
+            OpenItem {
+                section: Some("Human".to_string()),
+                ..tagged_item("PWF-0003", "corrupt")
+            },
+            OpenItem {
+                effort: Some("2".to_string()),
+                ..tagged_item("PWF-0002", "also corrupt")
+            },
+            OpenItem {
+                effort: Some("3".to_string()),
+                ..tagged_item("PWF-0001", "[sqlite]")
+            },
+        ]);
+
+        let got = send_now(
+            &(),
+            &GetPendingWorkHandler::new(store),
+            GetPendingWork {
+                effort: Some(3),
+                tags: Some(Tags::parse_values(&["sqlite".to_string()]).unwrap()),
+                ..default_query()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(listed_ids(&got), ["PWF-0001"]);
+    }
+
+    #[test]
+    fn tag_filter_applies_before_cap_and_hidden_count() {
+        let store = InMemoryPendingWorkReadStore::with_items(vec![
+            item("PWF-9999"),
+            tagged_item("PWF-0002", "[sqlite]"),
+            tagged_item("PWF-0001", "[sqlite]"),
+        ]);
+
+        let got = send_now(
+            &(),
+            &GetPendingWorkHandler::new(store),
+            GetPendingWork {
+                number: Some(1),
+                tags: Some(Tags::parse_values(&["sqlite".to_string()]).unwrap()),
+                ..default_query()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(listed_ids(&got), ["PWF-0002"]);
+        assert_eq!(got.hidden, 1);
     }
 
     #[test]

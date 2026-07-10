@@ -4,7 +4,9 @@ use pwf_application::{
     AddItemSpec, CancelItemSpec, ClosedItem, ClosedItemAction, CompleteItemSpec,
     PendingWorkWriteStore, ReopenedItem, UpdateItemSpec,
 };
-use pwf_domain::pending_work::{AddedItem, ParsePrereqsError, Prereqs, RemovedItem, UpdatedItem};
+use pwf_domain::pending_work::{
+    AddedItem, ParsePrereqsError, Prereqs, RemovedItem, Tags, UpdatedItem,
+};
 use regex::Regex;
 
 use super::{
@@ -22,7 +24,7 @@ use crate::obsidian::{
     note_text::{
         WorkItemFields, append_lanes_text, append_report_block_text, inferred_title,
         normalize_title, note_body, replace_body, replace_title, set_commits_text, set_effort_text,
-        set_prereq_text, work_item_content,
+        set_prereq_text, set_tags_text, work_item_content,
     },
 };
 
@@ -74,6 +76,7 @@ impl PendingWorkWriteStore for ObsidianPendingWorkStore {
             completed: None,
             prereq: spec.prereq.as_deref(),
             effort: spec.effort,
+            tags: spec.tags.as_ref(),
         });
         write_add_item_file(&item_path, &content)?;
 
@@ -126,7 +129,9 @@ impl PendingWorkWriteStore for ObsidianPendingWorkStore {
             || !spec.prereq.is_empty()
             || spec.clear_prereq
             || spec.append.is_some()
-            || spec.effort.is_some();
+            || spec.effort.is_some()
+            || spec.tags.is_some()
+            || spec.tags_clear;
         if !edits_body && spec.commits.is_none() && spec.append_report.is_none() {
             return Err(ObsidianPendingWorkStoreError::NothingToUpdate);
         }
@@ -256,6 +261,26 @@ impl ObsidianPendingWorkStore {
         }
         if let Some(effort) = spec.effort {
             content = set_effort_text(&content, Some(effort));
+        }
+        if spec.tags_clear {
+            content = set_tags_text(&content, None);
+        }
+        if let Some(appended) = spec.tags.as_ref() {
+            let tags = if spec.tags_clear {
+                appended.clone()
+            } else if let Some(existing) = item.tags.as_deref() {
+                Tags::parse_frontmatter(existing)
+                    .map_err(
+                        |error| ObsidianPendingWorkStoreError::InvalidTagsFrontmatter {
+                            id: item.id.clone(),
+                            raw: error.raw().to_string(),
+                        },
+                    )?
+                    .merged(appended)
+            } else {
+                appended.clone()
+            };
+            content = set_tags_text(&content, Some(&tags));
         }
         if let Some(report) = spec.append_report.as_deref() {
             content = append_report_block_text(&content, report)

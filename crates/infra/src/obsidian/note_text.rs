@@ -1,6 +1,7 @@
 use std::{fmt::Write, sync::LazyLock};
 
 use prompt_lanes::{Adapter, MarkdownAdapter};
+use pwf_domain::pending_work::Tags;
 use regex::Regex;
 
 static PLACEHOLDER_PROMPT_RE: LazyLock<Regex> = LazyLock::new(|| {
@@ -24,8 +25,10 @@ static COMMITS_LINE_NL_RE: LazyLock<Regex> =
 static EFFORT_LINE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^effort:.*$").unwrap());
 static EFFORT_LINE_NL_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?m)^effort:.*\n?").unwrap());
+static TAGS_LINE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^tags:.*$").unwrap());
+static TAGS_LINE_NL_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^tags:.*\n?").unwrap());
 static FRONTMATTER_FENCE_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?m)^---[ \t]*$").unwrap());
+    LazyLock::new(|| Regex::new(r"(?m)^---[ \t]*\r?$").unwrap());
 static HEADING_LINE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?m)^#{1,6}\s.*$").unwrap());
 static REPORT_HEADER_RE: LazyLock<Regex> =
@@ -33,6 +36,7 @@ static REPORT_HEADER_RE: LazyLock<Regex> =
 
 const MAX_TITLE_CHARS: usize = 80;
 const REPORT_HEADER: &str = "### Report";
+const UTF8_BOM: char = '\u{feff}';
 const LANE_SECTION_HEADERS: [&str; 4] =
     ["## Goals", "## Context", "## Constraints", "## Done When"];
 
@@ -46,6 +50,7 @@ pub(super) struct WorkItemFields<'a> {
     pub completed: Option<&'a str>,
     pub prereq: Option<&'a str>,
     pub effort: Option<u8>,
+    pub tags: Option<&'a Tags>,
 }
 
 pub(super) fn normalize_title(title: &str) -> String {
@@ -86,6 +91,9 @@ pub(super) fn work_item_content(fields: WorkItemFields<'_>) -> String {
     }
     if let Some(effort) = fields.effort {
         let _ = writeln!(out, "effort: {effort}");
+    }
+    if let Some(tags) = fields.tags {
+        let _ = writeln!(out, "tags: {}", tags.frontmatter_value());
     }
     out.push_str("---\n\n");
     out.push_str(fields.prompt.trim_end());
@@ -230,26 +238,89 @@ fn set_frontmatter_line(
     line_nl_re: &Regex,
     line: Option<String>,
 ) -> String {
-    let Some(line) = line else {
-        return line_nl_re.replace(content, "").into_owned();
+    let Some(bounds) = opening_frontmatter_bounds(content) else {
+        return content.to_string();
     };
-    if line_re.is_match(content) {
-        return line_re.replace(content, line.as_str()).into_owned();
+    let frontmatter = &content[bounds.start..bounds.end];
+
+    let Some(line) = line else {
+        let updated = line_nl_re.replace(frontmatter, "");
+        return replace_frontmatter_slice(content, bounds.start, bounds.end, &updated);
+    };
+    if let Some(existing) = line_re.find(frontmatter) {
+        let carriage_return = if existing.as_str().ends_with('\r') {
+            "\r"
+        } else {
+            ""
+        };
+        let replacement = format!("{line}{carriage_return}");
+        let updated = line_re.replace(frontmatter, replacement.as_str());
+        return replace_frontmatter_slice(content, bounds.start, bounds.end, &updated);
     }
     for re in [&*COMPLETED_LINE_RE, &*CREATED_LINE_RE] {
-        if let Some(m) = re.find(content) {
-            return format!("{}\n{line}{}", &content[..m.end()], &content[m.end()..]);
+        if let Some(m) = re.find(frontmatter) {
+            let has_carriage_return = m.as_str().ends_with('\r');
+            let line_end = bounds.start + m.end() - usize::from(has_carriage_return);
+            let newline = if has_carriage_return {
+                "\r\n"
+            } else {
+                bounds.newline
+            };
+            return format!(
+                "{}{newline}{line}{}",
+                &content[..line_end],
+                &content[line_end..]
+            );
         }
     }
-    let mut fences = FRONTMATTER_FENCE_RE.find_iter(content);
-    if let (Some(_), Some(close)) = (fences.next(), fences.next()) {
-        return format!(
-            "{}{line}\n{}",
-            &content[..close.start()],
-            &content[close.start()..]
-        );
+    format!(
+        "{}{line}{}{}",
+        &content[..bounds.end],
+        bounds.newline,
+        &content[bounds.end..]
+    )
+}
+
+#[derive(Clone, Copy)]
+struct FrontmatterBounds {
+    start: usize,
+    end: usize,
+    newline: &'static str,
+}
+
+fn opening_frontmatter_bounds(content: &str) -> Option<FrontmatterBounds> {
+    let without_bom = content.strip_prefix(UTF8_BOM).unwrap_or(content);
+    let bom_len = content.len() - without_bom.len();
+    let mut fences = FRONTMATTER_FENCE_RE.find_iter(without_bom);
+    let open = fences.next()?;
+    let close = fences.next()?;
+    if open.start() != 0 {
+        return None;
     }
-    content.to_string()
+    let newline = if open.as_str().ends_with('\r') {
+        "\r\n"
+    } else {
+        "\n"
+    };
+    Some(FrontmatterBounds {
+        start: bom_len + open.end(),
+        end: bom_len + close.start(),
+        newline,
+    })
+}
+
+fn replace_frontmatter_slice(
+    content: &str,
+    frontmatter_start: usize,
+    frontmatter_end: usize,
+    updated: &str,
+) -> String {
+    format!(
+        "{}{}{}",
+        &content[..frontmatter_start],
+        updated,
+        &content[frontmatter_end..]
+    )
 }
 
 pub(super) fn set_prereq_text(content: &str, value: Option<&str>) -> String {
@@ -276,5 +347,14 @@ pub(super) fn set_effort_text(content: &str, value: Option<u8>) -> String {
         &EFFORT_LINE_RE,
         &EFFORT_LINE_NL_RE,
         value.map(|v| format!("effort: {v}")),
+    )
+}
+
+pub(super) fn set_tags_text(content: &str, value: Option<&Tags>) -> String {
+    set_frontmatter_line(
+        content,
+        &TAGS_LINE_RE,
+        &TAGS_LINE_NL_RE,
+        value.map(|tags| format!("tags: {}", tags.frontmatter_value())),
     )
 }

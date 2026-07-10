@@ -7,9 +7,10 @@
 //! changing `add`'s output shape or any flag/field these functions forward —
 //! this module compiles against either but breaks at runtime if missed.
 
+use cqrsy::Sender;
+
 use super::errors::HandoffError;
 use crate::{cli::Args, config};
-use cqrsy::Sender;
 
 /// Extract the item id from `add` text output: `ADDED PWF TASK [<id>] …`.
 /// Only the external `--pending-work-script` allocator (`spawn_pw_add`) still

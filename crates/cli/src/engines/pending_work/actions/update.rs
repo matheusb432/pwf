@@ -19,12 +19,15 @@ pub(in crate::engines::pending_work) fn run_update(
         .as_deref()
         .ok_or(PendingWorkError::MissingId { action: "update" })?;
     let commits = commits::frontmatter_value(&args.commits);
+    let tags = super::super::tags::from_flags(&args.tag)?;
     let edits_body = args.prompt.is_some()
         || args.title.is_some()
         || !args.prereq.is_empty()
         || args.clear_prereq
         || args.append.is_some()
-        || args.effort.is_some();
+        || args.effort.is_some()
+        || tags.is_some()
+        || args.tags_clear;
     if !edits_body && commits.is_none() && args.append_report.is_none() {
         return Err(PendingWorkError::NothingToUpdate);
     }
@@ -43,6 +46,8 @@ pub(in crate::engines::pending_work) fn run_update(
             commits,
             append_report: args.append_report.clone(),
             effort: args.effort,
+            tags,
+            tags_clear: args.tags_clear,
         },
     )
     .map_err(|error| PendingWorkError::ApplicationWrite(error.to_string()))
@@ -105,7 +110,7 @@ mod tests {
         assert_matches!(err, PendingWorkError::NothingToUpdate);
         assert_eq!(
             err.to_string(),
-            "nothing to update (pass --prompt, --title, --prereq, --clear-prereq, --commits, --append-report, --append, and/or --effort)."
+            "nothing to update (pass --prompt, --title, --prereq, --clear-prereq, --tag, --tags-clear, --commits, --append-report, --append, and/or --effort)."
         );
     }
 }

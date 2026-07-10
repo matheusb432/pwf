@@ -8,6 +8,8 @@ use assert_cmd::Command;
 use predicates::{prelude::PredicateBooleanExt, str::contains};
 use tempfile::TempDir;
 
+const LEADING_HYPHEN_TAG: &str = "-sqlite";
+
 fn pwf() -> Command {
     Command::cargo_bin("pwf").unwrap()
 }
@@ -26,6 +28,42 @@ fn staged() -> (TempDir, std::path::PathBuf) {
     fs::write(
         proj.join("glep-shimeji.md"),
         "- [ ] [[GLP-0001|tray gui]]\n",
+    )
+    .unwrap();
+    let cfg = dir.path().join("cfg.json");
+    fs::write(
+        &cfg,
+        format!(
+            r#"{{ "notesDir": {:?}, "projects": {{ "glep-shimeji": "/repo" }}, "prefixes": {{ "glep-shimeji": "GLP" }} }}"#,
+            notes.to_string_lossy()
+        ),
+    )
+    .unwrap();
+    (dir, cfg)
+}
+
+fn staged_tagged_items() -> (TempDir, std::path::PathBuf) {
+    let dir = TempDir::new().unwrap();
+    let notes = dir.path().join("notes");
+    let project = notes.join("glep-shimeji");
+    fs::create_dir_all(&project).unwrap();
+    for (id, title, tags) in [
+        ("GLP-0001", "both tags", Some("[sqlite, godot]")),
+        ("GLP-0002", "sqlite only", Some("[sqlite]")),
+        ("GLP-0003", "untagged", None),
+    ] {
+        let tags = tags.map_or_else(String::new, |value| format!("tags: {value}\n"));
+        fs::write(
+            project.join(format!("{id}.md")),
+            format!(
+                "---\nstatus: active\ntitle: {title}\nproject: glep-shimeji\ncreated: 2026-01-01\n{tags}---\n\nbody\n"
+            ),
+        )
+        .unwrap();
+    }
+    fs::write(
+        project.join("glep-shimeji.md"),
+        "- [ ] [[GLP-0001|both tags]]\n- [ ] [[GLP-0002|sqlite only]]\n- [ ] [[GLP-0003|untagged]]\n",
     )
     .unwrap();
     let cfg = dir.path().join("cfg.json");
@@ -701,6 +739,260 @@ fn canonical_only_prereq_flag_works() {
 /// Read a staged item file under the glep-shimeji project.
 fn read_item(dir: &TempDir, id: &str) -> String {
     fs::read_to_string(dir.path().join(format!("notes/glep-shimeji/{id}.md"))).unwrap()
+}
+
+#[test]
+fn e2e_add_tags_write_canonical_frontmatter() {
+    let (d, cfg) = staged();
+    pwf()
+        .args([
+            "add",
+            "glep-shimeji",
+            "tagged task",
+            "--tag",
+            "SQLite,csharp-export",
+            "--tag",
+            "godot",
+            "--config-path",
+        ])
+        .arg(&cfg)
+        .assert()
+        .success();
+    let item = read_item(&d, "GLP-0002");
+    assert!(
+        item.contains("tags: [sqlite, csharp_export, godot]\n"),
+        "{item}"
+    );
+}
+
+#[test]
+fn e2e_list_tag_filter_requires_all_requested_tags() {
+    let (_d, cfg) = staged_tagged_items();
+    pwf()
+        .args(["list", "--tag", "SQLite,godot", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .success()
+        .stdout(contains("both tags"))
+        .stdout(contains("sqlite only").not())
+        .stdout(contains("untagged").not());
+}
+
+#[test]
+fn e2e_list_long_displays_raw_tags_without_parsing() {
+    let (d, cfg) = staged_tagged_items();
+    let item_path = d.path().join("notes/glep-shimeji/GLP-0001.md");
+    fs::write(
+        item_path,
+        "---\nstatus: active\ntitle: both tags\nproject: glep-shimeji\ncreated: 2026-01-01\ntags: SQLite,godot\n---\n\nbody\n",
+    )
+    .unwrap();
+    pwf()
+        .args(["list", "--long", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .success()
+        .stdout(contains("tags: SQLite,godot"));
+}
+
+#[test]
+fn e2e_list_tag_filter_rejects_corrupt_frontmatter() {
+    let (d, cfg) = staged_tagged_items();
+    let item_path = d.path().join("notes/glep-shimeji/GLP-0001.md");
+    fs::write(
+        item_path,
+        "---\nstatus: active\ntitle: both tags\nproject: glep-shimeji\ncreated: 2026-01-01\ntags: sqlite,godot\n---\n\nbody\n",
+    )
+    .unwrap();
+    pwf()
+        .args(["list", "--tag", "sqlite", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .failure()
+        .stderr(contains("invalid tags frontmatter").and(contains("GLP-0001")));
+}
+
+#[test]
+fn e2e_list_tag_filter_rejects_empty_tags_frontmatter_with_item_context() {
+    let (d, cfg) = staged_tagged_items();
+    let item_path = d.path().join("notes/glep-shimeji/GLP-0001.md");
+    fs::write(
+        item_path,
+        "---\nstatus: active\ntitle: both tags\nproject: glep-shimeji\ncreated: 2026-01-01\ntags:   \n---\n\nbody\n",
+    )
+    .unwrap();
+    pwf()
+        .args(["list", "--tag", "sqlite", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .failure()
+        .stderr(contains("item GLP-0001 has invalid tags frontmatter"));
+}
+
+#[test]
+fn e2e_invalid_list_leading_hyphen_tag_names_raw_value() {
+    let (_d, cfg) = staged_tagged_items();
+    pwf()
+        .args([
+            "list",
+            "--tag",
+            LEADING_HYPHEN_TAG,
+            "--config-path",
+        ])
+        .arg(&cfg)
+        .assert()
+        .failure()
+        .stderr(contains(
+            r#"Error: Invalid --tag value "-sqlite"; use lowercase/uppercase ASCII letters, digits, '_' or '-', without leading, trailing, or repeated separators."#,
+        ));
+}
+
+#[test]
+fn e2e_update_tags_append_deduplicate_clear_and_replace() {
+    let (d, cfg) = staged();
+    let item_path = d.path().join("notes/glep-shimeji/GLP-0001.md");
+    fs::write(
+        item_path,
+        "---\nstatus: active\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\ntags: [sqlite, godot]\n---\n\nadd toggle\n",
+    )
+    .unwrap();
+    pwf()
+        .args([
+            "update",
+            "GLP-0001",
+            "--tag",
+            "godot,csharp-export",
+            "--config-path",
+        ])
+        .arg(&cfg)
+        .assert()
+        .success();
+    let item = read_item(&d, "GLP-0001");
+    assert!(
+        item.contains("tags: [sqlite, godot, csharp_export]\n"),
+        "{item}"
+    );
+
+    pwf()
+        .args([
+            "update",
+            "GLP-0001",
+            "--tags-clear",
+            "--tag",
+            "setup",
+            "--config-path",
+        ])
+        .arg(&cfg)
+        .assert()
+        .success();
+    let item = read_item(&d, "GLP-0001");
+    assert!(item.contains("tags: [setup]\n"), "{item}");
+    assert!(!item.contains("sqlite"), "{item}");
+}
+
+#[test]
+fn e2e_invalid_add_tag_names_raw_value_and_writes_nothing() {
+    let (d, cfg) = staged();
+    pwf()
+        .args([
+            "add",
+            "glep-shimeji",
+            "x",
+            "--tag",
+            "sqlite__export",
+            "--config-path",
+        ])
+        .arg(&cfg)
+        .assert()
+        .failure()
+        .stderr(contains("--tag").and(contains("sqlite__export")));
+    assert!(!d.path().join("notes/glep-shimeji/GLP-0002.md").exists());
+}
+
+#[test]
+fn e2e_invalid_add_leading_hyphen_tag_names_raw_value_and_writes_nothing() {
+    let (d, cfg) = staged();
+    pwf()
+        .args([
+            "add",
+            "glep-shimeji",
+            "x",
+            "--tag",
+            LEADING_HYPHEN_TAG,
+            "--config-path",
+        ])
+        .arg(&cfg)
+        .assert()
+        .failure()
+        .stderr(contains("--tag").and(contains(LEADING_HYPHEN_TAG)));
+    assert!(!d.path().join("notes/glep-shimeji/GLP-0002.md").exists());
+}
+
+#[test]
+fn e2e_invalid_update_leading_hyphen_tag_names_raw_value_and_writes_nothing() {
+    let (d, cfg) = staged();
+    let item_path = d.path().join("notes/glep-shimeji/GLP-0001.md");
+    let before = fs::read_to_string(&item_path).unwrap();
+    pwf()
+        .args([
+            "update",
+            "GLP-0001",
+            "--tag",
+            LEADING_HYPHEN_TAG,
+            "--config-path",
+        ])
+        .arg(&cfg)
+        .assert()
+        .failure()
+        .stderr(contains("--tag").and(contains(LEADING_HYPHEN_TAG)));
+    assert_eq!(fs::read_to_string(item_path).unwrap(), before);
+}
+
+#[test]
+fn e2e_update_tags_clear_is_idempotent_on_untagged_item() {
+    let (d, cfg) = staged();
+    pwf()
+        .args(["update", "GLP-0001", "--tags-clear", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .success();
+    assert!(!read_item(&d, "GLP-0001").contains("tags:"));
+}
+
+#[test]
+fn e2e_update_nothing_to_update_mentions_tag_flags() {
+    let (_d, cfg) = staged();
+    pwf()
+        .args(["update", "GLP-0001", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .failure()
+        .stderr(contains("--tag").and(contains("--tags-clear")));
+}
+
+#[test]
+fn e2e_update_closed_item_rejects_tag_edits_without_writing() {
+    let (d, cfg) = staged();
+    let project = d.path().join("notes/glep-shimeji");
+    fs::write(
+        project.join("glep-shimeji.md"),
+        "- [x] [[GLP-0001|tray gui]] ✅ 2026-01-02\n",
+    )
+    .unwrap();
+    let item_path = project.join("GLP-0001.md");
+    fs::write(
+        &item_path,
+        "---\nstatus: done\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\ncompleted: 2026-01-02\n---\n\nadd toggle\n",
+    )
+    .unwrap();
+    let before = fs::read_to_string(&item_path).unwrap();
+    pwf()
+        .args(["update", "GLP-0001", "--tag", "sqlite", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .failure()
+        .stderr(contains("tags").and(contains("open item")));
+    assert_eq!(fs::read_to_string(item_path).unwrap(), before);
 }
 
 /// Extract the `title: ` frontmatter value from an item file.

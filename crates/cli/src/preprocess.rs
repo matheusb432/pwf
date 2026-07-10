@@ -51,6 +51,7 @@ fn is_value_flag(flag: &str) -> bool {
             | "--project"
             | "--prompt"
             | "--prereq"
+            | "--tag"
             | "--commits"
             | "--title"
             | "--slug"
@@ -223,6 +224,14 @@ mod tests {
         assert_eq!(
             n(&["session", "--id", "PWF-0001", "--agent", "codex", "--yes"]),
             vec!["session", "--id", "PWF-0001", "--agent", "codex", "--yes"]
+        );
+    }
+
+    #[test]
+    fn tag_value_stays_with_its_flag_when_it_begins_with_punctuation() {
+        assert_eq!(
+            n(&["add", "pwf", "do", "x", "--tag", "_sqlite", "--human"]),
+            vec!["add", "--tag", "_sqlite", "--human", "pwf", "do", "x"]
         );
     }
 

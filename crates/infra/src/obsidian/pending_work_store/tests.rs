@@ -6,9 +6,9 @@ use pwf_application::{
     StatusTransitionDiagnostics, UpdateItemSpec,
 };
 use pwf_core::config::from_json;
-use pwf_domain::pending_work::OpenItem;
+use pwf_domain::pending_work::{OpenItem, Tags};
 
-use super::{ObsidianPendingWorkStore, fs::path_str};
+use super::{ObsidianPendingWorkStore, ObsidianPendingWorkStoreError, fs::path_str};
 
 #[test]
 fn open_items_matches_file_parser_metadata_for_normal_human_and_future_tasks() {
@@ -38,12 +38,14 @@ fn open_items_matches_file_parser_metadata_for_normal_human_and_future_tasks() {
         "2026-07-01",
         Some("\"[[CFG-0001]]\""),
         Some("2"),
+        Some("[sqlite, godot]"),
         "ship the adapter",
     );
     write_note(
         &project_dir.join("PWF-0002.md"),
         "human title",
         "2026-07-02",
+        None,
         None,
         None,
         "ask the human to verify",
@@ -54,6 +56,7 @@ fn open_items_matches_file_parser_metadata_for_normal_human_and_future_tasks() {
         "2026-07-03",
         None,
         Some("4"),
+        None,
         "follow up later",
     );
 
@@ -80,6 +83,7 @@ fn open_items_matches_file_parser_metadata_for_normal_human_and_future_tasks() {
                 section: None,
                 prereq: Some("\"[[CFG-0001]]\""),
                 effort: Some("2"),
+                tags: Some("[sqlite, godot]"),
                 created: Some("2026-07-01"),
             }),
             expected_item(&ItemExpectation {
@@ -92,6 +96,7 @@ fn open_items_matches_file_parser_metadata_for_normal_human_and_future_tasks() {
                 section: Some("Human"),
                 prereq: None,
                 effort: None,
+                tags: None,
                 created: Some("2026-07-02"),
             }),
             expected_item(&ItemExpectation {
@@ -104,9 +109,34 @@ fn open_items_matches_file_parser_metadata_for_normal_human_and_future_tasks() {
                 section: Some("Future"),
                 prereq: None,
                 effort: Some("4"),
+                tags: None,
                 created: Some("2026-07-03"),
             }),
         ]
+    );
+}
+
+#[test]
+fn open_items_retains_raw_tags_frontmatter() {
+    let temp = tempfile::tempdir().unwrap();
+    let notes_dir = temp.path().join("notes");
+    let project_dir = notes_dir.join("pwf");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    std::fs::write(project_dir.join("pwf.md"), "- [ ] [[PWF-0001]]\n").unwrap();
+    write_note(
+        &project_dir.join("PWF-0001.md"),
+        "tagged",
+        "2026-07-01",
+        None,
+        None,
+        Some("[SQLite, malformed-but-displayable]"),
+        "body",
+    );
+    let store = ObsidianPendingWorkStore::new(config_for_notes(&notes_dir));
+
+    assert_eq!(
+        store.open_items(None).unwrap()[0].tags.as_deref(),
+        Some("[SQLite, malformed-but-displayable]")
     );
 }
 
@@ -116,6 +146,7 @@ fn write_note(
     created: &str,
     prereq: Option<&str>,
     effort: Option<&str>,
+    tags: Option<&str>,
     body: &str,
 ) {
     let mut note =
@@ -125,6 +156,9 @@ fn write_note(
     }
     if let Some(effort) = effort {
         let _ = writeln!(note, "effort: {effort}");
+    }
+    if let Some(tags) = tags {
+        let _ = writeln!(note, "tags: {tags}");
     }
     let _ = write!(note, "---\n\n{body}\n");
     std::fs::write(path, note).unwrap();
@@ -140,6 +174,7 @@ struct ItemExpectation<'a> {
     section: Option<&'a str>,
     prereq: Option<&'a str>,
     effort: Option<&'a str>,
+    tags: Option<&'a str>,
     created: Option<&'a str>,
 }
 
@@ -164,6 +199,7 @@ fn expected_item(expectation: &ItemExpectation<'_>) -> OpenItem {
         section: expectation.section.map(str::to_string),
         prereq: expectation.prereq.map(str::to_string),
         effort: expectation.effort.map(str::to_string),
+        tags: expectation.tags.map(str::to_string),
         created: expectation.created.map(str::to_string),
     }
 }
@@ -184,6 +220,7 @@ fn add_item_creates_note_and_links_index() {
             section: Some("Human".to_string()),
             prereq: Some("[[PWF-0001]]".to_string()),
             effort: Some(2),
+            tags: None,
         })
         .unwrap();
 
@@ -200,6 +237,43 @@ fn add_item_creates_note_and_links_index() {
     assert!(note.contains("## Goals\n- Ship the adapter"), "{note}");
     let index = std::fs::read_to_string(notes_dir.join("pwf/pwf.md")).unwrap();
     assert_eq!(index, "\n\n## Human\n\n- [ ] [[PWF-0001]]\n");
+}
+
+#[test]
+fn add_item_writes_canonical_tags_and_omits_absent_tags() {
+    let temp = tempfile::tempdir().unwrap();
+    let notes_dir = temp.path().join("notes");
+    let store = ObsidianPendingWorkStore::new(config_for_notes(&notes_dir));
+    let tags = Tags::parse_values(&["SQLite,csharp-export".to_string()]).unwrap();
+    let tagged = store
+        .add_item(AddItemSpec {
+            project_name: "pwf".to_string(),
+            prompt: "tagged task".to_string(),
+            title: None,
+            created: "2026-07-07".to_string(),
+            section: None,
+            prereq: None,
+            effort: None,
+            tags: Some(tags),
+        })
+        .unwrap();
+    let note = std::fs::read_to_string(tagged.note_path).unwrap();
+    assert!(note.contains("tags: [sqlite, csharp_export]\n"), "{note}");
+
+    let untagged = store
+        .add_item(AddItemSpec {
+            project_name: "pwf".to_string(),
+            prompt: "untagged task".to_string(),
+            title: None,
+            created: "2026-07-07".to_string(),
+            section: None,
+            prereq: None,
+            effort: None,
+            tags: None,
+        })
+        .unwrap();
+    let note = std::fs::read_to_string(untagged.note_path).unwrap();
+    assert!(!note.contains("tags:"), "{note}");
 }
 
 #[test]
@@ -220,6 +294,7 @@ fn add_item_index_write_error_preserves_created_section_diagnostic() {
             section: Some("Human".to_string()),
             prereq: None,
             effort: None,
+            tags: None,
         })
         .unwrap_err();
 
@@ -244,12 +319,14 @@ fn update_item_rewrites_body_prereq_commits_effort_and_report() {
         "2026-07-01",
         None,
         None,
+        None,
         "already exists",
     );
     write_note(
         &project_dir.join("PWF-0002.md"),
         "old title",
         "2026-07-02",
+        None,
         None,
         None,
         "old body",
@@ -267,6 +344,8 @@ fn update_item_rewrites_body_prereq_commits_effort_and_report() {
             commits: Some("a..b".to_string()),
             append_report: Some("## Result\n\nDone.".to_string()),
             effort: Some(3),
+            tags: None,
+            tags_clear: false,
         })
         .unwrap();
 
@@ -294,6 +373,235 @@ fn update_item_rewrites_body_prereq_commits_effort_and_report() {
     );
 }
 
+fn tag_update(id: &str, tags: Option<Tags>, tags_clear: bool) -> UpdateItemSpec {
+    UpdateItemSpec {
+        id: id.to_string(),
+        prompt: None,
+        title: None,
+        append: None,
+        prereq: Vec::new(),
+        clear_prereq: false,
+        commits: None,
+        append_report: None,
+        effort: None,
+        tags,
+        tags_clear,
+    }
+}
+
+#[test]
+fn update_item_appends_deduplicated_tags() {
+    let (temp, store, item_path) = staged_open_item_with_tags("[sqlite, godot]");
+    let tags = Tags::parse_values(&["godot,csharp-export".to_string()]).unwrap();
+
+    store
+        .update_item(tag_update("PWF-0001", Some(tags), false))
+        .unwrap();
+
+    let note = std::fs::read_to_string(item_path).unwrap();
+    assert!(
+        note.contains("tags: [sqlite, godot, csharp_export]\n"),
+        "{note}"
+    );
+    assert_eq!(note.matches("tags:").count(), 1);
+    drop(temp);
+}
+
+#[test]
+fn update_item_append_adds_frontmatter_tags_without_rewriting_body_tags_line() {
+    let body = "tags: body-only value\nkeep this body byte-identical";
+    let (temp, store, item_path) = staged_open_item(None, body);
+    let tags = Tags::parse_values(&["SQLite".to_string()]).unwrap();
+
+    store
+        .update_item(tag_update("PWF-0001", Some(tags), false))
+        .unwrap();
+
+    let note = std::fs::read_to_string(item_path).unwrap();
+    assert_eq!(
+        note,
+        concat!(
+            "---\n",
+            "status: active\n",
+            "title: tagged\n",
+            "project: pwf\n",
+            "created: 2026-07-01\n",
+            "tags: [sqlite]\n",
+            "---\n\n",
+            "tags: body-only value\n",
+            "keep this body byte-identical\n",
+        )
+    );
+    drop(temp);
+}
+
+#[test]
+fn update_item_clear_preserves_body_tags_line_when_frontmatter_has_no_tags() {
+    let body = "tags: body-only value\nkeep this body byte-identical";
+    let (temp, store, item_path) = staged_open_item(None, body);
+    let before = std::fs::read_to_string(&item_path).unwrap();
+
+    store
+        .update_item(tag_update("PWF-0001", None, true))
+        .unwrap();
+
+    assert_eq!(std::fs::read_to_string(item_path).unwrap(), before);
+    drop(temp);
+}
+
+#[test]
+fn update_item_append_supports_bom_frontmatter_format() {
+    let before = formatted_tag_note(true, "\n", None);
+    let (temp, store, item_path) = staged_open_item_from_note(&before);
+    let tags = Tags::parse_values(&["SQLite".to_string()]).unwrap();
+
+    store
+        .update_item(tag_update("PWF-0001", Some(tags), false))
+        .unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(item_path).unwrap(),
+        formatted_tag_note(true, "\n", Some("[sqlite]"))
+    );
+    drop(temp);
+}
+
+#[test]
+fn update_item_clear_supports_bom_frontmatter_format() {
+    let before = formatted_tag_note(true, "\n", Some("[godot]"));
+    let (temp, store, item_path) = staged_open_item_from_note(&before);
+
+    store
+        .update_item(tag_update("PWF-0001", None, true))
+        .unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(item_path).unwrap(),
+        formatted_tag_note(true, "\n", None)
+    );
+    drop(temp);
+}
+
+#[test]
+fn update_item_append_supports_crlf_frontmatter_format() {
+    let before = formatted_tag_note(false, "\r\n", None);
+    let (temp, store, item_path) = staged_open_item_from_note(&before);
+    let tags = Tags::parse_values(&["SQLite".to_string()]).unwrap();
+
+    store
+        .update_item(tag_update("PWF-0001", Some(tags), false))
+        .unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(item_path).unwrap(),
+        formatted_tag_note(false, "\r\n", Some("[sqlite]"))
+    );
+    drop(temp);
+}
+
+#[test]
+fn update_item_clear_supports_crlf_frontmatter_format() {
+    let before = formatted_tag_note(false, "\r\n", Some("[godot]"));
+    let (temp, store, item_path) = staged_open_item_from_note(&before);
+
+    store
+        .update_item(tag_update("PWF-0001", None, true))
+        .unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(item_path).unwrap(),
+        formatted_tag_note(false, "\r\n", None)
+    );
+    drop(temp);
+}
+
+#[test]
+fn update_item_clear_removes_tags_and_clear_plus_tags_replaces() {
+    let (temp, store, item_path) = staged_open_item_with_tags("[godot, setup]");
+    store
+        .update_item(tag_update("PWF-0001", None, true))
+        .unwrap();
+    let note = std::fs::read_to_string(&item_path).unwrap();
+    assert!(!note.contains("tags:"), "{note}");
+
+    std::fs::write(
+        &item_path,
+        "---\nstatus: active\ntitle: tagged\nproject: pwf\ncreated: 2026-07-01\ntags: [godot, setup]\n---\n\nbody\n",
+    )
+    .unwrap();
+    let replacement = Tags::parse_values(&["SQLite".to_string()]).unwrap();
+    store
+        .update_item(tag_update("PWF-0001", Some(replacement), true))
+        .unwrap();
+    let note = std::fs::read_to_string(item_path).unwrap();
+    assert!(note.contains("tags: [sqlite]\n"), "{note}");
+    assert!(!note.contains("godot"), "{note}");
+    drop(temp);
+}
+
+#[test]
+fn update_item_clear_and_replace_do_not_parse_corrupt_existing_tags() {
+    let (temp, store, item_path) = staged_open_item_with_tags("sqlite, godot");
+    store
+        .update_item(tag_update("PWF-0001", None, true))
+        .unwrap();
+    let note = std::fs::read_to_string(&item_path).unwrap();
+    assert!(!note.contains("tags:"), "{note}");
+
+    std::fs::write(
+        &item_path,
+        "---\nstatus: active\ntitle: tagged\nproject: pwf\ncreated: 2026-07-01\ntags: still-corrupt\n---\n\nbody\n",
+    )
+    .unwrap();
+    let replacement = Tags::parse_values(&["SQLite".to_string()]).unwrap();
+    store
+        .update_item(tag_update("PWF-0001", Some(replacement), true))
+        .unwrap();
+    let note = std::fs::read_to_string(item_path).unwrap();
+    assert!(note.contains("tags: [sqlite]\n"), "{note}");
+    assert!(!note.contains("still-corrupt"), "{note}");
+    drop(temp);
+}
+
+#[test]
+fn update_item_rejects_corrupt_existing_tags_before_writing() {
+    let (_temp, store, item_path) = staged_open_item_with_tags("sqlite, godot");
+    let before = std::fs::read_to_string(&item_path).unwrap();
+    let tags = Tags::parse_values(&["sqlite".to_string()]).unwrap();
+
+    let error = store
+        .update_item(tag_update("PWF-0001", Some(tags), false))
+        .unwrap_err();
+
+    match error {
+        ObsidianPendingWorkStoreError::InvalidTagsFrontmatter { id, raw } => {
+            assert_eq!(id, "PWF-0001");
+            assert_eq!(raw, "sqlite, godot");
+        }
+        other => panic!("unexpected error: {other:?}"),
+    }
+    assert_eq!(std::fs::read_to_string(item_path).unwrap(), before);
+}
+
+#[test]
+fn update_item_rejects_empty_tags_frontmatter_before_writing() {
+    for raw in ["", "   "] {
+        let (_temp, store, item_path) = staged_open_item_with_tags(raw);
+        let before = std::fs::read_to_string(&item_path).unwrap();
+        let tags = Tags::parse_values(&["sqlite".to_string()]).unwrap();
+
+        let error = store
+            .update_item(tag_update("PWF-0001", Some(tags), false))
+            .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "item PWF-0001 has invalid tags frontmatter: \"\"."
+        );
+        assert_eq!(std::fs::read_to_string(item_path).unwrap(), before);
+    }
+}
+
 #[test]
 fn remove_item_deletes_note_and_unlinks_index() {
     let temp = tempfile::tempdir().unwrap();
@@ -305,6 +613,7 @@ fn remove_item_deletes_note_and_unlinks_index() {
         &project_dir.join("PWF-0001.md"),
         "stale task",
         "2026-07-01",
+        None,
         None,
         None,
         "remove me",
@@ -336,6 +645,7 @@ fn resolve_item_returns_open_note_path_from_active_index() {
         "2026-07-01",
         None,
         None,
+        None,
         "body",
     );
     let store = ObsidianPendingWorkStore::new(config_for_notes(&notes_dir));
@@ -359,6 +669,7 @@ fn resolve_item_show_returns_open_note_markdown_without_created_key() {
         &project_dir.join("PWF-0001.md"),
         "active task",
         "2026-07-01",
+        None,
         None,
         None,
         "## Goals\n- body",
@@ -551,6 +862,7 @@ fn complete_item_marks_active_file_item_done_with_report_and_commits() {
         "2026-07-01",
         None,
         None,
+        None,
         "body",
     );
     let store = ObsidianPendingWorkStore::new(config_for_notes(&notes_dir));
@@ -594,6 +906,7 @@ fn cancel_item_marks_active_file_item_cancelled_with_required_report() {
         &project_dir.join("PWF-0001.md"),
         "stop it",
         "2026-07-01",
+        None,
         None,
         None,
         "body",
@@ -656,6 +969,7 @@ fn complete_item_rotates_done_queue_and_archives_evicted_notes() {
         &project_dir.join("PWF-0007.md"),
         "new done",
         "2026-07-01",
+        None,
         None,
         None,
         "body",
@@ -797,6 +1111,61 @@ fn config_for_notes(notes_dir: &Path) -> pwf_core::config::Config {
         "prefixes": { "pwf": "PWF" }
     });
     from_json(&config_json.to_string(), None).unwrap()
+}
+
+fn staged_open_item_with_tags(
+    tags: &str,
+) -> (
+    tempfile::TempDir,
+    ObsidianPendingWorkStore,
+    std::path::PathBuf,
+) {
+    staged_open_item(Some(tags), "body")
+}
+
+fn staged_open_item(
+    tags: Option<&str>,
+    body: &str,
+) -> (
+    tempfile::TempDir,
+    ObsidianPendingWorkStore,
+    std::path::PathBuf,
+) {
+    let temp = tempfile::tempdir().unwrap();
+    let notes_dir = temp.path().join("notes");
+    let project_dir = notes_dir.join("pwf");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    std::fs::write(project_dir.join("pwf.md"), "- [ ] [[PWF-0001]]\n").unwrap();
+    let item_path = project_dir.join("PWF-0001.md");
+    write_note(&item_path, "tagged", "2026-07-01", None, None, tags, body);
+    let store = ObsidianPendingWorkStore::new(config_for_notes(&notes_dir));
+    (temp, store, item_path)
+}
+
+fn staged_open_item_from_note(
+    note: &str,
+) -> (
+    tempfile::TempDir,
+    ObsidianPendingWorkStore,
+    std::path::PathBuf,
+) {
+    let temp = tempfile::tempdir().unwrap();
+    let notes_dir = temp.path().join("notes");
+    let project_dir = notes_dir.join("pwf");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    std::fs::write(project_dir.join("pwf.md"), "- [ ] [[PWF-0001]]\n").unwrap();
+    let item_path = project_dir.join("PWF-0001.md");
+    std::fs::write(&item_path, note).unwrap();
+    let store = ObsidianPendingWorkStore::new(config_for_notes(&notes_dir));
+    (temp, store, item_path)
+}
+
+fn formatted_tag_note(bom: bool, newline: &str, tags: Option<&str>) -> String {
+    let bom = if bom { "\u{feff}" } else { "" };
+    let tags = tags.map_or_else(String::new, |tags| format!("tags: {tags}{newline}"));
+    format!(
+        "{bom}---{newline}status: active{newline}title: tagged{newline}project: pwf{newline}created: 2026-07-01{newline}{tags}---{newline}{newline}tags: body-only value{newline}keep this body byte-identical{newline}"
+    )
 }
 
 fn config_for_projects(notes_dir: &Path, projects: &[(&str, &str)]) -> pwf_core::config::Config {

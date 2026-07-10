@@ -2,6 +2,7 @@
 
 use cqrsy::Sender;
 use pwf_application::{GetPendingWork, GetPendingWorkError};
+use pwf_domain::pending_work::Tags;
 
 use super::{
     super::{errors::PendingWorkError, render::render_list},
@@ -217,6 +218,7 @@ pub(in crate::engines::pending_work) struct ListParams<'a> {
     pub scope: ListScope,
     pub number: Option<usize>,
     pub effort: Option<u8>,
+    pub tags: Option<&'a Tags>,
     pub order: OrderSpec,
     pub color_on: bool,
 }
@@ -233,6 +235,7 @@ pub(in crate::engines::pending_work) fn run_list_query(
             scope: params.scope.to_domain(),
             number: params.number,
             effort: params.effort,
+            tags: params.tags.cloned(),
             order: params.order.to_domain(),
         })
         .map_err(map_get_pending_work_error)?;
@@ -268,12 +271,17 @@ pub(in crate::engines::pending_work) fn map_get_pending_work_error(
                 PendingWorkError::ApplicationList(message)
             }
         }
+        invalid @ GetPendingWorkError::InvalidTags { .. } => {
+            PendingWorkError::ApplicationList(invalid.to_string())
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use std::assert_matches;
+
+    use pwf_domain::pending_work::Tags;
 
     use super::*;
     use crate::engines::pending_work::errors::PendingWorkError;
@@ -301,6 +309,7 @@ mod tests {
                 scope: ListScope::Default,
                 number: None,
                 effort: None,
+                tags: None,
                 order: OrderSpec::default(),
                 color_on: false,
             },
@@ -315,6 +324,22 @@ mod tests {
         assert_eq!(
             err.to_string(),
             format!("Notes directory not found: {missing}")
+        );
+    }
+
+    #[test]
+    fn invalid_application_tags_map_to_list_error() {
+        let error = GetPendingWorkError::InvalidTags {
+            id: "PWF-0001".to_string(),
+            source: Tags::parse_frontmatter("sqlite, godot").unwrap_err(),
+        };
+
+        let got = map_get_pending_work_error(error);
+
+        assert_matches!(got, PendingWorkError::ApplicationList(_));
+        assert_eq!(
+            got.to_string(),
+            "item PWF-0001 has invalid tags frontmatter: invalid tags frontmatter: \"sqlite, godot\""
         );
     }
 

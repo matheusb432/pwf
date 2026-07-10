@@ -161,9 +161,17 @@ pub(crate) enum PendingWorkError {
     },
     /// Update was invoked without any field mutations.
     #[error(
-        "nothing to update (pass --prompt, --title, --prereq, --clear-prereq, --commits, --append-report, --append, and/or --effort)."
+        "nothing to update (pass --prompt, --title, --prereq, --clear-prereq, --tag, --tags-clear, --commits, --append-report, --append, and/or --effort)."
     )]
     NothingToUpdate,
+    /// A tag flag value is not a valid discovery tag.
+    #[error(
+        "Invalid --tag value {raw:?}; use lowercase/uppercase ASCII letters, digits, '_' or '-', without leading, trailing, or repeated separators."
+    )]
+    InvalidTag {
+        /// The raw tag token supplied by the caller.
+        raw: String,
+    },
     /// A prereq flag value is not a canonical work-item id.
     #[error("Invalid --prereq id: {raw}.")]
     InvalidPrereqId {

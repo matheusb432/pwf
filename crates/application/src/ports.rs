@@ -1,4 +1,4 @@
-use pwf_domain::pending_work::{AddedItem, OpenItem, RemovedItem, UpdatedItem};
+use pwf_domain::pending_work::{AddedItem, OpenItem, RemovedItem, Tags, UpdatedItem};
 
 pub trait PendingWorkReadStore: Clone + Send + Sync + 'static {
     type Error: std::error::Error + Send + Sync + 'static;
@@ -32,6 +32,7 @@ pub struct AddItemSpec {
     pub section: Option<String>,
     pub prereq: Option<String>,
     pub effort: Option<u8>,
+    pub tags: Option<Tags>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,6 +46,8 @@ pub struct UpdateItemSpec {
     pub commits: Option<String>,
     pub append_report: Option<String>,
     pub effort: Option<u8>,
+    pub tags: Option<Tags>,
+    pub tags_clear: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

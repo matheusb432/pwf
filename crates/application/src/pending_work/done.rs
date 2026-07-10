@@ -67,6 +67,7 @@ where
                     section: Some("Human".to_string()),
                     prereq: None,
                     effort: None,
+                    tags: None,
                 })
                 .await
                 .map_err(|error| CompletePendingWorkError::ReviewTask(Box::new(error)))?;

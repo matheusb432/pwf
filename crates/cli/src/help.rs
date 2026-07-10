@@ -6,12 +6,12 @@
 // Tuned for AI agents driving the engine (the skills point them here, not at the
 // rich `--help`), so keep it token-lean.
 const PW_TERSE: &str = r"<project> [-n <N>] [--long|--future|--human|--all]   (routes to that project's open items; `pwf list` lists every project)
-  list [-n <N>] [--long] [--future] [--human] [--all] [-o/--order <created|id|project-id> <asc|desc>]   (--order default: created desc, flat across every project; --order project-id reproduces the pre-PWF-0096 project-grouped default)
-  add <project> <prompt>   prompt lanes: <title> / <goal> /c <context> /n <constraint> /d <done>; plus [--title] [--human] [--section <s>] [--prereq <id>] [--continue-handoff] [--continue <path>]
+  list [-n <N>] [--long] [--future] [--human] [--all] [--tag <tag>] [-o/--order <created|id|project-id> <asc|desc>]   (--order default: created desc, flat across every project; --order project-id reproduces the pre-PWF-0096 project-grouped default)
+  add <project> <prompt>   prompt lanes: <title> / <goal> /c <context> /n <constraint> /d <done>; plus [--title] [--human] [--section <s>] [--prereq <id>] [--tag <tag>] [--continue-handoff] [--continue <path>]
   done --id [--report] [--commits <range>] [--review]
   cancel --id --report [--commits <range>] [--review]
   reopen --id   (inverse of done/cancel: done|cancelled -> active)
-  update --id [--prompt] [--title] [--prereq <id>] [--clear-prereq] [--commits <range>] [--append-report <md>] [-a/--append <lanes>]   (--commits/--append-report also amend a closed item; -a/--append splices lane-syntax bullets into Goals/Context/Constraints/Done When, conflicts with --prompt)
+  update --id [--prompt] [--title] [--prereq <id>] [--clear-prereq] [--tag <tag>] [--tags-clear] [--commits <range>] [--append-report <md>] [-a/--append <lanes>]   (--commits/--append-report also amend a closed item; -a/--append splices lane-syntax bullets into Goals/Context/Constraints/Done When, conflicts with --prompt)
   resolve --id [--show]
   show <id>   (shorthand for resolve --show)
   session <id> [--agent claude|codex] [--model <name>] [-a/--append <lanes>] [-i] [-w] [--auto] [-y]   dispatch an agent into the project's zellij session, or inline in the current terminal with -i (--agent picks the agent, claude default; --model forwards a raw model override to the agent's own --model flag, no validation, wins over effort-tier resolution; -a/--append splices lane-syntax bullets into the body before dispatch, same as update; -w tells it to work in a git worktree named after the id; --auto runs it autonomously without prompting the user; -y skips the [Y/n] confirm)

@@ -1,5 +1,5 @@
 use cqrsy::Handler;
-use pwf_domain::pending_work::UpdatedItem;
+use pwf_domain::pending_work::{Tags, UpdatedItem};
 
 use crate::ports::{PendingWorkWriteStore, UpdateItemSpec};
 
@@ -15,6 +15,8 @@ pub struct UpdatePendingWorkItem {
     pub commits: Option<String>,
     pub append_report: Option<String>,
     pub effort: Option<u8>,
+    pub tags: Option<Tags>,
+    pub tags_clear: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -53,6 +55,8 @@ where
                 commits: req.commits,
                 append_report: req.append_report,
                 effort: req.effort,
+                tags: req.tags,
+                tags_clear: req.tags_clear,
             })
             .map_err(|error| UpdatePendingWorkError::WriteStore(Box::new(error)))
     }

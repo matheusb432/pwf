@@ -43,6 +43,8 @@ pub struct Args {
     pub prompt: Option<String>,
     pub prereq: Vec<String>,
     pub clear_prereq: bool,
+    pub tag: Vec<String>,
+    pub tags_clear: bool,
     // ? add: optional effort/complexity tier (1-4); update also reads it to gate
     // ? edits_body, list reads it as an exact-match filter.
     pub effort: Option<u8>,

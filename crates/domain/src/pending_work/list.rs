@@ -15,6 +15,7 @@ pub struct OpenItem {
     pub section: Option<String>,
     pub prereq: Option<String>,
     pub effort: Option<String>,
+    pub tags: Option<String>,
     pub created: Option<String>,
 }
 
@@ -100,6 +101,7 @@ mod tests {
                 section: Some("Human".to_string()),
                 prereq: Some("[[CFG-0001]]".to_string()),
                 effort: Some("2".to_string()),
+                tags: None,
                 created: Some("2026-07-06".to_string()),
             }],
             hidden: 3,

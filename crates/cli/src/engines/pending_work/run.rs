@@ -152,12 +152,14 @@ fn run_list(cfg: &Config, args: &Args) -> Result<EngineOutcome, errors::PendingW
     };
     let scope = ListScope::from_flags(args.human, args.future, args.all)?;
     let order = OrderSpec::from_tokens(&args.order)?;
+    let tags = super::tags::from_flags(&args.tag)?;
     let params = ListParams {
         only_project: only_project.as_deref(),
         long: args.long,
         scope,
         number: args.number,
         effort: args.effort,
+        tags: tags.as_ref(),
         order,
         color_on: use_color(args.color),
     };
@@ -234,6 +236,7 @@ fn build_add_command(
     args: &Args,
     date: &str,
 ) -> Result<AddPendingWorkItem, errors::PendingWorkError> {
+    let tags = super::tags::from_flags(&args.tag)?;
     let section = resolve_add_section(args)?;
     let prereq = super::prereq::frontmatter_from_flags(cfg, &args.prereq)?;
 
@@ -271,6 +274,7 @@ fn build_add_command(
         section: section.map(|section| section.as_str().to_string()),
         prereq,
         effort: args.effort,
+        tags,
     })
 }
 

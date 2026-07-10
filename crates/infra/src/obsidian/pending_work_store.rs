@@ -8,9 +8,8 @@ mod status;
 mod tests;
 mod write;
 
-use pwf_core::config::Config;
-
 pub use error::ObsidianPendingWorkStoreError;
+use pwf_core::config::Config;
 
 #[derive(Clone)]
 pub struct ObsidianPendingWorkStore {

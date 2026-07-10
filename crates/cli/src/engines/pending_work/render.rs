@@ -167,6 +167,9 @@ fn render_list_item(
     if let Some(e) = &item.effort {
         let _ = writeln!(out, "  effort: {e}");
     }
+    if let Some(tags) = &item.tags {
+        let _ = writeln!(out, "  tags: {tags}");
+    }
     for issue in &item.issues {
         let _ = writeln!(out, "  issue: {issue}");
     }
@@ -198,6 +201,7 @@ mod tests {
             section: None,
             prereq: None,
             effort: None,
+            tags: None,
             created: None,
         }
     }
@@ -248,6 +252,24 @@ mod tests {
         let mut out = String::new();
         render_list_item(&mut out, &sample_item(), &cfg, true, true, false);
         assert!(!out.contains("effort:"), "got: {out}");
+    }
+
+    #[test]
+    fn long_form_shows_raw_tags_line_when_present() {
+        let cfg = empty_cfg();
+        let mut item = sample_item();
+        item.tags = Some("[SQLite, hand-edited]".to_string());
+        let mut out = String::new();
+        render_list_item(&mut out, &item, &cfg, true, true, false);
+        assert!(out.contains("  tags: [SQLite, hand-edited]\n"), "{out}");
+    }
+
+    #[test]
+    fn long_form_omits_tags_line_when_absent() {
+        let cfg = empty_cfg();
+        let mut out = String::new();
+        render_list_item(&mut out, &sample_item(), &cfg, true, true, false);
+        assert!(!out.contains("tags:"), "{out}");
     }
 
     #[test]

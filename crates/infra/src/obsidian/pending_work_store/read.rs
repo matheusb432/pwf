@@ -118,6 +118,7 @@ fn parse_file_model_items(
         let mut prompt = String::new();
         let mut prereq = None;
         let mut effort = None;
+        let mut tags = None;
         let mut created = None;
 
         if let Some(raw) = load_item_note(&item_path) {
@@ -137,6 +138,7 @@ fn parse_file_model_items(
                 .get("effort")
                 .filter(|value| !value.trim().is_empty())
                 .cloned();
+            tags = parsed.frontmatter.get("tags").cloned();
             created = parsed
                 .frontmatter
                 .get("created")
@@ -171,6 +173,7 @@ fn parse_file_model_items(
             section: section_at(text, matched.start()),
             prereq,
             effort,
+            tags,
             created,
         });
     }
@@ -224,6 +227,7 @@ fn parse_legacy_items(project: &str, repo: Option<&str>, note: &str, text: &str)
                 section: section_at(text, item.start),
                 prereq: None,
                 effort: None,
+                tags: None,
                 created: None,
             }
         })

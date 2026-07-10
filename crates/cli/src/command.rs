@@ -136,6 +136,10 @@ pub enum PwAction {
         /// Prereq item id; repeat or comma-separate for several.
         #[arg(long)]
         prereq: Vec<String>,
+        /// Discovery tag; repeat or comma-separate for several. Input accepts `snake_case` or
+        /// kebab-case.
+        #[arg(long, allow_hyphen_values = true)]
+        tag: Vec<String>,
         /// Effort/complexity tier (1=easy .. 4=xhard); optional. Picks a Claude model
         /// via config/model-tiers.toml when the item is later dispatched with `pwf
         /// session` (codex ignores it).
@@ -168,6 +172,10 @@ pub enum PwAction {
         /// Show only items tagged with this exact effort/complexity tier (1-4).
         #[arg(long, value_parser = clap::value_parser!(u8).range(1..=4))]
         effort: Option<u8>,
+        /// Discovery tag filter; repeat or comma-separate for several. Every requested tag must
+        /// match.
+        #[arg(long, allow_hyphen_values = true)]
+        tag: Vec<String>,
         /// Sort key: field (created|id|project-id) and/or direction
         /// (asc|desc), each independently optional, in either order. Default:
         /// created desc, flat across every listed project. `project-id`
@@ -235,6 +243,13 @@ pub enum PwAction {
         /// Clear all prereqs on the item.
         #[arg(long, conflicts_with = "prereq")]
         clear_prereq: bool,
+        /// Discovery tag; repeat or comma-separate for several. Input accepts `snake_case` or
+        /// kebab-case.
+        #[arg(long, allow_hyphen_values = true)]
+        tag: Vec<String>,
+        /// Remove all tags before applying any supplied `--tag` values.
+        #[arg(long)]
+        tags_clear: bool,
         /// Overwrite the `commits:` provenance range(s) (repeat or comma-separate);
         /// works on closed done/cancelled items too.
         #[arg(long)]
@@ -765,6 +780,7 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             title,
             human,
             prereq,
+            tag,
             effort,
             common,
         } => {
@@ -776,6 +792,7 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             a.title = title;
             a.human = human;
             a.prereq = prereq;
+            a.tag = tag;
             a.effort = effort;
             apply_pw_common(a, common);
             PendingWorkAction::Add
@@ -788,6 +805,7 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             all,
             number,
             effort,
+            tag,
             order,
             common,
         } => {
@@ -798,6 +816,7 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             a.all = all;
             a.number = number;
             a.effort = effort;
+            a.tag = tag;
             a.order = order;
             apply_pw_common(a, common);
             PendingWorkAction::List
@@ -832,6 +851,8 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             title,
             prereq,
             clear_prereq,
+            tag,
+            tags_clear,
             commits,
             append_report,
             append,
@@ -843,6 +864,8 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             a.title = title;
             a.prereq = prereq;
             a.clear_prereq = clear_prereq;
+            a.tag = tag;
+            a.tags_clear = tags_clear;
             a.commits = commits;
             a.append_report = append_report;
             a.append = append;
@@ -1036,6 +1059,36 @@ mod tests {
         assert_eq!(engine, "pw");
         assert_eq!(args.action.as_deref(), Some("add"));
         assert_eq!(args.project.as_deref(), Some("glep-shimeji"));
+    }
+
+    #[test]
+    fn add_preserves_repeatable_tag_values_for_engine_normalization() {
+        let add = pw_args(&[
+            "add",
+            "pwf",
+            "x",
+            "--tag",
+            "SQLite,csharp-export",
+            "--tag",
+            "godot",
+        ]);
+
+        assert_eq!(add.tag, ["SQLite,csharp-export", "godot"]);
+    }
+
+    #[test]
+    fn list_preserves_repeatable_tag_values_for_engine_normalization() {
+        let list = pw_args(&["list", "--tag", "SQLite,godot", "--tag", "setup"]);
+
+        assert_eq!(list.tag, ["SQLite,godot", "setup"]);
+    }
+
+    #[test]
+    fn update_accepts_clear_plus_tag_as_replacement_form() {
+        let update = pw_args(&["update", "PWF-0001", "--tags-clear", "--tag", "sqlite"]);
+
+        assert!(update.tags_clear);
+        assert_eq!(update.tag, ["sqlite"]);
     }
 
     #[test]

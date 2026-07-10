@@ -47,13 +47,15 @@ pub enum ObsidianPendingWorkStoreError {
     #[error("Index link not found for {id}.")]
     IndexLinkNotFound { id: String },
     #[error(
-        "nothing to update (pass --prompt, --title, --prereq, --clear-prereq, --commits, --append-report, --append, and/or --effort)."
+        "nothing to update (pass --prompt, --title, --prereq, --clear-prereq, --tag, --tags-clear, --commits, --append-report, --append, and/or --effort)."
     )]
     NothingToUpdate,
     #[error(
-        "only --commits / --append-report can amend closed item {id} (done/cancelled); body/title/prereq need an open item."
+        "only --commits / --append-report can amend closed item {id} (done/cancelled); body/title/prereq/tags/append/effort need an open item."
     )]
     ClosedItemAmendOnly { id: String },
+    #[error("item {id} has invalid tags frontmatter: {raw:?}.")]
+    InvalidTagsFrontmatter { id: String, raw: String },
     #[error("Invalid --prereq id: {raw}.")]
     InvalidPrereqId { raw: String },
     #[error("--prereq requires an id.")]
