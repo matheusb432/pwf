@@ -212,8 +212,8 @@ checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 
 [[package]]
 name = "cqrsy"
-version = "0.3.0"
-source = "git+ssh://git@github.com/matheusb432/cqrsy.git?tag=v0.3.0#a6ec57886bf6dc7405a32011c146bc6d510eb1eb"
+version = "0.7.0"
+source = "git+ssh://git@github.com/matheusb432/cqrsy.git?tag=v0.7.0#f4e522add942cf1a8286ab8cbc0ce3c2901271a9"
 dependencies = [
  "cqrsy-core",
  "cqrsy-macros",
@@ -221,13 +221,13 @@ dependencies = [
 
 [[package]]
 name = "cqrsy-core"
-version = "0.3.0"
-source = "git+ssh://git@github.com/matheusb432/cqrsy.git?tag=v0.3.0#a6ec57886bf6dc7405a32011c146bc6d510eb1eb"
+version = "0.7.0"
+source = "git+ssh://git@github.com/matheusb432/cqrsy.git?tag=v0.7.0#f4e522add942cf1a8286ab8cbc0ce3c2901271a9"
 
 [[package]]
 name = "cqrsy-macros"
-version = "0.3.0"
-source = "git+ssh://git@github.com/matheusb432/cqrsy.git?tag=v0.3.0#a6ec57886bf6dc7405a32011c146bc6d510eb1eb"
+version = "0.7.0"
+source = "git+ssh://git@github.com/matheusb432/cqrsy.git?tag=v0.7.0#f4e522add942cf1a8286ab8cbc0ce3c2901271a9"
 dependencies = [
  "proc-macro2",
  "quote",

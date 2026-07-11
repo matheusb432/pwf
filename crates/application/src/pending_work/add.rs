@@ -1,10 +1,8 @@
-use cqrsy::Handler;
 use pwf_domain::pending_work::{AddedItem, Tags};
 
 use crate::ports::{AddItemSpec, PendingWorkWriteStore};
 
-#[derive(Debug, Clone, cqrsy::Command)]
-#[command(out = pwf_domain::pending_work::AddedItem, err = AddPendingWorkError)]
+#[derive(Debug, Clone)]
 pub struct AddPendingWorkItem {
     pub project_name: String,
     pub prompt: String,
@@ -22,33 +20,21 @@ pub enum AddPendingWorkError {
     WriteStore(Box<dyn std::error::Error + Send + Sync>),
 }
 
-#[derive(Debug, Clone)]
-pub struct AddPendingWorkItemHandler<S> {
-    store: S,
-}
-
-impl<S> AddPendingWorkItemHandler<S> {
-    pub fn new(store: S) -> Self {
-        Self { store }
-    }
-}
-
-impl<S> Handler<AddPendingWorkItem> for AddPendingWorkItemHandler<S>
-where
-    S: PendingWorkWriteStore,
-{
-    async fn handle(&self, req: AddPendingWorkItem) -> Result<AddedItem, AddPendingWorkError> {
-        self.store
-            .add_item(AddItemSpec {
-                project_name: req.project_name,
-                prompt: req.prompt,
-                title: req.title,
-                created: req.created,
-                section: req.section,
-                prereq: req.prereq,
-                effort: req.effort,
-                tags: req.tags,
-            })
-            .map_err(|error| AddPendingWorkError::WriteStore(Box::new(error)))
-    }
+#[cqrsy::handler(command)]
+pub fn handle(
+    store: &impl PendingWorkWriteStore,
+    cmd: AddPendingWorkItem,
+) -> Result<AddedItem, AddPendingWorkError> {
+    store
+        .add_item(AddItemSpec {
+            project_name: cmd.project_name,
+            prompt: cmd.prompt,
+            title: cmd.title,
+            created: cmd.created,
+            section: cmd.section,
+            prereq: cmd.prereq,
+            effort: cmd.effort,
+            tags: cmd.tags,
+        })
+        .map_err(|error| AddPendingWorkError::WriteStore(Box::new(error)))
 }

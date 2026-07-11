@@ -4,7 +4,7 @@ default-members = ["crates/cli"]
 resolver = "2"
 
 [workspace.dependencies]
-cqrsy = { git = "ssh://git@github.com/matheusb432/cqrsy.git", tag = "v0.3.0" }
+cqrsy = { git = "ssh://git@github.com/matheusb432/cqrsy.git", tag = "v0.7.0" }
 
 # Real delta over clippy defaults is `pedantic = warn`; group levels sit low so per-lint overrides win.
 [workspace.lints.clippy]

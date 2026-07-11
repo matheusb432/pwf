@@ -37,19 +37,16 @@ pub(in crate::engines::pending_work) fn run_done(
     )?;
     let store = ObsidianPendingWorkStore::new(cfg.clone());
     let add_sender = ReviewAddSender::new(store.clone());
-    let handler = CompletePendingWorkHandler::new(store, add_sender);
-    let output = cqrsy::send_now(
-        &(),
-        &handler,
-        CompletePendingWork {
+    let handler = CompletePendingWorkHandler { store, add_sender };
+    let output = handler
+        .send_now(CompletePendingWork {
             id: id.to_string(),
             completed,
             report: args.report.clone(),
             commits: args.commits.clone(),
             review: args.review,
-        },
-    )
-    .map_err(map_complete_error)?;
+        })
+        .map_err(map_complete_error)?;
     emit_status_diagnostics(&output);
     mirror_commit_and_append(output.text, gate, pending, "archived")
 }
@@ -83,8 +80,8 @@ pub(in crate::engines::pending_work) fn run_cancel(
     .map_err(map_cancel_error)?;
     let store = ObsidianPendingWorkStore::new(cfg.clone());
     let add_sender = ReviewAddSender::new(store.clone());
-    let handler = CancelPendingWorkHandler::new(store, add_sender);
-    let output = cqrsy::send_now(&(), &handler, command).map_err(map_cancel_error)?;
+    let handler = CancelPendingWorkHandler { store, add_sender };
+    let output = handler.send_now(command).map_err(map_cancel_error)?;
     emit_status_diagnostics(&output);
     mirror_commit_and_append(output.text, gate, pending, "archived")
 }
@@ -147,14 +144,14 @@ struct ReviewAddSender {
 impl ReviewAddSender {
     fn new(store: ObsidianPendingWorkStore) -> Self {
         Self {
-            handler: AddPendingWorkItemHandler::new(store),
+            handler: AddPendingWorkItemHandler { store },
         }
     }
 }
 
 impl Sender<AddPendingWorkItem> for ReviewAddSender {
     async fn send(&self, req: AddPendingWorkItem) -> Result<AddedItem, AddPendingWorkError> {
-        let result = cqrsy::send(&(), &self.handler, req).await;
+        let result = self.handler.send(req).await;
         match &result {
             Ok(added) => emit_created_section_diagnostic(added),
             Err(error) => emit_created_section_diagnostic_for_error(error),

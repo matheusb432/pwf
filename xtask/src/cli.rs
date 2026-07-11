@@ -24,8 +24,6 @@ pub(crate) enum Command {
     FmtCheck,
     /// Apply Clippy's machine-applicable lint fixes, then reformat.
     Fix(FixArgs),
-    /// Report production Rust error-handling smells (read-only; non-zero on hits).
-    SmellCheckErrors,
     /// Run the test suite (terse). `--verbose` streams logs; `--scope unit|e2e|all` (or
     /// `--e2e`/`--all`).
     Test(TestArgs),

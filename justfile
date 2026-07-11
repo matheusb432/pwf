@@ -30,10 +30,6 @@ fmt-check:
 fix *args:
     @just pwf fix {{ args }}
 
-# Report production Rust error-handling smells.
-smell-check-errors:
-    @just pwf smell-check-errors
-
 # Test gate. Default: slim unit+integration. --e2e: binary suites. --all: both. --verbose: full output.
 test *flags:
     @just pwf test {{ flags }}

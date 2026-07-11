@@ -5,7 +5,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use cqrsy::send_now;
+use cqrsy::Sender;
 use pwf_application::{
     AddItemSpec, AddPendingWorkError, AddPendingWorkItem, AddPendingWorkItemHandler,
     CancelItemSpec, CancelPendingWork, CancelPendingWorkError, CancelPendingWorkHandler,
@@ -16,6 +16,16 @@ use pwf_application::{
     UpdatePendingWorkError, UpdatePendingWorkItem, UpdatePendingWorkItemHandler,
 };
 use pwf_domain::pending_work::{AddedItem, RemovedItem, Tags, UpdatedItem};
+
+/// Sync dispatch shim: drive a fused handler through its blanket `Sender` on
+/// the tested path, keeping each case focused on the request/outcome.
+fn send_now<R, H>(handler: &H, req: R) -> R::Outcome
+where
+    R: cqrsy::Request,
+    H: Sender<R>,
+{
+    handler.send_now(req)
+}
 
 #[derive(Clone, Default)]
 struct RecordingWriteStore {
@@ -172,12 +182,9 @@ impl PendingWorkWriteStore for RecordingWriteStore {
     }
 }
 
-#[derive(Clone, cqrsy::Mediator)]
-struct RecordingAddSender {
-    #[handles(pwf_application::AddPendingWorkItem)]
-    handler: RecordingAddHandler,
-}
-
+/// Test add-sender double: a bare `Handler<AddPendingWorkItem>`, which is
+/// directly a `Sender<AddPendingWorkItem>` through cqrsy's blanket impl, so
+/// it drops straight into a fused handler's `add_sender` dependency.
 #[derive(Clone, Default)]
 struct RecordingAddHandler {
     state: Arc<Mutex<RecordingAddState>>,
@@ -189,21 +196,15 @@ struct RecordingAddState {
     fail: bool,
 }
 
-impl RecordingAddSender {
-    fn default() -> Self {
-        Self {
-            handler: RecordingAddHandler::default(),
-        }
-    }
-
+impl RecordingAddHandler {
     fn failing() -> Self {
-        let sender = Self::default();
-        sender.handler.state.lock().unwrap().fail = true;
-        sender
+        let handler = Self::default();
+        handler.state.lock().unwrap().fail = true;
+        handler
     }
 
     fn commands(&self) -> Vec<AddPendingWorkItem> {
-        self.handler.state.lock().unwrap().commands.clone()
+        self.state.lock().unwrap().commands.clone()
     }
 }
 
@@ -227,11 +228,12 @@ impl cqrsy::Handler<AddPendingWorkItem> for RecordingAddHandler {
 #[test]
 fn add_command_forwards_spec_to_write_store() {
     let store = RecordingWriteStore::default();
-    let handler = AddPendingWorkItemHandler::new(store.clone());
+    let handler = AddPendingWorkItemHandler {
+        store: store.clone(),
+    };
     let tags = Tags::parse_values(&["SQLite,csharp-export".to_string()]).unwrap();
 
     let got = send_now(
-        &(),
         &handler,
         AddPendingWorkItem {
             project_name: "pwf".to_string(),
@@ -265,10 +267,11 @@ fn add_command_forwards_spec_to_write_store() {
 
 #[test]
 fn add_command_maps_store_error() {
-    let handler = AddPendingWorkItemHandler::new(RecordingWriteStore::failing());
+    let handler = AddPendingWorkItemHandler {
+        store: RecordingWriteStore::failing(),
+    };
 
     let err = send_now(
-        &(),
         &handler,
         AddPendingWorkItem {
             project_name: "pwf".to_string(),
@@ -290,11 +293,12 @@ fn add_command_maps_store_error() {
 #[test]
 fn update_command_forwards_spec_to_write_store() {
     let store = RecordingWriteStore::default();
-    let handler = UpdatePendingWorkItemHandler::new(store.clone());
+    let handler = UpdatePendingWorkItemHandler {
+        store: store.clone(),
+    };
     let tags = Tags::parse_values(&["SQLite,csharp-export".to_string()]).unwrap();
 
     let got = send_now(
-        &(),
         &handler,
         UpdatePendingWorkItem {
             id: "pwf-7".to_string(),
@@ -342,10 +346,11 @@ fn update_command_forwards_spec_to_write_store() {
 
 #[test]
 fn update_command_maps_store_error() {
-    let handler = UpdatePendingWorkItemHandler::new(RecordingWriteStore::failing());
+    let handler = UpdatePendingWorkItemHandler {
+        store: RecordingWriteStore::failing(),
+    };
 
     let err = send_now(
-        &(),
         &handler,
         UpdatePendingWorkItem {
             id: "PWF-0007".to_string(),
@@ -370,10 +375,11 @@ fn update_command_maps_store_error() {
 #[test]
 fn remove_command_forwards_id_to_write_store() {
     let store = RecordingWriteStore::default();
-    let handler = RemovePendingWorkItemHandler::new(store.clone());
+    let handler = RemovePendingWorkItemHandler {
+        store: store.clone(),
+    };
 
     let got = send_now(
-        &(),
         &handler,
         RemovePendingWorkItem {
             id: "PWF-0007".to_string(),
@@ -387,10 +393,11 @@ fn remove_command_forwards_id_to_write_store() {
 
 #[test]
 fn remove_command_maps_store_error() {
-    let handler = RemovePendingWorkItemHandler::new(RecordingWriteStore::failing());
+    let handler = RemovePendingWorkItemHandler {
+        store: RecordingWriteStore::failing(),
+    };
 
     let err = send_now(
-        &(),
         &handler,
         RemovePendingWorkItem {
             id: "PWF-0007".to_string(),
@@ -405,11 +412,13 @@ fn remove_command_maps_store_error() {
 #[test]
 fn complete_command_forwards_spec_to_write_store() {
     let store = RecordingWriteStore::default();
-    let add_sender = RecordingAddSender::default();
-    let handler = CompletePendingWorkHandler::new(store.clone(), add_sender);
+    let add_sender = RecordingAddHandler::default();
+    let handler = CompletePendingWorkHandler {
+        store: store.clone(),
+        add_sender,
+    };
 
     let got = send_now(
-        &(),
         &handler,
         CompletePendingWork {
             id: "PWF-0007".to_string(),
@@ -436,11 +445,13 @@ fn complete_command_forwards_spec_to_write_store() {
 #[test]
 fn complete_command_creates_review_task_through_add_sender() {
     let store = RecordingWriteStore::default();
-    let add_sender = RecordingAddSender::default();
-    let handler = CompletePendingWorkHandler::new(store, add_sender.clone());
+    let add_sender = RecordingAddHandler::default();
+    let handler = CompletePendingWorkHandler {
+        store,
+        add_sender: add_sender.clone(),
+    };
 
     let got = send_now(
-        &(),
         &handler,
         CompletePendingWork {
             id: "pwf-7".to_string(),
@@ -473,11 +484,13 @@ fn complete_command_creates_review_task_through_add_sender() {
 #[test]
 fn cancel_command_review_uses_canonical_id_and_bare_diff_without_commits() {
     let store = RecordingWriteStore::default();
-    let add_sender = RecordingAddSender::default();
-    let handler = CancelPendingWorkHandler::new(store, add_sender.clone());
+    let add_sender = RecordingAddHandler::default();
+    let handler = CancelPendingWorkHandler {
+        store,
+        add_sender: add_sender.clone(),
+    };
 
     send_now(
-        &(),
         &handler,
         CancelPendingWork::new(
             "pwf-7".to_string(),
@@ -500,13 +513,12 @@ fn cancel_command_review_uses_canonical_id_and_bare_diff_without_commits() {
 
 #[test]
 fn complete_command_maps_store_and_review_add_errors() {
-    let failing_store_handler = CompletePendingWorkHandler::new(
-        RecordingWriteStore::failing(),
-        RecordingAddSender::default(),
-    );
+    let failing_store_handler = CompletePendingWorkHandler {
+        store: RecordingWriteStore::failing(),
+        add_sender: RecordingAddHandler::default(),
+    };
 
     let err = send_now(
-        &(),
         &failing_store_handler,
         CompletePendingWork {
             id: "PWF-0007".to_string(),
@@ -521,13 +533,12 @@ fn complete_command_maps_store_and_review_add_errors() {
     assert!(matches!(err, CompletePendingWorkError::WriteStore(_)));
     assert_eq!(err.to_string(), "fake store failed");
 
-    let failing_review_handler = CompletePendingWorkHandler::new(
-        RecordingWriteStore::default(),
-        RecordingAddSender::failing(),
-    );
+    let failing_review_handler = CompletePendingWorkHandler {
+        store: RecordingWriteStore::default(),
+        add_sender: RecordingAddHandler::failing(),
+    };
 
     let err = send_now(
-        &(),
         &failing_review_handler,
         CompletePendingWork {
             id: "PWF-0007".to_string(),
@@ -561,11 +572,13 @@ fn cancel_command_requires_non_empty_report_before_send() {
 #[test]
 fn cancel_command_forwards_spec_and_can_create_review_task() {
     let store = RecordingWriteStore::default();
-    let add_sender = RecordingAddSender::default();
-    let handler = CancelPendingWorkHandler::new(store.clone(), add_sender.clone());
+    let add_sender = RecordingAddHandler::default();
+    let handler = CancelPendingWorkHandler {
+        store: store.clone(),
+        add_sender: add_sender.clone(),
+    };
 
     let got = send_now(
-        &(),
         &handler,
         CancelPendingWork::new(
             "PWF-0007".to_string(),
@@ -600,10 +613,11 @@ fn cancel_command_forwards_spec_and_can_create_review_task() {
 #[test]
 fn reopen_command_forwards_id_and_renders_skip_text() {
     let store = RecordingWriteStore::default();
-    let handler = ReopenPendingWorkHandler::new(store.clone());
+    let handler = ReopenPendingWorkHandler {
+        store: store.clone(),
+    };
 
     let got = send_now(
-        &(),
         &handler,
         ReopenPendingWork {
             id: "PWF-0007".to_string(),
@@ -627,10 +641,11 @@ fn reopen_command_forwards_id_and_renders_skip_text() {
 
 #[test]
 fn reopen_command_maps_store_error() {
-    let handler = ReopenPendingWorkHandler::new(RecordingWriteStore::failing());
+    let handler = ReopenPendingWorkHandler {
+        store: RecordingWriteStore::failing(),
+    };
 
     let err = send_now(
-        &(),
         &handler,
         ReopenPendingWork {
             id: "PWF-0007".to_string(),

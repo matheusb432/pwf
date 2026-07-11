@@ -50,14 +50,6 @@ fn test_rejects_an_unknown_scope() {
 }
 
 #[test]
-fn smell_check_is_a_known_verb() {
-    xtask()
-        .args(["smell-check-errors", "--help"])
-        .assert()
-        .success();
-}
-
-#[test]
 fn install_and_update_are_known_verbs() {
     xtask().args(["install", "--help"]).assert().success();
     xtask()

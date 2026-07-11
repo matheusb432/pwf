@@ -26,15 +26,7 @@ fn justfile_forwards_logic_to_the_xtask_crate() {
         pwf.contains("set working-directory := '..'"),
         "pwf module should run recipes from the repo root"
     );
-    for verb in [
-        "fmt",
-        "fmt-check",
-        "fix",
-        "test",
-        "smell-check-errors",
-        "install",
-        "update",
-    ] {
+    for verb in ["fmt", "fmt-check", "fix", "test", "install", "update"] {
         let forwarded =
             pwf.contains(&format!("-- {verb}\n")) || pwf.contains(&format!("-- {verb} "));
         assert!(

@@ -1,9 +1,6 @@
-use cqrsy::Handler;
-
 use crate::ports::{PendingWorkResolveStore, ResolvePendingWorkOutput};
 
-#[derive(Debug, Clone, cqrsy::Query)]
-#[query(out = ResolvePendingWorkOutput, err = ResolvePendingWorkError)]
+#[derive(Debug, Clone)]
 pub struct ResolvePendingWorkItem {
     pub id: String,
     pub show: bool,
@@ -13,17 +10,6 @@ pub struct ResolvePendingWorkItem {
 pub enum ResolvePendingWorkError {
     #[error("{0}")]
     ReadStore(Box<dyn std::error::Error + Send + Sync>),
-}
-
-#[derive(Debug, Clone)]
-pub struct ResolvePendingWorkHandler<S> {
-    store: S,
-}
-
-impl<S> ResolvePendingWorkHandler<S> {
-    pub fn new(store: S) -> Self {
-        Self { store }
-    }
 }
 
 pub(crate) fn resolve_from_store<S>(
@@ -39,14 +25,10 @@ where
         .map_err(|error| ResolvePendingWorkError::ReadStore(Box::new(error)))
 }
 
-impl<S> Handler<ResolvePendingWorkItem> for ResolvePendingWorkHandler<S>
-where
-    S: PendingWorkResolveStore,
-{
-    async fn handle(
-        &self,
-        req: ResolvePendingWorkItem,
-    ) -> Result<ResolvePendingWorkOutput, ResolvePendingWorkError> {
-        resolve_from_store(&self.store, &req.id, req.show)
-    }
+#[cqrsy::handler(query)]
+pub fn handle(
+    store: &impl PendingWorkResolveStore,
+    query: ResolvePendingWorkItem,
+) -> Result<ResolvePendingWorkOutput, ResolvePendingWorkError> {
+    resolve_from_store(store, &query.id, query.show)
 }

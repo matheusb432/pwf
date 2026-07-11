@@ -1,6 +1,6 @@
 // Action: update.
 
-use cqrsy::send_now;
+use cqrsy::Sender;
 use pwf_application::{UpdatePendingWorkItem, UpdatePendingWorkItemHandler};
 use pwf_infra::obsidian::ObsidianPendingWorkStore;
 
@@ -32,11 +32,11 @@ pub(in crate::engines::pending_work) fn run_update(
         return Err(PendingWorkError::NothingToUpdate);
     }
 
-    let handler = UpdatePendingWorkItemHandler::new(ObsidianPendingWorkStore::new(cfg.clone()));
-    send_now(
-        &(),
-        &handler,
-        UpdatePendingWorkItem {
+    let handler = UpdatePendingWorkItemHandler {
+        store: ObsidianPendingWorkStore::new(cfg.clone()),
+    };
+    handler
+        .send_now(UpdatePendingWorkItem {
             id: id.to_string(),
             prompt: args.prompt.clone(),
             title: args.title.clone(),
@@ -48,9 +48,8 @@ pub(in crate::engines::pending_work) fn run_update(
             effort: args.effort,
             tags,
             tags_clear: args.tags_clear,
-        },
-    )
-    .map_err(|error| PendingWorkError::ApplicationWrite(error.to_string()))
+        })
+        .map_err(|error| PendingWorkError::ApplicationWrite(error.to_string()))
 }
 
 #[cfg(test)]

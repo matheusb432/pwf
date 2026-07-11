@@ -7,9 +7,10 @@ pub use pending_work::{
     CompletePendingWorkError, CompletePendingWorkHandler, GetPendingWork, GetPendingWorkError,
     GetPendingWorkHandler, RemovePendingWorkError, RemovePendingWorkItem,
     RemovePendingWorkItemHandler, ReopenPendingWork, ReopenPendingWorkError,
-    ReopenPendingWorkHandler, ResolvePendingWorkError, ResolvePendingWorkHandler,
-    ResolvePendingWorkItem, ShowPendingWorkError, ShowPendingWorkHandler, ShowPendingWorkItem,
-    UpdatePendingWorkError, UpdatePendingWorkItem, UpdatePendingWorkItemHandler,
+    ReopenPendingWorkHandler, ResolvePendingWorkError, ResolvePendingWorkItem,
+    ResolvePendingWorkItemHandler, ShowPendingWorkError, ShowPendingWorkItem,
+    ShowPendingWorkItemHandler, UpdatePendingWorkError, UpdatePendingWorkItem,
+    UpdatePendingWorkItemHandler,
 };
 pub use ports::{
     AddItemSpec, CancelItemSpec, ClosedItem, ClosedItemAction, CompleteItemSpec,

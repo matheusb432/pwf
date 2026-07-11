@@ -1,9 +1,6 @@
-use cqrsy::Handler;
-
 use crate::ports::PendingWorkWriteStore;
 
-#[derive(Debug, Clone, cqrsy::Command)]
-#[command(out = String, err = ReopenPendingWorkError)]
+#[derive(Debug, Clone)]
 pub struct ReopenPendingWork {
     pub id: String,
 }
@@ -14,25 +11,13 @@ pub enum ReopenPendingWorkError {
     WriteStore(Box<dyn std::error::Error + Send + Sync>),
 }
 
-#[derive(Debug, Clone)]
-pub struct ReopenPendingWorkHandler<S> {
-    store: S,
-}
-
-impl<S> ReopenPendingWorkHandler<S> {
-    pub fn new(store: S) -> Self {
-        Self { store }
-    }
-}
-
-impl<S> Handler<ReopenPendingWork> for ReopenPendingWorkHandler<S>
-where
-    S: PendingWorkWriteStore,
-{
-    async fn handle(&self, req: ReopenPendingWork) -> Result<String, ReopenPendingWorkError> {
-        self.store
-            .reopen_item(&req.id)
-            .map(|item| item.to_output_text())
-            .map_err(|error| ReopenPendingWorkError::WriteStore(Box::new(error)))
-    }
+#[cqrsy::handler(command)]
+pub fn handle(
+    store: &impl PendingWorkWriteStore,
+    cmd: ReopenPendingWork,
+) -> Result<String, ReopenPendingWorkError> {
+    store
+        .reopen_item(&cmd.id)
+        .map(|item| item.to_output_text())
+        .map_err(|error| ReopenPendingWorkError::WriteStore(Box::new(error)))
 }

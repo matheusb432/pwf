@@ -4,11 +4,22 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use cqrsy::send_now;
+use cqrsy::Sender;
 use pwf_application::{
-    PendingWorkResolveStore, ResolvePendingWorkError, ResolvePendingWorkHandler,
-    ResolvePendingWorkItem, ResolvePendingWorkOutput, ShowPendingWorkHandler, ShowPendingWorkItem,
+    PendingWorkResolveStore, ResolvePendingWorkError, ResolvePendingWorkItem,
+    ResolvePendingWorkItemHandler, ResolvePendingWorkOutput, ShowPendingWorkItem,
+    ShowPendingWorkItemHandler,
 };
+
+/// Sync dispatch shim: drive a fused handler through its blanket `Sender` on
+/// the tested path, keeping each case focused on the request/outcome.
+fn send_now<R, H>(handler: &H, req: R) -> R::Outcome
+where
+    R: cqrsy::Request,
+    H: Sender<R>,
+{
+    handler.send_now(req)
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ResolveCall {
@@ -73,10 +84,11 @@ impl PendingWorkResolveStore for RecordingResolveStore {
 #[test]
 fn resolve_query_forwards_id_and_show_flag_to_store() {
     let store = RecordingResolveStore::default();
-    let handler = ResolvePendingWorkHandler::new(store.clone());
+    let handler = ResolvePendingWorkItemHandler {
+        store: store.clone(),
+    };
 
     let got = send_now(
-        &(),
         &handler,
         ResolvePendingWorkItem {
             id: "pwf-7".to_string(),
@@ -100,10 +112,11 @@ fn resolve_query_forwards_id_and_show_flag_to_store() {
 
 #[test]
 fn resolve_query_maps_store_error() {
-    let handler = ResolvePendingWorkHandler::new(RecordingResolveStore::failing());
+    let handler = ResolvePendingWorkItemHandler {
+        store: RecordingResolveStore::failing(),
+    };
 
     let err = send_now(
-        &(),
         &handler,
         ResolvePendingWorkItem {
             id: "PWF-0007".to_string(),
@@ -119,10 +132,11 @@ fn resolve_query_maps_store_error() {
 #[test]
 fn show_query_uses_markdown_resolution_path() {
     let store = RecordingResolveStore::default();
-    let handler = ShowPendingWorkHandler::new(store.clone());
+    let handler = ShowPendingWorkItemHandler {
+        store: store.clone(),
+    };
 
     let got = send_now(
-        &(),
         &handler,
         ShowPendingWorkItem {
             id: "pwf-8".to_string(),

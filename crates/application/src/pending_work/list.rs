@@ -1,4 +1,3 @@
-use cqrsy::Handler;
 use pwf_domain::pending_work::{
     ListResult, ListScope, OpenItem, OrderDirection, OrderField, OrderSpec, ParseTagsError, Tags,
 };
@@ -7,8 +6,7 @@ use crate::ports::PendingWorkReadStore;
 
 const DEFAULT_LIST_CAP: usize = 10;
 
-#[derive(Debug, Clone, cqrsy::Query)]
-#[query(out = pwf_domain::pending_work::ListResult, err = GetPendingWorkError)]
+#[derive(Debug, Clone)]
 pub struct GetPendingWork {
     pub only_project: Option<String>,
     pub scope: ListScope,
@@ -30,59 +28,46 @@ pub enum GetPendingWorkError {
     },
 }
 
-#[derive(Debug, Clone)]
-pub struct GetPendingWorkHandler<S> {
-    store: S,
-}
+#[cqrsy::handler(query)]
+pub fn handle(
+    store: &impl PendingWorkReadStore,
+    query: GetPendingWork,
+) -> Result<ListResult, GetPendingWorkError> {
+    let mut items = store
+        .open_items(query.only_project.as_deref())
+        .map_err(|error| GetPendingWorkError::ReadStore(Box::new(error)))?;
 
-impl<S> GetPendingWorkHandler<S> {
-    pub fn new(store: S) -> Self {
-        Self { store }
-    }
-}
+    items.retain(|item| scope_includes(query.scope, item.section.as_deref()));
+    items.retain(|item| effort_matches(item, query.effort));
 
-impl<S> Handler<GetPendingWork> for GetPendingWorkHandler<S>
-where
-    S: PendingWorkReadStore,
-{
-    async fn handle(&self, req: GetPendingWork) -> Result<ListResult, GetPendingWorkError> {
-        let mut items = self
-            .store
-            .open_items(req.only_project.as_deref())
-            .map_err(|error| GetPendingWorkError::ReadStore(Box::new(error)))?;
-
-        items.retain(|item| scope_includes(req.scope, item.section.as_deref()));
-        items.retain(|item| effort_matches(item, req.effort));
-
-        if let Some(requested) = req.tags.as_ref() {
-            let mut matched = Vec::with_capacity(items.len());
-            for item in items {
-                let Some(raw) = item.tags.as_deref() else {
-                    continue;
-                };
-                let stored = Tags::parse_frontmatter(raw).map_err(|source| {
-                    GetPendingWorkError::InvalidTags {
-                        id: item.id.clone(),
-                        source,
-                    }
-                })?;
-                if stored.contains_all(requested) {
-                    matched.push(item);
+    if let Some(requested) = query.tags.as_ref() {
+        let mut matched = Vec::with_capacity(items.len());
+        for item in items {
+            let Some(raw) = item.tags.as_deref() else {
+                continue;
+            };
+            let stored = Tags::parse_frontmatter(raw).map_err(|source| {
+                GetPendingWorkError::InvalidTags {
+                    id: item.id.clone(),
+                    source,
                 }
+            })?;
+            if stored.contains_all(requested) {
+                matched.push(item);
             }
-            items = matched;
         }
-
-        if scope_groups_output(req.scope) {
-            sort_by_group_then_order(&mut items, req.order);
-        } else {
-            sort_by_order(&mut items, req.order);
-        }
-
-        let (items, hidden) = apply_cap(items, req.number.unwrap_or(DEFAULT_LIST_CAP));
-
-        Ok(ListResult { items, hidden })
+        items = matched;
     }
+
+    if scope_groups_output(query.scope) {
+        sort_by_group_then_order(&mut items, query.order);
+    } else {
+        sort_by_order(&mut items, query.order);
+    }
+
+    let (items, hidden) = apply_cap(items, query.number.unwrap_or(DEFAULT_LIST_CAP));
+
+    Ok(ListResult { items, hidden })
 }
 
 fn scope_includes(scope: ListScope, section: Option<&str>) -> bool {
@@ -179,13 +164,23 @@ fn apply_cap(items: Vec<OpenItem>, cap: usize) -> (Vec<OpenItem>, usize) {
 
 #[cfg(test)]
 mod tests {
-    use cqrsy::send_now;
+    use cqrsy::Sender;
     use pwf_domain::pending_work::{
-        ListScope, OpenItem, OrderDirection, OrderField, OrderSpec, Tags,
+        ListResult, ListScope, OpenItem, OrderDirection, OrderField, OrderSpec, Tags,
     };
 
     use super::{GetPendingWork, GetPendingWorkError, GetPendingWorkHandler};
-    use crate::testing::InMemoryPendingWorkReadStore;
+    use crate::{ports::PendingWorkReadStore, testing::InMemoryPendingWorkReadStore};
+
+    /// Sync dispatch shim: drive a fused `GetPendingWorkHandler` through its
+    /// blanket `Sender` on the tested path, keeping each case's assertions
+    /// focused on the query result.
+    fn send_now<S: PendingWorkReadStore>(
+        handler: &GetPendingWorkHandler<S>,
+        query: GetPendingWork,
+    ) -> Result<ListResult, GetPendingWorkError> {
+        handler.send_now(query)
+    }
 
     fn item(id: &str) -> OpenItem {
         OpenItem {
@@ -284,7 +279,7 @@ mod tests {
             future_item("PWF-0001"),
         ]);
 
-        let got = send_now(&(), &GetPendingWorkHandler::new(store), default_query()).unwrap();
+        let got = send_now(&GetPendingWorkHandler { store }, default_query()).unwrap();
 
         assert_eq!(listed_ids(&got), ["PWF-0003"]);
     }
@@ -296,7 +291,7 @@ mod tests {
             low_prio_item("PWF-0001"),
         ]);
 
-        let got = send_now(&(), &GetPendingWorkHandler::new(store), default_query()).unwrap();
+        let got = send_now(&GetPendingWorkHandler { store }, default_query()).unwrap();
 
         assert_eq!(listed_ids(&got), ["PWF-0002"]);
     }
@@ -311,8 +306,7 @@ mod tests {
         ]);
 
         let got = send_now(
-            &(),
-            &GetPendingWorkHandler::new(store),
+            &GetPendingWorkHandler { store },
             GetPendingWork {
                 scope: ListScope::All,
                 ..default_query()
@@ -335,8 +329,7 @@ mod tests {
         ]);
 
         let got = send_now(
-            &(),
-            &GetPendingWorkHandler::new(store),
+            &GetPendingWorkHandler { store },
             GetPendingWork {
                 scope: ListScope::HumanOnly,
                 ..default_query()
@@ -356,8 +349,7 @@ mod tests {
         ]);
 
         let got = send_now(
-            &(),
-            &GetPendingWorkHandler::new(store),
+            &GetPendingWorkHandler { store },
             GetPendingWork {
                 scope: ListScope::FutureOnly,
                 ..default_query()
@@ -377,8 +369,7 @@ mod tests {
         ]);
 
         let got = send_now(
-            &(),
-            &GetPendingWorkHandler::new(store),
+            &GetPendingWorkHandler { store },
             GetPendingWork {
                 effort: Some(3),
                 ..default_query()
@@ -394,8 +385,7 @@ mod tests {
         let store = InMemoryPendingWorkReadStore::with_items(vec![effort_item("PWF-0001", " 3 ")]);
 
         let got = send_now(
-            &(),
-            &GetPendingWorkHandler::new(store),
+            &GetPendingWorkHandler { store },
             GetPendingWork {
                 effort: Some(3),
                 ..default_query()
@@ -411,8 +401,7 @@ mod tests {
         let store = InMemoryPendingWorkReadStore::with_items(vec![effort_item("PWF-0001", "0")]);
 
         let got = send_now(
-            &(),
-            &GetPendingWorkHandler::new(store),
+            &GetPendingWorkHandler { store },
             GetPendingWork {
                 effort: Some(0),
                 ..default_query()
@@ -428,8 +417,7 @@ mod tests {
         let store = InMemoryPendingWorkReadStore::with_items(vec![effort_item("PWF-0001", "5")]);
 
         let got = send_now(
-            &(),
-            &GetPendingWorkHandler::new(store),
+            &GetPendingWorkHandler { store },
             GetPendingWork {
                 effort: Some(5),
                 ..default_query()
@@ -450,8 +438,7 @@ mod tests {
         ]);
 
         let got = send_now(
-            &(),
-            &GetPendingWorkHandler::new(store),
+            &GetPendingWorkHandler { store },
             GetPendingWork {
                 tags: Some(Tags::parse_values(&["SQLite,godot".to_string()]).unwrap()),
                 ..default_query()
@@ -470,16 +457,16 @@ mod tests {
         )]);
         assert!(
             send_now(
-                &(),
-                &GetPendingWorkHandler::new(store.clone()),
+                &GetPendingWorkHandler {
+                    store: store.clone()
+                },
                 default_query()
             )
             .is_ok()
         );
 
         let error = send_now(
-            &(),
-            &GetPendingWorkHandler::new(store),
+            &GetPendingWorkHandler { store },
             GetPendingWork {
                 tags: Some(Tags::parse_values(&["sqlite".to_string()]).unwrap()),
                 ..default_query()
@@ -512,8 +499,7 @@ mod tests {
         ]);
 
         let got = send_now(
-            &(),
-            &GetPendingWorkHandler::new(store),
+            &GetPendingWorkHandler { store },
             GetPendingWork {
                 effort: Some(3),
                 tags: Some(Tags::parse_values(&["sqlite".to_string()]).unwrap()),
@@ -534,8 +520,7 @@ mod tests {
         ]);
 
         let got = send_now(
-            &(),
-            &GetPendingWorkHandler::new(store),
+            &GetPendingWorkHandler { store },
             GetPendingWork {
                 number: Some(1),
                 tags: Some(Tags::parse_values(&["sqlite".to_string()]).unwrap()),
@@ -561,7 +546,7 @@ mod tests {
             },
         ]);
 
-        let got = send_now(&(), &GetPendingWorkHandler::new(store), default_query()).unwrap();
+        let got = send_now(&GetPendingWorkHandler { store }, default_query()).unwrap();
 
         assert_eq!(listed_ids(&got), ["CFG-0001", "PWF-0001"]);
     }
@@ -575,8 +560,7 @@ mod tests {
         ]);
 
         let got = send_now(
-            &(),
-            &GetPendingWorkHandler::new(store),
+            &GetPendingWorkHandler { store },
             GetPendingWork {
                 order: OrderSpec {
                     field: OrderField::Created,
@@ -598,8 +582,7 @@ mod tests {
         ]);
 
         let got = send_now(
-            &(),
-            &GetPendingWorkHandler::new(store),
+            &GetPendingWorkHandler { store },
             GetPendingWork {
                 order: OrderSpec {
                     field: OrderField::Id,
@@ -622,8 +605,7 @@ mod tests {
         ]);
 
         let got = send_now(
-            &(),
-            &GetPendingWorkHandler::new(store),
+            &GetPendingWorkHandler { store },
             GetPendingWork {
                 order: OrderSpec {
                     field: OrderField::ProjectId,
@@ -644,8 +626,7 @@ mod tests {
         );
 
         let got = send_now(
-            &(),
-            &GetPendingWorkHandler::new(store),
+            &GetPendingWorkHandler { store },
             GetPendingWork {
                 number: Some(0),
                 ..default_query()
@@ -663,7 +644,7 @@ mod tests {
             (1..=12).map(|n| item(&format!("GLP-{n:04}"))).collect(),
         );
 
-        let got = send_now(&(), &GetPendingWorkHandler::new(store), default_query()).unwrap();
+        let got = send_now(&GetPendingWorkHandler { store }, default_query()).unwrap();
 
         assert_eq!(got.items.len(), 10);
         assert_eq!(got.hidden, 2);

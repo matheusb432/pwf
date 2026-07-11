@@ -1,10 +1,8 @@
-use cqrsy::Handler;
 use pwf_domain::pending_work::{Tags, UpdatedItem};
 
 use crate::ports::{PendingWorkWriteStore, UpdateItemSpec};
 
-#[derive(Debug, Clone, cqrsy::Command)]
-#[command(out = pwf_domain::pending_work::UpdatedItem, err = UpdatePendingWorkError)]
+#[derive(Debug, Clone)]
 pub struct UpdatePendingWorkItem {
     pub id: String,
     pub prompt: Option<String>,
@@ -25,39 +23,24 @@ pub enum UpdatePendingWorkError {
     WriteStore(Box<dyn std::error::Error + Send + Sync>),
 }
 
-#[derive(Debug, Clone)]
-pub struct UpdatePendingWorkItemHandler<S> {
-    store: S,
-}
-
-impl<S> UpdatePendingWorkItemHandler<S> {
-    pub fn new(store: S) -> Self {
-        Self { store }
-    }
-}
-
-impl<S> Handler<UpdatePendingWorkItem> for UpdatePendingWorkItemHandler<S>
-where
-    S: PendingWorkWriteStore,
-{
-    async fn handle(
-        &self,
-        req: UpdatePendingWorkItem,
-    ) -> Result<UpdatedItem, UpdatePendingWorkError> {
-        self.store
-            .update_item(UpdateItemSpec {
-                id: req.id,
-                prompt: req.prompt,
-                title: req.title,
-                append: req.append,
-                prereq: req.prereq,
-                clear_prereq: req.clear_prereq,
-                commits: req.commits,
-                append_report: req.append_report,
-                effort: req.effort,
-                tags: req.tags,
-                tags_clear: req.tags_clear,
-            })
-            .map_err(|error| UpdatePendingWorkError::WriteStore(Box::new(error)))
-    }
+#[cqrsy::handler(command)]
+pub fn handle(
+    store: &impl PendingWorkWriteStore,
+    cmd: UpdatePendingWorkItem,
+) -> Result<UpdatedItem, UpdatePendingWorkError> {
+    store
+        .update_item(UpdateItemSpec {
+            id: cmd.id,
+            prompt: cmd.prompt,
+            title: cmd.title,
+            append: cmd.append,
+            prereq: cmd.prereq,
+            clear_prereq: cmd.clear_prereq,
+            commits: cmd.commits,
+            append_report: cmd.append_report,
+            effort: cmd.effort,
+            tags: cmd.tags,
+            tags_clear: cmd.tags_clear,
+        })
+        .map_err(|error| UpdatePendingWorkError::WriteStore(Box::new(error)))
 }

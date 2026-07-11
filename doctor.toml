@@ -9,8 +9,3 @@ hint = "install rust via rustup: https://rustup.rs"
 [[tool]]
 name = "just"
 hint = "cargo install just"
-
-[[tool]]
-name = "rg"
-required = false # only for `just smell-check-errors`
-hint = "ripgrep: cargo install ripgrep"

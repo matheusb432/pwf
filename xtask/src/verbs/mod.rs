@@ -5,5 +5,4 @@
 
 pub(crate) mod fmt;
 pub(crate) mod install;
-pub(crate) mod smell_check;
 pub(crate) mod test;

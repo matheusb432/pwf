@@ -25,10 +25,6 @@ fmt-check:
 fix *args:
     cargo run --quiet -p xtask -- fix {{ args }}
 
-# Report production Rust error-handling smells.
-smell-check-errors:
-    cargo run --quiet -p xtask -- smell-check-errors
-
 # Test gate (see root recipe for flags).
 test *flags:
     cargo run --quiet -p xtask -- test {{ flags }}

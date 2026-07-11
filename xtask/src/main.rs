@@ -27,7 +27,6 @@ fn run(command: cli::Command) -> Result<()> {
         Command::Fmt => verbs::fmt::fmt(),
         Command::FmtCheck => verbs::fmt::fmt_check(),
         Command::Fix(fix) => verbs::fmt::fix(&fix.args),
-        Command::SmellCheckErrors => verbs::smell_check::run(),
         Command::Test(test) => verbs::test::run(test.scope, test.verbose),
         Command::Install => verbs::install::install(),
         Command::Update(update) => verbs::install::update(&update),

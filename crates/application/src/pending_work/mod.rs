@@ -14,6 +14,6 @@ pub use done::{CompletePendingWork, CompletePendingWorkError, CompletePendingWor
 pub use list::{GetPendingWork, GetPendingWorkError, GetPendingWorkHandler};
 pub use remove::{RemovePendingWorkError, RemovePendingWorkItem, RemovePendingWorkItemHandler};
 pub use reopen::{ReopenPendingWork, ReopenPendingWorkError, ReopenPendingWorkHandler};
-pub use resolve::{ResolvePendingWorkError, ResolvePendingWorkHandler, ResolvePendingWorkItem};
-pub use show::{ShowPendingWorkError, ShowPendingWorkHandler, ShowPendingWorkItem};
+pub use resolve::{ResolvePendingWorkError, ResolvePendingWorkItem, ResolvePendingWorkItemHandler};
+pub use show::{ShowPendingWorkError, ShowPendingWorkItem, ShowPendingWorkItemHandler};
 pub use update::{UpdatePendingWorkError, UpdatePendingWorkItem, UpdatePendingWorkItemHandler};

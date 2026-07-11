@@ -1,5 +1,5 @@
-use cqrsy::send_now;
-use pwf_application::{ResolvePendingWorkHandler, ResolvePendingWorkItem};
+use cqrsy::Sender;
+use pwf_application::{ResolvePendingWorkItem, ResolvePendingWorkItemHandler};
 use pwf_infra::obsidian::ObsidianPendingWorkStore;
 
 use super::super::errors::PendingWorkError;
@@ -18,15 +18,14 @@ pub(in crate::engines::pending_work) fn run_resolve(
         Some(raw) if canonical_pending_id(raw) == lookup_id => raw,
         _ => lookup_id,
     };
-    let handler = ResolvePendingWorkHandler::new(ObsidianPendingWorkStore::new(cfg.clone()));
-    send_now(
-        &(),
-        &handler,
-        ResolvePendingWorkItem {
+    let handler = ResolvePendingWorkItemHandler {
+        store: ObsidianPendingWorkStore::new(cfg.clone()),
+    };
+    handler
+        .send_now(ResolvePendingWorkItem {
             id: id.to_string(),
             show: args.show,
-        },
-    )
-    .map(pwf_application::ResolvePendingWorkOutput::into_text)
-    .map_err(|error| PendingWorkError::ApplicationRead(error.to_string()))
+        })
+        .map(pwf_application::ResolvePendingWorkOutput::into_text)
+        .map_err(|error| PendingWorkError::ApplicationRead(error.to_string()))
 }

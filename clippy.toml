@@ -1,10 +1,17 @@
-# Fleet clippy tuning — synced from repository `templates/clippy.toml` (edit there, then
-# `just repos sync-clippy`; local edits here are overwritten). One root file; Clippy discovers it
-# from each crate's manifest dir. It tunes only the *configurable* lints; lint LEVELS (the
-# pedantic policy + opt-outs) live in the root Cargo.toml `[workspace.lints.clippy]`. `msrv` is
-# intentionally unset — the fleet tracks latest stable, so Clippy is free to suggest the newest
-# APIs. Comments sit above keys, never trailing, so a repo's TOML formatter (taplo) can't reflow
-# them and fight the sync.
+# Clippy tuning for this repo's Rust crates — REPO-OWNED (repository's `sync-clippy` fan-out manages
+# only the `[workspace.lints.clippy]` LEVELS table in the root Cargo.toml; this file opts out of
+# the whole-file sync via `clippy_toml = false` in repos.toml because of the bespoke
+# disallowed-methods below). One root file — Clippy discovers it from each crate's manifest dir.
+# `msrv` is intentionally unset — the fleet tracks latest stable, so Clippy is free to suggest the
+# newest APIs. Comments sit above keys, never trailing, so taplo can't reflow them.
 # Internal binaries: let Clippy suggest better signatures freely. Wrong for a repo publishing a
 # library crate — grow a which-variant override before opting one in.
 avoid-breaking-exported-api = false
+
+# cqrsy seam gate (repo-specific): `Handler`/`EventListener` are implementation-only
+# seams — calling them directly skips the request/event pipelines. Route through `Sender`/
+# `Publisher` instead so the behaviors always run.
+disallowed-methods = [
+  { path = "cqrsy_core::Handler::handle", reason = "implementation-only seam — send through cqrsy::Sender so request pipelines run (handler.send/send_now in tests and bespoke wiring); see the cqrsy crate docs" },
+  { path = "cqrsy_core::EventListener::handle", reason = "implementation-only seam — publish through a cqrsy::Publisher so the fan-out runs every listener (cqrsy::publish/publish_now for bespoke wiring and tests); see the cqrsy crate docs" },
+]
