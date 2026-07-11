@@ -3,7 +3,7 @@
 
 use cqrsy::Sender;
 use pwf_application::AddPendingWorkItem;
-use pwf_domain::pending_work::MutationOutcome;
+use pwf_domain::pending_work::{HANDOFF_TAG, MutationOutcome};
 
 use super::{
     actions::{
@@ -31,16 +31,21 @@ use super::{
 use crate::{
     cli::Args,
     config::Config,
-    engines::pending_work::actions::{run_resolve, run_show},
+    engines::{
+        handoff::mirror,
+        pending_work::actions::{run_resolve, run_show},
+    },
 };
 
 /// Top-level entry for a directly-parsed `pwf <verb>` command (main.rs only).
 /// `Add`/`Remove`/`Update`'s confirmations get a presentation-only reformat
-/// here — never inside `run_typed`, which `run_args` also calls for handoff's
-/// `done`/`reopen` in-process seams, which need the plain, un-ANSI'd text
-/// (see `confirm_render`'s doc comment). Handoff's in-process `add` seam
-/// reuses the same `AddPendingWorkItem` request build + mediator path as
-/// top-level `pwf add`, but consumes the typed `AddedItem` instead of raw text.
+/// here — never inside `run_typed`, which `run_args` also calls for the
+/// integration-test surface that drives pw verbs by `Args` directly, which
+/// needs the plain, un-ANSI'd text (see `confirm_render`'s doc comment).
+/// Handoff's in-process `add` seam reuses the same `AddPendingWorkItem`
+/// request build + mediator path as top-level `pwf add`, but consumes the
+/// typed `AddedItem` instead of raw text; handoff no longer calls `run_args`
+/// at all (PWF-0117 retired its `done`/`cancel`/`reopen`/`refresh` verbs).
 pub fn run(command: &PendingWorkCommand) -> Result<String, String> {
     let outcome = run_typed(command).map_err(String::from)?;
     let on = use_color(command.args().color);
@@ -215,11 +220,48 @@ pub(crate) fn add_command_from_args(
 /// (`--continue <path>`); the clap layer makes those three mutually exclusive.
 fn run_add(cfg: &Config, args: &Args, date: &str) -> Result<AddedItem, errors::PendingWorkError> {
     let command = build_add_command(cfg, args, date)?;
+
+    // Preflight a handoff scaffold *before* the mutation when `--tag handoff`
+    // is present, so a bad repo mapping or a path collision fails with no
+    // item created. `--continue-handoff` is excluded: that flag means the pw
+    // item continues an *existing* handoff, so it must never scaffold a new
+    // one. `handoff add`'s in-process seam (`inprocess_pw_add`) never reaches
+    // this function — it sends the built command straight through the
+    // mediator — but the external `--pending-work-script` allocator's
+    // canonical protocol (`pw_bridge::spawn_pw_add`) is `add --tag handoff
+    // --continue-handoff`, and an operator's allocator script commonly just
+    // execs the real `pwf` binary, which *does* land here.
+    let scaffold = if !args.continue_handoff
+        && command
+            .tags
+            .as_ref()
+            .is_some_and(|tags| tags.contains_name(HANDOFF_TAG))
+    {
+        Some(mirror::preflight_scaffold(
+            cfg,
+            &command.project_name,
+            command.title.as_deref().unwrap_or(""),
+            date,
+        )?)
+    } else {
+        None
+    };
+
     let mediator = pending_work_mediator(cfg);
     let result = mediator.send_now(command);
     match result {
         Ok(added) => {
             emit_created_section_diagnostic(&added);
+            if let Some(pending) = scaffold {
+                let path = pending.commit(&added.id).map_err(|source| {
+                    errors::PendingWorkError::HandoffMirrorAfterMutation {
+                        id: added.id.clone(),
+                        source,
+                        remedy: errors::ADD_MIRROR_REMEDY.to_string(),
+                    }
+                })?;
+                eprintln!("info: created handoff {}", path.display());
+            }
             Ok(added)
         }
         Err(error) => {

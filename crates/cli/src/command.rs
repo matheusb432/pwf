@@ -410,63 +410,24 @@ pub struct HandoffCommon {
     /// Date stamp (YYYY-MM-DD); defaults to today.
     #[arg(long)]
     pub date: Option<String>,
-    /// Skip the git commit (testing/sandbox).
-    #[arg(long)]
-    pub no_commit: bool,
     /// Path to a pending-work allocation script (testing).
     #[arg(long)]
     pub pending_work_script: Option<String>,
 }
 
-/// handoff verbs (`pwf handoff <verb>`).
+/// handoff verbs (`pwf handoff <verb>`). `done`/`cancel`/`reopen`/`refresh` are
+/// retired (PWF-0117, `main::retired_handoff_verb`) — a handoff-tagged pw item
+/// mirrors those operations from the pw verbs instead.
 #[derive(Subcommand, Debug)]
 pub enum HandoffAction {
-    /// Refresh the ledger and archive stranded handoffs.
-    Refresh {
-        #[command(flatten)]
-        common: HandoffCommon,
-    },
-    /// Create a handoff (allocates a pw id for managed repos).
-    New {
+    /// Create a handoff (allocates its linked pw item).
+    Add {
         /// Handoff title (required).
         #[arg(long)]
         title: Option<String>,
         /// Filename slug (else derived from the title).
         #[arg(long)]
         slug: Option<String>,
-        #[command(flatten)]
-        common: HandoffCommon,
-    },
-    /// Mark a handoff done.
-    Done {
-        #[arg(long)]
-        id: Option<String>,
-        /// Completion note.
-        #[arg(long)]
-        reason: Option<String>,
-        /// Commit range(s) to record on the linked item (repeat or comma-separate).
-        #[arg(long)]
-        commits: Vec<String>,
-        /// Also spawn a ## Human review task for the linked item.
-        #[arg(long)]
-        review: bool,
-        #[command(flatten)]
-        common: HandoffCommon,
-    },
-    /// Cancel a handoff.
-    Cancel {
-        #[arg(long)]
-        id: Option<String>,
-        /// Cancellation note.
-        #[arg(long)]
-        reason: Option<String>,
-        #[command(flatten)]
-        common: HandoffCommon,
-    },
-    /// Reopen an archived handoff (and its linked pw item) back to active.
-    Reopen {
-        #[arg(long)]
-        id: Option<String>,
         #[command(flatten)]
         common: HandoffCommon,
     },
@@ -970,49 +931,19 @@ fn apply_handoff_common(a: &mut EngineArgs, c: HandoffCommon) {
     a.config_path = c.config_path;
     a.repo_root = c.repo_root;
     a.date = c.date;
-    a.no_commit = c.no_commit;
     a.pending_work_script = c.pending_work_script;
 }
 
 fn fill_handoff(a: &mut EngineArgs, action: HandoffAction) {
     match action {
-        HandoffAction::Refresh { common } => {
-            a.action = Some("refresh".into());
-            apply_handoff_common(a, common);
-        }
-        HandoffAction::New {
+        HandoffAction::Add {
             title,
             slug,
             common,
         } => {
-            a.action = Some("new".into());
+            a.action = Some("add".into());
             a.title = title;
             a.slug = slug;
-            apply_handoff_common(a, common);
-        }
-        HandoffAction::Done {
-            id,
-            reason,
-            commits,
-            review,
-            common,
-        } => {
-            a.action = Some("done".into());
-            a.id = id;
-            a.reason = reason;
-            a.commits = commits;
-            a.review = review;
-            apply_handoff_common(a, common);
-        }
-        HandoffAction::Cancel { id, reason, common } => {
-            a.action = Some("cancel".into());
-            a.id = id;
-            a.reason = reason;
-            apply_handoff_common(a, common);
-        }
-        HandoffAction::Reopen { id, common } => {
-            a.action = Some("reopen".into());
-            a.id = id;
             apply_handoff_common(a, common);
         }
         HandoffAction::List { common } => {

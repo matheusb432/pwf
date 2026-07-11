@@ -5,6 +5,7 @@
 mod actions;
 mod errors;
 mod ledger;
+pub(crate) mod mirror;
 mod paths;
 mod pw_bridge;
 mod run;

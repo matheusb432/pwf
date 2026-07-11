@@ -62,19 +62,9 @@ pub(super) fn resolve_project_for_repo(root: &Path, args: &Args) -> Option<Strin
     let cfg = load_handoff_config(args);
     let cfg = cfg?;
     let norm = |p: &str| -> String { p.replace('\\', "/").trim_end_matches('/').to_lowercase() };
-    let home = home();
     let root_n = norm(&root.to_string_lossy());
     for (name, path_raw) in &cfg.projects {
-        let path = if path_raw == "~" {
-            home.clone()
-        } else if path_raw.starts_with("~/") || path_raw.starts_with("~\\") {
-            Path::new(&home)
-                .join(&path_raw[2..])
-                .to_string_lossy()
-                .into_owned()
-        } else {
-            path_raw.clone()
-        };
+        let path = expand_home(path_raw);
         if norm(&path) == root_n {
             return Some(name.clone());
         }
@@ -86,6 +76,22 @@ fn home() -> String {
     std::env::var("USERPROFILE")
         .or_else(|_| std::env::var("HOME"))
         .unwrap_or_default()
+}
+
+/// Expand a leading `~` or `~/`/`~\` in `raw` to the current user's home
+/// directory (`$HOME`/`%USERPROFILE%`). A `raw` without a leading `~` passes
+/// through unchanged. Shared by `resolve_project_for_repo` and the handoff
+/// mirror gate (`mirror::handoff_gate`), which both need to compare/derive a
+/// repo path from a config `projects` entry.
+pub(super) fn expand_home(raw: &str) -> String {
+    let home = home();
+    if raw == "~" {
+        home
+    } else if let Some(rest) = raw.strip_prefix("~/").or_else(|| raw.strip_prefix("~\\")) {
+        Path::new(&home).join(rest).to_string_lossy().into_owned()
+    } else {
+        raw.to_string()
+    }
 }
 
 /// Parse the config JSON from the --config-path arg, defaulting so handoff commands

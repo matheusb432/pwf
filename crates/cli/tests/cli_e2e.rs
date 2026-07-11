@@ -207,6 +207,32 @@ fn staged_with_handoff() -> (TempDir, std::path::PathBuf) {
     (dir, cfg)
 }
 
+/// Fresh project (no pre-existing items) mapped to a real, un-git-initialized
+/// repo dir with an empty `docs/handoffs/` — for the `--tag handoff` mirror
+/// round trip (PWF-0117 final-review item 7): `add --tag handoff` scaffolds a
+/// new handoff, `done`/`reopen` mirror onto it, and none of that needs or
+/// should touch `.git`.
+fn staged_for_handoff_mirror_roundtrip() -> (TempDir, std::path::PathBuf) {
+    let dir = TempDir::new().unwrap();
+    let notes = dir.path().join("notes");
+    let proj = notes.join("glep-shimeji");
+    let repo = dir.path().join("repo");
+    fs::create_dir_all(&proj).unwrap();
+    fs::create_dir_all(repo.join("docs").join("handoffs")).unwrap();
+    fs::write(proj.join("glep-shimeji.md"), "# glep-shimeji\n").unwrap();
+    let cfg = dir.path().join("cfg.json");
+    fs::write(
+        &cfg,
+        format!(
+            r#"{{ "notesDir": {:?}, "projects": {{ "glep-shimeji": {:?} }}, "prefixes": {{ "glep-shimeji": "GLP" }} }}"#,
+            notes.to_string_lossy(),
+            repo.to_string_lossy()
+        ),
+    )
+    .unwrap();
+    (dir, cfg)
+}
+
 /// Read the glep-shimeji index under a staged notes dir (TempDir root).
 fn read_index(dir: &TempDir) -> String {
     fs::read_to_string(dir.path().join("notes/glep-shimeji/glep-shimeji.md")).unwrap()
@@ -700,6 +726,37 @@ fn e2e_route_project_shorthand_ignores_created_stays_id_desc() {
         stdout.find("GLP-0002").unwrap() < stdout.find("GLP-0001").unwrap(),
         "route shorthand must stay id-descending: {stdout}"
     );
+}
+
+#[test]
+fn handoff_new_verb_retired_hints_add() {
+    // PWF-0117: `handoff new` was renamed to `handoff add`; the pre-parse guard
+    // must reject it before clap ever sees it, with a hint at the replacement.
+    pwf()
+        .args(["handoff", "new", "--title", "x"])
+        .assert()
+        .failure()
+        .stderr(contains("pwf handoff add"));
+}
+
+#[test]
+fn handoff_done_cancel_reopen_refresh_verbs_are_retired() {
+    // PWF-0117: handoff-tagged pw mutations now mirror through the pw verbs
+    // themselves, so `handoff done|cancel|reopen|refresh` are retired before
+    // clap ever sees them — each gets a curated hint, not a clap parse error.
+    for (verb, hint) in [
+        ("done", "pwf done --id"),
+        ("cancel", "pwf cancel --id"),
+        ("reopen", "pwf reopen --id"),
+        ("refresh", "ledger"),
+    ] {
+        pwf()
+            .args(["handoff", verb])
+            .assert()
+            .failure()
+            .code(1)
+            .stderr(contains(hint));
+    }
 }
 
 #[test]
@@ -3474,5 +3531,99 @@ fn note_add_list_update_remove_preserves_tasks_and_header() {
     assert!(
         after.contains("### Notes"),
         "notes header stripped on remove: {after}"
+    );
+}
+
+#[test]
+fn e2e_add_done_reopen_handoff_tag_round_trip_never_touches_git() {
+    // PWF-0117 final-review item 7: a full add -> done -> reopen cycle on a
+    // `--tag handoff` item, asserting the mirrored handoff's location/status
+    // on disk after each step, and that pwf never needs or creates `.git` —
+    // the repo is staged without `git init` on purpose.
+    let (d, cfg) = staged_for_handoff_mirror_roundtrip();
+    let repo = d.path().join("repo");
+    let handoff_dir = repo.join("docs/handoffs");
+    let handoff_path = handoff_dir.join("2026-01-01-mirror-round-trip.md");
+    assert!(
+        !repo.join(".git").exists(),
+        "fixture must start without .git"
+    );
+
+    pwf()
+        .args([
+            "add",
+            "glep-shimeji",
+            "mirror round trip",
+            "--tag",
+            "handoff",
+            "--title",
+            "mirror round trip",
+            "--date",
+            "2026-01-01",
+            "--config-path",
+        ])
+        .arg(&cfg)
+        .assert()
+        .success();
+    let scaffolded = fs::read_to_string(&handoff_path).unwrap_or_else(|e| {
+        panic!(
+            "handoff scaffold missing at {}: {e}",
+            handoff_path.display()
+        )
+    });
+    assert!(scaffolded.contains("status: active"), "got: {scaffolded}");
+    assert!(scaffolded.contains("pw: GLP-0001"), "got: {scaffolded}");
+    assert!(
+        !repo.join(".git").exists(),
+        "add must not create/touch .git"
+    );
+
+    pwf()
+        .args([
+            "done",
+            "--id",
+            "GLP-0001",
+            "--report",
+            "x",
+            "--commits",
+            "a..b",
+            "--date",
+            "2026-01-02",
+            "--config-path",
+        ])
+        .arg(&cfg)
+        .assert()
+        .success();
+    assert!(
+        !handoff_path.exists(),
+        "handoff should be moved out of the active dir once done"
+    );
+    let archived_path = handoff_dir.join("archived").join(
+        handoff_path
+            .file_name()
+            .expect("handoff path must have a file name"),
+    );
+    let archived = fs::read_to_string(&archived_path).unwrap();
+    assert!(archived.contains("status: done"), "got: {archived}");
+    assert!(
+        !repo.join(".git").exists(),
+        "done must not create/touch .git"
+    );
+
+    pwf()
+        .args(["reopen", "--id", "GLP-0001", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .success();
+    assert!(
+        !archived_path.exists(),
+        "reopen should move the handoff back out of archived/"
+    );
+    let restored = fs::read_to_string(&handoff_path).unwrap();
+    assert!(restored.contains("status: active"), "got: {restored}");
+    assert!(!restored.contains("completed:"), "got: {restored}");
+    assert!(
+        !repo.join(".git").exists(),
+        "reopen must not create/touch .git"
     );
 }

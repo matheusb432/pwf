@@ -15,5 +15,5 @@ pub use list::{
 pub use outcome::{AddedItem, MutationOutcome, RemovedItem, UpdatedItem};
 pub use prereq::{ParsePrereqsError, Prereqs};
 pub use status::WorkItemStatus;
-pub use tag::{ParseTagsError, Tag, Tags};
+pub use tag::{HANDOFF_TAG, ParseTagsError, Tag, Tags};
 pub use title::TaskTitle;

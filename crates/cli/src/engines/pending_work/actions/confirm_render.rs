@@ -2,14 +2,14 @@
 //! outcome, applied at the single call site that reaches a human terminal
 //! directly (`run.rs`'s outer `run()`). Never applied inside
 //! `run_typed`/`run_args`, which render the legacy `raw_text()` shape for the
-//! seams that still consume plain text (handoff's in-process `done`/`reopen`
-//! calls, the `done --review` embed). The in-process handoff `add` seam
-//! consumes the typed `AddedItem` from the shared mediator path and never
-//! parses text; the only remaining id-parse (`parse_added_id` in
-//! `engines/handoff/pw_bridge.rs`) reads the stdout of the external
-//! `--pending-work-script` allocator — a separately-spawned program that
-//! prints its own `ADDED PWF TASK [<id>]` line. See AGENTS.md's cross-engine-
-//! seams note (PWF-0087).
+//! seams that still consume plain text (`done --review`'s embed, and the
+//! `crates/cli/tests/pending_work.rs` integration suite driving verbs via
+//! `run_args`). The in-process handoff `add` seam consumes the typed
+//! `AddedItem` from the shared mediator path and never parses text; the only
+//! remaining id-parse (`parse_added_id` in `engines/handoff/pw_bridge.rs`)
+//! reads the stdout of the external `--pending-work-script` allocator — a
+//! separately-spawned program that prints its own `ADDED PWF TASK [<id>]`
+//! line. See AGENTS.md's cross-engine-seams note (PWF-0087).
 
 use anstyle::AnsiColor;
 use pwf_domain::pending_work::MutationOutcome;

@@ -391,7 +391,11 @@ fn tag_update(id: &str, tags: Option<Tags>, tags_clear: bool) -> UpdateItemSpec 
 
 #[test]
 fn update_item_appends_deduplicated_tags() {
-    let (temp, store, item_path) = staged_open_item_with_tags("[sqlite, godot]");
+    let StagedOpenItem {
+        _temp,
+        store,
+        item_path,
+    } = staged_open_item_with_tags("[sqlite, godot]");
     let tags = Tags::parse_values(&["godot,csharp-export".to_string()]).unwrap();
 
     store
@@ -404,13 +408,16 @@ fn update_item_appends_deduplicated_tags() {
         "{note}"
     );
     assert_eq!(note.matches("tags:").count(), 1);
-    drop(temp);
 }
 
 #[test]
 fn update_item_append_adds_frontmatter_tags_without_rewriting_body_tags_line() {
     let body = "tags: body-only value\nkeep this body byte-identical";
-    let (temp, store, item_path) = staged_open_item(None, body);
+    let StagedOpenItem {
+        _temp,
+        store,
+        item_path,
+    } = staged_open_item(None, body);
     let tags = Tags::parse_values(&["SQLite".to_string()]).unwrap();
 
     store
@@ -432,13 +439,16 @@ fn update_item_append_adds_frontmatter_tags_without_rewriting_body_tags_line() {
             "keep this body byte-identical\n",
         )
     );
-    drop(temp);
 }
 
 #[test]
 fn update_item_clear_preserves_body_tags_line_when_frontmatter_has_no_tags() {
     let body = "tags: body-only value\nkeep this body byte-identical";
-    let (temp, store, item_path) = staged_open_item(None, body);
+    let StagedOpenItem {
+        _temp,
+        store,
+        item_path,
+    } = staged_open_item(None, body);
     let before = std::fs::read_to_string(&item_path).unwrap();
 
     store
@@ -446,13 +456,16 @@ fn update_item_clear_preserves_body_tags_line_when_frontmatter_has_no_tags() {
         .unwrap();
 
     assert_eq!(std::fs::read_to_string(item_path).unwrap(), before);
-    drop(temp);
 }
 
 #[test]
 fn update_item_append_supports_bom_frontmatter_format() {
     let before = formatted_tag_note(true, "\n", None);
-    let (temp, store, item_path) = staged_open_item_from_note(&before);
+    let StagedOpenItem {
+        _temp,
+        store,
+        item_path,
+    } = staged_open_item_from_note(&before);
     let tags = Tags::parse_values(&["SQLite".to_string()]).unwrap();
 
     store
@@ -463,13 +476,16 @@ fn update_item_append_supports_bom_frontmatter_format() {
         std::fs::read_to_string(item_path).unwrap(),
         formatted_tag_note(true, "\n", Some("[sqlite]"))
     );
-    drop(temp);
 }
 
 #[test]
 fn update_item_clear_supports_bom_frontmatter_format() {
     let before = formatted_tag_note(true, "\n", Some("[godot]"));
-    let (temp, store, item_path) = staged_open_item_from_note(&before);
+    let StagedOpenItem {
+        _temp,
+        store,
+        item_path,
+    } = staged_open_item_from_note(&before);
 
     store
         .update_item(tag_update("PWF-0001", None, true))
@@ -479,13 +495,16 @@ fn update_item_clear_supports_bom_frontmatter_format() {
         std::fs::read_to_string(item_path).unwrap(),
         formatted_tag_note(true, "\n", None)
     );
-    drop(temp);
 }
 
 #[test]
 fn update_item_append_supports_crlf_frontmatter_format() {
     let before = formatted_tag_note(false, "\r\n", None);
-    let (temp, store, item_path) = staged_open_item_from_note(&before);
+    let StagedOpenItem {
+        _temp,
+        store,
+        item_path,
+    } = staged_open_item_from_note(&before);
     let tags = Tags::parse_values(&["SQLite".to_string()]).unwrap();
 
     store
@@ -496,13 +515,16 @@ fn update_item_append_supports_crlf_frontmatter_format() {
         std::fs::read_to_string(item_path).unwrap(),
         formatted_tag_note(false, "\r\n", Some("[sqlite]"))
     );
-    drop(temp);
 }
 
 #[test]
 fn update_item_clear_supports_crlf_frontmatter_format() {
     let before = formatted_tag_note(false, "\r\n", Some("[godot]"));
-    let (temp, store, item_path) = staged_open_item_from_note(&before);
+    let StagedOpenItem {
+        _temp,
+        store,
+        item_path,
+    } = staged_open_item_from_note(&before);
 
     store
         .update_item(tag_update("PWF-0001", None, true))
@@ -512,12 +534,15 @@ fn update_item_clear_supports_crlf_frontmatter_format() {
         std::fs::read_to_string(item_path).unwrap(),
         formatted_tag_note(false, "\r\n", None)
     );
-    drop(temp);
 }
 
 #[test]
 fn update_item_clear_removes_tags_and_clear_plus_tags_replaces() {
-    let (temp, store, item_path) = staged_open_item_with_tags("[godot, setup]");
+    let StagedOpenItem {
+        _temp,
+        store,
+        item_path,
+    } = staged_open_item_with_tags("[godot, setup]");
     store
         .update_item(tag_update("PWF-0001", None, true))
         .unwrap();
@@ -536,12 +561,15 @@ fn update_item_clear_removes_tags_and_clear_plus_tags_replaces() {
     let note = std::fs::read_to_string(item_path).unwrap();
     assert!(note.contains("tags: [sqlite]\n"), "{note}");
     assert!(!note.contains("godot"), "{note}");
-    drop(temp);
 }
 
 #[test]
 fn update_item_clear_and_replace_do_not_parse_corrupt_existing_tags() {
-    let (temp, store, item_path) = staged_open_item_with_tags("sqlite, godot");
+    let StagedOpenItem {
+        _temp,
+        store,
+        item_path,
+    } = staged_open_item_with_tags("sqlite, godot");
     store
         .update_item(tag_update("PWF-0001", None, true))
         .unwrap();
@@ -560,12 +588,15 @@ fn update_item_clear_and_replace_do_not_parse_corrupt_existing_tags() {
     let note = std::fs::read_to_string(item_path).unwrap();
     assert!(note.contains("tags: [sqlite]\n"), "{note}");
     assert!(!note.contains("still-corrupt"), "{note}");
-    drop(temp);
 }
 
 #[test]
 fn update_item_rejects_corrupt_existing_tags_before_writing() {
-    let (_temp, store, item_path) = staged_open_item_with_tags("sqlite, godot");
+    let StagedOpenItem {
+        _temp,
+        store,
+        item_path,
+    } = staged_open_item_with_tags("sqlite, godot");
     let before = std::fs::read_to_string(&item_path).unwrap();
     let tags = Tags::parse_values(&["sqlite".to_string()]).unwrap();
 
@@ -586,7 +617,11 @@ fn update_item_rejects_corrupt_existing_tags_before_writing() {
 #[test]
 fn update_item_rejects_empty_tags_frontmatter_before_writing() {
     for raw in ["", "   "] {
-        let (_temp, store, item_path) = staged_open_item_with_tags(raw);
+        let StagedOpenItem {
+            _temp,
+            store,
+            item_path,
+        } = staged_open_item_with_tags(raw);
         let before = std::fs::read_to_string(&item_path).unwrap();
         let tags = Tags::parse_values(&["sqlite".to_string()]).unwrap();
 
@@ -1113,24 +1148,17 @@ fn config_for_notes(notes_dir: &Path) -> pwf_core::config::Config {
     from_json(&config_json.to_string(), None).unwrap()
 }
 
-fn staged_open_item_with_tags(
-    tags: &str,
-) -> (
-    tempfile::TempDir,
-    ObsidianPendingWorkStore,
-    std::path::PathBuf,
-) {
+struct StagedOpenItem {
+    _temp: tempfile::TempDir,
+    store: ObsidianPendingWorkStore,
+    item_path: std::path::PathBuf,
+}
+
+fn staged_open_item_with_tags(tags: &str) -> StagedOpenItem {
     staged_open_item(Some(tags), "body")
 }
 
-fn staged_open_item(
-    tags: Option<&str>,
-    body: &str,
-) -> (
-    tempfile::TempDir,
-    ObsidianPendingWorkStore,
-    std::path::PathBuf,
-) {
+fn staged_open_item(tags: Option<&str>, body: &str) -> StagedOpenItem {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
     let project_dir = notes_dir.join("pwf");
@@ -1139,16 +1167,14 @@ fn staged_open_item(
     let item_path = project_dir.join("PWF-0001.md");
     write_note(&item_path, "tagged", "2026-07-01", None, None, tags, body);
     let store = ObsidianPendingWorkStore::new(config_for_notes(&notes_dir));
-    (temp, store, item_path)
+    StagedOpenItem {
+        _temp: temp,
+        store,
+        item_path,
+    }
 }
 
-fn staged_open_item_from_note(
-    note: &str,
-) -> (
-    tempfile::TempDir,
-    ObsidianPendingWorkStore,
-    std::path::PathBuf,
-) {
+fn staged_open_item_from_note(note: &str) -> StagedOpenItem {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
     let project_dir = notes_dir.join("pwf");
@@ -1157,7 +1183,11 @@ fn staged_open_item_from_note(
     let item_path = project_dir.join("PWF-0001.md");
     std::fs::write(&item_path, note).unwrap();
     let store = ObsidianPendingWorkStore::new(config_for_notes(&notes_dir));
-    (temp, store, item_path)
+    StagedOpenItem {
+        _temp: temp,
+        store,
+        item_path,
+    }
 }
 
 fn formatted_tag_note(bom: bool, newline: &str, tags: Option<&str>) -> String {
@@ -1212,4 +1242,55 @@ fn write_status_note(
     }
     note.push_str("---\n\nbody\n");
     std::fs::write(path, note).unwrap();
+}
+
+#[test]
+fn note_with_project_finds_active_note_case_insensitively() {
+    let temp = tempfile::tempdir().unwrap();
+    let notes_dir = temp.path().join("notes");
+    let project_dir = notes_dir.join("test-project");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    std::fs::write(project_dir.join("test-project.md"), "- [ ] [[TST-0001]]\n").unwrap();
+    write_note(
+        &project_dir.join("TST-0001.md"),
+        "test task",
+        "2026-07-01",
+        None,
+        None,
+        None,
+        "body",
+    );
+
+    let config_json = serde_json::json!({
+        "notesDir": notes_dir,
+        "projects": { "test-project": "/repo/test-project" },
+        "prefixes": { "test-project": "TST" }
+    });
+    let config = from_json(&config_json.to_string(), None).unwrap();
+    let store = ObsidianPendingWorkStore::new(config);
+
+    let result = store.note_with_project("tst-0001");
+    assert!(result.is_some());
+    let (project, path) = result.unwrap();
+    assert_eq!(project, "test-project");
+    assert!(path.ends_with("TST-0001.md"));
+}
+
+#[test]
+fn note_with_project_returns_none_for_unknown_id() {
+    let temp = tempfile::tempdir().unwrap();
+    let notes_dir = temp.path().join("notes");
+    let project_dir = notes_dir.join("test-project");
+    std::fs::create_dir_all(&project_dir).unwrap();
+
+    let config_json = serde_json::json!({
+        "notesDir": notes_dir,
+        "projects": { "test-project": "/repo/test-project" },
+        "prefixes": { "test-project": "TST" }
+    });
+    let config = from_json(&config_json.to_string(), None).unwrap();
+    let store = ObsidianPendingWorkStore::new(config);
+
+    let result = store.note_with_project("tst-9999");
+    assert!(result.is_none());
 }

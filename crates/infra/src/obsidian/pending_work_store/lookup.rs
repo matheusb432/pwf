@@ -71,6 +71,12 @@ impl ObsidianPendingWorkStore {
         }
         None
     }
+
+    /// Public lookup for cross-engine callers (the handoff mirror gate):
+    /// the owning project and note path for `id`, open or closed.
+    pub fn note_with_project(&self, id: &str) -> Option<(String, PathBuf)> {
+        self.find_item_note_with_project(id)
+    }
 }
 
 pub(super) fn normalize_lookup_id(id: &str) -> String {

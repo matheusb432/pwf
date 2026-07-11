@@ -12,6 +12,10 @@ fn main() {
         print_retired_pending_work_prefix_error(prefix, &argv);
         std::process::exit(1);
     }
+    if let Some(hint) = retired_handoff_verb(&argv) {
+        eprintln!("error: {hint}");
+        std::process::exit(1);
+    }
 
     if argv.iter().any(|a| help::is_terse(a)) {
         print_terse_help(&argv);
@@ -90,6 +94,34 @@ fn print_retired_pending_work_prefix_error(prefix: &str, argv: &[String]) {
         "error: use `{replacement}` instead; `pwf {prefix} ...` is a retired compatibility surface."
     );
     eprintln!("{DEPRECATED_PW_PREFIX_WARNING}");
+}
+
+/// `pwf handoff <verb>` tokens retired by PWF-0117: `Some(hint)` for a
+/// retired verb, `None` otherwise. Runs before clap parsing, same as
+/// `retired_pending_work_prefix`, so the retired token never reaches the
+/// `HandoffAction` enum.
+fn retired_handoff_verb(argv: &[String]) -> Option<String> {
+    if argv.first().map(String::as_str) != Some("handoff") {
+        return None;
+    }
+    match argv.get(1).map(String::as_str) {
+        Some("new") => Some("renamed: use `pwf handoff add`.".to_string()),
+        Some(verb @ ("done" | "cancel" | "reopen")) => Some(mirrored_pw_verb_hint(verb)),
+        Some("refresh") => Some(
+            "retired: the ledger is maintained automatically by handoff-mirroring verbs."
+                .to_string(),
+        ),
+        _ => None,
+    }
+}
+
+/// Hint shared by `done`/`cancel`/`reopen`: run the matching pw verb, which
+/// mirrors the operation onto the linked handoff.
+fn mirrored_pw_verb_hint(pw_verb: &str) -> String {
+    format!(
+        "retired: run `pwf {pw_verb} --id <pw-id>` \u{2014} a handoff-tagged task mirrors the \
+         operation onto its handoff."
+    )
 }
 
 fn pending_work_prefix_replacement(argv: &[String]) -> String {

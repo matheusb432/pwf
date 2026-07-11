@@ -55,7 +55,6 @@ fn is_value_flag(flag: &str) -> bool {
             | "--commits"
             | "--title"
             | "--slug"
-            | "--reason"
             | "--report"
             | "--append-report"
             | "--append"

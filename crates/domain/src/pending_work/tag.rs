@@ -2,6 +2,9 @@ use std::fmt;
 
 use thiserror::Error;
 
+/// The well-known tag that marks an item as governing a handoff (PWF-0117).
+pub const HANDOFF_TAG: &str = "handoff";
+
 /// Stores one normalized lowercase snake-case task label.
 ///
 /// # Examples
@@ -167,6 +170,20 @@ impl Tags {
         requested.0.iter().all(|tag| self.0.contains(tag))
     }
 
+    /// Whether the set contains the canonical tag `name`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pwf_domain::pending_work::{HANDOFF_TAG, Tags};
+    ///
+    /// let tags = Tags::parse_frontmatter("[handoff]").unwrap();
+    /// assert!(tags.contains_name(HANDOFF_TAG));
+    /// ```
+    pub fn contains_name(&self, name: &str) -> bool {
+        self.iter().any(|tag| tag.as_ref() == name)
+    }
+
     /// Renders the canonical inline-array frontmatter payload.
     ///
     /// # Examples
@@ -248,7 +265,7 @@ impl ParseTagsError {
 
 #[cfg(test)]
 mod tests {
-    use super::{ParseTagsError, Tags};
+    use super::{HANDOFF_TAG, ParseTagsError, Tags};
 
     fn values(tags: &Tags) -> Vec<&str> {
         tags.iter().map(AsRef::as_ref).collect()
@@ -305,5 +322,18 @@ mod tests {
         assert_eq!(values(&merged), ["sqlite", "godot", "csharp_export"]);
         assert!(merged.contains_all(&appended));
         assert!(!appended.contains_all(&existing));
+    }
+
+    #[test]
+    fn handoff_tag_constant_is_canonical() {
+        let tags = Tags::parse_values(&[HANDOFF_TAG.to_string()]).unwrap();
+        assert_eq!(tags.frontmatter_value(), "[handoff]");
+    }
+
+    #[test]
+    fn contains_name_matches_canonical_tag() {
+        let tags = Tags::parse_values(&["godot,handoff".to_string()]).unwrap();
+        assert!(tags.contains_name(HANDOFF_TAG));
+        assert!(!tags.contains_name("sqlite"));
     }
 }

@@ -1,5 +1,6 @@
 mod done_queue;
 mod index_text;
+mod note_frontmatter;
 mod note_text;
 mod pending_work_store;
 

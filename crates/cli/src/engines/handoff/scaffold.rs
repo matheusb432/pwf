@@ -15,8 +15,7 @@ pub fn scaffold(title: &str, project: &str, today: &str, pw: Option<&str>) -> St
     s.push_str("## Goals\n- [ ] <task title> :: <task description>\n\n");
     s.push_str("## Context\n\n## Next steps\n-\n\n");
     s.push_str("<!-- Lifecycle: while active, this is a LIVE document \u{2014} check off Goals as you finish them.\n");
-    s.push_str("     When all Goals are done run `handoff done <id>` (sets status done, checks the pw item,\n");
-    s.push_str("     drops the LEDGER row, moves this file to archived/, commits). Never edit archived/. -->\n");
+    s.push_str("     When all Goals are done run `pwf done --id <pw-id>` (closes the task and archives this handoff). Never edit archived/. -->\n");
     s
 }
 
@@ -46,5 +45,23 @@ mod tests {
             Some("TST-0001"),
         );
         assert!(s.contains("created: 2026-01-01\npw: TST-0001\n---"));
+    }
+
+    #[test]
+    fn scaffold_lifecycle_comment_points_at_pwf_done() {
+        // PWF-0117: the engine no longer runs `handoff done` or commits on the
+        // agent's behalf — the lifecycle comment must point at `pwf done` instead.
+        let s = scaffold("Managed Flow", "test-project", "2026-01-01", None);
+        assert!(
+            s.contains(
+                "When all Goals are done run `pwf done --id <pw-id>` (closes the task and archives this handoff). Never edit archived/."
+            ),
+            "lifecycle comment missing pwf done pointer: {s}"
+        );
+        assert!(
+            !s.contains("handoff done"),
+            "stale handoff done reference: {s}"
+        );
+        assert!(!s.contains("commits)"), "stale commit claim: {s}");
     }
 }

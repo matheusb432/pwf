@@ -1,7 +1,7 @@
 use std::{fmt::Write as _, path::Path, sync::LazyLock};
 
 use pwf_application::{ClosedItem, ClosedItemAction, ReopenedItem, StatusTransitionDiagnostics};
-use pwf_domain::pending_work::OpenItem;
+use pwf_domain::pending_work::{OpenItem, WorkItemStatus};
 use regex::Regex;
 
 use super::{
@@ -15,7 +15,8 @@ use super::{
 use crate::obsidian::{
     done_queue,
     index_text::add_link_to_index,
-    note_text::{append_report_text, reopen_status_text, set_commits_text, set_status_text},
+    note_frontmatter::{reopen_status_text, set_commits_text, set_status_text},
+    note_text::append_report_text,
 };
 
 static DATE_STAMP_RE: LazyLock<Regex> =
@@ -24,8 +25,36 @@ static DATE_STAMP_RE: LazyLock<Regex> =
 pub(super) struct CloseItemSpec {
     pub(super) id: String,
     pub(super) completed: String,
-    pub(super) report: Option<String>,
     pub(super) commits: Option<String>,
+    pub(super) kind: CloseItemKind,
+}
+
+pub(super) enum CloseItemKind {
+    Done { report: Option<String> },
+    Cancelled { report: String },
+}
+
+impl CloseItemKind {
+    fn action(&self) -> ClosedItemAction {
+        match self {
+            Self::Done { .. } => ClosedItemAction::Done,
+            Self::Cancelled { .. } => ClosedItemAction::Cancelled,
+        }
+    }
+
+    fn status(&self) -> WorkItemStatus {
+        match self {
+            Self::Done { .. } => WorkItemStatus::Done,
+            Self::Cancelled { .. } => WorkItemStatus::Cancelled,
+        }
+    }
+
+    fn report(&self) -> Option<&str> {
+        match self {
+            Self::Done { report } => report.as_deref(),
+            Self::Cancelled { report } => Some(report),
+        }
+    }
 }
 
 impl ObsidianPendingWorkStore {
@@ -49,7 +78,7 @@ impl ObsidianPendingWorkStore {
             .frontmatter
             .get("status")
             .map(String::as_str)
-            == Some("active")
+            == Some(WorkItemStatus::Active.as_frontmatter_str())
         {
             return Ok(ReopenedItem {
                 id: canonical,
@@ -87,20 +116,18 @@ impl ObsidianPendingWorkStore {
     pub(super) fn close_item(
         &self,
         spec: &CloseItemSpec,
-        action: ClosedItemAction,
     ) -> Result<ClosedItem, ObsidianPendingWorkStoreError> {
         let item = self.find_pending_item(&spec.id)?;
         if item.item_file.is_some() {
-            self.close_file_model_item(spec, action, &item)
+            self.close_file_model_item(spec, &item)
         } else {
-            Self::close_legacy_item(spec, action, &item)
+            Self::close_legacy_item(spec, &item)
         }
     }
 
     fn close_file_model_item(
         &self,
         spec: &CloseItemSpec,
-        action: ClosedItemAction,
         item: &OpenItem,
     ) -> Result<ClosedItem, ObsidianPendingWorkStoreError> {
         let item_file = item
@@ -109,18 +136,14 @@ impl ObsidianPendingWorkStore {
             .ok_or(ObsidianPendingWorkStoreError::UpdateRequiresFileModel)?;
         let item_path = Path::new(item_file);
         let mut content = read_item_file(item_path)?;
-        if let Some(report) = spec.report.as_deref() {
+        if let Some(report) = spec.kind.report() {
             content = append_report_text(&content, report)
                 .ok_or(ObsidianPendingWorkStoreError::EmptyReport)?;
         }
         if let Some(commits) = spec.commits.as_deref() {
             content = set_commits_text(&content, Some(commits));
         }
-        let status = match action {
-            ClosedItemAction::Done => "done",
-            ClosedItemAction::Cancelled => "cancelled",
-        };
-        content = set_status_text(&content, status, &spec.completed);
+        content = set_status_text(&content, spec.kind.status(), &spec.completed);
         write_item_file(item_path, &content)?;
 
         let diagnostics = self.rotate_done_queue(item, &spec.completed)?;
@@ -129,7 +152,7 @@ impl ObsidianPendingWorkStore {
             id: item.id.clone(),
             project: item.project.clone(),
             title: item.session.clone(),
-            action,
+            action: spec.kind.action(),
             diagnostics,
         })
     }
@@ -159,7 +182,6 @@ impl ObsidianPendingWorkStore {
 
     fn close_legacy_item(
         spec: &CloseItemSpec,
-        action: ClosedItemAction,
         item: &OpenItem,
     ) -> Result<ClosedItem, ObsidianPendingWorkStoreError> {
         let note_path = Path::new(&item.note);
@@ -199,7 +221,7 @@ impl ObsidianPendingWorkStore {
             id: item.id.clone(),
             project: item.project.clone(),
             title: item.session.clone(),
-            action,
+            action: spec.kind.action(),
             diagnostics: StatusTransitionDiagnostics::none(),
         })
     }

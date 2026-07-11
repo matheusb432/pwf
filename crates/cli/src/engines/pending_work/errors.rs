@@ -249,7 +249,45 @@ pub(crate) enum PendingWorkError {
         /// Underlying exec/spawn error text.
         message: String,
     },
+    /// The handoff mirror gate/lookup failed before any mutation was attempted.
+    #[error(transparent)]
+    HandoffMirror(#[from] crate::engines::handoff::mirror::MirrorError),
+    /// A pw mutation succeeded but mirroring it onto the linked handoff failed
+    /// afterward, leaving the pw item and its handoff out of sync. `remedy` is
+    /// per-producer: what actually fixes the desync differs by which verb
+    /// mutated the item (see `done_cancel_reopen_remedy`/`remove_remedy`/`add_remedy`).
+    #[error("{id} was mutated, but its handoff was not: {source}\n  {remedy}")]
+    HandoffMirrorAfterMutation {
+        /// The pw item id that was mutated.
+        id: String,
+        /// The underlying mirror error.
+        source: crate::engines::handoff::mirror::MirrorError,
+        /// Producer-supplied remediation text (see the `*_remedy` builders below).
+        remedy: String,
+    },
 }
+
+/// Remedy for a `done`/`cancel`/`reopen` mirror-after-mutation failure: the pw
+/// item already moved, so bringing the pair back in sync is a `pwf reopen`
+/// (which un-mirrors the pw side) followed by a retry, or finishing the
+/// archive/un-archive move by hand.
+pub(crate) fn done_cancel_reopen_remedy(id: &str) -> String {
+    format!(
+        "fix the cause, then `pwf reopen --id {id}` and re-run — or finish the handoff move by hand"
+    )
+}
+
+/// Remedy for a `remove` mirror-after-mutation failure: the pw note is
+/// already deleted, so `pwf reopen` has nothing to reopen — the stranded
+/// handoff file must be deleted by hand.
+pub(crate) const REMOVE_MIRROR_REMEDY: &str =
+    "the pw note is already deleted; delete the linked handoff file by hand";
+
+/// Remedy for an `add` mirror-after-mutation failure: the pw item is freshly
+/// created (not yet linked to any handoff `pwf reopen` could act on), so the
+/// operator must create the handoff scaffold by hand or drop the `handoff` tag.
+pub(crate) const ADD_MIRROR_REMEDY: &str = "the item was created but its handoff scaffold failed; \
+     create the handoff manually or remove the `handoff` tag";
 
 impl From<PendingWorkError> for String {
     fn from(error: PendingWorkError) -> Self {
@@ -266,6 +304,57 @@ mod tests {
     use std::{assert_matches, error::Error};
 
     use super::*;
+
+    fn stub_mirror_error() -> crate::engines::handoff::mirror::MirrorError {
+        crate::engines::handoff::mirror::MirrorError::HandoffNotFound {
+            id: "GLP-0001".to_string(),
+            dir: std::path::PathBuf::from("/repo/docs/handoffs"),
+        }
+    }
+
+    /// The three mirror-after-mutation producers (`done`/`cancel`/`reopen`,
+    /// `remove`, `add`) each carry remediation text that matches what's
+    /// actually true of the item at that point — a fresh error text per
+    /// producer, not one copy stretched to cover cases it doesn't fit.
+    #[test]
+    fn handoff_mirror_after_mutation_remedy_differs_by_producer() {
+        let done_like = PendingWorkError::HandoffMirrorAfterMutation {
+            id: "GLP-0001".to_string(),
+            source: stub_mirror_error(),
+            remedy: done_cancel_reopen_remedy("GLP-0001"),
+        };
+        assert!(done_like.to_string().contains("pwf reopen --id GLP-0001"));
+
+        let remove_like = PendingWorkError::HandoffMirrorAfterMutation {
+            id: "GLP-0001".to_string(),
+            source: stub_mirror_error(),
+            remedy: REMOVE_MIRROR_REMEDY.to_string(),
+        };
+        let remove_message = remove_like.to_string();
+        assert!(
+            remove_message.contains("already deleted"),
+            "got: {remove_message}"
+        );
+        assert!(
+            !remove_message.contains("pwf reopen"),
+            "remove has nothing to reopen: {remove_message}"
+        );
+
+        let add_like = PendingWorkError::HandoffMirrorAfterMutation {
+            id: "GLP-0001".to_string(),
+            source: stub_mirror_error(),
+            remedy: ADD_MIRROR_REMEDY.to_string(),
+        };
+        let add_message = add_like.to_string();
+        assert!(
+            add_message.contains("create the handoff manually"),
+            "got: {add_message}"
+        );
+        assert!(
+            !add_message.contains("pwf reopen"),
+            "a freshly created item has nothing to reopen: {add_message}"
+        );
+    }
 
     #[test]
     fn clean_error_bridge_preserves_display_and_source() {

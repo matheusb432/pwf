@@ -1,11 +1,11 @@
-//! Leaf action implementations: new, done/cancel, reopen, and list.
+//! Leaf action implementations: add and list. `done`/`cancel`/`reopen`/`refresh`
+//! are retired (PWF-0117) — `engines/handoff/mirror.rs` owns those transforms now,
+//! called directly from the pending-work actions
+//! (`engines/pending_work/actions/{done,reopen,remove}.rs`) and
+//! `pending_work::run::run_add`.
 
-mod complete;
+mod add;
 mod list;
-mod new;
-mod reopen;
 
-pub(super) use complete::complete_handoff;
+pub(super) use add::invoke_add;
 pub(super) use list::invoke_list;
-pub(super) use new::invoke_new;
-pub(super) use reopen::reopen_handoff;

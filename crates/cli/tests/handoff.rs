@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use pwf::engines::handoff;
+use pwf::engines::{handoff, pending_work as pwk};
 
 fn nanos() -> u128 {
     std::time::SystemTime::now()
@@ -45,19 +45,15 @@ fn parse_args(tokens: &[&str]) -> pwf::cli::Args {
     pwf::command::parse_argv(v).unwrap().1
 }
 
-// A few handoff tests drive a pending-work command (e.g. `done`) as a setup
-// step; pending-work verbs are top-level clap subcommands, so this just parses
-// the verb directly.
-fn parse_pw(tokens: &[&str]) -> pwf::cli::Args {
-    let v = tokens
-        .iter()
-        .map(std::string::ToString::to_string)
-        .collect();
-    pwf::command::parse_argv(v).unwrap().1
-}
-
 fn pw_stub_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pw-stub.sh")
+}
+
+/// An allocator stub that runs successfully but emits stdout `parse_added_id`
+/// can't extract an id from — used to drive `handoff add`'s scaffold-cleanup
+/// path when pw allocation fails after the scaffold file is already written.
+fn pw_stub_garbage_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pw-stub-garbage.sh")
 }
 
 // ── Task 18: scaffold + slug ────────────────────────────────────────────────
@@ -103,74 +99,16 @@ fn slug_converts_title() {
     assert_eq!(handoff::slug(""), "handoff");
 }
 
-// ── Task 19: ledger refresh ─────────────────────────────────────────────────
+// ── Task 20 / PWF-0117: add ─────────────────────────────────────────────────
 
 #[test]
-fn refresh_counts_active_only() {
-    let stage = tmpdir("hf_refresh");
-    let repo = stage.join("repo");
-    let handoff_dir = repo.join("docs/handoffs");
-    fs::create_dir_all(&handoff_dir).unwrap();
-
-    // Done handoff
-    fs::write(
-        handoff_dir.join("2026-01-01-done.md"),
-        "---\nstatus: done\nproject: test-project\ncreated: 2026-01-01\ncompleted: 2026-01-01\npw: TST-0001\n---\n\n# Done Handoff\n\n## Goals\n- [x] closed task :: complete work\n\n## Context\n\nDone handoffs are excluded from the active ledger.\n",
-    ).unwrap();
-
-    // Active handoff
-    fs::write(
-        handoff_dir.join("2026-01-02-active.md"),
-        "---\nstatus: active\nproject: test-project\ncreated: 2026-01-02\npw: TST-0002\n---\n\n# Active Followup\n\n## Goals\n- [x] inspect state :: read files\n- [ ] update state :: write files\n\n## Context\n\nOnly this active handoff should appear in the ledger.\n",
-    ).unwrap();
-
-    let notes = stage.join("notes");
-    let cfg = write_config(&stage, &repo, &notes);
-    let args = parse_args(&[
-        "refresh",
-        "--config-path",
-        cfg.to_str().unwrap(),
-        "--repo-root",
-        repo.to_str().unwrap(),
-        "--date",
-        "2026-01-01",
-    ]);
-    let out = handoff::run(&args).unwrap();
-    assert!(
-        out.starts_with("LEDGER refreshed."),
-        "expected refresh text, got: {out}"
-    );
-
-    let ledger = fs::read_to_string(handoff_dir.join("LEDGER.md")).unwrap();
-    assert!(ledger.contains("TST-0002"), "ledger missing TST-0002");
-    assert!(ledger.contains("1/2"), "ledger missing goals 1/2");
-    assert!(
-        !ledger.contains("TST-0001"),
-        "done handoff should not appear"
-    );
-
-    // active-only count proxy: one table data row (header excluded; `---` separator excluded)
-    let active_rows = ledger
-        .lines()
-        .filter(|l| l.starts_with("| ") && !l.contains("---"))
-        .count()
-        - 1; // subtract the `| ID | Handoff | … |` header row
-    assert_eq!(
-        active_rows, 1,
-        "expected exactly 1 active handoff row, ledger:\n{ledger}"
-    );
-}
-
-// ── Task 20: new ───────────────────────────────────────────────────────────
-
-#[test]
-fn new_unmanaged_no_pw() {
-    let stage = tmpdir("hf_new_unm");
+fn add_unmanaged_repo_errors() {
+    let stage = tmpdir("hf_add_unm");
     let repo = stage.join("repo");
     fs::create_dir_all(&repo).unwrap();
     let cfg = write_empty_config(&stage);
     let args = parse_args(&[
-        "new",
+        "add",
         "--title",
         "Unmanaged Flow",
         "--slug",
@@ -182,28 +120,36 @@ fn new_unmanaged_no_pw() {
         "--date",
         "2026-01-01",
     ]);
-    let out = handoff::run(&args).unwrap();
+    let err = handoff::run(&args).unwrap_err();
     assert!(
-        out.starts_with("Created handoff "),
-        "expected created text, got: {out}"
+        err.contains("this repo is not a managed project"),
+        "unexpected error: {err}"
     );
     assert!(
-        out.contains("2026-01-01-unmanaged-flow.md"),
-        "file path missing: {out}"
+        err.contains("register it in the pwf config"),
+        "unexpected error: {err}"
+    );
+    assert!(
+        err.contains(&repo.to_string_lossy().into_owned()),
+        "error should name the repo root: {err}"
     );
 
     let file_path = repo.join("docs/handoffs/2026-01-01-unmanaged-flow.md");
-    assert!(file_path.exists(), "handoff file not created");
-    let content = fs::read_to_string(&file_path).unwrap();
     assert!(
-        content.contains("project: repo"),
-        "project label should be repo dir leaf"
+        !file_path.exists(),
+        "unmanaged repo must not write a handoff file"
     );
-    assert!(!content.contains("pw:"), "unmanaged should have no pw line");
+    // An unmanaged repo must get no filesystem writes at all — not even an
+    // empty `docs/handoffs/` — so the `UnmanagedRepo` check must run before
+    // any directory is created.
+    assert!(
+        !repo.join("docs/handoffs").exists(),
+        "unmanaged repo must not have docs/handoffs/ created at all"
+    );
 }
 
 #[test]
-fn new_managed_calls_pw_stub() {
+fn add_managed_calls_pw_stub() {
     // This test uses the actual pw-stub.sh fixture to verify the spawn path.
     let stage = tmpdir("hf_new_mgd");
     let repo = stage.join("repo");
@@ -213,7 +159,7 @@ fn new_managed_calls_pw_stub() {
 
     let stub = pw_stub_path();
     let args = parse_args(&[
-        "new",
+        "add",
         "--title",
         "Managed Flow",
         "--slug",
@@ -243,7 +189,46 @@ fn new_managed_calls_pw_stub() {
 }
 
 #[test]
-fn new_managed_links_pw_in_process_without_script() {
+fn add_removes_orphan_scaffold_when_pw_allocation_fails() {
+    // The scaffold is written before pw allocation (`--continue-handoff` needs
+    // it on disk), so a failed allocation must best-effort delete it — else a
+    // handoff with no `pw:` link is stranded on disk with nothing pointing at
+    // it (PWF-0117 final-review item 4).
+    let stage = tmpdir("hf_add_orphan_scaffold");
+    let repo = stage.join("repo");
+    fs::create_dir_all(&repo).unwrap();
+    let notes = stage.join("notes");
+    let cfg = write_config(&stage, &repo, &notes);
+
+    let stub = pw_stub_garbage_path();
+    let args = parse_args(&[
+        "add",
+        "--title",
+        "Managed Flow",
+        "--slug",
+        "managed-flow",
+        "--config-path",
+        cfg.to_str().unwrap(),
+        "--repo-root",
+        repo.to_str().unwrap(),
+        "--date",
+        "2026-01-01",
+        "--pending-work-script",
+        stub.to_str().unwrap(),
+    ]);
+    let err = handoff::run(&args).unwrap_err();
+
+    assert!(err.contains("pw-add output parse error"), "got: {err}");
+    let file_path = repo.join("docs/handoffs/2026-01-01-managed-flow.md");
+    assert!(
+        !file_path.exists(),
+        "orphan scaffold must be removed when pw allocation fails: {}",
+        file_path.display()
+    );
+}
+
+#[test]
+fn add_managed_links_pw_in_process_without_script() {
     // Production path (no --pending-work-script): handoff calls the pending-work engine
     // in-process to allocate + link the work item, mirroring the PS default script.
     let stage = tmpdir("hf_new_inproc");
@@ -252,7 +237,7 @@ fn new_managed_links_pw_in_process_without_script() {
     let notes = stage.join("notes");
     let cfg = write_config(&stage, &repo, &notes);
     let args = parse_args(&[
-        "new",
+        "add",
         "--title",
         "Managed Flow",
         "--slug",
@@ -277,616 +262,247 @@ fn new_managed_links_pw_in_process_without_script() {
         content.contains("pw: TST-0001"),
         "pw not in file: {content}"
     );
+    let note_path = notes.join("test-project/TST-0001.md");
     assert!(
-        notes.join("test-project/TST-0001.md").exists(),
+        note_path.exists(),
         "work-item note not created in the vault"
     );
-}
-
-// ── Task 21: done / cancel ──────────────────────────────────────────────────
-
-#[test]
-fn done_archives_and_updates_frontmatter() {
-    let stage = tmpdir("hf_done");
-    let repo = stage.join("repo");
-    let handoff_dir = repo.join("docs/handoffs");
-    fs::create_dir_all(&handoff_dir).unwrap();
-    fs::write(
-        handoff_dir.join("2026-01-01-managed-flow.md"),
-        "---\nstatus: active\nproject: test-project\ncreated: 2026-01-01\npw: TST-0001\n---\n\n# Managed Flow\n\n## Goals\n- [x] draft plan :: write implementation plan\n- [ ] verify plan :: run checks\n\n## Context\n\nFinish the active handoff.\n",
-    ).unwrap();
-    // initial LEDGER
-    fs::write(handoff_dir.join("LEDGER.md"), "# stale\n").unwrap();
-
-    let notes = stage.join("notes");
-    let cfg = write_config(&stage, &repo, &notes);
-    let stub = pw_stub_path();
-    let args = parse_args(&[
-        "done",
-        "--id",
-        "TST-0001",
-        "--config-path",
-        cfg.to_str().unwrap(),
-        "--repo-root",
-        repo.to_str().unwrap(),
-        "--date",
-        "2026-01-01",
-        "--no-commit",
-        "--pending-work-script",
-        stub.to_str().unwrap(),
-    ]);
-    let out = handoff::run(&args).unwrap();
+    let note = fs::read_to_string(&note_path).unwrap();
     assert!(
-        out.contains("done handoff "),
-        "expected 'done handoff' text, got: {out}"
+        note.contains("tags: [handoff]"),
+        "handoff tag missing: {note}"
     );
 
-    let archived = repo.join("docs/handoffs/archived/2026-01-01-managed-flow.md");
-    assert!(archived.exists(), "archived file should exist");
-    let content = fs::read_to_string(&archived).unwrap();
-    assert!(content.contains("status: done"), "status not set to done");
-    assert!(
-        content.contains("completed: 2026-01-01"),
-        "completed not set"
-    );
-    // frontmatter order: status, completed appear before project/created
-    let status_pos = content.find("status:").unwrap();
-    let completed_pos = content.find("completed:").unwrap();
-    let project_pos = content.find("project:").unwrap();
-    assert!(
-        status_pos < completed_pos,
-        "completed should be after status"
-    );
-    assert!(
-        completed_pos < project_pos,
-        "completed should be before project"
-    );
-}
-
-#[test]
-fn cancel_archives_with_reason() {
-    let stage = tmpdir("hf_cancel");
-    let repo = stage.join("repo");
-    let handoff_dir = repo.join("docs/handoffs");
-    fs::create_dir_all(&handoff_dir).unwrap();
-    fs::write(
-        handoff_dir.join("2026-01-01-cancel-me.md"),
-        "---\nstatus: active\nproject: config-handler\ncreated: 2026-01-01\n---\n\n# Cancel me\n\n## Goals\n- [ ] x :: y\n",
-    ).unwrap();
-    fs::write(
-        handoff_dir.join("LEDGER.md"),
-        "# Handoff ledger - active only\n\n| ID | Handoff | Goals | Created |\n| --- | --- | --- | --- |\n| 2026-01-01-cancel-me | [Cancel me](2026-01-01-cancel-me.md) | 0/1 | 2026-01-01 |\n",
-    ).unwrap();
-
-    let cfg = write_empty_config(&stage);
-    let args = parse_args(&[
-        "cancel",
-        "--id",
-        "cancel-me",
-        "--reason",
-        "scope dropped",
-        "--config-path",
-        cfg.to_str().unwrap(),
-        "--repo-root",
-        repo.to_str().unwrap(),
-        "--date",
-        "2026-01-01",
-        "--no-commit",
-    ]);
-    let out = handoff::run(&args).unwrap();
-    assert!(
-        out.contains("cancelled handoff "),
-        "expected 'cancelled handoff' text, got: {out}"
-    );
-
-    let archived = repo.join("docs/handoffs/archived/2026-01-01-cancel-me.md");
-    assert!(archived.exists(), "archived file should exist");
-    let content = fs::read_to_string(&archived).unwrap();
-    assert!(content.contains("status: cancelled"), "status not set");
-    assert!(
-        content.contains("completed: 2026-01-01"),
-        "completed not set"
-    );
-    assert!(
-        content.contains("> Cancelled: scope dropped"),
-        "reason not appended: {content}"
-    );
-}
-
-// ── PWF-0012: idempotent + atomic done ──────────────────────────────────────
-
-#[test]
-fn done_skips_already_closed_pw_item_and_archives() {
-    let stage = tmpdir("hf_done_idem");
-    let repo = stage.join("repo");
-    fs::create_dir_all(&repo).unwrap();
-    let notes = stage.join("notes");
-    let cfg = write_config(&stage, &repo, &notes);
-
-    // Create handoff + linked open item TST-0001 (in-process production path).
-    let new_args = parse_args(&[
-        "new",
-        "--title",
-        "Managed Flow",
-        "--slug",
-        "managed-flow",
-        "--config-path",
-        cfg.to_str().unwrap(),
-        "--repo-root",
-        repo.to_str().unwrap(),
-        "--date",
-        "2026-01-01",
-    ]);
-    handoff::run(&new_args).unwrap();
-
-    // Close the linked item directly — the live reproduction step.
-    let done_pw_args = parse_pw(&[
-        "done",
-        "--id",
-        "TST-0001",
-        "--config-path",
-        cfg.to_str().unwrap(),
-        "--date",
-        "2026-01-01",
-    ]);
-    pwf::engines::pending_work::run_args(&done_pw_args).unwrap();
-
-    // done must treat the already-closed item as success (skip with a note).
-    let done_args = parse_args(&[
-        "done",
-        "--id",
-        "TST-0001",
-        "--config-path",
-        cfg.to_str().unwrap(),
-        "--repo-root",
-        repo.to_str().unwrap(),
-        "--date",
-        "2026-01-02",
-        "--no-commit",
-    ]);
-    let out = handoff::run(&done_args)
-        .unwrap_or_else(|e| panic!("done should succeed when pw item already done: {e}"));
-    assert!(
-        out.contains("done handoff "),
-        "expected 'done handoff' text, got: {out}"
-    );
-    assert!(
-        out.contains("already done"),
-        "expected skipped note in output, got: {out}"
-    );
-
-    let active = repo.join("docs/handoffs/2026-01-01-managed-flow.md");
-    let archived = repo.join("docs/handoffs/archived/2026-01-01-managed-flow.md");
-    assert!(archived.exists(), "handoff should be archived");
-    assert!(!active.exists(), "active copy should be gone");
-    let content = fs::read_to_string(&archived).unwrap();
-    assert!(
-        content.contains("status: done"),
-        "status not set: {content}"
-    );
-}
-
-// ── PWF-0054: reopen ─────────────────────────────────────────────────────────
-
-#[test]
-fn reopen_un_archives_handoff_and_reopens_linked_pw_item() {
-    // The full inverse of `done`: new → done → reopen must flip BOTH the handoff and
-    // its linked pw item back to active, via the in-process production path.
-    let stage = tmpdir("hf_reopen_paired");
-    let repo = stage.join("repo");
-    fs::create_dir_all(&repo).unwrap();
-    let notes = stage.join("notes");
-    let cfg = write_config(&stage, &repo, &notes);
-
-    let new_args = parse_args(&[
-        "new",
-        "--title",
-        "Managed Flow",
-        "--slug",
-        "managed-flow",
-        "--config-path",
-        cfg.to_str().unwrap(),
-        "--repo-root",
-        repo.to_str().unwrap(),
-        "--date",
-        "2026-01-01",
-    ]);
-    handoff::run(&new_args).unwrap();
-
-    let done_args = parse_args(&[
-        "done",
-        "--id",
-        "TST-0001",
-        "--config-path",
-        cfg.to_str().unwrap(),
-        "--repo-root",
-        repo.to_str().unwrap(),
-        "--date",
-        "2026-01-02",
-        "--no-commit",
-    ]);
-    handoff::run(&done_args).unwrap();
-
-    // Preconditions: handoff archived (done), pw item closed.
-    let archived = repo.join("docs/handoffs/archived/2026-01-01-managed-flow.md");
-    assert!(archived.exists(), "precondition: handoff archived");
-    let pw_note = notes.join("test-project/TST-0001.md");
-    assert!(
-        fs::read_to_string(&pw_note)
-            .unwrap()
-            .contains("status: done"),
-        "precondition: pw item done"
-    );
-
-    // Reopen — by the linked pw id, which find_archived matches via frontmatter.
-    let reopen_args = parse_args(&[
-        "reopen",
-        "--id",
-        "TST-0001",
-        "--config-path",
-        cfg.to_str().unwrap(),
-        "--repo-root",
-        repo.to_str().unwrap(),
-        "--no-commit",
-    ]);
-    let out = handoff::run(&reopen_args).unwrap();
-    assert!(
-        out.contains("reopened handoff "),
-        "expected 'reopened handoff', got: {out}"
-    );
-    assert!(
-        out.contains("pw: reopened TST-0001"),
-        "pw note missing: {out}"
-    );
-
-    // Handoff: un-archived, active, no completed stamp.
-    let active = repo.join("docs/handoffs/2026-01-01-managed-flow.md");
-    assert!(active.exists(), "handoff should be back in active dir");
-    assert!(!archived.exists(), "archived copy should be gone");
-    let hf = fs::read_to_string(&active).unwrap();
-    assert!(hf.contains("status: active"), "handoff status: {hf}");
-    assert!(!hf.contains("completed:"), "completed lingered: {hf}");
-
-    // Linked pw item: reopened (note active, no provenance, index link open).
-    let note = fs::read_to_string(&pw_note).unwrap();
-    assert!(note.contains("status: active"), "pw note status: {note}");
-    assert!(
-        !note.contains("completed:"),
-        "pw completed lingered: {note}"
-    );
-    let index = fs::read_to_string(notes.join("test-project/test-project.md")).unwrap();
-    assert!(
-        index.contains("- [ ] [[TST-0001]]"),
-        "pw index link not reopened: {index}"
-    );
-
-    // LEDGER row restored (handoff is active again).
-    let ledger = fs::read_to_string(repo.join("docs/handoffs/LEDGER.md")).unwrap();
-    assert!(
-        ledger.contains("2026-01-01-managed-flow.md"),
-        "LEDGER row not restored: {ledger}"
-    );
-}
-
-#[test]
-fn reopen_conflict_when_active_file_exists_leaves_archived_intact() {
-    let stage = tmpdir("hf_reopen_conflict");
-    let repo = stage.join("repo");
-    let handoff_dir = repo.join("docs/handoffs");
-    let archive_dir = handoff_dir.join("archived");
-    fs::create_dir_all(&archive_dir).unwrap();
-    let archived = archive_dir.join("2026-01-01-managed-flow.md");
-    fs::write(
-        &archived,
-        "---\nstatus: done\ncompleted: 2026-01-02\nproject: test-project\ncreated: 2026-01-01\n---\n\n# Managed Flow\n",
-    )
-    .unwrap();
-    // An active file of the same name already exists → conflict.
-    let active = handoff_dir.join("2026-01-01-managed-flow.md");
-    fs::write(&active, "frozen active\n").unwrap();
-
-    let cfg = write_empty_config(&stage);
-    let args = parse_args(&[
-        "reopen",
-        "--id",
-        "managed-flow",
-        "--config-path",
-        cfg.to_str().unwrap(),
-        "--repo-root",
-        repo.to_str().unwrap(),
-        "--no-commit",
-    ]);
-    let err = handoff::run(&args).unwrap_err();
-    assert!(
-        err.contains("Handoff already exists"),
-        "unexpected error: {err}"
-    );
-    // No partial state: archived untouched, active untouched.
-    assert!(archived.exists(), "archived must survive a conflict");
-    assert_eq!(fs::read_to_string(&active).unwrap(), "frozen active\n");
-}
-
-#[test]
-fn reopen_unknown_id_errors() {
-    let stage = tmpdir("hf_reopen_missing");
-    let repo = stage.join("repo");
-    fs::create_dir_all(repo.join("docs/handoffs/archived")).unwrap();
-    let cfg = write_empty_config(&stage);
-    let args = parse_args(&[
-        "reopen",
-        "--id",
-        "nope",
-        "--config-path",
-        cfg.to_str().unwrap(),
-        "--repo-root",
-        repo.to_str().unwrap(),
-        "--no-commit",
-    ]);
-    let err = handoff::run(&args).unwrap_err();
-    assert!(
-        err.contains("No archived handoff found"),
-        "unexpected error: {err}"
-    );
-}
-
-#[test]
-fn done_dest_conflict_leaves_no_partial_state() {
-    let stage = tmpdir("hf_done_atomic");
-    let repo = stage.join("repo");
-    fs::create_dir_all(&repo).unwrap();
-    let notes = stage.join("notes");
-    let cfg = write_config(&stage, &repo, &notes);
-
-    // Create handoff + linked open item TST-0001 (in-process production path).
-    let new_args = parse_args(&[
-        "new",
-        "--title",
-        "Managed Flow",
-        "--slug",
-        "managed-flow",
-        "--config-path",
-        cfg.to_str().unwrap(),
-        "--repo-root",
-        repo.to_str().unwrap(),
-        "--date",
-        "2026-01-01",
-    ]);
-    handoff::run(&new_args).unwrap();
-
-    // Force a late failure: the archive destination already exists.
-    let active = repo.join("docs/handoffs/2026-01-01-managed-flow.md");
-    let before = fs::read_to_string(&active).unwrap();
-    let archived_dir = repo.join("docs/handoffs/archived");
-    fs::create_dir_all(&archived_dir).unwrap();
-    fs::write(
-        archived_dir.join("2026-01-01-managed-flow.md"),
-        "frozen archive\n",
-    )
-    .unwrap();
-
-    let done_args = parse_args(&[
-        "done",
-        "--id",
-        "TST-0001",
-        "--config-path",
-        cfg.to_str().unwrap(),
-        "--repo-root",
-        repo.to_str().unwrap(),
-        "--date",
-        "2026-01-02",
-        "--no-commit",
-    ]);
-    let err = handoff::run(&done_args).unwrap_err();
-    assert!(
-        err.contains("Archived handoff already exists"),
-        "unexpected error: {err}"
-    );
-
-    // No partial state: active file untouched, linked pw item still open.
-    let after = fs::read_to_string(&active).unwrap();
-    assert_eq!(before, after, "active handoff must be untouched on failure");
-    let list_args = parse_args(&[
-        "list",
-        "--config-path",
-        cfg.to_str().unwrap(),
-        "--date",
-        "2026-01-02",
-    ]);
-    let out = pwf::engines::pending_work::run_args(&list_args).unwrap();
-    assert!(
-        out.contains("TST-0001"),
-        "pw item must remain open on failure: {out}"
-    );
-}
-
-#[test]
-fn refresh_archives_stranded_non_active_handoffs() {
-    let stage = tmpdir("hf_refresh_sweep");
-    let repo = stage.join("repo");
-    let handoff_dir = repo.join("docs/handoffs");
-    fs::create_dir_all(&handoff_dir).unwrap();
-    fs::write(
-        handoff_dir.join("2026-01-01-stranded.md"),
-        "---\nstatus: done\ncompleted: 2026-01-02\nproject: test-project\ncreated: 2026-01-01\npw: TST-0001\n---\n\n# Stranded\n\n## Goals\n- [x] a :: b\n",
-    )
-    .unwrap();
-    fs::write(
-        handoff_dir.join("2026-01-02-active.md"),
-        "---\nstatus: active\nproject: test-project\ncreated: 2026-01-02\npw: TST-0002\n---\n\n# Active\n\n## Goals\n- [ ] c :: d\n",
-    )
-    .unwrap();
-    // No status: key — a draft, not the sweep's business.
-    fs::write(handoff_dir.join("2026-01-03-draft.md"), "# Draft notes\n").unwrap();
-
-    let cfg = write_empty_config(&stage);
-    let args = parse_args(&[
-        "refresh",
-        "--config-path",
-        cfg.to_str().unwrap(),
-        "--repo-root",
-        repo.to_str().unwrap(),
-        "--date",
-        "2026-01-03",
-    ]);
-    let out = handoff::run(&args).unwrap();
-    assert!(
-        out.starts_with("LEDGER refreshed."),
-        "expected refresh text, got: {out}"
-    );
-    assert!(
-        out.contains("archived 1 stranded"),
-        "expected archive count in output, got: {out}"
-    );
-
-    assert!(
-        handoff_dir.join("archived/2026-01-01-stranded.md").exists(),
-        "stranded file should be moved to archived/"
-    );
-    assert!(
-        !handoff_dir.join("2026-01-01-stranded.md").exists(),
-        "stranded file should leave the active dir"
-    );
-    assert!(
-        handoff_dir.join("2026-01-03-draft.md").exists(),
-        "draft without status must be untouched"
-    );
-    let ledger = fs::read_to_string(handoff_dir.join("LEDGER.md")).unwrap();
-    assert!(!ledger.contains("TST-0001"), "swept handoff not in ledger");
-    assert!(ledger.contains("TST-0002"), "active handoff in ledger");
-}
-
-#[test]
-fn refresh_reports_archive_conflict_without_moving() {
-    let stage = tmpdir("hf_refresh_conflict");
-    let repo = stage.join("repo");
-    let handoff_dir = repo.join("docs/handoffs");
-    fs::create_dir_all(handoff_dir.join("archived")).unwrap();
-    fs::write(
-        handoff_dir.join("2026-01-01-clash.md"),
-        "---\nstatus: done\nproject: test-project\ncreated: 2026-01-01\n---\n\n# Clash\n",
-    )
-    .unwrap();
-    fs::write(
-        handoff_dir.join("archived/2026-01-01-clash.md"),
-        "frozen archive\n",
-    )
-    .unwrap();
-
-    let cfg = write_empty_config(&stage);
-    let args = parse_args(&[
-        "refresh",
-        "--config-path",
-        cfg.to_str().unwrap(),
-        "--repo-root",
-        repo.to_str().unwrap(),
-        "--date",
-        "2026-01-02",
-    ]);
-    let out = handoff::run(&args).unwrap();
-    assert!(
-        out.starts_with("LEDGER refreshed."),
-        "expected refresh text, got: {out}"
-    );
-    assert!(
-        !out.contains("archived 1"),
-        "conflicting file must not be counted as archived, got: {out}"
-    );
-    assert!(
-        out.contains("2026-01-01-clash.md"),
-        "conflict filename missing from output: {out}"
-    );
-    assert!(
-        handoff_dir.join("2026-01-01-clash.md").exists(),
-        "conflicting file stays in place"
-    );
+    // `invoke_add` (above) writes the scaffold directly, then calls
+    // `inprocess_pw_add`, which sends the built `AddPendingWorkItem` command
+    // straight through the mediator — it never re-enters `run_add`, so this
+    // directory must hold exactly the one file written up front. The CLI
+    // path that *does* land in `run_add` with `--continue-handoff --tag
+    // handoff` set (an operator's `--pending-work-script` execing the real
+    // `pwf` binary) is guarded separately by
+    // `add_continue_handoff_and_tag_handoff_does_not_scaffold_a_second_file`.
+    let handoff_files: Vec<_> = fs::read_dir(repo.join("docs/handoffs"))
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|e| {
+            e.path().extension().is_some_and(|ext| ext == "md") && e.file_name() != "LEDGER.md"
+        })
+        .collect();
     assert_eq!(
-        fs::read_to_string(handoff_dir.join("archived/2026-01-01-clash.md")).unwrap(),
-        "frozen archive\n",
-        "existing archive must never be overwritten"
+        handoff_files.len(),
+        1,
+        "expected exactly one handoff file, got: {:?}",
+        handoff_files
+            .iter()
+            .map(std::fs::DirEntry::path)
+            .collect::<Vec<_>>()
     );
 }
 
-// ── PWF-0017 Phase 4: done forwards --commits/--review to the linked pw item ─
+// ── Task 10 / PWF-0117: `pwf add --tag handoff` scaffolds the handoff ──────
 
 #[test]
-fn done_forwards_commits_and_review_to_linked_pw_item() {
-    let stage = tmpdir("hf_done_provenance");
+fn add_with_handoff_tag_scaffolds_handoff_file() {
+    let stage = tmpdir("pw_add_handoff_tag");
     let repo = stage.join("repo");
     fs::create_dir_all(&repo).unwrap();
     let notes = stage.join("notes");
     let cfg = write_config(&stage, &repo, &notes);
 
-    // Create handoff + linked OPEN file-model item TST-0001 (in-process path).
-    let new_args = parse_args(&[
-        "new",
-        "--title",
-        "Managed Flow",
-        "--slug",
-        "managed-flow",
+    let args = parse_pw_args(&[
+        "add",
+        "test-project",
+        "ship the thing / do it",
+        "--tag",
+        "handoff",
         "--config-path",
         cfg.to_str().unwrap(),
-        "--repo-root",
-        repo.to_str().unwrap(),
+        "--notes-dir",
+        notes.to_str().unwrap(),
         "--date",
         "2026-01-01",
     ]);
-    handoff::run(&new_args).unwrap();
+    let out = pwk::run_args(&args).unwrap();
 
-    // done with provenance, in-process (no --pending-work-script → inprocess_pw_done).
-    let done_args = parse_args(&[
-        "done",
-        "--id",
-        "TST-0001",
-        "--commits",
-        "aaaa..bbbb",
-        "--review",
+    assert!(out.contains("TST-0001"), "got: {out}");
+
+    let item = fs::read_to_string(notes.join("test-project/TST-0001.md")).unwrap();
+    assert!(item.contains("tags: [handoff]"), "got: {item}");
+
+    let handoff_path = repo.join("docs/handoffs/2026-01-01-ship-the-thing.md");
+    let handoff = fs::read_to_string(&handoff_path).unwrap();
+    assert!(handoff.contains("pw: TST-0001"), "got: {handoff}");
+
+    let ledger = fs::read_to_string(repo.join("docs/handoffs/LEDGER.md")).unwrap();
+    assert!(ledger.contains("TST-0001"), "got: {ledger}");
+}
+
+#[test]
+fn add_with_handoff_tag_and_missing_repo_root_errors_without_creating_item() {
+    let stage = tmpdir("pw_add_handoff_tag_missing_repo");
+    // `repo` is mapped in config but never created on disk.
+    let repo = stage.join("repo");
+    let notes = stage.join("notes");
+    let cfg = write_config(&stage, &repo, &notes);
+
+    let args = parse_pw_args(&[
+        "add",
+        "test-project",
+        "ship the thing / do it",
+        "--tag",
+        "handoff",
         "--config-path",
         cfg.to_str().unwrap(),
-        "--repo-root",
-        repo.to_str().unwrap(),
+        "--notes-dir",
+        notes.to_str().unwrap(),
         "--date",
-        "2026-01-02",
-        "--no-commit",
+        "2026-01-01",
     ]);
-    handoff::run(&done_args).unwrap();
+    let err = pwk::run_args(&args).unwrap_err();
 
-    // (1) The linked pw item file records the commit range.
-    let item = fs::read_to_string(notes.join("test-project/TST-0001.md")).unwrap();
+    assert!(err.contains("does not exist"), "got: {err}");
     assert!(
-        item.contains("commits: \"aaaa..bbbb\""),
-        "commit range not forwarded to linked item: {item}"
-    );
-
-    // (2) A ## Human review task was spawned in the project, prepped with the
-    // range-scoped git-tools diff commands.
-    let index = fs::read_to_string(notes.join("test-project/test-project.md")).unwrap();
-    assert!(index.contains("## Human"), "no Human section: {index}");
-    let human = fs::read_to_string(notes.join("test-project/TST-0002.md")).unwrap();
-    assert!(
-        human.contains("git-tools diff aaaa..bbbb"),
-        "review task missing range-scoped diff: {human}"
-    );
-    assert!(
-        human.contains("git-tools diff-subrepos"),
-        "review task missing diff-subrepos: {human}"
-    );
-
-    // (3) The handoff was archived as done, as usual.
-    let archived = repo.join("docs/handoffs/archived/2026-01-02-managed-flow.md");
-    let archived = if archived.exists() {
-        archived
-    } else {
-        repo.join("docs/handoffs/archived/2026-01-01-managed-flow.md")
-    };
-    assert!(archived.exists(), "handoff should be archived");
-    let content = fs::read_to_string(&archived).unwrap();
-    assert!(
-        content.contains("status: done"),
-        "status not done: {content}"
+        !notes.join("test-project").exists()
+            || fs::read_dir(notes.join("test-project"))
+                .unwrap()
+                .next()
+                .is_none(),
+        "no item should have been created when the handoff preflight fails"
     );
 }
 
-// ── Task 22: list + refresh dispatch ───────────────────────────────────────
+#[test]
+fn add_with_handoff_tag_and_scaffold_path_collision_errors_without_creating_item() {
+    let stage = tmpdir("pw_add_handoff_tag_collision");
+    let repo = stage.join("repo");
+    let handoff_dir = repo.join("docs/handoffs");
+    fs::create_dir_all(&handoff_dir).unwrap();
+    fs::write(
+        handoff_dir.join("2026-01-01-ship-the-thing.md"),
+        "existing\n",
+    )
+    .unwrap();
+    let notes = stage.join("notes");
+    let cfg = write_config(&stage, &repo, &notes);
+
+    let args = parse_pw_args(&[
+        "add",
+        "test-project",
+        "ship the thing / do it",
+        "--tag",
+        "handoff",
+        "--config-path",
+        cfg.to_str().unwrap(),
+        "--notes-dir",
+        notes.to_str().unwrap(),
+        "--date",
+        "2026-01-01",
+    ]);
+    let err = pwk::run_args(&args).unwrap_err();
+
+    assert!(err.contains("already exists"), "got: {err}");
+    assert!(
+        !notes.join("test-project").exists()
+            || fs::read_dir(notes.join("test-project"))
+                .unwrap()
+                .next()
+                .is_none(),
+        "no item should have been created on a scaffold path collision"
+    );
+    let existing = fs::read_to_string(handoff_dir.join("2026-01-01-ship-the-thing.md")).unwrap();
+    assert_eq!(existing, "existing\n", "existing handoff must be untouched");
+}
+
+#[test]
+fn add_without_handoff_tag_has_no_handoff_side_effects() {
+    let stage = tmpdir("pw_add_no_handoff_tag");
+    let repo = stage.join("repo");
+    fs::create_dir_all(&repo).unwrap();
+    let notes = stage.join("notes");
+    let cfg = write_config(&stage, &repo, &notes);
+
+    let args = parse_pw_args(&[
+        "add",
+        "test-project",
+        "ship the thing / do it",
+        "--tag",
+        "godot",
+        "--config-path",
+        cfg.to_str().unwrap(),
+        "--notes-dir",
+        notes.to_str().unwrap(),
+        "--date",
+        "2026-01-01",
+    ]);
+    let out = pwk::run_args(&args).unwrap();
+
+    assert!(out.contains("TST-0001"), "got: {out}");
+    let item = fs::read_to_string(notes.join("test-project/TST-0001.md")).unwrap();
+    assert!(item.contains("tags: [godot]"), "got: {item}");
+    assert!(
+        !repo.join("docs/handoffs").exists(),
+        "a plain (non-handoff) tag must not create a handoff dir"
+    );
+}
+
+/// `--continue-handoff --tag handoff` is the canonical shape an operator's
+/// `--pending-work-script` allocator execs against the real `pwf` binary
+/// (`pw_bridge::spawn_pw_add`'s doc comment). That flag means the item
+/// continues a handoff that already exists, so `run_add` must not scaffold a
+/// second one — only guard proving this drives `run_add` directly; the
+/// in-process `handoff add` seam (`inprocess_pw_add`) never reaches it.
+#[test]
+fn add_continue_handoff_and_tag_handoff_does_not_scaffold_a_second_file() {
+    let stage = tmpdir("pw_add_continue_no_double_scaffold");
+    let repo = stage.join("repo");
+    let handoff_dir = repo.join("docs/handoffs");
+    fs::create_dir_all(&handoff_dir).unwrap();
+    fs::write(
+        handoff_dir.join("2026-01-01-existing-handoff.md"),
+        "---\nstatus: active\nproject: test-project\ncreated: 2026-01-01\n---\n\n# Existing Handoff\n",
+    )
+    .unwrap();
+    let notes = stage.join("notes");
+    let cfg = write_config(&stage, &repo, &notes);
+
+    let args = parse_pw_args(&[
+        "add",
+        "test-project",
+        "--continue-handoff",
+        "--tag",
+        "handoff",
+        "--config-path",
+        cfg.to_str().unwrap(),
+        "--notes-dir",
+        notes.to_str().unwrap(),
+        "--date",
+        "2026-01-02",
+    ]);
+    let out = pwk::run_args(&args).unwrap();
+
+    assert!(out.contains("TST-0001"), "got: {out}");
+    let item = fs::read_to_string(notes.join("test-project/TST-0001.md")).unwrap();
+    assert!(item.contains("tags: [handoff]"), "got: {item}");
+
+    let handoff_files: Vec<_> = fs::read_dir(&handoff_dir)
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|e| {
+            e.path().extension().is_some_and(|ext| ext == "md") && e.file_name() != "LEDGER.md"
+        })
+        .collect();
+    assert_eq!(
+        handoff_files.len(),
+        1,
+        "--continue-handoff must not scaffold a second handoff file, got: {:?}",
+        handoff_files
+            .iter()
+            .map(std::fs::DirEntry::path)
+            .collect::<Vec<_>>()
+    );
+}
+
+// ── Task 22: list dispatch ─────────────────────────────────────────────────
 
 #[test]
 fn list_returns_ledger_content() {
@@ -931,4 +547,561 @@ fn list_no_ledger() {
     ]);
     let out = handoff::run(&args).unwrap();
     assert_eq!(out, "No active handoffs (LEDGER.md not found).");
+}
+
+// ── Task 7 / PWF-0117: mirror `pwf done`/`pwf cancel` onto the linked handoff ──
+
+fn parse_pw_args(tokens: &[&str]) -> pwf::cli::Args {
+    let v = tokens
+        .iter()
+        .map(std::string::ToString::to_string)
+        .collect();
+    pwf::command::parse_argv(v).unwrap().1
+}
+
+/// Stage a `test-project` item tagged `handoff` plus its open index link, and
+/// — when `handoff_pw` is set — a matching active handoff file under
+/// `docs/handoffs/` in `repo` linking back via `pw: <handoff_pw>`.
+fn stage_tagged_item(notes: &Path, repo: &Path, handoff_pw: Option<&str>) {
+    let proj = notes.join("test-project");
+    fs::create_dir_all(&proj).unwrap();
+    fs::write(
+        proj.join("TST-0001.md"),
+        "---\nstatus: active\ntitle: tray gui\nproject: test-project\ncreated: 2026-01-01\ntags: [handoff]\n---\n\nbody\n",
+    )
+    .unwrap();
+    fs::write(proj.join("test-project.md"), "- [ ] [[TST-0001]]\n").unwrap();
+
+    if let Some(pw) = handoff_pw {
+        let handoff_dir = repo.join("docs/handoffs");
+        fs::create_dir_all(&handoff_dir).unwrap();
+        fs::write(
+            handoff_dir.join("2026-01-01-managed-flow.md"),
+            format!(
+                "---\nstatus: active\nproject: test-project\ncreated: 2026-01-01\npw: {pw}\n---\n\n# Managed Flow\n"
+            ),
+        )
+        .unwrap();
+    }
+}
+
+#[test]
+fn done_archives_linked_handoff_and_reports_dest() {
+    let stage = tmpdir("hf_done_mirror");
+    let repo = stage.join("repo");
+    fs::create_dir_all(&repo).unwrap();
+    let notes = stage.join("notes");
+    stage_tagged_item(&notes, &repo, Some("TST-0001"));
+    let cfg = write_config(&stage, &repo, &notes);
+
+    let args = parse_pw_args(&[
+        "done",
+        "--id",
+        "TST-0001",
+        "--report",
+        "x",
+        "--config-path",
+        cfg.to_str().unwrap(),
+        "--notes-dir",
+        notes.to_str().unwrap(),
+        "--date",
+        "2026-01-02",
+    ]);
+    let out = pwk::run_args(&args).unwrap();
+
+    assert!(out.contains("handoff: archived"), "got: {out}");
+    let archived_path = repo.join("docs/handoffs/archived/2026-01-01-managed-flow.md");
+    let archived = fs::read_to_string(&archived_path).unwrap();
+    assert!(archived.contains("status: done"), "got: {archived}");
+    assert!(
+        archived.contains("completed: 2026-01-02"),
+        "got: {archived}"
+    );
+    assert!(
+        !repo
+            .join("docs/handoffs/2026-01-01-managed-flow.md")
+            .exists(),
+        "active handoff should have been moved"
+    );
+
+    let ledger = fs::read_to_string(repo.join("docs/handoffs/LEDGER.md")).unwrap();
+    assert!(
+        !ledger.contains("TST-0001"),
+        "closed item should have no ledger row: {ledger}"
+    );
+
+    let item = fs::read_to_string(notes.join("test-project/TST-0001.md")).unwrap();
+    assert!(item.contains("status: done"), "got: {item}");
+}
+
+#[test]
+fn cancel_archives_linked_handoff_as_cancelled_with_report_body() {
+    let stage = tmpdir("hf_cancel_mirror");
+    let repo = stage.join("repo");
+    fs::create_dir_all(&repo).unwrap();
+    let notes = stage.join("notes");
+    stage_tagged_item(&notes, &repo, Some("TST-0001"));
+    let cfg = write_config(&stage, &repo, &notes);
+
+    let args = parse_pw_args(&[
+        "cancel",
+        "--id",
+        "TST-0001",
+        "--report",
+        "why",
+        "--config-path",
+        cfg.to_str().unwrap(),
+        "--notes-dir",
+        notes.to_str().unwrap(),
+        "--date",
+        "2026-01-02",
+    ]);
+    let out = pwk::run_args(&args).unwrap();
+
+    assert!(out.contains("handoff: archived"), "got: {out}");
+    let archived_path = repo.join("docs/handoffs/archived/2026-01-01-managed-flow.md");
+    let archived = fs::read_to_string(&archived_path).unwrap();
+    assert!(archived.contains("status: cancelled"), "got: {archived}");
+    assert!(
+        archived.trim_end().ends_with("> Cancelled: why"),
+        "got: {archived}"
+    );
+
+    let item = fs::read_to_string(notes.join("test-project/TST-0001.md")).unwrap();
+    assert!(item.contains("status: cancelled"), "got: {item}");
+}
+
+#[test]
+fn done_errors_and_leaves_item_active_when_no_handoff_links_it() {
+    let stage = tmpdir("hf_done_mirror_missing");
+    let repo = stage.join("repo");
+    fs::create_dir_all(repo.join("docs/handoffs")).unwrap();
+    let notes = stage.join("notes");
+    stage_tagged_item(&notes, &repo, None);
+    let cfg = write_config(&stage, &repo, &notes);
+
+    let args = parse_pw_args(&[
+        "done",
+        "--id",
+        "TST-0001",
+        "--report",
+        "x",
+        "--config-path",
+        cfg.to_str().unwrap(),
+        "--notes-dir",
+        notes.to_str().unwrap(),
+        "--date",
+        "2026-01-02",
+    ]);
+    let err = pwk::run_args(&args).unwrap_err();
+
+    assert!(err.contains("pw: TST-0001"), "got: {err}");
+    let item = fs::read_to_string(notes.join("test-project/TST-0001.md")).unwrap();
+    assert!(
+        item.contains("status: active"),
+        "item mutated despite preflight failure: {item}"
+    );
+}
+
+#[test]
+fn done_on_untagged_item_never_touches_handoffs_dir() {
+    let stage = tmpdir("hf_done_untagged");
+    let repo = stage.join("repo");
+    fs::create_dir_all(&repo).unwrap();
+    let notes = stage.join("notes");
+    let proj = notes.join("test-project");
+    fs::create_dir_all(&proj).unwrap();
+    fs::write(
+        proj.join("TST-0001.md"),
+        "---\nstatus: active\ntitle: tray gui\nproject: test-project\ncreated: 2026-01-01\n---\n\nbody\n",
+    )
+    .unwrap();
+    fs::write(proj.join("test-project.md"), "- [ ] [[TST-0001]]\n").unwrap();
+    let handoff_dir = repo.join("docs/handoffs");
+    fs::create_dir_all(&handoff_dir).unwrap();
+    fs::write(
+        handoff_dir.join("2026-01-01-managed-flow.md"),
+        "---\nstatus: active\nproject: test-project\ncreated: 2026-01-01\npw: TST-0001\n---\n\n# Managed Flow\n",
+    )
+    .unwrap();
+    let cfg = write_config(&stage, &repo, &notes);
+
+    let args = parse_pw_args(&[
+        "done",
+        "--id",
+        "TST-0001",
+        "--config-path",
+        cfg.to_str().unwrap(),
+        "--notes-dir",
+        notes.to_str().unwrap(),
+        "--date",
+        "2026-01-02",
+    ]);
+    let out = pwk::run_args(&args).unwrap();
+
+    assert!(!out.contains("handoff: archived"), "got: {out}");
+    assert!(
+        handoff_dir.join("2026-01-01-managed-flow.md").exists(),
+        "untagged done must not touch the handoff file"
+    );
+    assert!(
+        !handoff_dir
+            .join("archived/2026-01-01-managed-flow.md")
+            .exists()
+    );
+    let item = fs::read_to_string(proj.join("TST-0001.md")).unwrap();
+    assert!(item.contains("status: done"), "got: {item}");
+}
+
+#[test]
+fn done_errors_and_leaves_item_active_when_archive_destination_exists() {
+    let stage = tmpdir("hf_done_mirror_conflict");
+    let repo = stage.join("repo");
+    fs::create_dir_all(&repo).unwrap();
+    let notes = stage.join("notes");
+    stage_tagged_item(&notes, &repo, Some("TST-0001"));
+    let archive_dir = repo.join("docs/handoffs/archived");
+    fs::create_dir_all(&archive_dir).unwrap();
+    fs::write(
+        archive_dir.join("2026-01-01-managed-flow.md"),
+        "existing archive\n",
+    )
+    .unwrap();
+    let cfg = write_config(&stage, &repo, &notes);
+
+    let args = parse_pw_args(&[
+        "done",
+        "--id",
+        "TST-0001",
+        "--report",
+        "x",
+        "--config-path",
+        cfg.to_str().unwrap(),
+        "--notes-dir",
+        notes.to_str().unwrap(),
+        "--date",
+        "2026-01-02",
+    ]);
+    let err = pwk::run_args(&args).unwrap_err();
+
+    assert!(
+        err.contains("archived handoff already exists"),
+        "got: {err}"
+    );
+    let item = fs::read_to_string(notes.join("test-project/TST-0001.md")).unwrap();
+    assert!(
+        item.contains("status: active"),
+        "item mutated despite preflight failure: {item}"
+    );
+}
+
+// ── Task 8 / PWF-0117: mirror `pwf reopen` onto the archived handoff ───────
+
+/// Stage a closed `test-project` item tagged `handoff` plus its done-queue
+/// index link, and — when `handoff_pw` is set — a matching archived handoff
+/// file under `docs/handoffs/archived/` in `repo` linking back via
+/// `pw: <handoff_pw>`.
+fn stage_closed_tagged_item(notes: &Path, repo: &Path, handoff_pw: Option<&str>) {
+    let proj = notes.join("test-project");
+    fs::create_dir_all(&proj).unwrap();
+    fs::write(
+        proj.join("TST-0001.md"),
+        "---\nstatus: done\ntitle: tray gui\nproject: test-project\ncreated: 2026-01-01\ncompleted: 2026-01-02\ntags: [handoff]\n---\n\nbody\n",
+    )
+    .unwrap();
+    fs::write(
+        proj.join("test-project.md"),
+        "- [x] [[TST-0001]] \u{2705} 2026-01-02\n",
+    )
+    .unwrap();
+
+    if let Some(pw) = handoff_pw {
+        let archive_dir = repo.join("docs/handoffs/archived");
+        fs::create_dir_all(&archive_dir).unwrap();
+        fs::write(
+            archive_dir.join("2026-01-01-managed-flow.md"),
+            format!(
+                "---\nstatus: done\ncompleted: 2026-01-02\nproject: test-project\ncreated: 2026-01-01\npw: {pw}\n---\n\n# Managed Flow\n"
+            ),
+        )
+        .unwrap();
+    }
+}
+
+#[test]
+fn reopen_restores_archived_handoff_and_reports_dest() {
+    let stage = tmpdir("hf_reopen_mirror");
+    let repo = stage.join("repo");
+    fs::create_dir_all(&repo).unwrap();
+    let notes = stage.join("notes");
+    stage_closed_tagged_item(&notes, &repo, Some("TST-0001"));
+    let cfg = write_config(&stage, &repo, &notes);
+
+    let args = parse_pw_args(&[
+        "reopen",
+        "--id",
+        "TST-0001",
+        "--config-path",
+        cfg.to_str().unwrap(),
+        "--notes-dir",
+        notes.to_str().unwrap(),
+    ]);
+    let out = pwk::run_args(&args).unwrap();
+
+    assert!(out.contains("handoff: reopened"), "got: {out}");
+    let active_path = repo.join("docs/handoffs/2026-01-01-managed-flow.md");
+    let active = fs::read_to_string(&active_path).unwrap();
+    assert!(active.contains("status: active"), "got: {active}");
+    assert!(!active.contains("completed:"), "got: {active}");
+    assert!(
+        !repo
+            .join("docs/handoffs/archived/2026-01-01-managed-flow.md")
+            .exists(),
+        "archived handoff should have been moved"
+    );
+
+    let ledger = fs::read_to_string(repo.join("docs/handoffs/LEDGER.md")).unwrap();
+    assert!(
+        ledger.contains("TST-0001"),
+        "reopened item should have a ledger row: {ledger}"
+    );
+
+    let item = fs::read_to_string(notes.join("test-project/TST-0001.md")).unwrap();
+    assert!(item.contains("status: active"), "got: {item}");
+    assert!(!item.contains("completed:"), "got: {item}");
+}
+
+#[test]
+fn reopen_errors_and_leaves_item_done_when_active_destination_exists() {
+    let stage = tmpdir("hf_reopen_mirror_conflict");
+    let repo = stage.join("repo");
+    fs::create_dir_all(&repo).unwrap();
+    let notes = stage.join("notes");
+    stage_closed_tagged_item(&notes, &repo, Some("TST-0001"));
+    let handoff_dir = repo.join("docs/handoffs");
+    fs::create_dir_all(&handoff_dir).unwrap();
+    fs::write(
+        handoff_dir.join("2026-01-01-managed-flow.md"),
+        "---\nstatus: active\nproject: test-project\ncreated: 2026-01-01\npw: TST-0002\n---\n\n# Conflicting\n",
+    )
+    .unwrap();
+    let cfg = write_config(&stage, &repo, &notes);
+
+    let args = parse_pw_args(&[
+        "reopen",
+        "--id",
+        "TST-0001",
+        "--config-path",
+        cfg.to_str().unwrap(),
+        "--notes-dir",
+        notes.to_str().unwrap(),
+    ]);
+    let err = pwk::run_args(&args).unwrap_err();
+
+    assert!(err.contains("active handoff already exists"), "got: {err}");
+    let item = fs::read_to_string(notes.join("test-project/TST-0001.md")).unwrap();
+    assert!(
+        item.contains("status: done"),
+        "item mutated despite preflight failure: {item}"
+    );
+}
+
+#[test]
+fn reopen_errors_and_leaves_item_done_when_no_archived_handoff_links_it() {
+    let stage = tmpdir("hf_reopen_mirror_missing");
+    let repo = stage.join("repo");
+    fs::create_dir_all(repo.join("docs/handoffs/archived")).unwrap();
+    let notes = stage.join("notes");
+    stage_closed_tagged_item(&notes, &repo, None);
+    let cfg = write_config(&stage, &repo, &notes);
+
+    let args = parse_pw_args(&[
+        "reopen",
+        "--id",
+        "TST-0001",
+        "--config-path",
+        cfg.to_str().unwrap(),
+        "--notes-dir",
+        notes.to_str().unwrap(),
+    ]);
+    let err = pwk::run_args(&args).unwrap_err();
+
+    assert!(err.contains("pw: TST-0001"), "got: {err}");
+    let item = fs::read_to_string(notes.join("test-project/TST-0001.md")).unwrap();
+    assert!(
+        item.contains("status: done"),
+        "item mutated despite preflight failure: {item}"
+    );
+}
+
+#[test]
+fn reopen_already_active_pair_skips_without_touching_handoff() {
+    let stage = tmpdir("hf_reopen_active_pair");
+    let repo = stage.join("repo");
+    fs::create_dir_all(&repo).unwrap();
+    let notes = stage.join("notes");
+    // Tagged ACTIVE item whose handoff is also already active: the pair is in
+    // its goal state, so reopen must stay FR-0021's idempotent no-op skip.
+    stage_tagged_item(&notes, &repo, Some("TST-0001"));
+    let cfg = write_config(&stage, &repo, &notes);
+
+    let args = parse_pw_args(&[
+        "reopen",
+        "--id",
+        "TST-0001",
+        "--config-path",
+        cfg.to_str().unwrap(),
+        "--notes-dir",
+        notes.to_str().unwrap(),
+    ]);
+    let out = pwk::run_args(&args).unwrap();
+
+    assert!(out.contains("already active"), "got: {out}");
+    assert!(!out.contains("handoff: reopened"), "got: {out}");
+    let handoff =
+        fs::read_to_string(repo.join("docs/handoffs/2026-01-01-managed-flow.md")).unwrap();
+    assert!(
+        handoff.contains("status: active"),
+        "active handoff mutated: {handoff}"
+    );
+    assert!(
+        !repo
+            .join("docs/handoffs/archived/2026-01-01-managed-flow.md")
+            .exists(),
+        "reopen of an active pair must not create an archived copy"
+    );
+}
+
+#[test]
+fn reopen_on_untagged_item_never_touches_handoffs_dir() {
+    let stage = tmpdir("hf_reopen_untagged");
+    let repo = stage.join("repo");
+    fs::create_dir_all(&repo).unwrap();
+    let notes = stage.join("notes");
+    let proj = notes.join("test-project");
+    fs::create_dir_all(&proj).unwrap();
+    fs::write(
+        proj.join("TST-0001.md"),
+        "---\nstatus: done\ntitle: tray gui\nproject: test-project\ncreated: 2026-01-01\ncompleted: 2026-01-02\n---\n\nbody\n",
+    )
+    .unwrap();
+    fs::write(
+        proj.join("test-project.md"),
+        "- [x] [[TST-0001]] \u{2705} 2026-01-02\n",
+    )
+    .unwrap();
+    let archive_dir = repo.join("docs/handoffs/archived");
+    fs::create_dir_all(&archive_dir).unwrap();
+    fs::write(
+        archive_dir.join("2026-01-01-managed-flow.md"),
+        "---\nstatus: done\ncompleted: 2026-01-02\nproject: test-project\ncreated: 2026-01-01\npw: TST-0001\n---\n\n# Managed Flow\n",
+    )
+    .unwrap();
+    let cfg = write_config(&stage, &repo, &notes);
+
+    let args = parse_pw_args(&[
+        "reopen",
+        "--id",
+        "TST-0001",
+        "--config-path",
+        cfg.to_str().unwrap(),
+        "--notes-dir",
+        notes.to_str().unwrap(),
+    ]);
+    let out = pwk::run_args(&args).unwrap();
+
+    assert!(!out.contains("handoff: reopened"), "got: {out}");
+    assert!(
+        archive_dir.join("2026-01-01-managed-flow.md").exists(),
+        "untagged reopen must not touch the handoff file"
+    );
+    let item = fs::read_to_string(proj.join("TST-0001.md")).unwrap();
+    assert!(item.contains("status: active"), "got: {item}");
+}
+
+// ── Task 9 / PWF-0117: mirror `pwf remove` onto the linked handoff ─────────
+
+#[test]
+fn remove_deletes_linked_handoff_and_rebuilds_ledger() {
+    let stage = tmpdir("hf_remove_mirror");
+    let repo = stage.join("repo");
+    fs::create_dir_all(&repo).unwrap();
+    let notes = stage.join("notes");
+    stage_tagged_item(&notes, &repo, Some("TST-0001"));
+    let handoff_dir = repo.join("docs/handoffs");
+    fs::write(handoff_dir.join("LEDGER.md"), "# stale\n").unwrap();
+    let cfg = write_config(&stage, &repo, &notes);
+
+    let args = parse_pw_args(&[
+        "remove",
+        "--id",
+        "TST-0001",
+        "--config-path",
+        cfg.to_str().unwrap(),
+        "--notes-dir",
+        notes.to_str().unwrap(),
+    ]);
+    // `run_args` uses `RealConfirm`, which is non-interactive under `cargo
+    // test` (no TTY on stdin), so the default-yes gate proceeds unprompted.
+    let out = pwk::run_args(&args).unwrap();
+
+    assert!(out.starts_with("REMOVED PWF TASK [TST-0001]"), "got: {out}");
+    assert!(
+        !notes.join("test-project/TST-0001.md").exists(),
+        "note must be deleted"
+    );
+    assert!(
+        !handoff_dir.join("2026-01-01-managed-flow.md").exists(),
+        "linked handoff must be deleted"
+    );
+    let ledger = fs::read_to_string(handoff_dir.join("LEDGER.md")).unwrap();
+    assert!(
+        !ledger.contains("TST-0001"),
+        "deleted item should have no ledger row: {ledger}"
+    );
+}
+
+#[test]
+fn remove_on_untagged_item_never_touches_handoffs_dir() {
+    let stage = tmpdir("hf_remove_untagged");
+    let repo = stage.join("repo");
+    fs::create_dir_all(&repo).unwrap();
+    let notes = stage.join("notes");
+    let proj = notes.join("test-project");
+    fs::create_dir_all(&proj).unwrap();
+    fs::write(
+        proj.join("TST-0001.md"),
+        "---\nstatus: active\ntitle: tray gui\nproject: test-project\ncreated: 2026-01-01\n---\n\nbody\n",
+    )
+    .unwrap();
+    fs::write(proj.join("test-project.md"), "- [ ] [[TST-0001]]\n").unwrap();
+    let handoff_dir = repo.join("docs/handoffs");
+    fs::create_dir_all(&handoff_dir).unwrap();
+    fs::write(
+        handoff_dir.join("2026-01-01-managed-flow.md"),
+        "---\nstatus: active\nproject: test-project\ncreated: 2026-01-01\npw: TST-0001\n---\n\n# Managed Flow\n",
+    )
+    .unwrap();
+    let cfg = write_config(&stage, &repo, &notes);
+
+    let args = parse_pw_args(&[
+        "remove",
+        "--id",
+        "TST-0001",
+        "--config-path",
+        cfg.to_str().unwrap(),
+        "--notes-dir",
+        notes.to_str().unwrap(),
+    ]);
+    let out = pwk::run_args(&args).unwrap();
+
+    assert!(out.starts_with("REMOVED PWF TASK [TST-0001]"), "got: {out}");
+    assert!(
+        !proj.join("TST-0001.md").exists(),
+        "untagged remove must still delete the note"
+    );
+    assert!(
+        handoff_dir.join("2026-01-01-managed-flow.md").exists(),
+        "untagged remove must not touch the handoff file"
+    );
 }

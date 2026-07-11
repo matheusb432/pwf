@@ -8,9 +8,9 @@
 const PW_TERSE: &str = r"<project> [-n <N>] [--long|--future|--human|--all]   (routes to that project's open items; `pwf list` lists every project)
   list [-n <N>] [--long] [--future] [--human] [--all] [--tag <tag>] [-o/--order <created|id|project-id> <asc|desc>]   (--order default: created desc, flat across every project; --order project-id reproduces the pre-PWF-0096 project-grouped default)
   add <project> <prompt>   prompt lanes: <title> / <goal> /c <context> /n <constraint> /d <done>; plus [--title] [--human] [--section <s>] [--prereq <id>] [--tag <tag>] [--continue-handoff] [--continue <path>]
-  done --id [--report] [--commits <range>] [--review]
-  cancel --id --report [--commits <range>] [--review]
-  reopen --id   (inverse of done/cancel: done|cancelled -> active)
+  done --id [--report] [--commits <range>] [--review]   (handoff-tagged items auto-archive their handoff)
+  cancel --id --report [--commits <range>] [--review]   (handoff-tagged items auto-archive their handoff)
+  reopen --id   (inverse of done/cancel: done|cancelled -> active; handoff-tagged items auto-restore their handoff)
   update --id [--prompt] [--title] [--prereq <id>] [--clear-prereq] [--tag <tag>] [--tags-clear] [--commits <range>] [--append-report <md>] [-a/--append <lanes>]   (--commits/--append-report also amend a closed item; -a/--append splices lane-syntax bullets into Goals/Context/Constraints/Done When, conflicts with --prompt)
   resolve --id [--show]
   show <id>   (shorthand for resolve --show)
@@ -20,11 +20,7 @@ const PW_TERSE: &str = r"<project> [-n <N>] [--long|--future|--human|--all]   (r
   remove --id";
 
 const HANDOFF_TERSE: &str = r"handoff <verb> [--repo-root <path>]
-  refresh
-  new [--title] [--slug]
-  done --id
-  cancel --id
-  reopen --id   (inverse of done/cancel: un-archives + reopens the linked pw item)
+  add [--title] [--slug]
   list";
 
 const MIGRATE_TERSE: &str =
@@ -114,7 +110,7 @@ mod tests {
 
     #[test]
     fn terse_engine_scoped_alias_and_unknown() {
-        assert!(terse_engine("handoff").unwrap().contains("done --id"));
+        assert!(terse_engine("handoff").unwrap().contains("add [--title]"));
         assert!(!terse_engine("handoff").unwrap().contains("launch-claude"));
         assert!(terse_engine("note").unwrap().contains("add <message>"));
         assert!(
@@ -143,9 +139,26 @@ mod tests {
         );
         assert!(terse_verb("done").unwrap().contains("done --id [--report]"));
         assert!(
+            terse_verb("done")
+                .unwrap()
+                .contains("handoff-tagged items auto-archive their handoff")
+        );
+        assert!(
             terse_verb("cancel")
                 .unwrap()
                 .contains("cancel --id --report")
+        );
+        assert!(
+            terse_verb("cancel")
+                .unwrap()
+                .contains("handoff-tagged items auto-archive their handoff"),
+            "cancel should carry the same handoff-mirroring fact as done"
+        );
+        assert!(
+            terse_verb("reopen")
+                .unwrap()
+                .contains("handoff-tagged items auto-restore their handoff"),
+            "reopen should note it mirrors onto the handoff too"
         );
         assert!(terse_verb("resolve").unwrap().contains("resolve --id"));
         // PWF-0065: the `show` shorthand for `resolve --show` is its own terse line,

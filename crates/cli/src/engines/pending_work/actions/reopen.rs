@@ -5,18 +5,27 @@ use pwf_infra::obsidian::ObsidianPendingWorkStore;
 
 use super::{
     super::{errors::PendingWorkError, run::require_id},
-    done::map_store_error,
+    done::{map_store_error, mirror_commit_and_append},
 };
-use crate::{cli::Args, config::Config};
+use crate::{cli::Args, config::Config, engines::handoff::mirror};
 
 pub(in crate::engines::pending_work) fn run_reopen(
     cfg: &Config,
     args: &Args,
 ) -> Result<String, PendingWorkError> {
     let id = require_id(args, "reopen")?;
+    let gate = mirror::handoff_gate(cfg, id)?;
+    // Inner None = the pair is already active (idempotent skip, FR-0021).
+    let pending = gate
+        .as_ref()
+        .map(mirror::preflight_reopen)
+        .transpose()?
+        .flatten();
+
     let handler = ReopenPendingWorkHandler::new(ObsidianPendingWorkStore::new(cfg.clone()));
-    cqrsy::send_now(&(), &handler, ReopenPendingWork { id: id.to_string() })
-        .map_err(map_reopen_error)
+    let text = cqrsy::send_now(&(), &handler, ReopenPendingWork { id: id.to_string() })
+        .map_err(map_reopen_error)?;
+    mirror_commit_and_append(text, gate, pending, "reopened")
 }
 
 fn map_reopen_error(error: ReopenPendingWorkError) -> PendingWorkError {

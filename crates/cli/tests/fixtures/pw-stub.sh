@@ -1,15 +1,15 @@
 #!/bin/sh
 # Minimal pending-work stub for handoff tests that exercise --pending-work-script.
+# `add` is the only surviving verb (PWF-0117 retired handoff's done/cancel/
+# reopen/refresh, so their pw-close/pw-reopen bridging is gone too).
 set -u
 
 verb=${1:-}
 [ $# -gt 0 ] && shift
 
-id=
 words=
 while [ $# -gt 0 ]; do
   case $1 in
-    --id) shift; id=${1:-} ;;
     --config-path|--date) shift ;;
     --*) : ;;
     *) words="${words:+$words }$1" ;;
@@ -21,11 +21,5 @@ case $verb in
   add)
     if [ -n "${HANDOFF_STUB_LOG:-}" ]; then printf 'add %s\n' "$words" >>"$HANDOFF_STUB_LOG"; fi
     printf 'ADDED PWF TASK [TST-0001] test-project :: continue managed flow\n'
-    ;;
-  done)
-    if [ -n "${HANDOFF_STUB_LOG:-}" ]; then printf 'done %s\n' "$id" >>"$HANDOFF_STUB_LOG"; fi
-    ;;
-  reopen)
-    if [ -n "${HANDOFF_STUB_LOG:-}" ]; then printf 'reopen %s\n' "$id" >>"$HANDOFF_STUB_LOG"; fi
     ;;
 esac

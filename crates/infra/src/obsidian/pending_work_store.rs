@@ -1,11 +1,15 @@
+mod add;
 mod error;
 mod fs;
 mod lookup;
 mod read;
+mod read_parser;
+mod remove;
 mod resolve;
 mod status;
 #[cfg(test)]
 mod tests;
+mod update;
 mod write;
 
 pub use error::ObsidianPendingWorkStoreError;

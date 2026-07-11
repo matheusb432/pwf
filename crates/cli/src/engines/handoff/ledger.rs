@@ -12,7 +12,7 @@ use regex::Regex;
 
 use super::{
     errors::{HandoffError, HandoffRead, HandoffReadStatus},
-    paths::{HandoffPaths, handoff_paths},
+    paths::handoff_paths,
 };
 use crate::{frontmatter, fs_atomic::write_text_atomic};
 
@@ -191,41 +191,6 @@ fn ledger_text(rows: &[Row]) -> String {
         );
     }
     l
-}
-
-/// Sweep non-active handoffs out of the active dir (the LEDGER rebuild alone is
-/// not a full reconcile — a stranded `status: done` file must also move).
-/// Files without a `status:` key are left alone (could be drafts); an existing
-/// archive of the same name is never overwritten — reported as a conflict.
-pub(super) fn archive_stranded(paths: &HandoffPaths) -> Result<(usize, Vec<String>), HandoffError> {
-    let mut moved = 0usize;
-    let mut conflicts = Vec::new();
-    for e in read_handoff_entries(&paths.dir) {
-        match e.frontmatter.get("status") {
-            Some(s) if s != "active" => {}
-            _ => continue,
-        }
-        let dest = paths.archive.join(&e.name);
-        if dest.exists() {
-            conflicts.push(e.name);
-            continue;
-        }
-        if !paths.archive.exists() {
-            std::fs::create_dir_all(&paths.archive).map_err(|source| HandoffError::CreateDir {
-                action: "archive-stranded",
-                path: paths.archive.clone(),
-                source,
-            })?;
-        }
-        std::fs::rename(&e.full_path, &dest).map_err(|source| HandoffError::Rename {
-            action: "archive-stranded",
-            from: e.full_path.clone(),
-            to: dest,
-            source,
-        })?;
-        moved += 1;
-    }
-    Ok((moved, conflicts))
 }
 
 #[cfg(test)]

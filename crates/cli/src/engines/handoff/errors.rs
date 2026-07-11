@@ -9,27 +9,18 @@ pub(super) enum HandoffError {
     RepoRootDoesNotExist { root: String },
     #[error("{source}")]
     CurrentDir { source: std::io::Error },
-    #[error("--title is required for new.")]
+    #[error("--title is required for add.")]
     MissingTitle,
-    #[error("--id is required for {action}.")]
-    MissingId { action: String },
+    #[error(
+        "this repo is not a managed project: {root}; handoffs require one — register it in the pwf config"
+    )]
+    UnmanagedRepo { root: String },
     #[error("a handoff subcommand is required.")]
     MissingSubcommand,
     #[error("unknown handoff action: {action}")]
     UnknownAction { action: String },
     #[error("Handoff already exists: {}", path.display())]
     HandoffAlreadyExists { path: PathBuf },
-    #[error("No active handoff found for '{key}' in {}.", dir.display())]
-    ActiveHandoffNotFound { key: String, dir: PathBuf },
-    #[error("No archived handoff found for '{key}' in {}.", dir.display())]
-    ArchivedHandoffNotFound { key: String, dir: PathBuf },
-    #[error("Archived handoff already exists: {}", path.display())]
-    ArchiveAlreadyExists { path: PathBuf },
-    #[error("Cannot remove active handoff after archiving: {source}")]
-    RemoveActiveAfterArchive {
-        path: PathBuf,
-        source: std::io::Error,
-    },
     #[error("{source}")]
     CreateDir {
         action: &'static str,
@@ -46,13 +37,6 @@ pub(super) enum HandoffError {
     Write {
         action: &'static str,
         path: PathBuf,
-        source: std::io::Error,
-    },
-    #[error("{source}")]
-    Rename {
-        action: &'static str,
-        from: PathBuf,
-        to: PathBuf,
         source: std::io::Error,
     },
     #[error("{message}")]

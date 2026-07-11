@@ -15,17 +15,23 @@ use crate::{
     config::Config,
     confirm::{Confirm, DefaultAnswer},
     confirm_prompt::{ConfirmationPrompt, Field},
+    engines::handoff::mirror,
 };
 
 /// Last-look prompt before an irreversible delete: identifies the task and the
-/// note file that is about to be unlinked and removed.
-fn confirmation_question(item: &Item, item_path: &Path) -> String {
-    let fields = [
+/// note file that is about to be unlinked and removed. `handoff_path` is
+/// `Some` only when the item is `handoff`-tagged and its mirrored file was
+/// located, so an operator sees the second deletion before confirming.
+fn confirmation_question(item: &Item, item_path: &Path, handoff_path: Option<&Path>) -> String {
+    let mut fields = vec![
         Field::new("task_id", item.id.clone()),
         Field::new("project", item.project.clone()),
         Field::new("title", item.session.clone()),
         Field::new("note", item_path.display().to_string()),
     ];
+    if let Some(path) = handoff_path {
+        fields.push(Field::new("handoff", path.display().to_string()));
+    }
     ConfirmationPrompt::new(
         "Confirm task removal",
         &fields,
@@ -60,11 +66,17 @@ pub(in crate::engines::pending_work) fn run_remove(
         });
     }
 
+    // Gate onto the linked handoff (PWF-0117) and locate its file before any
+    // prompt or mutation, so a tagged item with no matching handoff errors
+    // up front instead of deleting the note and stranding a dangling tag.
+    let gate = mirror::handoff_gate(cfg, id)?;
+    let handoff_path = gate.as_ref().map(mirror::preflight_delete).transpose()?;
+
     // Default-yes gate: an interactive operator can abort a mistaken delete.
     // `--yes` skips it; a non-interactive caller (agentic dispatch, pipe, CI)
     // proceeds without prompting so scripted removals stay unattended.
     if !args.assume_yes && confirmer.interactive() {
-        let question = confirmation_question(&item, item_path);
+        let question = confirmation_question(&item, item_path, handoff_path.as_deref());
         if !confirmer.confirm(&question, DefaultAnswer::Yes) {
             return Ok(EngineOutcome::Text(format!(
                 "# remove {} — aborted\nnothing deleted.\n",
@@ -83,12 +95,23 @@ pub(in crate::engines::pending_work) fn run_remove(
     )
     .map_err(|error| PendingWorkError::ApplicationWrite(error.to_string()))?;
 
+    if let Some(g) = gate {
+        let path = mirror::delete_for_item(&g).map_err(|source| {
+            PendingWorkError::HandoffMirrorAfterMutation {
+                id: g.id.clone(),
+                source,
+                remedy: super::super::errors::REMOVE_MIRROR_REMEDY.to_string(),
+            }
+        })?;
+        eprintln!("info: removed handoff {}", path.display());
+    }
+
     Ok(EngineOutcome::Mutation(MutationOutcome::Removed(removed)))
 }
 
 #[cfg(test)]
 mod tests {
-    use std::assert_matches;
+    use std::{assert_matches, path::PathBuf};
 
     use super::*;
     use crate::{confirm::FakeConfirm, engines::pending_work::errors::PendingWorkError};
@@ -269,5 +292,155 @@ mod tests {
 
         assert!(out.starts_with("REMOVED PWF TASK [GLP-0001]"), "got: {out}");
         assert!(!note.exists());
+    }
+
+    // ── PWF-0117: mirror onto the linked handoff ────────────────────────────
+
+    #[test]
+    fn confirmation_question_includes_handoff_field_when_gated() {
+        let item = Item {
+            id: "GLP-0001".to_string(),
+            project: "glep-shimeji".to_string(),
+            session: "tray gui".to_string(),
+            ..Item::empty()
+        };
+        let note_path = Path::new("/notes/glep-shimeji/GLP-0001.md");
+        let handoff_path = Path::new("/repo/docs/handoffs/2026-01-01-tray-gui.md");
+
+        let question = confirmation_question(&item, note_path, Some(handoff_path));
+
+        assert!(
+            question.contains("handoff: /repo/docs/handoffs/2026-01-01-tray-gui.md"),
+            "got: {question}"
+        );
+    }
+
+    #[test]
+    fn confirmation_question_omits_handoff_field_when_untagged() {
+        let item = Item {
+            id: "GLP-0001".to_string(),
+            project: "glep-shimeji".to_string(),
+            session: "tray gui".to_string(),
+            ..Item::empty()
+        };
+        let note_path = Path::new("/notes/glep-shimeji/GLP-0001.md");
+
+        let question = confirmation_question(&item, note_path, None);
+
+        assert!(!question.contains("handoff:"), "got: {question}");
+    }
+
+    /// Extend `stage_file_item`'s fixture with a `handoff`-tagged item and a
+    /// real repo dir, optionally holding an active handoff linking back via
+    /// `pw: GLP-0001`.
+    fn stage_tagged_item(with_handoff_file: bool) -> (tempfile::TempDir, Config, PathBuf) {
+        let stage = tempfile::tempdir().unwrap();
+        let notes = stage.path().join("notes");
+        let project = notes.join("glep-shimeji");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(
+            project.join("GLP-0001.md"),
+            "---\nstatus: active\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\ntags: [handoff]\n---\n\nbody\n",
+        )
+        .unwrap();
+        std::fs::write(project.join("glep-shimeji.md"), "- [ ] [[GLP-0001]]\n").unwrap();
+
+        let repo = stage.path().join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        let handoff_dir = repo.join("docs/handoffs");
+        if with_handoff_file {
+            std::fs::create_dir_all(&handoff_dir).unwrap();
+            std::fs::write(
+                handoff_dir.join("2026-01-01-tray-gui.md"),
+                "---\nstatus: active\nproject: glep-shimeji\ncreated: 2026-01-01\npw: GLP-0001\n---\n\n# Tray GUI\n",
+            )
+            .unwrap();
+        }
+
+        let cfg = crate::config::from_json(
+            &format!(
+                r#"{{ "notesDir": "{}", "projects": {{ "glep-shimeji": "{}" }}, "prefixes": {{ "glep-shimeji": "GLP" }} }}"#,
+                notes.to_string_lossy().replace('\\', "\\\\"),
+                repo.to_string_lossy().replace('\\', "\\\\"),
+            ),
+            None,
+        )
+        .unwrap();
+        (stage, cfg, handoff_dir.join("2026-01-01-tray-gui.md"))
+    }
+
+    /// A confirmer that panics if consulted — proves the mirror preflight
+    /// error short-circuits before any prompt is built.
+    struct PanicIfConsulted;
+    impl Confirm for PanicIfConsulted {
+        fn interactive(&self) -> bool {
+            true
+        }
+        fn confirm(&self, _question: &str, _default: DefaultAnswer) -> bool {
+            panic!("confirm() must not be called when the mirror preflight already errored");
+        }
+    }
+
+    #[test]
+    fn tagged_item_with_no_handoff_file_errors_before_confirm_prompt() {
+        let (stage, cfg, _handoff_path) = stage_tagged_item(false);
+        let note = stage.path().join("notes/glep-shimeji/GLP-0001.md");
+
+        let err = run_remove(&cfg, &args_for("GLP-0001"), &PanicIfConsulted).unwrap_err();
+
+        assert_matches!(err, PendingWorkError::HandoffMirror(_));
+        assert!(
+            note.exists(),
+            "note must survive a preflight failure, proving no mutation ran"
+        );
+    }
+
+    #[test]
+    fn interactive_decline_on_tagged_item_leaves_note_and_handoff_untouched() {
+        let (stage, cfg, handoff_path) = stage_tagged_item(true);
+        let note = stage.path().join("notes/glep-shimeji/GLP-0001.md");
+        let declines = FakeConfirm {
+            interactive: true,
+            answer: false,
+        };
+
+        let out = run_remove(&cfg, &args_for("GLP-0001"), &declines)
+            .unwrap()
+            .into_raw_text();
+
+        assert!(out.contains("aborted"), "got: {out}");
+        assert!(note.exists(), "declined removal must leave the note");
+        assert!(
+            handoff_path.exists(),
+            "declined removal must leave the handoff file"
+        );
+    }
+
+    #[test]
+    fn interactive_accept_on_tagged_item_deletes_note_and_handoff_and_rebuilds_ledger() {
+        let (stage, cfg, handoff_path) = stage_tagged_item(true);
+        let note = stage.path().join("notes/glep-shimeji/GLP-0001.md");
+        let ledger = stage.path().join("repo/docs/handoffs/LEDGER.md");
+        std::fs::write(&ledger, "# stale\n").unwrap();
+        let accepts = FakeConfirm {
+            interactive: true,
+            answer: true,
+        };
+
+        let out = run_remove(&cfg, &args_for("GLP-0001"), &accepts)
+            .unwrap()
+            .into_raw_text();
+
+        assert!(out.starts_with("REMOVED PWF TASK [GLP-0001]"), "got: {out}");
+        assert!(!note.exists(), "accepted removal must delete the note");
+        assert!(
+            !handoff_path.exists(),
+            "accepted removal must delete the linked handoff"
+        );
+        let ledger_text = std::fs::read_to_string(&ledger).unwrap();
+        assert!(
+            !ledger_text.contains("GLP-0001"),
+            "deleted item should have no ledger row: {ledger_text}"
+        );
     }
 }
