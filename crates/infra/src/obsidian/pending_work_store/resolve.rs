@@ -7,8 +7,6 @@ use super::{
     fs::{path_str, read_item_file},
 };
 
-const SHOW_FRONTMATTER_DENYLIST: &[&str] = &["created"];
-
 impl PendingWorkResolveStore for ObsidianPendingWorkStore {
     type Error = ObsidianPendingWorkStoreError;
 
@@ -49,9 +47,7 @@ impl ObsidianPendingWorkStore {
     ) -> Result<ResolvePendingWorkOutput, ObsidianPendingWorkStoreError> {
         if show {
             let raw = read_item_file(file)?;
-            return Ok(ResolvePendingWorkOutput::NoteMarkdown(
-                pwf_core::frontmatter::strip_frontmatter_keys(&raw, SHOW_FRONTMATTER_DENYLIST),
-            ));
+            return Ok(ResolvePendingWorkOutput::NoteMarkdown(raw));
         }
 
         Ok(ResolvePendingWorkOutput::NotePath(path_str(file)))

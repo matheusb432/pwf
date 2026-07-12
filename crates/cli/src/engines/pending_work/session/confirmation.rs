@@ -9,12 +9,20 @@ use crate::{
 };
 
 const CURRENT_TERMINAL_TARGET: &str = "current terminal";
+/// Shown for legacy inline items whose note carries no `created` frontmatter.
+const UNKNOWN_CREATED: &str = "(unknown)";
 
 pub(super) fn question(item: &Item, session: &str, opts: &DispatchOpts, agent: &str) -> String {
     let mode = DispatchMode::new(opts.inline, session);
     let fields = [
         Field::new("task_id", item.id.clone()),
         Field::new("title", item.session.clone()),
+        Field::new(
+            "created",
+            item.created
+                .clone()
+                .unwrap_or_else(|| UNKNOWN_CREATED.to_string()),
+        ),
         Field::new("mode", mode.label()),
         Field::new("agent", agent),
         Field::new(

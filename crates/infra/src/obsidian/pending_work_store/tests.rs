@@ -694,7 +694,7 @@ fn resolve_item_returns_open_note_path_from_active_index() {
 }
 
 #[test]
-fn resolve_item_show_returns_open_note_markdown_without_created_key() {
+fn resolve_item_show_returns_open_note_markdown_with_created_key() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
     let project_dir = notes_dir.join("pwf");
@@ -716,7 +716,7 @@ fn resolve_item_show_returns_open_note_markdown_without_created_key() {
     assert_eq!(
         got,
         ResolvePendingWorkOutput::NoteMarkdown(
-            "---\nstatus: active\ntitle: active task\nproject: pwf\n---\n\n## Goals\n- body\n"
+            "---\nstatus: active\ntitle: active task\nproject: pwf\ncreated: 2026-07-01\n---\n\n## Goals\n- body\n"
                 .to_string(),
         )
     );
@@ -747,7 +747,7 @@ fn resolve_item_show_finds_closed_note_still_in_project_dir() {
     assert_eq!(
         got,
         ResolvePendingWorkOutput::NoteMarkdown(
-            "---\nstatus: done\ntitle: done task\nproject: pwf\ncompleted: 2026-07-07\n---\n\nbody\n"
+            "---\nstatus: done\ntitle: done task\nproject: pwf\ncreated: 2026-07-01\ncompleted: 2026-07-07\n---\n\nbody\n"
                 .to_string(),
         )
     );
@@ -778,7 +778,7 @@ fn resolve_item_show_finds_closed_note_still_in_project_dir_with_shorthand_id() 
     assert_eq!(
         got,
         ResolvePendingWorkOutput::NoteMarkdown(
-            "---\nstatus: done\ntitle: done task\nproject: pwf\ncompleted: 2026-07-07\n---\n\nbody\n"
+            "---\nstatus: done\ntitle: done task\nproject: pwf\ncreated: 2026-07-01\ncompleted: 2026-07-07\n---\n\nbody\n"
                 .to_string(),
         )
     );
@@ -804,7 +804,7 @@ fn resolve_item_show_finds_archived_note_case_insensitively() {
     assert_eq!(
         got,
         ResolvePendingWorkOutput::NoteMarkdown(
-            "---\nstatus: cancelled\ntitle: archived task\nproject: pwf\ncompleted: 2026-07-07\ncommits: \"a..b\"\n---\n\nbody\n"
+            "---\nstatus: cancelled\ntitle: archived task\nproject: pwf\ncreated: 2026-07-01\ncompleted: 2026-07-07\ncommits: \"a..b\"\n---\n\nbody\n"
                 .to_string(),
         )
     );
@@ -830,7 +830,7 @@ fn resolve_item_show_finds_archived_note_with_shorthand_id() {
     assert_eq!(
         got,
         ResolvePendingWorkOutput::NoteMarkdown(
-            "---\nstatus: cancelled\ntitle: archived task\nproject: pwf\ncompleted: 2026-07-07\ncommits: \"a..b\"\n---\n\nbody\n"
+            "---\nstatus: cancelled\ntitle: archived task\nproject: pwf\ncreated: 2026-07-01\ncompleted: 2026-07-07\ncommits: \"a..b\"\n---\n\nbody\n"
                 .to_string(),
         )
     );

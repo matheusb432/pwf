@@ -245,7 +245,7 @@ mod tests {
         fs::create_dir_all(&repo).unwrap();
         fs::write(
             project.join("PWF-0001.md"),
-            "---\nstatus: active\ntitle: dispatch me\nproject: pwf\n---\n\ndo work\n",
+            "---\nstatus: active\ntitle: dispatch me\nproject: pwf\ncreated: 2026-07-01\n---\n\ndo work\n",
         )
         .unwrap();
         fs::write(project.join("pwf.md"), "- [[PWF-0001|dispatch me]]\n").unwrap();
@@ -455,6 +455,7 @@ mod tests {
         assert!(question.contains("# Confirm session dispatch"));
         assert!(question.contains("task_id: PWF-0001"));
         assert!(question.contains("title: dispatch me"));
+        assert!(question.contains("created: 2026-07-01"));
         assert!(question.contains("mode: inline"));
         assert!(question.contains("agent: codex"));
         assert!(question.contains("autonomy: yes"));

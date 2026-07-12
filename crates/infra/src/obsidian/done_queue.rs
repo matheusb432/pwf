@@ -35,7 +35,6 @@ pub(super) struct DoneQueue {
     pub evicted: Vec<String>,
     pub futuro_renamed: bool,
 }
-
 pub(super) fn mark_done(content: &str, id: &str, date: &str) -> DoneQueue {
     let open_re = Regex::new(&format!(
         r"^\s*-\s*(?:\[ \]\s*)?\[\[{}(?:\|[^\]]*)?\]\]",
@@ -67,6 +66,8 @@ pub(super) fn mark_done(content: &str, id: &str, date: &str) -> DoneQueue {
     lines[target] = format!("- [x] [[{id}]] ✅ {date}");
     let section = section_at_line(&lines, target, &HEADER_RE);
 
+    // TODO: refactor: this function (mark_done) has the side effect of evicting. this should instead be handled via an event.
+    // the data flow would be in application -> CompleteItem checks it. dispatches CompleteItemEvent -> will handle the eviction done queue.
     let mut evicted = Vec::new();
     if let Some(cap) = section_cap(&section) {
         let mut done: Vec<(usize, String, String)> = lines

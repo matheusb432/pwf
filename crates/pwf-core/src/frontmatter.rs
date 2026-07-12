@@ -52,35 +52,6 @@ pub fn parse(text: &str) -> Parsed {
     Parsed { frontmatter, body }
 }
 
-/// Return `text` with frontmatter lines whose key is in `drop_keys` removed.
-/// Body, key order, and per-line formatting are preserved. Text without a
-/// frontmatter block is returned unchanged. BOM-/CRLF-tolerant like [`parse`].
-pub fn strip_frontmatter_keys(text: &str, drop_keys: &[&str]) -> String {
-    let stripped = text.strip_prefix('\u{feff}').unwrap_or(text);
-    let lines: Vec<&str> = stripped.split('\n').collect();
-    let opens = !lines.is_empty() && lines[0].trim_end_matches('\r') == "---";
-    if !opens {
-        return text.to_string();
-    }
-    let Some(close) = (1..lines.len()).find(|&i| lines[i].trim_end_matches('\r') == "---") else {
-        return text.to_string();
-    };
-    let mut out: Vec<&str> = Vec::with_capacity(lines.len());
-    out.push(lines[0]); // opening ---
-    for line in &lines[1..close] {
-        let l = line.trim_end_matches('\r');
-        if let Some(idx) = l.find(':') {
-            let key = &l[..idx];
-            if is_fm_key(key) && drop_keys.contains(&key) {
-                continue;
-            }
-        }
-        out.push(line);
-    }
-    out.extend_from_slice(&lines[close..]); // closing --- + body
-    out.join("\n")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -114,38 +85,5 @@ mod tests {
         let p = parse("# title\n\n- [[GLP-0001|x]]\n");
         assert!(p.frontmatter.is_empty());
         assert_eq!(p.body, "# title\n\n- [[GLP-0001|x]]\n");
-    }
-
-    #[test]
-    fn strip_drops_listed_keys_preserving_order() {
-        let note =
-            "---\nstatus: active\ntitle: t\nproject: pwf\ncreated: 2026-06-20\n---\n\nbody line\n";
-        let out = strip_frontmatter_keys(note, &["created"]);
-        assert_eq!(
-            out,
-            "---\nstatus: active\ntitle: t\nproject: pwf\n---\n\nbody line\n"
-        );
-    }
-
-    #[test]
-    fn strip_keeps_keys_not_in_denylist() {
-        let note = "---\nstatus: active\nprereq: \"[[PWF-0001]]\"\n---\n\nbody\n";
-        let out = strip_frontmatter_keys(note, &["created"]);
-        assert_eq!(out, note);
-    }
-
-    #[test]
-    fn strip_passes_through_text_without_frontmatter() {
-        let note = "## Goals\n- do a thing\n";
-        assert_eq!(strip_frontmatter_keys(note, &["created"]), note);
-    }
-
-    #[test]
-    fn strip_is_bom_and_crlf_tolerant() {
-        let note = "\u{feff}---\r\nstatus: active\r\ncreated: 2026-06-20\r\n---\r\nbody\r\n";
-        let out = strip_frontmatter_keys(note, &["created"]);
-        assert!(!out.contains("created"));
-        assert!(out.contains("status: active"));
-        assert!(out.contains("body"));
     }
 }

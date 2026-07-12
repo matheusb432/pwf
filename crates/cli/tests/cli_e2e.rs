@@ -1925,7 +1925,7 @@ fn staged_with_item(
 }
 
 #[test]
-fn resolve_show_emits_markdown_without_created_key() {
+fn resolve_show_emits_markdown_with_created_key() {
     let (_d, cfg) = staged_with_item(
         "pwf",
         "PWF",
@@ -1950,8 +1950,8 @@ fn resolve_show_emits_markdown_without_created_key() {
     assert!(stdout.contains("## Goals"), "missing body: {stdout}");
     assert!(stdout.contains("- do the thing"), "missing goal: {stdout}");
     assert!(
-        !stdout.contains("created:"),
-        "created key must be stripped: {stdout}"
+        stdout.contains("created: 2026-06-20"),
+        "created date must be shown: {stdout}"
     );
 }
 
@@ -2170,8 +2170,8 @@ fn resolve_show_finds_archived_done_item() {
         "missing body: {stdout}"
     );
     assert!(
-        !stdout.contains("created:"),
-        "created key must be stripped: {stdout}"
+        stdout.contains("created: 2026-06-20"),
+        "created date must be shown: {stdout}"
     );
 }
 
@@ -2273,8 +2273,8 @@ fn id_input_forms_all_resolve_to_the_same_item() {
 
 #[test]
 fn show_streams_note_markdown_like_resolve_show() {
-    // `show --id` == `resolve --show --id`: emit the note markdown, minus the
-    // execution-irrelevant `created` key.
+    // `show --id` == `resolve --show --id`: emit the note's full markdown,
+    // including the `created` date.
     let (_d, cfg) = staged_with_item(
         "pwf",
         "PWF",
@@ -2295,8 +2295,8 @@ fn show_streams_note_markdown_like_resolve_show() {
     );
     assert!(stdout.contains("## Goals"), "missing body: {stdout}");
     assert!(
-        !stdout.contains("created:"),
-        "created key must be stripped: {stdout}"
+        stdout.contains("created: 2026-06-20"),
+        "created date must be shown: {stdout}"
     );
 }
 

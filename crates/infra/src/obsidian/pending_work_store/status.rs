@@ -7,8 +7,8 @@ use regex::Regex;
 use super::{
     ObsidianPendingWorkStore, ObsidianPendingWorkStoreError,
     fs::{
-        archive_item_file, line_start_index, read_index, read_item_file, remove_item_file,
-        write_index, write_item_file,
+        line_start_index, read_index, read_item_file, remove_item_file, write_index,
+        write_item_file,
     },
     lookup::normalize_lookup_id,
 };
@@ -168,12 +168,10 @@ impl ObsidianPendingWorkStore {
             return Ok(StatusTransitionDiagnostics::none());
         }
         let index = read_index(&index_path)?;
+        // TODO: refactor coupling and unintuitive function name. 'rotate_done_queue' should not be responsible for marking the item done
         let queue = done_queue::mark_done(&index, &item.id, completed);
         write_index(&index_path, &queue.content)?;
-        let project_dir = pwf_core::paths::project_dir(notes_dir, &item.project);
-        for evicted in &queue.evicted {
-            archive_item_file(&project_dir, evicted)?;
-        }
+
         Ok(StatusTransitionDiagnostics {
             futuro_renamed_project: queue.futuro_renamed.then(|| item.project.clone()),
             evicted_ids: queue.evicted,

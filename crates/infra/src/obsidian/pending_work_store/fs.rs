@@ -48,25 +48,6 @@ pub(super) fn remove_item_file(path: &Path) -> Result<(), ObsidianPendingWorkSto
         .map_err(|source| ObsidianPendingWorkStoreError::RemoveItemFile { source })
 }
 
-pub(super) fn archive_item_file(
-    project_dir: &Path,
-    id: &str,
-) -> Result<(), ObsidianPendingWorkStoreError> {
-    let src = project_dir.join(format!("{id}.md"));
-    if !src.exists() {
-        return Ok(());
-    }
-    let archive_dir = project_dir.join(ARCHIVE_DIR);
-    std::fs::create_dir_all(&archive_dir)
-        .map_err(|source| ObsidianPendingWorkStoreError::CreateArchiveDir { source })?;
-    std::fs::rename(&src, archive_dir.join(format!("{id}.md"))).map_err(|source| {
-        ObsidianPendingWorkStoreError::ArchiveItem {
-            id: id.to_string(),
-            source,
-        }
-    })
-}
-
 pub(super) fn line_start_index(content: &str, line_number: usize) -> Option<usize> {
     if line_number == 0 {
         return None;
