@@ -1,5 +1,7 @@
 use std::str::FromStr;
 
+use pwf_domain::pending_work::OpenItem;
+
 /// Task model shared across the pending-work submodules.
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub struct Item {
@@ -12,9 +14,6 @@ pub struct Item {
     pub file_path: Option<String>,
     pub line: usize,
     pub format: String,
-    // ? Internal cursor fields for index rewriting; not part of the data model.
-    pub marker_index: usize,
-    pub marker_length: usize,
     pub launchable: bool,
     pub needs_prompt: bool,
     pub issues: Vec<String>,
@@ -43,8 +42,6 @@ impl Item {
             file_path: None,
             line: 0,
             format: String::new(),
-            marker_index: 0,
-            marker_length: 0,
             launchable: false,
             needs_prompt: false,
             issues: vec![],
@@ -52,6 +49,29 @@ impl Item {
             prereq: None,
             effort: None,
             created: None,
+        }
+    }
+}
+
+impl From<OpenItem> for Item {
+    fn from(item: OpenItem) -> Self {
+        Self {
+            id: item.id,
+            project: item.project,
+            session: item.session,
+            prompt: item.prompt,
+            repo: item.repo,
+            note: item.note,
+            file_path: item.item_file,
+            line: item.line,
+            format: item.format,
+            launchable: item.launchable,
+            needs_prompt: item.needs_prompt,
+            issues: item.issues,
+            section: item.section,
+            prereq: item.prereq,
+            effort: item.effort,
+            created: item.created,
         }
     }
 }
@@ -120,8 +140,6 @@ impl Item {
             file_path: None,
             line: 0,
             format: "file".to_string(),
-            marker_index: 0,
-            marker_length: 0,
             launchable: true,
             needs_prompt: false,
             issues: vec![],

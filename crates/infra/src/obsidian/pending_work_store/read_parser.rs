@@ -1,4 +1,7 @@
-use std::{path::Path, sync::LazyLock};
+use std::{
+    path::{Path, PathBuf},
+    sync::LazyLock,
+};
 
 use pwf_domain::pending_work::OpenItem;
 use regex::Regex;
@@ -15,13 +18,13 @@ static LINK_RE: LazyLock<Regex> = LazyLock::new(|| {
 });
 static INLINE_LEGACY_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-        r"(?m)^(?P<indent>\s*)- \[ \] `(?P<session>[^`]+)`\s*(?:<-+|::)\s*(?P<prompt>.+?)\s*$",
+        r"(?m)^(?P<indent>[ \t]*)- \[ \] `(?P<session>[^`]+)`\s*(?:<-+|::)\s*(?P<prompt>.+?)\s*$",
     )
     .expect("valid inline legacy regex")
 });
 static FENCED_SESSION_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-        r"(?ms)^(?P<indent>\s*)- \[ \] `(?P<session>[^`]+)`\s*\r?\n```text\r?\n(?P<prompt>.*?)\r?\n```",
+        r"(?ms)^(?P<indent>[ \t]*)- \[ \] `(?P<session>[^`]+)`\s*\r?\n```text\r?\n(?P<prompt>.*?)\r?\n```",
     )
     .expect("valid fenced legacy regex")
 });
@@ -40,7 +43,7 @@ pub(super) fn parse_project_tasks(
     repo: Option<&str>,
     index_path: &Path,
     text: &str,
-    load_item_note: impl Fn(&Path) -> Option<String>,
+    load_item_note: impl Fn(&str) -> Option<(PathBuf, String, Option<String>)>,
 ) -> Vec<OpenItem> {
     let dir = index_path.parent().unwrap_or(Path::new("."));
     let note = path_str(index_path);
@@ -55,7 +58,7 @@ fn parse_file_model_items(
     dir: &Path,
     note: &str,
     text: &str,
-    load_item_note: &impl Fn(&Path) -> Option<String>,
+    load_item_note: &impl Fn(&str) -> Option<(PathBuf, String, Option<String>)>,
 ) -> Vec<OpenItem> {
     let mut items = Vec::new();
 
@@ -65,7 +68,7 @@ fn parse_file_model_items(
             .name("alias")
             .map(|alias| alias.as_str().to_string())
             .unwrap_or_default();
-        let item_path = dir.join(format!("{id}.md"));
+        let fallback_item_path = dir.join(format!("{id}.md"));
         let mut issues = Vec::new();
 
         if repo.is_none_or(|value| value.trim().is_empty()) {
@@ -79,12 +82,14 @@ fn parse_file_model_items(
         let mut tags = None;
         let mut created = None;
 
-        if let Some(raw) = load_item_note(&item_path) {
+        let mut item_path = fallback_item_path;
+        if let Some((resolved_path, raw, decoded_title)) = load_item_note(&id) {
+            item_path = resolved_path;
             let parsed = pwf_core::frontmatter::parse(&raw);
-            if let Some(frontmatter_title) = parsed.frontmatter.get("title")
-                && !frontmatter_title.is_empty()
+            if let Some(frontmatter_title) = decoded_title
+                && !frontmatter_title.trim().is_empty()
             {
-                title.clone_from(frontmatter_title);
+                title = frontmatter_title;
             }
             prereq = parsed
                 .frontmatter

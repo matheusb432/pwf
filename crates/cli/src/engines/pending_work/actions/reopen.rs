@@ -65,12 +65,12 @@ mod tests {
         std::fs::create_dir_all(&project).unwrap();
         std::fs::write(
             project.join("GLP-0001.md"),
-            "---\nstatus: done\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\ncompleted: 2026-01-02\ncommits: \"a..b\"\n---\n\nbody\n",
+            "---\nid: GLP-0001\nstatus: done\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\ncompleted: 2026-01-02\ncommits: \"a..b\"\n---\n\nbody\n",
         )
         .unwrap();
         std::fs::write(
             project.join("glep-shimeji.md"),
-            "- [x] [[GLP-0001]] ✅ 2026-01-02\n",
+            "---\nid: glp\ntitle: glep-shimeji\n---\n\n- [x] [[GLP-0001]] ✅ 2026-01-02\n",
         )
         .unwrap();
         let cfg = cfg(&notes);
@@ -97,30 +97,30 @@ mod tests {
         assert!(!note.contains("completed:"), "completed lingered: {note}");
         assert!(!note.contains("commits:"), "commits lingered: {note}");
         let index = std::fs::read_to_string(project.join("glep-shimeji.md")).unwrap();
-        assert_eq!(index, "- [ ] [[GLP-0001]]\n", "index not restored: {index}");
+        assert_eq!(
+            index, "---\nid: glp\ntitle: glep-shimeji\n---\n\n- [ ] [[GLP-0001]]\n",
+            "index not restored: {index}"
+        );
     }
 
     #[test]
-    fn reopen_moves_archived_note_back_to_project_dir() {
+    fn reopen_readds_evicted_link_without_moving_note() {
         let (stage, cfg) = stage_done_item();
         let project = stage.path().join("notes/glep-shimeji");
-        let archive = project.join("_archive");
-        std::fs::create_dir_all(&archive).unwrap();
-        // Simulate an eviction: note lives in _archive, index link is gone.
-        std::fs::rename(project.join("GLP-0001.md"), archive.join("GLP-0001.md")).unwrap();
-        std::fs::write(project.join("glep-shimeji.md"), "# glep-shimeji\n").unwrap();
+        std::fs::write(
+            project.join("glep-shimeji.md"),
+            "---\nid: glp\ntitle: glep-shimeji\n---\n\n# glep-shimeji\n",
+        )
+        .unwrap();
 
         let out = run_reopen(&cfg, &args("glp-0001")).unwrap();
 
         assert!(out.starts_with("Reopened GLP-0001"), "got: {out}");
         assert!(
             project.join("GLP-0001.md").exists(),
-            "note not moved back to project dir"
+            "note must remain in project dir"
         );
-        assert!(
-            !archive.join("GLP-0001.md").exists(),
-            "note still in _archive"
-        );
+        assert!(!project.join("_archive").exists());
         let index = std::fs::read_to_string(project.join("glep-shimeji.md")).unwrap();
         assert!(
             index.contains("- [ ] [[GLP-0001]]"),
@@ -134,7 +134,7 @@ mod tests {
         let project = stage.path().join("notes/glep-shimeji");
         std::fs::write(
             project.join("GLP-0001.md"),
-            "---\nstatus: active\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\nbody\n",
+            "---\nid: GLP-0001\nstatus: active\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\nbody\n",
         )
         .unwrap();
 

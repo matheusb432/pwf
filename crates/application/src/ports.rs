@@ -1,9 +1,11 @@
-use pwf_domain::pending_work::{AddedItem, OpenItem, RemovedItem, Tags, UpdatedItem};
+use pwf_domain::pending_work::{AddedItem, OpenItem, ProjectName, RemovedItem, Tags, UpdatedItem};
 
 pub trait PendingWorkReadStore: Clone + Send + Sync + 'static {
     type Error: std::error::Error + Send + Sync + 'static;
 
-    fn open_items(&self, only_project: Option<&str>) -> Result<Vec<OpenItem>, Self::Error>;
+    fn open_items_for_project(&self, project: &ProjectName) -> Result<Vec<OpenItem>, Self::Error>;
+    fn all_open_items(&self) -> Result<Vec<OpenItem>, Self::Error>;
+    fn open_item(&self, id: &str) -> Result<OpenItem, Self::Error>;
 }
 
 pub trait PendingWorkResolveStore: Clone + Send + Sync + 'static {

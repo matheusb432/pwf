@@ -10,7 +10,10 @@ use walkdir::WalkDir;
 
 use super::{
     RenameContext, RenameProjectError,
-    plan::{RenamePlan, is_scannable_md, replace_id_tokens, replace_project_label},
+    plan::{
+        RenamePlan, is_scannable_md, replace_id_tokens, replace_project_index_identity,
+        replace_project_label,
+    },
 };
 
 fn io<'a>(
@@ -42,6 +45,12 @@ pub fn apply_plan(ctx: &RenameContext, plan: &RenamePlan) -> Result<(), RenamePr
     }
 
     rewrite_id_tokens_in_vault(ctx)?;
+
+    let index = std::fs::read_to_string(&plan.index_identity_update)
+        .map_err(io("read index", &plan.index_identity_update))?;
+    let index = replace_project_index_identity(&index, &ctx.new_code, &ctx.new_label);
+    write_text_atomic(&plan.index_identity_update, &index)
+        .map_err(io("write index", &plan.index_identity_update))?;
 
     if ctx.path_changed {
         for path in &plan.label_updates {

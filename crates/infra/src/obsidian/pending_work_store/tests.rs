@@ -1,4 +1,4 @@
-use std::{fmt::Write as _, path::Path};
+use std::{assert_matches, fmt::Write as _, path::Path};
 
 use pwf_application::{
     AddItemSpec, CancelItemSpec, ClosedItemAction, CompleteItemSpec, PendingWorkReadStore,
@@ -60,15 +60,9 @@ fn open_items_matches_file_parser_metadata_for_normal_human_and_future_tasks() {
         "follow up later",
     );
 
-    let config_json = serde_json::json!({
-        "notesDir": notes_dir,
-        "projects": { "pwf": "/repo/pwf" },
-        "prefixes": { "pwf": "PWF" }
-    });
-    let config = from_json(&config_json.to_string(), None).unwrap();
-    let store = ObsidianPendingWorkStore::new(config);
+    let store = ObsidianPendingWorkStore::new(config_for_notes(&notes_dir));
 
-    let got = store.open_items(None).unwrap();
+    let got = store.all_open_items().unwrap();
 
     assert_eq!(
         got,
@@ -79,7 +73,7 @@ fn open_items_matches_file_parser_metadata_for_normal_human_and_future_tasks() {
                 prompt: "ship the adapter",
                 repo: "/repo/pwf",
                 project_dir: &project_dir,
-                line: 2,
+                line: 7,
                 section: None,
                 prereq: Some("\"[[CFG-0001]]\""),
                 effort: Some("2"),
@@ -92,7 +86,7 @@ fn open_items_matches_file_parser_metadata_for_normal_human_and_future_tasks() {
                 prompt: "ask the human to verify",
                 repo: "/repo/pwf",
                 project_dir: &project_dir,
-                line: 5,
+                line: 10,
                 section: Some("Human"),
                 prereq: None,
                 effort: None,
@@ -105,7 +99,7 @@ fn open_items_matches_file_parser_metadata_for_normal_human_and_future_tasks() {
                 prompt: "follow up later",
                 repo: "/repo/pwf",
                 project_dir: &project_dir,
-                line: 8,
+                line: 13,
                 section: Some("Future"),
                 prereq: None,
                 effort: Some("4"),
@@ -113,6 +107,33 @@ fn open_items_matches_file_parser_metadata_for_normal_human_and_future_tasks() {
                 created: Some("2026-07-03"),
             }),
         ]
+    );
+}
+
+#[test]
+fn open_items_rejects_project_index_without_identity_frontmatter() {
+    let temp = tempfile::tempdir().unwrap();
+    let notes_dir = temp.path().join("notes");
+    let project_dir = notes_dir.join("pwf");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    std::fs::write(project_dir.join("pwf.md"), "- [ ] [[PWF-0001]]\n").unwrap();
+    write_note(
+        &project_dir.join("PWF-0001.md"),
+        "task",
+        "2026-07-12",
+        None,
+        None,
+        None,
+        "body",
+    );
+    let store = ObsidianPendingWorkStore::new(raw_config_for_notes(&notes_dir));
+
+    let error = store.all_open_items().unwrap_err();
+
+    assert_matches!(
+        error,
+        ObsidianPendingWorkStoreError::MissingFrontmatter { ref property, .. }
+            if *property == "id/title"
     );
 }
 
@@ -135,8 +156,77 @@ fn open_items_retains_raw_tags_frontmatter() {
     let store = ObsidianPendingWorkStore::new(config_for_notes(&notes_dir));
 
     assert_eq!(
-        store.open_items(None).unwrap()[0].tags.as_deref(),
+        store.all_open_items().unwrap()[0].tags.as_deref(),
         Some("[SQLite, malformed-but-displayable]")
+    );
+}
+
+#[test]
+fn open_items_use_yaml_decoded_title() {
+    let temp = tempfile::tempdir().unwrap();
+    let notes_dir = temp.path().join("notes");
+    let project_dir = notes_dir.join("pwf");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    std::fs::write(project_dir.join("pwf.md"), "- [ ] [[PWF-0001]]\n").unwrap();
+    std::fs::write(
+        project_dir.join("PWF-0001.md"),
+        "---\nid: PWF-0001\nstatus: active\ntitle: \"adapter: preserve identity\"\nproject: pwf\ncreated: 2026-07-12\n---\n\nbody\n",
+    )
+    .unwrap();
+    let store = ObsidianPendingWorkStore::new(config_for_notes(&notes_dir));
+
+    let item = store.all_open_items().unwrap().remove(0);
+
+    assert_eq!(item.session, "adapter: preserve identity");
+}
+
+#[test]
+fn resolve_item_uses_frontmatter_id_instead_of_filename() {
+    let temp = tempfile::tempdir().unwrap();
+    let notes_dir = temp.path().join("notes");
+    let project_dir = notes_dir.join("pwf");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    std::fs::write(project_dir.join("pwf.md"), "- [ ] [[PWF-0001]]\n").unwrap();
+    std::fs::write(
+        project_dir.join("descriptive-name.md"),
+        "---\nid: PWF-0001\nstatus: active\ntitle: descriptive\nproject: pwf\ncreated: 2026-07-12\n---\n\nbody\n",
+    )
+    .unwrap();
+    let store = ObsidianPendingWorkStore::new(config_for_notes(&notes_dir));
+
+    let resolved = store.resolve_item("PWF-0001", false).unwrap();
+
+    assert_eq!(
+        resolved,
+        ResolvePendingWorkOutput::NotePath(path_str(&project_dir.join("descriptive-name.md")))
+    );
+}
+
+#[test]
+fn resolve_item_rejects_duplicate_frontmatter_ids() {
+    let temp = tempfile::tempdir().unwrap();
+    let notes_dir = temp.path().join("notes");
+    let project_dir = notes_dir.join("pwf");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    std::fs::write(project_dir.join("pwf.md"), "- [ ] [[PWF-0001]]\n").unwrap();
+    for (filename, id) in [
+        ("a.md", "PWF-0001"),
+        ("b.md", "PWF-0002"),
+        ("c.md", "PWF-0001"),
+    ] {
+        std::fs::write(
+            project_dir.join(filename),
+            format!("---\nid: {id}\nstatus: active\ntitle: task\nproject: pwf\ncreated: 2026-07-12\n---\n\nbody\n"),
+        )
+        .unwrap();
+    }
+    let store = ObsidianPendingWorkStore::new(config_for_notes(&notes_dir));
+
+    let error = store.resolve_item("PWF-0001", false).unwrap_err();
+
+    assert_matches!(
+        error,
+        ObsidianPendingWorkStoreError::DuplicateTaskId { ref id, .. } if id == "PWF-0001"
     );
 }
 
@@ -149,8 +239,10 @@ fn write_note(
     tags: Option<&str>,
     body: &str,
 ) {
-    let mut note =
-        format!("---\nstatus: active\ntitle: {title}\nproject: pwf\ncreated: {created}\n");
+    let id = path.file_stem().and_then(|stem| stem.to_str()).unwrap();
+    let mut note = format!(
+        "---\nid: {id}\nstatus: active\ntitle: {title}\nproject: pwf\ncreated: {created}\n"
+    );
     if let Some(prereq) = prereq {
         let _ = writeln!(note, "prereq: {prereq}");
     }
@@ -229,6 +321,10 @@ fn add_item_creates_note_and_links_index() {
     assert_eq!(added.title, "ship adapter");
     assert_eq!(added.created_section, Some("Human".to_string()));
     let note = std::fs::read_to_string(notes_dir.join("pwf/PWF-0001.md")).unwrap();
+    assert!(
+        note.starts_with("---\nid: PWF-0001\nstatus: active\n"),
+        "{note}"
+    );
     assert!(note.contains("status: active"), "{note}");
     assert!(note.contains("title: ship adapter"), "{note}");
     assert!(note.contains("created: 2026-07-07"), "{note}");
@@ -236,7 +332,10 @@ fn add_item_creates_note_and_links_index() {
     assert!(note.contains("effort: 2"), "{note}");
     assert!(note.contains("## Goals\n- Ship the adapter"), "{note}");
     let index = std::fs::read_to_string(notes_dir.join("pwf/pwf.md")).unwrap();
-    assert_eq!(index, "\n\n## Human\n\n- [ ] [[PWF-0001]]\n");
+    assert_eq!(
+        index,
+        "---\nid: pwf\ntitle: pwf\n---\n\n## Human\n\n- [ ] [[PWF-0001]]\n"
+    );
 }
 
 #[test]
@@ -277,7 +376,7 @@ fn add_item_writes_canonical_tags_and_omits_absent_tags() {
 }
 
 #[test]
-fn add_item_index_write_error_preserves_created_section_diagnostic() {
+fn add_item_rejects_unreadable_existing_index_before_mutation() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
     let project_dir = notes_dir.join("pwf");
@@ -298,8 +397,79 @@ fn add_item_index_write_error_preserves_created_section_diagnostic() {
         })
         .unwrap_err();
 
-    assert!(err.to_string().starts_with("Failed to write index file: "));
-    assert_eq!(err.created_section_diagnostic(), Some(("pwf", "Human")));
+    assert!(err.to_string().starts_with("Cannot read index: "));
+    assert_eq!(err.created_section_diagnostic(), None);
+}
+
+#[test]
+fn add_item_rejects_mismatched_project_index_identity() {
+    let temp = tempfile::tempdir().unwrap();
+    let notes_dir = temp.path().join("notes");
+    let project_dir = notes_dir.join("pwf");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    std::fs::write(
+        project_dir.join("pwf.md"),
+        "---\nid: rst\ntitle: rust-learn\n---\n\n# wrong\n",
+    )
+    .unwrap();
+    let store = ObsidianPendingWorkStore::new(config_for_notes(&notes_dir));
+
+    let error = store
+        .add_item(AddItemSpec {
+            project_name: "pwf".to_string(),
+            prompt: "task".to_string(),
+            title: None,
+            created: "2026-07-12".to_string(),
+            section: None,
+            prereq: None,
+            effort: None,
+            tags: None,
+        })
+        .unwrap_err();
+
+    assert_matches!(
+        error,
+        ObsidianPendingWorkStoreError::ProjectIndexIdentityMismatch { .. }
+    );
+}
+
+#[test]
+fn add_item_allocates_after_greatest_frontmatter_id() {
+    let temp = tempfile::tempdir().unwrap();
+    let notes_dir = temp.path().join("notes");
+    let project_dir = notes_dir.join("pwf");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    std::fs::write(
+        project_dir.join("pwf.md"),
+        "---\nid: pwf\ntitle: pwf\n---\n\n- [ ] [[PWF-0009]]\n",
+    )
+    .unwrap();
+    std::fs::write(
+        project_dir.join("descriptive.md"),
+        "---\nid: PWF-0009\nstatus: active\ntitle: existing\nproject: pwf\ncreated: 2026-07-12\n---\n\nbody\n",
+    )
+    .unwrap();
+    std::fs::write(
+        project_dir.join("PWF-0099.md"),
+        "---\ntype: note\n---\n\nnote\n",
+    )
+    .unwrap();
+    let store = ObsidianPendingWorkStore::new(config_for_notes(&notes_dir));
+
+    let added = store
+        .add_item(AddItemSpec {
+            project_name: "pwf".to_string(),
+            prompt: "next task".to_string(),
+            title: None,
+            created: "2026-07-12".to_string(),
+            section: None,
+            prereq: None,
+            effort: None,
+            tags: None,
+        })
+        .unwrap();
+
+    assert_eq!(added.id, "PWF-0010");
 }
 
 #[test]
@@ -429,6 +599,7 @@ fn update_item_append_adds_frontmatter_tags_without_rewriting_body_tags_line() {
         note,
         concat!(
             "---\n",
+            "id: PWF-0001\n",
             "status: active\n",
             "title: tagged\n",
             "project: pwf\n",
@@ -551,7 +722,7 @@ fn update_item_clear_removes_tags_and_clear_plus_tags_replaces() {
 
     std::fs::write(
         &item_path,
-        "---\nstatus: active\ntitle: tagged\nproject: pwf\ncreated: 2026-07-01\ntags: [godot, setup]\n---\n\nbody\n",
+        "---\nid: PWF-0001\nstatus: active\ntitle: tagged\nproject: pwf\ncreated: 2026-07-01\ntags: [godot, setup]\n---\n\nbody\n",
     )
     .unwrap();
     let replacement = Tags::parse_values(&["SQLite".to_string()]).unwrap();
@@ -578,7 +749,7 @@ fn update_item_clear_and_replace_do_not_parse_corrupt_existing_tags() {
 
     std::fs::write(
         &item_path,
-        "---\nstatus: active\ntitle: tagged\nproject: pwf\ncreated: 2026-07-01\ntags: still-corrupt\n---\n\nbody\n",
+        "---\nid: PWF-0001\nstatus: active\ntitle: tagged\nproject: pwf\ncreated: 2026-07-01\ntags: still-corrupt\n---\n\nbody\n",
     )
     .unwrap();
     let replacement = Tags::parse_values(&["SQLite".to_string()]).unwrap();
@@ -663,7 +834,7 @@ fn remove_item_deletes_note_and_unlinks_index() {
     assert!(!project_dir.join("PWF-0001.md").exists());
     assert_eq!(
         std::fs::read_to_string(project_dir.join("pwf.md")).unwrap(),
-        ""
+        "---\nid: pwf\ntitle: pwf\n---\n"
     );
 }
 
@@ -716,7 +887,7 @@ fn resolve_item_show_returns_open_note_markdown_with_created_key() {
     assert_eq!(
         got,
         ResolvePendingWorkOutput::NoteMarkdown(
-            "---\nstatus: active\ntitle: active task\nproject: pwf\ncreated: 2026-07-01\n---\n\n## Goals\n- body\n"
+            "---\nid: PWF-0001\nstatus: active\ntitle: active task\nproject: pwf\ncreated: 2026-07-01\n---\n\n## Goals\n- body\n"
                 .to_string(),
         )
     );
@@ -747,7 +918,7 @@ fn resolve_item_show_finds_closed_note_still_in_project_dir() {
     assert_eq!(
         got,
         ResolvePendingWorkOutput::NoteMarkdown(
-            "---\nstatus: done\ntitle: done task\nproject: pwf\ncreated: 2026-07-01\ncompleted: 2026-07-07\n---\n\nbody\n"
+            "---\nid: PWF-0003\nstatus: done\ntitle: done task\nproject: pwf\ncreated: 2026-07-01\ncompleted: 2026-07-07\n---\n\nbody\n"
                 .to_string(),
         )
     );
@@ -778,59 +949,7 @@ fn resolve_item_show_finds_closed_note_still_in_project_dir_with_shorthand_id() 
     assert_eq!(
         got,
         ResolvePendingWorkOutput::NoteMarkdown(
-            "---\nstatus: done\ntitle: done task\nproject: pwf\ncreated: 2026-07-01\ncompleted: 2026-07-07\n---\n\nbody\n"
-                .to_string(),
-        )
-    );
-}
-
-#[test]
-fn resolve_item_show_finds_archived_note_case_insensitively() {
-    let temp = tempfile::tempdir().unwrap();
-    let notes_dir = temp.path().join("notes");
-    let archive_dir = notes_dir.join("pwf/_archive");
-    std::fs::create_dir_all(&archive_dir).unwrap();
-    write_status_note(
-        &archive_dir.join("PWF-0002.md"),
-        "archived task",
-        "cancelled",
-        Some("2026-07-07"),
-        Some("a..b"),
-    );
-    let store = ObsidianPendingWorkStore::new(config_for_notes(&notes_dir));
-
-    let got = store.resolve_item("pwf-0002", true).unwrap();
-
-    assert_eq!(
-        got,
-        ResolvePendingWorkOutput::NoteMarkdown(
-            "---\nstatus: cancelled\ntitle: archived task\nproject: pwf\ncreated: 2026-07-01\ncompleted: 2026-07-07\ncommits: \"a..b\"\n---\n\nbody\n"
-                .to_string(),
-        )
-    );
-}
-
-#[test]
-fn resolve_item_show_finds_archived_note_with_shorthand_id() {
-    let temp = tempfile::tempdir().unwrap();
-    let notes_dir = temp.path().join("notes");
-    let archive_dir = notes_dir.join("pwf/_archive");
-    std::fs::create_dir_all(&archive_dir).unwrap();
-    write_status_note(
-        &archive_dir.join("PWF-0002.md"),
-        "archived task",
-        "cancelled",
-        Some("2026-07-07"),
-        Some("a..b"),
-    );
-    let store = ObsidianPendingWorkStore::new(config_for_notes(&notes_dir));
-
-    let got = store.resolve_item("pwf-2", true).unwrap();
-
-    assert_eq!(
-        got,
-        ResolvePendingWorkOutput::NoteMarkdown(
-            "---\nstatus: cancelled\ntitle: archived task\nproject: pwf\ncreated: 2026-07-01\ncompleted: 2026-07-07\ncommits: \"a..b\"\n---\n\nbody\n"
+            "---\nid: PWF-0003\nstatus: done\ntitle: done task\nproject: pwf\ncreated: 2026-07-01\ncompleted: 2026-07-07\n---\n\nbody\n"
                 .to_string(),
         )
     );
@@ -863,12 +982,12 @@ fn find_pending_item_ambiguous_error_preserves_raw_requested_id() {
     std::fs::write(beta_dir.join("beta.md"), "- [ ] [[PWF-0001]]\n").unwrap();
     std::fs::write(
         alpha_dir.join("PWF-0001.md"),
-        "---\nstatus: active\ntitle: alpha task\nproject: alpha\ncreated: 2026-07-01\n---\n\nbody\n",
+        "---\nid: PWF-0001\nstatus: active\ntitle: alpha task\nproject: alpha\ncreated: 2026-07-01\n---\n\nbody\n",
     )
     .unwrap();
     std::fs::write(
         beta_dir.join("PWF-0001.md"),
-        "---\nstatus: active\ntitle: beta task\nproject: beta\ncreated: 2026-07-02\n---\n\nbody\n",
+        "---\nid: PWF-0001\nstatus: active\ntitle: beta task\nproject: beta\ncreated: 2026-07-02\n---\n\nbody\n",
     )
     .unwrap();
     let store = ObsidianPendingWorkStore::new(config_for_projects(
@@ -926,7 +1045,7 @@ fn complete_item_marks_active_file_item_done_with_report_and_commits() {
     );
     assert_eq!(
         std::fs::read_to_string(project_dir.join("pwf.md")).unwrap(),
-        "- [x] [[PWF-0001]] ✅ 2026-07-07\n"
+        "---\nid: pwf\ntitle: pwf\n---\n\n- [x] [[PWF-0001]] ✅ 2026-07-07\n"
     );
 }
 
@@ -977,7 +1096,7 @@ fn cancel_item_marks_active_file_item_cancelled_with_required_report() {
 }
 
 #[test]
-fn complete_item_rotates_done_queue_and_archives_evicted_notes() {
+fn complete_item_rotates_done_queue_and_keeps_evicted_notes() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
     let project_dir = notes_dir.join("pwf");
@@ -1021,8 +1140,8 @@ fn complete_item_rotates_done_queue_and_archives_evicted_notes() {
         .unwrap();
 
     assert_eq!(closed.diagnostics.evicted_ids, vec!["PWF-0001"]);
-    assert!(!project_dir.join("PWF-0001.md").exists());
-    assert!(project_dir.join("_archive/PWF-0001.md").exists());
+    assert!(project_dir.join("PWF-0001.md").exists());
+    assert!(!project_dir.join("_archive").exists());
     let index = std::fs::read_to_string(project_dir.join("pwf.md")).unwrap();
     assert!(!index.contains("PWF-0001"), "{index}");
     assert!(
@@ -1079,20 +1198,19 @@ fn reopen_item_flips_done_and_cancelled_notes_back_to_active() {
     }
     assert_eq!(
         std::fs::read_to_string(project_dir.join("pwf.md")).unwrap(),
-        "- [ ] [[PWF-0001]]\n- [ ] [[PWF-0002]]\n"
+        "---\nid: pwf\ntitle: pwf\n---\n\n- [ ] [[PWF-0001]]\n- [ ] [[PWF-0002]]\n"
     );
 }
 
 #[test]
-fn reopen_item_restores_evicted_archive_note_and_readds_index_link() {
+fn reopen_item_restores_evicted_note_link_without_moving_the_file() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
     let project_dir = notes_dir.join("pwf");
-    let archive_dir = project_dir.join("_archive");
-    std::fs::create_dir_all(&archive_dir).unwrap();
+    std::fs::create_dir_all(&project_dir).unwrap();
     std::fs::write(project_dir.join("pwf.md"), "# pwf\n").unwrap();
     write_status_note(
-        &archive_dir.join("PWF-0001.md"),
+        &project_dir.join("PWF-0001.md"),
         "archived done",
         "done",
         Some("2026-07-07"),
@@ -1104,9 +1222,35 @@ fn reopen_item_restores_evicted_archive_note_and_readds_index_link() {
 
     assert_eq!(reopened.id, "PWF-0001");
     assert!(project_dir.join("PWF-0001.md").exists());
-    assert!(!archive_dir.join("PWF-0001.md").exists());
+    assert!(!project_dir.join("_archive").exists());
     let index = std::fs::read_to_string(project_dir.join("pwf.md")).unwrap();
     assert!(index.contains("- [ ] [[PWF-0001]]"), "{index}");
+}
+
+#[test]
+fn reopen_item_preserves_descriptive_filename() {
+    let temp = tempfile::tempdir().unwrap();
+    let notes_dir = temp.path().join("notes");
+    let project_dir = notes_dir.join("pwf");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    std::fs::write(
+        project_dir.join("pwf.md"),
+        "---\nid: pwf\ntitle: pwf\n---\n\n",
+    )
+    .unwrap();
+    let note_path = project_dir.join("descriptive-name.md");
+    std::fs::write(
+        &note_path,
+        "---\nid: PWF-0001\nstatus: done\ncompleted: 2026-07-12\ntitle: task\nproject: pwf\ncreated: 2026-07-01\n---\n\nbody\n",
+    )
+    .unwrap();
+    let store = ObsidianPendingWorkStore::new(config_for_notes(&notes_dir));
+
+    let reopened = store.reopen_item("PWF-0001").unwrap();
+
+    assert_eq!(reopened.id, "PWF-0001");
+    assert!(note_path.exists());
+    assert!(!project_dir.join("PWF-0001.md").exists());
 }
 
 #[test]
@@ -1135,11 +1279,16 @@ fn complete_item_preserves_legacy_inline_checkbox_behavior() {
     assert_eq!(closed.title, "legacy task");
     assert_eq!(
         std::fs::read_to_string(project_dir.join("pwf.md")).unwrap(),
-        "- [x] `legacy task` :: do the old thing ✅ 2026-07-07\n"
+        "---\nid: pwf\ntitle: pwf\n---\n\n- [x] `legacy task` :: do the old thing ✅ 2026-07-07\n"
     );
 }
 
 fn config_for_notes(notes_dir: &Path) -> pwf_core::config::Config {
+    ensure_test_index_identity(&notes_dir.join("pwf/pwf.md"), "pwf", "pwf");
+    raw_config_for_notes(notes_dir)
+}
+
+fn raw_config_for_notes(notes_dir: &Path) -> pwf_core::config::Config {
     let config_json = serde_json::json!({
         "notesDir": notes_dir,
         "projects": { "pwf": "/repo/pwf" },
@@ -1194,11 +1343,18 @@ fn formatted_tag_note(bom: bool, newline: &str, tags: Option<&str>) -> String {
     let bom = if bom { "\u{feff}" } else { "" };
     let tags = tags.map_or_else(String::new, |tags| format!("tags: {tags}{newline}"));
     format!(
-        "{bom}---{newline}status: active{newline}title: tagged{newline}project: pwf{newline}created: 2026-07-01{newline}{tags}---{newline}{newline}tags: body-only value{newline}keep this body byte-identical{newline}"
+        "{bom}---{newline}id: PWF-0001{newline}status: active{newline}title: tagged{newline}project: pwf{newline}created: 2026-07-01{newline}{tags}---{newline}{newline}tags: body-only value{newline}keep this body byte-identical{newline}"
     )
 }
 
 fn config_for_projects(notes_dir: &Path, projects: &[(&str, &str)]) -> pwf_core::config::Config {
+    for (project, prefix) in projects {
+        ensure_test_index_identity(
+            &notes_dir.join(project).join(format!("{project}.md")),
+            &prefix.to_ascii_lowercase(),
+            project,
+        );
+    }
     let project_map = projects
         .iter()
         .map(|(name, _prefix)| {
@@ -1225,6 +1381,20 @@ fn config_for_projects(notes_dir: &Path, projects: &[(&str, &str)]) -> pwf_core:
     from_json(&config_json.to_string(), None).unwrap()
 }
 
+fn ensure_test_index_identity(path: &Path, id: &str, title: &str) {
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return;
+    };
+    if content.starts_with("---") {
+        return;
+    }
+    std::fs::write(
+        path,
+        format!("---\nid: {id}\ntitle: {title}\n---\n\n{content}"),
+    )
+    .unwrap();
+}
+
 fn write_status_note(
     path: &Path,
     title: &str,
@@ -1232,8 +1402,10 @@ fn write_status_note(
     completed: Option<&str>,
     commits: Option<&str>,
 ) {
-    let mut note =
-        format!("---\nstatus: {status}\ntitle: {title}\nproject: pwf\ncreated: 2026-07-01\n");
+    let id = path.file_stem().and_then(|stem| stem.to_str()).unwrap();
+    let mut note = format!(
+        "---\nid: {id}\nstatus: {status}\ntitle: {title}\nproject: pwf\ncreated: 2026-07-01\n"
+    );
     if let Some(completed) = completed {
         let _ = writeln!(note, "completed: {completed}");
     }
@@ -1250,7 +1422,11 @@ fn note_with_project_finds_active_note_case_insensitively() {
     let notes_dir = temp.path().join("notes");
     let project_dir = notes_dir.join("test-project");
     std::fs::create_dir_all(&project_dir).unwrap();
-    std::fs::write(project_dir.join("test-project.md"), "- [ ] [[TST-0001]]\n").unwrap();
+    std::fs::write(
+        project_dir.join("test-project.md"),
+        "---\nid: tst\ntitle: test-project\n---\n\n- [ ] [[TST-0001]]\n",
+    )
+    .unwrap();
     write_note(
         &project_dir.join("TST-0001.md"),
         "test task",
@@ -1270,8 +1446,8 @@ fn note_with_project_finds_active_note_case_insensitively() {
     let store = ObsidianPendingWorkStore::new(config);
 
     let result = store.note_with_project("tst-0001");
-    assert!(result.is_some());
-    let (project, path) = result.unwrap();
+    assert!(result.as_ref().unwrap().is_some());
+    let (project, path) = result.unwrap().unwrap();
     assert_eq!(project, "test-project");
     assert!(path.ends_with("TST-0001.md"));
 }
@@ -1292,5 +1468,5 @@ fn note_with_project_returns_none_for_unknown_id() {
     let store = ObsidianPendingWorkStore::new(config);
 
     let result = store.note_with_project("tst-9999");
-    assert!(result.is_none());
+    assert!(result.unwrap().is_none());
 }

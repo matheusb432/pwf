@@ -140,10 +140,14 @@ mod tests {
         std::fs::create_dir_all(&project).unwrap();
         std::fs::write(
             project.join("GLP-0001.md"),
-            "---\nstatus: active\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\nbody\n",
+            "---\nid: GLP-0001\nstatus: active\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\nbody\n",
         )
         .unwrap();
-        std::fs::write(project.join("glep-shimeji.md"), index).unwrap();
+        std::fs::write(
+            project.join("glep-shimeji.md"),
+            format!("---\nid: glp\ntitle: glep-shimeji\n---\n\n{index}"),
+        )
+        .unwrap();
         let cfg = cfg(&notes);
         (stage, cfg)
     }
@@ -167,7 +171,11 @@ mod tests {
         let notes = stage.path().join("notes");
         let project = notes.join("glep-shimeji");
         std::fs::create_dir_all(&project).unwrap();
-        std::fs::write(project.join("glep-shimeji.md"), "- [ ] `legacy` :: do it\n").unwrap();
+        std::fs::write(
+            project.join("glep-shimeji.md"),
+            "---\nid: glp\ntitle: glep-shimeji\n---\n\n- [ ] `legacy` :: do it\n",
+        )
+        .unwrap();
         let cfg = cfg(&notes);
         let args = Args {
             id: Some("glep-shimeji:1".to_string()),
@@ -234,7 +242,7 @@ mod tests {
         );
         assert_eq!(
             std::fs::read_to_string(&index).unwrap(),
-            "- [ ] [[GLP-0001]]\n",
+            "---\nid: glp\ntitle: glep-shimeji\n---\n\n- [ ] [[GLP-0001]]\n",
             "declined removal must leave the index link in place"
         );
     }
@@ -255,7 +263,10 @@ mod tests {
 
         assert!(out.starts_with("REMOVED PWF TASK [GLP-0001]"), "got: {out}");
         assert!(!note.exists(), "accepted removal must delete the note");
-        assert_eq!(std::fs::read_to_string(&index).unwrap(), "");
+        assert_eq!(
+            std::fs::read_to_string(&index).unwrap(),
+            "---\nid: glp\ntitle: glep-shimeji\n---\n"
+        );
     }
 
     #[test]
@@ -339,10 +350,14 @@ mod tests {
         std::fs::create_dir_all(&project).unwrap();
         std::fs::write(
             project.join("GLP-0001.md"),
-            "---\nstatus: active\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\ntags: [handoff]\n---\n\nbody\n",
+            "---\nid: GLP-0001\nstatus: active\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\ntags: [handoff]\n---\n\nbody\n",
         )
         .unwrap();
-        std::fs::write(project.join("glep-shimeji.md"), "- [ ] [[GLP-0001]]\n").unwrap();
+        std::fs::write(
+            project.join("glep-shimeji.md"),
+            "---\nid: glp\ntitle: glep-shimeji\n---\n\n- [ ] [[GLP-0001]]\n",
+        )
+        .unwrap();
 
         let repo = stage.path().join("repo");
         std::fs::create_dir_all(&repo).unwrap();

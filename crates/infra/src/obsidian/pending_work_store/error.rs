@@ -2,6 +2,50 @@ use std::path::PathBuf;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ObsidianPendingWorkStoreError {
+    #[error("Cannot parse frontmatter property `{property}` in {}: {source}", path.display())]
+    FrontmatterParse {
+        path: PathBuf,
+        property: &'static str,
+        source: gray_matter::Error,
+    },
+    #[error("Missing frontmatter property `{property}` in {}", path.display())]
+    MissingFrontmatter {
+        path: PathBuf,
+        property: &'static str,
+    },
+    #[error("Missing task frontmatter property `id` in {}", path.display())]
+    MissingTaskId { path: PathBuf },
+    #[error("Invalid task frontmatter property `id` {value:?} in {}", path.display())]
+    InvalidTaskId { path: PathBuf, value: String },
+    #[error("More than one task has frontmatter id {id}: {}", paths.iter().map(|path| path.display().to_string()).collect::<Vec<_>>().join(", "))]
+    DuplicateTaskId { id: String, paths: Vec<PathBuf> },
+    #[error("Unknown task id prefix `{prefix}` for {id}")]
+    UnknownTaskPrefix { id: String, prefix: String },
+    #[error("Missing project-index frontmatter property `{property}` in {}", path.display())]
+    MissingProjectIndexProperty {
+        path: PathBuf,
+        property: &'static str,
+    },
+    #[error(
+        "Invalid project-index frontmatter property `{property}` {value:?} in {}",
+        path.display()
+    )]
+    InvalidProjectIndexProperty {
+        path: PathBuf,
+        property: &'static str,
+        value: String,
+    },
+    #[error(
+        "Project-index identity mismatch in {}: found id={actual_id:?}, title={actual_title:?}; expected id={expected_id:?}, title={expected_title:?}",
+        path.display()
+    )]
+    ProjectIndexIdentityMismatch {
+        path: PathBuf,
+        actual_id: String,
+        actual_title: String,
+        expected_id: String,
+        expected_title: String,
+    },
     #[error("Notes directory not found: {path}")]
     NotesDirectoryNotFound { path: String },
     #[error("Project '{project}' is not mapped to a repo in config/pending-work.json.")]

@@ -1,8 +1,9 @@
 // Config loading + read-side store: project-name resolution and item enumeration.
 
-use std::path::Path;
+use pwf_application::PendingWorkReadStore;
+use pwf_infra::obsidian::{ObsidianPendingWorkStore, ObsidianPendingWorkStoreError};
 
-use super::{errors, model::Item, naming::project_index_path, parse::get_project_tasks};
+use super::{errors, model::Item};
 use crate::config::Config;
 
 pub(super) fn load_config(args: &crate::cli::Args) -> Result<Config, errors::PendingWorkError> {
@@ -97,35 +98,6 @@ pub(super) fn resolve_project_repo(
     Ok((project, repo.to_string()))
 }
 
-/// Enumerate all pending-work items across managed projects (or one project).
-pub(super) fn get_pending_work(
-    cfg: &Config,
-    only_project: Option<&str>,
-) -> Result<Vec<Item>, errors::PendingWorkError> {
-    if !Path::new(&cfg.notes_dir).exists() {
-        return Err(errors::PendingWorkError::NotesDirectoryNotFound {
-            path: cfg.notes_dir.clone(),
-        });
-    }
-    let project_names: Vec<String> = if let Some(p) = only_project {
-        vec![p.to_string()]
-    } else {
-        let mut v: Vec<String> = cfg.projects.keys().cloned().collect();
-        v.sort();
-        v
-    };
-    let mut items: Vec<Item> = Vec::new();
-    for project in &project_names {
-        let index = project_index_path(cfg.notes_dir_for(project), project);
-        if !index.exists() {
-            continue;
-        }
-        let repo = cfg.projects.get(project).map(std::string::String::as_str);
-        items.extend(get_project_tasks(project, repo, &index));
-    }
-    Ok(items)
-}
-
 /// Whether `id` is still an open pending-work item (linked in a project index).
 /// Already-checked and unknown ids both report not-open.
 pub fn is_item_open(cfg: &Config, id: &str) -> Result<bool, String> {
@@ -133,21 +105,34 @@ pub fn is_item_open(cfg: &Config, id: &str) -> Result<bool, String> {
 }
 
 pub(super) fn is_item_open_typed(cfg: &Config, id: &str) -> Result<bool, errors::PendingWorkError> {
-    Ok(get_pending_work(cfg, None)?.iter().any(|i| i.id == id))
+    match ObsidianPendingWorkStore::new(cfg.clone()).open_item(id) {
+        Ok(_) => Ok(true),
+        Err(ObsidianPendingWorkStoreError::ItemNotFound { .. }) => Ok(false),
+        Err(error) => Err(map_store_read_error(error)),
+    }
 }
 
 /// Finds pending item by cli input id.
 /// Applies case insensitive search so "cfg-0001" matches to "CFG-0001".
 pub(super) fn find_pending_item(cfg: &Config, id: &str) -> Result<Item, errors::PendingWorkError> {
-    let items = get_pending_work(cfg, None)?;
-    let selected: Vec<&Item> = items
-        .iter()
-        .filter(|i| i.id.eq_ignore_ascii_case(id))
-        .collect();
-    match selected.len() {
-        0 => Err(errors::PendingWorkError::ItemNotFound { id: id.to_string() }),
-        1 => Ok(selected[0].clone()),
-        _ => Err(errors::PendingWorkError::AmbiguousId { id: id.to_string() }),
+    ObsidianPendingWorkStore::new(cfg.clone())
+        .open_item(id)
+        .map(Into::into)
+        .map_err(map_store_read_error)
+}
+
+fn map_store_read_error(error: ObsidianPendingWorkStoreError) -> errors::PendingWorkError {
+    match error {
+        ObsidianPendingWorkStoreError::ItemNotFound { id } => {
+            errors::PendingWorkError::ItemNotFound { id }
+        }
+        ObsidianPendingWorkStoreError::AmbiguousId { id } => {
+            errors::PendingWorkError::AmbiguousId { id }
+        }
+        ObsidianPendingWorkStoreError::NotesDirectoryNotFound { path } => {
+            errors::PendingWorkError::NotesDirectoryNotFound { path }
+        }
+        other => errors::PendingWorkError::ApplicationRead(other.to_string()),
     }
 }
 
@@ -321,10 +306,14 @@ mod tests {
 
     #[test]
     fn is_item_open_returns_typed_read_error_with_legacy_display() {
+        let mut projects = BTreeMap::new();
+        projects.insert("pwf".to_string(), "/repo/pwf".to_string());
+        let mut prefixes = BTreeMap::new();
+        prefixes.insert("pwf".to_string(), "PWF".to_string());
         let c = Config {
             notes_dir: "/path/that/does/not/exist".to_string(),
-            projects: BTreeMap::new(),
-            prefixes: BTreeMap::new(),
+            projects,
+            prefixes,
             work_prefix: "WRK".to_string(),
             notes_dir_overrides: BTreeMap::new(),
         };
@@ -343,35 +332,16 @@ mod tests {
     }
 
     #[test]
-    fn missing_notes_dir_returns_typed_error_with_legacy_display() {
-        let c = Config {
-            notes_dir: "/path/that/does/not/exist".to_string(),
-            projects: BTreeMap::new(),
-            prefixes: BTreeMap::new(),
-            work_prefix: "WRK".to_string(),
-            notes_dir_overrides: BTreeMap::new(),
-        };
-
-        let err = get_pending_work(&c, None).unwrap_err();
-
-        assert_matches!(
-            err,
-            errors::PendingWorkError::NotesDirectoryNotFound { ref path }
-                if path == "/path/that/does/not/exist"
-        );
-        assert_eq!(
-            err.to_string(),
-            "Notes directory not found: /path/that/does/not/exist"
-        );
-    }
-
-    #[test]
     fn find_pending_item_not_found_returns_typed_error_with_legacy_display() {
         let dir = tempfile::tempdir().unwrap();
+        let mut projects = BTreeMap::new();
+        projects.insert("pwf".to_string(), "/repo/pwf".to_string());
+        let mut prefixes = BTreeMap::new();
+        prefixes.insert("pwf".to_string(), "PWF".to_string());
         let c = Config {
             notes_dir: dir.path().to_string_lossy().into_owned(),
-            projects: BTreeMap::new(),
-            prefixes: BTreeMap::new(),
+            projects,
+            prefixes,
             work_prefix: "WRK".to_string(),
             notes_dir_overrides: BTreeMap::new(),
         };
@@ -388,41 +358,5 @@ mod tests {
         );
         let as_string: String = err.into();
         assert_eq!(as_string, "Open pending-work item not found: PWF-9999");
-    }
-
-    #[test]
-    fn find_pending_item_ambiguous_returns_typed_error_with_legacy_display() {
-        let dir = tempfile::tempdir().unwrap();
-        let alpha = dir.path().join("alpha");
-        let beta = dir.path().join("beta");
-        std::fs::create_dir_all(&alpha).unwrap();
-        std::fs::create_dir_all(&beta).unwrap();
-        for project_dir in [&alpha, &beta] {
-            std::fs::write(
-                project_dir.join("PWF-0001.md"),
-                "---\nstatus: active\ntitle: duplicate\nproject: pwf\ncreated: 2026-01-01\n---\n\nreal prompt\n",
-            )
-            .unwrap();
-        }
-        std::fs::write(alpha.join("alpha.md"), "- [ ] [[PWF-0001]]\n").unwrap();
-        std::fs::write(beta.join("beta.md"), "- [ ] [[PWF-0001]]\n").unwrap();
-        let mut projects = BTreeMap::new();
-        projects.insert("alpha".to_string(), "/repo/alpha".to_string());
-        projects.insert("beta".to_string(), "/repo/beta".to_string());
-        let c = Config {
-            notes_dir: dir.path().to_string_lossy().into_owned(),
-            projects,
-            prefixes: BTreeMap::new(),
-            work_prefix: "WRK".to_string(),
-            notes_dir_overrides: BTreeMap::new(),
-        };
-
-        let err = find_pending_item(&c, "pwf-0001").unwrap_err();
-
-        assert_matches!(
-            err,
-            errors::PendingWorkError::AmbiguousId { ref id } if id == "pwf-0001"
-        );
-        assert_eq!(err.to_string(), "Pending-work id is ambiguous: pwf-0001");
     }
 }

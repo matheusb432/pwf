@@ -14,6 +14,62 @@ fn pwf() -> Command {
     Command::cargo_bin("pwf").unwrap()
 }
 
+fn finish_fixture(dir: TempDir, cfg: std::path::PathBuf) -> (TempDir, std::path::PathBuf) {
+    migrate_fixture(&cfg);
+    (dir, cfg)
+}
+
+fn migrate_fixture(cfg: &std::path::Path) {
+    let config: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(cfg).unwrap()).unwrap();
+    let notes_dir = std::path::PathBuf::from(config["notesDir"].as_str().unwrap());
+    let projects = config["projects"].as_object().unwrap();
+    let prefixes = config["prefixes"].as_object().unwrap();
+    for project in projects.keys() {
+        let prefix = prefixes[project].as_str().unwrap();
+        let project_dir = notes_dir.join(project);
+        let index_path = project_dir.join(format!("{project}.md"));
+        if let Ok(content) = fs::read_to_string(&index_path)
+            && !content.starts_with("---")
+        {
+            fs::write(
+                &index_path,
+                format!(
+                    "---\nid: {}\ntitle: {project}\n---\n\n{content}",
+                    prefix.to_ascii_lowercase()
+                ),
+            )
+            .unwrap();
+        }
+        let Ok(entries) = fs::read_dir(project_dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path == index_path || path.extension().and_then(|ext| ext.to_str()) != Some("md") {
+                continue;
+            }
+            let Some(id) = path.file_stem().and_then(|stem| stem.to_str()) else {
+                continue;
+            };
+            if !id.starts_with(&format!("{prefix}-")) {
+                continue;
+            }
+            let Ok(content) = fs::read_to_string(&path) else {
+                continue;
+            };
+            if content.lines().any(|line| line.starts_with("id:"))
+                || content.lines().any(|line| line == "type: note")
+            {
+                continue;
+            }
+            if let Some(rest) = content.strip_prefix("---\n") {
+                fs::write(&path, format!("---\nid: {id}\n{rest}")).unwrap();
+            }
+        }
+    }
+}
+
 /// A staged notes dir with one open item + its config.json.
 fn staged() -> (TempDir, std::path::PathBuf) {
     let dir = TempDir::new().unwrap();
@@ -22,7 +78,7 @@ fn staged() -> (TempDir, std::path::PathBuf) {
     fs::create_dir_all(&proj).unwrap();
     fs::write(
         proj.join("GLP-0001.md"),
-        "---\nstatus: active\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\nadd toggle\n",
+        "---\nid: GLP-0001\nstatus: active\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\nadd toggle\n",
     )
     .unwrap();
     fs::write(
@@ -39,7 +95,7 @@ fn staged() -> (TempDir, std::path::PathBuf) {
         ),
     )
     .unwrap();
-    (dir, cfg)
+    finish_fixture(dir, cfg)
 }
 
 fn staged_tagged_items() -> (TempDir, std::path::PathBuf) {
@@ -75,7 +131,7 @@ fn staged_tagged_items() -> (TempDir, std::path::PathBuf) {
         ),
     )
     .unwrap();
-    (dir, cfg)
+    finish_fixture(dir, cfg)
 }
 
 /// Like `staged()`, but with a second open item `GLP-0002` so `--prereq` can point at
@@ -94,7 +150,7 @@ fn staged_two() -> (TempDir, std::path::PathBuf) {
         "- [ ] [[GLP-0002|second]]\n- [ ] [[GLP-0001|tray gui]]\n",
     )
     .unwrap();
-    (dir, cfg)
+    finish_fixture(dir, cfg)
 }
 
 /// Two items whose `created:` order is the *reverse* of their id-suffix order
@@ -130,7 +186,7 @@ fn staged_two_diverging_created() -> (TempDir, std::path::PathBuf) {
         ),
     )
     .unwrap();
-    (dir, cfg)
+    finish_fixture(dir, cfg)
 }
 
 /// Two *different* projects: `config-handler` (CFG-0001, created earlier) and
@@ -175,7 +231,7 @@ fn staged_two_projects_diverging_created() -> (TempDir, std::path::PathBuf) {
         ),
     )
     .unwrap();
-    (dir, cfg)
+    finish_fixture(dir, cfg)
 }
 
 /// Like `staged()`, but maps glep-shimeji at a real repo dir holding one handoff
@@ -204,7 +260,7 @@ fn staged_with_handoff() -> (TempDir, std::path::PathBuf) {
         ),
     )
     .unwrap();
-    (dir, cfg)
+    finish_fixture(dir, cfg)
 }
 
 /// Fresh project (no pre-existing items) mapped to a real, un-git-initialized
@@ -230,7 +286,7 @@ fn staged_for_handoff_mirror_roundtrip() -> (TempDir, std::path::PathBuf) {
         ),
     )
     .unwrap();
-    (dir, cfg)
+    finish_fixture(dir, cfg)
 }
 
 /// Read the glep-shimeji index under a staged notes dir (TempDir root).
@@ -265,7 +321,7 @@ fn staged_many(count: usize) -> (TempDir, std::path::PathBuf) {
         ),
     )
     .unwrap();
-    (dir, cfg)
+    finish_fixture(dir, cfg)
 }
 
 #[test]
@@ -341,14 +397,14 @@ fn add_human_flag_emits_section_created_diagnostic_when_it_creates_human_section
 }
 
 #[test]
-fn add_human_flag_emits_section_created_diagnostic_before_index_write_failure() {
+fn add_human_flag_rejects_unreadable_index_before_mutation() {
     let dir = TempDir::new().unwrap();
     let notes = dir.path().join("notes");
     let proj = notes.join("glep-shimeji");
     fs::create_dir_all(&proj).unwrap();
     fs::write(
         proj.join("GLP-0001.md"),
-        "---\nstatus: active\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\nadd toggle\n",
+        "---\nid: GLP-0001\nstatus: active\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\nadd toggle\n",
     )
     .unwrap();
     fs::create_dir_all(proj.join("glep-shimeji.md")).unwrap();
@@ -370,12 +426,8 @@ fn add_human_flag_emits_section_created_diagnostic_before_index_write_failure() 
 
     assert!(!output.status.success(), "{output:?}");
     let stderr = String::from_utf8(output.stderr).unwrap();
-    assert!(
-        stderr.starts_with(
-            "info: created `## Human` section in glep-shimeji\nError: Failed to write index file: "
-        ),
-        "stderr should preserve the diagnostic before the write error: {stderr}"
-    );
+    assert!(stderr.starts_with("Error: Cannot read index: "), "{stderr}");
+    assert!(!stderr.contains("created `## Human`"), "{stderr}");
 }
 
 #[test]
@@ -841,7 +893,7 @@ fn e2e_list_long_displays_raw_tags_without_parsing() {
     let item_path = d.path().join("notes/glep-shimeji/GLP-0001.md");
     fs::write(
         item_path,
-        "---\nstatus: active\ntitle: both tags\nproject: glep-shimeji\ncreated: 2026-01-01\ntags: SQLite,godot\n---\n\nbody\n",
+        "---\nid: GLP-0001\nstatus: active\ntitle: both tags\nproject: glep-shimeji\ncreated: 2026-01-01\ntags: SQLite,godot\n---\n\nbody\n",
     )
     .unwrap();
     pwf()
@@ -858,7 +910,7 @@ fn e2e_list_tag_filter_rejects_corrupt_frontmatter() {
     let item_path = d.path().join("notes/glep-shimeji/GLP-0001.md");
     fs::write(
         item_path,
-        "---\nstatus: active\ntitle: both tags\nproject: glep-shimeji\ncreated: 2026-01-01\ntags: sqlite,godot\n---\n\nbody\n",
+        "---\nid: GLP-0001\nstatus: active\ntitle: both tags\nproject: glep-shimeji\ncreated: 2026-01-01\ntags: sqlite,godot\n---\n\nbody\n",
     )
     .unwrap();
     pwf()
@@ -875,7 +927,7 @@ fn e2e_list_tag_filter_rejects_empty_tags_frontmatter_with_item_context() {
     let item_path = d.path().join("notes/glep-shimeji/GLP-0001.md");
     fs::write(
         item_path,
-        "---\nstatus: active\ntitle: both tags\nproject: glep-shimeji\ncreated: 2026-01-01\ntags:   \n---\n\nbody\n",
+        "---\nid: GLP-0001\nstatus: active\ntitle: both tags\nproject: glep-shimeji\ncreated: 2026-01-01\ntags:   \n---\n\nbody\n",
     )
     .unwrap();
     pwf()
@@ -910,7 +962,7 @@ fn e2e_update_tags_append_deduplicate_clear_and_replace() {
     let item_path = d.path().join("notes/glep-shimeji/GLP-0001.md");
     fs::write(
         item_path,
-        "---\nstatus: active\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\ntags: [sqlite, godot]\n---\n\nadd toggle\n",
+        "---\nid: GLP-0001\nstatus: active\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\ntags: [sqlite, godot]\n---\n\nadd toggle\n",
     )
     .unwrap();
     pwf()
@@ -1033,13 +1085,13 @@ fn e2e_update_closed_item_rejects_tag_edits_without_writing() {
     let project = d.path().join("notes/glep-shimeji");
     fs::write(
         project.join("glep-shimeji.md"),
-        "- [x] [[GLP-0001|tray gui]] ✅ 2026-01-02\n",
+        "---\nid: glp\ntitle: glep-shimeji\n---\n\n- [x] [[GLP-0001|tray gui]] ✅ 2026-01-02\n",
     )
     .unwrap();
     let item_path = project.join("GLP-0001.md");
     fs::write(
         &item_path,
-        "---\nstatus: done\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\ncompleted: 2026-01-02\n---\n\nadd toggle\n",
+        "---\nid: GLP-0001\nstatus: done\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\ncompleted: 2026-01-02\n---\n\nadd toggle\n",
     )
     .unwrap();
     let before = fs::read_to_string(&item_path).unwrap();
@@ -1326,12 +1378,9 @@ fn e2e_done_rotates_done_queue_past_general_cap() {
         "cap not enforced: {index}"
     );
     assert!(!index.contains("GLP-0001"), "oldest not evicted: {index}");
-    // Evicted note archived, not deleted; atomic writes leave no .bak.
-    assert!(
-        d.path()
-            .join("notes/glep-shimeji/_archive/GLP-0001.md")
-            .exists()
-    );
+    // Evicted note remains in place; atomic writes leave no .bak.
+    assert!(d.path().join("notes/glep-shimeji/GLP-0001.md").exists());
+    assert!(!d.path().join("notes/glep-shimeji/_archive").exists());
     assert!(
         !d.path()
             .join("notes/glep-shimeji/glep-shimeji.md.bak")
@@ -1551,7 +1600,7 @@ fn e2e_update_prereq_appends_and_dedups() {
     let proj = d.path().join("notes/glep-shimeji");
     fs::write(
         proj.join("GLP-0002.md"),
-        "---\nstatus: active\ntitle: second\nproject: glep-shimeji\ncreated: 2026-01-02\nprereq: \"[[GLP-0001]]\"\n---\n\ndo more\n",
+        "---\nid: GLP-0002\nstatus: active\ntitle: second\nproject: glep-shimeji\ncreated: 2026-01-02\nprereq: \"[[GLP-0001]]\"\n---\n\ndo more\n",
     )
     .unwrap();
     pwf()
@@ -1582,7 +1631,7 @@ fn e2e_update_clear_prereq_empties_it() {
     let proj = d.path().join("notes/glep-shimeji");
     fs::write(
         proj.join("GLP-0002.md"),
-        "---\nstatus: active\ntitle: second\nproject: glep-shimeji\ncreated: 2026-01-02\nprereq: \"[[GLP-0001]]\"\n---\n\ndo more\n",
+        "---\nid: GLP-0002\nstatus: active\ntitle: second\nproject: glep-shimeji\ncreated: 2026-01-02\nprereq: \"[[GLP-0001]]\"\n---\n\ndo more\n",
     )
     .unwrap();
     pwf()
@@ -1921,7 +1970,7 @@ fn staged_with_item(
         ),
     )
     .unwrap();
-    (dir, cfg)
+    finish_fixture(dir, cfg)
 }
 
 #[test]
@@ -1931,7 +1980,7 @@ fn resolve_show_emits_markdown_with_created_key() {
         "PWF",
         "PWF-0001",
         "do the thing",
-        "---\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- do the thing\n",
+        "---\nid: PWF-0001\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- do the thing\n",
     );
     let out = pwf()
         .args(["resolve", "--show", "--id", "PWF-0001", "--config-path"])
@@ -1966,7 +2015,7 @@ fn resolve_show_legacy_item_emits_body_only() {
     // Inline legacy format: `- [ ] \`session\` <- prompt` (no per-item .md file).
     fs::write(
         proj.join("glep-shimeji.md"),
-        "- [ ] `legacy task` <- do the legacy thing\n",
+        "---\nid: glp\ntitle: glep-shimeji\n---\n\n- [ ] `legacy task` <- do the legacy thing\n",
     )
     .unwrap();
     let cfg = dir.path().join("cfg.json");
@@ -1998,8 +2047,7 @@ fn resolve_show_legacy_item_emits_body_only() {
     );
 }
 
-/// Stage a single-project notes dir with a done item parked under `_archive/`
-/// (no index entry, mirroring `done`/`cancel`) and return (dir, cfg).
+/// Stages a single-project notes dir with a closed item and no index entry.
 fn staged_with_archived_item(
     project: &str,
     prefix: &str,
@@ -2008,9 +2056,9 @@ fn staged_with_archived_item(
 ) -> (TempDir, std::path::PathBuf) {
     let dir = TempDir::new().unwrap();
     let notes = dir.path().join("notes");
-    let archive = notes.join(project).join("_archive");
-    fs::create_dir_all(&archive).unwrap();
-    fs::write(archive.join(format!("{id}.md")), content).unwrap();
+    let project_dir = notes.join(project);
+    fs::create_dir_all(&project_dir).unwrap();
+    fs::write(project_dir.join(format!("{id}.md")), content).unwrap();
     let cfg = dir.path().join("cfg.json");
     fs::write(
         &cfg,
@@ -2023,12 +2071,12 @@ fn staged_with_archived_item(
         ),
     )
     .unwrap();
-    (dir, cfg)
+    finish_fixture(dir, cfg)
 }
 
 /// Stage a single-project notes dir with a done item whose note still sits in the
 /// project dir while its index link is checked (`- [x]`), as `done` leaves it until
-/// the done-queue cap evicts it to `_archive`. Returns (dir, cfg).
+/// the done-queue cap evicts its link. Returns (dir, cfg).
 fn staged_with_done_item(
     project: &str,
     prefix: &str,
@@ -2058,7 +2106,7 @@ fn staged_with_done_item(
         ),
     )
     .unwrap();
-    (dir, cfg)
+    finish_fixture(dir, cfg)
 }
 
 #[test]
@@ -2069,7 +2117,7 @@ fn e2e_reopen_flips_done_item_back_to_active_and_restores_index() {
         "pwf",
         "PWF",
         "PWF-0003",
-        "---\nstatus: done\ntitle: just done\nproject: pwf\ncreated: 2026-06-20\ncompleted: 2026-06-20\ncommits: \"a..b\"\n---\n\n## Goals\n- finish it\n",
+        "---\nid: PWF-0003\nstatus: done\ntitle: just done\nproject: pwf\ncreated: 2026-06-20\ncompleted: 2026-06-20\ncommits: \"a..b\"\n---\n\n## Goals\n- finish it\n",
     );
     pwf()
         // Lowercase id exercises the case-insensitive match + canonical output.
@@ -2084,7 +2132,10 @@ fn e2e_reopen_flips_done_item_back_to_active_and_restores_index() {
     assert!(!note.contains("completed:"), "completed lingered: {note}");
     assert!(!note.contains("commits:"), "commits lingered: {note}");
     let index = fs::read_to_string(dir.path().join("notes/pwf/pwf.md")).unwrap();
-    assert_eq!(index, "- [ ] [[PWF-0003]]\n", "index not reopened: {index}");
+    assert_eq!(
+        index, "---\nid: pwf\ntitle: pwf\n---\n\n- [ ] [[PWF-0003]]\n",
+        "index not reopened: {index}"
+    );
 }
 
 #[test]
@@ -2176,7 +2227,7 @@ fn resolve_show_finds_archived_done_item() {
 }
 
 #[test]
-fn resolve_prints_archived_item_path() {
+fn resolve_prints_closed_item_path() {
     let (_d, cfg) = staged_with_archived_item(
         "pwf",
         "PWF",
@@ -2190,8 +2241,8 @@ fn resolve_prints_archived_item_path() {
         .success();
     let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
     assert!(
-        stdout.contains("_archive/PWF-0002.md"),
-        "path should point at the archived note: {stdout}"
+        stdout.ends_with("/pwf/PWF-0002.md\n"),
+        "path should point at the closed note: {stdout}"
     );
 }
 
@@ -2241,7 +2292,7 @@ fn id_input_forms_all_resolve_to_the_same_item() {
         "PWF",
         "PWF-0001",
         "do the thing",
-        "---\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\nbody\n",
+        "---\nid: PWF-0001\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\nbody\n",
     );
 
     // Baseline: the canonical --id form.
@@ -2280,7 +2331,7 @@ fn show_streams_note_markdown_like_resolve_show() {
         "PWF",
         "PWF-0001",
         "do the thing",
-        "---\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- do the thing\n",
+        "---\nid: PWF-0001\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- do the thing\n",
     );
     let out = pwf()
         // Bare positional id — no `--id` flag.
@@ -2480,7 +2531,7 @@ fn update_commits_amends_open_item() {
         "PWF",
         "PWF-0001",
         "do the thing",
-        "---\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- do the thing\n",
+        "---\nid: PWF-0001\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- do the thing\n",
     );
     pwf()
         .args([
@@ -2592,7 +2643,7 @@ fn update_append_splices_bullets_into_an_existing_section() {
         "PWF",
         "PWF-0001",
         "do the thing",
-        "---\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- do the thing\n",
+        "---\nid: PWF-0001\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- do the thing\n",
     );
     pwf()
         .args(["update", "--id", "PWF-0001", "-a", "also this"])
@@ -2614,7 +2665,7 @@ fn update_append_creates_a_missing_section_via_lane_syntax() {
         "PWF",
         "PWF-0001",
         "do the thing",
-        "---\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- do the thing\n",
+        "---\nid: PWF-0001\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- do the thing\n",
     );
     pwf()
         .args([
@@ -2642,7 +2693,7 @@ fn update_append_rejects_whitespace_only() {
         "PWF",
         "PWF-0001",
         "do the thing",
-        "---\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- do the thing\n",
+        "---\nid: PWF-0001\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- do the thing\n",
     );
     pwf()
         .args(["update", "--id", "PWF-0001", "--append", "   \n\t"])
@@ -2660,7 +2711,7 @@ fn update_append_conflicts_with_prompt() {
         "PWF",
         "PWF-0001",
         "do the thing",
-        "---\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- do the thing\n",
+        "---\nid: PWF-0001\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- do the thing\n",
     );
     pwf()
         .args([
@@ -2709,7 +2760,7 @@ fn stage_session_with_zellij_stub(
     fs::create_dir_all(&repo).unwrap();
     fs::write(
         proj.join("PWF-0001.md"),
-        "---\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- do the thing\n",
+        "---\nid: PWF-0001\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- do the thing\n",
     )
     .unwrap();
     fs::write(proj.join("pwf.md"), "- [ ] [[PWF-0001|do the thing]]\n").unwrap();
@@ -2723,6 +2774,7 @@ fn stage_session_with_zellij_stub(
         ),
     )
     .unwrap();
+    migrate_fixture(&cfg);
 
     // A recording `zellij` on the child's PATH: copy the fixture to <bin>/zellij, +x.
     let bin = dir.path().join("bin");
@@ -2827,7 +2879,7 @@ fn session_with_effort_passes_model_flag_to_claude() {
     let notes = dir.path().join("notes");
     fs::write(
         notes.join("pwf").join("PWF-0001.md"),
-        "---\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\neffort: 4\n---\n\n## Goals\n- do the thing\n",
+        "---\nid: PWF-0001\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\neffort: 4\n---\n\n## Goals\n- do the thing\n",
     )
     .unwrap();
     let tiers = dir.path().join("model-tiers.toml");
@@ -2857,7 +2909,7 @@ fn session_with_effort_and_empty_claude_model_omits_model_flag() {
     let notes = dir.path().join("notes");
     fs::write(
         notes.join("pwf").join("PWF-0001.md"),
-        "---\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\neffort: 4\n---\n\n## Goals\n- do the thing\n",
+        "---\nid: PWF-0001\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\neffort: 4\n---\n\n## Goals\n- do the thing\n",
     )
     .unwrap();
     let tiers = dir.path().join("model-tiers.toml");
@@ -2916,7 +2968,7 @@ fn session_with_explicit_model_flag_wins_over_effort_tier() {
     let notes = dir.path().join("notes");
     fs::write(
         notes.join("pwf").join("PWF-0001.md"),
-        "---\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\neffort: 4\n---\n\n## Goals\n- do the thing\n",
+        "---\nid: PWF-0001\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\neffort: 4\n---\n\n## Goals\n- do the thing\n",
     )
     .unwrap();
     let tiers = dir.path().join("model-tiers.toml");
@@ -2957,7 +3009,7 @@ fn session_with_explicit_model_flag_survives_broken_tiers_config() {
     let notes = dir.path().join("notes");
     fs::write(
         notes.join("pwf").join("PWF-0001.md"),
-        "---\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\neffort: 4\n---\n\n## Goals\n- do the thing\n",
+        "---\nid: PWF-0001\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\neffort: 4\n---\n\n## Goals\n- do the thing\n",
     )
     .unwrap();
     let missing_tiers = dir.path().join("does-not-exist.toml");
@@ -2991,7 +3043,7 @@ fn session_with_effort_and_broken_tiers_config_fails_before_dispatch() {
     let notes = dir.path().join("notes");
     fs::write(
         notes.join("pwf").join("PWF-0001.md"),
-        "---\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\neffort: 4\n---\n\n## Goals\n- do the thing\n",
+        "---\nid: PWF-0001\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\neffort: 4\n---\n\n## Goals\n- do the thing\n",
     )
     .unwrap();
     let missing_tiers = dir.path().join("does-not-exist.toml");
@@ -3451,6 +3503,25 @@ fn retired_launch_claude_verb_treated_as_unknown_project() {
 }
 
 // ── PWF-0081: note engine — add/ls/remove e2e ────────────────────────────────
+
+#[test]
+fn e2e_remove_resolves_descriptive_filename_by_frontmatter_id() {
+    let (d, cfg) = staged();
+    let project = d.path().join("notes/glep-shimeji");
+    fs::rename(
+        project.join("GLP-0001.md"),
+        project.join("descriptive-name.md"),
+    )
+    .unwrap();
+
+    pwf()
+        .args(["remove", "--id", "GLP-0001", "--yes", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .success();
+
+    assert!(!project.join("descriptive-name.md").exists());
+}
 
 #[test]
 fn note_add_list_update_remove_preserves_tasks_and_header() {

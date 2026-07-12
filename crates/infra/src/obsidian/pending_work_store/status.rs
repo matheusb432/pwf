@@ -1,19 +1,17 @@
 use std::{fmt::Write as _, path::Path, sync::LazyLock};
 
 use pwf_application::{ClosedItem, ClosedItemAction, ReopenedItem, StatusTransitionDiagnostics};
-use pwf_domain::pending_work::{OpenItem, WorkItemStatus};
+use pwf_domain::pending_work::{OpenItem, ProjectName, WorkItemStatus};
 use regex::Regex;
 
 use super::{
     ObsidianPendingWorkStore, ObsidianPendingWorkStoreError,
-    fs::{
-        line_start_index, read_index, read_item_file, remove_item_file, write_index,
-        write_item_file,
-    },
+    fs::{line_start_index, read_index, read_item_file, write_index, write_item_file},
     lookup::normalize_lookup_id,
 };
 use crate::obsidian::{
     done_queue,
+    identity::parse_task_identity_if_task,
     index_text::add_link_to_index,
     note_frontmatter::{reopen_status_text, set_commits_text, set_status_text},
     note_text::append_report_text,
@@ -62,17 +60,18 @@ impl ObsidianPendingWorkStore {
         &self,
         id: &str,
     ) -> Result<ReopenedItem, ObsidianPendingWorkStoreError> {
-        let (project, note_path) = self.find_item_note_with_project(id).ok_or_else(|| {
+        let (project, note_path) = self.find_item_note_with_project(id)?.ok_or_else(|| {
             ObsidianPendingWorkStoreError::ItemNotFound {
                 id: normalize_lookup_id(id),
             }
         })?;
-        let canonical = note_path
-            .file_stem()
-            .and_then(|stem| stem.to_str())
-            .unwrap_or(id)
-            .to_string();
         let content = read_item_file(&note_path)?;
+        let canonical = parse_task_identity_if_task(&note_path, &content)?
+            .ok_or_else(|| ObsidianPendingWorkStoreError::MissingTaskId {
+                path: note_path.clone(),
+            })?
+            .as_ref()
+            .to_string();
 
         if pwf_core::frontmatter::parse(&content)
             .frontmatter
@@ -88,17 +87,11 @@ impl ObsidianPendingWorkStore {
         }
 
         let updated = set_commits_text(&reopen_status_text(&content), None);
-        let notes_dir = self.config.notes_dir_for(&project);
-        let project_dir = pwf_core::paths::project_dir(notes_dir, &project);
-        let target = project_dir.join(format!("{canonical}.md"));
-        write_item_file(&target, &updated)?;
-        if target != note_path {
-            remove_item_file(&note_path)?;
-        }
+        write_item_file(&note_path, &updated)?;
 
-        let index_path = pwf_core::paths::project_index_path(notes_dir, &project);
-        if index_path.exists() {
-            let index = read_index(&index_path)?;
+        let project_name =
+            ProjectName::try_new(&project).expect("resolved project name is non-empty");
+        if let Some((index_path, index)) = self.validated_project_index(&project_name)? {
             let restored = match done_queue::reopen_done_link(&index, &canonical) {
                 Some(content) => content,
                 None => add_link_to_index(&index, &format!("- [ ] [[{canonical}]]")),

@@ -47,15 +47,13 @@ fn add_allocates_first_id_and_writes_files() {
 }
 
 #[test]
-fn add_skips_ids_already_present_in_archive() {
+fn add_allocates_after_closed_items_in_project_directory() {
     const PROJECT: &str = "config-handler";
-    const ARCHIVE_DIR: &str = "_archive";
 
     let stage = stage_dir();
     let notes = stage.join("notes");
     let proj = notes.join(PROJECT);
-    let archive = proj.join(ARCHIVE_DIR);
-    fs::create_dir_all(&archive).unwrap();
+    fs::create_dir_all(&proj).unwrap();
     fs::write(
         proj.join("CFG-0088.md"),
         format!(
@@ -64,9 +62,9 @@ fn add_skips_ids_already_present_in_archive() {
     )
     .unwrap();
     fs::write(
-        archive.join("CFG-0089.md"),
+        proj.join("CFG-0089.md"),
         format!(
-            "---\nstatus: done\ntitle: archived\nproject: {PROJECT}\ncreated: 2026-01-01\n---\n\nbody\n"
+            "---\nstatus: done\ntitle: closed\nproject: {PROJECT}\ncreated: 2026-01-01\n---\n\nbody\n"
         ),
     )
     .unwrap();
@@ -83,7 +81,7 @@ fn add_skips_ids_already_present_in_archive() {
     let args = parse_args(&[
         "add",
         PROJECT,
-        "avoid archived duplicate",
+        "avoid closed duplicate",
         "--config-path",
         &cfg.to_string_lossy(),
         "--notes-dir",
@@ -95,7 +93,7 @@ fn add_skips_ids_already_present_in_archive() {
     let out = pwk::run_args(&args).unwrap();
     assert!(out.starts_with("ADDED PWF TASK [CFG-0090]"), "got: {out}");
     assert!(proj.join("CFG-0090.md").exists());
-    assert!(archive.join("CFG-0089.md").exists());
+    assert!(proj.join("CFG-0089.md").exists());
 }
 
 #[test]
@@ -1076,7 +1074,7 @@ fn done_keeps_done_link_in_index_in_place_without_bak() {
     let index = fs::read_to_string(proj.join("glep-shimeji.md")).unwrap();
     assert_eq!(
         index,
-        "# glep-shimeji\n\n- [x] [[GLP-0001]] ✅ 2026-01-01\n\n## Later\n"
+        "---\nid: glp\ntitle: glep-shimeji\n---\n\n# glep-shimeji\n\n- [x] [[GLP-0001]] ✅ 2026-01-01\n\n## Later\n"
     );
     // notes-pro is git-tracked: writes must NOT leave .bak clutter.
     assert!(!proj.join("GLP-0001.md.bak").exists());
@@ -1084,7 +1082,7 @@ fn done_keeps_done_link_in_index_in_place_without_bak() {
 }
 
 #[test]
-fn done_evicts_and_archives_oldest_beyond_general_cap() {
+fn done_evicts_oldest_link_but_keeps_note_in_project_dir() {
     // General cap is 6: with 6 done + a 7th checked, the oldest is unlinked and
     // its backing note moved to _archive/.
     let stage = stage_dir();
@@ -1135,14 +1133,14 @@ fn done_evicts_and_archives_oldest_beyond_general_cap() {
     assert!(!index.contains("GLP-0001"), "oldest unlinked: {index}");
     assert!(index.contains("- [x] [[GLP-0007]] ✅ 2026-06-13"));
     assert_eq!(index.matches("- [x]").count(), 6);
-    // Evicted note archived, not deleted.
+    // Queue eviction changes only index visibility; status remains authoritative on disk.
     assert!(
-        proj.join("_archive/GLP-0001.md").exists(),
-        "evicted note archived"
+        proj.join("GLP-0001.md").exists(),
+        "evicted note stays in project dir"
     );
     assert!(
-        !proj.join("GLP-0001.md").exists(),
-        "moved out of project dir"
+        !proj.join("_archive").exists(),
+        "archive directory is obsolete"
     );
 }
 
@@ -1451,7 +1449,7 @@ fn cancel_with_report_marks_item_cancelled_and_rotates_done_queue() {
     let index = fs::read_to_string(proj.join("glep-shimeji.md")).unwrap();
     assert_eq!(
         index,
-        "# glep-shimeji\n\n- [x] [[GLP-0001]] ✅ 2026-01-01\n"
+        "---\nid: glp\ntitle: glep-shimeji\n---\n\n# glep-shimeji\n\n- [x] [[GLP-0001]] ✅ 2026-01-01\n"
     );
 }
 
@@ -2113,8 +2111,91 @@ fn stage_dir() -> std::path::PathBuf {
 }
 
 fn parse_args(argv: &[&str]) -> pwf::cli::Args {
+    migrate_test_fixture(argv);
     let v = argv.iter().map(std::string::ToString::to_string).collect();
     pwf::command::parse_argv(v).unwrap().1
+}
+
+fn migrate_test_fixture(argv: &[&str]) {
+    let Some(notes_dir) = flag_value(argv, "--notes-dir") else {
+        return;
+    };
+    let Some(config_path) = flag_value(argv, "--config-path") else {
+        return;
+    };
+    let Ok(config) = fs::read_to_string(config_path) else {
+        return;
+    };
+    let Ok(config) = serde_json::from_str::<serde_json::Value>(&config) else {
+        return;
+    };
+    let Some(projects) = config
+        .get("projects")
+        .and_then(serde_json::Value::as_object)
+    else {
+        return;
+    };
+    let prefixes = config
+        .get("prefixes")
+        .and_then(serde_json::Value::as_object);
+    for project in projects.keys() {
+        let Some(prefix) = prefixes
+            .and_then(|prefixes| prefixes.get(project))
+            .and_then(serde_json::Value::as_str)
+        else {
+            continue;
+        };
+        migrate_test_project(std::path::Path::new(notes_dir), project, prefix);
+    }
+}
+
+fn flag_value<'args>(argv: &'args [&str], flag: &str) -> Option<&'args str> {
+    argv.windows(2)
+        .find(|pair| pair[0] == flag)
+        .map(|pair| pair[1])
+}
+
+fn migrate_test_project(notes_dir: &std::path::Path, project: &str, prefix: &str) {
+    let project_dir = notes_dir.join(project);
+    let index_path = project_dir.join(format!("{project}.md"));
+    if let Ok(content) = fs::read_to_string(&index_path)
+        && !content.starts_with("---")
+    {
+        fs::write(
+            &index_path,
+            format!(
+                "---\nid: {}\ntitle: {project}\n---\n\n{content}",
+                prefix.to_ascii_lowercase()
+            ),
+        )
+        .unwrap();
+    }
+    let Ok(entries) = fs::read_dir(project_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path == index_path || path.extension().and_then(|ext| ext.to_str()) != Some("md") {
+            continue;
+        }
+        let Some(id) = path.file_stem().and_then(|stem| stem.to_str()) else {
+            continue;
+        };
+        if !id.starts_with(&format!("{prefix}-")) {
+            continue;
+        }
+        let Ok(content) = fs::read_to_string(&path) else {
+            continue;
+        };
+        if content.lines().any(|line| line.starts_with("id:"))
+            || content.lines().any(|line| line == "type: note")
+        {
+            continue;
+        }
+        if let Some(rest) = content.strip_prefix("---\n") {
+            fs::write(&path, format!("---\nid: {id}\n{rest}")).unwrap();
+        }
+    }
 }
 
 /// JSON-escape a path (forward slashes for JSON string, escaped backslashes on Windows).
@@ -2124,51 +2205,11 @@ fn json_path(p: &std::path::Path) -> String {
 
 // ── Existing tests below ─────────────────────────────────────────────────────
 
-#[test]
-fn next_id_is_max_plus_one_first_is_0001() {
-    let dir = std::env::temp_dir().join(format!("pwid_{}", nanos()));
-    fs::create_dir_all(&dir).unwrap();
-    assert_eq!(pwk::next_work_item_id(&dir, "GLP"), "GLP-0001");
-    fs::write(dir.join("GLP-0001.md"), "x").unwrap();
-    fs::write(dir.join("GLP-0003.md"), "x").unwrap(); // gap preserved
-    fs::write(dir.join("OTHER.md"), "x").unwrap(); // ignored
-    assert_eq!(pwk::next_work_item_id(&dir, "GLP"), "GLP-0004");
-}
-
 fn nanos() -> u128 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos()
-}
-
-#[test]
-fn parses_file_model_items_with_line_numbers() {
-    let dir = std::env::temp_dir().join(format!("pwtasks_{}", nanos()));
-    let proj = dir.join("glep-shimeji");
-    std::fs::create_dir_all(&proj).unwrap();
-    std::fs::write(proj.join("GLP-0001.md"),
-        "---\nstatus: active\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\nadd startup toggle\n").unwrap();
-    std::fs::write(proj.join("GLP-0002.md"),
-        "---\nstatus: active\ntitle: status bar\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\nadd current mood indicator\n").unwrap();
-    let index = proj.join("glep-shimeji.md");
-    std::fs::write(
-        &index,
-        "# glep-shimeji\n- [[GLP-0001|tray gui]]\n\n- [[GLP-0002|status bar]]\n",
-    )
-    .unwrap();
-
-    let items = pwk::get_project_tasks("glep-shimeji", Some("/repo"), &index);
-    assert_eq!(items[0].id, "GLP-0001");
-    assert_eq!(items[0].session, "tray gui");
-    assert_eq!(items[0].prompt, "add startup toggle");
-    assert_eq!(items[0].line, 2);
-    assert_eq!(items[0].format, "file");
-    assert!(items[0].launchable);
-    // PS regex ^\s*-\s*\[\[ has \s* consuming the preceding blank line,
-    // so marker_index lands on the blank-line position (line 3), not line 4.
-    // Get-LineNumber counts newlines before $m.Index: 2 → returns 3.
-    assert_eq!(items[1].line, 3);
 }
 
 #[test]

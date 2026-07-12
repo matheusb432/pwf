@@ -54,6 +54,8 @@ pub enum RenameProjectError {
         path: PathBuf,
         source: std::io::Error,
     },
+    #[error("{0}")]
+    Identity(#[from] pwf_infra::obsidian::ObsidianPendingWorkStoreError),
 }
 
 /// The resolved inputs a rename operates on. Built by [`resolve`] from the pwf
@@ -158,13 +160,7 @@ pub fn run(args: &Args) -> Result<String, String> {
 /// or apply the transaction.
 pub fn run_typed(args: &Args) -> Result<String, RenameProjectError> {
     let ctx = resolve(args)?;
-    let items = plan::enumerate_items(&ctx.old_folder, &ctx.old_code).map_err(|source| {
-        RenameProjectError::Io {
-            op: "enumerate items",
-            path: ctx.old_folder.clone(),
-            source,
-        }
-    })?;
+    let items = plan::enumerate_items(&ctx.old_folder, &ctx.old_code, &ctx.old_label)?;
     let built = plan::build_plan(&ctx, &items);
     plan::check_collisions(&built)?;
 

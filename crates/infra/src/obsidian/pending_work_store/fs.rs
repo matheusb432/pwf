@@ -1,15 +1,9 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use super::ObsidianPendingWorkStoreError;
 
-pub(super) const ARCHIVE_DIR: &str = "_archive";
-
 pub(super) fn path_str(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
-}
-
-pub(super) fn project_archive_dir(notes_dir: &str, name: &str) -> PathBuf {
-    pwf_core::paths::project_dir(notes_dir, name).join(ARCHIVE_DIR)
 }
 
 pub(super) fn read_text_optional(path: &Path) -> Option<String> {
@@ -41,11 +35,6 @@ pub(super) fn write_item_file(
 pub(super) fn write_index(path: &Path, content: &str) -> Result<(), ObsidianPendingWorkStoreError> {
     pwf_core::fs_atomic::write_text_atomic(path, content)
         .map_err(|source| ObsidianPendingWorkStoreError::WriteIndex { source })
-}
-
-pub(super) fn remove_item_file(path: &Path) -> Result<(), ObsidianPendingWorkStoreError> {
-    std::fs::remove_file(path)
-        .map_err(|source| ObsidianPendingWorkStoreError::RemoveItemFile { source })
 }
 
 pub(super) fn line_start_index(content: &str, line_number: usize) -> Option<usize> {

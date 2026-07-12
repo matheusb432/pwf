@@ -39,12 +39,12 @@ fn stage_remove_item() -> (std::path::PathBuf, std::path::PathBuf, std::path::Pa
     fs::create_dir_all(&repo).unwrap();
     fs::write(
         project.join("PWF-0001.md"),
-        "---\nstatus: active\ntitle: stale task\nproject: pwf\ncreated: 2026-01-01\n---\n\nremove me\n",
+        "---\nid: PWF-0001\nstatus: active\ntitle: stale task\nproject: pwf\ncreated: 2026-01-01\n---\n\nremove me\n",
     )
     .unwrap();
     fs::write(
         project.join("pwf.md"),
-        "- [ ] [[PWF-0001|stale task]]\n- [ ] [[PWF-0002|keep task]]\n",
+        "---\nid: pwf\ntitle: pwf\n---\n\n- [ ] [[PWF-0001|stale task]]\n- [ ] [[PWF-0002|keep task]]\n",
     )
     .unwrap();
     let cfg = stage.join("config.json");
@@ -190,12 +190,12 @@ fn default_engine_lists_pending_work() {
     fs::create_dir_all(&proj).unwrap();
     fs::write(
         proj.join("GLP-0001.md"),
-        "---\nstatus: active\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\nadd startup toggle\n",
+        "---\nid: GLP-0001\nstatus: active\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\nadd startup toggle\n",
     )
     .unwrap();
     fs::write(
         proj.join("glep-shimeji.md"),
-        "- [ ] [[GLP-0001|tray gui]]\n",
+        "---\nid: glp\ntitle: glep-shimeji\n---\n\n- [ ] [[GLP-0001|tray gui]]\n",
     )
     .unwrap();
     let cfg = stage.join("config.json");
@@ -229,22 +229,22 @@ fn default_engine_treats_next_arg_as_project() {
     fs::create_dir_all(&config).unwrap();
     fs::write(
         glep.join("GLP-0001.md"),
-        "---\nstatus: active\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\nadd startup toggle\n",
+        "---\nid: GLP-0001\nstatus: active\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\nadd startup toggle\n",
     )
     .unwrap();
     fs::write(
         glep.join("glep-shimeji.md"),
-        "- [ ] [[GLP-0001|tray gui]]\n",
+        "---\nid: glp\ntitle: glep-shimeji\n---\n\n- [ ] [[GLP-0001|tray gui]]\n",
     )
     .unwrap();
     fs::write(
         config.join("CFG-0001.md"),
-        "---\nstatus: active\ntitle: config task\nproject: config-handler\ncreated: 2026-01-01\n---\n\nfix config\n",
+        "---\nid: CFG-0001\nstatus: active\ntitle: config task\nproject: config-handler\ncreated: 2026-01-01\n---\n\nfix config\n",
     )
     .unwrap();
     fs::write(
         config.join("config-handler.md"),
-        "- [ ] [[CFG-0001|config task]]\n",
+        "---\nid: cfg\ntitle: config-handler\n---\n\n- [ ] [[CFG-0001|config task]]\n",
     )
     .unwrap();
     let cfg = stage.join("config.json");

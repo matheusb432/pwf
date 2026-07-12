@@ -567,10 +567,14 @@ fn stage_tagged_item(notes: &Path, repo: &Path, handoff_pw: Option<&str>) {
     fs::create_dir_all(&proj).unwrap();
     fs::write(
         proj.join("TST-0001.md"),
-        "---\nstatus: active\ntitle: tray gui\nproject: test-project\ncreated: 2026-01-01\ntags: [handoff]\n---\n\nbody\n",
+        "---\nid: TST-0001\nstatus: active\ntitle: tray gui\nproject: test-project\ncreated: 2026-01-01\ntags: [handoff]\n---\n\nbody\n",
     )
     .unwrap();
-    fs::write(proj.join("test-project.md"), "- [ ] [[TST-0001]]\n").unwrap();
+    fs::write(
+        proj.join("test-project.md"),
+        "---\nid: tst\ntitle: test-project\n---\n\n- [ ] [[TST-0001]]\n",
+    )
+    .unwrap();
 
     if let Some(pw) = handoff_pw {
         let handoff_dir = repo.join("docs/handoffs");
@@ -713,10 +717,14 @@ fn done_on_untagged_item_never_touches_handoffs_dir() {
     fs::create_dir_all(&proj).unwrap();
     fs::write(
         proj.join("TST-0001.md"),
-        "---\nstatus: active\ntitle: tray gui\nproject: test-project\ncreated: 2026-01-01\n---\n\nbody\n",
+        "---\nid: TST-0001\nstatus: active\ntitle: tray gui\nproject: test-project\ncreated: 2026-01-01\n---\n\nbody\n",
     )
     .unwrap();
-    fs::write(proj.join("test-project.md"), "- [ ] [[TST-0001]]\n").unwrap();
+    fs::write(
+        proj.join("test-project.md"),
+        "---\nid: tst\ntitle: test-project\n---\n\n- [ ] [[TST-0001]]\n",
+    )
+    .unwrap();
     let handoff_dir = repo.join("docs/handoffs");
     fs::create_dir_all(&handoff_dir).unwrap();
     fs::write(
@@ -806,12 +814,12 @@ fn stage_closed_tagged_item(notes: &Path, repo: &Path, handoff_pw: Option<&str>)
     fs::create_dir_all(&proj).unwrap();
     fs::write(
         proj.join("TST-0001.md"),
-        "---\nstatus: done\ntitle: tray gui\nproject: test-project\ncreated: 2026-01-01\ncompleted: 2026-01-02\ntags: [handoff]\n---\n\nbody\n",
+        "---\nid: TST-0001\nstatus: done\ntitle: tray gui\nproject: test-project\ncreated: 2026-01-01\ncompleted: 2026-01-02\ntags: [handoff]\n---\n\nbody\n",
     )
     .unwrap();
     fs::write(
         proj.join("test-project.md"),
-        "- [x] [[TST-0001]] \u{2705} 2026-01-02\n",
+        "---\nid: tst\ntitle: test-project\n---\n\n- [x] [[TST-0001]] \u{2705} 2026-01-02\n",
     )
     .unwrap();
 
@@ -982,12 +990,12 @@ fn reopen_on_untagged_item_never_touches_handoffs_dir() {
     fs::create_dir_all(&proj).unwrap();
     fs::write(
         proj.join("TST-0001.md"),
-        "---\nstatus: done\ntitle: tray gui\nproject: test-project\ncreated: 2026-01-01\ncompleted: 2026-01-02\n---\n\nbody\n",
+        "---\nid: TST-0001\nstatus: done\ntitle: tray gui\nproject: test-project\ncreated: 2026-01-01\ncompleted: 2026-01-02\n---\n\nbody\n",
     )
     .unwrap();
     fs::write(
         proj.join("test-project.md"),
-        "- [x] [[TST-0001]] \u{2705} 2026-01-02\n",
+        "---\nid: tst\ntitle: test-project\n---\n\n- [x] [[TST-0001]] \u{2705} 2026-01-02\n",
     )
     .unwrap();
     let archive_dir = repo.join("docs/handoffs/archived");
@@ -1071,10 +1079,14 @@ fn remove_on_untagged_item_never_touches_handoffs_dir() {
     fs::create_dir_all(&proj).unwrap();
     fs::write(
         proj.join("TST-0001.md"),
-        "---\nstatus: active\ntitle: tray gui\nproject: test-project\ncreated: 2026-01-01\n---\n\nbody\n",
+        "---\nid: TST-0001\nstatus: active\ntitle: tray gui\nproject: test-project\ncreated: 2026-01-01\n---\n\nbody\n",
     )
     .unwrap();
-    fs::write(proj.join("test-project.md"), "- [ ] [[TST-0001]]\n").unwrap();
+    fs::write(
+        proj.join("test-project.md"),
+        "---\nid: tst\ntitle: test-project\n---\n\n- [ ] [[TST-0001]]\n",
+    )
+    .unwrap();
     let handoff_dir = repo.join("docs/handoffs");
     fs::create_dir_all(&handoff_dir).unwrap();
     fs::write(

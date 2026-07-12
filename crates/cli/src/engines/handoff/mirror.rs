@@ -121,7 +121,13 @@ pub(crate) struct GateItem {
 /// producing its canonical not-found/skip behavior.
 pub(crate) fn handoff_gate(cfg: &Config, id: &str) -> Result<Option<GateItem>, MirrorError> {
     let store = ObsidianPendingWorkStore::new(cfg.clone());
-    let Some((project, note_path)) = store.note_with_project(id) else {
+    let Some((project, note_path)) =
+        store
+            .note_with_project(id)
+            .map_err(|error| MirrorError::Ledger {
+                message: error.to_string(),
+            })?
+    else {
         return Ok(None);
     };
     let Ok(raw) = std::fs::read_to_string(&note_path) else {
@@ -131,11 +137,11 @@ pub(crate) fn handoff_gate(cfg: &Config, id: &str) -> Result<Option<GateItem>, M
     let Some(tags_raw) = parsed.frontmatter.get("tags") else {
         return Ok(None);
     };
-    let canonical_id = note_path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or(id)
-        .to_string();
+    let canonical_id = parsed
+        .frontmatter
+        .get("id")
+        .cloned()
+        .unwrap_or_else(|| id.to_string());
     let tags = Tags::parse_frontmatter(tags_raw).map_err(|_| MirrorError::InvalidTags {
         id: canonical_id.clone(),
         raw: tags_raw.clone(),
@@ -507,8 +513,9 @@ mod tests {
 
     /// Write a minimal pending-work item note with optional `tags:` frontmatter.
     fn write_item_note(path: &Path, project: &str, tags: Option<&str>) {
+        let id = path.file_stem().and_then(|stem| stem.to_str()).unwrap();
         let mut note = format!(
-            "---\nstatus: active\ntitle: test item\nproject: {project}\ncreated: 2026-07-01\n"
+            "---\nid: {id}\nstatus: active\ntitle: test item\nproject: {project}\ncreated: 2026-07-01\n"
         );
         if let Some(tags) = tags {
             let _ = writeln!(note, "tags: {tags}");
@@ -643,16 +650,16 @@ mod tests {
     }
 
     #[test]
-    fn tagged_item_found_via_archive_still_gates() {
+    fn tagged_closed_item_in_project_directory_still_gates() {
         let stage = tempdir();
         let notes = stage.path().join("notes");
-        let archive_dir = notes.join("test-project").join("_archive");
-        std::fs::create_dir_all(&archive_dir).unwrap();
+        let project_dir = notes.join("test-project");
+        std::fs::create_dir_all(&project_dir).unwrap();
         let mut note = String::from(
-            "---\nstatus: done\ntitle: test item\nproject: test-project\ncreated: 2026-07-01\ntags: [handoff]\n",
+            "---\nid: TST-0001\nstatus: done\ntitle: test item\nproject: test-project\ncreated: 2026-07-01\ntags: [handoff]\n",
         );
         note.push_str("---\n\nbody\n");
-        std::fs::write(archive_dir.join("TST-0001.md"), note).unwrap();
+        std::fs::write(project_dir.join("TST-0001.md"), note).unwrap();
 
         let repo = stage.path().join("repo");
         std::fs::create_dir_all(&repo).unwrap();
@@ -662,7 +669,7 @@ mod tests {
 
         let result = handoff_gate(&cfg, "TST-0001").unwrap();
 
-        let item = result.expect("archived tagged item should still gate");
+        let item = result.expect("closed tagged item should still gate");
         assert_eq!(item.id, "TST-0001");
         assert_eq!(item.repo_root, repo);
     }

@@ -1,8 +1,8 @@
 //! Fixture-corpus integration tests for the `rename-project` engine.
 //!
 //! Each test stages a self-contained pwf-db in a `TempDir`: a project dir with a
-//! couple of `OLD-NNNN.md` notes (one carrying an internal `[[OLD-NNNN]]`
-//! cross-ref), an `_archive/OLD-NNNN.md`, a second project whose frontmatter
+//! conventional and descriptive filenames (one carrying an internal
+//! `[[OLD-NNNN]]` cross-ref), a second project whose frontmatter
 //! lists a cross-project `prereq: "[[OLD-0001]]"`, and a `.trash/` note that must
 //! be left untouched — plus a pwf config JSON and a `repos.toml` manifest.
 
@@ -20,9 +20,9 @@ struct Vault {
     manifest: PathBuf,
 }
 
-fn note(status: &str, project: &str, body: &str) -> String {
+fn note(id: &str, status: &str, project: &str, body: &str) -> String {
     format!(
-        "---\nstatus: {status}\ntitle: t\nproject: {project}\ncreated: 2026-01-01\n---\n\n{body}\n"
+        "---\nid: {id}\nstatus: {status}\ntitle: t\nproject: {project}\ncreated: 2026-01-01\n---\n\n{body}\n"
     )
 }
 
@@ -31,24 +31,27 @@ fn stage() -> Vault {
     let root = dir.path().to_path_buf();
 
     let old = root.join("self/oldproj");
-    let archive = old.join("_archive");
-    fs::create_dir_all(&archive).unwrap();
+    fs::create_dir_all(&old).unwrap();
     fs::write(
         old.join("OLD-0001.md"),
-        note("active", "oldproj", "see [[OLD-0002]]"),
+        note("OLD-0001", "active", "oldproj", "see [[OLD-0002]]"),
     )
     .unwrap();
-    fs::write(old.join("OLD-0002.md"), note("active", "oldproj", "body")).unwrap();
     fs::write(
-        archive.join("OLD-0007.md"),
-        note("done", "oldproj", "archived"),
+        old.join("descriptive-task.md"),
+        note("OLD-0002", "active", "oldproj", "body"),
+    )
+    .unwrap();
+    fs::write(
+        old.join("completed-task.md"),
+        note("OLD-0007", "done", "oldproj", "completed"),
     )
     .unwrap();
 
     // The project index file is named by the path basename and links its items.
     fs::write(
         old.join("oldproj.md"),
-        "# oldproj\n\n- [ ] [[OLD-0001]]\n- [ ] [[OLD-0002]]\n",
+        "---\nid: old\ntitle: oldproj\n---\n\n# oldproj\n\n- [ ] [[OLD-0001]]\n- [ ] [[OLD-0002]]\n",
     )
     .unwrap();
 
@@ -56,7 +59,7 @@ fn stage() -> Vault {
     fs::create_dir_all(&other).unwrap();
     fs::write(
         other.join("OTH-0005.md"),
-        "---\nstatus: active\ntitle: t\nproject: other\nprereq: \"[[OLD-0001]]\"\ncreated: 2026-01-01\n---\n\nx\n",
+        "---\nid: OTH-0005\nstatus: active\ntitle: t\nproject: other\nprereq: \"[[OLD-0001]]\"\ncreated: 2026-01-01\n---\n\nx\n",
     )
     .unwrap();
 
@@ -64,7 +67,7 @@ fn stage() -> Vault {
     fs::create_dir_all(&trash).unwrap();
     fs::write(
         trash.join("OLD-0099.md"),
-        note("done", "oldproj", "trashed [[OLD-0001]]"),
+        note("OLD-0099", "done", "oldproj", "trashed [[OLD-0001]]"),
     )
     .unwrap();
 
@@ -168,8 +171,8 @@ fn dry_run_is_a_no_op_and_lists_plan() {
         "file rename listed:\n{out}"
     );
     assert!(
-        out.contains("OLD-0007.md"),
-        "_archive rename listed:\n{out}"
+        !out.contains("descriptive-task.md ->"),
+        "descriptive filename remains a locator:\n{out}"
     );
     assert!(
         out.contains("OTH-0005.md"),
@@ -203,8 +206,8 @@ fn rename_with_new_path_moves_renames_relinks_and_updates_label() {
         "renamed active note"
     );
     assert!(
-        v.root.join("self/newproj/_archive/NEW-0007.md").exists(),
-        "renamed archived note"
+        v.root.join("self/newproj/descriptive-task.md").exists(),
+        "descriptive task filename preserved"
     );
     assert!(
         !v.root.join("self/newproj/OLD-0001.md").exists(),
@@ -214,6 +217,10 @@ fn rename_with_new_path_moves_renames_relinks_and_updates_label() {
     assert!(
         read(&v.root, "self/newproj/NEW-0001.md").contains("[[NEW-0002]]"),
         "internal cross-ref rewritten"
+    );
+    assert!(
+        read(&v.root, "self/newproj/descriptive-task.md").contains("id: NEW-0002"),
+        "descriptive note identity rewritten in frontmatter"
     );
     assert!(
         read(&v.root, "self/newproj/NEW-0001.md").contains("project: newproj"),
@@ -247,6 +254,10 @@ fn rename_with_new_path_moves_renames_relinks_and_updates_label() {
         read(&v.root, "self/newproj/newproj.md").contains("[[NEW-0001]]"),
         "index links rewritten by the vault token pass"
     );
+    assert!(
+        read(&v.root, "self/newproj/newproj.md").starts_with("---\nid: new\ntitle: newproj\n---"),
+        "project-index identity rewritten"
+    );
 
     let man = fs::read_to_string(&v.manifest).unwrap();
     assert!(
@@ -270,8 +281,8 @@ fn code_only_rename_keeps_dir_and_label() {
     assert!(dir.join("NEW-0001.md").exists(), "renamed in place");
     assert!(!dir.join("OLD-0001.md").exists(), "old id gone");
     assert!(
-        dir.join("_archive/NEW-0007.md").exists(),
-        "archived renamed in place"
+        dir.join("completed-task.md").exists(),
+        "descriptive completed note preserved"
     );
 
     assert!(
@@ -296,6 +307,7 @@ fn code_only_rename_keeps_dir_and_label() {
         read(&v.root, "self/oldproj/oldproj.md").contains("[[NEW-0001]]"),
         "index links still rewritten by the vault token pass"
     );
+    assert!(read(&v.root, "self/oldproj/oldproj.md").contains("id: new"));
 
     let man = fs::read_to_string(&v.manifest).unwrap();
     assert!(man.contains("path = \"self/oldproj\""), "path preserved");
@@ -337,7 +349,11 @@ fn index_file_renamed_only_when_basename_changes() {
 #[test]
 fn collision_aborts_with_zero_writes() {
     let v = stage();
-    fs::write(v.root.join("self/oldproj/NEW-0001.md"), "collide\n").unwrap();
+    fs::write(
+        v.root.join("self/oldproj/NEW-0001.md"),
+        "---\ntype: note\n---\n\ncollide\n",
+    )
+    .unwrap();
     let before = snapshot(&v.root);
     let manifest_before = fs::read_to_string(&v.manifest).unwrap();
 

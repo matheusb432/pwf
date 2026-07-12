@@ -29,6 +29,7 @@ const UTF8_BOM: char = '\u{feff}';
 
 #[derive(Clone, Copy)]
 pub(super) struct NewWorkItemFields<'a> {
+    pub id: &'a str,
     pub title: &'a str,
     pub project: &'a str,
     pub prompt: &'a str,
@@ -41,6 +42,7 @@ pub(super) struct NewWorkItemFields<'a> {
 pub(super) fn new_work_item_content(fields: NewWorkItemFields<'_>) -> String {
     let mut out = String::new();
     out.push_str("---\n");
+    let _ = writeln!(out, "id: {}", fields.id);
     let _ = writeln!(out, "status: {}", WorkItemStatus::Active);
     let _ = writeln!(out, "title: {}", fields.title);
     let _ = writeln!(out, "project: {}", fields.project);

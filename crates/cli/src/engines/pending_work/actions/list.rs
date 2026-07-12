@@ -271,7 +271,8 @@ pub(in crate::engines::pending_work) fn map_get_pending_work_error(
                 PendingWorkError::ApplicationList(message)
             }
         }
-        invalid @ GetPendingWorkError::InvalidTags { .. } => {
+        invalid @ (GetPendingWorkError::InvalidTags { .. }
+        | GetPendingWorkError::InvalidProject { .. }) => {
             PendingWorkError::ApplicationList(invalid.to_string())
         }
     }

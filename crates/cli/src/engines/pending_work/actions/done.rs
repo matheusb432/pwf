@@ -234,7 +234,7 @@ mod tests {
         let item_path = stage.path().join("notes/glep-shimeji/GLP-0001.md");
         std::fs::write(
             &item_path,
-            "---\nstatus: active\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\ntags: [handoff]\n---\n\nbody\n",
+            "---\nid: GLP-0001\nstatus: active\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\ntags: [handoff]\n---\n\nbody\n",
         )
         .unwrap();
         (stage, cfg, item_path)
@@ -258,10 +258,14 @@ mod tests {
         std::fs::create_dir_all(&project).unwrap();
         std::fs::write(
             project.join("GLP-0001.md"),
-            "---\nstatus: active\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\nbody\n",
+            "---\nid: GLP-0001\nstatus: active\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\nbody\n",
         )
         .unwrap();
-        std::fs::write(project.join("glep-shimeji.md"), "- [ ] [[GLP-0001]]\n").unwrap();
+        std::fs::write(
+            project.join("glep-shimeji.md"),
+            "---\nid: glp\ntitle: glep-shimeji\n---\n\n- [ ] [[GLP-0001]]\n",
+        )
+        .unwrap();
         let cfg = cfg(&notes);
         (stage, cfg)
     }
@@ -363,12 +367,12 @@ mod tests {
         std::fs::create_dir_all(&project).unwrap();
         std::fs::write(
             project.join("GLP-0001.md"),
-            "---\nstatus: done\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\ncompleted: 2026-01-02\ntags: [handoff]\n---\n\nbody\n",
+            "---\nid: GLP-0001\nstatus: done\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\ncompleted: 2026-01-02\ntags: [handoff]\n---\n\nbody\n",
         )
         .unwrap();
         std::fs::write(
             project.join("glep-shimeji.md"),
-            "- [x] [[GLP-0001]] \u{2705} 2026-01-02\n",
+            "---\nid: glp\ntitle: glep-shimeji\n---\n\n- [x] [[GLP-0001]] \u{2705} 2026-01-02\n",
         )
         .unwrap();
 

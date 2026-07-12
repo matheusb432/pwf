@@ -3,8 +3,8 @@
 // asserted byte-for-byte by Rust tests — do not reword them casually.
 
 use super::{
+    handoff_query::newest_handoff,
     naming::pathdiff_forward,
-    parse::newest_handoff_typed,
     text::{get_title_from_continue_path, handoff_title_from_path},
 };
 
@@ -13,7 +13,7 @@ use super::{
 pub(super) fn continue_handoff_prompt(
     repo: &str,
 ) -> Result<(String, String), super::errors::PendingWorkError> {
-    let handoff = newest_handoff_typed(repo)?;
+    let handoff = newest_handoff(repo)?;
     let rel = pathdiff_forward(repo, &handoff); // forward-slash relative path
     let title = handoff_title_from_path(&handoff.to_string_lossy());
     let prompt = format!("Continue the handoff at @{rel}.");

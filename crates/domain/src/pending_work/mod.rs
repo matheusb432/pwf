@@ -8,7 +8,7 @@ mod tag;
 mod title;
 
 pub use effort::EffortTier;
-pub use id::{ProjectName, ProjectPrefix, WorkItemId, canonical_pending_id};
+pub use id::{ProjectIndexIdentity, ProjectName, ProjectPrefix, WorkItemId, canonical_pending_id};
 pub use list::{
     EffortFilter, ListLimit, ListResult, ListScope, OpenItem, OrderDirection, OrderField, OrderSpec,
 };

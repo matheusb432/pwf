@@ -12,12 +12,10 @@ use walkdir::WalkDir;
 
 use super::{RenameContext, RenameProjectError};
 
-/// One `OLD-NNNN.md` note file found under the project dir.
+/// One task note found from its authoritative frontmatter identity.
 pub struct ItemFile {
-    /// The `NNNN` number, preserved verbatim across the rename.
-    pub num: String,
-    /// `true` when the file lives under `_archive/`.
-    pub archived: bool,
+    pub id: String,
+    pub path: PathBuf,
 }
 
 /// A single note-file rename (post-dir-move absolute paths).
@@ -52,6 +50,7 @@ pub struct RenamePlan {
     /// index is named by the path basename, so a `--new-path` rename must move
     /// `config-handler.md` → `repository.md` or pwf can no longer resolve it.
     pub index_rename: Option<(PathBuf, PathBuf)>,
+    pub index_identity_update: PathBuf,
     pub file_renames: Vec<FileRename>,
     pub token_hits: Vec<TokenHit>,
     pub label_updates: Vec<PathBuf>,
@@ -62,47 +61,24 @@ pub struct RenamePlan {
     pub manifest_path: PathBuf,
 }
 
-/// Collect `OLD-NNNN.md` files directly in `folder` (active) and in
-/// `folder/_archive` (archived). No other subdirectory is entered, so `.trash/`
-/// is never touched.
-pub fn enumerate_items(folder: &Path, old_code: &str) -> std::io::Result<Vec<ItemFile>> {
-    let mut items = Vec::new();
-    collect_dir(folder, old_code, false, &mut items)?;
-    let archive = folder.join("_archive");
-    if archive.is_dir() {
-        collect_dir(&archive, old_code, true, &mut items)?;
-    }
-    items.sort_by(|a, b| (a.archived, &a.num).cmp(&(b.archived, &b.num)));
-    Ok(items)
-}
-
-fn collect_dir(
-    dir: &Path,
+/// Collect direct child task notes by parsing authoritative frontmatter.
+pub fn enumerate_items(
+    folder: &Path,
     old_code: &str,
-    archived: bool,
-    out: &mut Vec<ItemFile>,
-) -> std::io::Result<()> {
-    let prefix = format!("{old_code}-");
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
-        if !entry.file_type()?.is_file() {
-            continue;
-        }
-        let name = entry.file_name().to_string_lossy().into_owned();
-        let Some(rest) = name.strip_prefix(&prefix) else {
-            continue;
-        };
-        let Some(num) = rest.strip_suffix(".md") else {
-            continue;
-        };
-        if !num.is_empty() && num.bytes().all(|b| b.is_ascii_digit()) {
-            out.push(ItemFile {
-                num: num.to_string(),
-                archived,
-            });
-        }
-    }
-    Ok(())
+    old_label: &str,
+) -> Result<Vec<ItemFile>, pwf_infra::obsidian::ObsidianPendingWorkStoreError> {
+    let index = index_path(folder, old_label);
+    pwf_infra::obsidian::inspect_project_task_notes(folder, &index, old_code, old_label).map(
+        |tasks| {
+            tasks
+                .into_iter()
+                .map(|task| ItemFile {
+                    id: task.id.as_ref().to_string(),
+                    path: task.path,
+                })
+                .collect()
+        },
+    )
 }
 
 /// Absolute path of a project's `<basename>.md` index file directly in `folder`.
@@ -110,14 +86,20 @@ fn index_path(folder: &Path, basename: &str) -> PathBuf {
     folder.join(format!("{basename}.md"))
 }
 
-/// Absolute post-move path of a `<code>-<num>.md` note under `folder`.
-fn note_path(folder: &Path, archived: bool, code: &str, num: &str) -> PathBuf {
-    let base = if archived {
-        folder.join("_archive")
+fn post_move_path(ctx: &RenameContext, path: &Path) -> PathBuf {
+    if ctx.path_changed {
+        ctx.new_folder.join(
+            path.strip_prefix(&ctx.old_folder)
+                .expect("inventoried task is in project"),
+        )
     } else {
-        folder.to_path_buf()
-    };
-    base.join(format!("{code}-{num}.md"))
+        path.to_path_buf()
+    }
+}
+
+fn renamed_id(id: &str, old_code: &str, new_code: &str) -> String {
+    id.strip_prefix(&format!("{old_code}-"))
+        .map_or_else(|| id.to_string(), |number| format!("{new_code}-{number}"))
 }
 
 /// Build the immutable plan: the dir move, the file renames, the vault-wide
@@ -129,11 +111,18 @@ pub fn build_plan(ctx: &RenameContext, items: &[ItemFile]) -> RenamePlan {
         .path_changed
         .then(|| (ctx.old_folder.clone(), ctx.new_folder.clone()));
 
-    let file_renames = items
+    let file_renames: Vec<_> = items
         .iter()
-        .map(|it| FileRename {
-            from: note_path(&ctx.new_folder, it.archived, &ctx.old_code, &it.num),
-            to: note_path(&ctx.new_folder, it.archived, &ctx.new_code, &it.num),
+        .filter(|item| {
+            code_changed && item.path.file_stem().and_then(|stem| stem.to_str()) == Some(&item.id)
+        })
+        .map(|item| {
+            let from = post_move_path(ctx, &item.path);
+            let to = from.with_file_name(format!(
+                "{}.md",
+                renamed_id(&item.id, &ctx.old_code, &ctx.new_code)
+            ));
+            FileRename { from, to }
         })
         .collect();
 
@@ -141,9 +130,16 @@ pub fn build_plan(ctx: &RenameContext, items: &[ItemFile]) -> RenamePlan {
     // must not already sit in the source dir. A code-unchanged move keeps the
     // basename, so the file simply travels with the dir (guarded by new_folder).
     let collision_dests = if code_changed {
-        items
+        file_renames
             .iter()
-            .map(|it| note_path(&ctx.old_folder, it.archived, &ctx.new_code, &it.num))
+            .map(|rename| {
+                ctx.old_folder.join(
+                    rename
+                        .to
+                        .strip_prefix(&ctx.new_folder)
+                        .unwrap_or(&rename.to),
+                )
+            })
             .collect()
     } else {
         Vec::new()
@@ -177,11 +173,21 @@ pub fn build_plan(ctx: &RenameContext, items: &[ItemFile]) -> RenamePlan {
                 index_path(&ctx.new_folder, &ctx.new_label),
             )
         });
+    let index_identity_update = index_rename.as_ref().map_or_else(
+        || index_path(&ctx.new_folder, &ctx.old_label),
+        |(_, to)| to.clone(),
+    );
 
     let mut label_updates: Vec<PathBuf> = if ctx.path_changed {
         items
             .iter()
-            .map(|it| note_path(&ctx.new_folder, it.archived, &ctx.new_code, &it.num))
+            .map(|item| {
+                let moved = post_move_path(ctx, &item.path);
+                file_renames
+                    .iter()
+                    .find(|rename| rename.from == moved)
+                    .map_or(moved, |rename| rename.to.clone())
+            })
             .collect()
     } else {
         Vec::new()
@@ -202,6 +208,7 @@ pub fn build_plan(ctx: &RenameContext, items: &[ItemFile]) -> RenamePlan {
         new_label: ctx.new_label.clone(),
         dir_move,
         index_rename,
+        index_identity_update,
         file_renames,
         token_hits,
         label_updates,
@@ -416,6 +423,32 @@ pub fn replace_project_label(content: &str, old_label: &str, new_label: &str) ->
         out.push_str(line);
     }
     changed.then_some(out)
+}
+
+/// Rewrite authoritative project-index identity fields in frontmatter.
+#[must_use]
+pub fn replace_project_index_identity(content: &str, new_code: &str, new_label: &str) -> String {
+    let mut in_frontmatter = false;
+    let mut fence_count = 0;
+    let mut out = String::with_capacity(content.len());
+    for line in content.split_inclusive('\n') {
+        let trimmed = line.trim_end_matches(['\n', '\r']);
+        if trimmed == "---" {
+            fence_count += 1;
+            in_frontmatter = fence_count == 1;
+            out.push_str(line);
+            continue;
+        }
+        let newline = if line.ends_with('\n') { "\n" } else { "" };
+        if in_frontmatter && trimmed.starts_with("id:") {
+            let _ = write!(out, "id: {}{newline}", new_code.to_ascii_lowercase());
+        } else if in_frontmatter && trimmed.starts_with("title:") {
+            let _ = write!(out, "title: {new_label}{newline}");
+        } else {
+            out.push_str(line);
+        }
+    }
+    out
 }
 
 #[cfg(test)]

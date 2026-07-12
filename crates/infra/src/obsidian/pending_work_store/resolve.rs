@@ -14,7 +14,7 @@ impl PendingWorkResolveStore for ObsidianPendingWorkStore {
         match self.find_pending_item(id) {
             Ok(item) => Self::resolve_open_item(&item, show),
             Err(ObsidianPendingWorkStoreError::ItemNotFound { id }) => {
-                match self.find_item_note_file(&id) {
+                match self.find_item_note_file(&id)? {
                     Some(path) => Self::resolve_note_file(&path, show),
                     None => Err(ObsidianPendingWorkStoreError::ItemNotFound { id }),
                 }

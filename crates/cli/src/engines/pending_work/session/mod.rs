@@ -245,10 +245,14 @@ mod tests {
         fs::create_dir_all(&repo).unwrap();
         fs::write(
             project.join("PWF-0001.md"),
-            "---\nstatus: active\ntitle: dispatch me\nproject: pwf\ncreated: 2026-07-01\n---\n\ndo work\n",
+            "---\nid: PWF-0001\nstatus: active\ntitle: dispatch me\nproject: pwf\ncreated: 2026-07-01\n---\n\ndo work\n",
         )
         .unwrap();
-        fs::write(project.join("pwf.md"), "- [[PWF-0001|dispatch me]]\n").unwrap();
+        fs::write(
+            project.join("pwf.md"),
+            "---\nid: pwf\ntitle: pwf\n---\n\n- [[PWF-0001|dispatch me]]\n",
+        )
+        .unwrap();
         let cfg = crate::config::from_json(
             &format!(
                 r#"{{ "notesDir": "{}", "projects": {{ "pwf": "{}" }}, "prefixes": {{ "pwf": "PWF" }} }}"#,

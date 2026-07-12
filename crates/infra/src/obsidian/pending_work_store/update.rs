@@ -39,7 +39,7 @@ impl ObsidianPendingWorkStore {
         match self.find_pending_item(&spec.id) {
             Ok(item) => self.update_open_item(spec, &item),
             Err(ObsidianPendingWorkStoreError::ItemNotFound { id }) => {
-                match self.find_item_note_file(&id) {
+                match self.find_item_note_file(&id)? {
                     Some(_) if edits_body => {
                         Err(ObsidianPendingWorkStoreError::ClosedItemAmendOnly { id })
                     }

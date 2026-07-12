@@ -1,5 +1,6 @@
 use pwf_domain::pending_work::{
-    ListResult, ListScope, OpenItem, OrderDirection, OrderField, OrderSpec, ParseTagsError, Tags,
+    ListResult, ListScope, OpenItem, OrderDirection, OrderField, OrderSpec, ParseTagsError,
+    ProjectName, Tags,
 };
 
 use crate::ports::PendingWorkReadStore;
@@ -26,6 +27,8 @@ pub enum GetPendingWorkError {
         #[source]
         source: ParseTagsError,
     },
+    #[error("Invalid project identity: {value:?}.")]
+    InvalidProject { value: String },
 }
 
 #[cqrsy::handler(query)]
@@ -33,9 +36,17 @@ pub fn handle(
     store: &impl PendingWorkReadStore,
     query: GetPendingWork,
 ) -> Result<ListResult, GetPendingWorkError> {
-    let mut items = store
-        .open_items(query.only_project.as_deref())
-        .map_err(|error| GetPendingWorkError::ReadStore(Box::new(error)))?;
+    let mut items = match query.only_project.as_deref() {
+        Some(project) => {
+            let project =
+                ProjectName::try_new(project).map_err(|_| GetPendingWorkError::InvalidProject {
+                    value: project.to_string(),
+                })?;
+            store.open_items_for_project(&project)
+        }
+        None => store.all_open_items(),
+    }
+    .map_err(|error| GetPendingWorkError::ReadStore(Box::new(error)))?;
 
     items.retain(|item| scope_includes(query.scope, item.section.as_deref()));
     items.retain(|item| effort_matches(item, query.effort));
