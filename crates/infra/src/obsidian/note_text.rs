@@ -1,6 +1,7 @@
 use std::{fmt::Write, sync::LazyLock};
 
 use prompt_lanes::{Adapter, MarkdownAdapter};
+use pwf_domain::pending_work::TaskTitle;
 use regex::Regex;
 
 static PLACEHOLDER_PROMPT_RE: LazyLock<Regex> = LazyLock::new(|| {
@@ -24,7 +25,12 @@ pub(super) fn normalize_title(title: &str) -> String {
 }
 
 pub(super) fn inferred_title(prompt: &str) -> String {
-    normalize_title(&prompt_lanes::parse(prompt).capped_title(MAX_TITLE_CHARS))
+    let title = normalize_title(&prompt_lanes::parse(prompt).capped_title(MAX_TITLE_CHARS));
+    if title.is_empty() {
+        TaskTitle::default().to_string()
+    } else {
+        title
+    }
 }
 
 pub(super) fn note_body(prompt: &str) -> String {
@@ -146,4 +152,15 @@ pub(super) fn append_report_text(content: &str, report: &str) -> Option<String> 
     out.push_str(&report);
     out.push('\n');
     Some(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn marker_first_title_inference_uses_domain_default_without_body_leakage() {
+        assert_eq!(inferred_title("/c context"), "n/a");
+        assert_eq!(note_body("/c context"), "## Goals\n\n## Context\n- context");
+    }
 }

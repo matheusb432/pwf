@@ -1258,6 +1258,33 @@ fn e2e_add_rich_prompt_lanes_render_sections() {
     );
 }
 
+#[test]
+fn e2e_add_marker_first_prompt_defaults_title_without_body_sentinel() {
+    let (d, cfg) = staged();
+    pwf()
+        .args(["add", "glep-shimeji", "/c context", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .success();
+
+    let item = read_item(&d, "GLP-0002");
+    assert_eq!(title_of(&item), "n/a", "missing title fallback: {item}");
+    assert!(
+        item.contains("## Context\n- context"),
+        "authored context missing: {item}"
+    );
+    let body = item.split_once("---\n\n").unwrap().1;
+    assert!(!body.contains("n/a"), "fallback leaked into body: {item}");
+    assert!(
+        !body.contains("pending work"),
+        "legacy fallback leaked into body: {item}"
+    );
+    assert!(
+        !body.contains("\n- \n"),
+        "empty goal leaked into body: {item}"
+    );
+}
+
 // 3. Title cap end-to-end (mirrors pending_work.rs:134-189).
 
 #[test]
@@ -1842,7 +1869,7 @@ fn e2e_done_without_commits_writes_no_commits_line() {
 #[test]
 fn e2e_done_review_spawns_human_task_scoped_to_range() {
     let (d, cfg) = staged();
-    pwf()
+    let out = pwf()
         .args([
             "done",
             "--id",
@@ -1856,7 +1883,10 @@ fn e2e_done_review_spawns_human_task_scoped_to_range() {
         ])
         .arg(&cfg)
         .assert()
-        .success();
+        .success()
+        .stderr(contains(
+            "info: created `## Human` section in glep-shimeji\n",
+        ));
     // The checked item still gains the commits provenance.
     assert!(
         read_item(&d, "GLP-0001").contains("commits: \"a..b\""),
@@ -1866,14 +1896,11 @@ fn e2e_done_review_spawns_human_task_scoped_to_range() {
     let index = read_index(&d);
     assert!(index.contains("## Human"), "no Human section: {index}");
     let spawned = read_item(&d, "GLP-0002");
-    assert!(
-        spawned.contains("git-tools diff a..b"),
-        "review task missing scoped diff: {spawned}"
+    assert_eq!(
+        spawned,
+        "---\nid: GLP-0002\nstatus: active\ntitle: review glp-0001, commits: a..b\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\n## Goals\n- review GLP-0001, commits: a..b\n- git-tools diff a..b\n- git-tools diff-subrepos\n"
     );
-    assert!(
-        spawned.contains("git-tools diff-subrepos"),
-        "review task missing subrepos diff: {spawned}"
-    );
+    drop(out);
 }
 
 #[test]
@@ -1923,17 +1950,9 @@ fn e2e_done_review_without_commits_uses_bare_diff_fallback() {
         .assert()
         .success();
     let spawned = read_item(&d, "GLP-0002");
-    assert!(
-        spawned.contains("git-tools diff"),
-        "review task missing bare diff: {spawned}"
-    );
-    assert!(
-        spawned.contains("git-tools diff-subrepos"),
-        "review task missing subrepos diff: {spawned}"
-    );
-    assert!(
-        !spawned.contains(".."),
-        "fallback review task carried a range: {spawned}"
+    assert_eq!(
+        spawned,
+        "---\nid: GLP-0002\nstatus: active\ntitle: review glp-0001\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\n## Goals\n- review GLP-0001\n- git-tools diff\n- git-tools diff-subrepos\n"
     );
 }
 
@@ -2683,6 +2702,42 @@ fn update_append_creates_a_missing_section_via_lane_syntax() {
     assert!(
         note.contains("## Goals\n- do the thing\n- another goal\n\n## Context\n- new context\n"),
         "section not created: {note}"
+    );
+}
+
+#[test]
+fn update_append_marker_first_preserves_title_and_goals() {
+    let (d, cfg) = staged_with_item(
+        "pwf",
+        "PWF",
+        "PWF-0001",
+        "do the thing",
+        "---\nid: PWF-0001\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- do the thing\n",
+    );
+    pwf()
+        .args(["update", "--id", "PWF-0001", "--append", "/c context"])
+        .arg("--config-path")
+        .arg(&cfg)
+        .assert()
+        .success();
+
+    let note = fs::read_to_string(d.path().join("notes/pwf/PWF-0001.md")).unwrap();
+    assert!(
+        note.contains("title: do the thing"),
+        "title changed: {note}"
+    );
+    assert!(
+        note.contains("## Goals\n- do the thing\n\n## Context\n- context\n"),
+        "marker-first append changed unrelated content: {note}"
+    );
+    assert!(!note.contains("n/a"), "fallback leaked into update: {note}");
+    assert!(
+        !note.contains("pending work"),
+        "legacy fallback leaked into update: {note}"
+    );
+    assert!(
+        !note.contains("\n- \n"),
+        "empty goal leaked into update: {note}"
     );
 }
 

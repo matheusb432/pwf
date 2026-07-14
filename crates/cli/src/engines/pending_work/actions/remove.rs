@@ -2,8 +2,7 @@
 
 use std::path::Path;
 
-use cqrsy::Sender;
-use pwf_application::{RemovePendingWorkItem, RemovePendingWorkItemHandler};
+use pwf_application::pending_work::remove::RemovePendingWorkItem;
 use pwf_infra::obsidian::ObsidianPendingWorkStore;
 
 use super::{
@@ -85,14 +84,14 @@ pub(in crate::engines::pending_work) fn run_remove(
         }
     }
 
-    let handler = RemovePendingWorkItemHandler {
-        store: ObsidianPendingWorkStore::new(cfg.clone()),
-    };
-    let removed = handler
-        .send_now(RemovePendingWorkItem {
+    let store = ObsidianPendingWorkStore::new(cfg.clone());
+    let removed = pwf_application::pending_work::remove::execute(
+        RemovePendingWorkItem {
             id: item.id.clone(),
-        })
-        .map_err(|error| PendingWorkError::ApplicationWrite(error.to_string()))?;
+        },
+        &store,
+    )
+    .map_err(|error| PendingWorkError::ApplicationWrite(error.to_string()))?;
 
     if let Some(g) = gate {
         let path = mirror::delete_for_item(&g).map_err(|source| {

@@ -1,17 +1,6 @@
 pub mod pending_work;
 pub mod ports;
 
-pub use pending_work::{
-    AddPendingWorkError, AddPendingWorkItem, AddPendingWorkItemHandler, CancelPendingWork,
-    CancelPendingWorkError, CancelPendingWorkHandler, CompletePendingWork,
-    CompletePendingWorkError, CompletePendingWorkHandler, GetPendingWork, GetPendingWorkError,
-    GetPendingWorkHandler, RemovePendingWorkError, RemovePendingWorkItem,
-    RemovePendingWorkItemHandler, ReopenPendingWork, ReopenPendingWorkError,
-    ReopenPendingWorkHandler, ResolvePendingWorkError, ResolvePendingWorkItem,
-    ResolvePendingWorkItemHandler, ShowPendingWorkError, ShowPendingWorkItem,
-    ShowPendingWorkItemHandler, UpdatePendingWorkError, UpdatePendingWorkItem,
-    UpdatePendingWorkItemHandler,
-};
 pub use ports::{
     AddItemSpec, CancelItemSpec, ClosedItem, ClosedItemAction, CompleteItemSpec,
     PendingWorkReadStore, PendingWorkResolveStore, PendingWorkWriteStore, ReopenedItem,
@@ -19,4 +8,4 @@ pub use ports::{
 };
 
 #[cfg(test)]
-pub mod testing;
+mod testing;

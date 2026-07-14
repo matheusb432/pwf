@@ -1,12 +1,5 @@
 // Leaf action implementations: done (mark done), remove, and list.
 
-use pwf_application::{
-    AddPendingWorkItem, AddPendingWorkItemHandler, GetPendingWork, GetPendingWorkHandler,
-};
-use pwf_infra::obsidian::ObsidianPendingWorkStore;
-
-use crate::config::Config;
-
 mod add;
 mod confirm_render;
 mod done;
@@ -29,30 +22,3 @@ pub(super) use reopen::run_reopen;
 pub(super) use resolve::run_resolve;
 pub(super) use show::run_show;
 pub(super) use update::run_update;
-
-/// Composition-root state for the pending-work mediator: the single Obsidian
-/// store both the add and list handlers borrow from.
-struct PendingWorkState {
-    store: ObsidianPendingWorkStore,
-}
-
-cqrsy::mediator! {
-    #[derive(Clone)]
-    struct PendingWorkMediator from PendingWorkState {
-        state {
-            store: ObsidianPendingWorkStore,
-        }
-        handlers {
-            AddPendingWorkItem => add: AddPendingWorkItemHandler<ObsidianPendingWorkStore>,
-            GetPendingWork => list: GetPendingWorkHandler<ObsidianPendingWorkStore>,
-        }
-    }
-}
-
-pub(crate) fn pending_work_mediator(
-    cfg: &Config,
-) -> impl cqrsy::Handle + cqrsy::Sender<AddPendingWorkItem> + cqrsy::Sender<GetPendingWork> {
-    PendingWorkMediator::new(&PendingWorkState {
-        store: ObsidianPendingWorkStore::new(cfg.clone()),
-    })
-}

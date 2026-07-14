@@ -2,8 +2,8 @@ use crate::title::cap_title;
 
 /// A prompt parsed into a title plus four named, ordered bullet sections.
 ///
-/// `title` is the raw lead clause (uncapped, case-preserved) — it is always
-/// also present verbatim as `goals[0]`.
+/// `title` is the raw lead clause (uncapped, case-preserved). When present, it
+/// is also the first Goals bullet; marker-first prompts leave both empty.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct ParsedPrompt {
     pub title: String,

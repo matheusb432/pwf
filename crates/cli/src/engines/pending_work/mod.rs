@@ -30,7 +30,6 @@ mod text;
 
 pub(crate) use actions::{
     emit_created_section_diagnostic, emit_created_section_diagnostic_for_error,
-    pending_work_mediator,
 };
 pub use domain::{commands::PendingWorkCommand, types::canonical_pending_id};
 pub use index::{

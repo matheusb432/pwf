@@ -1,4 +1,5 @@
 use prompt_lanes::{Adapter, MarkdownAdapter, parse};
+use pwf_domain::pending_work::TaskTitle;
 
 use super::text::{is_placeholder_prompt, normalize_title};
 
@@ -8,7 +9,12 @@ const MAX_TITLE_CHARS: usize = 80;
 
 /// Returns the inferred title for a pending-work prompt.
 pub(super) fn inferred_title(prompt: &str) -> String {
-    normalize_title(&parse(prompt).capped_title(MAX_TITLE_CHARS))
+    let title = normalize_title(&parse(prompt).capped_title(MAX_TITLE_CHARS));
+    if title.is_empty() {
+        TaskTitle::default().to_string()
+    } else {
+        title
+    }
 }
 
 /// Renders the pending-work note body for a prompt.

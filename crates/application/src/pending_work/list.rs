@@ -32,9 +32,13 @@ pub enum GetPendingWorkError {
 }
 
 #[cqrsy::handler(query)]
-pub fn handle(
-    store: &impl PendingWorkReadStore,
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "the cqrsy list operation owns its request by contract"
+)]
+pub fn execute(
     query: GetPendingWork,
+    store: &impl PendingWorkReadStore,
 ) -> Result<ListResult, GetPendingWorkError> {
     let mut items = match query.only_project.as_deref() {
         Some(project) => {
@@ -175,22 +179,18 @@ fn apply_cap(items: Vec<OpenItem>, cap: usize) -> (Vec<OpenItem>, usize) {
 
 #[cfg(test)]
 mod tests {
-    use cqrsy::Sender;
     use pwf_domain::pending_work::{
         ListResult, ListScope, OpenItem, OrderDirection, OrderField, OrderSpec, Tags,
     };
 
-    use super::{GetPendingWork, GetPendingWorkError, GetPendingWorkHandler};
-    use crate::{ports::PendingWorkReadStore, testing::InMemoryPendingWorkReadStore};
+    use super::{GetPendingWork, GetPendingWorkError, execute};
+    use crate::testing::InMemoryPendingWorkReadStore;
 
-    /// Sync dispatch shim: drive a fused `GetPendingWorkHandler` through its
-    /// blanket `Sender` on the tested path, keeping each case's assertions
-    /// focused on the query result.
-    fn send_now<S: PendingWorkReadStore>(
-        handler: &GetPendingWorkHandler<S>,
+    fn run(
+        store: &InMemoryPendingWorkReadStore,
         query: GetPendingWork,
     ) -> Result<ListResult, GetPendingWorkError> {
-        handler.send_now(query)
+        execute(query, store)
     }
 
     fn item(id: &str) -> OpenItem {
@@ -290,7 +290,7 @@ mod tests {
             future_item("PWF-0001"),
         ]);
 
-        let got = send_now(&GetPendingWorkHandler { store }, default_query()).unwrap();
+        let got = run(&store, default_query()).unwrap();
 
         assert_eq!(listed_ids(&got), ["PWF-0003"]);
     }
@@ -302,7 +302,7 @@ mod tests {
             low_prio_item("PWF-0001"),
         ]);
 
-        let got = send_now(&GetPendingWorkHandler { store }, default_query()).unwrap();
+        let got = run(&store, default_query()).unwrap();
 
         assert_eq!(listed_ids(&got), ["PWF-0002"]);
     }
@@ -316,8 +316,8 @@ mod tests {
             item("GLP-0001"),
         ]);
 
-        let got = send_now(
-            &GetPendingWorkHandler { store },
+        let got = run(
+            &store,
             GetPendingWork {
                 scope: ListScope::All,
                 ..default_query()
@@ -339,8 +339,8 @@ mod tests {
             future_item("PWF-0001"),
         ]);
 
-        let got = send_now(
-            &GetPendingWorkHandler { store },
+        let got = run(
+            &store,
             GetPendingWork {
                 scope: ListScope::HumanOnly,
                 ..default_query()
@@ -359,8 +359,8 @@ mod tests {
             future_item("PWF-0001"),
         ]);
 
-        let got = send_now(
-            &GetPendingWorkHandler { store },
+        let got = run(
+            &store,
             GetPendingWork {
                 scope: ListScope::FutureOnly,
                 ..default_query()
@@ -379,8 +379,8 @@ mod tests {
             item("PWF-0001"),
         ]);
 
-        let got = send_now(
-            &GetPendingWorkHandler { store },
+        let got = run(
+            &store,
             GetPendingWork {
                 effort: Some(3),
                 ..default_query()
@@ -395,8 +395,8 @@ mod tests {
     fn stored_effort_trims_surrounding_whitespace() {
         let store = InMemoryPendingWorkReadStore::with_items(vec![effort_item("PWF-0001", " 3 ")]);
 
-        let got = send_now(
-            &GetPendingWorkHandler { store },
+        let got = run(
+            &store,
             GetPendingWork {
                 effort: Some(3),
                 ..default_query()
@@ -411,8 +411,8 @@ mod tests {
     fn stored_effort_zero_does_not_match_filter_zero() {
         let store = InMemoryPendingWorkReadStore::with_items(vec![effort_item("PWF-0001", "0")]);
 
-        let got = send_now(
-            &GetPendingWorkHandler { store },
+        let got = run(
+            &store,
             GetPendingWork {
                 effort: Some(0),
                 ..default_query()
@@ -427,8 +427,8 @@ mod tests {
     fn stored_effort_five_does_not_match_filter_five() {
         let store = InMemoryPendingWorkReadStore::with_items(vec![effort_item("PWF-0001", "5")]);
 
-        let got = send_now(
-            &GetPendingWorkHandler { store },
+        let got = run(
+            &store,
             GetPendingWork {
                 effort: Some(5),
                 ..default_query()
@@ -448,8 +448,8 @@ mod tests {
             item("PWF-0001"),
         ]);
 
-        let got = send_now(
-            &GetPendingWorkHandler { store },
+        let got = run(
+            &store,
             GetPendingWork {
                 tags: Some(Tags::parse_values(&["SQLite,godot".to_string()]).unwrap()),
                 ..default_query()
@@ -466,18 +466,10 @@ mod tests {
             "PWF-0001",
             "sqlite, godot",
         )]);
-        assert!(
-            send_now(
-                &GetPendingWorkHandler {
-                    store: store.clone()
-                },
-                default_query()
-            )
-            .is_ok()
-        );
+        assert!(run(&store, default_query()).is_ok());
 
-        let error = send_now(
-            &GetPendingWorkHandler { store },
+        let error = run(
+            &store,
             GetPendingWork {
                 tags: Some(Tags::parse_values(&["sqlite".to_string()]).unwrap()),
                 ..default_query()
@@ -509,8 +501,8 @@ mod tests {
             },
         ]);
 
-        let got = send_now(
-            &GetPendingWorkHandler { store },
+        let got = run(
+            &store,
             GetPendingWork {
                 effort: Some(3),
                 tags: Some(Tags::parse_values(&["sqlite".to_string()]).unwrap()),
@@ -530,8 +522,8 @@ mod tests {
             tagged_item("PWF-0001", "[sqlite]"),
         ]);
 
-        let got = send_now(
-            &GetPendingWorkHandler { store },
+        let got = run(
+            &store,
             GetPendingWork {
                 number: Some(1),
                 tags: Some(Tags::parse_values(&["sqlite".to_string()]).unwrap()),
@@ -557,7 +549,7 @@ mod tests {
             },
         ]);
 
-        let got = send_now(&GetPendingWorkHandler { store }, default_query()).unwrap();
+        let got = run(&store, default_query()).unwrap();
 
         assert_eq!(listed_ids(&got), ["CFG-0001", "PWF-0001"]);
     }
@@ -570,8 +562,8 @@ mod tests {
             dated_item("GLP-0003", "2026-02-01"),
         ]);
 
-        let got = send_now(
-            &GetPendingWorkHandler { store },
+        let got = run(
+            &store,
             GetPendingWork {
                 order: OrderSpec {
                     field: OrderField::Created,
@@ -592,8 +584,8 @@ mod tests {
             project_item("pwf", "PWF-0099"),
         ]);
 
-        let got = send_now(
-            &GetPendingWorkHandler { store },
+        let got = run(
+            &store,
             GetPendingWork {
                 order: OrderSpec {
                     field: OrderField::Id,
@@ -615,8 +607,8 @@ mod tests {
             project_item("config-handler", "CFG-0002"),
         ]);
 
-        let got = send_now(
-            &GetPendingWorkHandler { store },
+        let got = run(
+            &store,
             GetPendingWork {
                 order: OrderSpec {
                     field: OrderField::ProjectId,
@@ -636,8 +628,8 @@ mod tests {
             (1..=12).map(|n| item(&format!("GLP-{n:04}"))).collect(),
         );
 
-        let got = send_now(
-            &GetPendingWorkHandler { store },
+        let got = run(
+            &store,
             GetPendingWork {
                 number: Some(0),
                 ..default_query()
@@ -655,7 +647,7 @@ mod tests {
             (1..=12).map(|n| item(&format!("GLP-{n:04}"))).collect(),
         );
 
-        let got = send_now(&GetPendingWorkHandler { store }, default_query()).unwrap();
+        let got = run(&store, default_query()).unwrap();
 
         assert_eq!(got.items.len(), 10);
         assert_eq!(got.hidden, 2);

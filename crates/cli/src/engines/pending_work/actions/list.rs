@@ -1,13 +1,10 @@
 // Action: list.
 
-use cqrsy::Sender;
-use pwf_application::{GetPendingWork, GetPendingWorkError};
+use pwf_application::pending_work::list::{GetPendingWork, GetPendingWorkError};
 use pwf_domain::pending_work::Tags;
+use pwf_infra::obsidian::ObsidianPendingWorkStore;
 
-use super::{
-    super::{errors::PendingWorkError, render::render_list},
-    pending_work_mediator,
-};
+use super::super::{errors::PendingWorkError, render::render_list};
 use crate::config::Config;
 
 const NOTES_DIRECTORY_PREFIX: &str = "Notes directory not found: ";
@@ -228,17 +225,19 @@ pub(in crate::engines::pending_work) fn run_list_query(
     cfg: &Config,
     params: ListParams<'_>,
 ) -> Result<String, PendingWorkError> {
-    let mediator = pending_work_mediator(cfg);
-    let result = mediator
-        .send_now(GetPendingWork {
+    let store = ObsidianPendingWorkStore::new(cfg.clone());
+    let result = pwf_application::pending_work::list::execute(
+        GetPendingWork {
             only_project: params.only_project.map(str::to_owned),
             scope: params.scope.to_domain(),
             number: params.number,
             effort: params.effort,
             tags: params.tags.cloned(),
             order: params.order.to_domain(),
-        })
-        .map_err(map_get_pending_work_error)?;
+        },
+        &store,
+    )
+    .map_err(map_get_pending_work_error)?;
     Ok(render_query_result(cfg, params, &result))
 }
 

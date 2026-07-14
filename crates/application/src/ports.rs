@@ -122,6 +122,7 @@ impl ClosedItemAction {
 pub struct StatusTransitionOutput {
     pub text: String,
     pub diagnostics: StatusTransitionDiagnostics,
+    pub review_item: Option<AddedItem>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

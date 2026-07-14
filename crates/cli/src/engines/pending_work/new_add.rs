@@ -89,6 +89,16 @@ mod tests {
     }
 
     #[test]
+    fn marker_first_prompt_uses_domain_default_session() {
+        let cfg = cfg();
+        let args = args(Some("alpha"), Some("/c context"), None);
+
+        let got = NewAddInputs::resolve(&cfg, &args).unwrap();
+
+        assert_eq!(got.session, "n/a");
+    }
+
+    #[test]
     fn unique_prefix_resolves_to_full_project_name() {
         let cfg = cfg();
         let args = args(Some("al"), Some("do x"), None);

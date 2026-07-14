@@ -70,7 +70,7 @@ impl ObsidianPendingWorkStore {
         index_path: &Path,
         text: &str,
     ) -> Result<Vec<OpenItem>, ObsidianPendingWorkStoreError> {
-        let task_files = self.task_files_for_project(&project)?;
+        let task_files = self.task_files_for_project(project)?;
         Ok(parse_project_tasks(
             project.as_ref(),
             repo,

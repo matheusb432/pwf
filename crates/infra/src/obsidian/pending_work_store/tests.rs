@@ -132,8 +132,8 @@ fn open_items_rejects_project_index_without_identity_frontmatter() {
 
     assert_matches!(
         error,
-        ObsidianPendingWorkStoreError::MissingFrontmatter { ref property, .. }
-            if *property == "id/title"
+        ObsidianPendingWorkStoreError::MissingFrontmatter { property, .. }
+            if property == "id/title"
     );
 }
 

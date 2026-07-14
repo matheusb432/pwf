@@ -11,9 +11,13 @@ pub struct ShowPendingWorkItem {
 }
 
 #[cqrsy::handler(query)]
-pub fn handle(
-    store: &impl PendingWorkResolveStore,
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "the cqrsy show operation owns its request by contract"
+)]
+pub fn execute(
     query: ShowPendingWorkItem,
+    store: &impl PendingWorkResolveStore,
 ) -> Result<ResolvePendingWorkOutput, ShowPendingWorkError> {
     resolve_from_store(store, &query.id, true)
 }

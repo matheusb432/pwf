@@ -19,9 +19,8 @@ impl ObsidianPendingWorkStore {
         id: &str,
     ) -> Result<OpenItem, ObsidianPendingWorkStoreError> {
         let requested = id.to_string();
-        let id = match WorkItemId::try_new(id) {
-            Ok(id) => id,
-            Err(_) => return self.find_legacy_pending_item(&requested),
+        let Ok(id) = WorkItemId::try_new(id) else {
+            return self.find_legacy_pending_item(&requested);
         };
         let prefix = id.as_ref().split_once('-').map_or("", |(prefix, _)| prefix);
         if self

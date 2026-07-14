@@ -1,5 +1,4 @@
-use cqrsy::Sender;
-use pwf_application::{ShowPendingWorkItem, ShowPendingWorkItemHandler};
+use pwf_application::pending_work::show::ShowPendingWorkItem;
 use pwf_infra::obsidian::ObsidianPendingWorkStore;
 
 use super::super::errors::PendingWorkError;
@@ -21,11 +20,8 @@ pub(in crate::engines::pending_work) fn run_show(
         Some(raw) if canonical_pending_id(raw) == lookup_id => raw,
         _ => lookup_id,
     };
-    let handler = ShowPendingWorkItemHandler {
-        store: ObsidianPendingWorkStore::new(cfg.clone()),
-    };
-    handler
-        .send_now(ShowPendingWorkItem { id: id.to_string() })
-        .map(pwf_application::ResolvePendingWorkOutput::into_text)
+    let store = ObsidianPendingWorkStore::new(cfg.clone());
+    pwf_application::pending_work::show::execute(ShowPendingWorkItem { id: id.to_string() }, &store)
+        .map(pwf_application::ports::ResolvePendingWorkOutput::into_text)
         .map_err(|error| PendingWorkError::ApplicationRead(error.to_string()))
 }

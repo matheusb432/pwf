@@ -12,9 +12,13 @@ pub enum ReopenPendingWorkError {
 }
 
 #[cqrsy::handler(command)]
-pub fn handle(
-    store: &impl PendingWorkWriteStore,
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "the cqrsy reopen operation owns its request by contract"
+)]
+pub fn execute(
     cmd: ReopenPendingWork,
+    store: &impl PendingWorkWriteStore,
 ) -> Result<String, ReopenPendingWorkError> {
     store
         .reopen_item(&cmd.id)

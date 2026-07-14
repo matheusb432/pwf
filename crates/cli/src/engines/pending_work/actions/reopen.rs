@@ -1,7 +1,6 @@
 // Action: reopen (the inverse of done/cancel).
 
-use cqrsy::Sender;
-use pwf_application::{ReopenPendingWork, ReopenPendingWorkError, ReopenPendingWorkHandler};
+use pwf_application::pending_work::reopen::{ReopenPendingWork, ReopenPendingWorkError};
 use pwf_infra::obsidian::ObsidianPendingWorkStore;
 
 use super::{
@@ -23,12 +22,12 @@ pub(in crate::engines::pending_work) fn run_reopen(
         .transpose()?
         .flatten();
 
-    let handler = ReopenPendingWorkHandler {
-        store: ObsidianPendingWorkStore::new(cfg.clone()),
-    };
-    let text = handler
-        .send_now(ReopenPendingWork { id: id.to_string() })
-        .map_err(map_reopen_error)?;
+    let store = ObsidianPendingWorkStore::new(cfg.clone());
+    let text = pwf_application::pending_work::reopen::execute(
+        ReopenPendingWork { id: id.to_string() },
+        &store,
+    )
+    .map_err(map_reopen_error)?;
     mirror_commit_and_append(text, gate, pending, "reopened")
 }
 

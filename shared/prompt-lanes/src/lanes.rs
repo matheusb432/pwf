@@ -2,16 +2,6 @@
 
 use crate::{model::ParsedPrompt, title::single_line};
 
-const PENDING_WORK_TITLE: &str = "pending work";
-
-fn or_pending_work(title: String) -> String {
-    if title.is_empty() {
-        PENDING_WORK_TITLE.to_string()
-    } else {
-        title
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Section {
     Goals,
@@ -68,7 +58,6 @@ fn push(parsed: &mut ParsedPrompt, section: Section, text: String) {
 
 fn plain(prompt: &str) -> ParsedPrompt {
     let title = single_line(prompt);
-    let title = or_pending_work(title);
     ParsedPrompt {
         title: title.clone(),
         goals: vec![title],
@@ -96,8 +85,9 @@ pub fn parse(prompt: &str) -> ParsedPrompt {
             if seen_first_marker {
                 push(&mut parsed, current, words_to_text(&buffer));
             } else {
-                parsed.title = or_pending_work(words_to_text(&buffer));
-                parsed.goals.push(parsed.title.clone());
+                let title = words_to_text(&buffer);
+                parsed.title.clone_from(&title);
+                push(&mut parsed, Section::Goals, title);
             }
             buffer.clear();
             seen_first_marker = true;
@@ -123,6 +113,16 @@ mod tests {
         assert_eq!(parsed.title, "fix rich prompt parser");
         assert_eq!(parsed.goals, vec!["fix rich prompt parser".to_string()]);
         assert!(parsed.context.is_empty());
+        assert!(parsed.constraints.is_empty());
+        assert!(parsed.done_when.is_empty());
+    }
+
+    #[test]
+    fn plain_prompt_with_section_start_appends_only_section() {
+        let parsed = parse("/c currently, x does y");
+        assert!(parsed.title.is_empty());
+        assert!(parsed.goals.is_empty());
+        assert_eq!(parsed.context, vec!["currently, x does y".to_string()]);
         assert!(parsed.constraints.is_empty());
         assert!(parsed.done_when.is_empty());
     }
@@ -187,9 +187,10 @@ mod tests {
     }
 
     #[test]
-    fn empty_lead_before_marker_falls_back_to_pending_work() {
+    fn empty_lead_before_marker_emits_only_authored_content() {
         let parsed = parse("/ only second");
-        assert_eq!(parsed.title, "pending work");
+        assert!(parsed.title.is_empty());
+        assert_eq!(parsed.goals, vec!["only second".to_string()]);
     }
 
     #[test]

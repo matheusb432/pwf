@@ -3,9 +3,9 @@ use std::fmt::Write;
 use super::Adapter;
 use crate::model::ParsedPrompt;
 
-/// Renders a [`ParsedPrompt`] as Markdown: a `## Goals` section followed by
-/// optional `## Context`/`## Constraints`/`## Done When` sections, each a
-/// bullet list. A section with no bullets is omitted.
+/// Renders a [`ParsedPrompt`] as Markdown with a stable `## Goals` section.
+/// Optional `## Context`/`## Constraints`/`## Done When` sections are omitted
+/// when they have no bullets.
 pub struct MarkdownAdapter;
 
 impl Adapter for MarkdownAdapter {

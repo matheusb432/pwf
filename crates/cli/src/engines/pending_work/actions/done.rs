@@ -1,12 +1,12 @@
 // Action: done/cancel status transitions.
 
-use cqrsy::Sender;
 use pwf_application::{
-    AddPendingWorkError, AddPendingWorkItem, AddPendingWorkItemHandler, CancelPendingWork,
-    CancelPendingWorkError, CancelPendingWorkHandler, CompletePendingWork,
-    CompletePendingWorkError, CompletePendingWorkHandler, StatusTransitionOutput,
+    pending_work::{
+        cancel::{CancelPendingWork, CancelPendingWorkError},
+        done::{CompletePendingWork, CompletePendingWorkError},
+    },
+    ports::StatusTransitionOutput,
 };
-use pwf_domain::pending_work::AddedItem;
 use pwf_infra::obsidian::{ObsidianPendingWorkStore, ObsidianPendingWorkStoreError};
 
 use super::{
@@ -36,17 +36,20 @@ pub(in crate::engines::pending_work) fn run_done(
         args.report.as_deref(),
     )?;
     let store = ObsidianPendingWorkStore::new(cfg.clone());
-    let add_sender = ReviewAddSender::new(store.clone());
-    let handler = CompletePendingWorkHandler { store, add_sender };
-    let output = handler
-        .send_now(CompletePendingWork {
+    let output = pwf_application::pending_work::done::execute(
+        CompletePendingWork {
             id: id.to_string(),
             completed,
             report: args.report.clone(),
             commits: args.commits.clone(),
             review: args.review,
-        })
-        .map_err(map_complete_error)?;
+        },
+        &store,
+    )
+    .map_err(map_complete_error)?;
+    if let Some(review) = output.review_item.as_ref() {
+        emit_created_section_diagnostic(review);
+    }
     emit_status_diagnostics(&output);
     mirror_commit_and_append(output.text, gate, pending, "archived")
 }
@@ -79,9 +82,11 @@ pub(in crate::engines::pending_work) fn run_cancel(
     )
     .map_err(map_cancel_error)?;
     let store = ObsidianPendingWorkStore::new(cfg.clone());
-    let add_sender = ReviewAddSender::new(store.clone());
-    let handler = CancelPendingWorkHandler { store, add_sender };
-    let output = handler.send_now(command).map_err(map_cancel_error)?;
+    let output = pwf_application::pending_work::cancel::execute(command, &store)
+        .map_err(map_cancel_error)?;
+    if let Some(review) = output.review_item.as_ref() {
+        emit_created_section_diagnostic(review);
+    }
     emit_status_diagnostics(&output);
     mirror_commit_and_append(output.text, gate, pending, "archived")
 }
@@ -136,30 +141,6 @@ pub(super) fn mirror_commit_and_append(
     }
 }
 
-#[derive(Clone)]
-struct ReviewAddSender {
-    handler: AddPendingWorkItemHandler<ObsidianPendingWorkStore>,
-}
-
-impl ReviewAddSender {
-    fn new(store: ObsidianPendingWorkStore) -> Self {
-        Self {
-            handler: AddPendingWorkItemHandler { store },
-        }
-    }
-}
-
-impl Sender<AddPendingWorkItem> for ReviewAddSender {
-    async fn send(&self, req: AddPendingWorkItem) -> Result<AddedItem, AddPendingWorkError> {
-        let result = self.handler.send(req).await;
-        match &result {
-            Ok(added) => emit_created_section_diagnostic(added),
-            Err(error) => emit_created_section_diagnostic_for_error(error),
-        }
-        result
-    }
-}
-
 fn emit_status_diagnostics(output: &StatusTransitionOutput) {
     if let Some(project) = output.diagnostics.futuro_renamed_project.as_deref() {
         eprintln!("info: normalized `## Futuro` header to `## Future` in {project}");
@@ -178,6 +159,7 @@ fn map_complete_error(error: CompletePendingWorkError) -> PendingWorkError {
         CompletePendingWorkError::WriteStore(source) => map_store_error(source.as_ref())
             .unwrap_or_else(|| PendingWorkError::ApplicationWrite(source.to_string())),
         CompletePendingWorkError::ReviewTask(source) => {
+            emit_created_section_diagnostic_for_error(&source);
             PendingWorkError::ApplicationWrite(source.to_string())
         }
     }
@@ -189,6 +171,7 @@ fn map_cancel_error(error: CancelPendingWorkError) -> PendingWorkError {
         CancelPendingWorkError::WriteStore(source) => map_store_error(source.as_ref())
             .unwrap_or_else(|| PendingWorkError::ApplicationWrite(source.to_string())),
         CancelPendingWorkError::ReviewTask(source) => {
+            emit_created_section_diagnostic_for_error(&source);
             PendingWorkError::ApplicationWrite(source.to_string())
         }
     }
@@ -228,6 +211,16 @@ mod tests {
 
     use super::*;
     use crate::engines::pending_work::errors::PendingWorkError;
+
+    fn review_add_write_index_error() -> pwf_application::pending_work::add::AddPendingWorkError {
+        pwf_application::pending_work::add::AddPendingWorkError::WriteStore(Box::new(
+            ObsidianPendingWorkStoreError::AddWriteIndexFile {
+                source: std::io::Error::other("index write failed"),
+                project: "glep-shimeji".to_string(),
+                created_section: Some("Human".to_string()),
+            },
+        ))
+    }
 
     fn stage_tagged_handoff_item() -> (tempfile::TempDir, Config, std::path::PathBuf) {
         let (stage, cfg) = stage_file_item();
@@ -281,6 +274,40 @@ mod tests {
             PendingWorkError::MissingId { action } if action == "done"
         );
         assert_eq!(err.to_string(), "--id is required for done.");
+    }
+
+    #[test]
+    fn complete_review_error_exposes_created_section_before_cli_mapping() {
+        let error = CompletePendingWorkError::ReviewTask(review_add_write_index_error());
+        let CompletePendingWorkError::ReviewTask(source) = error else {
+            panic!("expected review-task error");
+        };
+
+        assert_eq!(
+            super::super::add::created_section_diagnostic_for_error(&source),
+            Some(("glep-shimeji", "Human"))
+        );
+        assert_matches!(
+            map_complete_error(CompletePendingWorkError::ReviewTask(source)),
+            PendingWorkError::ApplicationWrite(message) if message == "Failed to write index file: index write failed"
+        );
+    }
+
+    #[test]
+    fn cancel_review_error_exposes_created_section_before_cli_mapping() {
+        let error = CancelPendingWorkError::ReviewTask(review_add_write_index_error());
+        let CancelPendingWorkError::ReviewTask(source) = error else {
+            panic!("expected review-task error");
+        };
+
+        assert_eq!(
+            super::super::add::created_section_diagnostic_for_error(&source),
+            Some(("glep-shimeji", "Human"))
+        );
+        assert_matches!(
+            map_cancel_error(CancelPendingWorkError::ReviewTask(source)),
+            PendingWorkError::ApplicationWrite(message) if message == "Failed to write index file: index write failed"
+        );
     }
 
     #[test]

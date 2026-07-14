@@ -21,9 +21,9 @@ pub enum AddPendingWorkError {
 }
 
 #[cqrsy::handler(command)]
-pub fn handle(
-    store: &impl PendingWorkWriteStore,
+pub fn execute(
     cmd: AddPendingWorkItem,
+    store: &impl PendingWorkWriteStore,
 ) -> Result<AddedItem, AddPendingWorkError> {
     store
         .add_item(AddItemSpec {

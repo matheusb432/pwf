@@ -2,7 +2,8 @@
 //! linked to a new handoff, either by spawning the external
 //! `--pending-work-script` allocator (tests inject `pw-stub.sh`) or, in production,
 //! reusing the pending-work application request path in-process — the shared
-//! `AddPendingWorkItem` command build + mediator sender (`inprocess_pw_add`).
+//! `AddPendingWorkItem` command build + direct application add operation
+//! (`inprocess_pw_add`).
 //! `done`/`cancel`/`reopen`/`refresh` are retired (PWF-0117); closing/reopening
 //! a handoff-tagged pw item mirrors from the pw verbs instead, via
 //! `engines/handoff/mirror.rs`, called directly from the pending-work actions
@@ -12,15 +13,13 @@
 //! forward — this module compiles against either but breaks at runtime if
 //! missed.
 
-use cqrsy::Sender;
-
 use super::errors::HandoffError;
 use crate::{cli::Args, config};
 
 /// Extract the item id from `add` text output: `ADDED PWF TASK [<id>] …`.
 /// Only the external `--pending-work-script` allocator (`spawn_pw_add`) still
 /// needs this — the in-process path (`inprocess_pw_add`) consumes the typed
-/// `AddedItem` directly from the shared mediator path.
+/// `AddedItem` directly from the typed direct result.
 pub(super) fn parse_added_id(text: &str) -> Option<String> {
     text.lines()
         .next()
@@ -65,7 +64,7 @@ pub(super) fn spawn_pw_add(
 
 /// In-process equivalent of `spawn_pw_add` for production (no --pending-work-script):
 /// build the same `AddPendingWorkItem` command `pwf add <project> --continue-handoff`
-/// would, send it through the shared pending-work mediator, and take the id
+/// would, call the direct application add operation, and take the id
 /// directly — no stdout text to parse, so a malformed id can no longer slip
 /// past a text-shape check unnoticed.
 pub(super) fn inprocess_pw_add(
@@ -91,8 +90,8 @@ pub(super) fn inprocess_pw_add(
                 message: error.to_string(),
             }
         })?;
-    let mediator = crate::engines::pending_work::pending_work_mediator(&cfg);
-    let result = mediator.send_now(command);
+    let store = pwf_infra::obsidian::ObsidianPendingWorkStore::new(cfg);
+    let result = pwf_application::pending_work::add::execute(command, &store);
     match &result {
         Ok(added) => crate::engines::pending_work::emit_created_section_diagnostic(added),
         Err(error) => {
@@ -145,7 +144,7 @@ mod tests {
     // invisible to it (PWF project memory: "conformance stub masks protocol
     // break"). This drives the real bridge wrapper (`inprocess_pw_add`) —
     // synthetic-Args build, shared `AddPendingWorkItem` command construction,
-    // mediator send, and id extraction
+    // direct application execution, and id extraction
     // included — and asserts on real returned/on-disk data rather than
     // pre-rendered text, so a wrapper-confined regression (e.g. returning the
     // wrong `AddedItem` field as the id) fails here.

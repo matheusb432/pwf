@@ -139,8 +139,9 @@ mod tests {
     }
 
     #[test]
-    fn inferred_title_empty_lead_uses_pending_work_fallback() {
-        assert_eq!(inferred_title("/ only second"), "pending work");
+    fn inferred_title_empty_lead_uses_domain_fallback() {
+        assert_eq!(inferred_title("/ only second"), "n/a");
+        assert_eq!(inferred_title("/c context"), "n/a");
     }
 
     #[test]

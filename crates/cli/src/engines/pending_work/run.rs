@@ -1,17 +1,17 @@
 // Top-level dispatcher for `pwf <verb>`. The `route` verb is delegated to the
 // `pw` word-router in `route`; everything else dispatches here.
 
-use cqrsy::Sender;
-use pwf_application::AddPendingWorkItem;
+use pwf_application::pending_work::add::AddPendingWorkItem;
 use pwf_domain::pending_work::{HANDOFF_TAG, MutationOutcome};
+use pwf_infra::obsidian::ObsidianPendingWorkStore;
 
 use super::{
     actions::{
         AddedItem, EngineOutcome, ListParams, emit_created_section_diagnostic,
         emit_created_section_diagnostic_for_error,
         list::{ListScope, OrderSpec},
-        pending_work_mediator, render_outcome_confirmation, run_cancel, run_done, run_list_query,
-        run_remove, run_reopen, run_update,
+        render_outcome_confirmation, run_cancel, run_done, run_list_query, run_remove, run_reopen,
+        run_update,
     },
     agent::{probe::RealProbe, verify::verify_text_with_probe},
     color::use_color,
@@ -43,9 +43,10 @@ use crate::{
 /// integration-test surface that drives pw verbs by `Args` directly, which
 /// needs the plain, un-ANSI'd text (see `confirm_render`'s doc comment).
 /// Handoff's in-process `add` seam reuses the same `AddPendingWorkItem`
-/// request build + mediator path as top-level `pwf add`, but consumes the
-/// typed `AddedItem` instead of raw text; handoff no longer calls `run_args`
-/// at all (PWF-0117 retired its `done`/`cancel`/`reopen`/`refresh` verbs).
+/// request build + direct application operation as top-level `pwf add`, but
+/// consumes the typed `AddedItem` instead of raw text; handoff no longer calls
+/// `run_args` at all (PWF-0117 retired its `done`/`cancel`/`reopen`/`refresh`
+/// verbs).
 pub fn run(command: &PendingWorkCommand) -> Result<String, String> {
     let outcome = run_typed(command).map_err(String::from)?;
     let on = use_color(command.args().color);
@@ -226,11 +227,11 @@ fn run_add(cfg: &Config, args: &Args, date: &str) -> Result<AddedItem, errors::P
     // item created. `--continue-handoff` is excluded: that flag means the pw
     // item continues an *existing* handoff, so it must never scaffold a new
     // one. `handoff add`'s in-process seam (`inprocess_pw_add`) never reaches
-    // this function — it sends the built command straight through the
-    // mediator — but the external `--pending-work-script` allocator's
-    // canonical protocol (`pw_bridge::spawn_pw_add`) is `add --tag handoff
-    // --continue-handoff`, and an operator's allocator script commonly just
-    // execs the real `pwf` binary, which *does* land here.
+    // this function — it executes the built command directly through the
+    // application operation — but the external `--pending-work-script`
+    // allocator's canonical protocol (`pw_bridge::spawn_pw_add`) is `add --tag
+    // handoff --continue-handoff`, and an operator's allocator script commonly
+    // just execs the real `pwf` binary, which *does* land here.
     let scaffold = if !args.continue_handoff
         && command
             .tags
@@ -247,8 +248,8 @@ fn run_add(cfg: &Config, args: &Args, date: &str) -> Result<AddedItem, errors::P
         None
     };
 
-    let mediator = pending_work_mediator(cfg);
-    let result = mediator.send_now(command);
+    let store = ObsidianPendingWorkStore::new(cfg.clone());
+    let result = pwf_application::pending_work::add::execute(command, &store);
     match result {
         Ok(added) => {
             emit_created_section_diagnostic(&added);

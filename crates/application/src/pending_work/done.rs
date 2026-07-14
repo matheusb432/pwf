@@ -1,10 +1,7 @@
-use cqrsy::Sender;
 use pwf_domain::pending_work::AddedItem;
 
-use crate::{
-    AddPendingWorkItem,
-    ports::{CompleteItemSpec, PendingWorkWriteStore, StatusTransitionOutput},
-};
+use super::add::{AddPendingWorkError, AddPendingWorkItem};
+use crate::ports::{CompleteItemSpec, PendingWorkWriteStore, StatusTransitionOutput};
 
 #[derive(Debug, Clone)]
 pub struct CompletePendingWork {
@@ -20,44 +17,48 @@ pub enum CompletePendingWorkError {
     #[error("{0}")]
     WriteStore(Box<dyn std::error::Error + Send + Sync>),
     #[error("{0}")]
-    ReviewTask(Box<dyn std::error::Error + Send + Sync>),
+    ReviewTask(#[source] AddPendingWorkError),
 }
 
 #[cqrsy::handler(command)]
-pub async fn handle(
+pub fn execute(
+    command: CompletePendingWork,
     store: &impl PendingWorkWriteStore,
-    add_sender: &impl Sender<AddPendingWorkItem>,
-    cmd: CompletePendingWork,
 ) -> Result<StatusTransitionOutput, CompletePendingWorkError> {
-    let commits = frontmatter_value(&cmd.commits);
+    let commits = frontmatter_value(&command.commits);
     let closed = store
         .complete_item(CompleteItemSpec {
-            id: cmd.id.clone(),
-            completed: cmd.completed.clone(),
-            report: cmd.report,
+            id: command.id.clone(),
+            completed: command.completed.clone(),
+            report: command.report,
             commits: commits.clone(),
         })
         .map_err(|error| CompletePendingWorkError::WriteStore(Box::new(error)))?;
     let mut text = closed.to_output_text();
-    if cmd.review {
-        let review = add_sender
-            .send(AddPendingWorkItem {
+    let review_item = if command.review {
+        let review = super::add::execute(
+            AddPendingWorkItem {
                 project_name: closed.project.clone(),
                 prompt: review_task_prompt(&closed.id, commits.as_deref()),
                 title: None,
-                created: cmd.completed,
+                created: command.completed,
                 section: Some("Human".to_string()),
                 prereq: None,
                 effort: None,
                 tags: None,
-            })
-            .await
-            .map_err(|error| CompletePendingWorkError::ReviewTask(Box::new(error)))?;
+            },
+            store,
+        )
+        .map_err(CompletePendingWorkError::ReviewTask)?;
         text.push_str(&added_item_raw_text(&review));
-    }
+        Some(review)
+    } else {
+        None
+    };
     Ok(StatusTransitionOutput {
         text,
         diagnostics: closed.diagnostics,
+        review_item,
     })
 }
 
@@ -78,11 +79,17 @@ pub(super) fn frontmatter_value(values: &[String]) -> Option<String> {
 }
 
 pub(super) fn review_task_prompt(reviewed_id: &str, range: Option<&str>) -> String {
-    let diff = match range {
-        Some(range) => format!("git-tools diff {range}"),
-        None => "git-tools diff".to_string(),
+    let (title, diff) = match range {
+        Some(range) => (
+            format!("review {reviewed_id}, commits: {range}"),
+            format!("git-tools diff {range}"),
+        ),
+        None => (
+            format!("review {reviewed_id}"),
+            "git-tools diff".to_string(),
+        ),
     };
-    format!("review {reviewed_id} & {diff} & git-tools diff-subrepos")
+    format!("{title} / {diff} / git-tools diff-subrepos")
 }
 
 pub(super) fn added_item_raw_text(item: &AddedItem) -> String {
@@ -93,4 +100,47 @@ pub(super) fn added_item_raw_text(item: &AddedItem) -> String {
         item.title,
         item.note_path.display()
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CompletePendingWorkError, frontmatter_value, review_task_prompt};
+    use crate::pending_work::add::AddPendingWorkError;
+
+    fn values(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_string()).collect()
+    }
+
+    #[test]
+    fn commit_ranges_trim_split_and_deduplicate_in_first_seen_order() {
+        assert_eq!(
+            frontmatter_value(&values(&[" a..b,c..d ", "a..b", " e..f "])),
+            Some("a..b, c..d, e..f".to_string())
+        );
+        assert_eq!(frontmatter_value(&values(&["", "  ", ","])), None);
+    }
+
+    #[test]
+    fn review_prompt_uses_scoped_or_bare_diff() {
+        assert_eq!(
+            review_task_prompt("PWF-0128", Some("a..b")),
+            "review PWF-0128, commits: a..b / git-tools diff a..b / git-tools diff-subrepos"
+        );
+        assert_eq!(
+            review_task_prompt("PWF-0128", None),
+            "review PWF-0128 / git-tools diff / git-tools diff-subrepos"
+        );
+    }
+
+    #[test]
+    fn review_task_error_retains_the_concrete_add_error() {
+        let error = CompletePendingWorkError::ReviewTask(AddPendingWorkError::WriteStore(
+            Box::new(std::io::Error::other("index write failed")),
+        ));
+
+        let CompletePendingWorkError::ReviewTask(source) = error else {
+            panic!("expected review-task error");
+        };
+        assert!(matches!(source, AddPendingWorkError::WriteStore(_)));
+    }
 }

@@ -14,9 +14,13 @@ pub enum RemovePendingWorkError {
 }
 
 #[cqrsy::handler(command)]
-pub fn handle(
-    store: &impl PendingWorkWriteStore,
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "the cqrsy remove operation owns its request by contract"
+)]
+pub fn execute(
     cmd: RemovePendingWorkItem,
+    store: &impl PendingWorkWriteStore,
 ) -> Result<RemovedItem, RemovePendingWorkError> {
     store
         .remove_item(&cmd.id)

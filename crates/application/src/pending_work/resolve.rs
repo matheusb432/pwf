@@ -26,9 +26,13 @@ where
 }
 
 #[cqrsy::handler(query)]
-pub fn handle(
-    store: &impl PendingWorkResolveStore,
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "the cqrsy resolve operation owns its request by contract"
+)]
+pub fn execute(
     query: ResolvePendingWorkItem,
+    store: &impl PendingWorkResolveStore,
 ) -> Result<ResolvePendingWorkOutput, ResolvePendingWorkError> {
     resolve_from_store(store, &query.id, query.show)
 }
