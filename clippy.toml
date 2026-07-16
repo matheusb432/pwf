@@ -7,3 +7,6 @@
 # Internal binaries: let Clippy suggest better signatures freely. Wrong for a repo publishing a
 # library crate — grow a which-variant override before opting one in.
 avoid-breaking-exported-api = false
+
+# Pairs with the fleet `cognitive_complexity` opt-in; matches the fleet threshold (clippy default is 25).
+cognitive-complexity-threshold = 30

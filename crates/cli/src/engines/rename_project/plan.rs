@@ -66,7 +66,7 @@ pub fn enumerate_items(
     folder: &Path,
     old_code: &str,
     old_label: &str,
-) -> Result<Vec<ItemFile>, pwf_infra::obsidian::ObsidianPendingWorkStoreError> {
+) -> Result<Vec<ItemFile>, pwf_infra::obsidian::ObsidianStoreError> {
     let index = index_path(folder, old_label);
     pwf_infra::obsidian::inspect_project_task_notes(folder, &index, old_code, old_label).map(
         |tasks| {

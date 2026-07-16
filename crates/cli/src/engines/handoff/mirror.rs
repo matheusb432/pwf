@@ -9,8 +9,8 @@ use std::{
     sync::LazyLock,
 };
 
-use pwf_domain::pending_work::{HANDOFF_TAG, Tags};
-use pwf_infra::obsidian::ObsidianPendingWorkStore;
+use pwf_application::{AppDbStore, PendingWorkItem, pending_work::tags_of::QueryItemTags};
+use pwf_domain::pending_work::{HANDOFF_TAG, ProjectRegistry, Tags};
 use regex::Regex;
 
 use super::{
@@ -19,7 +19,7 @@ use super::{
     paths::{expand_home, handoff_paths, slug},
     scaffold::scaffold,
 };
-use crate::{config::Config, frontmatter, fs_atomic::write_text_atomic, regexes::STATUS_LINE_RE};
+use crate::{config::Config, fs_atomic::write_text_atomic, regexes::STATUS_LINE_RE};
 
 /// Errors from the handoff mirror gate and (in a later task) its mirroring ops.
 #[derive(Debug, thiserror::Error)]
@@ -118,53 +118,53 @@ pub(crate) struct GateItem {
 
 /// `Ok(Some)` iff `id` resolves to a note whose tags contain `handoff`.
 /// Missing note / no tags / untagged → `Ok(None)` so the pw handler keeps
-/// producing its canonical not-found/skip behavior.
-pub(crate) fn handoff_gate(cfg: &Config, id: &str) -> Result<Option<GateItem>, MirrorError> {
-    let store = ObsidianPendingWorkStore::new(cfg.clone());
-    let Some((project, note_path)) =
-        store
-            .note_with_project(id)
-            .map_err(|error| MirrorError::Ledger {
-                message: error.to_string(),
-            })?
+/// producing its canonical not-found/skip behavior. Reads the item's tags
+/// (open or closed) through the application `tags_of` query; a non-canonical id
+/// or an unmanaged prefix is surfaced as a `Ledger` error, exactly as the
+/// former note lookup was.
+pub(crate) fn handoff_gate(
+    cfg: &Config,
+    store: &impl AppDbStore<PendingWorkItem>,
+    projects: &ProjectRegistry,
+    id: &str,
+) -> Result<Option<GateItem>, MirrorError> {
+    let Some(view) = pwf_application::pending_work::tags_of::execute(
+        QueryItemTags { id: id.to_string() },
+        store,
+        projects,
+    )
+    .map_err(|error| MirrorError::Ledger {
+        message: error.to_string(),
+    })?
     else {
         return Ok(None);
     };
-    let Ok(raw) = std::fs::read_to_string(&note_path) else {
+    let Some(tags_raw) = view.tags else {
         return Ok(None);
     };
-    let parsed = frontmatter::parse(&raw);
-    let Some(tags_raw) = parsed.frontmatter.get("tags") else {
-        return Ok(None);
-    };
-    let canonical_id = parsed
-        .frontmatter
-        .get("id")
-        .cloned()
-        .unwrap_or_else(|| id.to_string());
-    let tags = Tags::parse_frontmatter(tags_raw).map_err(|_| MirrorError::InvalidTags {
-        id: canonical_id.clone(),
-        raw: tags_raw.clone(),
+    let tags = Tags::parse_frontmatter(&tags_raw).map_err(|_| MirrorError::InvalidTags {
+        id: view.id.clone(),
+        raw: tags_raw,
     })?;
     if !tags.contains_name(HANDOFF_TAG) {
         return Ok(None);
     }
-    let repo_raw = cfg.projects.get(&project).cloned().unwrap_or_default();
+    let repo_raw = cfg.projects.get(&view.project).cloned().unwrap_or_default();
     if repo_raw.trim().is_empty() {
         return Err(MirrorError::UnmanagedProject {
-            id: canonical_id,
-            project,
+            id: view.id,
+            project: view.project,
         });
     }
     let repo_root = PathBuf::from(expand_home(&repo_raw));
     if !repo_root.exists() {
         return Err(MirrorError::RepoRootMissing {
-            id: canonical_id,
+            id: view.id,
             path: repo_root,
         });
     }
     Ok(Some(GateItem {
-        id: canonical_id,
+        id: view.id,
         repo_root,
     }))
 }
@@ -550,7 +550,9 @@ mod tests {
         write_config(&cfg_path, &notes, "test-project", &repo.to_string_lossy());
         let cfg = crate::config::load(&cfg_path.to_string_lossy(), None).unwrap();
 
-        let result = handoff_gate(&cfg, "TST-0001").unwrap();
+        let store = crate::engines::pending_work::store_for(&cfg);
+        let projects = crate::engines::pending_work::project_registry(&cfg);
+        let result = handoff_gate(&cfg, &store, &projects, "TST-0001").unwrap();
 
         assert!(result.is_none());
     }
@@ -568,7 +570,9 @@ mod tests {
         write_config(&cfg_path, &notes, "test-project", &repo.to_string_lossy());
         let cfg = crate::config::load(&cfg_path.to_string_lossy(), None).unwrap();
 
-        let result = handoff_gate(&cfg, "TST-9999").unwrap();
+        let store = crate::engines::pending_work::store_for(&cfg);
+        let projects = crate::engines::pending_work::project_registry(&cfg);
+        let result = handoff_gate(&cfg, &store, &projects, "TST-9999").unwrap();
 
         assert!(result.is_none());
     }
@@ -591,7 +595,9 @@ mod tests {
         write_config(&cfg_path, &notes, "test-project", &repo.to_string_lossy());
         let cfg = crate::config::load(&cfg_path.to_string_lossy(), None).unwrap();
 
-        let result = handoff_gate(&cfg, "TST-0001").unwrap();
+        let store = crate::engines::pending_work::store_for(&cfg);
+        let projects = crate::engines::pending_work::project_registry(&cfg);
+        let result = handoff_gate(&cfg, &store, &projects, "TST-0001").unwrap();
 
         let item = result.expect("tagged item with existing repo should gate to Some");
         assert_eq!(item.id, "TST-0001");
@@ -615,7 +621,9 @@ mod tests {
         write_config(&cfg_path, &notes, "test-project", &repo.to_string_lossy());
         let cfg = crate::config::load(&cfg_path.to_string_lossy(), None).unwrap();
 
-        let err = handoff_gate(&cfg, "TST-0001").unwrap_err();
+        let store = crate::engines::pending_work::store_for(&cfg);
+        let projects = crate::engines::pending_work::project_registry(&cfg);
+        let err = handoff_gate(&cfg, &store, &projects, "TST-0001").unwrap_err();
 
         assert_matches!(
             err,
@@ -640,7 +648,9 @@ mod tests {
         write_config(&cfg_path, &notes, "test-project", "");
         let cfg = crate::config::load(&cfg_path.to_string_lossy(), None).unwrap();
 
-        let err = handoff_gate(&cfg, "TST-0001").unwrap_err();
+        let store = crate::engines::pending_work::store_for(&cfg);
+        let projects = crate::engines::pending_work::project_registry(&cfg);
+        let err = handoff_gate(&cfg, &store, &projects, "TST-0001").unwrap_err();
 
         assert_matches!(
             err,
@@ -667,7 +677,9 @@ mod tests {
         write_config(&cfg_path, &notes, "test-project", &repo.to_string_lossy());
         let cfg = crate::config::load(&cfg_path.to_string_lossy(), None).unwrap();
 
-        let result = handoff_gate(&cfg, "TST-0001").unwrap();
+        let store = crate::engines::pending_work::store_for(&cfg);
+        let projects = crate::engines::pending_work::project_registry(&cfg);
+        let result = handoff_gate(&cfg, &store, &projects, "TST-0001").unwrap();
 
         let item = result.expect("closed tagged item should still gate");
         assert_eq!(item.id, "TST-0001");

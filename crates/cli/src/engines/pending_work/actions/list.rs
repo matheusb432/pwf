@@ -1,8 +1,10 @@
 // Action: list.
 
-use pwf_application::pending_work::list::{GetPendingWork, GetPendingWorkError};
+use pwf_application::{
+    AppDbStore, PendingWorkItem,
+    pending_work::list::{GetPendingWork, GetPendingWorkError},
+};
 use pwf_domain::pending_work::Tags;
-use pwf_infra::obsidian::ObsidianPendingWorkStore;
 
 use super::super::{errors::PendingWorkError, render::render_list};
 use crate::config::Config;
@@ -223,9 +225,10 @@ pub(in crate::engines::pending_work) struct ListParams<'a> {
 /// Shared list query composition for `pwf list` and the hidden `route` word-router.
 pub(in crate::engines::pending_work) fn run_list_query(
     cfg: &Config,
+    store: &impl AppDbStore<PendingWorkItem>,
     params: ListParams<'_>,
 ) -> Result<String, PendingWorkError> {
-    let store = ObsidianPendingWorkStore::new(cfg.clone());
+    let registry = crate::engines::pending_work::run::project_registry(cfg);
     let result = pwf_application::pending_work::list::execute(
         GetPendingWork {
             only_project: params.only_project.map(str::to_owned),
@@ -235,7 +238,8 @@ pub(in crate::engines::pending_work) fn run_list_query(
             tags: params.tags.cloned(),
             order: params.order.to_domain(),
         },
-        &store,
+        store,
+        &registry,
     )
     .map_err(map_get_pending_work_error)?;
     Ok(render_query_result(cfg, params, &result))
@@ -300,9 +304,11 @@ mod tests {
             None,
         )
         .unwrap();
+        let store = crate::engines::pending_work::store_for(&cfg);
 
         let err = run_list_query(
             &cfg,
+            &store,
             ListParams {
                 only_project: None,
                 long: false,

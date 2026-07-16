@@ -188,6 +188,15 @@ pub(super) fn set_prereq_text(content: &str, value: Option<&str>) -> String {
     )
 }
 
+pub(super) fn set_completed_text(content: &str, value: Option<&str>) -> String {
+    set_frontmatter_line(
+        content,
+        &COMPLETED_LINE_RE,
+        &COMPLETED_LINE_NL_RE,
+        value.map(|value| format!("completed: {value}")),
+    )
+}
+
 pub(super) fn set_commits_text(content: &str, value: Option<&str>) -> String {
     set_frontmatter_line(
         content,

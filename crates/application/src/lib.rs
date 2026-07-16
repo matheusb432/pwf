@@ -2,9 +2,8 @@ pub mod pending_work;
 pub mod ports;
 
 pub use ports::{
-    AddItemSpec, CancelItemSpec, ClosedItem, ClosedItemAction, CompleteItemSpec,
-    PendingWorkReadStore, PendingWorkResolveStore, PendingWorkWriteStore, ReopenedItem,
-    ResolvePendingWorkOutput, StatusTransitionDiagnostics, StatusTransitionOutput, UpdateItemSpec,
+    AppDbStore, IndexEntry, IndexEntryState, IndexPlacement, IndexSection, ItemPatch,
+    Materialization, NewItem, NoteMarkdownSource, PendingWorkItem, Record, RecordId,
 };
 
 #[cfg(test)]

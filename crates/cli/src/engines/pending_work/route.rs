@@ -2,6 +2,8 @@
 // bare `pwf <words…>`). Create paths were removed in PWF-0034 — the only
 // create form is `pwf add <project> "<prompt>"`; bare words error with a hint.
 
+use pwf_application::{AppDbStore, PendingWorkItem};
+
 use super::{
     actions::{
         ListParams,
@@ -23,7 +25,12 @@ const ROUTE_ORDER: OrderSpec = OrderSpec {
     direction: OrderDirection::Asc,
 };
 
-pub(super) fn run_route(cfg: &Config, args: &Args, date: &str) -> Result<String, PendingWorkError> {
+pub(super) fn run_route(
+    cfg: &Config,
+    store: &impl AppDbStore<PendingWorkItem>,
+    args: &Args,
+    date: &str,
+) -> Result<String, PendingWorkError> {
     let route_words: Vec<&str> = args
         .words
         .iter()
@@ -36,6 +43,7 @@ pub(super) fn run_route(cfg: &Config, args: &Args, date: &str) -> Result<String,
         let scope = ListScope::from_flags(args.human, args.future, args.all)?;
         return run_list_query(
             cfg,
+            store,
             ListParams {
                 only_project: None,
                 long: args.long,
@@ -65,7 +73,11 @@ pub(super) fn run_route(cfg: &Config, args: &Args, date: &str) -> Result<String,
         let launcher = super::session::launcher_for(crate::cli::Agent::Claude);
         let probe = RealProbe::resolve(launcher.binary());
         let item = if let Some(vid) = verify_id {
-            Some(find_pending_item(cfg, vid)?)
+            Some(find_pending_item(
+                store,
+                &super::run::project_registry(cfg),
+                vid,
+            )?)
         } else {
             None
         };
@@ -103,6 +115,7 @@ pub(super) fn run_route(cfg: &Config, args: &Args, date: &str) -> Result<String,
         let scope = ListScope::from_flags(args.human, args.future, args.all)?;
         return run_list_query(
             cfg,
+            store,
             ListParams {
                 only_project: Some(&project_name),
                 long: args.long,
@@ -144,9 +157,15 @@ mod tests {
     #[test]
     fn removed_create_route_returns_typed_error_with_add_hint() {
         let cfg = cfg();
+        let store = super::super::store_for(&cfg);
 
-        let err =
-            run_route(&cfg, &args(&["add", "glep-shimeji", "do it"]), "2026-01-01").unwrap_err();
+        let err = run_route(
+            &cfg,
+            &store,
+            &args(&["add", "glep-shimeji", "do it"]),
+            "2026-01-01",
+        )
+        .unwrap_err();
 
         assert_matches!(err, errors::PendingWorkError::RouteCreateRejected);
         assert_eq!(err.to_string(), errors::ADD_HINT);

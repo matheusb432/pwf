@@ -61,6 +61,14 @@ fn install_and_update_are_known_verbs() {
 }
 
 #[test]
+fn check_architecture_is_a_known_verb() {
+    xtask()
+        .args(["check-architecture", "--help"])
+        .assert()
+        .success();
+}
+
+#[test]
 fn unknown_verb_is_rejected() {
     xtask()
         .arg("definitely-not-a-verb")

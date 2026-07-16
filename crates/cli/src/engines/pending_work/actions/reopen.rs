@@ -1,20 +1,32 @@
 // Action: reopen (the inverse of done/cancel).
 
-use pwf_application::pending_work::reopen::{ReopenPendingWork, ReopenPendingWorkError};
-use pwf_infra::obsidian::ObsidianPendingWorkStore;
+use pwf_application::{
+    AppDbStore, IndexEntry, PendingWorkItem,
+    pending_work::reopen::{ReopenPendingWork, ReopenPendingWorkError},
+};
 
 use super::{
     super::{errors::PendingWorkError, run::require_id},
+    close_render::render_reopened,
     done::{map_store_error, mirror_commit_and_append},
 };
 use crate::{cli::Args, config::Config, engines::handoff::mirror};
 
-pub(in crate::engines::pending_work) fn run_reopen(
+pub(in crate::engines::pending_work) fn run_reopen<S>(
     cfg: &Config,
+    store: &S,
     args: &Args,
-) -> Result<String, PendingWorkError> {
+) -> Result<String, PendingWorkError>
+where
+    S: AppDbStore<PendingWorkItem> + AppDbStore<IndexEntry>,
+{
     let id = require_id(args, "reopen")?;
-    let gate = mirror::handoff_gate(cfg, id)?;
+    let gate = mirror::handoff_gate(
+        cfg,
+        store,
+        &crate::engines::pending_work::run::project_registry(cfg),
+        id,
+    )?;
     // Inner None = the pair is already active (idempotent skip, FR-0021).
     let pending = gate
         .as_ref()
@@ -22,17 +34,18 @@ pub(in crate::engines::pending_work) fn run_reopen(
         .transpose()?
         .flatten();
 
-    let store = ObsidianPendingWorkStore::new(cfg.clone());
-    let text = pwf_application::pending_work::reopen::execute(
+    let outcome = pwf_application::pending_work::reopen::execute(
         ReopenPendingWork { id: id.to_string() },
-        &store,
+        store,
+        &crate::engines::pending_work::run::project_registry(cfg),
     )
     .map_err(map_reopen_error)?;
-    mirror_commit_and_append(text, gate, pending, "reopened")
+    mirror_commit_and_append(render_reopened(&outcome), gate, pending, "reopened")
 }
 
 fn map_reopen_error(error: ReopenPendingWorkError) -> PendingWorkError {
     match error {
+        ReopenPendingWorkError::ItemNotFound { id } => PendingWorkError::ItemNotFound { id },
         ReopenPendingWorkError::WriteStore(source) => map_store_error(source.as_ref())
             .unwrap_or_else(|| PendingWorkError::ApplicationWrite(source.to_string())),
     }
@@ -88,7 +101,8 @@ mod tests {
         let (stage, cfg) = stage_done_item();
         let project = stage.path().join("notes/glep-shimeji");
 
-        let out = run_reopen(&cfg, &args("GLP-0001")).unwrap();
+        let store = crate::engines::pending_work::store_for(&cfg);
+        let out = run_reopen(&cfg, &store, &args("GLP-0001")).unwrap();
 
         assert!(out.starts_with("Reopened GLP-0001"), "got: {out}");
         let note = std::fs::read_to_string(project.join("GLP-0001.md")).unwrap();
@@ -112,7 +126,8 @@ mod tests {
         )
         .unwrap();
 
-        let out = run_reopen(&cfg, &args("glp-0001")).unwrap();
+        let store = crate::engines::pending_work::store_for(&cfg);
+        let out = run_reopen(&cfg, &store, &args("glp-0001")).unwrap();
 
         assert!(out.starts_with("Reopened GLP-0001"), "got: {out}");
         assert!(
@@ -137,7 +152,8 @@ mod tests {
         )
         .unwrap();
 
-        let out = run_reopen(&cfg, &args("GLP-0001")).unwrap();
+        let store = crate::engines::pending_work::store_for(&cfg);
+        let out = run_reopen(&cfg, &store, &args("GLP-0001")).unwrap();
 
         assert!(out.contains("already active"), "got: {out}");
     }
@@ -145,14 +161,16 @@ mod tests {
     #[test]
     fn reopen_unknown_id_errors() {
         let (_stage, cfg) = stage_done_item();
-        let err = run_reopen(&cfg, &args("GLP-9999")).unwrap_err();
+        let store = crate::engines::pending_work::store_for(&cfg);
+        let err = run_reopen(&cfg, &store, &args("GLP-9999")).unwrap_err();
         assert!(matches!(err, PendingWorkError::ItemNotFound { .. }));
     }
 
     #[test]
     fn reopen_missing_id_errors() {
         let (_stage, cfg) = stage_done_item();
-        let err = run_reopen(&cfg, &Args::default()).unwrap_err();
+        let store = crate::engines::pending_work::store_for(&cfg);
+        let err = run_reopen(&cfg, &store, &Args::default()).unwrap_err();
         assert!(matches!(err, PendingWorkError::MissingId { action } if action == "reopen"));
     }
 }

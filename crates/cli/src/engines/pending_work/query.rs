@@ -1,7 +1,11 @@
 // Config loading + read-side store: project-name resolution and item enumeration.
 
-use pwf_application::PendingWorkReadStore;
-use pwf_infra::obsidian::{ObsidianPendingWorkStore, ObsidianPendingWorkStoreError};
+use pwf_application::{
+    AppDbStore, PendingWorkItem,
+    pending_work::find::{FindPendingWork, FindPendingWorkError},
+};
+use pwf_domain::pending_work::ProjectRegistry;
+use pwf_infra::obsidian::ObsidianStoreError;
 
 use super::{errors, model::Item};
 use crate::config::Config;
@@ -100,39 +104,76 @@ pub(super) fn resolve_project_repo(
 
 /// Whether `id` is still an open pending-work item (linked in a project index).
 /// Already-checked and unknown ids both report not-open.
-pub fn is_item_open(cfg: &Config, id: &str) -> Result<bool, String> {
-    is_item_open_typed(cfg, id).map_err(String::from)
+pub fn is_item_open(
+    store: &impl AppDbStore<PendingWorkItem>,
+    projects: &ProjectRegistry,
+    id: &str,
+) -> Result<bool, String> {
+    is_item_open_typed(store, projects, id).map_err(String::from)
 }
 
-pub(super) fn is_item_open_typed(cfg: &Config, id: &str) -> Result<bool, errors::PendingWorkError> {
-    match ObsidianPendingWorkStore::new(cfg.clone()).open_item(id) {
+pub(super) fn is_item_open_typed(
+    store: &impl AppDbStore<PendingWorkItem>,
+    projects: &ProjectRegistry,
+    id: &str,
+) -> Result<bool, errors::PendingWorkError> {
+    match pwf_application::pending_work::find::execute(
+        FindPendingWork { id: id.to_string() },
+        store,
+        projects,
+    ) {
         Ok(_) => Ok(true),
-        Err(ObsidianPendingWorkStoreError::ItemNotFound { .. }) => Ok(false),
-        Err(error) => Err(map_store_read_error(error)),
+        Err(FindPendingWorkError::ItemNotFound { .. }) => Ok(false),
+        Err(other) => Err(map_find_error(other)),
     }
 }
 
 /// Finds pending item by cli input id.
 /// Applies case insensitive search so "cfg-0001" matches to "CFG-0001".
-pub(super) fn find_pending_item(cfg: &Config, id: &str) -> Result<Item, errors::PendingWorkError> {
-    ObsidianPendingWorkStore::new(cfg.clone())
-        .open_item(id)
-        .map(Into::into)
-        .map_err(map_store_read_error)
+pub(super) fn find_pending_item(
+    store: &impl AppDbStore<PendingWorkItem>,
+    projects: &ProjectRegistry,
+    id: &str,
+) -> Result<Item, errors::PendingWorkError> {
+    pwf_application::pending_work::find::execute(
+        FindPendingWork { id: id.to_string() },
+        store,
+        projects,
+    )
+    .map(Into::into)
+    .map_err(map_find_error)
 }
 
-fn map_store_read_error(error: ObsidianPendingWorkStoreError) -> errors::PendingWorkError {
+/// Maps the application [`FindPendingWorkError`] to the pending-work engine's
+/// typed error, preserving today's exact display: not-found/ambiguous keep their
+/// verbatim messages, an unmanaged prefix renders like the legacy adapter, and a
+/// store read error special-cases the concrete `ObsidianStoreError` variants
+/// callers care about (downcasting through the boxed source).
+fn map_find_error(error: FindPendingWorkError) -> errors::PendingWorkError {
     match error {
-        ObsidianPendingWorkStoreError::ItemNotFound { id } => {
-            errors::PendingWorkError::ItemNotFound { id }
+        FindPendingWorkError::ItemNotFound { id } => errors::PendingWorkError::ItemNotFound { id },
+        FindPendingWorkError::AmbiguousId { id } => errors::PendingWorkError::AmbiguousId { id },
+        FindPendingWorkError::ReadStore(source) => map_store_read_error(source.as_ref()),
+        other @ FindPendingWorkError::UnknownPrefix { .. } => {
+            errors::PendingWorkError::ApplicationRead(other.to_string())
         }
-        ObsidianPendingWorkStoreError::AmbiguousId { id } => {
-            errors::PendingWorkError::AmbiguousId { id }
+    }
+}
+
+fn map_store_read_error(
+    error: &(dyn std::error::Error + Send + Sync + 'static),
+) -> errors::PendingWorkError {
+    match error.downcast_ref::<ObsidianStoreError>() {
+        Some(ObsidianStoreError::ItemNotFound { id }) => {
+            errors::PendingWorkError::ItemNotFound { id: id.clone() }
         }
-        ObsidianPendingWorkStoreError::NotesDirectoryNotFound { path } => {
-            errors::PendingWorkError::NotesDirectoryNotFound { path }
+        Some(ObsidianStoreError::AmbiguousId { id }) => {
+            errors::PendingWorkError::AmbiguousId { id: id.clone() }
         }
-        other => errors::PendingWorkError::ApplicationRead(other.to_string()),
+        Some(ObsidianStoreError::NotesDirectoryNotFound { path }) => {
+            errors::PendingWorkError::NotesDirectoryNotFound { path: path.clone() }
+        }
+        _ => errors::PendingWorkError::ApplicationRead(error.to_string()),
     }
 }
 
@@ -318,7 +359,9 @@ mod tests {
             notes_dir_overrides: BTreeMap::new(),
         };
 
-        let err = is_item_open_typed(&c, "PWF-0001").unwrap_err();
+        let store = super::super::store_for(&c);
+        let registry = super::super::run::project_registry(&c);
+        let err = is_item_open_typed(&store, &registry, "PWF-0001").unwrap_err();
 
         assert_matches!(
             err,
@@ -326,7 +369,7 @@ mod tests {
                 if path == "/path/that/does/not/exist"
         );
         assert_eq!(
-            is_item_open(&c, "PWF-0001").unwrap_err(),
+            is_item_open(&store, &registry, "PWF-0001").unwrap_err(),
             "Notes directory not found: /path/that/does/not/exist"
         );
     }
@@ -346,7 +389,9 @@ mod tests {
             notes_dir_overrides: BTreeMap::new(),
         };
 
-        let err = find_pending_item(&c, "PWF-9999").unwrap_err();
+        let store = super::super::store_for(&c);
+        let registry = super::super::run::project_registry(&c);
+        let err = find_pending_item(&store, &registry, "PWF-9999").unwrap_err();
 
         assert_matches!(
             err,

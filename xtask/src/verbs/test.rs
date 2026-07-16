@@ -68,8 +68,18 @@ fn plan(scope: Scope, verbose: bool) -> Vec<Step> {
     match scope {
         Scope::Unit => vec![unit()],
         Scope::E2e => vec![e2e()],
-        Scope::All => vec![unit(), e2e()],
+        Scope::All => vec![unit(), e2e(), check_architecture_step()],
     }
+}
+
+/// Spawns the `check-architecture` gate as its own step, `--all`-only: it isn't a `cargo test`
+/// run, so it stays out of `Unit`/`E2e` and only rides along with the full suite.
+fn check_architecture_step() -> Step {
+    Step::new(
+        "check-architecture",
+        "cargo",
+        ["run", "--quiet", "-p", "xtask", "--", "check-architecture"],
+    )
 }
 
 /// Runs the selected scope. For e2e, the binary suites exercise `target/release/pwf`, so the
@@ -127,11 +137,15 @@ mod tests {
     }
 
     #[test]
-    fn all_runs_unit_then_e2e() {
+    fn all_runs_unit_then_e2e_then_architecture_check() {
         let steps = plan(Scope::All, false);
-        assert_eq!(steps.len(), 2);
+        assert_eq!(steps.len(), 3);
         assert_eq!(argv(&steps[0]), ["test", "--quiet", "--workspace"]);
         assert!(argv(&steps[1]).contains(&"cli_e2e"));
+        assert_eq!(
+            argv(&steps[2]),
+            ["run", "--quiet", "-p", "xtask", "--", "check-architecture"]
+        );
     }
 
     #[derive(Parser)]

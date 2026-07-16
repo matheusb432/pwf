@@ -1,17 +1,18 @@
 // Action: done/cancel status transitions.
 
 use pwf_application::{
+    AppDbStore, IndexEntry, IndexSection, PendingWorkItem,
     pending_work::{
         cancel::{CancelPendingWork, CancelPendingWorkError},
         done::{CompletePendingWork, CompletePendingWorkError},
     },
-    ports::StatusTransitionOutput,
 };
-use pwf_infra::obsidian::{ObsidianPendingWorkStore, ObsidianPendingWorkStoreError};
+use pwf_infra::obsidian::ObsidianStoreError;
 
 use super::{
     super::{errors::PendingWorkError, naming::stamp_date},
     add::{emit_created_section_diagnostic, emit_created_section_diagnostic_for_error},
+    close_render::{emit_close_diagnostics, render_closed},
 };
 use crate::{
     cli::Args,
@@ -19,10 +20,14 @@ use crate::{
     engines::handoff::mirror::{self, GateItem, MirrorClose, PendingMove},
 };
 
-pub(in crate::engines::pending_work) fn run_done(
+pub(in crate::engines::pending_work) fn run_done<S>(
     cfg: &Config,
+    store: &S,
     args: &Args,
-) -> Result<String, PendingWorkError> {
+) -> Result<String, PendingWorkError>
+where
+    S: AppDbStore<PendingWorkItem> + AppDbStore<IndexEntry> + AppDbStore<IndexSection>,
+{
     let id = args
         .id
         .as_deref()
@@ -30,12 +35,12 @@ pub(in crate::engines::pending_work) fn run_done(
     let completed = stamp_date(args.date.as_deref());
     let (gate, pending) = mirror_close_preflight(
         cfg,
+        store,
         id,
         MirrorClose::Done,
         &completed,
         args.report.as_deref(),
     )?;
-    let store = ObsidianPendingWorkStore::new(cfg.clone());
     let output = pwf_application::pending_work::done::execute(
         CompletePendingWork {
             id: id.to_string(),
@@ -44,20 +49,25 @@ pub(in crate::engines::pending_work) fn run_done(
             commits: args.commits.clone(),
             review: args.review,
         },
-        &store,
+        store,
+        &crate::engines::pending_work::run::project_registry(cfg),
     )
     .map_err(map_complete_error)?;
     if let Some(review) = output.review_item.as_ref() {
         emit_created_section_diagnostic(review);
     }
-    emit_status_diagnostics(&output);
-    mirror_commit_and_append(output.text, gate, pending, "archived")
+    emit_close_diagnostics(&output);
+    mirror_commit_and_append(render_closed(&output), gate, pending, "archived")
 }
 
-pub(in crate::engines::pending_work) fn run_cancel(
+pub(in crate::engines::pending_work) fn run_cancel<S>(
     cfg: &Config,
+    store: &S,
     args: &Args,
-) -> Result<String, PendingWorkError> {
+) -> Result<String, PendingWorkError>
+where
+    S: AppDbStore<PendingWorkItem> + AppDbStore<IndexEntry> + AppDbStore<IndexSection>,
+{
     let id = args
         .id
         .as_deref()
@@ -68,6 +78,7 @@ pub(in crate::engines::pending_work) fn run_cancel(
     let completed = stamp_date(args.date.as_deref());
     let (gate, pending) = mirror_close_preflight(
         cfg,
+        store,
         id,
         MirrorClose::Cancelled,
         &completed,
@@ -81,14 +92,17 @@ pub(in crate::engines::pending_work) fn run_cancel(
         args.review,
     )
     .map_err(map_cancel_error)?;
-    let store = ObsidianPendingWorkStore::new(cfg.clone());
-    let output = pwf_application::pending_work::cancel::execute(command, &store)
-        .map_err(map_cancel_error)?;
+    let output = pwf_application::pending_work::cancel::execute(
+        command,
+        store,
+        &crate::engines::pending_work::run::project_registry(cfg),
+    )
+    .map_err(map_cancel_error)?;
     if let Some(review) = output.review_item.as_ref() {
         emit_created_section_diagnostic(review);
     }
-    emit_status_diagnostics(&output);
-    mirror_commit_and_append(output.text, gate, pending, "archived")
+    emit_close_diagnostics(&output);
+    mirror_commit_and_append(render_closed(&output), gate, pending, "archived")
 }
 
 /// Gate `id` onto its handoff (PWF-0117) and, when tagged, preflight the
@@ -98,12 +112,18 @@ pub(in crate::engines::pending_work) fn run_cancel(
 /// gate+preflight sequence exists exactly once.
 fn mirror_close_preflight(
     cfg: &Config,
+    store: &impl AppDbStore<PendingWorkItem>,
     id: &str,
     close: MirrorClose,
     date: &str,
     report: Option<&str>,
 ) -> Result<(Option<GateItem>, Option<PendingMove>), PendingWorkError> {
-    let gate = mirror::handoff_gate(cfg, id)?;
+    let gate = mirror::handoff_gate(
+        cfg,
+        store,
+        &crate::engines::pending_work::run::project_registry(cfg),
+        id,
+    )?;
     // Inner None = the linked handoff is already archived (e.g. re-running
     // `done` after it already succeeded): nothing to mirror, so the pw
     // handler's own already-closed error is what should surface.
@@ -141,21 +161,10 @@ pub(super) fn mirror_commit_and_append(
     }
 }
 
-fn emit_status_diagnostics(output: &StatusTransitionOutput) {
-    if let Some(project) = output.diagnostics.futuro_renamed_project.as_deref() {
-        eprintln!("info: normalized `## Futuro` header to `## Future` in {project}");
-    }
-    if !output.diagnostics.evicted_ids.is_empty() {
-        eprintln!(
-            "info: archived {} done item(s) past the section cap: {}",
-            output.diagnostics.evicted_ids.len(),
-            output.diagnostics.evicted_ids.join(", ")
-        );
-    }
-}
-
 fn map_complete_error(error: CompletePendingWorkError) -> PendingWorkError {
     match error {
+        CompletePendingWorkError::ItemNotFound { id } => PendingWorkError::ItemNotFound { id },
+        CompletePendingWorkError::EmptyReport => PendingWorkError::EmptyReport,
         CompletePendingWorkError::WriteStore(source) => map_store_error(source.as_ref())
             .unwrap_or_else(|| PendingWorkError::ApplicationWrite(source.to_string())),
         CompletePendingWorkError::ReviewTask(source) => {
@@ -168,6 +177,7 @@ fn map_complete_error(error: CompletePendingWorkError) -> PendingWorkError {
 fn map_cancel_error(error: CancelPendingWorkError) -> PendingWorkError {
     match error {
         CancelPendingWorkError::EmptyReport => PendingWorkError::EmptyReport,
+        CancelPendingWorkError::ItemNotFound { id } => PendingWorkError::ItemNotFound { id },
         CancelPendingWorkError::WriteStore(source) => map_store_error(source.as_ref())
             .unwrap_or_else(|| PendingWorkError::ApplicationWrite(source.to_string())),
         CancelPendingWorkError::ReviewTask(source) => {
@@ -180,22 +190,19 @@ fn map_cancel_error(error: CancelPendingWorkError) -> PendingWorkError {
 pub(super) fn map_store_error(
     source: &(dyn std::error::Error + Send + Sync + 'static),
 ) -> Option<PendingWorkError> {
-    let error = source.downcast_ref::<ObsidianPendingWorkStoreError>()?;
+    let error = source.downcast_ref::<ObsidianStoreError>()?;
     match error {
-        ObsidianPendingWorkStoreError::ItemNotFound { id } => {
+        ObsidianStoreError::ItemNotFound { id } => {
             Some(PendingWorkError::ItemNotFound { id: id.clone() })
         }
-        ObsidianPendingWorkStoreError::AmbiguousId { id } => {
+        ObsidianStoreError::AmbiguousId { id } => {
             Some(PendingWorkError::AmbiguousId { id: id.clone() })
         }
-        ObsidianPendingWorkStoreError::NotesDirectoryNotFound { path } => {
+        ObsidianStoreError::NotesDirectoryNotFound { path } => {
             Some(PendingWorkError::NotesDirectoryNotFound { path: path.clone() })
         }
-        ObsidianPendingWorkStoreError::WorkItemNoteMissing { path } => {
-            Some(PendingWorkError::WorkItemNoteMissing { path: path.clone() })
-        }
-        ObsidianPendingWorkStoreError::EmptyReport => Some(PendingWorkError::EmptyReport),
-        ObsidianPendingWorkStoreError::ExpectedOpenTaskMarker { note, line } => {
+        ObsidianStoreError::EmptyReport => Some(PendingWorkError::EmptyReport),
+        ObsidianStoreError::ExpectedOpenTaskMarker { note, line } => {
             Some(PendingWorkError::ExpectedOpenTaskMarker {
                 note: note.clone(),
                 line: *line,
@@ -214,7 +221,7 @@ mod tests {
 
     fn review_add_write_index_error() -> pwf_application::pending_work::add::AddPendingWorkError {
         pwf_application::pending_work::add::AddPendingWorkError::WriteStore(Box::new(
-            ObsidianPendingWorkStoreError::AddWriteIndexFile {
+            ObsidianStoreError::AddWriteIndexFile {
                 source: std::io::Error::other("index write failed"),
                 project: "glep-shimeji".to_string(),
                 created_section: Some("Human".to_string()),
@@ -267,7 +274,8 @@ mod tests {
     fn missing_id_returns_typed_error_with_legacy_display() {
         let (_stage, cfg) = stage_file_item();
 
-        let err = run_done(&cfg, &Args::default()).unwrap_err();
+        let store = crate::engines::pending_work::store_for(&cfg);
+        let err = run_done(&cfg, &store, &Args::default()).unwrap_err();
 
         assert_matches!(
             err,
@@ -319,7 +327,8 @@ mod tests {
             ..Args::default()
         };
 
-        let err = run_done(&cfg, &args).unwrap_err();
+        let store = crate::engines::pending_work::store_for(&cfg);
+        let err = run_done(&cfg, &store, &args).unwrap_err();
 
         assert_matches!(err, PendingWorkError::EmptyReport);
         assert_eq!(err.to_string(), "--report cannot be empty.");
@@ -336,7 +345,8 @@ mod tests {
             ..Args::default()
         };
 
-        let out = run_done(&cfg, &args).unwrap();
+        let store = crate::engines::pending_work::store_for(&cfg);
+        let out = run_done(&cfg, &store, &args).unwrap();
 
         assert!(out.starts_with("Done GLP-0001"), "got: {out}");
         assert!(out.contains("ADDED PWF TASK ["), "got: {out}");
@@ -351,7 +361,8 @@ mod tests {
             ..Args::default()
         };
 
-        let err = run_done(&cfg, &args).unwrap_err();
+        let store = crate::engines::pending_work::store_for(&cfg);
+        let err = run_done(&cfg, &store, &args).unwrap_err();
 
         assert_matches!(err, PendingWorkError::HandoffMirror(_));
         let item = std::fs::read_to_string(&item_path).unwrap();
@@ -371,7 +382,8 @@ mod tests {
             ..Args::default()
         };
 
-        let err = run_cancel(&cfg, &args).unwrap_err();
+        let store = crate::engines::pending_work::store_for(&cfg);
+        let err = run_cancel(&cfg, &store, &args).unwrap_err();
 
         assert_matches!(err, PendingWorkError::HandoffMirror(_));
         let item = std::fs::read_to_string(&item_path).unwrap();
@@ -429,7 +441,8 @@ mod tests {
             ..Args::default()
         };
 
-        let err = run_done(&cfg, &args).unwrap_err();
+        let store = crate::engines::pending_work::store_for(&cfg);
+        let err = run_done(&cfg, &store, &args).unwrap_err();
 
         assert_matches!(err, PendingWorkError::ItemNotFound { ref id } if id == "GLP-0001");
         let message = err.to_string();

@@ -2,8 +2,9 @@
 
 use std::path::Path;
 
-use pwf_application::pending_work::remove::RemovePendingWorkItem;
-use pwf_infra::obsidian::ObsidianPendingWorkStore;
+use pwf_application::{
+    AppDbStore, IndexEntry, PendingWorkItem, pending_work::remove::RemovePendingWorkItem,
+};
 
 use super::{
     super::{errors::PendingWorkError, model::Item, query::find_pending_item},
@@ -43,17 +44,22 @@ fn confirmation_question(item: &Item, item_path: &Path, handoff_path: Option<&Pa
 /// `Result<EngineOutcome, _>` because a declined interactive confirmation is
 /// still an `Ok` — it yields a `Text` abort message, not a `RemovedItem` —
 /// whereas `update` has no such abort path and always returns its typed item.
-pub(in crate::engines::pending_work) fn run_remove(
+pub(in crate::engines::pending_work) fn run_remove<S>(
     cfg: &Config,
+    store: &S,
     args: &Args,
     confirmer: &impl Confirm,
-) -> Result<EngineOutcome, PendingWorkError> {
+) -> Result<EngineOutcome, PendingWorkError>
+where
+    S: AppDbStore<PendingWorkItem> + AppDbStore<IndexEntry>,
+{
     let id = args
         .id
         .as_deref()
         .ok_or(PendingWorkError::MissingId { action: "remove" })?;
 
-    let item = find_pending_item(cfg, id)?;
+    let registry = crate::engines::pending_work::run::project_registry(cfg);
+    let item = find_pending_item(store, &registry, id)?;
     let item_file = item
         .file_path
         .as_deref()
@@ -68,7 +74,7 @@ pub(in crate::engines::pending_work) fn run_remove(
     // Gate onto the linked handoff (PWF-0117) and locate its file before any
     // prompt or mutation, so a tagged item with no matching handoff errors
     // up front instead of deleting the note and stranding a dangling tag.
-    let gate = mirror::handoff_gate(cfg, id)?;
+    let gate = mirror::handoff_gate(cfg, store, &registry, id)?;
     let handoff_path = gate.as_ref().map(mirror::preflight_delete).transpose()?;
 
     // Default-yes gate: an interactive operator can abort a mistaken delete.
@@ -84,12 +90,12 @@ pub(in crate::engines::pending_work) fn run_remove(
         }
     }
 
-    let store = ObsidianPendingWorkStore::new(cfg.clone());
     let removed = pwf_application::pending_work::remove::execute(
         RemovePendingWorkItem {
             id: item.id.clone(),
         },
-        &store,
+        store,
+        &registry,
     )
     .map_err(|error| PendingWorkError::ApplicationWrite(error.to_string()))?;
 
@@ -155,7 +161,8 @@ mod tests {
     fn missing_id_returns_typed_error_with_legacy_display() {
         let (_stage, cfg) = stage_file_item("- [ ] [[GLP-0001]]\n");
 
-        let err = run_remove(&cfg, &Args::default(), &NONINTERACTIVE).unwrap_err();
+        let store = crate::engines::pending_work::store_for(&cfg);
+        let err = run_remove(&cfg, &store, &Args::default(), &NONINTERACTIVE).unwrap_err();
 
         assert_matches!(
             err,
@@ -181,7 +188,8 @@ mod tests {
             ..Args::default()
         };
 
-        let err = run_remove(&cfg, &args, &NONINTERACTIVE).unwrap_err();
+        let store = crate::engines::pending_work::store_for(&cfg);
+        let err = run_remove(&cfg, &store, &args, &NONINTERACTIVE).unwrap_err();
 
         assert_matches!(err, PendingWorkError::RemoveRequiresFileModel);
         assert_eq!(
@@ -200,7 +208,8 @@ mod tests {
             ..Args::default()
         };
 
-        let err = run_remove(&cfg, &args, &NONINTERACTIVE).unwrap_err();
+        let store = crate::engines::pending_work::store_for(&cfg);
+        let err = run_remove(&cfg, &store, &args, &NONINTERACTIVE).unwrap_err();
 
         assert_matches!(
             err,
@@ -229,7 +238,8 @@ mod tests {
             answer: false,
         };
 
-        let out = run_remove(&cfg, &args_for("GLP-0001"), &declines)
+        let store = crate::engines::pending_work::store_for(&cfg);
+        let out = run_remove(&cfg, &store, &args_for("GLP-0001"), &declines)
             .unwrap()
             .into_raw_text();
 
@@ -256,7 +266,8 @@ mod tests {
             answer: true,
         };
 
-        let out = run_remove(&cfg, &args_for("GLP-0001"), &accepts)
+        let store = crate::engines::pending_work::store_for(&cfg);
+        let out = run_remove(&cfg, &store, &args_for("GLP-0001"), &accepts)
             .unwrap()
             .into_raw_text();
 
@@ -282,7 +293,8 @@ mod tests {
             ..args_for("GLP-0001")
         };
 
-        let out = run_remove(&cfg, &args, &would_decline)
+        let store = crate::engines::pending_work::store_for(&cfg);
+        let out = run_remove(&cfg, &store, &args, &would_decline)
             .unwrap()
             .into_raw_text();
 
@@ -295,7 +307,8 @@ mod tests {
         let (stage, cfg) = stage_file_item("- [ ] [[GLP-0001]]\n");
         let note = stage.path().join("notes/glep-shimeji/GLP-0001.md");
 
-        let out = run_remove(&cfg, &args_for("GLP-0001"), &NONINTERACTIVE)
+        let store = crate::engines::pending_work::store_for(&cfg);
+        let out = run_remove(&cfg, &store, &args_for("GLP-0001"), &NONINTERACTIVE)
             .unwrap()
             .into_raw_text();
 
@@ -399,7 +412,8 @@ mod tests {
         let (stage, cfg, _handoff_path) = stage_tagged_item(false);
         let note = stage.path().join("notes/glep-shimeji/GLP-0001.md");
 
-        let err = run_remove(&cfg, &args_for("GLP-0001"), &PanicIfConsulted).unwrap_err();
+        let store = crate::engines::pending_work::store_for(&cfg);
+        let err = run_remove(&cfg, &store, &args_for("GLP-0001"), &PanicIfConsulted).unwrap_err();
 
         assert_matches!(err, PendingWorkError::HandoffMirror(_));
         assert!(
@@ -417,7 +431,8 @@ mod tests {
             answer: false,
         };
 
-        let out = run_remove(&cfg, &args_for("GLP-0001"), &declines)
+        let store = crate::engines::pending_work::store_for(&cfg);
+        let out = run_remove(&cfg, &store, &args_for("GLP-0001"), &declines)
             .unwrap()
             .into_raw_text();
 
@@ -440,7 +455,8 @@ mod tests {
             answer: true,
         };
 
-        let out = run_remove(&cfg, &args_for("GLP-0001"), &accepts)
+        let store = crate::engines::pending_work::store_for(&cfg);
+        let out = run_remove(&cfg, &store, &args_for("GLP-0001"), &accepts)
             .unwrap()
             .into_raw_text();
 

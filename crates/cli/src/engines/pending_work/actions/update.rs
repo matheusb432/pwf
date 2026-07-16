@@ -1,16 +1,17 @@
 // Action: update.
 
-use pwf_application::pending_work::update::UpdatePendingWorkItem;
-use pwf_infra::obsidian::ObsidianPendingWorkStore;
+use pwf_application::{AppDbStore, PendingWorkItem, pending_work::update::UpdatePendingWorkItem};
+use pwf_domain::pending_work::ProjectRegistry;
 
 use super::{
     super::{commits, errors::PendingWorkError},
     outcome::UpdatedItem,
 };
-use crate::{cli::Args, config::Config};
+use crate::cli::Args;
 
 pub(in crate::engines::pending_work) fn run_update(
-    cfg: &Config,
+    store: &impl AppDbStore<PendingWorkItem>,
+    projects: &ProjectRegistry,
     args: &Args,
 ) -> Result<UpdatedItem, PendingWorkError> {
     let id = args
@@ -31,7 +32,6 @@ pub(in crate::engines::pending_work) fn run_update(
         return Err(PendingWorkError::NothingToUpdate);
     }
 
-    let store = ObsidianPendingWorkStore::new(cfg.clone());
     pwf_application::pending_work::update::execute(
         UpdatePendingWorkItem {
             id: id.to_string(),
@@ -46,7 +46,8 @@ pub(in crate::engines::pending_work) fn run_update(
             tags,
             tags_clear: args.tags_clear,
         },
-        &store,
+        store,
+        projects,
     )
     .map_err(|error| PendingWorkError::ApplicationWrite(error.to_string()))
 }
@@ -56,6 +57,7 @@ mod tests {
     use std::{assert_matches, path::Path};
 
     use super::*;
+    use crate::config::Config;
 
     fn cfg(notes: &Path) -> Config {
         crate::config::from_json(
@@ -86,7 +88,9 @@ mod tests {
             ..Args::default()
         };
 
-        let err = run_update(&cfg, &args).unwrap_err();
+        let store = crate::engines::pending_work::store_for(&cfg);
+        let projects = crate::engines::pending_work::run::project_registry(&cfg);
+        let err = run_update(&store, &projects, &args).unwrap_err();
 
         assert_matches!(
             err,
@@ -103,7 +107,9 @@ mod tests {
             ..Args::default()
         };
 
-        let err = run_update(&cfg, &args).unwrap_err();
+        let store = crate::engines::pending_work::store_for(&cfg);
+        let projects = crate::engines::pending_work::run::project_registry(&cfg);
+        let err = run_update(&store, &projects, &args).unwrap_err();
 
         assert_matches!(err, PendingWorkError::NothingToUpdate);
         assert_eq!(

@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 #[derive(Debug, thiserror::Error)]
-pub enum ObsidianPendingWorkStoreError {
+pub enum ObsidianStoreError {
     #[error("Cannot parse frontmatter property `{property}` in {}: {source}", path.display())]
     FrontmatterParse {
         path: PathBuf,
@@ -19,8 +19,6 @@ pub enum ObsidianPendingWorkStoreError {
     InvalidTaskId { path: PathBuf, value: String },
     #[error("More than one task has frontmatter id {id}: {}", paths.iter().map(|path| path.display().to_string()).collect::<Vec<_>>().join(", "))]
     DuplicateTaskId { id: String, paths: Vec<PathBuf> },
-    #[error("Unknown task id prefix `{prefix}` for {id}")]
-    UnknownTaskPrefix { id: String, prefix: String },
     #[error("Missing project-index frontmatter property `{property}` in {}", path.display())]
     MissingProjectIndexProperty {
         path: PathBuf,
@@ -48,8 +46,6 @@ pub enum ObsidianPendingWorkStoreError {
     },
     #[error("Notes directory not found: {path}")]
     NotesDirectoryNotFound { path: String },
-    #[error("Project '{project}' is not mapped to a repo in config/pending-work.json.")]
-    ProjectNotMappedToRepo { project: String },
     #[error("Project '{project}' has no work-item prefix in config/pending-work.json (prefixes).")]
     ProjectMissingPrefix { project: String },
     #[error("Cannot create project dir: {source}")]
@@ -82,12 +78,8 @@ pub enum ObsidianPendingWorkStoreError {
     ItemNotFound { id: String },
     #[error("Pending-work id is ambiguous: {id}")]
     AmbiguousId { id: String },
-    #[error("remove only supports file-model pending-work items.")]
-    RemoveRequiresFileModel,
     #[error("update only supports file-model pending-work items.")]
     UpdateRequiresFileModel,
-    #[error("Work-item note missing: {}", path.display())]
-    WorkItemNoteMissing { path: PathBuf },
     #[error("Index link not found for {id}.")]
     IndexLinkNotFound { id: String },
     #[error(
@@ -112,9 +104,13 @@ pub enum ObsidianPendingWorkStoreError {
     EmptyAppend,
     #[error("Expected open task marker at {note}:{line}. The note may have changed.")]
     ExpectedOpenTaskMarker { note: String, line: usize },
+    #[error(
+        "index sections are managed implicitly by index-entry writes; direct {op} is unsupported."
+    )]
+    IndexSectionWriteUnsupported { op: &'static str },
 }
 
-impl ObsidianPendingWorkStoreError {
+impl ObsidianStoreError {
     pub fn created_section_diagnostic(&self) -> Option<(&str, &str)> {
         match self {
             Self::AddWriteIndexFile {

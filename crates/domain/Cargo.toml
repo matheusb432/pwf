@@ -1,12 +1,13 @@
 [package]
 name = "pwf-domain"
 version = "4.1.0"
-edition = "2024"
-publish = false
+edition.workspace = true
+publish.workspace = true
 
 [dependencies]
-nutype = { version = "0.7.0", features = ["serde", "regex"] }
-thiserror = "2.0.18"
+nutype = { workspace = true }
+prompt-lanes = { path = "../../shared/prompt-lanes" }
+thiserror = { workspace = true }
 
 [lints]
 workspace = true

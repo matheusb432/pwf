@@ -1,26 +1,23 @@
 mod add;
 mod error;
 mod fs;
+mod index_entry;
+mod item_record;
 mod lookup;
 mod read;
 mod read_parser;
-mod remove;
-mod resolve;
-mod status;
 #[cfg(test)]
 mod tests;
-mod update;
-mod write;
 
-pub use error::ObsidianPendingWorkStoreError;
+pub use error::ObsidianStoreError;
 use pwf_core::config::Config;
 
 #[derive(Clone)]
-pub struct ObsidianPendingWorkStore {
+pub struct ObsidianStore {
     config: Config,
 }
 
-impl ObsidianPendingWorkStore {
+impl ObsidianStore {
     pub fn new(config: Config) -> Self {
         Self { config }
     }

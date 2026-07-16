@@ -1,5 +1,5 @@
 use pwf_application::pending_work::add::AddPendingWorkError;
-use pwf_infra::obsidian::ObsidianPendingWorkStoreError;
+use pwf_infra::obsidian::ObsidianStoreError;
 
 use super::outcome::AddedItem;
 
@@ -18,11 +18,13 @@ pub(crate) fn emit_created_section_diagnostic_for_error(error: &AddPendingWorkEr
 pub(super) fn created_section_diagnostic_for_error(
     error: &AddPendingWorkError,
 ) -> Option<(&str, &str)> {
-    let AddPendingWorkError::WriteStore(source) = error;
-    source
-        .as_ref()
-        .downcast_ref::<ObsidianPendingWorkStoreError>()
-        .and_then(ObsidianPendingWorkStoreError::created_section_diagnostic)
+    match error {
+        AddPendingWorkError::WriteStore(source) => source
+            .as_ref()
+            .downcast_ref::<ObsidianStoreError>()
+            .and_then(ObsidianStoreError::created_section_diagnostic),
+        AddPendingWorkError::ProjectNotMappedToRepo { .. } => None,
+    }
 }
 
 #[cfg(test)]
@@ -31,13 +33,12 @@ mod tests {
 
     #[test]
     fn add_write_index_error_exposes_created_section_diagnostic_data() {
-        let error = AddPendingWorkError::WriteStore(Box::new(
-            ObsidianPendingWorkStoreError::AddWriteIndexFile {
+        let error =
+            AddPendingWorkError::WriteStore(Box::new(ObsidianStoreError::AddWriteIndexFile {
                 source: std::io::Error::other("index write failed"),
                 project: "glep-shimeji".to_string(),
                 created_section: Some("Human".to_string()),
-            },
-        ));
+            }));
 
         assert_eq!(
             created_section_diagnostic_for_error(&error),

@@ -19,14 +19,17 @@ pub fn find_section_index(content: &str, headers: &[&str]) -> Option<usize> {
 }
 
 /// Remove the line matching `[[<id>|...]]` or `[[<id>]]`, with or without a
-/// leading `- [ ] ` Obsidian checkbox.
+/// leading Obsidian checkbox (`- [ ] ` open, `- [x] ` done, or a bare `- ` note
+/// line). The done-checkbox case backs the done-queue eviction unlink; every
+/// other caller only ever passes an open/bare id, so accepting `[x]` is inert
+/// for them.
 ///
 /// # Panics
 /// Panics if the link-matching regex fails to compile — unreachable in
 /// practice since `id` is escaped via [`regex::escape`].
 pub fn remove_index_link(content: &str, id: &str) -> String {
     let pattern = format!(
-        r"(?m)^\s*-\s*(?:\[ \]\s*)?\[\[{}(?:\|[^\]]*)?\]\].*(?:\r?\n)?",
+        r"(?m)^\s*-\s*(?:\[[ xX]\]\s*)?\[\[{}(?:\|[^\]]*)?\]\].*(?:\r?\n)?",
         regex::escape(id)
     );
     let re = Regex::new(&pattern).unwrap();

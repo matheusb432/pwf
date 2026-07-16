@@ -1,9 +1,13 @@
 pub mod add;
 pub mod cancel;
 pub mod done;
+pub mod enrich;
+pub mod find;
 pub mod list;
 pub mod remove;
 pub mod reopen;
 pub mod resolve;
 pub mod show;
+pub mod store_util;
+pub mod tags_of;
 pub mod update;

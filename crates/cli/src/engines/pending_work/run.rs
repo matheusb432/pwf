@@ -1,9 +1,12 @@
 // Top-level dispatcher for `pwf <verb>`. The `route` verb is delegated to the
 // `pw` word-router in `route`; everything else dispatches here.
 
-use pwf_application::pending_work::add::AddPendingWorkItem;
-use pwf_domain::pending_work::{HANDOFF_TAG, MutationOutcome};
-use pwf_infra::obsidian::ObsidianPendingWorkStore;
+use pwf_application::{
+    AppDbStore, IndexEntry, IndexSection, NoteMarkdownSource, PendingWorkItem,
+    pending_work::add::AddPendingWorkItem,
+};
+use pwf_domain::pending_work::{HANDOFF_TAG, MutationOutcome, ProjectName, ProjectRegistry};
+use pwf_infra::obsidian::ObsidianStore;
 
 use super::{
     actions::{
@@ -56,22 +59,55 @@ pub fn run(command: &PendingWorkCommand) -> Result<String, String> {
     }
 }
 
+/// Build the single store instance an engine entry threads down to every
+/// consumer for the rest of the call — the composition root this module owns
+/// (PWF-0123 stage 1). `ObsidianStore` is constructed only here; every other
+/// consumer takes the trait bounds it needs (the generic [`AppDbStore`] record
+/// kinds, plus [`NoteMarkdownSource`] for the ghost-`show` storage-error
+/// replay). The only other `pwf_infra` references in the CLI are the three
+/// error-downcast exceptions (`query.rs`, `actions/add.rs`, `actions/done.rs`).
+pub(crate) fn store_for(
+    cfg: &Config,
+) -> impl NoteMarkdownSource
++ AppDbStore<PendingWorkItem>
++ AppDbStore<IndexEntry>
++ AppDbStore<IndexSection>
++ use<> {
+    ObsidianStore::new(cfg.clone())
+}
+
+/// Build the [`ProjectRegistry`] the read-side handlers use to route ids to
+/// projects and to enumerate every managed project with its repo. Prefixes are
+/// uppercased to match the canonical `WorkItemId` form.
+pub(crate) fn project_registry(cfg: &Config) -> ProjectRegistry {
+    ProjectRegistry::new(cfg.projects.iter().map(|(name, repo)| {
+        (
+            ProjectName::try_new(name).expect("configured project is non-empty"),
+            Some(repo.clone()),
+            cfg.prefixes
+                .get(name)
+                .map(|prefix| prefix.to_ascii_uppercase()),
+        )
+    }))
+}
+
 pub(in crate::engines::pending_work) fn run_typed(
     command: &PendingWorkCommand,
 ) -> Result<EngineOutcome, errors::PendingWorkError> {
     let args = command.args();
 
     let cfg = load_config(args)?;
+    let store = store_for(&cfg);
     let date = stamp_date(args.date.as_deref());
 
     match command.action() {
-        Action::Route => Ok(EngineOutcome::Text(run_route(&cfg, args, &date)?)),
+        Action::Route => Ok(EngineOutcome::Text(run_route(&cfg, &store, args, &date)?)),
 
         Action::Add => Ok(EngineOutcome::Mutation(MutationOutcome::Added(run_add(
-            &cfg, args, &date,
+            &cfg, &store, args, &date,
         )?))),
 
-        Action::List => run_list(&cfg, args),
+        Action::List => run_list(&cfg, &store, args),
 
         Action::Clean => {
             let only = if let Some(p) = args.project.as_deref() {
@@ -93,7 +129,7 @@ pub(in crate::engines::pending_work) fn run_typed(
             let launcher = super::session::launcher_for(args.agent);
             let probe = RealProbe::resolve(launcher.binary());
             let item = if let Some(vid) = args.id.as_deref() {
-                Some(find_pending_item(&cfg, vid)?)
+                Some(find_pending_item(&store, &project_registry(&cfg), vid)?)
             } else {
                 None
             };
@@ -108,20 +144,20 @@ pub(in crate::engines::pending_work) fn run_typed(
             )))
         }
 
-        Action::Done => Ok(EngineOutcome::Text(run_done(&cfg, args)?)),
+        Action::Done => Ok(EngineOutcome::Text(run_done(&cfg, &store, args)?)),
 
-        Action::Cancel => Ok(EngineOutcome::Text(run_cancel(&cfg, args)?)),
+        Action::Cancel => Ok(EngineOutcome::Text(run_cancel(&cfg, &store, args)?)),
 
-        Action::Reopen => Ok(EngineOutcome::Text(run_reopen(&cfg, args)?)),
+        Action::Reopen => Ok(EngineOutcome::Text(run_reopen(&cfg, &store, args)?)),
 
-        Action::Resolve => Ok(EngineOutcome::Text(run_resolve(&cfg, args)?)),
+        Action::Resolve => Ok(EngineOutcome::Text(run_resolve(&cfg, &store, args)?)),
 
-        Action::Show => Ok(EngineOutcome::Text(run_show(&cfg, args)?)),
+        Action::Show => Ok(EngineOutcome::Text(run_show(&cfg, &store, args)?)),
 
-        Action::Remove => run_remove(&cfg, args, &crate::confirm::RealConfirm),
+        Action::Remove => run_remove(&cfg, &store, args, &crate::confirm::RealConfirm),
 
         Action::Update => Ok(EngineOutcome::Mutation(MutationOutcome::Updated(
-            run_update(&cfg, args)?,
+            run_update(&store, &project_registry(&cfg), args)?,
         ))),
 
         Action::Session => {
@@ -129,10 +165,11 @@ pub(in crate::engines::pending_work) fn run_typed(
             // `-a`/`--append`: extend the body via the same path as `update -a`/
             // `--append` before dispatch, so the launch prompt carries the extension.
             if args.append.is_some() {
-                run_update(&cfg, args)?;
+                run_update(&store, &project_registry(&cfg), args)?;
             }
             Ok(EngineOutcome::Text(super::session::dispatch(
-                &cfg,
+                &store,
+                &project_registry(&cfg),
                 id,
                 &super::session::DispatchOpts {
                     color: args.color,
@@ -150,7 +187,11 @@ pub(in crate::engines::pending_work) fn run_typed(
     }
 }
 
-fn run_list(cfg: &Config, args: &Args) -> Result<EngineOutcome, errors::PendingWorkError> {
+fn run_list(
+    cfg: &Config,
+    store: &impl AppDbStore<PendingWorkItem>,
+    args: &Args,
+) -> Result<EngineOutcome, errors::PendingWorkError> {
     let only_project = if let Some(p) = args.project.as_deref() {
         Some(resolve_managed_project_name_typed(cfg, p)?)
     } else {
@@ -169,7 +210,7 @@ fn run_list(cfg: &Config, args: &Args) -> Result<EngineOutcome, errors::PendingW
         order,
         color_on: use_color(args.color),
     };
-    Ok(EngineOutcome::Text(run_list_query(cfg, params)?))
+    Ok(EngineOutcome::Text(run_list_query(cfg, store, params)?))
 }
 
 pub fn run_args(args: &crate::cli::Args) -> Result<String, String> {
@@ -204,22 +245,42 @@ pub(in crate::engines::pending_work) fn require_id<'args>(
         .ok_or(errors::PendingWorkError::MissingId { action })
 }
 
-/// Build the application command behind `pwf add`, including the
-/// `--continue-handoff` / `--continue` prompt sourcing and config/date
-/// resolution that cross-engine callers need too.
+/// Build the application command behind `pwf add` plus the store + registry to
+/// execute it against, including the `--continue-handoff` / `--continue`
+/// prompt sourcing and config/date resolution that cross-engine callers need
+/// too. The store is built here (not by the caller) so `handoff`'s in-process
+/// add seam (`pw_bridge::inprocess_pw_add`) never has to name `ObsidianStore`
+/// itself — this function lives in an allowed composition-root file.
 pub(crate) fn add_command_from_args(
     args: &Args,
-) -> Result<(Config, AddPendingWorkItem), errors::PendingWorkError> {
+) -> Result<
+    (
+        impl AppDbStore<PendingWorkItem> + AppDbStore<IndexEntry> + AppDbStore<IndexSection> + use<>,
+        ProjectRegistry,
+        AddPendingWorkItem,
+    ),
+    errors::PendingWorkError,
+> {
     let cfg = load_config(args)?;
+    let store = store_for(&cfg);
+    let registry = project_registry(&cfg);
     let date = stamp_date(args.date.as_deref());
     let command = build_add_command(&cfg, args, &date)?;
-    Ok((cfg, command))
+    Ok((store, registry, command))
 }
 
 /// `pwf add` — create a pending-work item. The prompt comes from positional
 /// words, the repo's newest handoff (`--continue-handoff`), or a plan path
 /// (`--continue <path>`); the clap layer makes those three mutually exclusive.
-fn run_add(cfg: &Config, args: &Args, date: &str) -> Result<AddedItem, errors::PendingWorkError> {
+fn run_add<S>(
+    cfg: &Config,
+    store: &S,
+    args: &Args,
+    date: &str,
+) -> Result<AddedItem, errors::PendingWorkError>
+where
+    S: AppDbStore<PendingWorkItem> + AppDbStore<IndexEntry> + AppDbStore<IndexSection>,
+{
     let command = build_add_command(cfg, args, date)?;
 
     // Preflight a handoff scaffold *before* the mutation when `--tag handoff`
@@ -248,8 +309,8 @@ fn run_add(cfg: &Config, args: &Args, date: &str) -> Result<AddedItem, errors::P
         None
     };
 
-    let store = ObsidianPendingWorkStore::new(cfg.clone());
-    let result = pwf_application::pending_work::add::execute(command, &store);
+    let result =
+        pwf_application::pending_work::add::execute(command, store, &project_registry(cfg));
     match result {
         Ok(added) => {
             emit_created_section_diagnostic(&added);

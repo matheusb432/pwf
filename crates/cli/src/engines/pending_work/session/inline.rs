@@ -43,35 +43,3 @@ impl InlineExec for RealExec {
         }
     }
 }
-
-#[cfg(test)]
-pub(in crate::engines::pending_work) mod fake {
-    use std::cell::RefCell;
-
-    use super::*;
-
-    /// Records the argv + cwd it was asked to run and returns a scripted result,
-    /// so orchestration is tested without replacing the test process.
-    pub(in crate::engines::pending_work) struct FakeExec {
-        pub result: RefCell<Option<Result<(), String>>>,
-        pub calls: RefCell<Vec<(Vec<String>, String)>>,
-    }
-
-    impl FakeExec {
-        pub fn ok() -> Self {
-            Self {
-                result: RefCell::new(Some(Ok(()))),
-                calls: RefCell::new(vec![]),
-            }
-        }
-    }
-
-    impl InlineExec for FakeExec {
-        fn run(&self, argv: &[String], cwd: &str) -> Result<(), String> {
-            self.calls
-                .borrow_mut()
-                .push((argv.to_vec(), cwd.to_string()));
-            self.result.borrow_mut().take().unwrap_or(Ok(()))
-        }
-    }
-}

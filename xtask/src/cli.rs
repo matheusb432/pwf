@@ -32,4 +32,7 @@ pub(crate) enum Command {
     /// Rebuild + refresh the installed shim. `--dry` previews; `-f`/`--force` skips the fmt-check
     /// preflight.
     Update(UpdateArgs),
+    /// Fail if any `crates/cli` source file outside the composition-root allowlist imports the
+    /// infra crate directly; violations print as `<path>:<line>: <message>` on stderr.
+    CheckArchitecture,
 }

@@ -93,3 +93,71 @@ impl From<bool> for Enabled {
         if value { Enabled::Yes } else { Enabled::No }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        cli::{Agent, ColorChoice},
+        engines::pending_work::launch::{Auto, LaunchPolicy, Worktree},
+    };
+
+    #[test]
+    fn question_renders_dispatch_context_metadata_without_the_prompt_body() {
+        let mut item = Item::default_for_test("PWF-0001", "dispatch me");
+        item.created = Some("2026-07-01".to_string());
+        item.prompt = "do work".to_string();
+        item.note = "do work".to_string();
+        let opts = DispatchOpts {
+            color: ColorChoice::Never,
+            assume_yes: false,
+            inline: true,
+            launch: LaunchPolicy {
+                worktree: Worktree::from(true),
+                auto: Auto::from(true),
+            },
+            agent: Agent::Codex,
+            model_override: None,
+        };
+
+        let out = question(&item, "pwf", &opts, "codex");
+
+        assert!(out.contains("# Confirm session dispatch"));
+        assert!(out.contains("task_id: PWF-0001"));
+        assert!(out.contains("title: dispatch me"));
+        assert!(out.contains("created: 2026-07-01"));
+        assert!(out.contains("mode: inline"));
+        assert!(out.contains("agent: codex"));
+        assert!(out.contains("autonomy: yes"));
+        assert!(out.contains("worktree: yes"));
+        assert!(out.contains("target: current terminal"));
+        assert!(
+            !out.contains("do work"),
+            "confirmation must not flood the TUI with the prompt body: {out}"
+        );
+    }
+
+    #[test]
+    fn zellij_mode_targets_the_named_session_and_falls_back_on_missing_created() {
+        let item = Item::default_for_test("PWF-0001", "dispatch me");
+        let opts = DispatchOpts {
+            color: ColorChoice::Never,
+            assume_yes: false,
+            inline: false,
+            launch: LaunchPolicy {
+                worktree: Worktree::from(false),
+                auto: Auto::from(false),
+            },
+            agent: Agent::Claude,
+            model_override: None,
+        };
+
+        let out = question(&item, "pwf", &opts, "claude");
+
+        assert!(out.contains("mode: zellij"));
+        assert!(out.contains("target: zellij session pwf"));
+        assert!(out.contains("autonomy: no"));
+        assert!(out.contains("worktree: no"));
+        assert!(out.contains("created: (unknown)"));
+    }
+}

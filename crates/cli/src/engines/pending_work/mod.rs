@@ -41,6 +41,12 @@ pub use model::Item;
 pub use naming::{project_dir, project_index_path, project_key, stamp_date};
 pub use query::{is_item_open, resolve_managed_project_name};
 pub(crate) use run::add_command_from_args;
+// Only test fixtures outside this module (`handoff::mirror`/`pw_bridge`'s own
+// `#[cfg(test)]` blocks) need `store_for` directly; production code either
+// lives inside this module (plain `store_for(...)`) or goes through
+// `add_command_from_args`, so the cross-module re-export is test-only.
+#[cfg(test)]
+pub(crate) use run::{project_registry, store_for};
 pub use run::{run, run_args};
 pub use text::{
     get_title_from_continue_path, goals_body, handoff_title_from_path, inferred_title,

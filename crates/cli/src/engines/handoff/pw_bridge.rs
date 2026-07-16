@@ -84,14 +84,11 @@ pub(super) fn inprocess_pw_add(
         tag: vec![pwf_domain::pending_work::HANDOFF_TAG.to_string()],
         ..Default::default()
     };
-    let (cfg, command) =
-        crate::engines::pending_work::add_command_from_args(&a).map_err(|error| {
-            HandoffError::PendingWork {
-                message: error.to_string(),
-            }
+    let (store, registry, command) = crate::engines::pending_work::add_command_from_args(&a)
+        .map_err(|error| HandoffError::PendingWork {
+            message: error.to_string(),
         })?;
-    let store = pwf_infra::obsidian::ObsidianPendingWorkStore::new(cfg);
-    let result = pwf_application::pending_work::add::execute(command, &store);
+    let result = pwf_application::pending_work::add::execute(command, &store, &registry);
     match &result {
         Ok(added) => crate::engines::pending_work::emit_created_section_diagnostic(added),
         Err(error) => {
@@ -182,8 +179,10 @@ mod tests {
         assert!(id.starts_with("TST-"), "unexpected id: {id}");
 
         let cfg = crate::config::load(&cfg_path.to_string_lossy(), None).unwrap();
+        let store = crate::engines::pending_work::store_for(&cfg);
+        let projects = crate::engines::pending_work::project_registry(&cfg);
         assert!(
-            crate::engines::pending_work::is_item_open(&cfg, &id).unwrap(),
+            crate::engines::pending_work::is_item_open(&store, &projects, &id).unwrap(),
             "returned id should resolve as an open pending-work item"
         );
 

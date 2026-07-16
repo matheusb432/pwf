@@ -55,7 +55,7 @@ pub enum RenameProjectError {
         source: std::io::Error,
     },
     #[error("{0}")]
-    Identity(#[from] pwf_infra::obsidian::ObsidianPendingWorkStoreError),
+    Identity(#[from] pwf_infra::obsidian::ObsidianStoreError),
 }
 
 /// The resolved inputs a rename operates on. Built by [`resolve`] from the pwf

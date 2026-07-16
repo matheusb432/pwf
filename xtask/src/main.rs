@@ -7,6 +7,7 @@
 use anyhow::Result;
 use clap::Parser;
 
+mod architecture_check;
 mod cli;
 mod paths;
 mod proc;
@@ -30,5 +31,6 @@ fn run(command: cli::Command) -> Result<()> {
         Command::Test(test) => verbs::test::run(test.scope, test.verbose),
         Command::Install => verbs::install::install(),
         Command::Update(update) => verbs::install::update(&update),
+        Command::CheckArchitecture => verbs::check_architecture::run(),
     }
 }

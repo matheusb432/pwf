@@ -1,6 +1,7 @@
 // Leaf action implementations: done (mark done), remove, and list.
 
 mod add;
+mod close_render;
 mod confirm_render;
 mod done;
 pub(super) mod list;
