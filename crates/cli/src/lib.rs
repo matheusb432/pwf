@@ -1,4 +1,4 @@
-//! pw-workflow engines: pending-work, handoff, and migrate.
+//! Exposes pwf command parsing, engines, and shared CLI support.
 
 pub mod cli;
 pub mod codex_thread_title;

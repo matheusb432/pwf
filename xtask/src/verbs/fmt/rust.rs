@@ -3,8 +3,9 @@
 use super::FmtMode;
 use crate::task::Step;
 
-/// rustfmt over the workspace: stable `cargo fmt` by default, the pinned nightly when given.
-/// Nightly writes run twice so `wrap_comments` converges; checks are a single pass.
+/// Plans workspace rustfmt with an optional pinned nightly.
+///
+/// Nightly writes run twice so comment wrapping converges; checks run once.
 pub(super) fn format_steps(toolchain: Option<&str>, mode: FmtMode) -> Vec<Step> {
     let passes = match (toolchain, mode) {
         (Some(_), FmtMode::Write) => 2,
@@ -19,7 +20,7 @@ pub(super) fn format_steps(toolchain: Option<&str>, mode: FmtMode) -> Vec<Step> 
         .collect()
 }
 
-/// The clippy *check* step — lints the whole workspace and **fails on any warning**.
+/// Plans whole-workspace Clippy with warnings denied.
 pub(super) fn clippy_check_step() -> Step {
     Step::new(
         "clippy",
@@ -29,7 +30,7 @@ pub(super) fn clippy_check_step() -> Step {
     .args(["--", "-D", "warnings"])
 }
 
-/// The clippy *fix* step — machine-applicable fixes across the workspace, plus `extra`.
+/// Plans whole-workspace machine-applicable Clippy fixes with extra arguments.
 pub(super) fn clippy_fix_step(extra: &[String]) -> Step {
     Step::new(
         "clippy:fix",

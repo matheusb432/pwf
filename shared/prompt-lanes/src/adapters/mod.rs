@@ -1,6 +1,4 @@
-//! Render targets for a [`ParsedPrompt`](crate::ParsedPrompt). Each output
-//! format gets its own submodule here; the trait and the parser never need
-//! to change when a new format is added.
+//! Render targets for a [`ParsedPrompt`](crate::ParsedPrompt).
 
 mod markdown;
 

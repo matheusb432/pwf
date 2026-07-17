@@ -21,8 +21,7 @@ pub struct CompletePendingWork {
     pub review: bool,
 }
 
-/// Which status transition a close records. Owns the past-tense verb rendered in
-/// the CLI close confirmation (the single source for `Done`/`Cancelled`).
+/// Selects the status and confirmation verb recorded by a close operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClosedItemAction {
     Done,
@@ -46,8 +45,7 @@ impl ClosedItemAction {
     }
 }
 
-/// The result of closing (done/cancel) a pending-work item: the closed item's
-/// identity plus the done-queue side effects the CLI renders and diagnoses.
+/// Contains a closed item's identity and queue side effects.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompletedPendingWork {
     pub id: WorkItemId,
@@ -61,8 +59,6 @@ pub struct CompletedPendingWork {
 
 #[derive(Debug, thiserror::Error)]
 pub enum CompletePendingWorkError {
-    /// Verbatim former infra `ItemNotFound` display (PWF-0123 error-string
-    /// relocation) — also covers an already-closed item: only open items close.
     #[error("Open pending-work item not found: {id}")]
     ItemNotFound { id: String },
     #[error("--report cannot be empty.")]
@@ -73,13 +69,9 @@ pub enum CompletePendingWorkError {
     ReviewTask(#[source] AddPendingWorkError),
 }
 
-#[cqrsy::handler(command)]
-#[expect(
-    clippy::needless_pass_by_value,
-    reason = "the cqrsy done operation owns its request by contract"
-)]
+#[cqrsy::command]
 pub fn execute<S>(
-    command: CompletePendingWork,
+    command: &CompletePendingWork,
     store: &S,
     projects: &ProjectRegistry,
 ) -> Result<CompletedPendingWork, CompletePendingWorkError>
@@ -99,9 +91,7 @@ where
     .map_err(CloseError::into_complete)
 }
 
-/// Error surface shared by the `done` and `cancel` orchestrators — each handler
-/// maps it 1:1 onto its own public error enum so the two flows stay one code
-/// path (`perform_close`) with no duplication.
+/// Reports failures shared by the done and cancel operations.
 pub(super) enum CloseError {
     ItemNotFound { id: String },
     EmptyReport,
@@ -120,17 +110,13 @@ impl CloseError {
     }
 }
 
-/// The compound close flow shared by `done` and `cancel`: resolve the project,
-/// require an open item, patch its note (report + status/completed/commits) in a
-/// single [`ItemPatch`], then — only for a note-backed record
-/// ([`Materialization::NoteFile`]) — rotate the done queue via the pure domain
-/// [`close_decisions`], and spawn the optional `--review` task. The status patch
-/// is uniform across storage models; the queue rotation is the one
-/// materialization-gated step, since an inline or missing-note record has no
-/// file-model done queue to rotate.
+/// Closes an item through the flow shared by done and cancel.
+///
+/// One patch applies report and status fields. Only note-backed records rotate the queue, because
+/// inline and missing-note records have no file-backed queue entry.
 #[expect(
     clippy::too_many_arguments,
-    reason = "the two closing verbs share one flattened flow rather than duplicate it"
+    reason = "done and cancel share this orchestration"
 )]
 pub(super) fn perform_close<S>(
     store: &S,
@@ -213,13 +199,9 @@ fn map_load(error: LoadItemError) -> CloseError {
     }
 }
 
-/// The `QueueEntryView` for an index entry, mapping the adapter's raw section
-/// label onto the domain's done-queue section semantics: a headerless-region
-/// entry (empty raw label) becomes the `"General"` sentinel — mirroring the
-/// legacy `section_at_line` fallback exactly — while any real header label is
-/// passed through raw for the domain to canonicalize. A real `## General`
-/// header collapses to the same `"General"` the sentinel does, which is the same
-/// ambiguity the legacy port carried, so parity holds.
+/// Maps an index entry to queue semantics while preserving raw section labels.
+///
+/// An empty label becomes the `"General"` no-header sentinel.
 pub(super) fn queue_view(entry: &IndexEntry) -> QueueEntryView {
     let completed = match &entry.state {
         IndexEntryState::Open => None,
@@ -237,9 +219,7 @@ pub(super) fn queue_view(entry: &IndexEntry) -> QueueEntryView {
     }
 }
 
-/// Applies the done-queue decisions to the project index: rename a legacy
-/// `## Futuro` header, mark the closed entry done, and evict the oldest links
-/// beyond the section cap. Returns `(evicted_ids, futuro_renamed)`.
+/// Applies header normalization, the closed entry, and cap-based evictions to the index.
 fn rotate_done_queue<S>(
     store: &S,
     project: &ProjectName,
@@ -288,9 +268,7 @@ where
     Ok((decisions.evicted_ids, decisions.normalize_futuro_header))
 }
 
-/// Renames every `## Futuro` header region to `## Future` via the section-label
-/// `update` seam — the document-wide rename the legacy `mark_done` performed
-/// textually before eviction (representation-only, PWF-0123).
+/// Renames every `## Futuro` header to `## Future` through the section port.
 fn rename_futuro_headers<S>(
     store: &S,
     project: &ProjectName,
@@ -463,7 +441,7 @@ mod tests {
         entries.push(entry("GLP-0007", IndexEntryState::Open, "General"));
         let store = staged(items, entries);
 
-        let out = execute(done_command("GLP-0007"), &store, &registry()).unwrap();
+        let out = execute(&done_command("GLP-0007"), &store, &registry()).unwrap();
 
         assert_eq!(out.action, ClosedItemAction::Done);
         assert_eq!(
@@ -497,7 +475,7 @@ mod tests {
             vec![entry("GLP-0001", IndexEntryState::Open, "Futuro")],
         );
 
-        let out = execute(done_command("GLP-0001"), &store, &registry()).unwrap();
+        let out = execute(&done_command("GLP-0001"), &store, &registry()).unwrap();
 
         assert_eq!(out.futuro_renamed_project, Some(glp()));
     }
@@ -514,11 +492,8 @@ mod tests {
             ..done_command("GLP-0001")
         };
 
-        let out = execute(cmd, &store, &registry()).unwrap();
+        let out = execute(&cmd, &store, &registry()).unwrap();
 
-        // The in-memory double allocates the id but does not infer the note
-        // title (that is the vault adapter's job, pinned by the CLI e2e); this
-        // test owns the "review item + open index entry inserted" contract.
         let review = out.review_item.expect("review item present");
         assert_eq!(review.id, "GLP-0002");
         assert!(
@@ -535,7 +510,7 @@ mod tests {
     fn done_on_missing_item_reports_item_not_found() {
         let store = staged(Vec::new(), Vec::new());
 
-        let error = execute(done_command("GLP-9999"), &store, &registry()).unwrap_err();
+        let error = execute(&done_command("GLP-9999"), &store, &registry()).unwrap_err();
 
         assert!(matches!(
             error,

@@ -1,9 +1,6 @@
-//! `install` / `update` — build the pwf release binary and place it on PATH via a symlink.
+//! Installs or updates the release binary's global shim.
 //!
-//! Migrates the bash `install`/`update` recipes. The testable core (idempotent symlink
-//! placement, PATH-append decision) is split into pure helpers; the cargo-build and rc-file
-//! glue is the thin I/O layer. The Windows scoop path is `cfg!(windows)`-gated and certified
-//! manually (Linux is the primary host).
+//! Unix uses a symlink and shell PATH entry. Windows uses the manually certified Scoop path.
 
 use std::{
     env, fs,
@@ -30,7 +27,7 @@ pub(crate) struct UpdateArgs {
     pub(crate) force: bool,
 }
 
-/// What ensuring the shim symlink did.
+/// Describes a shim placement result.
 #[derive(Debug, PartialEq, Eq)]
 enum Linked {
     Created,
@@ -38,7 +35,7 @@ enum Linked {
     Unchanged,
 }
 
-/// Ensure `link` is a symlink pointing at `target`, idempotently. Filesystem-touching but pure.
+/// Ensures `link` points to `target` and reports whether it changed.
 #[cfg(unix)]
 fn ensure_symlink(target: &Path, link: &Path) -> Result<Linked> {
     if let Some(parent) = link.parent() {
@@ -59,8 +56,7 @@ fn ensure_symlink(target: &Path, link: &Path) -> Result<Linked> {
     })
 }
 
-/// Decide whether `dir` must be appended to a shell rc: `Some(export line)` when `dir` is neither
-/// already on `$PATH` nor already written into `rc_contents`. Pure — the caller does the write.
+/// Returns a PATH export when `dir` is absent from both PATH and shell configuration.
 fn path_export_line(dir: &Path, path_var: &str, rc_contents: &str) -> Option<String> {
     let dir_str = dir.to_string_lossy();
     let on_path = env::split_paths(path_var).any(|e| e == dir);
@@ -70,12 +66,10 @@ fn path_export_line(dir: &Path, path_var: &str, rc_contents: &str) -> Option<Str
     Some(format!("\nexport PATH=\"{dir_str}:$PATH\"\n"))
 }
 
-/// Platform binary name for the built pwf artifact.
 fn bin_name() -> &'static str {
     if cfg!(windows) { "pwf.exe" } else { "pwf" }
 }
 
-/// The built release binary path.
 fn release_bin() -> PathBuf {
     paths::repo_root()
         .join("target")
@@ -83,11 +77,11 @@ fn release_bin() -> PathBuf {
         .join(bin_name())
 }
 
-/// First-time setup of the global pwf shim.
+/// Installs the global pwf shim.
 pub(crate) fn install() -> Result<()> {
     #[cfg(windows)]
     {
-        // Certified manually: scoop is the Windows install path.
+        // The Windows Scoop path is manually certified.
         proc::run("scoop install", "scoop", &["install", "pwf.json"])?;
         proc::result("install", Status::Done);
         return Ok(());
@@ -100,14 +94,14 @@ pub(crate) fn install() -> Result<()> {
     }
 }
 
-/// Rebuild and refresh the installed shim; fmt-check preflight unless `--force`.
+/// Rebuilds and refreshes the shim after the format preflight unless forced.
 pub(crate) fn update(args: &UpdateArgs) -> Result<()> {
     if !args.force {
         fmt::fmt_check()?;
     }
     #[cfg(windows)]
     {
-        // Certified manually: copy into the scoop shim dir.
+        // The Windows Scoop path is manually certified.
         proc::run("cargo build", "cargo", &["build", "--release"])?;
         let dest = dirs_scoop_pwf()?;
         if args.dry {
@@ -132,7 +126,7 @@ pub(crate) fn update(args: &UpdateArgs) -> Result<()> {
     }
 }
 
-/// Build (unless dry) and ensure `~/.local/bin/pwf` links the release binary + PATH is wired.
+/// Builds and links the Unix binary, then ensures its directory is on PATH.
 #[cfg(unix)]
 fn place_unix(dry: bool) -> Result<()> {
     let target = release_bin();
@@ -152,14 +146,14 @@ fn place_unix(dry: bool) -> Result<()> {
     Ok(())
 }
 
-/// `~/.local/bin/pwf`.
+/// Resolves `~/.local/bin/pwf`.
 #[cfg(unix)]
 fn link_path() -> Result<PathBuf> {
     let home = env::var_os("HOME").context("HOME is not set")?;
     Ok(PathBuf::from(home).join(".local").join("bin").join("pwf"))
 }
 
-/// Append the PATH export to `~/.bashrc` when `dir` is not yet reachable.
+/// Appends a PATH export to `~/.bashrc` when needed.
 #[cfg(unix)]
 fn wire_path(dir: &Path) -> Result<()> {
     let path_var = env::var("PATH").unwrap_or_default();

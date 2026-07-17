@@ -1,20 +1,18 @@
-//! Top-level dispatcher for `pwf handoff <action>`. `done`/`cancel`/`reopen`/
-//! `refresh` are retired (PWF-0117, `main::retired_handoff_verb`) — a
-//! handoff-tagged pw item mirrors those operations from the pw verbs instead,
-//! so only `add`/`list` remain reachable here.
+//! Dispatches the remaining `handoff add` and `handoff list` actions.
+//! Pending-work verbs own lifecycle mirroring.
 
 use super::{
     actions::{invoke_add, invoke_list},
     errors::HandoffError,
     paths::repo_root_typed,
 };
-use crate::cli::Args;
+use crate::cli::EngineArgs;
 
-pub fn run(args: &Args) -> Result<String, String> {
+pub fn run(args: &EngineArgs) -> Result<String, String> {
     run_typed(args).map_err(|e| e.to_string())
 }
 
-pub(super) fn run_typed(args: &Args) -> Result<String, HandoffError> {
+pub(super) fn run_typed(args: &EngineArgs) -> Result<String, HandoffError> {
     let action = args
         .action
         .as_deref()
@@ -40,7 +38,7 @@ mod tests {
     #[test]
     fn run_typed_preserves_missing_title_text_with_variant() {
         let root = tempdir();
-        let args = Args {
+        let args = EngineArgs {
             action: Some("add".to_string()),
             repo_root: Some(root.path().to_string_lossy().into_owned()),
             ..Default::default()
@@ -54,10 +52,9 @@ mod tests {
 
     #[test]
     fn run_typed_treats_retired_done_as_unknown_action() {
-        // `done` is retired pre-parse (`main::retired_handoff_verb`); this only
-        // covers a caller that reaches `run_typed` directly, bypassing that guard.
+        // Direct callers can bypass the pre-parse retired-verb guard.
         let root = tempdir();
-        let args = Args {
+        let args = EngineArgs {
             action: Some("done".to_string()),
             repo_root: Some(root.path().to_string_lossy().into_owned()),
             ..Default::default()
@@ -72,7 +69,7 @@ mod tests {
     #[test]
     fn run_typed_preserves_unknown_action_text_with_action_field() {
         let root = tempdir();
-        let args = Args {
+        let args = EngineArgs {
             action: Some("wat".to_string()),
             repo_root: Some(root.path().to_string_lossy().into_owned()),
             ..Default::default()

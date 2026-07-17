@@ -1,5 +1,3 @@
-// Action: remove.
-
 use std::path::Path;
 
 use pwf_application::{
@@ -11,17 +9,14 @@ use super::{
     outcome::{EngineOutcome, MutationOutcome},
 };
 use crate::{
-    cli::Args,
+    cli::EngineArgs,
     config::Config,
-    confirm::{Confirm, DefaultAnswer},
+    confirm::{Confirmation, DefaultAnswer},
     confirm_prompt::{ConfirmationPrompt, Field},
     engines::handoff::mirror,
 };
 
-/// Last-look prompt before an irreversible delete: identifies the task and the
-/// note file that is about to be unlinked and removed. `handoff_path` is
-/// `Some` only when the item is `handoff`-tagged and its mirrored file was
-/// located, so an operator sees the second deletion before confirming.
+/// Includes both files when removal will also delete a linked handoff.
 fn confirmation_question(item: &Item, item_path: &Path, handoff_path: Option<&Path>) -> String {
     let mut fields = vec![
         Field::new("task_id", item.id.clone()),
@@ -40,15 +35,11 @@ fn confirmation_question(item: &Item, item_path: &Path, handoff_path: Option<&Pa
     .to_string()
 }
 
-/// Unlike `run_update`'s `Result<UpdatedItem, _>`, this returns
-/// `Result<EngineOutcome, _>` because a declined interactive confirmation is
-/// still an `Ok` — it yields a `Text` abort message, not a `RemovedItem` —
-/// whereas `update` has no such abort path and always returns its typed item.
 pub(in crate::engines::pending_work) fn run_remove<S>(
     cfg: &Config,
     store: &S,
-    args: &Args,
-    confirmer: &impl Confirm,
+    args: &EngineArgs,
+    confirmation: &impl Fn(&str, DefaultAnswer) -> Confirmation,
 ) -> Result<EngineOutcome, PendingWorkError>
 where
     S: AppDbStore<PendingWorkItem> + AppDbStore<IndexEntry>,
@@ -71,18 +62,14 @@ where
         });
     }
 
-    // Gate onto the linked handoff (PWF-0117) and locate its file before any
-    // prompt or mutation, so a tagged item with no matching handoff errors
-    // up front instead of deleting the note and stranding a dangling tag.
+    // Preflight the linked handoff before prompting so failures leave both files untouched.
     let gate = mirror::handoff_gate(cfg, store, &registry, id)?;
     let handoff_path = gate.as_ref().map(mirror::preflight_delete).transpose()?;
 
-    // Default-yes gate: an interactive operator can abort a mistaken delete.
-    // `--yes` skips it; a non-interactive caller (agentic dispatch, pipe, CI)
-    // proceeds without prompting so scripted removals stay unattended.
-    if !args.assume_yes && confirmer.interactive() {
+    // Interactive removal defaults to yes; `--yes` and non-interactive calls skip the prompt.
+    if !args.assume_yes {
         let question = confirmation_question(&item, item_path, handoff_path.as_deref());
-        if !confirmer.confirm(&question, DefaultAnswer::Yes) {
+        if confirmation(&question, DefaultAnswer::Yes) == Confirmation::Declined {
             return Ok(EngineOutcome::Text(format!(
                 "# remove {} — aborted\nnothing deleted.\n",
                 item.id
@@ -91,7 +78,7 @@ where
     }
 
     let removed = pwf_application::pending_work::remove::execute(
-        RemovePendingWorkItem {
+        &RemovePendingWorkItem {
             id: item.id.clone(),
         },
         store,
@@ -118,14 +105,19 @@ mod tests {
     use std::{assert_matches, path::PathBuf};
 
     use super::*;
-    use crate::{confirm::FakeConfirm, engines::pending_work::errors::PendingWorkError};
+    use crate::engines::pending_work::errors::PendingWorkError;
 
-    /// Non-interactive confirmer: the removal gate proceeds without prompting,
-    /// matching an agentic / piped run.
-    const NONINTERACTIVE: FakeConfirm = FakeConfirm {
-        interactive: false,
-        answer: false,
-    };
+    fn accepted(_: &str, _: DefaultAnswer) -> Confirmation {
+        Confirmation::Accepted
+    }
+
+    fn declined(_: &str, _: DefaultAnswer) -> Confirmation {
+        Confirmation::Declined
+    }
+
+    fn noninteractive(_: &str, _: DefaultAnswer) -> Confirmation {
+        Confirmation::NonInteractive
+    }
 
     fn cfg(notes: &Path) -> Config {
         crate::config::from_json(
@@ -162,7 +154,7 @@ mod tests {
         let (_stage, cfg) = stage_file_item("- [ ] [[GLP-0001]]\n");
 
         let store = crate::engines::pending_work::store_for(&cfg);
-        let err = run_remove(&cfg, &store, &Args::default(), &NONINTERACTIVE).unwrap_err();
+        let err = run_remove(&cfg, &store, &EngineArgs::default(), &noninteractive).unwrap_err();
 
         assert_matches!(
             err,
@@ -183,13 +175,13 @@ mod tests {
         )
         .unwrap();
         let cfg = cfg(&notes);
-        let args = Args {
+        let args = EngineArgs {
             id: Some("glep-shimeji:1".to_string()),
-            ..Args::default()
+            ..EngineArgs::default()
         };
 
         let store = crate::engines::pending_work::store_for(&cfg);
-        let err = run_remove(&cfg, &store, &args, &NONINTERACTIVE).unwrap_err();
+        let err = run_remove(&cfg, &store, &args, &noninteractive).unwrap_err();
 
         assert_matches!(err, PendingWorkError::RemoveRequiresFileModel);
         assert_eq!(
@@ -203,13 +195,13 @@ mod tests {
         let (stage, cfg) = stage_file_item("- [ ] [[GLP-0001]]\n");
         let missing = stage.path().join("notes/glep-shimeji/GLP-0001.md");
         std::fs::remove_file(&missing).unwrap();
-        let args = Args {
+        let args = EngineArgs {
             id: Some("GLP-0001".to_string()),
-            ..Args::default()
+            ..EngineArgs::default()
         };
 
         let store = crate::engines::pending_work::store_for(&cfg);
-        let err = run_remove(&cfg, &store, &args, &NONINTERACTIVE).unwrap_err();
+        let err = run_remove(&cfg, &store, &args, &noninteractive).unwrap_err();
 
         assert_matches!(
             err,
@@ -221,10 +213,10 @@ mod tests {
         );
     }
 
-    fn args_for(id: &str) -> Args {
-        Args {
+    fn args_for(id: &str) -> EngineArgs {
+        EngineArgs {
             id: Some(id.to_string()),
-            ..Args::default()
+            ..EngineArgs::default()
         }
     }
 
@@ -233,13 +225,8 @@ mod tests {
         let (stage, cfg) = stage_file_item("- [ ] [[GLP-0001]]\n");
         let note = stage.path().join("notes/glep-shimeji/GLP-0001.md");
         let index = stage.path().join("notes/glep-shimeji/glep-shimeji.md");
-        let declines = FakeConfirm {
-            interactive: true,
-            answer: false,
-        };
-
         let store = crate::engines::pending_work::store_for(&cfg);
-        let out = run_remove(&cfg, &store, &args_for("GLP-0001"), &declines)
+        let out = run_remove(&cfg, &store, &args_for("GLP-0001"), &declined)
             .unwrap()
             .into_raw_text();
 
@@ -261,13 +248,8 @@ mod tests {
         let (stage, cfg) = stage_file_item("- [ ] [[GLP-0001]]\n");
         let note = stage.path().join("notes/glep-shimeji/GLP-0001.md");
         let index = stage.path().join("notes/glep-shimeji/glep-shimeji.md");
-        let accepts = FakeConfirm {
-            interactive: true,
-            answer: true,
-        };
-
         let store = crate::engines::pending_work::store_for(&cfg);
-        let out = run_remove(&cfg, &store, &args_for("GLP-0001"), &accepts)
+        let out = run_remove(&cfg, &store, &args_for("GLP-0001"), &accepted)
             .unwrap()
             .into_raw_text();
 
@@ -283,18 +265,13 @@ mod tests {
     fn assume_yes_deletes_without_consulting_an_interactive_confirmer() {
         let (stage, cfg) = stage_file_item("- [ ] [[GLP-0001]]\n");
         let note = stage.path().join("notes/glep-shimeji/GLP-0001.md");
-        // A declining confirmer proves `--yes` never consults it.
-        let would_decline = FakeConfirm {
-            interactive: true,
-            answer: false,
-        };
-        let args = Args {
+        let args = EngineArgs {
             assume_yes: true,
             ..args_for("GLP-0001")
         };
 
         let store = crate::engines::pending_work::store_for(&cfg);
-        let out = run_remove(&cfg, &store, &args, &would_decline)
+        let out = run_remove(&cfg, &store, &args, &declined)
             .unwrap()
             .into_raw_text();
 
@@ -308,15 +285,13 @@ mod tests {
         let note = stage.path().join("notes/glep-shimeji/GLP-0001.md");
 
         let store = crate::engines::pending_work::store_for(&cfg);
-        let out = run_remove(&cfg, &store, &args_for("GLP-0001"), &NONINTERACTIVE)
+        let out = run_remove(&cfg, &store, &args_for("GLP-0001"), &noninteractive)
             .unwrap()
             .into_raw_text();
 
         assert!(out.starts_with("REMOVED PWF TASK [GLP-0001]"), "got: {out}");
         assert!(!note.exists());
     }
-
-    // ── PWF-0117: mirror onto the linked handoff ────────────────────────────
 
     #[test]
     fn confirmation_question_includes_handoff_field_when_gated() {
@@ -352,9 +327,6 @@ mod tests {
         assert!(!question.contains("handoff:"), "got: {question}");
     }
 
-    /// Extend `stage_file_item`'s fixture with a `handoff`-tagged item and a
-    /// real repo dir, optionally holding an active handoff linking back via
-    /// `pw: GLP-0001`.
     fn stage_tagged_item(with_handoff_file: bool) -> (tempfile::TempDir, Config, PathBuf) {
         let stage = tempfile::tempdir().unwrap();
         let notes = stage.path().join("notes");
@@ -395,16 +367,8 @@ mod tests {
         (stage, cfg, handoff_dir.join("2026-01-01-tray-gui.md"))
     }
 
-    /// A confirmer that panics if consulted — proves the mirror preflight
-    /// error short-circuits before any prompt is built.
-    struct PanicIfConsulted;
-    impl Confirm for PanicIfConsulted {
-        fn interactive(&self) -> bool {
-            true
-        }
-        fn confirm(&self, _question: &str, _default: DefaultAnswer) -> bool {
-            panic!("confirm() must not be called when the mirror preflight already errored");
-        }
+    fn panic_if_consulted(_: &str, _: DefaultAnswer) -> Confirmation {
+        panic!("confirmation must not be requested when the mirror preflight already errored");
     }
 
     #[test]
@@ -413,7 +377,7 @@ mod tests {
         let note = stage.path().join("notes/glep-shimeji/GLP-0001.md");
 
         let store = crate::engines::pending_work::store_for(&cfg);
-        let err = run_remove(&cfg, &store, &args_for("GLP-0001"), &PanicIfConsulted).unwrap_err();
+        let err = run_remove(&cfg, &store, &args_for("GLP-0001"), &panic_if_consulted).unwrap_err();
 
         assert_matches!(err, PendingWorkError::HandoffMirror(_));
         assert!(
@@ -426,13 +390,8 @@ mod tests {
     fn interactive_decline_on_tagged_item_leaves_note_and_handoff_untouched() {
         let (stage, cfg, handoff_path) = stage_tagged_item(true);
         let note = stage.path().join("notes/glep-shimeji/GLP-0001.md");
-        let declines = FakeConfirm {
-            interactive: true,
-            answer: false,
-        };
-
         let store = crate::engines::pending_work::store_for(&cfg);
-        let out = run_remove(&cfg, &store, &args_for("GLP-0001"), &declines)
+        let out = run_remove(&cfg, &store, &args_for("GLP-0001"), &declined)
             .unwrap()
             .into_raw_text();
 
@@ -450,13 +409,8 @@ mod tests {
         let note = stage.path().join("notes/glep-shimeji/GLP-0001.md");
         let ledger = stage.path().join("repo/docs/handoffs/LEDGER.md");
         std::fs::write(&ledger, "# stale\n").unwrap();
-        let accepts = FakeConfirm {
-            interactive: true,
-            answer: true,
-        };
-
         let store = crate::engines::pending_work::store_for(&cfg);
-        let out = run_remove(&cfg, &store, &args_for("GLP-0001"), &accepts)
+        let out = run_remove(&cfg, &store, &args_for("GLP-0001"), &accepted)
             .unwrap()
             .into_raw_text();
 

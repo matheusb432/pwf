@@ -1,8 +1,8 @@
-//! Date stamping: the supplied `--date` override, else today (local).
+//! Local date stamping with an optional explicit override.
 
 use chrono::Local;
 
-/// `date` when `Some`, else today's `YYYY-MM-DD` in local time.
+/// Returns the override or today's local date in `YYYY-MM-DD` form.
 pub fn stamp_date(date: Option<&str>) -> String {
     match date {
         Some(d) => d.to_string(),

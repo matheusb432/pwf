@@ -1,7 +1,8 @@
 use std::{fmt::Write as _, path::Path, sync::LazyLock};
 
 use pwf_application::{
-    AppDbStore, IndexPlacement, ItemPatch, Materialization, NewItem, PendingWorkItem, RecordId,
+    AppDbStore, IndexEntryState, IndexPlacement, ItemPatch, Materialization, NewItem,
+    PendingWorkItem, RecordId,
 };
 use pwf_domain::pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus};
 use regex::Regex;
@@ -25,8 +26,7 @@ use crate::obsidian::{
     note_text::{replace_body, replace_title},
 };
 
-/// Maps a task note's raw bytes to its persisted-state record. `source` is kept
-/// byte-exact (the `pwf show` contract); typed fields come off the frontmatter.
+/// Maps a task note to typed frontmatter fields while preserving its byte-exact source.
 fn note_to_record(
     id: WorkItemId,
     path: &Path,
@@ -44,9 +44,7 @@ fn note_to_record(
         .map(str::to_string)
         .or_else(|| frontmatter.get("title").cloned())
         .unwrap_or_default();
-    // Raw, unvalidated — the application tag filter parses lazily so an
-    // unfiltered read never fails on a corrupt `tags:` value (parity with the
-    // legacy read path).
+    // Preserve raw tags so unfiltered reads do not fail on invalid tag syntax.
     let tags = frontmatter.get("tags").cloned();
     let field = |key: &str| {
         frontmatter
@@ -73,10 +71,10 @@ fn note_to_record(
     }
 }
 
-/// Materializes an index wikilink with no backing note file. Mirrors the
-/// legacy read: empty body/prompt, `locator` = the note path the id should
-/// occupy, and a `MissingNote` discriminant carrying the diagnostic-facing
-/// (platform display form) path for the launchability issue line.
+/// Materializes an index link whose note file is missing.
+///
+/// Body and source are empty. `locator` is the expected note path, and `MissingNote` carries its
+/// platform display form for diagnostics.
 fn missing_note_record(
     id: WorkItemId,
     title: String,
@@ -106,7 +104,6 @@ fn missing_note_record(
     }
 }
 
-/// The note path an index-linked id is expected to occupy when no note exists.
 fn expected_note_path(index_path: &Path, id: &str) -> std::path::PathBuf {
     index_path
         .parent()
@@ -114,11 +111,10 @@ fn expected_note_path(index_path: &Path, id: &str) -> std::path::PathBuf {
         .join(format!("{id}.md"))
 }
 
-/// [`missing_note_record`] from a parsed checkbox line (single-item `get`).
 fn checkbox_to_record(index_path: &Path, line: &ParsedIndexLine) -> PendingWorkItem {
     let (status, completed) = match &line.state {
-        pwf_application::IndexEntryState::Open => (WorkItemStatus::Active, None),
-        pwf_application::IndexEntryState::Done(date) => (
+        IndexEntryState::Open => (WorkItemStatus::Active, None),
+        IndexEntryState::Done(date) => (
             WorkItemStatus::Done,
             (!date.as_str().is_empty()).then(|| date.clone()),
         ),
@@ -159,9 +155,7 @@ impl ObsidianStore {
             .map(|line| checkbox_to_record(&index_path, &line)))
     }
 
-    /// The index placement of `id`'s open link entry, if the project index
-    /// links it — same open-link recognition as the list materialization
-    /// (`scan_index`), so bare `- [[ID]]` links count too.
+    /// Returns an open link's index placement, including bare `- [[ID]]` links.
     fn open_entry_placement(
         &self,
         project: &ProjectName,
@@ -180,13 +174,10 @@ impl ObsidianStore {
             }))
     }
 
-    /// Index-driven list materialization, mirroring how the vault represents
-    /// the collection (and how the legacy read walked it): every open wikilink
-    /// entry becomes a record (note-backed or missing-note), and every legacy
-    /// inline prompt line becomes an [`RecordId::Inline`] record. A note file
-    /// with no index entry is not part of the listed collection. Placement
-    /// (index display path + entry line) and the RAW section label ride on each
-    /// record; normalization and launchability enrichment are application's.
+    /// Lists every note-backed, index-only, and inline pending-work record.
+    ///
+    /// Open index entries contribute placement. Every index entry contributes its raw section; the
+    /// application owns lifecycle visibility, normalization, and launchability policy.
     fn list_pending_items(
         &self,
         project: &ProjectName,
@@ -196,49 +187,45 @@ impl ObsidianStore {
                 path: self.config.notes_dir.clone(),
             });
         }
-        let Some((index_path, text)) = self.validated_project_index(project)? else {
-            return Ok(Vec::new());
-        };
         let tasks = self.task_files_for_project(project)?;
+        let mut records: Vec<PendingWorkItem> = tasks
+            .into_iter()
+            .map(|task| note_to_record(task.id, &task.path, task.title.as_deref(), task.markdown))
+            .collect();
+        let Some((index_path, text)) = self.validated_project_index(project)? else {
+            return Ok(records);
+        };
         let index_display = path_str(&index_path);
-        let scan = scan_index(&text);
 
-        let mut records = Vec::with_capacity(scan.links.len() + scan.inline.len());
-        for link in &scan.links {
-            let id = WorkItemId::try_new(&link.id).expect("link regex guarantees canonical id");
-            let alias = link.alias.clone().unwrap_or_default();
-            let mut record = match tasks.iter().find(|task| task.id == id) {
-                Some(task) => {
-                    let mut record = note_to_record(
-                        task.id.clone(),
-                        &task.path,
-                        task.title.as_deref(),
-                        task.markdown.clone(),
-                    );
-                    // The index alias backs up an empty note title (legacy
-                    // title precedence: frontmatter, alias, id).
-                    if record.title.trim().is_empty() {
-                        record.title = alias;
-                    }
-                    record
+        for line in parse_index_lines(&text) {
+            if let Some(record) = records
+                .iter_mut()
+                .find(|record| matches!(&record.id, RecordId::Item(id) if id == &line.id))
+            {
+                if record.title.trim().is_empty() {
+                    record.title = line.alias.clone().unwrap_or_default();
                 }
-                None => missing_note_record(
-                    id,
-                    alias,
-                    WorkItemStatus::Active,
-                    None,
-                    None,
-                    &expected_note_path(&index_path, &link.id),
-                ),
-            };
-            record.placement = Some(IndexPlacement {
-                index_path: index_display.clone(),
-                line: line_number(&text, link.start),
-            });
-            record.section = section_label_at(&text, link.start);
+                record.section = (!line.section.is_empty()).then(|| line.section.clone());
+                if matches!(&line.state, IndexEntryState::Open) {
+                    record.placement = Some(IndexPlacement {
+                        index_path: index_display.clone(),
+                        line: line.line_number,
+                    });
+                }
+                continue;
+            }
+
+            let mut record = checkbox_to_record(&index_path, &line);
+            if matches!(&line.state, IndexEntryState::Open) {
+                record.placement = Some(IndexPlacement {
+                    index_path: index_display.clone(),
+                    line: line.line_number,
+                });
+            }
             records.push(record);
         }
 
+        let scan = scan_index(&text);
         for (index, inline) in scan.inline.iter().enumerate() {
             records.push(PendingWorkItem {
                 id: RecordId::Inline(index + 1),
@@ -333,10 +320,7 @@ impl ObsidianStore {
         if let Some(body) = &patch.body {
             content = replace_body(&content, body);
         }
-        // Commits are applied before the status/completed edit so that a close
-        // (`status: done` + `completed:` inserted together) leaves `commits:`
-        // anchored after `created:`, not after the freshly-inserted `completed:`
-        // — the byte-for-byte frontmatter order the legacy close path produced.
+        // Apply commits first to keep `commits:` anchored after `created:` during a close.
         if let Some(commits) = &patch.commits {
             content = set_commits_text(&content, commits.as_deref());
         }
@@ -452,11 +436,8 @@ impl AppDbStore<PendingWorkItem> for ObsidianStore {
     }
 }
 
-/// Flips a legacy `- [ ]` checkbox at `line` to `- [x] … ✅ <completed>`.
-///
-/// Pure text mechanics for the `AppDbStore<PendingWorkItem>` status patch on an
-/// inline/legacy checkbox item (`patch_legacy_checkbox`); the byte-identical CLI
-/// gate depends on this being the single write path for legacy closes.
+/// Marks an inline checkbox done at `line` while preserving its surrounding text.
+/// The byte-identical CLI gate depends on this being the only legacy-close write path.
 pub(super) fn close_legacy_checkbox_text(
     content: &str,
     line: usize,

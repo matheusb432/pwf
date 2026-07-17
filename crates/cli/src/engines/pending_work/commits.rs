@@ -1,10 +1,7 @@
-// Commit-range provenance recorded on close-out (PWF-0017). Owns the `commits:`
-// frontmatter value format and the explicit `--review` task prompt. A range is
-// provenance, not a pwf id — no `[[…]]` wrapping, no config validation here.
+// Commit ranges are opaque provenance, not pending-work IDs.
 
-/// Normalizes the repeated/comma-separated `--commits` values into a single
-/// frontmatter value: split each on `,`, trim, drop empties, dedup (preserving
-/// first-seen order), join with `", "`. `None` when nothing usable remains.
+/// Normalizes repeated or comma-separated ranges, preserving first-seen order and removing
+/// duplicates. Returns `None` when no non-empty range remains.
 pub(super) fn frontmatter_value(values: &[String]) -> Option<String> {
     let mut ranges: Vec<String> = Vec::new();
     for value in values {

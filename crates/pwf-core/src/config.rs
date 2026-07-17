@@ -3,20 +3,16 @@ use std::{collections::BTreeMap, path::Path};
 use serde::Deserialize;
 use thiserror::Error;
 
-/// Errors at the config boundary. Display text is frozen to the pre-clap strings
-/// so existing CLI diagnostics stay stable.
+/// Reports configuration read and parse failures with stable CLI text.
 #[derive(Debug, Error)]
 pub enum ConfigError {
-    /// The config file could not be read at the given path.
     #[error("Pending work config not found: {0}")]
     NotFound(String),
-    /// The config JSON failed to parse.
     #[error("config parse error: {0}")]
     Parse(#[from] serde_json::Error),
 }
 
-// ? Engines return `Result<_, String>`; this lift lets `?` propagate a
-// ? `ConfigError` as its exact Display text — no output change.
+// Preserve Display text when engines expose string errors.
 impl From<ConfigError> for String {
     fn from(e: ConfigError) -> Self {
         e.to_string()
@@ -33,7 +29,7 @@ pub struct Config {
 }
 
 impl Config {
-    /// Notes root for a project: per-project override if present, else the global notes dir.
+    /// Returns the project override or the global notes directory.
     pub fn notes_dir_for(&self, project: &str) -> &str {
         self.notes_dir_overrides
             .get(project)
@@ -55,13 +51,13 @@ struct RawConfig {
     notes_dir_overrides: BTreeMap<String, String>,
 }
 
-/// Expand a leading `~` against `home`.
+/// Expands a leading `~` against `home`.
 pub fn expand_user(path: &str, home: &str) -> String {
     if path == "~" {
         return home.to_string();
     }
     if let Some(rest) = path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\")) {
-        // OS-native path join → backslash separators on Windows.
+        // Use native separators, including backslashes on Windows.
         return Path::new(home).join(rest).to_string_lossy().into_owned();
     }
     path.to_string()
@@ -73,7 +69,7 @@ fn home() -> String {
         .unwrap_or_default()
 }
 
-/// Parse config JSON. `notes_dir_override` is the `--notes-dir` flag (wins if set).
+/// Parses config JSON, with `notes_dir_override` taking precedence over the configured root.
 ///
 /// # Errors
 ///
@@ -104,7 +100,7 @@ pub fn from_json(json: &str, notes_dir_override: Option<&str>) -> Result<Config,
     })
 }
 
-/// Load config from a file path (used by the CLI).
+/// Loads config from a file path.
 ///
 /// # Errors
 ///
@@ -116,10 +112,9 @@ pub fn load(config_path: &str, notes_dir_override: Option<&str>) -> Result<Confi
     from_json(&json, notes_dir_override)
 }
 
-/// Default `--config-path` when none is supplied. Resolution order after the
-/// explicit `--config` flag: the `PWF_CONFIG` env var (set by the scoop shim so
-/// the global `pwf` finds the editable repo config), then the binary-relative
-/// `<exe>/../../config/pending-work.json` (works for `target/release/pwf.exe`).
+/// Resolves the default config path from `PWF_CONFIG`, then relative to the executable.
+///
+/// The binary-relative fallback is `<exe>/../../config/pending-work.json`.
 pub fn default_config_path() -> Option<String> {
     if let Ok(p) = std::env::var("PWF_CONFIG")
         && !p.is_empty()
@@ -174,7 +169,7 @@ mod tests {
 
     #[test]
     fn pwf_config_env_wins_over_relative() {
-        // SAFETY: single-threaded test; restore after.
+        // SAFETY: This test runs alone and restores the variable before returning.
         unsafe { std::env::set_var("PWF_CONFIG", "/custom/pwf.json") };
         let got = default_config_path();
         unsafe { std::env::remove_var("PWF_CONFIG") };
@@ -183,8 +178,6 @@ mod tests {
 
     #[test]
     fn config_error_display_is_byte_identical_to_legacy_strings() {
-        // PR2 invariant: typed errors must Display to the exact pre-refactor text
-        // so stderr stays byte-identical for callers.
         let not_found = ConfigError::NotFound("/x/pending-work.json".to_string());
         assert_eq!(
             not_found.to_string(),
@@ -199,14 +192,12 @@ mod tests {
 
     #[test]
     fn config_error_converts_to_string_unchanged() {
-        // Engines return Result<_, String>; `?` must lift ConfigError to the same text.
         let s: String = ConfigError::NotFound("/p".to_string()).into();
         assert_eq!(s, "Pending work config not found: /p");
     }
 
     #[test]
     fn expands_leading_tilde() {
-        // OS-native join under home.
         let home = "C:\\Users\\me";
         assert_eq!(expand_user("~", home), home);
         let joined = expand_user("~/x", home);

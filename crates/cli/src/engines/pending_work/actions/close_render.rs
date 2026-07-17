@@ -1,18 +1,10 @@
-//! CLI rendering for the close (`done`/`cancel`) and `reopen` outcomes, plus
-//! the stderr diagnostics for done-queue side effects. These strings were
-//! formerly emitted from the application/infra layers (PWF-0123 error/rendering
-//! relocation); every format here is verbatim from its prior source
-//! (`ClosedItem::to_output_text` / `ReopenedItem::to_output_text` /
-//! `actions/done.rs::emit_status_diagnostics`).
+//! Renders byte-stable close and reopen confirmations plus ordered done-queue diagnostics.
 
 use pwf_application::pending_work::{done::CompletedPendingWork, reopen::ReopenedPendingWork};
 
 use super::outcome::OutcomeRender;
 
-/// The close confirmation: `"<Done|Cancelled> <id> (<project> :: <title>)\n"`,
-/// followed by the `--review` task's `ADDED PWF TASK […]` block when present
-/// (rendered through the single `OutcomeRender::raw_text` source, so the added
-/// form never drifts from `add`'s).
+/// Renders the byte-stable close confirmation and optional review-task allocation.
 pub(in crate::engines::pending_work) fn render_closed(outcome: &CompletedPendingWork) -> String {
     let mut text = format!(
         "{} {} ({} :: {})\n",
@@ -27,8 +19,7 @@ pub(in crate::engines::pending_work) fn render_closed(outcome: &CompletedPending
     text
 }
 
-/// The reopen confirmation: `"Reopened <id> (<project>)\n"`, or the idempotent
-/// `"<id> already active (<project>) — skipped\n"` when nothing changed.
+/// Renders the byte-stable reopen or already-active confirmation.
 pub(in crate::engines::pending_work) fn render_reopened(outcome: &ReopenedPendingWork) -> String {
     if outcome.already_active {
         format!(
@@ -45,9 +36,7 @@ pub(in crate::engines::pending_work) fn render_reopened(outcome: &ReopenedPendin
     }
 }
 
-/// The done-queue side-effect diagnostics (stderr): futuro-header normalization
-/// and section-cap eviction, in that order — verbatim from the former
-/// `emit_status_diagnostics`.
+/// Emits header-normalization before section-cap-eviction diagnostics on stderr.
 pub(in crate::engines::pending_work) fn emit_close_diagnostics(outcome: &CompletedPendingWork) {
     if let Some(project) = &outcome.futuro_renamed_project {
         eprintln!(

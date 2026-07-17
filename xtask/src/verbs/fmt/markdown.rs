@@ -1,9 +1,9 @@
-//! Markdown (mdformat) command plan — active only when the repo opts in via `.mdformat.toml`.
+//! mdformat command planning for repositories with `.mdformat.toml`.
 
 use super::FmtMode;
 use crate::task::Step;
 
-/// Plugins `uvx` provisions alongside mdformat; keep in lockstep with `.mdformat.toml`.
+/// Plugins provisioned with mdformat and kept aligned with `.mdformat.toml`.
 const PLUGINS: &[&str] = &[
     "mdformat-gfm",
     "mdformat-gfm-alerts",
@@ -11,7 +11,7 @@ const PLUGINS: &[&str] = &[
     "mdformat-frontmatter",
 ];
 
-/// The mdformat step for `mode`, or `None` when there are no Markdown files to format.
+/// Builds an mdformat step, or returns [`None`] when there are no Markdown files.
 pub(super) fn format_step(files: &[String], mode: FmtMode) -> Option<Step> {
     if files.is_empty() {
         return None;

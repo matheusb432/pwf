@@ -10,7 +10,7 @@ use pwf_application::{
 
 use super::super::errors::PendingWorkError;
 use crate::{
-    cli::Args,
+    cli::EngineArgs,
     config::Config,
     engines::pending_work::{
         canonical_pending_id,
@@ -18,9 +18,8 @@ use crate::{
     },
 };
 
-/// Resolve the lookup id to feed the handlers, preferring the raw input when it
-/// canonicalizes to the same id (so a not-found error preserves the raw form).
-fn lookup_id<'a>(args: &'a Args, action: &'static str) -> Result<&'a str, PendingWorkError> {
+/// Preserves the caller's spelling when canonicalization resolves to the same item.
+fn lookup_id<'a>(args: &'a EngineArgs, action: &'static str) -> Result<&'a str, PendingWorkError> {
     let canonical = require_id(args, action)?;
     Ok(match args.raw_id.as_deref() {
         Some(raw) if canonical_pending_id(raw) == canonical => raw,
@@ -28,14 +27,12 @@ fn lookup_id<'a>(args: &'a Args, action: &'static str) -> Result<&'a str, Pendin
     })
 }
 
-/// Resolves an id to its note path (`show == false`) or full markdown source
-/// (`show == true`). Every id shape goes through the application handlers —
-/// the resolve handler serves legacy inline `project:N` prompts by scanning
-/// the generic list for their ordinal.
+/// Returns full Markdown when `show` is true and the note path otherwise.
+/// Legacy inline IDs resolve through the application handlers.
 pub(in crate::engines::pending_work) fn resolve_output<S>(
     cfg: &Config,
     store: &S,
-    args: &Args,
+    args: &EngineArgs,
     action: &'static str,
     show: bool,
 ) -> Result<String, PendingWorkError>
@@ -46,15 +43,12 @@ where
     let registry = project_registry(cfg);
     if show {
         return match pwf_application::pending_work::show::execute(
-            ShowPendingWorkItem { id: id.to_string() },
+            &ShowPendingWorkItem { id: id.to_string() },
             store,
             &registry,
         ) {
             Ok(shown) => Ok(shown.markdown),
-            // A missing-note wikilink has no markdown to stream. Attempt the
-            // real read of the expected note so the surfaced failure is
-            // literally the legacy one (`Cannot read item file: <io error>`),
-            // not a reconstructed lookalike.
+            // Read the missing path to preserve the storage error's exact message.
             Err(ResolvePendingWorkError::NoteFileMissing { path }) => {
                 NoteMarkdownSource::read_note_markdown(store, Path::new(&path))
                     .map_err(|error| PendingWorkError::ApplicationRead(error.to_string()))
@@ -63,7 +57,7 @@ where
         };
     }
     pwf_application::pending_work::resolve::execute(
-        ResolvePendingWorkItem { id: id.to_string() },
+        &ResolvePendingWorkItem { id: id.to_string() },
         store,
         &registry,
     )
@@ -74,7 +68,7 @@ where
 pub(in crate::engines::pending_work) fn run_resolve<S>(
     cfg: &Config,
     store: &S,
-    args: &Args,
+    args: &EngineArgs,
 ) -> Result<String, PendingWorkError>
 where
     S: AppDbStore<PendingWorkItem> + NoteMarkdownSource,
@@ -87,7 +81,6 @@ mod tests {
     use super::*;
     use crate::engines::pending_work::run::store_for;
 
-    /// Stage a vault whose index links PWF-0001 with no backing note file.
     fn ghost_stage() -> (tempfile::TempDir, Config) {
         let stage = tempfile::tempdir().unwrap();
         let notes = stage.path().join("notes");
@@ -109,10 +102,10 @@ mod tests {
         (stage, cfg)
     }
 
-    fn id_args(id: &str) -> Args {
-        Args {
+    fn id_args(id: &str) -> EngineArgs {
+        EngineArgs {
             id: Some(id.to_string()),
-            ..Args::default()
+            ..EngineArgs::default()
         }
     }
 
@@ -123,7 +116,6 @@ mod tests {
 
         let error = resolve_output(&cfg, &store, &id_args("PWF-0001"), "show", true).unwrap_err();
 
-        // The legacy read failure, literally: resolve_note_file → read_item_file.
         assert!(
             error.to_string().starts_with("Cannot read item file: "),
             "got: {error}"

@@ -7,44 +7,33 @@ pub struct QueryItemTags {
     pub id: String,
 }
 
-/// An item's owning project, canonical id, and raw `tags:` frontmatter — the
-/// minimal view the handoff mirror gate needs to decide whether a close/remove/
-/// reopen must mirror onto a linked handoff file.
+/// Contains the item identity and raw tags needed by the handoff mirror gate.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ItemTags {
     pub project: String,
     pub id: String,
-    /// Raw `tags:` frontmatter, verbatim and unparsed — the caller validates it
-    /// (so a corrupt value surfaces the caller's own error, not this query's).
+    /// Preserves raw `tags:` frontmatter for validation by the caller.
     pub tags: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum QueryItemTagsError {
-    /// The requested id is not a canonical [`WorkItemId`]. The gate treats this
-    /// as an error (not a silent skip), matching the legacy note lookup.
+    /// Rejects non-canonical ids instead of treating them as a missing item.
     #[error("Open pending-work item not found: {id}")]
     NotCanonical { id: String },
-    /// The id's prefix maps to no managed project.
     #[error("Unknown task id prefix `{prefix}` for {id}")]
     UnknownPrefix { id: String, prefix: String },
     #[error("{0}")]
     ReadStore(Box<dyn std::error::Error + Send + Sync>),
 }
 
-/// Reads the tags of the item identified by `id`, open **or** closed, by mapping
-/// the id prefix to its project and reading the record from the generic store.
-/// `Ok(None)` means the id is canonical and its prefix is managed but no matching
-/// record exists — the same "no item to gate" signal the mirror gate turned into
-/// a skip. A non-canonical id or an unmanaged prefix is an error, preserving the
-/// legacy note-lookup's error-vs-none boundary exactly.
-#[cqrsy::handler(query)]
-#[expect(
-    clippy::needless_pass_by_value,
-    reason = "the cqrsy query operation owns its request by contract"
-)]
+/// Reads raw tags for an open or closed item routed by canonical id prefix.
+///
+/// `Ok(None)` means the id and prefix are valid but no record exists. Invalid ids and unmanaged
+/// prefixes are errors.
+#[cqrsy::query]
 pub fn execute(
-    query: QueryItemTags,
+    query: &QueryItemTags,
     store: &impl AppDbStore<PendingWorkItem>,
     projects: &ProjectRegistry,
 ) -> Result<Option<ItemTags>, QueryItemTagsError> {
@@ -110,7 +99,7 @@ mod tests {
     }
 
     fn query(store: &InMemoryStore, id: &str) -> Result<Option<ItemTags>, QueryItemTagsError> {
-        execute(QueryItemTags { id: id.to_string() }, store, &registry())
+        execute(&QueryItemTags { id: id.to_string() }, store, &registry())
     }
 
     #[test]

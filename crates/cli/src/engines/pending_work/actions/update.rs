@@ -1,5 +1,3 @@
-// Action: update.
-
 use pwf_application::{AppDbStore, PendingWorkItem, pending_work::update::UpdatePendingWorkItem};
 use pwf_domain::pending_work::ProjectRegistry;
 
@@ -7,12 +5,12 @@ use super::{
     super::{commits, errors::PendingWorkError},
     outcome::UpdatedItem,
 };
-use crate::cli::Args;
+use crate::cli::EngineArgs;
 
 pub(in crate::engines::pending_work) fn run_update(
     store: &impl AppDbStore<PendingWorkItem>,
     projects: &ProjectRegistry,
-    args: &Args,
+    args: &EngineArgs,
 ) -> Result<UpdatedItem, PendingWorkError> {
     let id = args
         .id
@@ -83,9 +81,9 @@ mod tests {
     #[test]
     fn missing_id_returns_typed_error_with_legacy_display() {
         let (_stage, cfg) = stage_legacy_item();
-        let args = Args {
+        let args = EngineArgs {
             prompt: Some("x".to_string()),
-            ..Args::default()
+            ..EngineArgs::default()
         };
 
         let store = crate::engines::pending_work::store_for(&cfg);
@@ -102,9 +100,9 @@ mod tests {
     #[test]
     fn nothing_to_update_returns_typed_error_with_legacy_display() {
         let (_stage, cfg) = stage_legacy_item();
-        let args = Args {
+        let args = EngineArgs {
             id: Some("glep-shimeji:1".to_string()),
-            ..Args::default()
+            ..EngineArgs::default()
         };
 
         let store = crate::engines::pending_work::store_for(&cfg);

@@ -8,11 +8,11 @@ publish.workspace = true
 pwf-application = { path = "../application" }
 pwf-domain = { path = "../domain" }
 pwf-core = { path = "../pwf-core" }
-prompt-lanes = { path = "../../shared/prompt-lanes" }
 regex = { workspace = true }
 thiserror = { workspace = true }
 gray_matter = { version = "0.3.2", default-features = false, features = ["yaml"] }
 serde = { workspace = true }
+toml = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }

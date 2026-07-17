@@ -1,34 +1,37 @@
-//! Pure note-body text transforms: title inference, prompt-to-body rendering,
-//! and the lane/report body splices. These are representation-agnostic string
-//! functions — they never touch frontmatter fences (that stays in the vault
-//! adapter's `replace_body`/`replace_title`) — so they live in the domain and
-//! are shared by the application update handler and the infra add/close paths.
+//! Pure title, prompt, lane, and report transforms for note bodies.
 //!
-//! Deliberately regex-free: the only external dependency is the zero-dependency
-//! `prompt-lanes` lane parser; every header match here is exact line matching.
+//! Frontmatter remains a storage concern. Section headers match exact lines.
 
-use std::fmt::Write;
+use std::{fmt::Write, sync::LazyLock};
 
 use prompt_lanes::{Adapter, MarkdownAdapter, parse};
+use regex::Regex;
 
 use crate::pending_work::TaskTitle;
 
-/// Upper bound (in `char`s) on an auto-inferred title. Without it, a long prompt
-/// with no explicit marker becomes unreadable in the index/list surfaces.
+/// Maximum character count before the inferred-title ellipsis.
 const MAX_TITLE_CHARS: usize = 80;
 const REPORT_HEADER: &str = "### Report";
 const LANE_SECTION_HEADERS: [&str; 4] =
     ["## Goals", "## Context", "## Constraints", "## Done When"];
 
-/// Lowercases a title (the canonical pending-work title form).
+static PLACEHOLDER_PROMPT_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)(^\s*\[!\]\s*TODO\b|^\s*TODO\b|definir prompt|define prompt|tbd)")
+        .expect("valid placeholder regex")
+});
+
+enum PromptClassification {
+    Placeholder,
+    AuthoredVerbatimLegacy,
+    Authored,
+}
+
 #[must_use]
 pub fn normalize_title(title: &str) -> String {
     title.to_lowercase()
 }
 
-/// The inferred title for a pending-work prompt — the capped, lowercased lead
-/// title, falling back to the [`TaskTitle`] default when the prompt is
-/// marker-first (no authored title).
+/// Returns the capped, lowercased lead clause or [`TaskTitle::default`] for a marker-first prompt.
 #[must_use]
 pub fn inferred_title(prompt: &str) -> String {
     let title = normalize_title(&parse(prompt).capped_title(MAX_TITLE_CHARS));
@@ -39,50 +42,56 @@ pub fn inferred_title(prompt: &str) -> String {
     }
 }
 
-/// Renders the pending-work note body for a prompt: a placeholder prompt is kept
-/// verbatim so it stays detectable, otherwise the lane parser output is rendered
-/// through the Markdown adapter.
+/// Renders a prompt as Markdown while preserving placeholders and verbatim-authored prompts.
 #[must_use]
 pub fn note_body(prompt: &str) -> String {
-    if is_placeholder_prompt(prompt) {
-        prompt.to_string()
-    } else {
-        MarkdownAdapter.render(&parse(prompt))
+    match prompt_classification(prompt) {
+        PromptClassification::Placeholder | PromptClassification::AuthoredVerbatimLegacy => {
+            prompt.to_string()
+        }
+        PromptClassification::Authored => MarkdownAdapter.render(&parse(prompt)),
     }
 }
 
-/// Whether a prompt is a placeholder (empty, a `TODO`/`[!] TODO` marker, or a
-/// `define prompt`/`definir prompt`/`tbd` sentinel).
+/// Reports whether a prompt is empty or matches `TODO`, `[!] TODO`, `define prompt`, `definir
+/// prompt`, or `tbd` case-insensitively.
 #[must_use]
 pub fn is_placeholder_prompt(prompt: &str) -> bool {
-    if prompt.trim().is_empty() {
-        return true;
+    matches!(
+        prompt_classification(prompt),
+        PromptClassification::Placeholder
+    )
+}
+
+fn prompt_classification(prompt: &str) -> PromptClassification {
+    if prompt.trim().is_empty() || PLACEHOLDER_PROMPT_REGEX.is_match(prompt) {
+        return PromptClassification::Placeholder;
     }
-    let lower = prompt.to_lowercase();
-    if lower.contains("definir prompt") || lower.contains("define prompt") || lower.contains("tbd")
-    {
-        return true;
-    }
-    let trimmed = lower.trim_start();
-    let after_marker = trimmed.strip_prefix("[!]").map(str::trim_start);
-    [Some(trimmed), after_marker]
+
+    // Rendering uses ASCII boundaries, but diagnostics use Unicode boundaries.
+    let prompt_lowercase = prompt.to_lowercase();
+    let prompt_trimmed = prompt_lowercase.trim_start();
+    let prompt_after_marker = prompt_trimmed.strip_prefix("[!]").map(str::trim_start);
+    if [Some(prompt_trimmed), prompt_after_marker]
         .into_iter()
         .flatten()
-        .any(starts_with_todo_word)
+        .any(prompt_starts_with_todo_word_boundary_ascii)
+    {
+        PromptClassification::AuthoredVerbatimLegacy
+    } else {
+        PromptClassification::Authored
+    }
 }
 
-fn starts_with_todo_word(text: &str) -> bool {
-    text.strip_prefix("todo")
-        .is_some_and(|rest| !rest.starts_with(is_word_char))
+fn prompt_starts_with_todo_word_boundary_ascii(prompt: &str) -> bool {
+    prompt.strip_prefix("todo").is_some_and(|rest| {
+        !rest.starts_with(|character: char| character.is_ascii_alphanumeric() || character == '_')
+    })
 }
 
-fn is_word_char(c: char) -> bool {
-    c.is_ascii_alphanumeric() || c == '_'
-}
-
-/// Splices lane-syntax bullets (Goals/Context/Constraints/Done When) into a
-/// note body. An existing section grows in place (before the next heading), a
-/// missing one is created at the end. A whitespace-only prompt yields `None`.
+/// Splices lane bullets into existing sections and appends missing sections.
+///
+/// Returns [`None`] for a whitespace-only prompt.
 #[must_use]
 pub fn append_lanes(body: &str, prompt: &str) -> Option<String> {
     let prompt = prompt.trim();
@@ -134,9 +143,7 @@ fn append_bullets_to_section(content: &str, header: &str, bullets: &[String]) ->
     out
 }
 
-/// Byte offset just past a header line (`## Goals`, optionally with trailing
-/// whitespace), or `None` when the header is absent — the regex-free equivalent
-/// of `^{header}\s*$`.
+/// Returns the byte offset after an exact header line, allowing trailing whitespace.
 fn header_line_end(content: &str, header: &str) -> Option<usize> {
     let mut offset = 0;
     for segment in content.split('\n') {
@@ -151,7 +158,7 @@ fn header_line_end(content: &str, header: &str) -> Option<usize> {
     None
 }
 
-/// Byte offset of the first markdown heading line (`^#{1,6}\s`), regex-free.
+/// Returns the byte offset of the first Markdown heading line.
 fn next_heading_offset(content: &str) -> Option<usize> {
     let mut offset = 0;
     for segment in content.split('\n') {
@@ -168,8 +175,9 @@ fn is_heading_line(line: &str) -> bool {
     (1..=6).contains(&hashes) && line[hashes..].starts_with(char::is_whitespace)
 }
 
-/// Appends a free-form, multi-line Markdown report verbatim under a `### Report`
-/// H3 (created if absent). A whitespace-only report yields `None`.
+/// Appends a free-form Markdown report verbatim under one `### Report` heading.
+///
+/// Returns [`None`] for a whitespace-only report.
 #[must_use]
 pub fn append_report_block(body: &str, report: &str) -> Option<String> {
     let report = report.trim();
@@ -194,8 +202,9 @@ fn has_report_header(content: &str) -> bool {
     })
 }
 
-/// Appends a single-line (whitespace-collapsed) report under a fresh `### Report`
-/// H3. A blank-only report yields `None`.
+/// Appends a whitespace-collapsed report under a new `### Report` heading.
+///
+/// Returns [`None`] for a blank report.
 #[must_use]
 pub fn append_report(body: &str, report: &str) -> Option<String> {
     let report = normalized_report(report)?;
@@ -223,20 +232,154 @@ fn normalized_report(report: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    const MAX_RENDERED_TITLE_CHARS: usize = 81;
+
     #[test]
-    fn marker_first_title_inference_uses_domain_default_without_body_leakage() {
+    fn title_inference_keeps_full_prompt_without_ampersand() {
+        assert_eq!(
+            inferred_title("Build the data filter to let users sort"),
+            "build the data filter to let users sort"
+        );
+        assert_eq!(inferred_title("add startup toggle"), "add startup toggle");
+    }
+
+    #[test]
+    fn title_inference_cuts_at_first_lane_marker_only() {
+        assert_eq!(
+            inferred_title("create engine feature to add update task / make it idempotent"),
+            "create engine feature to add update task"
+        );
+        assert_eq!(inferred_title("a / b / c"), "a");
+        assert_eq!(
+            inferred_title("fix bug: empty prompt"),
+            "fix bug: empty prompt"
+        );
+    }
+
+    #[test]
+    fn title_inference_collapses_whitespace_and_lowercases() {
+        assert_eq!(
+            inferred_title("  Refactor   Help  Command  "),
+            "refactor help command"
+        );
+    }
+
+    #[test]
+    fn title_inference_empty_lead_uses_domain_fallback() {
+        assert_eq!(inferred_title("/ only second"), "n/a");
         assert_eq!(inferred_title("/c context"), "n/a");
+    }
+
+    #[test]
+    fn title_inference_caps_long_prompt_without_marker_at_word_boundary() {
+        let prompt = "Continue the PowerShell to Rust port into the cfgtool CLI (scripts/cfgtool), using the shipped gaming domain as the template, porting domain-by-domain smallest first";
+        let title = inferred_title(prompt);
+        assert_eq!(
+            title,
+            "continue the powershell to rust port into the cfgtool cli (scripts/cfgtool),…"
+        );
+        assert!(title.chars().count() <= MAX_RENDERED_TITLE_CHARS);
+        assert!(
+            prompt
+                .to_lowercase()
+                .starts_with(title.trim_end_matches('…'))
+        );
+    }
+
+    #[test]
+    fn title_inference_caps_long_lead_clause_before_marker() {
+        let prompt = "HUMAN: Start studying AZ-104 Section 02 - Storage. Begin with the Storage MOC, then cover Storage Accounts / Redundancy / Security";
+        let title = inferred_title(prompt);
+        assert_eq!(
+            title,
+            "human: start studying az-104 section 02 - storage. begin with the storage moc,…"
+        );
+        assert!(title.chars().count() <= MAX_RENDERED_TITLE_CHARS);
+    }
+
+    #[test]
+    fn title_inference_short_prompt_passes_through_uncapped() {
+        assert_eq!(
+            inferred_title("add a startup toggle to the settings page"),
+            "add a startup toggle to the settings page"
+        );
+    }
+
+    #[test]
+    fn title_inference_caps_single_overlong_word_on_char_boundary() {
+        let word = "x".repeat(200);
+        let title = inferred_title(&word);
+        assert!(title.ends_with('…'));
+        assert_eq!(title.chars().count(), MAX_RENDERED_TITLE_CHARS);
+    }
+
+    #[test]
+    fn title_inference_is_always_bounded() {
+        let cases = [
+            "x".repeat(500),                           // long, no boundary
+            format!("{} / tail", "word ".repeat(200)), // long lead before marker
+            "/ ".repeat(300),                          // all separators
+            "💥".repeat(300),                          // multi-byte, no spaces
+            "a ".repeat(300),                          // many word boundaries
+            String::new(),                             // empty
+        ];
+        for input in cases {
+            let t = inferred_title(&input);
+            assert!(
+                t.chars().count() <= MAX_RENDERED_TITLE_CHARS,
+                "input bound violated ({} chars): {t}",
+                t.chars().count()
+            );
+        }
+    }
+
+    #[test]
+    fn normalize_title_lowercases_and_leaves_lowercase_untouched() {
+        assert_eq!(normalize_title("HUMAN: Do AZ-104"), "human: do az-104");
+        assert_eq!(normalize_title("already lower"), "already lower");
+    }
+
+    #[test]
+    fn placeholder_prompt_detection() {
+        assert!(is_placeholder_prompt(""));
+        assert!(is_placeholder_prompt("TODO define this"));
+        assert!(is_placeholder_prompt("definir prompt"));
+        assert!(!is_placeholder_prompt("add startup toggle"));
+    }
+
+    #[test]
+    fn note_body_renders_marker_first_prompt_without_body_leakage() {
         assert_eq!(note_body("/c context"), "## Goals\n\n## Context\n- context");
     }
 
     #[test]
-    fn note_body_wraps_a_normal_prompt_and_keeps_placeholders_raw() {
+    fn note_body_wraps_a_normal_prompt() {
         assert_eq!(
             note_body("add startup toggle"),
             "## Goals\n- add startup toggle"
         );
         assert_eq!(note_body("a / b"), "## Goals\n- a\n- b");
+    }
+
+    #[test]
+    fn note_body_renders_one_bullet_per_slash_lane() {
+        assert_eq!(
+            note_body("create engine feature to add update task / make it idempotent"),
+            "## Goals\n- create engine feature to add update task\n- make it idempotent"
+        );
+    }
+
+    #[test]
+    fn note_body_preserves_ampersands_as_text() {
+        assert_eq!(note_body("a & b"), "## Goals\n- a & b");
+    }
+
+    #[test]
+    fn note_body_keeps_placeholder_raw_so_it_stays_detectable() {
         assert_eq!(note_body("TODO"), "TODO");
+        assert!(is_placeholder_prompt(&note_body("TODO")));
+        assert!(is_placeholder_prompt(&note_body("tbd")));
+        assert!(is_placeholder_prompt(&note_body("define prompt")));
         assert_eq!(note_body("tbd"), "tbd");
         assert_eq!(note_body("define prompt"), "define prompt");
     }
@@ -273,8 +416,12 @@ mod tests {
     }
 
     #[test]
-    fn normalize_title_lowercases() {
-        assert_eq!(normalize_title("HUMAN: Do AZ-104"), "human: do az-104");
+    fn unicode_todo_suffix_remains_raw_without_becoming_placeholder() {
+        for prompt in ["TODOé", "[!] TODOé"] {
+            assert!(!is_placeholder_prompt(prompt));
+            assert_eq!(note_body(prompt), prompt);
+        }
+        assert!(is_placeholder_prompt("TODO-implement"));
     }
 
     #[test]
@@ -314,7 +461,6 @@ mod tests {
             append_report_block(body, report).unwrap(),
             "## Goals\n\n- ship it\n\n### Report\n\n## Outcome\n\nShipped it.\n\n## Follow-ups\n\n- write the FSD card\n"
         );
-        // A second block reuses the existing `### Report` header (no duplicate).
         let once = append_report_block(body, "first").unwrap();
         let twice = append_report_block(&once, "second").unwrap();
         assert_eq!(twice.matches("### Report").count(), 1, "{twice}");

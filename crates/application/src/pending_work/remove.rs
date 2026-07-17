@@ -12,29 +12,20 @@ pub struct RemovePendingWorkItem {
 
 #[derive(Debug, thiserror::Error)]
 pub enum RemovePendingWorkError {
-    /// Verbatim former infra `ItemNotFound` display (PWF-0123 error-string
-    /// relocation) — also covers a closed record: only open items are
-    /// removable, matching the legacy open-items lookup.
     #[error("Open pending-work item not found: {id}")]
     ItemNotFound { id: String },
-    /// Verbatim former infra `WorkItemNoteMissing` display: the index links
-    /// the id but the note file is gone, so there is nothing to delete.
     #[error("Work-item note missing: {path}")]
     NoteMissing { path: String },
     #[error("{0}")]
     WriteStore(Box<dyn std::error::Error + Send + Sync>),
 }
 
-/// Deletes an open pending-work item: unlink its index entry first (a failed
-/// unlink leaves the note untouched — the legacy order), then delete the note
-/// record.
-#[cqrsy::handler(command)]
-#[expect(
-    clippy::needless_pass_by_value,
-    reason = "the cqrsy remove operation owns its request by contract"
-)]
+/// Deletes an open item after unlinking its index entry.
+///
+/// An unlink failure leaves the note untouched.
+#[cqrsy::command]
 pub fn execute<S>(
-    cmd: RemovePendingWorkItem,
+    cmd: &RemovePendingWorkItem,
     store: &S,
     projects: &ProjectRegistry,
 ) -> Result<RemovedItem, RemovePendingWorkError>
@@ -141,7 +132,7 @@ mod tests {
     fn remove_deletes_record_and_index_entry() {
         let store = staged(WorkItemStatus::Active);
 
-        let removed = execute(command("PWF-0001"), &store, &registry()).unwrap();
+        let removed = execute(&command("PWF-0001"), &store, &registry()).unwrap();
 
         assert_eq!(removed.id, "PWF-0001");
         assert_eq!(removed.project, "pwf");
@@ -157,7 +148,7 @@ mod tests {
     fn remove_rejects_closed_item_with_open_not_found_display() {
         let store = staged(WorkItemStatus::Done);
 
-        let error = execute(command("PWF-0001"), &store, &registry()).unwrap_err();
+        let error = execute(&command("PWF-0001"), &store, &registry()).unwrap_err();
 
         assert!(matches!(
             error,
@@ -174,7 +165,7 @@ mod tests {
     fn remove_missing_item_preserves_requested_id() {
         let store = staged(WorkItemStatus::Active);
 
-        let error = execute(command("PWF-9999"), &store, &registry()).unwrap_err();
+        let error = execute(&command("PWF-9999"), &store, &registry()).unwrap_err();
 
         assert!(matches!(
             error,
@@ -194,7 +185,7 @@ mod tests {
             .with_prefix("pwf", "PWF")
             .with_project("pwf", vec![ghost]);
 
-        let error = execute(command("PWF-0001"), &store, &registry()).unwrap_err();
+        let error = execute(&command("PWF-0001"), &store, &registry()).unwrap_err();
 
         assert!(matches!(
             error,

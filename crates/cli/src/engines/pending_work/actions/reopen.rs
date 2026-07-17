@@ -1,5 +1,3 @@
-// Action: reopen (the inverse of done/cancel).
-
 use pwf_application::{
     AppDbStore, IndexEntry, PendingWorkItem,
     pending_work::reopen::{ReopenPendingWork, ReopenPendingWorkError},
@@ -10,12 +8,12 @@ use super::{
     close_render::render_reopened,
     done::{map_store_error, mirror_commit_and_append},
 };
-use crate::{cli::Args, config::Config, engines::handoff::mirror};
+use crate::{cli::EngineArgs, config::Config, engines::handoff::mirror};
 
 pub(in crate::engines::pending_work) fn run_reopen<S>(
     cfg: &Config,
     store: &S,
-    args: &Args,
+    args: &EngineArgs,
 ) -> Result<String, PendingWorkError>
 where
     S: AppDbStore<PendingWorkItem> + AppDbStore<IndexEntry>,
@@ -27,7 +25,7 @@ where
         &crate::engines::pending_work::run::project_registry(cfg),
         id,
     )?;
-    // Inner None = the pair is already active (idempotent skip, FR-0021).
+    // An already-active linked pair is an idempotent skip (FR-0021).
     let pending = gate
         .as_ref()
         .map(mirror::preflight_reopen)
@@ -35,7 +33,7 @@ where
         .flatten();
 
     let outcome = pwf_application::pending_work::reopen::execute(
-        ReopenPendingWork { id: id.to_string() },
+        &ReopenPendingWork { id: id.to_string() },
         store,
         &crate::engines::pending_work::run::project_registry(cfg),
     )
@@ -68,8 +66,6 @@ mod tests {
         .unwrap()
     }
 
-    /// Stage a project with one done item still in the project dir, marked done in
-    /// the index done-queue.
     fn stage_done_item() -> (tempfile::TempDir, Config) {
         let stage = tempfile::tempdir().unwrap();
         let notes = stage.path().join("notes");
@@ -89,10 +85,10 @@ mod tests {
         (stage, cfg)
     }
 
-    fn args(id: &str) -> Args {
-        Args {
+    fn args(id: &str) -> EngineArgs {
+        EngineArgs {
             id: Some(id.to_string()),
-            ..Args::default()
+            ..EngineArgs::default()
         }
     }
 
@@ -170,7 +166,7 @@ mod tests {
     fn reopen_missing_id_errors() {
         let (_stage, cfg) = stage_done_item();
         let store = crate::engines::pending_work::store_for(&cfg);
-        let err = run_reopen(&cfg, &store, &Args::default()).unwrap_err();
+        let err = run_reopen(&cfg, &store, &EngineArgs::default()).unwrap_err();
         assert!(matches!(err, PendingWorkError::MissingId { action } if action == "reopen"));
     }
 }

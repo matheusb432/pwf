@@ -5,7 +5,16 @@ const DEPRECATED_PW_PREFIX_WARNING: &str =
 
 fn main() {
     let argv: Vec<String> = std::env::args().skip(1).collect();
-    if let Some(code) = pwf::codex_thread_title::maybe_run(&argv) {
+    let codex_thread_title_protocol = pwf::codex_thread_title::CodexThreadTitleProtocol {
+        launch_command: pwf_infra::session::codex::LAUNCH_COMMAND,
+        worker_command: pwf_infra::session::codex::WORKER_COMMAND,
+        binary: pwf_infra::session::codex::BINARY,
+        title_flag: pwf_infra::session::codex::TITLE_FLAG,
+        cwd_flag: pwf_infra::session::codex::CWD_FLAG,
+        since_flag: pwf_infra::session::codex::SINCE_FLAG,
+        argument_separator: pwf_infra::session::codex::ARG_SEPARATOR,
+    };
+    if let Some(code) = pwf::codex_thread_title::maybe_run(&argv, &codex_thread_title_protocol) {
         std::process::exit(code);
     }
     if let Some(prefix) = retired_pending_work_prefix(&argv) {
@@ -23,7 +32,6 @@ fn main() {
     }
     let argv = normalize_rich_help_aliases(argv);
 
-    // Canonical path: subcommand-default injection -> clap -> typed dispatch.
     match command::parse_command_argv(argv) {
         Ok(parsed) => match run_parsed(parsed) {
             Ok(out) => {
@@ -36,12 +44,10 @@ fn main() {
                 std::process::exit(1);
             }
         },
-        // clap renders help/version/parse errors with the right exit codes.
         Err(e) => exit_with_clap_error(&e),
     }
 }
 
-/// Print a clap-rendered help/version/parse error and exit with clap's code.
 fn exit_with_clap_error(e: &clap::Error) -> ! {
     let rendered = e.render().to_string();
     if e.use_stderr() {
@@ -96,10 +102,7 @@ fn print_retired_pending_work_prefix_error(prefix: &str, argv: &[String]) {
     eprintln!("{DEPRECATED_PW_PREFIX_WARNING}");
 }
 
-/// `pwf handoff <verb>` tokens retired by PWF-0117: `Some(hint)` for a
-/// retired verb, `None` otherwise. Runs before clap parsing, same as
-/// `retired_pending_work_prefix`, so the retired token never reaches the
-/// `HandoffAction` enum.
+/// Returns a replacement hint for retired handoff verbs before clap parses them.
 fn retired_handoff_verb(argv: &[String]) -> Option<String> {
     if argv.first().map(String::as_str) != Some("handoff") {
         return None;
@@ -115,8 +118,6 @@ fn retired_handoff_verb(argv: &[String]) -> Option<String> {
     }
 }
 
-/// Hint shared by `done`/`cancel`/`reopen`: run the matching pw verb, which
-/// mirrors the operation onto the linked handoff.
 fn mirrored_pw_verb_hint(pw_verb: &str) -> String {
     format!(
         "retired: run `pwf {pw_verb} --id <pw-id>` \u{2014} a handoff-tagged task mirrors the \

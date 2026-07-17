@@ -5,7 +5,7 @@ use pwf_domain::pending_work::{ProjectName, Tags, inferred_title, normalize_titl
 use super::{ObsidianStore, ObsidianStoreError, fs::write_add_item_file};
 use crate::obsidian::note_frontmatter::{NewWorkItemFields, new_work_item_content};
 
-/// The note-file fields a caller wants written, independent of index linking.
+/// Contains note-file fields independently of index linking.
 pub(super) struct NewNoteRequest<'a> {
     pub prompt: &'a str,
     pub title: Option<&'a str>,
@@ -15,8 +15,7 @@ pub(super) struct NewNoteRequest<'a> {
     pub tags: Option<&'a Tags>,
 }
 
-/// A freshly written task note: its allocated id, path, resolved title, and the
-/// exact bytes written.
+/// Contains a written task note's identity, path, title, and exact bytes.
 pub(super) struct WrittenNote {
     pub id: String,
     pub path: PathBuf,
@@ -25,9 +24,7 @@ pub(super) struct WrittenNote {
 }
 
 impl ObsidianStore {
-    /// Allocates the next id, builds, and writes a task note — note file only,
-    /// no index link. The generic `insert` builds on this and leaves indexing
-    /// to the application via the `IndexEntry` upsert.
+    /// Allocates and writes a task note without adding an index link.
     pub(super) fn write_new_note(
         &self,
         project: &ProjectName,

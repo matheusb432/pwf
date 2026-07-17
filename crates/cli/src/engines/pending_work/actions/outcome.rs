@@ -1,5 +1,4 @@
-// Typed outcomes for engine verbs are domain-owned; this module keeps only the
-// frozen legacy text rendering and the CLI-edge `EngineOutcome` wrapper.
+//! Preserves the legacy mutation text protocol for CLI seams.
 
 pub(crate) use pwf_domain::pending_work::AddedItem;
 pub(in crate::engines::pending_work) use pwf_domain::pending_work::{
@@ -66,10 +65,7 @@ impl OutcomeRender for UpdatedItem {
     }
 }
 
-/// Compose the frozen `"<VERB> PWF TASK [{id}] {headline}\n{detail lines}"`
-/// shape shared by every outcome's `raw_text()`. `render_outcome_confirmation`
-/// (`confirm_render.rs`) mirrors this same `headline`/`detail_lines` pair for
-/// the presentation-layer rendering, so the two never drift independently.
+/// Renders the legacy mutation protocol from the fields shared with terminal confirmations.
 fn render_raw_text(verb: &str, id: &str, headline: &str, detail_lines: &[String]) -> String {
     let mut out = format!("{verb} PWF TASK [{id}] {headline}\n");
     for line in detail_lines {
@@ -87,11 +83,7 @@ pub(super) fn mutation_raw_text(outcome: &MutationOutcome) -> String {
     }
 }
 
-/// What one engine verb produced. Raw legacy text is a rendering of this,
-/// applied at the seams that still need plain text — the `run_args` seam,
-/// `run()`'s own `Text` passthrough, and `done.rs`'s direct `raw_text()` call
-/// for the `--review` embed; `run()` renders confirmations from the typed
-/// variants directly for every other case.
+/// Separates typed mutations from verbatim text emitted by other verbs.
 #[derive(Debug)]
 pub(in crate::engines::pending_work) enum EngineOutcome {
     Mutation(MutationOutcome),
@@ -99,8 +91,7 @@ pub(in crate::engines::pending_work) enum EngineOutcome {
 }
 
 impl EngineOutcome {
-    /// The legacy seam string: the matching variant's `raw_text()`, or the
-    /// text verbatim.
+    /// Converts mutations to the legacy text protocol and preserves text outcomes verbatim.
     pub(in crate::engines::pending_work) fn into_raw_text(self) -> String {
         match self {
             EngineOutcome::Mutation(outcome) => mutation_raw_text(&outcome),

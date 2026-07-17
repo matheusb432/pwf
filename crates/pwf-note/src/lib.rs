@@ -1,5 +1,4 @@
-//! pwf-note — one-liner project notes: `pwf note <proj> [ls|add|remove]`.
-//! Indexed under a `### Notes` section, disjoint from pending-work tasks.
+//! Project notes indexed under a `### Notes` section, separate from pending-work items.
 
 pub mod errors;
 pub mod id;
@@ -14,7 +13,7 @@ pub use id::NoteId;
 
 const DEFAULT_LS_CAP: usize = 10;
 
-/// The note verb + its payload.
+/// Contains a note operation and its payload.
 #[derive(Debug, Clone)]
 pub enum NoteVerb {
     Ls { number: Option<usize> },
@@ -23,7 +22,7 @@ pub enum NoteVerb {
     Update { id: String, message: String },
 }
 
-/// A fully-parsed `pwf note` invocation, ready for [`run`].
+/// Contains a parsed `pwf note` invocation.
 #[derive(Debug, Clone)]
 pub struct NoteCommand {
     pub project: String,
@@ -33,7 +32,13 @@ pub struct NoteCommand {
     pub date: Option<String>,
 }
 
-/// Execute a note command, returning Markdown stdout. Files are written directly.
+/// Executes a note command and returns Markdown output.
+///
+/// Mutating commands write files before returning.
+///
+/// # Errors
+///
+/// Returns a rendered configuration or note-operation error.
 pub fn run(command: &NoteCommand) -> Result<String, String> {
     let cfg = load_config(command)?;
     let prefix = pwf_core::paths::project_key(&cfg, &command.project)

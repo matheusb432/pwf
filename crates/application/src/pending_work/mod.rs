@@ -7,6 +7,7 @@ pub mod list;
 pub mod remove;
 pub mod reopen;
 pub mod resolve;
+pub mod session;
 pub mod show;
 pub mod store_util;
 pub mod tags_of;

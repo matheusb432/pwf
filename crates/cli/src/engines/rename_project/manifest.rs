@@ -1,8 +1,5 @@
-//! `repos.toml` resolution and scoped block editing. The manifest is *parsed*
-//! (via `toml`) only to read a code's `path`; edits are a line-scoped rewrite of
-//! the single target `[[repo]]` table's `path`/`code` lines, so key order,
-//! spacing, comments, and sibling tables survive byte-for-byte (a full-file
-//! re-serialize would reformat the whole manifest).
+//! Resolves and edits one `repos.toml` repository table.
+//! Line-scoped edits preserve key order, spacing, comments, and sibling tables byte-for-byte.
 
 use std::path::PathBuf;
 
@@ -20,8 +17,8 @@ struct Repo {
     code: Option<String>,
 }
 
-/// The repo-relative `path` of the `[[repo]]` whose `code` matches (ASCII
-/// case-insensitive). `None` if no such entry, or the manifest does not parse.
+/// Returns the repo-relative path for an ASCII case-insensitive code match.
+/// Returns `None` when the code is absent or the manifest is invalid.
 #[must_use]
 pub fn resolve_repo_path(manifest: &str, code: &str) -> Option<String> {
     let parsed: Manifest = toml::from_str(manifest).ok()?;
@@ -36,10 +33,8 @@ pub fn resolve_repo_path(manifest: &str, code: &str) -> Option<String> {
         .map(|r| r.path)
 }
 
-/// Rewrite only the `path`/`code` lines inside the single `[[repo]]` table whose
-/// `code` matches `old_code`. Everything else — key order, spacing, sibling
-/// tables — is preserved byte-for-byte. `path` changes only when `new_path` is
-/// `Some`. `None` if the code is not found.
+/// Rewrites the matching repository table's `code` and optional `path` lines.
+/// All other bytes are preserved; `None` means `old_code` was not found.
 #[must_use]
 pub fn edit_manifest_block(
     manifest: &str,
@@ -83,7 +78,7 @@ pub fn edit_manifest_block(
     Some(out)
 }
 
-/// If `line` is `<key> = "<value>"` (ignoring leading whitespace), return `<value>`.
+/// Extracts a quoted value from a matching key assignment.
 fn key_value<'a>(line: &'a str, key: &str) -> Option<&'a str> {
     let rest = line.trim_start().strip_prefix(key)?.trim_start();
     let rest = rest.strip_prefix('=')?.trim_start();
@@ -91,8 +86,7 @@ fn key_value<'a>(line: &'a str, key: &str) -> Option<&'a str> {
     inner.find('"').map(|end| &inner[..end])
 }
 
-/// Rebuild a `<key> = "<newval>"` line, preserving the original leading indent
-/// and trailing newline.
+/// Rebuilds a key assignment while preserving indentation and its trailing newline.
 fn rewrite_kv(line: &str, key: &str, newval: &str) -> String {
     let indent: String = line
         .chars()
@@ -102,8 +96,7 @@ fn rewrite_kv(line: &str, key: &str, newval: &str) -> String {
     format!("{indent}{key} = \"{newval}\"{newline}")
 }
 
-/// Default repos.toml location: `$ARCA_ROOT/repos.toml`, else
-/// `$HOME/tools/repository/repos.toml` (mirrors repository's asset resolution).
+/// Resolves `repos.toml` from `$ARCA_ROOT`, then `$HOME/tools/repository`.
 #[must_use]
 pub fn default_manifest_path() -> PathBuf {
     if let Ok(root) = std::env::var("ARCA_ROOT")

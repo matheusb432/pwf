@@ -19,25 +19,17 @@ struct InMemoryState {
     prefixes: BTreeMap<ProjectName, String>,
 }
 
-/// The consolidated `AppDbStore` test double: one shared, `Clone`-able,
-/// thread-safe store standing in for all three pending-work record kinds
-/// (`PendingWorkItem`, `IndexEntry`, `IndexSection`) across every application
-/// handler test. `Clone` shares state — every clone locks the same
-/// `Arc<Mutex<InMemoryState>>`, so a clone handed to a handler under test
-/// observes writes the test makes through its own handle, and vice versa.
+/// Provides a thread-safe [`AppDbStore`] test double for all pending-work record kinds.
+///
+/// Clones share one `Arc<Mutex<InMemoryState>>` and therefore observe the same writes.
 #[derive(Debug, Clone, Default)]
 pub struct InMemoryStore {
     state: Arc<Mutex<InMemoryState>>,
 }
 
-/// The error surface for [`InMemoryStore`]'s `AppDbStore<IndexSection>` impl.
+/// Reports unsupported direct [`IndexSection`] writes.
 ///
-/// `PendingWorkItem` and `IndexEntry` writes never fail in-memory, so those
-/// impls use [`Infallible`]. `IndexSection` direct writes are rejected by
-/// design (sections are created implicitly by an `IndexEntry` upsert — the
-/// production `ObsidianStore` mirrors this with its own
-/// `IndexSectionWriteUnsupported` variant), so this double needs a real error
-/// to report that rejection instead of panicking.
+/// Sections are created implicitly by an [`IndexEntry`] upsert, matching the production store.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum InMemoryStoreError {
     #[error("index sections are managed implicitly and cannot be written directly (op: {op})")]
@@ -50,7 +42,7 @@ impl InMemoryStore {
         self
     }
 
-    /// Registers the id prefix `insert` allocates new item ids under.
+    /// Registers the id prefix used by item insertion.
     pub fn with_prefix(self, project: &str, prefix: &str) -> Self {
         self.lock()
             .prefixes
@@ -58,7 +50,7 @@ impl InMemoryStore {
         self
     }
 
-    /// Stages pre-existing index section regions (raw H2 labels).
+    /// Stages index sections by raw H2 label.
     pub fn with_sections(self, project: &str, labels: &[&str]) -> Self {
         self.lock().sections.insert(
             project_name(project),
@@ -67,7 +59,6 @@ impl InMemoryStore {
         self
     }
 
-    /// Staged + inserted records for `project`, for state assertions.
     pub fn items(&self, project: &str) -> Vec<PendingWorkItem> {
         self.lock()
             .items
@@ -76,7 +67,6 @@ impl InMemoryStore {
             .unwrap_or_default()
     }
 
-    /// Index entries for `project`, for state assertions.
     pub fn entries(&self, project: &str) -> Vec<IndexEntry> {
         self.lock()
             .entries
@@ -114,8 +104,7 @@ impl AppDbStore<PendingWorkItem> for InMemoryStore {
         Ok(self.lock().items.get(project).cloned().unwrap_or_default())
     }
 
-    /// Allocates the next `<prefix>-NNNN` id (the storage-autoincrement analog)
-    /// and materializes a minimal active record from `new`.
+    /// Allocates the next `<prefix>-NNNN` id and materializes an active record.
     fn insert(&self, project: &ProjectName, new: NewItem) -> Result<PendingWorkItem, Self::Error> {
         let mut state = self.lock();
         let prefix = state
@@ -141,7 +130,6 @@ impl AppDbStore<PendingWorkItem> for InMemoryStore {
             created: Some(new.created),
             completed: None,
             commits: None,
-            // Raw-representation field; add staging never exercises tags here.
             tags: None,
             effort: new.effort.map(|effort| effort.to_string()),
             prereq: new.prereq,
@@ -156,9 +144,7 @@ impl AppDbStore<PendingWorkItem> for InMemoryStore {
         Ok(record)
     }
 
-    /// Applies an [`ItemPatch`] to the matching record's typed fields — the
-    /// in-memory analog of the vault adapter's note rewrite, so update-handler
-    /// tests can assert post-patch state.
+    /// Applies an [`ItemPatch`] to the matching record's typed fields.
     fn update(
         &self,
         project: &ProjectName,
@@ -259,8 +245,7 @@ impl AppDbStore<IndexEntry> for InMemoryStore {
 }
 
 impl InMemoryStore {
-    /// Upsert-by-value, mirroring the adapter: replace or append the entry,
-    /// implicitly creating its section region when new.
+    /// Replaces or appends an entry and creates its section when needed.
     fn upsert(&self, project: &ProjectName, entry: IndexEntry) {
         let mut state = self.lock();
         if !entry.section.is_empty() {
@@ -302,9 +287,7 @@ impl AppDbStore<IndexSection> for InMemoryStore {
             .collect())
     }
 
-    /// Rejects, mirroring the production adapter: section regions are only
-    /// ever created implicitly by an [`IndexEntry`] upsert, never by a direct
-    /// write through this port.
+    /// Rejects direct section creation, matching the production adapter.
     fn insert(
         &self,
         _project: &ProjectName,
@@ -313,10 +296,7 @@ impl AppDbStore<IndexSection> for InMemoryStore {
         Err(InMemoryStoreError::IndexSectionWriteUnsupported { op: "insert" })
     }
 
-    /// Renames a section-label region in place — the in-memory analog of the
-    /// adapter's `## <label>` header rewrite (the futuro-normalization seam),
-    /// updating both the section list and any entry that referenced the old
-    /// label so a subsequent read reflects the rename.
+    /// Renames a section and updates entries that referenced its old label.
     fn update(
         &self,
         project: &ProjectName,
@@ -341,10 +321,7 @@ impl AppDbStore<IndexSection> for InMemoryStore {
         Ok(())
     }
 
-    /// Rejects, mirroring the production adapter: section regions are never
-    /// deleted through this port (they disappear only when the underlying
-    /// index text no longer has that header, which this double doesn't
-    /// model).
+    /// Rejects section deletion, matching the production adapter.
     fn delete(&self, _project: &ProjectName, _label: &String) -> Result<(), Self::Error> {
         Err(InMemoryStoreError::IndexSectionWriteUnsupported { op: "delete" })
     }

@@ -1,25 +1,18 @@
-//! Filesystem anchors for the host repo, resolved from the runtime `CARGO_MANIFEST_DIR` cargo
-//! sets for `cargo run`/`cargo test`, so they are independent of the process cwd AND of which
-//! checkout compiled the binary.
+//! Repository paths resolved independently of the process working directory.
 
 use std::path::{Path, PathBuf};
 
-/// Absolute path to the pwf repo root (this crate lives at `<root>/xtask`).
+/// Returns the absolute repository root.
 ///
-/// Resolved from the **runtime** `CARGO_MANIFEST_DIR` env var, not the compile-time `env!`
-/// constant: the machine-wide shared cargo build-dir (`~/.cargo/config.toml [build] build-dir`)
-/// reuses artifacts across checkouts, so a compile-time path baked by a `.worktrees/<name>`
-/// build can leak into the main checkout's binary and dangle once the worktree is removed
-/// (it retargeted the global `pwf` shim to a deleted path). Cargo sets the var at runtime for
-/// every `cargo run -p xtask`/`cargo test` invocation — always the invoking checkout. The
-/// compile-time value remains only as a fallback for running the binary outside cargo.
+/// Runtime `CARGO_MANIFEST_DIR` identifies the invoking checkout even when Cargo shares build
+/// artifacts across worktrees. The compile-time path is only a fallback outside Cargo.
 pub fn repo_root() -> PathBuf {
     let manifest_dir = std::env::var_os("CARGO_MANIFEST_DIR")
         .map_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")), PathBuf::from);
     root_from(&manifest_dir)
 }
 
-/// `<root>` from the xtask manifest dir `<root>/xtask`.
+/// Derives `<root>` from the `<root>/xtask` manifest directory.
 fn root_from(manifest_dir: &Path) -> PathBuf {
     manifest_dir
         .parent()

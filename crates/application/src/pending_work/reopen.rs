@@ -14,36 +14,29 @@ pub struct ReopenPendingWork {
     pub id: String,
 }
 
-/// The result of reopening a done/cancelled item back to active.
+/// Contains the outcome of reopening a closed item.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReopenedPendingWork {
     pub id: WorkItemId,
     pub project: ProjectName,
-    /// The item was already active — an idempotent skip that mutated nothing.
+    /// Indicates an idempotent skip with no mutation.
     pub already_active: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum ReopenPendingWorkError {
-    /// Verbatim former infra `ItemNotFound` display (PWF-0123 error-string
-    /// relocation).
     #[error("Open pending-work item not found: {id}")]
     ItemNotFound { id: String },
     #[error("{0}")]
     WriteStore(Box<dyn std::error::Error + Send + Sync>),
 }
 
-/// Flips a done/cancelled item back to active: clears the `completed:`/`commits:`
-/// provenance in one [`ItemPatch`], then restores or re-adds its open done-queue
-/// link per the pure [`reopen_decision`]. Idempotent — an already-active item is
-/// reported as a skip and mutates nothing.
-#[cqrsy::handler(command)]
-#[expect(
-    clippy::needless_pass_by_value,
-    reason = "the cqrsy reopen operation owns its request by contract"
-)]
+/// Reopens a closed item and restores or re-adds its queue link.
+///
+/// The update clears `completed:` and `commits:`. An active item returns an idempotent skip.
+#[cqrsy::command]
 pub fn execute<S>(
-    cmd: ReopenPendingWork,
+    cmd: &ReopenPendingWork,
     store: &S,
     projects: &ProjectRegistry,
 ) -> Result<ReopenedPendingWork, ReopenPendingWorkError>
@@ -182,7 +175,7 @@ mod tests {
             vec![entry(IndexEntryState::Done(Timestamp::new("2026-01-02")))],
         );
 
-        let out = execute(command(), &store, &registry()).unwrap();
+        let out = execute(&command(), &store, &registry()).unwrap();
 
         assert!(!out.already_active);
         assert_eq!(
@@ -201,7 +194,7 @@ mod tests {
     fn reopen_re_adds_evicted_entry() {
         let store = staged(WorkItemStatus::Done, Vec::new());
 
-        let out = execute(command(), &store, &registry()).unwrap();
+        let out = execute(&command(), &store, &registry()).unwrap();
 
         assert!(!out.already_active);
         let entries = store.entries("glep-shimeji");
@@ -214,7 +207,7 @@ mod tests {
     fn reopen_already_active_is_idempotent_skip() {
         let store = staged(WorkItemStatus::Active, vec![entry(IndexEntryState::Open)]);
 
-        let out = execute(command(), &store, &registry()).unwrap();
+        let out = execute(&command(), &store, &registry()).unwrap();
 
         assert!(out.already_active);
         assert_eq!(

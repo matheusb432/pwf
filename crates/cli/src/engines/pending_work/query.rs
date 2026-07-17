@@ -1,5 +1,3 @@
-// Config loading + read-side store: project-name resolution and item enumeration.
-
 use pwf_application::{
     AppDbStore, PendingWorkItem,
     pending_work::find::{FindPendingWork, FindPendingWorkError},
@@ -10,13 +8,15 @@ use pwf_infra::obsidian::ObsidianStoreError;
 use super::{errors, model::Item};
 use crate::config::Config;
 
-pub(super) fn load_config(args: &crate::cli::Args) -> Result<Config, errors::PendingWorkError> {
+pub(super) fn load_config(
+    args: &crate::cli::EngineArgs,
+) -> Result<Config, errors::PendingWorkError> {
     let cfg_path = resolve_config_path_with_default(args, crate::config::default_config_path)?;
     Ok(crate::config::load(&cfg_path, args.notes_dir.as_deref())?)
 }
 
 fn resolve_config_path_with_default(
-    args: &crate::cli::Args,
+    args: &crate::cli::EngineArgs,
     default_config_path: impl FnOnce() -> Option<String>,
 ) -> Result<String, errors::PendingWorkError> {
     args.config_path
@@ -25,11 +25,11 @@ fn resolve_config_path_with_default(
         .ok_or(errors::PendingWorkError::MissingConfigPath)
 }
 
-/// Resolve a project name against the managed list: exact, case-insensitive, unique prefix.
+/// Resolves an exact project name, prefix code, or unique case-insensitive name prefix.
 ///
-/// `cfg.projects` is a `BTreeMap`, so its keys already iterate in sorted order —
-/// there's no need to materialize + sort a `Vec` to match or to build the hint
-/// lists. Exact match is an O(log n) tree lookup; the fuzzy fallbacks scan keys.
+/// # Errors
+///
+/// Returns an error when the identifier is unknown or ambiguous.
 pub fn resolve_managed_project_name(cfg: &Config, name: &str) -> Result<String, String> {
     resolve_managed_project_name_typed(cfg, name).map_err(String::from)
 }
@@ -38,20 +38,16 @@ pub(super) fn resolve_managed_project_name_typed(
     cfg: &Config,
     name: &str,
 ) -> Result<String, errors::PendingWorkError> {
-    // Exact match.
     if cfg.projects.contains_key(name) {
         return Ok(name.to_string());
     }
-    // Case-insensitive exact: take it only if it's the unique winner.
     let mut ci = cfg.projects.keys().filter(|m| m.eq_ignore_ascii_case(name));
     if let Some(first) = ci.next()
         && ci.next().is_none()
     {
         return Ok(first.clone());
     }
-    // Exact prefix-code match (case-insensitive). `cfg.prefixes` maps project
-    // name -> CODE, so match on the value and return the key. Codes are exact
-    // identifiers, so they rank above the fuzzy name-prefix fallback below.
+    // Exact prefix codes take precedence over fuzzy project-name prefixes.
     let mut code = cfg
         .prefixes
         .iter()
@@ -62,7 +58,6 @@ pub(super) fn resolve_managed_project_name_typed(
     {
         return Ok(first.clone());
     }
-    // Unique prefix (case-insensitive).
     let lower = name.to_ascii_lowercase();
     let pfx: Vec<&String> = cfg
         .projects
@@ -84,9 +79,7 @@ pub(super) fn resolve_managed_project_name_typed(
     })
 }
 
-/// Resolve a managed project name together with its configured repo path, erroring
-/// if the name is unknown or maps to no repo. Used by the `new`/`add` paths, which
-/// need the (project, repo) pair.
+/// Resolves a project identifier and requires a configured repository path.
 pub(super) fn resolve_project_repo(
     cfg: &Config,
     raw: &str,
@@ -102,8 +95,11 @@ pub(super) fn resolve_project_repo(
     Ok((project, repo.to_string()))
 }
 
-/// Whether `id` is still an open pending-work item (linked in a project index).
-/// Already-checked and unknown ids both report not-open.
+/// Returns whether the ID is linked as open; checked and unknown IDs return false.
+///
+/// # Errors
+///
+/// Returns an error when the backing store query fails.
 pub fn is_item_open(
     store: &impl AppDbStore<PendingWorkItem>,
     projects: &ProjectRegistry,
@@ -118,7 +114,7 @@ pub(super) fn is_item_open_typed(
     id: &str,
 ) -> Result<bool, errors::PendingWorkError> {
     match pwf_application::pending_work::find::execute(
-        FindPendingWork { id: id.to_string() },
+        &FindPendingWork { id: id.to_string() },
         store,
         projects,
     ) {
@@ -128,15 +124,14 @@ pub(super) fn is_item_open_typed(
     }
 }
 
-/// Finds pending item by cli input id.
-/// Applies case insensitive search so "cfg-0001" matches to "CFG-0001".
+/// Finds an open item using case-insensitive ID matching.
 pub(super) fn find_pending_item(
     store: &impl AppDbStore<PendingWorkItem>,
     projects: &ProjectRegistry,
     id: &str,
 ) -> Result<Item, errors::PendingWorkError> {
     pwf_application::pending_work::find::execute(
-        FindPendingWork { id: id.to_string() },
+        &FindPendingWork { id: id.to_string() },
         store,
         projects,
     )
@@ -144,11 +139,7 @@ pub(super) fn find_pending_item(
     .map_err(map_find_error)
 }
 
-/// Maps the application [`FindPendingWorkError`] to the pending-work engine's
-/// typed error, preserving today's exact display: not-found/ambiguous keep their
-/// verbatim messages, an unmanaged prefix renders like the legacy adapter, and a
-/// store read error special-cases the concrete `ObsidianStoreError` variants
-/// callers care about (downcasting through the boxed source).
+/// Preserves legacy text while mapping Obsidian read failures to typed engine errors.
 fn map_find_error(error: FindPendingWorkError) -> errors::PendingWorkError {
     match error {
         FindPendingWorkError::ItemNotFound { id } => errors::PendingWorkError::ItemNotFound { id },
@@ -182,7 +173,7 @@ mod tests {
     use std::{assert_matches, collections::BTreeMap};
 
     use super::*;
-    use crate::cli::Args;
+    use crate::cli::EngineArgs;
 
     fn cfg() -> Config {
         let json = r#"{
@@ -221,7 +212,6 @@ mod tests {
 
     #[test]
     fn code_wins_over_name_prefix() {
-        // "be" is alpha's code AND a name-prefix of "beta"; the exact code wins.
         let c = cfg();
         assert_eq!(resolve_managed_project_name(&c, "be").unwrap(), "alpha");
     }
@@ -243,7 +233,7 @@ mod tests {
 
     #[test]
     fn missing_config_path_returns_typed_error_with_legacy_display() {
-        let args = Args::default();
+        let args = EngineArgs::default();
 
         let err = resolve_config_path_with_default(&args, || None).unwrap_err();
 
@@ -256,9 +246,9 @@ mod tests {
         let guard = tempfile::tempdir().unwrap();
         let missing_config = guard.path().join("missing_config.json");
         assert!(!missing_config.exists());
-        let args = Args {
+        let args = EngineArgs {
             config_path: Some(missing_config.to_string_lossy().into_owned()),
-            ..Args::default()
+            ..EngineArgs::default()
         };
 
         let err = load_config(&args).unwrap_err();

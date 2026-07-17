@@ -1,8 +1,10 @@
-// `pw` word-based routing: the read-only sub-dispatcher behind `pwf route` (and
-// bare `pwf <words…>`). Create paths were removed in PWF-0034 — the only
-// create form is `pwf add <project> "<prompt>"`; bare words error with a hint.
+//! Routes legacy word forms without supporting task creation.
 
-use pwf_application::{AppDbStore, PendingWorkItem};
+use pwf_application::{
+    AppDbStore, PendingWorkItem,
+    pending_work::session::{Agent, ModelTierCatalog, SessionRuntime, verify::VerifySession},
+};
+use pwf_domain::pending_work::ProjectRegistry;
 
 use super::{
     actions::{
@@ -10,16 +12,19 @@ use super::{
         list::{ListScope, OrderDirection, OrderField, OrderSpec},
         run_list_query,
     },
-    agent::{probe::RealProbe, verify::verify_text_with_probe},
+    agent::verify,
     color::use_color,
     errors::PendingWorkError,
-    query::{find_pending_item, resolve_managed_project_name_typed},
+    naming::stamp_date,
+    query::resolve_managed_project_name_typed,
 };
-use crate::{cli::Args, config::Config};
+use crate::{
+    cli::EngineArgs,
+    config::Config,
+    confirm::{Confirmation, DefaultAnswer},
+};
 
-/// Fixed legacy order for the `route` word-router (bare `pwf`/`pwf <project>`):
-/// project-name ascending, then id-suffix descending within a project — never
-/// affected by `--order`, since `route` has no `--order` flag to forward.
+/// Preserves project grouping for legacy word-routed lists.
 const ROUTE_ORDER: OrderSpec = OrderSpec {
     field: OrderField::ProjectId,
     direction: OrderDirection::Asc,
@@ -28,8 +33,11 @@ const ROUTE_ORDER: OrderSpec = OrderSpec {
 pub(super) fn run_route(
     cfg: &Config,
     store: &impl AppDbStore<PendingWorkItem>,
-    args: &Args,
-    date: &str,
+    projects: &ProjectRegistry,
+    model_tiers: &impl ModelTierCatalog,
+    runtime: &impl SessionRuntime,
+    args: &EngineArgs,
+    confirmation: &impl Fn(&str, DefaultAnswer) -> Confirmation,
 ) -> Result<String, PendingWorkError> {
     let route_words: Vec<&str> = args
         .words
@@ -39,7 +47,6 @@ pub(super) fn run_route(
         .collect();
 
     if route_words.is_empty() {
-        // list all
         let scope = ListScope::from_flags(args.human, args.future, args.all)?;
         return run_list_query(
             cfg,
@@ -52,6 +59,7 @@ pub(super) fn run_route(
                 effort: args.effort,
                 tags: None,
                 order: ROUTE_ORDER,
+                status_filter: args.status_filter,
                 color_on: use_color(args.color),
             },
         );
@@ -59,7 +67,7 @@ pub(super) fn run_route(
 
     let verb = route_words[0].to_ascii_lowercase();
 
-    // ! Create via bare words / sub-verbs was the duplicate-item footgun (PWF-0034).
+    // Bare create forms remain rejected because they can create duplicates.
     if matches!(verb.as_str(), "add" | "a" | "add-titled" | "at") {
         return Err(PendingWorkError::RouteCreateRejected);
     }
@@ -70,26 +78,19 @@ pub(super) fn run_route(
         } else {
             None
         };
-        let launcher = super::session::launcher_for(crate::cli::Agent::Claude);
-        let probe = RealProbe::resolve(launcher.binary());
-        let item = if let Some(vid) = verify_id {
-            Some(find_pending_item(
-                store,
-                &super::run::project_registry(cfg),
-                vid,
-            )?)
-        } else {
-            None
+        let request = VerifySession {
+            id: verify_id.map(str::to_string),
+            agent: Agent::Claude,
+            model_override: None,
         };
-        let claude_model = item.as_ref().and_then(|it| {
-            super::session::resolve_model_for_verify(crate::cli::Agent::Claude, it, None)
-        });
-        return Ok(verify_text_with_probe(
-            item.as_ref(),
-            launcher,
-            &probe,
-            claude_model.as_ref(),
-        ));
+        let outcome = pwf_application::pending_work::session::verify::execute(
+            request,
+            store,
+            projects,
+            model_tiers,
+            runtime,
+        )?;
+        return Ok(verify::render(&outcome));
     }
 
     if verb == "clean" || verb == "cl" {
@@ -101,15 +102,14 @@ pub(super) fn run_route(
         return Ok(crate::engines::clean::run_clean_typed(
             cfg,
             only.as_deref(),
-            date,
+            &stamp_date(args.date.as_deref()),
             args.dry_run,
             args.force,
-            &crate::confirm::RealConfirm,
+            confirmation,
         )?);
     }
 
-    // Otherwise: treat word[0] as a project name. A single word lists that
-    // project; trailing words error (create is `pw add` only — no silent route create).
+    // A single project word lists; trailing words are rejected as removed create syntax.
     let project_name = resolve_managed_project_name_typed(cfg, &verb)?;
     if route_words.len() == 1 {
         let scope = ListScope::from_flags(args.human, args.future, args.all)?;
@@ -124,6 +124,7 @@ pub(super) fn run_route(
                 effort: args.effort,
                 tags: None,
                 order: ROUTE_ORDER,
+                status_filter: args.status_filter,
                 color_on: use_color(args.color),
             },
         );
@@ -134,10 +135,63 @@ pub(super) fn run_route(
 
 #[cfg(test)]
 mod tests {
-    use std::assert_matches;
+    use std::{assert_matches, convert::Infallible};
+
+    use pwf_application::pending_work::session::{
+        AgentLaunch, AgentProbe, DispatchTarget, ModelTierLookup, TabOpenError,
+    };
+    use pwf_domain::pending_work::EffortTier;
 
     use super::*;
     use crate::engines::pending_work::errors;
+
+    #[derive(Clone, Copy)]
+    struct UnusedModelTiers;
+
+    impl ModelTierCatalog for UnusedModelTiers {
+        type Error = Infallible;
+
+        fn tier(&self, _effort: EffortTier) -> Result<ModelTierLookup, Self::Error> {
+            unreachable!("create-route rejection does not read model tiers")
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    struct UnusedRuntime;
+
+    impl SessionRuntime for UnusedRuntime {
+        fn probe_agent(&self, _agent: Agent) -> AgentProbe {
+            unreachable!("create-route rejection does not probe an agent")
+        }
+
+        fn repository_is_directory(&self, _path: &str) -> bool {
+            unreachable!("create-route rejection does not inspect a repository")
+        }
+
+        fn multiplexer_available(&self) -> bool {
+            unreachable!("create-route rejection does not inspect the multiplexer")
+        }
+
+        fn command_preview(&self, _launch: &AgentLaunch) -> String {
+            unreachable!("create-route rejection does not render a command")
+        }
+
+        fn run_inline(&self, _launch: &AgentLaunch) -> Result<(), String> {
+            unreachable!("create-route rejection does not dispatch")
+        }
+
+        fn open_tab(
+            &self,
+            _target: &DispatchTarget,
+            _launch: &AgentLaunch,
+        ) -> Result<(), TabOpenError> {
+            unreachable!("create-route rejection does not dispatch")
+        }
+
+        fn ensure_session(&self, _session: &str) -> Result<(), String> {
+            unreachable!("create-route rejection does not dispatch")
+        }
+    }
 
     fn cfg() -> Config {
         crate::config::from_json(
@@ -147,10 +201,10 @@ mod tests {
         .unwrap()
     }
 
-    fn args(words: &[&str]) -> Args {
-        Args {
+    fn args(words: &[&str]) -> EngineArgs {
+        EngineArgs {
             words: words.iter().map(|word| (*word).to_string()).collect(),
-            ..Args::default()
+            ..EngineArgs::default()
         }
     }
 
@@ -162,8 +216,11 @@ mod tests {
         let err = run_route(
             &cfg,
             &store,
+            &super::super::run::project_registry(&cfg),
+            &UnusedModelTiers,
+            &UnusedRuntime,
             &args(&["add", "glep-shimeji", "do it"]),
-            "2026-01-01",
+            &|_, _| Confirmation::NonInteractive,
         )
         .unwrap_err();
 

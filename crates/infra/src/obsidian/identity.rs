@@ -7,19 +7,15 @@ use serde::Deserialize;
 
 use super::ObsidianStoreError;
 
-/// A task note discovered from authoritative frontmatter identity.
+/// Contains a task note discovered by frontmatter identity.
 pub struct TaskNoteIdentity {
-    /// Canonical task identity parsed from frontmatter.
     pub id: WorkItemId,
-    /// Physical note locator, independent of the canonical identity.
     pub path: PathBuf,
-    /// Note content read during the same inventory pass.
     pub markdown: String,
-    /// Human-readable title decoded by the YAML boundary.
     pub title: Option<String>,
 }
 
-/// Inspect one project directory without deriving task identity from filenames.
+/// Inventories one project directory without deriving task identity from filenames.
 pub fn inspect_project_task_notes(
     project_dir: &Path,
     index_path: &Path,

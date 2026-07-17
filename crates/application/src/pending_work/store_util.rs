@@ -1,6 +1,4 @@
-//! Shared load/create utilities over the generic port — the pieces more than
-//! one pending-work handler orchestrates with (`add`, the close handlers, and
-//! done's `--review` path).
+//! Shared item loading and creation over the persistence ports.
 
 use pwf_domain::pending_work::{ProjectName, WorkItemId};
 
@@ -9,46 +7,35 @@ use crate::ports::{
     AppDbStore, IndexEntry, IndexEntryState, IndexSection, NewItem, PendingWorkItem,
 };
 
-/// A boxed adapter error, kept concrete inside the box so CLI diagnostics can
-/// still downcast to the store's error type (e.g. the created-section payload
-/// on a failed index write).
+/// Preserves concrete adapter errors for CLI downcasts and diagnostics.
 pub type StoreError = Box<dyn std::error::Error + Send + Sync>;
 
-/// Load-or-fail on the generic port.
+/// Reports failures while loading a required item.
 #[derive(Debug, thiserror::Error)]
 pub enum LoadItemError {
-    /// Verbatim former infra `ItemNotFound` display (PWF-0123 error-string
-    /// relocation).
     #[error("Open pending-work item not found: {id}")]
     ItemNotFound { id: String },
     #[error("{0}")]
     Store(StoreError),
 }
 
-/// The exact labels the vault materializes as dedicated `##` sections — the
-/// canonical `--section` values. Application policy: which labels are
-/// section-worthy is decided here; the adapter only maps placement.
+/// Canonical labels that materialize as dedicated H2 sections.
 const SECTION_LABELS: [&str; 3] = ["Future", "Human", "Low-prio"];
 
-/// What [`create_item`] wrote: the inserted record plus the created-section
-/// fact — the target `--section` label when no matching H2 region existed
-/// before the write (the data behind the CLI's created-section diagnostic).
+/// Contains a created record and the new H2 section, if one was needed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreatedItem {
     pub record: PendingWorkItem,
     pub created_section: Option<String>,
 }
 
-/// Strips the leading blank line the frontmatter parser retains on a note body,
-/// so re-wrapping it through the adapter's `replace_body` reproduces the note
-/// verbatim. Shared by the `update` and close (`done`/`cancel`) handlers.
+/// Strips the frontmatter parser's retained leading blank line before a body rewrite.
 #[must_use]
 pub fn body_region(body: &str) -> &str {
     body.strip_prefix('\n').unwrap_or(body)
 }
 
-/// Reads `id` within `project`, failing with the legacy not-found display when
-/// no record exists.
+/// Reads a required item within a project.
 pub fn require_item<S>(
     store: &S,
     project: &ProjectName,
@@ -64,9 +51,7 @@ where
         })
 }
 
-/// Creates a pending-work item: inserts the record (note only), then upserts
-/// its open index entry — reporting whether the entry's target section region
-/// had to be created.
+/// Inserts a note record, then upserts its open index entry.
 ///
 /// # Panics
 ///
@@ -81,9 +66,7 @@ where
     S: AppDbStore<PendingWorkItem> + AppDbStore<IndexEntry> + AppDbStore<IndexSection>,
 {
     let target_section = new.section.clone();
-    // The section listing doubles as the legacy pre-write index read: it runs
-    // before the note insert, so a corrupt/mismatched index fails the create
-    // with nothing written.
+    // Read sections before writing so an invalid index leaves no orphaned note.
     let existing = <S as AppDbStore<IndexSection>>::list(store, project)
         .map_err(|error| -> StoreError { Box::new(error) })?;
     let created_section = target_section
@@ -109,8 +92,7 @@ where
         IndexEntry {
             id,
             state: IndexEntryState::Open,
-            // RAW pass-through: placement (including the non-canonical-label
-            // general fallback) is the adapter's representation decision.
+            // Preserve the raw label; the adapter owns placement.
             section: target_section.unwrap_or_default(),
         },
     )
@@ -181,8 +163,6 @@ mod tests {
         assert_eq!(store.entries("pwf")[0].section, "Human");
     }
 
-    /// The latent-regression pin: a section header that exists with zero
-    /// entries must NOT be reported as created.
     #[test]
     fn create_item_does_not_report_existing_empty_section_region() {
         let store = staged_store().with_sections("pwf", &["Human"]);
@@ -192,8 +172,6 @@ mod tests {
         assert_eq!(created.created_section, None);
     }
 
-    /// Legacy alias parity: a `## Futuro` region satisfies `--section future`
-    /// (same alias set as the adapter's read headers).
     #[test]
     fn create_item_matches_section_aliases_like_the_legacy_read_headers() {
         let store = staged_store().with_sections("pwf", &["Futuro"]);

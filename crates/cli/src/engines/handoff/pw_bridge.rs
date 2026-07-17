@@ -1,25 +1,12 @@
-//! The cross-engine seam to the pending-work engine: allocating the pw item
-//! linked to a new handoff, either by spawning the external
-//! `--pending-work-script` allocator (tests inject `pw-stub.sh`) or, in production,
-//! reusing the pending-work application request path in-process — the shared
-//! `AddPendingWorkItem` command build + direct application add operation
-//! (`inprocess_pw_add`).
-//! `done`/`cancel`/`reopen`/`refresh` are retired (PWF-0117); closing/reopening
-//! a handoff-tagged pw item mirrors from the pw verbs instead, via
-//! `engines/handoff/mirror.rs`, called directly from the pending-work actions
-//! (`engines/pending_work/actions/{done,reopen,remove}.rs`) and
-//! `pending_work::run::run_add`. See AGENTS.md's cross-engine-seams note
-//! before changing `add`'s output shape or any flag/field these functions
-//! forward — this module compiles against either but breaks at runtime if
-//! missed.
+//! Allocates the pending-work item linked to a new handoff.
+//!
+//! External allocators use the raw `ADDED PWF TASK [<id>]` stdout protocol. Production calls
+//! the same add operation in-process and consumes its typed result. Preserve both seams.
 
 use super::errors::HandoffError;
-use crate::{cli::Args, config};
+use crate::{cli::EngineArgs, config};
 
-/// Extract the item id from `add` text output: `ADDED PWF TASK [<id>] …`.
-/// Only the external `--pending-work-script` allocator (`spawn_pw_add`) still
-/// needs this — the in-process path (`inprocess_pw_add`) consumes the typed
-/// `AddedItem` directly from the typed direct result.
+/// Extracts an item ID from the external allocator's `ADDED PWF TASK [<id>]` output.
 pub(super) fn parse_added_id(text: &str) -> Option<String> {
     text.lines()
         .next()
@@ -28,10 +15,7 @@ pub(super) fn parse_added_id(text: &str) -> Option<String> {
         .map(std::string::ToString::to_string)
 }
 
-/// Spawn the external `--pending-work-script` allocator with the canonical
-/// `add` protocol (`<script> add --config-path <cfg> --date <today>
-/// <project> --tag handoff --continue-handoff`) and parse the id from its
-/// stdout text.
+/// Runs the external allocator with the canonical add argv and parses its stdout ID.
 pub(super) fn spawn_pw_add(
     script: &str,
     cfg: &str,
@@ -62,17 +46,13 @@ pub(super) fn spawn_pw_add(
     })
 }
 
-/// In-process equivalent of `spawn_pw_add` for production (no --pending-work-script):
-/// build the same `AddPendingWorkItem` command `pwf add <project> --continue-handoff`
-/// would, call the direct application add operation, and take the id
-/// directly — no stdout text to parse, so a malformed id can no longer slip
-/// past a text-shape check unnoticed.
+/// Runs the equivalent add operation in-process and returns its typed ID.
 pub(super) fn inprocess_pw_add(
-    args: &Args,
+    args: &EngineArgs,
     today: &str,
     project: &str,
 ) -> Result<String, HandoffError> {
-    let a = crate::cli::Args {
+    let a = crate::cli::EngineArgs {
         action: Some("add".to_string()),
         date: Some(today.to_string()),
         config_path: args
@@ -116,17 +96,12 @@ mod tests {
         assert_eq!(parse_added_id("oops something went wrong"), None);
     }
 
-    /// A bad/nonexistent `--config-path` must surface as `HandoffError::PendingWork`
-    /// — the seam's only error mapping — rather than panicking or silently
-    /// swallowing the underlying `PendingWorkError`. The message comes straight
-    /// from `PendingWorkError`'s `Display` (see `query.rs`'s
-    /// `load_config_returns_typed_config_error_with_legacy_display`).
     #[test]
     fn inprocess_pw_add_maps_bad_config_path_to_pending_work_error() {
         let stage = crate::engines::handoff::test_support::tempdir();
         let missing_config = stage.path().join("missing_config.json");
         assert!(!missing_config.exists());
-        let args = crate::cli::Args {
+        let args = crate::cli::EngineArgs {
             config_path: Some(missing_config.to_string_lossy().into_owned()),
             ..Default::default()
         };
@@ -136,15 +111,8 @@ mod tests {
         assert_matches!(err, HandoffError::PendingWork { ref message } if message.contains("Pending work config not found"));
     }
 
-    // The conformance corpus (pw-stub.sh) only exercises the external
-    // `--pending-work-script` path; a break in the in-process `add` seam is
-    // invisible to it (PWF project memory: "conformance stub masks protocol
-    // break"). This drives the real bridge wrapper (`inprocess_pw_add`) —
-    // synthetic-Args build, shared `AddPendingWorkItem` command construction,
-    // direct application execution, and id extraction
-    // included — and asserts on real returned/on-disk data rather than
-    // pre-rendered text, so a wrapper-confined regression (e.g. returning the
-    // wrong `AddedItem` field as the id) fails here.
+    // The shell-stub corpus covers only the external allocator; this test exercises the in-process
+    // seam.
     #[test]
     fn inprocess_pw_add_seam_resolves_to_open_item_on_disk() {
         let stage = crate::engines::handoff::test_support::tempdir();
@@ -169,7 +137,7 @@ mod tests {
         )
         .unwrap();
 
-        let args = crate::cli::Args {
+        let args = crate::cli::EngineArgs {
             config_path: Some(cfg_path.to_string_lossy().into_owned()),
             ..Default::default()
         };

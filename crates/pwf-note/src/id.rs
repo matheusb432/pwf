@@ -1,8 +1,6 @@
-//! `NoteId` — parse/normalize a note id for a project-scoped command.
+//! Project-scoped note-id parsing and normalization.
 //!
-//! Because `pwf note <proj> …` already names the project, three input forms all
-//! resolve to the canonical `{PREFIX}-NOTE-{NNNN}`: the full id, the prefix-less
-//! `NOTE-NNNN`, and a bare number.
+//! Full ids, `NOTE-NNNN`, and bare numbers resolve to `{PREFIX}-NOTE-{NNNN}`.
 
 use crate::errors::NoteError;
 
@@ -13,10 +11,13 @@ pub struct NoteId {
 }
 
 impl NoteId {
-    /// Resolve `input` against the project's `prefix` (e.g. `"PWF"`).
+    /// Resolves `input` against the project's prefix.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NoteError::BadId`] when the input is not a full id, `NOTE-NNNN`, or a number.
     pub fn resolve(input: &str, prefix: &str) -> Result<NoteId, NoteError> {
-        // Normalize the prefix so a config-sourced lowercase prefix still yields
-        // a canonical (uppercase) id and matches the uppercased input.
+        // Configured prefixes may be lowercase; canonical ids are uppercase.
         let prefix = prefix.trim().to_uppercase();
         let up = input.trim().to_uppercase();
         let full = format!("{prefix}-NOTE-");
@@ -33,7 +34,7 @@ impl NoteId {
         })
     }
 
-    /// The note's `.md` file name (`{canonical}.md`).
+    /// Returns the note's `{canonical}.md` file name.
     pub fn file_name(&self) -> String {
         format!("{}.md", self.canonical)
     }
@@ -86,7 +87,6 @@ mod tests {
             NoteId::resolve("xyz", "PWF"),
             Err(NoteError::BadId(..))
         ));
-        // A different project's full id is not valid here.
         assert!(matches!(
             NoteId::resolve("GLP-NOTE-0001", "PWF"),
             Err(NoteError::BadId(..))

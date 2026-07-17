@@ -1,4 +1,4 @@
-//! Arg-surface tests: build the binary and assert the verb surface clap derives.
+//! Verifies the clap-derived verb surface.
 
 use assert_cmd::Command;
 use predicates::prelude::*;

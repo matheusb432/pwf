@@ -1,23 +1,20 @@
-// Resolve `prereq` frontmatter wikilinks to their work-item status for list and
-// other consumers that need to know whether prerequisite items are complete.
-
 use std::sync::LazyLock;
 
-use pwf_domain::pending_work::{ParsePrereqsError, Prereqs as DomainPrereqs, WorkItemStatus};
+use pwf_domain::pending_work::{ParsePrereqsError, Prereqs, WorkItemStatus};
 use regex::Regex;
 
 use super::{errors::PendingWorkError, naming::project_dir};
 use crate::config::Config;
 
-// Regex reading bare ids out of an existing `prereq` frontmatter value.
 const PREREQ_VALUE_PATTERN: &str = r"\[\[([A-Z]{2,4}-\d{4})";
 static PREREQ_VALUE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(PREREQ_VALUE_PATTERN).unwrap());
 
+/// Contains prerequisite IDs confirmed to exist in the current configuration.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct Prereqs(DomainPrereqs);
+pub(super) struct KnownPrereqs(Prereqs);
 
-impl Prereqs {
+impl KnownPrereqs {
     pub(super) fn from_flags(
         cfg: &Config,
         values: &[String],
@@ -47,11 +44,11 @@ pub(super) fn frontmatter_from_flags(
     cfg: &Config,
     values: &[String],
 ) -> Result<Option<String>, PendingWorkError> {
-    Ok(Prereqs::from_flags(cfg, values)?.map(|p| p.frontmatter_value()))
+    Ok(KnownPrereqs::from_flags(cfg, values)?.map(|p| p.frontmatter_value()))
 }
 
-fn parse_flag_values(values: &[String]) -> Result<DomainPrereqs, PendingWorkError> {
-    DomainPrereqs::parse_values(values).map_err(map_parse_prereqs_error)
+fn parse_flag_values(values: &[String]) -> Result<Prereqs, PendingWorkError> {
+    Prereqs::parse_values(values).map_err(map_parse_prereqs_error)
 }
 
 #[cfg(test)]
@@ -70,22 +67,19 @@ fn map_parse_prereqs_error(error: ParsePrereqsError) -> PendingWorkError {
     }
 }
 
-/// One resolved prerequisite: its id and the backing note's `status` (None when the
-/// note is missing).
 pub(super) struct PrereqStatus {
     pub id: String,
     pub status: Option<WorkItemStatus>,
 }
 
 impl PrereqStatus {
-    /// Human label: the raw status, or "missing" when the note is absent.
     fn label(&self) -> String {
         self.status
             .map_or_else(|| "missing".to_string(), |status| status.to_string())
     }
 }
 
-/// Resolves every `[[AAA-NNNN]]` wikilink in `prereq` to its status.
+/// Resolves each prerequisite wikilink to its work-item status.
 pub(super) fn resolve(cfg: &Config, prereq: &str) -> Vec<PrereqStatus> {
     PREREQ_VALUE_RE
         .captures_iter(prereq)
@@ -97,8 +91,8 @@ pub(super) fn resolve(cfg: &Config, prereq: &str) -> Vec<PrereqStatus> {
         .collect()
 }
 
-/// Reads the `status` frontmatter of the note backing `id`, mapping its prefix to a
-/// managed project. Returns None when the project, file, or status is absent.
+/// Reads status after mapping the ID prefix to a managed project.
+/// Returns `None` when the project, file, or status is missing.
 fn read_status(cfg: &Config, id: &str) -> Option<WorkItemStatus> {
     let prefix = id.split('-').next().unwrap_or("");
     let project = cfg
@@ -114,7 +108,7 @@ fn read_status(cfg: &Config, id: &str) -> Option<WorkItemStatus> {
         .and_then(|status| status.parse().ok())
 }
 
-/// Renders `CFG-0014 (done), CFG-0015 (active)` for the `--long` list line.
+/// Formats prerequisite statuses for the long list view.
 pub(super) fn list_summary(statuses: &[PrereqStatus]) -> String {
     statuses
         .iter()
@@ -168,7 +162,7 @@ mod tests {
     fn prereqs_accept_repeatable_and_comma_values() {
         let (_d, cfg) = stage_cfg();
         let values = vec!["CFG-0014, CFG-0015".to_string(), "[[CFG-0014]]".to_string()];
-        let prereqs = Prereqs::from_flags(&cfg, &values).unwrap().unwrap();
+        let prereqs = KnownPrereqs::from_flags(&cfg, &values).unwrap().unwrap();
         assert_eq!(prereqs.frontmatter_value(), "[[CFG-0014]], [[CFG-0015]]");
     }
 
@@ -184,16 +178,13 @@ mod tests {
 
     #[test]
     fn prereqs_normalize_lowercase_ids() {
-        // lowercase is accepted and canonicalized (PWF-0038 / BR-0001).
         let ids = parse_flag_ids(&["cfg-0014".to_string()]).unwrap();
         assert_eq!(ids, vec!["CFG-0014".to_string()]);
     }
 
     #[test]
     fn prereqs_normalize_shorthand_ids() {
-        // `--prereq` inherits BR-0010 shorthand collapse from the `WorkItemId`
-        // newtype: the glued, unpadded, and hyphenated-unpadded forms all resolve
-        // to the same canonical id `--id` accepts (PWF-0102).
+        // Uses the same shorthand canonicalization as `--id` (BR-0010).
         let ids = parse_flag_ids(&[
             "cfg57".to_string(),
             "CFG-14".to_string(),
@@ -235,7 +226,7 @@ mod tests {
     #[test]
     fn prereqs_reject_missing_ids() {
         let (_d, cfg) = stage_cfg();
-        let err = Prereqs::from_flags(&cfg, &["CFG-9999".to_string()]).unwrap_err();
+        let err = KnownPrereqs::from_flags(&cfg, &["CFG-9999".to_string()]).unwrap_err();
         assert_matches!(
             err,
             PendingWorkError::UnknownPrereqIds { ref ids }

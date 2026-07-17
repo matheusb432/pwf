@@ -13,10 +13,7 @@ use crate::obsidian::identity::{
 };
 
 impl ObsidianStore {
-    /// Reads and validates a project index's identity frontmatter, returning its
-    /// `(path, text)` when present. Shared by the generic-port read
-    /// materialization (`get`/`list`) so index-identity rejection is enforced on
-    /// every read path.
+    /// Reads a project index only after validating its identity frontmatter.
     pub(super) fn validated_project_index(
         &self,
         project: &ProjectName,

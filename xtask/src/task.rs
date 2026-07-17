@@ -1,11 +1,8 @@
-//! Command plans: verbs describe work as labeled [`Step`]s; a [`StepRunner`] executes them.
-//! Orchestration here owns ordering and failure aggregation without spawning anything itself.
+//! Labeled command plans with ordered execution and failure aggregation.
 
 use anyhow::{Result, bail};
 
-/// One tool invocation: a labeled program plus argv.
-///
-/// The label names the unit of work (`rustfmt`, `mdformat`, `clippy`) in error and drift messages.
+/// Describes one labeled program invocation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Step {
     label: String,
@@ -26,7 +23,7 @@ impl Step {
         }
     }
 
-    /// Appends arguments; accepts arrays, iterators, and `Option`s (for conditional flags).
+    /// Appends arguments from arrays, iterators, or conditional options.
     pub(crate) fn args(mut self, extra: impl IntoIterator<Item: Into<String>>) -> Self {
         self.args.extend(extra.into_iter().map(Into::into));
         self
@@ -45,16 +42,15 @@ impl Step {
     }
 }
 
-/// Port used by orchestration to execute steps.
+/// Executes planned command steps.
 pub(crate) trait StepRunner {
-    /// Runs a step, treating a non-zero exit as an error.
     fn run(&self, step: &Step) -> Result<()>;
 
-    /// Runs a step and reports whether it succeeded — non-zero exits are data for check gates.
+    /// Reports non-zero exits as data so check gates can aggregate failures.
     fn succeeds(&self, step: &Step) -> Result<bool>;
 }
 
-/// Runs steps in order, stopping at the first failure.
+/// Runs steps in order and stops at the first failure.
 pub(crate) fn run_all(runner: &impl StepRunner, steps: &[Step]) -> Result<()> {
     for step in steps {
         runner.run(step)?;
@@ -62,7 +58,7 @@ pub(crate) fn run_all(runner: &impl StepRunner, steps: &[Step]) -> Result<()> {
     Ok(())
 }
 
-/// Runs every check step even after failures, then reports all offenders at once.
+/// Runs every check and reports all failures together.
 pub(crate) fn check_all(runner: &impl StepRunner, steps: &[Step], remediation: &str) -> Result<()> {
     let failed = failed_labels(runner, steps)?;
     if !failed.is_empty() {

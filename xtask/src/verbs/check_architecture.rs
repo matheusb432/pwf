@@ -1,8 +1,6 @@
-//! `check-architecture` — the mechanical containment gate. Loads the workspace's source trees
-//! once and runs every check in [`crate::architecture_check`] over them; prints one
-//! `<path>:<line>: <message>` line per violation on stderr and exits non-zero. Pure check logic
-//! lives in `architecture_check`; this module is just the CLI-facing glue (reporting + exit
-//! status), matching the split every other verb here uses over `task`/`proc`.
+//! CLI reporting for the mechanical architecture gates.
+//!
+//! Violations use `<path>:<line>: <message>` on stderr and produce a non-zero exit.
 
 use anyhow::{Result, bail};
 
@@ -27,7 +25,7 @@ pub(crate) fn run() -> Result<()> {
     }
 }
 
-/// `<path>:<line>: <message>` — the gate's stderr line shape.
+/// Formats the gate's stable `<path>:<line>: <message>` diagnostic.
 fn format_violation(violation: &Violation) -> String {
     format!(
         "{}:{}: {}",

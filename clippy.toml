@@ -1,12 +1,2 @@
-# Clippy tuning for this repo's Rust crates — REPO-OWNED (repository's `sync-clippy` fan-out manages
-# only the `[workspace.lints.clippy]` LEVELS table in the root Cargo.toml; `clippy_toml = false`
-# in repos.toml leaves this file repo-owned). One root file — Clippy discovers it from each crate's
-# manifest dir.
-# `msrv` is intentionally unset — the fleet tracks latest stable, so Clippy is free to suggest the
-# newest APIs. Comments sit above keys, never trailing, so taplo can't reflow them.
-# Internal binaries: let Clippy suggest better signatures freely. Wrong for a repo publishing a
-# library crate — grow a which-variant override before opting one in.
 avoid-breaking-exported-api = false
-
-# Pairs with the fleet `cognitive_complexity` opt-in; matches the fleet threshold (clippy default is 25).
 cognitive-complexity-threshold = 30

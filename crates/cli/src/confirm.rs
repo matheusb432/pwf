@@ -1,74 +1,57 @@
-//! Interactive yes/no confirmation prompts. Detects whether stdin is a terminal
-//! and, when it is, prompts on stderr with a default-aware `[y/N]`/`[Y/n]` hint
-//! and reads the answer. Exposed as the `Confirm` trait so callers exercise the
-//! yes / no / non-interactive paths without a real terminal.
+//! Separates confirmation-answer interpretation from terminal I/O.
 
-use std::io::IsTerminal;
+use std::io::{IsTerminal, Write};
 
-/// Which answer an empty Enter selects — and thus which letter the prompt
-/// capitalises (`[Y/n]` for [`DefaultAnswer::Yes`], `[y/N]` for [`DefaultAnswer::No`]).
+/// Selects the answer used for empty or unrecognized input.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DefaultAnswer {
     Yes,
     No,
 }
 
-/// Gate for a yes/no decision. The real impl prompts on a TTY; tests inject
-/// deterministic answers.
-pub trait Confirm {
-    /// Is stdin a terminal we can prompt on? When false (agentic runs, pipes,
-    /// CI), callers decide whether to proceed or refuse without prompting.
-    fn interactive(&self) -> bool;
-    /// Prompt `question` with a `default`-aware hint and report yes/no.
-    fn confirm(&self, question: &str, default: DefaultAnswer) -> bool;
+/// Reports the result of a confirmation request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Confirmation {
+    /// The operator accepted the requested action.
+    Accepted,
+    /// The operator declined the requested action or stdin could not be read.
+    Declined,
+    /// Stdin is not a terminal, so no question was presented.
+    NonInteractive,
 }
 
-/// Interpret a raw answer line against `default`: an explicit `y`/`yes` or
-/// `n`/`no` (case-insensitive) wins; anything else — including an empty Enter —
-/// follows the default.
-fn interpret(line: &str, default: DefaultAnswer) -> bool {
+/// Interprets `yes` and `no` case-insensitively; all other input follows `default`.
+fn interpret(line: &str, default: DefaultAnswer) -> Confirmation {
     let answer = line.trim().to_ascii_lowercase();
-    match default {
+    let accepted = match default {
         DefaultAnswer::Yes => !matches!(answer.as_str(), "n" | "no"),
         DefaultAnswer::No => matches!(answer.as_str(), "y" | "yes"),
+    };
+    if accepted {
+        Confirmation::Accepted
+    } else {
+        Confirmation::Declined
     }
 }
 
-/// Real gate: prints the `default`-aware hint on stderr and reads a line from stdin.
-pub struct RealConfirm;
-impl Confirm for RealConfirm {
-    fn interactive(&self) -> bool {
-        std::io::stdin().is_terminal()
+/// Requests confirmation from terminal stdin when it is interactive.
+pub(crate) fn terminal(question: &str, default: DefaultAnswer) -> Confirmation {
+    if !std::io::stdin().is_terminal() {
+        return Confirmation::NonInteractive;
     }
-    fn confirm(&self, question: &str, default: DefaultAnswer) -> bool {
-        use std::io::Write;
-        let hint = match default {
-            DefaultAnswer::Yes => "[Y/n]",
-            DefaultAnswer::No => "[y/N]",
-        };
-        eprint!("{question} {hint} ");
-        let _ = std::io::stderr().flush();
-        let mut line = String::new();
-        // A read error (e.g. closed stdin) declines rather than act blindly.
-        if std::io::stdin().read_line(&mut line).is_err() {
-            return false;
-        }
+
+    let hint = match default {
+        DefaultAnswer::Yes => "[Y/n]",
+        DefaultAnswer::No => "[y/N]",
+    };
+    eprint!("{question} {hint} ");
+    let _ = std::io::stderr().flush();
+    let mut line = String::new();
+    // A read failure declines the action.
+    if std::io::stdin().read_line(&mut line).is_err() {
+        Confirmation::Declined
+    } else {
         interpret(&line, default)
-    }
-}
-
-/// Fake gate for tests — including the integration suites in `tests/`, which
-/// compile the lib without `cfg(test)`, so this stays ungated.
-pub struct FakeConfirm {
-    pub interactive: bool,
-    pub answer: bool,
-}
-impl Confirm for FakeConfirm {
-    fn interactive(&self) -> bool {
-        self.interactive
-    }
-    fn confirm(&self, _question: &str, _default: DefaultAnswer) -> bool {
-        self.answer
     }
 }
 
@@ -78,41 +61,48 @@ mod tests {
 
     #[test]
     fn default_yes_empty_enter_proceeds() {
-        assert!(interpret("", DefaultAnswer::Yes));
-        assert!(interpret("\n", DefaultAnswer::Yes));
-        assert!(interpret("   ", DefaultAnswer::Yes));
+        assert_eq!(interpret("", DefaultAnswer::Yes), Confirmation::Accepted);
+        assert_eq!(interpret("\n", DefaultAnswer::Yes), Confirmation::Accepted);
+        assert_eq!(interpret("   ", DefaultAnswer::Yes), Confirmation::Accepted);
     }
 
     #[test]
     fn default_yes_explicit_no_declines_case_insensitively() {
-        assert!(!interpret("n", DefaultAnswer::Yes));
-        assert!(!interpret("N", DefaultAnswer::Yes));
-        assert!(!interpret("no", DefaultAnswer::Yes));
-        assert!(!interpret("  NO  ", DefaultAnswer::Yes));
+        for answer in ["n", "N", "no", "  NO  "] {
+            assert_eq!(
+                interpret(answer, DefaultAnswer::Yes),
+                Confirmation::Declined
+            );
+        }
     }
 
     #[test]
     fn default_yes_anything_else_proceeds() {
-        assert!(interpret("y", DefaultAnswer::Yes));
-        assert!(interpret("yes", DefaultAnswer::Yes));
-        assert!(interpret("maybe", DefaultAnswer::Yes));
+        for answer in ["y", "yes", "maybe"] {
+            assert_eq!(
+                interpret(answer, DefaultAnswer::Yes),
+                Confirmation::Accepted
+            );
+        }
     }
 
     #[test]
     fn default_no_empty_enter_declines() {
-        assert!(!interpret("", DefaultAnswer::No));
-        assert!(!interpret("\n", DefaultAnswer::No));
+        assert_eq!(interpret("", DefaultAnswer::No), Confirmation::Declined);
+        assert_eq!(interpret("\n", DefaultAnswer::No), Confirmation::Declined);
     }
 
     #[test]
     fn default_no_explicit_yes_proceeds_case_insensitively() {
-        assert!(interpret("y", DefaultAnswer::No));
-        assert!(interpret("YES", DefaultAnswer::No));
+        for answer in ["y", "YES"] {
+            assert_eq!(interpret(answer, DefaultAnswer::No), Confirmation::Accepted);
+        }
     }
 
     #[test]
     fn default_no_anything_else_declines() {
-        assert!(!interpret("maybe", DefaultAnswer::No));
-        assert!(!interpret("x", DefaultAnswer::No));
+        for answer in ["maybe", "x"] {
+            assert_eq!(interpret(answer, DefaultAnswer::No), Confirmation::Declined);
+        }
     }
 }

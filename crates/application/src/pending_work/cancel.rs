@@ -40,8 +40,6 @@ impl CancelPendingWork {
 pub enum CancelPendingWorkError {
     #[error("--report cannot be empty.")]
     EmptyReport,
-    /// Verbatim former infra `ItemNotFound` display (PWF-0123 error-string
-    /// relocation) — also covers an already-closed item.
     #[error("Open pending-work item not found: {id}")]
     ItemNotFound { id: String },
     #[error("{0}")]
@@ -50,13 +48,9 @@ pub enum CancelPendingWorkError {
     ReviewTask(#[source] AddPendingWorkError),
 }
 
-#[cqrsy::handler(command)]
-#[expect(
-    clippy::needless_pass_by_value,
-    reason = "the cqrsy cancel operation owns its request by contract"
-)]
+#[cqrsy::command]
 pub fn execute<S>(
-    command: CancelPendingWork,
+    command: &CancelPendingWork,
     store: &S,
     projects: &ProjectRegistry,
 ) -> Result<CompletedPendingWork, CancelPendingWorkError>
@@ -169,7 +163,7 @@ mod tests {
         )
         .unwrap();
 
-        let out = execute(command, &store, &registry()).unwrap();
+        let out = execute(&command, &store, &registry()).unwrap();
 
         assert_eq!(out.action, super::super::done::ClosedItemAction::Cancelled);
         assert_eq!(

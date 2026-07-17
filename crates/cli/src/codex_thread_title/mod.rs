@@ -1,77 +1,61 @@
-//! Internal Codex launcher shim for setting a compact thread name.
+//! Names Codex threads through a hidden launcher shim and the app-server API.
 //!
-//! Codex's interactive CLI has no `--name` flag. The supported naming surface is
-//! the app-server `thread/name/set` method, so `pwf session --agent codex` runs
-//! through this hidden shim: start a short-lived background worker that waits for
-//! the just-created Codex thread, rename it, then replace the shim with `codex`.
-//!
-//! This root owns the launcher/worker orchestration; the argv protocol parser
-//! lives in [`invocation`] and the app-server JSON-RPC client in [`app_server`].
+//! A background worker names the new thread while the launcher replaces itself with Codex.
+//! `invocation` parses the hidden argv protocol, and `app_server` owns JSON-RPC.
 
 mod app_server;
 mod invocation;
 
 use std::{
     process::{Command, Stdio},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::Duration,
 };
 
 use app_server::AppServerClient;
 use invocation::Invocation;
 
-pub(crate) const LAUNCH_COMMAND: &str = "__codex-thread-title";
-pub(crate) const WORKER_COMMAND: &str = "__codex-thread-title-worker";
-
-const PWF_FALLBACK_BINARY: &str = "pwf";
-const CODEX_BINARY: &str = "codex";
-const TITLE_FLAG: &str = "--title";
-const CWD_FLAG: &str = "--cwd";
-const SINCE_FLAG: &str = "--since";
-const ARG_SEPARATOR: &str = "--";
 const MAX_RENAME_ATTEMPTS: usize = 40;
 const RENAME_POLL_INTERVAL: Duration = Duration::from_millis(250);
-
-pub(crate) fn launch_argv(title: String, cwd: String, prompt: String) -> Vec<String> {
-    let mut argv = vec![
-        current_pwf_exe(),
-        LAUNCH_COMMAND.to_string(),
-        TITLE_FLAG.to_string(),
-        title,
-        CWD_FLAG.to_string(),
-        cwd,
-        SINCE_FLAG.to_string(),
-        now_unix_seconds().to_string(),
-        ARG_SEPARATOR.to_string(),
-        CODEX_BINARY.to_string(),
-        ARG_SEPARATOR.to_string(),
-    ];
-    argv.push(prompt);
-    argv
+/// Defines the argv tokens used by the hidden Codex launcher protocol.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy)]
+pub struct CodexThreadTitleProtocol {
+    pub launch_command: &'static str,
+    pub worker_command: &'static str,
+    pub binary: &'static str,
+    pub title_flag: &'static str,
+    pub cwd_flag: &'static str,
+    pub since_flag: &'static str,
+    pub argument_separator: &'static str,
 }
 
 /// Runs the hidden Codex thread-title shim when `argv` requests it.
-pub fn maybe_run(argv: &[String]) -> Option<i32> {
+pub fn maybe_run(argv: &[String], protocol: &CodexThreadTitleProtocol) -> Option<i32> {
     match argv.first().map(String::as_str) {
-        Some(LAUNCH_COMMAND) => Some(run_launcher(&argv[1..])),
-        Some(WORKER_COMMAND) => Some(run_worker(&argv[1..])),
+        Some(command) if command == protocol.launch_command => {
+            Some(run_launcher(&argv[1..], protocol))
+        }
+        Some(command) if command == protocol.worker_command => {
+            Some(run_worker(&argv[1..], protocol))
+        }
         _ => None,
     }
 }
 
-fn run_launcher(args: &[String]) -> i32 {
-    let invocation = match Invocation::parse(args) {
+fn run_launcher(args: &[String], protocol: &CodexThreadTitleProtocol) -> i32 {
+    let invocation = match Invocation::parse(args, protocol) {
         Ok(invocation) => invocation,
         Err(message) => {
             eprintln!("Error: {message}");
             return 2;
         }
     };
-    spawn_worker(&invocation);
+    spawn_worker(&invocation, protocol);
     run_codex(&invocation.codex_argv)
 }
 
-fn run_worker(args: &[String]) -> i32 {
-    let Ok(invocation) = Invocation::parse(args) else {
+fn run_worker(args: &[String], protocol: &CodexThreadTitleProtocol) -> i32 {
+    let Ok(invocation) = Invocation::parse(args, protocol) else {
         return 2;
     };
     match rename_when_thread_appears(
@@ -79,25 +63,26 @@ fn run_worker(args: &[String]) -> i32 {
         &invocation.cwd,
         invocation.since,
         invocation.prompt_prefix(),
+        protocol.binary,
     ) {
         Ok(()) => 0,
         Err(_) => 1,
     }
 }
 
-fn spawn_worker(invocation: &Invocation) {
+fn spawn_worker(invocation: &Invocation, protocol: &CodexThreadTitleProtocol) {
     let Ok(exe) = std::env::current_exe() else {
         return;
     };
     let _ = Command::new(exe)
-        .arg(WORKER_COMMAND)
-        .arg(TITLE_FLAG)
+        .arg(protocol.worker_command)
+        .arg(protocol.title_flag)
         .arg(&invocation.title)
-        .arg(CWD_FLAG)
+        .arg(protocol.cwd_flag)
         .arg(&invocation.cwd)
-        .arg(SINCE_FLAG)
+        .arg(protocol.since_flag)
         .arg(invocation.since.to_string())
-        .arg(ARG_SEPARATOR)
+        .arg(protocol.argument_separator)
         .args(&invocation.codex_argv)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -135,8 +120,9 @@ fn rename_when_thread_appears(
     cwd: &str,
     since: u64,
     prompt_prefix: Option<&str>,
+    binary: &str,
 ) -> Result<(), String> {
-    let mut client = AppServerClient::start()?;
+    let mut client = AppServerClient::start(binary)?;
     for _ in 0..MAX_RENAME_ATTEMPTS {
         if let Some(thread_id) = client.find_thread(cwd, since, prompt_prefix)? {
             client.set_thread_name(&thread_id, title)?;
@@ -145,38 +131,4 @@ fn rename_when_thread_appears(
         std::thread::sleep(RENAME_POLL_INTERVAL);
     }
     Err("timed out waiting for codex thread".to_string())
-}
-
-fn current_pwf_exe() -> String {
-    std::env::current_exe().ok().map_or_else(
-        || PWF_FALLBACK_BINARY.to_string(),
-        |path| path.to_string_lossy().into_owned(),
-    )
-}
-
-fn now_unix_seconds() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn launch_argv_wraps_codex_with_title_and_guarded_prompt() {
-        let argv = launch_argv(
-            "PWF-0001 - do the thing".to_string(),
-            "/repo".to_string(),
-            "prompt\n--danger".to_string(),
-        );
-        assert_eq!(argv[1], LAUNCH_COMMAND);
-        assert!(argv.contains(&"PWF-0001 - do the thing".to_string()));
-        assert!(argv.contains(&"/repo".to_string()));
-        let codex_pos = argv.iter().position(|arg| arg == CODEX_BINARY).unwrap();
-        assert_eq!(argv[codex_pos + 1], ARG_SEPARATOR);
-        assert_eq!(argv.last().unwrap(), "prompt\n--danger");
-    }
 }

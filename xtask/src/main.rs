@@ -1,8 +1,6 @@
-//! `xtask` — pwf's embedded dev/release automation harness.
+//! Embedded development and release automation.
 //!
-//! A workspace member built on demand, invoked from the justfile as
-//! `cargo run -p xtask -- <verb>`; never installed. Recipe bodies stay one-line forwarders;
-//! automation logic lives in [`verbs`].
+//! Invoke it as `cargo run -p xtask -- <verb>`. The binary is not installed.
 
 use anyhow::Result;
 use clap::Parser;
@@ -21,7 +19,6 @@ fn main() {
     }
 }
 
-/// Dispatch one parsed verb to its handler.
 fn run(command: cli::Command) -> Result<()> {
     use cli::Command;
     match command {

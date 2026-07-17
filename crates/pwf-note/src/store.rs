@@ -1,5 +1,6 @@
-//! Note files on disk: create, enumerate (newest-first), and delete. The note
-//! body is the message verbatim; frontmatter records `type: note`.
+//! Creates, lists, updates, and deletes note files.
+//!
+//! Bodies store the trimmed message; frontmatter records `type: note`.
 
 use std::{fmt::Write, path::Path};
 
@@ -7,7 +8,7 @@ use regex::Regex;
 
 use crate::{errors::NoteError, id::NoteId};
 
-/// A note read model for rendering.
+/// Contains the note fields needed for list rendering.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Note {
     pub id: String,
@@ -15,19 +16,22 @@ pub struct Note {
     pub message: String,
 }
 
-/// Allocate the next `{prefix}-NOTE-NNNN` id by scanning `project_dir`.
+/// Allocates the next `{prefix}-NOTE-NNNN` id by scanning `project_dir`.
 ///
 /// # Panics
-/// Panics if [`pwf_core::id::next_id`]'s output does not match the canonical
-/// `{prefix}-NOTE-NNNN` shape it guarantees.
+///
+/// Panics if [`pwf_core::id::next_id`] returns a non-canonical id.
 pub fn allocate_id(project_dir: &Path, prefix: &str) -> NoteId {
     let key = format!("{prefix}-NOTE");
     let raw = pwf_core::id::next_id(&[project_dir], &key);
-    // `next_id` guarantees the `{key}-NNNN` shape; re-resolve into a NoteId.
     NoteId::resolve(&raw, prefix).expect("next_id yields a canonical note id")
 }
 
-/// Write the note `.md` (frontmatter + verbatim message body) atomically.
+/// Writes note frontmatter and body atomically.
+///
+/// # Errors
+///
+/// Returns [`NoteError::Io`] when the note cannot be written.
 pub fn create(
     project_dir: &Path,
     id: &NoteId,
@@ -43,7 +47,12 @@ pub fn create(
     })
 }
 
-/// Replace the note body while preserving its existing frontmatter.
+/// Replaces the note body while preserving frontmatter.
+///
+/// # Errors
+///
+/// Returns [`NoteError::NoSuchNote`] when the note is absent or [`NoteError::Io`] on read or write
+/// failure.
 pub fn update(project_dir: &Path, id: &NoteId, message: &str) -> Result<(), NoteError> {
     let path = project_dir.join(id.file_name());
     if !path.exists() {
@@ -86,11 +95,11 @@ fn replace_body(raw: &str, message: &str) -> String {
     format!("{frontmatter}\n\n{}\n", message.trim())
 }
 
-/// Enumerate notes in `project_dir`, newest-first (number descending).
+/// Lists notes by descending numeric suffix.
 ///
 /// # Panics
-/// Panics if the internal id-matching regex fails to compile — unreachable in
-/// practice since `prefix` is escaped via [`regex::escape`].
+///
+/// Panics if the escaped prefix cannot compile as a regular expression.
 pub fn list(project_dir: &Path, prefix: &str) -> Vec<Note> {
     let re = Regex::new(&format!(r"^{}-NOTE-(\d{{4}})$", regex::escape(prefix))).unwrap();
     let mut notes: Vec<Note> = Vec::new();
@@ -119,7 +128,7 @@ pub fn list(project_dir: &Path, prefix: &str) -> Vec<Note> {
     notes
 }
 
-/// First non-empty body line of a note (the message), frontmatter stripped.
+/// Returns the first non-empty body line after frontmatter.
 fn message_of(text: &str) -> String {
     let body = pwf_core::frontmatter::parse(text).body;
     body.lines()
@@ -129,7 +138,12 @@ fn message_of(text: &str) -> String {
         .to_string()
 }
 
-/// Hard-delete the note file. Missing file → `NoSuchNote`.
+/// Deletes a note file.
+///
+/// # Errors
+///
+/// Returns [`NoteError::NoSuchNote`] when the note is absent or [`NoteError::Io`] when removal
+/// fails.
 pub fn delete(project_dir: &Path, id: &NoteId) -> Result<(), NoteError> {
     let path = project_dir.join(id.file_name());
     if !path.exists() {

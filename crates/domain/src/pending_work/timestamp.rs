@@ -1,15 +1,12 @@
-/// Thin date carrier (YYYY-MM-DD as authored). Deliberately non-validating:
-/// a validating newtype would change behavior under the byte-identical gate.
+/// Preserves an authored `YYYY-MM-DD` value without validating it.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Timestamp(String);
 
 impl Timestamp {
-    /// Creates a timestamp from raw string input.
     pub fn new(raw: impl Into<String>) -> Self {
         Self(raw.into())
     }
 
-    /// Returns the timestamp string as a string slice.
     pub fn as_str(&self) -> &str {
         &self.0
     }

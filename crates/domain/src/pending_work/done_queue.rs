@@ -1,17 +1,13 @@
-use crate::pending_work::{Timestamp, WorkItemId};
+use crate::pending_work::{Timestamp, WorkItemId, section_alias};
 
-/// Per-section done-queue caps: oldest links beyond the cap are evicted after a close.
-///
-/// Exact port of `crates/infra/src/obsidian/done_queue.rs`'s `SECTION_CAPS` table.
+/// Per-section done-queue caps applied after a close.
 const SECTION_CAPS: &[(&str, usize)] =
     &[("General", 6), ("Low-prio", 3), ("Future", 3), ("Human", 3)];
 
-/// One parsed done-queue link, independent of its markdown source line.
+/// Represents one queue link independently of its Markdown source line.
 ///
-/// `completed` is `None` for an open link (`- [ ] [[ID]]`) and `Some(date)` for a done
-/// link (`- [x] [[ID]] ✅ <date>`). `section` is the entry's raw (uncanonicalized) H2
-/// label — e.g. `"Futuro"` or `"General"` when the link sits above any header, mirroring
-/// `section_at_line`'s `"General"` fallback in the infra port.
+/// `completed` distinguishes open and done links. `section` retains the raw H2 label; `"General"`
+/// also represents a link above every H2 header.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QueueEntryView {
     pub id: WorkItemId,
@@ -19,10 +15,7 @@ pub struct QueueEntryView {
     pub section: String,
 }
 
-/// Domain-owned mirror of the just-closed entry.
-///
-/// Domain cannot see application's `IndexEntry`; the done/cancel handler maps
-/// `MarkedEntry` -> `IndexEntry { state: Done(completed) }`.
+/// Describes the closed entry for the application-layer index update.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MarkedEntry {
     pub id: WorkItemId,
@@ -30,13 +23,10 @@ pub struct MarkedEntry {
     pub completed: Timestamp,
 }
 
-/// Decisions produced by closing an item: which links to evict, whether the legacy
-/// `## Futuro` header should be renamed to `## Future`, and what the closed entry
-/// itself now looks like.
+/// Contains queue mutations produced by closing an item.
 ///
-/// `marked_entry` is `None` when `id` has no matching open entry in `entries` — the
-/// same "target missing" case `mark_done` handles by applying only the futuro
-/// rename and skipping eviction (see module docs on the interface deviation).
+/// `marked_entry` is [`None`] when the queue has no matching open entry. Header normalization can
+/// still be required in that case.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CloseDecisions {
     pub evicted_ids: Vec<WorkItemId>,
@@ -44,41 +34,9 @@ pub struct CloseDecisions {
     pub marked_entry: Option<MarkedEntry>,
 }
 
-/// Decides eviction, futuro-header normalization, and the marked entry's canonical
-/// section for closing `id` as of `date`.
+/// Computes the close-time mark, eviction, and `Futuro` header normalization decisions.
 ///
-/// # Interface deviations from the brief
-///
-/// - `section_labels` is an addition to the brief's `close_decisions(entries, id, date)` signature.
-///   `entries` alone cannot express an empty `## Futuro` section (no done-queue links under it) or
-///   a `## Futuro` header that both exists and has no bearing on the entry being closed; the
-///   futuro-rename decision in `mark_done` scans every header line in the document unconditionally,
-///   regardless of `id`'s section or match state. Passing the raw H2 labels (application already
-///   has these cheaply via the `IndexSection` list record) lets `close_decisions` answer that
-///   document-wide question honestly.
-/// - `marked_entry` is `Option<MarkedEntry>` rather than the brief's plain `MarkedEntry`.
-///   `mark_done` returns a "no marking, futuro rename only" result when `id`'s open link is missing
-///   from the index (a real, already-exercised path in `mark_done`, not a hypothetical) — an
-///   entries-only, non-optional `MarkedEntry` cannot represent "closed an item with no queue link
-///   to mark".
-///
-/// # Examples
-///
-/// ```
-/// use pwf_domain::pending_work::{QueueEntryView, Timestamp, WorkItemId, close_decisions};
-///
-/// let id = WorkItemId::try_new("PWF-0007").unwrap();
-/// let entries = vec![QueueEntryView {
-///     id: id.clone(),
-///     completed: None,
-///     section: "General".to_string(),
-/// }];
-/// let decisions = close_decisions(&entries, &[], &id, &Timestamp::new("2026-07-07"));
-///
-/// assert!(decisions.evicted_ids.is_empty());
-/// assert!(!decisions.normalize_futuro_header);
-/// assert_eq!(decisions.marked_entry.unwrap().section_canonical, "General");
-/// ```
+/// Separate `section_labels` are required because entries cannot represent an empty H2 section.
 pub fn close_decisions(
     entries: &[QueueEntryView],
     section_labels: &[String],
@@ -113,10 +71,9 @@ pub fn close_decisions(
     }
 }
 
-/// Collects the ids evicted when the section holding `id` (marked done as of `date`)
-/// exceeds its cap: done links in `section_canonical` — the just-marked entry included —
-/// sorted oldest-first by `(completed, id)` (a missing/empty date sorts first), with the
-/// oldest `len - cap` evicted. A section with no configured cap evicts nothing.
+/// Returns excess ids ordered by completion date and id, including the item being closed.
+///
+/// Empty dates sort first. Sections without a cap never evict.
 fn evict_beyond_cap(
     entries: &[QueueEntryView],
     section_canonical: &str,
@@ -156,34 +113,18 @@ fn evict_beyond_cap(
         .collect()
 }
 
-/// Result of reopening a done/cancelled item back onto the done-queue.
+/// Selects the queue mutation needed to reopen an item.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReopenDecision {
-    /// A done link for the id exists in `entries`: flip it back to open in place.
+    /// Restores an existing done link in place.
     RestoreExisting,
-    /// No link for the id exists in `entries`: it was evicted past the cap, so a
-    /// fresh open link must be appended instead of restored.
+    /// Appends a new open link after the prior link was evicted.
     ReAddEvicted,
-    /// An open link for the id already exists in `entries`: nothing to do.
+    /// Leaves an existing open link unchanged.
     AlreadyOpen,
 }
 
-/// Decides how to reopen `id` onto the done-queue given the current entries.
-///
-/// # Examples
-///
-/// ```
-/// use pwf_domain::pending_work::{QueueEntryView, ReopenDecision, WorkItemId, reopen_decision};
-///
-/// let id = WorkItemId::try_new("PWF-0001").unwrap();
-/// let entries = vec![QueueEntryView {
-///     id: id.clone(),
-///     completed: None,
-///     section: "General".to_string(),
-/// }];
-///
-/// assert_eq!(reopen_decision(&entries, &id), ReopenDecision::AlreadyOpen);
-/// ```
+/// Selects the queue mutation needed to reopen `id`.
 pub fn reopen_decision(entries: &[QueueEntryView], id: &WorkItemId) -> ReopenDecision {
     match entries.iter().find(|entry| &entry.id == id) {
         Some(entry) if entry.completed.is_some() => ReopenDecision::RestoreExisting,
@@ -192,18 +133,13 @@ pub fn reopen_decision(entries: &[QueueEntryView], id: &WorkItemId) -> ReopenDec
     }
 }
 
-/// Whether a raw H2 label is a legacy `## Futuro` header that must be normalized
-/// to `## Future` on close — case-insensitive, whitespace-trimmed. The single
-/// source for the futuro-header question, shared by [`close_decisions`] (the
-/// rename *decision*) and the application close handler (which renames each
-/// matching label through the section-label write seam).
+/// Reports whether a trimmed H2 label is `Futuro`, case-insensitively.
 #[must_use]
 pub fn is_futuro_label(label: &str) -> bool {
     label.trim().eq_ignore_ascii_case("futuro")
 }
 
-/// Returns the configured done-queue cap for an already-canonicalized section name,
-/// or `None` when the section has no cap (nothing is ever evicted from it).
+/// Returns the cap for a canonical section name, or [`None`] for an uncapped section.
 pub fn section_cap(section_canonical: &str) -> Option<usize> {
     SECTION_CAPS
         .iter()
@@ -211,31 +147,12 @@ pub fn section_cap(section_canonical: &str) -> Option<usize> {
         .map(|(_, cap)| *cap)
 }
 
-/// Aliases legacy/loose raw section labels onto their canonical done-queue name
-/// (`future`/`futuro` -> `Future`, `human` -> `Human`, `low-prio`/`low-priority` ->
-/// `Low-prio`), passing through any other trimmed label unchanged.
-///
-/// Exact port of `crates/infra/src/obsidian/done_queue.rs`'s `canonical_section`.
+/// Resolves known aliases and lowercases any other trimmed label.
 fn canonical_section(label: &str) -> String {
-    match label.trim().to_lowercase().as_str() {
-        "future" | "futuro" => "Future".to_string(),
-        "human" => "Human".to_string(),
-        "low-prio" | "low-priority" => "Low-prio".to_string(),
-        other => other.to_string(),
-    }
+    section_alias(label).map_or_else(|| label.trim().to_lowercase(), str::to_string)
 }
 
-/// Resolves a `QueueEntryView.section` raw label the way the infra port's
-/// `section_at_line` resolves an entry's section: a real header label goes through
-/// [`canonical_section`], while the literal `"General"` sentinel — the producer's
-/// contractual stand-in for "no enclosing header" — passes through unchanged rather
-/// than being re-lowercased by `canonical_section`'s passthrough arm.
-///
-/// `section_at_line` never re-canonicalizes its own `"General"` fallback (the
-/// fallback runs in `unwrap_or_else`, entirely outside the `canonical_section` call);
-/// `canonical_section` is only ever fed a genuinely matched header label there. This
-/// wrapper exists because `QueueEntryView` collapses both cases into one flat
-/// string, so it re-splits them here instead of re-lowercasing the sentinel.
+/// Preserves the `"General"` no-header sentinel while canonicalizing real H2 labels.
 fn resolve_section(raw: &str) -> String {
     if raw.trim() == "General" {
         "General".to_string()
@@ -268,9 +185,6 @@ mod tests {
         }
     }
 
-    /// Transliterated from `complete_item_rotates_done_queue_and_keeps_evicted_notes`
-    /// (crates/infra/src/obsidian/store/tests.rs): 6 done General entries + closing a
-    /// 7th evicts exactly the oldest one.
     #[test]
     fn cap_boundary_evicts_single_oldest_beyond_cap() {
         let mut entries: Vec<QueueEntryView> = (1..=6)
@@ -340,8 +254,6 @@ mod tests {
         assert_eq!(decisions.evicted_ids, vec![id("PWF-0001")]);
     }
 
-    /// A section absent from `SECTION_CAPS` never evicts, no matter how many done
-    /// links it accumulates.
     #[test]
     fn section_without_a_cap_evicts_nothing() {
         let mut entries: Vec<QueueEntryView> = (1..=9)
@@ -365,8 +277,11 @@ mod tests {
         assert!(decisions.evicted_ids.is_empty());
     }
 
-    /// Raw `Futuro`/`futuro`/`low-priority` labels canonicalize onto the aliased name,
-    /// and the aliased name's cap (not any per-raw-label cap) governs eviction.
+    #[test]
+    fn unknown_section_canonicalization_lowercases_trimmed_label() {
+        assert_eq!(canonical_section(" SomeDay "), "someday");
+    }
+
     #[test]
     fn raw_section_label_aliases_before_cap_lookup() {
         let mut entries: Vec<QueueEntryView> = (1..=3)
@@ -388,10 +303,6 @@ mod tests {
         );
     }
 
-    /// The futuro rename decision is document-wide (any `## Futuro` header, from
-    /// `section_labels`) and independent of whether `id` matches an entry at all —
-    /// mirroring `mark_done`'s unconditional rename loop that runs before it looks
-    /// for the target link.
     #[test]
     fn futuro_header_normalizes_even_when_target_entry_is_missing() {
         let decisions = close_decisions(

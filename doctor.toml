@@ -9,3 +9,8 @@ hint = "install rust via rustup: https://rustup.rs"
 [[tool]]
 name = "just"
 hint = "cargo install just"
+
+# Backs `just test --all`'s no-import-alias gate; repository provisions it fleet-wide.
+[[tool]]
+name = "ast-grep"
+hint = "cargo install ast-grep --locked"

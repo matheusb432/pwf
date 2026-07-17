@@ -12,18 +12,12 @@ pub struct ShowPendingWorkItem {
     pub id: String,
 }
 
-/// `pwf show <id>` streams the note's full markdown source verbatim — the same
-/// lookup as `resolve`, emitting [`ResolvedItem::markdown`]. A missing-note
-/// wikilink has no source to stream, so it is rejected with
-/// [`ResolvePendingWorkError::NoteFileMissing`] instead of an empty success
-/// (the legacy read errored here too).
-#[cqrsy::handler(query)]
-#[expect(
-    clippy::needless_pass_by_value,
-    reason = "the cqrsy show operation owns its request by contract"
-)]
+/// Returns a resolved note's byte-exact Markdown source.
+///
+/// A missing-note index link returns [`ResolvePendingWorkError::NoteFileMissing`].
+#[cqrsy::query]
 pub fn execute(
-    query: ShowPendingWorkItem,
+    query: &ShowPendingWorkItem,
     store: &impl AppDbStore<PendingWorkItem>,
     projects: &ProjectRegistry,
 ) -> Result<ResolvedItem, ShowPendingWorkError> {
@@ -46,7 +40,7 @@ mod tests {
         let (store, registry) = staged();
 
         let shown = execute(
-            ShowPendingWorkItem {
+            &ShowPendingWorkItem {
                 id: "PWF-0001".to_string(),
             },
             &store,
@@ -62,7 +56,7 @@ mod tests {
         let (store, registry) = staged_ghost();
 
         let error = execute(
-            ShowPendingWorkItem {
+            &ShowPendingWorkItem {
                 id: "PWF-0002".to_string(),
             },
             &store,

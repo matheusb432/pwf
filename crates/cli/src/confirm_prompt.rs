@@ -1,21 +1,15 @@
-//! Domain-agnostic confirmation-prompt text: a titled, frontmatter-style
-//! metadata block plus a closing question. Kept free of any engine's domain
-//! types so every [`crate::confirm::Confirm`] caller (session dispatch, task
-//! removal, …) renders its last-look prompt the same way — and readably on a
-//! narrow terminal, as stacked `key: value` lines rather than a wide Markdown
-//! table.
+//! Formats domain-agnostic confirmation prompts as a title, metadata lines, and a question.
 
 use std::fmt;
 
-/// One `key: value` line of a confirmation's metadata block.
+/// Stores one `key: value` metadata line.
 pub struct Field {
     key: &'static str,
     value: String,
 }
 
 impl Field {
-    /// A metadata line. `value` is flattened to a single line so the block
-    /// stays scannable even when a value (e.g. a title) carries newlines.
+    /// Creates a metadata line and flattens newlines in `value`.
     pub fn new(key: &'static str, value: impl Into<String>) -> Self {
         Field {
             key,
@@ -24,14 +18,8 @@ impl Field {
     }
 }
 
-/// A last-look confirmation prompt: a `# title`, a frontmatter-style `key: value`
-/// block, then a closing `question`. [`fmt::Display`] renders it to the prompt
-/// text handed to [`crate::confirm::Confirm::confirm`], which appends the
-/// `[Y/n]` hint; `question` supplies its own trailing `?`.
-///
-/// A borrowing view — like [`std::fmt::Arguments`] or [`std::path::Display`] —
-/// it holds a `&[Field]` into the caller's stack array rather than owning a
-/// `Vec`, so building a prompt allocates nothing.
+/// Borrows and formats a Markdown title, metadata block, and closing question.
+/// The terminal shell appends the confirmation hint after this rendered text.
 pub struct ConfirmationPrompt<'a> {
     title: &'a str,
     fields: &'a [Field],
@@ -58,12 +46,10 @@ impl fmt::Display for ConfirmationPrompt<'_> {
     }
 }
 
-/// Collapse any carriage return / newline to a space so a value stays on its
-/// own `key: value` line.
+/// Collapses line endings so each value stays on one metadata line.
 fn flatten(value: String) -> String {
     if value.contains(['\r', '\n']) {
-        // Collapse CRLF to one space before flattening stray lone CR/LF, so a
-        // Windows line ending doesn't leave a double gap.
+        // Replace CRLF first to avoid two spaces for one Windows line ending.
         value.replace("\r\n", " ").replace(['\r', '\n'], " ")
     } else {
         value

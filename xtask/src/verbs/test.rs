@@ -1,7 +1,7 @@
-//! `test` — pwf's test suite. Workspace in-process unit/integration by default; `--e2e`
-//! runs the binary suites (`cli_e2e`, `help_cli`); `--all` runs both. `--verbose` streams
-//! uncaptured logs.
-//! Migrates the former `just pwf test` bash recipe.
+//! Test planning for workspace and binary suites.
+//!
+//! Unit and integration tests are the default. `--e2e` runs binary suites. `--all` runs both test
+//! scopes plus the architecture and import-alias gates. `--verbose` streams uncaptured logs.
 
 use anyhow::Result;
 use clap::{Args, ValueEnum};
@@ -42,13 +42,11 @@ pub(crate) enum Scope {
     All,
 }
 
-/// The binary-e2e targets, excluded from the default `cargo test` (they carry `test = false`).
+/// Binary suites excluded from default `cargo test` by `test = false`.
 const E2E_TARGETS: &[&str] = &["-p", "pwf", "--test", "cli_e2e", "--test", "help_cli"];
 const UNIT_TARGETS: &[&str] = &["--workspace"];
 
-/// One `cargo test` invocation: terse (`--quiet`) unless `verbose`, which instead streams
-/// uncaptured output (`-- --nocapture`). `targets` selects explicit test binaries (empty =
-/// default).
+/// Builds one quiet or uncaptured `cargo test` step for selected targets.
 fn cargo_test_step(label: &str, targets: &[&str], verbose: bool) -> Step {
     let mut step = Step::new(label, "cargo", ["test"]);
     if verbose {
@@ -61,19 +59,23 @@ fn cargo_test_step(label: &str, targets: &[&str], verbose: bool) -> Step {
     step
 }
 
-/// The ordered `cargo test` steps for a scope. Pure — no I/O, so it is unit-tested directly.
+/// Builds ordered test and gate steps for a scope.
 fn plan(scope: Scope, verbose: bool) -> Vec<Step> {
     let unit = || cargo_test_step("test", UNIT_TARGETS, verbose);
     let e2e = || cargo_test_step("test:e2e", E2E_TARGETS, verbose);
     match scope {
         Scope::Unit => vec![unit()],
         Scope::E2e => vec![e2e()],
-        Scope::All => vec![unit(), e2e(), check_architecture_step()],
+        Scope::All => vec![
+            unit(),
+            e2e(),
+            check_architecture_step(),
+            check_import_aliases_step(),
+        ],
     }
 }
 
-/// Spawns the `check-architecture` gate as its own step, `--all`-only: it isn't a `cargo test`
-/// run, so it stays out of `Unit`/`E2e` and only rides along with the full suite.
+/// Builds the architecture-gate step used by the full suite.
 fn check_architecture_step() -> Step {
     Step::new(
         "check-architecture",
@@ -82,8 +84,14 @@ fn check_architecture_step() -> Step {
     )
 }
 
-/// Runs the selected scope. For e2e, the binary suites exercise `target/release/pwf`, so the
-/// release binary is built first if absent.
+/// Builds the ast-grep import-alias gate used by the full suite.
+///
+/// AST matching ignores `as` text inside string-literal fixtures.
+fn check_import_aliases_step() -> Step {
+    Step::new("check-import-aliases", "ast-grep", ["scan"])
+}
+
+/// Runs a test scope, building the release binary first when a binary suite needs it.
 pub(crate) fn run(scope: Scope, verbose: bool) -> Result<()> {
     if matches!(scope, Scope::E2e | Scope::All) {
         let bin = paths::repo_root()
@@ -137,15 +145,24 @@ mod tests {
     }
 
     #[test]
-    fn all_runs_unit_then_e2e_then_architecture_check() {
+    fn all_runs_unit_then_e2e_then_both_gates() {
         let steps = plan(Scope::All, false);
-        assert_eq!(steps.len(), 3);
+        assert_eq!(steps.len(), 4);
         assert_eq!(argv(&steps[0]), ["test", "--quiet", "--workspace"]);
         assert!(argv(&steps[1]).contains(&"cli_e2e"));
         assert_eq!(
             argv(&steps[2]),
             ["run", "--quiet", "-p", "xtask", "--", "check-architecture"]
         );
+        assert_eq!(argv(&steps[3]), ["scan"]);
+    }
+
+    #[test]
+    fn gates_stay_out_of_the_slim_scopes() {
+        for scope in [Scope::Unit, Scope::E2e] {
+            let steps = plan(scope, false);
+            assert_eq!(steps.len(), 1);
+        }
     }
 
     #[derive(Parser)]

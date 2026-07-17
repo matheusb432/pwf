@@ -2,12 +2,11 @@
 
 use regex::Regex;
 
-/// Return byte offset of the first matching header, or `None`. Accepts headers
-/// in preference order. Matching is case-insensitive (PWF-0026).
+/// Returns the byte offset of the first case-insensitive header match in preference order.
 ///
 /// # Panics
-/// Panics if a header's regex fails to compile — unreachable in practice since
-/// each header is escaped via [`regex::escape`].
+///
+/// Panics if an escaped header cannot compile as a regular expression.
 pub fn find_section_index(content: &str, headers: &[&str]) -> Option<usize> {
     for h in headers {
         let pattern = format!(r"(?im)^{}\s*$", regex::escape(h));
@@ -18,15 +17,11 @@ pub fn find_section_index(content: &str, headers: &[&str]) -> Option<usize> {
     None
 }
 
-/// Remove the line matching `[[<id>|...]]` or `[[<id>]]`, with or without a
-/// leading Obsidian checkbox (`- [ ] ` open, `- [x] ` done, or a bare `- ` note
-/// line). The done-checkbox case backs the done-queue eviction unlink; every
-/// other caller only ever passes an open/bare id, so accepting `[x]` is inert
-/// for them.
+/// Removes every line linking `id`, including open, done, and bare Obsidian links.
 ///
 /// # Panics
-/// Panics if the link-matching regex fails to compile — unreachable in
-/// practice since `id` is escaped via [`regex::escape`].
+///
+/// Panics if the escaped id cannot compile as a regular expression.
 pub fn remove_index_link(content: &str, id: &str) -> String {
     let pattern = format!(
         r"(?m)^\s*-\s*(?:\[[ xX]\]\s*)?\[\[{}(?:\|[^\]]*)?\]\].*(?:\r?\n)?",
@@ -57,7 +52,6 @@ mod tests {
 
     #[test]
     fn remove_index_link_strips_bare_wikilink_note_line() {
-        // A note line is a bare `- [[ID]]` (no checkbox); removal must strip it.
         let content = "# proj\n\n### Notes\n- [[PWF-NOTE-0001]]\n- [[PWF-NOTE-0002]]\n";
         assert_eq!(
             remove_index_link(content, "PWF-NOTE-0001"),

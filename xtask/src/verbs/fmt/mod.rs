@@ -1,9 +1,7 @@
-//! The `fmt`, `fmt-check`, and `fix` verbs — formatting + lint automation.
+//! Formatting and lint automation for `fmt`, `fmt-check`, and `fix`.
 //!
-//! Formatters are gated on repo-root marker files so a fresh repo works with zero extra setup:
-//! stable `cargo fmt` always runs; a `.rustfmt-nightly` pin (one line, e.g. `nightly-2025-11-01`)
-//! switches rustfmt to that toolchain; a `.mdformat.toml` opts Markdown into mdformat (via `uvx`).
-//! Adapters build command plans; the shared task runner executes them.
+//! Stable rustfmt always runs. `.rustfmt-nightly` selects a toolchain, and `.mdformat.toml` enables
+//! Markdown formatting through `uvx`.
 
 use std::path::Path;
 
@@ -26,7 +24,7 @@ pub(crate) struct FixArgs {
     pub(crate) args: Vec<String>,
 }
 
-/// Whether a formatter run rewrites files or only reports drift.
+/// Selects formatting or drift checking.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum FmtMode {
     Write,
@@ -34,27 +32,25 @@ enum FmtMode {
 }
 
 impl FmtMode {
-    /// The `--check` flag when verifying, `None` when writing.
     fn check_flag(self) -> Option<&'static str> {
         (self == Self::Check).then_some("--check")
     }
 }
 
-/// Optional pin switching rustfmt to a nightly toolchain (enables nightly-only rustfmt.toml keys).
+/// Optional rustfmt nightly-toolchain pin.
 const NIGHTLY_FILE: &str = ".rustfmt-nightly";
 
-/// Optional marker opting the repo into Markdown formatting.
+/// Marker that enables Markdown formatting.
 const MDFORMAT_FILE: &str = ".mdformat.toml";
 
-/// Applies every active formatter in place.
+/// Applies every active formatter.
 pub(crate) fn fmt() -> Result<()> {
     task::run_all(&ProcessRunner, &format_steps(FmtMode::Write)?)?;
     proc::result("fmt", Status::Done);
     Ok(())
 }
 
-/// Verifies formatting and lints without writing. Every step runs even after one fails,
-/// so a single invocation reports all offenders.
+/// Checks every formatter and lint, aggregating failures without writing.
 pub(crate) fn fmt_check() -> Result<()> {
     let mut steps = format_steps(FmtMode::Check)?;
     steps.push(rust::clippy_check_step());
@@ -63,8 +59,7 @@ pub(crate) fn fmt_check() -> Result<()> {
     Ok(())
 }
 
-/// Applies clippy's machine-applicable fixes, then reformats whatever clippy rewrote.
-/// `extra` is forwarded verbatim to clippy (e.g. `-- -W clippy::nursery`).
+/// Applies Clippy fixes and then reformats, forwarding `extra` to Clippy.
 pub(crate) fn fix(extra: &[String]) -> Result<()> {
     task::run_all(&ProcessRunner, &[rust::clippy_fix_step(extra)])?;
     task::run_all(&ProcessRunner, &format_steps(FmtMode::Write)?)?;
@@ -72,7 +67,7 @@ pub(crate) fn fix(extra: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// Gathers the repo's formatter markers and builds the step plan for `mode`.
+/// Builds a format plan from repository marker files.
 fn format_steps(mode: FmtMode) -> Result<Vec<task::Step>> {
     let mut steps = rust::format_steps(nightly_pin()?.as_deref(), mode);
     if Path::new(MDFORMAT_FILE).is_file() {
@@ -81,7 +76,7 @@ fn format_steps(mode: FmtMode) -> Result<Vec<task::Step>> {
     Ok(steps)
 }
 
-/// The pinned toolchain from [`NIGHTLY_FILE`], or `None` when the repo doesn't pin one.
+/// Reads the pinned toolchain when present.
 fn nightly_pin() -> Result<Option<String>> {
     if !Path::new(NIGHTLY_FILE).is_file() {
         return Ok(None);
@@ -91,9 +86,7 @@ fn nightly_pin() -> Result<Option<String>> {
     parse_nightly_pin(&raw).map(Some)
 }
 
-/// Parses a present [`NIGHTLY_FILE`] marker's contents into a toolchain name.
-/// A blank marker is a misconfiguration — erroring beats spawning a broken `cargo +` (no
-/// toolchain).
+/// Parses a non-empty [`NIGHTLY_FILE`] toolchain name.
 fn parse_nightly_pin(raw: &str) -> Result<String> {
     let pin = raw.trim();
     if pin.is_empty() {
@@ -104,8 +97,7 @@ fn parse_nightly_pin(raw: &str) -> Result<String> {
     Ok(pin.to_string())
 }
 
-/// Tracked + untracked-but-not-ignored Markdown files (NUL-split `git ls-files`), so
-/// gitignored files are never formatted.
+/// Lists tracked and unignored Markdown files from NUL-delimited Git output.
 fn markdown_files() -> Result<Vec<String>> {
     let out = proc::capture(
         "git ls-files",

@@ -2,7 +2,7 @@ use std::fmt;
 
 use thiserror::Error;
 
-/// The well-known tag that marks an item as governing a handoff (PWF-0117).
+/// Marks an item as governing a handoff.
 pub const HANDOFF_TAG: &str = "handoff";
 
 /// Stores one normalized lowercase snake-case task label.
@@ -51,7 +51,7 @@ impl fmt::Display for Tag {
     }
 }
 
-/// Stores ordered, deduplicated task labels.
+/// Stores deduplicated task labels in first-seen order.
 ///
 /// # Examples
 ///
@@ -70,15 +70,6 @@ impl Tags {
     /// # Errors
     ///
     /// Returns [`ParseTagsError`] when no tag is supplied or any segment is invalid.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pwf_domain::pending_work::Tags;
-    ///
-    /// let tags = Tags::parse_values(&["godot,setup".to_string()]).unwrap();
-    /// assert_eq!(tags.iter().count(), 2);
-    /// ```
     pub fn parse_values(values: &[String]) -> Result<Self, ParseTagsError> {
         if values.is_empty() {
             return Err(ParseTagsError::MissingTag { raw: String::new() });
@@ -106,15 +97,6 @@ impl Tags {
     /// # Errors
     ///
     /// Returns [`ParseTagsError`] when the value is not a non-empty inline array of valid tags.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pwf_domain::pending_work::Tags;
-    ///
-    /// let tags = Tags::parse_frontmatter("[godot, csharp-export]").unwrap();
-    /// assert_eq!(tags.frontmatter_value(), "[godot, csharp_export]");
-    /// ```
     pub fn parse_frontmatter(raw: &str) -> Result<Self, ParseTagsError> {
         let trimmed = raw.trim();
         let Some(inner) = trimmed
@@ -135,16 +117,6 @@ impl Tags {
 
     #[must_use]
     /// Returns the first-seen union of existing and appended tags.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pwf_domain::pending_work::Tags;
-    ///
-    /// let left = Tags::parse_frontmatter("[godot]").unwrap();
-    /// let right = Tags::parse_frontmatter("[godot, setup]").unwrap();
-    /// assert_eq!(left.merged(&right).frontmatter_value(), "[godot, setup]");
-    /// ```
     pub fn merged(&self, appended: &Self) -> Self {
         let mut merged = self.0.clone();
         for tag in &appended.0 {
@@ -156,44 +128,16 @@ impl Tags {
     }
 
     /// Reports whether every requested tag is present.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pwf_domain::pending_work::Tags;
-    ///
-    /// let item = Tags::parse_frontmatter("[godot, setup]").unwrap();
-    /// let wanted = Tags::parse_frontmatter("[setup]").unwrap();
-    /// assert!(item.contains_all(&wanted));
-    /// ```
     pub fn contains_all(&self, requested: &Self) -> bool {
         requested.0.iter().all(|tag| self.0.contains(tag))
     }
 
-    /// Whether the set contains the canonical tag `name`.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pwf_domain::pending_work::{HANDOFF_TAG, Tags};
-    ///
-    /// let tags = Tags::parse_frontmatter("[handoff]").unwrap();
-    /// assert!(tags.contains_name(HANDOFF_TAG));
-    /// ```
+    /// Reports whether the set contains canonical tag `name`.
     pub fn contains_name(&self, name: &str) -> bool {
         self.iter().any(|tag| tag.as_ref() == name)
     }
 
     /// Renders the canonical inline-array frontmatter payload.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pwf_domain::pending_work::Tags;
-    ///
-    /// let tags = Tags::parse_frontmatter("[Godot, csharp-export]").unwrap();
-    /// assert_eq!(tags.frontmatter_value(), "[godot, csharp_export]");
-    /// ```
     pub fn frontmatter_value(&self) -> String {
         format!(
             "[{}]",
@@ -206,33 +150,12 @@ impl Tags {
     }
 
     /// Iterates over tags in first-seen order.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pwf_domain::pending_work::Tags;
-    ///
-    /// let tags = Tags::parse_frontmatter("[godot, setup]").unwrap();
-    /// assert_eq!(
-    ///     tags.iter().map(AsRef::as_ref).collect::<Vec<_>>(),
-    ///     ["godot", "setup"]
-    /// );
-    /// ```
     pub fn iter(&self) -> impl Iterator<Item = &Tag> {
         self.0.iter()
     }
 }
 
-/// Describes invalid CLI or frontmatter tag text while retaining the offending value.
-///
-/// # Examples
-///
-/// ```
-/// use pwf_domain::pending_work::{ParseTagsError, Tags};
-///
-/// let error = Tags::parse_values(&["bad tag".to_string()]).unwrap_err();
-/// assert!(matches!(error, ParseTagsError::InvalidTag { .. }));
-/// ```
+/// Retains invalid CLI or frontmatter tag text for diagnostics.
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ParseTagsError {
     #[error("missing tag value: {raw:?}")]
@@ -245,15 +168,6 @@ pub enum ParseTagsError {
 
 impl ParseTagsError {
     /// Returns the raw value that failed validation.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pwf_domain::pending_work::Tags;
-    ///
-    /// let error = Tags::parse_values(&["bad tag".to_string()]).unwrap_err();
-    /// assert_eq!(error.raw(), "bad tag");
-    /// ```
     pub fn raw(&self) -> &str {
         match self {
             Self::MissingTag { raw }

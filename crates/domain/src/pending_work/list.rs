@@ -1,7 +1,12 @@
+use super::WorkItemStatus;
+
+/// Contains one pending-work item projected for list and launch consumers.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OpenItem {
+pub struct PendingWorkItemView {
     pub id: String,
     pub project: String,
+    /// Retains the persisted lifecycle status.
+    pub status: WorkItemStatus,
     pub session: String,
     pub prompt: String,
     pub repo: Option<String>,
@@ -21,7 +26,7 @@ pub struct OpenItem {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListResult {
-    pub items: Vec<OpenItem>,
+    pub items: Vec<PendingWorkItemView>,
     pub hidden: usize,
 }
 
@@ -85,9 +90,10 @@ mod tests {
     #[test]
     fn list_result_keeps_items_and_hidden_count() {
         let result = ListResult {
-            items: vec![OpenItem {
+            items: vec![PendingWorkItemView {
                 id: "PWF-0001".to_string(),
                 project: "pwf".to_string(),
+                status: WorkItemStatus::Cancelled,
                 session: "session".to_string(),
                 prompt: "prompt".to_string(),
                 repo: Some("/repo".to_string()),
@@ -109,5 +115,6 @@ mod tests {
 
         assert_eq!(result.items.len(), 1);
         assert_eq!(result.hidden, 3);
+        assert_eq!(result.items[0].status, WorkItemStatus::Cancelled);
     }
 }

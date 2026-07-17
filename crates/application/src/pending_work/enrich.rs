@@ -1,58 +1,36 @@
 //! Launchability enrichment for open pending-work items.
 //!
-//! The pure derivation of an [`OpenItem`]'s launch-diagnostic fields
-//! (`launchable`/`needs_prompt`/`issues`) plus the display `format`/`section`
-//! normalization — relocated here from the infra read parser (PWF-0123 Task
-//! 2.4, since retired) so the generic-port read handlers own one copy of the
-//! rules. Every rule is transliterated verbatim; changing
-//! any of them changes `pwf list` diagnostics and `verify`/`session`
-//! launchability.
+//! One policy derives list, verify, and session diagnostics from persisted records.
 
-use std::sync::LazyLock;
-
-use pwf_domain::pending_work::OpenItem;
-use regex::Regex;
+use pwf_domain::pending_work::{
+    PendingWorkItemView, WorkItemStatus, is_placeholder_prompt, section_alias,
+};
 
 use crate::{Materialization, PendingWorkItem, RecordId};
 
-/// Diagnostic emitted when a project note has no configured repo mapping.
 pub const ISSUE_NO_REPO: &str =
     "Project note is not mapped to a repo; add it to config/pending-work.json.";
-/// Diagnostic emitted when a prompt is still a placeholder.
 pub const ISSUE_PLACEHOLDER_PROMPT: &str =
     "Prompt is a placeholder; define a real prompt before launching.";
 
-static PLACEHOLDER_PROMPT_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)(^\s*\[!\]\s*TODO\b|^\s*TODO\b|definir prompt|define prompt|tbd)")
-        .expect("valid placeholder regex")
-});
-
-/// Whether a prompt is empty or matches a known placeholder marker.
-#[must_use]
-pub fn is_placeholder_prompt(prompt: &str) -> bool {
-    prompt.trim().is_empty() || PLACEHOLDER_PROMPT_RE.is_match(prompt)
-}
-
-/// Canonicalizes a raw index section label to its display form; unknown labels
-/// pass through trimmed. Application owns this normalization (the infra
-/// `IndexEntry`/record `section` stay raw).
+/// Canonicalizes known section aliases and trims unknown labels for display.
 #[must_use]
 pub fn normalize_section_label(label: &str) -> String {
-    match label.trim().to_lowercase().as_str() {
-        "future" | "futuro" => "Future".to_string(),
-        "human" => "Human".to_string(),
-        "low-prio" | "low-priority" => "Low-prio".to_string(),
-        _ => label.trim().to_string(),
-    }
+    section_alias(label).map_or_else(|| label.trim().to_string(), str::to_string)
 }
 
-/// Normalizes an optional raw section label, preserving `None`.
 #[must_use]
 pub fn normalize_section(section: Option<&str>) -> Option<String> {
     section.map(normalize_section_label)
 }
 
-/// The derived launch-diagnostic flags for an open item.
+/// Returns whether an item is active and represented by an open index placement.
+#[must_use]
+pub(crate) fn is_open_item(item: &PendingWorkItem) -> bool {
+    item.status == WorkItemStatus::Active && item.placement.is_some()
+}
+
+/// Contains launchability flags and diagnostics derived from an open item.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DerivedFlags {
     pub issues: Vec<String>,
@@ -60,9 +38,7 @@ pub struct DerivedFlags {
     pub needs_prompt: bool,
 }
 
-/// Computes `issues`/`launchable`/`needs_prompt` from a repo mapping, the
-/// resolved prompt, and an optional missing-note locator — in the exact order
-/// the legacy parser emitted them (no-repo, missing-note, placeholder).
+/// Derives diagnostics in repository, missing-note, placeholder order.
 #[must_use]
 pub fn derive_flags(repo: Option<&str>, prompt: &str, missing_note: Option<&str>) -> DerivedFlags {
     let mut issues = Vec::new();
@@ -83,12 +59,11 @@ pub fn derive_flags(repo: Option<&str>, prompt: &str, missing_note: Option<&str>
     }
 }
 
-/// An open pending-work item enriched with its launch diagnostics, minus the
-/// owning `project` (supplied by the read handler via [`Self::into_open_item`],
-/// which also composes a legacy inline record's `<project>:<ordinal>` id).
+/// Contains a pending-work item's persisted data and derived diagnostics before project attachment.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EnrichedOpenItem {
+pub struct EnrichedPendingWorkItem {
     pub id: RecordId,
+    pub status: WorkItemStatus,
     pub session: String,
     pub prompt: String,
     pub repo: Option<String>,
@@ -106,17 +81,18 @@ pub struct EnrichedOpenItem {
     pub created: Option<String>,
 }
 
-impl EnrichedOpenItem {
-    /// Attaches the owning project, yielding the domain [`OpenItem`].
+impl EnrichedPendingWorkItem {
+    /// Attaches the project and composes inline ids as `<project>:<ordinal>`.
     #[must_use]
-    pub fn into_open_item(self, project: String) -> OpenItem {
+    pub fn into_pending_work_item_view(self, project: String) -> PendingWorkItemView {
         let id = match &self.id {
             RecordId::Item(id) => id.as_ref().to_string(),
             RecordId::Inline(ordinal) => format!("{project}:{ordinal}"),
         };
-        OpenItem {
+        PendingWorkItemView {
             id,
             project,
+            status: self.status,
             session: self.session,
             prompt: self.prompt,
             repo: self.repo,
@@ -136,17 +112,12 @@ impl EnrichedOpenItem {
     }
 }
 
-/// Enriches a stored [`PendingWorkItem`] into an open-item projection,
-/// reproducing the legacy read's derived fields exactly:
+/// Projects a persisted item into the fields consumed by list, verify, and session.
 ///
-/// - `format`/`item_file` come off the materialization (`file` for note-backed and missing-note
-///   wikilinks, `legacy` + no file for inline prompts);
-/// - a missing note contributes its `Work-item note missing: <path>` issue;
-/// - `note`/`line` render the record's index placement;
-/// - an empty title falls back to the canonical id;
-/// - the raw section label is canonicalized.
+/// Materialization controls `format` and `item_file`; missing notes add an issue; empty titles fall
+/// back to the canonical id; section labels are canonicalized for display.
 #[must_use]
-pub fn enrich(item: &PendingWorkItem, repo: Option<&str>) -> EnrichedOpenItem {
+pub fn enrich(item: &PendingWorkItem, repo: Option<&str>) -> EnrichedPendingWorkItem {
     let prompt = item.body.trim().to_string();
     let (format, item_file, missing_note) = match &item.materialization {
         Materialization::NoteFile => ("file", Some(item.locator.clone()), None),
@@ -164,8 +135,9 @@ pub fn enrich(item: &PendingWorkItem, repo: Option<&str>) -> EnrichedOpenItem {
         || (item.locator.clone(), 1),
         |placement| (placement.index_path.clone(), placement.line),
     );
-    EnrichedOpenItem {
+    EnrichedPendingWorkItem {
         id: item.id.clone(),
+        status: item.status,
         session,
         prompt,
         repo: repo.map(str::to_string),
@@ -222,6 +194,24 @@ mod tests {
         assert!(enriched.issues.is_empty());
         assert_eq!(enriched.prompt, "add startup toggle");
         assert_eq!(enriched.repo.as_deref(), Some("/repo"));
+    }
+
+    #[test]
+    fn open_item_requires_active_status_and_index_placement() {
+        let active = record("body");
+        assert!(is_open_item(&active));
+
+        let unlinked = PendingWorkItem {
+            placement: None,
+            ..active.clone()
+        };
+        assert!(!is_open_item(&unlinked));
+
+        let done = PendingWorkItem {
+            status: WorkItemStatus::Done,
+            ..active
+        };
+        assert!(!is_open_item(&done));
     }
 
     #[test]
@@ -288,14 +278,14 @@ mod tests {
             ..record("")
         };
 
-        let open = enrich(&inline, Some("/repo")).into_open_item("pwf".to_string());
+        let item = enrich(&inline, Some("/repo")).into_pending_work_item_view("pwf".to_string());
 
-        assert_eq!(open.id, "pwf:2");
-        assert_eq!(open.format, "legacy");
-        assert_eq!(open.item_file, None);
-        assert_eq!(open.session, "legacy task");
-        assert_eq!(open.prompt, "do the legacy thing");
-        assert!(open.launchable);
+        assert_eq!(item.id, "pwf:2");
+        assert_eq!(item.format, "legacy");
+        assert_eq!(item.item_file, None);
+        assert_eq!(item.session, "legacy task");
+        assert_eq!(item.prompt, "do the legacy thing");
+        assert!(item.launchable);
     }
 
     #[test]
@@ -313,6 +303,11 @@ mod tests {
             enrich(&rec, Some("/repo")).section.as_deref(),
             Some("Future")
         );
+    }
+
+    #[test]
+    fn unknown_section_label_preserves_trimmed_case() {
+        assert_eq!(normalize_section_label(" SomeDay "), "SomeDay");
     }
 
     #[test]

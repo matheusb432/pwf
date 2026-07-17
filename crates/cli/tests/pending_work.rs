@@ -1,11 +1,36 @@
 use std::{fmt::Write, fs};
 
 use pwf::{
-    confirm::FakeConfirm,
-    engines::{clean, pending_work as pwk},
+    confirm::{Confirmation, DefaultAnswer},
+    engines::{clean, pending_work},
 };
 
-// ── Task 12 ──────────────────────────────────────────────────────────────────
+#[path = "support/pending_work.rs"]
+mod pending_work_test;
+
+use pending_work_test::run_args_plain;
+
+fn confirmation_accepted(_: &str, _: DefaultAnswer) -> Confirmation {
+    Confirmation::Accepted
+}
+
+fn confirmation_declined(_: &str, _: DefaultAnswer) -> Confirmation {
+    Confirmation::Declined
+}
+
+fn confirmation_noninteractive(_: &str, _: DefaultAnswer) -> Confirmation {
+    Confirmation::NonInteractive
+}
+
+#[test]
+fn pending_work_stdout_normalization_strips_ansi_sgr_sequences() {
+    let stdout = "\u{1b}[1m\u{1b}[38;5;208mGLP-0001\u{1b}[0m :: tray gui";
+
+    assert_eq!(
+        pending_work_test::normalize_stdout(stdout),
+        "GLP-0001 :: tray gui"
+    );
+}
 
 #[test]
 fn add_allocates_first_id_and_writes_files() {
@@ -34,7 +59,7 @@ fn add_allocates_first_id_and_writes_files() {
         "--date",
         "2026-01-01",
     ]);
-    let out = pwk::run_args(&args).unwrap();
+    let out = run_args_plain(&args).unwrap();
     assert!(out.starts_with("ADDED PWF TASK [GLP-0001]"), "got: {out}");
     let item = fs::read_to_string(stage.join("notes/glep-shimeji/GLP-0001.md")).unwrap();
     assert!(item.contains("status: active"));
@@ -90,7 +115,7 @@ fn add_allocates_after_closed_items_in_project_directory() {
         "2026-01-01",
     ]);
 
-    let out = pwk::run_args(&args).unwrap();
+    let out = run_args_plain(&args).unwrap();
     assert!(out.starts_with("ADDED PWF TASK [CFG-0090]"), "got: {out}");
     assert!(proj.join("CFG-0090.md").exists());
     assert!(proj.join("CFG-0089.md").exists());
@@ -98,10 +123,7 @@ fn add_allocates_after_closed_items_in_project_directory() {
 
 #[test]
 fn add_caps_inferred_title_for_long_prompt_without_ampersand() {
-    // CFG-0075 regression, end-to-end: a long prompt with no '&' marker and no
-    // explicit --title must not write the whole prompt as the frontmatter title.
-    // Keep this on the real add path with a realistic long prompt; the failure is
-    // visible only after title inference and note writing meet.
+    // Keep this at the add boundary because it requires title inference and persisted output.
     let stage = stage_dir();
     let notes = stage.join("notes");
     fs::create_dir_all(&notes).unwrap();
@@ -126,7 +148,7 @@ fn add_caps_inferred_title_for_long_prompt_without_ampersand() {
         "--date",
         "2026-01-01",
     ]);
-    pwk::run_args(&args).unwrap();
+    run_args_plain(&args).unwrap();
 
     let item = fs::read_to_string(stage.join("notes/config-handler/CFG-0001.md")).unwrap();
     let title = item
@@ -146,7 +168,6 @@ fn add_caps_inferred_title_for_long_prompt_without_ampersand() {
         !title.contains("smallest first"),
         "tail of prompt dropped from title: {title}"
     );
-    // The full prompt is still preserved verbatim in the Goals body.
     assert!(
         item.contains("smallest first then rewiring the just recipes"),
         "body keeps full prompt"
@@ -159,7 +180,6 @@ fn add_human_flag_routes_item_under_human_section() {
     let notes = stage.join("notes");
     let proj = notes.join("glep-shimeji");
     fs::create_dir_all(&proj).unwrap();
-    // An existing GLP-0001 so the new item allocates GLP-0002 under ## Human.
     fs::write(
         proj.join("GLP-0001.md"),
         "---\nstatus: active\ntitle: existing\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\nbody\n",
@@ -193,7 +213,7 @@ fn add_human_flag_routes_item_under_human_section() {
         "--date",
         "2026-01-01",
     ]);
-    pwk::run_args(&args).unwrap();
+    run_args_plain(&args).unwrap();
     let index = fs::read_to_string(proj.join("glep-shimeji.md")).unwrap();
     let human_idx = index
         .find("## Human")
@@ -210,7 +230,6 @@ fn add_human_flag_routes_item_under_human_section() {
         item_idx < index.find("### Notes").unwrap(),
         "new item landed under personal notes: {index}"
     );
-    // The pre-existing normal item stays above the Human section.
     assert!(
         index.find("[[GLP-0001|existing]]").unwrap() < human_idx,
         "normal item moved: {index}"
@@ -257,7 +276,7 @@ fn add_with_prereq_writes_validated_frontmatter() {
         "--date",
         "2026-01-01",
     ]);
-    let out = pwk::run_args(&args).unwrap();
+    let out = run_args_plain(&args).unwrap();
     assert!(out.starts_with("ADDED PWF TASK [GLP-0002]"), "got: {out}");
     let item = fs::read_to_string(proj.join("GLP-0002.md")).unwrap();
     assert!(
@@ -297,7 +316,7 @@ fn add_rejects_unknown_prereq_without_writing_item() {
         "--date",
         "2026-01-01",
     ]);
-    let err = pwk::run_args(&args).unwrap_err();
+    let err = run_args_plain(&args).unwrap_err();
     assert!(err.contains("GLP-9999"), "got: {err}");
     assert!(
         !proj.join("GLP-0001.md").exists(),
@@ -332,11 +351,9 @@ fn add_unmanaged_project_returns_error() {
         "--date",
         "2026-01-01",
     ]);
-    let err = pwk::run_args(&args).unwrap_err();
+    let err = run_args_plain(&args).unwrap_err();
     assert!(err.contains("no work-item prefix"), "got: {err}");
 }
-
-// ── Task 13 ──────────────────────────────────────────────────────────────────
 
 #[test]
 fn list_shows_item_in_text() {
@@ -369,16 +386,14 @@ fn list_shows_item_in_text() {
         "--date",
         "2026-01-01",
     ]);
-    let out = pwk::run_args(&args).unwrap();
+    let out = run_args_plain(&args).unwrap();
     assert!(
         out.contains("GLP-0001 :: tray gui"),
         "item line missing: {out}"
     );
 }
 
-/// Shared fixture for the `list_*_scope_*` tests below: a glep-shimeji project
-/// with one item in each of the normal/Low-prio/Human/Future sections. Returns
-/// `(config-path, notes-dir)` as strings, ready for `list_scopes_run`.
+/// Stages one item in each list section and returns its config and notes paths.
 fn list_scopes_fixture() -> (String, String) {
     let stage = stage_dir();
     let notes = stage.join("notes");
@@ -416,7 +431,7 @@ fn list_scopes_fixture() -> (String, String) {
     )
 }
 
-/// Runs `pwf list <extra>` against the `list_scopes_fixture` project.
+/// Runs `pwf list` against the scoped-list fixture.
 fn list_scopes_run(cfg_s: &str, notes_s: &str, extra: &[&str]) -> String {
     let base = [
         "--config-path",
@@ -429,7 +444,7 @@ fn list_scopes_run(cfg_s: &str, notes_s: &str, extra: &[&str]) -> String {
     let mut argv = vec!["list"];
     argv.extend_from_slice(extra);
     argv.extend_from_slice(&base);
-    pwk::run_args(&parse_args(&argv)).unwrap()
+    run_args_plain(&parse_args(&argv)).unwrap()
 }
 
 #[test]
@@ -539,7 +554,7 @@ fn list_all_shows_human_section_item_in_text() {
     .unwrap();
     let cfg_s = cfg.to_string_lossy().into_owned();
     let notes_s = notes.to_string_lossy().into_owned();
-    let out = pwk::run_args(&parse_args(&[
+    let out = run_args_plain(&parse_args(&[
         "list",
         "--all",
         "--config-path",
@@ -602,7 +617,7 @@ fn list_all_follows_grouped_order_in_text() {
     .unwrap();
     let cfg_s = cfg.to_string_lossy().into_owned();
     let notes_s = notes.to_string_lossy().into_owned();
-    let out = pwk::run_args(&parse_args(&[
+    let out = run_args_plain(&parse_args(&[
         "list",
         "--all",
         "--config-path",
@@ -614,7 +629,6 @@ fn list_all_follows_grouped_order_in_text() {
     ]))
     .unwrap();
 
-    // Grouped order: Default → Low-prio → Human → Future (cross-project).
     let pos = |id: &str| {
         out.find(id)
             .unwrap_or_else(|| panic!("{id} missing: {out}"))
@@ -667,7 +681,7 @@ fn list_all_long_keeps_metadata_on_its_own_line_in_every_group() {
     .unwrap();
     let cfg_s = cfg.to_string_lossy().into_owned();
     let notes_s = notes.to_string_lossy().into_owned();
-    let out = pwk::run_args(&parse_args(&[
+    let out = run_args_plain(&parse_args(&[
         "list",
         "--all",
         "--long",
@@ -738,7 +752,7 @@ fn route_project_shortcut_uses_list_scopes() {
             "--date",
             "2026-01-01",
         ]);
-        pwk::run_args(&parse_args(&argv)).unwrap()
+        run_args_plain(&parse_args(&argv)).unwrap()
     };
 
     let def = run(&[]);
@@ -795,17 +809,15 @@ fn list_long_shows_per_item_metadata() {
         "--date",
         "2026-01-01",
     ]);
-    let out = pwk::run_args(&args).unwrap();
+    let out = run_args_plain(&args).unwrap();
     assert!(out.contains("GLP-0001 :: tray gui"), "got: {out}");
-    assert!(out.contains("  status: READY"), "got: {out}");
+    assert!(out.contains("  status: active"), "got: {out}");
+    assert!(out.contains("  launch: READY"), "got: {out}");
     assert!(out.contains("  repo: /repo"), "got: {out}");
     assert!(out.contains("  prompt: add startup toggle"), "got: {out}");
 }
 
-// ── PWF-0020: list item cap (`-n`), per-project newest-first ordering ─────────
-
-/// Stage `count` open glep-shimeji items (GLP-0001..=GLP-{count}) + config; return
-/// the base argv tail (config/notes/date) used by the cap tests below.
+/// Stages `count` open items and returns the config and notes paths.
 fn stage_many(count: usize) -> (std::path::PathBuf, std::path::PathBuf) {
     let stage = stage_dir();
     let notes = stage.join("notes");
@@ -847,13 +859,10 @@ fn list_run(cfg: &std::path::Path, notes: &std::path::Path, extra: &[&str]) -> S
         "--date",
         "2026-01-01",
     ]);
-    pwk::run_args(&parse_args(&argv)).unwrap()
+    run_args_plain(&parse_args(&argv)).unwrap()
 }
 
-/// Stages CFG-0001/CFG-0002 under `config-handler` and PWF-9999 under `pwf`,
-/// all sharing the same `created:` date, so ties fall to the deterministic
-/// full-id tiebreak (see [`list_default_is_flat_across_projects`] and
-/// [`list_order_project_id_reproduces_legacy_grouped_ordering`]).
+/// Stages two projects whose equal creation dates force the full-ID tiebreak.
 fn stage_two_projects_same_created_date() -> (std::path::PathBuf, std::path::PathBuf) {
     let stage = stage_dir();
     let notes = stage.join("notes");
@@ -892,10 +901,6 @@ fn stage_two_projects_same_created_date() -> (std::path::PathBuf, std::path::Pat
     (cfg, notes)
 }
 
-// ! PWF-0096 (re-scoped): the default listing is flat across projects — created
-// date wins over project grouping. When created dates tie (as here), the
-// deterministic tiebreak is the full id string, reversed with the (default
-// desc) direction, so it has no relation to project name.
 #[test]
 fn list_default_is_flat_across_projects() {
     let (cfg, notes) = stage_two_projects_same_created_date();
@@ -912,9 +917,6 @@ fn list_default_is_flat_across_projects() {
     );
 }
 
-// `--order project-id` is the explicit opt-in that reproduces the
-// pre-PWF-0096 default: project-name ascending, then newest-id-first within
-// each project.
 #[test]
 fn list_order_project_id_reproduces_legacy_grouped_ordering() {
     let (cfg, notes) = stage_two_projects_same_created_date();
@@ -935,7 +937,6 @@ fn list_order_project_id_reproduces_legacy_grouped_ordering() {
 fn list_caps_to_default_ten_and_signals_more() {
     let (cfg, notes) = stage_many(12);
     let out = list_run(&cfg, &notes, &[]);
-    // Newest 10 kept (GLP-0012..=GLP-0003); the 2 lowest hidden.
     assert!(out.contains("GLP-0012"), "newest missing: {out}");
     assert!(out.contains("GLP-0003"), "10th newest missing: {out}");
     assert!(!out.contains("GLP-0002"), "11th item leaked: {out}");
@@ -971,15 +972,12 @@ fn list_n_explicit_caps() {
 fn list_is_capped_and_ordered() {
     let (cfg, notes) = stage_many(12);
     let out = list_run(&cfg, &notes, &[]);
-    // Cap: exactly 10 items shown (2 hidden), newest first.
     assert!(out.contains("GLP-0012"), "newest missing: {out}");
     assert!(out.contains("GLP-0003"), "10th item missing: {out}");
     assert!(!out.contains("GLP-0002"), "11th item leaked: {out}");
     assert!(!out.contains("GLP-0001"), "12th item leaked: {out}");
-    // Footer present when items are hidden.
     assert!(out.contains("2 more"), "hidden-count footer missing: {out}");
     assert!(out.contains("-n 0"), "escape hatch missing: {out}");
-    // Newest-first: GLP-0012 appears before GLP-0003.
     assert!(
         out.find("GLP-0012").unwrap() < out.find("GLP-0003").unwrap(),
         "not newest-first: {out}"
@@ -1026,16 +1024,12 @@ fn list_long_shows_prereq_status() {
         "--date",
         "2026-01-01",
     ]);
-    let out = pwk::run_args(&args).unwrap();
+    let out = run_args_plain(&args).unwrap();
     assert!(out.contains("prereq: CFG-0014 (done)"), "got: {out}");
 }
 
-// ── Task 14 ──────────────────────────────────────────────────────────────────
-
 #[test]
 fn done_keeps_done_link_in_index_in_place_without_bak() {
-    // PWF-0026: done now KEEPS the item as `- [x] [[ID]] ✅ date` in place
-    // (a rotating done-queue), instead of deleting the index link.
     let stage = stage_dir();
     let notes = stage.join("notes");
     let proj = notes.join("glep-shimeji");
@@ -1064,27 +1058,23 @@ fn done_keeps_done_link_in_index_in_place_without_bak() {
         "--date",
         "2026-01-01",
     ]);
-    let out = pwk::run_args(&args).unwrap();
+    let out = run_args_plain(&args).unwrap();
     assert!(out.starts_with("Done GLP-0001"), "got: {out}");
-    // item file should now have status: done + completed
     let item = fs::read_to_string(proj.join("GLP-0001.md")).unwrap();
     assert!(item.contains("status: done"));
     assert!(item.contains("completed: 2026-01-01"));
-    // index keeps the link, marked done in place, layout preserved.
     let index = fs::read_to_string(proj.join("glep-shimeji.md")).unwrap();
     assert_eq!(
         index,
         "---\nid: glp\ntitle: glep-shimeji\n---\n\n# glep-shimeji\n\n- [x] [[GLP-0001]] ✅ 2026-01-01\n\n## Later\n"
     );
-    // notes-pro is git-tracked: writes must NOT leave .bak clutter.
+    // Writes must not leave backup files in the git-tracked vault.
     assert!(!proj.join("GLP-0001.md.bak").exists());
     assert!(!proj.join("glep-shimeji.md.bak").exists());
 }
 
 #[test]
 fn done_evicts_oldest_link_but_keeps_note_in_project_dir() {
-    // General cap is 6: with 6 done + a 7th checked, the oldest is unlinked and
-    // its backing note moved to _archive/.
     let stage = stage_dir();
     let notes = stage.join("notes");
     let proj = notes.join("glep-shimeji");
@@ -1099,7 +1089,6 @@ fn done_evicts_oldest_link_but_keeps_note_in_project_dir() {
         .unwrap();
         let _ = writeln!(index, "- [x] [[{id}]] ✅ 2026-01-{n:02}");
     }
-    // The open 7th item we will close.
     fs::write(
         proj.join("GLP-0007.md"),
         "---\nstatus: active\ntitle: seven\nproject: glep-shimeji\ncreated: 2026-06-13\n---\n\nbody\n",
@@ -1127,13 +1116,12 @@ fn done_evicts_oldest_link_but_keeps_note_in_project_dir() {
         "--date",
         "2026-06-13",
     ]);
-    pwk::run_args(&args).unwrap();
+    run_args_plain(&args).unwrap();
     let index = fs::read_to_string(proj.join("glep-shimeji.md")).unwrap();
-    // Oldest (GLP-0001) evicted from the index; GLP-0007 kept; six done remain.
     assert!(!index.contains("GLP-0001"), "oldest unlinked: {index}");
     assert!(index.contains("- [x] [[GLP-0007]] ✅ 2026-06-13"));
     assert_eq!(index.matches("- [x]").count(), 6);
-    // Queue eviction changes only index visibility; status remains authoritative on disk.
+    // Queue eviction changes index visibility but leaves the authoritative note in place.
     assert!(
         proj.join("GLP-0001.md").exists(),
         "evicted note stays in project dir"
@@ -1144,9 +1132,7 @@ fn done_evicts_oldest_link_but_keeps_note_in_project_dir() {
     );
 }
 
-// ── PWF-0015: update verb ─────────────────────────────────────────────────────
-
-/// Shared staging for update tests: a project with one active GLP-0001 item.
+/// Stages one active item for update tests.
 fn stage_update_item(body: &str) -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) {
     let stage = stage_dir();
     let notes = stage.join("notes");
@@ -1186,26 +1172,23 @@ fn update_rewrites_body_via_note_body_and_preserves_frontmatter() {
         "--date",
         "2026-01-01",
     ]);
-    let out = pwk::run_args(&args).unwrap();
+    let out = run_args_plain(&args).unwrap();
     assert!(
         out.contains("UPDATED PWF TASK [GLP-0001]") && out.contains("glep-shimeji :: tray gui"),
         "expected update confirmation for GLP-0001: {out}"
     );
 
     let item = fs::read_to_string(proj.join("GLP-0001.md")).unwrap();
-    // Body is note_body-wrapped (Goals template, one bullet per slash lane).
     assert!(
         item.contains("## Goals\n- new prompt\n- second goal"),
         "body should be note_body-wrapped: {item}"
     );
     assert!(!item.contains("old prompt"), "old body replaced: {item}");
-    // Frontmatter preserved untouched.
     assert!(item.contains("status: active"));
     assert!(item.contains("title: tray gui"));
     assert!(item.contains("project: glep-shimeji"));
     assert!(item.contains("created: 2026-01-01"));
     assert!(!item.contains("completed:"), "no completed added: {item}");
-    // No .bak clutter.
     assert!(!proj.join("GLP-0001.md.bak").exists());
 }
 
@@ -1223,7 +1206,7 @@ fn update_title_only_leaves_body_untouched() {
         "--notes-dir",
         &notes.to_string_lossy(),
     ]);
-    pwk::run_args(&args).unwrap();
+    run_args_plain(&args).unwrap();
     let item = fs::read_to_string(proj.join("GLP-0001.md")).unwrap();
     assert!(item.contains("title: new title"), "title replaced: {item}");
     assert!(!item.contains("title: tray gui"));
@@ -1247,7 +1230,7 @@ fn update_prompt_only_leaves_title_untouched() {
         "--notes-dir",
         &notes.to_string_lossy(),
     ]);
-    pwk::run_args(&args).unwrap();
+    run_args_plain(&args).unwrap();
     let item = fs::read_to_string(proj.join("GLP-0001.md")).unwrap();
     assert!(item.contains("title: tray gui"), "title untouched: {item}");
     assert!(item.contains("## Goals\n- fresh prompt"));
@@ -1267,9 +1250,9 @@ fn update_keeps_placeholder_prompt_raw_so_it_stays_detectable() {
         "--notes-dir",
         &notes.to_string_lossy(),
     ]);
-    pwk::run_args(&args).unwrap();
+    run_args_plain(&args).unwrap();
     let item = fs::read_to_string(proj.join("GLP-0001.md")).unwrap();
-    // Placeholder must NOT be Goals-wrapped, else is_placeholder_prompt can't flag it.
+    // Preserve raw placeholders so `is_placeholder_prompt` can recognize them.
     assert!(!item.contains("## Goals"), "placeholder stored raw: {item}");
     assert!(item.trim_end().ends_with("TODO"), "raw TODO body: {item}");
 }
@@ -1286,7 +1269,7 @@ fn update_requires_at_least_one_field() {
         "--notes-dir",
         &notes.to_string_lossy(),
     ]);
-    let err = pwk::run_args(&args).unwrap_err();
+    let err = run_args_plain(&args).unwrap_err();
     assert!(err.contains("nothing to update"), "got: {err}");
 }
 
@@ -1304,7 +1287,7 @@ fn update_unknown_id_errors() {
         "--notes-dir",
         &notes.to_string_lossy(),
     ]);
-    assert!(pwk::run_args(&args).is_err());
+    assert!(run_args_plain(&args).is_err());
 }
 
 #[test]
@@ -1345,7 +1328,7 @@ fn done_with_report_appends_report_section() {
         "--date",
         "2026-01-01",
     ]);
-    pwk::run_args(&args).unwrap();
+    run_args_plain(&args).unwrap();
     let item = fs::read_to_string(proj.join("GLP-0001.md")).unwrap();
     assert!(
         item.contains("status: done\ncompleted: 2026-01-01\n"),
@@ -1390,7 +1373,7 @@ fn cancel_requires_report() {
         &notes.to_string_lossy(),
     ]);
 
-    let err = pwk::run_args(&args).unwrap_err();
+    let err = run_args_plain(&args).unwrap_err();
 
     assert_eq!(err, "--report is required for cancel.");
 }
@@ -1434,7 +1417,7 @@ fn cancel_with_report_marks_item_cancelled_and_rotates_done_queue() {
         "2026-01-01",
     ]);
 
-    let out = pwk::run_args(&args).unwrap();
+    let out = run_args_plain(&args).unwrap();
 
     assert!(out.starts_with("Cancelled GLP-0001"), "got: {out}");
     let item = fs::read_to_string(proj.join("GLP-0001.md")).unwrap();
@@ -1500,7 +1483,7 @@ fn remove_deletes_pwf_item_file_and_index_link_with_id_only() {
         "--notes-dir",
         &notes.to_string_lossy(),
     ]);
-    let out = pwk::run_args(&args).unwrap();
+    let out = run_args_plain(&args).unwrap();
     assert!(
         out.contains("REMOVED PWF TASK [PWF-0001]") && out.contains("pwf :: stale task"),
         "expected remove confirmation for PWF-0001: {out}"
@@ -1516,8 +1499,6 @@ fn remove_deletes_pwf_item_file_and_index_link_with_id_only() {
         "unrelated link removed: {index}"
     );
 }
-
-// ── Task 15 ──────────────────────────────────────────────────────────────────
 
 #[test]
 fn add_continue_handoff_builds_handoff_prompt() {
@@ -1555,7 +1536,7 @@ fn add_continue_handoff_builds_handoff_prompt() {
         "--date",
         "2026-01-01",
     ]);
-    let out = pwk::run_args(&args).unwrap();
+    let out = run_args_plain(&args).unwrap();
     assert!(out.starts_with("ADDED PWF TASK [GLP-0001]"), "got: {out}");
     assert!(
         out.contains(":: continue api cleanup"),
@@ -1610,7 +1591,7 @@ fn add_with_title_flag_accepts_prereq() {
         "--date",
         "2026-01-01",
     ]);
-    pwk::run_args(&args).unwrap();
+    run_args_plain(&args).unwrap();
     let item = fs::read_to_string(proj.join("GLP-0002.md")).unwrap();
     assert!(
         item.contains("prereq: \"[[GLP-0001]]\"\n---"),
@@ -1620,8 +1601,6 @@ fn add_with_title_flag_accepts_prereq() {
 
 #[test]
 fn route_create_verbs_error_with_add_hint() {
-    // The old route create verbs (add/a/add-titled/at) no longer create; they
-    // error pointing at the single canonical `pw add` form.
     let stage = stage_dir();
     let notes = stage.join("notes");
     fs::create_dir_all(&notes).unwrap();
@@ -1647,12 +1626,10 @@ fn route_create_verbs_error_with_add_hint() {
         let mut argv = vec!["route", "--config-path", &cfg_s, "--notes-dir", &notes_s];
         argv.extend(words);
         let parsed = parse_args(&argv);
-        let err = pwk::run_args(&parsed).unwrap_err();
+        let err = run_args_plain(&parsed).unwrap_err();
         assert_eq!(err, expected);
     }
 }
-
-// ── resolve action ───────────────────────────────────────────────────────────
 
 fn resolve_stage() -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) {
     let stage = stage_dir();
@@ -1677,7 +1654,11 @@ fn resolve_stage() -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBu
     (notes, proj, cfg)
 }
 
-fn resolve_args(cfg: &std::path::Path, notes: &std::path::Path, extra: &[&str]) -> pwf::cli::Args {
+fn resolve_args(
+    cfg: &std::path::Path,
+    notes: &std::path::Path,
+    extra: &[&str],
+) -> pwf::cli::EngineArgs {
     let cfg_s = cfg.to_string_lossy();
     let notes_s = notes.to_string_lossy();
     let mut argv = vec![
@@ -1696,7 +1677,7 @@ fn resolve_args(cfg: &std::path::Path, notes: &std::path::Path, extra: &[&str]) 
 #[test]
 fn resolve_prints_item_note_path_plain() {
     let (notes, proj, cfg) = resolve_stage();
-    let out = pwk::run_args(&resolve_args(&cfg, &notes, &[])).unwrap();
+    let out = run_args_plain(&resolve_args(&cfg, &notes, &[])).unwrap();
     assert_eq!(
         out.trim(),
         proj.join("GLP-0001.md").to_string_lossy().as_ref()
@@ -1708,7 +1689,7 @@ fn resolve_unknown_id_errors() {
     let (notes, _proj, cfg) = resolve_stage();
     let mut args = resolve_args(&cfg, &notes, &[]);
     args.id = Some("GLP-0099".to_string());
-    let err = pwk::run_args(&args).unwrap_err();
+    let err = run_args_plain(&args).unwrap_err();
     assert!(err.contains("GLP-0099"), "error should name the id: {err}");
 }
 
@@ -1717,15 +1698,11 @@ fn resolve_requires_id() {
     let (notes, _proj, cfg) = resolve_stage();
     let mut args = resolve_args(&cfg, &notes, &[]);
     args.id = None;
-    let err = pwk::run_args(&args).unwrap_err();
+    let err = run_args_plain(&args).unwrap_err();
     assert!(err.contains("--id"), "error should mention --id: {err}");
 }
 
-// `verify` rendering (claude + codex, item-present and item-absent) is covered
-// white-box in `agent/verify.rs`, where the crate-internal `AgentLauncher` seam is
-// reachable; no integration duplicate is kept here.
-
-// ── clean action ──────────────────────────────────────────────────────────────
+// Agent verification rendering is covered where the crate-internal launcher seam is accessible.
 
 fn clean_stage() -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) {
     let stage = stage_dir();
@@ -1770,7 +1747,7 @@ fn clean_sweeps_checked_links_sets_done_and_unlinks() {
         "--date",
         "2026-01-01",
     ]);
-    let out = pwk::run_args(&args).unwrap();
+    let out = run_args_plain(&args).unwrap();
     assert!(out.contains("CLEANED"), "got: {out}");
     assert!(out.contains("CFG-0012"), "got: {out}");
     let item = fs::read_to_string(proj.join("CFG-0012.md")).unwrap();
@@ -1782,7 +1759,6 @@ fn clean_sweeps_checked_links_sets_done_and_unlinks() {
         idx.contains("- [ ] [[CFG-0001|bare open]]"),
         "open link lost: {idx}"
     );
-    // notes-pro is git-tracked: the cleaner must NOT leave .bak clutter.
     assert!(!proj.join("CFG-0012.md.bak").exists());
     assert!(!proj.join("config-handler.md.bak").exists());
 }
@@ -1806,7 +1782,7 @@ fn clean_dry_run_writes_nothing() {
         "--date",
         "2026-01-01",
     ]);
-    let out = pwk::run_args(&args).unwrap();
+    let out = run_args_plain(&args).unwrap();
     assert!(out.contains("WOULD CLEAN"), "got: {out}");
     let item = fs::read_to_string(proj.join("CFG-0012.md")).unwrap();
     assert!(item.contains("status: active"), "file mutated: {item}");
@@ -1821,7 +1797,7 @@ fn clean_dry_run_writes_nothing() {
 fn clean_skips_when_item_file_missing() {
     let (_stage, proj, cfg) = clean_stage();
     fs::write(proj.join("CFG-0012.md"), active_item("obsidian")).unwrap();
-    // CFG-9999 has no backing file.
+    // Leave CFG-9999 without a backing note.
     fs::write(
         proj.join("config-handler.md"),
         "- [x] [[CFG-9999|ghost]] ✅ 2026-06-05\n- [x] [[CFG-0012|obsidian]] ✅ 2026-06-05\n",
@@ -1837,14 +1813,13 @@ fn clean_skips_when_item_file_missing() {
         "--date",
         "2026-01-01",
     ]);
-    let out = pwk::run_args(&args).unwrap();
+    let out = run_args_plain(&args).unwrap();
     assert!(out.contains("CLEANED"), "got: {out}");
     assert!(
         out.contains("CFG-9999") && out.contains("skipped"),
         "got: {out}"
     );
     let idx = fs::read_to_string(proj.join("config-handler.md")).unwrap();
-    // skipped link is retained; cleaned link is gone
     assert!(idx.contains("CFG-9999"), "skipped link removed: {idx}");
     assert!(!idx.contains("CFG-0012"), "cleaned link retained: {idx}");
 }
@@ -1868,7 +1843,7 @@ fn clean_falls_back_to_date_without_checkmark() {
         "--date",
         "2026-03-03",
     ]);
-    let out = pwk::run_args(&args).unwrap();
+    let out = run_args_plain(&args).unwrap();
     assert!(out.contains("CLEANED"), "got: {out}");
     let item = fs::read_to_string(proj.join("CFG-0012.md")).unwrap();
     assert!(item.contains("completed: 2026-03-03"), "got: {item}");
@@ -1919,18 +1894,16 @@ fn clean_project_filter_limits_sweep() {
         "--date",
         "2026-01-01",
     ]);
-    let out = pwk::run_args(&args).unwrap();
+    let out = run_args_plain(&args).unwrap();
     assert!(out.contains("CLEANED"), "got: {out}");
     assert!(out.contains("CFG-0012"), "got: {out}");
-    // glep-shimeji untouched
     let gidx = fs::read_to_string(b.join("glep-shimeji.md")).unwrap();
     assert!(gidx.contains("GLP-0001"), "other project swept: {gidx}");
 }
 
 #[test]
 fn route_clean_verb_sweeps_project() {
-    // Route doesn't expose --force; use --dry-run to confirm the clean verb is
-    // recognized and dispatched without hitting the apply gate.
+    // Dry-run avoids the confirmation gate because route does not expose `--force`.
     let (_stage, proj, cfg) = clean_stage();
     fs::write(proj.join("CFG-0012.md"), active_item("obsidian")).unwrap();
     fs::write(
@@ -1950,7 +1923,7 @@ fn route_clean_verb_sweeps_project() {
         "--date",
         "2026-01-01",
     ]);
-    let out = pwk::run_args(&args).unwrap();
+    let out = run_args_plain(&args).unwrap();
     assert!(out.contains("WOULD CLEAN"), "got: {out}");
     assert!(out.contains("CFG-0012"), "got: {out}");
     let item = fs::read_to_string(proj.join("CFG-0012.md")).unwrap();
@@ -1964,7 +1937,6 @@ fn route_clean_verb_sweeps_project() {
 fn clean_reports_nothing_when_no_checked_links() {
     let (_stage, proj, cfg) = clean_stage();
     fs::write(proj.join("CFG-0012.md"), active_item("obsidian")).unwrap();
-    // Only an open link — nothing to clean.
     fs::write(
         proj.join("config-handler.md"),
         "- [ ] [[CFG-0012|obsidian]]\n",
@@ -1980,9 +1952,8 @@ fn clean_reports_nothing_when_no_checked_links() {
     ];
     let mut text_argv = vec!["clean"];
     text_argv.extend_from_slice(&base);
-    let out = pwk::run_args(&parse_args(&text_argv)).unwrap();
+    let out = run_args_plain(&parse_args(&text_argv)).unwrap();
     assert!(out.contains("No done work-item links"), "got: {out}");
-    // Nothing mutated, no backup written.
     let idx = fs::read_to_string(proj.join("config-handler.md")).unwrap();
     assert!(idx.contains("- [ ] [[CFG-0012|obsidian]]"));
     assert!(!proj.join("config-handler.md.bak").exists());
@@ -2006,17 +1977,13 @@ fn stage_one_done() -> (std::path::PathBuf, std::path::PathBuf) {
 #[test]
 fn clean_confirm_yes_applies_without_bak() {
     let (proj, cfg) = stage_one_done();
-    let confirmer = FakeConfirm {
-        interactive: true,
-        answer: true,
-    };
     let out = clean::run_clean(
         &load_clean_cfg(&cfg),
         None,
         "2026-01-01",
         false,
         false,
-        &confirmer,
+        &confirmation_accepted,
     )
     .unwrap();
     assert!(out.contains("CLEANED"), "got: {out}");
@@ -2025,7 +1992,6 @@ fn clean_confirm_yes_applies_without_bak() {
     assert!(item.contains("completed: 2026-06-05"));
     let idx = fs::read_to_string(proj.join("config-handler.md")).unwrap();
     assert!(!idx.contains("CFG-0012"));
-    // The whole point: no .bak clutter (notes-pro is git-tracked).
     assert!(!proj.join("CFG-0012.md.bak").exists());
     assert!(!proj.join("config-handler.md.bak").exists());
 }
@@ -2033,17 +1999,13 @@ fn clean_confirm_yes_applies_without_bak() {
 #[test]
 fn clean_confirm_no_aborts_and_keeps_everything() {
     let (proj, cfg) = stage_one_done();
-    let confirmer = FakeConfirm {
-        interactive: true,
-        answer: false,
-    };
     let out = clean::run_clean(
         &load_clean_cfg(&cfg),
         None,
         "2026-01-01",
         false,
         false,
-        &confirmer,
+        &confirmation_declined,
     )
     .unwrap();
     assert!(out.contains("Aborted"), "got: {out}");
@@ -2059,17 +2021,13 @@ fn clean_confirm_no_aborts_and_keeps_everything() {
 #[test]
 fn clean_non_interactive_without_force_refuses() {
     let (proj, cfg) = stage_one_done();
-    let confirmer = FakeConfirm {
-        interactive: false,
-        answer: true,
-    };
     let err = clean::run_clean(
         &load_clean_cfg(&cfg),
         None,
         "2026-01-01",
         false,
         false,
-        &confirmer,
+        &confirmation_noninteractive,
     )
     .unwrap_err();
     assert!(
@@ -2083,18 +2041,13 @@ fn clean_non_interactive_without_force_refuses() {
 #[test]
 fn clean_force_applies_without_prompt() {
     let (proj, cfg) = stage_one_done();
-    // answer:false would refuse, but --force bypasses the gate entirely.
-    let confirmer = FakeConfirm {
-        interactive: false,
-        answer: false,
-    };
     let out = clean::run_clean(
         &load_clean_cfg(&cfg),
         None,
         "2026-01-01",
         false,
         true,
-        &confirmer,
+        &confirmation_declined,
     )
     .unwrap();
     assert!(out.contains("CLEANED"), "got: {out}");
@@ -2102,15 +2055,13 @@ fn clean_force_applies_without_prompt() {
     assert!(item.contains("status: done"));
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
 fn stage_dir() -> std::path::PathBuf {
     let d = std::env::temp_dir().join(format!("pwstage_{}", nanos()));
     fs::create_dir_all(&d).unwrap();
     d
 }
 
-fn parse_args(argv: &[&str]) -> pwf::cli::Args {
+fn parse_args(argv: &[&str]) -> pwf::cli::EngineArgs {
     migrate_test_fixture(argv);
     let v = argv.iter().map(std::string::ToString::to_string).collect();
     pwf::command::parse_argv(v).unwrap().1
@@ -2198,12 +2149,10 @@ fn migrate_test_project(notes_dir: &std::path::Path, project: &str, prefix: &str
     }
 }
 
-/// JSON-escape a path (forward slashes for JSON string, escaped backslashes on Windows).
+/// Escapes a filesystem path for JSON, including Windows backslashes.
 fn json_path(p: &std::path::Path) -> String {
     p.to_string_lossy().replace('\\', "\\\\")
 }
-
-// ── Existing tests below ─────────────────────────────────────────────────────
 
 fn nanos() -> u128 {
     std::time::SystemTime::now()
@@ -2214,7 +2163,7 @@ fn nanos() -> u128 {
 
 #[test]
 fn work_item_content_active_then_done_field_order() {
-    let active = pwk::work_item_content(pwk::WorkItemFields {
+    let active = pending_work::work_item_content(pending_work::WorkItemFields {
         title: "tray gui",
         project: "glep-shimeji",
         prompt: "add startup toggle",
@@ -2228,15 +2177,15 @@ fn work_item_content_active_then_done_field_order() {
         "---\nstatus: active\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n"
     ));
     assert!(active.contains("\nadd startup toggle\n"));
-    // Set-WorkItemStatus inserts `completed:` right after `status:`
-    let done = pwk::set_status_text(&active, "done", "2026-02-02");
+    let done = pending_work::set_status_text(&active, "done", "2026-02-02");
     assert!(done.contains("status: done\ncompleted: 2026-02-02\n"));
 }
 
 #[test]
 fn add_then_remove_index_link_top_placement() {
-    let c = pwk::add_link_to_index("# glep-shimeji\n\n## Later\n", "- [[GLP-0001|tray gui]]");
+    let c =
+        pending_work::add_link_to_index("# glep-shimeji\n\n## Later\n", "- [[GLP-0001|tray gui]]");
     assert!(c.contains("- [[GLP-0001|tray gui]]"));
-    let removed = pwk::remove_index_link(&c, "GLP-0001");
+    let removed = pending_work::remove_index_link(&c, "GLP-0001");
     assert!(!removed.contains("GLP-0001"));
 }

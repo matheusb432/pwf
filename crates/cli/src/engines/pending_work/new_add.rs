@@ -1,15 +1,8 @@
-// Input resolution for the `add` verb: validates project + prompt, resolves the
-// managed project + its repo, and derives a session title.
+use pwf_domain::pending_work::{inferred_title, normalize_title};
 
-use super::{
-    errors::PendingWorkError,
-    query::resolve_project_repo,
-    text::{inferred_title, normalize_title},
-};
-use crate::{cli::Args, config::Config};
+use super::{errors::PendingWorkError, query::resolve_project_repo};
+use crate::{cli::EngineArgs, config::Config};
 
-/// Resolved, validated inputs for `add`. The prompt is borrowed from `args`
-/// (zero-copy); the rest are resolved owned strings.
 #[derive(Debug)]
 pub(super) struct NewAddInputs<'a> {
     pub project_name: String,
@@ -18,9 +11,7 @@ pub(super) struct NewAddInputs<'a> {
 }
 
 impl<'a> NewAddInputs<'a> {
-    /// Validate `--project`/`--prompt`, resolve the managed project + its repo path,
-    /// and derive the session title (explicit `--title`, else inferred from the prompt).
-    pub(super) fn resolve(cfg: &Config, args: &'a Args) -> Result<Self, PendingWorkError> {
+    pub(super) fn resolve(cfg: &Config, args: &'a EngineArgs) -> Result<Self, PendingWorkError> {
         let project_raw = args.project.as_deref().ok_or(PendingWorkError::AddUsage)?;
         let prompt = args
             .prompt
@@ -47,17 +38,16 @@ mod tests {
     use super::{super::errors, *};
 
     fn cfg() -> Config {
-        // "a" maps to a repo; "blank" is managed but has no repo mapping.
         let json = r#"{ "notesDir": "/n", "projects": { "alpha": "/repo/a", "blank": "" } }"#;
         crate::config::from_json(json, None).unwrap()
     }
 
-    fn args(project: Option<&str>, prompt: Option<&str>, title: Option<&str>) -> Args {
-        Args {
+    fn args(project: Option<&str>, prompt: Option<&str>, title: Option<&str>) -> EngineArgs {
+        EngineArgs {
             project: project.map(str::to_string),
             prompt: prompt.map(str::to_string),
             title: title.map(str::to_string),
-            ..Args::default()
+            ..EngineArgs::default()
         }
     }
 
@@ -76,7 +66,6 @@ mod tests {
         let cfg = cfg();
         let args = args(Some("alpha"), Some("do x"), Some("Custom Title"));
         let got = NewAddInputs::resolve(&cfg, &args).unwrap();
-        // Explicit titles are normalized to lowercase, same as inferred ones.
         assert_eq!(got.session, "custom title");
     }
 
@@ -109,7 +98,6 @@ mod tests {
     #[test]
     fn missing_input_on_add_points_at_positional_form() {
         let cfg = cfg();
-        // `add` takes positional args — the error must not name removed flags.
         let no_project = args(None, Some("do x"), None);
         let err = NewAddInputs::resolve(&cfg, &no_project).unwrap_err();
         assert_matches!(err, errors::PendingWorkError::AddUsage);

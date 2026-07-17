@@ -1,27 +1,14 @@
-// Action: list.
-
 use pwf_application::{
     AppDbStore, PendingWorkItem,
     pending_work::list::{GetPendingWork, GetPendingWorkError},
 };
-use pwf_domain::pending_work::Tags;
+use pwf_domain::pending_work::{Tags, WorkItemStatusFilter};
 
 use super::super::{errors::PendingWorkError, render::render_list};
 use crate::config::Config;
 
 const NOTES_DIRECTORY_PREFIX: &str = "Notes directory not found: ";
 
-/// Selects which pending-work sections a list command includes.
-///
-/// This stays local to the pending-work list action unless another
-/// pending-work list caller needs to reason about the selected scope.
-///
-/// # Examples
-///
-/// ```ignore
-/// let scope = ListScope::All;
-/// assert!(matches!(scope, ListScope::All));
-/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::engines::pending_work) enum ListScope {
     Default,
@@ -31,21 +18,6 @@ pub(in crate::engines::pending_work) enum ListScope {
 }
 
 impl ListScope {
-    /// Builds a [`ListScope`] from the mutually exclusive list flags.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`PendingWorkError::ConflictingListScopes`] when more than one of
-    /// `human`, `future`, or `all` is `true`.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// assert_eq!(ListScope::from_flags(false, false, false)?, ListScope::Default);
-    /// assert_eq!(ListScope::from_flags(true, false, false)?, ListScope::HumanOnly);
-    /// assert!(ListScope::from_flags(true, true, false).is_err());
-    /// # Ok::<(), PendingWorkError>(())
-    /// ```
     pub(in crate::engines::pending_work) fn from_flags(
         human: bool,
         future: bool,
@@ -74,10 +46,7 @@ impl ListScope {
     }
 }
 
-/// `-o`/`--order` sort field (default [`OrderField::Created`]). `Created`/`Id`
-/// sort flat across every listed project (no project grouping); `ProjectId` is
-/// the explicit opt-in that reproduces the pre-PWF-0096 default — project-name
-/// ascending, then newest-id-first within each project.
+/// Selects global list sorting or the legacy project-grouped order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::engines::pending_work) enum OrderField {
     Created,
@@ -85,10 +54,6 @@ pub(in crate::engines::pending_work) enum OrderField {
     ProjectId,
 }
 
-/// `-o`/`--order` sort direction. Its default depends on the field —
-/// [`OrderField::default_direction`] — since "newest first" (`Desc`) is the
-/// intuitive default for `created`/`id`, while `project-id` defaults to `Asc`
-/// (project-name ascending) to match the pre-PWF-0096 convention it reproduces.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::engines::pending_work) enum OrderDirection {
     Asc,
@@ -96,8 +61,6 @@ pub(in crate::engines::pending_work) enum OrderDirection {
 }
 
 impl OrderField {
-    /// The direction assumed when `--order`'s tokens name this field but no
-    /// direction keyword.
     fn default_direction(self) -> OrderDirection {
         match self {
             OrderField::Created | OrderField::Id => OrderDirection::Desc,
@@ -123,10 +86,7 @@ impl OrderDirection {
     }
 }
 
-/// `pwf list -o`/`--order`'s resolved sort key: which field, and which direction.
-/// Default is `Created` + `Desc` (newest-created-first, flat across every listed
-/// project); `--order project-id` reproduces the pre-PWF-0096 grouped ordering
-/// (project-name ascending, then newest-id-first within a project).
+/// Defaults to newest creation time; `project-id` restores the legacy grouped order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::engines::pending_work) struct OrderSpec {
     pub(in crate::engines::pending_work) field: OrderField,
@@ -143,16 +103,11 @@ impl Default for OrderSpec {
 }
 
 impl OrderSpec {
-    /// Builds an [`OrderSpec`] from `--order`'s raw tokens. Each token is
-    /// independently a field (`created`/`id`/`project-id`) or a direction
-    /// (`asc`/`desc`) keyword, in either order; a missing field defaults to
-    /// `created`, and a missing direction defaults per the resolved field
-    /// ([`OrderField::default_direction`]).
+    /// Parses field and direction tokens in either order, using field-specific defaults.
     ///
     /// # Errors
     ///
-    /// Returns a `PendingWorkError` when two tokens name the same category
-    /// (e.g. `--order created id` or `--order asc desc`), or a token is neither.
+    /// Returns [`PendingWorkError`] for conflicting or unknown tokens.
     pub(in crate::engines::pending_work) fn from_tokens(
         tokens: &[String],
     ) -> Result<Self, PendingWorkError> {
@@ -208,8 +163,6 @@ impl OrderSpec {
     }
 }
 
-/// The selection + rendering options for a list run. Groups the arguments that overflowed
-/// the list-run helper signature so each call site names its intent.
 #[derive(Clone, Copy)]
 pub(in crate::engines::pending_work) struct ListParams<'a> {
     pub only_project: Option<&'a str>,
@@ -219,10 +172,10 @@ pub(in crate::engines::pending_work) struct ListParams<'a> {
     pub effort: Option<u8>,
     pub tags: Option<&'a Tags>,
     pub order: OrderSpec,
+    pub status_filter: WorkItemStatusFilter,
     pub color_on: bool,
 }
 
-/// Shared list query composition for `pwf list` and the hidden `route` word-router.
 pub(in crate::engines::pending_work) fn run_list_query(
     cfg: &Config,
     store: &impl AppDbStore<PendingWorkItem>,
@@ -230,13 +183,14 @@ pub(in crate::engines::pending_work) fn run_list_query(
 ) -> Result<String, PendingWorkError> {
     let registry = crate::engines::pending_work::run::project_registry(cfg);
     let result = pwf_application::pending_work::list::execute(
-        GetPendingWork {
+        &GetPendingWork {
             only_project: params.only_project.map(str::to_owned),
             scope: params.scope.to_domain(),
             number: params.number,
             effort: params.effort,
             tags: params.tags.cloned(),
             order: params.order.to_domain(),
+            status_filter: params.status_filter,
         },
         store,
         &registry,
@@ -254,6 +208,7 @@ pub(in crate::engines::pending_work) fn render_query_result(
         result,
         cfg,
         params.only_project,
+        params.status_filter,
         params.long,
         params.scope.groups_output(),
         params.color_on,
@@ -317,6 +272,7 @@ mod tests {
                 effort: None,
                 tags: None,
                 order: OrderSpec::default(),
+                status_filter: WorkItemStatusFilter::default(),
                 color_on: false,
             },
         )

@@ -1,11 +1,12 @@
-//! `ls` output: `<ID> :: <message>`, newest-first, capped with a `-n 0` footer.
+//! Newest-first `<ID> :: <message>` list rendering.
 
 use std::fmt::Write;
 
 use crate::store::Note;
 
-/// Render up to `cap` notes (`cap == 0` → all), newest-first, with a hidden-count
-/// footer pointing at `-n 0` when items are dropped.
+/// Renders up to `cap` notes with a `-n 0` hint when entries are hidden.
+///
+/// A zero cap renders every note.
 pub fn render_list(notes: &[Note], cap: usize) -> String {
     if notes.is_empty() {
         return String::new();

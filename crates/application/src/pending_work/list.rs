@@ -1,9 +1,12 @@
 use pwf_domain::pending_work::{
-    ListResult, ListScope, OpenItem, OrderDirection, OrderField, OrderSpec, ParseTagsError,
-    ProjectName, ProjectRegistry, Tags, WorkItemStatus,
+    ListResult, ListScope, OrderDirection, OrderField, OrderSpec, ParseTagsError,
+    PendingWorkItemView, ProjectName, ProjectRegistry, Tags, WorkItemStatus, WorkItemStatusFilter,
 };
 
-use crate::{AppDbStore, PendingWorkItem, pending_work::enrich::enrich};
+use crate::{
+    AppDbStore, PendingWorkItem,
+    pending_work::enrich::{enrich, is_open_item},
+};
 
 const DEFAULT_LIST_CAP: usize = 10;
 
@@ -15,6 +18,8 @@ pub struct GetPendingWork {
     pub effort: Option<u8>,
     pub tags: Option<Tags>,
     pub order: OrderSpec,
+    /// Selects one persisted lifecycle status or every lifecycle status.
+    pub status_filter: WorkItemStatusFilter,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -31,17 +36,13 @@ pub enum GetPendingWorkError {
     InvalidProject { value: String },
 }
 
-#[cqrsy::handler(query)]
-#[expect(
-    clippy::needless_pass_by_value,
-    reason = "the cqrsy list operation owns its request by contract"
-)]
+#[cqrsy::query]
 pub fn execute(
-    query: GetPendingWork,
+    query: &GetPendingWork,
     store: &impl AppDbStore<PendingWorkItem>,
     projects: &ProjectRegistry,
 ) -> Result<ListResult, GetPendingWorkError> {
-    let mut items = collect_open_items(&query, store, projects)?;
+    let mut items = collect_list_items(query, store, projects)?;
 
     items.retain(|item| scope_includes(query.scope, item.section.as_deref()));
     items.retain(|item| effort_matches(item, query.effort));
@@ -76,15 +77,12 @@ pub fn execute(
     Ok(ListResult { items, hidden })
 }
 
-/// Reads the active items from each scoped project through the generic port and
-/// projects each into an [`OpenItem`] (open filter + launchability enrichment
-/// live here, no longer in the store). `only_project` scans one project; a
-/// global list scans every managed project in name order.
-fn collect_open_items(
+/// Reads and enriches listable lifecycle records from one project or every project in name order.
+fn collect_list_items(
     query: &GetPendingWork,
     store: &impl AppDbStore<PendingWorkItem>,
     projects: &ProjectRegistry,
-) -> Result<Vec<OpenItem>, GetPendingWorkError> {
+) -> Result<Vec<PendingWorkItemView>, GetPendingWorkError> {
     let scan: Vec<(ProjectName, Option<String>)> = match query.only_project.as_deref() {
         Some(name) => {
             let project =
@@ -106,11 +104,13 @@ fn collect_open_items(
             .list(project)
             .map_err(|error| GetPendingWorkError::ReadStore(Box::new(error)))?;
         for record in records {
-            if record.status != WorkItemStatus::Active {
+            let listable = is_open_item(&record) || record.status != WorkItemStatus::Active;
+            if !listable || !query.status_filter.includes(record.status) {
                 continue;
             }
             items.push(
-                enrich(&record, repo.as_deref()).into_open_item(project.as_ref().to_string()),
+                enrich(&record, repo.as_deref())
+                    .into_pending_work_item_view(project.as_ref().to_string()),
             );
         }
     }
@@ -140,7 +140,7 @@ fn section_group_rank(section: Option<&str>) -> u8 {
     }
 }
 
-fn effort_matches(item: &OpenItem, wanted: Option<u8>) -> bool {
+fn effort_matches(item: &PendingWorkItemView, wanted: Option<u8>) -> bool {
     let Some(wanted) = wanted else { return true };
     item.effort.as_deref().and_then(parse_effort_tier) == Some(wanted)
 }
@@ -158,11 +158,15 @@ fn id_suffix(id: &str) -> u64 {
         .unwrap_or(0)
 }
 
-fn created_key(item: &OpenItem) -> &str {
+fn created_key(item: &PendingWorkItemView) -> &str {
     item.created.as_deref().unwrap_or("")
 }
 
-fn item_order_cmp(order: OrderSpec, a: &OpenItem, b: &OpenItem) -> std::cmp::Ordering {
+fn item_order_cmp(
+    order: OrderSpec,
+    a: &PendingWorkItemView,
+    b: &PendingWorkItemView,
+) -> std::cmp::Ordering {
     if order.field == OrderField::ProjectId {
         let project_cmp = match order.direction {
             OrderDirection::Asc => a.project.cmp(&b.project),
@@ -186,11 +190,11 @@ fn item_order_cmp(order: OrderSpec, a: &OpenItem, b: &OpenItem) -> std::cmp::Ord
     }
 }
 
-fn sort_by_order(items: &mut [OpenItem], order: OrderSpec) {
+fn sort_by_order(items: &mut [PendingWorkItemView], order: OrderSpec) {
     items.sort_by(|a, b| item_order_cmp(order, a, b));
 }
 
-fn sort_by_group_then_order(items: &mut [OpenItem], order: OrderSpec) {
+fn sort_by_group_then_order(items: &mut [PendingWorkItemView], order: OrderSpec) {
     items.sort_by(|a, b| {
         section_group_rank(a.section.as_deref())
             .cmp(&section_group_rank(b.section.as_deref()))
@@ -198,7 +202,7 @@ fn sort_by_group_then_order(items: &mut [OpenItem], order: OrderSpec) {
     });
 }
 
-fn apply_cap(items: Vec<OpenItem>, cap: usize) -> (Vec<OpenItem>, usize) {
+fn apply_cap(items: Vec<PendingWorkItemView>, cap: usize) -> (Vec<PendingWorkItemView>, usize) {
     if cap == 0 || items.len() <= cap {
         return (items, 0);
     }
@@ -213,7 +217,7 @@ fn apply_cap(items: Vec<OpenItem>, cap: usize) -> (Vec<OpenItem>, usize) {
 mod tests {
     use pwf_domain::pending_work::{
         ListResult, ListScope, OrderDirection, OrderField, OrderSpec, ProjectName, ProjectRegistry,
-        Tags, Timestamp, WorkItemId, WorkItemStatus,
+        Tags, Timestamp, WorkItemId, WorkItemStatus, WorkItemStatusFilter,
     };
 
     use super::{GetPendingWork, GetPendingWorkError, execute};
@@ -221,7 +225,6 @@ mod tests {
         IndexPlacement, Materialization, PendingWorkItem, RecordId, testing::InMemoryStore,
     };
 
-    /// A staged record's project, then the record itself.
     type Staged = (&'static str, PendingWorkItem);
 
     fn record(id: &str) -> PendingWorkItem {
@@ -274,7 +277,6 @@ mod tests {
         (store, registry)
     }
 
-    /// Stage the given records under the single `pwf` project.
     fn pwf_store(items: Vec<PendingWorkItem>) -> (InMemoryStore, ProjectRegistry) {
         let staged: Vec<Staged> = items.into_iter().map(|item| ("pwf", item)).collect();
         store_and_registry(&staged)
@@ -283,7 +285,7 @@ mod tests {
     fn run(
         store: &InMemoryStore,
         registry: &ProjectRegistry,
-        query: GetPendingWork,
+        query: &GetPendingWork,
     ) -> Result<ListResult, GetPendingWorkError> {
         execute(query, store, registry)
     }
@@ -324,6 +326,7 @@ mod tests {
             effort: None,
             tags: None,
             order: OrderSpec::default(),
+            status_filter: WorkItemStatusFilter::default(),
         }
     }
 
@@ -343,9 +346,112 @@ mod tests {
         };
         let (store, registry) = pwf_store(vec![record("PWF-0001"), done, cancelled]);
 
-        let got = run(&store, &registry, default_query()).unwrap();
+        let got = run(&store, &registry, &default_query()).unwrap();
 
         assert_eq!(listed_ids(&got), ["PWF-0001"]);
+    }
+
+    #[test]
+    fn list_status_filter_selects_exact_statuses_and_all() {
+        let done = PendingWorkItem {
+            status: WorkItemStatus::Done,
+            placement: None,
+            ..record("PWF-0002")
+        };
+        let cancelled = PendingWorkItem {
+            status: WorkItemStatus::Cancelled,
+            placement: None,
+            ..record("PWF-0003")
+        };
+        let (store, registry) = pwf_store(vec![record("PWF-0001"), done, cancelled]);
+
+        for (status, expected) in [
+            (WorkItemStatus::Active, vec!["PWF-0001"]),
+            (WorkItemStatus::Done, vec!["PWF-0002"]),
+            (WorkItemStatus::Cancelled, vec!["PWF-0003"]),
+        ] {
+            let got = run(
+                &store,
+                &registry,
+                &GetPendingWork {
+                    status_filter: WorkItemStatusFilter::Exact(status),
+                    ..default_query()
+                },
+            )
+            .unwrap();
+            assert_eq!(listed_ids(&got), expected);
+        }
+
+        let all = run(
+            &store,
+            &registry,
+            &GetPendingWork {
+                status_filter: WorkItemStatusFilter::All,
+                ..default_query()
+            },
+        )
+        .unwrap();
+        assert_eq!(listed_ids(&all), ["PWF-0003", "PWF-0002", "PWF-0001"]);
+    }
+
+    #[test]
+    fn active_orphan_is_hidden_from_active_and_all_lists() {
+        let orphan = PendingWorkItem {
+            placement: None,
+            ..record("PWF-0002")
+        };
+        let (store, registry) = pwf_store(vec![record("PWF-0001"), orphan]);
+
+        for status_filter in [
+            WorkItemStatusFilter::Exact(WorkItemStatus::Active),
+            WorkItemStatusFilter::All,
+        ] {
+            let got = run(
+                &store,
+                &registry,
+                &GetPendingWork {
+                    status_filter,
+                    ..default_query()
+                },
+            )
+            .unwrap();
+            assert_eq!(listed_ids(&got), ["PWF-0001"]);
+        }
+    }
+
+    #[test]
+    fn status_filter_applies_before_cap_and_hidden_count() {
+        let active = PendingWorkItem {
+            created: Some(Timestamp::new("2026-07-09")),
+            ..record("PWF-0009")
+        };
+        let done_newer = PendingWorkItem {
+            status: WorkItemStatus::Done,
+            placement: None,
+            created: Some(Timestamp::new("2026-07-08")),
+            ..record("PWF-0002")
+        };
+        let done_older = PendingWorkItem {
+            status: WorkItemStatus::Done,
+            placement: None,
+            created: Some(Timestamp::new("2026-07-07")),
+            ..record("PWF-0001")
+        };
+        let (store, registry) = pwf_store(vec![active, done_newer, done_older]);
+
+        let got = run(
+            &store,
+            &registry,
+            &GetPendingWork {
+                number: Some(1),
+                status_filter: WorkItemStatusFilter::Exact(WorkItemStatus::Done),
+                ..default_query()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(listed_ids(&got), ["PWF-0002"]);
+        assert_eq!(got.hidden, 1);
     }
 
     #[test]
@@ -357,7 +463,7 @@ mod tests {
             sectioned("PWF-0001", "Low-prio"),
         ]);
 
-        let got = run(&store, &registry, default_query()).unwrap();
+        let got = run(&store, &registry, &default_query()).unwrap();
 
         assert_eq!(listed_ids(&got), ["PWF-0004"]);
     }
@@ -369,7 +475,7 @@ mod tests {
         let got = run(
             &store,
             &registry,
-            GetPendingWork {
+            &GetPendingWork {
                 scope: ListScope::FutureOnly,
                 ..default_query()
             },
@@ -391,7 +497,7 @@ mod tests {
         let got = run(
             &store,
             &registry,
-            GetPendingWork {
+            &GetPendingWork {
                 scope: ListScope::All,
                 ..default_query()
             },
@@ -415,7 +521,7 @@ mod tests {
         let got = run(
             &store,
             &registry,
-            GetPendingWork {
+            &GetPendingWork {
                 scope: ListScope::HumanOnly,
                 ..default_query()
             },
@@ -436,7 +542,7 @@ mod tests {
         let got = run(
             &store,
             &registry,
-            GetPendingWork {
+            &GetPendingWork {
                 effort: Some(3),
                 ..default_query()
             },
@@ -457,7 +563,7 @@ mod tests {
         let matched = run(
             &store,
             &registry,
-            GetPendingWork {
+            &GetPendingWork {
                 effort: Some(3),
                 ..default_query()
             },
@@ -469,7 +575,7 @@ mod tests {
             let empty = run(
                 &store,
                 &registry,
-                GetPendingWork {
+                &GetPendingWork {
                     effort: Some(tier),
                     ..default_query()
                 },
@@ -491,7 +597,7 @@ mod tests {
         let got = run(
             &store,
             &registry,
-            GetPendingWork {
+            &GetPendingWork {
                 tags: Some(Tags::parse_values(&["SQLite,godot".to_string()]).unwrap()),
                 ..default_query()
             },
@@ -504,12 +610,12 @@ mod tests {
     #[test]
     fn corrupt_tags_fail_only_when_a_tag_filter_is_requested() {
         let (store, registry) = pwf_store(vec![tagged_item("PWF-0001", "sqlite, godot")]);
-        assert!(run(&store, &registry, default_query()).is_ok());
+        assert!(run(&store, &registry, &default_query()).is_ok());
 
         let error = run(
             &store,
             &registry,
-            GetPendingWork {
+            &GetPendingWork {
                 tags: Some(Tags::parse_values(&["sqlite".to_string()]).unwrap()),
                 ..default_query()
             },
@@ -543,7 +649,7 @@ mod tests {
         let got = run(
             &store,
             &registry,
-            GetPendingWork {
+            &GetPendingWork {
                 effort: Some(3),
                 tags: Some(Tags::parse_values(&["sqlite".to_string()]).unwrap()),
                 ..default_query()
@@ -565,7 +671,7 @@ mod tests {
         let got = run(
             &store,
             &registry,
-            GetPendingWork {
+            &GetPendingWork {
                 number: Some(1),
                 tags: Some(Tags::parse_values(&["sqlite".to_string()]).unwrap()),
                 ..default_query()
@@ -584,7 +690,7 @@ mod tests {
             in_project("config-handler", dated_item("CFG-0001", "2026-03-01")),
         ]);
 
-        let got = run(&store, &registry, default_query()).unwrap();
+        let got = run(&store, &registry, &default_query()).unwrap();
 
         assert_eq!(listed_ids(&got), ["CFG-0001", "PWF-0001"]);
     }
@@ -600,7 +706,7 @@ mod tests {
         let got = run(
             &store,
             &registry,
-            GetPendingWork {
+            &GetPendingWork {
                 order: OrderSpec {
                     field: OrderField::Created,
                     direction: OrderDirection::Asc,
@@ -623,7 +729,7 @@ mod tests {
         let got = run(
             &store,
             &registry,
-            GetPendingWork {
+            &GetPendingWork {
                 order: OrderSpec {
                     field: OrderField::Id,
                     direction: OrderDirection::Desc,
@@ -647,7 +753,7 @@ mod tests {
         let got = run(
             &store,
             &registry,
-            GetPendingWork {
+            &GetPendingWork {
                 order: OrderSpec {
                     field: OrderField::ProjectId,
                     direction: OrderDirection::Asc,
@@ -668,7 +774,7 @@ mod tests {
         let all = run(
             &store,
             &registry,
-            GetPendingWork {
+            &GetPendingWork {
                 number: Some(0),
                 ..default_query()
             },
@@ -677,7 +783,7 @@ mod tests {
         assert_eq!(all.items.len(), 12);
         assert_eq!(all.hidden, 0);
 
-        let capped = run(&store, &registry, default_query()).unwrap();
+        let capped = run(&store, &registry, &default_query()).unwrap();
         assert_eq!(capped.items.len(), 10);
         assert_eq!(capped.hidden, 2);
     }
@@ -695,7 +801,7 @@ mod tests {
         };
         let (store, registry) = pwf_store(vec![record("PWF-0002"), inline]);
 
-        let got = run(&store, &registry, default_query()).unwrap();
+        let got = run(&store, &registry, &default_query()).unwrap();
 
         assert_eq!(listed_ids(&got), ["PWF-0002", "pwf:1"]);
         let legacy = &got.items[1];
@@ -714,7 +820,7 @@ mod tests {
         let got = run(
             &store,
             &registry,
-            GetPendingWork {
+            &GetPendingWork {
                 only_project: Some("pwf".to_string()),
                 ..default_query()
             },

@@ -1,9 +1,9 @@
-//! `handoff list` — print the current `LEDGER.md` verbatim.
+//! Prints the current `LEDGER.md` verbatim.
 
 use std::path::Path;
 
 use crate::{
-    cli::Args,
+    cli::EngineArgs,
     engines::handoff::{errors::HandoffRead, paths::handoff_paths},
 };
 
@@ -32,7 +32,7 @@ fn read_ledger_content(ledger: &Path) -> LedgerRead {
     }
 }
 
-pub(in crate::engines::handoff) fn invoke_list(root: &Path, _args: &Args) -> String {
+pub(in crate::engines::handoff) fn invoke_list(root: &Path, _args: &EngineArgs) -> String {
     let paths = handoff_paths(root);
     let ledger = read_ledger_content(&paths.ledger);
     let content = ledger.content.value;

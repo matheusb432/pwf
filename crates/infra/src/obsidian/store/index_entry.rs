@@ -1,8 +1,6 @@
 use std::{path::Path, sync::LazyLock};
 
-use pwf_application::{
-    AppDbStore, IndexEntry, IndexEntryState, IndexSection as IndexSectionRecord,
-};
+use pwf_application::{AppDbStore, IndexEntry, IndexEntryState, IndexSection};
 use pwf_domain::pending_work::{ProjectName, Timestamp, WorkItemId};
 use regex::Regex;
 
@@ -16,7 +14,7 @@ use crate::obsidian::{
         validate_project_index_identity,
     },
     index_text::{
-        IndexSection, add_link_to_index, add_section_block, remove_index_link, section_exists,
+        KnownSection, add_link_to_index, add_section_block, remove_index_link, section_exists,
     },
 };
 
@@ -31,22 +29,20 @@ static TASK_LINE_RE: LazyLock<Regex> = LazyLock::new(|| {
 static DATE_STAMP_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"✅\s*(\d{4}-\d{2}-\d{2})").expect("valid date stamp regex"));
 
-/// One checkbox line resolved from a project index, carrying the raw text and
-/// section label needed by both the [`IndexEntry`] and legacy-checkbox
-/// [`super::item_record`] mappings.
+/// Contains one parsed index checkbox and its raw enclosing section label.
 pub(super) struct ParsedIndexLine {
     pub id: WorkItemId,
     pub alias: Option<String>,
     pub state: IndexEntryState,
-    /// Raw stored section label (e.g. "Futuro"), never canonicalized.
+    /// Retains the raw section label without canonicalization.
     pub section: String,
-    /// 1-based line number within the index.
+    /// Uses a one-based line number within the index.
     pub line_number: usize,
 }
 
-/// Parses every `- [ ] [[ID]]` / `- [x] [[ID]] ✅ <date>` checkbox line from an
-/// index, tagging each with the raw label of its enclosing `## <label>` header.
-/// Pure representation mapping — no cap, eviction, or normalization policy.
+/// Parses item checkbox lines with their raw enclosing H2 labels.
+///
+/// This representation mapping applies no cap, eviction, or normalization policy.
 pub(super) fn parse_index_lines(text: &str) -> Vec<ParsedIndexLine> {
     let mut section = String::new();
     let mut lines = Vec::new();
@@ -61,9 +57,7 @@ pub(super) fn parse_index_lines(text: &str) -> Vec<ParsedIndexLine> {
         };
         let id = WorkItemId::try_new(&task["id"]).expect("regex guarantees canonical id");
         let alias = task.name("alias").map(|alias| alias.as_str().to_string());
-        // A missing mark group is a bare `- [[ID]]` wikilink — an open entry,
-        // same as an unchecked `- [ ]` (mirroring the item-list `scan_index`
-        // vocabulary and the legacy `mark_done` open-link recognition).
+        // A bare `- [[ID]]` link is open, like an unchecked checkbox.
         let is_done = matches!(task.name("mark").map(|m| m.as_str()), Some("x" | "X"));
         let state = if is_done {
             let date = DATE_STAMP_RE
@@ -85,9 +79,7 @@ pub(super) fn parse_index_lines(text: &str) -> Vec<ParsedIndexLine> {
     lines
 }
 
-/// Every H2 header's raw label in document order — the section regions the
-/// [`IndexSectionRecord`] kind reports. Same header recognition as
-/// [`parse_index_lines`], so entry sectioning and section listing cannot drift.
+/// Returns raw H2 labels in document order using the entry parser's header rules.
 pub(super) fn parse_section_labels(text: &str) -> Vec<String> {
     text.split('\n')
         .filter_map(|raw| {
@@ -108,10 +100,7 @@ fn render_entry_line(entry: &IndexEntry) -> String {
     }
 }
 
-/// Rewrites every `## <from>` header line to `## <to>`, matching the label the
-/// way [`parse_section_labels`] parses it (trimmed H2 label). Preserves all
-/// other lines and the trailing newline verbatim — the byte-for-byte equivalent
-/// of the legacy `mark_done` futuro-rename loop.
+/// Rewrites matching H2 labels while preserving all other bytes and the trailing newline.
 fn rename_header_lines(content: &str, from: &str, to: &str) -> String {
     content
         .split('\n')
@@ -154,13 +143,10 @@ impl ObsidianStore {
             .collect())
     }
 
-    /// Upsert `entry`'s index line. An existing line is replaced in place; a
-    /// new line is added through the same section placement the legacy add
-    /// used (`add_section_block` / `add_link_to_index`), creating the index
-    /// from the identity template when it does not exist yet. The add branch
-    /// writes via [`write_add_index_file`] so a failure carries the same
-    /// `Failed to write index file` text + created-section diagnostic payload
-    /// as the legacy add path.
+    /// Replaces an existing entry or inserts it through section placement rules.
+    ///
+    /// A missing index is created from the identity template. Add failures retain the
+    /// created-section diagnostic payload.
     fn upsert_index_entry(
         &self,
         project: &ProjectName,
@@ -192,7 +178,7 @@ impl ObsidianStore {
             let updated = replace_line(&content, existing.line_number, &new_line);
             return write_index(&index_path, &updated);
         }
-        let (updated, created_section) = match IndexSection::parse(&entry.section) {
+        let (updated, created_section) = match KnownSection::parse(&entry.section) {
             Some(section) => (
                 add_section_block(&content, &format!("{new_line}\n"), section),
                 (!section_exists(&content, section)).then(|| entry.section.clone()),
@@ -207,11 +193,7 @@ impl ObsidianStore {
         )
     }
 
-    /// Renames the `## <from>` header region to `## <to>` in place — the
-    /// section-label `update` seam application uses to normalize a legacy
-    /// `## Futuro` header on close (PWF-0123). Representation-only: it rewrites
-    /// the matching header line, the exact textual rename the legacy `mark_done`
-    /// performed.
+    /// Renames an H2 section label in place without applying application policy.
     fn rename_section_header(
         &self,
         project: &ProjectName,
@@ -283,41 +265,38 @@ impl AppDbStore<IndexEntry> for ObsidianStore {
     }
 }
 
-/// Mostly list-only: sections are created implicitly when an [`IndexEntry`]
-/// upsert targets a missing section, so `insert`/`delete` reject with
-/// [`ObsidianStoreError::IndexSectionWriteUnsupported`]. The one supported write
-/// is `update`, a representation-only label rename (the futuro-normalization
-/// seam, PWF-0123); reporting which regions exist is the rest of this impl's job.
-impl AppDbStore<IndexSectionRecord> for ObsidianStore {
+/// Lists and renames index sections.
+///
+/// [`IndexEntry`] upserts create sections implicitly. Direct insertion and deletion return
+/// [`ObsidianStoreError::IndexSectionWriteUnsupported`].
+impl AppDbStore<IndexSection> for ObsidianStore {
     type Error = ObsidianStoreError;
 
     fn get(
         &self,
         project: &ProjectName,
         label: &String,
-    ) -> Result<Option<IndexSectionRecord>, Self::Error> {
-        Ok(
-            <Self as AppDbStore<IndexSectionRecord>>::list(self, project)?
-                .into_iter()
-                .find(|section| section.label == *label),
-        )
+    ) -> Result<Option<IndexSection>, Self::Error> {
+        Ok(<Self as AppDbStore<IndexSection>>::list(self, project)?
+            .into_iter()
+            .find(|section| section.label == *label))
     }
 
-    fn list(&self, project: &ProjectName) -> Result<Vec<IndexSectionRecord>, Self::Error> {
+    fn list(&self, project: &ProjectName) -> Result<Vec<IndexSection>, Self::Error> {
         let Some((_, text)) = self.validated_project_index(project)? else {
             return Ok(Vec::new());
         };
         Ok(parse_section_labels(&text)
             .into_iter()
-            .map(|label| IndexSectionRecord { label })
+            .map(|label| IndexSection { label })
             .collect())
     }
 
     fn insert(
         &self,
         _project: &ProjectName,
-        _new: IndexSectionRecord,
-    ) -> Result<IndexSectionRecord, Self::Error> {
+        _new: IndexSection,
+    ) -> Result<IndexSection, Self::Error> {
         Err(ObsidianStoreError::IndexSectionWriteUnsupported { op: "insert" })
     }
 
@@ -325,7 +304,7 @@ impl AppDbStore<IndexSectionRecord> for ObsidianStore {
         &self,
         project: &ProjectName,
         label: &String,
-        patch: IndexSectionRecord,
+        patch: IndexSection,
     ) -> Result<(), Self::Error> {
         self.rename_section_header(project, label, &patch.label)
     }

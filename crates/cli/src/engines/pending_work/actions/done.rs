@@ -1,5 +1,3 @@
-// Action: done/cancel status transitions.
-
 use pwf_application::{
     AppDbStore, IndexEntry, IndexSection, PendingWorkItem,
     pending_work::{
@@ -15,7 +13,7 @@ use super::{
     close_render::{emit_close_diagnostics, render_closed},
 };
 use crate::{
-    cli::Args,
+    cli::EngineArgs,
     config::Config,
     engines::handoff::mirror::{self, GateItem, MirrorClose, PendingMove},
 };
@@ -23,7 +21,7 @@ use crate::{
 pub(in crate::engines::pending_work) fn run_done<S>(
     cfg: &Config,
     store: &S,
-    args: &Args,
+    args: &EngineArgs,
 ) -> Result<String, PendingWorkError>
 where
     S: AppDbStore<PendingWorkItem> + AppDbStore<IndexEntry> + AppDbStore<IndexSection>,
@@ -42,7 +40,7 @@ where
         args.report.as_deref(),
     )?;
     let output = pwf_application::pending_work::done::execute(
-        CompletePendingWork {
+        &CompletePendingWork {
             id: id.to_string(),
             completed,
             report: args.report.clone(),
@@ -63,7 +61,7 @@ where
 pub(in crate::engines::pending_work) fn run_cancel<S>(
     cfg: &Config,
     store: &S,
-    args: &Args,
+    args: &EngineArgs,
 ) -> Result<String, PendingWorkError>
 where
     S: AppDbStore<PendingWorkItem> + AppDbStore<IndexEntry> + AppDbStore<IndexSection>,
@@ -93,7 +91,7 @@ where
     )
     .map_err(map_cancel_error)?;
     let output = pwf_application::pending_work::cancel::execute(
-        command,
+        &command,
         store,
         &crate::engines::pending_work::run::project_registry(cfg),
     )
@@ -105,11 +103,7 @@ where
     mirror_commit_and_append(render_closed(&output), gate, pending, "archived")
 }
 
-/// Gate `id` onto its handoff (PWF-0117) and, when tagged, preflight the
-/// archive move — entirely before any pw-item mutation, so a preflight
-/// failure (untagged handoff, missing/ambiguous link, archive conflict)
-/// leaves the item untouched. Shared by `run_done`/`run_cancel` so the
-/// gate+preflight sequence exists exactly once.
+/// Preflights the linked handoff so mirror failures leave the pending-work item unchanged.
 fn mirror_close_preflight(
     cfg: &Config,
     store: &impl AppDbStore<PendingWorkItem>,
@@ -124,9 +118,7 @@ fn mirror_close_preflight(
         &crate::engines::pending_work::run::project_registry(cfg),
         id,
     )?;
-    // Inner None = the linked handoff is already archived (e.g. re-running
-    // `done` after it already succeeded): nothing to mirror, so the pw
-    // handler's own already-closed error is what should surface.
+    // An archived handoff defers to the pending-work item's already-closed error.
     let pending = gate
         .as_ref()
         .map(|g| mirror::preflight_close(g, close, date, report))
@@ -135,10 +127,6 @@ fn mirror_close_preflight(
     Ok((gate, pending))
 }
 
-/// Commit a preflighted mirror move and append its confirmation line to
-/// `text`, or return `text` unchanged when `id` wasn't handoff-tagged.
-/// Shared by `run_done`/`run_cancel` (label `"archived"`) and `run_reopen`
-/// (label `"reopened"`) — only the label differs between close and reopen.
 pub(super) fn mirror_commit_and_append(
     text: String,
     gate: Option<GateItem>,
@@ -275,7 +263,7 @@ mod tests {
         let (_stage, cfg) = stage_file_item();
 
         let store = crate::engines::pending_work::store_for(&cfg);
-        let err = run_done(&cfg, &store, &Args::default()).unwrap_err();
+        let err = run_done(&cfg, &store, &EngineArgs::default()).unwrap_err();
 
         assert_matches!(
             err,
@@ -321,10 +309,10 @@ mod tests {
     #[test]
     fn empty_report_returns_typed_error_with_legacy_display() {
         let (_stage, cfg) = stage_file_item();
-        let args = Args {
+        let args = EngineArgs {
             id: Some("GLP-0001".to_string()),
             report: Some(" \t\n".to_string()),
-            ..Args::default()
+            ..EngineArgs::default()
         };
 
         let store = crate::engines::pending_work::store_for(&cfg);
@@ -336,13 +324,12 @@ mod tests {
 
     #[test]
     fn done_with_review_appends_review_task_as_text() {
-        // --review should append the added task as text, never JSON (PWF-0059).
         let (_stage, cfg) = stage_file_item();
-        let args = Args {
+        let args = EngineArgs {
             id: Some("GLP-0001".to_string()),
             review: true,
             date: Some("2026-01-01".to_string()),
-            ..Args::default()
+            ..EngineArgs::default()
         };
 
         let store = crate::engines::pending_work::store_for(&cfg);
@@ -355,10 +342,10 @@ mod tests {
     #[test]
     fn done_tagged_item_errors_before_mutation_when_repo_root_missing() {
         let (_stage, cfg, item_path) = stage_tagged_handoff_item();
-        let args = Args {
+        let args = EngineArgs {
             id: Some("GLP-0001".to_string()),
             date: Some("2026-01-01".to_string()),
-            ..Args::default()
+            ..EngineArgs::default()
         };
 
         let store = crate::engines::pending_work::store_for(&cfg);
@@ -375,11 +362,11 @@ mod tests {
     #[test]
     fn cancel_tagged_item_errors_before_mutation_when_repo_root_missing() {
         let (_stage, cfg, item_path) = stage_tagged_handoff_item();
-        let args = Args {
+        let args = EngineArgs {
             id: Some("GLP-0001".to_string()),
             report: Some("obsoleted".to_string()),
             date: Some("2026-01-01".to_string()),
-            ..Args::default()
+            ..EngineArgs::default()
         };
 
         let store = crate::engines::pending_work::store_for(&cfg);
@@ -393,11 +380,6 @@ mod tests {
         );
     }
 
-    /// Re-running `done` on an already-done tagged item whose handoff was
-    /// already archived must surface the pw layer's canonical already-closed
-    /// error (`ItemNotFound`), not a mirror `HandoffNotFound` that misdirects
-    /// with an "untag it / create the handoff" hint — the handoff is exactly
-    /// where a first `done` left it, so there is nothing to fix there.
     #[test]
     fn done_on_already_closed_tagged_item_surfaces_pw_layer_error_not_mirror_hint() {
         let stage = tempfile::tempdir().unwrap();
@@ -435,10 +417,10 @@ mod tests {
             None,
         )
         .unwrap();
-        let args = Args {
+        let args = EngineArgs {
             id: Some("GLP-0001".to_string()),
             date: Some("2026-01-03".to_string()),
-            ..Args::default()
+            ..EngineArgs::default()
         };
 
         let store = crate::engines::pending_work::store_for(&cfg);

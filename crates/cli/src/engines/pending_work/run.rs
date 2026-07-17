@@ -1,12 +1,18 @@
-// Top-level dispatcher for `pwf <verb>`. The `route` verb is delegated to the
-// `pw` word-router in `route`; everything else dispatches here.
-
 use pwf_application::{
     AppDbStore, IndexEntry, IndexSection, NoteMarkdownSource, PendingWorkItem,
-    pending_work::add::AddPendingWorkItem,
+    pending_work::{
+        add::AddPendingWorkItem,
+        session::{
+            Agent, ConfirmationPolicy, DispatchMode, LaunchDirectives, dispatch::DispatchSession,
+            verify::VerifySession,
+        },
+    },
 };
 use pwf_domain::pending_work::{HANDOFF_TAG, MutationOutcome, ProjectName, ProjectRegistry};
-use pwf_infra::obsidian::ObsidianStore;
+use pwf_infra::{
+    obsidian::ObsidianStore,
+    session::{ProcessSessionRuntime, TomlModelTierCatalog},
+};
 
 use super::{
     actions::{
@@ -16,42 +22,32 @@ use super::{
         render_outcome_confirmation, run_cancel, run_done, run_list_query, run_remove, run_reopen,
         run_update,
     },
-    agent::{probe::RealProbe, verify::verify_text_with_probe},
+    agent::verify,
     color::use_color,
     continue_prompt::{continue_handoff_prompt, continue_plan_prompt},
     domain::commands::PendingWorkCommand,
     errors,
-    launch::LaunchPolicy,
     model::Action,
     naming::stamp_date,
     new_add::NewAddInputs,
-    query::{
-        find_pending_item, load_config, resolve_managed_project_name_typed, resolve_project_repo,
-    },
+    query::{load_config, resolve_managed_project_name_typed, resolve_project_repo},
     route::run_route,
     section::Section,
 };
 use crate::{
-    cli::Args,
+    cli::EngineArgs,
     config::Config,
+    confirm::{Confirmation, DefaultAnswer},
     engines::{
         handoff::mirror,
         pending_work::actions::{run_resolve, run_show},
     },
 };
 
-/// Top-level entry for a directly-parsed `pwf <verb>` command (main.rs only).
-/// `Add`/`Remove`/`Update`'s confirmations get a presentation-only reformat
-/// here — never inside `run_typed`, which `run_args` also calls for the
-/// integration-test surface that drives pw verbs by `Args` directly, which
-/// needs the plain, un-ANSI'd text (see `confirm_render`'s doc comment).
-/// Handoff's in-process `add` seam reuses the same `AddPendingWorkItem`
-/// request build + direct application operation as top-level `pwf add`, but
-/// consumes the typed `AddedItem` instead of raw text; handoff no longer calls
-/// `run_args` at all (PWF-0117 retired its `done`/`cancel`/`reopen`/`refresh`
-/// verbs).
+/// Runs a parsed command and applies terminal formatting to typed mutations.
+/// `run_args` retains the legacy raw-text protocol for non-terminal seams.
 pub fn run(command: &PendingWorkCommand) -> Result<String, String> {
-    let outcome = run_typed(command).map_err(String::from)?;
+    let outcome = run_typed(command, &crate::confirm::terminal).map_err(String::from)?;
     let on = use_color(command.args().color);
     match render_outcome_confirmation(&outcome, on) {
         Some(rendered) => Ok(rendered),
@@ -59,13 +55,8 @@ pub fn run(command: &PendingWorkCommand) -> Result<String, String> {
     }
 }
 
-/// Build the single store instance an engine entry threads down to every
-/// consumer for the rest of the call — the composition root this module owns
-/// (PWF-0123 stage 1). `ObsidianStore` is constructed only here; every other
-/// consumer takes the trait bounds it needs (the generic [`AppDbStore`] record
-/// kinds, plus [`NoteMarkdownSource`] for the ghost-`show` storage-error
-/// replay). The only other `pwf_infra` references in the CLI are the three
-/// error-downcast exceptions (`query.rs`, `actions/add.rs`, `actions/done.rs`).
+/// Constructs [`ObsidianStore`] at the CLI composition root.
+/// Downstream code receives only the store traits it requires.
 pub(crate) fn store_for(
     cfg: &Config,
 ) -> impl NoteMarkdownSource
@@ -76,9 +67,7 @@ pub(crate) fn store_for(
     ObsidianStore::new(cfg.clone())
 }
 
-/// Build the [`ProjectRegistry`] the read-side handlers use to route ids to
-/// projects and to enumerate every managed project with its repo. Prefixes are
-/// uppercased to match the canonical `WorkItemId` form.
+/// Builds the [`ProjectRegistry`] and canonicalizes ID prefixes to uppercase.
 pub(crate) fn project_registry(cfg: &Config) -> ProjectRegistry {
     ProjectRegistry::new(cfg.projects.iter().map(|(name, repo)| {
         (
@@ -93,15 +82,28 @@ pub(crate) fn project_registry(cfg: &Config) -> ProjectRegistry {
 
 pub(in crate::engines::pending_work) fn run_typed(
     command: &PendingWorkCommand,
+    confirmation: &impl Fn(&str, DefaultAnswer) -> Confirmation,
 ) -> Result<EngineOutcome, errors::PendingWorkError> {
     let args = command.args();
 
     let cfg = load_config(args)?;
     let store = store_for(&cfg);
+    let projects = project_registry(&cfg);
+    let model_tiers = TomlModelTierCatalog;
+    let runtime = ProcessSessionRuntime;
+    let interaction = super::session::CliSessionInteraction;
     let date = stamp_date(args.date.as_deref());
 
     match command.action() {
-        Action::Route => Ok(EngineOutcome::Text(run_route(&cfg, &store, args, &date)?)),
+        Action::Route => Ok(EngineOutcome::Text(run_route(
+            &cfg,
+            &store,
+            &projects,
+            &model_tiers,
+            &runtime,
+            args,
+            confirmation,
+        )?)),
 
         Action::Add => Ok(EngineOutcome::Mutation(MutationOutcome::Added(run_add(
             &cfg, &store, args, &date,
@@ -121,27 +123,24 @@ pub(in crate::engines::pending_work) fn run_typed(
                 &date,
                 args.dry_run,
                 args.force,
-                &crate::confirm::RealConfirm,
+                confirmation,
             )?))
         }
 
         Action::Verify => {
-            let launcher = super::session::launcher_for(args.agent);
-            let probe = RealProbe::resolve(launcher.binary());
-            let item = if let Some(vid) = args.id.as_deref() {
-                Some(find_pending_item(&store, &project_registry(&cfg), vid)?)
-            } else {
-                None
+            let request = VerifySession {
+                id: args.id.clone(),
+                agent: application_agent(args.agent),
+                model_override: args.model.clone(),
             };
-            let claude_model = item.as_ref().and_then(|it| {
-                super::session::resolve_model_for_verify(args.agent, it, args.model.as_deref())
-            });
-            Ok(EngineOutcome::Text(verify_text_with_probe(
-                item.as_ref(),
-                launcher,
-                &probe,
-                claude_model.as_ref(),
-            )))
+            let outcome = pwf_application::pending_work::session::verify::execute(
+                request,
+                &store,
+                &projects,
+                &model_tiers,
+                &runtime,
+            )?;
+            Ok(EngineOutcome::Text(verify::render(&outcome)))
         }
 
         Action::Done => Ok(EngineOutcome::Text(run_done(&cfg, &store, args)?)),
@@ -154,43 +153,64 @@ pub(in crate::engines::pending_work) fn run_typed(
 
         Action::Show => Ok(EngineOutcome::Text(run_show(&cfg, &store, args)?)),
 
-        Action::Remove => run_remove(&cfg, &store, args, &crate::confirm::RealConfirm),
+        Action::Remove => run_remove(&cfg, &store, args, confirmation),
 
         Action::Update => Ok(EngineOutcome::Mutation(MutationOutcome::Updated(
-            run_update(&store, &project_registry(&cfg), args)?,
+            run_update(&store, &projects, args)?,
         ))),
 
         Action::Session => {
             let id = require_id(args, "session")?;
-            // `-a`/`--append`: extend the body via the same path as `update -a`/
-            // `--append` before dispatch, so the launch prompt carries the extension.
+            // Apply append before dispatch so the launch prompt includes the new body text.
             if args.append.is_some() {
-                run_update(&store, &project_registry(&cfg), args)?;
+                run_update(&store, &projects, args)?;
             }
-            Ok(EngineOutcome::Text(super::session::dispatch(
-                &store,
-                &project_registry(&cfg),
-                id,
-                &super::session::DispatchOpts {
-                    color: args.color,
-                    assume_yes: args.assume_yes,
-                    inline: args.inline,
-                    launch: LaunchPolicy {
-                        worktree: args.worktree.into(),
-                        auto: args.auto.into(),
-                    },
-                    agent: args.agent,
-                    model_override: args.model.clone(),
+            let request = DispatchSession {
+                id: id.to_string(),
+                mode: if args.inline {
+                    DispatchMode::Inline
+                } else {
+                    DispatchMode::Multiplexer
                 },
-            )?))
+                directives: LaunchDirectives {
+                    worktree: args.worktree,
+                    autonomous: args.auto,
+                },
+                agent: application_agent(args.agent),
+                model_override: args.model.clone(),
+                confirmation: if args.assume_yes {
+                    ConfirmationPolicy::Skip
+                } else {
+                    ConfirmationPolicy::Ask
+                },
+            };
+            let outcome = pwf_application::pending_work::session::dispatch::execute(
+                &request,
+                &store,
+                &projects,
+                &model_tiers,
+                &runtime,
+                &interaction,
+            )?;
+            Ok(EngineOutcome::Text(super::session::render_dispatch(
+                &outcome,
+                use_color(args.color),
+            )))
         }
+    }
+}
+
+fn application_agent(agent: crate::cli::Agent) -> Agent {
+    match agent {
+        crate::cli::Agent::Claude => Agent::Claude,
+        crate::cli::Agent::Codex => Agent::Codex,
     }
 }
 
 fn run_list(
     cfg: &Config,
     store: &impl AppDbStore<PendingWorkItem>,
-    args: &Args,
+    args: &EngineArgs,
 ) -> Result<EngineOutcome, errors::PendingWorkError> {
     let only_project = if let Some(p) = args.project.as_deref() {
         Some(resolve_managed_project_name_typed(cfg, p)?)
@@ -208,24 +228,25 @@ fn run_list(
         effort: args.effort,
         tags: tags.as_ref(),
         order,
+        status_filter: args.status_filter,
         color_on: use_color(args.color),
     };
     Ok(EngineOutcome::Text(run_list_query(cfg, store, params)?))
 }
 
-pub fn run_args(args: &crate::cli::Args) -> Result<String, String> {
+pub fn run_args(args: &crate::cli::EngineArgs) -> Result<String, String> {
     run_args_typed(args).map_err(String::from)
 }
 
 pub(in crate::engines::pending_work) fn run_args_typed(
-    args: &crate::cli::Args,
+    args: &crate::cli::EngineArgs,
 ) -> Result<String, errors::PendingWorkError> {
     let command = PendingWorkCommand::from_args_typed(args)?;
-    run_typed(&command).map(EngineOutcome::into_raw_text)
+    run_typed(&command, &|_, _| Confirmation::NonInteractive).map(EngineOutcome::into_raw_text)
 }
 
-/// Resolve the create section from `--section` (wins) or the `--human` shorthand.
-fn resolve_add_section(args: &Args) -> Result<Option<Section>, errors::PendingWorkError> {
+/// Resolves `--section`, which takes precedence over `--human`.
+fn resolve_add_section(args: &EngineArgs) -> Result<Option<Section>, errors::PendingWorkError> {
     if let Some(raw) = args.section.as_deref() {
         return Section::from_flag(raw).map(Some).ok_or_else(|| {
             errors::PendingWorkError::BadSection {
@@ -237,7 +258,7 @@ fn resolve_add_section(args: &Args) -> Result<Option<Section>, errors::PendingWo
 }
 
 pub(in crate::engines::pending_work) fn require_id<'args>(
-    args: &'args Args,
+    args: &'args EngineArgs,
     action: &'static str,
 ) -> Result<&'args str, errors::PendingWorkError> {
     args.id
@@ -245,14 +266,10 @@ pub(in crate::engines::pending_work) fn require_id<'args>(
         .ok_or(errors::PendingWorkError::MissingId { action })
 }
 
-/// Build the application command behind `pwf add` plus the store + registry to
-/// execute it against, including the `--continue-handoff` / `--continue`
-/// prompt sourcing and config/date resolution that cross-engine callers need
-/// too. The store is built here (not by the caller) so `handoff`'s in-process
-/// add seam (`pw_bridge::inprocess_pw_add`) never has to name `ObsidianStore`
-/// itself — this function lives in an allowed composition-root file.
+/// Builds the add request, store, and registry for CLI and in-process handoff creation.
+/// Constructing the concrete store here keeps the handoff bridge independent of [`ObsidianStore`].
 pub(crate) fn add_command_from_args(
-    args: &Args,
+    args: &EngineArgs,
 ) -> Result<
     (
         impl AppDbStore<PendingWorkItem> + AppDbStore<IndexEntry> + AppDbStore<IndexSection> + use<>,
@@ -269,13 +286,12 @@ pub(crate) fn add_command_from_args(
     Ok((store, registry, command))
 }
 
-/// `pwf add` — create a pending-work item. The prompt comes from positional
-/// words, the repo's newest handoff (`--continue-handoff`), or a plan path
-/// (`--continue <path>`); the clap layer makes those three mutually exclusive.
+/// Creates an item after preflighting any new handoff scaffold.
+/// `--continue-handoff` targets an existing handoff and never creates a scaffold.
 fn run_add<S>(
     cfg: &Config,
     store: &S,
-    args: &Args,
+    args: &EngineArgs,
     date: &str,
 ) -> Result<AddedItem, errors::PendingWorkError>
 where
@@ -283,16 +299,6 @@ where
 {
     let command = build_add_command(cfg, args, date)?;
 
-    // Preflight a handoff scaffold *before* the mutation when `--tag handoff`
-    // is present, so a bad repo mapping or a path collision fails with no
-    // item created. `--continue-handoff` is excluded: that flag means the pw
-    // item continues an *existing* handoff, so it must never scaffold a new
-    // one. `handoff add`'s in-process seam (`inprocess_pw_add`) never reaches
-    // this function — it executes the built command directly through the
-    // application operation — but the external `--pending-work-script`
-    // allocator's canonical protocol (`pw_bridge::spawn_pw_add`) is `add --tag
-    // handoff --continue-handoff`, and an operator's allocator script commonly
-    // just execs the real `pwf` binary, which *does* land here.
     let scaffold = if !args.continue_handoff
         && command
             .tags
@@ -337,14 +343,13 @@ where
 
 fn build_add_command(
     cfg: &Config,
-    args: &Args,
+    args: &EngineArgs,
     date: &str,
 ) -> Result<AddPendingWorkItem, errors::PendingWorkError> {
     let tags = super::tags::from_flags(&args.tag)?;
     let section = resolve_add_section(args)?;
     let prereq = super::prereq::frontmatter_from_flags(cfg, &args.prereq)?;
 
-    // Resolve (project_name, title, prompt) per the chosen prompt source.
     let (project_name, title, prompt): (String, Option<String>, String) = if args.continue_handoff {
         let raw = args
             .project
@@ -401,9 +406,9 @@ mod tests {
         .unwrap();
         let command = PendingWorkCommand::new(
             action,
-            Args {
+            EngineArgs {
                 config_path: Some(config.to_string_lossy().into_owned()),
-                ..Args::default()
+                ..EngineArgs::default()
             },
         );
         (stage, command)
@@ -412,16 +417,16 @@ mod tests {
     #[test]
     fn run_args_stringifies_missing_action_at_public_edge() {
         assert_eq!(
-            run_args(&Args::default()).unwrap_err(),
+            run_args(&EngineArgs::default()).unwrap_err(),
             "a pw subcommand is required."
         );
     }
 
     #[test]
     fn run_args_stringifies_unknown_action_at_public_edge() {
-        let args = Args {
+        let args = EngineArgs {
             action: Some("nope".to_string()),
-            ..Args::default()
+            ..EngineArgs::default()
         };
 
         assert_eq!(run_args(&args).unwrap_err(), "Unknown action: nope");
@@ -441,33 +446,33 @@ mod tests {
 
     #[test]
     fn section_flag_wins_over_human_shorthand() {
-        let args = Args {
+        let args = EngineArgs {
             section: Some("future".into()),
             human: true,
-            ..Args::default()
+            ..EngineArgs::default()
         };
         assert_eq!(resolve_add_section(&args).unwrap(), Some(Section::Future));
     }
 
     #[test]
     fn human_shorthand_maps_to_human_section() {
-        let args = Args {
+        let args = EngineArgs {
             human: true,
-            ..Args::default()
+            ..EngineArgs::default()
         };
         assert_eq!(resolve_add_section(&args).unwrap(), Some(Section::Human));
     }
 
     #[test]
     fn no_section_flags_means_general_area() {
-        assert_eq!(resolve_add_section(&Args::default()).unwrap(), None);
+        assert_eq!(resolve_add_section(&EngineArgs::default()).unwrap(), None);
     }
 
     #[test]
     fn invalid_section_value_errors() {
-        let args = Args {
+        let args = EngineArgs {
             section: Some("bogus".into()),
-            ..Args::default()
+            ..EngineArgs::default()
         };
 
         let err = resolve_add_section(&args).unwrap_err();

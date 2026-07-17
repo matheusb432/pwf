@@ -9,7 +9,7 @@ use regex::Regex;
 use super::store_util::body_region;
 use crate::ports::{AppDbStore, ItemPatch, PendingWorkItem};
 
-/// Reads bare ids out of an existing `prereq` frontmatter value (dedup source).
+/// Extracts bare ids from an existing `prereq` frontmatter value.
 static PREREQ_VALUE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\[\[([A-Z]{2,4}-\d{4})").expect("valid prereq regex"));
 
@@ -28,8 +28,6 @@ pub struct UpdatePendingWorkItem {
     pub tags_clear: bool,
 }
 
-/// Every display is verbatim from the former infra `ObsidianStoreError`
-/// (PWF-0123 error-string relocation) so the CLI surface stays byte-identical.
 #[derive(Debug, thiserror::Error)]
 pub enum UpdatePendingWorkError {
     #[error("Open pending-work item not found: {id}")]
@@ -58,12 +56,10 @@ pub enum UpdatePendingWorkError {
     WriteStore(Box<dyn std::error::Error + Send + Sync>),
 }
 
-/// Applies an edit to a pending-work item over the generic port. Body edits
-/// (`--prompt` regenerates, `--append`/`--append-report` splice) fold into one
-/// `ItemPatch { body, .. }`; frontmatter edits ride the same patch as typed
-/// fields. A closed (done/cancelled) item accepts only `--commits`/
-/// `--append-report`; anything else is `ClosedItemAmendOnly`.
-#[cqrsy::handler(command)]
+/// Applies body and frontmatter edits in one item patch.
+///
+/// Closed items accept only commit and report amendments.
+#[cqrsy::command]
 pub fn execute<S>(
     cmd: UpdatePendingWorkItem,
     store: &S,
@@ -148,9 +144,9 @@ where
     })
 }
 
-/// The final body when `--prompt`/`--append`/`--append-report` touch it, else
-/// `None`. `--prompt` regenerates from scratch; the splices layer over the
-/// existing body region (or the freshly regenerated one).
+/// Computes a replacement body when a prompt, lane, or report edit requires one.
+///
+/// Prompt replacement starts from a new body; lane and report edits build on that result.
 fn compute_body(
     cmd: &UpdatePendingWorkItem,
     record: &PendingWorkItem,
@@ -169,11 +165,10 @@ fn compute_body(
     Ok(body)
 }
 
-/// The `ItemPatch.tags` value: `None` = leave, `Some(None)` = clear,
-/// `Some(Some(_))` = set — so this mirrors the patch field's `Option<Option>`.
+/// Resolves the tri-state `ItemPatch.tags` value: unchanged, cleared, or replaced.
 #[expect(
     clippy::option_option,
-    reason = "produces the ItemPatch.tags patch field verbatim"
+    reason = "preserves ItemPatch.tags tri-state semantics"
 )]
 fn resolve_tags(
     cmd: &UpdatePendingWorkItem,
@@ -229,8 +224,7 @@ where
     })
 }
 
-/// Dedup-appends the referenced prereq ids onto the existing frontmatter value,
-/// after validating every new id resolves to a stored item.
+/// Validates and deduplicates prerequisite ids before appending them to frontmatter.
 fn merge_prereqs<S>(
     store: &S,
     projects: &ProjectRegistry,
@@ -461,7 +455,6 @@ mod tests {
 
     #[test]
     fn update_tags_clear_plus_tags_replaces_without_parsing_existing() {
-        // A corrupt existing value must NOT be parsed on the replace path.
         let store = staged_with_tags("still-corrupt");
         let cmd = UpdatePendingWorkItem {
             tags: Some(tags(&["sqlite"])),

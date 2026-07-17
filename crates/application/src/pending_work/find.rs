@@ -1,6 +1,9 @@
-use pwf_domain::pending_work::{OpenItem, ProjectRegistry, WorkItemId};
+use pwf_domain::pending_work::{PendingWorkItemView, ProjectRegistry, WorkItemId};
 
-use crate::{AppDbStore, PendingWorkItem, pending_work::enrich::enrich};
+use crate::{
+    AppDbStore, PendingWorkItem,
+    pending_work::enrich::{enrich, is_open_item},
+};
 
 #[derive(Debug, Clone)]
 pub struct FindPendingWork {
@@ -9,38 +12,27 @@ pub struct FindPendingWork {
 
 #[derive(Debug, thiserror::Error)]
 pub enum FindPendingWorkError {
-    /// No open item matched the requested id. Preserves the raw requested id
-    /// verbatim (never re-normalized), matching the legacy lookup's display.
+    /// Preserves the unmatched requested id without normalizing it again.
     #[error("Open pending-work item not found: {id}")]
     ItemNotFound { id: String },
-    /// More than one open item — or more than one project sharing the id's
-    /// prefix — matched. Preserves the raw requested id verbatim.
+    /// Reports multiple matching items or projects sharing one id prefix.
     #[error("Pending-work id is ambiguous: {id}")]
     AmbiguousId { id: String },
-    /// The id's prefix maps to no managed project. Rendered exactly like the
-    /// legacy adapter's `UnknownTaskPrefix` (uppercased id + prefix).
     #[error("Unknown task id prefix `{prefix}` for {id}")]
     UnknownPrefix { id: String, prefix: String },
     #[error("{0}")]
     ReadStore(Box<dyn std::error::Error + Send + Sync>),
 }
 
-/// Finds the single open pending-work item matching `id`, enriched with its
-/// launch diagnostics — the shared lookup behind `pwf verify`, `pwf session`
-/// dispatch validation, and prereq checks. Reuses [`enrich`] so those callers
-/// see identical [`OpenItem`] data to the list view.
+/// Finds one open item and applies the same launchability enrichment as list.
 ///
-/// A canonical id routes to its project by prefix, listing that project's open
-/// entries and matching by exact id; a non-canonical id is served by the
-/// legacy inline scan (`<project>:<ordinal>` prompts have no [`WorkItemId`], so
-/// they are found by listing every project and matching the composed id
-/// case-insensitively). Item identity is index-open-link driven (not
-/// note-status driven), exactly as the legacy open-item read was.
+/// Canonical ids route by project prefix. Inline `<project>:<ordinal>` ids require a
+/// case-insensitive scan across managed projects. Open index links determine membership.
 pub(crate) fn find_open_item<S>(
     store: &S,
     projects: &ProjectRegistry,
     id: &str,
-) -> Result<OpenItem, FindPendingWorkError>
+) -> Result<PendingWorkItemView, FindPendingWorkError>
 where
     S: AppDbStore<PendingWorkItem>,
 {
@@ -66,9 +58,13 @@ where
     let records = store
         .list(project)
         .map_err(|error| FindPendingWorkError::ReadStore(Box::new(error)))?;
-    let mut matched: Vec<OpenItem> = records
+    let mut matched: Vec<PendingWorkItemView> = records
         .iter()
-        .map(|record| enrich(record, repo.as_deref()).into_open_item(project.as_ref().to_string()))
+        .filter(|record| is_open_item(record))
+        .map(|record| {
+            enrich(record, repo.as_deref())
+                .into_pending_work_item_view(project.as_ref().to_string())
+        })
         .filter(|item| item.id == work_id.as_ref())
         .collect();
     match matched.len() {
@@ -78,13 +74,12 @@ where
     }
 }
 
-/// Scans every managed project's open entries for the legacy inline record whose
-/// composed `<project>:<ordinal>` display id matches `id` case-insensitively.
+/// Finds an inline `<project>:<ordinal>` id case-insensitively across managed projects.
 fn find_inline_open_item<S>(
     store: &S,
     projects: &ProjectRegistry,
     requested: &str,
-) -> Result<OpenItem, FindPendingWorkError>
+) -> Result<PendingWorkItemView, FindPendingWorkError>
 where
     S: AppDbStore<PendingWorkItem>,
 {
@@ -93,7 +88,11 @@ where
             .list(project)
             .map_err(|error| FindPendingWorkError::ReadStore(Box::new(error)))?;
         for record in records {
-            let item = enrich(&record, repo).into_open_item(project.as_ref().to_string());
+            if !is_open_item(&record) {
+                continue;
+            }
+            let item =
+                enrich(&record, repo).into_pending_work_item_view(project.as_ref().to_string());
             if item.format == "legacy" && item.id.eq_ignore_ascii_case(requested) {
                 return Ok(item);
             }
@@ -104,21 +103,19 @@ where
     })
 }
 
-#[cqrsy::handler(query)]
-#[expect(
-    clippy::needless_pass_by_value,
-    reason = "the cqrsy find operation owns its request by contract"
-)]
+#[cqrsy::query]
 pub fn execute(
-    query: FindPendingWork,
+    query: &FindPendingWork,
     store: &impl AppDbStore<PendingWorkItem>,
     projects: &ProjectRegistry,
-) -> Result<OpenItem, FindPendingWorkError> {
+) -> Result<PendingWorkItemView, FindPendingWorkError> {
     find_open_item(store, projects, &query.id)
 }
 
 #[cfg(test)]
 mod tests {
+    use std::assert_matches;
+
     use pwf_domain::pending_work::{
         ProjectName, ProjectRegistry, Timestamp, WorkItemId, WorkItemStatus,
     };
@@ -166,7 +163,10 @@ mod tests {
             body: "do the legacy thing".to_string(),
             source: "do the legacy thing".to_string(),
             locator: "/notes/pwf/pwf.md".to_string(),
-            placement: None,
+            placement: Some(IndexPlacement {
+                index_path: "/notes/pwf/pwf.md".to_string(),
+                line: ordinal,
+            }),
             materialization: Materialization::InlineLegacy,
         }
     }
@@ -185,8 +185,8 @@ mod tests {
         store: &InMemoryStore,
         projects: &ProjectRegistry,
         id: &str,
-    ) -> Result<pwf_domain::pending_work::OpenItem, FindPendingWorkError> {
-        execute(FindPendingWork { id: id.to_string() }, store, projects)
+    ) -> Result<pwf_domain::pending_work::PendingWorkItemView, FindPendingWorkError> {
+        execute(&FindPendingWork { id: id.to_string() }, store, projects)
     }
 
     #[test]
@@ -253,6 +253,28 @@ mod tests {
         let error = find(&store, &projects, "PWF-0001").unwrap_err();
 
         assert!(matches!(error, FindPendingWorkError::AmbiguousId { .. }));
+    }
+
+    #[test]
+    fn find_rejects_closed_and_unlinked_active_records() {
+        let done = PendingWorkItem {
+            status: WorkItemStatus::Done,
+            placement: None,
+            ..record("PWF-0001")
+        };
+        let unlinked_active = PendingWorkItem {
+            placement: None,
+            ..record("PWF-0002")
+        };
+        let store = InMemoryStore::default().with_project("pwf", vec![done, unlinked_active]);
+        let projects = registry(&[("pwf", "PWF")]);
+
+        for id in ["PWF-0001", "PWF-0002"] {
+            assert_matches!(
+                find(&store, &projects, id),
+                Err(FindPendingWorkError::ItemNotFound { id: missing }) if missing == id
+            );
+        }
     }
 
     #[test]

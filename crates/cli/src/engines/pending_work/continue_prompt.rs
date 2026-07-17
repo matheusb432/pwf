@@ -1,27 +1,20 @@
-// Builders for the "continue" task prompts. Relocated from the route word-grammar
-// (PWF-0034) so they survive only as explicit `add` flags. The output strings are
-// asserted byte-for-byte by Rust tests — do not reword them casually.
-
 use super::{
     handoff_query::newest_handoff,
     naming::pathdiff_forward,
     text::{get_title_from_continue_path, handoff_title_from_path},
 };
 
-/// `(title, prompt)` for `add <project> --continue-handoff`: continue the repo's
-/// newest handoff. `repo` is the project's mapped repo root.
+/// Builds a title and prompt from the newest handoff under `repo`.
 pub(super) fn continue_handoff_prompt(
     repo: &str,
 ) -> Result<(String, String), super::errors::PendingWorkError> {
     let handoff = newest_handoff(repo)?;
-    let rel = pathdiff_forward(repo, &handoff); // forward-slash relative path
+    let rel = pathdiff_forward(repo, &handoff);
     let title = handoff_title_from_path(&handoff.to_string_lossy());
     let prompt = format!("Continue the handoff at @{rel}.");
     Ok((title, prompt))
 }
 
-/// `(title, prompt)` for `add <project> --continue <path>`: continue the plan at
-/// `path`.
 pub(super) fn continue_plan_prompt(project_name: &str, path: &str) -> (String, String) {
     let title = get_title_from_continue_path(project_name, path);
     let prompt = format!("continue the plan at {path}");

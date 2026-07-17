@@ -1,18 +1,12 @@
-//! Terminal color policy + a shared ANSI paint helper, used by anything that
-//! renders human-facing confirmation/outcome text (`session` dispatch
-//! outcomes, `add` confirmations). ANSI is gated by an explicit `on` bool
-//! resolved once at the edge (`use_color`) so callers stay unit-testable.
-
 use anstyle::{Ansi256Color, Style};
 
 use crate::cli::ColorChoice;
 
-/// A common "orange" in the 256-color palette (no orange in the basic 16).
-/// Used for task ids in list output (`render_list_item`).
+/// Provides the orange palette entry used for list item identifiers.
 pub(in crate::engines::pending_work) const ID_ORANGE: Ansi256Color = Ansi256Color(208);
 
-/// Resolve the effective color setting once, at the edge. `NO_COLOR` wins;
-/// `CLICOLOR_FORCE` forces on; `Auto` falls back to stdout TTY detection.
+/// Resolves color at the CLI edge. `NO_COLOR` takes precedence over `CLICOLOR_FORCE`; `Auto` checks
+/// stdout.
 pub(in crate::engines::pending_work) fn use_color(choice: ColorChoice) -> bool {
     use std::io::IsTerminal;
     if std::env::var_os("NO_COLOR").is_some() {
@@ -28,7 +22,7 @@ pub(in crate::engines::pending_work) fn use_color(choice: ColorChoice) -> bool {
     }
 }
 
-/// Bold + `color`; degrades to Markdown `**bold**` when `on` is false.
+/// Applies bold ANSI color, or Markdown bold when color is disabled.
 pub(in crate::engines::pending_work) fn paint(
     text: &str,
     color: impl Into<anstyle::Color>,
@@ -50,7 +44,6 @@ mod tests {
     #[test]
     fn use_color_never_returns_false() {
         assert!(!use_color(ColorChoice::Never));
-        // Auto/Always depend on env/TTY and are not asserted here.
     }
 
     #[test]

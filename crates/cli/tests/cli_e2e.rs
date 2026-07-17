@@ -1,6 +1,4 @@
-//! Behavior-level checks of the built binary (clap surface), per the
-//! rust-cli-tooling testing matrix: exit codes, that the retired legacy flag
-//! surface now errors, and canonical-only flags.
+//! Checks the built binary's arguments, output, exit codes, and persisted effects.
 
 use std::fs;
 
@@ -70,7 +68,7 @@ fn migrate_fixture(cfg: &std::path::Path) {
     }
 }
 
-/// A staged notes dir with one open item + its config.json.
+/// Stages one open item and its config.
 fn staged() -> (TempDir, std::path::PathBuf) {
     let dir = TempDir::new().unwrap();
     let notes = dir.path().join("notes");
@@ -134,9 +132,7 @@ fn staged_tagged_items() -> (TempDir, std::path::PathBuf) {
     finish_fixture(dir, cfg)
 }
 
-/// Like `staged()`, but with a second open item `GLP-0002` so `--prereq` can point at
-/// a distinct valid id. Kept separate from `staged()` to avoid skewing item counts in
-/// the cap/list tests that assume a single seeded item.
+/// Stages a second item for prerequisite tests without changing single-item fixtures.
 fn staged_two() -> (TempDir, std::path::PathBuf) {
     let (dir, cfg) = staged();
     let proj = dir.path().join("notes").join("glep-shimeji");
@@ -153,10 +149,7 @@ fn staged_two() -> (TempDir, std::path::PathBuf) {
     finish_fixture(dir, cfg)
 }
 
-/// Two items whose `created:` order is the *reverse* of their id-suffix order
-/// (GLP-0001 is created later than GLP-0002) — distinguishes `--order created`
-/// from `--order id` in a way `staged_two()` can't, since there id and created
-/// order agree.
+/// Stages two items whose creation and ID orders disagree.
 fn staged_two_diverging_created() -> (TempDir, std::path::PathBuf) {
     let dir = TempDir::new().unwrap();
     let notes = dir.path().join("notes");
@@ -189,12 +182,7 @@ fn staged_two_diverging_created() -> (TempDir, std::path::PathBuf) {
     finish_fixture(dir, cfg)
 }
 
-/// Two *different* projects: `config-handler` (CFG-0001, created earlier) and
-/// `glep-shimeji` (GLP-0099, created later). "config-handler" sorts
-/// alphabetically *before* "glep-shimeji" — so a project-grouped default would
-/// still put CFG-0001 first, while a flat created-desc default puts GLP-0099
-/// (the newer item) first. The two predictions diverge, distinguishing "does
-/// the default group by project" from "does it order by created date".
+/// Stages two projects whose project-name and creation-date orders disagree.
 fn staged_two_projects_diverging_created() -> (TempDir, std::path::PathBuf) {
     let dir = TempDir::new().unwrap();
     let notes = dir.path().join("notes");
@@ -234,8 +222,145 @@ fn staged_two_projects_diverging_created() -> (TempDir, std::path::PathBuf) {
     finish_fixture(dir, cfg)
 }
 
-/// Like `staged()`, but maps glep-shimeji at a real repo dir holding one handoff
-/// note — needed by `--continue-handoff`, which reads `<repo>/docs/handoffs/`.
+/// Stages mixed lifecycle records across two managed projects.
+fn status_fixture_stage() -> (TempDir, std::path::PathBuf) {
+    let dir = TempDir::new().unwrap();
+    let notes = dir.path().join("notes");
+    let project_glp = notes.join("glep-shimeji");
+    let project_cfg = notes.join("config-handler");
+    let repo_glp = dir.path().join("repo-glp");
+    let repo_cfg = dir.path().join("repo-cfg");
+    fs::create_dir_all(&project_glp).unwrap();
+    fs::create_dir_all(&project_cfg).unwrap();
+    fs::create_dir_all(&repo_glp).unwrap();
+    fs::create_dir_all(&repo_cfg).unwrap();
+
+    for (directory, id, status, title, project, created) in [
+        (
+            &project_glp,
+            "GLP-0001",
+            "active",
+            "active default",
+            "glep-shimeji",
+            "2026-07-01",
+        ),
+        (
+            &project_glp,
+            "GLP-0002",
+            "active",
+            "active human",
+            "glep-shimeji",
+            "2026-07-02",
+        ),
+        (
+            &project_glp,
+            "GLP-0003",
+            "done",
+            "done human linked",
+            "glep-shimeji",
+            "2026-07-03",
+        ),
+        (
+            &project_glp,
+            "GLP-0004",
+            "done",
+            "done unlinked",
+            "glep-shimeji",
+            "2026-07-04",
+        ),
+        (
+            &project_glp,
+            "GLP-0005",
+            "cancelled",
+            "cancelled unlinked",
+            "glep-shimeji",
+            "2026-07-05",
+        ),
+        (
+            &project_glp,
+            "GLP-0006",
+            "active",
+            "active orphan",
+            "glep-shimeji",
+            "2026-07-06",
+        ),
+        (
+            &project_cfg,
+            "CFG-0001",
+            "done",
+            "cfg done unlinked",
+            "config-handler",
+            "2026-07-07",
+        ),
+        (
+            &project_cfg,
+            "CFG-0002",
+            "active",
+            "cfg active default",
+            "config-handler",
+            "2026-07-08",
+        ),
+        (
+            &project_cfg,
+            "CFG-0003",
+            "cancelled",
+            "cfg cancelled unlinked",
+            "config-handler",
+            "2026-07-09",
+        ),
+    ] {
+        fs::write(
+            directory.join(format!("{id}.md")),
+            format!(
+                "---\nid: {id}\nstatus: {status}\ntitle: {title}\nproject: {project}\ncreated: {created}\n---\n\nrun {title}\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    fs::write(
+        project_glp.join("glep-shimeji.md"),
+        "- [ ] [[GLP-0001|active default]]\n\n## Human\n\n- [ ] [[GLP-0002|active human]]\n- [x] [[GLP-0003|done human linked]] ✅ 2026-07-03\n",
+    )
+    .unwrap();
+    fs::write(
+        project_cfg.join("config-handler.md"),
+        "- [ ] [[CFG-0002|cfg active default]]\n",
+    )
+    .unwrap();
+
+    let cfg = dir.path().join("cfg.json");
+    fs::write(
+        &cfg,
+        format!(
+            r#"{{ "notesDir": {:?}, "projects": {{ "config-handler": {:?}, "glep-shimeji": {:?} }}, "prefixes": {{ "config-handler": "CFG", "glep-shimeji": "GLP" }} }}"#,
+            notes.to_string_lossy(),
+            repo_cfg.to_string_lossy(),
+            repo_glp.to_string_lossy()
+        ),
+    )
+    .unwrap();
+    finish_fixture(dir, cfg)
+}
+
+fn status_command_output(cfg: &std::path::Path, args: &[&str]) -> std::process::Output {
+    let output = pwf()
+        .args(args)
+        .arg("--config-path")
+        .arg(cfg)
+        .env_remove("CLICOLOR_FORCE")
+        .env_remove("NO_COLOR")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    output
+}
+
+/// Stages a real repository with one handoff for `--continue-handoff`.
 fn staged_with_handoff() -> (TempDir, std::path::PathBuf) {
     let dir = TempDir::new().unwrap();
     let notes = dir.path().join("notes");
@@ -263,11 +388,7 @@ fn staged_with_handoff() -> (TempDir, std::path::PathBuf) {
     finish_fixture(dir, cfg)
 }
 
-/// Fresh project (no pre-existing items) mapped to a real, un-git-initialized
-/// repo dir with an empty `docs/handoffs/` — for the `--tag handoff` mirror
-/// round trip (PWF-0117 final-review item 7): `add --tag handoff` scaffolds a
-/// new handoff, `done`/`reopen` mirror onto it, and none of that needs or
-/// should touch `.git`.
+/// Stages a fresh repository without Git metadata for the handoff lifecycle round trip.
 fn staged_for_handoff_mirror_roundtrip() -> (TempDir, std::path::PathBuf) {
     let dir = TempDir::new().unwrap();
     let notes = dir.path().join("notes");
@@ -289,13 +410,11 @@ fn staged_for_handoff_mirror_roundtrip() -> (TempDir, std::path::PathBuf) {
     finish_fixture(dir, cfg)
 }
 
-/// Read the glep-shimeji index under a staged notes dir (TempDir root).
 fn read_index(dir: &TempDir) -> String {
     fs::read_to_string(dir.path().join("notes/glep-shimeji/glep-shimeji.md")).unwrap()
 }
 
-/// Like `staged()`, but seeds `count` open items (GLP-0001..=GLP-{count}) so the
-/// default list cap (10) actually truncates (PWF-0020).
+/// Stages `count` open items for list-cap tests.
 fn staged_many(count: usize) -> (TempDir, std::path::PathBuf) {
     let dir = TempDir::new().unwrap();
     let notes = dir.path().join("notes");
@@ -332,7 +451,6 @@ fn add_positional_quoted_prompt_creates_item() {
         .arg(&cfg)
         .assert()
         .success();
-    // staged() already holds GLP-0001, so the new item is GLP-0002.
     assert!(d.path().join("notes/glep-shimeji/GLP-0002.md").exists());
     assert!(read_index(&d).contains("[[GLP-0002]]"), "index not updated");
 }
@@ -346,7 +464,6 @@ fn add_confirmation_leads_with_added_task_prefix_and_no_blank_line() {
         .assert()
         .success();
     let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
-    // staged() already holds GLP-0001, so the new item is GLP-0002.
     assert!(
         stdout.starts_with("Added pwf task: **GLP-0002 glep-shimeji ::"),
         "got: {stdout}"
@@ -495,7 +612,6 @@ fn bare_words_route_errors_and_writes_nothing() {
         .assert()
         .failure()
         .stderr(contains("pwf add"));
-    // The footgun is dead: no item was written.
     assert!(!d.path().join("notes/glep-shimeji/GLP-0002.md").exists());
 }
 
@@ -598,6 +714,180 @@ fn ls_alias_matches_list_output() {
 }
 
 #[test]
+fn e2e_list_status_default_matches_explicit_active() {
+    let (_dir, cfg) = status_fixture_stage();
+    let default = status_command_output(&cfg, &["list"]);
+    let active = status_command_output(&cfg, &["list", "--status", "active"]);
+    let stdout = String::from_utf8(default.stdout.clone()).unwrap();
+
+    assert_eq!(default.stdout, active.stdout);
+    assert!(stdout.contains("GLP-0001 :: active default"), "{stdout}");
+    assert!(
+        stdout.contains("CFG-0002 :: cfg active default"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("GLP-0002"), "{stdout}");
+    assert!(!stdout.contains("GLP-0006"), "{stdout}");
+    assert!(!stdout.contains("(active)"), "{stdout}");
+}
+
+#[test]
+fn e2e_list_status_exact_filters_and_cancelled_alias_match() {
+    let (_dir, cfg) = status_fixture_stage();
+    let done = status_command_output(&cfg, &["list", "--status", "done"]);
+    let done_stdout = String::from_utf8(done.stdout).unwrap();
+    assert!(done_stdout.contains("CFG-0001 :: cfg done unlinked"));
+    assert!(done_stdout.contains("GLP-0004 :: done unlinked"));
+    assert!(!done_stdout.contains("GLP-0003"), "{done_stdout}");
+    assert!(!done_stdout.contains("active default"), "{done_stdout}");
+    assert!(!done_stdout.contains("cancelled unlinked"), "{done_stdout}");
+
+    let list = status_command_output(&cfg, &["list", "--status", "cancelled"]);
+    let alias = status_command_output(&cfg, &["ls", "--status", "cancelled"]);
+    let cancelled_stdout = String::from_utf8(list.stdout.clone()).unwrap();
+    assert_eq!(list.stdout, alias.stdout);
+    assert!(cancelled_stdout.contains("CFG-0003 :: cfg cancelled unlinked"));
+    assert!(cancelled_stdout.contains("GLP-0005 :: cancelled unlinked"));
+    assert!(!cancelled_stdout.contains("done unlinked"));
+}
+
+#[test]
+fn e2e_list_status_all_annotates_every_lifecycle_and_hides_active_orphan() {
+    let (_dir, cfg) = status_fixture_stage();
+    let output = status_command_output(&cfg, &["list", "--status", "all", "-n", "0"]);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    assert!(stdout.contains("GLP-0001 :: active default (active)"));
+    assert!(stdout.contains("GLP-0004 :: done unlinked (done)"));
+    assert!(stdout.contains("GLP-0005 :: cancelled unlinked (cancelled)"));
+    assert!(!stdout.contains("GLP-0006"), "{stdout}");
+    assert!(!stdout.contains('\u{1b}'), "{stdout}");
+}
+
+#[test]
+fn e2e_list_status_project_routes_keep_project_scope() {
+    let (_dir, cfg) = status_fixture_stage();
+    let done = status_command_output(&cfg, &["glep-shimeji", "--status", "done"]);
+    let done_stdout = String::from_utf8(done.stdout).unwrap();
+    assert!(done_stdout.contains("GLP-0004 :: done unlinked"));
+    assert!(!done_stdout.contains("GLP-0003"), "{done_stdout}");
+    assert!(!done_stdout.contains("CFG-"), "{done_stdout}");
+
+    let shorthand = status_command_output(&cfg, &["glep-shimeji", "--status", "all"]);
+    let canonical = status_command_output(
+        &cfg,
+        &["list", "--project", "glep-shimeji", "--status", "all"],
+    );
+    assert_eq!(shorthand.stdout, canonical.stdout);
+}
+
+#[test]
+fn e2e_list_status_all_composes_with_all_sections() {
+    let (_dir, cfg) = status_fixture_stage();
+    let output = status_command_output(&cfg, &["list", "--status", "all", "--all", "-n", "0"]);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    assert!(stdout.contains("Human\n"), "{stdout}");
+    assert!(stdout.contains("GLP-0002 :: active human (active)"));
+    assert!(stdout.contains("GLP-0003 :: done human linked (done)"));
+}
+
+#[test]
+fn e2e_list_status_filter_applies_before_cap_and_hidden_count() {
+    let (_dir, cfg) = status_fixture_stage();
+    let output = status_command_output(&cfg, &["list", "--status", "done", "-n", "1"]);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    assert!(stdout.contains("CFG-0001 :: cfg done unlinked"), "{stdout}");
+    assert!(!stdout.contains("GLP-0004"), "{stdout}");
+    assert!(stdout.contains("1 more"), "{stdout}");
+    assert!(!stdout.contains("active orphan"), "{stdout}");
+}
+
+#[test]
+fn e2e_list_status_rejects_repeated_and_unknown_values() {
+    let (_dir, cfg) = status_fixture_stage();
+    pwf()
+        .args(["list", "--status", "done", "--status", "active"])
+        .arg("--config-path")
+        .arg(&cfg)
+        .assert()
+        .failure()
+        .stderr(contains("cannot be used multiple times"));
+    pwf()
+        .args(["list", "--status", "paused"])
+        .arg("--config-path")
+        .arg(&cfg)
+        .assert()
+        .failure()
+        .stderr(contains("invalid value 'paused'"));
+}
+
+#[test]
+fn e2e_list_status_annotations_follow_color_environment_precedence() {
+    let (_dir, cfg) = status_fixture_stage();
+    let colored = pwf()
+        .args(["list", "--status", "all", "-n", "0"])
+        .arg("--config-path")
+        .arg(&cfg)
+        .env("CLICOLOR_FORCE", "1")
+        .env_remove("NO_COLOR")
+        .output()
+        .unwrap();
+    assert!(colored.status.success());
+    let colored_stdout = String::from_utf8(colored.stdout).unwrap();
+    assert!(
+        colored_stdout.contains("\u{1b}[38;5;208mactive"),
+        "{colored_stdout}"
+    );
+    assert!(
+        colored_stdout.contains("\u{1b}[32mdone"),
+        "{colored_stdout}"
+    );
+    assert!(
+        colored_stdout.contains("\u{1b}[31mcancelled"),
+        "{colored_stdout}"
+    );
+
+    let plain = pwf()
+        .args(["list", "--status", "all", "-n", "0"])
+        .arg("--config-path")
+        .arg(&cfg)
+        .env("CLICOLOR_FORCE", "1")
+        .env("NO_COLOR", "1")
+        .output()
+        .unwrap();
+    assert!(plain.status.success());
+    let plain_stdout = String::from_utf8(plain.stdout).unwrap();
+    assert!(!plain_stdout.contains('\u{1b}'), "{plain_stdout}");
+    assert!(plain_stdout.contains("(active)"));
+    assert!(plain_stdout.contains("(done)"));
+    assert!(plain_stdout.contains("(cancelled)"));
+}
+
+#[test]
+fn e2e_list_status_long_separates_lifecycle_and_launch_metadata() {
+    let (_dir, cfg) = status_fixture_stage();
+    let active = status_command_output(&cfg, &["list", "--status", "active", "--long"]);
+    let active_stdout = String::from_utf8(active.stdout).unwrap();
+    assert!(
+        active_stdout.contains("  status: active\n"),
+        "{active_stdout}"
+    );
+    assert!(
+        active_stdout.contains("  launch: READY\n"),
+        "{active_stdout}"
+    );
+
+    let done = status_command_output(&cfg, &["list", "--status", "done", "--long"]);
+    let done_stdout = String::from_utf8(done.stdout).unwrap();
+    assert!(done_stdout.contains("  status: done\n"), "{done_stdout}");
+    assert!(!done_stdout.contains("launch:"), "{done_stdout}");
+    assert!(!done_stdout.contains("issue:"), "{done_stdout}");
+    assert!(!done_stdout.contains("fix:"), "{done_stdout}");
+}
+
+#[test]
 fn list_default_caps_and_shows_more() {
     let (_d, cfg) = staged_many(12);
     pwf()
@@ -649,8 +939,6 @@ fn e2e_list_default_orders_by_created_desc_not_id() {
         .stdout
         .clone();
     let stdout = String::from_utf8(out).unwrap();
-    // GLP-0001 was created later, so the created-desc default puts it first
-    // even though its id suffix is lower.
     assert!(
         stdout.find("GLP-0001").unwrap() < stdout.find("GLP-0002").unwrap(),
         "expected newest-created (GLP-0001) first: {stdout}"
@@ -669,7 +957,6 @@ fn e2e_list_order_id_desc_reproduces_legacy_ordering() {
         .stdout
         .clone();
     let stdout = String::from_utf8(out).unwrap();
-    // Same fixture, but id-desc puts GLP-0002 first regardless of created dates.
     assert!(
         stdout.find("GLP-0002").unwrap() < stdout.find("GLP-0001").unwrap(),
         "expected highest id (GLP-0002) first: {stdout}"
@@ -733,8 +1020,6 @@ fn e2e_list_order_rejects_unknown_token() {
 
 #[test]
 fn e2e_list_default_across_all_projects_is_flat_by_created_not_grouped_by_project() {
-    // Reproduces the reported bug: bare `pwf list`/`pwf ls` across multiple
-    // projects must order by created date first, not group by project name.
     let (_d, cfg) = staged_two_projects_diverging_created();
     let out = pwf()
         .args(["list", "--config-path"])
@@ -765,8 +1050,6 @@ fn e2e_list_order_project_id_reproduces_legacy_grouped_default() {
 
 #[test]
 fn e2e_route_project_shorthand_ignores_created_stays_id_desc() {
-    // AC-0004.6: `pwf <project>` (the word-router) has no --order flag and must
-    // keep the legacy id-descending order even though GLP-0001 was created later.
     let (_d, cfg) = staged_two_diverging_created();
     let out = pwf()
         .args(["glep-shimeji", "--config-path"])
@@ -782,8 +1065,6 @@ fn e2e_route_project_shorthand_ignores_created_stays_id_desc() {
 
 #[test]
 fn handoff_new_verb_retired_hints_add() {
-    // PWF-0117: `handoff new` was renamed to `handoff add`; the pre-parse guard
-    // must reject it before clap ever sees it, with a hint at the replacement.
     pwf()
         .args(["handoff", "new", "--title", "x"])
         .assert()
@@ -793,9 +1074,6 @@ fn handoff_new_verb_retired_hints_add() {
 
 #[test]
 fn handoff_done_cancel_reopen_refresh_verbs_are_retired() {
-    // PWF-0117: handoff-tagged pw mutations now mirror through the pw verbs
-    // themselves, so `handoff done|cancel|reopen|refresh` are retired before
-    // clap ever sees them — each gets a curated hint, not a clap parse error.
     for (verb, hint) in [
         ("done", "pwf done --id"),
         ("cancel", "pwf cancel --id"),
@@ -813,9 +1091,7 @@ fn handoff_done_cancel_reopen_refresh_verbs_are_retired() {
 
 #[test]
 fn retired_legacy_flag_surface_errors() {
-    // The PowerShell-style surface was removed in v2.1: `-Action`/`-ConfigPath`
-    // no longer parse. `-Action list` is treated as router words, so the run
-    // fails (unknown project) rather than silently listing.
+    // Legacy `-Action` tokens route as words and must never trigger a list.
     let (_d, cfg) = staged();
     pwf()
         .args(["-Action", "list", "-ConfigPath"])
@@ -826,7 +1102,6 @@ fn retired_legacy_flag_surface_errors() {
 
 #[test]
 fn canonical_only_prereq_flag_works() {
-    // `--prereq` is a canonical CLI-only surface; cover it through the binary.
     let (_d, cfg) = staged();
     pwf()
         .args([
@@ -842,10 +1117,6 @@ fn canonical_only_prereq_flag_works() {
         .success();
 }
 
-// ── PWF-0031: post-port e2e coverage (assert file CONTENTS, not just exit) ──────
-// The in-process tests in tests/pending_work.rs mirror these; here we run the binary.
-
-/// Read a staged item file under the glep-shimeji project.
 fn read_item(dir: &TempDir, id: &str) -> String {
     fs::read_to_string(dir.path().join(format!("notes/glep-shimeji/{id}.md"))).unwrap()
 }
@@ -1104,14 +1375,11 @@ fn e2e_update_closed_item_rejects_tag_edits_without_writing() {
     assert_eq!(fs::read_to_string(item_path).unwrap(), before);
 }
 
-/// Extract the `title: ` frontmatter value from an item file.
 fn title_of(item: &str) -> &str {
     item.lines()
         .find_map(|l| l.strip_prefix("title: "))
         .expect("title frontmatter present")
 }
-
-// 1. `update` verb — zero e2e coverage today (mirrors pending_work.rs:862-993).
 
 #[test]
 fn e2e_update_prompt_rewrites_body_and_preserves_frontmatter() {
@@ -1131,7 +1399,6 @@ fn e2e_update_prompt_rewrites_body_and_preserves_frontmatter() {
         .assert()
         .success();
     let item = read_item(&d, "GLP-0001");
-    // Body is the Goals template, one bullet per slash lane.
     assert!(
         item.contains("## Goals\n- a\n- b"),
         "body not Goals-wrapped: {item}"
@@ -1146,12 +1413,10 @@ fn e2e_update_prompt_rewrites_body_and_preserves_frontmatter() {
         "done when: {item}"
     );
     assert!(!item.contains("add toggle"), "old body replaced: {item}");
-    // Frontmatter preserved untouched.
     assert!(item.contains("status: active"));
     assert!(item.contains("title: tray gui"));
     assert!(item.contains("project: glep-shimeji"));
     assert!(item.contains("created: 2026-01-01"));
-    // Atomic write leaves no .bak clutter.
     assert!(!d.path().join("notes/glep-shimeji/GLP-0001.md.bak").exists());
 }
 
@@ -1222,8 +1487,6 @@ fn e2e_update_unknown_id_fails() {
         .failure();
 }
 
-// 2. Rich prompt lanes via the binary.
-
 #[test]
 fn e2e_add_rich_prompt_lanes_render_sections() {
     let (d, cfg) = staged();
@@ -1238,7 +1501,6 @@ fn e2e_add_rich_prompt_lanes_render_sections() {
         .assert()
         .success();
     let item = read_item(&d, "GLP-0002");
-    // Title is the lead clause, lowercased, cut at the first lane marker.
     assert_eq!(title_of(&item), "lead clause", "title not cut: {item}");
     assert!(
         item.contains("## Goals\n- lead clause\n- goal two\n- goal three"),
@@ -1285,12 +1547,9 @@ fn e2e_add_marker_first_prompt_defaults_title_without_body_sentinel() {
     );
 }
 
-// 3. Title cap end-to-end (mirrors pending_work.rs:134-189).
-
 #[test]
 fn e2e_add_caps_long_title_without_ampersand() {
     let (d, cfg) = staged();
-    // >120 chars, no `&`; the tail "smallest first" must be dropped from the title.
     let long = "Continue the PowerShell to Rust port into the cfgtool CLI using the shipped gaming domain as the template porting smallest first";
     pwf()
         .args(["add", "glep-shimeji", long, "--config-path"])
@@ -1299,7 +1558,7 @@ fn e2e_add_caps_long_title_without_ampersand() {
         .success();
     let item = read_item(&d, "GLP-0002");
     let title = title_of(&item);
-    // Cap appends `…`, so the bound is MAX_TITLE_CHARS + 1 = 81, not exactly 80.
+    // The ellipsis adds one character to the 80-character title cap.
     assert!(
         title.chars().count() <= 81,
         "title must stay bounded, got {}: {title}",
@@ -1313,14 +1572,11 @@ fn e2e_add_caps_long_title_without_ampersand() {
         !title.contains("smallest first"),
         "tail dropped from title: {title}"
     );
-    // The dropped tail still lives in the Goals body.
     assert!(
         item.contains("smallest first"),
         "body keeps full prompt: {item}"
     );
 }
-
-// 4. Lowercase normalization end-to-end (guards commit 063304b) — add + update.
 
 #[test]
 fn e2e_add_lowercases_inferred_title() {
@@ -1377,12 +1633,8 @@ fn e2e_update_lowercases_explicit_title() {
     assert_eq!(title_of(&item), "upper thing", "explicit update: {item}");
 }
 
-// 5. Done-queue rotation via `done` (mirrors pending_work.rs:720-833).
-
 #[test]
 fn e2e_done_rotates_done_queue_past_general_cap() {
-    // staged_many(7): seven open items. Close all seven; the General cap is 6, so
-    // the oldest done entry (GLP-0001) is evicted past the cap.
     let (d, cfg) = staged_many(7);
     for n in 1..=7 {
         let id = format!("GLP-{n:04}");
@@ -1393,19 +1645,16 @@ fn e2e_done_rotates_done_queue_past_general_cap() {
             .success();
     }
     let index = read_index(&d);
-    // The most-recently checked item is marked done in place with the date.
     assert!(
         index.contains("- [x] [[GLP-0007]] ✅ 2026-01-01"),
         "checked item not marked in place: {index}"
     );
-    // Only `cap` (6) done entries remain; the oldest was evicted.
     assert_eq!(
         index.matches("- [x]").count(),
         6,
         "cap not enforced: {index}"
     );
     assert!(!index.contains("GLP-0001"), "oldest not evicted: {index}");
-    // Evicted note remains in place; atomic writes leave no .bak.
     assert!(d.path().join("notes/glep-shimeji/GLP-0001.md").exists());
     assert!(!d.path().join("notes/glep-shimeji/_archive").exists());
     assert!(
@@ -1414,8 +1663,6 @@ fn e2e_done_rotates_done_queue_past_general_cap() {
             .exists()
     );
 }
-
-// 6. Prereq frontmatter content end-to-end (mirrors pending_work.rs:256-343).
 
 #[test]
 fn e2e_add_with_prereq_writes_validated_frontmatter() {
@@ -1441,8 +1688,6 @@ fn e2e_add_with_prereq_writes_validated_frontmatter() {
 
 #[test]
 fn e2e_add_with_prereq_shorthand_normalizes_to_canonical() {
-    // PWF-0102: `--prereq` inherits the same id-shorthand collapse `--id` accepts
-    // (BR-0010) — a glued/unpadded reference resolves and is stored canonically.
     let (d, cfg) = staged();
     pwf()
         .args([
@@ -1512,8 +1757,6 @@ fn e2e_add_rejects_unknown_prereq_without_writing_item() {
         "failed add wrote a new item"
     );
 }
-
-// 6b. `update --prereq`/`--clear-prereq` (PWF-0042) — append/clear semantics.
 
 #[test]
 fn e2e_update_prereq_writes_validated_frontmatter() {
@@ -1623,7 +1866,7 @@ fn e2e_list_long_shows_effort_line() {
 #[test]
 fn e2e_update_prereq_appends_and_dedups() {
     let (d, cfg) = staged_two();
-    // Seed GLP-0002 with an existing prereq, then append an overlapping set.
+    // Seed an existing prerequisite to exercise append deduplication.
     let proj = d.path().join("notes/glep-shimeji");
     fs::write(
         proj.join("GLP-0002.md"),
@@ -1643,7 +1886,6 @@ fn e2e_update_prereq_appends_and_dedups() {
         .assert()
         .success();
     let item = read_item(&d, "GLP-0002");
-    // GLP-0001 already present is the only valid append target; it must not duplicate.
     assert_eq!(
         item.matches("[[GLP-0001]]").count(),
         1,
@@ -1674,7 +1916,6 @@ fn e2e_update_clear_prereq_empties_it() {
         .success();
     let item = read_item(&d, "GLP-0002");
     assert!(!item.contains("prereq:"), "prereq line lingered: {item}");
-    // Other frontmatter intact.
     assert!(item.contains("status: active"));
     assert!(item.contains("title: second"));
     assert!(item.contains("created: 2026-01-02"));
@@ -1703,7 +1944,6 @@ fn e2e_update_prereq_rejects_unknown() {
 #[test]
 fn e2e_update_prereq_and_clear_conflict() {
     let (_d, cfg) = staged_two();
-    // clap rejects the mutually-exclusive flags before the engine runs.
     pwf()
         .args([
             "update",
@@ -1719,13 +1959,10 @@ fn e2e_update_prereq_and_clear_conflict() {
         .failure();
 }
 
-// 7. Default section placement end-to-end (mirrors pending_work.rs:192-253).
-
 #[test]
 fn e2e_add_default_section_lands_before_any_header() {
     let (d, cfg) = staged();
-    // Seed a `## ` header so the placement assertion below actually runs: the
-    // default add must land in the top-level General region, above this section.
+    // Seed a section header so the test can distinguish top-level placement.
     let index_path = d.path().join("notes/glep-shimeji/glep-shimeji.md");
     let seeded = format!(
         "{}\n## Future\n- [ ] [[GLP-0099|future thing]]\n",
@@ -1747,8 +1984,6 @@ fn e2e_add_default_section_lands_before_any_header() {
     let header = index.find("## ").expect("no `## ` header in index");
     assert!(item < header, "item not before first header: {index}");
 }
-
-// 8. PWF-0017: commit-range provenance on `done` + the explicit `--review` task.
 
 #[test]
 fn e2e_done_normalizes_mixed_case_id() {
@@ -1822,7 +2057,6 @@ fn e2e_done_commits_repeated_and_comma_join_and_dedup() {
         "repeated commits not joined"
     );
 
-    // Comma form yields the identical joined value.
     let (d2, cfg2) = staged();
     pwf()
         .args([
@@ -1846,7 +2080,6 @@ fn e2e_done_commits_repeated_and_comma_join_and_dedup() {
 
 #[test]
 fn e2e_done_without_commits_writes_no_commits_line() {
-    // Byte-identical default path: no `--commits` ⇒ no `commits:` frontmatter.
     let (d, cfg) = staged();
     pwf()
         .args([
@@ -1887,12 +2120,10 @@ fn e2e_done_review_spawns_human_task_scoped_to_range() {
         .stderr(contains(
             "info: created `## Human` section in glep-shimeji\n",
         ));
-    // The checked item still gains the commits provenance.
     assert!(
         read_item(&d, "GLP-0001").contains("commits: \"a..b\""),
         "checked item missing commits"
     );
-    // A new `## Human` review task is spawned (GLP-0002) with the prepped commands.
     let index = read_index(&d);
     assert!(index.contains("## Human"), "no Human section: {index}");
     let spawned = read_item(&d, "GLP-0002");
@@ -1905,7 +2136,6 @@ fn e2e_done_review_spawns_human_task_scoped_to_range() {
 
 #[test]
 fn e2e_done_review_appends_review_task_as_text() {
-    // done is now text-only (PWF-0059).
     let (_d, cfg) = staged();
     let out = pwf()
         .args([
@@ -1956,10 +2186,7 @@ fn e2e_done_review_without_commits_uses_bare_diff_fallback() {
     );
 }
 
-// 9. resolve --show: markdown emitter (PWF-0059).
-
-/// Stage a single-project notes dir with a custom item file and return (dir, cfg).
-/// The index entry uses the canonical `- [ ] [[<id>|<title>]]` format.
+/// Stages one custom item with a canonical open index link.
 fn staged_with_item(
     project: &str,
     prefix: &str,
@@ -2025,13 +2252,11 @@ fn resolve_show_emits_markdown_with_created_key() {
 
 #[test]
 fn resolve_show_legacy_item_emits_body_only() {
-    // Legacy inline items use the backtick-checkbox format; file_path = None, so
-    // resolve --show falls back to the parsed prompt string (no frontmatter to strip).
+    // Legacy inline items have no note file, so show falls back to their parsed prompt.
     let dir = TempDir::new().unwrap();
     let notes = dir.path().join("notes");
     let proj = notes.join("glep-shimeji");
     fs::create_dir_all(&proj).unwrap();
-    // Inline legacy format: `- [ ] \`session\` <- prompt` (no per-item .md file).
     fs::write(
         proj.join("glep-shimeji.md"),
         "---\nid: glp\ntitle: glep-shimeji\n---\n\n- [ ] `legacy task` <- do the legacy thing\n",
@@ -2046,7 +2271,6 @@ fn resolve_show_legacy_item_emits_body_only() {
         ),
     )
     .unwrap();
-    // Legacy items get ids like "glep-shimeji:1" (ordinal is 1-based).
     let out = pwf()
         .args([
             "resolve",
@@ -2059,14 +2283,13 @@ fn resolve_show_legacy_item_emits_body_only() {
         .assert()
         .success();
     let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
-    // Prompt text emitted.
     assert!(
         stdout.contains("do the legacy thing"),
         "prompt not in output: {stdout}"
     );
 }
 
-/// Stages a single-project notes dir with a closed item and no index entry.
+/// Stages one archived item without an index entry.
 fn staged_with_archived_item(
     project: &str,
     prefix: &str,
@@ -2093,9 +2316,7 @@ fn staged_with_archived_item(
     finish_fixture(dir, cfg)
 }
 
-/// Stage a single-project notes dir with a done item whose note still sits in the
-/// project dir while its index link is checked (`- [x]`), as `done` leaves it until
-/// the done-queue cap evicts its link. Returns (dir, cfg).
+/// Stages a done item whose note remains in place behind a checked index link.
 fn staged_with_done_item(
     project: &str,
     prefix: &str,
@@ -2107,7 +2328,6 @@ fn staged_with_done_item(
     let proj = notes.join(project);
     fs::create_dir_all(&proj).unwrap();
     fs::write(proj.join(format!("{id}.md")), content).unwrap();
-    // Checked link → the index parser skips it, so find_pending_item misses it.
     fs::write(
         proj.join(format!("{project}.md")),
         format!("- [x] [[{id}]] ✅ 2026-06-20\n"),
@@ -2130,8 +2350,6 @@ fn staged_with_done_item(
 
 #[test]
 fn e2e_reopen_flips_done_item_back_to_active_and_restores_index() {
-    // PWF-0054: reopen is the inverse of done — done → active, drop provenance,
-    // flip the done-queue link back to an open `- [ ]`.
     let (dir, cfg) = staged_with_done_item(
         "pwf",
         "PWF",
@@ -2139,7 +2357,6 @@ fn e2e_reopen_flips_done_item_back_to_active_and_restores_index() {
         "---\nid: PWF-0003\nstatus: done\ntitle: just done\nproject: pwf\ncreated: 2026-06-20\ncompleted: 2026-06-20\ncommits: \"a..b\"\n---\n\n## Goals\n- finish it\n",
     );
     pwf()
-        // Lowercase id exercises the case-insensitive match + canonical output.
         .args(["reopen", "--id", "pwf-0003", "--config-path"])
         .arg(&cfg)
         .assert()
@@ -2181,8 +2398,6 @@ fn e2e_reopen_unknown_id_errors() {
 
 #[test]
 fn resolve_show_finds_done_item_still_in_project_dir() {
-    // PWF-0061: a freshly-checked item keeps its note in the project dir but its
-    // index link is `- [x]`, so the parser skips it. resolve must still find it.
     let (_d, cfg) = staged_with_done_item(
         "pwf",
         "PWF",
@@ -2219,8 +2434,6 @@ fn resolve_show_finds_done_item_still_in_project_dir_with_shorthand_id() {
 
 #[test]
 fn resolve_show_finds_archived_done_item() {
-    // PWF-0061: done items are unlinked from the index and parked under `_archive`.
-    // resolve --show must still find them so it shows tasks regardless of status.
     let (_d, cfg) = staged_with_archived_item(
         "pwf",
         "PWF",
@@ -2228,7 +2441,6 @@ fn resolve_show_finds_archived_done_item() {
         "---\nstatus: done\ntitle: finished thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- finished thing\n",
     );
     let out = pwf()
-        // Lowercase id also exercises the case-insensitive archive match.
         .args(["resolve", "--show", "--id", "pwf-0002", "--config-path"])
         .arg(&cfg)
         .assert()
@@ -2314,7 +2526,6 @@ fn id_input_forms_all_resolve_to_the_same_item() {
         "---\nid: PWF-0001\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\nbody\n",
     );
 
-    // Baseline: the canonical --id form.
     let canonical = pwf()
         .args(["resolve", "--id", "PWF-0001", "--config-path"])
         .arg(&cfg)
@@ -2322,11 +2533,10 @@ fn id_input_forms_all_resolve_to_the_same_item() {
         .success();
     let baseline = String::from_utf8(canonical.get_output().stdout.clone()).unwrap();
 
-    // Each shorthand must produce byte-identical output.
     for form in [
-        vec!["resolve", "pwf-0001"], // bare positional, lowercase canonical
-        vec!["resolve", "pwf1"],     // glued + unpadded
-        vec!["resolve", "pwf", "1"], // split two-token
+        vec!["resolve", "pwf-0001"],
+        vec!["resolve", "pwf1"],
+        vec!["resolve", "pwf", "1"],
     ] {
         let out = pwf()
             .args(&form)
@@ -2339,12 +2549,8 @@ fn id_input_forms_all_resolve_to_the_same_item() {
     }
 }
 
-// 9b. show: shorthand alias for `resolve --show` (PWF-0065).
-
 #[test]
 fn show_streams_note_markdown_like_resolve_show() {
-    // `show --id` == `resolve --show --id`: emit the note's full markdown,
-    // including the `created` date.
     let (_d, cfg) = staged_with_item(
         "pwf",
         "PWF",
@@ -2353,7 +2559,6 @@ fn show_streams_note_markdown_like_resolve_show() {
         "---\nid: PWF-0001\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- do the thing\n",
     );
     let out = pwf()
-        // Bare positional id — no `--id` flag.
         .args(["show", "PWF-0001", "--config-path"])
         .arg(&cfg)
         .assert()
@@ -2372,8 +2577,6 @@ fn show_streams_note_markdown_like_resolve_show() {
 
 #[test]
 fn show_finds_archived_done_item_regardless_of_status() {
-    // The alias inherits resolve's status-agnostic lookup: a done item evicted to
-    // `_archive` (no index link) is still found and streamed.
     let (_d, cfg) = staged_with_archived_item(
         "pwf",
         "PWF",
@@ -2381,7 +2584,6 @@ fn show_finds_archived_done_item_regardless_of_status() {
         "---\nstatus: done\ntitle: finished thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- finished thing\n",
     );
     let out = pwf()
-        // Lowercase positional id also exercises the case-insensitive archive match.
         .args(["show", "pwf-0002", "--config-path"])
         .arg(&cfg)
         .assert()
@@ -2456,10 +2658,7 @@ fn show_preserves_raw_lowercase_id_in_not_found_error() {
 
 #[test]
 fn show_without_id_errors_with_clean_usage_hiding_pw_engine() {
-    // `show`'s id is now a shared optional `IdArg`, so a missing id is no longer a
-    // clap usage error — it is the engine-level "--id is required for show." message,
-    // shared across all id-facing verbs. It must still never leak the internal `pw`
-    // engine token the preprocess injects.
+    // Engine-level ID errors must not expose the hidden router token.
     let out = pwf().arg("show").assert().failure();
     let stderr = String::from_utf8(out.get_output().stderr.clone()).unwrap();
     assert!(
@@ -2472,12 +2671,8 @@ fn show_without_id_errors_with_clean_usage_hiding_pw_engine() {
     );
 }
 
-// 10. update --commits: amend provenance, incl. on closed items (PWF-0062).
-
 #[test]
 fn update_commits_amends_done_item_in_project_dir() {
-    // PWF-0062: a closed item (checked `- [x]` link, note still in project dir) is
-    // skipped by find_pending_item; update --commits must still amend its provenance.
     let (_d, cfg) = staged_with_done_item(
         "pwf",
         "PWF",
@@ -2496,7 +2691,6 @@ fn update_commits_amends_done_item_in_project_dir() {
         .arg(&cfg)
         .assert()
         .success();
-    // Verify via resolve --show: the commits line is overwritten, status untouched.
     let out = pwf()
         .args(["resolve", "--show", "--id", "PWF-0003", "--config-path"])
         .arg(&cfg)
@@ -2578,9 +2772,7 @@ fn update_commits_amends_open_item() {
 
 #[test]
 fn update_append_report_attaches_verbatim_report_to_closed_item() {
-    // PWF-0065: a closed item needs a multi-section narrative closeout report;
-    // --append-report must append it verbatim to the body without rerunning the
-    // title/Goals regeneration that --prompt does.
+    // Closed-item reports append verbatim without rerunning body generation.
     let (_d, cfg) = staged_with_done_item(
         "pwf",
         "PWF",
@@ -2598,13 +2790,11 @@ fn update_append_report_attaches_verbatim_report_to_closed_item() {
         .success()
         .stdout(contains("report appended"));
     let note = fs::read_to_string(_d.path().join("notes/pwf/PWF-0003.md")).unwrap();
-    // Body and frontmatter untouched; status stays done (no regeneration).
     assert!(note.contains("status: done"), "status changed: {note}");
     assert!(
         note.contains("## Goals\n\n- ship it\n"),
         "body altered: {note}"
     );
-    // Report appended verbatim — headings, blank lines, and list survive.
     assert!(
         note.contains(
             "### Report\n\n## Outcome\n\nShipped `--append-report`.\n\n## Follow-ups\n\n- write the FSD card\n"
@@ -2652,8 +2842,6 @@ fn update_body_edit_on_closed_item_is_rejected() {
         .failure()
         .stderr(contains("can amend closed item"));
 }
-
-// 10a. update --append/-a: splice lane-syntax bullets into the body (PWF-0090).
 
 #[test]
 fn update_append_splices_bullets_into_an_existing_section() {
@@ -2796,18 +2984,15 @@ fn update_append_on_closed_item_is_rejected() {
         .stderr(contains("can amend closed item"));
 }
 
-// 11. session verb: zellij-independent error surfaces (PWF-0038).
-
-/// Stage a launchable PWF-0001 item with a real repo dir plus a recording `zellij`
-/// stub on a child PATH. Returns the cfg path, the child `PATH`, and the argv log
-/// the stub appends to — the shared rig for the session argv-capture e2e tests.
+/// Stages a launchable item and a recording `zellij` stub on the child process PATH.
+/// Returns the config, child PATH, and argv log.
 #[cfg(unix)]
 fn stage_session_with_zellij_stub(
     dir: &TempDir,
 ) -> (std::path::PathBuf, String, std::path::PathBuf) {
     use std::os::unix::fs::PermissionsExt;
 
-    // A REAL repo dir: the session preflight RepoMissing-rejects a nonexistent repo.
+    // Session preflight requires the mapped repository to exist.
     let notes = dir.path().join("notes");
     let proj = notes.join("pwf");
     let repo = dir.path().join("repo");
@@ -2831,7 +3016,7 @@ fn stage_session_with_zellij_stub(
     .unwrap();
     migrate_fixture(&cfg);
 
-    // A recording `zellij` on the child's PATH: copy the fixture to <bin>/zellij, +x.
+    // Install the recording fixture as `zellij` on the child PATH.
     let bin = dir.path().join("bin");
     fs::create_dir_all(&bin).unwrap();
     let stub = bin.join("zellij");
@@ -2862,7 +3047,6 @@ fn session_ok_outputs_thread_title() {
         .success()
         .stdout(contains("dispatched"));
 
-    // The title travels ONLY in zellij's argv (claude's --name value), never stdout.
     let argv = fs::read_to_string(&log).unwrap();
     assert!(
         argv.contains("PWF-0001 - do the thing"),
@@ -2873,8 +3057,6 @@ fn session_ok_outputs_thread_title() {
 #[test]
 #[cfg(unix)]
 fn session_worktree_flag_injects_instruction_into_argv() {
-    // PWF-0076: `-w`/`--worktree` augments the launch prompt with a git-worktree
-    // setup step naming the item id. It rides ONLY in the dispatched agent's argv.
     let dir = TempDir::new().unwrap();
     let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
 
@@ -2904,7 +3086,6 @@ fn session_worktree_flag_injects_instruction_into_argv() {
 #[test]
 #[cfg(unix)]
 fn session_without_worktree_flag_omits_instruction() {
-    // Without `-w`, the launch prompt carries no worktree step (default-off).
     let dir = TempDir::new().unwrap();
     let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
 
@@ -2928,9 +3109,7 @@ fn session_without_worktree_flag_omits_instruction() {
 fn session_with_effort_passes_model_flag_to_claude() {
     let dir = TempDir::new().unwrap();
     let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
-    // Re-stage the item note with an effort tag (stage_session_with_zellij_stub's
-    // PWF-0001.md has no effort: line; append one so this test doesn't need its
-    // own full staging duplicate).
+    // Add effort metadata without duplicating the session fixture.
     let notes = dir.path().join("notes");
     fs::write(
         notes.join("pwf").join("PWF-0001.md"),
@@ -2957,8 +3136,7 @@ fn session_with_effort_passes_model_flag_to_claude() {
 #[test]
 #[cfg(unix)]
 fn session_with_effort_and_empty_claude_model_omits_model_flag() {
-    // `claude_model = ""` is the deliberate "use claude's own default" sentinel —
-    // dispatch must succeed with no `--model` flag, not error and not pass "".
+    // An empty tier mapping delegates model selection to Claude.
     let dir = TempDir::new().unwrap();
     let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
     let notes = dir.path().join("notes");
@@ -2989,8 +3167,7 @@ fn session_with_effort_and_empty_claude_model_omits_model_flag() {
 #[test]
 #[cfg(unix)]
 fn session_with_explicit_model_flag_forwards_it_verbatim() {
-    // No effort tag, no model-tiers.toml at all — `--model` is a raw forward
-    // with no lookup, so dispatch succeeds and the value rides straight through.
+    // Explicit models bypass effort-tier lookup and forward verbatim.
     let dir = TempDir::new().unwrap();
     let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
 
@@ -3057,8 +3234,6 @@ fn session_with_explicit_model_flag_wins_over_effort_tier() {
 #[test]
 #[cfg(unix)]
 fn session_with_explicit_model_flag_survives_broken_tiers_config() {
-    // The override never touches model-tiers.toml, so a broken/missing config
-    // must not block dispatch when `--model` is explicitly given.
     let dir = TempDir::new().unwrap();
     let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
     let notes = dir.path().join("notes");
@@ -3112,16 +3287,13 @@ fn session_with_effort_and_broken_tiers_config_fails_before_dispatch() {
         .assert()
         .failure();
 
-    // Nothing dispatched: the stub never logged a zellij call.
     assert!(!log.exists() || fs::read_to_string(&log).unwrap().is_empty());
 }
 
 #[test]
 #[cfg(unix)]
 fn session_codex_agent_emits_codex_argv() {
-    // PWF-0079: Codex has no `--name` flag. `pwf` launches it through a small
-    // title-aware shim that renames the Codex thread via Codex's app-server API,
-    // then runs `codex -- <prompt>`.
+    // Codex thread naming uses the hidden app-server shim because Codex has no `--name` flag.
     let dir = TempDir::new().unwrap();
     let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
 
@@ -3151,9 +3323,7 @@ fn session_codex_agent_emits_codex_argv() {
         argv.contains("PWF-0001 - do the thing"),
         "codex title shim did not receive get_thread_title text: {argv}"
     );
-    // The real Codex command still runs with the prompt as a `--`-guarded
-    // positional. zellij's own `--name <tab>` is always present; assert on the
-    // codex segment rather than the whole line.
+    // Match the Codex segment because zellij also contributes a `--name` argument.
     assert!(
         argv.contains("-- codex --"),
         "codex argv tail not captured: {argv}"
@@ -3167,10 +3337,7 @@ fn session_codex_agent_emits_codex_argv() {
 #[test]
 #[cfg(unix)]
 fn session_append_extends_the_note_before_dispatch() {
-    // PWF-0088: `-a`/`--append` on session reuses `update`'s lane-syntax splice to
-    // extend the body in place before dispatching. PWF-0093: the launch prompt is
-    // a thin pointer, not the note body, so the extension lands in the note (which
-    // the dispatched agent resolves itself) rather than riding in the argv.
+    // Session appends to the note while the launch argv remains a thin pointer.
     let dir = TempDir::new().unwrap();
     let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
 
@@ -3211,9 +3378,7 @@ fn session_append_extends_the_note_before_dispatch() {
 #[test]
 #[cfg(unix)]
 fn session_dispatches_a_thin_pointer_not_the_note_body() {
-    // PWF-0093: the pw-workflow skill's first step already resolves the item and
-    // reads its body in full, so the launch prompt just names the id/project and
-    // points the agent at the task — it must not inline the note's Goals/Context.
+    // The agent resolves the item, so dispatch includes its identity but not its body.
     let dir = TempDir::new().unwrap();
     let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
 
@@ -3244,9 +3409,6 @@ fn session_dispatches_a_thin_pointer_not_the_note_body() {
 #[test]
 #[cfg(unix)]
 fn session_append_short_flag_extends_body_not_the_agent() {
-    // PWF-0088: session's `-a` is `--append`, not `--agent` (the agent shorthand
-    // was removed to free it). `-a <text>` must splice into the body and still
-    // dispatch the default claude launcher.
     let dir = TempDir::new().unwrap();
     let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
 
@@ -3304,7 +3466,6 @@ fn session_append_rejects_whitespace_only_before_any_dispatch() {
 
 #[test]
 fn session_rejects_unknown_agent() {
-    // clap ValueEnum rejects an unknown --agent value before any dispatch.
     pwf()
         .args([
             "session",
@@ -3321,9 +3482,7 @@ fn session_rejects_unknown_agent() {
 
 #[test]
 fn verify_codex_agent_reports_codex() {
-    // PWF-0068: `pwf verify --agent codex` probes codex and renders the codex
-    // command. `command: codex` is host-independent (no item → binary-only command);
-    // `codex:` appears whether or not codex resolves on this host's PATH.
+    // The binary-only Codex command is stable even when Codex is absent from the host PATH.
     pwf()
         .args(["verify", "--agent", "codex"])
         .assert()
@@ -3362,8 +3521,6 @@ fn e2e_verify_reports_resolved_model_for_effort_tagged_item() {
 
 #[test]
 fn e2e_verify_omits_model_for_empty_claude_model_tier() {
-    // `claude_model = ""` resolves to no override — verify passes with no
-    // `--model` in the rendered command, same as an untagged item.
     let (d, cfg) = staged();
     pwf()
         .args([
@@ -3455,14 +3612,13 @@ fn e2e_verify_fails_on_broken_model_tiers_for_effort_tagged_item() {
         .arg(&cfg)
         .env("PWF_MODEL_TIERS", &missing_tiers)
         .assert()
-        .success() // `verify` itself still exits 0 — it reports "fail" in its markdown, doesn't hard-error.
+        .success() // Probe failures are reported in Markdown.
         .stdout(contains("\u{2014} fail"))
         .stdout(contains("launchable: no"));
 }
 
 #[test]
 fn session_missing_id_errors() {
-    // `pwf session` with no id → MissingId, before any zellij probe.
     pwf()
         .arg("session")
         .assert()
@@ -3472,7 +3628,6 @@ fn session_missing_id_errors() {
 
 #[test]
 fn session_unknown_id_errors_not_found() {
-    // Unknown id resolves to not-found before the zellij availability check.
     let (_dir, cfg) = staged();
     pwf()
         .args(["session", "GLP-9999", "--config-path"])
@@ -3484,8 +3639,6 @@ fn session_unknown_id_errors_not_found() {
 
 #[test]
 fn session_accepts_yes_flag() {
-    // PWF-0074: `--yes` is a valid session flag; it doesn't alter id resolution,
-    // so an unknown id still fails not-found (proving the flag parsed, not errored).
     let (_dir, cfg) = staged();
     pwf()
         .args(["session", "GLP-9999", "--yes", "--config-path"])
@@ -3497,9 +3650,6 @@ fn session_accepts_yes_flag() {
 
 #[test]
 fn session_accepts_inline_short_flag() {
-    // PWF-0073: `-i` is a valid session flag; it doesn't alter id resolution, so an
-    // unknown id still fails not-found (proving the flag parsed and validation runs
-    // before any exec — no zellij/claude needed in CI).
     let (_dir, cfg) = staged();
     pwf()
         .args(["session", "GLP-9999", "-i", "--config-path"])
@@ -3511,7 +3661,6 @@ fn session_accepts_inline_short_flag() {
 
 #[test]
 fn session_accepts_inline_long_flag() {
-    // PWF-0073: the long `--inline` form parses identically.
     let (_dir, cfg) = staged();
     pwf()
         .args(["session", "GLP-9999", "--inline", "--config-path"])
@@ -3523,8 +3672,6 @@ fn session_accepts_inline_long_flag() {
 
 #[test]
 fn session_accepts_worktree_flags() {
-    // PWF-0076: `-w`/`--worktree` is a valid session flag; it doesn't alter id
-    // resolution, so an unknown id still fails not-found (proving the flag parsed).
     let (_dir, cfg) = staged();
     for flag in ["-w", "--worktree"] {
         pwf()
@@ -3538,8 +3685,7 @@ fn session_accepts_worktree_flags() {
 
 #[test]
 fn retired_launch_verb_treated_as_unknown_project() {
-    // `launch` is no longer a clap subcommand; the preprocessor treats it as a
-    // route word (project name), which fails as an unknown managed project.
+    // Retired launch verbs fall through to project routing.
     pwf()
         .args(["launch", "--id", "GLP-0001"])
         .assert()
@@ -3549,15 +3695,12 @@ fn retired_launch_verb_treated_as_unknown_project() {
 
 #[test]
 fn retired_launch_claude_verb_treated_as_unknown_project() {
-    // `launch-claude` is no longer a clap subcommand; same routing as above.
     pwf()
         .args(["launch-claude", "--id", "GLP-0001"])
         .assert()
         .failure()
         .stderr(contains("Unknown managed project identifier"));
 }
-
-// ── PWF-0081: note engine — add/ls/remove e2e ────────────────────────────────
 
 #[test]
 fn e2e_remove_resolves_descriptive_filename_by_frontmatter_id() {
@@ -3580,8 +3723,6 @@ fn e2e_remove_resolves_descriptive_filename_by_frontmatter_id() {
 
 #[test]
 fn note_add_list_update_remove_preserves_tasks_and_header() {
-    // Stage a `pwf` project with a seeded task; verifies note mutations leave the
-    // task line and `### Notes` header intact across the full add→ls→update→remove cycle.
     let (dir, cfg) = staged_with_item(
         "pwf",
         "PWF",
@@ -3662,10 +3803,7 @@ fn note_add_list_update_remove_preserves_tasks_and_header() {
 
 #[test]
 fn e2e_add_done_reopen_handoff_tag_round_trip_never_touches_git() {
-    // PWF-0117 final-review item 7: a full add -> done -> reopen cycle on a
-    // `--tag handoff` item, asserting the mirrored handoff's location/status
-    // on disk after each step, and that pwf never needs or creates `.git` —
-    // the repo is staged without `git init` on purpose.
+    // The fixture omits `.git`; the complete handoff lifecycle must neither require nor create it.
     let (d, cfg) = staged_for_handoff_mirror_roundtrip();
     let repo = d.path().join("repo");
     let handoff_dir = repo.join("docs/handoffs");

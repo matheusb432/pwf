@@ -1,6 +1,7 @@
-//! pwf-core — domain-agnostic vault primitives shared by the pwf engines.
-//! Knows nothing of tasks vs. notes: config resolution, frontmatter, atomic
-//! writes, project paths, id allocation, and generic index text transforms.
+//! Domain-neutral vault primitives shared by the pwf engines.
+//!
+//! This crate owns configuration, frontmatter, atomic writes, paths, id allocation, and generic
+//! index text transforms. It does not model tasks or notes.
 
 pub mod config;
 pub mod date;

@@ -1,18 +1,13 @@
-//! Declarative clap command tree — the single source of truth for parsing AND
-//! `--help` (PWF-0030). Doc comments on each command/arg ARE the help text; keep
-//! them tight. Pending-work verbs (`PwAction`) are flattened onto `Engine` so
-//! `add`/`list`/`done`/… render as direct top-level commands, matching what
-//! actually parses. The only argv preprocessing left is `preprocess.rs`, which
-//! injects the implicit `route` default clap can't derive.
-//!
-//! The per-engine `*Common` flag groups are flattened into every action because
-//! tests and scripts inject sandbox flags (`--config-path`, `--notes-dir` /
-//! `--repo-root`, `--date`, …) onto individual commands — matching the old flat parser.
+//! Defines the clap command tree used for parsing and rich help.
+//! Pending-work actions are flattened into top-level commands, while `preprocess.rs`
+//! supplies the implicit `route` action. Per-engine common flags are flattened into
+//! each action so callers can pass sandbox overrides directly to a command.
 
 use clap::{Args, Parser, Subcommand};
+use pwf_domain::pending_work::{WorkItemStatus, WorkItemStatusFilter};
 use pwf_note::{NoteCommand, NoteVerb};
 
-use crate::engines::pending_work::{Action as PendingWorkAction, PendingWorkCommand};
+use crate::engines::pending_work::{self, PendingWorkCommand};
 
 /// `--color` choices (clap-facing; mapped to `cli::ColorChoice` in `fill_pw`).
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
@@ -27,6 +22,26 @@ pub enum ColorArg {
 pub enum AgentArg {
     Claude,
     Codex,
+}
+
+/// `--status` choices for pending-work lists.
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+pub enum StatusArg {
+    Active,
+    Done,
+    Cancelled,
+    All,
+}
+
+impl StatusArg {
+    fn filter(self) -> WorkItemStatusFilter {
+        match self {
+            Self::Active => WorkItemStatusFilter::Exact(WorkItemStatus::Active),
+            Self::Done => WorkItemStatusFilter::Exact(WorkItemStatus::Done),
+            Self::Cancelled => WorkItemStatusFilter::Exact(WorkItemStatus::Cancelled),
+            Self::All => WorkItemStatusFilter::All,
+        }
+    }
 }
 
 fn agent_choice(a: AgentArg) -> crate::cli::Agent {
@@ -47,9 +62,7 @@ pub struct Cli {
 /// Top-level engines.
 #[derive(Subcommand, Debug)]
 pub enum Engine {
-    // `// !` Flattened (not a named subcommand) so `add`/`list`/`done`/… render
-    // as direct top-level Commands: entries — matching what actually parses,
-    // since `pwf pw …` itself is a retired prefix main.rs rejects pre-parse.
+    // Flattening keeps pending-work verbs at the top level; `pwf pw` is retired.
     #[command(flatten)]
     Pw(PwAction),
     /// Per-repo handoff ledgers (resume notes between sessions).
@@ -183,6 +196,9 @@ pub enum PwAction {
         /// the pre-PWF-0096 default.
         #[arg(short = 'o', long, num_args = 0..=2, value_name = "ORDER", value_parser = ["created", "id", "project-id", "asc", "desc"])]
         order: Vec<String>,
+        /// Filter by one lifecycle status, or include every lifecycle status.
+        #[arg(long, value_enum, default_value_t = StatusArg::Active)]
+        status: StatusArg,
         #[command(flatten)]
         common: PwCommon,
     },
@@ -318,8 +334,7 @@ pub enum PwAction {
         #[command(flatten)]
         common: PwCommon,
     },
-    // `// !` Hidden internal verbs — reachable but absent from help, matching the
-    // current hand-curated help which omits route.
+    // The implicit router remains callable but is omitted from help.
     /// Internal: word-router behind bare `pwf <words…>`.
     #[command(hide = true)]
     Route {
@@ -341,6 +356,9 @@ pub enum PwAction {
         /// Cap to N listed items (forwarded to the list it routes to).
         #[arg(short = 'n', long, value_name = "N")]
         number: Option<usize>,
+        /// Filter by one lifecycle status, or include every lifecycle status.
+        #[arg(long, value_enum, default_value_t = StatusArg::Active)]
+        status: StatusArg,
         #[arg(long)]
         prereq: Vec<String>,
         #[command(flatten)]
@@ -550,9 +568,7 @@ pub enum NoteAction {
 
 // ── bridge to the engines ─────────────────────────────────────────────────────
 
-// `crate::cli::Args` is the engine DTO; aliased to avoid clashing with clap's
-// `Args` derive imported above.
-use crate::cli::Args as EngineArgs;
+use crate::cli::EngineArgs;
 
 #[derive(Debug, Clone)]
 pub enum ParsedCommand {
@@ -692,7 +708,7 @@ fn normalize_pending_work_id(id: Option<String>) -> Option<String> {
 }
 
 /// Shared body of `PwAction::Done`/`PwAction::Cancel`, which parse identically —
-/// only the resulting [`PendingWorkAction`] differs.
+/// only the resulting [`pending_work::Action`] differs.
 fn fill_pw_close(
     a: &mut EngineArgs,
     id: IdArg,
@@ -711,7 +727,7 @@ fn fill_pw_close(
 }
 
 /// Shared body of `PwAction::Reopen`/`PwAction::Show`, which parse identically —
-/// only the resulting [`PendingWorkAction`] differs.
+/// only the resulting [`pending_work::Action`] differs.
 fn fill_pw_id_only(a: &mut EngineArgs, id: IdArg, common: PwCommon) {
     let raw_id = id.resolve();
     a.raw_id.clone_from(&raw_id);
@@ -721,16 +737,9 @@ fn fill_pw_id_only(a: &mut EngineArgs, id: IdArg, common: PwCommon) {
 
 #[allow(
     clippy::too_many_lines,
-    reason = "one flat match arm per clap-derived PwAction variant, translating its fields \
-              1:1 into EngineArgs; identical-body arms (Done/Cancel, Reopen/Show) are already \
-              deduped via fill_pw_close/fill_pw_id_only. The remaining arms (Add/List/Update/ \
-              Route/Session) each have 8-10 distinct fields, so extracting them into helpers \
-              would need >7 positional params (reintroducing too_many_arguments) or a \
-              per-variant argument-grouping struct that only shadow-duplicates the PwAction \
-              variant shape clap already owns as the single source of truth (command.rs's own \
-              module doc). A single flat match stays the clearer, less-duplicated shape."
+    reason = "the exhaustive match maps each clap action directly into the shared engine DTO"
 )]
-fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
+fn fill_pw(a: &mut EngineArgs, action: PwAction) -> pending_work::Action {
     match action {
         PwAction::Add {
             project,
@@ -756,7 +765,7 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             a.tag = tag;
             a.effort = effort;
             apply_pw_common(a, common);
-            PendingWorkAction::Add
+            pending_work::Action::Add
         }
         PwAction::List {
             project,
@@ -768,6 +777,7 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             effort,
             tag,
             order,
+            status,
             common,
         } => {
             a.project = project;
@@ -779,8 +789,9 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             a.effort = effort;
             a.tag = tag;
             a.order = order;
+            a.status_filter = status.filter();
             apply_pw_common(a, common);
-            PendingWorkAction::List
+            pending_work::Action::List
         }
         PwAction::Done {
             id,
@@ -790,7 +801,7 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             common,
         } => {
             fill_pw_close(a, id, report, commits, review, common);
-            PendingWorkAction::Done
+            pending_work::Action::Done
         }
         PwAction::Cancel {
             id,
@@ -800,11 +811,11 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             common,
         } => {
             fill_pw_close(a, id, report, commits, review, common);
-            PendingWorkAction::Cancel
+            pending_work::Action::Cancel
         }
         PwAction::Reopen { id, common } => {
             fill_pw_id_only(a, id, common);
-            PendingWorkAction::Reopen
+            pending_work::Action::Reopen
         }
         PwAction::Update {
             id,
@@ -832,7 +843,7 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             a.append = append;
             a.effort = effort;
             apply_pw_common(a, common);
-            PendingWorkAction::Update
+            pending_work::Action::Update
         }
         PwAction::Resolve { id, show, common } => {
             let raw_id = id.resolve();
@@ -840,11 +851,11 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             a.id = normalize_pending_work_id(raw_id);
             a.show = show;
             apply_pw_common(a, common);
-            PendingWorkAction::Resolve
+            pending_work::Action::Resolve
         }
         PwAction::Show { id, common } => {
             fill_pw_id_only(a, id, common);
-            PendingWorkAction::Show
+            pending_work::Action::Show
         }
         PwAction::Clean {
             project,
@@ -856,7 +867,7 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             a.force = force;
             a.dry_run = dry_run;
             apply_pw_common(a, common);
-            PendingWorkAction::Clean
+            pending_work::Action::Clean
         }
         PwAction::Verify {
             id,
@@ -868,7 +879,7 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             a.agent = agent_choice(agent);
             a.model = model;
             apply_pw_common(a, common);
-            PendingWorkAction::Verify
+            pending_work::Action::Verify
         }
         PwAction::Route {
             words,
@@ -877,6 +888,7 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             human,
             all,
             number,
+            status,
             prereq,
             common,
         } => {
@@ -886,15 +898,16 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             a.human = human;
             a.all = all;
             a.number = number;
+            a.status_filter = status.filter();
             a.prereq = prereq;
             apply_pw_common(a, common);
-            PendingWorkAction::Route
+            pending_work::Action::Route
         }
         PwAction::Remove { id, yes, common } => {
             a.id = normalize_pending_work_id(id.resolve());
             a.assume_yes = yes;
             apply_pw_common(a, common);
-            PendingWorkAction::Remove
+            pending_work::Action::Remove
         }
         PwAction::Session {
             id,
@@ -922,7 +935,7 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> PendingWorkAction {
             a.append = append;
             a.model = model;
             apply_pw_common(a, common);
-            PendingWorkAction::Session
+            pending_work::Action::Session
         }
     }
 }
@@ -959,8 +972,6 @@ mod tests {
 
     use super::*;
 
-    // clap's own structural validation: catches duplicate args, bad flatten,
-    // invalid trailing_var_arg, etc. at test time rather than first parse.
     #[test]
     fn cli_tree_is_valid() {
         Cli::command().debug_assert();
@@ -1015,6 +1026,24 @@ mod tests {
     }
 
     #[test]
+    fn list_and_project_route_parse_one_status_filter() {
+        use pwf_domain::pending_work::{WorkItemStatus, WorkItemStatusFilter};
+
+        assert_eq!(
+            pw_args(&["list"]).status_filter,
+            WorkItemStatusFilter::Exact(WorkItemStatus::Active)
+        );
+        assert_eq!(
+            pw_args(&["list", "--status", "done"]).status_filter,
+            WorkItemStatusFilter::Exact(WorkItemStatus::Done)
+        );
+        assert_eq!(
+            pw_args(&["pwf", "--status", "all"]).status_filter,
+            WorkItemStatusFilter::All
+        );
+    }
+
+    #[test]
     fn update_accepts_clear_plus_tag_as_replacement_form() {
         let update = pw_args(&["update", "PWF-0001", "--tags-clear", "--tag", "sqlite"]);
 
@@ -1032,8 +1061,6 @@ mod tests {
         assert_eq!(args.number, Some(2));
     }
 
-    // ! PWF-0041: the `pw <project>` shorthand routes through the hidden `route`
-    // verb; its list flags must be forwarded, not swallowed into the route words.
     #[test]
     fn route_shorthand_forwards_long_flag() {
         let a = pw_args(&["pwf", "--long"]);
@@ -1064,8 +1091,6 @@ mod tests {
         assert!(a.future);
     }
 
-    // ! PWF-0020: `-n`/`--number` must reach the list both via the `pw <project>`
-    // shorthand (Route) and the explicit `pw list` verb.
     #[test]
     fn route_shorthand_forwards_number_flag() {
         let a = pw_args(&["pwf", "-n", "3"]);
@@ -1080,7 +1105,6 @@ mod tests {
         assert_eq!(pw_args(&["list", "--number", "5"]).number, Some(5));
     }
 
-    // ! PWF-0017: `pw done` accepts the new provenance flags into the DTO.
     #[test]
     fn done_parses_commits_and_review() {
         let a = pw_args(&[
@@ -1112,8 +1136,6 @@ mod tests {
         assert_eq!(a.report.as_deref(), Some("blocked by changed scope"));
     }
 
-    // ! PWF-0088: `session -a`/`--append` reuses `update`'s append field on the
-    // shared DTO — no duplicate field/parsing.
     #[test]
     fn session_parses_append_short_flag_into_shared_update_field() {
         let a = pw_args(&["session", "PWF-0001", "-a", "extra context"]);
@@ -1185,8 +1207,6 @@ mod tests {
         assert!(parse_argv(argv).is_err());
     }
 
-    // ! PWF-0065: `show` is the shorthand verb for `resolve --show`; it takes the id
-    // as a bare positional or `--id` and still normalizes it to uppercase.
     #[test]
     fn show_parses_positional_id_to_show_action_uppercased() {
         let argv = ["show", "pwf-0001"]

@@ -7,8 +7,7 @@ pub struct ResolvePendingWorkItem {
     pub id: String,
 }
 
-/// A resolved pending-work note: its display path and its full markdown source.
-/// The caller (`pwf resolve` vs `pwf resolve --show`) picks which to emit.
+/// Contains a resolved note's display path and full Markdown source.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedItem {
     pub note_path: String,
@@ -26,23 +25,19 @@ impl From<PendingWorkItem> for ResolvedItem {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ResolvePendingWorkError {
-    /// Preserves the raw requested id verbatim (never re-normalized), matching
-    /// the legacy infra `ItemNotFound` display.
+    /// Preserves the unmatched requested id without normalizing it again.
     #[error("Open pending-work item not found: {id}")]
     ItemNotFound { id: String },
-    /// A markdown stream was requested for an index wikilink whose note file is
-    /// missing — there is no source to stream. Resolving the item's *path* is
-    /// still fine; only `show`/`--show` reject this materialization.
+    /// Rejects source output for an index link whose note file is missing.
+    ///
+    /// Path-only resolution remains valid for this materialization.
     #[error("work-item note file is missing: {path}")]
     NoteFileMissing { path: String },
     #[error("{0}")]
     ReadStore(Box<dyn std::error::Error + Send + Sync>),
 }
 
-/// Resolves `id` to its stored record, open or closed, by mapping the id prefix
-/// to its project and reading it from the generic store. A non-canonical id is
-/// served by the inline-legacy scan (`<project>:<ordinal>` prompts have no
-/// [`WorkItemId`], so they are found by listing and matching ordinals).
+/// Resolves an open or closed record by project prefix or inline `<project>:<ordinal>` id.
 pub(crate) fn resolve_record<S>(
     store: &S,
     projects: &ProjectRegistry,
@@ -62,9 +57,7 @@ where
         .ok_or_else(not_found)
 }
 
-/// Finds the legacy inline record whose composed `<project>:<ordinal>` display
-/// id matches `id` case-insensitively — the same match the legacy read applied
-/// across every project's open items.
+/// Finds an inline `<project>:<ordinal>` id case-insensitively across managed projects.
 fn resolve_inline_record<S>(
     store: &S,
     projects: &ProjectRegistry,
@@ -90,13 +83,9 @@ where
     Err(ResolvePendingWorkError::ItemNotFound { id: id.to_string() })
 }
 
-#[cqrsy::handler(query)]
-#[expect(
-    clippy::needless_pass_by_value,
-    reason = "the cqrsy resolve operation owns its request by contract"
-)]
+#[cqrsy::query]
 pub fn execute(
-    query: ResolvePendingWorkItem,
+    query: &ResolvePendingWorkItem,
     store: &impl AppDbStore<PendingWorkItem>,
     projects: &ProjectRegistry,
 ) -> Result<ResolvedItem, ResolvePendingWorkError> {
@@ -135,8 +124,6 @@ pub(crate) mod testing {
         (store, registry())
     }
 
-    /// A missing-note wikilink record ("ghost"): index entry exists, note
-    /// file does not — empty body/source, locator = the expected note path.
     pub(crate) fn staged_ghost() -> (InMemoryStore, ProjectRegistry) {
         let record = PendingWorkItem {
             id: RecordId::Item(WorkItemId::try_new("PWF-0002").unwrap()),
@@ -161,8 +148,6 @@ pub(crate) mod testing {
         (store, registry())
     }
 
-    /// A legacy inline prompt record (``- [ ] `session` <- prompt`` index
-    /// line): ordinal identity, prompt-as-source, index file as locator.
     pub(crate) fn staged_inline() -> (InMemoryStore, ProjectRegistry) {
         let record = PendingWorkItem {
             id: RecordId::Inline(1),
@@ -206,7 +191,7 @@ mod tests {
         let (store, registry) = staged();
 
         let resolved = execute(
-            ResolvePendingWorkItem {
+            &ResolvePendingWorkItem {
                 id: "PWF-0001".to_string(),
             },
             &store,
@@ -223,7 +208,7 @@ mod tests {
         let (store, registry) = staged_ghost();
 
         let resolved = execute(
-            ResolvePendingWorkItem {
+            &ResolvePendingWorkItem {
                 id: "PWF-0002".to_string(),
             },
             &store,
@@ -231,8 +216,6 @@ mod tests {
         )
         .unwrap();
 
-        // The path form still resolves a ghost item (legacy parity); only the
-        // markdown/show form rejects it.
         assert_eq!(resolved.note_path, "/notes/pwf/PWF-0002.md");
     }
 
@@ -241,7 +224,7 @@ mod tests {
         let (store, registry) = staged_inline();
 
         let resolved = execute(
-            ResolvePendingWorkItem {
+            &ResolvePendingWorkItem {
                 id: "PWF:1".to_string(),
             },
             &store,
@@ -249,8 +232,6 @@ mod tests {
         )
         .unwrap();
 
-        // Path form → the index note holding the inline prompt; markdown form
-        // → the prompt itself (no frontmatter to strip).
         assert_eq!(resolved.note_path, "/notes/pwf/pwf.md");
         assert_eq!(resolved.markdown, "do the legacy thing");
     }
@@ -260,7 +241,7 @@ mod tests {
         let (store, registry) = staged_inline();
 
         let error = execute(
-            ResolvePendingWorkItem {
+            &ResolvePendingWorkItem {
                 id: "pwf:9".to_string(),
             },
             &store,
@@ -276,7 +257,7 @@ mod tests {
         let (store, registry) = staged();
 
         let error = execute(
-            ResolvePendingWorkItem {
+            &ResolvePendingWorkItem {
                 id: "pwf-9999".to_string(),
             },
             &store,

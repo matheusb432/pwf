@@ -1,8 +1,5 @@
-//! Tag-governed mirroring (PWF-0117): pending-work verbs on a `handoff`-tagged
-//! item perform the matching operation on the item's handoff file. Gate +
-//! forward resolution live here; the close/reopen/delete/scaffold ops below
-//! are the actual mirroring work, ported from `actions/complete.rs` and
-//! `actions/reopen.rs`'s transform + rollback logic rather than reinvented.
+//! Mirrors pending-work lifecycle changes onto files linked by the `handoff` tag.
+//! Preflight functions resolve and stage each operation before its commit mutates disk.
 
 use std::{
     path::{Path, PathBuf},
@@ -21,85 +18,38 @@ use super::{
 };
 use crate::{config::Config, fs_atomic::write_text_atomic, regexes::STATUS_LINE_RE};
 
-/// Errors from the handoff mirror gate and (in a later task) its mirroring ops.
+/// Reports failures while resolving or applying a handoff mirror operation.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum MirrorError {
-    /// The item's `tags:` frontmatter value could not be parsed.
     #[error("item {id} has invalid tags frontmatter: {raw}")]
-    InvalidTags {
-        /// The gated item's canonical id.
-        id: String,
-        /// The raw, unparseable `tags:` value.
-        raw: String,
-    },
-    /// A `handoff`-tagged item's project has no repo mapping in config.
+    InvalidTags { id: String, raw: String },
     #[error("item {id} is tagged `handoff` but project {project} maps to no repo in the config")]
-    UnmanagedProject {
-        /// The gated item's canonical id.
-        id: String,
-        /// The item's managed project name.
-        project: String,
-    },
-    /// A `handoff`-tagged item's mapped repo path does not exist on disk.
+    UnmanagedProject { id: String, project: String },
     #[error("item {id} is tagged `handoff` but its repo path does not exist: {}", path.display())]
-    RepoRootMissing {
-        /// The gated item's canonical id.
-        id: String,
-        /// The nonexistent, already-expanded repo path.
-        path: PathBuf,
-    },
-    /// No handoff file in the repo's handoff dir links back to this item.
+    RepoRootMissing { id: String, path: PathBuf },
     #[error(
         "item {id} is tagged `handoff` but no handoff with `pw: {id}` exists in {} — untag it (`pwf update --id {id} --tags-clear`) or create the handoff",
         dir.display()
     )]
-    HandoffNotFound {
-        /// The gated item's canonical id.
-        id: String,
-        /// The handoff dir that was searched.
-        dir: PathBuf,
-    },
-    /// More than one handoff file claims the same linked item.
+    HandoffNotFound { id: String, dir: PathBuf },
     #[error("more than one handoff in {} claims `pw: {id}` — fix the duplicate frontmatter", dir.display())]
-    AmbiguousHandoff {
-        /// The gated item's canonical id.
-        id: String,
-        /// The handoff dir that was searched.
-        dir: PathBuf,
-    },
-    /// The archive-move target already exists.
+    AmbiguousHandoff { id: String, dir: PathBuf },
     #[error("archived handoff already exists: {}", path.display())]
-    ArchiveAlreadyExists {
-        /// The already-occupied archive path.
-        path: PathBuf,
-    },
-    /// The un-archive-move target already exists.
+    ArchiveAlreadyExists { path: PathBuf },
     #[error("active handoff already exists: {}", path.display())]
-    HandoffAlreadyExists {
-        /// The already-occupied active path.
-        path: PathBuf,
-    },
-    /// A filesystem operation on a handoff file failed.
+    HandoffAlreadyExists { path: PathBuf },
     #[error("{source}")]
     Io {
-        /// The attempted operation, for context in logs/tests.
         action: &'static str,
-        /// The path the operation targeted.
         path: PathBuf,
-        /// The underlying I/O error.
         source: std::io::Error,
     },
-    /// Rebuilding the LEDGER after a mirror op failed.
     #[error("{message}")]
-    Ledger {
-        /// The rendered ledger-refresh failure.
-        message: String,
-    },
+    Ledger { message: String },
 }
 
 impl From<HandoffError> for MirrorError {
-    /// A ledger-refresh failure inside a mirror op is always reported through
-    /// `Ledger` — callers don't need to know it started life as a `HandoffError`.
+    /// Maps ledger refresh failures into the mirror error boundary.
     fn from(e: HandoffError) -> Self {
         MirrorError::Ledger {
             message: e.to_string(),
@@ -107,21 +57,16 @@ impl From<HandoffError> for MirrorError {
     }
 }
 
-/// The `handoff`-tagged item a mutation gate resolved, and where its repo lives.
+/// Contains a canonical handoff-tagged item ID and its expanded, verified repository root.
 #[derive(Debug)]
 pub(crate) struct GateItem {
-    /// The item's canonical id.
     pub id: String,
-    /// The item's repo root, already `~`-expanded and confirmed to exist.
     pub repo_root: PathBuf,
 }
 
-/// `Ok(Some)` iff `id` resolves to a note whose tags contain `handoff`.
-/// Missing note / no tags / untagged → `Ok(None)` so the pw handler keeps
-/// producing its canonical not-found/skip behavior. Reads the item's tags
-/// (open or closed) through the application `tags_of` query; a non-canonical id
-/// or an unmanaged prefix is surfaced as a `Ledger` error, exactly as the
-/// former note lookup was.
+/// Resolves a handoff-tagged item and its repository root.
+/// Missing, tagless, and untagged items return `None` so pending-work retains its canonical result.
+/// ID and prefix failures cross this boundary as [`MirrorError::Ledger`].
 pub(crate) fn handoff_gate(
     cfg: &Config,
     store: &impl AppDbStore<PendingWorkItem>,
@@ -129,7 +74,7 @@ pub(crate) fn handoff_gate(
     id: &str,
 ) -> Result<Option<GateItem>, MirrorError> {
     let Some(view) = pwf_application::pending_work::tags_of::execute(
-        QueryItemTags { id: id.to_string() },
+        &QueryItemTags { id: id.to_string() },
         store,
         projects,
     )
@@ -169,14 +114,11 @@ pub(crate) fn handoff_gate(
     }))
 }
 
-/// Capturing `status:` variant (group `$1`); distinct from the shared,
-/// non-capturing `crate::regexes::STATUS_LINE_RE`. Ported from
-/// `actions/complete.rs`.
+/// Captures the complete `status:` line in group 1.
 static STATUS_CAPTURE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?m)^(status:.*)$").unwrap());
 
-/// Insert/replace a field after `status:`. Ported from `actions/complete.rs`,
-/// which now imports it here instead of holding its own copy.
+/// Replaces a frontmatter field or inserts it after `status:`.
 pub(super) fn set_frontmatter_field(content: &str, field: &str, value: &str) -> String {
     let field_re = Regex::new(&format!(r"(?m)^{field}:.*$")).unwrap();
     if field_re.is_match(content) {
@@ -184,27 +126,22 @@ pub(super) fn set_frontmatter_field(content: &str, field: &str, value: &str) -> 
             .replace(content, format!("{field}: {value}").as_str())
             .into_owned()
     } else {
-        // Insert after the first status: line
         STATUS_CAPTURE_RE
             .replace(content, format!("$1\n{field}: {value}").as_str())
             .into_owned()
     }
 }
 
-/// Drop a frontmatter field line (and its trailing newline) entirely. Ported
-/// from `actions/reopen.rs`, which now imports it here instead of holding its
-/// own copy. Used by `preflight_reopen` to drop the `completed:` stamp.
+/// Removes a frontmatter field and its trailing newline.
 pub(super) fn drop_frontmatter_field(content: &str, field: &str) -> String {
     let re = Regex::new(&format!(r"(?m)^{field}:.*\n?")).unwrap();
     re.replace(content, "").into_owned()
 }
 
-/// Which terminal status a mirror close writes to the handoff file.
+/// Selects the terminal status written by a mirrored close.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MirrorClose {
-    /// The linked pw item was completed normally.
     Done,
-    /// The linked pw item was cancelled.
     Cancelled,
 }
 
@@ -217,9 +154,8 @@ impl MirrorClose {
     }
 }
 
-/// Find the single entry among `entries` whose `pw:` frontmatter matches `id`
-/// case-insensitively. `dir` is only used to render the not-found/ambiguous
-/// error's location.
+/// Finds the single case-insensitive `pw:` match.
+/// `dir` supplies context for missing and ambiguous errors.
 fn find_by_pw<'a>(
     entries: &'a [HandoffEntry],
     id: &str,
@@ -243,12 +179,9 @@ fn find_by_pw<'a>(
     Ok(first)
 }
 
-/// A staged, not-yet-applied archive/un-archive move: the destination content
-/// is fully computed and all preconditions checked before any write happens.
-/// `commit` performs the actual filesystem mutation with the rollback shape
-/// ported from `actions/complete.rs`/`actions/reopen.rs`: write the
-/// destination, remove the source, rebuild the ledger — unwinding on the
-/// first failure so a partial move never strands both copies.
+/// Stages an archive or unarchive move after all preconditions pass.
+/// Commit writes the destination, removes the source, and refreshes the ledger, rolling back
+/// partial state on failure.
 #[derive(Debug)]
 pub(crate) struct PendingMove {
     root: PathBuf,
@@ -289,14 +222,9 @@ impl PendingMove {
     }
 }
 
-/// Preflight a handoff close (`done`/`cancel`): locate the active handoff
-/// linked to `gate.id`, compute its archived content, and check the archive
-/// destination is free — without writing anything. `Ok(None)` means the
-/// linked handoff is already archived: the pw item is being closed again
-/// (e.g. a re-run of `done` after it already succeeded), so the pair is
-/// already in its goal state and there is nothing left to mirror — the pw
-/// handler's own already-closed error is what should surface, not a mirror
-/// not-found. Transform ported from `actions/complete.rs::complete_handoff`.
+/// Stages a handoff close without writing to disk.
+/// Returns `None` when the linked handoff is already archived so the pending-work handler owns the
+/// already-closed result.
 pub(crate) fn preflight_close(
     gate: &GateItem,
     close: MirrorClose,
@@ -310,10 +238,8 @@ pub(crate) fn preflight_close(
         Err(err @ MirrorError::HandoffNotFound { .. }) => {
             let archived = read_handoff_entries(&paths.archive);
             return match find_by_pw(&archived, &gate.id, &paths.archive) {
-                // Already archived: nothing left to mirror.
                 Ok(_) => Ok(None),
-                // In neither dir: keep the active-dir not-found error, whose
-                // rendered path points at where a close expects the handoff.
+                // Report the active directory because close expects the source there.
                 Err(MirrorError::HandoffNotFound { .. }) => Err(err),
                 Err(other) => Err(other),
             };
@@ -352,12 +278,8 @@ pub(crate) fn preflight_close(
     }))
 }
 
-/// Preflight a handoff reopen: locate the archived (non-active) handoff
-/// linked to `gate.id`, compute its reactivated content, and check the active
-/// destination is free — without writing anything. `Ok(None)` means the
-/// linked handoff is already in the active dir: the pair is in its goal
-/// state, so an idempotent reopen skip (FR-0021) has nothing to mirror.
-/// Transform ported from `actions/reopen.rs::reopen_handoff`.
+/// Stages a handoff reopen without writing to disk.
+/// Returns `None` when the linked handoff is already active, preserving idempotent reopen behavior.
 pub(crate) fn preflight_reopen(gate: &GateItem) -> Result<Option<PendingMove>, MirrorError> {
     let paths = handoff_paths(&gate.repo_root);
     let archived: Vec<HandoffEntry> = read_handoff_entries(&paths.archive)
@@ -369,10 +291,8 @@ pub(crate) fn preflight_reopen(gate: &GateItem) -> Result<Option<PendingMove>, M
         Err(err @ MirrorError::HandoffNotFound { .. }) => {
             let active = get_active_handoff_files(&paths.dir);
             return match find_by_pw(&active, &gate.id, &paths.dir) {
-                // Already active: nothing to un-archive.
                 Ok(_) => Ok(None),
-                // In neither dir: keep the archive-dir not-found error, whose
-                // rendered path points at where a reopen expects the handoff.
+                // Report the archive directory because reopen expects the source there.
                 Err(MirrorError::HandoffNotFound { .. }) => Err(err),
                 Err(other) => Err(other),
             };
@@ -404,7 +324,7 @@ pub(crate) fn preflight_reopen(gate: &GateItem) -> Result<Option<PendingMove>, M
     }))
 }
 
-/// Locate the active handoff linked to `gate.id` without deleting anything.
+/// Locates the active handoff linked to `gate.id` without deleting it.
 pub(crate) fn preflight_delete(gate: &GateItem) -> Result<PathBuf, MirrorError> {
     let paths = handoff_paths(&gate.repo_root);
     let active = get_active_handoff_files(&paths.dir);
@@ -412,9 +332,8 @@ pub(crate) fn preflight_delete(gate: &GateItem) -> Result<PathBuf, MirrorError> 
     Ok(entry.full_path.clone())
 }
 
-/// Delete the active handoff linked to `gate.id` and rebuild the ledger,
-/// restoring the file if the rebuild fails so a delete can never silently
-/// desync the ledger from what's actually on disk.
+/// Deletes the linked active handoff and rebuilds the ledger.
+/// A ledger failure restores the file to prevent state divergence.
 pub(crate) fn delete_for_item(gate: &GateItem) -> Result<PathBuf, MirrorError> {
     let path = preflight_delete(gate)?;
     let original = std::fs::read_to_string(&path).map_err(|source| MirrorError::Io {
@@ -434,8 +353,7 @@ pub(crate) fn delete_for_item(gate: &GateItem) -> Result<PathBuf, MirrorError> {
     Ok(path)
 }
 
-/// A staged, not-yet-written new handoff file: the destination path is free
-/// and the repo root resolved, but nothing is on disk until `commit`.
+/// Stages a new handoff without writing after its repository and destination are validated.
 #[derive(Debug)]
 pub(crate) struct PendingScaffold {
     path: PathBuf,
@@ -454,8 +372,7 @@ impl PendingScaffold {
             source,
         })?;
         if let Err(e) = refresh_ledger_typed(&self.root) {
-            // Same never-strand-partial-state invariant as PendingMove::commit:
-            // a failed ledger rebuild must not leave the new file on disk.
+            // Remove the scaffold if the ledger cannot represent it.
             let _ = std::fs::remove_file(&self.path);
             return Err(MirrorError::from(e));
         }
@@ -463,11 +380,8 @@ impl PendingScaffold {
     }
 }
 
-/// Preflight a new handoff scaffold for `project`: resolve its repo root from
-/// config and check the dated slug path is free — without writing anything.
-/// `project` doubles as the id in `UnmanagedProject`/`RepoRootMissing` (no pw
-/// item exists yet at this point — scaffolding happens before allocation),
-/// mirroring `handoff_gate`'s own project-to-repo resolution.
+/// Stages a new handoff after resolving its repository and checking its destination.
+/// Before item allocation, project-resolution errors use `project` as their ID context.
 pub(crate) fn preflight_scaffold(
     cfg: &Config,
     project: &str,
@@ -511,7 +425,6 @@ mod tests {
     use super::*;
     use crate::engines::handoff::test_support::tempdir;
 
-    /// Write a minimal pending-work item note with optional `tags:` frontmatter.
     fn write_item_note(path: &Path, project: &str, tags: Option<&str>) {
         let id = path.file_stem().and_then(|stem| stem.to_str()).unwrap();
         let mut note = format!(
@@ -1023,8 +936,7 @@ mod tests {
     fn pending_scaffold_commit_rolls_back_file_when_ledger_rebuild_fails() {
         let stage = tempdir();
         let repo = stage.path().join("repo");
-        // A directory squatting on the LEDGER path makes the post-write ledger
-        // rebuild fail (the atomic temp-then-rename can't replace a directory).
+        // A directory at `LEDGER.md` forces the post-write atomic rename to fail.
         std::fs::create_dir_all(repo.join("docs/handoffs/LEDGER.md")).unwrap();
         let notes = stage.path().join("notes");
         let cfg_path = stage.path().join("config.json");

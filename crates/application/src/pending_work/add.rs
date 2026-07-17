@@ -19,23 +19,19 @@ pub struct AddPendingWorkItem {
 
 #[derive(Debug, thiserror::Error)]
 pub enum AddPendingWorkError {
-    /// Verbatim former infra display (PWF-0123 error-string relocation).
     #[error("Project '{project}' is not mapped to a repo in config/pending-work.json.")]
     ProjectNotMappedToRepo { project: String },
     #[error("{0}")]
     WriteStore(Box<dyn std::error::Error + Send + Sync>),
 }
 
-/// Creates a pending-work item: validates the project's repo mapping via the
-/// registry, then inserts the record + open index entry through
-/// [`store_util::create_item`], returning the typed [`AddedItem`] outcome
-/// (including the created-section fact behind the CLI's stderr diagnostic).
+/// Creates a pending-work record and its open index entry for a mapped project.
 ///
 /// # Panics
 ///
 /// Panics if the store's `insert` violates its contract by returning a record
 /// without a canonical [`pwf_domain::pending_work::WorkItemId`].
-#[cqrsy::handler(command)]
+#[cqrsy::command]
 pub fn execute<S>(
     cmd: AddPendingWorkItem,
     store: &S,
@@ -142,8 +138,6 @@ mod tests {
         assert_eq!(added.created_section.as_deref(), Some("Human"));
     }
 
-    /// A `## Human` header with zero entries already exists — the diagnostic
-    /// must NOT fire (the legacy `section_exists` contract).
     #[test]
     fn add_does_not_report_created_section_for_existing_empty_region() {
         let store = InMemoryStore::default()

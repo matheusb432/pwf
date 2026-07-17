@@ -11,9 +11,9 @@ fn temp_suffix(now: SystemTime) -> String {
     }
 }
 
-/// Write `content` to `path` atomically (temp sibling + rename). UTF-8 (no BOM);
-/// callers must pass `\n`-delimited content. Never leaves a `.bak` — notes-pro is
-/// git-tracked, so prior content is recoverable from git.
+/// Writes UTF-8 content atomically through a temporary sibling and rename.
+///
+/// Callers must provide `\n` delimiters. No backup file is created.
 pub fn write_text_atomic(path: &Path, content: &str) -> io::Result<()> {
     if let Some(parent) = path.parent()
         && !parent.as_os_str().is_empty()
@@ -23,7 +23,7 @@ pub fn write_text_atomic(path: &Path, content: &str) -> io::Result<()> {
     }
     let tmp = path.with_extension(temp_suffix(SystemTime::now()));
     fs::write(&tmp, content.as_bytes())?;
-    fs::rename(&tmp, path)?; // same-volume atomic replace
+    fs::rename(&tmp, path)?; // A same-volume rename is atomic.
     Ok(())
 }
 

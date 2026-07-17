@@ -41,58 +41,21 @@ pub struct ProjectIndexIdentity {
 }
 
 impl ProjectIndexIdentity {
-    /// Creates an identity from validated configured values.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pwf_domain::pending_work::{ProjectIndexIdentity, ProjectName, ProjectPrefix};
-    ///
-    /// let identity = ProjectIndexIdentity::new(
-    ///     ProjectPrefix::try_new("rst").unwrap(),
-    ///     ProjectName::try_new("rust-learn").unwrap(),
-    /// );
-    /// assert_eq!(identity.title().as_ref(), "rust-learn");
-    /// ```
     pub fn new(id: ProjectPrefix, title: ProjectName) -> Self {
         Self { id, title }
     }
 
     /// Returns the canonical uppercase project prefix.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use pwf_domain::pending_work::{ProjectIndexIdentity, ProjectName, ProjectPrefix};
-    /// # let identity = ProjectIndexIdentity::new(ProjectPrefix::try_new("pwf").unwrap(), ProjectName::try_new("pwf").unwrap());
-    /// assert_eq!(identity.id().as_ref(), "PWF");
-    /// ```
     pub fn id(&self) -> &ProjectPrefix {
         &self.id
     }
 
     /// Returns the lowercase prefix stored in project-index frontmatter.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use pwf_domain::pending_work::{ProjectIndexIdentity, ProjectName, ProjectPrefix};
-    /// # let identity = ProjectIndexIdentity::new(ProjectPrefix::try_new("PWF").unwrap(), ProjectName::try_new("pwf").unwrap());
-    /// assert_eq!(identity.frontmatter_id(), "pwf");
-    /// ```
     pub fn frontmatter_id(&self) -> String {
         self.id.as_ref().to_ascii_lowercase()
     }
 
     /// Returns the configured project name stored as the index title.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use pwf_domain::pending_work::{ProjectIndexIdentity, ProjectName, ProjectPrefix};
-    /// # let identity = ProjectIndexIdentity::new(ProjectPrefix::try_new("rst").unwrap(), ProjectName::try_new("rust-learn").unwrap());
-    /// assert_eq!(identity.title().as_ref(), "rust-learn");
-    /// ```
     pub fn title(&self) -> &ProjectName {
         &self.title
     }

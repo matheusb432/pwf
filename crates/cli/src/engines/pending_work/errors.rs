@@ -1,291 +1,132 @@
-// Shared, interpolated error messages used across more than one submodule.
-// Plain (non-interpolated) messages local to a single module live as a `const`
-// in that module instead.
-
 use thiserror::Error;
 
-/// Typed errors from the pending-work engine internals. Crate-visible (not
-/// wider): the shared `AddPendingWorkItem` command-build path surfaces this to
-/// the handoff engine's in-process `add` seam, which maps it to
-/// `HandoffError::PendingWork` via `to_string()` rather than matching variants.
+/// Carries pending-work errors across CLI and in-process handoff seams.
+/// The handoff seam converts these errors with `to_string()` instead of matching variants.
 #[derive(Debug, Error)]
 pub(crate) enum PendingWorkError {
-    /// Config loading failed.
     #[error("{0}")]
     Config(
         #[from]
         #[source]
         crate::config::ConfigError,
     ),
-    /// No config path was provided and no default could be resolved.
     #[error("missing --config-path")]
     MissingConfigPath,
-    /// Application-backed list query failed with a rendered message.
     #[error("{0}")]
     ApplicationList(String),
-    /// Application-backed resolve/show query failed with a rendered message.
     #[error("{0}")]
     ApplicationRead(String),
-    /// Application-backed write command failed with a rendered message.
     #[error("{0}")]
     ApplicationWrite(String),
-    /// A tier→model TOML mapping failed to load or resolve for a claude dispatch.
     #[error(transparent)]
-    ModelTiers(#[from] crate::engines::pending_work::session::ModelTiersError),
-    /// An item's `effort:` frontmatter value isn't a valid 1-4 integer (hand-edited/corrupted).
-    #[error("item {id} has an invalid effort value '{value}' (expected an integer 1-4).")]
-    BadEffortValue {
-        /// The item whose frontmatter is corrupted.
-        id: String,
-        /// The raw, unparseable value.
-        value: String,
-    },
-    /// The caller did not provide a pending-work subcommand.
+    SessionDispatch(#[from] pwf_application::pending_work::session::dispatch::DispatchSessionError),
+    #[error(transparent)]
+    SessionVerify(#[from] pwf_application::pending_work::session::verify::VerifySessionError),
     #[error("a pw subcommand is required.")]
     MissingSubcommand,
-    /// The provided pending-work subcommand is not known.
     #[error("Unknown action: {action}")]
-    UnknownAction {
-        /// The action token after normalization.
-        action: String,
-    },
-    /// The provided add section is not known.
+    UnknownAction { action: String },
     #[error("Unknown --section value '{value}'. Use one of: future, human, low-prio.")]
-    BadSection {
-        /// The raw section flag value.
-        value: String,
-    },
-    /// More than one list scope flag was supplied.
+    BadSection { value: String },
     #[error("Choose only one list scope flag: --human, --future, or --all.")]
     ConflictingListScopes,
-    /// `--order` was given two field tokens (e.g. `--order created id`).
     #[error(
         "--order field conflict: choose either 'created' or 'id', not both ('{first}' and '{second}')."
     )]
-    ConflictingOrderField {
-        /// The first field token seen.
-        first: String,
-        /// The second, conflicting field token.
-        second: String,
-    },
-    /// `--order` was given two direction tokens (e.g. `--order asc desc`).
+    ConflictingOrderField { first: String, second: String },
     #[error(
         "--order direction conflict: choose either 'asc' or 'desc', not both ('{first}' and '{second}')."
     )]
-    ConflictingOrderDirection {
-        /// The first direction token seen.
-        first: String,
-        /// The second, conflicting direction token.
-        second: String,
-    },
-    /// An `--order` token isn't a recognized field or direction keyword.
+    ConflictingOrderDirection { first: String, second: String },
     #[error("Unknown --order value '{value}'. Use one of: created, id, asc, desc.")]
-    BadOrderValue {
-        /// The raw, unrecognized token.
-        value: String,
-    },
-    /// A managed project has no configured repository path.
+    BadOrderValue { value: String },
     #[error("Project '{project}' is not mapped to a repo in config/pending-work.json.")]
-    ProjectNotMappedToRepo {
-        /// The managed project name.
-        project: String,
-    },
-    /// A managed project identifier matches multiple projects.
+    ProjectNotMappedToRepo { project: String },
     #[error(
         "'{identifier}' is ambiguous. Managed project identifiers matching it: {}.",
         matches.join(", ")
     )]
     AmbiguousManagedProject {
-        /// The raw identifier supplied by the caller.
         identifier: String,
-        /// Matching managed project names, in config iteration order.
         matches: Vec<String>,
     },
-    /// A managed project identifier matches no project.
     #[error(
         "Unknown managed project identifier: {identifier}\nManaged project identifiers: {}",
         known.join(", ")
     )]
     UnknownManagedProject {
-        /// The raw identifier supplied by the caller.
         identifier: String,
-        /// Known managed project names, in config iteration order.
         known: Vec<String>,
     },
-    /// The configured notes directory could not be found.
     #[error("Notes directory not found: {path}")]
-    NotesDirectoryNotFound {
-        /// The configured notes directory path.
-        path: String,
-    },
-    /// No open item matched the requested pending-work id.
+    NotesDirectoryNotFound { path: String },
     #[error("Open pending-work item not found: {id}")]
-    ItemNotFound {
-        /// The id requested by the caller.
-        id: String,
-    },
-    /// More than one open item matched the requested pending-work id.
+    ItemNotFound { id: String },
     #[error("Pending-work id is ambiguous: {id}")]
-    AmbiguousId {
-        /// The id requested by the caller.
-        id: String,
-    },
-    /// The selected item cannot be launched until blocking issues are fixed.
-    #[error("Pending-work item '{id}' is not launchable: {}", issues.join("; "))]
-    NotLaunchable {
-        /// The selected item id.
-        id: String,
-        /// Human-facing blocking launch issues.
-        issues: Vec<String>,
-    },
-    /// An action requiring an id was invoked without one.
+    AmbiguousId { id: String },
     #[error("--id is required for {action}.")]
-    MissingId {
-        /// The pending-work action name.
-        action: &'static str,
-    },
-    /// A close report was supplied but contained no content.
+    MissingId { action: &'static str },
     #[error("--report cannot be empty.")]
     EmptyReport,
-    /// Cancel requires a report explaining what was tried and why work stopped.
     #[error("--report is required for cancel.")]
     MissingCancelReport,
-    /// Remove only supports the file-model pending-work format.
     #[error("remove only supports file-model pending-work items.")]
     RemoveRequiresFileModel,
-    /// The item link existed, but its backing note file was absent.
     #[error("Work-item note missing: {}", path.display())]
-    WorkItemNoteMissing {
-        /// Missing work-item note path.
-        path: std::path::PathBuf,
-    },
-    /// Update was invoked without any field mutations.
+    WorkItemNoteMissing { path: std::path::PathBuf },
     #[error(
         "nothing to update (pass --prompt, --title, --prereq, --clear-prereq, --tag, --tags-clear, --commits, --append-report, --append, and/or --effort)."
     )]
     NothingToUpdate,
-    /// A tag flag value is not a valid discovery tag.
     #[error(
         "Invalid --tag value {raw:?}; use lowercase/uppercase ASCII letters, digits, '_' or '-', without leading, trailing, or repeated separators."
     )]
-    InvalidTag {
-        /// The raw tag token supplied by the caller.
-        raw: String,
-    },
-    /// A prereq flag value is not a canonical work-item id.
+    InvalidTag { raw: String },
     #[error("Invalid --prereq id: {raw}.")]
-    InvalidPrereqId {
-        /// The raw id token supplied by the caller.
-        raw: String,
-    },
-    /// A prereq flag was supplied without any id tokens.
+    InvalidPrereqId { raw: String },
     #[error("--prereq requires an id.")]
     MissingPrereqId,
-    /// One or more canonical prereq ids do not exist.
     #[error("Unknown --prereq id(s): {}.", ids.join(", "))]
-    UnknownPrereqIds {
-        /// Missing canonical ids, in caller order after deduplication.
-        ids: Vec<String>,
-    },
-    /// Add was invoked without the positional project/prompt form.
+    UnknownPrereqIds { ids: Vec<String> },
     #[error("{}", ADD_HINT)]
     AddUsage,
-    /// `--continue-handoff` could not find a handoff directory.
     #[error("No handoff directory found for project at {}.", path.display())]
-    NoHandoffDirectory {
-        /// Expected handoff directory path.
-        path: std::path::PathBuf,
-    },
-    /// `--continue-handoff` found no usable Markdown handoff files.
+    NoHandoffDirectory { path: std::path::PathBuf },
     #[error("No handoff Markdown files found in {}.", path.display())]
-    NoHandoffMarkdown {
-        /// Handoff directory path.
-        path: std::path::PathBuf,
-    },
-    /// Reading the handoff directory failed.
+    NoHandoffMarkdown { path: std::path::PathBuf },
     #[error("{source}")]
     ReadHandoffDirectory {
-        /// Handoff directory path.
         path: std::path::PathBuf,
-        /// The underlying filesystem error.
         source: std::io::Error,
     },
-    /// Route attempted one of the removed create forms.
     #[error("{}", ADD_HINT)]
     RouteCreateRejected,
-    /// The clean engine failed.
     #[error(transparent)]
     Clean(#[from] crate::engines::clean::CleanError),
-    /// A legacy inline item no longer has the expected open checkbox marker.
     #[error("Expected open task marker at {note}:{line}. The note may have changed.")]
-    ExpectedOpenTaskMarker {
-        /// The note path containing the legacy task.
-        note: String,
-        /// The line reported for the legacy task.
-        line: usize,
-    },
-    /// `zellij` is not installed / not on PATH.
-    #[error("zellij not found on PATH; cannot dispatch a pwf session (Linux-only feature).")]
-    ZellijNotFound,
-    /// The resolved repo directory does not exist.
-    #[error("Repo directory for project '{project}' does not exist: {path}")]
-    RepoMissing {
-        /// The managed project name.
-        project: String,
-        /// The missing repo path.
-        path: String,
-    },
-    /// `new-tab` failed even after creating the session.
-    #[error("Failed to dispatch into zellij session '{session}': {message}")]
-    SessionDispatchFailed {
-        /// The target session name.
-        session: String,
-        /// Underlying zellij error text.
-        message: String,
-    },
-    /// Inline (`-i`) dispatch failed to run the agent in the current terminal.
-    #[error("Failed to run agent inline: {message}")]
-    InlineExecFailed {
-        /// Underlying exec/spawn error text.
-        message: String,
-    },
-    /// The handoff mirror gate/lookup failed before any mutation was attempted.
+    ExpectedOpenTaskMarker { note: String, line: usize },
+    /// Reports a handoff preflight failure before any pending-work mutation.
     #[error(transparent)]
     HandoffMirror(#[from] crate::engines::handoff::mirror::MirrorError),
-    /// A pw mutation succeeded but mirroring it onto the linked handoff failed
-    /// afterward, leaving the pw item and its handoff out of sync. `remedy` is
-    /// per-producer: what actually fixes the desync differs by which verb
-    /// mutated the item (see `done_cancel_reopen_remedy`/`remove_remedy`/`add_remedy`).
+    /// Reports a successful pending-work mutation followed by a failed handoff mirror.
+    /// Each producer supplies recovery steps for its post-mutation state.
     #[error("{id} was mutated, but its handoff was not: {source}\n  {remedy}")]
     HandoffMirrorAfterMutation {
-        /// The pw item id that was mutated.
         id: String,
-        /// The underlying mirror error.
         source: crate::engines::handoff::mirror::MirrorError,
-        /// Producer-supplied remediation text (see the `*_remedy` builders below).
         remedy: String,
     },
 }
 
-/// Remedy for a `done`/`cancel`/`reopen` mirror-after-mutation failure: the pw
-/// item already moved, so bringing the pair back in sync is a `pwf reopen`
-/// (which un-mirrors the pw side) followed by a retry, or finishing the
-/// archive/un-archive move by hand.
 pub(crate) fn done_cancel_reopen_remedy(id: &str) -> String {
     format!(
         "fix the cause, then `pwf reopen --id {id}` and re-run — or finish the handoff move by hand"
     )
 }
 
-/// Remedy for a `remove` mirror-after-mutation failure: the pw note is
-/// already deleted, so `pwf reopen` has nothing to reopen — the stranded
-/// handoff file must be deleted by hand.
 pub(crate) const REMOVE_MIRROR_REMEDY: &str =
     "the pw note is already deleted; delete the linked handoff file by hand";
 
-/// Remedy for an `add` mirror-after-mutation failure: the pw item is freshly
-/// created (not yet linked to any handoff `pwf reopen` could act on), so the
-/// operator must create the handoff scaffold by hand or drop the `handoff` tag.
 pub(crate) const ADD_MIRROR_REMEDY: &str = "the item was created but its handoff scaffold failed; \
      create the handoff manually or remove the `handoff` tag";
 
@@ -295,8 +136,6 @@ impl From<PendingWorkError> for String {
     }
 }
 
-/// The canonical create form. Pointed at by the route guards that reject the
-/// removed silent-create paths (PWF-0034).
 pub(super) const ADD_HINT: &str = r#"Use: pwf add <project> "<prompt>""#;
 
 #[cfg(test)]
@@ -312,10 +151,6 @@ mod tests {
         }
     }
 
-    /// The three mirror-after-mutation producers (`done`/`cancel`/`reopen`,
-    /// `remove`, `add`) each carry remediation text that matches what's
-    /// actually true of the item at that point — a fresh error text per
-    /// producer, not one copy stretched to cover cases it doesn't fit.
     #[test]
     fn handoff_mirror_after_mutation_remedy_differs_by_producer() {
         let done_like = PendingWorkError::HandoffMirrorAfterMutation {

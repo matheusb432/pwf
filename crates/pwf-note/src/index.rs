@@ -1,17 +1,17 @@
-//! Maintenance of the `### Notes` section in a project index. The section is
-//! pinned at the END of the file (after every `## ` task section); new notes go
-//! newest-first directly under the header.
+//! Maintains the final `### Notes` section of a project index.
+//!
+//! New links are inserted newest-first directly under the header.
 
 use pwf_core::index::edit::{find_section_index, remove_index_link};
 
 const NOTES_HEADER: &str = "### Notes";
 
-/// Insert `- [[id]]` newest-first under `### Notes`, creating the section at the
-/// end of the file when absent. The rest of the document is preserved verbatim.
+/// Inserts `- [[id]]` newest-first under a final `### Notes` section.
+///
+/// A missing section is appended after trimming trailing whitespace.
 pub fn add_note_link(content: &str, id: &str) -> String {
     let line = format!("- [[{id}]]");
     if let Some(idx) = find_section_index(content, &[NOTES_HEADER]) {
-        // Insert immediately after the header line (newest-first).
         let after_header = content[idx..]
             .find('\n')
             .map_or(content.len(), |i| idx + i + 1);
@@ -19,7 +19,6 @@ pub fn add_note_link(content: &str, id: &str) -> String {
         let suffix = &content[after_header..];
         format!("{prefix}{line}\n{suffix}")
     } else {
-        // Create the section at the very end of the file.
         let prefix = content.trim_end();
         if prefix.is_empty() {
             format!("{NOTES_HEADER}\n\n{line}\n")
@@ -29,7 +28,7 @@ pub fn add_note_link(content: &str, id: &str) -> String {
     }
 }
 
-/// Remove the `- [[id]]` note line (delegates to the generic transform).
+/// Removes the `- [[id]]` note line.
 pub fn remove_note_link(content: &str, id: &str) -> String {
     remove_index_link(content, id)
 }

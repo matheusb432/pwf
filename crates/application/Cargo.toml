@@ -6,7 +6,7 @@ publish.workspace = true
 
 [dependencies]
 pwf-domain = { path = "../domain" }
-cqrsy = { workspace = true, features = ["derive"] }
+cqrsy = { workspace = true }
 regex = { workspace = true }
 thiserror = { workspace = true }
 

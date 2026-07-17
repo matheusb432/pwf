@@ -1,33 +1,22 @@
-//! Architecture gates — mechanical checks over the workspace source trees.
+//! Mechanical architecture checks over workspace source trees.
 //!
-//! Trees are loaded once (one walk + one read per tree) and shared by every check that targets
-//! them; checks themselves are pure `&[SourceFile] -> Vec<Violation>` functions, so they are
-//! unit-tested without touching the filesystem. Gate 1 is infra containment; gate 2 is
-//! no-rendering-in-application; gate 3 is direct-call shape (this task) — it reuses the
-//! already-loaded `cli_files` tree, never re-walking.
+//! Each tree is loaded once. Pure checks operate on [`SourceFile`] slices without filesystem I/O.
 
 use std::{fs, io, path::Path};
 
-/// Import identifier scanned for outside the composition roots.
 const INFRA_CRATE_NAME: &str = "pwf_infra";
 const CLI_SOURCE_ROOT: &str = "crates/cli/src";
 const APPLICATION_SOURCE_ROOT: &str = "crates/application/src";
 
-/// Composition roots — permanently allowed to name infra types.
+/// Composition roots allowed to import infrastructure types.
 const INFRA_IMPORT_ALLOWLIST_ROOTS: &[&str] = &[
     "crates/cli/src/main.rs",
     "crates/cli/src/engines/pending_work/run.rs",
     "crates/cli/src/engines/handoff/run.rs",
 ];
 
-/// Exceptions:
-/// - query.rs / actions/done.rs / actions/add.rs: downcast the boxed `AppDbStore::Error` to the
-///   concrete `ObsidianStoreError` to preserve exact legacy error text (e.g.
-///   `NotesDirectoryNotFound`, `AmbiguousId`) the generic port's typed errors don't carry. Phase 4
-///   (PWF-0123) audited this after the phase-3 error relocation and confirmed the need is
-///   permanent, not transitional — `AppDbStore::Error` is a generic associated type, so a CLI
-///   caller that needs infra-specific variants has no seam but downcasting the boxed source.
-/// - `engines/rename_project`/*: separate engine outside the PWF-0123 port scope.
+/// Pending-work exceptions downcast boxed store errors to preserve variant-specific diagnostics.
+/// The rename-project engine remains outside the pending-work port boundary.
 const INFRA_IMPORT_ALLOWLIST_EXCEPTIONS: &[&str] = &[
     "crates/cli/src/engines/pending_work/query.rs",
     "crates/cli/src/engines/pending_work/actions/done.rs",
@@ -36,24 +25,22 @@ const INFRA_IMPORT_ALLOWLIST_EXCEPTIONS: &[&str] = &[
     "crates/cli/src/engines/rename_project/plan.rs",
 ];
 
-/// A `*.rs` file loaded from one of the checked trees.
+/// Contains one Rust source file from a checked tree.
 pub(crate) struct SourceFile {
     pub(crate) relative_path: String,
     pub(crate) content: String,
 }
 
-/// One check failure: where it was found and why it's disallowed.
+/// Locates one architecture violation and explains the rejected shape.
 pub(crate) struct Violation {
     pub(crate) relative_path: String,
     pub(crate) line: usize,
     pub(crate) message: String,
 }
 
-/// Runs every architecture gate over the workspace's source trees, loading each tree once.
+/// Runs every architecture gate after loading each source tree once.
 ///
-/// `Ok(Err(violations))` is the check-failed outcome (data, not an I/O error); the outer
-/// `io::Result` is reserved for a tree that could not be walked/read at all — that propagates
-/// instead of being silently treated as "no violations".
+/// The outer result reports tree I/O failures. The inner result carries architecture violations.
 pub(crate) fn run(repo_root: &Path) -> io::Result<Result<(), Vec<Violation>>> {
     let cli_files = load_source_tree(repo_root, CLI_SOURCE_ROOT)?;
     let application_files = load_source_tree(repo_root, APPLICATION_SOURCE_ROOT)?;
@@ -70,7 +57,7 @@ pub(crate) fn run(repo_root: &Path) -> io::Result<Result<(), Vec<Violation>>> {
     })
 }
 
-/// Every infra import outside the allowlisted composition roots.
+/// Finds infrastructure imports outside the allowlist.
 fn check_infra_containment(files: &[SourceFile]) -> Vec<Violation> {
     files
         .iter()
@@ -84,13 +71,10 @@ fn is_infra_import_allowed(relative_path: &str) -> bool {
         || INFRA_IMPORT_ALLOWLIST_EXCEPTIONS.contains(&relative_path)
 }
 
-/// Gate 3: an application operation is always called fully qualified —
-/// `pwf_application::<path>::execute(...)` — never through an imported/aliased handle. A
-/// fully-qualified call needs no `use` of any module at all, so the gate is on imports: any
-/// `use pwf_application ...` statement that brings a *module* into scope (a lowercase imported
-/// leaf — bare, grouped, `self`, `as`-renamed, or a glob) enables a shortened `add::execute(...)`
-/// call and is a violation. Uppercase type/DTO imports (commands, outcomes, error types) stay
-/// unflagged.
+/// Enforces fully qualified application-operation calls from CLI engines.
+///
+/// Lowercase imported leaves enable shortened calls and are rejected. Uppercase DTO imports are
+/// allowed.
 fn check_direct_call_shape(files: &[SourceFile]) -> Vec<Violation> {
     files
         .iter()
@@ -115,9 +99,9 @@ fn direct_call_shape_violations_in_file(file: &SourceFile) -> Vec<Violation> {
         .collect()
 }
 
-/// Byte ranges of every `use pwf_application ... ;` statement (marker through the terminating
-/// `;` — a `use` statement never contains a `;` inside its braces, so the first one found always
-/// closes it).
+/// Returns byte ranges for `use pwf_application ...;` statements.
+///
+/// A use tree cannot contain an internal semicolon, so the first semicolon closes the statement.
 fn use_application_statement_ranges(content: &str) -> Vec<(usize, usize)> {
     let mut ranges = Vec::new();
     let mut search_from = 0;
@@ -134,8 +118,7 @@ fn use_application_statement_ranges(content: &str) -> Vec<(usize, usize)> {
     ranges
 }
 
-/// The violation message for one `use pwf_application ...;` statement, or `None` if it only
-/// names types/DTOs (the allowed shape).
+/// Returns a violation for an application import that binds a module or function.
 fn direct_call_shape_violation_message(statement: &str) -> Option<String> {
     if statement.contains('*') {
         return Some(
@@ -154,11 +137,10 @@ fn direct_call_shape_violation_message(statement: &str) -> Option<String> {
     })
 }
 
-/// The first *module* name `statement` binds into scope: an imported leaf — an identifier
-/// followed by `,`, `}`, `;`, `as`, or the statement's end, i.e. not a `::` path prefix — that
-/// starts lowercase (`add`, `self`, an imported `execute` fn), at any brace-group nesting depth.
-/// Uppercase leaves are types/DTOs and allowed; an `as` alias is judged by the identifier it
-/// renames, never by the alias name itself.
+/// Returns the first lowercase imported leaf at any use-tree depth.
+///
+/// Aliases are classified by the imported identifier, not the alias. Uppercase DTO leaves are
+/// ignored.
 fn first_lowercase_imported_leaf(statement: &str) -> Option<&str> {
     let mut previous_token: Option<&str> = None;
     for (offset, token) in identifier_tokens(statement) {
@@ -180,7 +162,7 @@ fn first_lowercase_imported_leaf(statement: &str) -> Option<&str> {
     None
 }
 
-/// `(offset, identifier)` for every maximal identifier-character run in `statement`, in order.
+/// Tokenizes identifier runs with their byte offsets.
 fn identifier_tokens(statement: &str) -> Vec<(usize, &str)> {
     let is_ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
     let bytes = statement.as_bytes();
@@ -200,8 +182,7 @@ fn identifier_tokens(statement: &str) -> Vec<(usize, &str)> {
     tokens
 }
 
-/// Macros that build presentation text — application returns typed data for the CLI to render,
-/// it does not compose the rendered lines itself.
+/// Rendering macros prohibited in the application layer outside named exceptions.
 const RENDERING_MACROS: &[&str] = &[
     "format!(",
     "write!(",
@@ -210,62 +191,48 @@ const RENDERING_MACROS: &[&str] = &[
     "eprintln!(",
 ];
 
-/// `(file, function)` pairs allowed to call a rendering macro anyway. Two tiers, each entry's
-/// comment says which: most compose a plain data value — a spawned task's prompt, an id or
-/// frontmatter value — that the CLI still renders (content ≠ presentation); two are genuine
-/// presentation strings frozen verbatim by the byte-identical gate, carried as named debt until
-/// a follow-up converts them to typed data + CLI render.
+/// Functions allowed to format domain content or frozen presentation debt.
 const RENDERING_ALLOWLIST: &[(&str, &str)] = &[
-    // Builds the spawned `## Human` review task's title/goal text (task *content*, handed to
-    // `add::execute` as a new item's prompt) for `pwf done --review`, not a rendered CLI line.
+    // Builds review-task prompt content, not a CLI line.
     (
         "crates/application/src/pending_work/done.rs",
         "review_task_prompt",
     ),
-    // Dedups/joins raw `--commits` values into the `commits:` frontmatter value. Contains no
-    // `format!` today (plain `.join`); listed for allowlist-doc parity with its sibling above,
-    // since both exist for the same reason (content ≠ presentation).
+    // Builds a `commits:` frontmatter value.
     (
         "crates/application/src/pending_work/done.rs",
         "frontmatter_value",
     ),
-    // "Work-item note missing: {path}" lands in `issues: Vec<String>`, which `pwf list --long`
-    // prints verbatim as `issue: <text>` — presentation, frozen by byte-identical gate; debt:
-    // convert to typed Issue data + CLI render.
+    // Carries frozen issue text until issues become typed CLI-rendered data.
     (
         "crates/application/src/pending_work/enrich.rs",
         "derive_flags",
     ),
-    // Composes the legacy inline record's `<project>:<ordinal>` identity string — an id value,
-    // not display text.
+    // Composes an inline record id value.
     (
         "crates/application/src/pending_work/enrich.rs",
-        "into_open_item",
+        "into_pending_work_item_view",
     ),
-    // Same inline `<project>:<ordinal>` id composition, used only to match an incoming id string.
+    // Composes an inline id for input matching.
     (
         "crates/application/src/pending_work/resolve.rs",
         "resolve_inline_record",
     ),
-    // "commits: <range>" joins `changes: Vec<String>` (a display-message list — its sibling entry
-    // is the pure-English "report appended") rendered under `Updated pwf task:` — presentation,
-    // frozen by byte-identical gate; debt: convert to typed change data + CLI render.
+    // Carries frozen change text until changes become typed CLI-rendered data.
     (
         "crates/application/src/pending_work/update.rs",
         "amend_closed_item",
     ),
-    // "[[<ID>]]" is the literal `prereq:` frontmatter value being composed, not a message.
+    // Builds a `prereq:` frontmatter value.
     (
         "crates/application/src/pending_work/update.rs",
         "merge_prereqs",
     ),
 ];
 
-/// Every rendering-macro call in application, outside a test/error/allowlisted context.
+/// Finds rendering macros outside test, error, and allowlisted spans.
 ///
-/// A file entirely gated by an external `#[cfg(test)] mod <name>;` declaration (e.g. `lib.rs`'s
-/// `#[cfg(test)] mod testing;`, backed by `testing.rs`) never ships in the production binary, so
-/// it is skipped outright rather than scanned line by line.
+/// Files backing external `#[cfg(test)] mod name;` declarations are skipped entirely.
 fn check_application_rendering(files: &[SourceFile]) -> Vec<Violation> {
     let test_only = test_only_module_files(files);
     files
@@ -275,8 +242,7 @@ fn check_application_rendering(files: &[SourceFile]) -> Vec<Violation> {
         .collect()
 }
 
-/// Relative paths of files that back a `#[cfg(test)]\nmod <name>;` external module declaration
-/// found anywhere in the tree — the whole file is test-only, regardless of its own content.
+/// Returns files backing external `#[cfg(test)] mod name;` declarations.
 fn test_only_module_files(files: &[SourceFile]) -> Vec<String> {
     let names: Vec<String> = files
         .iter()
@@ -293,8 +259,7 @@ fn test_only_module_files(files: &[SourceFile]) -> Vec<String> {
         .collect()
 }
 
-/// Module names declared as `#[cfg(test)]\nmod <name>;` (semicolon form — an external file, not
-/// an inline body) anywhere in `content`.
+/// Returns names from external `#[cfg(test)] mod name;` declarations.
 fn external_test_only_module_names(content: &str) -> Vec<String> {
     let lines: Vec<&str> = content.lines().collect();
     lines
@@ -308,13 +273,13 @@ fn external_test_only_module_names(content: &str) -> Vec<String> {
         .collect()
 }
 
-/// Whether `relative_path` is the file backing module `name` (`<name>.rs` or `<name>/mod.rs`).
+/// Reports whether a path backs `<name>.rs` or `<name>/mod.rs`.
 fn backs_module(relative_path: &str, name: &str) -> bool {
     relative_path.ends_with(&format!("/{name}.rs"))
         || relative_path.ends_with(&format!("/{name}/mod.rs"))
 }
 
-/// Rendering-macro violations in one file, after masking test/error/allowlisted spans.
+/// Finds rendering macros after masking allowed spans.
 fn rendering_violations_in_file(file: &SourceFile) -> Vec<Violation> {
     let mut masked = cfg_test_mod_body_ranges(&file.content);
     masked.extend(error_attribute_ranges(&file.content));
@@ -341,23 +306,17 @@ fn rendering_violations_in_file(file: &SourceFile) -> Vec<Violation> {
         .collect()
 }
 
-/// Whether `offset` starts a real macro-name token rather than landing mid-identifier — e.g.
-/// `"println!("` is a substring of `"eprintln!("`, so a plain substring match alone would
-/// double-count the latter.
+/// Reports whether `offset` starts a macro token rather than landing inside an identifier.
 fn is_macro_call_start(content: &str, offset: usize) -> bool {
     is_identifier_boundary(content[..offset].chars().next_back())
 }
 
-/// Whether `ch` (or its absence, at either end of the string) can bound a plain identifier —
-/// i.e. it is not itself an identifier character. Shared by every substring scan here that must
-/// tell a whole-word match (the `as` keyword, a macro name) from one landing mid-identifier
-/// (`assert`, `eprintln!`).
+/// Reports whether a character can bound an identifier token.
 fn is_identifier_boundary(ch: Option<char>) -> bool {
     ch.is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_'))
 }
 
-/// Byte ranges of every inline `#[cfg(test)]\nmod <name> { ... }` body (brace-tracked from the
-/// marker), covering the marker itself through the matching closing brace.
+/// Returns byte ranges for inline `#[cfg(test)] mod name { ... }` declarations.
 fn cfg_test_mod_body_ranges(content: &str) -> Vec<(usize, usize)> {
     let mut ranges = Vec::new();
     let mut search_from = 0;
@@ -377,12 +336,9 @@ fn cfg_test_mod_body_ranges(content: &str) -> Vec<(usize, usize)> {
     ranges
 }
 
-/// The offset of the `{` opening an inline `mod <name> { ... }` body declared on the line right
-/// after `marker_offset`, or `None` if that line isn't an inline mod-body declaration at all —
-/// an external `mod <name>;` (handled separately) or, just as in `crates/cli` (e.g.
-/// `#[cfg(test)] pub(crate) use run::store_for;`), an unrelated cfg-gated item. Bounded to that
-/// one line so an unrelated marker can never "capture" some unrelated, far-later `mod tests {`
-/// via an unbounded forward search.
+/// Returns the opening brace for an inline test module immediately after a cfg marker.
+///
+/// Search is limited to the next line so an unrelated later module cannot be captured.
 fn following_mod_block_open_brace(content: &str, marker_offset: usize) -> Option<usize> {
     let next_line_start = marker_offset + content[marker_offset..].find('\n')? + 1;
     let next_line_len = content[next_line_start..]
@@ -396,8 +352,7 @@ fn following_mod_block_open_brace(content: &str, marker_offset: usize) -> Option
         .then(|| next_line_start + next_line.rfind('{').expect("checked ends_with '{' above"))
 }
 
-/// Byte ranges of every `#[error(...)]` attribute (paren-tracked, so a multi-line
-/// `#[error(\n    "..."\n)]` form is covered too) — thiserror `Display` strings are permitted.
+/// Returns byte ranges for single-line and multiline `#[error(...)]` attributes.
 fn error_attribute_ranges(content: &str) -> Vec<(usize, usize)> {
     const MARKER: &str = "#[error(";
     let mut ranges = Vec::new();
@@ -417,8 +372,7 @@ fn error_attribute_ranges(content: &str) -> Vec<(usize, usize)> {
     ranges
 }
 
-/// Byte ranges of every allowlisted function's body in `file`, keyed by `(file, function)` pairs
-/// in [`RENDERING_ALLOWLIST`] matching `file.relative_path`.
+/// Returns body ranges for allowlisted functions in one file.
 fn allowlisted_function_ranges(file: &SourceFile) -> Vec<(usize, usize)> {
     RENDERING_ALLOWLIST
         .iter()
@@ -427,9 +381,9 @@ fn allowlisted_function_ranges(file: &SourceFile) -> Vec<(usize, usize)> {
         .collect()
 }
 
-/// The byte range of `fn <name>(...) { ... }`'s body (brace-tracked), from the `fn` keyword
-/// through the matching closing brace, or `None` if `name` is not defined in `content`. Tolerates
-/// generics/where-clauses between the name and the opening brace (`fn foo<S>(..) -> T where .. {`).
+/// Returns the brace-tracked body range for a named function.
+///
+/// Generic parameters and where clauses between the name and opening brace are supported.
 fn function_body_range(content: &str, name: &str) -> Option<(usize, usize)> {
     let marker = format!("fn {name}");
     let mut search_from = 0;
@@ -449,9 +403,9 @@ fn function_body_range(content: &str, name: &str) -> Option<(usize, usize)> {
     }
 }
 
-/// The offset of the delimiter matching the one at `open` (which must hold `open_byte`), tracking
-/// nesting depth over raw bytes — safe even across UTF-8 text, since a multi-byte character's
-/// continuation bytes never collide with an ASCII delimiter byte.
+/// Returns the matching ASCII delimiter offset by tracking nesting over raw bytes.
+///
+/// UTF-8 continuation bytes cannot collide with ASCII delimiters.
 fn matching_delimiter_close(content: &str, open: usize, open_byte: u8, close_byte: u8) -> usize {
     let bytes = content.as_bytes();
     debug_assert_eq!(bytes[open], open_byte);
@@ -469,7 +423,7 @@ fn matching_delimiter_close(content: &str, open: usize, open_byte: u8, close_byt
     bytes.len().saturating_sub(1)
 }
 
-/// Whole-content substring scan; line numbers computed only for hits.
+/// Finds whole-content substring occurrences and computes line numbers for hits.
 fn occurrences(file: &SourceFile, needle: &str, why: &str) -> Vec<Violation> {
     file.content
         .match_indices(needle)
@@ -481,8 +435,7 @@ fn occurrences(file: &SourceFile, needle: &str, why: &str) -> Vec<Violation> {
         .collect()
 }
 
-// The corpus is <1 MB and this only runs on match hits, so a `bytecount`-crate dependency buys
-// nothing here — plain iteration is fine.
+// The corpus is under 1 MB, so plain byte iteration avoids an unnecessary dependency.
 #[allow(clippy::naive_bytecount)]
 fn newline_count_before(content: &str, offset: usize) -> usize {
     content.as_bytes()[..offset]
@@ -491,8 +444,7 @@ fn newline_count_before(content: &str, offset: usize) -> usize {
         .count()
 }
 
-/// One walk + one read per tree, shared by every check that targets it. `relative_path` is
-/// repo-relative with `/` separators (stable across Windows/Linux checkouts).
+/// Loads each Rust file once with a repository-relative, slash-separated path.
 fn load_source_tree(repo_root: &Path, source_root: &str) -> io::Result<Vec<SourceFile>> {
     let mut files = Vec::new();
     walk_rs_files(repo_root, &repo_root.join(source_root), &mut files)?;
@@ -517,7 +469,7 @@ fn walk_rs_files(repo_root: &Path, dir: &Path, files: &mut Vec<SourceFile>) -> i
     Ok(())
 }
 
-/// `path` made repo-relative with forward-slash separators, regardless of host OS.
+/// Returns a repository-relative path with forward-slash separators on every host.
 fn relative_slash_path(repo_root: &Path, path: &Path) -> String {
     path.strip_prefix(repo_root)
         .unwrap_or(path)
@@ -702,9 +654,6 @@ mod tests {
 
     #[test]
     fn a_cfg_test_marker_before_a_non_mod_item_does_not_swallow_later_real_code() {
-        // Mirrors `crates/cli/src/engines/pending_work/mod.rs`'s `#[cfg(test)] pub(crate) use
-        // run::store_for;` shape: the marker precedes a `use`, not a `mod` body, so it must not
-        // gobble everything up to the file's real, unrelated `mod tests {` block further down.
         let files = [source_file(
             "crates/application/src/pending_work/whatever.rs",
             "#[cfg(test)]\npub(crate) use something::helper;\n\npub fn real() -> String {\n    format!(\"real\")\n}\n\n#[cfg(test)]\nmod tests {\n    fn t() {}\n}\n",
@@ -798,8 +747,6 @@ mod tests {
 
     #[test]
     fn flags_a_bare_operation_module_import() {
-        // The smuggle shape: no `execute` in the import, no `as` — but the shortened
-        // `add::execute(...)` call it enables defeats the fully-qualified invariant.
         let files = [source_file(
             "crates/cli/src/engines/pending_work/actions/add.rs",
             "use pwf_application::pending_work::add;\n\nfn run() {\n    let result = add::execute(command, &store);\n}\n",

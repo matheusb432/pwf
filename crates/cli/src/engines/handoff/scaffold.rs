@@ -1,8 +1,8 @@
-//! The markdown template for a freshly-created handoff.
+//! Renders the Markdown template for a new handoff.
 
 use std::fmt::Write;
 
-/// Build the markdown content for a new handoff.
+/// Builds the Markdown content for a new handoff.
 pub fn scaffold(title: &str, project: &str, today: &str, pw: Option<&str>) -> String {
     let mut s = String::new();
     s.push_str("---\nstatus: active\n");
@@ -31,7 +31,6 @@ mod tests {
         );
         assert!(!s.contains("pw:"));
         assert!(s.contains("# Managed Flow"));
-        // em-dash in lifecycle comment
         assert!(s.contains('\u{2014}'));
         assert!(s.contains("- [ ] <task title> :: <task description>"));
     }
@@ -49,8 +48,6 @@ mod tests {
 
     #[test]
     fn scaffold_lifecycle_comment_points_at_pwf_done() {
-        // PWF-0117: the engine no longer runs `handoff done` or commits on the
-        // agent's behalf — the lifecycle comment must point at `pwf done` instead.
         let s = scaffold("Managed Flow", "test-project", "2026-01-01", None);
         assert!(
             s.contains(

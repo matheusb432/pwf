@@ -1,7 +1,7 @@
 //! Pure argv parsing for the shim's launcher/worker protocol:
 //! `--title <t> --cwd <dir> --since <unix-secs> -- <codex argv…>`.
 
-use super::{ARG_SEPARATOR, CWD_FLAG, SINCE_FLAG, TITLE_FLAG};
+use super::CodexThreadTitleProtocol;
 
 pub(super) struct Invocation {
     pub(super) title: String,
@@ -11,14 +11,17 @@ pub(super) struct Invocation {
 }
 
 impl Invocation {
-    pub(super) fn parse(args: &[String]) -> Result<Self, String> {
+    pub(super) fn parse(
+        args: &[String],
+        protocol: &CodexThreadTitleProtocol,
+    ) -> Result<Self, String> {
         let mut title = None;
         let mut cwd = None;
         let mut since = None;
         let mut i = 0;
         while i < args.len() {
             match args[i].as_str() {
-                ARG_SEPARATOR => {
+                argument if argument == protocol.argument_separator => {
                     let codex_argv = args[i + 1..].to_vec();
                     if codex_argv.is_empty() {
                         return Err("missing codex argv after --".to_string());
@@ -30,15 +33,15 @@ impl Invocation {
                         codex_argv,
                     });
                 }
-                TITLE_FLAG => {
+                argument if argument == protocol.title_flag => {
                     i += 1;
                     title = args.get(i).cloned();
                 }
-                CWD_FLAG => {
+                argument if argument == protocol.cwd_flag => {
                     i += 1;
                     cwd = args.get(i).cloned();
                 }
-                SINCE_FLAG => {
+                argument if argument == protocol.since_flag => {
                     i += 1;
                     since = Some(
                         args.get(i)
@@ -64,27 +67,42 @@ impl Invocation {
 
 #[cfg(test)]
 mod tests {
-    use super::{super::CODEX_BINARY, *};
+    use super::*;
+
+    fn protocol() -> super::super::CodexThreadTitleProtocol {
+        super::super::CodexThreadTitleProtocol {
+            launch_command: "launch",
+            worker_command: "worker",
+            binary: "test-codex",
+            title_flag: "++title",
+            cwd_flag: "++cwd",
+            since_flag: "++since",
+            argument_separator: "++",
+        }
+    }
 
     #[test]
     fn invocation_parser_keeps_codex_prompt_as_one_arg() {
         let args = vec![
-            TITLE_FLAG.to_string(),
+            "++title".to_string(),
             "title".to_string(),
-            CWD_FLAG.to_string(),
+            "++cwd".to_string(),
             "/repo".to_string(),
-            SINCE_FLAG.to_string(),
+            "++since".to_string(),
             "42".to_string(),
-            ARG_SEPARATOR.to_string(),
-            CODEX_BINARY.to_string(),
-            ARG_SEPARATOR.to_string(),
+            "++".to_string(),
+            "test-codex".to_string(),
+            "++".to_string(),
             "prompt\n--danger".to_string(),
         ];
-        let parsed = Invocation::parse(&args).unwrap();
+        let parsed = Invocation::parse(&args, &protocol()).unwrap();
         assert_eq!(parsed.title, "title");
         assert_eq!(parsed.cwd, "/repo");
         assert_eq!(parsed.since, 42);
-        assert_eq!(parsed.codex_argv, vec!["codex", "--", "prompt\n--danger"]);
+        assert_eq!(
+            parsed.codex_argv,
+            vec!["test-codex", "++", "prompt\n--danger"]
+        );
         assert_eq!(parsed.prompt_prefix(), Some("prompt"));
     }
 }

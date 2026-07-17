@@ -1,5 +1,4 @@
-//! The handoff engine's error type, plus the best-effort-read status used by
-//! reads that degrade (rather than fail) on a partially unreadable directory.
+//! Defines handoff errors and partial-read status.
 
 use std::path::PathBuf;
 

@@ -2,26 +2,21 @@ use std::collections::BTreeMap;
 
 use super::{ProjectName, WorkItemId};
 
-/// One managed project's registry entry: its configured repo (if any) and the
-/// uppercase id prefix that routes a [`WorkItemId`] back to it.
+/// Associates a managed project with its repository and uppercase item-id prefix.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ProjectEntry {
     repo: Option<String>,
     prefix: Option<String>,
 }
 
-/// Registry of the managed projects, keyed by [`ProjectName`].
-///
-/// Resolves a work item id prefix to its owning project (`project_for_id`) and
-/// enumerates every managed project with its repo (`projects`) — the read-side
-/// handlers' single source of project routing and repo mapping.
+/// Routes work-item ids and repository lookups through managed project configuration.
 #[derive(Debug, Clone, Default)]
 pub struct ProjectRegistry {
     entries: BTreeMap<ProjectName, ProjectEntry>,
 }
 
 impl ProjectRegistry {
-    /// Builds a registry from `(project, repo, uppercase-prefix)` triples.
+    /// Builds a registry from `(project, repository, uppercase prefix)` triples.
     pub fn new(
         entries: impl IntoIterator<Item = (ProjectName, Option<String>, Option<String>)>,
     ) -> Self {
@@ -33,8 +28,7 @@ impl ProjectRegistry {
         }
     }
 
-    /// Resolves the project owning `id` by its uppercase prefix (case-sensitive,
-    /// matching the canonical [`WorkItemId`] form).
+    /// Resolves the project owning `id` by its case-sensitive uppercase prefix.
     pub fn project_for_id(&self, id: &WorkItemId) -> Option<&ProjectName> {
         let prefix = id.as_ref().split('-').next()?;
         self.entries
@@ -43,9 +37,7 @@ impl ProjectRegistry {
             .map(|(name, _)| name)
     }
 
-    /// How many managed projects carry `prefix` as their (uppercase) id prefix.
-    /// A count above one marks an ambiguous-prefix config (two projects sharing
-    /// a prefix), which the single-item lookup rejects rather than guessing.
+    /// Counts projects using `prefix`; a count above one makes item routing ambiguous.
     pub fn projects_with_prefix(&self, prefix: &str) -> usize {
         self.entries
             .values()
@@ -53,7 +45,7 @@ impl ProjectRegistry {
             .count()
     }
 
-    /// Every managed project with its configured repo, in project-name order.
+    /// Returns managed projects and repositories in project-name order.
     pub fn projects(&self) -> impl Iterator<Item = (&ProjectName, Option<&str>)> {
         self.entries
             .iter()

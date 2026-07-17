@@ -9,6 +9,40 @@ pub enum WorkItemStatus {
     Cancelled,
 }
 
+/// Selects one lifecycle status or includes every lifecycle status.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkItemStatusFilter {
+    Exact(WorkItemStatus),
+    All,
+}
+
+impl WorkItemStatusFilter {
+    /// Returns whether the filter includes the supplied lifecycle status.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pwf_domain::pending_work::{WorkItemStatus, WorkItemStatusFilter};
+    ///
+    /// let filter = WorkItemStatusFilter::Exact(WorkItemStatus::Done);
+    /// assert!(filter.includes(WorkItemStatus::Done));
+    /// assert!(!filter.includes(WorkItemStatus::Active));
+    /// ```
+    #[must_use]
+    pub fn includes(self, status: WorkItemStatus) -> bool {
+        match self {
+            Self::Exact(expected) => expected == status,
+            Self::All => true,
+        }
+    }
+}
+
+impl Default for WorkItemStatusFilter {
+    fn default() -> Self {
+        Self::Exact(WorkItemStatus::Active)
+    }
+}
+
 impl WorkItemStatus {
     pub const fn as_frontmatter_str(self) -> &'static str {
         match self {
@@ -50,7 +84,7 @@ pub struct ParseWorkItemStatusError {
 mod tests {
     use std::str::FromStr;
 
-    use super::WorkItemStatus;
+    use super::{WorkItemStatus, WorkItemStatusFilter};
 
     #[test]
     fn parse_accepts_frontmatter_status_strings() {
@@ -78,5 +112,28 @@ mod tests {
     #[test]
     fn parse_rejects_unknown_status() {
         assert!(WorkItemStatus::from_str("paused").is_err());
+    }
+
+    #[test]
+    fn status_filter_defaults_to_active() {
+        assert_eq!(
+            WorkItemStatusFilter::default(),
+            WorkItemStatusFilter::Exact(WorkItemStatus::Active)
+        );
+    }
+
+    #[test]
+    fn status_filter_matches_one_status_or_all() {
+        let done = WorkItemStatusFilter::Exact(WorkItemStatus::Done);
+        assert!(done.includes(WorkItemStatus::Done));
+        assert!(!done.includes(WorkItemStatus::Active));
+
+        for status in [
+            WorkItemStatus::Active,
+            WorkItemStatus::Done,
+            WorkItemStatus::Cancelled,
+        ] {
+            assert!(WorkItemStatusFilter::All.includes(status));
+        }
     }
 }

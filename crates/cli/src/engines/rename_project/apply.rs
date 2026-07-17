@@ -1,7 +1,6 @@
-//! The mutating transaction. Executed only for a real (non-dry-run) rename, in a
-//! fixed order: directory move → file renames → vault-wide id-token rewrite →
-//! `project:` label rewrite → scoped manifest edit. The collision pre-flight has
-//! already run, so destinations are known-clear before the first write.
+//! Applies a rename plan after collision preflight.
+//! The fixed order is directory move, file renames, ID rewrites, label rewrites, then manifest
+//! edit.
 
 use std::{path::Path, process::Command};
 
@@ -27,7 +26,7 @@ fn io<'a>(
     }
 }
 
-/// Execute the whole rename transaction against the real tree.
+/// Applies the complete rename transaction to the filesystem.
 pub fn apply_plan(ctx: &RenameContext, plan: &RenamePlan) -> Result<(), RenameProjectError> {
     if let Some((from, to)) = &plan.dir_move {
         if let Some(parent) = to.parent() {
@@ -74,9 +73,7 @@ pub fn apply_plan(ctx: &RenameContext, plan: &RenamePlan) -> Result<(), RenamePr
     Ok(())
 }
 
-/// Whole-token `OLD-NNNN` → `NEW-NNNN` across every scannable `.md` under the
-/// vault root (post-move), covering cross-project prereq wikilinks and the
-/// migrated project's own internal cross-refs. `.trash/` is skipped.
+/// Rewrites whole ID tokens in scannable vault Markdown after the directory move.
 fn rewrite_id_tokens_in_vault(ctx: &RenameContext) -> Result<(), RenameProjectError> {
     for entry in WalkDir::new(&ctx.root).into_iter().filter_map(Result::ok) {
         if !is_scannable_md(entry.path(), entry.file_type().is_file()) {
@@ -91,8 +88,7 @@ fn rewrite_id_tokens_in_vault(ctx: &RenameContext) -> Result<(), RenameProjectEr
     Ok(())
 }
 
-/// Move a directory: `git mv` when `root` is inside a git work tree (so git
-/// records the rename), else a plain fs rename.
+/// Moves a directory with `git mv` inside a worktree and filesystem rename otherwise.
 fn move_dir(root: &Path, from: &Path, to: &Path) -> Result<(), RenameProjectError> {
     if is_git_repo(root) {
         let status = Command::new("git")

@@ -15,9 +15,10 @@ fn is_fm_key(key: &str) -> bool {
     chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
-/// Parse YAML-ish frontmatter exactly like `ConvertFrom-Frontmatter`.
-/// BOM- and CRLF-tolerant. Non-matching input yields empty frontmatter and the
-/// whole text as the body.
+/// Parses the YAML-like subset accepted by `ConvertFrom-Frontmatter`.
+///
+/// BOM and CRLF are accepted. Missing or unterminated fences return empty frontmatter and the
+/// original text as the body.
 pub fn parse(text: &str) -> Parsed {
     let stripped = text.strip_prefix('\u{feff}').unwrap_or(text);
     let lines: Vec<&str> = stripped.split('\n').collect();
@@ -43,7 +44,7 @@ pub fn parse(text: &str) -> Parsed {
             let key = &l[..idx];
             if is_fm_key(key) {
                 let val = &l[idx + 1..];
-                let val = val.strip_prefix(' ').unwrap_or(val); // strip one optional leading space
+                let val = val.strip_prefix(' ').unwrap_or(val); // Strip one optional leading space.
                 frontmatter.insert(key.to_string(), val.trim().to_string());
             }
         }

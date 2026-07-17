@@ -1,6 +1,6 @@
-//! prompt-lanes: a domain-agnostic parser for the one-line lane-syntax
-//! task-prompt format (`title / goal /c context /n constraint /d done when`),
-//! rendered through a pluggable [`Adapter`].
+//! Parses one-line lane syntax and renders it through an [`Adapter`].
+//!
+//! The syntax is `title / goal /c context /n constraint /d done when`.
 
 mod adapters;
 mod lanes;

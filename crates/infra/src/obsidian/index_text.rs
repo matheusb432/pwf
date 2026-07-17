@@ -10,13 +10,13 @@ static ANCHOR_WIKILINK_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^
 static ANCHOR_CHECKBOX_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^- \[").unwrap());
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum IndexSection {
+pub(super) enum KnownSection {
     Future,
     Human,
     LowPrio,
 }
 
-impl IndexSection {
+impl KnownSection {
     pub(super) fn parse(value: &str) -> Option<Self> {
         match value {
             "Future" => Some(Self::Future),
@@ -72,7 +72,7 @@ pub(super) fn add_link_to_index(content: &str, link: &str) -> String {
     format!("{prefix}\n\n{block}{sep}{suffix}")
 }
 
-pub(super) fn section_exists(content: &str, section: IndexSection) -> bool {
+pub(super) fn section_exists(content: &str, section: KnownSection) -> bool {
     find_section_index(content, section.read_headers()).is_some()
 }
 
@@ -106,18 +106,18 @@ fn insert_section_item(content: &str, insert_at: usize, block: &str) -> String {
     }
 }
 
-pub(super) fn add_section_block(content: &str, block: &str, section: IndexSection) -> String {
+pub(super) fn add_section_block(content: &str, block: &str, section: KnownSection) -> String {
     if let Some(idx) = find_section_index(content, section.read_headers()) {
         return insert_section_item(content, line_end_after(content, idx), block);
     }
 
     let header = format!("## {}", section.as_str());
-    if section == IndexSection::Future {
+    if section == KnownSection::Future {
         let prefix = content.trim_end();
         return format!("{prefix}\n\n{header}\n\n{block}");
     }
 
-    if let Some(future_idx) = find_section_index(content, IndexSection::Future.read_headers()) {
+    if let Some(future_idx) = find_section_index(content, KnownSection::Future.read_headers()) {
         let prefix = content[..future_idx].trim_end();
         let suffix = &content[future_idx..];
         return format!("{prefix}\n\n{header}\n\n{block}{suffix}");

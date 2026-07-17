@@ -1,5 +1,4 @@
-//! `LEDGER.md`: the active-handoffs summary table, reading and reconciling
-//! `docs/handoffs/` entries (frontmatter + goal-checkbox counts) into rows.
+//! Reconciles active handoff frontmatter and goal counts into `LEDGER.md`.
 
 use std::{
     collections::BTreeMap,
@@ -29,7 +28,6 @@ pub(super) struct Row {
     pub(super) created: String,
 }
 
-/// Count `- [ ]` / `- [x]` checkboxes.
 fn goal_count(content: &str) -> String {
     let mut total = 0usize;
     let mut done = 0usize;
@@ -44,8 +42,7 @@ fn goal_count(content: &str) -> String {
     format!("{done}/{total}")
 }
 
-/// First `^#\s+(.+?)\s*$` line (exactly one '#' then whitespace — so `## Goals` is
-/// skipped), else fallback.
+/// Returns the first level-one heading or `fallback`.
 fn handoff_title(content: &str, fallback: &str) -> String {
     for line in content.split('\n') {
         if let Some(rest) = line.strip_prefix('#')
@@ -68,7 +65,7 @@ pub(super) struct HandoffEntry {
     pub(super) frontmatter: BTreeMap<String, String>,
 }
 
-/// *.md in dir, not LEDGER.md/README.md, with parsed frontmatter.
+/// Reads handoff Markdown entries except `LEDGER.md` and `README.md`.
 pub(super) fn read_handoff_entries(dir: &Path) -> Vec<HandoffEntry> {
     read_handoff_entries_typed(dir).value
 }
@@ -131,7 +128,7 @@ pub(super) fn get_active_handoff_files(dir: &Path) -> Vec<HandoffEntry> {
         .collect()
 }
 
-/// Rebuild LEDGER.md from active handoffs.
+/// Rebuilds `LEDGER.md` from active handoffs.
 pub(super) fn refresh_ledger_typed(root: &Path) -> Result<(PathBuf, usize), HandoffError> {
     let paths = handoff_paths(root);
     if !paths.dir.exists() {
@@ -162,7 +159,6 @@ pub(super) fn refresh_ledger_typed(root: &Path) -> Result<(PathBuf, usize), Hand
             }
         })
         .collect();
-    // Sort by (created, file_name) descending
     rows.sort_by(|a, b| {
         b.created
             .cmp(&a.created)

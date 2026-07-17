@@ -1,13 +1,12 @@
-//! `handoff add` — scaffold a handoff file and allocate its linked pw work item.
-//! Handoffs require a managed repo (PWF-0117): an unmanaged repo errors before
-//! any file is written, rather than scaffolding an unlinked handoff.
+//! Scaffolds a handoff and allocates its linked pending-work item.
+//! Unmanaged repositories fail before any filesystem write.
 
 use std::{fmt::Write, path::Path, sync::LazyLock};
 
 use regex::Regex;
 
 use crate::{
-    cli::Args,
+    cli::EngineArgs,
     config,
     engines::handoff::{
         errors::HandoffError,
@@ -24,7 +23,7 @@ static CREATED_LINE_RE: LazyLock<Regex> =
 
 pub(in crate::engines::handoff) fn invoke_add(
     root: &Path,
-    args: &Args,
+    args: &EngineArgs,
 ) -> Result<String, HandoffError> {
     let title = args.title.as_deref().ok_or(HandoffError::MissingTitle)?;
     let today = get_today(args.date.as_deref());
@@ -34,9 +33,7 @@ pub(in crate::engines::handoff) fn invoke_add(
         slug(title)
     };
 
-    // Resolve the managed project *before* touching the filesystem: an
-    // unmanaged repo must get no writes at all, not even an empty
-    // `docs/handoffs/` directory.
+    // Resolve management before creating even an empty handoff directory.
     let project =
         resolve_project_for_repo(root, args).ok_or_else(|| HandoffError::UnmanagedRepo {
             root: root.display().to_string(),
@@ -55,9 +52,7 @@ pub(in crate::engines::handoff) fn invoke_add(
         return Err(HandoffError::HandoffAlreadyExists { path: file_path });
     }
 
-    // Write the scaffold before allocating the pw item: `--continue-handoff`
-    // (below) builds its prompt by reading the newest handoff file on disk, so
-    // the file must exist first.
+    // The allocator reads the newest handoff, so write the scaffold first.
     write_text_atomic(&file_path, &scaffold(title, &project, &today, None)).map_err(|source| {
         HandoffError::Write {
             action: "add",
@@ -66,10 +61,7 @@ pub(in crate::engines::handoff) fn invoke_add(
         }
     })?;
 
-    // Allocate the linked pw work item: spawn the injected script (tests inject
-    // pw-stub.sh) or, in production, call the pending-work engine in-process.
-    // On failure, best-effort delete the scaffold just written above — an
-    // allocation failure must not strand a handoff file with no `pw:` link.
+    // Roll back the scaffold if either allocator fails to return a linked item.
     let id = match if let Some(script) = &args.pending_work_script {
         let cfg = args
             .config_path
@@ -87,7 +79,6 @@ pub(in crate::engines::handoff) fn invoke_add(
         }
     };
 
-    // Insert pw: <id> after the created: line.
     let content = std::fs::read_to_string(&file_path).map_err(|source| HandoffError::Read {
         action: "add",
         path: file_path.clone(),

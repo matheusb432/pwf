@@ -3,7 +3,12 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use pwf::engines::{handoff, pending_work as pwk};
+use pwf::engines::handoff;
+
+#[path = "support/pending_work.rs"]
+mod pending_work_test;
+
+use pending_work_test::run_args_plain;
 
 fn nanos() -> u128 {
     std::time::SystemTime::now()
@@ -39,7 +44,7 @@ fn write_empty_config(dir: &Path) -> PathBuf {
     cfg_path
 }
 
-fn parse_args(tokens: &[&str]) -> pwf::cli::Args {
+fn parse_args(tokens: &[&str]) -> pwf::cli::EngineArgs {
     let mut v = vec!["handoff".to_string()];
     v.extend(tokens.iter().map(std::string::ToString::to_string));
     pwf::command::parse_argv(v).unwrap().1
@@ -49,14 +54,10 @@ fn pw_stub_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pw-stub.sh")
 }
 
-/// An allocator stub that runs successfully but emits stdout `parse_added_id`
-/// can't extract an id from — used to drive `handoff add`'s scaffold-cleanup
-/// path when pw allocation fails after the scaffold file is already written.
+/// Returns an allocator stub whose successful output lacks an item ID.
 fn pw_stub_garbage_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pw-stub-garbage.sh")
 }
-
-// ── Task 18: scaffold + slug ────────────────────────────────────────────────
 
 #[test]
 fn scaffold_matches_expected_shape_without_pw() {
@@ -70,11 +71,8 @@ fn scaffold_matches_expected_shape_without_pw() {
         expected_prefix
     );
     assert!(!s.contains("pw:"));
-    // em-dash
     assert!(s.contains('\u{2014}'));
-    // goal placeholder
     assert!(s.contains("- [ ] <task title> :: <task description>"));
-    // Next steps
     assert!(s.contains("## Next steps\n-\n"));
 }
 
@@ -98,8 +96,6 @@ fn slug_converts_title() {
     assert_eq!(handoff::slug("  Hello World!! "), "hello-world");
     assert_eq!(handoff::slug(""), "handoff");
 }
-
-// ── Task 20 / PWF-0117: add ─────────────────────────────────────────────────
 
 #[test]
 fn add_unmanaged_repo_errors() {
@@ -139,9 +135,6 @@ fn add_unmanaged_repo_errors() {
         !file_path.exists(),
         "unmanaged repo must not write a handoff file"
     );
-    // An unmanaged repo must get no filesystem writes at all — not even an
-    // empty `docs/handoffs/` — so the `UnmanagedRepo` check must run before
-    // any directory is created.
     assert!(
         !repo.join("docs/handoffs").exists(),
         "unmanaged repo must not have docs/handoffs/ created at all"
@@ -150,7 +143,6 @@ fn add_unmanaged_repo_errors() {
 
 #[test]
 fn add_managed_calls_pw_stub() {
-    // This test uses the actual pw-stub.sh fixture to verify the spawn path.
     let stage = tmpdir("hf_new_mgd");
     let repo = stage.join("repo");
     fs::create_dir_all(&repo).unwrap();
@@ -190,10 +182,6 @@ fn add_managed_calls_pw_stub() {
 
 #[test]
 fn add_removes_orphan_scaffold_when_pw_allocation_fails() {
-    // The scaffold is written before pw allocation (`--continue-handoff` needs
-    // it on disk), so a failed allocation must best-effort delete it — else a
-    // handoff with no `pw:` link is stranded on disk with nothing pointing at
-    // it (PWF-0117 final-review item 4).
     let stage = tmpdir("hf_add_orphan_scaffold");
     let repo = stage.join("repo");
     fs::create_dir_all(&repo).unwrap();
@@ -229,8 +217,6 @@ fn add_removes_orphan_scaffold_when_pw_allocation_fails() {
 
 #[test]
 fn add_managed_links_pw_in_process_without_script() {
-    // Production path (no --pending-work-script): handoff calls the pending-work engine
-    // in-process to allocate + link the work item, mirroring the PS default script.
     let stage = tmpdir("hf_new_inproc");
     let repo = stage.join("repo");
     fs::create_dir_all(&repo).unwrap();
@@ -248,7 +234,6 @@ fn add_managed_links_pw_in_process_without_script() {
         repo.to_str().unwrap(),
         "--date",
         "2026-01-01",
-        // no --pending-work-script → in-process fallback
     ]);
     let out = handoff::run(&args).unwrap();
     assert!(
@@ -273,14 +258,6 @@ fn add_managed_links_pw_in_process_without_script() {
         "handoff tag missing: {note}"
     );
 
-    // `invoke_add` (above) writes the scaffold directly, then calls
-    // `inprocess_pw_add`, which sends the built `AddPendingWorkItem` command
-    // straight through the mediator — it never re-enters `run_add`, so this
-    // directory must hold exactly the one file written up front. The CLI
-    // path that *does* land in `run_add` with `--continue-handoff --tag
-    // handoff` set (an operator's `--pending-work-script` execing the real
-    // `pwf` binary) is guarded separately by
-    // `add_continue_handoff_and_tag_handoff_does_not_scaffold_a_second_file`.
     let handoff_files: Vec<_> = fs::read_dir(repo.join("docs/handoffs"))
         .unwrap()
         .filter_map(Result::ok)
@@ -298,8 +275,6 @@ fn add_managed_links_pw_in_process_without_script() {
             .collect::<Vec<_>>()
     );
 }
-
-// ── Task 10 / PWF-0117: `pwf add --tag handoff` scaffolds the handoff ──────
 
 #[test]
 fn add_with_handoff_tag_scaffolds_handoff_file() {
@@ -322,7 +297,7 @@ fn add_with_handoff_tag_scaffolds_handoff_file() {
         "--date",
         "2026-01-01",
     ]);
-    let out = pwk::run_args(&args).unwrap();
+    let out = run_args_plain(&args).unwrap();
 
     assert!(out.contains("TST-0001"), "got: {out}");
 
@@ -340,7 +315,7 @@ fn add_with_handoff_tag_scaffolds_handoff_file() {
 #[test]
 fn add_with_handoff_tag_and_missing_repo_root_errors_without_creating_item() {
     let stage = tmpdir("pw_add_handoff_tag_missing_repo");
-    // `repo` is mapped in config but never created on disk.
+    // Leave the configured repository path absent.
     let repo = stage.join("repo");
     let notes = stage.join("notes");
     let cfg = write_config(&stage, &repo, &notes);
@@ -358,7 +333,7 @@ fn add_with_handoff_tag_and_missing_repo_root_errors_without_creating_item() {
         "--date",
         "2026-01-01",
     ]);
-    let err = pwk::run_args(&args).unwrap_err();
+    let err = run_args_plain(&args).unwrap_err();
 
     assert!(err.contains("does not exist"), "got: {err}");
     assert!(
@@ -398,7 +373,7 @@ fn add_with_handoff_tag_and_scaffold_path_collision_errors_without_creating_item
         "--date",
         "2026-01-01",
     ]);
-    let err = pwk::run_args(&args).unwrap_err();
+    let err = run_args_plain(&args).unwrap_err();
 
     assert!(err.contains("already exists"), "got: {err}");
     assert!(
@@ -434,7 +409,7 @@ fn add_without_handoff_tag_has_no_handoff_side_effects() {
         "--date",
         "2026-01-01",
     ]);
-    let out = pwk::run_args(&args).unwrap();
+    let out = run_args_plain(&args).unwrap();
 
     assert!(out.contains("TST-0001"), "got: {out}");
     let item = fs::read_to_string(notes.join("test-project/TST-0001.md")).unwrap();
@@ -445,12 +420,7 @@ fn add_without_handoff_tag_has_no_handoff_side_effects() {
     );
 }
 
-/// `--continue-handoff --tag handoff` is the canonical shape an operator's
-/// `--pending-work-script` allocator execs against the real `pwf` binary
-/// (`pw_bridge::spawn_pw_add`'s doc comment). That flag means the item
-/// continues a handoff that already exists, so `run_add` must not scaffold a
-/// second one — only guard proving this drives `run_add` directly; the
-/// in-process `handoff add` seam (`inprocess_pw_add`) never reaches it.
+/// Verifies the external allocator argv does not scaffold an existing handoff twice.
 #[test]
 fn add_continue_handoff_and_tag_handoff_does_not_scaffold_a_second_file() {
     let stage = tmpdir("pw_add_continue_no_double_scaffold");
@@ -478,7 +448,7 @@ fn add_continue_handoff_and_tag_handoff_does_not_scaffold_a_second_file() {
         "--date",
         "2026-01-02",
     ]);
-    let out = pwk::run_args(&args).unwrap();
+    let out = run_args_plain(&args).unwrap();
 
     assert!(out.contains("TST-0001"), "got: {out}");
     let item = fs::read_to_string(notes.join("test-project/TST-0001.md")).unwrap();
@@ -501,8 +471,6 @@ fn add_continue_handoff_and_tag_handoff_does_not_scaffold_a_second_file() {
             .collect::<Vec<_>>()
     );
 }
-
-// ── Task 22: list dispatch ─────────────────────────────────────────────────
 
 #[test]
 fn list_returns_ledger_content() {
@@ -549,9 +517,7 @@ fn list_no_ledger() {
     assert_eq!(out, "No active handoffs (LEDGER.md not found).");
 }
 
-// ── Task 7 / PWF-0117: mirror `pwf done`/`pwf cancel` onto the linked handoff ──
-
-fn parse_pw_args(tokens: &[&str]) -> pwf::cli::Args {
+fn parse_pw_args(tokens: &[&str]) -> pwf::cli::EngineArgs {
     let v = tokens
         .iter()
         .map(std::string::ToString::to_string)
@@ -559,9 +525,7 @@ fn parse_pw_args(tokens: &[&str]) -> pwf::cli::Args {
     pwf::command::parse_argv(v).unwrap().1
 }
 
-/// Stage a `test-project` item tagged `handoff` plus its open index link, and
-/// — when `handoff_pw` is set — a matching active handoff file under
-/// `docs/handoffs/` in `repo` linking back via `pw: <handoff_pw>`.
+/// Stages an open tagged item and an optional linked active handoff.
 fn stage_tagged_item(notes: &Path, repo: &Path, handoff_pw: Option<&str>) {
     let proj = notes.join("test-project");
     fs::create_dir_all(&proj).unwrap();
@@ -611,7 +575,7 @@ fn done_archives_linked_handoff_and_reports_dest() {
         "--date",
         "2026-01-02",
     ]);
-    let out = pwk::run_args(&args).unwrap();
+    let out = run_args_plain(&args).unwrap();
 
     assert!(out.contains("handoff: archived"), "got: {out}");
     let archived_path = repo.join("docs/handoffs/archived/2026-01-01-managed-flow.md");
@@ -660,7 +624,7 @@ fn cancel_archives_linked_handoff_as_cancelled_with_report_body() {
         "--date",
         "2026-01-02",
     ]);
-    let out = pwk::run_args(&args).unwrap();
+    let out = run_args_plain(&args).unwrap();
 
     assert!(out.contains("handoff: archived"), "got: {out}");
     let archived_path = repo.join("docs/handoffs/archived/2026-01-01-managed-flow.md");
@@ -697,7 +661,7 @@ fn done_errors_and_leaves_item_active_when_no_handoff_links_it() {
         "--date",
         "2026-01-02",
     ]);
-    let err = pwk::run_args(&args).unwrap_err();
+    let err = run_args_plain(&args).unwrap_err();
 
     assert!(err.contains("pw: TST-0001"), "got: {err}");
     let item = fs::read_to_string(notes.join("test-project/TST-0001.md")).unwrap();
@@ -745,7 +709,7 @@ fn done_on_untagged_item_never_touches_handoffs_dir() {
         "--date",
         "2026-01-02",
     ]);
-    let out = pwk::run_args(&args).unwrap();
+    let out = run_args_plain(&args).unwrap();
 
     assert!(!out.contains("handoff: archived"), "got: {out}");
     assert!(
@@ -790,7 +754,7 @@ fn done_errors_and_leaves_item_active_when_archive_destination_exists() {
         "--date",
         "2026-01-02",
     ]);
-    let err = pwk::run_args(&args).unwrap_err();
+    let err = run_args_plain(&args).unwrap_err();
 
     assert!(
         err.contains("archived handoff already exists"),
@@ -803,12 +767,7 @@ fn done_errors_and_leaves_item_active_when_archive_destination_exists() {
     );
 }
 
-// ── Task 8 / PWF-0117: mirror `pwf reopen` onto the archived handoff ───────
-
-/// Stage a closed `test-project` item tagged `handoff` plus its done-queue
-/// index link, and — when `handoff_pw` is set — a matching archived handoff
-/// file under `docs/handoffs/archived/` in `repo` linking back via
-/// `pw: <handoff_pw>`.
+/// Stages a closed tagged item and an optional linked archived handoff.
 fn stage_closed_tagged_item(notes: &Path, repo: &Path, handoff_pw: Option<&str>) {
     let proj = notes.join("test-project");
     fs::create_dir_all(&proj).unwrap();
@@ -854,7 +813,7 @@ fn reopen_restores_archived_handoff_and_reports_dest() {
         "--notes-dir",
         notes.to_str().unwrap(),
     ]);
-    let out = pwk::run_args(&args).unwrap();
+    let out = run_args_plain(&args).unwrap();
 
     assert!(out.contains("handoff: reopened"), "got: {out}");
     let active_path = repo.join("docs/handoffs/2026-01-01-managed-flow.md");
@@ -904,7 +863,7 @@ fn reopen_errors_and_leaves_item_done_when_active_destination_exists() {
         "--notes-dir",
         notes.to_str().unwrap(),
     ]);
-    let err = pwk::run_args(&args).unwrap_err();
+    let err = run_args_plain(&args).unwrap_err();
 
     assert!(err.contains("active handoff already exists"), "got: {err}");
     let item = fs::read_to_string(notes.join("test-project/TST-0001.md")).unwrap();
@@ -932,7 +891,7 @@ fn reopen_errors_and_leaves_item_done_when_no_archived_handoff_links_it() {
         "--notes-dir",
         notes.to_str().unwrap(),
     ]);
-    let err = pwk::run_args(&args).unwrap_err();
+    let err = run_args_plain(&args).unwrap_err();
 
     assert!(err.contains("pw: TST-0001"), "got: {err}");
     let item = fs::read_to_string(notes.join("test-project/TST-0001.md")).unwrap();
@@ -948,8 +907,7 @@ fn reopen_already_active_pair_skips_without_touching_handoff() {
     let repo = stage.join("repo");
     fs::create_dir_all(&repo).unwrap();
     let notes = stage.join("notes");
-    // Tagged ACTIVE item whose handoff is also already active: the pair is in
-    // its goal state, so reopen must stay FR-0021's idempotent no-op skip.
+    // Keep both sides active to exercise idempotent reopen.
     stage_tagged_item(&notes, &repo, Some("TST-0001"));
     let cfg = write_config(&stage, &repo, &notes);
 
@@ -962,7 +920,7 @@ fn reopen_already_active_pair_skips_without_touching_handoff() {
         "--notes-dir",
         notes.to_str().unwrap(),
     ]);
-    let out = pwk::run_args(&args).unwrap();
+    let out = run_args_plain(&args).unwrap();
 
     assert!(out.contains("already active"), "got: {out}");
     assert!(!out.contains("handoff: reopened"), "got: {out}");
@@ -1016,7 +974,7 @@ fn reopen_on_untagged_item_never_touches_handoffs_dir() {
         "--notes-dir",
         notes.to_str().unwrap(),
     ]);
-    let out = pwk::run_args(&args).unwrap();
+    let out = run_args_plain(&args).unwrap();
 
     assert!(!out.contains("handoff: reopened"), "got: {out}");
     assert!(
@@ -1026,8 +984,6 @@ fn reopen_on_untagged_item_never_touches_handoffs_dir() {
     let item = fs::read_to_string(proj.join("TST-0001.md")).unwrap();
     assert!(item.contains("status: active"), "got: {item}");
 }
-
-// ── Task 9 / PWF-0117: mirror `pwf remove` onto the linked handoff ─────────
 
 #[test]
 fn remove_deletes_linked_handoff_and_rebuilds_ledger() {
@@ -1049,9 +1005,8 @@ fn remove_deletes_linked_handoff_and_rebuilds_ledger() {
         "--notes-dir",
         notes.to_str().unwrap(),
     ]);
-    // `run_args` uses `RealConfirm`, which is non-interactive under `cargo
-    // test` (no TTY on stdin), so the default-yes gate proceeds unprompted.
-    let out = pwk::run_args(&args).unwrap();
+    // `run_args` uses explicit non-interactive confirmation and never reads process stdin.
+    let out = run_args_plain(&args).unwrap();
 
     assert!(out.starts_with("REMOVED PWF TASK [TST-0001]"), "got: {out}");
     assert!(
@@ -1105,7 +1060,7 @@ fn remove_on_untagged_item_never_touches_handoffs_dir() {
         "--notes-dir",
         notes.to_str().unwrap(),
     ]);
-    let out = pwk::run_args(&args).unwrap();
+    let out = run_args_plain(&args).unwrap();
 
     assert!(out.starts_with("REMOVED PWF TASK [TST-0001]"), "got: {out}");
     assert!(

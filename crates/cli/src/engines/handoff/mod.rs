@@ -1,6 +1,4 @@
-//! Handoff engine, split by responsibility. `mod.rs` only wires the submodules
-//! together and re-exports the public surface; behavior lives in the focused
-//! submodules below.
+//! Implements handoff scaffolding, listing, ledger reconciliation, and lifecycle mirroring.
 
 mod actions;
 mod errors;

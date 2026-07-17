@@ -1,5 +1,4 @@
-//! Child-process execution and the `RESULT scope=… status=…` output contract.
-//! Every verb spawns children and reports through here — never ad hoc.
+//! Child-process execution and stable `RESULT scope=… status=…` reporting.
 
 use std::process::Command;
 
@@ -7,12 +6,10 @@ use anyhow::{Context, Result, bail};
 
 use crate::task::{Step, StepRunner};
 
-/// Terminal status of a verb, printed as the `RESULT` line's `status=` field.
+/// Selects the `status=` value in a terminal `RESULT` line.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Status {
-    /// A check or suite succeeded.
     Pass,
-    /// A write action completed.
     Done,
 }
 
@@ -25,7 +22,7 @@ impl std::fmt::Display for Status {
     }
 }
 
-/// [`StepRunner`] backed by real child processes.
+/// Runs steps as child processes.
 pub(crate) struct ProcessRunner;
 
 impl StepRunner for ProcessRunner {
@@ -53,7 +50,7 @@ impl StepRunner for ProcessRunner {
     }
 }
 
-/// Runs `program args…`, tagging a non-zero exit with `label`.
+/// Runs a child process and tags non-zero exits with `label`.
 pub(crate) fn run(label: &str, program: &str, args: &[&str]) -> Result<()> {
     let status = Command::new(program)
         .args(args)
@@ -65,7 +62,7 @@ pub(crate) fn run(label: &str, program: &str, args: &[&str]) -> Result<()> {
     Ok(())
 }
 
-/// Runs `program args…` and captures stdout as UTF-8; errors on non-zero exit.
+/// Runs a child process and captures UTF-8 stdout.
 pub(crate) fn capture(label: &str, program: &str, args: &[&str]) -> Result<String> {
     let out = Command::new(program)
         .args(args)
@@ -77,7 +74,7 @@ pub(crate) fn capture(label: &str, program: &str, args: &[&str]) -> Result<Strin
     String::from_utf8(out.stdout).context("non-UTF-8 output")
 }
 
-/// Emits the contract line on stdout (keep it byte-stable — consumers grep it).
+/// Emits the byte-stable `RESULT` line consumed by automation.
 pub(crate) fn result(scope: &str, status: Status) {
     println!("RESULT scope={scope} status={status}");
 }

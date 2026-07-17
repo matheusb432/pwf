@@ -1,15 +1,5 @@
-//! Presentation-only reformat of `add`/`remove`/`update`'s confirmation
-//! outcome, applied at the single call site that reaches a human terminal
-//! directly (`run.rs`'s outer `run()`). Never applied inside
-//! `run_typed`/`run_args`, which render the legacy `raw_text()` shape for the
-//! seams that still consume plain text (`done --review`'s embed, and the
-//! `crates/cli/tests/pending_work.rs` integration suite driving verbs via
-//! `run_args`). The in-process handoff `add` seam consumes the typed
-//! `AddedItem` from the shared mediator path and never parses text; the only
-//! remaining id-parse (`parse_added_id` in `engines/handoff/pw_bridge.rs`)
-//! reads the stdout of the external `--pending-work-script` allocator — a
-//! separately-spawned program that prints its own `ADDED PWF TASK [<id>]`
-//! line. See AGENTS.md's cross-engine-seams note (PWF-0087).
+//! Formats typed mutation confirmations only for direct terminal output.
+//! `run_typed` and `run_args` retain raw text; external allocators own `ADDED PWF TASK [<id>]`.
 
 use anstyle::AnsiColor;
 use pwf_domain::pending_work::MutationOutcome;
@@ -47,12 +37,6 @@ fn mutation_confirmation_parts(
     }
 }
 
-/// Render `outcome`'s confirmation as `"<label>: <id> <headline>\n<detail
-/// lines>"`, with the id and headline painted bold + the outcome's color when
-/// `on` — the id leads the highlighted span so it pops out among long
-/// prompts. `None` for `Text` outcomes, which the caller prints unchanged.
-/// `headline`/`detail_lines` are the same per-variant accessors `raw_text()`
-/// (`outcome.rs`) composes from, so the two renderings can never drift apart.
 pub(in crate::engines::pending_work) fn render_outcome_confirmation(
     outcome: &EngineOutcome,
     on: bool,

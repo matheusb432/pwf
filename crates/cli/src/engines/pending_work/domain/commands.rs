@@ -1,19 +1,19 @@
 use super::super::model::Action;
-use crate::{cli::Args, engines::pending_work::errors::PendingWorkError};
+use crate::{cli::EngineArgs, engines::pending_work::errors::PendingWorkError};
 
 #[derive(Debug, Clone)]
 pub struct PendingWorkCommand {
     action: Action,
-    args: Args,
+    args: EngineArgs,
 }
 
 impl PendingWorkCommand {
-    pub(crate) fn new(action: Action, args: Args) -> Self {
+    pub(crate) fn new(action: Action, args: EngineArgs) -> Self {
         Self { action, args }
     }
 
     pub(in crate::engines::pending_work) fn from_args_typed(
-        args: &Args,
+        args: &EngineArgs,
     ) -> Result<Self, PendingWorkError> {
         let action_raw = args
             .action
@@ -32,7 +32,7 @@ impl PendingWorkCommand {
         &self.action
     }
 
-    pub(crate) fn args(&self) -> &Args {
+    pub(crate) fn args(&self) -> &EngineArgs {
         &self.args
     }
 }
@@ -46,7 +46,7 @@ mod tests {
 
     #[test]
     fn missing_action_returns_typed_error_with_legacy_display() {
-        let args = Args::default();
+        let args = EngineArgs::default();
 
         let err = PendingWorkCommand::from_args_typed(&args).unwrap_err();
 
@@ -56,9 +56,9 @@ mod tests {
 
     #[test]
     fn unknown_action_returns_typed_error_with_legacy_display() {
-        let args = Args {
+        let args = EngineArgs {
             action: Some("nope".to_string()),
-            ..Args::default()
+            ..EngineArgs::default()
         };
 
         let err = PendingWorkCommand::from_args_typed(&args).unwrap_err();

@@ -172,9 +172,7 @@ fn write_note(
     std::fs::write(path, note).unwrap();
 }
 
-/// Drives the migrated add write path at the adapter level: the generic
-/// `insert` (note only) followed by the `IndexEntry::Open` upsert — exactly
-/// what the application `store_util::create_item` seam orchestrates.
+/// Writes a note and then its open index entry through the adapter ports.
 fn generic_add(store: &ObsidianStore, new: NewItem) -> Result<PendingWorkItem, ObsidianStoreError> {
     let project = ProjectName::try_new("pwf").unwrap();
     let section = new.section.clone().unwrap_or_default();
@@ -362,9 +360,7 @@ fn generic_insert_allocates_after_greatest_frontmatter_id() {
     );
 }
 
-/// Applies a tags-only [`ItemPatch`] to `PWF-0001` through the generic port —
-/// the write path the migrated update handler now drives. `Some(tags)` sets the
-/// frontmatter tags line, `None` clears it.
+/// Applies a tags-only patch; `Some(tags)` sets the field and `None` clears it.
 fn apply_tag_patch(store: &ObsidianStore, tags: Option<Tags>) {
     let project = ProjectName::try_new("pwf").unwrap();
     let id = WorkItemId::try_new("PWF-0001").unwrap();
@@ -414,8 +410,6 @@ fn generic_update_writes_a_deduplicated_tag_value() {
         store,
         item_path,
     } = staged_open_item_with_tags("[sqlite, godot]");
-    // The handler owns the merge; the adapter writes whatever final value it is
-    // handed.
     let merged = Tags::parse_values(&["sqlite,godot,csharp-export".to_string()]).unwrap();
 
     apply_tag_patch(&store, Some(merged));
@@ -531,7 +525,6 @@ fn generic_delete_removes_note_and_unlinks_index() {
     let project = ProjectName::try_new("pwf").unwrap();
     let id = WorkItemId::try_new("PWF-0001").unwrap();
 
-    // The migrated remove order: index unlink first, then the note delete.
     <ObsidianStore as AppDbStore<IndexEntry>>::delete(&store, &project, &id).unwrap();
     <ObsidianStore as AppDbStore<PendingWorkItem>>::delete(&store, &project, &id).unwrap();
 
@@ -639,8 +632,6 @@ fn get_finds_closed_note_still_in_project_dir_with_shorthand_id() {
     );
     let store = ObsidianStore::new(config_for_notes(&notes_dir));
 
-    // The WorkItemId sanitizer expands the `pwf3` shorthand, so the generic
-    // lookup finds the same closed note the legacy shorthand resolve did.
     let record = get_record(&store, "pwf3").expect("shorthand id must resolve");
 
     assert_eq!(
@@ -748,8 +739,6 @@ fn write_status_note(
     std::fs::write(path, note).unwrap();
 }
 
-// --- PWF-0123 Phase 2: generic AppDbStore representation-mapping round-trips ---
-
 #[test]
 fn item_record_roundtrips_file_model_note() {
     let temp = tempfile::tempdir().unwrap();
@@ -794,7 +783,6 @@ fn item_record_roundtrips_file_model_note() {
     assert_eq!(record.section, None);
     assert_eq!(record.body, "\nship the adapter body\n");
     assert_eq!(record.locator, path_str(&note_path));
-    // The load-bearing contract: source is the note's bytes, verbatim.
     assert_eq!(record.source, source);
 }
 
@@ -825,9 +813,6 @@ fn item_record_materializes_legacy_checkbox_line() {
     assert_eq!(record.created, None);
     assert_eq!(record.completed, None);
     assert_eq!(record.section, None);
-    // A note-less wikilink materializes as a missing-note record: empty
-    // body/source, locator = the note path the id should occupy, and the
-    // missing-note discriminant carrying the diagnostic-facing path.
     assert_eq!(record.locator, path_str(&expected_note));
     assert_eq!(record.source, "");
     assert_eq!(record.body, "");
@@ -877,7 +862,6 @@ fn index_entries_parse_open_done_and_raw_futuro_section() {
             IndexEntry {
                 id: WorkItemId::try_new("PWF-0003").unwrap(),
                 state: IndexEntryState::Open,
-                // Raw stored label, NOT canonicalized to "Future".
                 section: "Futuro".to_string(),
             },
         ]
@@ -951,7 +935,6 @@ fn insert_allocates_next_id_without_index_write() {
     )
     .unwrap();
 
-    // Next id after the PWF-0007 max-scan.
     assert_eq!(
         record.id,
         RecordId::Item(WorkItemId::try_new("PWF-0008").unwrap())
@@ -959,17 +942,13 @@ fn insert_allocates_next_id_without_index_write() {
     assert_eq!(record.status, WorkItemStatus::Active);
     assert!(record.source.contains("id: PWF-0008"));
     assert_eq!(record.locator, path_str(&project_dir.join("PWF-0008.md")));
-    // The note file exists...
     assert!(project_dir.join("PWF-0008.md").exists());
-    // ...but insert did NOT touch the index (that is IndexEntry's job).
     assert_eq!(std::fs::read_to_string(&index_path).unwrap(), index_before);
 }
 
-/// The generic list carries index placement (display path + entry line) and the
-/// RAW section label on each record; a note file with no index entry is not
-/// part of the listed collection (index-driven, like the legacy read).
+/// Verifies that open index links contribute placement without owning list membership.
 #[test]
-fn generic_list_records_carry_placement_and_stay_index_driven() {
+fn generic_list_records_carry_open_placement_without_hiding_unlinked_notes() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
     let project_dir = notes_dir.join("pwf");
@@ -993,7 +972,6 @@ fn generic_list_records_carry_placement_and_stay_index_driven() {
         None,
         "body",
     );
-    // Active note with no index entry: not part of the listed collection.
     write_note(
         &project_dir.join("PWF-0002.md"),
         "unlinked",
@@ -1008,8 +986,16 @@ fn generic_list_records_carry_placement_and_stay_index_driven() {
     let project = ProjectName::try_new("pwf").unwrap();
     let records = <ObsidianStore as AppDbStore<PendingWorkItem>>::list(&store, &project).unwrap();
 
-    assert_eq!(records.len(), 1, "unlinked note must not be listed");
-    let record = &records[0];
+    assert_eq!(records.len(), 2);
+    let record = records
+        .iter()
+        .find(|record| {
+            record
+                .id
+                .as_item()
+                .is_some_and(|id| id.as_ref() == "PWF-0001")
+        })
+        .expect("linked record must be listed");
     assert_eq!(
         record.id,
         RecordId::Item(WorkItemId::try_new("PWF-0001").unwrap())
@@ -1021,11 +1007,126 @@ fn generic_list_records_carry_placement_and_stay_index_driven() {
             line: 7,
         })
     );
-    // RAW stored label — normalization is application policy.
     assert_eq!(record.section.as_deref(), Some("Futuro"));
+    let unlinked = records
+        .iter()
+        .find(|record| {
+            record
+                .id
+                .as_item()
+                .is_some_and(|id| id.as_ref() == "PWF-0002")
+        })
+        .expect("unlinked record must be listed");
+    assert!(unlinked.placement.is_none());
+    assert_eq!(unlinked.section, None);
 }
 
-// ── IndexSection: list-only record kind ─────────────────────────────────────
+#[test]
+fn list_pending_items_returns_note_history_and_index_only_records() {
+    let temp = tempfile::tempdir().unwrap();
+    let notes_dir = temp.path().join("notes");
+    let project_dir = notes_dir.join("pwf");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    let index_path = project_dir.join("pwf.md");
+    std::fs::write(
+        &index_path,
+        concat!(
+            "---\nid: pwf\ntitle: pwf\n---\n\n",
+            "- [ ] [[PWF-0001|linked active]]\n",
+            "## Human\n",
+            "- [x] [[PWF-0002|linked done]] ✅ 2026-07-02\n",
+            "- [x] [[PWF-0006|missing done]] ✅ 2026-07-06\n",
+            "- [ ] `legacy task` :: run the legacy prompt\n",
+        ),
+    )
+    .unwrap();
+    for (id, status, completed) in [
+        ("PWF-0001", "active", None),
+        ("PWF-0002", "done", Some("2026-07-02")),
+        ("PWF-0003", "cancelled", Some("2026-07-03")),
+        ("PWF-0004", "done", Some("2026-07-04")),
+        ("PWF-0005", "active", None),
+    ] {
+        write_status_note(
+            &project_dir.join(format!("{id}.md")),
+            &format!("title {id}"),
+            status,
+            completed,
+            None,
+        );
+    }
+    let store = ObsidianStore::new(raw_config_for_notes(&notes_dir));
+    let project = ProjectName::try_new("pwf").unwrap();
+
+    let records = <ObsidianStore as AppDbStore<PendingWorkItem>>::list(&store, &project).unwrap();
+    let mut ids: Vec<String> = records
+        .iter()
+        .filter_map(|record| record.id.as_item().map(ToString::to_string))
+        .collect();
+    ids.sort();
+
+    assert_eq!(
+        ids,
+        [
+            "PWF-0001", "PWF-0002", "PWF-0003", "PWF-0004", "PWF-0005", "PWF-0006",
+        ]
+    );
+    let record = |id: &str| {
+        records
+            .iter()
+            .find(|record| record.id.as_item().is_some_and(|item| item.as_ref() == id))
+            .unwrap_or_else(|| panic!("record {id} must be listed"))
+    };
+    assert_eq!(
+        record("PWF-0001").placement,
+        Some(IndexPlacement {
+            index_path: path_str(&index_path),
+            line: 6,
+        })
+    );
+    assert_eq!(record("PWF-0002").status, WorkItemStatus::Done);
+    assert_eq!(record("PWF-0002").section.as_deref(), Some("Human"));
+    assert!(record("PWF-0002").placement.is_none());
+    assert_eq!(record("PWF-0003").status, WorkItemStatus::Cancelled);
+    assert_eq!(record("PWF-0004").status, WorkItemStatus::Done);
+    assert!(record("PWF-0004").placement.is_none());
+    assert_eq!(record("PWF-0005").status, WorkItemStatus::Active);
+    assert!(record("PWF-0005").placement.is_none());
+    let missing_done = record("PWF-0006");
+    assert_eq!(missing_done.status, WorkItemStatus::Done);
+    assert_matches!(
+        &missing_done.materialization,
+        Materialization::MissingNote { .. }
+    );
+    assert!(records.iter().any(|record| {
+        record.id == RecordId::Inline(1)
+            && record.title == "legacy task"
+            && record.body == "run the legacy prompt"
+    }));
+}
+
+#[test]
+fn list_pending_items_returns_note_history_when_index_is_missing() {
+    let temp = tempfile::tempdir().unwrap();
+    let notes_dir = temp.path().join("notes");
+    let project_dir = notes_dir.join("pwf");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    write_status_note(
+        &project_dir.join("PWF-0001.md"),
+        "evicted done task",
+        "done",
+        Some("2026-07-01"),
+        None,
+    );
+    let store = ObsidianStore::new(raw_config_for_notes(&notes_dir));
+    let project = ProjectName::try_new("pwf").unwrap();
+
+    let records = <ObsidianStore as AppDbStore<PendingWorkItem>>::list(&store, &project).unwrap();
+
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].status, WorkItemStatus::Done);
+    assert!(records[0].placement.is_none());
+}
 
 #[test]
 fn index_sections_list_raw_h2_labels_in_document_order() {
@@ -1134,8 +1235,7 @@ fn index_section_insert_and_delete_are_unsupported() {
     );
 }
 
-/// The one supported section write: `update` renames a `## <label>` header in
-/// place (the futuro-normalization seam, PWF-0123).
+/// Verifies that section update renames an H2 label in place.
 #[test]
 fn index_section_update_renames_header_in_place() {
     let temp = tempfile::tempdir().unwrap();
@@ -1166,12 +1266,7 @@ fn index_section_update_renames_header_in_place() {
     );
 }
 
-// ── add parity: generic insert+upsert must reproduce legacy add's bytes ─────
-
-/// One `pwf add` staging scenario: the pre-existing index (None = fresh
-/// vault), the requested `--section`, and the exact index bytes the write must
-/// leave behind — captured from the legacy monolithic `add_item` before its
-/// retirement, so the generic path stays byte-identical to it.
+/// Captures one add scenario and its expected byte-exact index.
 struct AddParityScenario {
     name: &'static str,
     initial_index: Option<&'static str>,
@@ -1265,12 +1360,7 @@ fn stage_add_parity_vault(
     (temp, store, project_dir)
 }
 
-/// NFR gate for the PWF-0123 write migration: the generic `insert` (note only)
-/// plus the `IndexEntry::Open` upsert must leave the index byte-identical to
-/// what the legacy monolithic `add_item` produced — same section placement
-/// (H2/H3 region logic, `### Notes` safety per NFR-0007), same link format,
-/// same fresh-index template. The `expected_index` literals were captured
-/// against the legacy implementation before its retirement in Task 2.5.
+/// Verifies byte-exact section placement, H3 safety, link format, and fresh-index creation.
 #[test]
 fn generic_insert_plus_upsert_writes_legacy_add_index_bytes() {
     for scenario in add_parity_scenarios() {

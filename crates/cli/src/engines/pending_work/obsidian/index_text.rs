@@ -1,5 +1,3 @@
-// Project-index string transforms.
-
 use std::sync::LazyLock;
 
 pub use pwf_core::index::edit::{find_section_index, remove_index_link};
@@ -13,21 +11,12 @@ static NOTES_HEADER_RE: LazyLock<Regex> =
 static ANCHOR_WIKILINK_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^- \[\[").unwrap());
 static ANCHOR_CHECKBOX_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^- \[").unwrap());
 
-/// Insert `link\n` at the top of the normal-item region: before the first
-/// `^- \[` line that precedes any `## ` section, else after the leading preamble
-/// (H1/blockquote) but above the sections.
-///
-/// Anchoring on a checkbox *anywhere* in the file let a new item land inside
-/// `## Future`/`## Human` when those sections held the only checkboxes; bounding
-/// the search to the region before the first `## ` header keeps it in the normal
-/// region. A leading H1 or blockquote is preamble; the item lands after it.
-/// The region also stops at a `### Notes` H3, so a new task never anchors onto
-/// a note line.
+/// Inserts a link at the top of the unheaded task region, after any H1 or blockquote preamble.
+/// The region ends before the first H2 or `### Notes`, preventing insertion into sections or note
+/// lists.
 pub fn add_link_to_index(content: &str, link: &str) -> String {
     let block = format!("{link}\n");
 
-    // The task region ends at the first H2 section OR the `### Notes` H3,
-    // whichever comes first — so a new task never anchors onto a note line.
     let normal_end = [
         SECTION_MARK_RE.find(content).map(|m| m.start()),
         NOTES_HEADER_RE.find(content).map(|m| m.start()),
@@ -45,8 +34,7 @@ pub fn add_link_to_index(content: &str, link: &str) -> String {
 
     let prefix = content[..insert_at].trim_end();
     let suffix = &content[insert_at..];
-    // block ends with '\n'; leave a blank line before a following heading, but stay
-    // adjacent to a following list item.
+    // Separate headings with a blank line; keep list items adjacent.
     let sep = if !suffix.is_empty() && suffix.trim_start().starts_with('#') {
         "\n"
     } else {
@@ -58,7 +46,6 @@ pub fn add_link_to_index(content: &str, link: &str) -> String {
     format!("{prefix}\n\n{block}{sep}{suffix}")
 }
 
-/// True if `section`'s header already exists in `content` (case-insensitive).
 pub fn section_exists(content: &str, section: Section) -> bool {
     find_section_index(content, section.read_headers()).is_some()
 }
@@ -93,10 +80,8 @@ fn insert_section_item(content: &str, insert_at: usize, block: &str) -> String {
     }
 }
 
-/// Insert `block` into the `section` ('Future', 'Human', or 'Low-prio'), creating the
-/// header if needed. Section order: normal -> Low-prio -> Human -> Future (last).
-/// A legacy `## Futuro` header is still recognized, but new sections are created
-/// as `## Future` (PWF-0026).
+/// Inserts a task into its section, creating the header when absent.
+/// New sections follow Low-prio, Human, Future order; legacy Future headers remain readable.
 pub fn add_section_block(content: &str, block: &str, section: Section) -> String {
     let headers = section.read_headers();
     let section_idx = find_section_index(content, headers);
@@ -105,17 +90,13 @@ pub fn add_section_block(content: &str, block: &str, section: Section) -> String
         return insert_section_item(content, line_end_after(content, idx), block);
     }
 
-    // Section does not exist; create it in the correct position.
     let header = format!("## {}", section.as_str());
 
     if section == Section::Future {
-        // Append at the very end.
         let prefix = content.trim_end();
         return format!("{prefix}\n\n{header}\n\n{block}");
     }
 
-    // Low-prio / Human: place immediately before Future (incl. legacy Futuro) if it
-    // exists, else at end.
     let futuro_idx = find_section_index(content, Section::Future.read_headers());
     if let Some(fidx) = futuro_idx {
         let prefix = content[..fidx].trim_end();
@@ -135,8 +116,6 @@ mod tests {
 
     #[test]
     fn add_link_lands_in_normal_region_not_future() {
-        // PWF-0006/1: when the only checkboxes live under `## Future`, the new item
-        // must go into the (empty) normal region above the heading, never inside it.
         let content = "## Future\n- [ ] [[GLP-0007|later]]\n";
         assert_eq!(
             add_link_to_index(content, NEW),
@@ -146,7 +125,6 @@ mod tests {
 
     #[test]
     fn add_link_below_leading_h1() {
-        // Preserve migrated behavior: item lands below the H1 title.
         assert_eq!(
             add_link_to_index("# glep-shimeji\n", NEW),
             "# glep-shimeji\n\n- [ ] [[GLP-0003|new task]]\n"
@@ -155,7 +133,6 @@ mod tests {
 
     #[test]
     fn add_link_after_leading_blockquote() {
-        // A leading Obsidian callout is preamble: the item lands after the blockquote.
         let content = "> [!note] callout\n\n- [ ] [[GLP-0007|existing]]\n";
         assert_eq!(
             add_link_to_index(content, NEW),
@@ -179,8 +156,6 @@ mod tests {
 
     #[test]
     fn add_section_block_prepends_into_existing_human() {
-        // PWF-0006/6: a second Human add must land within the existing `## Human`
-        // section, not create a duplicate header.
         let content = "- [ ] [[X-0001|a]]\n\n## Human\n- [ ] [[X-0002|h]]\n";
         let got = add_section_block(content, "- [ ] [[X-0003|new]]\n", Section::Human);
         assert_eq!(
@@ -228,7 +203,6 @@ mod tests {
 
     #[test]
     fn add_section_block_future_appends_at_end() {
-        // New Future sections are created as `## Future` (never `## Futuro`).
         let content = "- [ ] [[X-0001|a]]\n";
         assert_eq!(
             add_section_block(content, "- [ ] [[X-0003|new]]\n", Section::Future),
@@ -238,7 +212,6 @@ mod tests {
 
     #[test]
     fn add_section_block_future_appends_into_legacy_futuro_header() {
-        // A pre-existing `## Futuro` is still recognized for insertion.
         let content = "- [ ] [[X-0001|a]]\n\n## Futuro\n- [ ] [[X-0002|f]]\n";
         let got = add_section_block(content, "- [ ] [[X-0003|new]]\n", Section::Future);
         assert!(got.contains("## Futuro"), "legacy header preserved: {got}");
@@ -257,8 +230,6 @@ mod tests {
 
     #[test]
     fn add_link_lands_above_notes_section_when_no_tasks() {
-        // A project with only notes (no open tasks, no H2 sections): a new task must
-        // land in the normal region ABOVE `### Notes`, never anchored onto a note line.
         let content = "# pwf\n\n### Notes\n- [[PWF-NOTE-0001]]\n";
         assert_eq!(
             add_link_to_index(content, NEW),

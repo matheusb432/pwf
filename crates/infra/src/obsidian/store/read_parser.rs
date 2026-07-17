@@ -5,10 +5,8 @@ use regex::Regex;
 static SECTION_HEADER_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?m)^##\s+(?P<name>.+?)\s*$").expect("valid section regex"));
 static LINK_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r"(?m)^\s*-\s*(?:\[ \]\s*)?\[\[(?P<id>[A-Z]{2,4}-\d{4})(?:\|(?P<alias>[^\]]+))?\]\].*$",
-    )
-    .expect("valid item link regex")
+    Regex::new(r"(?m)^\s*-\s*(?:\[ \]\s*)?\[\[(?P<id>[A-Z]{2,4}-\d{4})(?:\|[^\]]+)?\]\].*$")
+        .expect("valid item link regex")
 });
 static INLINE_LEGACY_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
@@ -23,24 +21,22 @@ static FENCED_SESSION_RE: LazyLock<Regex> = LazyLock::new(|| {
     .expect("valid fenced legacy regex")
 });
 
-/// An open wikilink entry (`- [[ID]]` / `- [ ] [[ID|alias]]`) in an index.
+/// Contains an open index wikilink and its source offset.
 pub(super) struct LinkEntry {
     pub(super) id: String,
-    pub(super) alias: Option<String>,
     pub(super) start: usize,
 }
 
-/// A legacy inline prompt entry (backtick session + inline or fenced prompt).
+/// Contains an inline prompt and its source offset.
 pub(super) struct InlineEntry {
     pub(super) session: String,
     pub(super) prompt: String,
     pub(super) start: usize,
 }
 
-/// Every open item entry in an index: wikilinks in document order, inline
-/// legacy prompts sorted by position (their 1-based rank is the inline
-/// ordinal). The single scan the generic record materialization
-/// (`item_record::list_pending_items`) consumes.
+/// Scans open wikilinks and inline prompts in document order.
+///
+/// An inline prompt's one-based rank becomes its ordinal identity.
 pub(super) struct IndexScan {
     pub(super) links: Vec<LinkEntry>,
     pub(super) inline: Vec<InlineEntry>,
@@ -51,9 +47,6 @@ pub(super) fn scan_index(text: &str) -> IndexScan {
         .captures_iter(text)
         .map(|captures| LinkEntry {
             id: captures["id"].to_string(),
-            alias: captures
-                .name("alias")
-                .map(|alias| alias.as_str().to_string()),
             start: captures.get(0).expect("whole match").start(),
         })
         .collect();
@@ -72,9 +65,7 @@ pub(super) fn scan_index(text: &str) -> IndexScan {
     IndexScan { links, inline }
 }
 
-/// The RAW trimmed `## <label>` header governing `offset`, if any.
-/// Normalization (`Futuro` → `Future`, …) is application policy
-/// ([`enrich::normalize_section_label`]).
+/// Returns the raw trimmed H2 label governing `offset`, if any.
 pub(super) fn section_label_at(text: &str, offset: usize) -> Option<String> {
     let mut current = None;
     for captures in SECTION_HEADER_RE.captures_iter(text) {

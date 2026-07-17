@@ -1,5 +1,4 @@
-//! Exec-level checks for help dispatch. `CARGO_BIN_EXE_pwf` is injected by Cargo
-//! for integration tests of the `pwf` binary.
+//! Checks binary help dispatch through Cargo's injected `CARGO_BIN_EXE_pwf` path.
 use std::{fs, process::Command};
 
 fn run(args: &[&str]) -> (String, bool) {
@@ -142,9 +141,9 @@ fn tag_help_is_scoped_to_supported_commands() {
     assert!(all_terse_ok, "pwf --help --terse should exit 0");
     assert!(
         all_terse.contains(
-            "<project> [-n <N>] [--long|--future|--human|--all]   (routes to that project's open items; `pwf list` lists every project)"
+            "<project> [-n <N>] [--status <active|done|cancelled|all>] [--long|--future|--human|--all]   (routes to that project's pending-work items; `pwf list` lists every project)"
         ),
-        "route shorthand must remain unchanged and tag-free: {all_terse}"
+        "route shorthand must remain tag-free and expose status: {all_terse}"
     );
 }
 
@@ -342,7 +341,6 @@ fn terse_help_is_lean_and_succeeds() {
 
 #[test]
 fn verb_terse_help_is_scoped_to_that_verb() {
-    // PWF-0063: `pwf <verb> --help --terse` must show only that verb, not every engine.
     let (terse, ok) = run(&["update", "--help", "--terse"]);
     assert!(ok, "pwf update --help --terse should exit 0");
     assert!(
@@ -358,7 +356,6 @@ fn verb_terse_help_is_scoped_to_that_verb() {
         "verb-scoped terse must not dump sibling verbs: {terse}"
     );
 
-    // The engine forms and the top-level map still emit their full blocks.
     let (engine, ok) = run(&["handoff", "--help", "--terse"]);
     assert!(ok);
     assert!(
@@ -374,7 +371,6 @@ fn verb_terse_help_is_scoped_to_that_verb() {
 
 #[test]
 fn session_help_documents_yes_flag() {
-    // PWF-0074: `--yes`/`-y` skips the [Y/n] dispatch confirmation.
     let (help, ok) = run(&["session", "--help"]);
     assert!(ok, "pwf session --help should exit 0");
     assert!(
@@ -396,7 +392,6 @@ fn session_help_documents_yes_flag() {
 
 #[test]
 fn session_help_documents_worktree_flag() {
-    // PWF-0076: `-w`/`--worktree` augments the launch prompt with a worktree step.
     let (help, ok) = run(&["session", "--help"]);
     assert!(ok, "pwf session --help should exit 0");
     assert!(
@@ -418,7 +413,6 @@ fn session_help_documents_worktree_flag() {
 
 #[test]
 fn session_help_documents_auto_flag() {
-    // PWF-0077: `--auto` appends an autonomy directive for unattended dispatch.
     let (help, ok) = run(&["session", "--help"]);
     assert!(ok, "pwf session --help should exit 0");
     assert!(
@@ -440,8 +434,6 @@ fn session_help_documents_auto_flag() {
 
 #[test]
 fn session_help_documents_agent_flag_long_only() {
-    // PWF-0088: `--agent <claude|codex>` selects the agent (claude default); its
-    // `-a` shorthand was dropped so `-a` can mean `--append` on session instead.
     let (help, ok) = run(&["session", "--help"]);
     assert!(ok, "pwf session --help should exit 0");
     assert!(
@@ -456,8 +448,6 @@ fn session_help_documents_agent_flag_long_only() {
 
 #[test]
 fn session_help_documents_append_flag() {
-    // PWF-0088: `-a`/`--append <lanes>` reuses `update`'s lane-syntax splice to
-    // extend the body before dispatch.
     let (help, ok) = run(&["session", "--help"]);
     assert!(ok, "pwf session --help should exit 0");
     assert!(
@@ -475,7 +465,6 @@ fn session_help_documents_append_flag() {
 
 #[test]
 fn verify_help_documents_agent_flag() {
-    // PWF-0068: `pwf verify` probes the selected agent (claude default).
     let (help, ok) = run(&["verify", "--help"]);
     assert!(ok, "pwf verify --help should exit 0");
     assert!(
@@ -505,6 +494,34 @@ fn list_help_mentions_all_scope() {
     assert!(
         terse.contains("[--all]"),
         "terse help should document --all: {terse}"
+    );
+}
+
+#[test]
+fn list_status_help_names_the_single_value_domain() {
+    let (rich, rich_ok) = run(&["list", "--help"]);
+    assert!(rich_ok, "pwf list --help should exit 0");
+    assert!(
+        rich.contains("--status"),
+        "rich help must expose --status: {rich}"
+    );
+    for value in ["active", "done", "cancelled", "all"] {
+        assert!(rich.contains(value), "rich help must name {value}: {rich}");
+    }
+
+    let (list_terse, list_terse_ok) = run(&["list", "--help", "--terse"]);
+    assert!(list_terse_ok, "pwf list --help --terse should exit 0");
+    assert!(
+        list_terse.contains("[--status <active|done|cancelled|all>]"),
+        "list terse help must expose the exact status domain: {list_terse}"
+    );
+
+    let (top_terse, top_terse_ok) = run(&["--help", "--terse"]);
+    assert!(top_terse_ok, "pwf --help --terse should exit 0");
+    let project_line = top_terse.lines().next().unwrap_or_default();
+    assert!(
+        project_line.contains("[--status <active|done|cancelled|all>]"),
+        "project shorthand terse help must expose the exact status domain: {project_line}"
     );
 }
 

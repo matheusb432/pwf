@@ -15,7 +15,7 @@ fn stage_dir() -> std::path::PathBuf {
     d
 }
 
-fn parse_args(v: &[&str]) -> cli::Args {
+fn parse_args(v: &[&str]) -> cli::EngineArgs {
     let mut owned = vec!["migrate".to_string()];
     owned.extend(v.iter().map(std::string::ToString::to_string));
     pwf::command::parse_argv(owned).unwrap().1
@@ -27,7 +27,6 @@ fn migrate_converts_all() {
     let notes_dir = stage.join("notes");
     fs::create_dir_all(&notes_dir).unwrap();
 
-    // Write the flat note (matches fixture input)
     let flat_note = notes_dir.join("glep-shimeji.md");
     fs::write(
         &flat_note,
@@ -35,7 +34,6 @@ fn migrate_converts_all() {
     )
     .unwrap();
 
-    // Write config
     let cfg_path = stage.join("config.json");
     fs::write(
         &cfg_path,
@@ -57,7 +55,6 @@ fn migrate_converts_all() {
 
     migrate::run(&args).unwrap();
 
-    // GLP-0001 = tray gui (last document item, active)
     let glp1 = fs::read_to_string(notes_dir.join("glep-shimeji/GLP-0001.md")).unwrap();
     assert!(glp1.contains("status: active"), "GLP-0001 should be active");
     assert!(glp1.contains("title: tray gui"), "GLP-0001 title");
@@ -71,7 +68,6 @@ fn migrate_converts_all() {
         "GLP-0001 should have no completed field"
     );
 
-    // GLP-0002 = old cleanup (first document item, done)
     let glp2 = fs::read_to_string(notes_dir.join("glep-shimeji/GLP-0002.md")).unwrap();
     assert!(glp2.contains("status: done"), "GLP-0002 should be done");
     assert!(glp2.contains("title: old cleanup"), "GLP-0002 title");
@@ -84,7 +80,6 @@ fn migrate_converts_all() {
         glp2.contains("completed cleanup on 2025-12-31"),
         "GLP-0002 body"
     );
-    // completed must be the LAST frontmatter field (after created)
     let created_pos = glp2.find("created:").unwrap();
     let completed_pos = glp2.find("completed:").unwrap();
     assert!(
@@ -92,14 +87,11 @@ fn migrate_converts_all() {
         "completed must come after created in frontmatter"
     );
 
-    // Index: active links prepended (with "- [ ]" Obsidian checkbox), legacy inline agent items
-    // converted
     let index = fs::read_to_string(notes_dir.join("glep-shimeji/glep-shimeji.md")).unwrap();
     assert!(
         index.starts_with("- [ ] [[GLP-0001]]"),
         "index starts with active checkbox link"
     );
-    // Done items are not re-added as active links, and no legacy inline backtick tasks remain.
     assert!(
         !index.contains("- [x]") && !index.contains('`'),
         "legacy inline agent items converted"
@@ -114,7 +106,6 @@ fn migrate_converts_all() {
         "human content retained"
     );
 
-    // Flat note deleted
     assert!(
         !flat_note.exists(),
         "flat note should be deleted after migration"
@@ -156,9 +147,7 @@ fn migrate_dry_run_does_not_write() {
 
     migrate::run(&args).unwrap();
 
-    // Flat note must still exist (dry run)
     assert!(flat_note.exists(), "flat note must survive dry run");
-    // Folder must not be created
     assert!(
         !notes_dir.join("glep-shimeji").exists(),
         "folder must not be created in dry run"
@@ -172,10 +161,8 @@ fn migrate_skips_when_folder_index_exists() {
     let folder = notes_dir.join("glep-shimeji");
     fs::create_dir_all(&folder).unwrap();
 
-    // Pre-existing folder index
     fs::write(folder.join("glep-shimeji.md"), "already migrated\n").unwrap();
 
-    // Flat note also exists
     let flat_note = notes_dir.join("glep-shimeji.md");
     fs::write(&flat_note, "# glep-shimeji\n\n- [ ] `item` <- do thing\n").unwrap();
 
@@ -200,12 +187,10 @@ fn migrate_skips_when_folder_index_exists() {
 
     migrate::run(&args).unwrap();
 
-    // Flat note must be untouched (skipped)
     assert!(
         flat_note.exists(),
         "flat note untouched when folder index exists"
     );
-    // Existing folder index unchanged
     assert_eq!(
         fs::read_to_string(folder.join("glep-shimeji.md")).unwrap(),
         "already migrated\n"

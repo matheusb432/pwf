@@ -1,5 +1,4 @@
-//! JSON-RPC client for Codex's `app-server --stdio`: initialize, list threads,
-//! and set a thread name over line-delimited JSON.
+//! Implements the line-delimited JSON-RPC client for Codex `app-server --stdio`.
 
 use std::{
     io::{BufRead, BufReader, Write},
@@ -7,8 +6,6 @@ use std::{
 };
 
 use serde_json::{Value, json};
-
-use super::CODEX_BINARY;
 
 const APP_SERVER: &str = "app-server";
 const STDIO: &str = "--stdio";
@@ -29,8 +26,8 @@ pub(super) struct AppServerClient {
 }
 
 impl AppServerClient {
-    pub(super) fn start() -> Result<Self, String> {
-        let mut child = Command::new(CODEX_BINARY)
+    pub(super) fn start(binary: &str) -> Result<Self, String> {
+        let mut child = Command::new(binary)
             .args([APP_SERVER, STDIO])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -155,10 +152,8 @@ impl Drop for AppServerClient {
     }
 }
 
-/// Pure decision over a `thread/list` response: the first (newest-first) thread
-/// created at/after `threshold` whose `preview` starts with `prompt_prefix`
-/// (when given). A thread missing `createdAt` — or missing `preview` while a
-/// prefix filter is set — never matches.
+/// Selects the first matching thread from a newest-first response at or after `threshold`.
+/// Threads missing required timestamps or previews do not match.
 fn matching_thread_id(
     threads: &[Value],
     threshold: u64,

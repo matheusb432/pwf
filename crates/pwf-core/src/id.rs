@@ -1,16 +1,16 @@
-//! Sequential id allocation by scanning a project dir for `{KEY}-NNNN.md` files.
+//! Sequential id allocation from `{KEY}-NNNN.md` files.
 
 use std::path::Path;
 
 use regex::Regex;
 
-/// Allocate `"{key}-{max+1:04}"` by scanning every dir in `dirs` for `*.md`
-/// files whose stem matches `^{key}-(\d{4})$`. Missing dirs are skipped; gaps
-/// are preserved (allocation is `max + 1`, never a gap-fill).
+/// Allocates `"{key}-{max+1:04}"` by scanning matching Markdown stems in every directory.
+///
+/// Missing directories are skipped. Allocation uses the maximum suffix rather than filling gaps.
 ///
 /// # Panics
-/// Panics if the internal id-matching regex fails to compile — unreachable in
-/// practice since `key` is escaped via [`regex::escape`].
+///
+/// Panics if the escaped key cannot compile as a regular expression.
 pub fn next_id(dirs: &[&Path], key: &str) -> String {
     let re = Regex::new(&format!(r"^{}-(\d{{4}})$", regex::escape(key))).unwrap();
     let mut max = 0;
@@ -66,7 +66,6 @@ mod tests {
 
     #[test]
     fn disjoint_keys_do_not_perturb_each_other() {
-        // A task file must not bump a NOTE allocation and vice-versa.
         let d = tempdir();
         std::fs::write(d.path().join("PWF-0007.md"), "x").unwrap();
         std::fs::write(d.path().join("PWF-NOTE-0003.md"), "x").unwrap();

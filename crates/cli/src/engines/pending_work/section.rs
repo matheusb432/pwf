@@ -1,10 +1,6 @@
-//! The `Section` a pending-work item is created under within a project note.
-//! Replaces stringly-typed section handling on the write path: one place owns the
-//! canonical name, the recognized headers (incl. legacy aliases), and the
-//! `--section` flag grammar. Absence of a `Section` means the General area (items
-//! at the top of the note, no `## ` header).
+//! Defines canonical sections, accepted flag values, and legacy header aliases.
+//! `None` represents the unheaded general section.
 
-/// A non-default pending-work section.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Section {
     Future,
@@ -13,8 +9,7 @@ pub enum Section {
 }
 
 impl Section {
-    /// Canonical name: the value written to frontmatter and the created
-    /// `## {name}` header.
+    /// Returns the canonical frontmatter and header name.
     pub fn as_str(self) -> &'static str {
         match self {
             Section::Future => "Future",
@@ -23,8 +18,7 @@ impl Section {
         }
     }
 
-    /// Recognized headers, newest-canonical first; legacy aliases still matched
-    /// (`## Futuro`, `## Low-priority`) so existing notes keep parsing (PWF-0026).
+    /// Returns canonical and legacy headers, with the canonical form first.
     pub fn read_headers(self) -> &'static [&'static str] {
         match self {
             Section::Future => &["## Future", "## Futuro"],
@@ -33,9 +27,7 @@ impl Section {
         }
     }
 
-    /// Parse the `--section` flag value (`future|human|low-prio`, case-insensitive).
-    /// Returns `None` for an unrecognized value so the caller can error with the raw
-    /// input.
+    /// Parses a canonical CLI value case-insensitively.
     pub fn from_flag(value: &str) -> Option<Section> {
         match value.trim().to_lowercase().as_str() {
             "future" => Some(Section::Future),

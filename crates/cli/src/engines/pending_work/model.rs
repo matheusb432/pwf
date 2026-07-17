@@ -1,8 +1,7 @@
 use std::str::FromStr;
 
-use pwf_domain::pending_work::OpenItem;
+use pwf_domain::pending_work::PendingWorkItemView;
 
-/// Task model shared across the pending-work submodules.
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub struct Item {
     pub id: String,
@@ -17,16 +16,13 @@ pub struct Item {
     pub launchable: bool,
     pub needs_prompt: bool,
     pub issues: Vec<String>,
-    // ? Index section governing this item (`Future`/`Human`), or `None` for the
-    // ? normal/visible region. Internal-only: drives default list filtering.
+    // `None` selects the normal section and default list visibility.
     pub section: Option<String>,
-    // ? Raw `prereq` frontmatter (e.g. "[[CFG-0014]]").
+    // Raw `prereq` frontmatter.
     pub prereq: Option<String>,
-    // ? Raw `effort` frontmatter (e.g. "3"); unvalidated here — EffortTier::parse
-    // ? validates it at resolution time (session/verify).
+    // Raw `effort` frontmatter; session resolution validates it.
     pub effort: Option<String>,
-    // ? Raw `created` frontmatter (e.g. "2026-01-01"); `None` for legacy inline
-    // ? items, which have no backing note. Drives `list --order created`.
+    // Raw `created` frontmatter; legacy inline items have no value.
     pub created: Option<String>,
 }
 
@@ -53,8 +49,8 @@ impl Item {
     }
 }
 
-impl From<OpenItem> for Item {
-    fn from(item: OpenItem) -> Self {
+impl From<PendingWorkItemView> for Item {
+    fn from(item: PendingWorkItemView) -> Self {
         Self {
             id: item.id,
             project: item.project,

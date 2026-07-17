@@ -1,10 +1,6 @@
-//! Fixture-corpus integration tests for the `rename-project` engine.
-//!
-//! Each test stages a self-contained pwf-db in a `TempDir`: a project dir with a
-//! conventional and descriptive filenames (one carrying an internal
-//! `[[OLD-NNNN]]` cross-ref), a second project whose frontmatter
-//! lists a cross-project `prereq: "[[OLD-0001]]"`, and a `.trash/` note that must
-//! be left untouched — plus a pwf config JSON and a `repos.toml` manifest.
+//! Runs `rename-project` against a self-contained pwf-db, config, and manifest.
+//! The fixture covers filename variants, internal and cross-project references, and `.trash`
+//! exclusion.
 
 use std::{
     fs,
@@ -48,7 +44,6 @@ fn stage() -> Vault {
     )
     .unwrap();
 
-    // The project index file is named by the path basename and links its items.
     fs::write(
         old.join("oldproj.md"),
         "---\nid: old\ntitle: oldproj\n---\n\n# oldproj\n\n- [ ] [[OLD-0001]]\n- [ ] [[OLD-0002]]\n",
@@ -97,7 +92,7 @@ fn stage() -> Vault {
     }
 }
 
-fn args(v: &Vault, extra: &[&str]) -> cli::Args {
+fn args(v: &Vault, extra: &[&str]) -> cli::EngineArgs {
     let mut argv = vec![
         "rename-project".to_string(),
         "--config-path".into(),
@@ -316,7 +311,6 @@ fn code_only_rename_keeps_dir_and_label() {
 
 #[test]
 fn index_file_renamed_only_when_basename_changes() {
-    // Path change with a new basename → index renamed and re-linked.
     let v = stage();
     rename_project::run(&args(
         &v,
@@ -326,7 +320,6 @@ fn index_file_renamed_only_when_basename_changes() {
     assert!(v.root.join("self/newproj/newproj.md").exists());
     assert!(!v.root.join("self/newproj/oldproj.md").exists());
 
-    // A path change whose basename is unchanged keeps the index name.
     let v2 = stage();
     rename_project::run(&args(
         &v2,

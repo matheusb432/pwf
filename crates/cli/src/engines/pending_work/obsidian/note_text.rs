@@ -1,5 +1,3 @@
-// Work-item note rendering and frontmatter string transforms.
-
 use std::{fmt::Write, sync::LazyLock};
 
 use regex::Regex;
@@ -7,7 +5,6 @@ use regex::Regex;
 static COMPLETED_LINE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?m)^completed:.*$").unwrap());
 
-/// The fields rendered into a work-item note body by [`work_item_content`].
 #[derive(Clone, Copy)]
 pub struct WorkItemFields<'a> {
     pub title: &'a str,
@@ -20,7 +17,6 @@ pub struct WorkItemFields<'a> {
     pub effort: Option<u8>,
 }
 
-/// For brand-new items `completed` is None.
 pub fn work_item_content(fields: WorkItemFields<'_>) -> String {
     let WorkItemFields {
         title,
@@ -53,12 +49,10 @@ pub fn work_item_content(fields: WorkItemFields<'_>) -> String {
     out
 }
 
-/// Replace first `status:` line; insert/replace `completed:` (insert right after
-/// the new status line when absent).
+/// Replaces the first status line and inserts or replaces completion immediately after it.
 ///
 /// # Panics
-/// Panics if the internal status-matching regex fails to compile — unreachable
-/// in practice since `status` is escaped via [`regex::escape`].
+/// Panics if the generated status regex fails to compile.
 pub fn set_status_text(content: &str, status: &str, completed: &str) -> String {
     let c = crate::regexes::STATUS_LINE_RE
         .replace(content, format!("status: {status}").as_str())

@@ -1,7 +1,4 @@
-//! Plan construction for `rename-project`: enumeration, the immutable
-//! [`RenamePlan`], the dry-run/summary renderers, and the pure text rewriters
-//! (`replace_id_tokens`, `replace_project_label`) that both the dry-run preview
-//! and the apply shell share.
+//! Builds immutable rename plans and provides their pure text rewriters.
 
 use std::{
     fmt::Write as _,
@@ -12,27 +9,26 @@ use walkdir::WalkDir;
 
 use super::{RenameContext, RenameProjectError};
 
-/// One task note found from its authoritative frontmatter identity.
+/// Identifies a task note by authoritative frontmatter ID.
 pub struct ItemFile {
     pub id: String,
     pub path: PathBuf,
 }
 
-/// A single note-file rename (post-dir-move absolute paths).
+/// Identifies one post-directory-move note rename.
 pub struct FileRename {
     pub from: PathBuf,
     pub to: PathBuf,
 }
 
-/// A vault `.md` file that carries `<old_code>-NNNN` id tokens, with its match count.
+/// Records ID-token matches in one vault Markdown file.
 pub struct TokenHit {
     pub path: PathBuf,
     pub count: usize,
 }
 
-/// The fully-resolved, immutable plan. Every mutating step reads from here; the
-/// dry-run renderer prints from here. Paths in `file_renames`/`label_updates`
-/// are the post-move locations (under `new_folder`).
+/// Contains the immutable inputs for rendering or applying a rename.
+/// File rename and label-update paths use post-move locations.
 pub struct RenamePlan {
     pub old_code: String,
     pub new_code: String,
@@ -43,25 +39,22 @@ pub struct RenamePlan {
     pub new_folder: PathBuf,
     pub old_label: String,
     pub new_label: String,
-    /// `Some((from, to))` iff the path changes.
+    /// Contains the directory move when the path changes.
     pub dir_move: Option<(PathBuf, PathBuf)>,
-    /// `Some((from, to))` (post-move paths) iff the path basename changes and a
-    /// `<old-basename>.md` project index file exists in the folder. The folder
-    /// index is named by the path basename, so a `--new-path` rename must move
-    /// `config-handler.md` → `repository.md` or pwf can no longer resolve it.
+    /// Contains the post-move index rename when the basename changes and the old index exists.
+    /// The index filename must continue to match the directory basename.
     pub index_rename: Option<(PathBuf, PathBuf)>,
     pub index_identity_update: PathBuf,
     pub file_renames: Vec<FileRename>,
     pub token_hits: Vec<TokenHit>,
     pub label_updates: Vec<PathBuf>,
-    /// Pre-move destination paths that must not already exist (only populated
-    /// when the code prefix changes, so the note basename actually changes).
+    /// Lists pre-move destinations that must be absent before a code change.
     pub collision_dests: Vec<PathBuf>,
     pub root: PathBuf,
     pub manifest_path: PathBuf,
 }
 
-/// Collect direct child task notes by parsing authoritative frontmatter.
+/// Collects direct child task notes from authoritative frontmatter.
 pub fn enumerate_items(
     folder: &Path,
     old_code: &str,
@@ -81,7 +74,6 @@ pub fn enumerate_items(
     )
 }
 
-/// Absolute path of a project's `<basename>.md` index file directly in `folder`.
 fn index_path(folder: &Path, basename: &str) -> PathBuf {
     folder.join(format!("{basename}.md"))
 }
@@ -102,9 +94,8 @@ fn renamed_id(id: &str, old_code: &str, new_code: &str) -> String {
         .map_or_else(|| id.to_string(), |number| format!("{new_code}-{number}"))
 }
 
-/// Build the immutable plan: the dir move, the file renames, the vault-wide
-/// id-token scan (report-only; re-walked at apply time), the `project:` label
-/// updates, and the pre-flight collision destinations.
+/// Builds the immutable plan and its preflight collision set.
+/// Token hits are report-only; apply re-scans the vault before rewriting.
 pub fn build_plan(ctx: &RenameContext, items: &[ItemFile]) -> RenamePlan {
     let code_changed = ctx.new_code != ctx.old_code;
     let dir_move = ctx
@@ -126,9 +117,7 @@ pub fn build_plan(ctx: &RenameContext, items: &[ItemFile]) -> RenamePlan {
         })
         .collect();
 
-    // When the code changes the note basename changes, so the new-prefixed name
-    // must not already sit in the source dir. A code-unchanged move keeps the
-    // basename, so the file simply travels with the dir (guarded by new_folder).
+    // A code change must not overwrite an existing new-prefix note.
     let collision_dests = if code_changed {
         file_renames
             .iter()
@@ -162,9 +151,7 @@ pub fn build_plan(ctx: &RenameContext, items: &[ItemFile]) -> RenamePlan {
     }
     token_hits.sort_by(|a, b| a.path.cmp(&b.path));
 
-    // The `<basename>.md` index file follows the path basename. Rename it (and
-    // include it in the label rewrite) only when the basename actually changes
-    // and the index exists; a code-only rename leaves it untouched.
+    // The project index follows the directory basename when that basename changes.
     let label_changed = ctx.new_label != ctx.old_label;
     let index_rename = (label_changed && index_path(&ctx.old_folder, &ctx.old_label).is_file())
         .then(|| {
@@ -218,17 +205,15 @@ pub fn build_plan(ctx: &RenameContext, items: &[ItemFile]) -> RenamePlan {
     }
 }
 
-/// True for a regular `.md` file that is not inside a `.trash/` directory.
+/// Reports whether a regular Markdown file is outside `.trash`.
 pub fn is_scannable_md(path: &Path, is_file: bool) -> bool {
     is_file
         && path.extension().and_then(|e| e.to_str()) == Some("md")
         && !path.components().any(|c| c.as_os_str() == ".trash")
 }
 
-/// Abort before any write if any destination already exists on disk. A path
-/// change must land on a fresh directory; a code change must not clobber a note
-/// already using the new prefix in the source dir. A same-code file (basename
-/// unchanged) just moves with the dir, so it is never a collision with itself.
+/// Rejects plans whose new directory or code-prefixed note destinations already exist.
+/// Same-code moves do not collide with notes that retain their basename.
 pub fn check_collisions(plan: &RenamePlan) -> Result<(), RenameProjectError> {
     if plan.path_changed && plan.new_folder.exists() {
         return Err(RenameProjectError::Collision(plan.new_folder.clone()));
@@ -242,8 +227,7 @@ pub fn check_collisions(plan: &RenamePlan) -> Result<(), RenameProjectError> {
 }
 
 impl RenamePlan {
-    /// The full dry-run plan text: every dir move, file rename, cross-ref
-    /// rewrite, label update, and manifest edit, mutating nothing.
+    /// Renders every planned change without mutating the filesystem.
     #[must_use]
     pub fn render(&self) -> String {
         let mut s = String::new();
@@ -327,7 +311,7 @@ impl RenamePlan {
         s
     }
 
-    /// One-line confirmation printed after a real (non-dry-run) rename.
+    /// Renders the one-line summary for an applied rename.
     #[must_use]
     pub fn render_summary(&self) -> String {
         let index = usize::from(self.index_rename.is_some());
@@ -347,11 +331,8 @@ fn file_name(path: &Path) -> String {
         .into_owned()
 }
 
-/// Replace whole `<old_code>-<digits>` id tokens with `<new_code>-<digits>`,
-/// preserving the number. A token boundary requires the char before `old_code`
-/// to be neither ASCII-alphanumeric nor `-`, and the char after the digits to be
-/// non-alphanumeric — so `[[CFG-0007]]` matches but `CFG-NOTE-0001` and
-/// `XCFG-0003` do not. Returns the rewritten text and the match count.
+/// Replaces whole `<old_code>-<digits>` tokens while preserving their number.
+/// Boundaries exclude alphanumeric prefixes, `-` prefixes, and alphanumeric suffixes.
 #[must_use]
 pub fn replace_id_tokens(content: &str, old_code: &str, new_code: &str) -> (String, usize) {
     let needle = format!("{old_code}-");
@@ -389,9 +370,8 @@ pub fn replace_id_tokens(content: &str, old_code: &str, new_code: &str) -> (Stri
     (out, count)
 }
 
-/// Rewrite the first frontmatter `project:` line whose value equals `old_label`
-/// to `new_label`. Returns `None` when there is no such line (no change). Only
-/// the leading `---`-fenced frontmatter block is considered.
+/// Rewrites the first matching `project:` value in leading fenced frontmatter.
+/// Returns `None` when no value changes.
 #[must_use]
 pub fn replace_project_label(content: &str, old_label: &str, new_label: &str) -> Option<String> {
     let mut seen_open = false;
@@ -425,7 +405,7 @@ pub fn replace_project_label(content: &str, old_label: &str, new_label: &str) ->
     changed.then_some(out)
 }
 
-/// Rewrite authoritative project-index identity fields in frontmatter.
+/// Rewrites authoritative project-index identity fields in frontmatter.
 #[must_use]
 pub fn replace_project_index_identity(content: &str, new_code: &str, new_label: &str) -> String {
     let mut in_frontmatter = false;
@@ -471,8 +451,6 @@ mod tests {
 
     #[test]
     fn ignores_trailing_letter_and_no_digits() {
-        // A letter right after the digits, and a bare `CFG-` with no number, are
-        // not id tokens.
         let (out, n) = replace_id_tokens("CFG-0007x CFG- CFG", "CFG", "ARC");
         assert_eq!(out, "CFG-0007x CFG- CFG");
         assert_eq!(n, 0);

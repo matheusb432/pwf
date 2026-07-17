@@ -1,13 +1,13 @@
-//! Pure title-formatting helpers: whitespace collapsing and word-boundary-safe capping.
+//! Whitespace normalization and word-boundary title capping.
 
-/// Collapses internal whitespace runs to single spaces and trims the ends.
+/// Collapses whitespace runs and trims both ends.
 pub(crate) fn single_line(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// Caps `title` at `max_chars`, breaking on a word boundary and appending an
-/// ellipsis when truncated. Falls back to a char-boundary cut when a single
-/// word exceeds `max_chars` on its own (e.g. a URL with no spaces).
+/// Caps a title at a word boundary and appends an ellipsis when truncated.
+///
+/// An overlong first word falls back to a character-boundary cut.
 pub(crate) fn cap_title(title: &str, max_chars: usize) -> String {
     if title.chars().count() <= max_chars {
         return title.to_string();

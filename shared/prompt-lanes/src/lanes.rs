@@ -22,10 +22,10 @@ impl Section {
     }
 }
 
-/// A `/`-shaped token the caller plainly meant as a lane marker, even if the
-/// letter isn't one of the recognized sections — e.g. `/x`. Matches the exact
-/// shape of a real marker (`/` + one ASCII letter) so ordinary prose tokens
-/// like absolute paths (`/etc/hosts`) are never mistaken for one.
+/// Reports whether a token has the `/` plus one ASCII letter marker shape.
+///
+/// This recognizes unknown markers such as `/x` without treating paths such as `/etc/hosts` as
+/// markers.
 fn is_marker_shaped(token: &str) -> bool {
     let mut chars = token.chars();
     chars.next() == Some('/')
@@ -33,9 +33,9 @@ fn is_marker_shaped(token: &str) -> bool {
         && chars.next().is_none()
 }
 
-/// A token that should flush the current bullet buffer: `/` alone, a
-/// recognized section marker, or an unrecognized-but-marker-shaped token
-/// (which flushes the buffer without switching section, like bare `/`).
+/// Reports whether a token flushes the current bullet buffer.
+///
+/// Bare `/` and unknown marker-shaped tokens flush without selecting a new section.
 fn is_marker(token: &str) -> bool {
     token == "/" || Section::from_marker(token).is_some() || is_marker_shaped(token)
 }
@@ -65,10 +65,9 @@ fn plain(prompt: &str) -> ParsedPrompt {
     }
 }
 
-/// Parses the one-line lane syntax (`title / goal /c context /n constraint /d
-/// done when`) into a [`ParsedPrompt`]. A prompt with no lane marker becomes a
-/// single-bullet Goals section whose only bullet is the (whitespace-collapsed)
-/// prompt itself.
+/// Parses one-line lane syntax into a [`ParsedPrompt`].
+///
+/// Without a lane marker, the collapsed prompt becomes one Goals bullet.
 pub fn parse(prompt: &str) -> ParsedPrompt {
     let tokens: Vec<&str> = prompt.split_whitespace().collect();
     if !tokens.iter().any(|token| is_marker(token)) {
@@ -195,9 +194,6 @@ mod tests {
 
     #[test]
     fn unrecognized_marker_shaped_token_starts_a_bullet_without_switching_section() {
-        // `/x` isn't a known section letter, but it's shaped exactly like one
-        // (`/` + one letter) — it must still break the bullet, not get folded
-        // into it as literal text.
         let parsed = parse("title /c context one /x context two");
         assert_eq!(
             parsed.context,
@@ -207,10 +203,6 @@ mod tests {
 
     #[test]
     fn two_unrecognized_markers_do_not_corrupt_surrounding_bullets() {
-        // Regression: a prompt using an unrecognized marker (`/x`) twice, once
-        // before the first real marker and once mid-section, used to leak the
-        // literal `/x` token into the running text and merge two unrelated
-        // clauses into one bullet.
         let prompt = "alpha beta /x gamma delta /g epsilon zeta /c eta theta /x iota kappa /c lambda mu / nu xi";
         let parsed = parse(prompt);
         assert_eq!(

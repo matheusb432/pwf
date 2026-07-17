@@ -1,12 +1,9 @@
-//! Custom help surfaces clap's derive does not provide: the token-lean `--terse`
-//! agent help plus the small token predicates `main` uses before handing rich
-//! help to clap. Rich help is rendered from `command.rs`.
+//! Provides token-lean `--terse` help and pre-clap help-token detection.
+//! Rich help remains derived from `command.rs`.
 
-// Terse help: verbs + required args only, no prose/recipe-hints/route-shortcuts.
-// Tuned for AI agents driving the engine (the skills point them here, not at the
-// rich `--help`), so keep it token-lean.
-const PW_TERSE: &str = r"<project> [-n <N>] [--long|--future|--human|--all]   (routes to that project's open items; `pwf list` lists every project)
-  list [-n <N>] [--long] [--future] [--human] [--all] [--tag <tag>] [-o/--order <created|id|project-id> <asc|desc>]   (--order default: created desc, flat across every project; --order project-id reproduces the pre-PWF-0096 project-grouped default)
+// Keep terse help to verbs, required arguments, and routing-critical qualifiers.
+const PW_TERSE: &str = r"<project> [-n <N>] [--status <active|done|cancelled|all>] [--long|--future|--human|--all]   (routes to that project's pending-work items; `pwf list` lists every project)
+  list [-n <N>] [--status <active|done|cancelled|all>] [--long] [--future] [--human] [--all] [--tag <tag>] [-o/--order <created|id|project-id> <asc|desc>]   (--all includes every section; --status all includes every lifecycle; --order default: created desc, flat across every project; --order project-id reproduces the pre-PWF-0096 project-grouped default)
   add <project> <prompt>   prompt lanes: <title> / <goal> /c <context> /n <constraint> /d <done>; plus [--title] [--human] [--section <s>] [--prereq <id>] [--tag <tag>] [--continue-handoff] [--continue <path>]
   done --id [--report] [--commits <range>] [--review]   (handoff-tagged items auto-archive their handoff)
   cancel --id --report [--commits <range>] [--review]   (handoff-tagged items auto-archive their handoff)
@@ -34,10 +31,8 @@ const NOTE_TERSE: &str = r"note <project> [verb]
 
 const RENAME_PROJECT_TERSE: &str = r"rename-project --old <CODE> --new <CODE> [--new-path <path>] [--dry-run]   (relocate a project's pwf-db identity + repos.toml entry; --dry-run previews the full plan)";
 
-/// Terse, token-lean help for one non-default engine (`handoff`, `migrate`,
-/// `note`). `None` for anything else — pending-work verbs aren't a named
-/// engine to scope to; they resolve individually via `terse_verb`, or in full
-/// as part of `terse_text`.
+/// Returns terse help for `handoff`, `migrate`, or `note`.
+/// Pending-work verbs are resolved by [`terse_verb`] instead.
 pub fn terse_engine(engine: &str) -> Option<String> {
     let block = match engine.to_ascii_lowercase().as_str() {
         "handoff" => HANDOFF_TERSE,
@@ -49,20 +44,18 @@ pub fn terse_engine(engine: &str) -> Option<String> {
     Some(block.to_string())
 }
 
-/// Terse help for every engine (top-level `pwf --help --terse`).
+/// Returns terse help for every engine.
 pub fn terse_text() -> String {
     format!(
         "{PW_TERSE}\n\n{HANDOFF_TERSE}\n\n{MIGRATE_TERSE}\n\n{NOTE_TERSE}\n\n{RENAME_PROJECT_TERSE}"
     )
 }
 
-/// Terse help for one pending-work verb (e.g. `update`): the single matching line
-/// from `PW_TERSE`, trimmed. `None` if `verb` is not a pending-work verb. Lets
-/// `pwf <verb> --help --terse` scope to that verb instead of dumping every engine.
+/// Returns the trimmed terse-help line for one pending-work verb.
 pub fn terse_verb(verb: &str) -> Option<String> {
     PW_TERSE
         .lines()
-        .skip(1) // first line is the `<project>` route-shorthand header, not a verb
+        .skip(1) // Skip the route header.
         .map(str::trim)
         .find(|line| {
             line.split([' ', '\t'])
@@ -72,7 +65,7 @@ pub fn terse_verb(verb: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-/// True if `tok` is a rich-help token or the legacy `--list` top-level alias.
+/// Reports whether `tok` requests rich help or the legacy top-level list alias.
 pub fn is_help_token(tok: &str) -> bool {
     matches!(
         tok.to_ascii_lowercase().as_str(),
@@ -80,7 +73,7 @@ pub fn is_help_token(tok: &str) -> bool {
     )
 }
 
-/// True for the `--terse` help-format modifier.
+/// Reports whether `tok` requests terse help.
 pub fn is_terse(tok: &str) -> bool {
     tok.eq_ignore_ascii_case("--terse")
 }
@@ -101,9 +94,6 @@ mod tests {
 
     #[test]
     fn terse_engine_has_no_pending_work_grouping() {
-        // Pending-work verbs are flattened, top-level clap subcommands — there's no
-        // named "pw" engine left to scope terse help to (`terse_verb` covers one
-        // verb at a time; `terse_text` covers all of them as part of everything).
         assert!(terse_engine("pw").is_none());
         assert!(terse_engine("pending-work").is_none());
     }
@@ -123,15 +113,11 @@ mod tests {
 
     #[test]
     fn terse_verb_scopes_to_one_pending_work_verb() {
-        // A verb returns only its own line — no other verbs, no other engines.
         let u = terse_verb("update").expect("update verb");
         assert!(u.starts_with("update --id"));
         assert!(!u.contains("resolve"), "must not bleed other verbs: {u}");
         assert!(!u.contains("handoff"), "must not bleed engines: {u}");
-        // Case-insensitive.
         assert_eq!(terse_verb("UPDATE"), terse_verb("update"));
-        // ...and keeps verbs + required args for the rest, matching the old
-        // whole-block assertions now that there's no "pw" grouping to fetch them from.
         assert!(
             terse_verb("add")
                 .unwrap()
@@ -161,11 +147,8 @@ mod tests {
             "reopen should note it mirrors onto the handoff too"
         );
         assert!(terse_verb("resolve").unwrap().contains("resolve --id"));
-        // PWF-0065: the `show` shorthand for `resolve --show` is its own terse line,
-        // taking a bare positional id.
         assert!(terse_verb("show").unwrap().contains("show <id>"));
         assert!(terse_verb("remove").unwrap().contains("remove --id"));
-        // The route-shorthand header is not a verb.
         assert_eq!(terse_verb("pw"), None);
         assert_eq!(terse_verb("bogus"), None);
     }
@@ -173,10 +156,8 @@ mod tests {
     #[test]
     fn terse_text_covers_all_engines() {
         let t = terse_text();
-        // ...keeps verbs + required args...
         assert!(t.contains("add <project> <prompt>"));
         assert!(t.contains("done --id [--report]"));
-        // ...but drops human-only prose: descriptions, recipe hints, route shortcuts.
         assert!(!t.contains("[just "), "terse must drop recipe hints");
         assert!(
             !t.contains("List open items."),

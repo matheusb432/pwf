@@ -1,6 +1,4 @@
-//! `clean` action: sweep each project index for done `- [x] [[KEY-NNNN|…]]`
-//! links, stamp the backing file done+completed, and remove the link.
-//! File-model analogue of scripts/notes-todo-cleaner (the legacy checkbox model).
+//! Removes checked work-item links after stamping their backing notes as completed.
 
 use std::{
     fmt::Write,
@@ -13,7 +11,7 @@ use regex::Regex;
 use super::pending_work::{project_index_path, set_status_text};
 use crate::{
     config::Config,
-    confirm::{Confirm, DefaultAnswer},
+    confirm::{Confirmation, DefaultAnswer},
     frontmatter, fs_atomic,
 };
 
@@ -47,8 +45,7 @@ pub enum CleanError {
     },
 }
 
-/// One `- [x] [[KEY-NNNN|…]]` line located in an index note. The span covers the
-/// whole line plus its trailing newline so it can be excised cleanly.
+/// Identifies a checked work-item link and its complete line span in an index note.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DoneLink {
     pub id: String,
@@ -57,12 +54,10 @@ pub struct DoneLink {
     pub end: usize,
 }
 
-/// Find checked work-item links. Ignores open (`- [ ]`), bare (`- [[…]]`), and
-/// plain checkbox lines without a wikilink.
+/// Finds checked wikilinks while ignoring open, bare, and non-wikilink entries.
 ///
 /// # Panics
-/// Panics if a `DONE_INDEX_LINK_RE` capture has no group 0 — unreachable in
-/// practice, since group 0 is the whole match and is always present.
+/// Panics if a regex match lacks its required whole-match capture.
 pub fn find_done_index_links(content: &str) -> Vec<DoneLink> {
     DONE_INDEX_LINK_RE
         .captures_iter(content)
@@ -81,8 +76,8 @@ pub fn find_done_index_links(content: &str) -> Vec<DoneLink> {
         .collect()
 }
 
-/// Completed-date precedence: ✅ stamp on the index line → existing frontmatter
-/// `completed:` → caller fallback (`--date`/today). Empty/whitespace values skip.
+/// Resolves the completion date from the index stamp, frontmatter, then caller fallback.
+/// Empty values are ignored.
 pub fn resolve_completed(
     link_completed: Option<&str>,
     fm_completed: Option<&str>,
@@ -95,7 +90,7 @@ pub fn resolve_completed(
         .to_string()
 }
 
-/// Per-item outcome of a clean sweep.
+/// Reports the outcome for one checked item.
 #[derive(Debug, Clone)]
 pub struct CleanResult {
     pub id: String,
@@ -107,7 +102,6 @@ pub struct CleanResult {
     pub issue: Option<String>,
 }
 
-/// Remove non-overlapping, ascending byte spans from `content`.
 fn remove_spans(content: &str, spans: &[(usize, usize)]) -> String {
     let mut out = String::with_capacity(content.len());
     let mut cursor = 0;
@@ -121,20 +115,17 @@ fn remove_spans(content: &str, spans: &[(usize, usize)]) -> String {
     out
 }
 
-/// A file write the cleaner intends to perform (computed before any I/O).
 struct PendingWrite {
     path: PathBuf,
     content: String,
 }
 
-/// What a clean would do for one project: the report rows plus the writes.
 struct ProjectPlan {
     project: String,
     results: Vec<CleanResult>,
     writes: Vec<PendingWrite>,
 }
 
-/// Compute (without writing) what a clean would do for one project.
 fn plan_project(project: &str, index_path: &Path, date: &str) -> Result<ProjectPlan, CleanError> {
     let content = std::fs::read_to_string(index_path).map_err(|source| CleanError::ReadIndex {
         path: index_path.to_path_buf(),
@@ -172,8 +163,7 @@ fn plan_project(project: &str, index_path: &Path, date: &str) -> Result<ProjectP
             .get("completed")
             .cloned();
         let completed = resolve_completed(link.completed.as_deref(), fm_completed.as_deref(), date);
-        // Stamp the item file first, unlink the index last: on a mid-apply failure
-        // a link is only ever removed after its backing file is stamped done.
+        // Stamp the note before unlinking it so failures cannot orphan an unstamped item.
         writes.push(PendingWrite {
             path: item_path,
             content: set_status_text(&raw, "done", &completed),
@@ -204,7 +194,6 @@ fn plan_project(project: &str, index_path: &Path, date: &str) -> Result<ProjectP
     })
 }
 
-/// Render the per-project text summary. `dry_run` only flips the header verb.
 fn render_text(plans: &[ProjectPlan], dry_run: bool) -> String {
     let mut out = String::new();
     for p in plans {
@@ -241,22 +230,19 @@ fn render_text(plans: &[ProjectPlan], dry_run: bool) -> String {
     out
 }
 
-/// `pw clean`: sweep one project (`only_project`, already resolved) or all
-/// managed projects.
+/// Cleans one resolved project or every managed project.
 ///
-/// notes-pro is git-tracked, so writes do NOT leave `.bak` files. A real
-/// (non-dry-run) clean is gated: `--dry-run` previews; `--force` applies
-/// without asking; an interactive run prints the plan and asks to confirm; a
-/// non-interactive run without `--force` refuses rather than mutate silently.
+/// Writes do not leave backup files. A mutating run requires `--force` or interactive
+/// confirmation; non-interactive runs without `--force` fail closed.
 pub fn run_clean(
     cfg: &Config,
     only_project: Option<&str>,
     date: &str,
     dry_run: bool,
     force: bool,
-    confirmer: &dyn Confirm,
+    confirmation: &impl Fn(&str, DefaultAnswer) -> Confirmation,
 ) -> Result<String, String> {
-    run_clean_typed(cfg, only_project, date, dry_run, force, confirmer)
+    run_clean_typed(cfg, only_project, date, dry_run, force, confirmation)
         .map_err(|error| error.to_string())
 }
 
@@ -266,7 +252,7 @@ pub(crate) fn run_clean_typed(
     date: &str,
     dry_run: bool,
     force: bool,
-    confirmer: &dyn Confirm,
+    confirmation: &impl Fn(&str, DefaultAnswer) -> Confirmation,
 ) -> Result<String, CleanError> {
     if !Path::new(&cfg.notes_dir).exists() {
         return Err(CleanError::NotesDirectoryNotFound {
@@ -296,20 +282,19 @@ pub(crate) fn run_clean_typed(
         .filter(|r| r.status != "skipped")
         .count();
 
-    // Confirmation gate — only when a real run would actually mutate something.
     if !dry_run && cleanable > 0 {
         let apply = if force {
             true
-        } else if confirmer.interactive() {
-            eprint!("{}", render_text(&plans, true));
-            confirmer.confirm(
-                &format!(
-                    "Clean {cleanable} done work-item(s)? Edits notes-pro (git-tracked; no .bak)"
-                ),
-                DefaultAnswer::No,
-            )
         } else {
-            return Err(CleanError::NoTtyToConfirm);
+            let question = format!(
+                "{}Clean {cleanable} done work-item(s)? Edits notes-pro (git-tracked; no .bak)",
+                render_text(&plans, true)
+            );
+            match confirmation(&question, DefaultAnswer::No) {
+                Confirmation::Accepted => true,
+                Confirmation::Declined => false,
+                Confirmation::NonInteractive => return Err(CleanError::NoTtyToConfirm),
+            }
         };
         if !apply {
             return Ok("Aborted; nothing changed.\n".to_string());
@@ -345,21 +330,26 @@ mod tests {
     use std::{assert_matches, error::Error};
 
     use super::*;
-    use crate::{config, confirm::FakeConfirm};
+    use crate::config;
 
-    /// Build a minimal Config pointing at a temp notes dir with one done link.
+    fn declined(_: &str, _: DefaultAnswer) -> Confirmation {
+        Confirmation::Declined
+    }
+
+    fn noninteractive(_: &str, _: DefaultAnswer) -> Confirmation {
+        Confirmation::NonInteractive
+    }
+
     fn stage_clean_fixture() -> (tempfile::TempDir, config::Config) {
         let stage = tempfile::tempdir().unwrap();
         let notes = stage.path().join("notes");
         let proj = notes.join("cfg");
         std::fs::create_dir_all(&proj).unwrap();
-        // Index has one checked wikilink.
         std::fs::write(
             proj.join("cfg.md"),
             "- [x] [[CFG-0001|test item]] ✅ 2026-06-01\n",
         )
         .unwrap();
-        // Backing item file.
         std::fs::write(
             proj.join("CFG-0001.md"),
             "---\nstatus: active\ntitle: test item\nproject: cfg\ncreated: 2026-01-01\n---\n\nbody\n",
@@ -378,26 +368,14 @@ mod tests {
 
     #[test]
     fn noninteractive_clean_without_force_errors() {
-        // Non-interactive + no --force must refuse rather than mutate silently.
         let (_stage, cfg) = stage_clean_fixture();
-        let err = run_clean_typed(
-            &cfg,
-            None,
-            "2026-06-20",
-            false,
-            false,
-            &FakeConfirm {
-                interactive: false,
-                answer: false,
-            },
-        )
-        .unwrap_err();
+        let err =
+            run_clean_typed(&cfg, None, "2026-06-20", false, false, &noninteractive).unwrap_err();
         assert_matches!(err, CleanError::NoTtyToConfirm);
     }
 
     #[test]
     fn force_applies_and_returns_text_summary() {
-        // --force bypasses the confirm gate and returns the CLEANED text line.
         let (_stage, cfg) = stage_clean_fixture();
         let out = run_clean_typed(
             &cfg,
@@ -405,10 +383,7 @@ mod tests {
             "2026-06-20",
             false,
             true, // force
-            &FakeConfirm {
-                interactive: false,
-                answer: false,
-            },
+            &declined,
         )
         .unwrap();
         assert!(
@@ -445,7 +420,6 @@ mod tests {
             "2026-02-02"
         );
         assert_eq!(resolve_completed(None, None, "2026-01-01"), "2026-01-01");
-        // empty ✅ is ignored, falls through to frontmatter
         assert_eq!(
             resolve_completed(Some("  "), Some("2026-02-02"), "2026-01-01"),
             "2026-02-02"
