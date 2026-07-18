@@ -1,4 +1,4 @@
-use std::{path::Path, sync::LazyLock};
+use std::{collections::BTreeMap, path::Path, sync::LazyLock};
 
 use pwf_application::{AppDbStore, IndexEntry, IndexEntryState, IndexSection};
 use pwf_domain::pending_work::{ProjectName, Timestamp, WorkItemId};
@@ -42,8 +42,12 @@ pub(super) struct ParsedIndexLine {
 
 /// Parses item checkbox lines with their raw enclosing H2 labels.
 ///
-/// This representation mapping applies no cap, eviction, or normalization policy.
-pub(super) fn parse_index_lines(text: &str) -> Vec<ParsedIndexLine> {
+/// This representation mapping rejects duplicate task identities and applies no cap, eviction, or
+/// normalization policy.
+pub(super) fn parse_index_lines(
+    index_path: &Path,
+    text: &str,
+) -> Result<Vec<ParsedIndexLine>, ObsidianStoreError> {
     let mut section = String::new();
     let mut lines = Vec::new();
     for (index, raw) in text.split('\n').enumerate() {
@@ -76,7 +80,24 @@ pub(super) fn parse_index_lines(text: &str) -> Vec<ParsedIndexLine> {
             line_number: index + 1,
         });
     }
-    lines
+    let mut line_numbers_by_id = BTreeMap::<WorkItemId, Vec<usize>>::new();
+    for line in &lines {
+        line_numbers_by_id
+            .entry(line.id.clone())
+            .or_default()
+            .push(line.line_number);
+    }
+    if let Some((id, line_numbers)) = line_numbers_by_id
+        .into_iter()
+        .find(|(_, line_numbers)| line_numbers.len() > 1)
+    {
+        return Err(ObsidianStoreError::ProjectIndexTaskIdDuplicate {
+            path: index_path.to_path_buf(),
+            id: id.to_string(),
+            lines: line_numbers,
+        });
+    }
+    Ok(lines)
 }
 
 /// Returns raw H2 labels in document order using the entry parser's header rules.
@@ -130,10 +151,10 @@ impl ObsidianStore {
         &self,
         project: &ProjectName,
     ) -> Result<Vec<IndexEntry>, ObsidianStoreError> {
-        let Some((_, text)) = self.validated_project_index(project)? else {
+        let Some((index_path, text)) = self.validated_project_index(project)? else {
             return Ok(Vec::new());
         };
-        Ok(parse_index_lines(&text)
+        Ok(parse_index_lines(&index_path, &text)?
             .into_iter()
             .map(|line| IndexEntry {
                 id: line.id,
@@ -171,7 +192,7 @@ impl ObsidianStore {
             new_project_index_content(&identity)
         };
         let new_line = render_entry_line(entry);
-        if let Some(existing) = parse_index_lines(&content)
+        if let Some(existing) = parse_index_lines(&index_path, &content)?
             .into_iter()
             .find(|line| line.id == entry.id)
         {

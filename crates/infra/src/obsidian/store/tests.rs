@@ -1022,6 +1022,47 @@ fn generic_list_records_carry_open_placement_without_hiding_unlinked_notes() {
 }
 
 #[test]
+fn generic_list_rejects_duplicate_project_index_task_ids() {
+    let temp = tempfile::tempdir().unwrap();
+    let notes_dir = temp.path().join("notes");
+    let project_dir = notes_dir.join("pwf");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    let index_path = project_dir.join("pwf.md");
+    std::fs::write(
+        &index_path,
+        concat!(
+            "---\nid: pwf\ntitle: pwf\n---\n\n",
+            "- [ ] [[PWF-0001|first]]\n",
+            "## Human\n",
+            "- [ ] [[PWF-0001|duplicate]]\n",
+        ),
+    )
+    .unwrap();
+    write_note(
+        &project_dir.join("PWF-0001.md"),
+        "task",
+        "2026-07-18",
+        None,
+        None,
+        None,
+        "body",
+    );
+    let store = ObsidianStore::new(raw_config_for_notes(&notes_dir));
+    let project = ProjectName::try_new("pwf").unwrap();
+
+    let error = <ObsidianStore as AppDbStore<PendingWorkItem>>::list(&store, &project).unwrap_err();
+
+    assert_matches!(
+        error,
+        ObsidianStoreError::ProjectIndexTaskIdDuplicate {
+            path,
+            id,
+            lines,
+        } if path == index_path && id == "PWF-0001" && lines == [6, 8]
+    );
+}
+
+#[test]
 fn list_pending_items_returns_note_history_and_index_only_records() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");

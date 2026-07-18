@@ -824,6 +824,25 @@ fn e2e_list_status_rejects_repeated_and_unknown_values() {
 }
 
 #[test]
+fn e2e_list_status_rejects_duplicate_project_index_task_ids() {
+    let (dir, cfg) = staged();
+    let index_path = dir.path().join("notes/glep-shimeji/glep-shimeji.md");
+    let mut index = fs::read_to_string(&index_path).unwrap();
+    index.push_str("- [ ] [[GLP-0001|duplicate]]\n");
+    fs::write(&index_path, index).unwrap();
+
+    pwf()
+        .args(["list", "--status", "all"])
+        .arg("--config-path")
+        .arg(&cfg)
+        .assert()
+        .failure()
+        .stderr(contains("Project index task id GLP-0001 is duplicated"))
+        .stderr(contains(index_path.to_string_lossy().as_ref()))
+        .stderr(contains("lines 6, 7"));
+}
+
+#[test]
 fn e2e_list_status_annotations_follow_color_environment_precedence() {
     let (_dir, cfg) = status_fixture_stage();
     let colored = pwf()
@@ -3732,9 +3751,8 @@ fn note_add_list_update_remove_preserves_tasks_and_header() {
     );
 
     pwf()
-        .args(["note", "pwf", "--config-path"])
+        .args(["note", "add", "pwf", "remember the milk", "--config-path"])
         .arg(&cfg)
-        .args(["add", "remember the milk"])
         .assert()
         .success()
         .stdout(predicates::str::contains(
@@ -3752,20 +3770,27 @@ fn note_add_list_update_remove_preserves_tasks_and_header() {
         "note link missing: {index}"
     );
 
+    // The project token resolves case-insensitively by name or id code.
     pwf()
-        .args(["note", "pwf", "--config-path"])
+        .args([
+            "note",
+            "update",
+            "PWF",
+            "1",
+            "remember oat milk",
+            "--config-path",
+        ])
         .arg(&cfg)
-        .args(["update", "1", "remember oat milk"])
         .assert()
         .success()
         .stdout(predicates::str::contains(
             "Updated PWF-NOTE-0001 :: remember oat milk",
         ));
 
+    // A bare project lists (implicit `ls`).
     pwf()
         .args(["note", "pwf", "--config-path"])
         .arg(&cfg)
-        .arg("ls")
         .assert()
         .success()
         .stdout(predicates::str::contains(
@@ -3780,9 +3805,8 @@ fn note_add_list_update_remove_preserves_tasks_and_header() {
     );
 
     pwf()
-        .args(["note", "pwf", "--config-path"])
+        .args(["note", "remove", "pwf", "1", "--config-path"])
         .arg(&cfg)
-        .args(["remove", "1"])
         .assert()
         .success();
 

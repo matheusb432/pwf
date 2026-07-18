@@ -41,19 +41,22 @@ pub struct NoteCommand {
 /// Returns a rendered configuration or note-operation error.
 pub fn run(command: &NoteCommand) -> Result<String, String> {
     let cfg = load_config(command)?;
-    let prefix = pwf_core::paths::project_key(&cfg, &command.project)
+    let project = pwf_core::paths::resolve_project_name(&cfg, &command.project)
         .ok_or_else(|| NoteError::UnknownProject(command.project.clone()))?
         .to_string();
-    let notes_dir = cfg.notes_dir_for(&command.project);
-    let project_dir = pwf_core::paths::project_dir(notes_dir, &command.project);
-    let index_path = pwf_core::paths::project_index_path(notes_dir, &command.project);
+    let prefix = pwf_core::paths::project_key(&cfg, &project)
+        .ok_or_else(|| NoteError::UnknownProject(command.project.clone()))?
+        .to_string();
+    let notes_dir = cfg.notes_dir_for(&project);
+    let project_dir = pwf_core::paths::project_dir(notes_dir, &project);
+    let index_path = pwf_core::paths::project_index_path(notes_dir, &project);
 
     match &command.verb {
-        NoteVerb::Ls { number } => Ok(render_ls(&project_dir, &command.project, &prefix, *number)),
+        NoteVerb::Ls { number } => Ok(render_ls(&project_dir, &project, &prefix, *number)),
         NoteVerb::Add { message } => add_note(
             &project_dir,
             &index_path,
-            &command.project,
+            &project,
             &prefix,
             message,
             command.date.as_deref(),
@@ -198,7 +201,78 @@ mod run_tests {
     fn unknown_project_errors() {
         let (_root, cfg) = sandbox();
         let err = run(&cmd("nope", NoteVerb::Ls { number: None }, &cfg)).unwrap_err();
-        assert!(err.contains("no configured prefix"), "got: {err}");
+        assert!(err.contains("Unknown project 'nope'"), "got: {err}");
+    }
+
+    fn sandbox_two_projects() -> (tempfile::TempDir, String) {
+        let root = tempfile::tempdir().unwrap();
+        let cfg = root.path().join("pending-work.json");
+        std::fs::write(
+            &cfg,
+            format!(
+                r#"{{ "notesDir": "{}", "projects": {{ "pwf": "/repo", "glep-shimeji": "/glep" }}, "prefixes": {{ "pwf": "PWF", "glep-shimeji": "GLP" }} }}"#,
+                root.path().join("notes").to_string_lossy().replace('\\', "/")
+            ),
+        )
+        .unwrap();
+        let cfg = cfg.to_string_lossy().into_owned();
+        (root, cfg)
+    }
+
+    #[test]
+    fn project_case_variants_resolve_to_canonical_project() {
+        let (root, cfg) = sandbox_two_projects();
+        run(&cmd(
+            "Pwf",
+            NoteVerb::Add {
+                message: "case check".into(),
+            },
+            &cfg,
+        ))
+        .unwrap();
+
+        let note_path = root
+            .path()
+            .join("notes")
+            .join("pwf")
+            .join("PWF-NOTE-0001.md");
+        let content = std::fs::read_to_string(&note_path)
+            .unwrap_or_else(|e| panic!("could not read {}: {e}", note_path.display()));
+        assert!(
+            content.contains("project: pwf"),
+            "expected canonical 'project: pwf' in:\n{content}"
+        );
+
+        let listed = run(&cmd("PWF", NoteVerb::Ls { number: None }, &cfg)).unwrap();
+        assert!(
+            listed.contains("PWF-NOTE-0001 :: case check"),
+            "got: {listed}"
+        );
+    }
+
+    #[test]
+    fn project_id_code_resolves_to_canonical_project() {
+        let (root, cfg) = sandbox_two_projects();
+        let out = run(&cmd(
+            "glp",
+            NoteVerb::Add {
+                message: "code check".into(),
+            },
+            &cfg,
+        ))
+        .unwrap();
+        assert!(out.contains("GLP-NOTE-0001 :: code check"), "got: {out}");
+        assert!(
+            root.path()
+                .join("notes")
+                .join("glep-shimeji")
+                .join("GLP-NOTE-0001.md")
+                .exists(),
+            "note must land under the canonical project directory"
+        );
+
+        let removed = run(&cmd("GLP", NoteVerb::Remove { id: "1".into() }, &cfg)).unwrap();
+        assert!(removed.contains("Removed GLP-NOTE-0001"), "got: {removed}");
     }
 
     #[test]

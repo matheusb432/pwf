@@ -149,7 +149,7 @@ impl ObsidianStore {
         let Some((index_path, text)) = self.validated_project_index(project)? else {
             return Ok(None);
         };
-        Ok(parse_index_lines(&text)
+        Ok(parse_index_lines(&index_path, &text)?
             .into_iter()
             .find(|line| line.id == *id)
             .map(|line| checkbox_to_record(&index_path, &line)))
@@ -197,7 +197,7 @@ impl ObsidianStore {
         };
         let index_display = path_str(&index_path);
 
-        for line in parse_index_lines(&text) {
+        for line in parse_index_lines(&index_path, &text)? {
             if let Some(record) = records
                 .iter_mut()
                 .find(|record| matches!(&record.id, RecordId::Item(id) if id == &line.id))
@@ -301,7 +301,7 @@ impl ObsidianStore {
                 id: id.as_ref().to_string(),
             });
         };
-        let Some(line) = parse_index_lines(&text)
+        let Some(line) = parse_index_lines(&index_path, &text)?
             .into_iter()
             .find(|line| line.id == *id)
         else {

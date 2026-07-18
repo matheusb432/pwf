@@ -1,6 +1,6 @@
-//! Launchability enrichment for open pending-work items.
+//! Enriches pending-work records with shared launchability diagnostics.
 //!
-//! One policy derives list, verify, and session diagnostics from persisted records.
+//! One policy derives list, verify, and session diagnostics from persisted pending-work records.
 
 use pwf_domain::pending_work::{
     PendingWorkItemView, WorkItemStatus, is_placeholder_prompt, section_alias,
@@ -30,7 +30,7 @@ pub(crate) fn is_open_item(item: &PendingWorkItem) -> bool {
     item.status == WorkItemStatus::Active && item.placement.is_some()
 }
 
-/// Contains launchability flags and diagnostics derived from an open item.
+/// Contains launchability flags and diagnostics derived from a pending-work item.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DerivedFlags {
     pub issues: Vec<String>,

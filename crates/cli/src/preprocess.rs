@@ -1,7 +1,8 @@
 //! Normalizes pending-work argv shapes that clap cannot derive.
 //!
 //! Bare non-verb words route through the hidden `route` action. Explicit verbs have
-//! their positionals reordered ahead of flags. Other engines and help tokens pass through.
+//! their positionals reordered ahead of flags. `note` gains an implicit `ls` before a
+//! bare project; other engines and help tokens pass through.
 
 /// Returns pending-work verbs recognized as clap subcommands, including hidden `route`.
 fn pw_subcommands() -> &'static [&'static str] {
@@ -86,6 +87,31 @@ fn is_id_facing_verb(verb: &str) -> bool {
     )
 }
 
+/// Returns note verbs recognized as clap subcommands.
+fn note_subcommands() -> &'static [&'static str] {
+    &["list", "ls", "add", "remove", "update", "help"]
+}
+
+/// Injects `ls` before a bare `note <project>` so an omitted verb lists.
+fn normalize_note(argv: Vec<String>) -> Vec<String> {
+    let mut i = 1;
+    while i < argv.len() {
+        let tok = argv[i].as_str();
+        if tok.starts_with("--") {
+            i += if is_value_flag(tok) { 2 } else { 1 };
+        } else if tok.starts_with('-') {
+            i += 1;
+        } else if note_subcommands().contains(&tok) {
+            return argv;
+        } else {
+            let mut out = argv;
+            out.insert(i, "ls".to_string());
+            return out;
+        }
+    }
+    argv
+}
+
 /// Reports whether a token is the 2-4 letter code half of a split ID.
 fn is_code_token(tok: &str) -> bool {
     (2..=4).contains(&tok.len()) && tok.chars().all(|c| c.is_ascii_alphabetic())
@@ -101,6 +127,9 @@ fn is_number_token(tok: &str) -> bool {
 pub fn normalize(argv: Vec<String>) -> Vec<String> {
     if argv.is_empty() || argv[0].starts_with('-') {
         return argv;
+    }
+    if argv[0].eq_ignore_ascii_case("note") {
+        return normalize_note(argv);
     }
     if is_other_root_token(&argv[0].to_ascii_lowercase()) {
         return argv;
@@ -385,11 +414,29 @@ mod tests {
     }
 
     #[test]
-    fn note_passes_through_untouched() {
+    fn note_verb_first_passes_through_untouched() {
         assert_eq!(
-            n(&["note", "pwf", "add", "buy", "milk"]),
-            vec!["note", "pwf", "add", "buy", "milk"]
+            n(&["note", "add", "pwf", "buy", "milk"]),
+            vec!["note", "add", "pwf", "buy", "milk"]
         );
+    }
+
+    #[test]
+    fn note_bare_project_gains_implicit_ls() {
+        assert_eq!(n(&["note", "pwf"]), vec!["note", "ls", "pwf"]);
+    }
+
+    #[test]
+    fn note_bare_project_after_value_flag_gains_implicit_ls() {
+        assert_eq!(
+            n(&["note", "--config-path", "/cfg.json", "pwf"]),
+            vec!["note", "--config-path", "/cfg.json", "ls", "pwf"]
+        );
+    }
+
+    #[test]
+    fn note_without_positionals_passes_through_untouched() {
+        assert_eq!(n(&["note", "--help"]), vec!["note", "--help"]);
     }
 
     #[test]

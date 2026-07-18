@@ -23,11 +23,11 @@ const HANDOFF_TERSE: &str = r"handoff <verb> [--repo-root <path>]
 const MIGRATE_TERSE: &str =
     r"migrate [--config-path <path>]   (migrates flat <project>.md into <project>/<project>.md)";
 
-const NOTE_TERSE: &str = r"note <project> [verb]
-  ls [-n <N>]
-  add <message>
-  update <id> <message>
-  remove <id>";
+const NOTE_TERSE: &str = r"note <verb> <project>   (project = name or id code, case-insensitive; bare `note <project>` lists)
+  ls <project> [-n <N>]
+  add <project> <message>
+  update <project> <id> <message>
+  remove <project> <id>";
 
 const RENAME_PROJECT_TERSE: &str = r"rename-project --old <CODE> --new <CODE> [--new-path <path>] [--dry-run]   (relocate a project's pwf-db identity + repos.toml entry; --dry-run previews the full plan)";
 
@@ -102,11 +102,15 @@ mod tests {
     fn terse_engine_scoped_alias_and_unknown() {
         assert!(terse_engine("handoff").unwrap().contains("add [--title]"));
         assert!(!terse_engine("handoff").unwrap().contains("launch-claude"));
-        assert!(terse_engine("note").unwrap().contains("add <message>"));
         assert!(
             terse_engine("note")
                 .unwrap()
-                .contains("update <id> <message>")
+                .contains("add <project> <message>")
+        );
+        assert!(
+            terse_engine("note")
+                .unwrap()
+                .contains("update <project> <id> <message>")
         );
         assert!(terse_engine("bogus").is_none());
     }
@@ -165,7 +169,7 @@ mod tests {
         );
         assert!(t.contains("handoff <verb>"));
         assert!(t.contains("migrate"));
-        assert!(t.contains("note <project>"));
+        assert!(t.contains("note <verb> <project>"));
         assert!(t.contains("rename-project --old"));
     }
 

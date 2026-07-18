@@ -19,6 +19,12 @@ pub enum ObsidianStoreError {
     InvalidTaskId { path: PathBuf, value: String },
     #[error("More than one task has frontmatter id {id}: {}", paths.iter().map(|path| path.display().to_string()).collect::<Vec<_>>().join(", "))]
     DuplicateTaskId { id: String, paths: Vec<PathBuf> },
+    #[error("Project index task id {id} is duplicated in {} at lines {}", path.display(), lines.iter().map(usize::to_string).collect::<Vec<_>>().join(", "))]
+    ProjectIndexTaskIdDuplicate {
+        path: PathBuf,
+        id: String,
+        lines: Vec<usize>,
+    },
     #[error("Missing project-index frontmatter property `{property}` in {}", path.display())]
     MissingProjectIndexProperty {
         path: PathBuf,

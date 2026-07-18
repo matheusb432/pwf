@@ -323,7 +323,7 @@ fn terse_help_is_lean_and_succeeds() {
         "terse should advertise prompt lanes: {terse}"
     );
     assert!(
-        terse.contains("note <project>"),
+        terse.contains("note <verb> <project>"),
         "terse should list the note engine: {terse}"
     );
     assert!(!terse.contains("[just "), "terse should drop recipe hints");
@@ -504,6 +504,10 @@ fn list_status_help_names_the_single_value_domain() {
     assert!(
         rich.contains("--status"),
         "rich help must expose --status: {rich}"
+    );
+    assert!(
+        rich.starts_with("List pending-work items"),
+        "rich help must not describe a lifecycle-filtered list as open-only: {rich}"
     );
     for value in ["active", "done", "cancelled", "all"] {
         assert!(rich.contains(value), "rich help must name {value}: {rich}");

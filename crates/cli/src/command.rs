@@ -72,7 +72,7 @@ pub enum Engine {
     },
     /// One-shot: migrate a flat `<project>.md` note into the folder model.
     Migrate(MigrateArgs),
-    /// One-liner project notes: `pwf note <proj> [ls|add <msg>|remove <id>]`.
+    /// One-liner project notes: `pwf note [ls|add <msg>|remove <id>] <proj>`.
     Note(NoteArgs),
     /// Atomically rename a managed project's pwf-db identity + `repos.toml` entry.
     RenameProject(RenameProjectArgs),
@@ -161,7 +161,7 @@ pub enum PwAction {
         #[command(flatten)]
         common: PwCommon,
     },
-    /// List open normal items (scoped sections hidden unless scoped or `--all`).
+    /// List pending-work items (scoped sections hidden unless selected or `--all`).
     #[command(alias = "ls")]
     List {
         /// Limit to one project.
@@ -506,15 +506,11 @@ pub struct RenameProjectArgs {
 
 // ── note engine ───────────────────────────────────────────────────────────────
 
-/// `pwf note <proj> …` — the project is a required positional; an omitted verb
-/// lists (alias for `ls`).
+/// `pwf note <verb> <proj> …` — verb-first; a bare `pwf note <proj>` lists.
 #[derive(Args, Debug)]
 pub struct NoteArgs {
-    /// Managed project (name).
-    #[arg(value_name = "PROJECT")]
-    pub project: String,
     #[command(subcommand)]
-    pub action: Option<NoteAction>,
+    pub action: NoteAction,
     #[command(flatten)]
     pub common: NoteCommon,
 }
@@ -523,40 +519,52 @@ pub struct NoteArgs {
 #[derive(Args, Debug, Default)]
 pub struct NoteCommon {
     /// Path to the pwf config JSON (overrides $`PWF_CONFIG`).
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub config_path: Option<String>,
     /// Override the notes directory.
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub notes_dir: Option<String>,
     /// Date stamp (YYYY-MM-DD); defaults to today.
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub date: Option<String>,
 }
 
-/// note verbs (`pwf note <proj> <verb>`).
+/// note verbs (`pwf note <verb> <proj>`).
 #[derive(Subcommand, Debug)]
 pub enum NoteAction {
-    /// List the project's notes, newest-first (default when no verb is given).
+    /// List a project's notes, newest-first (`pwf note <proj>` alone also lists).
     #[command(alias = "ls")]
     List {
+        /// Managed project (name or id code, case-insensitive).
+        #[arg(value_name = "PROJECT")]
+        project: String,
         /// Cap to N listed notes (default 10; `-n 0` = all).
         #[arg(short = 'n', long, value_name = "N")]
         number: Option<usize>,
     },
-    /// Add a one-liner note: `pwf note <proj> add "<message>"`.
+    /// Add a one-liner note: `pwf note add <proj> "<message>"`.
     Add {
+        /// Managed project (name or id code, case-insensitive).
+        #[arg(value_name = "PROJECT")]
+        project: String,
         /// Note message words (joined with single spaces).
         #[arg(value_name = "MESSAGE", required = true)]
         message: Vec<String>,
     },
-    /// Delete a note and strip its index link: `pwf note <proj> remove <id>`.
+    /// Delete a note and strip its index link: `pwf note remove <proj> <id>`.
     Remove {
+        /// Managed project (name or id code, case-insensitive).
+        #[arg(value_name = "PROJECT")]
+        project: String,
         /// Note id: full `PWF-NOTE-0001`, `NOTE-0001`, or a bare `1`.
         #[arg(value_name = "ID")]
         id: String,
     },
-    /// Replace a note's message: `pwf note <proj> update <id> "<message>"`.
+    /// Replace a note's message: `pwf note update <proj> <id> "<message>"`.
     Update {
+        /// Managed project (name or id code, case-insensitive).
+        #[arg(value_name = "PROJECT")]
+        project: String,
         /// Note id: full `PWF-NOTE-0001`, `NOTE-0001`, or a bare `1`.
         #[arg(value_name = "ID")]
         id: String,
@@ -676,20 +684,29 @@ fn fill_pw_command(action: PwAction) -> PendingWorkCommand {
 }
 
 fn fill_note(n: NoteArgs) -> NoteCommand {
-    let verb = match n.action {
-        None | Some(NoteAction::List { number: None }) => NoteVerb::Ls { number: None },
-        Some(NoteAction::List { number }) => NoteVerb::Ls { number },
-        Some(NoteAction::Add { message }) => NoteVerb::Add {
-            message: message.join(" "),
-        },
-        Some(NoteAction::Remove { id }) => NoteVerb::Remove { id },
-        Some(NoteAction::Update { id, message }) => NoteVerb::Update {
+    let (project, verb) = match n.action {
+        NoteAction::List { project, number } => (project, NoteVerb::Ls { number }),
+        NoteAction::Add { project, message } => (
+            project,
+            NoteVerb::Add {
+                message: message.join(" "),
+            },
+        ),
+        NoteAction::Remove { project, id } => (project, NoteVerb::Remove { id }),
+        NoteAction::Update {
+            project,
             id,
-            message: message.join(" "),
-        },
+            message,
+        } => (
+            project,
+            NoteVerb::Update {
+                id,
+                message: message.join(" "),
+            },
+        ),
     };
     NoteCommand {
-        project: n.project,
+        project,
         verb,
         config_path: n.common.config_path,
         notes_dir: n.common.notes_dir,
@@ -1259,20 +1276,70 @@ mod tests {
     }
 
     #[test]
-    fn note_add_joins_message_words() {
-        let c = parse_note(&["note", "pwf", "add", "buy", "milk"]);
+    fn note_bare_project_keeps_common_flags() {
+        let c = parse_note(&["note", "pwf", "--config-path", "/cfg.json"]);
+        assert_eq!(c.project, "pwf");
+        assert!(matches!(c.verb, NoteVerb::Ls { number: None }));
+        assert_eq!(c.config_path.as_deref(), Some("/cfg.json"));
+    }
+
+    #[test]
+    fn note_add_is_verb_first_and_joins_message_words() {
+        let c = parse_note(&["note", "add", "pwf", "buy", "milk"]);
+        assert_eq!(c.project, "pwf");
         assert!(matches!(c.verb, NoteVerb::Add { ref message } if message == "buy milk"));
     }
 
     #[test]
-    fn note_remove_takes_bare_id() {
-        let c = parse_note(&["note", "pwf", "remove", "3"]);
+    fn note_add_accepts_trailing_common_flags() {
+        let c = parse_note(&[
+            "note",
+            "add",
+            "pwf",
+            "buy",
+            "milk",
+            "--config-path",
+            "/cfg.json",
+        ]);
+        assert_eq!(c.config_path.as_deref(), Some("/cfg.json"));
+        assert!(matches!(c.verb, NoteVerb::Add { ref message } if message == "buy milk"));
+    }
+
+    #[test]
+    fn note_remove_takes_project_then_bare_id() {
+        let c = parse_note(&["note", "remove", "pwf", "3"]);
+        assert_eq!(c.project, "pwf");
         assert!(matches!(c.verb, NoteVerb::Remove { ref id } if id == "3"));
     }
 
     #[test]
+    fn note_update_takes_project_then_id_then_message() {
+        let c = parse_note(&["note", "update", "pwf", "3", "oat", "milk"]);
+        assert_eq!(c.project, "pwf");
+        assert!(matches!(
+            c.verb,
+            NoteVerb::Update { ref id, ref message } if id == "3" && message == "oat milk"
+        ));
+    }
+
+    #[test]
     fn note_ls_number_flag() {
-        let c = parse_note(&["note", "pwf", "ls", "-n", "0"]);
+        let c = parse_note(&["note", "ls", "pwf", "-n", "0"]);
+        assert_eq!(c.project, "pwf");
         assert!(matches!(c.verb, NoteVerb::Ls { number: Some(0) }));
+    }
+
+    #[test]
+    fn note_project_first_verb_is_rejected() {
+        let argv = vec![
+            "note".to_string(),
+            "pwf".to_string(),
+            "add".to_string(),
+            "x".to_string(),
+        ];
+        assert!(
+            parse_command_argv(argv).is_err(),
+            "old project-first syntax must not parse"
+        );
     }
 }
