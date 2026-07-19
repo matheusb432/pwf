@@ -16,13 +16,10 @@ const INFRA_IMPORT_ALLOWLIST_ROOTS: &[&str] = &[
 ];
 
 /// Pending-work exceptions downcast boxed store errors to preserve variant-specific diagnostics.
-/// The rename-project engine remains outside the pending-work port boundary.
 const INFRA_IMPORT_ALLOWLIST_EXCEPTIONS: &[&str] = &[
     "crates/cli/src/engines/pending_work/query.rs",
     "crates/cli/src/engines/pending_work/actions/done.rs",
     "crates/cli/src/engines/pending_work/actions/add.rs",
-    "crates/cli/src/engines/rename_project/mod.rs",
-    "crates/cli/src/engines/rename_project/plan.rs",
 ];
 
 /// Contains one Rust source file from a checked tree.

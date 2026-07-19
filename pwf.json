@@ -1,6 +1,6 @@
 {
   "version": "0.1.0",
-  "description": "pwf - pending-work / handoff / migrate engine",
+  "description": "Manages pending work, handoffs, and project notes across configured repositories.",
   "homepage": "https://localhost/pwf",
   "license": "MIT",
   "architecture": {

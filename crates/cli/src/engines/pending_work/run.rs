@@ -108,22 +108,6 @@ pub(in crate::engines::pending_work) fn run_typed(
 
         Action::List => run_list(&cfg, &store, args),
 
-        Action::Clean => {
-            let only = if let Some(p) = args.project.as_deref() {
-                Some(resolve_managed_project_name_typed(&cfg, p)?)
-            } else {
-                None
-            };
-            Ok(EngineOutcome::Text(crate::engines::clean::run_clean_typed(
-                &cfg,
-                only.as_deref(),
-                &date,
-                args.dry_run,
-                args.force,
-                confirmation,
-            )?))
-        }
-
         Action::Verify => {
             let request = VerifySession {
                 id: args.id.clone(),

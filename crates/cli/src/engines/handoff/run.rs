@@ -51,22 +51,6 @@ mod tests {
     }
 
     #[test]
-    fn run_typed_treats_retired_done_as_unknown_action() {
-        // Direct callers can bypass the pre-parse retired-verb guard.
-        let root = tempdir();
-        let args = EngineArgs {
-            action: Some("done".to_string()),
-            repo_root: Some(root.path().to_string_lossy().into_owned()),
-            ..Default::default()
-        };
-
-        let err = run_typed(&args).unwrap_err();
-
-        assert_matches!(err, HandoffError::UnknownAction { ref action } if action == "done");
-        assert_eq!(err.to_string(), "unknown handoff action: done");
-    }
-
-    #[test]
     fn run_typed_preserves_unknown_action_text_with_action_field() {
         let root = tempdir();
         let args = EngineArgs {

@@ -53,8 +53,6 @@ pub struct EngineArgs {
     // `show --path` prints the note path instead of the note markdown.
     pub path: bool,
     pub long: bool,
-    pub force: bool,
-    pub dry_run: bool,
     // `None` uses the default list cap; `Some(0)` disables it.
     pub number: Option<usize>,
     // The list engine resolves these raw `--order` tokens into an order specification.
@@ -75,8 +73,4 @@ pub struct EngineArgs {
     pub agent: Agent,
     // Forwarded without validation so new model names work immediately.
     pub model: Option<String>,
-    pub old_code: Option<String>,
-    pub new_code: Option<String>,
-    pub new_path: Option<String>,
-    pub manifest_path: Option<String>,
 }

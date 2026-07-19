@@ -115,36 +115,6 @@ fn tag_help_is_scoped_to_supported_commands() {
         list.contains("--tag"),
         "list help should expose tag filtering: {list}"
     );
-
-    let (add_terse, add_terse_ok) = run(&["add", "--help", "--terse"]);
-    assert!(add_terse_ok, "pwf add --help --terse should exit 0");
-    assert!(
-        add_terse.contains("[--tag <tag>]"),
-        "add terse help should expose --tag: {add_terse}"
-    );
-
-    let (update_terse, update_terse_ok) = run(&["update", "--help", "--terse"]);
-    assert!(update_terse_ok, "pwf update --help --terse should exit 0");
-    assert!(
-        update_terse.contains("[--tag <tag>]") && update_terse.contains("[--tags-clear]"),
-        "update terse help should expose tag append and clear: {update_terse}"
-    );
-
-    let (list_terse, list_terse_ok) = run(&["list", "--help", "--terse"]);
-    assert!(list_terse_ok, "pwf list --help --terse should exit 0");
-    assert!(
-        list_terse.contains("[--tag <tag>]"),
-        "list terse help should expose tag filtering: {list_terse}"
-    );
-
-    let (all_terse, all_terse_ok) = run(&["--help", "--terse"]);
-    assert!(all_terse_ok, "pwf --help --terse should exit 0");
-    assert!(
-        all_terse.contains(
-            "<project> [-n <N>] [--status <active|done|cancelled|all>] [--long|--future|--human|--all]   (project = full name or id code, case-insensitive; routes to that project's pending-work items; `pwf list` lists every project)"
-        ),
-        "route shorthand must remain tag-free and expose status: {all_terse}"
-    );
 }
 
 #[test]
@@ -280,6 +250,12 @@ fn top_level_help_groups_default_commands_and_engines() {
     let (help, ok) = run(&["--help"]);
     assert!(ok, "pwf --help should exit 0");
     assert!(
+        help.starts_with(
+            "Manages pending work, handoffs, and project notes across configured repositories."
+        ),
+        "top help should state the current command scope: {help}"
+    );
+    assert!(
         help.contains("Commands:"),
         "top help should be clap-rendered command help: {help}"
     );
@@ -290,15 +266,11 @@ fn top_level_help_groups_default_commands_and_engines() {
     );
     assert!(
         !help.lines().any(|l| l.trim_start().starts_with("pw ")),
-        "top help must not advertise the retired `pwf pw …` prefix: {help}"
+        "top help should list pending-work commands directly: {help}"
     );
     assert!(
         help.contains("handoff"),
         "top help should mention handoff engine: {help}"
-    );
-    assert!(
-        help.contains("migrate"),
-        "top help should mention migrate engine: {help}"
     );
     assert!(
         help.contains("note"),
@@ -307,65 +279,6 @@ fn top_level_help_groups_default_commands_and_engines() {
     assert!(
         !help.contains("LEGACY"),
         "top help should not advertise the removed legacy surface: {help}"
-    );
-}
-
-#[test]
-fn terse_help_is_lean_and_succeeds() {
-    let (terse, ok) = run(&["--help", "--terse"]);
-    assert!(ok, "pwf --help --terse should exit 0");
-    assert!(
-        terse.contains("add <project> <prompt>"),
-        "terse should list verbs+args"
-    );
-    assert!(
-        terse.contains("/ <goal>") && terse.contains("/d <done>"),
-        "terse should advertise prompt lanes: {terse}"
-    );
-    assert!(
-        terse.contains("note <verb> <project>"),
-        "terse should list the note engine: {terse}"
-    );
-    assert!(!terse.contains("[just "), "terse should drop recipe hints");
-    assert!(
-        !terse.contains("List open items."),
-        "terse should drop descriptions"
-    );
-
-    let (full, _) = run(&["--help"]);
-    assert!(
-        full.contains("Commands:") && full.contains("note"),
-        "rich help should be clap's command index: {full}"
-    );
-}
-
-#[test]
-fn verb_terse_help_is_scoped_to_that_verb() {
-    let (terse, ok) = run(&["update", "--help", "--terse"]);
-    assert!(ok, "pwf update --help --terse should exit 0");
-    assert!(
-        terse.trim_start().starts_with("update --id"),
-        "should lead with the update verb line: {terse}"
-    );
-    assert!(
-        !terse.contains("handoff <verb>"),
-        "verb-scoped terse must not dump the handoff engine: {terse}"
-    );
-    assert!(
-        !terse.contains("show <id>"),
-        "verb-scoped terse must not dump sibling verbs: {terse}"
-    );
-
-    let (engine, ok) = run(&["handoff", "--help", "--terse"]);
-    assert!(ok);
-    assert!(
-        engine.contains("handoff <verb>"),
-        "engine terse stays full: {engine}"
-    );
-    let (top, _) = run(&["--help", "--terse"]);
-    assert!(
-        top.contains("handoff <verb>") && top.contains("show <id>"),
-        "top-level terse stays full: {top}"
     );
 }
 
@@ -381,13 +294,6 @@ fn session_help_documents_yes_flag() {
         help.contains("confirmation"),
         "session help should describe the confirmation: {help}"
     );
-
-    let (terse, ok) = run(&["session", "--help", "--terse"]);
-    assert!(ok, "pwf session --help --terse should exit 0");
-    assert!(
-        terse.contains("-y"),
-        "session terse should mention the -y shortcut: {terse}"
-    );
 }
 
 #[test]
@@ -402,13 +308,6 @@ fn session_help_documents_worktree_flag() {
         help.contains("worktree"),
         "session help should describe the worktree behavior: {help}"
     );
-
-    let (terse, ok) = run(&["session", "--help", "--terse"]);
-    assert!(ok, "pwf session --help --terse should exit 0");
-    assert!(
-        terse.contains("-w"),
-        "session terse should mention the -w shortcut: {terse}"
-    );
 }
 
 #[test]
@@ -422,13 +321,6 @@ fn session_help_documents_auto_flag() {
     assert!(
         help.to_lowercase().contains("autonom"),
         "session help should describe the autonomy behavior: {help}"
-    );
-
-    let (terse, ok) = run(&["session", "--help", "--terse"]);
-    assert!(ok, "pwf session --help --terse should exit 0");
-    assert!(
-        terse.contains("--auto"),
-        "session terse should mention --auto: {terse}"
     );
 }
 
@@ -454,13 +346,6 @@ fn session_help_documents_append_flag() {
         help.contains("-a, --append <APPEND>"),
         "session help should list -a/--append: {help}"
     );
-
-    let (terse, ok) = run(&["session", "--help", "--terse"]);
-    assert!(ok, "pwf session --help --terse should exit 0");
-    assert!(
-        terse.contains("-a/--append"),
-        "session terse should mention -a/--append: {terse}"
-    );
 }
 
 #[test]
@@ -471,13 +356,6 @@ fn verify_help_documents_agent_flag() {
         help.contains("--agent"),
         "verify help should list --agent: {help}"
     );
-
-    let (terse, ok) = run(&["verify", "--help", "--terse"]);
-    assert!(ok, "pwf verify --help --terse should exit 0");
-    assert!(
-        terse.contains("-a"),
-        "verify terse should mention the -a shortcut: {terse}"
-    );
 }
 
 #[test]
@@ -487,13 +365,6 @@ fn list_help_mentions_all_scope() {
     assert!(
         list_help.contains("--all"),
         "list --help should document --all: {list_help}"
-    );
-
-    let (terse, ok) = run(&["--help", "--terse"]);
-    assert!(ok, "pwf --help --terse should exit 0");
-    assert!(
-        terse.contains("[--all]"),
-        "terse help should document --all: {terse}"
     );
 }
 
@@ -512,21 +383,6 @@ fn list_status_help_names_the_single_value_domain() {
     for value in ["active", "done", "cancelled", "all"] {
         assert!(rich.contains(value), "rich help must name {value}: {rich}");
     }
-
-    let (list_terse, list_terse_ok) = run(&["list", "--help", "--terse"]);
-    assert!(list_terse_ok, "pwf list --help --terse should exit 0");
-    assert!(
-        list_terse.contains("[--status <active|done|cancelled|all>]"),
-        "list terse help must expose the exact status domain: {list_terse}"
-    );
-
-    let (top_terse, top_terse_ok) = run(&["--help", "--terse"]);
-    assert!(top_terse_ok, "pwf --help --terse should exit 0");
-    let project_line = top_terse.lines().next().unwrap_or_default();
-    assert!(
-        project_line.contains("[--status <active|done|cancelled|all>]"),
-        "project shorthand terse help must expose the exact status domain: {project_line}"
-    );
 }
 
 #[test]

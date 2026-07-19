@@ -15,7 +15,6 @@ use super::{
     agent::verify,
     color::use_color,
     errors::PendingWorkError,
-    naming::stamp_date,
     query::resolve_managed_project_name_typed,
 };
 use crate::{
@@ -37,7 +36,7 @@ pub(super) fn run_route(
     model_tiers: &impl ModelTierCatalog,
     runtime: &impl SessionRuntime,
     args: &EngineArgs,
-    confirmation: &impl Fn(&str, DefaultAnswer) -> Confirmation,
+    _confirmation: &impl Fn(&str, DefaultAnswer) -> Confirmation,
 ) -> Result<String, PendingWorkError> {
     let route_words: Vec<&str> = args
         .words
@@ -91,22 +90,6 @@ pub(super) fn run_route(
             runtime,
         )?;
         return Ok(verify::render(&outcome));
-    }
-
-    if verb == "clean" || verb == "cl" {
-        let only = if route_words.len() >= 2 {
-            Some(resolve_managed_project_name_typed(cfg, route_words[1])?)
-        } else {
-            None
-        };
-        return Ok(crate::engines::clean::run_clean_typed(
-            cfg,
-            only.as_deref(),
-            &stamp_date(args.date.as_deref()),
-            args.dry_run,
-            args.force,
-            confirmation,
-        )?);
     }
 
     // A single project word lists; trailing words are rejected as removed create syntax.

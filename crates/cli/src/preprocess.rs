@@ -7,26 +7,16 @@
 /// Returns pending-work verbs recognized as clap subcommands, including hidden `route`.
 fn pw_subcommands() -> &'static [&'static str] {
     &[
-        "add", "list", "ls", "done", "cancel", "reopen", "update", "show", "s", "session", "clean",
+        "add", "list", "ls", "done", "cancel", "reopen", "update", "show", "s", "session",
         "verify", "remove", "route",
     ]
 }
 
-/// Reports whether a top-level token must pass through to clap or `help.rs`.
+/// Reports whether a top-level token must pass through to clap.
 fn is_other_root_token(token: &str) -> bool {
     matches!(
         token,
-        "handoff"
-            | "migrate"
-            | "note"
-            | "rename-project"
-            | "--help"
-            | "-h"
-            | "help"
-            | "--list"
-            | "--version"
-            | "-V"
-            | "--terse"
+        "handoff" | "note" | "--help" | "-h" | "help" | "--list" | "--version" | "-V"
     )
 }
 
@@ -386,32 +376,8 @@ mod tests {
     #[test]
     fn handoff_passes_through_untouched() {
         assert_eq!(
-            n(&["handoff", "done", "--id", "h1"]),
-            vec!["handoff", "done", "--id", "h1"]
-        );
-    }
-
-    #[test]
-    fn rename_project_passes_through_untouched() {
-        assert_eq!(
-            n(&[
-                "rename-project",
-                "--old",
-                "CFG",
-                "--new",
-                "ARC",
-                "--new-path",
-                "self/repository"
-            ]),
-            vec![
-                "rename-project",
-                "--old",
-                "CFG",
-                "--new",
-                "ARC",
-                "--new-path",
-                "self/repository"
-            ]
+            n(&["handoff", "list", "--repo-root", "."]),
+            vec!["handoff", "list", "--repo-root", "."]
         );
     }
 

@@ -101,8 +101,6 @@ pub(crate) enum PendingWorkError {
     },
     #[error("{}", ADD_HINT)]
     RouteCreateRejected,
-    #[error(transparent)]
-    Clean(#[from] crate::engines::clean::CleanError),
     #[error("Expected open task marker at {note}:{line}. The note may have changed.")]
     ExpectedOpenTaskMarker { note: String, line: usize },
     /// Reports a handoff preflight failure before any pending-work mutation.
@@ -140,7 +138,6 @@ pub(super) const ADD_HINT: &str = r#"Use: pwf add <project> "<prompt>""#;
 
 #[cfg(test)]
 mod tests {
-    use std::{assert_matches, error::Error};
 
     use super::*;
 
@@ -189,17 +186,5 @@ mod tests {
             !add_message.contains("pwf reopen"),
             "a freshly created item has nothing to reopen: {add_message}"
         );
-    }
-
-    #[test]
-    fn clean_error_bridge_preserves_display_and_source() {
-        let err = PendingWorkError::from(crate::engines::clean::CleanError::ReadIndex {
-            path: std::path::PathBuf::from("/tmp/index.md"),
-            source: std::io::Error::new(std::io::ErrorKind::PermissionDenied, "locked"),
-        });
-
-        assert_matches!(err, PendingWorkError::Clean(_));
-        assert_eq!(err.to_string(), "Cannot read index: locked");
-        assert_eq!(err.source().unwrap().to_string(), "locked");
     }
 }

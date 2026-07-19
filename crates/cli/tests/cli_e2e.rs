@@ -616,43 +616,6 @@ fn bare_words_route_errors_and_writes_nothing() {
 }
 
 #[test]
-fn deprecated_pw_prefix_warns_and_fails() {
-    let (_d, cfg) = staged();
-    pwf()
-        .args(["pw", "list", "--config-path"])
-        .arg(&cfg)
-        .assert()
-        .failure()
-        .stderr(contains("warning: `pwf pw ...` is deprecated"))
-        .stderr(contains("use `pwf list`"));
-}
-
-#[test]
-fn pending_work_alias_warns_and_fails() {
-    let (_d, cfg) = staged();
-    pwf()
-        .args(["pending-work", "list", "--config-path"])
-        .arg(&cfg)
-        .assert()
-        .failure()
-        .stderr(contains("warning: `pwf pending-work ...` is deprecated"))
-        .stderr(contains("use `pwf list`"));
-}
-
-#[test]
-fn deprecated_pw_prefix_fails_for_action_usage_without_writing() {
-    let (d, cfg) = staged();
-    pwf()
-        .args(["pw", "add", "glep-shimeji", "legacy add", "--config-path"])
-        .arg(&cfg)
-        .assert()
-        .failure()
-        .stderr(contains("warning: `pwf pw ...` is deprecated"))
-        .stderr(contains("use `pwf add`"));
-    assert!(!d.path().join("notes/glep-shimeji/GLP-0002.md").exists());
-}
-
-#[test]
 fn single_word_route_lists_project() {
     let (_d, cfg) = staged();
     pwf()
@@ -1102,32 +1065,6 @@ fn e2e_route_project_shorthand_ignores_created_stays_id_desc() {
         stdout.find("GLP-0002").unwrap() < stdout.find("GLP-0001").unwrap(),
         "route shorthand must stay id-descending: {stdout}"
     );
-}
-
-#[test]
-fn handoff_new_verb_retired_hints_add() {
-    pwf()
-        .args(["handoff", "new", "--title", "x"])
-        .assert()
-        .failure()
-        .stderr(contains("pwf handoff add"));
-}
-
-#[test]
-fn handoff_done_cancel_reopen_refresh_verbs_are_retired() {
-    for (verb, hint) in [
-        ("done", "pwf done --id"),
-        ("cancel", "pwf cancel --id"),
-        ("reopen", "pwf reopen --id"),
-        ("refresh", "ledger"),
-    ] {
-        pwf()
-            .args(["handoff", verb])
-            .assert()
-            .failure()
-            .code(1)
-            .stderr(contains(hint));
-    }
 }
 
 #[test]
@@ -2753,17 +2690,12 @@ fn show_preserves_raw_lowercase_id_in_not_found_error() {
 }
 
 #[test]
-fn show_without_id_errors_with_clean_usage_hiding_pw_engine() {
-    // Engine-level ID errors must not expose the hidden router token.
+fn show_without_id_error_names_the_command() {
     let out = pwf().arg("show").assert().failure();
     let stderr = String::from_utf8(out.get_output().stderr.clone()).unwrap();
     assert!(
         stderr.contains("--id is required for show"),
         "missing-id message should name the verb: {stderr}"
-    );
-    assert!(
-        !stderr.contains("pwf pw"),
-        "error must not leak the internal pw engine: {stderr}"
     );
 }
 

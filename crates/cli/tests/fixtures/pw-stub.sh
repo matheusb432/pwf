@@ -1,7 +1,6 @@
 #!/bin/sh
 # Minimal pending-work stub for handoff tests that exercise --pending-work-script.
-# `add` is the only surviving verb (PWF-0117 retired handoff's done/cancel/
-# reopen/refresh, so their pw-close/pw-reopen bridging is gone too).
+# Handoff allocation only invokes `add`.
 set -u
 
 verb=${1:-}

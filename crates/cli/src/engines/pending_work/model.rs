@@ -77,7 +77,6 @@ pub enum Action {
     Route,
     Add,
     List,
-    Clean,
     Verify,
     Done,
     Cancel,
@@ -91,7 +90,6 @@ pub enum Action {
 const ROUTE: &str = "route";
 const ADD: &str = "add";
 const LIST: &str = "list";
-const CLEAN: &str = "clean";
 const VERIFY: &str = "verify";
 const DONE: &str = "done";
 const CANCEL: &str = "cancel";
@@ -107,7 +105,6 @@ impl Action {
             Action::Route => ROUTE,
             Action::Add => ADD,
             Action::List => LIST,
-            Action::Clean => CLEAN,
             Action::Verify => VERIFY,
             Action::Done => DONE,
             Action::Cancel => CANCEL,
@@ -151,7 +148,6 @@ impl FromStr for Action {
             ROUTE => Ok(Action::Route),
             ADD => Ok(Action::Add),
             LIST => Ok(Action::List),
-            CLEAN => Ok(Action::Clean),
             VERIFY => Ok(Action::Verify),
             DONE => Ok(Action::Done),
             CANCEL => Ok(Action::Cancel),

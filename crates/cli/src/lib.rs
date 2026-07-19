@@ -8,6 +8,5 @@ pub mod confirm;
 pub mod confirm_prompt;
 pub mod engines;
 pub use pwf_core::{frontmatter, fs_atomic};
-pub mod help;
 pub mod preprocess;
 pub mod regexes;

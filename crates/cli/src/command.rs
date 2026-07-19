@@ -51,7 +51,7 @@ fn agent_choice(a: AgentArg) -> crate::cli::Agent {
     }
 }
 
-/// pwf — pending-work / handoff / migrate engine for managed repos.
+/// Manages pending work, handoffs, and project notes across configured repositories.
 #[derive(Parser, Debug)]
 #[command(name = "pwf", version, about, long_about = None)]
 pub struct Cli {
@@ -62,7 +62,7 @@ pub struct Cli {
 /// Top-level engines.
 #[derive(Subcommand, Debug)]
 pub enum Engine {
-    // Flattening keeps pending-work verbs at the top level; `pwf pw` is retired.
+    // Flatten pending-work verbs into the top-level command set.
     #[command(flatten)]
     Pw(PwAction),
     /// Per-repo handoff ledgers (resume notes between sessions).
@@ -70,12 +70,8 @@ pub enum Engine {
         #[command(subcommand)]
         action: HandoffAction,
     },
-    /// One-shot: migrate a flat `<project>.md` note into the folder model.
-    Migrate(MigrateArgs),
     /// One-liner project notes: `pwf note [ls|add <msg>|remove <id>] <proj>`.
     Note(NoteArgs),
-    /// Atomically rename a managed project's pwf-db identity + `repos.toml` entry.
-    RenameProject(RenameProjectArgs),
 }
 
 // ── pw engine ───────────────────────────────────────────────────────────────
@@ -305,19 +301,6 @@ pub enum PwAction {
         #[command(flatten)]
         common: PwCommon,
     },
-    /// Archive/clear done items.
-    Clean {
-        #[arg(long)]
-        project: Option<String>,
-        /// Bypass the confirmation guard.
-        #[arg(long)]
-        force: bool,
-        /// Print actions without writing.
-        #[arg(long)]
-        dry_run: bool,
-        #[command(flatten)]
-        common: PwCommon,
-    },
     /// Probe whether an agent is launchable.
     Verify {
         #[command(flatten)]
@@ -431,9 +414,7 @@ pub struct HandoffCommon {
     pub pending_work_script: Option<String>,
 }
 
-/// handoff verbs (`pwf handoff <verb>`). `done`/`cancel`/`reopen`/`refresh` are
-/// retired (PWF-0117, `main::retired_handoff_verb`) — a handoff-tagged pw item
-/// mirrors those operations from the pw verbs instead.
+/// Provides handoff creation and listing commands.
 #[derive(Subcommand, Debug)]
 pub enum HandoffAction {
     /// Create a handoff (allocates its linked pw item).
@@ -452,54 +433,6 @@ pub enum HandoffAction {
         #[command(flatten)]
         common: HandoffCommon,
     },
-}
-
-// ── migrate engine ────────────────────────────────────────────────────────────
-
-/// One-shot migration of a flat `<project>.md` note into the folder model.
-#[derive(Args, Debug, Default)]
-pub struct MigrateArgs {
-    /// Path to the pwf config JSON (overrides $`PWF_CONFIG`).
-    #[arg(long)]
-    pub config_path: Option<String>,
-    /// Override the notes directory.
-    #[arg(long)]
-    pub notes_dir: Option<String>,
-    /// Date stamp (YYYY-MM-DD); defaults to today.
-    #[arg(long)]
-    pub date: Option<String>,
-    /// Print actions without writing.
-    #[arg(long)]
-    pub dry_run: bool,
-}
-
-// ── rename-project engine ─────────────────────────────────────────────────────
-
-/// Atomically relocate a managed project's pwf-db identity — notes dir, id
-/// prefix, cross-project refs, `project:` label — and its `repos.toml` entry.
-#[derive(Args, Debug, Default)]
-pub struct RenameProjectArgs {
-    /// Current project code (resolved against repos.toml). Unknown → error.
-    #[arg(long, value_name = "CODE")]
-    pub old: Option<String>,
-    /// Target project code. Must differ from `--old` unless `--new-path` is given.
-    #[arg(long, value_name = "CODE")]
-    pub new: Option<String>,
-    /// New repo-relative path; moves the notes dir under the pwf-db root.
-    #[arg(long = "new-path", value_name = "PATH")]
-    pub new_path: Option<String>,
-    /// Path to repos.toml (overrides $`ARCA_ROOT` / $HOME/tools/repository).
-    #[arg(long = "manifest-path", value_name = "PATH")]
-    pub manifest_path: Option<String>,
-    /// Path to the pwf config JSON (overrides $`PWF_CONFIG`).
-    #[arg(long)]
-    pub config_path: Option<String>,
-    /// Override the notes directory base.
-    #[arg(long)]
-    pub notes_dir: Option<String>,
-    /// Print the plan; mutate nothing.
-    #[arg(long)]
-    pub dry_run: bool,
 }
 
 // ── note engine ───────────────────────────────────────────────────────────────
@@ -580,16 +513,13 @@ use crate::cli::EngineArgs;
 pub enum ParsedCommand {
     PendingWork(PendingWorkCommand),
     Handoff(EngineArgs),
-    Migrate(EngineArgs),
     Note(NoteCommand),
-    RenameProject(EngineArgs),
 }
 
 /// Parse a full post-binary argv into a typed engine command.
 ///
-/// The pending-work branch preserves the clap-derived action enum all the way to
-/// the engine; handoff/migrate keep using the flat DTO until their boundaries are
-/// refactored.
+/// The pending-work branch preserves the clap-derived action enum through dispatch.
+/// Handoff uses the flat engine DTO.
 ///
 /// # Errors
 ///
@@ -622,29 +552,11 @@ impl Cli {
                 fill_handoff(&mut a, action);
                 ParsedCommand::Handoff(a)
             }
-            Engine::Migrate(m) => ParsedCommand::Migrate(EngineArgs {
-                config_path: m.config_path,
-                notes_dir: m.notes_dir,
-                date: m.date,
-                dry_run: m.dry_run,
-                ..Default::default()
-            }),
             Engine::Note(n) => ParsedCommand::Note(fill_note(n)),
-            Engine::RenameProject(r) => ParsedCommand::RenameProject(EngineArgs {
-                old_code: r.old,
-                new_code: r.new,
-                new_path: r.new_path,
-                manifest_path: r.manifest_path,
-                config_path: r.config_path,
-                notes_dir: r.notes_dir,
-                dry_run: r.dry_run,
-                ..Default::default()
-            }),
         }
     }
 
     /// Flatten the parsed clap tree into the engine name + engine `Args`.
-    /// `// !` Temporary bridge kept for handoff/migrate compatibility.
     pub fn into_engine_args(self) -> (String, EngineArgs) {
         let mut a = EngineArgs::default();
         let engine = match self.engine {
@@ -657,18 +569,8 @@ impl Cli {
                 fill_handoff(&mut a, action);
                 "handoff"
             }
-            Engine::Migrate(m) => {
-                a.config_path = m.config_path;
-                a.notes_dir = m.notes_dir;
-                a.date = m.date;
-                a.dry_run = m.dry_run;
-                "migrate"
-            }
             Engine::Note(_) => {
                 unreachable!("note is dispatched via parse_command_argv / ParsedCommand::Note")
-            }
-            Engine::RenameProject(_) => {
-                unreachable!("rename-project is dispatched via parse_command_argv")
             }
         };
         (engine.to_string(), a)
@@ -863,18 +765,6 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> pending_work::Action {
             fill_pw_id_only(a, id, common);
             a.path = path;
             pending_work::Action::Show
-        }
-        PwAction::Clean {
-            project,
-            force,
-            dry_run,
-            common,
-        } => {
-            a.project = project;
-            a.force = force;
-            a.dry_run = dry_run;
-            apply_pw_common(a, common);
-            pending_work::Action::Clean
         }
         PwAction::Verify {
             id,
