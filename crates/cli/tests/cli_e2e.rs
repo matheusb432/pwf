@@ -664,6 +664,28 @@ fn single_word_route_lists_project() {
 }
 
 #[test]
+fn single_word_route_accepts_project_code_case_insensitively() {
+    let (_d, cfg) = staged();
+    pwf()
+        .args(["glp", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .success()
+        .stdout(contains("GLP-0001"));
+}
+
+#[test]
+fn single_word_route_rejects_project_name_prefix() {
+    let (_d, cfg) = staged();
+    pwf()
+        .args(["glep", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .failure()
+        .stderr(contains("Unknown managed project identifier: glep"));
+}
+
+#[test]
 fn help_and_version_exit_zero() {
     pwf()
         .arg("--help")
@@ -1460,6 +1482,101 @@ fn e2e_update_title_only_leaves_body_untouched() {
 }
 
 #[test]
+fn e2e_add_normalizes_colon_title_and_notes_it_on_stderr() {
+    let (d, cfg) = staged();
+    pwf()
+        .args([
+            "add",
+            "glep-shimeji",
+            "prompt body",
+            "--title",
+            "finish refactor: promote sync-git seam",
+            "--config-path",
+        ])
+        .arg(&cfg)
+        .assert()
+        .success()
+        .stderr(contains("info: title normalized to keep metadata valid"));
+    let item = read_item(&d, "GLP-0002");
+    assert_eq!(
+        title_of(&item),
+        "finish refactor; promote sync-git seam",
+        "title not yaml-safe: {item}"
+    );
+    pwf()
+        .args(["show", "GLP-0002", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .success()
+        .stdout(contains("finish refactor; promote sync-git seam"));
+}
+
+#[test]
+fn e2e_add_safe_title_emits_no_normalization_notice() {
+    let (d, cfg) = staged();
+    pwf()
+        .args([
+            "add",
+            "glep-shimeji",
+            "prompt body",
+            "--title",
+            "Plain Safe Title",
+            "--config-path",
+        ])
+        .arg(&cfg)
+        .assert()
+        .success()
+        .stderr(contains("title normalized").not());
+    assert_eq!(title_of(&read_item(&d, "GLP-0002")), "plain safe title");
+}
+
+#[test]
+fn e2e_add_inferred_colon_title_normalizes_silently() {
+    let (d, cfg) = staged();
+    pwf()
+        .args([
+            "add",
+            "glep-shimeji",
+            "fix bug: empty prompt",
+            "--config-path",
+        ])
+        .arg(&cfg)
+        .assert()
+        .success()
+        .stderr(contains("title normalized").not());
+    assert_eq!(
+        title_of(&read_item(&d, "GLP-0002")),
+        "fix bug; empty prompt"
+    );
+}
+
+#[test]
+fn e2e_update_normalizes_colon_title_and_notes_it_on_stderr() {
+    let (d, cfg) = staged();
+    pwf()
+        .args([
+            "update",
+            "--id",
+            "GLP-0001",
+            "--title",
+            "fix bug: handle colons",
+            "--config-path",
+        ])
+        .arg(&cfg)
+        .assert()
+        .success()
+        .stderr(contains("info: title normalized to keep metadata valid"));
+    let item = read_item(&d, "GLP-0001");
+    assert_eq!(title_of(&item), "fix bug; handle colons");
+    pwf()
+        .args(["show", "GLP-0001", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .success()
+        .stdout(contains("fix bug; handle colons"));
+}
+
+#[test]
 fn e2e_update_prompt_only_leaves_title_untouched() {
     let (d, cfg) = staged();
     pwf()
@@ -2148,7 +2265,7 @@ fn e2e_done_review_spawns_human_task_scoped_to_range() {
     let spawned = read_item(&d, "GLP-0002");
     assert_eq!(
         spawned,
-        "---\nid: GLP-0002\nstatus: active\ntitle: review glp-0001, commits: a..b\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\n## Goals\n- review GLP-0001, commits: a..b\n- git-tools diff a..b\n- git-tools diff-subrepos\n"
+        "---\nid: GLP-0002\nstatus: active\ntitle: review glp-0001, commits; a..b\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\n## Goals\n- review GLP-0001, commits: a..b\n- git-tools diff a..b\n- git-tools diff-subrepos\n"
     );
     drop(out);
 }
@@ -2239,7 +2356,7 @@ fn staged_with_item(
 }
 
 #[test]
-fn resolve_show_emits_markdown_with_created_key() {
+fn show_emits_markdown_with_created_key() {
     let (_d, cfg) = staged_with_item(
         "pwf",
         "PWF",
@@ -2248,7 +2365,7 @@ fn resolve_show_emits_markdown_with_created_key() {
         "---\nid: PWF-0001\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- do the thing\n",
     );
     let out = pwf()
-        .args(["resolve", "--show", "--id", "PWF-0001", "--config-path"])
+        .args(["show", "--id", "PWF-0001", "--config-path"])
         .arg(&cfg)
         .assert()
         .success();
@@ -2270,7 +2387,7 @@ fn resolve_show_emits_markdown_with_created_key() {
 }
 
 #[test]
-fn resolve_show_legacy_item_emits_body_only() {
+fn show_legacy_item_emits_body_only() {
     // Legacy inline items have no note file, so show falls back to their parsed prompt.
     let dir = TempDir::new().unwrap();
     let notes = dir.path().join("notes");
@@ -2291,13 +2408,7 @@ fn resolve_show_legacy_item_emits_body_only() {
     )
     .unwrap();
     let out = pwf()
-        .args([
-            "resolve",
-            "--show",
-            "--id",
-            "glep-shimeji:1",
-            "--config-path",
-        ])
+        .args(["show", "--id", "glep-shimeji:1", "--config-path"])
         .arg(&cfg)
         .assert()
         .success();
@@ -2416,7 +2527,7 @@ fn e2e_reopen_unknown_id_errors() {
 }
 
 #[test]
-fn resolve_show_finds_done_item_still_in_project_dir() {
+fn show_finds_done_item_still_in_project_dir() {
     let (_d, cfg) = staged_with_done_item(
         "pwf",
         "PWF",
@@ -2424,7 +2535,7 @@ fn resolve_show_finds_done_item_still_in_project_dir() {
         "---\nstatus: done\ntitle: just done\nproject: pwf\ncompleted: 2026-06-20\n---\n\n## Goals\n- just done\n",
     );
     let out = pwf()
-        .args(["resolve", "--show", "--id", "PWF-0003", "--config-path"])
+        .args(["show", "--id", "PWF-0003", "--config-path"])
         .arg(&cfg)
         .assert()
         .success();
@@ -2434,7 +2545,7 @@ fn resolve_show_finds_done_item_still_in_project_dir() {
 }
 
 #[test]
-fn resolve_show_finds_done_item_still_in_project_dir_with_shorthand_id() {
+fn show_finds_done_item_still_in_project_dir_with_shorthand_id() {
     let (_d, cfg) = staged_with_done_item(
         "pwf",
         "PWF",
@@ -2442,7 +2553,7 @@ fn resolve_show_finds_done_item_still_in_project_dir_with_shorthand_id() {
         "---\nstatus: done\ntitle: just done\nproject: pwf\ncompleted: 2026-06-20\n---\n\n## Goals\n- just done\n",
     );
     let out = pwf()
-        .args(["resolve", "--show", "--id", "pwf3", "--config-path"])
+        .args(["show", "--id", "pwf3", "--config-path"])
         .arg(&cfg)
         .assert()
         .success();
@@ -2452,87 +2563,18 @@ fn resolve_show_finds_done_item_still_in_project_dir_with_shorthand_id() {
 }
 
 #[test]
-fn resolve_show_finds_archived_done_item() {
-    let (_d, cfg) = staged_with_archived_item(
-        "pwf",
-        "PWF",
-        "PWF-0002",
-        "---\nstatus: done\ntitle: finished thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- finished thing\n",
-    );
-    let out = pwf()
-        .args(["resolve", "--show", "--id", "pwf-0002", "--config-path"])
-        .arg(&cfg)
-        .assert()
-        .success();
-    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
-    assert!(stdout.contains("status: done"), "missing status: {stdout}");
-    assert!(
-        stdout.contains("- finished thing"),
-        "missing body: {stdout}"
-    );
-    assert!(
-        stdout.contains("created: 2026-06-20"),
-        "created date must be shown: {stdout}"
-    );
-}
-
-#[test]
-fn resolve_prints_closed_item_path() {
+fn resolve_verb_is_removed_and_fails() {
     let (_d, cfg) = staged_with_archived_item(
         "pwf",
         "PWF",
         "PWF-0002",
         "---\nstatus: cancelled\ntitle: dropped\nproject: pwf\n---\n\n## Goals\n- dropped\n",
     );
-    let out = pwf()
-        .args(["resolve", "--id", "PWF-0002", "--config-path"])
-        .arg(&cfg)
-        .assert()
-        .success();
-    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
-    assert!(
-        stdout.ends_with("/pwf/PWF-0002.md\n"),
-        "path should point at the closed note: {stdout}"
-    );
-}
-
-#[test]
-fn resolve_errors_when_id_absent_from_index_and_archive() {
-    let (_d, cfg) = staged_with_archived_item(
-        "pwf",
-        "PWF",
-        "PWF-0002",
-        "---\nstatus: done\ntitle: t\nproject: pwf\n---\n\nbody\n",
-    );
     pwf()
-        .args(["resolve", "--id", "PWF-9999", "--config-path"])
+        .args(["resolve", "--show", "--id", "PWF-0002", "--config-path"])
         .arg(&cfg)
         .assert()
         .failure();
-}
-
-#[test]
-fn resolve_preserves_raw_lowercase_id_in_not_found_error() {
-    let (_d, cfg) = staged_with_archived_item(
-        "pwf",
-        "PWF",
-        "PWF-0002",
-        "---\nstatus: done\ntitle: t\nproject: pwf\n---\n\nbody\n",
-    );
-    let out = pwf()
-        .args(["resolve", "--id", "pwf-9999", "--config-path"])
-        .arg(&cfg)
-        .assert()
-        .failure();
-    let stderr = String::from_utf8(out.get_output().stderr.clone()).unwrap();
-    assert!(
-        stderr.contains("pwf-9999"),
-        "error should preserve raw lowercase id: {stderr}"
-    );
-    assert!(
-        !stderr.contains("PWF-9999"),
-        "error should not normalize the missing id: {stderr}"
-    );
 }
 
 #[test]
@@ -2546,16 +2588,17 @@ fn id_input_forms_all_resolve_to_the_same_item() {
     );
 
     let canonical = pwf()
-        .args(["resolve", "--id", "PWF-0001", "--config-path"])
+        .args(["show", "--id", "PWF-0001", "--config-path"])
         .arg(&cfg)
         .assert()
         .success();
     let baseline = String::from_utf8(canonical.get_output().stdout.clone()).unwrap();
 
     for form in [
-        vec!["resolve", "pwf-0001"],
-        vec!["resolve", "pwf1"],
-        vec!["resolve", "pwf", "1"],
+        vec!["show", "pwf-0001"],
+        vec!["show", "pwf1"],
+        vec!["show", "pwf", "1"],
+        vec!["s", "pwf1"],
     ] {
         let out = pwf()
             .args(&form)
@@ -2569,7 +2612,7 @@ fn id_input_forms_all_resolve_to_the_same_item() {
 }
 
 #[test]
-fn show_streams_note_markdown_like_resolve_show() {
+fn show_alias_s_streams_note_markdown() {
     let (_d, cfg) = staged_with_item(
         "pwf",
         "PWF",
@@ -2578,7 +2621,7 @@ fn show_streams_note_markdown_like_resolve_show() {
         "---\nid: PWF-0001\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- do the thing\n",
     );
     let out = pwf()
-        .args(["show", "PWF-0001", "--config-path"])
+        .args(["s", "PWF-0001", "--config-path"])
         .arg(&cfg)
         .assert()
         .success();
@@ -2588,9 +2631,43 @@ fn show_streams_note_markdown_like_resolve_show() {
         "missing status: {stdout}"
     );
     assert!(stdout.contains("## Goals"), "missing body: {stdout}");
+}
+
+#[test]
+fn show_alias_s_collapses_split_id_form() {
+    let (_d, cfg) = staged_with_item(
+        "pwf",
+        "PWF",
+        "PWF-0001",
+        "do the thing",
+        "---\nid: PWF-0001\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- do the thing\n",
+    );
+    let out = pwf()
+        .args(["s", "pwf", "1", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .success();
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("## Goals"), "missing body: {stdout}");
+}
+
+#[test]
+fn show_path_prints_closed_item_path() {
+    let (_d, cfg) = staged_with_archived_item(
+        "pwf",
+        "PWF",
+        "PWF-0002",
+        "---\nstatus: cancelled\ntitle: dropped\nproject: pwf\n---\n\n## Goals\n- dropped\n",
+    );
+    let out = pwf()
+        .args(["show", "--path", "PWF-0002", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .success();
+    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
     assert!(
-        stdout.contains("created: 2026-06-20"),
-        "created date must be shown: {stdout}"
+        stdout.ends_with("/pwf/PWF-0002.md\n"),
+        "path should point at the closed note: {stdout}"
     );
 }
 
@@ -2711,7 +2788,7 @@ fn update_commits_amends_done_item_in_project_dir() {
         .assert()
         .success();
     let out = pwf()
-        .args(["resolve", "--show", "--id", "PWF-0003", "--config-path"])
+        .args(["show", "--id", "PWF-0003", "--config-path"])
         .arg(&cfg)
         .assert()
         .success();
@@ -2745,7 +2822,7 @@ fn update_commits_amends_archived_item() {
         .assert()
         .success();
     let out = pwf()
-        .args(["resolve", "--show", "--id", "PWF-0002", "--config-path"])
+        .args(["show", "--id", "PWF-0002", "--config-path"])
         .arg(&cfg)
         .assert()
         .success();
@@ -2778,7 +2855,7 @@ fn update_commits_amends_open_item() {
         .assert()
         .success();
     let out = pwf()
-        .args(["resolve", "--show", "--id", "PWF-0001", "--config-path"])
+        .args(["show", "--id", "PWF-0001", "--config-path"])
         .arg(&cfg)
         .assert()
         .success();
@@ -2799,7 +2876,7 @@ fn update_append_report_attaches_verbatim_report_to_closed_item() {
         "---\nstatus: done\ntitle: t\nproject: pwf\ncompleted: 2026-06-20\n---\n\n## Goals\n\n- ship it\n",
     );
     let report =
-        "## Outcome\n\nShipped `--append-report`.\n\n## Follow-ups\n\n- write the FSD card";
+        "## Outcome\n\nShipped `--append-report`.\n\n## Follow-ups\n\n- write the release notes";
     pwf()
         .args(["update", "--id", "pwf-0003", "--append-report"])
         .arg(report)
@@ -2816,7 +2893,7 @@ fn update_append_report_attaches_verbatim_report_to_closed_item() {
     );
     assert!(
         note.contains(
-            "### Report\n\n## Outcome\n\nShipped `--append-report`.\n\n## Follow-ups\n\n- write the FSD card\n"
+            "### Report\n\n## Outcome\n\nShipped `--append-report`.\n\n## Follow-ups\n\n- write the release notes\n"
         ),
         "report not appended verbatim: {note}"
     );

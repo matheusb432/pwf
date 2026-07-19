@@ -251,6 +251,38 @@ fn generic_add_creates_note_and_links_index() {
 }
 
 #[test]
+fn generic_add_normalizes_yaml_breaking_titles_so_reads_survive() {
+    let temp = tempfile::tempdir().unwrap();
+    let notes_dir = temp.path().join("notes");
+    let store = ObsidianStore::new(config_for_notes(&notes_dir));
+    let hostile_titles = [
+        "finish refactor: promote sync-git seam over: that",
+        "fix #123 now",
+        "- leading dash",
+        "[wip] thing",
+        "\"quoted",
+        "*star &anchor !tag",
+        "|block >fold %directive @at `tick {brace",
+        "a\nb: c",
+        ":::",
+        "fix foo::bar panic",
+        "time 3:30pm https://docs.rs read",
+    ];
+
+    for title in hostile_titles {
+        let record = generic_add(&store, new_item("prompt", Some(title), None)).unwrap();
+        let id = record
+            .id
+            .as_item()
+            .expect("inserted record carries a canonical id")
+            .clone();
+        let read = get_record(&store, id.as_ref())
+            .unwrap_or_else(|| panic!("hostile title must stay readable: {title:?}"));
+        assert_eq!(read.title, record.title, "title round-trip: {title:?}");
+    }
+}
+
+#[test]
 fn generic_add_writes_canonical_tags_and_omits_absent_tags() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");

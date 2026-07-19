@@ -1,8 +1,9 @@
 use pwf_application::{AppDbStore, PendingWorkItem, pending_work::update::UpdatePendingWorkItem};
-use pwf_domain::pending_work::ProjectRegistry;
+use pwf_domain::pending_work::{ProjectRegistry, title_was_normalized};
 
 use super::{
     super::{commits, errors::PendingWorkError},
+    add::TITLE_NORMALIZED_NOTICE,
     outcome::UpdatedItem,
 };
 use crate::cli::EngineArgs;
@@ -30,7 +31,7 @@ pub(in crate::engines::pending_work) fn run_update(
         return Err(PendingWorkError::NothingToUpdate);
     }
 
-    pwf_application::pending_work::update::execute(
+    let updated = pwf_application::pending_work::update::execute(
         UpdatePendingWorkItem {
             id: id.to_string(),
             prompt: args.prompt.clone(),
@@ -47,7 +48,11 @@ pub(in crate::engines::pending_work) fn run_update(
         store,
         projects,
     )
-    .map_err(|error| PendingWorkError::ApplicationWrite(error.to_string()))
+    .map_err(|error| PendingWorkError::ApplicationWrite(error.to_string()))?;
+    if args.title.as_deref().is_some_and(title_was_normalized) {
+        eprintln!("{TITLE_NORMALIZED_NOTICE}");
+    }
+    Ok(updated)
 }
 
 #[cfg(test)]

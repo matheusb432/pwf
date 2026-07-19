@@ -82,7 +82,6 @@ pub enum Action {
     Done,
     Cancel,
     Reopen,
-    Resolve,
     Show,
     Remove,
     Update,
@@ -97,7 +96,6 @@ const VERIFY: &str = "verify";
 const DONE: &str = "done";
 const CANCEL: &str = "cancel";
 const REOPEN: &str = "reopen";
-const RESOLVE: &str = "resolve";
 const SHOW: &str = "show";
 const REMOVE: &str = "remove";
 const UPDATE: &str = "update";
@@ -114,7 +112,6 @@ impl Action {
             Action::Done => DONE,
             Action::Cancel => CANCEL,
             Action::Reopen => REOPEN,
-            Action::Resolve => RESOLVE,
             Action::Show => SHOW,
             Action::Remove => REMOVE,
             Action::Update => UPDATE,
@@ -159,7 +156,6 @@ impl FromStr for Action {
             DONE => Ok(Action::Done),
             CANCEL => Ok(Action::Cancel),
             REOPEN => Ok(Action::Reopen),
-            RESOLVE => Ok(Action::Resolve),
             SHOW => Ok(Action::Show),
             REMOVE => Ok(Action::Remove),
             UPDATE => Ok(Action::Update),

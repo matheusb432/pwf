@@ -50,7 +50,8 @@ pub struct EngineArgs {
     // Update and session splice these lanes into an open item's structured body.
     pub append: Option<String>,
     pub pending_work_script: Option<String>,
-    pub show: bool,
+    // `show --path` prints the note path instead of the note markdown.
+    pub path: bool,
     pub long: bool,
     pub force: bool,
     pub dry_run: bool,

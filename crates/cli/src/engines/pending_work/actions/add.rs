@@ -3,6 +3,10 @@ use pwf_infra::obsidian::ObsidianStoreError;
 
 use super::outcome::AddedItem;
 
+/// Stderr notice shared by `add` and `update` when a title needed YAML-safety rewriting.
+pub(in crate::engines::pending_work) const TITLE_NORMALIZED_NOTICE: &str =
+    "info: title normalized to keep metadata valid";
+
 pub(crate) fn emit_created_section_diagnostic(item: &AddedItem) {
     if let Some(section) = item.created_section.as_deref() {
         eprintln!("info: created `## {section}` section in {}", item.project);

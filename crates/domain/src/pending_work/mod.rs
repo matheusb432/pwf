@@ -24,7 +24,7 @@ pub use list::{
 };
 pub use note_body::{
     append_lanes, append_report, append_report_block, inferred_title, is_placeholder_prompt,
-    normalize_title, note_body,
+    normalize_title, note_body, title_was_normalized,
 };
 pub use outcome::{AddedItem, MutationOutcome, RemovedItem, UpdatedItem};
 pub use prereq::{ParsePrereqsError, Prereqs};

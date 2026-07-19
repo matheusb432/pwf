@@ -25,7 +25,7 @@ where
         &crate::engines::pending_work::run::project_registry(cfg),
         id,
     )?;
-    // An already-active linked pair is an idempotent skip (FR-0021).
+    // An already-active linked pair is an idempotent skip.
     let pending = gate
         .as_ref()
         .map(mirror::preflight_reopen)

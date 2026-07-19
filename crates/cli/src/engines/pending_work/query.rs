@@ -25,11 +25,12 @@ fn resolve_config_path_with_default(
         .ok_or(errors::PendingWorkError::MissingConfigPath)
 }
 
-/// Resolves an exact project name, prefix code, or unique case-insensitive name prefix.
+/// Resolves a project's full name or id code, both case-insensitive.
+/// Name-prefix abbreviations are rejected as unknown.
 ///
 /// # Errors
 ///
-/// Returns an error when the identifier is unknown or ambiguous.
+/// Returns an error when the identifier is unknown or matches several projects.
 pub fn resolve_managed_project_name(cfg: &Config, name: &str) -> Result<String, String> {
     resolve_managed_project_name_typed(cfg, name).map_err(String::from)
 }
@@ -41,37 +42,30 @@ pub(super) fn resolve_managed_project_name_typed(
     if cfg.projects.contains_key(name) {
         return Ok(name.to_string());
     }
-    let mut ci = cfg.projects.keys().filter(|m| m.eq_ignore_ascii_case(name));
-    if let Some(first) = ci.next()
-        && ci.next().is_none()
-    {
-        return Ok(first.clone());
-    }
-    // Exact prefix codes take precedence over fuzzy project-name prefixes.
-    let mut code = cfg
-        .prefixes
-        .iter()
-        .filter(|(_, c)| c.eq_ignore_ascii_case(name))
-        .map(|(proj, _)| proj);
-    if let Some(first) = code.next()
-        && code.next().is_none()
-    {
-        return Ok(first.clone());
-    }
-    let lower = name.to_ascii_lowercase();
-    let pfx: Vec<&String> = cfg
+    let names: Vec<&String> = cfg
         .projects
         .keys()
-        .filter(|m| m.to_ascii_lowercase().starts_with(&lower))
+        .filter(|m| m.eq_ignore_ascii_case(name))
         .collect();
-    if pfx.len() == 1 {
-        return Ok(pfx[0].clone());
-    }
-    if pfx.len() > 1 {
-        return Err(errors::PendingWorkError::AmbiguousManagedProject {
-            identifier: name.to_string(),
-            matches: pfx.into_iter().cloned().collect(),
-        });
+    let codes: Vec<&String> = cfg
+        .prefixes
+        .iter()
+        .filter(|(_, code)| code.eq_ignore_ascii_case(name))
+        .map(|(project, _)| project)
+        .collect();
+    // A unique name match wins over a code match; several matches at the
+    // first non-empty tier are ambiguous instead of silently falling through.
+    for tier in [names, codes] {
+        match tier.as_slice() {
+            [] => {}
+            [only] => return Ok((*only).clone()),
+            several => {
+                return Err(errors::PendingWorkError::AmbiguousManagedProject {
+                    identifier: name.to_string(),
+                    matches: several.iter().map(|m| (*m).clone()).collect(),
+                });
+            }
+        }
     }
     Err(errors::PendingWorkError::UnknownManagedProject {
         identifier: name.to_string(),
@@ -211,18 +205,21 @@ mod tests {
     }
 
     #[test]
-    fn code_wins_over_name_prefix() {
+    fn code_resolves_even_when_a_project_name_extends_it() {
         let c = cfg();
         assert_eq!(resolve_managed_project_name(&c, "be").unwrap(), "alpha");
     }
 
     #[test]
-    fn unique_name_prefix_still_resolves() {
+    fn name_prefix_abbreviations_are_rejected_as_unknown() {
         let c = cfg();
-        assert_eq!(
-            resolve_managed_project_name(&c, "glep").unwrap(),
-            "glep-shimeji"
-        );
+        for abbreviation in ["glep", "git", "g"] {
+            assert_matches!(
+                resolve_managed_project_name_typed(&c, abbreviation).unwrap_err(),
+                errors::PendingWorkError::UnknownManagedProject { .. },
+                "'{abbreviation}' must not abbreviate a project name"
+            );
+        }
     }
 
     #[test]
@@ -265,26 +262,31 @@ mod tests {
     }
 
     #[test]
-    fn ambiguous_identifier_returns_typed_error_with_legacy_display() {
-        let c = cfg();
+    fn duplicated_code_returns_typed_ambiguity_error_with_legacy_display() {
+        let json = r#"{
+            "notesDir": "/n",
+            "projects": { "git-tools": "/r/gt", "glep-shimeji": "/r/gs" },
+            "prefixes": { "git-tools": "DUP", "glep-shimeji": "DUP" }
+        }"#;
+        let c = crate::config::from_json(json, None).unwrap();
 
-        let err = resolve_managed_project_name_typed(&c, "g").unwrap_err();
+        let err = resolve_managed_project_name_typed(&c, "dup").unwrap_err();
 
         assert_matches!(
             err,
             errors::PendingWorkError::AmbiguousManagedProject {
                 ref identifier,
                 ref matches
-            } if identifier == "g"
+            } if identifier == "dup"
                 && matches == &vec!["git-tools".to_string(), "glep-shimeji".to_string()]
         );
         assert_eq!(
             err.to_string(),
-            "'g' is ambiguous. Managed project identifiers matching it: git-tools, glep-shimeji."
+            "'dup' is ambiguous. Managed project identifiers matching it: git-tools, glep-shimeji."
         );
         assert_eq!(
-            resolve_managed_project_name(&c, "g").unwrap_err(),
-            "'g' is ambiguous. Managed project identifiers matching it: git-tools, glep-shimeji."
+            resolve_managed_project_name(&c, "dup").unwrap_err(),
+            "'dup' is ambiguous. Managed project identifiers matching it: git-tools, glep-shimeji."
         );
     }
 

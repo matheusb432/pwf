@@ -141,7 +141,7 @@ fn tag_help_is_scoped_to_supported_commands() {
     assert!(all_terse_ok, "pwf --help --terse should exit 0");
     assert!(
         all_terse.contains(
-            "<project> [-n <N>] [--status <active|done|cancelled|all>] [--long|--future|--human|--all]   (routes to that project's pending-work items; `pwf list` lists every project)"
+            "<project> [-n <N>] [--status <active|done|cancelled|all>] [--long|--future|--human|--all]   (project = full name or id code, case-insensitive; routes to that project's pending-work items; `pwf list` lists every project)"
         ),
         "route shorthand must remain tag-free and expose status: {all_terse}"
     );
@@ -352,7 +352,7 @@ fn verb_terse_help_is_scoped_to_that_verb() {
         "verb-scoped terse must not dump the handoff engine: {terse}"
     );
     assert!(
-        !terse.contains("resolve --id"),
+        !terse.contains("show <id>"),
         "verb-scoped terse must not dump sibling verbs: {terse}"
     );
 
@@ -364,7 +364,7 @@ fn verb_terse_help_is_scoped_to_that_verb() {
     );
     let (top, _) = run(&["--help", "--terse"]);
     assert!(
-        top.contains("handoff <verb>") && top.contains("resolve --id"),
+        top.contains("handoff <verb>") && top.contains("show <id>"),
         "top-level terse stays full: {top}"
     );
 }

@@ -2,15 +2,14 @@
 //! Rich help remains derived from `command.rs`.
 
 // Keep terse help to verbs, required arguments, and routing-critical qualifiers.
-const PW_TERSE: &str = r"<project> [-n <N>] [--status <active|done|cancelled|all>] [--long|--future|--human|--all]   (routes to that project's pending-work items; `pwf list` lists every project)
+const PW_TERSE: &str = r"<project> [-n <N>] [--status <active|done|cancelled|all>] [--long|--future|--human|--all]   (project = full name or id code, case-insensitive; routes to that project's pending-work items; `pwf list` lists every project)
   list [-n <N>] [--status <active|done|cancelled|all>] [--long] [--future] [--human] [--all] [--tag <tag>] [-o/--order <created|id|project-id> <asc|desc>]   (--all includes every section; --status all includes every lifecycle; --order default: created desc, flat across every project; --order project-id reproduces the pre-PWF-0096 project-grouped default)
   add <project> <prompt>   prompt lanes: <title> / <goal> /c <context> /n <constraint> /d <done>; plus [--title] [--human] [--section <s>] [--prereq <id>] [--tag <tag>] [--continue-handoff] [--continue <path>]
   done --id [--report] [--commits <range>] [--review]   (handoff-tagged items auto-archive their handoff)
   cancel --id --report [--commits <range>] [--review]   (handoff-tagged items auto-archive their handoff)
   reopen --id   (inverse of done/cancel: done|cancelled -> active; handoff-tagged items auto-restore their handoff)
   update --id [--prompt] [--title] [--prereq <id>] [--clear-prereq] [--tag <tag>] [--tags-clear] [--commits <range>] [--append-report <md>] [-a/--append <lanes>]   (--commits/--append-report also amend a closed item; -a/--append splices lane-syntax bullets into Goals/Context/Constraints/Done When, conflicts with --prompt)
-  resolve --id [--show]
-  show <id>   (shorthand for resolve --show)
+  show <id> [--path]   (alias: s; streams the task note's markdown, any status; --path prints the note path instead)
   session <id> [--agent claude|codex] [--model <name>] [-a/--append <lanes>] [-i] [-w] [--auto] [-y]   dispatch an agent into the project's zellij session, or inline in the current terminal with -i (--agent picks the agent, claude default; --model forwards a raw model override to the agent's own --model flag, no validation, wins over effort-tier resolution; -a/--append splices lane-syntax bullets into the body before dispatch, same as update; -w tells it to work in a git worktree named after the id; --auto runs it autonomously without prompting the user; -y skips the [Y/n] confirm)
   clean [--dry-run|--force]
   verify [--id] [-a claude|codex] [--model <name>]
@@ -150,8 +149,8 @@ mod tests {
                 .contains("handoff-tagged items auto-restore their handoff"),
             "reopen should note it mirrors onto the handoff too"
         );
-        assert!(terse_verb("resolve").unwrap().contains("resolve --id"));
-        assert!(terse_verb("show").unwrap().contains("show <id>"));
+        assert_eq!(terse_verb("resolve"), None, "resolve verb is removed");
+        assert!(terse_verb("show").unwrap().contains("show <id> [--path]"));
         assert!(terse_verb("remove").unwrap().contains("remove --id"));
         assert_eq!(terse_verb("pw"), None);
         assert_eq!(terse_verb("bogus"), None);

@@ -1,4 +1,4 @@
-use pwf_domain::pending_work::{inferred_title, normalize_title};
+use pwf_domain::pending_work::{inferred_title, normalize_title, title_was_normalized};
 
 use super::{errors::PendingWorkError, query::resolve_project_repo};
 use crate::{cli::EngineArgs, config::Config};
@@ -8,6 +8,8 @@ pub(super) struct NewAddInputs<'a> {
     pub project_name: String,
     pub session: String,
     pub prompt: &'a str,
+    /// True when the explicit `--title` needed YAML-safety rewriting beyond trim+lowercase.
+    pub title_normalized: bool,
 }
 
 impl<'a> NewAddInputs<'a> {
@@ -19,14 +21,15 @@ impl<'a> NewAddInputs<'a> {
             .filter(|p| !p.trim().is_empty())
             .ok_or(PendingWorkError::AddUsage)?;
         let (project_name, _repo) = resolve_project_repo(cfg, project_raw)?;
-        let session = match args.title.as_deref() {
-            Some(t) if !t.trim().is_empty() => normalize_title(t),
-            _ => inferred_title(prompt),
+        let (session, title_normalized) = match args.title.as_deref() {
+            Some(t) if !t.trim().is_empty() => (normalize_title(t), title_was_normalized(t)),
+            _ => (inferred_title(prompt), false),
         };
         Ok(Self {
             project_name,
             session,
             prompt,
+            title_normalized,
         })
     }
 }
@@ -67,6 +70,25 @@ mod tests {
         let args = args(Some("alpha"), Some("do x"), Some("Custom Title"));
         let got = NewAddInputs::resolve(&cfg, &args).unwrap();
         assert_eq!(got.session, "custom title");
+        assert!(!got.title_normalized);
+    }
+
+    #[test]
+    fn yaml_breaking_explicit_title_is_normalized_and_flagged() {
+        let cfg = cfg();
+        let args = args(Some("alpha"), Some("do x"), Some("fix bug: handle colons"));
+        let got = NewAddInputs::resolve(&cfg, &args).unwrap();
+        assert_eq!(got.session, "fix bug; handle colons");
+        assert!(got.title_normalized);
+    }
+
+    #[test]
+    fn yaml_breaking_inferred_title_normalizes_without_flagging() {
+        let cfg = cfg();
+        let args = args(Some("alpha"), Some("fix bug: empty prompt"), None);
+        let got = NewAddInputs::resolve(&cfg, &args).unwrap();
+        assert_eq!(got.session, "fix bug; empty prompt");
+        assert!(!got.title_normalized);
     }
 
     #[test]
@@ -88,11 +110,11 @@ mod tests {
     }
 
     #[test]
-    fn unique_prefix_resolves_to_full_project_name() {
+    fn project_name_prefix_is_rejected_on_add() {
         let cfg = cfg();
         let args = args(Some("al"), Some("do x"), None);
-        let got = NewAddInputs::resolve(&cfg, &args).unwrap();
-        assert_eq!(got.project_name, "alpha");
+        let err = NewAddInputs::resolve(&cfg, &args).unwrap_err();
+        assert_matches!(err, errors::PendingWorkError::UnknownManagedProject { .. });
     }
 
     #[test]

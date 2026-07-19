@@ -1631,7 +1631,7 @@ fn route_create_verbs_error_with_add_hint() {
     }
 }
 
-fn resolve_stage() -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) {
+fn show_stage() -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) {
     let stage = stage_dir();
     let notes = stage.join("notes");
     let proj = notes.join("glep-shimeji");
@@ -1654,7 +1654,7 @@ fn resolve_stage() -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBu
     (notes, proj, cfg)
 }
 
-fn resolve_args(
+fn show_path_args(
     cfg: &std::path::Path,
     notes: &std::path::Path,
     extra: &[&str],
@@ -1662,7 +1662,8 @@ fn resolve_args(
     let cfg_s = cfg.to_string_lossy();
     let notes_s = notes.to_string_lossy();
     let mut argv = vec![
-        "resolve",
+        "show",
+        "--path",
         "--id",
         "GLP-0001",
         "--config-path",
@@ -1675,9 +1676,9 @@ fn resolve_args(
 }
 
 #[test]
-fn resolve_prints_item_note_path_plain() {
-    let (notes, proj, cfg) = resolve_stage();
-    let out = run_args_plain(&resolve_args(&cfg, &notes, &[])).unwrap();
+fn show_path_prints_item_note_path_plain() {
+    let (notes, proj, cfg) = show_stage();
+    let out = run_args_plain(&show_path_args(&cfg, &notes, &[])).unwrap();
     assert_eq!(
         out.trim(),
         proj.join("GLP-0001.md").to_string_lossy().as_ref()
@@ -1685,18 +1686,18 @@ fn resolve_prints_item_note_path_plain() {
 }
 
 #[test]
-fn resolve_unknown_id_errors() {
-    let (notes, _proj, cfg) = resolve_stage();
-    let mut args = resolve_args(&cfg, &notes, &[]);
+fn show_unknown_id_errors() {
+    let (notes, _proj, cfg) = show_stage();
+    let mut args = show_path_args(&cfg, &notes, &[]);
     args.id = Some("GLP-0099".to_string());
     let err = run_args_plain(&args).unwrap_err();
     assert!(err.contains("GLP-0099"), "error should name the id: {err}");
 }
 
 #[test]
-fn resolve_requires_id() {
-    let (notes, _proj, cfg) = resolve_stage();
-    let mut args = resolve_args(&cfg, &notes, &[]);
+fn show_requires_id() {
+    let (notes, _proj, cfg) = show_stage();
+    let mut args = show_path_args(&cfg, &notes, &[]);
     args.id = None;
     let err = run_args_plain(&args).unwrap_err();
     assert!(err.contains("--id"), "error should mention --id: {err}");

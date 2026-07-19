@@ -423,6 +423,22 @@ mod tests {
         assert_eq!(item.body, "## Goals\n- fresh prompt");
     }
 
+    #[test]
+    fn update_normalizes_yaml_breaking_title() {
+        let store = staged(WorkItemStatus::Active, "body\n");
+        let cmd = UpdatePendingWorkItem {
+            title: Some("Fix Parser: Handle Colons".to_string()),
+            ..empty("GLP-0001")
+        };
+
+        execute(cmd, &store, &registry()).unwrap();
+
+        assert_eq!(
+            store.items("glep-shimeji")[0].title,
+            "fix parser; handle colons"
+        );
+    }
+
     fn staged_with_tags(raw: &str) -> InMemoryStore {
         let record = PendingWorkItem {
             tags: Some(raw.to_string()),

@@ -184,7 +184,7 @@ mod tests {
 
     #[test]
     fn prereqs_normalize_shorthand_ids() {
-        // Uses the same shorthand canonicalization as `--id` (BR-0010).
+        // Uses the same shorthand canonicalization as `--id`.
         let ids = parse_flag_ids(&[
             "cfg57".to_string(),
             "CFG-14".to_string(),

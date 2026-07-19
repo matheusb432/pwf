@@ -16,8 +16,8 @@ use pwf_infra::{
 
 use super::{
     actions::{
-        AddedItem, EngineOutcome, ListParams, emit_created_section_diagnostic,
-        emit_created_section_diagnostic_for_error,
+        AddedItem, EngineOutcome, ListParams, TITLE_NORMALIZED_NOTICE,
+        emit_created_section_diagnostic, emit_created_section_diagnostic_for_error,
         list::{ListScope, OrderSpec},
         render_outcome_confirmation, run_cancel, run_done, run_list_query, run_remove, run_reopen,
         run_update,
@@ -38,10 +38,7 @@ use crate::{
     cli::EngineArgs,
     config::Config,
     confirm::{Confirmation, DefaultAnswer},
-    engines::{
-        handoff::mirror,
-        pending_work::actions::{run_resolve, run_show},
-    },
+    engines::{handoff::mirror, pending_work::actions::run_show},
 };
 
 /// Runs a parsed command and applies terminal formatting to typed mutations.
@@ -148,8 +145,6 @@ pub(in crate::engines::pending_work) fn run_typed(
         Action::Cancel => Ok(EngineOutcome::Text(run_cancel(&cfg, &store, args)?)),
 
         Action::Reopen => Ok(EngineOutcome::Text(run_reopen(&cfg, &store, args)?)),
-
-        Action::Resolve => Ok(EngineOutcome::Text(run_resolve(&cfg, &store, args)?)),
 
         Action::Show => Ok(EngineOutcome::Text(run_show(&cfg, &store, args)?)),
 
@@ -282,7 +277,7 @@ pub(crate) fn add_command_from_args(
     let store = store_for(&cfg);
     let registry = project_registry(&cfg);
     let date = stamp_date(args.date.as_deref());
-    let command = build_add_command(&cfg, args, &date)?;
+    let (command, _title_normalized) = build_add_command(&cfg, args, &date)?;
     Ok((store, registry, command))
 }
 
@@ -297,7 +292,7 @@ fn run_add<S>(
 where
     S: AppDbStore<PendingWorkItem> + AppDbStore<IndexEntry> + AppDbStore<IndexSection>,
 {
-    let command = build_add_command(cfg, args, date)?;
+    let (command, title_normalized) = build_add_command(cfg, args, date)?;
 
     let scaffold = if !args.continue_handoff
         && command
@@ -320,6 +315,9 @@ where
     match result {
         Ok(added) => {
             emit_created_section_diagnostic(&added);
+            if title_normalized {
+                eprintln!("{TITLE_NORMALIZED_NOTICE}");
+            }
             if let Some(pending) = scaffold {
                 let path = pending.commit(&added.id).map_err(|source| {
                     errors::PendingWorkError::HandoffMirrorAfterMutation {
@@ -341,50 +339,56 @@ where
     }
 }
 
+/// Builds the add request plus whether an explicit `--title` needed YAML-safety rewriting.
 fn build_add_command(
     cfg: &Config,
     args: &EngineArgs,
     date: &str,
-) -> Result<AddPendingWorkItem, errors::PendingWorkError> {
+) -> Result<(AddPendingWorkItem, bool), errors::PendingWorkError> {
     let tags = super::tags::from_flags(&args.tag)?;
     let section = resolve_add_section(args)?;
     let prereq = super::prereq::frontmatter_from_flags(cfg, &args.prereq)?;
 
-    let (project_name, title, prompt): (String, Option<String>, String) = if args.continue_handoff {
-        let raw = args
-            .project
-            .as_deref()
-            .ok_or(errors::PendingWorkError::AddUsage)?;
-        let (project_name, repo) = resolve_project_repo(cfg, raw)?;
-        let (title, prompt) = continue_handoff_prompt(&repo)?;
-        (project_name, Some(title), prompt)
-    } else if let Some(path) = args.continue_path.as_deref() {
-        let raw = args
-            .project
-            .as_deref()
-            .ok_or(errors::PendingWorkError::AddUsage)?;
-        let (project_name, _repo) = resolve_project_repo(cfg, raw)?;
-        let (title, prompt) = continue_plan_prompt(&project_name, path);
-        (project_name, Some(title), prompt)
-    } else {
-        let input = NewAddInputs::resolve(cfg, args)?;
-        (
-            input.project_name,
-            Some(input.session),
-            input.prompt.to_string(),
-        )
-    };
+    let (project_name, title, prompt, title_normalized): (String, Option<String>, String, bool) =
+        if args.continue_handoff {
+            let raw = args
+                .project
+                .as_deref()
+                .ok_or(errors::PendingWorkError::AddUsage)?;
+            let (project_name, repo) = resolve_project_repo(cfg, raw)?;
+            let (title, prompt) = continue_handoff_prompt(&repo)?;
+            (project_name, Some(title), prompt, false)
+        } else if let Some(path) = args.continue_path.as_deref() {
+            let raw = args
+                .project
+                .as_deref()
+                .ok_or(errors::PendingWorkError::AddUsage)?;
+            let (project_name, _repo) = resolve_project_repo(cfg, raw)?;
+            let (title, prompt) = continue_plan_prompt(&project_name, path);
+            (project_name, Some(title), prompt, false)
+        } else {
+            let input = NewAddInputs::resolve(cfg, args)?;
+            (
+                input.project_name,
+                Some(input.session),
+                input.prompt.to_string(),
+                input.title_normalized,
+            )
+        };
 
-    Ok(AddPendingWorkItem {
-        project_name,
-        prompt,
-        title,
-        created: date.to_string(),
-        section: section.map(|section| section.as_str().to_string()),
-        prereq,
-        effort: args.effort,
-        tags,
-    })
+    Ok((
+        AddPendingWorkItem {
+            project_name,
+            prompt,
+            title,
+            created: date.to_string(),
+            section: section.map(|section| section.as_str().to_string()),
+            prereq,
+            effort: args.effort,
+            tags,
+        },
+        title_normalized,
+    ))
 }
 
 #[cfg(test)]
@@ -433,15 +437,15 @@ mod tests {
     }
 
     #[test]
-    fn resolve_missing_id_returns_typed_error_with_legacy_display() {
-        let (_stage, command) = command_for(Action::Resolve);
-        let err = require_id(command.args(), "resolve").unwrap_err();
+    fn show_missing_id_returns_typed_error_with_legacy_display() {
+        let (_stage, command) = command_for(Action::Show);
+        let err = require_id(command.args(), "show").unwrap_err();
 
         assert_matches!(
             err,
-            errors::PendingWorkError::MissingId { action } if action == "resolve"
+            errors::PendingWorkError::MissingId { action } if action == "show"
         );
-        assert_eq!(err.to_string(), "--id is required for resolve.");
+        assert_eq!(err.to_string(), "--id is required for show.");
     }
 
     #[test]

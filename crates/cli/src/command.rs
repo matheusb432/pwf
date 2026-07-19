@@ -125,7 +125,7 @@ pub enum PwAction {
     /// `--continue-handoff` / `--continue <path>` build the prompt from the
     /// repo's newest handoff or a plan path instead of positional words.
     Add {
-        /// Managed project (name or unique prefix).
+        /// Managed project (full name or id code, case-insensitive).
         #[arg(value_name = "PROJECT")]
         project: Option<String>,
         /// Task prompt words (joined with single spaces).
@@ -140,7 +140,9 @@ pub enum PwAction {
         /// File the item under a section (future|human|low-prio).
         #[arg(long, value_name = "SECTION")]
         section: Option<String>,
-        /// Explicit title (else inferred from the prompt).
+        /// Explicit title (else inferred from the prompt). YAML-breaking
+        /// characters (e.g. a colon before a space) are normalized with a
+        /// stderr notice so the note's frontmatter stays parseable.
         #[arg(long)]
         title: Option<String>,
         /// File the item under `## Human` (shorthand for `--section human`).
@@ -251,6 +253,8 @@ pub enum PwAction {
         id: IdArg,
         #[arg(long)]
         prompt: Option<String>,
+        /// Replacement title. YAML-breaking characters (e.g. a colon before a
+        /// space) are normalized with a stderr notice.
         #[arg(long)]
         title: Option<String>,
         /// Prereq item id to append (repeat or comma-separate); dedups.
@@ -287,23 +291,17 @@ pub enum PwAction {
         #[command(flatten)]
         common: PwCommon,
     },
-    /// Print an item's note path (any status, incl. archived done/cancelled);
-    /// `--show` prints the note as markdown instead.
-    Resolve {
-        #[command(flatten)]
-        id: IdArg,
-        /// Emit the task note as markdown (frontmatter minus exec-irrelevant keys + body).
-        #[arg(long)]
-        show: bool,
-        #[command(flatten)]
-        common: PwCommon,
-    },
-    /// Shorthand for `pwf resolve --show <id>`: stream a task note's markdown.
+    /// Stream a task note's markdown (any status, incl. archived done/cancelled).
     ///
-    /// The id is a bare positional — `pwf show <id>` — or `--id`.
+    /// The id is a bare positional — `pwf show <id>` — or `--id`. `pwf s` is
+    /// an alias. `--path` prints the note's path instead of its markdown.
+    #[command(alias = "s")]
     Show {
         #[command(flatten)]
         id: IdArg,
+        /// Print the item's note path instead of the note markdown.
+        #[arg(long)]
+        path: bool,
         #[command(flatten)]
         common: PwCommon,
     },
@@ -743,8 +741,7 @@ fn fill_pw_close(
     apply_pw_common(a, common);
 }
 
-/// Shared body of `PwAction::Reopen`/`PwAction::Show`, which parse identically —
-/// only the resulting [`pending_work::Action`] differs.
+/// Shared id-plus-common body of `PwAction::Reopen`/`PwAction::Show`.
 fn fill_pw_id_only(a: &mut EngineArgs, id: IdArg, common: PwCommon) {
     let raw_id = id.resolve();
     a.raw_id.clone_from(&raw_id);
@@ -862,16 +859,9 @@ fn fill_pw(a: &mut EngineArgs, action: PwAction) -> pending_work::Action {
             apply_pw_common(a, common);
             pending_work::Action::Update
         }
-        PwAction::Resolve { id, show, common } => {
-            let raw_id = id.resolve();
-            a.raw_id.clone_from(&raw_id);
-            a.id = normalize_pending_work_id(raw_id);
-            a.show = show;
-            apply_pw_common(a, common);
-            pending_work::Action::Resolve
-        }
-        PwAction::Show { id, common } => {
+        PwAction::Show { id, path, common } => {
             fill_pw_id_only(a, id, common);
+            a.path = path;
             pending_work::Action::Show
         }
         PwAction::Clean {
@@ -1198,11 +1188,8 @@ mod tests {
     }
 
     #[test]
-    fn resolve_accepts_glued_positional_id() {
-        assert_eq!(
-            pw_args(&["resolve", "cfg57"]).id.as_deref(),
-            Some("CFG-0057")
-        );
+    fn show_accepts_glued_positional_id() {
+        assert_eq!(pw_args(&["show", "cfg57"]).id.as_deref(), Some("CFG-0057"));
     }
 
     #[test]
@@ -1227,6 +1214,28 @@ mod tests {
     #[test]
     fn show_parses_positional_id_to_show_action_uppercased() {
         let argv = ["show", "pwf-0001"]
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect();
+        let ParsedCommand::PendingWork(command) = parse_command_argv(argv).expect("parse") else {
+            panic!("expected pending-work command");
+        };
+        assert_eq!(
+            command.action(),
+            &crate::engines::pending_work::Action::Show
+        );
+        assert_eq!(command.args().id.as_deref(), Some("PWF-0001"));
+    }
+
+    #[test]
+    fn show_path_flag_parses_into_engine_args() {
+        assert!(pw_args(&["show", "--path", "pwf-0001"]).path);
+        assert!(!pw_args(&["show", "pwf-0001"]).path);
+    }
+
+    #[test]
+    fn show_alias_s_parses_to_show_action() {
+        let argv = ["s", "pwf-0001"]
             .iter()
             .map(std::string::ToString::to_string)
             .collect();

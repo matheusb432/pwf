@@ -7,8 +7,8 @@
 /// Returns pending-work verbs recognized as clap subcommands, including hidden `route`.
 fn pw_subcommands() -> &'static [&'static str] {
     &[
-        "add", "list", "ls", "done", "cancel", "reopen", "update", "resolve", "show", "session",
-        "clean", "verify", "remove", "route",
+        "add", "list", "ls", "done", "cancel", "reopen", "update", "show", "s", "session", "clean",
+        "verify", "remove", "route",
     ]
 }
 
@@ -75,15 +75,7 @@ fn is_order_flag(tok: &str) -> bool {
 fn is_id_facing_verb(verb: &str) -> bool {
     matches!(
         verb,
-        "done"
-            | "cancel"
-            | "reopen"
-            | "update"
-            | "resolve"
-            | "show"
-            | "session"
-            | "verify"
-            | "remove"
+        "done" | "cancel" | "reopen" | "update" | "show" | "s" | "session" | "verify" | "remove"
     )
 }
 
@@ -374,6 +366,16 @@ mod tests {
     }
 
     #[test]
+    fn show_alias_s_is_a_verb_not_a_project_word() {
+        assert_eq!(n(&["s", "pwf-0127"]), vec!["s", "pwf-0127"]);
+    }
+
+    #[test]
+    fn show_alias_s_collapses_split_id() {
+        assert_eq!(n(&["s", "pwf", "127"]), vec!["s", "pwf-127"]);
+    }
+
+    #[test]
     fn canonical_reopen_subcommand_passes_through() {
         assert_eq!(
             n(&["reopen", "--id", "PWF-0001"]),
@@ -514,7 +516,7 @@ mod tests {
     #[test]
     fn split_id_form_collapses_for_id_facing_verb() {
         assert_eq!(n(&["done", "cfg", "57"]), vec!["done", "cfg-57"]);
-        assert_eq!(n(&["resolve", "wne", "48"]), vec!["resolve", "wne-48"]);
+        assert_eq!(n(&["show", "wne", "48"]), vec!["show", "wne-48"]);
     }
 
     #[test]
