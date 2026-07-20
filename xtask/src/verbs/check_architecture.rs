@@ -40,13 +40,13 @@ mod tests {
     #[test]
     fn formats_as_path_colon_line_colon_message() {
         let violation = Violation {
-            relative_path: "crates/cli/src/engines/pending_work/actions/remove.rs".to_string(),
-            line: 7,
-            message: "pwf_infra outside composition root".to_string(),
+            relative_path: "crates/domain/Cargo.toml".to_string(),
+            line: 1,
+            message: "pwf-domain must not depend on outward layer pwf-application".to_string(),
         };
         assert_eq!(
             format_violation(&violation),
-            "crates/cli/src/engines/pending_work/actions/remove.rs:7: pwf_infra outside composition root"
+            "crates/domain/Cargo.toml:1: pwf-domain must not depend on outward layer pwf-application"
         );
     }
 }

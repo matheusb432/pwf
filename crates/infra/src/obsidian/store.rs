@@ -1,6 +1,8 @@
 mod add;
 mod error;
 mod fs;
+mod handoff_document;
+mod handoff_ledger;
 mod index_entry;
 mod item_record;
 mod lookup;

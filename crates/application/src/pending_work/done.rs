@@ -1,15 +1,21 @@
 use pwf_domain::pending_work::{
-    AddedItem, MarkedEntry, ProjectName, ProjectRegistry, QueueEntryView, Timestamp, WorkItemId,
-    WorkItemStatus, append_report, close_decisions, is_futuro_label,
+    MarkedEntry, ProjectName, QueueEntryView, Timestamp, WorkItemId, WorkItemStatus,
+    close_decisions, is_futuro_label,
 };
 
 use super::{
-    add::{AddPendingWorkError, AddPendingWorkItem},
+    add::{AddPendingWorkError, AddedItem, PendingWorkSection, added_item, project_mapped},
+    commit_provenance,
+    note_body::append_report,
+    project_registry::ProjectRegistry,
     store_util::{self, LoadItemError, body_region},
 };
-use crate::ports::{
-    AppDbStore, IndexEntry, IndexEntryState, IndexSection, ItemPatch, Materialization,
-    PendingWorkItem,
+use crate::{
+    handoff::{HandoffError, HandoffMutationOutcome, lifecycle},
+    ports::{
+        AppDbStore, HandoffDocumentStore, HandoffLedger, IndexEntry, IndexEntryState, IndexSection,
+        ItemPatch, Materialization, NewItem, PendingWorkItem,
+    },
 };
 
 #[derive(Debug, Clone)]
@@ -55,18 +61,34 @@ pub struct CompletedPendingWork {
     pub evicted_ids: Vec<WorkItemId>,
     pub futuro_renamed_project: Option<ProjectName>,
     pub review_item: Option<AddedItem>,
+    pub handoff: HandoffMutationOutcome,
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum CompletePendingWorkError {
     #[error("Open pending-work item not found: {id}")]
     ItemNotFound { id: String },
+    /// Reports a canonical identifier whose prefix has no configured project.
+    #[error("Unknown task id prefix `{prefix}` for {pending_work_identifier}")]
+    UnknownPrefix {
+        pending_work_identifier: String,
+        prefix: String,
+    },
     #[error("--report cannot be empty.")]
     EmptyReport,
     #[error("{0}")]
     WriteStore(Box<dyn std::error::Error + Send + Sync>),
     #[error("{0}")]
     ReviewTask(#[source] AddPendingWorkError),
+    #[error(transparent)]
+    HandoffPreflight(HandoffError),
+    #[error("{source}")]
+    HandoffAfterPendingWork {
+        pending_work_identifier: WorkItemId,
+        completed: Box<CompletedPendingWork>,
+        #[source]
+        source: HandoffError,
+    },
 }
 
 #[cqrsy::command]
@@ -76,7 +98,11 @@ pub fn execute<S>(
     projects: &ProjectRegistry,
 ) -> Result<CompletedPendingWork, CompletePendingWorkError>
 where
-    S: AppDbStore<PendingWorkItem> + AppDbStore<IndexEntry> + AppDbStore<IndexSection>,
+    S: AppDbStore<PendingWorkItem>
+        + AppDbStore<IndexEntry>
+        + AppDbStore<IndexSection>
+        + HandoffDocumentStore
+        + AppDbStore<HandoffLedger>,
 {
     perform_close(
         store,
@@ -93,19 +119,48 @@ where
 
 /// Reports failures shared by the done and cancel operations.
 pub(super) enum CloseError {
-    ItemNotFound { id: String },
+    ItemNotFound {
+        id: String,
+    },
+    UnknownPrefix {
+        pending_work_identifier: String,
+        prefix: String,
+    },
     EmptyReport,
     WriteStore(Box<dyn std::error::Error + Send + Sync>),
     ReviewTask(AddPendingWorkError),
+    HandoffPreflight(HandoffError),
+    HandoffAfterPendingWork {
+        pending_work_identifier: WorkItemId,
+        completed: Box<CompletedPendingWork>,
+        source: HandoffError,
+    },
 }
 
 impl CloseError {
     fn into_complete(self) -> CompletePendingWorkError {
         match self {
             Self::ItemNotFound { id } => CompletePendingWorkError::ItemNotFound { id },
+            Self::UnknownPrefix {
+                pending_work_identifier,
+                prefix,
+            } => CompletePendingWorkError::UnknownPrefix {
+                pending_work_identifier,
+                prefix,
+            },
             Self::EmptyReport => CompletePendingWorkError::EmptyReport,
             Self::WriteStore(source) => CompletePendingWorkError::WriteStore(source),
             Self::ReviewTask(source) => CompletePendingWorkError::ReviewTask(source),
+            Self::HandoffPreflight(source) => CompletePendingWorkError::HandoffPreflight(source),
+            Self::HandoffAfterPendingWork {
+                pending_work_identifier,
+                completed,
+                source,
+            } => CompletePendingWorkError::HandoffAfterPendingWork {
+                pending_work_identifier,
+                completed,
+                source,
+            },
         }
     }
 }
@@ -129,21 +184,45 @@ pub(super) fn perform_close<S>(
     review: bool,
 ) -> Result<CompletedPendingWork, CloseError>
 where
-    S: AppDbStore<PendingWorkItem> + AppDbStore<IndexEntry> + AppDbStore<IndexSection>,
+    S: AppDbStore<PendingWorkItem>
+        + AppDbStore<IndexEntry>
+        + AppDbStore<IndexSection>
+        + HandoffDocumentStore
+        + AppDbStore<HandoffLedger>,
 {
-    let commits_value = frontmatter_value(commits);
-    let wid =
+    let commits_value = commit_provenance::normalize(commits);
+    let pending_work_identifier =
         WorkItemId::try_new(id).map_err(|_| CloseError::ItemNotFound { id: id.to_string() })?;
+    let prefix = pending_work_identifier
+        .as_ref()
+        .split_once('-')
+        .map_or("", |(prefix, _)| prefix);
     let project = projects
-        .project_for_id(&wid)
-        .ok_or_else(|| CloseError::ItemNotFound { id: id.to_string() })?;
-    let record = store_util::require_item(store, project, &wid).map_err(map_load)?;
+        .project_for_id(&pending_work_identifier)
+        .ok_or_else(|| CloseError::UnknownPrefix {
+            pending_work_identifier: pending_work_identifier.to_string(),
+            prefix: prefix.to_string(),
+        })?;
+    let record =
+        store_util::require_item(store, project, &pending_work_identifier).map_err(map_load)?;
     if record.status != WorkItemStatus::Active {
         return Err(CloseError::ItemNotFound {
-            id: wid.as_ref().to_string(),
+            id: pending_work_identifier.as_ref().to_string(),
         });
     }
     let title = record.title.clone();
+    let handoff_pending = lifecycle::preflight_close(
+        store,
+        projects,
+        pending_work_identifier.as_ref(),
+        match action {
+            ClosedItemAction::Done => lifecycle::CloseHandoffAction::Done,
+            ClosedItemAction::Cancelled => lifecycle::CloseHandoffAction::Cancelled,
+        },
+        completed,
+        report,
+    )
+    .map_err(CloseError::HandoffPreflight)?;
 
     let mut patch = ItemPatch {
         status: Some(action.status()),
@@ -158,12 +237,12 @@ where
     if let Some(commits) = &commits_value {
         patch.commits = Some(Some(commits.clone()));
     }
-    <S as AppDbStore<PendingWorkItem>>::update(store, project, &wid, patch)
+    <S as AppDbStore<PendingWorkItem>>::update(store, project, &pending_work_identifier, patch)
         .map_err(|error| CloseError::WriteStore(Box::new(error)))?;
 
     let (evicted_ids, futuro_renamed) =
         if matches!(record.materialization, Materialization::NoteFile) {
-            rotate_done_queue(store, project, &wid, completed)?
+            rotate_done_queue(store, project, &pending_work_identifier, completed)?
         } else {
             (Vec::new(), false)
         };
@@ -174,22 +253,30 @@ where
                 store,
                 projects,
                 project,
-                &wid,
+                &pending_work_identifier,
                 completed,
                 commits_value.as_deref(),
             )
         })
         .transpose()?;
 
-    Ok(CompletedPendingWork {
-        id: wid,
+    let mut completed_pending_work = CompletedPendingWork {
+        id: pending_work_identifier,
         project: project.clone(),
         title,
         action,
         evicted_ids,
         futuro_renamed_project: futuro_renamed.then(|| project.clone()),
         review_item,
-    })
+        handoff: HandoffMutationOutcome::NotLinked,
+    };
+    completed_pending_work.handoff = lifecycle::commit_after_pending_work(store, handoff_pending)
+        .map_err(|source| CloseError::HandoffAfterPendingWork {
+        pending_work_identifier: completed_pending_work.id.clone(),
+        completed: Box::new(completed_pending_work.clone()),
+        source,
+    })?;
+    Ok(completed_pending_work)
 }
 
 fn map_load(error: LoadItemError) -> CloseError {
@@ -302,37 +389,38 @@ fn spawn_review<S>(
 where
     S: AppDbStore<PendingWorkItem> + AppDbStore<IndexEntry> + AppDbStore<IndexSection>,
 {
-    super::add::execute(
-        AddPendingWorkItem {
-            project_name: project.as_ref().to_string(),
+    project_mapped(project.as_ref(), projects).map_err(CloseError::ReviewTask)?;
+    let created = store_util::create_item(
+        store,
+        project,
+        NewItem {
             prompt: review_task_prompt(reviewed.as_ref(), commits),
             title: None,
-            created: completed.to_string(),
-            section: Some("Human".to_string()),
+            created: Timestamp::new(completed),
+            section: Some(PendingWorkSection::Human.as_str().to_string()),
             prereq: None,
             effort: None,
             tags: None,
         },
-        store,
-        projects,
     )
-    .map_err(CloseError::ReviewTask)
-}
-
-pub(super) fn frontmatter_value(values: &[String]) -> Option<String> {
-    let mut ranges: Vec<String> = Vec::new();
-    for value in values {
-        for raw in value.split(',') {
-            let raw = raw.trim();
-            if raw.is_empty() {
-                continue;
-            }
-            if !ranges.iter().any(|range| range == raw) {
-                ranges.push(raw.to_string());
-            }
-        }
-    }
-    (!ranges.is_empty()).then(|| ranges.join(", "))
+    .map_err(|source| {
+        CloseError::ReviewTask(AddPendingWorkError::WriteStore {
+            diagnostics: crate::pending_work::add::AddPendingWorkDiagnostics {
+                project: project.to_string(),
+                created_section: source
+                    .created_section()
+                    .map(|(_, section)| section.to_string()),
+                title_normalized: false,
+            },
+            source,
+        })
+    })?;
+    Ok(added_item(
+        project,
+        created,
+        false,
+        crate::handoff::HandoffMutationOutcome::NotLinked,
+    ))
 }
 
 pub(super) fn review_task_prompt(reviewed_id: &str, range: Option<&str>) -> String {
@@ -351,17 +439,22 @@ pub(super) fn review_task_prompt(reviewed_id: &str, range: Option<&str>) -> Stri
 
 #[cfg(test)]
 mod tests {
-    use pwf_domain::pending_work::{
-        ProjectName, ProjectRegistry, Timestamp, WorkItemId, WorkItemStatus,
+    use std::{path::PathBuf, time::SystemTime};
+
+    use pwf_domain::{
+        handoff::HandoffStatus,
+        pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus},
     };
 
     use super::{
-        ClosedItemAction, CompletePendingWork, CompletePendingWorkError, execute,
-        frontmatter_value, review_task_prompt,
+        AddPendingWorkError, ClosedItemAction, CompletePendingWork, CompletePendingWorkError,
+        ProjectRegistry, execute, review_task_prompt,
     };
     use crate::{
-        IndexEntry, IndexEntryState, Materialization, PendingWorkItem, RecordId,
-        testing::InMemoryStore,
+        HandoffDocument, HandoffDocumentIdentifier, HandoffLocation, HandoffScope, IndexEntry,
+        IndexEntryState, Materialization, PendingWorkItem, RecordId,
+        handoff::HandoffMutationOutcome,
+        testing::{FailurePoint, InMemoryStore},
     };
 
     fn registry() -> ProjectRegistry {
@@ -422,6 +515,28 @@ mod tests {
             report: None,
             commits: Vec::new(),
             review: false,
+        }
+    }
+
+    fn handoff() -> HandoffDocument {
+        HandoffDocument {
+            identifier: HandoffDocumentIdentifier {
+                file_name: "2026-01-01-tray-gui.md".to_string(),
+                location: HandoffLocation::Active,
+            },
+            location: HandoffLocation::Active,
+            project: Some(glp()),
+            title: "Tray GUI".to_string(),
+            status: Some(HandoffStatus::Active),
+            created: Some(Timestamp::new("2026-01-01")),
+            completed: None,
+            pending_work_identifier_raw: Some("glp-0001".to_string()),
+            goals_completed: 0,
+            goals_total: 1,
+            body: "\n# Tray GUI\n".to_string(),
+            source: "---\nstatus: active\nproject: glep-shimeji\ncreated: 2026-01-01\npw: glp-0001\n---\n\n# Tray GUI\n".to_string(),
+            locator: PathBuf::from("/repo/docs/handoffs/2026-01-01-tray-gui.md"),
+            modified_timestamp: SystemTime::UNIX_EPOCH,
         }
     }
 
@@ -507,6 +622,32 @@ mod tests {
     }
 
     #[test]
+    fn done_review_preserves_add_project_mapping_policy() {
+        let store = staged(
+            vec![record("GLP-0001", WorkItemStatus::Active)],
+            vec![entry("GLP-0001", IndexEntryState::Open, "General")],
+        );
+        let projects = ProjectRegistry::new(vec![(glp(), None, Some("GLP".to_string()))]);
+        let command = CompletePendingWork {
+            review: true,
+            ..done_command("GLP-0001")
+        };
+
+        let error = execute(&command, &store, &projects).unwrap_err();
+
+        assert!(matches!(
+            error,
+            CompletePendingWorkError::ReviewTask(
+                AddPendingWorkError::ProjectNotMappedToRepo { ref project }
+            ) if project == "glep-shimeji"
+        ));
+        assert_eq!(
+            error.to_string(),
+            "Project 'glep-shimeji' is not mapped to a repo in config/pending-work.json."
+        );
+    }
+
+    #[test]
     fn done_on_missing_item_reports_item_not_found() {
         let store = staged(Vec::new(), Vec::new());
 
@@ -523,18 +664,97 @@ mod tests {
     }
 
     #[test]
-    fn commit_ranges_trim_split_and_deduplicate_in_first_seen_order() {
-        let values: Vec<String> = [" a..b,c..d ", "a..b", " e..f "]
-            .iter()
-            .map(|value| (*value).to_string())
-            .collect();
+    fn done_reports_an_unknown_configured_prefix() {
+        let store = staged(Vec::new(), Vec::new());
+
+        let error = execute(&done_command("XYZ-0001"), &store, &registry()).unwrap_err();
+
         assert_eq!(
-            frontmatter_value(&values),
-            Some("a..b, c..d, e..f".to_string())
+            error.to_string(),
+            "Unknown task id prefix `XYZ` for XYZ-0001"
         );
+    }
+
+    #[test]
+    fn done_archives_the_linked_handoff_after_closing_pending_work() {
+        let tagged = PendingWorkItem {
+            tags: Some("[handoff]".to_string()),
+            ..record("GLP-0001", WorkItemStatus::Active)
+        };
+        let scope = HandoffScope {
+            repository_root: PathBuf::from("/repo"),
+        };
+        let store = staged(
+            vec![tagged],
+            vec![entry("GLP-0001", IndexEntryState::Open, "General")],
+        )
+        .with_handoff_documents(scope.clone(), vec![handoff()]);
+
+        let outcome = execute(&done_command("GLP-0001"), &store, &registry()).unwrap();
+
+        assert!(matches!(
+            outcome.handoff,
+            HandoffMutationOutcome::Archived { .. }
+        ));
+        assert_eq!(store.items("glep-shimeji")[0].status, WorkItemStatus::Done);
         assert_eq!(
-            frontmatter_value(&[String::new(), "  ".to_string(), ",".to_string()]),
-            None
+            store.handoff_documents(&scope)[0].location,
+            HandoffLocation::Archived
+        );
+    }
+
+    #[test]
+    fn done_reports_handoff_failure_after_pending_work_is_closed() {
+        let tagged = PendingWorkItem {
+            tags: Some("[handoff]".to_string()),
+            ..record("GLP-0001", WorkItemStatus::Active)
+        };
+        let scope = HandoffScope {
+            repository_root: PathBuf::from("/repo"),
+        };
+        let store = staged(
+            vec![tagged],
+            vec![entry("GLP-0001", IndexEntryState::Open, "General")],
+        )
+        .with_handoff_documents(scope, vec![handoff()])
+        .with_failure(FailurePoint::DocumentUpdate);
+
+        let error = execute(&done_command("GLP-0001"), &store, &registry()).unwrap_err();
+
+        assert!(matches!(
+            error,
+            CompletePendingWorkError::HandoffAfterPendingWork {
+                ref pending_work_identifier,
+                ..
+            } if pending_work_identifier.as_ref() == "GLP-0001"
+        ));
+        assert_eq!(store.items("glep-shimeji")[0].status, WorkItemStatus::Done);
+    }
+
+    #[test]
+    fn done_handoff_preflight_precedes_blank_report_validation() {
+        let tagged = PendingWorkItem {
+            tags: Some("[handoff]".to_string()),
+            ..record("GLP-0001", WorkItemStatus::Active)
+        };
+        let store = staged(
+            vec![tagged],
+            vec![entry("GLP-0001", IndexEntryState::Open, "General")],
+        );
+        let command = CompletePendingWork {
+            report: Some(" \t\n".to_string()),
+            ..done_command("GLP-0001")
+        };
+
+        let error = execute(&command, &store, &registry()).unwrap_err();
+
+        assert!(matches!(
+            error,
+            CompletePendingWorkError::HandoffPreflight(_)
+        ));
+        assert_eq!(
+            store.items("glep-shimeji")[0].status,
+            WorkItemStatus::Active
         );
     }
 

@@ -29,6 +29,35 @@ pub struct CreatedItem {
     pub created_section: Option<String>,
 }
 
+/// Reports the persistence phase that failed while creating an item and its index entry.
+#[derive(Debug, thiserror::Error)]
+pub enum CreateItemError {
+    #[error("{0}")]
+    ReadSections(#[source] StoreError),
+    #[error("{0}")]
+    InsertRecord(#[source] StoreError),
+    #[error("{source}")]
+    InsertIndex {
+        project: ProjectName,
+        created_section: Option<String>,
+        #[source]
+        source: StoreError,
+    },
+}
+
+impl CreateItemError {
+    pub fn created_section(&self) -> Option<(&ProjectName, &str)> {
+        match self {
+            Self::InsertIndex {
+                project,
+                created_section: Some(section),
+                ..
+            } => Some((project, section)),
+            _ => None,
+        }
+    }
+}
+
 /// Strips the frontmatter parser's retained leading blank line before a body rewrite.
 #[must_use]
 pub fn body_region(body: &str) -> &str {
@@ -61,14 +90,14 @@ pub fn create_item<S>(
     store: &S,
     project: &ProjectName,
     new: NewItem,
-) -> Result<CreatedItem, StoreError>
+) -> Result<CreatedItem, CreateItemError>
 where
     S: AppDbStore<PendingWorkItem> + AppDbStore<IndexEntry> + AppDbStore<IndexSection>,
 {
     let target_section = new.section.clone();
     // Read sections before writing so an invalid index leaves no orphaned note.
     let existing = <S as AppDbStore<IndexSection>>::list(store, project)
-        .map_err(|error| -> StoreError { Box::new(error) })?;
+        .map_err(|error| CreateItemError::ReadSections(Box::new(error)))?;
     let created_section = target_section
         .as_deref()
         .filter(|label| SECTION_LABELS.contains(label))
@@ -80,7 +109,7 @@ where
         .map(str::to_string);
 
     let record = <S as AppDbStore<PendingWorkItem>>::insert(store, project, new)
-        .map_err(|error| -> StoreError { Box::new(error) })?;
+        .map_err(|error| CreateItemError::InsertRecord(Box::new(error)))?;
     let id = record
         .id
         .as_item()
@@ -96,7 +125,11 @@ where
             section: target_section.unwrap_or_default(),
         },
     )
-    .map_err(|error| -> StoreError { Box::new(error) })?;
+    .map_err(|error| CreateItemError::InsertIndex {
+        project: project.clone(),
+        created_section: created_section.clone(),
+        source: Box::new(error),
+    })?;
 
     Ok(CreatedItem {
         record,

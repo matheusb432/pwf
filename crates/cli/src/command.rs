@@ -1,55 +1,8 @@
-//! Defines the clap command tree used for parsing and rich help.
-//! Pending-work actions are flattened into top-level commands, while `preprocess.rs`
-//! supplies the implicit `route` action. Per-engine common flags are flattened into
-//! each action so callers can pass sandbox overrides directly to a command.
+//! Defines root parsing and top-level engine selection.
 
-use clap::{Args, Parser, Subcommand};
-use pwf_domain::pending_work::{WorkItemStatus, WorkItemStatusFilter};
-use pwf_note::{NoteCommand, NoteVerb};
+use clap::{Parser, Subcommand};
 
-use crate::engines::pending_work::{self, PendingWorkCommand};
-
-/// `--color` choices (clap-facing; mapped to `cli::ColorChoice` in `fill_pw`).
-#[derive(Debug, Clone, Copy, clap::ValueEnum)]
-pub enum ColorArg {
-    Auto,
-    Always,
-    Never,
-}
-
-/// `--agent` choices (clap-facing; mapped to `cli::Agent` in `fill_pw`). Default claude.
-#[derive(Debug, Clone, Copy, clap::ValueEnum)]
-pub enum AgentArg {
-    Claude,
-    Codex,
-}
-
-/// `--status` choices for pending-work lists.
-#[derive(Debug, Clone, Copy, clap::ValueEnum)]
-pub enum StatusArg {
-    Active,
-    Done,
-    Cancelled,
-    All,
-}
-
-impl StatusArg {
-    fn filter(self) -> WorkItemStatusFilter {
-        match self {
-            Self::Active => WorkItemStatusFilter::Exact(WorkItemStatus::Active),
-            Self::Done => WorkItemStatusFilter::Exact(WorkItemStatus::Done),
-            Self::Cancelled => WorkItemStatusFilter::Exact(WorkItemStatus::Cancelled),
-            Self::All => WorkItemStatusFilter::All,
-        }
-    }
-}
-
-fn agent_choice(a: AgentArg) -> crate::cli::Agent {
-    match a {
-        AgentArg::Claude => crate::cli::Agent::Claude,
-        AgentArg::Codex => crate::cli::Agent::Codex,
-    }
-}
+use crate::engines::{handoff, note, pending_work};
 
 /// Manages pending work, handoffs, and project notes across configured repositories.
 #[derive(Parser, Debug)]
@@ -59,808 +12,23 @@ pub struct Cli {
     pub engine: Engine,
 }
 
-/// Top-level engines.
 #[derive(Subcommand, Debug)]
 pub enum Engine {
-    // Flatten pending-work verbs into the top-level command set.
     #[command(flatten)]
-    Pw(PwAction),
+    PendingWork(pending_work::Command),
     /// Per-repo handoff ledgers (resume notes between sessions).
     Handoff {
         #[command(subcommand)]
-        action: HandoffAction,
+        command: handoff::Command,
     },
     /// One-liner project notes: `pwf note [ls|add <msg>|remove <id>] <proj>`.
-    Note(NoteArgs),
+    Note(note::Arguments),
 }
 
-// ── pw engine ───────────────────────────────────────────────────────────────
-
-/// Config/sandbox overrides accepted by every `pw` command (flattened).
-#[derive(Args, Debug, Default)]
-pub struct PwCommon {
-    /// Path to the pwf config JSON (overrides $`PWF_CONFIG`).
-    #[arg(long)]
-    pub config_path: Option<String>,
-    /// Override the notes directory.
-    #[arg(long)]
-    pub notes_dir: Option<String>,
-    /// Date stamp (YYYY-MM-DD); defaults to today.
-    #[arg(long)]
-    pub date: Option<String>,
-}
-
-/// The id-input surface shared by every id-facing pending-work verb: a bare
-/// positional id or the `--id` flag (mutually exclusive). Flattened into each
-/// verb so the positional-or-flag logic lives in exactly one place. The compact
-/// split form (`cfg 57`) is collapsed to one token in `preprocess.rs` before
-/// clap, and `canonical_pending_id` normalizes whatever token lands here.
-#[derive(Args, Debug, Default)]
-pub struct IdArg {
-    /// Item id (bare positional; `--id` also accepted). E.g. `PWF-0001`, `cfg57`.
-    #[arg(value_name = "ID")]
-    pos: Option<String>,
-    #[arg(long = "id", value_name = "ID", conflicts_with = "pos")]
-    flag: Option<String>,
-}
-
-impl IdArg {
-    /// The supplied id, preferring the positional; `None` if neither was given.
-    fn resolve(self) -> Option<String> {
-        self.pos.or(self.flag)
-    }
-}
-
-/// pending-work verbs (`pwf <verb>`).
-#[derive(Subcommand, Debug)]
-pub enum PwAction {
-    /// Add a pwf task: `pwf add <project> "<prompt>"`.
-    ///
-    /// Prompt words are joined with single spaces, so quotes are optional. Rich
-    /// prompts use lanes: `<title> / <goal> /c <context> /n <constraint> /d <done>`.
-    /// `--continue-handoff` / `--continue <path>` build the prompt from the
-    /// repo's newest handoff or a plan path instead of positional words.
-    Add {
-        /// Managed project (full name or id code, case-insensitive).
-        #[arg(value_name = "PROJECT")]
-        project: Option<String>,
-        /// Task prompt words (joined with single spaces).
-        #[arg(value_name = "PROMPT")]
-        prompt: Vec<String>,
-        /// Build the prompt from the repo's newest handoff.
-        #[arg(long = "continue-handoff", conflicts_with_all = ["prompt", "continue_path"])]
-        continue_handoff: bool,
-        /// Build the prompt to continue the plan at PATH.
-        #[arg(long = "continue", value_name = "PATH", conflicts_with_all = ["prompt", "continue_handoff"])]
-        continue_path: Option<String>,
-        /// File the item under a section (future|human|low-prio).
-        #[arg(long, value_name = "SECTION")]
-        section: Option<String>,
-        /// Explicit title (else inferred from the prompt). YAML-breaking
-        /// characters (e.g. a colon before a space) are normalized with a
-        /// stderr notice so the note's frontmatter stays parseable.
-        #[arg(long)]
-        title: Option<String>,
-        /// File the item under `## Human` (shorthand for `--section human`).
-        #[arg(long)]
-        human: bool,
-        /// Prereq item id; repeat or comma-separate for several.
-        #[arg(long)]
-        prereq: Vec<String>,
-        /// Discovery tag; repeat or comma-separate for several. Input accepts `snake_case` or
-        /// kebab-case.
-        #[arg(long, allow_hyphen_values = true)]
-        tag: Vec<String>,
-        /// Effort/complexity tier (1=easy .. 4=xhard); optional. Picks a Claude model
-        /// via config/model-tiers.toml when the item is later dispatched with `pwf
-        /// session` (codex ignores it).
-        #[arg(long, value_parser = clap::value_parser!(u8).range(1..=4))]
-        effort: Option<u8>,
-        #[command(flatten)]
-        common: PwCommon,
-    },
-    /// List pending-work items (scoped sections hidden unless selected or `--all`).
-    #[command(alias = "ls")]
-    List {
-        /// Limit to one project.
-        #[arg(long)]
-        project: Option<String>,
-        /// Long form with per-item metadata.
-        #[arg(long)]
-        long: bool,
-        /// Show only `## Future` items.
-        #[arg(long, conflicts_with_all = ["human", "all"])]
-        future: bool,
-        /// Show only `## Human` items.
-        #[arg(long, conflicts_with_all = ["future", "all"])]
-        human: bool,
-        /// Include every list section.
-        #[arg(long, conflicts_with_all = ["human", "future"])]
-        all: bool,
-        /// Cap to N listed items (default 10; `-n 0` = all).
-        #[arg(short = 'n', long, value_name = "N")]
-        number: Option<usize>,
-        /// Show only items tagged with this exact effort/complexity tier (1-4).
-        #[arg(long, value_parser = clap::value_parser!(u8).range(1..=4))]
-        effort: Option<u8>,
-        /// Discovery tag filter; repeat or comma-separate for several. Every requested tag must
-        /// match.
-        #[arg(long, allow_hyphen_values = true)]
-        tag: Vec<String>,
-        /// Sort key: field (created|id|project-id) and/or direction
-        /// (asc|desc), each independently optional, in either order. Default:
-        /// created desc, flat across every listed project. `project-id`
-        /// groups by project (default asc), then newest-id-first within it —
-        /// the pre-PWF-0096 default.
-        #[arg(short = 'o', long, num_args = 0..=2, value_name = "ORDER", value_parser = ["created", "id", "project-id", "asc", "desc"])]
-        order: Vec<String>,
-        /// Filter by one lifecycle status, or include every lifecycle status.
-        #[arg(long, value_enum, default_value_t = StatusArg::Active)]
-        status: StatusArg,
-        #[command(flatten)]
-        common: PwCommon,
-    },
-    /// Mark an item done in place, keeping a capped done-queue.
-    Done {
-        #[command(flatten)]
-        id: IdArg,
-        /// Append a one-line completion report.
-        #[arg(long)]
-        report: Option<String>,
-        /// Commit range(s) to record as provenance (repeat or comma-separate).
-        #[arg(long)]
-        commits: Vec<String>,
-        /// Also spawn a `## Human` review task with prepped git-tools diff commands.
-        #[arg(long)]
-        review: bool,
-        #[command(flatten)]
-        common: PwCommon,
-    },
-    /// Mark an item cancelled in place, keeping the same capped queue as done.
-    Cancel {
-        #[command(flatten)]
-        id: IdArg,
-        /// Required cancellation report: what was tried and why work stopped.
-        #[arg(long)]
-        report: Option<String>,
-        /// Commit range(s) to record as provenance (repeat or comma-separate).
-        #[arg(long)]
-        commits: Vec<String>,
-        /// Also spawn a `## Human` review task with prepped git-tools diff commands.
-        #[arg(long)]
-        review: bool,
-        #[command(flatten)]
-        common: PwCommon,
-    },
-    /// Reopen a closed item: flip done/cancelled back to active, drop its
-    /// completed/commits provenance, and restore its index link.
-    Reopen {
-        #[command(flatten)]
-        id: IdArg,
-        #[command(flatten)]
-        common: PwCommon,
-    },
-    /// Replace an item's prompt body and/or title; append or clear its prereqs;
-    /// splice rich lane-syntax bullets into the body; amend its `commits:`
-    /// provenance; or append a closeout report — the last two being the only edits
-    /// allowed on a closed item.
-    Update {
-        #[command(flatten)]
-        id: IdArg,
-        #[arg(long)]
-        prompt: Option<String>,
-        /// Replacement title. YAML-breaking characters (e.g. a colon before a
-        /// space) are normalized with a stderr notice.
-        #[arg(long)]
-        title: Option<String>,
-        /// Prereq item id to append (repeat or comma-separate); dedups.
-        #[arg(long)]
-        prereq: Vec<String>,
-        /// Clear all prereqs on the item.
-        #[arg(long, conflicts_with = "prereq")]
-        clear_prereq: bool,
-        /// Discovery tag; repeat or comma-separate for several. Input accepts `snake_case` or
-        /// kebab-case.
-        #[arg(long, allow_hyphen_values = true)]
-        tag: Vec<String>,
-        /// Remove all tags before applying any supplied `--tag` values.
-        #[arg(long)]
-        tags_clear: bool,
-        /// Overwrite the `commits:` provenance range(s) (repeat or comma-separate);
-        /// works on closed done/cancelled items too.
-        #[arg(long)]
-        commits: Vec<String>,
-        /// Append a free-form, multi-line Markdown closeout report to the body
-        /// verbatim, under `### Report` — never reruns title/Goals regeneration, so
-        /// it is safe on closed done/cancelled items.
-        #[arg(long)]
-        append_report: Option<String>,
-        /// Splice rich lane-syntax bullets (same syntax as `add`'s prompt) into the
-        /// body's Goals/Context/Constraints/Done When sections, growing an existing
-        /// section or creating a missing one; open items only.
-        #[arg(short = 'a', long, conflicts_with = "prompt")]
-        append: Option<String>,
-        /// Set (or overwrite) the item's effort/complexity tier (1=easy .. 4=xhard).
-        /// Optional; open items only, same rule as title/body/prereq edits.
-        #[arg(long, value_parser = clap::value_parser!(u8).range(1..=4))]
-        effort: Option<u8>,
-        #[command(flatten)]
-        common: PwCommon,
-    },
-    /// Stream a task note's markdown (any status, incl. archived done/cancelled).
-    ///
-    /// The id is a bare positional — `pwf show <id>` — or `--id`. `pwf s` is
-    /// an alias. `--path` prints the note's path instead of its markdown.
-    #[command(alias = "s")]
-    Show {
-        #[command(flatten)]
-        id: IdArg,
-        /// Print the item's note path instead of the note markdown.
-        #[arg(long)]
-        path: bool,
-        #[command(flatten)]
-        common: PwCommon,
-    },
-    /// Probe whether an agent is launchable.
-    Verify {
-        #[command(flatten)]
-        id: IdArg,
-        /// Which agent to probe (claude default).
-        #[arg(long = "agent", short = 'a', value_enum, default_value_t = AgentArg::Claude)]
-        agent: AgentArg,
-        /// Explicit model override, forwarded verbatim to the agent's `--model` flag
-        /// (no validation — wins over any effort-tier resolution).
-        #[arg(long, short = 'm')]
-        model: Option<String>,
-        #[command(flatten)]
-        common: PwCommon,
-    },
-    // The implicit router remains callable but is omitted from help.
-    /// Internal: word-router behind bare `pwf <words…>`.
-    #[command(hide = true)]
-    Route {
-        /// Free-form route words (project + prompt, or a sub-verb).
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        words: Vec<String>,
-        /// Long form with per-item metadata (forwarded to the list it routes to).
-        #[arg(long)]
-        long: bool,
-        /// Show only `## Future` items (forwarded to the list it routes to).
-        #[arg(long, conflicts_with_all = ["human", "all"])]
-        future: bool,
-        /// Show only `## Human` items (forwarded to the list it routes to).
-        #[arg(long, conflicts_with_all = ["future", "all"])]
-        human: bool,
-        /// Include every list section (forwarded to the list it routes to).
-        #[arg(long, conflicts_with_all = ["human", "future"])]
-        all: bool,
-        /// Cap to N listed items (forwarded to the list it routes to).
-        #[arg(short = 'n', long, value_name = "N")]
-        number: Option<usize>,
-        /// Filter by one lifecycle status, or include every lifecycle status.
-        #[arg(long, value_enum, default_value_t = StatusArg::Active)]
-        status: StatusArg,
-        #[arg(long)]
-        prereq: Vec<String>,
-        #[command(flatten)]
-        common: PwCommon,
-    },
-    /// Delete a task note and remove its index link.
-    Remove {
-        #[command(flatten)]
-        id: IdArg,
-        /// Skip the [Y/n] removal confirmation (assume yes).
-        #[arg(long = "yes", short = 'y')]
-        yes: bool,
-        #[command(flatten)]
-        common: PwCommon,
-    },
-    /// Dispatch a real agent session into the item's zellij session as a new tab.
-    ///
-    /// The id is a bare positional — `pwf session <id>` — or `--id`.
-    Session {
-        #[command(flatten)]
-        id: IdArg,
-        /// Color policy for the dispatch output.
-        #[arg(long, value_enum, default_value_t = ColorArg::Auto)]
-        color: ColorArg,
-        /// Skip the [Y/n] dispatch confirmation (assume yes).
-        #[arg(long = "yes", short = 'y')]
-        yes: bool,
-        /// Run the agent inline in the current terminal instead of a zellij tab.
-        #[arg(long = "inline", short = 'i')]
-        inline: bool,
-        /// Tell the dispatched agent to isolate its work in a git worktree named after the item
-        /// id.
-        #[arg(long = "worktree", short = 'w')]
-        worktree: bool,
-        /// Append an autonomy directive so the agent runs without prompting the user (for
-        /// unattended dispatch).
-        #[arg(long = "auto")]
-        auto: bool,
-        /// Which agent to dispatch (claude default).
-        #[arg(long = "agent", value_enum, default_value_t = AgentArg::Claude)]
-        agent: AgentArg,
-        /// Splice rich lane-syntax bullets (same syntax as `update -a`/`--append`) into the
-        /// item's body before dispatch, growing an existing section or creating a missing one,
-        /// then dispatch with the full updated prompt as usual.
-        #[arg(short = 'a', long)]
-        append: Option<String>,
-        /// Explicit model override, forwarded verbatim to the agent's `--model` flag
-        /// (no validation — wins over any effort-tier resolution).
-        #[arg(long, short = 'm')]
-        model: Option<String>,
-        #[command(flatten)]
-        common: PwCommon,
-    },
-}
-
-// ── handoff engine ────────────────────────────────────────────────────────────
-
-/// Config/sandbox overrides accepted by every `handoff` command (flattened).
-#[derive(Args, Debug, Default)]
-pub struct HandoffCommon {
-    /// Path to the pwf config JSON (overrides $`PWF_CONFIG`).
-    #[arg(long)]
-    pub config_path: Option<String>,
-    /// Repo root (else `git rev-parse --show-toplevel`, else cwd).
-    #[arg(long)]
-    pub repo_root: Option<String>,
-    /// Date stamp (YYYY-MM-DD); defaults to today.
-    #[arg(long)]
-    pub date: Option<String>,
-    /// Path to a pending-work allocation script (testing).
-    #[arg(long)]
-    pub pending_work_script: Option<String>,
-}
-
-/// Provides handoff creation and listing commands.
-#[derive(Subcommand, Debug)]
-pub enum HandoffAction {
-    /// Create a handoff (allocates its linked pw item).
-    Add {
-        /// Handoff title (required).
-        #[arg(long)]
-        title: Option<String>,
-        /// Filename slug (else derived from the title).
-        #[arg(long)]
-        slug: Option<String>,
-        #[command(flatten)]
-        common: HandoffCommon,
-    },
-    /// List handoffs.
-    List {
-        #[command(flatten)]
-        common: HandoffCommon,
-    },
-}
-
-// ── note engine ───────────────────────────────────────────────────────────────
-
-/// `pwf note <verb> <proj> …` — verb-first; a bare `pwf note <proj>` lists.
-#[derive(Args, Debug)]
-pub struct NoteArgs {
-    #[command(subcommand)]
-    pub action: NoteAction,
-    #[command(flatten)]
-    pub common: NoteCommon,
-}
-
-/// Config/sandbox overrides accepted by every `note` command (flattened).
-#[derive(Args, Debug, Default)]
-pub struct NoteCommon {
-    /// Path to the pwf config JSON (overrides $`PWF_CONFIG`).
-    #[arg(long, global = true)]
-    pub config_path: Option<String>,
-    /// Override the notes directory.
-    #[arg(long, global = true)]
-    pub notes_dir: Option<String>,
-    /// Date stamp (YYYY-MM-DD); defaults to today.
-    #[arg(long, global = true)]
-    pub date: Option<String>,
-}
-
-/// note verbs (`pwf note <verb> <proj>`).
-#[derive(Subcommand, Debug)]
-pub enum NoteAction {
-    /// List a project's notes, newest-first (`pwf note <proj>` alone also lists).
-    #[command(alias = "ls")]
-    List {
-        /// Managed project (name or id code, case-insensitive).
-        #[arg(value_name = "PROJECT")]
-        project: String,
-        /// Cap to N listed notes (default 10; `-n 0` = all).
-        #[arg(short = 'n', long, value_name = "N")]
-        number: Option<usize>,
-    },
-    /// Add a one-liner note: `pwf note add <proj> "<message>"`.
-    Add {
-        /// Managed project (name or id code, case-insensitive).
-        #[arg(value_name = "PROJECT")]
-        project: String,
-        /// Note message words (joined with single spaces).
-        #[arg(value_name = "MESSAGE", required = true)]
-        message: Vec<String>,
-    },
-    /// Delete a note and strip its index link: `pwf note remove <proj> <id>`.
-    Remove {
-        /// Managed project (name or id code, case-insensitive).
-        #[arg(value_name = "PROJECT")]
-        project: String,
-        /// Note id: full `PWF-NOTE-0001`, `NOTE-0001`, or a bare `1`.
-        #[arg(value_name = "ID")]
-        id: String,
-    },
-    /// Replace a note's message: `pwf note update <proj> <id> "<message>"`.
-    Update {
-        /// Managed project (name or id code, case-insensitive).
-        #[arg(value_name = "PROJECT")]
-        project: String,
-        /// Note id: full `PWF-NOTE-0001`, `NOTE-0001`, or a bare `1`.
-        #[arg(value_name = "ID")]
-        id: String,
-        /// Replacement note message words (joined with single spaces).
-        #[arg(value_name = "MESSAGE", required = true)]
-        message: Vec<String>,
-    },
-}
-
-// ── bridge to the engines ─────────────────────────────────────────────────────
-
-use crate::cli::EngineArgs;
-
-#[derive(Debug, Clone)]
-pub enum ParsedCommand {
-    PendingWork(PendingWorkCommand),
-    Handoff(EngineArgs),
-    Note(NoteCommand),
-}
-
-/// Parse a full post-binary argv into a typed engine command.
-///
-/// The pending-work branch preserves the clap-derived action enum through dispatch.
-/// Handoff uses the flat engine DTO.
-///
-/// # Errors
-///
-/// Returns the `clap::Error` from a parse failure, help, or version request.
-pub fn parse_command_argv(argv: Vec<String>) -> Result<ParsedCommand, clap::Error> {
-    let norm = crate::preprocess::normalize(argv);
-    let cli = Cli::try_parse_from(std::iter::once("pwf".to_string()).chain(norm))?;
-    Ok(cli.into_parsed_command())
-}
-
-/// Parse a full post-binary argv (engine + args) through subcommand-default
-/// injection + clap, returning the engine name and the `Args` DTO the engines
-/// consume. clap errors (incl. `--help`/`--version`) propagate as `clap::Error`.
-///
-/// # Errors
-///
-/// Returns the `clap::Error` from a parse failure, help, or version request.
-pub fn parse_argv(argv: Vec<String>) -> Result<(String, EngineArgs), clap::Error> {
-    let norm = crate::preprocess::normalize(argv);
-    let cli = Cli::try_parse_from(std::iter::once("pwf".to_string()).chain(norm))?;
-    Ok(cli.into_engine_args())
-}
-
-impl Cli {
-    pub fn into_parsed_command(self) -> ParsedCommand {
-        match self.engine {
-            Engine::Pw(action) => ParsedCommand::PendingWork(fill_pw_command(action)),
-            Engine::Handoff { action } => {
-                let mut a = EngineArgs::default();
-                fill_handoff(&mut a, action);
-                ParsedCommand::Handoff(a)
-            }
-            Engine::Note(n) => ParsedCommand::Note(fill_note(n)),
-        }
-    }
-
-    /// Flatten the parsed clap tree into the engine name + engine `Args`.
-    pub fn into_engine_args(self) -> (String, EngineArgs) {
-        let mut a = EngineArgs::default();
-        let engine = match self.engine {
-            Engine::Pw(action) => {
-                let action = fill_pw(&mut a, action);
-                a.action = Some(action.as_str().into());
-                "pw"
-            }
-            Engine::Handoff { action } => {
-                fill_handoff(&mut a, action);
-                "handoff"
-            }
-            Engine::Note(_) => {
-                unreachable!("note is dispatched via parse_command_argv / ParsedCommand::Note")
-            }
-        };
-        (engine.to_string(), a)
-    }
-}
-
-fn fill_pw_command(action: PwAction) -> PendingWorkCommand {
-    let mut a = EngineArgs::default();
-    let action = fill_pw(&mut a, action);
-    PendingWorkCommand::new(action, a)
-}
-
-fn fill_note(n: NoteArgs) -> NoteCommand {
-    let (project, verb) = match n.action {
-        NoteAction::List { project, number } => (project, NoteVerb::Ls { number }),
-        NoteAction::Add { project, message } => (
-            project,
-            NoteVerb::Add {
-                message: message.join(" "),
-            },
-        ),
-        NoteAction::Remove { project, id } => (project, NoteVerb::Remove { id }),
-        NoteAction::Update {
-            project,
-            id,
-            message,
-        } => (
-            project,
-            NoteVerb::Update {
-                id,
-                message: message.join(" "),
-            },
-        ),
-    };
-    NoteCommand {
-        project,
-        verb,
-        config_path: n.common.config_path,
-        notes_dir: n.common.notes_dir,
-        date: n.common.date,
-    }
-}
-
-fn apply_pw_common(a: &mut EngineArgs, c: PwCommon) {
-    a.config_path = c.config_path;
-    a.notes_dir = c.notes_dir;
-    a.date = c.date;
-}
-
-fn normalize_pending_work_id(id: Option<String>) -> Option<String> {
-    id.map(|id| crate::engines::pending_work::canonical_pending_id(&id))
-}
-
-/// Shared body of `PwAction::Done`/`PwAction::Cancel`, which parse identically —
-/// only the resulting [`pending_work::Action`] differs.
-fn fill_pw_close(
-    a: &mut EngineArgs,
-    id: IdArg,
-    report: Option<String>,
-    commits: Vec<String>,
-    review: bool,
-    common: PwCommon,
-) {
-    let raw_id = id.resolve();
-    a.raw_id.clone_from(&raw_id);
-    a.id = normalize_pending_work_id(raw_id);
-    a.report = report;
-    a.commits = commits;
-    a.review = review;
-    apply_pw_common(a, common);
-}
-
-/// Shared id-plus-common body of `PwAction::Reopen`/`PwAction::Show`.
-fn fill_pw_id_only(a: &mut EngineArgs, id: IdArg, common: PwCommon) {
-    let raw_id = id.resolve();
-    a.raw_id.clone_from(&raw_id);
-    a.id = normalize_pending_work_id(raw_id);
-    apply_pw_common(a, common);
-}
-
-#[allow(
-    clippy::too_many_lines,
-    reason = "the exhaustive match maps each clap action directly into the shared engine DTO"
-)]
-fn fill_pw(a: &mut EngineArgs, action: PwAction) -> pending_work::Action {
-    match action {
-        PwAction::Add {
-            project,
-            prompt,
-            continue_handoff,
-            continue_path,
-            section,
-            title,
-            human,
-            prereq,
-            tag,
-            effort,
-            common,
-        } => {
-            a.project = project;
-            a.prompt = (!prompt.is_empty()).then(|| prompt.join(" "));
-            a.continue_handoff = continue_handoff;
-            a.continue_path = continue_path;
-            a.section = section;
-            a.title = title;
-            a.human = human;
-            a.prereq = prereq;
-            a.tag = tag;
-            a.effort = effort;
-            apply_pw_common(a, common);
-            pending_work::Action::Add
-        }
-        PwAction::List {
-            project,
-            long,
-            future,
-            human,
-            all,
-            number,
-            effort,
-            tag,
-            order,
-            status,
-            common,
-        } => {
-            a.project = project;
-            a.long = long;
-            a.future = future;
-            a.human = human;
-            a.all = all;
-            a.number = number;
-            a.effort = effort;
-            a.tag = tag;
-            a.order = order;
-            a.status_filter = status.filter();
-            apply_pw_common(a, common);
-            pending_work::Action::List
-        }
-        PwAction::Done {
-            id,
-            report,
-            commits,
-            review,
-            common,
-        } => {
-            fill_pw_close(a, id, report, commits, review, common);
-            pending_work::Action::Done
-        }
-        PwAction::Cancel {
-            id,
-            report,
-            commits,
-            review,
-            common,
-        } => {
-            fill_pw_close(a, id, report, commits, review, common);
-            pending_work::Action::Cancel
-        }
-        PwAction::Reopen { id, common } => {
-            fill_pw_id_only(a, id, common);
-            pending_work::Action::Reopen
-        }
-        PwAction::Update {
-            id,
-            prompt,
-            title,
-            prereq,
-            clear_prereq,
-            tag,
-            tags_clear,
-            commits,
-            append_report,
-            append,
-            effort,
-            common,
-        } => {
-            a.id = normalize_pending_work_id(id.resolve());
-            a.prompt = prompt;
-            a.title = title;
-            a.prereq = prereq;
-            a.clear_prereq = clear_prereq;
-            a.tag = tag;
-            a.tags_clear = tags_clear;
-            a.commits = commits;
-            a.append_report = append_report;
-            a.append = append;
-            a.effort = effort;
-            apply_pw_common(a, common);
-            pending_work::Action::Update
-        }
-        PwAction::Show { id, path, common } => {
-            fill_pw_id_only(a, id, common);
-            a.path = path;
-            pending_work::Action::Show
-        }
-        PwAction::Verify {
-            id,
-            agent,
-            model,
-            common,
-        } => {
-            a.id = normalize_pending_work_id(id.resolve());
-            a.agent = agent_choice(agent);
-            a.model = model;
-            apply_pw_common(a, common);
-            pending_work::Action::Verify
-        }
-        PwAction::Route {
-            words,
-            long,
-            future,
-            human,
-            all,
-            number,
-            status,
-            prereq,
-            common,
-        } => {
-            a.words = words;
-            a.long = long;
-            a.future = future;
-            a.human = human;
-            a.all = all;
-            a.number = number;
-            a.status_filter = status.filter();
-            a.prereq = prereq;
-            apply_pw_common(a, common);
-            pending_work::Action::Route
-        }
-        PwAction::Remove { id, yes, common } => {
-            a.id = normalize_pending_work_id(id.resolve());
-            a.assume_yes = yes;
-            apply_pw_common(a, common);
-            pending_work::Action::Remove
-        }
-        PwAction::Session {
-            id,
-            color,
-            yes,
-            inline,
-            worktree,
-            auto,
-            agent,
-            append,
-            model,
-            common,
-        } => {
-            a.id = normalize_pending_work_id(id.resolve());
-            a.color = match color {
-                ColorArg::Auto => crate::cli::ColorChoice::Auto,
-                ColorArg::Always => crate::cli::ColorChoice::Always,
-                ColorArg::Never => crate::cli::ColorChoice::Never,
-            };
-            a.assume_yes = yes;
-            a.inline = inline;
-            a.worktree = worktree;
-            a.auto = auto;
-            a.agent = agent_choice(agent);
-            a.append = append;
-            a.model = model;
-            apply_pw_common(a, common);
-            pending_work::Action::Session
-        }
-    }
-}
-
-fn apply_handoff_common(a: &mut EngineArgs, c: HandoffCommon) {
-    a.config_path = c.config_path;
-    a.repo_root = c.repo_root;
-    a.date = c.date;
-    a.pending_work_script = c.pending_work_script;
-}
-
-fn fill_handoff(a: &mut EngineArgs, action: HandoffAction) {
-    match action {
-        HandoffAction::Add {
-            title,
-            slug,
-            common,
-        } => {
-            a.action = Some("add".into());
-            a.title = title;
-            a.slug = slug;
-            apply_handoff_common(a, common);
-        }
-        HandoffAction::List { common } => {
-            a.action = Some("list".into());
-            apply_handoff_common(a, common);
-        }
-    }
+/// Parses post-binary arguments after preserving the accepted normalization pass.
+pub fn parse_argv(argv: Vec<String>) -> Result<Cli, clap::Error> {
+    let normalized = crate::preprocess::normalize(argv);
+    Cli::try_parse_from(std::iter::once("pwf".to_string()).chain(normalized))
 }
 
 #[cfg(test)]
@@ -869,376 +37,329 @@ mod tests {
 
     use super::*;
 
+    fn parse(tokens: &[&str]) -> Cli {
+        parse_argv(tokens.iter().map(|token| (*token).to_string()).collect()).expect("parse")
+    }
+
+    fn pending_work(tokens: &[&str]) -> pending_work::Command {
+        let Engine::PendingWork(command) = parse(tokens).engine else {
+            panic!("expected pending-work command");
+        };
+        command
+    }
+
     #[test]
     fn cli_tree_is_valid() {
         Cli::command().debug_assert();
     }
 
-    fn pw_args(tokens: &[&str]) -> EngineArgs {
-        let argv = tokens
-            .iter()
-            .map(std::string::ToString::to_string)
-            .collect();
-        let (engine, parsed_args) = parse_argv(argv).expect("parse");
-        assert_eq!(engine, "pw");
-        parsed_args
-    }
-
-    fn parse_top_level(tokens: &[&str]) -> (String, EngineArgs) {
-        let argv = tokens
-            .iter()
-            .map(std::string::ToString::to_string)
-            .collect();
-        parse_argv(argv).expect("parse")
-    }
-
     #[test]
-    fn default_engine_when_omitted() {
-        let (engine, args) = parse_top_level(&["add", "glep-shimeji", "x"]);
-        assert_eq!(engine, "pw");
-        assert_eq!(args.action.as_deref(), Some("add"));
-        assert_eq!(args.project.as_deref(), Some("glep-shimeji"));
-    }
-
-    #[test]
-    fn add_preserves_repeatable_tag_values_for_engine_normalization() {
-        let add = pw_args(&[
+    fn add_parses_into_the_typed_pending_work_leaf() {
+        let pending_work::Command::Add(arguments) = pending_work(&[
             "add",
             "pwf",
-            "x",
+            "keep",
+            "typed",
+            "--title",
+            "Typed CLI",
             "--tag",
-            "SQLite,csharp-export",
+            "architecture",
+            "--effort",
+            "3",
+            "--config-path",
+            "/tmp/pwf.json",
+            "--notes-dir",
+            "/tmp/notes",
+            "--date",
+            "2026-07-20",
+        ]) else {
+            panic!("expected add");
+        };
+        assert_eq!(arguments.project.as_deref(), Some("pwf"));
+        assert_eq!(arguments.prompt, ["keep", "typed"]);
+        assert_eq!(arguments.title.as_deref(), Some("Typed CLI"));
+        assert_eq!(arguments.tag, ["architecture"]);
+        assert_eq!(arguments.effort, Some(3));
+        assert_eq!(
+            arguments.common.config_path.as_deref(),
+            Some("/tmp/pwf.json")
+        );
+        assert_eq!(arguments.common.notes_dir.as_deref(), Some("/tmp/notes"));
+        assert_eq!(arguments.common.date.as_deref(), Some("2026-07-20"));
+    }
+
+    #[test]
+    fn list_parses_into_the_typed_pending_work_leaf() {
+        let pending_work::Command::List(arguments) = pending_work(&[
+            "list",
+            "--project",
+            "pwf",
+            "--long",
+            "--all",
+            "-n",
+            "2",
+            "--effort",
+            "3",
             "--tag",
-            "godot",
-        ]);
-
-        assert_eq!(add.tag, ["SQLite,csharp-export", "godot"]);
-    }
-
-    #[test]
-    fn list_preserves_repeatable_tag_values_for_engine_normalization() {
-        let list = pw_args(&["list", "--tag", "SQLite,godot", "--tag", "setup"]);
-
-        assert_eq!(list.tag, ["SQLite,godot", "setup"]);
-    }
-
-    #[test]
-    fn list_and_project_route_parse_one_status_filter() {
-        use pwf_domain::pending_work::{WorkItemStatus, WorkItemStatusFilter};
-
-        assert_eq!(
-            pw_args(&["list"]).status_filter,
-            WorkItemStatusFilter::Exact(WorkItemStatus::Active)
-        );
-        assert_eq!(
-            pw_args(&["list", "--status", "done"]).status_filter,
-            WorkItemStatusFilter::Exact(WorkItemStatus::Done)
-        );
-        assert_eq!(
-            pw_args(&["pwf", "--status", "all"]).status_filter,
-            WorkItemStatusFilter::All
-        );
-    }
-
-    #[test]
-    fn update_accepts_clear_plus_tag_as_replacement_form() {
-        let update = pw_args(&["update", "PWF-0001", "--tags-clear", "--tag", "sqlite"]);
-
-        assert!(update.tags_clear);
-        assert_eq!(update.tag, ["sqlite"]);
-    }
-
-    #[test]
-    fn default_project_route_with_flags() {
-        let (engine, args) = parse_top_level(&["glep-shimeji", "--long", "-n", "2"]);
-        assert_eq!(engine, "pw");
-        assert_eq!(args.action.as_deref(), Some("route"));
-        assert_eq!(args.words, vec!["glep-shimeji"]);
-        assert!(args.long);
-        assert_eq!(args.number, Some(2));
-    }
-
-    #[test]
-    fn route_shorthand_forwards_long_flag() {
-        let a = pw_args(&["pwf", "--long"]);
-        assert_eq!(a.action.as_deref(), Some("route"));
-        assert_eq!(a.words, vec!["pwf"]);
-        assert!(a.long);
-    }
-
-    #[test]
-    fn route_shorthand_forwards_future_flag() {
-        let a = pw_args(&["pwf", "--future"]);
-        assert_eq!(a.words, vec!["pwf"]);
-        assert!(a.future);
-    }
-
-    #[test]
-    fn route_shorthand_forwards_all_flag() {
-        let a = pw_args(&["pwf", "--all"]);
-        assert_eq!(a.words, vec!["pwf"]);
-        assert!(a.all);
-    }
-
-    #[test]
-    fn route_shorthand_forwards_combined_flags() {
-        let a = pw_args(&["pwf", "--long", "--future"]);
-        assert_eq!(a.words, vec!["pwf"]);
-        assert!(a.long);
-        assert!(a.future);
-    }
-
-    #[test]
-    fn route_shorthand_forwards_number_flag() {
-        let a = pw_args(&["pwf", "-n", "3"]);
-        assert_eq!(a.action.as_deref(), Some("route"));
-        assert_eq!(a.words, vec!["pwf"]);
-        assert_eq!(a.number, Some(3));
-    }
-
-    #[test]
-    fn list_parses_number_short_and_long() {
-        assert_eq!(pw_args(&["list", "-n", "5"]).number, Some(5));
-        assert_eq!(pw_args(&["list", "--number", "5"]).number, Some(5));
-    }
-
-    #[test]
-    fn done_parses_commits_and_review() {
-        let a = pw_args(&[
+            "rust",
+            "-o",
+            "project-id",
+            "desc",
+            "--status",
             "done",
-            "--id",
-            "GLP-0001",
+        ]) else {
+            panic!("expected list");
+        };
+        assert_eq!(arguments.project.as_deref(), Some("pwf"));
+        assert!(arguments.long && arguments.all);
+        assert_eq!(arguments.number, Some(2));
+        assert_eq!(arguments.effort, Some(3));
+        assert_eq!(arguments.tag, ["rust"]);
+        assert_eq!(arguments.order, ["project-id", "desc"]);
+        assert_eq!(
+            arguments.status.filter(),
+            pwf_domain::pending_work::WorkItemStatusFilter::Exact(
+                pwf_domain::pending_work::WorkItemStatus::Done
+            )
+        );
+    }
+
+    #[test]
+    fn lifecycle_verbs_parse_into_typed_pending_work_leaves() {
+        let pending_work::Command::Done(done) = pending_work(&[
+            "done",
+            "cfg",
+            "57",
+            "--report",
+            "finished",
             "--commits",
             "a..b",
-            "--commits",
-            "c..d",
             "--review",
-        ]);
-        assert_eq!(a.action.as_deref(), Some("done"));
-        assert_eq!(a.commits, vec!["a..b", "c..d"]);
-        assert!(a.review);
-    }
+        ]) else {
+            panic!("expected done");
+        };
+        assert_eq!(done.identifier.canonical().as_deref(), Some("CFG-0057"));
+        assert_eq!(done.report.as_deref(), Some("finished"));
+        assert_eq!(done.commits, ["a..b"]);
+        assert!(done.review);
 
-    #[test]
-    fn cancel_parses_required_report_surface() {
-        let a = pw_args(&[
+        let pending_work::Command::Cancel(cancel) = pending_work(&[
             "cancel",
-            "--id",
-            "GLP-0001",
+            "PWF-0002",
             "--report",
-            "blocked by changed scope",
-        ]);
-        assert_eq!(a.action.as_deref(), Some("cancel"));
-        assert_eq!(a.id.as_deref(), Some("GLP-0001"));
-        assert_eq!(a.report.as_deref(), Some("blocked by changed scope"));
+            "blocked",
+            "--commits",
+            "b..c",
+        ]) else {
+            panic!("expected cancel");
+        };
+        assert_eq!(cancel.identifier.canonical().as_deref(), Some("PWF-0002"));
+        assert_eq!(cancel.report.as_deref(), Some("blocked"));
+
+        let pending_work::Command::Reopen(reopen) = pending_work(&["reopen", "pwf3"]) else {
+            panic!("expected reopen");
+        };
+        assert_eq!(reopen.identifier.canonical().as_deref(), Some("PWF-0003"));
     }
 
     #[test]
-    fn session_parses_append_short_flag_into_shared_update_field() {
-        let a = pw_args(&["session", "PWF-0001", "-a", "extra context"]);
-        assert_eq!(a.action.as_deref(), Some("session"));
-        assert_eq!(a.append.as_deref(), Some("extra context"));
-    }
-
-    #[test]
-    fn session_agent_flag_is_long_only_now_that_short_is_append() {
-        let a = pw_args(&["session", "PWF-0001", "--agent", "codex"]);
-        assert_eq!(a.agent, crate::cli::Agent::Codex);
-        assert_eq!(a.append, None);
-    }
-
-    #[test]
-    fn pending_work_id_flags_parse_to_uppercase() {
-        let a = pw_args(&["done", "--id", "gLp-0001"]);
-        assert_eq!(a.id.as_deref(), Some("GLP-0001"));
-    }
-
-    #[test]
-    fn done_accepts_bare_positional_id() {
-        assert_eq!(
-            pw_args(&["done", "GLP-0001"]).id.as_deref(),
-            Some("GLP-0001")
-        );
-    }
-
-    #[test]
-    fn done_still_accepts_id_flag() {
-        assert_eq!(
-            pw_args(&["done", "--id", "GLP-0001"]).id.as_deref(),
-            Some("GLP-0001")
-        );
-    }
-
-    #[test]
-    fn remove_accepts_bare_positional_id() {
-        assert_eq!(
-            pw_args(&["remove", "pwf-0002"]).id.as_deref(),
-            Some("PWF-0002")
-        );
-    }
-
-    #[test]
-    fn show_accepts_glued_positional_id() {
-        assert_eq!(pw_args(&["show", "cfg57"]).id.as_deref(), Some("CFG-0057"));
-    }
-
-    #[test]
-    fn update_accepts_split_id_form() {
-        assert_eq!(
-            pw_args(&["update", "cfg", "57", "--title", "x"])
-                .id
-                .as_deref(),
-            Some("CFG-0057")
-        );
-    }
-
-    #[test]
-    fn positional_and_id_flag_conflict() {
-        let argv = ["done", "GLP-0001", "--id", "GLP-0002"]
-            .iter()
-            .map(std::string::ToString::to_string)
-            .collect();
-        assert!(parse_argv(argv).is_err());
-    }
-
-    #[test]
-    fn show_parses_positional_id_to_show_action_uppercased() {
-        let argv = ["show", "pwf-0001"]
-            .iter()
-            .map(std::string::ToString::to_string)
-            .collect();
-        let ParsedCommand::PendingWork(command) = parse_command_argv(argv).expect("parse") else {
-            panic!("expected pending-work command");
+    fn update_parses_into_the_typed_pending_work_leaf() {
+        let pending_work::Command::Update(arguments) = pending_work(&[
+            "update",
+            "PWF-0001",
+            "--title",
+            "new",
+            "--prereq",
+            "PWF-0002",
+            "--tag",
+            "rust",
+            "--commits",
+            "a..b",
+            "--append-report",
+            "done",
+            "--effort",
+            "4",
+        ]) else {
+            panic!("expected update");
         };
         assert_eq!(
-            command.action(),
-            &crate::engines::pending_work::Action::Show
+            arguments.identifier.canonical().as_deref(),
+            Some("PWF-0001")
         );
-        assert_eq!(command.args().id.as_deref(), Some("PWF-0001"));
+        assert_eq!(arguments.title.as_deref(), Some("new"));
+        assert_eq!(arguments.prereq, ["PWF-0002"]);
+        assert_eq!(arguments.tag, ["rust"]);
+        assert_eq!(arguments.commits, ["a..b"]);
+        assert_eq!(arguments.append_report.as_deref(), Some("done"));
+        assert_eq!(arguments.effort, Some(4));
     }
 
     #[test]
-    fn show_path_flag_parses_into_engine_args() {
-        assert!(pw_args(&["show", "--path", "pwf-0001"]).path);
-        assert!(!pw_args(&["show", "pwf-0001"]).path);
-    }
-
-    #[test]
-    fn show_alias_s_parses_to_show_action() {
-        let argv = ["s", "pwf-0001"]
-            .iter()
-            .map(std::string::ToString::to_string)
-            .collect();
-        let ParsedCommand::PendingWork(command) = parse_command_argv(argv).expect("parse") else {
-            panic!("expected pending-work command");
+    fn show_remove_and_verify_parse_into_typed_pending_work_leaves() {
+        let pending_work::Command::Show(show) = pending_work(&["s", "pwf1", "--path"]) else {
+            panic!("expected show");
         };
-        assert_eq!(
-            command.action(),
-            &crate::engines::pending_work::Action::Show
-        );
-        assert_eq!(command.args().id.as_deref(), Some("PWF-0001"));
-    }
+        assert_eq!(show.identifier.raw(), Some("pwf1"));
+        assert!(show.path);
 
-    #[test]
-    fn typed_pw_parse_keeps_action_out_of_flat_args() {
-        let argv = ["done", "--id", "GLP-0001"]
-            .iter()
-            .map(std::string::ToString::to_string)
-            .collect();
-        let ParsedCommand::PendingWork(command) = parse_command_argv(argv).expect("parse") else {
-            panic!("expected pending-work command");
+        let pending_work::Command::Remove(remove) = pending_work(&["remove", "PWF-0002", "-y"])
+        else {
+            panic!("expected remove");
         };
+        assert_eq!(remove.identifier.canonical().as_deref(), Some("PWF-0002"));
+        assert!(remove.assume_yes);
+
+        let pending_work::Command::Verify(verify) =
+            pending_work(&["verify", "PWF-0003", "-a", "codex", "-m", "gpt-5"])
+        else {
+            panic!("expected verify");
+        };
+        assert_eq!(verify.identifier.canonical().as_deref(), Some("PWF-0003"));
+        assert_eq!(verify.agent, pending_work::common::AgentChoice::Codex);
+        assert_eq!(verify.model.as_deref(), Some("gpt-5"));
+    }
+
+    #[test]
+    fn session_and_route_parse_into_typed_pending_work_leaves() {
+        let pending_work::Command::Session(session) = pending_work(&[
+            "session",
+            "PWF-0001",
+            "--color",
+            "always",
+            "--yes",
+            "--inline",
+            "--worktree",
+            "--auto",
+            "--agent",
+            "codex",
+            "-a",
+            "context",
+            "-m",
+            "gpt-5",
+        ]) else {
+            panic!("expected session");
+        };
+        assert_eq!(session.identifier.canonical().as_deref(), Some("PWF-0001"));
+        assert_eq!(session.color, pending_work::session::ColorChoice::Always);
+        assert!(session.assume_yes && session.inline && session.worktree && session.autonomous);
+        assert_eq!(session.agent, pending_work::common::AgentChoice::Codex);
+        assert_eq!(session.append.as_deref(), Some("context"));
+
+        let pending_work::Command::Route(route) =
+            pending_work(&["pwf", "--long", "--future", "-n", "3", "--status", "all"])
+        else {
+            panic!("expected route");
+        };
+        assert_eq!(route.words, ["pwf"]);
+        assert!(route.long && route.future);
+        assert_eq!(route.number, Some(3));
         assert_eq!(
-            command.action(),
-            &crate::engines::pending_work::Action::Done
+            route.status.filter(),
+            pwf_domain::pending_work::WorkItemStatusFilter::All
         );
-        assert_eq!(command.args().id.as_deref(), Some("GLP-0001"));
-        assert!(command.args().action.is_none());
-    }
-
-    fn parse_note(tokens: &[&str]) -> NoteCommand {
-        let argv = tokens
-            .iter()
-            .map(std::string::ToString::to_string)
-            .collect();
-        match parse_command_argv(argv).expect("parse") {
-            ParsedCommand::Note(c) => c,
-            other => panic!("expected note command, got {other:?}"),
-        }
     }
 
     #[test]
-    fn note_bare_project_is_ls() {
-        let c = parse_note(&["note", "pwf"]);
-        assert_eq!(c.project, "pwf");
-        assert!(matches!(c.verb, NoteVerb::Ls { number: None }));
+    fn compatibility_routes_resolve_to_typed_pending_work_leaves() {
+        let pending_work::Command::Route(project_route) =
+            pending_work(&["pwf", "--long", "--future", "-n", "3", "--status", "all"])
+        else {
+            panic!("expected project route");
+        };
+        let pending_work::route::ResolvedCommand::List(list) =
+            pending_work::route::resolve(&project_route)
+        else {
+            panic!("expected routed list");
+        };
+        assert_eq!(list.project.as_deref(), Some("pwf"));
+        assert!(list.long && list.future);
+        assert_eq!(list.number, Some(3));
+        assert_eq!(list.order, ["project-id"]);
+        assert_eq!(
+            list.status.filter(),
+            pwf_domain::pending_work::WorkItemStatusFilter::All
+        );
+
+        let pending_work::Command::Route(verify_route) =
+            pending_work(&["route", "verify", "cfg57"])
+        else {
+            panic!("expected verify route");
+        };
+        let pending_work::route::ResolvedCommand::Verify(verify) =
+            pending_work::route::resolve(&verify_route)
+        else {
+            panic!("expected routed verify");
+        };
+        assert_eq!(verify.identifier.canonical().as_deref(), Some("CFG-0057"));
+        assert_eq!(verify.agent, pending_work::common::AgentChoice::Claude);
+        assert_eq!(verify.model, None);
     }
 
     #[test]
-    fn note_bare_project_keeps_common_flags() {
-        let c = parse_note(&["note", "pwf", "--config-path", "/cfg.json"]);
-        assert_eq!(c.project, "pwf");
-        assert!(matches!(c.verb, NoteVerb::Ls { number: None }));
-        assert_eq!(c.config_path.as_deref(), Some("/cfg.json"));
+    fn positional_and_id_flag_conflict_is_rejected() {
+        let error = parse_argv(
+            ["done", "GLP-0001", "--id", "GLP-0002"]
+                .map(str::to_string)
+                .to_vec(),
+        )
+        .expect_err("positional and --id must conflict");
+
+        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+        assert!(error.to_string().contains("cannot be used with"));
     }
 
     #[test]
-    fn note_add_is_verb_first_and_joins_message_words() {
-        let c = parse_note(&["note", "add", "pwf", "buy", "milk"]);
-        assert_eq!(c.project, "pwf");
-        assert!(matches!(c.verb, NoteVerb::Add { ref message } if message == "buy milk"));
+    fn project_first_note_verb_is_rejected() {
+        let error = parse_argv(["note", "pwf", "add", "x"].map(str::to_string).to_vec())
+            .expect_err("note verbs must be verb-first");
+
+        assert!(error.to_string().contains("unexpected argument 'add'"));
     }
 
     #[test]
-    fn note_add_accepts_trailing_common_flags() {
-        let c = parse_note(&[
-            "note",
+    fn handoff_verbs_parse_into_typed_engine_leaves() {
+        let Engine::Handoff {
+            command: handoff::Command::Add(add),
+        } = parse(&[
+            "handoff",
             "add",
-            "pwf",
-            "buy",
-            "milk",
-            "--config-path",
-            "/cfg.json",
-        ]);
-        assert_eq!(c.config_path.as_deref(), Some("/cfg.json"));
-        assert!(matches!(c.verb, NoteVerb::Add { ref message } if message == "buy milk"));
+            "--title",
+            "checkpoint",
+            "--slug",
+            "checkpoint",
+            "--repo-root",
+            "/tmp/repo",
+            "--date",
+            "2026-07-20",
+        ])
+        .engine
+        else {
+            panic!("expected handoff add");
+        };
+        assert_eq!(add.title.as_deref(), Some("checkpoint"));
+        assert_eq!(add.slug.as_deref(), Some("checkpoint"));
+        assert_eq!(add.common.repo_root.as_deref(), Some("/tmp/repo"));
+
+        let Engine::Handoff {
+            command: handoff::Command::List(list),
+        } = parse(&["handoff", "list", "--repo-root", "/tmp/repo"]).engine
+        else {
+            panic!("expected handoff list");
+        };
+        assert_eq!(list.common.repo_root.as_deref(), Some("/tmp/repo"));
     }
 
     #[test]
-    fn note_remove_takes_project_then_bare_id() {
-        let c = parse_note(&["note", "remove", "pwf", "3"]);
-        assert_eq!(c.project, "pwf");
-        assert!(matches!(c.verb, NoteVerb::Remove { ref id } if id == "3"));
-    }
-
-    #[test]
-    fn note_update_takes_project_then_id_then_message() {
-        let c = parse_note(&["note", "update", "pwf", "3", "oat", "milk"]);
-        assert_eq!(c.project, "pwf");
+    fn note_bare_project_is_list() {
+        let Engine::Note(arguments) = parse(&["note", "pwf"]).engine else {
+            panic!("expected note");
+        };
         assert!(matches!(
-            c.verb,
-            NoteVerb::Update { ref id, ref message } if id == "3" && message == "oat milk"
+            arguments.command,
+            note::Command::List {
+                ref project,
+                number: None
+            } if project == "pwf"
         ));
-    }
-
-    #[test]
-    fn note_ls_number_flag() {
-        let c = parse_note(&["note", "ls", "pwf", "-n", "0"]);
-        assert_eq!(c.project, "pwf");
-        assert!(matches!(c.verb, NoteVerb::Ls { number: Some(0) }));
-    }
-
-    #[test]
-    fn note_project_first_verb_is_rejected() {
-        let argv = vec![
-            "note".to_string(),
-            "pwf".to_string(),
-            "add".to_string(),
-            "x".to_string(),
-        ];
-        assert!(
-            parse_command_argv(argv).is_err(),
-            "old project-first syntax must not parse"
-        );
     }
 }

@@ -93,6 +93,54 @@ fn per_action_help_is_scoped_and_succeeds() {
 }
 
 #[test]
+fn remaining_leaf_help_uses_the_canonical_scoped_command_path() {
+    for verb in ["done", "cancel", "reopen", "update", "show", "remove"] {
+        let (help, ok) = run(&[verb, "--help"]);
+
+        assert!(ok, "pwf {verb} --help should exit 0");
+        assert!(
+            help.contains(&format!("Usage: pwf {verb} ")),
+            "{verb} help should use its canonical command path: {help}"
+        );
+    }
+
+    for verb in ["add", "list"] {
+        let (help, ok) = run(&["handoff", verb, "--help"]);
+
+        assert!(ok, "pwf handoff {verb} --help should exit 0");
+        assert!(
+            help.contains(&format!("Usage: pwf handoff {verb} ")),
+            "handoff {verb} help should use its canonical command path: {help}"
+        );
+    }
+}
+
+#[test]
+fn update_help_exposes_every_update_specific_flag() {
+    let (update_help, update_help_succeeded) = run(&["update", "--help"]);
+
+    assert!(update_help_succeeded, "pwf update --help should exit 0");
+    for flag in [
+        "--id",
+        "--prompt",
+        "--title",
+        "--prereq",
+        "--clear-prereq",
+        "--tag",
+        "--tags-clear",
+        "--commits",
+        "--append-report",
+        "--append",
+        "--effort",
+    ] {
+        assert!(
+            update_help.split_whitespace().any(|token| token == flag),
+            "update help should expose {flag}: {update_help}"
+        );
+    }
+}
+
+#[test]
 fn tag_help_is_scoped_to_supported_commands() {
     let (add, add_ok) = run(&["add", "--help"]);
     assert!(add_ok, "pwf add --help should exit 0");

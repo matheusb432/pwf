@@ -8,7 +8,7 @@ use pwf::engines::handoff;
 #[path = "support/pending_work.rs"]
 mod pending_work_test;
 
-use pending_work_test::run_args_plain;
+use pending_work_test::run_plain;
 
 fn nanos() -> u128 {
     std::time::SystemTime::now()
@@ -44,10 +44,14 @@ fn write_empty_config(dir: &Path) -> PathBuf {
     cfg_path
 }
 
-fn parse_args(tokens: &[&str]) -> pwf::cli::EngineArgs {
+fn parse_args(tokens: &[&str]) -> handoff::Command {
     let mut v = vec!["handoff".to_string()];
     v.extend(tokens.iter().map(std::string::ToString::to_string));
-    pwf::command::parse_argv(v).unwrap().1
+    let pwf::command::Engine::Handoff { command } = pwf::command::parse_argv(v).unwrap().engine
+    else {
+        panic!("expected handoff command");
+    };
+    command
 }
 
 fn pw_stub_path() -> PathBuf {
@@ -57,44 +61,6 @@ fn pw_stub_path() -> PathBuf {
 /// Returns an allocator stub whose successful output lacks an item ID.
 fn pw_stub_garbage_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pw-stub-garbage.sh")
-}
-
-#[test]
-fn scaffold_matches_expected_shape_without_pw() {
-    let s = handoff::scaffold("Managed Flow", "test-project", "2026-01-01", None);
-    let expected_prefix =
-        "---\nstatus: active\nproject: test-project\ncreated: 2026-01-01\n---\n\n# Managed Flow\n";
-    assert!(
-        s.starts_with(expected_prefix),
-        "scaffold prefix mismatch:\ngot:      {:?}\nexpected: {:?}",
-        &s[..expected_prefix.len().min(s.len())],
-        expected_prefix
-    );
-    assert!(!s.contains("pw:"));
-    assert!(s.contains('\u{2014}'));
-    assert!(s.contains("- [ ] <task title> :: <task description>"));
-    assert!(s.contains("## Next steps\n-\n"));
-}
-
-#[test]
-fn scaffold_with_pw_inserted_after_created() {
-    let s = handoff::scaffold(
-        "Managed Flow",
-        "test-project",
-        "2026-01-01",
-        Some("TST-0001"),
-    );
-    assert!(
-        s.contains("created: 2026-01-01\npw: TST-0001\n---"),
-        "pw line not after created: {s:?}"
-    );
-}
-
-#[test]
-fn slug_converts_title() {
-    assert_eq!(handoff::slug("Managed Flow"), "managed-flow");
-    assert_eq!(handoff::slug("  Hello World!! "), "hello-world");
-    assert_eq!(handoff::slug(""), "handoff");
 }
 
 #[test]
@@ -277,6 +243,37 @@ fn add_managed_links_pw_in_process_without_script() {
 }
 
 #[test]
+fn direct_handoff_add_rejects_an_unparseable_destination_before_allocation() {
+    let stage = tmpdir("hf_add_unparseable_collision");
+    let repo = stage.join("repo");
+    let handoff_dir = repo.join("docs/handoffs");
+    fs::create_dir_all(&handoff_dir).unwrap();
+    let destination = handoff_dir.join("2026-01-01-managed-flow.md");
+    fs::write(&destination, [0xff, 0xfe]).unwrap();
+    let notes = stage.join("notes");
+    let cfg = write_config(&stage, &repo, &notes);
+    let args = parse_args(&[
+        "add",
+        "--title",
+        "Managed Flow",
+        "--slug",
+        "managed-flow",
+        "--config-path",
+        cfg.to_str().unwrap(),
+        "--repo-root",
+        repo.to_str().unwrap(),
+        "--date",
+        "2026-01-01",
+    ]);
+
+    let error = handoff::run(&args).unwrap_err();
+
+    assert!(error.contains("already exists"), "got: {error}");
+    assert!(!notes.join("test-project").exists());
+    assert_eq!(fs::read(destination).unwrap(), [0xff, 0xfe]);
+}
+
+#[test]
 fn add_with_handoff_tag_scaffolds_handoff_file() {
     let stage = tmpdir("pw_add_handoff_tag");
     let repo = stage.join("repo");
@@ -297,7 +294,7 @@ fn add_with_handoff_tag_scaffolds_handoff_file() {
         "--date",
         "2026-01-01",
     ]);
-    let out = run_args_plain(&args).unwrap();
+    let out = run_plain(&args).unwrap();
 
     assert!(out.contains("TST-0001"), "got: {out}");
 
@@ -333,7 +330,7 @@ fn add_with_handoff_tag_and_missing_repo_root_errors_without_creating_item() {
         "--date",
         "2026-01-01",
     ]);
-    let err = run_args_plain(&args).unwrap_err();
+    let err = run_plain(&args).unwrap_err();
 
     assert!(err.contains("does not exist"), "got: {err}");
     assert!(
@@ -373,7 +370,7 @@ fn add_with_handoff_tag_and_scaffold_path_collision_errors_without_creating_item
         "--date",
         "2026-01-01",
     ]);
-    let err = run_args_plain(&args).unwrap_err();
+    let err = run_plain(&args).unwrap_err();
 
     assert!(err.contains("already exists"), "got: {err}");
     assert!(
@@ -386,6 +383,41 @@ fn add_with_handoff_tag_and_scaffold_path_collision_errors_without_creating_item
     );
     let existing = fs::read_to_string(handoff_dir.join("2026-01-01-ship-the-thing.md")).unwrap();
     assert_eq!(existing, "existing\n", "existing handoff must be untouched");
+}
+
+#[test]
+fn add_with_unparseable_scaffold_destination_preflights_before_item_creation() {
+    let stage = tmpdir("pw_add_unparseable_scaffold_collision");
+    let repo = stage.join("repo");
+    let handoff_dir = repo.join("docs/handoffs");
+    fs::create_dir_all(&handoff_dir).unwrap();
+    let destination = handoff_dir.join("2026-01-01-ship-the-thing.md");
+    fs::write(&destination, [0xff, 0xfe]).unwrap();
+    let notes = stage.join("notes");
+    let cfg = write_config(&stage, &repo, &notes);
+
+    let args = parse_pw_args(&[
+        "add",
+        "test-project",
+        "ship the thing / do it",
+        "--tag",
+        "handoff",
+        "--config-path",
+        cfg.to_str().unwrap(),
+        "--notes-dir",
+        notes.to_str().unwrap(),
+        "--date",
+        "2026-01-01",
+    ]);
+
+    let error = run_plain(&args).unwrap_err();
+
+    assert!(error.contains("already exists"), "got: {error}");
+    assert!(
+        !notes.join("test-project").exists(),
+        "unparseable destination collision must win before pending-work insertion"
+    );
+    assert_eq!(fs::read(destination).unwrap(), [0xff, 0xfe]);
 }
 
 #[test]
@@ -409,7 +441,7 @@ fn add_without_handoff_tag_has_no_handoff_side_effects() {
         "--date",
         "2026-01-01",
     ]);
-    let out = run_args_plain(&args).unwrap();
+    let out = run_plain(&args).unwrap();
 
     assert!(out.contains("TST-0001"), "got: {out}");
     let item = fs::read_to_string(notes.join("test-project/TST-0001.md")).unwrap();
@@ -448,7 +480,7 @@ fn add_continue_handoff_and_tag_handoff_does_not_scaffold_a_second_file() {
         "--date",
         "2026-01-02",
     ]);
-    let out = run_args_plain(&args).unwrap();
+    let out = run_plain(&args).unwrap();
 
     assert!(out.contains("TST-0001"), "got: {out}");
     let item = fs::read_to_string(notes.join("test-project/TST-0001.md")).unwrap();
@@ -517,12 +549,16 @@ fn list_no_ledger() {
     assert_eq!(out, "No active handoffs (LEDGER.md not found).");
 }
 
-fn parse_pw_args(tokens: &[&str]) -> pwf::cli::EngineArgs {
+fn parse_pw_args(tokens: &[&str]) -> pwf::engines::pending_work::Command {
     let v = tokens
         .iter()
         .map(std::string::ToString::to_string)
         .collect();
-    pwf::command::parse_argv(v).unwrap().1
+    let pwf::command::Engine::PendingWork(command) = pwf::command::parse_argv(v).unwrap().engine
+    else {
+        panic!("expected pending-work command");
+    };
+    command
 }
 
 /// Stages an open tagged item and an optional linked active handoff.
@@ -575,7 +611,7 @@ fn done_archives_linked_handoff_and_reports_dest() {
         "--date",
         "2026-01-02",
     ]);
-    let out = run_args_plain(&args).unwrap();
+    let out = run_plain(&args).unwrap();
 
     assert!(out.contains("handoff: archived"), "got: {out}");
     let archived_path = repo.join("docs/handoffs/archived/2026-01-01-managed-flow.md");
@@ -624,7 +660,7 @@ fn cancel_archives_linked_handoff_as_cancelled_with_report_body() {
         "--date",
         "2026-01-02",
     ]);
-    let out = run_args_plain(&args).unwrap();
+    let out = run_plain(&args).unwrap();
 
     assert!(out.contains("handoff: archived"), "got: {out}");
     let archived_path = repo.join("docs/handoffs/archived/2026-01-01-managed-flow.md");
@@ -661,7 +697,7 @@ fn done_errors_and_leaves_item_active_when_no_handoff_links_it() {
         "--date",
         "2026-01-02",
     ]);
-    let err = run_args_plain(&args).unwrap_err();
+    let err = run_plain(&args).unwrap_err();
 
     assert!(err.contains("pw: TST-0001"), "got: {err}");
     let item = fs::read_to_string(notes.join("test-project/TST-0001.md")).unwrap();
@@ -709,7 +745,7 @@ fn done_on_untagged_item_never_touches_handoffs_dir() {
         "--date",
         "2026-01-02",
     ]);
-    let out = run_args_plain(&args).unwrap();
+    let out = run_plain(&args).unwrap();
 
     assert!(!out.contains("handoff: archived"), "got: {out}");
     assert!(
@@ -754,7 +790,7 @@ fn done_errors_and_leaves_item_active_when_archive_destination_exists() {
         "--date",
         "2026-01-02",
     ]);
-    let err = run_args_plain(&args).unwrap_err();
+    let err = run_plain(&args).unwrap_err();
 
     assert!(
         err.contains("archived handoff already exists"),
@@ -813,7 +849,7 @@ fn reopen_restores_archived_handoff_and_reports_dest() {
         "--notes-dir",
         notes.to_str().unwrap(),
     ]);
-    let out = run_args_plain(&args).unwrap();
+    let out = run_plain(&args).unwrap();
 
     assert!(out.contains("handoff: reopened"), "got: {out}");
     let active_path = repo.join("docs/handoffs/2026-01-01-managed-flow.md");
@@ -863,7 +899,7 @@ fn reopen_errors_and_leaves_item_done_when_active_destination_exists() {
         "--notes-dir",
         notes.to_str().unwrap(),
     ]);
-    let err = run_args_plain(&args).unwrap_err();
+    let err = run_plain(&args).unwrap_err();
 
     assert!(err.contains("active handoff already exists"), "got: {err}");
     let item = fs::read_to_string(notes.join("test-project/TST-0001.md")).unwrap();
@@ -891,7 +927,7 @@ fn reopen_errors_and_leaves_item_done_when_no_archived_handoff_links_it() {
         "--notes-dir",
         notes.to_str().unwrap(),
     ]);
-    let err = run_args_plain(&args).unwrap_err();
+    let err = run_plain(&args).unwrap_err();
 
     assert!(err.contains("pw: TST-0001"), "got: {err}");
     let item = fs::read_to_string(notes.join("test-project/TST-0001.md")).unwrap();
@@ -920,7 +956,7 @@ fn reopen_already_active_pair_skips_without_touching_handoff() {
         "--notes-dir",
         notes.to_str().unwrap(),
     ]);
-    let out = run_args_plain(&args).unwrap();
+    let out = run_plain(&args).unwrap();
 
     assert!(out.contains("already active"), "got: {out}");
     assert!(!out.contains("handoff: reopened"), "got: {out}");
@@ -974,7 +1010,7 @@ fn reopen_on_untagged_item_never_touches_handoffs_dir() {
         "--notes-dir",
         notes.to_str().unwrap(),
     ]);
-    let out = run_args_plain(&args).unwrap();
+    let out = run_plain(&args).unwrap();
 
     assert!(!out.contains("handoff: reopened"), "got: {out}");
     assert!(
@@ -1005,10 +1041,13 @@ fn remove_deletes_linked_handoff_and_rebuilds_ledger() {
         "--notes-dir",
         notes.to_str().unwrap(),
     ]);
-    // `run_args` uses explicit non-interactive confirmation and never reads process stdin.
-    let out = run_args_plain(&args).unwrap();
+    // Non-terminal stdin follows the accepted non-interactive confirmation policy.
+    let out = run_plain(&args).unwrap();
 
-    assert!(out.starts_with("REMOVED PWF TASK [TST-0001]"), "got: {out}");
+    assert!(
+        out.starts_with("Removed pwf task: **TST-0001"),
+        "got: {out}"
+    );
     assert!(
         !notes.join("test-project/TST-0001.md").exists(),
         "note must be deleted"
@@ -1060,9 +1099,12 @@ fn remove_on_untagged_item_never_touches_handoffs_dir() {
         "--notes-dir",
         notes.to_str().unwrap(),
     ]);
-    let out = run_args_plain(&args).unwrap();
+    let out = run_plain(&args).unwrap();
 
-    assert!(out.starts_with("REMOVED PWF TASK [TST-0001]"), "got: {out}");
+    assert!(
+        out.starts_with("Removed pwf task: **TST-0001"),
+        "got: {out}"
+    );
     assert!(
         !proj.join("TST-0001.md").exists(),
         "untagged remove must still delete the note"

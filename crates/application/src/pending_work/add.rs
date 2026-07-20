@@ -1,31 +1,191 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::LazyLock};
 
-use pwf_domain::pending_work::{AddedItem, ProjectName, ProjectRegistry, Tags, Timestamp};
+use pwf_domain::pending_work::{
+    HANDOFF_TAG, ProjectName, Tags, Timestamp, WorkItemId, inferred_title, normalize_title,
+    title_was_normalized,
+};
+use regex::Regex;
 
-use super::store_util;
-use crate::ports::{AppDbStore, IndexEntry, IndexSection, NewItem, PendingWorkItem};
+use super::{
+    prerequisite::PrerequisiteValidationError,
+    project_registry::{ProjectRegistry, ProjectResolutionError},
+    store_util,
+};
+use crate::{
+    HandoffDocumentStore, HandoffLedger,
+    handoff::{HandoffError, HandoffMutationOutcome, lifecycle},
+    ports::{AppDbStore, IndexEntry, IndexSection, NewItem, PendingWorkItem},
+};
 
-#[derive(Debug, Clone)]
-pub struct AddPendingWorkItem {
-    pub project_name: String,
-    pub prompt: String,
-    pub title: Option<String>,
-    pub created: String,
-    pub section: Option<String>,
-    pub prereq: Option<String>,
-    pub effort: Option<u8>,
-    pub tags: Option<Tags>,
+/// Describes the pending-work item and index section created by [`execute`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AddedItem {
+    /// Canonical identifier allocated to the item.
+    pub id: String,
+    /// Managed project containing the item.
+    pub project: String,
+    /// Persisted item title.
+    pub title: String,
+    /// Path of the created item note.
+    pub note_path: PathBuf,
+    /// Index section created during insertion, when one was absent.
+    pub created_section: Option<String>,
+    /// Whether an explicit title required metadata-safe normalization.
+    pub title_normalized: bool,
+    /// Linked handoff side effect.
+    pub handoff: HandoffMutationOutcome,
 }
 
+/// Carries add diagnostics that remain observable after a later handoff failure.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AddPendingWorkDiagnostics {
+    /// Managed project receiving the item.
+    pub project: String,
+    /// Index section created during insertion, when one was absent.
+    pub created_section: Option<String>,
+    /// Whether an explicit title required metadata-safe normalization.
+    pub title_normalized: bool,
+}
+
+/// Selects the semantic source used to create a pending-work item.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AddPendingWorkSource {
+    /// Creates an item from a direct prompt and optional explicit title.
+    Prompt {
+        /// Pending-work prompt.
+        prompt: String,
+        /// Optional explicit title.
+        title: Option<String>,
+    },
+    /// Creates an item that continues a plan path.
+    Plan {
+        /// Plan path retained in the generated prompt.
+        path: String,
+    },
+    /// Creates an item from the newest handoff in the managed repository.
+    NewestHandoff,
+}
+
+/// Selects one canonical pending-work index section.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PendingWorkSection {
+    /// Work intentionally deferred to a future queue.
+    Future,
+    /// Work requiring human action.
+    Human,
+    /// Work kept in the low-priority queue.
+    LowPriority,
+}
+
+impl PendingWorkSection {
+    /// Parses a canonical section name case-insensitively.
+    #[must_use]
+    pub fn from_name(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "future" => Some(Self::Future),
+            "human" => Some(Self::Human),
+            "low-prio" => Some(Self::LowPriority),
+            _ => None,
+        }
+    }
+
+    /// Returns the canonical persisted section label.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Future => "Future",
+            Self::Human => "Human",
+            Self::LowPriority => "Low-prio",
+        }
+    }
+}
+
+/// Requests creation of one pending-work item.
+#[derive(Debug, Clone)]
+pub struct AddPendingWorkItem {
+    /// Managed project name or identifier prefix.
+    pub project_identifier: Option<String>,
+    /// Semantic prompt source.
+    pub source: Option<AddPendingWorkSource>,
+    /// Authored creation date.
+    pub created: String,
+    /// Optional canonical index section.
+    pub section: Option<PendingWorkSection>,
+    /// Raw repeated prerequisite values.
+    pub prerequisites: Vec<String>,
+    /// Optional effort tier.
+    pub effort: Option<u8>,
+    /// Raw repeated tag values.
+    pub tags: Vec<String>,
+}
+
+/// Reports add preparation or persistence failures.
 #[derive(Debug, thiserror::Error)]
 pub enum AddPendingWorkError {
+    /// Required positional add input was absent.
+    #[error("Use: pwf add <project> \"<prompt>\"")]
+    Usage,
+    /// The managed project identifier could not be resolved uniquely.
+    #[error(transparent)]
+    ProjectResolution(#[from] ProjectResolutionError),
+    /// The selected project has no usable repository mapping.
     #[error("Project '{project}' is not mapped to a repo in config/pending-work.json.")]
-    ProjectNotMappedToRepo { project: String },
-    #[error("{0}")]
-    WriteStore(Box<dyn std::error::Error + Send + Sync>),
+    ProjectNotMappedToRepo {
+        /// Requested project name.
+        project: String,
+    },
+    /// A raw tag was invalid.
+    #[error(
+        "Invalid --tag value {raw:?}; use lowercase/uppercase ASCII letters, digits, '_' or '-', without leading, trailing, or repeated separators."
+    )]
+    InvalidTag {
+        /// Rejected raw value.
+        raw: String,
+    },
+    /// A raw prerequisite identifier was invalid.
+    #[error("Invalid --prereq id: {raw}.")]
+    InvalidPrerequisiteId {
+        /// Rejected raw value.
+        raw: String,
+    },
+    /// A prerequisite flag contained no identifier.
+    #[error("--prereq requires an id.")]
+    MissingPrerequisiteId,
+    /// One or more prerequisite records were absent.
+    #[error("Unknown --prereq id(s): {}.", ids.join(", "))]
+    UnknownPrerequisiteIds {
+        /// Canonical missing identifiers.
+        ids: Vec<String>,
+    },
+    /// A linked handoff failed read-only validation.
+    #[error(transparent)]
+    HandoffPreflight(HandoffError),
+    /// Pending work was created before its linked handoff failed.
+    #[error("{pending_work_identifier} was mutated, but its handoff was not: {source}")]
+    HandoffAfterPendingWork {
+        /// Created pending-work identifier.
+        pending_work_identifier: WorkItemId,
+        /// Diagnostics produced by the successful pending-work insertion.
+        diagnostics: Box<AddPendingWorkDiagnostics>,
+        /// Handoff failure after pending-work persistence.
+        #[source]
+        source: HandoffError,
+    },
+    /// An item or index write failed.
+    #[error("{source}")]
+    WriteStore {
+        diagnostics: AddPendingWorkDiagnostics,
+        #[source]
+        source: store_util::CreateItemError,
+    },
 }
 
 /// Creates a pending-work record and its open index entry for a mapped project.
+///
+/// # Errors
+///
+/// Returns [`AddPendingWorkError`] when project preparation fails or the store cannot create the
+/// item and index entry.
 ///
 /// # Panics
 ///
@@ -38,36 +198,240 @@ pub fn execute<S>(
     projects: &ProjectRegistry,
 ) -> Result<AddedItem, AddPendingWorkError>
 where
-    S: AppDbStore<PendingWorkItem> + AppDbStore<IndexEntry> + AppDbStore<IndexSection>,
+    S: AppDbStore<PendingWorkItem>
+        + AppDbStore<IndexEntry>
+        + AppDbStore<IndexSection>
+        + HandoffDocumentStore
+        + AppDbStore<HandoffLedger>,
 {
-    let not_mapped = |project: &str| AddPendingWorkError::ProjectNotMappedToRepo {
-        project: project.to_string(),
+    let tags = parse_tags(&cmd.tags)?;
+    let prereq = if cmd.prerequisites.is_empty() {
+        None
+    } else {
+        Some(
+            super::prerequisite::validate_and_merge(None, &cmd.prerequisites, store, projects)
+                .map_err(map_prerequisite_error)?,
+        )
     };
-    let Ok(project) = ProjectName::try_new(&cmd.project_name) else {
-        return Err(not_mapped(&cmd.project_name));
+    let prepared = prepare_source(&cmd, store, projects)?;
+    let scaffold = if !prepared.newest_handoff
+        && tags
+            .as_ref()
+            .is_some_and(|tags| tags.contains_name(HANDOFF_TAG))
+    {
+        Some(
+            lifecycle::preflight_scaffold(
+                store,
+                &prepared.repository,
+                &prepared.project,
+                &prepared.title,
+                &cmd.created,
+            )
+            .map_err(AddPendingWorkError::HandoffPreflight)?,
+        )
+    } else {
+        None
+    };
+
+    let created = store_util::create_item(
+        store,
+        &prepared.project,
+        NewItem {
+            prompt: prepared.prompt,
+            title: Some(prepared.title),
+            created: Timestamp::new(cmd.created),
+            section: cmd
+                .section
+                .map(PendingWorkSection::as_str)
+                .map(str::to_string),
+            prereq,
+            effort: cmd.effort,
+            tags,
+        },
+    )
+    .map_err(|source| AddPendingWorkError::WriteStore {
+        diagnostics: AddPendingWorkDiagnostics {
+            project: prepared.project.to_string(),
+            created_section: source
+                .created_section()
+                .map(|(_, section)| section.to_string()),
+            title_normalized: prepared.title_normalized,
+        },
+        source,
+    })?;
+
+    let pending_work_identifier = created
+        .record
+        .id
+        .as_item()
+        .expect("inserted record carries a canonical id")
+        .clone();
+    let diagnostics = AddPendingWorkDiagnostics {
+        project: prepared.project.to_string(),
+        created_section: created.created_section.clone(),
+        title_normalized: prepared.title_normalized,
+    };
+    let handoff = scaffold
+        .map(|scaffold| lifecycle::commit_scaffold(store, scaffold, &pending_work_identifier))
+        .transpose()
+        .map_err(|source| AddPendingWorkError::HandoffAfterPendingWork {
+            pending_work_identifier,
+            diagnostics: Box::new(diagnostics.clone()),
+            source,
+        })?
+        .unwrap_or(HandoffMutationOutcome::NotLinked);
+
+    Ok(added_item(
+        &prepared.project,
+        created,
+        prepared.title_normalized,
+        handoff,
+    ))
+}
+
+struct PreparedAdd {
+    project: ProjectName,
+    repository: String,
+    title: String,
+    prompt: String,
+    title_normalized: bool,
+    newest_handoff: bool,
+}
+
+fn parse_tags(values: &[String]) -> Result<Option<Tags>, AddPendingWorkError> {
+    if values.is_empty() {
+        return Ok(None);
+    }
+    Tags::parse_values(values)
+        .map(Some)
+        .map_err(|error| AddPendingWorkError::InvalidTag {
+            raw: error.raw().to_string(),
+        })
+}
+
+fn prepare_source<S>(
+    command: &AddPendingWorkItem,
+    store: &S,
+    projects: &ProjectRegistry,
+) -> Result<PreparedAdd, AddPendingWorkError>
+where
+    S: HandoffDocumentStore,
+{
+    let identifier = command
+        .project_identifier
+        .as_deref()
+        .ok_or(AddPendingWorkError::Usage)?;
+    let source = command.source.as_ref().ok_or(AddPendingWorkError::Usage)?;
+    if matches!(source, AddPendingWorkSource::Prompt { prompt, .. } if prompt.trim().is_empty()) {
+        return Err(AddPendingWorkError::Usage);
+    }
+    let project = project_mapped(identifier, projects)?;
+    let repository = projects
+        .repo_for(&project)
+        .expect("project_mapped requires a repository")
+        .to_string();
+    let (title, prompt, title_normalized, newest_handoff) = match source {
+        AddPendingWorkSource::Prompt { prompt, title } => {
+            let (title, normalized) = match title.as_deref() {
+                Some(title) if !title.trim().is_empty() => {
+                    (normalize_title(title), title_was_normalized(title))
+                }
+                _ => (inferred_title(prompt), false),
+            };
+            (title, prompt.clone(), normalized, false)
+        }
+        AddPendingWorkSource::Plan { path } => (
+            plan_title(project.as_ref(), path),
+            plan_continuation_prompt(path),
+            false,
+            false,
+        ),
+        AddPendingWorkSource::NewestHandoff => {
+            let (title, prompt) = lifecycle::newest_handoff(store, &repository)
+                .map_err(AddPendingWorkError::HandoffPreflight)?;
+            (title, prompt, false, true)
+        }
+    };
+    Ok(PreparedAdd {
+        project,
+        repository,
+        title,
+        prompt,
+        title_normalized,
+        newest_handoff,
+    })
+}
+
+fn plan_continuation_prompt(path: &str) -> String {
+    format!("continue the plan at {path}")
+}
+
+fn plan_title(project: &str, path: &str) -> String {
+    static DASH_UNDERSCORE_REGEX: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"[-_]+").expect("valid separator regex"));
+    static DATE_SLUG_PREFIX_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"^\d{4}-\d{2}-\d{2}-").expect("valid dated slug prefix regex")
+    });
+    let stem = std::path::Path::new(path)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("");
+    let stem = DATE_SLUG_PREFIX_REGEX.replace(stem, "");
+    let excluded = ["kickoff", "handoff", "plan"];
+    let words = DASH_UNDERSCORE_REGEX
+        .split(&stem)
+        .filter(|word| !word.is_empty())
+        .map(str::to_lowercase)
+        .filter(|word| !excluded.contains(&word.as_str()))
+        .collect::<Vec<_>>();
+    let project = DASH_UNDERSCORE_REGEX
+        .replace_all(project, " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase();
+    if words.is_empty() {
+        format!("{project} plan")
+    } else {
+        format!("{project} {}", words.join(" "))
+    }
+}
+
+fn map_prerequisite_error(error: PrerequisiteValidationError) -> AddPendingWorkError {
+    match error {
+        PrerequisiteValidationError::InvalidId { raw } => {
+            AddPendingWorkError::InvalidPrerequisiteId { raw }
+        }
+        PrerequisiteValidationError::MissingId => AddPendingWorkError::MissingPrerequisiteId,
+        PrerequisiteValidationError::UnknownIds { ids } => {
+            AddPendingWorkError::UnknownPrerequisiteIds { ids }
+        }
+    }
+}
+
+pub(super) fn project_mapped(
+    project_identifier: &str,
+    projects: &ProjectRegistry,
+) -> Result<ProjectName, AddPendingWorkError> {
+    let project = projects.resolve(project_identifier)?.clone();
+    let not_mapped = || AddPendingWorkError::ProjectNotMappedToRepo {
+        project: project.to_string(),
     };
     if projects
         .repo_for(&project)
         .is_none_or(|repo| repo.trim().is_empty())
     {
-        return Err(not_mapped(&cmd.project_name));
+        return Err(not_mapped());
     }
+    Ok(project)
+}
 
-    let created = store_util::create_item(
-        store,
-        &project,
-        NewItem {
-            prompt: cmd.prompt,
-            title: cmd.title,
-            created: Timestamp::new(cmd.created),
-            section: cmd.section,
-            prereq: cmd.prereq,
-            effort: cmd.effort,
-            tags: cmd.tags,
-        },
-    )
-    .map_err(AddPendingWorkError::WriteStore)?;
-
+pub(super) fn added_item(
+    project: &ProjectName,
+    created: store_util::CreatedItem,
+    title_normalized: bool,
+    handoff: HandoffMutationOutcome,
+) -> AddedItem {
     let id = created
         .record
         .id
@@ -75,94 +439,16 @@ where
         .expect("inserted record carries a canonical id")
         .as_ref()
         .to_string();
-    Ok(AddedItem {
+    AddedItem {
         id,
-        project: cmd.project_name,
+        project: project.as_ref().to_string(),
         title: created.record.title,
         note_path: PathBuf::from(created.record.locator),
         created_section: created.created_section,
-    })
+        title_normalized,
+        handoff,
+    }
 }
 
 #[cfg(test)]
-mod tests {
-    use pwf_domain::pending_work::{ProjectName, ProjectRegistry};
-
-    use super::{AddPendingWorkError, AddPendingWorkItem, execute};
-    use crate::{IndexEntryState, testing::InMemoryStore};
-
-    fn registry(repo: Option<&str>) -> ProjectRegistry {
-        ProjectRegistry::new(vec![(
-            ProjectName::try_new("pwf").unwrap(),
-            repo.map(str::to_string),
-            Some("PWF".to_string()),
-        )])
-    }
-
-    fn command(section: Option<&str>) -> AddPendingWorkItem {
-        AddPendingWorkItem {
-            project_name: "pwf".to_string(),
-            prompt: "do the thing".to_string(),
-            title: Some("ship it".to_string()),
-            created: "2026-07-15".to_string(),
-            section: section.map(str::to_string),
-            prereq: None,
-            effort: None,
-            tags: None,
-        }
-    }
-
-    #[test]
-    fn add_inserts_record_and_open_index_entry() {
-        let store = InMemoryStore::default().with_prefix("pwf", "PWF");
-
-        let added = execute(command(None), &store, &registry(Some("/repo/pwf"))).unwrap();
-
-        assert_eq!(added.id, "PWF-0001");
-        assert_eq!(added.project, "pwf");
-        assert_eq!(added.title, "ship it");
-        assert_eq!(added.created_section, None);
-        let entries = store.entries("pwf");
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].id.as_ref(), "PWF-0001");
-        assert_eq!(entries[0].state, IndexEntryState::Open);
-        assert_eq!(store.items("pwf").len(), 1);
-    }
-
-    #[test]
-    fn add_reports_created_section_only_when_region_absent() {
-        let store = InMemoryStore::default().with_prefix("pwf", "PWF");
-
-        let added = execute(command(Some("Human")), &store, &registry(Some("/repo/pwf"))).unwrap();
-
-        assert_eq!(added.created_section.as_deref(), Some("Human"));
-    }
-
-    #[test]
-    fn add_does_not_report_created_section_for_existing_empty_region() {
-        let store = InMemoryStore::default()
-            .with_prefix("pwf", "PWF")
-            .with_sections("pwf", &["Human"]);
-
-        let added = execute(command(Some("Human")), &store, &registry(Some("/repo/pwf"))).unwrap();
-
-        assert_eq!(added.created_section, None);
-    }
-
-    #[test]
-    fn add_rejects_unmapped_project_with_legacy_display() {
-        let store = InMemoryStore::default().with_prefix("pwf", "PWF");
-
-        for registry in [registry(None), registry(Some("  "))] {
-            let error = execute(command(None), &store, &registry).unwrap_err();
-            assert!(matches!(
-                error,
-                AddPendingWorkError::ProjectNotMappedToRepo { ref project } if project == "pwf"
-            ));
-            assert_eq!(
-                error.to_string(),
-                "Project 'pwf' is not mapped to a repo in config/pending-work.json."
-            );
-        }
-    }
-}
+mod tests;

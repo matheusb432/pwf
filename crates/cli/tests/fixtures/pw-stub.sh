@@ -3,22 +3,17 @@
 # Handoff allocation only invokes `add`.
 set -u
 
-verb=${1:-}
-[ $# -gt 0 ] && shift
+if [ -n "${HANDOFF_STUB_LOG:-}" ]; then
+  : >"$HANDOFF_STUB_LOG"
+  for argument in "$@"; do
+    printf '%s\n' "$argument" >>"$HANDOFF_STUB_LOG"
+  done
+fi
 
-words=
-while [ $# -gt 0 ]; do
-  case $1 in
-    --config-path|--date) shift ;;
-    --*) : ;;
-    *) words="${words:+$words }$1" ;;
-  esac
-  shift
-done
+verb=${1:-}
 
 case $verb in
   add)
-    if [ -n "${HANDOFF_STUB_LOG:-}" ]; then printf 'add %s\n' "$words" >>"$HANDOFF_STUB_LOG"; fi
     printf 'ADDED PWF TASK [TST-0001] test-project :: continue managed flow\n'
     ;;
 esac

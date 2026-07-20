@@ -2,7 +2,6 @@
 
 use std::error::Error;
 
-use pwf_domain::pending_work::ProjectRegistry;
 use thiserror::Error;
 
 use super::{
@@ -13,13 +12,18 @@ use super::{
 };
 use crate::{
     AppDbStore, PendingWorkItem,
-    pending_work::find::{FindPendingWorkError, find_open_item},
+    pending_work::{
+        find::{FindPendingWorkError, find_open_item},
+        project_registry::ProjectRegistry,
+        update::{self, UpdatePendingWorkError, UpdatePendingWorkItem},
+    },
 };
 
 /// Requests one inline or multiplexer session dispatch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DispatchSession {
     pub id: String,
+    pub append: Option<String>,
     pub mode: DispatchMode,
     pub directives: LaunchDirectives,
     pub agent: Agent,
@@ -32,6 +36,8 @@ pub struct DispatchSession {
 pub enum DispatchSessionError {
     #[error(transparent)]
     Find(#[from] FindPendingWorkError),
+    #[error(transparent)]
+    Update(#[from] UpdatePendingWorkError),
     #[error("Pending-work item '{id}' is not launchable: {}", issues.join("; "))]
     NotLaunchable { id: String, issues: Vec<String> },
     #[error("Repo directory for project '{project}' does not exist: {path}")]
@@ -51,8 +57,9 @@ pub enum DispatchSessionError {
 ///
 /// # Errors
 ///
-/// Returns [`DispatchSessionError`] for lookup, validation, model selection, inline execution, or
-/// session recovery failures. Other tab-open failures become [`DispatchSessionOutcome::Failed`].
+/// Returns [`DispatchSessionError`] for lookup, launch validation, model selection, append
+/// preparation or persistence, inline execution, or session recovery failures. Other tab-open
+/// failures become [`DispatchSessionOutcome::Failed`].
 #[cqrsy::command]
 pub fn execute(
     command: &DispatchSession,
@@ -96,6 +103,28 @@ pub fn execute(
         return Err(DispatchSessionError::MultiplexerNotFound);
     }
 
+    let prepared_update = if let Some(append) = &command.append {
+        Some(update::prepare(
+            &UpdatePendingWorkItem {
+                id: item.id.clone(),
+                prompt: None,
+                title: None,
+                append: Some(append.clone()),
+                prereq: Vec::new(),
+                clear_prereq: false,
+                commits: Vec::new(),
+                append_report: None,
+                effort: None,
+                tags: Vec::new(),
+                tags_clear: false,
+            },
+            store,
+            projects,
+        )?)
+    } else {
+        None
+    };
+
     let target = dispatch_target(&item.id);
     let launch = build_agent_launch(&item, command.directives, command.agent, model);
     if command.confirmation == ConfirmationPolicy::Ask {
@@ -111,6 +140,10 @@ pub fn execute(
         if !interaction.confirm(&confirmation) {
             return Ok(DispatchSessionOutcome::Aborted { task_id: item.id });
         }
+    }
+
+    if let Some(prepared_update) = prepared_update {
+        update::persist(prepared_update, store)?;
     }
 
     match command.mode {
@@ -184,18 +217,19 @@ fn tab_error_message(error: TabOpenError) -> String {
 mod tests {
     use std::{
         collections::{BTreeSet, VecDeque},
+        convert::Infallible,
         error::Error,
         fmt,
         sync::{Arc, Mutex, MutexGuard},
     };
 
     use pwf_domain::pending_work::{
-        EffortTier, ProjectName, ProjectRegistry, Timestamp, WorkItemId, WorkItemStatus,
+        EffortTier, ProjectName, Timestamp, WorkItemId, WorkItemStatus,
     };
 
-    use super::{DispatchSession, DispatchSessionError, execute};
+    use super::{DispatchSession, DispatchSessionError, ProjectRegistry, execute};
     use crate::{
-        IndexPlacement, Materialization, PendingWorkItem, RecordId,
+        AppDbStore, IndexPlacement, ItemPatch, Materialization, NewItem, PendingWorkItem, RecordId,
         pending_work::{
             find::FindPendingWorkError,
             session::{
@@ -210,7 +244,7 @@ mod tests {
 
     const CATALOG_PATH: &str = "/config/model-tiers.toml";
     const REPOSITORY: &str = "/repo/pwf";
-    const TASK_ID: &str = "PWF-0139";
+    const TASK_ID: &str = "PWF-0001";
 
     #[derive(Debug, Clone, PartialEq, Eq)]
     enum Event {
@@ -272,6 +306,86 @@ mod tests {
         ) -> Self {
             self.lock().tab_results = results.into_iter().collect();
             self
+        }
+
+        fn launches(&self) -> Vec<AgentLaunch> {
+            let state = self.lock();
+            state
+                .inline_launches
+                .iter()
+                .chain(state.tab_launches.iter().map(|(_, launch)| launch))
+                .cloned()
+                .collect()
+        }
+    }
+
+    #[derive(Debug, Clone, Copy, thiserror::Error)]
+    #[error("persistence refused")]
+    struct PersistenceError;
+
+    #[derive(Debug, Clone)]
+    struct RejectingUpdateStore {
+        inner: InMemoryStore,
+    }
+
+    impl RejectingUpdateStore {
+        fn items(&self) -> Vec<PendingWorkItem> {
+            self.inner.items("pwf")
+        }
+    }
+
+    fn infallible<T>(result: Result<T, Infallible>) -> T {
+        match result {
+            Ok(value) => value,
+            Err(error) => match error {},
+        }
+    }
+
+    impl AppDbStore<PendingWorkItem> for RejectingUpdateStore {
+        type Error = PersistenceError;
+
+        fn get(
+            &self,
+            project: &ProjectName,
+            id: &WorkItemId,
+        ) -> Result<Option<PendingWorkItem>, Self::Error> {
+            Ok(infallible(
+                <InMemoryStore as AppDbStore<PendingWorkItem>>::get(&self.inner, project, id),
+            ))
+        }
+
+        fn list(&self, project: &ProjectName) -> Result<Vec<PendingWorkItem>, Self::Error> {
+            Ok(infallible(
+                <InMemoryStore as AppDbStore<PendingWorkItem>>::list(&self.inner, project),
+            ))
+        }
+
+        fn insert(
+            &self,
+            project: &ProjectName,
+            new: NewItem,
+        ) -> Result<PendingWorkItem, Self::Error> {
+            Ok(infallible(
+                <InMemoryStore as AppDbStore<PendingWorkItem>>::insert(&self.inner, project, new),
+            ))
+        }
+
+        fn update(
+            &self,
+            _project: &ProjectName,
+            _id: &WorkItemId,
+            _patch: ItemPatch,
+        ) -> Result<(), Self::Error> {
+            Err(PersistenceError)
+        }
+
+        fn delete(&self, project: &ProjectName, id: &WorkItemId) -> Result<(), Self::Error> {
+            infallible(<InMemoryStore as AppDbStore<PendingWorkItem>>::delete(
+                &self.inner,
+                project,
+                id,
+            ));
+            Ok(())
         }
     }
 
@@ -468,6 +582,7 @@ mod tests {
     fn command(mode: DispatchMode) -> DispatchSession {
         DispatchSession {
             id: TASK_ID.to_string(),
+            append: None,
             mode,
             directives: LaunchDirectives::default(),
             agent: Agent::Claude,
@@ -478,7 +593,7 @@ mod tests {
 
     fn dispatch(
         command: &DispatchSession,
-        store: &InMemoryStore,
+        store: &impl AppDbStore<PendingWorkItem>,
         catalog: &Catalog,
         runtime: &Runtime,
         interaction: &Interaction,
@@ -511,11 +626,14 @@ mod tests {
     #[test]
     fn non_launchable_item_is_rejected_before_runtime_dispatch() {
         let store = store(record("TODO", None));
+        let stored_before = store.items("pwf")[0].clone();
         let runtime = Runtime::default().with_repository();
         let interaction = Interaction::new(&runtime, true);
+        let mut request = command(DispatchMode::Inline);
+        request.append = Some("rejected context".to_string());
 
         let error = dispatch(
-            &command(DispatchMode::Inline),
+            &request,
             &store,
             &catalog(Some("sonnet")),
             &runtime,
@@ -528,17 +646,22 @@ mod tests {
             DispatchSessionError::NotLaunchable { ref id, ref issues }
                 if id == TASK_ID && issues.iter().any(|issue| issue.contains("placeholder"))
         ));
-        assert!(runtime.lock().inline_launches.is_empty());
+        let stored_after_precondition_failure = store.items("pwf")[0].clone();
+        assert_eq!(stored_before, stored_after_precondition_failure);
+        assert!(runtime.launches().is_empty());
     }
 
     #[test]
     fn missing_repository_is_rejected_before_execution() {
         let store = store(record("implement dispatch", None));
+        let stored_before = store.items("pwf")[0].clone();
         let runtime = Runtime::default();
         let interaction = Interaction::new(&runtime, true);
+        let mut request = command(DispatchMode::Inline);
+        request.append = Some("rejected context".to_string());
 
         let error = dispatch(
-            &command(DispatchMode::Inline),
+            &request,
             &store,
             &catalog(Some("sonnet")),
             &runtime,
@@ -551,16 +674,22 @@ mod tests {
             DispatchSessionError::RepositoryMissing { ref project, ref path }
                 if project == "pwf" && path == REPOSITORY
         ));
+        let stored_after_precondition_failure = store.items("pwf")[0].clone();
+        assert_eq!(stored_before, stored_after_precondition_failure);
+        assert!(runtime.launches().is_empty());
     }
 
     #[test]
     fn model_tier_failure_precedes_missing_repository() {
         let store = store(record("implement dispatch", Some("3")));
+        let stored_before = store.items("pwf")[0].clone();
         let runtime = Runtime::default();
         let interaction = Interaction::new(&runtime, true);
+        let mut request = command(DispatchMode::Inline);
+        request.append = Some("rejected context".to_string());
 
         let error = dispatch(
-            &command(DispatchMode::Inline),
+            &request,
             &store,
             &missing_tier_catalog(),
             &runtime,
@@ -573,17 +702,23 @@ mod tests {
             format!("tier 3 has no [tiers.3] entry in {CATALOG_PATH}")
         );
         assert!(error.source().is_some());
+        let stored_after_precondition_failure = store.items("pwf")[0].clone();
+        assert_eq!(stored_before, stored_after_precondition_failure);
+        assert!(runtime.launches().is_empty());
     }
 
     #[test]
     fn missing_multiplexer_is_rejected_only_for_multiplexer_mode() {
         let store = store(record("implement dispatch", None));
+        let stored_before = store.items("pwf")[0].clone();
         let runtime = Runtime::default().with_repository();
         runtime.lock().multiplexer_available = false;
         let interaction = Interaction::new(&runtime, true);
+        let mut request = command(DispatchMode::Multiplexer);
+        request.append = Some("rejected context".to_string());
 
         let error = dispatch(
-            &command(DispatchMode::Multiplexer),
+            &request,
             &store,
             &catalog(Some("sonnet")),
             &runtime,
@@ -592,14 +727,42 @@ mod tests {
         .unwrap_err();
 
         assert!(matches!(error, DispatchSessionError::MultiplexerNotFound));
+        let stored_after_precondition_failure = store.items("pwf")[0].clone();
+        assert_eq!(stored_before, stored_after_precondition_failure);
+        assert!(runtime.launches().is_empty());
     }
 
     #[test]
-    fn declined_confirmation_aborts_without_dispatching() {
+    fn empty_append_is_rejected_without_persisting_or_dispatching() {
         let store = store(record("implement dispatch", None));
+        let stored_before = store.items("pwf")[0].clone();
+        let runtime = Runtime::default().with_repository();
+        let interaction = Interaction::new(&runtime, true);
+        let mut request_with_empty_append = command(DispatchMode::Inline);
+        request_with_empty_append.append = Some("   \n\t".to_string());
+
+        let result = dispatch(
+            &request_with_empty_append,
+            &store,
+            &catalog(Some("sonnet")),
+            &runtime,
+            &interaction,
+        );
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().to_string(), "--append cannot be empty.");
+        assert_eq!(stored_before, store.items("pwf")[0]);
+        assert!(runtime.launches().is_empty());
+    }
+
+    #[test]
+    fn declined_confirmation_does_not_persist_append_or_dispatch() {
+        let store = store(record("implement dispatch", None));
+        let stored_before = store.items("pwf")[0].clone();
         let runtime = Runtime::default().with_repository();
         let interaction = Interaction::new(&runtime, false);
         let mut request = command(DispatchMode::Multiplexer);
+        request.append = Some("declined context".to_string());
         request.confirmation = ConfirmationPolicy::Ask;
 
         let outcome = dispatch(
@@ -617,10 +780,39 @@ mod tests {
                 task_id: TASK_ID.to_string()
             }
         );
-        assert!(runtime.lock().tab_launches.is_empty());
+        let stored_after_decline = store.items("pwf")[0].clone();
+        assert_eq!(stored_before, stored_after_decline);
+        assert!(runtime.launches().is_empty());
         let confirmations = &interaction.lock().confirmations;
         assert_eq!(confirmations[0].task_id, TASK_ID);
         assert_eq!(confirmations[0].mode, DispatchMode::Multiplexer);
+    }
+
+    #[test]
+    fn accepted_append_is_persisted_before_thin_pointer_dispatch() {
+        let store = store(record("implement dispatch", None));
+        let runtime = Runtime::default().with_repository();
+        let interaction = Interaction::new(&runtime, true);
+        let mut request = command(DispatchMode::Inline);
+        request.append = Some("accepted context".to_string());
+        request.confirmation = ConfirmationPolicy::Ask;
+
+        let outcome = dispatch(
+            &request,
+            &store,
+            &catalog(Some("sonnet")),
+            &runtime,
+            &interaction,
+        )
+        .unwrap();
+
+        assert!(matches!(outcome, DispatchSessionOutcome::Inline { .. }));
+        let stored_after_accept = store.items("pwf")[0].clone();
+        assert!(stored_after_accept.body.contains("- accepted context"));
+        assert_eq!(
+            runtime.launches()[0].prompt,
+            "Pending-work ID: PWF-0001\nProject: pwf\n\ndo PWF-0001"
+        );
     }
 
     #[test]
@@ -650,14 +842,17 @@ mod tests {
     }
 
     #[test]
-    fn inline_failure_is_an_operation_error() {
+    fn inline_failure_after_acceptance_leaves_append_persisted() {
         let store = store(record("implement dispatch", None));
         let runtime = Runtime::default().with_repository();
         runtime.lock().inline_result = Err("exec refused".to_string());
         let interaction = Interaction::new(&runtime, true);
+        let mut request = command(DispatchMode::Inline);
+        request.append = Some("accepted context".to_string());
+        request.confirmation = ConfirmationPolicy::Ask;
 
         let error = dispatch(
-            &command(DispatchMode::Inline),
+            &request,
             &store,
             &catalog(Some("sonnet")),
             &runtime,
@@ -669,6 +864,41 @@ mod tests {
             error,
             DispatchSessionError::InlineFailed { ref message } if message == "exec refused"
         ));
+        let stored_after_runtime_failure = store.items("pwf")[0].clone();
+        assert!(
+            stored_after_runtime_failure
+                .body
+                .contains("- accepted context")
+        );
+    }
+
+    #[test]
+    fn persistence_failure_prevents_dispatch() {
+        let store = RejectingUpdateStore {
+            inner: store(record("implement dispatch", None)),
+        };
+        let stored_before = store.items()[0].clone();
+        let runtime = Runtime::default().with_repository();
+        let interaction = Interaction::new(&runtime, true);
+        let mut request = command(DispatchMode::Inline);
+        request.append = Some("accepted context".to_string());
+        request.confirmation = ConfirmationPolicy::Ask;
+
+        let error = dispatch(
+            &request,
+            &store,
+            &catalog(Some("sonnet")),
+            &runtime,
+            &interaction,
+        )
+        .unwrap_err();
+
+        assert_eq!(error.to_string(), "persistence refused");
+        assert_eq!(stored_before, store.items()[0]);
+        assert!(
+            runtime.launches().is_empty(),
+            "persistence failure must prevent dispatch"
+        );
     }
 
     #[test]

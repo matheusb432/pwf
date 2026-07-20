@@ -1,6 +1,5 @@
 //! Verifies agent availability and pending-work launchability without dispatching.
 
-use pwf_domain::pending_work::ProjectRegistry;
 use thiserror::Error;
 
 use super::{
@@ -9,7 +8,10 @@ use super::{
 };
 use crate::{
     AppDbStore, PendingWorkItem,
-    pending_work::find::{FindPendingWorkError, find_open_item},
+    pending_work::{
+        find::{FindPendingWorkError, find_open_item},
+        project_registry::ProjectRegistry,
+    },
 };
 
 /// Requests an agent probe with optional item launchability context.
@@ -97,10 +99,10 @@ mod tests {
     };
 
     use pwf_domain::pending_work::{
-        EffortTier, ProjectName, ProjectRegistry, Timestamp, WorkItemId, WorkItemStatus,
+        EffortTier, ProjectName, Timestamp, WorkItemId, WorkItemStatus,
     };
 
-    use super::{VerifySession, execute};
+    use super::{ProjectRegistry, VerifySession, execute};
     use crate::{
         IndexPlacement, Materialization, PendingWorkItem, RecordId,
         pending_work::session::{

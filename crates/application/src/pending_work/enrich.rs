@@ -2,10 +2,9 @@
 //!
 //! One policy derives list, verify, and session diagnostics from persisted pending-work records.
 
-use pwf_domain::pending_work::{
-    PendingWorkItemView, WorkItemStatus, is_placeholder_prompt, section_alias,
-};
+use pwf_domain::pending_work::{WorkItemStatus, section_alias};
 
+use super::{list::PendingWorkItemView, note_body::is_placeholder_prompt};
 use crate::{Materialization, PendingWorkItem, RecordId};
 
 pub const ISSUE_NO_REPO: &str =
@@ -46,7 +45,7 @@ pub fn derive_flags(repo: Option<&str>, prompt: &str, missing_note: Option<&str>
         issues.push(ISSUE_NO_REPO.to_string());
     }
     if let Some(path) = missing_note {
-        issues.push(format!("Work-item note missing: {path}"));
+        issues.push(missing_note_issue(path));
     }
     let needs_prompt = is_placeholder_prompt(prompt);
     if needs_prompt {
@@ -87,7 +86,7 @@ impl EnrichedPendingWorkItem {
     pub fn into_pending_work_item_view(self, project: String) -> PendingWorkItemView {
         let id = match &self.id {
             RecordId::Item(id) => id.as_ref().to_string(),
-            RecordId::Inline(ordinal) => format!("{project}:{ordinal}"),
+            RecordId::Inline(ordinal) => inline_record_id(&project, *ordinal),
         };
         PendingWorkItemView {
             id,
@@ -105,11 +104,20 @@ impl EnrichedPendingWorkItem {
             issues: self.issues,
             section: self.section,
             prereq: self.prereq,
+            prerequisite_statuses: Vec::new(),
             effort: self.effort,
             tags: self.tags,
             created: self.created,
         }
     }
+}
+
+fn missing_note_issue(path: &str) -> String {
+    format!("Work-item note missing: {path}")
+}
+
+pub(crate) fn inline_record_id(project: &str, ordinal: usize) -> String {
+    format!("{project}:{ordinal}")
 }
 
 /// Projects a persisted item into the fields consumed by list, verify, and session.

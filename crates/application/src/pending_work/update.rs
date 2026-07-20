@@ -1,146 +1,293 @@
-use std::sync::LazyLock;
-
 use pwf_domain::pending_work::{
-    ParsePrereqsError, Prereqs, ProjectRegistry, Tags, UpdatedItem, WorkItemId, WorkItemStatus,
-    append_lanes, append_report_block, normalize_title, note_body,
+    ProjectName, Tags, WorkItemId, WorkItemStatus, normalize_title, title_was_normalized,
 };
-use regex::Regex;
 
-use super::store_util::body_region;
+use super::{
+    commit_provenance,
+    note_body::{append_lanes, append_report_block, note_body},
+    prerequisite::{PrerequisiteValidationError, validate_and_merge},
+    project_registry::ProjectRegistry,
+    store_util::body_region,
+};
 use crate::ports::{AppDbStore, ItemPatch, PendingWorkItem};
 
-/// Extracts bare ids from an existing `prereq` frontmatter value.
-static PREREQ_VALUE_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\[\[([A-Z]{2,4}-\d{4})").expect("valid prereq regex"));
-
+/// Requests edits to one pending-work item.
 #[derive(Debug, Clone)]
 pub struct UpdatePendingWorkItem {
+    /// Requested work-item identifier.
     pub id: String,
+    /// Optional replacement prompt.
     pub prompt: Option<String>,
+    /// Optional replacement title.
     pub title: Option<String>,
+    /// Optional lane content appended to the body.
     pub append: Option<String>,
+    /// Raw prerequisite values appended to existing prerequisites.
     pub prereq: Vec<String>,
+    /// Whether existing prerequisites are cleared.
     pub clear_prereq: bool,
-    pub commits: Option<String>,
+    /// Raw repeated commit ranges.
+    pub commits: Vec<String>,
+    /// Optional report appended to the body.
     pub append_report: Option<String>,
+    /// Optional replacement effort tier.
     pub effort: Option<u8>,
-    pub tags: Option<Tags>,
+    /// Raw tags appended to existing tags.
+    pub tags: Vec<String>,
+    /// Whether existing tags are cleared before applying raw tags.
     pub tags_clear: bool,
 }
 
+/// Reports update preparation or persistence failures.
 #[derive(Debug, thiserror::Error)]
 pub enum UpdatePendingWorkError {
+    /// The requested item does not exist.
     #[error("Open pending-work item not found: {id}")]
-    ItemNotFound { id: String },
+    ItemNotFound {
+        /// Requested identifier.
+        id: String,
+    },
+    /// The request contains no effective edit.
     #[error(
         "nothing to update (pass --prompt, --title, --prereq, --clear-prereq, --tag, --tags-clear, --commits, --append-report, --append, and/or --effort)."
     )]
     NothingToUpdate,
+    /// A closed item was asked to accept an open-item edit.
     #[error(
         "only --commits / --append-report can amend closed item {id} (done/cancelled); body/title/prereq/tags/append/effort need an open item."
     )]
-    ClosedItemAmendOnly { id: String },
+    ClosedItemAmendOnly {
+        /// Requested closed-item identifier.
+        id: String,
+    },
+    /// Existing tag frontmatter cannot be merged safely.
     #[error("item {id} has invalid tags frontmatter: {raw:?}.")]
-    InvalidTagsFrontmatter { id: String, raw: String },
+    InvalidTagsFrontmatter {
+        /// Item containing invalid frontmatter.
+        id: String,
+        /// Raw frontmatter value.
+        raw: String,
+    },
+    /// A raw tag value is invalid.
+    #[error(
+        "Invalid --tag value {raw:?}; use lowercase/uppercase ASCII letters, digits, '_' or '-', without leading, trailing, or repeated separators."
+    )]
+    InvalidTag {
+        /// Raw tag value.
+        raw: String,
+    },
+    /// A prerequisite value is not a work-item identifier.
     #[error("Invalid --prereq id: {raw}.")]
-    InvalidPrereqId { raw: String },
+    InvalidPrereqId {
+        /// Raw prerequisite value.
+        raw: String,
+    },
+    /// No prerequisite identifier was supplied.
     #[error("--prereq requires an id.")]
     MissingPrereqId,
+    /// One or more prerequisite records do not exist.
     #[error("Unknown --prereq id(s): {}.", ids.join(", "))]
-    UnknownPrereqIds { ids: Vec<String> },
+    UnknownPrereqIds {
+        /// Canonical identifiers without records.
+        ids: Vec<String>,
+    },
+    /// The requested report is blank.
     #[error("--report cannot be empty.")]
     EmptyReport,
+    /// The requested lane append is blank.
     #[error("--append cannot be empty.")]
     EmptyAppend,
+    /// An item or prerequisite store operation failed.
     #[error("{0}")]
-    WriteStore(Box<dyn std::error::Error + Send + Sync>),
+    WriteStore(#[source] Box<dyn std::error::Error + Send + Sync>),
+}
+
+/// Describes either an open-item edit or a closed-item amendment from [`execute`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UpdatedItem {
+    /// Reports the effective identity and title after editing an open item.
+    OpenItemEdit {
+        /// Canonical identifier of the edited item.
+        id: String,
+        /// Managed project containing the item.
+        project: String,
+        /// Effective title after the edit.
+        title: String,
+        /// Whether YAML-safe normalization changed an explicit title.
+        title_normalized: bool,
+    },
+    /// Reports the fields amended on a closed item.
+    Changed {
+        /// Canonical identifier of the amended item.
+        id: String,
+        /// Renderable summaries of the applied changes.
+        changes: Vec<String>,
+    },
+}
+
+impl UpdatedItem {
+    /// Reports whether YAML-safe normalization changed an explicit title.
+    #[must_use]
+    pub fn title_normalized(&self) -> bool {
+        match self {
+            Self::OpenItemEdit {
+                title_normalized, ..
+            } => *title_normalized,
+            Self::Changed { .. } => false,
+        }
+    }
+}
+
+struct PendingWorkItemIdentity {
+    project: ProjectName,
+    identifier: WorkItemId,
+}
+
+pub(crate) struct PreparedPendingWorkUpdate {
+    identity: PendingWorkItemIdentity,
+    patch: ItemPatch,
+    outcome: UpdatedItem,
 }
 
 /// Applies body and frontmatter edits in one item patch.
 ///
 /// Closed items accept only commit and report amendments.
+///
+/// # Errors
+///
+/// Returns [`UpdatePendingWorkError`] when preparation, validation, or persistence fails.
 #[cqrsy::command]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "preserves the public request-first operation signature"
+)]
 pub fn execute<S>(
-    cmd: UpdatePendingWorkItem,
+    command: UpdatePendingWorkItem,
     store: &S,
     projects: &ProjectRegistry,
 ) -> Result<UpdatedItem, UpdatePendingWorkError>
 where
     S: AppDbStore<PendingWorkItem>,
 {
-    let edits_body = cmd.prompt.is_some()
-        || cmd.title.is_some()
-        || !cmd.prereq.is_empty()
-        || cmd.clear_prereq
-        || cmd.append.is_some()
-        || cmd.effort.is_some()
-        || cmd.tags.is_some()
-        || cmd.tags_clear;
-    if !edits_body && cmd.commits.is_none() && cmd.append_report.is_none() {
+    let prepared = prepare(&command, store, projects)?;
+    persist(prepared, store)
+}
+
+pub(crate) fn prepare(
+    command: &UpdatePendingWorkItem,
+    store: &impl AppDbStore<PendingWorkItem>,
+    projects: &ProjectRegistry,
+) -> Result<PreparedPendingWorkUpdate, UpdatePendingWorkError> {
+    let commits = commit_provenance::normalize(&command.commits);
+    let tags = parse_tags(&command.tags)?;
+    let edits_body = command.prompt.is_some()
+        || command.title.is_some()
+        || !command.prereq.is_empty()
+        || command.clear_prereq
+        || command.append.is_some()
+        || command.effort.is_some()
+        || tags.is_some()
+        || command.tags_clear;
+    if !edits_body && commits.is_none() && command.append_report.is_none() {
         return Err(UpdatePendingWorkError::NothingToUpdate);
     }
 
-    let not_found = || UpdatePendingWorkError::ItemNotFound { id: cmd.id.clone() };
-    let id = WorkItemId::try_new(&cmd.id).map_err(|_| not_found())?;
-    let project = projects.project_for_id(&id).ok_or_else(not_found)?;
+    let not_found = || UpdatePendingWorkError::ItemNotFound {
+        id: command.id.clone(),
+    };
+    let identifier = WorkItemId::try_new(&command.id).map_err(|_| not_found())?;
+    let project = projects.project_for_id(&identifier).ok_or_else(not_found)?;
     let record = store
-        .get(project, &id)
+        .get(project, &identifier)
         .map_err(|error| UpdatePendingWorkError::WriteStore(Box::new(error)))?
         .ok_or_else(not_found)?;
+    let identity = PendingWorkItemIdentity {
+        project: project.clone(),
+        identifier,
+    };
 
     if record.status == WorkItemStatus::Active {
-        edit_open_item(store, projects, &cmd, &id, &record)
+        prepare_open_item(
+            store,
+            projects,
+            identity,
+            command,
+            commits.as_deref(),
+            tags.as_ref(),
+            &record,
+        )
     } else if edits_body {
-        Err(UpdatePendingWorkError::ClosedItemAmendOnly { id: cmd.id })
+        Err(UpdatePendingWorkError::ClosedItemAmendOnly {
+            id: command.id.clone(),
+        })
     } else {
-        amend_closed_item(store, project, &cmd, &id, &record)
+        amend_closed_item(identity, command, commits.as_deref(), &record)
     }
 }
 
-fn edit_open_item<S>(
+pub(crate) fn persist(
+    prepared: PreparedPendingWorkUpdate,
+    store: &impl AppDbStore<PendingWorkItem>,
+) -> Result<UpdatedItem, UpdatePendingWorkError> {
+    store
+        .update(
+            &prepared.identity.project,
+            &prepared.identity.identifier,
+            prepared.patch,
+        )
+        .map_err(|error| UpdatePendingWorkError::WriteStore(Box::new(error)))?;
+    Ok(prepared.outcome)
+}
+
+fn prepare_open_item<S>(
     store: &S,
     projects: &ProjectRegistry,
-    cmd: &UpdatePendingWorkItem,
-    id: &WorkItemId,
+    identity: PendingWorkItemIdentity,
+    command: &UpdatePendingWorkItem,
+    commits: Option<&str>,
+    tags: Option<&Tags>,
     record: &PendingWorkItem,
-) -> Result<UpdatedItem, UpdatePendingWorkError>
+) -> Result<PreparedPendingWorkUpdate, UpdatePendingWorkError>
 where
     S: AppDbStore<PendingWorkItem>,
 {
-    let new_title = cmd
+    let new_title = command
         .title
         .as_deref()
         .map_or_else(|| record.title.clone(), normalize_title);
 
     let mut patch = ItemPatch {
-        body: compute_body(cmd, record)?,
+        body: compute_body(command, record)?,
         ..ItemPatch::default()
     };
-    if cmd.title.is_some() {
+    if command.title.is_some() {
         patch.title = Some(new_title.clone());
     }
-    if cmd.clear_prereq {
+    if command.clear_prereq {
         patch.prereq = Some(None);
-    } else if !cmd.prereq.is_empty() {
-        let merged = merge_prereqs(store, projects, record.prereq.as_deref(), &cmd.prereq)?;
+    } else if !command.prereq.is_empty() {
+        let merged = validate_and_merge(record.prereq.as_deref(), &command.prereq, store, projects)
+            .map_err(map_prerequisite_error)?;
         patch.prereq = Some(Some(merged));
     }
-    if let Some(commits) = &cmd.commits {
-        patch.commits = Some(Some(commits.clone()));
+    if let Some(commits) = commits {
+        patch.commits = Some(Some(commits.to_string()));
     }
-    if let Some(effort) = cmd.effort {
+    if let Some(effort) = command.effort {
         patch.effort = Some(effort);
     }
-    patch.tags = resolve_tags(cmd, id, record)?;
+    patch.tags = resolve_tags(tags, command.tags_clear, &identity.identifier, record)?;
 
-    let project = projects.project_for_id(id).expect("id already resolved");
-    store
-        .update(project, id, patch)
-        .map_err(|error| UpdatePendingWorkError::WriteStore(Box::new(error)))?;
-    Ok(UpdatedItem::OpenItemEdit {
-        id: id.as_ref().to_string(),
-        project: project.as_ref().to_string(),
+    let outcome = UpdatedItem::OpenItemEdit {
+        id: identity.identifier.as_ref().to_string(),
+        project: identity.project.as_ref().to_string(),
         title: new_title,
+        title_normalized: command.title.as_deref().is_some_and(title_was_normalized),
+    };
+    Ok(PreparedPendingWorkUpdate {
+        identity,
+        patch,
+        outcome,
     })
 }
 
@@ -148,16 +295,16 @@ where
 ///
 /// Prompt replacement starts from a new body; lane and report edits build on that result.
 fn compute_body(
-    cmd: &UpdatePendingWorkItem,
+    command: &UpdatePendingWorkItem,
     record: &PendingWorkItem,
 ) -> Result<Option<String>, UpdatePendingWorkError> {
     let base = body_region(&record.body);
-    let mut body: Option<String> = cmd.prompt.as_deref().map(note_body);
-    if let Some(append) = &cmd.append {
+    let mut body: Option<String> = command.prompt.as_deref().map(note_body);
+    if let Some(append) = &command.append {
         let current = body.as_deref().unwrap_or(base);
         body = Some(append_lanes(current, append).ok_or(UpdatePendingWorkError::EmptyAppend)?);
     }
-    if let Some(report) = &cmd.append_report {
+    if let Some(report) = &command.append_report {
         let current = body.as_deref().unwrap_or(base);
         body =
             Some(append_report_block(current, report).ok_or(UpdatePendingWorkError::EmptyReport)?);
@@ -171,14 +318,15 @@ fn compute_body(
     reason = "preserves ItemPatch.tags tri-state semantics"
 )]
 fn resolve_tags(
-    cmd: &UpdatePendingWorkItem,
+    appended: Option<&Tags>,
+    clear: bool,
     id: &WorkItemId,
     record: &PendingWorkItem,
 ) -> Result<Option<Option<Tags>>, UpdatePendingWorkError> {
-    let Some(appended) = &cmd.tags else {
-        return Ok(cmd.tags_clear.then_some(None));
+    let Some(appended) = appended else {
+        return Ok(clear.then_some(None));
     };
-    let tags = if cmd.tags_clear {
+    let tags = if clear {
         appended.clone()
     } else if let Some(existing) = record.tags.as_deref() {
         Tags::parse_frontmatter(existing)
@@ -193,108 +341,69 @@ fn resolve_tags(
     Ok(Some(Some(tags)))
 }
 
-fn amend_closed_item<S>(
-    store: &S,
-    project: &pwf_domain::pending_work::ProjectName,
-    cmd: &UpdatePendingWorkItem,
-    id: &WorkItemId,
+fn amend_closed_item(
+    identity: PendingWorkItemIdentity,
+    command: &UpdatePendingWorkItem,
+    commits: Option<&str>,
     record: &PendingWorkItem,
-) -> Result<UpdatedItem, UpdatePendingWorkError>
-where
-    S: AppDbStore<PendingWorkItem>,
-{
+) -> Result<PreparedPendingWorkUpdate, UpdatePendingWorkError> {
     let mut patch = ItemPatch::default();
     let mut changes = Vec::new();
-    if let Some(commits) = &cmd.commits {
-        patch.commits = Some(Some(commits.clone()));
-        changes.push(format!("commits: {commits}"));
+    if let Some(commits) = commits {
+        patch.commits = Some(Some(commits.to_string()));
+        changes.push(commits_change(commits));
     }
-    if let Some(report) = &cmd.append_report {
+    if let Some(report) = &command.append_report {
         let base = body_region(&record.body);
         patch.body =
             Some(append_report_block(base, report).ok_or(UpdatePendingWorkError::EmptyReport)?);
         changes.push("report appended".to_string());
     }
-    store
-        .update(project, id, patch)
-        .map_err(|error| UpdatePendingWorkError::WriteStore(Box::new(error)))?;
-    Ok(UpdatedItem::Changed {
-        id: id.as_ref().to_string(),
+    let outcome = UpdatedItem::Changed {
+        id: identity.identifier.as_ref().to_string(),
         changes,
+    };
+    Ok(PreparedPendingWorkUpdate {
+        identity,
+        patch,
+        outcome,
     })
 }
 
-/// Validates and deduplicates prerequisite ids before appending them to frontmatter.
-fn merge_prereqs<S>(
-    store: &S,
-    projects: &ProjectRegistry,
-    existing: Option<&str>,
-    values: &[String],
-) -> Result<String, UpdatePendingWorkError>
-where
-    S: AppDbStore<PendingWorkItem>,
-{
-    let mut ids: Vec<String> = existing
-        .into_iter()
-        .flat_map(|value| {
-            PREREQ_VALUE_RE
-                .captures_iter(value)
-                .map(|captures| captures[1].to_string())
-        })
-        .collect();
-    let prereqs = Prereqs::parse_values(values).map_err(map_parse_prereqs_error)?;
-    let mut missing = Vec::new();
-    for id in prereqs.iter() {
-        if !prereq_exists(store, projects, id)? {
-            missing.push(id.as_ref().to_string());
-        }
-    }
-    if !missing.is_empty() {
-        return Err(UpdatePendingWorkError::UnknownPrereqIds { ids: missing });
-    }
-    for id in prereqs.ids() {
-        if !ids.iter().any(|existing| existing == id) {
-            ids.push(id.to_string());
-        }
-    }
-    Ok(ids
-        .iter()
-        .map(|id| format!("[[{id}]]"))
-        .collect::<Vec<_>>()
-        .join(", "))
+fn commits_change(commits: &str) -> String {
+    format!("commits: {commits}")
 }
 
-fn prereq_exists<S>(
-    store: &S,
-    projects: &ProjectRegistry,
-    id: &WorkItemId,
-) -> Result<bool, UpdatePendingWorkError>
-where
-    S: AppDbStore<PendingWorkItem>,
-{
-    let Some(project) = projects.project_for_id(id) else {
-        return Ok(false);
-    };
-    Ok(store
-        .get(project, id)
-        .map_err(|error| UpdatePendingWorkError::WriteStore(Box::new(error)))?
-        .is_some())
-}
-
-fn map_parse_prereqs_error(error: ParsePrereqsError) -> UpdatePendingWorkError {
+fn map_prerequisite_error(error: PrerequisiteValidationError) -> UpdatePendingWorkError {
     match error {
-        ParsePrereqsError::MissingId => UpdatePendingWorkError::MissingPrereqId,
-        ParsePrereqsError::InvalidId { raw } => UpdatePendingWorkError::InvalidPrereqId { raw },
+        PrerequisiteValidationError::InvalidId { raw } => {
+            UpdatePendingWorkError::InvalidPrereqId { raw }
+        }
+        PrerequisiteValidationError::MissingId => UpdatePendingWorkError::MissingPrereqId,
+        PrerequisiteValidationError::UnknownIds { ids } => {
+            UpdatePendingWorkError::UnknownPrereqIds { ids }
+        }
     }
+}
+
+fn parse_tags(values: &[String]) -> Result<Option<Tags>, UpdatePendingWorkError> {
+    if values.is_empty() {
+        return Ok(None);
+    }
+    Tags::parse_values(values)
+        .map(Some)
+        .map_err(|error| UpdatePendingWorkError::InvalidTag {
+            raw: error.raw().to_string(),
+        })
 }
 
 #[cfg(test)]
 mod tests {
-    use pwf_domain::pending_work::{
-        ProjectName, ProjectRegistry, Tags, Timestamp, UpdatedItem, WorkItemId, WorkItemStatus,
-    };
+    use pwf_domain::pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus};
 
-    use super::{UpdatePendingWorkError, UpdatePendingWorkItem, execute};
+    use super::{
+        ProjectRegistry, UpdatePendingWorkError, UpdatePendingWorkItem, UpdatedItem, execute,
+    };
     use crate::{Materialization, PendingWorkItem, RecordId, testing::InMemoryStore};
 
     fn registry() -> ProjectRegistry {
@@ -318,7 +427,7 @@ mod tests {
             prereq: None,
             section: None,
             body: body.to_string(),
-            source: body.to_string(),
+            source: format!("---\nstatus: {status}\n---\n{body}"),
             locator: format!("/mem/glep-shimeji/{id}.md"),
             placement: None,
             materialization: Materialization::NoteFile,
@@ -339,10 +448,10 @@ mod tests {
             append: None,
             prereq: Vec::new(),
             clear_prereq: false,
-            commits: None,
+            commits: Vec::new(),
             append_report: None,
             effort: None,
-            tags: None,
+            tags: Vec::new(),
             tags_clear: false,
         }
     }
@@ -364,7 +473,7 @@ mod tests {
     fn update_allows_commits_amend_on_closed_item() {
         let store = staged(WorkItemStatus::Done, "## Goals\n- x\n");
         let cmd = UpdatePendingWorkItem {
-            commits: Some("abc..def".to_string()),
+            commits: vec![" abc..def, ghi..jkl ".to_string(), "abc..def".to_string()],
             ..empty("GLP-0001")
         };
 
@@ -374,12 +483,12 @@ mod tests {
             updated,
             UpdatedItem::Changed {
                 id: "GLP-0001".to_string(),
-                changes: vec!["commits: abc..def".to_string()],
+                changes: vec!["commits: abc..def, ghi..jkl".to_string()],
             }
         );
         assert_eq!(
             store.items("glep-shimeji")[0].commits.as_deref(),
-            Some("abc..def")
+            Some("abc..def, ghi..jkl")
         );
     }
 
@@ -416,6 +525,7 @@ mod tests {
                 id: "GLP-0001".to_string(),
                 project: "glep-shimeji".to_string(),
                 title: "new title".to_string(),
+                title_normalized: false,
             }
         );
         let item = &store.items("glep-shimeji")[0];
@@ -431,12 +541,19 @@ mod tests {
             ..empty("GLP-0001")
         };
 
-        execute(cmd, &store, &registry()).unwrap();
+        let updated = execute(cmd, &store, &registry()).unwrap();
 
         assert_eq!(
             store.items("glep-shimeji")[0].title,
             "fix parser; handle colons"
         );
+        assert!(matches!(
+            updated,
+            UpdatedItem::OpenItemEdit {
+                title_normalized: true,
+                ..
+            }
+        ));
     }
 
     fn staged_with_tags(raw: &str) -> InMemoryStore {
@@ -449,15 +566,15 @@ mod tests {
             .with_project("glep-shimeji", vec![record])
     }
 
-    fn tags(values: &[&str]) -> Tags {
-        Tags::parse_values(&values.iter().map(|v| (*v).to_string()).collect::<Vec<_>>()).unwrap()
+    fn tags(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_string()).collect()
     }
 
     #[test]
     fn update_merges_tags_with_existing_frontmatter() {
         let store = staged_with_tags("[sqlite, godot]");
         let cmd = UpdatePendingWorkItem {
-            tags: Some(tags(&["godot", "csharp-export"])),
+            tags: tags(&["godot", "csharp-export"]),
             ..empty("GLP-0001")
         };
 
@@ -473,7 +590,7 @@ mod tests {
     fn update_tags_clear_plus_tags_replaces_without_parsing_existing() {
         let store = staged_with_tags("still-corrupt");
         let cmd = UpdatePendingWorkItem {
-            tags: Some(tags(&["sqlite"])),
+            tags: tags(&["sqlite"]),
             tags_clear: true,
             ..empty("GLP-0001")
         };
@@ -490,7 +607,7 @@ mod tests {
     fn update_rejects_corrupt_existing_tags_on_the_merge_path() {
         let store = staged_with_tags("sqlite, godot");
         let cmd = UpdatePendingWorkItem {
-            tags: Some(tags(&["sqlite"])),
+            tags: tags(&["sqlite"]),
             ..empty("GLP-0001")
         };
 
@@ -501,6 +618,59 @@ mod tests {
             UpdatePendingWorkError::InvalidTagsFrontmatter { ref id, ref raw }
                 if id == "GLP-0001" && raw == "sqlite, godot"
         ));
+    }
+
+    #[test]
+    fn update_rejects_invalid_raw_tag_with_cli_display() {
+        let store = staged(WorkItemStatus::Active, "body\n");
+        let cmd = UpdatePendingWorkItem {
+            tags: vec!["sqlite__export".to_string()],
+            ..empty("GLP-0001")
+        };
+
+        let error = execute(cmd, &store, &registry()).unwrap_err();
+
+        assert!(matches!(
+            error,
+            UpdatePendingWorkError::InvalidTag { ref raw } if raw == "sqlite__export"
+        ));
+        assert_eq!(
+            error.to_string(),
+            "Invalid --tag value \"sqlite__export\"; use lowercase/uppercase ASCII letters, digits, '_' or '-', without leading, trailing, or repeated separators."
+        );
+    }
+
+    #[test]
+    fn update_validates_and_merges_prerequisites_in_the_application() {
+        let store = InMemoryStore::default()
+            .with_prefix("glep-shimeji", "GLP")
+            .with_project(
+                "glep-shimeji",
+                vec![
+                    PendingWorkItem {
+                        prereq: Some("[[GLP-0001]], [[GLP-0001]]".to_string()),
+                        ..record("GLP-0002", WorkItemStatus::Active, "body\n")
+                    },
+                    record("GLP-0001", WorkItemStatus::Done, "body\n"),
+                ],
+            );
+        let cmd = UpdatePendingWorkItem {
+            prereq: vec!["glp1, GLP-0001".to_string()],
+            ..empty("GLP-0002")
+        };
+
+        execute(cmd, &store, &registry()).unwrap();
+
+        let item = store
+            .items("glep-shimeji")
+            .into_iter()
+            .find(|item| {
+                item.id
+                    .as_item()
+                    .is_some_and(|id| id.as_ref() == "GLP-0002")
+            })
+            .unwrap();
+        assert_eq!(item.prereq.as_deref(), Some("[[GLP-0001]]"));
     }
 
     #[test]

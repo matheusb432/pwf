@@ -1,10 +1,13 @@
-use pwf_domain::pending_work::ProjectRegistry;
-
 use super::{
     add::AddPendingWorkError,
     done::{CloseError, ClosedItemAction, CompletedPendingWork, perform_close},
+    project_registry::ProjectRegistry,
 };
-use crate::ports::{AppDbStore, IndexEntry, IndexSection, PendingWorkItem};
+use crate::{
+    HandoffDocumentStore, HandoffLedger,
+    handoff::HandoffError,
+    ports::{AppDbStore, IndexEntry, IndexSection, PendingWorkItem},
+};
 
 #[derive(Debug, Clone)]
 pub struct CancelPendingWork {
@@ -22,17 +25,14 @@ impl CancelPendingWork {
         report: String,
         commits: Vec<String>,
         review: bool,
-    ) -> Result<Self, CancelPendingWorkError> {
-        if report.trim().is_empty() {
-            return Err(CancelPendingWorkError::EmptyReport);
-        }
-        Ok(Self {
+    ) -> Self {
+        Self {
             id,
             completed,
             report,
             commits,
             review,
-        })
+        }
     }
 }
 
@@ -42,10 +42,25 @@ pub enum CancelPendingWorkError {
     EmptyReport,
     #[error("Open pending-work item not found: {id}")]
     ItemNotFound { id: String },
+    /// Reports a canonical identifier whose prefix has no configured project.
+    #[error("Unknown task id prefix `{prefix}` for {pending_work_identifier}")]
+    UnknownPrefix {
+        pending_work_identifier: String,
+        prefix: String,
+    },
     #[error("{0}")]
     WriteStore(Box<dyn std::error::Error + Send + Sync>),
     #[error("{0}")]
     ReviewTask(#[source] AddPendingWorkError),
+    #[error(transparent)]
+    HandoffPreflight(HandoffError),
+    #[error("{source}")]
+    HandoffAfterPendingWork {
+        pending_work_identifier: pwf_domain::pending_work::WorkItemId,
+        completed: Box<CompletedPendingWork>,
+        #[source]
+        source: HandoffError,
+    },
 }
 
 #[cqrsy::command]
@@ -55,7 +70,11 @@ pub fn execute<S>(
     projects: &ProjectRegistry,
 ) -> Result<CompletedPendingWork, CancelPendingWorkError>
 where
-    S: AppDbStore<PendingWorkItem> + AppDbStore<IndexEntry> + AppDbStore<IndexSection>,
+    S: AppDbStore<PendingWorkItem>
+        + AppDbStore<IndexEntry>
+        + AppDbStore<IndexSection>
+        + HandoffDocumentStore
+        + AppDbStore<HandoffLedger>,
 {
     perform_close(
         store,
@@ -73,22 +92,43 @@ where
 fn map_close_error(error: CloseError) -> CancelPendingWorkError {
     match error {
         CloseError::ItemNotFound { id } => CancelPendingWorkError::ItemNotFound { id },
+        CloseError::UnknownPrefix {
+            pending_work_identifier,
+            prefix,
+        } => CancelPendingWorkError::UnknownPrefix {
+            pending_work_identifier,
+            prefix,
+        },
         CloseError::EmptyReport => CancelPendingWorkError::EmptyReport,
         CloseError::WriteStore(source) => CancelPendingWorkError::WriteStore(source),
         CloseError::ReviewTask(source) => CancelPendingWorkError::ReviewTask(source),
+        CloseError::HandoffPreflight(source) => CancelPendingWorkError::HandoffPreflight(source),
+        CloseError::HandoffAfterPendingWork {
+            pending_work_identifier,
+            completed,
+            source,
+        } => CancelPendingWorkError::HandoffAfterPendingWork {
+            pending_work_identifier,
+            completed,
+            source,
+        },
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use pwf_domain::pending_work::{
-        ProjectName, ProjectRegistry, Timestamp, WorkItemId, WorkItemStatus,
+    use std::{path::PathBuf, time::SystemTime};
+
+    use pwf_domain::{
+        handoff::HandoffStatus,
+        pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus},
     };
 
-    use super::{CancelPendingWork, CancelPendingWorkError, execute};
+    use super::{CancelPendingWork, CancelPendingWorkError, ProjectRegistry, execute};
     use crate::{
-        IndexEntry, IndexEntryState, Materialization, PendingWorkItem, RecordId,
-        testing::InMemoryStore,
+        HandoffDocument, HandoffDocumentIdentifier, HandoffLocation, HandoffScope, IndexEntry,
+        IndexEntryState, Materialization, PendingWorkItem, RecordId,
+        testing::{FailurePoint, InMemoryStore},
     };
 
     fn registry() -> ProjectRegistry {
@@ -136,19 +176,68 @@ mod tests {
         store
     }
 
+    fn handoff() -> HandoffDocument {
+        HandoffDocument {
+            identifier: HandoffDocumentIdentifier {
+                file_name: "2026-01-01-tray-gui.md".to_string(),
+                location: HandoffLocation::Active,
+            },
+            location: HandoffLocation::Active,
+            project: Some(ProjectName::try_new("glep-shimeji").unwrap()),
+            title: "Tray GUI".to_string(),
+            status: Some(HandoffStatus::Active),
+            created: Some(Timestamp::new("2026-01-01")),
+            completed: None,
+            pending_work_identifier_raw: Some("GLP-0001".to_string()),
+            goals_completed: 0,
+            goals_total: 1,
+            body: "\n# Tray GUI\n".to_string(),
+            source: "---\nstatus: active\nproject: glep-shimeji\ncreated: 2026-01-01\npw: GLP-0001\n---\n\n# Tray GUI\n".to_string(),
+            locator: PathBuf::from("/repo/docs/handoffs/2026-01-01-tray-gui.md"),
+            modified_timestamp: SystemTime::UNIX_EPOCH,
+        }
+    }
+
     #[test]
-    fn cancel_requires_report() {
-        let error = CancelPendingWork::new(
+    fn cancel_rejects_blank_report_during_execution() {
+        let command = CancelPendingWork::new(
             "GLP-0001".to_string(),
             "2026-07-14".to_string(),
             " \t\n".to_string(),
             Vec::new(),
             false,
-        )
-        .expect_err("blank cancellation report must fail");
+        );
+
+        let error = execute(&command, &staged(), &registry()).unwrap_err();
 
         assert!(matches!(error, CancelPendingWorkError::EmptyReport));
         assert_eq!(error.to_string(), "--report cannot be empty.");
+    }
+
+    #[test]
+    fn cancel_handoff_preflight_precedes_blank_report_validation() {
+        let tagged = PendingWorkItem {
+            tags: Some("[handoff]".to_string()),
+            ..record("GLP-0001")
+        };
+        let store = InMemoryStore::default()
+            .with_prefix("glep-shimeji", "GLP")
+            .with_project("glep-shimeji", vec![tagged]);
+        let command = CancelPendingWork::new(
+            "GLP-0001".to_string(),
+            "2026-07-14".to_string(),
+            " \t\n".to_string(),
+            Vec::new(),
+            false,
+        );
+
+        let error = execute(&command, &store, &registry()).unwrap_err();
+
+        assert!(matches!(error, CancelPendingWorkError::HandoffPreflight(_)));
+        assert_eq!(
+            store.items("glep-shimeji")[0].status,
+            WorkItemStatus::Active
+        );
     }
 
     #[test]
@@ -158,14 +247,72 @@ mod tests {
             "GLP-0001".to_string(),
             "2026-07-14".to_string(),
             "obsoleted".to_string(),
-            Vec::new(),
+            vec![" a..b, c..d ".to_string(), "a..b".to_string()],
             false,
-        )
-        .unwrap();
+        );
 
         let out = execute(&command, &store, &registry()).unwrap();
 
         assert_eq!(out.action, super::super::done::ClosedItemAction::Cancelled);
+        assert_eq!(
+            store.items("glep-shimeji")[0].status,
+            WorkItemStatus::Cancelled
+        );
+        assert_eq!(
+            store.items("glep-shimeji")[0].commits.as_deref(),
+            Some("a..b, c..d")
+        );
+    }
+
+    #[test]
+    fn cancel_reports_an_unknown_configured_prefix() {
+        let command = CancelPendingWork::new(
+            "XYZ-0001".to_string(),
+            "2026-07-14".to_string(),
+            "obsolete".to_string(),
+            Vec::new(),
+            false,
+        );
+
+        let error = execute(&command, &staged(), &registry()).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "Unknown task id prefix `XYZ` for XYZ-0001"
+        );
+    }
+
+    #[test]
+    fn cancel_reports_handoff_failure_after_pending_work_is_cancelled() {
+        let tagged = PendingWorkItem {
+            tags: Some("[handoff]".to_string()),
+            ..record("GLP-0001")
+        };
+        let scope = HandoffScope {
+            repository_root: PathBuf::from("/repo"),
+        };
+        let store = InMemoryStore::default()
+            .with_prefix("glep-shimeji", "GLP")
+            .with_project("glep-shimeji", vec![tagged])
+            .with_handoff_documents(scope, vec![handoff()])
+            .with_failure(FailurePoint::DocumentUpdate);
+        let command = CancelPendingWork::new(
+            "GLP-0001".to_string(),
+            "2026-07-14".to_string(),
+            "obsoleted".to_string(),
+            Vec::new(),
+            false,
+        );
+
+        let error = execute(&command, &store, &registry()).unwrap_err();
+
+        assert!(matches!(
+            error,
+            CancelPendingWorkError::HandoffAfterPendingWork {
+                ref pending_work_identifier,
+                ..
+            } if pending_work_identifier.as_ref() == "GLP-0001"
+        ));
         assert_eq!(
             store.items("glep-shimeji")[0].status,
             WorkItemStatus::Cancelled

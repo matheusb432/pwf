@@ -6,6 +6,7 @@ publish.workspace = true
 
 [dependencies]
 pwf-domain = { path = "../domain" }
+prompt-lanes = { path = "../../shared/prompt-lanes" }
 cqrsy = { workspace = true }
 regex = { workspace = true }
 thiserror = { workspace = true }

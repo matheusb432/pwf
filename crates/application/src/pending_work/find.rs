@@ -1,8 +1,12 @@
-use pwf_domain::pending_work::{PendingWorkItemView, ProjectRegistry, WorkItemId};
+use pwf_domain::pending_work::WorkItemId;
 
 use crate::{
     AppDbStore, PendingWorkItem,
-    pending_work::enrich::{enrich, is_open_item},
+    pending_work::{
+        enrich::{enrich, is_open_item},
+        list::PendingWorkItemView,
+        project_registry::ProjectRegistry,
+    },
 };
 
 #[derive(Debug, Clone)]
@@ -116,11 +120,11 @@ pub fn execute(
 mod tests {
     use std::assert_matches;
 
-    use pwf_domain::pending_work::{
-        ProjectName, ProjectRegistry, Timestamp, WorkItemId, WorkItemStatus,
-    };
+    use pwf_domain::pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus};
 
-    use super::{FindPendingWork, FindPendingWorkError, execute};
+    use super::{
+        FindPendingWork, FindPendingWorkError, PendingWorkItemView, ProjectRegistry, execute,
+    };
     use crate::{
         IndexPlacement, Materialization, PendingWorkItem, RecordId, testing::InMemoryStore,
     };
@@ -185,7 +189,7 @@ mod tests {
         store: &InMemoryStore,
         projects: &ProjectRegistry,
         id: &str,
-    ) -> Result<pwf_domain::pending_work::PendingWorkItemView, FindPendingWorkError> {
+    ) -> Result<PendingWorkItemView, FindPendingWorkError> {
         execute(&FindPendingWork { id: id.to_string() }, store, projects)
     }
 

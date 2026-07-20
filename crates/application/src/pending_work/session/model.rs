@@ -18,7 +18,7 @@ pub enum DispatchMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfirmationPolicy {
     Skip,
-    /// Confirms before any launch side effect.
+    /// Confirms before append persistence or any launch side effect.
     Ask,
 }
 

@@ -1,7 +1,7 @@
 [workspace]
 members = ["crates/*", "shared/prompt-lanes", "xtask"]
 default-members = ["crates/cli"]
-resolver = "2"
+resolver = "3"
 
 [workspace.package]
 edition = "2024"
@@ -9,6 +9,7 @@ publish = false
 
 [workspace.dependencies]
 assert_cmd = "2"
+cargo_metadata = "0.23.1"
 chrono = "0.4"
 clap = { version = "4", features = ["derive"] }
 console = { version = "0.16.4", default-features = false, features = [
@@ -16,6 +17,7 @@ console = { version = "0.16.4", default-features = false, features = [
     "alloc",
 ] }
 cqrsy = { git = "ssh://git@github.com/matheusb432/cqrsy.git", tag = "v0.10.0" }
+expectrl = "0.9.0"
 nutype = { version = "0.7.0", features = ["serde", "regex"] }
 predicates = "3"
 regex = "1"

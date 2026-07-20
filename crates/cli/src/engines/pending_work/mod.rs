@@ -1,43 +1,78 @@
-mod actions;
-mod agent;
-mod color;
-mod commits;
-mod continue_prompt;
-mod domain;
-mod errors;
-mod handoff_query;
-mod index;
-mod model;
-mod naming;
-mod new_add;
-mod obsidian;
-mod prereq;
-mod query;
-mod render;
-mod route;
-mod run;
-mod section;
-mod session;
-mod tags;
-mod text;
+use clap::Subcommand;
 
-pub(crate) use actions::{
-    emit_created_section_diagnostic, emit_created_section_diagnostic_for_error,
-};
-pub use domain::{commands::PendingWorkCommand, types::canonical_pending_id};
-pub use index::{
-    WorkItemFields, add_link_to_index, add_section_block, find_section_index, remove_index_link,
-    section_exists, set_status_text, work_item_content,
-};
-pub(crate) use model::Action;
-pub use model::Item;
-pub use naming::{project_dir, project_index_path, project_key, stamp_date};
-pub use query::{is_item_open, resolve_managed_project_name};
-pub(crate) use run::add_command_from_args;
-// Cross-engine tests require direct store and registry construction.
-#[cfg(test)]
-pub(crate) use run::{project_registry, store_for};
-pub use run::{run, run_args};
-pub use text::{
-    get_title_from_continue_path, handoff_title_from_path, line_number, project_title_prefix,
-};
+pub mod add;
+pub mod cancel;
+pub(crate) mod common;
+pub mod done;
+pub mod list;
+pub mod remove;
+mod render;
+pub mod reopen;
+pub mod route;
+pub mod session;
+pub mod show;
+pub mod update;
+pub mod verify;
+
+#[derive(Subcommand, Debug)]
+pub enum Command {
+    /// Add a pwf task: `pwf add <project> "<prompt>"`.
+    ///
+    /// Prompt words are joined with single spaces, so quotes are optional. Rich
+    /// prompts use lanes: `<title> / <goal> /c <context> /n <constraint> /d <done>`.
+    /// `--continue-handoff` / `--continue <path>` build the prompt from the
+    /// repo's newest handoff or a plan path instead of positional words.
+    Add(add::Arguments),
+    /// List pending-work items (scoped sections hidden unless selected or `--all`).
+    #[command(alias = "ls")]
+    List(list::Arguments),
+    /// Mark an item done in place, keeping a capped done-queue.
+    Done(done::Arguments),
+    /// Mark an item cancelled in place, keeping the same capped queue as done.
+    Cancel(cancel::Arguments),
+    /// Reopen a closed item: flip done/cancelled back to active, drop its
+    /// completed/commits provenance, and restore its index link.
+    Reopen(reopen::Arguments),
+    /// Replace an item's prompt body and/or title; append or clear its prereqs;
+    /// splice rich lane-syntax bullets into the body; amend its `commits:`
+    /// provenance; or append a closeout report — the last two being the only edits
+    /// allowed on a closed item.
+    Update(update::Arguments),
+    /// Stream a task note's markdown (any status, incl. archived done/cancelled).
+    ///
+    /// The id is a bare positional — `pwf show <id>` — or `--id`. `pwf s` is
+    /// an alias. `--path` prints the note's path instead of its markdown.
+    #[command(alias = "s")]
+    Show(show::Arguments),
+    /// Probe whether an agent is launchable.
+    Verify(verify::Arguments),
+    /// Internal word router behind bare `pwf <words...>`.
+    #[command(hide = true)]
+    Route(route::Arguments),
+    /// Delete a task note and remove its index link.
+    Remove(remove::Arguments),
+    /// Dispatch a real agent session into the item's zellij session as a new tab.
+    ///
+    /// The id is a bare positional — `pwf session <id>` — or `--id`.
+    Session(session::Arguments),
+}
+
+pub fn run(command: &Command) -> Result<String, String> {
+    match command {
+        Command::Add(arguments) => add::run(arguments),
+        Command::List(arguments) => list::run(arguments),
+        Command::Done(arguments) => done::run(arguments),
+        Command::Cancel(arguments) => cancel::run(arguments),
+        Command::Reopen(arguments) => reopen::run(arguments),
+        Command::Update(arguments) => update::run(arguments),
+        Command::Show(arguments) => show::run(arguments),
+        Command::Verify(arguments) => verify::run(arguments),
+        Command::Route(arguments) => match route::resolve(arguments) {
+            route::ResolvedCommand::List(arguments) => list::run(&arguments),
+            route::ResolvedCommand::Verify(arguments) => verify::run(&arguments),
+        },
+        Command::Remove(arguments) => remove::run(arguments),
+        Command::Session(arguments) => session::run(arguments),
+    }
+    .map_err(String::from)
+}

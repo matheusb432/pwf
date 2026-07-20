@@ -5,7 +5,7 @@ use pwf::engines::pending_work;
 #[path = "support/pending_work.rs"]
 mod pending_work_test;
 
-use pending_work_test::run_args_plain;
+use pending_work_test::run_plain;
 
 #[test]
 fn pending_work_stdout_normalization_strips_ansi_sgr_sequences() {
@@ -44,8 +44,8 @@ fn add_allocates_first_id_and_writes_files() {
         "--date",
         "2026-01-01",
     ]);
-    let out = run_args_plain(&args).unwrap();
-    assert!(out.starts_with("ADDED PWF TASK [GLP-0001]"), "got: {out}");
+    let out = run_plain(&args).unwrap();
+    assert!(out.starts_with("Added pwf task: **GLP-0001"), "got: {out}");
     let item = fs::read_to_string(stage.join("notes/glep-shimeji/GLP-0001.md")).unwrap();
     assert!(item.contains("status: active"));
     let index = fs::read_to_string(stage.join("notes/glep-shimeji/glep-shimeji.md")).unwrap();
@@ -100,8 +100,8 @@ fn add_allocates_after_closed_items_in_project_directory() {
         "2026-01-01",
     ]);
 
-    let out = run_args_plain(&args).unwrap();
-    assert!(out.starts_with("ADDED PWF TASK [CFG-0090]"), "got: {out}");
+    let out = run_plain(&args).unwrap();
+    assert!(out.starts_with("Added pwf task: **CFG-0090"), "got: {out}");
     assert!(proj.join("CFG-0090.md").exists());
     assert!(proj.join("CFG-0089.md").exists());
 }
@@ -133,7 +133,7 @@ fn add_caps_inferred_title_for_long_prompt_without_ampersand() {
         "--date",
         "2026-01-01",
     ]);
-    run_args_plain(&args).unwrap();
+    run_plain(&args).unwrap();
 
     let item = fs::read_to_string(stage.join("notes/config-handler/CFG-0001.md")).unwrap();
     let title = item
@@ -198,7 +198,7 @@ fn add_human_flag_routes_item_under_human_section() {
         "--date",
         "2026-01-01",
     ]);
-    run_args_plain(&args).unwrap();
+    run_plain(&args).unwrap();
     let index = fs::read_to_string(proj.join("glep-shimeji.md")).unwrap();
     let human_idx = index
         .find("## Human")
@@ -261,8 +261,8 @@ fn add_with_prereq_writes_validated_frontmatter() {
         "--date",
         "2026-01-01",
     ]);
-    let out = run_args_plain(&args).unwrap();
-    assert!(out.starts_with("ADDED PWF TASK [GLP-0002]"), "got: {out}");
+    let out = run_plain(&args).unwrap();
+    assert!(out.starts_with("Added pwf task: **GLP-0002"), "got: {out}");
     let item = fs::read_to_string(proj.join("GLP-0002.md")).unwrap();
     assert!(
         item.contains("prereq: \"[[GLP-0001]]\"\n---"),
@@ -301,7 +301,7 @@ fn add_rejects_unknown_prereq_without_writing_item() {
         "--date",
         "2026-01-01",
     ]);
-    let err = run_args_plain(&args).unwrap_err();
+    let err = run_plain(&args).unwrap_err();
     assert!(err.contains("GLP-9999"), "got: {err}");
     assert!(
         !proj.join("GLP-0001.md").exists(),
@@ -336,7 +336,7 @@ fn add_unmanaged_project_returns_error() {
         "--date",
         "2026-01-01",
     ]);
-    let err = run_args_plain(&args).unwrap_err();
+    let err = run_plain(&args).unwrap_err();
     assert!(err.contains("no work-item prefix"), "got: {err}");
 }
 
@@ -371,7 +371,7 @@ fn list_shows_item_in_text() {
         "--date",
         "2026-01-01",
     ]);
-    let out = run_args_plain(&args).unwrap();
+    let out = run_plain(&args).unwrap();
     assert!(
         out.contains("GLP-0001 :: tray gui"),
         "item line missing: {out}"
@@ -429,7 +429,7 @@ fn list_scopes_run(cfg_s: &str, notes_s: &str, extra: &[&str]) -> String {
     let mut argv = vec!["list"];
     argv.extend_from_slice(extra);
     argv.extend_from_slice(&base);
-    run_args_plain(&parse_args(&argv)).unwrap()
+    run_plain(&parse_args(&argv)).unwrap()
 }
 
 #[test]
@@ -539,7 +539,7 @@ fn list_all_shows_human_section_item_in_text() {
     .unwrap();
     let cfg_s = cfg.to_string_lossy().into_owned();
     let notes_s = notes.to_string_lossy().into_owned();
-    let out = run_args_plain(&parse_args(&[
+    let out = run_plain(&parse_args(&[
         "list",
         "--all",
         "--config-path",
@@ -602,7 +602,7 @@ fn list_all_follows_grouped_order_in_text() {
     .unwrap();
     let cfg_s = cfg.to_string_lossy().into_owned();
     let notes_s = notes.to_string_lossy().into_owned();
-    let out = run_args_plain(&parse_args(&[
+    let out = run_plain(&parse_args(&[
         "list",
         "--all",
         "--config-path",
@@ -666,7 +666,7 @@ fn list_all_long_keeps_metadata_on_its_own_line_in_every_group() {
     .unwrap();
     let cfg_s = cfg.to_string_lossy().into_owned();
     let notes_s = notes.to_string_lossy().into_owned();
-    let out = run_args_plain(&parse_args(&[
+    let out = run_plain(&parse_args(&[
         "list",
         "--all",
         "--long",
@@ -737,7 +737,7 @@ fn route_project_shortcut_uses_list_scopes() {
             "--date",
             "2026-01-01",
         ]);
-        run_args_plain(&parse_args(&argv)).unwrap()
+        run_plain(&parse_args(&argv)).unwrap()
     };
 
     let def = run(&[]);
@@ -794,7 +794,7 @@ fn list_long_shows_per_item_metadata() {
         "--date",
         "2026-01-01",
     ]);
-    let out = run_args_plain(&args).unwrap();
+    let out = run_plain(&args).unwrap();
     assert!(out.contains("GLP-0001 :: tray gui"), "got: {out}");
     assert!(out.contains("  status: active"), "got: {out}");
     assert!(out.contains("  launch: READY"), "got: {out}");
@@ -844,7 +844,7 @@ fn list_run(cfg: &std::path::Path, notes: &std::path::Path, extra: &[&str]) -> S
         "--date",
         "2026-01-01",
     ]);
-    run_args_plain(&parse_args(&argv)).unwrap()
+    run_plain(&parse_args(&argv)).unwrap()
 }
 
 /// Stages two projects whose equal creation dates force the full-ID tiebreak.
@@ -981,8 +981,13 @@ fn list_long_shows_prereq_status() {
     )
     .unwrap();
     fs::write(
+        proj.join("CFG-0015.md"),
+        "---\nstatus: active\ntitle: active prereq\nproject: config-handler\ncreated: 2026-01-01\n---\n\nbody\n",
+    )
+    .unwrap();
+    fs::write(
         proj.join("CFG-0020.md"),
-        "---\nstatus: active\ntitle: dependent\nproject: config-handler\ncreated: 2026-01-01\nprereq: \"[[CFG-0014]]\"\n---\n\ndo the dependent thing\n",
+        "---\nstatus: active\ntitle: dependent\nproject: config-handler\ncreated: 2026-01-01\nprereq: \"[[CFG-0014]], [[CFG-0015]], [[CFG-9999]]\"\n---\n\ndo the dependent thing\n",
     )
     .unwrap();
     fs::write(
@@ -1009,8 +1014,11 @@ fn list_long_shows_prereq_status() {
         "--date",
         "2026-01-01",
     ]);
-    let out = run_args_plain(&args).unwrap();
-    assert!(out.contains("prereq: CFG-0014 (done)"), "got: {out}");
+    let out = run_plain(&args).unwrap();
+    assert!(
+        out.contains("prereq: CFG-0014 (done), CFG-0015 (active), CFG-9999 (missing)"),
+        "got: {out}"
+    );
 }
 
 #[test]
@@ -1043,7 +1051,7 @@ fn done_keeps_done_link_in_index_in_place_without_bak() {
         "--date",
         "2026-01-01",
     ]);
-    let out = run_args_plain(&args).unwrap();
+    let out = run_plain(&args).unwrap();
     assert!(out.starts_with("Done GLP-0001"), "got: {out}");
     let item = fs::read_to_string(proj.join("GLP-0001.md")).unwrap();
     assert!(item.contains("status: done"));
@@ -1101,7 +1109,7 @@ fn done_evicts_oldest_link_but_keeps_note_in_project_dir() {
         "--date",
         "2026-06-13",
     ]);
-    run_args_plain(&args).unwrap();
+    run_plain(&args).unwrap();
     let index = fs::read_to_string(proj.join("glep-shimeji.md")).unwrap();
     assert!(!index.contains("GLP-0001"), "oldest unlinked: {index}");
     assert!(index.contains("- [x] [[GLP-0007]] ✅ 2026-06-13"));
@@ -1157,9 +1165,9 @@ fn update_rewrites_body_via_note_body_and_preserves_frontmatter() {
         "--date",
         "2026-01-01",
     ]);
-    let out = run_args_plain(&args).unwrap();
+    let out = run_plain(&args).unwrap();
     assert!(
-        out.contains("UPDATED PWF TASK [GLP-0001]") && out.contains("glep-shimeji :: tray gui"),
+        out.contains("Updated pwf task: **GLP-0001") && out.contains("glep-shimeji :: tray gui"),
         "expected update confirmation for GLP-0001: {out}"
     );
 
@@ -1191,7 +1199,7 @@ fn update_title_only_leaves_body_untouched() {
         "--notes-dir",
         &notes.to_string_lossy(),
     ]);
-    run_args_plain(&args).unwrap();
+    run_plain(&args).unwrap();
     let item = fs::read_to_string(proj.join("GLP-0001.md")).unwrap();
     assert!(item.contains("title: new title"), "title replaced: {item}");
     assert!(!item.contains("title: tray gui"));
@@ -1215,7 +1223,7 @@ fn update_prompt_only_leaves_title_untouched() {
         "--notes-dir",
         &notes.to_string_lossy(),
     ]);
-    run_args_plain(&args).unwrap();
+    run_plain(&args).unwrap();
     let item = fs::read_to_string(proj.join("GLP-0001.md")).unwrap();
     assert!(item.contains("title: tray gui"), "title untouched: {item}");
     assert!(item.contains("## Goals\n- fresh prompt"));
@@ -1235,7 +1243,7 @@ fn update_keeps_placeholder_prompt_raw_so_it_stays_detectable() {
         "--notes-dir",
         &notes.to_string_lossy(),
     ]);
-    run_args_plain(&args).unwrap();
+    run_plain(&args).unwrap();
     let item = fs::read_to_string(proj.join("GLP-0001.md")).unwrap();
     // Preserve raw placeholders so `is_placeholder_prompt` can recognize them.
     assert!(!item.contains("## Goals"), "placeholder stored raw: {item}");
@@ -1254,7 +1262,7 @@ fn update_requires_at_least_one_field() {
         "--notes-dir",
         &notes.to_string_lossy(),
     ]);
-    let err = run_args_plain(&args).unwrap_err();
+    let err = run_plain(&args).unwrap_err();
     assert!(err.contains("nothing to update"), "got: {err}");
 }
 
@@ -1272,7 +1280,7 @@ fn update_unknown_id_errors() {
         "--notes-dir",
         &notes.to_string_lossy(),
     ]);
-    assert!(run_args_plain(&args).is_err());
+    assert!(run_plain(&args).is_err());
 }
 
 #[test]
@@ -1313,7 +1321,7 @@ fn done_with_report_appends_report_section() {
         "--date",
         "2026-01-01",
     ]);
-    run_args_plain(&args).unwrap();
+    run_plain(&args).unwrap();
     let item = fs::read_to_string(proj.join("GLP-0001.md")).unwrap();
     assert!(
         item.contains("status: done\ncompleted: 2026-01-01\n"),
@@ -1358,7 +1366,7 @@ fn cancel_requires_report() {
         &notes.to_string_lossy(),
     ]);
 
-    let err = run_args_plain(&args).unwrap_err();
+    let err = run_plain(&args).unwrap_err();
 
     assert_eq!(err, "--report is required for cancel.");
 }
@@ -1402,7 +1410,7 @@ fn cancel_with_report_marks_item_cancelled_and_rotates_done_queue() {
         "2026-01-01",
     ]);
 
-    let out = run_args_plain(&args).unwrap();
+    let out = run_plain(&args).unwrap();
 
     assert!(out.starts_with("Cancelled GLP-0001"), "got: {out}");
     let item = fs::read_to_string(proj.join("GLP-0001.md")).unwrap();
@@ -1468,9 +1476,9 @@ fn remove_deletes_pwf_item_file_and_index_link_with_id_only() {
         "--notes-dir",
         &notes.to_string_lossy(),
     ]);
-    let out = run_args_plain(&args).unwrap();
+    let out = run_plain(&args).unwrap();
     assert!(
-        out.contains("REMOVED PWF TASK [PWF-0001]") && out.contains("pwf :: stale task"),
+        out.contains("Removed pwf task: **PWF-0001") && out.contains("pwf :: stale task"),
         "expected remove confirmation for PWF-0001: {out}"
     );
     assert!(!proj.join("PWF-0001.md").exists());
@@ -1521,8 +1529,8 @@ fn add_continue_handoff_builds_handoff_prompt() {
         "--date",
         "2026-01-01",
     ]);
-    let out = run_args_plain(&args).unwrap();
-    assert!(out.starts_with("ADDED PWF TASK [GLP-0001]"), "got: {out}");
+    let out = run_plain(&args).unwrap();
+    assert!(out.starts_with("Added pwf task: **GLP-0001"), "got: {out}");
     assert!(
         out.contains(":: continue api cleanup"),
         "title not in output: {out}"
@@ -1576,7 +1584,7 @@ fn add_with_title_flag_accepts_prereq() {
         "--date",
         "2026-01-01",
     ]);
-    run_args_plain(&args).unwrap();
+    run_plain(&args).unwrap();
     let item = fs::read_to_string(proj.join("GLP-0002.md")).unwrap();
     assert!(
         item.contains("prereq: \"[[GLP-0001]]\"\n---"),
@@ -1611,7 +1619,7 @@ fn route_create_verbs_error_with_add_hint() {
         let mut argv = vec!["route", "--config-path", &cfg_s, "--notes-dir", &notes_s];
         argv.extend(words);
         let parsed = parse_args(&argv);
-        let err = run_args_plain(&parsed).unwrap_err();
+        let err = run_plain(&parsed).unwrap_err();
         assert_eq!(err, expected);
     }
 }
@@ -1623,7 +1631,7 @@ fn show_stage() -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) 
     fs::create_dir_all(&proj).unwrap();
     fs::write(
         proj.join("GLP-0001.md"),
-        "---\nstatus: active\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\nadd startup toggle\n",
+        "---\nid: GLP-0001\nstatus: active\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\nadd startup toggle\n",
     )
     .unwrap();
     fs::write(proj.join("glep-shimeji.md"), "- [[GLP-0001|tray gui]]\n").unwrap();
@@ -1643,7 +1651,7 @@ fn show_path_args(
     cfg: &std::path::Path,
     notes: &std::path::Path,
     extra: &[&str],
-) -> pwf::cli::EngineArgs {
+) -> pending_work::Command {
     let cfg_s = cfg.to_string_lossy();
     let notes_s = notes.to_string_lossy();
     let mut argv = vec![
@@ -1663,7 +1671,39 @@ fn show_path_args(
 #[test]
 fn show_path_prints_item_note_path_plain() {
     let (notes, proj, cfg) = show_stage();
-    let out = run_args_plain(&show_path_args(&cfg, &notes, &[])).unwrap();
+    let out = run_plain(&show_path_args(&cfg, &notes, &[])).unwrap();
+    assert_eq!(
+        out.trim(),
+        proj.join("GLP-0001.md").to_string_lossy().as_ref()
+    );
+}
+
+#[test]
+fn show_markdown_preserves_item_note_bytes() {
+    let (notes, proj, cfg) = show_stage();
+    let expected = fs::read_to_string(proj.join("GLP-0001.md")).unwrap();
+    let cfg_s = cfg.to_string_lossy();
+    let notes_s = notes.to_string_lossy();
+    let args = parse_args(&[
+        "show",
+        "--id",
+        "GLP-0001",
+        "--config-path",
+        &cfg_s,
+        "--notes-dir",
+        &notes_s,
+    ]);
+
+    assert_eq!(run_plain(&args).unwrap(), expected);
+}
+
+#[test]
+fn show_path_succeeds_when_item_note_is_missing() {
+    let (notes, proj, cfg) = show_stage();
+    fs::remove_file(proj.join("GLP-0001.md")).unwrap();
+
+    let out = run_plain(&show_path_args(&cfg, &notes, &[])).unwrap();
+
     assert_eq!(
         out.trim(),
         proj.join("GLP-0001.md").to_string_lossy().as_ref()
@@ -1673,18 +1713,36 @@ fn show_path_prints_item_note_path_plain() {
 #[test]
 fn show_unknown_id_errors() {
     let (notes, _proj, cfg) = show_stage();
-    let mut args = show_path_args(&cfg, &notes, &[]);
-    args.id = Some("GLP-0099".to_string());
-    let err = run_args_plain(&args).unwrap_err();
+    let cfg = cfg.to_string_lossy();
+    let notes = notes.to_string_lossy();
+    let args = parse_args(&[
+        "show",
+        "--path",
+        "--id",
+        "GLP-0099",
+        "--config-path",
+        &cfg,
+        "--notes-dir",
+        &notes,
+    ]);
+    let err = run_plain(&args).unwrap_err();
     assert!(err.contains("GLP-0099"), "error should name the id: {err}");
 }
 
 #[test]
 fn show_requires_id() {
     let (notes, _proj, cfg) = show_stage();
-    let mut args = show_path_args(&cfg, &notes, &[]);
-    args.id = None;
-    let err = run_args_plain(&args).unwrap_err();
+    let cfg = cfg.to_string_lossy();
+    let notes = notes.to_string_lossy();
+    let args = parse_args(&[
+        "show",
+        "--path",
+        "--config-path",
+        &cfg,
+        "--notes-dir",
+        &notes,
+    ]);
+    let err = run_plain(&args).unwrap_err();
     assert!(err.contains("--id"), "error should mention --id: {err}");
 }
 
@@ -1696,10 +1754,14 @@ fn stage_dir() -> std::path::PathBuf {
     d
 }
 
-fn parse_args(argv: &[&str]) -> pwf::cli::EngineArgs {
+fn parse_args(argv: &[&str]) -> pending_work::Command {
     migrate_test_fixture(argv);
     let v = argv.iter().map(std::string::ToString::to_string).collect();
-    pwf::command::parse_argv(v).unwrap().1
+    let pwf::command::Engine::PendingWork(command) = pwf::command::parse_argv(v).unwrap().engine
+    else {
+        panic!("expected pending-work command");
+    };
+    command
 }
 
 fn migrate_test_fixture(argv: &[&str]) {
@@ -1794,33 +1856,4 @@ fn nanos() -> u128 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos()
-}
-
-#[test]
-fn work_item_content_active_then_done_field_order() {
-    let active = pending_work::work_item_content(pending_work::WorkItemFields {
-        title: "tray gui",
-        project: "glep-shimeji",
-        prompt: "add startup toggle",
-        status: "active",
-        created: "2026-01-01",
-        completed: None,
-        prereq: None,
-        effort: None,
-    });
-    assert!(active.starts_with(
-        "---\nstatus: active\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n"
-    ));
-    assert!(active.contains("\nadd startup toggle\n"));
-    let done = pending_work::set_status_text(&active, "done", "2026-02-02");
-    assert!(done.contains("status: done\ncompleted: 2026-02-02\n"));
-}
-
-#[test]
-fn add_then_remove_index_link_top_placement() {
-    let c =
-        pending_work::add_link_to_index("# glep-shimeji\n\n## Later\n", "- [[GLP-0001|tray gui]]");
-    assert!(c.contains("- [[GLP-0001|tray gui]]"));
-    let removed = pending_work::remove_index_link(&c, "GLP-0001");
-    assert!(!removed.contains("GLP-0001"));
 }

@@ -7,7 +7,6 @@ publish.workspace = true
 [dependencies]
 nutype = { workspace = true }
 prompt-lanes = { path = "../../shared/prompt-lanes" }
-regex = { workspace = true }
 thiserror = { workspace = true }
 
 [lints]

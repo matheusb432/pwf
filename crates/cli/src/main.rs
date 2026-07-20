@@ -17,8 +17,8 @@ fn main() {
 
     let argv = normalize_rich_help_aliases(argv);
 
-    match command::parse_command_argv(argv) {
-        Ok(parsed) => match run_parsed(parsed) {
+    match command::parse_argv(argv) {
+        Ok(parsed) => match run(parsed) {
             Ok(out) => {
                 if !out.is_empty() {
                     println!("{out}");
@@ -43,11 +43,11 @@ fn exit_with_clap_error(e: &clap::Error) -> ! {
     std::process::exit(e.exit_code());
 }
 
-fn run_parsed(parsed: command::ParsedCommand) -> Result<String, String> {
-    match parsed {
-        command::ParsedCommand::PendingWork(command) => engines::pending_work::run(&command),
-        command::ParsedCommand::Handoff(args) => engines::handoff::run(&args),
-        command::ParsedCommand::Note(command) => pwf_note::run(&command),
+fn run(parsed: command::Cli) -> Result<String, String> {
+    match parsed.engine {
+        command::Engine::PendingWork(command) => engines::pending_work::run(&command),
+        command::Engine::Handoff { command } => engines::handoff::run(&command),
+        command::Engine::Note(arguments) => engines::note::run(&arguments),
     }
 }
 

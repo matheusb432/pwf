@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
-use pwf_domain::pending_work::{ProjectName, Tags, inferred_title, normalize_title, note_body};
+use pwf_application::pending_work::note_body;
+use pwf_domain::pending_work::{ProjectName, Tags, inferred_title, normalize_title};
 
 use super::{ObsidianStore, ObsidianStoreError, fs::write_add_item_file};
 use crate::obsidian::note_frontmatter::{NewWorkItemFields, new_work_item_content};

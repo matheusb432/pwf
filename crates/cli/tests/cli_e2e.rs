@@ -3,6 +3,8 @@
 use std::fs;
 
 use assert_cmd::Command;
+#[cfg(target_os = "linux")]
+use expectrl::Expect;
 use predicates::{prelude::PredicateBooleanExt, str::contains};
 use tempfile::TempDir;
 
@@ -10,6 +12,14 @@ const LEADING_HYPHEN_TAG: &str = "-sqlite";
 
 fn pwf() -> Command {
     Command::cargo_bin("pwf").unwrap()
+}
+
+fn raw_rename_error_for_file_over_directory(path: &std::path::Path) -> String {
+    let source_path = path.with_extension("error-probe");
+    fs::write(&source_path, "probe").unwrap();
+    let error = fs::rename(&source_path, path).unwrap_err();
+    fs::remove_file(source_path).unwrap();
+    error.to_string()
 }
 
 fn finish_fixture(dir: TempDir, cfg: std::path::PathBuf) -> (TempDir, std::path::PathBuf) {
@@ -410,6 +420,71 @@ fn staged_for_handoff_mirror_roundtrip() -> (TempDir, std::path::PathBuf) {
     finish_fixture(dir, cfg)
 }
 
+/// Stages the exact `test-project` identity used by the external allocator protocol.
+fn staged_for_handoff_allocator_contract() -> (TempDir, std::path::PathBuf) {
+    let dir = TempDir::new().unwrap();
+    let notes = dir.path().join("notes");
+    let project = notes.join("test-project");
+    let repo = dir.path().join("repo");
+    fs::create_dir_all(&project).unwrap();
+    fs::create_dir_all(&repo).unwrap();
+    fs::write(project.join("test-project.md"), "# test-project\n").unwrap();
+    let config_path = dir.path().join("cfg.json");
+    fs::write(
+        &config_path,
+        format!(
+            r#"{{ "notesDir": {:?}, "projects": {{ "test-project": {:?} }}, "prefixes": {{ "test-project": "TST" }} }}"#,
+            notes.to_string_lossy(),
+            repo.to_string_lossy()
+        ),
+    )
+    .unwrap();
+    finish_fixture(dir, config_path)
+}
+
+fn add_linked_handoff(stage: &TempDir, config_path: &std::path::Path) -> std::path::PathBuf {
+    let handoff_path = stage
+        .path()
+        .join("repo/docs/handoffs/2026-01-01-mirror-round-trip.md");
+    pwf()
+        .args([
+            "add",
+            "glep-shimeji",
+            "mirror round trip",
+            "--tag",
+            "handoff",
+            "--title",
+            "mirror round trip",
+            "--date",
+            "2026-01-01",
+            "--config-path",
+        ])
+        .arg(config_path)
+        .assert()
+        .success();
+    assert!(handoff_path.exists(), "linked handoff was not created");
+    handoff_path
+}
+
+fn handoff_add_command(stage: &TempDir, config_path: &std::path::Path) -> Command {
+    let mut command = pwf();
+    command
+        .args([
+            "handoff",
+            "add",
+            "--title",
+            "Managed Flow",
+            "--slug",
+            "managed-flow",
+            "--repo-root",
+        ])
+        .arg(stage.path().join("repo"))
+        .arg("--config-path")
+        .arg(config_path)
+        .args(["--date", "2026-01-01"]);
+    command
+}
+
 fn read_index(dir: &TempDir) -> String {
     fs::read_to_string(dir.path().join("notes/glep-shimeji/glep-shimeji.md")).unwrap()
 }
@@ -514,6 +589,114 @@ fn add_human_flag_emits_section_created_diagnostic_when_it_creates_human_section
 }
 
 #[test]
+fn add_usage_error_is_a_binary_contract() {
+    let (_dir, cfg) = staged();
+
+    pwf()
+        .args(["add", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .code(1)
+        .stdout("")
+        .stderr("Error: Use: pwf add <project> \"<prompt>\"\n");
+}
+
+#[test]
+fn add_project_errors_are_binary_contracts() {
+    let (_dir, cfg) = staged();
+    pwf()
+        .args(["add", "unknown", "do work", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .code(1)
+        .stdout("")
+        .stderr(
+            "Error: Unknown managed project identifier: unknown\nManaged project identifiers: glep-shimeji\n",
+        );
+
+    let mut config: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&cfg).unwrap()).unwrap();
+    config["prefixes"] = serde_json::json!({});
+    fs::write(&cfg, serde_json::to_vec(&config).unwrap()).unwrap();
+
+    pwf()
+        .args(["add", "glep-shimeji", "do work", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .code(1)
+        .stdout("")
+        .stderr(
+            "Error: Project 'glep-shimeji' has no work-item prefix in config/pending-work.json (prefixes).\n",
+        );
+}
+
+#[test]
+fn add_prerequisite_parse_errors_are_binary_contracts() {
+    let (dir, cfg) = staged();
+
+    for (value, expected) in [
+        ("", "Error: --prereq requires an id.\n"),
+        ("GLP-99999", "Error: Invalid --prereq id: GLP-99999.\n"),
+    ] {
+        pwf()
+            .args([
+                "add",
+                "glep-shimeji",
+                "do dependent work",
+                "--prereq",
+                value,
+                "--config-path",
+            ])
+            .arg(&cfg)
+            .assert()
+            .code(1)
+            .stdout("")
+            .stderr(expected);
+    }
+    assert!(
+        !dir.path().join("notes/glep-shimeji/GLP-0002.md").exists(),
+        "failed add wrote a new item"
+    );
+}
+
+#[test]
+fn add_prerequisite_errors_precede_project_resolution_and_scaffold_preflight() {
+    let (_dir, cfg) = staged();
+
+    pwf()
+        .args([
+            "add",
+            "unknown",
+            "do dependent work",
+            "--prereq",
+            "",
+            "--config-path",
+        ])
+        .arg(&cfg)
+        .assert()
+        .code(1)
+        .stdout("")
+        .stderr("Error: --prereq requires an id.\n");
+
+    pwf()
+        .args([
+            "add",
+            "glep-shimeji",
+            "do dependent work",
+            "--tag",
+            "handoff",
+            "--prereq",
+            "GLP-99999",
+            "--config-path",
+        ])
+        .arg(&cfg)
+        .assert()
+        .code(1)
+        .stdout("")
+        .stderr("Error: Invalid --prereq id: GLP-99999.\n");
+}
+
+#[test]
 fn add_human_flag_rejects_unreadable_index_before_mutation() {
     let dir = TempDir::new().unwrap();
     let notes = dir.path().join("notes");
@@ -604,6 +787,62 @@ fn add_continue_handoff_builds_handoff_prompt() {
 }
 
 #[test]
+fn add_continue_plan_persists_the_complete_plan_prompt() {
+    let (directory, config_path) = staged();
+    let plan_path = "docs/planning/plans/2026-07-19-cli-application-boundary-realignment.md";
+
+    pwf()
+        .args([
+            "add",
+            "glep-shimeji",
+            "--continue",
+            plan_path,
+            "--date",
+            "2026-07-20",
+            "--config-path",
+        ])
+        .arg(&config_path)
+        .assert()
+        .success();
+
+    let note = fs::read_to_string(directory.path().join("notes/glep-shimeji/GLP-0002.md")).unwrap();
+    assert_eq!(
+        note,
+        format!(
+            "---\nid: GLP-0002\nstatus: active\ntitle: glep shimeji cli application boundary realignment\nproject: glep-shimeji\ncreated: 2026-07-20\n---\n\n## Goals\n- continue the plan at {plan_path}\n"
+        )
+    );
+}
+
+#[test]
+fn lifecycle_commands_report_unknown_configured_prefixes_verbatim() {
+    let (_directory, config_path) = staged();
+
+    for arguments in [
+        vec!["done", "XYZ-0001", "--date", "2026-07-20"],
+        vec![
+            "cancel",
+            "XYZ-0001",
+            "--report",
+            "obsolete",
+            "--date",
+            "2026-07-20",
+        ],
+        vec!["reopen", "XYZ-0001"],
+        vec!["remove", "XYZ-0001", "--yes"],
+    ] {
+        pwf()
+            .args(arguments)
+            .arg("--config-path")
+            .arg(&config_path)
+            .assert()
+            .code(1)
+            .stdout("")
+            .stderr("Error: Unknown task id prefix `XYZ` for XYZ-0001\n");
+    }
+}
+
+#[test]
 fn bare_words_route_errors_and_writes_nothing() {
     let (d, cfg) = staged();
     pwf()
@@ -679,6 +918,62 @@ fn canonical_list_succeeds() {
         .success();
     let canon_out = String::from_utf8(canon.get_output().stdout.clone()).unwrap();
     assert!(canon_out.contains("GLP-0001 :: tray gui"));
+}
+
+#[test]
+fn list_long_prints_prerequisite_status_through_the_binary() {
+    let (dir, cfg) = staged_two();
+    fs::write(
+        dir.path().join("notes/glep-shimeji/GLP-0002.md"),
+        "---\nid: GLP-0002\nstatus: active\ntitle: second\nproject: glep-shimeji\ncreated: 2026-01-02\nprereq: \"[[GLP-0001]]\"\n---\n\ndo more\n",
+    )
+    .unwrap();
+
+    pwf()
+        .args([
+            "list",
+            "--long",
+            "--project",
+            "glep-shimeji",
+            "--config-path",
+        ])
+        .arg(&cfg)
+        .env("NO_COLOR", "1")
+        .assert()
+        .success()
+        .stderr("")
+        .stdout(contains("  prereq: GLP-0001 (active)\n"));
+}
+
+#[test]
+fn list_read_errors_reach_binary_stderr() {
+    let (dir, cfg) = staged();
+    let index = dir.path().join("notes/glep-shimeji/glep-shimeji.md");
+    fs::remove_file(&index).unwrap();
+    fs::create_dir(&index).unwrap();
+
+    pwf()
+        .args(["list", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .code(1)
+        .stdout("")
+        .stderr(predicates::str::starts_with("Error: Cannot read index: "));
+
+    let (dir, cfg) = staged();
+    let item = dir.path().join("notes/glep-shimeji/GLP-0001.md");
+    fs::remove_file(&item).unwrap();
+    fs::create_dir(&item).unwrap();
+
+    pwf()
+        .args(["list", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .code(1)
+        .stdout("")
+        .stderr(predicates::str::starts_with(
+            "Error: Cannot read item file: ",
+        ));
 }
 
 #[test]
@@ -1449,6 +1744,49 @@ fn e2e_add_normalizes_colon_title_and_notes_it_on_stderr() {
 }
 
 #[test]
+fn add_post_handoff_failure_emits_pending_work_diagnostics_before_error() {
+    let (stage, config_path) = staged_for_handoff_mirror_roundtrip();
+    let handoff_directory = stage.path().join("repo/docs/handoffs");
+    fs::create_dir(handoff_directory.join("LEDGER.md")).unwrap();
+
+    let output = pwf()
+        .args([
+            "add",
+            "glep-shimeji",
+            "ship the thing",
+            "--title",
+            "Ship: Thing",
+            "--tag",
+            "handoff",
+            "--human",
+            "--date",
+            "2026-01-01",
+            "--config-path",
+        ])
+        .arg(&config_path)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    let section = stderr
+        .find("info: created `## Human` section in glep-shimeji")
+        .expect("created-section diagnostic");
+    let title = stderr
+        .find("info: title normalized to keep metadata valid")
+        .expect("title diagnostic");
+    let error = stderr
+        .find("GLP-0001 was mutated, but its handoff was not")
+        .expect("post-mutation error");
+    assert!(section < title && title < error, "got stderr:\n{stderr}");
+    assert!(stage.path().join("notes/glep-shimeji/GLP-0001.md").exists());
+    assert!(
+        !handoff_directory.join("2026-01-01-ship-thing.md").exists(),
+        "failed ledger write must remove the new scaffold"
+    );
+}
+
+#[test]
 fn e2e_add_safe_title_emits_no_normalization_notice() {
     let (d, cfg) = staged();
     pwf()
@@ -1824,7 +2162,8 @@ fn e2e_add_rejects_unknown_prereq_without_writing_item() {
         ])
         .arg(&cfg)
         .assert()
-        .failure();
+        .failure()
+        .stderr("Error: Unknown --prereq id(s): GLP-9999.\n");
     assert!(
         !d.path().join("notes/glep-shimeji/GLP-0002.md").exists(),
         "failed add wrote a new item"
@@ -2293,34 +2632,16 @@ fn staged_with_item(
 }
 
 #[test]
-fn show_emits_markdown_with_created_key() {
-    let (_d, cfg) = staged_with_item(
-        "pwf",
-        "PWF",
-        "PWF-0001",
-        "do the thing",
-        "---\nid: PWF-0001\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- do the thing\n",
-    );
-    let out = pwf()
+fn show_emits_note_markdown_byte_for_byte() {
+    let markdown = "---\nid: PWF-0001\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- do the thing\n";
+    let (_d, cfg) = staged_with_item("pwf", "PWF", "PWF-0001", "do the thing", markdown);
+    pwf()
         .args(["show", "--id", "PWF-0001", "--config-path"])
         .arg(&cfg)
         .assert()
-        .success();
-    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
-    assert!(
-        stdout.contains("status: active"),
-        "missing status: {stdout}"
-    );
-    assert!(
-        stdout.contains("title: do the thing"),
-        "missing title: {stdout}"
-    );
-    assert!(stdout.contains("## Goals"), "missing body: {stdout}");
-    assert!(stdout.contains("- do the thing"), "missing goal: {stdout}");
-    assert!(
-        stdout.contains("created: 2026-06-20"),
-        "created date must be shown: {stdout}"
-    );
+        .success()
+        .stderr("")
+        .stdout(format!("{markdown}\n"));
 }
 
 #[test]
@@ -2590,22 +2911,40 @@ fn show_alias_s_collapses_split_id_form() {
 
 #[test]
 fn show_path_prints_closed_item_path() {
-    let (_d, cfg) = staged_with_archived_item(
+    let (stage, config_path) = staged_with_archived_item(
         "pwf",
         "PWF",
         "PWF-0002",
         "---\nstatus: cancelled\ntitle: dropped\nproject: pwf\n---\n\n## Goals\n- dropped\n",
     );
-    let out = pwf()
+    let pending_work_path_expected = stage
+        .path()
+        .join("notes/pwf/PWF-0002.md")
+        .to_string_lossy()
+        .replace('\\', "/");
+    pwf()
         .args(["show", "--path", "PWF-0002", "--config-path"])
+        .arg(&config_path)
+        .assert()
+        .success()
+        .stderr("")
+        .stdout(format!("{pending_work_path_expected}\n"));
+}
+
+#[test]
+fn show_missing_note_preserves_the_storage_read_error() {
+    let (dir, cfg) = staged();
+    fs::remove_file(dir.path().join("notes/glep-shimeji/GLP-0001.md")).unwrap();
+
+    pwf()
+        .args(["show", "GLP-0001", "--config-path"])
         .arg(&cfg)
         .assert()
-        .success();
-    let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
-    assert!(
-        stdout.ends_with("/pwf/PWF-0002.md\n"),
-        "path should point at the closed note: {stdout}"
-    );
+        .code(1)
+        .stdout("")
+        .stderr(predicates::str::starts_with(
+            "Error: Cannot read item file: ",
+        ));
 }
 
 #[test]
@@ -2700,7 +3039,7 @@ fn show_without_id_error_names_the_command() {
 }
 
 #[test]
-fn update_commits_amends_done_item_in_project_dir() {
+fn update_repeated_commits_and_report_preserve_changed_output_order() {
     let (_d, cfg) = staged_with_done_item(
         "pwf",
         "PWF",
@@ -2713,12 +3052,21 @@ fn update_commits_amends_done_item_in_project_dir() {
             "--id",
             "pwf-0003",
             "--commits",
+            " aaa111..bbb222, ccc333..ddd444 ",
+            "--commits",
             "aaa111..bbb222",
+            "--append-report",
+            "shipped",
             "--config-path",
         ])
         .arg(&cfg)
+        .env("NO_COLOR", "1")
         .assert()
-        .success();
+        .success()
+        .stderr("")
+        .stdout(
+            "Updated pwf task: **PWF-0003 commits: aaa111..bbb222, ccc333..ddd444, report appended**\n\n",
+        );
     let out = pwf()
         .args(["show", "--id", "PWF-0003", "--config-path"])
         .arg(&cfg)
@@ -2726,7 +3074,7 @@ fn update_commits_amends_done_item_in_project_dir() {
         .success();
     let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
     assert!(
-        stdout.contains("commits: \"aaa111..bbb222\""),
+        stdout.contains("commits: \"aaa111..bbb222, ccc333..ddd444\""),
         "commits not amended: {stdout}"
     );
     assert!(!stdout.contains("old..HEAD"), "stale range left: {stdout}");
@@ -3404,6 +3752,48 @@ fn session_append_extends_the_note_before_dispatch() {
 }
 
 #[test]
+#[cfg(target_os = "linux")]
+fn session_append_declined_through_stdin_leaves_note_unchanged() {
+    let directory = TempDir::new().unwrap();
+    let (config_path, child_path, launch_log_path) = stage_session_with_zellij_stub(&directory);
+    let note_path = directory.path().join("notes/pwf/PWF-0001.md");
+    let stored_before = fs::read_to_string(&note_path).unwrap();
+
+    let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_pwf"));
+    command
+        .args([
+            "session",
+            "--id",
+            "PWF-0001",
+            "--append",
+            "declined context",
+            "--config-path",
+        ])
+        .arg(&config_path)
+        .env("PATH", child_path)
+        .env("ZELLIJ_STUB_LOG", &launch_log_path)
+        .env("NO_COLOR", "1");
+
+    let mut session = expectrl::Session::spawn(command).unwrap();
+    session.set_expect_timeout(Some(std::time::Duration::from_secs(10)));
+    session.expect("[Y/n]").unwrap();
+    session.send_line("n").unwrap();
+    session.expect("aborted").unwrap();
+    session.expect(expectrl::Eof).unwrap();
+    assert!(matches!(
+        session.get_process().wait().unwrap(),
+        expectrl::process::unix::WaitStatus::Exited(_, 0)
+    ));
+
+    let stored_after_decline = fs::read_to_string(&note_path).unwrap();
+    assert_eq!(stored_before, stored_after_decline);
+    assert!(
+        !launch_log_path.exists() || fs::read_to_string(&launch_log_path).unwrap().is_empty(),
+        "declined confirmation must not dispatch"
+    );
+}
+
+#[test]
 #[cfg(unix)]
 fn session_dispatches_a_thin_pointer_not_the_note_body() {
     // The agent resolves the item, so dispatch includes its identity but not its body.
@@ -3471,6 +3861,13 @@ fn session_append_short_flag_extends_body_not_the_agent() {
 fn session_append_rejects_whitespace_only_before_any_dispatch() {
     let (dir, cfg) = staged();
     let note_path = dir.path().join("notes/glep-shimeji/GLP-0001.md");
+    let repository_path = dir.path().join("repo");
+    fs::create_dir_all(&repository_path).unwrap();
+    let mut config: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&cfg).unwrap()).unwrap();
+    config["projects"]["glep-shimeji"] =
+        serde_json::Value::String(repository_path.to_string_lossy().into_owned());
+    fs::write(&cfg, serde_json::to_vec(&config).unwrap()).unwrap();
     let before = fs::read_to_string(&note_path).unwrap();
 
     pwf()
@@ -3478,6 +3875,7 @@ fn session_append_rejects_whitespace_only_before_any_dispatch() {
             "session",
             "--id",
             "GLP-0001",
+            "--inline",
             "--yes",
             "--append",
             "   \n\t",
@@ -3835,33 +4233,236 @@ fn note_add_list_update_remove_preserves_tasks_and_header() {
 }
 
 #[test]
-fn e2e_add_done_reopen_handoff_tag_round_trip_never_touches_git() {
+fn handoff_list_missing_ledger_text_is_a_binary_contract() {
+    let dir = TempDir::new().unwrap();
+    let repo = dir.path().join("repo");
+    fs::create_dir_all(&repo).unwrap();
+
+    pwf()
+        .args(["handoff", "list", "--repo-root"])
+        .arg(&repo)
+        .assert()
+        .success()
+        .stderr("")
+        .stdout("No active handoffs (LEDGER.md not found).\n");
+}
+
+#[test]
+fn handoff_list_unreadable_ledger_is_not_reported_as_missing() {
+    let dir = TempDir::new().unwrap();
+    let repo = dir.path().join("repo");
+    fs::create_dir_all(repo.join("docs/handoffs/LEDGER.md")).unwrap();
+
+    pwf()
+        .args(["handoff", "list", "--repo-root"])
+        .arg(&repo)
+        .assert()
+        .code(1)
+        .stdout("")
+        .stderr(
+            predicates::str::starts_with("Error: Cannot read handoff ledger ")
+                .and(predicates::str::contains("LEDGER.md")),
+        );
+}
+
+#[test]
+fn handoff_add_explicit_config_error_is_not_reported_as_unmanaged() {
+    let dir = TempDir::new().unwrap();
+    let repo = dir.path().join("repo");
+    fs::create_dir_all(&repo).unwrap();
+    let missing_config = dir.path().join("missing.json");
+
+    handoff_add_command(&dir, &missing_config)
+        .assert()
+        .code(1)
+        .stdout("")
+        .stderr(format!(
+            "Error: Pending work config not found: {}\n",
+            missing_config.display()
+        ));
+    assert!(!repo.join("docs/handoffs").exists());
+}
+
+#[test]
+fn handoff_add_malformed_explicit_config_is_not_reported_as_unmanaged() {
+    let dir = TempDir::new().unwrap();
+    let repo = dir.path().join("repo");
+    fs::create_dir_all(&repo).unwrap();
+    let malformed_config = dir.path().join("malformed.json");
+    fs::write(&malformed_config, "{ not json").unwrap();
+
+    handoff_add_command(&dir, &malformed_config)
+        .assert()
+        .code(1)
+        .stdout("")
+        .stderr("Error: config parse error: key must be a string at line 1 column 3\n");
+    assert!(!repo.join("docs/handoffs").exists());
+}
+
+#[test]
+fn handoff_add_valid_config_with_unmanaged_repo_has_exact_error_and_no_scaffold() {
+    let dir = TempDir::new().unwrap();
+    let repo = dir.path().join("repo");
+    fs::create_dir_all(&repo).unwrap();
+    let config = dir.path().join("valid.json");
+    fs::write(&config, r#"{ "notesDir": "/unused" }"#).unwrap();
+
+    handoff_add_command(&dir, &config)
+        .assert()
+        .code(1)
+        .stdout("")
+        .stderr(format!(
+            "Error: this repo is not a managed project: {}; handoffs require one — register it in the pwf config\n",
+            repo.display()
+        ));
+    assert!(!repo.join("docs/handoffs").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn handoff_add_external_allocator_receives_canonical_arguments() {
+    let (dir, cfg) = staged_for_handoff_allocator_contract();
+    let repo = dir.path().join("repo");
+    let handoff = repo.join("docs/handoffs/2026-01-01-managed-flow.md");
+    let allocator =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pw-stub.sh");
+    let argument_log = dir.path().join("allocator-argv.txt");
+
+    handoff_add_command(&dir, &cfg)
+        .arg("--pending-work-script")
+        .arg(&allocator)
+        .env("HANDOFF_STUB_LOG", &argument_log)
+        .assert()
+        .success()
+        .stderr("")
+        .stdout(format!(
+            "Created handoff {}\n  pw: TST-0001\n  Now fill the Goals + Context; close with: pwf done --id TST-0001\n",
+            handoff.display()
+        ));
+    assert_eq!(
+        fs::read_to_string(&argument_log).unwrap(),
+        format!(
+            "add\n--config-path\n{}\n--date\n2026-01-01\ntest-project\n--tag\nhandoff\n--continue-handoff\n",
+            cfg.display()
+        )
+    );
+    assert!(
+        fs::read_to_string(&handoff)
+            .unwrap()
+            .contains("pw: TST-0001")
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn handoff_add_rejects_raw_invalid_utf8_and_removes_the_provisional_document() {
+    let (dir, cfg) = staged_for_handoff_allocator_contract();
+    let handoff = dir
+        .path()
+        .join("repo/docs/handoffs/2026-01-01-managed-flow.md");
+    let allocator = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/pw-stub-invalid-utf8.sh");
+
+    handoff_add_command(&dir, &cfg)
+        .arg("--pending-work-script")
+        .arg(&allocator)
+        .assert()
+        .code(1)
+        .stdout("")
+        .stderr(predicates::str::contains(
+            "allocator stdout is not valid UTF-8",
+        ));
+
+    assert!(
+        !handoff.exists(),
+        "invalid allocator output must remove the provisional handoff"
+    );
+}
+
+#[test]
+fn handoff_add_in_process_allocator_links_the_created_item() {
+    let (dir, cfg) = staged_for_handoff_mirror_roundtrip();
+    let repo = dir.path().join("repo");
+    let handoff = repo.join("docs/handoffs/2026-01-01-managed-flow.md");
+
+    handoff_add_command(&dir, &cfg)
+        .assert()
+        .success()
+        .stderr("")
+        .stdout(format!(
+            "Created handoff {}\n  pw: GLP-0001\n  Now fill the Goals + Context; close with: pwf done --id GLP-0001\n",
+            handoff.display()
+        ));
+    assert!(
+        fs::read_to_string(&handoff)
+            .unwrap()
+            .contains("pw: GLP-0001")
+    );
+    let note = fs::read_to_string(dir.path().join("notes/glep-shimeji/GLP-0001.md")).unwrap();
+    assert!(note.contains("status: active"), "got: {note}");
+    assert!(note.contains("tags: [handoff]"), "got: {note}");
+}
+
+#[test]
+fn linked_handoff_close_failure_reports_post_mutation_recovery() {
+    let (dir, cfg) = staged_for_handoff_mirror_roundtrip();
+    let handoff = add_linked_handoff(&dir, &cfg);
+    let ledger = handoff.parent().unwrap().join("LEDGER.md");
+    fs::remove_file(&ledger).unwrap();
+    fs::create_dir(&ledger).unwrap();
+    let raw_source = raw_rename_error_for_file_over_directory(&ledger);
+
+    pwf()
+        .args([
+            "done",
+            "GLP-0001",
+            "--report",
+            "complete",
+            "--date",
+            "2026-01-02",
+            "--config-path",
+        ])
+        .arg(&cfg)
+        .assert()
+        .code(1)
+        .stdout("")
+        .stderr(format!(
+            "Error: GLP-0001 was mutated, but its handoff was not: {raw_source}\n  fix the cause, then `pwf reopen --id GLP-0001` and re-run — or finish the handoff move by hand\n"
+        ));
+}
+
+#[test]
+fn linked_handoff_remove_failure_reports_deleted_note_recovery() {
+    let (dir, cfg) = staged_for_handoff_mirror_roundtrip();
+    let handoff = add_linked_handoff(&dir, &cfg);
+    let ledger = handoff.parent().unwrap().join("LEDGER.md");
+    fs::remove_file(&ledger).unwrap();
+    fs::create_dir(&ledger).unwrap();
+    let raw_source = raw_rename_error_for_file_over_directory(&ledger);
+
+    pwf()
+        .args(["remove", "GLP-0001", "--yes", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .code(1)
+        .stdout("")
+        .stderr(format!(
+            "Error: GLP-0001 was mutated, but its handoff was not: {raw_source}\n  the pw note is already deleted; delete the linked handoff file by hand\n"
+        ));
+}
+
+#[test]
+fn linked_handoff_lifecycle_outputs_never_touch_git() {
     // The fixture omits `.git`; the complete handoff lifecycle must neither require nor create it.
     let (d, cfg) = staged_for_handoff_mirror_roundtrip();
     let repo = d.path().join("repo");
     let handoff_dir = repo.join("docs/handoffs");
-    let handoff_path = handoff_dir.join("2026-01-01-mirror-round-trip.md");
     assert!(
         !repo.join(".git").exists(),
         "fixture must start without .git"
     );
 
-    pwf()
-        .args([
-            "add",
-            "glep-shimeji",
-            "mirror round trip",
-            "--tag",
-            "handoff",
-            "--title",
-            "mirror round trip",
-            "--date",
-            "2026-01-01",
-            "--config-path",
-        ])
-        .arg(&cfg)
-        .assert()
-        .success();
+    let handoff_path = add_linked_handoff(&d, &cfg);
     let scaffolded = fs::read_to_string(&handoff_path).unwrap_or_else(|e| {
         panic!(
             "handoff scaffold missing at {}: {e}",
@@ -3873,6 +4474,11 @@ fn e2e_add_done_reopen_handoff_tag_round_trip_never_touches_git() {
     assert!(
         !repo.join(".git").exists(),
         "add must not create/touch .git"
+    );
+    let archived_path = handoff_dir.join("archived").join(
+        handoff_path
+            .file_name()
+            .expect("handoff path must have a file name"),
     );
 
     pwf()
@@ -3890,15 +4496,15 @@ fn e2e_add_done_reopen_handoff_tag_round_trip_never_touches_git() {
         ])
         .arg(&cfg)
         .assert()
-        .success();
+        .success()
+        .stderr("")
+        .stdout(format!(
+            "Done GLP-0001 (glep-shimeji :: mirror round trip)\n\n  handoff: archived {}\n",
+            archived_path.display()
+        ));
     assert!(
         !handoff_path.exists(),
         "handoff should be moved out of the active dir once done"
-    );
-    let archived_path = handoff_dir.join("archived").join(
-        handoff_path
-            .file_name()
-            .expect("handoff path must have a file name"),
     );
     let archived = fs::read_to_string(&archived_path).unwrap();
     assert!(archived.contains("status: done"), "got: {archived}");
@@ -3911,7 +4517,12 @@ fn e2e_add_done_reopen_handoff_tag_round_trip_never_touches_git() {
         .args(["reopen", "--id", "GLP-0001", "--config-path"])
         .arg(&cfg)
         .assert()
-        .success();
+        .success()
+        .stderr("")
+        .stdout(format!(
+            "Reopened GLP-0001 (glep-shimeji)\n\n  handoff: reopened {}\n",
+            handoff_path.display()
+        ));
     assert!(
         !archived_path.exists(),
         "reopen should move the handoff back out of archived/"
@@ -3922,5 +4533,59 @@ fn e2e_add_done_reopen_handoff_tag_round_trip_never_touches_git() {
     assert!(
         !repo.join(".git").exists(),
         "reopen must not create/touch .git"
+    );
+
+    pwf()
+        .args([
+            "cancel",
+            "GLP-0001",
+            "--report",
+            "superseded",
+            "--date",
+            "2026-01-03",
+            "--config-path",
+        ])
+        .arg(&cfg)
+        .assert()
+        .success()
+        .stderr("")
+        .stdout(format!(
+            "Cancelled GLP-0001 (glep-shimeji :: mirror round trip)\n\n  handoff: archived {}\n",
+            archived_path.display()
+        ));
+
+    pwf()
+        .args(["reopen", "GLP-0001", "--config-path"])
+        .arg(&cfg)
+        .assert()
+        .success();
+    let pending_work_note_path_expected = d
+        .path()
+        .join("notes/glep-shimeji/GLP-0001.md")
+        .to_string_lossy()
+        .replace('\\', "/");
+    let pending_work_index_path_expected = d
+        .path()
+        .join("notes/glep-shimeji/glep-shimeji.md")
+        .to_string_lossy()
+        .replace('\\', "/");
+    pwf()
+        .args(["remove", "GLP-0001", "--yes", "--config-path"])
+        .arg(&cfg)
+        .env("NO_COLOR", "1")
+        .assert()
+        .success()
+        .stdout(format!(
+            "Removed pwf task: **GLP-0001 glep-shimeji :: mirror round trip**\n  deleted: {}\n  unlinked: {}\n\n",
+            pending_work_note_path_expected,
+            pending_work_index_path_expected
+        ))
+        .stderr(format!(
+            "info: removed handoff {}\n",
+            handoff_path.display()
+        ));
+    assert!(
+        !repo.join(".git").exists(),
+        "remove must not create/touch .git"
     );
 }

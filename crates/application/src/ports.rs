@@ -1,6 +1,12 @@
-use std::path::Path;
+use std::{
+    path::{Path, PathBuf},
+    time::SystemTime,
+};
 
-use pwf_domain::pending_work::{ProjectName, Tags, Timestamp, WorkItemId, WorkItemStatus};
+use pwf_domain::{
+    handoff::HandoffStatus,
+    pending_work::{ProjectName, Tags, Timestamp, WorkItemId, WorkItemStatus},
+};
 
 /// Defines the scope, identity, insertion, and patch types for a persisted record.
 pub trait Record {
@@ -14,12 +20,246 @@ pub trait Record {
 pub trait AppDbStore<R: Record>: Clone + Send + Sync + 'static {
     type Error: std::error::Error + Send + Sync + 'static;
 
+    /// Reads one record by scope and identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns the adapter error when the record cannot be read.
     fn get(&self, scope: &R::Scope, id: &R::Id) -> Result<Option<R>, Self::Error>;
     /// Reads every record within `scope`, unfiltered and unordered.
+    ///
+    /// # Errors
+    ///
+    /// Returns the adapter error when the records cannot be read.
     fn list(&self, scope: &R::Scope) -> Result<Vec<R>, Self::Error>;
+    /// Inserts one record within `scope`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the adapter error when the record cannot be inserted.
     fn insert(&self, scope: &R::Scope, new: R::New) -> Result<R, Self::Error>;
+    /// Applies one patch to the identified record.
+    ///
+    /// # Errors
+    ///
+    /// Returns the adapter error when the record cannot be updated.
     fn update(&self, scope: &R::Scope, id: &R::Id, patch: R::Patch) -> Result<(), Self::Error>;
+    /// Deletes the identified record.
+    ///
+    /// # Errors
+    ///
+    /// Returns the adapter error when the record cannot be deleted.
     fn delete(&self, scope: &R::Scope, id: &R::Id) -> Result<(), Self::Error>;
+}
+
+/// Locates handoff records beneath one repository root.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct HandoffScope {
+    /// Root containing `docs/handoffs`.
+    pub repository_root: PathBuf,
+}
+
+/// Describes whether a repository and its active handoff directory exist.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HandoffDocumentScopePresence {
+    /// The configured repository root does not exist.
+    RepositoryMissing,
+    /// The repository exists without `docs/handoffs`.
+    HandoffDirectoryMissing,
+    /// The active handoff path exists and is a directory.
+    Present,
+}
+
+/// Identifies a handoff file and its storage location.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct HandoffDocumentIdentifier {
+    /// Markdown file name without parent directories.
+    pub file_name: String,
+    /// Active or archived location containing the file.
+    pub location: HandoffLocation,
+}
+
+/// Selects the active or archived handoff directory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum HandoffLocation {
+    /// The live `docs/handoffs` directory.
+    Active,
+    /// The immutable `docs/handoffs/archived` directory.
+    Archived,
+}
+
+/// A parsed handoff document with its raw representation and file metadata.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HandoffDocument {
+    /// Record identity within the repository.
+    pub identifier: HandoffDocumentIdentifier,
+    /// Directory location represented separately for operation results.
+    pub location: HandoffLocation,
+    /// Parsed managed project, when valid.
+    pub project: Option<ProjectName>,
+    /// First level-one heading or file-stem fallback.
+    pub title: String,
+    /// Parsed lifecycle state, when valid.
+    pub status: Option<HandoffStatus>,
+    /// Authored creation value, when present.
+    pub created: Option<Timestamp>,
+    /// Authored completion value, when present.
+    pub completed: Option<Timestamp>,
+    /// Unvalidated `pw:` value retained for operation-level validation.
+    pub pending_work_identifier_raw: Option<String>,
+    /// Number of checked goal boxes.
+    pub goals_completed: usize,
+    /// Total number of goal boxes.
+    pub goals_total: usize,
+    /// Markdown below frontmatter.
+    pub body: String,
+    /// Complete source preserved byte-for-byte.
+    pub source: String,
+    /// Concrete path used by the adapter.
+    pub locator: PathBuf,
+    /// Filesystem modification time used by newest-handoff selection.
+    pub modified_timestamp: SystemTime,
+}
+
+impl Record for HandoffDocument {
+    type Scope = HandoffScope;
+    type Id = HandoffDocumentIdentifier;
+    type New = NewHandoffDocument;
+    type Patch = HandoffPatch;
+}
+
+/// Extends handoff record storage with representation facts needed for lifecycle recovery.
+pub trait HandoffDocumentStore: AppDbStore<HandoffDocument> {
+    /// Inspects repository and active-directory presence without listing documents.
+    ///
+    /// # Errors
+    ///
+    /// Returns the adapter error when either path cannot be inspected.
+    fn scope_presence(
+        &self,
+        scope: &HandoffScope,
+    ) -> Result<HandoffDocumentScopePresence, <Self as AppDbStore<HandoffDocument>>::Error>;
+
+    /// Returns whether the exact representation path exists without parsing it.
+    ///
+    /// # Errors
+    ///
+    /// Returns the adapter error when the path cannot be inspected.
+    fn document_exists(
+        &self,
+        scope: &HandoffScope,
+        identifier: &HandoffDocumentIdentifier,
+    ) -> Result<bool, <Self as AppDbStore<HandoffDocument>>::Error>;
+
+    /// Reads handoff documents from exactly one lifecycle directory.
+    ///
+    /// # Errors
+    ///
+    /// Returns the adapter error when the selected directory cannot be read.
+    fn list_location(
+        &self,
+        scope: &HandoffScope,
+        location: HandoffLocation,
+    ) -> Result<Vec<HandoffDocument>, <Self as AppDbStore<HandoffDocument>>::Error>;
+
+    /// Restores a moved document before removing its exact opposite-location record.
+    ///
+    /// # Errors
+    ///
+    /// Returns the adapter error when the snapshot cannot be restored.
+    fn restore_document_after_move(
+        &self,
+        scope: &HandoffScope,
+        snapshot: &HandoffDocument,
+    ) -> Result<(), <Self as AppDbStore<HandoffDocument>>::Error>;
+
+    /// Restores a deleted document without changing any opposite-location record.
+    ///
+    /// # Errors
+    ///
+    /// Returns the adapter error when the snapshot cannot be restored.
+    fn restore_document_after_delete(
+        &self,
+        scope: &HandoffScope,
+        snapshot: &HandoffDocument,
+    ) -> Result<(), <Self as AppDbStore<HandoffDocument>>::Error>;
+}
+
+/// Data required to create an active handoff document.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewHandoffDocument {
+    /// Markdown file name without parent directories.
+    pub file_name: String,
+    /// Managed project owning the repository.
+    pub project: ProjectName,
+    /// Handoff heading.
+    pub title: String,
+    /// Authored creation value.
+    pub created: Timestamp,
+    /// Markdown body below frontmatter.
+    pub body: String,
+    /// Optional linked pending-work identifier.
+    pub pending_work_identifier: Option<WorkItemId>,
+}
+
+/// Fields changed by a handoff lifecycle operation.
+#[allow(clippy::option_option)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HandoffPatch {
+    /// Moves the document when present.
+    pub location: Option<HandoffLocation>,
+    /// Replaces lifecycle status when present.
+    pub status: Option<HandoffStatus>,
+    /// Replaces or clears completion metadata when present.
+    pub completed: Option<Option<Timestamp>>,
+    /// Sets the pending-work link when present.
+    pub pending_work_identifier: Option<WorkItemId>,
+    /// Replaces the body when present.
+    pub body: Option<String>,
+}
+
+/// The persisted handoff ledger Markdown.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HandoffLedger {
+    /// Complete ledger Markdown.
+    pub source: String,
+    /// Concrete ledger path used by the adapter.
+    pub locator: PathBuf,
+}
+
+impl Record for HandoffLedger {
+    type Scope = HandoffScope;
+    type Id = HandoffLedgerIdentifier;
+    type New = HandoffLedgerWrite;
+    type Patch = HandoffLedgerWrite;
+}
+
+/// Singleton identity for one repository's handoff ledger.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct HandoffLedgerIdentifier;
+
+/// Rows used to replace one derived handoff ledger.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HandoffLedgerWrite {
+    /// Rows in final display order.
+    pub rows: Vec<HandoffLedgerRow>,
+}
+
+/// One active handoff row in the derived ledger.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HandoffLedgerRow {
+    /// Validated identifier or legacy file-stem fallback.
+    pub pending_work_identifier: String,
+    /// Handoff heading.
+    pub title: String,
+    /// Relative Markdown link target.
+    pub file_name: String,
+    /// Number of checked goals.
+    pub goals_completed: usize,
+    /// Total number of goals.
+    pub goals_total: usize,
+    /// Authored creation value used for ordering and display.
+    pub created: String,
 }
 
 /// A pending-work record's identity within its project.
@@ -170,6 +410,10 @@ impl Record for IndexSection {
 pub trait NoteMarkdownSource: Clone + Send + Sync + 'static {
     type Error: std::error::Error + Send + Sync + 'static;
 
-    /// Raw markdown of the note at `path`, surfacing the backend's read failure.
+    /// Reads raw Markdown from `path`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the backend error when the note cannot be read.
     fn read_note_markdown(&self, path: &Path) -> Result<String, Self::Error>;
 }

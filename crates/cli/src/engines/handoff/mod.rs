@@ -1,16 +1,23 @@
-//! Implements handoff scaffolding, listing, ledger reconciliation, and lifecycle mirroring.
+//! Implements handoff creation and listing.
 
-mod actions;
-mod errors;
-mod ledger;
-pub(crate) mod mirror;
-mod paths;
-mod pw_bridge;
-mod run;
-mod scaffold;
-#[cfg(test)]
-mod test_support;
+use clap::Subcommand;
 
-pub use paths::slug;
-pub use run::run;
-pub use scaffold::scaffold;
+pub mod add;
+mod common;
+pub mod list;
+
+#[derive(Subcommand, Debug)]
+pub enum Command {
+    /// Create a handoff (allocates its linked pw item).
+    Add(add::Arguments),
+    /// List handoffs.
+    List(list::Arguments),
+}
+
+pub fn run(command: &Command) -> Result<String, String> {
+    match command {
+        Command::Add(arguments) => add::run(arguments),
+        Command::List(arguments) => list::run(arguments),
+    }
+    .map_err(|error| error.to_string())
+}

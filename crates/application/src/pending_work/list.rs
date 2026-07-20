@@ -1,14 +1,121 @@
 use pwf_domain::pending_work::{
-    ListResult, ListScope, OrderDirection, OrderField, OrderSpec, ParseTagsError,
-    PendingWorkItemView, ProjectName, ProjectRegistry, Tags, WorkItemStatus, WorkItemStatusFilter,
+    ParseTagsError, ProjectName, Tags, WorkItemStatus, WorkItemStatusFilter,
 };
 
+use super::prerequisite;
+pub use super::prerequisite::PrerequisiteStatus;
 use crate::{
     AppDbStore, PendingWorkItem,
-    pending_work::enrich::{enrich, is_open_item},
+    pending_work::{
+        enrich::{enrich, is_open_item},
+        project_registry::ProjectRegistry,
+    },
 };
 
 const DEFAULT_LIST_CAP: usize = 10;
+
+/// Contains one pending-work item projected for list and launch consumers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingWorkItemView {
+    /// Canonical item id, or `<project>:<ordinal>` for a legacy inline item.
+    pub id: String,
+    /// Managed project containing the item.
+    pub project: String,
+    /// Retains the persisted lifecycle status.
+    pub status: WorkItemStatus,
+    /// Title-derived label used for session display and launch.
+    pub session: String,
+    /// Trimmed prompt body used for launch.
+    pub prompt: String,
+    /// Configured project repository, when mapped.
+    pub repo: Option<String>,
+    /// Source note path displayed for the item.
+    pub note: String,
+    /// Materialized item-note path; absent for legacy inline items.
+    pub item_file: Option<String>,
+    /// Source line associated with the item.
+    pub line: usize,
+    /// Materialization format: `file` or `legacy`.
+    pub format: String,
+    /// Whether the item has no launch-blocking issues.
+    pub launchable: bool,
+    /// Whether the prompt is missing or still a placeholder.
+    pub needs_prompt: bool,
+    /// Ordered launchability diagnostics.
+    pub issues: Vec<String>,
+    /// Normalized index section label, when sectioned.
+    pub section: Option<String>,
+    /// Persisted prerequisite frontmatter value.
+    pub prereq: Option<String>,
+    /// Prerequisite lifecycle projections requested for long output.
+    pub prerequisite_statuses: Vec<PrerequisiteStatus>,
+    /// Persisted effort value.
+    pub effort: Option<String>,
+    /// Persisted tags frontmatter value.
+    pub tags: Option<String>,
+    /// Persisted creation value.
+    pub created: Option<String>,
+}
+
+/// Returns listed items and the count hidden by the requested cap.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListResult {
+    /// Items remaining after filtering, ordering, and capping.
+    pub items: Vec<PendingWorkItemView>,
+    /// Number of matching items excluded by the requested cap.
+    pub hidden: usize,
+}
+
+/// Selects which pending-work index sections participate in a list query.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ListScope {
+    /// Includes only items without an index section.
+    Default,
+    /// Includes only items in the normalized `Human` section.
+    HumanOnly,
+    /// Includes only items in the normalized `Future` section.
+    FutureOnly,
+    /// Includes items from every index section.
+    All,
+}
+
+/// Selects the primary list ordering field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OrderField {
+    /// Orders by the persisted creation value.
+    Created,
+    /// Orders by the numeric item-id suffix.
+    Id,
+    /// Orders by project name, then by newest item id within each project.
+    ProjectId,
+}
+
+/// Selects ascending or descending list ordering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OrderDirection {
+    /// Orders the selected field from lower to higher values.
+    Asc,
+    /// Orders the selected field from higher to lower values.
+    Desc,
+}
+
+/// Combines the list ordering field and direction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OrderSpec {
+    /// Primary field used to order listed items.
+    pub field: OrderField,
+    /// Direction applied to the primary ordering field.
+    pub direction: OrderDirection,
+}
+
+impl Default for OrderSpec {
+    fn default() -> Self {
+        Self {
+            field: OrderField::Created,
+            direction: OrderDirection::Desc,
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct GetPendingWork {
@@ -20,6 +127,8 @@ pub struct GetPendingWork {
     pub order: OrderSpec,
     /// Selects one persisted lifecycle status or every lifecycle status.
     pub status_filter: WorkItemStatusFilter,
+    /// Projects prerequisite statuses for long-list rendering when enabled.
+    pub include_prerequisite_statuses: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -72,7 +181,15 @@ pub fn execute(
         sort_by_order(&mut items, query.order);
     }
 
-    let (items, hidden) = apply_cap(items, query.number.unwrap_or(DEFAULT_LIST_CAP));
+    let (mut items, hidden) = apply_cap(items, query.number.unwrap_or(DEFAULT_LIST_CAP));
+
+    if query.include_prerequisite_statuses {
+        for item in &mut items {
+            item.prerequisite_statuses = item.prereq.as_deref().map_or_else(Vec::new, |value| {
+                prerequisite::statuses(value, store, projects)
+            });
+        }
+    }
 
     Ok(ListResult { items, hidden })
 }
@@ -215,14 +332,19 @@ fn apply_cap(items: Vec<PendingWorkItemView>, cap: usize) -> (Vec<PendingWorkIte
 
 #[cfg(test)]
 mod tests {
+    use std::convert::Infallible;
+
     use pwf_domain::pending_work::{
-        ListResult, ListScope, OrderDirection, OrderField, OrderSpec, ProjectName, ProjectRegistry,
-        Tags, Timestamp, WorkItemId, WorkItemStatus, WorkItemStatusFilter,
+        ProjectName, Tags, Timestamp, WorkItemId, WorkItemStatus, WorkItemStatusFilter,
     };
 
-    use super::{GetPendingWork, GetPendingWorkError, execute};
+    use super::{
+        GetPendingWork, GetPendingWorkError, ListResult, ListScope, OrderDirection, OrderField,
+        OrderSpec, PrerequisiteStatus, ProjectRegistry, execute,
+    };
     use crate::{
-        IndexPlacement, Materialization, PendingWorkItem, RecordId, testing::InMemoryStore,
+        AppDbStore, IndexPlacement, ItemPatch, Materialization, NewItem, PendingWorkItem, RecordId,
+        testing::InMemoryStore,
     };
 
     type Staged = (&'static str, PendingWorkItem);
@@ -282,6 +404,61 @@ mod tests {
         store_and_registry(&staged)
     }
 
+    fn prerequisite_registry() -> ProjectRegistry {
+        ProjectRegistry::new([
+            (
+                ProjectName::try_new("pwf").unwrap(),
+                Some("/repo/pwf".to_string()),
+                Some("PWF".to_string()),
+            ),
+            (
+                ProjectName::try_new("config-handler").unwrap(),
+                Some("/repo/config-handler".to_string()),
+                Some("CFG".to_string()),
+            ),
+        ])
+    }
+
+    #[derive(Clone)]
+    struct NoPrerequisiteLookupStore(InMemoryStore);
+
+    impl AppDbStore<PendingWorkItem> for NoPrerequisiteLookupStore {
+        type Error = Infallible;
+
+        fn get(
+            &self,
+            _project: &ProjectName,
+            _id: &WorkItemId,
+        ) -> Result<Option<PendingWorkItem>, Self::Error> {
+            panic!("short list must not read prerequisite records")
+        }
+
+        fn list(&self, project: &ProjectName) -> Result<Vec<PendingWorkItem>, Self::Error> {
+            <InMemoryStore as AppDbStore<PendingWorkItem>>::list(&self.0, project)
+        }
+
+        fn insert(
+            &self,
+            _project: &ProjectName,
+            _new: NewItem,
+        ) -> Result<PendingWorkItem, Self::Error> {
+            unreachable!("list query does not insert records")
+        }
+
+        fn update(
+            &self,
+            _project: &ProjectName,
+            _id: &WorkItemId,
+            _patch: ItemPatch,
+        ) -> Result<(), Self::Error> {
+            unreachable!("list query does not update records")
+        }
+
+        fn delete(&self, _project: &ProjectName, _id: &WorkItemId) -> Result<(), Self::Error> {
+            unreachable!("list query does not delete records")
+        }
+    }
+
     fn run(
         store: &InMemoryStore,
         registry: &ProjectRegistry,
@@ -327,11 +504,120 @@ mod tests {
             tags: None,
             order: OrderSpec::default(),
             status_filter: WorkItemStatusFilter::default(),
+            include_prerequisite_statuses: false,
         }
     }
 
     fn listed_ids(result: &ListResult) -> Vec<&str> {
         result.items.iter().map(|item| item.id.as_str()).collect()
+    }
+
+    #[test]
+    fn long_list_projects_done_active_and_missing_prerequisite_statuses() {
+        let dependent = PendingWorkItem {
+            prereq: Some("[[CFG-0014]], [[CFG-0015]], [[CFG-9999]]".to_string()),
+            ..record("PWF-0001")
+        };
+        let done = PendingWorkItem {
+            status: WorkItemStatus::Done,
+            ..record("CFG-0014")
+        };
+        let active = record("CFG-0015");
+        let store = InMemoryStore::default()
+            .with_project("pwf", vec![dependent])
+            .with_project("config-handler", vec![done, active]);
+
+        let got = run(
+            &store,
+            &prerequisite_registry(),
+            &GetPendingWork {
+                only_project: Some("pwf".to_string()),
+                include_prerequisite_statuses: true,
+                ..default_query()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            got.items[0].prerequisite_statuses,
+            [
+                PrerequisiteStatus {
+                    id: WorkItemId::try_new("CFG-0014").unwrap(),
+                    status: Some(WorkItemStatus::Done),
+                },
+                PrerequisiteStatus {
+                    id: WorkItemId::try_new("CFG-0015").unwrap(),
+                    status: Some(WorkItemStatus::Active),
+                },
+                PrerequisiteStatus {
+                    id: WorkItemId::try_new("CFG-9999").unwrap(),
+                    status: None,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn long_list_treats_indexed_prerequisite_without_note_as_missing() {
+        let dependent = PendingWorkItem {
+            prereq: Some("[[CFG-0014]]".to_string()),
+            ..record("PWF-0001")
+        };
+        let missing_note = PendingWorkItem {
+            source: String::new(),
+            body: String::new(),
+            placement: None,
+            materialization: Materialization::MissingNote {
+                expected: "/notes/config-handler/CFG-0014.md".to_string(),
+            },
+            ..record("CFG-0014")
+        };
+        let store = InMemoryStore::default()
+            .with_project("pwf", vec![dependent])
+            .with_project("config-handler", vec![missing_note]);
+
+        let got = run(
+            &store,
+            &prerequisite_registry(),
+            &GetPendingWork {
+                only_project: Some("pwf".to_string()),
+                include_prerequisite_statuses: true,
+                ..default_query()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            got.items[0].prerequisite_statuses,
+            [PrerequisiteStatus {
+                id: WorkItemId::try_new("CFG-0014").unwrap(),
+                status: None,
+            }]
+        );
+    }
+
+    #[test]
+    fn short_list_skips_prerequisite_record_lookups() {
+        let dependent = PendingWorkItem {
+            prereq: Some("[[CFG-0014]]".to_string()),
+            ..record("PWF-0001")
+        };
+        let store = NoPrerequisiteLookupStore(
+            InMemoryStore::default().with_project("pwf", vec![dependent]),
+        );
+
+        let got = execute(
+            &GetPendingWork {
+                only_project: Some("pwf".to_string()),
+                include_prerequisite_statuses: false,
+                ..default_query()
+            },
+            &store,
+            &prerequisite_registry(),
+        )
+        .unwrap();
+
+        assert!(got.items[0].prerequisite_statuses.is_empty());
     }
 
     #[test]

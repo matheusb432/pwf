@@ -1,8 +1,9 @@
 //! Builds provider-neutral agent launches and canonical multiplexer targets.
 
-use pwf_domain::pending_work::{PendingWorkItemView, ProjectPrefix, WorkItemId};
+use pwf_domain::pending_work::{ProjectPrefix, WorkItemId};
 
 use super::{Agent, AgentLaunch, DispatchTarget, LaunchDirectives};
+use crate::pending_work::list::PendingWorkItemView;
 
 /// Autonomy directive inserted by `--auto`.
 const AUTONOMY_DIRECTIVE: &str = "You MUST execute this autonomously. Do not prompt the user for questions. But if something seems critical and needs user decision, STOP execution and clarify";
@@ -96,9 +97,9 @@ fn legacy_dispatch_target(task_id: &str) -> DispatchTarget {
 
 #[cfg(test)]
 mod tests {
-    use pwf_domain::pending_work::{PendingWorkItemView, WorkItemStatus};
+    use pwf_domain::pending_work::WorkItemStatus;
 
-    use super::{build_agent_launch, dispatch_target};
+    use super::{PendingWorkItemView, build_agent_launch, dispatch_target};
     use crate::pending_work::session::{Agent, LaunchDirectives};
 
     fn item() -> PendingWorkItemView {
@@ -118,6 +119,7 @@ mod tests {
             issues: Vec::new(),
             section: None,
             prereq: None,
+            prerequisite_statuses: Vec::new(),
             tags: None,
             effort: None,
             created: Some("2026-07-15".to_string()),

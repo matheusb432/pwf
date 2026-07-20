@@ -1,14 +1,26 @@
 pub mod add;
 pub mod cancel;
+mod commit_provenance;
 pub mod done;
 pub mod enrich;
 pub mod find;
 pub mod list;
+mod note_body;
+mod prerequisite;
+mod project_registry;
 pub mod remove;
 pub mod reopen;
-pub mod resolve;
+mod resolve;
 pub mod session;
 pub mod show;
 pub mod store_util;
-pub mod tags_of;
 pub mod update;
+
+pub use add::{AddPendingWorkSource, AddedItem, PendingWorkSection};
+pub use list::{ListResult, ListScope, OrderDirection, OrderField, OrderSpec, PendingWorkItemView};
+pub use note_body::note_body;
+pub use prerequisite::PrerequisiteStatus;
+pub use project_registry::{ProjectRegistry, ProjectResolutionError};
+pub use remove::RemovedItem;
+pub use show::ShowOutput;
+pub use update::UpdatedItem;

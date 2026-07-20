@@ -1,59 +1,27 @@
-use pwf_domain::pending_work::{ProjectRegistry, WorkItemId};
+use pwf_domain::pending_work::WorkItemId;
 
+use super::{
+    enrich::inline_record_id, project_registry::ProjectRegistry, show::ShowPendingWorkError,
+};
 use crate::{AppDbStore, PendingWorkItem, RecordId};
-
-#[derive(Debug, Clone)]
-pub struct ResolvePendingWorkItem {
-    pub id: String,
-}
-
-/// Contains a resolved note's display path and full Markdown source.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ResolvedItem {
-    pub note_path: String,
-    pub markdown: String,
-}
-
-impl From<PendingWorkItem> for ResolvedItem {
-    fn from(record: PendingWorkItem) -> Self {
-        Self {
-            note_path: record.locator,
-            markdown: record.source,
-        }
-    }
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum ResolvePendingWorkError {
-    /// Preserves the unmatched requested id without normalizing it again.
-    #[error("Open pending-work item not found: {id}")]
-    ItemNotFound { id: String },
-    /// Rejects source output for an index link whose note file is missing.
-    ///
-    /// Path-only resolution remains valid for this materialization.
-    #[error("work-item note file is missing: {path}")]
-    NoteFileMissing { path: String },
-    #[error("{0}")]
-    ReadStore(Box<dyn std::error::Error + Send + Sync>),
-}
 
 /// Resolves an open or closed record by project prefix or inline `<project>:<ordinal>` id.
 pub(crate) fn resolve_record<S>(
     store: &S,
     projects: &ProjectRegistry,
     id: &str,
-) -> Result<PendingWorkItem, ResolvePendingWorkError>
+) -> Result<PendingWorkItem, ShowPendingWorkError>
 where
     S: AppDbStore<PendingWorkItem>,
 {
-    let not_found = || ResolvePendingWorkError::ItemNotFound { id: id.to_string() };
+    let not_found = || ShowPendingWorkError::ItemNotFound { id: id.to_string() };
     let Ok(work_id) = WorkItemId::try_new(id) else {
         return resolve_inline_record(store, projects, id);
     };
     let project = projects.project_for_id(&work_id).ok_or_else(not_found)?;
     store
         .get(project, &work_id)
-        .map_err(|error| ResolvePendingWorkError::ReadStore(Box::new(error)))?
+        .map_err(|error| ShowPendingWorkError::ReadStore(Box::new(error)))?
         .ok_or_else(not_found)
 }
 
@@ -62,17 +30,17 @@ fn resolve_inline_record<S>(
     store: &S,
     projects: &ProjectRegistry,
     id: &str,
-) -> Result<PendingWorkItem, ResolvePendingWorkError>
+) -> Result<PendingWorkItem, ShowPendingWorkError>
 where
     S: AppDbStore<PendingWorkItem>,
 {
     for (project, _repo) in projects.projects() {
         let records = store
             .list(project)
-            .map_err(|error| ResolvePendingWorkError::ReadStore(Box::new(error)))?;
+            .map_err(|error| ShowPendingWorkError::ReadStore(Box::new(error)))?;
         let found = records.into_iter().find(|record| match record.id {
             RecordId::Inline(ordinal) => {
-                format!("{}:{ordinal}", project.as_ref()).eq_ignore_ascii_case(id)
+                inline_record_id(project.as_ref(), ordinal).eq_ignore_ascii_case(id)
             }
             RecordId::Item(_) => false,
         });
@@ -80,24 +48,14 @@ where
             return Ok(record);
         }
     }
-    Err(ResolvePendingWorkError::ItemNotFound { id: id.to_string() })
-}
-
-#[cqrsy::query]
-pub fn execute(
-    query: &ResolvePendingWorkItem,
-    store: &impl AppDbStore<PendingWorkItem>,
-    projects: &ProjectRegistry,
-) -> Result<ResolvedItem, ResolvePendingWorkError> {
-    resolve_record(store, projects, &query.id).map(ResolvedItem::from)
+    Err(ShowPendingWorkError::ItemNotFound { id: id.to_string() })
 }
 
 #[cfg(test)]
 pub(crate) mod testing {
-    use pwf_domain::pending_work::{
-        ProjectName, ProjectRegistry, Timestamp, WorkItemId, WorkItemStatus,
-    };
+    use pwf_domain::pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus};
 
+    use super::ProjectRegistry;
     use crate::{Materialization, PendingWorkItem, RecordId, testing::InMemoryStore};
 
     pub(crate) const PWF_0001_SOURCE: &str = "---\nid: PWF-0001\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- do the thing\n";
@@ -182,72 +140,44 @@ pub(crate) mod testing {
 #[cfg(test)]
 mod tests {
     use super::{
-        ResolvePendingWorkError, ResolvePendingWorkItem, execute,
+        ShowPendingWorkError, resolve_record,
         testing::{staged, staged_ghost, staged_inline},
     };
 
     #[test]
-    fn resolve_returns_path_and_markdown() {
+    fn resolve_record_returns_path_and_markdown() {
         let (store, registry) = staged();
 
-        let resolved = execute(
-            &ResolvePendingWorkItem {
-                id: "PWF-0001".to_string(),
-            },
-            &store,
-            &registry,
-        )
-        .unwrap();
+        let resolved = resolve_record(&store, &registry, "PWF-0001").unwrap();
 
-        assert_eq!(resolved.note_path, "/notes/pwf/PWF-0001.md");
-        assert_eq!(resolved.markdown, super::testing::PWF_0001_SOURCE);
+        assert_eq!(resolved.locator, "/notes/pwf/PWF-0001.md");
+        assert_eq!(resolved.source, super::testing::PWF_0001_SOURCE);
     }
 
     #[test]
     fn resolve_returns_expected_note_path_for_missing_note_wikilink() {
         let (store, registry) = staged_ghost();
 
-        let resolved = execute(
-            &ResolvePendingWorkItem {
-                id: "PWF-0002".to_string(),
-            },
-            &store,
-            &registry,
-        )
-        .unwrap();
+        let resolved = resolve_record(&store, &registry, "PWF-0002").unwrap();
 
-        assert_eq!(resolved.note_path, "/notes/pwf/PWF-0002.md");
+        assert_eq!(resolved.locator, "/notes/pwf/PWF-0002.md");
     }
 
     #[test]
     fn resolve_serves_inline_legacy_id_case_insensitively() {
         let (store, registry) = staged_inline();
 
-        let resolved = execute(
-            &ResolvePendingWorkItem {
-                id: "PWF:1".to_string(),
-            },
-            &store,
-            &registry,
-        )
-        .unwrap();
+        let resolved = resolve_record(&store, &registry, "PWF:1").unwrap();
 
-        assert_eq!(resolved.note_path, "/notes/pwf/pwf.md");
-        assert_eq!(resolved.markdown, "do the legacy thing");
+        assert_eq!(resolved.locator, "/notes/pwf/pwf.md");
+        assert_eq!(resolved.source, "do the legacy thing");
     }
 
     #[test]
     fn resolve_unknown_inline_id_preserves_raw_id() {
         let (store, registry) = staged_inline();
 
-        let error = execute(
-            &ResolvePendingWorkItem {
-                id: "pwf:9".to_string(),
-            },
-            &store,
-            &registry,
-        )
-        .unwrap_err();
+        let error = resolve_record(&store, &registry, "pwf:9").unwrap_err();
 
         assert_eq!(error.to_string(), "Open pending-work item not found: pwf:9");
     }
@@ -256,14 +186,7 @@ mod tests {
     fn resolve_missing_id_preserves_raw_lowercase_id() {
         let (store, registry) = staged();
 
-        let error = execute(
-            &ResolvePendingWorkItem {
-                id: "pwf-9999".to_string(),
-            },
-            &store,
-            &registry,
-        )
-        .unwrap_err();
+        let error = resolve_record(&store, &registry, "pwf-9999").unwrap_err();
 
         assert_eq!(
             error.to_string(),
@@ -271,7 +194,7 @@ mod tests {
         );
         assert!(matches!(
             error,
-            ResolvePendingWorkError::ItemNotFound { id } if id == "pwf-9999"
+            ShowPendingWorkError::ItemNotFound { id } if id == "pwf-9999"
         ));
     }
 }
