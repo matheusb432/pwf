@@ -9,9 +9,9 @@ use pwf_infra::obsidian::ObsidianStore;
 
 use super::{
     common::{CommonArguments, PendingWorkError, StatusChoice, load_configuration},
-    render::{color_enabled_auto, render_list},
+    render::render_list,
 };
-use crate::config::Config;
+use crate::{config::Config, console::Console};
 
 #[derive(Args, Debug)]
 #[expect(
@@ -68,7 +68,7 @@ pub(crate) enum Compatibility {
     RejectCreateAfterProjectResolution,
 }
 
-pub(super) fn run(arguments: &Arguments) -> Result<String, PendingWorkError> {
+pub(super) fn run(arguments: &Arguments, console: Console) -> Result<String, PendingWorkError> {
     let configuration = load_configuration(&arguments.common)?;
     let projects = ProjectRegistry::new(configuration.projects.iter().map(|(name, repository)| {
         (
@@ -108,7 +108,7 @@ pub(super) fn run(arguments: &Arguments) -> Result<String, PendingWorkError> {
         tags: tags.as_ref(),
         order,
         status_filter: arguments.status.filter(),
-        color_on: color_enabled_auto(),
+        color_on: console.color(),
     };
     let store = ObsidianStore::new(configuration.clone());
     let result = pwf_application::pending_work::list::execute(

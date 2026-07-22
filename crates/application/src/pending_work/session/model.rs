@@ -1,5 +1,7 @@
 //! Semantic session values shared by operations and adapters.
 
+use crate::pending_work::PendingWorkItemView;
+
 /// Selects a supported agent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Agent {
@@ -39,6 +41,23 @@ pub struct AgentLaunch {
     pub prompt: String,
     pub model: Option<String>,
 }
+impl AgentLaunch {
+    pub fn new(
+        item: &PendingWorkItemView,
+        directives: LaunchDirectives,
+        agent: Agent,
+        model: Option<String>,
+    ) -> Self {
+        AgentLaunch {
+            agent,
+            task_id: item.id.clone(),
+            title: super::launch::thread_title(item),
+            repository: item.repo.clone().unwrap_or_default(),
+            prompt: super::launch::launch_prompt(item, directives),
+            model,
+        }
+    }
+}
 
 /// Contains an agent binary's availability and discovered metadata.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,6 +84,7 @@ pub struct DispatchConfirmation {
     pub mode: DispatchMode,
     pub agent: Agent,
     pub directives: LaunchDirectives,
+    pub model: String,
     pub target: DispatchTarget,
 }
 
@@ -119,6 +139,46 @@ pub struct ModelTier {
 pub struct ModelTierLookup {
     pub catalog: String,
     pub tier: Option<ModelTier>,
+}
+
+/// The agent harness' model.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct AgentModel(pub Option<String>);
+
+// TODO: find cleaner way to write this? (lotta boilerplate y_y)
+impl From<Option<String>> for AgentModel {
+    fn from(value: Option<String>) -> Self {
+        Self(value)
+    }
+}
+
+impl From<String> for AgentModel {
+    fn from(value: String) -> Self {
+        Self(Some(value))
+    }
+}
+
+impl From<Option<&str>> for AgentModel {
+    fn from(value: Option<&str>) -> Self {
+        // TODO: find cleaner way to write this?
+        if let Some(v) = value {
+            Self(Some(v.to_string()))
+        } else {
+            Self(None)
+        }
+    }
+}
+
+impl AgentModel {
+    pub const MODEL_DEFAULT: &str = "default";
+
+    pub fn into_inner(self) -> Option<String> {
+        self.0
+    }
+
+    pub fn display_or_default(&self) -> String {
+        self.0.clone().unwrap_or(Self::MODEL_DEFAULT.to_string())
+    }
 }
 
 /// Classifies a provider-specific tab-open failure.

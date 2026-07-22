@@ -28,27 +28,19 @@ pub struct Arguments {
 
 use super::{
     common::{PendingWorkError, load_configuration},
-    render::{REMOVE_MIRROR_REMEDY, color_enabled_auto, render_removed},
+    render::{REMOVE_MIRROR_REMEDY, render_removed},
 };
 use crate::{
     config::Config,
     confirm::{Confirmation, DefaultAnswer},
     confirm_prompt::{ConfirmationPrompt, Field},
+    console::Console,
 };
 
 #[derive(Clone, Copy)]
 struct CliRemovalInteraction {
-    confirmation: fn(&str, DefaultAnswer) -> Confirmation,
+    console: Console,
     assume_yes: bool,
-}
-
-impl CliRemovalInteraction {
-    fn new(confirmation: fn(&str, DefaultAnswer) -> Confirmation, assume_yes: bool) -> Self {
-        Self {
-            confirmation,
-            assume_yes,
-        }
-    }
 }
 
 impl RemovalInteraction for CliRemovalInteraction {
@@ -57,7 +49,8 @@ impl RemovalInteraction for CliRemovalInteraction {
             return true;
         }
         matches!(
-            (self.confirmation)(&removal_confirmation(context), DefaultAnswer::Yes),
+            self.console
+                .confirm(&removal_confirmation(context), DefaultAnswer::Yes),
             Confirmation::Accepted | Confirmation::NonInteractive
         )
     }
@@ -81,17 +74,17 @@ fn removal_confirmation(context: &RemovalConfirmation) -> String {
     .to_string()
 }
 
-pub(super) fn run(arguments: &Arguments) -> Result<String, PendingWorkError> {
+pub(super) fn run(arguments: &Arguments, console: Console) -> Result<String, PendingWorkError> {
     let configuration = load_configuration(&arguments.common)?;
     let store = ObsidianStore::new(configuration.clone());
-    run_remove(&configuration, &store, arguments, crate::confirm::terminal)
+    run_remove(&configuration, &store, arguments, console)
 }
 
 pub(in crate::engines::pending_work) fn run_remove<S>(
     cfg: &Config,
     store: &S,
     args: &Arguments,
-    confirmation: fn(&str, DefaultAnswer) -> Confirmation,
+    console: Console,
 ) -> Result<String, PendingWorkError>
 where
     S: AppDbStore<PendingWorkItem>
@@ -110,7 +103,10 @@ where
     }));
     let id = args.identifier.required("remove")?;
 
-    let interaction = CliRemovalInteraction::new(confirmation, args.assume_yes);
+    let interaction = CliRemovalInteraction {
+        console,
+        assume_yes: args.assume_yes,
+    };
     let outcome = pwf_application::pending_work::remove::execute(
         &RemovePendingWorkItem { id },
         store,
@@ -124,7 +120,7 @@ where
             if let HandoffMutationOutcome::Removed { path } = &removed.handoff {
                 eprintln!("info: removed handoff {}", path.display());
             }
-            Ok(render_removed(&removed, color_enabled_auto()))
+            Ok(render_removed(&removed, console.color()))
         }
         RemovePendingWorkOutcome::Aborted {
             pending_work_identifier,

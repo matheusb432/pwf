@@ -7,13 +7,14 @@ use anyhow::{Result, bail};
 use crate::{
     architecture_check::{self, Violation},
     paths,
-    proc::{self, Status},
+    process::{self, Status},
+    verb::Verb,
 };
 
 pub(crate) fn run() -> Result<()> {
     match architecture_check::run(&paths::repo_root())? {
         Ok(()) => {
-            proc::result("check-architecture", Status::Pass);
+            process::result(Verb::CHECK_ARCHITECTURE, Status::Pass);
             Ok(())
         }
         Err(violations) => {

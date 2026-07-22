@@ -29,18 +29,6 @@ fn agent_name(agent: pwf_application::pending_work::session::Agent) -> &'static 
 
 const ID_ORANGE: Ansi256Color = Ansi256Color(208);
 
-pub(super) fn color_enabled_auto() -> bool {
-    use std::io::IsTerminal;
-
-    if std::env::var_os("NO_COLOR").is_some() {
-        return false;
-    }
-    if std::env::var_os("CLICOLOR_FORCE").is_some() {
-        return true;
-    }
-    std::io::stdout().is_terminal()
-}
-
 fn paint(text: &str, color: impl Into<anstyle::Color>, enabled: bool) -> String {
     if !enabled {
         return format!("**{text}**");

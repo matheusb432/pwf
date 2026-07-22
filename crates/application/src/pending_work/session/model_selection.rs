@@ -25,14 +25,10 @@ pub(super) fn resolve_model<C>(
     agent: Agent,
     task_id: &str,
     effort: Option<&str>,
-    model_override: Option<&str>,
 ) -> Result<Option<String>, ModelSelectionError>
 where
     C: ModelTierCatalog,
 {
-    if let Some(model) = model_override {
-        return Ok(Some(model.to_string()));
-    }
     if agent == Agent::Codex {
         return Ok(None);
     }
@@ -65,30 +61,13 @@ where
     Ok(if model.is_empty() { None } else { Some(model) })
 }
 
-pub(super) fn resolve_model_for_verify<C>(
-    catalog: &C,
-    agent: Agent,
-    task_id: &str,
-    effort: Option<&str>,
-    model_override: Option<&str>,
-) -> Option<Result<String, String>>
-where
-    C: ModelTierCatalog,
-{
-    match resolve_model(catalog, agent, task_id, effort, model_override) {
-        Ok(None) => None,
-        Ok(Some(model)) => Some(Ok(model)),
-        Err(error) => Some(Err(error.to_string())),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::{assert_matches, error::Error, fmt};
 
     use pwf_domain::pending_work::EffortTier;
 
-    use super::{ModelSelectionError, resolve_model, resolve_model_for_verify};
+    use super::{ModelSelectionError, resolve_model};
     use crate::pending_work::session::{Agent, ModelTier, ModelTierCatalog, ModelTierLookup};
 
     const CATALOG_PATH: &str = "/config/model-tiers.toml";
@@ -129,37 +108,13 @@ mod tests {
     }
 
     #[test]
-    fn explicit_override_wins_before_effort_validation_or_catalog_access() {
-        let unavailable_catalog = Catalog {
-            result: Err(CatalogError("catalog unavailable")),
-        };
-
-        let model = resolve_model(
-            &unavailable_catalog,
-            Agent::Claude,
-            "PWF-0001",
-            Some("nine"),
-            Some("fable"),
-        )
-        .unwrap();
-
-        assert_eq!(model.as_deref(), Some("fable"));
-    }
-
-    #[test]
     fn codex_ignores_effort_and_the_catalog() {
         let unavailable_catalog = Catalog {
             result: Err(CatalogError("catalog unavailable")),
         };
 
-        let model = resolve_model(
-            &unavailable_catalog,
-            Agent::Codex,
-            "PWF-0001",
-            Some("nine"),
-            None,
-        )
-        .unwrap();
+        let model =
+            resolve_model(&unavailable_catalog, Agent::Codex, "PWF-0001", Some("nine")).unwrap();
 
         assert_eq!(model, None);
     }
@@ -170,8 +125,7 @@ mod tests {
             result: Err(CatalogError("catalog unavailable")),
         };
 
-        let model =
-            resolve_model(&unavailable_catalog, Agent::Claude, "PWF-0001", None, None).unwrap();
+        let model = resolve_model(&unavailable_catalog, Agent::Claude, "PWF-0001", None).unwrap();
 
         assert_eq!(model, None);
     }
@@ -183,7 +137,6 @@ mod tests {
             Agent::Claude,
             "PWF-0001",
             Some("nine"),
-            None,
         )
         .unwrap_err();
 
@@ -201,7 +154,6 @@ mod tests {
             Agent::Claude,
             "PWF-0001",
             Some("3"),
-            None,
         )
         .unwrap();
 
@@ -210,14 +162,8 @@ mod tests {
 
     #[test]
     fn empty_claude_model_is_the_no_override_sentinel() {
-        let model = resolve_model(
-            &catalog(Some("")),
-            Agent::Claude,
-            "PWF-0001",
-            Some("2"),
-            None,
-        )
-        .unwrap();
+        let model =
+            resolve_model(&catalog(Some("")), Agent::Claude, "PWF-0001", Some("2")).unwrap();
 
         assert_eq!(model, None);
     }
@@ -228,14 +174,8 @@ mod tests {
             result: Err(CatalogError("catalog unavailable")),
         };
 
-        let error = resolve_model(
-            &unavailable_catalog,
-            Agent::Claude,
-            "PWF-0001",
-            Some("1"),
-            None,
-        )
-        .unwrap_err();
+        let error =
+            resolve_model(&unavailable_catalog, Agent::Claude, "PWF-0001", Some("1")).unwrap_err();
 
         assert_eq!(error.source().unwrap().to_string(), "catalog unavailable");
     }
@@ -249,8 +189,7 @@ mod tests {
             }),
         };
 
-        let error =
-            resolve_model(&missing, Agent::Claude, "PWF-0001", Some("4"), None).unwrap_err();
+        let error = resolve_model(&missing, Agent::Claude, "PWF-0001", Some("4")).unwrap_err();
 
         assert_matches!(&error, ModelSelectionError::MissingTier { tier: 4, .. });
         assert_eq!(
@@ -262,7 +201,7 @@ mod tests {
     #[test]
     fn missing_claude_model_is_an_application_error() {
         let error =
-            resolve_model(&catalog(None), Agent::Claude, "PWF-0001", Some("4"), None).unwrap_err();
+            resolve_model(&catalog(None), Agent::Claude, "PWF-0001", Some("4")).unwrap_err();
 
         assert_matches!(
             &error,
@@ -271,30 +210,6 @@ mod tests {
         assert_eq!(
             error.to_string(),
             format!("tier 4 in {CATALOG_PATH} has no claude_model set")
-        );
-    }
-
-    #[test]
-    fn dispatch_returns_model_errors_while_verify_renders_them_as_issues() {
-        let missing = Catalog {
-            result: Ok(ModelTierLookup {
-                catalog: CATALOG_PATH.to_string(),
-                tier: None,
-            }),
-        };
-
-        let dispatch = resolve_model(&missing, Agent::Claude, "PWF-0001", Some("4"), None);
-        let verify = resolve_model_for_verify(&missing, Agent::Claude, "PWF-0001", Some("4"), None);
-
-        assert_matches!(
-            dispatch,
-            Err(ModelSelectionError::MissingTier { tier: 4, .. })
-        );
-        assert_eq!(
-            verify,
-            Some(Err(format!(
-                "tier 4 has no [tiers.4] entry in {CATALOG_PATH}"
-            )))
         );
     }
 }

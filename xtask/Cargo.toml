@@ -12,9 +12,10 @@ name = "xtask"
 path = "src/main.rs"
 
 [dependencies]
-anyhow = "1"
+anyhow = { workspace = true }
 cargo_metadata = { workspace = true }
 clap = { workspace = true }
+clap-cargo = { workspace = true }
 
 [dev-dependencies]
 assert_cmd = { workspace = true }

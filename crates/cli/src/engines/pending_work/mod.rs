@@ -1,5 +1,7 @@
 use clap::Subcommand;
 
+use crate::console::Console;
+
 pub mod add;
 pub mod cancel;
 pub(crate) mod common;
@@ -57,22 +59,22 @@ pub enum Command {
     Session(session::Arguments),
 }
 
-pub fn run(command: &Command) -> Result<String, String> {
+pub fn run(command: &Command, console: Console) -> Result<String, String> {
     match command {
-        Command::Add(arguments) => add::run(arguments),
-        Command::List(arguments) => list::run(arguments),
+        Command::Add(arguments) => add::run(arguments, console),
+        Command::List(arguments) => list::run(arguments, console),
         Command::Done(arguments) => done::run(arguments),
         Command::Cancel(arguments) => cancel::run(arguments),
         Command::Reopen(arguments) => reopen::run(arguments),
-        Command::Update(arguments) => update::run(arguments),
+        Command::Update(arguments) => update::run(arguments, console),
         Command::Show(arguments) => show::run(arguments),
         Command::Verify(arguments) => verify::run(arguments),
         Command::Route(arguments) => match route::resolve(arguments) {
-            route::ResolvedCommand::List(arguments) => list::run(&arguments),
+            route::ResolvedCommand::List(arguments) => list::run(&arguments, console),
             route::ResolvedCommand::Verify(arguments) => verify::run(&arguments),
         },
-        Command::Remove(arguments) => remove::run(arguments),
-        Command::Session(arguments) => session::run(arguments),
+        Command::Remove(arguments) => remove::run(arguments, console),
+        Command::Session(arguments) => session::run(arguments, console),
     }
     .map_err(String::from)
 }

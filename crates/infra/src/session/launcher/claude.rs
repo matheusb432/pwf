@@ -4,6 +4,8 @@ use pwf_application::pending_work::session::AgentLaunch;
 
 use super::{CLAUDE_BINARY, argv::LaunchArgv};
 
+// FIXME: this silently ignores almost every parameter! bad abstraction, there must be a
+// 'ClaudeLaunch' struct instead that clearly defines what it uses
 pub(super) fn launch_argv(launch: &AgentLaunch) -> Vec<String> {
     let mut argv = LaunchArgv::new(CLAUDE_BINARY).flag("--name", launch.title.clone());
     if let Some(model) = &launch.model {

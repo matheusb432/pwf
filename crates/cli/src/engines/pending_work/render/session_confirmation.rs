@@ -28,6 +28,7 @@ pub(in crate::engines::pending_work) fn render_session_confirmation(
         ),
         Field::new("mode", mode),
         Field::new("agent", agent_name(confirmation.agent)),
+        Field::new("model", confirmation.model.clone()),
         Field::new(
             "autonomy",
             Enabled::from(confirmation.directives.autonomous).label(),
@@ -91,6 +92,7 @@ mod tests {
                 session: "pwf".to_string(),
                 tab: "PWF-0001".to_string(),
             },
+            model: String::default(),
         };
 
         let out = render_session_confirmation(&confirmation);
@@ -119,6 +121,7 @@ mod tests {
                 session: "pwf".to_string(),
                 tab: "PWF-0001".to_string(),
             },
+            model: String::default(),
         };
 
         let out = render_session_confirmation(&confirmation);

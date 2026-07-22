@@ -27,21 +27,23 @@ path = "tests/help_cli.rs"
 test = false
 
 [dependencies]
-pwf-application = { path = "../application" }
-pwf-core = { path = "../pwf-core" }
-pwf-domain = { path = "../domain" }
-pwf-infra = { path = "../infra" }
-pwf-note = { path = "../pwf-note" }
+anstream = { workspace = true }
+pwf-application = { workspace = true }
+pwf-core = { workspace = true }
+pwf-domain = { workspace = true }
+pwf-infra = { workspace = true }
+pwf-note = { workspace = true }
 clap = { workspace = true }
+clap-cargo = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }
 regex = { workspace = true }
 thiserror = { workspace = true }
 nutype = { workspace = true }
-anstyle = "1"
+anstyle = { workspace = true }
 toml = { workspace = true }
-walkdir = "2"
+walkdir = { workspace = true }
 
 [dev-dependencies]
 assert_cmd = { workspace = true }

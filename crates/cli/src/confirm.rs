@@ -1,6 +1,6 @@
 //! Separates confirmation-answer interpretation from terminal I/O.
 
-use std::io::{IsTerminal, Write};
+use std::io::Write;
 
 /// Selects the answer used for empty or unrecognized input.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -34,12 +34,10 @@ fn interpret(line: &str, default: DefaultAnswer) -> Confirmation {
     }
 }
 
-/// Requests confirmation from terminal stdin when it is interactive.
-pub(crate) fn terminal(question: &str, default: DefaultAnswer) -> Confirmation {
-    if !std::io::stdin().is_terminal() {
-        return Confirmation::NonInteractive;
-    }
-
+/// Asks the question on stderr and reads the answer from terminal stdin.
+///
+/// Callers establish interactivity first via [`crate::console::Console`].
+pub(crate) fn prompt(question: &str, default: DefaultAnswer) -> Confirmation {
     let hint = match default {
         DefaultAnswer::Yes => "[Y/n]",
         DefaultAnswer::No => "[y/N]",

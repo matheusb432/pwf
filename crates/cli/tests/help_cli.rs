@@ -12,6 +12,44 @@ fn run(args: &[&str]) -> (String, bool) {
     )
 }
 
+#[test]
+fn forced_color_help_uses_cargo_palette() {
+    let out = Command::new(env!("CARGO_BIN_EXE_pwf"))
+        .arg("--help")
+        .env_remove("NO_COLOR")
+        .env("CLICOLOR_FORCE", "1")
+        .output()
+        .expect("run pwf");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+
+    assert!(out.status.success(), "stdout: {stdout}");
+    assert!(
+        stdout.contains("\u{1b}["),
+        "help should contain ANSI styling: {stdout}"
+    );
+    assert!(
+        stdout.contains("36m"),
+        "help should use Cargo's cyan palette: {stdout}"
+    );
+}
+
+#[test]
+fn no_color_help_strips_ansi_styling() {
+    let out = Command::new(env!("CARGO_BIN_EXE_pwf"))
+        .arg("--help")
+        .env_remove("CLICOLOR_FORCE")
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("run pwf");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+
+    assert!(out.status.success(), "stdout: {stdout}");
+    assert!(
+        !stdout.contains("\u{1b}["),
+        "help should be unstyled: {stdout}"
+    );
+}
+
 fn nanos() -> u128 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

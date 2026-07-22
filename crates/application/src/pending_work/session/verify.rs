@@ -2,15 +2,13 @@
 
 use thiserror::Error;
 
-use super::{
-    Agent, ModelTierCatalog, SessionRuntime, VerifySessionOutcome, launch::build_agent_launch,
-    model_selection::resolve_model_for_verify,
-};
+use super::{Agent, ModelTierCatalog, SessionRuntime, VerifySessionOutcome};
 use crate::{
     AppDbStore, PendingWorkItem,
     pending_work::{
         find::{FindPendingWorkError, find_open_item},
         project_registry::ProjectRegistry,
+        session::{AgentLaunch, model_selection::resolve_model},
     },
 };
 
@@ -56,19 +54,14 @@ pub fn execute(
     };
 
     let item = find_open_item(store, projects, &id)?;
-    let model = resolve_model_for_verify(
-        model_tiers,
-        query.agent,
-        &item.id,
-        item.effort.as_deref(),
-        query.model_override.as_deref(),
-    );
-    let (model, model_issue) = match model {
-        None => (None, None),
-        Some(Ok(model)) => (Some(model), None),
-        Some(Err(issue)) => (None, Some(issue)),
+    let (model, model_issue) = match query.model_override {
+        Some(model) => (Some(model), None),
+        None => match resolve_model(model_tiers, query.agent, &item.id, item.effort.as_deref()) {
+            Ok(model) => (model, None),
+            Err(issue) => (None, Some(issue)),
+        },
     };
-    let launch = build_agent_launch(
+    let launch = AgentLaunch::new(
         &item,
         super::LaunchDirectives::default(),
         query.agent,
@@ -79,7 +72,7 @@ pub fn execute(
     let mut launchable = item.launchable;
     if let Some(issue) = model_issue {
         launchable = false;
-        issues.push(issue);
+        issues.push(issue.to_string());
     }
     Ok(VerifySessionOutcome {
         task_id: Some(item.id),

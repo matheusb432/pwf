@@ -6,7 +6,7 @@ publish.workspace = true
 description = "pwf-note — one-liner project notes engine over pwf-core"
 
 [dependencies]
-pwf-core = { path = "../pwf-core" }
+pwf-core = { workspace = true }
 regex = { workspace = true }
 thiserror = { workspace = true }
 

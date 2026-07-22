@@ -5,12 +5,12 @@ edition.workspace = true
 publish.workspace = true
 
 [dependencies]
-pwf-application = { path = "../application" }
-pwf-domain = { path = "../domain" }
-pwf-core = { path = "../pwf-core" }
+pwf-application = { workspace = true }
+pwf-domain = { workspace = true }
+pwf-core = { workspace = true }
 regex = { workspace = true }
 thiserror = { workspace = true }
-gray_matter = { version = "0.3.2", default-features = false, features = ["yaml"] }
+gray_matter = { workspace = true }
 serde = { workspace = true }
 toml = { workspace = true }
 

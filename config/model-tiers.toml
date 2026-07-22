@@ -1,13 +1,3 @@
-# Effort tier -> per-provider model mapping, read by `pwf session`/`pwf verify`
-# when a task carries an `effort:` frontmatter tag. Edit freely — no code change
-# needed to repoint a tier to a different model. Only `claude_model` is read
-# today (codex is out of scope); a future provider gets its own sibling key
-# (e.g. `codex_model`) on the same tier.
-#
-# claude_model = "" is a deliberate sentinel: the tier resolves with no --model
-# override, so claude runs its own default. This differs from omitting the key
-# entirely, which is treated as a broken config and fails dispatch/verify.
-
 [tiers.1]
 claude_model = "sonnet"
 

@@ -7,14 +7,14 @@ use thiserror::Error;
 use super::{
     Agent, ConfirmationPolicy, DispatchConfirmation, DispatchMode, DispatchSessionOutcome,
     LaunchDirectives, ModelTierCatalog, SessionInteraction, SessionRuntime, TabOpenError,
-    launch::{build_agent_launch, dispatch_target},
-    model_selection::resolve_model,
+    launch::dispatch_target, model_selection::resolve_model,
 };
 use crate::{
     AppDbStore, PendingWorkItem,
     pending_work::{
         find::{FindPendingWorkError, find_open_item},
         project_registry::ProjectRegistry,
+        session::{AgentLaunch, model::AgentModel},
         update::{self, UpdatePendingWorkError, UpdatePendingWorkItem},
     },
 };
@@ -27,7 +27,7 @@ pub struct DispatchSession {
     pub mode: DispatchMode,
     pub directives: LaunchDirectives,
     pub agent: Agent,
-    pub model_override: Option<String>,
+    pub model_override: AgentModel,
     pub confirmation: ConfirmationPolicy,
 }
 
@@ -82,14 +82,12 @@ pub fn execute(
         });
     }
 
-    let model = resolve_model(
-        model_tiers,
-        command.agent,
-        &item.id,
-        item.effort.as_deref(),
-        command.model_override.as_deref(),
-    )
-    .map_err(|error| DispatchSessionError::ModelTier(Box::new(error)))?;
+    let model: AgentModel = match command.model_override.clone().into_inner() {
+        Some(model) => Some(model),
+        None => resolve_model(model_tiers, command.agent, &item.id, item.effort.as_deref())
+            .map_err(|error| DispatchSessionError::ModelTier(Box::new(error)))?,
+    }
+    .into();
 
     let repository = item.repo.clone().unwrap_or_default();
     if !runtime.repository_is_directory(&repository) {
@@ -126,7 +124,12 @@ pub fn execute(
     };
 
     let target = dispatch_target(&item.id);
-    let launch = build_agent_launch(&item, command.directives, command.agent, model);
+    let launch = AgentLaunch::new(
+        &item,
+        command.directives,
+        command.agent,
+        model.clone().into_inner(),
+    );
     if command.confirmation == ConfirmationPolicy::Ask {
         let confirmation = DispatchConfirmation {
             task_id: item.id.clone(),
@@ -135,6 +138,7 @@ pub fn execute(
             mode: command.mode,
             agent: command.agent,
             directives: command.directives,
+            model: model.display_or_default(),
             target: target.clone(),
         };
         if !interaction.confirm(&confirmation) {
@@ -236,7 +240,7 @@ mod tests {
                 Agent, AgentLaunch, AgentProbe, ConfirmationPolicy, DispatchConfirmation,
                 DispatchMode, DispatchSessionOutcome, DispatchTarget, LaunchDirectives, ModelTier,
                 ModelTierCatalog, ModelTierLookup, SessionInteraction, SessionRuntime,
-                TabOpenError,
+                TabOpenError, model::AgentModel,
             },
         },
         testing::InMemoryStore,
@@ -586,7 +590,7 @@ mod tests {
             mode,
             directives: LaunchDirectives::default(),
             agent: Agent::Claude,
-            model_override: None,
+            model_override: AgentModel::default(),
             confirmation: ConfirmationPolicy::Skip,
         }
     }
@@ -1063,7 +1067,7 @@ mod tests {
             result: Err(CatalogError("catalog unavailable")),
         };
         let mut request = command(DispatchMode::Inline);
-        request.model_override = Some("fable".to_string());
+        request.model_override = Some("fable".to_string()).into();
 
         dispatch(
             &request,

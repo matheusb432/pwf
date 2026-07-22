@@ -55,10 +55,11 @@ pub struct Arguments {
 
 use super::{
     common::{PendingWorkError, load_configuration},
-    render::{TITLE_NORMALIZED_NOTICE, color_enabled_auto, render_updated},
+    render::{TITLE_NORMALIZED_NOTICE, render_updated},
 };
+use crate::console::Console;
 
-pub(super) fn run(arguments: &Arguments) -> Result<String, PendingWorkError> {
+pub(super) fn run(arguments: &Arguments, console: Console) -> Result<String, PendingWorkError> {
     let configuration = load_configuration(&arguments.common)?;
     let projects = ProjectRegistry::new(configuration.projects.iter().map(|(name, repository)| {
         (
@@ -72,7 +73,7 @@ pub(super) fn run(arguments: &Arguments) -> Result<String, PendingWorkError> {
     }));
     let store = ObsidianStore::new(configuration);
     let updated = run_update(&store, &projects, arguments)?;
-    Ok(render_updated(&updated, color_enabled_auto()))
+    Ok(render_updated(&updated, console.color()))
 }
 
 pub(in crate::engines::pending_work) fn run_update(

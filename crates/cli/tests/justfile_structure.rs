@@ -8,48 +8,66 @@ fn repo_path(path: &str) -> std::path::PathBuf {
 }
 
 #[test]
-fn justfile_forwards_logic_to_the_xtask_crate() {
+fn root_justfile_is_a_typed_command_catalog() {
     let root = fs::read_to_string(repo_path("justfile")).expect("read root justfile");
-    assert!(
-        root.contains(r#"set shell := ["bash", "-eu", "-o", "pipefail", "-c"]"#),
-        "root justfile should use the bash recipe shell"
-    );
-    assert!(root.contains("mod pwf 'just/pwf.justfile'"));
-    assert!(root.contains("mod agents 'just/agents.justfile'"));
-    assert!(
-        !root.contains("mod md"),
-        "the md module is retired (xtask owns Markdown fmt)"
-    );
+    let shell = r#"["bash", "-eu", "-o", "pipefail", "-c"]"#;
+    assert!(root.contains(&format!("set shell := {shell}")));
+    assert!(root.contains(&format!("set windows-shell := {shell}")));
+    assert!(root.contains("mod project 'just/project.just'"));
+    assert!(root.contains("mod agents 'just/agents.just'"));
+    assert!(!root.contains("mod md"));
 
-    let pwf = fs::read_to_string(repo_path("just/pwf.justfile")).expect("read pwf module");
-    assert!(
-        pwf.contains("set working-directory := '..'"),
-        "pwf module should run recipes from the repo root"
-    );
-    for verb in ["fmt", "fmt-check", "fix", "test", "install", "update"] {
+    for dependency in [
+        "build: project::build",
+        "ship: project::ship",
+        "fmt: project::fmt",
+        "fmt-check: project::fmt-check",
+        "lint: project::lint",
+        "check: project::check",
+        "test *args: (project::test args)",
+        "install: project::install",
+        "update *args: (project::update args)",
+        "bootstrap *args: (agents::bootstrap args)",
+    ] {
+        assert!(
+            root.contains(dependency),
+            "root recipe should use typed dependency `{dependency}`"
+        );
+    }
+}
+
+#[test]
+fn project_module_forwards_logic_to_xtask() {
+    let project = fs::read_to_string(repo_path("just/project.just")).expect("read project module");
+    let shell = r#"["bash", "-eu", "-o", "pipefail", "-c"]"#;
+    assert!(project.contains(&format!("set shell := {shell}")));
+    assert!(project.contains(&format!("set windows-shell := {shell}")));
+    assert!(project.contains("set working-directory := '..'"));
+
+    for verb in [
+        "fmt",
+        "fmt-check",
+        "lint",
+        "check",
+        "fix",
+        "test",
+        "ship",
+        "install",
+        "update",
+    ] {
         let forwarded =
-            pwf.contains(&format!("-- {verb}\n")) || pwf.contains(&format!("-- {verb} "));
+            project.contains(&format!("-- {verb}\n")) || project.contains(&format!("-- {verb} "));
         assert!(
             forwarded,
             "`{verb}` recipe should forward into the xtask crate"
         );
     }
-    assert!(!pwf.contains("shellspec"), "ShellSpec is retired");
-    assert!(
-        !pwf.contains("_require-shellspec"),
-        "ShellSpec guard is retired"
-    );
+    assert!(!project.contains("shellspec"));
 }
 
 #[test]
-fn shellspec_suite_is_removed() {
-    assert!(
-        !repo_path(".shellspec").exists(),
-        ".shellspec should be deleted"
-    );
-    assert!(!repo_path("spec").exists(), "spec/ should be deleted");
-    assert!(
-        !repo_path("just/md.justfile").exists(),
-        "just/md.justfile should be deleted"
-    );
+fn retired_shellspec_suite_stays_removed() {
+    assert!(!repo_path(".shellspec").exists());
+    assert!(!repo_path("spec").exists());
+    assert!(!repo_path("just/md.justfile").exists());
 }

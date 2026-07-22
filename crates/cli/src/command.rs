@@ -6,7 +6,13 @@ use crate::engines::{handoff, note, pending_work};
 
 /// Manages pending work, handoffs, and project notes across configured repositories.
 #[derive(Parser, Debug)]
-#[command(name = "pwf", version, about, long_about = None)]
+#[command(
+    name = "pwf",
+    version,
+    about,
+    long_about = None,
+    styles = clap_cargo::style::CLAP_STYLING
+)]
 pub struct Cli {
     #[command(subcommand)]
     pub engine: Engine,

@@ -12,8 +12,9 @@ use clap::Args;
 
 use crate::{
     paths,
-    proc::{self, Status},
-    verbs::fmt,
+    process::{self, Status},
+    verb::Verb,
+    verbs::check,
 };
 
 /// Flags for the `update` verb.
@@ -22,7 +23,7 @@ pub(crate) struct UpdateArgs {
     /// Preview the shim change and run `--help` without touching the system.
     #[arg(long, visible_alias = "dry-run")]
     pub(crate) dry: bool,
-    /// Skip the fmt-check preflight (still builds + refreshes the shim).
+    /// Skip the full check preflight (still builds + refreshes the shim).
     #[arg(short = 'f', long)]
     pub(crate) force: bool,
 }
@@ -82,27 +83,27 @@ pub(crate) fn install() -> Result<()> {
     #[cfg(windows)]
     {
         // The Windows Scoop path is manually certified.
-        proc::run("scoop install", "scoop", &["install", "pwf.json"])?;
-        proc::result("install", Status::Done);
+        process::run("scoop install", "scoop", &["install", "pwf.json"])?;
+        process::result(Verb::INSTALL, Status::Done);
         return Ok(());
     }
     #[cfg(unix)]
     {
         place_unix(false)?;
-        proc::result("install", Status::Done);
+        process::result(Verb::INSTALL, Status::Done);
         Ok(())
     }
 }
 
 /// Rebuilds and refreshes the shim after the format preflight unless forced.
 pub(crate) fn update(args: &UpdateArgs) -> Result<()> {
-    if !args.force {
-        fmt::fmt_check()?;
+    if should_run_check_preflight(args.force) {
+        check::run()?;
     }
     #[cfg(windows)]
     {
         // The Windows Scoop path is manually certified.
-        proc::run("cargo build", "cargo", &["build", "--release"])?;
+        process::run("cargo build", "cargo", &["build", "--release"])?;
         let dest = dirs_scoop_pwf()?;
         if args.dry {
             eprintln!(
@@ -115,15 +116,19 @@ pub(crate) fn update(args: &UpdateArgs) -> Result<()> {
                 .with_context(|| format!("copying to {}", dest.display()))?;
             eprintln!("refreshed global pwf shim -> {}", dest.display());
         }
-        proc::result("update", Status::Done);
+        process::result(Verb::UPDATE, Status::Done);
         return Ok(());
     }
     #[cfg(unix)]
     {
         place_unix(args.dry)?;
-        proc::result("update", Status::Done);
+        process::result(Verb::UPDATE, Status::Done);
         Ok(())
     }
+}
+
+fn should_run_check_preflight(force: bool) -> bool {
+    !force
 }
 
 /// Builds and links the Unix binary, then ensures its directory is on PATH.
@@ -139,7 +144,7 @@ fn place_unix(dry: bool) -> Result<()> {
         );
         return Ok(());
     }
-    proc::run("cargo build", "cargo", &["build", "--release"])?;
+    process::run("cargo build", "cargo", &["build", "--release"])?;
     let placed = ensure_symlink(&target, &link)?;
     eprintln!("pwf shim {placed:?} -> {}", target.display());
     wire_path(link.parent().context("link has no parent")?)?;
@@ -197,6 +202,12 @@ mod tests {
         assert!(
             path_export_line(dir, "/usr/bin", "export PATH=\"/home/u/.local/bin:$PATH\"").is_none()
         );
+    }
+
+    #[test]
+    fn update_check_preflight_is_skipped_only_when_forced() {
+        assert!(should_run_check_preflight(false));
+        assert!(!should_run_check_preflight(true));
     }
 
     #[test]

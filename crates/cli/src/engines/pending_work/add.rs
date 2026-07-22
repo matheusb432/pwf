@@ -9,10 +9,11 @@ use pwf_infra::obsidian::ObsidianStore;
 use super::{
     common::{CommonArguments, PendingWorkError, load_configuration},
     render::{
-        ADD_MIRROR_REMEDY, TITLE_NORMALIZED_NOTICE, color_enabled_auto, emit_add_diagnostics,
-        emit_created_section, emit_created_section_for_error, render_added,
+        ADD_MIRROR_REMEDY, TITLE_NORMALIZED_NOTICE, emit_add_diagnostics, emit_created_section,
+        emit_created_section_for_error, render_added,
     },
 };
+use crate::console::Console;
 
 #[derive(Args, Debug)]
 pub struct Arguments {
@@ -55,7 +56,7 @@ pub struct Arguments {
     pub(crate) common: CommonArguments,
 }
 
-pub(super) fn run(arguments: &Arguments) -> Result<String, PendingWorkError> {
+pub(super) fn run(arguments: &Arguments, console: Console) -> Result<String, PendingWorkError> {
     let configuration = load_configuration(&arguments.common)?;
     let projects = ProjectRegistry::new(configuration.projects.iter().map(|(name, repository)| {
         (
@@ -82,7 +83,7 @@ pub(super) fn run(arguments: &Arguments) -> Result<String, PendingWorkError> {
             {
                 eprintln!("info: created handoff {}", path.display());
             }
-            Ok(render_added(&added, color_enabled_auto()))
+            Ok(render_added(&added, console.color()))
         }
         Err(error) => {
             emit_created_section_for_error(&error);

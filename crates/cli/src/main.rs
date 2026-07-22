@@ -1,3 +1,5 @@
+use std::io::Write;
+
 use pwf::{command, engines};
 
 fn main() {
@@ -34,18 +36,20 @@ fn main() {
 }
 
 fn exit_with_clap_error(e: &clap::Error) -> ! {
-    let rendered = e.render().to_string();
+    let rendered = e.render().ansi().to_string();
     if e.use_stderr() {
-        eprint!("{rendered}");
+        let _ = anstream::stderr().write_all(rendered.as_bytes());
     } else {
-        print!("{rendered}");
+        let _ = anstream::stdout().write_all(rendered.as_bytes());
     }
     std::process::exit(e.exit_code());
 }
 
 fn run(parsed: command::Cli) -> Result<String, String> {
     match parsed.engine {
-        command::Engine::PendingWork(command) => engines::pending_work::run(&command),
+        command::Engine::PendingWork(command) => {
+            engines::pending_work::run(&command, pwf::console::Console::from_terminal())
+        }
         command::Engine::Handoff { command } => engines::handoff::run(&command),
         command::Engine::Note(arguments) => engines::note::run(&arguments),
     }

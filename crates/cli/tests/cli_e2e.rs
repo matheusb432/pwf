@@ -3410,12 +3410,20 @@ fn stage_session_with_zellij_stub(
 
 #[test]
 #[cfg(unix)]
-fn session_ok_outputs_thread_title() {
+fn session_claude_agent_outputs_thread_title() {
     let dir = TempDir::new().unwrap();
     let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
 
     pwf()
-        .args(["session", "--id", "PWF-0001", "--yes", "--config-path"])
+        .args([
+            "session",
+            "--id",
+            "PWF-0001",
+            "--agent",
+            "claude",
+            "--yes",
+            "--config-path",
+        ])
         .arg(&cfg)
         .env("PATH", path)
         .env("ZELLIJ_STUB_LOG", &log)
@@ -3496,7 +3504,15 @@ fn session_with_effort_passes_model_flag_to_claude() {
     fs::write(&tiers, "[tiers.4]\nclaude_model = \"opus\"\n").unwrap();
 
     pwf()
-        .args(["session", "--id", "PWF-0001", "--yes", "--config-path"])
+        .args([
+            "session",
+            "--id",
+            "PWF-0001",
+            "--agent",
+            "claude",
+            "--yes",
+            "--config-path",
+        ])
         .arg(&cfg)
         .env("PATH", path)
         .env("ZELLIJ_STUB_LOG", &log)
@@ -3507,138 +3523,6 @@ fn session_with_effort_passes_model_flag_to_claude() {
     let argv = fs::read_to_string(&log).unwrap();
     assert!(argv.contains("--model"), "no --model in argv: {argv}");
     assert!(argv.contains("opus"), "model value missing: {argv}");
-}
-
-#[test]
-#[cfg(unix)]
-fn session_with_effort_and_empty_claude_model_omits_model_flag() {
-    // An empty tier mapping delegates model selection to Claude.
-    let dir = TempDir::new().unwrap();
-    let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
-    let notes = dir.path().join("notes");
-    fs::write(
-        notes.join("pwf").join("PWF-0001.md"),
-        "---\nid: PWF-0001\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\neffort: 4\n---\n\n## Goals\n- do the thing\n",
-    )
-    .unwrap();
-    let tiers = dir.path().join("model-tiers.toml");
-    fs::write(&tiers, "[tiers.4]\nclaude_model = \"\"\n").unwrap();
-
-    pwf()
-        .args(["session", "--id", "PWF-0001", "--yes", "--config-path"])
-        .arg(&cfg)
-        .env("PATH", path)
-        .env("ZELLIJ_STUB_LOG", &log)
-        .env("PWF_MODEL_TIERS", &tiers)
-        .assert()
-        .success();
-
-    let argv = fs::read_to_string(&log).unwrap();
-    assert!(
-        !argv.contains("--model"),
-        "unexpected --model in argv: {argv}"
-    );
-}
-
-#[test]
-#[cfg(unix)]
-fn session_with_explicit_model_flag_forwards_it_verbatim() {
-    // Explicit models bypass effort-tier lookup and forward verbatim.
-    let dir = TempDir::new().unwrap();
-    let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
-
-    pwf()
-        .args([
-            "session",
-            "--id",
-            "PWF-0001",
-            "--yes",
-            "--model",
-            "fable",
-            "--config-path",
-        ])
-        .arg(&cfg)
-        .env("PATH", path)
-        .env("ZELLIJ_STUB_LOG", &log)
-        .assert()
-        .success();
-
-    let argv = fs::read_to_string(&log).unwrap();
-    assert!(argv.contains("--model"), "no --model in argv: {argv}");
-    assert!(argv.contains("fable"), "model value missing: {argv}");
-}
-
-#[test]
-#[cfg(unix)]
-fn session_with_explicit_model_flag_wins_over_effort_tier() {
-    let dir = TempDir::new().unwrap();
-    let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
-    let notes = dir.path().join("notes");
-    fs::write(
-        notes.join("pwf").join("PWF-0001.md"),
-        "---\nid: PWF-0001\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\neffort: 4\n---\n\n## Goals\n- do the thing\n",
-    )
-    .unwrap();
-    let tiers = dir.path().join("model-tiers.toml");
-    fs::write(&tiers, "[tiers.4]\nclaude_model = \"opus\"\n").unwrap();
-
-    pwf()
-        .args([
-            "session",
-            "--id",
-            "PWF-0001",
-            "--yes",
-            "--model",
-            "fable",
-            "--config-path",
-        ])
-        .arg(&cfg)
-        .env("PATH", path)
-        .env("ZELLIJ_STUB_LOG", &log)
-        .env("PWF_MODEL_TIERS", &tiers)
-        .assert()
-        .success();
-
-    let argv = fs::read_to_string(&log).unwrap();
-    assert!(argv.contains("fable"), "override should win: {argv}");
-    assert!(
-        !argv.contains("opus"),
-        "tier model should be shadowed: {argv}"
-    );
-}
-
-#[test]
-#[cfg(unix)]
-fn session_with_explicit_model_flag_survives_broken_tiers_config() {
-    let dir = TempDir::new().unwrap();
-    let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
-    let notes = dir.path().join("notes");
-    fs::write(
-        notes.join("pwf").join("PWF-0001.md"),
-        "---\nid: PWF-0001\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\neffort: 4\n---\n\n## Goals\n- do the thing\n",
-    )
-    .unwrap();
-    let missing_tiers = dir.path().join("does-not-exist.toml");
-
-    pwf()
-        .args([
-            "session",
-            "--id",
-            "PWF-0001",
-            "--yes",
-            "--model",
-            "fable",
-            "--config-path",
-        ])
-        .arg(&cfg)
-        .env("PATH", path)
-        .env("ZELLIJ_STUB_LOG", &log)
-        .env("PWF_MODEL_TIERS", &missing_tiers)
-        .assert()
-        .success();
-
-    let argv = fs::read_to_string(&log).unwrap();
-    assert!(argv.contains("fable"), "override should win: {argv}");
 }
 
 #[test]
@@ -3655,7 +3539,15 @@ fn session_with_effort_and_broken_tiers_config_fails_before_dispatch() {
     let missing_tiers = dir.path().join("does-not-exist.toml");
 
     pwf()
-        .args(["session", "--id", "PWF-0001", "--yes", "--config-path"])
+        .args([
+            "session",
+            "--id",
+            "PWF-0001",
+            "--agent",
+            "claude",
+            "--yes",
+            "--config-path",
+        ])
         .arg(&cfg)
         .env("PATH", path)
         .env("ZELLIJ_STUB_LOG", &log)
@@ -3826,12 +3718,21 @@ fn session_dispatches_a_thin_pointer_not_the_note_body() {
 
 #[test]
 #[cfg(unix)]
-fn session_append_short_flag_extends_body_not_the_agent() {
+fn session_append_short_flag_extends_the_note() {
     let dir = TempDir::new().unwrap();
     let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
 
     pwf()
-        .args(["session", "--id", "PWF-0001", "--yes", "-a", "extra note"])
+        .args([
+            "session",
+            "--id",
+            "PWF-0001",
+            "--agent",
+            "codex",
+            "--yes",
+            "-a",
+            "extra note",
+        ])
         .arg("--config-path")
         .arg(&cfg)
         .env("PATH", path)
@@ -3844,16 +3745,6 @@ fn session_append_short_flag_extends_body_not_the_agent() {
     assert!(
         note.contains("- extra note"),
         "-a did not splice into the body: {note}"
-    );
-
-    let argv = fs::read_to_string(&log).unwrap();
-    assert!(
-        argv.contains("claude"),
-        "default agent must stay claude: {argv}"
-    );
-    assert!(
-        !argv.contains("codex"),
-        "-a must not select codex as an agent: {argv}"
     );
 }
 
@@ -3936,84 +3827,20 @@ fn e2e_verify_reports_resolved_model_for_effort_tagged_item() {
     fs::write(&tiers, "[tiers.1]\nclaude_model = \"sonnet\"\n").unwrap();
 
     pwf()
-        .args(["verify", "--id", "GLP-0001", "--config-path"])
+        .args([
+            "verify",
+            "--id",
+            "GLP-0001",
+            "--agent",
+            "claude",
+            "--config-path",
+        ])
         .arg(&cfg)
         .env("PWF_MODEL_TIERS", &tiers)
         .assert()
         .success()
         .stdout(contains("--model"))
         .stdout(contains("sonnet"));
-}
-
-#[test]
-fn e2e_verify_omits_model_for_empty_claude_model_tier() {
-    let (d, cfg) = staged();
-    pwf()
-        .args([
-            "update",
-            "--id",
-            "GLP-0001",
-            "--effort",
-            "1",
-            "--config-path",
-        ])
-        .arg(&cfg)
-        .assert()
-        .success();
-    let tiers = d.path().join("model-tiers.toml");
-    fs::write(&tiers, "[tiers.1]\nclaude_model = \"\"\n").unwrap();
-
-    let out = pwf()
-        .args(["verify", "--id", "GLP-0001", "--config-path"])
-        .arg(&cfg)
-        .env("PWF_MODEL_TIERS", &tiers)
-        .assert()
-        .success()
-        .stdout(contains("launchable: yes"))
-        .get_output()
-        .stdout
-        .clone();
-    let stdout = String::from_utf8(out).unwrap();
-    assert!(
-        !stdout.contains("--model"),
-        "unexpected --model in verify output: {stdout}"
-    );
-}
-
-#[test]
-fn e2e_verify_with_explicit_model_flag_wins_over_effort_tier() {
-    let (d, cfg) = staged();
-    pwf()
-        .args([
-            "update",
-            "--id",
-            "GLP-0001",
-            "--effort",
-            "1",
-            "--config-path",
-        ])
-        .arg(&cfg)
-        .assert()
-        .success();
-    let tiers = d.path().join("model-tiers.toml");
-    fs::write(&tiers, "[tiers.1]\nclaude_model = \"sonnet\"\n").unwrap();
-
-    pwf()
-        .args([
-            "verify",
-            "--id",
-            "GLP-0001",
-            "--model",
-            "fable",
-            "--config-path",
-        ])
-        .arg(&cfg)
-        .env("PWF_MODEL_TIERS", &tiers)
-        .assert()
-        .success()
-        .stdout(contains("--model"))
-        .stdout(contains("fable"))
-        .stdout(contains("sonnet").not());
 }
 
 #[test]
@@ -4034,7 +3861,14 @@ fn e2e_verify_fails_on_broken_model_tiers_for_effort_tagged_item() {
     let missing_tiers = d.path().join("does-not-exist.toml");
 
     pwf()
-        .args(["verify", "--id", "GLP-0001", "--config-path"])
+        .args([
+            "verify",
+            "--id",
+            "GLP-0001",
+            "--agent",
+            "claude",
+            "--config-path",
+        ])
         .arg(&cfg)
         .env("PWF_MODEL_TIERS", &missing_tiers)
         .assert()

@@ -51,8 +51,9 @@ impl Identifier {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
 pub enum AgentChoice {
-    #[default]
     Claude,
+    // TODO: make default agent choice be configurable by user
+    #[default]
     Codex,
 }
 

@@ -1,4 +1,5 @@
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+set windows-shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 set working-directory := '..'
 
 [private]

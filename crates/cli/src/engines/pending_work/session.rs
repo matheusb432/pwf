@@ -16,7 +16,10 @@ use super::{
     common::{AgentChoice, CommonArguments, Identifier, PendingWorkError, load_configuration},
     render::{render_dispatch, render_session_confirmation},
 };
-use crate::confirm::{Confirmation, DefaultAnswer};
+use crate::{
+    confirm::{Confirmation, DefaultAnswer},
+    console::Console,
+};
 
 #[derive(Args, Debug)]
 #[expect(
@@ -43,12 +46,11 @@ pub struct Arguments {
     /// unattended dispatch).
     #[arg(long = "auto")]
     pub(crate) autonomous: bool,
-    /// Which agent to dispatch (claude default).
-    #[arg(long = "agent", value_enum, default_value_t = AgentChoice::Claude)]
+    /// Which agent to dispatch.
+    #[arg(long = "agent", value_enum, default_value_t = AgentChoice::default())]
     pub(crate) agent: AgentChoice,
-    /// Splice rich lane-syntax bullets (same syntax as `update -a`/`--append`) into the
-    /// item's body before dispatch, growing an existing section or creating a missing one,
-    /// then dispatch with the full updated prompt as usual.
+    /// Appends content into the item's body before dispatch, growing an existing
+    /// section or creating a missing one.
     #[arg(short = 'a', long)]
     pub(crate) append: Option<String>,
     /// Explicit model override, forwarded verbatim to the agent's `--model` flag
@@ -67,8 +69,10 @@ pub enum ColorChoice {
     Never,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
-struct CliSessionInteraction;
+#[derive(Debug, Clone, Copy)]
+struct CliSessionInteraction {
+    console: Console,
+}
 
 impl SessionInteraction for CliSessionInteraction {
     fn warn_agent_missing(&self, binary: &str) {
@@ -79,7 +83,8 @@ impl SessionInteraction for CliSessionInteraction {
 
     fn confirm(&self, context: &DispatchConfirmation) -> bool {
         matches!(
-            crate::confirm::terminal(&render_session_confirmation(context), DefaultAnswer::Yes,),
+            self.console
+                .confirm(&render_session_confirmation(context), DefaultAnswer::Yes),
             Confirmation::Accepted | Confirmation::NonInteractive
         )
     }
@@ -89,7 +94,7 @@ impl SessionInteraction for CliSessionInteraction {
     }
 }
 
-pub(super) fn run(arguments: &Arguments) -> Result<String, PendingWorkError> {
+pub(super) fn run(arguments: &Arguments, console: Console) -> Result<String, PendingWorkError> {
     let configuration = load_configuration(&arguments.common)?;
     let projects = ProjectRegistry::new(configuration.projects.iter().map(|(name, repository)| {
         (
@@ -115,7 +120,7 @@ pub(super) fn run(arguments: &Arguments) -> Result<String, PendingWorkError> {
             autonomous: arguments.autonomous,
         },
         agent: arguments.agent.into(),
-        model_override: arguments.model.clone(),
+        model_override: arguments.model.clone().into(),
         confirmation: if arguments.assume_yes {
             ConfirmationPolicy::Skip
         } else {
@@ -128,23 +133,15 @@ pub(super) fn run(arguments: &Arguments) -> Result<String, PendingWorkError> {
         &projects,
         &TomlModelTierCatalog,
         &ProcessSessionRuntime,
-        &CliSessionInteraction,
+        &CliSessionInteraction { console },
     )?;
-    Ok(render_dispatch(&outcome, color_enabled(arguments.color)))
-}
-
-fn color_enabled(choice: ColorChoice) -> bool {
-    use std::io::IsTerminal;
-
-    if std::env::var_os("NO_COLOR").is_some() {
-        return false;
-    }
-    if std::env::var_os("CLICOLOR_FORCE").is_some() {
-        return true;
-    }
-    match choice {
-        ColorChoice::Auto => std::io::stdout().is_terminal(),
-        ColorChoice::Always => true,
-        ColorChoice::Never => false,
-    }
+    // TODO: make render_dispatch render model
+    Ok(render_dispatch(
+        &outcome,
+        console.color_with(match arguments.color {
+            ColorChoice::Auto => None,
+            ColorChoice::Always => Some(true),
+            ColorChoice::Never => Some(false),
+        }),
+    ))
 }

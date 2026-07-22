@@ -1,4 +1,4 @@
-//! Formatting and lint automation for `fmt`, `fmt-check`, and `fix`.
+//! Formatting automation for `fmt`, `fmt-check`, and `fix`.
 //!
 //! Stable rustfmt always runs. `.rustfmt-nightly` selects a toolchain, and `.mdformat.toml` enables
 //! Markdown formatting through `uvx`.
@@ -8,9 +8,11 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 use clap::Args;
 
+use super::lint;
 use crate::{
-    proc::{self, ProcessRunner, Status},
+    process::{self, Status},
     task,
+    verb::Verb,
 };
 
 mod markdown;
@@ -18,21 +20,21 @@ mod rust;
 
 /// Extra args for the `fix` verb, forwarded verbatim to `cargo clippy --fix`.
 #[derive(Args)]
-pub(crate) struct FixArgs {
+pub(crate) struct FixArguments {
     /// e.g. `-- -W clippy::pedantic`
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-    pub(crate) args: Vec<String>,
+    pub(crate) arguments_extra: Vec<String>,
 }
 
 /// Selects formatting or drift checking.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum FmtMode {
+enum FormatMode {
     Write,
     Check,
 }
 
-impl FmtMode {
-    fn check_flag(self) -> Option<&'static str> {
+impl FormatMode {
+    fn check_argument(self) -> Option<&'static str> {
         (self == Self::Check).then_some("--check")
     }
 }
@@ -44,36 +46,42 @@ const NIGHTLY_FILE: &str = ".rustfmt-nightly";
 const MDFORMAT_FILE: &str = ".mdformat.toml";
 
 /// Applies every active formatter.
-pub(crate) fn fmt() -> Result<()> {
-    task::run_all(&ProcessRunner, &format_steps(FmtMode::Write)?)?;
-    proc::result("fmt", Status::Done);
+pub(crate) fn run() -> Result<()> {
+    task::run_all(&write_steps()?)?;
+    process::result(Verb::FORMAT, Status::Done);
     Ok(())
 }
 
-/// Checks every formatter and lint, aggregating failures without writing.
-pub(crate) fn fmt_check() -> Result<()> {
-    let mut steps = format_steps(FmtMode::Check)?;
-    steps.push(rust::clippy_check_step());
-    task::check_all(&ProcessRunner, &steps, "run `just fix` / `just fmt`")?;
-    proc::result("fmt-check", Status::Pass);
+/// Checks every formatter, aggregating failures without writing.
+pub(crate) fn check() -> Result<()> {
+    task::check_all(&check_steps()?, "run `just fmt`")?;
+    process::result(Verb::FORMAT_CHECK, Status::Pass);
     Ok(())
 }
 
 /// Applies Clippy fixes and then reformats, forwarding `extra` to Clippy.
 pub(crate) fn fix(extra: &[String]) -> Result<()> {
-    task::run_all(&ProcessRunner, &[rust::clippy_fix_step(extra)])?;
-    task::run_all(&ProcessRunner, &format_steps(FmtMode::Write)?)?;
-    proc::result("fix", Status::Done);
+    task::run_all(&[lint::fix_step(extra)])?;
+    task::run_all(&write_steps()?)?;
+    process::result(Verb::FIX, Status::Done);
     Ok(())
 }
 
 /// Builds a format plan from repository marker files.
-fn format_steps(mode: FmtMode) -> Result<Vec<task::Step>> {
+fn format_steps(mode: FormatMode) -> Result<Vec<task::Step>> {
     let mut steps = rust::format_steps(nightly_pin()?.as_deref(), mode);
     if Path::new(MDFORMAT_FILE).is_file() {
         steps.extend(markdown::format_step(&markdown_files()?, mode));
     }
     Ok(steps)
+}
+
+pub(super) fn write_steps() -> Result<Vec<task::Step>> {
+    format_steps(FormatMode::Write)
+}
+
+pub(super) fn check_steps() -> Result<Vec<task::Step>> {
+    format_steps(FormatMode::Check)
 }
 
 /// Reads the pinned toolchain when present.
@@ -99,7 +107,7 @@ fn parse_nightly_pin(raw: &str) -> Result<String> {
 
 /// Lists tracked and unignored Markdown files from NUL-delimited Git output.
 fn markdown_files() -> Result<Vec<String>> {
-    let out = proc::capture(
+    let output = process::capture(
         "git ls-files",
         "git",
         &[
@@ -112,7 +120,7 @@ fn markdown_files() -> Result<Vec<String>> {
             "*.md",
         ],
     )?;
-    Ok(out
+    Ok(output
         .split('\0')
         .filter(|s| !s.is_empty())
         .map(str::to_string)
@@ -135,5 +143,11 @@ mod tests {
     fn blank_nightly_marker_is_rejected() {
         assert!(parse_nightly_pin("").is_err());
         assert!(parse_nightly_pin("   \n\t").is_err());
+    }
+
+    #[test]
+    fn check_steps_only_contain_formatters() {
+        let steps = check_steps().unwrap();
+        assert!(steps.iter().all(|step| step.label() != "clippy"));
     }
 }

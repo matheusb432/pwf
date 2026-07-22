@@ -8,13 +8,27 @@ fn xtask() -> Command {
 }
 
 #[test]
-fn help_lists_the_fmt_family() {
+fn forced_color_help_uses_cargo_palette() {
+    xtask()
+        .arg("--help")
+        .env_remove("NO_COLOR")
+        .env("CLICOLOR_FORCE", "1")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\u{1b}["))
+        .stdout(predicate::str::contains("36m"));
+}
+
+#[test]
+fn help_lists_the_quality_verbs() {
     xtask()
         .arg("--help")
         .assert()
         .success()
         .stdout(predicate::str::contains("fmt"))
         .stdout(predicate::str::contains("fmt-check"))
+        .stdout(predicate::str::contains("lint"))
+        .stdout(predicate::str::contains("check"))
         .stdout(predicate::str::contains("fix"));
 }
 
@@ -25,6 +39,16 @@ fn fix_documents_forwarded_args() {
         .assert()
         .success()
         .stdout(predicate::str::contains("clippy"));
+}
+
+#[test]
+fn fmt_check_help_is_formatting_only() {
+    xtask()
+        .args(["fmt-check", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("formatting"))
+        .stdout(predicate::str::contains("lint").not());
 }
 
 #[test]
@@ -57,7 +81,8 @@ fn install_and_update_are_known_verbs() {
         .assert()
         .success()
         .stdout(predicate::str::contains("--dry"))
-        .stdout(predicate::str::contains("--force"));
+        .stdout(predicate::str::contains("--force"))
+        .stdout(predicate::str::contains("full check preflight"));
 }
 
 #[test]
@@ -66,6 +91,11 @@ fn check_architecture_is_a_known_verb() {
         .args(["check-architecture", "--help"])
         .assert()
         .success();
+}
+
+#[test]
+fn ship_is_a_known_verb() {
+    xtask().args(["ship", "--help"]).assert().success();
 }
 
 #[test]

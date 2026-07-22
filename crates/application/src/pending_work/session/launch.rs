@@ -2,29 +2,13 @@
 
 use pwf_domain::pending_work::{ProjectPrefix, WorkItemId};
 
-use super::{Agent, AgentLaunch, DispatchTarget, LaunchDirectives};
+use super::{DispatchTarget, LaunchDirectives};
 use crate::pending_work::list::PendingWorkItemView;
 
 /// Autonomy directive inserted by `--auto`.
 const AUTONOMY_DIRECTIVE: &str = "You MUST execute this autonomously. Do not prompt the user for questions. But if something seems critical and needs user decision, STOP execution and clarify";
 
-pub(super) fn build_agent_launch(
-    item: &PendingWorkItemView,
-    directives: LaunchDirectives,
-    agent: Agent,
-    model: Option<String>,
-) -> AgentLaunch {
-    AgentLaunch {
-        agent,
-        task_id: item.id.clone(),
-        title: thread_title(item),
-        repository: item.repo.clone().unwrap_or_default(),
-        prompt: launch_prompt(item, directives),
-        model,
-    }
-}
-
-fn thread_title(item: &PendingWorkItemView) -> String {
+pub(super) fn thread_title(item: &PendingWorkItemView) -> String {
     let mut title = String::with_capacity(item.id.len() + item.session.len() + 3);
     title.push_str(&item.id);
     title.push_str(" - ");
@@ -32,7 +16,7 @@ fn thread_title(item: &PendingWorkItemView) -> String {
     title
 }
 
-fn launch_prompt(item: &PendingWorkItemView, directives: LaunchDirectives) -> String {
+pub(super) fn launch_prompt(item: &PendingWorkItemView, directives: LaunchDirectives) -> String {
     let mut prompt = format_prompt(item, directives.autonomous);
     if directives.worktree {
         prompt.push_str("\n\n");
@@ -99,8 +83,8 @@ fn legacy_dispatch_target(task_id: &str) -> DispatchTarget {
 mod tests {
     use pwf_domain::pending_work::WorkItemStatus;
 
-    use super::{PendingWorkItemView, build_agent_launch, dispatch_target};
-    use crate::pending_work::session::{Agent, LaunchDirectives};
+    use super::{PendingWorkItemView, dispatch_target};
+    use crate::pending_work::session::{Agent, AgentLaunch, LaunchDirectives};
 
     fn item() -> PendingWorkItemView {
         PendingWorkItemView {
@@ -127,7 +111,7 @@ mod tests {
     }
 
     fn launch(worktree: bool, autonomous: bool) -> super::super::AgentLaunch {
-        build_agent_launch(
+        AgentLaunch::new(
             &item(),
             LaunchDirectives {
                 worktree,
@@ -181,7 +165,7 @@ mod tests {
 
     #[test]
     fn launch_carries_only_semantic_agent_values() {
-        let launch = build_agent_launch(
+        let launch = AgentLaunch::new(
             &item(),
             LaunchDirectives::default(),
             Agent::Claude,

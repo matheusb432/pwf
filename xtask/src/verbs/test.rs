@@ -8,8 +8,9 @@ use clap::{Args, ValueEnum};
 
 use crate::{
     paths,
-    proc::{self, Status},
+    process::{self, Status},
     task::{self, Step},
+    verb::Verb,
 };
 
 /// Flags for the `test` verb. `--e2e`/`--all` are parse-time shorthands feeding `--scope`.
@@ -51,10 +52,12 @@ fn cargo_test_step(label: &str, targets: &[&str], verbose: bool) -> Step {
     let mut step = Step::new(label, "cargo", ["test"]);
     if verbose {
         step = step
-            .args(targets.iter().copied())
-            .args(["--", "--nocapture"]);
+            .with_arguments(targets.iter().copied())
+            .with_arguments(["--", "--nocapture"]);
     } else {
-        step = step.args(["--quiet"]).args(targets.iter().copied());
+        step = step
+            .with_arguments(["--quiet"])
+            .with_arguments(targets.iter().copied());
     }
     step
 }
@@ -99,11 +102,11 @@ pub(crate) fn run(scope: Scope, verbose: bool) -> Result<()> {
             .join("release")
             .join("pwf");
         if !bin.is_file() {
-            proc::run("cargo build", "cargo", &["build", "--release"])?;
+            process::run("cargo build", "cargo", &["build", "--release"])?;
         }
     }
-    task::run_all(&proc::ProcessRunner, &plan(scope, verbose))?;
-    proc::result("test", Status::Pass);
+    task::run_all(&plan(scope, verbose))?;
+    process::result(Verb::TEST, Status::Pass);
     Ok(())
 }
 
@@ -114,7 +117,7 @@ mod tests {
     use super::*;
 
     fn argv(step: &Step) -> Vec<&str> {
-        step.argv().iter().map(String::as_str).collect()
+        step.arguments().iter().map(String::as_str).collect()
     }
 
     #[test]

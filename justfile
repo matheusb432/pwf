@@ -1,43 +1,56 @@
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+set windows-shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 
-mod agents 'just/agents.justfile'
-mod pwf 'just/pwf.justfile'
+mod agents 'just/agents.just'
+mod project 'just/project.just'
 
 _default:
-    @just --list --unsorted --list-submodules
+    @just --list --unsorted
+
+# One-time repository setup for cross-agent skills.
+[group('build')]
+bootstrap *args: (agents::bootstrap args)
 
 # Build the release binary.
-build:
-    @just pwf build
+[group('build')]
+build: project::build
 
 # First-time setup of the global pwf shim.
-install:
-    @just pwf install
+[group('build')]
+install: project::install
 
 # Refresh the global pwf shim after a rebuild.
-update *args:
-    @just pwf update {{ args }}
+[group('build')]
+update *args: (project::update args)
 
-# Format Rust sources and Markdown in place.
-fmt:
-    @just pwf fmt
+# Run the full test preflight and build the release binary.
+[group('build')]
+ship: project::ship
 
-# Check formatting + clippy -D warnings + Markdown; non-zero on drift.
-fmt-check:
-    @just pwf fmt-check
+# Apply every repository formatter.
+[group('quality')]
+fmt: project::fmt
 
-# Apply clippy's machine-applicable fixes, then reformat.
-fix *args:
-    @just pwf fix {{ args }}
+# Check formatting without modifying files.
+[group('quality')]
+fmt-check: project::fmt-check
 
-# Test gate. Default: slim unit+integration. --e2e: binary suites. --all: both. --verbose: full output.
-test *flags:
-    @just pwf test {{ flags }}
+# Run repository linters.
+[group('quality')]
+lint: project::lint
 
-# One-time repo setup for cross-agent skills.
-bootstrap *flags:
-    @just agents bootstrap {{ flags }}
+# Run the complete read-only formatting and lint gate.
+[group('quality')]
+check: project::check
 
-# Read-only readiness check: required tools/versions + optional health (see doctor.toml).
+# Apply machine-applicable fixes and reformat.
+[group('quality')]
+fix *args: (project::fix args)
+
+# Run the selected test scope.
+[group('quality')]
+test *args: (project::test args)
+
+# Check development-host readiness.
 doctor *args:
     doctor-rs {{ args }}

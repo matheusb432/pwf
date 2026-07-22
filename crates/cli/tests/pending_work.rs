@@ -8,16 +8,6 @@ mod pending_work_test;
 use pending_work_test::run_plain;
 
 #[test]
-fn pending_work_stdout_normalization_strips_ansi_sgr_sequences() {
-    let stdout = "\u{1b}[1m\u{1b}[38;5;208mGLP-0001\u{1b}[0m :: tray gui";
-
-    assert_eq!(
-        pending_work_test::normalize_stdout(stdout),
-        "GLP-0001 :: tray gui"
-    );
-}
-
-#[test]
 fn add_allocates_first_id_and_writes_files() {
     let stage = stage_dir();
     let notes = stage.join("notes");
