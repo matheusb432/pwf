@@ -1,11 +1,15 @@
-//! Implements concrete process and configuration adapters for session operations.
+//! Implements concrete provider, process, and configuration adapters for sessions.
 
+mod codex_app_server;
 mod inline;
 mod launcher;
 mod model_tiers;
-mod runtime;
+mod repository;
 mod zellij;
 
-pub use launcher::codex;
+pub use codex_app_server::CodexThreadPreparationError;
+pub use inline::InlineHarness;
+pub use launcher::{AgentProbe, ClaudeHarness, CodexHarness, render_argv};
 pub use model_tiers::{ModelTiersError, TomlModelTierCatalog};
-pub use runtime::ProcessSessionRuntime;
+pub use repository::LocalRepositoryClient;
+pub use zellij::ZellijHarness;

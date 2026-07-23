@@ -9,14 +9,14 @@ use super::{
 use crate::{
     AppDbStore, HandoffDocument, HandoffDocumentIdentifier, HandoffDocumentStore, HandoffLedger,
     HandoffLocation, HandoffScope,
-    handoff::{HandoffError, HandoffMutationOutcome, ledger},
+    handoff::{HandoffError, HandoffMutationOk, ledger},
 };
 
 pub(crate) fn commit_scaffold<S>(
     store: &S,
     mut pending: PendingScaffold,
     pending_work_identifier: &WorkItemId,
-) -> Result<HandoffMutationOutcome, HandoffError>
+) -> Result<HandoffMutationOk, HandoffError>
 where
     S: HandoffDocumentStore + AppDbStore<HandoffLedger>,
 {
@@ -37,15 +37,15 @@ pub(crate) fn pending_handoff_path(mutation: &PendingHandoffMutation) -> Option<
 pub(crate) fn commit_after_pending_work<S>(
     store: &S,
     pending: PendingHandoffMutation,
-) -> Result<HandoffMutationOutcome, HandoffError>
+) -> Result<HandoffMutationOk, HandoffError>
 where
     S: HandoffDocumentStore + AppDbStore<HandoffLedger>,
 {
     // FIXME: Add a durable mutation journal before claiming atomic pending-work and handoff updates; process termination between stores can leave only the first record committed.
     match pending {
-        PendingHandoffMutation::NotLinked => Ok(HandoffMutationOutcome::NotLinked),
+        PendingHandoffMutation::NotLinked => Ok(HandoffMutationOk::NotLinked),
         PendingHandoffMutation::AlreadyInTargetState => {
-            Ok(HandoffMutationOutcome::AlreadyInTargetState)
+            Ok(HandoffMutationOk::AlreadyInTargetState)
         }
         PendingHandoffMutation::Create(pending) => commit_create(store, pending),
         PendingHandoffMutation::Move(pending) => commit_move(store, pending),
@@ -53,10 +53,7 @@ where
     }
 }
 
-fn commit_create<S>(
-    store: &S,
-    pending: PendingScaffold,
-) -> Result<HandoffMutationOutcome, HandoffError>
+fn commit_create<S>(store: &S, pending: PendingScaffold) -> Result<HandoffMutationOk, HandoffError>
 where
     S: HandoffDocumentStore + AppDbStore<HandoffLedger>,
 {
@@ -72,12 +69,12 @@ where
             <S as AppDbStore<HandoffDocument>>::delete(store, &pending.scope, &pending.identifier);
         return Err(map_ledger_error(&pending.scope, source));
     }
-    Ok(HandoffMutationOutcome::Created {
+    Ok(HandoffMutationOk::Created {
         path: document.locator,
     })
 }
 
-fn commit_move<S>(store: &S, pending: PendingMove) -> Result<HandoffMutationOutcome, HandoffError>
+fn commit_move<S>(store: &S, pending: PendingMove) -> Result<HandoffMutationOk, HandoffError>
 where
     S: HandoffDocumentStore + AppDbStore<HandoffLedger>,
 {
@@ -109,19 +106,16 @@ where
         return Err(map_ledger_error(&pending.scope, source));
     }
     Ok(match pending.outcome {
-        MoveOutcome::Archived => HandoffMutationOutcome::Archived {
+        MoveOutcome::Archived => HandoffMutationOk::Archived {
             path: destination_path,
         },
-        MoveOutcome::Reopened => HandoffMutationOutcome::Reopened {
+        MoveOutcome::Reopened => HandoffMutationOk::Reopened {
             path: destination_path,
         },
     })
 }
 
-fn commit_delete<S>(
-    store: &S,
-    pending: &PendingDelete,
-) -> Result<HandoffMutationOutcome, HandoffError>
+fn commit_delete<S>(store: &S, pending: &PendingDelete) -> Result<HandoffMutationOk, HandoffError>
 where
     S: HandoffDocumentStore + AppDbStore<HandoffLedger>,
 {
@@ -135,7 +129,7 @@ where
         let _ = store.restore_document_after_delete(&pending.scope, &pending.snapshot);
         return Err(map_ledger_error(&pending.scope, source));
     }
-    Ok(HandoffMutationOutcome::Removed { path })
+    Ok(HandoffMutationOk::Removed { path })
 }
 
 fn map_ledger_error(scope: &HandoffScope, source: ledger::RebuildLedgerError) -> HandoffError {

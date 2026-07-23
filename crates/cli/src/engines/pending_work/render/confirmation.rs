@@ -1,7 +1,7 @@
 //! Formats typed mutation confirmations at their owning leaf boundaries.
 
 use anstyle::AnsiColor;
-use pwf_application::pending_work::{AddedItem, RemovedItem, UpdatedItem};
+use pwf_application::pending_work::{AddedItem, RemovedItem, UpdatePendingWorkItemOk};
 
 use super::paint;
 
@@ -34,14 +34,14 @@ pub(in crate::engines::pending_work) fn render_removed(
 }
 
 pub(in crate::engines::pending_work) fn render_updated(
-    item: &UpdatedItem,
+    item: &UpdatePendingWorkItemOk,
     color_on: bool,
 ) -> String {
     let (id, headline) = match item {
-        UpdatedItem::OpenItemEdit {
+        UpdatePendingWorkItemOk::OpenItemEdit {
             id, project, title, ..
         } => (id.as_str(), format!("{project} :: {title}")),
-        UpdatedItem::Changed { id, changes } => (id.as_str(), changes.join(", ")),
+        UpdatePendingWorkItemOk::Changed { id, changes } => (id.as_str(), changes.join(", ")),
     };
     render_confirmation(
         "Updated pwf task",
@@ -89,7 +89,7 @@ fn render_confirmation(
 mod tests {
     use std::path::PathBuf;
 
-    use pwf_application::handoff::HandoffMutationOutcome;
+    use pwf_application::handoff::HandoffMutationOk;
 
     use super::*;
 
@@ -101,7 +101,7 @@ mod tests {
             note_path: PathBuf::from("/x/PWF-0087.md"),
             created_section: None,
             title_normalized: false,
-            handoff: HandoffMutationOutcome::NotLinked,
+            handoff: HandoffMutationOk::NotLinked,
         }
     }
 
@@ -144,7 +144,7 @@ mod tests {
             title: "stale task".to_string(),
             deleted_path: PathBuf::from("/x.md"),
             unlinked: "/x.md".to_string(),
-            handoff: HandoffMutationOutcome::NotLinked,
+            handoff: HandoffMutationOk::NotLinked,
         };
 
         assert_eq!(
@@ -155,13 +155,13 @@ mod tests {
 
     #[test]
     fn updated_variants_preserve_confirmation_shape() {
-        let open = UpdatedItem::OpenItemEdit {
+        let open = UpdatePendingWorkItemOk::OpenItemEdit {
             id: "PWF-0003".to_string(),
             project: "pwf".to_string(),
             title: "renamed".to_string(),
             title_normalized: false,
         };
-        let closed = UpdatedItem::Changed {
+        let closed = UpdatePendingWorkItemOk::Changed {
             id: "PWF-0004".to_string(),
             changes: vec!["commits: abc..def".to_string()],
         };

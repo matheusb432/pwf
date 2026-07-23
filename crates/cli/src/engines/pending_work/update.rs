@@ -1,7 +1,7 @@
 use clap::Args;
 use pwf_application::{
     AppDbStore, PendingWorkItem,
-    pending_work::{ProjectRegistry, UpdatedItem, update::UpdatePendingWorkItem},
+    pending_work::{ProjectRegistry, UpdatePendingWorkItemOk, update::UpdatePendingWorkItem},
 };
 use pwf_domain::pending_work::ProjectName;
 use pwf_infra::obsidian::ObsidianStore;
@@ -80,7 +80,7 @@ pub(in crate::engines::pending_work) fn run_update(
     store: &impl AppDbStore<PendingWorkItem>,
     projects: &ProjectRegistry,
     args: &Arguments,
-) -> Result<UpdatedItem, PendingWorkError> {
+) -> Result<UpdatePendingWorkItemOk, PendingWorkError> {
     let id = args.identifier.required("update")?;
     let updated = pwf_application::pending_work::update::execute(
         UpdatePendingWorkItem {

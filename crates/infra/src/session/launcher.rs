@@ -1,34 +1,69 @@
-//! Encodes prepared semantic launches for each supported agent CLI.
+//! Owns concrete provider probes, launch preparation, and command previews.
 
 mod argv;
 mod claude;
-pub mod codex;
+mod codex;
 
-use pwf_application::pending_work::session::{Agent, AgentLaunch};
+use std::process::Command;
 
-const CLAUDE_BINARY: &str = "claude";
+pub use claude::ClaudeHarness;
+pub use codex::CodexHarness;
+pub use pwf_application::pending_work::session::AgentProbe;
 
-pub(super) fn binary(agent: Agent) -> &'static str {
-    match agent {
-        Agent::Claude => CLAUDE_BINARY,
-        Agent::Codex => codex::BINARY,
+fn probe(binary: &str) -> AgentProbe {
+    let (available, path, version) = match which_binary(binary) {
+        None => (false, None, None),
+        Some(path) => {
+            let version = run_version(&path);
+            (true, Some(path), version)
+        }
+    };
+    AgentProbe {
+        binary: binary.to_string(),
+        available,
+        path,
+        version,
     }
 }
 
-pub(super) fn launch_argv(launch: &AgentLaunch) -> Vec<String> {
-    match launch.agent {
-        Agent::Claude => claude::launch_argv(launch),
-        Agent::Codex => codex::launch_argv(launch),
+fn which_binary(name: &str) -> Option<String> {
+    #[cfg(windows)]
+    {
+        let output = Command::new("where").arg(name).output().ok()?;
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            return stdout.lines().next().map(|line| line.trim().to_string());
+        }
+        None
+    }
+    #[cfg(not(windows))]
+    {
+        let output = Command::new("sh")
+            .args(["-c", &format!("command -v {name}")])
+            .output()
+            .ok()?;
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let first = stdout.lines().next()?.trim();
+            if !first.is_empty() {
+                return Some(first.to_string());
+            }
+        }
+        None
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+fn run_version(path: &str) -> Option<String> {
+    let output = Command::new(path).arg("--version").output().ok()?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stdout.lines().next().map(|line| line.trim().to_string())
+}
 
-    #[test]
-    fn agent_maps_to_its_owned_binary() {
-        assert_eq!(binary(Agent::Claude), "claude");
-        assert_eq!(binary(Agent::Codex), "codex");
-    }
+/// Renders complete argv as a shell-safe command preview.
+#[must_use]
+pub fn render_argv(argv: &[String]) -> String {
+    argv.iter()
+        .map(|argument| shell_words::quote(argument))
+        .collect::<Vec<_>>()
+        .join(" ")
 }

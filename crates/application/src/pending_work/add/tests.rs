@@ -12,7 +12,7 @@ use super::{
 use crate::{
     HandoffDocument, HandoffDocumentIdentifier, HandoffDocumentScopePresence, HandoffLocation,
     HandoffScope, IndexEntryState,
-    handoff::HandoffMutationOutcome,
+    handoff::HandoffMutationOk,
     testing::{FailurePoint, InMemoryStore},
 };
 
@@ -49,7 +49,7 @@ fn add_inserts_record_and_open_index_entry() {
     assert_eq!(added.project, "pwf");
     assert_eq!(added.title, "ship it");
     assert!(!added.title_normalized);
-    assert_eq!(added.handoff, HandoffMutationOutcome::NotLinked);
+    assert_eq!(added.handoff, HandoffMutationOk::NotLinked);
     assert_eq!(added.created_section, None);
     let entries = store.entries("pwf");
     assert_eq!(entries.len(), 1);
@@ -171,7 +171,7 @@ fn add_normalizes_explicit_title_and_creates_linked_handoff() {
     assert!(added.title_normalized);
     assert_eq!(
         added.handoff,
-        HandoffMutationOutcome::Created {
+        HandoffMutationOk::Created {
             path: PathBuf::from(repository_root).join("docs/handoffs/2026-07-15-ship-it.md")
         }
     );
@@ -274,7 +274,7 @@ fn add_newest_handoff_selects_by_modified_timestamp_without_scaffolding() {
     let added = execute(command, &store, &registry(Some(repository_root))).unwrap();
 
     assert_eq!(added.title, "continue api cleanup");
-    assert_eq!(added.handoff, HandoffMutationOutcome::NotLinked);
+    assert_eq!(added.handoff, HandoffMutationOk::NotLinked);
     assert_eq!(store.handoff_documents(&scope(repository_root)).len(), 2);
     assert_eq!(
         store.items("pwf")[0].body,

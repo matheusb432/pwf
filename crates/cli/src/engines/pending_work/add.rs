@@ -78,9 +78,7 @@ pub(super) fn run(arguments: &Arguments, console: Console) -> Result<String, Pen
             if added.title_normalized {
                 eprintln!("{TITLE_NORMALIZED_NOTICE}");
             }
-            if let pwf_application::handoff::HandoffMutationOutcome::Created { path } =
-                &added.handoff
-            {
+            if let pwf_application::handoff::HandoffMutationOk::Created { path } = &added.handoff {
                 eprintln!("info: created handoff {}", path.display());
             }
             Ok(render_added(&added, console.color()))

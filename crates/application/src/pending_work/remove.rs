@@ -9,7 +9,7 @@ use super::{
 };
 use crate::{
     HandoffDocumentStore, HandoffLedger,
-    handoff::{HandoffError, HandoffMutationOutcome, lifecycle},
+    handoff::{HandoffError, HandoffMutationOk, lifecycle},
     ports::{AppDbStore, IndexEntry, Materialization, PendingWorkItem},
 };
 
@@ -26,7 +26,7 @@ pub struct RemovedItem {
     pub deleted_path: PathBuf,
     /// Index note from which the item link was removed.
     pub unlinked: String,
-    pub handoff: HandoffMutationOutcome,
+    pub handoff: HandoffMutationOk,
 }
 
 #[derive(Debug, Clone)]
@@ -165,7 +165,7 @@ where
             .placement
             .map(|placement| placement.index_path)
             .unwrap_or_default(),
-        handoff: HandoffMutationOutcome::NotLinked,
+        handoff: HandoffMutationOk::NotLinked,
     };
     removed.handoff =
         lifecycle::commit_after_pending_work(store, handoff_pending).map_err(|source| {

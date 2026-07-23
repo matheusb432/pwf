@@ -16,7 +16,7 @@ pub(super) use diagnostics::{
 };
 pub(super) use handoff::append_handoff_outcome;
 pub(super) use list::render_list;
-pub(super) use session::render_dispatch;
+pub(super) use session::{render_dispatch, render_dry_run, render_session_aborted};
 pub(super) use session_confirmation::render_session_confirmation;
 pub(super) use verify::render_verify;
 

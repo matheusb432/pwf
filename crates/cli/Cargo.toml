@@ -1,6 +1,6 @@
 [package]
 name = "pwf"
-version = "4.1.0"
+version = "0.1.0"
 edition.workspace = true
 publish.workspace = true
 description = "Manages pending work, handoffs, and project notes across configured repositories."
@@ -36,7 +36,6 @@ pwf-note = { workspace = true }
 clap = { workspace = true }
 clap-cargo = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true }
 chrono = { workspace = true }
 regex = { workspace = true }
 thiserror = { workspace = true }
@@ -49,6 +48,7 @@ walkdir = { workspace = true }
 assert_cmd = { workspace = true }
 console = { workspace = true }
 predicates = { workspace = true }
+serde_json = { workspace = true }
 tempfile = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]

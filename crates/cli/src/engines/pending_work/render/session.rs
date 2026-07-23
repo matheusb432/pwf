@@ -1,22 +1,22 @@
 use std::fmt::Write;
 
 use anstyle::AnsiColor;
-use pwf_application::pending_work::session::DispatchSessionOutcome;
+use pwf_application::pending_work::session::{
+    Agent, DispatchMode, SessionPlan, dispatch::DispatchSessionOk,
+};
+use pwf_infra::session::render_argv;
 
 use super::{agent_name, paint};
 
 pub(in crate::engines::pending_work) fn render_dispatch(
-    outcome: &DispatchSessionOutcome,
+    outcome: &DispatchSessionOk,
     on: bool,
 ) -> String {
     let (token, color, target, agent, repository, note) = match outcome {
-        DispatchSessionOutcome::Aborted { task_id } => {
-            return format!("# session {task_id} — aborted\nnothing dispatched.\n");
-        }
-        DispatchSessionOutcome::Inline { task_id } => {
+        DispatchSessionOk::Inline { task_id } => {
             return format!("# session {task_id} — ran inline\n");
         }
-        DispatchSessionOutcome::Direct {
+        DispatchSessionOk::TabOpened {
             target,
             agent,
             repository,
@@ -28,7 +28,7 @@ pub(in crate::engines::pending_work) fn render_dispatch(
             Some(repository),
             None,
         ),
-        DispatchSessionOutcome::Recovered {
+        DispatchSessionOk::MultiplexerStartedAndTabOpened {
             target,
             agent,
             repository,
@@ -39,14 +39,6 @@ pub(in crate::engines::pending_work) fn render_dispatch(
             Some(*agent),
             Some(repository),
             Some("note: the zellij session was not running — created it.".to_string()),
-        ),
-        DispatchSessionOutcome::Failed { target, message } => (
-            "failed",
-            AnsiColor::Red,
-            target,
-            None,
-            None,
-            Some(format!("error: {message}")),
         ),
     };
     let session = &target.session;
@@ -67,9 +59,46 @@ pub(in crate::engines::pending_work) fn render_dispatch(
     out
 }
 
+pub(in crate::engines::pending_work) fn render_session_aborted(task_id: &str) -> String {
+    format!("# session {task_id} — aborted\nnothing dispatched.\n")
+}
+
+pub(in crate::engines::pending_work) fn render_dry_run(
+    plan: &SessionPlan,
+    argv: &[String],
+) -> String {
+    let agent = match plan.launch.agent {
+        Agent::Claude => "Claude",
+        Agent::Codex => "Codex",
+    };
+    let target = match plan.mode {
+        DispatchMode::Inline => "inline".to_string(),
+        DispatchMode::Multiplexer => {
+            format!("zellij: {} / {}", plan.target.session, plan.target.tab)
+        }
+    };
+    format!(
+        "# session {} - dry run\n\
+task: {}\n\
+agent: {agent}\n\
+model: {}\n\
+repository: {}\n\
+{target}\n\
+command: {}\n\
+nothing dispatched.\n",
+        plan.launch.task_id,
+        plan.launch.title,
+        plan.launch.model.as_deref().unwrap_or("default"),
+        plan.launch.repository,
+        render_argv(argv),
+    )
+}
+
 #[cfg(test)]
 mod tests {
-    use pwf_application::pending_work::session::{Agent, DispatchSessionOutcome, DispatchTarget};
+    use pwf_application::pending_work::session::{
+        Agent, DispatchTarget, dispatch::DispatchSessionOk,
+    };
 
     use super::*;
 
@@ -82,7 +111,7 @@ mod tests {
 
     #[test]
     fn success_renders_green_token_and_bold_session_tab_plain() {
-        let outcome = DispatchSessionOutcome::Direct {
+        let outcome = DispatchSessionOk::TabOpened {
             target: target(),
             agent: Agent::Claude,
             repository: "/repo".into(),
@@ -96,7 +125,7 @@ mod tests {
 
     #[test]
     fn fallback_renders_created_token_and_note() {
-        let outcome = DispatchSessionOutcome::Recovered {
+        let outcome = DispatchSessionOk::MultiplexerStartedAndTabOpened {
             target: target(),
             agent: Agent::Claude,
             repository: "/repo".into(),
@@ -107,19 +136,8 @@ mod tests {
     }
 
     #[test]
-    fn error_renders_failed_token_and_message() {
-        let outcome = DispatchSessionOutcome::Failed {
-            target: target(),
-            message: "boom".into(),
-        };
-        let out = render_dispatch(&outcome, false);
-        assert!(out.starts_with("# session CFG-0009 — failed"));
-        assert!(out.contains("error: boom"));
-    }
-
-    #[test]
     fn color_on_emits_ansi() {
-        let outcome = DispatchSessionOutcome::Direct {
+        let outcome = DispatchSessionOk::TabOpened {
             target: target(),
             agent: Agent::Claude,
             repository: "/repo".into(),
@@ -129,19 +147,14 @@ mod tests {
     }
 
     #[test]
-    fn aborted_and_inline_outcomes_preserve_their_compact_text() {
+    fn aborted_and_inline_results_preserve_their_compact_text() {
         assert_eq!(
-            render_dispatch(
-                &DispatchSessionOutcome::Aborted {
-                    task_id: "PWF-0001".into()
-                },
-                false
-            ),
+            render_session_aborted("PWF-0001"),
             "# session PWF-0001 — aborted\nnothing dispatched.\n"
         );
         assert_eq!(
             render_dispatch(
-                &DispatchSessionOutcome::Inline {
+                &DispatchSessionOk::Inline {
                     task_id: "PWF-0001".into()
                 },
                 false

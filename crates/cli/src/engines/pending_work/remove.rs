@@ -1,7 +1,7 @@
 use clap::Args;
 use pwf_application::{
     AppDbStore, HandoffDocumentStore, HandoffLedger, IndexEntry, PendingWorkItem,
-    handoff::HandoffMutationOutcome,
+    handoff::HandoffMutationOk,
     pending_work::{
         ProjectRegistry,
         remove::{
@@ -117,7 +117,7 @@ where
 
     match outcome {
         RemovePendingWorkOutcome::Removed(removed) => {
-            if let HandoffMutationOutcome::Removed { path } = &removed.handoff {
+            if let HandoffMutationOk::Removed { path } = &removed.handoff {
                 eprintln!("info: removed handoff {}", path.display());
             }
             Ok(render_removed(&removed, console.color()))

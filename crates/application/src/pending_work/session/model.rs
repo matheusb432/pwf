@@ -16,14 +16,6 @@ pub enum DispatchMode {
     Multiplexer,
 }
 
-/// Selects whether dispatch requires operator confirmation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ConfirmationPolicy {
-    Skip,
-    /// Confirms before append persistence or any launch side effect.
-    Ask,
-}
-
 /// Selects optional launch-prompt directives.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct LaunchDirectives {
@@ -59,13 +51,12 @@ impl AgentLaunch {
     }
 }
 
-/// Contains an agent binary's availability and discovered metadata.
+/// Groups a provider-neutral launch with its mechanical dispatch destination.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AgentProbe {
-    pub binary: String,
-    pub available: bool,
-    pub path: Option<String>,
-    pub version: Option<String>,
+pub struct SessionPlan {
+    pub launch: AgentLaunch,
+    pub mode: DispatchMode,
+    pub target: DispatchTarget,
 }
 
 /// Identifies a multiplexer session and tab.
@@ -88,43 +79,22 @@ pub struct DispatchConfirmation {
     pub target: DispatchTarget,
 }
 
-/// Describes a dispatch attempt without pre-rendering CLI output.
+/// Contains an agent binary's availability and discovered metadata.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DispatchSessionOutcome {
-    Aborted {
-        task_id: String,
-    },
-    Inline {
-        task_id: String,
-    },
-    /// Records a tab launch into an existing session.
-    Direct {
-        target: DispatchTarget,
-        agent: Agent,
-        repository: String,
-    },
-    /// Records a tab launch after recreating its missing session.
-    Recovered {
-        target: DispatchTarget,
-        agent: Agent,
-        repository: String,
-    },
-    /// Carries a tab-open failure as an outcome rather than an operation error.
-    Failed {
-        target: DispatchTarget,
-        message: String,
-    },
+pub struct AgentProbe {
+    pub binary: String,
+    pub available: bool,
+    pub path: Option<String>,
+    pub version: Option<String>,
 }
 
-/// Contains agent availability and optional item launchability results.
+/// Contains pending-work launchability and an optional provider-neutral launch.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct VerifySessionOutcome {
+pub struct VerifySessionOk {
     pub task_id: Option<String>,
-    pub probe: AgentProbe,
-    /// Reports item and model readiness independently of agent availability.
     pub launchable: bool,
     pub issues: Vec<String>,
-    pub command_preview: String,
+    pub launch: Option<AgentLaunch>,
 }
 
 /// Contains a raw model-tier catalog entry.
@@ -178,60 +148,5 @@ impl AgentModel {
 
     pub fn display_or_default(&self) -> String {
         self.0.clone().unwrap_or(Self::MODEL_DEFAULT.to_string())
-    }
-}
-
-/// Classifies a provider-specific tab-open failure.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TabOpenError {
-    SessionNotFound,
-    Other(String),
-}
-
-#[cfg(test)]
-mod tests {
-    use super::super::{Agent, DispatchSessionOutcome, DispatchTarget};
-
-    fn target() -> DispatchTarget {
-        DispatchTarget {
-            session: "pwf".to_string(),
-            tab: "PWF-0139".to_string(),
-        }
-    }
-
-    #[test]
-    fn direct_dispatch_is_a_distinct_outcome() {
-        let outcome = DispatchSessionOutcome::Direct {
-            target: target(),
-            agent: Agent::Claude,
-            repository: "/repo/pwf".to_string(),
-        };
-
-        assert!(matches!(outcome, DispatchSessionOutcome::Direct { .. }));
-    }
-
-    #[test]
-    fn recovered_dispatch_is_a_distinct_outcome() {
-        let outcome = DispatchSessionOutcome::Recovered {
-            target: target(),
-            agent: Agent::Claude,
-            repository: "/repo/pwf".to_string(),
-        };
-
-        assert!(matches!(outcome, DispatchSessionOutcome::Recovered { .. }));
-    }
-
-    #[test]
-    fn failed_dispatch_retains_the_provider_message() {
-        let outcome = DispatchSessionOutcome::Failed {
-            target: target(),
-            message: "session unavailable".to_string(),
-        };
-
-        assert!(matches!(
-            outcome,
-            DispatchSessionOutcome::Failed { ref message, .. }
-                if message == "session unavailable"
-        ));
     }
 }

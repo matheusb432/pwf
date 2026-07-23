@@ -7,6 +7,7 @@ use clap::Parser;
 
 mod architecture_check;
 mod cli;
+mod gate;
 mod paths;
 mod process;
 mod task;

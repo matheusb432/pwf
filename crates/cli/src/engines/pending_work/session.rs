@@ -2,19 +2,25 @@ use clap::Args;
 use pwf_application::pending_work::{
     ProjectRegistry,
     session::{
-        ConfirmationPolicy, DispatchConfirmation, DispatchMode, LaunchDirectives,
-        SessionInteraction, dispatch::DispatchSession,
+        Agent, AgentProbe, DispatchMode, LaunchDirectives, PlanSessionIntent,
+        dispatch::{DispatchSession, DispatchSessionOk},
+        plan::{PlanSession, PlanSessionOk},
     },
 };
 use pwf_domain::pending_work::ProjectName;
 use pwf_infra::{
     obsidian::ObsidianStore,
-    session::{ProcessSessionRuntime, TomlModelTierCatalog},
+    session::{
+        ClaudeHarness, CodexHarness, InlineHarness, LocalRepositoryClient, TomlModelTierCatalog,
+        ZellijHarness,
+    },
 };
 
 use super::{
     common::{AgentChoice, CommonArguments, Identifier, PendingWorkError, load_configuration},
-    render::{render_dispatch, render_session_confirmation},
+    render::{
+        render_dispatch, render_dry_run, render_session_aborted, render_session_confirmation,
+    },
 };
 use crate::{
     confirm::{Confirmation, DefaultAnswer},
@@ -53,6 +59,9 @@ pub struct Arguments {
     /// section or creating a missing one.
     #[arg(short = 'a', long)]
     pub(crate) append: Option<String>,
+    /// Show the exact launch command without editing the task or starting anything.
+    #[arg(long, visible_alias = "dry", conflicts_with = "append")]
+    pub(crate) dry_run: bool,
     /// Explicit model override, forwarded verbatim to the agent's `--model` flag
     /// (no validation — wins over any effort-tier resolution).
     #[arg(long, short = 'm')]
@@ -69,31 +78,6 @@ pub enum ColorChoice {
     Never,
 }
 
-#[derive(Debug, Clone, Copy)]
-struct CliSessionInteraction {
-    console: Console,
-}
-
-impl SessionInteraction for CliSessionInteraction {
-    fn warn_agent_missing(&self, binary: &str) {
-        eprintln!(
-            "note: {binary} not found on PATH from here; the agent will surface the error if it can't run."
-        );
-    }
-
-    fn confirm(&self, context: &DispatchConfirmation) -> bool {
-        matches!(
-            self.console
-                .confirm(&render_session_confirmation(context), DefaultAnswer::Yes),
-            Confirmation::Accepted | Confirmation::NonInteractive
-        )
-    }
-
-    fn inline_starting(&self, task_id: &str, repository: &str) {
-        eprintln!("running {task_id} inline in {repository}…");
-    }
-}
-
 pub(super) fn run(arguments: &Arguments, console: Console) -> Result<String, PendingWorkError> {
     let configuration = load_configuration(&arguments.common)?;
     let projects = ProjectRegistry::new(configuration.projects.iter().map(|(name, repository)| {
@@ -107,9 +91,17 @@ pub(super) fn run(arguments: &Arguments, console: Console) -> Result<String, Pen
         )
     }));
     let store = ObsidianStore::new(configuration);
-    let request = DispatchSession {
+    let agent = Agent::from(arguments.agent);
+
+    let request = PlanSession {
         id: arguments.identifier.required("session")?,
-        append: arguments.append.clone(),
+        intent: if arguments.dry_run {
+            PlanSessionIntent::DryRun
+        } else {
+            PlanSessionIntent::Dispatch {
+                append: arguments.append.clone(),
+            }
+        },
         mode: if arguments.inline {
             DispatchMode::Inline
         } else {
@@ -119,29 +111,74 @@ pub(super) fn run(arguments: &Arguments, console: Console) -> Result<String, Pen
             worktree: arguments.worktree,
             autonomous: arguments.autonomous,
         },
-        agent: arguments.agent.into(),
+        agent,
         model_override: arguments.model.clone().into(),
-        confirmation: if arguments.assume_yes {
-            ConfirmationPolicy::Skip
-        } else {
-            ConfirmationPolicy::Ask
-        },
     };
-    let outcome = pwf_application::pending_work::session::dispatch::execute(
+    let planned = pwf_application::pending_work::session::plan::execute(
         &request,
         &store,
         &projects,
         &TomlModelTierCatalog,
-        &ProcessSessionRuntime,
-        &CliSessionInteraction { console },
+        &LocalRepositoryClient,
+        &ClaudeHarness,
+        &CodexHarness,
+        &ZellijHarness,
     )?;
-    // TODO: make render_dispatch render model
-    Ok(render_dispatch(
-        &outcome,
+    let planned = match planned {
+        PlanSessionOk::DryRun(dry_run) => {
+            render_probe(dry_run.probe());
+            return Ok(render_dry_run(dry_run.plan(), dry_run.argv()));
+        }
+        PlanSessionOk::Dispatch(planned) => planned,
+    };
+    render_probe(planned.probe());
+
+    if !arguments.assume_yes
+        && matches!(
+            console.confirm(
+                &render_session_confirmation(planned.confirmation()),
+                DefaultAnswer::Yes
+            ),
+            Confirmation::Declined
+        )
+    {
+        return Ok(render_session_aborted(&planned.confirmation().task_id));
+    }
+
+    if planned.plan().mode == DispatchMode::Inline {
+        eprintln!(
+            "running {} inline in {}...",
+            planned.plan().launch.task_id,
+            planned.plan().launch.repository
+        );
+    }
+    let outcome = pwf_application::pending_work::session::dispatch::execute(
+        DispatchSession::new(planned),
+        &store,
+        &ClaudeHarness,
+        &CodexHarness,
+        &InlineHarness,
+        &ZellijHarness,
+    )?;
+    Ok(render(&outcome, arguments, console))
+}
+
+fn render_probe(probe: &AgentProbe) {
+    if !probe.available {
+        eprintln!(
+            "note: {} not found on PATH from here; the agent will surface the error if it can't run.",
+            probe.binary
+        );
+    }
+}
+
+fn render(outcome: &DispatchSessionOk, arguments: &Arguments, console: Console) -> String {
+    render_dispatch(
+        outcome,
         console.color_with(match arguments.color {
             ColorChoice::Auto => None,
             ColorChoice::Always => Some(true),
             ColorChoice::Never => Some(false),
         }),
-    ))
+    )
 }

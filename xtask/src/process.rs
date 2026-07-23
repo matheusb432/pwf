@@ -91,8 +91,8 @@ mod tests {
 
     #[test]
     fn run_contextualizes_a_missing_program() {
-        let error = run("mdformat", "definitely-not-a-real-binary-xyz", &[]).unwrap_err();
-        assert!(error.to_string().contains("spawning mdformat"));
+        let error = run("rumdl", "definitely-not-a-real-binary-xyz", &[]).unwrap_err();
+        assert!(error.to_string().contains("spawning rumdl"));
     }
 
     #[test]

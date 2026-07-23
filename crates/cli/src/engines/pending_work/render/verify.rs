@@ -1,8 +1,8 @@
 use std::fmt::Write;
 
-use pwf_application::pending_work::session::VerifySessionOutcome;
+use crate::engines::pending_work::verify::VerifySessionOk;
 
-pub(in crate::engines::pending_work) fn render_verify(outcome: &VerifySessionOutcome) -> String {
+pub(in crate::engines::pending_work) fn render_verify(outcome: &VerifySessionOk) -> String {
     let result = if outcome.probe.available && outcome.launchable {
         "pass"
     } else {
@@ -49,12 +49,13 @@ pub(in crate::engines::pending_work) fn render_verify(outcome: &VerifySessionOut
 
 #[cfg(test)]
 mod tests {
-    use pwf_application::pending_work::session::{AgentProbe, VerifySessionOutcome};
+    use pwf_infra::session::AgentProbe;
 
     use super::*;
+    use crate::engines::pending_work::verify::VerifySessionOk;
 
-    fn outcome(binary: &str, available: bool, launchable: bool) -> VerifySessionOutcome {
-        VerifySessionOutcome {
+    fn outcome(binary: &str, available: bool, launchable: bool) -> VerifySessionOk {
+        VerifySessionOk {
             task_id: Some("PWF-0001".to_string()),
             probe: AgentProbe {
                 binary: binary.to_string(),

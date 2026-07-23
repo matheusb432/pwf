@@ -383,6 +383,20 @@ fn session_help_documents_yes_flag() {
 }
 
 #[test]
+fn session_help_documents_dry_run_and_alias() {
+    let (help, ok) = run(&["session", "--help"]);
+    assert!(ok, "pwf session --help should exit 0");
+    assert!(
+        help.contains("--dry-run"),
+        "session help should list --dry-run: {help}"
+    );
+    assert!(
+        help.contains("--dry"),
+        "session help should list the --dry alias: {help}"
+    );
+}
+
+#[test]
 fn session_help_documents_worktree_flag() {
     let (help, ok) = run(&["session", "--help"]);
     assert!(ok, "pwf session --help should exit 0");

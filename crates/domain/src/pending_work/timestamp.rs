@@ -11,15 +11,3 @@ impl Timestamp {
         &self.0
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn timestamp_roundtrips_raw_string() {
-        let raw = "2026-07-15";
-        let ts = Timestamp::new(raw);
-        assert_eq!(ts.as_str(), raw);
-    }
-}

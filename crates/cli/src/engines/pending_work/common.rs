@@ -132,6 +132,8 @@ pub(crate) enum PendingWorkError {
     #[error(transparent)]
     Remove(#[from] pwf_application::pending_work::remove::RemovePendingWorkError),
     #[error(transparent)]
+    SessionPlan(#[from] pwf_application::pending_work::session::plan::PlanSessionError),
+    #[error(transparent)]
     SessionDispatch(#[from] pwf_application::pending_work::session::dispatch::DispatchSessionError),
     #[error(transparent)]
     SessionVerify(#[from] pwf_application::pending_work::session::verify::VerifySessionError),

@@ -12,7 +12,7 @@ use super::{
 use crate::{
     HandoffDocument, HandoffDocumentIdentifier, HandoffLocation, HandoffScope, Materialization,
     PendingWorkItem, RecordId,
-    handoff::{HandoffError, HandoffMutationOutcome},
+    handoff::{HandoffError, HandoffMutationOk},
     pending_work::ProjectRegistry,
     testing::{FailurePoint, InMemoryStore},
 };
@@ -130,7 +130,7 @@ fn close_selects_one_active_link_case_insensitively_and_archives_it() {
 
     assert_eq!(
         outcome,
-        HandoffMutationOutcome::Archived {
+        HandoffMutationOk::Archived {
             path: PathBuf::from(REPOSITORY_ROOT)
                 .join("docs/handoffs/archived")
                 .join(FILE_NAME),
@@ -193,7 +193,7 @@ fn close_already_archived_returns_a_typed_idempotent_mutation() {
     ));
     assert_eq!(
         commit_after_pending_work(&store, pending).unwrap(),
-        HandoffMutationOutcome::AlreadyInTargetState
+        HandoffMutationOk::AlreadyInTargetState
     );
 }
 
@@ -236,7 +236,7 @@ fn reopen_accepts_a_legacy_archived_document_without_a_valid_status() {
 
     let outcome = commit_after_pending_work(&store, pending).unwrap();
 
-    assert!(matches!(outcome, HandoffMutationOutcome::Reopened { .. }));
+    assert!(matches!(outcome, HandoffMutationOk::Reopened { .. }));
     let active = &store.handoff_documents(&scope())[0];
     assert_eq!(active.location, HandoffLocation::Active);
     assert_eq!(active.status, Some(HandoffStatus::Active));

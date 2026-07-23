@@ -104,7 +104,7 @@ pub enum UpdatePendingWorkError {
 
 /// Describes either an open-item edit or a closed-item amendment from [`execute`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum UpdatedItem {
+pub enum UpdatePendingWorkItemOk {
     /// Reports the effective identity and title after editing an open item.
     OpenItemEdit {
         /// Canonical identifier of the edited item.
@@ -125,7 +125,7 @@ pub enum UpdatedItem {
     },
 }
 
-impl UpdatedItem {
+impl UpdatePendingWorkItemOk {
     /// Reports whether YAML-safe normalization changed an explicit title.
     #[must_use]
     pub fn title_normalized(&self) -> bool {
@@ -146,7 +146,7 @@ struct PendingWorkItemIdentity {
 pub(crate) struct PreparedPendingWorkUpdate {
     identity: PendingWorkItemIdentity,
     patch: ItemPatch,
-    outcome: UpdatedItem,
+    outcome: UpdatePendingWorkItemOk,
 }
 
 /// Applies body and frontmatter edits in one item patch.
@@ -165,7 +165,7 @@ pub fn execute<S>(
     command: UpdatePendingWorkItem,
     store: &S,
     projects: &ProjectRegistry,
-) -> Result<UpdatedItem, UpdatePendingWorkError>
+) -> Result<UpdatePendingWorkItemOk, UpdatePendingWorkError>
 where
     S: AppDbStore<PendingWorkItem>,
 {
@@ -228,7 +228,7 @@ pub(crate) fn prepare(
 pub(crate) fn persist(
     prepared: PreparedPendingWorkUpdate,
     store: &impl AppDbStore<PendingWorkItem>,
-) -> Result<UpdatedItem, UpdatePendingWorkError> {
+) -> Result<UpdatePendingWorkItemOk, UpdatePendingWorkError> {
     store
         .update(
             &prepared.identity.project,
@@ -278,7 +278,7 @@ where
     }
     patch.tags = resolve_tags(tags, command.tags_clear, &identity.identifier, record)?;
 
-    let outcome = UpdatedItem::OpenItemEdit {
+    let outcome = UpdatePendingWorkItemOk::OpenItemEdit {
         id: identity.identifier.as_ref().to_string(),
         project: identity.project.as_ref().to_string(),
         title: new_title,
@@ -359,7 +359,7 @@ fn amend_closed_item(
             Some(append_report_block(base, report).ok_or(UpdatePendingWorkError::EmptyReport)?);
         changes.push("report appended".to_string());
     }
-    let outcome = UpdatedItem::Changed {
+    let outcome = UpdatePendingWorkItemOk::Changed {
         id: identity.identifier.as_ref().to_string(),
         changes,
     };
@@ -402,7 +402,8 @@ mod tests {
     use pwf_domain::pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus};
 
     use super::{
-        ProjectRegistry, UpdatePendingWorkError, UpdatePendingWorkItem, UpdatedItem, execute,
+        ProjectRegistry, UpdatePendingWorkError, UpdatePendingWorkItem, UpdatePendingWorkItemOk,
+        execute,
     };
     use crate::{Materialization, PendingWorkItem, RecordId, testing::InMemoryStore};
 
@@ -481,7 +482,7 @@ mod tests {
 
         assert_eq!(
             updated,
-            UpdatedItem::Changed {
+            UpdatePendingWorkItemOk::Changed {
                 id: "GLP-0001".to_string(),
                 changes: vec!["commits: abc..def, ghi..jkl".to_string()],
             }
@@ -521,7 +522,7 @@ mod tests {
 
         assert_eq!(
             updated,
-            UpdatedItem::OpenItemEdit {
+            UpdatePendingWorkItemOk::OpenItemEdit {
                 id: "GLP-0001".to_string(),
                 project: "glep-shimeji".to_string(),
                 title: "new title".to_string(),
@@ -549,7 +550,7 @@ mod tests {
         );
         assert!(matches!(
             updated,
-            UpdatedItem::OpenItemEdit {
+            UpdatePendingWorkItemOk::OpenItemEdit {
                 title_normalized: true,
                 ..
             }

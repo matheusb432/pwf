@@ -4,19 +4,6 @@ use pwf::{command, engines};
 
 fn main() {
     let argv: Vec<String> = std::env::args().skip(1).collect();
-    let codex_thread_title_protocol = pwf::codex_thread_title::CodexThreadTitleProtocol {
-        launch_command: pwf_infra::session::codex::LAUNCH_COMMAND,
-        worker_command: pwf_infra::session::codex::WORKER_COMMAND,
-        binary: pwf_infra::session::codex::BINARY,
-        title_flag: pwf_infra::session::codex::TITLE_FLAG,
-        cwd_flag: pwf_infra::session::codex::CWD_FLAG,
-        since_flag: pwf_infra::session::codex::SINCE_FLAG,
-        argument_separator: pwf_infra::session::codex::ARG_SEPARATOR,
-    };
-    if let Some(code) = pwf::codex_thread_title::maybe_run(&argv, &codex_thread_title_protocol) {
-        std::process::exit(code);
-    }
-
     let argv = normalize_rich_help_aliases(argv);
 
     match command::parse_argv(argv) {

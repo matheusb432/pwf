@@ -9,7 +9,7 @@ use super::{
 };
 use crate::{
     HandoffDocumentStore, HandoffLedger,
-    handoff::{HandoffError, HandoffMutationOutcome, lifecycle},
+    handoff::{HandoffError, HandoffMutationOk, lifecycle},
     ports::{AppDbStore, IndexEntry, IndexEntryState, ItemPatch, PendingWorkItem},
 };
 
@@ -25,7 +25,7 @@ pub struct ReopenedPendingWork {
     pub project: ProjectName,
     /// Indicates an idempotent skip with no mutation.
     pub already_active: bool,
-    pub handoff: HandoffMutationOutcome,
+    pub handoff: HandoffMutationOk,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -169,7 +169,7 @@ mod tests {
     use crate::{
         HandoffDocument, HandoffDocumentIdentifier, HandoffLocation, HandoffScope, IndexEntry,
         IndexEntryState, Materialization, PendingWorkItem, RecordId,
-        handoff::HandoffMutationOutcome,
+        handoff::HandoffMutationOk,
         testing::{FailurePoint, InMemoryStore},
     };
 
@@ -332,7 +332,7 @@ mod tests {
 
         assert!(matches!(
             outcome.handoff,
-            HandoffMutationOutcome::Reopened { .. }
+            HandoffMutationOk::Reopened { .. }
         ));
         assert_eq!(
             store.handoff_documents(&scope)[0].location,

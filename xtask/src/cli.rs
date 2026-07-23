@@ -24,7 +24,7 @@ pub(crate) struct Cli {
 /// the surface — `ValueEnum` for closed choices, `conflicts_with` for exclusive flags.
 #[derive(Subcommand)]
 pub(crate) enum Command {
-    /// Format the repo in place (stable/pinned-nightly rustfmt; mdformat when `.mdformat.toml`
+    /// Format the repo in place (stable/pinned-nightly rustfmt; rumdl when `.rumdl.toml`
     /// present).
     #[command(name = Verb::FORMAT.as_str())]
     Format,

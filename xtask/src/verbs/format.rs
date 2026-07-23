@@ -1,6 +1,6 @@
 //! Formatting automation for `fmt`, `fmt-check`, and `fix`.
 //!
-//! Stable rustfmt always runs. `.rustfmt-nightly` selects a toolchain, and `.mdformat.toml` enables
+//! Stable rustfmt always runs. `.rustfmt-nightly` selects a toolchain, and `.rumdl.toml` enables
 //! Markdown formatting through `uvx`.
 
 use std::path::Path;
@@ -43,7 +43,7 @@ impl FormatMode {
 const NIGHTLY_FILE: &str = ".rustfmt-nightly";
 
 /// Marker that enables Markdown formatting.
-const MDFORMAT_FILE: &str = ".mdformat.toml";
+const RUMDL_FILE: &str = ".rumdl.toml";
 
 /// Applies every active formatter.
 pub(crate) fn run() -> Result<()> {
@@ -70,7 +70,7 @@ pub(crate) fn fix(extra: &[String]) -> Result<()> {
 /// Builds a format plan from repository marker files.
 fn format_steps(mode: FormatMode) -> Result<Vec<task::Step>> {
     let mut steps = rust::format_steps(nightly_pin()?.as_deref(), mode);
-    if Path::new(MDFORMAT_FILE).is_file() {
+    if Path::new(RUMDL_FILE).is_file() {
         steps.extend(markdown::format_step(&markdown_files()?, mode));
     }
     Ok(steps)

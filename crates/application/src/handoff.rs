@@ -8,7 +8,7 @@ pub mod ports;
 
 /// Describes the linked handoff side effect of a pending-work mutation.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum HandoffMutationOutcome {
+pub enum HandoffMutationOk {
     /// The pending-work item is not linked to a handoff.
     NotLinked,
     /// A linked handoff was created.

@@ -23,4 +23,4 @@ pub use prerequisite::PrerequisiteStatus;
 pub use project_registry::{ProjectRegistry, ProjectResolutionError};
 pub use remove::RemovedItem;
 pub use show::ShowOutput;
-pub use update::UpdatedItem;
+pub use update::UpdatePendingWorkItemOk;

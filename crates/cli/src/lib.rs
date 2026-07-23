@@ -1,6 +1,5 @@
 //! Exposes pwf command parsing, engines, and shared CLI support.
 
-pub mod codex_thread_title;
 pub mod command;
 pub use pwf_core::config;
 pub mod confirm;

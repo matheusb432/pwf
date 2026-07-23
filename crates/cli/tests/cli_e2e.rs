@@ -3452,12 +3452,17 @@ fn stage_session_with_zellij_stub(
     .unwrap();
     migrate_fixture(&cfg);
 
-    // Install the recording fixture as `zellij` on the child PATH.
+    // Install process fixtures on the child PATH.
     let bin = dir.path().join("bin");
     fs::create_dir_all(&bin).unwrap();
-    let stub = bin.join("zellij");
-    fs::copy("tests/fixtures/zellij-stub.sh", &stub).unwrap();
-    fs::set_permissions(&stub, fs::Permissions::from_mode(0o755)).unwrap();
+    for (name, fixture) in [
+        ("zellij", "tests/fixtures/zellij-stub.sh"),
+        ("codex", "tests/fixtures/codex-stub.sh"),
+    ] {
+        let stub = bin.join(name);
+        fs::copy(fixture, &stub).unwrap();
+        fs::set_permissions(&stub, fs::Permissions::from_mode(0o755)).unwrap();
+    }
 
     let log = dir.path().join("argv.log");
     let path = format!(
@@ -3466,6 +3471,22 @@ fn stage_session_with_zellij_stub(
         std::env::var("PATH").unwrap_or_default()
     );
     (cfg, path, log)
+}
+
+#[cfg(unix)]
+fn zellij_command_sequence(log: &str) -> Vec<&str> {
+    log.split('\0')
+        .filter(|invocation| !invocation.is_empty())
+        .map(|invocation| {
+            if invocation.starts_with("--session ") && invocation.contains(" action new-tab ") {
+                "new-tab"
+            } else if invocation.starts_with("attach --create-background ") {
+                "attach --create-background"
+            } else {
+                invocation
+            }
+        })
+        .collect()
 }
 
 #[test]
@@ -3495,6 +3516,283 @@ fn session_claude_agent_outputs_thread_title() {
     assert!(
         argv.contains("PWF-0001 - do the thing"),
         "thread title not in captured zellij argv: {argv}"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn session_tab_rejection_exits_nonzero() {
+    let dir = TempDir::new().unwrap();
+    let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
+
+    pwf()
+        .args([
+            "session",
+            "--id",
+            "PWF-0001",
+            "--agent",
+            "claude",
+            "--yes",
+            "--config-path",
+        ])
+        .arg(&cfg)
+        .env("PATH", path)
+        .env("ZELLIJ_STUB_LOG", &log)
+        .env("ZELLIJ_STUB_EXIT_CODE", "17")
+        .env("ZELLIJ_STUB_STDERR", "tab rejected by fixture")
+        .assert()
+        .code(1)
+        .stdout("")
+        .stderr(contains("PWF-0001").and(contains("tab rejected by fixture")));
+}
+
+#[test]
+#[cfg(unix)]
+fn session_codex_naming_failure_stops_before_dispatch() {
+    let directory = TempDir::new().unwrap();
+    let (config_path, child_path, zellij_log_path) = stage_session_with_zellij_stub(&directory);
+    let app_server_log_path = directory.path().join("codex-app-server.jsonl");
+    let resume_log_path = directory.path().join("codex-resume.log");
+
+    pwf()
+        .args([
+            "session",
+            "--id",
+            "PWF-0001",
+            "--agent",
+            "codex",
+            "--yes",
+            "--config-path",
+        ])
+        .arg(&config_path)
+        .env("PATH", child_path)
+        .env("CODEX_STUB_APP_SERVER_LOG", &app_server_log_path)
+        .env("CODEX_STUB_NAME_ERROR", "name denied by fixture")
+        .env("CODEX_STUB_RESUME_LOG", &resume_log_path)
+        .env("ZELLIJ_STUB_LOG", &zellij_log_path)
+        .assert()
+        .code(1)
+        .stdout("")
+        .stderr(
+            contains("thread/name/set")
+                .and(contains("PWF-0001 - do the thing"))
+                .and(contains("Codex was not launched")),
+        );
+
+    assert!(
+        !zellij_log_path.exists(),
+        "naming failure invoked zellij: {}",
+        fs::read_to_string(zellij_log_path).unwrap()
+    );
+    assert!(
+        !resume_log_path.exists(),
+        "naming failure invoked codex resume"
+    );
+}
+
+#[test]
+fn session_dry_run_conflicts_with_append_before_loading_configuration() {
+    pwf()
+        .args([
+            "session",
+            "PWF-0001",
+            "--dry-run",
+            "--append",
+            "mutation",
+            "--config-path",
+            "/path/that-clap-must-never-read.json",
+        ])
+        .assert()
+        .code(2)
+        .stderr(contains("cannot be used with"));
+}
+
+#[test]
+#[cfg(unix)]
+fn session_dry_alias_renders_complete_codex_command_without_side_effects() {
+    let directory = TempDir::new().unwrap();
+    let (config_path, child_path, zellij_log_path) = stage_session_with_zellij_stub(&directory);
+    let note_path = directory.path().join("notes/pwf/PWF-0001.md");
+    let note_before = fs::read(&note_path).unwrap();
+    let app_server_log_path = directory.path().join("codex-app-server.jsonl");
+    let resume_log_path = directory.path().join("codex-resume.log");
+    let repository = directory.path().join("repo").to_string_lossy().into_owned();
+    let expected_prompt = concat!(
+        "Pending-work ID: PWF-0001\nProject: pwf\n",
+        "You MUST execute this autonomously. Do not prompt the user for questions. But if something ",
+        "seems critical and needs user decision, STOP execution and clarify\n\ndo PWF-0001\n\n",
+        "Workspace: before doing anything else, use a git-worktrees skill to create a git worktree ",
+        "here named `PWF-0001` (the worktree name is this task'\\''s id), and do all of this task'\\''s ",
+        "work inside that worktree."
+    );
+    let expected_command = format!(
+        "zellij --session pwf action new-tab --cwd {repository} --name PWF-0001 -- codex resume \
+         --model gpt-5.4 '<thread-id returned by thread/start>' -- '{expected_prompt}'"
+    );
+    let expected_output = format!(
+        "# session PWF-0001 - dry run\ntask: PWF-0001 - do the thing\nagent: Codex\nmodel: \
+         gpt-5.4\nrepository: {repository}\nzellij: pwf / PWF-0001\ncommand: {expected_command}\n\
+         nothing dispatched.\n\n"
+    );
+
+    pwf()
+        .args([
+            "session",
+            "PWF-0001",
+            "--dry",
+            "--agent",
+            "codex",
+            "--model",
+            "gpt-5.4",
+            "--worktree",
+            "--auto",
+            "--yes",
+            "--config-path",
+        ])
+        .arg(&config_path)
+        .env("PATH", child_path)
+        .env("CODEX_STUB_APP_SERVER_LOG", &app_server_log_path)
+        .env("CODEX_STUB_RESUME_LOG", &resume_log_path)
+        .env("ZELLIJ_STUB_LOG", &zellij_log_path)
+        .env("ZELLIJ_STUB_LOG_VERSION", "1")
+        .assert()
+        .success()
+        .stdout(expected_output)
+        .stderr("");
+
+    assert_eq!(note_before, fs::read(&note_path).unwrap());
+    for path in [&app_server_log_path, &resume_log_path, &zellij_log_path] {
+        assert!(
+            !path.exists(),
+            "dry run invoked a process recorded at {}: {}",
+            path.display(),
+            fs::read_to_string(path).unwrap()
+        );
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn session_recovers_a_missing_zellij_session_once() {
+    let dir = TempDir::new().unwrap();
+    let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
+    let state = dir.path().join("zellij-state");
+
+    pwf()
+        .args([
+            "session",
+            "--id",
+            "PWF-0001",
+            "--agent",
+            "claude",
+            "--yes",
+            "--config-path",
+        ])
+        .arg(&cfg)
+        .env("PATH", path)
+        .env("ZELLIJ_STUB_LOG", &log)
+        .env("ZELLIJ_STUB_MISSING_SESSION_COUNT", "1")
+        .env("ZELLIJ_STUB_STATE", &state)
+        .assert()
+        .success()
+        .stdout(contains("created session + dispatched"));
+
+    let invocations = fs::read_to_string(&log).unwrap();
+    assert_eq!(
+        zellij_command_sequence(&invocations),
+        ["new-tab", "attach --create-background", "new-tab"]
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn session_stops_after_a_second_missing_zellij_session() {
+    let dir = TempDir::new().unwrap();
+    let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
+    let state = dir.path().join("zellij-state");
+
+    pwf()
+        .args([
+            "session",
+            "--id",
+            "PWF-0001",
+            "--agent",
+            "claude",
+            "--yes",
+            "--config-path",
+        ])
+        .arg(&cfg)
+        .env("PATH", path)
+        .env("ZELLIJ_STUB_LOG", &log)
+        .env("ZELLIJ_STUB_MISSING_SESSION_COUNT", "2")
+        .env("ZELLIJ_STUB_STATE", &state)
+        .assert()
+        .code(1)
+        .stdout("")
+        .stderr(contains("session not found"));
+
+    let invocations = fs::read_to_string(&log).unwrap();
+    assert_eq!(
+        zellij_command_sequence(&invocations),
+        ["new-tab", "attach --create-background", "new-tab"]
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn session_inline_executes_the_concrete_claude_process() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = TempDir::new().unwrap();
+    let (cfg, path, zellij_log) = stage_session_with_zellij_stub(&dir);
+    let claude = dir.path().join("bin/claude");
+    fs::copy("tests/fixtures/claude-stub.sh", &claude).unwrap();
+    fs::set_permissions(&claude, fs::Permissions::from_mode(0o755)).unwrap();
+    let claude_log = dir.path().join("claude.log");
+
+    pwf()
+        .args([
+            "session",
+            "--id",
+            "PWF-0001",
+            "--agent",
+            "claude",
+            "--inline",
+            "--yes",
+            "--config-path",
+        ])
+        .arg(&cfg)
+        .env("PATH", path)
+        .env("CLAUDE_STUB_EXIT_CODE", "23")
+        .env("CLAUDE_STUB_LOG", &claude_log)
+        .env("ZELLIJ_STUB_LOG", &zellij_log)
+        .env("ZELLIJ_STUB_LOG_VERSION", "1")
+        .assert()
+        .code(23)
+        .stdout("")
+        .stderr(contains("running PWF-0001 inline in"));
+
+    let repository = dir.path().join("repo");
+    let log = fs::read(&claude_log).unwrap();
+    let entries = log
+        .split(|byte| *byte == 0)
+        .filter(|entry| !entry.is_empty())
+        .map(|entry| String::from_utf8(entry.to_vec()).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        entries,
+        [
+            format!("cwd={}", repository.display()),
+            "arg=--name".to_string(),
+            "arg=PWF-0001 - do the thing".to_string(),
+            "arg=--".to_string(),
+            "arg=Pending-work ID: PWF-0001\nProject: pwf\n\ndo PWF-0001".to_string(),
+        ]
+    );
+    assert!(
+        !zellij_log.exists(),
+        "inline dispatch invoked zellij: {}",
+        fs::read_to_string(zellij_log).unwrap()
     );
 }
 
@@ -3617,51 +3915,6 @@ fn session_with_effort_and_broken_tiers_config_fails_before_dispatch() {
 
     assert!(!log.exists() || fs::read_to_string(&log).unwrap().is_empty());
 }
-
-// FIXME: uncomment or rewrite once thread_title_launch_argv is refactored
-// #[test]
-// #[cfg(unix)]
-// fn session_codex_agent_emits_codex_argv() {
-//     // Codex thread naming uses the hidden app-server shim because Codex has no `--name` flag.
-//     let dir = TempDir::new().unwrap();
-//     let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
-
-//     pwf()
-//         .args([
-//             "session",
-//             "--id",
-//             "PWF-0001",
-//             "--agent",
-//             "codex",
-//             "--yes",
-//             "--config-path",
-//         ])
-//         .arg(&cfg)
-//         .env("PATH", path)
-//         .env("ZELLIJ_STUB_LOG", &log)
-//         .assert()
-//         .success()
-//         .stdout(contains("dispatched"));
-
-//     let argv = fs::read_to_string(&log).unwrap();
-//     assert!(
-//         argv.contains("__codex-thread-title"),
-//         "codex title shim not captured: {argv}"
-//     );
-//     assert!(
-//         argv.contains("PWF-0001 - do the thing"),
-//         "codex title shim did not receive get_thread_title text: {argv}"
-//     );
-//     // Match the Codex segment because zellij also contributes a `--name` argument.
-//     assert!(
-//         argv.contains("-- codex --"),
-//         "codex argv tail not captured: {argv}"
-//     );
-//     assert!(
-//         !argv.contains("codex --name"),
-//         "codex must not get a --name flag: {argv}"
-//     );
-// }
 
 #[test]
 #[cfg(unix)]
@@ -3843,22 +4096,6 @@ fn session_append_rejects_whitespace_only_before_any_dispatch() {
 }
 
 #[test]
-fn session_rejects_unknown_agent() {
-    pwf()
-        .args([
-            "session",
-            "PWF-0001",
-            "--agent",
-            "bogus",
-            "--config-path",
-            "x",
-        ])
-        .assert()
-        .failure()
-        .stderr(contains("invalid value 'bogus'"));
-}
-
-#[test]
 fn verify_codex_agent_reports_codex() {
     // The binary-only Codex command is stable even when Codex is absent from the host PATH.
     pwf()
@@ -3956,52 +4193,6 @@ fn session_unknown_id_errors_not_found() {
         .assert()
         .failure()
         .stderr(contains("not found"));
-}
-
-#[test]
-fn session_accepts_yes_flag() {
-    let (_dir, cfg) = staged();
-    pwf()
-        .args(["session", "GLP-9999", "--yes", "--config-path"])
-        .arg(&cfg)
-        .assert()
-        .failure()
-        .stderr(contains("not found"));
-}
-
-#[test]
-fn session_accepts_inline_short_flag() {
-    let (_dir, cfg) = staged();
-    pwf()
-        .args(["session", "GLP-9999", "-i", "--config-path"])
-        .arg(&cfg)
-        .assert()
-        .failure()
-        .stderr(contains("not found"));
-}
-
-#[test]
-fn session_accepts_inline_long_flag() {
-    let (_dir, cfg) = staged();
-    pwf()
-        .args(["session", "GLP-9999", "--inline", "--config-path"])
-        .arg(&cfg)
-        .assert()
-        .failure()
-        .stderr(contains("not found"));
-}
-
-#[test]
-fn session_accepts_worktree_flags() {
-    let (_dir, cfg) = staged();
-    for flag in ["-w", "--worktree"] {
-        pwf()
-            .args(["session", "GLP-9999", flag, "--config-path"])
-            .arg(&cfg)
-            .assert()
-            .failure()
-            .stderr(contains("not found"));
-    }
 }
 
 #[test]

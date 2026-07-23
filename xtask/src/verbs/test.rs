@@ -1,15 +1,17 @@
 //! Test planning for workspace and binary suites.
 //!
 //! Unit and integration tests are the default. `--e2e` runs binary suites. `--all` runs both test
-//! scopes plus the architecture and import-alias gates. `--verbose` streams uncaptured logs.
+//! scopes plus the architecture and import-alias gates. Steps run through the captured gate, which
+//! records full output to a log, prints a summary table, and emits the `RESULT` line. `--verbose`
+//! also streams each step's output live.
 
 use anyhow::Result;
 use clap::{Args, ValueEnum};
 
 use crate::{
-    paths,
-    process::{self, Status},
-    task::{self, Step},
+    gate::{self, Job, Kind},
+    paths, process,
+    task::Step,
     verb::Verb,
 };
 
@@ -62,18 +64,23 @@ fn cargo_test_step(label: &str, targets: &[&str], verbose: bool) -> Step {
     step
 }
 
-/// Builds ordered test and gate steps for a scope.
-fn plan(scope: Scope, verbose: bool) -> Vec<Step> {
-    let unit = || cargo_test_step("test", UNIT_TARGETS, verbose);
-    let e2e = || cargo_test_step("test:e2e", E2E_TARGETS, verbose);
+/// Builds ordered test and gate steps for a scope, each paired with its count [`Kind`].
+fn plan(scope: Scope, verbose: bool) -> Vec<(Step, Kind)> {
+    let unit = || (cargo_test_step("test", UNIT_TARGETS, verbose), Kind::Cargo);
+    let e2e = || {
+        (
+            cargo_test_step("test:e2e", E2E_TARGETS, verbose),
+            Kind::Cargo,
+        )
+    };
     match scope {
         Scope::Unit => vec![unit()],
         Scope::E2e => vec![e2e()],
         Scope::All => vec![
             unit(),
             e2e(),
-            check_architecture_step(),
-            check_import_aliases_step(),
+            (check_architecture_step(), Kind::Plain),
+            (check_import_aliases_step(), Kind::Plain),
         ],
     }
 }
@@ -94,7 +101,8 @@ fn check_import_aliases_step() -> Step {
     Step::new("check-import-aliases", "ast-grep", ["scan"])
 }
 
-/// Runs a test scope, building the release binary first when a binary suite needs it.
+/// Runs a test scope through the captured gate, building the release binary first when a binary
+/// suite needs it.
 pub(crate) fn run(scope: Scope, verbose: bool) -> Result<()> {
     if matches!(scope, Scope::E2e | Scope::All) {
         let bin = paths::repo_root()
@@ -105,9 +113,11 @@ pub(crate) fn run(scope: Scope, verbose: bool) -> Result<()> {
             process::run("cargo build", "cargo", &["build", "--release"])?;
         }
     }
-    task::run_all(&plan(scope, verbose))?;
-    process::result(Verb::TEST, Status::Pass);
-    Ok(())
+    let jobs = plan(scope, verbose)
+        .into_iter()
+        .map(|(step, kind)| Job::new(step, kind))
+        .collect::<Vec<_>>();
+    gate::run(Verb::TEST.as_str(), &jobs, verbose)
 }
 
 #[cfg(test)]
@@ -124,14 +134,15 @@ mod tests {
     fn unit_default_is_terse() {
         let steps = plan(Scope::Unit, false);
         assert_eq!(steps.len(), 1);
-        assert_eq!(argv(&steps[0]), ["test", "--quiet", "--workspace"]);
+        assert_eq!(argv(&steps[0].0), ["test", "--quiet", "--workspace"]);
+        assert!(matches!(steps[0].1, Kind::Cargo));
     }
 
     #[test]
     fn verbose_drops_quiet_and_adds_nocapture() {
         let steps = plan(Scope::Unit, true);
         assert_eq!(
-            argv(&steps[0]),
+            argv(&steps[0].0),
             ["test", "--workspace", "--", "--nocapture"]
         );
     }
@@ -140,7 +151,7 @@ mod tests {
     fn e2e_selects_the_binary_suites() {
         let steps = plan(Scope::E2e, false);
         assert_eq!(
-            argv(&steps[0]),
+            argv(&steps[0].0),
             [
                 "test", "--quiet", "-p", "pwf", "--test", "cli_e2e", "--test", "help_cli"
             ]
@@ -151,13 +162,15 @@ mod tests {
     fn all_runs_unit_then_e2e_then_both_gates() {
         let steps = plan(Scope::All, false);
         assert_eq!(steps.len(), 4);
-        assert_eq!(argv(&steps[0]), ["test", "--quiet", "--workspace"]);
-        assert!(argv(&steps[1]).contains(&"cli_e2e"));
+        assert_eq!(argv(&steps[0].0), ["test", "--quiet", "--workspace"]);
+        assert!(argv(&steps[1].0).contains(&"cli_e2e"));
         assert_eq!(
-            argv(&steps[2]),
+            argv(&steps[2].0),
             ["run", "--quiet", "-p", "xtask", "--", "check-architecture"]
         );
-        assert_eq!(argv(&steps[3]), ["scan"]);
+        assert_eq!(argv(&steps[3].0), ["scan"]);
+        assert!(matches!(steps[2].1, Kind::Plain));
+        assert!(matches!(steps[3].1, Kind::Plain));
     }
 
     #[test]

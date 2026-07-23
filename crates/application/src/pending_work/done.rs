@@ -11,7 +11,7 @@ use super::{
     store_util::{self, LoadItemError, body_region},
 };
 use crate::{
-    handoff::{HandoffError, HandoffMutationOutcome, lifecycle},
+    handoff::{HandoffError, HandoffMutationOk, lifecycle},
     ports::{
         AppDbStore, HandoffDocumentStore, HandoffLedger, IndexEntry, IndexEntryState, IndexSection,
         ItemPatch, Materialization, NewItem, PendingWorkItem,
@@ -61,7 +61,7 @@ pub struct CompletedPendingWork {
     pub evicted_ids: Vec<WorkItemId>,
     pub futuro_renamed_project: Option<ProjectName>,
     pub review_item: Option<AddedItem>,
-    pub handoff: HandoffMutationOutcome,
+    pub handoff: HandoffMutationOk,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -268,7 +268,7 @@ where
         evicted_ids,
         futuro_renamed_project: futuro_renamed.then(|| project.clone()),
         review_item,
-        handoff: HandoffMutationOutcome::NotLinked,
+        handoff: HandoffMutationOk::NotLinked,
     };
     completed_pending_work.handoff = lifecycle::commit_after_pending_work(store, handoff_pending)
         .map_err(|source| CloseError::HandoffAfterPendingWork {
@@ -419,7 +419,7 @@ where
         project,
         created,
         false,
-        crate::handoff::HandoffMutationOutcome::NotLinked,
+        crate::handoff::HandoffMutationOk::NotLinked,
     ))
 }
 
@@ -453,7 +453,7 @@ mod tests {
     use crate::{
         HandoffDocument, HandoffDocumentIdentifier, HandoffLocation, HandoffScope, IndexEntry,
         IndexEntryState, Materialization, PendingWorkItem, RecordId,
-        handoff::HandoffMutationOutcome,
+        handoff::HandoffMutationOk,
         testing::{FailurePoint, InMemoryStore},
     };
 
@@ -694,7 +694,7 @@ mod tests {
 
         assert!(matches!(
             outcome.handoff,
-            HandoffMutationOutcome::Archived { .. }
+            HandoffMutationOk::Archived { .. }
         ));
         assert_eq!(store.items("glep-shimeji")[0].status, WorkItemStatus::Done);
         assert_eq!(

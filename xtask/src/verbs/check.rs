@@ -31,12 +31,12 @@ mod tests {
     fn aggregate_steps_append_lint_after_formatters() {
         let formatting = vec![
             Step::new("rustfmt", "rustfmt", Vec::<&str>::new()),
-            Step::new("mdformat", "mdformat", Vec::<&str>::new()),
+            Step::new("rumdl", "rumdl", Vec::<&str>::new()),
         ];
 
         let steps = steps(formatting);
         let labels = steps.iter().map(Step::label).collect::<Vec<_>>();
 
-        assert_eq!(labels, ["rustfmt", "mdformat", "clippy"]);
+        assert_eq!(labels, ["rustfmt", "rumdl", "clippy"]);
     }
 }

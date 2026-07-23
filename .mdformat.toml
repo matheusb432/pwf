@@ -1,8 +1,0 @@
-
-wrap = "no"
-number = true
-end_of_line = "lf"
-extensions = ["gfm", "gfm_alerts", "wikilink", "frontmatter"]
-
-[plugin.tables]
-compact_tables = true

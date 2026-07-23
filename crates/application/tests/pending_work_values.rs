@@ -2,7 +2,7 @@ use std::{assert_matches, path::PathBuf};
 
 use pwf_application::pending_work::{
     AddedItem, ListResult, ListScope, OrderDirection, OrderField, OrderSpec, PendingWorkItemView,
-    ProjectRegistry, ProjectResolutionError, RemovedItem, UpdatedItem, note_body,
+    ProjectRegistry, ProjectResolutionError, RemovedItem, UpdatePendingWorkItemOk, note_body,
 };
 use pwf_domain::pending_work::{ProjectName, WorkItemStatus};
 
@@ -131,7 +131,7 @@ fn application_modules_own_pending_work_use_case_values() {
 
     assert_type::<AddedItem>();
     assert_type::<RemovedItem>();
-    assert_type::<UpdatedItem>();
+    assert_type::<UpdatePendingWorkItemOk>();
     assert_type::<PendingWorkItemView>();
     assert_type::<ListResult>();
     assert_type::<ListScope>();
@@ -154,7 +154,7 @@ fn application_modules_own_pending_work_use_case_values() {
         note_path: PathBuf::from("/repo/PWF-0001.md"),
         created_section: None,
         title_normalized: false,
-        handoff: pwf_application::handoff::HandoffMutationOutcome::NotLinked,
+        handoff: pwf_application::handoff::HandoffMutationOk::NotLinked,
     };
     let _ = PendingWorkItemView {
         id: "PWF-0001".to_string(),

@@ -13,7 +13,7 @@ use super::{
 };
 use crate::{
     HandoffDocumentStore, HandoffLedger,
-    handoff::{HandoffError, HandoffMutationOutcome, lifecycle},
+    handoff::{HandoffError, HandoffMutationOk, lifecycle},
     ports::{AppDbStore, IndexEntry, IndexSection, NewItem, PendingWorkItem},
 };
 
@@ -33,7 +33,7 @@ pub struct AddedItem {
     /// Whether an explicit title required metadata-safe normalization.
     pub title_normalized: bool,
     /// Linked handoff side effect.
-    pub handoff: HandoffMutationOutcome,
+    pub handoff: HandoffMutationOk,
 }
 
 /// Carries add diagnostics that remain observable after a later handoff failure.
@@ -279,7 +279,7 @@ where
             diagnostics: Box::new(diagnostics.clone()),
             source,
         })?
-        .unwrap_or(HandoffMutationOutcome::NotLinked);
+        .unwrap_or(HandoffMutationOk::NotLinked);
 
     Ok(added_item(
         &prepared.project,
@@ -430,7 +430,7 @@ pub(super) fn added_item(
     project: &ProjectName,
     created: store_util::CreatedItem,
     title_normalized: bool,
-    handoff: HandoffMutationOutcome,
+    handoff: HandoffMutationOk,
 ) -> AddedItem {
     let id = created
         .record

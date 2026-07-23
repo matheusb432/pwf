@@ -1,9 +1,12 @@
 use clap::Args;
-use pwf_application::pending_work::{ProjectRegistry, session::verify::VerifySession};
+use pwf_application::pending_work::{
+    ProjectRegistry,
+    session::{Agent, verify::VerifySession},
+};
 use pwf_domain::pending_work::ProjectName;
 use pwf_infra::{
     obsidian::ObsidianStore,
-    session::{ProcessSessionRuntime, TomlModelTierCatalog},
+    session::{AgentProbe, ClaudeHarness, CodexHarness, TomlModelTierCatalog, render_argv},
 };
 
 use super::{
@@ -26,6 +29,14 @@ pub struct Arguments {
     pub(crate) common: CommonArguments,
 }
 
+pub(in crate::engines::pending_work) struct VerifySessionOk {
+    pub task_id: Option<String>,
+    pub probe: AgentProbe,
+    pub launchable: bool,
+    pub issues: Vec<String>,
+    pub command_preview: String,
+}
+
 pub(super) fn run(arguments: &Arguments) -> Result<String, PendingWorkError> {
     let configuration = load_configuration(&arguments.common)?;
     let projects = ProjectRegistry::new(configuration.projects.iter().map(|(name, repository)| {
@@ -39,17 +50,33 @@ pub(super) fn run(arguments: &Arguments) -> Result<String, PendingWorkError> {
         )
     }));
     let store = ObsidianStore::new(configuration);
-    let request = VerifySession {
-        id: arguments.identifier.canonical(),
-        agent: arguments.agent.into(),
-        model_override: arguments.model.clone(),
+    let agent = Agent::from(arguments.agent);
+    let probe = match agent {
+        Agent::Claude => ClaudeHarness::probe(),
+        Agent::Codex => CodexHarness::probe(),
     };
-    let outcome = pwf_application::pending_work::session::verify::execute(
-        request,
+    let verification = pwf_application::pending_work::session::verify::execute(
+        VerifySession {
+            id: arguments.identifier.canonical(),
+            agent,
+            model_override: arguments.model.clone(),
+        },
         &store,
         &projects,
         &TomlModelTierCatalog,
-        &ProcessSessionRuntime,
     )?;
-    Ok(render_verify(&outcome))
+    let command_preview = match verification.launch.as_ref() {
+        Some(launch) => match agent {
+            Agent::Claude => render_argv(&ClaudeHarness::preview(launch)),
+            Agent::Codex => render_argv(&CodexHarness::preview(launch)),
+        },
+        None => probe.binary.clone(),
+    };
+    Ok(render_verify(&VerifySessionOk {
+        task_id: verification.task_id,
+        probe,
+        launchable: verification.launchable,
+        issues: verification.issues,
+        command_preview,
+    }))
 }
