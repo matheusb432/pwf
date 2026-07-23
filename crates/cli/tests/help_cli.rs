@@ -445,12 +445,28 @@ fn verify_help_documents_agent_flag() {
 }
 
 #[test]
-fn list_help_mentions_all_scope() {
+fn list_help_documents_all_as_everything() {
     let (list_help, ok) = run(&["list", "--help"]);
     assert!(ok, "pwf list --help should exit 0");
     assert!(
         list_help.contains("--all"),
         "list --help should document --all: {list_help}"
+    );
+    assert!(
+        list_help.contains("every section, every lifecycle status, no item cap"),
+        "--all help should state it lists everything: {list_help}"
+    );
+    assert!(
+        list_help.contains("--section <SECTION>"),
+        "list --help should document --section: {list_help}"
+    );
+    assert!(
+        list_help.contains("--order <FIELD[:DIR]>"),
+        "list --help should document the order value shape: {list_help}"
+    );
+    assert!(
+        list_help.contains("default: active"),
+        "--status help should state its default: {list_help}"
     );
 }
 

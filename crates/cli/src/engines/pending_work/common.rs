@@ -67,6 +67,12 @@ impl From<AgentChoice> for Agent {
 }
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
+pub enum SectionChoice {
+    Future,
+    Human,
+}
+
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
 pub enum StatusChoice {
     Active,
     Done,
@@ -131,18 +137,6 @@ pub(crate) enum PendingWorkError {
     SessionVerify(#[from] pwf_application::pending_work::session::verify::VerifySessionError),
     #[error("Unknown --section value '{value}'. Use one of: future, human, low-prio.")]
     BadSection { value: String },
-    #[error("Choose only one list scope flag: --human, --future, or --all.")]
-    ConflictingListScopes,
-    #[error(
-        "--order field conflict: choose either 'created' or 'id', not both ('{first}' and '{second}')."
-    )]
-    ConflictingOrderField { first: String, second: String },
-    #[error(
-        "--order direction conflict: choose either 'asc' or 'desc', not both ('{first}' and '{second}')."
-    )]
-    ConflictingOrderDirection { first: String, second: String },
-    #[error("Unknown --order value '{value}'. Use one of: created, id, asc, desc.")]
-    BadOrderValue { value: String },
     #[error(
         "'{identifier}' is ambiguous. Managed project identifiers matching it: {}.",
         matches.join(", ")

@@ -59,7 +59,7 @@ fn compatibility_router_only_converts_tokens_to_typed_leaves() {
 
 #[test]
 fn pending_work_dispatch_matches_command_once_without_outcome_bridge() {
-    let dispatch = source("crates/cli/src/engines/pending_work/mod.rs");
+    let dispatch = source("crates/cli/src/engines/pending_work.rs");
 
     assert_eq!(occurrence_count(&dispatch, "match command"), 1);
     assert!(dispatch.contains("route::resolve"));

@@ -3,15 +3,11 @@
 use clap::Args;
 
 use super::{
-    common::{AgentChoice, CommonArguments, Identifier, StatusChoice},
+    common::{AgentChoice, CommonArguments, Identifier, SectionChoice, StatusChoice},
     list, verify,
 };
 
 #[derive(Args, Debug)]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "clap mirrors independent command-line switches"
-)]
 pub struct Arguments {
     /// Free-form route words (project + prompt, or a sub-verb).
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -19,21 +15,20 @@ pub struct Arguments {
     /// Long form with per-item metadata.
     #[arg(long)]
     pub(crate) long: bool,
-    /// Show only `## Future` items.
-    #[arg(long, conflicts_with_all = ["human", "all"])]
-    pub(crate) future: bool,
-    /// Show only `## Human` items.
-    #[arg(long, conflicts_with_all = ["future", "all"])]
-    pub(crate) human: bool,
-    /// Include every list section.
-    #[arg(long, conflicts_with_all = ["human", "future"])]
+    /// Show only this scoped section.
+    #[arg(long, value_enum, conflicts_with = "all")]
+    pub(crate) section: Option<SectionChoice>,
+    /// List everything: every section, every lifecycle status, no item cap.
+    /// An explicit `--status` or `-n` overrides the widened default.
+    #[arg(long)]
     pub(crate) all: bool,
-    /// Cap to N listed items.
-    #[arg(short = 'n', long, value_name = "N")]
+    /// Cap to N listed items, N >= 1 [default: 10, or unlimited under `--all`].
+    #[arg(short = 'n', long, value_name = "N", value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..=100_000))]
     pub(crate) number: Option<usize>,
-    /// Filter by one lifecycle status, or include every lifecycle status.
-    #[arg(long, value_enum, default_value_t = StatusChoice::Active)]
-    pub(crate) status: StatusChoice,
+    /// Filter by one lifecycle status, or include every lifecycle status
+    /// [default: active, or all under `--all`].
+    #[arg(long, value_enum)]
+    pub(crate) status: Option<StatusChoice>,
     #[arg(long)]
     pub(crate) prereq: Vec<String>,
     #[command(flatten)]
@@ -98,13 +93,12 @@ fn list_arguments(
     list::Arguments {
         project,
         long: arguments.long,
-        future: arguments.future,
-        human: arguments.human,
+        section: arguments.section,
         all: arguments.all,
         number: arguments.number,
         effort: None,
         tag: Vec::new(),
-        order: vec!["project-id".to_string()],
+        order: Some(list::PROJECT_GROUPED_ORDER),
         status: arguments.status,
         common: arguments.common.clone(),
         compatibility,

@@ -11,7 +11,7 @@ fn more_footer(hidden: usize) -> String {
     if hidden == 0 {
         return String::new();
     }
-    format!("... and {hidden} more; run 'pwf -n 0' to show all")
+    format!("... and {hidden} more; use '--all' to list everything")
 }
 
 pub(in crate::engines::pending_work) fn render_list(
@@ -543,6 +543,6 @@ mod tests {
     fn more_footer_mentions_count_and_escape_hatch() {
         let footer = more_footer(2);
         assert!(footer.contains("2 more"), "got: {footer}");
-        assert!(footer.contains("-n 0"), "got: {footer}");
+        assert!(footer.contains("--all"), "got: {footer}");
     }
 }

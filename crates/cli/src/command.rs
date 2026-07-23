@@ -109,8 +109,7 @@ mod tests {
             "--tag",
             "rust",
             "-o",
-            "project-id",
-            "desc",
+            "project-id:desc",
             "--status",
             "done",
         ]) else {
@@ -121,9 +120,15 @@ mod tests {
         assert_eq!(arguments.number, Some(2));
         assert_eq!(arguments.effort, Some(3));
         assert_eq!(arguments.tag, ["rust"]);
-        assert_eq!(arguments.order, ["project-id", "desc"]);
         assert_eq!(
-            arguments.status.filter(),
+            arguments.order,
+            Some(pwf_application::pending_work::OrderSpec {
+                field: pwf_application::pending_work::OrderField::ProjectId,
+                direction: pwf_application::pending_work::OrderDirection::Desc,
+            })
+        );
+        assert_eq!(
+            arguments.status.expect("explicit --status").filter(),
             pwf_domain::pending_work::WorkItemStatusFilter::Exact(
                 pwf_domain::pending_work::WorkItemStatus::Done
             )
@@ -251,25 +256,43 @@ mod tests {
         assert_eq!(session.agent, pending_work::common::AgentChoice::Codex);
         assert_eq!(session.append.as_deref(), Some("context"));
 
-        let pending_work::Command::Route(route) =
-            pending_work(&["pwf", "--long", "--future", "-n", "3", "--status", "all"])
-        else {
+        let pending_work::Command::Route(route) = pending_work(&[
+            "pwf",
+            "--long",
+            "--section",
+            "future",
+            "-n",
+            "3",
+            "--status",
+            "all",
+        ]) else {
             panic!("expected route");
         };
         assert_eq!(route.words, ["pwf"]);
-        assert!(route.long && route.future);
+        assert!(route.long);
+        assert!(matches!(
+            route.section,
+            Some(pending_work::common::SectionChoice::Future)
+        ));
         assert_eq!(route.number, Some(3));
         assert_eq!(
-            route.status.filter(),
+            route.status.expect("explicit --status").filter(),
             pwf_domain::pending_work::WorkItemStatusFilter::All
         );
     }
 
     #[test]
     fn compatibility_routes_resolve_to_typed_pending_work_leaves() {
-        let pending_work::Command::Route(project_route) =
-            pending_work(&["pwf", "--long", "--future", "-n", "3", "--status", "all"])
-        else {
+        let pending_work::Command::Route(project_route) = pending_work(&[
+            "pwf",
+            "--long",
+            "--section",
+            "future",
+            "-n",
+            "3",
+            "--status",
+            "all",
+        ]) else {
             panic!("expected project route");
         };
         let pending_work::route::ResolvedCommand::List(list) =
@@ -278,11 +301,21 @@ mod tests {
             panic!("expected routed list");
         };
         assert_eq!(list.project.as_deref(), Some("pwf"));
-        assert!(list.long && list.future);
+        assert!(list.long);
+        assert!(matches!(
+            list.section,
+            Some(pending_work::common::SectionChoice::Future)
+        ));
         assert_eq!(list.number, Some(3));
-        assert_eq!(list.order, ["project-id"]);
         assert_eq!(
-            list.status.filter(),
+            list.order,
+            Some(pwf_application::pending_work::OrderSpec {
+                field: pwf_application::pending_work::OrderField::ProjectId,
+                direction: pwf_application::pending_work::OrderDirection::Asc,
+            })
+        );
+        assert_eq!(
+            list.status.expect("explicit --status").filter(),
             pwf_domain::pending_work::WorkItemStatusFilter::All
         );
 

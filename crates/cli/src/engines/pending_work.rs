@@ -25,7 +25,8 @@ pub enum Command {
     /// `--continue-handoff` / `--continue <path>` build the prompt from the
     /// repo's newest handoff or a plan path instead of positional words.
     Add(add::Arguments),
-    /// List pending-work items (scoped sections hidden unless selected or `--all`).
+    /// List pending-work items (active only, capped, scoped sections hidden; `--all` lists
+    /// everything).
     #[command(alias = "ls")]
     List(list::Arguments),
     /// Mark an item done in place, keeping a capped done-queue.
@@ -37,12 +38,12 @@ pub enum Command {
     Reopen(reopen::Arguments),
     /// Replace an item's prompt body and/or title; append or clear its prereqs;
     /// splice rich lane-syntax bullets into the body; amend its `commits:`
-    /// provenance; or append a closeout report — the last two being the only edits
+    /// provenance; or append a closeout report; the last two are the only edits
     /// allowed on a closed item.
     Update(update::Arguments),
     /// Stream a task note's markdown (any status, incl. archived done/cancelled).
     ///
-    /// The id is a bare positional — `pwf show <id>` — or `--id`. `pwf s` is
+    /// The id is a bare positional (`pwf show <id>`) or `--id`. `pwf s` is
     /// an alias. `--path` prints the note's path instead of its markdown.
     #[command(alias = "s")]
     Show(show::Arguments),
@@ -55,7 +56,7 @@ pub enum Command {
     Remove(remove::Arguments),
     /// Dispatch a real agent session into the item's zellij session as a new tab.
     ///
-    /// The id is a bare positional — `pwf session <id>` — or `--id`.
+    /// The id is a bare positional (`pwf session <id>`) or `--id`.
     Session(session::Arguments),
 }
 

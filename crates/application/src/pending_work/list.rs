@@ -12,8 +12,6 @@ use crate::{
     },
 };
 
-const DEFAULT_LIST_CAP: usize = 10;
-
 /// Contains one pending-work item projected for list and launch consumers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PendingWorkItemView {
@@ -121,7 +119,8 @@ impl Default for OrderSpec {
 pub struct GetPendingWork {
     pub only_project: Option<String>,
     pub scope: ListScope,
-    pub number: Option<usize>,
+    /// Maximum listed items; `None` lists every item.
+    pub cap: Option<usize>,
     pub effort: Option<u8>,
     pub tags: Option<Tags>,
     pub order: OrderSpec,
@@ -181,7 +180,7 @@ pub fn execute(
         sort_by_order(&mut items, query.order);
     }
 
-    let (mut items, hidden) = apply_cap(items, query.number.unwrap_or(DEFAULT_LIST_CAP));
+    let (mut items, hidden) = apply_cap(items, query.cap);
 
     if query.include_prerequisite_statuses {
         for item in &mut items {
@@ -319,8 +318,14 @@ fn sort_by_group_then_order(items: &mut [PendingWorkItemView], order: OrderSpec)
     });
 }
 
-fn apply_cap(items: Vec<PendingWorkItemView>, cap: usize) -> (Vec<PendingWorkItemView>, usize) {
-    if cap == 0 || items.len() <= cap {
+fn apply_cap(
+    items: Vec<PendingWorkItemView>,
+    cap: Option<usize>,
+) -> (Vec<PendingWorkItemView>, usize) {
+    let Some(cap) = cap else {
+        return (items, 0);
+    };
+    if items.len() <= cap {
         return (items, 0);
     }
 
@@ -499,7 +504,7 @@ mod tests {
         GetPendingWork {
             only_project: None,
             scope: ListScope::Default,
-            number: None,
+            cap: None,
             effort: None,
             tags: None,
             order: OrderSpec::default(),
@@ -729,7 +734,7 @@ mod tests {
             &store,
             &registry,
             &GetPendingWork {
-                number: Some(1),
+                cap: Some(1),
                 status_filter: WorkItemStatusFilter::Exact(WorkItemStatus::Done),
                 ..default_query()
             },
@@ -958,7 +963,7 @@ mod tests {
             &store,
             &registry,
             &GetPendingWork {
-                number: Some(1),
+                cap: Some(1),
                 tags: Some(Tags::parse_values(&["sqlite".to_string()]).unwrap()),
                 ..default_query()
             },
@@ -1053,23 +1058,23 @@ mod tests {
     }
 
     #[test]
-    fn number_zero_keeps_all_items_and_default_cap_hides_after_ten() {
+    fn cap_none_keeps_all_items_and_cap_hides_the_rest() {
         let (store, registry) =
             pwf_store((1..=12).map(|n| record(&format!("GLP-{n:04}"))).collect());
 
-        let all = run(
+        let all = run(&store, &registry, &default_query()).unwrap();
+        assert_eq!(all.items.len(), 12);
+        assert_eq!(all.hidden, 0);
+
+        let capped = run(
             &store,
             &registry,
             &GetPendingWork {
-                number: Some(0),
+                cap: Some(10),
                 ..default_query()
             },
         )
         .unwrap();
-        assert_eq!(all.items.len(), 12);
-        assert_eq!(all.hidden, 0);
-
-        let capped = run(&store, &registry, &default_query()).unwrap();
         assert_eq!(capped.items.len(), 10);
         assert_eq!(capped.hidden, 2);
     }

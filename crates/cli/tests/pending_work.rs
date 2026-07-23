@@ -438,7 +438,7 @@ fn list_default_scope_hides_low_prio_human_and_future() {
 #[test]
 fn list_human_scope_shows_only_human() {
     let (cfg_s, notes_s) = list_scopes_fixture();
-    let h = list_scopes_run(&cfg_s, &notes_s, &["--human"]);
+    let h = list_scopes_run(&cfg_s, &notes_s, &["--section", "human"]);
     assert!(!h.contains("GLP-0001"), "normal leaked with --human: {h}");
     assert!(!h.contains("GLP-0002"), "low-prio leaked with --human: {h}");
     assert!(h.contains("GLP-0003"), "Human not shown with --human: {h}");
@@ -448,7 +448,7 @@ fn list_human_scope_shows_only_human() {
 #[test]
 fn list_future_scope_shows_only_future() {
     let (cfg_s, notes_s) = list_scopes_fixture();
-    let f = list_scopes_run(&cfg_s, &notes_s, &["--future"]);
+    let f = list_scopes_run(&cfg_s, &notes_s, &["--section", "future"]);
     assert!(!f.contains("GLP-0001"), "normal leaked with --future: {f}");
     assert!(
         !f.contains("GLP-0002"),
@@ -670,10 +670,10 @@ fn list_all_long_keeps_metadata_on_its_own_line_in_every_group() {
     .unwrap();
 
     for expected in [
-        "GLP-0001 :: normal\n  status:",
-        "GLP-0002 :: lowp\n  status:",
-        "GLP-0003 :: human task\n  status:",
-        "GLP-0004 :: future task\n  status:",
+        "GLP-0001 :: normal (active)\n  status:",
+        "GLP-0002 :: lowp (active)\n  status:",
+        "GLP-0003 :: human task (active)\n  status:",
+        "GLP-0004 :: future task (active)\n  status:",
     ] {
         assert!(
             out.contains(expected),
@@ -736,7 +736,7 @@ fn route_project_shortcut_uses_list_scopes() {
     assert!(!def.contains("CFG-0003"), "human leaked: {def}");
     assert!(!def.contains("CFG-0004"), "future leaked: {def}");
 
-    let human = run(&["--human"]);
+    let human = run(&["--section", "human"]);
     assert!(!human.contains("CFG-0001"), "normal leaked: {human}");
     assert!(!human.contains("CFG-0002"), "low-prio leaked: {human}");
     assert!(human.contains("CFG-0003"), "human missing: {human}");
@@ -880,7 +880,7 @@ fn stage_two_projects_same_created_date() -> (std::path::PathBuf, std::path::Pat
 fn list_default_is_flat_across_projects() {
     let (cfg, notes) = stage_two_projects_same_created_date();
 
-    let out = list_run(&cfg, &notes, &["-n", "0"]);
+    let out = list_run(&cfg, &notes, &[]);
 
     assert_eq!(
         out.lines().map(str::to_string).collect::<Vec<_>>(),
@@ -893,10 +893,10 @@ fn list_default_is_flat_across_projects() {
 }
 
 #[test]
-fn list_order_project_id_reproduces_legacy_grouped_ordering() {
+fn list_order_project_id_groups_by_project() {
     let (cfg, notes) = stage_two_projects_same_created_date();
 
-    let out = list_run(&cfg, &notes, &["-n", "0", "--order", "project-id"]);
+    let out = list_run(&cfg, &notes, &["--order", "project-id"]);
 
     assert_eq!(
         out.lines().map(str::to_string).collect::<Vec<_>>(),
@@ -917,20 +917,20 @@ fn list_caps_to_default_ten_and_signals_more() {
     assert!(!out.contains("GLP-0002"), "11th item leaked: {out}");
     assert!(!out.contains("GLP-0001"), "12th item leaked: {out}");
     assert!(out.contains("2 more"), "more footer missing: {out}");
-    assert!(out.contains("-n 0"), "escape hatch missing: {out}");
+    assert!(out.contains("--all"), "escape hatch missing: {out}");
 }
 
 #[test]
-fn list_n_zero_shows_all_no_footer() {
+fn list_all_shows_all_no_footer() {
     let (cfg, notes) = stage_many(12);
-    let out = list_run(&cfg, &notes, &["-n", "0"]);
+    let out = list_run(&cfg, &notes, &["--all"]);
     for n in 1..=12 {
         assert!(
             out.contains(&format!("GLP-{n:04}")),
             "GLP-{n:04} missing: {out}"
         );
     }
-    assert!(!out.contains("more"), "footer shown with -n 0: {out}");
+    assert!(!out.contains("more"), "footer shown with --all: {out}");
 }
 
 #[test]
@@ -952,7 +952,7 @@ fn list_is_capped_and_ordered() {
     assert!(!out.contains("GLP-0002"), "11th item leaked: {out}");
     assert!(!out.contains("GLP-0001"), "12th item leaked: {out}");
     assert!(out.contains("2 more"), "hidden-count footer missing: {out}");
-    assert!(out.contains("-n 0"), "escape hatch missing: {out}");
+    assert!(out.contains("--all"), "escape hatch missing: {out}");
     assert!(
         out.find("GLP-0012").unwrap() < out.find("GLP-0003").unwrap(),
         "not newest-first: {out}"
