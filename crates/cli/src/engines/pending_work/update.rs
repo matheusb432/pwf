@@ -3,7 +3,7 @@ use pwf_application::{
     AppRecordStore, PendingWorkItem,
     pending_work::{
         ProjectRegistry, UpdatePendingWorkItemOk,
-        update::{self, UpdatePendingWorkItem},
+        update_pending_work_item::{self, UpdatePendingWorkItem},
     },
 };
 use pwf_infra::obsidian::ObsidianStore;
@@ -74,7 +74,7 @@ pub(in crate::engines::pending_work) fn run_update(
     args: &Arguments,
 ) -> Result<UpdatePendingWorkItemOk, PendingWorkError> {
     let id = args.identifier.required("update")?;
-    let updated = update::execute(
+    let updated = update_pending_work_item::execute(
         UpdatePendingWorkItem {
             id,
             prompt: args.prompt.clone(),

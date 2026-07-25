@@ -36,6 +36,7 @@ pub struct AgentLaunch {
 impl AgentLaunch {
     pub fn new(
         item: &PendingWorkItemView,
+        task_content: &str,
         directives: LaunchDirectives,
         agent: Agent,
         model: Option<String>,
@@ -45,7 +46,7 @@ impl AgentLaunch {
             task_id: item.id.clone(),
             title: super::launch::thread_title(item),
             repository: item.repo.clone().unwrap_or_default(),
-            prompt: super::launch::launch_prompt(item, directives),
+            prompt: super::launch::launch_prompt(task_content, &item.id, directives),
             model,
         }
     }

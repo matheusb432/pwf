@@ -1,34 +1,34 @@
-pub mod add;
-pub mod cancel;
+pub mod add_pending_work_item;
+pub mod cancel_pending_work;
 mod commit_provenance;
-pub mod done;
+pub mod complete_pending_work;
 mod enrich;
-pub mod find;
+pub mod find_pending_work;
+pub mod get_pending_work;
 pub(crate) mod identifier;
-pub mod list;
 mod note_body;
 mod prerequisite;
 mod project_registry;
-pub mod remove;
-pub mod reopen;
+pub mod remove_pending_work_item;
+pub mod reopen_pending_work;
 mod resolve;
 mod section;
 pub mod session;
-pub mod show;
+pub mod show_pending_work_item;
 pub(crate) mod store_util;
 pub(crate) mod tag_policy;
 mod title;
-pub mod update;
+pub mod update_pending_work_item;
 
-pub use add::{AddPendingWorkSource, AddedItem, PendingWorkSection};
-pub use list::{
+pub use add_pending_work_item::{AddPendingWorkSource, AddedItem, PendingWorkSection};
+pub use get_pending_work::{
     ListMode, ListResult, ListSection, OrderDirection, OrderField, OrderSpec, PendingWorkItemView,
     PrerequisiteStatus, StatusFilter,
 };
 pub use project_registry::{ProjectRegistry, ProjectResolutionError};
-pub use remove::RemovedItem;
-pub use show::ShowOutput;
-pub use update::UpdatePendingWorkItemOk;
+pub use remove_pending_work_item::RemovedItem;
+pub use show_pending_work_item::ShowOutput;
+pub use update_pending_work_item::UpdatePendingWorkItemOk;
 
 /// Renders a prompt as Markdown while preserving placeholders and verbatim-authored prompts.
 ///

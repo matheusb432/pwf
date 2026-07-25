@@ -3,7 +3,7 @@ use pwf_application::pending_work::{
     ProjectRegistry,
     session::{
         Agent,
-        verify::{self, VerifySession},
+        verify_session::{self, VerifySession},
     },
 };
 use pwf_infra::{
@@ -51,7 +51,7 @@ pub(super) fn run(
         Agent::Claude => ClaudeHarness::probe(),
         Agent::Codex => CodexHarness::probe(),
     };
-    let verification = verify::execute(
+    let verification = verify_session::execute(
         VerifySession {
             id: arguments.identifier.raw().map(str::to_string),
             agent,
@@ -59,6 +59,7 @@ pub(super) fn run(
         },
         store,
         projects,
+        store,
         &TomlModelTierCatalog,
     )?;
     let command_preview = match verification.launch.as_ref() {

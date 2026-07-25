@@ -173,9 +173,15 @@ fn add_creates_database_and_returns_the_project() {
 #[test]
 fn get_reads_a_project_created_by_another_process() {
     let cli = ProjectCli::new();
-    let created = add(&cli, "arc", "repository", "/work/repository", "/pending-work/repository");
+    let created = add(
+        &cli,
+        "foo",
+        "foo-bar",
+        "/work/foo-bar",
+        "/pending-work/foo-bar",
+    );
 
-    let fetched = success_json(cli.run(&["project", "get", "arc"]));
+    let fetched = success_json(cli.run(&["project", "get", "foo"]));
 
     assert_eq!(fetched, created);
 }
@@ -183,9 +189,21 @@ fn get_reads_a_project_created_by_another_process() {
 #[test]
 fn list_is_title_sorted_and_includes_paused_projects() {
     let cli = ProjectCli::new();
-    add(&cli, "brs", "brasa", "/work/brasa", "/pending-work/brasa");
-    add(&cli, "arc", "repository", "/work/repository", "/pending-work/repository");
-    success_json(cli.run(&["project", "pause", "brs"]));
+    add(
+        &cli,
+        "bar",
+        "bar-baz",
+        "/work/bar-baz",
+        "/pending-work/bar-baz",
+    );
+    add(
+        &cli,
+        "foo",
+        "foo-bar",
+        "/work/foo-bar",
+        "/pending-work/foo-bar",
+    );
+    success_json(cli.run(&["project", "pause", "bar"]));
 
     let projects = success_json(cli.run(&["project", "ls"]));
     let projects = projects.as_array().expect("list returns an array");
@@ -193,19 +211,19 @@ fn list_is_title_sorted_and_includes_paused_projects() {
     assert_eq!(projects.len(), 2);
     assert_project(
         &projects[0],
-        "ARC",
-        "repository",
-        "/work/repository",
-        "/pending-work/repository",
-        false,
+        "BAR",
+        "bar-baz",
+        "/work/bar-baz",
+        "/pending-work/bar-baz",
+        true,
     );
     assert_project(
         &projects[1],
-        "BRS",
-        "brasa",
-        "/work/brasa",
-        "/pending-work/brasa",
-        true,
+        "FOO",
+        "foo-bar",
+        "/work/foo-bar",
+        "/pending-work/foo-bar",
+        false,
     );
 }
 

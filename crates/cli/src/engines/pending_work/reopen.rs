@@ -3,7 +3,7 @@ use pwf_application::{
     AppRecordStore, HandoffDocumentStore, HandoffLedger, IndexEntry, PendingWorkItem,
     pending_work::{
         ProjectRegistry,
-        reopen::{self, ReopenPendingWork, ReopenPendingWorkError},
+        reopen_pending_work::{self, ReopenPendingWork, ReopenPendingWorkError},
     },
 };
 use pwf_infra::obsidian::ObsidianStore;
@@ -43,8 +43,8 @@ where
         + AppRecordStore<HandoffLedger>,
 {
     let id = args.identifier.required("reopen")?;
-    let outcome =
-        reopen::execute(&ReopenPendingWork { id }, store, projects).map_err(map_reopen_error)?;
+    let outcome = reopen_pending_work::execute(&ReopenPendingWork { id }, store, projects)
+        .map_err(map_reopen_error)?;
     Ok(append_handoff_outcome(
         render_reopened(&outcome),
         &outcome.handoff,

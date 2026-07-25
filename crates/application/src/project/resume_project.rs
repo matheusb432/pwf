@@ -197,67 +197,27 @@ mod tests {
     use std::path::PathBuf;
 
     use pwf_domain::project::ProjectPrefix;
-    use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
 
     use super::*;
-
-    #[derive(Clone)]
-    struct TestDatabase(SqlitePool);
-
-    impl AppDbStore for TestDatabase {
-        fn pool(&self) -> &SqlitePool {
-            &self.0
-        }
-    }
-
-    async fn database() -> TestDatabase {
-        let pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .unwrap();
-        sqlx::query(
-            "CREATE TABLE project_sources (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, value TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT '2026-07-26T00:00:00.000Z', UNIQUE (kind, value))",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-        sqlx::query(
-            "CREATE TABLE projects (id TEXT PRIMARY KEY, project_source_id INTEGER NOT NULL, title TEXT NOT NULL UNIQUE, tasks_kind TEXT NOT NULL, tasks_path TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT '2026-07-26T00:00:00.000Z', paused_at TEXT, UNIQUE (tasks_kind, tasks_path))",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-        TestDatabase(pool)
-    }
-
-    async fn insert_paused_project(database: &TestDatabase, id: &str, tasks_path: &str) {
-        let source_id =
-            sqlx::query("INSERT INTO project_sources (kind, value) VALUES ('directory', ?)")
-                .bind(format!("/work/{id}"))
-                .execute(database.pool())
-                .await
-                .unwrap()
-                .last_insert_rowid();
-        sqlx::query(
-            "INSERT INTO projects (id, project_source_id, title, tasks_kind, tasks_path, paused_at) VALUES (?, ?, ?, 'directory', ?, '2026-07-26T00:00:00.000Z')",
-        )
-        .bind(id)
-        .bind(source_id)
-        .bind(id.to_ascii_lowercase())
-        .bind(tasks_path)
-        .execute(database.pool())
-        .await
-        .unwrap();
-    }
+    use crate::ports::TestDatabase;
 
     #[tokio::test]
     async fn runtime_alias_of_other_paused_project_is_rejected() {
-        let database = database().await;
-        let home = PathBuf::from("/home/developer");
+        let database = TestDatabase::new().await;
+        let home = PathBuf::from("/home/tester");
         let resolved_path = home.join("tasks/shared");
-        insert_paused_project(&database, "PWF", "~/tasks/shared").await;
-        insert_paused_project(&database, "ALT", &resolved_path.to_string_lossy()).await;
+        database
+            .insert_project("PWF", "pwf", "/work/PWF", "~/tasks/shared", true)
+            .await;
+        database
+            .insert_project(
+                "ALT",
+                "alt",
+                "/work/ALT",
+                &resolved_path.to_string_lossy(),
+                true,
+            )
+            .await;
 
         let error = super::execute(
             ResumeProject {

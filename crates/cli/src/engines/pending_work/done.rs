@@ -4,7 +4,7 @@ use pwf_application::{
     PendingWorkItem,
     pending_work::{
         ProjectRegistry,
-        done::{self, CompletePendingWork, CompletePendingWorkError},
+        complete_pending_work::{self, CompletePendingWork, CompletePendingWorkError},
     },
 };
 use pwf_infra::obsidian::ObsidianStore;
@@ -60,7 +60,7 @@ where
     C: Clock,
 {
     let id = args.identifier.required("done")?;
-    let output = done::execute(
+    let output = complete_pending_work::execute(
         &CompletePendingWork {
             id,
             date: args.common.date.clone(),

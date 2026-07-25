@@ -183,9 +183,9 @@ mod tests {
 
     #[test]
     fn remove_index_link_handles_checkbox_prefix() {
-        let content = "# proj\n\n- [ ] [[GLP-0001|tray gui]]\n\n## Later\n";
+        let content = "# proj\n\n- [ ] [[FOO-0001|tray gui]]\n\n## Later\n";
         assert_eq!(
-            remove_index_link(content, "GLP-0001"),
+            remove_index_link(content, "FOO-0001"),
             "# proj\n\n## Later\n"
         );
     }

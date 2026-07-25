@@ -1,5 +1,5 @@
 use clap::Args;
-use pwf_application::project::list::{self, ListProjects};
+use pwf_application::project::list_projects::{self, ListProjects};
 use pwf_infra::SqliteStore;
 
 use super::output;
@@ -8,7 +8,7 @@ use super::output;
 pub struct Arguments {}
 
 pub(super) async fn run(_arguments: Arguments, database: &SqliteStore) -> Result<String, String> {
-    let projects = list::execute(
+    let projects = list_projects::execute(
         ListProjects {
             include_paused: true,
         },

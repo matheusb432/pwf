@@ -1,7 +1,7 @@
 use std::{path::PathBuf, str::FromStr};
 
 use clap::{Args, ValueEnum};
-use pwf_application::project::add::{self, AddProject, AddProjectFields};
+use pwf_application::project::add_project::{self, AddProject, AddProjectFields};
 use pwf_domain::project::{
     ProjectName, ProjectPrefix, ProjectSource, ProjectSourceKind, ProjectSourceValue, ProjectTasks,
     ProjectTasksKind, ProjectTasksPath,
@@ -67,7 +67,7 @@ pub(super) async fn run(
 ) -> Result<String, String> {
     match arguments.kind {
         SourceKind::Directory => {
-            let project = add::execute(
+            let project = add_project::execute(
                 AddProject {
                     fields: arguments.payload.0,
                     home,

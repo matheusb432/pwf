@@ -122,23 +122,19 @@ fn ensure_record_identity(project: &ProjectSeed<'_>) {
 fn staged() -> (TempDir, DatabaseFixture) {
     let dir = TempDir::new().unwrap();
     let notes = dir.path().join("notes");
-    let proj = notes.join("glep-shimeji");
+    let proj = notes.join("foo-bar");
     fs::create_dir_all(&proj).unwrap();
     fs::write(
-        proj.join("GLP-0001.md"),
-        "---\nid: GLP-0001\nstatus: active\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\nadd toggle\n",
+        proj.join("FOO-0001.md"),
+        "---\nid: FOO-0001\nstatus: active\ntitle: tray gui\nproject: foo-bar\ncreated: 2026-01-01\n---\n\nadd toggle\n",
     )
     .unwrap();
-    fs::write(
-        proj.join("glep-shimeji.md"),
-        "- [ ] [[GLP-0001|tray gui]]\n",
-    )
-    .unwrap();
+    fs::write(proj.join("foo-bar.md"), "- [ ] [[FOO-0001|tray gui]]\n").unwrap();
     finish_fixture(
         dir,
         &[ProjectSeed {
-            id: "GLP",
-            title: "glep-shimeji",
+            id: "FOO",
+            title: "foo-bar",
             repository: std::path::Path::new("/repo"),
             tasks_path: &proj,
         }],
@@ -148,32 +144,32 @@ fn staged() -> (TempDir, DatabaseFixture) {
 fn staged_tagged_items() -> (TempDir, DatabaseFixture) {
     let dir = TempDir::new().unwrap();
     let notes = dir.path().join("notes");
-    let project = notes.join("glep-shimeji");
+    let project = notes.join("foo-bar");
     fs::create_dir_all(&project).unwrap();
     for (id, title, tags) in [
-        ("GLP-0001", "both tags", Some("[sqlite, godot]")),
-        ("GLP-0002", "sqlite only", Some("[sqlite]")),
-        ("GLP-0003", "untagged", None),
+        ("FOO-0001", "both tags", Some("[sqlite, godot]")),
+        ("FOO-0002", "sqlite only", Some("[sqlite]")),
+        ("FOO-0003", "untagged", None),
     ] {
         let tags = tags.map_or_else(String::new, |value| format!("tags: {value}\n"));
         fs::write(
             project.join(format!("{id}.md")),
             format!(
-                "---\nstatus: active\ntitle: {title}\nproject: glep-shimeji\ncreated: 2026-01-01\n{tags}---\n\nbody\n"
+                "---\nstatus: active\ntitle: {title}\nproject: foo-bar\ncreated: 2026-01-01\n{tags}---\n\nbody\n"
             ),
         )
         .unwrap();
     }
     fs::write(
-        project.join("glep-shimeji.md"),
-        "- [ ] [[GLP-0001|both tags]]\n- [ ] [[GLP-0002|sqlite only]]\n- [ ] [[GLP-0003|untagged]]\n",
+        project.join("foo-bar.md"),
+        "- [ ] [[FOO-0001|both tags]]\n- [ ] [[FOO-0002|sqlite only]]\n- [ ] [[FOO-0003|untagged]]\n",
     )
     .unwrap();
     finish_fixture(
         dir,
         &[ProjectSeed {
-            id: "GLP",
-            title: "glep-shimeji",
+            id: "FOO",
+            title: "foo-bar",
             repository: std::path::Path::new("/repo"),
             tasks_path: &project,
         }],
@@ -183,20 +179,20 @@ fn staged_tagged_items() -> (TempDir, DatabaseFixture) {
 /// Stages a second item for prerequisite tests without changing single-item fixtures.
 fn staged_two() -> (TempDir, DatabaseFixture) {
     let (dir, database) = staged();
-    let proj = dir.path().join("notes").join("glep-shimeji");
+    let proj = dir.path().join("notes").join("foo-bar");
     fs::write(
-        proj.join("GLP-0002.md"),
-        "---\nstatus: active\ntitle: second\nproject: glep-shimeji\ncreated: 2026-01-02\n---\n\ndo more\n",
+        proj.join("FOO-0002.md"),
+        "---\nstatus: active\ntitle: second\nproject: foo-bar\ncreated: 2026-01-02\n---\n\ndo more\n",
     )
     .unwrap();
     fs::write(
-        proj.join("glep-shimeji.md"),
-        "- [ ] [[GLP-0002|second]]\n- [ ] [[GLP-0001|tray gui]]\n",
+        proj.join("foo-bar.md"),
+        "- [ ] [[FOO-0002|second]]\n- [ ] [[FOO-0001|tray gui]]\n",
     )
     .unwrap();
     ensure_record_identity(&ProjectSeed {
-        id: "GLP",
-        title: "glep-shimeji",
+        id: "FOO",
+        title: "foo-bar",
         repository: std::path::Path::new("/repo"),
         tasks_path: &proj,
     });
@@ -207,28 +203,28 @@ fn staged_two() -> (TempDir, DatabaseFixture) {
 fn staged_two_diverging_created() -> (TempDir, DatabaseFixture) {
     let dir = TempDir::new().unwrap();
     let notes = dir.path().join("notes");
-    let proj = notes.join("glep-shimeji");
+    let proj = notes.join("foo-bar");
     fs::create_dir_all(&proj).unwrap();
     fs::write(
-        proj.join("GLP-0001.md"),
-        "---\nstatus: active\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-03-01\n---\n\nadd toggle\n",
+        proj.join("FOO-0001.md"),
+        "---\nstatus: active\ntitle: tray gui\nproject: foo-bar\ncreated: 2026-03-01\n---\n\nadd toggle\n",
     )
     .unwrap();
     fs::write(
-        proj.join("GLP-0002.md"),
-        "---\nstatus: active\ntitle: second\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\ndo more\n",
+        proj.join("FOO-0002.md"),
+        "---\nstatus: active\ntitle: second\nproject: foo-bar\ncreated: 2026-01-01\n---\n\ndo more\n",
     )
     .unwrap();
     fs::write(
-        proj.join("glep-shimeji.md"),
-        "- [ ] [[GLP-0001|tray gui]]\n- [ ] [[GLP-0002|second]]\n",
+        proj.join("foo-bar.md"),
+        "- [ ] [[FOO-0001|tray gui]]\n- [ ] [[FOO-0002|second]]\n",
     )
     .unwrap();
     finish_fixture(
         dir,
         &[ProjectSeed {
-            id: "GLP",
-            title: "glep-shimeji",
+            id: "FOO",
+            title: "foo-bar",
             repository: std::path::Path::new("/repo"),
             tasks_path: &proj,
         }],
@@ -240,9 +236,9 @@ fn staged_two_projects_diverging_created() -> (TempDir, DatabaseFixture) {
     let dir = TempDir::new().unwrap();
     let notes = dir.path().join("notes");
     let cfg_proj = notes.join("config-handler");
-    let glp_proj = notes.join("glep-shimeji");
+    let foo_proj = notes.join("foo-bar");
     fs::create_dir_all(&cfg_proj).unwrap();
-    fs::create_dir_all(&glp_proj).unwrap();
+    fs::create_dir_all(&foo_proj).unwrap();
     fs::write(
         cfg_proj.join("CFG-0001.md"),
         "---\nstatus: active\ntitle: cfg item\nproject: config-handler\ncreated: 2026-01-01\n---\n\ndo cfg\n",
@@ -254,15 +250,11 @@ fn staged_two_projects_diverging_created() -> (TempDir, DatabaseFixture) {
     )
     .unwrap();
     fs::write(
-        glp_proj.join("GLP-0099.md"),
-        "---\nstatus: active\ntitle: glp item\nproject: glep-shimeji\ncreated: 2026-03-01\n---\n\ndo glp\n",
+        foo_proj.join("FOO-0099.md"),
+        "---\nstatus: active\ntitle: foo item\nproject: foo-bar\ncreated: 2026-03-01\n---\n\ndo foo\n",
     )
     .unwrap();
-    fs::write(
-        glp_proj.join("glep-shimeji.md"),
-        "- [ ] [[GLP-0099|glp item]]\n",
-    )
-    .unwrap();
+    fs::write(foo_proj.join("foo-bar.md"), "- [ ] [[FOO-0099|foo item]]\n").unwrap();
     finish_fixture(
         dir,
         &[
@@ -273,10 +265,10 @@ fn staged_two_projects_diverging_created() -> (TempDir, DatabaseFixture) {
                 tasks_path: &cfg_proj,
             },
             ProjectSeed {
-                id: "GLP",
-                title: "glep-shimeji",
-                repository: std::path::Path::new("/repo/glp"),
-                tasks_path: &glp_proj,
+                id: "FOO",
+                title: "foo-bar",
+                repository: std::path::Path::new("/repo/foo"),
+                tasks_path: &foo_proj,
             },
         ],
     )
@@ -286,62 +278,62 @@ fn staged_two_projects_diverging_created() -> (TempDir, DatabaseFixture) {
 fn status_fixture_stage() -> (TempDir, DatabaseFixture) {
     let dir = TempDir::new().unwrap();
     let notes = dir.path().join("notes");
-    let project_glp = notes.join("glep-shimeji");
+    let project_foo = notes.join("foo-bar");
     let project_cfg = notes.join("config-handler");
-    let repo_glp = dir.path().join("repo-glp");
+    let repo_foo = dir.path().join("repo-foo");
     let repo_cfg = dir.path().join("repo-cfg");
-    fs::create_dir_all(&project_glp).unwrap();
+    fs::create_dir_all(&project_foo).unwrap();
     fs::create_dir_all(&project_cfg).unwrap();
-    fs::create_dir_all(&repo_glp).unwrap();
+    fs::create_dir_all(&repo_foo).unwrap();
     fs::create_dir_all(&repo_cfg).unwrap();
 
     for (directory, id, status, title, project, created) in [
         (
-            &project_glp,
-            "GLP-0001",
+            &project_foo,
+            "FOO-0001",
             "active",
             "active default",
-            "glep-shimeji",
+            "foo-bar",
             "2026-07-01",
         ),
         (
-            &project_glp,
-            "GLP-0002",
+            &project_foo,
+            "FOO-0002",
             "active",
             "active human",
-            "glep-shimeji",
+            "foo-bar",
             "2026-07-02",
         ),
         (
-            &project_glp,
-            "GLP-0003",
+            &project_foo,
+            "FOO-0003",
             "done",
             "done human linked",
-            "glep-shimeji",
+            "foo-bar",
             "2026-07-03",
         ),
         (
-            &project_glp,
-            "GLP-0004",
+            &project_foo,
+            "FOO-0004",
             "done",
             "done unlinked",
-            "glep-shimeji",
+            "foo-bar",
             "2026-07-04",
         ),
         (
-            &project_glp,
-            "GLP-0005",
+            &project_foo,
+            "FOO-0005",
             "cancelled",
             "cancelled unlinked",
-            "glep-shimeji",
+            "foo-bar",
             "2026-07-05",
         ),
         (
-            &project_glp,
-            "GLP-0006",
+            &project_foo,
+            "FOO-0006",
             "active",
             "active orphan",
-            "glep-shimeji",
+            "foo-bar",
             "2026-07-06",
         ),
         (
@@ -379,8 +371,8 @@ fn status_fixture_stage() -> (TempDir, DatabaseFixture) {
     }
 
     fs::write(
-        project_glp.join("glep-shimeji.md"),
-        "- [ ] [[GLP-0001|active default]]\n\n## Human\n\n- [ ] [[GLP-0002|active human]]\n- [x] [[GLP-0003|done human linked]] ✅ 2026-07-03\n",
+        project_foo.join("foo-bar.md"),
+        "- [ ] [[FOO-0001|active default]]\n\n## Human\n\n- [ ] [[FOO-0002|active human]]\n- [x] [[FOO-0003|done human linked]] ✅ 2026-07-03\n",
     )
     .unwrap();
     fs::write(
@@ -399,10 +391,10 @@ fn status_fixture_stage() -> (TempDir, DatabaseFixture) {
                 tasks_path: &project_cfg,
             },
             ProjectSeed {
-                id: "GLP",
-                title: "glep-shimeji",
-                repository: &repo_glp,
-                tasks_path: &project_glp,
+                id: "FOO",
+                title: "foo-bar",
+                repository: &repo_foo,
+                tasks_path: &project_foo,
             },
         ],
     )
@@ -428,12 +420,12 @@ fn status_command_output(database: &DatabaseFixture, args: &[&str]) -> std::proc
 fn staged_with_handoff() -> (TempDir, DatabaseFixture) {
     let dir = TempDir::new().unwrap();
     let notes = dir.path().join("notes");
-    let proj = notes.join("glep-shimeji");
+    let proj = notes.join("foo-bar");
     let repo = dir.path().join("repo");
     let handoffs = repo.join("docs").join("handoffs");
     fs::create_dir_all(&proj).unwrap();
     fs::create_dir_all(&handoffs).unwrap();
-    fs::write(proj.join("glep-shimeji.md"), "# glep-shimeji\n").unwrap();
+    fs::write(proj.join("foo-bar.md"), "# foo-bar\n").unwrap();
     fs::write(
         handoffs.join("2026-01-01-api-cleanup.md"),
         "# API cleanup handoff\n",
@@ -442,8 +434,8 @@ fn staged_with_handoff() -> (TempDir, DatabaseFixture) {
     finish_fixture(
         dir,
         &[ProjectSeed {
-            id: "GLP",
-            title: "glep-shimeji",
+            id: "FOO",
+            title: "foo-bar",
             repository: &repo,
             tasks_path: &proj,
         }],
@@ -454,16 +446,16 @@ fn staged_with_handoff() -> (TempDir, DatabaseFixture) {
 fn staged_for_handoff_mirror_roundtrip() -> (TempDir, DatabaseFixture) {
     let dir = TempDir::new().unwrap();
     let notes = dir.path().join("notes");
-    let proj = notes.join("glep-shimeji");
+    let proj = notes.join("foo-bar");
     let repo = dir.path().join("repo");
     fs::create_dir_all(&proj).unwrap();
     fs::create_dir_all(repo.join("docs").join("handoffs")).unwrap();
-    fs::write(proj.join("glep-shimeji.md"), "# glep-shimeji\n").unwrap();
+    fs::write(proj.join("foo-bar.md"), "# foo-bar\n").unwrap();
     finish_fixture(
         dir,
         &[ProjectSeed {
-            id: "GLP",
-            title: "glep-shimeji",
+            id: "FOO",
+            title: "foo-bar",
             repository: &repo,
             tasks_path: &proj,
         }],
@@ -498,7 +490,7 @@ fn add_linked_handoff(stage: &TempDir, database: &DatabaseFixture) -> std::path:
         .command()
         .args([
             "add",
-            "glep-shimeji",
+            "foo-bar",
             "mirror round trip",
             "--tag",
             "handoff",
@@ -531,31 +523,31 @@ fn handoff_add_command(stage: &TempDir, database: &DatabaseFixture) -> Command {
 }
 
 fn read_index(dir: &TempDir) -> String {
-    fs::read_to_string(dir.path().join("notes/glep-shimeji/glep-shimeji.md")).unwrap()
+    fs::read_to_string(dir.path().join("notes/foo-bar/foo-bar.md")).unwrap()
 }
 
 /// Stages `count` open items for list-cap tests.
 fn staged_many(count: usize) -> (TempDir, DatabaseFixture) {
     let dir = TempDir::new().unwrap();
     let notes = dir.path().join("notes");
-    let proj = notes.join("glep-shimeji");
+    let proj = notes.join("foo-bar");
     fs::create_dir_all(&proj).unwrap();
-    let mut index = String::from("# glep-shimeji\n\n");
+    let mut index = String::from("# foo-bar\n\n");
     for n in 1..=count {
-        let id = format!("GLP-{n:04}");
+        let id = format!("FOO-{n:04}");
         fs::write(
             proj.join(format!("{id}.md")),
-            format!("---\nstatus: active\ntitle: t{n}\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\nbody\n"),
+            format!("---\nstatus: active\ntitle: t{n}\nproject: foo-bar\ncreated: 2026-01-01\n---\n\nbody\n"),
         )
         .unwrap();
         index.push_str(&format!("- [ ] [[{id}|t{n}]]\n"));
     }
-    fs::write(proj.join("glep-shimeji.md"), index).unwrap();
+    fs::write(proj.join("foo-bar.md"), index).unwrap();
     finish_fixture(
         dir,
         &[ProjectSeed {
-            id: "GLP",
-            title: "glep-shimeji",
+            id: "FOO",
+            title: "foo-bar",
             repository: std::path::Path::new("/repo"),
             tasks_path: &proj,
         }],
@@ -566,11 +558,11 @@ fn staged_many(count: usize) -> (TempDir, DatabaseFixture) {
 fn add_positional_quoted_prompt_creates_item() {
     let (d, cfg) = staged();
     cfg.command()
-        .args(["add", "glep-shimeji", "x y z"])
+        .args(["add", "foo-bar", "x y z"])
         .assert()
         .success();
-    assert!(d.path().join("notes/glep-shimeji/GLP-0002.md").exists());
-    assert!(read_index(&d).contains("[[GLP-0002]]"), "index not updated");
+    assert!(d.path().join("notes/foo-bar/FOO-0002.md").exists());
+    assert!(read_index(&d).contains("[[FOO-0002]]"), "index not updated");
 }
 
 #[test]
@@ -578,12 +570,12 @@ fn add_confirmation_leads_with_added_task_prefix_and_no_blank_line() {
     let (_d, cfg) = staged();
     let out = cfg
         .command()
-        .args(["add", "glep-shimeji", "x y z"])
+        .args(["add", "foo-bar", "x y z"])
         .assert()
         .success();
     let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
     assert!(
-        stdout.starts_with("Added pwf task: **GLP-0002 glep-shimeji ::"),
+        stdout.starts_with("Added pwf task: **FOO-0002 foo-bar ::"),
         "got: {stdout}"
     );
     assert!(stdout.contains("file:"), "got: {stdout}");
@@ -593,10 +585,10 @@ fn add_confirmation_leads_with_added_task_prefix_and_no_blank_line() {
 fn add_bare_words_joined_into_prompt() {
     let (d, cfg) = staged();
     cfg.command()
-        .args(["add", "glep-shimeji", "do", "a", "thing"])
+        .args(["add", "foo-bar", "do", "a", "thing"])
         .assert()
         .success();
-    let item = fs::read_to_string(d.path().join("notes/glep-shimeji/GLP-0002.md")).unwrap();
+    let item = fs::read_to_string(d.path().join("notes/foo-bar/FOO-0002.md")).unwrap();
     assert!(item.contains("do a thing"), "prompt not joined: {item}");
 }
 
@@ -604,12 +596,12 @@ fn add_bare_words_joined_into_prompt() {
 fn add_human_flag_files_under_human_section() {
     let (d, cfg) = staged();
     cfg.command()
-        .args(["add", "glep-shimeji", "x", "--human"])
+        .args(["add", "foo-bar", "x", "--human"])
         .assert()
         .success();
     let index = read_index(&d);
     let human = index.find("## Human").expect("no ## Human section");
-    let item = index.find("[[GLP-0002]]").expect("no new item link");
+    let item = index.find("[[FOO-0002]]").expect("no new item link");
     assert!(item > human, "item not under ## Human: {index}");
 }
 
@@ -618,14 +610,14 @@ fn add_human_flag_emits_section_created_diagnostic_when_it_creates_human_section
     let (_d, cfg) = staged();
     let output = cfg
         .command()
-        .args(["add", "glep-shimeji", "x", "--human"])
+        .args(["add", "foo-bar", "x", "--human"])
         .output()
         .unwrap();
 
     assert!(output.status.success(), "{output:?}");
     assert_eq!(
         String::from_utf8(output.stderr).unwrap(),
-        "info: created `## Human` section in glep-shimeji\n"
+        "info: created `## Human` section in foo-bar\n"
     );
 }
 
@@ -650,7 +642,7 @@ fn add_project_errors_are_binary_contracts() {
         .code(1)
         .stdout("")
         .stderr(
-            "Error: Unknown managed project identifier: unknown\nManaged project identifiers: glep-shimeji\n",
+            "Error: Unknown managed project identifier: unknown\nManaged project identifiers: foo-bar\n",
         );
 }
 
@@ -660,23 +652,17 @@ fn add_prerequisite_parse_errors_are_binary_contracts() {
 
     for (value, expected) in [
         ("", "Error: --prereq requires an id.\n"),
-        ("GLP-99999", "Error: Invalid --prereq id: GLP-99999.\n"),
+        ("FOO-99999", "Error: Invalid --prereq id: FOO-99999.\n"),
     ] {
         cfg.command()
-            .args([
-                "add",
-                "glep-shimeji",
-                "do dependent work",
-                "--prereq",
-                value,
-            ])
+            .args(["add", "foo-bar", "do dependent work", "--prereq", value])
             .assert()
             .code(1)
             .stdout("")
             .stderr(expected);
     }
     assert!(
-        !dir.path().join("notes/glep-shimeji/GLP-0002.md").exists(),
+        !dir.path().join("notes/foo-bar/FOO-0002.md").exists(),
         "failed add wrote a new item"
     );
 }
@@ -695,37 +681,37 @@ fn add_prerequisite_errors_precede_project_resolution_and_scaffold_preflight() {
     cfg.command()
         .args([
             "add",
-            "glep-shimeji",
+            "foo-bar",
             "do dependent work",
             "--tag",
             "handoff",
             "--prereq",
-            "GLP-99999",
+            "FOO-99999",
         ])
         .assert()
         .code(1)
         .stdout("")
-        .stderr("Error: Invalid --prereq id: GLP-99999.\n");
+        .stderr("Error: Invalid --prereq id: FOO-99999.\n");
 }
 
 #[test]
 fn add_human_flag_rejects_unreadable_index_before_mutation() {
     let dir = TempDir::new().unwrap();
     let notes = dir.path().join("notes");
-    let proj = notes.join("glep-shimeji");
+    let proj = notes.join("foo-bar");
     fs::create_dir_all(&proj).unwrap();
     fs::write(
-        proj.join("GLP-0001.md"),
-        "---\nid: GLP-0001\nstatus: active\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\nadd toggle\n",
+        proj.join("FOO-0001.md"),
+        "---\nid: FOO-0001\nstatus: active\ntitle: tray gui\nproject: foo-bar\ncreated: 2026-01-01\n---\n\nadd toggle\n",
     )
     .unwrap();
-    fs::create_dir_all(proj.join("glep-shimeji.md")).unwrap();
+    fs::create_dir_all(proj.join("foo-bar.md")).unwrap();
     let database = DatabaseFixture::new(dir.path().join("projects.sqlite3"));
-    database.add_directory_project("GLP", "glep-shimeji", std::path::Path::new("/repo"), &proj);
+    database.add_directory_project("FOO", "foo-bar", std::path::Path::new("/repo"), &proj);
 
     let output = database
         .command()
-        .args(["add", "glep-shimeji", "x", "--human"])
+        .args(["add", "foo-bar", "x", "--human"])
         .output()
         .unwrap();
 
@@ -739,12 +725,12 @@ fn add_human_flag_rejects_unreadable_index_before_mutation() {
 fn add_section_future_files_under_future_section() {
     let (d, cfg) = staged();
     cfg.command()
-        .args(["add", "glep-shimeji", "x", "--section", "future"])
+        .args(["add", "foo-bar", "x", "--section", "future"])
         .assert()
         .success();
     let index = read_index(&d);
     let future = index.find("## Future").expect("no ## Future section");
-    let item = index.find("[[GLP-0002]]").expect("no new item link");
+    let item = index.find("[[FOO-0002]]").expect("no new item link");
     assert!(item > future, "item not under ## Future: {index}");
 }
 
@@ -762,24 +748,24 @@ fn add_continue_handoff_builds_handoff_prompt() {
     let (d, cfg) = staged_with_handoff();
     let out = cfg
         .command()
-        .args(["add", "glep-shimeji", "--continue-handoff"])
+        .args(["add", "foo-bar", "--continue-handoff"])
         .assert()
         .success();
     let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
     assert!(
-        stdout.starts_with("Added pwf task: **GLP-0001"),
+        stdout.starts_with("Added pwf task: **FOO-0001"),
         "id not moved to the front: {stdout}"
     );
     assert!(
         stdout.contains(":: continue api cleanup"),
         "title not in output: {stdout}"
     );
-    let item = std::fs::read_to_string(d.path().join("notes/glep-shimeji/GLP-0001.md")).unwrap();
+    let item = std::fs::read_to_string(d.path().join("notes/foo-bar/FOO-0001.md")).unwrap();
     assert!(
         item.contains("Continue the handoff at @docs/handoffs/2026-01-01-api-cleanup.md."),
         "prompt not in item: {item}"
     );
-    assert!(d.path().join("notes/glep-shimeji/GLP-0001.md").exists());
+    assert!(d.path().join("notes/foo-bar/FOO-0001.md").exists());
 }
 
 #[test]
@@ -791,7 +777,7 @@ fn add_continue_plan_persists_the_complete_plan_prompt() {
         .command()
         .args([
             "add",
-            "glep-shimeji",
+            "foo-bar",
             "--continue",
             plan_path,
             "--date",
@@ -800,11 +786,11 @@ fn add_continue_plan_persists_the_complete_plan_prompt() {
         .assert()
         .success();
 
-    let note = fs::read_to_string(directory.path().join("notes/glep-shimeji/GLP-0002.md")).unwrap();
+    let note = fs::read_to_string(directory.path().join("notes/foo-bar/FOO-0002.md")).unwrap();
     assert_eq!(
         note,
         format!(
-            "---\nid: GLP-0002\nstatus: active\ntitle: glep shimeji cli application boundary realignment\nproject: glep-shimeji\ncreated: 2026-07-20\n---\n\n## Goals\n\n- continue the plan at {plan_path}\n"
+            "---\nid: FOO-0002\nstatus: active\ntitle: foo bar cli application boundary realignment\nproject: foo-bar\ncreated: 2026-07-20\n---\n\n## Goals\n\n- continue the plan at {plan_path}\n"
         )
     );
 }
@@ -840,41 +826,41 @@ fn lifecycle_commands_report_unknown_configured_prefixes_verbatim() {
 fn bare_words_route_errors_and_writes_nothing() {
     let (d, cfg) = staged();
     cfg.command()
-        .args(["glep-shimeji", "make", "a", "thing"])
+        .args(["foo-bar", "make", "a", "thing"])
         .assert()
         .failure()
         .stderr(contains("pwf add"));
-    assert!(!d.path().join("notes/glep-shimeji/GLP-0002.md").exists());
+    assert!(!d.path().join("notes/foo-bar/FOO-0002.md").exists());
 }
 
 #[test]
 fn single_word_route_lists_project() {
     let (_d, cfg) = staged();
     cfg.command()
-        .args(["glep-shimeji"])
+        .args(["foo-bar"])
         .assert()
         .success()
-        .stdout(contains("GLP-0001"));
+        .stdout(contains("FOO-0001"));
 }
 
 #[test]
 fn single_word_route_accepts_project_code_case_insensitively() {
     let (_d, cfg) = staged();
     cfg.command()
-        .args(["glp"])
+        .args(["foo"])
         .assert()
         .success()
-        .stdout(contains("GLP-0001"));
+        .stdout(contains("FOO-0001"));
 }
 
 #[test]
 fn single_word_route_rejects_project_name_prefix() {
     let (_d, cfg) = staged();
     cfg.command()
-        .args(["glep"])
+        .args(["foo-b"])
         .assert()
         .failure()
-        .stderr(contains("Unknown managed project identifier: glep"));
+        .stderr(contains("Unknown managed project identifier: foo-b"));
 }
 
 #[test]
@@ -913,31 +899,31 @@ fn canonical_list_succeeds() {
     let (_d, cfg) = staged();
     let canon = cfg.command().args(["list"]).assert().success();
     let canon_out = String::from_utf8(canon.get_output().stdout.clone()).unwrap();
-    assert!(canon_out.contains("GLP-0001 :: tray gui"));
+    assert!(canon_out.contains("FOO-0001 :: tray gui"));
 }
 
 #[test]
 fn list_long_prints_prerequisite_status_through_the_binary() {
     let (dir, cfg) = staged_two();
     fs::write(
-        dir.path().join("notes/glep-shimeji/GLP-0002.md"),
-        "---\nid: GLP-0002\nstatus: active\ntitle: second\nproject: glep-shimeji\ncreated: 2026-01-02\nprereq: \"[[GLP-0001]]\"\n---\n\ndo more\n",
+        dir.path().join("notes/foo-bar/FOO-0002.md"),
+        "---\nid: FOO-0002\nstatus: active\ntitle: second\nproject: foo-bar\ncreated: 2026-01-02\nprereq: \"[[FOO-0001]]\"\n---\n\ndo more\n",
     )
     .unwrap();
 
     cfg.command()
-        .args(["list", "--long", "--project", "glep-shimeji"])
+        .args(["list", "--long", "--project", "foo-bar"])
         .env("NO_COLOR", "1")
         .assert()
         .success()
         .stderr("")
-        .stdout(contains("  prereq: GLP-0001 (active)\n"));
+        .stdout(contains("  prereq: FOO-0001 (active)\n"));
 }
 
 #[test]
 fn list_read_errors_reach_binary_stderr() {
     let (dir, cfg) = staged();
-    let index = dir.path().join("notes/glep-shimeji/glep-shimeji.md");
+    let index = dir.path().join("notes/foo-bar/foo-bar.md");
     fs::remove_file(&index).unwrap();
     fs::create_dir(&index).unwrap();
 
@@ -949,7 +935,7 @@ fn list_read_errors_reach_binary_stderr() {
         .stderr(predicates::str::starts_with("Error: Cannot read index: "));
 
     let (dir, cfg) = staged();
-    let item = dir.path().join("notes/glep-shimeji/GLP-0001.md");
+    let item = dir.path().join("notes/foo-bar/FOO-0001.md");
     fs::remove_file(&item).unwrap();
     fs::create_dir(&item).unwrap();
 
@@ -980,13 +966,13 @@ fn e2e_list_status_default_matches_explicit_active() {
     let stdout = String::from_utf8(default.stdout.clone()).unwrap();
 
     assert_eq!(default.stdout, active.stdout);
-    assert!(stdout.contains("GLP-0001 :: active default"), "{stdout}");
+    assert!(stdout.contains("FOO-0001 :: active default"), "{stdout}");
     assert!(
         stdout.contains("CFG-0002 :: cfg active default"),
         "{stdout}"
     );
-    assert!(!stdout.contains("GLP-0002"), "{stdout}");
-    assert!(!stdout.contains("GLP-0006"), "{stdout}");
+    assert!(!stdout.contains("FOO-0002"), "{stdout}");
+    assert!(!stdout.contains("FOO-0006"), "{stdout}");
     assert!(!stdout.contains("(active)"), "{stdout}");
 }
 
@@ -996,8 +982,8 @@ fn e2e_list_status_exact_filters_and_cancelled_alias_match() {
     let done = status_command_output(&cfg, &["list", "--status", "done"]);
     let done_stdout = String::from_utf8(done.stdout).unwrap();
     assert!(done_stdout.contains("CFG-0001 :: cfg done unlinked"));
-    assert!(done_stdout.contains("GLP-0004 :: done unlinked"));
-    assert!(!done_stdout.contains("GLP-0003"), "{done_stdout}");
+    assert!(done_stdout.contains("FOO-0004 :: done unlinked"));
+    assert!(!done_stdout.contains("FOO-0003"), "{done_stdout}");
     assert!(!done_stdout.contains("active default"), "{done_stdout}");
     assert!(!done_stdout.contains("cancelled unlinked"), "{done_stdout}");
 
@@ -1006,7 +992,7 @@ fn e2e_list_status_exact_filters_and_cancelled_alias_match() {
     let cancelled_stdout = String::from_utf8(list.stdout.clone()).unwrap();
     assert_eq!(list.stdout, alias.stdout);
     assert!(cancelled_stdout.contains("CFG-0003 :: cfg cancelled unlinked"));
-    assert!(cancelled_stdout.contains("GLP-0005 :: cancelled unlinked"));
+    assert!(cancelled_stdout.contains("FOO-0005 :: cancelled unlinked"));
     assert!(!cancelled_stdout.contains("done unlinked"));
 }
 
@@ -1016,27 +1002,25 @@ fn e2e_list_status_all_annotates_every_lifecycle_and_hides_active_orphan() {
     let output = status_command_output(&cfg, &["list", "--status", "all"]);
     let stdout = String::from_utf8(output.stdout).unwrap();
 
-    assert!(stdout.contains("GLP-0001 :: active default (active)"));
-    assert!(stdout.contains("GLP-0004 :: done unlinked (done)"));
-    assert!(stdout.contains("GLP-0005 :: cancelled unlinked (cancelled)"));
-    assert!(!stdout.contains("GLP-0006"), "{stdout}");
+    assert!(stdout.contains("FOO-0001 :: active default (active)"));
+    assert!(stdout.contains("FOO-0004 :: done unlinked (done)"));
+    assert!(stdout.contains("FOO-0005 :: cancelled unlinked (cancelled)"));
+    assert!(!stdout.contains("FOO-0006"), "{stdout}");
     assert!(!stdout.contains('\u{1b}'), "{stdout}");
 }
 
 #[test]
 fn e2e_list_status_project_routes_keep_project_scope() {
     let (_dir, cfg) = status_fixture_stage();
-    let done = status_command_output(&cfg, &["glep-shimeji", "--status", "done"]);
+    let done = status_command_output(&cfg, &["foo-bar", "--status", "done"]);
     let done_stdout = String::from_utf8(done.stdout).unwrap();
-    assert!(done_stdout.contains("GLP-0004 :: done unlinked"));
-    assert!(!done_stdout.contains("GLP-0003"), "{done_stdout}");
+    assert!(done_stdout.contains("FOO-0004 :: done unlinked"));
+    assert!(!done_stdout.contains("FOO-0003"), "{done_stdout}");
     assert!(!done_stdout.contains("CFG-"), "{done_stdout}");
 
-    let shorthand = status_command_output(&cfg, &["glep-shimeji", "--status", "all"]);
-    let canonical = status_command_output(
-        &cfg,
-        &["list", "--project", "glep-shimeji", "--status", "all"],
-    );
+    let shorthand = status_command_output(&cfg, &["foo-bar", "--status", "all"]);
+    let canonical =
+        status_command_output(&cfg, &["list", "--project", "foo-bar", "--status", "all"]);
     assert_eq!(shorthand.stdout, canonical.stdout);
 }
 
@@ -1047,8 +1031,8 @@ fn e2e_list_status_all_composes_with_all_sections() {
     let stdout = String::from_utf8(output.stdout).unwrap();
 
     assert!(stdout.contains("Human\n"), "{stdout}");
-    assert!(stdout.contains("GLP-0002 :: active human (active)"));
-    assert!(stdout.contains("GLP-0003 :: done human linked (done)"));
+    assert!(stdout.contains("FOO-0002 :: active human (active)"));
+    assert!(stdout.contains("FOO-0003 :: done human linked (done)"));
 }
 
 #[test]
@@ -1058,19 +1042,19 @@ fn e2e_list_all_implies_every_status_and_no_cap() {
     let stdout = String::from_utf8(output.stdout).unwrap();
 
     assert!(
-        stdout.contains("GLP-0001 :: active default (active)"),
+        stdout.contains("FOO-0001 :: active default (active)"),
         "{stdout}"
     );
     assert!(
-        stdout.contains("GLP-0004 :: done unlinked (done)"),
+        stdout.contains("FOO-0004 :: done unlinked (done)"),
         "{stdout}"
     );
     assert!(
-        stdout.contains("GLP-0005 :: cancelled unlinked (cancelled)"),
+        stdout.contains("FOO-0005 :: cancelled unlinked (cancelled)"),
         "{stdout}"
     );
     assert!(
-        stdout.contains("GLP-0003 :: done human linked (done)"),
+        stdout.contains("FOO-0003 :: done human linked (done)"),
         "{stdout}"
     );
     assert!(!stdout.contains("more"), "{stdout}");
@@ -1091,12 +1075,12 @@ fn e2e_list_all_defers_to_explicit_status_and_cap() {
 #[test]
 fn e2e_project_route_all_matches_canonical_list_all() {
     let (_dir, cfg) = status_fixture_stage();
-    let shorthand = status_command_output(&cfg, &["glep-shimeji", "--all"]);
-    let canonical = status_command_output(&cfg, &["list", "--project", "glep-shimeji", "--all"]);
+    let shorthand = status_command_output(&cfg, &["foo-bar", "--all"]);
+    let canonical = status_command_output(&cfg, &["list", "--project", "foo-bar", "--all"]);
     assert_eq!(shorthand.stdout, canonical.stdout);
     let stdout = String::from_utf8(shorthand.stdout).unwrap();
     assert!(
-        stdout.contains("GLP-0005 :: cancelled unlinked (cancelled)"),
+        stdout.contains("FOO-0005 :: cancelled unlinked (cancelled)"),
         "{stdout}"
     );
 }
@@ -1108,7 +1092,7 @@ fn e2e_list_status_filter_applies_before_cap_and_hidden_count() {
     let stdout = String::from_utf8(output.stdout).unwrap();
 
     assert!(stdout.contains("CFG-0001 :: cfg done unlinked"), "{stdout}");
-    assert!(!stdout.contains("GLP-0004"), "{stdout}");
+    assert!(!stdout.contains("FOO-0004"), "{stdout}");
     assert!(stdout.contains("1 more"), "{stdout}");
     assert!(!stdout.contains("active orphan"), "{stdout}");
 }
@@ -1131,16 +1115,16 @@ fn e2e_list_status_rejects_repeated_and_unknown_values() {
 #[test]
 fn e2e_list_status_rejects_duplicate_project_index_task_ids() {
     let (dir, cfg) = staged();
-    let index_path = dir.path().join("notes/glep-shimeji/glep-shimeji.md");
+    let index_path = dir.path().join("notes/foo-bar/foo-bar.md");
     let mut index = fs::read_to_string(&index_path).unwrap();
-    index.push_str("- [ ] [[GLP-0001|duplicate]]\n");
+    index.push_str("- [ ] [[FOO-0001|duplicate]]\n");
     fs::write(&index_path, index).unwrap();
 
     cfg.command()
         .args(["list", "--status", "all"])
         .assert()
         .failure()
-        .stderr(contains("Project index task id GLP-0001 is duplicated"))
+        .stderr(contains("Project index task id FOO-0001 is duplicated"))
         .stderr(contains(index_path.to_string_lossy().as_ref()))
         .stderr(contains("lines 6, 7"));
 }
@@ -1214,10 +1198,10 @@ fn list_default_caps_and_shows_more() {
         .args(["list"])
         .assert()
         .success()
-        .stdout(contains("GLP-0012"))
+        .stdout(contains("FOO-0012"))
         .stdout(contains("2 more"))
         .stdout(contains("--all"))
-        .stdout(contains("GLP-0001").not());
+        .stdout(contains("FOO-0001").not());
 }
 
 #[test]
@@ -1237,8 +1221,8 @@ fn list_all_uncaps_past_the_default_ten() {
         .args(["list", "--all"])
         .assert()
         .success()
-        .stdout(contains("GLP-0001"))
-        .stdout(contains("GLP-0012"))
+        .stdout(contains("FOO-0001"))
+        .stdout(contains("FOO-0012"))
         .stdout(contains("more").not());
 }
 
@@ -1246,12 +1230,12 @@ fn list_all_uncaps_past_the_default_ten() {
 fn shorthand_project_forwards_number() {
     let (_d, cfg) = staged_many(12);
     cfg.command()
-        .args(["glep-shimeji", "-n", "2"])
+        .args(["foo-bar", "-n", "2"])
         .assert()
         .success()
-        .stdout(contains("GLP-0012"))
-        .stdout(contains("GLP-0011"))
-        .stdout(contains("GLP-0010").not());
+        .stdout(contains("FOO-0012"))
+        .stdout(contains("FOO-0011"))
+        .stdout(contains("FOO-0010").not());
 }
 
 #[test]
@@ -1267,8 +1251,8 @@ fn e2e_list_default_orders_by_created_desc_not_id() {
         .clone();
     let stdout = String::from_utf8(out).unwrap();
     assert!(
-        stdout.find("GLP-0001").unwrap() < stdout.find("GLP-0002").unwrap(),
-        "expected newest-created (GLP-0001) first: {stdout}"
+        stdout.find("FOO-0001").unwrap() < stdout.find("FOO-0002").unwrap(),
+        "expected newest-created (FOO-0001) first: {stdout}"
     );
 }
 
@@ -1285,8 +1269,8 @@ fn e2e_list_order_id_desc_orders_highest_id_first() {
         .clone();
     let stdout = String::from_utf8(out).unwrap();
     assert!(
-        stdout.find("GLP-0002").unwrap() < stdout.find("GLP-0001").unwrap(),
-        "expected highest id (GLP-0002) first: {stdout}"
+        stdout.find("FOO-0002").unwrap() < stdout.find("FOO-0001").unwrap(),
+        "expected highest id (FOO-0002) first: {stdout}"
     );
 }
 
@@ -1300,8 +1284,8 @@ fn e2e_list_order_created_asc_orders_oldest_first() {
         .unwrap();
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(
-        stdout.find("GLP-0002").unwrap() < stdout.find("GLP-0001").unwrap(),
-        "expected oldest-created (GLP-0002) first: {stdout}"
+        stdout.find("FOO-0002").unwrap() < stdout.find("FOO-0001").unwrap(),
+        "expected oldest-created (FOO-0002) first: {stdout}"
     );
 }
 
@@ -1346,8 +1330,8 @@ fn e2e_list_default_across_all_projects_is_flat_by_created_not_grouped_by_projec
     let out = cfg.command().args(["list"]).output().unwrap();
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(
-        stdout.find("GLP-0099").unwrap() < stdout.find("CFG-0001").unwrap(),
-        "expected the newer item (GLP-0099) first, ignoring project grouping: {stdout}"
+        stdout.find("FOO-0099").unwrap() < stdout.find("CFG-0001").unwrap(),
+        "expected the newer item (FOO-0099) first, ignoring project grouping: {stdout}"
     );
 }
 
@@ -1361,7 +1345,7 @@ fn e2e_list_order_project_id_groups_by_project_ascending() {
         .unwrap();
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(
-        stdout.find("CFG-0001").unwrap() < stdout.find("GLP-0099").unwrap(),
+        stdout.find("CFG-0001").unwrap() < stdout.find("FOO-0099").unwrap(),
         "--order project-id must group by project ascending, regardless of created date: {stdout}"
     );
 }
@@ -1369,10 +1353,10 @@ fn e2e_list_order_project_id_groups_by_project_ascending() {
 #[test]
 fn e2e_route_project_shorthand_ignores_created_stays_id_desc() {
     let (_d, cfg) = staged_two_diverging_created();
-    let out = cfg.command().args(["glep-shimeji"]).output().unwrap();
+    let out = cfg.command().args(["foo-bar"]).output().unwrap();
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(
-        stdout.find("GLP-0002").unwrap() < stdout.find("GLP-0001").unwrap(),
+        stdout.find("FOO-0002").unwrap() < stdout.find("FOO-0001").unwrap(),
         "route shorthand must stay id-descending: {stdout}"
     );
 }
@@ -1391,19 +1375,13 @@ fn retired_legacy_flag_surface_errors() {
 fn canonical_only_prereq_flag_works() {
     let (_d, cfg) = staged();
     cfg.command()
-        .args([
-            "add",
-            "glep-shimeji",
-            "do the thing",
-            "--prereq",
-            "GLP-0001",
-        ])
+        .args(["add", "foo-bar", "do the thing", "--prereq", "FOO-0001"])
         .assert()
         .success();
 }
 
 fn read_item(dir: &TempDir, id: &str) -> String {
-    fs::read_to_string(dir.path().join(format!("notes/glep-shimeji/{id}.md"))).unwrap()
+    fs::read_to_string(dir.path().join(format!("notes/foo-bar/{id}.md"))).unwrap()
 }
 
 #[test]
@@ -1412,7 +1390,7 @@ fn e2e_add_tags_write_canonical_frontmatter() {
     cfg.command()
         .args([
             "add",
-            "glep-shimeji",
+            "foo-bar",
             "tagged task",
             "--tag",
             "SQLite,csharp-export",
@@ -1421,7 +1399,7 @@ fn e2e_add_tags_write_canonical_frontmatter() {
         ])
         .assert()
         .success();
-    let item = read_item(&d, "GLP-0002");
+    let item = read_item(&d, "FOO-0002");
     assert!(
         item.contains("tags: [sqlite, csharp_export, godot]\n"),
         "{item}"
@@ -1443,10 +1421,10 @@ fn e2e_list_tag_filter_requires_all_requested_tags() {
 #[test]
 fn e2e_list_long_displays_raw_tags_without_parsing() {
     let (d, cfg) = staged_tagged_items();
-    let item_path = d.path().join("notes/glep-shimeji/GLP-0001.md");
+    let item_path = d.path().join("notes/foo-bar/FOO-0001.md");
     fs::write(
         item_path,
-        "---\nid: GLP-0001\nstatus: active\ntitle: both tags\nproject: glep-shimeji\ncreated: 2026-01-01\ntags: SQLite,godot\n---\n\nbody\n",
+        "---\nid: FOO-0001\nstatus: active\ntitle: both tags\nproject: foo-bar\ncreated: 2026-01-01\ntags: SQLite,godot\n---\n\nbody\n",
     )
     .unwrap();
     cfg.command()
@@ -1459,33 +1437,33 @@ fn e2e_list_long_displays_raw_tags_without_parsing() {
 #[test]
 fn e2e_list_tag_filter_rejects_corrupt_frontmatter() {
     let (d, cfg) = staged_tagged_items();
-    let item_path = d.path().join("notes/glep-shimeji/GLP-0001.md");
+    let item_path = d.path().join("notes/foo-bar/FOO-0001.md");
     fs::write(
         item_path,
-        "---\nid: GLP-0001\nstatus: active\ntitle: both tags\nproject: glep-shimeji\ncreated: 2026-01-01\ntags: sqlite,godot\n---\n\nbody\n",
+        "---\nid: FOO-0001\nstatus: active\ntitle: both tags\nproject: foo-bar\ncreated: 2026-01-01\ntags: sqlite,godot\n---\n\nbody\n",
     )
     .unwrap();
     cfg.command()
         .args(["list", "--tag", "sqlite"])
         .assert()
         .failure()
-        .stderr(contains("invalid tags frontmatter").and(contains("GLP-0001")));
+        .stderr(contains("invalid tags frontmatter").and(contains("FOO-0001")));
 }
 
 #[test]
 fn e2e_list_tag_filter_rejects_empty_tags_frontmatter_with_item_context() {
     let (d, cfg) = staged_tagged_items();
-    let item_path = d.path().join("notes/glep-shimeji/GLP-0001.md");
+    let item_path = d.path().join("notes/foo-bar/FOO-0001.md");
     fs::write(
         item_path,
-        "---\nid: GLP-0001\nstatus: active\ntitle: both tags\nproject: glep-shimeji\ncreated: 2026-01-01\ntags:   \n---\n\nbody\n",
+        "---\nid: FOO-0001\nstatus: active\ntitle: both tags\nproject: foo-bar\ncreated: 2026-01-01\ntags:   \n---\n\nbody\n",
     )
     .unwrap();
     cfg.command()
         .args(["list", "--tag", "sqlite"])
         .assert()
         .failure()
-        .stderr(contains("item GLP-0001 has invalid tags frontmatter"));
+        .stderr(contains("item FOO-0001 has invalid tags frontmatter"));
 }
 
 #[test]
@@ -1507,27 +1485,27 @@ fn e2e_invalid_list_leading_hyphen_tag_names_raw_value() {
 #[test]
 fn e2e_update_tags_append_deduplicate_clear_and_replace() {
     let (d, cfg) = staged();
-    let item_path = d.path().join("notes/glep-shimeji/GLP-0001.md");
+    let item_path = d.path().join("notes/foo-bar/FOO-0001.md");
     fs::write(
         item_path,
-        "---\nid: GLP-0001\nstatus: active\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\ntags: [sqlite, godot]\n---\n\nadd toggle\n",
+        "---\nid: FOO-0001\nstatus: active\ntitle: tray gui\nproject: foo-bar\ncreated: 2026-01-01\ntags: [sqlite, godot]\n---\n\nadd toggle\n",
     )
     .unwrap();
     cfg.command()
-        .args(["update", "GLP-0001", "--tag", "godot,csharp-export"])
+        .args(["update", "FOO-0001", "--tag", "godot,csharp-export"])
         .assert()
         .success();
-    let item = read_item(&d, "GLP-0001");
+    let item = read_item(&d, "FOO-0001");
     assert!(
         item.contains("tags: [sqlite, godot, csharp_export]\n"),
         "{item}"
     );
 
     cfg.command()
-        .args(["update", "GLP-0001", "--tags-clear", "--tag", "setup"])
+        .args(["update", "FOO-0001", "--tags-clear", "--tag", "setup"])
         .assert()
         .success();
-    let item = read_item(&d, "GLP-0001");
+    let item = read_item(&d, "FOO-0001");
     assert!(item.contains("tags: [setup]\n"), "{item}");
     assert!(!item.contains("sqlite"), "{item}");
 }
@@ -1536,31 +1514,31 @@ fn e2e_update_tags_append_deduplicate_clear_and_replace() {
 fn e2e_invalid_add_tag_names_raw_value_and_writes_nothing() {
     let (d, cfg) = staged();
     cfg.command()
-        .args(["add", "glep-shimeji", "x", "--tag", "sqlite__export"])
+        .args(["add", "foo-bar", "x", "--tag", "sqlite__export"])
         .assert()
         .failure()
         .stderr(contains("--tag").and(contains("sqlite__export")));
-    assert!(!d.path().join("notes/glep-shimeji/GLP-0002.md").exists());
+    assert!(!d.path().join("notes/foo-bar/FOO-0002.md").exists());
 }
 
 #[test]
 fn e2e_invalid_add_leading_hyphen_tag_names_raw_value_and_writes_nothing() {
     let (d, cfg) = staged();
     cfg.command()
-        .args(["add", "glep-shimeji", "x", "--tag", LEADING_HYPHEN_TAG])
+        .args(["add", "foo-bar", "x", "--tag", LEADING_HYPHEN_TAG])
         .assert()
         .failure()
         .stderr(contains("--tag").and(contains(LEADING_HYPHEN_TAG)));
-    assert!(!d.path().join("notes/glep-shimeji/GLP-0002.md").exists());
+    assert!(!d.path().join("notes/foo-bar/FOO-0002.md").exists());
 }
 
 #[test]
 fn e2e_invalid_update_leading_hyphen_tag_names_raw_value_and_writes_nothing() {
     let (d, cfg) = staged();
-    let item_path = d.path().join("notes/glep-shimeji/GLP-0001.md");
+    let item_path = d.path().join("notes/foo-bar/FOO-0001.md");
     let before = fs::read_to_string(&item_path).unwrap();
     cfg.command()
-        .args(["update", "GLP-0001", "--tag", LEADING_HYPHEN_TAG])
+        .args(["update", "FOO-0001", "--tag", LEADING_HYPHEN_TAG])
         .assert()
         .failure()
         .stderr(contains("--tag").and(contains(LEADING_HYPHEN_TAG)));
@@ -1571,17 +1549,17 @@ fn e2e_invalid_update_leading_hyphen_tag_names_raw_value_and_writes_nothing() {
 fn e2e_update_tags_clear_is_idempotent_on_untagged_item() {
     let (d, cfg) = staged();
     cfg.command()
-        .args(["update", "GLP-0001", "--tags-clear"])
+        .args(["update", "FOO-0001", "--tags-clear"])
         .assert()
         .success();
-    assert!(!read_item(&d, "GLP-0001").contains("tags:"));
+    assert!(!read_item(&d, "FOO-0001").contains("tags:"));
 }
 
 #[test]
 fn e2e_update_nothing_to_update_mentions_tag_flags() {
     let (_d, cfg) = staged();
     cfg.command()
-        .args(["update", "GLP-0001"])
+        .args(["update", "FOO-0001"])
         .assert()
         .failure()
         .stderr(contains("--tag").and(contains("--tags-clear")));
@@ -1590,21 +1568,21 @@ fn e2e_update_nothing_to_update_mentions_tag_flags() {
 #[test]
 fn e2e_update_closed_item_rejects_tag_edits_without_writing() {
     let (d, cfg) = staged();
-    let project = d.path().join("notes/glep-shimeji");
+    let project = d.path().join("notes/foo-bar");
     fs::write(
-        project.join("glep-shimeji.md"),
-        "---\nid: glp\ntitle: glep-shimeji\n---\n\n- [x] [[GLP-0001|tray gui]] ✅ 2026-01-02\n",
+        project.join("foo-bar.md"),
+        "---\nid: foo\ntitle: foo-bar\n---\n\n- [x] [[FOO-0001|tray gui]] ✅ 2026-01-02\n",
     )
     .unwrap();
-    let item_path = project.join("GLP-0001.md");
+    let item_path = project.join("FOO-0001.md");
     fs::write(
         &item_path,
-        "---\nid: GLP-0001\nstatus: done\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\ncompleted: 2026-01-02\n---\n\nadd toggle\n",
+        "---\nid: FOO-0001\nstatus: done\ntitle: tray gui\nproject: foo-bar\ncreated: 2026-01-01\ncompleted: 2026-01-02\n---\n\nadd toggle\n",
     )
     .unwrap();
     let before = fs::read_to_string(&item_path).unwrap();
     cfg.command()
-        .args(["update", "GLP-0001", "--tag", "sqlite"])
+        .args(["update", "FOO-0001", "--tag", "sqlite"])
         .assert()
         .failure()
         .stderr(contains("tags").and(contains("open item")));
@@ -1624,7 +1602,7 @@ fn e2e_update_prompt_rewrites_body_and_preserves_frontmatter() {
         .args([
             "update",
             "--id",
-            "GLP-0001",
+            "FOO-0001",
             "--prompt",
             "a / b /c context /n no manual edit /d tests pass",
             "--date",
@@ -1632,7 +1610,7 @@ fn e2e_update_prompt_rewrites_body_and_preserves_frontmatter() {
         ])
         .assert()
         .success();
-    let item = read_item(&d, "GLP-0001");
+    let item = read_item(&d, "FOO-0001");
     assert!(
         item.contains("## Goals\n\n- a\n- b"),
         "body not Goals-wrapped: {item}"
@@ -1649,19 +1627,19 @@ fn e2e_update_prompt_rewrites_body_and_preserves_frontmatter() {
     assert!(!item.contains("add toggle"), "old body replaced: {item}");
     assert!(item.contains("status: active"));
     assert!(item.contains("title: tray gui"));
-    assert!(item.contains("project: glep-shimeji"));
+    assert!(item.contains("project: foo-bar"));
     assert!(item.contains("created: 2026-01-01"));
-    assert!(!d.path().join("notes/glep-shimeji/GLP-0001.md.bak").exists());
+    assert!(!d.path().join("notes/foo-bar/FOO-0001.md.bak").exists());
 }
 
 #[test]
 fn e2e_update_title_only_leaves_body_untouched() {
     let (d, cfg) = staged();
     cfg.command()
-        .args(["update", "--id", "GLP-0001", "--title", "X"])
+        .args(["update", "--id", "FOO-0001", "--title", "X"])
         .assert()
         .success();
-    let item = read_item(&d, "GLP-0001");
+    let item = read_item(&d, "FOO-0001");
     assert_eq!(title_of(&item), "x", "title replaced+normalized: {item}");
     assert!(item.contains("add toggle"), "body untouched: {item}");
 }
@@ -1672,7 +1650,7 @@ fn e2e_add_normalizes_colon_title_and_notes_it_on_stderr() {
     cfg.command()
         .args([
             "add",
-            "glep-shimeji",
+            "foo-bar",
             "prompt body",
             "--title",
             "finish refactor: promote sync-git seam",
@@ -1680,14 +1658,14 @@ fn e2e_add_normalizes_colon_title_and_notes_it_on_stderr() {
         .assert()
         .success()
         .stderr(contains("info: title normalized to keep metadata valid"));
-    let item = read_item(&d, "GLP-0002");
+    let item = read_item(&d, "FOO-0002");
     assert_eq!(
         title_of(&item),
         "finish refactor; promote sync-git seam",
         "title not yaml-safe: {item}"
     );
     cfg.command()
-        .args(["show", "GLP-0002"])
+        .args(["show", "FOO-0002"])
         .assert()
         .success()
         .stdout(contains("finish refactor; promote sync-git seam"));
@@ -1703,7 +1681,7 @@ fn add_post_handoff_failure_emits_pending_work_diagnostics_before_error() {
         .command()
         .args([
             "add",
-            "glep-shimeji",
+            "foo-bar",
             "ship the thing",
             "--title",
             "Ship: Thing",
@@ -1719,16 +1697,16 @@ fn add_post_handoff_failure_emits_pending_work_diagnostics_before_error() {
     assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr).unwrap();
     let section = stderr
-        .find("info: created `## Human` section in glep-shimeji")
+        .find("info: created `## Human` section in foo-bar")
         .expect("created-section diagnostic");
     let title = stderr
         .find("info: title normalized to keep metadata valid")
         .expect("title diagnostic");
     let error = stderr
-        .find("GLP-0001 was mutated, but its handoff was not")
+        .find("FOO-0001 was mutated, but its handoff was not")
         .expect("post-mutation error");
     assert!(section < title && title < error, "got stderr:\n{stderr}");
-    assert!(stage.path().join("notes/glep-shimeji/GLP-0001.md").exists());
+    assert!(stage.path().join("notes/foo-bar/FOO-0001.md").exists());
     assert!(
         !handoff_directory.join("2026-01-01-ship-thing.md").exists(),
         "failed ledger write must remove the new scaffold"
@@ -1741,7 +1719,7 @@ fn e2e_add_safe_title_emits_no_normalization_notice() {
     cfg.command()
         .args([
             "add",
-            "glep-shimeji",
+            "foo-bar",
             "prompt body",
             "--title",
             "Plain Safe Title",
@@ -1749,19 +1727,19 @@ fn e2e_add_safe_title_emits_no_normalization_notice() {
         .assert()
         .success()
         .stderr(contains("title normalized").not());
-    assert_eq!(title_of(&read_item(&d, "GLP-0002")), "plain safe title");
+    assert_eq!(title_of(&read_item(&d, "FOO-0002")), "plain safe title");
 }
 
 #[test]
 fn e2e_add_inferred_colon_title_normalizes_silently() {
     let (d, cfg) = staged();
     cfg.command()
-        .args(["add", "glep-shimeji", "fix bug: empty prompt"])
+        .args(["add", "foo-bar", "fix bug: empty prompt"])
         .assert()
         .success()
         .stderr(contains("title normalized").not());
     assert_eq!(
-        title_of(&read_item(&d, "GLP-0002")),
+        title_of(&read_item(&d, "FOO-0002")),
         "fix bug; empty prompt"
     );
 }
@@ -1773,17 +1751,17 @@ fn e2e_update_normalizes_colon_title_and_notes_it_on_stderr() {
         .args([
             "update",
             "--id",
-            "GLP-0001",
+            "FOO-0001",
             "--title",
             "fix bug: handle colons",
         ])
         .assert()
         .success()
         .stderr(contains("info: title normalized to keep metadata valid"));
-    let item = read_item(&d, "GLP-0001");
+    let item = read_item(&d, "FOO-0001");
     assert_eq!(title_of(&item), "fix bug; handle colons");
     cfg.command()
-        .args(["show", "GLP-0001"])
+        .args(["show", "FOO-0001"])
         .assert()
         .success()
         .stdout(contains("fix bug; handle colons"));
@@ -1793,10 +1771,10 @@ fn e2e_update_normalizes_colon_title_and_notes_it_on_stderr() {
 fn e2e_update_prompt_only_leaves_title_untouched() {
     let (d, cfg) = staged();
     cfg.command()
-        .args(["update", "--id", "GLP-0001", "--prompt", "fresh prompt"])
+        .args(["update", "--id", "FOO-0001", "--prompt", "fresh prompt"])
         .assert()
         .success();
-    let item = read_item(&d, "GLP-0001");
+    let item = read_item(&d, "FOO-0001");
     assert_eq!(title_of(&item), "tray gui", "title untouched: {item}");
     assert!(item.contains("## Goals\n\n- fresh prompt"), "body: {item}");
 }
@@ -1805,7 +1783,7 @@ fn e2e_update_prompt_only_leaves_title_untouched() {
 fn e2e_update_requires_a_field() {
     let (_d, cfg) = staged();
     cfg.command()
-        .args(["update", "--id", "GLP-0001"])
+        .args(["update", "--id", "FOO-0001"])
         .assert()
         .failure();
 }
@@ -1814,7 +1792,7 @@ fn e2e_update_requires_a_field() {
 fn e2e_update_unknown_id_fails() {
     let (_d, cfg) = staged();
     cfg.command()
-        .args(["update", "--id", "GLP-9999", "--prompt", "x"])
+        .args(["update", "--id", "FOO-9999", "--prompt", "x"])
         .assert()
         .failure();
 }
@@ -1825,12 +1803,12 @@ fn e2e_add_rich_prompt_lanes_render_sections() {
     cfg.command()
         .args([
             "add",
-            "glep-shimeji",
+            "foo-bar",
             "lead clause / goal two / goal three /c context one /n no parser crate /d tests pass",
         ])
         .assert()
         .success();
-    let item = read_item(&d, "GLP-0002");
+    let item = read_item(&d, "FOO-0002");
     assert_eq!(title_of(&item), "lead clause", "title not cut: {item}");
     assert!(
         item.contains("## Goals\n\n- lead clause\n- goal two\n- goal three"),
@@ -1854,11 +1832,11 @@ fn e2e_add_rich_prompt_lanes_render_sections() {
 fn e2e_add_marker_first_prompt_defaults_title_without_body_sentinel() {
     let (d, cfg) = staged();
     cfg.command()
-        .args(["add", "glep-shimeji", "/c context"])
+        .args(["add", "foo-bar", "/c context"])
         .assert()
         .success();
 
-    let item = read_item(&d, "GLP-0002");
+    let item = read_item(&d, "FOO-0002");
     assert_eq!(title_of(&item), "n/a", "missing title fallback: {item}");
     assert!(
         item.contains("## Context\n\n- context"),
@@ -1881,10 +1859,10 @@ fn e2e_add_caps_long_title_without_ampersand() {
     let (d, cfg) = staged();
     let long = "Continue the PowerShell to Rust port into the cfgtool CLI using the shipped gaming domain as the template porting smallest first";
     cfg.command()
-        .args(["add", "glep-shimeji", long])
+        .args(["add", "foo-bar", long])
         .assert()
         .success();
-    let item = read_item(&d, "GLP-0002");
+    let item = read_item(&d, "FOO-0002");
     let title = title_of(&item);
     // The ellipsis adds one character to the 80-character title cap.
     assert!(
@@ -1910,10 +1888,10 @@ fn e2e_add_caps_long_title_without_ampersand() {
 fn e2e_add_lowercases_inferred_title() {
     let (d, cfg) = staged();
     cfg.command()
-        .args(["add", "glep-shimeji", "Refactor Help Command"])
+        .args(["add", "foo-bar", "Refactor Help Command"])
         .assert()
         .success();
-    let item = read_item(&d, "GLP-0002");
+    let item = read_item(&d, "FOO-0002");
     assert_eq!(title_of(&item), "refactor help command", "inferred: {item}");
 }
 
@@ -1921,10 +1899,10 @@ fn e2e_add_lowercases_inferred_title() {
 fn e2e_add_lowercases_explicit_title() {
     let (d, cfg) = staged();
     cfg.command()
-        .args(["add", "glep-shimeji", "x", "--title", "UPPER THING"])
+        .args(["add", "foo-bar", "x", "--title", "UPPER THING"])
         .assert()
         .success();
-    let item = read_item(&d, "GLP-0002");
+    let item = read_item(&d, "FOO-0002");
     assert_eq!(title_of(&item), "upper thing", "explicit add: {item}");
 }
 
@@ -1932,10 +1910,10 @@ fn e2e_add_lowercases_explicit_title() {
 fn e2e_update_lowercases_explicit_title() {
     let (d, cfg) = staged();
     cfg.command()
-        .args(["update", "--id", "GLP-0001", "--title", "UPPER THING"])
+        .args(["update", "--id", "FOO-0001", "--title", "UPPER THING"])
         .assert()
         .success();
-    let item = read_item(&d, "GLP-0001");
+    let item = read_item(&d, "FOO-0001");
     assert_eq!(title_of(&item), "upper thing", "explicit update: {item}");
 }
 
@@ -1943,7 +1921,7 @@ fn e2e_update_lowercases_explicit_title() {
 fn e2e_done_rotates_done_queue_past_general_cap() {
     let (d, cfg) = staged_many(7);
     for n in 1..=7 {
-        let id = format!("GLP-{n:04}");
+        let id = format!("FOO-{n:04}");
         cfg.command()
             .args(["done", "--id", &id, "--date", "2026-01-01"])
             .assert()
@@ -1951,7 +1929,7 @@ fn e2e_done_rotates_done_queue_past_general_cap() {
     }
     let index = read_index(&d);
     assert!(
-        index.contains("- [x] [[GLP-0007]] ✅ 2026-01-01"),
+        index.contains("- [x] [[FOO-0007]] ✅ 2026-01-01"),
         "checked item not marked in place: {index}"
     );
     assert_eq!(
@@ -1959,26 +1937,22 @@ fn e2e_done_rotates_done_queue_past_general_cap() {
         6,
         "cap not enforced: {index}"
     );
-    assert!(!index.contains("GLP-0001"), "oldest not evicted: {index}");
-    assert!(d.path().join("notes/glep-shimeji/GLP-0001.md").exists());
-    assert!(!d.path().join("notes/glep-shimeji/_archive").exists());
-    assert!(
-        !d.path()
-            .join("notes/glep-shimeji/glep-shimeji.md.bak")
-            .exists()
-    );
+    assert!(!index.contains("FOO-0001"), "oldest not evicted: {index}");
+    assert!(d.path().join("notes/foo-bar/FOO-0001.md").exists());
+    assert!(!d.path().join("notes/foo-bar/_archive").exists());
+    assert!(!d.path().join("notes/foo-bar/foo-bar.md.bak").exists());
 }
 
 #[test]
 fn e2e_add_with_prereq_writes_validated_frontmatter() {
     let (d, cfg) = staged();
     cfg.command()
-        .args(["add", "glep-shimeji", "x", "--prereq", "GLP-0001"])
+        .args(["add", "foo-bar", "x", "--prereq", "FOO-0001"])
         .assert()
         .success();
-    let item = read_item(&d, "GLP-0002");
+    let item = read_item(&d, "FOO-0002");
     assert!(
-        item.contains("prereq: \"[[GLP-0001]]\""),
+        item.contains("prereq: \"[[FOO-0001]]\""),
         "prereq frontmatter missing: {item}"
     );
 }
@@ -1987,12 +1961,12 @@ fn e2e_add_with_prereq_writes_validated_frontmatter() {
 fn e2e_add_with_prereq_shorthand_normalizes_to_canonical() {
     let (d, cfg) = staged();
     cfg.command()
-        .args(["add", "glep-shimeji", "x", "--prereq", "glp1"])
+        .args(["add", "foo-bar", "x", "--prereq", "foo1"])
         .assert()
         .success();
-    let item = read_item(&d, "GLP-0002");
+    let item = read_item(&d, "FOO-0002");
     assert!(
-        item.contains("prereq: \"[[GLP-0001]]\""),
+        item.contains("prereq: \"[[FOO-0001]]\""),
         "shorthand prereq not canonicalized: {item}"
     );
 }
@@ -2001,10 +1975,10 @@ fn e2e_add_with_prereq_shorthand_normalizes_to_canonical() {
 fn e2e_add_with_effort_writes_frontmatter() {
     let (d, cfg) = staged();
     cfg.command()
-        .args(["add", "glep-shimeji", "x", "--effort", "3"])
+        .args(["add", "foo-bar", "x", "--effort", "3"])
         .assert()
         .success();
-    let item = read_item(&d, "GLP-0002");
+    let item = read_item(&d, "FOO-0002");
     assert!(
         item.contains("effort: 3\n"),
         "effort frontmatter missing: {item}"
@@ -2015,11 +1989,11 @@ fn e2e_add_with_effort_writes_frontmatter() {
 fn e2e_add_effort_out_of_range_is_rejected() {
     let (d, cfg) = staged();
     cfg.command()
-        .args(["add", "glep-shimeji", "x", "--effort", "5"])
+        .args(["add", "foo-bar", "x", "--effort", "5"])
         .assert()
         .failure();
     assert!(
-        !d.path().join("notes/glep-shimeji/GLP-0002.md").exists(),
+        !d.path().join("notes/foo-bar/FOO-0002.md").exists(),
         "failed add wrote a new item"
     );
 }
@@ -2028,12 +2002,12 @@ fn e2e_add_effort_out_of_range_is_rejected() {
 fn e2e_add_rejects_unknown_prereq_without_writing_item() {
     let (d, cfg) = staged();
     cfg.command()
-        .args(["add", "glep-shimeji", "x", "--prereq", "GLP-9999"])
+        .args(["add", "foo-bar", "x", "--prereq", "FOO-9999"])
         .assert()
         .failure()
-        .stderr("Error: Unknown --prereq id(s): GLP-9999.\n");
+        .stderr("Error: Unknown --prereq id(s): FOO-9999.\n");
     assert!(
-        !d.path().join("notes/glep-shimeji/GLP-0002.md").exists(),
+        !d.path().join("notes/foo-bar/FOO-0002.md").exists(),
         "failed add wrote a new item"
     );
 }
@@ -2042,12 +2016,12 @@ fn e2e_add_rejects_unknown_prereq_without_writing_item() {
 fn e2e_update_prereq_writes_validated_frontmatter() {
     let (d, cfg) = staged_two();
     cfg.command()
-        .args(["update", "--id", "GLP-0002", "--prereq", "GLP-0001"])
+        .args(["update", "--id", "FOO-0002", "--prereq", "FOO-0001"])
         .assert()
         .success();
-    let item = read_item(&d, "GLP-0002");
+    let item = read_item(&d, "FOO-0002");
     assert!(
-        item.contains("prereq: \"[[GLP-0001]]\""),
+        item.contains("prereq: \"[[FOO-0001]]\""),
         "prereq frontmatter missing: {item}"
     );
 }
@@ -2056,10 +2030,10 @@ fn e2e_update_prereq_writes_validated_frontmatter() {
 fn e2e_update_effort_writes_frontmatter() {
     let (d, cfg) = staged();
     cfg.command()
-        .args(["update", "--id", "GLP-0001", "--effort", "4"])
+        .args(["update", "--id", "FOO-0001", "--effort", "4"])
         .assert()
         .success();
-    let item = read_item(&d, "GLP-0001");
+    let item = read_item(&d, "FOO-0001");
     assert!(
         item.contains("effort: 4\n"),
         "effort frontmatter missing: {item}"
@@ -2070,11 +2044,11 @@ fn e2e_update_effort_writes_frontmatter() {
 fn e2e_list_effort_filter_shows_only_matching_tier() {
     let (_d, cfg) = staged_two();
     cfg.command()
-        .args(["update", "--id", "GLP-0001", "--effort", "1"])
+        .args(["update", "--id", "FOO-0001", "--effort", "1"])
         .assert()
         .success();
     cfg.command()
-        .args(["update", "--id", "GLP-0002", "--effort", "4"])
+        .args(["update", "--id", "FOO-0002", "--effort", "4"])
         .assert()
         .success();
 
@@ -2090,7 +2064,7 @@ fn e2e_list_effort_filter_shows_only_matching_tier() {
 fn e2e_list_long_shows_effort_line() {
     let (_d, cfg) = staged();
     cfg.command()
-        .args(["update", "--id", "GLP-0001", "--effort", "2"])
+        .args(["update", "--id", "FOO-0001", "--effort", "2"])
         .assert()
         .success();
 
@@ -2105,25 +2079,25 @@ fn e2e_list_long_shows_effort_line() {
 fn e2e_update_prereq_appends_and_dedups() {
     let (d, cfg) = staged_two();
     // Seed an existing prerequisite to exercise append deduplication.
-    let proj = d.path().join("notes/glep-shimeji");
+    let proj = d.path().join("notes/foo-bar");
     fs::write(
-        proj.join("GLP-0002.md"),
-        "---\nid: GLP-0002\nstatus: active\ntitle: second\nproject: glep-shimeji\ncreated: 2026-01-02\nprereq: \"[[GLP-0001]]\"\n---\n\ndo more\n",
+        proj.join("FOO-0002.md"),
+        "---\nid: FOO-0002\nstatus: active\ntitle: second\nproject: foo-bar\ncreated: 2026-01-02\nprereq: \"[[FOO-0001]]\"\n---\n\ndo more\n",
     )
     .unwrap();
     cfg.command()
         .args([
             "update",
             "--id",
-            "GLP-0002",
+            "FOO-0002",
             "--prereq",
-            "GLP-0001,GLP-0001",
+            "FOO-0001,FOO-0001",
         ])
         .assert()
         .success();
-    let item = read_item(&d, "GLP-0002");
+    let item = read_item(&d, "FOO-0002");
     assert_eq!(
-        item.matches("[[GLP-0001]]").count(),
+        item.matches("[[FOO-0001]]").count(),
         1,
         "prereq duplicated: {item}"
     );
@@ -2133,17 +2107,17 @@ fn e2e_update_prereq_appends_and_dedups() {
 #[test]
 fn e2e_update_clear_prereq_empties_it() {
     let (d, cfg) = staged_two();
-    let proj = d.path().join("notes/glep-shimeji");
+    let proj = d.path().join("notes/foo-bar");
     fs::write(
-        proj.join("GLP-0002.md"),
-        "---\nid: GLP-0002\nstatus: active\ntitle: second\nproject: glep-shimeji\ncreated: 2026-01-02\nprereq: \"[[GLP-0001]]\"\n---\n\ndo more\n",
+        proj.join("FOO-0002.md"),
+        "---\nid: FOO-0002\nstatus: active\ntitle: second\nproject: foo-bar\ncreated: 2026-01-02\nprereq: \"[[FOO-0001]]\"\n---\n\ndo more\n",
     )
     .unwrap();
     cfg.command()
-        .args(["update", "--id", "GLP-0002", "--clear-prereq"])
+        .args(["update", "--id", "FOO-0002", "--clear-prereq"])
         .assert()
         .success();
-    let item = read_item(&d, "GLP-0002");
+    let item = read_item(&d, "FOO-0002");
     assert!(!item.contains("prereq:"), "prereq line lingered: {item}");
     assert!(item.contains("status: active"));
     assert!(item.contains("title: second"));
@@ -2153,13 +2127,13 @@ fn e2e_update_clear_prereq_empties_it() {
 #[test]
 fn e2e_update_prereq_rejects_unknown() {
     let (d, cfg) = staged_two();
-    let before = read_item(&d, "GLP-0002");
+    let before = read_item(&d, "FOO-0002");
     cfg.command()
-        .args(["update", "--id", "GLP-0002", "--prereq", "GLP-9999"])
+        .args(["update", "--id", "FOO-0002", "--prereq", "FOO-9999"])
         .assert()
         .failure()
-        .stderr(contains("GLP-9999"));
-    assert_eq!(read_item(&d, "GLP-0002"), before, "item changed on failure");
+        .stderr(contains("FOO-9999"));
+    assert_eq!(read_item(&d, "FOO-0002"), before, "item changed on failure");
 }
 
 #[test]
@@ -2169,9 +2143,9 @@ fn e2e_update_prereq_and_clear_conflict() {
         .args([
             "update",
             "--id",
-            "GLP-0002",
+            "FOO-0002",
             "--prereq",
-            "GLP-0001",
+            "FOO-0001",
             "--clear-prereq",
         ])
         .assert()
@@ -2182,18 +2156,18 @@ fn e2e_update_prereq_and_clear_conflict() {
 fn e2e_add_default_section_lands_before_any_header() {
     let (d, cfg) = staged();
     // Seed a section header so the test can distinguish top-level placement.
-    let index_path = d.path().join("notes/glep-shimeji/glep-shimeji.md");
+    let index_path = d.path().join("notes/foo-bar/foo-bar.md");
     let seeded = format!(
-        "{}\n## Future\n- [ ] [[GLP-0099|future thing]]\n",
+        "{}\n## Future\n- [ ] [[FOO-0099|future thing]]\n",
         read_index(&d)
     );
     fs::write(&index_path, seeded).unwrap();
     cfg.command()
-        .args(["add", "glep-shimeji", "default placed item"])
+        .args(["add", "foo-bar", "default placed item"])
         .assert()
         .success();
     let index = read_index(&d);
-    let item = index.find("[[GLP-0002]]").expect("no new item link");
+    let item = index.find("[[FOO-0002]]").expect("no new item link");
     let header = index.find("## ").expect("no `## ` header in index");
     assert!(item < header, "item not before first header: {index}");
 }
@@ -2202,14 +2176,14 @@ fn e2e_add_default_section_lands_before_any_header() {
 fn e2e_done_normalizes_mixed_case_id() {
     let (d, cfg) = staged();
     cfg.command()
-        .args(["done", "--id", "glp-0001", "--date", "2026-01-01"])
+        .args(["done", "--id", "foo-0001", "--date", "2026-01-01"])
         .assert()
         .success();
-    let item = read_item(&d, "GLP-0001");
+    let item = read_item(&d, "FOO-0001");
     assert!(item.contains("status: done"), "item not checked: {item}");
     let index = read_index(&d);
     assert!(
-        index.contains("[x] [[GLP-0001]]"),
+        index.contains("[x] [[FOO-0001]]"),
         "index did not use canonical id: {index}"
     );
 }
@@ -2221,7 +2195,7 @@ fn e2e_done_commits_writes_provenance_frontmatter() {
         .args([
             "done",
             "--id",
-            "GLP-0001",
+            "FOO-0001",
             "--commits",
             "a1b2c3d..f4e5d6c",
             "--date",
@@ -2229,7 +2203,7 @@ fn e2e_done_commits_writes_provenance_frontmatter() {
         ])
         .assert()
         .success();
-    let item = read_item(&d, "GLP-0001");
+    let item = read_item(&d, "FOO-0001");
     assert!(
         item.contains("commits: \"a1b2c3d..f4e5d6c\""),
         "commits frontmatter missing: {item}"
@@ -2243,7 +2217,7 @@ fn e2e_done_commits_repeated_and_comma_join_and_dedup() {
         .args([
             "done",
             "--id",
-            "GLP-0001",
+            "FOO-0001",
             "--commits",
             "a..b",
             "--commits",
@@ -2254,7 +2228,7 @@ fn e2e_done_commits_repeated_and_comma_join_and_dedup() {
         .assert()
         .success();
     assert!(
-        read_item(&d, "GLP-0001").contains("commits: \"a..b, c..d\""),
+        read_item(&d, "FOO-0001").contains("commits: \"a..b, c..d\""),
         "repeated commits not joined"
     );
 
@@ -2263,7 +2237,7 @@ fn e2e_done_commits_repeated_and_comma_join_and_dedup() {
         .args([
             "done",
             "--id",
-            "GLP-0001",
+            "FOO-0001",
             "--commits",
             "a..b,c..d",
             "--date",
@@ -2272,7 +2246,7 @@ fn e2e_done_commits_repeated_and_comma_join_and_dedup() {
         .assert()
         .success();
     assert!(
-        read_item(&d2, "GLP-0001").contains("commits: \"a..b, c..d\""),
+        read_item(&d2, "FOO-0001").contains("commits: \"a..b, c..d\""),
         "comma commits not joined"
     );
 }
@@ -2281,11 +2255,11 @@ fn e2e_done_commits_repeated_and_comma_join_and_dedup() {
 fn e2e_done_without_commits_writes_no_commits_line() {
     let (d, cfg) = staged();
     cfg.command()
-        .args(["done", "--id", "GLP-0001", "--date", "2026-01-01"])
+        .args(["done", "--id", "FOO-0001", "--date", "2026-01-01"])
         .assert()
         .success();
     assert!(
-        !read_item(&d, "GLP-0001").contains("commits:"),
+        !read_item(&d, "FOO-0001").contains("commits:"),
         "default done path leaked a commits line"
     );
 }
@@ -2298,7 +2272,7 @@ fn e2e_done_review_spawns_human_task_scoped_to_range() {
         .args([
             "done",
             "--id",
-            "GLP-0001",
+            "FOO-0001",
             "--commits",
             "a..b",
             "--review",
@@ -2307,19 +2281,17 @@ fn e2e_done_review_spawns_human_task_scoped_to_range() {
         ])
         .assert()
         .success()
-        .stderr(contains(
-            "info: created `## Human` section in glep-shimeji\n",
-        ));
+        .stderr(contains("info: created `## Human` section in foo-bar\n"));
     assert!(
-        read_item(&d, "GLP-0001").contains("commits: \"a..b\""),
+        read_item(&d, "FOO-0001").contains("commits: \"a..b\""),
         "checked item missing commits"
     );
     let index = read_index(&d);
     assert!(index.contains("## Human"), "no Human section: {index}");
-    let spawned = read_item(&d, "GLP-0002");
+    let spawned = read_item(&d, "FOO-0002");
     assert_eq!(
         spawned,
-        "---\nid: GLP-0002\nstatus: active\ntitle: review glp-0001, commits; a..b\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\n## Goals\n\n- review GLP-0001, commits: a..b\n- git-tools diff a..b\n- git-tools diff-subrepos\n"
+        "---\nid: FOO-0002\nstatus: active\ntitle: review foo-0001, commits; a..b\nproject: foo-bar\ncreated: 2026-01-01\n---\n\n## Goals\n\n- review FOO-0001, commits: a..b\n- git-tools diff a..b\n- git-tools diff-subrepos\n"
     );
     drop(out);
 }
@@ -2332,7 +2304,7 @@ fn e2e_done_review_appends_review_task_as_text() {
         .args([
             "done",
             "--id",
-            "GLP-0001",
+            "FOO-0001",
             "--commits",
             "a..b",
             "--review",
@@ -2343,11 +2315,11 @@ fn e2e_done_review_appends_review_task_as_text() {
         .success();
     let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
     assert!(
-        stdout.starts_with("Done GLP-0001"),
+        stdout.starts_with("Done FOO-0001"),
         "expected text output: {stdout}"
     );
     assert!(
-        stdout.contains("ADDED PWF TASK [GLP-0002]"),
+        stdout.contains("ADDED PWF TASK [FOO-0002]"),
         "review task appended as text: {stdout}"
     );
 }
@@ -2359,17 +2331,17 @@ fn e2e_done_review_without_commits_uses_bare_diff_fallback() {
         .args([
             "done",
             "--id",
-            "GLP-0001",
+            "FOO-0001",
             "--review",
             "--date",
             "2026-01-01",
         ])
         .assert()
         .success();
-    let spawned = read_item(&d, "GLP-0002");
+    let spawned = read_item(&d, "FOO-0002");
     assert_eq!(
         spawned,
-        "---\nid: GLP-0002\nstatus: active\ntitle: review glp-0001\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\n## Goals\n\n- review GLP-0001\n- git-tools diff\n- git-tools diff-subrepos\n"
+        "---\nid: FOO-0002\nstatus: active\ntitle: review foo-0001\nproject: foo-bar\ncreated: 2026-01-01\n---\n\n## Goals\n\n- review FOO-0001\n- git-tools diff\n- git-tools diff-subrepos\n"
     );
 }
 
@@ -2419,18 +2391,18 @@ fn show_legacy_item_emits_body_only() {
     // Legacy inline items have no note file, so show falls back to their parsed prompt.
     let dir = TempDir::new().unwrap();
     let notes = dir.path().join("notes");
-    let proj = notes.join("glep-shimeji");
+    let proj = notes.join("foo-bar");
     fs::create_dir_all(&proj).unwrap();
     fs::write(
-        proj.join("glep-shimeji.md"),
-        "---\nid: glp\ntitle: glep-shimeji\n---\n\n- [ ] `legacy task` <- do the legacy thing\n",
+        proj.join("foo-bar.md"),
+        "---\nid: foo\ntitle: foo-bar\n---\n\n- [ ] `legacy task` <- do the legacy thing\n",
     )
     .unwrap();
     let database = DatabaseFixture::new(dir.path().join("projects.sqlite3"));
-    database.add_directory_project("GLP", "glep-shimeji", std::path::Path::new("/repo"), &proj);
+    database.add_directory_project("FOO", "foo-bar", std::path::Path::new("/repo"), &proj);
     let out = database
         .command()
-        .args(["show", "--id", "glep-shimeji:1"])
+        .args(["show", "--id", "foo-bar:1"])
         .assert()
         .success();
     let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
@@ -2520,7 +2492,7 @@ fn e2e_reopen_flips_done_item_back_to_active_and_restores_index() {
 fn e2e_reopen_already_active_item_skips() {
     let (_d, cfg) = staged();
     cfg.command()
-        .args(["reopen", "--id", "GLP-0001"])
+        .args(["reopen", "--id", "FOO-0001"])
         .assert()
         .success()
         .stdout(contains("already active"));
@@ -2530,7 +2502,7 @@ fn e2e_reopen_already_active_item_skips() {
 fn e2e_reopen_unknown_id_errors() {
     let (_d, cfg) = staged();
     cfg.command()
-        .args(["reopen", "--id", "GLP-9999"])
+        .args(["reopen", "--id", "FOO-9999"])
         .assert()
         .failure()
         .stderr(contains("not found"));
@@ -2672,10 +2644,10 @@ fn show_path_prints_closed_item_path() {
 #[test]
 fn show_missing_note_preserves_the_storage_read_error() {
     let (dir, cfg) = staged();
-    fs::remove_file(dir.path().join("notes/glep-shimeji/GLP-0001.md")).unwrap();
+    fs::remove_file(dir.path().join("notes/foo-bar/FOO-0001.md")).unwrap();
 
     cfg.command()
-        .args(["show", "GLP-0001"])
+        .args(["show", "FOO-0001"])
         .assert()
         .code(1)
         .stdout("")
@@ -3043,6 +3015,9 @@ fn update_append_on_closed_item_is_rejected() {
 /// Stages a launchable item and a recording `zellij` stub on the child process PATH.
 /// Returns the database, child PATH, and argv log.
 #[cfg(unix)]
+const SESSION_NOTE_MARKDOWN: &str = "---\nid: PWF-0001\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- do the thing\n";
+
+#[cfg(unix)]
 fn stage_session_with_zellij_stub(dir: &TempDir) -> (DatabaseFixture, String, std::path::PathBuf) {
     use std::os::unix::fs::PermissionsExt;
 
@@ -3052,11 +3027,7 @@ fn stage_session_with_zellij_stub(dir: &TempDir) -> (DatabaseFixture, String, st
     let repo = dir.path().join("repo");
     fs::create_dir_all(&proj).unwrap();
     fs::create_dir_all(&repo).unwrap();
-    fs::write(
-        proj.join("PWF-0001.md"),
-        "---\nid: PWF-0001\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- do the thing\n",
-    )
-    .unwrap();
+    fs::write(proj.join("PWF-0001.md"), SESSION_NOTE_MARKDOWN).unwrap();
     fs::write(proj.join("pwf.md"), "- [ ] [[PWF-0001|do the thing]]\n").unwrap();
     let database = DatabaseFixture::new(dir.path().join("projects.sqlite3"));
     database.add_directory_project("PWF", "pwf", &repo, &proj);
@@ -3229,9 +3200,10 @@ fn session_dry_alias_renders_complete_codex_command_without_side_effects() {
     let resume_log_path = directory.path().join("codex-resume.log");
     let repository = directory.path().join("repo").to_string_lossy().into_owned();
     let expected_prompt = concat!(
-        "Pending-work ID: PWF-0001\nProject: pwf\n",
         "You MUST execute this autonomously. Do not prompt the user for questions. But if something ",
-        "seems critical and needs user decision, STOP execution and clarify\n\ndo PWF-0001\n\n",
+        "seems critical and needs user decision, STOP execution and clarify\n\n",
+        "---\nid: PWF-0001\nstatus: active\ntitle: do the thing\nproject: pwf\n",
+        "created: 2026-06-20\n---\n\n## Goals\n- do the thing\n\n",
         "Workspace: before doing anything else, use a git-worktrees skill to create a git worktree ",
         "here named `PWF-0001` (the worktree name is this task'\\''s id), and do all of this task'\\''s ",
         "work inside that worktree."
@@ -3370,7 +3342,7 @@ fn session_inline_executes_the_concrete_claude_process() {
             "arg=--name".to_string(),
             "arg=PWF-0001 - do the thing".to_string(),
             "arg=--".to_string(),
-            "arg=Pending-work ID: PWF-0001\nProject: pwf\n\ndo PWF-0001".to_string(),
+            format!("arg={SESSION_NOTE_MARKDOWN}"),
         ]
     );
     assert!(
@@ -3476,7 +3448,6 @@ fn session_with_effort_and_broken_tiers_config_fails_before_dispatch() {
 #[test]
 #[cfg(unix)]
 fn session_append_extends_the_note_before_dispatch() {
-    // Session appends to the note while the launch argv remains a thin pointer.
     let dir = TempDir::new().unwrap();
     let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
 
@@ -3503,12 +3474,8 @@ fn session_append_extends_the_note_before_dispatch() {
 
     let argv = fs::read_to_string(&log).unwrap();
     assert!(
-        argv.contains("do PWF-0001"),
-        "dispatched prompt did not carry the thin pointer: {argv}"
-    );
-    assert!(
-        !argv.contains("one more thing in the moment"),
-        "the note body must not be inlined into the dispatched prompt: {argv}"
+        argv.contains(&note),
+        "dispatched prompt did not contain the appended task content: {argv}"
     );
 }
 
@@ -3554,36 +3521,6 @@ fn session_append_declined_through_stdin_leaves_note_unchanged() {
 
 #[test]
 #[cfg(unix)]
-fn session_dispatches_a_thin_pointer_not_the_note_body() {
-    // The agent resolves the item, so dispatch includes its identity but not its body.
-    let dir = TempDir::new().unwrap();
-    let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
-
-    cfg.command()
-        .args(["session", "--id", "PWF-0001", "--yes"])
-        .env("PATH", path)
-        .env("ZELLIJ_STUB_LOG", &log)
-        .assert()
-        .success()
-        .stdout(contains("dispatched"));
-
-    let argv = fs::read_to_string(&log).unwrap();
-    assert!(
-        argv.contains("Pending-work ID: PWF-0001") && argv.contains("Project: pwf"),
-        "dispatched prompt lost its id/project headers: {argv}"
-    );
-    assert!(
-        argv.contains("do PWF-0001"),
-        "dispatched prompt is missing the thin pointer: {argv}"
-    );
-    assert!(
-        !argv.contains("## Goals"),
-        "the note body must not be inlined into the dispatched prompt: {argv}"
-    );
-}
-
-#[test]
-#[cfg(unix)]
 fn session_append_short_flag_extends_the_note() {
     let dir = TempDir::new().unwrap();
     let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
@@ -3615,12 +3552,12 @@ fn session_append_short_flag_extends_the_note() {
 #[test]
 fn session_append_rejects_whitespace_only_before_any_dispatch() {
     let (dir, cfg) = staged();
-    let note_path = dir.path().join("notes/glep-shimeji/GLP-0001.md");
+    let note_path = dir.path().join("notes/foo-bar/FOO-0001.md");
     let before = fs::read_to_string(&note_path).unwrap();
 
     cfg.command()
         .args([
-            "session", "--id", "GLP-0001", "--inline", "--yes", "--append", "   \n\t",
+            "session", "--id", "FOO-0001", "--inline", "--yes", "--append", "   \n\t",
         ])
         .assert()
         .failure()
@@ -3647,14 +3584,14 @@ fn verify_codex_agent_reports_codex() {
 fn e2e_verify_reports_resolved_model_for_effort_tagged_item() {
     let (d, cfg) = staged();
     cfg.command()
-        .args(["update", "--id", "GLP-0001", "--effort", "1"])
+        .args(["update", "--id", "FOO-0001", "--effort", "1"])
         .assert()
         .success();
     let tiers = d.path().join("model-tiers.toml");
     fs::write(&tiers, "[tiers.1]\nclaude_model = \"sonnet\"\n").unwrap();
 
     cfg.command()
-        .args(["verify", "--id", "GLP-0001", "--agent", "claude"])
+        .args(["verify", "--id", "FOO-0001", "--agent", "claude"])
         .env("PWF_MODEL_TIERS", &tiers)
         .assert()
         .success()
@@ -3666,13 +3603,13 @@ fn e2e_verify_reports_resolved_model_for_effort_tagged_item() {
 fn e2e_verify_fails_on_broken_model_tiers_for_effort_tagged_item() {
     let (d, cfg) = staged();
     cfg.command()
-        .args(["update", "--id", "GLP-0001", "--effort", "1"])
+        .args(["update", "--id", "FOO-0001", "--effort", "1"])
         .assert()
         .success();
     let missing_tiers = d.path().join("does-not-exist.toml");
 
     cfg.command()
-        .args(["verify", "--id", "GLP-0001", "--agent", "claude"])
+        .args(["verify", "--id", "FOO-0001", "--agent", "claude"])
         .env("PWF_MODEL_TIERS", &missing_tiers)
         .assert()
         .success() // Probe failures are reported in Markdown.
@@ -3695,7 +3632,7 @@ fn session_missing_id_errors() {
 fn session_unknown_id_errors_not_found() {
     let (_dir, cfg) = staged();
     cfg.command()
-        .args(["session", "GLP-9999"])
+        .args(["session", "FOO-9999"])
         .assert()
         .failure()
         .stderr(contains("not found"));
@@ -3707,7 +3644,7 @@ fn retired_launch_verb_treated_as_unknown_project() {
     let (_directory, database) = temporary_database();
     database
         .command()
-        .args(["launch", "--id", "GLP-0001"])
+        .args(["launch", "--id", "FOO-0001"])
         .assert()
         .failure()
         .stderr(contains("Unknown managed project identifier"));
@@ -3718,7 +3655,7 @@ fn retired_launch_claude_verb_treated_as_unknown_project() {
     let (_directory, database) = temporary_database();
     database
         .command()
-        .args(["launch-claude", "--id", "GLP-0001"])
+        .args(["launch-claude", "--id", "FOO-0001"])
         .assert()
         .failure()
         .stderr(contains("Unknown managed project identifier"));
@@ -3727,15 +3664,15 @@ fn retired_launch_claude_verb_treated_as_unknown_project() {
 #[test]
 fn e2e_remove_resolves_descriptive_filename_by_frontmatter_id() {
     let (d, cfg) = staged();
-    let project = d.path().join("notes/glep-shimeji");
+    let project = d.path().join("notes/foo-bar");
     fs::rename(
-        project.join("GLP-0001.md"),
+        project.join("FOO-0001.md"),
         project.join("descriptive-name.md"),
     )
     .unwrap();
 
     cfg.command()
-        .args(["remove", "--id", "GLP-0001", "--yes"])
+        .args(["remove", "--id", "FOO-0001", "--yes"])
         .assert()
         .success();
 
@@ -3945,15 +3882,15 @@ fn handoff_add_in_process_allocator_links_the_created_item() {
         .success()
         .stderr("")
         .stdout(format!(
-            "Created handoff {}\n  pw: GLP-0001\n  Now fill the Goals + Context; close with: pwf done --id GLP-0001\n",
+            "Created handoff {}\n  pw: FOO-0001\n  Now fill the Goals + Context; close with: pwf done --id FOO-0001\n",
             handoff.display()
         ));
     assert!(
         fs::read_to_string(&handoff)
             .unwrap()
-            .contains("pw: GLP-0001")
+            .contains("pw: FOO-0001")
     );
-    let note = fs::read_to_string(dir.path().join("notes/glep-shimeji/GLP-0001.md")).unwrap();
+    let note = fs::read_to_string(dir.path().join("notes/foo-bar/FOO-0001.md")).unwrap();
     assert!(note.contains("status: active"), "got: {note}");
     assert!(note.contains("tags: [handoff]"), "got: {note}");
 }
@@ -3970,7 +3907,7 @@ fn linked_handoff_close_failure_reports_post_mutation_recovery() {
     cfg.command()
         .args([
             "done",
-            "GLP-0001",
+            "FOO-0001",
             "--report",
             "complete",
             "--date",
@@ -3980,7 +3917,7 @@ fn linked_handoff_close_failure_reports_post_mutation_recovery() {
         .code(1)
         .stdout("")
         .stderr(format!(
-            "Error: GLP-0001 was mutated, but its handoff was not: {raw_source}\n  fix the cause, then `pwf reopen --id GLP-0001` and re-run — or finish the handoff move by hand\n"
+            "Error: FOO-0001 was mutated, but its handoff was not: {raw_source}\n  fix the cause, then `pwf reopen --id FOO-0001` and re-run — or finish the handoff move by hand\n"
         ));
 }
 
@@ -3994,12 +3931,12 @@ fn linked_handoff_remove_failure_reports_deleted_note_recovery() {
     let raw_source = raw_rename_error_for_file_over_directory(&ledger);
 
     cfg.command()
-        .args(["remove", "GLP-0001", "--yes"])
+        .args(["remove", "FOO-0001", "--yes"])
         .assert()
         .code(1)
         .stdout("")
         .stderr(format!(
-            "Error: GLP-0001 was mutated, but its handoff was not: {raw_source}\n  the pw note is already deleted; delete the linked handoff file by hand\n"
+            "Error: FOO-0001 was mutated, but its handoff was not: {raw_source}\n  the pw note is already deleted; delete the linked handoff file by hand\n"
         ));
 }
 
@@ -4022,7 +3959,7 @@ fn linked_handoff_lifecycle_outputs_never_touch_git() {
         )
     });
     assert!(scaffolded.contains("status: active"), "got: {scaffolded}");
-    assert!(scaffolded.contains("pw: GLP-0001"), "got: {scaffolded}");
+    assert!(scaffolded.contains("pw: FOO-0001"), "got: {scaffolded}");
     assert!(
         !repo.join(".git").exists(),
         "add must not create/touch .git"
@@ -4037,7 +3974,7 @@ fn linked_handoff_lifecycle_outputs_never_touch_git() {
         .args([
             "done",
             "--id",
-            "GLP-0001",
+            "FOO-0001",
             "--report",
             "x",
             "--commits",
@@ -4049,7 +3986,7 @@ fn linked_handoff_lifecycle_outputs_never_touch_git() {
         .success()
         .stderr("")
         .stdout(format!(
-            "Done GLP-0001 (glep-shimeji :: mirror round trip)\n\n  handoff: archived {}\n",
+            "Done FOO-0001 (foo-bar :: mirror round trip)\n\n  handoff: archived {}\n",
             archived_path.display()
         ));
     assert!(
@@ -4064,12 +4001,12 @@ fn linked_handoff_lifecycle_outputs_never_touch_git() {
     );
 
     cfg.command()
-        .args(["reopen", "--id", "GLP-0001"])
+        .args(["reopen", "--id", "FOO-0001"])
         .assert()
         .success()
         .stderr("")
         .stdout(format!(
-            "Reopened GLP-0001 (glep-shimeji)\n\n  handoff: reopened {}\n",
+            "Reopened FOO-0001 (foo-bar)\n\n  handoff: reopened {}\n",
             handoff_path.display()
         ));
     assert!(
@@ -4087,7 +4024,7 @@ fn linked_handoff_lifecycle_outputs_never_touch_git() {
     cfg.command()
         .args([
             "cancel",
-            "GLP-0001",
+            "FOO-0001",
             "--report",
             "superseded",
             "--date",
@@ -4097,31 +4034,31 @@ fn linked_handoff_lifecycle_outputs_never_touch_git() {
         .success()
         .stderr("")
         .stdout(format!(
-            "Cancelled GLP-0001 (glep-shimeji :: mirror round trip)\n\n  handoff: archived {}\n",
+            "Cancelled FOO-0001 (foo-bar :: mirror round trip)\n\n  handoff: archived {}\n",
             archived_path.display()
         ));
 
     cfg.command()
-        .args(["reopen", "GLP-0001"])
+        .args(["reopen", "FOO-0001"])
         .assert()
         .success();
     let pending_work_note_path_expected = d
         .path()
-        .join("notes/glep-shimeji/GLP-0001.md")
+        .join("notes/foo-bar/FOO-0001.md")
         .to_string_lossy()
         .replace('\\', "/");
     let pending_work_index_path_expected = d
         .path()
-        .join("notes/glep-shimeji/glep-shimeji.md")
+        .join("notes/foo-bar/foo-bar.md")
         .to_string_lossy()
         .replace('\\', "/");
     cfg.command()
-        .args(["remove", "GLP-0001", "--yes"])
+        .args(["remove", "FOO-0001", "--yes"])
         .env("NO_COLOR", "1")
         .assert()
         .success()
         .stdout(format!(
-            "Removed pwf task: **GLP-0001 glep-shimeji :: mirror round trip**\n  deleted: {}\n  unlinked: {}\n\n",
+            "Removed pwf task: **FOO-0001 foo-bar :: mirror round trip**\n  deleted: {}\n  unlinked: {}\n\n",
             pending_work_note_path_expected,
             pending_work_index_path_expected
         ))

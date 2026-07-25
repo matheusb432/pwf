@@ -6,11 +6,16 @@ use thiserror::Error;
 
 use super::{
     Agent, ClaudeSessionClient, CodexSessionClient, DispatchMode, DispatchTarget,
-    InlineSessionClient, ZellijSessionClient, ZellijTabOpenError, plan::PreparedSessionDispatch,
+    InlineSessionClient, ZellijSessionClient, ZellijTabOpenError,
+    plan_session::PreparedSessionDispatch, task_content,
 };
 use crate::{
-    AppRecordStore, PendingWorkItem,
-    pending_work::update::{self, UpdatePendingWorkError},
+    AppRecordStore, NoteMarkdownSource, PendingWorkItem,
+    pending_work::{
+        project_registry::ProjectRegistry,
+        show_pending_work_item::ShowPendingWorkError,
+        update_pending_work_item::{self, UpdatePendingWorkError},
+    },
 };
 
 pub struct DispatchSession {
@@ -45,6 +50,8 @@ pub enum DispatchSessionOk {
 pub enum DispatchSessionError {
     #[error(transparent)]
     Update(#[from] UpdatePendingWorkError),
+    #[error(transparent)]
+    Show(#[from] ShowPendingWorkError),
     #[error("Failed to run agent inline: {message}")]
     InlineFailed { message: String },
     #[error("Failed to dispatch into zellij session '{session}': {message}")]
@@ -69,19 +76,27 @@ pub enum DispatchSessionError {
 #[cqrsy::command]
 pub fn execute(
     command: DispatchSession,
-    store: &impl AppRecordStore<PendingWorkItem>,
+    store: &(impl AppRecordStore<PendingWorkItem> + NoteMarkdownSource),
+    projects: &ProjectRegistry,
     claude: &impl ClaudeSessionClient,
     codex: &impl CodexSessionClient,
     inline: &impl InlineSessionClient,
     zellij: &impl ZellijSessionClient,
 ) -> Result<DispatchSessionOk, DispatchSessionError> {
     let PreparedSessionDispatch {
-        plan,
+        mut plan,
+        confirmation,
         prepared_update,
         ..
     } = command.prepared;
     if let Some(prepared_update) = prepared_update {
-        update::persist(prepared_update, store)?;
+        update_pending_work_item::persist(prepared_update, store)?;
+        let task_content = task_content::load(&plan.launch.task_id, store, projects, store)?;
+        plan.launch.prompt = super::launch::launch_prompt(
+            &task_content,
+            &plan.launch.task_id,
+            confirmation.directives,
+        );
     }
 
     match plan.launch.agent {

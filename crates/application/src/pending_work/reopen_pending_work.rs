@@ -189,9 +189,9 @@ mod tests {
 
     fn registry() -> ProjectRegistry {
         ProjectRegistry::new(vec![(
-            ProjectName::try_new("glep-shimeji").unwrap(),
+            ProjectName::try_new("foo-bar").unwrap(),
             Some("/repo".to_string()),
-            Some("GLP".to_string()),
+            Some("FOO".to_string()),
         )])
     }
 
@@ -209,22 +209,22 @@ mod tests {
             section: None,
             body: "\nbody\n".to_string(),
             source: "body".to_string(),
-            locator: format!("/mem/glep-shimeji/{id}.md"),
+            locator: format!("/mem/foo-bar/{id}.md"),
             placement: None,
             materialization: Materialization::NoteFile,
         }
     }
 
-    fn glp() -> ProjectName {
-        ProjectName::try_new("glep-shimeji").unwrap()
+    fn foo() -> ProjectName {
+        ProjectName::try_new("foo-bar").unwrap()
     }
 
     fn staged(status: WorkItemStatus, entries: Vec<IndexEntry>) -> InMemoryStore {
         let store = InMemoryStore::default()
-            .with_prefix("glep-shimeji", "GLP")
-            .with_project("glep-shimeji", vec![record("GLP-0001", status)]);
+            .with_prefix("foo-bar", "FOO")
+            .with_project("foo-bar", vec![record("FOO-0001", status)]);
         for entry in entries {
-            <InMemoryStore as crate::AppRecordStore<IndexEntry>>::insert(&store, &glp(), entry)
+            <InMemoryStore as crate::AppRecordStore<IndexEntry>>::insert(&store, &foo(), entry)
                 .unwrap();
         }
         store
@@ -232,7 +232,7 @@ mod tests {
 
     fn entry(state: IndexEntryState) -> IndexEntry {
         IndexEntry {
-            id: WorkItemId::try_new("GLP-0001").unwrap(),
+            id: WorkItemId::try_new("FOO-0001").unwrap(),
             state,
             section: String::new(),
         }
@@ -240,7 +240,7 @@ mod tests {
 
     fn command() -> ReopenPendingWork {
         ReopenPendingWork {
-            id: "GLP-0001".to_string(),
+            id: "FOO-0001".to_string(),
         }
     }
 
@@ -254,16 +254,10 @@ mod tests {
         let out = super::execute(&command(), &store, &registry()).unwrap();
 
         assert!(!out.already_active);
-        assert_eq!(
-            store.items("glep-shimeji")[0].status,
-            WorkItemStatus::Active
-        );
-        assert_eq!(store.items("glep-shimeji")[0].completed, None);
-        assert_eq!(store.items("glep-shimeji")[0].commits, None);
-        assert_eq!(
-            store.entries("glep-shimeji")[0].state,
-            IndexEntryState::Open
-        );
+        assert_eq!(store.items("foo-bar")[0].status, WorkItemStatus::Active);
+        assert_eq!(store.items("foo-bar")[0].completed, None);
+        assert_eq!(store.items("foo-bar")[0].commits, None);
+        assert_eq!(store.entries("foo-bar")[0].state, IndexEntryState::Open);
     }
 
     #[test]
@@ -273,9 +267,9 @@ mod tests {
         let out = super::execute(&command(), &store, &registry()).unwrap();
 
         assert!(!out.already_active);
-        let entries = store.entries("glep-shimeji");
+        let entries = store.entries("foo-bar");
         assert_eq!(entries.len(), 1, "evicted link must be re-added");
-        assert_eq!(entries[0].id, WorkItemId::try_new("GLP-0001").unwrap());
+        assert_eq!(entries[0].id, WorkItemId::try_new("FOO-0001").unwrap());
         assert_eq!(entries[0].state, IndexEntryState::Open);
     }
 
@@ -286,10 +280,7 @@ mod tests {
         let out = super::execute(&command(), &store, &registry()).unwrap();
 
         assert!(out.already_active);
-        assert_eq!(
-            store.items("glep-shimeji")[0].commits.as_deref(),
-            Some("a..b")
-        );
+        assert_eq!(store.items("foo-bar")[0].commits.as_deref(), Some("a..b"));
     }
 
     #[test]
@@ -311,7 +302,7 @@ mod tests {
     fn reopen_restores_the_linked_archived_handoff() {
         let tagged = PendingWorkItem {
             tags: Some("[handoff]".to_string()),
-            ..record("GLP-0001", WorkItemStatus::Done)
+            ..record("FOO-0001", WorkItemStatus::Done)
         };
         let scope = HandoffScope {
             repository_root: PathBuf::from("/repo"),
@@ -322,24 +313,24 @@ mod tests {
                 location: HandoffLocation::Archived,
             },
             location: HandoffLocation::Archived,
-            project: Some(glp()),
+            project: Some(foo()),
             title: "Tray GUI".to_string(),
             status: Some(HandoffStatus::Done),
             created: Some(Timestamp::new("2026-01-01")),
             completed: Some(Timestamp::new("2026-01-02")),
-            pending_work_identifier_raw: Some("GLP-0001".to_string()),
+            pending_work_identifier_raw: Some("FOO-0001".to_string()),
             goals_completed: 1,
             goals_total: 1,
             body: "\n# Tray GUI\n".to_string(),
-            source: "---\nstatus: done\ncompleted: 2026-01-02\nproject: glep-shimeji\ncreated: 2026-01-01\npw: GLP-0001\n---\n\n# Tray GUI\n".to_string(),
+            source: "---\nstatus: done\ncompleted: 2026-01-02\nproject: foo-bar\ncreated: 2026-01-01\npw: FOO-0001\n---\n\n# Tray GUI\n".to_string(),
             locator: PathBuf::from(
                 "/repo/docs/handoffs/archived/2026-01-01-tray-gui.md",
             ),
             modified_timestamp: SystemTime::UNIX_EPOCH,
         };
         let store = InMemoryStore::default()
-            .with_prefix("glep-shimeji", "GLP")
-            .with_project("glep-shimeji", vec![tagged])
+            .with_prefix("foo-bar", "FOO")
+            .with_project("foo-bar", vec![tagged])
             .with_handoff_documents(scope.clone(), vec![handoff]);
 
         let outcome = super::execute(&command(), &store, &registry()).unwrap();
@@ -358,7 +349,7 @@ mod tests {
     fn reopen_reports_handoff_failure_after_pending_work_is_reopened() {
         let tagged = PendingWorkItem {
             tags: Some("[handoff]".to_string()),
-            ..record("GLP-0001", WorkItemStatus::Done)
+            ..record("FOO-0001", WorkItemStatus::Done)
         };
         let scope = HandoffScope {
             repository_root: PathBuf::from("/repo"),
@@ -369,24 +360,24 @@ mod tests {
                 location: HandoffLocation::Archived,
             },
             location: HandoffLocation::Archived,
-            project: Some(glp()),
+            project: Some(foo()),
             title: "Tray GUI".to_string(),
             status: Some(HandoffStatus::Done),
             created: Some(Timestamp::new("2026-01-01")),
             completed: Some(Timestamp::new("2026-01-02")),
-            pending_work_identifier_raw: Some("GLP-0001".to_string()),
+            pending_work_identifier_raw: Some("FOO-0001".to_string()),
             goals_completed: 1,
             goals_total: 1,
             body: "\n# Tray GUI\n".to_string(),
-            source: "---\nstatus: done\ncompleted: 2026-01-02\nproject: glep-shimeji\ncreated: 2026-01-01\npw: GLP-0001\n---\n\n# Tray GUI\n".to_string(),
+            source: "---\nstatus: done\ncompleted: 2026-01-02\nproject: foo-bar\ncreated: 2026-01-01\npw: FOO-0001\n---\n\n# Tray GUI\n".to_string(),
             locator: PathBuf::from(
                 "/repo/docs/handoffs/archived/2026-01-01-tray-gui.md",
             ),
             modified_timestamp: SystemTime::UNIX_EPOCH,
         };
         let store = InMemoryStore::default()
-            .with_prefix("glep-shimeji", "GLP")
-            .with_project("glep-shimeji", vec![tagged])
+            .with_prefix("foo-bar", "FOO")
+            .with_project("foo-bar", vec![tagged])
             .with_handoff_documents(scope, vec![handoff])
             .with_failure(FailurePoint::DocumentUpdate);
 
@@ -397,11 +388,8 @@ mod tests {
             ReopenPendingWorkError::HandoffAfterPendingWork {
                 ref pending_work_identifier,
                 ..
-            } if pending_work_identifier.as_ref() == "GLP-0001"
+            } if pending_work_identifier.as_ref() == "FOO-0001"
         ));
-        assert_eq!(
-            store.items("glep-shimeji")[0].status,
-            WorkItemStatus::Active
-        );
+        assert_eq!(store.items("foo-bar")[0].status, WorkItemStatus::Active);
     }
 }

@@ -242,15 +242,12 @@ mod tests {
 
     #[test]
     fn bare_pw_verb_defaults_to_pending_work() {
-        assert_eq!(
-            n(&["add", "glep-shimeji", "x"]),
-            vec!["add", "glep-shimeji", "x"]
-        );
+        assert_eq!(n(&["add", "foo-bar", "x"]), vec!["add", "foo-bar", "x"]);
     }
 
     #[test]
     fn bare_project_defaults_to_route() {
-        assert_eq!(n(&["glep-shimeji"]), vec!["route", "glep-shimeji"]);
+        assert_eq!(n(&["foo-bar"]), vec!["route", "foo-bar"]);
     }
 
     #[test]
@@ -261,8 +258,8 @@ mod tests {
     #[test]
     fn leading_non_verb_word_routes() {
         assert_eq!(
-            n(&["glep-shimeji", "do", "x"]),
-            vec!["route", "glep-shimeji", "do", "x"]
+            n(&["foo-bar", "do", "x"]),
+            vec!["route", "foo-bar", "do", "x"]
         );
     }
 
@@ -282,14 +279,14 @@ mod tests {
     #[test]
     fn route_keeps_flags_and_words() {
         assert_eq!(
-            n(&["glep", "do", "x", "--human"]),
-            vec!["route", "--human", "glep", "do", "x"]
+            n(&["foo", "do", "x", "--human"]),
+            vec!["route", "--human", "foo", "do", "x"]
         );
     }
 
     #[test]
     fn route_shorthand_forwards_all_flag() {
-        assert_eq!(n(&["glep", "--all"]), vec!["route", "--all", "glep"]);
+        assert_eq!(n(&["foo", "--all"]), vec!["route", "--all", "foo"]);
     }
 
     #[test]
@@ -303,16 +300,16 @@ mod tests {
     #[test]
     fn section_value_is_consumed_with_its_flag() {
         assert_eq!(
-            n(&["add", "glep", "--section", "future", "do", "x"]),
-            vec!["add", "--section", "future", "glep", "do", "x"]
+            n(&["add", "foo", "--section", "future", "do", "x"]),
+            vec!["add", "--section", "future", "foo", "do", "x"]
         );
     }
 
     #[test]
     fn effort_value_stays_with_its_flag_on_add() {
         assert_eq!(
-            n(&["add", "glep", "--effort", "3", "do", "x"]),
-            vec!["add", "--effort", "3", "glep", "do", "x"]
+            n(&["add", "foo", "--effort", "3", "do", "x"]),
+            vec!["add", "--effort", "3", "foo", "do", "x"]
         );
     }
 
@@ -403,7 +400,7 @@ mod tests {
             n(&[
                 "done",
                 "--id",
-                "GLP-0001",
+                "FOO-0001",
                 "--commits",
                 "a..b",
                 "--commits",
@@ -412,7 +409,7 @@ mod tests {
             vec![
                 "done",
                 "--id",
-                "GLP-0001",
+                "FOO-0001",
                 "--commits",
                 "a..b",
                 "--commits",

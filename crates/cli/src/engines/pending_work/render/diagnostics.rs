@@ -1,6 +1,6 @@
 use pwf_application::pending_work::{
     AddedItem,
-    add::{AddPendingWorkDiagnostics, AddPendingWorkError},
+    add_pending_work_item::{AddPendingWorkDiagnostics, AddPendingWorkError},
 };
 
 pub(in crate::engines::pending_work) const TITLE_NORMALIZED_NOTICE: &str =
@@ -65,7 +65,7 @@ fn created_section_for_error(error: &AddPendingWorkError) -> Option<(&str, &str)
 
 #[cfg(test)]
 mod tests {
-    use pwf_application::pending_work::add::CreateItemError;
+    use pwf_application::pending_work::add_pending_work_item::CreateItemError;
     use pwf_domain::pending_work::ProjectName;
     use pwf_infra::obsidian::ObsidianStoreError;
 
@@ -75,16 +75,16 @@ mod tests {
     fn add_write_index_error_exposes_created_section_diagnostic_data() {
         let error = AddPendingWorkError::WriteStore {
             diagnostics: AddPendingWorkDiagnostics {
-                project: "glep-shimeji".to_string(),
+                project: "foo-bar".to_string(),
                 created_section: Some("Human".to_string()),
                 title_normalized: false,
             },
             source: CreateItemError::InsertIndex {
-                project: ProjectName::try_new("glep-shimeji").unwrap(),
+                project: ProjectName::try_new("foo-bar").unwrap(),
                 created_section: Some("Human".to_string()),
                 source: Box::new(ObsidianStoreError::AddWriteIndexFile {
                     source: std::io::Error::other("index write failed"),
-                    project: "glep-shimeji".to_string(),
+                    project: "foo-bar".to_string(),
                     created_section: Some("Human".to_string()),
                 }),
             },
@@ -92,7 +92,7 @@ mod tests {
 
         assert_eq!(
             created_section_for_error(&error),
-            Some(("glep-shimeji", "Human"))
+            Some(("foo-bar", "Human"))
         );
     }
 }

@@ -458,22 +458,19 @@ mod tests {
 
     #[test]
     fn home_relative_and_absolute_paths_have_the_same_identity() {
-        let home = Path::new("/home/developer");
+        let home = Path::new("/home/tester");
         let home_relative = super::resolve("~/tasks/shared", home).unwrap();
-        let absolute = super::resolve("/home/developer/tasks/shared", home).unwrap();
+        let absolute = super::resolve("/home/tester/tasks/shared", home).unwrap();
 
         assert_eq!(home_relative.identity(), absolute.identity());
-        assert_eq!(
-            home_relative.path(),
-            Path::new("/home/developer/tasks/shared")
-        );
+        assert_eq!(home_relative.path(), Path::new("/home/tester/tasks/shared"));
     }
 
     #[test]
     fn windows_and_mixed_separators_have_a_portable_identity() {
-        let home = Path::new(r"C:\Users\matheus");
+        let home = Path::new(r"C:\Users\tester");
         let home_relative = super::resolve(r"~\tasks/shared", home).unwrap();
-        let absolute = super::resolve(r"C:/Users\matheus\tasks\shared", home).unwrap();
+        let absolute = super::resolve(r"C:/Users\tester\tasks\shared", home).unwrap();
 
         assert_eq!(home_relative.identity(), absolute.identity());
     }
@@ -488,7 +485,7 @@ mod tests {
             "~/tasks//shared",
             r"~\tasks\\shared",
         ] {
-            let error = super::resolve(raw, Path::new("/home/developer")).unwrap_err();
+            let error = super::resolve(raw, Path::new("/home/tester")).unwrap_err();
 
             assert_eq!(
                 error.to_string(),
@@ -507,7 +504,7 @@ mod tests {
             r"~\D:tasks",
             "~/nested/D:/tasks",
         ] {
-            let error = super::resolve(raw, Path::new("/home/developer")).unwrap_err();
+            let error = super::resolve(raw, Path::new("/home/tester")).unwrap_err();
 
             assert_eq!(
                 error.to_string(),
@@ -528,7 +525,7 @@ mod tests {
             r"~\nested\D:\tasks",
         ] {
             assert!(
-                super::resolve(raw, Path::new(r"C:\Users\matheus")).is_err(),
+                super::resolve(raw, Path::new(r"C:\Users\tester")).is_err(),
                 "accepted {raw:?}"
             );
         }
@@ -543,7 +540,7 @@ mod tests {
             "/srv/tasks/./shared",
             r"C:\tasks\..\shared",
         ] {
-            let error = super::resolve(raw, Path::new("/home/developer")).unwrap_err();
+            let error = super::resolve(raw, Path::new("/home/tester")).unwrap_err();
 
             assert_eq!(
                 error.to_string(),
@@ -555,7 +552,7 @@ mod tests {
 
     #[test]
     fn safe_non_home_absolute_paths_remain_unchanged() {
-        let resolved = super::resolve("/srv/pwf/tasks", Path::new("/home/developer")).unwrap();
+        let resolved = super::resolve("/srv/pwf/tasks", Path::new("/home/tester")).unwrap();
 
         assert_eq!(resolved.path(), Path::new("/srv/pwf/tasks"));
     }

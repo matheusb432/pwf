@@ -408,7 +408,7 @@ mod tests {
     #[test]
     fn positional_and_id_flag_conflict_is_rejected() {
         let error = parse_argv(
-            ["done", "GLP-0001", "--id", "GLP-0002"]
+            ["done", "FOO-0001", "--id", "FOO-0002"]
                 .map(str::to_string)
                 .to_vec(),
         )

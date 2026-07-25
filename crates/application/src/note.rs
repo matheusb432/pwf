@@ -1,8 +1,8 @@
 //! Defines project-note operations and shared read DTOs.
 
-pub mod add;
+pub mod add_note;
 pub mod dto;
 mod identifier;
-pub mod list;
-pub mod remove;
-pub mod update;
+pub mod list_notes;
+pub mod remove_note;
+pub mod update_note;

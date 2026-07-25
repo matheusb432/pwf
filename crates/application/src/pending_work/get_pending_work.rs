@@ -16,7 +16,7 @@ use crate::{
 /// # Examples
 ///
 /// ```
-/// use pwf_application::pending_work::list::PrerequisiteStatus;
+/// use pwf_application::pending_work::get_pending_work::PrerequisiteStatus;
 /// use pwf_domain::pending_work::{WorkItemId, WorkItemStatus};
 ///
 /// let prerequisite = PrerequisiteStatus {
@@ -954,10 +954,10 @@ mod tests {
     #[test]
     fn all_scope_groups_by_section_rank() {
         let (store, registry) = pwf_store(vec![
-            sectioned("GLP-0004", "Future"),
-            sectioned("GLP-0003", "Human"),
-            sectioned("GLP-0002", "Low-prio"),
-            record("GLP-0001"),
+            sectioned("FOO-0004", "Future"),
+            sectioned("FOO-0003", "Human"),
+            sectioned("FOO-0002", "Low-prio"),
+            record("FOO-0001"),
         ]);
 
         let got = run(
@@ -972,7 +972,7 @@ mod tests {
 
         assert_eq!(
             listed_ids(&got),
-            ["GLP-0001", "GLP-0002", "GLP-0003", "GLP-0004"]
+            ["FOO-0001", "FOO-0002", "FOO-0003", "FOO-0004"]
         );
     }
 
@@ -1164,9 +1164,9 @@ mod tests {
     #[test]
     fn created_asc_orders_oldest_first() {
         let (store, registry) = pwf_store(vec![
-            dated_item("GLP-0001", "2026-01-01"),
-            dated_item("GLP-0002", "2026-03-01"),
-            dated_item("GLP-0003", "2026-02-01"),
+            dated_item("FOO-0001", "2026-01-01"),
+            dated_item("FOO-0002", "2026-03-01"),
+            dated_item("FOO-0003", "2026-02-01"),
         ]);
 
         let got = run(
@@ -1182,7 +1182,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(listed_ids(&got), ["GLP-0001", "GLP-0003", "GLP-0002"]);
+        assert_eq!(listed_ids(&got), ["FOO-0001", "FOO-0003", "FOO-0002"]);
     }
 
     #[test]
@@ -1233,7 +1233,7 @@ mod tests {
     #[test]
     fn all_uncaps_and_direct_mode_uses_the_default_cap() {
         let (store, registry) =
-            pwf_store((1..=12).map(|n| record(&format!("GLP-{n:04}"))).collect());
+            pwf_store((1..=12).map(|n| record(&format!("FOO-{n:04}"))).collect());
 
         let all = run(
             &store,

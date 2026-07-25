@@ -6,10 +6,10 @@ use clap::{Args, Subcommand};
 use pwf_application::{
     Clock,
     note::{
-        add::{self, AddNote, AddedNote},
-        list::{self, ListNotes, ListedNotes},
-        remove::{self, RemoveNote, RemovedNote},
-        update::{self, UpdateNote, UpdatedNote},
+        add_note::{self, AddNote, AddedNote},
+        list_notes::{self, ListNotes, ListedNotes},
+        remove_note::{self, RemoveNote, RemovedNote},
+        update_note::{self, UpdateNote, UpdatedNote},
     },
     pending_work::ProjectRegistry,
 };
@@ -84,7 +84,7 @@ where
     C: Clock,
 {
     match &arguments.command {
-        Command::List { project, number } => list::execute(
+        Command::List { project, number } => list_notes::execute(
             ListNotes {
                 project_identifier: project.clone(),
                 number: *number,
@@ -94,7 +94,7 @@ where
         )
         .map(|result| render_listed(&result))
         .map_err(|error| error.to_string()),
-        Command::Add { project, message } => add::execute(
+        Command::Add { project, message } => add_note::execute(
             AddNote {
                 project_identifier: project.clone(),
                 message: message.join(" "),
@@ -106,7 +106,7 @@ where
         )
         .map(|result| render_added(&result))
         .map_err(|error| error.to_string()),
-        Command::Remove { project, id } => remove::execute(
+        Command::Remove { project, id } => remove_note::execute(
             RemoveNote {
                 project_identifier: project.clone(),
                 id: id.clone(),
@@ -120,7 +120,7 @@ where
             project,
             id,
             message,
-        } => update::execute(
+        } => update_note::execute(
             UpdateNote {
                 project_identifier: project.clone(),
                 id: id.clone(),
@@ -167,8 +167,8 @@ fn render_updated(result: &UpdatedNote) -> String {
 #[cfg(test)]
 mod tests {
     use pwf_application::note::{
-        add::AddedNote, dto::ListedNote, list::ListedNotes, remove::RemovedNote,
-        update::UpdatedNote,
+        add_note::AddedNote, dto::ListedNote, list_notes::ListedNotes, remove_note::RemovedNote,
+        update_note::UpdatedNote,
     };
     use pwf_domain::{note::NoteId, pending_work::ProjectName};
 

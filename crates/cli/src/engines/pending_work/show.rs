@@ -3,7 +3,7 @@ use pwf_application::{
     AppRecordStore, NoteMarkdownSource, PendingWorkItem,
     pending_work::{
         ProjectRegistry, ShowOutput,
-        show::{self, ShowPendingWorkItem},
+        show_pending_work_item::{self, ShowPendingWorkItem},
     },
 };
 use pwf_infra::obsidian::ObsidianStore;
@@ -51,6 +51,6 @@ where
     } else {
         ShowOutput::Markdown
     };
-    show::execute(&ShowPendingWorkItem { id, output }, store, projects, store)
+    show_pending_work_item::execute(&ShowPendingWorkItem { id, output }, store, projects, store)
         .map_err(|error| PendingWorkError::ApplicationRead(error.to_string()))
 }

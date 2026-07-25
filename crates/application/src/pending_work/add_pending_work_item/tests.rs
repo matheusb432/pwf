@@ -159,8 +159,8 @@ fn plan_title_preserves_legacy_separator_whitespace_and_unicode_rules() {
         "déjà vu mañana cleanup"
     );
     assert_eq!(
-        plan_title("glep---shimeji", "docs/plans/2026-01-01-plan.md"),
-        "glep shimeji plan"
+        plan_title("foo---bar", "docs/plans/2026-01-01-plan.md"),
+        "foo bar plan"
     );
 }
 

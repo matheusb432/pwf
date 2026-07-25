@@ -15,7 +15,7 @@ const DEFAULT_NOTE_COUNT: usize = 10;
 /// # Examples
 ///
 /// ```
-/// use pwf_application::note::list::ListNotes;
+/// use pwf_application::note::list_notes::ListNotes;
 ///
 /// let query = ListNotes {
 ///     project_identifier: "pwf".to_string(),
@@ -36,7 +36,7 @@ pub struct ListNotes {
 /// # Examples
 ///
 /// ```
-/// use pwf_application::note::list::ListedNotes;
+/// use pwf_application::note::list_notes::ListedNotes;
 /// use pwf_domain::pending_work::ProjectName;
 ///
 /// let result = ListedNotes {
@@ -61,7 +61,7 @@ pub struct ListedNotes {
 /// # Examples
 ///
 /// ```
-/// use pwf_application::note::list::ListNotesError;
+/// use pwf_application::note::list_notes::ListNotesError;
 ///
 /// let error = ListNotesError::UnknownProject {
 ///     identifier: "missing".to_string(),
@@ -93,7 +93,7 @@ pub enum ListNotesError {
 /// ```
 /// # use pwf_application::{
 /// #     AppRecordStore, ProjectNote,
-/// #     note::list::{self, ListNotes, ListNotesError, ListedNotes},
+/// #     note::list_notes::{self, ListNotes, ListNotesError, ListedNotes},
 /// #     pending_work::ProjectRegistry,
 /// # };
 /// # fn list<S>(
@@ -104,7 +104,7 @@ pub enum ListNotesError {
 /// # where
 /// #     S: AppRecordStore<ProjectNote>,
 /// # {
-/// list::execute(query, store, projects)
+/// list_notes::execute(query, store, projects)
 /// # }
 /// ```
 #[cqrsy::query]

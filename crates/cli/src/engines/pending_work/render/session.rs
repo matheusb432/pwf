@@ -2,7 +2,7 @@ use std::fmt::Write;
 
 use anstyle::AnsiColor;
 use pwf_application::pending_work::session::{
-    Agent, DispatchMode, SessionPlan, dispatch::DispatchSessionOk,
+    Agent, DispatchMode, SessionPlan, dispatch_session::DispatchSessionOk,
 };
 use pwf_infra::session::render_argv;
 
@@ -97,7 +97,7 @@ nothing dispatched.\n",
 #[cfg(test)]
 mod tests {
     use pwf_application::pending_work::session::{
-        Agent, DispatchTarget, dispatch::DispatchSessionOk,
+        Agent, DispatchTarget, dispatch_session::DispatchSessionOk,
     };
 
     use super::*;

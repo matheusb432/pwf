@@ -3,7 +3,7 @@
 use pwf_domain::pending_work::ProjectPrefix;
 
 use super::{DispatchTarget, LaunchDirectives};
-use crate::pending_work::{identifier, list::PendingWorkItemView};
+use crate::pending_work::{get_pending_work::PendingWorkItemView, identifier};
 
 /// Autonomy directive inserted by `--auto`.
 const AUTONOMY_DIRECTIVE: &str = "You MUST execute this autonomously. Do not prompt the user for questions. But if something seems critical and needs user decision, STOP execution and clarify";
@@ -16,28 +16,25 @@ pub(super) fn thread_title(item: &PendingWorkItemView) -> String {
     title
 }
 
-pub(super) fn launch_prompt(item: &PendingWorkItemView, directives: LaunchDirectives) -> String {
-    let mut prompt = format_prompt(item, directives.autonomous);
-    if directives.worktree {
+pub(super) fn launch_prompt(
+    task_content: &str,
+    task_id: &str,
+    directives: LaunchDirectives,
+) -> String {
+    let mut prompt = String::new();
+    if directives.autonomous {
+        prompt.push_str(AUTONOMY_DIRECTIVE);
         prompt.push_str("\n\n");
-        prompt.push_str(&worktree_instruction(&item.id));
     }
-    prompt.trim().to_string()
-}
-
-fn format_prompt(item: &PendingWorkItemView, autonomous: bool) -> String {
-    let mut header = String::new();
-    header.push_str("Pending-work ID: ");
-    header.push_str(&item.id);
-    header.push_str("\nProject: ");
-    header.push_str(&item.project);
-    if autonomous {
-        header.push('\n');
-        header.push_str(AUTONOMY_DIRECTIVE);
+    prompt.push_str(task_content);
+    if directives.worktree {
+        if !prompt.ends_with('\n') {
+            prompt.push('\n');
+        }
+        prompt.push('\n');
+        prompt.push_str(&worktree_instruction(task_id));
     }
-    header.push_str("\n\ndo ");
-    header.push_str(&item.id);
-    header
+    prompt
 }
 
 fn worktree_instruction(id: &str) -> String {
@@ -110,63 +107,11 @@ mod tests {
         }
     }
 
-    fn launch(worktree: bool, autonomous: bool) -> super::super::AgentLaunch {
-        AgentLaunch::new(
-            &item(),
-            LaunchDirectives {
-                worktree,
-                autonomous,
-            },
-            Agent::Claude,
-            None,
-        )
-    }
-
-    #[test]
-    fn plain_prompt_is_a_thin_pointer_without_the_note_body() {
-        let launch = launch(false, false);
-
-        assert_eq!(
-            launch.prompt,
-            "Pending-work ID: PWF-0076\nProject: pwf\n\ndo PWF-0076"
-        );
-        assert!(!launch.prompt.contains("assemble the widget"));
-    }
-
-    #[test]
-    fn autonomous_prompt_keeps_the_exact_directive_in_the_header() {
-        let launch = launch(false, true);
-
-        assert_eq!(
-            launch.prompt,
-            "Pending-work ID: PWF-0076\nProject: pwf\nYou MUST execute this autonomously. Do not prompt the user for questions. But if something seems critical and needs user decision, STOP execution and clarify\n\ndo PWF-0076"
-        );
-    }
-
-    #[test]
-    fn worktree_prompt_keeps_the_exact_instruction() {
-        let launch = launch(true, false);
-
-        assert_eq!(
-            launch.prompt,
-            "Pending-work ID: PWF-0076\nProject: pwf\n\ndo PWF-0076\n\nWorkspace: before doing anything else, use a git-worktrees skill to create a git worktree here named `PWF-0076` (the worktree name is this task's id), and do all of this task's work inside that worktree."
-        );
-    }
-
-    #[test]
-    fn prompt_directives_compose_without_closeout_policy() {
-        let launch = launch(true, true);
-
-        assert!(launch.prompt.contains("execute this autonomously"));
-        assert!(launch.prompt.contains("git-worktrees skill"));
-        assert!(!launch.prompt.contains("Closeout:"));
-        assert!(!launch.prompt.contains("pwf done"));
-    }
-
     #[test]
     fn launch_carries_only_semantic_agent_values() {
         let launch = AgentLaunch::new(
             &item(),
+            "task content",
             LaunchDirectives::default(),
             Agent::Claude,
             Some("opus".to_string()),

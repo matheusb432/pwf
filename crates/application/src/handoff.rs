@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 
-pub mod add;
+pub mod add_handoff;
 mod ledger;
 pub(crate) mod lifecycle;
-pub mod list;
+pub mod list_handoffs;
 mod naming;
 pub mod ports;
 

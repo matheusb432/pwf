@@ -8,6 +8,8 @@ use std::{
 };
 
 pub use app_db_store::AppDbStore;
+#[cfg(test)]
+pub(crate) use app_db_store::TestDatabase;
 pub use app_record_store::{AppRecordStore, Record};
 pub use clock::Clock;
 use pwf_domain::{

@@ -410,9 +410,9 @@ mod tests {
 
     fn registry() -> ProjectRegistry {
         ProjectRegistry::new(vec![(
-            ProjectName::try_new("glep-shimeji").unwrap(),
+            ProjectName::try_new("foo-bar").unwrap(),
             Some("/repo".to_string()),
-            Some("GLP".to_string()),
+            Some("FOO".to_string()),
         )])
     }
 
@@ -430,7 +430,7 @@ mod tests {
             section: None,
             body: body.to_string(),
             source: format!("---\nstatus: {status}\n---\n{body}"),
-            locator: format!("/mem/glep-shimeji/{id}.md"),
+            locator: format!("/mem/foo-bar/{id}.md"),
             placement: None,
             materialization: Materialization::NoteFile,
         }
@@ -438,8 +438,8 @@ mod tests {
 
     fn staged(status: WorkItemStatus, body: &str) -> InMemoryStore {
         InMemoryStore::default()
-            .with_prefix("glep-shimeji", "GLP")
-            .with_project("glep-shimeji", vec![record("GLP-0001", status, body)])
+            .with_prefix("foo-bar", "FOO")
+            .with_project("foo-bar", vec![record("FOO-0001", status, body)])
     }
 
     fn empty(id: &str) -> UpdatePendingWorkItem {
@@ -462,7 +462,7 @@ mod tests {
     fn update_rejects_empty_patch_with_nothing_to_update() {
         let store = staged(WorkItemStatus::Active, "## Goals\n- x\n");
 
-        let error = super::execute(empty("GLP-0001"), &store, &registry()).unwrap_err();
+        let error = super::execute(empty("FOO-0001"), &store, &registry()).unwrap_err();
 
         assert!(matches!(error, UpdatePendingWorkError::NothingToUpdate));
         assert_eq!(
@@ -476,7 +476,7 @@ mod tests {
         let store = staged(WorkItemStatus::Done, "## Goals\n- x\n");
         let cmd = UpdatePendingWorkItem {
             commits: vec![" abc..def, ghi..jkl ".to_string(), "abc..def".to_string()],
-            ..empty("GLP-0001")
+            ..empty("FOO-0001")
         };
 
         let updated = super::execute(cmd, &store, &registry()).unwrap();
@@ -484,12 +484,12 @@ mod tests {
         assert_eq!(
             updated,
             UpdatePendingWorkItemOk::Changed {
-                id: "GLP-0001".to_string(),
+                id: "FOO-0001".to_string(),
                 changes: vec!["commits: abc..def, ghi..jkl".to_string()],
             }
         );
         assert_eq!(
-            store.items("glep-shimeji")[0].commits.as_deref(),
+            store.items("foo-bar")[0].commits.as_deref(),
             Some("abc..def, ghi..jkl")
         );
     }
@@ -499,14 +499,14 @@ mod tests {
         let store = staged(WorkItemStatus::Done, "body\n");
         let cmd = UpdatePendingWorkItem {
             title: Some("new title".to_string()),
-            ..empty("GLP-0001")
+            ..empty("FOO-0001")
         };
 
         let error = super::execute(cmd, &store, &registry()).unwrap_err();
 
         assert!(matches!(
             error,
-            UpdatePendingWorkError::ClosedItemAmendOnly { ref id } if id == "GLP-0001"
+            UpdatePendingWorkError::ClosedItemAmendOnly { ref id } if id == "FOO-0001"
         ));
     }
 
@@ -516,7 +516,7 @@ mod tests {
         let cmd = UpdatePendingWorkItem {
             title: Some("New Title".to_string()),
             prompt: Some("fresh prompt".to_string()),
-            ..empty("GLP-0001")
+            ..empty("FOO-0001")
         };
 
         let updated = super::execute(cmd, &store, &registry()).unwrap();
@@ -524,13 +524,13 @@ mod tests {
         assert_eq!(
             updated,
             UpdatePendingWorkItemOk::OpenItemEdit {
-                id: "GLP-0001".to_string(),
-                project: "glep-shimeji".to_string(),
+                id: "FOO-0001".to_string(),
+                project: "foo-bar".to_string(),
                 title: "new title".to_string(),
                 title_normalized: false,
             }
         );
-        let item = &store.items("glep-shimeji")[0];
+        let item = &store.items("foo-bar")[0];
         assert_eq!(item.title, "new title");
         assert_eq!(item.body, format!("## Goals{S}- fresh prompt"));
     }
@@ -540,15 +540,12 @@ mod tests {
         let store = staged(WorkItemStatus::Active, "body\n");
         let cmd = UpdatePendingWorkItem {
             title: Some("Fix Parser: Handle Colons".to_string()),
-            ..empty("GLP-0001")
+            ..empty("FOO-0001")
         };
 
         let updated = super::execute(cmd, &store, &registry()).unwrap();
 
-        assert_eq!(
-            store.items("glep-shimeji")[0].title,
-            "fix parser; handle colons"
-        );
+        assert_eq!(store.items("foo-bar")[0].title, "fix parser; handle colons");
         assert!(matches!(
             updated,
             UpdatePendingWorkItemOk::OpenItemEdit {
@@ -561,11 +558,11 @@ mod tests {
     fn staged_with_tags(raw: &str) -> InMemoryStore {
         let record = PendingWorkItem {
             tags: Some(raw.to_string()),
-            ..record("GLP-0001", WorkItemStatus::Active, "body\n")
+            ..record("FOO-0001", WorkItemStatus::Active, "body\n")
         };
         InMemoryStore::default()
-            .with_prefix("glep-shimeji", "GLP")
-            .with_project("glep-shimeji", vec![record])
+            .with_prefix("foo-bar", "FOO")
+            .with_project("foo-bar", vec![record])
     }
 
     fn tags(values: &[&str]) -> Vec<String> {
@@ -577,13 +574,13 @@ mod tests {
         let store = staged_with_tags("[sqlite, godot]");
         let cmd = UpdatePendingWorkItem {
             tags: tags(&["godot", "csharp-export"]),
-            ..empty("GLP-0001")
+            ..empty("FOO-0001")
         };
 
         super::execute(cmd, &store, &registry()).unwrap();
 
         assert_eq!(
-            store.items("glep-shimeji")[0].tags.as_deref(),
+            store.items("foo-bar")[0].tags.as_deref(),
             Some("[sqlite, godot, csharp_export]")
         );
     }
@@ -594,15 +591,12 @@ mod tests {
         let cmd = UpdatePendingWorkItem {
             tags: tags(&["sqlite"]),
             tags_clear: true,
-            ..empty("GLP-0001")
+            ..empty("FOO-0001")
         };
 
         super::execute(cmd, &store, &registry()).unwrap();
 
-        assert_eq!(
-            store.items("glep-shimeji")[0].tags.as_deref(),
-            Some("[sqlite]")
-        );
+        assert_eq!(store.items("foo-bar")[0].tags.as_deref(), Some("[sqlite]"));
     }
 
     #[test]
@@ -610,7 +604,7 @@ mod tests {
         let store = staged_with_tags("sqlite, godot");
         let cmd = UpdatePendingWorkItem {
             tags: tags(&["sqlite"]),
-            ..empty("GLP-0001")
+            ..empty("FOO-0001")
         };
 
         let error = super::execute(cmd, &store, &registry()).unwrap_err();
@@ -618,7 +612,7 @@ mod tests {
         assert!(matches!(
             error,
             UpdatePendingWorkError::InvalidTagsFrontmatter { ref id, ref raw }
-                if id == "GLP-0001" && raw == "sqlite, godot"
+                if id == "FOO-0001" && raw == "sqlite, godot"
         ));
     }
 
@@ -627,7 +621,7 @@ mod tests {
         let store = staged(WorkItemStatus::Active, "body\n");
         let cmd = UpdatePendingWorkItem {
             tags: vec!["sqlite__export".to_string()],
-            ..empty("GLP-0001")
+            ..empty("FOO-0001")
         };
 
         let error = super::execute(cmd, &store, &registry()).unwrap_err();
@@ -645,34 +639,34 @@ mod tests {
     #[test]
     fn update_validates_and_merges_prerequisites_in_the_application() {
         let store = InMemoryStore::default()
-            .with_prefix("glep-shimeji", "GLP")
+            .with_prefix("foo-bar", "FOO")
             .with_project(
-                "glep-shimeji",
+                "foo-bar",
                 vec![
                     PendingWorkItem {
-                        prereq: Some("[[GLP-0001]], [[GLP-0001]]".to_string()),
-                        ..record("GLP-0002", WorkItemStatus::Active, "body\n")
+                        prereq: Some("[[FOO-0001]], [[FOO-0001]]".to_string()),
+                        ..record("FOO-0002", WorkItemStatus::Active, "body\n")
                     },
-                    record("GLP-0001", WorkItemStatus::Done, "body\n"),
+                    record("FOO-0001", WorkItemStatus::Done, "body\n"),
                 ],
             );
         let cmd = UpdatePendingWorkItem {
-            prereq: vec!["glp1, GLP-0001".to_string()],
-            ..empty("GLP-0002")
+            prereq: vec!["foo1, FOO-0001".to_string()],
+            ..empty("FOO-0002")
         };
 
         super::execute(cmd, &store, &registry()).unwrap();
 
         let item = store
-            .items("glep-shimeji")
+            .items("foo-bar")
             .into_iter()
             .find(|item| {
                 item.id
                     .as_item()
-                    .is_some_and(|id| id.as_ref() == "GLP-0002")
+                    .is_some_and(|id| id.as_ref() == "FOO-0002")
             })
             .unwrap();
-        assert_eq!(item.prereq.as_deref(), Some("[[GLP-0001]]"));
+        assert_eq!(item.prereq.as_deref(), Some("[[FOO-0001]]"));
     }
 
     #[test]
@@ -680,14 +674,14 @@ mod tests {
         let store = staged(WorkItemStatus::Active, "body\n");
         let cmd = UpdatePendingWorkItem {
             prompt: Some("x".to_string()),
-            ..empty("glp-9999")
+            ..empty("foo-9999")
         };
 
         let error = super::execute(cmd, &store, &registry()).unwrap_err();
 
         assert!(matches!(
             error,
-            UpdatePendingWorkError::ItemNotFound { ref id } if id == "glp-9999"
+            UpdatePendingWorkError::ItemNotFound { ref id } if id == "foo-9999"
         ));
     }
 }

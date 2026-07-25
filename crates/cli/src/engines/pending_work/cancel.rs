@@ -3,7 +3,7 @@ use pwf_application::{
     Clock,
     pending_work::{
         ProjectRegistry,
-        cancel::{self, CancelPendingWork, CancelPendingWorkError},
+        cancel_pending_work::{self, CancelPendingWork, CancelPendingWorkError},
     },
 };
 use pwf_infra::obsidian::ObsidianStore;
@@ -51,7 +51,8 @@ pub(super) fn run(
         arguments.commits.clone(),
         arguments.review,
     );
-    let output = cancel::execute(&command, store, projects, clock).map_err(map_error)?;
+    let output =
+        cancel_pending_work::execute(&command, store, projects, clock).map_err(map_error)?;
     if let Some(review) = output.review_item.as_ref() {
         emit_created_section(review);
     }

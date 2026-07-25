@@ -1,6 +1,8 @@
 //! Renders byte-stable close and reopen confirmations plus ordered done-queue diagnostics.
 
-use pwf_application::pending_work::{done::CompletedPendingWork, reopen::ReopenedPendingWork};
+use pwf_application::pending_work::{
+    complete_pending_work::CompletedPendingWork, reopen_pending_work::ReopenedPendingWork,
+};
 
 use super::confirmation::render_review_item;
 

@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use clap::Args;
-use pwf_application::project::resume::{self, ResumeProject};
+use pwf_application::project::resume_project::{self, ResumeProject};
 use pwf_domain::project::ProjectPrefix;
 use pwf_infra::SqliteStore;
 
@@ -19,7 +19,7 @@ pub(super) async fn run(
     database: &SqliteStore,
     home: PathBuf,
 ) -> Result<String, String> {
-    let change = resume::execute(
+    let change = resume_project::execute(
         ResumeProject {
             id: arguments.id,
             home,

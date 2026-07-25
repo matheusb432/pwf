@@ -297,68 +297,24 @@ mod tests {
         ProjectName, ProjectPrefix, ProjectSource, ProjectSourceKind, ProjectSourceValue,
         ProjectTasks, ProjectTasksKind, ProjectTasksPath,
     };
-    use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
 
     use super::*;
+    use crate::ports::TestDatabase;
 
-    #[derive(Clone)]
-    struct TestDatabase(SqlitePool);
-
-    impl AppDbStore for TestDatabase {
-        fn pool(&self) -> &SqlitePool {
-            &self.0
-        }
-    }
-
-    async fn database() -> TestDatabase {
-        let pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .unwrap();
-        sqlx::query(
-            "CREATE TABLE project_sources (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, value TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT '2026-07-26T00:00:00.000Z', UNIQUE (kind, value))",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-        sqlx::query(
-            "CREATE TABLE projects (id TEXT PRIMARY KEY, project_source_id INTEGER NOT NULL, title TEXT NOT NULL UNIQUE, tasks_kind TEXT NOT NULL, tasks_path TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT '2026-07-26T00:00:00.000Z', paused_at TEXT, UNIQUE (tasks_kind, tasks_path))",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-        TestDatabase(pool)
-    }
-
-    async fn insert_paused_project(database: &TestDatabase, id: &str, tasks_path: &str) {
-        let source_id =
-            sqlx::query("INSERT INTO project_sources (kind, value) VALUES ('directory', ?)")
-                .bind(format!("/work/{id}"))
-                .execute(database.pool())
-                .await
-                .unwrap()
-                .last_insert_rowid();
-        sqlx::query(
-            "INSERT INTO projects (id, project_source_id, title, tasks_kind, tasks_path, paused_at) VALUES (?, ?, ?, 'directory', ?, '2026-07-26T00:00:00.000Z')",
-        )
-        .bind(id)
-        .bind(source_id)
-        .bind(id.to_ascii_lowercase())
-        .bind(tasks_path)
-        .execute(database.pool())
-        .await
-        .unwrap();
-    }
-
-    fn project(id: &str, title: &str, tasks_path: &str, home: PathBuf) -> AddProject {
+    fn project(
+        id: &str,
+        title: &str,
+        source_value: &str,
+        tasks_path: &str,
+        home: PathBuf,
+    ) -> AddProject {
         AddProject {
             fields: AddProjectFields {
                 id: ProjectPrefix::try_new(id).unwrap(),
                 title: ProjectName::try_new(title).unwrap(),
                 source: ProjectSource::new(
                     ProjectSourceKind::Directory,
-                    ProjectSourceValue::try_new(format!("/work/{id}")).unwrap(),
+                    ProjectSourceValue::try_new(source_value).unwrap(),
                 ),
                 tasks: ProjectTasks::new(
                     ProjectTasksKind::Directory,
@@ -370,14 +326,128 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn runtime_alias_of_paused_project_is_rejected() {
-        let database = database().await;
-        let home = PathBuf::from("/home/developer");
-        let resolved_path = home.join("tasks/shared");
-        insert_paused_project(&database, "PWF", "~/tasks/shared").await;
+    async fn matching_source_row_is_reused() {
+        let database = TestDatabase::new().await;
+        let home = PathBuf::from("/home/tester");
+
+        super::execute(
+            project("ONE", "one", "/work/shared", "/tasks/one", home.clone()),
+            &database,
+        )
+        .await
+        .unwrap();
+        super::execute(
+            project("TWO", "two", "/work/shared", "/tasks/two", home),
+            &database,
+        )
+        .await
+        .unwrap();
+
+        let source_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM project_sources")
+            .fetch_one(database.pool())
+            .await
+            .unwrap();
+        assert_eq!(source_count, 1);
+    }
+
+    #[tokio::test]
+    async fn duplicate_project_id_is_classified() {
+        let database = TestDatabase::new().await;
+        let home = PathBuf::from("/home/tester");
+        super::execute(
+            project("PWF", "pwf", "/work/pwf", "/tasks/pwf", home.clone()),
+            &database,
+        )
+        .await
+        .unwrap();
 
         let error = super::execute(
-            project("ALT", "other", &resolved_path.to_string_lossy(), home),
+            project("pwf", "other", "/work/other", "/tasks/other", home),
+            &database,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            AddProjectError::DuplicateProjectId { id }
+                if id == ProjectPrefix::try_new("PWF").unwrap()
+        ));
+    }
+
+    #[tokio::test]
+    async fn duplicate_project_title_is_classified() {
+        let database = TestDatabase::new().await;
+        let home = PathBuf::from("/home/tester");
+        super::execute(
+            project("PWF", "pwf", "/work/pwf", "/tasks/pwf", home.clone()),
+            &database,
+        )
+        .await
+        .unwrap();
+
+        let error = super::execute(
+            project("ALT", "pwf", "/work/other", "/tasks/other", home),
+            &database,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            AddProjectError::DuplicateProjectTitle { title }
+                if title == ProjectName::try_new("pwf").unwrap()
+        ));
+    }
+
+    #[tokio::test]
+    async fn failed_project_insert_rolls_back_new_source() {
+        let database = TestDatabase::new().await;
+        let home = PathBuf::from("/home/tester");
+        super::execute(
+            project("PWF", "pwf", "/work/pwf", "/tasks/pwf", home.clone()),
+            &database,
+        )
+        .await
+        .unwrap();
+
+        let error = super::execute(
+            project("ALT", "pwf", "/work/rolled-back", "/tasks/other", home),
+            &database,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            AddProjectError::DuplicateProjectTitle { .. }
+        ));
+        let source_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM project_sources WHERE value = ?")
+                .bind("/work/rolled-back")
+                .fetch_one(database.pool())
+                .await
+                .unwrap();
+        assert_eq!(source_count, 0);
+    }
+
+    #[tokio::test]
+    async fn runtime_alias_of_paused_project_is_rejected() {
+        let database = TestDatabase::new().await;
+        let home = PathBuf::from("/home/tester");
+        let resolved_path = home.join("tasks/shared");
+        database
+            .insert_project("PWF", "pwf", "/work/PWF", "~/tasks/shared", true)
+            .await;
+
+        let error = super::execute(
+            project(
+                "ALT",
+                "other",
+                "/work/ALT",
+                &resolved_path.to_string_lossy(),
+                home,
+            ),
             &database,
         )
         .await

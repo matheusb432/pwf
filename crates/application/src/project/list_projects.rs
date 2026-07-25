@@ -100,3 +100,41 @@ fn unexpected(
 fn unexpected_row(context: &'static str, source: ProjectRowError) -> ListProjectsError {
     unexpected(context, source)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ports::TestDatabase;
+
+    #[tokio::test]
+    async fn active_list_filters_paused_projects_and_sorts_by_title() {
+        let database = TestDatabase::new().await;
+        database
+            .insert_project("ZED", "zeta", "/work/zeta", "/tasks/zeta", false)
+            .await;
+        database
+            .insert_project("ALP", "alpha", "/work/alpha", "/tasks/alpha", false)
+            .await;
+        database
+            .insert_project("PAU", "beta", "/work/beta", "/tasks/beta", true)
+            .await;
+
+        let projects = super::execute(
+            ListProjects {
+                include_paused: false,
+            },
+            &database,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            projects
+                .iter()
+                .map(|project| project.title.as_ref())
+                .collect::<Vec<_>>(),
+            ["alpha", "zeta"]
+        );
+        assert!(projects.iter().all(|project| !project.is_paused));
+    }
+}

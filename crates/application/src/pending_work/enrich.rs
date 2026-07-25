@@ -2,7 +2,7 @@
 
 use pwf_domain::pending_work::WorkItemStatus;
 
-use super::{list::PendingWorkItemView, note_body::is_placeholder_prompt, section};
+use super::{get_pending_work::PendingWorkItemView, note_body::is_placeholder_prompt, section};
 use crate::{Materialization, PendingWorkItem, RecordId};
 
 pub const ISSUE_NO_REPO: &str =

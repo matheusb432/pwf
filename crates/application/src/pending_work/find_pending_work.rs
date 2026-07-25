@@ -2,8 +2,8 @@ use crate::{
     AppRecordStore, PendingWorkItem,
     pending_work::{
         enrich::{enrich, is_open_item},
+        get_pending_work::PendingWorkItemView,
         identifier,
-        list::PendingWorkItemView,
         project_registry::ProjectRegistry,
     },
 };

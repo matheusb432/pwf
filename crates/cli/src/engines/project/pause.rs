@@ -1,5 +1,5 @@
 use clap::Args;
-use pwf_application::project::pause::{self, PauseProject};
+use pwf_application::project::pause_project::{self, PauseProject};
 use pwf_domain::project::ProjectPrefix;
 use pwf_infra::SqliteStore;
 
@@ -13,7 +13,7 @@ pub struct Arguments {
 }
 
 pub(super) async fn run(arguments: Arguments, database: &SqliteStore) -> Result<String, String> {
-    let change = pause::execute(PauseProject { id: arguments.id }, database)
+    let change = pause_project::execute(PauseProject { id: arguments.id }, database)
         .await
         .map_err(|error| format!("project pause failed: {error}"))?;
     output::state_change(change)

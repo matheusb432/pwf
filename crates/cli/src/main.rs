@@ -8,7 +8,7 @@ use pwf_application::{
     Clock,
     pending_work::ProjectRegistry,
     project::{
-        load_active::{self, ActiveProject, LoadActiveProjects},
+        load_active_projects::{self, ActiveProject, LoadActiveProjects},
         resolve_runtime_path::{self, ResolveRuntimePath, ResolvedPath},
     },
 };
@@ -124,7 +124,7 @@ async fn open_database() -> Result<SqliteStore, String> {
 }
 
 async fn load_active_projects(database: &SqliteStore) -> Result<ActiveProjects, String> {
-    let projects = load_active::execute(
+    let projects = load_active_projects::execute(
         LoadActiveProjects {
             home: managed_project_home()?,
         },

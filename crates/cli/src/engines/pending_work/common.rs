@@ -91,21 +91,27 @@ pub(crate) enum PendingWorkError {
     #[error("{0}")]
     ApplicationWrite(String),
     #[error(transparent)]
-    Add(#[from] pwf_application::pending_work::add::AddPendingWorkError),
+    Add(#[from] pwf_application::pending_work::add_pending_work_item::AddPendingWorkError),
     #[error(transparent)]
-    Complete(#[from] pwf_application::pending_work::done::CompletePendingWorkError),
+    Complete(
+        #[from] pwf_application::pending_work::complete_pending_work::CompletePendingWorkError,
+    ),
     #[error(transparent)]
-    Cancel(#[from] pwf_application::pending_work::cancel::CancelPendingWorkError),
+    Cancel(#[from] pwf_application::pending_work::cancel_pending_work::CancelPendingWorkError),
     #[error(transparent)]
-    Reopen(#[from] pwf_application::pending_work::reopen::ReopenPendingWorkError),
+    Reopen(#[from] pwf_application::pending_work::reopen_pending_work::ReopenPendingWorkError),
     #[error(transparent)]
-    Remove(#[from] pwf_application::pending_work::remove::RemovePendingWorkError),
+    Remove(#[from] pwf_application::pending_work::remove_pending_work_item::RemovePendingWorkError),
     #[error(transparent)]
-    SessionPlan(#[from] pwf_application::pending_work::session::plan::PlanSessionError),
+    SessionPlan(#[from] pwf_application::pending_work::session::plan_session::PlanSessionError),
     #[error(transparent)]
-    SessionDispatch(#[from] pwf_application::pending_work::session::dispatch::DispatchSessionError),
+    SessionDispatch(
+        #[from] pwf_application::pending_work::session::dispatch_session::DispatchSessionError,
+    ),
     #[error(transparent)]
-    SessionVerify(#[from] pwf_application::pending_work::session::verify::VerifySessionError),
+    SessionVerify(
+        #[from] pwf_application::pending_work::session::verify_session::VerifySessionError,
+    ),
     #[error("Unknown --section value '{value}'. Use one of: future, human, low-prio.")]
     BadSection { value: String },
     #[error(

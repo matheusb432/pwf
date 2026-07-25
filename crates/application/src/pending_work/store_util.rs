@@ -2,7 +2,7 @@
 
 use pwf_domain::pending_work::{ProjectName, WorkItemId};
 
-use super::{add::CreateItemError, enrich::normalize_section_label};
+use super::{add_pending_work_item::CreateItemError, enrich::normalize_section_label};
 use crate::ports::{
     AppRecordStore, IndexEntry, IndexEntryState, IndexSection, NewItem, PendingWorkItem,
 };

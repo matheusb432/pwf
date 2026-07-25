@@ -2,13 +2,14 @@
 
 use thiserror::Error;
 
-use super::{Agent, ModelTierCatalog, VerifySessionOk, model::AgentModel};
+use super::{Agent, ModelTierCatalog, VerifySessionOk, model::AgentModel, task_content};
 use crate::{
-    AppRecordStore, PendingWorkItem,
+    AppRecordStore, NoteMarkdownSource, PendingWorkItem,
     pending_work::{
-        find::{FindPendingWorkError, find_open_item},
+        find_pending_work::{FindPendingWorkError, find_open_item},
         project_registry::ProjectRegistry,
         session::{AgentLaunch, model_selection::resolve_model},
+        show_pending_work_item::ShowPendingWorkError,
     },
 };
 
@@ -25,6 +26,8 @@ pub struct VerifySession {
 pub enum VerifySessionError {
     #[error(transparent)]
     Find(#[from] FindPendingWorkError),
+    #[error(transparent)]
+    Show(#[from] ShowPendingWorkError),
 }
 
 /// Verifies one open item and prepares its provider-neutral launch.
@@ -38,6 +41,7 @@ pub fn execute(
     query: VerifySession,
     store: &impl AppRecordStore<PendingWorkItem>,
     projects: &ProjectRegistry,
+    markdown_source: &impl NoteMarkdownSource,
     model_tiers: &impl ModelTierCatalog,
 ) -> Result<VerifySessionOk, VerifySessionError> {
     let Some(id) = query.id else {
@@ -57,8 +61,14 @@ pub fn execute(
             Err(issue) => (None, Some(issue)),
         },
     };
+    let task_content = if item.launchable {
+        task_content::load(&item.id, store, projects, markdown_source)?
+    } else {
+        item.prompt.clone()
+    };
     let launch = AgentLaunch::new(
         &item,
+        &task_content,
         super::LaunchDirectives::default(),
         query.agent,
         model,
@@ -79,7 +89,7 @@ pub fn execute(
 
 #[cfg(test)]
 mod tests {
-    use std::{error::Error, fmt};
+    use std::{convert::Infallible, error::Error, fmt, path::Path};
 
     use pwf_domain::pending_work::{
         EffortTier, ProjectName, Timestamp, WorkItemId, WorkItemStatus,
@@ -87,13 +97,24 @@ mod tests {
 
     use super::{AgentModel, ProjectRegistry, VerifySession};
     use crate::{
-        IndexPlacement, Materialization, PendingWorkItem, RecordId,
+        IndexPlacement, Materialization, NoteMarkdownSource, PendingWorkItem, RecordId,
         pending_work::session::{Agent, ModelTierCatalog, ModelTierLookup},
         testing::InMemoryStore,
     };
 
     const REPOSITORY: &str = "/repo/pwf";
     const TASK_ID: &str = "PWF-0139";
+
+    #[derive(Clone)]
+    struct UnusedNoteMarkdownSource;
+
+    impl NoteMarkdownSource for UnusedNoteMarkdownSource {
+        type Error = Infallible;
+
+        fn read_note_markdown(&self, _path: &Path) -> Result<String, Self::Error> {
+            panic!("non-launchable verification must not read note Markdown")
+        }
+    }
 
     #[derive(Debug, Clone)]
     struct CatalogError;
@@ -157,6 +178,7 @@ mod tests {
             },
             &store,
             &projects,
+            &UnusedNoteMarkdownSource,
             &BrokenCatalog,
         )
         .unwrap();

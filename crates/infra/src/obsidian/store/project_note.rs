@@ -216,7 +216,7 @@ mod tests {
 
     use pwf_application::{
         AppRecordStore, NewProjectNote, ProjectNote, ProjectNotePatch,
-        note::remove::{self, RemoveNote},
+        note::remove_note::{self, RemoveNote},
         pending_work::ProjectRegistry,
     };
     use pwf_domain::{
@@ -368,7 +368,7 @@ mod tests {
         .unwrap();
         let store = store(&tasks_path);
 
-        let removed = remove::execute(
+        let removed = remove_note::execute(
             RemoveNote {
                 project_identifier: "pwf".to_string(),
                 id: "note-0001".to_string(),

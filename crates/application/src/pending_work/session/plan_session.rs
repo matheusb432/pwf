@@ -7,15 +7,18 @@ use thiserror::Error;
 use super::{
     Agent, AgentProbe, ClaudeSessionClient, CodexSessionClient, DispatchConfirmation, DispatchMode,
     LaunchDirectives, ModelTierCatalog, RepositorySessionClient, SessionPlan, ZellijSessionClient,
-    launch::dispatch_target, model::AgentModel, model_selection::resolve_model,
+    launch::dispatch_target, model::AgentModel, model_selection::resolve_model, task_content,
 };
 use crate::{
-    AppRecordStore, PendingWorkItem,
+    AppRecordStore, NoteMarkdownSource, PendingWorkItem,
     pending_work::{
-        find::{FindPendingWorkError, find_open_item},
+        find_pending_work::{FindPendingWorkError, find_open_item},
         project_registry::ProjectRegistry,
         session::AgentLaunch,
-        update::{self, PreparedPendingWorkUpdate, UpdatePendingWorkError, UpdatePendingWorkItem},
+        show_pending_work_item::ShowPendingWorkError,
+        update_pending_work_item::{
+            self, PreparedPendingWorkUpdate, UpdatePendingWorkError, UpdatePendingWorkItem,
+        },
     },
 };
 
@@ -74,7 +77,7 @@ impl DryRunSession {
 /// Contains a session plan and any append prepared for later persistence.
 pub struct PreparedSessionDispatch {
     pub(super) plan: SessionPlan,
-    confirmation: DispatchConfirmation,
+    pub(super) confirmation: DispatchConfirmation,
     pub(super) prepared_update: Option<PreparedPendingWorkUpdate>,
     probe: AgentProbe,
 }
@@ -105,6 +108,8 @@ pub enum PlanSessionError {
     Find(#[from] FindPendingWorkError),
     #[error(transparent)]
     Update(#[from] UpdatePendingWorkError),
+    #[error(transparent)]
+    Show(#[from] ShowPendingWorkError),
     #[error("Pending-work item '{id}' is not launchable: {}", issues.join("; "))]
     NotLaunchable { id: String, issues: Vec<String> },
     #[error("Repo directory for project '{project}' does not exist: {path}")]
@@ -129,7 +134,7 @@ pub enum PlanSessionError {
 )]
 pub fn execute(
     command: &PlanSession,
-    store: &impl AppRecordStore<PendingWorkItem>,
+    store: &(impl AppRecordStore<PendingWorkItem> + NoteMarkdownSource),
     projects: &ProjectRegistry,
     model_tiers: &impl ModelTierCatalog,
     repository: &impl RepositorySessionClient,
@@ -155,34 +160,13 @@ pub fn execute(
             .map_err(|error| PlanSessionError::ModelTier(Box::new(error)))?,
     }
     .into();
-    let prepared_update = if let PlanSessionIntent::Dispatch {
-        append: Some(append),
-    } = &command.intent
-    {
-        Some(update::prepare(
-            &UpdatePendingWorkItem {
-                id: item.id.clone(),
-                prompt: None,
-                title: None,
-                append: Some(append.clone()),
-                prereq: Vec::new(),
-                clear_prereq: false,
-                commits: Vec::new(),
-                append_report: None,
-                effort: None,
-                tags: Vec::new(),
-                tags_clear: false,
-            },
-            store,
-            projects,
-        )?)
-    } else {
-        None
-    };
+    let prepared_update = prepare_append(command, &item.id, store, projects)?;
     let target = dispatch_target(&item.id);
+    let task_content = task_content::load(&item.id, store, projects, store)?;
     let plan = SessionPlan {
         launch: AgentLaunch::new(
             &item,
+            &task_content,
             command.directives,
             command.agent,
             model.clone().into_inner(),
@@ -239,4 +223,36 @@ pub fn execute(
             Ok(PlanSessionOk::DryRun(DryRunSession { plan, argv, probe }))
         }
     }
+}
+
+fn prepare_append(
+    command: &PlanSession,
+    item_id: &str,
+    store: &impl AppRecordStore<PendingWorkItem>,
+    projects: &ProjectRegistry,
+) -> Result<Option<PreparedPendingWorkUpdate>, UpdatePendingWorkError> {
+    let PlanSessionIntent::Dispatch {
+        append: Some(append),
+    } = &command.intent
+    else {
+        return Ok(None);
+    };
+    update_pending_work_item::prepare(
+        &UpdatePendingWorkItem {
+            id: item_id.to_string(),
+            prompt: None,
+            title: None,
+            append: Some(append.clone()),
+            prereq: Vec::new(),
+            clear_prereq: false,
+            commits: Vec::new(),
+            append_report: None,
+            effort: None,
+            tags: Vec::new(),
+            tags_clear: false,
+        },
+        store,
+        projects,
+    )
+    .map(Some)
 }

@@ -10,7 +10,7 @@ use crate::{AppRecordStore, Clock, NewProjectNote, ProjectNote, pending_work::Pr
 /// # Examples
 ///
 /// ```
-/// use pwf_application::note::add::AddNote;
+/// use pwf_application::note::add_note::AddNote;
 ///
 /// let request = AddNote {
 ///     project_identifier: "pwf".to_string(),
@@ -34,7 +34,7 @@ pub struct AddNote {
 /// # Examples
 ///
 /// ```
-/// use pwf_application::note::add::AddedNote;
+/// use pwf_application::note::add_note::AddedNote;
 /// use pwf_domain::note::NoteId;
 ///
 /// let added = AddedNote {
@@ -56,7 +56,7 @@ pub struct AddedNote {
 /// # Examples
 ///
 /// ```
-/// use pwf_application::note::add::AddNoteError;
+/// use pwf_application::note::add_note::AddNoteError;
 ///
 /// assert_eq!(
 ///     AddNoteError::EmptyMessage.to_string(),
@@ -99,7 +99,7 @@ pub enum AddNoteError {
 /// ```
 /// # use pwf_application::{
 /// #     AppRecordStore, Clock, ProjectNote,
-/// #     note::add::{self, AddNote, AddNoteError, AddedNote},
+/// #     note::add_note::{self, AddNote, AddNoteError, AddedNote},
 /// #     pending_work::ProjectRegistry,
 /// # };
 /// # fn add<S, C>(
@@ -112,7 +112,7 @@ pub enum AddNoteError {
 /// #     S: AppRecordStore<ProjectNote>,
 /// #     C: Clock,
 /// # {
-/// add::execute(request, store, projects, clock)
+/// add_note::execute(request, store, projects, clock)
 /// # }
 /// ```
 #[cqrsy::command]

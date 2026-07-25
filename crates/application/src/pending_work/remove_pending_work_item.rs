@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use pwf_domain::pending_work::{ProjectName, WorkItemId, WorkItemStatus};
 
 use super::{
-    find::{FindPendingWorkError, find_open_item},
+    find_pending_work::{FindPendingWorkError, find_open_item},
     identifier,
     project_registry::ProjectRegistry,
     store_util::{self, LoadItemError},

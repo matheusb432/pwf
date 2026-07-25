@@ -5,7 +5,9 @@ mod queue;
 use queue::{close_decisions, is_futuro_label};
 
 use super::{
-    add::{AddPendingWorkError, AddedItem, PendingWorkSection, added_item, project_mapped},
+    add_pending_work_item::{
+        AddPendingWorkError, AddedItem, PendingWorkSection, added_item, project_mapped,
+    },
     commit_provenance, identifier,
     note_body::append_report,
     project_registry::ProjectRegistry,
@@ -385,7 +387,7 @@ where
     )
     .map_err(|source| {
         CloseError::ReviewTask(AddPendingWorkError::WriteStore {
-            diagnostics: crate::pending_work::add::AddPendingWorkDiagnostics {
+            diagnostics: crate::pending_work::add_pending_work_item::AddPendingWorkDiagnostics {
                 project: project.to_string(),
                 created_section: source
                     .created_section()
@@ -449,9 +451,9 @@ mod tests {
 
     fn registry() -> ProjectRegistry {
         ProjectRegistry::new(vec![(
-            ProjectName::try_new("glep-shimeji").unwrap(),
+            ProjectName::try_new("foo-bar").unwrap(),
             Some("/repo".to_string()),
-            Some("GLP".to_string()),
+            Some("FOO".to_string()),
         )])
     }
 
@@ -469,7 +471,7 @@ mod tests {
             section: None,
             body: "\nbody\n".to_string(),
             source: "body".to_string(),
-            locator: format!("/mem/glep-shimeji/{id}.md"),
+            locator: format!("/mem/foo-bar/{id}.md"),
             placement: None,
             materialization: Materialization::NoteFile,
         }
@@ -483,16 +485,16 @@ mod tests {
         }
     }
 
-    fn glp() -> ProjectName {
-        ProjectName::try_new("glep-shimeji").unwrap()
+    fn foo() -> ProjectName {
+        ProjectName::try_new("foo-bar").unwrap()
     }
 
     fn staged(items: Vec<PendingWorkItem>, entries: Vec<IndexEntry>) -> InMemoryStore {
         let store = InMemoryStore::default()
-            .with_prefix("glep-shimeji", "GLP")
-            .with_project("glep-shimeji", items);
+            .with_prefix("foo-bar", "FOO")
+            .with_project("foo-bar", items);
         for entry in entries {
-            <InMemoryStore as crate::AppRecordStore<IndexEntry>>::insert(&store, &glp(), entry)
+            <InMemoryStore as crate::AppRecordStore<IndexEntry>>::insert(&store, &foo(), entry)
                 .unwrap();
         }
         store
@@ -515,16 +517,16 @@ mod tests {
                 location: HandoffLocation::Active,
             },
             location: HandoffLocation::Active,
-            project: Some(glp()),
+            project: Some(foo()),
             title: "Tray GUI".to_string(),
             status: Some(HandoffStatus::Active),
             created: Some(Timestamp::new("2026-01-01")),
             completed: None,
-            pending_work_identifier_raw: Some("glp-0001".to_string()),
+            pending_work_identifier_raw: Some("foo-0001".to_string()),
             goals_completed: 0,
             goals_total: 1,
             body: "\n# Tray GUI\n".to_string(),
-            source: "---\nstatus: active\nproject: glep-shimeji\ncreated: 2026-01-01\npw: glp-0001\n---\n\n# Tray GUI\n".to_string(),
+            source: "---\nstatus: active\nproject: foo-bar\ncreated: 2026-01-01\npw: foo-0001\n---\n\n# Tray GUI\n".to_string(),
             locator: PathBuf::from("/repo/docs/handoffs/2026-01-01-tray-gui.md"),
             modified_timestamp: SystemTime::UNIX_EPOCH,
         }
@@ -532,34 +534,34 @@ mod tests {
 
     #[test]
     fn done_marks_entry_and_evicts_past_cap() {
-        let mut items = vec![record("GLP-0007", WorkItemStatus::Active)];
+        let mut items = vec![record("FOO-0007", WorkItemStatus::Active)];
         let mut entries: Vec<IndexEntry> = (1..=6)
             .map(|n| {
-                items.push(record(&format!("GLP-{n:04}"), WorkItemStatus::Done));
+                items.push(record(&format!("FOO-{n:04}"), WorkItemStatus::Done));
                 entry(
-                    &format!("GLP-{n:04}"),
+                    &format!("FOO-{n:04}"),
                     IndexEntryState::Done(Timestamp::new(format!("2026-01-{n:02}"))),
                     "General",
                 )
             })
             .collect();
-        entries.push(entry("GLP-0007", IndexEntryState::Open, "General"));
+        entries.push(entry("FOO-0007", IndexEntryState::Open, "General"));
         let store = staged(items, entries);
 
         let out =
-            super::execute(&done_command("GLP-0007"), &store, &registry(), &FixedClock).unwrap();
+            super::execute(&done_command("FOO-0007"), &store, &registry(), &FixedClock).unwrap();
 
         assert_eq!(out.action, ClosedItemAction::Done);
         assert_eq!(
             out.evicted_ids,
-            vec![WorkItemId::try_new("GLP-0001").unwrap()]
+            vec![WorkItemId::try_new("FOO-0001").unwrap()]
         );
         assert_eq!(out.futuro_renamed_project, None);
-        assert_eq!(store.items("glep-shimeji")[0].status, WorkItemStatus::Done);
+        assert_eq!(store.items("foo-bar")[0].status, WorkItemStatus::Done);
         let marked = store
-            .entries("glep-shimeji")
+            .entries("foo-bar")
             .into_iter()
-            .find(|e| e.id == WorkItemId::try_new("GLP-0007").unwrap())
+            .find(|e| e.id == WorkItemId::try_new("FOO-0007").unwrap())
             .unwrap();
         assert_eq!(
             marked.state,
@@ -567,9 +569,9 @@ mod tests {
         );
         assert!(
             !store
-                .entries("glep-shimeji")
+                .entries("foo-bar")
                 .iter()
-                .any(|e| e.id == WorkItemId::try_new("GLP-0001").unwrap()),
+                .any(|e| e.id == WorkItemId::try_new("FOO-0001").unwrap()),
             "evicted entry must be unlinked"
         );
     }
@@ -577,16 +579,16 @@ mod tests {
     #[test]
     fn done_uses_clock_date_when_no_date_is_explicit() {
         let store = staged(
-            vec![record("GLP-0001", WorkItemStatus::Active)],
-            vec![entry("GLP-0001", IndexEntryState::Open, "General")],
+            vec![record("FOO-0001", WorkItemStatus::Active)],
+            vec![entry("FOO-0001", IndexEntryState::Open, "General")],
         );
-        let mut command = done_command("GLP-0001");
+        let mut command = done_command("FOO-0001");
         command.date = None;
 
         super::execute(&command, &store, &registry(), &FixedClock).unwrap();
 
         assert_eq!(
-            store.items("glep-shimeji")[0].completed,
+            store.items("foo-bar")[0].completed,
             Some(Timestamp::new("2026-07-26"))
         );
     }
@@ -594,37 +596,37 @@ mod tests {
     #[test]
     fn done_normalizes_futuro_header_entries() {
         let store = staged(
-            vec![record("GLP-0001", WorkItemStatus::Active)],
-            vec![entry("GLP-0001", IndexEntryState::Open, "Futuro")],
+            vec![record("FOO-0001", WorkItemStatus::Active)],
+            vec![entry("FOO-0001", IndexEntryState::Open, "Futuro")],
         );
 
         let out =
-            super::execute(&done_command("GLP-0001"), &store, &registry(), &FixedClock).unwrap();
+            super::execute(&done_command("FOO-0001"), &store, &registry(), &FixedClock).unwrap();
 
-        assert_eq!(out.futuro_renamed_project, Some(glp()));
+        assert_eq!(out.futuro_renamed_project, Some(foo()));
     }
 
     #[test]
     fn done_review_inserts_review_item_and_open_entry() {
         let store = staged(
-            vec![record("GLP-0001", WorkItemStatus::Active)],
-            vec![entry("GLP-0001", IndexEntryState::Open, "General")],
+            vec![record("FOO-0001", WorkItemStatus::Active)],
+            vec![entry("FOO-0001", IndexEntryState::Open, "General")],
         );
         let cmd = CompletePendingWork {
             review: true,
             commits: vec!["a..b".to_string()],
-            ..done_command("GLP-0001")
+            ..done_command("FOO-0001")
         };
 
         let out = super::execute(&cmd, &store, &registry(), &FixedClock).unwrap();
 
         let review = out.review_item.expect("review item present");
-        assert_eq!(review.id, "GLP-0002");
+        assert_eq!(review.id, "FOO-0002");
         assert!(
             store
-                .entries("glep-shimeji")
+                .entries("foo-bar")
                 .iter()
-                .any(|e| e.id == WorkItemId::try_new("GLP-0002").unwrap()
+                .any(|e| e.id == WorkItemId::try_new("FOO-0002").unwrap()
                     && e.state == IndexEntryState::Open),
             "review task must get an open index entry"
         );
@@ -633,13 +635,13 @@ mod tests {
     #[test]
     fn done_review_preserves_add_project_mapping_policy() {
         let store = staged(
-            vec![record("GLP-0001", WorkItemStatus::Active)],
-            vec![entry("GLP-0001", IndexEntryState::Open, "General")],
+            vec![record("FOO-0001", WorkItemStatus::Active)],
+            vec![entry("FOO-0001", IndexEntryState::Open, "General")],
         );
-        let projects = ProjectRegistry::new(vec![(glp(), None, Some("GLP".to_string()))]);
+        let projects = ProjectRegistry::new(vec![(foo(), None, Some("FOO".to_string()))]);
         let command = CompletePendingWork {
             review: true,
-            ..done_command("GLP-0001")
+            ..done_command("FOO-0001")
         };
 
         let error = super::execute(&command, &store, &projects, &FixedClock).unwrap_err();
@@ -648,11 +650,11 @@ mod tests {
             error,
             CompletePendingWorkError::ReviewTask(
                 AddPendingWorkError::ProjectHasNoDirectorySource { ref project }
-            ) if project == "glep-shimeji"
+            ) if project == "foo-bar"
         ));
         assert_eq!(
             error.to_string(),
-            "Project 'glep-shimeji' has no directory source; update the managed project record."
+            "Project 'foo-bar' has no directory source; update the managed project record."
         );
     }
 
@@ -660,16 +662,16 @@ mod tests {
     fn done_on_missing_item_reports_item_not_found() {
         let store = staged(Vec::new(), Vec::new());
 
-        let error = super::execute(&done_command("GLP-9999"), &store, &registry(), &FixedClock)
+        let error = super::execute(&done_command("FOO-9999"), &store, &registry(), &FixedClock)
             .unwrap_err();
 
         assert!(matches!(
             error,
-            CompletePendingWorkError::ItemNotFound { ref id } if id == "GLP-9999"
+            CompletePendingWorkError::ItemNotFound { ref id } if id == "FOO-9999"
         ));
         assert_eq!(
             error.to_string(),
-            "Open pending-work item not found: GLP-9999"
+            "Open pending-work item not found: FOO-9999"
         );
     }
 
@@ -690,25 +692,25 @@ mod tests {
     fn done_archives_the_linked_handoff_after_closing_pending_work() {
         let tagged = PendingWorkItem {
             tags: Some("[handoff]".to_string()),
-            ..record("GLP-0001", WorkItemStatus::Active)
+            ..record("FOO-0001", WorkItemStatus::Active)
         };
         let scope = HandoffScope {
             repository_root: PathBuf::from("/repo"),
         };
         let store = staged(
             vec![tagged],
-            vec![entry("GLP-0001", IndexEntryState::Open, "General")],
+            vec![entry("FOO-0001", IndexEntryState::Open, "General")],
         )
         .with_handoff_documents(scope.clone(), vec![handoff()]);
 
         let outcome =
-            super::execute(&done_command("GLP-0001"), &store, &registry(), &FixedClock).unwrap();
+            super::execute(&done_command("FOO-0001"), &store, &registry(), &FixedClock).unwrap();
 
         assert!(matches!(
             outcome.handoff,
             HandoffMutationOk::Archived { .. }
         ));
-        assert_eq!(store.items("glep-shimeji")[0].status, WorkItemStatus::Done);
+        assert_eq!(store.items("foo-bar")[0].status, WorkItemStatus::Done);
         assert_eq!(
             store.handoff_documents(&scope)[0].location,
             HandoffLocation::Archived
@@ -719,19 +721,19 @@ mod tests {
     fn done_reports_handoff_failure_after_pending_work_is_closed() {
         let tagged = PendingWorkItem {
             tags: Some("[handoff]".to_string()),
-            ..record("GLP-0001", WorkItemStatus::Active)
+            ..record("FOO-0001", WorkItemStatus::Active)
         };
         let scope = HandoffScope {
             repository_root: PathBuf::from("/repo"),
         };
         let store = staged(
             vec![tagged],
-            vec![entry("GLP-0001", IndexEntryState::Open, "General")],
+            vec![entry("FOO-0001", IndexEntryState::Open, "General")],
         )
         .with_handoff_documents(scope, vec![handoff()])
         .with_failure(FailurePoint::DocumentUpdate);
 
-        let error = super::execute(&done_command("GLP-0001"), &store, &registry(), &FixedClock)
+        let error = super::execute(&done_command("FOO-0001"), &store, &registry(), &FixedClock)
             .unwrap_err();
 
         assert!(matches!(
@@ -739,24 +741,24 @@ mod tests {
             CompletePendingWorkError::HandoffAfterPendingWork {
                 ref pending_work_identifier,
                 ..
-            } if pending_work_identifier.as_ref() == "GLP-0001"
+            } if pending_work_identifier.as_ref() == "FOO-0001"
         ));
-        assert_eq!(store.items("glep-shimeji")[0].status, WorkItemStatus::Done);
+        assert_eq!(store.items("foo-bar")[0].status, WorkItemStatus::Done);
     }
 
     #[test]
     fn done_handoff_preflight_precedes_blank_report_validation() {
         let tagged = PendingWorkItem {
             tags: Some("[handoff]".to_string()),
-            ..record("GLP-0001", WorkItemStatus::Active)
+            ..record("FOO-0001", WorkItemStatus::Active)
         };
         let store = staged(
             vec![tagged],
-            vec![entry("GLP-0001", IndexEntryState::Open, "General")],
+            vec![entry("FOO-0001", IndexEntryState::Open, "General")],
         );
         let command = CompletePendingWork {
             report: Some(" \t\n".to_string()),
-            ..done_command("GLP-0001")
+            ..done_command("FOO-0001")
         };
 
         let error = super::execute(&command, &store, &registry(), &FixedClock).unwrap_err();
@@ -765,10 +767,7 @@ mod tests {
             error,
             CompletePendingWorkError::HandoffPreflight(_)
         ));
-        assert_eq!(
-            store.items("glep-shimeji")[0].status,
-            WorkItemStatus::Active
-        );
+        assert_eq!(store.items("foo-bar")[0].status, WorkItemStatus::Active);
     }
 
     #[test]

@@ -54,11 +54,11 @@ pub(super) enum HandoffError {
     #[error("{source}")]
     Add {
         #[source]
-        source: pwf_application::handoff::add::AddHandoffError,
+        source: pwf_application::handoff::add_handoff::AddHandoffError,
     },
     #[error("{source}")]
     List {
         #[source]
-        source: pwf_application::handoff::list::ListHandoffsError,
+        source: pwf_application::handoff::list_handoffs::ListHandoffsError,
     },
 }

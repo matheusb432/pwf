@@ -2,7 +2,7 @@ use clap::Args;
 use pwf_application::pending_work::{
     ListMode, ListSection, OrderDirection, OrderField, OrderSpec, ProjectRegistry,
     ProjectResolutionError,
-    list::{self, GetPendingWork, GetPendingWorkError},
+    get_pending_work::{self, GetPendingWork, GetPendingWorkError},
 };
 use pwf_infra::obsidian::ObsidianStore;
 
@@ -83,7 +83,7 @@ pub(super) fn run(
             return Err(PendingWorkError::RouteCreateRejected);
         }
     }
-    let result = list::execute(
+    let result = get_pending_work::execute(
         &GetPendingWork {
             project_identifier: arguments.project.clone(),
             section: arguments.section.map(|section| match section {

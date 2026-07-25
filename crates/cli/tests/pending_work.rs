@@ -13,7 +13,7 @@ use projects::{TestProject, TestProjects};
 fn test_projects(tasks_root: &std::path::Path) -> TestProjects {
     let projects = [
         ("CFG", "config-handler", "/repo/cfg"),
-        ("GLP", "glep-shimeji", "/repo"),
+        ("FOO", "foo-bar", "/repo"),
         ("PWF", "pwf", "/repo/pwf"),
     ];
     for (id, title, _) in projects {
@@ -37,7 +37,7 @@ fn add_allocates_first_id_and_writes_files() {
     fs::create_dir_all(&notes).unwrap();
     let args = parse_args(&[
         "add",
-        "glep-shimeji",
+        "foo-bar",
         "add startup toggle",
         "--title",
         "tray gui",
@@ -45,15 +45,15 @@ fn add_allocates_first_id_and_writes_files() {
         "2026-01-01",
     ]);
     let out = run_plain(&args, &test_projects(&notes)).unwrap();
-    assert!(out.starts_with("Added pwf task: **GLP-0001"), "got: {out}");
-    let item = fs::read_to_string(stage.join("notes/glep-shimeji/GLP-0001.md")).unwrap();
+    assert!(out.starts_with("Added pwf task: **FOO-0001"), "got: {out}");
+    let item = fs::read_to_string(stage.join("notes/foo-bar/FOO-0001.md")).unwrap();
     assert!(item.contains("status: active"));
-    let index = fs::read_to_string(stage.join("notes/glep-shimeji/glep-shimeji.md")).unwrap();
+    let index = fs::read_to_string(stage.join("notes/foo-bar/foo-bar.md")).unwrap();
     assert!(
-        index.contains("- [ ] [[GLP-0001]]"),
+        index.contains("- [ ] [[FOO-0001]]"),
         "bare link written: {index}"
     );
-    assert!(!index.contains("[[GLP-0001|"), "no alias written: {index}");
+    assert!(!index.contains("[[FOO-0001|"), "no alias written: {index}");
 }
 
 #[test]
@@ -130,21 +130,21 @@ fn add_caps_inferred_title_for_long_prompt_without_ampersand() {
 fn add_human_flag_routes_item_under_human_section() {
     let stage = stage_dir();
     let notes = stage.join("notes");
-    let proj = notes.join("glep-shimeji");
+    let proj = notes.join("foo-bar");
     fs::create_dir_all(&proj).unwrap();
     fs::write(
-        proj.join("GLP-0001.md"),
-        "---\nstatus: active\ntitle: existing\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\nbody\n",
+        proj.join("FOO-0001.md"),
+        "---\nstatus: active\ntitle: existing\nproject: foo-bar\ncreated: 2026-01-01\n---\n\nbody\n",
     )
     .unwrap();
     fs::write(
-        proj.join("glep-shimeji.md"),
-        "- [ ] [[GLP-0001|existing]]\n\n## Human\n\n- [x] keep prior human entry\n\n### Notes\nkeep personal notes here\n",
+        proj.join("foo-bar.md"),
+        "- [ ] [[FOO-0001|existing]]\n\n## Human\n\n- [x] keep prior human entry\n\n### Notes\nkeep personal notes here\n",
     )
     .unwrap();
     let args = parse_args(&[
         "add",
-        "glep-shimeji",
+        "foo-bar",
         "review the thing",
         "--title",
         "human task",
@@ -153,16 +153,16 @@ fn add_human_flag_routes_item_under_human_section() {
         "2026-01-01",
     ]);
     run_plain(&args, &test_projects(&notes)).unwrap();
-    let index = fs::read_to_string(proj.join("glep-shimeji.md")).unwrap();
+    let index = fs::read_to_string(proj.join("foo-bar.md")).unwrap();
     let human_idx = index
         .find("## Human")
         .unwrap_or_else(|| panic!("no ## Human: {index}"));
     let item_idx = index
-        .find("[[GLP-0002]]")
+        .find("[[FOO-0002]]")
         .unwrap_or_else(|| panic!("no item: {index}"));
     assert!(item_idx > human_idx, "new item not under ## Human: {index}");
     assert!(
-        index.contains("## Human\n- [ ] [[GLP-0002]]\n\n- [x] keep prior human entry"),
+        index.contains("## Human\n- [ ] [[FOO-0002]]\n\n- [x] keep prior human entry"),
         "new item not immediately after ## Human: {index}"
     );
     assert!(
@@ -170,7 +170,7 @@ fn add_human_flag_routes_item_under_human_section() {
         "new item landed under personal notes: {index}"
     );
     assert!(
-        index.find("[[GLP-0001|existing]]").unwrap() < human_idx,
+        index.find("[[FOO-0001|existing]]").unwrap() < human_idx,
         "normal item moved: {index}"
     );
 }
@@ -179,34 +179,30 @@ fn add_human_flag_routes_item_under_human_section() {
 fn add_with_prereq_writes_validated_frontmatter() {
     let stage = stage_dir();
     let notes = stage.join("notes");
-    let proj = notes.join("glep-shimeji");
+    let proj = notes.join("foo-bar");
     fs::create_dir_all(&proj).unwrap();
     fs::write(
-        proj.join("GLP-0001.md"),
-        "---\nstatus: active\ntitle: prerequisite\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\nbody\n",
+        proj.join("FOO-0001.md"),
+        "---\nstatus: active\ntitle: prerequisite\nproject: foo-bar\ncreated: 2026-01-01\n---\n\nbody\n",
     )
     .unwrap();
-    fs::write(
-        proj.join("glep-shimeji.md"),
-        "- [ ] [[GLP-0001|prerequisite]]\n",
-    )
-    .unwrap();
+    fs::write(proj.join("foo-bar.md"), "- [ ] [[FOO-0001|prerequisite]]\n").unwrap();
     let args = parse_args(&[
         "add",
-        "glep-shimeji",
+        "foo-bar",
         "do dependent work",
         "--title",
         "dependent",
         "--prereq",
-        "GLP-0001",
+        "FOO-0001",
         "--date",
         "2026-01-01",
     ]);
     let out = run_plain(&args, &test_projects(&notes)).unwrap();
-    assert!(out.starts_with("Added pwf task: **GLP-0002"), "got: {out}");
-    let item = fs::read_to_string(proj.join("GLP-0002.md")).unwrap();
+    assert!(out.starts_with("Added pwf task: **FOO-0002"), "got: {out}");
+    let item = fs::read_to_string(proj.join("FOO-0002.md")).unwrap();
     assert!(
-        item.contains("prereq: \"[[GLP-0001]]\"\n---"),
+        item.contains("prereq: \"[[FOO-0001]]\"\n---"),
         "got: {item}"
     );
 }
@@ -215,24 +211,24 @@ fn add_with_prereq_writes_validated_frontmatter() {
 fn add_rejects_unknown_prereq_without_writing_item() {
     let stage = stage_dir();
     let notes = stage.join("notes");
-    let proj = notes.join("glep-shimeji");
+    let proj = notes.join("foo-bar");
     fs::create_dir_all(&proj).unwrap();
-    fs::write(proj.join("glep-shimeji.md"), "").unwrap();
+    fs::write(proj.join("foo-bar.md"), "").unwrap();
     let args = parse_args(&[
         "add",
-        "glep-shimeji",
+        "foo-bar",
         "do dependent work",
         "--title",
         "dependent",
         "--prereq",
-        "GLP-9999",
+        "FOO-9999",
         "--date",
         "2026-01-01",
     ]);
     let err = run_plain(&args, &test_projects(&notes)).unwrap_err();
-    assert!(err.contains("GLP-9999"), "got: {err}");
+    assert!(err.contains("FOO-9999"), "got: {err}");
     assert!(
-        !proj.join("GLP-0001.md").exists(),
+        !proj.join("FOO-0001.md").exists(),
         "failed add wrote a new item"
     );
 }
@@ -262,26 +258,26 @@ fn add_unmanaged_project_returns_error() {
 fn list_shows_item_in_text() {
     let stage = stage_dir();
     let notes = stage.join("notes");
-    let proj = notes.join("glep-shimeji");
+    let proj = notes.join("foo-bar");
     fs::create_dir_all(&proj).unwrap();
     fs::write(
-        proj.join("GLP-0001.md"),
-        "---\nstatus: active\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\nadd startup toggle\n",
+        proj.join("FOO-0001.md"),
+        "---\nstatus: active\ntitle: tray gui\nproject: foo-bar\ncreated: 2026-01-01\n---\n\nadd startup toggle\n",
     )
     .unwrap();
-    let index_content = "# glep-shimeji\n\n- [[GLP-0001|tray gui]]\n";
-    fs::write(proj.join("glep-shimeji.md"), index_content).unwrap();
+    let index_content = "# foo-bar\n\n- [[FOO-0001|tray gui]]\n";
+    fs::write(proj.join("foo-bar.md"), index_content).unwrap();
     let args = parse_args(&["list", "--date", "2026-01-01"]);
-    ensure_record_identity(&proj, "GLP", "glep-shimeji");
+    ensure_record_identity(&proj, "FOO", "foo-bar");
     let projects = TestProjects::new([TestProject {
-        id: "GLP",
-        title: "glep-shimeji",
+        id: "FOO",
+        title: "foo-bar",
         repository: std::path::PathBuf::from("/repo"),
         tasks_path: proj.clone(),
     }]);
     let out = run_plain(&args, &projects).unwrap();
     assert!(
-        out.contains("GLP-0001 :: tray gui"),
+        out.contains("FOO-0001 :: tray gui"),
         "item line missing: {out}"
     );
 }
@@ -290,23 +286,23 @@ fn list_shows_item_in_text() {
 fn list_scopes_fixture() -> std::path::PathBuf {
     let stage = stage_dir();
     let notes = stage.join("notes");
-    let proj = notes.join("glep-shimeji");
+    let proj = notes.join("foo-bar");
     fs::create_dir_all(&proj).unwrap();
     for (id, title) in [
-        ("GLP-0001", "normal"),
-        ("GLP-0002", "lowp"),
-        ("GLP-0003", "human task"),
-        ("GLP-0004", "future task"),
+        ("FOO-0001", "normal"),
+        ("FOO-0002", "lowp"),
+        ("FOO-0003", "human task"),
+        ("FOO-0004", "future task"),
     ] {
         fs::write(
             proj.join(format!("{id}.md")),
-            format!("---\nstatus: active\ntitle: {title}\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\nbody\n"),
+            format!("---\nstatus: active\ntitle: {title}\nproject: foo-bar\ncreated: 2026-01-01\n---\n\nbody\n"),
         )
         .unwrap();
     }
     fs::write(
-        proj.join("glep-shimeji.md"),
-        "- [ ] [[GLP-0001|normal]]\n\n## Low-prio\n- [ ] [[GLP-0002|lowp]]\n\n## Human\n- [ ] [[GLP-0003|human task]]\n\n## Future\n- [ ] [[GLP-0004|future task]]\n",
+        proj.join("foo-bar.md"),
+        "- [ ] [[FOO-0001|normal]]\n\n## Low-prio\n- [ ] [[FOO-0002|lowp]]\n\n## Human\n- [ ] [[FOO-0003|human task]]\n\n## Future\n- [ ] [[FOO-0004|future task]]\n",
     )
     .unwrap();
     notes
@@ -325,37 +321,37 @@ fn list_scopes_run(notes: &std::path::Path, extra: &[&str]) -> String {
 fn list_default_scope_hides_low_prio_human_and_future() {
     let notes = list_scopes_fixture();
     let def = list_scopes_run(&notes, &[]);
-    assert!(def.contains("GLP-0001"), "normal missing: {def}");
+    assert!(def.contains("FOO-0001"), "normal missing: {def}");
     assert!(
-        !def.contains("GLP-0002"),
+        !def.contains("FOO-0002"),
         "Low-prio shown by default: {def}"
     );
-    assert!(!def.contains("GLP-0003"), "Human shown by default: {def}");
-    assert!(!def.contains("GLP-0004"), "Future shown by default: {def}");
+    assert!(!def.contains("FOO-0003"), "Human shown by default: {def}");
+    assert!(!def.contains("FOO-0004"), "Future shown by default: {def}");
 }
 
 #[test]
 fn list_human_scope_shows_only_human() {
     let notes = list_scopes_fixture();
     let h = list_scopes_run(&notes, &["--section", "human"]);
-    assert!(!h.contains("GLP-0001"), "normal leaked with --human: {h}");
-    assert!(!h.contains("GLP-0002"), "low-prio leaked with --human: {h}");
-    assert!(h.contains("GLP-0003"), "Human not shown with --human: {h}");
-    assert!(!h.contains("GLP-0004"), "Future leaked with --human: {h}");
+    assert!(!h.contains("FOO-0001"), "normal leaked with --human: {h}");
+    assert!(!h.contains("FOO-0002"), "low-prio leaked with --human: {h}");
+    assert!(h.contains("FOO-0003"), "Human not shown with --human: {h}");
+    assert!(!h.contains("FOO-0004"), "Future leaked with --human: {h}");
 }
 
 #[test]
 fn list_future_scope_shows_only_future() {
     let notes = list_scopes_fixture();
     let f = list_scopes_run(&notes, &["--section", "future"]);
-    assert!(!f.contains("GLP-0001"), "normal leaked with --future: {f}");
+    assert!(!f.contains("FOO-0001"), "normal leaked with --future: {f}");
     assert!(
-        !f.contains("GLP-0002"),
+        !f.contains("FOO-0002"),
         "low-prio leaked with --future: {f}"
     );
-    assert!(!f.contains("GLP-0003"), "Human leaked with --future: {f}");
+    assert!(!f.contains("FOO-0003"), "Human leaked with --future: {f}");
     assert!(
-        f.contains("GLP-0004"),
+        f.contains("FOO-0004"),
         "Future not shown with --future: {f}"
     );
 }
@@ -364,20 +360,20 @@ fn list_future_scope_shows_only_future() {
 fn list_all_scope_shows_and_orders_every_section() {
     let notes = list_scopes_fixture();
     let all = list_scopes_run(&notes, &["--all"]);
-    assert!(all.contains("GLP-0001"), "normal missing with --all: {all}");
+    assert!(all.contains("FOO-0001"), "normal missing with --all: {all}");
     assert!(
-        all.contains("GLP-0002"),
+        all.contains("FOO-0002"),
         "low-prio missing with --all: {all}"
     );
-    assert!(all.contains("GLP-0003"), "Human missing with --all: {all}");
-    assert!(all.contains("GLP-0004"), "Future missing with --all: {all}");
-    let normal_idx = all.find("GLP-0001").unwrap();
+    assert!(all.contains("FOO-0003"), "Human missing with --all: {all}");
+    assert!(all.contains("FOO-0004"), "Future missing with --all: {all}");
+    let normal_idx = all.find("FOO-0001").unwrap();
     let low_prio_header_idx = all.find("Low-prio").unwrap();
-    let low_prio_idx = all.find("GLP-0002").unwrap();
+    let low_prio_idx = all.find("FOO-0002").unwrap();
     let human_header_idx = all.find("Human").unwrap();
-    let human_idx = all.find("GLP-0003").unwrap();
+    let human_idx = all.find("FOO-0003").unwrap();
     let future_header_idx = all.find("Future").unwrap();
-    let future_idx = all.find("GLP-0004").unwrap();
+    let future_idx = all.find("FOO-0004").unwrap();
     assert!(
         normal_idx < low_prio_header_idx,
         "normal group should lead: {all}"
@@ -405,16 +401,16 @@ fn list_all_scope_shows_and_orders_every_section() {
 fn list_all_shows_human_section_item_in_text() {
     let stage = stage_dir();
     let notes = stage.join("notes");
-    let proj = notes.join("glep-shimeji");
+    let proj = notes.join("foo-bar");
     fs::create_dir_all(&proj).unwrap();
     fs::write(
-        proj.join("GLP-0001.md"),
-        "---\nstatus: active\ntitle: human task\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\nbody\n",
+        proj.join("FOO-0001.md"),
+        "---\nstatus: active\ntitle: human task\nproject: foo-bar\ncreated: 2026-01-01\n---\n\nbody\n",
     )
     .unwrap();
     fs::write(
-        proj.join("glep-shimeji.md"),
-        "## Human\n- [ ] [[GLP-0001|human task]]\n",
+        proj.join("foo-bar.md"),
+        "## Human\n- [ ] [[FOO-0001|human task]]\n",
     )
     .unwrap();
     let out = run_plain(
@@ -423,7 +419,7 @@ fn list_all_shows_human_section_item_in_text() {
     )
     .unwrap();
     assert!(
-        out.contains("GLP-0001 :: human task"),
+        out.contains("FOO-0001 :: human task"),
         "item line missing: {out}"
     );
 }
@@ -433,15 +429,15 @@ fn list_all_follows_grouped_order_in_text() {
     let stage = stage_dir();
     let notes = stage.join("notes");
     let cfg_proj = notes.join("config-handler");
-    let glp_proj = notes.join("glep-shimeji");
+    let foo_proj = notes.join("foo-bar");
     fs::create_dir_all(&cfg_proj).unwrap();
-    fs::create_dir_all(&glp_proj).unwrap();
+    fs::create_dir_all(&foo_proj).unwrap();
 
     for (project_dir, project, id, title) in [
         (&cfg_proj, "config-handler", "CFG-0002", "normal newer"),
         (&cfg_proj, "config-handler", "CFG-0001", "human task"),
-        (&glp_proj, "glep-shimeji", "GLP-0002", "low-prio task"),
-        (&glp_proj, "glep-shimeji", "GLP-0001", "future task"),
+        (&foo_proj, "foo-bar", "FOO-0002", "low-prio task"),
+        (&foo_proj, "foo-bar", "FOO-0001", "future task"),
     ] {
         fs::write(
             project_dir.join(format!("{id}.md")),
@@ -458,8 +454,8 @@ fn list_all_follows_grouped_order_in_text() {
     )
     .unwrap();
     fs::write(
-        glp_proj.join("glep-shimeji.md"),
-        "## Low-prio\n- [ ] [[GLP-0002|low-prio task]]\n\n## Future\n- [ ] [[GLP-0001|future task]]\n",
+        foo_proj.join("foo-bar.md"),
+        "## Low-prio\n- [ ] [[FOO-0002|low-prio task]]\n\n## Future\n- [ ] [[FOO-0001|future task]]\n",
     )
     .unwrap();
     let out = run_plain(
@@ -473,15 +469,15 @@ fn list_all_follows_grouped_order_in_text() {
             .unwrap_or_else(|| panic!("{id} missing: {out}"))
     };
     assert!(
-        pos("CFG-0002") < pos("GLP-0002"),
+        pos("CFG-0002") < pos("FOO-0002"),
         "normal should precede low-prio: {out}"
     );
     assert!(
-        pos("GLP-0002") < pos("CFG-0001"),
+        pos("FOO-0002") < pos("CFG-0001"),
         "low-prio should precede human: {out}"
     );
     assert!(
-        pos("CFG-0001") < pos("GLP-0001"),
+        pos("CFG-0001") < pos("FOO-0001"),
         "human should precede future: {out}"
     );
 }
@@ -490,23 +486,23 @@ fn list_all_follows_grouped_order_in_text() {
 fn list_all_long_keeps_metadata_on_its_own_line_in_every_group() {
     let stage = stage_dir();
     let notes = stage.join("notes");
-    let proj = notes.join("glep-shimeji");
+    let proj = notes.join("foo-bar");
     fs::create_dir_all(&proj).unwrap();
     for (id, title) in [
-        ("GLP-0001", "normal"),
-        ("GLP-0002", "lowp"),
-        ("GLP-0003", "human task"),
-        ("GLP-0004", "future task"),
+        ("FOO-0001", "normal"),
+        ("FOO-0002", "lowp"),
+        ("FOO-0003", "human task"),
+        ("FOO-0004", "future task"),
     ] {
         fs::write(
             proj.join(format!("{id}.md")),
-            format!("---\nstatus: active\ntitle: {title}\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\nbody\n"),
+            format!("---\nstatus: active\ntitle: {title}\nproject: foo-bar\ncreated: 2026-01-01\n---\n\nbody\n"),
         )
         .unwrap();
     }
     fs::write(
-        proj.join("glep-shimeji.md"),
-        "- [ ] [[GLP-0001|normal]]\n\n## Low-prio\n- [ ] [[GLP-0002|lowp]]\n\n## Human\n- [ ] [[GLP-0003|human task]]\n\n## Future\n- [ ] [[GLP-0004|future task]]\n",
+        proj.join("foo-bar.md"),
+        "- [ ] [[FOO-0001|normal]]\n\n## Low-prio\n- [ ] [[FOO-0002|lowp]]\n\n## Human\n- [ ] [[FOO-0003|human task]]\n\n## Future\n- [ ] [[FOO-0004|future task]]\n",
     )
     .unwrap();
     let out = run_plain(
@@ -516,10 +512,10 @@ fn list_all_long_keeps_metadata_on_its_own_line_in_every_group() {
     .unwrap();
 
     for expected in [
-        "GLP-0001 :: normal (active)\n  status:",
-        "GLP-0002 :: lowp (active)\n  status:",
-        "GLP-0003 :: human task (active)\n  status:",
-        "GLP-0004 :: future task (active)\n  status:",
+        "FOO-0001 :: normal (active)\n  status:",
+        "FOO-0002 :: lowp (active)\n  status:",
+        "FOO-0003 :: human task (active)\n  status:",
+        "FOO-0004 :: future task (active)\n  status:",
     ] {
         assert!(
             out.contains(expected),
@@ -581,21 +577,21 @@ fn route_project_shortcut_uses_list_scopes() {
 fn list_long_shows_per_item_metadata() {
     let stage = stage_dir();
     let notes = stage.join("notes");
-    let proj = notes.join("glep-shimeji");
+    let proj = notes.join("foo-bar");
     fs::create_dir_all(&proj).unwrap();
     fs::write(
-        proj.join("GLP-0001.md"),
-        "---\nstatus: active\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\nadd startup toggle\n",
+        proj.join("FOO-0001.md"),
+        "---\nstatus: active\ntitle: tray gui\nproject: foo-bar\ncreated: 2026-01-01\n---\n\nadd startup toggle\n",
     )
     .unwrap();
     fs::write(
-        proj.join("glep-shimeji.md"),
-        "# glep-shimeji\n\n- [[GLP-0001|tray gui]]\n",
+        proj.join("foo-bar.md"),
+        "# foo-bar\n\n- [[FOO-0001|tray gui]]\n",
     )
     .unwrap();
     let args = parse_args(&["list", "--long", "--date", "2026-01-01"]);
     let out = run_plain(&args, &test_projects(&notes)).unwrap();
-    assert!(out.contains("GLP-0001 :: tray gui"), "got: {out}");
+    assert!(out.contains("FOO-0001 :: tray gui"), "got: {out}");
     assert!(out.contains("  status: active"), "got: {out}");
     assert!(out.contains("  launch: READY"), "got: {out}");
     assert!(out.contains("  repo: /repo"), "got: {out}");
@@ -606,19 +602,19 @@ fn list_long_shows_per_item_metadata() {
 fn stage_many(count: usize) -> std::path::PathBuf {
     let stage = stage_dir();
     let notes = stage.join("notes");
-    let proj = notes.join("glep-shimeji");
+    let proj = notes.join("foo-bar");
     fs::create_dir_all(&proj).unwrap();
-    let mut index = String::from("# glep-shimeji\n\n");
+    let mut index = String::from("# foo-bar\n\n");
     for n in 1..=count {
-        let id = format!("GLP-{n:04}");
+        let id = format!("FOO-{n:04}");
         fs::write(
             proj.join(format!("{id}.md")),
-            format!("---\nstatus: active\ntitle: t{n}\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\nbody\n"),
+            format!("---\nstatus: active\ntitle: t{n}\nproject: foo-bar\ncreated: 2026-01-01\n---\n\nbody\n"),
         )
         .unwrap();
         let _ = writeln!(index, "- [ ] [[{id}|t{n}]]");
     }
-    fs::write(proj.join("glep-shimeji.md"), index).unwrap();
+    fs::write(proj.join("foo-bar.md"), index).unwrap();
     notes
 }
 
@@ -693,10 +689,10 @@ fn list_order_project_id_groups_by_project() {
 fn list_caps_to_default_ten_and_signals_more() {
     let notes = stage_many(12);
     let out = list_run(&notes, &[]);
-    assert!(out.contains("GLP-0012"), "newest missing: {out}");
-    assert!(out.contains("GLP-0003"), "10th newest missing: {out}");
-    assert!(!out.contains("GLP-0002"), "11th item leaked: {out}");
-    assert!(!out.contains("GLP-0001"), "12th item leaked: {out}");
+    assert!(out.contains("FOO-0012"), "newest missing: {out}");
+    assert!(out.contains("FOO-0003"), "10th newest missing: {out}");
+    assert!(!out.contains("FOO-0002"), "11th item leaked: {out}");
+    assert!(!out.contains("FOO-0001"), "12th item leaked: {out}");
     assert!(out.contains("2 more"), "more footer missing: {out}");
     assert!(out.contains("--all"), "escape hatch missing: {out}");
 }
@@ -707,8 +703,8 @@ fn list_all_shows_all_no_footer() {
     let out = list_run(&notes, &["--all"]);
     for n in 1..=12 {
         assert!(
-            out.contains(&format!("GLP-{n:04}")),
-            "GLP-{n:04} missing: {out}"
+            out.contains(&format!("FOO-{n:04}")),
+            "FOO-{n:04} missing: {out}"
         );
     }
     assert!(!out.contains("more"), "footer shown with --all: {out}");
@@ -718,24 +714,24 @@ fn list_all_shows_all_no_footer() {
 fn list_n_explicit_caps() {
     let notes = stage_many(12);
     let out = list_run(&notes, &["-n", "3"]);
-    assert!(out.contains("GLP-0012"), "newest missing: {out}");
-    assert!(out.contains("GLP-0011"), "2nd newest missing: {out}");
-    assert!(out.contains("GLP-0010"), "3rd newest missing: {out}");
-    assert!(!out.contains("GLP-0009"), "4th item leaked: {out}");
+    assert!(out.contains("FOO-0012"), "newest missing: {out}");
+    assert!(out.contains("FOO-0011"), "2nd newest missing: {out}");
+    assert!(out.contains("FOO-0010"), "3rd newest missing: {out}");
+    assert!(!out.contains("FOO-0009"), "4th item leaked: {out}");
 }
 
 #[test]
 fn list_is_capped_and_ordered() {
     let notes = stage_many(12);
     let out = list_run(&notes, &[]);
-    assert!(out.contains("GLP-0012"), "newest missing: {out}");
-    assert!(out.contains("GLP-0003"), "10th item missing: {out}");
-    assert!(!out.contains("GLP-0002"), "11th item leaked: {out}");
-    assert!(!out.contains("GLP-0001"), "12th item leaked: {out}");
+    assert!(out.contains("FOO-0012"), "newest missing: {out}");
+    assert!(out.contains("FOO-0003"), "10th item missing: {out}");
+    assert!(!out.contains("FOO-0002"), "11th item leaked: {out}");
+    assert!(!out.contains("FOO-0001"), "12th item leaked: {out}");
     assert!(out.contains("2 more"), "hidden-count footer missing: {out}");
     assert!(out.contains("--all"), "escape hatch missing: {out}");
     assert!(
-        out.find("GLP-0012").unwrap() < out.find("GLP-0003").unwrap(),
+        out.find("FOO-0012").unwrap() < out.find("FOO-0003").unwrap(),
         "not newest-first: {out}"
     );
 }
@@ -778,60 +774,60 @@ fn list_long_shows_prereq_status() {
 fn done_keeps_done_link_in_index_in_place_without_bak() {
     let stage = stage_dir();
     let notes = stage.join("notes");
-    let proj = notes.join("glep-shimeji");
+    let proj = notes.join("foo-bar");
     fs::create_dir_all(&proj).unwrap();
-    let item_content = "---\nstatus: active\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\nadd startup toggle\n";
-    fs::write(proj.join("GLP-0001.md"), item_content).unwrap();
-    let index_content = "# glep-shimeji\n\n- [[GLP-0001|tray gui]]\n\n## Later\n";
-    fs::write(proj.join("glep-shimeji.md"), index_content).unwrap();
-    let args = parse_args(&["done", "--id", "GLP-0001", "--date", "2026-01-01"]);
+    let item_content = "---\nstatus: active\ntitle: tray gui\nproject: foo-bar\ncreated: 2026-01-01\n---\n\nadd startup toggle\n";
+    fs::write(proj.join("FOO-0001.md"), item_content).unwrap();
+    let index_content = "# foo-bar\n\n- [[FOO-0001|tray gui]]\n\n## Later\n";
+    fs::write(proj.join("foo-bar.md"), index_content).unwrap();
+    let args = parse_args(&["done", "--id", "FOO-0001", "--date", "2026-01-01"]);
     let out = run_plain(&args, &test_projects(&notes)).unwrap();
-    assert!(out.starts_with("Done GLP-0001"), "got: {out}");
-    let item = fs::read_to_string(proj.join("GLP-0001.md")).unwrap();
+    assert!(out.starts_with("Done FOO-0001"), "got: {out}");
+    let item = fs::read_to_string(proj.join("FOO-0001.md")).unwrap();
     assert!(item.contains("status: done"));
     assert!(item.contains("completed: 2026-01-01"));
-    let index = fs::read_to_string(proj.join("glep-shimeji.md")).unwrap();
+    let index = fs::read_to_string(proj.join("foo-bar.md")).unwrap();
     assert_eq!(
         index,
-        "---\nid: glp\ntitle: glep-shimeji\n---\n\n# glep-shimeji\n\n- [x] [[GLP-0001]] ✅ 2026-01-01\n\n## Later\n"
+        "---\nid: foo\ntitle: foo-bar\n---\n\n# foo-bar\n\n- [x] [[FOO-0001]] ✅ 2026-01-01\n\n## Later\n"
     );
     // Writes must not leave backup files in the git-tracked vault.
-    assert!(!proj.join("GLP-0001.md.bak").exists());
-    assert!(!proj.join("glep-shimeji.md.bak").exists());
+    assert!(!proj.join("FOO-0001.md.bak").exists());
+    assert!(!proj.join("foo-bar.md.bak").exists());
 }
 
 #[test]
 fn done_evicts_oldest_link_but_keeps_note_in_project_dir() {
     let stage = stage_dir();
     let notes = stage.join("notes");
-    let proj = notes.join("glep-shimeji");
+    let proj = notes.join("foo-bar");
     fs::create_dir_all(&proj).unwrap();
     let mut index = String::new();
     for n in 1..=6 {
-        let id = format!("GLP-{n:04}");
+        let id = format!("FOO-{n:04}");
         fs::write(
             proj.join(format!("{id}.md")),
-            format!("---\nstatus: done\ncompleted: 2026-01-{n:02}\ntitle: t{n}\nproject: glep-shimeji\ncreated: 2026-01-{n:02}\n---\n\nbody\n"),
+            format!("---\nstatus: done\ncompleted: 2026-01-{n:02}\ntitle: t{n}\nproject: foo-bar\ncreated: 2026-01-{n:02}\n---\n\nbody\n"),
         )
         .unwrap();
         let _ = writeln!(index, "- [x] [[{id}]] ✅ 2026-01-{n:02}");
     }
     fs::write(
-        proj.join("GLP-0007.md"),
-        "---\nstatus: active\ntitle: seven\nproject: glep-shimeji\ncreated: 2026-06-13\n---\n\nbody\n",
+        proj.join("FOO-0007.md"),
+        "---\nstatus: active\ntitle: seven\nproject: foo-bar\ncreated: 2026-06-13\n---\n\nbody\n",
     )
     .unwrap();
-    index.push_str("- [ ] [[GLP-0007]]\n");
-    fs::write(proj.join("glep-shimeji.md"), &index).unwrap();
-    let args = parse_args(&["done", "--id", "GLP-0007", "--date", "2026-06-13"]);
+    index.push_str("- [ ] [[FOO-0007]]\n");
+    fs::write(proj.join("foo-bar.md"), &index).unwrap();
+    let args = parse_args(&["done", "--id", "FOO-0007", "--date", "2026-06-13"]);
     run_plain(&args, &test_projects(&notes)).unwrap();
-    let index = fs::read_to_string(proj.join("glep-shimeji.md")).unwrap();
-    assert!(!index.contains("GLP-0001"), "oldest unlinked: {index}");
-    assert!(index.contains("- [x] [[GLP-0007]] ✅ 2026-06-13"));
+    let index = fs::read_to_string(proj.join("foo-bar.md")).unwrap();
+    assert!(!index.contains("FOO-0001"), "oldest unlinked: {index}");
+    assert!(index.contains("- [x] [[FOO-0007]] ✅ 2026-06-13"));
     assert_eq!(index.matches("- [x]").count(), 6);
     // Queue eviction changes index visibility but leaves the authoritative note in place.
     assert!(
-        proj.join("GLP-0001.md").exists(),
+        proj.join("FOO-0001.md").exists(),
         "evicted note stays in project dir"
     );
     assert!(
@@ -844,14 +840,14 @@ fn done_evicts_oldest_link_but_keeps_note_in_project_dir() {
 fn stage_update_item(body: &str) -> (std::path::PathBuf, std::path::PathBuf) {
     let stage = stage_dir();
     let notes = stage.join("notes");
-    let proj = notes.join("glep-shimeji");
+    let proj = notes.join("foo-bar");
     fs::create_dir_all(&proj).unwrap();
     fs::write(
-        proj.join("GLP-0001.md"),
-        format!("---\nstatus: active\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\n{body}\n"),
+        proj.join("FOO-0001.md"),
+        format!("---\nstatus: active\ntitle: tray gui\nproject: foo-bar\ncreated: 2026-01-01\n---\n\n{body}\n"),
     )
     .unwrap();
-    fs::write(proj.join("glep-shimeji.md"), "- [ ] [[GLP-0001]]\n").unwrap();
+    fs::write(proj.join("foo-bar.md"), "- [ ] [[FOO-0001]]\n").unwrap();
     (notes, proj)
 }
 
@@ -861,7 +857,7 @@ fn update_rewrites_body_via_note_body_and_preserves_frontmatter() {
     let args = parse_args(&[
         "update",
         "--id",
-        "GLP-0001",
+        "FOO-0001",
         "--prompt",
         "new prompt / second goal",
         "--date",
@@ -869,11 +865,11 @@ fn update_rewrites_body_via_note_body_and_preserves_frontmatter() {
     ]);
     let out = run_plain(&args, &test_projects(&notes)).unwrap();
     assert!(
-        out.contains("Updated pwf task: **GLP-0001") && out.contains("glep-shimeji :: tray gui"),
-        "expected update confirmation for GLP-0001: {out}"
+        out.contains("Updated pwf task: **FOO-0001") && out.contains("foo-bar :: tray gui"),
+        "expected update confirmation for FOO-0001: {out}"
     );
 
-    let item = fs::read_to_string(proj.join("GLP-0001.md")).unwrap();
+    let item = fs::read_to_string(proj.join("FOO-0001.md")).unwrap();
     let expected_body = format!("## Goals{S}- new prompt\n- second goal");
     assert!(
         item.contains(&expected_body),
@@ -882,18 +878,18 @@ fn update_rewrites_body_via_note_body_and_preserves_frontmatter() {
     assert!(!item.contains("old prompt"), "old body replaced: {item}");
     assert!(item.contains("status: active"));
     assert!(item.contains("title: tray gui"));
-    assert!(item.contains("project: glep-shimeji"));
+    assert!(item.contains("project: foo-bar"));
     assert!(item.contains("created: 2026-01-01"));
     assert!(!item.contains("completed:"), "no completed added: {item}");
-    assert!(!proj.join("GLP-0001.md.bak").exists());
+    assert!(!proj.join("FOO-0001.md.bak").exists());
 }
 
 #[test]
 fn update_title_only_leaves_body_untouched() {
     let (notes, proj) = stage_update_item("## Goals\n- keep me");
-    let args = parse_args(&["update", "--id", "GLP-0001", "--title", "new title"]);
+    let args = parse_args(&["update", "--id", "FOO-0001", "--title", "new title"]);
     run_plain(&args, &test_projects(&notes)).unwrap();
-    let item = fs::read_to_string(proj.join("GLP-0001.md")).unwrap();
+    let item = fs::read_to_string(proj.join("FOO-0001.md")).unwrap();
     assert!(item.contains("title: new title"), "title replaced: {item}");
     assert!(!item.contains("title: tray gui"));
     assert!(
@@ -905,9 +901,9 @@ fn update_title_only_leaves_body_untouched() {
 #[test]
 fn update_prompt_only_leaves_title_untouched() {
     let (notes, proj) = stage_update_item("old body");
-    let args = parse_args(&["update", "--id", "GLP-0001", "--prompt", "fresh prompt"]);
+    let args = parse_args(&["update", "--id", "FOO-0001", "--prompt", "fresh prompt"]);
     run_plain(&args, &test_projects(&notes)).unwrap();
-    let item = fs::read_to_string(proj.join("GLP-0001.md")).unwrap();
+    let item = fs::read_to_string(proj.join("FOO-0001.md")).unwrap();
     assert!(item.contains("title: tray gui"), "title untouched: {item}");
     let expected_body = format!("## Goals{S}- fresh prompt");
     assert!(item.contains(&expected_body));
@@ -916,9 +912,9 @@ fn update_prompt_only_leaves_title_untouched() {
 #[test]
 fn update_keeps_placeholder_prompt_raw_so_it_stays_detectable() {
     let (notes, proj) = stage_update_item("## Goals\n- old");
-    let args = parse_args(&["update", "--id", "GLP-0001", "--prompt", "TODO"]);
+    let args = parse_args(&["update", "--id", "FOO-0001", "--prompt", "TODO"]);
     run_plain(&args, &test_projects(&notes)).unwrap();
-    let item = fs::read_to_string(proj.join("GLP-0001.md")).unwrap();
+    let item = fs::read_to_string(proj.join("FOO-0001.md")).unwrap();
     // Preserve raw placeholders so `is_placeholder_prompt` can recognize them.
     assert!(!item.contains("## Goals"), "placeholder stored raw: {item}");
     assert!(item.trim_end().ends_with("TODO"), "raw TODO body: {item}");
@@ -927,7 +923,7 @@ fn update_keeps_placeholder_prompt_raw_so_it_stays_detectable() {
 #[test]
 fn update_requires_at_least_one_field() {
     let (notes, _proj) = stage_update_item("body");
-    let args = parse_args(&["update", "--id", "GLP-0001"]);
+    let args = parse_args(&["update", "--id", "FOO-0001"]);
     let err = run_plain(&args, &test_projects(&notes)).unwrap_err();
     assert!(err.contains("nothing to update"), "got: {err}");
 }
@@ -935,7 +931,7 @@ fn update_requires_at_least_one_field() {
 #[test]
 fn update_unknown_id_errors() {
     let (notes, _proj) = stage_update_item("body");
-    let args = parse_args(&["update", "--id", "GLP-9999", "--prompt", "x"]);
+    let args = parse_args(&["update", "--id", "FOO-9999", "--prompt", "x"]);
     assert!(run_plain(&args, &test_projects(&notes)).is_err());
 }
 
@@ -943,29 +939,25 @@ fn update_unknown_id_errors() {
 fn done_with_report_appends_report_section() {
     let stage = stage_dir();
     let notes = stage.join("notes");
-    let proj = notes.join("glep-shimeji");
+    let proj = notes.join("foo-bar");
     fs::create_dir_all(&proj).unwrap();
     fs::write(
-        proj.join("GLP-0001.md"),
-        "---\nstatus: active\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\nadd startup toggle\n",
+        proj.join("FOO-0001.md"),
+        "---\nstatus: active\ntitle: tray gui\nproject: foo-bar\ncreated: 2026-01-01\n---\n\nadd startup toggle\n",
     )
     .unwrap();
-    fs::write(
-        proj.join("glep-shimeji.md"),
-        "- [ ] [[GLP-0001|tray gui]]\n",
-    )
-    .unwrap();
+    fs::write(proj.join("foo-bar.md"), "- [ ] [[FOO-0001|tray gui]]\n").unwrap();
     let args = parse_args(&[
         "done",
         "--id",
-        "GLP-0001",
+        "FOO-0001",
         "--report",
         "  launch prompt now tells agents to add reports\nwhen no plan covers the task  ",
         "--date",
         "2026-01-01",
     ]);
     run_plain(&args, &test_projects(&notes)).unwrap();
-    let item = fs::read_to_string(proj.join("GLP-0001.md")).unwrap();
+    let item = fs::read_to_string(proj.join("FOO-0001.md")).unwrap();
     assert!(
         item.contains("status: done\ncompleted: 2026-01-01\n"),
         "got: {item}"
@@ -982,15 +974,15 @@ fn done_with_report_appends_report_section() {
 fn cancel_requires_report() {
     let stage = stage_dir();
     let notes = stage.join("notes");
-    let proj = notes.join("glep-shimeji");
+    let proj = notes.join("foo-bar");
     fs::create_dir_all(&proj).unwrap();
     fs::write(
-        proj.join("GLP-0001.md"),
-        "---\nstatus: active\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\nadd startup toggle\n",
+        proj.join("FOO-0001.md"),
+        "---\nstatus: active\ntitle: tray gui\nproject: foo-bar\ncreated: 2026-01-01\n---\n\nadd startup toggle\n",
     )
     .unwrap();
-    fs::write(proj.join("glep-shimeji.md"), "- [ ] [[GLP-0001]]\n").unwrap();
-    let args = parse_args(&["cancel", "--id", "GLP-0001"]);
+    fs::write(proj.join("foo-bar.md"), "- [ ] [[FOO-0001]]\n").unwrap();
+    let args = parse_args(&["cancel", "--id", "FOO-0001"]);
 
     let err = run_plain(&args, &test_projects(&notes)).unwrap_err();
 
@@ -1001,22 +993,22 @@ fn cancel_requires_report() {
 fn cancel_with_report_marks_item_cancelled_and_rotates_done_queue() {
     let stage = stage_dir();
     let notes = stage.join("notes");
-    let proj = notes.join("glep-shimeji");
+    let proj = notes.join("foo-bar");
     fs::create_dir_all(&proj).unwrap();
     fs::write(
-        proj.join("GLP-0001.md"),
-        "---\nstatus: active\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\nadd startup toggle\n",
+        proj.join("FOO-0001.md"),
+        "---\nstatus: active\ntitle: tray gui\nproject: foo-bar\ncreated: 2026-01-01\n---\n\nadd startup toggle\n",
     )
     .unwrap();
     fs::write(
-        proj.join("glep-shimeji.md"),
-        "# glep-shimeji\n\n- [ ] [[GLP-0001|tray gui]]\n",
+        proj.join("foo-bar.md"),
+        "# foo-bar\n\n- [ ] [[FOO-0001|tray gui]]\n",
     )
     .unwrap();
     let args = parse_args(&[
         "cancel",
         "--id",
-        "GLP-0001",
+        "FOO-0001",
         "--report",
         "  tried the implementation\nblocked by upstream scope  ",
         "--date",
@@ -1025,8 +1017,8 @@ fn cancel_with_report_marks_item_cancelled_and_rotates_done_queue() {
 
     let out = run_plain(&args, &test_projects(&notes)).unwrap();
 
-    assert!(out.starts_with("Cancelled GLP-0001"), "got: {out}");
-    let item = fs::read_to_string(proj.join("GLP-0001.md")).unwrap();
+    assert!(out.starts_with("Cancelled FOO-0001"), "got: {out}");
+    let item = fs::read_to_string(proj.join("FOO-0001.md")).unwrap();
     assert!(
         item.contains("status: cancelled\ncompleted: 2026-01-01\n"),
         "got: {item}"
@@ -1035,10 +1027,10 @@ fn cancel_with_report_marks_item_cancelled_and_rotates_done_queue() {
         item.ends_with("\n### Report\n\ntried the implementation blocked by upstream scope\n"),
         "got: {item}"
     );
-    let index = fs::read_to_string(proj.join("glep-shimeji.md")).unwrap();
+    let index = fs::read_to_string(proj.join("foo-bar.md")).unwrap();
     assert_eq!(
         index,
-        "---\nid: glp\ntitle: glep-shimeji\n---\n\n# glep-shimeji\n\n- [x] [[GLP-0001]] ✅ 2026-01-01\n"
+        "---\nid: foo\ntitle: foo-bar\n---\n\n# foo-bar\n\n- [x] [[FOO-0001]] ✅ 2026-01-01\n"
     );
 }
 
@@ -1088,37 +1080,37 @@ fn add_continue_handoff_builds_handoff_prompt() {
     let stage = stage_dir();
     let notes = stage.join("notes");
     let repo = stage.join("repo");
-    let proj = notes.join("glep-shimeji");
+    let proj = notes.join("foo-bar");
     let handoff_dir = repo.join("docs").join("handoffs");
     fs::create_dir_all(&proj).unwrap();
     fs::create_dir_all(&handoff_dir).unwrap();
-    fs::write(proj.join("glep-shimeji.md"), "# glep-shimeji\n").unwrap();
+    fs::write(proj.join("foo-bar.md"), "# foo-bar\n").unwrap();
     fs::write(
         handoff_dir.join("2026-01-01-api-cleanup.md"),
         "# API cleanup handoff\n",
     )
     .unwrap();
-    ensure_record_identity(&proj, "GLP", "glep-shimeji");
+    ensure_record_identity(&proj, "FOO", "foo-bar");
     let args = parse_args(&[
         "add",
-        "glep-shimeji",
+        "foo-bar",
         "--continue-handoff",
         "--date",
         "2026-01-01",
     ]);
     let projects = TestProjects::new([TestProject {
-        id: "GLP",
-        title: "glep-shimeji",
+        id: "FOO",
+        title: "foo-bar",
         repository: repo,
         tasks_path: proj.clone(),
     }]);
     let out = run_plain(&args, &projects).unwrap();
-    assert!(out.starts_with("Added pwf task: **GLP-0001"), "got: {out}");
+    assert!(out.starts_with("Added pwf task: **FOO-0001"), "got: {out}");
     assert!(
         out.contains(":: continue api cleanup"),
         "title not in output: {out}"
     );
-    let item = fs::read_to_string(proj.join("GLP-0001.md")).unwrap();
+    let item = fs::read_to_string(proj.join("FOO-0001.md")).unwrap();
     assert!(
         item.contains("Continue the handoff at @docs/handoffs/2026-01-01-api-cleanup.md."),
         "prompt not in item: {item}"
@@ -1129,35 +1121,31 @@ fn add_continue_handoff_builds_handoff_prompt() {
 fn add_with_title_flag_accepts_prereq() {
     let stage = stage_dir();
     let notes = stage.join("notes");
-    let proj = notes.join("glep-shimeji");
+    let proj = notes.join("foo-bar");
     fs::create_dir_all(&proj).unwrap();
     fs::write(
-        proj.join("GLP-0001.md"),
-        "---\nstatus: active\ntitle: prerequisite\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\nbody\n",
+        proj.join("FOO-0001.md"),
+        "---\nstatus: active\ntitle: prerequisite\nproject: foo-bar\ncreated: 2026-01-01\n---\n\nbody\n",
     )
     .unwrap();
-    fs::write(
-        proj.join("glep-shimeji.md"),
-        "- [ ] [[GLP-0001|prerequisite]]\n",
-    )
-    .unwrap();
+    fs::write(proj.join("foo-bar.md"), "- [ ] [[FOO-0001|prerequisite]]\n").unwrap();
     let args = parse_args(&[
         "add",
-        "glep-shimeji",
+        "foo-bar",
         "do",
         "dependent",
         "work",
         "--title",
         "dependent",
         "--prereq",
-        "GLP-0001",
+        "FOO-0001",
         "--date",
         "2026-01-01",
     ]);
     run_plain(&args, &test_projects(&notes)).unwrap();
-    let item = fs::read_to_string(proj.join("GLP-0002.md")).unwrap();
+    let item = fs::read_to_string(proj.join("FOO-0002.md")).unwrap();
     assert!(
-        item.contains("prereq: \"[[GLP-0001]]\"\n---"),
+        item.contains("prereq: \"[[FOO-0001]]\"\n---"),
         "got: {item}"
     );
 }
@@ -1171,7 +1159,7 @@ fn route_create_verbs_error_with_add_hint() {
     for (words, expected) in [
         (&["add"][..], r#"Use: pwf add <project> "<prompt>""#),
         (
-            &["add-titled", "glep-shimeji"][..],
+            &["add-titled", "foo-bar"][..],
             r#"Use: pwf add <project> "<prompt>""#,
         ),
     ] {
@@ -1186,19 +1174,19 @@ fn route_create_verbs_error_with_add_hint() {
 fn show_stage() -> (std::path::PathBuf, std::path::PathBuf) {
     let stage = stage_dir();
     let notes = stage.join("notes");
-    let proj = notes.join("glep-shimeji");
+    let proj = notes.join("foo-bar");
     fs::create_dir_all(&proj).unwrap();
     fs::write(
-        proj.join("GLP-0001.md"),
-        "---\nid: GLP-0001\nstatus: active\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\nadd startup toggle\n",
+        proj.join("FOO-0001.md"),
+        "---\nid: FOO-0001\nstatus: active\ntitle: tray gui\nproject: foo-bar\ncreated: 2026-01-01\n---\n\nadd startup toggle\n",
     )
     .unwrap();
-    fs::write(proj.join("glep-shimeji.md"), "- [[GLP-0001|tray gui]]\n").unwrap();
+    fs::write(proj.join("foo-bar.md"), "- [[FOO-0001|tray gui]]\n").unwrap();
     (notes, proj)
 }
 
 fn show_path_args(extra: &[&str]) -> pending_work::Command {
-    let mut argv = vec!["show", "--path", "--id", "GLP-0001"];
+    let mut argv = vec!["show", "--path", "--id", "FOO-0001"];
     argv.extend_from_slice(extra);
     parse_args(&argv)
 }
@@ -1209,15 +1197,15 @@ fn show_path_prints_item_note_path_plain() {
     let out = run_plain(&show_path_args(&[]), &test_projects(&notes)).unwrap();
     assert_eq!(
         out.trim(),
-        proj.join("GLP-0001.md").to_string_lossy().as_ref()
+        proj.join("FOO-0001.md").to_string_lossy().as_ref()
     );
 }
 
 #[test]
 fn show_markdown_preserves_item_note_bytes() {
     let (notes, proj) = show_stage();
-    let expected = fs::read_to_string(proj.join("GLP-0001.md")).unwrap();
-    let args = parse_args(&["show", "--id", "GLP-0001"]);
+    let expected = fs::read_to_string(proj.join("FOO-0001.md")).unwrap();
+    let args = parse_args(&["show", "--id", "FOO-0001"]);
 
     assert_eq!(run_plain(&args, &test_projects(&notes)).unwrap(), expected);
 }
@@ -1225,22 +1213,22 @@ fn show_markdown_preserves_item_note_bytes() {
 #[test]
 fn show_path_succeeds_when_item_note_is_missing() {
     let (notes, proj) = show_stage();
-    fs::remove_file(proj.join("GLP-0001.md")).unwrap();
+    fs::remove_file(proj.join("FOO-0001.md")).unwrap();
 
     let out = run_plain(&show_path_args(&[]), &test_projects(&notes)).unwrap();
 
     assert_eq!(
         out.trim(),
-        proj.join("GLP-0001.md").to_string_lossy().as_ref()
+        proj.join("FOO-0001.md").to_string_lossy().as_ref()
     );
 }
 
 #[test]
 fn show_unknown_id_errors() {
     let (notes, _proj) = show_stage();
-    let args = parse_args(&["show", "--path", "--id", "GLP-0099"]);
+    let args = parse_args(&["show", "--path", "--id", "FOO-0099"]);
     let err = run_plain(&args, &test_projects(&notes)).unwrap_err();
-    assert!(err.contains("GLP-0099"), "error should name the id: {err}");
+    assert!(err.contains("FOO-0099"), "error should name the id: {err}");
 }
 
 #[test]

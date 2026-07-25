@@ -1,13 +1,13 @@
 //! Provides managed-project application operations.
 
-pub mod add;
+pub mod add_project;
 mod dto;
-pub mod get;
-pub mod list;
-pub mod load_active;
-pub mod pause;
+pub mod get_project;
+pub mod list_projects;
+pub mod load_active_projects;
+pub mod pause_project;
 pub mod resolve_runtime_path;
-pub mod resume;
+pub mod resume_project;
 mod runtime_path;
 mod task_location;
 

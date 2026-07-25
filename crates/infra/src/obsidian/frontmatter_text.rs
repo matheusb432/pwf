@@ -83,7 +83,7 @@ mod tests {
     #[test]
     fn missing_or_malformed_frontmatter_returns_the_original_body() {
         for source in [
-            "# title\n\n- [[GLP-0001|x]]\n",
+            "# title\n\n- [[FOO-0001|x]]\n",
             "---\nstatus: active\nunterminated\n",
         ] {
             let parsed = parse(source);

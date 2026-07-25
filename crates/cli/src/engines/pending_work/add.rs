@@ -3,7 +3,9 @@ use pwf_application::{
     Clock,
     pending_work::{
         PendingWorkSection, ProjectRegistry,
-        add::{self, AddPendingWorkError, AddPendingWorkItem, AddPendingWorkSource},
+        add_pending_work_item::{
+            self, AddPendingWorkError, AddPendingWorkItem, AddPendingWorkSource,
+        },
     },
 };
 use pwf_infra::obsidian::ObsidianStore;
@@ -66,7 +68,7 @@ pub(super) fn run(
     clock: &impl Clock,
 ) -> Result<String, PendingWorkError> {
     let command = request(arguments)?;
-    let result = add::execute(&command, store, projects, clock);
+    let result = add_pending_work_item::execute(&command, store, projects, clock);
     match result {
         Ok(added) => {
             emit_created_section(&added);

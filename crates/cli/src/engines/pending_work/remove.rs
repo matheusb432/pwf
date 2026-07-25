@@ -4,7 +4,7 @@ use pwf_application::{
     handoff::HandoffMutationOk,
     pending_work::{
         ProjectRegistry,
-        remove::{
+        remove_pending_work_item::{
             self, RemovalConfirmation, RemovalInteraction, RemovePendingWorkError,
             RemovePendingWorkItem, RemovePendingWorkOutcome,
         },
@@ -99,8 +99,13 @@ where
         console,
         assume_yes: args.assume_yes,
     };
-    let outcome = remove::execute(&RemovePendingWorkItem { id }, store, projects, &interaction)
-        .map_err(map_remove_error)?;
+    let outcome = remove_pending_work_item::execute(
+        &RemovePendingWorkItem { id },
+        store,
+        projects,
+        &interaction,
+    )
+    .map_err(map_remove_error)?;
 
     match outcome {
         RemovePendingWorkOutcome::Removed(removed) => {

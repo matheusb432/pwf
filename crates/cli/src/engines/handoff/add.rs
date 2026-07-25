@@ -10,7 +10,7 @@ use pwf_application::{
     AppRecordStore, Clock, HandoffDocumentStore, HandoffLedger, IndexEntry, IndexSection,
     PendingWorkItem,
     handoff::{
-        add::{self, AddHandoff, AddHandoffError, HandoffAllocation},
+        add_handoff::{self, AddHandoff, AddHandoffError, HandoffAllocation},
         ports::PendingWorkAllocatorClient,
     },
     pending_work::ProjectRegistry,
@@ -74,7 +74,7 @@ where
     C: Clock,
 {
     let title = args.title.as_deref().ok_or(HandoffError::MissingTitle)?;
-    let added = add::execute(
+    let added = add_handoff::execute(
         AddHandoff {
             scope: pwf_application::HandoffScope {
                 repository_root: root.to_path_buf(),

@@ -1,6 +1,6 @@
 use super::{
-    add::AddPendingWorkError,
-    done::{CloseError, ClosedItemAction, CompletedPendingWork, perform_close},
+    add_pending_work_item::AddPendingWorkError,
+    complete_pending_work::{CloseError, ClosedItemAction, CompletedPendingWork, perform_close},
     project_registry::ProjectRegistry,
 };
 use crate::{
@@ -149,9 +149,9 @@ mod tests {
 
     fn registry() -> ProjectRegistry {
         ProjectRegistry::new(vec![(
-            ProjectName::try_new("glep-shimeji").unwrap(),
+            ProjectName::try_new("foo-bar").unwrap(),
             Some("/repo".to_string()),
-            Some("GLP".to_string()),
+            Some("FOO".to_string()),
         )])
     }
 
@@ -169,7 +169,7 @@ mod tests {
             section: None,
             body: "\nbody\n".to_string(),
             source: "body".to_string(),
-            locator: format!("/mem/glep-shimeji/{id}.md"),
+            locator: format!("/mem/foo-bar/{id}.md"),
             placement: None,
             materialization: Materialization::NoteFile,
         }
@@ -177,13 +177,13 @@ mod tests {
 
     fn staged() -> InMemoryStore {
         let store = InMemoryStore::default()
-            .with_prefix("glep-shimeji", "GLP")
-            .with_project("glep-shimeji", vec![record("GLP-0001")]);
+            .with_prefix("foo-bar", "FOO")
+            .with_project("foo-bar", vec![record("FOO-0001")]);
         <InMemoryStore as crate::AppRecordStore<IndexEntry>>::insert(
             &store,
-            &ProjectName::try_new("glep-shimeji").unwrap(),
+            &ProjectName::try_new("foo-bar").unwrap(),
             IndexEntry {
-                id: WorkItemId::try_new("GLP-0001").unwrap(),
+                id: WorkItemId::try_new("FOO-0001").unwrap(),
                 state: IndexEntryState::Open,
                 section: String::new(),
             },
@@ -199,16 +199,16 @@ mod tests {
                 location: HandoffLocation::Active,
             },
             location: HandoffLocation::Active,
-            project: Some(ProjectName::try_new("glep-shimeji").unwrap()),
+            project: Some(ProjectName::try_new("foo-bar").unwrap()),
             title: "Tray GUI".to_string(),
             status: Some(HandoffStatus::Active),
             created: Some(Timestamp::new("2026-01-01")),
             completed: None,
-            pending_work_identifier_raw: Some("GLP-0001".to_string()),
+            pending_work_identifier_raw: Some("FOO-0001".to_string()),
             goals_completed: 0,
             goals_total: 1,
             body: "\n# Tray GUI\n".to_string(),
-            source: "---\nstatus: active\nproject: glep-shimeji\ncreated: 2026-01-01\npw: GLP-0001\n---\n\n# Tray GUI\n".to_string(),
+            source: "---\nstatus: active\nproject: foo-bar\ncreated: 2026-01-01\npw: FOO-0001\n---\n\n# Tray GUI\n".to_string(),
             locator: PathBuf::from("/repo/docs/handoffs/2026-01-01-tray-gui.md"),
             modified_timestamp: SystemTime::UNIX_EPOCH,
         }
@@ -217,7 +217,7 @@ mod tests {
     #[test]
     fn cancel_rejects_blank_report_during_execution() {
         let command = CancelPendingWork::new(
-            "GLP-0001".to_string(),
+            "FOO-0001".to_string(),
             Some("2026-07-14".to_string()),
             " \t\n".to_string(),
             Vec::new(),
@@ -234,13 +234,13 @@ mod tests {
     fn cancel_handoff_preflight_precedes_blank_report_validation() {
         let tagged = PendingWorkItem {
             tags: Some("[handoff]".to_string()),
-            ..record("GLP-0001")
+            ..record("FOO-0001")
         };
         let store = InMemoryStore::default()
-            .with_prefix("glep-shimeji", "GLP")
-            .with_project("glep-shimeji", vec![tagged]);
+            .with_prefix("foo-bar", "FOO")
+            .with_project("foo-bar", vec![tagged]);
         let command = CancelPendingWork::new(
-            "GLP-0001".to_string(),
+            "FOO-0001".to_string(),
             Some("2026-07-14".to_string()),
             " \t\n".to_string(),
             Vec::new(),
@@ -250,17 +250,14 @@ mod tests {
         let error = super::execute(&command, &store, &registry(), &FixedClock).unwrap_err();
 
         assert!(matches!(error, CancelPendingWorkError::HandoffPreflight(_)));
-        assert_eq!(
-            store.items("glep-shimeji")[0].status,
-            WorkItemStatus::Active
-        );
+        assert_eq!(store.items("foo-bar")[0].status, WorkItemStatus::Active);
     }
 
     #[test]
     fn cancel_marks_item_cancelled() {
         let store = staged();
         let command = CancelPendingWork::new(
-            "GLP-0001".to_string(),
+            "FOO-0001".to_string(),
             Some("2026-07-14".to_string()),
             "obsoleted".to_string(),
             vec![" a..b, c..d ".to_string(), "a..b".to_string()],
@@ -269,17 +266,17 @@ mod tests {
 
         let out = super::execute(&command, &store, &registry(), &FixedClock).unwrap();
 
-        assert_eq!(out.action, super::super::done::ClosedItemAction::Cancelled);
         assert_eq!(
-            store.items("glep-shimeji")[0].status,
-            WorkItemStatus::Cancelled
+            out.action,
+            super::super::complete_pending_work::ClosedItemAction::Cancelled
         );
+        assert_eq!(store.items("foo-bar")[0].status, WorkItemStatus::Cancelled);
         assert_eq!(
-            store.items("glep-shimeji")[0].completed,
+            store.items("foo-bar")[0].completed,
             Some(Timestamp::new("2026-07-14"))
         );
         assert_eq!(
-            store.items("glep-shimeji")[0].commits.as_deref(),
+            store.items("foo-bar")[0].commits.as_deref(),
             Some("a..b, c..d")
         );
     }
@@ -288,7 +285,7 @@ mod tests {
     fn cancel_uses_clock_date_when_no_date_is_explicit() {
         let store = staged();
         let command = CancelPendingWork::new(
-            "GLP-0001".to_string(),
+            "FOO-0001".to_string(),
             None,
             "obsoleted".to_string(),
             Vec::new(),
@@ -298,7 +295,7 @@ mod tests {
         super::execute(&command, &store, &registry(), &FixedClock).unwrap();
 
         assert_eq!(
-            store.items("glep-shimeji")[0].completed,
+            store.items("foo-bar")[0].completed,
             Some(Timestamp::new("2026-07-26"))
         );
     }
@@ -325,18 +322,18 @@ mod tests {
     fn cancel_reports_handoff_failure_after_pending_work_is_cancelled() {
         let tagged = PendingWorkItem {
             tags: Some("[handoff]".to_string()),
-            ..record("GLP-0001")
+            ..record("FOO-0001")
         };
         let scope = HandoffScope {
             repository_root: PathBuf::from("/repo"),
         };
         let store = InMemoryStore::default()
-            .with_prefix("glep-shimeji", "GLP")
-            .with_project("glep-shimeji", vec![tagged])
+            .with_prefix("foo-bar", "FOO")
+            .with_project("foo-bar", vec![tagged])
             .with_handoff_documents(scope, vec![handoff()])
             .with_failure(FailurePoint::DocumentUpdate);
         let command = CancelPendingWork::new(
-            "GLP-0001".to_string(),
+            "FOO-0001".to_string(),
             Some("2026-07-14".to_string()),
             "obsoleted".to_string(),
             Vec::new(),
@@ -350,11 +347,8 @@ mod tests {
             CancelPendingWorkError::HandoffAfterPendingWork {
                 ref pending_work_identifier,
                 ..
-            } if pending_work_identifier.as_ref() == "GLP-0001"
+            } if pending_work_identifier.as_ref() == "FOO-0001"
         ));
-        assert_eq!(
-            store.items("glep-shimeji")[0].status,
-            WorkItemStatus::Cancelled
-        );
+        assert_eq!(store.items("foo-bar")[0].status, WorkItemStatus::Cancelled);
     }
 }

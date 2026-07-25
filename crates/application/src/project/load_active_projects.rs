@@ -4,7 +4,7 @@ use pwf_domain::project::ProjectPrefix;
 
 use super::{
     Project,
-    list::{self, ListProjects, ListProjectsError},
+    list_projects::{self, ListProjects, ListProjectsError},
     resolve_runtime_path::{self, ResolveRuntimePath, RuntimePathError},
     task_location::{self, TaskLocationError},
 };
@@ -73,7 +73,7 @@ pub async fn execute(
     query: LoadActiveProjects,
     database: &impl AppDbStore,
 ) -> Result<Vec<ActiveProject>, LoadActiveProjectsError> {
-    let projects = list::execute(
+    let projects = list_projects::execute(
         ListProjects {
             include_paused: false,
         },
@@ -187,15 +187,32 @@ mod tests {
     fn runtime_task_aliases_are_rejected_with_stable_project_order() {
         let projects = vec![
             project("PWF", "pwf", "/work/pwf", "~/tasks/shared"),
-            project("ALT", "other", "/work/other", "/home/developer/tasks/shared"),
+            project("ALT", "other", "/work/other", "/home/tester/tasks/shared"),
         ];
 
-        let error = resolve_projects(projects, Path::new("/home/developer")).unwrap_err();
+        let error = resolve_projects(projects, Path::new("/home/tester")).unwrap_err();
 
         assert_eq!(
             error.to_string(),
             "managed projects ALT and PWF resolve to the same task location: \
-             /home/developer/tasks/shared"
+             /home/tester/tasks/shared"
+        );
+    }
+
+    #[test]
+    fn home_relative_paths_are_resolved_for_runtime_use() {
+        let projects = vec![project("PWF", "pwf", "~/tools/pwf", "~/pending-work/pwf")];
+
+        let active = resolve_projects(projects, Path::new("/home/tester")).unwrap();
+
+        assert_eq!(active.len(), 1);
+        assert_eq!(
+            active[0].source_path,
+            PathBuf::from("/home/tester/tools/pwf")
+        );
+        assert_eq!(
+            active[0].tasks_path,
+            PathBuf::from("/home/tester/pending-work/pwf")
         );
     }
 }

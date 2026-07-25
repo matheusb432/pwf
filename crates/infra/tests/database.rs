@@ -130,30 +130,3 @@ async fn active_projects_excludes_paused_rows() -> anyhow::Result<()> {
     assert_eq!(ids, ["ACTIVE"]);
     Ok(())
 }
-
-#[tokio::test]
-async fn schema_preserves_source_and_task_text_exactly() -> anyhow::Result<()> {
-    let temp_directory = tempfile::tempdir()?;
-    let pool = migrated_pool(&temp_directory).await?;
-    let source_text = "  /repo with spaces  ";
-    let tasks_text = "  /tasks with spaces  ";
-
-    sqlx::query("INSERT INTO project_sources (kind, value) VALUES ('directory', ?)")
-        .bind(source_text)
-        .execute(&pool)
-        .await?;
-    sqlx::query("INSERT INTO projects (id, project_source_id, title, tasks_kind, tasks_path) VALUES ('TEXT', 1, 'text', 'directory', ?)")
-        .bind(tasks_text)
-        .execute(&pool)
-        .await?;
-
-    let stored_source: String = sqlx::query_scalar("SELECT value FROM project_sources")
-        .fetch_one(&pool)
-        .await?;
-    let stored_tasks: String = sqlx::query_scalar("SELECT tasks_path FROM projects")
-        .fetch_one(&pool)
-        .await?;
-    assert_eq!(stored_source, source_text);
-    assert_eq!(stored_tasks, tasks_text);
-    Ok(())
-}

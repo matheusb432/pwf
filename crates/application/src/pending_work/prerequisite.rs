@@ -3,7 +3,7 @@ use std::sync::LazyLock;
 use pwf_domain::pending_work::{WorkItemId, WorkItemStatus};
 use regex::Regex;
 
-use super::{identifier, list::PrerequisiteStatus, project_registry::ProjectRegistry};
+use super::{get_pending_work::PrerequisiteStatus, identifier, project_registry::ProjectRegistry};
 use crate::{AppRecordStore, Materialization, PendingWorkItem};
 
 const PREREQUISITE_VALUE_PATTERN: &str = r"\[\[([A-Z]{2,4}-\d{4})";

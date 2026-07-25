@@ -3,8 +3,8 @@ use pwf_application::pending_work::{
     ProjectRegistry,
     session::{
         Agent, AgentProbe, DispatchMode, LaunchDirectives, PlanSessionIntent,
-        dispatch::{self, DispatchSession, DispatchSessionOk},
-        plan::{self, PlanSession, PlanSessionOk},
+        dispatch_session::{self, DispatchSession, DispatchSessionOk},
+        plan_session::{self, PlanSession, PlanSessionOk},
     },
 };
 use pwf_infra::{
@@ -108,7 +108,7 @@ pub(super) fn run(
         agent,
         model_override: arguments.model.clone().into(),
     };
-    let planned = plan::execute(
+    let planned = plan_session::execute(
         &request,
         store,
         projects,
@@ -146,9 +146,10 @@ pub(super) fn run(
             planned.plan().launch.repository
         );
     }
-    let outcome = dispatch::execute(
+    let outcome = dispatch_session::execute(
         DispatchSession::new(planned),
         store,
+        projects,
         &ClaudeHarness,
         &CodexHarness,
         &InlineHarness,

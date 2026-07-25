@@ -214,8 +214,8 @@ mod tests {
     #[test]
     fn project_name_trims_and_rejects_blank() {
         assert_eq!(
-            ProjectName::try_new("  glep-shimeji  ").unwrap().as_ref(),
-            "glep-shimeji"
+            ProjectName::try_new("  foo-bar  ").unwrap().as_ref(),
+            "foo-bar"
         );
         assert!(ProjectName::try_new(" \t ").is_err());
     }

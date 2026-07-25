@@ -77,18 +77,18 @@ fn stage_dir() -> std::path::PathBuf {
 fn default_engine_treats_next_arg_as_project() {
     let stage = stage_dir();
     let notes = stage.join("notes");
-    let glep = notes.join("glep-shimeji");
+    let foo = notes.join("foo-bar");
     let config = notes.join("config-handler");
-    fs::create_dir_all(&glep).unwrap();
+    fs::create_dir_all(&foo).unwrap();
     fs::create_dir_all(&config).unwrap();
     fs::write(
-        glep.join("GLP-0001.md"),
-        "---\nid: GLP-0001\nstatus: active\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\nadd startup toggle\n",
+        foo.join("FOO-0001.md"),
+        "---\nid: FOO-0001\nstatus: active\ntitle: tray gui\nproject: foo-bar\ncreated: 2026-01-01\n---\n\nadd startup toggle\n",
     )
     .unwrap();
     fs::write(
-        glep.join("glep-shimeji.md"),
-        "---\nid: glp\ntitle: glep-shimeji\n---\n\n- [ ] [[GLP-0001|tray gui]]\n",
+        foo.join("foo-bar.md"),
+        "---\nid: foo\ntitle: foo-bar\n---\n\n- [ ] [[FOO-0001|tray gui]]\n",
     )
     .unwrap();
     fs::write(
@@ -108,7 +108,7 @@ fn default_engine_treats_next_arg_as_project() {
         std::path::Path::new("/config"),
         &config,
     );
-    database.add_directory_project("GLP", "glep-shimeji", std::path::Path::new("/glep"), &glep);
+    database.add_directory_project("FOO", "foo-bar", std::path::Path::new("/foo"), &foo);
 
     let out = database
         .command()
@@ -119,7 +119,7 @@ fn default_engine_treats_next_arg_as_project() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "stderr: {stderr}");
     assert!(stdout.contains("CFG-0001 :: config task"));
-    assert!(!stdout.contains("GLP-0001"), "got: {stdout}");
+    assert!(!stdout.contains("FOO-0001"), "got: {stdout}");
 }
 
 #[test]

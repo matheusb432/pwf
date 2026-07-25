@@ -1,6 +1,6 @@
 use super::{
     enrich::inline_record_id, identifier, project_registry::ProjectRegistry,
-    show::ShowPendingWorkError,
+    show_pending_work_item::ShowPendingWorkError,
 };
 use crate::{AppRecordStore, PendingWorkItem, RecordId};
 
