@@ -27,7 +27,7 @@ enum PromptClassification {
 /// ```
 /// use pwf_application::pending_work::note_body;
 ///
-/// assert_eq!(note_body("ship release"), "## Goals\n- ship release");
+/// assert_eq!(note_body("ship release"), "## Goals\n\n- ship release");
 /// ```
 #[must_use]
 pub fn note_body(prompt: &str) -> String {
@@ -220,6 +220,9 @@ fn normalized_report(report: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    // section separator
+    const S: &str = "\n\n";
+
     #[test]
     fn placeholder_prompt_detection() {
         assert!(is_placeholder_prompt(""));
@@ -230,29 +233,32 @@ mod tests {
 
     #[test]
     fn note_body_renders_marker_first_prompt_without_body_leakage() {
-        assert_eq!(note_body("/c context"), "## Goals\n\n## Context\n- context");
+        assert_eq!(
+            note_body("/c context"),
+            format!("## Goals\n{S}## Context{S}- context")
+        );
     }
 
     #[test]
     fn note_body_wraps_a_normal_prompt() {
         assert_eq!(
             note_body("add startup toggle"),
-            "## Goals\n- add startup toggle"
+            format!("## Goals{S}- add startup toggle")
         );
-        assert_eq!(note_body("a / b"), "## Goals\n- a\n- b");
+        assert_eq!(note_body("a / b"), format!("## Goals{S}- a\n- b"));
     }
 
     #[test]
     fn note_body_renders_one_bullet_per_slash_lane() {
         assert_eq!(
             note_body("create engine feature to add update task / make it idempotent"),
-            "## Goals\n- create engine feature to add update task\n- make it idempotent"
+            format!("## Goals{S}- create engine feature to add update task\n- make it idempotent")
         );
     }
 
     #[test]
     fn note_body_preserves_ampersands_as_text() {
-        assert_eq!(note_body("a & b"), "## Goals\n- a & b");
+        assert_eq!(note_body("a & b"), format!("## Goals{S}- a & b"));
     }
 
     #[test]

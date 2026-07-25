@@ -1,7 +1,6 @@
 use std::path::{Path, PathBuf};
 
 use gray_matter::{Matter, engine::YAML};
-use pwf_core::config::Config;
 use pwf_domain::pending_work::{ProjectIndexIdentity, ProjectName, ProjectPrefix, WorkItemId};
 use serde::Deserialize;
 
@@ -19,30 +18,13 @@ pub struct TaskNoteIdentity {
 pub fn inspect_project_task_notes(
     project_dir: &Path,
     index_path: &Path,
-    expected_prefix: &str,
-    expected_title: &str,
+    expected_identity: &ProjectIndexIdentity,
 ) -> Result<Vec<TaskNoteIdentity>, ObsidianStoreError> {
     if index_path.exists() {
         let index_markdown = std::fs::read_to_string(index_path)
             .map_err(|source| ObsidianStoreError::ReadIndex { source })?;
         let actual = parse_project_index_identity(index_path, &index_markdown)?;
-        let expected = ProjectIndexIdentity::new(
-            ProjectPrefix::try_new(expected_prefix).map_err(|_| {
-                ObsidianStoreError::InvalidProjectIndexProperty {
-                    path: index_path.to_path_buf(),
-                    property: "id",
-                    value: expected_prefix.to_string(),
-                }
-            })?,
-            ProjectName::try_new(expected_title).map_err(|_| {
-                ObsidianStoreError::InvalidProjectIndexProperty {
-                    path: index_path.to_path_buf(),
-                    property: "title",
-                    value: expected_title.to_string(),
-                }
-            })?,
-        );
-        validate_project_index_identity(index_path, &actual, &expected)?;
+        validate_project_index_identity(index_path, &actual, expected_identity)?;
     }
 
     let mut tasks = Vec::new();
@@ -168,22 +150,6 @@ pub(super) fn new_project_index_content(identity: &ProjectIndexIdentity) -> Stri
     )
 }
 
-pub(super) fn configured_project_index_identity(
-    config: &Config,
-    project: &ProjectName,
-) -> Result<ProjectIndexIdentity, ObsidianStoreError> {
-    let prefix = config.prefixes.get(project.as_ref()).ok_or_else(|| {
-        ObsidianStoreError::ProjectMissingPrefix {
-            project: project.as_ref().to_string(),
-        }
-    })?;
-    let prefix =
-        ProjectPrefix::try_new(prefix).map_err(|_| ObsidianStoreError::ProjectMissingPrefix {
-            project: project.as_ref().to_string(),
-        })?;
-    Ok(ProjectIndexIdentity::new(prefix, project.clone()))
-}
-
 fn parse_frontmatter<T: serde::de::DeserializeOwned>(
     path: &Path,
     markdown: &str,
@@ -263,7 +229,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_project_index_identity_that_disagrees_with_config() {
+    fn rejects_project_index_identity_that_disagrees_with_supplied_identity() {
         let path = Path::new("/vault/rust-learn/index.md");
         let actual = ProjectIndexIdentity::new(
             ProjectPrefix::try_new("pwf").unwrap(),

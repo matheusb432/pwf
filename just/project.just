@@ -37,6 +37,10 @@ fmt-check:
 lint:
     cargo run --quiet -p xtask -- lint
 
+# Refresh or verify the committed SQLx checked-query cache.
+prepare *args:
+    cargo run --quiet -p xtask -- prepare {{ args }}
+
 # Run the complete read-only formatting and lint gate.
 [group('quality')]
 check:

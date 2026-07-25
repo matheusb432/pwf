@@ -3,18 +3,16 @@ use std::error::Error;
 use pwf_domain::handoff::HandoffStatus;
 
 use crate::{
-    AppDbStore, HandoffDocumentStore, HandoffLedger, HandoffLedgerRow, HandoffLedgerWrite,
+    AppRecordStore, HandoffDocumentStore, HandoffLedger, HandoffLedgerRow, HandoffLedgerWrite,
     HandoffLocation, HandoffScope,
 };
-
-type StoreError = Box<dyn Error + Send + Sync>;
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum RebuildLedgerError {
     #[error("{0}")]
-    ReadDocuments(#[source] StoreError),
+    ReadDocuments(#[source] Box<dyn Error + Send + Sync>),
     #[error("{0}")]
-    WriteLedger(#[source] StoreError),
+    WriteLedger(#[source] Box<dyn Error + Send + Sync>),
 }
 
 pub(crate) fn rebuild<S>(
@@ -22,7 +20,7 @@ pub(crate) fn rebuild<S>(
     store: &S,
 ) -> Result<HandoffLedger, RebuildLedgerError>
 where
-    S: HandoffDocumentStore + AppDbStore<HandoffLedger>,
+    S: HandoffDocumentStore + AppRecordStore<HandoffLedger>,
 {
     let documents = store
         .list_location(scope, HandoffLocation::Active)
@@ -53,7 +51,7 @@ where
             .cmp(&left.created)
             .then_with(|| right.file_name.cmp(&left.file_name))
     });
-    <S as AppDbStore<HandoffLedger>>::insert(store, scope, HandoffLedgerWrite { rows })
+    <S as AppRecordStore<HandoffLedger>>::insert(store, scope, HandoffLedgerWrite { rows })
         .map_err(|error| RebuildLedgerError::WriteLedger(Box::new(error)))
 }
 

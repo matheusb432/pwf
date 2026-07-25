@@ -4,10 +4,9 @@ use std::path::Path;
 
 use clap::Args;
 use pwf_application::{
-    AppDbStore, HandoffLedger,
+    AppRecordStore, HandoffLedger,
     handoff::list::{ListHandoffs, ListedHandoffs},
 };
-use pwf_infra::obsidian::ObsidianStore;
 
 use super::common::{CommonArguments, HandoffError, repository_root};
 
@@ -17,11 +16,12 @@ pub struct Arguments {
     pub(crate) common: CommonArguments,
 }
 
-pub(super) fn run(arguments: &Arguments) -> Result<String, HandoffError> {
+pub(super) fn run(
+    arguments: &Arguments,
+    store: &impl AppRecordStore<HandoffLedger>,
+) -> Result<String, HandoffError> {
     let root = repository_root(&arguments.common)?;
-    let configuration = crate::config::from_json("{}", None)
-        .expect("an empty configuration is valid for repository-scoped handoff records");
-    invoke_list(&root, &ObsidianStore::new(configuration))
+    invoke_list(&root, store)
 }
 
 pub(in crate::engines::handoff) fn invoke_list<S>(
@@ -29,7 +29,7 @@ pub(in crate::engines::handoff) fn invoke_list<S>(
     store: &S,
 ) -> Result<String, HandoffError>
 where
-    S: AppDbStore<HandoffLedger>,
+    S: AppRecordStore<HandoffLedger>,
 {
     let listed = pwf_application::handoff::list::execute(
         ListHandoffs {

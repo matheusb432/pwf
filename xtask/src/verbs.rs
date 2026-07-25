@@ -7,5 +7,6 @@ pub(crate) mod check_architecture;
 pub(crate) mod format;
 pub(crate) mod install;
 pub(crate) mod lint;
+pub(crate) mod prepare;
 pub(crate) mod ship;
 pub(crate) mod test;

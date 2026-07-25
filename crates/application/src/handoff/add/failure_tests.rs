@@ -4,7 +4,7 @@ use pwf_domain::pending_work::{ProjectName, WorkItemId};
 
 use super::{AddHandoff, AddHandoffError, HandoffAllocation, execute};
 use crate::{
-    AppDbStore, HandoffDocument, HandoffDocumentIdentifier, HandoffDocumentScopePresence,
+    AppRecordStore, HandoffDocument, HandoffDocumentIdentifier, HandoffDocumentScopePresence,
     HandoffDocumentStore, HandoffLedger, HandoffLedgerIdentifier, HandoffLedgerWrite,
     HandoffLocation, HandoffPatch, HandoffScope, IndexEntry, IndexSection, ItemPatch,
     NewHandoffDocument, NewItem, PendingWorkItem,
@@ -43,7 +43,7 @@ impl FailureStore {
     }
 }
 
-impl AppDbStore<HandoffDocument> for FailureStore {
+impl AppRecordStore<HandoffDocument> for FailureStore {
     type Error = FailureStoreError;
 
     fn get(
@@ -54,7 +54,7 @@ impl AppDbStore<HandoffDocument> for FailureStore {
         if self.point == FailurePoint::ReadPreflight {
             return Err(FailureStoreError::Sentinel);
         }
-        <InMemoryStore as AppDbStore<HandoffDocument>>::get(&self.inner, scope, identifier)
+        <InMemoryStore as AppRecordStore<HandoffDocument>>::get(&self.inner, scope, identifier)
             .map_err(Into::into)
     }
 
@@ -62,7 +62,8 @@ impl AppDbStore<HandoffDocument> for FailureStore {
         if self.point == FailurePoint::ReadLedger {
             return Err(FailureStoreError::Sentinel);
         }
-        <InMemoryStore as AppDbStore<HandoffDocument>>::list(&self.inner, scope).map_err(Into::into)
+        <InMemoryStore as AppRecordStore<HandoffDocument>>::list(&self.inner, scope)
+            .map_err(Into::into)
     }
 
     fn insert(
@@ -70,7 +71,7 @@ impl AppDbStore<HandoffDocument> for FailureStore {
         scope: &HandoffScope,
         new: NewHandoffDocument,
     ) -> Result<HandoffDocument, Self::Error> {
-        <InMemoryStore as AppDbStore<HandoffDocument>>::insert(&self.inner, scope, new)
+        <InMemoryStore as AppRecordStore<HandoffDocument>>::insert(&self.inner, scope, new)
             .map_err(Into::into)
     }
 
@@ -83,7 +84,7 @@ impl AppDbStore<HandoffDocument> for FailureStore {
         if self.point == FailurePoint::UpdateLink {
             return Err(FailureStoreError::Sentinel);
         }
-        <InMemoryStore as AppDbStore<HandoffDocument>>::update(
+        <InMemoryStore as AppRecordStore<HandoffDocument>>::update(
             &self.inner,
             scope,
             identifier,
@@ -97,7 +98,7 @@ impl AppDbStore<HandoffDocument> for FailureStore {
         scope: &HandoffScope,
         identifier: &HandoffDocumentIdentifier,
     ) -> Result<(), Self::Error> {
-        <InMemoryStore as AppDbStore<HandoffDocument>>::delete(&self.inner, scope, identifier)
+        <InMemoryStore as AppRecordStore<HandoffDocument>>::delete(&self.inner, scope, identifier)
             .map_err(Into::into)
     }
 }
@@ -157,7 +158,7 @@ impl HandoffDocumentStore for FailureStore {
     }
 }
 
-impl AppDbStore<HandoffLedger> for FailureStore {
+impl AppRecordStore<HandoffLedger> for FailureStore {
     type Error = FailureStoreError;
 
     fn get(
@@ -165,12 +166,13 @@ impl AppDbStore<HandoffLedger> for FailureStore {
         scope: &HandoffScope,
         identifier: &HandoffLedgerIdentifier,
     ) -> Result<Option<HandoffLedger>, Self::Error> {
-        <InMemoryStore as AppDbStore<HandoffLedger>>::get(&self.inner, scope, identifier)
+        <InMemoryStore as AppRecordStore<HandoffLedger>>::get(&self.inner, scope, identifier)
             .map_err(Into::into)
     }
 
     fn list(&self, scope: &HandoffScope) -> Result<Vec<HandoffLedger>, Self::Error> {
-        <InMemoryStore as AppDbStore<HandoffLedger>>::list(&self.inner, scope).map_err(Into::into)
+        <InMemoryStore as AppRecordStore<HandoffLedger>>::list(&self.inner, scope)
+            .map_err(Into::into)
     }
 
     fn insert(
@@ -178,7 +180,7 @@ impl AppDbStore<HandoffLedger> for FailureStore {
         scope: &HandoffScope,
         new: HandoffLedgerWrite,
     ) -> Result<HandoffLedger, Self::Error> {
-        <InMemoryStore as AppDbStore<HandoffLedger>>::insert(&self.inner, scope, new)
+        <InMemoryStore as AppRecordStore<HandoffLedger>>::insert(&self.inner, scope, new)
             .map_err(Into::into)
     }
 
@@ -188,8 +190,13 @@ impl AppDbStore<HandoffLedger> for FailureStore {
         identifier: &HandoffLedgerIdentifier,
         patch: HandoffLedgerWrite,
     ) -> Result<(), Self::Error> {
-        <InMemoryStore as AppDbStore<HandoffLedger>>::update(&self.inner, scope, identifier, patch)
-            .map_err(Into::into)
+        <InMemoryStore as AppRecordStore<HandoffLedger>>::update(
+            &self.inner,
+            scope,
+            identifier,
+            patch,
+        )
+        .map_err(Into::into)
     }
 
     fn delete(
@@ -197,12 +204,12 @@ impl AppDbStore<HandoffLedger> for FailureStore {
         scope: &HandoffScope,
         identifier: &HandoffLedgerIdentifier,
     ) -> Result<(), Self::Error> {
-        <InMemoryStore as AppDbStore<HandoffLedger>>::delete(&self.inner, scope, identifier)
+        <InMemoryStore as AppRecordStore<HandoffLedger>>::delete(&self.inner, scope, identifier)
             .map_err(Into::into)
     }
 }
 
-impl AppDbStore<PendingWorkItem> for FailureStore {
+impl AppRecordStore<PendingWorkItem> for FailureStore {
     type Error = FailureStoreError;
 
     fn get(
@@ -210,16 +217,17 @@ impl AppDbStore<PendingWorkItem> for FailureStore {
         scope: &ProjectName,
         identifier: &WorkItemId,
     ) -> Result<Option<PendingWorkItem>, Self::Error> {
-        <InMemoryStore as AppDbStore<PendingWorkItem>>::get(&self.inner, scope, identifier)
+        <InMemoryStore as AppRecordStore<PendingWorkItem>>::get(&self.inner, scope, identifier)
             .map_err(infallible)
     }
 
     fn list(&self, scope: &ProjectName) -> Result<Vec<PendingWorkItem>, Self::Error> {
-        <InMemoryStore as AppDbStore<PendingWorkItem>>::list(&self.inner, scope).map_err(infallible)
+        <InMemoryStore as AppRecordStore<PendingWorkItem>>::list(&self.inner, scope)
+            .map_err(infallible)
     }
 
     fn insert(&self, scope: &ProjectName, new: NewItem) -> Result<PendingWorkItem, Self::Error> {
-        <InMemoryStore as AppDbStore<PendingWorkItem>>::insert(&self.inner, scope, new)
+        <InMemoryStore as AppRecordStore<PendingWorkItem>>::insert(&self.inner, scope, new)
             .map_err(infallible)
     }
 
@@ -229,7 +237,7 @@ impl AppDbStore<PendingWorkItem> for FailureStore {
         identifier: &WorkItemId,
         patch: ItemPatch,
     ) -> Result<(), Self::Error> {
-        <InMemoryStore as AppDbStore<PendingWorkItem>>::update(
+        <InMemoryStore as AppRecordStore<PendingWorkItem>>::update(
             &self.inner,
             scope,
             identifier,
@@ -239,12 +247,12 @@ impl AppDbStore<PendingWorkItem> for FailureStore {
     }
 
     fn delete(&self, scope: &ProjectName, identifier: &WorkItemId) -> Result<(), Self::Error> {
-        <InMemoryStore as AppDbStore<PendingWorkItem>>::delete(&self.inner, scope, identifier)
+        <InMemoryStore as AppRecordStore<PendingWorkItem>>::delete(&self.inner, scope, identifier)
             .map_err(infallible)
     }
 }
 
-impl AppDbStore<IndexEntry> for FailureStore {
+impl AppRecordStore<IndexEntry> for FailureStore {
     type Error = FailureStoreError;
 
     fn get(
@@ -252,16 +260,16 @@ impl AppDbStore<IndexEntry> for FailureStore {
         scope: &ProjectName,
         identifier: &WorkItemId,
     ) -> Result<Option<IndexEntry>, Self::Error> {
-        <InMemoryStore as AppDbStore<IndexEntry>>::get(&self.inner, scope, identifier)
+        <InMemoryStore as AppRecordStore<IndexEntry>>::get(&self.inner, scope, identifier)
             .map_err(infallible)
     }
 
     fn list(&self, scope: &ProjectName) -> Result<Vec<IndexEntry>, Self::Error> {
-        <InMemoryStore as AppDbStore<IndexEntry>>::list(&self.inner, scope).map_err(infallible)
+        <InMemoryStore as AppRecordStore<IndexEntry>>::list(&self.inner, scope).map_err(infallible)
     }
 
     fn insert(&self, scope: &ProjectName, new: IndexEntry) -> Result<IndexEntry, Self::Error> {
-        <InMemoryStore as AppDbStore<IndexEntry>>::insert(&self.inner, scope, new)
+        <InMemoryStore as AppRecordStore<IndexEntry>>::insert(&self.inner, scope, new)
             .map_err(infallible)
     }
 
@@ -271,17 +279,17 @@ impl AppDbStore<IndexEntry> for FailureStore {
         identifier: &WorkItemId,
         patch: IndexEntry,
     ) -> Result<(), Self::Error> {
-        <InMemoryStore as AppDbStore<IndexEntry>>::update(&self.inner, scope, identifier, patch)
+        <InMemoryStore as AppRecordStore<IndexEntry>>::update(&self.inner, scope, identifier, patch)
             .map_err(infallible)
     }
 
     fn delete(&self, scope: &ProjectName, identifier: &WorkItemId) -> Result<(), Self::Error> {
-        <InMemoryStore as AppDbStore<IndexEntry>>::delete(&self.inner, scope, identifier)
+        <InMemoryStore as AppRecordStore<IndexEntry>>::delete(&self.inner, scope, identifier)
             .map_err(infallible)
     }
 }
 
-impl AppDbStore<IndexSection> for FailureStore {
+impl AppRecordStore<IndexSection> for FailureStore {
     type Error = FailureStoreError;
 
     fn get(
@@ -289,16 +297,17 @@ impl AppDbStore<IndexSection> for FailureStore {
         scope: &ProjectName,
         identifier: &String,
     ) -> Result<Option<IndexSection>, Self::Error> {
-        <InMemoryStore as AppDbStore<IndexSection>>::get(&self.inner, scope, identifier)
+        <InMemoryStore as AppRecordStore<IndexSection>>::get(&self.inner, scope, identifier)
             .map_err(Into::into)
     }
 
     fn list(&self, scope: &ProjectName) -> Result<Vec<IndexSection>, Self::Error> {
-        <InMemoryStore as AppDbStore<IndexSection>>::list(&self.inner, scope).map_err(Into::into)
+        <InMemoryStore as AppRecordStore<IndexSection>>::list(&self.inner, scope)
+            .map_err(Into::into)
     }
 
     fn insert(&self, scope: &ProjectName, new: IndexSection) -> Result<IndexSection, Self::Error> {
-        <InMemoryStore as AppDbStore<IndexSection>>::insert(&self.inner, scope, new)
+        <InMemoryStore as AppRecordStore<IndexSection>>::insert(&self.inner, scope, new)
             .map_err(Into::into)
     }
 
@@ -308,12 +317,17 @@ impl AppDbStore<IndexSection> for FailureStore {
         identifier: &String,
         patch: IndexSection,
     ) -> Result<(), Self::Error> {
-        <InMemoryStore as AppDbStore<IndexSection>>::update(&self.inner, scope, identifier, patch)
-            .map_err(Into::into)
+        <InMemoryStore as AppRecordStore<IndexSection>>::update(
+            &self.inner,
+            scope,
+            identifier,
+            patch,
+        )
+        .map_err(Into::into)
     }
 
     fn delete(&self, scope: &ProjectName, identifier: &String) -> Result<(), Self::Error> {
-        <InMemoryStore as AppDbStore<IndexSection>>::delete(&self.inner, scope, identifier)
+        <InMemoryStore as AppRecordStore<IndexSection>>::delete(&self.inner, scope, identifier)
             .map_err(Into::into)
     }
 }
@@ -346,9 +360,7 @@ fn failed_add(point: FailurePoint) -> AddHandoffError {
             title: "Managed Flow".to_string(),
             slug: None,
             created: "2026-01-01".to_string(),
-            allocation: HandoffAllocation::External {
-                config_path: PathBuf::from("/tmp/pending-work.json"),
-            },
+            allocation: HandoffAllocation::External,
         },
         &FailureStore::new(point),
         &projects,

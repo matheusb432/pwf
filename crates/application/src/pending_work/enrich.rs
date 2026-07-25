@@ -8,7 +8,7 @@ use super::{list::PendingWorkItemView, note_body::is_placeholder_prompt};
 use crate::{Materialization, PendingWorkItem, RecordId};
 
 pub const ISSUE_NO_REPO: &str =
-    "Project note is not mapped to a repo; add it to config/pending-work.json.";
+    "Project has no directory source; update the managed project record.";
 pub const ISSUE_PLACEHOLDER_PROMPT: &str =
     "Prompt is a placeholder; define a real prompt before launching.";
 

@@ -1,7 +1,9 @@
 //! Owns project-note parsing, request mapping, and execution.
 
 use clap::{Args, Subcommand};
-use pwf_note::{NoteCommand, NoteVerb};
+use pwf_application::pending_work::ProjectRegistry;
+use pwf_infra::obsidian::ObsidianStore;
+use pwf_note::{NoteCommand, NoteTarget, NoteVerb};
 
 #[derive(Args, Debug)]
 pub struct Arguments {
@@ -13,12 +15,6 @@ pub struct Arguments {
 
 #[derive(Args, Debug, Default)]
 struct CommonArguments {
-    /// Path to the pwf config JSON (overrides $`PWF_CONFIG`).
-    #[arg(long, global = true)]
-    config_path: Option<String>,
-    /// Override the notes directory.
-    #[arg(long, global = true)]
-    notes_dir: Option<String>,
     /// Date stamp (YYYY-MM-DD); defaults to today.
     #[arg(long, global = true)]
     date: Option<String>,
@@ -68,12 +64,20 @@ pub(crate) enum Command {
     },
 }
 
-pub fn run(arguments: &Arguments) -> Result<String, String> {
-    pwf_note::run(&application_command(arguments))
+pub fn run(
+    arguments: &Arguments,
+    store: &ObsidianStore,
+    projects: &ProjectRegistry,
+) -> Result<String, String> {
+    pwf_note::run(&application_command(arguments, store, projects)?)
 }
 
-fn application_command(arguments: &Arguments) -> NoteCommand {
-    let (project, verb) = match &arguments.command {
+fn application_command(
+    arguments: &Arguments,
+    store: &ObsidianStore,
+    projects: &ProjectRegistry,
+) -> Result<NoteCommand, String> {
+    let (raw_project, verb) = match &arguments.command {
         Command::List { project, number } => (project.clone(), NoteVerb::Ls { number: *number }),
         Command::Add { project, message } => (
             project.clone(),
@@ -94,11 +98,29 @@ fn application_command(arguments: &Arguments) -> NoteCommand {
             },
         ),
     };
-    NoteCommand {
+    let project = projects
+        .resolve(&raw_project)
+        .map_err(|_| unknown_project(&raw_project))?
+        .clone();
+    let prefix = projects
+        .prefix_for(&project)
+        .ok_or_else(|| unknown_project(&raw_project))?;
+    let target = NoteTarget {
+        tasks_path: store
+            .tasks_path(&project)
+            .map_err(|error| error.to_string())?
+            .to_path_buf(),
         project,
+        prefix,
+    };
+
+    Ok(NoteCommand {
+        target,
         verb,
-        config_path: arguments.common.config_path.clone(),
-        notes_dir: arguments.common.notes_dir.clone(),
         date: arguments.common.date.clone(),
-    }
+    })
+}
+
+fn unknown_project(raw_project: &str) -> String {
+    format!("Unknown project '{raw_project}'; expected a managed project name or id code.")
 }

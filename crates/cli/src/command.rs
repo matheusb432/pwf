@@ -2,7 +2,7 @@
 
 use clap::{Parser, Subcommand};
 
-use crate::engines::{handoff, note, pending_work};
+use crate::engines::{handoff, note, pending_work, project};
 
 /// Manages pending work, handoffs, and project notes across configured repositories.
 #[derive(Parser, Debug)]
@@ -20,6 +20,8 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Engine {
+    /// Manages registered projects.
+    Project(project::Arguments),
     #[command(flatten)]
     PendingWork(pending_work::Command),
     /// Per-repo handoff ledgers (resume notes between sessions).
@@ -33,8 +35,27 @@ pub enum Engine {
 
 /// Parses post-binary arguments after preserving the accepted normalization pass.
 pub fn parse_argv(argv: Vec<String>) -> Result<Cli, clap::Error> {
-    let normalized = crate::preprocess::normalize(argv);
+    let normalized = if argv
+        .first()
+        .is_some_and(|token| token.eq_ignore_ascii_case("project"))
+    {
+        argv
+    } else {
+        crate::preprocess::normalize(argv)
+    };
     Cli::try_parse_from(std::iter::once("pwf".to_string()).chain(normalized))
+}
+
+/// Renders help scoped to the project command.
+pub fn project_help() -> String {
+    let mut help = Cli::try_parse_from(["pwf", "project", "--help"])
+        .expect_err("project help exits clap parsing")
+        .render()
+        .to_string();
+    if help.ends_with('\n') {
+        help.pop();
+    }
+    help
 }
 
 #[cfg(test)]
@@ -42,6 +63,7 @@ mod tests {
     use clap::CommandFactory;
 
     use super::*;
+    use crate::engines::project;
 
     fn parse(tokens: &[&str]) -> Cli {
         parse_argv(tokens.iter().map(|token| (*token).to_string()).collect()).expect("parse")
@@ -54,9 +76,72 @@ mod tests {
         command
     }
 
+    fn project(tokens: &[&str]) -> project::Arguments {
+        let Engine::Project(arguments) = parse(tokens).engine else {
+            panic!("expected project command");
+        };
+        arguments
+    }
+
     #[test]
     fn cli_tree_is_valid() {
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn project_list_parses_into_the_typed_leaf() {
+        assert!(matches!(
+            project(&["project", "ls"]).command,
+            Some(project::Command::List(_))
+        ));
+    }
+
+    #[test]
+    fn project_get_parses_into_the_typed_leaf() {
+        let Some(project::Command::Get(arguments)) = project(&["project", "get", "pwf"]).command
+        else {
+            panic!("expected project get");
+        };
+
+        assert_eq!(arguments.id.as_ref(), "PWF");
+    }
+
+    #[test]
+    fn project_add_parses_into_the_typed_leaf() {
+        let payload = r#"{
+            "id": "pwf",
+            "title": "pwf",
+            "source": {"value": "/work/pwf"},
+            "tasks": {"kind": "directory", "path": "/notes/pwf"}
+        }"#;
+        let Some(project::Command::Add(arguments)) =
+            project(&["project", "add", "--kind", "directory", payload]).command
+        else {
+            panic!("expected project add");
+        };
+
+        assert_eq!(arguments.kind, project::add::SourceKind::Directory);
+        assert_eq!(arguments.payload.0.id.as_ref(), "PWF");
+        assert_eq!(arguments.payload.0.title.as_ref(), "pwf");
+        assert_eq!(arguments.payload.0.source.value().as_ref(), "/work/pwf");
+        assert_eq!(arguments.payload.0.tasks.path().as_ref(), "/notes/pwf");
+    }
+
+    #[test]
+    fn project_pause_and_resume_parse_into_typed_leaves() {
+        let Some(project::Command::Pause(arguments)) =
+            project(&["project", "pause", "arc"]).command
+        else {
+            panic!("expected project pause");
+        };
+        assert_eq!(arguments.id.as_ref(), "ARC");
+
+        let Some(project::Command::Resume(arguments)) =
+            project(&["project", "resume", "arc"]).command
+        else {
+            panic!("expected project resume");
+        };
+        assert_eq!(arguments.id.as_ref(), "ARC");
     }
 
     #[test]
@@ -72,10 +157,6 @@ mod tests {
             "architecture",
             "--effort",
             "3",
-            "--config-path",
-            "/tmp/pwf.json",
-            "--notes-dir",
-            "/tmp/notes",
             "--date",
             "2026-07-20",
         ]) else {
@@ -86,11 +167,6 @@ mod tests {
         assert_eq!(arguments.title.as_deref(), Some("Typed CLI"));
         assert_eq!(arguments.tag, ["architecture"]);
         assert_eq!(arguments.effort, Some(3));
-        assert_eq!(
-            arguments.common.config_path.as_deref(),
-            Some("/tmp/pwf.json")
-        );
-        assert_eq!(arguments.common.notes_dir.as_deref(), Some("/tmp/notes"));
         assert_eq!(arguments.common.date.as_deref(), Some("2026-07-20"));
     }
 

@@ -7,60 +7,6 @@ use nutype::nutype;
 )]
 pub struct WorkItemId(String);
 
-#[nutype(
-    sanitize(trim),
-    validate(not_empty),
-    derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, AsRef, Display,)
-)]
-pub struct ProjectName(String);
-
-#[nutype(
-    sanitize(trim, uppercase),
-    validate(predicate = is_project_prefix),
-    derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, AsRef, Display,)
-)]
-pub struct ProjectPrefix(String);
-
-/// Identifies one configured project's index independently of its filename.
-///
-/// # Examples
-///
-/// ```
-/// use pwf_domain::pending_work::{ProjectIndexIdentity, ProjectName, ProjectPrefix};
-///
-/// let identity = ProjectIndexIdentity::new(
-///     ProjectPrefix::try_new("pwf").unwrap(),
-///     ProjectName::try_new("pwf").unwrap(),
-/// );
-/// assert_eq!(identity.frontmatter_id(), "pwf");
-/// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProjectIndexIdentity {
-    id: ProjectPrefix,
-    title: ProjectName,
-}
-
-impl ProjectIndexIdentity {
-    pub fn new(id: ProjectPrefix, title: ProjectName) -> Self {
-        Self { id, title }
-    }
-
-    /// Returns the canonical uppercase project prefix.
-    pub fn id(&self) -> &ProjectPrefix {
-        &self.id
-    }
-
-    /// Returns the lowercase prefix stored in project-index frontmatter.
-    pub fn frontmatter_id(&self) -> String {
-        self.id.as_ref().to_ascii_lowercase()
-    }
-
-    /// Returns the configured project name stored as the index title.
-    pub fn title(&self) -> &ProjectName {
-        &self.title
-    }
-}
-
 fn collapse_pending_id(raw: &str) -> String {
     let trimmed = raw.trim().to_ascii_uppercase();
     match split_compact_pending_id(&trimmed) {
@@ -90,10 +36,6 @@ fn is_canonical_pending_id(raw: &str) -> bool {
         && code.chars().all(|ch| ch.is_ascii_uppercase())
         && digits.len() == 4
         && digits.chars().all(|ch| ch.is_ascii_digit())
-}
-
-fn is_project_prefix(raw: &str) -> bool {
-    (2..=4).contains(&raw.len()) && raw.chars().all(|ch| ch.is_ascii_uppercase())
 }
 
 pub fn canonical_pending_id(raw: &str) -> String {
@@ -142,33 +84,5 @@ mod tests {
         assert_eq!(canonical_pending_id("garbage"), "GARBAGE");
         assert_eq!(canonical_pending_id("PWF-0047-extra"), "PWF-0047-EXTRA");
         assert_eq!(canonical_pending_id("toolong-0047"), "TOOLONG-0047");
-    }
-
-    #[test]
-    fn project_name_trims_and_rejects_blank() {
-        assert_eq!(
-            ProjectName::try_new("  glep-shimeji  ").unwrap().as_ref(),
-            "glep-shimeji"
-        );
-        assert!(ProjectName::try_new(" \t ").is_err());
-    }
-
-    #[test]
-    fn project_prefix_uppercases_and_preserves_width_rules() {
-        assert_eq!(ProjectPrefix::try_new("pwf").unwrap().as_ref(), "PWF");
-        assert!(ProjectPrefix::try_new("P").is_err());
-        assert!(ProjectPrefix::try_new("TOOLONG").is_err());
-    }
-
-    #[test]
-    fn project_index_identity_uses_typed_config_identity() {
-        let identity = ProjectIndexIdentity::new(
-            ProjectPrefix::try_new("pwf").unwrap(),
-            ProjectName::try_new("pwf").unwrap(),
-        );
-
-        assert_eq!(identity.id().as_ref(), "PWF");
-        assert_eq!(identity.frontmatter_id(), "pwf");
-        assert_eq!(identity.title().as_ref(), "pwf");
     }
 }

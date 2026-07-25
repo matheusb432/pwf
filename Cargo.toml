@@ -21,10 +21,17 @@ console = { version = "0.16.4", default-features = false, features = [
     "alloc",
 ] }
 cqrsy = { git = "ssh://git@github.com/matheusb432/cqrsy.git", tag = "v0.10.0" }
+directories = "6.0.0"
 expectrl = "0.9.0"
 gray_matter = { version = "0.3.2", default-features = false, features = ["yaml"] }
 nutype = { version = "0.7.0", features = ["serde", "regex"] }
+percent-encoding = "2.3.2"
 predicates = "3"
+process-wrap = { version = "9.1.0", default-features = false, features = [
+    "job-object",
+    "process-group",
+    "std",
+] }
 prompt-lanes = { path = "shared/prompt-lanes" }
 pwf-application = { path = "crates/application" }
 pwf-core = { path = "crates/pwf-core" }
@@ -35,9 +42,17 @@ regex = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 shell-words = "1.1.1"
+sqlx = { version = "0.9.0", default-features = false, features = [
+    "runtime-tokio",
+    "sqlite",
+    "macros",
+    "migrate",
+    "sqlx-toml",
+] }
 tempfile = "3"
 thiserror = "2.0.18"
 toml = "1.1.2"
+tokio = "1"
 walkdir = "2"
 
 # Avoid tweaking, prefer fixing the lints.

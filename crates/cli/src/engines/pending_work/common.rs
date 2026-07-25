@@ -3,16 +3,8 @@ use pwf_application::pending_work::session::Agent;
 use pwf_domain::pending_work::{WorkItemStatus, WorkItemStatusFilter, canonical_pending_id};
 use thiserror::Error;
 
-use crate::config::Config;
-
 #[derive(Args, Clone, Debug, Default)]
 pub struct CommonArguments {
-    /// Path to the pwf config JSON (overrides $`PWF_CONFIG`).
-    #[arg(long)]
-    pub(crate) config_path: Option<String>,
-    /// Override the notes directory.
-    #[arg(long)]
-    pub(crate) notes_dir: Option<String>,
     /// Date stamp (YYYY-MM-DD); defaults to today.
     #[arg(long)]
     pub(crate) date: Option<String>,
@@ -91,30 +83,10 @@ impl StatusChoice {
     }
 }
 
-pub(crate) fn load_configuration(arguments: &CommonArguments) -> Result<Config, PendingWorkError> {
-    let config_path = arguments
-        .config_path
-        .clone()
-        .or_else(crate::config::default_config_path)
-        .ok_or(PendingWorkError::MissingConfigPath)?;
-    Ok(crate::config::load(
-        &config_path,
-        arguments.notes_dir.as_deref(),
-    )?)
-}
-
 /// Carries pending-work errors across CLI and in-process handoff seams.
 /// The handoff seam converts these errors with `to_string()` instead of matching variants.
 #[derive(Debug, Error)]
 pub(crate) enum PendingWorkError {
-    #[error("{0}")]
-    Config(
-        #[from]
-        #[source]
-        crate::config::ConfigError,
-    ),
-    #[error("missing --config-path")]
-    MissingConfigPath,
     #[error("{0}")]
     ApplicationList(String),
     #[error("{0}")]

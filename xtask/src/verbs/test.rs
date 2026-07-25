@@ -1,9 +1,9 @@
 //! Test planning for workspace and binary suites.
 //!
 //! Unit and integration tests are the default. `--e2e` runs binary suites. `--all` runs both test
-//! scopes plus the architecture and import-alias gates. Steps run through the captured gate, which
-//! records full output to a log, prints a summary table, and emits the `RESULT` line. `--verbose`
-//! also streams each step's output live.
+//! scopes plus the architecture and ast-grep source gates. Steps run through the captured gate,
+//! which records full output to a log, prints a summary table, and emits the `RESULT` line.
+//! `--verbose` also streams each step's output live.
 
 use anyhow::Result;
 use clap::{Args, ValueEnum};
@@ -46,7 +46,16 @@ pub(crate) enum Scope {
 }
 
 /// Binary suites excluded from default `cargo test` by `test = false`.
-const E2E_TARGETS: &[&str] = &["-p", "pwf", "--test", "cli_e2e", "--test", "help_cli"];
+const E2E_TARGETS: &[&str] = &[
+    "-p",
+    "pwf",
+    "--test",
+    "cli_e2e",
+    "--test",
+    "help_cli",
+    "--test",
+    "project_cli",
+];
 const UNIT_TARGETS: &[&str] = &["--workspace"];
 
 /// Builds one quiet or uncaptured `cargo test` step for selected targets.
@@ -80,7 +89,8 @@ fn plan(scope: Scope, verbose: bool) -> Vec<(Step, Kind)> {
             unit(),
             e2e(),
             (check_architecture_step(), Kind::Plain),
-            (check_import_aliases_step(), Kind::Plain),
+            (ast_rules_test_step(), Kind::Plain),
+            (ast_rules_scan_step(), Kind::Plain),
         ],
     }
 }
@@ -94,11 +104,21 @@ fn check_architecture_step() -> Step {
     )
 }
 
-/// Builds the ast-grep import-alias gate used by the full suite.
+/// Builds the step validating every `rules/` policy against its `rule-tests/` cases.
 ///
-/// AST matching ignores `as` text inside string-literal fixtures.
-fn check_import_aliases_step() -> Step {
-    Step::new("check-import-aliases", "ast-grep", ["scan"])
+/// Snapshot comparison stays off: the cases assert only that valid snippets pass and invalid
+/// snippets are flagged, not exact match spans.
+fn ast_rules_test_step() -> Step {
+    Step::new(
+        "test:ast-rules",
+        "ast-grep",
+        ["test", "--skip-snapshot-tests"],
+    )
+}
+
+/// Builds the ast-grep source gate enforcing every `rules/` policy on the tree.
+pub(super) fn ast_rules_scan_step() -> Step {
+    Step::new("check-ast-rules", "ast-grep", ["scan"])
 }
 
 /// Runs a test scope through the captured gate, building the release binary first when a binary
@@ -153,24 +173,35 @@ mod tests {
         assert_eq!(
             argv(&steps[0].0),
             [
-                "test", "--quiet", "-p", "pwf", "--test", "cli_e2e", "--test", "help_cli"
+                "test",
+                "--quiet",
+                "-p",
+                "pwf",
+                "--test",
+                "cli_e2e",
+                "--test",
+                "help_cli",
+                "--test",
+                "project_cli"
             ]
         );
     }
 
     #[test]
-    fn all_runs_unit_then_e2e_then_both_gates() {
+    fn all_runs_unit_then_e2e_then_the_gates() {
         let steps = plan(Scope::All, false);
-        assert_eq!(steps.len(), 4);
+        assert_eq!(steps.len(), 5);
         assert_eq!(argv(&steps[0].0), ["test", "--quiet", "--workspace"]);
         assert!(argv(&steps[1].0).contains(&"cli_e2e"));
         assert_eq!(
             argv(&steps[2].0),
             ["run", "--quiet", "-p", "xtask", "--", "check-architecture"]
         );
-        assert_eq!(argv(&steps[3].0), ["scan"]);
-        assert!(matches!(steps[2].1, Kind::Plain));
-        assert!(matches!(steps[3].1, Kind::Plain));
+        assert_eq!(argv(&steps[3].0), ["test", "--skip-snapshot-tests"]);
+        assert_eq!(argv(&steps[4].0), ["scan"]);
+        for (_, kind) in &steps[2..] {
+            assert!(matches!(kind, Kind::Plain));
+        }
     }
 
     #[test]

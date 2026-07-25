@@ -118,8 +118,8 @@ pub enum ObsidianStoreError {
     },
     #[error("Notes directory not found: {path}")]
     NotesDirectoryNotFound { path: String },
-    #[error("Project '{project}' has no work-item prefix in config/pending-work.json (prefixes).")]
-    ProjectMissingPrefix { project: String },
+    #[error("Unknown project '{project}'.")]
+    UnknownProject { project: String },
     #[error("Cannot create project dir: {source}")]
     CreateProjectDir { source: std::io::Error },
     #[error("Cannot create index dir: {source}")]

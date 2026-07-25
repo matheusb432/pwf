@@ -10,24 +10,19 @@ use super::{
     ports::{AllocatePendingWork, PendingWorkAllocatorClient},
 };
 use crate::{
-    AppDbStore, HandoffDocument, HandoffDocumentIdentifier, HandoffDocumentStore, HandoffLedger,
-    HandoffLocation, HandoffPatch, HandoffScope, IndexEntry, IndexSection, NewHandoffDocument,
-    NewItem, PendingWorkItem,
+    AppRecordStore, HandoffDocument, HandoffDocumentIdentifier, HandoffDocumentStore,
+    HandoffLedger, HandoffLocation, HandoffPatch, HandoffScope, IndexEntry, IndexSection,
+    NewHandoffDocument, NewItem, PendingWorkItem,
     pending_work::{ProjectRegistry, ProjectResolutionError, store_util},
 };
-
-type StoreError = Box<dyn Error + Send + Sync>;
 
 /// Selects typed in-process allocation or the legacy external CLI protocol.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HandoffAllocation {
     /// Creates the linked item through the shared application primitive.
     InProcess,
-    /// Invokes the configured allocator with this manifest.
-    External {
-        /// Pending-work configuration path passed to the process adapter.
-        config_path: PathBuf,
-    },
+    /// Invokes the configured allocator.
+    External,
 }
 
 /// Requests one linked handoff and pending-work item.
@@ -77,14 +72,14 @@ pub enum AddHandoffError {
     StoreBeforeAllocation {
         /// Concrete adapter failure.
         #[source]
-        source: StoreError,
+        source: Box<dyn Error + Send + Sync>,
     },
     /// The typed or external pending-work allocator failed.
     #[error("{source}")]
     AllocationFailed {
         /// Concrete allocator or pending-work store failure.
         #[source]
-        source: StoreError,
+        source: Box<dyn Error + Send + Sync>,
     },
     /// Allocation succeeded but the handoff could not be linked.
     #[error("{source}")]
@@ -95,7 +90,7 @@ pub enum AddHandoffError {
         handoff_path: PathBuf,
         /// Concrete adapter failure.
         #[source]
-        source: StoreError,
+        source: Box<dyn Error + Send + Sync>,
     },
     /// Allocation and linking succeeded but ledger replacement failed.
     #[error("{source}")]
@@ -106,7 +101,7 @@ pub enum AddHandoffError {
         handoff_path: PathBuf,
         /// Concrete adapter failure.
         #[source]
-        source: StoreError,
+        source: Box<dyn Error + Send + Sync>,
     },
 }
 
@@ -124,11 +119,11 @@ pub fn execute<S, C>(
     allocator: &C,
 ) -> Result<AddedHandoff, AddHandoffError>
 where
-    S: AppDbStore<PendingWorkItem>
-        + AppDbStore<IndexEntry>
-        + AppDbStore<IndexSection>
+    S: AppRecordStore<PendingWorkItem>
+        + AppRecordStore<IndexEntry>
+        + AppRecordStore<IndexSection>
         + HandoffDocumentStore
-        + AppDbStore<HandoffLedger>,
+        + AppRecordStore<HandoffLedger>,
     C: PendingWorkAllocatorClient,
 {
     let project = projects
@@ -161,7 +156,7 @@ where
     }
 
     let body = lifecycle::handoff_body(&command.title);
-    let provisional = <S as AppDbStore<HandoffDocument>>::insert(
+    let provisional = <S as AppRecordStore<HandoffDocument>>::insert(
         store,
         &command.scope,
         NewHandoffDocument {
@@ -180,23 +175,23 @@ where
 
     let pending_work_identifier = match &command.allocation {
         HandoffAllocation::InProcess => allocate_in_process(store, &project, &file_name, &created),
-        HandoffAllocation::External { config_path } => allocator
+        HandoffAllocation::External => allocator
             .allocate(&AllocatePendingWork {
-                config_path: config_path.clone(),
                 created: created.clone(),
                 project: project.clone(),
             })
-            .map_err(|error| -> StoreError { Box::new(error) }),
+            .map_err(|error| -> Box<dyn Error + Send + Sync> { Box::new(error) }),
     };
     let pending_work_identifier = match pending_work_identifier {
         Ok(identifier) => identifier,
         Err(source) => {
-            let _ = <S as AppDbStore<HandoffDocument>>::delete(store, &command.scope, &identifier);
+            let _ =
+                <S as AppRecordStore<HandoffDocument>>::delete(store, &command.scope, &identifier);
             return Err(AddHandoffError::AllocationFailed { source });
         }
     };
 
-    <S as AppDbStore<HandoffDocument>>::update(
+    <S as AppRecordStore<HandoffDocument>>::update(
         store,
         &command.scope,
         &identifier,
@@ -230,9 +225,9 @@ fn allocate_in_process<S>(
     project: &pwf_domain::pending_work::ProjectName,
     file_name: &str,
     created: &Timestamp,
-) -> Result<WorkItemId, StoreError>
+) -> Result<WorkItemId, Box<dyn Error + Send + Sync>>
 where
-    S: AppDbStore<PendingWorkItem> + AppDbStore<IndexEntry> + AppDbStore<IndexSection>,
+    S: AppRecordStore<PendingWorkItem> + AppRecordStore<IndexEntry> + AppRecordStore<IndexSection>,
 {
     let mut relative_path = String::from("docs/handoffs/");
     relative_path.push_str(file_name);
@@ -278,7 +273,7 @@ mod tests {
 
     use super::{AddHandoff, AddHandoffError, HandoffAllocation, execute};
     use crate::{
-        AppDbStore, HandoffDocument, NewHandoffDocument,
+        AppRecordStore, HandoffDocument, NewHandoffDocument,
         handoff::ports::{AllocatePendingWork, PendingWorkAllocatorClient},
         pending_work::ProjectRegistry,
         ports::{HandoffScope, RecordId},
@@ -400,9 +395,7 @@ mod tests {
                 title: "Managed Flow".to_string(),
                 slug: None,
                 created: "2026-01-01".to_string(),
-                allocation: HandoffAllocation::External {
-                    config_path: PathBuf::from("/tmp/pending-work.json"),
-                },
+                allocation: HandoffAllocation::External,
             },
             &store,
             &project_registry(&repository_root.to_string_lossy()),
@@ -413,10 +406,6 @@ mod tests {
         assert_eq!(added.pending_work_identifier.as_ref(), "TST-0042");
         assert_eq!(store.items("test-project"), []);
         let allocated = request.lock().unwrap().clone().unwrap();
-        assert_eq!(
-            allocated.config_path,
-            PathBuf::from("/tmp/pending-work.json")
-        );
         assert_eq!(allocated.created.as_str(), "2026-01-01");
         assert_eq!(allocated.project.as_ref(), "test-project");
         assert_eq!(
@@ -445,9 +434,7 @@ mod tests {
                 title: "Managed Flow".to_string(),
                 slug: None,
                 created: "2026-01-01".to_string(),
-                allocation: HandoffAllocation::External {
-                    config_path: PathBuf::from("/tmp/pending-work.json"),
-                },
+                allocation: HandoffAllocation::External,
             },
             &store,
             &project_registry(&repository_root.to_string_lossy()),
@@ -467,7 +454,7 @@ mod tests {
             repository_root: repository_root.clone(),
         };
         let store = InMemoryStore::default().with_prefix("test-project", "TST");
-        <InMemoryStore as AppDbStore<HandoffDocument>>::insert(
+        <InMemoryStore as AppRecordStore<HandoffDocument>>::insert(
             &store,
             &scope,
             NewHandoffDocument {

@@ -3,7 +3,7 @@ use pwf_domain::pending_work::WorkItemId;
 use super::{
     enrich::inline_record_id, project_registry::ProjectRegistry, show::ShowPendingWorkError,
 };
-use crate::{AppDbStore, PendingWorkItem, RecordId};
+use crate::{AppRecordStore, PendingWorkItem, RecordId};
 
 /// Resolves an open or closed record by project prefix or inline `<project>:<ordinal>` id.
 pub(crate) fn resolve_record<S>(
@@ -12,7 +12,7 @@ pub(crate) fn resolve_record<S>(
     id: &str,
 ) -> Result<PendingWorkItem, ShowPendingWorkError>
 where
-    S: AppDbStore<PendingWorkItem>,
+    S: AppRecordStore<PendingWorkItem>,
 {
     let not_found = || ShowPendingWorkError::ItemNotFound { id: id.to_string() };
     let Ok(work_id) = WorkItemId::try_new(id) else {
@@ -32,7 +32,7 @@ fn resolve_inline_record<S>(
     id: &str,
 ) -> Result<PendingWorkItem, ShowPendingWorkError>
 where
-    S: AppDbStore<PendingWorkItem>,
+    S: AppRecordStore<PendingWorkItem>,
 {
     for (project, _repo) in projects.projects() {
         let records = store

@@ -1,0 +1,16 @@
+id: no-execute-in-cli
+language: rust
+severity: error
+files:
+  - "crates/cli/src/**/*.rs"
+message: "CLI process roots must call application operations instead of defining execute."
+note: |
+  Operations live in the application layer as `execute` functions; the CLI
+  composes ports and calls them fully qualified. An `execute` defined under
+  `crates/cli/src` is an operation hiding in the process root.
+rule:
+  all:
+    - kind: function_item
+    - has:
+        field: name
+        regex: "^execute$"

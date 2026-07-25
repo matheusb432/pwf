@@ -104,18 +104,18 @@ fn add_does_not_report_created_section_for_existing_empty_region() {
 }
 
 #[test]
-fn add_rejects_unmapped_project_with_legacy_display() {
+fn add_rejects_project_without_directory_source() {
     let store = InMemoryStore::default().with_prefix("pwf", "PWF");
 
     for registry in [registry(None), registry(Some("  "))] {
         let error = execute(command(None), &store, &registry).unwrap_err();
         assert!(matches!(
             error,
-            AddPendingWorkError::ProjectNotMappedToRepo { ref project } if project == "pwf"
+            AddPendingWorkError::ProjectHasNoDirectorySource { ref project } if project == "pwf"
         ));
         assert_eq!(
             error.to_string(),
-            "Project 'pwf' is not mapped to a repo in config/pending-work.json."
+            "Project 'pwf' has no directory source; update the managed project record."
         );
     }
 }

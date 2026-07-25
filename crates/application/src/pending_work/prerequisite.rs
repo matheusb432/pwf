@@ -4,7 +4,7 @@ use pwf_domain::pending_work::{ParsePrereqsError, Prereqs, WorkItemId, WorkItemS
 use regex::Regex;
 
 use super::project_registry::ProjectRegistry;
-use crate::{AppDbStore, Materialization, PendingWorkItem};
+use crate::{AppRecordStore, Materialization, PendingWorkItem};
 
 const PREREQUISITE_VALUE_PATTERN: &str = r"\[\[([A-Z]{2,4}-\d{4})";
 static PREREQUISITE_VALUE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
@@ -59,7 +59,7 @@ pub(super) fn validate_and_merge<S>(
     projects: &ProjectRegistry,
 ) -> Result<String, PrerequisiteValidationError>
 where
-    S: AppDbStore<PendingWorkItem>,
+    S: AppRecordStore<PendingWorkItem>,
 {
     let prerequisites = Prereqs::parse_values(values).map_err(|error| match error {
         ParsePrereqsError::MissingId => PrerequisiteValidationError::MissingId,
@@ -111,7 +111,7 @@ fn has_valid_persisted_status(record: &PendingWorkItem) -> bool {
 
 pub(super) fn statuses(
     value: &str,
-    store: &impl AppDbStore<PendingWorkItem>,
+    store: &impl AppRecordStore<PendingWorkItem>,
     projects: &ProjectRegistry,
 ) -> Vec<PrerequisiteStatus> {
     PREREQUISITE_VALUE_REGEX
@@ -127,7 +127,7 @@ pub(super) fn statuses(
 
 #[rustfmt::skip]
 fn status(
-    store: &impl AppDbStore<PendingWorkItem>,
+    store: &impl AppRecordStore<PendingWorkItem>,
     projects: &ProjectRegistry,
     id: &WorkItemId,
 ) -> Option<WorkItemStatus> {
@@ -147,7 +147,7 @@ mod tests {
 
     use super::{PrerequisiteValidationError, validate_and_merge};
     use crate::{
-        AppDbStore, ItemPatch, NewItem, PendingWorkItem,
+        AppRecordStore, ItemPatch, NewItem, PendingWorkItem,
         pending_work::resolve::testing::{staged, staged_ghost},
     };
 
@@ -158,7 +158,7 @@ mod tests {
     #[error("read failed")]
     struct ReadFailure;
 
-    impl AppDbStore<PendingWorkItem> for ReadFailureStore {
+    impl AppRecordStore<PendingWorkItem> for ReadFailureStore {
         type Error = ReadFailure;
 
         fn get(

@@ -1,5 +1,5 @@
 //! Command-line surface. clap derives `--help` from the doc comments here and on each verb's
-//! `Args` struct — keep them the single source of truth for the verb documentation.
+//! `Args` struct, so keep them the single source of truth for the verb documentation.
 
 use clap::{Parser, Subcommand};
 
@@ -8,7 +8,7 @@ use crate::{
     verbs::{format::FixArguments, install::UpdateArgs, test::TestArgs},
 };
 
-/// pwf's embedded dev/release automation (xtask). Never installed — run via `cargo run -p xtask`.
+/// pwf's embedded dev/release automation (xtask). Never installed; run via `cargo run -p xtask`.
 #[derive(Parser)]
 #[command(
     version,
@@ -21,7 +21,7 @@ pub(crate) struct Cli {
 }
 
 /// One arm per automation verb, each dispatched to its [`crate::verbs`] module. Let clap validate
-/// the surface — `ValueEnum` for closed choices, `conflicts_with` for exclusive flags.
+/// the surface: `ValueEnum` for closed choices, `conflicts_with` for exclusive flags.
 #[derive(Subcommand)]
 pub(crate) enum Command {
     /// Format the repo in place (stable/pinned-nightly rustfmt; rumdl when `.rumdl.toml`
@@ -37,6 +37,13 @@ pub(crate) enum Command {
     /// Run the complete read-only formatting and lint gate.
     #[command(name = Verb::CHECK.as_str())]
     Check,
+    /// Refresh the committed `SQLx` checked-query cache, or verify it with `--check`.
+    #[command(name = Verb::PREPARE.as_str())]
+    Prepare {
+        /// Verify that committed query metadata matches the checked queries.
+        #[arg(long)]
+        check: bool,
+    },
     /// Apply Clippy's machine-applicable lint fixes, then reformat.
     #[command(name = Verb::FIX.as_str())]
     Fix(FixArguments),

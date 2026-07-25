@@ -1,6 +1,6 @@
 use regex::Regex;
 
-/// Flips a done link (`- [x] [[ID]] …`) back to an open link (`- [ ] [[ID]]`),
+/// Flips a done link (`- [x] [[ID]] ...`) back to an open link (`- [ ] [[ID]]`),
 /// preserving indentation. Returns `None` when no done link for `id` exists.
 pub(super) fn reopen_done_link(content: &str, id: &str) -> Option<String> {
     let done_re = Regex::new(&format!(

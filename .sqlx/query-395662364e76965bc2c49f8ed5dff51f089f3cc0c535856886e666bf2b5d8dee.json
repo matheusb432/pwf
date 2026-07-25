@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        UPDATE projects\n        SET paused_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')\n        WHERE id = ? AND paused_at IS NULL\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "395662364e76965bc2c49f8ed5dff51f089f3cc0c535856886e666bf2b5d8dee"
+}

@@ -7,8 +7,11 @@ use pwf::engines::handoff;
 
 #[path = "support/pending_work.rs"]
 mod pending_work_test;
+#[path = "support/projects.rs"]
+mod projects;
 
 use pending_work_test::run_plain;
+use projects::{TestProject, TestProjects};
 
 fn nanos() -> u128 {
     std::time::SystemTime::now()
@@ -23,25 +26,17 @@ fn tmpdir(prefix: &str) -> PathBuf {
     d
 }
 
-fn write_config(dir: &Path, repo: &Path, notes: &Path) -> PathBuf {
-    let cfg_path = dir.join("config.json");
-    let json = format!(
-        r#"{{ "notesDir": "{}", "projects": {{ "test-project": "{}" }}, "prefixes": {{ "test-project": "TST" }} }}"#,
-        notes.to_string_lossy().replace('\\', "/"),
-        repo.to_string_lossy().replace('\\', "/")
-    );
-    fs::write(&cfg_path, &json).unwrap();
-    cfg_path
+fn projects(repo: &Path, notes: &Path) -> TestProjects {
+    TestProjects::new([TestProject {
+        id: "TST",
+        title: "test-project",
+        repository: repo.to_path_buf(),
+        tasks_path: notes.join("test-project"),
+    }])
 }
 
-fn write_empty_config(dir: &Path) -> PathBuf {
-    let cfg_path = dir.join("config.json");
-    fs::write(
-        &cfg_path,
-        r#"{ "notesDir": "/tmp/notes", "projects": {}, "prefixes": {} }"#,
-    )
-    .unwrap();
-    cfg_path
+fn no_projects() -> TestProjects {
+    TestProjects::new([])
 }
 
 fn parse_args(tokens: &[&str]) -> handoff::Command {
@@ -68,27 +63,25 @@ fn add_unmanaged_repo_errors() {
     let stage = tmpdir("hf_add_unm");
     let repo = stage.join("repo");
     fs::create_dir_all(&repo).unwrap();
-    let cfg = write_empty_config(&stage);
+    let projects = no_projects();
     let args = parse_args(&[
         "add",
         "--title",
         "Unmanaged Flow",
         "--slug",
         "unmanaged-flow",
-        "--config-path",
-        cfg.to_str().unwrap(),
         "--repo-root",
         repo.to_str().unwrap(),
         "--date",
         "2026-01-01",
     ]);
-    let err = handoff::run(&args).unwrap_err();
+    let err = handoff::run(&args, &projects.store, &projects.registry).unwrap_err();
     assert!(
         err.contains("this repo is not a managed project"),
         "unexpected error: {err}"
     );
     assert!(
-        err.contains("register it in the pwf config"),
+        err.contains("managed project record"),
         "unexpected error: {err}"
     );
     assert!(
@@ -113,7 +106,7 @@ fn add_managed_calls_pw_stub() {
     let repo = stage.join("repo");
     fs::create_dir_all(&repo).unwrap();
     let notes = stage.join("notes");
-    let cfg = write_config(&stage, &repo, &notes);
+    let projects = projects(&repo, &notes);
 
     let stub = pw_stub_path();
     let args = parse_args(&[
@@ -122,8 +115,6 @@ fn add_managed_calls_pw_stub() {
         "Managed Flow",
         "--slug",
         "managed-flow",
-        "--config-path",
-        cfg.to_str().unwrap(),
         "--repo-root",
         repo.to_str().unwrap(),
         "--date",
@@ -131,7 +122,7 @@ fn add_managed_calls_pw_stub() {
         "--pending-work-script",
         stub.to_str().unwrap(),
     ]);
-    let out = handoff::run(&args).unwrap();
+    let out = handoff::run(&args, &projects.store, &projects.registry).unwrap();
     assert!(
         out.starts_with("Created handoff "),
         "expected created text, got: {out}"
@@ -152,7 +143,7 @@ fn add_removes_orphan_scaffold_when_pw_allocation_fails() {
     let repo = stage.join("repo");
     fs::create_dir_all(&repo).unwrap();
     let notes = stage.join("notes");
-    let cfg = write_config(&stage, &repo, &notes);
+    let projects = projects(&repo, &notes);
 
     let stub = pw_stub_garbage_path();
     let args = parse_args(&[
@@ -161,8 +152,6 @@ fn add_removes_orphan_scaffold_when_pw_allocation_fails() {
         "Managed Flow",
         "--slug",
         "managed-flow",
-        "--config-path",
-        cfg.to_str().unwrap(),
         "--repo-root",
         repo.to_str().unwrap(),
         "--date",
@@ -170,7 +159,7 @@ fn add_removes_orphan_scaffold_when_pw_allocation_fails() {
         "--pending-work-script",
         stub.to_str().unwrap(),
     ]);
-    let err = handoff::run(&args).unwrap_err();
+    let err = handoff::run(&args, &projects.store, &projects.registry).unwrap_err();
 
     assert!(err.contains("pw-add output parse error"), "got: {err}");
     let file_path = repo.join("docs/handoffs/2026-01-01-managed-flow.md");
@@ -187,21 +176,19 @@ fn add_managed_links_pw_in_process_without_script() {
     let repo = stage.join("repo");
     fs::create_dir_all(&repo).unwrap();
     let notes = stage.join("notes");
-    let cfg = write_config(&stage, &repo, &notes);
+    let projects = projects(&repo, &notes);
     let args = parse_args(&[
         "add",
         "--title",
         "Managed Flow",
         "--slug",
         "managed-flow",
-        "--config-path",
-        cfg.to_str().unwrap(),
         "--repo-root",
         repo.to_str().unwrap(),
         "--date",
         "2026-01-01",
     ]);
-    let out = handoff::run(&args).unwrap();
+    let out = handoff::run(&args, &projects.store, &projects.registry).unwrap();
     assert!(
         out.starts_with("Created handoff "),
         "expected created text, got: {out}"
@@ -251,22 +238,20 @@ fn direct_handoff_add_rejects_an_unparseable_destination_before_allocation() {
     let destination = handoff_dir.join("2026-01-01-managed-flow.md");
     fs::write(&destination, [0xff, 0xfe]).unwrap();
     let notes = stage.join("notes");
-    let cfg = write_config(&stage, &repo, &notes);
+    let projects = projects(&repo, &notes);
     let args = parse_args(&[
         "add",
         "--title",
         "Managed Flow",
         "--slug",
         "managed-flow",
-        "--config-path",
-        cfg.to_str().unwrap(),
         "--repo-root",
         repo.to_str().unwrap(),
         "--date",
         "2026-01-01",
     ]);
 
-    let error = handoff::run(&args).unwrap_err();
+    let error = handoff::run(&args, &projects.store, &projects.registry).unwrap_err();
 
     assert!(error.contains("already exists"), "got: {error}");
     assert!(!notes.join("test-project").exists());
@@ -279,7 +264,7 @@ fn add_with_handoff_tag_scaffolds_handoff_file() {
     let repo = stage.join("repo");
     fs::create_dir_all(&repo).unwrap();
     let notes = stage.join("notes");
-    let cfg = write_config(&stage, &repo, &notes);
+    let projects = projects(&repo, &notes);
 
     let args = parse_pw_args(&[
         "add",
@@ -287,14 +272,10 @@ fn add_with_handoff_tag_scaffolds_handoff_file() {
         "ship the thing / do it",
         "--tag",
         "handoff",
-        "--config-path",
-        cfg.to_str().unwrap(),
-        "--notes-dir",
-        notes.to_str().unwrap(),
         "--date",
         "2026-01-01",
     ]);
-    let out = run_plain(&args).unwrap();
+    let out = run_plain(&args, &projects).unwrap();
 
     assert!(out.contains("TST-0001"), "got: {out}");
 
@@ -315,7 +296,7 @@ fn add_with_handoff_tag_and_missing_repo_root_errors_without_creating_item() {
     // Leave the configured repository path absent.
     let repo = stage.join("repo");
     let notes = stage.join("notes");
-    let cfg = write_config(&stage, &repo, &notes);
+    let projects = projects(&repo, &notes);
 
     let args = parse_pw_args(&[
         "add",
@@ -323,14 +304,10 @@ fn add_with_handoff_tag_and_missing_repo_root_errors_without_creating_item() {
         "ship the thing / do it",
         "--tag",
         "handoff",
-        "--config-path",
-        cfg.to_str().unwrap(),
-        "--notes-dir",
-        notes.to_str().unwrap(),
         "--date",
         "2026-01-01",
     ]);
-    let err = run_plain(&args).unwrap_err();
+    let err = run_plain(&args, &projects).unwrap_err();
 
     assert!(err.contains("does not exist"), "got: {err}");
     assert!(
@@ -355,7 +332,7 @@ fn add_with_handoff_tag_and_scaffold_path_collision_errors_without_creating_item
     )
     .unwrap();
     let notes = stage.join("notes");
-    let cfg = write_config(&stage, &repo, &notes);
+    let projects = projects(&repo, &notes);
 
     let args = parse_pw_args(&[
         "add",
@@ -363,14 +340,10 @@ fn add_with_handoff_tag_and_scaffold_path_collision_errors_without_creating_item
         "ship the thing / do it",
         "--tag",
         "handoff",
-        "--config-path",
-        cfg.to_str().unwrap(),
-        "--notes-dir",
-        notes.to_str().unwrap(),
         "--date",
         "2026-01-01",
     ]);
-    let err = run_plain(&args).unwrap_err();
+    let err = run_plain(&args, &projects).unwrap_err();
 
     assert!(err.contains("already exists"), "got: {err}");
     assert!(
@@ -394,7 +367,7 @@ fn add_with_unparseable_scaffold_destination_preflights_before_item_creation() {
     let destination = handoff_dir.join("2026-01-01-ship-the-thing.md");
     fs::write(&destination, [0xff, 0xfe]).unwrap();
     let notes = stage.join("notes");
-    let cfg = write_config(&stage, &repo, &notes);
+    let projects = projects(&repo, &notes);
 
     let args = parse_pw_args(&[
         "add",
@@ -402,15 +375,11 @@ fn add_with_unparseable_scaffold_destination_preflights_before_item_creation() {
         "ship the thing / do it",
         "--tag",
         "handoff",
-        "--config-path",
-        cfg.to_str().unwrap(),
-        "--notes-dir",
-        notes.to_str().unwrap(),
         "--date",
         "2026-01-01",
     ]);
 
-    let error = run_plain(&args).unwrap_err();
+    let error = run_plain(&args, &projects).unwrap_err();
 
     assert!(error.contains("already exists"), "got: {error}");
     assert!(
@@ -426,7 +395,7 @@ fn add_without_handoff_tag_has_no_handoff_side_effects() {
     let repo = stage.join("repo");
     fs::create_dir_all(&repo).unwrap();
     let notes = stage.join("notes");
-    let cfg = write_config(&stage, &repo, &notes);
+    let projects = projects(&repo, &notes);
 
     let args = parse_pw_args(&[
         "add",
@@ -434,14 +403,10 @@ fn add_without_handoff_tag_has_no_handoff_side_effects() {
         "ship the thing / do it",
         "--tag",
         "godot",
-        "--config-path",
-        cfg.to_str().unwrap(),
-        "--notes-dir",
-        notes.to_str().unwrap(),
         "--date",
         "2026-01-01",
     ]);
-    let out = run_plain(&args).unwrap();
+    let out = run_plain(&args, &projects).unwrap();
 
     assert!(out.contains("TST-0001"), "got: {out}");
     let item = fs::read_to_string(notes.join("test-project/TST-0001.md")).unwrap();
@@ -465,7 +430,7 @@ fn add_continue_handoff_and_tag_handoff_does_not_scaffold_a_second_file() {
     )
     .unwrap();
     let notes = stage.join("notes");
-    let cfg = write_config(&stage, &repo, &notes);
+    let projects = projects(&repo, &notes);
 
     let args = parse_pw_args(&[
         "add",
@@ -473,14 +438,10 @@ fn add_continue_handoff_and_tag_handoff_does_not_scaffold_a_second_file() {
         "--continue-handoff",
         "--tag",
         "handoff",
-        "--config-path",
-        cfg.to_str().unwrap(),
-        "--notes-dir",
-        notes.to_str().unwrap(),
         "--date",
         "2026-01-02",
     ]);
-    let out = run_plain(&args).unwrap();
+    let out = run_plain(&args, &projects).unwrap();
 
     assert!(out.contains("TST-0001"), "got: {out}");
     let item = fs::read_to_string(notes.join("test-project/TST-0001.md")).unwrap();
@@ -513,17 +474,15 @@ fn list_returns_ledger_content() {
     let ledger_content = "# Handoff ledger - active only\n\n| ID | Handoff | Goals | Created |\n| --- | --- | --- | --- |\n| CFG-0001 | [Alpha](2026-01-01-alpha.md) | 1/2 | 2026-01-01 |\n";
     fs::write(handoff_dir.join("LEDGER.md"), ledger_content).unwrap();
 
-    let cfg = write_empty_config(&stage);
+    let projects = no_projects();
     let args = parse_args(&[
         "list",
-        "--config-path",
-        cfg.to_str().unwrap(),
         "--repo-root",
         repo.to_str().unwrap(),
         "--date",
         "2026-01-01",
     ]);
-    let out = handoff::run(&args).unwrap();
+    let out = handoff::run(&args, &projects.store, &projects.registry).unwrap();
     assert_eq!(
         out, ledger_content,
         "list should return ledger content verbatim"
@@ -535,17 +494,15 @@ fn list_no_ledger() {
     let stage = tmpdir("hf_list_empty");
     let repo = stage.join("repo");
     fs::create_dir_all(&repo).unwrap();
-    let cfg = write_empty_config(&stage);
+    let projects = no_projects();
     let args = parse_args(&[
         "list",
-        "--config-path",
-        cfg.to_str().unwrap(),
         "--repo-root",
         repo.to_str().unwrap(),
         "--date",
         "2026-01-01",
     ]);
-    let out = handoff::run(&args).unwrap();
+    let out = handoff::run(&args, &projects.store, &projects.registry).unwrap();
     assert_eq!(out, "No active handoffs (LEDGER.md not found).");
 }
 
@@ -596,7 +553,7 @@ fn done_archives_linked_handoff_and_reports_dest() {
     fs::create_dir_all(&repo).unwrap();
     let notes = stage.join("notes");
     stage_tagged_item(&notes, &repo, Some("TST-0001"));
-    let cfg = write_config(&stage, &repo, &notes);
+    let projects = projects(&repo, &notes);
 
     let args = parse_pw_args(&[
         "done",
@@ -604,14 +561,10 @@ fn done_archives_linked_handoff_and_reports_dest() {
         "TST-0001",
         "--report",
         "x",
-        "--config-path",
-        cfg.to_str().unwrap(),
-        "--notes-dir",
-        notes.to_str().unwrap(),
         "--date",
         "2026-01-02",
     ]);
-    let out = run_plain(&args).unwrap();
+    let out = run_plain(&args, &projects).unwrap();
 
     assert!(out.contains("handoff: archived"), "got: {out}");
     let archived_path = repo.join("docs/handoffs/archived/2026-01-01-managed-flow.md");
@@ -645,7 +598,7 @@ fn cancel_archives_linked_handoff_as_cancelled_with_report_body() {
     fs::create_dir_all(&repo).unwrap();
     let notes = stage.join("notes");
     stage_tagged_item(&notes, &repo, Some("TST-0001"));
-    let cfg = write_config(&stage, &repo, &notes);
+    let projects = projects(&repo, &notes);
 
     let args = parse_pw_args(&[
         "cancel",
@@ -653,14 +606,10 @@ fn cancel_archives_linked_handoff_as_cancelled_with_report_body() {
         "TST-0001",
         "--report",
         "why",
-        "--config-path",
-        cfg.to_str().unwrap(),
-        "--notes-dir",
-        notes.to_str().unwrap(),
         "--date",
         "2026-01-02",
     ]);
-    let out = run_plain(&args).unwrap();
+    let out = run_plain(&args, &projects).unwrap();
 
     assert!(out.contains("handoff: archived"), "got: {out}");
     let archived_path = repo.join("docs/handoffs/archived/2026-01-01-managed-flow.md");
@@ -682,7 +631,7 @@ fn done_errors_and_leaves_item_active_when_no_handoff_links_it() {
     fs::create_dir_all(repo.join("docs/handoffs")).unwrap();
     let notes = stage.join("notes");
     stage_tagged_item(&notes, &repo, None);
-    let cfg = write_config(&stage, &repo, &notes);
+    let projects = projects(&repo, &notes);
 
     let args = parse_pw_args(&[
         "done",
@@ -690,14 +639,10 @@ fn done_errors_and_leaves_item_active_when_no_handoff_links_it() {
         "TST-0001",
         "--report",
         "x",
-        "--config-path",
-        cfg.to_str().unwrap(),
-        "--notes-dir",
-        notes.to_str().unwrap(),
         "--date",
         "2026-01-02",
     ]);
-    let err = run_plain(&args).unwrap_err();
+    let err = run_plain(&args, &projects).unwrap_err();
 
     assert!(err.contains("pw: TST-0001"), "got: {err}");
     let item = fs::read_to_string(notes.join("test-project/TST-0001.md")).unwrap();
@@ -732,20 +677,10 @@ fn done_on_untagged_item_never_touches_handoffs_dir() {
         "---\nstatus: active\nproject: test-project\ncreated: 2026-01-01\npw: TST-0001\n---\n\n# Managed Flow\n",
     )
     .unwrap();
-    let cfg = write_config(&stage, &repo, &notes);
+    let projects = projects(&repo, &notes);
 
-    let args = parse_pw_args(&[
-        "done",
-        "--id",
-        "TST-0001",
-        "--config-path",
-        cfg.to_str().unwrap(),
-        "--notes-dir",
-        notes.to_str().unwrap(),
-        "--date",
-        "2026-01-02",
-    ]);
-    let out = run_plain(&args).unwrap();
+    let args = parse_pw_args(&["done", "--id", "TST-0001", "--date", "2026-01-02"]);
+    let out = run_plain(&args, &projects).unwrap();
 
     assert!(!out.contains("handoff: archived"), "got: {out}");
     assert!(
@@ -775,7 +710,7 @@ fn done_errors_and_leaves_item_active_when_archive_destination_exists() {
         "existing archive\n",
     )
     .unwrap();
-    let cfg = write_config(&stage, &repo, &notes);
+    let projects = projects(&repo, &notes);
 
     let args = parse_pw_args(&[
         "done",
@@ -783,14 +718,10 @@ fn done_errors_and_leaves_item_active_when_archive_destination_exists() {
         "TST-0001",
         "--report",
         "x",
-        "--config-path",
-        cfg.to_str().unwrap(),
-        "--notes-dir",
-        notes.to_str().unwrap(),
         "--date",
         "2026-01-02",
     ]);
-    let err = run_plain(&args).unwrap_err();
+    let err = run_plain(&args, &projects).unwrap_err();
 
     assert!(
         err.contains("archived handoff already exists"),
@@ -838,18 +769,10 @@ fn reopen_restores_archived_handoff_and_reports_dest() {
     fs::create_dir_all(&repo).unwrap();
     let notes = stage.join("notes");
     stage_closed_tagged_item(&notes, &repo, Some("TST-0001"));
-    let cfg = write_config(&stage, &repo, &notes);
+    let projects = projects(&repo, &notes);
 
-    let args = parse_pw_args(&[
-        "reopen",
-        "--id",
-        "TST-0001",
-        "--config-path",
-        cfg.to_str().unwrap(),
-        "--notes-dir",
-        notes.to_str().unwrap(),
-    ]);
-    let out = run_plain(&args).unwrap();
+    let args = parse_pw_args(&["reopen", "--id", "TST-0001"]);
+    let out = run_plain(&args, &projects).unwrap();
 
     assert!(out.contains("handoff: reopened"), "got: {out}");
     let active_path = repo.join("docs/handoffs/2026-01-01-managed-flow.md");
@@ -888,18 +811,10 @@ fn reopen_errors_and_leaves_item_done_when_active_destination_exists() {
         "---\nstatus: active\nproject: test-project\ncreated: 2026-01-01\npw: TST-0002\n---\n\n# Conflicting\n",
     )
     .unwrap();
-    let cfg = write_config(&stage, &repo, &notes);
+    let projects = projects(&repo, &notes);
 
-    let args = parse_pw_args(&[
-        "reopen",
-        "--id",
-        "TST-0001",
-        "--config-path",
-        cfg.to_str().unwrap(),
-        "--notes-dir",
-        notes.to_str().unwrap(),
-    ]);
-    let err = run_plain(&args).unwrap_err();
+    let args = parse_pw_args(&["reopen", "--id", "TST-0001"]);
+    let err = run_plain(&args, &projects).unwrap_err();
 
     assert!(err.contains("active handoff already exists"), "got: {err}");
     let item = fs::read_to_string(notes.join("test-project/TST-0001.md")).unwrap();
@@ -916,18 +831,10 @@ fn reopen_errors_and_leaves_item_done_when_no_archived_handoff_links_it() {
     fs::create_dir_all(repo.join("docs/handoffs/archived")).unwrap();
     let notes = stage.join("notes");
     stage_closed_tagged_item(&notes, &repo, None);
-    let cfg = write_config(&stage, &repo, &notes);
+    let projects = projects(&repo, &notes);
 
-    let args = parse_pw_args(&[
-        "reopen",
-        "--id",
-        "TST-0001",
-        "--config-path",
-        cfg.to_str().unwrap(),
-        "--notes-dir",
-        notes.to_str().unwrap(),
-    ]);
-    let err = run_plain(&args).unwrap_err();
+    let args = parse_pw_args(&["reopen", "--id", "TST-0001"]);
+    let err = run_plain(&args, &projects).unwrap_err();
 
     assert!(err.contains("pw: TST-0001"), "got: {err}");
     let item = fs::read_to_string(notes.join("test-project/TST-0001.md")).unwrap();
@@ -945,18 +852,10 @@ fn reopen_already_active_pair_skips_without_touching_handoff() {
     let notes = stage.join("notes");
     // Keep both sides active to exercise idempotent reopen.
     stage_tagged_item(&notes, &repo, Some("TST-0001"));
-    let cfg = write_config(&stage, &repo, &notes);
+    let projects = projects(&repo, &notes);
 
-    let args = parse_pw_args(&[
-        "reopen",
-        "--id",
-        "TST-0001",
-        "--config-path",
-        cfg.to_str().unwrap(),
-        "--notes-dir",
-        notes.to_str().unwrap(),
-    ]);
-    let out = run_plain(&args).unwrap();
+    let args = parse_pw_args(&["reopen", "--id", "TST-0001"]);
+    let out = run_plain(&args, &projects).unwrap();
 
     assert!(out.contains("already active"), "got: {out}");
     assert!(!out.contains("handoff: reopened"), "got: {out}");
@@ -999,18 +898,10 @@ fn reopen_on_untagged_item_never_touches_handoffs_dir() {
         "---\nstatus: done\ncompleted: 2026-01-02\nproject: test-project\ncreated: 2026-01-01\npw: TST-0001\n---\n\n# Managed Flow\n",
     )
     .unwrap();
-    let cfg = write_config(&stage, &repo, &notes);
+    let projects = projects(&repo, &notes);
 
-    let args = parse_pw_args(&[
-        "reopen",
-        "--id",
-        "TST-0001",
-        "--config-path",
-        cfg.to_str().unwrap(),
-        "--notes-dir",
-        notes.to_str().unwrap(),
-    ]);
-    let out = run_plain(&args).unwrap();
+    let args = parse_pw_args(&["reopen", "--id", "TST-0001"]);
+    let out = run_plain(&args, &projects).unwrap();
 
     assert!(!out.contains("handoff: reopened"), "got: {out}");
     assert!(
@@ -1030,19 +921,11 @@ fn remove_deletes_linked_handoff_and_rebuilds_ledger() {
     stage_tagged_item(&notes, &repo, Some("TST-0001"));
     let handoff_dir = repo.join("docs/handoffs");
     fs::write(handoff_dir.join("LEDGER.md"), "# stale\n").unwrap();
-    let cfg = write_config(&stage, &repo, &notes);
+    let projects = projects(&repo, &notes);
 
-    let args = parse_pw_args(&[
-        "remove",
-        "--id",
-        "TST-0001",
-        "--config-path",
-        cfg.to_str().unwrap(),
-        "--notes-dir",
-        notes.to_str().unwrap(),
-    ]);
+    let args = parse_pw_args(&["remove", "--id", "TST-0001"]);
     // Non-terminal stdin follows the accepted non-interactive confirmation policy.
-    let out = run_plain(&args).unwrap();
+    let out = run_plain(&args, &projects).unwrap();
 
     assert!(
         out.starts_with("Removed pwf task: **TST-0001"),
@@ -1088,18 +971,10 @@ fn remove_on_untagged_item_never_touches_handoffs_dir() {
         "---\nstatus: active\nproject: test-project\ncreated: 2026-01-01\npw: TST-0001\n---\n\n# Managed Flow\n",
     )
     .unwrap();
-    let cfg = write_config(&stage, &repo, &notes);
+    let projects = projects(&repo, &notes);
 
-    let args = parse_pw_args(&[
-        "remove",
-        "--id",
-        "TST-0001",
-        "--config-path",
-        cfg.to_str().unwrap(),
-        "--notes-dir",
-        notes.to_str().unwrap(),
-    ]);
-    let out = run_plain(&args).unwrap();
+    let args = parse_pw_args(&["remove", "--id", "TST-0001"]);
+    let out = run_plain(&args, &projects).unwrap();
 
     assert!(
         out.starts_with("Removed pwf task: **TST-0001"),

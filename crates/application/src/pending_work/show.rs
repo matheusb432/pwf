@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use crate::{
-    AppDbStore, Materialization, NoteMarkdownSource, PendingWorkItem,
+    AppRecordStore, Materialization, NoteMarkdownSource, PendingWorkItem,
     pending_work::{project_registry::ProjectRegistry, resolve::resolve_record},
 };
 
@@ -64,7 +64,7 @@ pub fn execute<S, N>(
     markdown_source: &N,
 ) -> Result<String, ShowPendingWorkError>
 where
-    S: AppDbStore<PendingWorkItem>,
+    S: AppRecordStore<PendingWorkItem>,
     N: NoteMarkdownSource,
 {
     let record = resolve_record(store, projects, &query.id)?;

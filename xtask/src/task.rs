@@ -1,5 +1,7 @@
 //! Command plans and execution.
 
+use std::time::Duration;
+
 use anyhow::{Result, bail};
 
 use crate::process;
@@ -9,6 +11,7 @@ pub(crate) struct Step {
     label: String,
     program: String,
     arguments: Vec<String>,
+    deadline: Option<Duration>,
 }
 
 impl Step {
@@ -21,6 +24,7 @@ impl Step {
             label: label.into(),
             program: program.into(),
             arguments: arguments.into_iter().map(Into::into).collect(),
+            deadline: None,
         }
     }
 
@@ -30,6 +34,11 @@ impl Step {
     ) -> Self {
         self.arguments
             .extend(arguments_extra.into_iter().map(Into::into));
+        self
+    }
+
+    pub(crate) fn with_deadline(mut self, deadline: Duration) -> Self {
+        self.deadline = Some(deadline);
         self
     }
 
@@ -43,6 +52,10 @@ impl Step {
 
     pub(crate) fn arguments(&self) -> &[String] {
         &self.arguments
+    }
+
+    pub(crate) fn deadline(&self) -> Option<Duration> {
+        self.deadline
     }
 }
 

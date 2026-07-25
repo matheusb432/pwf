@@ -3,11 +3,10 @@ use pwf_application::pending_work::{
     ProjectRegistry,
     cancel::{CancelPendingWork, CancelPendingWorkError},
 };
-use pwf_domain::pending_work::ProjectName;
 use pwf_infra::obsidian::ObsidianStore;
 
 use super::{
-    common::{CommonArguments, Identifier, PendingWorkError, load_configuration},
+    common::{CommonArguments, Identifier, PendingWorkError},
     render::{
         append_handoff_outcome, done_cancel_reopen_remedy, emit_close_diagnostics,
         emit_created_section, emit_created_section_for_error, render_closed,
@@ -31,19 +30,11 @@ pub struct Arguments {
     pub(crate) common: CommonArguments,
 }
 
-pub(super) fn run(arguments: &Arguments) -> Result<String, PendingWorkError> {
-    let configuration = load_configuration(&arguments.common)?;
-    let projects = ProjectRegistry::new(configuration.projects.iter().map(|(name, repository)| {
-        (
-            ProjectName::try_new(name).expect("configured project is non-empty"),
-            Some(repository.clone()),
-            configuration
-                .prefixes
-                .get(name)
-                .map(|prefix| prefix.to_ascii_uppercase()),
-        )
-    }));
-    let store = ObsidianStore::new(configuration);
+pub(super) fn run(
+    arguments: &Arguments,
+    store: &ObsidianStore,
+    projects: &ProjectRegistry,
+) -> Result<String, PendingWorkError> {
     let id = arguments.identifier.required("cancel")?;
     let report = arguments
         .report
@@ -56,7 +47,7 @@ pub(super) fn run(arguments: &Arguments) -> Result<String, PendingWorkError> {
         arguments.commits.clone(),
         arguments.review,
     );
-    let output = pwf_application::pending_work::cancel::execute(&command, &store, &projects)
+    let output = pwf_application::pending_work::cancel::execute(&command, store, projects)
         .map_err(map_error)?;
     if let Some(review) = output.review_item.as_ref() {
         emit_created_section(review);

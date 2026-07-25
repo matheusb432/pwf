@@ -4,7 +4,7 @@ use std::{
 };
 
 use pwf_application::{
-    AppDbStore, HandoffDocument, HandoffDocumentIdentifier, HandoffDocumentScopePresence,
+    AppRecordStore, HandoffDocument, HandoffDocumentIdentifier, HandoffDocumentScopePresence,
     HandoffDocumentStore, HandoffLocation, HandoffPatch, HandoffScope, NewHandoffDocument,
 };
 use pwf_domain::{
@@ -184,7 +184,7 @@ fn update_handoff_document(
     Ok(())
 }
 
-impl AppDbStore<HandoffDocument> for ObsidianStore {
+impl AppRecordStore<HandoffDocument> for ObsidianStore {
     type Error = ObsidianStoreError;
 
     fn get(
@@ -231,7 +231,8 @@ impl HandoffDocumentStore for ObsidianStore {
     fn scope_presence(
         &self,
         scope: &HandoffScope,
-    ) -> Result<HandoffDocumentScopePresence, <Self as AppDbStore<HandoffDocument>>::Error> {
+    ) -> Result<HandoffDocumentScopePresence, <Self as AppRecordStore<HandoffDocument>>::Error>
+    {
         let repository_exists = scope.repository_root.try_exists().map_err(|source| {
             ObsidianStoreError::ReadHandoffDirectory {
                 path: scope.repository_root.clone(),
@@ -271,7 +272,7 @@ impl HandoffDocumentStore for ObsidianStore {
         &self,
         scope: &HandoffScope,
         identifier: &HandoffDocumentIdentifier,
-    ) -> Result<bool, <Self as AppDbStore<HandoffDocument>>::Error> {
+    ) -> Result<bool, <Self as AppRecordStore<HandoffDocument>>::Error> {
         let path = handoff_document_path(scope, identifier);
         path.try_exists()
             .map_err(|source| ObsidianStoreError::InspectHandoffDocument { path, source })
@@ -281,7 +282,7 @@ impl HandoffDocumentStore for ObsidianStore {
         &self,
         scope: &HandoffScope,
         location: HandoffLocation,
-    ) -> Result<Vec<HandoffDocument>, <Self as AppDbStore<HandoffDocument>>::Error> {
+    ) -> Result<Vec<HandoffDocument>, <Self as AppRecordStore<HandoffDocument>>::Error> {
         handoff_documents_location(scope, location)
     }
 
@@ -289,7 +290,7 @@ impl HandoffDocumentStore for ObsidianStore {
         &self,
         scope: &HandoffScope,
         snapshot: &HandoffDocument,
-    ) -> Result<(), <Self as AppDbStore<HandoffDocument>>::Error> {
+    ) -> Result<(), <Self as AppRecordStore<HandoffDocument>>::Error> {
         restore_document_source(scope, snapshot)?;
         let moved_identifier = HandoffDocumentIdentifier {
             file_name: snapshot.identifier.file_name.clone(),
@@ -316,7 +317,7 @@ impl HandoffDocumentStore for ObsidianStore {
         &self,
         scope: &HandoffScope,
         snapshot: &HandoffDocument,
-    ) -> Result<(), <Self as AppDbStore<HandoffDocument>>::Error> {
+    ) -> Result<(), <Self as AppRecordStore<HandoffDocument>>::Error> {
         restore_document_source(scope, snapshot)
     }
 }
@@ -513,10 +514,9 @@ mod tests {
     use std::{assert_matches, path::PathBuf};
 
     use pwf_application::{
-        AppDbStore, HandoffDocument, HandoffDocumentIdentifier, HandoffDocumentStore,
+        AppRecordStore, HandoffDocument, HandoffDocumentIdentifier, HandoffDocumentStore,
         HandoffLocation, HandoffPatch, HandoffScope, NewHandoffDocument,
     };
-    use pwf_core::config::from_json;
     use pwf_domain::{
         handoff::HandoffStatus,
         pending_work::{ProjectName, Timestamp, WorkItemId},
@@ -525,7 +525,7 @@ mod tests {
     use super::super::{ObsidianStore, ObsidianStoreError};
 
     fn store() -> ObsidianStore {
-        ObsidianStore::new(from_json(r#"{ "notesDir": "/unused" }"#, None).unwrap())
+        ObsidianStore::new([])
     }
 
     fn scope(repository_root: PathBuf) -> HandoffScope {
@@ -552,7 +552,7 @@ mod tests {
         std::fs::write(handoff_directory.join("README.md"), "ignored").unwrap();
 
         let documents =
-            <ObsidianStore as AppDbStore<HandoffDocument>>::list(&store(), &scope).unwrap();
+            <ObsidianStore as AppRecordStore<HandoffDocument>>::list(&store(), &scope).unwrap();
 
         assert_eq!(documents.len(), 2);
         let malformed_document = documents
@@ -654,7 +654,7 @@ mod tests {
             location: HandoffLocation::Active,
         };
 
-        let inserted = <ObsidianStore as AppDbStore<HandoffDocument>>::insert(
+        let inserted = <ObsidianStore as AppRecordStore<HandoffDocument>>::insert(
             &store,
             &scope,
             NewHandoffDocument {
@@ -671,7 +671,7 @@ mod tests {
         assert!(inserted.source.contains("status: active\n"));
         assert!(!inserted.source.contains("pw:"));
 
-        <ObsidianStore as AppDbStore<HandoffDocument>>::update(
+        <ObsidianStore as AppRecordStore<HandoffDocument>>::update(
             &store,
             &scope,
             &identifier,
@@ -686,7 +686,7 @@ mod tests {
         .unwrap();
 
         assert!(
-            <ObsidianStore as AppDbStore<HandoffDocument>>::get(&store, &scope, &identifier)
+            <ObsidianStore as AppRecordStore<HandoffDocument>>::get(&store, &scope, &identifier)
                 .unwrap()
                 .is_none()
         );
@@ -694,7 +694,7 @@ mod tests {
             location: HandoffLocation::Archived,
             ..identifier
         };
-        let archived = <ObsidianStore as AppDbStore<HandoffDocument>>::get(
+        let archived = <ObsidianStore as AppRecordStore<HandoffDocument>>::get(
             &store,
             &scope,
             &archived_identifier,
@@ -720,7 +720,7 @@ mod tests {
                     .contains("tmp-"))
         );
 
-        <ObsidianStore as AppDbStore<HandoffDocument>>::delete(
+        <ObsidianStore as AppRecordStore<HandoffDocument>>::delete(
             &store,
             &scope,
             &archived_identifier,
@@ -742,7 +742,7 @@ mod tests {
         let source = "---\nstatus: active\nproject: test-project\ncreated: 2026-01-01\npw: TST-0001\n---\n\n# Legacy\n";
         std::fs::write(handoff_directory.join(&identifier.file_name), source).unwrap();
 
-        <ObsidianStore as AppDbStore<HandoffDocument>>::update(
+        <ObsidianStore as AppRecordStore<HandoffDocument>>::update(
             &store(),
             &scope,
             &identifier,
@@ -781,10 +781,10 @@ mod tests {
         std::fs::write(handoff_directory.join(&identifier.file_name), source).unwrap();
         let store = store();
         let snapshot =
-            <ObsidianStore as AppDbStore<HandoffDocument>>::get(&store, &scope, &identifier)
+            <ObsidianStore as AppRecordStore<HandoffDocument>>::get(&store, &scope, &identifier)
                 .unwrap()
                 .unwrap();
-        <ObsidianStore as AppDbStore<HandoffDocument>>::update(
+        <ObsidianStore as AppRecordStore<HandoffDocument>>::update(
             &store,
             &scope,
             &identifier,
@@ -835,10 +835,10 @@ mod tests {
         .unwrap();
         let store = store();
         let snapshot =
-            <ObsidianStore as AppDbStore<HandoffDocument>>::get(&store, &scope, &identifier)
+            <ObsidianStore as AppRecordStore<HandoffDocument>>::get(&store, &scope, &identifier)
                 .unwrap()
                 .unwrap();
-        <ObsidianStore as AppDbStore<HandoffDocument>>::delete(&store, &scope, &identifier)
+        <ObsidianStore as AppRecordStore<HandoffDocument>>::delete(&store, &scope, &identifier)
             .unwrap();
 
         store
@@ -868,10 +868,10 @@ mod tests {
             body: "\n# Existing\n".to_string(),
             pending_work_identifier: None,
         };
-        <ObsidianStore as AppDbStore<HandoffDocument>>::insert(&store, &scope, new.clone())
+        <ObsidianStore as AppRecordStore<HandoffDocument>>::insert(&store, &scope, new.clone())
             .unwrap();
 
-        let error = <ObsidianStore as AppDbStore<HandoffDocument>>::insert(&store, &scope, new)
+        let error = <ObsidianStore as AppRecordStore<HandoffDocument>>::insert(&store, &scope, new)
             .unwrap_err();
 
         assert_matches!(error, ObsidianStoreError::HandoffDocumentExists { .. });
@@ -896,7 +896,7 @@ mod tests {
             location: HandoffLocation::Active,
         };
 
-        let error = <ObsidianStore as AppDbStore<HandoffDocument>>::update(
+        let error = <ObsidianStore as AppRecordStore<HandoffDocument>>::update(
             &store(),
             &scope,
             &identifier,
@@ -935,7 +935,7 @@ mod tests {
             location: HandoffLocation::Active,
         };
 
-        let error = <ObsidianStore as AppDbStore<HandoffDocument>>::update(
+        let error = <ObsidianStore as AppRecordStore<HandoffDocument>>::update(
             &store(),
             &scope,
             &identifier,
@@ -982,7 +982,7 @@ mod tests {
             location: HandoffLocation::Active,
         };
 
-        let error = <ObsidianStore as AppDbStore<HandoffDocument>>::update(
+        let error = <ObsidianStore as AppRecordStore<HandoffDocument>>::update(
             &store(),
             &scope,
             &identifier,

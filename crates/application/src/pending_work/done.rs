@@ -13,8 +13,8 @@ use super::{
 use crate::{
     handoff::{HandoffError, HandoffMutationOk, lifecycle},
     ports::{
-        AppDbStore, HandoffDocumentStore, HandoffLedger, IndexEntry, IndexEntryState, IndexSection,
-        ItemPatch, Materialization, NewItem, PendingWorkItem,
+        AppRecordStore, HandoffDocumentStore, HandoffLedger, IndexEntry, IndexEntryState,
+        IndexSection, ItemPatch, Materialization, NewItem, PendingWorkItem,
     },
 };
 
@@ -98,11 +98,11 @@ pub fn execute<S>(
     projects: &ProjectRegistry,
 ) -> Result<CompletedPendingWork, CompletePendingWorkError>
 where
-    S: AppDbStore<PendingWorkItem>
-        + AppDbStore<IndexEntry>
-        + AppDbStore<IndexSection>
+    S: AppRecordStore<PendingWorkItem>
+        + AppRecordStore<IndexEntry>
+        + AppRecordStore<IndexSection>
         + HandoffDocumentStore
-        + AppDbStore<HandoffLedger>,
+        + AppRecordStore<HandoffLedger>,
 {
     perform_close(
         store,
@@ -184,11 +184,11 @@ pub(super) fn perform_close<S>(
     review: bool,
 ) -> Result<CompletedPendingWork, CloseError>
 where
-    S: AppDbStore<PendingWorkItem>
-        + AppDbStore<IndexEntry>
-        + AppDbStore<IndexSection>
+    S: AppRecordStore<PendingWorkItem>
+        + AppRecordStore<IndexEntry>
+        + AppRecordStore<IndexSection>
         + HandoffDocumentStore
-        + AppDbStore<HandoffLedger>,
+        + AppRecordStore<HandoffLedger>,
 {
     let commits_value = commit_provenance::normalize(commits);
     let pending_work_identifier =
@@ -237,7 +237,7 @@ where
     if let Some(commits) = &commits_value {
         patch.commits = Some(Some(commits.clone()));
     }
-    <S as AppDbStore<PendingWorkItem>>::update(store, project, &pending_work_identifier, patch)
+    <S as AppRecordStore<PendingWorkItem>>::update(store, project, &pending_work_identifier, patch)
         .map_err(|error| CloseError::WriteStore(Box::new(error)))?;
 
     let (evicted_ids, futuro_renamed) =
@@ -314,11 +314,11 @@ fn rotate_done_queue<S>(
     completed: &str,
 ) -> Result<(Vec<WorkItemId>, bool), CloseError>
 where
-    S: AppDbStore<IndexEntry> + AppDbStore<IndexSection>,
+    S: AppRecordStore<IndexEntry> + AppRecordStore<IndexSection>,
 {
-    let entries = <S as AppDbStore<IndexEntry>>::list(store, project)
+    let entries = <S as AppRecordStore<IndexEntry>>::list(store, project)
         .map_err(|error| CloseError::WriteStore(Box::new(error)))?;
-    let sections = <S as AppDbStore<IndexSection>>::list(store, project)
+    let sections = <S as AppRecordStore<IndexSection>>::list(store, project)
         .map_err(|error| CloseError::WriteStore(Box::new(error)))?;
     let views: Vec<QueueEntryView> = entries.iter().map(queue_view).collect();
     let labels: Vec<String> = sections
@@ -336,7 +336,7 @@ where
         ..
     }) = &decisions.marked_entry
     {
-        <S as AppDbStore<IndexEntry>>::update(
+        <S as AppRecordStore<IndexEntry>>::update(
             store,
             project,
             marked_id,
@@ -349,7 +349,7 @@ where
         .map_err(|error| CloseError::WriteStore(Box::new(error)))?;
     }
     for evicted in &decisions.evicted_ids {
-        <S as AppDbStore<IndexEntry>>::delete(store, project, evicted)
+        <S as AppRecordStore<IndexEntry>>::delete(store, project, evicted)
             .map_err(|error| CloseError::WriteStore(Box::new(error)))?;
     }
     Ok((decisions.evicted_ids, decisions.normalize_futuro_header))
@@ -362,10 +362,10 @@ fn rename_futuro_headers<S>(
     sections: &[IndexSection],
 ) -> Result<(), CloseError>
 where
-    S: AppDbStore<IndexSection>,
+    S: AppRecordStore<IndexSection>,
 {
     for section in sections.iter().filter(|s| is_futuro_label(&s.label)) {
-        <S as AppDbStore<IndexSection>>::update(
+        <S as AppRecordStore<IndexSection>>::update(
             store,
             project,
             &section.label,
@@ -387,7 +387,7 @@ fn spawn_review<S>(
     commits: Option<&str>,
 ) -> Result<AddedItem, CloseError>
 where
-    S: AppDbStore<PendingWorkItem> + AppDbStore<IndexEntry> + AppDbStore<IndexSection>,
+    S: AppRecordStore<PendingWorkItem> + AppRecordStore<IndexEntry> + AppRecordStore<IndexSection>,
 {
     project_mapped(project.as_ref(), projects).map_err(CloseError::ReviewTask)?;
     let created = store_util::create_item(
@@ -502,7 +502,7 @@ mod tests {
             .with_prefix("glep-shimeji", "GLP")
             .with_project("glep-shimeji", items);
         for entry in entries {
-            <InMemoryStore as crate::AppDbStore<IndexEntry>>::insert(&store, &glp(), entry)
+            <InMemoryStore as crate::AppRecordStore<IndexEntry>>::insert(&store, &glp(), entry)
                 .unwrap();
         }
         store
@@ -638,12 +638,12 @@ mod tests {
         assert!(matches!(
             error,
             CompletePendingWorkError::ReviewTask(
-                AddPendingWorkError::ProjectNotMappedToRepo { ref project }
+                AddPendingWorkError::ProjectHasNoDirectorySource { ref project }
             ) if project == "glep-shimeji"
         ));
         assert_eq!(
             error.to_string(),
-            "Project 'glep-shimeji' is not mapped to a repo in config/pending-work.json."
+            "Project 'glep-shimeji' has no directory source; update the managed project record."
         );
     }
 

@@ -1,7 +1,7 @@
 use std::{fmt::Write as _, path::Path, sync::LazyLock};
 
 use pwf_application::{
-    AppDbStore, IndexEntryState, IndexPlacement, ItemPatch, Materialization, NewItem,
+    AppRecordStore, IndexEntryState, IndexPlacement, ItemPatch, Materialization, NewItem,
     PendingWorkItem, RecordId,
 };
 use pwf_domain::pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus};
@@ -182,9 +182,10 @@ impl ObsidianStore {
         &self,
         project: &ProjectName,
     ) -> Result<Vec<PendingWorkItem>, ObsidianStoreError> {
-        if !Path::new(&self.config.notes_dir).exists() {
+        let project_directory = self.project_paths.project_directory(project)?;
+        if !project_directory.exists() {
             return Err(ObsidianStoreError::NotesDirectoryNotFound {
-                path: self.config.notes_dir.clone(),
+                path: project_directory.display().to_string(),
             });
         }
         let tasks = self.task_files_for_project(project)?;
@@ -256,12 +257,7 @@ impl ObsidianStore {
         project: &ProjectName,
         new: &NewItem,
     ) -> Result<PendingWorkItem, ObsidianStoreError> {
-        let prefix =
-            pwf_core::paths::project_key(&self.config, project.as_ref()).ok_or_else(|| {
-                ObsidianStoreError::ProjectMissingPrefix {
-                    project: project.as_ref().to_string(),
-                }
-            })?;
+        let prefix = self.project_paths.project_identity(project)?.id().as_ref();
         let note = self.write_new_note(
             project,
             prefix,
@@ -403,7 +399,7 @@ impl ObsidianStore {
     }
 }
 
-impl AppDbStore<PendingWorkItem> for ObsidianStore {
+impl AppRecordStore<PendingWorkItem> for ObsidianStore {
     type Error = ObsidianStoreError;
 
     fn get(

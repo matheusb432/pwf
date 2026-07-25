@@ -1,9 +1,8 @@
 use clap::Args;
 use pwf_application::{
-    AppDbStore, PendingWorkItem,
+    AppRecordStore, PendingWorkItem,
     pending_work::{ProjectRegistry, UpdatePendingWorkItemOk, update::UpdatePendingWorkItem},
 };
-use pwf_domain::pending_work::ProjectName;
 use pwf_infra::obsidian::ObsidianStore;
 
 use super::common::{CommonArguments, Identifier};
@@ -35,18 +34,15 @@ pub struct Arguments {
     /// works on closed done/cancelled items too.
     #[arg(long)]
     pub(crate) commits: Vec<String>,
-    /// Append a free-form, multi-line Markdown closeout report to the body
-    /// verbatim, under `### Report` — never reruns title/Goals regeneration, so
-    /// it is safe on closed done/cancelled items.
+    /// Append multi-line Markdown under `### Report` verbatim; works on closed
+    /// done/cancelled items too.
     #[arg(long)]
     pub(crate) append_report: Option<String>,
-    /// Splice rich lane-syntax bullets (same syntax as `add`'s prompt) into the
-    /// body's Goals/Context/Constraints/Done When sections, growing an existing
-    /// section or creating a missing one; open items only.
+    /// Splice lane-syntax bullets (same syntax as `add`'s prompt) into the body's
+    /// Goals/Context/Constraints/Done When sections; open items only.
     #[arg(short = 'a', long, conflicts_with = "prompt")]
     pub(crate) append: Option<String>,
-    /// Set (or overwrite) the item's effort/complexity tier (1=easy .. 4=xhard).
-    /// Optional; open items only, same rule as title/body/prereq edits.
+    /// Effort tier (1=easy .. 4=xhard); open items only.
     #[arg(long, value_parser = clap::value_parser!(u8).range(1..=4))]
     pub(crate) effort: Option<u8>,
     #[command(flatten)]
@@ -54,30 +50,23 @@ pub struct Arguments {
 }
 
 use super::{
-    common::{PendingWorkError, load_configuration},
+    common::PendingWorkError,
     render::{TITLE_NORMALIZED_NOTICE, render_updated},
 };
 use crate::console::Console;
 
-pub(super) fn run(arguments: &Arguments, console: Console) -> Result<String, PendingWorkError> {
-    let configuration = load_configuration(&arguments.common)?;
-    let projects = ProjectRegistry::new(configuration.projects.iter().map(|(name, repository)| {
-        (
-            ProjectName::try_new(name).expect("configured project is non-empty"),
-            Some(repository.clone()),
-            configuration
-                .prefixes
-                .get(name)
-                .map(|prefix| prefix.to_ascii_uppercase()),
-        )
-    }));
-    let store = ObsidianStore::new(configuration);
-    let updated = run_update(&store, &projects, arguments)?;
+pub(super) fn run(
+    arguments: &Arguments,
+    console: Console,
+    store: &ObsidianStore,
+    projects: &ProjectRegistry,
+) -> Result<String, PendingWorkError> {
+    let updated = run_update(store, projects, arguments)?;
     Ok(render_updated(&updated, console.color()))
 }
 
 pub(in crate::engines::pending_work) fn run_update(
-    store: &impl AppDbStore<PendingWorkItem>,
+    store: &impl AppRecordStore<PendingWorkItem>,
     projects: &ProjectRegistry,
     args: &Arguments,
 ) -> Result<UpdatePendingWorkItemOk, PendingWorkError> {

@@ -10,7 +10,7 @@ use super::{
     PendingScaffold, handoff_body, handoff_directory, handoff_path, scope,
 };
 use crate::{
-    AppDbStore, HandoffDocument, HandoffDocumentIdentifier, HandoffDocumentScopePresence,
+    AppRecordStore, HandoffDocument, HandoffDocumentIdentifier, HandoffDocumentScopePresence,
     HandoffDocumentStore, HandoffLocation, HandoffPatch, NewHandoffDocument, PendingWorkItem,
     handoff::HandoffError, pending_work::ProjectRegistry,
 };
@@ -84,7 +84,7 @@ pub(crate) fn preflight_close<S>(
     report: Option<&str>,
 ) -> Result<PendingHandoffMutation, HandoffError>
 where
-    S: HandoffDocumentStore + AppDbStore<PendingWorkItem>,
+    S: HandoffDocumentStore + AppRecordStore<PendingWorkItem>,
 {
     let Some(gate) = handoff_gate(store, projects, pending_work_identifier)? else {
         return Ok(PendingHandoffMutation::NotLinked);
@@ -155,7 +155,7 @@ pub(crate) fn preflight_reopen<S>(
     pending_work_identifier: &str,
 ) -> Result<PendingHandoffMutation, HandoffError>
 where
-    S: HandoffDocumentStore + AppDbStore<PendingWorkItem>,
+    S: HandoffDocumentStore + AppRecordStore<PendingWorkItem>,
 {
     let Some(gate) = handoff_gate(store, projects, pending_work_identifier)? else {
         return Ok(PendingHandoffMutation::NotLinked);
@@ -223,7 +223,7 @@ pub(crate) fn preflight_delete<S>(
     pending_work_identifier: &str,
 ) -> Result<PendingHandoffMutation, HandoffError>
 where
-    S: HandoffDocumentStore + AppDbStore<PendingWorkItem>,
+    S: HandoffDocumentStore + AppRecordStore<PendingWorkItem>,
 {
     let Some(gate) = handoff_gate(store, projects, pending_work_identifier)? else {
         return Ok(PendingHandoffMutation::NotLinked);
@@ -253,7 +253,7 @@ fn handoff_gate<S>(
     pending_work_identifier: &str,
 ) -> Result<Option<GateItem>, HandoffError>
 where
-    S: HandoffDocumentStore + AppDbStore<PendingWorkItem>,
+    S: HandoffDocumentStore + AppRecordStore<PendingWorkItem>,
 {
     let Ok(identifier) = WorkItemId::try_new(pending_work_identifier) else {
         return Ok(None);
@@ -261,11 +261,9 @@ where
     let Some(project) = projects.project_for_id(&identifier) else {
         return Ok(None);
     };
-    let Some(item) =
-        <S as AppDbStore<PendingWorkItem>>::get(store, project, &identifier).map_err(|source| {
-            HandoffError::ReadPendingWork {
-                source: Box::new(source),
-            }
+    let Some(item) = <S as AppRecordStore<PendingWorkItem>>::get(store, project, &identifier)
+        .map_err(|source| HandoffError::ReadPendingWork {
+            source: Box::new(source),
         })?
     else {
         return Ok(None);

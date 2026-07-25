@@ -1,0 +1,17 @@
+id: no-execute-in-cli
+valid:
+  - |
+    fn run() {
+        pwf_application::pending_work::add::execute();
+    }
+invalid:
+  - fn execute() {}
+  - |
+    mod nested {
+        pub(crate) fn execute() {}
+    }
+  - |
+    struct Verb;
+    impl Verb {
+        fn execute(&self) {}
+    }

@@ -3,10 +3,11 @@ name = "pwf-note"
 version = "0.1.0"
 edition.workspace = true
 publish.workspace = true
-description = "pwf-note — one-liner project notes engine over pwf-core"
+description = "pwf-note: one-liner project notes engine over pwf-core"
 
 [dependencies]
 pwf-core = { workspace = true }
+pwf-domain = { workspace = true }
 regex = { workspace = true }
 thiserror = { workspace = true }
 

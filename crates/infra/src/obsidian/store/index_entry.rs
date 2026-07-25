@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, path::Path, sync::LazyLock};
 
-use pwf_application::{AppDbStore, IndexEntry, IndexEntryState, IndexSection};
+use pwf_application::{AppRecordStore, IndexEntry, IndexEntryState, IndexSection};
 use pwf_domain::pending_work::{ProjectName, Timestamp, WorkItemId};
 use regex::Regex;
 
@@ -10,8 +10,7 @@ use super::{
 };
 use crate::obsidian::{
     identity::{
-        configured_project_index_identity, new_project_index_content, parse_project_index_identity,
-        validate_project_index_identity,
+        new_project_index_content, parse_project_index_identity, validate_project_index_identity,
     },
     index_text::{
         KnownSection, add_link_to_index, add_section_block, remove_index_link, section_exists,
@@ -173,23 +172,20 @@ impl ObsidianStore {
         project: &ProjectName,
         entry: &IndexEntry,
     ) -> Result<(), ObsidianStoreError> {
-        let index_path = pwf_core::paths::project_index_path(
-            self.config.notes_dir_for(project.as_ref()),
-            project.as_ref(),
-        );
+        let index_path = self.project_paths.project_index_path(project)?;
         let index_dir = index_path.parent().unwrap_or(Path::new("."));
         if !index_dir.exists() {
             std::fs::create_dir_all(index_dir)
                 .map_err(|source| ObsidianStoreError::CreateIndexDir { source })?;
         }
-        let identity = configured_project_index_identity(&self.config, project)?;
+        let identity = self.project_paths.project_identity(project)?;
         let content = if index_path.is_file() {
             let content = read_index(&index_path)?;
             let actual = parse_project_index_identity(&index_path, &content)?;
-            validate_project_index_identity(&index_path, &actual, &identity)?;
+            validate_project_index_identity(&index_path, &actual, identity)?;
             content
         } else {
-            new_project_index_content(&identity)
+            new_project_index_content(identity)
         };
         let new_line = render_entry_line(entry);
         if let Some(existing) = parse_index_lines(&index_path, &content)?
@@ -221,10 +217,7 @@ impl ObsidianStore {
         from: &str,
         to: &str,
     ) -> Result<(), ObsidianStoreError> {
-        let index_path = pwf_core::paths::project_index_path(
-            self.config.notes_dir_for(project.as_ref()),
-            project.as_ref(),
-        );
+        let index_path = self.project_paths.project_index_path(project)?;
         let content = read_index(&index_path)?;
         write_index(&index_path, &rename_header_lines(&content, from, to))
     }
@@ -234,10 +227,7 @@ impl ObsidianStore {
         project: &ProjectName,
         id: &WorkItemId,
     ) -> Result<(), ObsidianStoreError> {
-        let index_path = pwf_core::paths::project_index_path(
-            self.config.notes_dir_for(project.as_ref()),
-            project.as_ref(),
-        );
+        let index_path = self.project_paths.project_index_path(project)?;
         let content = read_index(&index_path)?;
         let updated = remove_index_link(&content, id.as_ref());
         if updated == content {
@@ -249,7 +239,7 @@ impl ObsidianStore {
     }
 }
 
-impl AppDbStore<IndexEntry> for ObsidianStore {
+impl AppRecordStore<IndexEntry> for ObsidianStore {
     type Error = ObsidianStoreError;
 
     fn get(
@@ -290,7 +280,7 @@ impl AppDbStore<IndexEntry> for ObsidianStore {
 ///
 /// [`IndexEntry`] upserts create sections implicitly. Direct insertion and deletion return
 /// [`ObsidianStoreError::IndexSectionWriteUnsupported`].
-impl AppDbStore<IndexSection> for ObsidianStore {
+impl AppRecordStore<IndexSection> for ObsidianStore {
     type Error = ObsidianStoreError;
 
     fn get(
@@ -298,7 +288,7 @@ impl AppDbStore<IndexSection> for ObsidianStore {
         project: &ProjectName,
         label: &String,
     ) -> Result<Option<IndexSection>, Self::Error> {
-        Ok(<Self as AppDbStore<IndexSection>>::list(self, project)?
+        Ok(<Self as AppRecordStore<IndexSection>>::list(self, project)?
             .into_iter()
             .find(|section| section.label == *label))
     }

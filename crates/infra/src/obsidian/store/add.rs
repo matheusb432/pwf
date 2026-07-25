@@ -36,12 +36,9 @@ impl ObsidianStore {
             Some(title) if !title.trim().is_empty() => normalize_title(title),
             _ => inferred_title(request.prompt),
         };
-        let dir = pwf_core::paths::project_dir(
-            self.config.notes_dir_for(project.as_ref()),
-            project.as_ref(),
-        );
+        let dir = self.project_paths.project_directory(project)?;
         if !dir.exists() {
-            std::fs::create_dir_all(&dir)
+            std::fs::create_dir_all(dir)
                 .map_err(|source| ObsidianStoreError::CreateProjectDir { source })?;
         }
         let id = self.next_task_id(project, prefix)?;

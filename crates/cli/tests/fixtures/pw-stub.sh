@@ -10,6 +10,10 @@ if [ -n "${HANDOFF_STUB_LOG:-}" ]; then
   done
 fi
 
+if [ -n "${HANDOFF_STUB_DATABASE_LOG:-}" ]; then
+  printf '%s' "${PWF_DATABASE_PATH:-}" >"$HANDOFF_STUB_DATABASE_LOG"
+fi
+
 verb=${1:-}
 
 case $verb in

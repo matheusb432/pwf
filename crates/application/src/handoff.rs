@@ -36,8 +36,10 @@ pub enum HandoffError {
     /// A handoff-tagged pending-work record has malformed tags.
     #[error("item {id} has invalid tags frontmatter: {raw}")]
     InvalidTags { id: String, raw: String },
-    /// A handoff-tagged item belongs to a project without a repository mapping.
-    #[error("item {id} is tagged `handoff` but project {project} maps to no repo in the config")]
+    /// A handoff-tagged item belongs to a managed project without a directory-backed repository.
+    #[error(
+        "item {id} is tagged `handoff` but the managed project record for {project} has no directory source for its repository; inspect it with `pwf project ls`"
+    )]
     UnmanagedProject { id: String, project: String },
     /// A handoff-tagged item maps to a repository that is absent.
     #[error("item {id} is tagged `handoff` but its repo path does not exist: {}", path.display())]

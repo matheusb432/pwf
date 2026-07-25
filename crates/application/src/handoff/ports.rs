@@ -1,12 +1,10 @@
-use std::{error::Error, path::PathBuf};
+use std::error::Error;
 
 use pwf_domain::pending_work::{ProjectName, Timestamp, WorkItemId};
 
 /// Request sent to an out-of-process pending-work allocator.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AllocatePendingWork {
-    /// Manifest passed through the allocator CLI protocol.
-    pub config_path: PathBuf,
     /// Date supplied to pending-work creation.
     pub created: Timestamp,
     /// Managed project receiving the allocated item.
@@ -28,7 +26,7 @@ pub trait PendingWorkAllocatorClient: Clone + Send + Sync + 'static {
 
 #[cfg(test)]
 mod tests {
-    use std::{convert::Infallible, path::PathBuf};
+    use std::convert::Infallible;
 
     use pwf_domain::pending_work::{ProjectName, Timestamp, WorkItemId};
 
@@ -41,7 +39,6 @@ mod tests {
         type Error = Infallible;
 
         fn allocate(&self, request: &AllocatePendingWork) -> Result<WorkItemId, Self::Error> {
-            assert_eq!(request.config_path, PathBuf::from("/tmp/config.json"));
             assert_eq!(request.created.as_str(), "2026-01-01");
             assert_eq!(request.project.as_ref(), "test-project");
             Ok(WorkItemId::try_new("TST-0001").unwrap())
@@ -52,7 +49,6 @@ mod tests {
     fn allocator_port_returns_a_typed_identifier() {
         let identifier = Client
             .allocate(&AllocatePendingWork {
-                config_path: PathBuf::from("/tmp/config.json"),
                 created: Timestamp::new("2026-01-01"),
                 project: ProjectName::try_new("test-project").unwrap(),
             })

@@ -3,7 +3,7 @@ name = "prompt-lanes"
 version = "0.1.0"
 edition.workspace = true
 publish.workspace = true
-description = "prompt-lanes — domain-agnostic one-line lane-syntax task-prompt parser with pluggable render adapters"
+description = "prompt-lanes: domain-agnostic one-line lane-syntax task-prompt parser with pluggable render adapters"
 
 [dependencies]
 

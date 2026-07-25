@@ -1,7 +1,7 @@
 use pwf_domain::pending_work::WorkItemId;
 
 use crate::{
-    AppDbStore, PendingWorkItem,
+    AppRecordStore, PendingWorkItem,
     pending_work::{
         enrich::{enrich, is_open_item},
         list::PendingWorkItemView,
@@ -38,7 +38,7 @@ pub(crate) fn find_open_item<S>(
     id: &str,
 ) -> Result<PendingWorkItemView, FindPendingWorkError>
 where
-    S: AppDbStore<PendingWorkItem>,
+    S: AppRecordStore<PendingWorkItem>,
 {
     let requested = id.to_string();
     let Ok(work_id) = WorkItemId::try_new(id) else {
@@ -85,7 +85,7 @@ fn find_inline_open_item<S>(
     requested: &str,
 ) -> Result<PendingWorkItemView, FindPendingWorkError>
 where
-    S: AppDbStore<PendingWorkItem>,
+    S: AppRecordStore<PendingWorkItem>,
 {
     for (project, repo) in projects.projects() {
         let records = store
@@ -110,7 +110,7 @@ where
 #[cqrsy::query]
 pub fn execute(
     query: &FindPendingWork,
-    store: &impl AppDbStore<PendingWorkItem>,
+    store: &impl AppRecordStore<PendingWorkItem>,
     projects: &ProjectRegistry,
 ) -> Result<PendingWorkItemView, FindPendingWorkError> {
     find_open_item(store, projects, &query.id)

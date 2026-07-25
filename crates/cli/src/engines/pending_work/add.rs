@@ -3,11 +3,10 @@ use pwf_application::pending_work::{
     PendingWorkSection, ProjectRegistry,
     add::{AddPendingWorkError, AddPendingWorkItem, AddPendingWorkSource},
 };
-use pwf_domain::pending_work::ProjectName;
 use pwf_infra::obsidian::ObsidianStore;
 
 use super::{
-    common::{CommonArguments, PendingWorkError, load_configuration},
+    common::{CommonArguments, PendingWorkError},
     render::{
         ADD_MIRROR_REMEDY, TITLE_NORMALIZED_NOTICE, emit_add_diagnostics, emit_created_section,
         emit_created_section_for_error, render_added,
@@ -56,22 +55,15 @@ pub struct Arguments {
     pub(crate) common: CommonArguments,
 }
 
-pub(super) fn run(arguments: &Arguments, console: Console) -> Result<String, PendingWorkError> {
-    let configuration = load_configuration(&arguments.common)?;
-    let projects = ProjectRegistry::new(configuration.projects.iter().map(|(name, repository)| {
-        (
-            ProjectName::try_new(name).expect("configured project is non-empty"),
-            Some(repository.clone()),
-            configuration
-                .prefixes
-                .get(name)
-                .map(|prefix| prefix.to_ascii_uppercase()),
-        )
-    }));
-    let store = ObsidianStore::new(configuration);
+pub(super) fn run(
+    arguments: &Arguments,
+    console: Console,
+    store: &ObsidianStore,
+    projects: &ProjectRegistry,
+) -> Result<String, PendingWorkError> {
     let created = pwf_core::date::stamp_date(arguments.common.date.as_deref());
     let command = request(arguments, created)?;
-    let result = pwf_application::pending_work::add::execute(command, &store, &projects);
+    let result = pwf_application::pending_work::add::execute(command, store, projects);
     match result {
         Ok(added) => {
             emit_created_section(&added);
@@ -108,15 +100,15 @@ pub(super) fn run(arguments: &Arguments, console: Console) -> Result<String, Pen
 }
 
 fn request(arguments: &Arguments, created: String) -> Result<AddPendingWorkItem, PendingWorkError> {
-    let section = if let Some(section) = arguments.section.as_deref() {
-        PendingWorkSection::from_name(section)
+    let section = match arguments.section.as_deref() {
+        Some(section) => PendingWorkSection::from_name(section)
             .map(Some)
             .ok_or_else(|| PendingWorkError::BadSection {
                 value: section.to_string(),
-            })?
-    } else {
-        arguments.human.then_some(PendingWorkSection::Human)
+            })?,
+        None => arguments.human.then_some(PendingWorkSection::Human),
     };
+
     let source = if arguments.continue_handoff {
         Some(AddPendingWorkSource::NewestHandoff)
     } else if let Some(path) = arguments.continue_path.clone() {

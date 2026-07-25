@@ -1,4 +1,6 @@
 /target
+/.run/
+/config/pending-work.json
 *.exe
 *.pdb
 /.artifacts

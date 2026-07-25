@@ -1,17 +1,49 @@
 //! Checks the built binary's arguments, output, exit codes, and persisted effects.
 
-use std::fs;
+use std::{fs, process::Command};
 
-use assert_cmd::Command;
+use assert_cmd::prelude::OutputAssertExt as _;
 #[cfg(target_os = "linux")]
 use expectrl::Expect;
 use predicates::{prelude::PredicateBooleanExt, str::contains};
 use tempfile::TempDir;
 
+#[path = "support/database.rs"]
+mod database;
+
+use database::DatabaseFixture;
+
 const LEADING_HYPHEN_TAG: &str = "-sqlite";
 
-fn pwf() -> Command {
-    Command::cargo_bin("pwf").unwrap()
+fn database_independent_command() -> Command {
+    Command::new(env!("CARGO_BIN_EXE_pwf"))
+}
+
+fn temporary_database() -> (TempDir, DatabaseFixture) {
+    let directory = TempDir::new().unwrap();
+    let database = DatabaseFixture::new(directory.path().join("projects.sqlite3"));
+    (directory, database)
+}
+
+#[test]
+fn database_backed_suites_use_the_database_fixture_command() {
+    let database_path_variable = concat!("PWF_DATABASE", "_PATH");
+    for (name, source) in [
+        ("cli_e2e.rs", include_str!("cli_e2e.rs")),
+        ("help_cli.rs", include_str!("help_cli.rs")),
+    ] {
+        assert!(
+            !source.contains(database_path_variable),
+            "{name} contains manual database-path environment wiring"
+        );
+    }
+    assert_eq!(
+        include_str!("support/database.rs")
+            .matches(database_path_variable)
+            .count(),
+        1,
+        "DatabaseFixture::command must be the sole database-path environment owner"
+    );
 }
 
 fn raw_rename_error_for_file_over_directory(path: &std::path::Path) -> String {
@@ -22,64 +54,72 @@ fn raw_rename_error_for_file_over_directory(path: &std::path::Path) -> String {
     error.to_string()
 }
 
-fn finish_fixture(dir: TempDir, cfg: std::path::PathBuf) -> (TempDir, std::path::PathBuf) {
-    migrate_fixture(&cfg);
-    (dir, cfg)
+struct ProjectSeed<'fixture> {
+    id: &'fixture str,
+    title: &'fixture str,
+    repository: &'fixture std::path::Path,
+    tasks_path: &'fixture std::path::Path,
 }
 
-fn migrate_fixture(cfg: &std::path::Path) {
-    let config: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(cfg).unwrap()).unwrap();
-    let notes_dir = std::path::PathBuf::from(config["notesDir"].as_str().unwrap());
-    let projects = config["projects"].as_object().unwrap();
-    let prefixes = config["prefixes"].as_object().unwrap();
-    for project in projects.keys() {
-        let prefix = prefixes[project].as_str().unwrap();
-        let project_dir = notes_dir.join(project);
-        let index_path = project_dir.join(format!("{project}.md"));
-        if let Ok(content) = fs::read_to_string(&index_path)
-            && !content.starts_with("---")
-        {
-            fs::write(
-                &index_path,
-                format!(
-                    "---\nid: {}\ntitle: {project}\n---\n\n{content}",
-                    prefix.to_ascii_lowercase()
-                ),
-            )
-            .unwrap();
+fn finish_fixture(dir: TempDir, projects: &[ProjectSeed<'_>]) -> (TempDir, DatabaseFixture) {
+    let database = DatabaseFixture::new(dir.path().join("projects.sqlite3"));
+    for project in projects {
+        database.add_directory_project(
+            project.id,
+            project.title,
+            project.repository,
+            project.tasks_path,
+        );
+        ensure_record_identity(project);
+    }
+    (dir, database)
+}
+
+fn ensure_record_identity(project: &ProjectSeed<'_>) {
+    let index_path = project.tasks_path.join(format!("{}.md", project.title));
+    if let Ok(content) = fs::read_to_string(&index_path)
+        && !content.starts_with("---")
+    {
+        fs::write(
+            &index_path,
+            format!(
+                "---\nid: {}\ntitle: {}\n---\n\n{content}",
+                project.id.to_ascii_lowercase(),
+                project.title,
+            ),
+        )
+        .unwrap();
+    }
+    let Ok(entries) = fs::read_dir(project.tasks_path) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path == index_path || path.extension().and_then(|ext| ext.to_str()) != Some("md") {
+            continue;
         }
-        let Ok(entries) = fs::read_dir(project_dir) else {
+        let Some(id) = path.file_stem().and_then(|stem| stem.to_str()) else {
             continue;
         };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path == index_path || path.extension().and_then(|ext| ext.to_str()) != Some("md") {
-                continue;
-            }
-            let Some(id) = path.file_stem().and_then(|stem| stem.to_str()) else {
-                continue;
-            };
-            if !id.starts_with(&format!("{prefix}-")) {
-                continue;
-            }
-            let Ok(content) = fs::read_to_string(&path) else {
-                continue;
-            };
-            if content.lines().any(|line| line.starts_with("id:"))
-                || content.lines().any(|line| line == "type: note")
-            {
-                continue;
-            }
-            if let Some(rest) = content.strip_prefix("---\n") {
-                fs::write(&path, format!("---\nid: {id}\n{rest}")).unwrap();
-            }
+        if !id.starts_with(&format!("{}-", project.id)) {
+            continue;
+        }
+        let Ok(content) = fs::read_to_string(&path) else {
+            continue;
+        };
+        if content.lines().any(|line| line.starts_with("id:"))
+            || content.lines().any(|line| line == "type: note")
+        {
+            continue;
+        }
+        if let Some(rest) = content.strip_prefix("---\n") {
+            fs::write(&path, format!("---\nid: {id}\n{rest}")).unwrap();
         }
     }
 }
 
-/// Stages one open item and its config.
-fn staged() -> (TempDir, std::path::PathBuf) {
+/// Stages one open item and its managed-project database.
+fn staged() -> (TempDir, DatabaseFixture) {
     let dir = TempDir::new().unwrap();
     let notes = dir.path().join("notes");
     let proj = notes.join("glep-shimeji");
@@ -94,19 +134,18 @@ fn staged() -> (TempDir, std::path::PathBuf) {
         "- [ ] [[GLP-0001|tray gui]]\n",
     )
     .unwrap();
-    let cfg = dir.path().join("cfg.json");
-    fs::write(
-        &cfg,
-        format!(
-            r#"{{ "notesDir": {:?}, "projects": {{ "glep-shimeji": "/repo" }}, "prefixes": {{ "glep-shimeji": "GLP" }} }}"#,
-            notes.to_string_lossy()
-        ),
+    finish_fixture(
+        dir,
+        &[ProjectSeed {
+            id: "GLP",
+            title: "glep-shimeji",
+            repository: std::path::Path::new("/repo"),
+            tasks_path: &proj,
+        }],
     )
-    .unwrap();
-    finish_fixture(dir, cfg)
 }
 
-fn staged_tagged_items() -> (TempDir, std::path::PathBuf) {
+fn staged_tagged_items() -> (TempDir, DatabaseFixture) {
     let dir = TempDir::new().unwrap();
     let notes = dir.path().join("notes");
     let project = notes.join("glep-shimeji");
@@ -130,21 +169,20 @@ fn staged_tagged_items() -> (TempDir, std::path::PathBuf) {
         "- [ ] [[GLP-0001|both tags]]\n- [ ] [[GLP-0002|sqlite only]]\n- [ ] [[GLP-0003|untagged]]\n",
     )
     .unwrap();
-    let cfg = dir.path().join("cfg.json");
-    fs::write(
-        &cfg,
-        format!(
-            r#"{{ "notesDir": {:?}, "projects": {{ "glep-shimeji": "/repo" }}, "prefixes": {{ "glep-shimeji": "GLP" }} }}"#,
-            notes.to_string_lossy()
-        ),
+    finish_fixture(
+        dir,
+        &[ProjectSeed {
+            id: "GLP",
+            title: "glep-shimeji",
+            repository: std::path::Path::new("/repo"),
+            tasks_path: &project,
+        }],
     )
-    .unwrap();
-    finish_fixture(dir, cfg)
 }
 
 /// Stages a second item for prerequisite tests without changing single-item fixtures.
-fn staged_two() -> (TempDir, std::path::PathBuf) {
-    let (dir, cfg) = staged();
+fn staged_two() -> (TempDir, DatabaseFixture) {
+    let (dir, database) = staged();
     let proj = dir.path().join("notes").join("glep-shimeji");
     fs::write(
         proj.join("GLP-0002.md"),
@@ -156,11 +194,17 @@ fn staged_two() -> (TempDir, std::path::PathBuf) {
         "- [ ] [[GLP-0002|second]]\n- [ ] [[GLP-0001|tray gui]]\n",
     )
     .unwrap();
-    finish_fixture(dir, cfg)
+    ensure_record_identity(&ProjectSeed {
+        id: "GLP",
+        title: "glep-shimeji",
+        repository: std::path::Path::new("/repo"),
+        tasks_path: &proj,
+    });
+    (dir, database)
 }
 
 /// Stages two items whose creation and ID orders disagree.
-fn staged_two_diverging_created() -> (TempDir, std::path::PathBuf) {
+fn staged_two_diverging_created() -> (TempDir, DatabaseFixture) {
     let dir = TempDir::new().unwrap();
     let notes = dir.path().join("notes");
     let proj = notes.join("glep-shimeji");
@@ -180,20 +224,19 @@ fn staged_two_diverging_created() -> (TempDir, std::path::PathBuf) {
         "- [ ] [[GLP-0001|tray gui]]\n- [ ] [[GLP-0002|second]]\n",
     )
     .unwrap();
-    let cfg = dir.path().join("cfg.json");
-    fs::write(
-        &cfg,
-        format!(
-            r#"{{ "notesDir": {:?}, "projects": {{ "glep-shimeji": "/repo" }}, "prefixes": {{ "glep-shimeji": "GLP" }} }}"#,
-            notes.to_string_lossy()
-        ),
+    finish_fixture(
+        dir,
+        &[ProjectSeed {
+            id: "GLP",
+            title: "glep-shimeji",
+            repository: std::path::Path::new("/repo"),
+            tasks_path: &proj,
+        }],
     )
-    .unwrap();
-    finish_fixture(dir, cfg)
 }
 
 /// Stages two projects whose project-name and creation-date orders disagree.
-fn staged_two_projects_diverging_created() -> (TempDir, std::path::PathBuf) {
+fn staged_two_projects_diverging_created() -> (TempDir, DatabaseFixture) {
     let dir = TempDir::new().unwrap();
     let notes = dir.path().join("notes");
     let cfg_proj = notes.join("config-handler");
@@ -220,20 +263,27 @@ fn staged_two_projects_diverging_created() -> (TempDir, std::path::PathBuf) {
         "- [ ] [[GLP-0099|glp item]]\n",
     )
     .unwrap();
-    let cfg = dir.path().join("cfg.json");
-    fs::write(
-        &cfg,
-        format!(
-            r#"{{ "notesDir": {:?}, "projects": {{ "config-handler": "/repo/cfg", "glep-shimeji": "/repo/glp" }}, "prefixes": {{ "config-handler": "CFG", "glep-shimeji": "GLP" }} }}"#,
-            notes.to_string_lossy()
-        ),
+    finish_fixture(
+        dir,
+        &[
+            ProjectSeed {
+                id: "CFG",
+                title: "config-handler",
+                repository: std::path::Path::new("/repo/cfg"),
+                tasks_path: &cfg_proj,
+            },
+            ProjectSeed {
+                id: "GLP",
+                title: "glep-shimeji",
+                repository: std::path::Path::new("/repo/glp"),
+                tasks_path: &glp_proj,
+            },
+        ],
     )
-    .unwrap();
-    finish_fixture(dir, cfg)
 }
 
 /// Stages mixed lifecycle records across two managed projects.
-fn status_fixture_stage() -> (TempDir, std::path::PathBuf) {
+fn status_fixture_stage() -> (TempDir, DatabaseFixture) {
     let dir = TempDir::new().unwrap();
     let notes = dir.path().join("notes");
     let project_glp = notes.join("glep-shimeji");
@@ -339,25 +389,29 @@ fn status_fixture_stage() -> (TempDir, std::path::PathBuf) {
     )
     .unwrap();
 
-    let cfg = dir.path().join("cfg.json");
-    fs::write(
-        &cfg,
-        format!(
-            r#"{{ "notesDir": {:?}, "projects": {{ "config-handler": {:?}, "glep-shimeji": {:?} }}, "prefixes": {{ "config-handler": "CFG", "glep-shimeji": "GLP" }} }}"#,
-            notes.to_string_lossy(),
-            repo_cfg.to_string_lossy(),
-            repo_glp.to_string_lossy()
-        ),
+    finish_fixture(
+        dir,
+        &[
+            ProjectSeed {
+                id: "CFG",
+                title: "config-handler",
+                repository: &repo_cfg,
+                tasks_path: &project_cfg,
+            },
+            ProjectSeed {
+                id: "GLP",
+                title: "glep-shimeji",
+                repository: &repo_glp,
+                tasks_path: &project_glp,
+            },
+        ],
     )
-    .unwrap();
-    finish_fixture(dir, cfg)
 }
 
-fn status_command_output(cfg: &std::path::Path, args: &[&str]) -> std::process::Output {
-    let output = pwf()
+fn status_command_output(database: &DatabaseFixture, args: &[&str]) -> std::process::Output {
+    let output = database
+        .command()
         .args(args)
-        .arg("--config-path")
-        .arg(cfg)
         .env_remove("CLICOLOR_FORCE")
         .env_remove("NO_COLOR")
         .output()
@@ -371,7 +425,7 @@ fn status_command_output(cfg: &std::path::Path, args: &[&str]) -> std::process::
 }
 
 /// Stages a real repository with one handoff for `--continue-handoff`.
-fn staged_with_handoff() -> (TempDir, std::path::PathBuf) {
+fn staged_with_handoff() -> (TempDir, DatabaseFixture) {
     let dir = TempDir::new().unwrap();
     let notes = dir.path().join("notes");
     let proj = notes.join("glep-shimeji");
@@ -385,21 +439,19 @@ fn staged_with_handoff() -> (TempDir, std::path::PathBuf) {
         "# API cleanup handoff\n",
     )
     .unwrap();
-    let cfg = dir.path().join("cfg.json");
-    fs::write(
-        &cfg,
-        format!(
-            r#"{{ "notesDir": {:?}, "projects": {{ "glep-shimeji": {:?} }}, "prefixes": {{ "glep-shimeji": "GLP" }} }}"#,
-            notes.to_string_lossy(),
-            repo.to_string_lossy()
-        ),
+    finish_fixture(
+        dir,
+        &[ProjectSeed {
+            id: "GLP",
+            title: "glep-shimeji",
+            repository: &repo,
+            tasks_path: &proj,
+        }],
     )
-    .unwrap();
-    finish_fixture(dir, cfg)
 }
 
 /// Stages a fresh repository without Git metadata for the handoff lifecycle round trip.
-fn staged_for_handoff_mirror_roundtrip() -> (TempDir, std::path::PathBuf) {
+fn staged_for_handoff_mirror_roundtrip() -> (TempDir, DatabaseFixture) {
     let dir = TempDir::new().unwrap();
     let notes = dir.path().join("notes");
     let proj = notes.join("glep-shimeji");
@@ -407,21 +459,19 @@ fn staged_for_handoff_mirror_roundtrip() -> (TempDir, std::path::PathBuf) {
     fs::create_dir_all(&proj).unwrap();
     fs::create_dir_all(repo.join("docs").join("handoffs")).unwrap();
     fs::write(proj.join("glep-shimeji.md"), "# glep-shimeji\n").unwrap();
-    let cfg = dir.path().join("cfg.json");
-    fs::write(
-        &cfg,
-        format!(
-            r#"{{ "notesDir": {:?}, "projects": {{ "glep-shimeji": {:?} }}, "prefixes": {{ "glep-shimeji": "GLP" }} }}"#,
-            notes.to_string_lossy(),
-            repo.to_string_lossy()
-        ),
+    finish_fixture(
+        dir,
+        &[ProjectSeed {
+            id: "GLP",
+            title: "glep-shimeji",
+            repository: &repo,
+            tasks_path: &proj,
+        }],
     )
-    .unwrap();
-    finish_fixture(dir, cfg)
 }
 
 /// Stages the exact `test-project` identity used by the external allocator protocol.
-fn staged_for_handoff_allocator_contract() -> (TempDir, std::path::PathBuf) {
+fn staged_for_handoff_allocator_contract() -> (TempDir, DatabaseFixture) {
     let dir = TempDir::new().unwrap();
     let notes = dir.path().join("notes");
     let project = notes.join("test-project");
@@ -429,24 +479,23 @@ fn staged_for_handoff_allocator_contract() -> (TempDir, std::path::PathBuf) {
     fs::create_dir_all(&project).unwrap();
     fs::create_dir_all(&repo).unwrap();
     fs::write(project.join("test-project.md"), "# test-project\n").unwrap();
-    let config_path = dir.path().join("cfg.json");
-    fs::write(
-        &config_path,
-        format!(
-            r#"{{ "notesDir": {:?}, "projects": {{ "test-project": {:?} }}, "prefixes": {{ "test-project": "TST" }} }}"#,
-            notes.to_string_lossy(),
-            repo.to_string_lossy()
-        ),
+    finish_fixture(
+        dir,
+        &[ProjectSeed {
+            id: "TST",
+            title: "test-project",
+            repository: &repo,
+            tasks_path: &project,
+        }],
     )
-    .unwrap();
-    finish_fixture(dir, config_path)
 }
 
-fn add_linked_handoff(stage: &TempDir, config_path: &std::path::Path) -> std::path::PathBuf {
+fn add_linked_handoff(stage: &TempDir, database: &DatabaseFixture) -> std::path::PathBuf {
     let handoff_path = stage
         .path()
         .join("repo/docs/handoffs/2026-01-01-mirror-round-trip.md");
-    pwf()
+    database
+        .command()
         .args([
             "add",
             "glep-shimeji",
@@ -457,17 +506,15 @@ fn add_linked_handoff(stage: &TempDir, config_path: &std::path::Path) -> std::pa
             "mirror round trip",
             "--date",
             "2026-01-01",
-            "--config-path",
         ])
-        .arg(config_path)
         .assert()
         .success();
     assert!(handoff_path.exists(), "linked handoff was not created");
     handoff_path
 }
 
-fn handoff_add_command(stage: &TempDir, config_path: &std::path::Path) -> Command {
-    let mut command = pwf();
+fn handoff_add_command(stage: &TempDir, database: &DatabaseFixture) -> Command {
+    let mut command = database.command();
     command
         .args([
             "handoff",
@@ -479,8 +526,6 @@ fn handoff_add_command(stage: &TempDir, config_path: &std::path::Path) -> Comman
             "--repo-root",
         ])
         .arg(stage.path().join("repo"))
-        .arg("--config-path")
-        .arg(config_path)
         .args(["--date", "2026-01-01"]);
     command
 }
@@ -490,7 +535,7 @@ fn read_index(dir: &TempDir) -> String {
 }
 
 /// Stages `count` open items for list-cap tests.
-fn staged_many(count: usize) -> (TempDir, std::path::PathBuf) {
+fn staged_many(count: usize) -> (TempDir, DatabaseFixture) {
     let dir = TempDir::new().unwrap();
     let notes = dir.path().join("notes");
     let proj = notes.join("glep-shimeji");
@@ -506,24 +551,22 @@ fn staged_many(count: usize) -> (TempDir, std::path::PathBuf) {
         index.push_str(&format!("- [ ] [[{id}|t{n}]]\n"));
     }
     fs::write(proj.join("glep-shimeji.md"), index).unwrap();
-    let cfg = dir.path().join("cfg.json");
-    fs::write(
-        &cfg,
-        format!(
-            r#"{{ "notesDir": {:?}, "projects": {{ "glep-shimeji": "/repo" }}, "prefixes": {{ "glep-shimeji": "GLP" }} }}"#,
-            notes.to_string_lossy()
-        ),
+    finish_fixture(
+        dir,
+        &[ProjectSeed {
+            id: "GLP",
+            title: "glep-shimeji",
+            repository: std::path::Path::new("/repo"),
+            tasks_path: &proj,
+        }],
     )
-    .unwrap();
-    finish_fixture(dir, cfg)
 }
 
 #[test]
 fn add_positional_quoted_prompt_creates_item() {
     let (d, cfg) = staged();
-    pwf()
-        .args(["add", "glep-shimeji", "x y z", "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["add", "glep-shimeji", "x y z"])
         .assert()
         .success();
     assert!(d.path().join("notes/glep-shimeji/GLP-0002.md").exists());
@@ -533,9 +576,9 @@ fn add_positional_quoted_prompt_creates_item() {
 #[test]
 fn add_confirmation_leads_with_added_task_prefix_and_no_blank_line() {
     let (_d, cfg) = staged();
-    let out = pwf()
-        .args(["add", "glep-shimeji", "x y z", "--config-path"])
-        .arg(&cfg)
+    let out = cfg
+        .command()
+        .args(["add", "glep-shimeji", "x y z"])
         .assert()
         .success();
     let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
@@ -549,9 +592,8 @@ fn add_confirmation_leads_with_added_task_prefix_and_no_blank_line() {
 #[test]
 fn add_bare_words_joined_into_prompt() {
     let (d, cfg) = staged();
-    pwf()
-        .args(["add", "glep-shimeji", "do", "a", "thing", "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["add", "glep-shimeji", "do", "a", "thing"])
         .assert()
         .success();
     let item = fs::read_to_string(d.path().join("notes/glep-shimeji/GLP-0002.md")).unwrap();
@@ -561,9 +603,8 @@ fn add_bare_words_joined_into_prompt() {
 #[test]
 fn add_human_flag_files_under_human_section() {
     let (d, cfg) = staged();
-    pwf()
-        .args(["add", "glep-shimeji", "x", "--human", "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["add", "glep-shimeji", "x", "--human"])
         .assert()
         .success();
     let index = read_index(&d);
@@ -575,9 +616,9 @@ fn add_human_flag_files_under_human_section() {
 #[test]
 fn add_human_flag_emits_section_created_diagnostic_when_it_creates_human_section() {
     let (_d, cfg) = staged();
-    let output = pwf()
-        .args(["add", "glep-shimeji", "x", "--human", "--config-path"])
-        .arg(&cfg)
+    let output = cfg
+        .command()
+        .args(["add", "glep-shimeji", "x", "--human"])
         .output()
         .unwrap();
 
@@ -592,9 +633,8 @@ fn add_human_flag_emits_section_created_diagnostic_when_it_creates_human_section
 fn add_usage_error_is_a_binary_contract() {
     let (_dir, cfg) = staged();
 
-    pwf()
-        .args(["add", "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["add"])
         .assert()
         .code(1)
         .stdout("")
@@ -604,29 +644,13 @@ fn add_usage_error_is_a_binary_contract() {
 #[test]
 fn add_project_errors_are_binary_contracts() {
     let (_dir, cfg) = staged();
-    pwf()
-        .args(["add", "unknown", "do work", "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["add", "unknown", "do work"])
         .assert()
         .code(1)
         .stdout("")
         .stderr(
             "Error: Unknown managed project identifier: unknown\nManaged project identifiers: glep-shimeji\n",
-        );
-
-    let mut config: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&cfg).unwrap()).unwrap();
-    config["prefixes"] = serde_json::json!({});
-    fs::write(&cfg, serde_json::to_vec(&config).unwrap()).unwrap();
-
-    pwf()
-        .args(["add", "glep-shimeji", "do work", "--config-path"])
-        .arg(&cfg)
-        .assert()
-        .code(1)
-        .stdout("")
-        .stderr(
-            "Error: Project 'glep-shimeji' has no work-item prefix in config/pending-work.json (prefixes).\n",
         );
 }
 
@@ -638,16 +662,14 @@ fn add_prerequisite_parse_errors_are_binary_contracts() {
         ("", "Error: --prereq requires an id.\n"),
         ("GLP-99999", "Error: Invalid --prereq id: GLP-99999.\n"),
     ] {
-        pwf()
+        cfg.command()
             .args([
                 "add",
                 "glep-shimeji",
                 "do dependent work",
                 "--prereq",
                 value,
-                "--config-path",
             ])
-            .arg(&cfg)
             .assert()
             .code(1)
             .stdout("")
@@ -663,22 +685,14 @@ fn add_prerequisite_parse_errors_are_binary_contracts() {
 fn add_prerequisite_errors_precede_project_resolution_and_scaffold_preflight() {
     let (_dir, cfg) = staged();
 
-    pwf()
-        .args([
-            "add",
-            "unknown",
-            "do dependent work",
-            "--prereq",
-            "",
-            "--config-path",
-        ])
-        .arg(&cfg)
+    cfg.command()
+        .args(["add", "unknown", "do dependent work", "--prereq", ""])
         .assert()
         .code(1)
         .stdout("")
         .stderr("Error: --prereq requires an id.\n");
 
-    pwf()
+    cfg.command()
         .args([
             "add",
             "glep-shimeji",
@@ -687,9 +701,7 @@ fn add_prerequisite_errors_precede_project_resolution_and_scaffold_preflight() {
             "handoff",
             "--prereq",
             "GLP-99999",
-            "--config-path",
         ])
-        .arg(&cfg)
         .assert()
         .code(1)
         .stdout("")
@@ -708,19 +720,12 @@ fn add_human_flag_rejects_unreadable_index_before_mutation() {
     )
     .unwrap();
     fs::create_dir_all(proj.join("glep-shimeji.md")).unwrap();
-    let cfg = dir.path().join("cfg.json");
-    fs::write(
-        &cfg,
-        format!(
-            r#"{{ "notesDir": {:?}, "projects": {{ "glep-shimeji": "/repo" }}, "prefixes": {{ "glep-shimeji": "GLP" }} }}"#,
-            notes.to_string_lossy()
-        ),
-    )
-    .unwrap();
+    let database = DatabaseFixture::new(dir.path().join("projects.sqlite3"));
+    database.add_directory_project("GLP", "glep-shimeji", std::path::Path::new("/repo"), &proj);
 
-    let output = pwf()
-        .args(["add", "glep-shimeji", "x", "--human", "--config-path"])
-        .arg(&cfg)
+    let output = database
+        .command()
+        .args(["add", "glep-shimeji", "x", "--human"])
         .output()
         .unwrap();
 
@@ -733,16 +738,8 @@ fn add_human_flag_rejects_unreadable_index_before_mutation() {
 #[test]
 fn add_section_future_files_under_future_section() {
     let (d, cfg) = staged();
-    pwf()
-        .args([
-            "add",
-            "glep-shimeji",
-            "x",
-            "--section",
-            "future",
-            "--config-path",
-        ])
-        .arg(&cfg)
+    cfg.command()
+        .args(["add", "glep-shimeji", "x", "--section", "future"])
         .assert()
         .success();
     let index = read_index(&d);
@@ -753,8 +750,7 @@ fn add_section_future_files_under_future_section() {
 
 #[test]
 fn e2e_list_scope_flags_conflict() {
-    Command::cargo_bin("pwf")
-        .unwrap()
+    database_independent_command()
         .args(["list", "--section", "human", "--all"])
         .assert()
         .failure()
@@ -764,9 +760,9 @@ fn e2e_list_scope_flags_conflict() {
 #[test]
 fn add_continue_handoff_builds_handoff_prompt() {
     let (d, cfg) = staged_with_handoff();
-    let out = pwf()
-        .args(["add", "glep-shimeji", "--continue-handoff", "--config-path"])
-        .arg(&cfg)
+    let out = cfg
+        .command()
+        .args(["add", "glep-shimeji", "--continue-handoff"])
         .assert()
         .success();
     let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
@@ -791,7 +787,8 @@ fn add_continue_plan_persists_the_complete_plan_prompt() {
     let (directory, config_path) = staged();
     let plan_path = "docs/planning/plans/2026-07-19-cli-application-boundary-realignment.md";
 
-    pwf()
+    config_path
+        .command()
         .args([
             "add",
             "glep-shimeji",
@@ -799,9 +796,7 @@ fn add_continue_plan_persists_the_complete_plan_prompt() {
             plan_path,
             "--date",
             "2026-07-20",
-            "--config-path",
         ])
-        .arg(&config_path)
         .assert()
         .success();
 
@@ -809,7 +804,7 @@ fn add_continue_plan_persists_the_complete_plan_prompt() {
     assert_eq!(
         note,
         format!(
-            "---\nid: GLP-0002\nstatus: active\ntitle: glep shimeji cli application boundary realignment\nproject: glep-shimeji\ncreated: 2026-07-20\n---\n\n## Goals\n- continue the plan at {plan_path}\n"
+            "---\nid: GLP-0002\nstatus: active\ntitle: glep shimeji cli application boundary realignment\nproject: glep-shimeji\ncreated: 2026-07-20\n---\n\n## Goals\n\n- continue the plan at {plan_path}\n"
         )
     );
 }
@@ -831,10 +826,9 @@ fn lifecycle_commands_report_unknown_configured_prefixes_verbatim() {
         vec!["reopen", "XYZ-0001"],
         vec!["remove", "XYZ-0001", "--yes"],
     ] {
-        pwf()
+        config_path
+            .command()
             .args(arguments)
-            .arg("--config-path")
-            .arg(&config_path)
             .assert()
             .code(1)
             .stdout("")
@@ -845,9 +839,8 @@ fn lifecycle_commands_report_unknown_configured_prefixes_verbatim() {
 #[test]
 fn bare_words_route_errors_and_writes_nothing() {
     let (d, cfg) = staged();
-    pwf()
-        .args(["glep-shimeji", "make", "a", "thing", "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["glep-shimeji", "make", "a", "thing"])
         .assert()
         .failure()
         .stderr(contains("pwf add"));
@@ -857,9 +850,8 @@ fn bare_words_route_errors_and_writes_nothing() {
 #[test]
 fn single_word_route_lists_project() {
     let (_d, cfg) = staged();
-    pwf()
-        .args(["glep-shimeji", "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["glep-shimeji"])
         .assert()
         .success()
         .stdout(contains("GLP-0001"));
@@ -868,9 +860,8 @@ fn single_word_route_lists_project() {
 #[test]
 fn single_word_route_accepts_project_code_case_insensitively() {
     let (_d, cfg) = staged();
-    pwf()
-        .args(["glp", "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["glp"])
         .assert()
         .success()
         .stdout(contains("GLP-0001"));
@@ -879,9 +870,8 @@ fn single_word_route_accepts_project_code_case_insensitively() {
 #[test]
 fn single_word_route_rejects_project_name_prefix() {
     let (_d, cfg) = staged();
-    pwf()
-        .args(["glep", "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["glep"])
         .assert()
         .failure()
         .stderr(contains("Unknown managed project identifier: glep"));
@@ -889,14 +879,14 @@ fn single_word_route_rejects_project_name_prefix() {
 
 #[test]
 fn help_and_version_exit_zero() {
-    pwf()
+    database_independent_command()
         .arg("--help")
         .assert()
         .success()
         .stdout(contains("add"))
         .stdout(contains("list"))
         .stdout(contains("handoff"));
-    pwf()
+    database_independent_command()
         .arg("--version")
         .assert()
         .success()
@@ -905,17 +895,23 @@ fn help_and_version_exit_zero() {
 
 #[test]
 fn unknown_engine_fails() {
-    pwf().arg("bogus").assert().failure();
+    let (_directory, database) = temporary_database();
+
+    database
+        .command()
+        .arg("bogus")
+        .assert()
+        .code(1)
+        .stdout("")
+        .stderr(
+            "Error: Unknown managed project identifier: bogus\nManaged project identifiers: \n",
+        );
 }
 
 #[test]
 fn canonical_list_succeeds() {
     let (_d, cfg) = staged();
-    let canon = pwf()
-        .args(["list", "--config-path"])
-        .arg(&cfg)
-        .assert()
-        .success();
+    let canon = cfg.command().args(["list"]).assert().success();
     let canon_out = String::from_utf8(canon.get_output().stdout.clone()).unwrap();
     assert!(canon_out.contains("GLP-0001 :: tray gui"));
 }
@@ -929,15 +925,8 @@ fn list_long_prints_prerequisite_status_through_the_binary() {
     )
     .unwrap();
 
-    pwf()
-        .args([
-            "list",
-            "--long",
-            "--project",
-            "glep-shimeji",
-            "--config-path",
-        ])
-        .arg(&cfg)
+    cfg.command()
+        .args(["list", "--long", "--project", "glep-shimeji"])
         .env("NO_COLOR", "1")
         .assert()
         .success()
@@ -952,9 +941,8 @@ fn list_read_errors_reach_binary_stderr() {
     fs::remove_file(&index).unwrap();
     fs::create_dir(&index).unwrap();
 
-    pwf()
-        .args(["list", "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["list"])
         .assert()
         .code(1)
         .stdout("")
@@ -965,9 +953,8 @@ fn list_read_errors_reach_binary_stderr() {
     fs::remove_file(&item).unwrap();
     fs::create_dir(&item).unwrap();
 
-    pwf()
-        .args(["list", "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["list"])
         .assert()
         .code(1)
         .stdout("")
@@ -979,16 +966,8 @@ fn list_read_errors_reach_binary_stderr() {
 #[test]
 fn ls_alias_matches_list_output() {
     let (_d, cfg) = staged();
-    let list = pwf()
-        .args(["list", "--config-path"])
-        .arg(&cfg)
-        .assert()
-        .success();
-    let ls = pwf()
-        .args(["ls", "--config-path"])
-        .arg(&cfg)
-        .assert()
-        .success();
+    let list = cfg.command().args(["list"]).assert().success();
+    let ls = cfg.command().args(["ls"]).assert().success();
 
     assert_eq!(ls.get_output().stdout, list.get_output().stdout);
 }
@@ -1137,17 +1116,13 @@ fn e2e_list_status_filter_applies_before_cap_and_hidden_count() {
 #[test]
 fn e2e_list_status_rejects_repeated_and_unknown_values() {
     let (_dir, cfg) = status_fixture_stage();
-    pwf()
+    cfg.command()
         .args(["list", "--status", "done", "--status", "active"])
-        .arg("--config-path")
-        .arg(&cfg)
         .assert()
         .failure()
         .stderr(contains("cannot be used multiple times"));
-    pwf()
+    cfg.command()
         .args(["list", "--status", "paused"])
-        .arg("--config-path")
-        .arg(&cfg)
         .assert()
         .failure()
         .stderr(contains("invalid value 'paused'"));
@@ -1161,10 +1136,8 @@ fn e2e_list_status_rejects_duplicate_project_index_task_ids() {
     index.push_str("- [ ] [[GLP-0001|duplicate]]\n");
     fs::write(&index_path, index).unwrap();
 
-    pwf()
+    cfg.command()
         .args(["list", "--status", "all"])
-        .arg("--config-path")
-        .arg(&cfg)
         .assert()
         .failure()
         .stderr(contains("Project index task id GLP-0001 is duplicated"))
@@ -1175,10 +1148,9 @@ fn e2e_list_status_rejects_duplicate_project_index_task_ids() {
 #[test]
 fn e2e_list_status_annotations_follow_color_environment_precedence() {
     let (_dir, cfg) = status_fixture_stage();
-    let colored = pwf()
+    let colored = cfg
+        .command()
         .args(["list", "--status", "all"])
-        .arg("--config-path")
-        .arg(&cfg)
         .env("CLICOLOR_FORCE", "1")
         .env_remove("NO_COLOR")
         .output()
@@ -1198,10 +1170,9 @@ fn e2e_list_status_annotations_follow_color_environment_precedence() {
         "{colored_stdout}"
     );
 
-    let plain = pwf()
+    let plain = cfg
+        .command()
         .args(["list", "--status", "all"])
-        .arg("--config-path")
-        .arg(&cfg)
         .env("CLICOLOR_FORCE", "1")
         .env("NO_COLOR", "1")
         .output()
@@ -1239,9 +1210,8 @@ fn e2e_list_status_long_separates_lifecycle_and_launch_metadata() {
 #[test]
 fn list_default_caps_and_shows_more() {
     let (_d, cfg) = staged_many(12);
-    pwf()
-        .args(["list", "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["list"])
         .assert()
         .success()
         .stdout(contains("GLP-0012"))
@@ -1253,9 +1223,8 @@ fn list_default_caps_and_shows_more() {
 #[test]
 fn list_n_zero_is_rejected() {
     let (_d, cfg) = staged_many(12);
-    pwf()
-        .args(["list", "-n", "0", "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["list", "-n", "0"])
         .assert()
         .failure()
         .stderr(contains("invalid value"));
@@ -1264,9 +1233,8 @@ fn list_n_zero_is_rejected() {
 #[test]
 fn list_all_uncaps_past_the_default_ten() {
     let (_d, cfg) = staged_many(12);
-    pwf()
-        .args(["list", "--all", "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["list", "--all"])
         .assert()
         .success()
         .stdout(contains("GLP-0001"))
@@ -1277,9 +1245,8 @@ fn list_all_uncaps_past_the_default_ten() {
 #[test]
 fn shorthand_project_forwards_number() {
     let (_d, cfg) = staged_many(12);
-    pwf()
-        .args(["glep-shimeji", "-n", "2", "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["glep-shimeji", "-n", "2"])
         .assert()
         .success()
         .stdout(contains("GLP-0012"))
@@ -1290,9 +1257,9 @@ fn shorthand_project_forwards_number() {
 #[test]
 fn e2e_list_default_orders_by_created_desc_not_id() {
     let (_d, cfg) = staged_two_diverging_created();
-    let out = pwf()
-        .args(["list", "--config-path"])
-        .arg(&cfg)
+    let out = cfg
+        .command()
+        .args(["list"])
         .assert()
         .success()
         .get_output()
@@ -1308,9 +1275,9 @@ fn e2e_list_default_orders_by_created_desc_not_id() {
 #[test]
 fn e2e_list_order_id_desc_orders_highest_id_first() {
     let (_d, cfg) = staged_two_diverging_created();
-    let out = pwf()
-        .args(["list", "--order", "id:desc", "--config-path"])
-        .arg(&cfg)
+    let out = cfg
+        .command()
+        .args(["list", "--order", "id:desc"])
         .assert()
         .success()
         .get_output()
@@ -1326,9 +1293,9 @@ fn e2e_list_order_id_desc_orders_highest_id_first() {
 #[test]
 fn e2e_list_order_created_asc_orders_oldest_first() {
     let (_d, cfg) = staged_two_diverging_created();
-    let out = pwf()
-        .args(["list", "--order", "created:asc", "--config-path"])
-        .arg(&cfg)
+    let out = cfg
+        .command()
+        .args(["list", "--order", "created:asc"])
         .output()
         .unwrap();
     let stdout = String::from_utf8(out.stdout).unwrap();
@@ -1341,15 +1308,13 @@ fn e2e_list_order_created_asc_orders_oldest_first() {
 #[test]
 fn e2e_list_order_rejects_a_bare_flag_and_direction_only_value() {
     let (_d, cfg) = staged_two();
-    pwf()
-        .args(["list", "--order", "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["list", "--order"])
         .assert()
         .failure()
         .stderr(contains("--order"));
-    pwf()
-        .args(["list", "--order", "asc", "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["list", "--order", "asc"])
         .assert()
         .failure()
         .stderr(contains("invalid value"));
@@ -1358,9 +1323,8 @@ fn e2e_list_order_rejects_a_bare_flag_and_direction_only_value() {
 #[test]
 fn e2e_list_order_rejects_a_direction_in_the_field_position() {
     let (_d, cfg) = staged_two();
-    pwf()
-        .args(["list", "--order", "created:id", "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["list", "--order", "created:id"])
         .assert()
         .failure()
         .stderr(contains("invalid value"));
@@ -1369,9 +1333,8 @@ fn e2e_list_order_rejects_a_direction_in_the_field_position() {
 #[test]
 fn e2e_list_order_rejects_unknown_token() {
     let (_d, cfg) = staged_two();
-    pwf()
-        .args(["list", "--order", "bogus", "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["list", "--order", "bogus"])
         .assert()
         .failure()
         .stderr(contains("invalid value"));
@@ -1380,11 +1343,7 @@ fn e2e_list_order_rejects_unknown_token() {
 #[test]
 fn e2e_list_default_across_all_projects_is_flat_by_created_not_grouped_by_project() {
     let (_d, cfg) = staged_two_projects_diverging_created();
-    let out = pwf()
-        .args(["list", "--config-path"])
-        .arg(&cfg)
-        .output()
-        .unwrap();
+    let out = cfg.command().args(["list"]).output().unwrap();
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(
         stdout.find("GLP-0099").unwrap() < stdout.find("CFG-0001").unwrap(),
@@ -1395,9 +1354,9 @@ fn e2e_list_default_across_all_projects_is_flat_by_created_not_grouped_by_projec
 #[test]
 fn e2e_list_order_project_id_groups_by_project_ascending() {
     let (_d, cfg) = staged_two_projects_diverging_created();
-    let out = pwf()
-        .args(["list", "--order", "project-id", "--config-path"])
-        .arg(&cfg)
+    let out = cfg
+        .command()
+        .args(["list", "--order", "project-id"])
         .output()
         .unwrap();
     let stdout = String::from_utf8(out.stdout).unwrap();
@@ -1410,11 +1369,7 @@ fn e2e_list_order_project_id_groups_by_project_ascending() {
 #[test]
 fn e2e_route_project_shorthand_ignores_created_stays_id_desc() {
     let (_d, cfg) = staged_two_diverging_created();
-    let out = pwf()
-        .args(["glep-shimeji", "--config-path"])
-        .arg(&cfg)
-        .output()
-        .unwrap();
+    let out = cfg.command().args(["glep-shimeji"]).output().unwrap();
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(
         stdout.find("GLP-0002").unwrap() < stdout.find("GLP-0001").unwrap(),
@@ -1426,9 +1381,8 @@ fn e2e_route_project_shorthand_ignores_created_stays_id_desc() {
 fn retired_legacy_flag_surface_errors() {
     // Legacy `-Action` tokens route as words and must never trigger a list.
     let (_d, cfg) = staged();
-    pwf()
+    cfg.command()
         .args(["-Action", "list", "-ConfigPath"])
-        .arg(&cfg)
         .assert()
         .failure();
 }
@@ -1436,16 +1390,14 @@ fn retired_legacy_flag_surface_errors() {
 #[test]
 fn canonical_only_prereq_flag_works() {
     let (_d, cfg) = staged();
-    pwf()
+    cfg.command()
         .args([
             "add",
             "glep-shimeji",
             "do the thing",
             "--prereq",
             "GLP-0001",
-            "--config-path",
         ])
-        .arg(&cfg)
         .assert()
         .success();
 }
@@ -1457,7 +1409,7 @@ fn read_item(dir: &TempDir, id: &str) -> String {
 #[test]
 fn e2e_add_tags_write_canonical_frontmatter() {
     let (d, cfg) = staged();
-    pwf()
+    cfg.command()
         .args([
             "add",
             "glep-shimeji",
@@ -1466,9 +1418,7 @@ fn e2e_add_tags_write_canonical_frontmatter() {
             "SQLite,csharp-export",
             "--tag",
             "godot",
-            "--config-path",
         ])
-        .arg(&cfg)
         .assert()
         .success();
     let item = read_item(&d, "GLP-0002");
@@ -1481,9 +1431,8 @@ fn e2e_add_tags_write_canonical_frontmatter() {
 #[test]
 fn e2e_list_tag_filter_requires_all_requested_tags() {
     let (_d, cfg) = staged_tagged_items();
-    pwf()
-        .args(["list", "--tag", "SQLite,godot", "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["list", "--tag", "SQLite,godot"])
         .assert()
         .success()
         .stdout(contains("both tags"))
@@ -1500,9 +1449,8 @@ fn e2e_list_long_displays_raw_tags_without_parsing() {
         "---\nid: GLP-0001\nstatus: active\ntitle: both tags\nproject: glep-shimeji\ncreated: 2026-01-01\ntags: SQLite,godot\n---\n\nbody\n",
     )
     .unwrap();
-    pwf()
-        .args(["list", "--long", "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["list", "--long"])
         .assert()
         .success()
         .stdout(contains("tags: SQLite,godot"));
@@ -1517,9 +1465,8 @@ fn e2e_list_tag_filter_rejects_corrupt_frontmatter() {
         "---\nid: GLP-0001\nstatus: active\ntitle: both tags\nproject: glep-shimeji\ncreated: 2026-01-01\ntags: sqlite,godot\n---\n\nbody\n",
     )
     .unwrap();
-    pwf()
-        .args(["list", "--tag", "sqlite", "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["list", "--tag", "sqlite"])
         .assert()
         .failure()
         .stderr(contains("invalid tags frontmatter").and(contains("GLP-0001")));
@@ -1534,9 +1481,8 @@ fn e2e_list_tag_filter_rejects_empty_tags_frontmatter_with_item_context() {
         "---\nid: GLP-0001\nstatus: active\ntitle: both tags\nproject: glep-shimeji\ncreated: 2026-01-01\ntags:   \n---\n\nbody\n",
     )
     .unwrap();
-    pwf()
-        .args(["list", "--tag", "sqlite", "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["list", "--tag", "sqlite"])
         .assert()
         .failure()
         .stderr(contains("item GLP-0001 has invalid tags frontmatter"));
@@ -1545,14 +1491,12 @@ fn e2e_list_tag_filter_rejects_empty_tags_frontmatter_with_item_context() {
 #[test]
 fn e2e_invalid_list_leading_hyphen_tag_names_raw_value() {
     let (_d, cfg) = staged_tagged_items();
-    pwf()
+    cfg.command()
         .args([
             "list",
             "--tag",
             LEADING_HYPHEN_TAG,
-            "--config-path",
         ])
-        .arg(&cfg)
         .assert()
         .failure()
         .stderr(contains(
@@ -1569,15 +1513,8 @@ fn e2e_update_tags_append_deduplicate_clear_and_replace() {
         "---\nid: GLP-0001\nstatus: active\ntitle: tray gui\nproject: glep-shimeji\ncreated: 2026-01-01\ntags: [sqlite, godot]\n---\n\nadd toggle\n",
     )
     .unwrap();
-    pwf()
-        .args([
-            "update",
-            "GLP-0001",
-            "--tag",
-            "godot,csharp-export",
-            "--config-path",
-        ])
-        .arg(&cfg)
+    cfg.command()
+        .args(["update", "GLP-0001", "--tag", "godot,csharp-export"])
         .assert()
         .success();
     let item = read_item(&d, "GLP-0001");
@@ -1586,16 +1523,8 @@ fn e2e_update_tags_append_deduplicate_clear_and_replace() {
         "{item}"
     );
 
-    pwf()
-        .args([
-            "update",
-            "GLP-0001",
-            "--tags-clear",
-            "--tag",
-            "setup",
-            "--config-path",
-        ])
-        .arg(&cfg)
+    cfg.command()
+        .args(["update", "GLP-0001", "--tags-clear", "--tag", "setup"])
         .assert()
         .success();
     let item = read_item(&d, "GLP-0001");
@@ -1606,16 +1535,8 @@ fn e2e_update_tags_append_deduplicate_clear_and_replace() {
 #[test]
 fn e2e_invalid_add_tag_names_raw_value_and_writes_nothing() {
     let (d, cfg) = staged();
-    pwf()
-        .args([
-            "add",
-            "glep-shimeji",
-            "x",
-            "--tag",
-            "sqlite__export",
-            "--config-path",
-        ])
-        .arg(&cfg)
+    cfg.command()
+        .args(["add", "glep-shimeji", "x", "--tag", "sqlite__export"])
         .assert()
         .failure()
         .stderr(contains("--tag").and(contains("sqlite__export")));
@@ -1625,16 +1546,8 @@ fn e2e_invalid_add_tag_names_raw_value_and_writes_nothing() {
 #[test]
 fn e2e_invalid_add_leading_hyphen_tag_names_raw_value_and_writes_nothing() {
     let (d, cfg) = staged();
-    pwf()
-        .args([
-            "add",
-            "glep-shimeji",
-            "x",
-            "--tag",
-            LEADING_HYPHEN_TAG,
-            "--config-path",
-        ])
-        .arg(&cfg)
+    cfg.command()
+        .args(["add", "glep-shimeji", "x", "--tag", LEADING_HYPHEN_TAG])
         .assert()
         .failure()
         .stderr(contains("--tag").and(contains(LEADING_HYPHEN_TAG)));
@@ -1646,15 +1559,8 @@ fn e2e_invalid_update_leading_hyphen_tag_names_raw_value_and_writes_nothing() {
     let (d, cfg) = staged();
     let item_path = d.path().join("notes/glep-shimeji/GLP-0001.md");
     let before = fs::read_to_string(&item_path).unwrap();
-    pwf()
-        .args([
-            "update",
-            "GLP-0001",
-            "--tag",
-            LEADING_HYPHEN_TAG,
-            "--config-path",
-        ])
-        .arg(&cfg)
+    cfg.command()
+        .args(["update", "GLP-0001", "--tag", LEADING_HYPHEN_TAG])
         .assert()
         .failure()
         .stderr(contains("--tag").and(contains(LEADING_HYPHEN_TAG)));
@@ -1664,9 +1570,8 @@ fn e2e_invalid_update_leading_hyphen_tag_names_raw_value_and_writes_nothing() {
 #[test]
 fn e2e_update_tags_clear_is_idempotent_on_untagged_item() {
     let (d, cfg) = staged();
-    pwf()
-        .args(["update", "GLP-0001", "--tags-clear", "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["update", "GLP-0001", "--tags-clear"])
         .assert()
         .success();
     assert!(!read_item(&d, "GLP-0001").contains("tags:"));
@@ -1675,9 +1580,8 @@ fn e2e_update_tags_clear_is_idempotent_on_untagged_item() {
 #[test]
 fn e2e_update_nothing_to_update_mentions_tag_flags() {
     let (_d, cfg) = staged();
-    pwf()
-        .args(["update", "GLP-0001", "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["update", "GLP-0001"])
         .assert()
         .failure()
         .stderr(contains("--tag").and(contains("--tags-clear")));
@@ -1699,9 +1603,8 @@ fn e2e_update_closed_item_rejects_tag_edits_without_writing() {
     )
     .unwrap();
     let before = fs::read_to_string(&item_path).unwrap();
-    pwf()
-        .args(["update", "GLP-0001", "--tag", "sqlite", "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["update", "GLP-0001", "--tag", "sqlite"])
         .assert()
         .failure()
         .stderr(contains("tags").and(contains("open item")));
@@ -1717,7 +1620,7 @@ fn title_of(item: &str) -> &str {
 #[test]
 fn e2e_update_prompt_rewrites_body_and_preserves_frontmatter() {
     let (d, cfg) = staged();
-    pwf()
+    cfg.command()
         .args([
             "update",
             "--id",
@@ -1726,23 +1629,21 @@ fn e2e_update_prompt_rewrites_body_and_preserves_frontmatter() {
             "a / b /c context /n no manual edit /d tests pass",
             "--date",
             "2026-01-01",
-            "--config-path",
         ])
-        .arg(&cfg)
         .assert()
         .success();
     let item = read_item(&d, "GLP-0001");
     assert!(
-        item.contains("## Goals\n- a\n- b"),
+        item.contains("## Goals\n\n- a\n- b"),
         "body not Goals-wrapped: {item}"
     );
-    assert!(item.contains("## Context\n- context"), "context: {item}");
+    assert!(item.contains("## Context\n\n- context"), "context: {item}");
     assert!(
-        item.contains("## Constraints\n- no manual edit"),
+        item.contains("## Constraints\n\n- no manual edit"),
         "constraints: {item}"
     );
     assert!(
-        item.contains("## Done When\n- tests pass"),
+        item.contains("## Done When\n\n- tests pass"),
         "done when: {item}"
     );
     assert!(!item.contains("add toggle"), "old body replaced: {item}");
@@ -1756,16 +1657,8 @@ fn e2e_update_prompt_rewrites_body_and_preserves_frontmatter() {
 #[test]
 fn e2e_update_title_only_leaves_body_untouched() {
     let (d, cfg) = staged();
-    pwf()
-        .args([
-            "update",
-            "--id",
-            "GLP-0001",
-            "--title",
-            "X",
-            "--config-path",
-        ])
-        .arg(&cfg)
+    cfg.command()
+        .args(["update", "--id", "GLP-0001", "--title", "X"])
         .assert()
         .success();
     let item = read_item(&d, "GLP-0001");
@@ -1776,16 +1669,14 @@ fn e2e_update_title_only_leaves_body_untouched() {
 #[test]
 fn e2e_add_normalizes_colon_title_and_notes_it_on_stderr() {
     let (d, cfg) = staged();
-    pwf()
+    cfg.command()
         .args([
             "add",
             "glep-shimeji",
             "prompt body",
             "--title",
             "finish refactor: promote sync-git seam",
-            "--config-path",
         ])
-        .arg(&cfg)
         .assert()
         .success()
         .stderr(contains("info: title normalized to keep metadata valid"));
@@ -1795,9 +1686,8 @@ fn e2e_add_normalizes_colon_title_and_notes_it_on_stderr() {
         "finish refactor; promote sync-git seam",
         "title not yaml-safe: {item}"
     );
-    pwf()
-        .args(["show", "GLP-0002", "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["show", "GLP-0002"])
         .assert()
         .success()
         .stdout(contains("finish refactor; promote sync-git seam"));
@@ -1809,7 +1699,8 @@ fn add_post_handoff_failure_emits_pending_work_diagnostics_before_error() {
     let handoff_directory = stage.path().join("repo/docs/handoffs");
     fs::create_dir(handoff_directory.join("LEDGER.md")).unwrap();
 
-    let output = pwf()
+    let output = config_path
+        .command()
         .args([
             "add",
             "glep-shimeji",
@@ -1821,9 +1712,7 @@ fn add_post_handoff_failure_emits_pending_work_diagnostics_before_error() {
             "--human",
             "--date",
             "2026-01-01",
-            "--config-path",
         ])
-        .arg(&config_path)
         .output()
         .unwrap();
 
@@ -1849,16 +1738,14 @@ fn add_post_handoff_failure_emits_pending_work_diagnostics_before_error() {
 #[test]
 fn e2e_add_safe_title_emits_no_normalization_notice() {
     let (d, cfg) = staged();
-    pwf()
+    cfg.command()
         .args([
             "add",
             "glep-shimeji",
             "prompt body",
             "--title",
             "Plain Safe Title",
-            "--config-path",
         ])
-        .arg(&cfg)
         .assert()
         .success()
         .stderr(contains("title normalized").not());
@@ -1868,14 +1755,8 @@ fn e2e_add_safe_title_emits_no_normalization_notice() {
 #[test]
 fn e2e_add_inferred_colon_title_normalizes_silently() {
     let (d, cfg) = staged();
-    pwf()
-        .args([
-            "add",
-            "glep-shimeji",
-            "fix bug: empty prompt",
-            "--config-path",
-        ])
-        .arg(&cfg)
+    cfg.command()
+        .args(["add", "glep-shimeji", "fix bug: empty prompt"])
         .assert()
         .success()
         .stderr(contains("title normalized").not());
@@ -1888,24 +1769,21 @@ fn e2e_add_inferred_colon_title_normalizes_silently() {
 #[test]
 fn e2e_update_normalizes_colon_title_and_notes_it_on_stderr() {
     let (d, cfg) = staged();
-    pwf()
+    cfg.command()
         .args([
             "update",
             "--id",
             "GLP-0001",
             "--title",
             "fix bug: handle colons",
-            "--config-path",
         ])
-        .arg(&cfg)
         .assert()
         .success()
         .stderr(contains("info: title normalized to keep metadata valid"));
     let item = read_item(&d, "GLP-0001");
     assert_eq!(title_of(&item), "fix bug; handle colons");
-    pwf()
-        .args(["show", "GLP-0001", "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["show", "GLP-0001"])
         .assert()
         .success()
         .stdout(contains("fix bug; handle colons"));
@@ -1914,29 +1792,20 @@ fn e2e_update_normalizes_colon_title_and_notes_it_on_stderr() {
 #[test]
 fn e2e_update_prompt_only_leaves_title_untouched() {
     let (d, cfg) = staged();
-    pwf()
-        .args([
-            "update",
-            "--id",
-            "GLP-0001",
-            "--prompt",
-            "fresh prompt",
-            "--config-path",
-        ])
-        .arg(&cfg)
+    cfg.command()
+        .args(["update", "--id", "GLP-0001", "--prompt", "fresh prompt"])
         .assert()
         .success();
     let item = read_item(&d, "GLP-0001");
     assert_eq!(title_of(&item), "tray gui", "title untouched: {item}");
-    assert!(item.contains("## Goals\n- fresh prompt"), "body: {item}");
+    assert!(item.contains("## Goals\n\n- fresh prompt"), "body: {item}");
 }
 
 #[test]
 fn e2e_update_requires_a_field() {
     let (_d, cfg) = staged();
-    pwf()
-        .args(["update", "--id", "GLP-0001", "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["update", "--id", "GLP-0001"])
         .assert()
         .failure();
 }
@@ -1944,16 +1813,8 @@ fn e2e_update_requires_a_field() {
 #[test]
 fn e2e_update_unknown_id_fails() {
     let (_d, cfg) = staged();
-    pwf()
-        .args([
-            "update",
-            "--id",
-            "GLP-9999",
-            "--prompt",
-            "x",
-            "--config-path",
-        ])
-        .arg(&cfg)
+    cfg.command()
+        .args(["update", "--id", "GLP-9999", "--prompt", "x"])
         .assert()
         .failure();
 }
@@ -1961,32 +1822,30 @@ fn e2e_update_unknown_id_fails() {
 #[test]
 fn e2e_add_rich_prompt_lanes_render_sections() {
     let (d, cfg) = staged();
-    pwf()
+    cfg.command()
         .args([
             "add",
             "glep-shimeji",
             "lead clause / goal two / goal three /c context one /n no parser crate /d tests pass",
-            "--config-path",
         ])
-        .arg(&cfg)
         .assert()
         .success();
     let item = read_item(&d, "GLP-0002");
     assert_eq!(title_of(&item), "lead clause", "title not cut: {item}");
     assert!(
-        item.contains("## Goals\n- lead clause\n- goal two\n- goal three"),
+        item.contains("## Goals\n\n- lead clause\n- goal two\n- goal three"),
         "goals not rendered: {item}"
     );
     assert!(
-        item.contains("## Context\n- context one"),
+        item.contains("## Context\n\n- context one"),
         "context not rendered: {item}"
     );
     assert!(
-        item.contains("## Constraints\n- no parser crate"),
+        item.contains("## Constraints\n\n- no parser crate"),
         "constraints not rendered: {item}"
     );
     assert!(
-        item.contains("## Done When\n- tests pass"),
+        item.contains("## Done When\n\n- tests pass"),
         "done-when not rendered: {item}"
     );
 }
@@ -1994,16 +1853,15 @@ fn e2e_add_rich_prompt_lanes_render_sections() {
 #[test]
 fn e2e_add_marker_first_prompt_defaults_title_without_body_sentinel() {
     let (d, cfg) = staged();
-    pwf()
-        .args(["add", "glep-shimeji", "/c context", "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["add", "glep-shimeji", "/c context"])
         .assert()
         .success();
 
     let item = read_item(&d, "GLP-0002");
     assert_eq!(title_of(&item), "n/a", "missing title fallback: {item}");
     assert!(
-        item.contains("## Context\n- context"),
+        item.contains("## Context\n\n- context"),
         "authored context missing: {item}"
     );
     let body = item.split_once("---\n\n").unwrap().1;
@@ -2022,9 +1880,8 @@ fn e2e_add_marker_first_prompt_defaults_title_without_body_sentinel() {
 fn e2e_add_caps_long_title_without_ampersand() {
     let (d, cfg) = staged();
     let long = "Continue the PowerShell to Rust port into the cfgtool CLI using the shipped gaming domain as the template porting smallest first";
-    pwf()
-        .args(["add", "glep-shimeji", long, "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["add", "glep-shimeji", long])
         .assert()
         .success();
     let item = read_item(&d, "GLP-0002");
@@ -2052,14 +1909,8 @@ fn e2e_add_caps_long_title_without_ampersand() {
 #[test]
 fn e2e_add_lowercases_inferred_title() {
     let (d, cfg) = staged();
-    pwf()
-        .args([
-            "add",
-            "glep-shimeji",
-            "Refactor Help Command",
-            "--config-path",
-        ])
-        .arg(&cfg)
+    cfg.command()
+        .args(["add", "glep-shimeji", "Refactor Help Command"])
         .assert()
         .success();
     let item = read_item(&d, "GLP-0002");
@@ -2069,16 +1920,8 @@ fn e2e_add_lowercases_inferred_title() {
 #[test]
 fn e2e_add_lowercases_explicit_title() {
     let (d, cfg) = staged();
-    pwf()
-        .args([
-            "add",
-            "glep-shimeji",
-            "x",
-            "--title",
-            "UPPER THING",
-            "--config-path",
-        ])
-        .arg(&cfg)
+    cfg.command()
+        .args(["add", "glep-shimeji", "x", "--title", "UPPER THING"])
         .assert()
         .success();
     let item = read_item(&d, "GLP-0002");
@@ -2088,16 +1931,8 @@ fn e2e_add_lowercases_explicit_title() {
 #[test]
 fn e2e_update_lowercases_explicit_title() {
     let (d, cfg) = staged();
-    pwf()
-        .args([
-            "update",
-            "--id",
-            "GLP-0001",
-            "--title",
-            "UPPER THING",
-            "--config-path",
-        ])
-        .arg(&cfg)
+    cfg.command()
+        .args(["update", "--id", "GLP-0001", "--title", "UPPER THING"])
         .assert()
         .success();
     let item = read_item(&d, "GLP-0001");
@@ -2109,9 +1944,8 @@ fn e2e_done_rotates_done_queue_past_general_cap() {
     let (d, cfg) = staged_many(7);
     for n in 1..=7 {
         let id = format!("GLP-{n:04}");
-        pwf()
-            .args(["done", "--id", &id, "--date", "2026-01-01", "--config-path"])
-            .arg(&cfg)
+        cfg.command()
+            .args(["done", "--id", &id, "--date", "2026-01-01"])
             .assert()
             .success();
     }
@@ -2138,16 +1972,8 @@ fn e2e_done_rotates_done_queue_past_general_cap() {
 #[test]
 fn e2e_add_with_prereq_writes_validated_frontmatter() {
     let (d, cfg) = staged();
-    pwf()
-        .args([
-            "add",
-            "glep-shimeji",
-            "x",
-            "--prereq",
-            "GLP-0001",
-            "--config-path",
-        ])
-        .arg(&cfg)
+    cfg.command()
+        .args(["add", "glep-shimeji", "x", "--prereq", "GLP-0001"])
         .assert()
         .success();
     let item = read_item(&d, "GLP-0002");
@@ -2160,16 +1986,8 @@ fn e2e_add_with_prereq_writes_validated_frontmatter() {
 #[test]
 fn e2e_add_with_prereq_shorthand_normalizes_to_canonical() {
     let (d, cfg) = staged();
-    pwf()
-        .args([
-            "add",
-            "glep-shimeji",
-            "x",
-            "--prereq",
-            "glp1",
-            "--config-path",
-        ])
-        .arg(&cfg)
+    cfg.command()
+        .args(["add", "glep-shimeji", "x", "--prereq", "glp1"])
         .assert()
         .success();
     let item = read_item(&d, "GLP-0002");
@@ -2182,9 +2000,8 @@ fn e2e_add_with_prereq_shorthand_normalizes_to_canonical() {
 #[test]
 fn e2e_add_with_effort_writes_frontmatter() {
     let (d, cfg) = staged();
-    pwf()
-        .args(["add", "glep-shimeji", "x", "--effort", "3", "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["add", "glep-shimeji", "x", "--effort", "3"])
         .assert()
         .success();
     let item = read_item(&d, "GLP-0002");
@@ -2197,9 +2014,8 @@ fn e2e_add_with_effort_writes_frontmatter() {
 #[test]
 fn e2e_add_effort_out_of_range_is_rejected() {
     let (d, cfg) = staged();
-    pwf()
-        .args(["add", "glep-shimeji", "x", "--effort", "5", "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["add", "glep-shimeji", "x", "--effort", "5"])
         .assert()
         .failure();
     assert!(
@@ -2211,16 +2027,8 @@ fn e2e_add_effort_out_of_range_is_rejected() {
 #[test]
 fn e2e_add_rejects_unknown_prereq_without_writing_item() {
     let (d, cfg) = staged();
-    pwf()
-        .args([
-            "add",
-            "glep-shimeji",
-            "x",
-            "--prereq",
-            "GLP-9999",
-            "--config-path",
-        ])
-        .arg(&cfg)
+    cfg.command()
+        .args(["add", "glep-shimeji", "x", "--prereq", "GLP-9999"])
         .assert()
         .failure()
         .stderr("Error: Unknown --prereq id(s): GLP-9999.\n");
@@ -2233,16 +2041,8 @@ fn e2e_add_rejects_unknown_prereq_without_writing_item() {
 #[test]
 fn e2e_update_prereq_writes_validated_frontmatter() {
     let (d, cfg) = staged_two();
-    pwf()
-        .args([
-            "update",
-            "--id",
-            "GLP-0002",
-            "--prereq",
-            "GLP-0001",
-            "--config-path",
-        ])
-        .arg(&cfg)
+    cfg.command()
+        .args(["update", "--id", "GLP-0002", "--prereq", "GLP-0001"])
         .assert()
         .success();
     let item = read_item(&d, "GLP-0002");
@@ -2255,16 +2055,8 @@ fn e2e_update_prereq_writes_validated_frontmatter() {
 #[test]
 fn e2e_update_effort_writes_frontmatter() {
     let (d, cfg) = staged();
-    pwf()
-        .args([
-            "update",
-            "--id",
-            "GLP-0001",
-            "--effort",
-            "4",
-            "--config-path",
-        ])
-        .arg(&cfg)
+    cfg.command()
+        .args(["update", "--id", "GLP-0001", "--effort", "4"])
         .assert()
         .success();
     let item = read_item(&d, "GLP-0001");
@@ -2277,34 +2069,17 @@ fn e2e_update_effort_writes_frontmatter() {
 #[test]
 fn e2e_list_effort_filter_shows_only_matching_tier() {
     let (_d, cfg) = staged_two();
-    pwf()
-        .args([
-            "update",
-            "--id",
-            "GLP-0001",
-            "--effort",
-            "1",
-            "--config-path",
-        ])
-        .arg(&cfg)
+    cfg.command()
+        .args(["update", "--id", "GLP-0001", "--effort", "1"])
         .assert()
         .success();
-    pwf()
-        .args([
-            "update",
-            "--id",
-            "GLP-0002",
-            "--effort",
-            "4",
-            "--config-path",
-        ])
-        .arg(&cfg)
+    cfg.command()
+        .args(["update", "--id", "GLP-0002", "--effort", "4"])
         .assert()
         .success();
 
-    pwf()
-        .args(["list", "--effort", "4", "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["list", "--effort", "4"])
         .assert()
         .success()
         .stdout(contains("second"))
@@ -2314,22 +2089,13 @@ fn e2e_list_effort_filter_shows_only_matching_tier() {
 #[test]
 fn e2e_list_long_shows_effort_line() {
     let (_d, cfg) = staged();
-    pwf()
-        .args([
-            "update",
-            "--id",
-            "GLP-0001",
-            "--effort",
-            "2",
-            "--config-path",
-        ])
-        .arg(&cfg)
+    cfg.command()
+        .args(["update", "--id", "GLP-0001", "--effort", "2"])
         .assert()
         .success();
 
-    pwf()
-        .args(["list", "--long", "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["list", "--long"])
         .assert()
         .success()
         .stdout(contains("effort: 2"));
@@ -2345,16 +2111,14 @@ fn e2e_update_prereq_appends_and_dedups() {
         "---\nid: GLP-0002\nstatus: active\ntitle: second\nproject: glep-shimeji\ncreated: 2026-01-02\nprereq: \"[[GLP-0001]]\"\n---\n\ndo more\n",
     )
     .unwrap();
-    pwf()
+    cfg.command()
         .args([
             "update",
             "--id",
             "GLP-0002",
             "--prereq",
             "GLP-0001,GLP-0001",
-            "--config-path",
         ])
-        .arg(&cfg)
         .assert()
         .success();
     let item = read_item(&d, "GLP-0002");
@@ -2375,15 +2139,8 @@ fn e2e_update_clear_prereq_empties_it() {
         "---\nid: GLP-0002\nstatus: active\ntitle: second\nproject: glep-shimeji\ncreated: 2026-01-02\nprereq: \"[[GLP-0001]]\"\n---\n\ndo more\n",
     )
     .unwrap();
-    pwf()
-        .args([
-            "update",
-            "--id",
-            "GLP-0002",
-            "--clear-prereq",
-            "--config-path",
-        ])
-        .arg(&cfg)
+    cfg.command()
+        .args(["update", "--id", "GLP-0002", "--clear-prereq"])
         .assert()
         .success();
     let item = read_item(&d, "GLP-0002");
@@ -2397,16 +2154,8 @@ fn e2e_update_clear_prereq_empties_it() {
 fn e2e_update_prereq_rejects_unknown() {
     let (d, cfg) = staged_two();
     let before = read_item(&d, "GLP-0002");
-    pwf()
-        .args([
-            "update",
-            "--id",
-            "GLP-0002",
-            "--prereq",
-            "GLP-9999",
-            "--config-path",
-        ])
-        .arg(&cfg)
+    cfg.command()
+        .args(["update", "--id", "GLP-0002", "--prereq", "GLP-9999"])
         .assert()
         .failure()
         .stderr(contains("GLP-9999"));
@@ -2416,7 +2165,7 @@ fn e2e_update_prereq_rejects_unknown() {
 #[test]
 fn e2e_update_prereq_and_clear_conflict() {
     let (_d, cfg) = staged_two();
-    pwf()
+    cfg.command()
         .args([
             "update",
             "--id",
@@ -2424,9 +2173,7 @@ fn e2e_update_prereq_and_clear_conflict() {
             "--prereq",
             "GLP-0001",
             "--clear-prereq",
-            "--config-path",
         ])
-        .arg(&cfg)
         .assert()
         .failure();
 }
@@ -2441,14 +2188,8 @@ fn e2e_add_default_section_lands_before_any_header() {
         read_index(&d)
     );
     fs::write(&index_path, seeded).unwrap();
-    pwf()
-        .args([
-            "add",
-            "glep-shimeji",
-            "default placed item",
-            "--config-path",
-        ])
-        .arg(&cfg)
+    cfg.command()
+        .args(["add", "glep-shimeji", "default placed item"])
         .assert()
         .success();
     let index = read_index(&d);
@@ -2460,16 +2201,8 @@ fn e2e_add_default_section_lands_before_any_header() {
 #[test]
 fn e2e_done_normalizes_mixed_case_id() {
     let (d, cfg) = staged();
-    pwf()
-        .args([
-            "done",
-            "--id",
-            "glp-0001",
-            "--date",
-            "2026-01-01",
-            "--config-path",
-        ])
-        .arg(&cfg)
+    cfg.command()
+        .args(["done", "--id", "glp-0001", "--date", "2026-01-01"])
         .assert()
         .success();
     let item = read_item(&d, "GLP-0001");
@@ -2484,7 +2217,7 @@ fn e2e_done_normalizes_mixed_case_id() {
 #[test]
 fn e2e_done_commits_writes_provenance_frontmatter() {
     let (d, cfg) = staged();
-    pwf()
+    cfg.command()
         .args([
             "done",
             "--id",
@@ -2493,9 +2226,7 @@ fn e2e_done_commits_writes_provenance_frontmatter() {
             "a1b2c3d..f4e5d6c",
             "--date",
             "2026-01-01",
-            "--config-path",
         ])
-        .arg(&cfg)
         .assert()
         .success();
     let item = read_item(&d, "GLP-0001");
@@ -2508,7 +2239,7 @@ fn e2e_done_commits_writes_provenance_frontmatter() {
 #[test]
 fn e2e_done_commits_repeated_and_comma_join_and_dedup() {
     let (d, cfg) = staged();
-    pwf()
+    cfg.command()
         .args([
             "done",
             "--id",
@@ -2519,9 +2250,7 @@ fn e2e_done_commits_repeated_and_comma_join_and_dedup() {
             "c..d",
             "--date",
             "2026-01-01",
-            "--config-path",
         ])
-        .arg(&cfg)
         .assert()
         .success();
     assert!(
@@ -2530,7 +2259,7 @@ fn e2e_done_commits_repeated_and_comma_join_and_dedup() {
     );
 
     let (d2, cfg2) = staged();
-    pwf()
+    cfg2.command()
         .args([
             "done",
             "--id",
@@ -2539,9 +2268,7 @@ fn e2e_done_commits_repeated_and_comma_join_and_dedup() {
             "a..b,c..d",
             "--date",
             "2026-01-01",
-            "--config-path",
         ])
-        .arg(&cfg2)
         .assert()
         .success();
     assert!(
@@ -2553,16 +2280,8 @@ fn e2e_done_commits_repeated_and_comma_join_and_dedup() {
 #[test]
 fn e2e_done_without_commits_writes_no_commits_line() {
     let (d, cfg) = staged();
-    pwf()
-        .args([
-            "done",
-            "--id",
-            "GLP-0001",
-            "--date",
-            "2026-01-01",
-            "--config-path",
-        ])
-        .arg(&cfg)
+    cfg.command()
+        .args(["done", "--id", "GLP-0001", "--date", "2026-01-01"])
         .assert()
         .success();
     assert!(
@@ -2574,7 +2293,8 @@ fn e2e_done_without_commits_writes_no_commits_line() {
 #[test]
 fn e2e_done_review_spawns_human_task_scoped_to_range() {
     let (d, cfg) = staged();
-    let out = pwf()
+    let out = cfg
+        .command()
         .args([
             "done",
             "--id",
@@ -2584,9 +2304,7 @@ fn e2e_done_review_spawns_human_task_scoped_to_range() {
             "--review",
             "--date",
             "2026-01-01",
-            "--config-path",
         ])
-        .arg(&cfg)
         .assert()
         .success()
         .stderr(contains(
@@ -2601,7 +2319,7 @@ fn e2e_done_review_spawns_human_task_scoped_to_range() {
     let spawned = read_item(&d, "GLP-0002");
     assert_eq!(
         spawned,
-        "---\nid: GLP-0002\nstatus: active\ntitle: review glp-0001, commits; a..b\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\n## Goals\n- review GLP-0001, commits: a..b\n- git-tools diff a..b\n- git-tools diff-subrepos\n"
+        "---\nid: GLP-0002\nstatus: active\ntitle: review glp-0001, commits; a..b\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\n## Goals\n\n- review GLP-0001, commits: a..b\n- git-tools diff a..b\n- git-tools diff-subrepos\n"
     );
     drop(out);
 }
@@ -2609,7 +2327,8 @@ fn e2e_done_review_spawns_human_task_scoped_to_range() {
 #[test]
 fn e2e_done_review_appends_review_task_as_text() {
     let (_d, cfg) = staged();
-    let out = pwf()
+    let out = cfg
+        .command()
         .args([
             "done",
             "--id",
@@ -2619,9 +2338,7 @@ fn e2e_done_review_appends_review_task_as_text() {
             "--review",
             "--date",
             "2026-01-01",
-            "--config-path",
         ])
-        .arg(&cfg)
         .assert()
         .success();
     let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
@@ -2638,7 +2355,7 @@ fn e2e_done_review_appends_review_task_as_text() {
 #[test]
 fn e2e_done_review_without_commits_uses_bare_diff_fallback() {
     let (d, cfg) = staged();
-    pwf()
+    cfg.command()
         .args([
             "done",
             "--id",
@@ -2646,15 +2363,13 @@ fn e2e_done_review_without_commits_uses_bare_diff_fallback() {
             "--review",
             "--date",
             "2026-01-01",
-            "--config-path",
         ])
-        .arg(&cfg)
         .assert()
         .success();
     let spawned = read_item(&d, "GLP-0002");
     assert_eq!(
         spawned,
-        "---\nid: GLP-0002\nstatus: active\ntitle: review glp-0001\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\n## Goals\n- review GLP-0001\n- git-tools diff\n- git-tools diff-subrepos\n"
+        "---\nid: GLP-0002\nstatus: active\ntitle: review glp-0001\nproject: glep-shimeji\ncreated: 2026-01-01\n---\n\n## Goals\n\n- review GLP-0001\n- git-tools diff\n- git-tools diff-subrepos\n"
     );
 }
 
@@ -2665,7 +2380,7 @@ fn staged_with_item(
     id: &str,
     title: &str,
     content: &str,
-) -> (TempDir, std::path::PathBuf) {
+) -> (TempDir, DatabaseFixture) {
     let dir = TempDir::new().unwrap();
     let notes = dir.path().join("notes");
     let proj = notes.join(project);
@@ -2676,28 +2391,23 @@ fn staged_with_item(
         format!("- [ ] [[{id}|{title}]]\n"),
     )
     .unwrap();
-    let cfg = dir.path().join("cfg.json");
-    fs::write(
-        &cfg,
-        format!(
-            r#"{{ "notesDir": {:?}, "projects": {{ {:?}: "/repo" }}, "prefixes": {{ {:?}: {:?} }} }}"#,
-            notes.to_string_lossy(),
-            project,
-            project,
-            prefix
-        ),
+    finish_fixture(
+        dir,
+        &[ProjectSeed {
+            id: prefix,
+            title: project,
+            repository: std::path::Path::new("/repo"),
+            tasks_path: &proj,
+        }],
     )
-    .unwrap();
-    finish_fixture(dir, cfg)
 }
 
 #[test]
 fn show_emits_note_markdown_byte_for_byte() {
     let markdown = "---\nid: PWF-0001\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- do the thing\n";
     let (_d, cfg) = staged_with_item("pwf", "PWF", "PWF-0001", "do the thing", markdown);
-    pwf()
-        .args(["show", "--id", "PWF-0001", "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["show", "--id", "PWF-0001"])
         .assert()
         .success()
         .stderr("")
@@ -2716,18 +2426,11 @@ fn show_legacy_item_emits_body_only() {
         "---\nid: glp\ntitle: glep-shimeji\n---\n\n- [ ] `legacy task` <- do the legacy thing\n",
     )
     .unwrap();
-    let cfg = dir.path().join("cfg.json");
-    fs::write(
-        &cfg,
-        format!(
-            r#"{{ "notesDir": {:?}, "projects": {{ "glep-shimeji": "/repo" }}, "prefixes": {{ "glep-shimeji": "GLP" }} }}"#,
-            notes.to_string_lossy()
-        ),
-    )
-    .unwrap();
-    let out = pwf()
-        .args(["show", "--id", "glep-shimeji:1", "--config-path"])
-        .arg(&cfg)
+    let database = DatabaseFixture::new(dir.path().join("projects.sqlite3"));
+    database.add_directory_project("GLP", "glep-shimeji", std::path::Path::new("/repo"), &proj);
+    let out = database
+        .command()
+        .args(["show", "--id", "glep-shimeji:1"])
         .assert()
         .success();
     let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
@@ -2743,25 +2446,21 @@ fn staged_with_archived_item(
     prefix: &str,
     id: &str,
     content: &str,
-) -> (TempDir, std::path::PathBuf) {
+) -> (TempDir, DatabaseFixture) {
     let dir = TempDir::new().unwrap();
     let notes = dir.path().join("notes");
     let project_dir = notes.join(project);
     fs::create_dir_all(&project_dir).unwrap();
     fs::write(project_dir.join(format!("{id}.md")), content).unwrap();
-    let cfg = dir.path().join("cfg.json");
-    fs::write(
-        &cfg,
-        format!(
-            r#"{{ "notesDir": {:?}, "projects": {{ {:?}: "/repo" }}, "prefixes": {{ {:?}: {:?} }} }}"#,
-            notes.to_string_lossy(),
-            project,
-            project,
-            prefix
-        ),
+    finish_fixture(
+        dir,
+        &[ProjectSeed {
+            id: prefix,
+            title: project,
+            repository: std::path::Path::new("/repo"),
+            tasks_path: &project_dir,
+        }],
     )
-    .unwrap();
-    finish_fixture(dir, cfg)
 }
 
 /// Stages a done item whose note remains in place behind a checked index link.
@@ -2770,7 +2469,7 @@ fn staged_with_done_item(
     prefix: &str,
     id: &str,
     content: &str,
-) -> (TempDir, std::path::PathBuf) {
+) -> (TempDir, DatabaseFixture) {
     let dir = TempDir::new().unwrap();
     let notes = dir.path().join("notes");
     let proj = notes.join(project);
@@ -2781,19 +2480,15 @@ fn staged_with_done_item(
         format!("- [x] [[{id}]] ✅ 2026-06-20\n"),
     )
     .unwrap();
-    let cfg = dir.path().join("cfg.json");
-    fs::write(
-        &cfg,
-        format!(
-            r#"{{ "notesDir": {:?}, "projects": {{ {:?}: "/repo" }}, "prefixes": {{ {:?}: {:?} }} }}"#,
-            notes.to_string_lossy(),
-            project,
-            project,
-            prefix
-        ),
+    finish_fixture(
+        dir,
+        &[ProjectSeed {
+            id: prefix,
+            title: project,
+            repository: std::path::Path::new("/repo"),
+            tasks_path: &proj,
+        }],
     )
-    .unwrap();
-    finish_fixture(dir, cfg)
 }
 
 #[test]
@@ -2804,9 +2499,8 @@ fn e2e_reopen_flips_done_item_back_to_active_and_restores_index() {
         "PWF-0003",
         "---\nid: PWF-0003\nstatus: done\ntitle: just done\nproject: pwf\ncreated: 2026-06-20\ncompleted: 2026-06-20\ncommits: \"a..b\"\n---\n\n## Goals\n- finish it\n",
     );
-    pwf()
-        .args(["reopen", "--id", "pwf-0003", "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["reopen", "--id", "pwf-0003"])
         .assert()
         .success()
         .stdout(contains("Reopened PWF-0003"));
@@ -2825,9 +2519,8 @@ fn e2e_reopen_flips_done_item_back_to_active_and_restores_index() {
 #[test]
 fn e2e_reopen_already_active_item_skips() {
     let (_d, cfg) = staged();
-    pwf()
-        .args(["reopen", "--id", "GLP-0001", "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["reopen", "--id", "GLP-0001"])
         .assert()
         .success()
         .stdout(contains("already active"));
@@ -2836,9 +2529,8 @@ fn e2e_reopen_already_active_item_skips() {
 #[test]
 fn e2e_reopen_unknown_id_errors() {
     let (_d, cfg) = staged();
-    pwf()
-        .args(["reopen", "--id", "GLP-9999", "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["reopen", "--id", "GLP-9999"])
         .assert()
         .failure()
         .stderr(contains("not found"));
@@ -2852,9 +2544,9 @@ fn show_finds_done_item_still_in_project_dir() {
         "PWF-0003",
         "---\nstatus: done\ntitle: just done\nproject: pwf\ncompleted: 2026-06-20\n---\n\n## Goals\n- just done\n",
     );
-    let out = pwf()
-        .args(["show", "--id", "PWF-0003", "--config-path"])
-        .arg(&cfg)
+    let out = cfg
+        .command()
+        .args(["show", "--id", "PWF-0003"])
         .assert()
         .success();
     let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
@@ -2870,9 +2562,9 @@ fn show_finds_done_item_still_in_project_dir_with_shorthand_id() {
         "PWF-0003",
         "---\nstatus: done\ntitle: just done\nproject: pwf\ncompleted: 2026-06-20\n---\n\n## Goals\n- just done\n",
     );
-    let out = pwf()
-        .args(["show", "--id", "pwf3", "--config-path"])
-        .arg(&cfg)
+    let out = cfg
+        .command()
+        .args(["show", "--id", "pwf3"])
         .assert()
         .success();
     let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
@@ -2888,9 +2580,8 @@ fn resolve_verb_is_removed_and_fails() {
         "PWF-0002",
         "---\nstatus: cancelled\ntitle: dropped\nproject: pwf\n---\n\n## Goals\n- dropped\n",
     );
-    pwf()
-        .args(["resolve", "--show", "--id", "PWF-0002", "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["resolve", "--show", "--id", "PWF-0002"])
         .assert()
         .failure();
 }
@@ -2905,9 +2596,9 @@ fn id_input_forms_all_resolve_to_the_same_item() {
         "---\nid: PWF-0001\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\nbody\n",
     );
 
-    let canonical = pwf()
-        .args(["show", "--id", "PWF-0001", "--config-path"])
-        .arg(&cfg)
+    let canonical = cfg
+        .command()
+        .args(["show", "--id", "PWF-0001"])
         .assert()
         .success();
     let baseline = String::from_utf8(canonical.get_output().stdout.clone()).unwrap();
@@ -2918,12 +2609,7 @@ fn id_input_forms_all_resolve_to_the_same_item() {
         vec!["show", "pwf", "1"],
         vec!["s", "pwf1"],
     ] {
-        let out = pwf()
-            .args(&form)
-            .args(["--config-path"])
-            .arg(&cfg)
-            .assert()
-            .success();
+        let out = cfg.command().args(&form).assert().success();
         let got = String::from_utf8(out.get_output().stdout.clone()).unwrap();
         assert_eq!(got, baseline, "form {form:?} did not resolve like --id");
     }
@@ -2938,11 +2624,7 @@ fn show_alias_s_streams_note_markdown() {
         "do the thing",
         "---\nid: PWF-0001\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- do the thing\n",
     );
-    let out = pwf()
-        .args(["s", "PWF-0001", "--config-path"])
-        .arg(&cfg)
-        .assert()
-        .success();
+    let out = cfg.command().args(["s", "PWF-0001"]).assert().success();
     let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
     assert!(
         stdout.contains("status: active"),
@@ -2960,11 +2642,7 @@ fn show_alias_s_collapses_split_id_form() {
         "do the thing",
         "---\nid: PWF-0001\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- do the thing\n",
     );
-    let out = pwf()
-        .args(["s", "pwf", "1", "--config-path"])
-        .arg(&cfg)
-        .assert()
-        .success();
+    let out = cfg.command().args(["s", "pwf", "1"]).assert().success();
     let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
     assert!(stdout.contains("## Goals"), "missing body: {stdout}");
 }
@@ -2982,9 +2660,9 @@ fn show_path_prints_closed_item_path() {
         .join("notes/pwf/PWF-0002.md")
         .to_string_lossy()
         .replace('\\', "/");
-    pwf()
-        .args(["show", "--path", "PWF-0002", "--config-path"])
-        .arg(&config_path)
+    config_path
+        .command()
+        .args(["show", "--path", "PWF-0002"])
         .assert()
         .success()
         .stderr("")
@@ -2996,9 +2674,8 @@ fn show_missing_note_preserves_the_storage_read_error() {
     let (dir, cfg) = staged();
     fs::remove_file(dir.path().join("notes/glep-shimeji/GLP-0001.md")).unwrap();
 
-    pwf()
-        .args(["show", "GLP-0001", "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["show", "GLP-0001"])
         .assert()
         .code(1)
         .stdout("")
@@ -3015,11 +2692,7 @@ fn show_finds_archived_done_item_regardless_of_status() {
         "PWF-0002",
         "---\nstatus: done\ntitle: finished thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- finished thing\n",
     );
-    let out = pwf()
-        .args(["show", "pwf-0002", "--config-path"])
-        .arg(&cfg)
-        .assert()
-        .success();
+    let out = cfg.command().args(["show", "pwf-0002"]).assert().success();
     let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
     assert!(stdout.contains("status: done"), "missing status: {stdout}");
     assert!(
@@ -3036,11 +2709,7 @@ fn show_finds_archived_done_item_with_shorthand_id() {
         "PWF-0002",
         "---\nstatus: done\ntitle: finished thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- finished thing\n",
     );
-    let out = pwf()
-        .args(["show", "pwf-2", "--config-path"])
-        .arg(&cfg)
-        .assert()
-        .success();
+    let out = cfg.command().args(["show", "pwf-2"]).assert().success();
     let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
     assert!(stdout.contains("status: done"), "missing status: {stdout}");
     assert!(
@@ -3057,11 +2726,7 @@ fn show_errors_when_id_absent() {
         "PWF-0002",
         "---\nstatus: done\ntitle: t\nproject: pwf\n---\n\nbody\n",
     );
-    pwf()
-        .args(["show", "PWF-9999", "--config-path"])
-        .arg(&cfg)
-        .assert()
-        .failure();
+    cfg.command().args(["show", "PWF-9999"]).assert().failure();
 }
 
 #[test]
@@ -3072,11 +2737,7 @@ fn show_preserves_raw_lowercase_id_in_not_found_error() {
         "PWF-0002",
         "---\nstatus: done\ntitle: t\nproject: pwf\n---\n\nbody\n",
     );
-    let out = pwf()
-        .args(["show", "pwf-9999", "--config-path"])
-        .arg(&cfg)
-        .assert()
-        .failure();
+    let out = cfg.command().args(["show", "pwf-9999"]).assert().failure();
     let stderr = String::from_utf8(out.get_output().stderr.clone()).unwrap();
     assert!(
         stderr.contains("pwf-9999"),
@@ -3090,7 +2751,8 @@ fn show_preserves_raw_lowercase_id_in_not_found_error() {
 
 #[test]
 fn show_without_id_error_names_the_command() {
-    let out = pwf().arg("show").assert().failure();
+    let (_directory, database) = temporary_database();
+    let out = database.command().arg("show").assert().failure();
     let stderr = String::from_utf8(out.get_output().stderr.clone()).unwrap();
     assert!(
         stderr.contains("--id is required for show"),
@@ -3106,7 +2768,7 @@ fn update_repeated_commits_and_report_preserve_changed_output_order() {
         "PWF-0003",
         "---\nstatus: done\ntitle: t\nproject: pwf\ncompleted: 2026-06-20\ncommits: \"old..HEAD\"\n---\n\nbody\n",
     );
-    pwf()
+    cfg.command()
         .args([
             "update",
             "--id",
@@ -3117,9 +2779,7 @@ fn update_repeated_commits_and_report_preserve_changed_output_order() {
             "aaa111..bbb222",
             "--append-report",
             "shipped",
-            "--config-path",
         ])
-        .arg(&cfg)
         .env("NO_COLOR", "1")
         .assert()
         .success()
@@ -3127,9 +2787,9 @@ fn update_repeated_commits_and_report_preserve_changed_output_order() {
         .stdout(
             "Updated pwf task: **PWF-0003 commits: aaa111..bbb222, ccc333..ddd444, report appended**\n\n",
         );
-    let out = pwf()
-        .args(["show", "--id", "PWF-0003", "--config-path"])
-        .arg(&cfg)
+    let out = cfg
+        .command()
+        .args(["show", "--id", "PWF-0003"])
         .assert()
         .success();
     let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
@@ -3149,21 +2809,13 @@ fn update_commits_amends_archived_item() {
         "PWF-0002",
         "---\nstatus: done\ntitle: t\nproject: pwf\ncompleted: 2026-06-20\n---\n\nbody\n",
     );
-    pwf()
-        .args([
-            "update",
-            "--id",
-            "PWF-0002",
-            "--commits",
-            "c0ffee..d00d",
-            "--config-path",
-        ])
-        .arg(&cfg)
+    cfg.command()
+        .args(["update", "--id", "PWF-0002", "--commits", "c0ffee..d00d"])
         .assert()
         .success();
-    let out = pwf()
-        .args(["show", "--id", "PWF-0002", "--config-path"])
-        .arg(&cfg)
+    let out = cfg
+        .command()
+        .args(["show", "--id", "PWF-0002"])
         .assert()
         .success();
     let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
@@ -3182,21 +2834,13 @@ fn update_commits_amends_open_item() {
         "do the thing",
         "---\nid: PWF-0001\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- do the thing\n",
     );
-    pwf()
-        .args([
-            "update",
-            "--id",
-            "PWF-0001",
-            "--commits",
-            "1a2b..3c4d",
-            "--config-path",
-        ])
-        .arg(&cfg)
+    cfg.command()
+        .args(["update", "--id", "PWF-0001", "--commits", "1a2b..3c4d"])
         .assert()
         .success();
-    let out = pwf()
-        .args(["show", "--id", "PWF-0001", "--config-path"])
-        .arg(&cfg)
+    let out = cfg
+        .command()
+        .args(["show", "--id", "PWF-0001"])
         .assert()
         .success();
     let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
@@ -3217,11 +2861,9 @@ fn update_append_report_attaches_verbatim_report_to_closed_item() {
     );
     let report =
         "## Outcome\n\nShipped `--append-report`.\n\n## Follow-ups\n\n- write the release notes";
-    pwf()
+    cfg.command()
         .args(["update", "--id", "pwf-0003", "--append-report"])
         .arg(report)
-        .arg("--config-path")
-        .arg(&cfg)
         .assert()
         .success()
         .stdout(contains("report appended"));
@@ -3247,10 +2889,8 @@ fn update_append_report_rejects_whitespace_only() {
         "PWF-0003",
         "---\nstatus: done\ntitle: t\nproject: pwf\ncompleted: 2026-06-20\n---\n\nbody\n",
     );
-    pwf()
+    cfg.command()
         .args(["update", "--id", "PWF-0003", "--append-report", "   \n\t"])
-        .arg("--config-path")
-        .arg(&cfg)
         .assert()
         .failure()
         .stderr(contains("--report cannot be empty"));
@@ -3264,16 +2904,8 @@ fn update_body_edit_on_closed_item_is_rejected() {
         "PWF-0003",
         "---\nstatus: done\ntitle: t\nproject: pwf\ncompleted: 2026-06-20\n---\n\nbody\n",
     );
-    pwf()
-        .args([
-            "update",
-            "--id",
-            "PWF-0003",
-            "--title",
-            "new title",
-            "--config-path",
-        ])
-        .arg(&cfg)
+    cfg.command()
+        .args(["update", "--id", "PWF-0003", "--title", "new title"])
         .assert()
         .failure()
         .stderr(contains("can amend closed item"));
@@ -3288,10 +2920,8 @@ fn update_append_splices_bullets_into_an_existing_section() {
         "do the thing",
         "---\nid: PWF-0001\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- do the thing\n",
     );
-    pwf()
+    cfg.command()
         .args(["update", "--id", "PWF-0001", "-a", "also this"])
-        .arg("--config-path")
-        .arg(&cfg)
         .assert()
         .success();
     let note = fs::read_to_string(_d.path().join("notes/pwf/PWF-0001.md")).unwrap();
@@ -3310,7 +2940,7 @@ fn update_append_creates_a_missing_section_via_lane_syntax() {
         "do the thing",
         "---\nid: PWF-0001\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- do the thing\n",
     );
-    pwf()
+    cfg.command()
         .args([
             "update",
             "--id",
@@ -3318,8 +2948,6 @@ fn update_append_creates_a_missing_section_via_lane_syntax() {
             "--append",
             "another goal /c new context",
         ])
-        .arg("--config-path")
-        .arg(&cfg)
         .assert()
         .success();
     let note = fs::read_to_string(_d.path().join("notes/pwf/PWF-0001.md")).unwrap();
@@ -3338,10 +2966,8 @@ fn update_append_marker_first_preserves_title_and_goals() {
         "do the thing",
         "---\nid: PWF-0001\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- do the thing\n",
     );
-    pwf()
+    cfg.command()
         .args(["update", "--id", "PWF-0001", "--append", "/c context"])
-        .arg("--config-path")
-        .arg(&cfg)
         .assert()
         .success();
 
@@ -3374,10 +3000,8 @@ fn update_append_rejects_whitespace_only() {
         "do the thing",
         "---\nid: PWF-0001\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- do the thing\n",
     );
-    pwf()
+    cfg.command()
         .args(["update", "--id", "PWF-0001", "--append", "   \n\t"])
-        .arg("--config-path")
-        .arg(&cfg)
         .assert()
         .failure()
         .stderr(contains("--append cannot be empty"));
@@ -3392,12 +3016,10 @@ fn update_append_conflicts_with_prompt() {
         "do the thing",
         "---\nid: PWF-0001\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- do the thing\n",
     );
-    pwf()
+    cfg.command()
         .args([
             "update", "--id", "PWF-0001", "--prompt", "x", "--append", "y",
         ])
-        .arg("--config-path")
-        .arg(&cfg)
         .assert()
         .failure()
         .stderr(contains("cannot be used with"));
@@ -3411,21 +3033,17 @@ fn update_append_on_closed_item_is_rejected() {
         "PWF-0003",
         "---\nstatus: done\ntitle: t\nproject: pwf\ncompleted: 2026-06-20\n---\n\nbody\n",
     );
-    pwf()
+    cfg.command()
         .args(["update", "--id", "PWF-0003", "--append", "more work"])
-        .arg("--config-path")
-        .arg(&cfg)
         .assert()
         .failure()
         .stderr(contains("can amend closed item"));
 }
 
 /// Stages a launchable item and a recording `zellij` stub on the child process PATH.
-/// Returns the config, child PATH, and argv log.
+/// Returns the database, child PATH, and argv log.
 #[cfg(unix)]
-fn stage_session_with_zellij_stub(
-    dir: &TempDir,
-) -> (std::path::PathBuf, String, std::path::PathBuf) {
+fn stage_session_with_zellij_stub(dir: &TempDir) -> (DatabaseFixture, String, std::path::PathBuf) {
     use std::os::unix::fs::PermissionsExt;
 
     // Session preflight requires the mapped repository to exist.
@@ -3440,17 +3058,14 @@ fn stage_session_with_zellij_stub(
     )
     .unwrap();
     fs::write(proj.join("pwf.md"), "- [ ] [[PWF-0001|do the thing]]\n").unwrap();
-    let cfg = dir.path().join("cfg.json");
-    fs::write(
-        &cfg,
-        format!(
-            r#"{{ "notesDir": {:?}, "projects": {{ "pwf": {:?} }}, "prefixes": {{ "pwf": "PWF" }} }}"#,
-            notes.to_string_lossy(),
-            repo.to_string_lossy()
-        ),
-    )
-    .unwrap();
-    migrate_fixture(&cfg);
+    let database = DatabaseFixture::new(dir.path().join("projects.sqlite3"));
+    database.add_directory_project("PWF", "pwf", &repo, &proj);
+    ensure_record_identity(&ProjectSeed {
+        id: "PWF",
+        title: "pwf",
+        repository: &repo,
+        tasks_path: &proj,
+    });
 
     // Install process fixtures on the child PATH.
     let bin = dir.path().join("bin");
@@ -3470,7 +3085,7 @@ fn stage_session_with_zellij_stub(
         bin.to_string_lossy(),
         std::env::var("PATH").unwrap_or_default()
     );
-    (cfg, path, log)
+    (database, path, log)
 }
 
 #[cfg(unix)]
@@ -3495,17 +3110,8 @@ fn session_claude_agent_outputs_thread_title() {
     let dir = TempDir::new().unwrap();
     let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
 
-    pwf()
-        .args([
-            "session",
-            "--id",
-            "PWF-0001",
-            "--agent",
-            "claude",
-            "--yes",
-            "--config-path",
-        ])
-        .arg(&cfg)
+    cfg.command()
+        .args(["session", "--id", "PWF-0001", "--agent", "claude", "--yes"])
         .env("PATH", path)
         .env("ZELLIJ_STUB_LOG", &log)
         .assert()
@@ -3525,17 +3131,8 @@ fn session_tab_rejection_exits_nonzero() {
     let dir = TempDir::new().unwrap();
     let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
 
-    pwf()
-        .args([
-            "session",
-            "--id",
-            "PWF-0001",
-            "--agent",
-            "claude",
-            "--yes",
-            "--config-path",
-        ])
-        .arg(&cfg)
+    cfg.command()
+        .args(["session", "--id", "PWF-0001", "--agent", "claude", "--yes"])
         .env("PATH", path)
         .env("ZELLIJ_STUB_LOG", &log)
         .env("ZELLIJ_STUB_EXIT_CODE", "17")
@@ -3554,17 +3151,9 @@ fn session_codex_naming_failure_stops_before_dispatch() {
     let app_server_log_path = directory.path().join("codex-app-server.jsonl");
     let resume_log_path = directory.path().join("codex-resume.log");
 
-    pwf()
-        .args([
-            "session",
-            "--id",
-            "PWF-0001",
-            "--agent",
-            "codex",
-            "--yes",
-            "--config-path",
-        ])
-        .arg(&config_path)
+    config_path
+        .command()
+        .args(["session", "--id", "PWF-0001", "--agent", "codex", "--yes"])
         .env("PATH", child_path)
         .env("CODEX_STUB_APP_SERVER_LOG", &app_server_log_path)
         .env("CODEX_STUB_NAME_ERROR", "name denied by fixture")
@@ -3591,17 +3180,9 @@ fn session_codex_naming_failure_stops_before_dispatch() {
 }
 
 #[test]
-fn session_dry_run_conflicts_with_append_before_loading_configuration() {
-    pwf()
-        .args([
-            "session",
-            "PWF-0001",
-            "--dry-run",
-            "--append",
-            "mutation",
-            "--config-path",
-            "/path/that-clap-must-never-read.json",
-        ])
+fn session_dry_run_conflicts_with_append_before_loading_projects() {
+    database_independent_command()
+        .args(["session", "PWF-0001", "--dry-run", "--append", "mutation"])
         .assert()
         .code(2)
         .stderr(contains("cannot be used with"));
@@ -3635,7 +3216,8 @@ fn session_dry_alias_renders_complete_codex_command_without_side_effects() {
          nothing dispatched.\n\n"
     );
 
-    pwf()
+    config_path
+        .command()
         .args([
             "session",
             "PWF-0001",
@@ -3647,9 +3229,7 @@ fn session_dry_alias_renders_complete_codex_command_without_side_effects() {
             "--worktree",
             "--auto",
             "--yes",
-            "--config-path",
         ])
-        .arg(&config_path)
         .env("PATH", child_path)
         .env("CODEX_STUB_APP_SERVER_LOG", &app_server_log_path)
         .env("CODEX_STUB_RESUME_LOG", &resume_log_path)
@@ -3678,17 +3258,8 @@ fn session_recovers_a_missing_zellij_session_once() {
     let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
     let state = dir.path().join("zellij-state");
 
-    pwf()
-        .args([
-            "session",
-            "--id",
-            "PWF-0001",
-            "--agent",
-            "claude",
-            "--yes",
-            "--config-path",
-        ])
-        .arg(&cfg)
+    cfg.command()
+        .args(["session", "--id", "PWF-0001", "--agent", "claude", "--yes"])
         .env("PATH", path)
         .env("ZELLIJ_STUB_LOG", &log)
         .env("ZELLIJ_STUB_MISSING_SESSION_COUNT", "1")
@@ -3711,17 +3282,8 @@ fn session_stops_after_a_second_missing_zellij_session() {
     let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
     let state = dir.path().join("zellij-state");
 
-    pwf()
-        .args([
-            "session",
-            "--id",
-            "PWF-0001",
-            "--agent",
-            "claude",
-            "--yes",
-            "--config-path",
-        ])
-        .arg(&cfg)
+    cfg.command()
+        .args(["session", "--id", "PWF-0001", "--agent", "claude", "--yes"])
         .env("PATH", path)
         .env("ZELLIJ_STUB_LOG", &log)
         .env("ZELLIJ_STUB_MISSING_SESSION_COUNT", "2")
@@ -3750,18 +3312,10 @@ fn session_inline_executes_the_concrete_claude_process() {
     fs::set_permissions(&claude, fs::Permissions::from_mode(0o755)).unwrap();
     let claude_log = dir.path().join("claude.log");
 
-    pwf()
+    cfg.command()
         .args([
-            "session",
-            "--id",
-            "PWF-0001",
-            "--agent",
-            "claude",
-            "--inline",
-            "--yes",
-            "--config-path",
+            "session", "--id", "PWF-0001", "--agent", "claude", "--inline", "--yes",
         ])
-        .arg(&cfg)
         .env("PATH", path)
         .env("CLAUDE_STUB_EXIT_CODE", "23")
         .env("CLAUDE_STUB_LOG", &claude_log)
@@ -3802,16 +3356,8 @@ fn session_worktree_flag_injects_instruction_into_argv() {
     let dir = TempDir::new().unwrap();
     let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
 
-    pwf()
-        .args([
-            "session",
-            "--id",
-            "PWF-0001",
-            "--yes",
-            "-w",
-            "--config-path",
-        ])
-        .arg(&cfg)
+    cfg.command()
+        .args(["session", "--id", "PWF-0001", "--yes", "-w"])
         .env("PATH", path)
         .env("ZELLIJ_STUB_LOG", &log)
         .assert()
@@ -3831,9 +3377,8 @@ fn session_without_worktree_flag_omits_instruction() {
     let dir = TempDir::new().unwrap();
     let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
 
-    pwf()
-        .args(["session", "--id", "PWF-0001", "--yes", "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["session", "--id", "PWF-0001", "--yes"])
         .env("PATH", path)
         .env("ZELLIJ_STUB_LOG", &log)
         .assert()
@@ -3861,17 +3406,8 @@ fn session_with_effort_passes_model_flag_to_claude() {
     let tiers = dir.path().join("model-tiers.toml");
     fs::write(&tiers, "[tiers.4]\nclaude_model = \"opus\"\n").unwrap();
 
-    pwf()
-        .args([
-            "session",
-            "--id",
-            "PWF-0001",
-            "--agent",
-            "claude",
-            "--yes",
-            "--config-path",
-        ])
-        .arg(&cfg)
+    cfg.command()
+        .args(["session", "--id", "PWF-0001", "--agent", "claude", "--yes"])
         .env("PATH", path)
         .env("ZELLIJ_STUB_LOG", &log)
         .env("PWF_MODEL_TIERS", &tiers)
@@ -3896,17 +3432,8 @@ fn session_with_effort_and_broken_tiers_config_fails_before_dispatch() {
     .unwrap();
     let missing_tiers = dir.path().join("does-not-exist.toml");
 
-    pwf()
-        .args([
-            "session",
-            "--id",
-            "PWF-0001",
-            "--agent",
-            "claude",
-            "--yes",
-            "--config-path",
-        ])
-        .arg(&cfg)
+    cfg.command()
+        .args(["session", "--id", "PWF-0001", "--agent", "claude", "--yes"])
         .env("PATH", path)
         .env("ZELLIJ_STUB_LOG", &log)
         .env("PWF_MODEL_TIERS", &missing_tiers)
@@ -3923,7 +3450,7 @@ fn session_append_extends_the_note_before_dispatch() {
     let dir = TempDir::new().unwrap();
     let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
 
-    pwf()
+    cfg.command()
         .args([
             "session",
             "--id",
@@ -3931,9 +3458,7 @@ fn session_append_extends_the_note_before_dispatch() {
             "--yes",
             "--append",
             "one more thing in the moment",
-            "--config-path",
         ])
-        .arg(&cfg)
         .env("PATH", path)
         .env("ZELLIJ_STUB_LOG", &log)
         .assert()
@@ -3965,7 +3490,7 @@ fn session_append_declined_through_stdin_leaves_note_unchanged() {
     let note_path = directory.path().join("notes/pwf/PWF-0001.md");
     let stored_before = fs::read_to_string(&note_path).unwrap();
 
-    let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_pwf"));
+    let mut command = config_path.command();
     command
         .args([
             "session",
@@ -3973,9 +3498,7 @@ fn session_append_declined_through_stdin_leaves_note_unchanged() {
             "PWF-0001",
             "--append",
             "declined context",
-            "--config-path",
         ])
-        .arg(&config_path)
         .env("PATH", child_path)
         .env("ZELLIJ_STUB_LOG", &launch_log_path)
         .env("NO_COLOR", "1");
@@ -4006,9 +3529,8 @@ fn session_dispatches_a_thin_pointer_not_the_note_body() {
     let dir = TempDir::new().unwrap();
     let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
 
-    pwf()
-        .args(["session", "--id", "PWF-0001", "--yes", "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["session", "--id", "PWF-0001", "--yes"])
         .env("PATH", path)
         .env("ZELLIJ_STUB_LOG", &log)
         .assert()
@@ -4036,7 +3558,7 @@ fn session_append_short_flag_extends_the_note() {
     let dir = TempDir::new().unwrap();
     let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
 
-    pwf()
+    cfg.command()
         .args([
             "session",
             "--id",
@@ -4047,8 +3569,6 @@ fn session_append_short_flag_extends_the_note() {
             "-a",
             "extra note",
         ])
-        .arg("--config-path")
-        .arg(&cfg)
         .env("PATH", path)
         .env("ZELLIJ_STUB_LOG", &log)
         .assert()
@@ -4066,27 +3586,12 @@ fn session_append_short_flag_extends_the_note() {
 fn session_append_rejects_whitespace_only_before_any_dispatch() {
     let (dir, cfg) = staged();
     let note_path = dir.path().join("notes/glep-shimeji/GLP-0001.md");
-    let repository_path = dir.path().join("repo");
-    fs::create_dir_all(&repository_path).unwrap();
-    let mut config: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&cfg).unwrap()).unwrap();
-    config["projects"]["glep-shimeji"] =
-        serde_json::Value::String(repository_path.to_string_lossy().into_owned());
-    fs::write(&cfg, serde_json::to_vec(&config).unwrap()).unwrap();
     let before = fs::read_to_string(&note_path).unwrap();
 
-    pwf()
+    cfg.command()
         .args([
-            "session",
-            "--id",
-            "GLP-0001",
-            "--inline",
-            "--yes",
-            "--append",
-            "   \n\t",
-            "--config-path",
+            "session", "--id", "GLP-0001", "--inline", "--yes", "--append", "   \n\t",
         ])
-        .arg(&cfg)
         .assert()
         .failure()
         .stderr(contains("--append cannot be empty"));
@@ -4098,7 +3603,9 @@ fn session_append_rejects_whitespace_only_before_any_dispatch() {
 #[test]
 fn verify_codex_agent_reports_codex() {
     // The binary-only Codex command is stable even when Codex is absent from the host PATH.
-    pwf()
+    let (_directory, database) = temporary_database();
+    database
+        .command()
         .args(["verify", "--agent", "codex"])
         .assert()
         .success()
@@ -4109,31 +3616,15 @@ fn verify_codex_agent_reports_codex() {
 #[test]
 fn e2e_verify_reports_resolved_model_for_effort_tagged_item() {
     let (d, cfg) = staged();
-    pwf()
-        .args([
-            "update",
-            "--id",
-            "GLP-0001",
-            "--effort",
-            "1",
-            "--config-path",
-        ])
-        .arg(&cfg)
+    cfg.command()
+        .args(["update", "--id", "GLP-0001", "--effort", "1"])
         .assert()
         .success();
     let tiers = d.path().join("model-tiers.toml");
     fs::write(&tiers, "[tiers.1]\nclaude_model = \"sonnet\"\n").unwrap();
 
-    pwf()
-        .args([
-            "verify",
-            "--id",
-            "GLP-0001",
-            "--agent",
-            "claude",
-            "--config-path",
-        ])
-        .arg(&cfg)
+    cfg.command()
+        .args(["verify", "--id", "GLP-0001", "--agent", "claude"])
         .env("PWF_MODEL_TIERS", &tiers)
         .assert()
         .success()
@@ -4144,30 +3635,14 @@ fn e2e_verify_reports_resolved_model_for_effort_tagged_item() {
 #[test]
 fn e2e_verify_fails_on_broken_model_tiers_for_effort_tagged_item() {
     let (d, cfg) = staged();
-    pwf()
-        .args([
-            "update",
-            "--id",
-            "GLP-0001",
-            "--effort",
-            "1",
-            "--config-path",
-        ])
-        .arg(&cfg)
+    cfg.command()
+        .args(["update", "--id", "GLP-0001", "--effort", "1"])
         .assert()
         .success();
     let missing_tiers = d.path().join("does-not-exist.toml");
 
-    pwf()
-        .args([
-            "verify",
-            "--id",
-            "GLP-0001",
-            "--agent",
-            "claude",
-            "--config-path",
-        ])
-        .arg(&cfg)
+    cfg.command()
+        .args(["verify", "--id", "GLP-0001", "--agent", "claude"])
         .env("PWF_MODEL_TIERS", &missing_tiers)
         .assert()
         .success() // Probe failures are reported in Markdown.
@@ -4177,7 +3652,9 @@ fn e2e_verify_fails_on_broken_model_tiers_for_effort_tagged_item() {
 
 #[test]
 fn session_missing_id_errors() {
-    pwf()
+    let (_directory, database) = temporary_database();
+    database
+        .command()
         .arg("session")
         .assert()
         .failure()
@@ -4187,9 +3664,8 @@ fn session_missing_id_errors() {
 #[test]
 fn session_unknown_id_errors_not_found() {
     let (_dir, cfg) = staged();
-    pwf()
-        .args(["session", "GLP-9999", "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["session", "GLP-9999"])
         .assert()
         .failure()
         .stderr(contains("not found"));
@@ -4198,7 +3674,9 @@ fn session_unknown_id_errors_not_found() {
 #[test]
 fn retired_launch_verb_treated_as_unknown_project() {
     // Retired launch verbs fall through to project routing.
-    pwf()
+    let (_directory, database) = temporary_database();
+    database
+        .command()
         .args(["launch", "--id", "GLP-0001"])
         .assert()
         .failure()
@@ -4207,7 +3685,9 @@ fn retired_launch_verb_treated_as_unknown_project() {
 
 #[test]
 fn retired_launch_claude_verb_treated_as_unknown_project() {
-    pwf()
+    let (_directory, database) = temporary_database();
+    database
+        .command()
         .args(["launch-claude", "--id", "GLP-0001"])
         .assert()
         .failure()
@@ -4224,9 +3704,8 @@ fn e2e_remove_resolves_descriptive_filename_by_frontmatter_id() {
     )
     .unwrap();
 
-    pwf()
-        .args(["remove", "--id", "GLP-0001", "--yes", "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["remove", "--id", "GLP-0001", "--yes"])
         .assert()
         .success();
 
@@ -4243,9 +3722,8 @@ fn note_add_list_update_remove_preserves_tasks_and_header() {
         "---\nstatus: active\ntitle: real task\nproject: pwf\ncreated: 2026-01-01\n---\n\nbody\n",
     );
 
-    pwf()
-        .args(["note", "add", "pwf", "remember the milk", "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["note", "add", "pwf", "remember the milk"])
         .assert()
         .success()
         .stdout(predicates::str::contains(
@@ -4264,16 +3742,8 @@ fn note_add_list_update_remove_preserves_tasks_and_header() {
     );
 
     // The project token resolves case-insensitively by name or id code.
-    pwf()
-        .args([
-            "note",
-            "update",
-            "PWF",
-            "1",
-            "remember oat milk",
-            "--config-path",
-        ])
-        .arg(&cfg)
+    cfg.command()
+        .args(["note", "update", "PWF", "1", "remember oat milk"])
         .assert()
         .success()
         .stdout(predicates::str::contains(
@@ -4281,9 +3751,8 @@ fn note_add_list_update_remove_preserves_tasks_and_header() {
         ));
 
     // A bare project lists (implicit `ls`).
-    pwf()
-        .args(["note", "pwf", "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["note", "pwf"])
         .assert()
         .success()
         .stdout(predicates::str::contains(
@@ -4297,9 +3766,8 @@ fn note_add_list_update_remove_preserves_tasks_and_header() {
         "update duplicated note link: {updated_index}"
     );
 
-    pwf()
-        .args(["note", "remove", "pwf", "1", "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["note", "remove", "pwf", "1"])
         .assert()
         .success();
 
@@ -4324,7 +3792,7 @@ fn handoff_list_missing_ledger_text_is_a_binary_contract() {
     let repo = dir.path().join("repo");
     fs::create_dir_all(&repo).unwrap();
 
-    pwf()
+    database_independent_command()
         .args(["handoff", "list", "--repo-root"])
         .arg(&repo)
         .assert()
@@ -4339,7 +3807,7 @@ fn handoff_list_unreadable_ledger_is_not_reported_as_missing() {
     let repo = dir.path().join("repo");
     fs::create_dir_all(repo.join("docs/handoffs/LEDGER.md")).unwrap();
 
-    pwf()
+    database_independent_command()
         .args(["handoff", "list", "--repo-root"])
         .arg(&repo)
         .assert()
@@ -4352,53 +3820,18 @@ fn handoff_list_unreadable_ledger_is_not_reported_as_missing() {
 }
 
 #[test]
-fn handoff_add_explicit_config_error_is_not_reported_as_unmanaged() {
+fn handoff_add_unmanaged_repo_has_exact_error_and_no_scaffold() {
     let dir = TempDir::new().unwrap();
     let repo = dir.path().join("repo");
     fs::create_dir_all(&repo).unwrap();
-    let missing_config = dir.path().join("missing.json");
+    let database = DatabaseFixture::new(dir.path().join("projects.sqlite3"));
 
-    handoff_add_command(&dir, &missing_config)
+    handoff_add_command(&dir, &database)
         .assert()
         .code(1)
         .stdout("")
         .stderr(format!(
-            "Error: Pending work config not found: {}\n",
-            missing_config.display()
-        ));
-    assert!(!repo.join("docs/handoffs").exists());
-}
-
-#[test]
-fn handoff_add_malformed_explicit_config_is_not_reported_as_unmanaged() {
-    let dir = TempDir::new().unwrap();
-    let repo = dir.path().join("repo");
-    fs::create_dir_all(&repo).unwrap();
-    let malformed_config = dir.path().join("malformed.json");
-    fs::write(&malformed_config, "{ not json").unwrap();
-
-    handoff_add_command(&dir, &malformed_config)
-        .assert()
-        .code(1)
-        .stdout("")
-        .stderr("Error: config parse error: key must be a string at line 1 column 3\n");
-    assert!(!repo.join("docs/handoffs").exists());
-}
-
-#[test]
-fn handoff_add_valid_config_with_unmanaged_repo_has_exact_error_and_no_scaffold() {
-    let dir = TempDir::new().unwrap();
-    let repo = dir.path().join("repo");
-    fs::create_dir_all(&repo).unwrap();
-    let config = dir.path().join("valid.json");
-    fs::write(&config, r#"{ "notesDir": "/unused" }"#).unwrap();
-
-    handoff_add_command(&dir, &config)
-        .assert()
-        .code(1)
-        .stdout("")
-        .stderr(format!(
-            "Error: this repo is not a managed project: {}; handoffs require one — register it in the pwf config\n",
+            "Error: this repo is not a managed project: {}; handoffs require a managed project record\n",
             repo.display()
         ));
     assert!(!repo.join("docs/handoffs").exists());
@@ -4413,11 +3846,13 @@ fn handoff_add_external_allocator_receives_canonical_arguments() {
     let allocator =
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pw-stub.sh");
     let argument_log = dir.path().join("allocator-argv.txt");
+    let database_path_log = dir.path().join("allocator-database-path.txt");
 
     handoff_add_command(&dir, &cfg)
         .arg("--pending-work-script")
         .arg(&allocator)
         .env("HANDOFF_STUB_LOG", &argument_log)
+        .env("HANDOFF_STUB_DATABASE_LOG", &database_path_log)
         .assert()
         .success()
         .stderr("")
@@ -4427,10 +3862,14 @@ fn handoff_add_external_allocator_receives_canonical_arguments() {
         ));
     assert_eq!(
         fs::read_to_string(&argument_log).unwrap(),
-        format!(
-            "add\n--config-path\n{}\n--date\n2026-01-01\ntest-project\n--tag\nhandoff\n--continue-handoff\n",
-            cfg.display()
-        )
+        "add\n--date\n2026-01-01\ntest-project\n--tag\nhandoff\n--continue-handoff\n"
+    );
+    assert_eq!(
+        fs::read(&database_path_log).unwrap(),
+        dir.path()
+            .join("projects.sqlite3")
+            .as_os_str()
+            .as_encoded_bytes()
     );
     assert!(
         fs::read_to_string(&handoff)
@@ -4498,7 +3937,7 @@ fn linked_handoff_close_failure_reports_post_mutation_recovery() {
     fs::create_dir(&ledger).unwrap();
     let raw_source = raw_rename_error_for_file_over_directory(&ledger);
 
-    pwf()
+    cfg.command()
         .args([
             "done",
             "GLP-0001",
@@ -4506,9 +3945,7 @@ fn linked_handoff_close_failure_reports_post_mutation_recovery() {
             "complete",
             "--date",
             "2026-01-02",
-            "--config-path",
         ])
-        .arg(&cfg)
         .assert()
         .code(1)
         .stdout("")
@@ -4526,9 +3963,8 @@ fn linked_handoff_remove_failure_reports_deleted_note_recovery() {
     fs::create_dir(&ledger).unwrap();
     let raw_source = raw_rename_error_for_file_over_directory(&ledger);
 
-    pwf()
-        .args(["remove", "GLP-0001", "--yes", "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["remove", "GLP-0001", "--yes"])
         .assert()
         .code(1)
         .stdout("")
@@ -4567,7 +4003,7 @@ fn linked_handoff_lifecycle_outputs_never_touch_git() {
             .expect("handoff path must have a file name"),
     );
 
-    pwf()
+    cfg.command()
         .args([
             "done",
             "--id",
@@ -4578,9 +4014,7 @@ fn linked_handoff_lifecycle_outputs_never_touch_git() {
             "a..b",
             "--date",
             "2026-01-02",
-            "--config-path",
         ])
-        .arg(&cfg)
         .assert()
         .success()
         .stderr("")
@@ -4599,9 +4033,8 @@ fn linked_handoff_lifecycle_outputs_never_touch_git() {
         "done must not create/touch .git"
     );
 
-    pwf()
-        .args(["reopen", "--id", "GLP-0001", "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["reopen", "--id", "GLP-0001"])
         .assert()
         .success()
         .stderr("")
@@ -4621,7 +4054,7 @@ fn linked_handoff_lifecycle_outputs_never_touch_git() {
         "reopen must not create/touch .git"
     );
 
-    pwf()
+    cfg.command()
         .args([
             "cancel",
             "GLP-0001",
@@ -4629,9 +4062,7 @@ fn linked_handoff_lifecycle_outputs_never_touch_git() {
             "superseded",
             "--date",
             "2026-01-03",
-            "--config-path",
         ])
-        .arg(&cfg)
         .assert()
         .success()
         .stderr("")
@@ -4640,9 +4071,8 @@ fn linked_handoff_lifecycle_outputs_never_touch_git() {
             archived_path.display()
         ));
 
-    pwf()
-        .args(["reopen", "GLP-0001", "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["reopen", "GLP-0001"])
         .assert()
         .success();
     let pending_work_note_path_expected = d
@@ -4655,9 +4085,8 @@ fn linked_handoff_lifecycle_outputs_never_touch_git() {
         .join("notes/glep-shimeji/glep-shimeji.md")
         .to_string_lossy()
         .replace('\\', "/");
-    pwf()
-        .args(["remove", "GLP-0001", "--yes", "--config-path"])
-        .arg(&cfg)
+    cfg.command()
+        .args(["remove", "GLP-0001", "--yes"])
         .env("NO_COLOR", "1")
         .assert()
         .success()

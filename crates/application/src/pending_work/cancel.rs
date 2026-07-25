@@ -6,7 +6,7 @@ use super::{
 use crate::{
     HandoffDocumentStore, HandoffLedger,
     handoff::HandoffError,
-    ports::{AppDbStore, IndexEntry, IndexSection, PendingWorkItem},
+    ports::{AppRecordStore, IndexEntry, IndexSection, PendingWorkItem},
 };
 
 #[derive(Debug, Clone)]
@@ -70,11 +70,11 @@ pub fn execute<S>(
     projects: &ProjectRegistry,
 ) -> Result<CompletedPendingWork, CancelPendingWorkError>
 where
-    S: AppDbStore<PendingWorkItem>
-        + AppDbStore<IndexEntry>
-        + AppDbStore<IndexSection>
+    S: AppRecordStore<PendingWorkItem>
+        + AppRecordStore<IndexEntry>
+        + AppRecordStore<IndexSection>
         + HandoffDocumentStore
-        + AppDbStore<HandoffLedger>,
+        + AppRecordStore<HandoffLedger>,
 {
     perform_close(
         store,
@@ -163,7 +163,7 @@ mod tests {
         let store = InMemoryStore::default()
             .with_prefix("glep-shimeji", "GLP")
             .with_project("glep-shimeji", vec![record("GLP-0001")]);
-        <InMemoryStore as crate::AppDbStore<IndexEntry>>::insert(
+        <InMemoryStore as crate::AppRecordStore<IndexEntry>>::insert(
             &store,
             &ProjectName::try_new("glep-shimeji").unwrap(),
             IndexEntry {

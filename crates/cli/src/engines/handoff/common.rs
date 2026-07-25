@@ -4,9 +4,6 @@ use clap::Args;
 
 #[derive(Args, Debug, Default)]
 pub struct CommonArguments {
-    /// Path to the pwf config JSON (overrides $`PWF_CONFIG`).
-    #[arg(long)]
-    pub(crate) config_path: Option<String>,
     /// Repo root (else `git rev-parse --show-toplevel`, else cwd).
     #[arg(long)]
     pub(crate) repo_root: Option<String>,
@@ -56,16 +53,11 @@ pub(super) enum HandoffError {
     #[error("--title is required for add.")]
     MissingTitle,
     #[error(
-        "this repo is not a managed project: {root}; handoffs require one — register it in the pwf config"
+        "this repo is not a managed project: {root}; handoffs require a managed project record"
     )]
     UnmanagedRepo { root: String },
     #[error("Handoff already exists: {}", path.display())]
     HandoffAlreadyExists { path: PathBuf },
-    #[error("{source}")]
-    Config {
-        #[source]
-        source: crate::config::ConfigError,
-    },
     #[error("{source}")]
     Add {
         #[source]

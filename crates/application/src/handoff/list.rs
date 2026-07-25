@@ -1,8 +1,6 @@
 use std::error::Error;
 
-use crate::{AppDbStore, HandoffLedger, HandoffLedgerIdentifier, HandoffScope};
-
-type StoreError = Box<dyn Error + Send + Sync>;
+use crate::{AppRecordStore, HandoffLedger, HandoffLedgerIdentifier, HandoffScope};
 
 /// Requests the persisted ledger for one repository.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,7 +29,7 @@ pub enum ListHandoffsError {
     ReadLedger {
         /// Concrete adapter failure.
         #[source]
-        source: StoreError,
+        source: Box<dyn Error + Send + Sync>,
     },
 }
 
@@ -43,10 +41,10 @@ pub enum ListHandoffsError {
 #[cqrsy::query]
 pub fn execute<S>(command: ListHandoffs, store: &S) -> Result<ListedHandoffs, ListHandoffsError>
 where
-    S: AppDbStore<HandoffLedger>,
+    S: AppRecordStore<HandoffLedger>,
 {
     let ListHandoffs { scope } = command;
-    let ledger = <S as AppDbStore<HandoffLedger>>::get(store, &scope, &HandoffLedgerIdentifier)
+    let ledger = <S as AppRecordStore<HandoffLedger>>::get(store, &scope, &HandoffLedgerIdentifier)
         .map_err(|error| ListHandoffsError::ReadLedger {
             source: Box::new(error),
         })?;
@@ -64,8 +62,8 @@ mod tests {
 
     use super::{ListHandoffs, ListedHandoffs, execute};
     use crate::{
-        AppDbStore, HandoffLedger, HandoffLedgerIdentifier, HandoffLedgerRow, HandoffLedgerWrite,
-        HandoffScope, testing::InMemoryStore,
+        AppRecordStore, HandoffLedger, HandoffLedgerIdentifier, HandoffLedgerRow,
+        HandoffLedgerWrite, HandoffScope, testing::InMemoryStore,
     };
 
     fn scope() -> HandoffScope {
@@ -83,7 +81,7 @@ mod tests {
             ListedHandoffs::LedgerMissing
         );
 
-        <InMemoryStore as AppDbStore<HandoffLedger>>::insert(
+        <InMemoryStore as AppRecordStore<HandoffLedger>>::insert(
             &store,
             &scope(),
             HandoffLedgerWrite {
@@ -111,7 +109,7 @@ mod tests {
         let store = InMemoryStore::default();
 
         assert!(
-            <InMemoryStore as AppDbStore<HandoffLedger>>::get(
+            <InMemoryStore as AppRecordStore<HandoffLedger>>::get(
                 &store,
                 &scope(),
                 &HandoffLedgerIdentifier,

@@ -10,7 +10,7 @@ use super::{
 use crate::{
     HandoffDocumentStore, HandoffLedger,
     handoff::{HandoffError, HandoffMutationOk, lifecycle},
-    ports::{AppDbStore, IndexEntry, IndexEntryState, ItemPatch, PendingWorkItem},
+    ports::{AppRecordStore, IndexEntry, IndexEntryState, ItemPatch, PendingWorkItem},
 };
 
 #[derive(Debug, Clone)]
@@ -60,10 +60,10 @@ pub fn execute<S>(
     projects: &ProjectRegistry,
 ) -> Result<ReopenedPendingWork, ReopenPendingWorkError>
 where
-    S: AppDbStore<PendingWorkItem>
-        + AppDbStore<IndexEntry>
+    S: AppRecordStore<PendingWorkItem>
+        + AppRecordStore<IndexEntry>
         + HandoffDocumentStore
-        + AppDbStore<HandoffLedger>,
+        + AppRecordStore<HandoffLedger>,
 {
     let not_found = || ReopenPendingWorkError::ItemNotFound { id: cmd.id.clone() };
     let pending_work_identifier = WorkItemId::try_new(&cmd.id).map_err(|_| not_found())?;
@@ -103,7 +103,7 @@ where
         });
     }
 
-    <S as AppDbStore<PendingWorkItem>>::update(
+    <S as AppRecordStore<PendingWorkItem>>::update(
         store,
         project,
         &pending_work_identifier,
@@ -116,7 +116,7 @@ where
     )
     .map_err(|error| ReopenPendingWorkError::WriteStore(Box::new(error)))?;
 
-    let entries = <S as AppDbStore<IndexEntry>>::list(store, project)
+    let entries = <S as AppRecordStore<IndexEntry>>::list(store, project)
         .map_err(|error| ReopenPendingWorkError::WriteStore(Box::new(error)))?;
     let views: Vec<QueueEntryView> = entries.iter().map(queue_view).collect();
     let open_entry = IndexEntry {
@@ -126,7 +126,7 @@ where
     };
     match reopen_decision(&views, &pending_work_identifier) {
         ReopenDecision::RestoreExisting => {
-            <S as AppDbStore<IndexEntry>>::update(
+            <S as AppRecordStore<IndexEntry>>::update(
                 store,
                 project,
                 &pending_work_identifier,
@@ -135,7 +135,7 @@ where
             .map_err(|error| ReopenPendingWorkError::WriteStore(Box::new(error)))?;
         }
         ReopenDecision::ReAddEvicted => {
-            <S as AppDbStore<IndexEntry>>::insert(store, project, open_entry)
+            <S as AppRecordStore<IndexEntry>>::insert(store, project, open_entry)
                 .map_err(|error| ReopenPendingWorkError::WriteStore(Box::new(error)))?;
         }
         ReopenDecision::AlreadyOpen => {}
@@ -210,7 +210,7 @@ mod tests {
             .with_prefix("glep-shimeji", "GLP")
             .with_project("glep-shimeji", vec![record("GLP-0001", status)]);
         for entry in entries {
-            <InMemoryStore as crate::AppDbStore<IndexEntry>>::insert(&store, &glp(), entry)
+            <InMemoryStore as crate::AppRecordStore<IndexEntry>>::insert(&store, &glp(), entry)
                 .unwrap();
         }
         store

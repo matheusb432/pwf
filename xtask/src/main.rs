@@ -6,10 +6,13 @@ use anyhow::Result;
 use clap::Parser;
 
 mod architecture_check;
+mod child_process;
 mod cli;
 mod gate;
 mod paths;
 mod process;
+mod sqlite_url;
+mod sqlx_cli;
 mod task;
 mod verb;
 mod verbs;
@@ -28,6 +31,7 @@ fn run(command: cli::Command) -> Result<()> {
         Command::FormatCheck => verbs::format::check(),
         Command::Lint => verbs::lint::run(),
         Command::Check => verbs::check::run(),
+        Command::Prepare { check } => verbs::prepare::run(check),
         Command::Fix(arguments) => verbs::format::fix(&arguments.arguments_extra),
         Command::Test(test) => verbs::test::run(test.scope, test.verbose),
         Command::Ship => verbs::ship::run(),

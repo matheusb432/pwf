@@ -5,8 +5,6 @@ use pwf_application::pending_work::{ListResult, PendingWorkItemView, Prerequisit
 use pwf_domain::pending_work::{WorkItemStatus, WorkItemStatusFilter};
 
 use super::{ID_ORANGE, paint};
-use crate::config::Config;
-
 fn more_footer(hidden: usize) -> String {
     if hidden == 0 {
         return String::new();
@@ -16,27 +14,22 @@ fn more_footer(hidden: usize) -> String {
 
 pub(in crate::engines::pending_work) fn render_list(
     result: &ListResult,
-    cfg: &Config,
-    only_project: Option<&str>,
+    location: &str,
     status_filter: WorkItemStatusFilter,
     long: bool,
     grouped: bool,
     on: bool,
 ) -> String {
     if result.items.is_empty() {
-        let target = only_project.map_or_else(
-            || cfg.notes_dir.clone(),
-            |p| format!("{p} in {}", cfg.notes_dir),
-        );
         return match status_filter {
             WorkItemStatusFilter::Exact(WorkItemStatus::Active) => {
-                format!("No open pending-work prompts found in {target}.\n")
+                format!("No open pending-work prompts found in {location}.\n")
             }
             WorkItemStatusFilter::Exact(status) => {
-                format!("No pending-work prompts with status {status} found in {target}.\n")
+                format!("No pending-work prompts with status {status} found in {location}.\n")
             }
             WorkItemStatusFilter::All => {
-                format!("No pending-work prompts found in {target}.\n")
+                format!("No pending-work prompts found in {location}.\n")
             }
         };
     }
@@ -234,15 +227,17 @@ fn render_list_item(
             let _ = writeln!(out, "  issue: {issue}");
         }
         if !item.launchable {
-            let _ = writeln!(out, "  fix: edit {} or config/pending-work.json", item.note);
+            let _ = writeln!(
+                out,
+                "  fix: edit {} or update the managed project record",
+                item.note
+            );
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-
     use pwf_application::pending_work::PrerequisiteStatus;
     use pwf_domain::pending_work::{WorkItemId, WorkItemStatus, WorkItemStatusFilter};
 
@@ -269,16 +264,6 @@ mod tests {
             effort: None,
             tags: None,
             created: None,
-        }
-    }
-
-    fn empty_cfg() -> Config {
-        Config {
-            notes_dir: String::new(),
-            projects: BTreeMap::default(),
-            prefixes: BTreeMap::default(),
-            work_prefix: String::new(),
-            notes_dir_overrides: BTreeMap::default(),
         }
     }
 
@@ -420,9 +405,6 @@ mod tests {
             items: Vec::new(),
             hidden: 0,
         };
-        let mut cfg = empty_cfg();
-        cfg.notes_dir = "notes".to_string();
-
         for (filter, expected) in [
             (
                 WorkItemStatusFilter::Exact(WorkItemStatus::Active),
@@ -442,7 +424,7 @@ mod tests {
             ),
         ] {
             assert_eq!(
-                render_list(&result, &cfg, None, filter, false, false, false),
+                render_list(&result, "notes", filter, false, false, false),
                 expected
             );
         }

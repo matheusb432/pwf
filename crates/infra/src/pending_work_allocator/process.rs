@@ -122,8 +122,6 @@ fn run_allocator(script: &Path, request: &AllocatePendingWork) -> Result<Output,
     // FIXME: Pass the exact handoff path through the external allocator protocol; newest-file discovery can attach concurrent additions to the wrong handoff.
     std::process::Command::new(script)
         .arg("add")
-        .arg("--config-path")
-        .arg(&request.config_path)
         .args([
             "--date",
             request.created.as_str(),
@@ -212,14 +210,16 @@ mod tests {
     #[test]
     fn process_client_passes_the_complete_canonical_argument_vector() {
         let temporary_directory = tempfile::tempdir().unwrap();
-        let argument_log = temporary_directory.path().join("arguments.txt");
-        let client = ProcessPendingWorkAllocator::new(Some(allocator_fixture(
-            "pending-work-allocator-success.sh",
-        )));
+        let script = temporary_directory.path().join("allocator.sh");
+        std::os::unix::fs::symlink(
+            allocator_fixture("pending-work-allocator-success.sh"),
+            &script,
+        )
+        .unwrap();
+        let client = ProcessPendingWorkAllocator::new(Some(script.clone()));
 
         let parsed = client
             .allocate(&AllocatePendingWork {
-                config_path: argument_log.clone(),
                 created: Timestamp::new("2026-01-01"),
                 project: ProjectName::try_new("test-project").unwrap(),
             })
@@ -227,45 +227,9 @@ mod tests {
 
         assert_eq!(parsed.as_ref(), "PWF-0001");
         assert_eq!(
-            std::fs::read_to_string(argument_log).unwrap(),
-            format!(
-                "add\n--config-path\n{}\n--date\n2026-01-01\ntest-project\n--tag\nhandoff\n--continue-handoff\n",
-                temporary_directory.path().join("arguments.txt").display()
-            )
+            std::fs::read_to_string(script.with_extension("sh.arguments")).unwrap(),
+            "add\n--date\n2026-01-01\ntest-project\n--tag\nhandoff\n--continue-handoff\n"
         );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn process_client_preserves_non_utf8_config_path_bytes_in_the_complete_argument_vector() {
-        use std::{
-            ffi::OsString,
-            os::unix::ffi::{OsStrExt as _, OsStringExt as _},
-        };
-
-        let temporary_directory = tempfile::tempdir().unwrap();
-        let client = ProcessPendingWorkAllocator::new(Some(allocator_fixture(
-            "pending-work-allocator-success.sh",
-        )));
-        let config_path = temporary_directory
-            .path()
-            .join(OsString::from_vec(b"pending-\xff-work.json".to_vec()));
-
-        let parsed = client
-            .allocate(&AllocatePendingWork {
-                config_path: config_path.clone(),
-                created: Timestamp::new("2026-01-01"),
-                project: ProjectName::try_new("test-project").unwrap(),
-            })
-            .unwrap();
-
-        assert_eq!(parsed.as_ref(), "PWF-0001");
-        let mut expected = b"add\n--config-path\n".to_vec();
-        expected.extend_from_slice(config_path.as_os_str().as_bytes());
-        expected.extend_from_slice(
-            b"\n--date\n2026-01-01\ntest-project\n--tag\nhandoff\n--continue-handoff\n",
-        );
-        assert_eq!(std::fs::read(config_path).unwrap(), expected);
     }
 
     #[cfg(unix)]
@@ -277,7 +241,6 @@ mod tests {
 
         let error = client
             .allocate(&AllocatePendingWork {
-                config_path: PathBuf::from("/tmp/pending-work.json"),
                 created: Timestamp::new("2026-01-01"),
                 project: ProjectName::try_new("test-project").unwrap(),
             })
@@ -302,7 +265,6 @@ mod tests {
 
         let error = client
             .allocate(&AllocatePendingWork {
-                config_path: PathBuf::from("/tmp/pending-work.json"),
                 created: Timestamp::new("2026-01-01"),
                 project: ProjectName::try_new("test-project").unwrap(),
             })

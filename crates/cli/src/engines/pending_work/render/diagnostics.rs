@@ -51,7 +51,7 @@ fn created_section_for_error(error: &AddPendingWorkError) -> Option<(&str, &str)
             .created_section
             .as_deref()
             .map(|section| (diagnostics.project.as_str(), section)),
-        AddPendingWorkError::ProjectNotMappedToRepo { .. }
+        AddPendingWorkError::ProjectHasNoDirectorySource { .. }
         | AddPendingWorkError::Usage
         | AddPendingWorkError::ProjectResolution(_)
         | AddPendingWorkError::InvalidTag { .. }

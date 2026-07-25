@@ -1,12 +1,12 @@
 use std::{fmt::Write as _, path::PathBuf};
 
 use pwf_application::{
-    AppDbStore, HandoffLedger, HandoffLedgerIdentifier, HandoffLedgerWrite, HandoffScope,
+    AppRecordStore, HandoffLedger, HandoffLedgerIdentifier, HandoffLedgerWrite, HandoffScope,
 };
 
 use super::{ObsidianStore, ObsidianStoreError};
 
-impl AppDbStore<HandoffLedger> for ObsidianStore {
+impl AppRecordStore<HandoffLedger> for ObsidianStore {
     type Error = ObsidianStoreError;
 
     fn get(
@@ -27,7 +27,7 @@ impl AppDbStore<HandoffLedger> for ObsidianStore {
 
     fn list(&self, scope: &HandoffScope) -> Result<Vec<HandoffLedger>, Self::Error> {
         Ok(
-            <Self as AppDbStore<HandoffLedger>>::get(self, scope, &HandoffLedgerIdentifier)?
+            <Self as AppRecordStore<HandoffLedger>>::get(self, scope, &HandoffLedgerIdentifier)?
                 .into_iter()
                 .collect(),
         )
@@ -58,7 +58,7 @@ impl AppDbStore<HandoffLedger> for ObsidianStore {
         _identifier: &HandoffLedgerIdentifier,
         patch: HandoffLedgerWrite,
     ) -> Result<(), Self::Error> {
-        let _ = <Self as AppDbStore<HandoffLedger>>::insert(self, scope, patch)?;
+        let _ = <Self as AppRecordStore<HandoffLedger>>::insert(self, scope, patch)?;
         Ok(())
     }
 
@@ -108,15 +108,14 @@ mod tests {
     use std::{assert_matches, path::PathBuf};
 
     use pwf_application::{
-        AppDbStore, HandoffLedger, HandoffLedgerIdentifier, HandoffLedgerRow, HandoffLedgerWrite,
-        HandoffScope,
+        AppRecordStore, HandoffLedger, HandoffLedgerIdentifier, HandoffLedgerRow,
+        HandoffLedgerWrite, HandoffScope,
     };
-    use pwf_core::config::from_json;
 
     use super::super::{ObsidianStore, ObsidianStoreError};
 
     fn store() -> ObsidianStore {
-        ObsidianStore::new(from_json(r#"{ "notesDir": "/unused" }"#, None).unwrap())
+        ObsidianStore::new([])
     }
 
     fn scope(repository_root: PathBuf) -> HandoffScope {
@@ -142,7 +141,7 @@ mod tests {
         let scope = scope(temporary_directory.path().join("repo"));
         let store = store();
         assert!(
-            <ObsidianStore as AppDbStore<HandoffLedger>>::get(
+            <ObsidianStore as AppRecordStore<HandoffLedger>>::get(
                 &store,
                 &scope,
                 &HandoffLedgerIdentifier,
@@ -152,14 +151,15 @@ mod tests {
         );
 
         let inserted =
-            <ObsidianStore as AppDbStore<HandoffLedger>>::insert(&store, &scope, write()).unwrap();
+            <ObsidianStore as AppRecordStore<HandoffLedger>>::insert(&store, &scope, write())
+                .unwrap();
         assert_eq!(
             inserted.source,
             "# Handoff ledger — active only\n\nOnly handoffs with status: active are listed.\n\n| ID | Handoff | Goals | Created |\n| --- | --- | --- | --- |\n| TST-0001 | [Managed Flow](2026-01-01-managed-flow.md) | 1/2 | 2026-01-01 |\n"
         );
 
         std::fs::write(&inserted.locator, "verbatim\r\nledger\r\n").unwrap();
-        let read = <ObsidianStore as AppDbStore<HandoffLedger>>::get(
+        let read = <ObsidianStore as AppRecordStore<HandoffLedger>>::get(
             &store,
             &scope,
             &HandoffLedgerIdentifier,
@@ -168,7 +168,7 @@ mod tests {
         .unwrap();
         assert_eq!(read.source, "verbatim\r\nledger\r\n");
 
-        <ObsidianStore as AppDbStore<HandoffLedger>>::delete(
+        <ObsidianStore as AppRecordStore<HandoffLedger>>::delete(
             &store,
             &scope,
             &HandoffLedgerIdentifier,
@@ -184,7 +184,7 @@ mod tests {
         let ledger = scope.repository_root.join("docs/handoffs/LEDGER.md");
         std::fs::create_dir_all(&ledger).unwrap();
 
-        let error = <ObsidianStore as AppDbStore<HandoffLedger>>::get(
+        let error = <ObsidianStore as AppRecordStore<HandoffLedger>>::get(
             &store(),
             &scope,
             &HandoffLedgerIdentifier,
@@ -201,8 +201,9 @@ mod tests {
         let ledger_path = scope.repository_root.join("docs/handoffs/LEDGER.md");
         std::fs::create_dir_all(&ledger_path).unwrap();
 
-        let error = <ObsidianStore as AppDbStore<HandoffLedger>>::insert(&store(), &scope, write())
-            .unwrap_err();
+        let error =
+            <ObsidianStore as AppRecordStore<HandoffLedger>>::insert(&store(), &scope, write())
+                .unwrap_err();
 
         let display = error.to_string();
         let ObsidianStoreError::WriteHandoffLedger { path, source } = error else {

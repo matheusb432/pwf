@@ -4,14 +4,14 @@ use pwf_application::pending_work::{
     ProjectResolutionError,
     list::{GetPendingWork, GetPendingWorkError},
 };
-use pwf_domain::pending_work::{ProjectName, Tags, WorkItemStatusFilter};
+use pwf_domain::pending_work::{Tags, WorkItemStatusFilter};
 use pwf_infra::obsidian::ObsidianStore;
 
 use super::{
-    common::{CommonArguments, PendingWorkError, SectionChoice, StatusChoice, load_configuration},
+    common::{CommonArguments, PendingWorkError, SectionChoice, StatusChoice},
     render::render_list,
 };
-use crate::{config::Config, console::Console};
+use crate::console::Console;
 
 const LIST_CAP_DEFAULT: usize = 10;
 
@@ -70,28 +70,32 @@ pub(crate) enum Compatibility {
     RejectCreateAfterProjectResolution,
 }
 
-pub(super) fn run(arguments: &Arguments, console: Console) -> Result<String, PendingWorkError> {
-    let configuration = load_configuration(&arguments.common)?;
-    let projects = ProjectRegistry::new(configuration.projects.iter().map(|(name, repository)| {
-        (
-            ProjectName::try_new(name).expect("configured project is non-empty"),
-            Some(repository.clone()),
-            configuration
-                .prefixes
-                .get(name)
-                .map(|prefix| prefix.to_ascii_uppercase()),
-        )
-    }));
+pub(super) fn run(
+    arguments: &Arguments,
+    console: Console,
+    store: &ObsidianStore,
+    projects: &ProjectRegistry,
+) -> Result<String, PendingWorkError> {
     let only_project = arguments
         .project
         .as_deref()
         .map(|project| {
             projects
                 .resolve(project)
-                .map(ToString::to_string)
+                .cloned()
                 .map_err(map_project_resolution_error)
         })
         .transpose()?;
+    let location = only_project
+        .as_ref()
+        .map(|project| {
+            store
+                .tasks_path(project)
+                .map(|path| path.display().to_string())
+                .map_err(|error| PendingWorkError::ApplicationRead(error.to_string()))
+        })
+        .transpose()?
+        .unwrap_or_else(|| "managed project task paths".to_string());
     match arguments.compatibility {
         Compatibility::List => {}
         Compatibility::RejectCreate | Compatibility::RejectCreateAfterProjectResolution => {
@@ -103,7 +107,7 @@ pub(super) fn run(arguments: &Arguments, console: Console) -> Result<String, Pen
     let tags = tags_from_flags(&arguments.tag)?;
     let (status, cap) = effective_status_and_cap(arguments.all, arguments.status, arguments.number);
     let parameters = ListParams {
-        only_project: only_project.as_deref(),
+        only_project: only_project.as_ref().map(AsRef::as_ref),
         long: arguments.long,
         scope,
         cap,
@@ -113,7 +117,6 @@ pub(super) fn run(arguments: &Arguments, console: Console) -> Result<String, Pen
         status_filter: status.filter(),
         color_on: console.color(),
     };
-    let store = ObsidianStore::new(configuration.clone());
     let result = pwf_application::pending_work::list::execute(
         &GetPendingWork {
             only_project: parameters.only_project.map(str::to_owned),
@@ -125,11 +128,11 @@ pub(super) fn run(arguments: &Arguments, console: Console) -> Result<String, Pen
             status_filter: parameters.status_filter,
             include_prerequisite_statuses: parameters.long,
         },
-        &store,
-        &projects,
+        store,
+        projects,
     )
     .map_err(map_get_pending_work_error)?;
-    Ok(render_query_result(&configuration, parameters, &result))
+    Ok(render_query_result(&location, parameters, &result))
 }
 
 fn map_project_resolution_error(error: ProjectResolutionError) -> PendingWorkError {
@@ -236,11 +239,10 @@ pub(in crate::engines::pending_work) struct ListParams<'a> {
     pub color_on: bool,
 }
 
-fn render_query_result(cfg: &Config, params: ListParams<'_>, result: &ListResult) -> String {
+fn render_query_result(location: &str, params: ListParams<'_>, result: &ListResult) -> String {
     render_list(
         result,
-        cfg,
-        params.only_project,
+        location,
         params.status_filter,
         params.long,
         list_scope_groups_output(params.scope),

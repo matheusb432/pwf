@@ -7,10 +7,7 @@ use super::{
     ObsidianStore, ObsidianStoreError,
     fs::{read_item_file, read_text_optional},
 };
-use crate::obsidian::identity::{
-    configured_project_index_identity, parse_project_index_identity,
-    validate_project_index_identity,
-};
+use crate::obsidian::identity::{parse_project_index_identity, validate_project_index_identity};
 
 impl ObsidianStore {
     /// Reads a project index only after validating its identity frontmatter.
@@ -18,16 +15,13 @@ impl ObsidianStore {
         &self,
         project: &ProjectName,
     ) -> Result<Option<(PathBuf, String)>, ObsidianStoreError> {
-        let index_path = pwf_core::paths::project_index_path(
-            self.config.notes_dir_for(project.as_ref()),
-            project.as_ref(),
-        );
+        let index_path = self.project_paths.project_index_path(project)?;
         let Some(text) = read_text_optional(&index_path) else {
             return Ok(None);
         };
         let actual = parse_project_index_identity(&index_path, &text)?;
-        let expected = configured_project_index_identity(&self.config, project)?;
-        validate_project_index_identity(&index_path, &actual, &expected)?;
+        let expected = self.project_paths.project_identity(project)?;
+        validate_project_index_identity(&index_path, &actual, expected)?;
         Ok(Some((index_path, text)))
     }
 }

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        UPDATE projects\n        SET paused_at = NULL\n        WHERE id = ? AND paused_at IS NOT NULL\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "eb9e5cc280ca80b5bc18a731e8784e4483bea7aea1c26f0dfb29426e4c618b9b"
+}

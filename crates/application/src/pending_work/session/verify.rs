@@ -4,7 +4,7 @@ use thiserror::Error;
 
 use super::{Agent, ModelTierCatalog, VerifySessionOk};
 use crate::{
-    AppDbStore, PendingWorkItem,
+    AppRecordStore, PendingWorkItem,
     pending_work::{
         find::{FindPendingWorkError, find_open_item},
         project_registry::ProjectRegistry,
@@ -36,7 +36,7 @@ pub enum VerifySessionError {
 #[cqrsy::query]
 pub fn execute(
     query: VerifySession,
-    store: &impl AppDbStore<PendingWorkItem>,
+    store: &impl AppRecordStore<PendingWorkItem>,
     projects: &ProjectRegistry,
     model_tiers: &impl ModelTierCatalog,
 ) -> Result<VerifySessionOk, VerifySessionError> {

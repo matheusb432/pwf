@@ -7,7 +7,6 @@ use pwf_application::pending_work::{
         plan::{PlanSession, PlanSessionOk},
     },
 };
-use pwf_domain::pending_work::ProjectName;
 use pwf_infra::{
     obsidian::ObsidianStore,
     session::{
@@ -17,7 +16,7 @@ use pwf_infra::{
 };
 
 use super::{
-    common::{AgentChoice, CommonArguments, Identifier, PendingWorkError, load_configuration},
+    common::{AgentChoice, CommonArguments, Identifier, PendingWorkError},
     render::{
         render_dispatch, render_dry_run, render_session_aborted, render_session_confirmation,
     },
@@ -62,8 +61,8 @@ pub struct Arguments {
     /// Show the exact launch command without editing the task or starting anything.
     #[arg(long, visible_alias = "dry", conflicts_with = "append")]
     pub(crate) dry_run: bool,
-    /// Explicit model override, forwarded verbatim to the agent's `--model` flag
-    /// (no validation — wins over any effort-tier resolution).
+    /// Model forwarded verbatim to the agent's `--model` flag, unvalidated. Wins
+    /// over effort-tier resolution.
     #[arg(long, short = 'm')]
     pub(crate) model: Option<String>,
     #[command(flatten)]
@@ -78,19 +77,12 @@ pub enum ColorChoice {
     Never,
 }
 
-pub(super) fn run(arguments: &Arguments, console: Console) -> Result<String, PendingWorkError> {
-    let configuration = load_configuration(&arguments.common)?;
-    let projects = ProjectRegistry::new(configuration.projects.iter().map(|(name, repository)| {
-        (
-            ProjectName::try_new(name).expect("configured project is non-empty"),
-            Some(repository.clone()),
-            configuration
-                .prefixes
-                .get(name)
-                .map(|prefix| prefix.to_ascii_uppercase()),
-        )
-    }));
-    let store = ObsidianStore::new(configuration);
+pub(super) fn run(
+    arguments: &Arguments,
+    console: Console,
+    store: &ObsidianStore,
+    projects: &ProjectRegistry,
+) -> Result<String, PendingWorkError> {
     let agent = Agent::from(arguments.agent);
 
     let request = PlanSession {
@@ -116,8 +108,8 @@ pub(super) fn run(arguments: &Arguments, console: Console) -> Result<String, Pen
     };
     let planned = pwf_application::pending_work::session::plan::execute(
         &request,
-        &store,
-        &projects,
+        store,
+        projects,
         &TomlModelTierCatalog,
         &LocalRepositoryClient,
         &ClaudeHarness,
@@ -154,7 +146,7 @@ pub(super) fn run(arguments: &Arguments, console: Console) -> Result<String, Pen
     }
     let outcome = pwf_application::pending_work::session::dispatch::execute(
         DispatchSession::new(planned),
-        &store,
+        store,
         &ClaudeHarness,
         &CodexHarness,
         &InlineHarness,

@@ -14,7 +14,7 @@ use super::{
 use crate::{
     HandoffDocumentStore, HandoffLedger,
     handoff::{HandoffError, HandoffMutationOk, lifecycle},
-    ports::{AppDbStore, IndexEntry, IndexSection, NewItem, PendingWorkItem},
+    ports::{AppRecordStore, IndexEntry, IndexSection, NewItem, PendingWorkItem},
 };
 
 /// Describes the pending-work item and index section created by [`execute`].
@@ -128,9 +128,9 @@ pub enum AddPendingWorkError {
     /// The managed project identifier could not be resolved uniquely.
     #[error(transparent)]
     ProjectResolution(#[from] ProjectResolutionError),
-    /// The selected project has no usable repository mapping.
-    #[error("Project '{project}' is not mapped to a repo in config/pending-work.json.")]
-    ProjectNotMappedToRepo {
+    /// The selected project has no usable directory source.
+    #[error("Project '{project}' has no directory source; update the managed project record.")]
+    ProjectHasNoDirectorySource {
         /// Requested project name.
         project: String,
     },
@@ -198,11 +198,11 @@ pub fn execute<S>(
     projects: &ProjectRegistry,
 ) -> Result<AddedItem, AddPendingWorkError>
 where
-    S: AppDbStore<PendingWorkItem>
-        + AppDbStore<IndexEntry>
-        + AppDbStore<IndexSection>
+    S: AppRecordStore<PendingWorkItem>
+        + AppRecordStore<IndexEntry>
+        + AppRecordStore<IndexSection>
         + HandoffDocumentStore
-        + AppDbStore<HandoffLedger>,
+        + AppRecordStore<HandoffLedger>,
 {
     let tags = parse_tags(&cmd.tags)?;
     let prereq = if cmd.prerequisites.is_empty() {
@@ -414,7 +414,7 @@ pub(super) fn project_mapped(
     projects: &ProjectRegistry,
 ) -> Result<ProjectName, AddPendingWorkError> {
     let project = projects.resolve(project_identifier)?.clone();
-    let not_mapped = || AddPendingWorkError::ProjectNotMappedToRepo {
+    let not_mapped = || AddPendingWorkError::ProjectHasNoDirectorySource {
         project: project.to_string(),
     };
     if projects

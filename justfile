@@ -39,6 +39,9 @@ fmt-check: project::fmt-check
 [group('quality')]
 lint: project::lint
 
+# Refresh or verify the committed SQLx checked-query cache.
+prepare *args: (project::prepare args)
+
 # Run the complete read-only formatting and lint gate.
 [group('quality')]
 check: project::check

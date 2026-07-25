@@ -13,7 +13,7 @@ use pwf_domain::{
 };
 
 use crate::ports::{
-    AppDbStore, HandoffDocument, HandoffDocumentIdentifier, HandoffDocumentScopePresence,
+    AppRecordStore, HandoffDocument, HandoffDocumentIdentifier, HandoffDocumentScopePresence,
     HandoffDocumentStore, HandoffLedger, HandoffLedgerIdentifier, HandoffLedgerWrite,
     HandoffLocation, HandoffPatch, HandoffScope, IndexEntry, IndexSection, ItemPatch,
     Materialization, NewHandoffDocument, NewItem, PendingWorkItem, RecordId,
@@ -41,7 +41,7 @@ pub(crate) enum FailurePoint {
     LedgerInsert,
 }
 
-/// Provides a thread-safe [`AppDbStore`] test double for application records.
+/// Provides a thread-safe [`AppRecordStore`] test double for application records.
 ///
 /// Clones share one `Arc<Mutex<InMemoryState>>` and therefore observe the same writes.
 #[derive(Debug, Clone, Default)]
@@ -155,7 +155,7 @@ fn project_name(project: &str) -> ProjectName {
     ProjectName::try_new(project).expect("test project name is non-empty")
 }
 
-impl AppDbStore<PendingWorkItem> for InMemoryStore {
+impl AppRecordStore<PendingWorkItem> for InMemoryStore {
     type Error = Infallible;
 
     fn get(
@@ -265,7 +265,7 @@ impl AppDbStore<PendingWorkItem> for InMemoryStore {
     }
 }
 
-impl AppDbStore<HandoffDocument> for InMemoryStore {
+impl AppRecordStore<HandoffDocument> for InMemoryStore {
     type Error = InMemoryStoreError;
 
     fn get(
@@ -417,7 +417,8 @@ impl HandoffDocumentStore for InMemoryStore {
     fn scope_presence(
         &self,
         scope: &HandoffScope,
-    ) -> Result<HandoffDocumentScopePresence, <Self as AppDbStore<HandoffDocument>>::Error> {
+    ) -> Result<HandoffDocumentScopePresence, <Self as AppRecordStore<HandoffDocument>>::Error>
+    {
         Ok(self
             .lock()
             .handoff_scope_presences
@@ -430,7 +431,7 @@ impl HandoffDocumentStore for InMemoryStore {
         &self,
         scope: &HandoffScope,
         identifier: &HandoffDocumentIdentifier,
-    ) -> Result<bool, <Self as AppDbStore<HandoffDocument>>::Error> {
+    ) -> Result<bool, <Self as AppRecordStore<HandoffDocument>>::Error> {
         Ok(self
             .lock()
             .handoff_documents
@@ -446,7 +447,7 @@ impl HandoffDocumentStore for InMemoryStore {
         &self,
         scope: &HandoffScope,
         location: HandoffLocation,
-    ) -> Result<Vec<HandoffDocument>, <Self as AppDbStore<HandoffDocument>>::Error> {
+    ) -> Result<Vec<HandoffDocument>, <Self as AppRecordStore<HandoffDocument>>::Error> {
         Ok(self
             .lock()
             .handoff_documents
@@ -462,7 +463,7 @@ impl HandoffDocumentStore for InMemoryStore {
         &self,
         scope: &HandoffScope,
         snapshot: &HandoffDocument,
-    ) -> Result<(), <Self as AppDbStore<HandoffDocument>>::Error> {
+    ) -> Result<(), <Self as AppRecordStore<HandoffDocument>>::Error> {
         if self
             .lock()
             .failure_points
@@ -490,7 +491,7 @@ impl HandoffDocumentStore for InMemoryStore {
         &self,
         scope: &HandoffScope,
         snapshot: &HandoffDocument,
-    ) -> Result<(), <Self as AppDbStore<HandoffDocument>>::Error> {
+    ) -> Result<(), <Self as AppRecordStore<HandoffDocument>>::Error> {
         if self
             .lock()
             .failure_points
@@ -520,7 +521,7 @@ fn restore_in_memory_document(documents: &mut Vec<HandoffDocument>, snapshot: &H
     }
 }
 
-impl AppDbStore<HandoffLedger> for InMemoryStore {
+impl AppRecordStore<HandoffLedger> for InMemoryStore {
     type Error = InMemoryStoreError;
 
     fn get(
@@ -575,7 +576,7 @@ impl AppDbStore<HandoffLedger> for InMemoryStore {
         _identifier: &HandoffLedgerIdentifier,
         patch: HandoffLedgerWrite,
     ) -> Result<(), Self::Error> {
-        let _ = <Self as AppDbStore<HandoffLedger>>::insert(self, scope, patch)?;
+        let _ = <Self as AppRecordStore<HandoffLedger>>::insert(self, scope, patch)?;
         Ok(())
     }
 
@@ -673,7 +674,7 @@ fn goal_counts(body: &str) -> (usize, usize) {
     })
 }
 
-impl AppDbStore<IndexEntry> for InMemoryStore {
+impl AppRecordStore<IndexEntry> for InMemoryStore {
     type Error = Infallible;
 
     fn get(
@@ -741,7 +742,7 @@ impl InMemoryStore {
     }
 }
 
-impl AppDbStore<IndexSection> for InMemoryStore {
+impl AppRecordStore<IndexSection> for InMemoryStore {
     type Error = InMemoryStoreError;
 
     fn get(
@@ -749,7 +750,7 @@ impl AppDbStore<IndexSection> for InMemoryStore {
         project: &ProjectName,
         label: &String,
     ) -> Result<Option<IndexSection>, Self::Error> {
-        Ok(<Self as AppDbStore<IndexSection>>::list(self, project)?
+        Ok(<Self as AppRecordStore<IndexSection>>::list(self, project)?
             .into_iter()
             .find(|section| section.label == *label))
     }
@@ -815,7 +816,7 @@ mod tests {
         pending_work::{ProjectName, Timestamp, WorkItemId},
     };
 
-    use super::{AppDbStore, InMemoryStore};
+    use super::{AppRecordStore, InMemoryStore};
     use crate::{
         HandoffDocument, HandoffDocumentIdentifier, HandoffLocation, HandoffPatch, HandoffScope,
         NewHandoffDocument,
@@ -831,7 +832,7 @@ mod tests {
             location: HandoffLocation::Active,
         };
         let store = InMemoryStore::default();
-        <InMemoryStore as AppDbStore<HandoffDocument>>::insert(
+        <InMemoryStore as AppRecordStore<HandoffDocument>>::insert(
             &store,
             &scope,
             NewHandoffDocument {
@@ -847,7 +848,7 @@ mod tests {
         store.lock().handoff_documents.get_mut(&scope).unwrap()[0].modified_timestamp =
             SystemTime::UNIX_EPOCH;
 
-        <InMemoryStore as AppDbStore<HandoffDocument>>::update(
+        <InMemoryStore as AppRecordStore<HandoffDocument>>::update(
             &store,
             &scope,
             &identifier,

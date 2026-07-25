@@ -1,8 +1,18 @@
 //! Checks binary help dispatch through Cargo's injected `CARGO_BIN_EXE_pwf` path.
 use std::{fs, process::Command};
 
+#[path = "support/database.rs"]
+mod database;
+
+use database::DatabaseFixture;
+
+// Help and clap rejections exit before application dispatch, so they do not open the database.
+fn database_independent_command() -> Command {
+    Command::new(env!("CARGO_BIN_EXE_pwf"))
+}
+
 fn run(args: &[&str]) -> (String, bool) {
-    let out = Command::new(env!("CARGO_BIN_EXE_pwf"))
+    let out = database_independent_command()
         .args(args)
         .output()
         .expect("run pwf");
@@ -14,7 +24,7 @@ fn run(args: &[&str]) -> (String, bool) {
 
 #[test]
 fn forced_color_help_uses_cargo_palette() {
-    let out = Command::new(env!("CARGO_BIN_EXE_pwf"))
+    let out = database_independent_command()
         .arg("--help")
         .env_remove("NO_COLOR")
         .env("CLICOLOR_FORCE", "1")
@@ -35,7 +45,7 @@ fn forced_color_help_uses_cargo_palette() {
 
 #[test]
 fn no_color_help_strips_ansi_styling() {
-    let out = Command::new(env!("CARGO_BIN_EXE_pwf"))
+    let out = database_independent_command()
         .arg("--help")
         .env_remove("CLICOLOR_FORCE")
         .env("NO_COLOR", "1")
@@ -63,11 +73,7 @@ fn stage_dir() -> std::path::PathBuf {
     d
 }
 
-fn json_path(p: &std::path::Path) -> String {
-    p.to_string_lossy().replace('\\', "\\\\")
-}
-
-fn stage_remove_item() -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) {
+fn stage_remove_item() -> (std::path::PathBuf, DatabaseFixture) {
     let stage = stage_dir();
     let notes = stage.join("notes");
     let repo = stage.join("repo");
@@ -84,17 +90,9 @@ fn stage_remove_item() -> (std::path::PathBuf, std::path::PathBuf, std::path::Pa
         "---\nid: pwf\ntitle: pwf\n---\n\n- [ ] [[PWF-0001|stale task]]\n- [ ] [[PWF-0002|keep task]]\n",
     )
     .unwrap();
-    let cfg = stage.join("config.json");
-    fs::write(
-        &cfg,
-        format!(
-            r#"{{ "notesDir": "{}", "projects": {{ "pwf": "{}" }}, "prefixes": {{ "pwf": "PWF" }} }}"#,
-            json_path(&notes),
-            json_path(&repo)
-        ),
-    )
-    .unwrap();
-    (notes, project, cfg)
+    let database = DatabaseFixture::new(stage.join("projects.sqlite3"));
+    database.add_directory_project("PWF", "pwf", &repo, &project);
+    (project, database)
 }
 
 #[test]
@@ -205,17 +203,11 @@ fn tag_help_is_scoped_to_supported_commands() {
 
 #[test]
 fn canonical_remove_deletes_item_from_cli() {
-    let (notes, project, cfg) = stage_remove_item();
+    let (project, database) = stage_remove_item();
 
-    let out = Command::new(env!("CARGO_BIN_EXE_pwf"))
-        .args([
-            "remove",
-            "--id",
-            "pwf-0001",
-            "--notes-dir",
-            &notes.to_string_lossy(),
-        ])
-        .env("PWF_CONFIG", &cfg)
+    let out = database
+        .command()
+        .args(["remove", "--id", "pwf-0001"])
         .output()
         .expect("run pwf");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -253,21 +245,10 @@ fn default_engine_lists_pending_work() {
         "---\nid: glp\ntitle: glep-shimeji\n---\n\n- [ ] [[GLP-0001|tray gui]]\n",
     )
     .unwrap();
-    let cfg = stage.join("config.json");
-    fs::write(
-        &cfg,
-        format!(
-            r#"{{ "notesDir": "{}", "projects": {{ "glep-shimeji": "/repo" }}, "prefixes": {{ "glep-shimeji": "GLP" }} }}"#,
-            json_path(&notes)
-        ),
-    )
-    .unwrap();
+    let database = DatabaseFixture::new(stage.join("projects.sqlite3"));
+    database.add_directory_project("GLP", "glep-shimeji", std::path::Path::new("/repo"), &proj);
 
-    let out = Command::new(env!("CARGO_BIN_EXE_pwf"))
-        .args(["list"])
-        .env("PWF_CONFIG", &cfg)
-        .output()
-        .expect("run pwf");
+    let out = database.command().args(["list"]).output().expect("run pwf");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "stderr: {stderr}");
@@ -302,19 +283,18 @@ fn default_engine_treats_next_arg_as_project() {
         "---\nid: cfg\ntitle: config-handler\n---\n\n- [ ] [[CFG-0001|config task]]\n",
     )
     .unwrap();
-    let cfg = stage.join("config.json");
-    fs::write(
-        &cfg,
-        format!(
-            r#"{{ "notesDir": "{}", "projects": {{ "config-handler": "/config", "glep-shimeji": "/glep" }}, "prefixes": {{ "config-handler": "CFG", "glep-shimeji": "GLP" }} }}"#,
-            json_path(&notes)
-        ),
-    )
-    .unwrap();
+    let database = DatabaseFixture::new(stage.join("projects.sqlite3"));
+    database.add_directory_project(
+        "CFG",
+        "config-handler",
+        std::path::Path::new("/config"),
+        &config,
+    );
+    database.add_directory_project("GLP", "glep-shimeji", std::path::Path::new("/glep"), &glep);
 
-    let out = Command::new(env!("CARGO_BIN_EXE_pwf"))
+    let out = database
+        .command()
         .args(["config-handler"])
-        .env("PWF_CONFIG", &cfg)
         .output()
         .expect("run pwf");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -363,9 +343,47 @@ fn top_level_help_groups_default_commands_and_engines() {
         "top help should mention note engine: {help}"
     );
     assert!(
+        help.lines()
+            .any(|line| line.trim_start().starts_with("project")),
+        "top help should mention project engine: {help}"
+    );
+    assert!(
         !help.contains("LEGACY"),
         "top help should not advertise the removed legacy surface: {help}"
     );
+}
+
+#[test]
+fn project_help_lists_scoped_leaves() {
+    let (help, ok) = run(&["project", "--help"]);
+
+    assert!(ok, "pwf project --help should exit 0");
+    assert!(
+        help.contains("Usage: pwf project"),
+        "project help should use its scoped command path: {help}"
+    );
+    for leaf in ["ls", "get", "add", "pause", "resume"] {
+        assert!(
+            help.lines().any(|line| line.trim_start().starts_with(leaf)),
+            "project help should list {leaf}: {help}"
+        );
+    }
+    assert!(
+        !help
+            .lines()
+            .any(|line| line.trim_start().starts_with("handoff")),
+        "project help should not list other engines: {help}"
+    );
+}
+
+#[test]
+fn project_bare_command_prints_scoped_help() {
+    let (bare, bare_ok) = run(&["project"]);
+    let (explicit, explicit_ok) = run(&["project", "--help"]);
+
+    assert!(bare_ok, "bare pwf project should exit 0");
+    assert!(explicit_ok, "pwf project --help should exit 0");
+    assert_eq!(bare, explicit, "bare project should print project help");
 }
 
 #[test]
@@ -503,7 +521,7 @@ fn list_status_help_names_the_single_value_domain() {
 
 #[test]
 fn json_flag_is_rejected() {
-    let out = Command::new(env!("CARGO_BIN_EXE_pwf"))
+    let out = database_independent_command()
         .args(["list", "--json"])
         .output()
         .expect("run pwf");

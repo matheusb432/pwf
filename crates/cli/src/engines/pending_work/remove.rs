@@ -1,6 +1,6 @@
 use clap::Args;
 use pwf_application::{
-    AppDbStore, HandoffDocumentStore, HandoffLedger, IndexEntry, PendingWorkItem,
+    AppRecordStore, HandoffDocumentStore, HandoffLedger, IndexEntry, PendingWorkItem,
     handoff::HandoffMutationOk,
     pending_work::{
         ProjectRegistry,
@@ -10,7 +10,6 @@ use pwf_application::{
         },
     },
 };
-use pwf_domain::pending_work::ProjectName;
 use pwf_infra::obsidian::ObsidianStore;
 
 use super::common::{CommonArguments, Identifier};
@@ -27,11 +26,10 @@ pub struct Arguments {
 }
 
 use super::{
-    common::{PendingWorkError, load_configuration},
+    common::PendingWorkError,
     render::{REMOVE_MIRROR_REMEDY, render_removed},
 };
 use crate::{
-    config::Config,
     confirm::{Confirmation, DefaultAnswer},
     confirm_prompt::{ConfirmationPrompt, Field},
     console::Console,
@@ -74,33 +72,27 @@ fn removal_confirmation(context: &RemovalConfirmation) -> String {
     .to_string()
 }
 
-pub(super) fn run(arguments: &Arguments, console: Console) -> Result<String, PendingWorkError> {
-    let configuration = load_configuration(&arguments.common)?;
-    let store = ObsidianStore::new(configuration.clone());
-    run_remove(&configuration, &store, arguments, console)
+pub(super) fn run(
+    arguments: &Arguments,
+    console: Console,
+    store: &ObsidianStore,
+    projects: &ProjectRegistry,
+) -> Result<String, PendingWorkError> {
+    run_remove(store, projects, arguments, console)
 }
 
 pub(in crate::engines::pending_work) fn run_remove<S>(
-    cfg: &Config,
     store: &S,
+    projects: &ProjectRegistry,
     args: &Arguments,
     console: Console,
 ) -> Result<String, PendingWorkError>
 where
-    S: AppDbStore<PendingWorkItem>
-        + AppDbStore<IndexEntry>
+    S: AppRecordStore<PendingWorkItem>
+        + AppRecordStore<IndexEntry>
         + HandoffDocumentStore
-        + AppDbStore<HandoffLedger>,
+        + AppRecordStore<HandoffLedger>,
 {
-    let projects = ProjectRegistry::new(cfg.projects.iter().map(|(name, repository)| {
-        (
-            ProjectName::try_new(name).expect("configured project is non-empty"),
-            Some(repository.clone()),
-            cfg.prefixes
-                .get(name)
-                .map(|prefix| prefix.to_ascii_uppercase()),
-        )
-    }));
     let id = args.identifier.required("remove")?;
 
     let interaction = CliRemovalInteraction {
@@ -110,7 +102,7 @@ where
     let outcome = pwf_application::pending_work::remove::execute(
         &RemovePendingWorkItem { id },
         store,
-        &projects,
+        projects,
         &interaction,
     )
     .map_err(map_remove_error)?;

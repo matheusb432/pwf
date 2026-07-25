@@ -4,10 +4,6 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum NoteError {
-    #[error(
-        "Unknown project '{0}'; expected a configured project name or id code (config/pending-work.json)."
-    )]
-    UnknownProject(String),
     #[error("Invalid note id '{0}'; expected e.g. {1}-NOTE-0001, NOTE-0001, or 1.")]
     BadId(String, String),
     #[error("No such note {id} in {project}.")]

@@ -9,6 +9,7 @@ prompt-lanes = { workspace = true }
 pwf-domain = { workspace = true }
 cqrsy = { workspace = true }
 regex = { workspace = true }
+sqlx = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]

@@ -10,7 +10,7 @@ use super::{
 use crate::{
     HandoffDocumentStore, HandoffLedger,
     handoff::{HandoffError, HandoffMutationOk, lifecycle},
-    ports::{AppDbStore, IndexEntry, Materialization, PendingWorkItem},
+    ports::{AppRecordStore, IndexEntry, Materialization, PendingWorkItem},
 };
 
 /// Describes the note and index link deleted by [`execute`].
@@ -90,10 +90,10 @@ pub fn execute<S, I>(
     interaction: &I,
 ) -> Result<RemovePendingWorkOutcome, RemovePendingWorkError>
 where
-    S: AppDbStore<PendingWorkItem>
-        + AppDbStore<IndexEntry>
+    S: AppRecordStore<PendingWorkItem>
+        + AppRecordStore<IndexEntry>
         + HandoffDocumentStore
-        + AppDbStore<HandoffLedger>,
+        + AppRecordStore<HandoffLedger>,
     I: RemovalInteraction,
 {
     let not_found = || RemovePendingWorkError::ItemNotFound { id: cmd.id.clone() };
@@ -151,9 +151,9 @@ where
         });
     }
 
-    <S as AppDbStore<IndexEntry>>::delete(store, project, &pending_work_identifier)
+    <S as AppRecordStore<IndexEntry>>::delete(store, project, &pending_work_identifier)
         .map_err(|error| RemovePendingWorkError::WriteStore(Box::new(error)))?;
-    <S as AppDbStore<PendingWorkItem>>::delete(store, project, &pending_work_identifier)
+    <S as AppRecordStore<PendingWorkItem>>::delete(store, project, &pending_work_identifier)
         .map_err(|error| RemovePendingWorkError::WriteStore(Box::new(error)))?;
 
     let mut removed = RemovedItem {
@@ -228,7 +228,7 @@ mod tests {
         let store = InMemoryStore::default()
             .with_prefix("pwf", "PWF")
             .with_project("pwf", vec![record("PWF-0001", status)]);
-        <InMemoryStore as crate::AppDbStore<IndexEntry>>::insert(
+        <InMemoryStore as crate::AppRecordStore<IndexEntry>>::insert(
             &store,
             &ProjectName::try_new("pwf").unwrap(),
             IndexEntry {

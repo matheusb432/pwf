@@ -10,7 +10,7 @@ use super::{
     launch::dispatch_target, model::AgentModel, model_selection::resolve_model,
 };
 use crate::{
-    AppDbStore, PendingWorkItem,
+    AppRecordStore, PendingWorkItem,
     pending_work::{
         find::{FindPendingWorkError, find_open_item},
         project_registry::ProjectRegistry,
@@ -129,7 +129,7 @@ pub enum PlanSessionError {
 )]
 pub fn execute(
     command: &PlanSession,
-    store: &impl AppDbStore<PendingWorkItem>,
+    store: &impl AppRecordStore<PendingWorkItem>,
     projects: &ProjectRegistry,
     model_tiers: &impl ModelTierCatalog,
     repository: &impl RepositorySessionClient,

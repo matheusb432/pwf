@@ -1,4 +1,6 @@
 use clap::Subcommand;
+use pwf_application::pending_work::ProjectRegistry;
+use pwf_infra::obsidian::ObsidianStore;
 
 use crate::console::Console;
 
@@ -36,10 +38,9 @@ pub enum Command {
     /// Reopen a closed item: flip done/cancelled back to active, drop its
     /// completed/commits provenance, and restore its index link.
     Reopen(reopen::Arguments),
-    /// Replace an item's prompt body and/or title; append or clear its prereqs;
-    /// splice rich lane-syntax bullets into the body; amend its `commits:`
-    /// provenance; or append a closeout report; the last two are the only edits
-    /// allowed on a closed item.
+    /// Edit an item's prompt body, title, prereqs, tags, effort, or provenance.
+    ///
+    /// Only `--commits` and `--append-report` are allowed on a closed item.
     Update(update::Arguments),
     /// Stream a task note's markdown (any status, incl. archived done/cancelled).
     ///
@@ -60,22 +61,29 @@ pub enum Command {
     Session(session::Arguments),
 }
 
-pub fn run(command: &Command, console: Console) -> Result<String, String> {
+pub fn run(
+    command: &Command,
+    console: Console,
+    store: &ObsidianStore,
+    projects: &ProjectRegistry,
+) -> Result<String, String> {
     match command {
-        Command::Add(arguments) => add::run(arguments, console),
-        Command::List(arguments) => list::run(arguments, console),
-        Command::Done(arguments) => done::run(arguments),
-        Command::Cancel(arguments) => cancel::run(arguments),
-        Command::Reopen(arguments) => reopen::run(arguments),
-        Command::Update(arguments) => update::run(arguments, console),
-        Command::Show(arguments) => show::run(arguments),
-        Command::Verify(arguments) => verify::run(arguments),
+        Command::Add(arguments) => add::run(arguments, console, store, projects),
+        Command::List(arguments) => list::run(arguments, console, store, projects),
+        Command::Done(arguments) => done::run(arguments, store, projects),
+        Command::Cancel(arguments) => cancel::run(arguments, store, projects),
+        Command::Reopen(arguments) => reopen::run(arguments, store, projects),
+        Command::Update(arguments) => update::run(arguments, console, store, projects),
+        Command::Show(arguments) => show::run(arguments, store, projects),
+        Command::Verify(arguments) => verify::run(arguments, store, projects),
         Command::Route(arguments) => match route::resolve(arguments) {
-            route::ResolvedCommand::List(arguments) => list::run(&arguments, console),
-            route::ResolvedCommand::Verify(arguments) => verify::run(&arguments),
+            route::ResolvedCommand::List(arguments) => {
+                list::run(&arguments, console, store, projects)
+            }
+            route::ResolvedCommand::Verify(arguments) => verify::run(&arguments, store, projects),
         },
-        Command::Remove(arguments) => remove::run(arguments, console),
-        Command::Session(arguments) => session::run(arguments, console),
+        Command::Remove(arguments) => remove::run(arguments, console, store, projects),
+        Command::Session(arguments) => session::run(arguments, console, store, projects),
     }
     .map_err(String::from)
 }

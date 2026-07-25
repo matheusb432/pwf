@@ -1,12 +1,11 @@
 use clap::Args;
 use pwf_application::{
-    AppDbStore, HandoffDocumentStore, HandoffLedger, IndexEntry, PendingWorkItem,
+    AppRecordStore, HandoffDocumentStore, HandoffLedger, IndexEntry, PendingWorkItem,
     pending_work::{
         ProjectRegistry,
         reopen::{ReopenPendingWork, ReopenPendingWorkError},
     },
 };
-use pwf_domain::pending_work::ProjectName;
 use pwf_infra::obsidian::ObsidianStore;
 
 use super::common::{CommonArguments, Identifier};
@@ -20,40 +19,32 @@ pub struct Arguments {
 }
 
 use super::{
-    common::{PendingWorkError, load_configuration},
+    common::PendingWorkError,
     render::{append_handoff_outcome, done_cancel_reopen_remedy, render_reopened},
 };
-use crate::config::Config;
 
-pub(super) fn run(arguments: &Arguments) -> Result<String, PendingWorkError> {
-    let configuration = load_configuration(&arguments.common)?;
-    let store = ObsidianStore::new(configuration.clone());
-    run_reopen(&configuration, &store, arguments)
+pub(super) fn run(
+    arguments: &Arguments,
+    store: &ObsidianStore,
+    projects: &ProjectRegistry,
+) -> Result<String, PendingWorkError> {
+    run_reopen(store, projects, arguments)
 }
 
 pub(in crate::engines::pending_work) fn run_reopen<S>(
-    cfg: &Config,
     store: &S,
+    projects: &ProjectRegistry,
     args: &Arguments,
 ) -> Result<String, PendingWorkError>
 where
-    S: AppDbStore<PendingWorkItem>
-        + AppDbStore<IndexEntry>
+    S: AppRecordStore<PendingWorkItem>
+        + AppRecordStore<IndexEntry>
         + HandoffDocumentStore
-        + AppDbStore<HandoffLedger>,
+        + AppRecordStore<HandoffLedger>,
 {
-    let projects = ProjectRegistry::new(cfg.projects.iter().map(|(name, repository)| {
-        (
-            ProjectName::try_new(name).expect("configured project is non-empty"),
-            Some(repository.clone()),
-            cfg.prefixes
-                .get(name)
-                .map(|prefix| prefix.to_ascii_uppercase()),
-        )
-    }));
     let id = args.identifier.required("reopen")?;
     let outcome =
-        pwf_application::pending_work::reopen::execute(&ReopenPendingWork { id }, store, &projects)
+        pwf_application::pending_work::reopen::execute(&ReopenPendingWork { id }, store, projects)
             .map_err(map_reopen_error)?;
     Ok(append_handoff_outcome(
         render_reopened(&outcome),

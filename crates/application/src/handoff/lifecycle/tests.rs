@@ -110,6 +110,29 @@ fn scaffold_body_is_the_exact_shared_template_body() {
 }
 
 #[test]
+fn linked_item_without_repository_source_points_to_the_managed_project_record() {
+    let error = preflight_close(
+        &store(Vec::new()),
+        &registry(None),
+        "PWF-0001",
+        CloseHandoffAction::Done,
+        "2026-07-20",
+        None,
+    )
+    .unwrap_err();
+
+    assert!(matches!(
+        error,
+        HandoffError::UnmanagedProject { ref id, ref project }
+            if id == "PWF-0001" && project == "pwf"
+    ));
+    assert_eq!(
+        error.to_string(),
+        "item PWF-0001 is tagged `handoff` but the managed project record for pwf has no directory source for its repository; inspect it with `pwf project ls`"
+    );
+}
+
+#[test]
 fn close_selects_one_active_link_case_insensitively_and_archives_it() {
     let store = store(vec![document(
         HandoffLocation::Active,

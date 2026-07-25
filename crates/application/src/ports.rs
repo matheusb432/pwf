@@ -1,56 +1,17 @@
+mod app_db_store;
+mod app_record_store;
+
 use std::{
     path::{Path, PathBuf},
     time::SystemTime,
 };
 
+pub use app_db_store::AppDbStore;
+pub use app_record_store::{AppRecordStore, Record};
 use pwf_domain::{
     handoff::HandoffStatus,
     pending_work::{ProjectName, Tags, Timestamp, WorkItemId, WorkItemStatus},
 };
-
-/// Defines the scope, identity, insertion, and patch types for a persisted record.
-pub trait Record {
-    type Scope;
-    type Id;
-    type New;
-    type Patch;
-}
-
-/// Persists records by scope and identity without filtering, ordering, or pagination.
-pub trait AppDbStore<R: Record>: Clone + Send + Sync + 'static {
-    type Error: std::error::Error + Send + Sync + 'static;
-
-    /// Reads one record by scope and identity.
-    ///
-    /// # Errors
-    ///
-    /// Returns the adapter error when the record cannot be read.
-    fn get(&self, scope: &R::Scope, id: &R::Id) -> Result<Option<R>, Self::Error>;
-    /// Reads every record within `scope`, unfiltered and unordered.
-    ///
-    /// # Errors
-    ///
-    /// Returns the adapter error when the records cannot be read.
-    fn list(&self, scope: &R::Scope) -> Result<Vec<R>, Self::Error>;
-    /// Inserts one record within `scope`.
-    ///
-    /// # Errors
-    ///
-    /// Returns the adapter error when the record cannot be inserted.
-    fn insert(&self, scope: &R::Scope, new: R::New) -> Result<R, Self::Error>;
-    /// Applies one patch to the identified record.
-    ///
-    /// # Errors
-    ///
-    /// Returns the adapter error when the record cannot be updated.
-    fn update(&self, scope: &R::Scope, id: &R::Id, patch: R::Patch) -> Result<(), Self::Error>;
-    /// Deletes the identified record.
-    ///
-    /// # Errors
-    ///
-    /// Returns the adapter error when the record cannot be deleted.
-    fn delete(&self, scope: &R::Scope, id: &R::Id) -> Result<(), Self::Error>;
-}
 
 /// Locates handoff records beneath one repository root.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -129,7 +90,7 @@ impl Record for HandoffDocument {
 }
 
 /// Extends handoff record storage with representation facts needed for lifecycle recovery.
-pub trait HandoffDocumentStore: AppDbStore<HandoffDocument> {
+pub trait HandoffDocumentStore: AppRecordStore<HandoffDocument> {
     /// Inspects repository and active-directory presence without listing documents.
     ///
     /// # Errors
@@ -138,7 +99,7 @@ pub trait HandoffDocumentStore: AppDbStore<HandoffDocument> {
     fn scope_presence(
         &self,
         scope: &HandoffScope,
-    ) -> Result<HandoffDocumentScopePresence, <Self as AppDbStore<HandoffDocument>>::Error>;
+    ) -> Result<HandoffDocumentScopePresence, <Self as AppRecordStore<HandoffDocument>>::Error>;
 
     /// Returns whether the exact representation path exists without parsing it.
     ///
@@ -149,7 +110,7 @@ pub trait HandoffDocumentStore: AppDbStore<HandoffDocument> {
         &self,
         scope: &HandoffScope,
         identifier: &HandoffDocumentIdentifier,
-    ) -> Result<bool, <Self as AppDbStore<HandoffDocument>>::Error>;
+    ) -> Result<bool, <Self as AppRecordStore<HandoffDocument>>::Error>;
 
     /// Reads handoff documents from exactly one lifecycle directory.
     ///
@@ -160,7 +121,7 @@ pub trait HandoffDocumentStore: AppDbStore<HandoffDocument> {
         &self,
         scope: &HandoffScope,
         location: HandoffLocation,
-    ) -> Result<Vec<HandoffDocument>, <Self as AppDbStore<HandoffDocument>>::Error>;
+    ) -> Result<Vec<HandoffDocument>, <Self as AppRecordStore<HandoffDocument>>::Error>;
 
     /// Restores a moved document before removing its exact opposite-location record.
     ///
@@ -171,7 +132,7 @@ pub trait HandoffDocumentStore: AppDbStore<HandoffDocument> {
         &self,
         scope: &HandoffScope,
         snapshot: &HandoffDocument,
-    ) -> Result<(), <Self as AppDbStore<HandoffDocument>>::Error>;
+    ) -> Result<(), <Self as AppRecordStore<HandoffDocument>>::Error>;
 
     /// Restores a deleted document without changing any opposite-location record.
     ///
@@ -182,7 +143,7 @@ pub trait HandoffDocumentStore: AppDbStore<HandoffDocument> {
         &self,
         scope: &HandoffScope,
         snapshot: &HandoffDocument,
-    ) -> Result<(), <Self as AppDbStore<HandoffDocument>>::Error>;
+    ) -> Result<(), <Self as AppRecordStore<HandoffDocument>>::Error>;
 }
 
 /// Data required to create an active handoff document.
@@ -404,7 +365,7 @@ impl Record for IndexSection {
     type Patch = IndexSection;
 }
 
-/// Reads raw note Markdown by path outside the record-keyed [`AppDbStore`] port.
+/// Reads raw note Markdown by path outside the record-keyed [`AppRecordStore`] port.
 ///
 /// Missing-note `show` operations use this seam to preserve the storage backend's read error.
 pub trait NoteMarkdownSource: Clone + Send + Sync + 'static {

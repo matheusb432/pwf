@@ -1,9 +1,8 @@
 use clap::Args;
 use pwf_application::{
-    AppDbStore, NoteMarkdownSource, PendingWorkItem,
+    AppRecordStore, NoteMarkdownSource, PendingWorkItem,
     pending_work::{ProjectRegistry, ShowOutput, show::ShowPendingWorkItem},
 };
-use pwf_domain::pending_work::ProjectName;
 use pwf_infra::obsidian::ObsidianStore;
 
 use super::common::{CommonArguments, Identifier};
@@ -19,13 +18,14 @@ pub struct Arguments {
     pub(crate) common: CommonArguments,
 }
 
-use super::common::{PendingWorkError, load_configuration};
-use crate::config::Config;
+use super::common::PendingWorkError;
 
-pub(super) fn run(arguments: &Arguments) -> Result<String, PendingWorkError> {
-    let configuration = load_configuration(&arguments.common)?;
-    let store = ObsidianStore::new(configuration.clone());
-    run_show(&configuration, &store, arguments)
+pub(super) fn run(
+    arguments: &Arguments,
+    store: &ObsidianStore,
+    projects: &ProjectRegistry,
+) -> Result<String, PendingWorkError> {
+    run_show(store, projects, arguments)
 }
 
 /// Preserves the caller's spelling when canonicalization resolves to the same item.
@@ -42,22 +42,13 @@ fn lookup_id(arguments: &Arguments) -> Result<String, PendingWorkError> {
 /// Returns the complete Markdown for an item regardless of status;
 /// `--path` returns the note path instead.
 pub(in crate::engines::pending_work) fn run_show<S>(
-    cfg: &Config,
     store: &S,
+    projects: &ProjectRegistry,
     args: &Arguments,
 ) -> Result<String, PendingWorkError>
 where
-    S: AppDbStore<PendingWorkItem> + NoteMarkdownSource,
+    S: AppRecordStore<PendingWorkItem> + NoteMarkdownSource,
 {
-    let projects = ProjectRegistry::new(cfg.projects.iter().map(|(name, repository)| {
-        (
-            ProjectName::try_new(name).expect("configured project is non-empty"),
-            Some(repository.clone()),
-            cfg.prefixes
-                .get(name)
-                .map(|prefix| prefix.to_ascii_uppercase()),
-        )
-    }));
     let id = lookup_id(args)?;
     let output = if args.path {
         ShowOutput::Path
@@ -67,7 +58,7 @@ where
     pwf_application::pending_work::show::execute(
         &ShowPendingWorkItem { id, output },
         store,
-        &projects,
+        projects,
         store,
     )
     .map_err(|error| PendingWorkError::ApplicationRead(error.to_string()))

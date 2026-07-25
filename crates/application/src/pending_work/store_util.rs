@@ -4,11 +4,8 @@ use pwf_domain::pending_work::{ProjectName, WorkItemId};
 
 use super::enrich::normalize_section_label;
 use crate::ports::{
-    AppDbStore, IndexEntry, IndexEntryState, IndexSection, NewItem, PendingWorkItem,
+    AppRecordStore, IndexEntry, IndexEntryState, IndexSection, NewItem, PendingWorkItem,
 };
-
-/// Preserves concrete adapter errors for CLI downcasts and diagnostics.
-pub type StoreError = Box<dyn std::error::Error + Send + Sync>;
 
 /// Reports failures while loading a required item.
 #[derive(Debug, thiserror::Error)]
@@ -16,7 +13,7 @@ pub enum LoadItemError {
     #[error("Open pending-work item not found: {id}")]
     ItemNotFound { id: String },
     #[error("{0}")]
-    Store(StoreError),
+    Store(Box<dyn std::error::Error + Send + Sync>),
 }
 
 /// Canonical labels that materialize as dedicated H2 sections.
@@ -33,15 +30,15 @@ pub struct CreatedItem {
 #[derive(Debug, thiserror::Error)]
 pub enum CreateItemError {
     #[error("{0}")]
-    ReadSections(#[source] StoreError),
+    ReadSections(#[source] Box<dyn std::error::Error + Send + Sync>),
     #[error("{0}")]
-    InsertRecord(#[source] StoreError),
+    InsertRecord(#[source] Box<dyn std::error::Error + Send + Sync>),
     #[error("{source}")]
     InsertIndex {
         project: ProjectName,
         created_section: Option<String>,
         #[source]
-        source: StoreError,
+        source: Box<dyn std::error::Error + Send + Sync>,
     },
 }
 
@@ -71,9 +68,9 @@ pub fn require_item<S>(
     id: &WorkItemId,
 ) -> Result<PendingWorkItem, LoadItemError>
 where
-    S: AppDbStore<PendingWorkItem>,
+    S: AppRecordStore<PendingWorkItem>,
 {
-    <S as AppDbStore<PendingWorkItem>>::get(store, project, id)
+    <S as AppRecordStore<PendingWorkItem>>::get(store, project, id)
         .map_err(|error| LoadItemError::Store(Box::new(error)))?
         .ok_or_else(|| LoadItemError::ItemNotFound {
             id: id.as_ref().to_string(),
@@ -92,11 +89,11 @@ pub fn create_item<S>(
     new: NewItem,
 ) -> Result<CreatedItem, CreateItemError>
 where
-    S: AppDbStore<PendingWorkItem> + AppDbStore<IndexEntry> + AppDbStore<IndexSection>,
+    S: AppRecordStore<PendingWorkItem> + AppRecordStore<IndexEntry> + AppRecordStore<IndexSection>,
 {
     let target_section = new.section.clone();
     // Read sections before writing so an invalid index leaves no orphaned note.
-    let existing = <S as AppDbStore<IndexSection>>::list(store, project)
+    let existing = <S as AppRecordStore<IndexSection>>::list(store, project)
         .map_err(|error| CreateItemError::ReadSections(Box::new(error)))?;
     let created_section = target_section
         .as_deref()
@@ -108,14 +105,14 @@ where
         })
         .map(str::to_string);
 
-    let record = <S as AppDbStore<PendingWorkItem>>::insert(store, project, new)
+    let record = <S as AppRecordStore<PendingWorkItem>>::insert(store, project, new)
         .map_err(|error| CreateItemError::InsertRecord(Box::new(error)))?;
     let id = record
         .id
         .as_item()
         .expect("inserted record carries a canonical id")
         .clone();
-    <S as AppDbStore<IndexEntry>>::insert(
+    <S as AppRecordStore<IndexEntry>>::insert(
         store,
         project,
         IndexEntry {

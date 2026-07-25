@@ -9,7 +9,7 @@ use super::{
     project_registry::ProjectRegistry,
     store_util::body_region,
 };
-use crate::ports::{AppDbStore, ItemPatch, PendingWorkItem};
+use crate::ports::{AppRecordStore, ItemPatch, PendingWorkItem};
 
 /// Requests edits to one pending-work item.
 #[derive(Debug, Clone)]
@@ -167,7 +167,7 @@ pub fn execute<S>(
     projects: &ProjectRegistry,
 ) -> Result<UpdatePendingWorkItemOk, UpdatePendingWorkError>
 where
-    S: AppDbStore<PendingWorkItem>,
+    S: AppRecordStore<PendingWorkItem>,
 {
     let prepared = prepare(&command, store, projects)?;
     persist(prepared, store)
@@ -175,7 +175,7 @@ where
 
 pub(crate) fn prepare(
     command: &UpdatePendingWorkItem,
-    store: &impl AppDbStore<PendingWorkItem>,
+    store: &impl AppRecordStore<PendingWorkItem>,
     projects: &ProjectRegistry,
 ) -> Result<PreparedPendingWorkUpdate, UpdatePendingWorkError> {
     let commits = commit_provenance::normalize(&command.commits);
@@ -227,7 +227,7 @@ pub(crate) fn prepare(
 
 pub(crate) fn persist(
     prepared: PreparedPendingWorkUpdate,
-    store: &impl AppDbStore<PendingWorkItem>,
+    store: &impl AppRecordStore<PendingWorkItem>,
 ) -> Result<UpdatePendingWorkItemOk, UpdatePendingWorkError> {
     store
         .update(
@@ -249,7 +249,7 @@ fn prepare_open_item<S>(
     record: &PendingWorkItem,
 ) -> Result<PreparedPendingWorkUpdate, UpdatePendingWorkError>
 where
-    S: AppDbStore<PendingWorkItem>,
+    S: AppRecordStore<PendingWorkItem>,
 {
     let new_title = command
         .title
@@ -407,6 +407,9 @@ mod tests {
     };
     use crate::{Materialization, PendingWorkItem, RecordId, testing::InMemoryStore};
 
+    // section separator
+    const S: &str = "\n\n";
+
     fn registry() -> ProjectRegistry {
         ProjectRegistry::new(vec![(
             ProjectName::try_new("glep-shimeji").unwrap(),
@@ -531,7 +534,7 @@ mod tests {
         );
         let item = &store.items("glep-shimeji")[0];
         assert_eq!(item.title, "new title");
-        assert_eq!(item.body, "## Goals\n- fresh prompt");
+        assert_eq!(item.body, format!("## Goals{S}- fresh prompt"));
     }
 
     #[test]

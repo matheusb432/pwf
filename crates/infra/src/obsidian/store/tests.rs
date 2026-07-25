@@ -1,13 +1,187 @@
 use std::{assert_matches, fmt::Write as _, path::Path};
 
 use pwf_application::{
-    AppDbStore, IndexEntry, IndexEntryState, IndexPlacement, IndexSection, ItemPatch,
-    Materialization, NewItem, PendingWorkItem, RecordId,
+    AppRecordStore, HandoffDocument, HandoffLedger, HandoffLedgerWrite, HandoffScope, IndexEntry,
+    IndexEntryState, IndexPlacement, IndexSection, ItemPatch, Materialization, NewHandoffDocument,
+    NewItem, PendingWorkItem, RecordId,
 };
-use pwf_core::config::from_json;
-use pwf_domain::pending_work::{ProjectName, Tags, Timestamp, WorkItemId, WorkItemStatus};
+use pwf_domain::pending_work::{
+    ProjectIndexIdentity, ProjectName, ProjectPrefix, Tags, Timestamp, WorkItemId, WorkItemStatus,
+};
 
-use super::{ObsidianStore, ObsidianStoreError, fs::path_str};
+use super::{ObsidianProject, ObsidianStore, ObsidianStoreError, fs::path_str};
+
+// section separator
+const S: &str = "\n\n";
+
+fn project(id: &str, title: &str, tasks_path: &Path) -> ObsidianProject {
+    ObsidianProject::new(
+        ProjectIndexIdentity::new(
+            ProjectPrefix::try_new(id).unwrap(),
+            ProjectName::try_new(title).unwrap(),
+        ),
+        tasks_path.to_path_buf(),
+    )
+}
+
+#[test]
+fn explicit_task_path_is_the_complete_project_directory() {
+    let temporary_directory = tempfile::tempdir().unwrap();
+    let tasks_path = temporary_directory.path().join("custom/tasks");
+    std::fs::create_dir_all(&tasks_path).unwrap();
+    std::fs::write(
+        tasks_path.join("pwf.md"),
+        "---\nid: pwf\ntitle: pwf\n---\n\n- [ ] [[PWF-0001]]\n",
+    )
+    .unwrap();
+    write_note(
+        &tasks_path.join("PWF-0001.md"),
+        "exact path",
+        "2026-07-25",
+        None,
+        None,
+        None,
+        "body",
+    );
+    let store = ObsidianStore::new([project("pwf", "pwf", &tasks_path)]);
+
+    let record = get_record(&store, "PWF-0001").unwrap();
+
+    assert_eq!(record.locator, path_str(&tasks_path.join("PWF-0001.md")));
+    assert!(!tasks_path.join("pwf").exists());
+}
+
+#[test]
+fn explicit_index_path_uses_the_project_title_inside_tasks_path() {
+    let temporary_directory = tempfile::tempdir().unwrap();
+    let tasks_path = temporary_directory.path().join("records");
+    std::fs::create_dir_all(&tasks_path).unwrap();
+    let index_path = tasks_path.join("rust-learn.md");
+    std::fs::write(
+        &index_path,
+        "---\nid: rst\ntitle: rust-learn\n---\n\n- [ ] [[RST-0001]]\n",
+    )
+    .unwrap();
+    let store = ObsidianStore::new([project("rst", "rust-learn", &tasks_path)]);
+    let project_name = ProjectName::try_new("rust-learn").unwrap();
+
+    let records =
+        <ObsidianStore as AppRecordStore<PendingWorkItem>>::list(&store, &project_name).unwrap();
+
+    assert_eq!(records.len(), 1);
+    assert_eq!(
+        records[0].placement.as_ref().unwrap().index_path,
+        path_str(&index_path)
+    );
+}
+
+#[test]
+fn explicit_projects_support_unrelated_task_parents() {
+    let temporary_directory = tempfile::tempdir().unwrap();
+    let first_tasks = temporary_directory.path().join("one/tasks-a");
+    let second_tasks = temporary_directory.path().join("elsewhere/tasks-b");
+    for (tasks_path, id, title, item_id) in [
+        (&first_tasks, "aaa", "alpha", "AAA-0001"),
+        (&second_tasks, "bbb", "beta", "BBB-0001"),
+    ] {
+        std::fs::create_dir_all(tasks_path).unwrap();
+        std::fs::write(
+            tasks_path.join(format!("{title}.md")),
+            format!("---\nid: {id}\ntitle: {title}\n---\n\n- [ ] [[{item_id}]]\n"),
+        )
+        .unwrap();
+    }
+    let store = ObsidianStore::new([
+        project("aaa", "alpha", &first_tasks),
+        project("bbb", "beta", &second_tasks),
+    ]);
+
+    for (title, expected_id) in [("alpha", "AAA-0001"), ("beta", "BBB-0001")] {
+        let project_name = ProjectName::try_new(title).unwrap();
+        let records =
+            <ObsidianStore as AppRecordStore<PendingWorkItem>>::list(&store, &project_name)
+                .unwrap();
+        assert_eq!(records[0].id.as_item().unwrap().as_ref(), expected_id);
+    }
+}
+
+#[test]
+fn explicit_unknown_project_returns_a_typed_error() {
+    let store = ObsidianStore::new([]);
+    let unknown = ProjectName::try_new("unknown").unwrap();
+
+    let error =
+        <ObsidianStore as AppRecordStore<PendingWorkItem>>::list(&store, &unknown).unwrap_err();
+
+    assert_matches!(
+        error,
+        ObsidianStoreError::UnknownProject { ref project } if project == "unknown"
+    );
+}
+
+#[test]
+fn explicit_index_validation_uses_the_supplied_identity() {
+    let temporary_directory = tempfile::tempdir().unwrap();
+    let tasks_path = temporary_directory.path().join("tasks");
+    std::fs::create_dir_all(&tasks_path).unwrap();
+    std::fs::write(
+        tasks_path.join("pwf.md"),
+        "---\nid: old\ntitle: pwf\n---\n\n",
+    )
+    .unwrap();
+    let store = ObsidianStore::new([project("new", "pwf", &tasks_path)]);
+    let project_name = ProjectName::try_new("pwf").unwrap();
+
+    let error = <ObsidianStore as AppRecordStore<PendingWorkItem>>::list(&store, &project_name)
+        .unwrap_err();
+
+    assert_matches!(
+        error,
+        ObsidianStoreError::ProjectIndexIdentityMismatch {
+            ref expected_id,
+            ..
+        } if expected_id == "new"
+    );
+}
+
+#[test]
+fn explicit_empty_projects_support_repository_scoped_handoff_storage() {
+    let temporary_directory = tempfile::tempdir().unwrap();
+    let scope = HandoffScope {
+        repository_root: temporary_directory.path().join("repo"),
+    };
+    let store = ObsidianStore::new([]);
+    let document = <ObsidianStore as AppRecordStore<HandoffDocument>>::insert(
+        &store,
+        &scope,
+        NewHandoffDocument {
+            file_name: "2026-07-25-storage.md".to_string(),
+            project: ProjectName::try_new("pwf").unwrap(),
+            title: "Storage".to_string(),
+            created: Timestamp::new("2026-07-25"),
+            body: "\n# Storage\n".to_string(),
+            pending_work_identifier: None,
+        },
+    )
+    .unwrap();
+    let ledger = <ObsidianStore as AppRecordStore<HandoffLedger>>::insert(
+        &store,
+        &scope,
+        HandoffLedgerWrite { rows: Vec::new() },
+    )
+    .unwrap();
+
+    assert_eq!(
+        document.locator,
+        scope
+            .repository_root
+            .join("docs/handoffs/2026-07-25-storage.md")
+    );
+    assert_eq!(
+        ledger.locator,
+        scope.repository_root.join("docs/handoffs/LEDGER.md")
+    );
+}
 
 #[test]
 fn generic_list_rejects_project_index_without_identity_frontmatter() {
@@ -25,10 +199,11 @@ fn generic_list_rejects_project_index_without_identity_frontmatter() {
         None,
         "body",
     );
-    let store = ObsidianStore::new(raw_config_for_notes(&notes_dir));
+    let store = store_for_tasks(&notes_dir.join("pwf"));
 
     let project = ProjectName::try_new("pwf").unwrap();
-    let error = <ObsidianStore as AppDbStore<PendingWorkItem>>::list(&store, &project).unwrap_err();
+    let error =
+        <ObsidianStore as AppRecordStore<PendingWorkItem>>::list(&store, &project).unwrap_err();
 
     assert_matches!(
         error,
@@ -53,7 +228,7 @@ fn generic_read_retains_raw_tags_frontmatter() {
         Some("[SQLite, malformed-but-displayable]"),
         "body",
     );
-    let store = ObsidianStore::new(config_for_notes(&notes_dir));
+    let store = store_with_index_identity(&notes_dir.join("pwf"));
 
     assert_eq!(
         get_record(&store, "PWF-0001").unwrap().tags.as_deref(),
@@ -73,7 +248,7 @@ fn generic_read_uses_yaml_decoded_title() {
         "---\nid: PWF-0001\nstatus: active\ntitle: \"adapter: preserve identity\"\nproject: pwf\ncreated: 2026-07-12\n---\n\nbody\n",
     )
     .unwrap();
-    let store = ObsidianStore::new(config_for_notes(&notes_dir));
+    let store = store_with_index_identity(&notes_dir.join("pwf"));
 
     let record = get_record(&store, "PWF-0001").unwrap();
 
@@ -82,7 +257,7 @@ fn generic_read_uses_yaml_decoded_title() {
 
 fn get_record(store: &ObsidianStore, id: &str) -> Option<PendingWorkItem> {
     let project = ProjectName::try_new("pwf").unwrap();
-    <ObsidianStore as AppDbStore<PendingWorkItem>>::get(
+    <ObsidianStore as AppRecordStore<PendingWorkItem>>::get(
         store,
         &project,
         &WorkItemId::try_new(id).unwrap(),
@@ -102,7 +277,7 @@ fn get_resolves_frontmatter_id_to_descriptive_filename_locator() {
         "---\nid: PWF-0001\nstatus: active\ntitle: descriptive\nproject: pwf\ncreated: 2026-07-12\n---\n\nbody\n",
     )
     .unwrap();
-    let store = ObsidianStore::new(config_for_notes(&notes_dir));
+    let store = store_with_index_identity(&notes_dir.join("pwf"));
 
     let record = get_record(&store, "PWF-0001").expect("record must resolve by frontmatter id");
 
@@ -130,10 +305,10 @@ fn get_rejects_duplicate_frontmatter_ids() {
         )
         .unwrap();
     }
-    let store = ObsidianStore::new(config_for_notes(&notes_dir));
+    let store = store_with_index_identity(&notes_dir.join("pwf"));
     let project = ProjectName::try_new("pwf").unwrap();
 
-    let error = <ObsidianStore as AppDbStore<PendingWorkItem>>::get(
+    let error = <ObsidianStore as AppRecordStore<PendingWorkItem>>::get(
         &store,
         &project,
         &WorkItemId::try_new("PWF-0001").unwrap(),
@@ -176,13 +351,13 @@ fn write_note(
 fn generic_add(store: &ObsidianStore, new: NewItem) -> Result<PendingWorkItem, ObsidianStoreError> {
     let project = ProjectName::try_new("pwf").unwrap();
     let section = new.section.clone().unwrap_or_default();
-    let record = <ObsidianStore as AppDbStore<PendingWorkItem>>::insert(store, &project, new)?;
+    let record = <ObsidianStore as AppRecordStore<PendingWorkItem>>::insert(store, &project, new)?;
     let id = record
         .id
         .as_item()
         .expect("inserted record carries a canonical id")
         .clone();
-    <ObsidianStore as AppDbStore<IndexEntry>>::insert(
+    <ObsidianStore as AppRecordStore<IndexEntry>>::insert(
         store,
         &project,
         IndexEntry {
@@ -210,8 +385,7 @@ fn new_item(prompt: &str, title: Option<&str>, section: Option<&str>) -> NewItem
 fn generic_add_creates_note_and_links_index() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
-    let config = config_for_notes(&notes_dir);
-    let store = ObsidianStore::new(config);
+    let store = store_with_index_identity(&notes_dir.join("pwf"));
 
     let record = generic_add(
         &store,
@@ -242,7 +416,8 @@ fn generic_add_creates_note_and_links_index() {
     assert!(note.contains("created: 2026-07-07"), "{note}");
     assert!(note.contains("prereq: \"[[PWF-0001]]\""), "{note}");
     assert!(note.contains("effort: 2"), "{note}");
-    assert!(note.contains("## Goals\n- Ship the adapter"), "{note}");
+    let expected_body = format!("## Goals{S}- Ship the adapter");
+    assert!(note.contains(&expected_body), "{note}");
     let index = std::fs::read_to_string(notes_dir.join("pwf/pwf.md")).unwrap();
     assert_eq!(
         index,
@@ -254,7 +429,7 @@ fn generic_add_creates_note_and_links_index() {
 fn generic_add_normalizes_yaml_breaking_titles_so_reads_survive() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
-    let store = ObsidianStore::new(config_for_notes(&notes_dir));
+    let store = store_with_index_identity(&notes_dir.join("pwf"));
     let hostile_titles = [
         "finish refactor: promote sync-git seam over: that",
         "fix #123 now",
@@ -286,7 +461,7 @@ fn generic_add_normalizes_yaml_breaking_titles_so_reads_survive() {
 fn generic_add_writes_canonical_tags_and_omits_absent_tags() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
-    let store = ObsidianStore::new(config_for_notes(&notes_dir));
+    let store = store_with_index_identity(&notes_dir.join("pwf"));
     let tags = Tags::parse_values(&["SQLite,csharp-export".to_string()]).unwrap();
     let tagged = generic_add(
         &store,
@@ -310,11 +485,10 @@ fn generic_insert_rejects_unreadable_existing_index_before_writing_a_note() {
     let notes_dir = temp.path().join("notes");
     let project_dir = notes_dir.join("pwf");
     std::fs::create_dir_all(project_dir.join("pwf.md")).unwrap();
-    let config = config_for_notes(&notes_dir);
-    let store = ObsidianStore::new(config);
+    let store = store_with_index_identity(&project_dir);
     let project = ProjectName::try_new("pwf").unwrap();
 
-    let err = <ObsidianStore as AppDbStore<PendingWorkItem>>::insert(
+    let err = <ObsidianStore as AppRecordStore<PendingWorkItem>>::insert(
         &store,
         &project,
         new_item("Ship the adapter /d tests pass", Some("Ship Adapter"), None),
@@ -339,10 +513,10 @@ fn generic_insert_rejects_mismatched_project_index_identity() {
         "---\nid: rst\ntitle: rust-learn\n---\n\n# wrong\n",
     )
     .unwrap();
-    let store = ObsidianStore::new(config_for_notes(&notes_dir));
+    let store = store_with_index_identity(&notes_dir.join("pwf"));
     let project = ProjectName::try_new("pwf").unwrap();
 
-    let error = <ObsidianStore as AppDbStore<PendingWorkItem>>::insert(
+    let error = <ObsidianStore as AppRecordStore<PendingWorkItem>>::insert(
         &store,
         &project,
         new_item("task", None, None),
@@ -376,10 +550,10 @@ fn generic_insert_allocates_after_greatest_frontmatter_id() {
         "---\ntype: note\n---\n\nnote\n",
     )
     .unwrap();
-    let store = ObsidianStore::new(config_for_notes(&notes_dir));
+    let store = store_with_index_identity(&notes_dir.join("pwf"));
     let project = ProjectName::try_new("pwf").unwrap();
 
-    let record = <ObsidianStore as AppDbStore<PendingWorkItem>>::insert(
+    let record = <ObsidianStore as AppRecordStore<PendingWorkItem>>::insert(
         &store,
         &project,
         new_item("next task", None, None),
@@ -400,7 +574,8 @@ fn apply_tag_patch(store: &ObsidianStore, tags: Option<Tags>) {
         tags: Some(tags),
         ..Default::default()
     };
-    <ObsidianStore as AppDbStore<PendingWorkItem>>::update(store, &project, &id, patch).unwrap();
+    <ObsidianStore as AppRecordStore<PendingWorkItem>>::update(store, &project, &id, patch)
+        .unwrap();
 }
 
 fn sqlite_tags() -> Tags {
@@ -553,12 +728,12 @@ fn generic_delete_removes_note_and_unlinks_index() {
         None,
         "remove me",
     );
-    let store = ObsidianStore::new(config_for_notes(&notes_dir));
+    let store = store_with_index_identity(&notes_dir.join("pwf"));
     let project = ProjectName::try_new("pwf").unwrap();
     let id = WorkItemId::try_new("PWF-0001").unwrap();
 
-    <ObsidianStore as AppDbStore<IndexEntry>>::delete(&store, &project, &id).unwrap();
-    <ObsidianStore as AppDbStore<PendingWorkItem>>::delete(&store, &project, &id).unwrap();
+    <ObsidianStore as AppRecordStore<IndexEntry>>::delete(&store, &project, &id).unwrap();
+    <ObsidianStore as AppRecordStore<PendingWorkItem>>::delete(&store, &project, &id).unwrap();
 
     assert!(!project_dir.join("PWF-0001.md").exists());
     assert_eq!(
@@ -583,7 +758,7 @@ fn get_returns_open_note_locator_from_active_index() {
         None,
         "body",
     );
-    let store = ObsidianStore::new(config_for_notes(&notes_dir));
+    let store = store_with_index_identity(&notes_dir.join("pwf"));
 
     let record = get_record(&store, "PWF-0001").expect("open item must resolve");
 
@@ -606,7 +781,7 @@ fn get_returns_open_note_source_with_created_key() {
         None,
         "## Goals\n- body",
     );
-    let store = ObsidianStore::new(config_for_notes(&notes_dir));
+    let store = store_with_index_identity(&notes_dir.join("pwf"));
 
     let record = get_record(&store, "PWF-0001").expect("open item must resolve");
 
@@ -634,7 +809,7 @@ fn get_finds_closed_note_still_in_project_dir() {
         Some("2026-07-07"),
         None,
     );
-    let store = ObsidianStore::new(config_for_notes(&notes_dir));
+    let store = store_with_index_identity(&notes_dir.join("pwf"));
 
     let record = get_record(&store, "PWF-0003").expect("closed item must resolve");
 
@@ -662,7 +837,7 @@ fn get_finds_closed_note_still_in_project_dir_with_shorthand_id() {
         Some("2026-07-07"),
         None,
     );
-    let store = ObsidianStore::new(config_for_notes(&notes_dir));
+    let store = store_with_index_identity(&notes_dir.join("pwf"));
 
     let record = get_record(&store, "pwf3").expect("shorthand id must resolve");
 
@@ -672,18 +847,13 @@ fn get_finds_closed_note_still_in_project_dir_with_shorthand_id() {
     );
 }
 
-fn config_for_notes(notes_dir: &Path) -> pwf_core::config::Config {
-    ensure_test_index_identity(&notes_dir.join("pwf/pwf.md"), "pwf", "pwf");
-    raw_config_for_notes(notes_dir)
+fn store_with_index_identity(tasks_path: &Path) -> ObsidianStore {
+    ensure_test_index_identity(&tasks_path.join("pwf.md"), "pwf", "pwf");
+    store_for_tasks(tasks_path)
 }
 
-fn raw_config_for_notes(notes_dir: &Path) -> pwf_core::config::Config {
-    let config_json = serde_json::json!({
-        "notesDir": notes_dir,
-        "projects": { "pwf": "/repo/pwf" },
-        "prefixes": { "pwf": "PWF" }
-    });
-    from_json(&config_json.to_string(), None).unwrap()
+fn store_for_tasks(tasks_path: &Path) -> ObsidianStore {
+    ObsidianStore::new([project("pwf", "pwf", tasks_path)])
 }
 
 struct StagedOpenItem {
@@ -704,7 +874,7 @@ fn staged_open_item(tags: Option<&str>, body: &str) -> StagedOpenItem {
     std::fs::write(project_dir.join("pwf.md"), "- [ ] [[PWF-0001]]\n").unwrap();
     let item_path = project_dir.join("PWF-0001.md");
     write_note(&item_path, "tagged", "2026-07-01", None, None, tags, body);
-    let store = ObsidianStore::new(config_for_notes(&notes_dir));
+    let store = store_with_index_identity(&notes_dir.join("pwf"));
     StagedOpenItem {
         _temp: temp,
         store,
@@ -720,7 +890,7 @@ fn staged_open_item_from_note(note: &str) -> StagedOpenItem {
     std::fs::write(project_dir.join("pwf.md"), "- [ ] [[PWF-0001]]\n").unwrap();
     let item_path = project_dir.join("PWF-0001.md");
     std::fs::write(&item_path, note).unwrap();
-    let store = ObsidianStore::new(config_for_notes(&notes_dir));
+    let store = store_with_index_identity(&notes_dir.join("pwf"));
     StagedOpenItem {
         _temp: temp,
         store,
@@ -794,11 +964,11 @@ fn item_record_roundtrips_file_model_note() {
         "ship the adapter body\n",
     );
     std::fs::write(&note_path, source).unwrap();
-    let store = ObsidianStore::new(config_for_notes(&notes_dir));
+    let store = store_with_index_identity(&notes_dir.join("pwf"));
 
     let project = ProjectName::try_new("pwf").unwrap();
     let id = WorkItemId::try_new("PWF-0001").unwrap();
-    let record = <ObsidianStore as AppDbStore<PendingWorkItem>>::get(&store, &project, &id)
+    let record = <ObsidianStore as AppRecordStore<PendingWorkItem>>::get(&store, &project, &id)
         .unwrap()
         .expect("file-model record present");
 
@@ -830,11 +1000,11 @@ fn item_record_materializes_legacy_checkbox_line() {
         "---\nid: pwf\ntitle: pwf\n---\n\n- [ ] [[PWF-0002|handle it]]\n",
     )
     .unwrap();
-    let store = ObsidianStore::new(raw_config_for_notes(&notes_dir));
+    let store = store_for_tasks(&notes_dir.join("pwf"));
 
     let project = ProjectName::try_new("pwf").unwrap();
     let id = WorkItemId::try_new("PWF-0002").unwrap();
-    let record = <ObsidianStore as AppDbStore<PendingWorkItem>>::get(&store, &project, &id)
+    let record = <ObsidianStore as AppRecordStore<PendingWorkItem>>::get(&store, &project, &id)
         .unwrap()
         .expect("legacy checkbox materialized");
 
@@ -873,10 +1043,10 @@ fn index_entries_parse_open_done_and_raw_futuro_section() {
         ),
     )
     .unwrap();
-    let store = ObsidianStore::new(raw_config_for_notes(&notes_dir));
+    let store = store_for_tasks(&notes_dir.join("pwf"));
 
     let project = ProjectName::try_new("pwf").unwrap();
-    let entries = <ObsidianStore as AppDbStore<IndexEntry>>::list(&store, &project).unwrap();
+    let entries = <ObsidianStore as AppRecordStore<IndexEntry>>::list(&store, &project).unwrap();
 
     assert_eq!(
         entries,
@@ -912,7 +1082,7 @@ fn patch_status_done_flips_legacy_checkbox_with_date_stamp() {
         "---\nid: pwf\ntitle: pwf\n---\n\n- [ ] [[PWF-0002|handle it]]\n",
     )
     .unwrap();
-    let store = ObsidianStore::new(raw_config_for_notes(&notes_dir));
+    let store = store_for_tasks(&notes_dir.join("pwf"));
 
     let project = ProjectName::try_new("pwf").unwrap();
     let id = WorkItemId::try_new("PWF-0002").unwrap();
@@ -922,7 +1092,8 @@ fn patch_status_done_flips_legacy_checkbox_with_date_stamp() {
         ..Default::default()
     };
 
-    <ObsidianStore as AppDbStore<PendingWorkItem>>::update(&store, &project, &id, patch).unwrap();
+    <ObsidianStore as AppRecordStore<PendingWorkItem>>::update(&store, &project, &id, patch)
+        .unwrap();
 
     let index = std::fs::read_to_string(&index_path).unwrap();
     assert!(
@@ -949,10 +1120,10 @@ fn insert_allocates_next_id_without_index_write() {
         None,
         "already here",
     );
-    let store = ObsidianStore::new(raw_config_for_notes(&notes_dir));
+    let store = store_for_tasks(&notes_dir.join("pwf"));
 
     let project = ProjectName::try_new("pwf").unwrap();
-    let record = <ObsidianStore as AppDbStore<PendingWorkItem>>::insert(
+    let record = <ObsidianStore as AppRecordStore<PendingWorkItem>>::insert(
         &store,
         &project,
         NewItem {
@@ -1013,10 +1184,11 @@ fn generic_list_records_carry_open_placement_without_hiding_unlinked_notes() {
         None,
         "body",
     );
-    let store = ObsidianStore::new(raw_config_for_notes(&notes_dir));
+    let store = store_for_tasks(&notes_dir.join("pwf"));
 
     let project = ProjectName::try_new("pwf").unwrap();
-    let records = <ObsidianStore as AppDbStore<PendingWorkItem>>::list(&store, &project).unwrap();
+    let records =
+        <ObsidianStore as AppRecordStore<PendingWorkItem>>::list(&store, &project).unwrap();
 
     assert_eq!(records.len(), 2);
     let record = records
@@ -1079,10 +1251,11 @@ fn generic_list_rejects_duplicate_project_index_task_ids() {
         None,
         "body",
     );
-    let store = ObsidianStore::new(raw_config_for_notes(&notes_dir));
+    let store = store_for_tasks(&notes_dir.join("pwf"));
     let project = ProjectName::try_new("pwf").unwrap();
 
-    let error = <ObsidianStore as AppDbStore<PendingWorkItem>>::list(&store, &project).unwrap_err();
+    let error =
+        <ObsidianStore as AppRecordStore<PendingWorkItem>>::list(&store, &project).unwrap_err();
 
     assert_matches!(
         error,
@@ -1128,10 +1301,11 @@ fn list_pending_items_returns_note_history_and_index_only_records() {
             None,
         );
     }
-    let store = ObsidianStore::new(raw_config_for_notes(&notes_dir));
+    let store = store_for_tasks(&notes_dir.join("pwf"));
     let project = ProjectName::try_new("pwf").unwrap();
 
-    let records = <ObsidianStore as AppDbStore<PendingWorkItem>>::list(&store, &project).unwrap();
+    let records =
+        <ObsidianStore as AppRecordStore<PendingWorkItem>>::list(&store, &project).unwrap();
     let mut ids: Vec<String> = records
         .iter()
         .filter_map(|record| record.id.as_item().map(ToString::to_string))
@@ -1191,10 +1365,11 @@ fn list_pending_items_returns_note_history_when_index_is_missing() {
         Some("2026-07-01"),
         None,
     );
-    let store = ObsidianStore::new(raw_config_for_notes(&notes_dir));
+    let store = store_for_tasks(&notes_dir.join("pwf"));
     let project = ProjectName::try_new("pwf").unwrap();
 
-    let records = <ObsidianStore as AppDbStore<PendingWorkItem>>::list(&store, &project).unwrap();
+    let records =
+        <ObsidianStore as AppRecordStore<PendingWorkItem>>::list(&store, &project).unwrap();
 
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].status, WorkItemStatus::Done);
@@ -1219,10 +1394,10 @@ fn index_sections_list_raw_h2_labels_in_document_order() {
         ),
     )
     .unwrap();
-    let store = ObsidianStore::new(raw_config_for_notes(&notes_dir));
+    let store = store_for_tasks(&notes_dir.join("pwf"));
     let project = ProjectName::try_new("pwf").unwrap();
 
-    let sections = <ObsidianStore as AppDbStore<IndexSection>>::list(&store, &project).unwrap();
+    let sections = <ObsidianStore as AppRecordStore<IndexSection>>::list(&store, &project).unwrap();
 
     // RAW labels in document order; H3 regions (### Notes) are not sections.
     assert_eq!(
@@ -1246,10 +1421,10 @@ fn index_sections_list_empty_when_index_missing() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
     std::fs::create_dir_all(notes_dir.join("pwf")).unwrap();
-    let store = ObsidianStore::new(raw_config_for_notes(&notes_dir));
+    let store = store_for_tasks(&notes_dir.join("pwf"));
     let project = ProjectName::try_new("pwf").unwrap();
 
-    let sections = <ObsidianStore as AppDbStore<IndexSection>>::list(&store, &project).unwrap();
+    let sections = <ObsidianStore as AppRecordStore<IndexSection>>::list(&store, &project).unwrap();
 
     assert!(sections.is_empty());
 }
@@ -1265,15 +1440,21 @@ fn index_section_get_finds_exact_raw_label() {
         "---\nid: pwf\ntitle: pwf\n---\n\n## Human\n",
     )
     .unwrap();
-    let store = ObsidianStore::new(raw_config_for_notes(&notes_dir));
+    let store = store_for_tasks(&notes_dir.join("pwf"));
     let project = ProjectName::try_new("pwf").unwrap();
 
-    let human =
-        <ObsidianStore as AppDbStore<IndexSection>>::get(&store, &project, &"Human".to_string())
-            .unwrap();
-    let missing =
-        <ObsidianStore as AppDbStore<IndexSection>>::get(&store, &project, &"Future".to_string())
-            .unwrap();
+    let human = <ObsidianStore as AppRecordStore<IndexSection>>::get(
+        &store,
+        &project,
+        &"Human".to_string(),
+    )
+    .unwrap();
+    let missing = <ObsidianStore as AppRecordStore<IndexSection>>::get(
+        &store,
+        &project,
+        &"Future".to_string(),
+    )
+    .unwrap();
 
     assert_eq!(
         human,
@@ -1292,18 +1473,22 @@ fn index_section_insert_and_delete_are_unsupported() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
     std::fs::create_dir_all(notes_dir.join("pwf")).unwrap();
-    let store = ObsidianStore::new(raw_config_for_notes(&notes_dir));
+    let store = store_for_tasks(&notes_dir.join("pwf"));
     let project = ProjectName::try_new("pwf").unwrap();
     let section = IndexSection {
         label: "Human".to_string(),
     };
 
     assert_matches!(
-        <ObsidianStore as AppDbStore<IndexSection>>::insert(&store, &project, section),
+        <ObsidianStore as AppRecordStore<IndexSection>>::insert(&store, &project, section),
         Err(ObsidianStoreError::IndexSectionWriteUnsupported { op: "insert" })
     );
     assert_matches!(
-        <ObsidianStore as AppDbStore<IndexSection>>::delete(&store, &project, &"Human".to_string()),
+        <ObsidianStore as AppRecordStore<IndexSection>>::delete(
+            &store,
+            &project,
+            &"Human".to_string()
+        ),
         Err(ObsidianStoreError::IndexSectionWriteUnsupported { op: "delete" })
     );
 }
@@ -1320,10 +1505,10 @@ fn index_section_update_renames_header_in_place() {
         "---\nid: pwf\ntitle: pwf\n---\n\n## Futuro\n\n- [ ] [[PWF-0001]]\n",
     )
     .unwrap();
-    let store = ObsidianStore::new(raw_config_for_notes(&notes_dir));
+    let store = store_for_tasks(&notes_dir.join("pwf"));
     let project = ProjectName::try_new("pwf").unwrap();
 
-    <ObsidianStore as AppDbStore<IndexSection>>::update(
+    <ObsidianStore as AppRecordStore<IndexSection>>::update(
         &store,
         &project,
         &"Futuro".to_string(),
@@ -1429,7 +1614,7 @@ fn stage_add_parity_vault(
     if let Some(index) = initial_index {
         std::fs::write(project_dir.join("pwf.md"), index).unwrap();
     }
-    let store = ObsidianStore::new(raw_config_for_notes(&notes_dir));
+    let store = store_for_tasks(&notes_dir.join("pwf"));
     (temp, store, project_dir)
 }
 
@@ -1440,7 +1625,7 @@ fn generic_insert_plus_upsert_writes_legacy_add_index_bytes() {
         let (_guard, store, project_dir) = stage_add_parity_vault(scenario.initial_index);
         let project = ProjectName::try_new("pwf").unwrap();
 
-        let record = <ObsidianStore as AppDbStore<PendingWorkItem>>::insert(
+        let record = <ObsidianStore as AppRecordStore<PendingWorkItem>>::insert(
             &store,
             &project,
             NewItem {
@@ -1465,7 +1650,7 @@ fn generic_insert_plus_upsert_writes_legacy_add_index_bytes() {
             "allocated id for `{}`",
             scenario.name
         );
-        <ObsidianStore as AppDbStore<IndexEntry>>::insert(
+        <ObsidianStore as AppRecordStore<IndexEntry>>::insert(
             &store,
             &project,
             IndexEntry {
@@ -1495,10 +1680,10 @@ fn upsert_creates_missing_index_from_identity_template() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
     std::fs::create_dir_all(notes_dir.join("pwf")).unwrap();
-    let store = ObsidianStore::new(raw_config_for_notes(&notes_dir));
+    let store = store_for_tasks(&notes_dir.join("pwf"));
     let project = ProjectName::try_new("pwf").unwrap();
 
-    <ObsidianStore as AppDbStore<IndexEntry>>::insert(
+    <ObsidianStore as AppRecordStore<IndexEntry>>::insert(
         &store,
         &project,
         IndexEntry {
@@ -1522,10 +1707,10 @@ fn delete_index_entry_errors_when_no_link_matches() {
     let project_dir = notes_dir.join("pwf");
     std::fs::create_dir_all(&project_dir).unwrap();
     std::fs::write(project_dir.join("pwf.md"), PARITY_IDENTITY).unwrap();
-    let store = ObsidianStore::new(raw_config_for_notes(&notes_dir));
+    let store = store_for_tasks(&notes_dir.join("pwf"));
     let project = ProjectName::try_new("pwf").unwrap();
 
-    let error = <ObsidianStore as AppDbStore<IndexEntry>>::delete(
+    let error = <ObsidianStore as AppRecordStore<IndexEntry>>::delete(
         &store,
         &project,
         &WorkItemId::try_new("PWF-0002").unwrap(),

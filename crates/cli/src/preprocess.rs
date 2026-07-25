@@ -24,9 +24,7 @@ fn is_other_root_token(token: &str) -> bool {
 fn is_value_flag(flag: &str) -> bool {
     matches!(
         flag,
-        "--config-path"
-            | "--notes-dir"
-            | "--repo-root"
+        "--repo-root"
             | "--pending-work-script"
             | "--id"
             | "--project"
@@ -392,14 +390,6 @@ mod tests {
     #[test]
     fn note_bare_project_gains_implicit_ls() {
         assert_eq!(n(&["note", "pwf"]), vec!["note", "ls", "pwf"]);
-    }
-
-    #[test]
-    fn note_bare_project_after_value_flag_gains_implicit_ls() {
-        assert_eq!(
-            n(&["note", "--config-path", "/cfg.json", "pwf"]),
-            vec!["note", "--config-path", "/cfg.json", "ls", "pwf"]
-        );
     }
 
     #[test]

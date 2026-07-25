@@ -1,6 +1,11 @@
 use std::{collections::BTreeMap, path::Path};
 
-use pwf_domain::pending_work::{ProjectName, WorkItemId};
+use pwf_domain::{
+    pending_work::{ProjectName, WorkItemId},
+    project::ProjectPrefix,
+};
+
+use crate::project::Project;
 
 /// Associates a managed project with its repository and item-id prefix.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,6 +74,17 @@ impl ProjectRegistry {
                 .map(|(name, repository, prefix)| (name, ProjectEntry { repository, prefix }))
                 .collect(),
         }
+    }
+
+    /// Builds routing entries from persisted projects after expanding directory sources.
+    pub fn from_projects(projects: &[Project], expand_directory: impl Fn(&str) -> String) -> Self {
+        Self::new(projects.iter().map(|project| {
+            (
+                project.title.clone(),
+                Some(expand_directory(project.source.value().as_ref())),
+                Some(project.id.to_string()),
+            )
+        }))
     }
 
     /// Resolves an exact name, a unique ASCII-case-insensitive name, or a unique prefix.
@@ -178,6 +194,14 @@ impl ProjectRegistry {
             .and_then(|entry| entry.repository.as_deref())
     }
 
+    /// Returns the managed-project prefix for `project`, when present.
+    pub fn prefix_for(&self, project: &ProjectName) -> Option<ProjectPrefix> {
+        self.entries
+            .get(project)
+            .and_then(|entry| entry.prefix.as_deref())
+            .and_then(|prefix| ProjectPrefix::try_new(prefix).ok())
+    }
+
     fn project_names(&self) -> Vec<String> {
         self.entries.keys().map(ToString::to_string).collect()
     }
@@ -202,4 +226,40 @@ fn normalize_repository(repository: &str) -> String {
         .replace('\\', "/")
         .trim_end_matches('/')
         .to_ascii_lowercase()
+}
+
+#[cfg(test)]
+mod tests {
+    use pwf_domain::project::{
+        ProjectName, ProjectPrefix, ProjectSource, ProjectSourceKind, ProjectSourceValue,
+        ProjectTasks, ProjectTasksKind, ProjectTasksPath,
+    };
+
+    use super::ProjectRegistry;
+    use crate::project::Project;
+
+    #[test]
+    fn project_rows_build_repository_and_prefix_routes_with_expanded_sources() {
+        let projects = [Project {
+            id: ProjectPrefix::try_new("pwf").unwrap(),
+            title: ProjectName::try_new("pwf").unwrap(),
+            source: ProjectSource::new(
+                ProjectSourceKind::Directory,
+                ProjectSourceValue::try_new("~/tools/pwf").unwrap(),
+            ),
+            tasks: ProjectTasks::new(
+                ProjectTasksKind::Directory,
+                ProjectTasksPath::try_new("~/notes/pwf").unwrap(),
+            ),
+            created_at: "2026-07-25T00:00:00Z".to_string(),
+            is_paused: false,
+        }];
+
+        let registry =
+            ProjectRegistry::from_projects(&projects, |path| path.replacen('~', "/home/me", 1));
+
+        let project = registry.resolve("PWF").unwrap();
+        assert_eq!(project.as_ref(), "pwf");
+        assert_eq!(registry.repo_for(project), Some("/home/me/tools/pwf"));
+    }
 }

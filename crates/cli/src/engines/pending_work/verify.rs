@@ -3,14 +3,13 @@ use pwf_application::pending_work::{
     ProjectRegistry,
     session::{Agent, verify::VerifySession},
 };
-use pwf_domain::pending_work::ProjectName;
 use pwf_infra::{
     obsidian::ObsidianStore,
     session::{AgentProbe, ClaudeHarness, CodexHarness, TomlModelTierCatalog, render_argv},
 };
 
 use super::{
-    common::{AgentChoice, CommonArguments, Identifier, PendingWorkError, load_configuration},
+    common::{AgentChoice, CommonArguments, Identifier, PendingWorkError},
     render::render_verify,
 };
 
@@ -21,8 +20,8 @@ pub struct Arguments {
     /// Which agent to probe (claude default).
     #[arg(long = "agent", short = 'a', value_enum, default_value_t = AgentChoice::Claude)]
     pub(crate) agent: AgentChoice,
-    /// Explicit model override, forwarded verbatim to the agent's `--model` flag
-    /// (no validation — wins over any effort-tier resolution).
+    /// Model forwarded verbatim to the agent's `--model` flag, unvalidated. Wins
+    /// over effort-tier resolution.
     #[arg(long, short = 'm')]
     pub(crate) model: Option<String>,
     #[command(flatten)]
@@ -37,19 +36,11 @@ pub(in crate::engines::pending_work) struct VerifySessionOk {
     pub command_preview: String,
 }
 
-pub(super) fn run(arguments: &Arguments) -> Result<String, PendingWorkError> {
-    let configuration = load_configuration(&arguments.common)?;
-    let projects = ProjectRegistry::new(configuration.projects.iter().map(|(name, repository)| {
-        (
-            ProjectName::try_new(name).expect("configured project is non-empty"),
-            Some(repository.clone()),
-            configuration
-                .prefixes
-                .get(name)
-                .map(|prefix| prefix.to_ascii_uppercase()),
-        )
-    }));
-    let store = ObsidianStore::new(configuration);
+pub(super) fn run(
+    arguments: &Arguments,
+    store: &ObsidianStore,
+    projects: &ProjectRegistry,
+) -> Result<String, PendingWorkError> {
     let agent = Agent::from(arguments.agent);
     let probe = match agent {
         Agent::Claude => ClaudeHarness::probe(),
@@ -61,8 +52,8 @@ pub(super) fn run(arguments: &Arguments) -> Result<String, PendingWorkError> {
             agent,
             model_override: arguments.model.clone(),
         },
-        &store,
-        &projects,
+        store,
+        projects,
         &TomlModelTierCatalog,
     )?;
     let command_preview = match verification.launch.as_ref() {

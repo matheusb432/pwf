@@ -5,7 +5,7 @@ use pwf_domain::pending_work::{
 use super::prerequisite;
 pub use super::prerequisite::PrerequisiteStatus;
 use crate::{
-    AppDbStore, PendingWorkItem,
+    AppRecordStore, PendingWorkItem,
     pending_work::{
         enrich::{enrich, is_open_item},
         project_registry::ProjectRegistry,
@@ -147,7 +147,7 @@ pub enum GetPendingWorkError {
 #[cqrsy::query]
 pub fn execute(
     query: &GetPendingWork,
-    store: &impl AppDbStore<PendingWorkItem>,
+    store: &impl AppRecordStore<PendingWorkItem>,
     projects: &ProjectRegistry,
 ) -> Result<ListResult, GetPendingWorkError> {
     let mut items = collect_list_items(query, store, projects)?;
@@ -196,7 +196,7 @@ pub fn execute(
 /// Reads and enriches listable lifecycle records from one project or every project in name order.
 fn collect_list_items(
     query: &GetPendingWork,
-    store: &impl AppDbStore<PendingWorkItem>,
+    store: &impl AppRecordStore<PendingWorkItem>,
     projects: &ProjectRegistry,
 ) -> Result<Vec<PendingWorkItemView>, GetPendingWorkError> {
     let scan: Vec<(ProjectName, Option<String>)> = match query.only_project.as_deref() {
@@ -348,11 +348,9 @@ mod tests {
         OrderSpec, PrerequisiteStatus, ProjectRegistry, execute,
     };
     use crate::{
-        AppDbStore, IndexPlacement, ItemPatch, Materialization, NewItem, PendingWorkItem, RecordId,
-        testing::InMemoryStore,
+        AppRecordStore, IndexPlacement, ItemPatch, Materialization, NewItem, PendingWorkItem,
+        RecordId, testing::InMemoryStore,
     };
-
-    type Staged = (&'static str, PendingWorkItem);
 
     fn record(id: &str) -> PendingWorkItem {
         PendingWorkItem {
@@ -377,11 +375,13 @@ mod tests {
         }
     }
 
-    fn in_project(project: &'static str, item: PendingWorkItem) -> Staged {
+    fn in_project(project: &'static str, item: PendingWorkItem) -> (&'static str, PendingWorkItem) {
         (project, item)
     }
 
-    fn store_and_registry(items: &[Staged]) -> (InMemoryStore, ProjectRegistry) {
+    fn store_and_registry(
+        items: &[(&'static str, PendingWorkItem)],
+    ) -> (InMemoryStore, ProjectRegistry) {
         let mut store = InMemoryStore::default();
         let mut projects: Vec<&'static str> = items.iter().map(|(project, _)| *project).collect();
         projects.sort_unstable();
@@ -405,7 +405,8 @@ mod tests {
     }
 
     fn pwf_store(items: Vec<PendingWorkItem>) -> (InMemoryStore, ProjectRegistry) {
-        let staged: Vec<Staged> = items.into_iter().map(|item| ("pwf", item)).collect();
+        let staged: Vec<(&'static str, PendingWorkItem)> =
+            items.into_iter().map(|item| ("pwf", item)).collect();
         store_and_registry(&staged)
     }
 
@@ -427,7 +428,7 @@ mod tests {
     #[derive(Clone)]
     struct NoPrerequisiteLookupStore(InMemoryStore);
 
-    impl AppDbStore<PendingWorkItem> for NoPrerequisiteLookupStore {
+    impl AppRecordStore<PendingWorkItem> for NoPrerequisiteLookupStore {
         type Error = Infallible;
 
         fn get(
@@ -439,7 +440,7 @@ mod tests {
         }
 
         fn list(&self, project: &ProjectName) -> Result<Vec<PendingWorkItem>, Self::Error> {
-            <InMemoryStore as AppDbStore<PendingWorkItem>>::list(&self.0, project)
+            <InMemoryStore as AppRecordStore<PendingWorkItem>>::list(&self.0, project)
         }
 
         fn insert(

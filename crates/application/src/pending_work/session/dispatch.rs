@@ -9,7 +9,7 @@ use super::{
     InlineSessionClient, ZellijSessionClient, ZellijTabOpenError, plan::PreparedSessionDispatch,
 };
 use crate::{
-    AppDbStore, PendingWorkItem,
+    AppRecordStore, PendingWorkItem,
     pending_work::update::{self, UpdatePendingWorkError},
 };
 
@@ -69,7 +69,7 @@ pub enum DispatchSessionError {
 #[cqrsy::command]
 pub fn execute(
     command: DispatchSession,
-    store: &impl AppDbStore<PendingWorkItem>,
+    store: &impl AppRecordStore<PendingWorkItem>,
     claude: &impl ClaudeSessionClient,
     codex: &impl CodexSessionClient,
     inline: &impl InlineSessionClient,
