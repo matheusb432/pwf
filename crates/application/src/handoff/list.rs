@@ -60,7 +60,7 @@ where
 mod tests {
     use std::path::PathBuf;
 
-    use super::{ListHandoffs, ListedHandoffs, execute};
+    use super::{ListHandoffs, ListedHandoffs};
     use crate::{
         AppRecordStore, HandoffLedger, HandoffLedgerIdentifier, HandoffLedgerRow,
         HandoffLedgerWrite, HandoffScope, testing::InMemoryStore,
@@ -77,7 +77,7 @@ mod tests {
         let store = InMemoryStore::default();
 
         assert_eq!(
-            execute(ListHandoffs { scope: scope() }, &store,).unwrap(),
+            super::execute(ListHandoffs { scope: scope() }, &store,).unwrap(),
             ListedHandoffs::LedgerMissing
         );
 
@@ -97,7 +97,7 @@ mod tests {
         )
         .unwrap();
 
-        let listed = execute(ListHandoffs { scope: scope() }, &store).unwrap();
+        let listed = super::execute(ListHandoffs { scope: scope() }, &store).unwrap();
         let ListedHandoffs::Ledger { markdown } = listed else {
             panic!("expected the persisted ledger")
         };

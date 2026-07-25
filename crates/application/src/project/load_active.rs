@@ -1,14 +1,12 @@
-use std::{
-    collections::BTreeMap,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 use pwf_domain::project::ProjectPrefix;
 
 use super::{
     Project,
-    list::{ListProjects, ListProjectsError},
+    list::{self, ListProjects, ListProjectsError},
     resolve_runtime_path::{self, ResolveRuntimePath, RuntimePathError},
+    task_location::{self, TaskLocationError},
 };
 use crate::AppDbStore;
 
@@ -75,7 +73,7 @@ pub async fn execute(
     query: LoadActiveProjects,
     database: &impl AppDbStore,
 ) -> Result<Vec<ActiveProject>, LoadActiveProjectsError> {
-    let projects = super::list::execute(
+    let projects = list::execute(
         ListProjects {
             include_paused: false,
         },
@@ -90,22 +88,23 @@ fn resolve_projects(
     projects: Vec<Project>,
     home: &Path,
 ) -> Result<Vec<ActiveProject>, LoadActiveProjectsError> {
-    let mut task_path_owners = BTreeMap::new();
+    let mut task_path_owners = Vec::with_capacity(projects.len());
     let mut active = Vec::with_capacity(projects.len());
 
     for project in projects {
         let source_path =
             resolve_path(&project.id, "source", project.source.value().as_ref(), home)?;
-        let tasks_path = resolve_path(&project.id, "task", project.tasks.path().as_ref(), home)?;
-        if let Some(existing_id) =
-            task_path_owners.insert(tasks_path.identity().clone(), project.id.clone())
-        {
-            return Err(task_path_conflict(
-                existing_id,
-                project.id,
-                tasks_path.path().to_path_buf(),
-            ));
-        }
+        let tasks_path = task_location::reject_collision(
+            &project.id,
+            project.tasks.path().as_ref(),
+            task_path_owners.iter().cloned(),
+            home,
+        )
+        .map_err(task_location_error)?;
+        task_path_owners.push((
+            project.id.clone(),
+            project.tasks.path().as_ref().to_string(),
+        ));
         active.push(ActiveProject {
             project,
             source_path: source_path.path().to_path_buf(),
@@ -134,23 +133,27 @@ fn resolve_path(
     })
 }
 
-fn task_path_conflict(
-    first_id: ProjectPrefix,
-    second_id: ProjectPrefix,
-    path: PathBuf,
-) -> LoadActiveProjectsError {
-    if first_id <= second_id {
-        LoadActiveProjectsError::DuplicateTaskLocation {
+fn task_location_error(error: TaskLocationError) -> LoadActiveProjectsError {
+    match error {
+        TaskLocationError::InvalidPath {
+            project_id,
+            path,
+            source,
+        } => LoadActiveProjectsError::InvalidPath {
+            project_id,
+            field: "task",
+            path,
+            source,
+        },
+        TaskLocationError::Collision {
             first_id,
             second_id,
             path,
-        }
-    } else {
-        LoadActiveProjectsError::DuplicateTaskLocation {
-            first_id: second_id,
-            second_id: first_id,
+        } => LoadActiveProjectsError::DuplicateTaskLocation {
+            first_id,
+            second_id,
             path,
-        }
+        },
     }
 }
 

@@ -1,4 +1,6 @@
 mod done_queue;
+mod frontmatter_text;
+mod fs_atomic;
 mod identity;
 mod index_text;
 mod note_frontmatter;

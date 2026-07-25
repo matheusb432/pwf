@@ -1,8 +1,8 @@
 //! Derives pending-work launchability diagnostics for list, verify, and session operations.
 
-use pwf_domain::pending_work::{WorkItemStatus, section_alias};
+use pwf_domain::pending_work::WorkItemStatus;
 
-use super::{list::PendingWorkItemView, note_body::is_placeholder_prompt};
+use super::{list::PendingWorkItemView, note_body::is_placeholder_prompt, section};
 use crate::{Materialization, PendingWorkItem, RecordId};
 
 pub const ISSUE_NO_REPO: &str =
@@ -12,12 +12,12 @@ pub const ISSUE_PLACEHOLDER_PROMPT: &str =
 
 /// Canonicalizes known section aliases and trims unknown labels for display.
 #[must_use]
-pub fn normalize_section_label(label: &str) -> String {
-    section_alias(label).map_or_else(|| label.trim().to_string(), str::to_string)
+pub(super) fn normalize_section_label(label: &str) -> String {
+    section::alias(label).map_or_else(|| label.trim().to_string(), str::to_string)
 }
 
 #[must_use]
-pub fn normalize_section(section: Option<&str>) -> Option<String> {
+pub(super) fn normalize_section(section: Option<&str>) -> Option<String> {
     section.map(normalize_section_label)
 }
 
@@ -37,7 +37,11 @@ pub struct DerivedFlags {
 
 /// Derives diagnostics in repository, missing-note, placeholder order.
 #[must_use]
-pub fn derive_flags(repo: Option<&str>, prompt: &str, missing_note: Option<&str>) -> DerivedFlags {
+pub(super) fn derive_flags(
+    repo: Option<&str>,
+    prompt: &str,
+    missing_note: Option<&str>,
+) -> DerivedFlags {
     let mut issues = Vec::new();
     if repo.is_none_or(|value| value.trim().is_empty()) {
         issues.push(ISSUE_NO_REPO.to_string());
@@ -123,7 +127,7 @@ pub(crate) fn inline_record_id(project: &str, ordinal: usize) -> String {
 /// Materialization controls `format` and `item_file`; missing notes add an issue; empty titles fall
 /// back to the canonical id; section labels are canonicalized for display.
 #[must_use]
-pub fn enrich(item: &PendingWorkItem, repo: Option<&str>) -> EnrichedPendingWorkItem {
+pub(super) fn enrich(item: &PendingWorkItem, repo: Option<&str>) -> EnrichedPendingWorkItem {
     let prompt = item.body.trim().to_string();
     let (format, item_file, missing_note) = match &item.materialization {
         Materialization::NoteFile => ("file", Some(item.locator.clone()), None),

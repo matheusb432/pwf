@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use pwf_application::pending_work::note_body;
-use pwf_domain::pending_work::{ProjectName, Tags, inferred_title, normalize_title};
+use pwf_domain::pending_work::{ProjectName, Tags};
 
 use super::{ObsidianStore, ObsidianStoreError, fs::write_add_item_file};
 use crate::obsidian::note_frontmatter::{NewWorkItemFields, new_work_item_content};
@@ -9,7 +9,7 @@ use crate::obsidian::note_frontmatter::{NewWorkItemFields, new_work_item_content
 /// Contains note-file fields independently of index linking.
 pub(super) struct NewNoteRequest<'a> {
     pub prompt: &'a str,
-    pub title: Option<&'a str>,
+    pub title: &'a str,
     pub created: &'a str,
     pub prereq: Option<&'a str>,
     pub effort: Option<u8>,
@@ -32,10 +32,6 @@ impl ObsidianStore {
         prefix: &str,
         request: &NewNoteRequest<'_>,
     ) -> Result<WrittenNote, ObsidianStoreError> {
-        let title = match request.title {
-            Some(title) if !title.trim().is_empty() => normalize_title(title),
-            _ => inferred_title(request.prompt),
-        };
         let dir = self.project_paths.project_directory(project)?;
         if !dir.exists() {
             std::fs::create_dir_all(dir)
@@ -46,7 +42,7 @@ impl ObsidianStore {
         let body = note_body(request.prompt);
         let content = new_work_item_content(NewWorkItemFields {
             id: &id,
-            title: &title,
+            title: request.title,
             project: project.as_ref(),
             prompt: &body,
             created: request.created,
@@ -58,7 +54,7 @@ impl ObsidianStore {
         Ok(WrittenNote {
             id,
             path,
-            title,
+            title: request.title.to_string(),
             content,
         })
     }

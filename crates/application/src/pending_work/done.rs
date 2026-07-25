@@ -6,15 +6,16 @@ use queue::{close_decisions, is_futuro_label};
 
 use super::{
     add::{AddPendingWorkError, AddedItem, PendingWorkSection, added_item, project_mapped},
-    commit_provenance,
+    commit_provenance, identifier,
     note_body::append_report,
     project_registry::ProjectRegistry,
     store_util::{self, LoadItemError, body_region},
+    title,
 };
 use crate::{
     handoff::{HandoffError, HandoffMutationOk, lifecycle},
     ports::{
-        AppRecordStore, HandoffDocumentStore, HandoffLedger, IndexEntry, IndexEntryState,
+        AppRecordStore, Clock, HandoffDocumentStore, HandoffLedger, IndexEntry, IndexEntryState,
         IndexSection, ItemPatch, Materialization, NewItem, PendingWorkItem,
     },
 };
@@ -22,7 +23,7 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct CompletePendingWork {
     pub id: String,
-    pub completed: String,
+    pub date: Option<String>,
     pub report: Option<String>,
     pub commits: Vec<String>,
     pub review: bool,
@@ -93,10 +94,11 @@ pub enum CompletePendingWorkError {
 }
 
 #[cqrsy::command]
-pub fn execute<S>(
+pub fn execute<S, C>(
     command: &CompletePendingWork,
     store: &S,
     projects: &ProjectRegistry,
+    clock: &C,
 ) -> Result<CompletedPendingWork, CompletePendingWorkError>
 where
     S: AppRecordStore<PendingWorkItem>
@@ -104,13 +106,18 @@ where
         + AppRecordStore<IndexSection>
         + HandoffDocumentStore
         + AppRecordStore<HandoffLedger>,
+    C: Clock,
 {
+    let authored_date = command
+        .date
+        .clone()
+        .map_or_else(|| clock.today(), Timestamp::new);
     perform_close(
         store,
         projects,
         ClosedItemAction::Done,
         &command.id,
-        &command.completed,
+        authored_date.as_str(),
         command.report.as_deref(),
         &command.commits,
         command.review,
@@ -193,7 +200,7 @@ where
 {
     let commits_value = commit_provenance::normalize(commits);
     let pending_work_identifier =
-        WorkItemId::try_new(id).map_err(|_| CloseError::ItemNotFound { id: id.to_string() })?;
+        identifier::parse(id).ok_or_else(|| CloseError::ItemNotFound { id: id.to_string() })?;
     let prefix = pending_work_identifier
         .as_ref()
         .split_once('-')
@@ -362,12 +369,13 @@ where
     S: AppRecordStore<PendingWorkItem> + AppRecordStore<IndexEntry> + AppRecordStore<IndexSection>,
 {
     project_mapped(project.as_ref(), projects).map_err(CloseError::ReviewTask)?;
+    let prompt = review_task_prompt(reviewed.as_ref(), commits);
     let created = store_util::create_item(
         store,
         project,
         NewItem {
-            prompt: review_task_prompt(reviewed.as_ref(), commits),
-            title: None,
+            title: title::inferred(&prompt),
+            prompt,
             created: Timestamp::new(completed),
             section: Some(PendingWorkSection::Human.as_str().to_string()),
             prereq: None,
@@ -420,14 +428,24 @@ mod tests {
 
     use super::{
         AddPendingWorkError, ClosedItemAction, CompletePendingWork, CompletePendingWorkError,
-        ProjectRegistry, execute, review_task_prompt,
+        ProjectRegistry, review_task_prompt,
     };
     use crate::{
         HandoffDocument, HandoffDocumentIdentifier, HandoffLocation, HandoffScope, IndexEntry,
         IndexEntryState, Materialization, PendingWorkItem, RecordId,
         handoff::HandoffMutationOk,
+        ports::Clock,
         testing::{FailurePoint, InMemoryStore},
     };
+
+    #[derive(Clone)]
+    struct FixedClock;
+
+    impl Clock for FixedClock {
+        fn today(&self) -> Timestamp {
+            Timestamp::new("2026-07-26")
+        }
+    }
 
     fn registry() -> ProjectRegistry {
         ProjectRegistry::new(vec![(
@@ -483,7 +501,7 @@ mod tests {
     fn done_command(id: &str) -> CompletePendingWork {
         CompletePendingWork {
             id: id.to_string(),
-            completed: "2026-07-07".to_string(),
+            date: Some("2026-07-07".to_string()),
             report: None,
             commits: Vec::new(),
             review: false,
@@ -528,7 +546,8 @@ mod tests {
         entries.push(entry("GLP-0007", IndexEntryState::Open, "General"));
         let store = staged(items, entries);
 
-        let out = execute(&done_command("GLP-0007"), &store, &registry()).unwrap();
+        let out =
+            super::execute(&done_command("GLP-0007"), &store, &registry(), &FixedClock).unwrap();
 
         assert_eq!(out.action, ClosedItemAction::Done);
         assert_eq!(
@@ -556,13 +575,31 @@ mod tests {
     }
 
     #[test]
+    fn done_uses_clock_date_when_no_date_is_explicit() {
+        let store = staged(
+            vec![record("GLP-0001", WorkItemStatus::Active)],
+            vec![entry("GLP-0001", IndexEntryState::Open, "General")],
+        );
+        let mut command = done_command("GLP-0001");
+        command.date = None;
+
+        super::execute(&command, &store, &registry(), &FixedClock).unwrap();
+
+        assert_eq!(
+            store.items("glep-shimeji")[0].completed,
+            Some(Timestamp::new("2026-07-26"))
+        );
+    }
+
+    #[test]
     fn done_normalizes_futuro_header_entries() {
         let store = staged(
             vec![record("GLP-0001", WorkItemStatus::Active)],
             vec![entry("GLP-0001", IndexEntryState::Open, "Futuro")],
         );
 
-        let out = execute(&done_command("GLP-0001"), &store, &registry()).unwrap();
+        let out =
+            super::execute(&done_command("GLP-0001"), &store, &registry(), &FixedClock).unwrap();
 
         assert_eq!(out.futuro_renamed_project, Some(glp()));
     }
@@ -579,7 +616,7 @@ mod tests {
             ..done_command("GLP-0001")
         };
 
-        let out = execute(&cmd, &store, &registry()).unwrap();
+        let out = super::execute(&cmd, &store, &registry(), &FixedClock).unwrap();
 
         let review = out.review_item.expect("review item present");
         assert_eq!(review.id, "GLP-0002");
@@ -605,7 +642,7 @@ mod tests {
             ..done_command("GLP-0001")
         };
 
-        let error = execute(&command, &store, &projects).unwrap_err();
+        let error = super::execute(&command, &store, &projects, &FixedClock).unwrap_err();
 
         assert!(matches!(
             error,
@@ -623,7 +660,8 @@ mod tests {
     fn done_on_missing_item_reports_item_not_found() {
         let store = staged(Vec::new(), Vec::new());
 
-        let error = execute(&done_command("GLP-9999"), &store, &registry()).unwrap_err();
+        let error = super::execute(&done_command("GLP-9999"), &store, &registry(), &FixedClock)
+            .unwrap_err();
 
         assert!(matches!(
             error,
@@ -639,7 +677,8 @@ mod tests {
     fn done_reports_an_unknown_configured_prefix() {
         let store = staged(Vec::new(), Vec::new());
 
-        let error = execute(&done_command("XYZ-0001"), &store, &registry()).unwrap_err();
+        let error = super::execute(&done_command("XYZ-0001"), &store, &registry(), &FixedClock)
+            .unwrap_err();
 
         assert_eq!(
             error.to_string(),
@@ -662,7 +701,8 @@ mod tests {
         )
         .with_handoff_documents(scope.clone(), vec![handoff()]);
 
-        let outcome = execute(&done_command("GLP-0001"), &store, &registry()).unwrap();
+        let outcome =
+            super::execute(&done_command("GLP-0001"), &store, &registry(), &FixedClock).unwrap();
 
         assert!(matches!(
             outcome.handoff,
@@ -691,7 +731,8 @@ mod tests {
         .with_handoff_documents(scope, vec![handoff()])
         .with_failure(FailurePoint::DocumentUpdate);
 
-        let error = execute(&done_command("GLP-0001"), &store, &registry()).unwrap_err();
+        let error = super::execute(&done_command("GLP-0001"), &store, &registry(), &FixedClock)
+            .unwrap_err();
 
         assert!(matches!(
             error,
@@ -718,7 +759,7 @@ mod tests {
             ..done_command("GLP-0001")
         };
 
-        let error = execute(&command, &store, &registry()).unwrap_err();
+        let error = super::execute(&command, &store, &registry(), &FixedClock).unwrap_err();
 
         assert!(matches!(
             error,

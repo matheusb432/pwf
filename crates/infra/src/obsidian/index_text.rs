@@ -1,6 +1,5 @@
 use std::sync::LazyLock;
 
-pub use pwf_core::index::edit::{find_section_index, remove_index_link};
 use regex::Regex;
 
 static SECTION_MARK_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^##\s").unwrap());
@@ -8,6 +7,51 @@ static NOTES_HEADER_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?m)^###\s+Notes\s*$").unwrap());
 static ANCHOR_WIKILINK_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^- \[\[").unwrap());
 static ANCHOR_CHECKBOX_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^- \[").unwrap());
+
+const NOTES_HEADER: &str = "### Notes";
+
+pub(super) fn find_section_index(content: &str, headers: &[&str]) -> Option<usize> {
+    for header in headers {
+        let pattern = format!(r"(?im)^{}\s*$", regex::escape(header));
+        if let Some(section) = Regex::new(&pattern).unwrap().find(content) {
+            return Some(section.start());
+        }
+    }
+    None
+}
+
+pub(super) fn remove_index_link(content: &str, id: &str) -> String {
+    let pattern = format!(
+        r"(?m)^\s*-\s*(?:\[[ xX]\]\s*)?\[\[{}(?:\|[^\]]*)?\]\].*(?:\r?\n)?",
+        regex::escape(id)
+    );
+    Regex::new(&pattern)
+        .unwrap()
+        .replace_all(content, "")
+        .into_owned()
+}
+
+pub(super) fn add_note_link(content: &str, id: &str) -> String {
+    let link = format!("- [[{id}]]");
+    if let Some(index) = find_section_index(content, &[NOTES_HEADER]) {
+        let after_header = content[index..]
+            .find('\n')
+            .map_or(content.len(), |offset| index + offset + 1);
+        let prefix = &content[..after_header];
+        let suffix = &content[after_header..];
+        return format!("{prefix}{link}\n{suffix}");
+    }
+    let prefix = content.trim_end();
+    if prefix.is_empty() {
+        format!("{NOTES_HEADER}\n\n{link}\n")
+    } else {
+        format!("{prefix}\n\n{NOTES_HEADER}\n\n{link}\n")
+    }
+}
+
+pub(super) fn remove_note_link(content: &str, id: &str) -> String {
+    remove_index_link(content, id)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum KnownSection {
@@ -125,4 +169,70 @@ pub(super) fn add_section_block(content: &str, block: &str, section: KnownSectio
 
     let prefix = content.trim_end();
     format!("{prefix}\n\n{header}\n\n{block}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{add_note_link, find_section_index, remove_index_link, remove_note_link};
+
+    #[test]
+    fn find_section_index_is_case_insensitive() {
+        let content = "- [ ] [[X-0001|a]]\n\n## low-prio\n- [ ] [[X-0002|f]]\n";
+        assert!(find_section_index(content, &["## Low-prio"]).is_some());
+    }
+
+    #[test]
+    fn remove_index_link_handles_checkbox_prefix() {
+        let content = "# proj\n\n- [ ] [[GLP-0001|tray gui]]\n\n## Later\n";
+        assert_eq!(
+            remove_index_link(content, "GLP-0001"),
+            "# proj\n\n## Later\n"
+        );
+    }
+
+    #[test]
+    fn remove_index_link_strips_bare_wikilink_note_line() {
+        let content = "# proj\n\n### Notes\n- [[PWF-NOTE-0001]]\n- [[PWF-NOTE-0002]]\n";
+        assert_eq!(
+            remove_index_link(content, "PWF-NOTE-0001"),
+            "# proj\n\n### Notes\n- [[PWF-NOTE-0002]]\n"
+        );
+    }
+
+    #[test]
+    fn note_link_creates_final_section_without_clobbering_tasks() {
+        let content = "- [ ] [[PWF-0001|task]]\n\n## Future\n- [ ] [[PWF-0002|later]]\n";
+        assert_eq!(
+            add_note_link(content, "PWF-NOTE-0001"),
+            "- [ ] [[PWF-0001|task]]\n\n## Future\n- [ ] [[PWF-0002|later]]\n\n### Notes\n\n- [[PWF-NOTE-0001]]\n"
+        );
+    }
+
+    #[test]
+    fn note_link_creates_section_in_empty_index() {
+        assert_eq!(
+            add_note_link("", "PWF-NOTE-0001"),
+            "### Notes\n\n- [[PWF-NOTE-0001]]\n"
+        );
+    }
+
+    #[test]
+    fn note_link_inserts_newest_first_under_existing_header() {
+        let content = "# pwf\n\n### Notes\n- [[PWF-NOTE-0001]]\n";
+        let updated = add_note_link(content, "PWF-NOTE-0002");
+        assert_eq!(
+            updated,
+            "# pwf\n\n### Notes\n- [[PWF-NOTE-0002]]\n- [[PWF-NOTE-0001]]\n"
+        );
+        assert_eq!(updated.matches("### Notes").count(), 1);
+    }
+
+    #[test]
+    fn note_link_removal_strips_only_the_target() {
+        let content = "### Notes\n- [[PWF-NOTE-0001]]\n- [[PWF-NOTE-0002]]\n";
+        assert_eq!(
+            remove_note_link(content, "PWF-NOTE-0001"),
+            "### Notes\n- [[PWF-NOTE-0002]]\n"
+        );
+    }
 }

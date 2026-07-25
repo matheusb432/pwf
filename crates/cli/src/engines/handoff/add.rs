@@ -7,16 +7,17 @@ use std::{
 
 use clap::Args;
 use pwf_application::{
-    AppRecordStore, HandoffDocumentStore, HandoffLedger, IndexEntry, IndexSection, PendingWorkItem,
+    AppRecordStore, Clock, HandoffDocumentStore, HandoffLedger, IndexEntry, IndexSection,
+    PendingWorkItem,
     handoff::{
-        add::{AddHandoff, AddHandoffError, HandoffAllocation},
+        add::{self, AddHandoff, AddHandoffError, HandoffAllocation},
         ports::PendingWorkAllocatorClient,
     },
     pending_work::ProjectRegistry,
 };
 use pwf_infra::{obsidian::ObsidianStore, pending_work_allocator::ProcessPendingWorkAllocator};
 
-use super::common::{CommonArguments, HandoffError, date, repository_root};
+use super::common::{CommonArguments, HandoffError, repository_root};
 
 #[derive(Args, Debug)]
 pub struct Arguments {
@@ -34,12 +35,9 @@ pub(super) fn run(
     arguments: &Arguments,
     store: &ObsidianStore,
     projects: &ProjectRegistry,
+    clock: &impl Clock,
 ) -> Result<String, HandoffError> {
     let root = repository_root(&arguments.common)?;
-    let title = arguments
-        .title
-        .as_deref()
-        .ok_or(HandoffError::MissingTitle)?;
     let allocator = ProcessPendingWorkAllocator::new(
         arguments
             .common
@@ -53,18 +51,18 @@ pub(super) fn run(
         HandoffAllocation::InProcess
     };
     invoke_add(
-        &root, arguments, title, allocation, store, projects, &allocator,
+        &root, arguments, allocation, store, projects, &allocator, clock,
     )
 }
 
-pub(in crate::engines::handoff) fn invoke_add<S, C>(
+pub(in crate::engines::handoff) fn invoke_add<S, A, C>(
     root: &Path,
     args: &Arguments,
-    title: &str,
     allocation: HandoffAllocation,
     store: &S,
     projects: &ProjectRegistry,
-    allocator: &C,
+    allocator: &A,
+    clock: &C,
 ) -> Result<String, HandoffError>
 where
     S: AppRecordStore<PendingWorkItem>
@@ -72,22 +70,24 @@ where
         + AppRecordStore<IndexSection>
         + HandoffDocumentStore
         + AppRecordStore<HandoffLedger>,
-    C: PendingWorkAllocatorClient,
+    A: PendingWorkAllocatorClient,
+    C: Clock,
 {
-    let today = date(args.common.date.as_deref());
-    let added = pwf_application::handoff::add::execute(
+    let title = args.title.as_deref().ok_or(HandoffError::MissingTitle)?;
+    let added = add::execute(
         AddHandoff {
             scope: pwf_application::HandoffScope {
                 repository_root: root.to_path_buf(),
             },
             title: title.to_string(),
             slug: args.slug.clone(),
-            created: today,
+            date: args.common.date.clone(),
             allocation,
         },
         store,
         projects,
         allocator,
+        clock,
     )
     .map_err(|source| match source {
         AddHandoffError::ProjectResolution { .. } => HandoffError::UnmanagedRepo {

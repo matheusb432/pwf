@@ -35,7 +35,7 @@ where
     let Some(raw_effort) = effort else {
         return Ok(None);
     };
-    let tier = EffortTier::parse(raw_effort).ok_or_else(|| ModelSelectionError::InvalidEffort {
+    let tier = parse_effort(raw_effort).ok_or_else(|| ModelSelectionError::InvalidEffort {
         task_id: task_id.to_string(),
         value: raw_effort.to_string(),
     })?;
@@ -61,13 +61,20 @@ where
     Ok(if model.is_empty() { None } else { Some(model) })
 }
 
+fn parse_effort(raw: &str) -> Option<EffortTier> {
+    raw.trim()
+        .parse::<u8>()
+        .ok()
+        .and_then(|value| EffortTier::try_from(value).ok())
+}
+
 #[cfg(test)]
 mod tests {
     use std::{assert_matches, error::Error, fmt};
 
     use pwf_domain::pending_work::EffortTier;
 
-    use super::{ModelSelectionError, resolve_model};
+    use super::{ModelSelectionError, parse_effort, resolve_model};
     use crate::pending_work::session::{Agent, ModelTier, ModelTierCatalog, ModelTierLookup};
 
     const CATALOG_PATH: &str = "/config/model-tiers.toml";
@@ -104,6 +111,16 @@ mod tests {
                     claude_model: claude_model.map(str::to_string),
                 }),
             }),
+        }
+    }
+
+    #[test]
+    fn effort_text_decodes_only_the_valid_tier_range() {
+        for value in 1..=4 {
+            assert_eq!(u8::from(parse_effort(&value.to_string()).unwrap()), value);
+        }
+        for raw in ["0", "5", "abc", ""] {
+            assert!(parse_effort(raw).is_none());
         }
     }
 

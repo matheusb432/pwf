@@ -1,5 +1,7 @@
 //! Parses and dispatches managed-project commands.
 
+use std::path::PathBuf;
+
 use clap::{Args, Subcommand};
 use pwf_domain::project::ProjectPrefix;
 use pwf_infra::SqliteStore;
@@ -32,7 +34,11 @@ pub enum Command {
     Resume(resume::Arguments),
 }
 
-pub async fn run(arguments: Arguments, database: &SqliteStore) -> Result<String, String> {
+pub async fn run(
+    arguments: Arguments,
+    database: &SqliteStore,
+    home: Option<PathBuf>,
+) -> Result<String, String> {
     let Some(command) = arguments.command else {
         return Ok(crate::command::project_help());
     };
@@ -40,10 +46,14 @@ pub async fn run(arguments: Arguments, database: &SqliteStore) -> Result<String,
     match command {
         Command::List(arguments) => list::run(arguments, database).await,
         Command::Get(arguments) => get::run(arguments, database).await,
-        Command::Add(arguments) => add::run(arguments, database).await,
+        Command::Add(arguments) => add::run(arguments, database, project_home(home)?).await,
         Command::Pause(arguments) => pause::run(arguments, database).await,
-        Command::Resume(arguments) => resume::run(arguments, database).await,
+        Command::Resume(arguments) => resume::run(arguments, database, project_home(home)?).await,
     }
+}
+
+fn project_home(home: Option<PathBuf>) -> Result<PathBuf, String> {
+    home.ok_or_else(|| "resolving the home directory for managed projects failed".to_string())
 }
 
 fn parse_project_id(raw: &str) -> Result<ProjectPrefix, String> {

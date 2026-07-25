@@ -1,6 +1,6 @@
-use pwf_domain::pending_work::{Timestamp, WorkItemId, section_alias};
+use pwf_domain::pending_work::{Timestamp, WorkItemId};
 
-use crate::{IndexEntry, IndexEntryState, IndexSection};
+use crate::{IndexEntry, IndexEntryState, IndexSection, pending_work::section};
 
 const SECTION_CAPS: &[(&str, usize)] =
     &[("General", 6), ("Low-prio", 3), ("Future", 3), ("Human", 3)];
@@ -90,7 +90,7 @@ fn canonical_section(label: &str) -> String {
     if label.trim().is_empty() || label.trim() == "General" {
         return "General".to_string();
     }
-    section_alias(label).map_or_else(|| label.trim().to_lowercase(), str::to_string)
+    section::alias(label).map_or_else(|| label.trim().to_lowercase(), str::to_string)
 }
 
 #[cfg(test)]

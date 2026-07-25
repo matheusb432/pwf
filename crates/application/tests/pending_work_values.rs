@@ -2,9 +2,10 @@ use std::{assert_matches, path::PathBuf};
 
 use pwf_application::pending_work::{
     AddedItem, ListResult, OrderDirection, OrderField, OrderSpec, PendingWorkItemView,
-    ProjectRegistry, ProjectResolutionError, RemovedItem, UpdatePendingWorkItemOk, note_body,
+    PrerequisiteStatus, ProjectRegistry, ProjectResolutionError, RemovedItem,
+    UpdatePendingWorkItemOk, note_body,
 };
-use pwf_domain::pending_work::{ProjectName, WorkItemStatus};
+use pwf_domain::pending_work::{ProjectName, WorkItemId, WorkItemStatus};
 
 fn project(name: &str) -> ProjectName {
     ProjectName::try_new(name).unwrap()
@@ -176,4 +177,20 @@ fn application_modules_own_pending_work_use_case_values() {
         tags: None,
         created: Some("2026-07-19".to_string()),
     };
+}
+
+#[test]
+fn prerequisite_status_preserves_facade_and_list_paths_as_one_type() {
+    let list_status = pwf_application::pending_work::list::PrerequisiteStatus {
+        id: WorkItemId::try_new("PWF-0001").unwrap(),
+        status: Some(WorkItemStatus::Done),
+    };
+    let facade_status: PrerequisiteStatus = list_status.clone();
+
+    assert_eq!(facade_status, list_status);
+    assert_eq!(facade_status.status, Some(WorkItemStatus::Done));
+    let debug = format!("{facade_status:?}");
+    assert!(debug.starts_with("PrerequisiteStatus"));
+    assert!(debug.contains("PWF-0001"));
+    assert!(debug.contains("Done"));
 }

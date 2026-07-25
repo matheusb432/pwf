@@ -6,7 +6,6 @@ publish.workspace = true
 
 [dependencies]
 nutype = { workspace = true }
-prompt-lanes = { workspace = true }
 thiserror = { workspace = true }
 
 [lints]

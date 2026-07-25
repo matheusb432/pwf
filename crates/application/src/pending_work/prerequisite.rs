@@ -1,9 +1,9 @@
 use std::sync::LazyLock;
 
-use pwf_domain::pending_work::{ParsePrereqsError, Prereqs, WorkItemId, WorkItemStatus};
+use pwf_domain::pending_work::{WorkItemId, WorkItemStatus};
 use regex::Regex;
 
-use super::project_registry::ProjectRegistry;
+use super::{identifier, list::PrerequisiteStatus, project_registry::ProjectRegistry};
 use crate::{AppRecordStore, Materialization, PendingWorkItem};
 
 const PREREQUISITE_VALUE_PATTERN: &str = r"\[\[([A-Z]{2,4}-\d{4})";
@@ -18,30 +18,6 @@ static PERSISTED_FRONTMATTER_REGEX: LazyLock<Regex> = LazyLock::new(|| {
         .expect("valid persisted frontmatter regex")
 });
 
-/// Describes the persisted lifecycle status of one prerequisite item.
-///
-/// A [`None`] status means the prerequisite could not be resolved.
-///
-/// # Examples
-///
-/// ```
-/// use pwf_application::pending_work::PrerequisiteStatus;
-/// use pwf_domain::pending_work::{WorkItemId, WorkItemStatus};
-///
-/// let prerequisite = PrerequisiteStatus {
-///     id: WorkItemId::try_new("PWF-0001").unwrap(),
-///     status: Some(WorkItemStatus::Done),
-/// };
-/// assert_eq!(prerequisite.status, Some(WorkItemStatus::Done));
-/// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PrerequisiteStatus {
-    /// Canonical prerequisite identifier.
-    pub id: WorkItemId,
-    /// Persisted status, or [`None`] when lookup cannot resolve the record.
-    pub status: Option<WorkItemStatus>,
-}
-
 #[derive(Debug, thiserror::Error)]
 pub(super) enum PrerequisiteValidationError {
     #[error("Invalid --prereq id: {raw}.")]
@@ -50,6 +26,42 @@ pub(super) enum PrerequisiteValidationError {
     MissingId,
     #[error("Unknown --prereq id(s): {}.", ids.join(", "))]
     UnknownIds { ids: Vec<String> },
+}
+
+fn parse_values(values: &[String]) -> Result<Vec<WorkItemId>, PrerequisiteValidationError> {
+    let mut identifiers = Vec::new();
+    for value in values {
+        for raw in value.split(',') {
+            let raw = raw.trim();
+            if raw.is_empty() {
+                continue;
+            }
+            let candidate = raw
+                .strip_prefix("[[")
+                .and_then(|trimmed| trimmed.strip_suffix("]]"))
+                .unwrap_or(raw);
+            let identifier = identifier::parse(candidate).ok_or_else(|| {
+                PrerequisiteValidationError::InvalidId {
+                    raw: raw.to_string(),
+                }
+            })?;
+            if !identifiers.contains(&identifier) {
+                identifiers.push(identifier);
+            }
+        }
+    }
+    if identifiers.is_empty() {
+        return Err(PrerequisiteValidationError::MissingId);
+    }
+    Ok(identifiers)
+}
+
+fn frontmatter_value(identifiers: &[WorkItemId]) -> String {
+    identifiers
+        .iter()
+        .map(|identifier| format!("[[{identifier}]]"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 pub(super) fn validate_and_merge<S>(
@@ -61,12 +73,9 @@ pub(super) fn validate_and_merge<S>(
 where
     S: AppRecordStore<PendingWorkItem>,
 {
-    let prerequisites = Prereqs::parse_values(values).map_err(|error| match error {
-        ParsePrereqsError::MissingId => PrerequisiteValidationError::MissingId,
-        ParsePrereqsError::InvalidId { raw } => PrerequisiteValidationError::InvalidId { raw },
-    })?;
+    let prerequisites = parse_values(values)?;
     let mut unknown = Vec::new();
-    for identifier in prerequisites.iter() {
+    for identifier in &prerequisites {
         let Some(project) = projects.project_for_id(identifier) else {
             unknown.push(identifier.as_ref().to_string());
             continue;
@@ -87,16 +96,17 @@ where
     for identifier in existing
         .into_iter()
         .flat_map(|value| PREREQUISITE_VALUE_REGEX.captures_iter(value))
-        .map(|captures| captures[1].to_string())
-        .chain(prerequisites.ids().into_iter().map(str::to_string))
+        .map(|captures| {
+            WorkItemId::try_new(&captures[1])
+                .expect("prerequisite regex captures a canonical work-item id")
+        })
+        .chain(prerequisites)
     {
         if !identifiers.contains(&identifier) {
             identifiers.push(identifier);
         }
     }
-    Ok(Prereqs::parse_values(&identifiers)
-        .expect("merged prerequisite identifiers remain canonical")
-        .frontmatter_value())
+    Ok(frontmatter_value(&identifiers))
 }
 
 fn has_valid_persisted_status(record: &PendingWorkItem) -> bool {
@@ -145,7 +155,7 @@ fn status(
 mod tests {
     use pwf_domain::pending_work::{ProjectName, WorkItemId};
 
-    use super::{PrerequisiteValidationError, validate_and_merge};
+    use super::{PrerequisiteValidationError, frontmatter_value, parse_values, validate_and_merge};
     use crate::{
         AppRecordStore, ItemPatch, NewItem, PendingWorkItem,
         pending_work::resolve::testing::{staged, staged_ghost},
@@ -193,6 +203,27 @@ mod tests {
         fn delete(&self, _scope: &ProjectName, _id: &WorkItemId) -> Result<(), Self::Error> {
             unreachable!("validator is read-only")
         }
+    }
+
+    #[test]
+    fn loose_values_normalize_deduplicate_and_render() {
+        let prerequisites =
+            parse_values(&["cfg57, [[CFG-0014]]".to_string(), "CFG-14".to_string()]).unwrap();
+
+        assert_eq!(
+            prerequisites.iter().map(AsRef::as_ref).collect::<Vec<_>>(),
+            ["CFG-0057", "CFG-0014"]
+        );
+        assert_eq!(
+            frontmatter_value(&prerequisites),
+            "[[CFG-0057]], [[CFG-0014]]"
+        );
+    }
+
+    #[test]
+    fn loose_values_reject_empty_input() {
+        assert!(parse_values(&[]).is_err());
+        assert!(parse_values(&[" , ".to_string()]).is_err());
     }
 
     #[test]

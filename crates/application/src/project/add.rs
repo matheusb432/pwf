@@ -1,4 +1,4 @@
-use std::error::Error;
+use std::{error::Error, path::PathBuf};
 
 use pwf_domain::project::{ProjectName, ProjectPrefix, ProjectSource, ProjectTasks};
 use sqlx::error::ErrorKind;
@@ -6,12 +6,22 @@ use sqlx::error::ErrorKind;
 use super::{
     Project,
     dto::{ProjectRow, ProjectRowError},
+    task_location::{self, TaskLocationError},
 };
 use crate::AppDbStore;
 
 /// Requests creation of one managed project.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AddProject {
+    /// Project fields parsed from user input.
+    pub fields: AddProjectFields,
+    /// Home directory used to expand home-relative task paths.
+    pub home: PathBuf,
+}
+
+/// Defines the persisted fields for one managed project.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AddProjectFields {
     /// Canonical project prefix.
     pub id: ProjectPrefix,
     /// Unique project title.
@@ -37,11 +47,29 @@ pub enum AddProjectError {
         /// Conflicting project title.
         title: ProjectName,
     },
-    /// The pending-work task location already belongs to a project.
-    #[error("project task location already exists")]
-    DuplicateTaskLocation {
-        /// Conflicting task location.
-        tasks: ProjectTasks,
+    /// A task path cannot be resolved for the current runtime.
+    #[error("managed project {project_id} task path '{path}' is invalid: {source}")]
+    InvalidTaskPath {
+        /// Project containing the invalid task path.
+        project_id: ProjectPrefix,
+        /// Persisted task path value.
+        path: String,
+        /// Path validation failure.
+        #[source]
+        source: super::resolve_runtime_path::RuntimePathError,
+    },
+    /// Two projects resolve to the same runtime task location.
+    #[error(
+        "managed projects {first_id} and {second_id} resolve to the same task location: {}",
+        path.display()
+    )]
+    DuplicateRuntimeTaskLocation {
+        /// First project prefix in lexical order.
+        first_id: ProjectPrefix,
+        /// Second project prefix in lexical order.
+        second_id: ProjectPrefix,
+        /// Conflicting resolved task location.
+        path: PathBuf,
     },
     /// Project creation failed outside an expected conflict.
     #[error("{context}: {source}")]
@@ -58,8 +86,11 @@ pub enum AddProjectError {
 ///
 /// # Errors
 ///
-/// Returns a conflict variant when the ID, title, or task location exists. Returns
-/// [`AddProjectError::Unexpected`] for database and persisted-data failures.
+/// Returns a conflict variant when the ID or title exists. Returns
+/// [`AddProjectError::InvalidTaskPath`] when the candidate or an existing task path cannot be
+/// resolved, and [`AddProjectError::DuplicateRuntimeTaskLocation`] when two projects resolve to
+/// the same task location. Returns [`AddProjectError::Unexpected`] for database and persisted-data
+/// failures.
 #[cqrsy::command]
 pub async fn execute(
     command: AddProject,
@@ -70,8 +101,16 @@ pub async fn execute(
         .begin_with("BEGIN IMMEDIATE")
         .await
         .map_err(|error| unexpected("starting project creation transaction", error))?;
-    let source_kind = command.source.kind().to_string();
-    let source_value = command.source.value().as_ref();
+    let existing = other_task_locations(&mut transaction, &command.fields.id).await?;
+    task_location::reject_collision(
+        &command.fields.id,
+        command.fields.tasks.path().as_ref(),
+        existing,
+        &command.home,
+    )
+    .map_err(task_location_error)?;
+    let source_kind = command.fields.source.kind().to_string();
+    let source_value = command.fields.source.value().as_ref();
     let source_id = sqlx::query_scalar!(
         r#"
         SELECT id AS "id!"
@@ -100,10 +139,10 @@ pub async fn execute(
         .last_insert_rowid(),
     };
 
-    let id = command.id.as_ref();
-    let title = command.title.as_ref();
-    let tasks_kind = command.tasks.kind().to_string();
-    let tasks_path = command.tasks.path().as_ref();
+    let id = command.fields.id.as_ref();
+    let title = command.fields.title.as_ref();
+    let tasks_kind = command.fields.tasks.kind().to_string();
+    let tasks_path = command.fields.tasks.path().as_ref();
     let insert_result = sqlx::query!(
         r#"
         INSERT INTO projects (id, project_source_id, title, tasks_kind, tasks_path)
@@ -151,6 +190,26 @@ pub async fn execute(
     Ok(project)
 }
 
+async fn other_task_locations(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    candidate_id: &ProjectPrefix,
+) -> Result<Vec<(ProjectPrefix, String)>, AddProjectError> {
+    sqlx::query_as::<_, (String, String)>(
+        "SELECT id, tasks_path FROM projects WHERE id != ? ORDER BY id ASC",
+    )
+    .bind(candidate_id.as_ref())
+    .fetch_all(&mut **transaction)
+    .await
+    .map_err(|error| unexpected("reading project task locations", error))?
+    .into_iter()
+    .map(|(id, tasks_path)| {
+        ProjectPrefix::try_new(id)
+            .map(|id| (id, tasks_path))
+            .map_err(|error| unexpected("converting project task location", error))
+    })
+    .collect()
+}
+
 async fn project_insertion_error(
     transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     command: &AddProject,
@@ -163,25 +222,16 @@ async fn project_insertion_error(
         return unexpected("inserting project", error);
     }
 
-    let id = command.id.as_ref();
-    let title = command.title.as_ref();
-    let tasks_kind = command.tasks.kind().to_string();
-    let tasks_path = command.tasks.path().as_ref();
+    let id = command.fields.id.as_ref();
+    let title = command.fields.title.as_ref();
     let conflicts = sqlx::query!(
         r#"
         SELECT
             EXISTS(SELECT 1 FROM projects WHERE id = ?) AS "id_exists!: bool",
-            EXISTS(SELECT 1 FROM projects WHERE title = ?) AS "title_exists!: bool",
-            EXISTS(
-                SELECT 1
-                FROM projects
-                WHERE tasks_kind = ? AND tasks_path = ?
-            ) AS "tasks_exist!: bool"
+            EXISTS(SELECT 1 FROM projects WHERE title = ?) AS "title_exists!: bool"
         "#,
         id,
         title,
-        tasks_kind,
-        tasks_path,
     )
     .fetch_one(&mut **transaction)
     .await;
@@ -191,20 +241,14 @@ async fn project_insertion_error(
     };
     if conflicts.id_exists {
         return AddProjectError::DuplicateProjectId {
-            id: command.id.clone(),
+            id: command.fields.id.clone(),
         };
     }
     if conflicts.title_exists {
         return AddProjectError::DuplicateProjectTitle {
-            title: command.title.clone(),
+            title: command.fields.title.clone(),
         };
     }
-    if conflicts.tasks_exist {
-        return AddProjectError::DuplicateTaskLocation {
-            tasks: command.tasks.clone(),
-        };
-    }
-
     unexpected("inserting project", error)
 }
 
@@ -220,4 +264,131 @@ fn unexpected(
 
 fn unexpected_row(context: &'static str, source: ProjectRowError) -> AddProjectError {
     unexpected(context, source)
+}
+
+fn task_location_error(error: TaskLocationError) -> AddProjectError {
+    match error {
+        TaskLocationError::InvalidPath {
+            project_id,
+            path,
+            source,
+        } => AddProjectError::InvalidTaskPath {
+            project_id,
+            path,
+            source,
+        },
+        TaskLocationError::Collision {
+            first_id,
+            second_id,
+            path,
+        } => AddProjectError::DuplicateRuntimeTaskLocation {
+            first_id,
+            second_id,
+            path,
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use pwf_domain::project::{
+        ProjectName, ProjectPrefix, ProjectSource, ProjectSourceKind, ProjectSourceValue,
+        ProjectTasks, ProjectTasksKind, ProjectTasksPath,
+    };
+    use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
+
+    use super::*;
+
+    #[derive(Clone)]
+    struct TestDatabase(SqlitePool);
+
+    impl AppDbStore for TestDatabase {
+        fn pool(&self) -> &SqlitePool {
+            &self.0
+        }
+    }
+
+    async fn database() -> TestDatabase {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::query(
+            "CREATE TABLE project_sources (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, value TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT '2026-07-26T00:00:00.000Z', UNIQUE (kind, value))",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE TABLE projects (id TEXT PRIMARY KEY, project_source_id INTEGER NOT NULL, title TEXT NOT NULL UNIQUE, tasks_kind TEXT NOT NULL, tasks_path TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT '2026-07-26T00:00:00.000Z', paused_at TEXT, UNIQUE (tasks_kind, tasks_path))",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        TestDatabase(pool)
+    }
+
+    async fn insert_paused_project(database: &TestDatabase, id: &str, tasks_path: &str) {
+        let source_id =
+            sqlx::query("INSERT INTO project_sources (kind, value) VALUES ('directory', ?)")
+                .bind(format!("/work/{id}"))
+                .execute(database.pool())
+                .await
+                .unwrap()
+                .last_insert_rowid();
+        sqlx::query(
+            "INSERT INTO projects (id, project_source_id, title, tasks_kind, tasks_path, paused_at) VALUES (?, ?, ?, 'directory', ?, '2026-07-26T00:00:00.000Z')",
+        )
+        .bind(id)
+        .bind(source_id)
+        .bind(id.to_ascii_lowercase())
+        .bind(tasks_path)
+        .execute(database.pool())
+        .await
+        .unwrap();
+    }
+
+    fn project(id: &str, title: &str, tasks_path: &str, home: PathBuf) -> AddProject {
+        AddProject {
+            fields: AddProjectFields {
+                id: ProjectPrefix::try_new(id).unwrap(),
+                title: ProjectName::try_new(title).unwrap(),
+                source: ProjectSource::new(
+                    ProjectSourceKind::Directory,
+                    ProjectSourceValue::try_new(format!("/work/{id}")).unwrap(),
+                ),
+                tasks: ProjectTasks::new(
+                    ProjectTasksKind::Directory,
+                    ProjectTasksPath::try_new(tasks_path).unwrap(),
+                ),
+            },
+            home,
+        }
+    }
+
+    #[tokio::test]
+    async fn runtime_alias_of_paused_project_is_rejected() {
+        let database = database().await;
+        let home = PathBuf::from("/home/developer");
+        let resolved_path = home.join("tasks/shared");
+        insert_paused_project(&database, "PWF", "~/tasks/shared").await;
+
+        let error = super::execute(
+            project("ALT", "other", &resolved_path.to_string_lossy(), home),
+            &database,
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "managed projects ALT and PWF resolve to the same task location: {}",
+                resolved_path.display()
+            )
+        );
+    }
 }

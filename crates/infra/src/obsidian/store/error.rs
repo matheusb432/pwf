@@ -2,6 +2,21 @@ use std::path::PathBuf;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ObsidianStoreError {
+    #[error("Cannot read note {id}: {source}")]
+    ReadProjectNote { id: String, source: std::io::Error },
+    #[error("Cannot inspect note {id}: {source}")]
+    InspectProjectNote { id: String, source: std::io::Error },
+    #[error("Cannot write note {id}: {source}")]
+    WriteProjectNote { id: String, source: std::io::Error },
+    #[error("Cannot remove note {id}: {source}")]
+    RemoveProjectNote { id: String, source: std::io::Error },
+    #[error("No such note {id} in {project}.")]
+    ProjectNoteNotFound { id: String, project: String },
+    #[error("Cannot write index: {source}")]
+    WriteProjectNoteIndex {
+        path: PathBuf,
+        source: std::io::Error,
+    },
     #[error("Cannot read handoff directory {}: {source}", path.display())]
     ReadHandoffDirectory {
         path: PathBuf,

@@ -1,7 +1,7 @@
-use std::str::FromStr;
+use std::{path::PathBuf, str::FromStr};
 
 use clap::{Args, ValueEnum};
-use pwf_application::project::add::AddProject;
+use pwf_application::project::add::{self, AddProject, AddProjectFields};
 use pwf_domain::project::{
     ProjectName, ProjectPrefix, ProjectSource, ProjectSourceKind, ProjectSourceValue, ProjectTasks,
     ProjectTasksKind, ProjectTasksPath,
@@ -27,7 +27,7 @@ pub enum SourceKind {
 }
 
 #[derive(Clone, Debug)]
-pub struct DirectoryPayload(pub AddProject);
+pub struct DirectoryPayload(pub AddProjectFields);
 
 impl FromStr for DirectoryPayload {
     type Err = String;
@@ -51,7 +51,7 @@ impl FromStr for DirectoryPayload {
         let tasks_path = ProjectTasksPath::try_new(path)
             .map_err(|_| "project tasks path must not be blank".to_string())?;
 
-        Ok(Self(AddProject {
+        Ok(Self(AddProjectFields {
             id,
             title,
             source: ProjectSource::new(ProjectSourceKind::Directory, source_value),
@@ -60,12 +60,22 @@ impl FromStr for DirectoryPayload {
     }
 }
 
-pub(super) async fn run(arguments: Arguments, database: &SqliteStore) -> Result<String, String> {
+pub(super) async fn run(
+    arguments: Arguments,
+    database: &SqliteStore,
+    home: PathBuf,
+) -> Result<String, String> {
     match arguments.kind {
         SourceKind::Directory => {
-            let project = pwf_application::project::add::execute(arguments.payload.0, database)
-                .await
-                .map_err(|error| format!("project add failed: {error}"))?;
+            let project = add::execute(
+                AddProject {
+                    fields: arguments.payload.0,
+                    home,
+                },
+                database,
+            )
+            .await
+            .map_err(|error| format!("project add failed: {error}"))?;
             output::project(project)
         }
     }

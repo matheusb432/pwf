@@ -1357,7 +1357,6 @@ dependencies = [
  "anstream",
  "anstyle",
  "assert_cmd",
- "chrono",
  "clap",
  "clap-cargo",
  "console",
@@ -1366,10 +1365,8 @@ dependencies = [
  "nutype",
  "predicates",
  "pwf-application",
- "pwf-core",
  "pwf-domain",
  "pwf-infra",
- "pwf-note",
  "regex",
  "serde",
  "serde_json",
@@ -1391,15 +1388,7 @@ dependencies = [
  "sqlx",
  "tempfile",
  "thiserror",
-]
-
-[[package]]
-name = "pwf-core"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "regex",
- "tempfile",
+ "tokio",
 ]
 
 [[package]]
@@ -1407,7 +1396,6 @@ name = "pwf-domain"
 version = "0.1.0"
 dependencies = [
  "nutype",
- "prompt-lanes",
  "thiserror",
 ]
 
@@ -1416,10 +1404,10 @@ name = "pwf-infra"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "directories",
  "gray_matter",
  "pwf-application",
- "pwf-core",
  "pwf-domain",
  "regex",
  "serde",
@@ -1430,17 +1418,6 @@ dependencies = [
  "thiserror",
  "tokio",
  "toml 1.1.2+spec-1.1.0",
-]
-
-[[package]]
-name = "pwf-note"
-version = "0.1.0"
-dependencies = [
- "pwf-core",
- "pwf-domain",
- "regex",
- "tempfile",
- "thiserror",
 ]
 
 [[package]]
@@ -2680,8 +2657,11 @@ dependencies = [
  "clap-cargo",
  "percent-encoding",
  "predicates",
+ "proc-macro2",
  "process-wrap",
+ "syn",
  "tempfile",
+ "walkdir",
 ]
 
 [[package]]

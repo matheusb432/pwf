@@ -1,0 +1,55 @@
+id: application-operation-export-surface
+valid:
+  - |
+    pub struct CreateTodo;
+    pub struct CreateTodoFields;
+    pub struct CreatedTodo;
+    pub enum CreateTodoError {}
+    pub fn execute(command: CreateTodo) -> Result<CreatedTodo, CreateTodoError> {
+        todo!()
+    }
+  - |
+    pub(crate) fn normalize(value: &str) -> String {
+        value.trim().to_string()
+    }
+  - |
+    pub(super) fn normalize(value: &str) -> String {
+        value.trim().to_string()
+    }
+  - |
+    pub(crate) use super::support::normalize;
+  - |
+    pub(super) use super::support::{normalize, validate as validate_value};
+  - |
+    pub type CreateItemError = super::store_util::CreateItemError;
+  - |
+    pub use operation::{Request, Response};
+  - |
+    pub struct TodoDto;
+    impl TodoDto {
+        pub fn title(&self) -> &str {
+            "todo"
+        }
+    }
+  - |
+    pub trait TodoStore {
+        fn load(&self);
+    }
+invalid:
+  - |
+    pub fn run() {}
+  - |
+    pub fn normalize(value: &str) -> String {
+        value.trim().to_string()
+    }
+  - |
+    pub async fn handle() {}
+  - |
+    pub fn execute() {}
+    pub use std::mem::drop;
+  - |
+    pub fn execute() {}
+    pub use std::mem::drop as run;
+  - |
+    pub fn execute() {}
+    pub use std::mem::{drop, forget as discard};

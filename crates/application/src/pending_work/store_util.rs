@@ -2,7 +2,7 @@
 
 use pwf_domain::pending_work::{ProjectName, WorkItemId};
 
-use super::enrich::normalize_section_label;
+use super::{add::CreateItemError, enrich::normalize_section_label};
 use crate::ports::{
     AppRecordStore, IndexEntry, IndexEntryState, IndexSection, NewItem, PendingWorkItem,
 };
@@ -26,43 +26,14 @@ pub struct CreatedItem {
     pub created_section: Option<String>,
 }
 
-/// Reports the persistence phase that failed while creating an item and its index entry.
-#[derive(Debug, thiserror::Error)]
-pub enum CreateItemError {
-    #[error("{0}")]
-    ReadSections(#[source] Box<dyn std::error::Error + Send + Sync>),
-    #[error("{0}")]
-    InsertRecord(#[source] Box<dyn std::error::Error + Send + Sync>),
-    #[error("{source}")]
-    InsertIndex {
-        project: ProjectName,
-        created_section: Option<String>,
-        #[source]
-        source: Box<dyn std::error::Error + Send + Sync>,
-    },
-}
-
-impl CreateItemError {
-    pub fn created_section(&self) -> Option<(&ProjectName, &str)> {
-        match self {
-            Self::InsertIndex {
-                project,
-                created_section: Some(section),
-                ..
-            } => Some((project, section)),
-            _ => None,
-        }
-    }
-}
-
 /// Strips the frontmatter parser's retained leading blank line before a body rewrite.
 #[must_use]
-pub fn body_region(body: &str) -> &str {
+pub(super) fn body_region(body: &str) -> &str {
     body.strip_prefix('\n').unwrap_or(body)
 }
 
 /// Reads a required item within a project.
-pub fn require_item<S>(
+pub(super) fn require_item<S>(
     store: &S,
     project: &ProjectName,
     id: &WorkItemId,
@@ -83,7 +54,7 @@ where
 ///
 /// Panics if the store's `insert` violates its contract by returning a record
 /// without a canonical [`WorkItemId`].
-pub fn create_item<S>(
+pub(crate) fn create_item<S>(
     store: &S,
     project: &ProjectName,
     new: NewItem,
@@ -151,7 +122,7 @@ mod tests {
     fn new_item(section: Option<&str>) -> NewItem {
         NewItem {
             prompt: "do the thing".to_string(),
-            title: Some("ship it".to_string()),
+            title: "ship it".to_string(),
             created: Timestamp::new("2026-07-15"),
             section: section.map(str::to_string),
             prereq: None,

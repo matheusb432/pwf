@@ -6,6 +6,7 @@ mod handoff_ledger;
 mod index_entry;
 mod item_record;
 mod lookup;
+mod project_note;
 mod read;
 mod read_parser;
 #[cfg(test)]

@@ -1,8 +1,8 @@
 use std::path::Path;
 
 use pwf_domain::{
-    handoff::{HandoffStatus, continuation_title, slug},
-    pending_work::{HANDOFF_TAG, ProjectName, Tags, Timestamp, WorkItemId},
+    handoff::HandoffStatus,
+    pending_work::{ProjectName, Timestamp},
 };
 
 use super::{
@@ -12,7 +12,8 @@ use super::{
 use crate::{
     AppRecordStore, HandoffDocument, HandoffDocumentIdentifier, HandoffDocumentScopePresence,
     HandoffDocumentStore, HandoffLocation, HandoffPatch, NewHandoffDocument, PendingWorkItem,
-    handoff::HandoffError, pending_work::ProjectRegistry,
+    handoff::{HandoffError, naming},
+    pending_work::{ProjectRegistry, identifier, tag_policy},
 };
 
 struct GateItem {
@@ -255,7 +256,7 @@ fn handoff_gate<S>(
 where
     S: HandoffDocumentStore + AppRecordStore<PendingWorkItem>,
 {
-    let Ok(identifier) = WorkItemId::try_new(pending_work_identifier) else {
+    let Some(identifier) = identifier::parse(pending_work_identifier) else {
         return Ok(None);
     };
     let Some(project) = projects.project_for_id(&identifier) else {
@@ -272,11 +273,11 @@ where
     let Some(raw) = item.tags else {
         return Ok(None);
     };
-    let tags = Tags::parse_frontmatter(&raw).map_err(|_| HandoffError::InvalidTags {
+    let tags = tag_policy::parse_frontmatter(&raw).map_err(|_| HandoffError::InvalidTags {
         id: item_identifier.clone(),
         raw,
     })?;
-    if !tags.contains_name(HANDOFF_TAG) {
+    if !tag_policy::contains_name(&tags, tag_policy::HANDOFF_TAG) {
         return Ok(None);
     }
     let repository = projects
@@ -390,13 +391,13 @@ where
         .unwrap_or(&document.locator);
     let relative = path_forward(relative);
     Ok((
-        continuation_title(&document.identifier.file_name),
+        naming::continuation_title(&document.identifier.file_name),
         handoff_continuation_prompt(&relative),
     ))
 }
 
 fn handoff_file_name(created: &str, title: &str) -> String {
-    format!("{created}-{}.md", slug(title))
+    naming::file_name(created, title)
 }
 
 fn handoff_continuation_prompt(relative_path: &str) -> String {

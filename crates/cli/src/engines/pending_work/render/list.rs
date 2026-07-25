@@ -1,8 +1,10 @@
 use std::fmt::Write;
 
 use anstyle::AnsiColor;
-use pwf_application::pending_work::{ListResult, PendingWorkItemView, PrerequisiteStatus};
-use pwf_domain::pending_work::{WorkItemStatus, WorkItemStatusFilter};
+use pwf_application::pending_work::{
+    ListResult, PendingWorkItemView, PrerequisiteStatus, StatusFilter,
+};
+use pwf_domain::pending_work::WorkItemStatus;
 
 use super::{ID_ORANGE, paint};
 fn more_footer(hidden: usize) -> String {
@@ -15,20 +17,20 @@ fn more_footer(hidden: usize) -> String {
 pub(in crate::engines::pending_work) fn render_list(
     result: &ListResult,
     location: &str,
-    status_filter: WorkItemStatusFilter,
+    status_filter: StatusFilter,
     long: bool,
     grouped: bool,
     on: bool,
 ) -> String {
     if result.items.is_empty() {
         return match status_filter {
-            WorkItemStatusFilter::Exact(WorkItemStatus::Active) => {
+            StatusFilter::Exact(WorkItemStatus::Active) => {
                 format!("No open pending-work prompts found in {location}.\n")
             }
-            WorkItemStatusFilter::Exact(status) => {
+            StatusFilter::Exact(status) => {
                 format!("No pending-work prompts with status {status} found in {location}.\n")
             }
-            WorkItemStatusFilter::All => {
+            StatusFilter::All => {
                 format!("No pending-work prompts found in {location}.\n")
             }
         };
@@ -93,7 +95,7 @@ const RENDER_GROUPS: [RenderGroup; 5] = [
 fn render_grouped_list(
     out: &mut String,
     items: &[PendingWorkItemView],
-    status_filter: WorkItemStatusFilter,
+    status_filter: StatusFilter,
     long: bool,
     on: bool,
 ) {
@@ -140,12 +142,8 @@ fn render_status(status: WorkItemStatus, on: bool) -> String {
     paint(&text, color, true)
 }
 
-fn status_annotation(
-    status: WorkItemStatus,
-    status_filter: WorkItemStatusFilter,
-    on: bool,
-) -> String {
-    if status_filter != WorkItemStatusFilter::All {
+fn status_annotation(status: WorkItemStatus, status_filter: StatusFilter, on: bool) -> String {
+    if status_filter != StatusFilter::All {
         return String::new();
     }
     format!(" ({})", render_status(status, on))
@@ -167,7 +165,7 @@ fn prerequisite_status_summary(statuses: &[PrerequisiteStatus]) -> String {
 fn render_list_item(
     out: &mut String,
     item: &PendingWorkItemView,
-    status_filter: WorkItemStatusFilter,
+    status_filter: StatusFilter,
     long: bool,
     last: bool,
     on: bool,
@@ -238,8 +236,8 @@ fn render_list_item(
 
 #[cfg(test)]
 mod tests {
-    use pwf_application::pending_work::PrerequisiteStatus;
-    use pwf_domain::pending_work::{WorkItemId, WorkItemStatus, WorkItemStatusFilter};
+    use pwf_application::pending_work::{PrerequisiteStatus, StatusFilter};
+    use pwf_domain::pending_work::{WorkItemId, WorkItemStatus};
 
     use super::*;
 
@@ -269,7 +267,7 @@ mod tests {
 
     fn render_item_for_filter(
         item: &PendingWorkItemView,
-        status_filter: WorkItemStatusFilter,
+        status_filter: StatusFilter,
         long: bool,
         on: bool,
     ) -> String {
@@ -284,7 +282,7 @@ mod tests {
         render_list_item(
             &mut out,
             &sample_item(),
-            WorkItemStatusFilter::default(),
+            StatusFilter::default(),
             false,
             true,
             false,
@@ -301,7 +299,7 @@ mod tests {
         render_list_item(
             &mut out,
             &sample_item(),
-            WorkItemStatusFilter::default(),
+            StatusFilter::default(),
             false,
             true,
             true,
@@ -319,7 +317,7 @@ mod tests {
         ] {
             let mut item = sample_item();
             item.status = status;
-            let output = render_item_for_filter(&item, WorkItemStatusFilter::All, false, false);
+            let output = render_item_for_filter(&item, StatusFilter::All, false, false);
             assert!(output.ends_with(expected), "{output}");
             assert!(!output.contains('\u{1b}'), "{output}");
         }
@@ -329,7 +327,7 @@ mod tests {
     fn exact_status_short_lines_keep_the_existing_shape() {
         let output = render_item_for_filter(
             &sample_item(),
-            WorkItemStatusFilter::Exact(WorkItemStatus::Active),
+            StatusFilter::Exact(WorkItemStatus::Active),
             false,
             false,
         );
@@ -351,7 +349,7 @@ mod tests {
             item.status = status;
             outputs.push(render_item_for_filter(
                 &item,
-                WorkItemStatusFilter::All,
+                StatusFilter::All,
                 false,
                 true,
             ));
@@ -369,7 +367,7 @@ mod tests {
     fn long_form_separates_lifecycle_from_active_launch_readiness() {
         let output = render_item_for_filter(
             &sample_item(),
-            WorkItemStatusFilter::Exact(WorkItemStatus::Active),
+            StatusFilter::Exact(WorkItemStatus::Active),
             true,
             false,
         );
@@ -388,7 +386,7 @@ mod tests {
 
         let output = render_item_for_filter(
             &item,
-            WorkItemStatusFilter::Exact(WorkItemStatus::Done),
+            StatusFilter::Exact(WorkItemStatus::Done),
             true,
             false,
         );
@@ -405,24 +403,24 @@ mod tests {
             items: Vec::new(),
             hidden: 0,
             project: None,
-            status_filter: WorkItemStatusFilter::default(),
+            status_filter: StatusFilter::default(),
             grouped: false,
         };
         for (filter, expected) in [
             (
-                WorkItemStatusFilter::Exact(WorkItemStatus::Active),
+                StatusFilter::Exact(WorkItemStatus::Active),
                 "No open pending-work prompts found in notes.\n",
             ),
             (
-                WorkItemStatusFilter::Exact(WorkItemStatus::Done),
+                StatusFilter::Exact(WorkItemStatus::Done),
                 "No pending-work prompts with status done found in notes.\n",
             ),
             (
-                WorkItemStatusFilter::Exact(WorkItemStatus::Cancelled),
+                StatusFilter::Exact(WorkItemStatus::Cancelled),
                 "No pending-work prompts with status cancelled found in notes.\n",
             ),
             (
-                WorkItemStatusFilter::All,
+                StatusFilter::All,
                 "No pending-work prompts found in notes.\n",
             ),
         ] {
@@ -438,14 +436,7 @@ mod tests {
         let mut item = sample_item();
         item.effort = Some("3".to_string());
         let mut out = String::new();
-        render_list_item(
-            &mut out,
-            &item,
-            WorkItemStatusFilter::default(),
-            true,
-            true,
-            false,
-        );
+        render_list_item(&mut out, &item, StatusFilter::default(), true, true, false);
         assert!(out.contains("  effort: 3\n"), "got: {out}");
     }
 
@@ -467,7 +458,7 @@ mod tests {
             },
         ];
 
-        let output = render_item_for_filter(&item, WorkItemStatusFilter::default(), true, false);
+        let output = render_item_for_filter(&item, StatusFilter::default(), true, false);
 
         assert!(
             output.contains("  prereq: CFG-0014 (done), CFG-0015 (active), CFG-9999 (missing)\n"),
@@ -481,7 +472,7 @@ mod tests {
         render_list_item(
             &mut out,
             &sample_item(),
-            WorkItemStatusFilter::default(),
+            StatusFilter::default(),
             true,
             true,
             false,
@@ -494,14 +485,7 @@ mod tests {
         let mut item = sample_item();
         item.tags = Some("[SQLite, hand-edited]".to_string());
         let mut out = String::new();
-        render_list_item(
-            &mut out,
-            &item,
-            WorkItemStatusFilter::default(),
-            true,
-            true,
-            false,
-        );
+        render_list_item(&mut out, &item, StatusFilter::default(), true, true, false);
         assert!(out.contains("  tags: [SQLite, hand-edited]\n"), "{out}");
     }
 
@@ -511,7 +495,7 @@ mod tests {
         render_list_item(
             &mut out,
             &sample_item(),
-            WorkItemStatusFilter::default(),
+            StatusFilter::default(),
             true,
             true,
             false,

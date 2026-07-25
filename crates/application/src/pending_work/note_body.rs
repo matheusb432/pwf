@@ -20,17 +20,8 @@ enum PromptClassification {
     Authored,
 }
 
-/// Renders a prompt as Markdown while preserving placeholders and verbatim-authored prompts.
-///
-/// # Examples
-///
-/// ```
-/// use pwf_application::pending_work::note_body;
-///
-/// assert_eq!(note_body("ship release"), "## Goals\n\n- ship release");
-/// ```
 #[must_use]
-pub fn note_body(prompt: &str) -> String {
+pub(super) fn render(prompt: &str) -> String {
     match prompt_classification(prompt) {
         PromptClassification::Placeholder | PromptClassification::AuthoredVerbatimLegacy => {
             prompt.to_string()
@@ -233,7 +224,7 @@ mod tests {
     #[test]
     fn note_body_renders_marker_first_prompt_without_body_leakage() {
         assert_eq!(
-            note_body("/c context"),
+            render("/c context"),
             format!("## Goals\n{S}## Context{S}- context")
         );
     }
@@ -241,33 +232,33 @@ mod tests {
     #[test]
     fn note_body_wraps_a_normal_prompt() {
         assert_eq!(
-            note_body("add startup toggle"),
+            render("add startup toggle"),
             format!("## Goals{S}- add startup toggle")
         );
-        assert_eq!(note_body("a / b"), format!("## Goals{S}- a\n- b"));
+        assert_eq!(render("a / b"), format!("## Goals{S}- a\n- b"));
     }
 
     #[test]
     fn note_body_renders_one_bullet_per_slash_lane() {
         assert_eq!(
-            note_body("create engine feature to add update task / make it idempotent"),
+            render("create engine feature to add update task / make it idempotent"),
             format!("## Goals{S}- create engine feature to add update task\n- make it idempotent")
         );
     }
 
     #[test]
     fn note_body_preserves_ampersands_as_text() {
-        assert_eq!(note_body("a & b"), format!("## Goals{S}- a & b"));
+        assert_eq!(render("a & b"), format!("## Goals{S}- a & b"));
     }
 
     #[test]
     fn note_body_keeps_placeholder_raw_so_it_stays_detectable() {
-        assert_eq!(note_body("TODO"), "TODO");
-        assert!(is_placeholder_prompt(&note_body("TODO")));
-        assert!(is_placeholder_prompt(&note_body("tbd")));
-        assert!(is_placeholder_prompt(&note_body("define prompt")));
-        assert_eq!(note_body("tbd"), "tbd");
-        assert_eq!(note_body("define prompt"), "define prompt");
+        assert_eq!(render("TODO"), "TODO");
+        assert!(is_placeholder_prompt(&render("TODO")));
+        assert!(is_placeholder_prompt(&render("tbd")));
+        assert!(is_placeholder_prompt(&render("define prompt")));
+        assert_eq!(render("tbd"), "tbd");
+        assert_eq!(render("define prompt"), "define prompt");
     }
 
     #[test]
@@ -305,7 +296,7 @@ mod tests {
     fn unicode_todo_suffix_remains_raw_without_becoming_placeholder() {
         for prompt in ["TODOé", "[!] TODOé"] {
             assert!(!is_placeholder_prompt(prompt));
-            assert_eq!(note_body(prompt), prompt);
+            assert_eq!(render(prompt), prompt);
         }
         assert!(is_placeholder_prompt("TODO-implement"));
     }

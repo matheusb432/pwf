@@ -1,7 +1,10 @@
 use clap::Args;
 use pwf_application::{
     AppRecordStore, NoteMarkdownSource, PendingWorkItem,
-    pending_work::{ProjectRegistry, ShowOutput, show::ShowPendingWorkItem},
+    pending_work::{
+        ProjectRegistry, ShowOutput,
+        show::{self, ShowPendingWorkItem},
+    },
 };
 use pwf_infra::obsidian::ObsidianStore;
 
@@ -28,15 +31,8 @@ pub(super) fn run(
     run_show(store, projects, arguments)
 }
 
-/// Preserves the caller's spelling when canonicalization resolves to the same item.
 fn lookup_id(arguments: &Arguments) -> Result<String, PendingWorkError> {
-    let canonical = arguments.identifier.required("show")?;
-    Ok(match arguments.identifier.raw() {
-        Some(raw) if pwf_domain::pending_work::canonical_pending_id(raw) == canonical => {
-            raw.to_string()
-        }
-        _ => canonical,
-    })
+    arguments.identifier.required("show")
 }
 
 /// Returns the complete Markdown for an item regardless of status;
@@ -55,11 +51,6 @@ where
     } else {
         ShowOutput::Markdown
     };
-    pwf_application::pending_work::show::execute(
-        &ShowPendingWorkItem { id, output },
-        store,
-        projects,
-        store,
-    )
-    .map_err(|error| PendingWorkError::ApplicationRead(error.to_string()))
+    show::execute(&ShowPendingWorkItem { id, output }, store, projects, store)
+        .map_err(|error| PendingWorkError::ApplicationRead(error.to_string()))
 }

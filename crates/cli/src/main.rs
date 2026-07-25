@@ -5,15 +5,17 @@ use std::{
 
 use pwf::{command, engines};
 use pwf_application::{
+    Clock,
     pending_work::ProjectRegistry,
     project::{
-        load_active::{ActiveProject, LoadActiveProjects},
-        resolve_runtime_path::{ResolveRuntimePath, ResolvedPath},
+        load_active::{self, ActiveProject, LoadActiveProjects},
+        resolve_runtime_path::{self, ResolveRuntimePath, ResolvedPath},
     },
 };
 use pwf_domain::{pending_work::ProjectIndexIdentity, project::ProjectPrefix};
 use pwf_infra::{
     SqliteStore,
+    clock::LocalClock,
     obsidian::{ObsidianProject, ObsidianStore},
 };
 
@@ -22,8 +24,9 @@ async fn main() {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let argv = normalize_rich_help_aliases(argv);
 
+    let clock = LocalClock;
     match command::parse_argv(argv) {
-        Ok(parsed) => match run(parsed).await {
+        Ok(parsed) => match run(parsed, &clock).await {
             Ok(out) => {
                 if !out.is_empty() {
                     println!("{out}");
@@ -48,7 +51,10 @@ fn exit_with_clap_error(e: &clap::Error) -> ! {
     std::process::exit(e.exit_code());
 }
 
-async fn run(parsed: command::Cli) -> Result<String, String> {
+async fn run<C>(parsed: command::Cli, clock: &C) -> Result<String, String>
+where
+    C: Clock,
+{
     match parsed.engine {
         command::Engine::Project(arguments) if arguments.command.is_none() => {
             Ok(command::project_help())
@@ -56,10 +62,7 @@ async fn run(parsed: command::Cli) -> Result<String, String> {
         command::Engine::Project(arguments) => {
             let home = project_command_home(&arguments)?;
             let database = open_database().await?;
-            if let Some(home) = home {
-                validate_project_command(&arguments, &database, &home).await?;
-            }
-            engines::project::run(arguments, &database).await
+            engines::project::run(arguments, &database, home).await
         }
         command::Engine::PendingWork(command) => {
             let database = open_database().await?;
@@ -69,24 +72,26 @@ async fn run(parsed: command::Cli) -> Result<String, String> {
                 pwf::console::Console::from_terminal(),
                 &projects.store,
                 &projects.registry,
+                clock,
             )
         }
         command::Engine::Handoff { command } => match command {
             engines::handoff::Command::Add(_) => {
                 let database = open_database().await?;
                 let projects = load_active_projects(&database).await?;
-                engines::handoff::run(&command, &projects.store, &projects.registry)
+                engines::handoff::run(&command, &projects.store, &projects.registry, clock)
             }
             engines::handoff::Command::List(_) => engines::handoff::run(
                 &command,
                 &ObsidianStore::new([]),
                 &ProjectRegistry::default(),
+                clock,
             ),
         },
         command::Engine::Note(arguments) => {
             let database = open_database().await?;
             let projects = load_active_projects(&database).await?;
-            engines::note::run(&arguments, &projects.store, &projects.registry)
+            engines::note::run(&arguments, &projects.store, &projects.registry, clock)
         }
     }
 }
@@ -119,7 +124,7 @@ async fn open_database() -> Result<SqliteStore, String> {
 }
 
 async fn load_active_projects(database: &SqliteStore) -> Result<ActiveProjects, String> {
-    let projects = pwf_application::project::load_active::execute(
+    let projects = load_active::execute(
         LoadActiveProjects {
             home: managed_project_home()?,
         },
@@ -163,54 +168,6 @@ fn project_command_home(
     }
 }
 
-async fn validate_project_command(
-    arguments: &engines::project::Arguments,
-    database: &SqliteStore,
-    home: &Path,
-) -> Result<(), String> {
-    let projects = pwf_application::project::list::execute(
-        pwf_application::project::list::ListProjects {
-            include_paused: true,
-        },
-        database,
-    )
-    .await
-    .map_err(|error| format!("listing managed projects for task validation failed: {error}"))?;
-
-    let candidate = match arguments.command.as_ref() {
-        Some(engines::project::Command::Add(arguments)) => Some((
-            &arguments.payload.0.id,
-            arguments.payload.0.tasks.path().as_ref(),
-        )),
-        Some(engines::project::Command::Resume(arguments)) => projects
-            .iter()
-            .find(|project| project.id == arguments.id)
-            .map(|project| (&project.id, project.tasks.path().as_ref())),
-        _ => None,
-    };
-    let Some((candidate_id, candidate_path)) = candidate else {
-        return Ok(());
-    };
-    let candidate = resolve_project_path(candidate_id, "task", candidate_path, home)?;
-
-    for project in projects
-        .iter()
-        .filter(|project| project.id != *candidate_id)
-    {
-        let existing =
-            resolve_project_path(&project.id, "task", project.tasks.path().as_ref(), home)?;
-        if candidate.identity() == existing.identity() {
-            return Err(task_path_conflict(
-                candidate_id,
-                &project.id,
-                candidate.path(),
-            ));
-        }
-    }
-
-    Ok(())
-}
-
 fn managed_project_home() -> Result<PathBuf, String> {
     directories::BaseDirs::new()
         .map(|directories| directories.home_dir().to_path_buf())
@@ -223,28 +180,13 @@ fn resolve_project_path(
     path: &str,
     home: &Path,
 ) -> Result<ResolvedPath, String> {
-    pwf_application::project::resolve_runtime_path::execute(&ResolveRuntimePath {
+    resolve_runtime_path::execute(&ResolveRuntimePath {
         path: path.to_string(),
         home: home.to_path_buf(),
     })
     .map_err(|error| {
         format!("managed project {project_id} {field} path '{path}' is invalid: {error}")
     })
-}
-
-fn task_path_conflict(
-    first_id: &ProjectPrefix,
-    second_id: &ProjectPrefix,
-    path: &std::path::Path,
-) -> String {
-    let mut project_ids = [first_id.to_string(), second_id.to_string()];
-    project_ids.sort();
-    format!(
-        "managed projects {} and {} resolve to the same task location: {}",
-        project_ids[0],
-        project_ids[1],
-        path.display()
-    )
 }
 
 fn normalize_rich_help_aliases(argv: Vec<String>) -> Vec<String> {

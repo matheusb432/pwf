@@ -9,6 +9,8 @@ pub struct AllocatePendingWork {
     pub created: Timestamp,
     /// Managed project receiving the allocated item.
     pub project: ProjectName,
+    /// Canonical tag applied by the allocator command.
+    pub tag: String,
 }
 
 /// Allocates one pending-work identifier through an external boundary.
@@ -41,6 +43,7 @@ mod tests {
         fn allocate(&self, request: &AllocatePendingWork) -> Result<WorkItemId, Self::Error> {
             assert_eq!(request.created.as_str(), "2026-01-01");
             assert_eq!(request.project.as_ref(), "test-project");
+            assert_eq!(request.tag, "handoff");
             Ok(WorkItemId::try_new("TST-0001").unwrap())
         }
     }
@@ -51,6 +54,7 @@ mod tests {
             .allocate(&AllocatePendingWork {
                 created: Timestamp::new("2026-01-01"),
                 project: ProjectName::try_new("test-project").unwrap(),
+                tag: "handoff".to_string(),
             })
             .unwrap();
 

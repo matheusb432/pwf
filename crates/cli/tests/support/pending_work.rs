@@ -1,6 +1,7 @@
 //! Runs pending-work operations in-process for integration tests.
 
 use pwf::{console::Console, engines::pending_work};
+use pwf_infra::clock::LocalClock;
 
 use crate::projects::TestProjects;
 
@@ -15,5 +16,6 @@ pub(super) fn run_plain(
         Console::plain(),
         &projects.store,
         &projects.registry,
+        &LocalClock,
     )
 }

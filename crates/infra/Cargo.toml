@@ -6,10 +6,10 @@ publish.workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
+chrono = { workspace = true }
 directories = { workspace = true }
 pwf-application = { workspace = true }
 pwf-domain = { workspace = true }
-pwf-core = { workspace = true }
 regex = { workspace = true }
 thiserror = { workspace = true }
 gray_matter = { workspace = true }

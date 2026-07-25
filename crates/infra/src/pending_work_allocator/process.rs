@@ -127,7 +127,7 @@ fn run_allocator(script: &Path, request: &AllocatePendingWork) -> Result<Output,
             request.created.as_str(),
             request.project.as_ref(),
             "--tag",
-            pwf_domain::pending_work::HANDOFF_TAG,
+            &request.tag,
             "--continue-handoff",
         ])
         .output()
@@ -222,6 +222,7 @@ mod tests {
             .allocate(&AllocatePendingWork {
                 created: Timestamp::new("2026-01-01"),
                 project: ProjectName::try_new("test-project").unwrap(),
+                tag: "handoff".to_string(),
             })
             .unwrap();
 
@@ -243,6 +244,7 @@ mod tests {
             .allocate(&AllocatePendingWork {
                 created: Timestamp::new("2026-01-01"),
                 project: ProjectName::try_new("test-project").unwrap(),
+                tag: "handoff".to_string(),
             })
             .unwrap_err();
 
@@ -267,6 +269,7 @@ mod tests {
             .allocate(&AllocatePendingWork {
                 created: Timestamp::new("2026-01-01"),
                 project: ProjectName::try_new("test-project").unwrap(),
+                tag: "handoff".to_string(),
             })
             .unwrap_err();
 

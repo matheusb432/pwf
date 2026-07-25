@@ -1,9 +1,19 @@
 //! Owns project-note parsing, request mapping, and execution.
 
+use std::fmt::Write;
+
 use clap::{Args, Subcommand};
-use pwf_application::pending_work::ProjectRegistry;
+use pwf_application::{
+    Clock,
+    note::{
+        add::{self, AddNote, AddedNote},
+        list::{self, ListNotes, ListedNotes},
+        remove::{self, RemoveNote, RemovedNote},
+        update::{self, UpdateNote, UpdatedNote},
+    },
+    pending_work::ProjectRegistry,
+};
 use pwf_infra::obsidian::ObsidianStore;
-use pwf_note::{NoteCommand, NoteTarget, NoteVerb};
 
 #[derive(Args, Debug)]
 pub struct Arguments {
@@ -64,63 +74,159 @@ pub(crate) enum Command {
     },
 }
 
-pub fn run(
+pub fn run<C>(
     arguments: &Arguments,
     store: &ObsidianStore,
     projects: &ProjectRegistry,
-) -> Result<String, String> {
-    pwf_note::run(&application_command(arguments, store, projects)?)
-}
-
-fn application_command(
-    arguments: &Arguments,
-    store: &ObsidianStore,
-    projects: &ProjectRegistry,
-) -> Result<NoteCommand, String> {
-    let (raw_project, verb) = match &arguments.command {
-        Command::List { project, number } => (project.clone(), NoteVerb::Ls { number: *number }),
-        Command::Add { project, message } => (
-            project.clone(),
-            NoteVerb::Add {
-                message: message.join(" "),
+    clock: &C,
+) -> Result<String, String>
+where
+    C: Clock,
+{
+    match &arguments.command {
+        Command::List { project, number } => list::execute(
+            ListNotes {
+                project_identifier: project.clone(),
+                number: *number,
             },
-        ),
-        Command::Remove { project, id } => (project.clone(), NoteVerb::Remove { id: id.clone() }),
+            store,
+            projects,
+        )
+        .map(|result| render_listed(&result))
+        .map_err(|error| error.to_string()),
+        Command::Add { project, message } => add::execute(
+            AddNote {
+                project_identifier: project.clone(),
+                message: message.join(" "),
+                date: arguments.common.date.clone(),
+            },
+            store,
+            projects,
+            clock,
+        )
+        .map(|result| render_added(&result))
+        .map_err(|error| error.to_string()),
+        Command::Remove { project, id } => remove::execute(
+            RemoveNote {
+                project_identifier: project.clone(),
+                id: id.clone(),
+            },
+            store,
+            projects,
+        )
+        .map(|result| render_removed(&result))
+        .map_err(|error| error.to_string()),
         Command::Update {
             project,
             id,
             message,
-        } => (
-            project.clone(),
-            NoteVerb::Update {
+        } => update::execute(
+            UpdateNote {
+                project_identifier: project.clone(),
                 id: id.clone(),
                 message: message.join(" "),
             },
-        ),
-    };
-    let project = projects
-        .resolve(&raw_project)
-        .map_err(|_| unknown_project(&raw_project))?
-        .clone();
-    let prefix = projects
-        .prefix_for(&project)
-        .ok_or_else(|| unknown_project(&raw_project))?;
-    let target = NoteTarget {
-        tasks_path: store
-            .tasks_path(&project)
-            .map_err(|error| error.to_string())?
-            .to_path_buf(),
-        project,
-        prefix,
-    };
-
-    Ok(NoteCommand {
-        target,
-        verb,
-        date: arguments.common.date.clone(),
-    })
+            store,
+            projects,
+        )
+        .map(|result| render_updated(&result))
+        .map_err(|error| error.to_string()),
+    }
 }
 
-fn unknown_project(raw_project: &str) -> String {
-    format!("Unknown project '{raw_project}'; expected a managed project name or id code.")
+fn render_listed(result: &ListedNotes) -> String {
+    if result.notes.is_empty() {
+        return format!("No notes for {}.\n", result.project);
+    }
+    let mut output = String::new();
+    for note in &result.notes {
+        let _ = writeln!(output, "{} :: {}", note.id, note.message);
+    }
+    if result.hidden > 0 {
+        let _ = writeln!(
+            output,
+            "... and {} more; run 'pwf note <proj> ls -n 0' to show all",
+            result.hidden
+        );
+    }
+    output
+}
+
+fn render_added(result: &AddedNote) -> String {
+    format!("Added {} :: {}\n", result.id, result.message)
+}
+
+fn render_removed(result: &RemovedNote) -> String {
+    format!("Removed {}\n", result.id)
+}
+
+fn render_updated(result: &UpdatedNote) -> String {
+    format!("Updated {} :: {}\n", result.id, result.message)
+}
+
+#[cfg(test)]
+mod tests {
+    use pwf_application::note::{
+        add::AddedNote, dto::ListedNote, list::ListedNotes, remove::RemovedNote,
+        update::UpdatedNote,
+    };
+    use pwf_domain::{note::NoteId, pending_work::ProjectName};
+
+    use super::{render_added, render_listed, render_removed, render_updated};
+
+    fn identifier(number: u32) -> NoteId {
+        NoteId::try_new(format!("PWF-NOTE-{number:04}")).unwrap()
+    }
+
+    #[test]
+    fn typed_results_render_the_existing_note_output_contract() {
+        assert_eq!(
+            render_added(&AddedNote {
+                id: identifier(1),
+                message: "remember milk".to_string(),
+            }),
+            "Added PWF-NOTE-0001 :: remember milk\n"
+        );
+        assert_eq!(
+            render_removed(&RemovedNote { id: identifier(1) }),
+            "Removed PWF-NOTE-0001\n"
+        );
+        assert_eq!(
+            render_updated(&UpdatedNote {
+                id: identifier(1),
+                message: "remember oat milk".to_string(),
+            }),
+            "Updated PWF-NOTE-0001 :: remember oat milk\n"
+        );
+    }
+
+    #[test]
+    fn listed_results_render_empty_lines_and_hidden_hint() {
+        let project = ProjectName::try_new("pwf").unwrap();
+        assert_eq!(
+            render_listed(&ListedNotes {
+                project: project.clone(),
+                notes: Vec::new(),
+                hidden: 0,
+            }),
+            "No notes for pwf.\n"
+        );
+        assert_eq!(
+            render_listed(&ListedNotes {
+                project,
+                notes: vec![
+                    ListedNote {
+                        id: identifier(2),
+                        message: "second".to_string(),
+                    },
+                    ListedNote {
+                        id: identifier(1),
+                        message: "first".to_string(),
+                    },
+                ],
+                hidden: 3,
+            }),
+            "PWF-NOTE-0002 :: second\nPWF-NOTE-0001 :: first\n... and 3 more; run 'pwf note <proj> ls -n 0' to show all\n"
+        );
+    }
 }

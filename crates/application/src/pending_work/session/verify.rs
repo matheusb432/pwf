@@ -85,7 +85,7 @@ mod tests {
         EffortTier, ProjectName, Timestamp, WorkItemId, WorkItemStatus,
     };
 
-    use super::{AgentModel, ProjectRegistry, VerifySession, execute};
+    use super::{AgentModel, ProjectRegistry, VerifySession};
     use crate::{
         IndexPlacement, Materialization, PendingWorkItem, RecordId,
         pending_work::session::{Agent, ModelTierCatalog, ModelTierLookup},
@@ -149,7 +149,7 @@ mod tests {
             Some("PWF".to_string()),
         )]);
 
-        let outcome = execute(
+        let outcome = super::execute(
             VerifySession {
                 id: Some(TASK_ID.to_string()),
                 agent: Agent::Claude,

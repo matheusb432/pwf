@@ -6,13 +6,13 @@ use super::{
 use crate::{
     HandoffDocumentStore, HandoffLedger,
     handoff::HandoffError,
-    ports::{AppRecordStore, IndexEntry, IndexSection, PendingWorkItem},
+    ports::{AppRecordStore, Clock, IndexEntry, IndexSection, PendingWorkItem},
 };
 
 #[derive(Debug, Clone)]
 pub struct CancelPendingWork {
     pub id: String,
-    pub completed: String,
+    pub date: Option<String>,
     report: String,
     pub commits: Vec<String>,
     pub review: bool,
@@ -21,14 +21,14 @@ pub struct CancelPendingWork {
 impl CancelPendingWork {
     pub fn new(
         id: String,
-        completed: String,
+        date: Option<String>,
         report: String,
         commits: Vec<String>,
         review: bool,
     ) -> Self {
         Self {
             id,
-            completed,
+            date,
             report,
             commits,
             review,
@@ -64,10 +64,11 @@ pub enum CancelPendingWorkError {
 }
 
 #[cqrsy::command]
-pub fn execute<S>(
+pub fn execute<S, C>(
     command: &CancelPendingWork,
     store: &S,
     projects: &ProjectRegistry,
+    clock: &C,
 ) -> Result<CompletedPendingWork, CancelPendingWorkError>
 where
     S: AppRecordStore<PendingWorkItem>
@@ -75,13 +76,18 @@ where
         + AppRecordStore<IndexSection>
         + HandoffDocumentStore
         + AppRecordStore<HandoffLedger>,
+    C: Clock,
 {
+    let authored_date = command
+        .date
+        .clone()
+        .map_or_else(|| clock.today(), pwf_domain::pending_work::Timestamp::new);
     perform_close(
         store,
         projects,
         ClosedItemAction::Cancelled,
         &command.id,
-        &command.completed,
+        authored_date.as_str(),
         Some(command.report.as_str()),
         &command.commits,
         command.review,
@@ -124,12 +130,22 @@ mod tests {
         pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus},
     };
 
-    use super::{CancelPendingWork, CancelPendingWorkError, ProjectRegistry, execute};
+    use super::{CancelPendingWork, CancelPendingWorkError, ProjectRegistry};
     use crate::{
         HandoffDocument, HandoffDocumentIdentifier, HandoffLocation, HandoffScope, IndexEntry,
         IndexEntryState, Materialization, PendingWorkItem, RecordId,
+        ports::Clock,
         testing::{FailurePoint, InMemoryStore},
     };
+
+    #[derive(Clone)]
+    struct FixedClock;
+
+    impl Clock for FixedClock {
+        fn today(&self) -> Timestamp {
+            Timestamp::new("2026-07-26")
+        }
+    }
 
     fn registry() -> ProjectRegistry {
         ProjectRegistry::new(vec![(
@@ -202,13 +218,13 @@ mod tests {
     fn cancel_rejects_blank_report_during_execution() {
         let command = CancelPendingWork::new(
             "GLP-0001".to_string(),
-            "2026-07-14".to_string(),
+            Some("2026-07-14".to_string()),
             " \t\n".to_string(),
             Vec::new(),
             false,
         );
 
-        let error = execute(&command, &staged(), &registry()).unwrap_err();
+        let error = super::execute(&command, &staged(), &registry(), &FixedClock).unwrap_err();
 
         assert!(matches!(error, CancelPendingWorkError::EmptyReport));
         assert_eq!(error.to_string(), "--report cannot be empty.");
@@ -225,13 +241,13 @@ mod tests {
             .with_project("glep-shimeji", vec![tagged]);
         let command = CancelPendingWork::new(
             "GLP-0001".to_string(),
-            "2026-07-14".to_string(),
+            Some("2026-07-14".to_string()),
             " \t\n".to_string(),
             Vec::new(),
             false,
         );
 
-        let error = execute(&command, &store, &registry()).unwrap_err();
+        let error = super::execute(&command, &store, &registry(), &FixedClock).unwrap_err();
 
         assert!(matches!(error, CancelPendingWorkError::HandoffPreflight(_)));
         assert_eq!(
@@ -245,18 +261,22 @@ mod tests {
         let store = staged();
         let command = CancelPendingWork::new(
             "GLP-0001".to_string(),
-            "2026-07-14".to_string(),
+            Some("2026-07-14".to_string()),
             "obsoleted".to_string(),
             vec![" a..b, c..d ".to_string(), "a..b".to_string()],
             false,
         );
 
-        let out = execute(&command, &store, &registry()).unwrap();
+        let out = super::execute(&command, &store, &registry(), &FixedClock).unwrap();
 
         assert_eq!(out.action, super::super::done::ClosedItemAction::Cancelled);
         assert_eq!(
             store.items("glep-shimeji")[0].status,
             WorkItemStatus::Cancelled
+        );
+        assert_eq!(
+            store.items("glep-shimeji")[0].completed,
+            Some(Timestamp::new("2026-07-14"))
         );
         assert_eq!(
             store.items("glep-shimeji")[0].commits.as_deref(),
@@ -265,16 +285,35 @@ mod tests {
     }
 
     #[test]
+    fn cancel_uses_clock_date_when_no_date_is_explicit() {
+        let store = staged();
+        let command = CancelPendingWork::new(
+            "GLP-0001".to_string(),
+            None,
+            "obsoleted".to_string(),
+            Vec::new(),
+            false,
+        );
+
+        super::execute(&command, &store, &registry(), &FixedClock).unwrap();
+
+        assert_eq!(
+            store.items("glep-shimeji")[0].completed,
+            Some(Timestamp::new("2026-07-26"))
+        );
+    }
+
+    #[test]
     fn cancel_reports_an_unknown_configured_prefix() {
         let command = CancelPendingWork::new(
             "XYZ-0001".to_string(),
-            "2026-07-14".to_string(),
+            Some("2026-07-14".to_string()),
             "obsolete".to_string(),
             Vec::new(),
             false,
         );
 
-        let error = execute(&command, &staged(), &registry()).unwrap_err();
+        let error = super::execute(&command, &staged(), &registry(), &FixedClock).unwrap_err();
 
         assert_eq!(
             error.to_string(),
@@ -298,13 +337,13 @@ mod tests {
             .with_failure(FailurePoint::DocumentUpdate);
         let command = CancelPendingWork::new(
             "GLP-0001".to_string(),
-            "2026-07-14".to_string(),
+            Some("2026-07-14".to_string()),
             "obsoleted".to_string(),
             Vec::new(),
             false,
         );
 
-        let error = execute(&command, &store, &registry()).unwrap_err();
+        let error = super::execute(&command, &store, &registry(), &FixedClock).unwrap_err();
 
         assert!(matches!(
             error,

@@ -1,4 +1,5 @@
 use clap::Args;
+use pwf_application::project::get::{self, GetProject};
 use pwf_domain::project::ProjectPrefix;
 use pwf_infra::SqliteStore;
 
@@ -12,11 +13,8 @@ pub struct Arguments {
 }
 
 pub(super) async fn run(arguments: Arguments, database: &SqliteStore) -> Result<String, String> {
-    let project = pwf_application::project::get::execute(
-        pwf_application::project::get::GetProject { id: arguments.id },
-        database,
-    )
-    .await
-    .map_err(|error| format!("project get failed: {error}"))?;
+    let project = get::execute(GetProject { id: arguments.id }, database)
+        .await
+        .map_err(|error| format!("project get failed: {error}"))?;
     output::project(project)
 }

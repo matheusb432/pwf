@@ -85,7 +85,7 @@ where
 mod tests {
     use std::{convert::Infallible, path::Path};
 
-    use super::{ShowOutput, ShowPendingWorkItem, execute};
+    use super::{ShowOutput, ShowPendingWorkItem};
     use crate::{
         NoteMarkdownSource,
         pending_work::resolve::testing::{PWF_0001_SOURCE, staged, staged_ghost},
@@ -121,7 +121,7 @@ mod tests {
     fn show_streams_source_verbatim() {
         let (store, registry) = staged();
 
-        let shown = execute(
+        let shown = super::execute(
             &ShowPendingWorkItem {
                 id: "PWF-0001".to_string(),
                 output: ShowOutput::Markdown,
@@ -139,7 +139,7 @@ mod tests {
     fn show_path_returns_missing_note_locator_without_reading_markdown() {
         let (store, registry) = staged_ghost();
 
-        let shown = execute(
+        let shown = super::execute(
             &ShowPendingWorkItem {
                 id: "PWF-0002".to_string(),
                 output: ShowOutput::Path,
@@ -157,7 +157,7 @@ mod tests {
     fn show_markdown_preserves_missing_note_source_error() {
         let (store, registry) = staged_ghost();
 
-        let error = execute(
+        let error = super::execute(
             &ShowPendingWorkItem {
                 id: "PWF-0002".to_string(),
                 output: ShowOutput::Markdown,

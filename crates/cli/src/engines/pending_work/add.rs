@@ -1,7 +1,10 @@
 use clap::Args;
-use pwf_application::pending_work::{
-    PendingWorkSection, ProjectRegistry,
-    add::{AddPendingWorkError, AddPendingWorkItem, AddPendingWorkSource},
+use pwf_application::{
+    Clock,
+    pending_work::{
+        PendingWorkSection, ProjectRegistry,
+        add::{self, AddPendingWorkError, AddPendingWorkItem, AddPendingWorkSource},
+    },
 };
 use pwf_infra::obsidian::ObsidianStore;
 
@@ -60,10 +63,10 @@ pub(super) fn run(
     console: Console,
     store: &ObsidianStore,
     projects: &ProjectRegistry,
+    clock: &impl Clock,
 ) -> Result<String, PendingWorkError> {
-    let created = pwf_core::date::stamp_date(arguments.common.date.as_deref());
-    let command = request(arguments, created)?;
-    let result = pwf_application::pending_work::add::execute(command, store, projects);
+    let command = request(arguments)?;
+    let result = add::execute(&command, store, projects, clock);
     match result {
         Ok(added) => {
             emit_created_section(&added);
@@ -99,7 +102,7 @@ pub(super) fn run(
     }
 }
 
-fn request(arguments: &Arguments, created: String) -> Result<AddPendingWorkItem, PendingWorkError> {
+fn request(arguments: &Arguments) -> Result<AddPendingWorkItem, PendingWorkError> {
     let section = match arguments.section.as_deref() {
         Some(section) => PendingWorkSection::from_name(section)
             .map(Some)
@@ -124,7 +127,7 @@ fn request(arguments: &Arguments, created: String) -> Result<AddPendingWorkItem,
     Ok(AddPendingWorkItem {
         project_identifier: arguments.project.clone(),
         source,
-        created,
+        date: arguments.common.date.clone(),
         section,
         prerequisites: arguments.prereq.clone(),
         effort: arguments.effort,

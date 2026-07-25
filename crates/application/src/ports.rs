@@ -1,5 +1,6 @@
 mod app_db_store;
 mod app_record_store;
+mod clock;
 
 use std::{
     path::{Path, PathBuf},
@@ -8,8 +9,10 @@ use std::{
 
 pub use app_db_store::AppDbStore;
 pub use app_record_store::{AppRecordStore, Record};
+pub use clock::Clock;
 use pwf_domain::{
     handoff::HandoffStatus,
+    note::NoteId,
     pending_work::{ProjectName, Tags, Timestamp, WorkItemId, WorkItemStatus},
 };
 
@@ -223,6 +226,110 @@ pub struct HandoffLedgerRow {
     pub created: String,
 }
 
+/// Describes one persisted project note.
+///
+/// # Examples
+///
+/// ```
+/// use pwf_application::ProjectNote;
+/// use pwf_domain::note::NoteId;
+///
+/// let note = ProjectNote {
+///     id: NoteId::try_new("PWF-NOTE-0001").unwrap(),
+///     message: "remember milk".to_string(),
+/// };
+/// assert_eq!(note.id.as_ref(), "PWF-NOTE-0001");
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectNote {
+    /// Identifies the note within its project.
+    pub id: NoteId,
+    /// Contains the note's first non-empty body line.
+    pub message: String,
+}
+
+impl Record for ProjectNote {
+    type Scope = ProjectName;
+    type Id = NoteId;
+    type New = NewProjectNote;
+    type Patch = ProjectNotePatch;
+}
+
+/// Supplies the fields required to persist a new project note.
+///
+/// # Examples
+///
+/// ```
+/// use pwf_application::NewProjectNote;
+/// use pwf_domain::{note::NoteId, pending_work::Timestamp};
+///
+/// let note = NewProjectNote {
+///     id: NoteId::try_new("PWF-NOTE-0001").unwrap(),
+///     message: "remember milk".to_string(),
+///     created: Timestamp::new("2026-07-26"),
+/// };
+/// assert_eq!(note.created.as_str(), "2026-07-26");
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewProjectNote {
+    /// Identifies the new note within its project.
+    pub id: NoteId,
+    /// Contains the trimmed note message.
+    pub message: String,
+    /// Records the authored creation date.
+    pub created: Timestamp,
+}
+
+/// Replaces the mutable fields of one project note.
+///
+/// # Examples
+///
+/// ```
+/// use pwf_application::ProjectNotePatch;
+///
+/// let patch = ProjectNotePatch {
+///     message: "remember oat milk".to_string(),
+/// };
+/// assert_eq!(patch.message, "remember oat milk");
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectNotePatch {
+    /// Replaces the note body message.
+    pub message: String,
+}
+
+/// Inspects project-note representation facts required by note operations.
+///
+/// # Examples
+///
+/// ```
+/// use pwf_application::{AppRecordStore, ProjectNote, ProjectNoteStore};
+/// use pwf_domain::{note::NoteId, pending_work::ProjectName};
+///
+/// # fn exists<S>(
+/// #     store: &S,
+/// #     project: &ProjectName,
+/// #     id: &NoteId,
+/// # ) -> Result<bool, <S as AppRecordStore<ProjectNote>>::Error>
+/// # where
+/// #     S: ProjectNoteStore,
+/// # {
+/// store.note_exists(project, id)
+/// # }
+/// ```
+pub trait ProjectNoteStore: AppRecordStore<ProjectNote> {
+    /// Returns whether the note's exact representation path exists.
+    ///
+    /// # Errors
+    ///
+    /// Returns the storage adapter error when representation existence cannot be inspected.
+    fn note_exists(
+        &self,
+        project: &ProjectName,
+        id: &NoteId,
+    ) -> Result<bool, <Self as AppRecordStore<ProjectNote>>::Error>;
+}
+
 /// A pending-work record's identity within its project.
 ///
 /// Canonical items carry a [`WorkItemId`]. Inline prompts use a one-based ordinal; read handlers
@@ -298,7 +405,7 @@ impl Record for PendingWorkItem {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewItem {
     pub prompt: String,
-    pub title: Option<String>,
+    pub title: String,
     pub created: Timestamp,
     pub section: Option<String>,
     pub prereq: Option<String>,

@@ -4,6 +4,7 @@ use std::{
 };
 
 use pwf::engines::handoff;
+use pwf_infra::clock::LocalClock;
 
 #[path = "support/pending_work.rs"]
 mod pending_work_test;
@@ -75,7 +76,7 @@ fn add_unmanaged_repo_errors() {
         "--date",
         "2026-01-01",
     ]);
-    let err = handoff::run(&args, &projects.store, &projects.registry).unwrap_err();
+    let err = handoff::run(&args, &projects.store, &projects.registry, &LocalClock).unwrap_err();
     assert!(
         err.contains("this repo is not a managed project"),
         "unexpected error: {err}"
@@ -122,7 +123,7 @@ fn add_managed_calls_pw_stub() {
         "--pending-work-script",
         stub.to_str().unwrap(),
     ]);
-    let out = handoff::run(&args, &projects.store, &projects.registry).unwrap();
+    let out = handoff::run(&args, &projects.store, &projects.registry, &LocalClock).unwrap();
     assert!(
         out.starts_with("Created handoff "),
         "expected created text, got: {out}"
@@ -159,7 +160,7 @@ fn add_removes_orphan_scaffold_when_pw_allocation_fails() {
         "--pending-work-script",
         stub.to_str().unwrap(),
     ]);
-    let err = handoff::run(&args, &projects.store, &projects.registry).unwrap_err();
+    let err = handoff::run(&args, &projects.store, &projects.registry, &LocalClock).unwrap_err();
 
     assert!(err.contains("pw-add output parse error"), "got: {err}");
     let file_path = repo.join("docs/handoffs/2026-01-01-managed-flow.md");
@@ -188,7 +189,7 @@ fn add_managed_links_pw_in_process_without_script() {
         "--date",
         "2026-01-01",
     ]);
-    let out = handoff::run(&args, &projects.store, &projects.registry).unwrap();
+    let out = handoff::run(&args, &projects.store, &projects.registry, &LocalClock).unwrap();
     assert!(
         out.starts_with("Created handoff "),
         "expected created text, got: {out}"
@@ -251,7 +252,7 @@ fn direct_handoff_add_rejects_an_unparseable_destination_before_allocation() {
         "2026-01-01",
     ]);
 
-    let error = handoff::run(&args, &projects.store, &projects.registry).unwrap_err();
+    let error = handoff::run(&args, &projects.store, &projects.registry, &LocalClock).unwrap_err();
 
     assert!(error.contains("already exists"), "got: {error}");
     assert!(!notes.join("test-project").exists());
@@ -482,7 +483,7 @@ fn list_returns_ledger_content() {
         "--date",
         "2026-01-01",
     ]);
-    let out = handoff::run(&args, &projects.store, &projects.registry).unwrap();
+    let out = handoff::run(&args, &projects.store, &projects.registry, &LocalClock).unwrap();
     assert_eq!(
         out, ledger_content,
         "list should return ledger content verbatim"
@@ -502,7 +503,7 @@ fn list_no_ledger() {
         "--date",
         "2026-01-01",
     ]);
-    let out = handoff::run(&args, &projects.store, &projects.registry).unwrap();
+    let out = handoff::run(&args, &projects.store, &projects.registry, &LocalClock).unwrap();
     assert_eq!(out, "No active handoffs (LEDGER.md not found).");
 }
 

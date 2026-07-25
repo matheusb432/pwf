@@ -1,7 +1,7 @@
 //! Implements handoff creation and listing.
 
 use clap::Subcommand;
-use pwf_application::pending_work::ProjectRegistry;
+use pwf_application::{Clock, pending_work::ProjectRegistry};
 use pwf_infra::obsidian::ObsidianStore;
 
 pub mod add;
@@ -16,13 +16,17 @@ pub enum Command {
     List(list::Arguments),
 }
 
-pub fn run(
+pub fn run<C>(
     command: &Command,
     store: &ObsidianStore,
     projects: &ProjectRegistry,
-) -> Result<String, String> {
+    clock: &C,
+) -> Result<String, String>
+where
+    C: Clock,
+{
     match command {
-        Command::Add(arguments) => add::run(arguments, store, projects),
+        Command::Add(arguments) => add::run(arguments, store, projects, clock),
         Command::List(arguments) => list::run(arguments, store),
     }
     .map_err(|error| error.to_string())

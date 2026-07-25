@@ -54,7 +54,7 @@ pub(super) fn new_work_item_content(fields: NewWorkItemFields<'_>) -> String {
         let _ = writeln!(out, "effort: {effort}");
     }
     if let Some(tags) = fields.tags {
-        let _ = writeln!(out, "tags: {}", tags.frontmatter_value());
+        let _ = writeln!(out, "tags: {}", tags_frontmatter_value(tags));
     }
     out.push_str("---\n\n");
     out.push_str(fields.prompt.trim_end());
@@ -220,6 +220,16 @@ pub(super) fn set_tags_text(content: &str, value: Option<&Tags>) -> String {
         content,
         &TAGS_LINE_RE,
         &TAGS_LINE_NL_RE,
-        value.map(|tags| format!("tags: {}", tags.frontmatter_value())),
+        value.map(|tags| format!("tags: {}", tags_frontmatter_value(tags))),
+    )
+}
+
+fn tags_frontmatter_value(tags: &Tags) -> String {
+    format!(
+        "[{}]",
+        tags.iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", ")
     )
 }

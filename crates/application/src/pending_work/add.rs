@@ -1,21 +1,47 @@
 use std::{path::PathBuf, sync::LazyLock};
 
-use pwf_domain::pending_work::{
-    HANDOFF_TAG, ProjectName, Tags, Timestamp, WorkItemId, inferred_title, normalize_title,
-    title_was_normalized,
-};
+use pwf_domain::pending_work::{ProjectName, Tags, Timestamp, WorkItemId};
 use regex::Regex;
 
 use super::{
     prerequisite::PrerequisiteValidationError,
     project_registry::{ProjectRegistry, ProjectResolutionError},
-    store_util,
+    store_util, tag_policy, title,
 };
 use crate::{
     HandoffDocumentStore, HandoffLedger,
     handoff::{HandoffError, HandoffMutationOk, lifecycle},
-    ports::{AppRecordStore, IndexEntry, IndexSection, NewItem, PendingWorkItem},
+    ports::{AppRecordStore, Clock, IndexEntry, IndexSection, NewItem, PendingWorkItem},
 };
+
+/// Reports the persistence phase that failed while creating an item and its index entry.
+#[derive(Debug, thiserror::Error)]
+pub enum CreateItemError {
+    #[error("{0}")]
+    ReadSections(#[source] Box<dyn std::error::Error + Send + Sync>),
+    #[error("{0}")]
+    InsertRecord(#[source] Box<dyn std::error::Error + Send + Sync>),
+    #[error("{source}")]
+    InsertIndex {
+        project: ProjectName,
+        created_section: Option<String>,
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
+}
+
+impl CreateItemError {
+    pub fn created_section(&self) -> Option<(&ProjectName, &str)> {
+        match self {
+            Self::InsertIndex {
+                project,
+                created_section: Some(section),
+                ..
+            } => Some((project, section)),
+            _ => None,
+        }
+    }
+}
 
 /// Describes the pending-work item and index section created by [`execute`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -107,8 +133,8 @@ pub struct AddPendingWorkItem {
     pub project_identifier: Option<String>,
     /// Semantic prompt source.
     pub source: Option<AddPendingWorkSource>,
-    /// Authored creation date.
-    pub created: String,
+    /// Optional authored creation date.
+    pub date: Option<String>,
     /// Optional canonical index section.
     pub section: Option<PendingWorkSection>,
     /// Raw repeated prerequisite values.
@@ -176,7 +202,7 @@ pub enum AddPendingWorkError {
     WriteStore {
         diagnostics: AddPendingWorkDiagnostics,
         #[source]
-        source: store_util::CreateItemError,
+        source: CreateItemError,
     },
 }
 
@@ -192,10 +218,11 @@ pub enum AddPendingWorkError {
 /// Panics if the store's `insert` violates its contract by returning a record
 /// without a canonical [`pwf_domain::pending_work::WorkItemId`].
 #[cqrsy::command]
-pub fn execute<S>(
-    cmd: AddPendingWorkItem,
+pub fn execute<S, C>(
+    cmd: &AddPendingWorkItem,
     store: &S,
     projects: &ProjectRegistry,
+    clock: &C,
 ) -> Result<AddedItem, AddPendingWorkError>
 where
     S: AppRecordStore<PendingWorkItem>
@@ -203,7 +230,12 @@ where
         + AppRecordStore<IndexSection>
         + HandoffDocumentStore
         + AppRecordStore<HandoffLedger>,
+    C: Clock,
 {
+    let authored_date = cmd
+        .date
+        .clone()
+        .map_or_else(|| clock.today(), Timestamp::new);
     let tags = parse_tags(&cmd.tags)?;
     let prereq = if cmd.prerequisites.is_empty() {
         None
@@ -213,11 +245,11 @@ where
                 .map_err(map_prerequisite_error)?,
         )
     };
-    let prepared = prepare_source(&cmd, store, projects)?;
+    let prepared = prepare_source(cmd, store, projects)?;
     let scaffold = if !prepared.newest_handoff
         && tags
             .as_ref()
-            .is_some_and(|tags| tags.contains_name(HANDOFF_TAG))
+            .is_some_and(|tags| tag_policy::contains_name(tags, tag_policy::HANDOFF_TAG))
     {
         Some(
             lifecycle::preflight_scaffold(
@@ -225,7 +257,7 @@ where
                 &prepared.repository,
                 &prepared.project,
                 &prepared.title,
-                &cmd.created,
+                authored_date.as_str(),
             )
             .map_err(AddPendingWorkError::HandoffPreflight)?,
         )
@@ -238,8 +270,8 @@ where
         &prepared.project,
         NewItem {
             prompt: prepared.prompt,
-            title: Some(prepared.title),
-            created: Timestamp::new(cmd.created),
+            title: prepared.title,
+            created: authored_date,
             section: cmd
                 .section
                 .map(PendingWorkSection::as_str)
@@ -302,7 +334,7 @@ fn parse_tags(values: &[String]) -> Result<Option<Tags>, AddPendingWorkError> {
     if values.is_empty() {
         return Ok(None);
     }
-    Tags::parse_values(values)
+    tag_policy::parse_values(values)
         .map(Some)
         .map_err(|error| AddPendingWorkError::InvalidTag {
             raw: error.raw().to_string(),
@@ -334,14 +366,14 @@ where
         AddPendingWorkSource::Prompt { prompt, title } => {
             let (title, normalized) = match title.as_deref() {
                 Some(title) if !title.trim().is_empty() => {
-                    (normalize_title(title), title_was_normalized(title))
+                    (title::normalize(title), title::was_normalized(title))
                 }
-                _ => (inferred_title(prompt), false),
+                _ => (title::inferred(prompt), false),
             };
             (title, prompt.clone(), normalized, false)
         }
         AddPendingWorkSource::Plan { path } => (
-            plan_title(project.as_ref(), path),
+            title::normalize(&plan_title(project.as_ref(), path)),
             plan_continuation_prompt(path),
             false,
             false,
@@ -349,7 +381,7 @@ where
         AddPendingWorkSource::NewestHandoff => {
             let (title, prompt) = lifecycle::newest_handoff(store, &repository)
                 .map_err(AddPendingWorkError::HandoffPreflight)?;
-            (title, prompt, false, true)
+            (title::normalize(&title), prompt, false, true)
         }
     };
     Ok(PreparedAdd {

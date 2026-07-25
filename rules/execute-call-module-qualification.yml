@@ -1,0 +1,32 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ast-grep/ast-grep/main/schemas/rust_rule.json
+
+id: execute-call-module-qualification
+language: rust
+severity: error
+message: "Call `execute` through exactly one operation module."
+note: "Import the operation module, then call `<operation>::execute(...)`."
+rule:
+  kind: call_expression
+  has:
+    field: function
+    all:
+      - any:
+          - all:
+              - kind: identifier
+              - regex: "^execute$"
+          - all:
+              - kind: scoped_identifier
+              - has:
+                  field: name
+                  regex: "^execute$"
+      - not:
+          all:
+            - kind: scoped_identifier
+            - has:
+                field: path
+                any:
+                  - kind: identifier
+                  - kind: super
+            - has:
+                field: name
+                regex: "^execute$"

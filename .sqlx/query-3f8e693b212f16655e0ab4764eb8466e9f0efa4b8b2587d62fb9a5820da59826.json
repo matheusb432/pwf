@@ -1,0 +1,28 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT\n            EXISTS(SELECT 1 FROM projects WHERE id = ?) AS \"id_exists!: bool\",\n            EXISTS(SELECT 1 FROM projects WHERE title = ?) AS \"title_exists!: bool\"\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id_exists!: bool",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "title_exists!: bool",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "3f8e693b212f16655e0ab4764eb8466e9f0efa4b8b2587d62fb9a5820da59826"
+}

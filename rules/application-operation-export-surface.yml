@@ -1,0 +1,62 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ast-grep/ast-grep/main/schemas/rust_rule.json
+
+id: application-operation-export-surface
+language: rust
+severity: error
+files:
+  - "crates/application/src/*/*.rs"
+  - "crates/application/src/*/**/*.rs"
+ignores:
+  - "crates/application/src/**/ports.rs"
+  - "crates/application/src/ports/**/*.rs"
+  - "crates/application/src/**/ports/**/*.rs"
+  - "crates/application/src/**/dto.rs"
+  - "crates/application/src/**/model.rs"
+  - "crates/application/src/**/tests.rs"
+  - "crates/application/src/**/tests/**/*.rs"
+  - "crates/application/src/**/*_tests.rs"
+message: "Application operation files may expose `execute` and declared contract items, not other functions or re-exports."
+note: "Keep support private to the feature or expose contracts through a facade, port, DTO, or model."
+rule:
+  any:
+    - all:
+        - kind: function_item
+        - has:
+            kind: visibility_modifier
+            regex: "^pub$"
+        - has:
+            field: name
+            kind: identifier
+            not:
+              regex: "^execute$"
+        - not:
+            inside:
+              kind: impl_item
+              stopBy: end
+        - not:
+            inside:
+              kind: trait_item
+              stopBy: end
+    - all:
+        - kind: use_declaration
+        - has:
+            kind: visibility_modifier
+            regex: "^pub$"
+        - inside:
+            matches: operation-source
+            stopBy: end
+utils:
+  operation-source:
+    all:
+      - kind: source_file
+      - has:
+          stopBy: neighbor
+          all:
+            - kind: function_item
+            - has:
+                kind: visibility_modifier
+                regex: "^pub$"
+            - has:
+                field: name
+                kind: identifier
+                regex: "^execute$"

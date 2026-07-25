@@ -1,7 +1,6 @@
-use pwf_domain::pending_work::WorkItemId;
-
 use super::{
-    enrich::inline_record_id, project_registry::ProjectRegistry, show::ShowPendingWorkError,
+    enrich::inline_record_id, identifier, project_registry::ProjectRegistry,
+    show::ShowPendingWorkError,
 };
 use crate::{AppRecordStore, PendingWorkItem, RecordId};
 
@@ -15,7 +14,7 @@ where
     S: AppRecordStore<PendingWorkItem>,
 {
     let not_found = || ShowPendingWorkError::ItemNotFound { id: id.to_string() };
-    let Ok(work_id) = WorkItemId::try_new(id) else {
+    let Some(work_id) = identifier::parse(id) else {
         return resolve_inline_record(store, projects, id);
     };
     let project = projects.project_for_id(&work_id).ok_or_else(not_found)?;

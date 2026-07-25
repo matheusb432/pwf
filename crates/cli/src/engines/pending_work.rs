@@ -1,5 +1,5 @@
 use clap::Subcommand;
-use pwf_application::pending_work::ProjectRegistry;
+use pwf_application::{Clock, pending_work::ProjectRegistry};
 use pwf_infra::obsidian::ObsidianStore;
 
 use crate::console::Console;
@@ -61,17 +61,21 @@ pub enum Command {
     Session(session::Arguments),
 }
 
-pub fn run(
+pub fn run<C>(
     command: &Command,
     console: Console,
     store: &ObsidianStore,
     projects: &ProjectRegistry,
-) -> Result<String, String> {
+    clock: &C,
+) -> Result<String, String>
+where
+    C: Clock,
+{
     match command {
-        Command::Add(arguments) => add::run(arguments, console, store, projects),
+        Command::Add(arguments) => add::run(arguments, console, store, projects, clock),
         Command::List(arguments) => list::run(arguments, console, store, projects),
-        Command::Done(arguments) => done::run(arguments, store, projects),
-        Command::Cancel(arguments) => cancel::run(arguments, store, projects),
+        Command::Done(arguments) => done::run(arguments, store, projects, clock),
+        Command::Cancel(arguments) => cancel::run(arguments, store, projects, clock),
         Command::Reopen(arguments) => reopen::run(arguments, store, projects),
         Command::Update(arguments) => update::run(arguments, console, store, projects),
         Command::Show(arguments) => show::run(arguments, store, projects),

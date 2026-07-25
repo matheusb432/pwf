@@ -1,6 +1,6 @@
 use clap::Args;
-use pwf_application::pending_work::session::Agent;
-use pwf_domain::pending_work::{WorkItemStatus, WorkItemStatusFilter, canonical_pending_id};
+use pwf_application::pending_work::{StatusFilter, session::Agent};
+use pwf_domain::pending_work::WorkItemStatus;
 use thiserror::Error;
 
 #[derive(Args, Clone, Debug, Default)]
@@ -31,12 +31,9 @@ impl Identifier {
         self.positional.as_deref().or(self.flag.as_deref())
     }
 
-    pub(crate) fn canonical(&self) -> Option<String> {
-        self.raw().map(canonical_pending_id)
-    }
-
     pub(crate) fn required(&self, action: &'static str) -> Result<String, PendingWorkError> {
-        self.canonical()
+        self.raw()
+            .map(str::to_string)
             .ok_or(PendingWorkError::MissingId { action })
     }
 }
@@ -73,12 +70,12 @@ pub enum StatusChoice {
 }
 
 impl StatusChoice {
-    pub(crate) fn filter(self) -> WorkItemStatusFilter {
+    pub(crate) fn filter(self) -> StatusFilter {
         match self {
-            Self::Active => WorkItemStatusFilter::Exact(WorkItemStatus::Active),
-            Self::Done => WorkItemStatusFilter::Exact(WorkItemStatus::Done),
-            Self::Cancelled => WorkItemStatusFilter::Exact(WorkItemStatus::Cancelled),
-            Self::All => WorkItemStatusFilter::All,
+            Self::Active => StatusFilter::Exact(WorkItemStatus::Active),
+            Self::Done => StatusFilter::Exact(WorkItemStatus::Done),
+            Self::Cancelled => StatusFilter::Exact(WorkItemStatus::Cancelled),
+            Self::All => StatusFilter::All,
         }
     }
 }

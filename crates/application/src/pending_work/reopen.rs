@@ -1,6 +1,7 @@
 use pwf_domain::pending_work::{ProjectName, WorkItemId, WorkItemStatus};
 
 use super::{
+    identifier,
     project_registry::ProjectRegistry,
     store_util::{self, LoadItemError},
 };
@@ -63,7 +64,7 @@ where
         + AppRecordStore<HandoffLedger>,
 {
     let not_found = || ReopenPendingWorkError::ItemNotFound { id: cmd.id.clone() };
-    let pending_work_identifier = WorkItemId::try_new(&cmd.id).map_err(|_| not_found())?;
+    let pending_work_identifier = identifier::parse(&cmd.id).ok_or_else(not_found)?;
     let prefix = pending_work_identifier
         .as_ref()
         .split_once('-')
@@ -178,7 +179,7 @@ mod tests {
         pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus},
     };
 
-    use super::{ProjectRegistry, ReopenPendingWork, ReopenPendingWorkError, execute};
+    use super::{ProjectRegistry, ReopenPendingWork, ReopenPendingWorkError};
     use crate::{
         HandoffDocument, HandoffDocumentIdentifier, HandoffLocation, HandoffScope, IndexEntry,
         IndexEntryState, Materialization, PendingWorkItem, RecordId,
@@ -250,7 +251,7 @@ mod tests {
             vec![entry(IndexEntryState::Done(Timestamp::new("2026-01-02")))],
         );
 
-        let out = execute(&command(), &store, &registry()).unwrap();
+        let out = super::execute(&command(), &store, &registry()).unwrap();
 
         assert!(!out.already_active);
         assert_eq!(
@@ -269,7 +270,7 @@ mod tests {
     fn reopen_re_adds_evicted_entry() {
         let store = staged(WorkItemStatus::Done, Vec::new());
 
-        let out = execute(&command(), &store, &registry()).unwrap();
+        let out = super::execute(&command(), &store, &registry()).unwrap();
 
         assert!(!out.already_active);
         let entries = store.entries("glep-shimeji");
@@ -282,7 +283,7 @@ mod tests {
     fn reopen_already_active_is_idempotent_skip() {
         let store = staged(WorkItemStatus::Active, vec![entry(IndexEntryState::Open)]);
 
-        let out = execute(&command(), &store, &registry()).unwrap();
+        let out = super::execute(&command(), &store, &registry()).unwrap();
 
         assert!(out.already_active);
         assert_eq!(
@@ -298,7 +299,7 @@ mod tests {
             id: "XYZ-0001".to_string(),
         };
 
-        let error = execute(&command, &store, &registry()).unwrap_err();
+        let error = super::execute(&command, &store, &registry()).unwrap_err();
 
         assert_eq!(
             error.to_string(),
@@ -341,7 +342,7 @@ mod tests {
             .with_project("glep-shimeji", vec![tagged])
             .with_handoff_documents(scope.clone(), vec![handoff]);
 
-        let outcome = execute(&command(), &store, &registry()).unwrap();
+        let outcome = super::execute(&command(), &store, &registry()).unwrap();
 
         assert!(matches!(
             outcome.handoff,
@@ -389,7 +390,7 @@ mod tests {
             .with_handoff_documents(scope, vec![handoff])
             .with_failure(FailurePoint::DocumentUpdate);
 
-        let error = execute(&command(), &store, &registry()).unwrap_err();
+        let error = super::execute(&command(), &store, &registry()).unwrap_err();
 
         assert!(matches!(
             error,

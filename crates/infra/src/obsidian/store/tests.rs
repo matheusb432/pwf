@@ -6,7 +6,8 @@ use pwf_application::{
     NewItem, PendingWorkItem, RecordId,
 };
 use pwf_domain::pending_work::{
-    ProjectIndexIdentity, ProjectName, ProjectPrefix, Tags, Timestamp, WorkItemId, WorkItemStatus,
+    ProjectIndexIdentity, ProjectName, ProjectPrefix, Tag, Tags, Timestamp, WorkItemId,
+    WorkItemStatus,
 };
 
 use super::{ObsidianProject, ObsidianStore, ObsidianStoreError, fs::path_str};
@@ -368,10 +369,10 @@ fn generic_add(store: &ObsidianStore, new: NewItem) -> Result<PendingWorkItem, O
     Ok(record)
 }
 
-fn new_item(prompt: &str, title: Option<&str>, section: Option<&str>) -> NewItem {
+fn new_item(prompt: &str, title: &str, section: Option<&str>) -> NewItem {
     NewItem {
         prompt: prompt.to_string(),
-        title: title.map(str::to_string),
+        title: title.to_string(),
         created: Timestamp::new("2026-07-07"),
         section: section.map(str::to_string),
         prereq: None,
@@ -393,7 +394,7 @@ fn generic_add_creates_note_and_links_index() {
             effort: Some(2),
             ..new_item(
                 "Ship the adapter /d tests pass",
-                Some("Ship Adapter"),
+                "ship adapter",
                 Some("Human"),
             )
         },
@@ -425,55 +426,23 @@ fn generic_add_creates_note_and_links_index() {
 }
 
 #[test]
-fn generic_add_normalizes_yaml_breaking_titles_so_reads_survive() {
-    let temp = tempfile::tempdir().unwrap();
-    let notes_dir = temp.path().join("notes");
-    let store = store_with_index_identity(&notes_dir.join("pwf"));
-    let hostile_titles = [
-        "finish refactor: promote sync-git seam over: that",
-        "fix #123 now",
-        "- leading dash",
-        "[wip] thing",
-        "\"quoted",
-        "*star &anchor !tag",
-        "|block >fold %directive @at `tick {brace",
-        "a\nb: c",
-        ":::",
-        "fix foo::bar panic",
-        "time 3:30pm https://docs.rs read",
-    ];
-
-    for title in hostile_titles {
-        let record = generic_add(&store, new_item("prompt", Some(title), None)).unwrap();
-        let id = record
-            .id
-            .as_item()
-            .expect("inserted record carries a canonical id")
-            .clone();
-        let read = get_record(&store, id.as_ref())
-            .unwrap_or_else(|| panic!("hostile title must stay readable: {title:?}"));
-        assert_eq!(read.title, record.title, "title round-trip: {title:?}");
-    }
-}
-
-#[test]
 fn generic_add_writes_canonical_tags_and_omits_absent_tags() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
     let store = store_with_index_identity(&notes_dir.join("pwf"));
-    let tags = Tags::parse_values(&["SQLite,csharp-export".to_string()]).unwrap();
+    let tags = tags(&["sqlite", "csharp_export"]);
     let tagged = generic_add(
         &store,
         NewItem {
             tags: Some(tags),
-            ..new_item("tagged task", None, None)
+            ..new_item("tagged task", "tagged task", None)
         },
     )
     .unwrap();
     let note = std::fs::read_to_string(tagged.locator).unwrap();
     assert!(note.contains("tags: [sqlite, csharp_export]\n"), "{note}");
 
-    let untagged = generic_add(&store, new_item("untagged task", None, None)).unwrap();
+    let untagged = generic_add(&store, new_item("untagged task", "untagged task", None)).unwrap();
     let note = std::fs::read_to_string(untagged.locator).unwrap();
     assert!(!note.contains("tags:"), "{note}");
 }
@@ -490,7 +459,7 @@ fn generic_insert_rejects_unreadable_existing_index_before_writing_a_note() {
     let err = <ObsidianStore as AppRecordStore<PendingWorkItem>>::insert(
         &store,
         &project,
-        new_item("Ship the adapter /d tests pass", Some("Ship Adapter"), None),
+        new_item("Ship the adapter /d tests pass", "ship adapter", None),
     )
     .unwrap_err();
 
@@ -518,7 +487,7 @@ fn generic_insert_rejects_mismatched_project_index_identity() {
     let error = <ObsidianStore as AppRecordStore<PendingWorkItem>>::insert(
         &store,
         &project,
-        new_item("task", None, None),
+        new_item("task", "task", None),
     )
     .unwrap_err();
 
@@ -555,7 +524,7 @@ fn generic_insert_allocates_after_greatest_frontmatter_id() {
     let record = <ObsidianStore as AppRecordStore<PendingWorkItem>>::insert(
         &store,
         &project,
-        new_item("next task", None, None),
+        new_item("next task", "next task", None),
     )
     .unwrap();
 
@@ -578,7 +547,17 @@ fn apply_tag_patch(store: &ObsidianStore, tags: Option<Tags>) {
 }
 
 fn sqlite_tags() -> Tags {
-    Tags::parse_values(&["SQLite".to_string()]).unwrap()
+    tags(&["sqlite"])
+}
+
+fn tags(values: &[&str]) -> Tags {
+    Tags::try_new(
+        values
+            .iter()
+            .map(|value| Tag::try_from(*value).unwrap())
+            .collect(),
+    )
+    .unwrap()
 }
 
 #[test]
@@ -616,7 +595,7 @@ fn generic_update_writes_a_deduplicated_tag_value() {
         store,
         item_path,
     } = staged_open_item_with_tags("[sqlite, godot]");
-    let merged = Tags::parse_values(&["sqlite,godot,csharp-export".to_string()]).unwrap();
+    let merged = tags(&["sqlite", "godot", "csharp_export"]);
 
     apply_tag_patch(&store, Some(merged));
 
@@ -811,34 +790,6 @@ fn get_finds_closed_note_still_in_project_dir() {
     let store = store_with_index_identity(&notes_dir.join("pwf"));
 
     let record = get_record(&store, "PWF-0003").expect("closed item must resolve");
-
-    assert_eq!(
-        record.source,
-        "---\nid: PWF-0003\nstatus: done\ntitle: done task\nproject: pwf\ncreated: 2026-07-01\ncompleted: 2026-07-07\n---\n\nbody\n"
-    );
-}
-
-#[test]
-fn get_finds_closed_note_still_in_project_dir_with_shorthand_id() {
-    let temp = tempfile::tempdir().unwrap();
-    let notes_dir = temp.path().join("notes");
-    let project_dir = notes_dir.join("pwf");
-    std::fs::create_dir_all(&project_dir).unwrap();
-    std::fs::write(
-        project_dir.join("pwf.md"),
-        "- [x] [[PWF-0003]] ✅ 2026-07-07\n",
-    )
-    .unwrap();
-    write_status_note(
-        &project_dir.join("PWF-0003.md"),
-        "done task",
-        "done",
-        Some("2026-07-07"),
-        None,
-    );
-    let store = store_with_index_identity(&notes_dir.join("pwf"));
-
-    let record = get_record(&store, "pwf3").expect("shorthand id must resolve");
 
     assert_eq!(
         record.source,
@@ -1127,7 +1078,7 @@ fn insert_allocates_next_id_without_index_write() {
         &project,
         NewItem {
             prompt: "wire up the new thing".to_string(),
-            title: None,
+            title: "wire up the new thing".to_string(),
             created: Timestamp::new("2026-07-15"),
             section: None,
             prereq: None,
@@ -1629,7 +1580,7 @@ fn generic_insert_plus_upsert_writes_legacy_add_index_bytes() {
             &project,
             NewItem {
                 prompt: "do the thing".to_string(),
-                title: Some("Ship It".to_string()),
+                title: "ship it".to_string(),
                 created: Timestamp::new("2026-07-07"),
                 section: scenario.section.map(str::to_string),
                 prereq: None,

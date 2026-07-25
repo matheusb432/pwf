@@ -95,7 +95,7 @@ fn insert_handoff_document(
         return Err(ObsidianStoreError::HandoffDocumentExists { path });
     }
     let source = render_new_handoff_document(new);
-    pwf_core::fs_atomic::write_text_atomic(&path, &source).map_err(|source| {
+    crate::obsidian::fs_atomic::write_text_atomic(&path, &source).map_err(|source| {
         ObsidianStoreError::WriteHandoffDocument {
             path: path.clone(),
             source,
@@ -154,7 +154,7 @@ fn update_handoff_document(
     if let Some(body) = patch.body {
         source = replace_body(&source, &body);
     }
-    pwf_core::fs_atomic::write_text_atomic(&source_path, &source).map_err(|source| {
+    crate::obsidian::fs_atomic::write_text_atomic(&source_path, &source).map_err(|source| {
         ObsidianStoreError::WriteHandoffDocument {
             path: source_path.clone(),
             source,
@@ -165,7 +165,7 @@ fn update_handoff_document(
         && let Err(move_source) = std::fs::rename(&source_path, &target_path)
     {
         if let Err(restore_source) =
-            pwf_core::fs_atomic::write_text_atomic(&source_path, &source_original)
+            crate::obsidian::fs_atomic::write_text_atomic(&source_path, &source_original)
         {
             return Err(ObsidianStoreError::RestoreHandoffDocument {
                 path: source_path.clone(),
@@ -327,7 +327,7 @@ fn restore_document_source(
     snapshot: &HandoffDocument,
 ) -> Result<(), ObsidianStoreError> {
     let path = handoff_document_path(scope, &snapshot.identifier);
-    pwf_core::fs_atomic::write_text_atomic(&path, &snapshot.source)
+    crate::obsidian::fs_atomic::write_text_atomic(&path, &snapshot.source)
         .map_err(|source| ObsidianStoreError::WriteHandoffDocument { path, source })
 }
 
@@ -359,7 +359,7 @@ fn read_handoff_document(
             path: path.to_path_buf(),
             source,
         })?;
-    let parsed = pwf_core::frontmatter::parse(&source);
+    let parsed = crate::obsidian::frontmatter_text::parse(&source);
     let file_name = path
         .file_name()
         .and_then(|file_name| file_name.to_str())

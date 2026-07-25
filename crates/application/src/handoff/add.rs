@@ -1,19 +1,16 @@
 use std::{error::Error, path::PathBuf};
 
-use pwf_domain::{
-    handoff::{continuation_title, slug},
-    pending_work::{HANDOFF_TAG, Tags, Timestamp, WorkItemId},
-};
+use pwf_domain::pending_work::{Timestamp, WorkItemId};
 
 use super::{
-    ledger, lifecycle,
+    ledger, lifecycle, naming,
     ports::{AllocatePendingWork, PendingWorkAllocatorClient},
 };
 use crate::{
-    AppRecordStore, HandoffDocument, HandoffDocumentIdentifier, HandoffDocumentStore,
+    AppRecordStore, Clock, HandoffDocument, HandoffDocumentIdentifier, HandoffDocumentStore,
     HandoffLedger, HandoffLocation, HandoffPatch, HandoffScope, IndexEntry, IndexSection,
     NewHandoffDocument, NewItem, PendingWorkItem,
-    pending_work::{ProjectRegistry, ProjectResolutionError, store_util},
+    pending_work::{ProjectRegistry, ProjectResolutionError, store_util, tag_policy},
 };
 
 /// Selects in-process allocation or the external CLI protocol.
@@ -34,8 +31,8 @@ pub struct AddHandoff {
     pub title: String,
     /// Optional caller-selected file slug.
     pub slug: Option<String>,
-    /// Authored creation date.
-    pub created: String,
+    /// Optional authored creation date.
+    pub date: Option<String>,
     /// Pending-work allocation boundary.
     pub allocation: HandoffAllocation,
 }
@@ -112,11 +109,12 @@ pub enum AddHandoffError {
 /// Returns [`AddHandoffError`] when project resolution, collision preflight, persistence,
 /// allocation, linking, or ledger replacement fails.
 #[cqrsy::command]
-pub fn execute<S, C>(
+pub fn execute<S, A, C>(
     command: AddHandoff,
     store: &S,
     projects: &ProjectRegistry,
-    allocator: &C,
+    allocator: &A,
+    clock: &C,
 ) -> Result<AddedHandoff, AddHandoffError>
 where
     S: AppRecordStore<PendingWorkItem>
@@ -124,18 +122,22 @@ where
         + AppRecordStore<IndexSection>
         + HandoffDocumentStore
         + AppRecordStore<HandoffLedger>,
-    C: PendingWorkAllocatorClient,
+    A: PendingWorkAllocatorClient,
+    C: Clock,
 {
+    let authored_date = command
+        .date
+        .clone()
+        .map_or_else(|| clock.today(), Timestamp::new);
     let project = projects
         .project_for_repository(&command.scope.repository_root)
         .cloned()
         .map_err(|source| AddHandoffError::ProjectResolution { source })?;
-    let created = Timestamp::new(command.created);
-    let slug = slug(command.slug.as_deref().unwrap_or(&command.title));
-    let mut file_name = created.as_str().to_string();
-    file_name.push('-');
-    file_name.push_str(&slug);
-    file_name.push_str(".md");
+    let created = authored_date;
+    let file_name = naming::file_name(
+        created.as_str(),
+        command.slug.as_deref().unwrap_or(&command.title),
+    );
     let identifier = HandoffDocumentIdentifier {
         file_name: file_name.clone(),
         location: HandoffLocation::Active,
@@ -179,6 +181,7 @@ where
             .allocate(&AllocatePendingWork {
                 created: created.clone(),
                 project: project.clone(),
+                tag: tag_policy::HANDOFF_TAG.to_string(),
             })
             .map_err(|error| -> Box<dyn Error + Send + Sync> { Box::new(error) }),
     };
@@ -239,13 +242,13 @@ where
         project,
         NewItem {
             prompt,
-            title: Some(continuation_title(file_name)),
+            title: naming::continuation_title(file_name),
             created: created.clone(),
             section: None,
             prereq: None,
             effort: None,
             tags: Some(
-                Tags::parse_values(&[HANDOFF_TAG.to_string()])
+                tag_policy::parse_values(&[tag_policy::HANDOFF_TAG.to_string()])
                     .expect("the handoff tag constant is valid"),
             ),
         },
@@ -271,14 +274,23 @@ mod tests {
 
     use pwf_domain::pending_work::{ProjectName, Timestamp, WorkItemId};
 
-    use super::{AddHandoff, AddHandoffError, HandoffAllocation, execute};
+    use super::{AddHandoff, AddHandoffError, HandoffAllocation};
     use crate::{
         AppRecordStore, HandoffDocument, NewHandoffDocument,
         handoff::ports::{AllocatePendingWork, PendingWorkAllocatorClient},
         pending_work::ProjectRegistry,
-        ports::{HandoffScope, RecordId},
+        ports::{Clock, HandoffScope, RecordId},
         testing::InMemoryStore,
     };
+
+    #[derive(Clone)]
+    pub(super) struct FixedClock;
+
+    impl Clock for FixedClock {
+        fn today(&self) -> Timestamp {
+            Timestamp::new("2026-07-26")
+        }
+    }
 
     #[derive(Clone)]
     struct RejectingAllocator;
@@ -326,17 +338,18 @@ mod tests {
         };
         let store = InMemoryStore::default().with_prefix("test-project", "TST");
 
-        let added = execute(
+        let added = super::execute(
             AddHandoff {
                 scope: scope.clone(),
                 title: "Managed Flow".to_string(),
                 slug: Some("managed-flow".to_string()),
-                created: "2026-01-01".to_string(),
+                date: Some("2026-01-01".to_string()),
                 allocation: HandoffAllocation::InProcess,
             },
             &store,
             &project_registry(&repository_root.to_string_lossy()),
             &RejectingAllocator,
+            &FixedClock,
         )
         .unwrap();
 
@@ -377,6 +390,39 @@ mod tests {
     }
 
     #[test]
+    fn add_uses_clock_date_when_no_date_is_explicit() {
+        let repository_root = PathBuf::from("/repo/test-project");
+        let scope = HandoffScope {
+            repository_root: repository_root.clone(),
+        };
+        let store = InMemoryStore::default().with_prefix("test-project", "TST");
+
+        super::execute(
+            AddHandoff {
+                scope: scope.clone(),
+                title: "Managed Flow".to_string(),
+                slug: Some("managed-flow".to_string()),
+                date: None,
+                allocation: HandoffAllocation::InProcess,
+            },
+            &store,
+            &project_registry(&repository_root.to_string_lossy()),
+            &RejectingAllocator,
+            &FixedClock,
+        )
+        .unwrap();
+
+        assert_eq!(
+            store.handoff_documents(&scope)[0].created,
+            Some(Timestamp::new("2026-07-26"))
+        );
+        assert_eq!(
+            store.items("test-project")[0].created,
+            Some(Timestamp::new("2026-07-26"))
+        );
+    }
+
+    #[test]
     fn external_add_calls_the_allocator_with_typed_context_and_links_its_identifier() {
         let repository_root = PathBuf::from("/repo/test-project");
         let scope = HandoffScope {
@@ -389,17 +435,18 @@ mod tests {
             result: Ok(WorkItemId::try_new("TST-0042").unwrap()),
         };
 
-        let added = execute(
+        let added = super::execute(
             AddHandoff {
                 scope: scope.clone(),
                 title: "Managed Flow".to_string(),
                 slug: None,
-                created: "2026-01-01".to_string(),
+                date: Some("2026-01-01".to_string()),
                 allocation: HandoffAllocation::External,
             },
             &store,
             &project_registry(&repository_root.to_string_lossy()),
             &allocator,
+            &FixedClock,
         )
         .unwrap();
 
@@ -428,17 +475,18 @@ mod tests {
             result: Err(AllocatorError),
         };
 
-        let error = execute(
+        let error = super::execute(
             AddHandoff {
                 scope: scope.clone(),
                 title: "Managed Flow".to_string(),
                 slug: None,
-                created: "2026-01-01".to_string(),
+                date: Some("2026-01-01".to_string()),
                 allocation: HandoffAllocation::External,
             },
             &store,
             &project_registry(&repository_root.to_string_lossy()),
             &allocator,
+            &FixedClock,
         )
         .unwrap_err();
 
@@ -468,17 +516,18 @@ mod tests {
         )
         .unwrap();
 
-        let error = execute(
+        let error = super::execute(
             AddHandoff {
                 scope,
                 title: "Managed Flow".to_string(),
                 slug: None,
-                created: "2026-01-01".to_string(),
+                date: Some("2026-01-01".to_string()),
                 allocation: HandoffAllocation::InProcess,
             },
             &store,
             &project_registry(&repository_root.to_string_lossy()),
             &RejectingAllocator,
+            &FixedClock,
         )
         .unwrap_err();
 

@@ -2,7 +2,7 @@ use std::{convert::Infallible, error::Error as _, path::PathBuf};
 
 use pwf_domain::pending_work::{ProjectName, WorkItemId};
 
-use super::{AddHandoff, AddHandoffError, HandoffAllocation, execute};
+use super::{AddHandoff, AddHandoffError, HandoffAllocation, tests::FixedClock};
 use crate::{
     AppRecordStore, HandoffDocument, HandoffDocumentIdentifier, HandoffDocumentScopePresence,
     HandoffDocumentStore, HandoffLedger, HandoffLedgerIdentifier, HandoffLedgerWrite,
@@ -354,17 +354,18 @@ fn failed_add(point: FailurePoint) -> AddHandoffError {
         Some(repository_root.to_string_lossy().into_owned()),
         Some("TST".to_string()),
     )]);
-    execute(
+    super::execute(
         AddHandoff {
             scope: HandoffScope { repository_root },
             title: "Managed Flow".to_string(),
             slug: None,
-            created: "2026-01-01".to_string(),
+            date: Some("2026-01-01".to_string()),
             allocation: HandoffAllocation::External,
         },
         &FailureStore::new(point),
         &projects,
         &SuccessfulAllocator,
+        &FixedClock,
     )
     .expect_err("injected store failure must fail handoff creation")
 }

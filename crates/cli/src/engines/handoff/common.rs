@@ -15,13 +15,6 @@ pub struct CommonArguments {
     pub(crate) pending_work_script: Option<String>,
 }
 
-pub(crate) fn date(date: Option<&str>) -> String {
-    date.map_or_else(
-        || chrono::Local::now().format("%Y-%m-%d").to_string(),
-        str::to_string,
-    )
-}
-
 pub(crate) fn repository_root(arguments: &CommonArguments) -> Result<PathBuf, HandoffError> {
     if let Some(root) = &arguments.repo_root {
         let path = Path::new(root);

@@ -65,6 +65,7 @@ fn created_section_for_error(error: &AddPendingWorkError) -> Option<(&str, &str)
 
 #[cfg(test)]
 mod tests {
+    use pwf_application::pending_work::add::CreateItemError;
     use pwf_domain::pending_work::ProjectName;
     use pwf_infra::obsidian::ObsidianStoreError;
 
@@ -78,7 +79,7 @@ mod tests {
                 created_section: Some("Human".to_string()),
                 title_normalized: false,
             },
-            source: pwf_application::pending_work::store_util::CreateItemError::InsertIndex {
+            source: CreateItemError::InsertIndex {
                 project: ProjectName::try_new("glep-shimeji").unwrap(),
                 created_section: Some("Human".to_string()),
                 source: Box::new(ObsidianStoreError::AddWriteIndexFile {

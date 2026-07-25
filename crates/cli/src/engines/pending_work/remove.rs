@@ -5,8 +5,8 @@ use pwf_application::{
     pending_work::{
         ProjectRegistry,
         remove::{
-            RemovalConfirmation, RemovalInteraction, RemovePendingWorkError, RemovePendingWorkItem,
-            RemovePendingWorkOutcome,
+            self, RemovalConfirmation, RemovalInteraction, RemovePendingWorkError,
+            RemovePendingWorkItem, RemovePendingWorkOutcome,
         },
     },
 };
@@ -99,13 +99,8 @@ where
         console,
         assume_yes: args.assume_yes,
     };
-    let outcome = pwf_application::pending_work::remove::execute(
-        &RemovePendingWorkItem { id },
-        store,
-        projects,
-        &interaction,
-    )
-    .map_err(map_remove_error)?;
+    let outcome = remove::execute(&RemovePendingWorkItem { id }, store, projects, &interaction)
+        .map_err(map_remove_error)?;
 
     match outcome {
         RemovePendingWorkOutcome::Removed(removed) => {

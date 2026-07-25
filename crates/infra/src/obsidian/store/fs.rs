@@ -19,12 +19,12 @@ pub(super) fn read_index(path: &Path) -> Result<String, ObsidianStoreError> {
 }
 
 pub(super) fn write_item_file(path: &Path, content: &str) -> Result<(), ObsidianStoreError> {
-    pwf_core::fs_atomic::write_text_atomic(path, content)
+    crate::obsidian::fs_atomic::write_text_atomic(path, content)
         .map_err(|source| ObsidianStoreError::WriteItemFile { source })
 }
 
 pub(super) fn write_index(path: &Path, content: &str) -> Result<(), ObsidianStoreError> {
-    pwf_core::fs_atomic::write_text_atomic(path, content)
+    crate::obsidian::fs_atomic::write_text_atomic(path, content)
         .map_err(|source| ObsidianStoreError::WriteIndex { source })
 }
 
@@ -48,7 +48,7 @@ pub(super) fn line_start_index(content: &str, line_number: usize) -> Option<usiz
 }
 
 pub(super) fn write_add_item_file(path: &Path, content: &str) -> Result<(), ObsidianStoreError> {
-    pwf_core::fs_atomic::write_text_atomic(path, content)
+    crate::obsidian::fs_atomic::write_text_atomic(path, content)
         .map_err(|source| ObsidianStoreError::AddWriteItemFile { source })
 }
 
@@ -58,7 +58,7 @@ pub(super) fn write_add_index_file(
     project: &str,
     created_section: Option<&str>,
 ) -> Result<(), ObsidianStoreError> {
-    pwf_core::fs_atomic::write_text_atomic(path, content).map_err(|source| {
+    crate::obsidian::fs_atomic::write_text_atomic(path, content).map_err(|source| {
         ObsidianStoreError::AddWriteIndexFile {
             source,
             project: project.to_string(),

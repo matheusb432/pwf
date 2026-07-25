@@ -1,13 +1,12 @@
-use pwf_domain::pending_work::{
-    ProjectName, Tags, WorkItemId, WorkItemStatus, normalize_title, title_was_normalized,
-};
+use pwf_domain::pending_work::{ProjectName, Tags, WorkItemId, WorkItemStatus};
 
 use super::{
-    commit_provenance,
-    note_body::{append_lanes, append_report_block, note_body},
+    commit_provenance, identifier,
+    note_body::{append_lanes, append_report_block, render},
     prerequisite::{PrerequisiteValidationError, validate_and_merge},
     project_registry::ProjectRegistry,
     store_util::body_region,
+    tag_policy, title,
 };
 use crate::ports::{AppRecordStore, ItemPatch, PendingWorkItem};
 
@@ -195,7 +194,7 @@ pub(crate) fn prepare(
     let not_found = || UpdatePendingWorkError::ItemNotFound {
         id: command.id.clone(),
     };
-    let identifier = WorkItemId::try_new(&command.id).map_err(|_| not_found())?;
+    let identifier = identifier::parse(&command.id).ok_or_else(not_found)?;
     let project = projects.project_for_id(&identifier).ok_or_else(not_found)?;
     let record = store
         .get(project, &identifier)
@@ -254,7 +253,7 @@ where
     let new_title = command
         .title
         .as_deref()
-        .map_or_else(|| record.title.clone(), normalize_title);
+        .map_or_else(|| record.title.clone(), title::normalize);
 
     let mut patch = ItemPatch {
         body: compute_body(command, record)?,
@@ -282,7 +281,7 @@ where
         id: identity.identifier.as_ref().to_string(),
         project: identity.project.as_ref().to_string(),
         title: new_title,
-        title_normalized: command.title.as_deref().is_some_and(title_was_normalized),
+        title_normalized: command.title.as_deref().is_some_and(title::was_normalized),
     };
     Ok(PreparedPendingWorkUpdate {
         identity,
@@ -299,7 +298,7 @@ fn compute_body(
     record: &PendingWorkItem,
 ) -> Result<Option<String>, UpdatePendingWorkError> {
     let base = body_region(&record.body);
-    let mut body: Option<String> = command.prompt.as_deref().map(note_body);
+    let mut body: Option<String> = command.prompt.as_deref().map(render);
     if let Some(append) = &command.append {
         let current = body.as_deref().unwrap_or(base);
         body = Some(append_lanes(current, append).ok_or(UpdatePendingWorkError::EmptyAppend)?);
@@ -329,12 +328,13 @@ fn resolve_tags(
     let tags = if clear {
         appended.clone()
     } else if let Some(existing) = record.tags.as_deref() {
-        Tags::parse_frontmatter(existing)
-            .map_err(|error| UpdatePendingWorkError::InvalidTagsFrontmatter {
+        let existing = tag_policy::parse_frontmatter(existing).map_err(|error| {
+            UpdatePendingWorkError::InvalidTagsFrontmatter {
                 id: id.as_ref().to_string(),
                 raw: error.raw().to_string(),
-            })?
-            .merged(appended)
+            }
+        })?;
+        tag_policy::merge(&existing, appended)
     } else {
         appended.clone()
     };
@@ -390,7 +390,7 @@ fn parse_tags(values: &[String]) -> Result<Option<Tags>, UpdatePendingWorkError>
     if values.is_empty() {
         return Ok(None);
     }
-    Tags::parse_values(values)
+    tag_policy::parse_values(values)
         .map(Some)
         .map_err(|error| UpdatePendingWorkError::InvalidTag {
             raw: error.raw().to_string(),
@@ -403,7 +403,6 @@ mod tests {
 
     use super::{
         ProjectRegistry, UpdatePendingWorkError, UpdatePendingWorkItem, UpdatePendingWorkItemOk,
-        execute,
     };
     use crate::{Materialization, PendingWorkItem, RecordId, testing::InMemoryStore};
 
@@ -463,7 +462,7 @@ mod tests {
     fn update_rejects_empty_patch_with_nothing_to_update() {
         let store = staged(WorkItemStatus::Active, "## Goals\n- x\n");
 
-        let error = execute(empty("GLP-0001"), &store, &registry()).unwrap_err();
+        let error = super::execute(empty("GLP-0001"), &store, &registry()).unwrap_err();
 
         assert!(matches!(error, UpdatePendingWorkError::NothingToUpdate));
         assert_eq!(
@@ -480,7 +479,7 @@ mod tests {
             ..empty("GLP-0001")
         };
 
-        let updated = execute(cmd, &store, &registry()).unwrap();
+        let updated = super::execute(cmd, &store, &registry()).unwrap();
 
         assert_eq!(
             updated,
@@ -503,7 +502,7 @@ mod tests {
             ..empty("GLP-0001")
         };
 
-        let error = execute(cmd, &store, &registry()).unwrap_err();
+        let error = super::execute(cmd, &store, &registry()).unwrap_err();
 
         assert!(matches!(
             error,
@@ -520,7 +519,7 @@ mod tests {
             ..empty("GLP-0001")
         };
 
-        let updated = execute(cmd, &store, &registry()).unwrap();
+        let updated = super::execute(cmd, &store, &registry()).unwrap();
 
         assert_eq!(
             updated,
@@ -544,7 +543,7 @@ mod tests {
             ..empty("GLP-0001")
         };
 
-        let updated = execute(cmd, &store, &registry()).unwrap();
+        let updated = super::execute(cmd, &store, &registry()).unwrap();
 
         assert_eq!(
             store.items("glep-shimeji")[0].title,
@@ -581,7 +580,7 @@ mod tests {
             ..empty("GLP-0001")
         };
 
-        execute(cmd, &store, &registry()).unwrap();
+        super::execute(cmd, &store, &registry()).unwrap();
 
         assert_eq!(
             store.items("glep-shimeji")[0].tags.as_deref(),
@@ -598,7 +597,7 @@ mod tests {
             ..empty("GLP-0001")
         };
 
-        execute(cmd, &store, &registry()).unwrap();
+        super::execute(cmd, &store, &registry()).unwrap();
 
         assert_eq!(
             store.items("glep-shimeji")[0].tags.as_deref(),
@@ -614,7 +613,7 @@ mod tests {
             ..empty("GLP-0001")
         };
 
-        let error = execute(cmd, &store, &registry()).unwrap_err();
+        let error = super::execute(cmd, &store, &registry()).unwrap_err();
 
         assert!(matches!(
             error,
@@ -631,7 +630,7 @@ mod tests {
             ..empty("GLP-0001")
         };
 
-        let error = execute(cmd, &store, &registry()).unwrap_err();
+        let error = super::execute(cmd, &store, &registry()).unwrap_err();
 
         assert!(matches!(
             error,
@@ -662,7 +661,7 @@ mod tests {
             ..empty("GLP-0002")
         };
 
-        execute(cmd, &store, &registry()).unwrap();
+        super::execute(cmd, &store, &registry()).unwrap();
 
         let item = store
             .items("glep-shimeji")
@@ -684,7 +683,7 @@ mod tests {
             ..empty("glp-9999")
         };
 
-        let error = execute(cmd, &store, &registry()).unwrap_err();
+        let error = super::execute(cmd, &store, &registry()).unwrap_err();
 
         assert!(matches!(
             error,

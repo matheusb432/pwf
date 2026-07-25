@@ -40,7 +40,7 @@ impl AppRecordStore<HandoffLedger> for ObsidianStore {
     ) -> Result<HandoffLedger, Self::Error> {
         let path = ledger_path(scope);
         let source = render_ledger(&new);
-        pwf_core::fs_atomic::write_text_atomic(&path, &source).map_err(|source| {
+        crate::obsidian::fs_atomic::write_text_atomic(&path, &source).map_err(|source| {
             ObsidianStoreError::WriteHandoffLedger {
                 path: path.clone(),
                 source,

@@ -34,15 +34,12 @@ test = false
 [dependencies]
 anstream = { workspace = true }
 pwf-application = { workspace = true }
-pwf-core = { workspace = true }
 pwf-domain = { workspace = true }
 pwf-infra = { workspace = true }
-pwf-note = { workspace = true }
 clap = { workspace = true }
 clap-cargo = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-chrono = { workspace = true }
 directories = { workspace = true }
 regex = { workspace = true }
 thiserror = { workspace = true }

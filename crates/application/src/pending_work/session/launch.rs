@@ -1,9 +1,9 @@
 //! Builds provider-neutral agent launches and canonical multiplexer targets.
 
-use pwf_domain::pending_work::{ProjectPrefix, WorkItemId};
+use pwf_domain::pending_work::ProjectPrefix;
 
 use super::{DispatchTarget, LaunchDirectives};
-use crate::pending_work::list::PendingWorkItemView;
+use crate::pending_work::{identifier, list::PendingWorkItemView};
 
 /// Autonomy directive inserted by `--auto`.
 const AUTONOMY_DIRECTIVE: &str = "You MUST execute this autonomously. Do not prompt the user for questions. But if something seems critical and needs user decision, STOP execution and clarify";
@@ -53,7 +53,7 @@ fn worktree_instruction(id: &str) -> String {
 }
 
 pub(super) fn dispatch_target(task_id: &str) -> DispatchTarget {
-    let Ok(work_item_id) = WorkItemId::try_new(task_id) else {
+    let Some(work_item_id) = identifier::parse(task_id) else {
         return legacy_dispatch_target(task_id);
     };
     let canonical_id = work_item_id.as_ref();

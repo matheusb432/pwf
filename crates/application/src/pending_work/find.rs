@@ -1,9 +1,8 @@
-use pwf_domain::pending_work::WorkItemId;
-
 use crate::{
     AppRecordStore, PendingWorkItem,
     pending_work::{
         enrich::{enrich, is_open_item},
+        identifier,
         list::PendingWorkItemView,
         project_registry::ProjectRegistry,
     },
@@ -41,7 +40,7 @@ where
     S: AppRecordStore<PendingWorkItem>,
 {
     let requested = id.to_string();
-    let Ok(work_id) = WorkItemId::try_new(id) else {
+    let Some(work_id) = identifier::parse(id) else {
         return find_inline_open_item(store, projects, &requested);
     };
     let prefix = work_id
@@ -122,9 +121,7 @@ mod tests {
 
     use pwf_domain::pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus};
 
-    use super::{
-        FindPendingWork, FindPendingWorkError, PendingWorkItemView, ProjectRegistry, execute,
-    };
+    use super::{FindPendingWork, FindPendingWorkError, PendingWorkItemView, ProjectRegistry};
     use crate::{
         IndexPlacement, Materialization, PendingWorkItem, RecordId, testing::InMemoryStore,
     };
@@ -190,7 +187,7 @@ mod tests {
         projects: &ProjectRegistry,
         id: &str,
     ) -> Result<PendingWorkItemView, FindPendingWorkError> {
-        execute(&FindPendingWork { id: id.to_string() }, store, projects)
+        super::execute(&FindPendingWork { id: id.to_string() }, store, projects)
     }
 
     #[test]
@@ -208,7 +205,7 @@ mod tests {
     }
 
     #[test]
-    fn canonical_id_is_case_insensitive_via_workitemid() {
+    fn loose_id_normalization_is_application_owned() {
         let store = InMemoryStore::default().with_project("pwf", vec![record("PWF-0001")]);
         let projects = registry(&[("pwf", "PWF")]);
 

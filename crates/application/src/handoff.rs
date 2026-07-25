@@ -4,6 +4,7 @@ pub mod add;
 mod ledger;
 pub(crate) mod lifecycle;
 pub mod list;
+mod naming;
 pub mod ports;
 
 /// Describes the linked handoff side effect of a pending-work mutation.

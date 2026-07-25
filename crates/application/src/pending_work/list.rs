@@ -1,9 +1,6 @@
-use pwf_domain::pending_work::{
-    ParseTagsError, ProjectName, Tags, WorkItemStatus, WorkItemStatusFilter,
-};
+use pwf_domain::pending_work::{ProjectName, Tags, WorkItemId, WorkItemStatus};
 
-use super::prerequisite;
-pub use super::prerequisite::PrerequisiteStatus;
+use super::{prerequisite, tag_policy};
 use crate::{
     AppRecordStore, PendingWorkItem,
     pending_work::{
@@ -11,6 +8,30 @@ use crate::{
         project_registry::ProjectRegistry,
     },
 };
+
+/// Describes the persisted lifecycle status of one prerequisite item.
+///
+/// A [`None`] status means the prerequisite could not be resolved.
+///
+/// # Examples
+///
+/// ```
+/// use pwf_application::pending_work::list::PrerequisiteStatus;
+/// use pwf_domain::pending_work::{WorkItemId, WorkItemStatus};
+///
+/// let prerequisite = PrerequisiteStatus {
+///     id: WorkItemId::try_new("PWF-0001").unwrap(),
+///     status: Some(WorkItemStatus::Done),
+/// };
+/// assert_eq!(prerequisite.status, Some(WorkItemStatus::Done));
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrerequisiteStatus {
+    /// Canonical prerequisite identifier.
+    pub id: WorkItemId,
+    /// Persisted status, or [`None`] when lookup cannot resolve the record.
+    pub status: Option<WorkItemStatus>,
+}
 
 /// Contains one pending-work item projected for list and launch consumers.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,9 +86,32 @@ pub struct ListResult {
     /// Managed project selected by the request, when scoped.
     pub project: Option<ProjectName>,
     /// Effective lifecycle filter after applying list defaults.
-    pub status_filter: WorkItemStatusFilter,
+    pub status_filter: StatusFilter,
     /// Reports whether the renderer should group items by section.
     pub grouped: bool,
+}
+
+/// Selects one lifecycle status or includes every lifecycle status.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StatusFilter {
+    Exact(WorkItemStatus),
+    All,
+}
+
+impl StatusFilter {
+    #[must_use]
+    pub fn includes(self, status: WorkItemStatus) -> bool {
+        match self {
+            Self::Exact(expected) => expected == status,
+            Self::All => true,
+        }
+    }
+}
+
+impl Default for StatusFilter {
+    fn default() -> Self {
+        Self::Exact(WorkItemStatus::Active)
+    }
 }
 
 /// Selects an explicit pending-work index section.
@@ -136,10 +180,34 @@ pub struct GetPendingWork {
     pub tags: Vec<String>,
     pub order: Option<OrderSpec>,
     /// Explicit lifecycle filter. Omission uses the mode-specific default.
-    pub status: Option<WorkItemStatusFilter>,
+    pub status: Option<StatusFilter>,
     /// Projects prerequisite statuses for long-list rendering when enabled.
     pub include_prerequisite_statuses: bool,
     pub mode: ListMode,
+}
+
+/// Retains invalid requested or persisted tag text for list diagnostics.
+#[derive(Debug, thiserror::Error)]
+#[error("{message}")]
+pub struct TagParseError {
+    raw: String,
+    message: String,
+}
+
+impl TagParseError {
+    #[must_use]
+    pub fn raw(&self) -> &str {
+        &self.raw
+    }
+}
+
+impl From<tag_policy::ParseTagsError> for TagParseError {
+    fn from(error: tag_policy::ParseTagsError) -> Self {
+        Self {
+            raw: error.raw().to_string(),
+            message: error.to_string(),
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -150,10 +218,10 @@ pub enum GetPendingWorkError {
     InvalidTags {
         id: String,
         #[source]
-        source: ParseTagsError,
+        source: TagParseError,
     },
     #[error("invalid requested tags: {0}")]
-    InvalidRequestedTags(#[source] ParseTagsError),
+    InvalidRequestedTags(#[source] TagParseError),
     #[error(transparent)]
     ResolveProject(#[from] super::ProjectResolutionError),
 }
@@ -165,7 +233,7 @@ struct ResolvedGetPendingWork {
     effort: Option<u8>,
     tags: Option<Tags>,
     order: OrderSpec,
-    status_filter: WorkItemStatusFilter,
+    status_filter: StatusFilter,
     include_prerequisite_statuses: bool,
 }
 
@@ -195,13 +263,13 @@ pub fn execute(
             let Some(raw) = item.tags.as_deref() else {
                 continue;
             };
-            let stored = Tags::parse_frontmatter(raw).map_err(|source| {
+            let stored = tag_policy::parse_frontmatter(raw).map_err(|source| {
                 GetPendingWorkError::InvalidTags {
                     id: item.id.clone(),
-                    source,
+                    source: source.into(),
                 }
             })?;
-            if stored.contains_all(requested) {
+            if tag_policy::contains_all(&stored, requested) {
                 matched.push(item);
             }
         }
@@ -255,7 +323,10 @@ fn resolve_query(
     let tags = if query.tags.is_empty() {
         None
     } else {
-        Some(Tags::parse_values(&query.tags).map_err(GetPendingWorkError::InvalidRequestedTags)?)
+        Some(
+            tag_policy::parse_values(&query.tags)
+                .map_err(|error| GetPendingWorkError::InvalidRequestedTags(error.into()))?,
+        )
     };
     let order = query.order.unwrap_or(match query.mode {
         ListMode::Direct => OrderSpec::default(),
@@ -265,9 +336,9 @@ fn resolve_query(
         },
     });
     let status_filter = query.status.unwrap_or(if query.all {
-        WorkItemStatusFilter::All
+        StatusFilter::All
     } else {
-        WorkItemStatusFilter::default()
+        StatusFilter::default()
     });
 
     Ok(ResolvedGetPendingWork {
@@ -424,13 +495,11 @@ fn apply_cap(
 mod tests {
     use std::convert::Infallible;
 
-    use pwf_domain::pending_work::{
-        ProjectName, Timestamp, WorkItemId, WorkItemStatus, WorkItemStatusFilter,
-    };
+    use pwf_domain::pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus};
 
     use super::{
         GetPendingWork, GetPendingWorkError, ListMode, ListResult, ListSection, OrderDirection,
-        OrderField, OrderSpec, PrerequisiteStatus, ProjectRegistry, execute,
+        OrderField, OrderSpec, PrerequisiteStatus, ProjectRegistry, StatusFilter,
     };
     use crate::{
         AppRecordStore, IndexPlacement, ItemPatch, Materialization, NewItem, PendingWorkItem,
@@ -555,7 +624,7 @@ mod tests {
         registry: &ProjectRegistry,
         query: &GetPendingWork,
     ) -> Result<ListResult, GetPendingWorkError> {
-        execute(query, store, registry)
+        super::execute(query, store, registry)
     }
 
     fn sectioned(id: &str, section: &str) -> PendingWorkItem {
@@ -699,7 +768,7 @@ mod tests {
             InMemoryStore::default().with_project("pwf", vec![dependent]),
         );
 
-        let got = execute(
+        let got = super::execute(
             &GetPendingWork {
                 project_identifier: Some("pwf".to_string()),
                 include_prerequisite_statuses: false,
@@ -731,6 +800,24 @@ mod tests {
     }
 
     #[test]
+    fn status_filter_defaults_to_active_and_includes_exact_or_all() {
+        assert_eq!(
+            StatusFilter::default(),
+            StatusFilter::Exact(WorkItemStatus::Active)
+        );
+        let done = StatusFilter::Exact(WorkItemStatus::Done);
+        assert!(done.includes(WorkItemStatus::Done));
+        assert!(!done.includes(WorkItemStatus::Active));
+        for status in [
+            WorkItemStatus::Active,
+            WorkItemStatus::Done,
+            WorkItemStatus::Cancelled,
+        ] {
+            assert!(StatusFilter::All.includes(status));
+        }
+    }
+
+    #[test]
     fn list_status_filter_selects_exact_statuses_and_all() {
         let done = PendingWorkItem {
             status: WorkItemStatus::Done,
@@ -753,7 +840,7 @@ mod tests {
                 &store,
                 &registry,
                 &GetPendingWork {
-                    status: Some(WorkItemStatusFilter::Exact(status)),
+                    status: Some(StatusFilter::Exact(status)),
                     ..default_query()
                 },
             )
@@ -765,7 +852,7 @@ mod tests {
             &store,
             &registry,
             &GetPendingWork {
-                status: Some(WorkItemStatusFilter::All),
+                status: Some(StatusFilter::All),
                 ..default_query()
             },
         )
@@ -782,8 +869,8 @@ mod tests {
         let (store, registry) = pwf_store(vec![record("PWF-0001"), orphan]);
 
         for status_filter in [
-            WorkItemStatusFilter::Exact(WorkItemStatus::Active),
-            WorkItemStatusFilter::All,
+            StatusFilter::Exact(WorkItemStatus::Active),
+            StatusFilter::All,
         ] {
             let got = run(
                 &store,
@@ -823,7 +910,7 @@ mod tests {
             &registry,
             &GetPendingWork {
                 number: Some(1),
-                status: Some(WorkItemStatusFilter::Exact(WorkItemStatus::Done)),
+                status: Some(StatusFilter::Exact(WorkItemStatus::Done)),
                 ..default_query()
             },
         )
@@ -1160,7 +1247,7 @@ mod tests {
         .unwrap();
         assert_eq!(all.items.len(), 12);
         assert_eq!(all.hidden, 0);
-        assert_eq!(all.status_filter, WorkItemStatusFilter::All);
+        assert_eq!(all.status_filter, StatusFilter::All);
         assert!(all.grouped);
 
         let capped = run(
@@ -1174,7 +1261,7 @@ mod tests {
         .unwrap();
         assert_eq!(capped.items.len(), 10);
         assert_eq!(capped.hidden, 2);
-        assert_eq!(capped.status_filter, WorkItemStatusFilter::default());
+        assert_eq!(capped.status_filter, StatusFilter::default());
         assert!(!capped.grouped);
     }
 

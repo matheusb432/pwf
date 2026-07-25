@@ -205,7 +205,7 @@ mod tests {
         );
         assert_eq!(
             arguments.status.expect("explicit --status").filter(),
-            pwf_domain::pending_work::WorkItemStatusFilter::Exact(
+            pwf_application::pending_work::StatusFilter::Exact(
                 pwf_domain::pending_work::WorkItemStatus::Done
             )
         );
@@ -225,7 +225,7 @@ mod tests {
         ]) else {
             panic!("expected done");
         };
-        assert_eq!(done.identifier.canonical().as_deref(), Some("CFG-0057"));
+        assert_eq!(done.identifier.raw(), Some("cfg-57"));
         assert_eq!(done.report.as_deref(), Some("finished"));
         assert_eq!(done.commits, ["a..b"]);
         assert!(done.review);
@@ -240,13 +240,13 @@ mod tests {
         ]) else {
             panic!("expected cancel");
         };
-        assert_eq!(cancel.identifier.canonical().as_deref(), Some("PWF-0002"));
+        assert_eq!(cancel.identifier.raw(), Some("PWF-0002"));
         assert_eq!(cancel.report.as_deref(), Some("blocked"));
 
         let pending_work::Command::Reopen(reopen) = pending_work(&["reopen", "pwf3"]) else {
             panic!("expected reopen");
         };
-        assert_eq!(reopen.identifier.canonical().as_deref(), Some("PWF-0003"));
+        assert_eq!(reopen.identifier.raw(), Some("pwf3"));
     }
 
     #[test]
@@ -269,10 +269,7 @@ mod tests {
         ]) else {
             panic!("expected update");
         };
-        assert_eq!(
-            arguments.identifier.canonical().as_deref(),
-            Some("PWF-0001")
-        );
+        assert_eq!(arguments.identifier.raw(), Some("PWF-0001"));
         assert_eq!(arguments.title.as_deref(), Some("new"));
         assert_eq!(arguments.prereq, ["PWF-0002"]);
         assert_eq!(arguments.tag, ["rust"]);
@@ -293,7 +290,7 @@ mod tests {
         else {
             panic!("expected remove");
         };
-        assert_eq!(remove.identifier.canonical().as_deref(), Some("PWF-0002"));
+        assert_eq!(remove.identifier.raw(), Some("PWF-0002"));
         assert!(remove.assume_yes);
 
         let pending_work::Command::Verify(verify) =
@@ -301,7 +298,7 @@ mod tests {
         else {
             panic!("expected verify");
         };
-        assert_eq!(verify.identifier.canonical().as_deref(), Some("PWF-0003"));
+        assert_eq!(verify.identifier.raw(), Some("PWF-0003"));
         assert_eq!(verify.agent, pending_work::common::AgentChoice::Codex);
         assert_eq!(verify.model.as_deref(), Some("gpt-5"));
     }
@@ -326,7 +323,7 @@ mod tests {
         ]) else {
             panic!("expected session");
         };
-        assert_eq!(session.identifier.canonical().as_deref(), Some("PWF-0001"));
+        assert_eq!(session.identifier.raw(), Some("PWF-0001"));
         assert_eq!(session.color, pending_work::session::ColorChoice::Always);
         assert!(session.assume_yes && session.inline && session.worktree && session.autonomous);
         assert_eq!(session.agent, pending_work::common::AgentChoice::Codex);
@@ -353,7 +350,7 @@ mod tests {
         assert_eq!(route.number, Some(3));
         assert_eq!(
             route.status.expect("explicit --status").filter(),
-            pwf_domain::pending_work::WorkItemStatusFilter::All
+            pwf_application::pending_work::StatusFilter::All
         );
     }
 
@@ -390,7 +387,7 @@ mod tests {
         );
         assert_eq!(
             list.status.expect("explicit --status").filter(),
-            pwf_domain::pending_work::WorkItemStatusFilter::All
+            pwf_application::pending_work::StatusFilter::All
         );
 
         let pending_work::Command::Route(verify_route) =
@@ -403,7 +400,7 @@ mod tests {
         else {
             panic!("expected routed verify");
         };
-        assert_eq!(verify.identifier.canonical().as_deref(), Some("CFG-0057"));
+        assert_eq!(verify.identifier.raw(), Some("cfg57"));
         assert_eq!(verify.agent, pending_work::common::AgentChoice::Claude);
         assert_eq!(verify.model, None);
     }

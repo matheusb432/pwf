@@ -4,6 +4,7 @@ use pwf_domain::pending_work::{ProjectName, WorkItemId, WorkItemStatus};
 
 use super::{
     find::{FindPendingWorkError, find_open_item},
+    identifier,
     project_registry::ProjectRegistry,
     store_util::{self, LoadItemError},
 };
@@ -97,7 +98,7 @@ where
     I: RemovalInteraction,
 {
     let not_found = || RemovePendingWorkError::ItemNotFound { id: cmd.id.clone() };
-    let Ok(pending_work_identifier) = WorkItemId::try_new(&cmd.id) else {
+    let Some(pending_work_identifier) = identifier::parse(&cmd.id) else {
         return match find_open_item(store, projects, &cmd.id) {
             Ok(_) => Err(RemovePendingWorkError::FileModelRequired),
             Err(FindPendingWorkError::ReadStore(source)) => {
@@ -281,7 +282,7 @@ mod tests {
         let store = staged(WorkItemStatus::Active);
 
         let RemovePendingWorkOutcome::Removed(removed) =
-            execute(&command("PWF-0001"), &store, &registry(), &Accepted).unwrap()
+            super::execute(&command("PWF-0001"), &store, &registry(), &Accepted).unwrap()
         else {
             panic!("accepted removal must remove the item");
         };
@@ -300,7 +301,8 @@ mod tests {
     fn remove_rejects_closed_item_with_open_not_found_display() {
         let store = staged(WorkItemStatus::Done);
 
-        let error = execute(&command("PWF-0001"), &store, &registry(), &Accepted).unwrap_err();
+        let error =
+            super::execute(&command("PWF-0001"), &store, &registry(), &Accepted).unwrap_err();
 
         assert!(matches!(
             error,
@@ -317,7 +319,8 @@ mod tests {
     fn remove_missing_item_preserves_requested_id() {
         let store = staged(WorkItemStatus::Active);
 
-        let error = execute(&command("PWF-9999"), &store, &registry(), &Accepted).unwrap_err();
+        let error =
+            super::execute(&command("PWF-9999"), &store, &registry(), &Accepted).unwrap_err();
 
         assert!(matches!(
             error,
@@ -329,7 +332,8 @@ mod tests {
     fn remove_reports_an_unknown_configured_prefix() {
         let store = staged(WorkItemStatus::Active);
 
-        let error = execute(&command("XYZ-0001"), &store, &registry(), &Accepted).unwrap_err();
+        let error =
+            super::execute(&command("XYZ-0001"), &store, &registry(), &Accepted).unwrap_err();
 
         assert_eq!(
             error.to_string(),
@@ -351,7 +355,8 @@ mod tests {
             .with_handoff_documents(scope, vec![handoff()])
             .with_failure(FailurePoint::DocumentDelete);
 
-        let error = execute(&command("PWF-0001"), &store, &registry(), &Accepted).unwrap_err();
+        let error =
+            super::execute(&command("PWF-0001"), &store, &registry(), &Accepted).unwrap_err();
 
         assert!(matches!(
             error,
@@ -375,7 +380,8 @@ mod tests {
             .with_prefix("pwf", "PWF")
             .with_project("pwf", vec![ghost]);
 
-        let error = execute(&command("PWF-0001"), &store, &registry(), &Accepted).unwrap_err();
+        let error =
+            super::execute(&command("PWF-0001"), &store, &registry(), &Accepted).unwrap_err();
 
         assert!(matches!(
             error,
@@ -412,7 +418,7 @@ mod tests {
         fn remove_deletes_record_and_index_entry_after_confirmation() {
             let store = staged(WorkItemStatus::Active);
 
-            let outcome = execute(
+            let outcome = super::execute(
                 &command("PWF-0001"),
                 &store,
                 &registry(),
@@ -432,7 +438,7 @@ mod tests {
         fn remove_decline_returns_aborted_without_mutating_pending_work() {
             let store = staged(WorkItemStatus::Active);
 
-            let outcome = execute(
+            let outcome = super::execute(
                 &command("PWF-0001"),
                 &store,
                 &registry(),

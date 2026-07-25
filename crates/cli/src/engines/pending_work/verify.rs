@@ -1,7 +1,10 @@
 use clap::Args;
 use pwf_application::pending_work::{
     ProjectRegistry,
-    session::{Agent, verify::VerifySession},
+    session::{
+        Agent,
+        verify::{self, VerifySession},
+    },
 };
 use pwf_infra::{
     obsidian::ObsidianStore,
@@ -48,9 +51,9 @@ pub(super) fn run(
         Agent::Claude => ClaudeHarness::probe(),
         Agent::Codex => CodexHarness::probe(),
     };
-    let verification = pwf_application::pending_work::session::verify::execute(
+    let verification = verify::execute(
         VerifySession {
-            id: arguments.identifier.canonical(),
+            id: arguments.identifier.raw().map(str::to_string),
             agent,
             model_override: arguments.model.clone().into(),
         },

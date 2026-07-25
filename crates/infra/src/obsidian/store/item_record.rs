@@ -33,7 +33,7 @@ fn note_to_record(
     decoded_title: Option<&str>,
     source: String,
 ) -> PendingWorkItem {
-    let parsed = pwf_core::frontmatter::parse(&source);
+    let parsed = crate::obsidian::frontmatter_text::parse(&source);
     let frontmatter = &parsed.frontmatter;
     let status = frontmatter
         .get("status")
@@ -263,7 +263,7 @@ impl ObsidianStore {
             prefix,
             &NewNoteRequest {
                 prompt: &new.prompt,
-                title: new.title.as_deref(),
+                title: &new.title,
                 created: new.created.as_str(),
                 prereq: new.prereq.as_deref(),
                 effort: new.effort,

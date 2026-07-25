@@ -1,9 +1,10 @@
 use clap::Args;
 use pwf_application::{
-    AppRecordStore, HandoffDocumentStore, HandoffLedger, IndexEntry, IndexSection, PendingWorkItem,
+    AppRecordStore, Clock, HandoffDocumentStore, HandoffLedger, IndexEntry, IndexSection,
+    PendingWorkItem,
     pending_work::{
         ProjectRegistry,
-        done::{CompletePendingWork, CompletePendingWorkError},
+        done::{self, CompletePendingWork, CompletePendingWorkError},
     },
 };
 use pwf_infra::obsidian::ObsidianStore;
@@ -39,14 +40,16 @@ pub(super) fn run(
     arguments: &Arguments,
     store: &ObsidianStore,
     projects: &ProjectRegistry,
+    clock: &impl Clock,
 ) -> Result<String, PendingWorkError> {
-    run_done(store, projects, arguments)
+    run_done(store, projects, arguments, clock)
 }
 
-pub(in crate::engines::pending_work) fn run_done<S>(
+pub(in crate::engines::pending_work) fn run_done<S, C>(
     store: &S,
     projects: &ProjectRegistry,
     args: &Arguments,
+    clock: &C,
 ) -> Result<String, PendingWorkError>
 where
     S: AppRecordStore<PendingWorkItem>
@@ -54,19 +57,20 @@ where
         + AppRecordStore<IndexSection>
         + HandoffDocumentStore
         + AppRecordStore<HandoffLedger>,
+    C: Clock,
 {
     let id = args.identifier.required("done")?;
-    let completed = pwf_core::date::stamp_date(args.common.date.as_deref());
-    let output = pwf_application::pending_work::done::execute(
+    let output = done::execute(
         &CompletePendingWork {
             id,
-            completed,
+            date: args.common.date.clone(),
             report: args.report.clone(),
             commits: args.commits.clone(),
             review: args.review,
         },
         store,
         projects,
+        clock,
     )
     .map_err(map_complete_error)?;
     if let Some(review) = output.review_item.as_ref() {

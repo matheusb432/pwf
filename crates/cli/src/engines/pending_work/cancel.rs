@@ -1,7 +1,10 @@
 use clap::Args;
-use pwf_application::pending_work::{
-    ProjectRegistry,
-    cancel::{CancelPendingWork, CancelPendingWorkError},
+use pwf_application::{
+    Clock,
+    pending_work::{
+        ProjectRegistry,
+        cancel::{self, CancelPendingWork, CancelPendingWorkError},
+    },
 };
 use pwf_infra::obsidian::ObsidianStore;
 
@@ -34,6 +37,7 @@ pub(super) fn run(
     arguments: &Arguments,
     store: &ObsidianStore,
     projects: &ProjectRegistry,
+    clock: &impl Clock,
 ) -> Result<String, PendingWorkError> {
     let id = arguments.identifier.required("cancel")?;
     let report = arguments
@@ -42,13 +46,12 @@ pub(super) fn run(
         .ok_or(PendingWorkError::MissingCancelReport)?;
     let command = CancelPendingWork::new(
         id,
-        pwf_core::date::stamp_date(arguments.common.date.as_deref()),
+        arguments.common.date.clone(),
         report,
         arguments.commits.clone(),
         arguments.review,
     );
-    let output = pwf_application::pending_work::cancel::execute(&command, store, projects)
-        .map_err(map_error)?;
+    let output = cancel::execute(&command, store, projects, clock).map_err(map_error)?;
     if let Some(review) = output.review_item.as_ref() {
         emit_created_section(review);
     }

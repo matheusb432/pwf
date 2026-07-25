@@ -1,0 +1,10 @@
+id: execute-call-module-qualification
+valid:
+  - "fn call() { create_todo::execute(command); }"
+  - "fn call() { super::execute(command); }"
+  - "fn call() { query.execute(pool); }"
+  - "fn execute(command: Command) {}"
+invalid:
+  - "fn call() { execute(command); }"
+  - "fn call() { application::todos::create_todo::execute(command); }"
+  - "fn call() { crate::todos::create_todo::execute(command); }"

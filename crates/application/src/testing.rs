@@ -9,14 +9,16 @@ use std::{
 
 use pwf_domain::{
     handoff::HandoffStatus,
-    pending_work::{ProjectName, WorkItemId, WorkItemStatus},
+    note::NoteId,
+    pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus},
 };
 
 use crate::ports::{
     AppRecordStore, HandoffDocument, HandoffDocumentIdentifier, HandoffDocumentScopePresence,
     HandoffDocumentStore, HandoffLedger, HandoffLedgerIdentifier, HandoffLedgerWrite,
     HandoffLocation, HandoffPatch, HandoffScope, IndexEntry, IndexSection, ItemPatch,
-    Materialization, NewHandoffDocument, NewItem, PendingWorkItem, RecordId,
+    Materialization, NewHandoffDocument, NewItem, NewProjectNote, PendingWorkItem, ProjectNote,
+    ProjectNotePatch, ProjectNoteStore, RecordId,
 };
 
 #[derive(Debug, Default)]
@@ -25,6 +27,8 @@ struct InMemoryState {
     entries: BTreeMap<ProjectName, Vec<IndexEntry>>,
     sections: BTreeMap<ProjectName, Vec<String>>,
     prefixes: BTreeMap<ProjectName, String>,
+    project_notes: BTreeMap<ProjectName, Vec<ProjectNote>>,
+    project_note_creations: BTreeMap<ProjectName, Vec<Timestamp>>,
     handoff_documents: BTreeMap<HandoffScope, Vec<HandoffDocument>>,
     handoff_scope_presences: BTreeMap<HandoffScope, HandoffDocumentScopePresence>,
     handoff_ledgers: BTreeMap<HandoffScope, HandoffLedger>,
@@ -39,6 +43,8 @@ pub(crate) enum FailurePoint {
     DocumentRestoreMove,
     DocumentUpdate,
     LedgerInsert,
+    ProjectNoteDelete,
+    ProjectNoteList,
 }
 
 /// Provides a thread-safe [`AppRecordStore`] test double for application records.
@@ -94,6 +100,29 @@ impl InMemoryStore {
     pub fn entries(&self, project: &str) -> Vec<IndexEntry> {
         self.lock()
             .entries
+            .get(&project_name(project))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    pub fn with_project_notes(self, project: &str, notes: Vec<ProjectNote>) -> Self {
+        self.lock()
+            .project_notes
+            .insert(project_name(project), notes);
+        self
+    }
+
+    pub fn project_notes(&self, project: &str) -> Vec<ProjectNote> {
+        self.lock()
+            .project_notes
+            .get(&project_name(project))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    pub fn project_note_creations(&self, project: &str) -> Vec<Timestamp> {
+        self.lock()
+            .project_note_creations
             .get(&project_name(project))
             .cloned()
             .unwrap_or_default()
@@ -196,12 +225,12 @@ impl AppRecordStore<PendingWorkItem> for InMemoryStore {
         let locator = format!("/mem/{}/{}.md", project.as_ref(), id.as_ref());
         let record = PendingWorkItem {
             id: RecordId::Item(id),
-            title: new.title.clone().unwrap_or_else(|| "n/a".to_string()),
+            title: new.title,
             status: WorkItemStatus::Active,
             created: Some(new.created),
             completed: None,
             commits: None,
-            tags: new.tags.map(|tags| tags.frontmatter_value()),
+            tags: new.tags.map(|tags| render_tags(&tags)),
             effort: new.effort.map(|effort| effort.to_string()),
             prereq: new.prereq,
             section: None,
@@ -250,7 +279,7 @@ impl AppRecordStore<PendingWorkItem> for InMemoryStore {
             record.effort = Some(effort.to_string());
         }
         if let Some(tags) = patch.tags {
-            record.tags = tags.map(|tags| tags.frontmatter_value());
+            record.tags = tags.map(|tags| render_tags(&tags));
         }
         Ok(())
     }
@@ -262,6 +291,119 @@ impl AppRecordStore<PendingWorkItem> for InMemoryStore {
         items.retain(|item| item.id.as_item() != Some(id));
         assert!(before > items.len(), "delete of unknown id {id:?}");
         Ok(())
+    }
+}
+
+fn render_tags(tags: &pwf_domain::pending_work::Tags) -> String {
+    format!(
+        "[{}]",
+        tags.iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
+impl AppRecordStore<ProjectNote> for InMemoryStore {
+    type Error = InMemoryStoreError;
+
+    fn get(&self, project: &ProjectName, id: &NoteId) -> Result<Option<ProjectNote>, Self::Error> {
+        Ok(self
+            .lock()
+            .project_notes
+            .get(project)
+            .and_then(|notes| notes.iter().find(|note| note.id == *id).cloned()))
+    }
+
+    fn list(&self, project: &ProjectName) -> Result<Vec<ProjectNote>, Self::Error> {
+        if self
+            .lock()
+            .failure_points
+            .contains(&FailurePoint::ProjectNoteList)
+        {
+            return Err(InMemoryStoreError::Injected {
+                operation: "project-note-list",
+            });
+        }
+        Ok(self
+            .lock()
+            .project_notes
+            .get(project)
+            .cloned()
+            .unwrap_or_default())
+    }
+
+    fn insert(
+        &self,
+        project: &ProjectName,
+        new: NewProjectNote,
+    ) -> Result<ProjectNote, Self::Error> {
+        let record = ProjectNote {
+            id: new.id,
+            message: new.message,
+        };
+        let mut state = self.lock();
+        state
+            .project_note_creations
+            .entry(project.clone())
+            .or_default()
+            .push(new.created);
+        state
+            .project_notes
+            .entry(project.clone())
+            .or_default()
+            .push(record.clone());
+        Ok(record)
+    }
+
+    fn update(
+        &self,
+        project: &ProjectName,
+        id: &NoteId,
+        patch: ProjectNotePatch,
+    ) -> Result<(), Self::Error> {
+        let mut state = self.lock();
+        let note = state
+            .project_notes
+            .entry(project.clone())
+            .or_default()
+            .iter_mut()
+            .find(|note| note.id == *id)
+            .expect("update of unknown project note");
+        note.message = patch.message;
+        Ok(())
+    }
+
+    fn delete(&self, project: &ProjectName, id: &NoteId) -> Result<(), Self::Error> {
+        if self
+            .lock()
+            .failure_points
+            .contains(&FailurePoint::ProjectNoteDelete)
+        {
+            return Err(InMemoryStoreError::Injected {
+                operation: "project-note-delete",
+            });
+        }
+        let mut state = self.lock();
+        let notes = state.project_notes.entry(project.clone()).or_default();
+        let count_before = notes.len();
+        notes.retain(|note| note.id != *id);
+        assert!(count_before > notes.len(), "delete of unknown project note");
+        Ok(())
+    }
+}
+
+impl ProjectNoteStore for InMemoryStore {
+    fn note_exists(
+        &self,
+        project: &ProjectName,
+        id: &NoteId,
+    ) -> Result<bool, <Self as AppRecordStore<ProjectNote>>::Error> {
+        Ok(self
+            .lock()
+            .project_notes
+            .get(project)
+            .is_some_and(|notes| notes.iter().any(|note| note.id == *id)))
     }
 }
 
