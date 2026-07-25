@@ -20,8 +20,10 @@ pub struct Arguments {
     /// Which agent to probe (claude default).
     #[arg(long = "agent", short = 'a', value_enum, default_value_t = AgentChoice::Claude)]
     pub(crate) agent: AgentChoice,
-    /// Model forwarded verbatim to the agent's `--model` flag, unvalidated. Wins
-    /// over effort-tier resolution.
+    /// Model override forwarded to the selected agent. Wins over effort-tier resolution.
+    ///
+    /// Use `default` or omit the flag to leave selection to effort-tier policy and provider
+    /// configuration.
     #[arg(long, short = 'm')]
     pub(crate) model: Option<String>,
     #[command(flatten)]
@@ -50,7 +52,7 @@ pub(super) fn run(
         VerifySession {
             id: arguments.identifier.canonical(),
             agent,
-            model_override: arguments.model.clone(),
+            model_override: arguments.model.clone().into(),
         },
         store,
         projects,

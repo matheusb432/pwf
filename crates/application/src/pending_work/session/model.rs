@@ -113,29 +113,23 @@ pub struct ModelTierLookup {
 
 /// The agent harness' model.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct AgentModel(pub Option<String>);
+pub struct AgentModel(Option<String>);
 
-// TODO: find cleaner way to write this? (lotta boilerplate y_y)
 impl From<Option<String>> for AgentModel {
     fn from(value: Option<String>) -> Self {
-        Self(value)
+        Self(value.filter(|model| model != Self::MODEL_DEFAULT))
     }
 }
 
 impl From<String> for AgentModel {
     fn from(value: String) -> Self {
-        Self(Some(value))
+        Some(value).into()
     }
 }
 
 impl From<Option<&str>> for AgentModel {
     fn from(value: Option<&str>) -> Self {
-        // TODO: find cleaner way to write this?
-        if let Some(v) = value {
-            Self(Some(v.to_string()))
-        } else {
-            Self(None)
-        }
+        value.map(str::to_string).into()
     }
 }
 
@@ -148,5 +142,23 @@ impl AgentModel {
 
     pub fn display_or_default(&self) -> String {
         self.0.clone().unwrap_or(Self::MODEL_DEFAULT.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AgentModel;
+
+    #[test]
+    fn default_and_absent_models_are_no_override() {
+        assert_eq!(AgentModel::from(None::<String>).into_inner(), None);
+        assert_eq!(
+            AgentModel::from(Some("default".to_string())).into_inner(),
+            None
+        );
+        assert_eq!(
+            AgentModel::from(Some("gpt-5.6".to_string())).into_inner(),
+            Some("gpt-5.6".to_string())
+        );
     }
 }

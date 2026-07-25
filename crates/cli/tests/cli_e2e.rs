@@ -3190,6 +3190,36 @@ fn session_dry_run_conflicts_with_append_before_loading_projects() {
 
 #[test]
 #[cfg(unix)]
+fn session_default_model_omits_provider_override() {
+    let directory = TempDir::new().unwrap();
+    let (config_path, child_path, _) = stage_session_with_zellij_stub(&directory);
+
+    config_path
+        .command()
+        .args([
+            "session",
+            "PWF-0001",
+            "--dry-run",
+            "--inline",
+            "--agent",
+            "codex",
+            "--model",
+            "default",
+            "--yes",
+        ])
+        .env("PATH", child_path)
+        .assert()
+        .success()
+        .stdout(contains("model: default"))
+        .stdout(contains(
+            "command: codex resume '<thread-id returned by thread/start>' --",
+        ))
+        .stdout(contains("--model").not())
+        .stderr("");
+}
+
+#[test]
+#[cfg(unix)]
 fn session_dry_alias_renders_complete_codex_command_without_side_effects() {
     let directory = TempDir::new().unwrap();
     let (config_path, child_path, zellij_log_path) = stage_session_with_zellij_stub(&directory);

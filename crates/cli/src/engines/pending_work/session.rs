@@ -61,8 +61,10 @@ pub struct Arguments {
     /// Show the exact launch command without editing the task or starting anything.
     #[arg(long, visible_alias = "dry", conflicts_with = "append")]
     pub(crate) dry_run: bool,
-    /// Model forwarded verbatim to the agent's `--model` flag, unvalidated. Wins
-    /// over effort-tier resolution.
+    /// Model override forwarded to the selected agent. Wins over effort-tier resolution.
+    ///
+    /// Use `default` or omit the flag to leave selection to effort-tier policy and provider
+    /// configuration.
     #[arg(long, short = 'm')]
     pub(crate) model: Option<String>,
     #[command(flatten)]

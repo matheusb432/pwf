@@ -2,7 +2,7 @@
 
 use thiserror::Error;
 
-use super::{Agent, ModelTierCatalog, VerifySessionOk};
+use super::{Agent, ModelTierCatalog, VerifySessionOk, model::AgentModel};
 use crate::{
     AppRecordStore, PendingWorkItem,
     pending_work::{
@@ -17,7 +17,7 @@ use crate::{
 pub struct VerifySession {
     pub id: Option<String>,
     pub agent: Agent,
-    pub model_override: Option<String>,
+    pub model_override: AgentModel,
 }
 
 /// Reports pending-work lookup failures during verification.
@@ -50,7 +50,7 @@ pub fn execute(
     };
 
     let item = find_open_item(store, projects, &id)?;
-    let (model, model_issue) = match query.model_override {
+    let (model, model_issue) = match query.model_override.into_inner() {
         Some(model) => (Some(model), None),
         None => match resolve_model(model_tiers, query.agent, &item.id, item.effort.as_deref()) {
             Ok(model) => (model, None),
@@ -85,7 +85,7 @@ mod tests {
         EffortTier, ProjectName, Timestamp, WorkItemId, WorkItemStatus,
     };
 
-    use super::{ProjectRegistry, VerifySession, execute};
+    use super::{AgentModel, ProjectRegistry, VerifySession, execute};
     use crate::{
         IndexPlacement, Materialization, PendingWorkItem, RecordId,
         pending_work::session::{Agent, ModelTierCatalog, ModelTierLookup},
@@ -153,7 +153,7 @@ mod tests {
             VerifySession {
                 id: Some(TASK_ID.to_string()),
                 agent: Agent::Claude,
-                model_override: None,
+                model_override: AgentModel::default(),
             },
             &store,
             &projects,
