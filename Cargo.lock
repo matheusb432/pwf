@@ -1400,7 +1400,6 @@ dependencies = [
  "chrono",
  "regex",
  "tempfile",
- "thiserror",
 ]
 
 [[package]]

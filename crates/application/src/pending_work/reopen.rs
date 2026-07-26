@@ -1,9 +1,6 @@
-use pwf_domain::pending_work::{
-    ProjectName, QueueEntryView, ReopenDecision, WorkItemId, WorkItemStatus, reopen_decision,
-};
+use pwf_domain::pending_work::{ProjectName, WorkItemId, WorkItemStatus};
 
 use super::{
-    done::queue_view,
     project_registry::ProjectRegistry,
     store_util::{self, LoadItemError},
 };
@@ -118,13 +115,12 @@ where
 
     let entries = <S as AppRecordStore<IndexEntry>>::list(store, project)
         .map_err(|error| ReopenPendingWorkError::WriteStore(Box::new(error)))?;
-    let views: Vec<QueueEntryView> = entries.iter().map(queue_view).collect();
     let open_entry = IndexEntry {
         id: pending_work_identifier.clone(),
         state: IndexEntryState::Open,
         section: String::new(),
     };
-    match reopen_decision(&views, &pending_work_identifier) {
+    match reopen_decision(&entries, &pending_work_identifier) {
         ReopenDecision::RestoreExisting => {
             <S as AppRecordStore<IndexEntry>>::update(
                 store,
@@ -154,6 +150,23 @@ where
         already_active: false,
         handoff,
     })
+}
+
+#[derive(Clone, Copy)]
+enum ReopenDecision {
+    RestoreExisting,
+    ReAddEvicted,
+    AlreadyOpen,
+}
+
+fn reopen_decision(entries: &[IndexEntry], id: &WorkItemId) -> ReopenDecision {
+    match entries.iter().find(|entry| &entry.id == id) {
+        Some(entry) if matches!(entry.state, IndexEntryState::Done(_)) => {
+            ReopenDecision::RestoreExisting
+        }
+        Some(_) => ReopenDecision::AlreadyOpen,
+        None => ReopenDecision::ReAddEvicted,
+    }
 }
 
 #[cfg(test)]

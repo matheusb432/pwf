@@ -383,12 +383,10 @@ mod tests {
             Some(pending_work::common::SectionChoice::Future)
         ));
         assert_eq!(list.number, Some(3));
+        assert_eq!(list.order, None);
         assert_eq!(
-            list.order,
-            Some(pwf_application::pending_work::OrderSpec {
-                field: pwf_application::pending_work::OrderField::ProjectId,
-                direction: pwf_application::pending_work::OrderDirection::Asc,
-            })
+            list.mode,
+            pwf_application::pending_work::ListMode::ProjectRoute
         );
         assert_eq!(
             list.status.expect("explicit --status").filter(),
@@ -462,19 +460,5 @@ mod tests {
             panic!("expected handoff list");
         };
         assert_eq!(list.common.repo_root.as_deref(), Some("/tmp/repo"));
-    }
-
-    #[test]
-    fn note_bare_project_is_list() {
-        let Engine::Note(arguments) = parse(&["note", "pwf"]).engine else {
-            panic!("expected note");
-        };
-        assert!(matches!(
-            arguments.command,
-            note::Command::List {
-                ref project,
-                number: None
-            } if project == "pwf"
-        ));
     }
 }

@@ -1,6 +1,4 @@
-//! Enriches pending-work records with shared launchability diagnostics.
-//!
-//! One policy derives list, verify, and session diagnostics from persisted pending-work records.
+//! Derives pending-work launchability diagnostics for list, verify, and session operations.
 
 use pwf_domain::pending_work::{WorkItemStatus, section_alias};
 

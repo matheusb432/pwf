@@ -6,6 +6,7 @@ use crate::{paths, sqlite_url, sqlx_cli};
 
 const DATABASE_SETUP_DEADLINE: Duration = Duration::from_secs(30);
 const QUERY_PREPARE_DEADLINE: Duration = Duration::from_mins(5);
+const DATABASE_SETUP_SUCCESS: &str = "Prepared temporary SQLx database for query validation.";
 
 pub(crate) fn run(check: bool) -> Result<()> {
     exec(&paths::repo_root(), check)
@@ -22,13 +23,14 @@ fn exec(root: &Path, check: bool) -> Result<()> {
     let database_url = sqlite_url::from_path(&database_path);
     let environment = query_environment(&database_url);
 
-    sqlx_cli::run(
+    sqlx_cli::run_with_success_summary(
         root,
         &executable,
         "create SQLx preparation database",
         &strings_os(database_setup_arguments()),
         &environment,
         DATABASE_SETUP_DEADLINE,
+        DATABASE_SETUP_SUCCESS,
     )?;
     sqlx_cli::run(
         root,

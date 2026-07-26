@@ -1,7 +1,8 @@
-use pwf_domain::pending_work::{
-    MarkedEntry, ProjectName, QueueEntryView, Timestamp, WorkItemId, WorkItemStatus,
-    close_decisions, is_futuro_label,
-};
+use pwf_domain::pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus};
+
+mod queue;
+
+use queue::{close_decisions, is_futuro_label};
 
 use super::{
     add::{AddPendingWorkError, AddedItem, PendingWorkSection, added_item, project_mapped},
@@ -286,26 +287,6 @@ fn map_load(error: LoadItemError) -> CloseError {
     }
 }
 
-/// Maps an index entry to queue semantics while preserving raw section labels.
-///
-/// An empty label becomes the `"General"` no-header sentinel.
-pub(super) fn queue_view(entry: &IndexEntry) -> QueueEntryView {
-    let completed = match &entry.state {
-        IndexEntryState::Open => None,
-        IndexEntryState::Done(date) => Some(date.clone()),
-    };
-    let section = if entry.section.is_empty() {
-        "General".to_string()
-    } else {
-        entry.section.clone()
-    };
-    QueueEntryView {
-        id: entry.id.clone(),
-        completed,
-        section,
-    }
-}
-
 /// Applies header normalization, the closed entry, and cap-based evictions to the index.
 fn rotate_done_queue<S>(
     store: &S,
@@ -320,29 +301,20 @@ where
         .map_err(|error| CloseError::WriteStore(Box::new(error)))?;
     let sections = <S as AppRecordStore<IndexSection>>::list(store, project)
         .map_err(|error| CloseError::WriteStore(Box::new(error)))?;
-    let views: Vec<QueueEntryView> = entries.iter().map(queue_view).collect();
-    let labels: Vec<String> = sections
-        .iter()
-        .map(|section| section.label.clone())
-        .collect();
-    let decisions = close_decisions(&views, &labels, id, &Timestamp::new(completed));
+    let completed = Timestamp::new(completed);
+    let decisions = close_decisions(&entries, &sections, id, &completed);
 
     if decisions.normalize_futuro_header {
         rename_futuro_headers(store, project, &sections)?;
     }
-    if let Some(MarkedEntry {
-        id: marked_id,
-        completed,
-        ..
-    }) = &decisions.marked_entry
-    {
+    if decisions.mark_target {
         <S as AppRecordStore<IndexEntry>>::update(
             store,
             project,
-            marked_id,
+            id,
             IndexEntry {
-                id: marked_id.clone(),
-                state: IndexEntryState::Done(completed.clone()),
+                id: id.clone(),
+                state: IndexEntryState::Done(completed),
                 section: String::new(),
             },
         )

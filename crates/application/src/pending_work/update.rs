@@ -407,7 +407,6 @@ mod tests {
     };
     use crate::{Materialization, PendingWorkItem, RecordId, testing::InMemoryStore};
 
-    // section separator
     const S: &str = "\n\n";
 
     fn registry() -> ProjectRegistry {

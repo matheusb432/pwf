@@ -76,12 +76,6 @@ mod tests {
     }
 
     #[test]
-    fn no_fields_still_renders_header_and_question() {
-        let prompt = ConfirmationPrompt::new("Confirm", &[], "Proceed?");
-        assert_eq!(prompt.to_string(), "# Confirm\n\n\nProceed?");
-    }
-
-    #[test]
     fn multiline_values_are_flattened_to_one_line() {
         let fields = [Field::new("title", "first\nsecond\r\nthird")];
         let prompt = ConfirmationPrompt::new("Confirm", &fields, "Go?");

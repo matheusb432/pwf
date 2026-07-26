@@ -1,7 +1,7 @@
 use std::{assert_matches, path::PathBuf};
 
 use pwf_application::pending_work::{
-    AddedItem, ListResult, ListScope, OrderDirection, OrderField, OrderSpec, PendingWorkItemView,
+    AddedItem, ListResult, OrderDirection, OrderField, OrderSpec, PendingWorkItemView,
     ProjectRegistry, ProjectResolutionError, RemovedItem, UpdatePendingWorkItemOk, note_body,
 };
 use pwf_domain::pending_work::{ProjectName, WorkItemStatus};
@@ -134,7 +134,6 @@ fn application_modules_own_pending_work_use_case_values() {
     assert_type::<UpdatePendingWorkItemOk>();
     assert_type::<PendingWorkItemView>();
     assert_type::<ListResult>();
-    assert_type::<ListScope>();
     assert_type::<OrderField>();
     assert_type::<OrderDirection>();
     assert_type::<OrderSpec>();

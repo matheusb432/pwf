@@ -77,7 +77,7 @@ pub struct PreparedClaudeLaunch {
 }
 
 impl PreparedClaudeLaunch {
-    /// Returns the prepared argv without exposing mutable access.
+    /// Returns the prepared argv.
     #[must_use]
     pub fn argv(&self) -> &[String] {
         &self.argv

@@ -404,6 +404,9 @@ mod tests {
         let result = ListResult {
             items: Vec::new(),
             hidden: 0,
+            project: None,
+            status_filter: WorkItemStatusFilter::default(),
+            grouped: false,
         };
         for (filter, expected) in [
             (

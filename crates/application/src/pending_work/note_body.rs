@@ -220,7 +220,6 @@ fn normalized_report(report: &str) -> Option<String> {
 mod tests {
     use super::*;
 
-    // section separator
     const S: &str = "\n\n";
 
     #[test]

@@ -6,7 +6,7 @@ use std::{
 use pwf_application::handoff::ports::{AllocatePendingWork, PendingWorkAllocatorClient};
 use pwf_domain::pending_work::WorkItemId;
 
-/// Invokes the legacy pending-work allocator executable when configured.
+/// Invokes the configured external pending-work allocator.
 #[derive(Debug, Clone, Default)]
 pub struct ProcessPendingWorkAllocator {
     script: Option<PathBuf>,

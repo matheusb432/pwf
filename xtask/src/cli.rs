@@ -1,5 +1,4 @@
-//! Command-line surface. clap derives `--help` from the doc comments here and on each verb's
-//! `Args` struct, so keep them the single source of truth for the verb documentation.
+//! clap derives help from this module and each verb's `Args` doc comments.
 
 use clap::{Parser, Subcommand};
 

@@ -1,6 +1,4 @@
-//! One module per automation verb.
-//!
-//! A new verb needs a module, a [`crate::cli::Command`] arm, and dispatch in `main.rs`.
+//! Each automation verb has a module, a [`crate::cli::Command`] arm, and dispatch in `main.rs`.
 
 pub(crate) mod check;
 pub(crate) mod check_architecture;

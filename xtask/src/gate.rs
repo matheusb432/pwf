@@ -82,9 +82,7 @@ fn surface_failures(failures: &[(String, String)]) {
     }
 }
 
-/// Resolves summary styling from the environment. Terminal sniffing is banned outside the console
-/// edge, so `NO_COLOR` forces plain output, `CLICOLOR_FORCE` forces color, and plain is the
-/// default.
+/// Resolves summary color without terminal detection; `NO_COLOR` wins and plain is the default.
 fn color_enabled() -> bool {
     std::env::var_os("NO_COLOR").is_none() && std::env::var_os("CLICOLOR_FORCE").is_some()
 }

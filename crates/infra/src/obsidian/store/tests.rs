@@ -11,7 +11,6 @@ use pwf_domain::pending_work::{
 
 use super::{ObsidianProject, ObsidianStore, ObsidianStoreError, fs::path_str};
 
-// section separator
 const S: &str = "\n\n";
 
 fn project(id: &str, title: &str, tasks_path: &Path) -> ObsidianProject {

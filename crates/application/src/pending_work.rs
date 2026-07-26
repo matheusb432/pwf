@@ -17,7 +17,9 @@ pub mod store_util;
 pub mod update;
 
 pub use add::{AddPendingWorkSource, AddedItem, PendingWorkSection};
-pub use list::{ListResult, ListScope, OrderDirection, OrderField, OrderSpec, PendingWorkItemView};
+pub use list::{
+    ListMode, ListResult, ListSection, OrderDirection, OrderField, OrderSpec, PendingWorkItemView,
+};
 pub use note_body::note_body;
 pub use prerequisite::PrerequisiteStatus;
 pub use project_registry::{ProjectRegistry, ProjectResolutionError};

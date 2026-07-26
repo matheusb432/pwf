@@ -1,5 +1,6 @@
 use std::{
     ffi::OsString,
+    io::Write,
     path::{Path, PathBuf},
     process::{Command, Stdio},
     time::Duration,
@@ -63,6 +64,68 @@ pub(crate) fn run(
         bail!("{label} failed (exit {})", status.code().unwrap_or(-1));
     }
     Ok(())
+}
+
+pub(crate) fn run_with_success_summary(
+    root: &Path,
+    program: &Path,
+    label: &str,
+    arguments: &[OsString],
+    environment: &[(&str, &str)],
+    deadline: Duration,
+    success_summary: &str,
+) -> Result<()> {
+    let mut command = Command::new(program);
+    command
+        .args(arguments)
+        .current_dir(root)
+        .envs(environment.iter().copied());
+    run_command_with_success_summary(
+        command,
+        label,
+        deadline,
+        success_summary,
+        &mut std::io::stderr().lock(),
+    )
+}
+
+fn run_command_with_success_summary(
+    mut command: Command,
+    label: &str,
+    deadline: Duration,
+    success_summary: &str,
+    diagnostics: &mut impl Write,
+) -> Result<()> {
+    let stdout = tempfile::NamedTempFile::new()
+        .with_context(|| format!("creating captured stdout for {label}"))?;
+    let stdout_child = stdout
+        .reopen()
+        .with_context(|| format!("opening captured stdout for {label}"))?;
+    command.stdout(Stdio::from(stdout_child));
+
+    let status = child_process::run(command, label, deadline);
+    let stdout = std::fs::read(stdout.path())
+        .with_context(|| format!("reading captured stdout for {label}"))?;
+
+    match status {
+        Ok(status) if status.success() => {
+            writeln!(diagnostics, "{success_summary}")
+                .with_context(|| format!("writing success summary for {label}"))?;
+            Ok(())
+        }
+        Ok(status) => {
+            diagnostics
+                .write_all(&stdout)
+                .with_context(|| format!("replaying captured stdout for {label}"))?;
+            bail!("{label} failed (exit {})", status.code().unwrap_or(-1));
+        }
+        Err(error) => {
+            diagnostics
+                .write_all(&stdout)
+                .with_context(|| format!("replaying captured stdout for {label}"))?;
+            Err(error)
+        }
+    }
 }
 
 fn local_tool_root(root: &Path) -> PathBuf {
@@ -189,9 +252,88 @@ fn install_arguments(root: &Path, action: InstallationAction) -> Vec<OsString> {
 
 #[cfg(test)]
 mod tests {
-    use std::{ffi::OsString, path::Path};
+    use std::{ffi::OsString, io::Write, path::Path, process::Command, time::Duration};
 
     use super::*;
+
+    const FIXTURE_EXIT_CODE_ENVIRONMENT: &str = "PWF_XTASK_SQLX_FIXTURE_EXIT_CODE";
+    const FIXTURE_STDOUT: &str = "Applied temporary fixture migration\n";
+    const SUCCESS_SUMMARY: &str = "Prepared temporary SQLx database for query validation.";
+
+    fn captured_stdout_fixture_command(exit_code: Option<&str>) -> Command {
+        let executable = std::env::current_exe().expect("current test executable");
+        let mut command = Command::new(executable);
+        command.args([
+            "--exact",
+            "sqlx_cli::tests::captured_stdout_fixture",
+            "--ignored",
+        ]);
+        if let Some(exit_code) = exit_code {
+            command.env(FIXTURE_EXIT_CODE_ENVIRONMENT, exit_code);
+        }
+        command
+    }
+
+    #[test]
+    fn contextual_success_replaces_child_stdout_with_summary() {
+        let command = captured_stdout_fixture_command(None);
+        let mut diagnostics = Vec::new();
+
+        run_command_with_success_summary(
+            command,
+            "temporary database setup",
+            Duration::from_secs(5),
+            SUCCESS_SUMMARY,
+            &mut diagnostics,
+        )
+        .unwrap();
+
+        assert_eq!(
+            String::from_utf8(diagnostics).unwrap(),
+            format!("{SUCCESS_SUMMARY}\n")
+        );
+    }
+
+    #[test]
+    fn failure_replays_captured_stdout_before_returning_error() {
+        let command = captured_stdout_fixture_command(Some("9"));
+        let mut diagnostics = Vec::new();
+
+        let error = run_command_with_success_summary(
+            command,
+            "temporary database setup",
+            Duration::from_secs(5),
+            SUCCESS_SUMMARY,
+            &mut diagnostics,
+        )
+        .unwrap_err();
+
+        assert!(
+            diagnostics
+                .windows(FIXTURE_STDOUT.len())
+                .any(|window| window == FIXTURE_STDOUT.as_bytes())
+        );
+        assert!(
+            error
+                .to_string()
+                .contains("temporary database setup failed (exit 9)")
+        );
+    }
+
+    #[test]
+    #[ignore = "captured stdout process fixture"]
+    fn captured_stdout_fixture() {
+        let mut stdout = std::io::stdout().lock();
+        stdout.write_all(FIXTURE_STDOUT.as_bytes()).unwrap();
+        stdout.flush().unwrap();
+        if let Some(exit_code) = std::env::var_os(FIXTURE_EXIT_CODE_ENVIRONMENT) {
+            let exit_code = exit_code
+                .to_string_lossy()
+                .parse()
+                .expect("fixture exit code");
+            std::process::exit(exit_code);
+        }
+    }
 
     #[test]
     fn tool_paths_are_repository_owned_and_platform_specific() {

@@ -1,11 +1,9 @@
-//! rustfmt and clippy command plans.
+//! rustfmt command plans.
 
 use super::FormatMode;
 use crate::task::Step;
 
-/// Plans workspace rustfmt with an optional pinned nightly.
-///
-/// Nightly writes run twice so comment wrapping converges; checks run once.
+/// Plans two pinned-nightly write passes so comment wrapping converges; all other modes use one.
 pub(super) fn format_steps(toolchain: Option<&str>, mode: FormatMode) -> Vec<Step> {
     let passes = match (toolchain, mode) {
         (Some(_), FormatMode::Write) => 2,

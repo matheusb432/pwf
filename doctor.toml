@@ -1,5 +1,4 @@
-# pwf dev-environment readiness. Engine: the shared `doctor-rs` binary (CODE DOC).
-# Run `just doctor`. Read-only: it never installs, provisioning owns that.
+# Read-only checks for `just doctor`.
 
 [[tool]]
 name = "cargo"
@@ -10,7 +9,7 @@ hint = "install rust via rustup: https://rustup.rs"
 name = "just"
 hint = "cargo install just"
 
-# Backs `just test --all`'s ast-grep source gates; repository provisions it fleet-wide.
+# Required by `just test --all`.
 [[tool]]
 name = "ast-grep"
 hint = "cargo install ast-grep --locked"

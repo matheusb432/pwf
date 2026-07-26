@@ -16,7 +16,7 @@ use crate::{
     pending_work::{ProjectRegistry, ProjectResolutionError, store_util},
 };
 
-/// Selects typed in-process allocation or the legacy external CLI protocol.
+/// Selects in-process allocation or the external CLI protocol.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HandoffAllocation {
     /// Creates the linked item through the shared application primitive.
@@ -74,7 +74,7 @@ pub enum AddHandoffError {
         #[source]
         source: Box<dyn Error + Send + Sync>,
     },
-    /// The typed or external pending-work allocator failed.
+    /// The in-process or external pending-work allocator failed.
     #[error("{source}")]
     AllocationFailed {
         /// Concrete allocator or pending-work store failure.

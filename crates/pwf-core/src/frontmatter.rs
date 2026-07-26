@@ -44,7 +44,7 @@ pub fn parse(text: &str) -> Parsed {
             let key = &l[..idx];
             if is_fm_key(key) {
                 let val = &l[idx + 1..];
-                let val = val.strip_prefix(' ').unwrap_or(val); // Strip one optional leading space.
+                let val = val.strip_prefix(' ').unwrap_or(val);
                 frontmatter.insert(key.to_string(), val.trim().to_string());
             }
         }

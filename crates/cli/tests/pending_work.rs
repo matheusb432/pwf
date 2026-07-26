@@ -28,7 +28,6 @@ fn test_projects(tasks_root: &std::path::Path) -> TestProjects {
     }))
 }
 
-// section separator
 const S: &str = "\n\n";
 
 #[test]
@@ -1251,8 +1250,6 @@ fn show_requires_id() {
     let err = run_plain(&args, &test_projects(&notes)).unwrap_err();
     assert!(err.contains("--id"), "error should mention --id: {err}");
 }
-
-// Agent verification rendering is covered where the crate-internal launcher seam is accessible.
 
 fn stage_dir() -> std::path::PathBuf {
     let d = std::env::temp_dir().join(format!("pwstage_{}", nanos()));

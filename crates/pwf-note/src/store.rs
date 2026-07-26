@@ -191,7 +191,6 @@ mod tests {
         assert_eq!(notes[0].id, "PWF-NOTE-0002");
         assert_eq!(notes[0].message, "second note");
         assert_eq!(notes[1].message, "first note");
-        // Frontmatter is `type: note`, not a task.
         let raw = std::fs::read_to_string(d.join("PWF-NOTE-0001.md")).unwrap();
         assert!(raw.contains("type: note"), "got: {raw}");
         assert!(

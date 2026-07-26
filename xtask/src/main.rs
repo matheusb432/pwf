@@ -1,6 +1,4 @@
-//! Embedded development and release automation.
-//!
-//! Invoke it as `cargo run -p xtask -- <verb>`. The binary is not installed.
+//! Repository automation invoked as `cargo run -p xtask -- <verb>`; the binary is not installed.
 
 use anyhow::Result;
 use clap::Parser;

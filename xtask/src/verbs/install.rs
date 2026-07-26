@@ -82,7 +82,6 @@ fn release_bin() -> PathBuf {
 pub(crate) fn install() -> Result<()> {
     #[cfg(windows)]
     {
-        // The Windows Scoop path is manually certified.
         process::run("scoop install", "scoop", &["install", "pwf.json"])?;
         process::result(Verb::INSTALL, Status::Done);
         return Ok(());
@@ -102,7 +101,6 @@ pub(crate) fn update(args: &UpdateArgs) -> Result<()> {
     }
     #[cfg(windows)]
     {
-        // The Windows Scoop path is manually certified.
         process::run("cargo build", "cargo", &["build", "--release"])?;
         let dest = dirs_scoop_pwf()?;
         if args.dry {

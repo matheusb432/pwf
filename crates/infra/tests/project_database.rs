@@ -5,6 +5,7 @@ use pwf_application::{
         add::{AddProject, AddProjectError},
         get::GetProject,
         list::ListProjects,
+        load_active::LoadActiveProjects,
         pause::{PauseProject, PauseProjectError},
         resume::{ResumeProject, ResumeProjectError},
     },
@@ -262,6 +263,43 @@ async fn list_sorts_by_title_and_optionally_includes_paused_projects() {
     );
     assert!(all[0].is_paused);
     assert!(!all[1].is_paused);
+}
+
+#[tokio::test]
+async fn load_active_resolves_runtime_paths_without_changing_persisted_values() {
+    let (_directory, database) = database().await;
+    project::add::execute(
+        directory_project("PWF", "pwf", "~/tools/pwf", "~/tasks/pwf"),
+        &database,
+    )
+    .await
+    .unwrap();
+    project::add::execute(
+        directory_project("ARC", "repository", "/work/repository", "/tasks/repository"),
+        &database,
+    )
+    .await
+    .unwrap();
+    project::pause::execute(PauseProject { id: id("ARC") }, &database)
+        .await
+        .unwrap();
+
+    let home = std::path::PathBuf::from("/home/runtime");
+    let runtime =
+        project::load_active::execute(LoadActiveProjects { home: home.clone() }, &database)
+            .await
+            .unwrap();
+
+    assert_eq!(runtime.len(), 1);
+    assert_eq!(runtime[0].project.id, id("PWF"));
+    assert_eq!(runtime[0].source_path, home.join("tools/pwf"));
+    assert_eq!(runtime[0].tasks_path, home.join("tasks/pwf"));
+
+    let persisted = project::get::execute(GetProject { id: id("PWF") }, &database)
+        .await
+        .unwrap();
+    assert_eq!(persisted.source.value().as_ref(), "~/tools/pwf");
+    assert_eq!(persisted.tasks.path().as_ref(), "~/tasks/pwf");
 }
 
 #[tokio::test]

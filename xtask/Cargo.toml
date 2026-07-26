@@ -2,8 +2,6 @@
 name = "xtask"
 version = "0.1.0"
 edition.workspace = true
-# Embedded dev-automation crate: never published, never installed. The justfile forwards each
-# recipe to `cargo run -p xtask -- <verb>`, so all automation logic lives here in Rust.
 publish.workspace = true
 
 [[bin]]

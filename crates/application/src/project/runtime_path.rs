@@ -4,26 +4,26 @@ use std::{
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct ResolvedPath {
+pub struct ResolvedPath {
     path: PathBuf,
     identity: RuntimePathIdentity,
 }
 
 impl ResolvedPath {
-    pub(super) fn path(&self) -> &Path {
+    pub fn path(&self) -> &Path {
         &self.path
     }
 
-    pub(super) fn identity(&self) -> &RuntimePathIdentity {
+    pub fn identity(&self) -> &RuntimePathIdentity {
         &self.identity
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) struct RuntimePathIdentity(OsString);
+pub struct RuntimePathIdentity(OsString);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub(super) enum RuntimePathError {
+pub enum RuntimePathError {
     #[error("path must not be empty")]
     Empty,
     #[error("path must not contain repeated separators")]
@@ -43,7 +43,7 @@ pub(super) enum RuntimePathError {
     RelativeHome,
 }
 
-pub(super) fn resolve(path: &str, home: &Path) -> Result<ResolvedPath, RuntimePathError> {
+pub fn resolve(path: &str, home: &Path) -> Result<ResolvedPath, RuntimePathError> {
     host::resolve(path, home)
 }
 

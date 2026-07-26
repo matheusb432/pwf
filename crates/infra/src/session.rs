@@ -1,4 +1,4 @@
-//! Implements concrete provider, process, and configuration adapters for sessions.
+//! Implements provider, process, and configuration adapters for sessions.
 
 mod codex_app_server;
 mod inline;

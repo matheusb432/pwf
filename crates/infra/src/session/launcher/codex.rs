@@ -110,13 +110,13 @@ impl PreparedCodexLaunch {
         }
     }
 
-    /// Returns the prepared argv without exposing mutable access.
+    /// Returns the prepared argv.
     #[must_use]
     pub fn argv(&self) -> &[String] {
         &self.argv
     }
 
-    /// Returns the exact named thread ID without transferring ownership.
+    /// Returns the named thread ID.
     #[must_use]
     pub fn thread_id(&self) -> &str {
         &self.thread_id

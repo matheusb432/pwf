@@ -6,7 +6,6 @@ publish.workspace = true
 description = "pwf-core: domain-neutral vault primitives for pwf"
 
 [dependencies]
-thiserror = { workspace = true }
 regex = { workspace = true }
 chrono = { workspace = true }
 

@@ -98,9 +98,10 @@ fn list_arguments(
         number: arguments.number,
         effort: None,
         tag: Vec::new(),
-        order: Some(list::PROJECT_GROUPED_ORDER),
+        order: None,
         status: arguments.status,
         common: arguments.common.clone(),
         compatibility,
+        mode: pwf_application::pending_work::ListMode::ProjectRoute,
     }
 }

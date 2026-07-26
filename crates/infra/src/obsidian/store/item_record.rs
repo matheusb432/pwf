@@ -433,7 +433,7 @@ impl AppRecordStore<PendingWorkItem> for ObsidianStore {
 }
 
 /// Marks an inline checkbox done at `line` while preserving its surrounding text.
-/// The byte-identical CLI gate depends on this being the only legacy-close write path.
+/// This must remain the only write path to preserve byte-identical CLI output.
 pub(super) fn close_legacy_checkbox_text(
     content: &str,
     line: usize,

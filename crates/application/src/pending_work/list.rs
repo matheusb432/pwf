@@ -62,19 +62,29 @@ pub struct ListResult {
     pub items: Vec<PendingWorkItemView>,
     /// Number of matching items excluded by the requested cap.
     pub hidden: usize,
+    /// Managed project selected by the request, when scoped.
+    pub project: Option<ProjectName>,
+    /// Effective lifecycle filter after applying list defaults.
+    pub status_filter: WorkItemStatusFilter,
+    /// Reports whether the renderer should group items by section.
+    pub grouped: bool,
 }
 
-/// Selects which pending-work index sections participate in a list query.
+/// Selects an explicit pending-work index section.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ListScope {
-    /// Includes only items without an index section.
-    Default,
+pub enum ListSection {
     /// Includes only items in the normalized `Human` section.
-    HumanOnly,
+    Human,
     /// Includes only items in the normalized `Future` section.
-    FutureOnly,
-    /// Includes items from every index section.
-    All,
+    Future,
+}
+
+/// Selects the defaults used by the direct list command or project compatibility route.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ListMode {
+    #[default]
+    Direct,
+    ProjectRoute,
 }
 
 /// Selects the primary list ordering field.
@@ -117,17 +127,19 @@ impl Default for OrderSpec {
 
 #[derive(Debug, Clone)]
 pub struct GetPendingWork {
-    pub only_project: Option<String>,
-    pub scope: ListScope,
-    /// Maximum listed items; `None` lists every item.
-    pub cap: Option<usize>,
+    pub project_identifier: Option<String>,
+    pub section: Option<ListSection>,
+    pub all: bool,
+    /// Explicit item cap. Omission uses the mode-specific default.
+    pub number: Option<usize>,
     pub effort: Option<u8>,
-    pub tags: Option<Tags>,
-    pub order: OrderSpec,
-    /// Selects one persisted lifecycle status or every lifecycle status.
-    pub status_filter: WorkItemStatusFilter,
+    pub tags: Vec<String>,
+    pub order: Option<OrderSpec>,
+    /// Explicit lifecycle filter. Omission uses the mode-specific default.
+    pub status: Option<WorkItemStatusFilter>,
     /// Projects prerequisite statuses for long-list rendering when enabled.
     pub include_prerequisite_statuses: bool,
+    pub mode: ListMode,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -140,8 +152,29 @@ pub enum GetPendingWorkError {
         #[source]
         source: ParseTagsError,
     },
-    #[error("Invalid project identity: {value:?}.")]
-    InvalidProject { value: String },
+    #[error("invalid requested tags: {0}")]
+    InvalidRequestedTags(#[source] ParseTagsError),
+    #[error(transparent)]
+    ResolveProject(#[from] super::ProjectResolutionError),
+}
+
+struct ResolvedGetPendingWork {
+    project: Option<ProjectName>,
+    scope: ListScope,
+    cap: Option<usize>,
+    effort: Option<u8>,
+    tags: Option<Tags>,
+    order: OrderSpec,
+    status_filter: WorkItemStatusFilter,
+    include_prerequisite_statuses: bool,
+}
+
+#[derive(Clone, Copy)]
+enum ListScope {
+    Default,
+    HumanOnly,
+    FutureOnly,
+    All,
 }
 
 #[cqrsy::query]
@@ -150,7 +183,8 @@ pub fn execute(
     store: &impl AppRecordStore<PendingWorkItem>,
     projects: &ProjectRegistry,
 ) -> Result<ListResult, GetPendingWorkError> {
-    let mut items = collect_list_items(query, store, projects)?;
+    let query = resolve_query(query, projects)?;
+    let mut items = collect_list_items(&query, store, projects)?;
 
     items.retain(|item| scope_includes(query.scope, item.section.as_deref()));
     items.retain(|item| effort_matches(item, query.effort));
@@ -190,23 +224,74 @@ pub fn execute(
         }
     }
 
-    Ok(ListResult { items, hidden })
+    Ok(ListResult {
+        items,
+        hidden,
+        project: query.project,
+        status_filter: query.status_filter,
+        grouped: scope_groups_output(query.scope),
+    })
+}
+
+fn resolve_query(
+    query: &GetPendingWork,
+    projects: &ProjectRegistry,
+) -> Result<ResolvedGetPendingWork, GetPendingWorkError> {
+    let project = query
+        .project_identifier
+        .as_deref()
+        .map(|identifier| projects.resolve(identifier).cloned())
+        .transpose()?;
+    let scope = if query.all {
+        ListScope::All
+    } else {
+        match query.section {
+            None => ListScope::Default,
+            Some(ListSection::Human) => ListScope::HumanOnly,
+            Some(ListSection::Future) => ListScope::FutureOnly,
+        }
+    };
+    let cap = query.number.or((!query.all).then_some(10));
+    let tags = if query.tags.is_empty() {
+        None
+    } else {
+        Some(Tags::parse_values(&query.tags).map_err(GetPendingWorkError::InvalidRequestedTags)?)
+    };
+    let order = query.order.unwrap_or(match query.mode {
+        ListMode::Direct => OrderSpec::default(),
+        ListMode::ProjectRoute => OrderSpec {
+            field: OrderField::ProjectId,
+            direction: OrderDirection::Asc,
+        },
+    });
+    let status_filter = query.status.unwrap_or(if query.all {
+        WorkItemStatusFilter::All
+    } else {
+        WorkItemStatusFilter::default()
+    });
+
+    Ok(ResolvedGetPendingWork {
+        project,
+        scope,
+        cap,
+        effort: query.effort,
+        tags,
+        order,
+        status_filter,
+        include_prerequisite_statuses: query.include_prerequisite_statuses,
+    })
 }
 
 /// Reads and enriches listable lifecycle records from one project or every project in name order.
 fn collect_list_items(
-    query: &GetPendingWork,
+    query: &ResolvedGetPendingWork,
     store: &impl AppRecordStore<PendingWorkItem>,
     projects: &ProjectRegistry,
 ) -> Result<Vec<PendingWorkItemView>, GetPendingWorkError> {
-    let scan: Vec<(ProjectName, Option<String>)> = match query.only_project.as_deref() {
-        Some(name) => {
-            let project =
-                ProjectName::try_new(name).map_err(|_| GetPendingWorkError::InvalidProject {
-                    value: name.to_string(),
-                })?;
-            let repo = projects.repo_for(&project).map(str::to_string);
-            vec![(project, repo)]
+    let scan: Vec<(ProjectName, Option<String>)> = match query.project.as_ref() {
+        Some(project) => {
+            let repo = projects.repo_for(project).map(str::to_string);
+            vec![(project.clone(), repo)]
         }
         None => projects
             .projects()
@@ -340,12 +425,12 @@ mod tests {
     use std::convert::Infallible;
 
     use pwf_domain::pending_work::{
-        ProjectName, Tags, Timestamp, WorkItemId, WorkItemStatus, WorkItemStatusFilter,
+        ProjectName, Timestamp, WorkItemId, WorkItemStatus, WorkItemStatusFilter,
     };
 
     use super::{
-        GetPendingWork, GetPendingWorkError, ListResult, ListScope, OrderDirection, OrderField,
-        OrderSpec, PrerequisiteStatus, ProjectRegistry, execute,
+        GetPendingWork, GetPendingWorkError, ListMode, ListResult, ListSection, OrderDirection,
+        OrderField, OrderSpec, PrerequisiteStatus, ProjectRegistry, execute,
     };
     use crate::{
         AppRecordStore, IndexPlacement, ItemPatch, Materialization, NewItem, PendingWorkItem,
@@ -503,14 +588,16 @@ mod tests {
 
     fn default_query() -> GetPendingWork {
         GetPendingWork {
-            only_project: None,
-            scope: ListScope::Default,
-            cap: None,
+            project_identifier: None,
+            section: None,
+            all: false,
+            number: Some(100_000),
             effort: None,
-            tags: None,
-            order: OrderSpec::default(),
-            status_filter: WorkItemStatusFilter::default(),
+            tags: Vec::new(),
+            order: None,
+            status: None,
             include_prerequisite_statuses: false,
+            mode: ListMode::Direct,
         }
     }
 
@@ -537,7 +624,7 @@ mod tests {
             &store,
             &prerequisite_registry(),
             &GetPendingWork {
-                only_project: Some("pwf".to_string()),
+                project_identifier: Some("pwf".to_string()),
                 include_prerequisite_statuses: true,
                 ..default_query()
             },
@@ -586,7 +673,7 @@ mod tests {
             &store,
             &prerequisite_registry(),
             &GetPendingWork {
-                only_project: Some("pwf".to_string()),
+                project_identifier: Some("pwf".to_string()),
                 include_prerequisite_statuses: true,
                 ..default_query()
             },
@@ -614,7 +701,7 @@ mod tests {
 
         let got = execute(
             &GetPendingWork {
-                only_project: Some("pwf".to_string()),
+                project_identifier: Some("pwf".to_string()),
                 include_prerequisite_statuses: false,
                 ..default_query()
             },
@@ -666,7 +753,7 @@ mod tests {
                 &store,
                 &registry,
                 &GetPendingWork {
-                    status_filter: WorkItemStatusFilter::Exact(status),
+                    status: Some(WorkItemStatusFilter::Exact(status)),
                     ..default_query()
                 },
             )
@@ -678,7 +765,7 @@ mod tests {
             &store,
             &registry,
             &GetPendingWork {
-                status_filter: WorkItemStatusFilter::All,
+                status: Some(WorkItemStatusFilter::All),
                 ..default_query()
             },
         )
@@ -702,7 +789,7 @@ mod tests {
                 &store,
                 &registry,
                 &GetPendingWork {
-                    status_filter,
+                    status: Some(status_filter),
                     ..default_query()
                 },
             )
@@ -735,8 +822,8 @@ mod tests {
             &store,
             &registry,
             &GetPendingWork {
-                cap: Some(1),
-                status_filter: WorkItemStatusFilter::Exact(WorkItemStatus::Done),
+                number: Some(1),
+                status: Some(WorkItemStatusFilter::Exact(WorkItemStatus::Done)),
                 ..default_query()
             },
         )
@@ -768,7 +855,7 @@ mod tests {
             &store,
             &registry,
             &GetPendingWork {
-                scope: ListScope::FutureOnly,
+                section: Some(ListSection::Future),
                 ..default_query()
             },
         )
@@ -790,7 +877,7 @@ mod tests {
             &store,
             &registry,
             &GetPendingWork {
-                scope: ListScope::All,
+                all: true,
                 ..default_query()
             },
         )
@@ -814,7 +901,7 @@ mod tests {
             &store,
             &registry,
             &GetPendingWork {
-                scope: ListScope::HumanOnly,
+                section: Some(ListSection::Human),
                 ..default_query()
             },
         )
@@ -890,7 +977,7 @@ mod tests {
             &store,
             &registry,
             &GetPendingWork {
-                tags: Some(Tags::parse_values(&["SQLite,godot".to_string()]).unwrap()),
+                tags: vec!["SQLite,godot".to_string()],
                 ..default_query()
             },
         )
@@ -908,7 +995,7 @@ mod tests {
             &store,
             &registry,
             &GetPendingWork {
-                tags: Some(Tags::parse_values(&["sqlite".to_string()]).unwrap()),
+                tags: vec!["sqlite".to_string()],
                 ..default_query()
             },
         )
@@ -943,7 +1030,7 @@ mod tests {
             &registry,
             &GetPendingWork {
                 effort: Some(3),
-                tags: Some(Tags::parse_values(&["sqlite".to_string()]).unwrap()),
+                tags: vec!["sqlite".to_string()],
                 ..default_query()
             },
         )
@@ -964,8 +1051,8 @@ mod tests {
             &store,
             &registry,
             &GetPendingWork {
-                cap: Some(1),
-                tags: Some(Tags::parse_values(&["sqlite".to_string()]).unwrap()),
+                number: Some(1),
+                tags: vec!["sqlite".to_string()],
                 ..default_query()
             },
         )
@@ -999,10 +1086,10 @@ mod tests {
             &store,
             &registry,
             &GetPendingWork {
-                order: OrderSpec {
+                order: Some(OrderSpec {
                     field: OrderField::Created,
                     direction: OrderDirection::Asc,
-                },
+                }),
                 ..default_query()
             },
         )
@@ -1022,10 +1109,10 @@ mod tests {
             &store,
             &registry,
             &GetPendingWork {
-                order: OrderSpec {
+                order: Some(OrderSpec {
                     field: OrderField::Id,
                     direction: OrderDirection::Desc,
-                },
+                }),
                 ..default_query()
             },
         )
@@ -1035,7 +1122,7 @@ mod tests {
     }
 
     #[test]
-    fn project_id_order_groups_by_project_then_newest_id() {
+    fn project_route_defaults_to_project_id_order() {
         let (store, registry) = store_and_registry(&[
             in_project("pwf", record("PWF-9999")),
             in_project("config-handler", record("CFG-0001")),
@@ -1046,10 +1133,8 @@ mod tests {
             &store,
             &registry,
             &GetPendingWork {
-                order: OrderSpec {
-                    field: OrderField::ProjectId,
-                    direction: OrderDirection::Asc,
-                },
+                order: None,
+                mode: ListMode::ProjectRoute,
                 ..default_query()
             },
         )
@@ -1059,25 +1144,38 @@ mod tests {
     }
 
     #[test]
-    fn cap_none_keeps_all_items_and_cap_hides_the_rest() {
+    fn all_uncaps_and_direct_mode_uses_the_default_cap() {
         let (store, registry) =
             pwf_store((1..=12).map(|n| record(&format!("GLP-{n:04}"))).collect());
 
-        let all = run(&store, &registry, &default_query()).unwrap();
+        let all = run(
+            &store,
+            &registry,
+            &GetPendingWork {
+                all: true,
+                number: None,
+                ..default_query()
+            },
+        )
+        .unwrap();
         assert_eq!(all.items.len(), 12);
         assert_eq!(all.hidden, 0);
+        assert_eq!(all.status_filter, WorkItemStatusFilter::All);
+        assert!(all.grouped);
 
         let capped = run(
             &store,
             &registry,
             &GetPendingWork {
-                cap: Some(10),
+                number: None,
                 ..default_query()
             },
         )
         .unwrap();
         assert_eq!(capped.items.len(), 10);
         assert_eq!(capped.hidden, 2);
+        assert_eq!(capped.status_filter, WorkItemStatusFilter::default());
+        assert!(!capped.grouped);
     }
 
     #[test]
@@ -1113,12 +1211,13 @@ mod tests {
             &store,
             &registry,
             &GetPendingWork {
-                only_project: Some("pwf".to_string()),
+                project_identifier: Some("pwf".to_string()),
                 ..default_query()
             },
         )
         .unwrap();
 
         assert_eq!(listed_ids(&got), ["PWF-0001"]);
+        assert_eq!(got.project, Some(ProjectName::try_new("pwf").unwrap()));
     }
 }

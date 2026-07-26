@@ -1,4 +1,4 @@
-//! Creates and names one exact Codex thread through the app-server protocol.
+//! Creates and names one Codex thread through the app-server protocol.
 
 mod client;
 

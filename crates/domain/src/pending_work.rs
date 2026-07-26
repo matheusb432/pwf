@@ -1,4 +1,3 @@
-mod done_queue;
 mod effort;
 mod id;
 mod prereq;
@@ -8,10 +7,6 @@ mod tag;
 mod timestamp;
 mod title;
 
-pub use done_queue::{
-    CloseDecisions, MarkedEntry, QueueEntryView, ReopenDecision, close_decisions, is_futuro_label,
-    reopen_decision, section_cap,
-};
 pub use effort::EffortTier;
 pub use id::{WorkItemId, canonical_pending_id};
 pub use prereq::{ParsePrereqsError, Prereqs};

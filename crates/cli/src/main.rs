@@ -1,18 +1,21 @@
 use std::{
-    collections::BTreeMap,
     io::Write,
     path::{Path, PathBuf},
 };
 
 use pwf::{command, engines};
-use pwf_application::{pending_work::ProjectRegistry, project::Project};
+use pwf_application::{
+    pending_work::ProjectRegistry,
+    project::{
+        load_active::{ActiveProject, LoadActiveProjects},
+        resolve_runtime_path::{ResolveRuntimePath, ResolvedPath},
+    },
+};
 use pwf_domain::{pending_work::ProjectIndexIdentity, project::ProjectPrefix};
 use pwf_infra::{
     SqliteStore,
     obsidian::{ObsidianProject, ObsidianStore},
 };
-
-mod runtime_path;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
@@ -116,49 +119,33 @@ async fn open_database() -> Result<SqliteStore, String> {
 }
 
 async fn load_active_projects(database: &SqliteStore) -> Result<ActiveProjects, String> {
-    let projects = pwf_application::project::list::execute(
-        pwf_application::project::list::ListProjects {
-            include_paused: false,
+    let projects = pwf_application::project::load_active::execute(
+        LoadActiveProjects {
+            home: managed_project_home()?,
         },
         database,
     )
     .await
-    .map_err(|error| format!("listing active projects failed: {error}"))?;
-    let home = managed_project_home()?;
-    compose_active_projects(&projects, &home)
+    .map_err(|error| error.to_string())?;
+    Ok(compose_active_projects(&projects))
 }
 
-fn compose_active_projects(projects: &[Project], home: &Path) -> Result<ActiveProjects, String> {
-    let mut task_path_owners = BTreeMap::new();
-    let mut resolved_projects = Vec::with_capacity(projects.len());
-
-    for project in projects {
-        let source =
-            resolve_project_path(&project.id, "source", project.source.value().as_ref(), home)?;
-        let tasks = resolve_project_path(&project.id, "task", project.tasks.path().as_ref(), home)?;
-        if let Some(existing_id) =
-            task_path_owners.insert(tasks.identity().clone(), project.id.clone())
-        {
-            return Err(task_path_conflict(&existing_id, &project.id, tasks.path()));
-        }
-        resolved_projects.push((project, source, tasks));
-    }
-
-    let registry = ProjectRegistry::new(resolved_projects.iter().map(|(project, source, _)| {
+fn compose_active_projects(projects: &[ActiveProject]) -> ActiveProjects {
+    let registry = ProjectRegistry::new(projects.iter().map(|runtime| {
         (
-            project.title.clone(),
-            Some(source.path().to_string_lossy().into_owned()),
-            Some(project.id.to_string()),
+            runtime.project.title.clone(),
+            Some(runtime.source_path.to_string_lossy().into_owned()),
+            Some(runtime.project.id.to_string()),
         )
     }));
-    let store = ObsidianStore::new(resolved_projects.iter().map(|(project, _, tasks)| {
+    let store = ObsidianStore::new(projects.iter().map(|runtime| {
         ObsidianProject::new(
-            ProjectIndexIdentity::new(project.id.clone(), project.title.clone()),
-            tasks.path().to_path_buf(),
+            ProjectIndexIdentity::new(runtime.project.id.clone(), runtime.project.title.clone()),
+            runtime.tasks_path.clone(),
         )
     }));
 
-    Ok(ActiveProjects { registry, store })
+    ActiveProjects { registry, store }
 }
 
 fn project_command_home(
@@ -235,8 +222,12 @@ fn resolve_project_path(
     field: &'static str,
     path: &str,
     home: &Path,
-) -> Result<runtime_path::ResolvedPath, String> {
-    runtime_path::resolve(path, home).map_err(|error| {
+) -> Result<ResolvedPath, String> {
+    pwf_application::project::resolve_runtime_path::execute(&ResolveRuntimePath {
+        path: path.to_string(),
+        home: home.to_path_buf(),
+    })
+    .map_err(|error| {
         format!("managed project {project_id} {field} path '{path}' is invalid: {error}")
     })
 }
@@ -261,129 +252,4 @@ fn normalize_rich_help_aliases(argv: Vec<String>) -> Vec<String> {
         return vec!["--help".to_string()];
     }
     argv
-}
-
-#[cfg(test)]
-mod tests {
-    use std::path::Path;
-
-    use pwf_application::project::{add::AddProject, pause::PauseProject};
-    use pwf_domain::project::{
-        ProjectName, ProjectPrefix, ProjectSource, ProjectSourceKind, ProjectSourceValue,
-        ProjectTasks, ProjectTasksKind, ProjectTasksPath,
-    };
-
-    use super::{compose_active_projects, load_active_projects};
-
-    fn project(id: &str, title: &str, source: &str, tasks_path: &str) -> AddProject {
-        AddProject {
-            id: ProjectPrefix::try_new(id).unwrap(),
-            title: ProjectName::try_new(title).unwrap(),
-            source: ProjectSource::new(
-                ProjectSourceKind::Directory,
-                ProjectSourceValue::try_new(source).unwrap(),
-            ),
-            tasks: ProjectTasks::new(
-                ProjectTasksKind::Directory,
-                ProjectTasksPath::try_new(tasks_path).unwrap(),
-            ),
-        }
-    }
-
-    #[tokio::test]
-    async fn active_project_composition_expands_runtime_paths_without_changing_stored_values() {
-        let directory = tempfile::tempdir().unwrap();
-        let pool = pwf_infra::database::build_pool(&directory.path().join("projects.sqlite3"))
-            .await
-            .unwrap();
-        pwf_infra::database::migrate_database(&pool).await.unwrap();
-        let database = pwf_infra::SqliteStore::new(pool);
-        pwf_application::project::add::execute(
-            project("pwf", "pwf", "~/tools/pwf", "~/tasks/pwf"),
-            &database,
-        )
-        .await
-        .unwrap();
-        pwf_application::project::add::execute(
-            project("arc", "repository", "/work/repository", "/tasks/repository"),
-            &database,
-        )
-        .await
-        .unwrap();
-        pwf_application::project::pause::execute(
-            PauseProject {
-                id: ProjectPrefix::try_new("arc").unwrap(),
-            },
-            &database,
-        )
-        .await
-        .unwrap();
-
-        let runtime = load_active_projects(&database).await.unwrap();
-        let home = directories::BaseDirs::new()
-            .unwrap()
-            .home_dir()
-            .to_path_buf();
-        let pwf = runtime.registry.resolve("PWF").unwrap();
-        assert_eq!(
-            runtime.registry.repo_for(pwf),
-            Some(home.join("tools/pwf").to_string_lossy().as_ref())
-        );
-        assert_eq!(
-            runtime.store.tasks_path(pwf).unwrap(),
-            home.join("tasks/pwf")
-        );
-        assert!(runtime.registry.resolve("ARC").is_err());
-
-        let project = pwf_application::project::get::execute(
-            pwf_application::project::get::GetProject {
-                id: ProjectPrefix::try_new("pwf").unwrap(),
-            },
-            &database,
-        )
-        .await
-        .unwrap();
-        assert_eq!(project.source.value().as_ref(), "~/tools/pwf");
-        assert_eq!(project.tasks.path().as_ref(), "~/tasks/pwf");
-    }
-
-    #[test]
-    fn active_project_composition_rejects_runtime_task_path_aliases() {
-        let projects = [
-            persisted_project("pwf", "pwf", "/work/pwf", "~/tasks/shared"),
-            persisted_project("alt", "other", "/work/other", "/home/developer/tasks/shared"),
-        ];
-
-        let Err(error) = compose_active_projects(&projects, Path::new("/home/developer")) else {
-            panic!("runtime task path aliases were accepted");
-        };
-
-        assert_eq!(
-            error,
-            "managed projects ALT and PWF resolve to the same task location: \
-             /home/developer/tasks/shared"
-        );
-    }
-
-    fn persisted_project(
-        id: &str,
-        title: &str,
-        source: &str,
-        tasks_path: &str,
-    ) -> pwf_application::project::Project {
-        pwf_application::project::Project {
-            id: ProjectPrefix::try_new(id).unwrap(),
-            title: ProjectName::try_new(title).unwrap(),
-            source: ProjectSource::new(
-                ProjectSourceKind::Directory,
-                ProjectSourceValue::try_new(source).unwrap(),
-            ),
-            tasks: ProjectTasks::new(
-                ProjectTasksKind::Directory,
-                ProjectTasksPath::try_new(tasks_path).unwrap(),
-            ),
-            created_at: "2026-07-25T00:00:00.000Z".to_string(),
-            is_paused: false,
-        }
-    }
 }

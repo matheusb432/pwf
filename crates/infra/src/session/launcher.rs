@@ -1,4 +1,4 @@
-//! Owns concrete provider probes, launch preparation, and command previews.
+//! Probes providers and prepares session launches and command previews.
 
 mod argv;
 mod claude;
