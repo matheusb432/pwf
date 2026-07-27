@@ -1,26 +1,28 @@
-//! Test planning for workspace and binary suites.
-//!
-//! Unit and integration tests are the default. `--e2e` runs binary suites. `--all` runs both test
-//! scopes plus the architecture and ast-grep source gates. Steps run through the captured gate,
-//! which records full output to a log, prints a summary table, and emits the `RESULT` line.
-//! `--verbose` also streams each step's output live.
+//! Test runner and ordered E2E worker.
 
-use anyhow::Result;
+use std::ffi::OsString;
+
+use anyhow::{Context, Result};
 use clap::{Args, ValueEnum};
+use xtk_test::Run;
 
-use crate::{
-    gate::{self, Job, Kind},
-    paths, process,
-    task::Step,
-    verb::Verb,
-};
+use crate::{paths, process, project};
 
-/// Flags for the `test` verb. `--e2e`/`--all` are parse-time shorthands feeding `--scope`.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "CLI flags map directly to Clap arguments"
+)]
 #[derive(Args)]
 pub(crate) struct TestArgs {
-    /// Stream full tool logs live instead of the terse default.
+    /// Stream full test output live; the log still captures it.
     #[arg(long)]
     pub(crate) verbose: bool,
+    /// Emit one JSON report to stdout.
+    #[arg(long)]
+    pub(crate) json: bool,
+    /// Provide an evidence directory to E2E tests and save report.json.
+    #[arg(long)]
+    pub(crate) evidences: bool,
     /// Which part of the suite to run.
     #[arg(
         long,
@@ -37,7 +39,6 @@ pub(crate) struct TestArgs {
     all: bool,
 }
 
-/// Which part of the suite runs; clap parses `--scope` straight into this.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 pub(crate) enum Scope {
     Unit,
@@ -45,172 +46,84 @@ pub(crate) enum Scope {
     All,
 }
 
-/// Binary suites excluded from default `cargo test` by `test = false`.
-const E2E_TARGETS: &[&str] = &[
-    "-p",
-    "pwf",
-    "--test",
-    "cli_e2e",
-    "--test",
-    "help_cli",
-    "--test",
-    "project_cli",
-];
-const UNIT_TARGETS: &[&str] = &["--workspace"];
+pub(crate) fn run(arguments: &TestArgs) -> Result<()> {
+    let executable = std::env::current_exe()
+        .context("resolve the xtask executable")?
+        .into_os_string();
+    let declarations = selected_tests(arguments.scope, executable);
 
-/// Builds one quiet or uncaptured `cargo test` step for selected targets.
-fn cargo_test_step(label: &str, targets: &[&str], verbose: bool) -> Step {
-    let mut step = Step::new(label, "cargo", ["test"]);
+    Run::new(
+        arguments.scope.to_string(),
+        declarations
+            .into_iter()
+            .map(project::TestDeclaration::into_test),
+    )
+    .verbose(arguments.verbose)
+    .json(arguments.json)
+    .evidences_from_cargo_manifest(arguments.evidences, include_str!("../../Cargo.toml"))?
+    .execute()?;
+
+    Ok(())
+}
+
+pub(crate) fn run_e2e_worker(verbose: bool) -> Result<()> {
+    let binary = paths::repo_root()
+        .join("target")
+        .join("release")
+        .join(format!("pwf{}", std::env::consts::EXE_SUFFIX));
+    if !binary.is_file() {
+        process::run("cargo build", "cargo", &["build", "--release"])?;
+    }
+    let mut arguments = vec![
+        "test",
+        "-p",
+        "pwf",
+        "--test",
+        "cli_e2e",
+        "--test",
+        "project_cli",
+    ];
     if verbose {
-        step = step
-            .with_arguments(targets.iter().copied())
-            .with_arguments(["--", "--nocapture"]);
+        arguments.extend(["--", "--nocapture"]);
     } else {
-        step = step
-            .with_arguments(["--quiet"])
-            .with_arguments(targets.iter().copied());
+        arguments.insert(1, "--quiet");
     }
-    step
+    process::run("binary E2E suites", "cargo", &arguments)
 }
 
-/// Builds ordered test and gate steps for a scope, each paired with its count [`Kind`].
-fn plan(scope: Scope, verbose: bool) -> Vec<(Step, Kind)> {
-    let unit = || (cargo_test_step("test", UNIT_TARGETS, verbose), Kind::Cargo);
-    let e2e = || {
-        (
-            cargo_test_step("test:e2e", E2E_TARGETS, verbose),
-            Kind::Cargo,
-        )
-    };
+fn selected_tests(scope: Scope, executable: OsString) -> Vec<project::TestDeclaration> {
     match scope {
-        Scope::Unit => vec![unit()],
-        Scope::E2e => vec![e2e()],
-        Scope::All => vec![
-            unit(),
-            e2e(),
-            (check_architecture_step(), Kind::Plain),
-            (ast_rules_test_step(), Kind::Plain),
-            (ast_rules_scan_step(), Kind::Plain),
-        ],
+        Scope::Unit => project::tests_unit(),
+        Scope::E2e => project::tests_e2e(executable),
+        Scope::All => project::tests_all(executable),
     }
 }
 
-/// Builds the architecture-gate step used by the full suite.
-fn check_architecture_step() -> Step {
-    Step::new(
-        "check-architecture",
-        "cargo",
-        ["run", "--quiet", "-p", "xtask", "--", "check-architecture"],
-    )
-}
-
-/// Builds the step validating every `rules/` policy against its `rule-tests/` cases.
-///
-/// Snapshot comparison stays off: the cases assert only that valid snippets pass and invalid
-/// snippets are flagged, not exact match spans.
-fn ast_rules_test_step() -> Step {
-    Step::new(
-        "test:ast-rules",
-        "ast-grep",
-        ["test", "--skip-snapshot-tests"],
-    )
-}
-
-/// Builds the ast-grep source gate enforcing every `rules/` policy on the tree.
-pub(super) fn ast_rules_scan_step() -> Step {
-    Step::new("check-ast-rules", "ast-grep", ["scan"])
-}
-
-/// Runs a test scope through the captured gate, building the release binary first when a binary
-/// suite needs it.
-pub(crate) fn run(scope: Scope, verbose: bool) -> Result<()> {
-    if matches!(scope, Scope::E2e | Scope::All) {
-        let bin = paths::repo_root()
-            .join("target")
-            .join("release")
-            .join("pwf");
-        if !bin.is_file() {
-            process::run("cargo build", "cargo", &["build", "--release"])?;
-        }
+impl std::fmt::Display for Scope {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Unit => "unit",
+            Self::E2e => "e2e",
+            Self::All => "all",
+        })
     }
-    let jobs = plan(scope, verbose)
-        .into_iter()
-        .map(|(step, kind)| Job::new(step, kind))
-        .collect::<Vec<_>>();
-    gate::run(Verb::TEST.as_str(), &jobs, verbose)
+}
+
+#[cfg(test)]
+fn selected_test_labels(scope: Scope) -> Vec<&'static str> {
+    selected_tests(scope, "xtask".into())
+        .iter()
+        .map(project::TestDeclaration::label)
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use clap::Parser;
 
     use super::*;
-
-    fn argv(step: &Step) -> Vec<&str> {
-        step.arguments().iter().map(String::as_str).collect()
-    }
-
-    #[test]
-    fn unit_default_is_terse() {
-        let steps = plan(Scope::Unit, false);
-        assert_eq!(steps.len(), 1);
-        assert_eq!(argv(&steps[0].0), ["test", "--quiet", "--workspace"]);
-        assert!(matches!(steps[0].1, Kind::Cargo));
-    }
-
-    #[test]
-    fn verbose_drops_quiet_and_adds_nocapture() {
-        let steps = plan(Scope::Unit, true);
-        assert_eq!(
-            argv(&steps[0].0),
-            ["test", "--workspace", "--", "--nocapture"]
-        );
-    }
-
-    #[test]
-    fn e2e_selects_the_binary_suites() {
-        let steps = plan(Scope::E2e, false);
-        assert_eq!(
-            argv(&steps[0].0),
-            [
-                "test",
-                "--quiet",
-                "-p",
-                "pwf",
-                "--test",
-                "cli_e2e",
-                "--test",
-                "help_cli",
-                "--test",
-                "project_cli"
-            ]
-        );
-    }
-
-    #[test]
-    fn all_runs_unit_then_e2e_then_the_gates() {
-        let steps = plan(Scope::All, false);
-        assert_eq!(steps.len(), 5);
-        assert_eq!(argv(&steps[0].0), ["test", "--quiet", "--workspace"]);
-        assert!(argv(&steps[1].0).contains(&"cli_e2e"));
-        assert_eq!(
-            argv(&steps[2].0),
-            ["run", "--quiet", "-p", "xtask", "--", "check-architecture"]
-        );
-        assert_eq!(argv(&steps[3].0), ["test", "--skip-snapshot-tests"]);
-        assert_eq!(argv(&steps[4].0), ["scan"]);
-        for (_, kind) in &steps[2..] {
-            assert!(matches!(kind, Kind::Plain));
-        }
-    }
-
-    #[test]
-    fn gates_stay_out_of_the_slim_scopes() {
-        for scope in [Scope::Unit, Scope::E2e] {
-            let steps = plan(scope, false);
-            assert_eq!(steps.len(), 1);
-        }
-    }
 
     #[derive(Parser)]
     struct Harness {
@@ -219,19 +132,29 @@ mod tests {
     }
 
     #[test]
-    fn shorthands_and_conflicts() {
+    fn scopes_select_the_owned_declarations() {
+        assert_eq!(selected_test_labels(Scope::Unit), ["unit"]);
+        assert_eq!(selected_test_labels(Scope::E2e), ["e2e"]);
         assert_eq!(
-            Harness::try_parse_from(["t"]).unwrap().args.scope,
-            Scope::Unit
+            selected_test_labels(Scope::All),
+            ["unit", "e2e", "architecture", "ast-rules", "ast-scan"]
         );
-        assert_eq!(
-            Harness::try_parse_from(["t", "--e2e"]).unwrap().args.scope,
-            Scope::E2e
-        );
-        assert_eq!(
-            Harness::try_parse_from(["t", "--all"]).unwrap().args.scope,
-            Scope::All
-        );
+    }
+
+    #[test]
+    fn shorthands_flags_and_conflicts_parse_at_the_cli_boundary() {
+        let arguments = Harness::try_parse_from(["t", "--e2e", "--json", "--evidences"])
+            .unwrap()
+            .args;
+        assert_eq!(arguments.scope, Scope::E2e);
+        assert!(arguments.json);
+        assert!(arguments.evidences);
         assert!(Harness::try_parse_from(["t", "--e2e", "--all"]).is_err());
+        assert!(Harness::try_parse_from(["t", "--scope", "unit", "--all"]).is_err());
+    }
+
+    #[test]
+    fn e2e_timeout_exceeds_the_runner_default() {
+        assert!(project::E2E_TIMEOUT > Duration::from_mins(30));
     }
 }

@@ -10,14 +10,16 @@ use super::{Agent, ModelTierCatalog, ModelTierLookup};
 /// Reports invalid effort values and incomplete model-tier configuration.
 #[derive(Debug, Error)]
 pub(super) enum ModelSelectionError {
-    #[error("item {task_id} has an invalid effort value '{value}' (expected an integer 1-4).")]
+    #[error(
+        "item {task_id} has an invalid effort value '{value}' (expected low, medium, high, or highest)."
+    )]
     InvalidEffort { task_id: String, value: String },
     #[error("{0}")]
     Catalog(#[source] Box<dyn Error + Send + Sync>),
     #[error("tier {tier} has no [tiers.{tier}] entry in {catalog}")]
-    MissingTier { tier: u8, catalog: String },
+    MissingTier { tier: EffortTier, catalog: String },
     #[error("tier {tier} in {catalog} has no claude_model set")]
-    MissingClaudeModel { tier: u8, catalog: String },
+    MissingClaudeModel { tier: EffortTier, catalog: String },
 }
 
 pub(super) fn resolve_model<C>(
@@ -39,7 +41,6 @@ where
         task_id: task_id.to_string(),
         value: raw_effort.to_string(),
     })?;
-    let tier_number = u8::from(tier);
     let ModelTierLookup {
         catalog,
         tier: entry,
@@ -47,25 +48,16 @@ where
         .tier(tier)
         .map_err(|error| ModelSelectionError::Catalog(Box::new(error)))?;
     let Some(entry) = entry else {
-        return Err(ModelSelectionError::MissingTier {
-            tier: tier_number,
-            catalog,
-        });
+        return Err(ModelSelectionError::MissingTier { tier, catalog });
     };
     let model = entry
         .claude_model
-        .ok_or(ModelSelectionError::MissingClaudeModel {
-            tier: tier_number,
-            catalog,
-        })?;
+        .ok_or(ModelSelectionError::MissingClaudeModel { tier, catalog })?;
     Ok(if model.is_empty() { None } else { Some(model) })
 }
 
 fn parse_effort(raw: &str) -> Option<EffortTier> {
-    raw.trim()
-        .parse::<u8>()
-        .ok()
-        .and_then(|value| EffortTier::try_from(value).ok())
+    raw.trim().parse().ok()
 }
 
 #[cfg(test)]
@@ -115,11 +107,16 @@ mod tests {
     }
 
     #[test]
-    fn effort_text_decodes_only_the_valid_tier_range() {
-        for value in 1..=4 {
-            assert_eq!(u8::from(parse_effort(&value.to_string()).unwrap()), value);
+    fn effort_text_decodes_only_plain_english_names() {
+        for (raw, expected) in [
+            ("low", EffortTier::Low),
+            ("medium", EffortTier::Medium),
+            ("high", EffortTier::High),
+            ("highest", EffortTier::Highest),
+        ] {
+            assert_eq!(parse_effort(raw), Some(expected));
         }
-        for raw in ["0", "5", "abc", ""] {
+        for raw in ["1", "4", "abc", ""] {
             assert!(parse_effort(raw).is_none());
         }
     }
@@ -170,7 +167,7 @@ mod tests {
             &catalog(Some("sonnet")),
             Agent::Claude,
             "PWF-0001",
-            Some("3"),
+            Some("high"),
         )
         .unwrap();
 
@@ -179,8 +176,13 @@ mod tests {
 
     #[test]
     fn empty_claude_model_is_the_no_override_sentinel() {
-        let model =
-            resolve_model(&catalog(Some("")), Agent::Claude, "PWF-0001", Some("2")).unwrap();
+        let model = resolve_model(
+            &catalog(Some("")),
+            Agent::Claude,
+            "PWF-0001",
+            Some("medium"),
+        )
+        .unwrap();
 
         assert_eq!(model, None);
     }
@@ -191,8 +193,8 @@ mod tests {
             result: Err(CatalogError("catalog unavailable")),
         };
 
-        let error =
-            resolve_model(&unavailable_catalog, Agent::Claude, "PWF-0001", Some("1")).unwrap_err();
+        let error = resolve_model(&unavailable_catalog, Agent::Claude, "PWF-0001", Some("low"))
+            .unwrap_err();
 
         assert_eq!(error.source().unwrap().to_string(), "catalog unavailable");
     }
@@ -206,27 +208,37 @@ mod tests {
             }),
         };
 
-        let error = resolve_model(&missing, Agent::Claude, "PWF-0001", Some("4")).unwrap_err();
+        let error =
+            resolve_model(&missing, Agent::Claude, "PWF-0001", Some("highest")).unwrap_err();
 
-        assert_matches!(&error, ModelSelectionError::MissingTier { tier: 4, .. });
+        assert_matches!(
+            &error,
+            ModelSelectionError::MissingTier {
+                tier: EffortTier::Highest,
+                ..
+            }
+        );
         assert_eq!(
             error.to_string(),
-            format!("tier 4 has no [tiers.4] entry in {CATALOG_PATH}")
+            format!("tier highest has no [tiers.highest] entry in {CATALOG_PATH}")
         );
     }
 
     #[test]
     fn missing_claude_model_is_an_application_error() {
         let error =
-            resolve_model(&catalog(None), Agent::Claude, "PWF-0001", Some("4")).unwrap_err();
+            resolve_model(&catalog(None), Agent::Claude, "PWF-0001", Some("highest")).unwrap_err();
 
         assert_matches!(
             &error,
-            ModelSelectionError::MissingClaudeModel { tier: 4, .. }
+            ModelSelectionError::MissingClaudeModel {
+                tier: EffortTier::Highest,
+                ..
+            }
         );
         assert_eq!(
             error.to_string(),
-            format!("tier 4 in {CATALOG_PATH} has no claude_model set")
+            format!("tier highest in {CATALOG_PATH} has no claude_model set")
         );
     }
 }

@@ -156,7 +156,7 @@ mod tests {
             "--tag",
             "architecture",
             "--effort",
-            "3",
+            "high",
             "--date",
             "2026-07-20",
         ]) else {
@@ -166,7 +166,10 @@ mod tests {
         assert_eq!(arguments.prompt, ["keep", "typed"]);
         assert_eq!(arguments.title.as_deref(), Some("Typed CLI"));
         assert_eq!(arguments.tag, ["architecture"]);
-        assert_eq!(arguments.effort, Some(3));
+        assert_eq!(
+            arguments.effort.map(Into::into),
+            Some(pwf_domain::pending_work::EffortTier::High)
+        );
         assert_eq!(arguments.common.date.as_deref(), Some("2026-07-20"));
     }
 
@@ -181,7 +184,7 @@ mod tests {
             "-n",
             "2",
             "--effort",
-            "3",
+            "high",
             "--tag",
             "rust",
             "-o",
@@ -194,7 +197,10 @@ mod tests {
         assert_eq!(arguments.project.as_deref(), Some("pwf"));
         assert!(arguments.long && arguments.all);
         assert_eq!(arguments.number, Some(2));
-        assert_eq!(arguments.effort, Some(3));
+        assert_eq!(
+            arguments.effort.map(Into::into),
+            Some(pwf_domain::pending_work::EffortTier::High)
+        );
         assert_eq!(arguments.tag, ["rust"]);
         assert_eq!(
             arguments.order,
@@ -265,7 +271,7 @@ mod tests {
             "--append-report",
             "done",
             "--effort",
-            "4",
+            "highest",
         ]) else {
             panic!("expected update");
         };
@@ -275,7 +281,25 @@ mod tests {
         assert_eq!(arguments.tag, ["rust"]);
         assert_eq!(arguments.commits, ["a..b"]);
         assert_eq!(arguments.append_report.as_deref(), Some("done"));
-        assert_eq!(arguments.effort, Some(4));
+        assert_eq!(
+            arguments.effort.map(Into::into),
+            Some(pwf_domain::pending_work::EffortTier::Highest)
+        );
+    }
+
+    #[test]
+    fn numeric_effort_tiers_are_rejected() {
+        let error = parse_argv(
+            ["add", "pwf", "do work", "--effort", "3"]
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
+        )
+        .unwrap_err();
+
+        assert_eq!(error.kind(), clap::error::ErrorKind::InvalidValue);
+        let rendered = error.to_string();
+        assert!(rendered.contains("possible values: low, medium, high, highest"));
     }
 
     #[test]
@@ -351,6 +375,46 @@ mod tests {
         assert_eq!(
             route.status.expect("explicit --status").filter(),
             pwf_application::pending_work::StatusFilter::All
+        );
+    }
+
+    #[test]
+    fn session_effort_defaults_and_parses_named_values() {
+        let pending_work::Command::Session(defaulted) = pending_work(&["session", "PWF-0001"])
+        else {
+            panic!("expected session");
+        };
+        assert_eq!(
+            pwf_application::pending_work::session::SessionEffort::from(defaulted.effort),
+            pwf_application::pending_work::session::SessionEffort::High
+        );
+
+        let pending_work::Command::Session(explicit) =
+            pending_work(&["session", "PWF-0001", "--effort", "xhigh"])
+        else {
+            panic!("expected session");
+        };
+        assert_eq!(
+            pwf_application::pending_work::session::SessionEffort::from(explicit.effort),
+            pwf_application::pending_work::session::SessionEffort::XHigh
+        );
+    }
+
+    #[test]
+    fn session_rejects_non_portable_effort_values() {
+        let error = parse_argv(
+            ["session", "PWF-0001", "--effort", "highest"]
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
+        )
+        .unwrap_err();
+
+        assert_eq!(error.kind(), clap::error::ErrorKind::InvalidValue);
+        assert!(
+            error
+                .to_string()
+                .contains("possible values: low, medium, high, xhigh")
         );
     }
 

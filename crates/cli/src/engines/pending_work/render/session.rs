@@ -82,6 +82,7 @@ pub(in crate::engines::pending_work) fn render_dry_run(
 task: {}\n\
 agent: {agent}\n\
 model: {}\n\
+effort: {}\n\
 repository: {}\n\
 {target}\n\
 command: {}\n\
@@ -89,6 +90,7 @@ nothing dispatched.\n",
         plan.launch.task_id,
         plan.launch.title,
         plan.launch.model.as_deref().unwrap_or("default"),
+        plan.launch.effort,
         plan.launch.repository,
         render_argv(argv),
     )
@@ -97,7 +99,8 @@ nothing dispatched.\n",
 #[cfg(test)]
 mod tests {
     use pwf_application::pending_work::session::{
-        Agent, DispatchTarget, dispatch_session::DispatchSessionOk,
+        Agent, AgentLaunch, DispatchMode, DispatchTarget, SessionEffort, SessionPlan,
+        dispatch_session::DispatchSessionOk,
     };
 
     use super::*;
@@ -161,5 +164,37 @@ mod tests {
             ),
             "# session PWF-0001 — ran inline\n"
         );
+    }
+
+    #[test]
+    fn dry_run_renders_reasoning_effort() {
+        let plan = SessionPlan {
+            launch: AgentLaunch {
+                agent: Agent::Codex,
+                task_id: "PWF-0001".into(),
+                title: "PWF-0001 - reason carefully".into(),
+                repository: "/repo".into(),
+                prompt: "Inspect PWF-0001.".into(),
+                model: None,
+                effort: SessionEffort::High,
+            },
+            mode: DispatchMode::Inline,
+            target: target(),
+        };
+
+        let out = render_dry_run(
+            &plan,
+            &[
+                "codex".into(),
+                "resume".into(),
+                "-c".into(),
+                "model_reasoning_effort=\"high\"".into(),
+                "<thread-id returned by thread/start>".into(),
+                "--".into(),
+                "Inspect PWF-0001.".into(),
+            ],
+        );
+
+        assert!(out.contains("effort: high"));
     }
 }

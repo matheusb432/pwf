@@ -1,6 +1,8 @@
 //! Implements provider, process, and configuration adapters for sessions.
 
+mod claude_effort;
 mod codex_app_server;
+mod codex_reasoning_effort;
 mod inline;
 mod launcher;
 mod model_tiers;

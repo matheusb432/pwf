@@ -1,5 +1,6 @@
 //! Semantic session values shared by operations and adapters.
 
+use super::session_effort::SessionEffort;
 use crate::pending_work::PendingWorkItemView;
 
 /// Selects a supported agent.
@@ -32,6 +33,7 @@ pub struct AgentLaunch {
     pub repository: String,
     pub prompt: String,
     pub model: Option<String>,
+    pub effort: SessionEffort,
 }
 impl AgentLaunch {
     pub fn new(
@@ -40,6 +42,7 @@ impl AgentLaunch {
         directives: LaunchDirectives,
         agent: Agent,
         model: Option<String>,
+        effort: SessionEffort,
     ) -> Self {
         AgentLaunch {
             agent,
@@ -48,6 +51,7 @@ impl AgentLaunch {
             repository: item.repo.clone().unwrap_or_default(),
             prompt: super::launch::launch_prompt(task_content, &item.id, directives),
             model,
+            effort,
         }
     }
 }
@@ -77,6 +81,7 @@ pub struct DispatchConfirmation {
     pub agent: Agent,
     pub directives: LaunchDirectives,
     pub model: String,
+    pub effort: SessionEffort,
     pub target: DispatchTarget,
 }
 

@@ -7,7 +7,7 @@ use pwf_application::pending_work::{
 use pwf_infra::obsidian::ObsidianStore;
 
 use super::{
-    common::{CommonArguments, PendingWorkError, SectionChoice, StatusChoice},
+    common::{CommonArguments, EffortChoice, PendingWorkError, SectionChoice, StatusChoice},
     render::render_list,
 };
 use crate::console::Console;
@@ -30,9 +30,9 @@ pub struct Arguments {
     /// Cap to N listed items, N >= 1 [default: 10, or unlimited under `--all`].
     #[arg(short = 'n', long, value_name = "N", value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..=100_000))]
     pub(crate) number: Option<usize>,
-    /// Show only items tagged with this exact effort/complexity tier (1-4).
-    #[arg(long, value_parser = clap::value_parser!(u8).range(1..=4))]
-    pub(crate) effort: Option<u8>,
+    /// Show only items tagged with this exact effort/complexity tier.
+    #[arg(long, value_enum)]
+    pub(crate) effort: Option<EffortChoice>,
     /// Discovery tag filter; repeat or comma-separate for several. Every requested tag must
     /// match.
     #[arg(long, allow_hyphen_values = true)]
@@ -92,7 +92,7 @@ pub(super) fn run(
             }),
             all: arguments.all,
             number: arguments.number,
-            effort: arguments.effort,
+            effort: arguments.effort.map(Into::into),
             tags: arguments.tag.clone(),
             order: arguments.order,
             status: arguments.status.map(StatusChoice::filter),

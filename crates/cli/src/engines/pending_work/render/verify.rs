@@ -119,13 +119,13 @@ mod tests {
         result.task_id = Some("PWF-0002".to_string());
         result
             .issues
-            .push("tier 4 has no claude_model set".to_string());
+            .push("tier highest has no claude_model set".to_string());
         let out = render_verify(&result);
         assert!(
             out.starts_with("# verify PWF-0002 \u{2014} fail"),
             "got: {out}"
         );
         assert!(out.contains("launchable: no"));
-        assert!(out.contains("- tier 4 has no claude_model set"));
+        assert!(out.contains("- tier highest has no claude_model set"));
     }
 }

@@ -2,7 +2,7 @@ use clap::Args;
 use pwf_application::pending_work::{
     ProjectRegistry,
     session::{
-        Agent, AgentProbe, DispatchMode, LaunchDirectives, PlanSessionIntent,
+        Agent, AgentProbe, DispatchMode, LaunchDirectives, PlanSessionIntent, SessionEffort,
         dispatch_session::{self, DispatchSession, DispatchSessionOk},
         plan_session::{self, PlanSession, PlanSessionOk},
     },
@@ -67,6 +67,9 @@ pub struct Arguments {
     /// configuration.
     #[arg(long, short = 'm')]
     pub(crate) model: Option<String>,
+    /// Reasoning effort for the dispatched agent session.
+    #[arg(long, value_enum, default_value_t = SessionEffortChoice::default())]
+    pub(crate) effort: SessionEffortChoice,
     #[command(flatten)]
     pub(crate) common: CommonArguments,
 }
@@ -77,6 +80,27 @@ pub enum ColorChoice {
     Auto,
     Always,
     Never,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
+pub(crate) enum SessionEffortChoice {
+    Low,
+    Medium,
+    #[default]
+    High,
+    #[value(name = "xhigh")]
+    XHigh,
+}
+
+impl From<SessionEffortChoice> for SessionEffort {
+    fn from(choice: SessionEffortChoice) -> Self {
+        match choice {
+            SessionEffortChoice::Low => Self::Low,
+            SessionEffortChoice::Medium => Self::Medium,
+            SessionEffortChoice::High => Self::High,
+            SessionEffortChoice::XHigh => Self::XHigh,
+        }
+    }
 }
 
 pub(super) fn run(
@@ -107,6 +131,7 @@ pub(super) fn run(
         },
         agent,
         model_override: arguments.model.clone().into(),
+        effort: arguments.effort.into(),
     };
     let planned = plan_session::execute(
         &request,

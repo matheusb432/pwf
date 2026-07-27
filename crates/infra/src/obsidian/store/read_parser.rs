@@ -4,10 +4,6 @@ use regex::Regex;
 
 static SECTION_HEADER_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?m)^##\s+(?P<name>.+?)\s*$").expect("valid section regex"));
-static LINK_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?m)^\s*-\s*(?:\[ \]\s*)?\[\[(?P<id>[A-Z]{2,4}-\d{4})(?:\|[^\]]+)?\]\].*$")
-        .expect("valid item link regex")
-});
 static INLINE_LEGACY_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"(?m)^(?P<indent>[ \t]*)- \[ \] `(?P<session>[^`]+)`\s*(?:<-+|::)\s*(?P<prompt>.+?)\s*$",
@@ -21,12 +17,6 @@ static FENCED_SESSION_RE: LazyLock<Regex> = LazyLock::new(|| {
     .expect("valid fenced legacy regex")
 });
 
-/// Contains an open index wikilink and its source offset.
-pub(super) struct LinkEntry {
-    pub(super) id: String,
-    pub(super) start: usize,
-}
-
 /// Contains an inline prompt and its source offset.
 pub(super) struct InlineEntry {
     pub(super) session: String,
@@ -34,23 +24,14 @@ pub(super) struct InlineEntry {
     pub(super) start: usize,
 }
 
-/// Scans open wikilinks and inline prompts in document order.
+/// Scans inline prompts in document order.
 ///
 /// An inline prompt's one-based rank becomes its ordinal identity.
 pub(super) struct IndexScan {
-    pub(super) links: Vec<LinkEntry>,
     pub(super) inline: Vec<InlineEntry>,
 }
 
 pub(super) fn scan_index(text: &str) -> IndexScan {
-    let links = LINK_RE
-        .captures_iter(text)
-        .map(|captures| LinkEntry {
-            id: captures["id"].to_string(),
-            start: captures.get(0).expect("whole match").start(),
-        })
-        .collect();
-
     let mut inline: Vec<InlineEntry> = INLINE_LEGACY_RE
         .captures_iter(text)
         .chain(FENCED_SESSION_RE.captures_iter(text))
@@ -62,7 +43,7 @@ pub(super) fn scan_index(text: &str) -> IndexScan {
         .collect();
     inline.sort_by_key(|entry| entry.start);
 
-    IndexScan { links, inline }
+    IndexScan { inline }
 }
 
 /// Returns the raw trimmed H2 label governing `offset`, if any.

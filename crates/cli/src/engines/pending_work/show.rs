@@ -3,12 +3,14 @@ use pwf_application::{
     AppRecordStore, NoteMarkdownSource, PendingWorkItem,
     pending_work::{
         ProjectRegistry, ShowOutput,
-        show_pending_work_item::{self, ShowPendingWorkItem},
+        show_pending_work_item::{self, ShowPendingWorkItem, ShowPendingWorkItemOutput},
     },
 };
 use pwf_infra::obsidian::ObsidianStore;
 
 use super::common::{CommonArguments, Identifier};
+
+mod output;
 
 #[derive(Args, Debug)]
 pub struct Arguments {
@@ -17,6 +19,9 @@ pub struct Arguments {
     /// Print the item's note path instead of the note markdown.
     #[arg(long)]
     pub(crate) path: bool,
+    /// Print typed task data as JSON.
+    #[arg(long, conflicts_with = "path")]
+    pub(crate) json: bool,
     #[command(flatten)]
     pub(crate) common: CommonArguments,
 }
@@ -48,9 +53,23 @@ where
     let id = lookup_id(args)?;
     let output = if args.path {
         ShowOutput::Path
+    } else if args.json {
+        ShowOutput::Json
     } else {
         ShowOutput::Markdown
     };
-    show_pending_work_item::execute(&ShowPendingWorkItem { id, output }, store, projects, store)
-        .map_err(|error| PendingWorkError::ApplicationRead(error.to_string()))
+    let shown = show_pending_work_item::execute(
+        &ShowPendingWorkItem { id, output },
+        store,
+        projects,
+        store,
+    )
+    .map_err(|error| PendingWorkError::ApplicationRead(error.to_string()))?;
+    match shown {
+        ShowPendingWorkItemOutput::Markdown(markdown) => Ok(markdown),
+        ShowPendingWorkItemOutput::Path(path) => Ok(path),
+        ShowPendingWorkItemOutput::Json(task) => {
+            output::json(*task).map_err(PendingWorkError::ApplicationRead)
+        }
+    }
 }

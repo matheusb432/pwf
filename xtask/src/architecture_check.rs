@@ -815,6 +815,45 @@ operation_dsl! {
         );
     }
 
+    #[test]
+    fn source_policy_excludes_only_the_reusable_test_runner_package() {
+        let workspace = workspace_with_dependencies("", "");
+        fs::write(
+            workspace.path().join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/*\", \"xtask\", \"xtask/xtk_test\"]\nresolver = \"3\"\n",
+        )
+        .expect("workspace manifest");
+        for (directory, package) in [("xtask", "xtask"), ("xtask/xtk_test", "xtk_test")] {
+            let root = workspace.path().join(directory);
+            fs::create_dir_all(root.join("src")).expect("package source directory");
+            fs::write(
+                root.join("Cargo.toml"),
+                format!(
+                    "[package]\nname = \"{package}\"\nversion = \"0.1.0\"\nedition = \"2024\"\n"
+                ),
+            )
+            .expect("package manifest");
+            fs::write(
+                root.join("src/lib.rs"),
+                "fn inspect() { assert_eq!(execute(command), expected); }\n",
+            )
+            .expect("package source");
+        }
+
+        let violations = run(workspace.path()).unwrap().unwrap_err();
+
+        assert_eq!(
+            violations.len(),
+            1,
+            "{:?}",
+            violations
+                .iter()
+                .map(|violation| &violation.relative_path)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(violations[0].relative_path, "xtask/src/lib.rs");
+    }
+
     #[cfg(unix)]
     #[test]
     fn source_discovery_includes_symlinked_rust_files() {

@@ -434,10 +434,10 @@ mod tests {
     #[test]
     fn long_form_shows_effort_line_when_present() {
         let mut item = sample_item();
-        item.effort = Some("3".to_string());
+        item.effort = Some("high".to_string());
         let mut out = String::new();
         render_list_item(&mut out, &item, StatusFilter::default(), true, true, false);
-        assert!(out.contains("  effort: 3\n"), "got: {out}");
+        assert!(out.contains("  effort: high\n"), "got: {out}");
     }
 
     #[test]

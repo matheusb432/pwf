@@ -58,6 +58,8 @@ fn test_exposes_its_flags() {
         .assert()
         .success()
         .stdout(predicate::str::contains("--verbose"))
+        .stdout(predicate::str::contains("--json"))
+        .stdout(predicate::str::contains("--evidences"))
         .stdout(predicate::str::contains("--scope"))
         .stdout(predicate::str::contains("unit, e2e, all"))
         .stdout(predicate::str::contains("--e2e"))

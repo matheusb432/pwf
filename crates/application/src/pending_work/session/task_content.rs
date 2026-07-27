@@ -2,7 +2,9 @@ use crate::{
     AppRecordStore, NoteMarkdownSource, PendingWorkItem,
     pending_work::{
         project_registry::ProjectRegistry,
-        show_pending_work_item::{self, ShowOutput, ShowPendingWorkError, ShowPendingWorkItem},
+        show_pending_work_item::{
+            self, ShowOutput, ShowPendingWorkError, ShowPendingWorkItem, ShowPendingWorkItemOutput,
+        },
     },
 };
 
@@ -12,7 +14,7 @@ pub(super) fn load(
     projects: &ProjectRegistry,
     markdown_source: &impl NoteMarkdownSource,
 ) -> Result<String, ShowPendingWorkError> {
-    show_pending_work_item::execute(
+    let output = show_pending_work_item::execute(
         &ShowPendingWorkItem {
             id: id.to_string(),
             output: ShowOutput::Markdown,
@@ -20,5 +22,9 @@ pub(super) fn load(
         store,
         projects,
         markdown_source,
-    )
+    )?;
+    let ShowPendingWorkItemOutput::Markdown(markdown) = output else {
+        unreachable!("Markdown request returned a different representation")
+    };
+    Ok(markdown)
 }

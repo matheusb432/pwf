@@ -1,11 +1,11 @@
-[tiers.1]
+[tiers.low]
 claude_model = "sonnet"
 
-[tiers.2]
+[tiers.medium]
 claude_model = "opus"
 
-[tiers.3]
+[tiers.high]
 claude_model = "opus"
 
-[tiers.4]
+[tiers.highest]
 claude_model = "opus"

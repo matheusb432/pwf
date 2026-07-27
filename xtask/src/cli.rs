@@ -50,6 +50,13 @@ pub(crate) enum Command {
     /// `--e2e`/`--all`).
     #[command(name = Verb::TEST.as_str())]
     Test(TestArgs),
+    /// Build the release binary when needed, then run the binary suites.
+    #[command(hide = true)]
+    E2eWorker {
+        /// Stream Cargo test output from the worker.
+        #[arg(long)]
+        verbose: bool,
+    },
     /// Run the full test preflight and build the release binary.
     #[command(name = Verb::SHIP.as_str())]
     Ship,

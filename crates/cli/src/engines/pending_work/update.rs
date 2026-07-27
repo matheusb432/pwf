@@ -8,7 +8,7 @@ use pwf_application::{
 };
 use pwf_infra::obsidian::ObsidianStore;
 
-use super::common::{CommonArguments, Identifier};
+use super::common::{CommonArguments, EffortChoice, Identifier};
 
 #[derive(Args, Debug)]
 pub struct Arguments {
@@ -45,9 +45,9 @@ pub struct Arguments {
     /// Goals/Context/Constraints/Done When sections; open items only.
     #[arg(short = 'a', long, conflicts_with = "prompt")]
     pub(crate) append: Option<String>,
-    /// Effort tier (1=easy .. 4=xhard); open items only.
-    #[arg(long, value_parser = clap::value_parser!(u8).range(1..=4))]
-    pub(crate) effort: Option<u8>,
+    /// Effort tier; open items only.
+    #[arg(long, value_enum)]
+    pub(crate) effort: Option<EffortChoice>,
     #[command(flatten)]
     pub(crate) common: CommonArguments,
 }
@@ -84,7 +84,7 @@ pub(in crate::engines::pending_work) fn run_update(
             clear_prereq: args.clear_prereq,
             commits: args.commits.clone(),
             append_report: args.append_report.clone(),
-            effort: args.effort,
+            effort: args.effort.map(Into::into),
             tags: args.tag.clone(),
             tags_clear: args.tags_clear,
         },

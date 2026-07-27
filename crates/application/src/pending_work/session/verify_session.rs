@@ -2,7 +2,9 @@
 
 use thiserror::Error;
 
-use super::{Agent, ModelTierCatalog, VerifySessionOk, model::AgentModel, task_content};
+use super::{
+    Agent, ModelTierCatalog, SessionEffort, VerifySessionOk, model::AgentModel, task_content,
+};
 use crate::{
     AppRecordStore, NoteMarkdownSource, PendingWorkItem,
     pending_work::{
@@ -72,6 +74,7 @@ pub fn execute(
         super::LaunchDirectives::default(),
         query.agent,
         model,
+        SessionEffort::default(),
     );
     let mut issues = item.issues;
     let mut launchable = item.launchable;
@@ -147,7 +150,7 @@ mod tests {
             completed: None,
             commits: None,
             tags: None,
-            effort: Some("4".to_string()),
+            effort: Some("highest".to_string()),
             prereq: None,
             section: None,
             body: "tbd".to_string(),

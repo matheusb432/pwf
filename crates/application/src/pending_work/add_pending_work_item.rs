@@ -1,6 +1,6 @@
 use std::{path::PathBuf, sync::LazyLock};
 
-use pwf_domain::pending_work::{ProjectName, Tags, Timestamp, WorkItemId};
+use pwf_domain::pending_work::{EffortTier, ProjectName, Tags, Timestamp, WorkItemId};
 use regex::Regex;
 
 use super::{
@@ -140,7 +140,7 @@ pub struct AddPendingWorkItem {
     /// Raw repeated prerequisite values.
     pub prerequisites: Vec<String>,
     /// Optional effort tier.
-    pub effort: Option<u8>,
+    pub effort: Option<EffortTier>,
     /// Raw repeated tag values.
     pub tags: Vec<String>,
 }

@@ -143,7 +143,19 @@ impl ObsidianStore {
         {
             let mut record =
                 note_to_record(task.id, &task.path, task.title.as_deref(), task.markdown);
-            record.placement = self.open_entry_placement(project, id)?;
+            if let Some((index_path, text)) = self.validated_project_index(project)?
+                && let Some(line) = parse_index_lines(&index_path, &text)?
+                    .into_iter()
+                    .find(|line| line.id == *id)
+            {
+                record.section = (!line.section.is_empty()).then_some(line.section);
+                if matches!(line.state, IndexEntryState::Open) {
+                    record.placement = Some(IndexPlacement {
+                        index_path: path_str(&index_path),
+                        line: line.line_number,
+                    });
+                }
+            }
             return Ok(Some(record));
         }
         let Some((index_path, text)) = self.validated_project_index(project)? else {
@@ -153,25 +165,6 @@ impl ObsidianStore {
             .into_iter()
             .find(|line| line.id == *id)
             .map(|line| checkbox_to_record(&index_path, &line)))
-    }
-
-    /// Returns an open link's index placement, including bare `- [[ID]]` links.
-    fn open_entry_placement(
-        &self,
-        project: &ProjectName,
-        id: &WorkItemId,
-    ) -> Result<Option<IndexPlacement>, ObsidianStoreError> {
-        let Some((index_path, text)) = self.validated_project_index(project)? else {
-            return Ok(None);
-        };
-        Ok(scan_index(&text)
-            .links
-            .into_iter()
-            .find(|link| link.id == id.as_ref())
-            .map(|link| IndexPlacement {
-                index_path: path_str(&index_path),
-                line: line_number(&text, link.start),
-            }))
     }
 
     /// Lists every note-backed, index-only, and inline pending-work record.

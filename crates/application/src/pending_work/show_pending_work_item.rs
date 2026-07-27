@@ -1,9 +1,15 @@
 use std::path::Path;
 
+use pwf_domain::pending_work::{
+    EffortTier, ProjectName, Tags, Timestamp, WorkItemId, WorkItemStatus,
+};
+
 use crate::{
     AppRecordStore, Materialization, NoteMarkdownSource, PendingWorkItem,
     pending_work::{project_registry::ProjectRegistry, resolve::resolve_record},
 };
+
+mod data;
 
 /// Selects the representation returned by [`execute`].
 ///
@@ -20,6 +26,71 @@ pub enum ShowOutput {
     Markdown,
     /// Returns the record's display path without reading its note.
     Path,
+    /// Returns typed task data for machine-readable rendering.
+    Json,
+}
+
+/// Contains one pending-work item's semantic data.
+///
+/// # Examples
+///
+/// ```
+/// use pwf_application::pending_work::show_pending_work_item::PendingWorkItemData;
+///
+/// # fn inspect(task: &PendingWorkItemData) {
+/// assert!(!task.id.is_empty());
+/// assert!(!task.project.as_ref().is_empty());
+/// # }
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingWorkItemData {
+    /// Canonical item id, or `<project>:<ordinal>` for an inline item.
+    pub id: String,
+    /// Managed project containing the item.
+    pub project: ProjectName,
+    /// Persisted title.
+    pub title: String,
+    /// Persisted lifecycle status.
+    pub status: WorkItemStatus,
+    /// Persisted creation date.
+    pub created: Option<Timestamp>,
+    /// Persisted completion date.
+    pub completed: Option<Timestamp>,
+    /// Persisted commit provenance.
+    pub commits: Option<String>,
+    /// Canonical task labels.
+    pub tags: Option<Tags>,
+    /// Validated effort tier.
+    pub effort: Option<EffortTier>,
+    /// Canonical prerequisite identifiers when the relationship is present.
+    pub prerequisites: Option<Vec<WorkItemId>>,
+    /// Index section containing the item.
+    pub section: Option<String>,
+    /// Trimmed authored prompt.
+    pub prompt: String,
+}
+
+/// Returns the selected pending-work representation.
+///
+/// # Examples
+///
+/// ```
+/// use pwf_application::pending_work::show_pending_work_item::ShowPendingWorkItemOutput;
+///
+/// # fn consume(output: ShowPendingWorkItemOutput) {
+/// if let ShowPendingWorkItemOutput::Json(task) = output {
+///     assert!(!task.id.is_empty());
+/// }
+/// # }
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ShowPendingWorkItemOutput {
+    /// Contains persisted Markdown.
+    Markdown(String),
+    /// Contains the item display path.
+    Path(String),
+    /// Contains semantic task data.
+    Json(Box<PendingWorkItemData>),
 }
 
 /// Requests one pending-work item in a selected output representation.
@@ -47,37 +118,50 @@ pub enum ShowPendingWorkError {
     /// Retains the Markdown source's byte-read failure.
     #[error("{0}")]
     ReadMarkdown(#[source] Box<dyn std::error::Error + Send + Sync>),
+    /// Reports invalid persisted data required by the typed representation.
+    #[error("Invalid pending-work item {field}: {reason}")]
+    InvalidItemData {
+        /// Semantic field that could not be projected.
+        field: &'static str,
+        /// Validation failure.
+        reason: String,
+    },
 }
 
-/// Returns a pending-work item's byte-exact Markdown source or display path.
+/// Returns a pending-work item's selected representation.
 ///
 /// # Errors
 ///
 /// Returns [`ShowPendingWorkError::ItemNotFound`] when the identifier cannot be resolved,
 /// [`ShowPendingWorkError::ReadStore`] when record resolution fails, or
-/// [`ShowPendingWorkError::ReadMarkdown`] when a missing-note link cannot be read.
+/// [`ShowPendingWorkError::ReadMarkdown`] when a missing-note link cannot be read, or
+/// [`ShowPendingWorkError::InvalidItemData`] when persisted task data cannot be projected.
 #[cqrsy::query]
 pub fn execute<S, N>(
     query: &ShowPendingWorkItem,
     store: &S,
     projects: &ProjectRegistry,
     markdown_source: &N,
-) -> Result<String, ShowPendingWorkError>
+) -> Result<ShowPendingWorkItemOutput, ShowPendingWorkError>
 where
     S: AppRecordStore<PendingWorkItem>,
     N: NoteMarkdownSource,
 {
-    let record = resolve_record(store, projects, &query.id)?;
+    let (project, record) = resolve_record(store, projects, &query.id)?;
     match query.output {
-        ShowOutput::Path => Ok(record.locator),
+        ShowOutput::Path => Ok(ShowPendingWorkItemOutput::Path(record.locator)),
         ShowOutput::Markdown
             if matches!(record.materialization, Materialization::MissingNote { .. }) =>
         {
             markdown_source
                 .read_note_markdown(Path::new(&record.locator))
+                .map(ShowPendingWorkItemOutput::Markdown)
                 .map_err(|error| ShowPendingWorkError::ReadMarkdown(Box::new(error)))
         }
-        ShowOutput::Markdown => Ok(record.source),
+        ShowOutput::Markdown => Ok(ShowPendingWorkItemOutput::Markdown(record.source)),
+        ShowOutput::Json => data::from_record(project, record)
+            .map(Box::new)
+            .map(ShowPendingWorkItemOutput::Json),
     }
 }
 
@@ -85,7 +169,7 @@ where
 mod tests {
     use std::{convert::Infallible, path::Path};
 
-    use super::{ShowOutput, ShowPendingWorkItem};
+    use super::{ShowOutput, ShowPendingWorkItem, ShowPendingWorkItemOutput};
     use crate::{
         NoteMarkdownSource,
         pending_work::resolve::testing::{PWF_0001_SOURCE, staged, staged_ghost},
@@ -132,7 +216,10 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(shown, PWF_0001_SOURCE);
+        assert_eq!(
+            shown,
+            ShowPendingWorkItemOutput::Markdown(PWF_0001_SOURCE.to_string())
+        );
     }
 
     #[test]
@@ -150,7 +237,10 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(shown, "/notes/pwf/PWF-0002.md");
+        assert_eq!(
+            shown,
+            ShowPendingWorkItemOutput::Path("/notes/pwf/PWF-0002.md".to_string())
+        );
     }
 
     #[test]

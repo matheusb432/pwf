@@ -13,17 +13,10 @@ path = "src/main.rs"
 name = "pwf"
 path = "src/lib.rs"
 
-# Binary-e2e suites, excluded from the default `cargo test` so `just test` stays in-process.
-# `test = false` only drops them from the default set; `just test --e2e` and
-# `cargo test --test <name>` still select them explicitly.
+# run `just test --e2e` to test these with `test = false`.
 [[test]]
 name = "cli_e2e"
 path = "tests/cli_e2e.rs"
-test = false
-
-[[test]]
-name = "help_cli"
-path = "tests/help_cli.rs"
 test = false
 
 [[test]]

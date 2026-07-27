@@ -65,6 +65,12 @@ pub(super) fn violations(metadata: &Metadata) -> Result<Vec<Violation>> {
 
     let mut violations = Vec::new();
     for source_file in source_files {
+        if source_file
+            .strip_prefix(workspace_root)
+            .is_ok_and(|path| path.starts_with("xtask/xtk_test"))
+        {
+            continue;
+        }
         inspect_source(workspace_root, &source_file, &mut violations)?;
     }
     Ok(violations)

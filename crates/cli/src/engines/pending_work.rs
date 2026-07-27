@@ -45,7 +45,7 @@ pub enum Command {
     /// Stream a task note's markdown (any status, incl. archived done/cancelled).
     ///
     /// The id is a bare positional (`pwf show <id>`) or `--id`. `pwf s` is
-    /// an alias. `--path` prints the note's path instead of its markdown.
+    /// an alias. `--path` prints the note path; `--json` prints typed task data.
     #[command(alias = "s")]
     Show(show::Arguments),
     /// Probe whether an agent is launchable.

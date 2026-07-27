@@ -1,3 +1,5 @@
+use pwf_domain::pending_work::ProjectName;
+
 use super::{
     enrich::inline_record_id, identifier, project_registry::ProjectRegistry,
     show_pending_work_item::ShowPendingWorkError,
@@ -9,7 +11,7 @@ pub(crate) fn resolve_record<S>(
     store: &S,
     projects: &ProjectRegistry,
     id: &str,
-) -> Result<PendingWorkItem, ShowPendingWorkError>
+) -> Result<(ProjectName, PendingWorkItem), ShowPendingWorkError>
 where
     S: AppRecordStore<PendingWorkItem>,
 {
@@ -21,6 +23,7 @@ where
     store
         .get(project, &work_id)
         .map_err(|error| ShowPendingWorkError::ReadStore(Box::new(error)))?
+        .map(|record| (project.clone(), record))
         .ok_or_else(not_found)
 }
 
@@ -29,7 +32,7 @@ fn resolve_inline_record<S>(
     store: &S,
     projects: &ProjectRegistry,
     id: &str,
-) -> Result<PendingWorkItem, ShowPendingWorkError>
+) -> Result<(ProjectName, PendingWorkItem), ShowPendingWorkError>
 where
     S: AppRecordStore<PendingWorkItem>,
 {
@@ -44,7 +47,7 @@ where
             RecordId::Item(_) => false,
         });
         if let Some(record) = found {
-            return Ok(record);
+            return Ok((project.clone(), record));
         }
     }
     Err(ShowPendingWorkError::ItemNotFound { id: id.to_string() })
@@ -147,8 +150,9 @@ mod tests {
     fn resolve_record_returns_path_and_markdown() {
         let (store, registry) = staged();
 
-        let resolved = resolve_record(&store, &registry, "PWF-0001").unwrap();
+        let (project, resolved) = resolve_record(&store, &registry, "PWF-0001").unwrap();
 
+        assert_eq!(project.as_ref(), "pwf");
         assert_eq!(resolved.locator, "/notes/pwf/PWF-0001.md");
         assert_eq!(resolved.source, super::testing::PWF_0001_SOURCE);
     }
@@ -157,7 +161,7 @@ mod tests {
     fn resolve_returns_expected_note_path_for_missing_note_wikilink() {
         let (store, registry) = staged_ghost();
 
-        let resolved = resolve_record(&store, &registry, "PWF-0002").unwrap();
+        let (_project, resolved) = resolve_record(&store, &registry, "PWF-0002").unwrap();
 
         assert_eq!(resolved.locator, "/notes/pwf/PWF-0002.md");
     }
@@ -166,8 +170,9 @@ mod tests {
     fn resolve_serves_inline_legacy_id_case_insensitively() {
         let (store, registry) = staged_inline();
 
-        let resolved = resolve_record(&store, &registry, "PWF:1").unwrap();
+        let (project, resolved) = resolve_record(&store, &registry, "PWF:1").unwrap();
 
+        assert_eq!(project.as_ref(), "pwf");
         assert_eq!(resolved.locator, "/notes/pwf/pwf.md");
         assert_eq!(resolved.source, "do the legacy thing");
     }

@@ -15,7 +15,7 @@ pub use clock::Clock;
 use pwf_domain::{
     handoff::HandoffStatus,
     note::NoteId,
-    pending_work::{ProjectName, Tags, Timestamp, WorkItemId, WorkItemStatus},
+    pending_work::{EffortTier, ProjectName, Tags, Timestamp, WorkItemId, WorkItemStatus},
 };
 
 /// Locates handoff records beneath one repository root.
@@ -411,7 +411,7 @@ pub struct NewItem {
     pub created: Timestamp,
     pub section: Option<String>,
     pub prereq: Option<String>,
-    pub effort: Option<u8>,
+    pub effort: Option<EffortTier>,
     pub tags: Option<Tags>,
 }
 
@@ -428,7 +428,7 @@ pub struct ItemPatch {
     pub body: Option<String>,
     pub title: Option<String>,
     pub prereq: Option<Option<String>>,
-    pub effort: Option<u8>,
+    pub effort: Option<EffortTier>,
     pub tags: Option<Option<Tags>>,
 }
 

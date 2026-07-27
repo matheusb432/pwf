@@ -1,4 +1,4 @@
-use pwf_domain::pending_work::{ProjectName, Tags, WorkItemId, WorkItemStatus};
+use pwf_domain::pending_work::{EffortTier, ProjectName, Tags, WorkItemId, WorkItemStatus};
 
 use super::{prerequisite, tag_policy};
 use crate::{
@@ -176,7 +176,7 @@ pub struct GetPendingWork {
     pub all: bool,
     /// Explicit item cap. Omission uses the mode-specific default.
     pub number: Option<usize>,
-    pub effort: Option<u8>,
+    pub effort: Option<EffortTier>,
     pub tags: Vec<String>,
     pub order: Option<OrderSpec>,
     /// Explicit lifecycle filter. Omission uses the mode-specific default.
@@ -230,7 +230,7 @@ struct ResolvedGetPendingWork {
     project: Option<ProjectName>,
     scope: ListScope,
     cap: Option<usize>,
-    effort: Option<u8>,
+    effort: Option<EffortTier>,
     tags: Option<Tags>,
     order: OrderSpec,
     status_filter: StatusFilter,
@@ -412,16 +412,13 @@ fn section_group_rank(section: Option<&str>) -> u8 {
     }
 }
 
-fn effort_matches(item: &PendingWorkItemView, wanted: Option<u8>) -> bool {
+fn effort_matches(item: &PendingWorkItemView, wanted: Option<EffortTier>) -> bool {
     let Some(wanted) = wanted else { return true };
     item.effort.as_deref().and_then(parse_effort_tier) == Some(wanted)
 }
 
-fn parse_effort_tier(raw: &str) -> Option<u8> {
-    raw.trim()
-        .parse::<u8>()
-        .ok()
-        .filter(|tier| (1..=4).contains(tier))
+fn parse_effort_tier(raw: &str) -> Option<EffortTier> {
+    raw.trim().parse().ok()
 }
 
 fn id_suffix(id: &str) -> u64 {
@@ -495,7 +492,9 @@ fn apply_cap(
 mod tests {
     use std::convert::Infallible;
 
-    use pwf_domain::pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus};
+    use pwf_domain::pending_work::{
+        EffortTier, ProjectName, Timestamp, WorkItemId, WorkItemStatus,
+    };
 
     use super::{
         GetPendingWork, GetPendingWorkError, ListMode, ListResult, ListSection, OrderDirection,
@@ -1000,8 +999,8 @@ mod tests {
     #[test]
     fn effort_filter_matches_exact_tier_only() {
         let (store, registry) = pwf_store(vec![
-            effort_item("PWF-0003", "3"),
-            effort_item("PWF-0002", "2"),
+            effort_item("PWF-0003", "high"),
+            effort_item("PWF-0002", "medium"),
             record("PWF-0001"),
         ]);
 
@@ -1009,7 +1008,7 @@ mod tests {
             &store,
             &registry,
             &GetPendingWork {
-                effort: Some(3),
+                effort: Some(EffortTier::High),
                 ..default_query()
             },
         )
@@ -1019,36 +1018,23 @@ mod tests {
     }
 
     #[test]
-    fn stored_effort_trims_and_bounds_the_tier() {
+    fn stored_effort_trims_names_and_rejects_numeric_metadata() {
         let (store, registry) = pwf_store(vec![
-            effort_item("PWF-0003", " 3 "),
-            effort_item("PWF-0002", "0"),
-            effort_item("PWF-0001", "5"),
+            effort_item("PWF-0003", " high "),
+            effort_item("PWF-0002", "3"),
+            effort_item("PWF-0001", "unknown"),
         ]);
 
         let matched = run(
             &store,
             &registry,
             &GetPendingWork {
-                effort: Some(3),
+                effort: Some(EffortTier::High),
                 ..default_query()
             },
         )
         .unwrap();
         assert_eq!(listed_ids(&matched), ["PWF-0003"]);
-
-        for tier in [0, 5] {
-            let empty = run(
-                &store,
-                &registry,
-                &GetPendingWork {
-                    effort: Some(tier),
-                    ..default_query()
-                },
-            )
-            .unwrap();
-            assert!(empty.items.is_empty(), "tier {tier} should not match");
-        }
     }
 
     #[test]
@@ -1103,11 +1089,11 @@ mod tests {
                 ..tagged_item("PWF-0003", "corrupt")
             },
             PendingWorkItem {
-                effort: Some("2".to_string()),
+                effort: Some("medium".to_string()),
                 ..tagged_item("PWF-0002", "also corrupt")
             },
             PendingWorkItem {
-                effort: Some("3".to_string()),
+                effort: Some("high".to_string()),
                 ..tagged_item("PWF-0001", "[sqlite]")
             },
         ]);
@@ -1116,7 +1102,7 @@ mod tests {
             &store,
             &registry,
             &GetPendingWork {
-                effort: Some(3),
+                effort: Some(EffortTier::High),
                 tags: vec!["sqlite".to_string()],
                 ..default_query()
             },

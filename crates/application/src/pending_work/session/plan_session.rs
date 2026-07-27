@@ -6,8 +6,9 @@ use thiserror::Error;
 
 use super::{
     Agent, AgentProbe, ClaudeSessionClient, CodexSessionClient, DispatchConfirmation, DispatchMode,
-    LaunchDirectives, ModelTierCatalog, RepositorySessionClient, SessionPlan, ZellijSessionClient,
-    launch::dispatch_target, model::AgentModel, model_selection::resolve_model, task_content,
+    LaunchDirectives, ModelTierCatalog, RepositorySessionClient, SessionEffort, SessionPlan,
+    ZellijSessionClient, launch::dispatch_target, model::AgentModel,
+    model_selection::resolve_model, task_content,
 };
 use crate::{
     AppRecordStore, NoteMarkdownSource, PendingWorkItem,
@@ -31,6 +32,7 @@ pub struct PlanSession {
     pub directives: LaunchDirectives,
     pub agent: Agent,
     pub model_override: AgentModel,
+    pub effort: SessionEffort,
 }
 
 /// Selects whether a plan is prepared for dispatch or rendered without effects.
@@ -170,6 +172,7 @@ pub fn execute(
             command.directives,
             command.agent,
             model.clone().into_inner(),
+            command.effort,
         ),
         mode: command.mode,
         target: target.clone(),
@@ -194,6 +197,7 @@ pub fn execute(
         agent: command.agent,
         directives: command.directives,
         model: model.display_or_default(),
+        effort: command.effort,
         target,
     };
 

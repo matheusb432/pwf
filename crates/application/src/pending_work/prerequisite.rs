@@ -56,6 +56,19 @@ fn parse_values(values: &[String]) -> Result<Vec<WorkItemId>, PrerequisiteValida
     Ok(identifiers)
 }
 
+pub(super) fn parse_frontmatter(raw: &str) -> Result<Vec<WorkItemId>, PrerequisiteValidationError> {
+    let raw = raw.trim();
+    let unquoted = raw
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .or_else(|| {
+            raw.strip_prefix('\'')
+                .and_then(|value| value.strip_suffix('\''))
+        })
+        .unwrap_or(raw);
+    parse_values(&[unquoted.to_string()])
+}
+
 fn frontmatter_value(identifiers: &[WorkItemId]) -> String {
     identifiers
         .iter()

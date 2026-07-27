@@ -39,7 +39,7 @@ impl ModelTierCatalog for TomlModelTierCatalog {
 
 #[derive(Debug, Deserialize)]
 struct RawModelTiers {
-    tiers: BTreeMap<u8, TierEntry>,
+    tiers: BTreeMap<String, TierEntry>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -80,8 +80,7 @@ fn tier_at(path: &str, effort: EffortTier) -> Result<ModelTierLookup, ModelTiers
     let text =
         std::fs::read_to_string(path).map_err(|_| ModelTiersError::NotFound(path.to_string()))?;
     let raw: RawModelTiers = toml::from_str(&text)?;
-    let tier_number = u8::from(effort);
-    let tier = raw.tiers.get(&tier_number).map(|entry| ModelTier {
+    let tier = raw.tiers.get(effort.as_ref()).map(|entry| ModelTier {
         claude_model: entry.claude_model.clone(),
     });
     Ok(ModelTierLookup {
@@ -101,10 +100,6 @@ mod tests {
         let path = directory.path().join("model-tiers.toml");
         std::fs::write(&path, contents).unwrap();
         (directory, path)
-    }
-
-    fn effort(value: u8) -> EffortTier {
-        EffortTier::try_from(value).unwrap()
     }
 
     #[test]
@@ -142,9 +137,9 @@ mod tests {
 
     #[test]
     fn configured_tier_retains_catalog_provenance() {
-        let (_directory, path) = stage("[tiers.3]\nclaude_model = \"sonnet\"\n");
+        let (_directory, path) = stage("[tiers.high]\nclaude_model = \"sonnet\"\n");
 
-        let lookup = tier_at(path.to_str().unwrap(), effort(3)).unwrap();
+        let lookup = tier_at(path.to_str().unwrap(), EffortTier::High).unwrap();
 
         assert_eq!(lookup.catalog, path.to_string_lossy());
         assert_eq!(
@@ -157,9 +152,9 @@ mod tests {
 
     #[test]
     fn empty_config_value_remains_raw_data() {
-        let (_directory, path) = stage("[tiers.2]\nclaude_model = \"\"\n");
+        let (_directory, path) = stage("[tiers.medium]\nclaude_model = \"\"\n");
 
-        let lookup = tier_at(path.to_str().unwrap(), effort(2)).unwrap();
+        let lookup = tier_at(path.to_str().unwrap(), EffortTier::Medium).unwrap();
 
         assert_eq!(
             lookup.tier,
@@ -171,9 +166,9 @@ mod tests {
 
     #[test]
     fn absent_tier_is_a_successful_empty_lookup() {
-        let (_directory, path) = stage("[tiers.1]\nclaude_model = \"sonnet\"\n");
+        let (_directory, path) = stage("[tiers.low]\nclaude_model = \"sonnet\"\n");
 
-        let lookup = tier_at(path.to_str().unwrap(), effort(2)).unwrap();
+        let lookup = tier_at(path.to_str().unwrap(), EffortTier::Medium).unwrap();
 
         assert_eq!(lookup.catalog, path.to_string_lossy());
         assert_eq!(lookup.tier, None);
@@ -181,9 +176,9 @@ mod tests {
 
     #[test]
     fn absent_claude_model_remains_raw_data() {
-        let (_directory, path) = stage("[tiers.1]\n");
+        let (_directory, path) = stage("[tiers.low]\n");
 
-        let lookup = tier_at(path.to_str().unwrap(), effort(1)).unwrap();
+        let lookup = tier_at(path.to_str().unwrap(), EffortTier::Low).unwrap();
 
         assert_eq!(lookup.tier, Some(ModelTier { claude_model: None }));
     }
@@ -193,7 +188,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let missing = directory.path().join("does-not-exist.toml");
 
-        let error = tier_at(missing.to_str().unwrap(), effort(1)).unwrap_err();
+        let error = tier_at(missing.to_str().unwrap(), EffortTier::Low).unwrap_err();
 
         assert_matches!(error, ModelTiersError::NotFound(_));
     }
@@ -202,7 +197,7 @@ mod tests {
     fn malformed_toml_is_parse_error() {
         let (_directory, path) = stage("this is not toml [[[");
 
-        let error = tier_at(path.to_str().unwrap(), effort(1)).unwrap_err();
+        let error = tier_at(path.to_str().unwrap(), EffortTier::Low).unwrap_err();
 
         assert_matches!(error, ModelTiersError::Parse(_));
     }

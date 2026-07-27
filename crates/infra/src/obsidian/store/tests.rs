@@ -6,7 +6,7 @@ use pwf_application::{
     NewItem, PendingWorkItem, RecordId,
 };
 use pwf_domain::pending_work::{
-    ProjectIndexIdentity, ProjectName, ProjectPrefix, Tag, Tags, Timestamp, WorkItemId,
+    EffortTier, ProjectIndexIdentity, ProjectName, ProjectPrefix, Tag, Tags, Timestamp, WorkItemId,
     WorkItemStatus,
 };
 
@@ -391,7 +391,7 @@ fn generic_add_creates_note_and_links_index() {
         &store,
         NewItem {
             prereq: Some("[[PWF-0001]]".to_string()),
-            effort: Some(2),
+            effort: Some(EffortTier::Medium),
             ..new_item(
                 "Ship the adapter /d tests pass",
                 "ship adapter",
@@ -415,7 +415,7 @@ fn generic_add_creates_note_and_links_index() {
     assert!(note.contains("title: ship adapter"), "{note}");
     assert!(note.contains("created: 2026-07-07"), "{note}");
     assert!(note.contains("prereq: \"[[PWF-0001]]\""), "{note}");
-    assert!(note.contains("effort: 2"), "{note}");
+    assert!(note.contains("effort: medium"), "{note}");
     let expected_body = format!("## Goals{S}- Ship the adapter");
     assert!(note.contains(&expected_body), "{note}");
     let index = std::fs::read_to_string(notes_dir.join("pwf/pwf.md")).unwrap();
@@ -907,7 +907,7 @@ fn item_record_roundtrips_file_model_note() {
         "project: pwf\n",
         "created: 2026-07-01\n",
         "prereq: \"[[CFG-0001]]\"\n",
-        "effort: 2\n",
+        "effort: medium\n",
         "tags: [sqlite, godot]\n",
         "---\n",
         "\n",
@@ -930,7 +930,7 @@ fn item_record_roundtrips_file_model_note() {
     assert_eq!(record.completed, None);
     assert_eq!(record.commits, None);
     assert_eq!(record.prereq.as_deref(), Some("\"[[CFG-0001]]\""));
-    assert_eq!(record.effort.as_deref(), Some("2"));
+    assert_eq!(record.effort.as_deref(), Some("medium"));
     assert_eq!(record.tags.as_deref(), Some("[sqlite, godot]"));
     assert_eq!(record.section, None);
     assert_eq!(record.body, "\nship the adapter body\n");

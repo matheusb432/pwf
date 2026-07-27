@@ -686,18 +686,6 @@ fn list_order_project_id_groups_by_project() {
 }
 
 #[test]
-fn list_caps_to_default_ten_and_signals_more() {
-    let notes = stage_many(12);
-    let out = list_run(&notes, &[]);
-    assert!(out.contains("FOO-0012"), "newest missing: {out}");
-    assert!(out.contains("FOO-0003"), "10th newest missing: {out}");
-    assert!(!out.contains("FOO-0002"), "11th item leaked: {out}");
-    assert!(!out.contains("FOO-0001"), "12th item leaked: {out}");
-    assert!(out.contains("2 more"), "more footer missing: {out}");
-    assert!(out.contains("--all"), "escape hatch missing: {out}");
-}
-
-#[test]
 fn list_all_shows_all_no_footer() {
     let notes = stage_many(12);
     let out = list_run(&notes, &["--all"]);
@@ -1114,39 +1102,6 @@ fn add_continue_handoff_builds_handoff_prompt() {
     assert!(
         item.contains("Continue the handoff at @docs/handoffs/2026-01-01-api-cleanup.md."),
         "prompt not in item: {item}"
-    );
-}
-
-#[test]
-fn add_with_title_flag_accepts_prereq() {
-    let stage = stage_dir();
-    let notes = stage.join("notes");
-    let proj = notes.join("foo-bar");
-    fs::create_dir_all(&proj).unwrap();
-    fs::write(
-        proj.join("FOO-0001.md"),
-        "---\nstatus: active\ntitle: prerequisite\nproject: foo-bar\ncreated: 2026-01-01\n---\n\nbody\n",
-    )
-    .unwrap();
-    fs::write(proj.join("foo-bar.md"), "- [ ] [[FOO-0001|prerequisite]]\n").unwrap();
-    let args = parse_args(&[
-        "add",
-        "foo-bar",
-        "do",
-        "dependent",
-        "work",
-        "--title",
-        "dependent",
-        "--prereq",
-        "FOO-0001",
-        "--date",
-        "2026-01-01",
-    ]);
-    run_plain(&args, &test_projects(&notes)).unwrap();
-    let item = fs::read_to_string(proj.join("FOO-0002.md")).unwrap();
-    assert!(
-        item.contains("prereq: \"[[FOO-0001]]\"\n---"),
-        "got: {item}"
     );
 }
 

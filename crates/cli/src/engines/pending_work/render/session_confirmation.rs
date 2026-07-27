@@ -29,6 +29,7 @@ pub(in crate::engines::pending_work) fn render_session_confirmation(
         Field::new("mode", mode),
         Field::new("agent", agent_name(confirmation.agent)),
         Field::new("model", confirmation.model.clone()),
+        Field::new("effort", confirmation.effort.to_string()),
         Field::new(
             "autonomy",
             Enabled::from(confirmation.directives.autonomous).label(),
@@ -71,7 +72,7 @@ impl From<bool> for Enabled {
 #[cfg(test)]
 mod tests {
     use pwf_application::pending_work::session::{
-        Agent, DispatchConfirmation, DispatchMode, DispatchTarget, LaunchDirectives,
+        Agent, DispatchConfirmation, DispatchMode, DispatchTarget, LaunchDirectives, SessionEffort,
     };
 
     use super::*;
@@ -93,6 +94,7 @@ mod tests {
                 tab: "PWF-0001".to_string(),
             },
             model: String::default(),
+            effort: SessionEffort::XHigh,
         };
 
         let out = render_session_confirmation(&confirmation);
@@ -103,6 +105,7 @@ mod tests {
         assert!(out.contains("created: 2026-07-01"));
         assert!(out.contains("mode: inline"));
         assert!(out.contains("agent: codex"));
+        assert!(out.contains("effort: xhigh"));
         assert!(out.contains("autonomy: yes"));
         assert!(out.contains("worktree: yes"));
         assert!(out.contains("target: current terminal"));
@@ -122,6 +125,7 @@ mod tests {
                 tab: "PWF-0001".to_string(),
             },
             model: String::default(),
+            effort: SessionEffort::High,
         };
 
         let out = render_session_confirmation(&confirmation);
@@ -129,6 +133,7 @@ mod tests {
         assert!(out.contains("mode: zellij"));
         assert!(out.contains("target: zellij session pwf"));
         assert!(out.contains("autonomy: no"));
+        assert!(out.contains("effort: high"));
         assert!(out.contains("worktree: no"));
         assert!(out.contains("created: (unknown)"));
     }

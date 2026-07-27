@@ -8,6 +8,7 @@ mod model_selection;
 pub mod plan_session;
 mod ports;
 mod provider;
+mod session_effort;
 mod task_content;
 pub mod verify_session;
 
@@ -21,3 +22,4 @@ pub use model::{
 pub use plan_session::PlanSessionIntent;
 pub use ports::ModelTierCatalog;
 pub use provider::{ClaudeSessionClient, CodexSessionClient, PreparedCodexLaunch};
+pub use session_effort::SessionEffort;

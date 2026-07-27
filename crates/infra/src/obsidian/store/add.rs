@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use pwf_application::pending_work::note_body;
-use pwf_domain::pending_work::{ProjectName, Tags};
+use pwf_domain::pending_work::{EffortTier, ProjectName, Tags};
 
 use super::{ObsidianStore, ObsidianStoreError, fs::write_add_item_file};
 use crate::obsidian::note_frontmatter::{NewWorkItemFields, new_work_item_content};
@@ -12,7 +12,7 @@ pub(super) struct NewNoteRequest<'a> {
     pub title: &'a str,
     pub created: &'a str,
     pub prereq: Option<&'a str>,
-    pub effort: Option<u8>,
+    pub effort: Option<EffortTier>,
     pub tags: Option<&'a Tags>,
 }
 

@@ -54,4 +54,4 @@ fix *args:
 # Run unit, end-to-end, or all tests.
 [group('quality')]
 test *args:
-    cargo run --quiet -p xtask -- test {{ args }}
+    @cargo run --quiet -p xtask -- test {{ args }}

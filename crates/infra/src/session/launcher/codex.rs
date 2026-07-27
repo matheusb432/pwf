@@ -7,7 +7,7 @@ use super::{
     argv::LaunchArgv,
     probe,
 };
-use crate::session::CodexThreadPreparationError;
+use crate::session::{CodexThreadPreparationError, codex_reasoning_effort::CodexReasoningEffort};
 
 const BINARY: &str = "codex";
 const THREAD_ID_PREVIEW: &str = "<thread-id returned by thread/start>";
@@ -16,6 +16,7 @@ struct CodexLaunchPlan {
     title: String,
     repository: String,
     model: Option<String>,
+    effort: CodexReasoningEffort,
     prompt: String,
 }
 
@@ -25,6 +26,7 @@ impl From<&AgentLaunch> for CodexLaunchPlan {
             title: launch.title.clone(),
             repository: launch.repository.clone(),
             model: launch.model.clone(),
+            effort: launch.effort.into(),
             prompt: launch.prompt.clone(),
         }
     }
@@ -70,6 +72,7 @@ impl CodexHarness {
             &plan.title,
             &plan.repository,
             plan.model.as_deref(),
+            plan.effort,
         )?;
         Ok(PreparedCodexLaunch::from_named_thread(named_thread, plan))
     }
@@ -128,12 +131,16 @@ fn resume_argv(plan: CodexLaunchPlan, thread_id: String) -> Vec<String> {
     if let Some(model) = plan.model {
         argv = argv.flag("--model", model);
     }
+    argv = argv.flag(
+        "-c",
+        format!("model_reasoning_effort=\"{}\"", plan.effort.as_str()),
+    );
     argv.positional(thread_id).into_guarded(plan.prompt)
 }
 
 #[cfg(test)]
 mod tests {
-    use pwf_application::pending_work::session::{Agent, AgentLaunch};
+    use pwf_application::pending_work::session::{Agent, AgentLaunch, SessionEffort};
 
     use super::CodexHarness;
     #[cfg(unix)]
@@ -151,6 +158,7 @@ mod tests {
             prompt: "; rm -rf ~ $(curl evil)\n--dangerously-bypass-approvals-and-sandbox"
                 .to_string(),
             model: Some("gpt-8-billion".to_string()),
+            effort: SessionEffort::XHigh,
         };
 
         let prepared =
@@ -163,6 +171,8 @@ mod tests {
                 "resume",
                 "--model",
                 "gpt-8-billion",
+                "-c",
+                "model_reasoning_effort=\"xhigh\"",
                 OWNED_THREAD_ID,
                 "--",
                 "; rm -rf ~ $(curl evil)\n--dangerously-bypass-approvals-and-sandbox",
@@ -172,6 +182,10 @@ mod tests {
         let requests = fixture.requests();
         assert_eq!(requests[2]["params"]["cwd"], "/repo");
         assert_eq!(requests[2]["params"]["model"], "gpt-8-billion");
+        assert_eq!(
+            requests[2]["params"]["config"]["model_reasoning_effort"],
+            "xhigh"
+        );
         assert_eq!(
             requests[3]["params"]["name"],
             "\"; thread/delete everything"

@@ -308,8 +308,8 @@ mod tests {
     #[test]
     fn effort_value_stays_with_its_flag_on_add() {
         assert_eq!(
-            n(&["add", "foo", "--effort", "3", "do", "x"]),
-            vec!["add", "--effort", "3", "foo", "do", "x"]
+            n(&["add", "foo", "--effort", "high", "do", "x"]),
+            vec!["add", "--effort", "high", "foo", "do", "x"]
         );
     }
 

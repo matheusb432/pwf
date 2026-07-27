@@ -1,4 +1,4 @@
-use pwf_domain::pending_work::{ProjectName, Tags, WorkItemId, WorkItemStatus};
+use pwf_domain::pending_work::{EffortTier, ProjectName, Tags, WorkItemId, WorkItemStatus};
 
 use super::{
     commit_provenance, identifier,
@@ -30,7 +30,7 @@ pub struct UpdatePendingWorkItem {
     /// Optional report appended to the body.
     pub append_report: Option<String>,
     /// Optional replacement effort tier.
-    pub effort: Option<u8>,
+    pub effort: Option<EffortTier>,
     /// Raw tags appended to existing tags.
     pub tags: Vec<String>,
     /// Whether existing tags are cleared before applying raw tags.

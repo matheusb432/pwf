@@ -11,7 +11,7 @@ use pwf_application::{
 use pwf_infra::obsidian::ObsidianStore;
 
 use super::{
-    common::{CommonArguments, PendingWorkError},
+    common::{CommonArguments, EffortChoice, PendingWorkError},
     render::{
         ADD_MIRROR_REMEDY, TITLE_NORMALIZED_NOTICE, emit_add_diagnostics, emit_created_section,
         emit_created_section_for_error, render_added,
@@ -51,11 +51,10 @@ pub struct Arguments {
     /// kebab-case.
     #[arg(long, allow_hyphen_values = true)]
     pub(crate) tag: Vec<String>,
-    /// Effort/complexity tier (1=easy .. 4=xhard); optional. Picks a Claude model
-    /// via config/model-tiers.toml when the item is later dispatched with `pwf
-    /// session` (codex ignores it).
-    #[arg(long, value_parser = clap::value_parser!(u8).range(1..=4))]
-    pub(crate) effort: Option<u8>,
+    /// Effort/complexity tier; optional. Picks a Claude model via config/model-tiers.toml when
+    /// the item is later dispatched with `pwf session` (codex ignores it).
+    #[arg(long, value_enum)]
+    pub(crate) effort: Option<EffortChoice>,
     #[command(flatten)]
     pub(crate) common: CommonArguments,
 }
@@ -132,7 +131,7 @@ fn request(arguments: &Arguments) -> Result<AddPendingWorkItem, PendingWorkError
         date: arguments.common.date.clone(),
         section,
         prerequisites: arguments.prereq.clone(),
-        effort: arguments.effort,
+        effort: arguments.effort.map(Into::into),
         tags: arguments.tag.clone(),
     })
 }

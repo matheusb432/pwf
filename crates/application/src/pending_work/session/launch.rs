@@ -81,7 +81,7 @@ mod tests {
     use pwf_domain::pending_work::WorkItemStatus;
 
     use super::{PendingWorkItemView, dispatch_target};
-    use crate::pending_work::session::{Agent, AgentLaunch, LaunchDirectives};
+    use crate::pending_work::session::{Agent, AgentLaunch, LaunchDirectives, SessionEffort};
 
     fn item() -> PendingWorkItemView {
         PendingWorkItemView {
@@ -115,6 +115,7 @@ mod tests {
             LaunchDirectives::default(),
             Agent::Claude,
             Some("opus".to_string()),
+            SessionEffort::XHigh,
         );
 
         assert_eq!(launch.agent, Agent::Claude);
@@ -122,6 +123,7 @@ mod tests {
         assert_eq!(launch.title, "PWF-0076 - make session -w");
         assert_eq!(launch.repository, "/repo/pwf");
         assert_eq!(launch.model.as_deref(), Some("opus"));
+        assert_eq!(launch.effort, SessionEffort::XHigh);
     }
 
     #[test]

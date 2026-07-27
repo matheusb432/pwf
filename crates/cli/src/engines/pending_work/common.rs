@@ -1,6 +1,6 @@
 use clap::Args;
 use pwf_application::pending_work::{StatusFilter, session::Agent};
-use pwf_domain::pending_work::WorkItemStatus;
+use pwf_domain::pending_work::{EffortTier, WorkItemStatus};
 use thiserror::Error;
 
 #[derive(Args, Clone, Debug, Default)]
@@ -67,6 +67,25 @@ pub enum StatusChoice {
     Done,
     Cancelled,
     All,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum EffortChoice {
+    Low,
+    Medium,
+    High,
+    Highest,
+}
+
+impl From<EffortChoice> for EffortTier {
+    fn from(choice: EffortChoice) -> Self {
+        match choice {
+            EffortChoice::Low => Self::Low,
+            EffortChoice::Medium => Self::Medium,
+            EffortChoice::High => Self::High,
+            EffortChoice::Highest => Self::Highest,
+        }
+    }
 }
 
 impl StatusChoice {

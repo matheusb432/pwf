@@ -1,6 +1,6 @@
 use std::{fmt::Write, sync::LazyLock};
 
-use pwf_domain::pending_work::{Tags, WorkItemStatus};
+use pwf_domain::pending_work::{EffortTier, Tags, WorkItemStatus};
 use regex::Regex;
 
 static STATUS_LINE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^status:.*$").unwrap());
@@ -35,7 +35,7 @@ pub(super) struct NewWorkItemFields<'a> {
     pub prompt: &'a str,
     pub created: &'a str,
     pub prereq: Option<&'a str>,
-    pub effort: Option<u8>,
+    pub effort: Option<EffortTier>,
     pub tags: Option<&'a Tags>,
 }
 
@@ -206,7 +206,7 @@ pub(super) fn set_commits_text(content: &str, value: Option<&str>) -> String {
     )
 }
 
-pub(super) fn set_effort_text(content: &str, value: Option<u8>) -> String {
+pub(super) fn set_effort_text(content: &str, value: Option<EffortTier>) -> String {
     set_frontmatter_line(
         content,
         &EFFORT_LINE_RE,

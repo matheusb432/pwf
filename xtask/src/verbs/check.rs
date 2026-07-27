@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 
-use super::{format, lint, test};
+use super::{format, lint};
 use crate::{
     process::{self, Status},
     task::{self, Step},
@@ -24,7 +24,7 @@ pub(crate) fn run() -> Result<()> {
 
 fn steps(mut formatting: Vec<Step>) -> Vec<Step> {
     formatting.push(lint::check_step());
-    formatting.push(test::ast_rules_scan_step());
+    formatting.push(ast_rules_scan_step());
     formatting.push(
         Step::new(
             "sqlx-prepare-check",
@@ -34,6 +34,14 @@ fn steps(mut formatting: Vec<Step>) -> Vec<Step> {
         .with_deadline(SQLX_PREPARE_CHECK_DEADLINE),
     );
     formatting
+}
+
+fn ast_rules_scan_step() -> Step {
+    Step::new(
+        "check-ast-rules",
+        "ast-grep",
+        ["scan", "--globs", "!xtask/xtk_test/**"],
+    )
 }
 
 #[cfg(test)]
@@ -67,6 +75,14 @@ mod tests {
         assert_eq!(
             sqlx_prepare_check.deadline(),
             Some(std::time::Duration::from_mins(20))
+        );
+        let ast_scan = steps
+            .iter()
+            .find(|step| step.label() == "check-ast-rules")
+            .expect("ast-grep scan step");
+        assert_eq!(
+            ast_scan.arguments(),
+            ["scan", "--globs", "!xtask/xtk_test/**"]
         );
     }
 }

@@ -5,6 +5,7 @@ resolver = "3"
 
 [workspace.package]
 edition = "2024"
+rust-version = "1.97"
 publish = false
 
 [workspace.dependencies]
@@ -16,14 +17,16 @@ cargo_metadata = "0.23.1"
 chrono = "0.4"
 clap = { version = "4", features = ["derive"] }
 clap-cargo = "0.18.3"
+command-group = "5.0.1"
 console = { version = "0.16.4", default-features = false, features = [
-    "ansi-parsing",
-    "alloc",
+    "std",
 ] }
 cqrsy = { git = "ssh://git@github.com/matheusb432/cqrsy.git", tag = "v0.10.0" }
 directories = "6.0.0"
 expectrl = "0.9.0"
 gray_matter = { version = "0.3.2", default-features = false, features = ["yaml"] }
+indicatif = { version = "0.18.6", default-features = false }
+libc = "0.2.186"
 nutype = { version = "0.7.0", features = ["serde", "regex"] }
 percent-encoding = "2.3.2"
 predicates = "3"
@@ -58,6 +61,7 @@ thiserror = "2.0.18"
 toml = "1.1.2"
 tokio = "1"
 walkdir = "2"
+xtk_test = { git = "ssh://git@github.com/matheusb432/xtk-test.git", tag = "v0.1.1" }
 
 # Avoid tweaking, prefer fixing the lints.
 [workspace.lints.clippy]

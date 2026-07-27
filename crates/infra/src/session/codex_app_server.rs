@@ -8,6 +8,8 @@ use client::AppServerClient;
 use serde_json::{Value, json};
 use thiserror::Error;
 
+use super::codex_reasoning_effort::CodexReasoningEffort;
+
 #[derive(Debug, Clone, Copy)]
 enum CodexAppServerOperation {
     ProcessStart,
@@ -162,6 +164,7 @@ pub(super) fn start_and_name_thread(
     title: &str,
     repository: &str,
     model: Option<&str>,
+    effort: CodexReasoningEffort,
 ) -> Result<NamedCodexThread, CodexThreadPreparationError> {
     let mut client =
         AppServerClient::start(binary).map_err(|failure| CodexThreadPreparationError {
@@ -171,7 +174,7 @@ pub(super) fn start_and_name_thread(
                 shutdown: failure.shutdown,
             }),
         })?;
-    let preparation = prepare_thread(&mut client, title, repository, model);
+    let preparation = prepare_thread(&mut client, title, repository, model, effort);
     let shutdown = client.shutdown();
 
     match preparation {
@@ -197,9 +200,11 @@ fn prepare_thread(
     title: &str,
     repository: &str,
     model: Option<&str>,
+    effort: CodexReasoningEffort,
 ) -> Result<OwnedCodexThread<Named>, PreparationFailure> {
     client.initialize().map_err(PreparationFailure::primary)?;
-    let unnamed = start_thread(client, repository, model).map_err(PreparationFailure::primary)?;
+    let unnamed =
+        start_thread(client, repository, model, effort).map_err(PreparationFailure::primary)?;
     match name_thread(client, unnamed, title) {
         Ok(named) => Ok(named),
         Err((unnamed, naming)) => match delete_thread(client, unnamed) {
@@ -245,6 +250,7 @@ fn start_thread(
     client: &mut AppServerClient,
     repository: &str,
     model: Option<&str>,
+    effort: CodexReasoningEffort,
 ) -> Result<OwnedCodexThread<Unnamed>, CodexAppServerError> {
     let result = client.request(
         CodexAppServerOperation::ThreadStart,
@@ -253,6 +259,7 @@ fn start_thread(
             "cwd": repository,
             "model": model,
             "config": {
+                "model_reasoning_effort": effort.as_str(),
                 "features": {
                     "hooks": false
                 }
@@ -404,6 +411,7 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::{start_and_name_thread, test_fixture::AppServerFixture};
+    use crate::session::codex_reasoning_effort::CodexReasoningEffort;
 
     const OWNED_THREAD_ID: &str = "thr-owned-by-this-request";
     const TITLE: &str = "PWF-0153 - exact thread ownership";
@@ -417,6 +425,7 @@ mod tests {
             TITLE,
             "/repo/pwf",
             Some("gpt-5.6"),
+            CodexReasoningEffort::XHigh,
         )
         .unwrap_err();
 
@@ -440,6 +449,7 @@ mod tests {
                 "cwd": "/repo/pwf",
                 "model": "gpt-5.6",
                 "config": {
+                    "model_reasoning_effort": "xhigh",
                     "features": {
                         "hooks": false
                     }
@@ -470,9 +480,14 @@ mod tests {
     fn cleanup_failure_retains_both_errors_and_exact_orphan_id() {
         let fixture = AppServerFixture::naming_failure(true);
 
-        let error =
-            start_and_name_thread(fixture.binary.to_str().unwrap(), TITLE, "/repo/pwf", None)
-                .unwrap_err();
+        let error = start_and_name_thread(
+            fixture.binary.to_str().unwrap(),
+            TITLE,
+            "/repo/pwf",
+            None,
+            CodexReasoningEffort::High,
+        )
+        .unwrap_err();
 
         let requests = fixture.requests();
         assert_eq!(requests[2]["params"]["model"], Value::Null);
@@ -497,9 +512,14 @@ mod tests {
     fn oversized_response_line_is_rejected_at_the_reader_boundary() {
         let fixture = AppServerFixture::oversized_response_line();
 
-        let error =
-            start_and_name_thread(fixture.binary.to_str().unwrap(), TITLE, "/repo/pwf", None)
-                .unwrap_err();
+        let error = start_and_name_thread(
+            fixture.binary.to_str().unwrap(),
+            TITLE,
+            "/repo/pwf",
+            None,
+            CodexReasoningEffort::High,
+        )
+        .unwrap_err();
 
         let diagnostic = error.to_string();
         assert!(

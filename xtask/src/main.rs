@@ -6,9 +6,9 @@ use clap::Parser;
 mod architecture_check;
 mod child_process;
 mod cli;
-mod gate;
 mod paths;
 mod process;
+mod project;
 mod sqlite_url;
 mod sqlx_cli;
 mod task;
@@ -31,7 +31,8 @@ fn run(command: cli::Command) -> Result<()> {
         Command::Check => verbs::check::run(),
         Command::Prepare { check } => verbs::prepare::run(check),
         Command::Fix(arguments) => verbs::format::fix(&arguments.arguments_extra),
-        Command::Test(test) => verbs::test::run(test.scope, test.verbose),
+        Command::Test(test) => verbs::test::run(&test),
+        Command::E2eWorker { verbose } => verbs::test::run_e2e_worker(verbose),
         Command::Ship => verbs::ship::run(),
         Command::Install => verbs::install::install(),
         Command::Update(update) => verbs::install::update(&update),
