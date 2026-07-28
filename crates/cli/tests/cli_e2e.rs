@@ -76,94 +76,6 @@ fn finish_fixture(dir: TempDir, projects: &[ProjectSeed<'_>]) -> (TempDir, Datab
     (dir, database)
 }
 
-/// Stages a fresh repository without Git metadata for the handoff lifecycle round trip.
-fn staged_for_handoff_mirror_roundtrip() -> (TempDir, DatabaseFixture) {
-    let dir = TempDir::new().unwrap();
-    let notes = dir.path().join("notes");
-    let proj = notes.join("foo-bar");
-    let repo = dir.path().join("repo");
-    fs::create_dir_all(&proj).unwrap();
-    fs::create_dir_all(repo.join("docs").join("handoffs")).unwrap();
-    fs::write(
-        proj.join("foo-bar.md"),
-        "---\nid: foo\ntitle: foo-bar\n---\n",
-    )
-    .unwrap();
-    finish_fixture(
-        dir,
-        &[ProjectSeed {
-            id: "FOO",
-            title: "foo-bar",
-            repository: &repo,
-            tasks_path: &proj,
-        }],
-    )
-}
-
-/// Stages the exact `test-project` identity used by the external allocator protocol.
-fn staged_for_handoff_allocator_contract() -> (TempDir, DatabaseFixture) {
-    let dir = TempDir::new().unwrap();
-    let notes = dir.path().join("notes");
-    let project = notes.join("test-project");
-    let repo = dir.path().join("repo");
-    fs::create_dir_all(&project).unwrap();
-    fs::create_dir_all(&repo).unwrap();
-    fs::write(
-        project.join("test-project.md"),
-        "---\nid: tst\ntitle: test-project\n---\n",
-    )
-    .unwrap();
-    finish_fixture(
-        dir,
-        &[ProjectSeed {
-            id: "TST",
-            title: "test-project",
-            repository: &repo,
-            tasks_path: &project,
-        }],
-    )
-}
-
-fn add_linked_handoff(stage: &TempDir, database: &DatabaseFixture) -> std::path::PathBuf {
-    let handoff_path = stage
-        .path()
-        .join("repo/docs/handoffs/2026-01-01-mirror-round-trip.md");
-    database
-        .command()
-        .args([
-            "add",
-            "foo-bar",
-            "mirror round trip",
-            "--tag",
-            "handoff",
-            "--title",
-            "mirror round trip",
-            "--date",
-            "2026-01-01",
-        ])
-        .assert()
-        .success();
-    assert!(handoff_path.exists(), "linked handoff was not created");
-    handoff_path
-}
-
-fn handoff_add_command(stage: &TempDir, database: &DatabaseFixture) -> Command {
-    let mut command = database.command();
-    command
-        .args([
-            "handoff",
-            "add",
-            "--title",
-            "Managed Flow",
-            "--slug",
-            "managed-flow",
-            "--repo-root",
-        ])
-        .arg(stage.path().join("repo"))
-        .args(["--date", "2026-01-01"]);
-    command
-}
-
 #[test]
 fn add_human_flag_rejects_unreadable_index_before_mutation() {
     let dir = TempDir::new().unwrap();
@@ -214,39 +126,6 @@ fn list_fails_when_an_item_cannot_be_read() {
     fs::create_dir(&item).unwrap();
 
     database.command().args(["list"]).assert().failure();
-}
-
-#[test]
-fn add_handoff_failure_keeps_the_task_and_removes_the_scaffold() {
-    let (stage, database) = staged_for_handoff_mirror_roundtrip();
-    let handoff_directory = stage.path().join("repo/docs/handoffs");
-    fs::create_dir(handoff_directory.join("LEDGER.md")).unwrap();
-
-    database
-        .command()
-        .args([
-            "add",
-            "foo-bar",
-            "ship the thing",
-            "--title",
-            "Ship: Thing",
-            "--tag",
-            "handoff",
-            "--human",
-            "--date",
-            "2026-01-01",
-        ])
-        .assert()
-        .failure();
-
-    let task = task_json(&database, "FOO-0001");
-    assert_eq!(task["status"], "active");
-    assert_eq!(task["tags"], json!(["handoff"]));
-    assert_eq!(task["section"], "Human");
-    assert!(
-        !handoff_directory.join("2026-01-01-ship-thing.md").exists(),
-        "failed ledger write must remove the new scaffold"
-    );
 }
 
 #[test]
@@ -502,6 +381,28 @@ fn zellij_command_sequence(log: &str) -> Vec<&str> {
             }
         })
         .collect()
+}
+
+#[test]
+#[cfg(unix)]
+fn verify_probes_and_previews_the_selected_provider() {
+    let directory = TempDir::new().unwrap();
+    let (database, path, _log) = stage_session_with_zellij_stub(&directory);
+
+    let assertion = database
+        .command()
+        .args(["verify", "PWF-0001", "--agent", "codex"])
+        .env("PATH", path)
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8(assertion.get_output().stdout.clone()).unwrap();
+    assert!(
+        stdout.contains("codex: available (codex-cli fixture 1.0)"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("command: codex resume "), "{stdout}");
+    assert!(!stdout.contains("claude:"), "{stdout}");
 }
 
 #[test]
@@ -837,220 +738,4 @@ fn note_lifecycle_preserves_pending_work_behavior() {
             .contains("remember oat milk")
     );
     assert_eq!(task_json(&database, "PWF-0001"), task_before);
-}
-
-#[test]
-fn handoff_list_unreadable_ledger_is_not_reported_as_missing() {
-    let dir = TempDir::new().unwrap();
-    let repo = dir.path().join("repo");
-    fs::create_dir_all(repo.join("docs/handoffs/LEDGER.md")).unwrap();
-
-    database_independent_command()
-        .args(["handoff", "list", "--repo-root"])
-        .arg(&repo)
-        .assert()
-        .failure();
-}
-
-#[cfg(unix)]
-#[test]
-fn handoff_add_external_allocator_receives_canonical_arguments() {
-    let (dir, cfg) = staged_for_handoff_allocator_contract();
-    let repo = dir.path().join("repo");
-    let handoff = repo.join("docs/handoffs/2026-01-01-managed-flow.md");
-    let allocator =
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pw-stub.sh");
-    let argument_log = dir.path().join("allocator-argv.txt");
-    let database_path_log = dir.path().join("allocator-database-path.txt");
-
-    handoff_add_command(&dir, &cfg)
-        .arg("--pending-work-script")
-        .arg(&allocator)
-        .env("HANDOFF_STUB_LOG", &argument_log)
-        .env("HANDOFF_STUB_DATABASE_LOG", &database_path_log)
-        .assert()
-        .success();
-    assert_eq!(
-        fs::read_to_string(&argument_log).unwrap(),
-        "add\n--date\n2026-01-01\ntest-project\n--tag\nhandoff\n--continue-handoff\n"
-    );
-    assert_eq!(
-        fs::read(&database_path_log).unwrap(),
-        dir.path()
-            .join("projects.sqlite3")
-            .as_os_str()
-            .as_encoded_bytes()
-    );
-    assert!(
-        fs::read_to_string(&handoff)
-            .unwrap()
-            .contains("pw: TST-0001")
-    );
-}
-
-#[cfg(unix)]
-#[test]
-fn handoff_add_rejects_raw_invalid_utf8_and_removes_the_provisional_document() {
-    let (dir, cfg) = staged_for_handoff_allocator_contract();
-    let handoff = dir
-        .path()
-        .join("repo/docs/handoffs/2026-01-01-managed-flow.md");
-    let allocator = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/pw-stub-invalid-utf8.sh");
-
-    handoff_add_command(&dir, &cfg)
-        .arg("--pending-work-script")
-        .arg(&allocator)
-        .assert()
-        .failure();
-
-    assert!(
-        !handoff.exists(),
-        "invalid allocator output must remove the provisional handoff"
-    );
-}
-
-#[test]
-fn linked_handoff_close_failure_reports_post_mutation_recovery() {
-    let (dir, cfg) = staged_for_handoff_mirror_roundtrip();
-    let handoff = add_linked_handoff(&dir, &cfg);
-    let ledger = handoff.parent().unwrap().join("LEDGER.md");
-    fs::remove_file(&ledger).unwrap();
-    fs::create_dir(&ledger).unwrap();
-
-    cfg.command()
-        .args([
-            "done",
-            "FOO-0001",
-            "--report",
-            "complete",
-            "--date",
-            "2026-01-02",
-        ])
-        .assert()
-        .failure();
-    assert_eq!(task_json(&cfg, "FOO-0001")["status"], "done");
-    assert!(
-        handoff.exists(),
-        "failed archive must leave the handoff active"
-    );
-}
-
-#[test]
-fn linked_handoff_remove_failure_reports_deleted_note_recovery() {
-    let (dir, cfg) = staged_for_handoff_mirror_roundtrip();
-    let handoff = add_linked_handoff(&dir, &cfg);
-    let ledger = handoff.parent().unwrap().join("LEDGER.md");
-    fs::remove_file(&ledger).unwrap();
-    fs::create_dir(&ledger).unwrap();
-
-    cfg.command()
-        .args(["remove", "FOO-0001", "--yes"])
-        .assert()
-        .failure();
-    cfg.command()
-        .args(["show", "FOO-0001", "--json"])
-        .assert()
-        .failure();
-    assert!(
-        handoff.exists(),
-        "failed cleanup must leave the handoff active"
-    );
-}
-
-#[test]
-fn linked_handoff_lifecycle_outputs_never_touch_git() {
-    // The fixture omits `.git`; the complete handoff lifecycle must neither require nor create it.
-    let (d, cfg) = staged_for_handoff_mirror_roundtrip();
-    let repo = d.path().join("repo");
-    let handoff_dir = repo.join("docs/handoffs");
-    assert!(
-        !repo.join(".git").exists(),
-        "fixture must start without .git"
-    );
-
-    let handoff_path = add_linked_handoff(&d, &cfg);
-    assert_eq!(task_json(&cfg, "FOO-0001")["status"], "active");
-    assert!(
-        !repo.join(".git").exists(),
-        "add must not create/touch .git"
-    );
-    let archived_path = handoff_dir.join("archived").join(
-        handoff_path
-            .file_name()
-            .expect("handoff path must have a file name"),
-    );
-
-    cfg.command()
-        .args([
-            "done",
-            "--id",
-            "FOO-0001",
-            "--report",
-            "x",
-            "--commits",
-            "a..b",
-            "--date",
-            "2026-01-02",
-        ])
-        .assert()
-        .success();
-    assert!(
-        !handoff_path.exists(),
-        "handoff should be moved out of the active dir once done"
-    );
-    assert!(archived_path.exists());
-    assert_eq!(task_json(&cfg, "FOO-0001")["status"], "done");
-    assert!(
-        !repo.join(".git").exists(),
-        "done must not create/touch .git"
-    );
-
-    cfg.command()
-        .args(["reopen", "--id", "FOO-0001"])
-        .assert()
-        .success();
-    assert!(
-        !archived_path.exists(),
-        "reopen should move the handoff back out of archived/"
-    );
-    assert!(handoff_path.exists());
-    assert_eq!(task_json(&cfg, "FOO-0001")["status"], "active");
-    assert!(
-        !repo.join(".git").exists(),
-        "reopen must not create/touch .git"
-    );
-
-    cfg.command()
-        .args([
-            "cancel",
-            "FOO-0001",
-            "--report",
-            "superseded",
-            "--date",
-            "2026-01-03",
-        ])
-        .assert()
-        .success();
-    assert!(archived_path.exists());
-    assert_eq!(task_json(&cfg, "FOO-0001")["status"], "cancelled");
-
-    cfg.command()
-        .args(["reopen", "FOO-0001"])
-        .assert()
-        .success();
-    cfg.command()
-        .args(["remove", "FOO-0001", "--yes"])
-        .env("NO_COLOR", "1")
-        .assert()
-        .success();
-    cfg.command()
-        .args(["show", "FOO-0001", "--json"])
-        .assert()
-        .failure();
-    assert!(!handoff_path.exists(), "remove left the handoff active");
-    assert!(
-        !repo.join(".git").exists(),
-        "remove must not create/touch .git"
-    );
 }

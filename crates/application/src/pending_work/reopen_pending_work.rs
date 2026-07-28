@@ -5,32 +5,24 @@ use super::{
     project_registry::ProjectRegistry,
     store_util::{self, LoadItemError},
 };
-use crate::{
-    HandoffDocumentStore, HandoffLedger,
-    handoff::{HandoffError, HandoffMutationOk, lifecycle},
-    ports::{AppRecordStore, IndexEntry, IndexEntryState, ItemPatch, PendingWorkItem},
-};
+use crate::ports::{AppRecordStore, IndexEntry, IndexEntryState, ItemPatch, PendingWorkItem};
 
 #[derive(Debug, Clone)]
 pub struct ReopenPendingWork {
     pub id: String,
 }
 
-/// Contains the outcome of reopening a closed item.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReopenedPendingWork {
+pub struct ReopenPendingWorkOk {
     pub id: WorkItemId,
     pub project: ProjectName,
-    /// Indicates an idempotent skip with no mutation.
     pub already_active: bool,
-    pub handoff: HandoffMutationOk,
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum ReopenPendingWorkError {
     #[error("Open pending-work item not found: {id}")]
     ItemNotFound { id: String },
-    /// Reports a canonical identifier whose prefix has no configured project.
     #[error("Unknown task id prefix `{prefix}` for {pending_work_identifier}")]
     UnknownPrefix {
         pending_work_identifier: String,
@@ -38,14 +30,6 @@ pub enum ReopenPendingWorkError {
     },
     #[error("{0}")]
     WriteStore(Box<dyn std::error::Error + Send + Sync>),
-    #[error(transparent)]
-    HandoffPreflight(HandoffError),
-    #[error("{source}")]
-    HandoffAfterPendingWork {
-        pending_work_identifier: WorkItemId,
-        #[source]
-        source: HandoffError,
-    },
 }
 
 /// Reopens a closed item and restores or re-adds its queue link.
@@ -56,12 +40,9 @@ pub fn execute<S>(
     cmd: &ReopenPendingWork,
     store: &S,
     projects: &ProjectRegistry,
-) -> Result<ReopenedPendingWork, ReopenPendingWorkError>
+) -> Result<ReopenPendingWorkOk, ReopenPendingWorkError>
 where
-    S: AppRecordStore<PendingWorkItem>
-        + AppRecordStore<IndexEntry>
-        + HandoffDocumentStore
-        + AppRecordStore<HandoffLedger>,
+    S: AppRecordStore<PendingWorkItem> + AppRecordStore<IndexEntry>,
 {
     let not_found = || ReopenPendingWorkError::ItemNotFound { id: cmd.id.clone() };
     let pending_work_identifier = identifier::parse(&cmd.id).ok_or_else(not_found)?;
@@ -83,21 +64,11 @@ where
             }
         })?;
 
-    let handoff_pending =
-        lifecycle::preflight_reopen(store, projects, pending_work_identifier.as_ref())
-            .map_err(ReopenPendingWorkError::HandoffPreflight)?;
-
     if record.status == WorkItemStatus::Active {
-        return Ok(ReopenedPendingWork {
-            id: pending_work_identifier.clone(),
+        return Ok(ReopenPendingWorkOk {
+            id: pending_work_identifier,
             project: project.clone(),
             already_active: true,
-            handoff: lifecycle::commit_after_pending_work(store, handoff_pending).map_err(
-                |source| ReopenPendingWorkError::HandoffAfterPendingWork {
-                    pending_work_identifier: pending_work_identifier.clone(),
-                    source,
-                },
-            )?,
         });
     }
 
@@ -138,18 +109,10 @@ where
         ReopenDecision::AlreadyOpen => {}
     }
 
-    let handoff =
-        lifecycle::commit_after_pending_work(store, handoff_pending).map_err(|source| {
-            ReopenPendingWorkError::HandoffAfterPendingWork {
-                pending_work_identifier: pending_work_identifier.clone(),
-                source,
-            }
-        })?;
-    Ok(ReopenedPendingWork {
+    Ok(ReopenPendingWorkOk {
         id: pending_work_identifier,
         project: project.clone(),
         already_active: false,
-        handoff,
     })
 }
 
@@ -172,19 +135,12 @@ fn reopen_decision(entries: &[IndexEntry], id: &WorkItemId) -> ReopenDecision {
 
 #[cfg(test)]
 mod tests {
-    use std::{path::PathBuf, time::SystemTime};
+    use pwf_domain::pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus};
 
-    use pwf_domain::{
-        handoff::HandoffStatus,
-        pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus},
-    };
-
-    use super::{ProjectRegistry, ReopenPendingWork, ReopenPendingWorkError};
+    use super::{ProjectRegistry, ReopenPendingWork};
     use crate::{
-        HandoffDocument, HandoffDocumentIdentifier, HandoffLocation, HandoffScope, IndexEntry,
-        IndexEntryState, Materialization, PendingWorkItem, RecordId,
-        handoff::HandoffMutationOk,
-        testing::{FailurePoint, InMemoryStore},
+        IndexEntry, IndexEntryState, Materialization, PendingWorkItem, RecordId,
+        testing::InMemoryStore,
     };
 
     fn registry() -> ProjectRegistry {
@@ -296,100 +252,5 @@ mod tests {
             error.to_string(),
             "Unknown task id prefix `XYZ` for XYZ-0001"
         );
-    }
-
-    #[test]
-    fn reopen_restores_the_linked_archived_handoff() {
-        let tagged = PendingWorkItem {
-            tags: Some("[handoff]".to_string()),
-            ..record("FOO-0001", WorkItemStatus::Done)
-        };
-        let scope = HandoffScope {
-            repository_root: PathBuf::from("/repo"),
-        };
-        let handoff = HandoffDocument {
-            identifier: HandoffDocumentIdentifier {
-                file_name: "2026-01-01-tray-gui.md".to_string(),
-                location: HandoffLocation::Archived,
-            },
-            location: HandoffLocation::Archived,
-            project: Some(foo()),
-            title: "Tray GUI".to_string(),
-            status: Some(HandoffStatus::Done),
-            created: Some(Timestamp::new("2026-01-01")),
-            completed: Some(Timestamp::new("2026-01-02")),
-            pending_work_identifier_raw: Some("FOO-0001".to_string()),
-            goals_completed: 1,
-            goals_total: 1,
-            body: "\n# Tray GUI\n".to_string(),
-            source: "---\nstatus: done\ncompleted: 2026-01-02\nproject: foo-bar\ncreated: 2026-01-01\npw: FOO-0001\n---\n\n# Tray GUI\n".to_string(),
-            locator: PathBuf::from(
-                "/repo/docs/handoffs/archived/2026-01-01-tray-gui.md",
-            ),
-            modified_timestamp: SystemTime::UNIX_EPOCH,
-        };
-        let store = InMemoryStore::default()
-            .with_prefix("foo-bar", "FOO")
-            .with_project("foo-bar", vec![tagged])
-            .with_handoff_documents(scope.clone(), vec![handoff]);
-
-        let outcome = super::execute(&command(), &store, &registry()).unwrap();
-
-        assert!(matches!(
-            outcome.handoff,
-            HandoffMutationOk::Reopened { .. }
-        ));
-        assert_eq!(
-            store.handoff_documents(&scope)[0].location,
-            HandoffLocation::Active
-        );
-    }
-
-    #[test]
-    fn reopen_reports_handoff_failure_after_pending_work_is_reopened() {
-        let tagged = PendingWorkItem {
-            tags: Some("[handoff]".to_string()),
-            ..record("FOO-0001", WorkItemStatus::Done)
-        };
-        let scope = HandoffScope {
-            repository_root: PathBuf::from("/repo"),
-        };
-        let handoff = HandoffDocument {
-            identifier: HandoffDocumentIdentifier {
-                file_name: "2026-01-01-tray-gui.md".to_string(),
-                location: HandoffLocation::Archived,
-            },
-            location: HandoffLocation::Archived,
-            project: Some(foo()),
-            title: "Tray GUI".to_string(),
-            status: Some(HandoffStatus::Done),
-            created: Some(Timestamp::new("2026-01-01")),
-            completed: Some(Timestamp::new("2026-01-02")),
-            pending_work_identifier_raw: Some("FOO-0001".to_string()),
-            goals_completed: 1,
-            goals_total: 1,
-            body: "\n# Tray GUI\n".to_string(),
-            source: "---\nstatus: done\ncompleted: 2026-01-02\nproject: foo-bar\ncreated: 2026-01-01\npw: FOO-0001\n---\n\n# Tray GUI\n".to_string(),
-            locator: PathBuf::from(
-                "/repo/docs/handoffs/archived/2026-01-01-tray-gui.md",
-            ),
-            modified_timestamp: SystemTime::UNIX_EPOCH,
-        };
-        let store = InMemoryStore::default()
-            .with_prefix("foo-bar", "FOO")
-            .with_project("foo-bar", vec![tagged])
-            .with_handoff_documents(scope, vec![handoff])
-            .with_failure(FailurePoint::DocumentUpdate);
-
-        let error = super::execute(&command(), &store, &registry()).unwrap_err();
-
-        assert!(matches!(
-            error,
-            ReopenPendingWorkError::HandoffAfterPendingWork {
-                ref pending_work_identifier,
-                ..
-            } if pending_work_identifier.as_ref() == "FOO-0001"
-        ));
-        assert_eq!(store.items("foo-bar")[0].status, WorkItemStatus::Active);
     }
 }

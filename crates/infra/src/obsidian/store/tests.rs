@@ -1,9 +1,8 @@
 use std::{assert_matches, fmt::Write as _, path::Path};
 
 use pwf_application::{
-    AppRecordStore, HandoffDocument, HandoffLedger, HandoffLedgerWrite, HandoffScope, IndexEntry,
-    IndexEntryState, IndexPlacement, IndexSection, ItemPatch, Materialization, NewHandoffDocument,
-    NewItem, PendingWorkItem, RecordId,
+    AppRecordStore, IndexEntry, IndexEntryState, IndexPlacement, IndexSection, ItemPatch,
+    Materialization, NewItem, PendingWorkItem, RecordId,
 };
 use pwf_domain::pending_work::{
     EffortTier, ProjectIndexIdentity, ProjectName, ProjectPrefix, Tag, Tags, Timestamp, WorkItemId,
@@ -141,45 +140,6 @@ fn explicit_index_validation_uses_the_supplied_identity() {
             ref expected_id,
             ..
         } if expected_id == "new"
-    );
-}
-
-#[test]
-fn explicit_empty_projects_support_repository_scoped_handoff_storage() {
-    let temporary_directory = tempfile::tempdir().unwrap();
-    let scope = HandoffScope {
-        repository_root: temporary_directory.path().join("repo"),
-    };
-    let store = ObsidianStore::new([]);
-    let document = <ObsidianStore as AppRecordStore<HandoffDocument>>::insert(
-        &store,
-        &scope,
-        NewHandoffDocument {
-            file_name: "2026-07-25-storage.md".to_string(),
-            project: ProjectName::try_new("pwf").unwrap(),
-            title: "Storage".to_string(),
-            created: Timestamp::new("2026-07-25"),
-            body: "\n# Storage\n".to_string(),
-            pending_work_identifier: None,
-        },
-    )
-    .unwrap();
-    let ledger = <ObsidianStore as AppRecordStore<HandoffLedger>>::insert(
-        &store,
-        &scope,
-        HandoffLedgerWrite { rows: Vec::new() },
-    )
-    .unwrap();
-
-    assert_eq!(
-        document.locator,
-        scope
-            .repository_root
-            .join("docs/handoffs/2026-07-25-storage.md")
-    );
-    assert_eq!(
-        ledger.locator,
-        scope.repository_root.join("docs/handoffs/LEDGER.md")
     );
 }
 

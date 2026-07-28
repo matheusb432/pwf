@@ -37,89 +37,48 @@ pub struct UpdatePendingWorkItem {
     pub tags_clear: bool,
 }
 
-/// Reports update preparation or persistence failures.
 #[derive(Debug, thiserror::Error)]
 pub enum UpdatePendingWorkError {
-    /// The requested item does not exist.
     #[error("Open pending-work item not found: {id}")]
-    ItemNotFound {
-        /// Requested identifier.
-        id: String,
-    },
-    /// The request contains no effective edit.
+    ItemNotFound { id: String },
     #[error(
         "nothing to update (pass --prompt, --title, --prereq, --clear-prereq, --tag, --tags-clear, --commits, --append-report, --append, and/or --effort)."
     )]
     NothingToUpdate,
-    /// A closed item was asked to accept an open-item edit.
     #[error(
         "only --commits / --append-report can amend closed item {id} (done/cancelled); body/title/prereq/tags/append/effort need an open item."
     )]
-    ClosedItemAmendOnly {
-        /// Requested closed-item identifier.
-        id: String,
-    },
-    /// Existing tag frontmatter cannot be merged safely.
+    ClosedItemAmendOnly { id: String },
     #[error("item {id} has invalid tags frontmatter: {raw:?}.")]
-    InvalidTagsFrontmatter {
-        /// Item containing invalid frontmatter.
-        id: String,
-        /// Raw frontmatter value.
-        raw: String,
-    },
-    /// A raw tag value is invalid.
+    InvalidTagsFrontmatter { id: String, raw: String },
     #[error(
         "Invalid --tag value {raw:?}; use lowercase/uppercase ASCII letters, digits, '_' or '-', without leading, trailing, or repeated separators."
     )]
-    InvalidTag {
-        /// Raw tag value.
-        raw: String,
-    },
-    /// A prerequisite value is not a work-item identifier.
+    InvalidTag { raw: String },
     #[error("Invalid --prereq id: {raw}.")]
-    InvalidPrereqId {
-        /// Raw prerequisite value.
-        raw: String,
-    },
-    /// No prerequisite identifier was supplied.
+    InvalidPrereqId { raw: String },
     #[error("--prereq requires an id.")]
     MissingPrereqId,
-    /// One or more prerequisite records do not exist.
     #[error("Unknown --prereq id(s): {}.", ids.join(", "))]
-    UnknownPrereqIds {
-        /// Canonical identifiers without records.
-        ids: Vec<String>,
-    },
-    /// The requested report is blank.
+    UnknownPrereqIds { ids: Vec<String> },
     #[error("--report cannot be empty.")]
     EmptyReport,
-    /// The requested lane append is blank.
     #[error("--append cannot be empty.")]
     EmptyAppend,
-    /// An item or prerequisite store operation failed.
     #[error("{0}")]
     WriteStore(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
 
-/// Describes either an open-item edit or a closed-item amendment from [`execute`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UpdatePendingWorkItemOk {
-    /// Reports the effective identity and title after editing an open item.
     OpenItemEdit {
-        /// Canonical identifier of the edited item.
         id: String,
-        /// Managed project containing the item.
         project: String,
-        /// Effective title after the edit.
         title: String,
-        /// Whether YAML-safe normalization changed an explicit title.
         title_normalized: bool,
     },
-    /// Reports the fields amended on a closed item.
     Changed {
-        /// Canonical identifier of the amended item.
         id: String,
-        /// Renderable summaries of the applied changes.
         changes: Vec<String>,
     },
 }

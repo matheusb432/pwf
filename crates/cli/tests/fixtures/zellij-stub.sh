@@ -1,5 +1,5 @@
 #!/bin/sh
-# Recording zellij stub for the session e2e (pattern of pw-stub.sh): appends its
+# Recording zellij stub for the session e2e: appends its
 # argv to $ZELLIJ_STUB_LOG with NUL invocation boundaries. Stateful
 # missing-session modes accept one or two tab failures.
 set -u

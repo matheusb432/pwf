@@ -1,34 +1,30 @@
-//! Defines root parsing and top-level engine selection.
+//! Defines root parsing and top-level command selection.
 
 use clap::{Parser, Subcommand};
 
-use crate::engines::{handoff, note, pending_work, project};
+use crate::{note, pending_work, project};
 
-/// Manages pending work, handoffs, and project notes across configured repositories.
+/// Manages pending work and project notes across configured repositories.
 #[derive(Parser, Debug)]
 #[command(
     name = "pwf",
     version,
     about,
     long_about = None,
+    arg_required_else_help = true,
     styles = clap_cargo::style::CLAP_STYLING
 )]
 pub struct Cli {
     #[command(subcommand)]
-    pub engine: Engine,
+    pub command: RootCommand,
 }
 
 #[derive(Subcommand, Debug)]
-pub enum Engine {
+pub enum RootCommand {
     /// Manages registered projects.
     Project(project::Arguments),
     #[command(flatten)]
     PendingWork(pending_work::Command),
-    /// Per-repo handoff ledgers (resume notes between sessions).
-    Handoff {
-        #[command(subcommand)]
-        command: handoff::Command,
-    },
     /// One-liner project notes: `pwf note [ls|add <msg>|remove <id>] <proj>`.
     Note(note::Arguments),
 }
@@ -63,21 +59,21 @@ mod tests {
     use clap::CommandFactory;
 
     use super::*;
-    use crate::engines::project;
+    use crate::project;
 
     fn parse(tokens: &[&str]) -> Cli {
         parse_argv(tokens.iter().map(|token| (*token).to_string()).collect()).expect("parse")
     }
 
     fn pending_work(tokens: &[&str]) -> pending_work::Command {
-        let Engine::PendingWork(command) = parse(tokens).engine else {
+        let RootCommand::PendingWork(command) = parse(tokens).command else {
             panic!("expected pending-work command");
         };
         command
     }
 
     fn project(tokens: &[&str]) -> project::Arguments {
-        let Engine::Project(arguments) = parse(tokens).engine else {
+        let RootCommand::Project(arguments) = parse(tokens).command else {
             panic!("expected project command");
         };
         arguments
@@ -488,38 +484,5 @@ mod tests {
             .expect_err("note verbs must be verb-first");
 
         assert!(error.to_string().contains("unexpected argument 'add'"));
-    }
-
-    #[test]
-    fn handoff_verbs_parse_into_typed_engine_leaves() {
-        let Engine::Handoff {
-            command: handoff::Command::Add(add),
-        } = parse(&[
-            "handoff",
-            "add",
-            "--title",
-            "checkpoint",
-            "--slug",
-            "checkpoint",
-            "--repo-root",
-            "/tmp/repo",
-            "--date",
-            "2026-07-20",
-        ])
-        .engine
-        else {
-            panic!("expected handoff add");
-        };
-        assert_eq!(add.title.as_deref(), Some("checkpoint"));
-        assert_eq!(add.slug.as_deref(), Some("checkpoint"));
-        assert_eq!(add.common.repo_root.as_deref(), Some("/tmp/repo"));
-
-        let Engine::Handoff {
-            command: handoff::Command::List(list),
-        } = parse(&["handoff", "list", "--repo-root", "/tmp/repo"]).engine
-        else {
-            panic!("expected handoff list");
-        };
-        assert_eq!(list.common.repo_root.as_deref(), Some("/tmp/repo"));
     }
 }

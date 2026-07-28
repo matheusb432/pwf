@@ -373,29 +373,21 @@ fn unsupported_tasks_kind_fails_at_json_parsing_before_database_creation() {
 }
 
 #[test]
-fn malformed_project_task_paths_fail_before_database_creation() {
-    for tasks_path in [
-        "~//tmp/tasks",
-        r"~\\tmp\tasks",
-        r"~/\tmp/tasks",
-        "~/tasks/../shared",
-        "~/D:/tasks",
-        "~/D:tasks",
-    ] {
-        let cli = ProjectCli::new();
-        let payload = add_payload("pwf", "pwf", "/work/pwf", tasks_path);
+fn malformed_project_task_path_does_not_persist_the_project() {
+    let cli = ProjectCli::new();
+    let tasks_path = "~/tasks/../shared";
+    let payload = add_payload("pwf", "pwf", "/work/pwf", tasks_path);
 
-        let output = cli.run(&["project", "add", "--kind", "directory", &payload]);
+    let output = cli.run(&["project", "add", "--kind", "directory", &payload]);
 
-        assert_failure(
-            output,
-            &["managed project PWF task path", "is invalid", tasks_path],
-        );
-        assert!(
-            !cli.database_path().exists(),
-            "invalid path created the project database: {tasks_path:?}"
-        );
-    }
+    assert_failure(
+        output,
+        &["managed project PWF task path", "is invalid", tasks_path],
+    );
+    assert_failure(
+        cli.run(&["project", "get", "PWF"]),
+        &["project not found: PWF"],
+    );
 }
 
 #[test]

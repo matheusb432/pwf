@@ -42,7 +42,6 @@ pub enum PlanSessionIntent {
     DryRun,
 }
 
-/// Contains the session planning outcome.
 #[expect(
     clippy::large_enum_variant,
     reason = "the dispatch outcome keeps the approved prepared-dispatch type unboxed"
@@ -103,7 +102,6 @@ impl PreparedSessionDispatch {
     }
 }
 
-/// Reports failures that prevent a session plan from being produced or persisted.
 #[derive(Debug, Error)]
 pub enum PlanSessionError {
     #[error(transparent)]
@@ -118,7 +116,6 @@ pub enum PlanSessionError {
     RepositoryMissing { project: String, path: String },
     #[error("zellij not found on PATH; cannot dispatch a pwf session (Linux-only feature).")]
     MultiplexerNotFound,
-    /// Preserves the model-catalog adapter's source chain.
     #[error("{0}")]
     ModelTier(#[source] Box<dyn Error + Send + Sync>),
 }

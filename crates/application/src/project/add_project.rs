@@ -32,51 +32,31 @@ pub struct AddProjectFields {
     pub tasks: ProjectTasks,
 }
 
-/// Reports an expected conflict or unexpected project creation failure.
 #[derive(Debug, thiserror::Error)]
 pub enum AddProjectError {
-    /// The project prefix already exists.
     #[error("project id already exists: {id}")]
-    DuplicateProjectId {
-        /// Conflicting project prefix.
-        id: ProjectPrefix,
-    },
-    /// The project title already exists.
+    DuplicateProjectId { id: ProjectPrefix },
     #[error("project title already exists: {title}")]
-    DuplicateProjectTitle {
-        /// Conflicting project title.
-        title: ProjectName,
-    },
-    /// A task path cannot be resolved for the current runtime.
+    DuplicateProjectTitle { title: ProjectName },
     #[error("managed project {project_id} task path '{path}' is invalid: {source}")]
     InvalidTaskPath {
-        /// Project containing the invalid task path.
         project_id: ProjectPrefix,
-        /// Persisted task path value.
         path: String,
-        /// Path validation failure.
         #[source]
         source: super::resolve_runtime_path::RuntimePathError,
     },
-    /// Two projects resolve to the same runtime task location.
     #[error(
         "managed projects {first_id} and {second_id} resolve to the same task location: {}",
         path.display()
     )]
     DuplicateRuntimeTaskLocation {
-        /// First project prefix in lexical order.
         first_id: ProjectPrefix,
-        /// Second project prefix in lexical order.
         second_id: ProjectPrefix,
-        /// Conflicting resolved task location.
         path: PathBuf,
     },
-    /// Project creation failed outside an expected conflict.
     #[error("{context}: {source}")]
     Unexpected {
-        /// Failed operation boundary.
         context: &'static str,
-        /// Concrete database or persisted-data failure.
         #[source]
         source: Box<dyn Error + Send + Sync>,
     },

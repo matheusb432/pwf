@@ -1393,7 +1393,6 @@ dependencies = [
 name = "pwf"
 version = "0.1.0"
 dependencies = [
- "anstream",
  "anstyle",
  "assert_cmd",
  "clap",
@@ -2736,11 +2735,8 @@ dependencies = [
  "clap-cargo",
  "percent-encoding",
  "predicates",
- "proc-macro2",
  "process-wrap",
- "syn 2.0.118",
  "tempfile",
- "walkdir",
  "xtk_test",
 ]
 

@@ -70,26 +70,10 @@ pub struct PendingWorkItemData {
     pub prompt: String,
 }
 
-/// Returns the selected pending-work representation.
-///
-/// # Examples
-///
-/// ```
-/// use pwf_application::pending_work::show_pending_work_item::ShowPendingWorkItemOutput;
-///
-/// # fn consume(output: ShowPendingWorkItemOutput) {
-/// if let ShowPendingWorkItemOutput::Json(task) = output {
-///     assert!(!task.id.is_empty());
-/// }
-/// # }
-/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ShowPendingWorkItemOutput {
-    /// Contains persisted Markdown.
+pub enum ShowPendingWorkItemOk {
     Markdown(String),
-    /// Contains the item display path.
     Path(String),
-    /// Contains semantic task data.
     Json(Box<PendingWorkItemData>),
 }
 
@@ -102,30 +86,17 @@ pub struct ShowPendingWorkItem {
     pub output: ShowOutput,
 }
 
-/// Reports a pending-work resolution or Markdown read failure.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum ShowPendingWorkError {
-    /// Preserves the unmatched requested id without normalizing it again.
     #[error("Open pending-work item not found: {id}")]
-    ItemNotFound {
-        /// Identifier supplied by the caller.
-        id: String,
-    },
-    /// Retains the record store's read or parse failure.
+    ItemNotFound { id: String },
     #[error("{0}")]
     ReadStore(#[source] Box<dyn std::error::Error + Send + Sync>),
-    /// Retains the Markdown source's byte-read failure.
     #[error("{0}")]
     ReadMarkdown(#[source] Box<dyn std::error::Error + Send + Sync>),
-    /// Reports invalid persisted data required by the typed representation.
     #[error("Invalid pending-work item {field}: {reason}")]
-    InvalidItemData {
-        /// Semantic field that could not be projected.
-        field: &'static str,
-        /// Validation failure.
-        reason: String,
-    },
+    InvalidItemData { field: &'static str, reason: String },
 }
 
 /// Returns a pending-work item's selected representation.
@@ -142,26 +113,26 @@ pub fn execute<S, N>(
     store: &S,
     projects: &ProjectRegistry,
     markdown_source: &N,
-) -> Result<ShowPendingWorkItemOutput, ShowPendingWorkError>
+) -> Result<ShowPendingWorkItemOk, ShowPendingWorkError>
 where
     S: AppRecordStore<PendingWorkItem>,
     N: NoteMarkdownSource,
 {
     let (project, record) = resolve_record(store, projects, &query.id)?;
     match query.output {
-        ShowOutput::Path => Ok(ShowPendingWorkItemOutput::Path(record.locator)),
+        ShowOutput::Path => Ok(ShowPendingWorkItemOk::Path(record.locator)),
         ShowOutput::Markdown
             if matches!(record.materialization, Materialization::MissingNote { .. }) =>
         {
             markdown_source
                 .read_note_markdown(Path::new(&record.locator))
-                .map(ShowPendingWorkItemOutput::Markdown)
+                .map(ShowPendingWorkItemOk::Markdown)
                 .map_err(|error| ShowPendingWorkError::ReadMarkdown(Box::new(error)))
         }
-        ShowOutput::Markdown => Ok(ShowPendingWorkItemOutput::Markdown(record.source)),
+        ShowOutput::Markdown => Ok(ShowPendingWorkItemOk::Markdown(record.source)),
         ShowOutput::Json => data::from_record(project, record)
             .map(Box::new)
-            .map(ShowPendingWorkItemOutput::Json),
+            .map(ShowPendingWorkItemOk::Json),
     }
 }
 
@@ -169,7 +140,7 @@ where
 mod tests {
     use std::{convert::Infallible, path::Path};
 
-    use super::{ShowOutput, ShowPendingWorkItem, ShowPendingWorkItemOutput};
+    use super::{ShowOutput, ShowPendingWorkItem, ShowPendingWorkItemOk};
     use crate::{
         NoteMarkdownSource,
         pending_work::resolve::testing::{PWF_0001_SOURCE, staged, staged_ghost},
@@ -218,7 +189,7 @@ mod tests {
 
         assert_eq!(
             shown,
-            ShowPendingWorkItemOutput::Markdown(PWF_0001_SOURCE.to_string())
+            ShowPendingWorkItemOk::Markdown(PWF_0001_SOURCE.to_string())
         );
     }
 
@@ -239,7 +210,7 @@ mod tests {
 
         assert_eq!(
             shown,
-            ShowPendingWorkItemOutput::Path("/notes/pwf/PWF-0002.md".to_string())
+            ShowPendingWorkItemOk::Path("/notes/pwf/PWF-0002.md".to_string())
         );
     }
 

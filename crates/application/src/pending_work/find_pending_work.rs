@@ -15,10 +15,8 @@ pub struct FindPendingWork {
 
 #[derive(Debug, thiserror::Error)]
 pub enum FindPendingWorkError {
-    /// Preserves the unmatched requested id without normalizing it again.
     #[error("Open pending-work item not found: {id}")]
     ItemNotFound { id: String },
-    /// Reports multiple matching items or projects sharing one id prefix.
     #[error("Pending-work id is ambiguous: {id}")]
     AmbiguousId { id: String },
     #[error("Unknown task id prefix `{prefix}` for {id}")]

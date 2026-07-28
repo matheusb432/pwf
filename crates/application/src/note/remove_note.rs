@@ -26,63 +26,19 @@ pub struct RemoveNote {
     pub id: String,
 }
 
-/// Reports the canonical identifier of a removed note.
-///
-/// # Examples
-///
-/// ```
-/// use pwf_application::note::remove_note::RemovedNote;
-/// use pwf_domain::note::NoteId;
-///
-/// let removed = RemovedNote {
-///     id: NoteId::try_new("PWF-NOTE-0001").unwrap(),
-/// };
-/// assert_eq!(removed.id.number(), 1);
-/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RemovedNote {
-    /// Identifies the removed note.
+pub struct RemoveNoteOk {
     pub id: NoteId,
 }
 
-/// Reports a rejected note-removal request or storage failure.
-///
-/// # Examples
-///
-/// ```
-/// use pwf_application::note::remove_note::RemoveNoteError;
-///
-/// let error = RemoveNoteError::NoSuchNote {
-///     id: "PWF-NOTE-0001".to_string(),
-///     project: "pwf".to_string(),
-/// };
-/// assert_eq!(error.to_string(), "No such note PWF-NOTE-0001 in pwf.");
-/// ```
 #[derive(Debug, thiserror::Error)]
 pub enum RemoveNoteError {
-    /// Reports a project identifier that does not resolve to a managed project.
     #[error("Unknown project '{identifier}'; expected a managed project name or id code.")]
-    UnknownProject {
-        /// Preserves the unmatched project identifier.
-        identifier: String,
-    },
-    /// Reports a note identifier that cannot resolve within the selected project.
+    UnknownProject { identifier: String },
     #[error("Invalid note id '{id}'; expected e.g. {prefix}-NOTE-0001, NOTE-0001, or 1.")]
-    InvalidIdentifier {
-        /// Preserves the rejected note identifier.
-        id: String,
-        /// Names the selected project's canonical prefix.
-        prefix: String,
-    },
-    /// Reports a resolved identifier whose note representation does not exist.
+    InvalidIdentifier { id: String, prefix: String },
     #[error("No such note {id} in {project}.")]
-    NoSuchNote {
-        /// Identifies the missing note canonically.
-        id: String,
-        /// Names the selected project.
-        project: String,
-    },
-    /// Preserves the storage adapter failure as the causal source.
+    NoSuchNote { id: String, project: String },
     #[error("{0}")]
     Store(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
@@ -101,14 +57,14 @@ pub enum RemoveNoteError {
 /// ```
 /// # use pwf_application::{
 /// #     ProjectNoteStore,
-/// #     note::remove_note::{self, RemoveNote, RemoveNoteError, RemovedNote},
+/// #     note::remove_note::{self, RemoveNote, RemoveNoteError, RemoveNoteOk},
 /// #     pending_work::ProjectRegistry,
 /// # };
 /// # fn remove<S>(
 /// #     request: RemoveNote,
 /// #     store: &S,
 /// #     projects: &ProjectRegistry,
-/// # ) -> Result<RemovedNote, RemoveNoteError>
+/// # ) -> Result<RemoveNoteOk, RemoveNoteError>
 /// # where
 /// #     S: ProjectNoteStore,
 /// # {
@@ -120,7 +76,7 @@ pub fn execute<S>(
     command: RemoveNote,
     store: &S,
     projects: &ProjectRegistry,
-) -> Result<RemovedNote, RemoveNoteError>
+) -> Result<RemoveNoteOk, RemoveNoteError>
 where
     S: ProjectNoteStore,
 {
@@ -152,7 +108,7 @@ where
     store
         .delete(&project, &id)
         .map_err(|error| RemoveNoteError::Store(Box::new(error)))?;
-    Ok(RemovedNote { id })
+    Ok(RemoveNoteOk { id })
 }
 
 #[cfg(test)]

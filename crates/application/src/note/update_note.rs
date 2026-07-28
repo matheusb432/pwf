@@ -29,68 +29,22 @@ pub struct UpdateNote {
     pub message: String,
 }
 
-/// Reports the canonical identifier and stored message of an updated note.
-///
-/// # Examples
-///
-/// ```
-/// use pwf_application::note::update_note::UpdatedNote;
-/// use pwf_domain::note::NoteId;
-///
-/// let updated = UpdatedNote {
-///     id: NoteId::try_new("PWF-NOTE-0001").unwrap(),
-///     message: "remember oat milk".to_string(),
-/// };
-/// assert_eq!(updated.id.number(), 1);
-/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UpdatedNote {
-    /// Identifies the updated note.
+pub struct UpdateNoteOk {
     pub id: NoteId,
-    /// Contains the trimmed replacement message.
     pub message: String,
 }
 
-/// Reports a rejected note-update request or storage failure.
-///
-/// # Examples
-///
-/// ```
-/// use pwf_application::note::update_note::UpdateNoteError;
-///
-/// assert_eq!(
-///     UpdateNoteError::EmptyMessage.to_string(),
-///     "Note message is empty; provide a non-empty message."
-/// );
-/// ```
 #[derive(Debug, thiserror::Error)]
 pub enum UpdateNoteError {
-    /// Reports a project identifier that does not resolve to a managed project.
     #[error("Unknown project '{identifier}'; expected a managed project name or id code.")]
-    UnknownProject {
-        /// Preserves the unmatched project identifier.
-        identifier: String,
-    },
-    /// Reports a replacement message that is empty after trimming.
+    UnknownProject { identifier: String },
     #[error("Note message is empty; provide a non-empty message.")]
     EmptyMessage,
-    /// Reports a note identifier that cannot resolve within the selected project.
     #[error("Invalid note id '{id}'; expected e.g. {prefix}-NOTE-0001, NOTE-0001, or 1.")]
-    InvalidIdentifier {
-        /// Preserves the rejected note identifier.
-        id: String,
-        /// Names the selected project's canonical prefix.
-        prefix: String,
-    },
-    /// Reports a resolved identifier whose note representation does not exist.
+    InvalidIdentifier { id: String, prefix: String },
     #[error("No such note {id} in {project}.")]
-    NoSuchNote {
-        /// Identifies the missing note canonically.
-        id: String,
-        /// Names the selected project.
-        project: String,
-    },
-    /// Preserves the storage adapter failure as the causal source.
+    NoSuchNote { id: String, project: String },
     #[error("{0}")]
     Store(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
@@ -110,14 +64,14 @@ pub enum UpdateNoteError {
 /// ```
 /// # use pwf_application::{
 /// #     AppRecordStore, ProjectNote,
-/// #     note::update_note::{self, UpdateNote, UpdateNoteError, UpdatedNote},
+/// #     note::update_note::{self, UpdateNote, UpdateNoteError, UpdateNoteOk},
 /// #     pending_work::ProjectRegistry,
 /// # };
 /// # fn update<S>(
 /// #     request: UpdateNote,
 /// #     store: &S,
 /// #     projects: &ProjectRegistry,
-/// # ) -> Result<UpdatedNote, UpdateNoteError>
+/// # ) -> Result<UpdateNoteOk, UpdateNoteError>
 /// # where
 /// #     S: AppRecordStore<ProjectNote>,
 /// # {
@@ -129,7 +83,7 @@ pub fn execute<S>(
     command: UpdateNote,
     store: &S,
     projects: &ProjectRegistry,
-) -> Result<UpdatedNote, UpdateNoteError>
+) -> Result<UpdateNoteOk, UpdateNoteError>
 where
     S: AppRecordStore<ProjectNote>,
 {
@@ -172,7 +126,7 @@ where
             },
         )
         .map_err(|error| UpdateNoteError::Store(Box::new(error)))?;
-    Ok(UpdatedNote {
+    Ok(UpdateNoteOk {
         id,
         message: message.to_string(),
     })

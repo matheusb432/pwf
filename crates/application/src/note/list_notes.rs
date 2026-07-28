@@ -31,52 +31,17 @@ pub struct ListNotes {
     pub number: Option<usize>,
 }
 
-/// Contains one project's selected notes and hidden count.
-///
-/// # Examples
-///
-/// ```
-/// use pwf_application::note::list_notes::ListedNotes;
-/// use pwf_domain::pending_work::ProjectName;
-///
-/// let result = ListedNotes {
-///     project: ProjectName::try_new("pwf").unwrap(),
-///     notes: Vec::new(),
-///     hidden: 0,
-/// };
-/// assert!(result.notes.is_empty());
-/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ListedNotes {
-    /// Names the resolved project.
+pub struct ListNotesOk {
     pub project: ProjectName,
-    /// Contains selected notes in descending numeric-suffix order.
     pub notes: Vec<ListedNote>,
-    /// Counts notes omitted by the requested cap.
     pub hidden: usize,
 }
 
-/// Reports a rejected note-list query or storage failure.
-///
-/// # Examples
-///
-/// ```
-/// use pwf_application::note::list_notes::ListNotesError;
-///
-/// let error = ListNotesError::UnknownProject {
-///     identifier: "missing".to_string(),
-/// };
-/// assert!(error.to_string().starts_with("Unknown project 'missing'"));
-/// ```
 #[derive(Debug, thiserror::Error)]
 pub enum ListNotesError {
-    /// Reports a project identifier that does not resolve to a managed project.
     #[error("Unknown project '{identifier}'; expected a managed project name or id code.")]
-    UnknownProject {
-        /// Preserves the unmatched project identifier.
-        identifier: String,
-    },
-    /// Preserves the storage adapter failure as the causal source.
+    UnknownProject { identifier: String },
     #[error("{0}")]
     Store(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
@@ -93,14 +58,14 @@ pub enum ListNotesError {
 /// ```
 /// # use pwf_application::{
 /// #     AppRecordStore, ProjectNote,
-/// #     note::list_notes::{self, ListNotes, ListNotesError, ListedNotes},
+/// #     note::list_notes::{self, ListNotes, ListNotesError, ListNotesOk},
 /// #     pending_work::ProjectRegistry,
 /// # };
 /// # fn list<S>(
 /// #     query: ListNotes,
 /// #     store: &S,
 /// #     projects: &ProjectRegistry,
-/// # ) -> Result<ListedNotes, ListNotesError>
+/// # ) -> Result<ListNotesOk, ListNotesError>
 /// # where
 /// #     S: AppRecordStore<ProjectNote>,
 /// # {
@@ -112,7 +77,7 @@ pub fn execute<S>(
     query: ListNotes,
     store: &S,
     projects: &ProjectRegistry,
-) -> Result<ListedNotes, ListNotesError>
+) -> Result<ListNotesOk, ListNotesError>
 where
     S: AppRecordStore<ProjectNote>,
 {
@@ -145,7 +110,7 @@ where
             message: note.message,
         })
         .collect();
-    Ok(ListedNotes {
+    Ok(ListNotesOk {
         project,
         notes,
         hidden,
@@ -180,7 +145,7 @@ mod tests {
         }
     }
 
-    fn identifiers(result: &super::ListedNotes) -> Vec<&str> {
+    fn identifiers(result: &super::ListNotesOk) -> Vec<&str> {
         result.notes.iter().map(|note| note.id.as_ref()).collect()
     }
 

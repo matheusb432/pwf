@@ -1,7 +1,5 @@
 use pwf_domain::pending_work::{Tag, Tags};
 
-pub(crate) const HANDOFF_TAG: &str = "handoff";
-
 pub(crate) fn parse_values(values: &[String]) -> Result<Tags, ParseTagsError> {
     if values.is_empty() {
         return Err(ParseTagsError::MissingTag { raw: String::new() });
@@ -63,10 +61,6 @@ pub(crate) fn contains_all(stored: &Tags, requested: &Tags) -> bool {
 }
 
 #[must_use]
-pub(crate) fn contains_name(tags: &Tags, name: &str) -> bool {
-    tags.iter().any(|tag| tag.as_ref() == name)
-}
-
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub(crate) enum ParseTagsError {
     #[error("missing tag value: {raw:?}")]
@@ -91,10 +85,7 @@ impl ParseTagsError {
 mod tests {
     use pwf_domain::pending_work::Tags;
 
-    use super::{
-        HANDOFF_TAG, ParseTagsError, contains_all, contains_name, merge, parse_frontmatter,
-        parse_values,
-    };
+    use super::{ParseTagsError, contains_all, merge, parse_frontmatter, parse_values};
 
     fn values(tags: &Tags) -> Vec<&str> {
         tags.iter().map(AsRef::as_ref).collect()
@@ -150,12 +141,5 @@ mod tests {
         assert_eq!(values(&merged), ["sqlite", "godot", "csharp_export"]);
         assert!(contains_all(&merged, &appended));
         assert!(!contains_all(&appended, &existing));
-    }
-
-    #[test]
-    fn handoff_membership_uses_the_canonical_tag() {
-        let tags = parse_values(&["godot,handoff".to_string()]).unwrap();
-        assert!(contains_name(&tags, HANDOFF_TAG));
-        assert!(!contains_name(&tags, "sqlite"));
     }
 }

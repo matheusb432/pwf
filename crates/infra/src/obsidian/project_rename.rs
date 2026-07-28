@@ -4,6 +4,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use pwf_application::{
+    ProjectTaskFilesClient, ProjectTaskFilesRenameCommit, StagedProjectTaskFilesRename,
+};
 use pwf_domain::project::ProjectIndexIdentity;
 use walkdir::WalkDir;
 
@@ -11,6 +14,10 @@ use super::ObsidianStoreError;
 
 const DIRECTORY_DEPTH_MAX: usize = 64;
 const ENTRY_COUNT_MAX: usize = 100_000;
+
+/// Adapts Obsidian project directories to application-owned task-file rename operations.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ObsidianProjectTaskFilesClient;
 
 /// Holds a copied and rewritten project directory until both stores are ready to commit.
 pub struct StagedProjectRename {
@@ -20,17 +27,23 @@ pub struct StagedProjectRename {
     backup_directory: PathBuf,
 }
 
-/// Describes the filesystem state after a project rename commits.
-#[derive(Debug)]
-pub enum ProjectRenameCommit {
-    /// The destination was installed and the source backup was removed.
-    Complete,
-    /// The destination was installed, but the source backup could not be removed.
-    BackupRetained { path: PathBuf, source: io::Error },
+impl ProjectTaskFilesClient for ObsidianProjectTaskFilesClient {
+    type Error = ObsidianStoreError;
+    type StagedRename = StagedProjectRename;
+
+    fn stage_project_rename(
+        &self,
+        source: &Path,
+        destination: &Path,
+        current: &ProjectIndexIdentity,
+        next: &ProjectIndexIdentity,
+    ) -> Result<Self::StagedRename, Self::Error> {
+        stage(source, destination, current, next)
+    }
 }
 
 /// Copies and rewrites one project directory without changing the source.
-pub fn stage(
+fn stage(
     source: &Path,
     destination: &Path,
     current: &ProjectIndexIdentity,
@@ -89,16 +102,28 @@ pub fn stage(
     Ok(staged)
 }
 
-impl StagedProjectRename {
-    /// Installs the staged directory and removes the source backup.
-    pub fn commit(self) -> Result<ProjectRenameCommit, ObsidianStoreError> {
+impl StagedProjectTaskFilesRename for StagedProjectRename {
+    type Error = ObsidianStoreError;
+
+    fn commit(self) -> Result<ProjectTaskFilesRenameCommit, Self::Error> {
         self.commit_with_backup_removal(|path| fs::remove_dir_all(path))
     }
 
+    fn discard(self) -> Result<(), Self::Error> {
+        fs::remove_dir_all(&self.staging_directory).map_err(|source_error| {
+            ObsidianStoreError::RemoveProjectRenameStaging {
+                path: self.staging_directory,
+                source: source_error,
+            }
+        })
+    }
+}
+
+impl StagedProjectRename {
     fn commit_with_backup_removal(
         self,
         remove_backup: impl FnOnce(&Path) -> io::Result<()>,
-    ) -> Result<ProjectRenameCommit, ObsidianStoreError> {
+    ) -> Result<ProjectTaskFilesRenameCommit, ObsidianStoreError> {
         reject_existing_destination(&self.destination)?;
         reject_existing_backup(&self.backup_directory)?;
         if let Err(source_error) = fs::rename(&self.source, &self.backup_directory) {
@@ -137,22 +162,12 @@ impl StagedProjectRename {
             };
         }
         match remove_backup(&self.backup_directory) {
-            Ok(()) => Ok(ProjectRenameCommit::Complete),
-            Err(source) => Ok(ProjectRenameCommit::BackupRetained {
+            Ok(()) => Ok(ProjectTaskFilesRenameCommit::Complete),
+            Err(source) => Ok(ProjectTaskFilesRenameCommit::BackupRetained {
                 path: self.backup_directory,
-                source,
+                source: Box::new(source),
             }),
         }
-    }
-
-    /// Deletes the staging copy after the database rejects the rename.
-    pub fn discard(self) -> Result<(), ObsidianStoreError> {
-        fs::remove_dir_all(&self.staging_directory).map_err(|source_error| {
-            ObsidianStoreError::RemoveProjectRenameStaging {
-                path: self.staging_directory,
-                source: source_error,
-            }
-        })
     }
 }
 
@@ -527,7 +542,7 @@ mod tests {
 
         assert_matches!(
             outcome,
-            ProjectRenameCommit::BackupRetained { path, .. } if path == backup
+            ProjectTaskFilesRenameCommit::BackupRetained { path, .. } if path == backup
         );
         assert!(!source.exists());
         assert!(destination.join("MUX-0079.md").is_file());

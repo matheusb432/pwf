@@ -2,22 +2,14 @@
 //!
 //! Bare non-verb words route through the hidden `route` action. Explicit verbs have
 //! their positionals reordered ahead of flags. `note` gains an implicit `ls` before a
-//! bare project; other engines and help tokens pass through.
+//! bare project; other commands and help tokens pass through.
 
 /// Returns pending-work verbs recognized as clap subcommands, including hidden `route`.
 fn pw_subcommands() -> &'static [&'static str] {
     &[
         "add", "list", "ls", "done", "cancel", "reopen", "update", "show", "s", "session",
-        "verify", "remove", "route",
+        "verify", "remove", "route", "help",
     ]
-}
-
-/// Reports whether a top-level token must pass through to clap.
-fn is_other_root_token(token: &str) -> bool {
-    matches!(
-        token,
-        "handoff" | "note" | "--help" | "-h" | "help" | "--list" | "--version" | "-V"
-    )
 }
 
 /// Reports whether a long flag consumes the next token.
@@ -25,7 +17,6 @@ fn is_value_flag(flag: &str) -> bool {
     matches!(
         flag,
         "--repo-root"
-            | "--pending-work-script"
             | "--id"
             | "--project"
             | "--prompt"
@@ -103,16 +94,13 @@ fn is_number_token(tok: &str) -> bool {
 }
 
 /// Injects `route` for bare words and places a verb's positional values before its options.
-/// Other engines, help tokens, and a leading option pass through unchanged.
+/// Other commands, help tokens, and a leading option pass through unchanged.
 pub fn normalize(argv: Vec<String>) -> Vec<String> {
     if argv.is_empty() || argv[0].starts_with('-') {
         return argv;
     }
     if argv[0].eq_ignore_ascii_case("note") {
         return normalize_note(argv);
-    }
-    if is_other_root_token(&argv[0].to_ascii_lowercase()) {
-        return argv;
     }
 
     let mut opts: Vec<String> = Vec::new();
@@ -365,14 +353,6 @@ mod tests {
         assert_eq!(
             n(&["reopen", "--id", "PWF-0001"]),
             vec!["reopen", "--id", "PWF-0001"]
-        );
-    }
-
-    #[test]
-    fn handoff_passes_through_untouched() {
-        assert_eq!(
-            n(&["handoff", "list", "--repo-root", "."]),
-            vec!["handoff", "list", "--repo-root", "."]
         );
     }
 

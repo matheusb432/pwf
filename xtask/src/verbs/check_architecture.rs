@@ -2,6 +2,8 @@
 //!
 //! Violations use `<path>:<line>: <message>` on stderr and produce a non-zero exit.
 
+use std::path::Path;
+
 use anyhow::{Result, bail};
 
 use crate::{
@@ -11,8 +13,9 @@ use crate::{
     verb::Verb,
 };
 
-pub(crate) fn run() -> Result<()> {
-    match architecture_check::run(&paths::repo_root())? {
+pub(crate) fn run(root: Option<&Path>) -> Result<()> {
+    let repo_root = root.map_or_else(paths::repo_root, Path::to_path_buf);
+    match architecture_check::run(&repo_root)? {
         Ok(()) => {
             process::result(Verb::CHECK_ARCHITECTURE, Status::Pass);
             Ok(())

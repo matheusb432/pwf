@@ -3,7 +3,7 @@ use crate::{
     pending_work::{
         project_registry::ProjectRegistry,
         show_pending_work_item::{
-            self, ShowOutput, ShowPendingWorkError, ShowPendingWorkItem, ShowPendingWorkItemOutput,
+            self, ShowOutput, ShowPendingWorkError, ShowPendingWorkItem, ShowPendingWorkItemOk,
         },
     },
 };
@@ -23,7 +23,7 @@ pub(super) fn load(
         projects,
         markdown_source,
     )?;
-    let ShowPendingWorkItemOutput::Markdown(markdown) = output else {
+    let ShowPendingWorkItemOk::Markdown(markdown) = output else {
         unreachable!("Markdown request returned a different representation")
     };
     Ok(markdown)

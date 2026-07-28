@@ -15,21 +15,13 @@ pub struct PauseProject {
     pub id: ProjectPrefix,
 }
 
-/// Reports a missing project or unexpected pause failure.
 #[derive(Debug, thiserror::Error)]
 pub enum PauseProjectError {
-    /// The requested project does not exist.
     #[error("project not found: {id}")]
-    ProjectNotFound {
-        /// Missing project prefix.
-        id: ProjectPrefix,
-    },
-    /// Project pausing failed outside expected absence.
+    ProjectNotFound { id: ProjectPrefix },
     #[error("{context}: {source}")]
     Unexpected {
-        /// Failed operation boundary.
         context: &'static str,
-        /// Concrete database or persisted-data failure.
         #[source]
         source: Box<dyn Error + Send + Sync>,
     },

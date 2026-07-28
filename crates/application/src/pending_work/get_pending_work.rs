@@ -1,8 +1,10 @@
+use std::path::PathBuf;
+
 use pwf_domain::pending_work::{EffortTier, ProjectName, Tags, WorkItemId, WorkItemStatus};
 
 use super::{prerequisite, tag_policy};
 use crate::{
-    AppRecordStore, PendingWorkItem,
+    AppRecordStore, PendingWorkItem, ProjectTaskLocationClient,
     pending_work::{
         enrich::{enrich, is_open_item},
         project_registry::ProjectRegistry,
@@ -76,18 +78,13 @@ pub struct PendingWorkItemView {
     pub created: Option<String>,
 }
 
-/// Returns listed items and the count hidden by the requested cap.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ListResult {
-    /// Items remaining after filtering, ordering, and capping.
+pub struct GetPendingWorkOk {
     pub items: Vec<PendingWorkItemView>,
-    /// Number of matching items excluded by the requested cap.
     pub hidden: usize,
-    /// Managed project selected by the request, when scoped.
     pub project: Option<ProjectName>,
-    /// Effective lifecycle filter after applying list defaults.
+    pub project_task_path: Option<PathBuf>,
     pub status_filter: StatusFilter,
-    /// Reports whether the renderer should group items by section.
     pub grouped: bool,
 }
 
@@ -214,6 +211,8 @@ impl From<tag_policy::ParseTagsError> for TagParseError {
 pub enum GetPendingWorkError {
     #[error("pending-work read failed: {0}")]
     ReadStore(Box<dyn std::error::Error + Send + Sync>),
+    #[error("managed project task path read failed: {0}")]
+    ReadProjectTaskPath(Box<dyn std::error::Error + Send + Sync>),
     #[error("item {id} has invalid tags frontmatter: {source}")]
     InvalidTags {
         id: String,
@@ -250,8 +249,15 @@ pub fn execute(
     query: &GetPendingWork,
     store: &impl AppRecordStore<PendingWorkItem>,
     projects: &ProjectRegistry,
-) -> Result<ListResult, GetPendingWorkError> {
+    task_locations: &impl ProjectTaskLocationClient,
+) -> Result<GetPendingWorkOk, GetPendingWorkError> {
     let query = resolve_query(query, projects)?;
+    let project_task_path = query
+        .project
+        .as_ref()
+        .map(|project| task_locations.project_task_path(project))
+        .transpose()
+        .map_err(|source| GetPendingWorkError::ReadProjectTaskPath(Box::new(source)))?;
     let mut items = collect_list_items(&query, store, projects)?;
 
     items.retain(|item| scope_includes(query.scope, item.section.as_deref()));
@@ -292,10 +298,11 @@ pub fn execute(
         }
     }
 
-    Ok(ListResult {
+    Ok(GetPendingWorkOk {
         items,
         hidden,
         project: query.project,
+        project_task_path,
         status_filter: query.status_filter,
         grouped: scope_groups_output(query.scope),
     })
@@ -490,20 +497,28 @@ fn apply_cap(
 
 #[cfg(test)]
 mod tests {
-    use std::convert::Infallible;
+    use std::{convert::Infallible, path::PathBuf};
 
     use pwf_domain::pending_work::{
         EffortTier, ProjectName, Timestamp, WorkItemId, WorkItemStatus,
     };
 
     use super::{
-        GetPendingWork, GetPendingWorkError, ListMode, ListResult, ListSection, OrderDirection,
-        OrderField, OrderSpec, PrerequisiteStatus, ProjectRegistry, StatusFilter,
+        GetPendingWork, GetPendingWorkError, GetPendingWorkOk, ListMode, ListSection,
+        OrderDirection, OrderField, OrderSpec, PrerequisiteStatus, ProjectRegistry, StatusFilter,
     };
     use crate::{
         AppRecordStore, IndexPlacement, ItemPatch, Materialization, NewItem, PendingWorkItem,
-        RecordId, testing::InMemoryStore,
+        ProjectTaskLocationClient, RecordId, testing::InMemoryStore,
     };
+
+    impl ProjectTaskLocationClient for InMemoryStore {
+        type Error = Infallible;
+
+        fn project_task_path(&self, project: &ProjectName) -> Result<PathBuf, Self::Error> {
+            Ok(PathBuf::from("/tasks").join(project.as_ref()))
+        }
+    }
 
     fn record(id: &str) -> PendingWorkItem {
         PendingWorkItem {
@@ -622,8 +637,8 @@ mod tests {
         store: &InMemoryStore,
         registry: &ProjectRegistry,
         query: &GetPendingWork,
-    ) -> Result<ListResult, GetPendingWorkError> {
-        super::execute(query, store, registry)
+    ) -> Result<GetPendingWorkOk, GetPendingWorkError> {
+        super::execute(query, store, registry, store)
     }
 
     fn sectioned(id: &str, section: &str) -> PendingWorkItem {
@@ -669,7 +684,7 @@ mod tests {
         }
     }
 
-    fn listed_ids(result: &ListResult) -> Vec<&str> {
+    fn listed_ids(result: &GetPendingWorkOk) -> Vec<&str> {
         result.items.iter().map(|item| item.id.as_str()).collect()
     }
 
@@ -775,6 +790,7 @@ mod tests {
             },
             &store,
             &prerequisite_registry(),
+            &store.0,
         )
         .unwrap();
 
@@ -1292,5 +1308,6 @@ mod tests {
 
         assert_eq!(listed_ids(&got), ["PWF-0001"]);
         assert_eq!(got.project, Some(ProjectName::try_new("pwf").unwrap()));
+        assert_eq!(got.project_task_path, Some(PathBuf::from("/tasks/pwf")));
     }
 }

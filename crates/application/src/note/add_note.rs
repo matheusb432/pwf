@@ -29,58 +29,20 @@ pub struct AddNote {
     pub date: Option<String>,
 }
 
-/// Reports the canonical identifier and stored message of an added note.
-///
-/// # Examples
-///
-/// ```
-/// use pwf_application::note::add_note::AddedNote;
-/// use pwf_domain::note::NoteId;
-///
-/// let added = AddedNote {
-///     id: NoteId::try_new("PWF-NOTE-0001").unwrap(),
-///     message: "remember milk".to_string(),
-/// };
-/// assert_eq!(added.id.as_ref(), "PWF-NOTE-0001");
-/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AddedNote {
-    /// Identifies the created note.
+pub struct AddNoteOk {
     pub id: NoteId,
-    /// Contains the trimmed stored message.
     pub message: String,
 }
 
-/// Reports a rejected note-add request or storage failure.
-///
-/// # Examples
-///
-/// ```
-/// use pwf_application::note::add_note::AddNoteError;
-///
-/// assert_eq!(
-///     AddNoteError::EmptyMessage.to_string(),
-///     "Note message is empty; provide a non-empty message."
-/// );
-/// ```
 #[derive(Debug, thiserror::Error)]
 pub enum AddNoteError {
-    /// Reports a project identifier that does not resolve to a managed project.
     #[error("Unknown project '{identifier}'; expected a managed project name or id code.")]
-    UnknownProject {
-        /// Preserves the unmatched project identifier.
-        identifier: String,
-    },
-    /// Reports a message that is empty after trimming.
+    UnknownProject { identifier: String },
     #[error("Note message is empty; provide a non-empty message.")]
     EmptyMessage,
-    /// Reports that the greatest existing suffix has reached the four-digit allocation ceiling.
     #[error("Project '{project}' has no available four-digit note identifiers.")]
-    IdentifierExhausted {
-        /// Names the project whose identifier range is exhausted.
-        project: String,
-    },
-    /// Preserves the storage adapter failure as the causal source.
+    IdentifierExhausted { project: String },
     #[error("{0}")]
     Store(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
@@ -99,7 +61,7 @@ pub enum AddNoteError {
 /// ```
 /// # use pwf_application::{
 /// #     AppRecordStore, Clock, ProjectNote,
-/// #     note::add_note::{self, AddNote, AddNoteError, AddedNote},
+/// #     note::add_note::{self, AddNote, AddNoteError, AddNoteOk},
 /// #     pending_work::ProjectRegistry,
 /// # };
 /// # fn add<S, C>(
@@ -107,7 +69,7 @@ pub enum AddNoteError {
 /// #     store: &S,
 /// #     projects: &ProjectRegistry,
 /// #     clock: &C,
-/// # ) -> Result<AddedNote, AddNoteError>
+/// # ) -> Result<AddNoteOk, AddNoteError>
 /// # where
 /// #     S: AppRecordStore<ProjectNote>,
 /// #     C: Clock,
@@ -121,7 +83,7 @@ pub fn execute<S, C>(
     store: &S,
     projects: &ProjectRegistry,
     clock: &C,
-) -> Result<AddedNote, AddNoteError>
+) -> Result<AddNoteOk, AddNoteError>
 where
     S: AppRecordStore<ProjectNote>,
     C: Clock,
@@ -165,7 +127,7 @@ where
             },
         )
         .map_err(|error| AddNoteError::Store(Box::new(error)))?;
-    Ok(AddedNote {
+    Ok(AddNoteOk {
         id: created.id,
         message: created.message,
     })

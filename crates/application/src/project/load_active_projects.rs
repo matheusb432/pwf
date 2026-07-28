@@ -28,36 +28,25 @@ pub struct ActiveProject {
     pub tasks_path: PathBuf,
 }
 
-/// Reports invalid or conflicting runtime project configuration.
 #[derive(Debug, thiserror::Error)]
 pub enum LoadActiveProjectsError {
-    /// Active projects could not be read.
     #[error("listing active projects failed: {0}")]
     List(#[from] ListProjectsError),
-    /// A persisted project path cannot be used by runtime adapters.
     #[error("managed project {project_id} {field} path '{path}' is invalid: {source}")]
     InvalidPath {
-        /// Project containing the invalid path.
         project_id: ProjectPrefix,
-        /// Path role within the project.
         field: &'static str,
-        /// Persisted path value.
         path: String,
-        /// Path validation failure.
         #[source]
         source: RuntimePathError,
     },
-    /// Two active projects resolve to the same task location.
     #[error(
         "managed projects {first_id} and {second_id} resolve to the same task location: {}",
         path.display()
     )]
     DuplicateTaskLocation {
-        /// First project prefix in lexical order.
         first_id: ProjectPrefix,
-        /// Second project prefix in lexical order.
         second_id: ProjectPrefix,
-        /// Conflicting resolved task location.
         path: PathBuf,
     },
 }

@@ -1,6 +1,6 @@
 //! Runs pending-work operations in-process for integration tests.
 
-use pwf::{console::Console, engines::pending_work};
+use pwf::{console::Console, pending_work};
 use pwf_infra::clock::LocalClock;
 
 use crate::projects::TestProjects;

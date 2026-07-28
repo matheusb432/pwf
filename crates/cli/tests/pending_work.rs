@@ -1,6 +1,6 @@
 use std::{fmt::Write, fs};
 
-use pwf::engines::pending_work;
+use pwf::pending_work;
 
 #[path = "support/pending_work.rs"]
 mod pending_work_test;
@@ -1064,48 +1064,6 @@ fn remove_deletes_pwf_item_file_and_index_link_with_id_only() {
 }
 
 #[test]
-fn add_continue_handoff_builds_handoff_prompt() {
-    let stage = stage_dir();
-    let notes = stage.join("notes");
-    let repo = stage.join("repo");
-    let proj = notes.join("foo-bar");
-    let handoff_dir = repo.join("docs").join("handoffs");
-    fs::create_dir_all(&proj).unwrap();
-    fs::create_dir_all(&handoff_dir).unwrap();
-    fs::write(proj.join("foo-bar.md"), "# foo-bar\n").unwrap();
-    fs::write(
-        handoff_dir.join("2026-01-01-api-cleanup.md"),
-        "# API cleanup handoff\n",
-    )
-    .unwrap();
-    ensure_record_identity(&proj, "FOO", "foo-bar");
-    let args = parse_args(&[
-        "add",
-        "foo-bar",
-        "--continue-handoff",
-        "--date",
-        "2026-01-01",
-    ]);
-    let projects = TestProjects::new([TestProject {
-        id: "FOO",
-        title: "foo-bar",
-        repository: repo,
-        tasks_path: proj.clone(),
-    }]);
-    let out = run_plain(&args, &projects).unwrap();
-    assert!(out.starts_with("Added pwf task: **FOO-0001"), "got: {out}");
-    assert!(
-        out.contains(":: continue api cleanup"),
-        "title not in output: {out}"
-    );
-    let item = fs::read_to_string(proj.join("FOO-0001.md")).unwrap();
-    assert!(
-        item.contains("Continue the handoff at @docs/handoffs/2026-01-01-api-cleanup.md."),
-        "prompt not in item: {item}"
-    );
-}
-
-#[test]
 fn route_create_verbs_error_with_add_hint() {
     let stage = stage_dir();
     let notes = stage.join("notes");
@@ -1202,7 +1160,8 @@ fn stage_dir() -> std::path::PathBuf {
 
 fn parse_args(argv: &[&str]) -> pending_work::Command {
     let v = argv.iter().map(std::string::ToString::to_string).collect();
-    let pwf::command::Engine::PendingWork(command) = pwf::command::parse_argv(v).unwrap().engine
+    let pwf::command::RootCommand::PendingWork(command) =
+        pwf::command::parse_argv(v).unwrap().command
     else {
         panic!("expected pending-work command");
     };

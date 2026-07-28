@@ -18,45 +18,29 @@ pub struct ResumeProject {
     pub home: PathBuf,
 }
 
-/// Reports a missing project or unexpected resume failure.
 #[derive(Debug, thiserror::Error)]
 pub enum ResumeProjectError {
-    /// The requested project does not exist.
     #[error("project not found: {id}")]
-    ProjectNotFound {
-        /// Missing project prefix.
-        id: ProjectPrefix,
-    },
-    /// A task path cannot be resolved for the current runtime.
+    ProjectNotFound { id: ProjectPrefix },
     #[error("managed project {project_id} task path '{path}' is invalid: {source}")]
     InvalidTaskPath {
-        /// Project containing the invalid task path.
         project_id: ProjectPrefix,
-        /// Persisted task path value.
         path: String,
-        /// Path validation failure.
         #[source]
         source: super::resolve_runtime_path::RuntimePathError,
     },
-    /// Two projects resolve to the same runtime task location.
     #[error(
         "managed projects {first_id} and {second_id} resolve to the same task location: {}",
         path.display()
     )]
     DuplicateRuntimeTaskLocation {
-        /// First project prefix in lexical order.
         first_id: ProjectPrefix,
-        /// Second project prefix in lexical order.
         second_id: ProjectPrefix,
-        /// Conflicting resolved task location.
         path: PathBuf,
     },
-    /// Project resuming failed outside expected absence.
     #[error("{context}: {source}")]
     Unexpected {
-        /// Failed operation boundary.
         context: &'static str,
-        /// Concrete database or persisted-data failure.
         #[source]
         source: Box<dyn Error + Send + Sync>,
     },

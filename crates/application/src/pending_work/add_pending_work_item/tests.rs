@@ -1,21 +1,7 @@
-use std::{path::PathBuf, time::SystemTime};
+use pwf_domain::pending_work::{ProjectName, Timestamp};
 
-use pwf_domain::{
-    handoff::HandoffStatus,
-    pending_work::{ProjectName, Timestamp},
-};
-
-use super::{
-    AddPendingWorkError, AddPendingWorkItem, AddPendingWorkSource, PendingWorkSection,
-    ProjectRegistry, plan_title,
-};
-use crate::{
-    HandoffDocument, HandoffDocumentIdentifier, HandoffDocumentScopePresence, HandoffLocation,
-    HandoffScope, IndexEntryState,
-    handoff::HandoffMutationOk,
-    ports::Clock,
-    testing::{FailurePoint, InMemoryStore},
-};
+use super::{AddPendingWorkError, AddPendingWorkItem, ProjectRegistry, plan_title};
+use crate::{IndexEntryState, ports::Clock, testing::InMemoryStore};
 
 #[derive(Clone)]
 struct FixedClock;
@@ -37,12 +23,12 @@ fn registry(repo: Option<&str>) -> ProjectRegistry {
 fn command(section: Option<&str>) -> AddPendingWorkItem {
     AddPendingWorkItem {
         project_identifier: Some("pwf".to_string()),
-        source: Some(AddPendingWorkSource::Prompt {
-            prompt: "do the thing".to_string(),
-            title: Some("ship it".to_string()),
-        }),
+        prompt: "do the thing".to_string(),
+        continue_path: None,
+        title: Some("ship it".to_string()),
         date: Some("2026-07-15".to_string()),
-        section: section.and_then(PendingWorkSection::from_name),
+        section: section.map(str::to_string),
+        human: false,
         prerequisites: Vec::new(),
         effort: None,
         tags: Vec::new(),
@@ -65,7 +51,6 @@ fn add_inserts_record_and_open_index_entry() {
     assert_eq!(added.project, "pwf");
     assert_eq!(added.title, "ship it");
     assert!(!added.title_normalized);
-    assert_eq!(added.handoff, HandoffMutationOk::NotLinked);
     assert_eq!(added.created_section, None);
     let entries = store.entries("pwf");
     assert_eq!(entries.len(), 1);
@@ -82,10 +67,7 @@ fn add_inserts_record_and_open_index_entry() {
 fn add_explicit_prompt_title_is_normalized_once() {
     let store = InMemoryStore::default().with_prefix("pwf", "PWF");
     let mut command = command(None);
-    command.source = Some(AddPendingWorkSource::Prompt {
-        prompt: "do the thing".to_string(),
-        title: Some("fix # metadata".to_string()),
-    });
+    command.title = Some("fix # metadata".to_string());
 
     let added =
         super::execute(&command, &store, &registry(Some("/repo/pwf")), &FixedClock).unwrap();
@@ -98,10 +80,8 @@ fn add_explicit_prompt_title_is_normalized_once() {
 fn add_inferred_prompt_title_is_normalized_once() {
     let store = InMemoryStore::default().with_prefix("pwf", "PWF");
     let mut command = command(None);
-    command.source = Some(AddPendingWorkSource::Prompt {
-        prompt: "fix # metadata".to_string(),
-        title: None,
-    });
+    command.prompt = "fix # metadata".to_string();
+    command.title = None;
 
     let added =
         super::execute(&command, &store, &registry(Some("/repo/pwf")), &FixedClock).unwrap();
@@ -140,16 +120,6 @@ fn add_reports_created_section_only_when_region_absent() {
 }
 
 #[test]
-fn pending_work_section_maps_cli_values_to_canonical_labels() {
-    assert_eq!(
-        PendingWorkSection::from_name("  LOW-PRIO "),
-        Some(PendingWorkSection::LowPriority)
-    );
-    assert_eq!(PendingWorkSection::LowPriority.as_str(), "Low-prio");
-    assert_eq!(PendingWorkSection::from_name("unknown"), None);
-}
-
-#[test]
 fn plan_title_preserves_legacy_separator_whitespace_and_unicode_rules() {
     assert_eq!(
         plan_title(
@@ -168,9 +138,7 @@ fn plan_title_preserves_legacy_separator_whitespace_and_unicode_rules() {
 fn add_plan_normalizes_yaml_significant_filename_title() {
     let store = InMemoryStore::default().with_prefix("pwf", "PWF");
     let mut command = command(None);
-    command.source = Some(AddPendingWorkSource::Plan {
-        path: "docs/plans/2026-07-15-fix-#-metadata.md".to_string(),
-    });
+    command.continue_path = Some("docs/plans/2026-07-15-fix-#-metadata.md".to_string());
 
     let added =
         super::execute(&command, &store, &registry(Some("/repo/pwf")), &FixedClock).unwrap();
@@ -213,269 +181,17 @@ fn add_rejects_project_without_directory_source() {
     }
 }
 
-fn scope(repository_root: &str) -> HandoffScope {
-    HandoffScope {
-        repository_root: PathBuf::from(repository_root),
-    }
-}
-
-fn handoff_document(
-    repository_root: &str,
-    file_name: &str,
-    modified_timestamp: SystemTime,
-) -> HandoffDocument {
-    HandoffDocument {
-        identifier: HandoffDocumentIdentifier {
-            file_name: file_name.to_string(),
-            location: HandoffLocation::Active,
-        },
-        location: HandoffLocation::Active,
-        project: Some(ProjectName::try_new("pwf").unwrap()),
-        title: "existing handoff".to_string(),
-        status: Some(HandoffStatus::Active),
-        created: Some(Timestamp::new("2026-07-14")),
-        completed: None,
-        pending_work_identifier_raw: None,
-        goals_completed: 0,
-        goals_total: 1,
-        body: "\n# Existing handoff\n".to_string(),
-        source: String::new(),
-        locator: PathBuf::from(repository_root)
-            .join("docs/handoffs")
-            .join(file_name),
-        modified_timestamp,
-    }
-}
-
-#[test]
-fn add_normalizes_explicit_title_and_creates_linked_handoff() {
-    let repository_root = "/repo/pwf";
-    let store = InMemoryStore::default().with_prefix("pwf", "PWF");
-    let mut command = command(None);
-    command.source = Some(AddPendingWorkSource::Prompt {
-        prompt: "do the thing".to_string(),
-        title: Some("Ship: It".to_string()),
-    });
-    command.tags = vec!["handoff".to_string()];
-
-    let added = super::execute(
-        &command,
-        &store,
-        &registry(Some(repository_root)),
-        &FixedClock,
-    )
-    .unwrap();
-
-    assert_eq!(added.title, "ship; it");
-    assert!(added.title_normalized);
-    assert_eq!(
-        added.handoff,
-        HandoffMutationOk::Created {
-            path: PathBuf::from(repository_root).join("docs/handoffs/2026-07-15-ship-it.md")
-        }
-    );
-    let documents = store.handoff_documents(&scope(repository_root));
-    assert_eq!(documents.len(), 1);
-    assert_eq!(
-        documents[0].pending_work_identifier_raw.as_deref(),
-        Some("PWF-0001")
-    );
-    assert!(
-        store
-            .handoff_ledger(&scope(repository_root))
-            .unwrap()
-            .source
-            .contains("PWF-0001")
-    );
-}
-
-#[test]
-fn add_handoff_destination_collision_preflights_before_pending_work_insert() {
-    let repository_root = "/repo/pwf";
-    let store = InMemoryStore::default()
-        .with_prefix("pwf", "PWF")
-        .with_handoff_documents(
-            scope(repository_root),
-            vec![handoff_document(
-                repository_root,
-                "2026-07-15-ship-it.md",
-                SystemTime::UNIX_EPOCH,
-            )],
-        );
-    let mut command = command(None);
-    command.tags = vec!["handoff".to_string()];
-
-    let error = super::execute(
-        &command,
-        &store,
-        &registry(Some(repository_root)),
-        &FixedClock,
-    )
-    .unwrap_err();
-
-    assert!(matches!(error, AddPendingWorkError::HandoffPreflight(_)));
-    assert!(store.items("pwf").is_empty());
-    assert_eq!(store.handoff_documents(&scope(repository_root)).len(), 1);
-}
-
-#[test]
-fn add_ledger_failure_reports_post_pending_work_phase_and_removes_scaffold() {
-    let repository_root = "/repo/pwf";
-    let store = InMemoryStore::default()
-        .with_prefix("pwf", "PWF")
-        .with_failure(FailurePoint::LedgerInsert);
-    let mut command = command(Some("Human"));
-    command.source = Some(AddPendingWorkSource::Prompt {
-        prompt: "do the thing".to_string(),
-        title: Some("Ship: It".to_string()),
-    });
-    command.tags = vec!["handoff".to_string()];
-
-    let error = super::execute(
-        &command,
-        &store,
-        &registry(Some(repository_root)),
-        &FixedClock,
-    )
-    .unwrap_err();
-
-    let AddPendingWorkError::HandoffAfterPendingWork {
-        pending_work_identifier,
-        diagnostics,
-        source,
-    } = error
-    else {
-        panic!("expected post-pending-work handoff failure");
-    };
-    assert_eq!(pending_work_identifier.as_ref(), "PWF-0001");
-    assert_eq!(diagnostics.project, "pwf");
-    assert_eq!(diagnostics.created_section.as_deref(), Some("Human"));
-    assert!(diagnostics.title_normalized);
-    assert!(matches!(
-        source,
-        crate::handoff::HandoffError::RebuildLedger { .. }
-    ));
-    assert_eq!(store.items("pwf").len(), 1);
-    assert!(
-        store.handoff_documents(&scope(repository_root)).is_empty(),
-        "failed ledger rebuild must compensate the scaffold"
-    );
-}
-
-#[test]
-fn add_newest_handoff_selects_by_modified_timestamp_without_scaffolding() {
-    let repository_root = "/repo/pwf";
-    let store = InMemoryStore::default()
-        .with_prefix("pwf", "PWF")
-        .with_handoff_documents(
-            scope(repository_root),
-            vec![
-                handoff_document(repository_root, "2026-07-14-old.md", SystemTime::UNIX_EPOCH),
-                handoff_document(
-                    repository_root,
-                    "2026-07-15-api-cleanup.md",
-                    SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1),
-                ),
-            ],
-        );
-    let mut command = command(None);
-    command.source = Some(AddPendingWorkSource::NewestHandoff);
-    command.tags = vec!["handoff".to_string()];
-
-    let added = super::execute(
-        &command,
-        &store,
-        &registry(Some(repository_root)),
-        &FixedClock,
-    )
-    .unwrap();
-
-    assert_eq!(added.title, "continue api cleanup");
-    assert_eq!(added.handoff, HandoffMutationOk::NotLinked);
-    assert_eq!(store.handoff_documents(&scope(repository_root)).len(), 2);
-    assert_eq!(
-        store.items("pwf")[0].body,
-        "Continue the handoff at @docs/handoffs/2026-07-15-api-cleanup.md."
-    );
-}
-
-#[test]
-fn add_newest_handoff_normalizes_yaml_significant_filename_title() {
-    let repository_root = "/repo/pwf";
-    let store = InMemoryStore::default()
-        .with_prefix("pwf", "PWF")
-        .with_handoff_documents(
-            scope(repository_root),
-            vec![handoff_document(
-                repository_root,
-                "2026-07-15-fix-#-metadata.md",
-                SystemTime::UNIX_EPOCH,
-            )],
-        );
-    let mut command = command(None);
-    command.source = Some(AddPendingWorkSource::NewestHandoff);
-
-    let added = super::execute(
-        &command,
-        &store,
-        &registry(Some(repository_root)),
-        &FixedClock,
-    )
-    .unwrap();
-
-    assert_eq!(added.title, "continue fix  metadata");
-    assert_eq!(store.items("pwf")[0].title, "continue fix  metadata");
-}
-
-#[test]
-fn add_newest_handoff_distinguishes_missing_directory_from_empty_directory() {
-    let repository_root = "/repo/pwf";
-    let scope = scope(repository_root);
-    let missing = InMemoryStore::default()
-        .with_prefix("pwf", "PWF")
-        .with_handoff_scope_presence(
-            scope.clone(),
-            HandoffDocumentScopePresence::HandoffDirectoryMissing,
-        );
-    let mut command = command(None);
-    command.source = Some(AddPendingWorkSource::NewestHandoff);
-
-    let error = super::execute(
-        &command,
-        &missing,
-        &registry(Some(repository_root)),
-        &FixedClock,
-    )
-    .unwrap_err();
-    assert_eq!(
-        error.to_string(),
-        "No handoff directory found for project at /repo/pwf/docs/handoffs."
-    );
-
-    let empty = InMemoryStore::default()
-        .with_prefix("pwf", "PWF")
-        .with_handoff_scope_presence(scope, HandoffDocumentScopePresence::Present);
-    let error = super::execute(
-        &command,
-        &empty,
-        &registry(Some(repository_root)),
-        &FixedClock,
-    )
-    .unwrap_err();
-    assert_eq!(
-        error.to_string(),
-        "No handoff Markdown files found in /repo/pwf/docs/handoffs."
-    );
-}
-
 #[test]
 fn add_prerequisite_error_precedes_missing_project_and_source() {
     let store = InMemoryStore::default().with_prefix("pwf", "PWF");
     let command = AddPendingWorkItem {
         project_identifier: None,
-        source: None,
+        prompt: String::new(),
+        continue_path: None,
+        title: None,
         date: Some("2026-07-15".to_string()),
         section: None,
+        human: false,
         prerequisites: vec!["PWF-99999".to_string()],
         effort: None,
         tags: Vec::new(),
@@ -493,12 +209,12 @@ fn add_blank_prompt_precedes_unknown_project_resolution() {
     let store = InMemoryStore::default().with_prefix("pwf", "PWF");
     let command = AddPendingWorkItem {
         project_identifier: Some("unknown".to_string()),
-        source: Some(AddPendingWorkSource::Prompt {
-            prompt: " \t".to_string(),
-            title: None,
-        }),
+        prompt: " \t".to_string(),
+        continue_path: None,
+        title: None,
         date: Some("2026-07-15".to_string()),
         section: None,
+        human: false,
         prerequisites: Vec::new(),
         effort: None,
         tags: Vec::new(),
@@ -509,4 +225,31 @@ fn add_blank_prompt_precedes_unknown_project_resolution() {
 
     assert!(matches!(error, AddPendingWorkError::Usage));
     assert_eq!(error.to_string(), "Use: pwf add <project> \"<prompt>\"");
+}
+
+#[test]
+fn explicit_section_wins_over_human_shorthand() {
+    let store = InMemoryStore::default().with_prefix("pwf", "PWF");
+    let mut command = command(Some("future"));
+    command.human = true;
+
+    let added =
+        super::execute(&command, &store, &registry(Some("/repo/pwf")), &FixedClock).unwrap();
+
+    assert_eq!(added.created_section.as_deref(), Some("Future"));
+}
+
+#[test]
+fn invalid_section_is_rejected_before_mutation() {
+    let store = InMemoryStore::default().with_prefix("pwf", "PWF");
+    let command = command(Some("someday"));
+
+    let error =
+        super::execute(&command, &store, &registry(Some("/repo/pwf")), &FixedClock).unwrap_err();
+
+    assert!(matches!(
+        error,
+        AddPendingWorkError::InvalidSection { ref value } if value == "someday"
+    ));
+    assert!(store.items("pwf").is_empty());
 }

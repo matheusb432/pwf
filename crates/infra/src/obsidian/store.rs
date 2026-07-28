@@ -1,8 +1,6 @@
 mod add;
 mod error;
 mod fs;
-mod handoff_document;
-mod handoff_ledger;
 mod index_entry;
 mod item_record;
 mod lookup;
@@ -15,6 +13,7 @@ mod tests;
 use std::path::Path;
 
 pub use error::ObsidianStoreError;
+use pwf_application::ProjectTaskLocationClient;
 use pwf_domain::pending_work::ProjectName;
 
 use super::project_paths::{ObsidianProject, ProjectPaths};
@@ -31,7 +30,15 @@ impl ObsidianStore {
         }
     }
 
-    pub fn tasks_path(&self, project: &ProjectName) -> Result<&Path, ObsidianStoreError> {
+    fn tasks_path(&self, project: &ProjectName) -> Result<&Path, ObsidianStoreError> {
         self.project_paths.project_directory(project)
+    }
+}
+
+impl ProjectTaskLocationClient for ObsidianStore {
+    type Error = ObsidianStoreError;
+
+    fn project_task_path(&self, project: &ProjectName) -> Result<std::path::PathBuf, Self::Error> {
+        self.tasks_path(project).map(Path::to_path_buf)
     }
 }

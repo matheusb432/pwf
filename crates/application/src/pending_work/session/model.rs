@@ -94,13 +94,13 @@ pub struct AgentProbe {
     pub version: Option<String>,
 }
 
-/// Contains pending-work launchability and an optional provider-neutral launch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerifySessionOk {
     pub task_id: Option<String>,
+    pub probe: AgentProbe,
     pub launchable: bool,
     pub issues: Vec<String>,
-    pub launch: Option<AgentLaunch>,
+    pub command_argv: Vec<String>,
 }
 
 /// Contains a raw model-tier catalog entry.

@@ -36,6 +36,6 @@ fn run(command: cli::Command) -> Result<()> {
         Command::Ship => verbs::ship::run(),
         Command::Install => verbs::install::install(),
         Command::Update(update) => verbs::install::update(&update),
-        Command::CheckArchitecture => verbs::check_architecture::run(),
+        Command::CheckArchitecture { root } => verbs::check_architecture::run(root.as_deref()),
     }
 }

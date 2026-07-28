@@ -13,15 +13,11 @@ pub struct ListProjects {
     pub include_paused: bool,
 }
 
-/// Reports an unexpected project list failure.
 #[derive(Debug, thiserror::Error)]
 pub enum ListProjectsError {
-    /// Project listing failed.
     #[error("{context}: {source}")]
     Unexpected {
-        /// Failed operation boundary.
         context: &'static str,
-        /// Concrete database or persisted-data failure.
         #[source]
         source: Box<dyn Error + Send + Sync>,
     },

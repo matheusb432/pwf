@@ -1,5 +1,7 @@
 //! clap derives help from this module and each verb's `Args` doc comments.
 
+use std::path::PathBuf;
+
 use clap::{Parser, Subcommand};
 
 use crate::{
@@ -67,8 +69,10 @@ pub(crate) enum Command {
     /// preflight.
     #[command(name = Verb::UPDATE.as_str())]
     Update(UpdateArgs),
-    /// Fail if any `crates/cli` source file outside the composition-root allowlist imports the
-    /// infra crate directly; violations print as `<path>:<line>: <message>` on stderr.
+    /// Reject forbidden outward workspace dependency edges.
     #[command(name = Verb::CHECK_ARCHITECTURE.as_str())]
-    CheckArchitecture,
+    CheckArchitecture {
+        /// Workspace root to inspect [default: this repository].
+        root: Option<PathBuf>,
+    },
 }

@@ -1,16 +1,17 @@
-//! Verifies pending-work launchability without probing or rendering a provider.
+//! Verifies pending-work launchability with the selected provider.
 
 use thiserror::Error;
 
 use super::{
-    Agent, ModelTierCatalog, SessionEffort, VerifySessionOk, model::AgentModel, task_content,
+    Agent, AgentLaunch, ClaudeSessionClient, CodexSessionClient, ModelTierCatalog, SessionEffort,
+    VerifySessionOk, model::AgentModel, task_content,
 };
 use crate::{
     AppRecordStore, NoteMarkdownSource, PendingWorkItem,
     pending_work::{
         find_pending_work::{FindPendingWorkError, find_open_item},
         project_registry::ProjectRegistry,
-        session::{AgentLaunch, model_selection::resolve_model},
+        session::model_selection::resolve_model,
         show_pending_work_item::ShowPendingWorkError,
     },
 };
@@ -23,7 +24,6 @@ pub struct VerifySession {
     pub model_override: AgentModel,
 }
 
-/// Reports pending-work lookup failures during verification.
 #[derive(Debug, Error)]
 pub enum VerifySessionError {
     #[error(transparent)]
@@ -45,9 +45,47 @@ pub fn execute(
     projects: &ProjectRegistry,
     markdown_source: &impl NoteMarkdownSource,
     model_tiers: &impl ModelTierCatalog,
+    claude: &impl ClaudeSessionClient,
+    codex: &impl CodexSessionClient,
 ) -> Result<VerifySessionOk, VerifySessionError> {
+    let probe = match query.agent {
+        Agent::Claude => claude.probe(),
+        Agent::Codex => codex.probe(),
+    };
+    let planned = prepare_verification(query, store, projects, markdown_source, model_tiers)?;
+    let command_argv = match planned.launch.as_ref() {
+        Some(launch) => match launch.agent {
+            Agent::Claude => claude.preview(launch),
+            Agent::Codex => codex.preview(launch),
+        },
+        None => vec![probe.binary.clone()],
+    };
+
+    Ok(VerifySessionOk {
+        task_id: planned.task_id,
+        probe,
+        launchable: planned.launchable,
+        issues: planned.issues,
+        command_argv,
+    })
+}
+
+struct PreparedVerification {
+    task_id: Option<String>,
+    launchable: bool,
+    issues: Vec<String>,
+    launch: Option<AgentLaunch>,
+}
+
+fn prepare_verification(
+    query: VerifySession,
+    store: &impl AppRecordStore<PendingWorkItem>,
+    projects: &ProjectRegistry,
+    markdown_source: &impl NoteMarkdownSource,
+    model_tiers: &impl ModelTierCatalog,
+) -> Result<PreparedVerification, VerifySessionError> {
     let Some(id) = query.id else {
-        return Ok(VerifySessionOk {
+        return Ok(PreparedVerification {
             task_id: None,
             launchable: true,
             issues: Vec::new(),
@@ -82,7 +120,7 @@ pub fn execute(
         launchable = false;
         issues.push(issue.to_string());
     }
-    Ok(VerifySessionOk {
+    Ok(PreparedVerification {
         task_id: Some(item.id),
         launchable,
         issues,
@@ -173,7 +211,7 @@ mod tests {
             Some("PWF".to_string()),
         )]);
 
-        let outcome = super::execute(
+        let outcome = super::prepare_verification(
             VerifySession {
                 id: Some(TASK_ID.to_string()),
                 agent: Agent::Claude,
