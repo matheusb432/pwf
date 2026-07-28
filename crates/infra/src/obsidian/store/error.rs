@@ -2,6 +2,103 @@ use std::path::PathBuf;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ObsidianStoreError {
+    #[error("Project rename destination already exists: {}", path.display())]
+    ProjectRenameDestinationExists { path: PathBuf },
+    #[error("Project rename staging directory already exists: {}", path.display())]
+    ProjectRenameStagingExists { path: PathBuf },
+    #[error("Project rename backup directory already exists: {}", path.display())]
+    ProjectRenameBackupExists { path: PathBuf },
+    #[error("Cannot inspect project rename path {}: {source}", path.display())]
+    InspectProjectRenamePath {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("Project rename source is not a directory: {}", path.display())]
+    ProjectRenameSourceNotDirectory { path: PathBuf },
+    #[error("Project rename source has no directory name: {}", path.display())]
+    ProjectRenameSourceNameMissing { path: PathBuf },
+    #[error("Project rename source has no parent directory: {}", path.display())]
+    ProjectRenameSourceParentMissing { path: PathBuf },
+    #[error("Cannot create project rename staging directory {}: {source}", path.display())]
+    CreateProjectRenameStaging {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("Cannot walk project rename source {}: {source}", path.display())]
+    WalkProjectRenameSource {
+        path: PathBuf,
+        source: walkdir::Error,
+    },
+    #[error("Project rename source exceeds {limit} entries: {}", path.display())]
+    ProjectRenameEntryLimit { path: PathBuf, limit: usize },
+    #[error("Project rename source exceeds depth {limit}: {}", path.display())]
+    ProjectRenameDepthLimit { path: PathBuf, limit: usize },
+    #[error("Project rename source contains an unsupported filesystem entry: {}", path.display())]
+    ProjectRenameEntryUnsupported { path: PathBuf },
+    #[error("Cannot create staged project rename directory {}: {source}", path.display())]
+    CreateStagedProjectRenameDirectory {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("Cannot copy project rename entry from {} to {}: {source}", from.display(), to.display())]
+    CopyProjectRenameEntry {
+        from: PathBuf,
+        to: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("Cannot read staged project rename file {}: {source}", path.display())]
+    ReadStagedProjectRenameFile {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("Staged project rename file is not UTF-8 Markdown: {}", path.display())]
+    StagedProjectRenameFileNotUtf8 { path: PathBuf },
+    #[error("Cannot write staged project rename file {}: {source}", path.display())]
+    WriteStagedProjectRenameFile {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("Project rename file already exists: {}", path.display())]
+    ProjectRenameFileExists { path: PathBuf },
+    #[error("Cannot rename staged project file from {} to {}: {source}", from.display(), to.display())]
+    RenameStagedProjectFile {
+        from: PathBuf,
+        to: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("Cannot remove project rename staging directory {}: {source}", path.display())]
+    RemoveProjectRenameStaging {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("Cannot move project rename source from {} to {}: {source}", from.display(), to.display())]
+    MoveProjectRenameSource {
+        from: PathBuf,
+        to: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("Cannot install staged project rename from {} to {}: {source}", from.display(), to.display())]
+    InstallStagedProjectRename {
+        from: PathBuf,
+        to: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("Cannot restore project rename source {} after staging install from {} to {} failed ({install_source}): {restore_source}", source_path.display(), from.display(), to.display())]
+    RestoreProjectRenameSource {
+        source_path: PathBuf,
+        from: PathBuf,
+        to: PathBuf,
+        install_source: std::io::Error,
+        restore_source: std::io::Error,
+    },
+    #[error("Cannot remove project rename staging directory {} after restoring the source at {} because installing it at {} failed ({install_source}): {cleanup_source}", path.display(), from.display(), to.display())]
+    RemoveRestoredProjectRenameStaging {
+        path: PathBuf,
+        from: PathBuf,
+        to: PathBuf,
+        install_source: std::io::Error,
+        cleanup_source: std::io::Error,
+    },
     #[error("Cannot read note {id}: {source}")]
     ReadProjectNote { id: String, source: std::io::Error },
     #[error("Cannot inspect note {id}: {source}")]

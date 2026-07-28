@@ -19,6 +19,7 @@ shell-words = { workspace = true }
 sqlx = { workspace = true }
 toml = { workspace = true }
 tokio = { workspace = true, features = ["time"] }
+walkdir = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

@@ -163,7 +163,9 @@ fn project_command_home(
             resolve_project_path(&project.id, "task", project.tasks.path().as_ref(), &home)?;
             Ok(Some(home))
         }
-        Some(engines::project::Command::Resume(_)) => managed_project_home().map(Some),
+        Some(engines::project::Command::Rename(_) | engines::project::Command::Resume(_)) => {
+            managed_project_home().map(Some)
+        }
         _ => Ok(None),
     }
 }

@@ -11,6 +11,7 @@ pub mod get;
 pub mod list;
 mod output;
 pub mod pause;
+pub mod rename;
 pub mod resume;
 
 #[derive(Args, Debug)]
@@ -30,6 +31,8 @@ pub enum Command {
     Add(add::Arguments),
     /// Pauses one registered project.
     Pause(pause::Arguments),
+    /// Renames one registered project and its pending-work files.
+    Rename(rename::Arguments),
     /// Resumes one registered project.
     Resume(resume::Arguments),
 }
@@ -48,6 +51,7 @@ pub async fn run(
         Command::Get(arguments) => get::run(arguments, database).await,
         Command::Add(arguments) => add::run(arguments, database, project_home(home)?).await,
         Command::Pause(arguments) => pause::run(arguments, database).await,
+        Command::Rename(arguments) => rename::run(arguments, database, project_home(home)?).await,
         Command::Resume(arguments) => resume::run(arguments, database, project_home(home)?).await,
     }
 }
