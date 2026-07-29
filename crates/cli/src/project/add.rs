@@ -2,11 +2,11 @@ use std::{path::PathBuf, str::FromStr};
 
 use clap::{Args, ValueEnum};
 use pwf_application::project::add_project::{self, AddProject, AddProjectFields};
-use pwf_domain::project::{
+use pwf_infra::SqliteStore;
+use pwf_models::project::{
     ProjectName, ProjectPrefix, ProjectSource, ProjectSourceKind, ProjectSourceValue, ProjectTasks,
     ProjectTasksKind, ProjectTasksPath,
 };
-use pwf_infra::SqliteStore;
 use serde::Deserialize;
 
 use super::output;

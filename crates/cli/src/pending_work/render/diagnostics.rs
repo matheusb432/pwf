@@ -39,8 +39,8 @@ mod tests {
     use pwf_application::pending_work::add_pending_work_item::{
         AddPendingWorkDiagnostics, CreateItemError,
     };
-    use pwf_domain::pending_work::ProjectName;
     use pwf_infra::obsidian::ObsidianStoreError;
+    use pwf_models::pending_work::ProjectName;
 
     use super::*;
 

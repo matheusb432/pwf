@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use pwf_domain::project::ProjectPrefix;
+use pwf_models::project::ProjectPrefix;
 
 use super::{
     resolve_runtime_path::{ResolvedPath, RuntimePathError},

@@ -1,6 +1,6 @@
 //! Adds one note to a managed project.
 
-use pwf_domain::{note::NoteId, pending_work::Timestamp};
+use pwf_models::{note::NoteId, pending_work::Timestamp};
 
 use super::{identifier, identifier::ResolvedProject};
 use crate::{AppRecordStore, Clock, NewProjectNote, ProjectNote, pending_work::ProjectRegistry};
@@ -60,10 +60,11 @@ pub enum AddNoteError {
 ///
 /// ```
 /// # use pwf_application::{
-/// #     AppRecordStore, Clock, ProjectNote,
+/// #     AppRecordStore, Clock,
 /// #     note::add_note::{self, AddNote, AddNoteError, AddNoteOk},
 /// #     pending_work::ProjectRegistry,
 /// # };
+/// # use pwf_models::note::ProjectNote;
 /// # fn add<S, C>(
 /// #     request: AddNote,
 /// #     store: &S,
@@ -137,7 +138,7 @@ where
 mod tests {
     use std::error::Error as _;
 
-    use pwf_domain::{
+    use pwf_models::{
         note::NoteId,
         pending_work::{ProjectName, Timestamp},
     };

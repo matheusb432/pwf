@@ -1,11 +1,11 @@
-use pwf_domain::pending_work::{ProjectName, WorkItemId, WorkItemStatus};
+use pwf_models::pending_work::{ProjectName, WorkItemId, WorkItemStatus};
 
 use super::{
     identifier,
     project_registry::ProjectRegistry,
     store_util::{self, LoadItemError},
 };
-use crate::ports::{AppRecordStore, IndexEntry, IndexEntryState, ItemPatch, PendingWorkItem};
+use crate::ports::{AppRecordStore, IndexEntry, IndexEntryState, ItemPatch, PendingWorkRecord};
 
 #[derive(Debug, Clone)]
 pub struct ReopenPendingWork {
@@ -42,7 +42,7 @@ pub fn execute<S>(
     projects: &ProjectRegistry,
 ) -> Result<ReopenPendingWorkOk, ReopenPendingWorkError>
 where
-    S: AppRecordStore<PendingWorkItem> + AppRecordStore<IndexEntry>,
+    S: AppRecordStore<PendingWorkRecord> + AppRecordStore<IndexEntry>,
 {
     let not_found = || ReopenPendingWorkError::ItemNotFound { id: cmd.id.clone() };
     let pending_work_identifier = identifier::parse(&cmd.id).ok_or_else(not_found)?;
@@ -72,7 +72,7 @@ where
         });
     }
 
-    <S as AppRecordStore<PendingWorkItem>>::update(
+    <S as AppRecordStore<PendingWorkRecord>>::update(
         store,
         project,
         &pending_work_identifier,
@@ -135,11 +135,11 @@ fn reopen_decision(entries: &[IndexEntry], id: &WorkItemId) -> ReopenDecision {
 
 #[cfg(test)]
 mod tests {
-    use pwf_domain::pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus};
+    use pwf_models::pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus};
 
     use super::{ProjectRegistry, ReopenPendingWork};
     use crate::{
-        IndexEntry, IndexEntryState, Materialization, PendingWorkItem, RecordId,
+        IndexEntry, IndexEntryState, Materialization, PendingWorkRecord, RecordId,
         testing::InMemoryStore,
     };
 
@@ -151,8 +151,8 @@ mod tests {
         )])
     }
 
-    fn record(id: &str, status: WorkItemStatus) -> PendingWorkItem {
-        PendingWorkItem {
+    fn record(id: &str, status: WorkItemStatus) -> PendingWorkRecord {
+        PendingWorkRecord {
             id: RecordId::Item(WorkItemId::try_new(id).unwrap()),
             title: "tray gui".to_string(),
             status,

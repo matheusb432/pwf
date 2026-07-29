@@ -1,6 +1,6 @@
 //! Model-catalog boundary for session operations.
 
-use pwf_domain::pending_work::EffortTier;
+use pwf_models::pending_work::EffortTier;
 
 use super::ModelTierLookup;
 

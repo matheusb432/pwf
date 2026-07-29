@@ -1,10 +1,8 @@
 use std::{fmt::Write as _, path::Path};
 
-use pwf_application::{
-    AppRecordStore, NewProjectNote, ProjectNote, ProjectNotePatch, ProjectNoteStore,
-};
-use pwf_domain::{
-    note::NoteId,
+use pwf_application::{AppRecordStore, NewProjectNote, ProjectNotePatch, ProjectNoteStore};
+use pwf_models::{
+    note::{NoteId, ProjectNote},
     pending_work::{ProjectName, ProjectPrefix},
 };
 use regex::Regex;
@@ -22,7 +20,7 @@ impl AppRecordStore<ProjectNote> for ObsidianStore {
         let path = self
             .project_paths
             .project_directory(project)?
-            .join(id.file_name());
+            .join(note_file_name(id));
         if !path.exists() {
             return Ok(None);
         }
@@ -50,7 +48,7 @@ impl AppRecordStore<ProjectNote> for ObsidianStore {
         new: NewProjectNote,
     ) -> Result<ProjectNote, Self::Error> {
         let project_directory = self.project_paths.project_directory(project)?;
-        let note_path = project_directory.join(new.id.file_name());
+        let note_path = project_directory.join(note_file_name(&new.id));
         let message = new.message.trim();
         let source = note_content(project.as_ref(), new.created.as_str(), message);
         fs_atomic::write_text_atomic(&note_path, &source).map_err(|source| {
@@ -78,7 +76,7 @@ impl AppRecordStore<ProjectNote> for ObsidianStore {
         let note_path = self
             .project_paths
             .project_directory(project)?
-            .join(id.file_name());
+            .join(note_file_name(id));
         if !note_path.exists() {
             return Err(note_not_found(project, id));
         }
@@ -100,7 +98,7 @@ impl AppRecordStore<ProjectNote> for ObsidianStore {
         let note_path = self
             .project_paths
             .project_directory(project)?
-            .join(id.file_name());
+            .join(note_file_name(id));
         if !note_path.exists() {
             return Err(note_not_found(project, id));
         }
@@ -126,7 +124,7 @@ impl ProjectNoteStore for ObsidianStore {
         let note_path = self
             .project_paths
             .project_directory(project)?
-            .join(id.file_name());
+            .join(note_file_name(id));
         note_path
             .try_exists()
             .map_err(|source| ObsidianStoreError::InspectProjectNote {
@@ -165,6 +163,10 @@ fn list_notes(project_directory: &Path, prefix: &ProjectPrefix) -> Vec<ProjectNo
         });
     }
     notes
+}
+
+fn note_file_name(id: &NoteId) -> String {
+    format!("{id}.md")
 }
 
 fn message_of(source: &str) -> String {
@@ -215,12 +217,12 @@ mod tests {
     use std::{assert_matches, fs, path::Path};
 
     use pwf_application::{
-        AppRecordStore, NewProjectNote, ProjectNote, ProjectNotePatch,
+        AppRecordStore, NewProjectNote, ProjectNotePatch,
         note::remove_note::{self, RemoveNote},
         pending_work::ProjectRegistry,
     };
-    use pwf_domain::{
-        note::NoteId,
+    use pwf_models::{
+        note::{NoteId, ProjectNote},
         pending_work::{ProjectIndexIdentity, ProjectName, ProjectPrefix, Timestamp},
     };
 

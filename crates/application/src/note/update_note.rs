@@ -1,6 +1,6 @@
 //! Updates one note in a managed project.
 
-use pwf_domain::note::NoteId;
+use pwf_models::note::NoteId;
 
 use super::identifier::{self, ResolvedProject};
 use crate::{AppRecordStore, ProjectNote, ProjectNotePatch, pending_work::ProjectRegistry};
@@ -63,10 +63,11 @@ pub enum UpdateNoteError {
 ///
 /// ```
 /// # use pwf_application::{
-/// #     AppRecordStore, ProjectNote,
+/// #     AppRecordStore,
 /// #     note::update_note::{self, UpdateNote, UpdateNoteError, UpdateNoteOk},
 /// #     pending_work::ProjectRegistry,
 /// # };
+/// # use pwf_models::note::ProjectNote;
 /// # fn update<S>(
 /// #     request: UpdateNote,
 /// #     store: &S,
@@ -136,7 +137,7 @@ where
 mod tests {
     use std::error::Error as _;
 
-    use pwf_domain::{note::NoteId, pending_work::ProjectName};
+    use pwf_models::{note::NoteId, pending_work::ProjectName};
 
     use super::{UpdateNote, UpdateNoteError};
     use crate::{ProjectNote, pending_work::ProjectRegistry, testing::InMemoryStore};

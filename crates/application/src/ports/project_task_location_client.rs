@@ -1,6 +1,6 @@
 use std::{error::Error, path::PathBuf};
 
-use pwf_domain::pending_work::ProjectName;
+use pwf_models::pending_work::ProjectName;
 
 /// Resolves one managed project's runtime task directory.
 pub trait ProjectTaskLocationClient: Clone + Send + Sync + 'static {

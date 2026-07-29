@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use pwf_domain::project::ProjectPrefix;
+use pwf_models::project::ProjectPrefix;
 
 use super::{
     Project,
@@ -148,7 +148,7 @@ fn task_location_error(error: TaskLocationError) -> LoadActiveProjectsError {
 
 #[cfg(test)]
 mod tests {
-    use pwf_domain::project::{
+    use pwf_models::project::{
         ProjectName, ProjectSource, ProjectSourceKind, ProjectSourceValue, ProjectTasks,
         ProjectTasksKind, ProjectTasksPath,
     };

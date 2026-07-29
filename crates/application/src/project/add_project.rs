@@ -1,6 +1,6 @@
 use std::{error::Error, path::PathBuf};
 
-use pwf_domain::project::{ProjectName, ProjectPrefix, ProjectSource, ProjectTasks};
+use pwf_models::project::{ProjectName, ProjectPrefix, ProjectSource, ProjectTasks};
 use sqlx::error::ErrorKind;
 
 use super::{
@@ -273,7 +273,7 @@ fn task_location_error(error: TaskLocationError) -> AddProjectError {
 mod tests {
     use std::path::PathBuf;
 
-    use pwf_domain::project::{
+    use pwf_models::project::{
         ProjectName, ProjectPrefix, ProjectSource, ProjectSourceKind, ProjectSourceValue,
         ProjectTasks, ProjectTasksKind, ProjectTasksPath,
     };

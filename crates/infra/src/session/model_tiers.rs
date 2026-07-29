@@ -3,7 +3,7 @@
 use std::{collections::BTreeMap, path::PathBuf};
 
 use pwf_application::pending_work::session::{ModelTier, ModelTierCatalog, ModelTierLookup};
-use pwf_domain::pending_work::EffortTier;
+use pwf_models::pending_work::EffortTier;
 use serde::Deserialize;
 use thiserror::Error;
 

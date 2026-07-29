@@ -116,3 +116,67 @@ pub(super) fn run_reject_create(
     )?;
     Err(PendingWorkError::RouteCreateRejected)
 }
+
+#[cfg(test)]
+mod tests {
+    use pwf_application::pending_work::{ListMode, StatusFilter};
+
+    use super::*;
+
+    fn arguments(words: &[&str]) -> Arguments {
+        Arguments {
+            words: words.iter().map(|word| (*word).to_string()).collect(),
+            long: true,
+            section: Some(SectionChoice::Future),
+            all: true,
+            number: Some(3),
+            status: Some(StatusChoice::All),
+            prereq: Vec::new(),
+            common: CommonArguments::default(),
+        }
+    }
+
+    #[test]
+    fn project_route_preserves_list_options() {
+        let ResolvedCommand::List(list) = resolve(&arguments(&["pwf"])) else {
+            panic!("expected routed list");
+        };
+
+        assert_eq!(list.project.as_deref(), Some("pwf"));
+        assert!(list.long);
+        assert!(matches!(list.section, Some(SectionChoice::Future)));
+        assert!(list.all);
+        assert_eq!(list.number, Some(3));
+        assert_eq!(list.mode, ListMode::ProjectRoute);
+        assert_eq!(
+            list.status.expect("explicit status").filter(),
+            StatusFilter::All
+        );
+    }
+
+    #[test]
+    fn verify_route_builds_the_compatibility_arguments() {
+        let ResolvedCommand::Verify(verify) = resolve(&arguments(&["verify", "cfg57"])) else {
+            panic!("expected routed verify");
+        };
+
+        assert_eq!(verify.identifier.raw(), Some("cfg57"));
+        assert_eq!(verify.agent, AgentChoice::Claude);
+        assert_eq!(verify.model, None);
+    }
+
+    #[test]
+    fn create_and_multiword_routes_reach_the_rejection_owner() {
+        let ResolvedCommand::RejectCreate(add) = resolve(&arguments(&["add"])) else {
+            panic!("expected rejected create");
+        };
+        assert_eq!(add.project_identifier, None);
+
+        let ResolvedCommand::RejectCreate(project_prompt) =
+            resolve(&arguments(&["pwf", "build", "it"]))
+        else {
+            panic!("expected rejected create");
+        };
+        assert_eq!(project_prompt.project_identifier.as_deref(), Some("pwf"));
+    }
+}

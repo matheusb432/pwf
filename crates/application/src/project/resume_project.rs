@@ -1,6 +1,6 @@
 use std::{error::Error, path::PathBuf};
 
-use pwf_domain::project::ProjectPrefix;
+use pwf_models::project::ProjectPrefix;
 
 use super::{
     Project, ProjectStateChange,
@@ -180,7 +180,7 @@ fn task_location_error(error: TaskLocationError) -> ResumeProjectError {
 mod tests {
     use std::path::PathBuf;
 
-    use pwf_domain::project::ProjectPrefix;
+    use pwf_models::project::ProjectPrefix;
 
     use super::*;
     use crate::ports::TestDatabase;

@@ -74,15 +74,7 @@ pub(crate) fn run_e2e_worker(verbose: bool) -> Result<()> {
     if !binary.is_file() {
         process::run("cargo build", "cargo", &["build", "--release"])?;
     }
-    let mut arguments = vec![
-        "test",
-        "-p",
-        "pwf",
-        "--test",
-        "cli_e2e",
-        "--test",
-        "project_cli",
-    ];
+    let mut arguments = vec!["test", "-p", "pwf_e2e", "--test", "e2e"];
     if verbose {
         arguments.extend(["--", "--nocapture"]);
     } else {

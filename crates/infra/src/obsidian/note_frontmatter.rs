@@ -1,6 +1,6 @@
 use std::{fmt::Write, sync::LazyLock};
 
-use pwf_domain::pending_work::{EffortTier, Tags, WorkItemStatus};
+use pwf_models::pending_work::{EffortTier, Tags, WorkItemStatus};
 use regex::Regex;
 
 static STATUS_LINE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^status:.*$").unwrap());
@@ -63,7 +63,7 @@ pub(super) fn new_work_item_content(fields: NewWorkItemFields<'_>) -> String {
 }
 
 pub(super) fn set_status_text(content: &str, status: WorkItemStatus, completed: &str) -> String {
-    let status = status.as_frontmatter_str();
+    let status = status.as_str();
     let content = STATUS_LINE_RE
         .replace(content, format!("status: {status}").as_str())
         .into_owned();
@@ -232,4 +232,21 @@ fn tags_frontmatter_value(tags: &Tags) -> String {
             .collect::<Vec<_>>()
             .join(", ")
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use pwf_models::pending_work::WorkItemStatus;
+
+    use super::set_status_text;
+
+    #[test]
+    fn close_status_inserts_completion_without_rewriting_other_bytes() {
+        let source = "---\nid: PWF-0001\nstatus: active\ntitle: task\n---\n\nbody\n";
+
+        assert_eq!(
+            set_status_text(source, WorkItemStatus::Done, "2026-07-29"),
+            "---\nid: PWF-0001\nstatus: done\ncompleted: 2026-07-29\ntitle: task\n---\n\nbody\n"
+        );
+    }
 }

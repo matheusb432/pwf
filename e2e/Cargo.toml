@@ -1,0 +1,22 @@
+[package]
+name = "pwf_e2e"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+autotests = false
+
+[[test]]
+name = "e2e"
+path = "tests/e2e.rs"
+test = false
+
+[dev-dependencies]
+assert_cmd = { workspace = true }
+serde_json = { workspace = true }
+tempfile = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+expectrl = { workspace = true }
+
+[lints]
+workspace = true

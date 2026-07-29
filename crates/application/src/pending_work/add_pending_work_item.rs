@@ -1,6 +1,6 @@
 use std::{path::PathBuf, sync::LazyLock};
 
-use pwf_domain::pending_work::{EffortTier, ProjectName, Tags, Timestamp};
+use pwf_models::pending_work::{EffortTier, ProjectName, Tags, Timestamp};
 use regex::Regex;
 
 use super::{
@@ -8,7 +8,7 @@ use super::{
     project_registry::{ProjectRegistry, ProjectResolutionError},
     store_util, tag_policy, title,
 };
-use crate::ports::{AppRecordStore, Clock, IndexEntry, IndexSection, NewItem, PendingWorkItem};
+use crate::ports::{AppRecordStore, Clock, IndexEntry, IndexSection, NewItem, PendingWorkRecord};
 
 /// Reports the persistence phase that failed while creating an item and its index entry.
 #[derive(Debug, thiserror::Error)]
@@ -162,7 +162,7 @@ pub enum AddPendingWorkError {
 /// # Panics
 ///
 /// Panics if the store's `insert` violates its contract by returning a record
-/// without a canonical [`pwf_domain::pending_work::WorkItemId`].
+/// without a canonical [`pwf_models::pending_work::WorkItemId`].
 #[cqrsy::command]
 pub fn execute<S, C>(
     cmd: &AddPendingWorkItem,
@@ -171,7 +171,9 @@ pub fn execute<S, C>(
     clock: &C,
 ) -> Result<AddPendingWorkItemOk, AddPendingWorkError>
 where
-    S: AppRecordStore<PendingWorkItem> + AppRecordStore<IndexEntry> + AppRecordStore<IndexSection>,
+    S: AppRecordStore<PendingWorkRecord>
+        + AppRecordStore<IndexEntry>
+        + AppRecordStore<IndexSection>,
     C: Clock,
 {
     let section = resolve_section(cmd.section.as_deref(), cmd.human)?;

@@ -9,7 +9,7 @@ use super::{
     InlineSessionClient, TmuxSessionClient, plan_session::PreparedSessionDispatch, task_content,
 };
 use crate::{
-    AppRecordStore, NoteMarkdownSource, PendingWorkItem,
+    AppRecordStore, NoteMarkdownSource, PendingWorkRecord,
     pending_work::{
         project_registry::ProjectRegistry,
         show_pending_work_item::ShowPendingWorkError,
@@ -68,7 +68,7 @@ pub enum DispatchSessionError {
 #[cqrsy::command]
 pub fn execute(
     command: DispatchSession,
-    store: &(impl AppRecordStore<PendingWorkItem> + NoteMarkdownSource),
+    store: &(impl AppRecordStore<PendingWorkRecord> + NoteMarkdownSource),
     projects: &ProjectRegistry,
     claude: &impl ClaudeSessionClient,
     codex: &impl CodexSessionClient,

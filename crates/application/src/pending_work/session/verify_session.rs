@@ -1,13 +1,14 @@
 //! Verifies pending-work launchability with the selected provider.
 
+use pwf_models::session::AgentModel;
 use thiserror::Error;
 
 use super::{
     Agent, AgentLaunch, ClaudeSessionClient, CodexSessionClient, ModelTierCatalog, SessionEffort,
-    VerifySessionOk, model::AgentModel, task_content,
+    VerifySessionOk, task_content,
 };
 use crate::{
-    AppRecordStore, NoteMarkdownSource, PendingWorkItem,
+    AppRecordStore, NoteMarkdownSource, PendingWorkRecord,
     pending_work::{
         find_pending_work::{FindPendingWorkError, find_open_item},
         project_registry::ProjectRegistry,
@@ -41,7 +42,7 @@ pub enum VerifySessionError {
 #[cqrsy::query]
 pub fn execute(
     query: VerifySession,
-    store: &impl AppRecordStore<PendingWorkItem>,
+    store: &impl AppRecordStore<PendingWorkRecord>,
     projects: &ProjectRegistry,
     markdown_source: &impl NoteMarkdownSource,
     model_tiers: &impl ModelTierCatalog,
@@ -79,7 +80,7 @@ struct PreparedVerification {
 
 fn prepare_verification(
     query: VerifySession,
-    store: &impl AppRecordStore<PendingWorkItem>,
+    store: &impl AppRecordStore<PendingWorkRecord>,
     projects: &ProjectRegistry,
     markdown_source: &impl NoteMarkdownSource,
     model_tiers: &impl ModelTierCatalog,
@@ -132,13 +133,13 @@ fn prepare_verification(
 mod tests {
     use std::{convert::Infallible, error::Error, fmt, path::Path};
 
-    use pwf_domain::pending_work::{
+    use pwf_models::pending_work::{
         EffortTier, ProjectName, Timestamp, WorkItemId, WorkItemStatus,
     };
 
     use super::{AgentModel, ProjectRegistry, VerifySession};
     use crate::{
-        IndexPlacement, Materialization, NoteMarkdownSource, PendingWorkItem, RecordId,
+        IndexPlacement, Materialization, NoteMarkdownSource, PendingWorkRecord, RecordId,
         pending_work::session::{Agent, ModelTierCatalog, ModelTierLookup},
         testing::InMemoryStore,
     };
@@ -179,8 +180,8 @@ mod tests {
         }
     }
 
-    fn record() -> PendingWorkItem {
-        PendingWorkItem {
+    fn record() -> PendingWorkRecord {
+        PendingWorkRecord {
             id: RecordId::Item(WorkItemId::try_new(TASK_ID).unwrap()),
             title: "application verify".to_string(),
             status: WorkItemStatus::Active,

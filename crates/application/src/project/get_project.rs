@@ -1,6 +1,6 @@
 use std::error::Error;
 
-use pwf_domain::project::ProjectPrefix;
+use pwf_models::project::ProjectPrefix;
 
 use super::{
     Project,

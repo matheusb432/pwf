@@ -1,5 +1,5 @@
 use prompt_lanes::parse;
-use pwf_domain::pending_work::TaskTitle;
+use pwf_models::pending_work::TaskTitle;
 
 const MAX_TITLE_CHARS: usize = 80;
 const YAML_UNSAFE_LEADING_CHARS: [char; 16] = [

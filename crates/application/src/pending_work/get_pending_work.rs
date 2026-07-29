@@ -1,10 +1,10 @@
 use std::path::PathBuf;
 
-use pwf_domain::pending_work::{EffortTier, ProjectName, Tags, WorkItemId, WorkItemStatus};
+use pwf_models::pending_work::{EffortTier, ProjectName, Tags, WorkItemId, WorkItemStatus};
 
 use super::{prerequisite, tag_policy};
 use crate::{
-    AppRecordStore, PendingWorkItem, ProjectTaskLocationClient,
+    AppRecordStore, PendingWorkRecord, ProjectTaskLocationClient,
     pending_work::{
         enrich::{enrich, is_open_item},
         project_registry::ProjectRegistry,
@@ -19,7 +19,7 @@ use crate::{
 ///
 /// ```
 /// use pwf_application::pending_work::get_pending_work::PrerequisiteStatus;
-/// use pwf_domain::pending_work::{WorkItemId, WorkItemStatus};
+/// use pwf_models::pending_work::{WorkItemId, WorkItemStatus};
 ///
 /// let prerequisite = PrerequisiteStatus {
 ///     id: WorkItemId::try_new("PWF-0001").unwrap(),
@@ -247,7 +247,7 @@ enum ListScope {
 #[cqrsy::query]
 pub fn execute(
     query: &GetPendingWork,
-    store: &impl AppRecordStore<PendingWorkItem>,
+    store: &impl AppRecordStore<PendingWorkRecord>,
     projects: &ProjectRegistry,
     task_locations: &impl ProjectTaskLocationClient,
 ) -> Result<GetPendingWorkOk, GetPendingWorkError> {
@@ -363,7 +363,7 @@ fn resolve_query(
 /// Reads and enriches listable lifecycle records from one project or every project in name order.
 fn collect_list_items(
     query: &ResolvedGetPendingWork,
-    store: &impl AppRecordStore<PendingWorkItem>,
+    store: &impl AppRecordStore<PendingWorkRecord>,
     projects: &ProjectRegistry,
 ) -> Result<Vec<PendingWorkItemView>, GetPendingWorkError> {
     let scan: Vec<(ProjectName, Option<String>)> = match query.project.as_ref() {
@@ -499,7 +499,7 @@ fn apply_cap(
 mod tests {
     use std::{convert::Infallible, path::PathBuf};
 
-    use pwf_domain::pending_work::{
+    use pwf_models::pending_work::{
         EffortTier, ProjectName, Timestamp, WorkItemId, WorkItemStatus,
     };
 
@@ -508,7 +508,7 @@ mod tests {
         OrderDirection, OrderField, OrderSpec, PrerequisiteStatus, ProjectRegistry, StatusFilter,
     };
     use crate::{
-        AppRecordStore, IndexPlacement, ItemPatch, Materialization, NewItem, PendingWorkItem,
+        AppRecordStore, IndexPlacement, ItemPatch, Materialization, NewItem, PendingWorkRecord,
         ProjectTaskLocationClient, RecordId, testing::InMemoryStore,
     };
 
@@ -520,8 +520,8 @@ mod tests {
         }
     }
 
-    fn record(id: &str) -> PendingWorkItem {
-        PendingWorkItem {
+    fn record(id: &str) -> PendingWorkRecord {
+        PendingWorkRecord {
             id: RecordId::Item(WorkItemId::try_new(id).unwrap()),
             title: id.to_string(),
             status: WorkItemStatus::Active,
@@ -543,19 +543,22 @@ mod tests {
         }
     }
 
-    fn in_project(project: &'static str, item: PendingWorkItem) -> (&'static str, PendingWorkItem) {
+    fn in_project(
+        project: &'static str,
+        item: PendingWorkRecord,
+    ) -> (&'static str, PendingWorkRecord) {
         (project, item)
     }
 
     fn store_and_registry(
-        items: &[(&'static str, PendingWorkItem)],
+        items: &[(&'static str, PendingWorkRecord)],
     ) -> (InMemoryStore, ProjectRegistry) {
         let mut store = InMemoryStore::default();
         let mut projects: Vec<&'static str> = items.iter().map(|(project, _)| *project).collect();
         projects.sort_unstable();
         projects.dedup();
         for project in &projects {
-            let staged: Vec<PendingWorkItem> = items
+            let staged: Vec<PendingWorkRecord> = items
                 .iter()
                 .filter(|(candidate, _)| candidate == project)
                 .map(|(_, item)| item.clone())
@@ -572,8 +575,8 @@ mod tests {
         (store, registry)
     }
 
-    fn pwf_store(items: Vec<PendingWorkItem>) -> (InMemoryStore, ProjectRegistry) {
-        let staged: Vec<(&'static str, PendingWorkItem)> =
+    fn pwf_store(items: Vec<PendingWorkRecord>) -> (InMemoryStore, ProjectRegistry) {
+        let staged: Vec<(&'static str, PendingWorkRecord)> =
             items.into_iter().map(|item| ("pwf", item)).collect();
         store_and_registry(&staged)
     }
@@ -596,26 +599,26 @@ mod tests {
     #[derive(Clone)]
     struct NoPrerequisiteLookupStore(InMemoryStore);
 
-    impl AppRecordStore<PendingWorkItem> for NoPrerequisiteLookupStore {
+    impl AppRecordStore<PendingWorkRecord> for NoPrerequisiteLookupStore {
         type Error = Infallible;
 
         fn get(
             &self,
             _project: &ProjectName,
             _id: &WorkItemId,
-        ) -> Result<Option<PendingWorkItem>, Self::Error> {
+        ) -> Result<Option<PendingWorkRecord>, Self::Error> {
             panic!("short list must not read prerequisite records")
         }
 
-        fn list(&self, project: &ProjectName) -> Result<Vec<PendingWorkItem>, Self::Error> {
-            <InMemoryStore as AppRecordStore<PendingWorkItem>>::list(&self.0, project)
+        fn list(&self, project: &ProjectName) -> Result<Vec<PendingWorkRecord>, Self::Error> {
+            <InMemoryStore as AppRecordStore<PendingWorkRecord>>::list(&self.0, project)
         }
 
         fn insert(
             &self,
             _project: &ProjectName,
             _new: NewItem,
-        ) -> Result<PendingWorkItem, Self::Error> {
+        ) -> Result<PendingWorkRecord, Self::Error> {
             unreachable!("list query does not insert records")
         }
 
@@ -641,29 +644,29 @@ mod tests {
         super::execute(query, store, registry, store)
     }
 
-    fn sectioned(id: &str, section: &str) -> PendingWorkItem {
-        PendingWorkItem {
+    fn sectioned(id: &str, section: &str) -> PendingWorkRecord {
+        PendingWorkRecord {
             section: Some(section.to_string()),
             ..record(id)
         }
     }
 
-    fn effort_item(id: &str, effort: &str) -> PendingWorkItem {
-        PendingWorkItem {
+    fn effort_item(id: &str, effort: &str) -> PendingWorkRecord {
+        PendingWorkRecord {
             effort: Some(effort.to_string()),
             ..record(id)
         }
     }
 
-    fn tagged_item(id: &str, tags: &str) -> PendingWorkItem {
-        PendingWorkItem {
+    fn tagged_item(id: &str, tags: &str) -> PendingWorkRecord {
+        PendingWorkRecord {
             tags: Some(tags.to_string()),
             ..record(id)
         }
     }
 
-    fn dated_item(id: &str, created: &str) -> PendingWorkItem {
-        PendingWorkItem {
+    fn dated_item(id: &str, created: &str) -> PendingWorkRecord {
+        PendingWorkRecord {
             created: Some(Timestamp::new(created)),
             ..record(id)
         }
@@ -690,11 +693,11 @@ mod tests {
 
     #[test]
     fn long_list_projects_done_active_and_missing_prerequisite_statuses() {
-        let dependent = PendingWorkItem {
+        let dependent = PendingWorkRecord {
             prereq: Some("[[CFG-0014]], [[CFG-0015]], [[CFG-9999]]".to_string()),
             ..record("PWF-0001")
         };
-        let done = PendingWorkItem {
+        let done = PendingWorkRecord {
             status: WorkItemStatus::Done,
             ..record("CFG-0014")
         };
@@ -735,11 +738,11 @@ mod tests {
 
     #[test]
     fn long_list_treats_indexed_prerequisite_without_note_as_missing() {
-        let dependent = PendingWorkItem {
+        let dependent = PendingWorkRecord {
             prereq: Some("[[CFG-0014]]".to_string()),
             ..record("PWF-0001")
         };
-        let missing_note = PendingWorkItem {
+        let missing_note = PendingWorkRecord {
             source: String::new(),
             body: String::new(),
             placement: None,
@@ -774,7 +777,7 @@ mod tests {
 
     #[test]
     fn short_list_skips_prerequisite_record_lookups() {
-        let dependent = PendingWorkItem {
+        let dependent = PendingWorkRecord {
             prereq: Some("[[CFG-0014]]".to_string()),
             ..record("PWF-0001")
         };
@@ -799,11 +802,11 @@ mod tests {
 
     #[test]
     fn list_filters_active_only() {
-        let done = PendingWorkItem {
+        let done = PendingWorkRecord {
             status: WorkItemStatus::Done,
             ..record("PWF-0002")
         };
-        let cancelled = PendingWorkItem {
+        let cancelled = PendingWorkRecord {
             status: WorkItemStatus::Cancelled,
             ..record("PWF-0003")
         };
@@ -834,12 +837,12 @@ mod tests {
 
     #[test]
     fn list_status_filter_selects_exact_statuses_and_all() {
-        let done = PendingWorkItem {
+        let done = PendingWorkRecord {
             status: WorkItemStatus::Done,
             placement: None,
             ..record("PWF-0002")
         };
-        let cancelled = PendingWorkItem {
+        let cancelled = PendingWorkRecord {
             status: WorkItemStatus::Cancelled,
             placement: None,
             ..record("PWF-0003")
@@ -877,7 +880,7 @@ mod tests {
 
     #[test]
     fn active_orphan_is_hidden_from_active_and_all_lists() {
-        let orphan = PendingWorkItem {
+        let orphan = PendingWorkRecord {
             placement: None,
             ..record("PWF-0002")
         };
@@ -902,17 +905,17 @@ mod tests {
 
     #[test]
     fn status_filter_applies_before_cap_and_hidden_count() {
-        let active = PendingWorkItem {
+        let active = PendingWorkRecord {
             created: Some(Timestamp::new("2026-07-09")),
             ..record("PWF-0009")
         };
-        let done_newer = PendingWorkItem {
+        let done_newer = PendingWorkRecord {
             status: WorkItemStatus::Done,
             placement: None,
             created: Some(Timestamp::new("2026-07-08")),
             ..record("PWF-0002")
         };
-        let done_older = PendingWorkItem {
+        let done_older = PendingWorkRecord {
             status: WorkItemStatus::Done,
             placement: None,
             created: Some(Timestamp::new("2026-07-07")),
@@ -1100,15 +1103,15 @@ mod tests {
     #[test]
     fn scope_and_effort_filters_exclude_corrupt_tags_before_parsing() {
         let (store, registry) = pwf_store(vec![
-            PendingWorkItem {
+            PendingWorkRecord {
                 section: Some("Human".to_string()),
                 ..tagged_item("PWF-0003", "corrupt")
             },
-            PendingWorkItem {
+            PendingWorkRecord {
                 effort: Some("medium".to_string()),
                 ..tagged_item("PWF-0002", "also corrupt")
             },
-            PendingWorkItem {
+            PendingWorkRecord {
                 effort: Some("high".to_string()),
                 ..tagged_item("PWF-0001", "[sqlite]")
             },
@@ -1269,7 +1272,7 @@ mod tests {
 
     #[test]
     fn inline_legacy_records_list_with_project_scoped_ids() {
-        let inline = PendingWorkItem {
+        let inline = PendingWorkRecord {
             id: RecordId::Inline(1),
             title: "legacy task".to_string(),
             body: "do the legacy thing".to_string(),

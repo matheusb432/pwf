@@ -1,11 +1,11 @@
 use std::path::Path;
 
-use pwf_domain::pending_work::{
+use pwf_models::pending_work::{
     EffortTier, ProjectName, Tags, Timestamp, WorkItemId, WorkItemStatus,
 };
 
 use crate::{
-    AppRecordStore, Materialization, NoteMarkdownSource, PendingWorkItem,
+    AppRecordStore, Materialization, NoteMarkdownSource, PendingWorkRecord,
     pending_work::{project_registry::ProjectRegistry, resolve::resolve_record},
 };
 
@@ -115,7 +115,7 @@ pub fn execute<S, N>(
     markdown_source: &N,
 ) -> Result<ShowPendingWorkItemOk, ShowPendingWorkError>
 where
-    S: AppRecordStore<PendingWorkItem>,
+    S: AppRecordStore<PendingWorkRecord>,
     N: NoteMarkdownSource,
 {
     let (project, record) = resolve_record(store, projects, &query.id)?;

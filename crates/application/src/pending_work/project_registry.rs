@@ -1,11 +1,9 @@
 use std::{collections::BTreeMap, path::Path};
 
-use pwf_domain::{
+use pwf_models::{
     pending_work::{ProjectName, WorkItemId},
-    project::ProjectPrefix,
+    project::{Project, ProjectPrefix},
 };
-
-use crate::project::Project;
 
 /// Associates a managed project with its repository and item-id prefix.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,7 +46,7 @@ pub enum ProjectResolutionError {
 ///
 /// ```
 /// use pwf_application::pending_work::ProjectRegistry;
-/// use pwf_domain::pending_work::ProjectName;
+/// use pwf_models::pending_work::ProjectName;
 ///
 /// let registry = ProjectRegistry::new([(
 ///     ProjectName::try_new("pwf").unwrap(),
@@ -232,13 +230,12 @@ fn normalize_repository(repository: &str) -> String {
 mod tests {
     use std::assert_matches;
 
-    use pwf_domain::project::{
-        ProjectName, ProjectPrefix, ProjectSource, ProjectSourceKind, ProjectSourceValue,
+    use pwf_models::project::{
+        Project, ProjectName, ProjectPrefix, ProjectSource, ProjectSourceKind, ProjectSourceValue,
         ProjectTasks, ProjectTasksKind, ProjectTasksPath,
     };
 
     use super::{ProjectRegistry, ProjectResolutionError};
-    use crate::project::Project;
 
     fn project(name: &str) -> ProjectName {
         ProjectName::try_new(name).unwrap()

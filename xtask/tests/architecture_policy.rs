@@ -11,16 +11,37 @@ fn check_architecture_rejects_an_outward_application_edge() {
         &[
             (
                 "application",
-                "pwf-application",
-                "[dependencies]\npwf-infra = { path = \"../infra\" }\n",
+                "pwf_application",
+                "[dependencies]\npwf_infra = { path = \"../infra\" }\n",
             ),
-            ("infra", "pwf-infra", ""),
+            ("infra", "pwf_infra", ""),
         ],
     );
 
     xtask(workspace.path()).assert().failure().stderr(contains(
-        "[application stays independent of adapters] pwf-application -> pwf-infra: \
+        "[application stays independent of adapters] pwf_application -> pwf_infra: \
              infrastructure belongs behind application-owned boundaries",
+    ));
+}
+
+#[test]
+fn check_architecture_rejects_a_models_wire_dependency() {
+    let workspace = tempfile::tempdir().expect("create temporary workspace");
+    write_workspace(
+        workspace.path(),
+        &[
+            (
+                "models",
+                "pwf_models",
+                "[dependencies]\nserde = { path = \"../serde\" }\n",
+            ),
+            ("serde", "serde", ""),
+        ],
+    );
+
+    xtask(workspace.path()).assert().failure().stderr(contains(
+        "[models stay independent] pwf_models -> serde: \
+             models must not depend on wire formats, persistence, use cases, or process roots",
     ));
 }
 
@@ -31,16 +52,16 @@ fn check_architecture_accepts_inward_and_development_edges() {
         workspace.path(),
         &[
             (
-                "domain",
-                "pwf-domain",
-                "[dev-dependencies]\npwf-infra = { path = \"../infra\" }\n",
+                "models",
+                "pwf_models",
+                "[dev-dependencies]\npwf_infra = { path = \"../infra\" }\n",
             ),
             (
                 "application",
-                "pwf-application",
-                "[dependencies]\npwf-domain = { path = \"../domain\" }\n",
+                "pwf_application",
+                "[dependencies]\npwf_models = { path = \"../models\" }\n",
             ),
-            ("infra", "pwf-infra", ""),
+            ("infra", "pwf_infra", ""),
         ],
     );
 

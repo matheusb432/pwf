@@ -140,7 +140,8 @@ fn resume_argv(plan: CodexLaunchPlan, thread_id: String) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use pwf_application::pending_work::session::{Agent, AgentLaunch, SessionEffort};
+    use pwf_application::pending_work::session::AgentLaunch;
+    use pwf_models::session::{Agent, SessionEffort};
 
     use super::CodexHarness;
     #[cfg(unix)]

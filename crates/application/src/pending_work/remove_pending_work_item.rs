@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use pwf_domain::pending_work::{ProjectName, WorkItemId, WorkItemStatus};
+use pwf_models::pending_work::{ProjectName, WorkItemId, WorkItemStatus};
 
 use super::{
     find_pending_work::{FindPendingWorkError, find_open_item},
@@ -8,7 +8,7 @@ use super::{
     project_registry::ProjectRegistry,
     store_util::{self, LoadItemError},
 };
-use crate::ports::{AppRecordStore, IndexEntry, Materialization, PendingWorkItem};
+use crate::ports::{AppRecordStore, IndexEntry, Materialization, PendingWorkRecord};
 
 /// Describes the note and index link deleted by [`execute`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,7 +77,7 @@ pub fn execute<S, I>(
     interaction: &I,
 ) -> Result<RemovePendingWorkItemOk, RemovePendingWorkError>
 where
-    S: AppRecordStore<PendingWorkItem> + AppRecordStore<IndexEntry>,
+    S: AppRecordStore<PendingWorkRecord> + AppRecordStore<IndexEntry>,
     I: RemovalInteraction,
 {
     let not_found = || RemovePendingWorkError::ItemNotFound { id: cmd.id.clone() };
@@ -131,7 +131,7 @@ where
 
     <S as AppRecordStore<IndexEntry>>::delete(store, project, &pending_work_identifier)
         .map_err(|error| RemovePendingWorkError::WriteStore(Box::new(error)))?;
-    <S as AppRecordStore<PendingWorkItem>>::delete(store, project, &pending_work_identifier)
+    <S as AppRecordStore<PendingWorkRecord>>::delete(store, project, &pending_work_identifier)
         .map_err(|error| RemovePendingWorkError::WriteStore(Box::new(error)))?;
 
     let removed = RemovedItem {
@@ -149,14 +149,14 @@ where
 
 #[cfg(test)]
 mod tests {
-    use pwf_domain::pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus};
+    use pwf_models::pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus};
 
     use super::{
         ProjectRegistry, RemovalConfirmation, RemovalInteraction, RemovePendingWorkError,
         RemovePendingWorkItem, RemovePendingWorkItemOk, execute,
     };
     use crate::{
-        IndexEntry, IndexEntryState, Materialization, PendingWorkItem, RecordId,
+        IndexEntry, IndexEntryState, Materialization, PendingWorkRecord, RecordId,
         testing::InMemoryStore,
     };
 
@@ -168,8 +168,8 @@ mod tests {
         )])
     }
 
-    fn record(id: &str, status: WorkItemStatus) -> PendingWorkItem {
-        PendingWorkItem {
+    fn record(id: &str, status: WorkItemStatus) -> PendingWorkRecord {
+        PendingWorkRecord {
             id: RecordId::Item(WorkItemId::try_new(id).unwrap()),
             title: "stale task".to_string(),
             status,
@@ -286,7 +286,7 @@ mod tests {
 
     #[test]
     fn remove_rejects_missing_note_wikilink_with_legacy_display() {
-        let ghost = PendingWorkItem {
+        let ghost = PendingWorkRecord {
             materialization: Materialization::MissingNote {
                 expected: "/notes/pwf/PWF-0001.md".to_string(),
             },

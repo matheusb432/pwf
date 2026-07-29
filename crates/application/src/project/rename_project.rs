@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use pwf_domain::project::{
+use pwf_models::project::{
     ProjectIndexIdentity, ProjectName, ProjectPrefix, ProjectSource, ProjectTasks,
 };
 
@@ -479,7 +479,7 @@ mod tests {
         path::{Path, PathBuf},
     };
 
-    use pwf_domain::project::{
+    use pwf_models::project::{
         ProjectIndexIdentity, ProjectName, ProjectPrefix, ProjectSource, ProjectSourceKind,
         ProjectSourceValue, ProjectTasks, ProjectTasksKind, ProjectTasksPath,
     };

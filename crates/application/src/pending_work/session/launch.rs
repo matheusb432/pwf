@@ -1,6 +1,6 @@
 //! Builds provider-neutral agent launches and canonical multiplexer targets.
 
-use pwf_domain::pending_work::ProjectPrefix;
+use pwf_models::pending_work::ProjectPrefix;
 
 use super::{DispatchTarget, LaunchDirectives};
 use crate::pending_work::{get_pending_work::PendingWorkItemView, identifier};
@@ -78,7 +78,7 @@ fn legacy_dispatch_target(task_id: &str) -> DispatchTarget {
 
 #[cfg(test)]
 mod tests {
-    use pwf_domain::pending_work::WorkItemStatus;
+    use pwf_models::pending_work::WorkItemStatus;
 
     use super::{PendingWorkItemView, dispatch_target};
     use crate::pending_work::session::{Agent, AgentLaunch, LaunchDirectives, SessionEffort};

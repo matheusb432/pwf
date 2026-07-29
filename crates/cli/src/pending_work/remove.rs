@@ -1,6 +1,6 @@
 use clap::Args;
 use pwf_application::{
-    AppRecordStore, IndexEntry, PendingWorkItem,
+    AppRecordStore, IndexEntry, PendingWorkRecord,
     pending_work::{
         ProjectRegistry,
         remove_pending_work_item::{
@@ -82,7 +82,7 @@ pub(in crate::pending_work) fn run_remove<S>(
     console: Console,
 ) -> Result<String, PendingWorkError>
 where
-    S: AppRecordStore<PendingWorkItem> + AppRecordStore<IndexEntry>,
+    S: AppRecordStore<PendingWorkRecord> + AppRecordStore<IndexEntry>,
 {
     let id = args.identifier.required("remove")?;
 
@@ -135,7 +135,7 @@ mod tests {
     use std::path::PathBuf;
 
     use pwf_application::pending_work::remove_pending_work_item::RemovalConfirmation;
-    use pwf_domain::pending_work::{ProjectName, WorkItemId, WorkItemStatus};
+    use pwf_models::pending_work::{ProjectName, WorkItemId, WorkItemStatus};
 
     use super::removal_confirmation;
 

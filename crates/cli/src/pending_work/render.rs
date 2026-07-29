@@ -19,10 +19,10 @@ pub(super) use session::{render_dispatch, render_dry_run, render_session_aborted
 pub(super) use session_confirmation::render_session_confirmation;
 pub(super) use verify::render_verify;
 
-fn agent_name(agent: pwf_application::pending_work::session::Agent) -> &'static str {
+fn agent_name(agent: pwf_models::session::Agent) -> &'static str {
     match agent {
-        pwf_application::pending_work::session::Agent::Claude => "claude",
-        pwf_application::pending_work::session::Agent::Codex => "codex",
+        pwf_models::session::Agent::Claude => "claude",
+        pwf_models::session::Agent::Codex => "codex",
     }
 }
 

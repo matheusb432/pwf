@@ -1,4 +1,4 @@
-use pwf_application::pending_work::session::SessionEffort;
+use pwf_models::session::SessionEffort;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum CodexReasoningEffort {

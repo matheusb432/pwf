@@ -1,4 +1,4 @@
-use pwf_domain::pending_work::WorkItemId;
+use pwf_models::pending_work::WorkItemId;
 
 pub(crate) fn normalize(raw: &str) -> String {
     let trimmed = raw.trim().to_ascii_uppercase();

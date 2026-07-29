@@ -2,16 +2,16 @@
 
 use std::error::Error;
 
+use pwf_models::session::AgentModel;
 use thiserror::Error;
 
 use super::{
     Agent, AgentProbe, ClaudeSessionClient, CodexSessionClient, DispatchConfirmation, DispatchMode,
     LaunchDirectives, ModelTierCatalog, RepositorySessionClient, SessionEffort, SessionPlan,
-    TmuxSessionClient, launch::dispatch_target, model::AgentModel, model_selection::resolve_model,
-    task_content,
+    TmuxSessionClient, launch::dispatch_target, model_selection::resolve_model, task_content,
 };
 use crate::{
-    AppRecordStore, NoteMarkdownSource, PendingWorkItem,
+    AppRecordStore, NoteMarkdownSource, PendingWorkRecord,
     pending_work::{
         find_pending_work::{FindPendingWorkError, find_open_item},
         project_registry::ProjectRegistry,
@@ -140,7 +140,7 @@ pub enum PlanSessionError {
 )]
 pub fn execute(
     command: &PlanSession,
-    store: &(impl AppRecordStore<PendingWorkItem> + NoteMarkdownSource),
+    store: &(impl AppRecordStore<PendingWorkRecord> + NoteMarkdownSource),
     projects: &ProjectRegistry,
     model_tiers: &impl ModelTierCatalog,
     repository: &impl RepositorySessionClient,
@@ -250,7 +250,7 @@ pub fn execute(
 fn prepare_append(
     command: &PlanSession,
     item_id: &str,
-    store: &impl AppRecordStore<PendingWorkItem>,
+    store: &impl AppRecordStore<PendingWorkRecord>,
     projects: &ProjectRegistry,
 ) -> Result<Option<PreparedPendingWorkUpdate>, UpdatePendingWorkError> {
     let PlanSessionIntent::Dispatch {

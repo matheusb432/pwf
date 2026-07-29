@@ -1,6 +1,9 @@
 use clap::Args;
-use pwf_application::pending_work::{StatusFilter, session::Agent};
-use pwf_domain::pending_work::{EffortTier, WorkItemStatus};
+use pwf_application::pending_work::StatusFilter;
+use pwf_models::{
+    pending_work::{EffortTier, WorkItemStatus},
+    session::Agent,
+};
 use thiserror::Error;
 
 #[derive(Args, Clone, Debug, Default)]

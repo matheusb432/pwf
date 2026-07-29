@@ -2,7 +2,7 @@ use clap::Args;
 use pwf_application::pending_work::{
     ProjectRegistry,
     session::{
-        Agent, AgentProbe, DispatchMode, LaunchDirectives, PlanSessionIntent, SessionEffort,
+        AgentProbe, PlanSessionIntent,
         dispatch_session::{self, DispatchSession},
         plan_session::{self, PlanSession, PlanSessionOk},
     },
@@ -14,6 +14,7 @@ use pwf_infra::{
         TomlModelTierCatalog, render_argv,
     },
 };
+use pwf_models::session::{Agent, DispatchMode, LaunchDirectives, SessionEffort};
 
 use super::{
     common::{AgentChoice, CommonArguments, Identifier, PendingWorkError},

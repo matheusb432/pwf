@@ -1,6 +1,6 @@
 use clap::Args;
 use pwf_application::{
-    AppRecordStore, IndexEntry, PendingWorkItem,
+    AppRecordStore, IndexEntry, PendingWorkRecord,
     pending_work::{
         ProjectRegistry,
         reopen_pending_work::{self, ReopenPendingWork, ReopenPendingWorkError},
@@ -34,7 +34,7 @@ pub(in crate::pending_work) fn run_reopen<S>(
     args: &Arguments,
 ) -> Result<String, PendingWorkError>
 where
-    S: AppRecordStore<PendingWorkItem> + AppRecordStore<IndexEntry>,
+    S: AppRecordStore<PendingWorkRecord> + AppRecordStore<IndexEntry>,
 {
     let id = args.identifier.required("reopen")?;
     let outcome = reopen_pending_work::execute(&ReopenPendingWork { id }, store, projects)

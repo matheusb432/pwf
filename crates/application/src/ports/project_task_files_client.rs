@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use pwf_domain::project::ProjectIndexIdentity;
+use pwf_models::project::ProjectIndexIdentity;
 
 /// Reports the filesystem state after staged project task files commit.
 #[derive(Debug)]

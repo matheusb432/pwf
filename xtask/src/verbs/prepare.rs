@@ -56,7 +56,7 @@ fn prepare_arguments(check: bool) -> Vec<&'static str> {
         "--no-dotenv",
         "--",
         "--package",
-        "pwf-application",
+        "pwf_application",
     ]);
     arguments
 }
@@ -83,7 +83,7 @@ mod tests {
                 "--no-dotenv",
                 "--",
                 "--package",
-                "pwf-application",
+                "pwf_application",
             ]
         );
         assert_eq!(
@@ -95,7 +95,7 @@ mod tests {
                 "--no-dotenv",
                 "--",
                 "--package",
-                "pwf-application",
+                "pwf_application",
             ]
         );
     }

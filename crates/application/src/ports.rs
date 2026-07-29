@@ -15,32 +15,10 @@ pub use project_task_files_client::{
     ProjectTaskFilesClient, ProjectTaskFilesRenameCommit, StagedProjectTaskFilesRename,
 };
 pub use project_task_location_client::ProjectTaskLocationClient;
-use pwf_domain::{
-    note::NoteId,
+use pwf_models::{
+    note::{NoteId, ProjectNote},
     pending_work::{EffortTier, ProjectName, Tags, Timestamp, WorkItemId, WorkItemStatus},
 };
-
-/// Describes one persisted project note.
-///
-/// # Examples
-///
-/// ```
-/// use pwf_application::ProjectNote;
-/// use pwf_domain::note::NoteId;
-///
-/// let note = ProjectNote {
-///     id: NoteId::try_new("PWF-NOTE-0001").unwrap(),
-///     message: "remember milk".to_string(),
-/// };
-/// assert_eq!(note.id.as_ref(), "PWF-NOTE-0001");
-/// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProjectNote {
-    /// Identifies the note within its project.
-    pub id: NoteId,
-    /// Contains the note's first non-empty body line.
-    pub message: String,
-}
 
 impl Record for ProjectNote {
     type Scope = ProjectName;
@@ -55,7 +33,7 @@ impl Record for ProjectNote {
 ///
 /// ```
 /// use pwf_application::NewProjectNote;
-/// use pwf_domain::{note::NoteId, pending_work::Timestamp};
+/// use pwf_models::{note::NoteId, pending_work::Timestamp};
 ///
 /// let note = NewProjectNote {
 ///     id: NoteId::try_new("PWF-NOTE-0001").unwrap(),
@@ -97,8 +75,11 @@ pub struct ProjectNotePatch {
 /// # Examples
 ///
 /// ```
-/// use pwf_application::{AppRecordStore, ProjectNote, ProjectNoteStore};
-/// use pwf_domain::{note::NoteId, pending_work::ProjectName};
+/// use pwf_application::{AppRecordStore, ProjectNoteStore};
+/// use pwf_models::{
+///     note::{NoteId, ProjectNote},
+///     pending_work::ProjectName,
+/// };
 ///
 /// # fn exists<S>(
 /// #     store: &S,
@@ -163,9 +144,9 @@ pub enum Materialization {
     InlineLegacy,
 }
 
-/// A pending-work note's persisted state.
+/// Carries one raw pending-work persistence record between application operations and adapters.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PendingWorkItem {
+pub struct PendingWorkRecord {
     pub id: RecordId,
     pub title: String,
     pub status: WorkItemStatus,
@@ -188,14 +169,14 @@ pub struct PendingWorkItem {
     pub materialization: Materialization,
 }
 
-impl Record for PendingWorkItem {
+impl Record for PendingWorkRecord {
     type Scope = ProjectName;
     type Id = WorkItemId;
     type New = NewItem;
     type Patch = ItemPatch;
 }
 
-/// The shape used to insert a new [`PendingWorkItem`].
+/// The shape used to insert a new [`PendingWorkRecord`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewItem {
     pub prompt: String,
@@ -207,7 +188,7 @@ pub struct NewItem {
     pub tags: Option<Tags>,
 }
 
-/// The shape used to patch an existing [`PendingWorkItem`].
+/// The shape used to patch an existing [`PendingWorkRecord`].
 ///
 /// `None` leaves a field unchanged. Nested `Some(None)` clears nullable fields. The application
 /// rejects empty patches before calling the adapter.

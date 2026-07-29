@@ -1,6 +1,6 @@
 //! Removes one note from a managed project.
 
-use pwf_domain::note::NoteId;
+use pwf_models::note::NoteId;
 
 use super::identifier::{self, ResolvedProject};
 use crate::{ProjectNoteStore, pending_work::ProjectRegistry};
@@ -115,7 +115,7 @@ where
 mod tests {
     use std::error::Error as _;
 
-    use pwf_domain::{note::NoteId, pending_work::ProjectName};
+    use pwf_models::{note::NoteId, pending_work::ProjectName};
 
     use super::{RemoveNote, RemoveNoteError};
     use crate::{

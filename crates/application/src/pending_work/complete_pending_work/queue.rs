@@ -1,4 +1,4 @@
-use pwf_domain::pending_work::{Timestamp, WorkItemId};
+use pwf_models::pending_work::{Timestamp, WorkItemId};
 
 use crate::{IndexEntry, IndexEntryState, IndexSection, pending_work::section};
 

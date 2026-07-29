@@ -7,10 +7,10 @@ use std::{
 use pwf_application::{
     ProjectTaskFilesClient, ProjectTaskFilesRenameCommit, StagedProjectTaskFilesRename,
 };
-use pwf_domain::project::ProjectIndexIdentity;
+use pwf_models::project::ProjectIndexIdentity;
 use walkdir::WalkDir;
 
-use super::ObsidianStoreError;
+use super::{ObsidianStoreError, identity::project_index_frontmatter_id};
 
 const DIRECTORY_DEPTH_MAX: usize = 64;
 const ENTRY_COUNT_MAX: usize = 100_000;
@@ -346,8 +346,8 @@ fn rewrite_markdown_text(
                 frontmatter = true;
             }
         } else if frontmatter {
-            if body == format!("id: {}", current.frontmatter_id()) {
-                body = format!("id: {}", next.frontmatter_id());
+            if body == format!("id: {}", project_index_frontmatter_id(current)) {
+                body = format!("id: {}", project_index_frontmatter_id(next));
             } else if body == format!("title: {}", current.title()) {
                 body = format!("title: {}", next.title());
             } else if body == format!("project: {}", current.title()) {
@@ -424,7 +424,7 @@ fn reject_existing(
 mod tests {
     use std::{assert_matches, fs, io, path::Path};
 
-    use pwf_domain::project::{ProjectIndexIdentity, ProjectName, ProjectPrefix};
+    use pwf_models::project::{ProjectIndexIdentity, ProjectName, ProjectPrefix};
 
     use super::*;
 

@@ -1,4 +1,4 @@
-use pwf_domain::pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus};
+use pwf_models::pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus};
 
 mod queue;
 
@@ -16,7 +16,7 @@ use super::{
 };
 use crate::ports::{
     AppRecordStore, Clock, IndexEntry, IndexEntryState, IndexSection, ItemPatch, Materialization,
-    NewItem, PendingWorkItem,
+    NewItem, PendingWorkRecord,
 };
 
 #[derive(Debug, Clone)]
@@ -88,7 +88,9 @@ pub fn execute<S, C>(
     clock: &C,
 ) -> Result<CompletePendingWorkOk, CompletePendingWorkError>
 where
-    S: AppRecordStore<PendingWorkItem> + AppRecordStore<IndexEntry> + AppRecordStore<IndexSection>,
+    S: AppRecordStore<PendingWorkRecord>
+        + AppRecordStore<IndexEntry>
+        + AppRecordStore<IndexSection>,
     C: Clock,
 {
     let authored_date = command
@@ -159,7 +161,9 @@ pub(super) fn perform_close<S>(
     review: bool,
 ) -> Result<CompletePendingWorkOk, CloseError>
 where
-    S: AppRecordStore<PendingWorkItem> + AppRecordStore<IndexEntry> + AppRecordStore<IndexSection>,
+    S: AppRecordStore<PendingWorkRecord>
+        + AppRecordStore<IndexEntry>
+        + AppRecordStore<IndexSection>,
 {
     let commits_value = commit_provenance::normalize(commits);
     let pending_work_identifier =
@@ -195,8 +199,13 @@ where
     if let Some(commits) = &commits_value {
         patch.commits = Some(Some(commits.clone()));
     }
-    <S as AppRecordStore<PendingWorkItem>>::update(store, project, &pending_work_identifier, patch)
-        .map_err(|error| CloseError::WriteStore(Box::new(error)))?;
+    <S as AppRecordStore<PendingWorkRecord>>::update(
+        store,
+        project,
+        &pending_work_identifier,
+        patch,
+    )
+    .map_err(|error| CloseError::WriteStore(Box::new(error)))?;
 
     let (evicted_ids, futuro_renamed) =
         if matches!(record.materialization, Materialization::NoteFile) {
@@ -308,7 +317,9 @@ fn spawn_review<S>(
     commits: Option<&str>,
 ) -> Result<AddPendingWorkItemOk, CloseError>
 where
-    S: AppRecordStore<PendingWorkItem> + AppRecordStore<IndexEntry> + AppRecordStore<IndexSection>,
+    S: AppRecordStore<PendingWorkRecord>
+        + AppRecordStore<IndexEntry>
+        + AppRecordStore<IndexSection>,
 {
     project_mapped(project.as_ref(), projects).map_err(CloseError::ReviewTask)?;
     let prompt = review_task_prompt(reviewed.as_ref(), commits);
@@ -356,14 +367,14 @@ pub(super) fn review_task_prompt(reviewed_id: &str, range: Option<&str>) -> Stri
 
 #[cfg(test)]
 mod tests {
-    use pwf_domain::pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus};
+    use pwf_models::pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus};
 
     use super::{
         AddPendingWorkError, ClosedItemAction, CompletePendingWork, CompletePendingWorkError,
         ProjectRegistry, review_task_prompt,
     };
     use crate::{
-        IndexEntry, IndexEntryState, Materialization, PendingWorkItem, RecordId, ports::Clock,
+        IndexEntry, IndexEntryState, Materialization, PendingWorkRecord, RecordId, ports::Clock,
         testing::InMemoryStore,
     };
 
@@ -384,8 +395,8 @@ mod tests {
         )])
     }
 
-    fn record(id: &str, status: WorkItemStatus) -> PendingWorkItem {
-        PendingWorkItem {
+    fn record(id: &str, status: WorkItemStatus) -> PendingWorkRecord {
+        PendingWorkRecord {
             id: RecordId::Item(WorkItemId::try_new(id).unwrap()),
             title: "tray gui".to_string(),
             status,
@@ -416,7 +427,7 @@ mod tests {
         ProjectName::try_new("foo-bar").unwrap()
     }
 
-    fn staged(items: Vec<PendingWorkItem>, entries: Vec<IndexEntry>) -> InMemoryStore {
+    fn staged(items: Vec<PendingWorkRecord>, entries: Vec<IndexEntry>) -> InMemoryStore {
         let store = InMemoryStore::default()
             .with_prefix("foo-bar", "FOO")
             .with_project("foo-bar", items);

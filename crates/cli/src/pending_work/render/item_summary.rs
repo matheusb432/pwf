@@ -1,5 +1,5 @@
 use anstyle::AnsiColor;
-use pwf_domain::pending_work::WorkItemStatus;
+use pwf_models::pending_work::WorkItemStatus;
 
 use super::{ID_ORANGE, paint};
 

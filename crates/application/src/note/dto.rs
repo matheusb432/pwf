@@ -1,6 +1,6 @@
 //! Defines shared project-note read DTOs.
 
-use pwf_domain::note::NoteId;
+use pwf_models::note::NoteId;
 
 /// Describes one note returned by a project-note read.
 ///
@@ -8,7 +8,7 @@ use pwf_domain::note::NoteId;
 ///
 /// ```
 /// use pwf_application::note::dto::ListedNote;
-/// use pwf_domain::note::NoteId;
+/// use pwf_models::note::NoteId;
 ///
 /// let note = ListedNote {
 ///     id: NoteId::try_new("PWF-NOTE-0001").unwrap(),

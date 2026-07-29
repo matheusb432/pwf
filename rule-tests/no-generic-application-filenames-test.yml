@@ -1,6 +1,0 @@
-# ast-grep snippet tests do not carry filenames. The real-path cases live in
-# xtask/tests/architecture_rules.rs.
-id: no-generic-application-filenames
-invalid:
-  - |
-    pub fn execute() {}

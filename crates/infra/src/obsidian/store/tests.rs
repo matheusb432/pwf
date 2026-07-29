@@ -2,9 +2,9 @@ use std::{assert_matches, fmt::Write as _, path::Path};
 
 use pwf_application::{
     AppRecordStore, IndexEntry, IndexEntryState, IndexPlacement, IndexSection, ItemPatch,
-    Materialization, NewItem, PendingWorkItem, RecordId,
+    Materialization, NewItem, PendingWorkRecord, RecordId,
 };
-use pwf_domain::pending_work::{
+use pwf_models::pending_work::{
     EffortTier, ProjectIndexIdentity, ProjectName, ProjectPrefix, Tag, Tags, Timestamp, WorkItemId,
     WorkItemStatus,
 };
@@ -65,7 +65,7 @@ fn explicit_index_path_uses_the_project_title_inside_tasks_path() {
     let project_name = ProjectName::try_new("rust-learn").unwrap();
 
     let records =
-        <ObsidianStore as AppRecordStore<PendingWorkItem>>::list(&store, &project_name).unwrap();
+        <ObsidianStore as AppRecordStore<PendingWorkRecord>>::list(&store, &project_name).unwrap();
 
     assert_eq!(records.len(), 1);
     assert_eq!(
@@ -98,7 +98,7 @@ fn explicit_projects_support_unrelated_task_parents() {
     for (title, expected_id) in [("alpha", "AAA-0001"), ("beta", "BBB-0001")] {
         let project_name = ProjectName::try_new(title).unwrap();
         let records =
-            <ObsidianStore as AppRecordStore<PendingWorkItem>>::list(&store, &project_name)
+            <ObsidianStore as AppRecordStore<PendingWorkRecord>>::list(&store, &project_name)
                 .unwrap();
         assert_eq!(records[0].id.as_item().unwrap().as_ref(), expected_id);
     }
@@ -110,7 +110,7 @@ fn explicit_unknown_project_returns_a_typed_error() {
     let unknown = ProjectName::try_new("unknown").unwrap();
 
     let error =
-        <ObsidianStore as AppRecordStore<PendingWorkItem>>::list(&store, &unknown).unwrap_err();
+        <ObsidianStore as AppRecordStore<PendingWorkRecord>>::list(&store, &unknown).unwrap_err();
 
     assert_matches!(
         error,
@@ -131,7 +131,7 @@ fn explicit_index_validation_uses_the_supplied_identity() {
     let store = ObsidianStore::new([project("new", "pwf", &tasks_path)]);
     let project_name = ProjectName::try_new("pwf").unwrap();
 
-    let error = <ObsidianStore as AppRecordStore<PendingWorkItem>>::list(&store, &project_name)
+    let error = <ObsidianStore as AppRecordStore<PendingWorkRecord>>::list(&store, &project_name)
         .unwrap_err();
 
     assert_matches!(
@@ -163,13 +163,32 @@ fn generic_list_rejects_project_index_without_identity_frontmatter() {
 
     let project = ProjectName::try_new("pwf").unwrap();
     let error =
-        <ObsidianStore as AppRecordStore<PendingWorkItem>>::list(&store, &project).unwrap_err();
+        <ObsidianStore as AppRecordStore<PendingWorkRecord>>::list(&store, &project).unwrap_err();
 
     assert_matches!(
         error,
         ObsidianStoreError::MissingFrontmatter { property, .. }
             if property == "id/title"
     );
+}
+
+#[test]
+fn generic_list_reports_an_unreadable_item_path() {
+    let temp = tempfile::tempdir().unwrap();
+    let project_dir = temp.path().join("pwf");
+    std::fs::create_dir_all(project_dir.join("PWF-0001.md")).unwrap();
+    std::fs::write(
+        project_dir.join("pwf.md"),
+        "---\nid: pwf\ntitle: pwf\n---\n\n- [ ] [[PWF-0001]]\n",
+    )
+    .unwrap();
+    let store = store_for_tasks(&project_dir);
+    let project = ProjectName::try_new("pwf").unwrap();
+
+    let error =
+        <ObsidianStore as AppRecordStore<PendingWorkRecord>>::list(&store, &project).unwrap_err();
+
+    assert_matches!(error, ObsidianStoreError::ReadItemFile { .. });
 }
 
 #[test]
@@ -215,9 +234,9 @@ fn generic_read_uses_yaml_decoded_title() {
     assert_eq!(record.title, "adapter: preserve identity");
 }
 
-fn get_record(store: &ObsidianStore, id: &str) -> Option<PendingWorkItem> {
+fn get_record(store: &ObsidianStore, id: &str) -> Option<PendingWorkRecord> {
     let project = ProjectName::try_new("pwf").unwrap();
-    <ObsidianStore as AppRecordStore<PendingWorkItem>>::get(
+    <ObsidianStore as AppRecordStore<PendingWorkRecord>>::get(
         store,
         &project,
         &WorkItemId::try_new(id).unwrap(),
@@ -268,7 +287,7 @@ fn get_rejects_duplicate_frontmatter_ids() {
     let store = store_with_index_identity(&notes_dir.join("pwf"));
     let project = ProjectName::try_new("pwf").unwrap();
 
-    let error = <ObsidianStore as AppRecordStore<PendingWorkItem>>::get(
+    let error = <ObsidianStore as AppRecordStore<PendingWorkRecord>>::get(
         &store,
         &project,
         &WorkItemId::try_new("PWF-0001").unwrap(),
@@ -308,10 +327,14 @@ fn write_note(
 }
 
 /// Writes a note and then its open index entry through the adapter ports.
-fn generic_add(store: &ObsidianStore, new: NewItem) -> Result<PendingWorkItem, ObsidianStoreError> {
+fn generic_add(
+    store: &ObsidianStore,
+    new: NewItem,
+) -> Result<PendingWorkRecord, ObsidianStoreError> {
     let project = ProjectName::try_new("pwf").unwrap();
     let section = new.section.clone().unwrap_or_default();
-    let record = <ObsidianStore as AppRecordStore<PendingWorkItem>>::insert(store, &project, new)?;
+    let record =
+        <ObsidianStore as AppRecordStore<PendingWorkRecord>>::insert(store, &project, new)?;
     let id = record
         .id
         .as_item()
@@ -416,7 +439,7 @@ fn generic_insert_rejects_unreadable_existing_index_before_writing_a_note() {
     let store = store_with_index_identity(&project_dir);
     let project = ProjectName::try_new("pwf").unwrap();
 
-    let err = <ObsidianStore as AppRecordStore<PendingWorkItem>>::insert(
+    let err = <ObsidianStore as AppRecordStore<PendingWorkRecord>>::insert(
         &store,
         &project,
         new_item("Ship the adapter /d tests pass", "ship adapter", None),
@@ -444,7 +467,7 @@ fn generic_insert_rejects_mismatched_project_index_identity() {
     let store = store_with_index_identity(&notes_dir.join("pwf"));
     let project = ProjectName::try_new("pwf").unwrap();
 
-    let error = <ObsidianStore as AppRecordStore<PendingWorkItem>>::insert(
+    let error = <ObsidianStore as AppRecordStore<PendingWorkRecord>>::insert(
         &store,
         &project,
         new_item("task", "task", None),
@@ -481,7 +504,7 @@ fn generic_insert_allocates_after_greatest_frontmatter_id() {
     let store = store_with_index_identity(&notes_dir.join("pwf"));
     let project = ProjectName::try_new("pwf").unwrap();
 
-    let record = <ObsidianStore as AppRecordStore<PendingWorkItem>>::insert(
+    let record = <ObsidianStore as AppRecordStore<PendingWorkRecord>>::insert(
         &store,
         &project,
         new_item("next task", "next task", None),
@@ -502,7 +525,7 @@ fn apply_tag_patch(store: &ObsidianStore, tags: Option<Tags>) {
         tags: Some(tags),
         ..Default::default()
     };
-    <ObsidianStore as AppRecordStore<PendingWorkItem>>::update(store, &project, &id, patch)
+    <ObsidianStore as AppRecordStore<PendingWorkRecord>>::update(store, &project, &id, patch)
         .unwrap();
 }
 
@@ -671,7 +694,7 @@ fn generic_delete_removes_note_and_unlinks_index() {
     let id = WorkItemId::try_new("PWF-0001").unwrap();
 
     <ObsidianStore as AppRecordStore<IndexEntry>>::delete(&store, &project, &id).unwrap();
-    <ObsidianStore as AppRecordStore<PendingWorkItem>>::delete(&store, &project, &id).unwrap();
+    <ObsidianStore as AppRecordStore<PendingWorkRecord>>::delete(&store, &project, &id).unwrap();
 
     assert!(!project_dir.join("PWF-0001.md").exists());
     assert_eq!(
@@ -878,7 +901,7 @@ fn item_record_roundtrips_file_model_note() {
 
     let project = ProjectName::try_new("pwf").unwrap();
     let id = WorkItemId::try_new("PWF-0001").unwrap();
-    let record = <ObsidianStore as AppRecordStore<PendingWorkItem>>::get(&store, &project, &id)
+    let record = <ObsidianStore as AppRecordStore<PendingWorkRecord>>::get(&store, &project, &id)
         .unwrap()
         .expect("file-model record present");
 
@@ -914,7 +937,7 @@ fn item_record_materializes_legacy_checkbox_line() {
 
     let project = ProjectName::try_new("pwf").unwrap();
     let id = WorkItemId::try_new("PWF-0002").unwrap();
-    let record = <ObsidianStore as AppRecordStore<PendingWorkItem>>::get(&store, &project, &id)
+    let record = <ObsidianStore as AppRecordStore<PendingWorkRecord>>::get(&store, &project, &id)
         .unwrap()
         .expect("legacy checkbox materialized");
 
@@ -1002,7 +1025,7 @@ fn patch_status_done_flips_legacy_checkbox_with_date_stamp() {
         ..Default::default()
     };
 
-    <ObsidianStore as AppRecordStore<PendingWorkItem>>::update(&store, &project, &id, patch)
+    <ObsidianStore as AppRecordStore<PendingWorkRecord>>::update(&store, &project, &id, patch)
         .unwrap();
 
     let index = std::fs::read_to_string(&index_path).unwrap();
@@ -1033,7 +1056,7 @@ fn insert_allocates_next_id_without_index_write() {
     let store = store_for_tasks(&notes_dir.join("pwf"));
 
     let project = ProjectName::try_new("pwf").unwrap();
-    let record = <ObsidianStore as AppRecordStore<PendingWorkItem>>::insert(
+    let record = <ObsidianStore as AppRecordStore<PendingWorkRecord>>::insert(
         &store,
         &project,
         NewItem {
@@ -1098,7 +1121,7 @@ fn generic_list_records_carry_open_placement_without_hiding_unlinked_notes() {
 
     let project = ProjectName::try_new("pwf").unwrap();
     let records =
-        <ObsidianStore as AppRecordStore<PendingWorkItem>>::list(&store, &project).unwrap();
+        <ObsidianStore as AppRecordStore<PendingWorkRecord>>::list(&store, &project).unwrap();
 
     assert_eq!(records.len(), 2);
     let record = records
@@ -1165,7 +1188,7 @@ fn generic_list_rejects_duplicate_project_index_task_ids() {
     let project = ProjectName::try_new("pwf").unwrap();
 
     let error =
-        <ObsidianStore as AppRecordStore<PendingWorkItem>>::list(&store, &project).unwrap_err();
+        <ObsidianStore as AppRecordStore<PendingWorkRecord>>::list(&store, &project).unwrap_err();
 
     assert_matches!(
         error,
@@ -1215,7 +1238,7 @@ fn list_pending_items_returns_note_history_and_index_only_records() {
     let project = ProjectName::try_new("pwf").unwrap();
 
     let records =
-        <ObsidianStore as AppRecordStore<PendingWorkItem>>::list(&store, &project).unwrap();
+        <ObsidianStore as AppRecordStore<PendingWorkRecord>>::list(&store, &project).unwrap();
     let mut ids: Vec<String> = records
         .iter()
         .filter_map(|record| record.id.as_item().map(ToString::to_string))
@@ -1279,7 +1302,7 @@ fn list_pending_items_returns_note_history_when_index_is_missing() {
     let project = ProjectName::try_new("pwf").unwrap();
 
     let records =
-        <ObsidianStore as AppRecordStore<PendingWorkItem>>::list(&store, &project).unwrap();
+        <ObsidianStore as AppRecordStore<PendingWorkRecord>>::list(&store, &project).unwrap();
 
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].status, WorkItemStatus::Done);
@@ -1535,7 +1558,7 @@ fn generic_insert_plus_upsert_writes_legacy_add_index_bytes() {
         let (_guard, store, project_dir) = stage_add_parity_vault(scenario.initial_index);
         let project = ProjectName::try_new("pwf").unwrap();
 
-        let record = <ObsidianStore as AppRecordStore<PendingWorkItem>>::insert(
+        let record = <ObsidianStore as AppRecordStore<PendingWorkRecord>>::insert(
             &store,
             &project,
             NewItem {

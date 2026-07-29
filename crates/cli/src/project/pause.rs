@@ -1,7 +1,7 @@
 use clap::Args;
 use pwf_application::project::pause_project::{self, PauseProject};
-use pwf_domain::project::ProjectPrefix;
 use pwf_infra::SqliteStore;
+use pwf_models::project::ProjectPrefix;
 
 use super::{output, parse_project_id};
 

@@ -3,7 +3,7 @@ use super::{
     complete_pending_work::{CloseError, ClosedItemAction, CompletePendingWorkOk, perform_close},
     project_registry::ProjectRegistry,
 };
-use crate::ports::{AppRecordStore, Clock, IndexEntry, IndexSection, PendingWorkItem};
+use crate::ports::{AppRecordStore, Clock, IndexEntry, IndexSection, PendingWorkRecord};
 
 #[derive(Debug, Clone)]
 pub struct CancelPendingWork {
@@ -57,13 +57,15 @@ pub fn execute<S, C>(
     clock: &C,
 ) -> Result<CompletePendingWorkOk, CancelPendingWorkError>
 where
-    S: AppRecordStore<PendingWorkItem> + AppRecordStore<IndexEntry> + AppRecordStore<IndexSection>,
+    S: AppRecordStore<PendingWorkRecord>
+        + AppRecordStore<IndexEntry>
+        + AppRecordStore<IndexSection>,
     C: Clock,
 {
     let authored_date = command
         .date
         .clone()
-        .map_or_else(|| clock.today(), pwf_domain::pending_work::Timestamp::new);
+        .map_or_else(|| clock.today(), pwf_models::pending_work::Timestamp::new);
     perform_close(
         store,
         projects,
@@ -95,11 +97,11 @@ fn map_close_error(error: CloseError) -> CancelPendingWorkError {
 
 #[cfg(test)]
 mod tests {
-    use pwf_domain::pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus};
+    use pwf_models::pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus};
 
     use super::{CancelPendingWork, CancelPendingWorkError, ProjectRegistry};
     use crate::{
-        IndexEntry, IndexEntryState, Materialization, PendingWorkItem, RecordId, ports::Clock,
+        IndexEntry, IndexEntryState, Materialization, PendingWorkRecord, RecordId, ports::Clock,
         testing::InMemoryStore,
     };
 
@@ -120,8 +122,8 @@ mod tests {
         )])
     }
 
-    fn record(id: &str) -> PendingWorkItem {
-        PendingWorkItem {
+    fn record(id: &str) -> PendingWorkRecord {
+        PendingWorkRecord {
             id: RecordId::Item(WorkItemId::try_new(id).unwrap()),
             title: "tray gui".to_string(),
             status: WorkItemStatus::Active,

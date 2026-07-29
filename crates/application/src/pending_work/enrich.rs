@@ -1,9 +1,9 @@
 //! Derives pending-work launchability diagnostics for list, verify, and session operations.
 
-use pwf_domain::pending_work::WorkItemStatus;
+use pwf_models::pending_work::WorkItemStatus;
 
 use super::{get_pending_work::PendingWorkItemView, note_body::is_placeholder_prompt, section};
-use crate::{Materialization, PendingWorkItem, RecordId};
+use crate::{Materialization, PendingWorkRecord, RecordId};
 
 pub const ISSUE_NO_REPO: &str =
     "Project has no directory source; update the managed project record.";
@@ -23,7 +23,7 @@ pub(super) fn normalize_section(section: Option<&str>) -> Option<String> {
 
 /// Returns whether an item is active and represented by an open index placement.
 #[must_use]
-pub(crate) fn is_open_item(item: &PendingWorkItem) -> bool {
+pub(crate) fn is_open_item(item: &PendingWorkRecord) -> bool {
     item.status == WorkItemStatus::Active && item.placement.is_some()
 }
 
@@ -127,7 +127,7 @@ pub(crate) fn inline_record_id(project: &str, ordinal: usize) -> String {
 /// Materialization controls `format` and `item_file`; missing notes add an issue; empty titles fall
 /// back to the canonical id; section labels are canonicalized for display.
 #[must_use]
-pub(super) fn enrich(item: &PendingWorkItem, repo: Option<&str>) -> EnrichedPendingWorkItem {
+pub(super) fn enrich(item: &PendingWorkRecord, repo: Option<&str>) -> EnrichedPendingWorkItem {
     let prompt = item.body.trim().to_string();
     let (format, item_file, missing_note) = match &item.materialization {
         Materialization::NoteFile => ("file", Some(item.locator.clone()), None),
@@ -168,13 +168,13 @@ pub(super) fn enrich(item: &PendingWorkItem, repo: Option<&str>) -> EnrichedPend
 
 #[cfg(test)]
 mod tests {
-    use pwf_domain::pending_work::{Timestamp, WorkItemId, WorkItemStatus};
+    use pwf_models::pending_work::{Timestamp, WorkItemId, WorkItemStatus};
 
     use super::*;
     use crate::IndexPlacement;
 
-    fn record(body: &str) -> PendingWorkItem {
-        PendingWorkItem {
+    fn record(body: &str) -> PendingWorkRecord {
+        PendingWorkRecord {
             id: RecordId::Item(WorkItemId::try_new("PWF-0001").unwrap()),
             title: "tray gui".to_string(),
             status: WorkItemStatus::Active,
@@ -211,13 +211,13 @@ mod tests {
         let active = record("body");
         assert!(is_open_item(&active));
 
-        let unlinked = PendingWorkItem {
+        let unlinked = PendingWorkRecord {
             placement: None,
             ..active.clone()
         };
         assert!(!is_open_item(&unlinked));
 
-        let done = PendingWorkItem {
+        let done = PendingWorkRecord {
             status: WorkItemStatus::Done,
             ..active
         };
@@ -278,7 +278,7 @@ mod tests {
 
     #[test]
     fn inline_legacy_record_projects_legacy_format_and_ordinal_id() {
-        let inline = PendingWorkItem {
+        let inline = PendingWorkRecord {
             id: RecordId::Inline(2),
             title: "legacy task".to_string(),
             body: "do the legacy thing".to_string(),

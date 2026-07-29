@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use gray_matter::{Matter, engine::YAML};
-use pwf_domain::pending_work::{ProjectIndexIdentity, ProjectName, ProjectPrefix, WorkItemId};
+use pwf_models::pending_work::{ProjectIndexIdentity, ProjectName, ProjectPrefix, WorkItemId};
 use serde::Deserialize;
 
 use super::ObsidianStoreError;
@@ -135,9 +135,9 @@ pub(super) fn validate_project_index_identity(
     }
     Err(ObsidianStoreError::ProjectIndexIdentityMismatch {
         path: path.to_path_buf(),
-        actual_id: actual.frontmatter_id(),
+        actual_id: project_index_frontmatter_id(actual),
         actual_title: actual.title().as_ref().to_string(),
-        expected_id: expected.frontmatter_id(),
+        expected_id: project_index_frontmatter_id(expected),
         expected_title: expected.title().as_ref().to_string(),
     })
 }
@@ -145,9 +145,13 @@ pub(super) fn validate_project_index_identity(
 pub(super) fn new_project_index_content(identity: &ProjectIndexIdentity) -> String {
     format!(
         "---\nid: {}\ntitle: {}\n---\n\n",
-        identity.frontmatter_id(),
+        project_index_frontmatter_id(identity),
         identity.title()
     )
+}
+
+pub(super) fn project_index_frontmatter_id(identity: &ProjectIndexIdentity) -> String {
+    identity.id().as_ref().to_ascii_lowercase()
 }
 
 fn parse_frontmatter<T: serde::de::DeserializeOwned>(
@@ -184,10 +188,11 @@ fn required_index_property(
 mod tests {
     use std::{assert_matches, path::Path};
 
-    use pwf_domain::pending_work::{ProjectIndexIdentity, ProjectName, ProjectPrefix};
+    use pwf_models::pending_work::{ProjectIndexIdentity, ProjectName, ProjectPrefix};
 
     use super::{
-        parse_project_index_identity, parse_task_metadata_if_task, validate_project_index_identity,
+        parse_project_index_identity, parse_task_metadata_if_task, project_index_frontmatter_id,
+        validate_project_index_identity,
     };
     use crate::obsidian::ObsidianStoreError;
 
@@ -224,7 +229,7 @@ mod tests {
         let identity = parse_project_index_identity(path, markdown).unwrap();
 
         assert_eq!(identity.id().as_ref(), "RST");
-        assert_eq!(identity.frontmatter_id(), "rst");
+        assert_eq!(project_index_frontmatter_id(&identity), "rst");
         assert_eq!(identity.title().as_ref(), "rust-learn");
     }
 

@@ -1,24 +1,7 @@
-use pwf_domain::project::{
-    ProjectName, ProjectPrefix, ProjectSource, ProjectSourceKind, ProjectSourceValue, ProjectTasks,
-    ProjectTasksKind, ProjectTasksPath,
+use pwf_models::project::{
+    Project, ProjectName, ProjectPrefix, ProjectSource, ProjectSourceKind, ProjectSourceValue,
+    ProjectTasks, ProjectTasksKind, ProjectTasksPath,
 };
-
-/// Describes one persisted managed project.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Project {
-    /// Canonical project prefix.
-    pub id: ProjectPrefix,
-    /// Project title.
-    pub title: ProjectName,
-    /// Project source location.
-    pub source: ProjectSource,
-    /// Pending-work task location.
-    pub tasks: ProjectTasks,
-    /// RFC 3339 UTC creation timestamp.
-    pub created_at: String,
-    /// Reports whether the project is paused.
-    pub is_paused: bool,
-}
 
 /// Describes the current project and whether a requested state transition changed it.
 #[derive(Debug, Clone, PartialEq, Eq)]

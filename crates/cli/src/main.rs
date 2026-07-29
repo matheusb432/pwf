@@ -6,12 +6,12 @@ use pwf_application::{
     pending_work::ProjectRegistry,
     project::load_active_projects::{self, ActiveProject, LoadActiveProjects},
 };
-use pwf_domain::pending_work::ProjectIndexIdentity;
 use pwf_infra::{
     SqliteStore,
     clock::LocalClock,
     obsidian::{ObsidianProject, ObsidianStore},
 };
+use pwf_models::pending_work::ProjectIndexIdentity;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {

@@ -53,7 +53,7 @@ pub(in crate::pending_work) fn emit_close_diagnostics(outcome: &CompletePendingW
             outcome
                 .evicted_ids
                 .iter()
-                .map(pwf_domain::pending_work::WorkItemId::as_ref)
+                .map(pwf_models::pending_work::WorkItemId::as_ref)
                 .collect::<Vec<_>>()
                 .join(", ")
         );

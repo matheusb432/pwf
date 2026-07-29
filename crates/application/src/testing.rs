@@ -4,19 +4,19 @@ use std::{
     sync::{Arc, Mutex, MutexGuard},
 };
 
-use pwf_domain::{
-    note::NoteId,
+use pwf_models::{
+    note::{NoteId, ProjectNote},
     pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus},
 };
 
 use crate::ports::{
     AppRecordStore, IndexEntry, IndexSection, ItemPatch, Materialization, NewItem, NewProjectNote,
-    PendingWorkItem, ProjectNote, ProjectNotePatch, ProjectNoteStore, RecordId,
+    PendingWorkRecord, ProjectNotePatch, ProjectNoteStore, RecordId,
 };
 
 #[derive(Debug, Default)]
 struct InMemoryState {
-    items: BTreeMap<ProjectName, Vec<PendingWorkItem>>,
+    items: BTreeMap<ProjectName, Vec<PendingWorkRecord>>,
     entries: BTreeMap<ProjectName, Vec<IndexEntry>>,
     sections: BTreeMap<ProjectName, Vec<String>>,
     prefixes: BTreeMap<ProjectName, String>,
@@ -49,7 +49,7 @@ pub enum InMemoryStoreError {
 }
 
 impl InMemoryStore {
-    pub fn with_project(self, project: &str, items: Vec<PendingWorkItem>) -> Self {
+    pub fn with_project(self, project: &str, items: Vec<PendingWorkRecord>) -> Self {
         self.lock().items.insert(project_name(project), items);
         self
     }
@@ -71,7 +71,7 @@ impl InMemoryStore {
         self
     }
 
-    pub fn items(&self, project: &str) -> Vec<PendingWorkItem> {
+    pub fn items(&self, project: &str) -> Vec<PendingWorkRecord> {
         self.lock()
             .items
             .get(&project_name(project))
@@ -124,14 +124,14 @@ fn project_name(project: &str) -> ProjectName {
     ProjectName::try_new(project).expect("test project name is non-empty")
 }
 
-impl AppRecordStore<PendingWorkItem> for InMemoryStore {
+impl AppRecordStore<PendingWorkRecord> for InMemoryStore {
     type Error = Infallible;
 
     fn get(
         &self,
         project: &ProjectName,
         id: &WorkItemId,
-    ) -> Result<Option<PendingWorkItem>, Self::Error> {
+    ) -> Result<Option<PendingWorkRecord>, Self::Error> {
         Ok(self.lock().items.get(project).and_then(|items| {
             items
                 .iter()
@@ -140,12 +140,16 @@ impl AppRecordStore<PendingWorkItem> for InMemoryStore {
         }))
     }
 
-    fn list(&self, project: &ProjectName) -> Result<Vec<PendingWorkItem>, Self::Error> {
+    fn list(&self, project: &ProjectName) -> Result<Vec<PendingWorkRecord>, Self::Error> {
         Ok(self.lock().items.get(project).cloned().unwrap_or_default())
     }
 
     /// Allocates the next `<prefix>-NNNN` id and materializes an active record.
-    fn insert(&self, project: &ProjectName, new: NewItem) -> Result<PendingWorkItem, Self::Error> {
+    fn insert(
+        &self,
+        project: &ProjectName,
+        new: NewItem,
+    ) -> Result<PendingWorkRecord, Self::Error> {
         let mut state = self.lock();
         let prefix = state
             .prefixes
@@ -163,7 +167,7 @@ impl AppRecordStore<PendingWorkItem> for InMemoryStore {
             + 1;
         let id = WorkItemId::try_new(format!("{prefix}-{next:04}")).expect("allocated id");
         let locator = format!("/mem/{}/{}.md", project.as_ref(), id.as_ref());
-        let record = PendingWorkItem {
+        let record = PendingWorkRecord {
             id: RecordId::Item(id),
             title: new.title,
             status: WorkItemStatus::Active,
@@ -234,7 +238,7 @@ impl AppRecordStore<PendingWorkItem> for InMemoryStore {
     }
 }
 
-fn render_tags(tags: &pwf_domain::pending_work::Tags) -> String {
+fn render_tags(tags: &pwf_models::pending_work::Tags) -> String {
     format!(
         "[{}]",
         tags.iter()

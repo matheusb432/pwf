@@ -2,7 +2,7 @@
 
 use std::error::Error;
 
-use pwf_domain::pending_work::EffortTier;
+use pwf_models::pending_work::EffortTier;
 use thiserror::Error;
 
 use super::{Agent, ModelTierCatalog, ModelTierLookup};
@@ -64,7 +64,7 @@ fn parse_effort(raw: &str) -> Option<EffortTier> {
 mod tests {
     use std::{assert_matches, error::Error, fmt};
 
-    use pwf_domain::pending_work::EffortTier;
+    use pwf_models::pending_work::EffortTier;
 
     use super::{ModelSelectionError, parse_effort, resolve_model};
     use crate::pending_work::session::{Agent, ModelTier, ModelTierCatalog, ModelTierLookup};

@@ -1,6 +1,6 @@
 use clap::Args;
 use pwf_application::{
-    AppRecordStore, Clock, IndexEntry, IndexSection, PendingWorkItem,
+    AppRecordStore, Clock, IndexEntry, IndexSection, PendingWorkRecord,
     pending_work::{
         ProjectRegistry,
         complete_pending_work::{self, CompletePendingWork, CompletePendingWorkError},
@@ -50,7 +50,9 @@ pub(in crate::pending_work) fn run_done<S, C>(
     clock: &C,
 ) -> Result<String, PendingWorkError>
 where
-    S: AppRecordStore<PendingWorkItem> + AppRecordStore<IndexEntry> + AppRecordStore<IndexSection>,
+    S: AppRecordStore<PendingWorkRecord>
+        + AppRecordStore<IndexEntry>
+        + AppRecordStore<IndexSection>,
     C: Clock,
 {
     let id = args.identifier.required("done")?;

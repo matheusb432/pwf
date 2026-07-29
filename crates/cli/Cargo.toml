@@ -13,21 +13,10 @@ path = "src/main.rs"
 name = "pwf"
 path = "src/lib.rs"
 
-# run `just test --e2e` to test these with `test = false`.
-[[test]]
-name = "cli_e2e"
-path = "tests/cli_e2e.rs"
-test = false
-
-[[test]]
-name = "project_cli"
-path = "tests/project_cli.rs"
-test = false
-
 [dependencies]
-pwf-application = { workspace = true }
-pwf-domain = { workspace = true }
-pwf-infra = { workspace = true }
+pwf_application = { workspace = true }
+pwf_models = { workspace = true }
+pwf_infra = { workspace = true }
 clap = { workspace = true }
 clap-cargo = { workspace = true }
 serde = { workspace = true }
@@ -40,15 +29,6 @@ anstyle = { workspace = true }
 toml = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt"] }
 walkdir = { workspace = true }
-
-[dev-dependencies]
-assert_cmd = { workspace = true }
-console = { workspace = true }
-predicates = { workspace = true }
-tempfile = { workspace = true }
-
-[target.'cfg(target_os = "linux")'.dev-dependencies]
-expectrl = { workspace = true }
 
 [lints]
 workspace = true

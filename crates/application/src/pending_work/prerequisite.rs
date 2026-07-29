@@ -1,10 +1,10 @@
 use std::sync::LazyLock;
 
-use pwf_domain::pending_work::{WorkItemId, WorkItemStatus};
+use pwf_models::pending_work::{WorkItemId, WorkItemStatus};
 use regex::Regex;
 
 use super::{get_pending_work::PrerequisiteStatus, identifier, project_registry::ProjectRegistry};
-use crate::{AppRecordStore, Materialization, PendingWorkItem};
+use crate::{AppRecordStore, Materialization, PendingWorkRecord};
 
 const PREREQUISITE_VALUE_PATTERN: &str = r"\[\[([A-Z]{2,4}-\d{4})";
 static PREREQUISITE_VALUE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
@@ -84,7 +84,7 @@ pub(super) fn validate_and_merge<S>(
     projects: &ProjectRegistry,
 ) -> Result<String, PrerequisiteValidationError>
 where
-    S: AppRecordStore<PendingWorkItem>,
+    S: AppRecordStore<PendingWorkRecord>,
 {
     let prerequisites = parse_values(values)?;
     let mut unknown = Vec::new();
@@ -122,7 +122,7 @@ where
     Ok(frontmatter_value(&identifiers))
 }
 
-fn has_valid_persisted_status(record: &PendingWorkItem) -> bool {
+fn has_valid_persisted_status(record: &PendingWorkRecord) -> bool {
     matches!(record.materialization, Materialization::NoteFile)
         && PERSISTED_FRONTMATTER_REGEX
             .captures(&record.source)
@@ -134,7 +134,7 @@ fn has_valid_persisted_status(record: &PendingWorkItem) -> bool {
 
 pub(super) fn statuses(
     value: &str,
-    store: &impl AppRecordStore<PendingWorkItem>,
+    store: &impl AppRecordStore<PendingWorkRecord>,
     projects: &ProjectRegistry,
 ) -> Vec<PrerequisiteStatus> {
     PREREQUISITE_VALUE_REGEX
@@ -150,7 +150,7 @@ pub(super) fn statuses(
 
 #[rustfmt::skip]
 fn status(
-    store: &impl AppRecordStore<PendingWorkItem>,
+    store: &impl AppRecordStore<PendingWorkRecord>,
     projects: &ProjectRegistry,
     id: &WorkItemId,
 ) -> Option<WorkItemStatus> {
@@ -166,11 +166,11 @@ fn status(
 
 #[cfg(test)]
 mod tests {
-    use pwf_domain::pending_work::{ProjectName, WorkItemId};
+    use pwf_models::pending_work::{ProjectName, WorkItemId};
 
     use super::{PrerequisiteValidationError, frontmatter_value, parse_values, validate_and_merge};
     use crate::{
-        AppRecordStore, ItemPatch, NewItem, PendingWorkItem,
+        AppRecordStore, ItemPatch, NewItem, PendingWorkRecord,
         pending_work::resolve::testing::{staged, staged_ghost},
     };
 
@@ -181,18 +181,18 @@ mod tests {
     #[error("read failed")]
     struct ReadFailure;
 
-    impl AppRecordStore<PendingWorkItem> for ReadFailureStore {
+    impl AppRecordStore<PendingWorkRecord> for ReadFailureStore {
         type Error = ReadFailure;
 
         fn get(
             &self,
             _scope: &ProjectName,
             _id: &WorkItemId,
-        ) -> Result<Option<PendingWorkItem>, Self::Error> {
+        ) -> Result<Option<PendingWorkRecord>, Self::Error> {
             Err(ReadFailure)
         }
 
-        fn list(&self, _scope: &ProjectName) -> Result<Vec<PendingWorkItem>, Self::Error> {
+        fn list(&self, _scope: &ProjectName) -> Result<Vec<PendingWorkRecord>, Self::Error> {
             unreachable!("validator reads one prerequisite")
         }
 
@@ -200,7 +200,7 @@ mod tests {
             &self,
             _scope: &ProjectName,
             _new: NewItem,
-        ) -> Result<PendingWorkItem, Self::Error> {
+        ) -> Result<PendingWorkRecord, Self::Error> {
             unreachable!("validator is read-only")
         }
 
@@ -323,7 +323,7 @@ mod tests {
             "---\nid: PWF-0001\nstatus: paused\ntitle: task\n---\n\nbody\n",
             "---\nid: PWF-0001\ntitle: task\n---\n\nstatus: active\n",
         ] {
-            let record = PendingWorkItem {
+            let record = PendingWorkRecord {
                 source: source.to_string(),
                 ..base.clone()
             };

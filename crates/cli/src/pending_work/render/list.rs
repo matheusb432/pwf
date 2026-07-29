@@ -3,7 +3,7 @@ use std::fmt::Write;
 use pwf_application::pending_work::{
     GetPendingWorkOk, PendingWorkItemView, PrerequisiteStatus, StatusFilter,
 };
-use pwf_domain::pending_work::WorkItemStatus;
+use pwf_models::pending_work::WorkItemStatus;
 
 use super::{StatusPlacement, render_item_summary, render_status};
 
@@ -213,7 +213,7 @@ fn render_list_item(
 #[cfg(test)]
 mod tests {
     use pwf_application::pending_work::{PrerequisiteStatus, StatusFilter};
-    use pwf_domain::pending_work::{WorkItemId, WorkItemStatus};
+    use pwf_models::pending_work::{WorkItemId, WorkItemStatus};
 
     use super::*;
 

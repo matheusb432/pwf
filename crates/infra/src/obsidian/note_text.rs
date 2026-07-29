@@ -25,3 +25,24 @@ pub(super) fn replace_body(content: &str, body: &str) -> String {
         _ => format!("{}\n", body.trim_end()),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{replace_body, replace_title};
+
+    #[test]
+    fn replacements_preserve_the_unedited_note_region() {
+        let source = "---\nid: PWF-0001\nstatus: active\ntitle: old\n---\n\nold body\n";
+        let titled = replace_title(source, "new title");
+
+        assert_eq!(
+            replace_body(&titled, "new body"),
+            "---\nid: PWF-0001\nstatus: active\ntitle: new title\n---\n\nnew body\n"
+        );
+    }
+
+    #[test]
+    fn body_only_source_stays_body_only() {
+        assert_eq!(replace_body("old body\n", "new body\n\n"), "new body\n");
+    }
+}

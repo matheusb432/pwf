@@ -50,6 +50,11 @@ check: project::check
 [group('quality')]
 fix *args: (project::fix args)
 
+# Collect Rust test line coverage via cargo-llvm-cov. Default prints the per-file summary table; pass --show-missing-lines for uncovered-line detail, or any other cargo-llvm-cov flag.
+[group('quality')]
+cov *args:
+    cargo llvm-cov --workspace {{ args }}
+
 # Run the selected test scope.
 [group('quality')]
 test *args: (project::test args)

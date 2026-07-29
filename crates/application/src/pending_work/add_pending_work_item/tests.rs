@@ -1,4 +1,4 @@
-use pwf_domain::pending_work::{ProjectName, Timestamp};
+use pwf_models::pending_work::{ProjectName, Timestamp};
 
 use super::{AddPendingWorkError, AddPendingWorkItem, ProjectRegistry, plan_title};
 use crate::{IndexEntryState, ports::Clock, testing::InMemoryStore};

@@ -5,11 +5,11 @@ use pwf_application::project::{
     add_project::AddProjectFields,
     rename_project::{self, RenameProject},
 };
-use pwf_domain::project::{
+use pwf_infra::{SqliteStore, obsidian::ObsidianProjectTaskFilesClient};
+use pwf_models::project::{
     ProjectName, ProjectPrefix, ProjectSource, ProjectSourceKind, ProjectSourceValue, ProjectTasks,
     ProjectTasksKind, ProjectTasksPath,
 };
-use pwf_infra::{SqliteStore, obsidian::ObsidianProjectTaskFilesClient};
 
 use super::{output, parse_project_id};
 

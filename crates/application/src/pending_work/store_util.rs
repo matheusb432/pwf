@@ -1,10 +1,10 @@
 //! Shared item loading and creation over the persistence ports.
 
-use pwf_domain::pending_work::{ProjectName, WorkItemId};
+use pwf_models::pending_work::{ProjectName, WorkItemId};
 
 use super::{add_pending_work_item::CreateItemError, enrich::normalize_section_label};
 use crate::ports::{
-    AppRecordStore, IndexEntry, IndexEntryState, IndexSection, NewItem, PendingWorkItem,
+    AppRecordStore, IndexEntry, IndexEntryState, IndexSection, NewItem, PendingWorkRecord,
 };
 
 /// Reports failures while loading a required item.
@@ -22,7 +22,7 @@ const SECTION_LABELS: [&str; 3] = ["Future", "Human", "Low-prio"];
 /// Contains a created record and the new H2 section, if one was needed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreatedItem {
-    pub record: PendingWorkItem,
+    pub record: PendingWorkRecord,
     pub created_section: Option<String>,
 }
 
@@ -37,11 +37,11 @@ pub(super) fn require_item<S>(
     store: &S,
     project: &ProjectName,
     id: &WorkItemId,
-) -> Result<PendingWorkItem, LoadItemError>
+) -> Result<PendingWorkRecord, LoadItemError>
 where
-    S: AppRecordStore<PendingWorkItem>,
+    S: AppRecordStore<PendingWorkRecord>,
 {
-    <S as AppRecordStore<PendingWorkItem>>::get(store, project, id)
+    <S as AppRecordStore<PendingWorkRecord>>::get(store, project, id)
         .map_err(|error| LoadItemError::Store(Box::new(error)))?
         .ok_or_else(|| LoadItemError::ItemNotFound {
             id: id.as_ref().to_string(),
@@ -60,7 +60,9 @@ pub(crate) fn create_item<S>(
     new: NewItem,
 ) -> Result<CreatedItem, CreateItemError>
 where
-    S: AppRecordStore<PendingWorkItem> + AppRecordStore<IndexEntry> + AppRecordStore<IndexSection>,
+    S: AppRecordStore<PendingWorkRecord>
+        + AppRecordStore<IndexEntry>
+        + AppRecordStore<IndexSection>,
 {
     let target_section = new.section.clone();
     // Read sections before writing so an invalid index leaves no orphaned note.
@@ -76,7 +78,7 @@ where
         })
         .map(str::to_string);
 
-    let record = <S as AppRecordStore<PendingWorkItem>>::insert(store, project, new)
+    let record = <S as AppRecordStore<PendingWorkRecord>>::insert(store, project, new)
         .map_err(|error| CreateItemError::InsertRecord(Box::new(error)))?;
     let id = record
         .id
@@ -107,7 +109,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use pwf_domain::pending_work::{ProjectName, Timestamp, WorkItemId};
+    use pwf_models::pending_work::{ProjectName, Timestamp, WorkItemId};
 
     use super::{LoadItemError, create_item, require_item};
     use crate::{

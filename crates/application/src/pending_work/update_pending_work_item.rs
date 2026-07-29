@@ -1,4 +1,4 @@
-use pwf_domain::pending_work::{EffortTier, ProjectName, Tags, WorkItemId, WorkItemStatus};
+use pwf_models::pending_work::{EffortTier, ProjectName, Tags, WorkItemId, WorkItemStatus};
 
 use super::{
     commit_provenance, identifier,
@@ -8,7 +8,7 @@ use super::{
     store_util::body_region,
     tag_policy, title,
 };
-use crate::ports::{AppRecordStore, ItemPatch, PendingWorkItem};
+use crate::ports::{AppRecordStore, ItemPatch, PendingWorkRecord};
 
 /// Requests edits to one pending-work item.
 #[derive(Debug, Clone)]
@@ -125,7 +125,7 @@ pub fn execute<S>(
     projects: &ProjectRegistry,
 ) -> Result<UpdatePendingWorkItemOk, UpdatePendingWorkError>
 where
-    S: AppRecordStore<PendingWorkItem>,
+    S: AppRecordStore<PendingWorkRecord>,
 {
     let prepared = prepare(&command, store, projects)?;
     persist(prepared, store)
@@ -133,7 +133,7 @@ where
 
 pub(crate) fn prepare(
     command: &UpdatePendingWorkItem,
-    store: &impl AppRecordStore<PendingWorkItem>,
+    store: &impl AppRecordStore<PendingWorkRecord>,
     projects: &ProjectRegistry,
 ) -> Result<PreparedPendingWorkUpdate, UpdatePendingWorkError> {
     let commits = commit_provenance::normalize(&command.commits);
@@ -185,7 +185,7 @@ pub(crate) fn prepare(
 
 pub(crate) fn persist(
     prepared: PreparedPendingWorkUpdate,
-    store: &impl AppRecordStore<PendingWorkItem>,
+    store: &impl AppRecordStore<PendingWorkRecord>,
 ) -> Result<UpdatePendingWorkItemOk, UpdatePendingWorkError> {
     store
         .update(
@@ -204,10 +204,10 @@ fn prepare_open_item<S>(
     command: &UpdatePendingWorkItem,
     commits: Option<&str>,
     tags: Option<&Tags>,
-    record: &PendingWorkItem,
+    record: &PendingWorkRecord,
 ) -> Result<PreparedPendingWorkUpdate, UpdatePendingWorkError>
 where
-    S: AppRecordStore<PendingWorkItem>,
+    S: AppRecordStore<PendingWorkRecord>,
 {
     let new_title = command
         .title
@@ -254,7 +254,7 @@ where
 /// Prompt replacement starts from a new body; lane and report edits build on that result.
 fn compute_body(
     command: &UpdatePendingWorkItem,
-    record: &PendingWorkItem,
+    record: &PendingWorkRecord,
 ) -> Result<Option<String>, UpdatePendingWorkError> {
     let base = body_region(&record.body);
     let mut body: Option<String> = command.prompt.as_deref().map(render);
@@ -279,7 +279,7 @@ fn resolve_tags(
     appended: Option<&Tags>,
     clear: bool,
     id: &WorkItemId,
-    record: &PendingWorkItem,
+    record: &PendingWorkRecord,
 ) -> Result<Option<Option<Tags>>, UpdatePendingWorkError> {
     let Some(appended) = appended else {
         return Ok(clear.then_some(None));
@@ -304,7 +304,7 @@ fn amend_closed_item(
     identity: PendingWorkItemIdentity,
     command: &UpdatePendingWorkItem,
     commits: Option<&str>,
-    record: &PendingWorkItem,
+    record: &PendingWorkRecord,
 ) -> Result<PreparedPendingWorkUpdate, UpdatePendingWorkError> {
     let mut patch = ItemPatch::default();
     let mut changes = Vec::new();
@@ -358,12 +358,12 @@ fn parse_tags(values: &[String]) -> Result<Option<Tags>, UpdatePendingWorkError>
 
 #[cfg(test)]
 mod tests {
-    use pwf_domain::pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus};
+    use pwf_models::pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus};
 
     use super::{
         ProjectRegistry, UpdatePendingWorkError, UpdatePendingWorkItem, UpdatePendingWorkItemOk,
     };
-    use crate::{Materialization, PendingWorkItem, RecordId, testing::InMemoryStore};
+    use crate::{Materialization, PendingWorkRecord, RecordId, testing::InMemoryStore};
 
     const S: &str = "\n\n";
 
@@ -375,8 +375,8 @@ mod tests {
         )])
     }
 
-    fn record(id: &str, status: WorkItemStatus, body: &str) -> PendingWorkItem {
-        PendingWorkItem {
+    fn record(id: &str, status: WorkItemStatus, body: &str) -> PendingWorkRecord {
+        PendingWorkRecord {
             id: RecordId::Item(WorkItemId::try_new(id).unwrap()),
             title: "tray gui".to_string(),
             status,
@@ -515,7 +515,7 @@ mod tests {
     }
 
     fn staged_with_tags(raw: &str) -> InMemoryStore {
-        let record = PendingWorkItem {
+        let record = PendingWorkRecord {
             tags: Some(raw.to_string()),
             ..record("FOO-0001", WorkItemStatus::Active, "body\n")
         };
@@ -602,7 +602,7 @@ mod tests {
             .with_project(
                 "foo-bar",
                 vec![
-                    PendingWorkItem {
+                    PendingWorkRecord {
                         prereq: Some("[[FOO-0001]], [[FOO-0001]]".to_string()),
                         ..record("FOO-0002", WorkItemStatus::Active, "body\n")
                     },

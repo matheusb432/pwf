@@ -14,7 +14,7 @@ use std::path::Path;
 
 pub use error::ObsidianStoreError;
 use pwf_application::ProjectTaskLocationClient;
-use pwf_domain::pending_work::ProjectName;
+use pwf_models::pending_work::ProjectName;
 
 use super::project_paths::{ObsidianProject, ProjectPaths};
 

@@ -1,4 +1,4 @@
-use pwf_domain::{
+use pwf_models::{
     note::NoteId,
     pending_work::{ProjectName, ProjectPrefix},
 };

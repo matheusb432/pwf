@@ -1,4 +1,4 @@
-use pwf_domain::pending_work::{Tag, Tags};
+use pwf_models::pending_work::{Tag, Tags};
 
 pub(crate) fn parse_values(values: &[String]) -> Result<Tags, ParseTagsError> {
     if values.is_empty() {
@@ -83,7 +83,7 @@ impl ParseTagsError {
 
 #[cfg(test)]
 mod tests {
-    use pwf_domain::pending_work::Tags;
+    use pwf_models::pending_work::Tags;
 
     use super::{ParseTagsError, contains_all, merge, parse_frontmatter, parse_values};
 

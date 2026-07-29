@@ -1,6 +1,6 @@
 use clap::Args;
 use pwf_application::{
-    AppRecordStore, PendingWorkItem,
+    AppRecordStore, PendingWorkRecord,
     pending_work::{
         ProjectRegistry, UpdatePendingWorkItemOk,
         update_pending_work_item::{self, UpdatePendingWorkItem},
@@ -69,7 +69,7 @@ pub(super) fn run(
 }
 
 pub(in crate::pending_work) fn run_update(
-    store: &impl AppRecordStore<PendingWorkItem>,
+    store: &impl AppRecordStore<PendingWorkRecord>,
     projects: &ProjectRegistry,
     args: &Arguments,
 ) -> Result<UpdatePendingWorkItemOk, PendingWorkError> {

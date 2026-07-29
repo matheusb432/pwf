@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, path::Path, sync::LazyLock};
 
 use pwf_application::{AppRecordStore, IndexEntry, IndexEntryState, IndexSection};
-use pwf_domain::pending_work::{ProjectName, Timestamp, WorkItemId};
+use pwf_models::pending_work::{ProjectName, Timestamp, WorkItemId};
 use regex::Regex;
 
 use super::{
@@ -322,5 +322,28 @@ impl AppRecordStore<IndexSection> for ObsidianStore {
 
     fn delete(&self, _project: &ProjectName, _label: &String) -> Result<(), Self::Error> {
         Err(ObsidianStoreError::IndexSectionWriteUnsupported { op: "delete" })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use pwf_application::{IndexEntry, IndexEntryState};
+    use pwf_models::pending_work::{Timestamp, WorkItemId};
+
+    use super::{render_entry_line, replace_line};
+
+    #[test]
+    fn done_entry_replaces_only_its_index_line() {
+        let entry = IndexEntry {
+            id: WorkItemId::try_new("PWF-0001").unwrap(),
+            state: IndexEntryState::Done(Timestamp::new("2026-07-29")),
+            section: String::new(),
+        };
+        let index = "# pwf\n\n- [ ] [[PWF-0001]]\n- [ ] [[PWF-0002]]\n";
+
+        assert_eq!(
+            replace_line(index, 3, &render_entry_line(&entry)),
+            "# pwf\n\n- [x] [[PWF-0001]] ✅ 2026-07-29\n- [ ] [[PWF-0002]]\n"
+        );
     }
 }

@@ -1,19 +1,19 @@
-use pwf_domain::pending_work::ProjectName;
+use pwf_models::pending_work::ProjectName;
 
 use super::{
     enrich::inline_record_id, identifier, project_registry::ProjectRegistry,
     show_pending_work_item::ShowPendingWorkError,
 };
-use crate::{AppRecordStore, PendingWorkItem, RecordId};
+use crate::{AppRecordStore, PendingWorkRecord, RecordId};
 
 /// Resolves an open or closed record by project prefix or inline `<project>:<ordinal>` id.
 pub(crate) fn resolve_record<S>(
     store: &S,
     projects: &ProjectRegistry,
     id: &str,
-) -> Result<(ProjectName, PendingWorkItem), ShowPendingWorkError>
+) -> Result<(ProjectName, PendingWorkRecord), ShowPendingWorkError>
 where
-    S: AppRecordStore<PendingWorkItem>,
+    S: AppRecordStore<PendingWorkRecord>,
 {
     let not_found = || ShowPendingWorkError::ItemNotFound { id: id.to_string() };
     let Some(work_id) = identifier::parse(id) else {
@@ -32,9 +32,9 @@ fn resolve_inline_record<S>(
     store: &S,
     projects: &ProjectRegistry,
     id: &str,
-) -> Result<(ProjectName, PendingWorkItem), ShowPendingWorkError>
+) -> Result<(ProjectName, PendingWorkRecord), ShowPendingWorkError>
 where
-    S: AppRecordStore<PendingWorkItem>,
+    S: AppRecordStore<PendingWorkRecord>,
 {
     for (project, _repo) in projects.projects() {
         let records = store
@@ -55,15 +55,15 @@ where
 
 #[cfg(test)]
 pub(crate) mod testing {
-    use pwf_domain::pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus};
+    use pwf_models::pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus};
 
     use super::ProjectRegistry;
-    use crate::{Materialization, PendingWorkItem, RecordId, testing::InMemoryStore};
+    use crate::{Materialization, PendingWorkRecord, RecordId, testing::InMemoryStore};
 
     pub(crate) const PWF_0001_SOURCE: &str = "---\nid: PWF-0001\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- do the thing\n";
 
     pub(crate) fn staged() -> (InMemoryStore, ProjectRegistry) {
-        let record = PendingWorkItem {
+        let record = PendingWorkRecord {
             id: RecordId::Item(WorkItemId::try_new("PWF-0001").unwrap()),
             title: "do the thing".to_string(),
             status: WorkItemStatus::Active,
@@ -85,7 +85,7 @@ pub(crate) mod testing {
     }
 
     pub(crate) fn staged_ghost() -> (InMemoryStore, ProjectRegistry) {
-        let record = PendingWorkItem {
+        let record = PendingWorkRecord {
             id: RecordId::Item(WorkItemId::try_new("PWF-0002").unwrap()),
             title: "ghost".to_string(),
             status: WorkItemStatus::Active,
@@ -109,7 +109,7 @@ pub(crate) mod testing {
     }
 
     pub(crate) fn staged_inline() -> (InMemoryStore, ProjectRegistry) {
-        let record = PendingWorkItem {
+        let record = PendingWorkRecord {
             id: RecordId::Inline(1),
             title: "legacy task".to_string(),
             status: WorkItemStatus::Active,

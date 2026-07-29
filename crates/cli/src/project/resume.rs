@@ -2,8 +2,8 @@ use std::path::PathBuf;
 
 use clap::Args;
 use pwf_application::project::resume_project::{self, ResumeProject};
-use pwf_domain::project::ProjectPrefix;
 use pwf_infra::SqliteStore;
+use pwf_models::project::ProjectPrefix;
 
 use super::{output, parse_project_id};
 

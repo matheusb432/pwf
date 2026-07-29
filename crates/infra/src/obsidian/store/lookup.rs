@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use pwf_domain::pending_work::{ProjectName, WorkItemId};
+use pwf_models::pending_work::{ProjectName, WorkItemId};
 
 use super::{ObsidianStore, ObsidianStoreError};
 use crate::obsidian::identity::inspect_project_task_notes;

@@ -2,9 +2,9 @@ use std::{fmt::Write as _, path::Path, sync::LazyLock};
 
 use pwf_application::{
     AppRecordStore, IndexEntryState, IndexPlacement, ItemPatch, Materialization, NewItem,
-    PendingWorkItem, RecordId,
+    PendingWorkRecord, RecordId,
 };
-use pwf_domain::pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus};
+use pwf_models::pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus};
 use regex::Regex;
 
 use super::{
@@ -32,7 +32,7 @@ fn note_to_record(
     path: &Path,
     decoded_title: Option<&str>,
     source: String,
-) -> PendingWorkItem {
+) -> PendingWorkRecord {
     let parsed = crate::obsidian::frontmatter_text::parse(&source);
     let frontmatter = &parsed.frontmatter;
     let status = frontmatter
@@ -52,7 +52,7 @@ fn note_to_record(
             .filter(|value| !value.trim().is_empty())
             .cloned()
     };
-    PendingWorkItem {
+    PendingWorkRecord {
         id: RecordId::Item(id),
         title,
         status,
@@ -82,8 +82,8 @@ fn missing_note_record(
     completed: Option<Timestamp>,
     section: Option<String>,
     expected_path: &Path,
-) -> PendingWorkItem {
-    PendingWorkItem {
+) -> PendingWorkRecord {
+    PendingWorkRecord {
         id: RecordId::Item(id),
         title,
         status,
@@ -111,7 +111,7 @@ fn expected_note_path(index_path: &Path, id: &str) -> std::path::PathBuf {
         .join(format!("{id}.md"))
 }
 
-fn checkbox_to_record(index_path: &Path, line: &ParsedIndexLine) -> PendingWorkItem {
+fn checkbox_to_record(index_path: &Path, line: &ParsedIndexLine) -> PendingWorkRecord {
     let (status, completed) = match &line.state {
         IndexEntryState::Open => (WorkItemStatus::Active, None),
         IndexEntryState::Done(date) => (
@@ -135,7 +135,7 @@ impl ObsidianStore {
         &self,
         project: &ProjectName,
         id: &WorkItemId,
-    ) -> Result<Option<PendingWorkItem>, ObsidianStoreError> {
+    ) -> Result<Option<PendingWorkRecord>, ObsidianStoreError> {
         if let Some(task) = self
             .task_files_for_project(project)?
             .into_iter()
@@ -174,7 +174,7 @@ impl ObsidianStore {
     fn list_pending_items(
         &self,
         project: &ProjectName,
-    ) -> Result<Vec<PendingWorkItem>, ObsidianStoreError> {
+    ) -> Result<Vec<PendingWorkRecord>, ObsidianStoreError> {
         let project_directory = self.project_paths.project_directory(project)?;
         if !project_directory.exists() {
             return Err(ObsidianStoreError::NotesDirectoryNotFound {
@@ -182,7 +182,7 @@ impl ObsidianStore {
             });
         }
         let tasks = self.task_files_for_project(project)?;
-        let mut records: Vec<PendingWorkItem> = tasks
+        let mut records: Vec<PendingWorkRecord> = tasks
             .into_iter()
             .map(|task| note_to_record(task.id, &task.path, task.title.as_deref(), task.markdown))
             .collect();
@@ -221,7 +221,7 @@ impl ObsidianStore {
 
         let scan = scan_index(&text);
         for (index, inline) in scan.inline.iter().enumerate() {
-            records.push(PendingWorkItem {
+            records.push(PendingWorkRecord {
                 id: RecordId::Inline(index + 1),
                 title: inline.session.clone(),
                 status: WorkItemStatus::Active,
@@ -249,7 +249,7 @@ impl ObsidianStore {
         &self,
         project: &ProjectName,
         new: &NewItem,
-    ) -> Result<PendingWorkItem, ObsidianStoreError> {
+    ) -> Result<PendingWorkRecord, ObsidianStoreError> {
         let prefix = self.project_paths.project_identity(project)?.id().as_ref();
         let note = self.write_new_note(
             project,
@@ -392,22 +392,26 @@ impl ObsidianStore {
     }
 }
 
-impl AppRecordStore<PendingWorkItem> for ObsidianStore {
+impl AppRecordStore<PendingWorkRecord> for ObsidianStore {
     type Error = ObsidianStoreError;
 
     fn get(
         &self,
         project: &ProjectName,
         id: &WorkItemId,
-    ) -> Result<Option<PendingWorkItem>, Self::Error> {
+    ) -> Result<Option<PendingWorkRecord>, Self::Error> {
         self.get_pending_item(project, id)
     }
 
-    fn list(&self, project: &ProjectName) -> Result<Vec<PendingWorkItem>, Self::Error> {
+    fn list(&self, project: &ProjectName) -> Result<Vec<PendingWorkRecord>, Self::Error> {
         self.list_pending_items(project)
     }
 
-    fn insert(&self, project: &ProjectName, new: NewItem) -> Result<PendingWorkItem, Self::Error> {
+    fn insert(
+        &self,
+        project: &ProjectName,
+        new: NewItem,
+    ) -> Result<PendingWorkRecord, Self::Error> {
         self.insert_pending_item(project, &new)
     }
 

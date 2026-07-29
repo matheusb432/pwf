@@ -1,6 +1,6 @@
 //! Lists one managed project's notes.
 
-use pwf_domain::pending_work::ProjectName;
+use pwf_models::pending_work::ProjectName;
 
 use super::{
     dto::ListedNote,
@@ -57,10 +57,11 @@ pub enum ListNotesError {
 ///
 /// ```
 /// # use pwf_application::{
-/// #     AppRecordStore, ProjectNote,
+/// #     AppRecordStore,
 /// #     note::list_notes::{self, ListNotes, ListNotesError, ListNotesOk},
 /// #     pending_work::ProjectRegistry,
 /// # };
+/// # use pwf_models::note::ProjectNote;
 /// # fn list<S>(
 /// #     query: ListNotes,
 /// #     store: &S,
@@ -121,7 +122,7 @@ where
 mod tests {
     use std::error::Error as _;
 
-    use pwf_domain::{note::NoteId, pending_work::ProjectName};
+    use pwf_models::{note::NoteId, pending_work::ProjectName};
 
     use super::{ListNotes, ListNotesError};
     use crate::{ProjectNote, pending_work::ProjectRegistry, testing::InMemoryStore};

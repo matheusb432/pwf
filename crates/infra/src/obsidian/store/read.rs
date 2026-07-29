@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use pwf_application::NoteMarkdownSource;
-use pwf_domain::pending_work::ProjectName;
+use pwf_models::pending_work::ProjectName;
 
 use super::{
     ObsidianStore, ObsidianStoreError,

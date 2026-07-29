@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use pwf_domain::pending_work::{ProjectIndexIdentity, ProjectName};
+use pwf_models::pending_work::{ProjectIndexIdentity, ProjectName};
 
 use super::ObsidianStoreError;
 

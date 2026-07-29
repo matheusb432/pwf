@@ -1,5 +1,5 @@
 use crate::{
-    AppRecordStore, PendingWorkItem,
+    AppRecordStore, PendingWorkRecord,
     pending_work::{
         enrich::{enrich, is_open_item},
         get_pending_work::PendingWorkItemView,
@@ -35,7 +35,7 @@ pub(crate) fn find_open_item<S>(
     id: &str,
 ) -> Result<PendingWorkItemView, FindPendingWorkError>
 where
-    S: AppRecordStore<PendingWorkItem>,
+    S: AppRecordStore<PendingWorkRecord>,
 {
     let requested = id.to_string();
     let Some(work_id) = identifier::parse(id) else {
@@ -82,7 +82,7 @@ fn find_inline_open_item<S>(
     requested: &str,
 ) -> Result<PendingWorkItemView, FindPendingWorkError>
 where
-    S: AppRecordStore<PendingWorkItem>,
+    S: AppRecordStore<PendingWorkRecord>,
 {
     for (project, repo) in projects.projects() {
         let records = store
@@ -107,7 +107,7 @@ where
 #[cqrsy::query]
 pub fn execute(
     query: &FindPendingWork,
-    store: &impl AppRecordStore<PendingWorkItem>,
+    store: &impl AppRecordStore<PendingWorkRecord>,
     projects: &ProjectRegistry,
 ) -> Result<PendingWorkItemView, FindPendingWorkError> {
     find_open_item(store, projects, &query.id)
@@ -117,15 +117,15 @@ pub fn execute(
 mod tests {
     use std::assert_matches;
 
-    use pwf_domain::pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus};
+    use pwf_models::pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus};
 
     use super::{FindPendingWork, FindPendingWorkError, PendingWorkItemView, ProjectRegistry};
     use crate::{
-        IndexPlacement, Materialization, PendingWorkItem, RecordId, testing::InMemoryStore,
+        IndexPlacement, Materialization, PendingWorkRecord, RecordId, testing::InMemoryStore,
     };
 
-    fn record(id: &str) -> PendingWorkItem {
-        PendingWorkItem {
+    fn record(id: &str) -> PendingWorkRecord {
+        PendingWorkRecord {
             id: RecordId::Item(WorkItemId::try_new(id).unwrap()),
             title: format!("title {id}"),
             status: WorkItemStatus::Active,
@@ -147,8 +147,8 @@ mod tests {
         }
     }
 
-    fn inline(ordinal: usize) -> PendingWorkItem {
-        PendingWorkItem {
+    fn inline(ordinal: usize) -> PendingWorkRecord {
+        PendingWorkRecord {
             id: RecordId::Inline(ordinal),
             title: "legacy task".to_string(),
             status: WorkItemStatus::Active,
@@ -256,12 +256,12 @@ mod tests {
 
     #[test]
     fn find_rejects_closed_and_unlinked_active_records() {
-        let done = PendingWorkItem {
+        let done = PendingWorkRecord {
             status: WorkItemStatus::Done,
             placement: None,
             ..record("PWF-0001")
         };
-        let unlinked_active = PendingWorkItem {
+        let unlinked_active = PendingWorkRecord {
             placement: None,
             ..record("PWF-0002")
         };

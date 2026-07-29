@@ -1,14 +1,14 @@
-use pwf_domain::pending_work::{EffortTier, ProjectName};
+use pwf_models::pending_work::{EffortTier, ProjectName};
 
 use super::{PendingWorkItemData, ShowPendingWorkError};
 use crate::{
-    PendingWorkItem, RecordId,
+    PendingWorkRecord, RecordId,
     pending_work::{prerequisite, tag_policy},
 };
 
 pub(super) fn from_record(
     project: ProjectName,
-    record: PendingWorkItem,
+    record: PendingWorkRecord,
 ) -> Result<PendingWorkItemData, ShowPendingWorkError> {
     let tags = record
         .tags

@@ -1,5 +1,5 @@
 use crate::{
-    AppRecordStore, NoteMarkdownSource, PendingWorkItem,
+    AppRecordStore, NoteMarkdownSource, PendingWorkRecord,
     pending_work::{
         project_registry::ProjectRegistry,
         show_pending_work_item::{
@@ -10,7 +10,7 @@ use crate::{
 
 pub(super) fn load(
     id: &str,
-    store: &impl AppRecordStore<PendingWorkItem>,
+    store: &impl AppRecordStore<PendingWorkRecord>,
     projects: &ProjectRegistry,
     markdown_source: &impl NoteMarkdownSource,
 ) -> Result<String, ShowPendingWorkError> {

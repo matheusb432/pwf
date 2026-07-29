@@ -70,7 +70,7 @@ pub fn execute(
 
 #[cfg(test)]
 mod tests {
-    use pwf_domain::pending_work::ProjectName;
+    use pwf_models::pending_work::ProjectName;
 
     use super::*;
 

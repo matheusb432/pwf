@@ -1,12 +1,12 @@
 [package]
-name = "pwf-application"
+name = "pwf_application"
 version = "0.1.0"
 edition.workspace = true
 publish.workspace = true
 
 [dependencies]
 prompt-lanes = { workspace = true }
-pwf-domain = { workspace = true }
+pwf_models = { workspace = true }
 cqrsy = { workspace = true }
 regex = { workspace = true }
 sqlx = { workspace = true }

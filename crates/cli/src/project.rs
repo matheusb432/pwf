@@ -3,8 +3,8 @@
 use std::path::PathBuf;
 
 use clap::{Args, Subcommand};
-use pwf_domain::project::ProjectPrefix;
 use pwf_infra::SqliteStore;
+use pwf_models::project::ProjectPrefix;
 
 pub mod add;
 pub mod get;

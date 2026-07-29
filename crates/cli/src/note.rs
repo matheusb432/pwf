@@ -170,7 +170,7 @@ mod tests {
         add_note::AddNoteOk, dto::ListedNote, list_notes::ListNotesOk, remove_note::RemoveNoteOk,
         update_note::UpdateNoteOk,
     };
-    use pwf_domain::{note::NoteId, pending_work::ProjectName};
+    use pwf_models::{note::NoteId, pending_work::ProjectName};
 
     use super::{render_added, render_listed, render_removed, render_updated};
 
