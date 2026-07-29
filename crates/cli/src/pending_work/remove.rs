@@ -24,10 +24,12 @@ pub struct Arguments {
     pub(crate) common: CommonArguments,
 }
 
-use super::{common::PendingWorkError, render::render_removed};
+use super::{
+    common::PendingWorkError,
+    render::{StatusPlacement, render_item_summary, render_removed},
+};
 use crate::{
     confirm::{Confirmation, DefaultAnswer},
-    confirm_prompt::{ConfirmationPrompt, Field},
     console::Console,
 };
 
@@ -51,18 +53,17 @@ impl RemovalInteraction for CliRemovalInteraction {
 }
 
 fn removal_confirmation(context: &RemovalConfirmation) -> String {
-    let fields = [
-        Field::new("task_id", context.pending_work_identifier.to_string()),
-        Field::new("project", context.project.to_string()),
-        Field::new("title", context.title.clone()),
-        Field::new("note", context.note_path.display().to_string()),
-    ];
-    ConfirmationPrompt::new(
-        "Confirm task removal",
-        &fields,
-        "Remove this pending-work task?",
+    let summary = render_item_summary(
+        context.pending_work_identifier.as_ref(),
+        &context.title,
+        Some((context.status, StatusPlacement::AfterTitle)),
+        false,
+    );
+    format!(
+        "# Confirm task removal\n\n{summary}\n\nproject: {}\nnote: {}\n\nRemove this pending-work task?",
+        context.project,
+        context.note_path.display()
     )
-    .to_string()
 }
 
 pub(super) fn run(
@@ -109,7 +110,9 @@ where
 
 fn map_remove_error(error: RemovePendingWorkError) -> PendingWorkError {
     match error {
-        RemovePendingWorkError::ItemNotFound { id } => PendingWorkError::ItemNotFound { id },
+        RemovePendingWorkError::ItemNotFound { id } => {
+            PendingWorkError::Remove(RemovePendingWorkError::ItemNotFound { id })
+        }
         RemovePendingWorkError::UnknownPrefix {
             pending_work_identifier,
             prefix,
@@ -124,5 +127,31 @@ fn map_remove_error(error: RemovePendingWorkError) -> PendingWorkError {
         RemovePendingWorkError::WriteStore(source) => {
             PendingWorkError::Remove(RemovePendingWorkError::WriteStore(source))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use pwf_application::pending_work::remove_pending_work_item::RemovalConfirmation;
+    use pwf_domain::pending_work::{ProjectName, WorkItemId, WorkItemStatus};
+
+    use super::removal_confirmation;
+
+    #[test]
+    fn confirmation_places_the_item_summary_between_blank_lines() {
+        let context = RemovalConfirmation {
+            pending_work_identifier: WorkItemId::try_new("PWF-0001").unwrap(),
+            project: ProjectName::try_new("pwf").unwrap(),
+            title: "stale task".to_string(),
+            status: WorkItemStatus::Active,
+            note_path: PathBuf::from("/notes/pwf/PWF-0001.md"),
+        };
+
+        assert_eq!(
+            removal_confirmation(&context),
+            "# Confirm task removal\n\nPWF-0001 :: stale task (active)\n\nproject: pwf\nnote: /notes/pwf/PWF-0001.md\n\nRemove this pending-work task?"
+        );
     }
 }

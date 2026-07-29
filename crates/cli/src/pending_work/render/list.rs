@@ -1,12 +1,11 @@
 use std::fmt::Write;
 
-use anstyle::AnsiColor;
 use pwf_application::pending_work::{
     GetPendingWorkOk, PendingWorkItemView, PrerequisiteStatus, StatusFilter,
 };
 use pwf_domain::pending_work::WorkItemStatus;
 
-use super::{ID_ORANGE, paint};
+use super::{StatusPlacement, render_item_summary, render_status};
 
 pub(in crate::pending_work) fn render_list(
     result: &GetPendingWorkOk,
@@ -127,26 +126,6 @@ fn render_grouped_list(
     }
 }
 
-fn render_status(status: WorkItemStatus, on: bool) -> String {
-    let text = status.to_string();
-    if !on {
-        return text;
-    }
-    let color: anstyle::Color = match status {
-        WorkItemStatus::Active => ID_ORANGE.into(),
-        WorkItemStatus::Done => AnsiColor::Green.into(),
-        WorkItemStatus::Cancelled => AnsiColor::Red.into(),
-    };
-    paint(&text, color, true)
-}
-
-fn status_annotation(status: WorkItemStatus, status_filter: StatusFilter, on: bool) -> String {
-    if status_filter != StatusFilter::All {
-        return String::new();
-    }
-    format!(" ({})", render_status(status, on))
-}
-
 fn prerequisite_status_summary(statuses: &[PrerequisiteStatus]) -> String {
     statuses
         .iter()
@@ -168,17 +147,16 @@ fn render_list_item(
     last: bool,
     on: bool,
 ) {
-    // Plain output is a raw-text contract; Markdown emphasis is reserved for ANSI rendering.
-    let id = if on {
-        paint(&item.id, ID_ORANGE, true)
+    let status = if status_filter == StatusFilter::All {
+        Some((item.status, StatusPlacement::AfterIdentifier))
     } else {
-        item.id.clone()
+        None
     };
-    let annotation = status_annotation(item.status, status_filter, on);
+    let summary = render_item_summary(&item.id, &item.session, status, on);
     let formatted = if last && !long {
-        format!("{id} :: {}{annotation}", item.session)
+        summary
     } else {
-        format!("{id} :: {}{annotation}\n", item.session)
+        format!("{summary}\n")
     };
     out.push_str(&formatted);
     if !long {
@@ -307,16 +285,25 @@ mod tests {
     }
 
     #[test]
-    fn all_status_short_lines_append_plain_lifecycle_annotations() {
+    fn all_status_short_lines_place_plain_lifecycle_after_the_identifier() {
         for (status, expected) in [
-            (WorkItemStatus::Active, "(active)"),
-            (WorkItemStatus::Done, "(done)"),
-            (WorkItemStatus::Cancelled, "(cancelled)"),
+            (
+                WorkItemStatus::Active,
+                "PWF-0064 [active] :: make list commands formatting less redundant",
+            ),
+            (
+                WorkItemStatus::Done,
+                "PWF-0064 [done] :: make list commands formatting less redundant",
+            ),
+            (
+                WorkItemStatus::Cancelled,
+                "PWF-0064 [cancelled] :: make list commands formatting less redundant",
+            ),
         ] {
             let mut item = sample_item();
             item.status = status;
             let output = render_item_for_filter(&item, StatusFilter::All, false, false);
-            assert!(output.ends_with(expected), "{output}");
+            assert_eq!(output, expected);
             assert!(!output.contains('\u{1b}'), "{output}");
         }
     }

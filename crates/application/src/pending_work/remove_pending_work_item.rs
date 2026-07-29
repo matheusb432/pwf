@@ -35,6 +35,7 @@ pub struct RemovalConfirmation {
     pub pending_work_identifier: WorkItemId,
     pub project: ProjectName,
     pub title: String,
+    pub status: WorkItemStatus,
     pub note_path: PathBuf,
 }
 
@@ -50,7 +51,7 @@ pub enum RemovePendingWorkItemOk {
 
 #[derive(Debug, thiserror::Error)]
 pub enum RemovePendingWorkError {
-    #[error("Open pending-work item not found: {id}")]
+    #[error("Pending-work item not found: {id}")]
     ItemNotFound { id: String },
     #[error("Unknown task id prefix `{prefix}` for {pending_work_identifier}")]
     UnknownPrefix {
@@ -65,7 +66,7 @@ pub enum RemovePendingWorkError {
     WriteStore(Box<dyn std::error::Error + Send + Sync>),
 }
 
-/// Deletes an open item after unlinking its index entry.
+/// Deletes an item after unlinking its index entry.
 ///
 /// An unlink failure leaves the note untouched.
 #[cqrsy::command]
@@ -106,9 +107,6 @@ where
                 LoadItemError::Store(source) => RemovePendingWorkError::WriteStore(source),
             }
         })?;
-    if record.status != WorkItemStatus::Active {
-        return Err(not_found());
-    }
     let note_path = match &record.materialization {
         Materialization::NoteFile => PathBuf::from(&record.locator),
         Materialization::MissingNote { expected } => {
@@ -122,6 +120,7 @@ where
         pending_work_identifier: pending_work_identifier.clone(),
         project: project.clone(),
         title: record.title.clone(),
+        status: record.status,
         note_path: note_path.clone(),
     };
     if !interaction.confirm(&confirmation) {
@@ -190,6 +189,12 @@ mod tests {
     }
 
     fn staged(status: WorkItemStatus) -> InMemoryStore {
+        let index_state = match status {
+            WorkItemStatus::Active => IndexEntryState::Open,
+            WorkItemStatus::Done | WorkItemStatus::Cancelled => {
+                IndexEntryState::Done(Timestamp::new("2026-07-02"))
+            }
+        };
         let store = InMemoryStore::default()
             .with_prefix("pwf", "PWF")
             .with_project("pwf", vec![record("PWF-0001", status)]);
@@ -198,7 +203,7 @@ mod tests {
             &ProjectName::try_new("pwf").unwrap(),
             IndexEntry {
                 id: WorkItemId::try_new("PWF-0001").unwrap(),
-                state: IndexEntryState::Open,
+                state: index_state,
                 section: String::new(),
             },
         )
@@ -240,21 +245,17 @@ mod tests {
     }
 
     #[test]
-    fn remove_rejects_closed_item_with_open_not_found_display() {
-        let store = staged(WorkItemStatus::Done);
+    fn remove_deletes_closed_items() {
+        for status in [WorkItemStatus::Done, WorkItemStatus::Cancelled] {
+            let store = staged(status);
 
-        let error =
-            super::execute(&command("PWF-0001"), &store, &registry(), &Accepted).unwrap_err();
+            let outcome =
+                super::execute(&command("PWF-0001"), &store, &registry(), &Accepted).unwrap();
 
-        assert!(matches!(
-            error,
-            RemovePendingWorkError::ItemNotFound { ref id } if id == "PWF-0001"
-        ));
-        assert_eq!(
-            error.to_string(),
-            "Open pending-work item not found: PWF-0001"
-        );
-        assert_eq!(store.items("pwf").len(), 1, "nothing may be deleted");
+            assert!(matches!(outcome, RemovePendingWorkItemOk::Removed(_)));
+            assert!(store.items("pwf").is_empty(), "{status} record retained");
+            assert!(store.entries("pwf").is_empty(), "{status} index retained");
+        }
     }
 
     #[test]

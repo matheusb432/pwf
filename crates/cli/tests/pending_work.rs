@@ -419,7 +419,7 @@ fn list_all_shows_human_section_item_in_text() {
     )
     .unwrap();
     assert!(
-        out.contains("FOO-0001 :: human task"),
+        out.contains("FOO-0001 [active] :: human task"),
         "item line missing: {out}"
     );
 }
@@ -512,10 +512,10 @@ fn list_all_long_keeps_metadata_on_its_own_line_in_every_group() {
     .unwrap();
 
     for expected in [
-        "FOO-0001 :: normal (active)\n  status:",
-        "FOO-0002 :: lowp (active)\n  status:",
-        "FOO-0003 :: human task (active)\n  status:",
-        "FOO-0004 :: future task (active)\n  status:",
+        "FOO-0001 [active] :: normal\n  status:",
+        "FOO-0002 [active] :: lowp\n  status:",
+        "FOO-0003 [active] :: human task\n  status:",
+        "FOO-0004 [active] :: future task\n  status:",
     ] {
         assert!(
             out.contains(expected),

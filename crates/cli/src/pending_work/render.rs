@@ -1,6 +1,7 @@
 mod close;
 mod confirmation;
 mod diagnostics;
+mod item_summary;
 mod list;
 mod session;
 mod session_confirmation;
@@ -12,6 +13,7 @@ pub(super) use confirmation::{render_added, render_removed, render_updated};
 pub(super) use diagnostics::{
     TITLE_NORMALIZED_NOTICE, emit_created_section, emit_created_section_for_error,
 };
+pub(super) use item_summary::{StatusPlacement, render_item_summary, render_status};
 pub(super) use list::render_list;
 pub(super) use session::{render_dispatch, render_dry_run, render_session_aborted};
 pub(super) use session_confirmation::render_session_confirmation;

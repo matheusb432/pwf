@@ -229,6 +229,69 @@ fn pending_work_list_and_review_behaviors_compose() {
             assert!(!stdout.contains(id), "{status} list leaked {id}: {stdout}");
         }
     }
+
+    let all = database
+        .command()
+        .args(["list", "--all", "--order", "id:asc"])
+        .output()
+        .unwrap();
+    assert!(all.status.success());
+    let stdout = String::from_utf8(all.stdout).unwrap();
+    assert!(
+        stdout
+            .lines()
+            .any(|line| line == "FOO-0001 [done] :: implementation"),
+        "{stdout}"
+    );
+    assert!(
+        stdout
+            .lines()
+            .any(|line| line == "FOO-0003 [cancelled] :: cancelled"),
+        "{stdout}"
+    );
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn remove_prompt_shows_closed_item_status_before_deletion() {
+    let (directory, database) = managed_project("FOO", "foo-bar");
+    database
+        .command()
+        .args([
+            "add",
+            "foo-bar",
+            "remove completed work",
+            "--title",
+            "completed work",
+            "--date",
+            "2026-01-01",
+        ])
+        .assert()
+        .success();
+    database
+        .command()
+        .args(["done", "FOO-0001", "--date", "2026-01-02"])
+        .assert()
+        .success();
+
+    let mut command = database.command();
+    command.args(["remove", "FOO-0001"]).env("NO_COLOR", "1");
+
+    let mut session = expectrl::Session::spawn(command).unwrap();
+    session.set_expect_timeout(Some(std::time::Duration::from_secs(10)));
+    session.expect("FOO-0001 :: completed work (done)").unwrap();
+    session.expect("[Y/n]").unwrap();
+    session.send_line("y").unwrap();
+    session.expect(expectrl::Eof).unwrap();
+    assert!(matches!(
+        session.get_process().wait().unwrap(),
+        expectrl::process::unix::WaitStatus::Exited(_, 0)
+    ));
+
+    assert!(
+        !directory.path().join("notes/foo-bar/FOO-0001.md").exists(),
+        "accepted removal retained the closed task"
+    );
 }
 
 #[test]
