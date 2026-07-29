@@ -1,4 +1,4 @@
-//! Defines repository, inline-process, and Zellij capabilities for sessions.
+//! Defines repository, inline-process, and tmux capabilities for sessions.
 
 pub trait InlineSessionClient: Clone + Send + Sync + 'static {
     fn run(&self, argv: &[String], repository: &str) -> Result<(), String>;
@@ -8,30 +8,26 @@ pub trait RepositorySessionClient: Clone + Send + Sync + 'static {
     fn is_directory(&self, path: &str) -> bool;
 }
 
-pub trait ZellijSessionClient: Clone + Send + Sync + 'static {
+pub trait TmuxSessionClient: Clone + Send + Sync + 'static {
     fn available(&self) -> bool;
 
-    fn new_tab_process_argv(
+    fn session_exists(&self, session: &str) -> Result<bool, String>;
+
+    fn new_window_process_argv(
         &self,
         session: &str,
         repository: &str,
-        tab: &str,
+        window: &str,
         argv: &[String],
     ) -> Vec<String>;
 
-    fn open_tab(
+    fn new_session_process_argv(&self, session: &str, repository: &str) -> Vec<String>;
+
+    fn open_window(
         &self,
         session: &str,
         repository: &str,
-        tab: &str,
+        window: &str,
         argv: &[String],
-    ) -> Result<(), ZellijTabOpenError>;
-
-    fn ensure_session(&self, session: &str) -> Result<(), String>;
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ZellijTabOpenError {
-    SessionNotFound,
-    Rejected(String),
+    ) -> Result<(), String>;
 }

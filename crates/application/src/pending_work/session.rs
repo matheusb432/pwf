@@ -12,9 +12,7 @@ mod session_effort;
 mod task_content;
 pub mod verify_session;
 
-pub use host::{
-    InlineSessionClient, RepositorySessionClient, ZellijSessionClient, ZellijTabOpenError,
-};
+pub use host::{InlineSessionClient, RepositorySessionClient, TmuxSessionClient};
 pub use model::{
     Agent, AgentLaunch, AgentProbe, DispatchConfirmation, DispatchMode, DispatchTarget,
     LaunchDirectives, ModelTier, ModelTierLookup, SessionPlan, VerifySessionOk,

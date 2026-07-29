@@ -3,7 +3,6 @@
 use anyhow::Result;
 use clap::Parser;
 
-mod architecture_check;
 mod child_process;
 mod cli;
 mod paths;

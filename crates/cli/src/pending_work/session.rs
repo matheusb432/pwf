@@ -10,8 +10,8 @@ use pwf_application::pending_work::{
 use pwf_infra::{
     obsidian::ObsidianStore,
     session::{
-        ClaudeHarness, CodexHarness, InlineHarness, LocalRepositoryClient, TomlModelTierCatalog,
-        ZellijHarness,
+        ClaudeHarness, CodexHarness, InlineHarness, LocalRepositoryClient, TmuxHarness,
+        TomlModelTierCatalog, render_argv,
     },
 };
 
@@ -40,7 +40,7 @@ pub struct Arguments {
     /// Skip the [Y/n] dispatch confirmation (assume yes).
     #[arg(long = "yes", short = 'y')]
     pub(crate) assume_yes: bool,
-    /// Run the agent inline in the current terminal instead of a zellij tab.
+    /// Run the agent inline in the current terminal instead of a tmux window.
     #[arg(long = "inline", short = 'i')]
     pub(crate) inline: bool,
     /// Tell the dispatched agent to isolate its work in a git worktree named after the item
@@ -141,8 +141,9 @@ pub(super) fn run(
         &LocalRepositoryClient,
         &ClaudeHarness,
         &CodexHarness,
-        &ZellijHarness,
-    )?;
+        &TmuxHarness,
+    )
+    .map_err(map_plan_error)?;
     let planned = match planned {
         PlanSessionOk::DryRun(dry_run) => {
             render_probe(dry_run.probe());
@@ -178,7 +179,7 @@ pub(super) fn run(
         &ClaudeHarness,
         &CodexHarness,
         &InlineHarness,
-        &ZellijHarness,
+        &TmuxHarness,
     )?;
     Ok(render_dispatch(
         &outcome,
@@ -188,6 +189,19 @@ pub(super) fn run(
             ColorChoice::Never => Some(false),
         }),
     ))
+}
+
+fn map_plan_error(error: plan_session::PlanSessionError) -> PendingWorkError {
+    match error {
+        plan_session::PlanSessionError::MultiplexerSessionMissing {
+            session,
+            start_command_argv,
+        } => PendingWorkError::TmuxSessionMissing {
+            session,
+            start_command: render_argv(&start_command_argv),
+        },
+        error => PendingWorkError::SessionPlan(error),
+    }
 }
 
 fn render_probe(probe: &AgentProbe) {

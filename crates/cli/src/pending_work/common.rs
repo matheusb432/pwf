@@ -120,7 +120,12 @@ pub(crate) enum PendingWorkError {
     #[error(transparent)]
     Remove(#[from] pwf_application::pending_work::remove_pending_work_item::RemovePendingWorkError),
     #[error(transparent)]
-    SessionPlan(#[from] pwf_application::pending_work::session::plan_session::PlanSessionError),
+    SessionPlan(pwf_application::pending_work::session::plan_session::PlanSessionError),
+    #[error("tmux session '{session}' does not exist.\nStart it with:\n{start_command}")]
+    TmuxSessionMissing {
+        session: String,
+        start_command: String,
+    },
     #[error(transparent)]
     SessionDispatch(
         #[from] pwf_application::pending_work::session::dispatch_session::DispatchSessionError,

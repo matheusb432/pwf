@@ -54,7 +54,7 @@ pub enum Command {
     Route(route::Arguments),
     /// Delete a task note and remove its index link.
     Remove(remove::Arguments),
-    /// Dispatch a real agent session into the item's zellij session as a new tab.
+    /// Dispatch a real agent session into the project's tmux session as a new window.
     ///
     /// The id is a bare positional (`pwf session <id>`) or `--id`.
     Session(session::Arguments),

@@ -7,8 +7,8 @@ use thiserror::Error;
 use super::{
     Agent, AgentProbe, ClaudeSessionClient, CodexSessionClient, DispatchConfirmation, DispatchMode,
     LaunchDirectives, ModelTierCatalog, RepositorySessionClient, SessionEffort, SessionPlan,
-    ZellijSessionClient, launch::dispatch_target, model::AgentModel,
-    model_selection::resolve_model, task_content,
+    TmuxSessionClient, launch::dispatch_target, model::AgentModel, model_selection::resolve_model,
+    task_content,
 };
 use crate::{
     AppRecordStore, NoteMarkdownSource, PendingWorkItem,
@@ -114,8 +114,15 @@ pub enum PlanSessionError {
     NotLaunchable { id: String, issues: Vec<String> },
     #[error("Repo directory for project '{project}' does not exist: {path}")]
     RepositoryMissing { project: String, path: String },
-    #[error("zellij not found on PATH; cannot dispatch a pwf session (Linux-only feature).")]
+    #[error("tmux not found on PATH; cannot dispatch a pwf session.")]
     MultiplexerNotFound,
+    #[error("checking tmux session '{session}' failed: {message}")]
+    MultiplexerSessionCheck { session: String, message: String },
+    #[error("tmux session '{session}' does not exist")]
+    MultiplexerSessionMissing {
+        session: String,
+        start_command_argv: Vec<String>,
+    },
     #[error("{0}")]
     ModelTier(#[source] Box<dyn Error + Send + Sync>),
 }
@@ -139,7 +146,7 @@ pub fn execute(
     repository: &impl RepositorySessionClient,
     claude: &impl ClaudeSessionClient,
     codex: &impl CodexSessionClient,
-    zellij: &impl ZellijSessionClient,
+    tmux: &impl TmuxSessionClient,
 ) -> Result<PlanSessionOk, PlanSessionError> {
     let probe = match command.agent {
         Agent::Claude => claude.probe(),
@@ -182,9 +189,23 @@ pub fn execute(
     }
     if matches!(command.intent, PlanSessionIntent::Dispatch { .. })
         && command.mode == DispatchMode::Multiplexer
-        && !zellij.available()
     {
-        return Err(PlanSessionError::MultiplexerNotFound);
+        if !tmux.available() {
+            return Err(PlanSessionError::MultiplexerNotFound);
+        }
+        let session_exists = tmux
+            .session_exists(&plan.target.session)
+            .map_err(|message| PlanSessionError::MultiplexerSessionCheck {
+                session: plan.target.session.clone(),
+                message,
+            })?;
+        if !session_exists {
+            return Err(PlanSessionError::MultiplexerSessionMissing {
+                session: plan.target.session.clone(),
+                start_command_argv: tmux
+                    .new_session_process_argv(&plan.target.session, &plan.launch.repository),
+            });
+        }
     }
     let confirmation = DispatchConfirmation {
         task_id: item.id,
@@ -214,10 +235,10 @@ pub fn execute(
             };
             let argv = match command.mode {
                 DispatchMode::Inline => provider_argv,
-                DispatchMode::Multiplexer => zellij.new_tab_process_argv(
+                DispatchMode::Multiplexer => tmux.new_window_process_argv(
                     &plan.target.session,
                     &plan.launch.repository,
-                    &plan.target.tab,
+                    &plan.target.window,
                     &provider_argv,
                 ),
             };

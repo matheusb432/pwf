@@ -9,11 +9,11 @@ use pwf_infra::session::render_argv;
 use super::{agent_name, paint};
 
 pub(in crate::pending_work) fn render_dispatch(outcome: &DispatchSessionOk, on: bool) -> String {
-    let (token, color, target, agent, repository, note) = match outcome {
+    let (token, color, target, agent, repository) = match outcome {
         DispatchSessionOk::Inline { task_id } => {
             return format!("# session {task_id} — ran inline\n");
         }
-        DispatchSessionOk::TabOpened {
+        DispatchSessionOk::WindowOpened {
             target,
             agent,
             repository,
@@ -23,35 +23,24 @@ pub(in crate::pending_work) fn render_dispatch(outcome: &DispatchSessionOk, on: 
             target,
             Some(*agent),
             Some(repository),
-            None,
-        ),
-        DispatchSessionOk::MultiplexerStartedAndTabOpened {
-            target,
-            agent,
-            repository,
-        } => (
-            "created session + dispatched",
-            AnsiColor::Yellow,
-            target,
-            Some(*agent),
-            Some(repository),
-            Some("note: the zellij session was not running — created it.".to_string()),
         ),
     };
     let session = &target.session;
-    let tab = &target.tab;
-    let line = paint(&format!("session: {session}  ·  tab: {tab}"), color, on);
-    let mut out = format!("# session {tab} — {token}\n{line}\n");
+    let window = &target.window;
+    let line = paint(
+        &format!("session: {session}  ·  window: {window}"),
+        color,
+        on,
+    );
+    let mut out = format!("# session {window} — {token}\n{line}\n");
     if let (Some(agent), Some(repository)) = (agent, repository) {
         let _ = write!(
             out,
-            "agent: {} · cwd: {repository}\nattach with: zellij attach {session}\n",
+            "agent: {} · cwd: {repository}\n\
+outside tmux: tmux attach-session -t ={session}\n\
+inside tmux: tmux switch-client -t ={session}\n",
             agent_name(agent)
         );
-    }
-    if let Some(n) = note {
-        out.push_str(&n);
-        out.push('\n');
     }
     out
 }
@@ -68,7 +57,7 @@ pub(in crate::pending_work) fn render_dry_run(plan: &SessionPlan, argv: &[String
     let target = match plan.mode {
         DispatchMode::Inline => "inline".to_string(),
         DispatchMode::Multiplexer => {
-            format!("zellij: {} / {}", plan.target.session, plan.target.tab)
+            format!("tmux: {} / {}", plan.target.session, plan.target.window)
         }
     };
     format!(
@@ -102,39 +91,28 @@ mod tests {
     fn target() -> DispatchTarget {
         DispatchTarget {
             session: "cfg".into(),
-            tab: "CFG-0009".into(),
+            window: "CFG-0009".into(),
         }
     }
 
     #[test]
-    fn success_renders_green_token_and_bold_session_tab_plain() {
-        let outcome = DispatchSessionOk::TabOpened {
+    fn success_renders_green_token_and_bold_session_window_plain() {
+        let outcome = DispatchSessionOk::WindowOpened {
             target: target(),
             agent: Agent::Claude,
             repository: "/repo".into(),
         };
         let out = render_dispatch(&outcome, false);
         assert!(out.starts_with("# session CFG-0009 — dispatched"));
-        assert!(out.contains("**session: cfg  ·  tab: CFG-0009**"));
-        assert!(out.contains("attach with: zellij attach cfg"));
+        assert!(out.contains("**session: cfg  ·  window: CFG-0009**"));
+        assert!(out.contains("outside tmux: tmux attach-session -t =cfg"));
+        assert!(out.contains("inside tmux: tmux switch-client -t =cfg"));
         assert!(!out.contains('\u{1b}'));
     }
 
     #[test]
-    fn fallback_renders_created_token_and_note() {
-        let outcome = DispatchSessionOk::MultiplexerStartedAndTabOpened {
-            target: target(),
-            agent: Agent::Claude,
-            repository: "/repo".into(),
-        };
-        let out = render_dispatch(&outcome, false);
-        assert!(out.starts_with("# session CFG-0009 — created session + dispatched"));
-        assert!(out.contains("was not running"));
-    }
-
-    #[test]
     fn color_on_emits_ansi() {
-        let outcome = DispatchSessionOk::TabOpened {
+        let outcome = DispatchSessionOk::WindowOpened {
             target: target(),
             agent: Agent::Claude,
             repository: "/repo".into(),

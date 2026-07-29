@@ -64,11 +64,11 @@ pub struct SessionPlan {
     pub target: DispatchTarget,
 }
 
-/// Identifies a multiplexer session and tab.
+/// Identifies a multiplexer session and window.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DispatchTarget {
     pub session: String,
-    pub tab: String,
+    pub window: String,
 }
 
 /// Contains the context shown before an interactive dispatch.

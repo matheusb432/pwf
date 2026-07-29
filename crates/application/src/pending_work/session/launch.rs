@@ -61,7 +61,7 @@ pub(super) fn dispatch_target(task_id: &str) -> DispatchTarget {
         .expect("a validated work-item id always contains a valid project prefix");
     DispatchTarget {
         session: project_prefix.as_ref().to_ascii_lowercase(),
-        tab: canonical_id.to_string(),
+        window: canonical_id.to_string(),
     }
 }
 
@@ -72,7 +72,7 @@ fn legacy_dispatch_target(task_id: &str) -> DispatchTarget {
             .next()
             .unwrap_or_default()
             .to_ascii_lowercase(),
-        tab: task_id.to_string(),
+        window: task_id.to_string(),
     }
 }
 
@@ -131,7 +131,7 @@ mod tests {
         let target = dispatch_target("cfg9");
 
         assert_eq!(target.session, "cfg");
-        assert_eq!(target.tab, "CFG-0009");
+        assert_eq!(target.window, "CFG-0009");
     }
 
     #[test]
@@ -139,6 +139,6 @@ mod tests {
         let target = dispatch_target("pwf:1");
 
         assert_eq!(target.session, "pwf:1");
-        assert_eq!(target.tab, "pwf:1");
+        assert_eq!(target.window, "pwf:1");
     }
 }

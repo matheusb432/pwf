@@ -6,8 +6,7 @@ use thiserror::Error;
 
 use super::{
     Agent, ClaudeSessionClient, CodexSessionClient, DispatchMode, DispatchTarget,
-    InlineSessionClient, ZellijSessionClient, ZellijTabOpenError,
-    plan_session::PreparedSessionDispatch, task_content,
+    InlineSessionClient, TmuxSessionClient, plan_session::PreparedSessionDispatch, task_content,
 };
 use crate::{
     AppRecordStore, NoteMarkdownSource, PendingWorkItem,
@@ -34,12 +33,7 @@ pub enum DispatchSessionOk {
     Inline {
         task_id: String,
     },
-    TabOpened {
-        target: DispatchTarget,
-        agent: Agent,
-        repository: String,
-    },
-    MultiplexerStartedAndTabOpened {
+    WindowOpened {
         target: DispatchTarget,
         agent: Agent,
         repository: String,
@@ -54,12 +48,10 @@ pub enum DispatchSessionError {
     Show(#[from] ShowPendingWorkError),
     #[error("Failed to run agent inline: {message}")]
     InlineFailed { message: String },
-    #[error("Failed to dispatch into zellij session '{session}': {message}")]
-    SessionEnsureFailed { session: String, message: String },
-    #[error("Failed to open zellij tab '{tab}' in session '{session}': {message}")]
-    TabOpen {
+    #[error("Failed to open tmux window '{window}' in session '{session}': {message}")]
+    WindowOpen {
         session: String,
-        tab: String,
+        window: String,
         message: String,
     },
     #[error("{source}")]
@@ -81,7 +73,7 @@ pub fn execute(
     claude: &impl ClaudeSessionClient,
     codex: &impl CodexSessionClient,
     inline: &impl InlineSessionClient,
-    zellij: &impl ZellijSessionClient,
+    tmux: &impl TmuxSessionClient,
 ) -> Result<DispatchSessionOk, DispatchSessionError> {
     let PreparedSessionDispatch {
         mut plan,
@@ -102,7 +94,7 @@ pub fn execute(
     match plan.launch.agent {
         Agent::Claude => {
             let argv = claude.prepare(&plan.launch);
-            dispatch_host(&argv, &plan, inline, zellij)
+            dispatch_host(&argv, &plan, inline, tmux)
         }
         Agent::Codex => {
             let prepared = codex.prepare(&plan.launch).map_err(|source| {
@@ -110,7 +102,7 @@ pub fn execute(
                     source: Box::new(source),
                 }
             })?;
-            dispatch_host(prepared.argv(), &plan, inline, zellij).map_err(|error| {
+            dispatch_host(prepared.argv(), &plan, inline, tmux).map_err(|error| {
                 DispatchSessionError::CodexBackend {
                     thread_id: prepared.thread_id().to_string(),
                     message: error.to_string(),
@@ -124,7 +116,7 @@ fn dispatch_host(
     argv: &[String],
     plan: &super::SessionPlan,
     inline: &impl InlineSessionClient,
-    zellij: &impl ZellijSessionClient,
+    tmux: &impl TmuxSessionClient,
 ) -> Result<DispatchSessionOk, DispatchSessionError> {
     match plan.mode {
         DispatchMode::Inline => {
@@ -135,61 +127,29 @@ fn dispatch_host(
                 task_id: plan.launch.task_id.clone(),
             })
         }
-        DispatchMode::Multiplexer => dispatch_multiplexer(argv, plan, zellij),
+        DispatchMode::Multiplexer => dispatch_multiplexer(argv, plan, tmux),
     }
 }
 
 fn dispatch_multiplexer(
     argv: &[String],
     plan: &super::SessionPlan,
-    zellij: &impl ZellijSessionClient,
+    tmux: &impl TmuxSessionClient,
 ) -> Result<DispatchSessionOk, DispatchSessionError> {
-    match open_tab(argv, plan, zellij) {
-        Ok(()) => Ok(DispatchSessionOk::TabOpened {
-            target: plan.target.clone(),
-            agent: plan.launch.agent,
-            repository: plan.launch.repository.clone(),
-        }),
-        Err(ZellijTabOpenError::Rejected(message)) => Err(tab_open_error(plan, message)),
-        Err(ZellijTabOpenError::SessionNotFound) => {
-            zellij
-                .ensure_session(&plan.target.session)
-                .map_err(|message| DispatchSessionError::SessionEnsureFailed {
-                    session: plan.target.session.clone(),
-                    message,
-                })?;
-            match open_tab(argv, plan, zellij) {
-                Ok(()) => Ok(DispatchSessionOk::MultiplexerStartedAndTabOpened {
-                    target: plan.target.clone(),
-                    agent: plan.launch.agent,
-                    repository: plan.launch.repository.clone(),
-                }),
-                Err(ZellijTabOpenError::SessionNotFound) => {
-                    Err(tab_open_error(plan, "session not found".to_string()))
-                }
-                Err(ZellijTabOpenError::Rejected(message)) => Err(tab_open_error(plan, message)),
-            }
-        }
-    }
-}
-
-fn open_tab(
-    argv: &[String],
-    plan: &super::SessionPlan,
-    zellij: &impl ZellijSessionClient,
-) -> Result<(), ZellijTabOpenError> {
-    zellij.open_tab(
+    tmux.open_window(
         &plan.target.session,
         &plan.launch.repository,
-        &plan.target.tab,
+        &plan.target.window,
         argv,
     )
-}
-
-fn tab_open_error(plan: &super::SessionPlan, message: String) -> DispatchSessionError {
-    DispatchSessionError::TabOpen {
+    .map_err(|message| DispatchSessionError::WindowOpen {
         session: plan.target.session.clone(),
-        tab: plan.target.tab.clone(),
+        window: plan.target.window.clone(),
         message,
-    }
+    })?;
+    Ok(DispatchSessionOk::WindowOpened {
+        target: plan.target.clone(),
+        agent: plan.launch.agent,
+        repository: plan.launch.repository.clone(),
+    })
 }

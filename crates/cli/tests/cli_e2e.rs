@@ -17,6 +17,26 @@ fn database_independent_command() -> Command {
     Command::new(env!("CARGO_BIN_EXE_pwf"))
 }
 
+#[test]
+fn session_help_describes_tmux_and_inline_dispatch() {
+    let output = database_independent_command()
+        .args(["session", "--help"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        stdout.contains("project's tmux session as a new window"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("current terminal instead of a tmux window"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("zellij"), "{stdout}");
+}
+
 fn managed_project(id: &str, title: &str) -> (TempDir, DatabaseFixture) {
     let directory = TempDir::new().unwrap();
     let tasks_path = directory.path().join("notes").join(title);
@@ -322,7 +342,7 @@ fn pending_work_lifecycle_is_observable_through_show_json() {
 }
 
 #[cfg(unix)]
-fn stage_session_with_zellij_stub(dir: &TempDir) -> (DatabaseFixture, String, std::path::PathBuf) {
+fn stage_session_with_tmux_stub(dir: &TempDir) -> (DatabaseFixture, String, std::path::PathBuf) {
     use std::os::unix::fs::PermissionsExt;
 
     let notes = dir.path().join("notes");
@@ -350,7 +370,7 @@ fn stage_session_with_zellij_stub(dir: &TempDir) -> (DatabaseFixture, String, st
     let bin = dir.path().join("bin");
     fs::create_dir_all(&bin).unwrap();
     for (name, fixture) in [
-        ("zellij", "tests/fixtures/zellij-stub.sh"),
+        ("tmux", "tests/fixtures/tmux-stub.sh"),
         ("codex", "tests/fixtures/codex-stub.sh"),
     ] {
         let stub = bin.join(name);
@@ -367,27 +387,11 @@ fn stage_session_with_zellij_stub(dir: &TempDir) -> (DatabaseFixture, String, st
     (database, path, log)
 }
 
-#[cfg(unix)]
-fn zellij_command_sequence(log: &str) -> Vec<&str> {
-    log.split('\0')
-        .filter(|invocation| !invocation.is_empty())
-        .map(|invocation| {
-            if invocation.starts_with("--session ") && invocation.contains(" action new-tab ") {
-                "new-tab"
-            } else if invocation.starts_with("attach --create-background ") {
-                "attach --create-background"
-            } else {
-                invocation
-            }
-        })
-        .collect()
-}
-
 #[test]
 #[cfg(unix)]
 fn verify_probes_and_previews_the_selected_provider() {
     let directory = TempDir::new().unwrap();
-    let (database, path, _log) = stage_session_with_zellij_stub(&directory);
+    let (database, path, _log) = stage_session_with_tmux_stub(&directory);
 
     let assertion = database
         .command()
@@ -407,26 +411,94 @@ fn verify_probes_and_previews_the_selected_provider() {
 
 #[test]
 #[cfg(unix)]
-fn session_tab_rejection_exits_nonzero() {
+fn session_dispatches_a_detached_tmux_window() {
     let dir = TempDir::new().unwrap();
-    let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
+    let (cfg, path, log) = stage_session_with_tmux_stub(&dir);
 
     cfg.command()
         .args(["session", "--id", "PWF-0001", "--agent", "claude", "--yes"])
         .env("PATH", path)
-        .env("ZELLIJ_STUB_LOG", &log)
-        .env("ZELLIJ_STUB_EXIT_CODE", "17")
-        .env("ZELLIJ_STUB_STDERR", "tab rejected by fixture")
+        .env("TMUX_STUB_LOG", &log)
+        .assert()
+        .success();
+
+    let invocations = fs::read_to_string(&log).unwrap();
+    assert!(invocations.contains("-V\0"), "{invocations:?}");
+    assert!(
+        invocations.contains("has-session -t =pwf\0"),
+        "{invocations:?}"
+    );
+    assert!(
+        invocations.contains("new-window -d -t =pwf: -c "),
+        "{invocations:?}"
+    );
+    assert!(
+        invocations.contains(" -n PWF-0001 -- claude "),
+        "{invocations:?}"
+    );
+    assert!(!invocations.contains("new-session"), "{invocations:?}");
+    assert!(!invocations.contains("switch-client"), "{invocations:?}");
+    assert!(!invocations.contains("attach-session"), "{invocations:?}");
+}
+
+#[test]
+#[cfg(unix)]
+fn session_missing_tmux_session_prints_a_start_command_without_mutation() {
+    let dir = TempDir::new().unwrap();
+    let (cfg, path, log) = stage_session_with_tmux_stub(&dir);
+    let repository = dir.path().join("repo");
+
+    let assertion = cfg
+        .command()
+        .args(["session", "--id", "PWF-0001", "--agent", "claude", "--yes"])
+        .env("PATH", path)
+        .env("TMUX_STUB_LOG", &log)
+        .env("TMUX_STUB_SESSION_EXISTS", "0")
         .assert()
         .failure();
-    assert!(fs::read_to_string(log).unwrap().contains("new-tab"));
+
+    let stderr = String::from_utf8(assertion.get_output().stderr.clone()).unwrap();
+    assert!(
+        stderr.contains("tmux session 'pwf' does not exist"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains(&format!(
+            "tmux new-session -d -s pwf -c {}",
+            repository.display()
+        )),
+        "{stderr}"
+    );
+    assert_eq!(
+        fs::read_to_string(&log).unwrap(),
+        "-V\0has-session -t =pwf\0"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn session_window_rejection_exits_nonzero() {
+    let dir = TempDir::new().unwrap();
+    let (cfg, path, log) = stage_session_with_tmux_stub(&dir);
+
+    let assertion = cfg
+        .command()
+        .args(["session", "--id", "PWF-0001", "--agent", "claude", "--yes"])
+        .env("PATH", path)
+        .env("TMUX_STUB_LOG", &log)
+        .env("TMUX_STUB_NEW_WINDOW_EXIT_CODE", "17")
+        .assert()
+        .failure();
+    let stderr = String::from_utf8(assertion.get_output().stderr.clone()).unwrap();
+    assert!(stderr.contains("Failed to open tmux window"), "{stderr}");
+    assert!(fs::read_to_string(log).unwrap().contains("new-window"));
 }
 
 #[test]
 #[cfg(unix)]
 fn session_codex_naming_failure_stops_before_dispatch() {
     let directory = TempDir::new().unwrap();
-    let (config_path, child_path, zellij_log_path) = stage_session_with_zellij_stub(&directory);
+    let (config_path, child_path, tmux_log_path) = stage_session_with_tmux_stub(&directory);
     let app_server_log_path = directory.path().join("codex-app-server.jsonl");
     let resume_log_path = directory.path().join("codex-resume.log");
 
@@ -437,7 +509,7 @@ fn session_codex_naming_failure_stops_before_dispatch() {
         .env("CODEX_STUB_APP_SERVER_LOG", &app_server_log_path)
         .env("CODEX_STUB_NAME_ERROR", "name denied by fixture")
         .env("CODEX_STUB_RESUME_LOG", &resume_log_path)
-        .env("ZELLIJ_STUB_LOG", &zellij_log_path)
+        .env("TMUX_STUB_LOG", &tmux_log_path)
         .assert()
         .failure();
 
@@ -446,9 +518,11 @@ fn session_codex_naming_failure_stops_before_dispatch() {
         "Codex app server was not invoked"
     );
     assert!(
-        !zellij_log_path.exists(),
-        "naming failure invoked zellij: {}",
-        fs::read_to_string(zellij_log_path).unwrap()
+        fs::read_to_string(&tmux_log_path)
+            .unwrap()
+            .ends_with("has-session -t =pwf\0"),
+        "naming failure opened a tmux window: {}",
+        fs::read_to_string(tmux_log_path).unwrap()
     );
     assert!(
         !resume_log_path.exists(),
@@ -460,7 +534,7 @@ fn session_codex_naming_failure_stops_before_dispatch() {
 #[cfg(unix)]
 fn session_codex_dry_run_renders_effort_without_process_effects() {
     let directory = TempDir::new().unwrap();
-    let (config_path, child_path, zellij_log_path) = stage_session_with_zellij_stub(&directory);
+    let (config_path, child_path, tmux_log_path) = stage_session_with_tmux_stub(&directory);
     let app_server_log_path = directory.path().join("codex-app-server.jsonl");
     let resume_log_path = directory.path().join("codex-resume.log");
 
@@ -473,7 +547,7 @@ fn session_codex_dry_run_renders_effort_without_process_effects() {
         .env("PATH", child_path)
         .env("CODEX_STUB_APP_SERVER_LOG", &app_server_log_path)
         .env("CODEX_STUB_RESUME_LOG", &resume_log_path)
-        .env("ZELLIJ_STUB_LOG", &zellij_log_path)
+        .env("TMUX_STUB_LOG", &tmux_log_path)
         .assert()
         .success();
 
@@ -487,53 +561,7 @@ fn session_codex_dry_run_renders_effort_without_process_effects() {
     assert!(!stdout.contains("--model default"), "{stdout}");
     assert!(!app_server_log_path.exists());
     assert!(!resume_log_path.exists());
-    assert!(!zellij_log_path.exists());
-}
-
-#[test]
-#[cfg(unix)]
-fn session_recovers_a_missing_zellij_session_once() {
-    let dir = TempDir::new().unwrap();
-    let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
-    let state = dir.path().join("zellij-state");
-
-    cfg.command()
-        .args(["session", "--id", "PWF-0001", "--agent", "claude", "--yes"])
-        .env("PATH", path)
-        .env("ZELLIJ_STUB_LOG", &log)
-        .env("ZELLIJ_STUB_MISSING_SESSION_COUNT", "1")
-        .env("ZELLIJ_STUB_STATE", &state)
-        .assert()
-        .success();
-
-    let invocations = fs::read_to_string(&log).unwrap();
-    assert_eq!(
-        zellij_command_sequence(&invocations),
-        ["new-tab", "attach --create-background", "new-tab"]
-    );
-}
-
-#[test]
-#[cfg(unix)]
-fn session_stops_after_a_second_missing_zellij_session() {
-    let dir = TempDir::new().unwrap();
-    let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
-    let state = dir.path().join("zellij-state");
-
-    cfg.command()
-        .args(["session", "--id", "PWF-0001", "--agent", "claude", "--yes"])
-        .env("PATH", path)
-        .env("ZELLIJ_STUB_LOG", &log)
-        .env("ZELLIJ_STUB_MISSING_SESSION_COUNT", "2")
-        .env("ZELLIJ_STUB_STATE", &state)
-        .assert()
-        .failure();
-
-    let invocations = fs::read_to_string(&log).unwrap();
-    assert_eq!(
-        zellij_command_sequence(&invocations),
-        ["new-tab", "attach --create-background", "new-tab"]
-    );
+    assert!(!tmux_log_path.exists());
 }
 
 #[test]
@@ -542,7 +570,7 @@ fn session_inline_executes_the_concrete_claude_process() {
     use std::os::unix::fs::PermissionsExt;
 
     let dir = TempDir::new().unwrap();
-    let (cfg, path, zellij_log) = stage_session_with_zellij_stub(&dir);
+    let (cfg, path, tmux_log) = stage_session_with_tmux_stub(&dir);
     let claude = dir.path().join("bin/claude");
     fs::copy("tests/fixtures/claude-stub.sh", &claude).unwrap();
     fs::set_permissions(&claude, fs::Permissions::from_mode(0o755)).unwrap();
@@ -555,8 +583,7 @@ fn session_inline_executes_the_concrete_claude_process() {
         .env("PATH", path)
         .env("CLAUDE_STUB_EXIT_CODE", "23")
         .env("CLAUDE_STUB_LOG", &claude_log)
-        .env("ZELLIJ_STUB_LOG", &zellij_log)
-        .env("ZELLIJ_STUB_LOG_VERSION", "1")
+        .env("TMUX_STUB_LOG", &tmux_log)
         .assert()
         .code(23);
 
@@ -584,9 +611,9 @@ fn session_inline_executes_the_concrete_claude_process() {
         entries[6]
     );
     assert!(
-        !zellij_log.exists(),
-        "inline dispatch invoked zellij: {}",
-        fs::read_to_string(zellij_log).unwrap()
+        !tmux_log.exists(),
+        "inline dispatch invoked tmux: {}",
+        fs::read_to_string(tmux_log).unwrap()
     );
 }
 
@@ -594,7 +621,7 @@ fn session_inline_executes_the_concrete_claude_process() {
 #[cfg(unix)]
 fn session_with_effort_and_broken_tiers_config_fails_before_dispatch() {
     let dir = TempDir::new().unwrap();
-    let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
+    let (cfg, path, log) = stage_session_with_tmux_stub(&dir);
     cfg.command()
         .args(["update", "PWF-0001", "--effort", "highest"])
         .assert()
@@ -604,7 +631,7 @@ fn session_with_effort_and_broken_tiers_config_fails_before_dispatch() {
     cfg.command()
         .args(["session", "--id", "PWF-0001", "--agent", "claude", "--yes"])
         .env("PATH", path)
-        .env("ZELLIJ_STUB_LOG", &log)
+        .env("TMUX_STUB_LOG", &log)
         .env("PWF_MODEL_TIERS", &missing_tiers)
         .assert()
         .failure();
@@ -616,7 +643,7 @@ fn session_with_effort_and_broken_tiers_config_fails_before_dispatch() {
 #[cfg(unix)]
 fn session_append_extends_the_note_before_dispatch() {
     let dir = TempDir::new().unwrap();
-    let (cfg, path, log) = stage_session_with_zellij_stub(&dir);
+    let (cfg, path, log) = stage_session_with_tmux_stub(&dir);
 
     cfg.command()
         .args([
@@ -628,7 +655,7 @@ fn session_append_extends_the_note_before_dispatch() {
             "one more thing in the moment",
         ])
         .env("PATH", path)
-        .env("ZELLIJ_STUB_LOG", &log)
+        .env("TMUX_STUB_LOG", &log)
         .assert()
         .success();
 
@@ -650,7 +677,7 @@ fn session_append_extends_the_note_before_dispatch() {
 #[cfg(target_os = "linux")]
 fn session_append_declined_through_stdin_leaves_note_unchanged() {
     let directory = TempDir::new().unwrap();
-    let (config_path, child_path, launch_log_path) = stage_session_with_zellij_stub(&directory);
+    let (config_path, child_path, launch_log_path) = stage_session_with_tmux_stub(&directory);
     let task_before = task_json(&config_path, "PWF-0001");
 
     let mut command = config_path.command();
@@ -665,7 +692,7 @@ fn session_append_declined_through_stdin_leaves_note_unchanged() {
             "declined context",
         ])
         .env("PATH", child_path)
-        .env("ZELLIJ_STUB_LOG", &launch_log_path)
+        .env("TMUX_STUB_LOG", &launch_log_path)
         .env("NO_COLOR", "1");
 
     let mut session = expectrl::Session::spawn(command).unwrap();
@@ -680,9 +707,10 @@ fn session_append_declined_through_stdin_leaves_note_unchanged() {
     ));
 
     assert_eq!(task_json(&config_path, "PWF-0001"), task_before);
+    let tmux_log = fs::read_to_string(&launch_log_path).unwrap();
     assert!(
-        !launch_log_path.exists() || fs::read_to_string(&launch_log_path).unwrap().is_empty(),
-        "declined confirmation must not dispatch"
+        !tmux_log.contains("new-window"),
+        "declined confirmation must not dispatch: {tmux_log:?}"
     );
 }
 

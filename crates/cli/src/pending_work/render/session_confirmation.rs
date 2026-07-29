@@ -12,8 +12,8 @@ pub(in crate::pending_work) fn render_session_confirmation(
     let (mode, target) = match confirmation.mode {
         DispatchMode::Inline => ("inline", CURRENT_TERMINAL_TARGET.to_string()),
         DispatchMode::Multiplexer => (
-            "zellij",
-            format!("zellij session {}", confirmation.target.session),
+            "tmux",
+            format!("tmux session {}", confirmation.target.session),
         ),
     };
     let fields = [
@@ -91,7 +91,7 @@ mod tests {
             },
             target: DispatchTarget {
                 session: "pwf".to_string(),
-                tab: "PWF-0001".to_string(),
+                window: "PWF-0001".to_string(),
             },
             model: String::default(),
             effort: SessionEffort::XHigh,
@@ -112,7 +112,7 @@ mod tests {
     }
 
     #[test]
-    fn zellij_mode_targets_the_named_session_and_falls_back_on_missing_created() {
+    fn tmux_mode_targets_the_named_session_and_falls_back_on_missing_created() {
         let confirmation = DispatchConfirmation {
             task_id: "PWF-0001".to_string(),
             title: "dispatch me".to_string(),
@@ -122,7 +122,7 @@ mod tests {
             directives: LaunchDirectives::default(),
             target: DispatchTarget {
                 session: "pwf".to_string(),
-                tab: "PWF-0001".to_string(),
+                window: "PWF-0001".to_string(),
             },
             model: String::default(),
             effort: SessionEffort::High,
@@ -130,8 +130,8 @@ mod tests {
 
         let out = render_session_confirmation(&confirmation);
 
-        assert!(out.contains("mode: zellij"));
-        assert!(out.contains("target: zellij session pwf"));
+        assert!(out.contains("mode: tmux"));
+        assert!(out.contains("target: tmux session pwf"));
         assert!(out.contains("autonomy: no"));
         assert!(out.contains("effort: high"));
         assert!(out.contains("worktree: no"));

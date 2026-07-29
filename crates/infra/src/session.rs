@@ -7,11 +7,11 @@ mod inline;
 mod launcher;
 mod model_tiers;
 mod repository;
-mod zellij;
+mod tmux;
 
 pub use codex_app_server::CodexThreadPreparationError;
 pub use inline::InlineHarness;
 pub use launcher::{AgentProbe, ClaudeHarness, CodexHarness, render_argv};
 pub use model_tiers::{ModelTiersError, TomlModelTierCatalog};
 pub use repository::LocalRepositoryClient;
-pub use zellij::ZellijHarness;
+pub use tmux::TmuxHarness;
