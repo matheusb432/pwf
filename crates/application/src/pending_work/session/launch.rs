@@ -1,19 +1,67 @@
 //! Builds provider-neutral agent launches and canonical multiplexer targets.
 
+use askama::Template;
 use pwf_models::pending_work::ProjectPrefix;
 
-use super::{DispatchTarget, LaunchDirectives};
+use super::{Agent, DispatchTarget, LaunchDirectives, SessionEffort};
 use crate::pending_work::{get_pending_work::PendingWorkItemView, identifier};
 
 /// Autonomy directive inserted by `--auto`.
 const AUTONOMY_DIRECTIVE: &str = "You MUST execute this autonomously. Do not prompt the user for questions. But if something seems critical and needs user decision, STOP execution and clarify";
 
-pub(super) fn thread_title(item: &PendingWorkItemView) -> String {
-    let mut title = String::with_capacity(item.id.len() + item.session.len() + 3);
-    title.push_str(&item.id);
-    title.push_str(" - ");
-    title.push_str(&item.session);
-    title
+#[derive(Template)]
+#[template(path = "thread_title.txt")]
+#[allow(
+    dead_code,
+    reason = "fields form the compile-time thread-title template context"
+)]
+struct ThreadTitleTemplate<'a> {
+    task_id: &'a str,
+    task_id_brief: String,
+    task_title: &'a str,
+    project: &'a str,
+    effort: SessionEffort,
+    autonomous: bool,
+    worktree: bool,
+    agent: &'static str,
+}
+
+pub(super) fn thread_title(
+    item: &PendingWorkItemView,
+    directives: LaunchDirectives,
+    agent: Agent,
+    effort: SessionEffort,
+) -> String {
+    ThreadTitleTemplate {
+        task_id: &item.id,
+        task_id_brief: task_id_brief(&item.id),
+        task_title: &item.session,
+        project: &item.project,
+        effort,
+        autonomous: directives.autonomous,
+        worktree: directives.worktree,
+        agent: match agent {
+            Agent::Claude => "claude",
+            Agent::Codex => "codex",
+        },
+    }
+    .render()
+    .expect("the compile-time-checked thread-title template renders to a String")
+}
+
+fn task_id_brief(task_id: &str) -> String {
+    let Some(work_item_id) = identifier::parse(task_id) else {
+        return task_id.to_string();
+    };
+    let (prefix, digits) = work_item_id
+        .as_ref()
+        .split_once('-')
+        .expect("a validated work-item id contains a separator");
+    let number = digits
+        .parse::<u16>()
+        .expect("a validated work-item id contains numeric digits");
+
+    format!("{}{number}", prefix.to_ascii_lowercase())
 }
 
 pub(super) fn launch_prompt(
@@ -120,7 +168,7 @@ mod tests {
 
         assert_eq!(launch.agent, Agent::Claude);
         assert_eq!(launch.task_id, "PWF-0076");
-        assert_eq!(launch.title, "PWF-0076 - make session -w");
+        assert_eq!(launch.title, "pwf76 :: make session -w");
         assert_eq!(launch.repository, "/repo/pwf");
         assert_eq!(launch.model.as_deref(), Some("opus"));
         assert_eq!(launch.effort, SessionEffort::XHigh);

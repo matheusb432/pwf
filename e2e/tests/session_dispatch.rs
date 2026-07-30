@@ -181,7 +181,7 @@ fn inline_dispatch_executes_the_concrete_claude_process() {
         entries[1..6],
         [
             "arg=--name",
-            "arg=PWF-0001 - do the thing",
+            "arg=pwf1 :: do the thing",
             "arg=--effort",
             "arg=high",
             "arg=--",

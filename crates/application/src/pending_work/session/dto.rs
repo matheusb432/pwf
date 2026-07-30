@@ -27,7 +27,7 @@ impl AgentLaunch {
         AgentLaunch {
             agent,
             task_id: item.id.clone(),
-            title: super::launch::thread_title(item),
+            title: super::launch::thread_title(item, directives, agent, effort),
             repository: item.repo.clone().unwrap_or_default(),
             prompt: super::launch::launch_prompt(task_content, &item.id, directives),
             model,
