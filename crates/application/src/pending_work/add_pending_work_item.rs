@@ -6,8 +6,9 @@ use pwf_models::pending_work::{
 use regex::Regex;
 
 use super::{
+    ProjectRegistry, ProjectResolutionError,
+    logic::pending_work_creation::{added_item, project_mapped},
     prerequisite::PrerequisiteValidationError,
-    project_registry::{ProjectRegistry, ProjectResolutionError},
     store_util, tag_policy, title,
 };
 use crate::ports::{AppRecordStore, Clock, IndexEntry, IndexSection, NewItem, PendingWorkRecord};
@@ -334,43 +335,6 @@ fn map_prerequisite_error(error: PrerequisiteValidationError) -> AddPendingWorkE
         PrerequisiteValidationError::UnknownIds { ids } => {
             AddPendingWorkError::UnknownPrerequisiteIds { ids }
         }
-    }
-}
-
-pub(super) fn project_mapped(
-    project_identifier: &str,
-    projects: &ProjectRegistry,
-) -> Result<ProjectName, AddPendingWorkError> {
-    let project = projects.resolve(project_identifier)?.clone();
-    let not_mapped = || AddPendingWorkError::ProjectHasNoDirectorySource {
-        project: project.to_string(),
-    };
-    if projects
-        .repo_for(&project)
-        .is_none_or(|repo| repo.trim().is_empty())
-    {
-        return Err(not_mapped());
-    }
-    Ok(project)
-}
-
-pub(super) fn added_item(
-    project: &ProjectName,
-    created: store_util::CreatedItem,
-) -> AddPendingWorkItemOk {
-    let id = created
-        .record
-        .id
-        .as_item()
-        .expect("inserted record carries a canonical id")
-        .as_ref()
-        .to_string();
-    AddPendingWorkItemOk {
-        id,
-        project: project.as_ref().to_string(),
-        title: created.record.title,
-        note_path: PathBuf::from(created.record.locator),
-        created_section: created.created_section,
     }
 }
 

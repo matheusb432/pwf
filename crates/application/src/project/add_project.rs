@@ -1,12 +1,12 @@
 use std::{error::Error, path::PathBuf};
 
-use pwf_models::project::{ProjectName, ProjectPrefix, ProjectSource, ProjectTasks};
+use pwf_models::project::{ProjectName, ProjectPrefix};
 use sqlx::error::ErrorKind;
 
 use super::{
-    Project,
+    Project, ProjectFields,
     dto::{ProjectRow, ProjectRowError},
-    task_location::{self, TaskLocationError},
+    logic::task_location::{self, TaskLocationError},
 };
 use crate::AppDbStore;
 
@@ -14,22 +14,9 @@ use crate::AppDbStore;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AddProject {
     /// Project fields parsed from user input.
-    pub fields: AddProjectFields,
+    pub fields: ProjectFields,
     /// Home directory used to expand home-relative task paths.
     pub home: PathBuf,
-}
-
-/// Defines the persisted fields for one managed project.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AddProjectFields {
-    /// Canonical project prefix.
-    pub id: ProjectPrefix,
-    /// Unique project title.
-    pub title: ProjectName,
-    /// Source location reused across matching projects.
-    pub source: ProjectSource,
-    /// Unique pending-work task location.
-    pub tasks: ProjectTasks,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -161,7 +148,7 @@ pub async fn execute(
     .fetch_one(&mut *transaction)
     .await
     .map_err(|error| unexpected("reading created project", error))?;
-    let project = Project::try_from(row)
+    let project = super::logic::project_from_row(row)
         .map_err(|error| unexpected_row("converting created project", error))?;
     transaction
         .commit()
@@ -289,7 +276,7 @@ mod tests {
         home: PathBuf,
     ) -> AddProject {
         AddProject {
-            fields: AddProjectFields {
+            fields: ProjectFields {
                 id: ProjectPrefix::try_new(id).unwrap(),
                 title: ProjectName::try_new(title).unwrap(),
                 source: ProjectSource::new(

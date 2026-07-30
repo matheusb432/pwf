@@ -4,7 +4,7 @@ use pwf_models::pending_work::ProjectName;
 
 use super::{
     dto::ListedNote,
-    identifier::{self, ResolvedProject},
+    logic::{self, ResolvedProject},
 };
 use crate::{AppRecordStore, ProjectNote, pending_work::ProjectRegistry};
 
@@ -87,7 +87,7 @@ where
         number,
     } = query;
     let ResolvedProject { project, prefix: _ } =
-        identifier::resolve_project(projects, &project_identifier).ok_or_else(|| {
+        logic::resolve_project(projects, &project_identifier).ok_or_else(|| {
             ListNotesError::UnknownProject {
                 identifier: project_identifier,
             }

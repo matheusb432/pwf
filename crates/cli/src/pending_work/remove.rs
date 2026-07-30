@@ -1,11 +1,11 @@
 use clap::Args;
 use pwf_application::{
-    AppRecordStore, IndexEntry, PendingWorkRecord,
+    AppRecordStore, IndexEntry, PendingWorkRecord, PendingWorkRemovalConfirmationClient,
     pending_work::{
         ProjectRegistry,
         remove_pending_work_item::{
-            self, RemovalConfirmation, RemovalInteraction, RemovePendingWorkError,
-            RemovePendingWorkItem, RemovePendingWorkItemOk,
+            self, RemovalConfirmation, RemovePendingWorkError, RemovePendingWorkItem,
+            RemovePendingWorkItemOk,
         },
     },
 };
@@ -34,12 +34,12 @@ use crate::{
 };
 
 #[derive(Clone, Copy)]
-struct CliRemovalInteraction {
+struct CliPendingWorkRemovalConfirmationClient {
     console: Console,
     assume_yes: bool,
 }
 
-impl RemovalInteraction for CliRemovalInteraction {
+impl PendingWorkRemovalConfirmationClient for CliPendingWorkRemovalConfirmationClient {
     fn confirm(&self, context: &RemovalConfirmation) -> bool {
         if self.assume_yes {
             return true;
@@ -86,7 +86,7 @@ where
 {
     let id = args.identifier.required("remove")?;
 
-    let interaction = CliRemovalInteraction {
+    let interaction = CliPendingWorkRemovalConfirmationClient {
         console,
         assume_yes: args.assume_yes,
     };

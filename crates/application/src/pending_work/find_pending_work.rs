@@ -1,11 +1,6 @@
 use crate::{
     AppRecordStore, PendingWorkRecord,
-    pending_work::{
-        enrich::{enrich, is_open_item},
-        get_pending_work::PendingWorkItemView,
-        identifier,
-        project_registry::ProjectRegistry,
-    },
+    pending_work::{ProjectRegistry, dto::PendingWorkItemView, logic::finding::find_open_item},
 };
 
 #[derive(Debug, Clone)]
@@ -23,85 +18,6 @@ pub enum FindPendingWorkError {
     UnknownPrefix { id: String, prefix: String },
     #[error("{0}")]
     ReadStore(Box<dyn std::error::Error + Send + Sync>),
-}
-
-/// Finds one open item and applies the same launchability enrichment as list.
-///
-/// Canonical ids route by project prefix. Inline `<project>:<ordinal>` ids require a
-/// case-insensitive scan across managed projects. Open index links determine membership.
-pub(crate) fn find_open_item<S>(
-    store: &S,
-    projects: &ProjectRegistry,
-    id: &str,
-) -> Result<PendingWorkItemView, FindPendingWorkError>
-where
-    S: AppRecordStore<PendingWorkRecord>,
-{
-    let requested = id.to_string();
-    let Some(work_id) = identifier::parse(id) else {
-        return find_inline_open_item(store, projects, &requested);
-    };
-    let prefix = work_id
-        .as_ref()
-        .split_once('-')
-        .map_or("", |(prefix, _)| prefix);
-    if projects.projects_with_prefix(prefix) > 1 {
-        return Err(FindPendingWorkError::AmbiguousId { id: requested });
-    }
-    let project =
-        projects
-            .project_for_id(&work_id)
-            .ok_or_else(|| FindPendingWorkError::UnknownPrefix {
-                id: work_id.as_ref().to_string(),
-                prefix: prefix.to_string(),
-            })?;
-    let repo = projects.repo_for(project).map(str::to_string);
-    let records = store
-        .list(project)
-        .map_err(|error| FindPendingWorkError::ReadStore(Box::new(error)))?;
-    let mut matched: Vec<PendingWorkItemView> = records
-        .iter()
-        .filter(|record| is_open_item(record))
-        .map(|record| {
-            enrich(record, repo.as_deref())
-                .into_pending_work_item_view(project.as_ref().to_string())
-        })
-        .filter(|item| item.id == work_id.as_ref())
-        .collect();
-    match matched.len() {
-        0 => Err(FindPendingWorkError::ItemNotFound { id: requested }),
-        1 => Ok(matched.pop().expect("length checked")),
-        _ => Err(FindPendingWorkError::AmbiguousId { id: requested }),
-    }
-}
-
-/// Finds an inline `<project>:<ordinal>` id case-insensitively across managed projects.
-fn find_inline_open_item<S>(
-    store: &S,
-    projects: &ProjectRegistry,
-    requested: &str,
-) -> Result<PendingWorkItemView, FindPendingWorkError>
-where
-    S: AppRecordStore<PendingWorkRecord>,
-{
-    for (project, repo) in projects.projects() {
-        let records = store
-            .list(project)
-            .map_err(|error| FindPendingWorkError::ReadStore(Box::new(error)))?;
-        for record in records {
-            if !is_open_item(&record) {
-                continue;
-            }
-            let item =
-                enrich(&record, repo).into_pending_work_item_view(project.as_ref().to_string());
-            if item.format == "legacy" && item.id.eq_ignore_ascii_case(requested) {
-                return Ok(item);
-            }
-        }
-    }
-    Err(FindPendingWorkError::ItemNotFound {
-        id: requested.to_string(),
-    })
 }
 
 #[cqrsy::query]

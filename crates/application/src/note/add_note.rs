@@ -2,7 +2,7 @@
 
 use pwf_models::{note::NoteId, pending_work::Timestamp};
 
-use super::{identifier, identifier::ResolvedProject};
+use super::logic::{self, ResolvedProject};
 use crate::{AppRecordStore, Clock, NewProjectNote, ProjectNote, pending_work::ProjectRegistry};
 
 /// Requests creation of one project note.
@@ -111,7 +111,7 @@ where
     C: Clock,
 {
     let ResolvedProject { project, prefix } =
-        identifier::resolve_project(projects, &command.project_identifier).ok_or_else(|| {
+        logic::resolve_project(projects, &command.project_identifier).ok_or_else(|| {
             AddNoteError::UnknownProject {
                 identifier: command.project_identifier.clone(),
             }

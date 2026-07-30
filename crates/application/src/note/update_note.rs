@@ -2,7 +2,7 @@
 
 use pwf_models::note::NoteId;
 
-use super::identifier::{self, ResolvedProject};
+use super::logic::{self, ResolvedProject};
 use crate::{AppRecordStore, ProjectNote, ProjectNotePatch, pending_work::ProjectRegistry};
 
 /// Requests replacement of one project note's topic.
@@ -93,17 +93,15 @@ where
         id: raw_id,
         topic,
     } = command;
-    let ResolvedProject { project, prefix } =
-        identifier::resolve_project(projects, &project_identifier).ok_or_else(|| {
-            UpdateNoteError::UnknownProject {
-                identifier: project_identifier,
-            }
+    let ResolvedProject { project, prefix } = logic::resolve_project(projects, &project_identifier)
+        .ok_or_else(|| UpdateNoteError::UnknownProject {
+            identifier: project_identifier,
         })?;
     let topic = topic.split_whitespace().collect::<Vec<_>>().join(" ");
     if topic.is_empty() {
         return Err(UpdateNoteError::EmptyTopic);
     }
-    let id = identifier::resolve_note(&raw_id, &prefix).ok_or_else(|| {
+    let id = logic::resolve_note(&raw_id, &prefix).ok_or_else(|| {
         UpdateNoteError::InvalidIdentifier {
             id: raw_id,
             prefix: prefix.to_string(),

@@ -3,16 +3,12 @@
 use pwf_models::session::AgentModel;
 use thiserror::Error;
 
-use super::{
-    Agent, AgentLaunch, ClaudeSessionClient, CodexSessionClient, ModelTierCatalog, SessionEffort,
-    VerifySessionOk, task_content,
-};
+use super::{Agent, AgentLaunch, SessionEffort, VerifySessionOk, logic};
 use crate::{
-    AppRecordStore, NoteMarkdownSource, PendingWorkRecord,
+    AgentModelTierCatalogClient, AppRecordStore, ClaudeAgentSessionClient, CodexAgentSessionClient,
+    NoteMarkdownClient, PendingWorkRecord,
     pending_work::{
-        find_pending_work::{FindPendingWorkError, find_open_item},
-        project_registry::ProjectRegistry,
-        session::model_selection::resolve_model,
+        ProjectRegistry, find_pending_work::FindPendingWorkError, logic::finding::find_open_item,
         show_pending_work_item::ShowPendingWorkError,
     },
 };
@@ -44,10 +40,10 @@ pub fn execute(
     query: VerifySession,
     store: &impl AppRecordStore<PendingWorkRecord>,
     projects: &ProjectRegistry,
-    markdown_source: &impl NoteMarkdownSource,
-    model_tiers: &impl ModelTierCatalog,
-    claude: &impl ClaudeSessionClient,
-    codex: &impl CodexSessionClient,
+    markdown_source: &impl NoteMarkdownClient,
+    model_tiers: &impl AgentModelTierCatalogClient,
+    claude: &impl ClaudeAgentSessionClient,
+    codex: &impl CodexAgentSessionClient,
 ) -> Result<VerifySessionOk, VerifySessionError> {
     let probe = match query.agent {
         Agent::Claude => claude.probe(),
@@ -82,8 +78,8 @@ fn prepare_verification(
     query: VerifySession,
     store: &impl AppRecordStore<PendingWorkRecord>,
     projects: &ProjectRegistry,
-    markdown_source: &impl NoteMarkdownSource,
-    model_tiers: &impl ModelTierCatalog,
+    markdown_source: &impl NoteMarkdownClient,
+    model_tiers: &impl AgentModelTierCatalogClient,
 ) -> Result<PreparedVerification, VerifySessionError> {
     let Some(id) = query.id else {
         return Ok(PreparedVerification {
@@ -97,17 +93,19 @@ fn prepare_verification(
     let item = find_open_item(store, projects, &id)?;
     let (model, model_issue) = match query.model_override.into_inner() {
         Some(model) => (Some(model), None),
-        None => match resolve_model(model_tiers, query.agent, &item.id, item.effort.as_deref()) {
-            Ok(model) => (model, None),
-            Err(issue) => (None, Some(issue)),
-        },
+        None => {
+            match logic::resolve_model(model_tiers, query.agent, &item.id, item.effort.as_deref()) {
+                Ok(model) => (model, None),
+                Err(issue) => (None, Some(issue)),
+            }
+        }
     };
     let task_content = if item.launchable {
-        task_content::load(&item.id, store, projects, markdown_source)?
+        logic::load_task_content(&item.id, store, projects, markdown_source)?
     } else {
         item.prompt.clone()
     };
-    let launch = AgentLaunch::new(
+    let launch = logic::agent_launch(
         &item,
         &task_content,
         super::LaunchDirectives::default(),
@@ -139,8 +137,9 @@ mod tests {
 
     use super::{AgentModel, ProjectRegistry, VerifySession};
     use crate::{
-        IndexPlacement, Materialization, NoteMarkdownSource, PendingWorkRecord, RecordId,
-        pending_work::session::{Agent, ModelTierCatalog, ModelTierLookup},
+        AgentModelTierCatalogClient, IndexPlacement, Materialization, NoteMarkdownClient,
+        PendingWorkRecord, RecordId,
+        pending_work::session::{Agent, ModelTierLookup},
         testing::InMemoryStore,
     };
 
@@ -148,9 +147,9 @@ mod tests {
     const TASK_ID: &str = "PWF-0139";
 
     #[derive(Clone)]
-    struct UnusedNoteMarkdownSource;
+    struct UnusedNoteMarkdownClient;
 
-    impl NoteMarkdownSource for UnusedNoteMarkdownSource {
+    impl NoteMarkdownClient for UnusedNoteMarkdownClient {
         type Error = Infallible;
 
         fn read_note_markdown(&self, _path: &Path) -> Result<String, Self::Error> {
@@ -172,7 +171,7 @@ mod tests {
     #[derive(Debug, Clone)]
     struct BrokenCatalog;
 
-    impl ModelTierCatalog for BrokenCatalog {
+    impl AgentModelTierCatalogClient for BrokenCatalog {
         type Error = CatalogError;
 
         fn tier(&self, _effort: EffortTier) -> Result<ModelTierLookup, Self::Error> {
@@ -220,7 +219,7 @@ mod tests {
             },
             &store,
             &projects,
-            &UnusedNoteMarkdownSource,
+            &UnusedNoteMarkdownClient,
             &BrokenCatalog,
         )
         .unwrap();

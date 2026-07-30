@@ -3,12 +3,16 @@ use std::path::PathBuf;
 use pwf_models::pending_work::{ProjectName, WorkItemId, WorkItemStatus};
 
 use super::{
-    find_pending_work::{FindPendingWorkError, find_open_item},
+    ProjectRegistry,
+    find_pending_work::FindPendingWorkError,
     identifier,
-    project_registry::ProjectRegistry,
+    logic::finding::find_open_item,
     store_util::{self, LoadItemError},
 };
-use crate::ports::{AppRecordStore, IndexEntry, Materialization, PendingWorkRecord};
+use crate::ports::{
+    AppRecordStore, IndexEntry, Materialization, PendingWorkRecord,
+    PendingWorkRemovalConfirmationClient,
+};
 
 /// Describes the note and index link deleted by [`execute`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,10 +41,6 @@ pub struct RemovalConfirmation {
     pub title: String,
     pub status: WorkItemStatus,
     pub note_path: PathBuf,
-}
-
-pub trait RemovalInteraction: Clone + Send + Sync + 'static {
-    fn confirm(&self, confirmation: &RemovalConfirmation) -> bool;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -78,7 +78,7 @@ pub fn execute<S, I>(
 ) -> Result<RemovePendingWorkItemOk, RemovePendingWorkError>
 where
     S: AppRecordStore<PendingWorkRecord> + AppRecordStore<IndexEntry>,
-    I: RemovalInteraction,
+    I: PendingWorkRemovalConfirmationClient,
 {
     let not_found = || RemovePendingWorkError::ItemNotFound { id: cmd.id.clone() };
     let Some(pending_work_identifier) = identifier::parse(&cmd.id) else {
@@ -152,12 +152,12 @@ mod tests {
     use pwf_models::pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus};
 
     use super::{
-        ProjectRegistry, RemovalConfirmation, RemovalInteraction, RemovePendingWorkError,
-        RemovePendingWorkItem, RemovePendingWorkItemOk, execute,
+        ProjectRegistry, RemovalConfirmation, RemovePendingWorkError, RemovePendingWorkItem,
+        RemovePendingWorkItemOk, execute,
     };
     use crate::{
-        IndexEntry, IndexEntryState, Materialization, PendingWorkRecord, RecordId,
-        testing::InMemoryStore,
+        IndexEntry, IndexEntryState, Materialization, PendingWorkRecord,
+        PendingWorkRemovalConfirmationClient, RecordId, testing::InMemoryStore,
     };
 
     fn registry() -> ProjectRegistry {
@@ -218,7 +218,7 @@ mod tests {
     #[derive(Clone)]
     struct Accepted;
 
-    impl RemovalInteraction for Accepted {
+    impl PendingWorkRemovalConfirmationClient for Accepted {
         fn confirm(&self, _confirmation: &RemovalConfirmation) -> bool {
             true
         }
@@ -311,7 +311,7 @@ mod tests {
 
     mod pwf_0144 {
         use super::{
-            super::{RemovalConfirmation, RemovalInteraction, RemovePendingWorkItemOk},
+            super::{RemovalConfirmation, RemovePendingWorkItemOk},
             *,
         };
 
@@ -324,7 +324,7 @@ mod tests {
             accepted: bool,
         }
 
-        impl RemovalInteraction for StaticInteraction {
+        impl PendingWorkRemovalConfirmationClient for StaticInteraction {
             fn confirm(&self, _confirmation: &RemovalConfirmation) -> bool {
                 self.accepted
             }

@@ -2,8 +2,6 @@
 
 use pwf_models::session::{Agent, DispatchMode, LaunchDirectives, SessionEffort};
 
-use crate::pending_work::PendingWorkItemView;
-
 /// Describes a provider-neutral agent launch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentLaunch {
@@ -15,27 +13,6 @@ pub struct AgentLaunch {
     pub model: Option<String>,
     pub effort: SessionEffort,
 }
-impl AgentLaunch {
-    pub fn new(
-        item: &PendingWorkItemView,
-        task_content: &str,
-        directives: LaunchDirectives,
-        agent: Agent,
-        model: Option<String>,
-        effort: SessionEffort,
-    ) -> Self {
-        AgentLaunch {
-            agent,
-            task_id: item.id.clone(),
-            title: super::launch::thread_title(item, directives, agent, effort),
-            repository: item.repo.clone().unwrap_or_default(),
-            prompt: super::launch::launch_prompt(task_content, &item.id, directives),
-            model,
-            effort,
-        }
-    }
-}
-
 /// Groups a provider-neutral launch with its mechanical dispatch destination.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionPlan {

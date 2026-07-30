@@ -1,7 +1,10 @@
 use std::{path::PathBuf, str::FromStr};
 
 use clap::{Args, ValueEnum};
-use pwf_application::project::add_project::{self, AddProject, AddProjectFields};
+use pwf_application::project::{
+    ProjectFields,
+    add_project::{self, AddProject},
+};
 use pwf_infra::SqliteStore;
 use pwf_models::project::{
     ProjectName, ProjectPrefix, ProjectSource, ProjectSourceKind, ProjectSourceValue, ProjectTasks,
@@ -27,7 +30,7 @@ pub enum SourceKind {
 }
 
 #[derive(Clone, Debug)]
-pub struct DirectoryPayload(pub AddProjectFields);
+pub struct DirectoryPayload(pub ProjectFields);
 
 impl FromStr for DirectoryPayload {
     type Err = String;
@@ -51,7 +54,7 @@ impl FromStr for DirectoryPayload {
         let tasks_path = ProjectTasksPath::try_new(path)
             .map_err(|_| "project tasks path must not be blank".to_string())?;
 
-        Ok(Self(AddProjectFields {
+        Ok(Self(ProjectFields {
             id,
             title,
             source: ProjectSource::new(ProjectSourceKind::Directory, source_value),

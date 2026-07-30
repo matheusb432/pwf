@@ -78,7 +78,7 @@ pub async fn execute(
     };
 
     rows.into_iter()
-        .map(Project::try_from)
+        .map(super::logic::project_from_row)
         .collect::<Result<Vec<_>, ProjectRowError>>()
         .map_err(|error| unexpected_row("converting listed project", error))
 }

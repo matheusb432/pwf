@@ -1,6 +1,10 @@
 //! Creates named Codex threads and prepares resume launches.
 
-use pwf_application::pending_work::session::{self, AgentLaunch, AgentProbe, CodexSessionClient};
+use pwf_application::{
+    CodexAgentSessionClient,
+    pending_work::session::{AgentLaunch, AgentProbe},
+    ports,
+};
 
 use super::{
     super::codex_app_server::{NamedCodexThread, start_and_name_thread},
@@ -78,7 +82,7 @@ impl CodexHarness {
     }
 }
 
-impl CodexSessionClient for CodexHarness {
+impl CodexAgentSessionClient for CodexHarness {
     type Error = CodexThreadPreparationError;
 
     fn probe(&self) -> AgentProbe {
@@ -89,9 +93,9 @@ impl CodexSessionClient for CodexHarness {
         Self::preview(launch)
     }
 
-    fn prepare(&self, launch: &AgentLaunch) -> Result<session::PreparedCodexLaunch, Self::Error> {
+    fn prepare(&self, launch: &AgentLaunch) -> Result<ports::PreparedCodexLaunch, Self::Error> {
         let prepared = Self::prepare(launch)?;
-        Ok(session::PreparedCodexLaunch::new(
+        Ok(ports::PreparedCodexLaunch::new(
             prepared.thread_id,
             prepared.argv,
         ))

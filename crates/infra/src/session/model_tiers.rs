@@ -2,7 +2,10 @@
 
 use std::{collections::BTreeMap, path::PathBuf};
 
-use pwf_application::pending_work::session::{ModelTier, ModelTierCatalog, ModelTierLookup};
+use pwf_application::{
+    AgentModelTierCatalogClient,
+    pending_work::session::{ModelTier, ModelTierLookup},
+};
 use pwf_models::pending_work::EffortTier;
 use serde::Deserialize;
 use thiserror::Error;
@@ -28,7 +31,7 @@ pub enum ModelTiersError {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct TomlModelTierCatalog;
 
-impl ModelTierCatalog for TomlModelTierCatalog {
+impl AgentModelTierCatalogClient for TomlModelTierCatalog {
     type Error = ModelTiersError;
 
     fn tier(&self, effort: EffortTier) -> Result<ModelTierLookup, Self::Error> {

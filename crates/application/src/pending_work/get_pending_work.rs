@@ -1,82 +1,17 @@
 use std::path::PathBuf;
 
-use pwf_models::pending_work::{EffortTier, ProjectName, Tags, WorkItemId, WorkItemStatus};
+use pwf_models::pending_work::{EffortTier, ProjectName, Tags, WorkItemStatus};
 
-use super::{prerequisite, tag_policy};
+#[cfg(test)]
+use super::dto::PrerequisiteStatus;
+use super::{dto::PendingWorkItemView, prerequisite, tag_policy};
 use crate::{
     AppRecordStore, PendingWorkRecord, ProjectTaskLocationClient,
     pending_work::{
+        ProjectRegistry,
         enrich::{enrich, is_open_item},
-        project_registry::ProjectRegistry,
     },
 };
-
-/// Describes the persisted lifecycle status of one prerequisite item.
-///
-/// A [`None`] status means the prerequisite could not be resolved.
-///
-/// # Examples
-///
-/// ```
-/// use pwf_application::pending_work::get_pending_work::PrerequisiteStatus;
-/// use pwf_models::pending_work::{WorkItemId, WorkItemStatus};
-///
-/// let prerequisite = PrerequisiteStatus {
-///     id: WorkItemId::try_new("PWF-0001").unwrap(),
-///     status: Some(WorkItemStatus::Done),
-/// };
-/// assert_eq!(prerequisite.status, Some(WorkItemStatus::Done));
-/// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PrerequisiteStatus {
-    /// Canonical prerequisite identifier.
-    pub id: WorkItemId,
-    /// Persisted status, or [`None`] when lookup cannot resolve the record.
-    pub status: Option<WorkItemStatus>,
-}
-
-/// Contains one pending-work item projected for list and launch consumers.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PendingWorkItemView {
-    /// Canonical item id, or `<project>:<ordinal>` for a legacy inline item.
-    pub id: String,
-    /// Managed project containing the item.
-    pub project: String,
-    /// Retains the persisted lifecycle status.
-    pub status: WorkItemStatus,
-    /// Title-derived label used for session display and launch.
-    pub session: String,
-    /// Trimmed prompt body used for launch.
-    pub prompt: String,
-    /// Configured project repository, when mapped.
-    pub repo: Option<String>,
-    /// Source note path displayed for the item.
-    pub note: String,
-    /// Materialized item-note path; absent for legacy inline items.
-    pub item_file: Option<String>,
-    /// Source line associated with the item.
-    pub line: usize,
-    /// Materialization format: `file` or `legacy`.
-    pub format: String,
-    /// Whether the item has no launch-blocking issues.
-    pub launchable: bool,
-    /// Whether the prompt is missing or still a placeholder.
-    pub needs_prompt: bool,
-    /// Ordered launchability diagnostics.
-    pub issues: Vec<String>,
-    /// Normalized index section label, when sectioned.
-    pub section: Option<String>,
-    /// Persisted prerequisite frontmatter value.
-    pub prereq: Option<String>,
-    /// Prerequisite lifecycle projections requested for long output.
-    pub prerequisite_statuses: Vec<PrerequisiteStatus>,
-    /// Persisted effort value.
-    pub effort: Option<String>,
-    /// Persisted tags frontmatter value.
-    pub tags: Option<String>,
-    /// Persisted creation value.
-    pub created: Option<String>,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GetPendingWorkOk {

@@ -1,13 +1,3 @@
-//! Defines repository, inline-process, and tmux capabilities for sessions.
-
-pub trait InlineSessionClient: Clone + Send + Sync + 'static {
-    fn run(&self, argv: &[String], repository: &str) -> Result<(), String>;
-}
-
-pub trait RepositorySessionClient: Clone + Send + Sync + 'static {
-    fn is_directory(&self, path: &str) -> bool;
-}
-
 pub trait TmuxSessionClient: Clone + Send + Sync + 'static {
     fn available(&self) -> bool;
 

@@ -1,7 +1,8 @@
 use super::{
+    ProjectRegistry,
     add_pending_work_item::AddPendingWorkError,
-    complete_pending_work::{CloseError, ClosedItemAction, CompletePendingWorkOk, perform_close},
-    project_registry::ProjectRegistry,
+    complete_pending_work::{ClosedItemAction, CompletePendingWorkOk},
+    logic::pending_work_closing::{CloseError, perform_close},
 };
 use crate::ports::{AppRecordStore, Clock, IndexEntry, IndexSection, PendingWorkRecord};
 

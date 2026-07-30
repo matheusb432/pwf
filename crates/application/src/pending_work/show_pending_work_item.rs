@@ -5,11 +5,12 @@ use pwf_models::pending_work::{
 };
 
 use crate::{
-    AppRecordStore, Materialization, NoteMarkdownSource, PendingWorkRecord,
-    pending_work::{project_registry::ProjectRegistry, resolve::resolve_record},
+    AppRecordStore, Materialization, NoteMarkdownClient, PendingWorkRecord, RecordId,
+    pending_work::{
+        ProjectRegistry,
+        logic::{prerequisite, resolve::resolve_record, tag_policy},
+    },
 };
-
-mod data;
 
 /// Selects the representation returned by [`execute`].
 ///
@@ -116,7 +117,7 @@ pub fn execute<S, N>(
 ) -> Result<ShowPendingWorkItemOk, ShowPendingWorkError>
 where
     S: AppRecordStore<PendingWorkRecord>,
-    N: NoteMarkdownSource,
+    N: NoteMarkdownClient,
 {
     let (project, record) = resolve_record(store, projects, &query.id)?;
     match query.output {
@@ -130,9 +131,72 @@ where
                 .map_err(|error| ShowPendingWorkError::ReadMarkdown(Box::new(error)))
         }
         ShowOutput::Markdown => Ok(ShowPendingWorkItemOk::Markdown(record.source)),
-        ShowOutput::Json => data::from_record(project, record)
+        ShowOutput::Json => pending_work_item_data(project, record)
             .map(Box::new)
             .map(ShowPendingWorkItemOk::Json),
+    }
+}
+
+fn pending_work_item_data(
+    project: ProjectName,
+    record: PendingWorkRecord,
+) -> Result<PendingWorkItemData, ShowPendingWorkError> {
+    let tags = record
+        .tags
+        .as_deref()
+        .map(tag_policy::parse_frontmatter)
+        .transpose()
+        .map_err(|error| invalid_item_data("tags", error))?;
+    let effort = record.effort.as_deref().map(parse_effort).transpose()?;
+    let prerequisites = record
+        .prereq
+        .as_deref()
+        .map(prerequisite::parse_frontmatter)
+        .transpose()
+        .map_err(|error| invalid_item_data("prerequisites", error))?;
+    let id = match record.id {
+        RecordId::Item(id) => id.to_string(),
+        RecordId::Inline(ordinal) => format!("{project}:{ordinal}"),
+    };
+
+    Ok(PendingWorkItemData {
+        id,
+        project,
+        title: record.title,
+        status: record.status,
+        created: record.created,
+        completed: record.completed,
+        commits: record
+            .commits
+            .map(|value| unquote_scalar(&value).to_string()),
+        tags,
+        effort,
+        prerequisites,
+        section: record.section,
+        prompt: record.body.trim().to_string(),
+    })
+}
+
+fn unquote_scalar(raw: &str) -> &str {
+    raw.strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .or_else(|| {
+            raw.strip_prefix('\'')
+                .and_then(|value| value.strip_suffix('\''))
+        })
+        .unwrap_or(raw)
+}
+
+fn parse_effort(raw: &str) -> Result<EffortTier, ShowPendingWorkError> {
+    raw.trim()
+        .parse()
+        .map_err(|error| invalid_item_data("effort", error))
+}
+
+fn invalid_item_data(field: &'static str, error: impl std::fmt::Display) -> ShowPendingWorkError {
+    ShowPendingWorkError::InvalidItemData {
+        field,
+        reason: error.to_string(),
     }
 }
 
@@ -142,14 +206,14 @@ mod tests {
 
     use super::{ShowOutput, ShowPendingWorkItem, ShowPendingWorkItemOk};
     use crate::{
-        NoteMarkdownSource,
-        pending_work::resolve::testing::{PWF_0001_SOURCE, staged, staged_ghost},
+        NoteMarkdownClient,
+        pending_work::logic::resolve::testing::{PWF_0001_SOURCE, staged, staged_ghost},
     };
 
     #[derive(Debug, Clone)]
-    struct UnusedNoteMarkdownSource;
+    struct UnusedNoteMarkdownClient;
 
-    impl NoteMarkdownSource for UnusedNoteMarkdownSource {
+    impl NoteMarkdownClient for UnusedNoteMarkdownClient {
         type Error = Infallible;
 
         fn read_note_markdown(&self, _path: &Path) -> Result<String, Self::Error> {
@@ -162,9 +226,9 @@ mod tests {
     struct StagedNoteReadError;
 
     #[derive(Debug, Clone)]
-    struct FailingNoteMarkdownSource;
+    struct FailingNoteMarkdownClient;
 
-    impl NoteMarkdownSource for FailingNoteMarkdownSource {
+    impl NoteMarkdownClient for FailingNoteMarkdownClient {
         type Error = StagedNoteReadError;
 
         fn read_note_markdown(&self, _path: &Path) -> Result<String, Self::Error> {
@@ -183,7 +247,7 @@ mod tests {
             },
             &store,
             &registry,
-            &UnusedNoteMarkdownSource,
+            &UnusedNoteMarkdownClient,
         )
         .unwrap();
 
@@ -204,7 +268,7 @@ mod tests {
             },
             &store,
             &registry,
-            &UnusedNoteMarkdownSource,
+            &UnusedNoteMarkdownClient,
         )
         .unwrap();
 
@@ -225,7 +289,7 @@ mod tests {
             },
             &store,
             &registry,
-            &FailingNoteMarkdownSource,
+            &FailingNoteMarkdownClient,
         )
         .unwrap_err();
 

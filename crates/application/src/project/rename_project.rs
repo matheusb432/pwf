@@ -8,12 +8,11 @@ use pwf_models::project::{
 };
 
 use super::{
-    Project,
-    add_project::AddProjectFields,
+    Project, ProjectFields,
     dto::{ProjectRow, ProjectRowError},
     get_project::{self, GetProject, GetProjectError},
+    logic::task_location::{self, TaskLocationError},
     resolve_runtime_path::{self, ResolveRuntimePath},
-    task_location::{self, TaskLocationError},
 };
 use crate::{
     AppDbStore, ProjectTaskFilesClient, ProjectTaskFilesRenameCommit, StagedProjectTaskFilesRename,
@@ -25,7 +24,7 @@ pub struct RenameProject {
     /// Existing project prefix.
     pub current_id: ProjectPrefix,
     /// Replacement project fields.
-    pub fields: AddProjectFields,
+    pub fields: ProjectFields,
     /// Home directory used to expand home-relative task paths.
     pub home: PathBuf,
 }
@@ -214,7 +213,7 @@ async fn rename_registry(
     .fetch_one(&mut *transaction)
     .await
     .map_err(|error| unexpected("reading renamed project", error))?;
-    let project = Project::try_from(row)
+    let project = super::logic::project_from_row(row)
         .map_err(|error| unexpected_row("converting renamed project", error))?;
     transaction
         .commit()
@@ -329,8 +328,8 @@ fn resolve_tasks_path(
     })
 }
 
-fn project_fields(project: &Project) -> AddProjectFields {
-    AddProjectFields {
+fn project_fields(project: &Project) -> ProjectFields {
+    ProjectFields {
         id: project.id.clone(),
         title: project.title.clone(),
         source: project.source.clone(),
@@ -370,7 +369,7 @@ async fn validate_identity(
             id: command.current_id.clone(),
         });
     };
-    let current = Project::try_from(current_row)
+    let current = super::logic::project_from_row(current_row)
         .map_err(|error| unexpected_row("converting source project", error))?;
     if current != *expected_current {
         return Err(RenameProjectError::SourceProjectChanged {
@@ -489,7 +488,7 @@ mod tests {
         StagedProjectTaskFilesRename,
         ports::TestDatabase,
         project::{
-            add_project::AddProjectFields,
+            ProjectFields,
             rename_project::{self, RenameProject, RenameProjectError},
         },
     };
@@ -535,8 +534,8 @@ mod tests {
         }
     }
 
-    fn fields(id: &str, title: &str, source: &str, tasks: &str) -> AddProjectFields {
-        AddProjectFields {
+    fn fields(id: &str, title: &str, source: &str, tasks: &str) -> ProjectFields {
+        ProjectFields {
             id: ProjectPrefix::try_new(id).unwrap(),
             title: ProjectName::try_new(title).unwrap(),
             source: ProjectSource::new(

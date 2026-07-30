@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::Args;
 use pwf_application::project::{
-    add_project::AddProjectFields,
+    ProjectFields,
     rename_project::{self, RenameProject},
 };
 use pwf_infra::{SqliteStore, obsidian::ObsidianProjectTaskFilesClient};
@@ -37,7 +37,7 @@ pub(super) async fn run(
     database: &SqliteStore,
     home: PathBuf,
 ) -> Result<String, String> {
-    let fields = AddProjectFields {
+    let fields = ProjectFields {
         id: arguments.destination_id,
         title: arguments.title,
         source: ProjectSource::new(ProjectSourceKind::Directory, arguments.source),

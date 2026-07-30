@@ -1,8 +1,7 @@
 use pwf_models::pending_work::{ProjectName, WorkItemId, WorkItemStatus};
 
 use super::{
-    identifier,
-    project_registry::ProjectRegistry,
+    ProjectRegistry, identifier,
     store_util::{self, LoadItemError},
 };
 use crate::ports::{AppRecordStore, IndexEntry, IndexEntryState, ItemPatch, PendingWorkRecord};

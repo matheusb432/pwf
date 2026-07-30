@@ -62,7 +62,7 @@ pub async fn execute(
     .map_err(|error| unexpected("reading project", error))?
     .ok_or(GetProjectError::ProjectNotFound { id: query.id })?;
 
-    Project::try_from(row).map_err(|error| unexpected_row("converting project", error))
+    super::logic::project_from_row(row).map_err(|error| unexpected_row("converting project", error))
 }
 
 fn unexpected(

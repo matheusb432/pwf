@@ -3,9 +3,9 @@ use std::{error::Error, path::PathBuf};
 use pwf_models::project::ProjectPrefix;
 
 use super::{
-    Project, ProjectStateChange,
+    ProjectStateChange,
     dto::{ProjectRow, ProjectRowError},
-    task_location::{self, TaskLocationError},
+    logic::task_location::{self, TaskLocationError},
 };
 use crate::AppDbStore;
 
@@ -126,7 +126,7 @@ pub async fn execute(
     .ok_or(ResumeProjectError::ProjectNotFound {
         id: command.id.clone(),
     })?;
-    let project = Project::try_from(row)
+    let project = super::logic::project_from_row(row)
         .map_err(|error| unexpected_row("converting resumed project", error))?;
     transaction
         .commit()

@@ -3,7 +3,7 @@ use std::error::Error;
 use pwf_models::project::ProjectPrefix;
 
 use super::{
-    Project, ProjectStateChange,
+    ProjectStateChange,
     dto::{ProjectRow, ProjectRowError},
 };
 use crate::AppDbStore;
@@ -77,7 +77,7 @@ pub async fn execute(
     .await
     .map_err(|error| unexpected("reading paused project", error))?
     .ok_or(PauseProjectError::ProjectNotFound { id: command.id })?;
-    let project = Project::try_from(row)
+    let project = super::logic::project_from_row(row)
         .map_err(|error| unexpected_row("converting paused project", error))?;
     transaction
         .commit()

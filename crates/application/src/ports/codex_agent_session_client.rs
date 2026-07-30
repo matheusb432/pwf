@@ -1,18 +1,8 @@
-//! Defines the distinct Claude and Codex capabilities used by session operations.
-
 use std::error::Error;
 
-use super::{AgentLaunch, AgentProbe};
+use crate::pending_work::session::{AgentLaunch, AgentProbe};
 
-pub trait ClaudeSessionClient: Clone + Send + Sync + 'static {
-    fn probe(&self) -> AgentProbe;
-
-    fn preview(&self, launch: &AgentLaunch) -> Vec<String>;
-
-    fn prepare(&self, launch: &AgentLaunch) -> Vec<String>;
-}
-
-pub trait CodexSessionClient: Clone + Send + Sync + 'static {
+pub trait CodexAgentSessionClient: Clone + Send + Sync + 'static {
     type Error: Error + Send + Sync + 'static;
 
     fn probe(&self) -> AgentProbe;

@@ -1,6 +1,9 @@
 //! Prepares native Claude Code launches.
 
-use pwf_application::pending_work::session::{AgentLaunch, AgentProbe, ClaudeSessionClient};
+use pwf_application::{
+    ClaudeAgentSessionClient,
+    pending_work::session::{AgentLaunch, AgentProbe},
+};
 
 use super::{argv::LaunchArgv, probe};
 use crate::session::claude_effort::ClaudeEffort;
@@ -62,7 +65,7 @@ impl ClaudeHarness {
     }
 }
 
-impl ClaudeSessionClient for ClaudeHarness {
+impl ClaudeAgentSessionClient for ClaudeHarness {
     fn probe(&self) -> AgentProbe {
         Self::probe()
     }

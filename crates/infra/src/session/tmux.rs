@@ -2,7 +2,7 @@
 
 use std::process::{Command, Output};
 
-use pwf_application::pending_work::session::TmuxSessionClient;
+use pwf_application::TmuxSessionClient;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct TmuxHarness;

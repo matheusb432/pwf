@@ -5,8 +5,8 @@ use pwf_models::project::ProjectPrefix;
 use super::{
     Project,
     list_projects::{self, ListProjects, ListProjectsError},
+    logic::task_location::{self, TaskLocationError},
     resolve_runtime_path::{self, ResolveRuntimePath, RuntimePathError},
-    task_location::{self, TaskLocationError},
 };
 use crate::AppDbStore;
 

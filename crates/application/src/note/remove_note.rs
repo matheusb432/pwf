@@ -2,7 +2,7 @@
 
 use pwf_models::note::NoteId;
 
-use super::identifier::{self, ResolvedProject};
+use super::logic::{self, ResolvedProject};
 use crate::{ProjectNoteStore, pending_work::ProjectRegistry};
 
 /// Requests deletion of one project note.
@@ -84,13 +84,11 @@ where
         project_identifier,
         id: raw_id,
     } = command;
-    let ResolvedProject { project, prefix } =
-        identifier::resolve_project(projects, &project_identifier).ok_or_else(|| {
-            RemoveNoteError::UnknownProject {
-                identifier: project_identifier,
-            }
+    let ResolvedProject { project, prefix } = logic::resolve_project(projects, &project_identifier)
+        .ok_or_else(|| RemoveNoteError::UnknownProject {
+            identifier: project_identifier,
         })?;
-    let id = identifier::resolve_note(&raw_id, &prefix).ok_or_else(|| {
+    let id = logic::resolve_note(&raw_id, &prefix).ok_or_else(|| {
         RemoveNoteError::InvalidIdentifier {
             id: raw_id,
             prefix: prefix.to_string(),

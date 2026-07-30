@@ -1,7 +1,4 @@
-use pwf_models::project::{
-    Project, ProjectName, ProjectPrefix, ProjectSource, ProjectSourceKind, ProjectSourceValue,
-    ProjectTasks, ProjectTasksKind, ProjectTasksPath,
-};
+use pwf_models::project::{Project, ProjectName, ProjectPrefix, ProjectSource, ProjectTasks};
 
 /// Describes the current project and whether a requested state transition changed it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -10,6 +7,14 @@ pub struct ProjectStateChange {
     pub project: Project,
     /// Reports whether the requested transition changed persisted state.
     pub changed: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectFields {
+    pub id: ProjectPrefix,
+    pub title: ProjectName,
+    pub source: ProjectSource,
+    pub tasks: ProjectTasks,
 }
 
 #[derive(Debug)]
@@ -27,59 +32,7 @@ pub(super) struct ProjectRow {
 #[derive(Debug, thiserror::Error)]
 #[error("persisted project {field} value {value:?} is invalid: {reason}")]
 pub(super) struct ProjectRowError {
-    field: &'static str,
-    value: String,
-    reason: String,
-}
-
-impl TryFrom<ProjectRow> for Project {
-    type Error = ProjectRowError;
-
-    fn try_from(row: ProjectRow) -> Result<Self, Self::Error> {
-        let id = convert("id", row.id, ProjectPrefix::try_new)?;
-        let title = convert("title", row.title, ProjectName::try_new)?;
-        let source_kind = convert("source kind", row.source_kind, |value| {
-            ProjectSourceKind::try_from(value.as_str())
-        })?;
-        let source_value = convert(
-            "source value",
-            row.source_value,
-            ProjectSourceValue::try_new,
-        )?;
-        let tasks_kind = convert("tasks kind", row.tasks_kind, |value| {
-            ProjectTasksKind::try_from(value.as_str())
-        })?;
-        let tasks_path = convert("tasks path", row.tasks_path, ProjectTasksPath::try_new)?;
-        if row.created_at.is_empty() {
-            return Err(ProjectRowError {
-                field: "created_at",
-                value: row.created_at,
-                reason: "value cannot be empty".to_string(),
-            });
-        }
-
-        Ok(Self {
-            id,
-            title,
-            source: ProjectSource::new(source_kind, source_value),
-            tasks: ProjectTasks::new(tasks_kind, tasks_path),
-            created_at: row.created_at,
-            is_paused: row.is_paused,
-        })
-    }
-}
-
-fn convert<T, E>(
-    field: &'static str,
-    value: String,
-    conversion: impl FnOnce(String) -> Result<T, E>,
-) -> Result<T, ProjectRowError>
-where
-    E: std::fmt::Display,
-{
-    conversion(value.clone()).map_err(|error| ProjectRowError {
-        field,
-        value,
-        reason: error.to_string(),
-    })
+    pub(super) field: &'static str,
+    pub(super) value: String,
+    pub(super) reason: String,
 }

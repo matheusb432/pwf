@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use pwf_application::NoteMarkdownSource;
+use pwf_application::NoteMarkdownClient;
 use pwf_models::pending_work::ProjectName;
 
 use super::{
@@ -26,7 +26,7 @@ impl ObsidianStore {
     }
 }
 
-impl NoteMarkdownSource for ObsidianStore {
+impl NoteMarkdownClient for ObsidianStore {
     type Error = ObsidianStoreError;
 
     fn read_note_markdown(&self, path: &Path) -> Result<String, Self::Error> {

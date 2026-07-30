@@ -6,20 +6,19 @@ use pwf_models::session::AgentModel;
 use thiserror::Error;
 
 use super::{
-    Agent, AgentProbe, ClaudeSessionClient, CodexSessionClient, DispatchConfirmation, DispatchMode,
-    LaunchDirectives, ModelTierCatalog, RepositorySessionClient, SessionEffort, SessionPlan,
-    TmuxSessionClient, launch::dispatch_target, model_selection::resolve_model, task_content,
+    Agent, AgentProbe, DispatchConfirmation, DispatchMode, LaunchDirectives, SessionEffort,
+    SessionPlan, logic,
 };
 use crate::{
-    AppRecordStore, NoteMarkdownSource, PendingWorkRecord,
+    AgentModelTierCatalogClient, AppRecordStore, ClaudeAgentSessionClient, CodexAgentSessionClient,
+    NoteMarkdownClient, PendingWorkRecord, RepositoryDirectoryClient, TmuxSessionClient,
     pending_work::{
-        find_pending_work::{FindPendingWorkError, find_open_item},
-        project_registry::ProjectRegistry,
-        session::AgentLaunch,
+        ProjectRegistry,
+        dto::PreparedPendingWorkUpdate,
+        find_pending_work::FindPendingWorkError,
+        logic::{finding::find_open_item, pending_work_update},
         show_pending_work_item::ShowPendingWorkError,
-        update_pending_work_item::{
-            self, PreparedPendingWorkUpdate, UpdatePendingWorkError, UpdatePendingWorkItem,
-        },
+        update_pending_work_item::{UpdatePendingWorkError, UpdatePendingWorkItem},
     },
 };
 
@@ -140,12 +139,12 @@ pub enum PlanSessionError {
 )]
 pub fn execute(
     command: &PlanSession,
-    store: &(impl AppRecordStore<PendingWorkRecord> + NoteMarkdownSource),
+    store: &(impl AppRecordStore<PendingWorkRecord> + NoteMarkdownClient),
     projects: &ProjectRegistry,
-    model_tiers: &impl ModelTierCatalog,
-    repository: &impl RepositorySessionClient,
-    claude: &impl ClaudeSessionClient,
-    codex: &impl CodexSessionClient,
+    model_tiers: &impl AgentModelTierCatalogClient,
+    repository: &impl RepositoryDirectoryClient,
+    claude: &impl ClaudeAgentSessionClient,
+    codex: &impl CodexAgentSessionClient,
     tmux: &impl TmuxSessionClient,
 ) -> Result<PlanSessionOk, PlanSessionError> {
     let probe = match command.agent {
@@ -162,15 +161,15 @@ pub fn execute(
 
     let model: AgentModel = match command.model_override.clone().into_inner() {
         Some(model) => Some(model),
-        None => resolve_model(model_tiers, command.agent, &item.id, item.effort.as_deref())
+        None => logic::resolve_model(model_tiers, command.agent, &item.id, item.effort.as_deref())
             .map_err(|error| PlanSessionError::ModelTier(Box::new(error)))?,
     }
     .into();
     let prepared_update = prepare_append(command, &item.id, store, projects)?;
-    let target = dispatch_target(&item.id);
-    let task_content = task_content::load(&item.id, store, projects, store)?;
+    let target = logic::dispatch_target(&item.id);
+    let task_content = logic::load_task_content(&item.id, store, projects, store)?;
     let plan = SessionPlan {
-        launch: AgentLaunch::new(
+        launch: logic::agent_launch(
             &item,
             &task_content,
             command.directives,
@@ -259,7 +258,7 @@ fn prepare_append(
     else {
         return Ok(None);
     };
-    update_pending_work_item::prepare(
+    pending_work_update::prepare(
         &UpdatePendingWorkItem {
             id: item_id.to_string(),
             prompt: None,

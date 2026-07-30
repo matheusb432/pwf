@@ -4,16 +4,13 @@ use std::error::Error;
 
 use thiserror::Error;
 
-use super::{
-    Agent, ClaudeSessionClient, CodexSessionClient, DispatchMode, DispatchTarget,
-    InlineSessionClient, TmuxSessionClient, plan_session::PreparedSessionDispatch, task_content,
-};
+use super::{Agent, DispatchMode, DispatchTarget, logic, plan_session::PreparedSessionDispatch};
 use crate::{
-    AppRecordStore, NoteMarkdownSource, PendingWorkRecord,
+    AppRecordStore, ClaudeAgentSessionClient, CodexAgentSessionClient, InlineAgentSessionClient,
+    NoteMarkdownClient, PendingWorkRecord, TmuxSessionClient,
     pending_work::{
-        project_registry::ProjectRegistry,
-        show_pending_work_item::ShowPendingWorkError,
-        update_pending_work_item::{self, UpdatePendingWorkError},
+        ProjectRegistry, logic::pending_work_update, show_pending_work_item::ShowPendingWorkError,
+        update_pending_work_item::UpdatePendingWorkError,
     },
 };
 
@@ -68,11 +65,11 @@ pub enum DispatchSessionError {
 #[cqrsy::command]
 pub fn execute(
     command: DispatchSession,
-    store: &(impl AppRecordStore<PendingWorkRecord> + NoteMarkdownSource),
+    store: &(impl AppRecordStore<PendingWorkRecord> + NoteMarkdownClient),
     projects: &ProjectRegistry,
-    claude: &impl ClaudeSessionClient,
-    codex: &impl CodexSessionClient,
-    inline: &impl InlineSessionClient,
+    claude: &impl ClaudeAgentSessionClient,
+    codex: &impl CodexAgentSessionClient,
+    inline: &impl InlineAgentSessionClient,
     tmux: &impl TmuxSessionClient,
 ) -> Result<DispatchSessionOk, DispatchSessionError> {
     let PreparedSessionDispatch {
@@ -82,13 +79,10 @@ pub fn execute(
         ..
     } = command.prepared;
     if let Some(prepared_update) = prepared_update {
-        update_pending_work_item::persist(prepared_update, store)?;
-        let task_content = task_content::load(&plan.launch.task_id, store, projects, store)?;
-        plan.launch.prompt = super::launch::launch_prompt(
-            &task_content,
-            &plan.launch.task_id,
-            confirmation.directives,
-        );
+        pending_work_update::persist(prepared_update, store)?;
+        let task_content = logic::load_task_content(&plan.launch.task_id, store, projects, store)?;
+        plan.launch.prompt =
+            logic::launch_prompt(&task_content, &plan.launch.task_id, confirmation.directives);
     }
 
     match plan.launch.agent {
@@ -115,7 +109,7 @@ pub fn execute(
 fn dispatch_host(
     argv: &[String],
     plan: &super::SessionPlan,
-    inline: &impl InlineSessionClient,
+    inline: &impl InlineAgentSessionClient,
     tmux: &impl TmuxSessionClient,
 ) -> Result<DispatchSessionOk, DispatchSessionError> {
     match plan.mode {

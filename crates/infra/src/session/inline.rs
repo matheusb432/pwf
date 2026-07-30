@@ -2,7 +2,7 @@
 
 use std::process::Command;
 
-use pwf_application::pending_work::session::InlineSessionClient;
+use pwf_application::InlineAgentSessionClient;
 
 /// Executes prepared agent commands inline.
 #[derive(Debug, Clone, Copy, Default)]
@@ -31,7 +31,7 @@ impl InlineHarness {
     }
 }
 
-impl InlineSessionClient for InlineHarness {
+impl InlineAgentSessionClient for InlineHarness {
     fn run(&self, argv: &[String], repository: &str) -> Result<(), String> {
         Self::run(argv, repository)
     }
