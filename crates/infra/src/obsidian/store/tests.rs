@@ -5,8 +5,8 @@ use pwf_application::{
     Materialization, NewItem, PendingWorkRecord, RecordId,
 };
 use pwf_models::pending_work::{
-    EffortTier, ProjectIndexIdentity, ProjectName, ProjectPrefix, Tag, Tags, Timestamp, WorkItemId,
-    WorkItemStatus,
+    EffortTier, ProjectIndexIdentity, ProjectName, ProjectPrefix, Tag, Tags, TaskTitle, Timestamp,
+    WorkItemId, WorkItemStatus,
 };
 
 use super::{ObsidianProject, ObsidianStore, ObsidianStoreError, fs::path_str};
@@ -355,7 +355,7 @@ fn generic_add(
 fn new_item(prompt: &str, title: &str, section: Option<&str>) -> NewItem {
     NewItem {
         prompt: prompt.to_string(),
-        title: title.to_string(),
+        title: TaskTitle::try_new(title).unwrap(),
         created: Timestamp::new("2026-07-07"),
         section: section.map(str::to_string),
         prereq: None,
@@ -399,7 +399,7 @@ fn generic_add_creates_note_and_links_index() {
     assert!(note.contains("created: 2026-07-07"), "{note}");
     assert!(note.contains("prereq: \"[[PWF-0001]]\""), "{note}");
     assert!(note.contains("effort: medium"), "{note}");
-    let expected_body = format!("## Goals{S}- Ship the adapter");
+    let expected_body = format!("## Goals\n{S}## Done When{S}- tests pass");
     assert!(note.contains(&expected_body), "{note}");
     let index = std::fs::read_to_string(notes_dir.join("pwf/pwf.md")).unwrap();
     assert_eq!(
@@ -1061,7 +1061,7 @@ fn insert_allocates_next_id_without_index_write() {
         &project,
         NewItem {
             prompt: "wire up the new thing".to_string(),
-            title: "wire up the new thing".to_string(),
+            title: TaskTitle::try_new("wire up the new thing").unwrap(),
             created: Timestamp::new("2026-07-15"),
             section: None,
             prereq: None,
@@ -1563,7 +1563,7 @@ fn generic_insert_plus_upsert_writes_legacy_add_index_bytes() {
             &project,
             NewItem {
                 prompt: "do the thing".to_string(),
-                title: "ship it".to_string(),
+                title: TaskTitle::try_new("ship it").unwrap(),
                 created: Timestamp::new("2026-07-07"),
                 section: scenario.section.map(str::to_string),
                 prereq: None,

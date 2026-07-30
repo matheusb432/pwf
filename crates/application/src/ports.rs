@@ -17,7 +17,9 @@ pub use project_task_files_client::{
 pub use project_task_location_client::ProjectTaskLocationClient;
 use pwf_models::{
     note::{NoteId, ProjectNote},
-    pending_work::{EffortTier, ProjectName, Tags, Timestamp, WorkItemId, WorkItemStatus},
+    pending_work::{
+        EffortTier, ProjectName, Tags, TaskTitle, Timestamp, WorkItemId, WorkItemStatus,
+    },
 };
 
 impl Record for ProjectNote {
@@ -37,7 +39,13 @@ impl Record for ProjectNote {
 ///
 /// let note = NewProjectNote {
 ///     id: NoteId::try_new("PWF-NOTE-0001").unwrap(),
-///     message: "remember milk".to_string(),
+///     topic: "Borrow concrete data".to_string(),
+///     tldr: "Return the narrowest useful value.".to_string(),
+///     why: None,
+///     domain: Some("rust".to_string()),
+///     tags: vec!["api-design".to_string()],
+///     sources: Vec::new(),
+///     verified: None,
 ///     created: Timestamp::new("2026-07-26"),
 /// };
 /// assert_eq!(note.created.as_str(), "2026-07-26");
@@ -46,8 +54,20 @@ impl Record for ProjectNote {
 pub struct NewProjectNote {
     /// Identifies the new note within its project.
     pub id: NoteId,
-    /// Contains the trimmed note message.
-    pub message: String,
+    /// Names the focused learning topic.
+    pub topic: String,
+    /// Summarizes the durable insight.
+    pub tldr: String,
+    /// Explains the consequence when it adds useful context.
+    pub why: Option<String>,
+    /// Classifies the subject when known.
+    pub domain: Option<String>,
+    /// Supplies discovery labels.
+    pub tags: Vec<String>,
+    /// Records supporting evidence.
+    pub sources: Vec<String>,
+    /// Records the supplied verification marker.
+    pub verified: Option<String>,
     /// Records the authored creation date.
     pub created: Timestamp,
 }
@@ -60,14 +80,14 @@ pub struct NewProjectNote {
 /// use pwf_application::ProjectNotePatch;
 ///
 /// let patch = ProjectNotePatch {
-///     message: "remember oat milk".to_string(),
+///     topic: "remember oat milk".to_string(),
 /// };
-/// assert_eq!(patch.message, "remember oat milk");
+/// assert_eq!(patch.topic, "remember oat milk");
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectNotePatch {
-    /// Replaces the note body message.
-    pub message: String,
+    /// Replaces the note topic while preserving its other content.
+    pub topic: String,
 }
 
 /// Inspects project-note representation facts required by note operations.
@@ -180,7 +200,7 @@ impl Record for PendingWorkRecord {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewItem {
     pub prompt: String,
-    pub title: String,
+    pub title: TaskTitle,
     pub created: Timestamp,
     pub section: Option<String>,
     pub prereq: Option<String>,
@@ -199,7 +219,7 @@ pub struct ItemPatch {
     pub completed: Option<Option<Timestamp>>,
     pub commits: Option<Option<String>>,
     pub body: Option<String>,
-    pub title: Option<String>,
+    pub title: Option<TaskTitle>,
     pub prereq: Option<Option<String>>,
     pub effort: Option<EffortTier>,
     pub tags: Option<Option<Tags>>,

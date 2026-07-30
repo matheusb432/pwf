@@ -47,11 +47,8 @@ mod tests {
     }
 
     #[test]
-    fn plain_prompt_renders_title_as_the_only_goal() {
-        assert_eq!(
-            render("fix rich prompt parser"),
-            format!("## Goals{S}- fix rich prompt parser")
-        );
+    fn plain_prompt_does_not_repeat_the_title_as_a_goal() {
+        assert_eq!(render("fix rich prompt parser"), "## Goals\n");
     }
 
     #[test]
@@ -60,7 +57,7 @@ mod tests {
         assert_eq!(
             render(prompt),
             format!(
-                "## Goals{S}- fix rich prompt parser\n- preserve ampersands in prose\n- keep code intact{S}## Context{S}- current add splits on ampersand{S}## Constraints{S}- no parser crate{S}## Done When{S}- tests cover add and update"
+                "## Goals{S}- preserve ampersands in prose\n- keep code intact{S}## Context{S}- current add splits on ampersand{S}## Constraints{S}- no parser crate{S}## Done When{S}- tests cover add and update"
             )
         );
     }
@@ -70,7 +67,7 @@ mod tests {
         assert_eq!(
             render("title /c context one / context two /d done one / done two"),
             format!(
-                "## Goals{S}- title{S}## Context{S}- context one\n- context two{S}## Done When{S}- done one\n- done two"
+                "## Goals\n{S}## Context{S}- context one\n- context two{S}## Done When{S}- done one\n- done two"
             )
         );
     }
@@ -79,9 +76,7 @@ mod tests {
     fn sections_can_be_interleaved_and_append_in_encounter_order() {
         assert_eq!(
             render("some title /c some context1 /g another goal /c some context2"),
-            format!(
-                "## Goals{S}- some title\n- another goal{S}## Context{S}- some context1\n- some context2"
-            )
+            format!("## Goals{S}- another goal{S}## Context{S}- some context1\n- some context2")
         );
     }
 
@@ -89,7 +84,7 @@ mod tests {
     fn ampersands_are_plain_text_to_the_prompt_parser() {
         assert_eq!(
             render("handle a & b / preserve c & d"),
-            format!("## Goals{S}- handle a & b\n- preserve c & d")
+            format!("## Goals{S}- preserve c & d")
         );
     }
 }

@@ -6,6 +6,7 @@ pub(super) enum ClaudeEffort {
     Medium,
     High,
     XHigh,
+    Max,
 }
 
 impl From<SessionEffort> for ClaudeEffort {
@@ -15,6 +16,7 @@ impl From<SessionEffort> for ClaudeEffort {
             SessionEffort::Medium => Self::Medium,
             SessionEffort::High => Self::High,
             SessionEffort::XHigh => Self::XHigh,
+            SessionEffort::Max => Self::Max,
         }
     }
 }
@@ -26,6 +28,7 @@ impl ClaudeEffort {
             Self::Medium => "medium",
             Self::High => "high",
             Self::XHigh => "xhigh",
+            Self::Max => "max",
         }
     }
 }

@@ -12,14 +12,14 @@ use pwf_models::note::NoteId;
 ///
 /// let note = ListedNote {
 ///     id: NoteId::try_new("PWF-NOTE-0001").unwrap(),
-///     message: "remember milk".to_string(),
+///     topic: "remember milk".to_string(),
 /// };
-/// assert_eq!(note.message, "remember milk");
+/// assert_eq!(note.topic, "remember milk");
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListedNote {
     /// Identifies the note within its project.
     pub id: NoteId,
-    /// Contains the note's first non-empty body line.
-    pub message: String,
+    /// Names the focused learning topic.
+    pub topic: String,
 }

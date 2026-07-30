@@ -1,7 +1,7 @@
 use clap::Args;
 use pwf_application::pending_work::StatusFilter;
 use pwf_models::{
-    pending_work::{EffortTier, WorkItemStatus},
+    pending_work::{EffortTier, TaskTitle, TaskTitleError, WorkItemStatus},
     session::Agent,
 };
 use thiserror::Error;
@@ -113,6 +113,8 @@ pub(crate) enum PendingWorkError {
     #[error(transparent)]
     Add(#[from] pwf_application::pending_work::add_pending_work_item::AddPendingWorkError),
     #[error(transparent)]
+    InvalidTitle(#[from] TaskTitleError),
+    #[error(transparent)]
     Complete(
         #[from] pwf_application::pending_work::complete_pending_work::CompletePendingWorkError,
     ),
@@ -185,3 +187,33 @@ impl From<PendingWorkError> for String {
 }
 
 pub(super) const ADD_HINT: &str = r#"Use: pwf add <project> "<prompt>""#;
+
+pub(super) fn task_title(raw: &str) -> Result<(TaskTitle, bool), PendingWorkError> {
+    let comparison = raw.trim().to_lowercase();
+    let title = TaskTitle::try_new(raw)?;
+    let normalized = title.as_ref() != comparison;
+    Ok((title, normalized))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::task_title;
+
+    #[test]
+    fn task_title_reports_metadata_normalization_only() {
+        for (raw, expected, normalized) in [
+            ("  Fix The THING  ", "fix the thing", false),
+            ("time is 3:30pm", "time is 3:30pm", false),
+            (
+                "fix parser: handle colons",
+                "fix parser; handle colons",
+                true,
+            ),
+            ("", "n/a", true),
+        ] {
+            let (title, was_normalized) = task_title(raw).unwrap();
+            assert_eq!(title.as_ref(), expected);
+            assert_eq!(was_normalized, normalized);
+        }
+    }
+}

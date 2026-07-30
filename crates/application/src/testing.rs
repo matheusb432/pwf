@@ -169,7 +169,7 @@ impl AppRecordStore<PendingWorkRecord> for InMemoryStore {
         let locator = format!("/mem/{}/{}.md", project.as_ref(), id.as_ref());
         let record = PendingWorkRecord {
             id: RecordId::Item(id),
-            title: new.title,
+            title: new.title.to_string(),
             status: WorkItemStatus::Active,
             created: Some(new.created),
             completed: None,
@@ -214,7 +214,7 @@ impl AppRecordStore<PendingWorkRecord> for InMemoryStore {
             record.body = body;
         }
         if let Some(title) = patch.title {
-            record.title = title;
+            record.title = title.to_string();
         }
         if let Some(prereq) = patch.prereq {
             record.prereq = prereq;
@@ -284,7 +284,7 @@ impl AppRecordStore<ProjectNote> for InMemoryStore {
     ) -> Result<ProjectNote, Self::Error> {
         let record = ProjectNote {
             id: new.id,
-            message: new.message,
+            topic: new.topic,
         };
         let mut state = self.lock();
         state
@@ -314,7 +314,7 @@ impl AppRecordStore<ProjectNote> for InMemoryStore {
             .iter_mut()
             .find(|note| note.id == *id)
             .expect("update of unknown project note");
-        note.message = patch.message;
+        note.topic = patch.topic;
         Ok(())
     }
 

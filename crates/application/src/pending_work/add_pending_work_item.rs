@@ -1,6 +1,8 @@
 use std::{path::PathBuf, sync::LazyLock};
 
-use pwf_models::pending_work::{EffortTier, ProjectName, Tags, Timestamp};
+use pwf_models::pending_work::{
+    EffortTier, ProjectName, Tags, TaskTitle, TaskTitleError, Timestamp,
+};
 use regex::Regex;
 
 use super::{
@@ -46,7 +48,6 @@ pub struct AddPendingWorkItemOk {
     pub title: String,
     pub note_path: PathBuf,
     pub created_section: Option<String>,
-    pub title_normalized: bool,
 }
 
 /// Carries add diagnostics that remain observable after a store failure.
@@ -56,15 +57,13 @@ pub struct AddPendingWorkDiagnostics {
     pub project: String,
     /// Index section created during insertion, when one was absent.
     pub created_section: Option<String>,
-    /// Whether an explicit title required metadata-safe normalization.
-    pub title_normalized: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum AddPendingWorkSource {
     Prompt {
         prompt: String,
-        title: Option<String>,
+        title: Option<TaskTitle>,
     },
     Plan {
         path: String,
@@ -109,7 +108,7 @@ pub struct AddPendingWorkItem {
     /// Optional plan path selected by `--continue`.
     pub continue_path: Option<String>,
     /// Optional explicit title for a direct prompt.
-    pub title: Option<String>,
+    pub title: Option<TaskTitle>,
     /// Optional authored creation date.
     pub date: Option<String>,
     /// Optional raw section selected by `--section`.
@@ -144,6 +143,8 @@ pub enum AddPendingWorkError {
     MissingPrerequisiteId,
     #[error("Unknown --prereq id(s): {}.", ids.join(", "))]
     UnknownPrerequisiteIds { ids: Vec<String> },
+    #[error(transparent)]
+    InvalidTitle(#[from] TaskTitleError),
     #[error("{source}")]
     WriteStore {
         diagnostics: AddPendingWorkDiagnostics,
@@ -211,23 +212,17 @@ where
             created_section: source
                 .created_section()
                 .map(|(_, section)| section.to_string()),
-            title_normalized: prepared.title_normalized,
         },
         source,
     })?;
 
-    Ok(added_item(
-        &prepared.project,
-        created,
-        prepared.title_normalized,
-    ))
+    Ok(added_item(&prepared.project, created))
 }
 
 struct PreparedAdd {
     project: ProjectName,
-    title: String,
+    title: TaskTitle,
     prompt: String,
-    title_normalized: bool,
 }
 
 fn parse_tags(values: &[String]) -> Result<Option<Tags>, AddPendingWorkError> {
@@ -264,27 +259,20 @@ fn prepare_source(
         return Err(AddPendingWorkError::Usage);
     }
     let project = project_mapped(identifier, projects)?;
-    let (title, prompt, title_normalized) = match source {
-        AddPendingWorkSource::Prompt { prompt, title } => {
-            let (title, normalized) = match title.as_deref() {
-                Some(title) if !title.trim().is_empty() => {
-                    (title::normalize(title), title::was_normalized(title))
-                }
-                _ => (title::inferred(prompt), false),
-            };
-            (title, prompt.clone(), normalized)
-        }
+    let (title, prompt) = match source {
+        AddPendingWorkSource::Prompt { prompt, title } => (
+            title.clone().map_or_else(|| title::inferred(prompt), Ok)?,
+            prompt.clone(),
+        ),
         AddPendingWorkSource::Plan { path } => (
-            title::normalize(&plan_title(project.as_ref(), path)),
+            TaskTitle::try_new(plan_title(project.as_ref(), path))?,
             plan_continuation_prompt(path),
-            false,
         ),
     };
     Ok(PreparedAdd {
         project,
         title,
         prompt,
-        title_normalized,
     })
 }
 
@@ -369,7 +357,6 @@ pub(super) fn project_mapped(
 pub(super) fn added_item(
     project: &ProjectName,
     created: store_util::CreatedItem,
-    title_normalized: bool,
 ) -> AddPendingWorkItemOk {
     let id = created
         .record
@@ -384,7 +371,6 @@ pub(super) fn added_item(
         title: created.record.title,
         note_path: PathBuf::from(created.record.locator),
         created_section: created.created_section,
-        title_normalized,
     }
 }
 

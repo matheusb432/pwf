@@ -8,7 +8,7 @@ use pwf_application::{
 };
 use pwf_infra::obsidian::ObsidianStore;
 
-use super::common::{CommonArguments, EffortChoice, Identifier};
+use super::common::{CommonArguments, EffortChoice, Identifier, task_title};
 
 #[derive(Args, Debug)]
 pub struct Arguments {
@@ -17,7 +17,8 @@ pub struct Arguments {
     #[arg(long)]
     pub(crate) prompt: Option<String>,
     /// Replacement title. YAML-breaking characters (e.g. a colon before a
-    /// space) are normalized with a stderr notice.
+    /// space) are normalized with a stderr notice. The normalized title cannot
+    /// exceed 200 characters.
     #[arg(long)]
     pub(crate) title: Option<String>,
     /// Prereq item id to append (repeat or comma-separate); dedups.
@@ -74,11 +75,19 @@ pub(in crate::pending_work) fn run_update(
     args: &Arguments,
 ) -> Result<UpdatePendingWorkItemOk, PendingWorkError> {
     let id = args.identifier.required("update")?;
+    let (title, title_normalized) = args
+        .title
+        .as_deref()
+        .map(task_title)
+        .transpose()?
+        .map_or((None, false), |(title, normalized)| {
+            (Some(title), normalized)
+        });
     let updated = update_pending_work_item::execute(
         UpdatePendingWorkItem {
             id,
             prompt: args.prompt.clone(),
-            title: args.title.clone(),
+            title,
             append: args.append.clone(),
             prereq: args.prereq.clone(),
             clear_prereq: args.clear_prereq,
@@ -92,7 +101,7 @@ pub(in crate::pending_work) fn run_update(
         projects,
     )
     .map_err(|error| PendingWorkError::ApplicationWrite(error.to_string()))?;
-    if updated.title_normalized() {
+    if title_normalized {
         eprintln!("{TITLE_NORMALIZED_NOTICE}");
     }
     Ok(updated)

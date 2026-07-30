@@ -1,4 +1,4 @@
-use pwf_models::pending_work::{ProjectName, Timestamp};
+use pwf_models::pending_work::{ProjectName, TaskTitle, Timestamp};
 
 use super::{AddPendingWorkError, AddPendingWorkItem, ProjectRegistry, plan_title};
 use crate::{IndexEntryState, ports::Clock, testing::InMemoryStore};
@@ -20,12 +20,16 @@ fn registry(repo: Option<&str>) -> ProjectRegistry {
     )])
 }
 
+fn task_title(raw: &str) -> TaskTitle {
+    TaskTitle::try_new(raw).unwrap()
+}
+
 fn command(section: Option<&str>) -> AddPendingWorkItem {
     AddPendingWorkItem {
         project_identifier: Some("pwf".to_string()),
         prompt: "do the thing".to_string(),
         continue_path: None,
-        title: Some("ship it".to_string()),
+        title: Some(task_title("ship it")),
         date: Some("2026-07-15".to_string()),
         section: section.map(str::to_string),
         human: false,
@@ -50,7 +54,6 @@ fn add_inserts_record_and_open_index_entry() {
     assert_eq!(added.id, "PWF-0001");
     assert_eq!(added.project, "pwf");
     assert_eq!(added.title, "ship it");
-    assert!(!added.title_normalized);
     assert_eq!(added.created_section, None);
     let entries = store.entries("pwf");
     assert_eq!(entries.len(), 1);
@@ -64,10 +67,10 @@ fn add_inserts_record_and_open_index_entry() {
 }
 
 #[test]
-fn add_explicit_prompt_title_is_normalized_once() {
+fn add_forwards_an_explicit_task_title() {
     let store = InMemoryStore::default().with_prefix("pwf", "PWF");
     let mut command = command(None);
-    command.title = Some("fix # metadata".to_string());
+    command.title = Some(task_title("fix # metadata"));
 
     let added =
         super::execute(&command, &store, &registry(Some("/repo/pwf")), &FixedClock).unwrap();

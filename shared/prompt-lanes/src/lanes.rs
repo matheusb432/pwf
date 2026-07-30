@@ -59,15 +59,14 @@ fn push(parsed: &mut ParsedPrompt, section: Section, text: String) {
 fn plain(prompt: &str) -> ParsedPrompt {
     let title = single_line(prompt);
     ParsedPrompt {
-        title: title.clone(),
-        goals: vec![title],
+        title,
         ..ParsedPrompt::default()
     }
 }
 
 /// Parses one-line lane syntax into a [`ParsedPrompt`].
 ///
-/// Without a lane marker, the collapsed prompt becomes one Goals bullet.
+/// Text before the first lane marker is the title and is not copied into Goals.
 pub fn parse(prompt: &str) -> ParsedPrompt {
     let tokens: Vec<&str> = prompt.split_whitespace().collect();
     if !tokens.iter().any(|token| is_marker(token)) {
@@ -86,7 +85,6 @@ pub fn parse(prompt: &str) -> ParsedPrompt {
             } else {
                 let title = words_to_text(&buffer);
                 parsed.title.clone_from(&title);
-                push(&mut parsed, Section::Goals, title);
             }
             buffer.clear();
             seen_first_marker = true;
@@ -107,10 +105,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn plain_prompt_makes_title_the_only_goal() {
+    fn plain_prompt_sets_the_title_without_repeating_it_as_a_goal() {
         let parsed = parse("fix rich prompt parser");
         assert_eq!(parsed.title, "fix rich prompt parser");
-        assert_eq!(parsed.goals, vec!["fix rich prompt parser".to_string()]);
+        assert!(parsed.goals.is_empty());
         assert!(parsed.context.is_empty());
         assert!(parsed.constraints.is_empty());
         assert!(parsed.done_when.is_empty());
@@ -134,7 +132,6 @@ mod tests {
         assert_eq!(
             parsed.goals,
             vec![
-                "fix rich prompt parser".to_string(),
                 "preserve ampersands in prose".to_string(),
                 "keep code intact".to_string(),
             ]
@@ -153,6 +150,7 @@ mod tests {
     #[test]
     fn standalone_slash_continues_the_current_section() {
         let parsed = parse("title /c context one / context two /d done one / done two");
+        assert!(parsed.goals.is_empty());
         assert_eq!(
             parsed.context,
             vec!["context one".to_string(), "context two".to_string()]
@@ -166,10 +164,7 @@ mod tests {
     #[test]
     fn sections_can_be_interleaved_and_append_in_encounter_order() {
         let parsed = parse("some title /c some context1 /g another goal /c some context2");
-        assert_eq!(
-            parsed.goals,
-            vec!["some title".to_string(), "another goal".to_string()]
-        );
+        assert_eq!(parsed.goals, vec!["another goal".to_string()]);
         assert_eq!(
             parsed.context,
             vec!["some context1".to_string(), "some context2".to_string()]
@@ -179,10 +174,7 @@ mod tests {
     #[test]
     fn ampersands_are_plain_text_to_the_parser() {
         let parsed = parse("handle a & b / preserve c & d");
-        assert_eq!(
-            parsed.goals,
-            vec!["handle a & b".to_string(), "preserve c & d".to_string()]
-        );
+        assert_eq!(parsed.goals, vec!["preserve c & d".to_string()]);
     }
 
     #[test]
@@ -207,11 +199,7 @@ mod tests {
         let parsed = parse(prompt);
         assert_eq!(
             parsed.goals,
-            vec![
-                "alpha beta".to_string(),
-                "gamma delta".to_string(),
-                "epsilon zeta".to_string(),
-            ]
+            vec!["gamma delta".to_string(), "epsilon zeta".to_string(),]
         );
         assert_eq!(
             parsed.context,

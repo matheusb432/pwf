@@ -14,7 +14,13 @@ use crate::{AppRecordStore, Clock, NewProjectNote, ProjectNote, pending_work::Pr
 ///
 /// let request = AddNote {
 ///     project_identifier: "pwf".to_string(),
-///     message: "remember milk".to_string(),
+///     topic: "Borrow concrete data".to_string(),
+///     tldr: "Return the narrowest useful value.".to_string(),
+///     why: None,
+///     domain: Some("rust".to_string()),
+///     tags: vec!["api-design".to_string()],
+///     sources: Vec::new(),
+///     verified: None,
 ///     date: Some("2026-07-26".to_string()),
 /// };
 /// assert_eq!(request.project_identifier, "pwf");
@@ -23,8 +29,20 @@ use crate::{AppRecordStore, Clock, NewProjectNote, ProjectNote, pending_work::Pr
 pub struct AddNote {
     /// Selects the managed project by name or id code.
     pub project_identifier: String,
-    /// Supplies the one-line note message.
-    pub message: String,
+    /// Names the focused learning topic.
+    pub topic: String,
+    /// Summarizes the durable insight.
+    pub tldr: String,
+    /// Explains the consequence when it adds useful context.
+    pub why: Option<String>,
+    /// Classifies the subject when known.
+    pub domain: Option<String>,
+    /// Supplies discovery labels.
+    pub tags: Vec<String>,
+    /// Records supporting evidence.
+    pub sources: Vec<String>,
+    /// Records the supplied verification marker.
+    pub verified: Option<String>,
     /// Overrides the clock date when present.
     pub date: Option<String>,
 }
@@ -32,15 +50,17 @@ pub struct AddNote {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AddNoteOk {
     pub id: NoteId,
-    pub message: String,
+    pub topic: String,
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum AddNoteError {
     #[error("Unknown project '{identifier}'; expected a managed project name or id code.")]
     UnknownProject { identifier: String },
-    #[error("Note message is empty; provide a non-empty message.")]
-    EmptyMessage,
+    #[error("Note topic is empty; provide a non-empty topic.")]
+    EmptyTopic,
+    #[error("Note TL;DR is empty; provide a non-empty TL;DR.")]
+    EmptyTldr,
     #[error("Project '{project}' has no available four-digit note identifiers.")]
     IdentifierExhausted { project: String },
     #[error("{0}")]
@@ -52,7 +72,8 @@ pub enum AddNoteError {
 /// # Errors
 ///
 /// Returns [`AddNoteError::UnknownProject`] when the project does not resolve,
-/// [`AddNoteError::EmptyMessage`] when the trimmed message is empty,
+/// [`AddNoteError::EmptyTopic`] when the normalized topic is empty,
+/// [`AddNoteError::EmptyTldr`] when the normalized TL;DR is empty,
 /// [`AddNoteError::IdentifierExhausted`] when the greatest existing suffix is `9999`, or
 /// [`AddNoteError::Store`] when listing or inserting notes fails.
 ///
@@ -95,9 +116,13 @@ where
                 identifier: command.project_identifier.clone(),
             }
         })?;
-    let message = command.message.trim();
-    if message.is_empty() {
-        return Err(AddNoteError::EmptyMessage);
+    let topic = normalize_inline(&command.topic);
+    if topic.is_empty() {
+        return Err(AddNoteError::EmptyTopic);
+    }
+    let tldr = normalize_inline(&command.tldr);
+    if tldr.is_empty() {
+        return Err(AddNoteError::EmptyTldr);
     }
     let notes = store
         .list(&project)
@@ -123,15 +148,45 @@ where
             &project,
             NewProjectNote {
                 id,
-                message: message.to_string(),
+                topic: topic.clone(),
+                tldr,
+                why: normalize_optional_block(command.why),
+                domain: normalize_optional_inline(command.domain),
+                tags: normalize_inline_values(command.tags),
+                sources: normalize_inline_values(command.sources),
+                verified: normalize_optional_inline(command.verified),
                 created,
             },
         )
         .map_err(|error| AddNoteError::Store(Box::new(error)))?;
     Ok(AddNoteOk {
         id: created.id,
-        message: created.message,
+        topic: created.topic,
     })
+}
+
+fn normalize_inline(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn normalize_optional_inline(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| normalize_inline(&value))
+        .filter(|value| !value.is_empty())
+}
+
+fn normalize_optional_block(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn normalize_inline_values(values: Vec<String>) -> Vec<String> {
+    values
+        .into_iter()
+        .map(|value| normalize_inline(&value))
+        .filter(|value| !value.is_empty())
+        .collect()
 }
 
 #[cfg(test)]
@@ -171,30 +226,48 @@ mod tests {
         )])
     }
 
-    fn note(number: u32, message: &str) -> ProjectNote {
+    fn note(number: u32, topic: &str) -> ProjectNote {
         ProjectNote {
             id: NoteId::try_new(format!("PWF-NOTE-{number:04}")).unwrap(),
-            message: message.to_string(),
+            topic: topic.to_string(),
         }
     }
 
     fn command(project_identifier: &str) -> AddNote {
         AddNote {
             project_identifier: project_identifier.to_string(),
-            message: " remember milk ".to_string(),
+            topic: " remember milk ".to_string(),
+            tldr: " buy milk before the store closes ".to_string(),
+            why: None,
+            domain: None,
+            tags: Vec::new(),
+            sources: Vec::new(),
+            verified: None,
             date: Some("2026-07-15".to_string()),
         }
     }
 
     #[test]
-    fn blank_message_wins_over_store_listing_failure() {
+    fn blank_topic_wins_over_store_listing_failure() {
         let store = InMemoryStore::default().with_failure(FailurePoint::ProjectNoteList);
         let mut command = command("pwf");
-        command.message = " \t ".to_string();
+        command.topic = " \t ".to_string();
 
         let error = super::execute(command, &store, &registry(), &FixedClock).unwrap_err();
 
-        assert!(matches!(error, AddNoteError::EmptyMessage));
+        assert!(matches!(error, AddNoteError::EmptyTopic));
+        assert!(store.project_notes("pwf").is_empty());
+    }
+
+    #[test]
+    fn blank_tldr_wins_over_store_listing_failure() {
+        let store = InMemoryStore::default().with_failure(FailurePoint::ProjectNoteList);
+        let mut command = command("pwf");
+        command.tldr = " \t ".to_string();
+
+        let error = super::execute(command, &store, &registry(), &FixedClock).unwrap_err();
+
+        assert!(matches!(error, AddNoteError::EmptyTldr));
         assert!(store.project_notes("pwf").is_empty());
     }
 
@@ -215,7 +288,7 @@ mod tests {
             .unwrap();
 
             assert_eq!(added.id.as_ref(), "PWF-NOTE-0010");
-            assert_eq!(added.message, "remember milk");
+            assert_eq!(added.topic, "remember milk");
             assert_eq!(
                 store.project_notes("pwf").last().unwrap().id.as_ref(),
                 "PWF-NOTE-0010"

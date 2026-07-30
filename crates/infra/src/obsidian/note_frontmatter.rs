@@ -1,6 +1,6 @@
 use std::{fmt::Write, sync::LazyLock};
 
-use pwf_models::pending_work::{EffortTier, Tags, WorkItemStatus};
+use pwf_models::pending_work::{EffortTier, Tags, TaskTitle, WorkItemStatus};
 use regex::Regex;
 
 static STATUS_LINE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^status:.*$").unwrap());
@@ -30,7 +30,7 @@ const UTF8_BOM: char = '\u{feff}';
 #[derive(Clone, Copy)]
 pub(super) struct NewWorkItemFields<'a> {
     pub id: &'a str,
-    pub title: &'a str,
+    pub title: &'a TaskTitle,
     pub project: &'a str,
     pub prompt: &'a str,
     pub created: &'a str,

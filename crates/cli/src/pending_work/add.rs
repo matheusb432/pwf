@@ -9,7 +9,7 @@ use pwf_application::{
 use pwf_infra::obsidian::ObsidianStore;
 
 use super::{
-    common::{CommonArguments, EffortChoice, PendingWorkError},
+    common::{CommonArguments, EffortChoice, PendingWorkError, task_title},
     render::{
         TITLE_NORMALIZED_NOTICE, emit_created_section, emit_created_section_for_error, render_added,
     },
@@ -32,7 +32,8 @@ pub struct Arguments {
     pub(crate) section: Option<String>,
     /// Explicit title (else inferred from the prompt). YAML-breaking
     /// characters (e.g. a colon before a space) are normalized with a
-    /// stderr notice so the note's frontmatter stays parseable.
+    /// stderr notice so the note's frontmatter stays parseable. The normalized
+    /// title cannot exceed 200 characters.
     #[arg(long)]
     pub(crate) title: Option<String>,
     /// File the item under `## Human` (shorthand for `--section human`).
@@ -60,12 +61,21 @@ pub(super) fn run(
     projects: &ProjectRegistry,
     clock: &impl Clock,
 ) -> Result<String, PendingWorkError> {
+    let (title, title_normalized) = arguments
+        .title
+        .as_deref()
+        .filter(|title| !title.trim().is_empty())
+        .map(task_title)
+        .transpose()?
+        .map_or((None, false), |(title, normalized)| {
+            (Some(title), normalized)
+        });
     let result = add_pending_work_item::execute(
         &AddPendingWorkItem {
             project_identifier: arguments.project.clone(),
             prompt: arguments.prompt.join(" "),
             continue_path: arguments.continue_path.clone(),
-            title: arguments.title.clone(),
+            title,
             date: arguments.common.date.clone(),
             section: arguments.section.clone(),
             human: arguments.human,
@@ -80,7 +90,7 @@ pub(super) fn run(
     match result {
         Ok(added) => {
             emit_created_section(&added);
-            if added.title_normalized {
+            if title_normalized {
                 eprintln!("{TITLE_NORMALIZED_NOTICE}");
             }
             Ok(render_added(&added, console.color()))

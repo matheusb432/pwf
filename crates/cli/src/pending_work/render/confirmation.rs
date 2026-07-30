@@ -95,7 +95,6 @@ mod tests {
             title: "color tui output when adding pwf task".to_string(),
             note_path: PathBuf::from("/x/PWF-0087.md"),
             created_section: None,
-            title_normalized: false,
         }
     }
 
@@ -152,7 +151,6 @@ mod tests {
             id: "PWF-0003".to_string(),
             project: "pwf".to_string(),
             title: "renamed".to_string(),
-            title_normalized: false,
         };
         let closed = UpdatePendingWorkItemOk::Changed {
             id: "PWF-0004".to_string(),

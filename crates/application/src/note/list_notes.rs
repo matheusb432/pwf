@@ -108,7 +108,7 @@ where
         .take(shown)
         .map(|note| ListedNote {
             id: note.id,
-            message: note.message,
+            topic: note.topic,
         })
         .collect();
     Ok(ListNotesOk {
@@ -142,7 +142,7 @@ mod tests {
     fn note(number: u32) -> ProjectNote {
         ProjectNote {
             id: NoteId::try_new(format!("PWF-NOTE-{number:04}")).unwrap(),
-            message: format!("note {number}"),
+            topic: format!("note {number}"),
         }
     }
 

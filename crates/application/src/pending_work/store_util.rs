@@ -109,7 +109,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use pwf_models::pending_work::{ProjectName, Timestamp, WorkItemId};
+    use pwf_models::pending_work::{ProjectName, TaskTitle, Timestamp, WorkItemId};
 
     use super::{LoadItemError, create_item, require_item};
     use crate::{
@@ -124,7 +124,7 @@ mod tests {
     fn new_item(section: Option<&str>) -> NewItem {
         NewItem {
             prompt: "do the thing".to_string(),
-            title: "ship it".to_string(),
+            title: TaskTitle::try_new("ship it").unwrap(),
             created: Timestamp::new("2026-07-15"),
             section: section.map(str::to_string),
             prereq: None,

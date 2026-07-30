@@ -1,4 +1,6 @@
-use pwf_models::pending_work::{EffortTier, ProjectName, Tags, WorkItemId, WorkItemStatus};
+use pwf_models::pending_work::{
+    EffortTier, ProjectName, Tags, TaskTitle, WorkItemId, WorkItemStatus,
+};
 
 use super::{
     commit_provenance, identifier,
@@ -6,7 +8,7 @@ use super::{
     prerequisite::{PrerequisiteValidationError, validate_and_merge},
     project_registry::ProjectRegistry,
     store_util::body_region,
-    tag_policy, title,
+    tag_policy,
 };
 use crate::ports::{AppRecordStore, ItemPatch, PendingWorkRecord};
 
@@ -18,7 +20,7 @@ pub struct UpdatePendingWorkItem {
     /// Optional replacement prompt.
     pub prompt: Option<String>,
     /// Optional replacement title.
-    pub title: Option<String>,
+    pub title: Option<TaskTitle>,
     /// Optional lane content appended to the body.
     pub append: Option<String>,
     /// Raw prerequisite values appended to existing prerequisites.
@@ -75,25 +77,11 @@ pub enum UpdatePendingWorkItemOk {
         id: String,
         project: String,
         title: String,
-        title_normalized: bool,
     },
     Changed {
         id: String,
         changes: Vec<String>,
     },
-}
-
-impl UpdatePendingWorkItemOk {
-    /// Reports whether YAML-safe normalization changed an explicit title.
-    #[must_use]
-    pub fn title_normalized(&self) -> bool {
-        match self {
-            Self::OpenItemEdit {
-                title_normalized, ..
-            } => *title_normalized,
-            Self::Changed { .. } => false,
-        }
-    }
 }
 
 struct PendingWorkItemIdentity {
@@ -211,15 +199,15 @@ where
 {
     let new_title = command
         .title
-        .as_deref()
-        .map_or_else(|| record.title.clone(), title::normalize);
+        .as_ref()
+        .map_or_else(|| record.title.clone(), ToString::to_string);
 
     let mut patch = ItemPatch {
         body: compute_body(command, record)?,
         ..ItemPatch::default()
     };
     if command.title.is_some() {
-        patch.title = Some(new_title.clone());
+        patch.title.clone_from(&command.title);
     }
     if command.clear_prereq {
         patch.prereq = Some(None);
@@ -240,7 +228,6 @@ where
         id: identity.identifier.as_ref().to_string(),
         project: identity.project.as_ref().to_string(),
         title: new_title,
-        title_normalized: command.title.as_deref().is_some_and(title::was_normalized),
     };
     Ok(PreparedPendingWorkUpdate {
         identity,
@@ -358,14 +345,12 @@ fn parse_tags(values: &[String]) -> Result<Option<Tags>, UpdatePendingWorkError>
 
 #[cfg(test)]
 mod tests {
-    use pwf_models::pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus};
+    use pwf_models::pending_work::{ProjectName, TaskTitle, Timestamp, WorkItemId, WorkItemStatus};
 
     use super::{
         ProjectRegistry, UpdatePendingWorkError, UpdatePendingWorkItem, UpdatePendingWorkItemOk,
     };
     use crate::{Materialization, PendingWorkRecord, RecordId, testing::InMemoryStore};
-
-    const S: &str = "\n\n";
 
     fn registry() -> ProjectRegistry {
         ProjectRegistry::new(vec![(
@@ -399,6 +384,10 @@ mod tests {
         InMemoryStore::default()
             .with_prefix("foo-bar", "FOO")
             .with_project("foo-bar", vec![record("FOO-0001", status, body)])
+    }
+
+    fn task_title(raw: &str) -> TaskTitle {
+        TaskTitle::try_new(raw).unwrap()
     }
 
     fn empty(id: &str) -> UpdatePendingWorkItem {
@@ -457,7 +446,7 @@ mod tests {
     fn update_rejects_body_edit_on_closed_item() {
         let store = staged(WorkItemStatus::Done, "body\n");
         let cmd = UpdatePendingWorkItem {
-            title: Some("new title".to_string()),
+            title: Some(task_title("new title")),
             ..empty("FOO-0001")
         };
 
@@ -473,7 +462,7 @@ mod tests {
     fn update_open_item_edits_title_and_body_and_reports_open_edit() {
         let store = staged(WorkItemStatus::Active, "\nold body\n");
         let cmd = UpdatePendingWorkItem {
-            title: Some("New Title".to_string()),
+            title: Some(task_title("New Title")),
             prompt: Some("fresh prompt".to_string()),
             ..empty("FOO-0001")
         };
@@ -486,32 +475,11 @@ mod tests {
                 id: "FOO-0001".to_string(),
                 project: "foo-bar".to_string(),
                 title: "new title".to_string(),
-                title_normalized: false,
             }
         );
         let item = &store.items("foo-bar")[0];
         assert_eq!(item.title, "new title");
-        assert_eq!(item.body, format!("## Goals{S}- fresh prompt"));
-    }
-
-    #[test]
-    fn update_normalizes_yaml_breaking_title() {
-        let store = staged(WorkItemStatus::Active, "body\n");
-        let cmd = UpdatePendingWorkItem {
-            title: Some("Fix Parser: Handle Colons".to_string()),
-            ..empty("FOO-0001")
-        };
-
-        let updated = super::execute(cmd, &store, &registry()).unwrap();
-
-        assert_eq!(store.items("foo-bar")[0].title, "fix parser; handle colons");
-        assert!(matches!(
-            updated,
-            UpdatePendingWorkItemOk::OpenItemEdit {
-                title_normalized: true,
-                ..
-            }
-        ));
+        assert_eq!(item.body, "## Goals\n");
     }
 
     fn staged_with_tags(raw: &str) -> InMemoryStore {

@@ -6,6 +6,7 @@ pub(super) enum CodexReasoningEffort {
     Medium,
     High,
     XHigh,
+    Max,
 }
 
 impl From<SessionEffort> for CodexReasoningEffort {
@@ -15,6 +16,7 @@ impl From<SessionEffort> for CodexReasoningEffort {
             SessionEffort::Medium => Self::Medium,
             SessionEffort::High => Self::High,
             SessionEffort::XHigh => Self::XHigh,
+            SessionEffort::Max => Self::Max,
         }
     }
 }
@@ -26,6 +28,7 @@ impl CodexReasoningEffort {
             Self::Medium => "medium",
             Self::High => "high",
             Self::XHigh => "xhigh",
+            Self::Max => "max",
         }
     }
 }

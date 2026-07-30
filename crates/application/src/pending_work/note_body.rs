@@ -75,7 +75,10 @@ pub(crate) fn append_lanes(body: &str, prompt: &str) -> Option<String> {
     if prompt.is_empty() {
         return None;
     }
-    let parsed = parse(prompt);
+    let mut parsed = parse(prompt);
+    if !parsed.title.is_empty() {
+        parsed.goals.insert(0, std::mem::take(&mut parsed.title));
+    }
     let sections: [&[String]; 4] = [
         &parsed.goals,
         &parsed.context,
@@ -231,24 +234,21 @@ mod tests {
 
     #[test]
     fn note_body_wraps_a_normal_prompt() {
-        assert_eq!(
-            render("add startup toggle"),
-            format!("## Goals{S}- add startup toggle")
-        );
-        assert_eq!(render("a / b"), format!("## Goals{S}- a\n- b"));
+        assert_eq!(render("add startup toggle"), "## Goals\n");
+        assert_eq!(render("a / b"), format!("## Goals{S}- b"));
     }
 
     #[test]
     fn note_body_renders_one_bullet_per_slash_lane() {
         assert_eq!(
             render("create engine feature to add update task / make it idempotent"),
-            format!("## Goals{S}- create engine feature to add update task\n- make it idempotent")
+            format!("## Goals{S}- make it idempotent")
         );
     }
 
     #[test]
     fn note_body_preserves_ampersands_as_text() {
-        assert_eq!(render("a & b"), format!("## Goals{S}- a & b"));
+        assert_eq!(render("a & b"), "## Goals\n");
     }
 
     #[test]

@@ -23,7 +23,7 @@ expectrl = "0.9.0"
 gray_matter = { version = "0.3.2", default-features = false, features = ["yaml"] }
 indicatif = { version = "0.18.6", default-features = false }
 libc = "0.2.186"
-nutype = { version = "0.7.0", features = ["serde", "regex"] }
+nutype = "0.7.0"
 percent-encoding = "2.3.2"
 predicates = "3"
 process-wrap = { version = "9.1.0", default-features = false, features = [

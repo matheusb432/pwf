@@ -323,11 +323,14 @@ where
 {
     project_mapped(project.as_ref(), projects).map_err(CloseError::ReviewTask)?;
     let prompt = review_task_prompt(reviewed.as_ref(), commits);
+    let review_title = title::inferred(&prompt)
+        .map_err(AddPendingWorkError::from)
+        .map_err(CloseError::ReviewTask)?;
     let created = store_util::create_item(
         store,
         project,
         NewItem {
-            title: title::inferred(&prompt),
+            title: review_title,
             prompt,
             created: Timestamp::new(completed),
             section: Some(PendingWorkSection::Human.as_str().to_string()),
@@ -343,12 +346,11 @@ where
                 created_section: source
                     .created_section()
                     .map(|(_, section)| section.to_string()),
-                title_normalized: false,
             },
             source,
         })
     })?;
-    Ok(added_item(project, created, false))
+    Ok(added_item(project, created))
 }
 
 pub(super) fn review_task_prompt(reviewed_id: &str, range: Option<&str>) -> String {

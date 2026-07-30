@@ -425,7 +425,7 @@ mod tests {
             TITLE,
             "/repo/pwf",
             Some("gpt-5.6"),
-            CodexReasoningEffort::XHigh,
+            CodexReasoningEffort::Max,
         )
         .unwrap_err();
 
@@ -449,7 +449,7 @@ mod tests {
                 "cwd": "/repo/pwf",
                 "model": "gpt-5.6",
                 "config": {
-                    "model_reasoning_effort": "xhigh",
+                    "model_reasoning_effort": "max",
                     "features": {
                         "hooks": false
                     }

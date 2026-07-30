@@ -30,7 +30,8 @@ fn created_section_for_error(error: &AddPendingWorkError) -> Option<(&str, &str)
         | AddPendingWorkError::InvalidTag { .. }
         | AddPendingWorkError::InvalidPrerequisiteId { .. }
         | AddPendingWorkError::MissingPrerequisiteId
-        | AddPendingWorkError::UnknownPrerequisiteIds { .. } => None,
+        | AddPendingWorkError::UnknownPrerequisiteIds { .. }
+        | AddPendingWorkError::InvalidTitle(_) => None,
     }
 }
 
@@ -50,7 +51,6 @@ mod tests {
             diagnostics: AddPendingWorkDiagnostics {
                 project: "foo-bar".to_string(),
                 created_section: Some("Human".to_string()),
-                title_normalized: false,
             },
             source: CreateItemError::InsertIndex {
                 project: ProjectName::try_new("foo-bar").unwrap(),

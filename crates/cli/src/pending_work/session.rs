@@ -91,6 +91,7 @@ pub(crate) enum SessionEffortChoice {
     High,
     #[value(name = "xhigh")]
     XHigh,
+    Max,
 }
 
 impl From<SessionEffortChoice> for SessionEffort {
@@ -100,6 +101,7 @@ impl From<SessionEffortChoice> for SessionEffort {
             SessionEffortChoice::Medium => Self::Medium,
             SessionEffortChoice::High => Self::High,
             SessionEffortChoice::XHigh => Self::XHigh,
+            SessionEffortChoice::Max => Self::Max,
         }
     }
 }

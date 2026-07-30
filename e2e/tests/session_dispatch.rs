@@ -120,7 +120,7 @@ fn codex_naming_failure_stops_before_dispatch() {
 }
 
 #[test]
-fn codex_dry_run_has_no_process_effects() {
+fn codex_dry_run_forwards_max_reasoning_effort() {
     let fixture = SessionFixture::new();
     let app_server_log_path = fixture.directory().join("codex-app-server.jsonl");
     let resume_log_path = fixture.directory().join("codex-resume.log");
@@ -130,7 +130,7 @@ fn codex_dry_run_has_no_process_effects() {
         .command()
         .args([
             "session", "--id", "PWF-0001", "--agent", "codex", "--inline", "--dry", "--effort",
-            "xhigh",
+            "max",
         ])
         .env("PATH", &fixture.child_path)
         .env("CODEX_STUB_APP_SERVER_LOG", &app_server_log_path)
@@ -140,9 +140,9 @@ fn codex_dry_run_has_no_process_effects() {
         .success();
 
     let stdout = String::from_utf8(assertion.get_output().stdout.clone()).unwrap();
-    assert!(stdout.contains("effort: xhigh"), "{stdout}");
+    assert!(stdout.contains("effort: max"), "{stdout}");
     assert!(
-        stdout.contains("-c 'model_reasoning_effort=\"xhigh\"'"),
+        stdout.contains("-c 'model_reasoning_effort=\"max\"'"),
         "{stdout}"
     );
     assert!(!app_server_log_path.exists());

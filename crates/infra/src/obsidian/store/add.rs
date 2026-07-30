@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use pwf_application::pending_work::note_body;
-use pwf_models::pending_work::{EffortTier, ProjectName, Tags};
+use pwf_models::pending_work::{EffortTier, ProjectName, Tags, TaskTitle};
 
 use super::{ObsidianStore, ObsidianStoreError, fs::write_add_item_file};
 use crate::obsidian::note_frontmatter::{NewWorkItemFields, new_work_item_content};
@@ -9,7 +9,7 @@ use crate::obsidian::note_frontmatter::{NewWorkItemFields, new_work_item_content
 /// Contains note-file fields independently of index linking.
 pub(super) struct NewNoteRequest<'a> {
     pub prompt: &'a str,
-    pub title: &'a str,
+    pub title: &'a TaskTitle,
     pub created: &'a str,
     pub prereq: Option<&'a str>,
     pub effort: Option<EffortTier>,
@@ -20,7 +20,7 @@ pub(super) struct NewNoteRequest<'a> {
 pub(super) struct WrittenNote {
     pub id: String,
     pub path: PathBuf,
-    pub title: String,
+    pub title: TaskTitle,
     pub content: String,
 }
 
@@ -54,7 +54,7 @@ impl ObsidianStore {
         Ok(WrittenNote {
             id,
             path,
-            title: request.title.to_string(),
+            title: request.title.clone(),
             content,
         })
     }

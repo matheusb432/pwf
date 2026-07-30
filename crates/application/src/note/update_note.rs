@@ -1,11 +1,11 @@
-//! Updates one note in a managed project.
+//! Updates one note topic in a managed project.
 
 use pwf_models::note::NoteId;
 
 use super::identifier::{self, ResolvedProject};
 use crate::{AppRecordStore, ProjectNote, ProjectNotePatch, pending_work::ProjectRegistry};
 
-/// Requests replacement of one project note's message.
+/// Requests replacement of one project note's topic.
 ///
 /// # Examples
 ///
@@ -15,9 +15,9 @@ use crate::{AppRecordStore, ProjectNote, ProjectNotePatch, pending_work::Project
 /// let request = UpdateNote {
 ///     project_identifier: "pwf".to_string(),
 ///     id: "1".to_string(),
-///     message: "remember oat milk".to_string(),
+///     topic: "remember oat milk".to_string(),
 /// };
-/// assert_eq!(request.message, "remember oat milk");
+/// assert_eq!(request.topic, "remember oat milk");
 /// ```
 #[derive(Debug, Clone)]
 pub struct UpdateNote {
@@ -25,22 +25,22 @@ pub struct UpdateNote {
     pub project_identifier: String,
     /// Selects the note by full id, `NOTE-NNNN`, or bare numeric suffix.
     pub id: String,
-    /// Supplies the replacement one-line message.
-    pub message: String,
+    /// Supplies the replacement topic.
+    pub topic: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpdateNoteOk {
     pub id: NoteId,
-    pub message: String,
+    pub topic: String,
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum UpdateNoteError {
     #[error("Unknown project '{identifier}'; expected a managed project name or id code.")]
     UnknownProject { identifier: String },
-    #[error("Note message is empty; provide a non-empty message.")]
-    EmptyMessage,
+    #[error("Note topic is empty; provide a non-empty topic.")]
+    EmptyTopic,
     #[error("Invalid note id '{id}'; expected e.g. {prefix}-NOTE-0001, NOTE-0001, or 1.")]
     InvalidIdentifier { id: String, prefix: String },
     #[error("No such note {id} in {project}.")]
@@ -49,12 +49,12 @@ pub enum UpdateNoteError {
     Store(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
 
-/// Resolves one note and replaces its message while preserving stored metadata.
+/// Resolves one note and replaces its topic while preserving stored content and metadata.
 ///
 /// # Errors
 ///
 /// Returns [`UpdateNoteError::UnknownProject`] when the project does not resolve,
-/// [`UpdateNoteError::EmptyMessage`] when the trimmed replacement is empty,
+/// [`UpdateNoteError::EmptyTopic`] when the normalized replacement is empty,
 /// [`UpdateNoteError::InvalidIdentifier`] when the note id is invalid for that project,
 /// [`UpdateNoteError::NoSuchNote`] when the note does not exist, or
 /// [`UpdateNoteError::Store`] when reading or updating the note fails.
@@ -91,7 +91,7 @@ where
     let UpdateNote {
         project_identifier,
         id: raw_id,
-        message,
+        topic,
     } = command;
     let ResolvedProject { project, prefix } =
         identifier::resolve_project(projects, &project_identifier).ok_or_else(|| {
@@ -99,9 +99,9 @@ where
                 identifier: project_identifier,
             }
         })?;
-    let message = message.trim();
-    if message.is_empty() {
-        return Err(UpdateNoteError::EmptyMessage);
+    let topic = topic.split_whitespace().collect::<Vec<_>>().join(" ");
+    if topic.is_empty() {
+        return Err(UpdateNoteError::EmptyTopic);
     }
     let id = identifier::resolve_note(&raw_id, &prefix).ok_or_else(|| {
         UpdateNoteError::InvalidIdentifier {
@@ -123,14 +123,11 @@ where
             &project,
             &id,
             ProjectNotePatch {
-                message: message.to_string(),
+                topic: topic.clone(),
             },
         )
         .map_err(|error| UpdateNoteError::Store(Box::new(error)))?;
-    Ok(UpdateNoteOk {
-        id,
-        message: message.to_string(),
-    })
+    Ok(UpdateNoteOk { id, topic })
 }
 
 #[cfg(test)]
@@ -157,7 +154,7 @@ mod tests {
     fn note() -> ProjectNote {
         ProjectNote {
             id: NoteId::try_new("PWF-NOTE-0007").unwrap(),
-            message: "old message".to_string(),
+            topic: "old message".to_string(),
         }
     }
 
@@ -175,7 +172,7 @@ mod tests {
                 UpdateNote {
                     project_identifier: "pwf".to_string(),
                     id: identifier.to_string(),
-                    message: " new message \t".to_string(),
+                    topic: " new message \t".to_string(),
                 },
                 &store,
                 &registry(),
@@ -183,8 +180,8 @@ mod tests {
             .unwrap();
 
             assert_eq!(updated.id.as_ref(), "PWF-NOTE-0007");
-            assert_eq!(updated.message, "new message");
-            assert_eq!(store.project_notes("pwf")[0].message, "new message");
+            assert_eq!(updated.topic, "new message");
+            assert_eq!(store.project_notes("pwf")[0].topic, "new message");
             assert!(store.entries("pwf").is_empty());
         }
     }
@@ -197,14 +194,14 @@ mod tests {
             UpdateNote {
                 project_identifier: "pwf".to_string(),
                 id: "7".to_string(),
-                message: " \t ".to_string(),
+                topic: " \t ".to_string(),
             },
             &store,
             &registry(),
         )
         .unwrap_err();
 
-        assert!(matches!(error, UpdateNoteError::EmptyMessage));
+        assert!(matches!(error, UpdateNoteError::EmptyTopic));
         assert_eq!(store.project_notes("pwf"), vec![note()]);
     }
 
@@ -216,7 +213,7 @@ mod tests {
             UpdateNote {
                 project_identifier: "pwf".to_string(),
                 id: "note-0007".to_string(),
-                message: "new message".to_string(),
+                topic: "new message".to_string(),
             },
             &store,
             &registry(),

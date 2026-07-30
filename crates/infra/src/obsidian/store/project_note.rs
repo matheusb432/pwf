@@ -11,6 +11,7 @@ use super::{ObsidianStore, ObsidianStoreError};
 use crate::obsidian::{
     frontmatter_text, fs_atomic,
     index_text::{add_note_link, remove_note_link},
+    note_text,
 };
 
 impl AppRecordStore<ProjectNote> for ObsidianStore {
@@ -32,7 +33,7 @@ impl AppRecordStore<ProjectNote> for ObsidianStore {
         })?;
         Ok(Some(ProjectNote {
             id: id.clone(),
-            message: message_of(&source),
+            topic: topic_of(&source),
         }))
     }
 
@@ -49,8 +50,7 @@ impl AppRecordStore<ProjectNote> for ObsidianStore {
     ) -> Result<ProjectNote, Self::Error> {
         let project_directory = self.project_paths.project_directory(project)?;
         let note_path = project_directory.join(note_file_name(&new.id));
-        let message = new.message.trim();
-        let source = note_content(project.as_ref(), new.created.as_str(), message);
+        let source = note_content(project.as_ref(), &new);
         fs_atomic::write_text_atomic(&note_path, &source).map_err(|source| {
             ObsidianStoreError::WriteProjectNote {
                 id: new.id.to_string(),
@@ -63,7 +63,7 @@ impl AppRecordStore<ProjectNote> for ObsidianStore {
         write_index(&index_path, &add_note_link(&index, new.id.as_ref()))?;
         Ok(ProjectNote {
             id: new.id,
-            message: message.to_string(),
+            topic: new.topic,
         })
     }
 
@@ -86,7 +86,7 @@ impl AppRecordStore<ProjectNote> for ObsidianStore {
                 source,
             }
         })?;
-        fs_atomic::write_text_atomic(&note_path, &replace_body(&source, &patch.message)).map_err(
+        fs_atomic::write_text_atomic(&note_path, &replace_topic(&source, &patch.topic)).map_err(
             |source| ObsidianStoreError::WriteProjectNote {
                 id: id.to_string(),
                 source,
@@ -159,7 +159,7 @@ fn list_notes(project_directory: &Path, prefix: &ProjectPrefix) -> Vec<ProjectNo
         let source = std::fs::read_to_string(path).unwrap_or_default();
         notes.push(ProjectNote {
             id,
-            message: message_of(&source),
+            topic: topic_of(&source),
         });
     }
     notes
@@ -169,31 +169,97 @@ fn note_file_name(id: &NoteId) -> String {
     format!("{id}.md")
 }
 
-fn message_of(source: &str) -> String {
-    frontmatter_text::parse(source)
-        .body
-        .lines()
+fn topic_of(source: &str) -> String {
+    let body = frontmatter_text::parse(source).body;
+    body.lines()
         .map(str::trim)
-        .find(|line| !line.is_empty())
+        .find_map(|line| line.strip_prefix("# ").map(str::trim))
+        .or_else(|| body.lines().map(str::trim).find(|line| !line.is_empty()))
         .unwrap_or("")
         .to_string()
 }
 
-fn note_content(project: &str, created: &str, message: &str) -> String {
+fn note_content(project: &str, note: &NewProjectNote) -> String {
     let mut source = String::from("---\ntype: note\n");
     let _ = writeln!(source, "project: {project}");
-    let _ = writeln!(source, "created: {created}");
+    let _ = writeln!(source, "created: {}", note.created.as_str());
+    if let Some(domain) = &note.domain {
+        let _ = writeln!(source, "domain: {}", yaml_string(domain));
+    }
+    if !note.tags.is_empty() {
+        let _ = writeln!(source, "tags: {}", yaml_array(&note.tags));
+    }
+    if !note.sources.is_empty() {
+        let _ = writeln!(source, "sources: {}", yaml_array(&note.sources));
+    }
+    if let Some(verified) = &note.verified {
+        let _ = writeln!(source, "verified: {}", yaml_string(verified));
+    }
     source.push_str("---\n\n");
-    source.push_str(message);
-    source.push('\n');
+    let _ = writeln!(source, "# {}\n", note.topic);
+    let _ = writeln!(source, "> **TL;DR:** {}", note.tldr);
+    if let Some(why) = &note.why {
+        let _ = write!(source, "\n## Why it matters\n\n{why}\n");
+    }
+    if !note.sources.is_empty() {
+        source.push_str("\n## Sources\n\n");
+        for evidence in &note.sources {
+            let _ = writeln!(source, "- {evidence}");
+        }
+    }
     source
 }
 
-fn replace_body(source: &str, message: &str) -> String {
-    let Some((frontmatter, _)) = source.split_once("\n\n") else {
-        return format!("{}\n", message.trim());
+fn yaml_string(value: &str) -> String {
+    serde_json::to_string(value).expect("serializing a string as JSON cannot fail")
+}
+
+fn yaml_array(values: &[String]) -> String {
+    format!(
+        "[{}]",
+        values
+            .iter()
+            .map(|value| yaml_string(value))
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
+fn replace_topic(source: &str, topic: &str) -> String {
+    let body_start = frontmatter_body_start(source);
+    let mut line_start = body_start;
+    for line in source[body_start..].split_inclusive('\n') {
+        let content = line.strip_suffix('\n').unwrap_or(line);
+        let content = content.strip_suffix('\r').unwrap_or(content);
+        if content.starts_with("# ") {
+            let line_end = line_start + content.len();
+            return format!("{}# {topic}{}", &source[..line_start], &source[line_end..]);
+        }
+        line_start += line.len();
+    }
+    note_text::replace_body(source, topic)
+}
+
+fn frontmatter_body_start(source: &str) -> usize {
+    let byte_order_mark = source
+        .strip_prefix('\u{feff}')
+        .map_or(0, |_| '\u{feff}'.len_utf8());
+    let mut lines = source[byte_order_mark..].split_inclusive('\n');
+    let Some(opening) = lines.next() else {
+        return 0;
     };
-    format!("{frontmatter}\n\n{}\n", message.trim())
+    if opening.trim_end_matches(['\r', '\n']) != "---" {
+        return 0;
+    }
+
+    let mut offset = byte_order_mark + opening.len();
+    for line in lines {
+        offset += line.len();
+        if line.trim_end_matches(['\r', '\n']) == "---" {
+            return offset;
+        }
+    }
+    0
 }
 
 fn note_not_found(project: &ProjectName, id: &NoteId) -> ObsidianStoreError {
@@ -254,10 +320,16 @@ mod tests {
         )])
     }
 
-    fn new_note(number: u32, message: &str) -> NewProjectNote {
+    fn new_note(number: u32, topic: &str) -> NewProjectNote {
         NewProjectNote {
             id: identifier(number),
-            message: message.to_string(),
+            topic: topic.to_string(),
+            tldr: "A CLI flag needs a binary test only for an owned contract.".to_string(),
+            why: Some("This protects real process-boundary failures.".to_string()),
+            domain: Some("testing".to_string()),
+            tags: vec!["cli".to_string(), "testing".to_string()],
+            sources: vec!["PWF-0165 implementation evidence".to_string()],
+            verified: Some("2026-07-30".to_string()),
             created: Timestamp::new("2026-07-26"),
         }
     }
@@ -274,15 +346,31 @@ mod tests {
         let inserted = <ObsidianStore as AppRecordStore<ProjectNote>>::insert(
             &store,
             &project(),
-            new_note(1, " remember milk "),
+            new_note(1, "remember milk"),
         )
         .unwrap();
 
         assert_eq!(inserted.id.as_ref(), "PWF-NOTE-0001");
-        assert_eq!(inserted.message, "remember milk");
+        assert_eq!(inserted.topic, "remember milk");
         assert_eq!(
             fs::read_to_string(tasks_path.join("PWF-NOTE-0001.md")).unwrap(),
-            "---\ntype: note\nproject: pwf\ncreated: 2026-07-26\n---\n\nremember milk\n"
+            concat!(
+                "---\n",
+                "type: note\n",
+                "project: pwf\n",
+                "created: 2026-07-26\n",
+                "domain: \"testing\"\n",
+                "tags: [\"cli\", \"testing\"]\n",
+                "sources: [\"PWF-0165 implementation evidence\"]\n",
+                "verified: \"2026-07-30\"\n",
+                "---\n\n",
+                "# remember milk\n\n",
+                "> **TL;DR:** A CLI flag needs a binary test only for an owned contract.\n\n",
+                "## Why it matters\n\n",
+                "This protects real process-boundary failures.\n\n",
+                "## Sources\n\n",
+                "- PWF-0165 implementation evidence\n",
+            )
         );
         assert_eq!(
             fs::read_to_string(&index_path).unwrap(),
@@ -318,7 +406,7 @@ mod tests {
             &project(),
             &identifier(1),
             ProjectNotePatch {
-                message: " new message ".to_string(),
+                topic: "new message".to_string(),
             },
         )
         .unwrap();
@@ -327,6 +415,44 @@ mod tests {
         assert_eq!(
             fs::read_to_string(tasks_path.join("PWF-NOTE-0001.md")).unwrap(),
             "---\ntype: note\nproject: pwf\ncreated: 2026-07-25\n---\n\nnew message\n"
+        );
+    }
+
+    #[test]
+    fn update_changes_only_the_canonical_topic_with_windows_line_endings() {
+        let directory = tempfile::tempdir().unwrap();
+        let tasks_path = directory.path().join("tasks");
+        fs::create_dir_all(&tasks_path).unwrap();
+        let index_path = tasks_path.join("pwf.md");
+        fs::write(&index_path, "### Notes\r\n\r\n- [[PWF-NOTE-0001]]\r\n").unwrap();
+        let source = concat!(
+            "---\r\n",
+            "type: note\r\n",
+            "project: pwf\r\n",
+            "created: 2026-07-25\r\n",
+            "# frontmatter comment\r\n",
+            "---\r\n\r\n",
+            "# old topic\r\n\r\n",
+            "> **TL;DR:** Preserve this.\r\n\r\n",
+            "## Why it matters\r\n\r\n",
+            "Keep every other byte.\r\n",
+        );
+        fs::write(tasks_path.join("PWF-NOTE-0001.md"), source).unwrap();
+        let store = store(&tasks_path);
+
+        <ObsidianStore as AppRecordStore<ProjectNote>>::update(
+            &store,
+            &project(),
+            &identifier(1),
+            ProjectNotePatch {
+                topic: "new topic".to_string(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            fs::read_to_string(tasks_path.join("PWF-NOTE-0001.md")).unwrap(),
+            source.replacen("# old topic", "# new topic", 1)
         );
     }
 

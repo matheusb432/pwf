@@ -267,7 +267,7 @@ impl ObsidianStore {
         Ok(note_to_record(
             id,
             &note.path,
-            Some(&note.title),
+            Some(note.title.as_ref()),
             note.content,
         ))
     }
@@ -304,7 +304,7 @@ impl ObsidianStore {
     fn patch_note_file(note_path: &Path, patch: &ItemPatch) -> Result<(), ObsidianStoreError> {
         let mut content = read_item_file(note_path)?;
         if let Some(title) = &patch.title {
-            content = replace_title(&content, title);
+            content = replace_title(&content, title.as_ref());
         }
         if let Some(body) = &patch.body {
             content = replace_body(&content, body);

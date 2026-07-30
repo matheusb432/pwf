@@ -82,6 +82,7 @@ impl DatabaseFixture {
 pub struct ManagedProject {
     _directory: TempDir,
     pub database: DatabaseFixture,
+    tasks_path: PathBuf,
 }
 
 impl ManagedProject {
@@ -104,7 +105,12 @@ impl ManagedProject {
         Self {
             _directory: directory,
             database,
+            tasks_path,
         }
+    }
+
+    pub fn note_markdown(&self, id: &str) -> String {
+        fs::read_to_string(self.tasks_path.join(format!("{id}.md"))).unwrap()
     }
 }
 

@@ -139,7 +139,7 @@ mod tests {
     fn note() -> ProjectNote {
         ProjectNote {
             id: NoteId::try_new("PWF-NOTE-0007").unwrap(),
-            message: "remember milk".to_string(),
+            topic: "remember milk".to_string(),
         }
     }
 

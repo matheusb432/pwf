@@ -29,6 +29,7 @@ pub enum SessionEffort {
     #[default]
     High,
     XHigh,
+    Max,
 }
 
 impl fmt::Display for SessionEffort {
@@ -38,6 +39,7 @@ impl fmt::Display for SessionEffort {
             Self::Medium => "medium",
             Self::High => "high",
             Self::XHigh => "xhigh",
+            Self::Max => "max",
         })
     }
 }

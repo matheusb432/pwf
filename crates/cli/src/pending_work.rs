@@ -24,6 +24,7 @@ pub enum Command {
     ///
     /// Prompt words are joined with single spaces, so quotes are optional. Rich
     /// prompts use lanes: `<title> / <goal> /c <context> /n <constraint> /d <done>`.
+    /// The title is stored separately from Goals and has a 200-character limit after normalization.
     /// `--continue <path>` builds the prompt from a plan path instead of positional words.
     Add(add::Arguments),
     /// List pending-work items (active only, capped, scoped sections hidden; `--all` lists
@@ -38,6 +39,8 @@ pub enum Command {
     /// completed/commits provenance, and restore its index link.
     Reopen(reopen::Arguments),
     /// Edit an item's prompt body, title, prereqs, tags, effort, or provenance.
+    ///
+    /// Replacement titles have a 200-character limit after normalization.
     ///
     /// Only `--commits` and `--append-report` are allowed on a closed item.
     Update(update::Arguments),

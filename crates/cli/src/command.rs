@@ -25,7 +25,7 @@ pub enum RootCommand {
     Project(project::Arguments),
     #[command(flatten)]
     PendingWork(pending_work::Command),
-    /// One-liner project notes: `pwf note [ls|add <msg>|remove <id>] <proj>`.
+    /// Study notes: `pwf note [list|add|update|remove] <project>`.
     Note(note::Arguments),
 }
 
