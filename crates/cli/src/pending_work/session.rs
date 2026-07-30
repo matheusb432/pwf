@@ -9,10 +9,7 @@ use pwf_application::pending_work::{
 };
 use pwf_infra::{
     obsidian::ObsidianStore,
-    session::{
-        ClaudeHarness, CodexHarness, InlineHarness, LocalRepositoryClient, TmuxHarness,
-        TomlModelTierCatalog, render_argv,
-    },
+    session::{AgentHarness, InlineHarness, LocalRepositoryClient, TmuxHarness, render_argv},
 };
 use pwf_models::session::{Agent, DispatchMode, LaunchDirectives, SessionEffort};
 
@@ -140,10 +137,8 @@ pub(super) fn run(
         &request,
         store,
         projects,
-        &TomlModelTierCatalog,
+        &AgentHarness,
         &LocalRepositoryClient,
-        &ClaudeHarness,
-        &CodexHarness,
         &TmuxHarness,
     )
     .map_err(map_plan_error)?;
@@ -179,8 +174,7 @@ pub(super) fn run(
         DispatchSession::new(planned),
         store,
         projects,
-        &ClaudeHarness,
-        &CodexHarness,
+        &AgentHarness,
         &InlineHarness,
         &TmuxHarness,
     )?;

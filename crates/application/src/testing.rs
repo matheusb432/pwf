@@ -22,13 +22,14 @@ struct InMemoryState {
     prefixes: BTreeMap<ProjectName, String>,
     project_notes: BTreeMap<ProjectName, Vec<ProjectNote>>,
     project_note_creations: BTreeMap<ProjectName, Vec<Timestamp>>,
-    failure_points: Vec<FailurePoint>,
+    project_note_failures: Vec<ProjectNoteFailure>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum FailurePoint {
-    ProjectNoteDelete,
-    ProjectNoteList,
+pub(crate) enum ProjectNoteFailure {
+    Delete,
+    List,
+    Read,
 }
 
 /// Provides a thread-safe [`AppRecordStore`] test double for application records.
@@ -46,6 +47,8 @@ pub enum InMemoryStoreError {
     IndexSectionWriteUnsupported { op: &'static str },
     #[error("injected in-memory store failure: {operation}")]
     Injected { operation: &'static str },
+    #[error("pending-work note Markdown is not staged: {locator}")]
+    PendingWorkNoteMarkdownMissing { locator: String },
 }
 
 impl InMemoryStore {
@@ -110,8 +113,8 @@ impl InMemoryStore {
             .unwrap_or_default()
     }
 
-    pub(crate) fn with_failure(self, failure_point: FailurePoint) -> Self {
-        self.lock().failure_points.push(failure_point);
+    pub(crate) fn with_failure(self, failure: ProjectNoteFailure) -> Self {
+        self.lock().project_note_failures.push(failure);
         self
     }
 
@@ -262,8 +265,8 @@ impl AppRecordStore<ProjectNote> for InMemoryStore {
     fn list(&self, project: &ProjectName) -> Result<Vec<ProjectNote>, Self::Error> {
         if self
             .lock()
-            .failure_points
-            .contains(&FailurePoint::ProjectNoteList)
+            .project_note_failures
+            .contains(&ProjectNoteFailure::List)
         {
             return Err(InMemoryStoreError::Injected {
                 operation: "project-note-list",
@@ -321,8 +324,8 @@ impl AppRecordStore<ProjectNote> for InMemoryStore {
     fn delete(&self, project: &ProjectName, id: &NoteId) -> Result<(), Self::Error> {
         if self
             .lock()
-            .failure_points
-            .contains(&FailurePoint::ProjectNoteDelete)
+            .project_note_failures
+            .contains(&ProjectNoteFailure::Delete)
         {
             return Err(InMemoryStoreError::Injected {
                 operation: "project-note-delete",
@@ -348,6 +351,30 @@ impl ProjectNoteStore for InMemoryStore {
             .project_notes
             .get(project)
             .is_some_and(|notes| notes.iter().any(|note| note.id == *id)))
+    }
+
+    fn read_note_markdown(
+        &self,
+        locator: &str,
+    ) -> Result<String, <Self as AppRecordStore<ProjectNote>>::Error> {
+        if self
+            .lock()
+            .project_note_failures
+            .contains(&ProjectNoteFailure::Read)
+        {
+            return Err(InMemoryStoreError::Injected {
+                operation: "project-note-read",
+            });
+        }
+        self.lock()
+            .items
+            .values()
+            .flatten()
+            .find(|item| item.locator == locator)
+            .map(|item| item.source.clone())
+            .ok_or_else(|| InMemoryStoreError::PendingWorkNoteMarkdownMissing {
+                locator: locator.to_string(),
+            })
     }
 }
 

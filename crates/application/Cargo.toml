@@ -6,6 +6,7 @@ publish.workspace = true
 
 [dependencies]
 askama = { workspace = true }
+bon = { workspace = true }
 prompt-lanes = { workspace = true }
 pwf_models = { workspace = true }
 cqrsy = { workspace = true }

@@ -9,9 +9,8 @@ mod model_tiers;
 mod repository;
 mod tmux;
 
-pub use codex_app_server::CodexThreadPreparationError;
 pub use inline::InlineHarness;
-pub use launcher::{AgentProbe, ClaudeHarness, CodexHarness, render_argv};
-pub use model_tiers::{ModelTiersError, TomlModelTierCatalog};
+pub use launcher::{AgentHarness, AgentPreparationError, AgentProbe, render_argv};
+pub use model_tiers::ModelTiersError;
 pub use repository::LocalRepositoryClient;
 pub use tmux::TmuxHarness;

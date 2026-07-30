@@ -10,8 +10,8 @@ use super::{
     SessionPlan, logic,
 };
 use crate::{
-    AgentModelTierCatalogClient, AppRecordStore, ClaudeAgentSessionClient, CodexAgentSessionClient,
-    NoteMarkdownClient, PendingWorkRecord, RepositoryDirectoryClient, TmuxSessionClient,
+    AgentClient, AgentCommand, AppRecordStore, PendingWorkRecord, ProjectNoteStore,
+    RepositoryDirectoryClient, SessionClient, SessionStart, SessionWindow,
     pending_work::{
         ProjectRegistry,
         dto::PreparedPendingWorkUpdate,
@@ -113,11 +113,11 @@ pub enum PlanSessionError {
     NotLaunchable { id: String, issues: Vec<String> },
     #[error("Repo directory for project '{project}' does not exist: {path}")]
     RepositoryMissing { project: String, path: String },
-    #[error("tmux not found on PATH; cannot dispatch a pwf session.")]
+    #[error("Session multiplexer is unavailable; cannot dispatch a pwf session.")]
     MultiplexerNotFound,
-    #[error("checking tmux session '{session}' failed: {message}")]
+    #[error("Checking multiplexer session '{session}' failed: {message}")]
     MultiplexerSessionCheck { session: String, message: String },
-    #[error("tmux session '{session}' does not exist")]
+    #[error("Multiplexer session '{session}' does not exist")]
     MultiplexerSessionMissing {
         session: String,
         start_command_argv: Vec<String>,
@@ -133,24 +133,15 @@ pub enum PlanSessionError {
 /// Returns [`PlanSessionError`] for lookup, launch validation, model selection, or append
 /// preparation failures.
 #[cqrsy::command]
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the operation keeps each concrete external capability visible"
-)]
 pub fn execute(
     command: &PlanSession,
-    store: &(impl AppRecordStore<PendingWorkRecord> + NoteMarkdownClient),
+    store: &(impl AppRecordStore<PendingWorkRecord> + ProjectNoteStore),
     projects: &ProjectRegistry,
-    model_tiers: &impl AgentModelTierCatalogClient,
+    agent_client: &impl AgentClient,
     repository: &impl RepositoryDirectoryClient,
-    claude: &impl ClaudeAgentSessionClient,
-    codex: &impl CodexAgentSessionClient,
-    tmux: &impl TmuxSessionClient,
+    session_client: &impl SessionClient,
 ) -> Result<PlanSessionOk, PlanSessionError> {
-    let probe = match command.agent {
-        Agent::Claude => claude.probe(),
-        Agent::Codex => codex.probe(),
-    };
+    let probe = agent_client.probe(command.agent);
     let item = find_open_item(store, projects, &command.id)?;
     if !item.launchable {
         return Err(PlanSessionError::NotLaunchable {
@@ -161,13 +152,15 @@ pub fn execute(
 
     let model: AgentModel = match command.model_override.clone().into_inner() {
         Some(model) => Some(model),
-        None => logic::resolve_model(model_tiers, command.agent, &item.id, item.effort.as_deref())
-            .map_err(|error| PlanSessionError::ModelTier(Box::new(error)))?,
+        None => logic::resolve_model(command.agent, &item.id, item.effort.as_deref(), |effort| {
+            agent_client.model_tier(effort)
+        })
+        .map_err(|error| PlanSessionError::ModelTier(Box::new(error)))?,
     }
     .into();
     let prepared_update = prepare_append(command, &item.id, store, projects)?;
     let target = logic::dispatch_target(&item.id);
-    let task_content = logic::load_task_content(&item.id, store, projects, store)?;
+    let task_content = logic::load_task_content(&item.id, store, projects)?;
     let plan = SessionPlan {
         launch: logic::agent_launch(
             &item,
@@ -189,20 +182,23 @@ pub fn execute(
     if matches!(command.intent, PlanSessionIntent::Dispatch { .. })
         && command.mode == DispatchMode::Multiplexer
     {
-        if !tmux.available() {
+        if !session_client.available() {
             return Err(PlanSessionError::MultiplexerNotFound);
         }
-        let session_exists = tmux
+        let session_exists = session_client
             .session_exists(&plan.target.session)
             .map_err(|message| PlanSessionError::MultiplexerSessionCheck {
                 session: plan.target.session.clone(),
                 message,
             })?;
         if !session_exists {
+            let start = SessionStart::builder()
+                .session_name(&plan.target.session)
+                .working_directory(&plan.launch.repository)
+                .build();
             return Err(PlanSessionError::MultiplexerSessionMissing {
                 session: plan.target.session.clone(),
-                start_command_argv: tmux
-                    .new_session_process_argv(&plan.target.session, &plan.launch.repository),
+                start_command_argv: session_client.preview_start(&start),
             });
         }
     }
@@ -228,18 +224,18 @@ pub fn execute(
             }))
         }
         PlanSessionIntent::DryRun => {
-            let provider_argv = match command.agent {
-                Agent::Claude => claude.preview(&plan.launch),
-                Agent::Codex => codex.preview(&plan.launch),
-            };
+            let provider_argv = agent_client.preview(&plan.launch);
             let argv = match command.mode {
                 DispatchMode::Inline => provider_argv,
-                DispatchMode::Multiplexer => tmux.new_window_process_argv(
-                    &plan.target.session,
-                    &plan.launch.repository,
-                    &plan.target.window,
-                    &provider_argv,
-                ),
+                DispatchMode::Multiplexer => {
+                    let window = SessionWindow::builder()
+                        .session_name(&plan.target.session)
+                        .working_directory(&plan.launch.repository)
+                        .window_name(&plan.target.window)
+                        .agent_command(AgentCommand::new(&provider_argv))
+                        .build();
+                    session_client.preview_window(&window)
+                }
             };
             Ok(PlanSessionOk::DryRun(DryRunSession { plan, argv, probe }))
         }

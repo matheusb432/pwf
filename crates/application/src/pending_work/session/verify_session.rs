@@ -1,12 +1,13 @@
 //! Verifies pending-work launchability with the selected provider.
 
-use pwf_models::session::AgentModel;
+use std::error::Error;
+
+use pwf_models::{pending_work::EffortTier, session::AgentModel};
 use thiserror::Error;
 
-use super::{Agent, AgentLaunch, SessionEffort, VerifySessionOk, logic};
+use super::{Agent, AgentLaunch, ModelTierLookup, SessionEffort, VerifySessionOk, logic};
 use crate::{
-    AgentModelTierCatalogClient, AppRecordStore, ClaudeAgentSessionClient, CodexAgentSessionClient,
-    NoteMarkdownClient, PendingWorkRecord,
+    AgentClient, AppRecordStore, PendingWorkRecord, ProjectNoteStore,
     pending_work::{
         ProjectRegistry, find_pending_work::FindPendingWorkError, logic::finding::find_open_item,
         show_pending_work_item::ShowPendingWorkError,
@@ -38,23 +39,16 @@ pub enum VerifySessionError {
 #[cqrsy::query]
 pub fn execute(
     query: VerifySession,
-    store: &impl AppRecordStore<PendingWorkRecord>,
+    store: &(impl AppRecordStore<PendingWorkRecord> + ProjectNoteStore),
     projects: &ProjectRegistry,
-    markdown_source: &impl NoteMarkdownClient,
-    model_tiers: &impl AgentModelTierCatalogClient,
-    claude: &impl ClaudeAgentSessionClient,
-    codex: &impl CodexAgentSessionClient,
+    agent_client: &impl AgentClient,
 ) -> Result<VerifySessionOk, VerifySessionError> {
-    let probe = match query.agent {
-        Agent::Claude => claude.probe(),
-        Agent::Codex => codex.probe(),
-    };
-    let planned = prepare_verification(query, store, projects, markdown_source, model_tiers)?;
+    let probe = agent_client.probe(query.agent);
+    let planned = prepare_verification(query, store, projects, |effort| {
+        agent_client.model_tier(effort)
+    })?;
     let command_argv = match planned.launch.as_ref() {
-        Some(launch) => match launch.agent {
-            Agent::Claude => claude.preview(launch),
-            Agent::Codex => codex.preview(launch),
-        },
+        Some(launch) => agent_client.preview(launch),
         None => vec![probe.binary.clone()],
     };
 
@@ -74,13 +68,15 @@ struct PreparedVerification {
     launch: Option<AgentLaunch>,
 }
 
-fn prepare_verification(
+fn prepare_verification<E>(
     query: VerifySession,
-    store: &impl AppRecordStore<PendingWorkRecord>,
+    store: &(impl AppRecordStore<PendingWorkRecord> + ProjectNoteStore),
     projects: &ProjectRegistry,
-    markdown_source: &impl NoteMarkdownClient,
-    model_tiers: &impl AgentModelTierCatalogClient,
-) -> Result<PreparedVerification, VerifySessionError> {
+    model_tier: impl FnOnce(EffortTier) -> Result<ModelTierLookup, E>,
+) -> Result<PreparedVerification, VerifySessionError>
+where
+    E: Error + Send + Sync + 'static,
+{
     let Some(id) = query.id else {
         return Ok(PreparedVerification {
             task_id: None,
@@ -94,14 +90,14 @@ fn prepare_verification(
     let (model, model_issue) = match query.model_override.into_inner() {
         Some(model) => (Some(model), None),
         None => {
-            match logic::resolve_model(model_tiers, query.agent, &item.id, item.effort.as_deref()) {
+            match logic::resolve_model(query.agent, &item.id, item.effort.as_deref(), model_tier) {
                 Ok(model) => (model, None),
                 Err(issue) => (None, Some(issue)),
             }
         }
     };
     let task_content = if item.launchable {
-        logic::load_task_content(&item.id, store, projects, markdown_source)?
+        logic::load_task_content(&item.id, store, projects)?
     } else {
         item.prompt.clone()
     };
@@ -129,16 +125,13 @@ fn prepare_verification(
 
 #[cfg(test)]
 mod tests {
-    use std::{convert::Infallible, error::Error, fmt, path::Path};
+    use std::{error::Error, fmt};
 
-    use pwf_models::pending_work::{
-        EffortTier, ProjectName, Timestamp, WorkItemId, WorkItemStatus,
-    };
+    use pwf_models::pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus};
 
     use super::{AgentModel, ProjectRegistry, VerifySession};
     use crate::{
-        AgentModelTierCatalogClient, IndexPlacement, Materialization, NoteMarkdownClient,
-        PendingWorkRecord, RecordId,
+        IndexPlacement, Materialization, PendingWorkRecord, RecordId,
         pending_work::session::{Agent, ModelTierLookup},
         testing::InMemoryStore,
     };
@@ -146,18 +139,7 @@ mod tests {
     const REPOSITORY: &str = "/repo/pwf";
     const TASK_ID: &str = "PWF-0139";
 
-    #[derive(Clone)]
-    struct UnusedNoteMarkdownClient;
-
-    impl NoteMarkdownClient for UnusedNoteMarkdownClient {
-        type Error = Infallible;
-
-        fn read_note_markdown(&self, _path: &Path) -> Result<String, Self::Error> {
-            panic!("non-launchable verification must not read note Markdown")
-        }
-    }
-
-    #[derive(Debug, Clone)]
+    #[derive(Debug)]
     struct CatalogError;
 
     impl fmt::Display for CatalogError {
@@ -167,17 +149,6 @@ mod tests {
     }
 
     impl Error for CatalogError {}
-
-    #[derive(Debug, Clone)]
-    struct BrokenCatalog;
-
-    impl AgentModelTierCatalogClient for BrokenCatalog {
-        type Error = CatalogError;
-
-        fn tier(&self, _effort: EffortTier) -> Result<ModelTierLookup, Self::Error> {
-            Err(CatalogError)
-        }
-    }
 
     fn record() -> PendingWorkRecord {
         PendingWorkRecord {
@@ -219,8 +190,7 @@ mod tests {
             },
             &store,
             &projects,
-            &UnusedNoteMarkdownClient,
-            &BrokenCatalog,
+            |_| Err::<ModelTierLookup, _>(CatalogError),
         )
         .unwrap();
 

@@ -7,7 +7,7 @@ use pwf_models::{
 };
 use regex::Regex;
 
-use super::{ObsidianStore, ObsidianStoreError};
+use super::{ObsidianStore, ObsidianStoreError, fs::read_item_file};
 use crate::obsidian::{
     frontmatter_text, fs_atomic,
     index_text::{add_note_link, remove_note_link},
@@ -131,6 +131,13 @@ impl ProjectNoteStore for ObsidianStore {
                 id: id.to_string(),
                 source,
             })
+    }
+
+    fn read_note_markdown(
+        &self,
+        locator: &str,
+    ) -> Result<String, <Self as AppRecordStore<ProjectNote>>::Error> {
+        read_item_file(Path::new(locator))
     }
 }
 

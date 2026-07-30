@@ -13,6 +13,7 @@ anyhow = "1"
 anstyle = "1"
 askama = { version = "0.16.0", default-features = false, features = ["derive", "std"] }
 assert_cmd = "2"
+bon = "3.9.3"
 cargo_metadata = "0.23.1"
 chrono = "0.4"
 clap = { version = "4", features = ["derive"] }

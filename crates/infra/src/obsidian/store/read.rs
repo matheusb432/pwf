@@ -1,12 +1,8 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use pwf_application::NoteMarkdownClient;
 use pwf_models::pending_work::ProjectName;
 
-use super::{
-    ObsidianStore, ObsidianStoreError,
-    fs::{read_item_file, read_text_optional},
-};
+use super::{ObsidianStore, ObsidianStoreError, fs::read_text_optional};
 use crate::obsidian::identity::{parse_project_index_identity, validate_project_index_identity};
 
 impl ObsidianStore {
@@ -23,13 +19,5 @@ impl ObsidianStore {
         let expected = self.project_paths.project_identity(project)?;
         validate_project_index_identity(&index_path, &actual, expected)?;
         Ok(Some((index_path, text)))
-    }
-}
-
-impl NoteMarkdownClient for ObsidianStore {
-    type Error = ObsidianStoreError;
-
-    fn read_note_markdown(&self, path: &Path) -> Result<String, Self::Error> {
-        read_item_file(path)
     }
 }

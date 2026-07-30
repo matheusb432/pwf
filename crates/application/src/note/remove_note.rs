@@ -119,7 +119,7 @@ mod tests {
     use crate::{
         ProjectNote,
         pending_work::ProjectRegistry,
-        testing::{FailurePoint, InMemoryStore},
+        testing::{InMemoryStore, ProjectNoteFailure},
     };
 
     #[derive(Debug, thiserror::Error)]
@@ -168,7 +168,7 @@ mod tests {
 
     #[test]
     fn missing_note_wins_over_adapter_delete_failure() {
-        let store = InMemoryStore::default().with_failure(FailurePoint::ProjectNoteDelete);
+        let store = InMemoryStore::default().with_failure(ProjectNoteFailure::Delete);
 
         let error = super::execute(
             RemoveNote {

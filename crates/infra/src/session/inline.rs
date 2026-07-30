@@ -2,22 +2,20 @@
 
 use std::process::Command;
 
-use pwf_application::InlineAgentSessionClient;
+use pwf_application::{AgentCommand, InlineAgentSessionClient};
 
 /// Executes prepared agent commands inline.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct InlineHarness;
 
-impl InlineHarness {
-    /// Runs prepared argv in the supplied repository.
-    ///
-    /// # Errors
-    ///
-    /// Returns a process error or unsuccessful exit status.
-    pub fn run(argv: &[String], repository: &str) -> Result<(), String> {
-        let (binary, arguments) = argv.split_first().ok_or_else(|| "empty argv".to_string())?;
+impl InlineAgentSessionClient for InlineHarness {
+    fn run(&self, command: AgentCommand<'_>, working_directory: &str) -> Result<(), String> {
+        let (binary, arguments) = command
+            .arguments()
+            .split_first()
+            .ok_or_else(|| "empty agent command".to_string())?;
         let mut command = Command::new(binary);
-        command.args(arguments).current_dir(repository);
+        command.args(arguments).current_dir(working_directory);
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt;
@@ -28,12 +26,6 @@ impl InlineHarness {
             let status = command.status().map_err(|error| error.to_string())?;
             map_spawn_status(status.success(), status.code())
         }
-    }
-}
-
-impl InlineAgentSessionClient for InlineHarness {
-    fn run(&self, argv: &[String], repository: &str) -> Result<(), String> {
-        Self::run(argv, repository)
     }
 }
 

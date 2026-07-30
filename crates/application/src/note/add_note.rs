@@ -202,7 +202,7 @@ mod tests {
     use crate::{
         Clock, ProjectNote,
         pending_work::ProjectRegistry,
-        testing::{FailurePoint, InMemoryStore},
+        testing::{InMemoryStore, ProjectNoteFailure},
     };
 
     #[derive(Debug, thiserror::Error)]
@@ -249,7 +249,7 @@ mod tests {
 
     #[test]
     fn blank_topic_wins_over_store_listing_failure() {
-        let store = InMemoryStore::default().with_failure(FailurePoint::ProjectNoteList);
+        let store = InMemoryStore::default().with_failure(ProjectNoteFailure::List);
         let mut command = command("pwf");
         command.topic = " \t ".to_string();
 
@@ -261,7 +261,7 @@ mod tests {
 
     #[test]
     fn blank_tldr_wins_over_store_listing_failure() {
-        let store = InMemoryStore::default().with_failure(FailurePoint::ProjectNoteList);
+        let store = InMemoryStore::default().with_failure(ProjectNoteFailure::List);
         let mut command = command("pwf");
         command.tldr = " \t ".to_string();
 

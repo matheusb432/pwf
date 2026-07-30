@@ -1,6 +1,6 @@
 use clap::Args;
 use pwf_application::{
-    AppRecordStore, NoteMarkdownClient, PendingWorkRecord,
+    AppRecordStore, PendingWorkRecord, ProjectNoteStore,
     pending_work::{
         ProjectRegistry, ShowOutput,
         show_pending_work_item::{self, ShowPendingWorkItem, ShowPendingWorkItemOk},
@@ -44,7 +44,7 @@ pub(in crate::pending_work) fn run_show<S>(
     args: &Arguments,
 ) -> Result<String, PendingWorkError>
 where
-    S: AppRecordStore<PendingWorkRecord> + NoteMarkdownClient,
+    S: AppRecordStore<PendingWorkRecord> + ProjectNoteStore,
 {
     let id = args.identifier.required("show")?;
     let output = if args.path {
@@ -54,13 +54,9 @@ where
     } else {
         ShowOutput::Markdown
     };
-    let shown = show_pending_work_item::execute(
-        &ShowPendingWorkItem { id, output },
-        store,
-        projects,
-        store,
-    )
-    .map_err(|error| PendingWorkError::ApplicationRead(error.to_string()))?;
+    let shown =
+        show_pending_work_item::execute(&ShowPendingWorkItem { id, output }, store, projects)
+            .map_err(|error| PendingWorkError::ApplicationRead(error.to_string()))?;
     match shown {
         ShowPendingWorkItemOk::Markdown(markdown) => Ok(markdown),
         ShowPendingWorkItemOk::Path(path) => Ok(path),

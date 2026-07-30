@@ -8,7 +8,7 @@ use thiserror::Error;
 
 use super::{Agent, AgentLaunch, DispatchTarget, LaunchDirectives, ModelTierLookup, SessionEffort};
 use crate::{
-    AgentModelTierCatalogClient, AppRecordStore, NoteMarkdownClient, PendingWorkRecord,
+    AppRecordStore, PendingWorkRecord, ProjectNoteStore,
     pending_work::{
         ProjectRegistry,
         dto::PendingWorkItemView,
@@ -170,14 +170,14 @@ pub(super) enum ModelSelectionError {
     MissingClaudeModel { tier: EffortTier, catalog: String },
 }
 
-pub(super) fn resolve_model<C>(
-    catalog: &C,
+pub(super) fn resolve_model<E>(
     agent: Agent,
     task_id: &str,
     effort: Option<&str>,
+    model_tier: impl FnOnce(EffortTier) -> Result<ModelTierLookup, E>,
 ) -> Result<Option<String>, ModelSelectionError>
 where
-    C: AgentModelTierCatalogClient,
+    E: Error + Send + Sync + 'static,
 {
     if agent == Agent::Codex {
         return Ok(None);
@@ -192,9 +192,7 @@ where
     let ModelTierLookup {
         catalog,
         tier: entry,
-    } = catalog
-        .tier(tier)
-        .map_err(|error| ModelSelectionError::Catalog(Box::new(error)))?;
+    } = model_tier(tier).map_err(|error| ModelSelectionError::Catalog(Box::new(error)))?;
     let Some(entry) = entry else {
         return Err(ModelSelectionError::MissingTier { tier, catalog });
     };
@@ -210,9 +208,8 @@ fn parse_effort(raw: &str) -> Option<EffortTier> {
 
 pub(super) fn load_task_content(
     id: &str,
-    store: &impl AppRecordStore<PendingWorkRecord>,
+    store: &(impl AppRecordStore<PendingWorkRecord> + ProjectNoteStore),
     projects: &ProjectRegistry,
-    markdown_client: &impl NoteMarkdownClient,
 ) -> Result<String, ShowPendingWorkError> {
     let output = show_pending_work_item::execute(
         &ShowPendingWorkItem {
@@ -221,7 +218,6 @@ pub(super) fn load_task_content(
         },
         store,
         projects,
-        markdown_client,
     )?;
     let ShowPendingWorkItemOk::Markdown(markdown) = output else {
         unreachable!("Markdown request returned a different representation")
@@ -303,10 +299,7 @@ mod model_selection_tests {
     use pwf_models::pending_work::EffortTier;
 
     use super::{ModelSelectionError, parse_effort, resolve_model};
-    use crate::{
-        AgentModelTierCatalogClient,
-        pending_work::session::{Agent, ModelTier, ModelTierLookup},
-    };
+    use crate::pending_work::session::{Agent, ModelTier, ModelTierLookup};
 
     const CATALOG_PATH: &str = "/config/model-tiers.toml";
 
@@ -321,26 +314,11 @@ mod model_selection_tests {
 
     impl Error for CatalogError {}
 
-    #[derive(Clone)]
-    struct Catalog {
-        result: Result<ModelTierLookup, CatalogError>,
-    }
-
-    impl AgentModelTierCatalogClient for Catalog {
-        type Error = CatalogError;
-
-        fn tier(&self, _effort: EffortTier) -> Result<ModelTierLookup, Self::Error> {
-            self.result.clone()
-        }
-    }
-
-    fn catalog(claude_model: Option<&str>) -> Catalog {
-        Catalog {
-            result: Ok(ModelTierLookup {
-                catalog: CATALOG_PATH.to_string(),
-                tier: Some(ModelTier {
-                    claude_model: claude_model.map(str::to_string),
-                }),
+    fn catalog(claude_model: Option<&str>) -> ModelTierLookup {
+        ModelTierLookup {
+            catalog: CATALOG_PATH.to_string(),
+            tier: Some(ModelTier {
+                claude_model: claude_model.map(str::to_string),
             }),
         }
     }
@@ -362,35 +340,29 @@ mod model_selection_tests {
 
     #[test]
     fn codex_ignores_effort_and_the_catalog() {
-        let unavailable_catalog = Catalog {
-            result: Err(CatalogError("catalog unavailable")),
-        };
-
-        let model =
-            resolve_model(&unavailable_catalog, Agent::Codex, "PWF-0001", Some("nine")).unwrap();
+        let model = resolve_model(Agent::Codex, "PWF-0001", Some("nine"), |_| {
+            Err(CatalogError("catalog unavailable"))
+        })
+        .unwrap();
 
         assert_eq!(model, None);
     }
 
     #[test]
     fn claude_without_effort_does_not_read_the_catalog() {
-        let unavailable_catalog = Catalog {
-            result: Err(CatalogError("catalog unavailable")),
-        };
-
-        let model = resolve_model(&unavailable_catalog, Agent::Claude, "PWF-0001", None).unwrap();
+        let model = resolve_model(Agent::Claude, "PWF-0001", None, |_| {
+            Err(CatalogError("catalog unavailable"))
+        })
+        .unwrap();
 
         assert_eq!(model, None);
     }
 
     #[test]
     fn malformed_effort_is_an_application_error() {
-        let error = resolve_model(
-            &catalog(Some("sonnet")),
-            Agent::Claude,
-            "PWF-0001",
-            Some("nine"),
-        )
+        let error = resolve_model(Agent::Claude, "PWF-0001", Some("nine"), |_| {
+            Ok::<_, CatalogError>(catalog(Some("sonnet")))
+        })
         .unwrap_err();
 
         assert_matches!(
@@ -402,12 +374,9 @@ mod model_selection_tests {
 
     #[test]
     fn configured_claude_model_is_selected() {
-        let model = resolve_model(
-            &catalog(Some("sonnet")),
-            Agent::Claude,
-            "PWF-0001",
-            Some("high"),
-        )
+        let model = resolve_model(Agent::Claude, "PWF-0001", Some("high"), |_| {
+            Ok::<_, CatalogError>(catalog(Some("sonnet")))
+        })
         .unwrap();
 
         assert_eq!(model.as_deref(), Some("sonnet"));
@@ -415,12 +384,9 @@ mod model_selection_tests {
 
     #[test]
     fn empty_claude_model_is_the_no_override_sentinel() {
-        let model = resolve_model(
-            &catalog(Some("")),
-            Agent::Claude,
-            "PWF-0001",
-            Some("medium"),
-        )
+        let model = resolve_model(Agent::Claude, "PWF-0001", Some("medium"), |_| {
+            Ok::<_, CatalogError>(catalog(Some("")))
+        })
         .unwrap();
 
         assert_eq!(model, None);
@@ -428,27 +394,23 @@ mod model_selection_tests {
 
     #[test]
     fn catalog_read_error_retains_its_source() {
-        let unavailable_catalog = Catalog {
-            result: Err(CatalogError("catalog unavailable")),
-        };
-
-        let error = resolve_model(&unavailable_catalog, Agent::Claude, "PWF-0001", Some("low"))
-            .unwrap_err();
+        let error = resolve_model(Agent::Claude, "PWF-0001", Some("low"), |_| {
+            Err(CatalogError("catalog unavailable"))
+        })
+        .unwrap_err();
 
         assert_eq!(error.source().unwrap().to_string(), "catalog unavailable");
     }
 
     #[test]
     fn missing_tier_is_an_application_error() {
-        let missing = Catalog {
-            result: Ok(ModelTierLookup {
+        let error = resolve_model(Agent::Claude, "PWF-0001", Some("highest"), |_| {
+            Ok::<_, CatalogError>(ModelTierLookup {
                 catalog: CATALOG_PATH.to_string(),
                 tier: None,
-            }),
-        };
-
-        let error =
-            resolve_model(&missing, Agent::Claude, "PWF-0001", Some("highest")).unwrap_err();
+            })
+        })
+        .unwrap_err();
 
         assert_matches!(
             &error,
@@ -465,8 +427,10 @@ mod model_selection_tests {
 
     #[test]
     fn missing_claude_model_is_an_application_error() {
-        let error =
-            resolve_model(&catalog(None), Agent::Claude, "PWF-0001", Some("highest")).unwrap_err();
+        let error = resolve_model(Agent::Claude, "PWF-0001", Some("highest"), |_| {
+            Ok::<_, CatalogError>(catalog(None))
+        })
+        .unwrap_err();
 
         assert_matches!(
             &error,

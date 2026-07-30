@@ -3,10 +3,7 @@ use pwf_application::pending_work::{
     ProjectRegistry,
     session::verify_session::{self, VerifySession},
 };
-use pwf_infra::{
-    obsidian::ObsidianStore,
-    session::{ClaudeHarness, CodexHarness, TomlModelTierCatalog},
-};
+use pwf_infra::{obsidian::ObsidianStore, session::AgentHarness};
 
 use super::{
     common::{AgentChoice, CommonArguments, Identifier, PendingWorkError},
@@ -43,10 +40,7 @@ pub(super) fn run(
         },
         store,
         projects,
-        store,
-        &TomlModelTierCatalog,
-        &ClaudeHarness,
-        &CodexHarness,
+        &AgentHarness,
     )?;
     Ok(render_verify(&verification))
 }

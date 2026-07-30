@@ -1,7 +1,5 @@
 use std::path::PathBuf;
 
-use pwf_models::pending_work::{ProjectName, WorkItemId, WorkItemStatus};
-
 use super::{
     ProjectRegistry,
     find_pending_work::FindPendingWorkError,
@@ -10,8 +8,8 @@ use super::{
     store_util::{self, LoadItemError},
 };
 use crate::ports::{
-    AppRecordStore, IndexEntry, Materialization, PendingWorkRecord,
-    PendingWorkRemovalConfirmationClient,
+    AppRecordStore, Confirmation, ConfirmationClient, IndexEntry, Materialization,
+    PendingWorkRecord,
 };
 
 /// Describes the note and index link deleted by [`execute`].
@@ -32,15 +30,6 @@ pub struct RemovedItem {
 #[derive(Debug, Clone)]
 pub struct RemovePendingWorkItem {
     pub id: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RemovalConfirmation {
-    pub pending_work_identifier: WorkItemId,
-    pub project: ProjectName,
-    pub title: String,
-    pub status: WorkItemStatus,
-    pub note_path: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,15 +59,14 @@ pub enum RemovePendingWorkError {
 ///
 /// An unlink failure leaves the note untouched.
 #[cqrsy::command]
-pub fn execute<S, I>(
+pub fn execute<S>(
     cmd: &RemovePendingWorkItem,
     store: &S,
     projects: &ProjectRegistry,
-    interaction: &I,
+    confirmation_client: &(impl ConfirmationClient + Send + Sync + 'static),
 ) -> Result<RemovePendingWorkItemOk, RemovePendingWorkError>
 where
     S: AppRecordStore<PendingWorkRecord> + AppRecordStore<IndexEntry>,
-    I: PendingWorkRemovalConfirmationClient,
 {
     let not_found = || RemovePendingWorkError::ItemNotFound { id: cmd.id.clone() };
     let Some(pending_work_identifier) = identifier::parse(&cmd.id) else {
@@ -116,14 +104,14 @@ where
         }
         Materialization::InlineLegacy => return Err(RemovePendingWorkError::FileModelRequired),
     };
-    let confirmation = RemovalConfirmation {
+    let confirmation = Confirmation::Removal {
         pending_work_identifier: pending_work_identifier.clone(),
         project: project.clone(),
         title: record.title.clone(),
         status: record.status,
         note_path: note_path.clone(),
     };
-    if !interaction.confirm(&confirmation) {
+    if !confirmation_client.confirm(&confirmation) {
         return Ok(RemovePendingWorkItemOk::Aborted {
             pending_work_identifier: pending_work_identifier.to_string(),
         });
@@ -152,12 +140,12 @@ mod tests {
     use pwf_models::pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus};
 
     use super::{
-        ProjectRegistry, RemovalConfirmation, RemovePendingWorkError, RemovePendingWorkItem,
-        RemovePendingWorkItemOk, execute,
+        ProjectRegistry, RemovePendingWorkError, RemovePendingWorkItem, RemovePendingWorkItemOk,
+        execute,
     };
     use crate::{
-        IndexEntry, IndexEntryState, Materialization, PendingWorkRecord,
-        PendingWorkRemovalConfirmationClient, RecordId, testing::InMemoryStore,
+        Confirmation, ConfirmationClient, IndexEntry, IndexEntryState, Materialization,
+        PendingWorkRecord, RecordId, testing::InMemoryStore,
     };
 
     fn registry() -> ProjectRegistry {
@@ -218,8 +206,8 @@ mod tests {
     #[derive(Clone)]
     struct Accepted;
 
-    impl PendingWorkRemovalConfirmationClient for Accepted {
-        fn confirm(&self, _confirmation: &RemovalConfirmation) -> bool {
+    impl ConfirmationClient for Accepted {
+        fn confirm(&self, _confirmation: &Confirmation) -> bool {
             true
         }
     }
@@ -310,10 +298,7 @@ mod tests {
     }
 
     mod pwf_0144 {
-        use super::{
-            super::{RemovalConfirmation, RemovePendingWorkItemOk},
-            *,
-        };
+        use super::{super::RemovePendingWorkItemOk, *};
 
         fn command(id: &str) -> RemovePendingWorkItem {
             RemovePendingWorkItem { id: id.to_string() }
@@ -324,8 +309,8 @@ mod tests {
             accepted: bool,
         }
 
-        impl PendingWorkRemovalConfirmationClient for StaticInteraction {
-            fn confirm(&self, _confirmation: &RemovalConfirmation) -> bool {
+        impl ConfirmationClient for StaticInteraction {
+            fn confirm(&self, _confirmation: &Confirmation) -> bool {
                 self.accepted
             }
         }

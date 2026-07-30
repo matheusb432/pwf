@@ -2,10 +2,7 @@
 
 use std::{collections::BTreeMap, path::PathBuf};
 
-use pwf_application::{
-    AgentModelTierCatalogClient,
-    pending_work::session::{ModelTier, ModelTierLookup},
-};
+use pwf_application::pending_work::session::{ModelTier, ModelTierLookup};
 use pwf_models::pending_work::EffortTier;
 use serde::Deserialize;
 use thiserror::Error;
@@ -27,17 +24,9 @@ pub enum ModelTiersError {
     ),
 }
 
-/// Loads model-tier entries from the resolved TOML catalog.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct TomlModelTierCatalog;
-
-impl AgentModelTierCatalogClient for TomlModelTierCatalog {
-    type Error = ModelTiersError;
-
-    fn tier(&self, effort: EffortTier) -> Result<ModelTierLookup, Self::Error> {
-        let catalog = default_model_tiers_path().ok_or(ModelTiersError::PathUnresolvable)?;
-        tier_at(&catalog, effort)
-    }
+pub(super) fn tier(effort: EffortTier) -> Result<ModelTierLookup, ModelTiersError> {
+    let catalog = default_model_tiers_path().ok_or(ModelTiersError::PathUnresolvable)?;
+    tier_at(&catalog, effort)
 }
 
 #[derive(Debug, Deserialize)]

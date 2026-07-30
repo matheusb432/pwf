@@ -1,11 +1,9 @@
-use std::path::Path;
-
 use pwf_models::pending_work::{
     EffortTier, ProjectName, Tags, Timestamp, WorkItemId, WorkItemStatus,
 };
 
 use crate::{
-    AppRecordStore, Materialization, NoteMarkdownClient, PendingWorkRecord, RecordId,
+    AppRecordStore, Materialization, PendingWorkRecord, ProjectNoteStore, RecordId,
     pending_work::{
         ProjectRegistry,
         logic::{prerequisite, resolve::resolve_record, tag_policy},
@@ -109,15 +107,13 @@ pub enum ShowPendingWorkError {
 /// [`ShowPendingWorkError::ReadMarkdown`] when a missing-note link cannot be read, or
 /// [`ShowPendingWorkError::InvalidItemData`] when persisted task data cannot be projected.
 #[cqrsy::query]
-pub fn execute<S, N>(
+pub fn execute<S>(
     query: &ShowPendingWorkItem,
     store: &S,
     projects: &ProjectRegistry,
-    markdown_source: &N,
 ) -> Result<ShowPendingWorkItemOk, ShowPendingWorkError>
 where
-    S: AppRecordStore<PendingWorkRecord>,
-    N: NoteMarkdownClient,
+    S: AppRecordStore<PendingWorkRecord> + ProjectNoteStore,
 {
     let (project, record) = resolve_record(store, projects, &query.id)?;
     match query.output {
@@ -125,8 +121,8 @@ where
         ShowOutput::Markdown
             if matches!(record.materialization, Materialization::MissingNote { .. }) =>
         {
-            markdown_source
-                .read_note_markdown(Path::new(&record.locator))
+            store
+                .read_note_markdown(&record.locator)
                 .map(ShowPendingWorkItemOk::Markdown)
                 .map_err(|error| ShowPendingWorkError::ReadMarkdown(Box::new(error)))
         }
@@ -202,39 +198,11 @@ fn invalid_item_data(field: &'static str, error: impl std::fmt::Display) -> Show
 
 #[cfg(test)]
 mod tests {
-    use std::{convert::Infallible, path::Path};
-
     use super::{ShowOutput, ShowPendingWorkItem, ShowPendingWorkItemOk};
     use crate::{
-        NoteMarkdownClient,
         pending_work::logic::resolve::testing::{PWF_0001_SOURCE, staged, staged_ghost},
+        testing::ProjectNoteFailure,
     };
-
-    #[derive(Debug, Clone)]
-    struct UnusedNoteMarkdownClient;
-
-    impl NoteMarkdownClient for UnusedNoteMarkdownClient {
-        type Error = Infallible;
-
-        fn read_note_markdown(&self, _path: &Path) -> Result<String, Self::Error> {
-            panic!("selected show output must not read note Markdown")
-        }
-    }
-
-    #[derive(Debug, Clone, thiserror::Error)]
-    #[error("Cannot read item file: staged read failure")]
-    struct StagedNoteReadError;
-
-    #[derive(Debug, Clone)]
-    struct FailingNoteMarkdownClient;
-
-    impl NoteMarkdownClient for FailingNoteMarkdownClient {
-        type Error = StagedNoteReadError;
-
-        fn read_note_markdown(&self, _path: &Path) -> Result<String, Self::Error> {
-            Err(StagedNoteReadError)
-        }
-    }
 
     #[test]
     fn show_streams_source_verbatim() {
@@ -247,7 +215,6 @@ mod tests {
             },
             &store,
             &registry,
-            &UnusedNoteMarkdownClient,
         )
         .unwrap();
 
@@ -268,7 +235,6 @@ mod tests {
             },
             &store,
             &registry,
-            &UnusedNoteMarkdownClient,
         )
         .unwrap();
 
@@ -281,6 +247,7 @@ mod tests {
     #[test]
     fn show_markdown_preserves_missing_note_source_error() {
         let (store, registry) = staged_ghost();
+        let store = store.with_failure(ProjectNoteFailure::Read);
 
         let error = super::execute(
             &ShowPendingWorkItem {
@@ -289,13 +256,12 @@ mod tests {
             },
             &store,
             &registry,
-            &FailingNoteMarkdownClient,
         )
         .unwrap_err();
 
         assert_eq!(
             error.to_string(),
-            "Cannot read item file: staged read failure"
+            "injected in-memory store failure: project-note-read"
         );
     }
 }

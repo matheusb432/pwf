@@ -36,4 +36,9 @@ pub trait ProjectNoteStore: AppRecordStore<ProjectNote> {
         project: &ProjectName,
         id: &NoteId,
     ) -> Result<bool, <Self as AppRecordStore<ProjectNote>>::Error>;
+
+    fn read_note_markdown(
+        &self,
+        locator: &str,
+    ) -> Result<String, <Self as AppRecordStore<ProjectNote>>::Error>;
 }

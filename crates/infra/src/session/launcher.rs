@@ -6,9 +6,58 @@ mod codex;
 
 use std::process::Command;
 
-pub use claude::ClaudeHarness;
-pub use codex::CodexHarness;
 pub use pwf_application::pending_work::session::AgentProbe;
+use pwf_application::{
+    AgentClient, PreparedAgentLaunch,
+    pending_work::session::{AgentLaunch, ModelTierLookup},
+};
+use pwf_models::{pending_work::EffortTier, session::Agent};
+use thiserror::Error;
+
+use super::{
+    codex_app_server::CodexThreadPreparationError,
+    model_tiers::{self, ModelTiersError},
+};
+
+#[derive(Debug, Error)]
+#[error(transparent)]
+pub struct AgentPreparationError(#[from] CodexThreadPreparationError);
+
+/// Implements agent discovery, configuration, and launch preparation.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AgentHarness;
+
+impl AgentClient for AgentHarness {
+    type ModelTierError = ModelTiersError;
+    type PreparationError = AgentPreparationError;
+
+    fn probe(&self, agent: Agent) -> AgentProbe {
+        match agent {
+            Agent::Claude => claude::probe(),
+            Agent::Codex => codex::probe(),
+        }
+    }
+
+    fn model_tier(&self, effort: EffortTier) -> Result<ModelTierLookup, Self::ModelTierError> {
+        model_tiers::tier(effort)
+    }
+
+    fn preview(&self, launch: &AgentLaunch) -> Vec<String> {
+        match launch.agent {
+            Agent::Claude => claude::preview(launch),
+            Agent::Codex => codex::preview(launch),
+        }
+    }
+
+    fn prepare(&self, launch: &AgentLaunch) -> Result<PreparedAgentLaunch, Self::PreparationError> {
+        match launch.agent {
+            Agent::Claude => Ok(PreparedAgentLaunch::Process {
+                arguments: claude::prepare(launch),
+            }),
+            Agent::Codex => codex::prepare(launch).map_err(Into::into),
+        }
+    }
+}
 
 fn probe(binary: &str) -> AgentProbe {
     let (available, path, version) = match which_binary(binary) {

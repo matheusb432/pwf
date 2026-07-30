@@ -1,3 +1,10 @@
+use super::AgentCommand;
+
 pub trait InlineAgentSessionClient: Clone + Send + Sync + 'static {
-    fn run(&self, argv: &[String], repository: &str) -> Result<(), String>;
+    /// Runs a prepared agent command in the supplied working directory.
+    ///
+    /// # Errors
+    ///
+    /// Returns a process error or unsuccessful exit status.
+    fn run(&self, command: AgentCommand<'_>, working_directory: &str) -> Result<(), String>;
 }
