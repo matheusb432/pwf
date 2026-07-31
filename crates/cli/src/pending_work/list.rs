@@ -7,8 +7,8 @@ use pwf_application::pending_work::{
 use pwf_infra::obsidian::ObsidianStore;
 
 use super::{
-    common::{CommonArguments, EffortChoice, PendingWorkError, SectionChoice, StatusChoice},
     render::render_list,
+    shared::{CommonArguments, EffortChoice, PendingWorkError, SectionChoice, StatusChoice},
 };
 use crate::console::Console;
 

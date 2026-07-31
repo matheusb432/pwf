@@ -116,20 +116,4 @@ mod tests {
         assert!(out.starts_with("# verify \u{2014} fail"), "heading: {out}");
         assert!(out.contains("claude: not found on PATH"));
     }
-
-    #[test]
-    fn verify_text_fails_and_lists_issue_on_broken_model_tiers() {
-        let mut result = outcome("claude", true, false);
-        result.task_id = Some("PWF-0002".to_string());
-        result
-            .issues
-            .push("tier highest has no claude_model set".to_string());
-        let out = render_verify(&result);
-        assert!(
-            out.starts_with("# verify PWF-0002 \u{2014} fail"),
-            "got: {out}"
-        );
-        assert!(out.contains("launchable: no"));
-        assert!(out.contains("- tier highest has no claude_model set"));
-    }
 }

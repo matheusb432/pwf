@@ -1,4 +1,4 @@
-use super::AgentCommand;
+use super::session::AgentCommand;
 
 pub trait InlineAgentSessionClient: Clone + Send + Sync + 'static {
     /// Runs a prepared agent command in the supplied working directory.

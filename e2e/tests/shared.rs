@@ -41,7 +41,7 @@ impl DatabaseFixture {
             .parent()
             .expect("database fixture path has a parent")
             .join("home");
-        fs::create_dir_all(&home).unwrap();
+        fs::create_dir_all(&home).expect("create isolated home");
         Self { path, home }
     }
 

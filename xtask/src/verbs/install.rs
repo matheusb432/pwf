@@ -96,7 +96,7 @@ pub(crate) fn install() -> Result<()> {
 
 /// Rebuilds and refreshes the shim after the format preflight unless forced.
 pub(crate) fn update(args: &UpdateArgs) -> Result<()> {
-    if should_run_check_preflight(args.force) {
+    if !args.force {
         check::run()?;
     }
     #[cfg(windows)]
@@ -123,10 +123,6 @@ pub(crate) fn update(args: &UpdateArgs) -> Result<()> {
         process::result(Verb::UPDATE, Status::Done);
         Ok(())
     }
-}
-
-fn should_run_check_preflight(force: bool) -> bool {
-    !force
 }
 
 /// Builds and links the Unix binary, then ensures its directory is on PATH.
@@ -156,11 +152,11 @@ fn link_path() -> Result<PathBuf> {
     Ok(PathBuf::from(home).join(".local").join("bin").join("pwf"))
 }
 
-/// Appends a PATH export to `~/.bashrc` when needed.
+/// Appends a PATH export to `~/.zshrc` when needed.
 #[cfg(unix)]
 fn wire_path(dir: &Path) -> Result<()> {
     let path_var = env::var("PATH").unwrap_or_default();
-    let rc = PathBuf::from(env::var_os("HOME").context("HOME is not set")?).join(".bashrc");
+    let rc = PathBuf::from(env::var_os("HOME").context("HOME is not set")?).join(".zshrc");
     let rc_contents = fs::read_to_string(&rc).unwrap_or_default();
     if let Some(line) = path_export_line(dir, &path_var, &rc_contents) {
         use std::io::Write;
@@ -200,12 +196,6 @@ mod tests {
         assert!(
             path_export_line(dir, "/usr/bin", "export PATH=\"/home/u/.local/bin:$PATH\"").is_none()
         );
-    }
-
-    #[test]
-    fn update_check_preflight_is_skipped_only_when_forced() {
-        assert!(should_run_check_preflight(false));
-        assert!(!should_run_check_preflight(true));
     }
 
     #[test]

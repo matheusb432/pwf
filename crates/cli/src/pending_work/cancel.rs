@@ -1,18 +1,18 @@
 use clap::Args;
 use pwf_application::{
-    Clock,
     pending_work::{
         ProjectRegistry,
         cancel_pending_work::{self, CancelPendingWork, CancelPendingWorkError},
     },
+    ports::clock::Clock,
 };
 use pwf_infra::obsidian::ObsidianStore;
 
 use super::{
-    common::{CommonArguments, Identifier, PendingWorkError},
     render::{
         emit_close_diagnostics, emit_created_section, emit_created_section_for_error, render_closed,
     },
+    shared::{CommonArguments, Identifier, PendingWorkError},
 };
 
 #[derive(Args, Debug)]

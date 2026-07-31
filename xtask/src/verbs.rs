@@ -2,6 +2,7 @@
 
 pub(crate) mod check;
 pub(crate) mod check_architecture;
+pub(crate) mod fix;
 pub(crate) mod format;
 pub(crate) mod install;
 pub(crate) mod lint;

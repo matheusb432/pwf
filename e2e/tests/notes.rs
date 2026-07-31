@@ -1,6 +1,6 @@
 use assert_cmd::prelude::OutputAssertExt as _;
 
-use crate::common::{ManagedProject, task_json};
+use crate::shared::{ManagedProject, task_json};
 
 #[test]
 fn note_lifecycle_does_not_change_pending_work() {

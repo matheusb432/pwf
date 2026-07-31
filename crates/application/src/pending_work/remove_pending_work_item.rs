@@ -8,8 +8,9 @@ use super::{
     store_util::{self, LoadItemError},
 };
 use crate::ports::{
-    AppRecordStore, Confirmation, ConfirmationClient, IndexEntry, Materialization,
-    PendingWorkRecord,
+    app_record::AppRecordStore,
+    confirmation::{Confirmation, ConfirmationClient},
+    pending_work_record::{IndexEntry, Materialization, PendingWorkRecord},
 };
 
 /// Describes the note and index link deleted by [`execute`].
@@ -78,15 +79,15 @@ where
             Err(_) => Err(not_found()),
         };
     };
-    let prefix = pending_work_identifier
+    let project_id = pending_work_identifier
         .as_ref()
         .split_once('-')
-        .map_or("", |(prefix, _)| prefix);
+        .map_or("", |(project_id, _)| project_id);
     let project = projects
-        .project_for_id(&pending_work_identifier)
+        .get_project_name_by(&pending_work_identifier)
         .ok_or_else(|| RemovePendingWorkError::UnknownPrefix {
             pending_work_identifier: pending_work_identifier.to_string(),
-            prefix: prefix.to_string(),
+            prefix: project_id.to_string(),
         })?;
     let record =
         store_util::require_item(store, project, &pending_work_identifier).map_err(|error| {
@@ -144,8 +145,14 @@ mod tests {
         execute,
     };
     use crate::{
-        Confirmation, ConfirmationClient, IndexEntry, IndexEntryState, Materialization,
-        PendingWorkRecord, RecordId, testing::InMemoryStore,
+        ports::{
+            app_record::AppRecordStore,
+            confirmation::{Confirmation, ConfirmationClient},
+            pending_work_record::{
+                IndexEntry, IndexEntryState, Materialization, PendingWorkRecord, RecordId,
+            },
+        },
+        testing::InMemoryStore,
     };
 
     fn registry() -> ProjectRegistry {
@@ -186,7 +193,7 @@ mod tests {
         let store = InMemoryStore::default()
             .with_prefix("pwf", "PWF")
             .with_project("pwf", vec![record("PWF-0001", status)]);
-        <InMemoryStore as crate::AppRecordStore<IndexEntry>>::insert(
+        <InMemoryStore as AppRecordStore<IndexEntry>>::insert(
             &store,
             &ProjectName::try_new("pwf").unwrap(),
             IndexEntry {

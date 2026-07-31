@@ -27,7 +27,6 @@ indicatif = { version = "0.18.6", default-features = false }
 libc = "0.2.186"
 nutype = "0.7.0"
 percent-encoding = "2.3.2"
-predicates = "3"
 process-wrap = { version = "9.1.0", default-features = false, features = [
     "job-object",
     "process-group",
@@ -53,7 +52,7 @@ thiserror = "2.0.18"
 toml = "1.1.2"
 tokio = "1"
 walkdir = "2"
-xtk_test = { git = "ssh://git@github.com/matheusb432/xtk-test.git", tag = "v0.1.1" }
+xtk_test = { git = "ssh://git@github.com/matheusb432/xtk-test.git", tag = "v0.2.0" }
 
 # Avoid tweaking, prefer fixing the lints.
 [workspace.lints.clippy]

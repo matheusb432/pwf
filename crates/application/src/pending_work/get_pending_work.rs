@@ -6,10 +6,13 @@ use pwf_models::pending_work::{EffortTier, ProjectName, Tags, WorkItemStatus};
 use super::dto::PrerequisiteStatus;
 use super::{dto::PendingWorkItemView, prerequisite, tag_policy};
 use crate::{
-    AppRecordStore, PendingWorkRecord, ProjectTaskLocationClient,
     pending_work::{
         ProjectRegistry,
         enrich::{enrich, is_open_item},
+    },
+    ports::{
+        app_record::AppRecordStore, pending_work_record::PendingWorkRecord,
+        project_task_location::ProjectTaskLocationClient,
     },
 };
 
@@ -303,7 +306,7 @@ fn collect_list_items(
 ) -> Result<Vec<PendingWorkItemView>, GetPendingWorkError> {
     let scan: Vec<(ProjectName, Option<String>)> = match query.project.as_ref() {
         Some(project) => {
-            let repo = projects.repo_for(project).map(str::to_string);
+            let repo = projects.get_repository_by(project).map(str::to_string);
             vec![(project.clone(), repo)]
         }
         None => projects
@@ -443,8 +446,14 @@ mod tests {
         OrderDirection, OrderField, OrderSpec, PrerequisiteStatus, ProjectRegistry, StatusFilter,
     };
     use crate::{
-        AppRecordStore, IndexPlacement, ItemPatch, Materialization, NewItem, PendingWorkRecord,
-        ProjectTaskLocationClient, RecordId, testing::InMemoryStore,
+        ports::{
+            app_record::AppRecordStore,
+            pending_work_record::{
+                IndexPlacement, ItemPatch, Materialization, NewItem, PendingWorkRecord, RecordId,
+            },
+            project_task_location::ProjectTaskLocationClient,
+        },
+        testing::InMemoryStore,
     };
 
     impl ProjectTaskLocationClient for InMemoryStore {

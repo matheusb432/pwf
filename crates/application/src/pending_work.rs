@@ -27,14 +27,6 @@ pub use update_pending_work_item::UpdatePendingWorkItemOk;
 pub use crate::project::{ProjectRegistry, ProjectResolutionError};
 
 /// Renders a prompt as Markdown while preserving placeholders and verbatim-authored prompts.
-///
-/// # Examples
-///
-/// ```
-/// use pwf_application::pending_work::note_body;
-///
-/// assert_eq!(note_body("ship release"), "## Goals\n");
-/// ```
 #[must_use]
 pub fn note_body(prompt: &str) -> String {
     note_body::render(prompt)

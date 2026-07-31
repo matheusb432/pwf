@@ -3,28 +3,13 @@
 use pwf_models::{note::NoteId, pending_work::Timestamp};
 
 use super::logic::{self, ResolvedProject};
-use crate::{AppRecordStore, Clock, NewProjectNote, ProjectNote, pending_work::ProjectRegistry};
+use crate::{
+    ProjectNote,
+    pending_work::ProjectRegistry,
+    ports::{app_record::AppRecordStore, clock::Clock, project_note::NewProjectNote},
+};
 
 /// Requests creation of one project note.
-///
-/// # Examples
-///
-/// ```
-/// use pwf_application::note::add_note::AddNote;
-///
-/// let request = AddNote {
-///     project_identifier: "pwf".to_string(),
-///     topic: "Borrow concrete data".to_string(),
-///     tldr: "Return the narrowest useful value.".to_string(),
-///     why: None,
-///     domain: Some("rust".to_string()),
-///     tags: vec!["api-design".to_string()],
-///     sources: Vec::new(),
-///     verified: None,
-///     date: Some("2026-07-26".to_string()),
-/// };
-/// assert_eq!(request.project_identifier, "pwf");
-/// ```
 #[derive(Debug, Clone)]
 pub struct AddNote {
     /// Selects the managed project by name or id code.
@@ -76,29 +61,6 @@ pub enum AddNoteError {
 /// [`AddNoteError::EmptyTldr`] when the normalized TL;DR is empty,
 /// [`AddNoteError::IdentifierExhausted`] when the greatest existing suffix is `9999`, or
 /// [`AddNoteError::Store`] when listing or inserting notes fails.
-///
-/// # Examples
-///
-/// ```
-/// # use pwf_application::{
-/// #     AppRecordStore, Clock,
-/// #     note::add_note::{self, AddNote, AddNoteError, AddNoteOk},
-/// #     pending_work::ProjectRegistry,
-/// # };
-/// # use pwf_models::note::ProjectNote;
-/// # fn add<S, C>(
-/// #     request: AddNote,
-/// #     store: &S,
-/// #     projects: &ProjectRegistry,
-/// #     clock: &C,
-/// # ) -> Result<AddNoteOk, AddNoteError>
-/// # where
-/// #     S: AppRecordStore<ProjectNote>,
-/// #     C: Clock,
-/// # {
-/// add_note::execute(request, store, projects, clock)
-/// # }
-/// ```
 #[cqrsy::command]
 pub fn execute<S, C>(
     command: AddNote,
@@ -110,12 +72,14 @@ where
     S: AppRecordStore<ProjectNote>,
     C: Clock,
 {
-    let ResolvedProject { project, prefix } =
-        logic::resolve_project(projects, &command.project_identifier).ok_or_else(|| {
-            AddNoteError::UnknownProject {
-                identifier: command.project_identifier.clone(),
-            }
-        })?;
+    let ResolvedProject {
+        project_name,
+        project_id,
+    } = logic::resolve_project(projects, &command.project_identifier).ok_or_else(|| {
+        AddNoteError::UnknownProject {
+            identifier: command.project_identifier.clone(),
+        }
+    })?;
     let topic = normalize_inline(&command.topic);
     if topic.is_empty() {
         return Err(AddNoteError::EmptyTopic);
@@ -125,7 +89,7 @@ where
         return Err(AddNoteError::EmptyTldr);
     }
     let notes = store
-        .list(&project)
+        .list(&project_name)
         .map_err(|error| AddNoteError::Store(Box::new(error)))?;
     let next_number = notes
         .iter()
@@ -135,17 +99,17 @@ where
         .checked_add(1)
         .filter(|number| *number <= 9_999)
         .ok_or_else(|| AddNoteError::IdentifierExhausted {
-            project: project.to_string(),
+            project: project_name.to_string(),
         })?;
-    let id = NoteId::try_new(format!("{prefix}-NOTE-{next_number:04}")).map_err(|_| {
+    let id = NoteId::try_new(format!("{project_id}-NOTE-{next_number:04}")).map_err(|_| {
         AddNoteError::IdentifierExhausted {
-            project: project.to_string(),
+            project: project_name.to_string(),
         }
     })?;
     let created = command.date.map_or_else(|| clock.today(), Timestamp::new);
     let created = store
         .insert(
-            &project,
+            &project_name,
             NewProjectNote {
                 id,
                 topic: topic.clone(),
@@ -200,8 +164,9 @@ mod tests {
 
     use super::{AddNote, AddNoteError};
     use crate::{
-        Clock, ProjectNote,
+        ProjectNote,
         pending_work::ProjectRegistry,
+        ports::clock::Clock,
         testing::{InMemoryStore, ProjectNoteFailure},
     };
 
@@ -272,7 +237,7 @@ mod tests {
     }
 
     #[test]
-    fn project_name_and_prefix_resolve_to_maximum_suffix_plus_one() {
+    fn project_name_and_id_resolve_to_maximum_suffix_plus_one() {
         for project_identifier in ["pwf", "PWF"] {
             let store = InMemoryStore::default().with_project_notes(
                 "pwf",

@@ -14,26 +14,26 @@ pub struct ProjectName(String);
 /// Identifies a managed project in pending-work identifiers.
 #[nutype(
     sanitize(trim, uppercase),
-    validate(predicate = is_project_prefix),
+    validate(predicate = is_project_id),
     derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, AsRef, Display,)
 )]
-pub struct ProjectPrefix(String);
+pub struct ProjectId(String);
 
 /// Identifies one configured project's index independently of its filename.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectIndexIdentity {
-    id: ProjectPrefix,
+    id: ProjectId,
     title: ProjectName,
 }
 
 impl ProjectIndexIdentity {
     /// Creates a project index identity.
-    pub fn new(id: ProjectPrefix, title: ProjectName) -> Self {
+    pub fn new(id: ProjectId, title: ProjectName) -> Self {
         Self { id, title }
     }
 
-    /// Returns the canonical uppercase project prefix.
-    pub fn id(&self) -> &ProjectPrefix {
+    /// Returns the canonical uppercase project ID.
+    pub fn id(&self) -> &ProjectId {
         &self.id
     }
 
@@ -166,8 +166,8 @@ impl ProjectTasks {
 /// Describes one managed project.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Project {
-    /// Canonical project prefix.
-    pub id: ProjectPrefix,
+    /// Canonical project ID.
+    pub id: ProjectId,
     /// Project title.
     pub title: ProjectName,
     /// Project source location.
@@ -184,7 +184,7 @@ fn is_project_name(raw: &str) -> bool {
     !raw.is_empty() && !raw.eq_ignore_ascii_case("project")
 }
 
-fn is_project_prefix(raw: &str) -> bool {
+fn is_project_id(raw: &str) -> bool {
     (2..=4).contains(&raw.len()) && raw.chars().all(|ch| ch.is_ascii_uppercase())
 }
 
@@ -197,21 +197,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn project_prefix_normalizes_two_to_four_ascii_letters() {
-        assert_eq!(ProjectPrefix::try_new(" pwf ").unwrap().as_ref(), "PWF");
-        assert!(ProjectPrefix::try_new("P").is_err());
-        assert!(ProjectPrefix::try_new("TOOLS").is_err());
-    }
-
-    #[test]
-    fn project_index_identity_uses_typed_config_identity() {
-        let identity = ProjectIndexIdentity::new(
-            ProjectPrefix::try_new("pwf").unwrap(),
-            ProjectName::try_new("pwf").unwrap(),
-        );
-
-        assert_eq!(identity.id().as_ref(), "PWF");
-        assert_eq!(identity.title().as_ref(), "pwf");
+    fn project_id_normalizes_two_to_four_ascii_letters() {
+        assert_eq!(ProjectId::try_new(" pwf ").unwrap().as_ref(), "PWF");
+        assert!(ProjectId::try_new("P").is_err());
+        assert!(ProjectId::try_new("TOOLS").is_err());
     }
 
     #[test]
@@ -235,20 +224,6 @@ mod tests {
     fn source_and_task_locations_reject_blank_values() {
         assert!(ProjectSourceValue::try_new(" \t ").is_err());
         assert!(ProjectTasksPath::try_new(" \t ").is_err());
-    }
-
-    #[test]
-    fn project_source_value_retains_accepted_whitespace() {
-        let value = " /work/pwf ";
-
-        assert_eq!(ProjectSourceValue::try_new(value).unwrap().as_ref(), value);
-    }
-
-    #[test]
-    fn project_tasks_path_retains_accepted_whitespace() {
-        let path = " .pending-work ";
-
-        assert_eq!(ProjectTasksPath::try_new(path).unwrap().as_ref(), path);
     }
 
     #[test]

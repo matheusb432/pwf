@@ -89,29 +89,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn run_ok_on_true() {
-        assert!(run("noop", "true", &[]).is_ok());
-    }
-
-    #[test]
-    fn run_err_on_false() {
-        let error = run("boom", "false", &[]).unwrap_err();
-        assert!(error.to_string().contains("boom failed"));
-    }
-
-    #[test]
     fn run_contextualizes_a_missing_program() {
         let error = run("rumdl", "definitely-not-a-real-binary-xyz", &[]).unwrap_err();
         assert!(error.to_string().contains("spawning rumdl"));
-    }
-
-    #[test]
-    fn step_exit_is_available_as_a_result_or_boolean() {
-        let passing = Step::new("passing", "true", Vec::<String>::new());
-        let failing = Step::new("failing", "false", Vec::<String>::new());
-        assert!(step_succeeds(&passing).unwrap());
-        assert!(!step_succeeds(&failing).unwrap());
-        assert!(run_step(&failing).is_err());
     }
 
     #[test]

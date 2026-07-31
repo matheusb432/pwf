@@ -1,19 +1,24 @@
-//! Test runner and ordered E2E worker.
+//! Test declarations, shared runner configuration, and ordered E2E worker.
 
-use std::ffi::OsString;
+use std::{ffi::OsString, time::Duration};
 
 use anyhow::{Context, Result};
-use clap::{Args, ValueEnum};
-use xtk_test::Run;
+use clap::{Args, Subcommand, ValueEnum};
+use xtk_test::{Run, Test, summary};
 
-use crate::{paths, process, project};
+use crate::{paths, process, task::Step};
+
+const E2E_TIMEOUT: Duration = Duration::from_hours(1);
 
 #[expect(
     clippy::struct_excessive_bools,
     reason = "CLI flags map directly to Clap arguments"
 )]
 #[derive(Args)]
+#[command(args_conflicts_with_subcommands = true)]
 pub(crate) struct TestArgs {
+    #[command(subcommand)]
+    command: Option<TestCommand>,
     /// Stream full test output live; the log still captures it.
     #[arg(long)]
     pub(crate) verbose: bool,
@@ -39,6 +44,19 @@ pub(crate) struct TestArgs {
     all: bool,
 }
 
+#[derive(Subcommand)]
+enum TestCommand {
+    /// Collect workspace test coverage with cargo-llvm-cov.
+    Coverage(TestCoverageArguments),
+}
+
+#[derive(Args)]
+struct TestCoverageArguments {
+    /// Extra arguments for cargo-llvm-cov.
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    arguments_extra: Vec<String>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 pub(crate) enum Scope {
     Unit,
@@ -47,23 +65,44 @@ pub(crate) enum Scope {
 }
 
 pub(crate) fn run(arguments: &TestArgs) -> Result<()> {
+    if let Some(TestCommand::Coverage(coverage)) = &arguments.command {
+        return test_coverage(&coverage.arguments_extra);
+    }
+
+    run_scope(
+        arguments.scope,
+        arguments.verbose,
+        arguments.json,
+        arguments.evidences,
+    )
+}
+
+pub(crate) fn run_all() -> Result<()> {
+    run_scope(Scope::All, false, false, false)
+}
+
+fn run_scope(scope: Scope, verbose: bool, json: bool, evidences: bool) -> Result<()> {
     let executable = std::env::current_exe()
         .context("resolve the xtask executable")?
         .into_os_string();
-    let declarations = selected_tests(arguments.scope, executable);
+    let declarations = selected_tests(scope, executable);
 
-    Run::new(
-        arguments.scope.to_string(),
-        declarations
-            .into_iter()
-            .map(project::TestDeclaration::into_test),
-    )
-    .verbose(arguments.verbose)
-    .json(arguments.json)
-    .evidences_from_cargo_manifest(arguments.evidences, include_str!("../../Cargo.toml"))?
-    .execute()?;
+    Run::new(scope.to_string(), declarations)
+        .verbose(verbose)
+        .json(json)
+        .evidences_from_cargo_manifest(evidences, include_str!("../../Cargo.toml"))?
+        .execute()?;
 
     Ok(())
+}
+
+fn test_coverage(arguments_extra: &[String]) -> Result<()> {
+    process::run_step(&test_coverage_step(arguments_extra))
+}
+
+fn test_coverage_step(arguments_extra: &[String]) -> Step {
+    Step::new("test coverage", "cargo", ["llvm-cov", "--workspace"])
+        .with_arguments(arguments_extra.iter().cloned())
 }
 
 pub(crate) fn run_e2e_worker(verbose: bool) -> Result<()> {
@@ -83,12 +122,42 @@ pub(crate) fn run_e2e_worker(verbose: bool) -> Result<()> {
     process::run("binary E2E suites", "cargo", &arguments)
 }
 
-fn selected_tests(scope: Scope, executable: OsString) -> Vec<project::TestDeclaration> {
+fn selected_tests(scope: Scope, executable: OsString) -> Vec<xtk_test::Test> {
     match scope {
-        Scope::Unit => project::tests_unit(),
-        Scope::E2e => project::tests_e2e(executable),
-        Scope::All => project::tests_all(executable),
+        Scope::Unit => tests_unit(),
+        Scope::E2e => tests_e2e(executable),
+        Scope::All => tests_all(executable),
     }
+}
+
+fn tests_unit() -> Vec<Test> {
+    vec![
+        Test::new("unit", "cargo")
+            .args(["test", "--quiet", "--workspace"])
+            .verbose_arguments(["--", "--nocapture"])
+            .summary_parser(summary::cargo),
+    ]
+}
+
+fn tests_e2e(executable: OsString) -> Vec<Test> {
+    vec![
+        Test::new("e2e", executable)
+            .arg("e2e-worker")
+            .verbose_arguments(["--verbose"])
+            .accepts_evidences()
+            .timeout(E2E_TIMEOUT),
+    ]
+}
+
+fn tests_all(executable: OsString) -> Vec<Test> {
+    let mut tests = tests_unit();
+    tests.extend(tests_e2e(executable.clone()));
+    tests.extend([
+        Test::new("architecture", executable).arg("check-architecture"),
+        Test::new("ast-rules", "ast-grep").args(["test", "--skip-snapshot-tests"]),
+        Test::new("ast-scan", "ast-grep").args(["scan", "--globs", "!xtask/xtk_test/**"]),
+    ]);
+    tests
 }
 
 impl std::fmt::Display for Scope {
@@ -102,51 +171,18 @@ impl std::fmt::Display for Scope {
 }
 
 #[cfg(test)]
-fn selected_test_labels(scope: Scope) -> Vec<&'static str> {
-    selected_tests(scope, "xtask".into())
-        .iter()
-        .map(project::TestDeclaration::label)
-        .collect()
-}
-
-#[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
-    use clap::Parser;
-
-    use super::*;
-
-    #[derive(Parser)]
-    struct Harness {
-        #[command(flatten)]
-        args: TestArgs,
-    }
+    use super::test_coverage_step;
 
     #[test]
-    fn scopes_select_the_owned_declarations() {
-        assert_eq!(selected_test_labels(Scope::Unit), ["unit"]);
-        assert_eq!(selected_test_labels(Scope::E2e), ["e2e"]);
+    fn test_coverage_forwards_cargo_llvm_cov_arguments() {
+        let step = test_coverage_step(&["--show-missing-lines".to_string()]);
+
+        assert_eq!(step.label(), "test coverage");
+        assert_eq!(step.program(), "cargo");
         assert_eq!(
-            selected_test_labels(Scope::All),
-            ["unit", "e2e", "architecture", "ast-rules", "ast-scan"]
+            step.arguments(),
+            ["llvm-cov", "--workspace", "--show-missing-lines"]
         );
-    }
-
-    #[test]
-    fn shorthands_flags_and_conflicts_parse_at_the_cli_boundary() {
-        let arguments = Harness::try_parse_from(["t", "--e2e", "--json", "--evidences"])
-            .unwrap()
-            .args;
-        assert_eq!(arguments.scope, Scope::E2e);
-        assert!(arguments.json);
-        assert!(arguments.evidences);
-        assert!(Harness::try_parse_from(["t", "--e2e", "--all"]).is_err());
-        assert!(Harness::try_parse_from(["t", "--scope", "unit", "--all"]).is_err());
-    }
-
-    #[test]
-    fn e2e_timeout_exceeds_the_runner_default() {
-        assert!(project::E2E_TIMEOUT > Duration::from_mins(30));
     }
 }

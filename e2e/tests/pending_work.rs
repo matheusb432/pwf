@@ -3,7 +3,7 @@ use assert_cmd::prelude::OutputAssertExt as _;
 use expectrl::Expect;
 use serde_json::{Value, json};
 
-use crate::common::{ManagedProject, task_json};
+use crate::shared::{ManagedProject, task_json};
 
 #[test]
 fn add_stores_the_title_separately_from_goals() {

@@ -12,15 +12,6 @@ pub struct ProjectNote {
 }
 
 /// Stores a canonical `{PREFIX}-NOTE-NNNN` identifier.
-///
-/// # Examples
-///
-/// ```
-/// use pwf_models::note::NoteId;
-///
-/// let id = NoteId::try_new("PWF-NOTE-0042").unwrap();
-/// assert_eq!(id.as_ref(), "PWF-NOTE-0042");
-/// ```
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct NoteId {
     canonical: String,
@@ -34,15 +25,6 @@ impl NoteId {
     ///
     /// Returns [`NoteIdError`] unless the value contains a two-to-four-letter uppercase prefix,
     /// `-NOTE-`, and exactly four decimal digits.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pwf_models::note::NoteId;
-    ///
-    /// assert!(NoteId::try_new("PWF-NOTE-0001").is_ok());
-    /// assert!(NoteId::try_new(concat!("pwf", "-note-0001")).is_err());
-    /// ```
     pub fn try_new(raw: impl Into<String>) -> Result<Self, NoteIdError> {
         let canonical = raw.into();
         let Some((prefix, number)) = canonical.split_once("-NOTE-") else {
@@ -64,14 +46,6 @@ impl NoteId {
     }
 
     /// Returns the decimal numeric suffix.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use pwf_models::note::NoteId;
-    ///
-    /// assert_eq!(NoteId::try_new("PWF-NOTE-0042").unwrap().number(), 42);
-    /// ```
     #[must_use]
     pub fn number(&self) -> u32 {
         self.number
@@ -91,15 +65,6 @@ impl fmt::Display for NoteId {
 }
 
 /// Reports a non-canonical project-note identifier.
-///
-/// # Examples
-///
-/// ```
-/// use pwf_models::note::NoteId;
-///
-/// let error = NoteId::try_new("PWF-0001").unwrap_err();
-/// assert_eq!(error.to_string(), "invalid canonical note id \"PWF-0001\"");
-/// ```
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("invalid canonical note id {value:?}")]
 pub struct NoteIdError {

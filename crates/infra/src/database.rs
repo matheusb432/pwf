@@ -55,3 +55,28 @@ pub async fn migrate_database(pool: &SqlitePool) -> anyhow::Result<()> {
         .context("applying database migrations")?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::build_pool;
+
+    #[tokio::test]
+    async fn pool_enables_foreign_keys_and_wal_journal_mode() {
+        let directory = tempfile::tempdir().expect("create database directory");
+        let pool = build_pool(&directory.path().join("pwf.sqlite3"))
+            .await
+            .expect("build SQLite pool");
+
+        let foreign_keys: i64 = sqlx::query_scalar("PRAGMA foreign_keys")
+            .fetch_one(&pool)
+            .await
+            .expect("read foreign-key mode");
+        let journal_mode: String = sqlx::query_scalar("PRAGMA journal_mode")
+            .fetch_one(&pool)
+            .await
+            .expect("read journal mode");
+
+        assert_eq!(foreign_keys, 1);
+        assert_eq!(journal_mode, "wal");
+    }
+}

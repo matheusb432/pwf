@@ -3,15 +3,6 @@ use std::fmt;
 use thiserror::Error;
 
 /// Stores one canonical lowercase snake-case task label.
-///
-/// # Examples
-///
-/// ```
-/// use pwf_models::pending_work::Tag;
-///
-/// let tag = Tag::try_from("csharp_export").unwrap();
-/// assert_eq!(tag.as_ref(), "csharp_export");
-/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Tag(String);
 

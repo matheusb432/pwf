@@ -5,12 +5,12 @@ use pwf_application::project::{
     ProjectFields,
     add_project::{self, AddProject},
 };
-use pwf_infra::SqliteStore;
 use pwf_models::project::{
-    ProjectName, ProjectPrefix, ProjectSource, ProjectSourceKind, ProjectSourceValue, ProjectTasks,
+    ProjectId, ProjectName, ProjectSource, ProjectSourceKind, ProjectSourceValue, ProjectTasks,
     ProjectTasksKind, ProjectTasksPath,
 };
 use serde::Deserialize;
+use sqlx::SqlitePool;
 
 use super::output;
 
@@ -38,7 +38,7 @@ impl FromStr for DirectoryPayload {
     fn from_str(payload: &str) -> Result<Self, Self::Err> {
         let payload: AddPayload = serde_json::from_str(payload)
             .map_err(|error| format!("project add JSON is invalid: {error}"))?;
-        let id = ProjectPrefix::try_new(payload.id)
+        let id = ProjectId::try_new(payload.id)
             .map_err(|_| "project id must contain two to four ASCII letters".to_string())?;
         let title_raw = payload.title;
         let title = ProjectName::try_new(title_raw.clone()).map_err(|_| {
@@ -65,7 +65,7 @@ impl FromStr for DirectoryPayload {
 
 pub(super) async fn run(
     arguments: Arguments,
-    database: &SqliteStore,
+    pool: &SqlitePool,
     home: PathBuf,
 ) -> Result<String, String> {
     match arguments.kind {
@@ -75,7 +75,7 @@ pub(super) async fn run(
                     fields: arguments.payload.0,
                     home,
                 },
-                database,
+                pool,
             )
             .await
             .map_err(|error| format!("project add failed: {error}"))?;

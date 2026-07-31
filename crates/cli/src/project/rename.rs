@@ -5,11 +5,12 @@ use pwf_application::project::{
     ProjectFields,
     rename_project::{self, RenameProject},
 };
-use pwf_infra::{SqliteStore, obsidian::ObsidianProjectTaskFilesClient};
+use pwf_infra::obsidian::ObsidianProjectTaskFilesClient;
 use pwf_models::project::{
-    ProjectName, ProjectPrefix, ProjectSource, ProjectSourceKind, ProjectSourceValue, ProjectTasks,
+    ProjectId, ProjectName, ProjectSource, ProjectSourceKind, ProjectSourceValue, ProjectTasks,
     ProjectTasksKind, ProjectTasksPath,
 };
+use sqlx::SqlitePool;
 
 use super::{output, parse_project_id};
 
@@ -17,10 +18,10 @@ use super::{output, parse_project_id};
 pub struct Arguments {
     /// Existing canonical project ID.
     #[arg(value_parser = parse_project_id)]
-    pub current_id: ProjectPrefix,
+    pub current_id: ProjectId,
     /// Replacement canonical project ID.
     #[arg(value_parser = parse_project_id)]
-    pub destination_id: ProjectPrefix,
+    pub destination_id: ProjectId,
     /// Replacement project title.
     #[arg(long, value_parser = parse_project_title)]
     pub title: ProjectName,
@@ -34,7 +35,7 @@ pub struct Arguments {
 
 pub(super) async fn run(
     arguments: Arguments,
-    database: &SqliteStore,
+    pool: &SqlitePool,
     home: PathBuf,
 ) -> Result<String, String> {
     let fields = ProjectFields {
@@ -49,7 +50,7 @@ pub(super) async fn run(
             fields,
             home,
         },
-        database,
+        pool,
         &ObsidianProjectTaskFilesClient,
     )
     .await

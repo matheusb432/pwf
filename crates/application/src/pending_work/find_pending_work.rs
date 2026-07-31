@@ -1,6 +1,6 @@
 use crate::{
-    AppRecordStore, PendingWorkRecord,
     pending_work::{ProjectRegistry, dto::PendingWorkItemView, logic::finding::find_open_item},
+    ports::{app_record::AppRecordStore, pending_work_record::PendingWorkRecord},
 };
 
 #[derive(Debug, Clone)]
@@ -37,7 +37,10 @@ mod tests {
 
     use super::{FindPendingWork, FindPendingWorkError, PendingWorkItemView, ProjectRegistry};
     use crate::{
-        IndexPlacement, Materialization, PendingWorkRecord, RecordId, testing::InMemoryStore,
+        ports::pending_work_record::{
+            IndexPlacement, Materialization, PendingWorkRecord, RecordId,
+        },
+        testing::InMemoryStore,
     };
 
     fn record(id: &str) -> PendingWorkRecord {
@@ -87,11 +90,11 @@ mod tests {
     }
 
     fn registry(projects: &[(&str, &str)]) -> ProjectRegistry {
-        ProjectRegistry::new(projects.iter().map(|(name, prefix)| {
+        ProjectRegistry::new(projects.iter().map(|(name, project_id)| {
             (
                 ProjectName::try_new(*name).unwrap(),
                 Some(format!("/repo/{name}")),
-                Some((*prefix).to_string()),
+                Some((*project_id).to_string()),
             )
         }))
     }
@@ -144,7 +147,7 @@ mod tests {
     }
 
     #[test]
-    fn shared_prefix_across_projects_is_ambiguous_preserving_raw_id() {
+    fn shared_project_id_across_projects_is_ambiguous_preserving_raw_id() {
         let store = InMemoryStore::default()
             .with_project("alpha", vec![record("PWF-0001")])
             .with_project("beta", vec![record("PWF-0001")]);

@@ -3,21 +3,9 @@
 use pwf_models::note::NoteId;
 
 use super::logic::{self, ResolvedProject};
-use crate::{ProjectNoteStore, pending_work::ProjectRegistry};
+use crate::{pending_work::ProjectRegistry, ports::project_note::ProjectNoteStore};
 
 /// Requests deletion of one project note.
-///
-/// # Examples
-///
-/// ```
-/// use pwf_application::note::remove_note::RemoveNote;
-///
-/// let request = RemoveNote {
-///     project_identifier: "pwf".to_string(),
-///     id: "NOTE-0001".to_string(),
-/// };
-/// assert_eq!(request.id, "NOTE-0001");
-/// ```
 #[derive(Debug, Clone)]
 pub struct RemoveNote {
     /// Selects the managed project by name or id code.
@@ -35,8 +23,8 @@ pub struct RemoveNoteOk {
 pub enum RemoveNoteError {
     #[error("Unknown project '{identifier}'; expected a managed project name or id code.")]
     UnknownProject { identifier: String },
-    #[error("Invalid note id '{id}'; expected e.g. {prefix}-NOTE-0001, NOTE-0001, or 1.")]
-    InvalidIdentifier { id: String, prefix: String },
+    #[error("Invalid note id '{id}'; expected e.g. {project_id}-NOTE-0001, NOTE-0001, or 1.")]
+    InvalidIdentifier { id: String, project_id: String },
     #[error("No such note {id} in {project}.")]
     NoSuchNote { id: String, project: String },
     #[error("{0}")]
@@ -51,26 +39,6 @@ pub enum RemoveNoteError {
 /// [`RemoveNoteError::InvalidIdentifier`] when the note id is invalid for that project,
 /// [`RemoveNoteError::NoSuchNote`] when the note does not exist, or
 /// [`RemoveNoteError::Store`] when existence inspection or deletion fails.
-///
-/// # Examples
-///
-/// ```
-/// # use pwf_application::{
-/// #     ProjectNoteStore,
-/// #     note::remove_note::{self, RemoveNote, RemoveNoteError, RemoveNoteOk},
-/// #     pending_work::ProjectRegistry,
-/// # };
-/// # fn remove<S>(
-/// #     request: RemoveNote,
-/// #     store: &S,
-/// #     projects: &ProjectRegistry,
-/// # ) -> Result<RemoveNoteOk, RemoveNoteError>
-/// # where
-/// #     S: ProjectNoteStore,
-/// # {
-/// remove_note::execute(request, store, projects)
-/// # }
-/// ```
 #[cqrsy::command]
 pub fn execute<S>(
     command: RemoveNote,
@@ -84,27 +52,31 @@ where
         project_identifier,
         id: raw_id,
     } = command;
-    let ResolvedProject { project, prefix } = logic::resolve_project(projects, &project_identifier)
-        .ok_or_else(|| RemoveNoteError::UnknownProject {
+    let ResolvedProject {
+        project_name,
+        project_id,
+    } = logic::resolve_project(projects, &project_identifier).ok_or_else(|| {
+        RemoveNoteError::UnknownProject {
             identifier: project_identifier,
-        })?;
-    let id = logic::resolve_note(&raw_id, &prefix).ok_or_else(|| {
+        }
+    })?;
+    let id = logic::resolve_note(&raw_id, &project_id).ok_or_else(|| {
         RemoveNoteError::InvalidIdentifier {
             id: raw_id,
-            prefix: prefix.to_string(),
+            project_id: project_id.to_string(),
         }
     })?;
     let exists = store
-        .note_exists(&project, &id)
+        .note_exists(&project_name, &id)
         .map_err(|error| RemoveNoteError::Store(Box::new(error)))?;
     if !exists {
         return Err(RemoveNoteError::NoSuchNote {
             id: id.to_string(),
-            project: project.to_string(),
+            project: project_name.to_string(),
         });
     }
     store
-        .delete(&project, &id)
+        .delete(&project_name, &id)
         .map_err(|error| RemoveNoteError::Store(Box::new(error)))?;
     Ok(RemoveNoteOk { id })
 }
@@ -207,8 +179,8 @@ mod tests {
             error,
             RemoveNoteError::InvalidIdentifier {
                 ref id,
-                ref prefix,
-            } if id == "FOO-NOTE-0001" && prefix == "PWF"
+                ref project_id,
+            } if id == "FOO-NOTE-0001" && project_id == "PWF"
         ));
     }
 

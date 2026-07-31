@@ -12,4 +12,4 @@ pub use tag::{EmptyTagsError, InvalidTagError, Tag, Tags};
 pub use timestamp::Timestamp;
 pub use title::{TaskTitle, TaskTitleError};
 
-pub use crate::project::{ProjectIndexIdentity, ProjectName, ProjectPrefix};
+pub use crate::project::{ProjectId, ProjectIndexIdentity, ProjectName};

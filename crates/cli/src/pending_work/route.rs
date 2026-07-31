@@ -7,10 +7,11 @@ use pwf_application::pending_work::{
 };
 
 use super::{
-    common::{
+    list,
+    shared::{
         AgentChoice, CommonArguments, Identifier, PendingWorkError, SectionChoice, StatusChoice,
     },
-    list, verify,
+    verify,
 };
 
 #[derive(Args, Debug)]

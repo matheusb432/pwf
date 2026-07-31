@@ -3,7 +3,7 @@ use pwf_models::{
     pending_work::{ProjectName, Timestamp},
 };
 
-use super::{AppRecordStore, Record};
+use super::app_record::{AppRecordStore, Record};
 
 impl Record for ProjectNote {
     type Scope = ProjectName;

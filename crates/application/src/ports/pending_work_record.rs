@@ -2,7 +2,7 @@ use pwf_models::pending_work::{
     EffortTier, ProjectName, Tags, TaskTitle, Timestamp, WorkItemId, WorkItemStatus,
 };
 
-use super::Record;
+use super::app_record::Record;
 
 /// A pending-work record's identity within its project.
 ///

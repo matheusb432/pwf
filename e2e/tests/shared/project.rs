@@ -25,7 +25,7 @@ impl ProjectFixture {
             .command()
             .args(arguments)
             .output()
-            .expect("run pwf")
+            .expect("run pwf process")
     }
 
     pub fn run_with_home(&self, arguments: &[&str], home: &Path) -> Output {
@@ -33,7 +33,7 @@ impl ProjectFixture {
             .command_with_home(home)
             .args(arguments)
             .output()
-            .expect("run pwf")
+            .expect("run pwf process")
     }
 
     pub fn add(&self, id: &str, title: &str, source: &str, tasks: &str) -> Value {
@@ -138,5 +138,5 @@ pub fn run_with_database(database_path: &Path, arguments: &[&str]) -> Output {
         .args(arguments)
         .env("PWF_DATABASE_PATH", database_path)
         .output()
-        .expect("run pwf")
+        .expect("run pwf process")
 }

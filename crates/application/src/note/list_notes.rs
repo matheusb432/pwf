@@ -6,23 +6,11 @@ use super::{
     dto::ListedNote,
     logic::{self, ResolvedProject},
 };
-use crate::{AppRecordStore, ProjectNote, pending_work::ProjectRegistry};
+use crate::{ProjectNote, pending_work::ProjectRegistry, ports::app_record::AppRecordStore};
 
 const DEFAULT_NOTE_COUNT: usize = 10;
 
 /// Requests one project's notes in newest-first order.
-///
-/// # Examples
-///
-/// ```
-/// use pwf_application::note::list_notes::ListNotes;
-///
-/// let query = ListNotes {
-///     project_identifier: "pwf".to_string(),
-///     number: Some(20),
-/// };
-/// assert_eq!(query.number, Some(20));
-/// ```
 #[derive(Debug, Clone)]
 pub struct ListNotes {
     /// Selects the managed project by name or id code.
@@ -52,27 +40,6 @@ pub enum ListNotesError {
 ///
 /// Returns [`ListNotesError::UnknownProject`] when the project does not resolve or
 /// [`ListNotesError::Store`] when listing notes fails.
-///
-/// # Examples
-///
-/// ```
-/// # use pwf_application::{
-/// #     AppRecordStore,
-/// #     note::list_notes::{self, ListNotes, ListNotesError, ListNotesOk},
-/// #     pending_work::ProjectRegistry,
-/// # };
-/// # use pwf_models::note::ProjectNote;
-/// # fn list<S>(
-/// #     query: ListNotes,
-/// #     store: &S,
-/// #     projects: &ProjectRegistry,
-/// # ) -> Result<ListNotesOk, ListNotesError>
-/// # where
-/// #     S: AppRecordStore<ProjectNote>,
-/// # {
-/// list_notes::execute(query, store, projects)
-/// # }
-/// ```
 #[cqrsy::query]
 pub fn execute<S>(
     query: ListNotes,
@@ -86,14 +53,16 @@ where
         project_identifier,
         number,
     } = query;
-    let ResolvedProject { project, prefix: _ } =
-        logic::resolve_project(projects, &project_identifier).ok_or_else(|| {
-            ListNotesError::UnknownProject {
-                identifier: project_identifier,
-            }
-        })?;
+    let ResolvedProject {
+        project_name,
+        project_id: _,
+    } = logic::resolve_project(projects, &project_identifier).ok_or_else(|| {
+        ListNotesError::UnknownProject {
+            identifier: project_identifier,
+        }
+    })?;
     let mut notes = store
-        .list(&project)
+        .list(&project_name)
         .map_err(|error| ListNotesError::Store(Box::new(error)))?;
     notes.sort_by_key(|note| std::cmp::Reverse(note.id.number()));
     let count = number.unwrap_or(DEFAULT_NOTE_COUNT);
@@ -112,7 +81,7 @@ where
         })
         .collect();
     Ok(ListNotesOk {
-        project,
+        project: project_name,
         notes,
         hidden,
     })

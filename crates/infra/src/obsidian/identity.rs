@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use gray_matter::{Matter, engine::YAML};
-use pwf_models::pending_work::{ProjectIndexIdentity, ProjectName, ProjectPrefix, WorkItemId};
+use pwf_models::pending_work::{ProjectId, ProjectIndexIdentity, ProjectName, WorkItemId};
 use serde::Deserialize;
 
 use super::ObsidianStoreError;
@@ -108,7 +108,7 @@ pub(super) fn parse_project_index_identity(
     let frontmatter = parse_frontmatter::<ProjectIndexFrontmatter>(path, markdown, "id/title")?;
     let raw_id = required_index_property(path, "id", frontmatter.id)?;
     let raw_title = required_index_property(path, "title", frontmatter.title)?;
-    let id = ProjectPrefix::try_new(&raw_id).map_err(|_| {
+    let id = ProjectId::try_new(&raw_id).map_err(|_| {
         ObsidianStoreError::InvalidProjectIndexProperty {
             path: path.to_path_buf(),
             property: "id",
@@ -188,7 +188,7 @@ fn required_index_property(
 mod tests {
     use std::{assert_matches, path::Path};
 
-    use pwf_models::pending_work::{ProjectIndexIdentity, ProjectName, ProjectPrefix};
+    use pwf_models::pending_work::{ProjectId, ProjectIndexIdentity, ProjectName};
 
     use super::{
         parse_project_index_identity, parse_task_metadata_if_task, project_index_frontmatter_id,
@@ -237,11 +237,11 @@ mod tests {
     fn rejects_project_index_identity_that_disagrees_with_supplied_identity() {
         let path = Path::new("/vault/rust-learn/index.md");
         let actual = ProjectIndexIdentity::new(
-            ProjectPrefix::try_new("pwf").unwrap(),
+            ProjectId::try_new("pwf").unwrap(),
             ProjectName::try_new("pwf").unwrap(),
         );
         let expected = ProjectIndexIdentity::new(
-            ProjectPrefix::try_new("rst").unwrap(),
+            ProjectId::try_new("rst").unwrap(),
             ProjectName::try_new("rust-learn").unwrap(),
         );
 

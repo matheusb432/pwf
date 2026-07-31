@@ -11,7 +11,11 @@ use super::{
     prerequisite::PrerequisiteValidationError,
     store_util, tag_policy, title,
 };
-use crate::ports::{AppRecordStore, Clock, IndexEntry, IndexSection, NewItem, PendingWorkRecord};
+use crate::ports::{
+    app_record::AppRecordStore,
+    clock::Clock,
+    pending_work_record::{IndexEntry, IndexSection, NewItem, PendingWorkRecord},
+};
 
 /// Reports the persistence phase that failed while creating an item and its index entry.
 #[derive(Debug, thiserror::Error)]
@@ -102,7 +106,7 @@ impl PendingWorkSection {
 /// Requests creation of one pending-work item.
 #[derive(Debug, Clone)]
 pub struct AddPendingWorkItem {
-    /// Managed project name or identifier prefix.
+    /// Managed project name or project ID.
     pub project_identifier: Option<String>,
     /// Direct prompt text after transport-level word joining.
     pub prompt: String,

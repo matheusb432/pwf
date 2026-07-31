@@ -6,7 +6,7 @@ use clap::{Parser, Subcommand};
 
 use crate::{
     verb::Verb,
-    verbs::{format::FixArguments, install::UpdateArgs, test::TestArgs},
+    verbs::{fix::FixArguments, install::UpdateArgs, ship::ShipArguments, test::TestArgs},
 };
 
 /// pwf's embedded dev/release automation (xtask). Never installed; run via `cargo run -p xtask`.
@@ -59,9 +59,9 @@ pub(crate) enum Command {
         #[arg(long)]
         verbose: bool,
     },
-    /// Run the full test preflight and build the release binary.
+    /// Run the release preflight and build the release binary.
     #[command(name = Verb::SHIP.as_str())]
-    Ship,
+    Ship(ShipArguments),
     /// First-time setup of the global pwf shim (`~/.local/bin/pwf` on Unix; scoop on Windows).
     #[command(name = Verb::INSTALL.as_str())]
     Install,

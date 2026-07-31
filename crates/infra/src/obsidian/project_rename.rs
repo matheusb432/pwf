@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use pwf_application::{
+use pwf_application::ports::project_task_files::{
     ProjectTaskFilesClient, ProjectTaskFilesRenameCommit, StagedProjectTaskFilesRename,
 };
 use pwf_models::project::ProjectIndexIdentity;
@@ -424,13 +424,13 @@ fn reject_existing(
 mod tests {
     use std::{assert_matches, fs, io, path::Path};
 
-    use pwf_models::project::{ProjectIndexIdentity, ProjectName, ProjectPrefix};
+    use pwf_models::project::{ProjectId, ProjectIndexIdentity, ProjectName};
 
     use super::*;
 
     fn identity(id: &str, title: &str) -> ProjectIndexIdentity {
         ProjectIndexIdentity::new(
-            ProjectPrefix::try_new(id).unwrap(),
+            ProjectId::try_new(id).unwrap(),
             ProjectName::try_new(title).unwrap(),
         )
     }

@@ -6,8 +6,8 @@ use pwf_application::pending_work::{
 use pwf_infra::{obsidian::ObsidianStore, session::AgentHarness};
 
 use super::{
-    common::{AgentChoice, CommonArguments, Identifier, PendingWorkError},
     render::render_verify,
+    shared::{AgentChoice, CommonArguments, Identifier, PendingWorkError},
 };
 
 #[derive(Args, Debug)]

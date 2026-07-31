@@ -1,18 +1,18 @@
 use clap::Args;
 use pwf_application::{
-    Clock,
     pending_work::{
         ProjectRegistry,
         add_pending_work_item::{self, AddPendingWorkItem},
     },
+    ports::clock::Clock,
 };
 use pwf_infra::obsidian::ObsidianStore;
 
 use super::{
-    common::{CommonArguments, EffortChoice, PendingWorkError, task_title},
     render::{
         TITLE_NORMALIZED_NOTICE, emit_created_section, emit_created_section_for_error, render_added,
     },
+    shared::{CommonArguments, EffortChoice, PendingWorkError, task_title},
 };
 use crate::console::Console;
 

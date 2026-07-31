@@ -1,6 +1,6 @@
 use std::{fs, path::Path};
 
-use crate::common::{ProjectFixture, assert_failure, assert_project, success_json};
+use crate::shared::{ProjectFixture, assert_failure, assert_project, success_json};
 
 fn write_fixture(tasks_path: &Path) {
     fs::create_dir_all(tasks_path).unwrap();

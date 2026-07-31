@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use pwf_models::project::ProjectPrefix;
+use pwf_models::project::ProjectId;
 
 use super::{
     Project,
@@ -8,7 +8,6 @@ use super::{
     logic::task_location::{self, TaskLocationError},
     resolve_runtime_path::{self, ResolveRuntimePath, RuntimePathError},
 };
-use crate::AppDbStore;
 
 /// Requests active projects with paths resolved for the current process.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,7 +33,7 @@ pub enum LoadActiveProjectsError {
     List(#[from] ListProjectsError),
     #[error("managed project {project_id} {field} path '{path}' is invalid: {source}")]
     InvalidPath {
-        project_id: ProjectPrefix,
+        project_id: ProjectId,
         field: &'static str,
         path: String,
         #[source]
@@ -45,8 +44,8 @@ pub enum LoadActiveProjectsError {
         path.display()
     )]
     DuplicateTaskLocation {
-        first_id: ProjectPrefix,
-        second_id: ProjectPrefix,
+        first_id: ProjectId,
+        second_id: ProjectId,
         path: PathBuf,
     },
 }
@@ -60,13 +59,13 @@ pub enum LoadActiveProjectsError {
 #[cqrsy::query]
 pub async fn execute(
     query: LoadActiveProjects,
-    database: &impl AppDbStore,
+    pool: &sqlx::SqlitePool,
 ) -> Result<Vec<ActiveProject>, LoadActiveProjectsError> {
     let projects = list_projects::execute(
         ListProjects {
             include_paused: false,
         },
-        database,
+        pool,
     )
     .await?;
 
@@ -105,7 +104,7 @@ fn resolve_projects(
 }
 
 fn resolve_path(
-    project_id: &ProjectPrefix,
+    project_id: &ProjectId,
     field: &'static str,
     path: &str,
     home: &Path,
@@ -157,7 +156,7 @@ mod tests {
 
     fn project(id: &str, title: &str, source: &str, tasks: &str) -> Project {
         Project {
-            id: ProjectPrefix::try_new(id).unwrap(),
+            id: ProjectId::try_new(id).unwrap(),
             title: ProjectName::try_new(title).unwrap(),
             source: ProjectSource::new(
                 ProjectSourceKind::Directory,

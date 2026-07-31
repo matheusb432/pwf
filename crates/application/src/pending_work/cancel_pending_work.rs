@@ -4,7 +4,11 @@ use super::{
     complete_pending_work::{ClosedItemAction, CompletePendingWorkOk},
     logic::pending_work_closing::{CloseError, perform_close},
 };
-use crate::ports::{AppRecordStore, Clock, IndexEntry, IndexSection, PendingWorkRecord};
+use crate::ports::{
+    app_record::AppRecordStore,
+    clock::Clock,
+    pending_work_record::{IndexEntry, IndexSection, PendingWorkRecord},
+};
 
 #[derive(Debug, Clone)]
 pub struct CancelPendingWork {
@@ -102,7 +106,13 @@ mod tests {
 
     use super::{CancelPendingWork, CancelPendingWorkError, ProjectRegistry};
     use crate::{
-        IndexEntry, IndexEntryState, Materialization, PendingWorkRecord, RecordId, ports::Clock,
+        ports::{
+            app_record::AppRecordStore,
+            clock::Clock,
+            pending_work_record::{
+                IndexEntry, IndexEntryState, Materialization, PendingWorkRecord, RecordId,
+            },
+        },
         testing::InMemoryStore,
     };
 
@@ -147,7 +157,7 @@ mod tests {
         let store = InMemoryStore::default()
             .with_prefix("foo-bar", "FOO")
             .with_project("foo-bar", vec![record("FOO-0001")]);
-        <InMemoryStore as crate::AppRecordStore<IndexEntry>>::insert(
+        <InMemoryStore as AppRecordStore<IndexEntry>>::insert(
             &store,
             &ProjectName::try_new("foo-bar").unwrap(),
             IndexEntry {

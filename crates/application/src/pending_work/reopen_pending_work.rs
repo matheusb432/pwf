@@ -4,7 +4,10 @@ use super::{
     ProjectRegistry, identifier,
     store_util::{self, LoadItemError},
 };
-use crate::ports::{AppRecordStore, IndexEntry, IndexEntryState, ItemPatch, PendingWorkRecord};
+use crate::ports::{
+    app_record::AppRecordStore,
+    pending_work_record::{IndexEntry, IndexEntryState, ItemPatch, PendingWorkRecord},
+};
 
 #[derive(Debug, Clone)]
 pub struct ReopenPendingWork {
@@ -45,15 +48,15 @@ where
 {
     let not_found = || ReopenPendingWorkError::ItemNotFound { id: cmd.id.clone() };
     let pending_work_identifier = identifier::parse(&cmd.id).ok_or_else(not_found)?;
-    let prefix = pending_work_identifier
+    let project_id = pending_work_identifier
         .as_ref()
         .split_once('-')
-        .map_or("", |(prefix, _)| prefix);
+        .map_or("", |(project_id, _)| project_id);
     let project = projects
-        .project_for_id(&pending_work_identifier)
+        .get_project_name_by(&pending_work_identifier)
         .ok_or_else(|| ReopenPendingWorkError::UnknownPrefix {
             pending_work_identifier: pending_work_identifier.to_string(),
-            prefix: prefix.to_string(),
+            prefix: project_id.to_string(),
         })?;
     let record =
         store_util::require_item(store, project, &pending_work_identifier).map_err(|error| {
@@ -138,7 +141,12 @@ mod tests {
 
     use super::{ProjectRegistry, ReopenPendingWork};
     use crate::{
-        IndexEntry, IndexEntryState, Materialization, PendingWorkRecord, RecordId,
+        ports::{
+            app_record::AppRecordStore,
+            pending_work_record::{
+                IndexEntry, IndexEntryState, Materialization, PendingWorkRecord, RecordId,
+            },
+        },
         testing::InMemoryStore,
     };
 
@@ -179,8 +187,7 @@ mod tests {
             .with_prefix("foo-bar", "FOO")
             .with_project("foo-bar", vec![record("FOO-0001", status)]);
         for entry in entries {
-            <InMemoryStore as crate::AppRecordStore<IndexEntry>>::insert(&store, &foo(), entry)
-                .unwrap();
+            <InMemoryStore as AppRecordStore<IndexEntry>>::insert(&store, &foo(), entry).unwrap();
         }
         store
     }

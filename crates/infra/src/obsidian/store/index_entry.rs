@@ -1,6 +1,9 @@
 use std::{collections::BTreeMap, path::Path, sync::LazyLock};
 
-use pwf_application::{AppRecordStore, IndexEntry, IndexEntryState, IndexSection};
+use pwf_application::ports::{
+    app_record::AppRecordStore,
+    pending_work_record::{IndexEntry, IndexEntryState, IndexSection},
+};
 use pwf_models::pending_work::{ProjectName, Timestamp, WorkItemId};
 use regex::Regex;
 
@@ -327,7 +330,7 @@ impl AppRecordStore<IndexSection> for ObsidianStore {
 
 #[cfg(test)]
 mod tests {
-    use pwf_application::{IndexEntry, IndexEntryState};
+    use pwf_application::ports::pending_work_record::{IndexEntry, IndexEntryState};
     use pwf_models::pending_work::{Timestamp, WorkItemId};
 
     use super::{render_entry_line, replace_line};

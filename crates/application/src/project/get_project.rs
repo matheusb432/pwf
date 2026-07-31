@@ -1,24 +1,23 @@
 use std::error::Error;
 
-use pwf_models::project::ProjectPrefix;
+use pwf_models::project::ProjectId;
 
 use super::{
     Project,
     dto::{ProjectRow, ProjectRowError},
 };
-use crate::AppDbStore;
 
-/// Requests one managed project by canonical prefix.
+/// Requests one managed project by canonical project ID.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GetProject {
-    /// Project prefix.
-    pub id: ProjectPrefix,
+    /// Project ID.
+    pub id: ProjectId,
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum GetProjectError {
     #[error("project not found: {id}")]
-    ProjectNotFound { id: ProjectPrefix },
+    ProjectNotFound { id: ProjectId },
     #[error("{context}: {source}")]
     Unexpected {
         context: &'static str,
@@ -36,7 +35,7 @@ pub enum GetProjectError {
 #[cqrsy::query]
 pub async fn execute(
     query: GetProject,
-    database: &impl AppDbStore,
+    pool: &sqlx::SqlitePool,
 ) -> Result<Project, GetProjectError> {
     let id = query.id.as_ref();
     let row = sqlx::query_as!(
@@ -57,7 +56,7 @@ pub async fn execute(
         "#,
         id,
     )
-    .fetch_optional(database.pool())
+    .fetch_optional(pool)
     .await
     .map_err(|error| unexpected("reading project", error))?
     .ok_or(GetProjectError::ProjectNotFound { id: query.id })?;

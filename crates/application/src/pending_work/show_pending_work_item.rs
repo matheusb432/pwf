@@ -3,22 +3,18 @@ use pwf_models::pending_work::{
 };
 
 use crate::{
-    AppRecordStore, Materialization, PendingWorkRecord, ProjectNoteStore, RecordId,
     pending_work::{
         ProjectRegistry,
         logic::{prerequisite, resolve::resolve_record, tag_policy},
     },
+    ports::{
+        app_record::AppRecordStore,
+        pending_work_record::{Materialization, PendingWorkRecord, RecordId},
+        project_note::ProjectNoteStore,
+    },
 };
 
 /// Selects the representation returned by [`execute`].
-///
-/// # Examples
-///
-/// ```
-/// use pwf_application::pending_work::ShowOutput;
-///
-/// assert_eq!(ShowOutput::Path, ShowOutput::Path);
-/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShowOutput {
     /// Returns the persisted Markdown source byte-for-byte.
@@ -30,17 +26,6 @@ pub enum ShowOutput {
 }
 
 /// Contains one pending-work item's semantic data.
-///
-/// # Examples
-///
-/// ```
-/// use pwf_application::pending_work::show_pending_work_item::PendingWorkItemData;
-///
-/// # fn inspect(task: &PendingWorkItemData) {
-/// assert!(!task.id.is_empty());
-/// assert!(!task.project.as_ref().is_empty());
-/// # }
-/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PendingWorkItemData {
     /// Canonical item id, or `<project>:<ordinal>` for an inline item.

@@ -4,7 +4,7 @@ use std::{
 };
 
 use pwf_models::project::{
-    ProjectIndexIdentity, ProjectName, ProjectPrefix, ProjectSource, ProjectTasks,
+    ProjectId, ProjectIndexIdentity, ProjectName, ProjectSource, ProjectTasks,
 };
 
 use super::{
@@ -14,15 +14,15 @@ use super::{
     logic::task_location::{self, TaskLocationError},
     resolve_runtime_path::{self, ResolveRuntimePath},
 };
-use crate::{
-    AppDbStore, ProjectTaskFilesClient, ProjectTaskFilesRenameCommit, StagedProjectTaskFilesRename,
+use crate::ports::project_task_files::{
+    ProjectTaskFilesClient, ProjectTaskFilesRenameCommit, StagedProjectTaskFilesRename,
 };
 
 /// Requests replacement of one managed project's identity and locations.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenameProject {
-    /// Existing project prefix.
-    pub current_id: ProjectPrefix,
+    /// Existing project ID.
+    pub current_id: ProjectId,
     /// Replacement project fields.
     pub fields: ProjectFields,
     /// Home directory used to expand home-relative task paths.
@@ -32,18 +32,18 @@ pub struct RenameProject {
 #[derive(Debug, thiserror::Error)]
 pub enum RenameProjectError {
     #[error("project rename failed: project not found: {id}")]
-    SourceProjectNotFound { id: ProjectPrefix },
+    SourceProjectNotFound { id: ProjectId },
     #[error("project rename failed: project changed while task files were staged: {id}")]
-    SourceProjectChanged { id: ProjectPrefix },
+    SourceProjectChanged { id: ProjectId },
     #[error("project rename failed: project id already exists: {id}")]
-    DestinationProjectIdExists { id: ProjectPrefix },
+    DestinationProjectIdExists { id: ProjectId },
     #[error("project rename failed: project title already exists: {title}")]
     DestinationProjectTitleExists { title: ProjectName },
     #[error(
         "project rename failed: managed project {project_id} task path '{path}' is invalid: {source}"
     )]
     InvalidTaskPath {
-        project_id: ProjectPrefix,
+        project_id: ProjectId,
         path: String,
         #[source]
         source: super::resolve_runtime_path::RuntimePathError,
@@ -53,8 +53,8 @@ pub enum RenameProjectError {
         path.display()
     )]
     DuplicateRuntimeTaskLocation {
-        first_id: ProjectPrefix,
-        second_id: ProjectPrefix,
+        first_id: ProjectId,
+        second_id: ProjectId,
         path: PathBuf,
     },
     #[error("project rename failed: {context}: {source}")]
@@ -99,14 +99,14 @@ pub enum RenameProjectError {
 #[cqrsy::command]
 pub async fn execute(
     command: RenameProject,
-    database: &impl AppDbStore,
+    pool: &sqlx::SqlitePool,
     task_files: &impl ProjectTaskFilesClient,
 ) -> Result<Project, RenameProjectError> {
     let current = get_project::execute(
         GetProject {
             id: command.current_id.clone(),
         },
-        database,
+        pool,
     )
     .await
     .map_err(get_project_error)?;
@@ -127,7 +127,7 @@ pub async fn execute(
         .map_err(|source| RenameProjectError::StageTaskFiles {
             source: Box::new(source),
         })?;
-    let renamed = match rename_registry(command, &current, database).await {
+    let renamed = match rename_registry(command, &current, pool).await {
         Ok(renamed) => renamed,
         Err(rename_error) => {
             return match staged.discard() {
@@ -153,7 +153,7 @@ pub async fn execute(
                     home,
                 },
                 &renamed,
-                database,
+                pool,
             )
             .await;
             match rollback {
@@ -172,10 +172,9 @@ pub async fn execute(
 async fn rename_registry(
     command: RenameProject,
     expected_current: &Project,
-    database: &impl AppDbStore,
+    pool: &sqlx::SqlitePool,
 ) -> Result<Project, RenameProjectError> {
-    let mut transaction = database
-        .pool()
+    let mut transaction = pool
         .begin_with("BEGIN IMMEDIATE")
         .await
         .map_err(|error| unexpected("starting project rename transaction", error))?;
@@ -312,7 +311,7 @@ fn get_project_error(error: GetProjectError) -> RenameProjectError {
 }
 
 fn resolve_tasks_path(
-    project_id: &ProjectPrefix,
+    project_id: &ProjectId,
     tasks: &ProjectTasks,
     home: &Path,
 ) -> Result<PathBuf, RenameProjectError> {
@@ -416,8 +415,8 @@ async fn validate_identity(
 
 async fn other_task_locations(
     transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
-    current_id: &ProjectPrefix,
-) -> Result<Vec<(ProjectPrefix, String)>, RenameProjectError> {
+    current_id: &ProjectId,
+) -> Result<Vec<(ProjectId, String)>, RenameProjectError> {
     sqlx::query_as::<_, (String, String)>(
         "SELECT id, tasks_path FROM projects WHERE id != ? ORDER BY id ASC",
     )
@@ -427,7 +426,7 @@ async fn other_task_locations(
     .map_err(|error| unexpected("reading project task locations", error))?
     .into_iter()
     .map(|(id, tasks_path)| {
-        ProjectPrefix::try_new(id)
+        ProjectId::try_new(id)
             .map(|id| (id, tasks_path))
             .map_err(|error| unexpected("converting project task location", error))
     })
@@ -479,18 +478,19 @@ mod tests {
     };
 
     use pwf_models::project::{
-        ProjectIndexIdentity, ProjectName, ProjectPrefix, ProjectSource, ProjectSourceKind,
+        ProjectId, ProjectIndexIdentity, ProjectName, ProjectSource, ProjectSourceKind,
         ProjectSourceValue, ProjectTasks, ProjectTasksKind, ProjectTasksPath,
     };
 
     use crate::{
-        AppDbStore, ProjectTaskFilesClient, ProjectTaskFilesRenameCommit,
-        StagedProjectTaskFilesRename,
-        ports::TestDatabase,
+        ports::project_task_files::{
+            ProjectTaskFilesClient, ProjectTaskFilesRenameCommit, StagedProjectTaskFilesRename,
+        },
         project::{
             ProjectFields,
             rename_project::{self, RenameProject, RenameProjectError},
         },
+        testing::insert_project,
     };
 
     #[derive(Clone, Copy)]
@@ -536,7 +536,7 @@ mod tests {
 
     fn fields(id: &str, title: &str, source: &str, tasks: &str) -> ProjectFields {
         ProjectFields {
-            id: ProjectPrefix::try_new(id).unwrap(),
+            id: ProjectId::try_new(id).unwrap(),
             title: ProjectName::try_new(title).unwrap(),
             source: ProjectSource::new(
                 ProjectSourceKind::Directory,
@@ -549,26 +549,25 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn rename_replaces_identity_and_preserves_project_state() {
-        let database = TestDatabase::new().await;
-        database
-            .insert_project(
-                "SSH",
-                "ssh-agent-phone-app",
-                "/self/ssh-agent-phone-app",
-                "/pwf-db/self/ssh-agent-phone-app",
-                true,
-            )
-            .await;
+    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
+    async fn rename_replaces_identity_and_preserves_project_state(pool: sqlx::SqlitePool) {
+        insert_project(
+            &pool,
+            "SSH",
+            "ssh-agent-phone-app",
+            "/self/ssh-agent-phone-app",
+            "/pwf-db/self/ssh-agent-phone-app",
+            true,
+        )
+        .await;
 
         let renamed = rename_project::execute(
             RenameProject {
-                current_id: ProjectPrefix::try_new("SSH").unwrap(),
+                current_id: ProjectId::try_new("SSH").unwrap(),
                 fields: fields("MUX", "mimux", "/self/mimux", "/pwf-db/self/mimux"),
                 home: PathBuf::from("/home/tester"),
             },
-            &database,
+            &pool,
             &TaskFilesClient::Available,
         )
         .await
@@ -580,28 +579,28 @@ mod tests {
         assert_eq!(renamed.tasks.path().as_ref(), "/pwf-db/self/mimux");
         assert_eq!(renamed.created_at, "2026-07-26T00:00:00.000Z");
         assert!(renamed.is_paused);
+        pool.close().await;
     }
 
-    #[tokio::test]
-    async fn task_file_staging_failure_leaves_registry_unchanged() {
-        let database = TestDatabase::new().await;
-        database
-            .insert_project(
-                "SSH",
-                "ssh-agent-phone-app",
-                "/self/ssh-agent-phone-app",
-                "/pwf-db/self/ssh-agent-phone-app",
-                false,
-            )
-            .await;
+    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
+    async fn task_file_staging_failure_leaves_registry_unchanged(pool: sqlx::SqlitePool) {
+        insert_project(
+            &pool,
+            "SSH",
+            "ssh-agent-phone-app",
+            "/self/ssh-agent-phone-app",
+            "/pwf-db/self/ssh-agent-phone-app",
+            false,
+        )
+        .await;
 
         let error = rename_project::execute(
             RenameProject {
-                current_id: ProjectPrefix::try_new("SSH").unwrap(),
+                current_id: ProjectId::try_new("SSH").unwrap(),
                 fields: fields("MUX", "mimux", "/self/mimux", "/pwf-db/self/mimux"),
                 home: PathBuf::from("/home/tester"),
             },
-            &database,
+            &pool,
             &TaskFilesClient::Missing,
         )
         .await
@@ -610,26 +609,25 @@ mod tests {
         assert_matches!(error, RenameProjectError::StageTaskFiles { .. });
         let stored: (String, String) =
             sqlx::query_as("SELECT id, title FROM projects WHERE id = 'SSH'")
-                .fetch_one(database.pool())
+                .fetch_one(&pool)
                 .await
                 .unwrap();
         assert_eq!(
             stored,
             ("SSH".to_string(), "ssh-agent-phone-app".to_string())
         );
+        pool.close().await;
     }
 
-    #[tokio::test]
-    async fn missing_source_project_is_classified() {
-        let database = TestDatabase::new().await;
-
+    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
+    async fn missing_source_project_is_classified(pool: sqlx::SqlitePool) {
         let error = rename_project::execute(
             RenameProject {
-                current_id: ProjectPrefix::try_new("SSH").unwrap(),
+                current_id: ProjectId::try_new("SSH").unwrap(),
                 fields: fields("MUX", "mimux", "/self/mimux", "/pwf-db/self/mimux"),
                 home: PathBuf::from("/home/tester"),
             },
-            &database,
+            &pool,
             &TaskFilesClient::Available,
         )
         .await
@@ -638,33 +636,39 @@ mod tests {
         assert_matches!(
             error,
             RenameProjectError::SourceProjectNotFound { id }
-                if id == ProjectPrefix::try_new("SSH").unwrap()
+                if id == ProjectId::try_new("SSH").unwrap()
         );
+        pool.close().await;
     }
 
-    #[tokio::test]
-    async fn destination_id_conflict_leaves_source_unchanged() {
-        let database = TestDatabase::new().await;
-        database
-            .insert_project(
-                "SSH",
-                "ssh-agent-phone-app",
-                "/self/ssh-agent-phone-app",
-                "/pwf-db/self/ssh-agent-phone-app",
-                false,
-            )
-            .await;
-        database
-            .insert_project("MUX", "other", "/self/other", "/pwf-db/self/other", false)
-            .await;
+    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
+    async fn destination_id_conflict_leaves_source_unchanged(pool: sqlx::SqlitePool) {
+        insert_project(
+            &pool,
+            "SSH",
+            "ssh-agent-phone-app",
+            "/self/ssh-agent-phone-app",
+            "/pwf-db/self/ssh-agent-phone-app",
+            false,
+        )
+        .await;
+        insert_project(
+            &pool,
+            "MUX",
+            "other",
+            "/self/other",
+            "/pwf-db/self/other",
+            false,
+        )
+        .await;
 
         let error = rename_project::execute(
             RenameProject {
-                current_id: ProjectPrefix::try_new("SSH").unwrap(),
+                current_id: ProjectId::try_new("SSH").unwrap(),
                 fields: fields("MUX", "mimux", "/self/mimux", "/pwf-db/self/mimux"),
                 home: PathBuf::from("/home/tester"),
             },
-            &database,
+            &pool,
             &TaskFilesClient::Available,
         )
         .await
@@ -673,11 +677,11 @@ mod tests {
         assert_matches!(
             error,
             RenameProjectError::DestinationProjectIdExists { id }
-                if id == ProjectPrefix::try_new("MUX").unwrap()
+                if id == ProjectId::try_new("MUX").unwrap()
         );
         let source: (String, String, String) =
             sqlx::query_as("SELECT id, title, tasks_path FROM projects WHERE id = 'SSH'")
-                .fetch_one(database.pool())
+                .fetch_one(&pool)
                 .await
                 .unwrap();
         assert_eq!(
@@ -688,31 +692,37 @@ mod tests {
                 "/pwf-db/self/ssh-agent-phone-app".to_string(),
             )
         );
+        pool.close().await;
     }
 
-    #[tokio::test]
-    async fn destination_title_conflict_is_classified() {
-        let database = TestDatabase::new().await;
-        database
-            .insert_project(
-                "SSH",
-                "ssh-agent-phone-app",
-                "/self/ssh-agent-phone-app",
-                "/pwf-db/self/ssh-agent-phone-app",
-                false,
-            )
-            .await;
-        database
-            .insert_project("ALT", "mimux", "/self/other", "/pwf-db/self/other", false)
-            .await;
+    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
+    async fn destination_title_conflict_is_classified(pool: sqlx::SqlitePool) {
+        insert_project(
+            &pool,
+            "SSH",
+            "ssh-agent-phone-app",
+            "/self/ssh-agent-phone-app",
+            "/pwf-db/self/ssh-agent-phone-app",
+            false,
+        )
+        .await;
+        insert_project(
+            &pool,
+            "ALT",
+            "mimux",
+            "/self/other",
+            "/pwf-db/self/other",
+            false,
+        )
+        .await;
 
         let error = rename_project::execute(
             RenameProject {
-                current_id: ProjectPrefix::try_new("SSH").unwrap(),
+                current_id: ProjectId::try_new("SSH").unwrap(),
                 fields: fields("MUX", "mimux", "/self/mimux", "/pwf-db/self/mimux"),
                 home: PathBuf::from("/home/tester"),
             },
-            &database,
+            &pool,
             &TaskFilesClient::Available,
         )
         .await
@@ -723,31 +733,37 @@ mod tests {
             RenameProjectError::DestinationProjectTitleExists { title }
                 if title == ProjectName::try_new("mimux").unwrap()
         );
+        pool.close().await;
     }
 
-    #[tokio::test]
-    async fn runtime_task_collision_leaves_source_unchanged() {
-        let database = TestDatabase::new().await;
-        database
-            .insert_project(
-                "SSH",
-                "ssh-agent-phone-app",
-                "/self/ssh-agent-phone-app",
-                "/pwf-db/self/ssh-agent-phone-app",
-                false,
-            )
-            .await;
-        database
-            .insert_project("ALT", "other", "/self/other", "~/tasks/shared", false)
-            .await;
+    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
+    async fn runtime_task_collision_leaves_source_unchanged(pool: sqlx::SqlitePool) {
+        insert_project(
+            &pool,
+            "SSH",
+            "ssh-agent-phone-app",
+            "/self/ssh-agent-phone-app",
+            "/pwf-db/self/ssh-agent-phone-app",
+            false,
+        )
+        .await;
+        insert_project(
+            &pool,
+            "ALT",
+            "other",
+            "/self/other",
+            "~/tasks/shared",
+            false,
+        )
+        .await;
 
         let error = rename_project::execute(
             RenameProject {
-                current_id: ProjectPrefix::try_new("SSH").unwrap(),
+                current_id: ProjectId::try_new("SSH").unwrap(),
                 fields: fields("MUX", "mimux", "/self/mimux", "/home/tester/tasks/shared"),
                 home: PathBuf::from("/home/tester"),
             },
-            &database,
+            &pool,
             &TaskFilesClient::Available,
         )
         .await
@@ -759,41 +775,42 @@ mod tests {
                 first_id,
                 second_id,
                 ..
-            } if first_id == ProjectPrefix::try_new("ALT").unwrap()
-                && second_id == ProjectPrefix::try_new("MUX").unwrap()
+            } if first_id == ProjectId::try_new("ALT").unwrap()
+                && second_id == ProjectId::try_new("MUX").unwrap()
         );
         let title: String = sqlx::query_scalar("SELECT title FROM projects WHERE id = 'SSH'")
-            .fetch_one(database.pool())
+            .fetch_one(&pool)
             .await
             .unwrap();
         assert_eq!(title, "ssh-agent-phone-app");
+        pool.close().await;
     }
 
-    #[tokio::test]
-    async fn invalid_task_path_is_classified() {
-        let database = TestDatabase::new().await;
-        database
-            .insert_project(
-                "SSH",
-                "ssh-agent-phone-app",
-                "/self/ssh-agent-phone-app",
-                "/pwf-db/self/ssh-agent-phone-app",
-                false,
-            )
-            .await;
+    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
+    async fn invalid_task_path_is_classified(pool: sqlx::SqlitePool) {
+        insert_project(
+            &pool,
+            "SSH",
+            "ssh-agent-phone-app",
+            "/self/ssh-agent-phone-app",
+            "/pwf-db/self/ssh-agent-phone-app",
+            false,
+        )
+        .await;
 
         let error = rename_project::execute(
             RenameProject {
-                current_id: ProjectPrefix::try_new("SSH").unwrap(),
+                current_id: ProjectId::try_new("SSH").unwrap(),
                 fields: fields("MUX", "mimux", "/self/mimux", "~/tasks/../mimux"),
                 home: PathBuf::from("/home/tester"),
             },
-            &database,
+            &pool,
             &TaskFilesClient::Available,
         )
         .await
         .unwrap_err();
 
         assert_matches!(error, RenameProjectError::InvalidTaskPath { .. });
+        pool.close().await;
     }
 }

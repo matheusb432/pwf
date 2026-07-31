@@ -3,12 +3,11 @@
 use std::error::Error;
 
 use askama::Template;
-use pwf_models::pending_work::{EffortTier, ProjectPrefix};
+use pwf_models::pending_work::{EffortTier, ProjectId};
 use thiserror::Error;
 
 use super::{Agent, AgentLaunch, DispatchTarget, LaunchDirectives, ModelTierLookup, SessionEffort};
 use crate::{
-    AppRecordStore, PendingWorkRecord, ProjectNoteStore,
     pending_work::{
         ProjectRegistry,
         dto::PendingWorkItemView,
@@ -16,6 +15,10 @@ use crate::{
         show_pending_work_item::{
             self, ShowOutput, ShowPendingWorkError, ShowPendingWorkItem, ShowPendingWorkItemOk,
         },
+    },
+    ports::{
+        app_record::AppRecordStore, pending_work_record::PendingWorkRecord,
+        project_note::ProjectNoteStore,
     },
 };
 
@@ -134,13 +137,13 @@ pub(super) fn dispatch_target(task_id: &str) -> DispatchTarget {
         return legacy_dispatch_target(task_id);
     };
     let canonical_id = work_item_id.as_ref();
-    let prefix = canonical_id
+    let project_id = canonical_id
         .split_once('-')
-        .map_or("", |(prefix, _)| prefix);
-    let project_prefix = ProjectPrefix::try_new(prefix)
-        .expect("a validated work-item id always contains a valid project prefix");
+        .map_or("", |(project_id, _)| project_id);
+    let project_id = ProjectId::try_new(project_id)
+        .expect("a validated work-item id always contains a valid project ID");
     DispatchTarget {
-        session: project_prefix.as_ref().to_ascii_lowercase(),
+        session: project_id.as_ref().to_ascii_lowercase(),
         window: canonical_id.to_string(),
     }
 }

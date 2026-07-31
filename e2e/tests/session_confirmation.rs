@@ -6,7 +6,7 @@ use assert_cmd::prelude::OutputAssertExt as _;
 #[cfg(target_os = "linux")]
 use expectrl::Expect;
 
-use crate::common::{SessionFixture, task_json};
+use crate::shared::{SessionFixture, task_json};
 
 #[test]
 fn accepted_append_reaches_the_note_and_dispatched_prompt() {

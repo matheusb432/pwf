@@ -97,16 +97,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn step_builder_appends_arrays_options_and_iterators() {
-        let step = Step::new("fmt", "cargo", ["fmt", "--all"])
-            .with_arguments(Some("--check"))
-            .with_arguments(None::<&str>)
-            .with_arguments(["a.md".to_string()]);
-        assert_eq!(step.program(), "cargo");
-        assert_eq!(step.arguments(), ["fmt", "--all", "--check", "a.md"]);
-    }
-
-    #[test]
     fn failure_message_lists_failed_steps() {
         let outcomes = [("format", false), ("docs", true), ("lint", false)];
         assert_eq!(

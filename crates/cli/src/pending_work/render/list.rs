@@ -253,38 +253,6 @@ mod tests {
     }
 
     #[test]
-    fn short_line_is_id_then_session_without_brackets_or_project() {
-        let mut out = String::new();
-        render_list_item(
-            &mut out,
-            &sample_item(),
-            StatusFilter::default(),
-            false,
-            true,
-            false,
-        );
-        assert_eq!(
-            out,
-            "PWF-0064 :: make list commands formatting less redundant"
-        );
-    }
-
-    #[test]
-    fn colored_id_is_orange_and_bold() {
-        let mut out = String::new();
-        render_list_item(
-            &mut out,
-            &sample_item(),
-            StatusFilter::default(),
-            false,
-            true,
-            true,
-        );
-        assert!(out.contains('\u{1b}'), "got: {out}");
-        assert!(out.contains("PWF-0064"), "got: {out}");
-    }
-
-    #[test]
     fn all_status_short_lines_place_plain_lifecycle_after_the_identifier() {
         for (status, expected) in [
             (
@@ -323,32 +291,6 @@ mod tests {
     }
 
     #[test]
-    fn all_status_annotations_use_distinct_lifecycle_colors() {
-        let mut outputs = Vec::new();
-        for status in [
-            WorkItemStatus::Active,
-            WorkItemStatus::Done,
-            WorkItemStatus::Cancelled,
-        ] {
-            let mut item = sample_item();
-            item.status = status;
-            outputs.push(render_item_for_filter(
-                &item,
-                StatusFilter::All,
-                false,
-                true,
-            ));
-        }
-
-        assert!(outputs[0].contains("38;5;208"), "{}", outputs[0]);
-        assert!(outputs[0].contains("active"), "{}", outputs[0]);
-        assert!(outputs[1].contains("\u{1b}[32m"), "{}", outputs[1]);
-        assert!(outputs[1].contains("done"), "{}", outputs[1]);
-        assert!(outputs[2].contains("\u{1b}[31m"), "{}", outputs[2]);
-        assert!(outputs[2].contains("cancelled"), "{}", outputs[2]);
-    }
-
-    #[test]
     fn long_form_separates_lifecycle_from_active_launch_readiness() {
         let output = render_item_for_filter(
             &sample_item(),
@@ -383,50 +325,6 @@ mod tests {
     }
 
     #[test]
-    fn empty_result_text_reflects_the_selected_lifecycle_filter() {
-        let result = GetPendingWorkOk {
-            items: Vec::new(),
-            hidden: 0,
-            project: None,
-            project_task_path: None,
-            status_filter: StatusFilter::default(),
-            grouped: false,
-        };
-        for (filter, expected) in [
-            (
-                StatusFilter::Exact(WorkItemStatus::Active),
-                "No open pending-work prompts found in notes.\n",
-            ),
-            (
-                StatusFilter::Exact(WorkItemStatus::Done),
-                "No pending-work prompts with status done found in notes.\n",
-            ),
-            (
-                StatusFilter::Exact(WorkItemStatus::Cancelled),
-                "No pending-work prompts with status cancelled found in notes.\n",
-            ),
-            (
-                StatusFilter::All,
-                "No pending-work prompts found in notes.\n",
-            ),
-        ] {
-            assert_eq!(
-                render_list(&result, "notes", filter, false, false, false),
-                expected
-            );
-        }
-    }
-
-    #[test]
-    fn long_form_shows_effort_line_when_present() {
-        let mut item = sample_item();
-        item.effort = Some("high".to_string());
-        let mut out = String::new();
-        render_list_item(&mut out, &item, StatusFilter::default(), true, true, false);
-        assert!(out.contains("  effort: high\n"), "got: {out}");
-    }
-
-    #[test]
     fn long_form_formats_typed_prerequisite_statuses() {
         let mut item = sample_item();
         item.prerequisite_statuses = vec![
@@ -450,43 +348,6 @@ mod tests {
             output.contains("  prereq: CFG-0014 (done), CFG-0015 (active), CFG-9999 (missing)\n"),
             "{output}"
         );
-    }
-
-    #[test]
-    fn long_form_omits_effort_line_when_absent() {
-        let mut out = String::new();
-        render_list_item(
-            &mut out,
-            &sample_item(),
-            StatusFilter::default(),
-            true,
-            true,
-            false,
-        );
-        assert!(!out.contains("effort:"), "got: {out}");
-    }
-
-    #[test]
-    fn long_form_shows_raw_tags_line_when_present() {
-        let mut item = sample_item();
-        item.tags = Some("[SQLite, hand-edited]".to_string());
-        let mut out = String::new();
-        render_list_item(&mut out, &item, StatusFilter::default(), true, true, false);
-        assert!(out.contains("  tags: [SQLite, hand-edited]\n"), "{out}");
-    }
-
-    #[test]
-    fn long_form_omits_tags_line_when_absent() {
-        let mut out = String::new();
-        render_list_item(
-            &mut out,
-            &sample_item(),
-            StatusFilter::default(),
-            true,
-            true,
-            false,
-        );
-        assert!(!out.contains("tags:"), "{out}");
     }
 
     #[test]

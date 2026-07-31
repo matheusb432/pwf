@@ -1,6 +1,6 @@
 use std::{error::Error, path::PathBuf};
 
-use pwf_models::project::{ProjectName, ProjectPrefix};
+use pwf_models::project::{ProjectId, ProjectName};
 use sqlx::error::ErrorKind;
 
 use super::{
@@ -8,7 +8,6 @@ use super::{
     dto::{ProjectRow, ProjectRowError},
     logic::task_location::{self, TaskLocationError},
 };
-use crate::AppDbStore;
 
 /// Requests creation of one managed project.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,12 +21,12 @@ pub struct AddProject {
 #[derive(Debug, thiserror::Error)]
 pub enum AddProjectError {
     #[error("project id already exists: {id}")]
-    DuplicateProjectId { id: ProjectPrefix },
+    DuplicateProjectId { id: ProjectId },
     #[error("project title already exists: {title}")]
     DuplicateProjectTitle { title: ProjectName },
     #[error("managed project {project_id} task path '{path}' is invalid: {source}")]
     InvalidTaskPath {
-        project_id: ProjectPrefix,
+        project_id: ProjectId,
         path: String,
         #[source]
         source: super::resolve_runtime_path::RuntimePathError,
@@ -37,8 +36,8 @@ pub enum AddProjectError {
         path.display()
     )]
     DuplicateRuntimeTaskLocation {
-        first_id: ProjectPrefix,
-        second_id: ProjectPrefix,
+        first_id: ProjectId,
+        second_id: ProjectId,
         path: PathBuf,
     },
     #[error("{context}: {source}")]
@@ -61,10 +60,9 @@ pub enum AddProjectError {
 #[cqrsy::command]
 pub async fn execute(
     command: AddProject,
-    database: &impl AppDbStore,
+    pool: &sqlx::SqlitePool,
 ) -> Result<Project, AddProjectError> {
-    let mut transaction = database
-        .pool()
+    let mut transaction = pool
         .begin_with("BEGIN IMMEDIATE")
         .await
         .map_err(|error| unexpected("starting project creation transaction", error))?;
@@ -159,8 +157,8 @@ pub async fn execute(
 
 async fn other_task_locations(
     transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
-    candidate_id: &ProjectPrefix,
-) -> Result<Vec<(ProjectPrefix, String)>, AddProjectError> {
+    candidate_id: &ProjectId,
+) -> Result<Vec<(ProjectId, String)>, AddProjectError> {
     sqlx::query_as::<_, (String, String)>(
         "SELECT id, tasks_path FROM projects WHERE id != ? ORDER BY id ASC",
     )
@@ -170,7 +168,7 @@ async fn other_task_locations(
     .map_err(|error| unexpected("reading project task locations", error))?
     .into_iter()
     .map(|(id, tasks_path)| {
-        ProjectPrefix::try_new(id)
+        ProjectId::try_new(id)
             .map(|id| (id, tasks_path))
             .map_err(|error| unexpected("converting project task location", error))
     })
@@ -261,12 +259,12 @@ mod tests {
     use std::path::PathBuf;
 
     use pwf_models::project::{
-        ProjectName, ProjectPrefix, ProjectSource, ProjectSourceKind, ProjectSourceValue,
-        ProjectTasks, ProjectTasksKind, ProjectTasksPath,
+        ProjectId, ProjectName, ProjectSource, ProjectSourceKind, ProjectSourceValue, ProjectTasks,
+        ProjectTasksKind, ProjectTasksPath,
     };
 
     use super::*;
-    use crate::ports::TestDatabase;
+    use crate::testing::insert_project;
 
     fn project(
         id: &str,
@@ -277,7 +275,7 @@ mod tests {
     ) -> AddProject {
         AddProject {
             fields: ProjectFields {
-                id: ProjectPrefix::try_new(id).unwrap(),
+                id: ProjectId::try_new(id).unwrap(),
                 title: ProjectName::try_new(title).unwrap(),
                 source: ProjectSource::new(
                     ProjectSourceKind::Directory,
@@ -292,45 +290,44 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn matching_source_row_is_reused() {
-        let database = TestDatabase::new().await;
+    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
+    async fn matching_source_row_is_reused(pool: sqlx::SqlitePool) {
         let home = PathBuf::from("/home/tester");
 
         super::execute(
             project("ONE", "one", "/work/shared", "/tasks/one", home.clone()),
-            &database,
+            &pool,
         )
         .await
         .unwrap();
         super::execute(
             project("TWO", "two", "/work/shared", "/tasks/two", home),
-            &database,
+            &pool,
         )
         .await
         .unwrap();
 
         let source_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM project_sources")
-            .fetch_one(database.pool())
+            .fetch_one(&pool)
             .await
             .unwrap();
         assert_eq!(source_count, 1);
+        pool.close().await;
     }
 
-    #[tokio::test]
-    async fn duplicate_project_id_is_classified() {
-        let database = TestDatabase::new().await;
+    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
+    async fn duplicate_project_id_is_classified(pool: sqlx::SqlitePool) {
         let home = PathBuf::from("/home/tester");
         super::execute(
             project("PWF", "pwf", "/work/pwf", "/tasks/pwf", home.clone()),
-            &database,
+            &pool,
         )
         .await
         .unwrap();
 
         let error = super::execute(
             project("pwf", "other", "/work/other", "/tasks/other", home),
-            &database,
+            &pool,
         )
         .await
         .unwrap_err();
@@ -338,24 +335,24 @@ mod tests {
         assert!(matches!(
             error,
             AddProjectError::DuplicateProjectId { id }
-                if id == ProjectPrefix::try_new("PWF").unwrap()
+                if id == ProjectId::try_new("PWF").unwrap()
         ));
+        pool.close().await;
     }
 
-    #[tokio::test]
-    async fn duplicate_project_title_is_classified() {
-        let database = TestDatabase::new().await;
+    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
+    async fn duplicate_project_title_is_classified(pool: sqlx::SqlitePool) {
         let home = PathBuf::from("/home/tester");
         super::execute(
             project("PWF", "pwf", "/work/pwf", "/tasks/pwf", home.clone()),
-            &database,
+            &pool,
         )
         .await
         .unwrap();
 
         let error = super::execute(
             project("ALT", "pwf", "/work/other", "/tasks/other", home),
-            &database,
+            &pool,
         )
         .await
         .unwrap_err();
@@ -365,22 +362,22 @@ mod tests {
             AddProjectError::DuplicateProjectTitle { title }
                 if title == ProjectName::try_new("pwf").unwrap()
         ));
+        pool.close().await;
     }
 
-    #[tokio::test]
-    async fn failed_project_insert_rolls_back_new_source() {
-        let database = TestDatabase::new().await;
+    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
+    async fn failed_project_insert_rolls_back_new_source(pool: sqlx::SqlitePool) {
         let home = PathBuf::from("/home/tester");
         super::execute(
             project("PWF", "pwf", "/work/pwf", "/tasks/pwf", home.clone()),
-            &database,
+            &pool,
         )
         .await
         .unwrap();
 
         let error = super::execute(
             project("ALT", "pwf", "/work/rolled-back", "/tasks/other", home),
-            &database,
+            &pool,
         )
         .await
         .unwrap_err();
@@ -392,20 +389,18 @@ mod tests {
         let source_count: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM project_sources WHERE value = ?")
                 .bind("/work/rolled-back")
-                .fetch_one(database.pool())
+                .fetch_one(&pool)
                 .await
                 .unwrap();
         assert_eq!(source_count, 0);
+        pool.close().await;
     }
 
-    #[tokio::test]
-    async fn runtime_alias_of_paused_project_is_rejected() {
-        let database = TestDatabase::new().await;
+    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
+    async fn runtime_alias_of_paused_project_is_rejected(pool: sqlx::SqlitePool) {
         let home = PathBuf::from("/home/tester");
         let resolved_path = home.join("tasks/shared");
-        database
-            .insert_project("PWF", "pwf", "/work/PWF", "~/tasks/shared", true)
-            .await;
+        insert_project(&pool, "PWF", "pwf", "/work/PWF", "~/tasks/shared", true).await;
 
         let error = super::execute(
             project(
@@ -415,7 +410,7 @@ mod tests {
                 &resolved_path.to_string_lossy(),
                 home,
             ),
-            &database,
+            &pool,
         )
         .await
         .unwrap_err();
@@ -427,5 +422,6 @@ mod tests {
                 resolved_path.display()
             )
         );
+        pool.close().await;
     }
 }

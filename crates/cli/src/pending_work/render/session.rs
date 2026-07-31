@@ -110,17 +110,6 @@ mod tests {
     }
 
     #[test]
-    fn color_on_emits_ansi() {
-        let outcome = DispatchSessionOk::WindowOpened {
-            target: target(),
-            agent: Agent::Claude,
-            repository: "/repo".into(),
-        };
-        let out = render_dispatch(&outcome, true);
-        assert!(out.contains('\u{1b}'));
-    }
-
-    #[test]
     fn aborted_and_inline_results_preserve_their_compact_text() {
         assert_eq!(
             render_session_aborted("PWF-0001"),

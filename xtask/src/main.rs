@@ -7,7 +7,6 @@ mod child_process;
 mod cli;
 mod paths;
 mod process;
-mod project;
 mod sqlite_url;
 mod sqlx_cli;
 mod task;
@@ -29,10 +28,10 @@ fn run(command: cli::Command) -> Result<()> {
         Command::Lint => verbs::lint::run(),
         Command::Check => verbs::check::run(),
         Command::Prepare { check } => verbs::prepare::run(check),
-        Command::Fix(arguments) => verbs::format::fix(&arguments.arguments_extra),
+        Command::Fix(arguments) => verbs::fix::run(&arguments.arguments_extra),
         Command::Test(test) => verbs::test::run(&test),
         Command::E2eWorker { verbose } => verbs::test::run_e2e_worker(verbose),
-        Command::Ship => verbs::ship::run(),
+        Command::Ship(arguments) => verbs::ship::run(arguments.force),
         Command::Install => verbs::install::install(),
         Command::Update(update) => verbs::install::update(&update),
         Command::CheckArchitecture { root } => verbs::check_architecture::run(root.as_deref()),

@@ -4,7 +4,7 @@ use std::fs;
 
 use assert_cmd::prelude::OutputAssertExt as _;
 
-use crate::common::SessionFixture;
+use crate::shared::SessionFixture;
 
 #[test]
 fn detached_dispatch_targets_the_existing_tmux_session() {

@@ -1,4 +1,4 @@
-use pwf_models::project::{Project, ProjectName, ProjectPrefix, ProjectSource, ProjectTasks};
+use pwf_models::project::{Project, ProjectId, ProjectName, ProjectSource, ProjectTasks};
 
 /// Describes the current project and whether a requested state transition changed it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -11,7 +11,7 @@ pub struct ProjectStateChange {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectFields {
-    pub id: ProjectPrefix,
+    pub id: ProjectId,
     pub title: ProjectName,
     pub source: ProjectSource,
     pub tasks: ProjectTasks,

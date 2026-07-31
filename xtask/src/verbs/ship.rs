@@ -1,37 +1,28 @@
 //! Release workflow.
 
 use anyhow::Result;
+use clap::Args;
 
 use crate::{
     process::{self, Status},
-    task::{self, Step},
     verb::Verb,
+    verbs::test,
 };
 
-pub(crate) fn run() -> Result<()> {
-    task::run_all(&steps())?;
+#[derive(Args)]
+pub(crate) struct ShipArguments {
+    /// Skip the test preflight.
+    #[arg(short = 'f', long)]
+    pub(crate) force: bool,
+}
+
+pub(crate) fn run(force: bool) -> Result<()> {
+    if force {
+        eprintln!("ship: --force - skipping the test preflight");
+    } else {
+        test::run_all()?;
+    }
+    process::run("release build", "cargo", &["build", "--release"])?;
     process::result(Verb::SHIP, Status::Pass);
     Ok(())
-}
-
-fn steps() -> [Step; 2] {
-    [
-        Step::new("test:all", "just", ["test", "--all"]),
-        Step::new("build:release", "cargo", ["build", "--release"]),
-    ]
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn steps_run_the_full_test_gate_before_the_release_build() {
-        let steps = steps();
-        assert_eq!(steps.len(), 2);
-        assert_eq!(steps[0].program(), "just");
-        assert_eq!(steps[0].arguments(), ["test", "--all"]);
-        assert_eq!(steps[1].program(), "cargo");
-        assert_eq!(steps[1].arguments(), ["build", "--release"]);
-    }
 }

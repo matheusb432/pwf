@@ -3,22 +3,13 @@
 use pwf_models::note::NoteId;
 
 use super::logic::{self, ResolvedProject};
-use crate::{AppRecordStore, ProjectNote, ProjectNotePatch, pending_work::ProjectRegistry};
+use crate::{
+    ProjectNote,
+    pending_work::ProjectRegistry,
+    ports::{app_record::AppRecordStore, project_note::ProjectNotePatch},
+};
 
 /// Requests replacement of one project note's topic.
-///
-/// # Examples
-///
-/// ```
-/// use pwf_application::note::update_note::UpdateNote;
-///
-/// let request = UpdateNote {
-///     project_identifier: "pwf".to_string(),
-///     id: "1".to_string(),
-///     topic: "remember oat milk".to_string(),
-/// };
-/// assert_eq!(request.topic, "remember oat milk");
-/// ```
 #[derive(Debug, Clone)]
 pub struct UpdateNote {
     /// Selects the managed project by name or id code.
@@ -41,8 +32,8 @@ pub enum UpdateNoteError {
     UnknownProject { identifier: String },
     #[error("Note topic is empty; provide a non-empty topic.")]
     EmptyTopic,
-    #[error("Invalid note id '{id}'; expected e.g. {prefix}-NOTE-0001, NOTE-0001, or 1.")]
-    InvalidIdentifier { id: String, prefix: String },
+    #[error("Invalid note id '{id}'; expected e.g. {project_id}-NOTE-0001, NOTE-0001, or 1.")]
+    InvalidIdentifier { id: String, project_id: String },
     #[error("No such note {id} in {project}.")]
     NoSuchNote { id: String, project: String },
     #[error("{0}")]
@@ -58,27 +49,6 @@ pub enum UpdateNoteError {
 /// [`UpdateNoteError::InvalidIdentifier`] when the note id is invalid for that project,
 /// [`UpdateNoteError::NoSuchNote`] when the note does not exist, or
 /// [`UpdateNoteError::Store`] when reading or updating the note fails.
-///
-/// # Examples
-///
-/// ```
-/// # use pwf_application::{
-/// #     AppRecordStore,
-/// #     note::update_note::{self, UpdateNote, UpdateNoteError, UpdateNoteOk},
-/// #     pending_work::ProjectRegistry,
-/// # };
-/// # use pwf_models::note::ProjectNote;
-/// # fn update<S>(
-/// #     request: UpdateNote,
-/// #     store: &S,
-/// #     projects: &ProjectRegistry,
-/// # ) -> Result<UpdateNoteOk, UpdateNoteError>
-/// # where
-/// #     S: AppRecordStore<ProjectNote>,
-/// # {
-/// update_note::execute(request, store, projects)
-/// # }
-/// ```
 #[cqrsy::command]
 pub fn execute<S>(
     command: UpdateNote,
@@ -93,32 +63,36 @@ where
         id: raw_id,
         topic,
     } = command;
-    let ResolvedProject { project, prefix } = logic::resolve_project(projects, &project_identifier)
-        .ok_or_else(|| UpdateNoteError::UnknownProject {
+    let ResolvedProject {
+        project_name,
+        project_id,
+    } = logic::resolve_project(projects, &project_identifier).ok_or_else(|| {
+        UpdateNoteError::UnknownProject {
             identifier: project_identifier,
-        })?;
+        }
+    })?;
     let topic = topic.split_whitespace().collect::<Vec<_>>().join(" ");
     if topic.is_empty() {
         return Err(UpdateNoteError::EmptyTopic);
     }
-    let id = logic::resolve_note(&raw_id, &prefix).ok_or_else(|| {
+    let id = logic::resolve_note(&raw_id, &project_id).ok_or_else(|| {
         UpdateNoteError::InvalidIdentifier {
             id: raw_id,
-            prefix: prefix.to_string(),
+            project_id: project_id.to_string(),
         }
     })?;
     let existing = store
-        .get(&project, &id)
+        .get(&project_name, &id)
         .map_err(|error| UpdateNoteError::Store(Box::new(error)))?;
     if existing.is_none() {
         return Err(UpdateNoteError::NoSuchNote {
             id: id.to_string(),
-            project: project.to_string(),
+            project: project_name.to_string(),
         });
     }
     store
         .update(
-            &project,
+            &project_name,
             &id,
             ProjectNotePatch {
                 topic: topic.clone(),

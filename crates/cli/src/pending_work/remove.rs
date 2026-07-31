@@ -1,16 +1,20 @@
 use clap::Args;
 use pwf_application::{
-    AppRecordStore, ConfirmationClient, IndexEntry, PendingWorkRecord,
     pending_work::{
         ProjectRegistry,
         remove_pending_work_item::{
             self, RemovePendingWorkError, RemovePendingWorkItem, RemovePendingWorkItemOk,
         },
     },
+    ports::{
+        app_record::AppRecordStore,
+        confirmation::{Confirmation, ConfirmationClient},
+        pending_work_record::{IndexEntry, PendingWorkRecord},
+    },
 };
 use pwf_infra::obsidian::ObsidianStore;
 
-use super::common::{CommonArguments, Identifier};
+use super::shared::{CommonArguments, Identifier};
 
 #[derive(Args, Debug)]
 pub struct Arguments {
@@ -24,8 +28,8 @@ pub struct Arguments {
 }
 
 use super::{
-    common::PendingWorkError,
     render::{StatusPlacement, render_item_summary, render_removed},
+    shared::PendingWorkError,
 };
 use crate::{
     confirm::{self, DefaultAnswer},
@@ -39,7 +43,7 @@ struct CliConfirmationClient {
 }
 
 impl ConfirmationClient for CliConfirmationClient {
-    fn confirm(&self, confirmation: &pwf_application::Confirmation) -> bool {
+    fn confirm(&self, confirmation: &Confirmation) -> bool {
         if self.assume_yes {
             return true;
         }
@@ -51,9 +55,9 @@ impl ConfirmationClient for CliConfirmationClient {
     }
 }
 
-fn confirmation_message(confirmation: &pwf_application::Confirmation) -> String {
+fn confirmation_message(confirmation: &Confirmation) -> String {
     match confirmation {
-        pwf_application::Confirmation::Removal {
+        Confirmation::Removal {
             pending_work_identifier,
             project,
             title,
@@ -142,7 +146,7 @@ fn map_remove_error(error: RemovePendingWorkError) -> PendingWorkError {
 mod tests {
     use std::path::PathBuf;
 
-    use pwf_application::Confirmation;
+    use pwf_application::ports::confirmation::Confirmation;
     use pwf_models::pending_work::{ProjectName, WorkItemId, WorkItemStatus};
 
     use super::confirmation_message;

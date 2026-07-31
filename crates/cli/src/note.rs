@@ -4,7 +4,6 @@ use std::fmt::Write;
 
 use clap::{Args, Subcommand};
 use pwf_application::{
-    Clock,
     note::{
         add_note::{self, AddNote, AddNoteOk},
         list_notes::{self, ListNotes, ListNotesOk},
@@ -12,6 +11,7 @@ use pwf_application::{
         update_note::{self, UpdateNote, UpdateNoteOk},
     },
     pending_work::ProjectRegistry,
+    ports::clock::Clock,
 };
 use pwf_infra::obsidian::ObsidianStore;
 

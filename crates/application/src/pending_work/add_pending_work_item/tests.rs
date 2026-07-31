@@ -1,7 +1,10 @@
 use pwf_models::pending_work::{ProjectName, TaskTitle, Timestamp};
 
 use super::{AddPendingWorkError, AddPendingWorkItem, ProjectRegistry, plan_title};
-use crate::{IndexEntryState, ports::Clock, testing::InMemoryStore};
+use crate::{
+    ports::{clock::Clock, pending_work_record::IndexEntryState},
+    testing::InMemoryStore,
+};
 
 #[derive(Clone)]
 struct FixedClock;

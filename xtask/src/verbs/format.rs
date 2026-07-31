@@ -1,14 +1,12 @@
 //! Formatting automation for `fmt`, `fmt-check`, and `fix`.
 //!
 //! Stable rustfmt always runs. `.rustfmt-nightly` selects a toolchain, and `.rumdl.toml` enables
-//! Markdown formatting through `uvx`.
+//! Markdown formatting through rumdl.
 
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
-use clap::Args;
 
-use super::lint;
 use crate::{
     process::{self, Status},
     task,
@@ -17,14 +15,6 @@ use crate::{
 
 mod markdown;
 mod rust;
-
-/// Extra args for the `fix` verb, forwarded verbatim to `cargo clippy --fix`.
-#[derive(Args)]
-pub(crate) struct FixArguments {
-    /// e.g. `-- -W clippy::pedantic`
-    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-    pub(crate) arguments_extra: Vec<String>,
-}
 
 /// Selects formatting or drift checking.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -56,14 +46,6 @@ pub(crate) fn run() -> Result<()> {
 pub(crate) fn check() -> Result<()> {
     task::check_all(&check_steps()?, "run `just fmt`")?;
     process::result(Verb::FORMAT_CHECK, Status::Pass);
-    Ok(())
-}
-
-/// Applies Clippy fixes and then reformats, forwarding `extra` to Clippy.
-pub(crate) fn fix(extra: &[String]) -> Result<()> {
-    task::run_all(&[lint::fix_step(extra)])?;
-    task::run_all(&write_steps()?)?;
-    process::result(Verb::FIX, Status::Done);
     Ok(())
 }
 

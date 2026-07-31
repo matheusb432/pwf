@@ -1,9 +1,12 @@
 use std::{fmt::Write as _, path::Path};
 
-use pwf_application::{AppRecordStore, NewProjectNote, ProjectNotePatch, ProjectNoteStore};
+use pwf_application::ports::{
+    app_record::AppRecordStore,
+    project_note::{NewProjectNote, ProjectNotePatch, ProjectNoteStore},
+};
 use pwf_models::{
     note::{NoteId, ProjectNote},
-    pending_work::{ProjectName, ProjectPrefix},
+    pending_work::{ProjectId, ProjectName},
 };
 use regex::Regex;
 
@@ -39,8 +42,8 @@ impl AppRecordStore<ProjectNote> for ObsidianStore {
 
     fn list(&self, project: &ProjectName) -> Result<Vec<ProjectNote>, Self::Error> {
         let project_directory = self.project_paths.project_directory(project)?;
-        let prefix = self.project_paths.project_identity(project)?.id();
-        Ok(list_notes(project_directory, prefix))
+        let project_id = self.project_paths.project_identity(project)?.id();
+        Ok(list_notes(project_directory, project_id))
     }
 
     fn insert(
@@ -141,8 +144,8 @@ impl ProjectNoteStore for ObsidianStore {
     }
 }
 
-fn list_notes(project_directory: &Path, prefix: &ProjectPrefix) -> Vec<ProjectNote> {
-    let pattern = format!(r"^{}-NOTE-(\d{{4}})$", regex::escape(prefix.as_ref()));
+fn list_notes(project_directory: &Path, project_id: &ProjectId) -> Vec<ProjectNote> {
+    let pattern = format!(r"^{}-NOTE-(\d{{4}})$", regex::escape(project_id.as_ref()));
     let identifier_pattern = Regex::new(&pattern).unwrap();
     let mut notes = Vec::new();
     for entry in std::fs::read_dir(project_directory)
@@ -290,13 +293,16 @@ mod tests {
     use std::{assert_matches, fs, path::Path};
 
     use pwf_application::{
-        AppRecordStore, NewProjectNote, ProjectNotePatch,
         note::remove_note::{self, RemoveNote},
         pending_work::ProjectRegistry,
+        ports::{
+            app_record::AppRecordStore,
+            project_note::{NewProjectNote, ProjectNotePatch},
+        },
     };
     use pwf_models::{
         note::{NoteId, ProjectNote},
-        pending_work::{ProjectIndexIdentity, ProjectName, ProjectPrefix, Timestamp},
+        pending_work::{ProjectId, ProjectIndexIdentity, ProjectName, Timestamp},
     };
 
     use super::super::{ObsidianProject, ObsidianStore, ObsidianStoreError};
@@ -304,7 +310,7 @@ mod tests {
     fn store(tasks_path: &Path) -> ObsidianStore {
         ObsidianStore::new([ObsidianProject::new(
             ProjectIndexIdentity::new(
-                ProjectPrefix::try_new("PWF").unwrap(),
+                ProjectId::try_new("PWF").unwrap(),
                 ProjectName::try_new("pwf").unwrap(),
             ),
             tasks_path.to_path_buf(),

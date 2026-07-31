@@ -20,8 +20,8 @@ impl SessionFixture {
         let directory = TempDir::new().unwrap();
         let notes = directory.path().join("notes/pwf");
         let repository = directory.path().join("repo");
-        fs::create_dir_all(&notes).unwrap();
-        fs::create_dir_all(&repository).unwrap();
+        fs::create_dir_all(&notes).expect("create task notes directory");
+        fs::create_dir_all(&repository).expect("create repository directory");
         fs::write(notes.join("pwf.md"), "---\nid: pwf\ntitle: pwf\n---\n").unwrap();
         let database = DatabaseFixture::new(directory.path().join("projects.sqlite3"));
         database.add_directory_project("PWF", "pwf", &repository, &notes);

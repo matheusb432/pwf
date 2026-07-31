@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use pwf_application::RepositoryDirectoryClient;
+use pwf_application::ports::repository_directory::RepositoryDirectoryClient;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct LocalRepositoryClient;

@@ -6,11 +6,17 @@ use thiserror::Error;
 
 use super::{Agent, DispatchMode, DispatchTarget, logic, plan_session::PreparedSessionDispatch};
 use crate::{
-    AgentClient, AgentCommand, AppRecordStore, InlineAgentSessionClient, PendingWorkRecord,
-    PreparedAgentLaunch, ProjectNoteStore, SessionClient, SessionWindow,
     pending_work::{
         ProjectRegistry, logic::pending_work_update, show_pending_work_item::ShowPendingWorkError,
         update_pending_work_item::UpdatePendingWorkError,
+    },
+    ports::{
+        agent::{AgentClient, PreparedAgentLaunch},
+        app_record::AppRecordStore,
+        inline_agent_session::InlineAgentSessionClient,
+        pending_work_record::PendingWorkRecord,
+        project_note::ProjectNoteStore,
+        session::{AgentCommand, SessionClient, SessionWindow},
     },
 };
 

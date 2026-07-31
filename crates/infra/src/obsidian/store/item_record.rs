@@ -1,8 +1,11 @@
 use std::{fmt::Write as _, path::Path, sync::LazyLock};
 
-use pwf_application::{
-    AppRecordStore, IndexEntryState, IndexPlacement, ItemPatch, Materialization, NewItem,
-    PendingWorkRecord, RecordId,
+use pwf_application::ports::{
+    app_record::AppRecordStore,
+    pending_work_record::{
+        IndexEntryState, IndexPlacement, ItemPatch, Materialization, NewItem, PendingWorkRecord,
+        RecordId,
+    },
 };
 use pwf_models::pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus};
 use regex::Regex;
@@ -250,10 +253,10 @@ impl ObsidianStore {
         project: &ProjectName,
         new: &NewItem,
     ) -> Result<PendingWorkRecord, ObsidianStoreError> {
-        let prefix = self.project_paths.project_identity(project)?.id().as_ref();
+        let project_id = self.project_paths.project_identity(project)?.id().as_ref();
         let note = self.write_new_note(
             project,
-            prefix,
+            project_id,
             &NewNoteRequest {
                 prompt: &new.prompt,
                 title: &new.title,

@@ -4,7 +4,6 @@ use super::{
     Project,
     dto::{ProjectRow, ProjectRowError},
 };
-use crate::AppDbStore;
 
 /// Requests managed projects in ascending title order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,7 +30,7 @@ pub enum ListProjectsError {
 #[cqrsy::query]
 pub async fn execute(
     query: ListProjects,
-    database: &impl AppDbStore,
+    pool: &sqlx::SqlitePool,
 ) -> Result<Vec<Project>, ListProjectsError> {
     let rows = if query.include_paused {
         sqlx::query_as!(
@@ -51,7 +50,7 @@ pub async fn execute(
             ORDER BY projects.title ASC
             "#,
         )
-        .fetch_all(database.pool())
+        .fetch_all(pool)
         .await
         .map_err(|error| unexpected("listing projects", error))?
     } else {
@@ -72,7 +71,7 @@ pub async fn execute(
             ORDER BY active_projects.title ASC
             "#,
         )
-        .fetch_all(database.pool())
+        .fetch_all(pool)
         .await
         .map_err(|error| unexpected("listing active projects", error))?
     };
@@ -100,26 +99,19 @@ fn unexpected_row(context: &'static str, source: ProjectRowError) -> ListProject
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ports::TestDatabase;
+    use crate::testing::insert_project;
 
-    #[tokio::test]
-    async fn active_list_filters_paused_projects_and_sorts_by_title() {
-        let database = TestDatabase::new().await;
-        database
-            .insert_project("ZED", "zeta", "/work/zeta", "/tasks/zeta", false)
-            .await;
-        database
-            .insert_project("ALP", "alpha", "/work/alpha", "/tasks/alpha", false)
-            .await;
-        database
-            .insert_project("PAU", "beta", "/work/beta", "/tasks/beta", true)
-            .await;
+    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
+    async fn active_list_filters_paused_projects_and_sorts_by_title(pool: sqlx::SqlitePool) {
+        insert_project(&pool, "ZED", "zeta", "/work/zeta", "/tasks/zeta", false).await;
+        insert_project(&pool, "ALP", "alpha", "/work/alpha", "/tasks/alpha", false).await;
+        insert_project(&pool, "PAU", "beta", "/work/beta", "/tasks/beta", true).await;
 
         let projects = super::execute(
             ListProjects {
                 include_paused: false,
             },
-            &database,
+            &pool,
         )
         .await
         .unwrap();
@@ -132,5 +124,6 @@ mod tests {
             ["alpha", "zeta"]
         );
         assert!(projects.iter().all(|project| !project.is_paused));
+        pool.close().await;
     }
 }

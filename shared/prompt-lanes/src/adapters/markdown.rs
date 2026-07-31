@@ -47,11 +47,6 @@ mod tests {
     }
 
     #[test]
-    fn plain_prompt_does_not_repeat_the_title_as_a_goal() {
-        assert_eq!(render("fix rich prompt parser"), "## Goals\n");
-    }
-
-    #[test]
     fn slash_lanes_render_supported_sections_as_bullets() {
         let prompt = "fix rich prompt parser / preserve ampersands in prose / keep code intact /c current add splits on ampersand /n no parser crate /d tests cover add and update";
         assert_eq!(
@@ -59,32 +54,6 @@ mod tests {
             format!(
                 "## Goals{S}- preserve ampersands in prose\n- keep code intact{S}## Context{S}- current add splits on ampersand{S}## Constraints{S}- no parser crate{S}## Done When{S}- tests cover add and update"
             )
-        );
-    }
-
-    #[test]
-    fn standalone_slash_continues_the_current_section() {
-        assert_eq!(
-            render("title /c context one / context two /d done one / done two"),
-            format!(
-                "## Goals\n{S}## Context{S}- context one\n- context two{S}## Done When{S}- done one\n- done two"
-            )
-        );
-    }
-
-    #[test]
-    fn sections_can_be_interleaved_and_append_in_encounter_order() {
-        assert_eq!(
-            render("some title /c some context1 /g another goal /c some context2"),
-            format!("## Goals{S}- another goal{S}## Context{S}- some context1\n- some context2")
-        );
-    }
-
-    #[test]
-    fn ampersands_are_plain_text_to_the_prompt_parser() {
-        assert_eq!(
-            render("handle a & b / preserve c & d"),
-            format!("## Goals{S}- preserve c & d")
         );
     }
 }

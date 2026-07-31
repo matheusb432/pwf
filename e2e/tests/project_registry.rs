@@ -1,4 +1,4 @@
-use crate::common::{
+use crate::shared::{
     ProjectFixture, add_payload, assert_failure, assert_project, run_with_database, success_json,
 };
 

@@ -8,8 +8,8 @@ use std::process::Command;
 
 pub use pwf_application::pending_work::session::AgentProbe;
 use pwf_application::{
-    AgentClient, PreparedAgentLaunch,
     pending_work::session::{AgentLaunch, ModelTierLookup},
+    ports::agent::{AgentClient, PreparedAgentLaunch},
 };
 use pwf_models::{pending_work::EffortTier, session::Agent};
 use thiserror::Error;

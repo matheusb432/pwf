@@ -1,24 +1,23 @@
 use std::error::Error;
 
-use pwf_models::project::ProjectPrefix;
+use pwf_models::project::ProjectId;
 
 use super::{
     ProjectStateChange,
     dto::{ProjectRow, ProjectRowError},
 };
-use crate::AppDbStore;
 
 /// Requests pausing one managed project.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PauseProject {
-    /// Project prefix.
-    pub id: ProjectPrefix,
+    /// Project ID.
+    pub id: ProjectId,
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum PauseProjectError {
     #[error("project not found: {id}")]
-    ProjectNotFound { id: ProjectPrefix },
+    ProjectNotFound { id: ProjectId },
     #[error("{context}: {source}")]
     Unexpected {
         context: &'static str,
@@ -36,10 +35,9 @@ pub enum PauseProjectError {
 #[cqrsy::command]
 pub async fn execute(
     command: PauseProject,
-    database: &impl AppDbStore,
+    pool: &sqlx::SqlitePool,
 ) -> Result<ProjectStateChange, PauseProjectError> {
-    let mut transaction = database
-        .pool()
+    let mut transaction = pool
         .begin_with("BEGIN IMMEDIATE")
         .await
         .map_err(|error| unexpected("starting project pause transaction", error))?;

@@ -1,6 +1,6 @@
 use pwf_models::pending_work::{ProjectName, WorkItemId, WorkItemStatus};
 
-use crate::ItemPatch;
+use crate::ports::pending_work_record::ItemPatch;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PrerequisiteStatus {

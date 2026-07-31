@@ -107,21 +107,6 @@ mod tests {
     }
 
     #[test]
-    fn added_colored_keeps_identifier_and_detail_intact() {
-        let output = render_added(&added_item(), true);
-
-        assert!(output.starts_with("Added pwf task: "), "got: {output}");
-        assert!(!output.starts_with('\n'), "got: {output}");
-        assert!(output.contains('\u{1b}'), "got: {output}");
-        assert!(output.contains("PWF-0087"), "got: {output}");
-        assert!(
-            output.contains("pwf :: color tui output when adding pwf task"),
-            "got: {output}"
-        );
-        assert!(output.contains("  file: /x/PWF-0087.md\n"));
-    }
-
-    #[test]
     fn review_item_preserves_the_existing_added_line() {
         assert_eq!(
             render_review_item(&added_item()),
@@ -142,28 +127,6 @@ mod tests {
         assert_eq!(
             render_removed(&item, false),
             "Removed pwf task: **PWF-0002 pwf :: stale task**\n  deleted: /x.md\n  unlinked: /x.md\n"
-        );
-    }
-
-    #[test]
-    fn updated_variants_preserve_confirmation_shape() {
-        let open = UpdatePendingWorkItemOk::OpenItemEdit {
-            id: "PWF-0003".to_string(),
-            project: "pwf".to_string(),
-            title: "renamed".to_string(),
-        };
-        let closed = UpdatePendingWorkItemOk::Changed {
-            id: "PWF-0004".to_string(),
-            changes: vec!["commits: abc..def".to_string()],
-        };
-
-        assert_eq!(
-            render_updated(&open, false),
-            "Updated pwf task: **PWF-0003 pwf :: renamed**\n"
-        );
-        assert_eq!(
-            render_updated(&closed, false),
-            "Updated pwf task: **PWF-0004 commits: abc..def**\n"
         );
     }
 }

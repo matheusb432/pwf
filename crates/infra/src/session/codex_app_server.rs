@@ -370,7 +370,7 @@ pub(super) mod test_fixture {
             let log = directory.path().join("requests.jsonl");
             symlink(
                 PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                    .join("tests/fixtures/codex-app-server-stub.sh"),
+                    .join("src/session/codex_app_server/app_server_stub.sh"),
                 &binary,
             )
             .unwrap();

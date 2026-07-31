@@ -1,4 +1,4 @@
-use pwf_application::Clock;
+use pwf_application::ports::clock::Clock;
 use pwf_models::pending_work::Timestamp;
 
 #[derive(Debug, Clone, Copy, Default)]

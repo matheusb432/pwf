@@ -2,13 +2,13 @@ use std::{collections::BTreeMap, path::Path};
 
 use pwf_models::{
     pending_work::{ProjectName, WorkItemId},
-    project::{Project, ProjectPrefix},
+    project::{Project, ProjectId},
 };
 
 use super::dto::{ProjectRow, ProjectRowError};
 
 pub(super) fn project_from_row(row: ProjectRow) -> Result<Project, ProjectRowError> {
-    let id = project_value("id", row.id, ProjectPrefix::try_new)?;
+    let id = project_value("id", row.id, ProjectId::try_new)?;
     let title = project_value("title", row.title, ProjectName::try_new)?;
     let source_kind = project_value("source kind", row.source_kind, |value| {
         pwf_models::project::ProjectSourceKind::try_from(value.as_str())
@@ -59,11 +59,11 @@ where
     })
 }
 
-/// Associates a managed project with its repository and item-id prefix.
+/// Associates a managed project with its repository and project ID.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ProjectEntry {
     repository: Option<String>,
-    prefix: Option<String>,
+    id: Option<String>,
 }
 
 /// Reports that no project or several projects matched a managed-project lookup.
@@ -95,35 +95,30 @@ pub enum ProjectResolutionError {
 }
 
 /// Routes managed-project identifiers, work-item ids, and repository paths.
-///
-/// # Examples
-///
-/// ```
-/// use pwf_application::project::ProjectRegistry;
-/// use pwf_models::pending_work::ProjectName;
-///
-/// let registry = ProjectRegistry::new([(
-///     ProjectName::try_new("pwf").unwrap(),
-///     Some("/repo/pwf".to_string()),
-///     Some("PWF".to_string()),
-/// )]);
-///
-/// assert_eq!(registry.resolve("PWF").unwrap().as_ref(), "pwf");
-/// ```
 #[derive(Debug, Clone, Default)]
 pub struct ProjectRegistry {
     entries: BTreeMap<ProjectName, ProjectEntry>,
 }
 
+// TODO: refactor. was an abstraction that only made sense before it became a SQLite table, now the
+// cli gets all projects on any op!
 impl ProjectRegistry {
-    /// Builds a registry from `(project, repository, uppercase prefix)` triples.
+    /// Builds a registry from `(project name, repository, project ID)` triples.
     pub fn new(
         entries: impl IntoIterator<Item = (ProjectName, Option<String>, Option<String>)>,
     ) -> Self {
         Self {
             entries: entries
                 .into_iter()
-                .map(|(name, repository, prefix)| (name, ProjectEntry { repository, prefix }))
+                .map(|(project_name, repository, project_id)| {
+                    (
+                        project_name,
+                        ProjectEntry {
+                            repository,
+                            id: project_id,
+                        },
+                    )
+                })
                 .collect(),
         }
     }
@@ -139,9 +134,9 @@ impl ProjectRegistry {
         }))
     }
 
-    /// Resolves an exact name, a unique ASCII-case-insensitive name, or a unique prefix.
+    /// Resolves an exact name, a unique ASCII-case-insensitive name, or a unique project ID.
     ///
-    /// Name matching stops before prefix matching when the name tier is non-empty.
+    /// Name matching stops before project ID matching when the name tier is non-empty.
     ///
     /// # Errors
     ///
@@ -165,18 +160,18 @@ impl ProjectRegistry {
             return result;
         }
 
-        let prefixes = self
+        let project_ids = self
             .entries
             .iter()
             .filter(|(_, entry)| {
                 entry
-                    .prefix
+                    .id
                     .as_deref()
-                    .is_some_and(|prefix| prefix.eq_ignore_ascii_case(identifier))
+                    .is_some_and(|project_id| project_id.eq_ignore_ascii_case(identifier))
             })
             .map(|(name, _)| name)
             .collect();
-        if let Some(result) = resolve_tier(identifier, prefixes) {
+        if let Some(result) = resolve_tier(identifier, project_ids) {
             return result;
         }
 
@@ -193,7 +188,7 @@ impl ProjectRegistry {
     ///
     /// Returns [`ProjectResolutionError::Unknown`] when no configured repository matches.
     /// Duplicate normalized mappings preserve project-name ordering and select the first match.
-    pub fn project_for_repository(
+    pub fn get_project_name_by_repository(
         &self,
         repository: impl AsRef<Path>,
     ) -> Result<&ProjectName, ProjectResolutionError> {
@@ -215,20 +210,20 @@ impl ProjectRegistry {
             })
     }
 
-    /// Resolves the project owning `id` by its case-sensitive uppercase prefix.
-    pub fn project_for_id(&self, id: &WorkItemId) -> Option<&ProjectName> {
-        let prefix = id.as_ref().split('-').next()?;
+    /// Resolves the project owning `work_item_id` by its project ID.
+    pub fn get_project_name_by(&self, work_item_id: &WorkItemId) -> Option<&ProjectName> {
+        let project_id = work_item_id.as_ref().split('-').next()?;
         self.entries
             .iter()
-            .find(|(_, entry)| entry.prefix.as_deref() == Some(prefix))
+            .find(|(_, entry)| entry.id.as_deref() == Some(project_id))
             .map(|(name, _)| name)
     }
 
-    /// Counts projects using `prefix`; a count above one makes item routing ambiguous.
-    pub fn projects_with_prefix(&self, prefix: &str) -> usize {
+    /// Counts projects using `project_id`; a count above one makes item routing ambiguous.
+    pub fn count_projects_by_project_id(&self, project_id: &str) -> usize {
         self.entries
             .values()
-            .filter(|entry| entry.prefix.as_deref() == Some(prefix))
+            .filter(|entry| entry.id.as_deref() == Some(project_id))
             .count()
     }
 
@@ -239,19 +234,19 @@ impl ProjectRegistry {
             .map(|(name, entry)| (name, entry.repository.as_deref()))
     }
 
-    /// Returns the configured repository for `project`, when present.
-    pub fn repo_for(&self, project: &ProjectName) -> Option<&str> {
+    /// Returns the configured repository for `project_name`, when present.
+    pub fn get_repository_by(&self, project_name: &ProjectName) -> Option<&str> {
         self.entries
-            .get(project)
+            .get(project_name)
             .and_then(|entry| entry.repository.as_deref())
     }
 
-    /// Returns the managed-project prefix for `project`, when present.
-    pub fn prefix_for(&self, project: &ProjectName) -> Option<ProjectPrefix> {
+    /// Returns the project ID for `project_name`, when present.
+    pub fn get_project_id_by(&self, project_name: &ProjectName) -> Option<ProjectId> {
         self.entries
-            .get(project)
-            .and_then(|entry| entry.prefix.as_deref())
-            .and_then(|prefix| ProjectPrefix::try_new(prefix).ok())
+            .get(project_name)
+            .and_then(|entry| entry.id.as_deref())
+            .and_then(|project_id| ProjectId::try_new(project_id).ok())
     }
 
     fn project_names(&self) -> Vec<String> {
@@ -285,7 +280,7 @@ mod tests {
     use std::assert_matches;
 
     use pwf_models::project::{
-        Project, ProjectName, ProjectPrefix, ProjectSource, ProjectSourceKind, ProjectSourceValue,
+        Project, ProjectId, ProjectName, ProjectSource, ProjectSourceKind, ProjectSourceValue,
         ProjectTasks, ProjectTasksKind, ProjectTasksPath,
     };
 
@@ -368,20 +363,20 @@ mod tests {
 
         assert_eq!(
             registry
-                .project_for_repository("/REPO/PWF/")
+                .get_project_name_by_repository("/REPO/PWF/")
                 .unwrap()
                 .as_ref(),
             "pwf"
         );
         assert_eq!(
             registry
-                .project_for_repository("c:/REPO/alpha")
+                .get_project_name_by_repository("c:/REPO/alpha")
                 .unwrap()
                 .as_ref(),
             "alpha"
         );
         assert_matches!(
-            registry.project_for_repository("/repo/./pwf"),
+            registry.get_project_name_by_repository("/repo/./pwf"),
             Err(ProjectResolutionError::Unknown { .. })
         );
     }
@@ -403,7 +398,7 @@ mod tests {
 
         assert_eq!(
             registry
-                .project_for_repository("/repo/shared/")
+                .get_project_name_by_repository("/repo/shared/")
                 .unwrap()
                 .as_ref(),
             "alpha"
@@ -411,9 +406,9 @@ mod tests {
     }
 
     #[test]
-    fn project_rows_build_repository_and_prefix_routes_with_expanded_sources() {
+    fn project_rows_build_repository_and_id_routes_with_expanded_sources() {
         let projects = [Project {
-            id: ProjectPrefix::try_new("pwf").unwrap(),
+            id: ProjectId::try_new("pwf").unwrap(),
             title: ProjectName::try_new("pwf").unwrap(),
             source: ProjectSource::new(
                 ProjectSourceKind::Directory,
@@ -432,35 +427,38 @@ mod tests {
 
         let project = registry.resolve("PWF").unwrap();
         assert_eq!(project.as_ref(), "pwf");
-        assert_eq!(registry.repo_for(project), Some("/home/me/tools/pwf"));
+        assert_eq!(
+            registry.get_repository_by(project),
+            Some("/home/me/tools/pwf")
+        );
     }
 }
 
 pub(in crate::project) mod task_location {
     use std::path::{Path, PathBuf};
 
-    use pwf_models::project::ProjectPrefix;
+    use pwf_models::project::ProjectId;
 
     use crate::project::resolve_runtime_path::{ResolvedPath, RuntimePathError, resolve};
 
     #[derive(Debug)]
     pub(in crate::project) enum TaskLocationError {
         InvalidPath {
-            project_id: ProjectPrefix,
+            project_id: ProjectId,
             path: String,
             source: RuntimePathError,
         },
         Collision {
-            first_id: ProjectPrefix,
-            second_id: ProjectPrefix,
+            first_id: ProjectId,
+            second_id: ProjectId,
             path: PathBuf,
         },
     }
 
     pub(in crate::project) fn reject_collision(
-        candidate_id: &ProjectPrefix,
+        candidate_id: &ProjectId,
         candidate_path: &str,
-        existing: impl IntoIterator<Item = (ProjectPrefix, String)>,
+        existing: impl IntoIterator<Item = (ProjectId, String)>,
         home: &Path,
     ) -> Result<ResolvedPath, TaskLocationError> {
         let candidate = resolve_path(candidate_id, candidate_path, home)?;
@@ -487,7 +485,7 @@ pub(in crate::project) mod task_location {
     }
 
     fn resolve_path(
-        project_id: &ProjectPrefix,
+        project_id: &ProjectId,
         path: &str,
         home: &Path,
     ) -> Result<ResolvedPath, TaskLocationError> {

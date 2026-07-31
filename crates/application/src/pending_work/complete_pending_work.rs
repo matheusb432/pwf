@@ -7,7 +7,11 @@ use super::{
     add_pending_work_item::{AddPendingWorkError, AddPendingWorkItemOk},
     logic::pending_work_closing::{CloseError, perform_close},
 };
-use crate::ports::{AppRecordStore, Clock, IndexEntry, IndexSection, PendingWorkRecord};
+use crate::ports::{
+    app_record::AppRecordStore,
+    clock::Clock,
+    pending_work_record::{IndexEntry, IndexSection, PendingWorkRecord},
+};
 
 #[derive(Debug, Clone)]
 pub struct CompletePendingWork {
@@ -110,7 +114,13 @@ mod tests {
         ProjectRegistry, review_task_prompt,
     };
     use crate::{
-        IndexEntry, IndexEntryState, Materialization, PendingWorkRecord, RecordId, ports::Clock,
+        ports::{
+            app_record::AppRecordStore,
+            clock::Clock,
+            pending_work_record::{
+                IndexEntry, IndexEntryState, Materialization, PendingWorkRecord, RecordId,
+            },
+        },
         testing::InMemoryStore,
     };
 
@@ -168,8 +178,7 @@ mod tests {
             .with_prefix("foo-bar", "FOO")
             .with_project("foo-bar", items);
         for entry in entries {
-            <InMemoryStore as crate::AppRecordStore<IndexEntry>>::insert(&store, &foo(), entry)
-                .unwrap();
+            <InMemoryStore as AppRecordStore<IndexEntry>>::insert(&store, &foo(), entry).unwrap();
         }
         store
     }

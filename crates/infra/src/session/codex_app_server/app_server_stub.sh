@@ -1,5 +1,5 @@
 #!/bin/sh
-# Implements one isolated Codex app-server connection for infrastructure tests.
+# Emulates one isolated Codex app-server connection at the process boundary.
 set -eu
 
 if [ "${1:-}" != "app-server" ] || [ "${2:-}" != "--stdio" ]; then

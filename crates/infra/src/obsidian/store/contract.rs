@@ -1,11 +1,14 @@
 use std::{assert_matches, fmt::Write as _, path::Path};
 
-use pwf_application::{
-    AppRecordStore, IndexEntry, IndexEntryState, IndexPlacement, IndexSection, ItemPatch,
-    Materialization, NewItem, PendingWorkRecord, RecordId,
+use pwf_application::ports::{
+    app_record::AppRecordStore,
+    pending_work_record::{
+        IndexEntry, IndexEntryState, IndexPlacement, IndexSection, ItemPatch, Materialization,
+        NewItem, PendingWorkRecord, RecordId,
+    },
 };
 use pwf_models::pending_work::{
-    EffortTier, ProjectIndexIdentity, ProjectName, ProjectPrefix, Tag, Tags, TaskTitle, Timestamp,
+    EffortTier, ProjectId, ProjectIndexIdentity, ProjectName, Tag, Tags, TaskTitle, Timestamp,
     WorkItemId, WorkItemStatus,
 };
 
@@ -16,7 +19,7 @@ const S: &str = "\n\n";
 fn project(id: &str, title: &str, tasks_path: &Path) -> ObsidianProject {
     ObsidianProject::new(
         ProjectIndexIdentity::new(
-            ProjectPrefix::try_new(id).unwrap(),
+            ProjectId::try_new(id).unwrap(),
             ProjectName::try_new(title).unwrap(),
         ),
         tasks_path.to_path_buf(),

@@ -4,7 +4,7 @@ use std::fs;
 
 use assert_cmd::prelude::OutputAssertExt as _;
 
-use crate::common::SessionFixture;
+use crate::shared::SessionFixture;
 
 #[test]
 fn verify_probes_and_previews_the_selected_provider() {

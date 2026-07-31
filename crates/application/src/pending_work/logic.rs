@@ -3,12 +3,12 @@ use crate::project::ProjectRegistry;
 
 pub(in crate::pending_work) mod finding {
     use crate::{
-        AppRecordStore, PendingWorkRecord,
         pending_work::{
             dto::PendingWorkItemView,
             find_pending_work::FindPendingWorkError,
             logic::{enrich, identifier},
         },
+        ports::{app_record::AppRecordStore, pending_work_record::PendingWorkRecord},
         project::ProjectRegistry,
     };
 
@@ -24,20 +24,20 @@ pub(in crate::pending_work) mod finding {
         let Some(work_id) = identifier::parse(id) else {
             return find_inline_open_item(store, projects, &requested);
         };
-        let prefix = work_id
+        let project_id = work_id
             .as_ref()
             .split_once('-')
-            .map_or("", |(prefix, _)| prefix);
-        if projects.projects_with_prefix(prefix) > 1 {
+            .map_or("", |(project_id, _)| project_id);
+        if projects.count_projects_by_project_id(project_id) > 1 {
             return Err(FindPendingWorkError::AmbiguousId { id: requested });
         }
-        let project = projects.project_for_id(&work_id).ok_or_else(|| {
+        let project = projects.get_project_name_by(&work_id).ok_or_else(|| {
             FindPendingWorkError::UnknownPrefix {
                 id: work_id.as_ref().to_string(),
-                prefix: prefix.to_string(),
+                prefix: project_id.to_string(),
             }
         })?;
-        let repo = projects.repo_for(project).map(str::to_string);
+        let repo = projects.get_repository_by(project).map(str::to_string);
         let records = store
             .list(project)
             .map_err(|error| FindPendingWorkError::ReadStore(Box::new(error)))?;
@@ -125,7 +125,8 @@ pub(in crate::pending_work) mod enrich {
 
     use super::{note_body::is_placeholder_prompt, section};
     use crate::{
-        Materialization, PendingWorkRecord, RecordId, pending_work::dto::PendingWorkItemView,
+        pending_work::dto::PendingWorkItemView,
+        ports::pending_work_record::{Materialization, PendingWorkRecord, RecordId},
     };
 
     pub(in crate::pending_work) const ISSUE_NO_REPO: &str =
@@ -301,7 +302,7 @@ pub(in crate::pending_work) mod enrich {
         use pwf_models::pending_work::{Timestamp, WorkItemId, WorkItemStatus};
 
         use super::*;
-        use crate::IndexPlacement;
+        use crate::ports::pending_work_record::IndexPlacement;
 
         fn record(body: &str) -> PendingWorkRecord {
             PendingWorkRecord {
@@ -891,7 +892,11 @@ pub(in crate::pending_work) mod prerequisite {
 
     use super::{ProjectRegistry, identifier};
     use crate::{
-        AppRecordStore, Materialization, PendingWorkRecord, pending_work::dto::PrerequisiteStatus,
+        pending_work::dto::PrerequisiteStatus,
+        ports::{
+            app_record::AppRecordStore,
+            pending_work_record::{Materialization, PendingWorkRecord},
+        },
     };
 
     const PREREQUISITE_VALUE_PATTERN: &str = r"\[\[([A-Z]{2,4}-\d{4})";
@@ -979,7 +984,7 @@ pub(in crate::pending_work) mod prerequisite {
         let prerequisites = parse_values(values)?;
         let mut unknown = Vec::new();
         for identifier in &prerequisites {
-            let Some(project) = projects.project_for_id(identifier) else {
+            let Some(project) = projects.get_project_name_by(identifier) else {
                 unknown.push(identifier.as_ref().to_string());
                 continue;
             };
@@ -1044,7 +1049,7 @@ pub(in crate::pending_work) mod prerequisite {
         projects: &ProjectRegistry,
         id: &WorkItemId,
     ) -> Option<WorkItemStatus> {
-        let project = projects.project_for_id(id)?;
+        let project = projects.get_project_name_by(id)?;
         // FIXME: Distinguish an absent prerequisite from a read or parse failure; both currently render as "missing" and can hide vault corruption.
         store
             .get(project, id)
@@ -1062,8 +1067,11 @@ pub(in crate::pending_work) mod prerequisite {
             PrerequisiteValidationError, frontmatter_value, parse_values, validate_and_merge,
         };
         use crate::{
-            AppRecordStore, ItemPatch, NewItem, PendingWorkRecord,
             pending_work::resolve::testing::{staged, staged_ghost},
+            ports::{
+                app_record::AppRecordStore,
+                pending_work_record::{ItemPatch, NewItem, PendingWorkRecord},
+            },
         };
 
         #[derive(Clone)]
@@ -1242,9 +1250,12 @@ pub(in crate::pending_work) mod resolve {
         ProjectRegistry, enrich::inline_record_id, identifier,
         show_pending_work_item::ShowPendingWorkError,
     };
-    use crate::{AppRecordStore, PendingWorkRecord, RecordId};
+    use crate::ports::{
+        app_record::AppRecordStore,
+        pending_work_record::{PendingWorkRecord, RecordId},
+    };
 
-    /// Resolves an open or closed record by project prefix or inline `<project>:<ordinal>` id.
+    /// Resolves an open or closed record by project ID or inline `<project>:<ordinal>` id.
     pub(in crate::pending_work) fn resolve_record<S>(
         store: &S,
         projects: &ProjectRegistry,
@@ -1257,7 +1268,9 @@ pub(in crate::pending_work) mod resolve {
         let Some(work_id) = identifier::parse(id) else {
             return resolve_inline_record(store, projects, id);
         };
-        let project = projects.project_for_id(&work_id).ok_or_else(not_found)?;
+        let project = projects
+            .get_project_name_by(&work_id)
+            .ok_or_else(not_found)?;
         store
             .get(project, &work_id)
             .map_err(|error| ShowPendingWorkError::ReadStore(Box::new(error)))?
@@ -1296,7 +1309,10 @@ pub(in crate::pending_work) mod resolve {
         use pwf_models::pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus};
 
         use super::ProjectRegistry;
-        use crate::{Materialization, PendingWorkRecord, RecordId, testing::InMemoryStore};
+        use crate::{
+            ports::pending_work_record::{Materialization, PendingWorkRecord, RecordId},
+            testing::InMemoryStore,
+        };
 
         pub(in crate::pending_work) const PWF_0001_SOURCE: &str = "---\nid: PWF-0001\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- do the thing\n";
 
@@ -1475,7 +1491,10 @@ pub(in crate::pending_work) mod store_util {
 
     use super::{add_pending_work_item::CreateItemError, enrich::normalize_section_label};
     use crate::ports::{
-        AppRecordStore, IndexEntry, IndexEntryState, IndexSection, NewItem, PendingWorkRecord,
+        app_record::AppRecordStore,
+        pending_work_record::{
+            IndexEntry, IndexEntryState, IndexSection, NewItem, PendingWorkRecord,
+        },
     };
 
     /// Reports failures while loading a required item.
@@ -1584,7 +1603,8 @@ pub(in crate::pending_work) mod store_util {
 
         use super::{LoadItemError, create_item, require_item};
         use crate::{
-            IndexEntryState, NewItem, RecordId, pending_work::resolve::testing::staged,
+            pending_work::resolve::testing::staged,
+            ports::pending_work_record::{IndexEntryState, NewItem, RecordId},
             testing::InMemoryStore,
         };
 
@@ -1857,7 +1877,6 @@ pub(in crate::pending_work) mod pending_work_update {
     use pwf_models::pending_work::{Tags, WorkItemId, WorkItemStatus};
 
     use crate::{
-        AppRecordStore, ItemPatch, PendingWorkRecord,
         pending_work::{
             dto::{PendingWorkItemIdentity, PreparedPendingWorkUpdate},
             logic::{
@@ -1870,6 +1889,10 @@ pub(in crate::pending_work) mod pending_work_update {
             update_pending_work_item::{
                 UpdatePendingWorkError, UpdatePendingWorkItem, UpdatePendingWorkItemOk,
             },
+        },
+        ports::{
+            app_record::AppRecordStore,
+            pending_work_record::{ItemPatch, PendingWorkRecord},
         },
         project::ProjectRegistry,
     };
@@ -1896,7 +1919,9 @@ pub(in crate::pending_work) mod pending_work_update {
             id: command.id.clone(),
         };
         let identifier = identifier::parse(&command.id).ok_or_else(not_found)?;
-        let project = projects.project_for_id(&identifier).ok_or_else(not_found)?;
+        let project = projects
+            .get_project_name_by(&identifier)
+            .ok_or_else(not_found)?;
         let record = store
             .get(project, &identifier)
             .map_err(|error| UpdatePendingWorkError::WriteStore(Box::new(error)))?
@@ -2122,7 +2147,7 @@ pub(in crate::pending_work) mod pending_work_creation {
             project: project.to_string(),
         };
         if projects
-            .repo_for(&project)
+            .get_repository_by(&project)
             .is_none_or(|repo| repo.trim().is_empty())
         {
             return Err(not_mapped());
@@ -2155,8 +2180,6 @@ pub(in crate::pending_work) mod pending_work_closing {
     use pwf_models::pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus};
 
     use crate::{
-        AppRecordStore, IndexEntry, IndexEntryState, IndexSection, ItemPatch, Materialization,
-        NewItem, PendingWorkRecord,
         pending_work::{
             add_pending_work_item::{
                 AddPendingWorkError, AddPendingWorkItemOk, PendingWorkSection,
@@ -2172,13 +2195,23 @@ pub(in crate::pending_work) mod pending_work_closing {
                 title,
             },
         },
+        ports::{
+            app_record::AppRecordStore,
+            pending_work_record::{
+                IndexEntry, IndexEntryState, IndexSection, ItemPatch, Materialization, NewItem,
+                PendingWorkRecord,
+            },
+        },
         project::ProjectRegistry,
     };
 
     mod queue {
         use pwf_models::pending_work::{Timestamp, WorkItemId};
 
-        use crate::{IndexEntry, IndexEntryState, IndexSection, pending_work::section};
+        use crate::{
+            pending_work::section,
+            ports::pending_work_record::{IndexEntry, IndexEntryState, IndexSection},
+        };
 
         const SECTION_CAPS: &[(&str, usize)] =
             &[("General", 6), ("Low-prio", 3), ("Future", 3), ("Human", 3)];
@@ -2518,15 +2551,15 @@ pub(in crate::pending_work) mod pending_work_closing {
         let commits_value = commit_provenance::normalize(commits);
         let pending_work_identifier =
             identifier::parse(id).ok_or_else(|| CloseError::ItemNotFound { id: id.to_string() })?;
-        let prefix = pending_work_identifier
+        let project_id = pending_work_identifier
             .as_ref()
             .split_once('-')
-            .map_or("", |(prefix, _)| prefix);
+            .map_or("", |(project_id, _)| project_id);
         let project = projects
-            .project_for_id(&pending_work_identifier)
+            .get_project_name_by(&pending_work_identifier)
             .ok_or_else(|| CloseError::UnknownPrefix {
                 pending_work_identifier: pending_work_identifier.to_string(),
-                prefix: prefix.to_string(),
+                prefix: project_id.to_string(),
             })?;
         let record =
             store_util::require_item(store, project, &pending_work_identifier).map_err(map_load)?;

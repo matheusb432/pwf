@@ -2,7 +2,9 @@
 
 use std::process::Command;
 
-use pwf_application::{AgentCommand, InlineAgentSessionClient};
+use pwf_application::ports::{
+    inline_agent_session::InlineAgentSessionClient, session::AgentCommand,
+};
 
 /// Executes prepared agent commands inline.
 #[derive(Debug, Clone, Copy, Default)]

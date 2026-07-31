@@ -1,12 +1,11 @@
 use clap::Subcommand;
-use pwf_application::{Clock, pending_work::ProjectRegistry};
+use pwf_application::{pending_work::ProjectRegistry, ports::clock::Clock};
 use pwf_infra::obsidian::ObsidianStore;
 
 use crate::console::Console;
 
 pub mod add;
 pub mod cancel;
-pub(crate) mod common;
 pub mod done;
 pub mod list;
 pub mod remove;
@@ -14,6 +13,7 @@ mod render;
 pub mod reopen;
 pub mod route;
 pub mod session;
+pub(crate) mod shared;
 pub mod show;
 pub mod update;
 pub mod verify;

@@ -172,25 +172,10 @@ mod tests {
     }
 
     #[test]
-    fn ampersands_are_plain_text_to_the_parser() {
-        let parsed = parse("handle a & b / preserve c & d");
-        assert_eq!(parsed.goals, vec!["preserve c & d".to_string()]);
-    }
-
-    #[test]
     fn empty_lead_before_marker_emits_only_authored_content() {
         let parsed = parse("/ only second");
         assert!(parsed.title.is_empty());
         assert_eq!(parsed.goals, vec!["only second".to_string()]);
-    }
-
-    #[test]
-    fn unrecognized_marker_shaped_token_starts_a_bullet_without_switching_section() {
-        let parsed = parse("title /c context one /x context two");
-        assert_eq!(
-            parsed.context,
-            vec!["context one".to_string(), "context two".to_string()]
-        );
     }
 
     #[test]

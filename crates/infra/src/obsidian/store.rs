@@ -1,4 +1,6 @@
 mod add;
+#[cfg(test)]
+mod contract;
 mod error;
 mod fs;
 mod index_entry;
@@ -7,13 +9,11 @@ mod lookup;
 mod project_note;
 mod read;
 mod read_parser;
-#[cfg(test)]
-mod tests;
 
 use std::path::Path;
 
 pub use error::ObsidianStoreError;
-use pwf_application::ProjectTaskLocationClient;
+use pwf_application::ports::project_task_location::ProjectTaskLocationClient;
 use pwf_models::pending_work::ProjectName;
 
 use super::project_paths::{ObsidianProject, ProjectPaths};

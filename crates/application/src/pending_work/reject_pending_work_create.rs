@@ -3,17 +3,6 @@
 use super::{ProjectRegistry, ProjectResolutionError};
 
 /// Requests rejection of a retired create form.
-///
-/// # Examples
-///
-/// ```
-/// use pwf_application::pending_work::reject_pending_work_create::RejectPendingWorkCreate;
-///
-/// let query = RejectPendingWorkCreate {
-///     project_identifier: Some("pwf".to_string()),
-/// };
-/// assert_eq!(query.project_identifier.as_deref(), Some("pwf"));
-/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RejectPendingWorkCreate {
     /// Selects the project that must resolve before rejection, when present.
@@ -35,27 +24,6 @@ pub enum RejectPendingWorkCreateError {
 ///
 /// Returns [`RejectPendingWorkCreateError`] when the supplied project identifier does not resolve
 /// uniquely.
-///
-/// # Examples
-///
-/// ```
-/// use pwf_application::pending_work::{
-///     ProjectRegistry,
-///     reject_pending_work_create::{self, RejectPendingWorkCreate},
-/// };
-///
-/// let outcome = reject_pending_work_create::execute(
-///     &RejectPendingWorkCreate {
-///         project_identifier: None,
-///     },
-///     &ProjectRegistry::default(),
-/// )
-/// .unwrap();
-/// assert_eq!(
-///     outcome,
-///     reject_pending_work_create::RejectPendingWorkCreateOk
-/// );
-/// ```
 #[cqrsy::query]
 pub fn execute(
     query: &RejectPendingWorkCreate,

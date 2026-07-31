@@ -1,14 +1,17 @@
 use clap::Args;
 use pwf_application::{
-    AppRecordStore, IndexEntry, PendingWorkRecord,
     pending_work::{
         ProjectRegistry,
         reopen_pending_work::{self, ReopenPendingWork, ReopenPendingWorkError},
     },
+    ports::{
+        app_record::AppRecordStore,
+        pending_work_record::{IndexEntry, PendingWorkRecord},
+    },
 };
 use pwf_infra::obsidian::ObsidianStore;
 
-use super::common::{CommonArguments, Identifier};
+use super::shared::{CommonArguments, Identifier};
 
 #[derive(Args, Debug)]
 pub struct Arguments {
@@ -18,7 +21,7 @@ pub struct Arguments {
     pub(crate) common: CommonArguments,
 }
 
-use super::{common::PendingWorkError, render::render_reopened};
+use super::{render::render_reopened, shared::PendingWorkError};
 
 pub(super) fn run(
     arguments: &Arguments,

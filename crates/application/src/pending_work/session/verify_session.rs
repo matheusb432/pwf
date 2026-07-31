@@ -7,10 +7,13 @@ use thiserror::Error;
 
 use super::{Agent, AgentLaunch, ModelTierLookup, SessionEffort, VerifySessionOk, logic};
 use crate::{
-    AgentClient, AppRecordStore, PendingWorkRecord, ProjectNoteStore,
     pending_work::{
         ProjectRegistry, find_pending_work::FindPendingWorkError, logic::finding::find_open_item,
         show_pending_work_item::ShowPendingWorkError,
+    },
+    ports::{
+        agent::AgentClient, app_record::AppRecordStore, pending_work_record::PendingWorkRecord,
+        project_note::ProjectNoteStore,
     },
 };
 
@@ -131,8 +134,10 @@ mod tests {
 
     use super::{AgentModel, ProjectRegistry, VerifySession};
     use crate::{
-        IndexPlacement, Materialization, PendingWorkRecord, RecordId,
         pending_work::session::{Agent, ModelTierLookup},
+        ports::pending_work_record::{
+            IndexPlacement, Materialization, PendingWorkRecord, RecordId,
+        },
         testing::InMemoryStore,
     };
 

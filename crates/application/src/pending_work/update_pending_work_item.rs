@@ -4,7 +4,7 @@ use super::{
     ProjectRegistry,
     logic::pending_work_update::{persist, prepare},
 };
-use crate::ports::{AppRecordStore, PendingWorkRecord};
+use crate::ports::{app_record::AppRecordStore, pending_work_record::PendingWorkRecord};
 
 /// Requests edits to one pending-work item.
 #[derive(Debug, Clone)]
@@ -109,7 +109,10 @@ mod tests {
     use super::{
         ProjectRegistry, UpdatePendingWorkError, UpdatePendingWorkItem, UpdatePendingWorkItemOk,
     };
-    use crate::{Materialization, PendingWorkRecord, RecordId, testing::InMemoryStore};
+    use crate::{
+        ports::pending_work_record::{Materialization, PendingWorkRecord, RecordId},
+        testing::InMemoryStore,
+    };
 
     fn registry() -> ProjectRegistry {
         ProjectRegistry::new(vec![(

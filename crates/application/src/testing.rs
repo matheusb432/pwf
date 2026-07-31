@@ -1,17 +1,23 @@
+mod database;
+
 use std::{
     collections::BTreeMap,
     convert::Infallible,
     sync::{Arc, Mutex, MutexGuard},
 };
 
+pub(crate) use database::{MIGRATOR, insert_project};
 use pwf_models::{
     note::{NoteId, ProjectNote},
     pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus},
 };
 
 use crate::ports::{
-    AppRecordStore, IndexEntry, IndexSection, ItemPatch, Materialization, NewItem, NewProjectNote,
-    PendingWorkRecord, ProjectNotePatch, ProjectNoteStore, RecordId,
+    app_record::AppRecordStore,
+    pending_work_record::{
+        IndexEntry, IndexSection, ItemPatch, Materialization, NewItem, PendingWorkRecord, RecordId,
+    },
+    project_note::{NewProjectNote, ProjectNotePatch, ProjectNoteStore},
 };
 
 #[derive(Debug, Default)]

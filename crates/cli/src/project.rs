@@ -3,8 +3,8 @@
 use std::path::PathBuf;
 
 use clap::{Args, Subcommand};
-use pwf_infra::SqliteStore;
-use pwf_models::project::ProjectPrefix;
+use pwf_models::project::ProjectId;
+use sqlx::SqlitePool;
 
 pub mod add;
 pub mod get;
@@ -39,7 +39,7 @@ pub enum Command {
 
 pub async fn run(
     arguments: Arguments,
-    database: &SqliteStore,
+    pool: &SqlitePool,
     home: Option<PathBuf>,
 ) -> Result<String, String> {
     let Some(command) = arguments.command else {
@@ -47,12 +47,12 @@ pub async fn run(
     };
 
     match command {
-        Command::List(arguments) => list::run(arguments, database).await,
-        Command::Get(arguments) => get::run(arguments, database).await,
-        Command::Add(arguments) => add::run(arguments, database, project_home(home)?).await,
-        Command::Pause(arguments) => pause::run(arguments, database).await,
-        Command::Rename(arguments) => rename::run(arguments, database, project_home(home)?).await,
-        Command::Resume(arguments) => resume::run(arguments, database, project_home(home)?).await,
+        Command::List(arguments) => list::run(arguments, pool).await,
+        Command::Get(arguments) => get::run(arguments, pool).await,
+        Command::Add(arguments) => add::run(arguments, pool, project_home(home)?).await,
+        Command::Pause(arguments) => pause::run(arguments, pool).await,
+        Command::Rename(arguments) => rename::run(arguments, pool, project_home(home)?).await,
+        Command::Resume(arguments) => resume::run(arguments, pool, project_home(home)?).await,
     }
 }
 
@@ -60,7 +60,7 @@ fn project_home(home: Option<PathBuf>) -> Result<PathBuf, String> {
     home.ok_or_else(|| "resolving the home directory for managed projects failed".to_string())
 }
 
-fn parse_project_id(raw: &str) -> Result<ProjectPrefix, String> {
-    ProjectPrefix::try_new(raw)
+fn parse_project_id(raw: &str) -> Result<ProjectId, String> {
+    ProjectId::try_new(raw)
         .map_err(|_| "project id must contain two to four ASCII letters".to_string())
 }

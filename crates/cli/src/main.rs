@@ -2,12 +2,11 @@ use std::path::PathBuf;
 
 use pwf::{command, note, pending_work, project};
 use pwf_application::{
-    Clock,
     pending_work::ProjectRegistry,
+    ports::clock::Clock,
     project::load_active_projects::{self, ActiveProject, LoadActiveProjects},
 };
 use pwf_infra::{
-    SqliteStore,
     clock::LocalClock,
     obsidian::{ObsidianProject, ObsidianStore},
 };
@@ -41,12 +40,12 @@ where
         }
         command::RootCommand::Project(arguments) => {
             let home = project_command_home(&arguments)?;
-            let database = open_database().await?;
-            project::run(arguments, &database, home).await
+            let pool = open_database().await?;
+            project::run(arguments, &pool, home).await
         }
         command::RootCommand::PendingWork(command) => {
-            let database = open_database().await?;
-            let projects = load_active_projects(&database).await?;
+            let pool = open_database().await?;
+            let projects = load_active_projects(&pool).await?;
             pending_work::run(
                 &command,
                 pwf::console::Console::from_terminal(),
@@ -56,8 +55,8 @@ where
             )
         }
         command::RootCommand::Note(arguments) => {
-            let database = open_database().await?;
-            let projects = load_active_projects(&database).await?;
+            let pool = open_database().await?;
+            let projects = load_active_projects(&pool).await?;
             note::run(&arguments, &projects.store, &projects.registry, clock)
         }
     }
@@ -68,7 +67,7 @@ struct ActiveProjects {
     store: ObsidianStore,
 }
 
-async fn open_database() -> Result<SqliteStore, String> {
+async fn open_database() -> Result<sqlx::SqlitePool, String> {
     let path = pwf_infra::database::database_path()
         .map_err(|error| format!("resolving project database path failed: {error}"))?;
     let pool = pwf_infra::database::build_pool(&path)
@@ -87,15 +86,15 @@ async fn open_database() -> Result<SqliteStore, String> {
                 path.display()
             )
         })?;
-    Ok(SqliteStore::new(pool))
+    Ok(pool)
 }
 
-async fn load_active_projects(database: &SqliteStore) -> Result<ActiveProjects, String> {
+async fn load_active_projects(pool: &sqlx::SqlitePool) -> Result<ActiveProjects, String> {
     let projects = load_active_projects::execute(
         LoadActiveProjects {
             home: managed_project_home()?,
         },
-        database,
+        pool,
     )
     .await
     .map_err(|error| error.to_string())?;

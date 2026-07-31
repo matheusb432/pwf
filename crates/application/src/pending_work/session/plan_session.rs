@@ -10,8 +10,6 @@ use super::{
     SessionPlan, logic,
 };
 use crate::{
-    AgentClient, AgentCommand, AppRecordStore, PendingWorkRecord, ProjectNoteStore,
-    RepositoryDirectoryClient, SessionClient, SessionStart, SessionWindow,
     pending_work::{
         ProjectRegistry,
         dto::PreparedPendingWorkUpdate,
@@ -19,6 +17,14 @@ use crate::{
         logic::{finding::find_open_item, pending_work_update},
         show_pending_work_item::ShowPendingWorkError,
         update_pending_work_item::{UpdatePendingWorkError, UpdatePendingWorkItem},
+    },
+    ports::{
+        agent::AgentClient,
+        app_record::AppRecordStore,
+        pending_work_record::PendingWorkRecord,
+        project_note::ProjectNoteStore,
+        repository_directory::RepositoryDirectoryClient,
+        session::{AgentCommand, SessionClient, SessionStart, SessionWindow},
     },
 };
 

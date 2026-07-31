@@ -1,14 +1,14 @@
 use clap::Args;
 use pwf_application::{
-    AppRecordStore, PendingWorkRecord,
     pending_work::{
         ProjectRegistry, UpdatePendingWorkItemOk,
         update_pending_work_item::{self, UpdatePendingWorkItem},
     },
+    ports::{app_record::AppRecordStore, pending_work_record::PendingWorkRecord},
 };
 use pwf_infra::obsidian::ObsidianStore;
 
-use super::common::{CommonArguments, EffortChoice, Identifier, task_title};
+use super::shared::{CommonArguments, EffortChoice, Identifier, task_title};
 
 #[derive(Args, Debug)]
 pub struct Arguments {
@@ -54,8 +54,8 @@ pub struct Arguments {
 }
 
 use super::{
-    common::PendingWorkError,
     render::{TITLE_NORMALIZED_NOTICE, render_updated},
+    shared::PendingWorkError,
 };
 use crate::console::Console;
 

@@ -1,19 +1,18 @@
 use std::{error::Error, path::PathBuf};
 
-use pwf_models::project::ProjectPrefix;
+use pwf_models::project::ProjectId;
 
 use super::{
     ProjectStateChange,
     dto::{ProjectRow, ProjectRowError},
     logic::task_location::{self, TaskLocationError},
 };
-use crate::AppDbStore;
 
 /// Requests resuming one managed project.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResumeProject {
-    /// Project prefix.
-    pub id: ProjectPrefix,
+    /// Project ID.
+    pub id: ProjectId,
     /// Home directory used to expand home-relative task paths.
     pub home: PathBuf,
 }
@@ -21,10 +20,10 @@ pub struct ResumeProject {
 #[derive(Debug, thiserror::Error)]
 pub enum ResumeProjectError {
     #[error("project not found: {id}")]
-    ProjectNotFound { id: ProjectPrefix },
+    ProjectNotFound { id: ProjectId },
     #[error("managed project {project_id} task path '{path}' is invalid: {source}")]
     InvalidTaskPath {
-        project_id: ProjectPrefix,
+        project_id: ProjectId,
         path: String,
         #[source]
         source: super::resolve_runtime_path::RuntimePathError,
@@ -34,8 +33,8 @@ pub enum ResumeProjectError {
         path.display()
     )]
     DuplicateRuntimeTaskLocation {
-        first_id: ProjectPrefix,
-        second_id: ProjectPrefix,
+        first_id: ProjectId,
+        second_id: ProjectId,
         path: PathBuf,
     },
     #[error("{context}: {source}")]
@@ -58,10 +57,9 @@ pub enum ResumeProjectError {
 #[cqrsy::command]
 pub async fn execute(
     command: ResumeProject,
-    database: &impl AppDbStore,
+    pool: &sqlx::SqlitePool,
 ) -> Result<ProjectStateChange, ResumeProjectError> {
-    let mut transaction = database
-        .pool()
+    let mut transaction = pool
         .begin_with("BEGIN IMMEDIATE")
         .await
         .map_err(|error| unexpected("starting project resume transaction", error))?;
@@ -84,7 +82,7 @@ pub async fn execute(
     .map_err(|error| unexpected("reading project task locations", error))?
     .into_iter()
     .map(|(id, tasks_path)| {
-        ProjectPrefix::try_new(id)
+        ProjectId::try_new(id)
             .map(|id| (id, tasks_path))
             .map_err(|error| unexpected("converting project task location", error))
     })
@@ -180,35 +178,32 @@ fn task_location_error(error: TaskLocationError) -> ResumeProjectError {
 mod tests {
     use std::path::PathBuf;
 
-    use pwf_models::project::ProjectPrefix;
+    use pwf_models::project::ProjectId;
 
     use super::*;
-    use crate::ports::TestDatabase;
+    use crate::testing::insert_project;
 
-    #[tokio::test]
-    async fn runtime_alias_of_other_paused_project_is_rejected() {
-        let database = TestDatabase::new().await;
+    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
+    async fn runtime_alias_of_other_paused_project_is_rejected(pool: sqlx::SqlitePool) {
         let home = PathBuf::from("/home/tester");
         let resolved_path = home.join("tasks/shared");
-        database
-            .insert_project("PWF", "pwf", "/work/PWF", "~/tasks/shared", true)
-            .await;
-        database
-            .insert_project(
-                "ALT",
-                "alt",
-                "/work/ALT",
-                &resolved_path.to_string_lossy(),
-                true,
-            )
-            .await;
+        insert_project(&pool, "PWF", "pwf", "/work/PWF", "~/tasks/shared", true).await;
+        insert_project(
+            &pool,
+            "ALT",
+            "alt",
+            "/work/ALT",
+            &resolved_path.to_string_lossy(),
+            true,
+        )
+        .await;
 
         let error = super::execute(
             ResumeProject {
-                id: ProjectPrefix::try_new("PWF").unwrap(),
+                id: ProjectId::try_new("PWF").unwrap(),
                 home,
             },
-            &database,
+            &pool,
         )
         .await
         .unwrap_err();
@@ -222,9 +217,10 @@ mod tests {
         );
         let paused_at: Option<String> =
             sqlx::query_scalar("SELECT paused_at FROM projects WHERE id = 'PWF'")
-                .fetch_one(database.pool())
+                .fetch_one(&pool)
                 .await
                 .unwrap();
         assert!(paused_at.is_some());
+        pool.close().await;
     }
 }

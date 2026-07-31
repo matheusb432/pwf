@@ -14,10 +14,10 @@ use pwf_infra::{
 use pwf_models::session::{Agent, DispatchMode, LaunchDirectives, SessionEffort};
 
 use super::{
-    common::{AgentChoice, CommonArguments, Identifier, PendingWorkError},
     render::{
         render_dispatch, render_dry_run, render_session_aborted, render_session_confirmation,
     },
+    shared::{AgentChoice, CommonArguments, Identifier, PendingWorkError},
 };
 use crate::{
     confirm::{Confirmation, DefaultAnswer},
