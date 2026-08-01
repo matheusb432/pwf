@@ -145,14 +145,6 @@ pub(crate) enum PendingWorkError {
         pwf_application::pending_work::reject_pending_work_create::RejectPendingWorkCreateError,
     ),
     #[error(
-        "'{identifier}' is ambiguous. Managed project identifiers matching it: {}.",
-        matches.join(", ")
-    )]
-    AmbiguousManagedProject {
-        identifier: String,
-        matches: Vec<String>,
-    },
-    #[error(
         "Unknown managed project identifier: {identifier}\nManaged project identifiers: {}",
         known.join(", ")
     )]

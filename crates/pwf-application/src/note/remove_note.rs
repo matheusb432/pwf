@@ -1,9 +1,15 @@
 //! Removes one note from a managed project.
 
-use pwf_models::note::NoteId;
+use pwf_models::{note::NoteId, project::Project};
 
-use super::logic::{self, ResolvedProject};
-use crate::{pending_work::ProjectRegistry, ports::project_note::ProjectNoteStore};
+use super::logic;
+use crate::{
+    ports::project_note::ProjectNoteStore,
+    project::{
+        ProjectStatusFilter,
+        resolve_project::{self, ResolveProject, ResolveProjectError},
+    },
+};
 
 /// Requests deletion of one project note.
 #[derive(Debug, Clone)]
@@ -28,6 +34,8 @@ pub enum RemoveNoteError {
     #[error("No such note {id} in {project}.")]
     NoSuchNote { id: String, project: String },
     #[error("{0}")]
+    Project(#[source] Box<dyn std::error::Error + Send + Sync>),
+    #[error("{0}")]
     Store(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
 
@@ -40,68 +48,70 @@ pub enum RemoveNoteError {
 /// [`RemoveNoteError::NoSuchNote`] when the note does not exist, or
 /// [`RemoveNoteError::Store`] when existence inspection or deletion fails.
 #[cqrsy::command]
-pub fn execute(
+pub async fn execute(
     command: RemoveNote,
     store: &impl ProjectNoteStore,
-    projects: &ProjectRegistry,
+    pool: &sqlx::SqlitePool,
 ) -> Result<RemoveNoteOk, RemoveNoteError> {
-    let RemoveNote {
-        project_identifier,
-        id: raw_id,
-    } = command;
-    let ResolvedProject {
-        project_name,
-        project_id,
-    } = logic::resolve_project(projects, &project_identifier).ok_or_else(|| {
-        RemoveNoteError::UnknownProject {
-            identifier: project_identifier,
-        }
-    })?;
-    let id = logic::resolve_note(&raw_id, &project_id).ok_or_else(|| {
+    let identifier = command.project_identifier.clone();
+    let project = resolve_project::execute(
+        ResolveProject {
+            identifier: identifier.clone(),
+            status: ProjectStatusFilter::ACTIVE,
+        },
+        pool,
+    )
+    .await
+    .map_err(|error| project_error(identifier, error))?;
+    execute_for_project(command, store, &project)
+}
+
+fn execute_for_project(
+    command: RemoveNote,
+    store: &impl ProjectNoteStore,
+    project: &Project,
+) -> Result<RemoveNoteOk, RemoveNoteError> {
+    let raw_id = command.id;
+    let id = logic::resolve_note(&raw_id, &project.id).ok_or_else(|| {
         RemoveNoteError::InvalidIdentifier {
             id: raw_id,
-            project_id: project_id.to_string(),
+            project_id: project.id.to_string(),
         }
     })?;
     let exists = store
-        .note_exists(&project_name, &id)
+        .note_exists(project, &id)
         .map_err(|error| RemoveNoteError::Store(Box::new(error)))?;
     if !exists {
         return Err(RemoveNoteError::NoSuchNote {
             id: id.to_string(),
-            project: project_name.to_string(),
+            project: project.title.to_string(),
         });
     }
     store
-        .delete(&project_name, &id)
+        .delete_note(project, &id)
         .map_err(|error| RemoveNoteError::Store(Box::new(error)))?;
     Ok(RemoveNoteOk { id })
+}
+
+fn project_error(identifier: String, error: ResolveProjectError) -> RemoveNoteError {
+    match error {
+        ResolveProjectError::Unknown { .. } => RemoveNoteError::UnknownProject { identifier },
+        error @ ResolveProjectError::Unexpected { .. } => RemoveNoteError::Project(Box::new(error)),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::error::Error as _;
 
-    use pwf_models::{note::NoteId, pending_work::ProjectName};
+    use pwf_models::note::{NoteId, ProjectNote};
 
     use super::{RemoveNote, RemoveNoteError};
-    use crate::{
-        ProjectNote,
-        pending_work::ProjectRegistry,
-        testing::{InMemoryStore, ProjectNoteFailure},
-    };
+    use crate::testing::{InMemoryStore, ProjectNoteFailure, project};
 
     #[derive(Debug, thiserror::Error)]
     #[error("sentinel store failure")]
     struct SentinelStoreError;
-
-    fn registry() -> ProjectRegistry {
-        ProjectRegistry::new([(
-            ProjectName::try_new("pwf").unwrap(),
-            Some("/repo/pwf".to_string()),
-            Some("PWF".to_string()),
-        )])
-    }
 
     fn note() -> ProjectNote {
         ProjectNote {
@@ -120,13 +130,13 @@ mod tests {
         ] {
             let store = InMemoryStore::default().with_project_notes("pwf", vec![note()]);
 
-            let removed = super::execute(
+            let removed = super::execute_for_project(
                 RemoveNote {
                     project_identifier: "PWF".to_string(),
                     id: identifier.to_string(),
                 },
                 &store,
-                &registry(),
+                &project("PWF", "pwf"),
             )
             .unwrap();
 
@@ -139,13 +149,13 @@ mod tests {
     fn missing_note_wins_over_adapter_delete_failure() {
         let store = InMemoryStore::default().with_failure(ProjectNoteFailure::Delete);
 
-        let error = super::execute(
+        let error = super::execute_for_project(
             RemoveNote {
                 project_identifier: "pwf".to_string(),
                 id: "1".to_string(),
             },
             &store,
-            &registry(),
+            &project("PWF", "pwf"),
         )
         .unwrap_err();
 
@@ -162,13 +172,13 @@ mod tests {
     fn identifier_from_another_project_is_rejected() {
         let store = InMemoryStore::default();
 
-        let error = super::execute(
+        let error = super::execute_for_project(
             RemoveNote {
                 project_identifier: "pwf".to_string(),
                 id: "FOO-NOTE-0001".to_string(),
             },
             &store,
-            &registry(),
+            &project("PWF", "pwf"),
         )
         .unwrap_err();
 

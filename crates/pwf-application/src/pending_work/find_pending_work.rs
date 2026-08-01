@@ -1,6 +1,6 @@
 use crate::{
-    pending_work::{ProjectRegistry, dto::PendingWorkItemView, logic::finding::find_open_item},
-    ports::{app_record::AppRecordStore, pending_work_record::PendingWorkRecord},
+    pending_work::{dto::PendingWorkItemView, logic::finding::find_open_item_from_db},
+    ports::pending_work_record::PendingWorkStore,
 };
 
 #[derive(Debug, Clone)]
@@ -18,29 +18,35 @@ pub enum FindPendingWorkError {
     UnknownPrefix { id: String, prefix: String },
     #[error("{0}")]
     ReadStore(Box<dyn std::error::Error + Send + Sync>),
+    #[error("{0}")]
+    QueryProject(Box<dyn std::error::Error + Send + Sync>),
 }
 
 #[cqrsy::query]
-pub fn execute(
+pub async fn execute(
     query: &FindPendingWork,
-    store: &impl AppRecordStore<PendingWorkRecord>,
-    projects: &ProjectRegistry,
+    store: &impl PendingWorkStore,
+    pool: &sqlx::SqlitePool,
 ) -> Result<PendingWorkItemView, FindPendingWorkError> {
-    find_open_item(store, projects, &query.id)
+    find_open_item_from_db(store, pool, &query.id).await
 }
 
 #[cfg(test)]
 mod tests {
     use std::assert_matches;
 
-    use pwf_models::pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus};
+    use pwf_models::{
+        pending_work::{Timestamp, WorkItemId, WorkItemStatus},
+        project::Project,
+    };
 
-    use super::{FindPendingWork, FindPendingWorkError, PendingWorkItemView, ProjectRegistry};
+    use super::{FindPendingWorkError, PendingWorkItemView};
     use crate::{
+        pending_work::logic::finding::find_open_item_in_projects,
         ports::pending_work_record::{
             IndexPlacement, Materialization, PendingWorkRecord, RecordId,
         },
-        testing::InMemoryStore,
+        testing::{InMemoryStore, project},
     };
 
     fn record(id: &str) -> PendingWorkRecord {
@@ -89,34 +95,31 @@ mod tests {
         }
     }
 
-    fn registry(projects: &[(&str, &str)]) -> ProjectRegistry {
-        ProjectRegistry::new(projects.iter().map(|(name, project_id)| {
-            (
-                ProjectName::try_new(*name).unwrap(),
-                Some(format!("/repo/{name}")),
-                Some((*project_id).to_string()),
-            )
-        }))
+    fn projects(values: &[(&str, &str)]) -> Vec<Project> {
+        values
+            .iter()
+            .map(|(name, project_id)| project(project_id, name))
+            .collect()
     }
 
     fn find(
         store: &InMemoryStore,
-        projects: &ProjectRegistry,
+        projects: &[Project],
         id: &str,
     ) -> Result<PendingWorkItemView, FindPendingWorkError> {
-        super::execute(&FindPendingWork { id: id.to_string() }, store, projects)
+        find_open_item_in_projects(store, projects, id)
     }
 
     #[test]
     fn finds_open_item_enriched_with_launchability() {
         let store = InMemoryStore::default().with_project("pwf", vec![record("PWF-0001")]);
-        let projects = registry(&[("pwf", "PWF")]);
+        let projects = projects(&[("pwf", "PWF")]);
 
         let item = find(&store, &projects, "PWF-0001").unwrap();
 
         assert_eq!(item.id, "PWF-0001");
         assert_eq!(item.project, "pwf");
-        assert_eq!(item.repo.as_deref(), Some("/repo/pwf"));
+        assert_eq!(item.repo.as_deref(), Some("/work/pwf"));
         assert_eq!(item.prompt, "do the thing");
         assert!(item.launchable);
     }
@@ -124,7 +127,7 @@ mod tests {
     #[test]
     fn loose_id_normalization_is_application_owned() {
         let store = InMemoryStore::default().with_project("pwf", vec![record("PWF-0001")]);
-        let projects = registry(&[("pwf", "PWF")]);
+        let projects = projects(&[("pwf", "PWF")]);
 
         assert_eq!(find(&store, &projects, "pwf-0001").unwrap().id, "PWF-0001");
     }
@@ -132,7 +135,7 @@ mod tests {
     #[test]
     fn missing_id_errors_not_found_preserving_raw_id() {
         let store = InMemoryStore::default().with_project("pwf", vec![record("PWF-0001")]);
-        let projects = registry(&[("pwf", "PWF")]);
+        let projects = projects(&[("pwf", "PWF")]);
 
         let error = find(&store, &projects, "pwf-9999").unwrap_err();
 
@@ -147,26 +150,10 @@ mod tests {
     }
 
     #[test]
-    fn shared_project_id_across_projects_is_ambiguous_preserving_raw_id() {
-        let store = InMemoryStore::default()
-            .with_project("alpha", vec![record("PWF-0001")])
-            .with_project("beta", vec![record("PWF-0001")]);
-        let projects = registry(&[("alpha", "PWF"), ("beta", "PWF")]);
-
-        let error = find(&store, &projects, "pwf-0001").unwrap_err();
-
-        assert!(matches!(
-            error,
-            FindPendingWorkError::AmbiguousId { ref id } if id == "pwf-0001"
-        ));
-        assert_eq!(error.to_string(), "Pending-work id is ambiguous: pwf-0001");
-    }
-
-    #[test]
     fn duplicate_link_in_one_project_is_ambiguous() {
         let store = InMemoryStore::default()
             .with_project("pwf", vec![record("PWF-0001"), record("PWF-0001")]);
-        let projects = registry(&[("pwf", "PWF")]);
+        let projects = projects(&[("pwf", "PWF")]);
 
         let error = find(&store, &projects, "PWF-0001").unwrap_err();
 
@@ -185,7 +172,7 @@ mod tests {
             ..record("PWF-0002")
         };
         let store = InMemoryStore::default().with_project("pwf", vec![done, unlinked_active]);
-        let projects = registry(&[("pwf", "PWF")]);
+        let projects = projects(&[("pwf", "PWF")]);
 
         for id in ["PWF-0001", "PWF-0002"] {
             assert_matches!(
@@ -198,7 +185,7 @@ mod tests {
     #[test]
     fn unknown_prefix_renders_like_the_legacy_adapter() {
         let store = InMemoryStore::default().with_project("pwf", vec![record("PWF-0001")]);
-        let projects = registry(&[("pwf", "PWF")]);
+        let projects = projects(&[("pwf", "PWF")]);
 
         let error = find(&store, &projects, "xyz-0001").unwrap_err();
 
@@ -216,7 +203,7 @@ mod tests {
     #[test]
     fn non_canonical_id_resolves_a_legacy_inline_prompt_case_insensitively() {
         let store = InMemoryStore::default().with_project("pwf", vec![inline(1)]);
-        let projects = registry(&[("pwf", "PWF")]);
+        let projects = projects(&[("pwf", "PWF")]);
 
         let item = find(&store, &projects, "PWF:1").unwrap();
 

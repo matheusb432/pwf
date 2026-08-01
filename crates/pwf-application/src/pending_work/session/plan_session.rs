@@ -1,6 +1,6 @@
 //! Plans a pending-work session before host validation or dispatch.
 
-use std::error::Error;
+use std::{error::Error, path::PathBuf};
 
 use pwf_models::session::AgentModel;
 use thiserror::Error;
@@ -11,20 +11,24 @@ use super::{
 };
 use crate::{
     pending_work::{
-        ProjectRegistry,
         dto::PreparedPendingWorkUpdate,
         find_pending_work::FindPendingWorkError,
-        logic::{finding::find_open_item, pending_work_update},
+        identifier,
+        logic::{finding::find_open_item_from_db, pending_work_update},
         show_pending_work_item::ShowPendingWorkError,
         update_pending_work_item::{UpdatePendingWorkError, UpdatePendingWorkItem},
     },
     ports::{
         agent::AgentClient,
-        app_record::AppRecordStore,
-        pending_work_record::PendingWorkRecord,
+        pending_work_record::PendingWorkStore,
         project_note::ProjectNoteStore,
         repository_directory::RepositoryDirectoryClient,
         session::{AgentCommand, SessionClient, SessionStart, SessionWindow},
+    },
+    project::{
+        ProjectStatusFilter,
+        get_project::{self, GetProject},
+        resolve_runtime_path::{self, ResolveRuntimePath},
     },
 };
 
@@ -130,6 +134,8 @@ pub enum PlanSessionError {
     },
     #[error("{0}")]
     ModelTier(#[source] Box<dyn Error + Send + Sync>),
+    #[error("Invalid repository path for project '{project}': {reason}")]
+    InvalidRepositoryPath { project: String, reason: String },
 }
 
 /// Plans one open item without performing host I/O or persistence.
@@ -139,22 +145,43 @@ pub enum PlanSessionError {
 /// Returns [`PlanSessionError`] for lookup, launch validation, model selection, or append
 /// preparation failures.
 #[cqrsy::command]
-pub fn execute(
+#[expect(
+    clippy::too_many_lines,
+    reason = "session planning validates one cohesive launch"
+)]
+pub async fn execute(
     command: &PlanSession,
-    store: &(impl AppRecordStore<PendingWorkRecord> + ProjectNoteStore),
-    projects: &ProjectRegistry,
+    store: &(impl PendingWorkStore + ProjectNoteStore),
+    pool: &sqlx::SqlitePool,
+    home: &PathBuf,
     agent_client: &impl AgentClient,
     repository: &impl RepositoryDirectoryClient,
     session_client: &impl SessionClient,
 ) -> Result<PlanSessionOk, PlanSessionError> {
     let probe = agent_client.probe(command.agent);
-    let item = find_open_item(store, projects, &command.id)?;
+    let mut item = find_open_item_from_db(store, pool, &command.id).await?;
     if !item.launchable {
         return Err(PlanSessionError::NotLaunchable {
             id: item.id,
             issues: item.issues,
         });
     }
+    let source_path = item
+        .repo
+        .clone()
+        .ok_or_else(|| PlanSessionError::InvalidRepositoryPath {
+            project: item.project.clone(),
+            reason: "project has no directory source".to_string(),
+        })?;
+    let resolved_repository = resolve_runtime_path::execute(&ResolveRuntimePath {
+        path: source_path,
+        home: home.clone(),
+    })
+    .map_err(|error| PlanSessionError::InvalidRepositoryPath {
+        project: item.project.clone(),
+        reason: error.to_string(),
+    })?;
+    item.repo = Some(resolved_repository.path().to_string_lossy().into_owned());
 
     let model: AgentModel = match command.model_override.clone().into_inner() {
         Some(model) => Some(model),
@@ -164,9 +191,9 @@ pub fn execute(
         .map_err(|error| PlanSessionError::ModelTier(Box::new(error)))?,
     }
     .into();
-    let prepared_update = prepare_append(command, &item.id, store, projects)?;
+    let prepared_update = prepare_append(command, &item.id, store, pool).await?;
     let target = logic::dispatch_target(&item.id);
-    let task_content = logic::load_task_content(&item.id, store, projects)?;
+    let task_content = logic::load_task_content(&item.id, store, pool).await?;
     let plan = SessionPlan {
         launch: logic::agent_launch(
             &item,
@@ -248,11 +275,11 @@ pub fn execute(
     }
 }
 
-fn prepare_append(
+async fn prepare_append(
     command: &PlanSession,
     item_id: &str,
-    store: &impl AppRecordStore<PendingWorkRecord>,
-    projects: &ProjectRegistry,
+    store: &impl PendingWorkStore,
+    pool: &sqlx::SqlitePool,
 ) -> Result<Option<PreparedPendingWorkUpdate>, UpdatePendingWorkError> {
     let PlanSessionIntent::Dispatch {
         append: Some(append),
@@ -260,6 +287,16 @@ fn prepare_append(
     else {
         return Ok(None);
     };
+    let id = identifier::parse(item_id).expect("planned session item has a canonical id");
+    let project = get_project::execute(
+        GetProject {
+            id: id.project_id(),
+            status: ProjectStatusFilter::ACTIVE,
+        },
+        pool,
+    )
+    .await
+    .map_err(|error| UpdatePendingWorkError::QueryProject(Box::new(error)))?;
     pending_work_update::prepare(
         &UpdatePendingWorkItem {
             id: item_id.to_string(),
@@ -275,7 +312,8 @@ fn prepare_append(
             tags_clear: false,
         },
         store,
-        projects,
+        &project,
+        std::slice::from_ref(&project),
     )
     .map(Some)
 }

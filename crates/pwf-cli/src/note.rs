@@ -10,7 +10,6 @@ use pwf_application::{
         remove_note::{self, RemoveNote, RemoveNoteOk},
         update_note::{self, UpdateNote, UpdateNoteOk},
     },
-    pending_work::ProjectRegistry,
     ports::clock::Clock,
 };
 use pwf_infra::obsidian::ObsidianStore;
@@ -92,10 +91,10 @@ pub(crate) enum Command {
     },
 }
 
-pub fn run(
+pub async fn run(
     arguments: &Arguments,
     store: &ObsidianStore,
-    projects: &ProjectRegistry,
+    pool: &sqlx::SqlitePool,
     clock: &impl Clock,
 ) -> Result<String, String> {
     match &arguments.command {
@@ -105,8 +104,9 @@ pub fn run(
                 number: *number,
             },
             store,
-            projects,
+            pool,
         )
+        .await
         .map(|result| render_listed(&result))
         .map_err(|error| error.to_string()),
         Command::Add {
@@ -131,9 +131,10 @@ pub fn run(
                 date: arguments.common.date.clone(),
             },
             store,
-            projects,
+            pool,
             clock,
         )
+        .await
         .map(|result| render_added(&result))
         .map_err(|error| error.to_string()),
         Command::Remove { project, id } => remove_note::execute(
@@ -142,8 +143,9 @@ pub fn run(
                 id: id.clone(),
             },
             store,
-            projects,
+            pool,
         )
+        .await
         .map(|result| render_removed(&result))
         .map_err(|error| error.to_string()),
         Command::Update { project, id, topic } => update_note::execute(
@@ -153,8 +155,9 @@ pub fn run(
                 topic: topic.join(" "),
             },
             store,
-            projects,
+            pool,
         )
+        .await
         .map(|result| render_updated(&result))
         .map_err(|error| error.to_string()),
     }

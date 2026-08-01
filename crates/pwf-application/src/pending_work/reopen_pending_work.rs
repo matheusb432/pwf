@@ -1,12 +1,20 @@
-use pwf_models::pending_work::{ProjectName, WorkItemId, WorkItemStatus};
+use pwf_models::{
+    pending_work::{ProjectName, WorkItemId, WorkItemStatus},
+    project::Project,
+};
 
 use super::{
-    ProjectRegistry, identifier,
+    identifier,
     store_util::{self, LoadItemError},
 };
-use crate::ports::{
-    app_record::AppRecordStore,
-    pending_work_record::{IndexEntry, IndexEntryState, ItemPatch, PendingWorkRecord},
+use crate::{
+    ports::pending_work_record::{
+        IndexEntry, IndexEntryState, IndexEntryStore, ItemPatch, PendingWorkStore,
+    },
+    project::{
+        ProjectStatusFilter,
+        get_project::{self, GetProject, GetProjectError},
+    },
 };
 
 #[derive(Debug, Clone)]
@@ -32,29 +40,55 @@ pub enum ReopenPendingWorkError {
     },
     #[error("{0}")]
     WriteStore(Box<dyn std::error::Error + Send + Sync>),
+    #[error("{0}")]
+    QueryProject(Box<dyn std::error::Error + Send + Sync>),
 }
 
 /// Reopens a closed item and restores or re-adds its queue link.
 ///
 /// The update clears `completed:` and `commits:`. An active item returns an idempotent skip.
 #[cqrsy::command]
-pub fn execute(
+pub async fn execute(
     cmd: &ReopenPendingWork,
-    store: &(impl AppRecordStore<PendingWorkRecord> + AppRecordStore<IndexEntry>),
-    projects: &ProjectRegistry,
+    store: &(impl PendingWorkStore + IndexEntryStore),
+    pool: &sqlx::SqlitePool,
 ) -> Result<ReopenPendingWorkOk, ReopenPendingWorkError> {
     let not_found = || ReopenPendingWorkError::ItemNotFound { id: cmd.id.clone() };
     let pending_work_identifier = identifier::parse(&cmd.id).ok_or_else(not_found)?;
-    let project_id = pending_work_identifier
-        .as_ref()
-        .split_once('-')
-        .map_or("", |(project_id, _)| project_id);
-    let project = projects
-        .get_project_name_by(&pending_work_identifier)
-        .ok_or_else(|| ReopenPendingWorkError::UnknownPrefix {
+    let project = match get_project::execute(
+        GetProject {
+            id: pending_work_identifier.project_id(),
+            status: ProjectStatusFilter::ACTIVE,
+        },
+        pool,
+    )
+    .await
+    {
+        Ok(project) => project,
+        Err(GetProjectError::ProjectNotFound { id: prefix }) => {
+            return Err(ReopenPendingWorkError::UnknownPrefix {
+                pending_work_identifier: pending_work_identifier.to_string(),
+                prefix: prefix.to_string(),
+            });
+        }
+        Err(error) => return Err(ReopenPendingWorkError::QueryProject(Box::new(error))),
+    };
+    execute_with_project(cmd, store, &project)
+}
+
+fn execute_with_project(
+    cmd: &ReopenPendingWork,
+    store: &(impl PendingWorkStore + IndexEntryStore),
+    project: &Project,
+) -> Result<ReopenPendingWorkOk, ReopenPendingWorkError> {
+    let not_found = || ReopenPendingWorkError::ItemNotFound { id: cmd.id.clone() };
+    let pending_work_identifier = identifier::parse(&cmd.id).ok_or_else(not_found)?;
+    if project.id != pending_work_identifier.project_id() {
+        return Err(ReopenPendingWorkError::UnknownPrefix {
             pending_work_identifier: pending_work_identifier.to_string(),
-            prefix: project_id.to_string(),
-        })?;
+            prefix: pending_work_identifier.project_id().to_string(),
+        });
+    }
     let record =
         store_util::require_item(store, project, &pending_work_identifier).map_err(|error| {
             match error {
@@ -66,12 +100,12 @@ pub fn execute(
     if record.status == WorkItemStatus::Active {
         return Ok(ReopenPendingWorkOk {
             id: pending_work_identifier,
-            project: project.clone(),
+            project: project.title.clone(),
             already_active: true,
         });
     }
 
-    AppRecordStore::<PendingWorkRecord>::update(
+    PendingWorkStore::update(
         store,
         project,
         &pending_work_identifier,
@@ -84,7 +118,7 @@ pub fn execute(
     )
     .map_err(|error| ReopenPendingWorkError::WriteStore(Box::new(error)))?;
 
-    let entries = AppRecordStore::<IndexEntry>::list(store, project)
+    let entries = IndexEntryStore::list_index_entries(store, project)
         .map_err(|error| ReopenPendingWorkError::WriteStore(Box::new(error)))?;
     let open_entry = IndexEntry {
         id: pending_work_identifier.clone(),
@@ -93,16 +127,11 @@ pub fn execute(
     };
     match reopen_decision(&entries, &pending_work_identifier) {
         ReopenDecision::RestoreExisting => {
-            AppRecordStore::<IndexEntry>::update(
-                store,
-                project,
-                &pending_work_identifier,
-                open_entry,
-            )
-            .map_err(|error| ReopenPendingWorkError::WriteStore(Box::new(error)))?;
+            IndexEntryStore::upsert_index_entry(store, project, open_entry)
+                .map_err(|error| ReopenPendingWorkError::WriteStore(Box::new(error)))?;
         }
         ReopenDecision::ReAddEvicted => {
-            AppRecordStore::<IndexEntry>::insert(store, project, open_entry)
+            IndexEntryStore::upsert_index_entry(store, project, open_entry)
                 .map_err(|error| ReopenPendingWorkError::WriteStore(Box::new(error)))?;
         }
         ReopenDecision::AlreadyOpen => {}
@@ -110,7 +139,7 @@ pub fn execute(
 
     Ok(ReopenPendingWorkOk {
         id: pending_work_identifier,
-        project: project.clone(),
+        project: project.title.clone(),
         already_active: false,
     })
 }
@@ -134,25 +163,22 @@ fn reopen_decision(entries: &[IndexEntry], id: &WorkItemId) -> ReopenDecision {
 
 #[cfg(test)]
 mod tests {
-    use pwf_models::pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus};
-
-    use super::{ProjectRegistry, ReopenPendingWork};
-    use crate::{
-        ports::{
-            app_record::AppRecordStore,
-            pending_work_record::{
-                IndexEntry, IndexEntryState, Materialization, PendingWorkRecord, RecordId,
-            },
-        },
-        testing::InMemoryStore,
+    use pwf_models::{
+        pending_work::{Timestamp, WorkItemId, WorkItemStatus},
+        project::Project,
     };
 
-    fn registry() -> ProjectRegistry {
-        ProjectRegistry::new(vec![(
-            ProjectName::try_new("foo-bar").unwrap(),
-            Some("/repo".to_string()),
-            Some("FOO".to_string()),
-        )])
+    use super::ReopenPendingWork;
+    use crate::{
+        ports::pending_work_record::{
+            IndexEntry, IndexEntryState, IndexEntryStore, Materialization, PendingWorkRecord,
+            RecordId,
+        },
+        testing::{InMemoryStore, project},
+    };
+
+    fn registry() -> Project {
+        project("FOO", "foo-bar")
     }
 
     fn record(id: &str, status: WorkItemStatus) -> PendingWorkRecord {
@@ -175,8 +201,8 @@ mod tests {
         }
     }
 
-    fn foo() -> ProjectName {
-        ProjectName::try_new("foo-bar").unwrap()
+    fn foo() -> Project {
+        project("FOO", "foo-bar")
     }
 
     fn staged(status: WorkItemStatus, entries: Vec<IndexEntry>) -> InMemoryStore {
@@ -184,7 +210,7 @@ mod tests {
             .with_prefix("foo-bar", "FOO")
             .with_project("foo-bar", vec![record("FOO-0001", status)]);
         for entry in entries {
-            <InMemoryStore as AppRecordStore<IndexEntry>>::insert(&store, &foo(), entry).unwrap();
+            IndexEntryStore::upsert_index_entry(&store, &foo(), entry).unwrap();
         }
         store
     }
@@ -210,7 +236,7 @@ mod tests {
             vec![entry(IndexEntryState::Done(Timestamp::new("2026-01-02")))],
         );
 
-        let out = super::execute(&command(), &store, &registry()).unwrap();
+        let out = super::execute_with_project(&command(), &store, &registry()).unwrap();
 
         assert!(!out.already_active);
         assert_eq!(store.items("foo-bar")[0].status, WorkItemStatus::Active);
@@ -223,7 +249,7 @@ mod tests {
     fn reopen_re_adds_evicted_entry() {
         let store = staged(WorkItemStatus::Done, Vec::new());
 
-        let out = super::execute(&command(), &store, &registry()).unwrap();
+        let out = super::execute_with_project(&command(), &store, &registry()).unwrap();
 
         assert!(!out.already_active);
         let entries = store.entries("foo-bar");
@@ -236,7 +262,7 @@ mod tests {
     fn reopen_already_active_is_idempotent_skip() {
         let store = staged(WorkItemStatus::Active, vec![entry(IndexEntryState::Open)]);
 
-        let out = super::execute(&command(), &store, &registry()).unwrap();
+        let out = super::execute_with_project(&command(), &store, &registry()).unwrap();
 
         assert!(out.already_active);
         assert_eq!(store.items("foo-bar")[0].commits.as_deref(), Some("a..b"));
@@ -249,7 +275,7 @@ mod tests {
             id: "XYZ-0001".to_string(),
         };
 
-        let error = super::execute(&command, &store, &registry()).unwrap_err();
+        let error = super::execute_with_project(&command, &store, &registry()).unwrap_err();
 
         assert_eq!(
             error.to_string(),

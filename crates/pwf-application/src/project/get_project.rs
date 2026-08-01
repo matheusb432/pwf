@@ -3,7 +3,7 @@ use std::error::Error;
 use pwf_models::project::ProjectId;
 
 use super::{
-    Project,
+    Project, ProjectStatusFilter,
     dto::{ProjectRow, ProjectRowError},
 };
 
@@ -12,6 +12,8 @@ use super::{
 pub struct GetProject {
     /// Project ID.
     pub id: ProjectId,
+    /// Project statuses eligible for the lookup.
+    pub status: ProjectStatusFilter,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -38,6 +40,7 @@ pub async fn execute(
     pool: &sqlx::SqlitePool,
 ) -> Result<Project, GetProjectError> {
     let id = query.id.as_ref();
+    let includes_paused = query.status.includes_paused();
     let row = sqlx::query_as!(
         ProjectRow,
         r#"
@@ -53,8 +56,10 @@ pub async fn execute(
         FROM projects
         JOIN project_sources ON project_sources.id = projects.project_source_id
         WHERE projects.id = ?
+          AND (? OR projects.paused_at IS NULL)
         "#,
         id,
+        includes_paused,
     )
     .fetch_optional(pool)
     .await
@@ -76,4 +81,40 @@ fn unexpected(
 
 fn unexpected_row(context: &'static str, source: ProjectRowError) -> GetProjectError {
     unexpected(context, source)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::insert_project;
+
+    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
+    async fn status_filter_controls_paused_project_visibility(pool: sqlx::SqlitePool) {
+        insert_project(&pool, "PWF", "pwf", "/work/pwf", "/tasks/pwf", true).await;
+        let id = ProjectId::try_new("PWF").unwrap();
+
+        let active = super::execute(
+            GetProject {
+                id: id.clone(),
+                status: ProjectStatusFilter::ACTIVE,
+            },
+            &pool,
+        )
+        .await;
+        let all = super::execute(
+            GetProject {
+                id,
+                status: ProjectStatusFilter::ALL,
+            },
+            &pool,
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(
+            active,
+            Err(GetProjectError::ProjectNotFound { .. })
+        ));
+        assert!(all.is_paused);
+    }
 }

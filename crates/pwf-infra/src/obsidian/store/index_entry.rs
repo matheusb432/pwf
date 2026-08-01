@@ -1,10 +1,12 @@
 use std::{collections::BTreeMap, path::Path, sync::LazyLock};
 
-use pwf_application::ports::{
-    app_record::AppRecordStore,
-    pending_work_record::{IndexEntry, IndexEntryState, IndexSection},
+use pwf_application::ports::pending_work_record::{
+    IndexEntry, IndexEntryState, IndexEntryStore, IndexSection, IndexSectionStore,
 };
-use pwf_models::pending_work::{ProjectName, Timestamp, WorkItemId};
+use pwf_models::{
+    pending_work::{Timestamp, WorkItemId},
+    project::Project,
+};
 use regex::Regex;
 
 use super::{
@@ -149,10 +151,7 @@ fn replace_line(content: &str, line_number: usize, new_line: &str) -> String {
 }
 
 impl ObsidianStore {
-    fn list_index_entries(
-        &self,
-        project: &ProjectName,
-    ) -> Result<Vec<IndexEntry>, ObsidianStoreError> {
+    fn list_index_entries(&self, project: &Project) -> Result<Vec<IndexEntry>, ObsidianStoreError> {
         let Some((index_path, text)) = self.validated_project_index(project)? else {
             return Ok(Vec::new());
         };
@@ -172,23 +171,23 @@ impl ObsidianStore {
     /// created-section diagnostic payload.
     fn upsert_index_entry(
         &self,
-        project: &ProjectName,
+        project: &Project,
         entry: &IndexEntry,
     ) -> Result<(), ObsidianStoreError> {
-        let index_path = self.project_paths.project_index_path(project)?;
+        let index_path = self.project_index_path(project)?;
         let index_dir = index_path.parent().unwrap_or(Path::new("."));
         if !index_dir.exists() {
             std::fs::create_dir_all(index_dir)
                 .map_err(|source| ObsidianStoreError::CreateIndexDir { source })?;
         }
-        let identity = self.project_paths.project_identity(project)?;
+        let identity = Self::project_identity(project);
         let content = if index_path.is_file() {
             let content = read_index(&index_path)?;
             let actual = parse_project_index_identity(&index_path, &content)?;
-            validate_project_index_identity(&index_path, &actual, identity)?;
+            validate_project_index_identity(&index_path, &actual, &identity)?;
             content
         } else {
-            new_project_index_content(identity)
+            new_project_index_content(&identity)
         };
         let new_line = render_entry_line(entry);
         if let Some(existing) = parse_index_lines(&index_path, &content)?
@@ -208,7 +207,7 @@ impl ObsidianStore {
         write_add_index_file(
             &index_path,
             &updated,
-            project.as_ref(),
+            project.title.as_ref(),
             created_section.as_deref(),
         )
     }
@@ -216,21 +215,21 @@ impl ObsidianStore {
     /// Renames an H2 section label in place without applying application policy.
     fn rename_section_header(
         &self,
-        project: &ProjectName,
+        project: &Project,
         from: &str,
         to: &str,
     ) -> Result<(), ObsidianStoreError> {
-        let index_path = self.project_paths.project_index_path(project)?;
+        let index_path = self.project_index_path(project)?;
         let content = read_index(&index_path)?;
         write_index(&index_path, &rename_header_lines(&content, from, to))
     }
 
     fn delete_index_entry(
         &self,
-        project: &ProjectName,
+        project: &Project,
         id: &WorkItemId,
     ) -> Result<(), ObsidianStoreError> {
-        let index_path = self.project_paths.project_index_path(project)?;
+        let index_path = self.project_index_path(project)?;
         let content = read_index(&index_path)?;
         let updated = remove_index_link(&content, id.as_ref());
         if updated == content {
@@ -242,61 +241,26 @@ impl ObsidianStore {
     }
 }
 
-impl AppRecordStore<IndexEntry> for ObsidianStore {
+impl IndexEntryStore for ObsidianStore {
     type Error = ObsidianStoreError;
 
-    fn get(
-        &self,
-        project: &ProjectName,
-        id: &WorkItemId,
-    ) -> Result<Option<IndexEntry>, Self::Error> {
-        Ok(self
-            .list_index_entries(project)?
-            .into_iter()
-            .find(|entry| entry.id == *id))
+    fn list_index_entries(&self, project: &Project) -> Result<Vec<IndexEntry>, Self::Error> {
+        ObsidianStore::list_index_entries(self, project)
     }
 
-    fn list(&self, project: &ProjectName) -> Result<Vec<IndexEntry>, Self::Error> {
-        self.list_index_entries(project)
+    fn upsert_index_entry(&self, project: &Project, entry: IndexEntry) -> Result<(), Self::Error> {
+        ObsidianStore::upsert_index_entry(self, project, &entry)
     }
 
-    fn insert(&self, project: &ProjectName, new: IndexEntry) -> Result<IndexEntry, Self::Error> {
-        self.upsert_index_entry(project, &new)?;
-        Ok(new)
-    }
-
-    fn update(
-        &self,
-        project: &ProjectName,
-        _id: &WorkItemId,
-        patch: IndexEntry,
-    ) -> Result<(), Self::Error> {
-        self.upsert_index_entry(project, &patch)
-    }
-
-    fn delete(&self, project: &ProjectName, id: &WorkItemId) -> Result<(), Self::Error> {
-        self.delete_index_entry(project, id)
+    fn delete_index_entry(&self, project: &Project, id: &WorkItemId) -> Result<(), Self::Error> {
+        ObsidianStore::delete_index_entry(self, project, id)
     }
 }
 
-/// Lists and renames index sections.
-///
-/// [`IndexEntry`] upserts create sections implicitly. Direct insertion and deletion return
-/// [`ObsidianStoreError::IndexSectionWriteUnsupported`].
-impl AppRecordStore<IndexSection> for ObsidianStore {
+impl IndexSectionStore for ObsidianStore {
     type Error = ObsidianStoreError;
 
-    fn get(
-        &self,
-        project: &ProjectName,
-        label: &String,
-    ) -> Result<Option<IndexSection>, Self::Error> {
-        Ok(<Self as AppRecordStore<IndexSection>>::list(self, project)?
-            .into_iter()
-            .find(|section| section.label == *label))
-    }
-
-    fn list(&self, project: &ProjectName) -> Result<Vec<IndexSection>, Self::Error> {
+    fn list_index_sections(&self, project: &Project) -> Result<Vec<IndexSection>, Self::Error> {
         let Some((_, text)) = self.validated_project_index(project)? else {
             return Ok(Vec::new());
         };
@@ -306,25 +270,13 @@ impl AppRecordStore<IndexSection> for ObsidianStore {
             .collect())
     }
 
-    fn insert(
+    fn rename_index_section(
         &self,
-        _project: &ProjectName,
-        _new: IndexSection,
-    ) -> Result<IndexSection, Self::Error> {
-        Err(ObsidianStoreError::IndexSectionWriteUnsupported { op: "insert" })
-    }
-
-    fn update(
-        &self,
-        project: &ProjectName,
-        label: &String,
-        patch: IndexSection,
+        project: &Project,
+        current_label: &str,
+        new_label: &str,
     ) -> Result<(), Self::Error> {
-        self.rename_section_header(project, label, &patch.label)
-    }
-
-    fn delete(&self, _project: &ProjectName, _label: &String) -> Result<(), Self::Error> {
-        Err(ObsidianStoreError::IndexSectionWriteUnsupported { op: "delete" })
+        self.rename_section_header(project, current_label, new_label)
     }
 }
 

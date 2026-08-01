@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use pwf_models::pending_work::{ProjectName, WorkItemId};
+use pwf_models::{pending_work::WorkItemId, project::Project};
 
 use super::{ObsidianStore, ObsidianStoreError};
 use crate::obsidian::identity::inspect_project_task_notes;
@@ -15,15 +15,15 @@ pub(super) struct TaskFile {
 impl ObsidianStore {
     pub(super) fn task_files_for_project(
         &self,
-        project: &ProjectName,
+        project: &Project,
     ) -> Result<Vec<TaskFile>, ObsidianStoreError> {
-        let project_dir = self.project_paths.project_directory(project)?;
-        let index_path = self.project_paths.project_index_path(project)?;
+        let project_dir = self.tasks_path(project)?;
+        let index_path = self.project_index_path(project)?;
         if !project_dir.exists() {
             return Ok(Vec::new());
         }
-        let identity = self.project_paths.project_identity(project)?;
-        inspect_project_task_notes(project_dir, &index_path, identity).map(|tasks| {
+        let identity = Self::project_identity(project);
+        inspect_project_task_notes(&project_dir, &index_path, &identity).map(|tasks| {
             tasks
                 .into_iter()
                 .map(|task| TaskFile {
@@ -38,7 +38,7 @@ impl ObsidianStore {
 
     pub(super) fn next_task_id(
         &self,
-        project: &ProjectName,
+        project: &Project,
         prefix: &str,
     ) -> Result<String, ObsidianStoreError> {
         let maximum = self

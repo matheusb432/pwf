@@ -1,12 +1,10 @@
 use std::{fmt::Write as _, path::Path};
 
-use pwf_application::ports::{
-    app_record::AppRecordStore,
-    project_note::{NewProjectNote, ProjectNotePatch, ProjectNoteStore},
-};
+use pwf_application::ports::project_note::{NewProjectNote, ProjectNotePatch, ProjectNoteStore};
 use pwf_models::{
     note::{NoteId, ProjectNote},
     pending_work::{ProjectId, ProjectName},
+    project::Project,
 };
 use regex::Regex;
 
@@ -17,14 +15,11 @@ use crate::obsidian::{
     note_text,
 };
 
-impl AppRecordStore<ProjectNote> for ObsidianStore {
+impl ProjectNoteStore for ObsidianStore {
     type Error = ObsidianStoreError;
 
-    fn get(&self, project: &ProjectName, id: &NoteId) -> Result<Option<ProjectNote>, Self::Error> {
-        let path = self
-            .project_paths
-            .project_directory(project)?
-            .join(note_file_name(id));
+    fn get_note(&self, project: &Project, id: &NoteId) -> Result<Option<ProjectNote>, Self::Error> {
+        let path = self.tasks_path(project)?.join(note_file_name(id));
         if !path.exists() {
             return Ok(None);
         }
@@ -40,20 +35,19 @@ impl AppRecordStore<ProjectNote> for ObsidianStore {
         }))
     }
 
-    fn list(&self, project: &ProjectName) -> Result<Vec<ProjectNote>, Self::Error> {
-        let project_directory = self.project_paths.project_directory(project)?;
-        let project_id = self.project_paths.project_identity(project)?.id();
-        Ok(list_notes(project_directory, project_id))
+    fn list_notes(&self, project: &Project) -> Result<Vec<ProjectNote>, Self::Error> {
+        let project_directory = self.tasks_path(project)?;
+        Ok(list_notes(&project_directory, &project.id))
     }
 
-    fn insert(
+    fn insert_note(
         &self,
-        project: &ProjectName,
+        project: &Project,
         new: NewProjectNote,
     ) -> Result<ProjectNote, Self::Error> {
-        let project_directory = self.project_paths.project_directory(project)?;
+        let project_directory = self.tasks_path(project)?;
         let note_path = project_directory.join(note_file_name(&new.id));
-        let source = note_content(project.as_ref(), &new);
+        let source = note_content(project.title.as_ref(), &new);
         fs_atomic::write_text_atomic(&note_path, &source).map_err(|source| {
             ObsidianStoreError::WriteProjectNote {
                 id: new.id.to_string(),
@@ -61,7 +55,7 @@ impl AppRecordStore<ProjectNote> for ObsidianStore {
             }
         })?;
 
-        let index_path = self.project_paths.project_index_path(project)?;
+        let index_path = self.project_index_path(project)?;
         let index = std::fs::read_to_string(&index_path).unwrap_or_default();
         write_index(&index_path, &add_note_link(&index, new.id.as_ref()))?;
         Ok(ProjectNote {
@@ -70,18 +64,15 @@ impl AppRecordStore<ProjectNote> for ObsidianStore {
         })
     }
 
-    fn update(
+    fn update_note(
         &self,
-        project: &ProjectName,
+        project: &Project,
         id: &NoteId,
         patch: ProjectNotePatch,
     ) -> Result<(), Self::Error> {
-        let note_path = self
-            .project_paths
-            .project_directory(project)?
-            .join(note_file_name(id));
+        let note_path = self.tasks_path(project)?.join(note_file_name(id));
         if !note_path.exists() {
-            return Err(note_not_found(project, id));
+            return Err(note_not_found(&project.title, id));
         }
         let source = std::fs::read_to_string(&note_path).map_err(|source| {
             ObsidianStoreError::ReadProjectNote {
@@ -97,13 +88,10 @@ impl AppRecordStore<ProjectNote> for ObsidianStore {
         )
     }
 
-    fn delete(&self, project: &ProjectName, id: &NoteId) -> Result<(), Self::Error> {
-        let note_path = self
-            .project_paths
-            .project_directory(project)?
-            .join(note_file_name(id));
+    fn delete_note(&self, project: &Project, id: &NoteId) -> Result<(), Self::Error> {
+        let note_path = self.tasks_path(project)?.join(note_file_name(id));
         if !note_path.exists() {
-            return Err(note_not_found(project, id));
+            return Err(note_not_found(&project.title, id));
         }
         std::fs::remove_file(&note_path).map_err(|source| {
             ObsidianStoreError::RemoveProjectNote {
@@ -112,22 +100,12 @@ impl AppRecordStore<ProjectNote> for ObsidianStore {
             }
         })?;
 
-        let index_path = self.project_paths.project_index_path(project)?;
+        let index_path = self.project_index_path(project)?;
         let index = std::fs::read_to_string(&index_path).unwrap_or_default();
         write_index(&index_path, &remove_note_link(&index, id.as_ref()))
     }
-}
-
-impl ProjectNoteStore for ObsidianStore {
-    fn note_exists(
-        &self,
-        project: &ProjectName,
-        id: &NoteId,
-    ) -> Result<bool, <Self as AppRecordStore<ProjectNote>>::Error> {
-        let note_path = self
-            .project_paths
-            .project_directory(project)?
-            .join(note_file_name(id));
+    fn note_exists(&self, project: &Project, id: &NoteId) -> Result<bool, Self::Error> {
+        let note_path = self.tasks_path(project)?.join(note_file_name(id));
         note_path
             .try_exists()
             .map_err(|source| ObsidianStoreError::InspectProjectNote {
@@ -136,10 +114,7 @@ impl ProjectNoteStore for ObsidianStore {
             })
     }
 
-    fn read_note_markdown(
-        &self,
-        locator: &str,
-    ) -> Result<String, <Self as AppRecordStore<ProjectNote>>::Error> {
+    fn read_note_markdown(&self, locator: &str) -> Result<String, Self::Error> {
         read_item_file(Path::new(locator))
     }
 }
@@ -292,45 +267,43 @@ fn write_index(path: &Path, source: &str) -> Result<(), ObsidianStoreError> {
 mod tests {
     use std::{assert_matches, fs, path::Path};
 
-    use pwf_application::{
-        note::remove_note::{self, RemoveNote},
-        pending_work::ProjectRegistry,
-        ports::{
-            app_record::AppRecordStore,
-            project_note::{NewProjectNote, ProjectNotePatch},
-        },
+    use pwf_application::ports::project_note::{
+        NewProjectNote, ProjectNotePatch, ProjectNoteStore,
     };
     use pwf_models::{
-        note::{NoteId, ProjectNote},
-        pending_work::{ProjectId, ProjectIndexIdentity, ProjectName, Timestamp},
+        note::NoteId,
+        pending_work::{ProjectId, ProjectName, Timestamp},
+        project::{
+            Project, ProjectSource, ProjectSourceKind, ProjectSourceValue, ProjectTasks,
+            ProjectTasksKind, ProjectTasksPath,
+        },
     };
 
-    use super::super::{ObsidianProject, ObsidianStore, ObsidianStoreError};
+    use super::super::{ObsidianStore, ObsidianStoreError};
 
     fn store(tasks_path: &Path) -> ObsidianStore {
-        ObsidianStore::new([ObsidianProject::new(
-            ProjectIndexIdentity::new(
-                ProjectId::try_new("PWF").unwrap(),
-                ProjectName::try_new("pwf").unwrap(),
-            ),
-            tasks_path.to_path_buf(),
-        )])
+        ObsidianStore::new(tasks_path.to_path_buf())
     }
 
-    fn project() -> ProjectName {
-        ProjectName::try_new("pwf").unwrap()
+    fn project(tasks_path: &Path) -> Project {
+        Project {
+            id: ProjectId::try_new("PWF").unwrap(),
+            title: ProjectName::try_new("pwf").unwrap(),
+            source: ProjectSource::new(
+                ProjectSourceKind::Directory,
+                ProjectSourceValue::try_new("/repo/pwf").unwrap(),
+            ),
+            tasks: ProjectTasks::new(
+                ProjectTasksKind::Directory,
+                ProjectTasksPath::try_new(tasks_path.to_string_lossy()).unwrap(),
+            ),
+            created_at: "2026-07-25T00:00:00.000Z".to_string(),
+            is_paused: false,
+        }
     }
 
     fn identifier(number: u32) -> NoteId {
         NoteId::try_new(format!("PWF-NOTE-{number:04}")).unwrap()
-    }
-
-    fn registry() -> ProjectRegistry {
-        ProjectRegistry::new([(
-            project(),
-            Some("/repo/pwf".to_string()),
-            Some("PWF".to_string()),
-        )])
     }
 
     fn new_note(number: u32, topic: &str) -> NewProjectNote {
@@ -356,9 +329,9 @@ mod tests {
         fs::write(&index_path, "- [ ] [[PWF-0001|task]]\n").unwrap();
         let store = store(&tasks_path);
 
-        let inserted = <ObsidianStore as AppRecordStore<ProjectNote>>::insert(
+        let inserted = ProjectNoteStore::insert_note(
             &store,
-            &project(),
+            &project(&tasks_path),
             new_note(1, "remember milk"),
         )
         .unwrap();
@@ -390,7 +363,7 @@ mod tests {
             "- [ ] [[PWF-0001|task]]\n\n### Notes\n\n- [[PWF-NOTE-0001]]\n"
         );
         assert_eq!(
-            <ObsidianStore as AppRecordStore<ProjectNote>>::list(&store, &project()).unwrap(),
+            ProjectNoteStore::list_notes(&store, &project(&tasks_path)).unwrap(),
             vec![inserted]
         );
     }
@@ -414,9 +387,9 @@ mod tests {
         let index_before = fs::read(&index_path).unwrap();
         let store = store(&tasks_path);
 
-        <ObsidianStore as AppRecordStore<ProjectNote>>::update(
+        ProjectNoteStore::update_note(
             &store,
-            &project(),
+            &project(&tasks_path),
             &identifier(1),
             ProjectNotePatch {
                 topic: "new message".to_string(),
@@ -453,9 +426,9 @@ mod tests {
         fs::write(tasks_path.join("PWF-NOTE-0001.md"), source).unwrap();
         let store = store(&tasks_path);
 
-        <ObsidianStore as AppRecordStore<ProjectNote>>::update(
+        ProjectNoteStore::update_note(
             &store,
-            &project(),
+            &project(&tasks_path),
             &identifier(1),
             ProjectNotePatch {
                 topic: "new topic".to_string(),
@@ -479,12 +452,8 @@ mod tests {
         fs::write(&index_path, index).unwrap();
         let store = store(&tasks_path);
 
-        let error = <ObsidianStore as AppRecordStore<ProjectNote>>::delete(
-            &store,
-            &project(),
-            &identifier(1),
-        )
-        .unwrap_err();
+        let error = ProjectNoteStore::delete_note(&store, &project(&tasks_path), &identifier(1))
+            .unwrap_err();
 
         assert_matches!(
             error,
@@ -495,7 +464,7 @@ mod tests {
     }
 
     #[test]
-    fn remove_operation_deletes_non_utf8_note_and_preserves_other_index_content() {
+    fn delete_removes_non_utf8_note_and_preserves_other_index_content() {
         let directory = tempfile::tempdir().unwrap();
         let tasks_path = directory.path().join("tasks");
         fs::create_dir_all(&tasks_path).unwrap();
@@ -509,17 +478,7 @@ mod tests {
         .unwrap();
         let store = store(&tasks_path);
 
-        let removed = remove_note::execute(
-            RemoveNote {
-                project_identifier: "pwf".to_string(),
-                id: "note-0001".to_string(),
-            },
-            &store,
-            &registry(),
-        )
-        .unwrap();
-
-        assert_eq!(removed.id.as_ref(), "PWF-NOTE-0001");
+        ProjectNoteStore::delete_note(&store, &project(&tasks_path), &identifier(1)).unwrap();
         assert!(!note_path.exists());
         assert_eq!(
             fs::read_to_string(index_path).unwrap(),
@@ -541,12 +500,8 @@ mod tests {
         fs::create_dir(tasks_path.join("pwf.md")).unwrap();
         let store = store(&tasks_path);
 
-        let error = <ObsidianStore as AppRecordStore<ProjectNote>>::delete(
-            &store,
-            &project(),
-            &identifier(1),
-        )
-        .unwrap_err();
+        let error = ProjectNoteStore::delete_note(&store, &project(&tasks_path), &identifier(1))
+            .unwrap_err();
 
         assert_matches!(error, ObsidianStoreError::WriteProjectNoteIndex { .. });
         assert!(!note_path.exists());

@@ -1,23 +1,4 @@
-use pwf_models::{
-    note::NoteId,
-    pending_work::{ProjectId, ProjectName},
-};
-
-use crate::pending_work::ProjectRegistry;
-
-pub(super) struct ResolvedProject {
-    pub project_name: ProjectName,
-    pub project_id: ProjectId,
-}
-
-pub(super) fn resolve_project(projects: &ProjectRegistry, raw: &str) -> Option<ResolvedProject> {
-    let project_name = projects.resolve(raw).ok()?.clone();
-    let project_id = projects.get_project_id_by(&project_name)?;
-    Some(ResolvedProject {
-        project_name,
-        project_id,
-    })
-}
+use pwf_models::{note::NoteId, project::ProjectId};
 
 pub(super) fn resolve_note(raw: &str, project_id: &ProjectId) -> Option<NoteId> {
     let raw_uppercase = raw.trim().to_ascii_uppercase();

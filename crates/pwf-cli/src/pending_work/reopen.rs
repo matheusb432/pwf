@@ -1,7 +1,6 @@
 use clap::Args;
-use pwf_application::pending_work::{
-    ProjectRegistry,
-    reopen_pending_work::{self, ReopenPendingWork, ReopenPendingWorkError},
+use pwf_application::pending_work::reopen_pending_work::{
+    self, ReopenPendingWork, ReopenPendingWorkError,
 };
 use pwf_infra::obsidian::ObsidianStore;
 
@@ -17,13 +16,14 @@ pub struct Arguments {
 
 use super::{render::render_reopened, shared::PendingWorkError};
 
-pub(super) fn run(
+pub(super) async fn run(
     arguments: &Arguments,
     store: &ObsidianStore,
-    projects: &ProjectRegistry,
+    pool: &sqlx::SqlitePool,
 ) -> Result<String, PendingWorkError> {
     let id = arguments.identifier.required("reopen")?;
-    let outcome = reopen_pending_work::execute(&ReopenPendingWork { id }, store, projects)
+    let outcome = reopen_pending_work::execute(&ReopenPendingWork { id }, store, pool)
+        .await
         .map_err(map_reopen_error)?;
     Ok(render_reopened(&outcome))
 }
@@ -40,6 +40,9 @@ fn map_reopen_error(error: ReopenPendingWorkError) -> PendingWorkError {
         }),
         ReopenPendingWorkError::WriteStore(source) => {
             PendingWorkError::Reopen(ReopenPendingWorkError::WriteStore(source))
+        }
+        ReopenPendingWorkError::QueryProject(source) => {
+            PendingWorkError::Reopen(ReopenPendingWorkError::QueryProject(source))
         }
     }
 }

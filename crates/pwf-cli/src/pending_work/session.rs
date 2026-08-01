@@ -1,11 +1,10 @@
+use std::path::PathBuf;
+
 use clap::Args;
-use pwf_application::pending_work::{
-    ProjectRegistry,
-    session::{
-        AgentProbe, PlanSessionIntent,
-        dispatch_session::{self, DispatchSession},
-        plan_session::{self, PlanSession, PlanSessionOk},
-    },
+use pwf_application::pending_work::session::{
+    AgentProbe, PlanSessionIntent,
+    dispatch_session::{self, DispatchSession},
+    plan_session::{self, PlanSession, PlanSessionOk},
 };
 use pwf_infra::{
     obsidian::ObsidianStore,
@@ -103,11 +102,12 @@ impl From<SessionEffortChoice> for SessionEffort {
     }
 }
 
-pub(super) fn run(
+pub(super) async fn run(
     arguments: &Arguments,
     console: Console,
     store: &ObsidianStore,
-    projects: &ProjectRegistry,
+    pool: &sqlx::SqlitePool,
+    home: &PathBuf,
 ) -> Result<String, PendingWorkError> {
     let agent = Agent::from(arguments.agent);
 
@@ -136,11 +136,13 @@ pub(super) fn run(
     let planned = plan_session::execute(
         &request,
         store,
-        projects,
+        pool,
+        home,
         &AgentHarness,
         &LocalRepositoryClient,
         &TmuxHarness,
     )
+    .await
     .map_err(map_plan_error)?;
     let planned = match planned {
         PlanSessionOk::DryRun(dry_run) => {
@@ -173,11 +175,12 @@ pub(super) fn run(
     let outcome = dispatch_session::execute(
         DispatchSession::new(planned),
         store,
-        projects,
+        pool,
         &AgentHarness,
         &InlineHarness,
         &TmuxHarness,
-    )?;
+    )
+    .await?;
     Ok(render_dispatch(
         &outcome,
         console.color_with(match arguments.color {

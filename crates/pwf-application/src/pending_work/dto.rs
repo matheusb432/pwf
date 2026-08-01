@@ -1,4 +1,7 @@
-use pwf_models::pending_work::{ProjectName, WorkItemId, WorkItemStatus};
+use pwf_models::{
+    pending_work::{WorkItemId, WorkItemStatus},
+    project::Project,
+};
 
 use crate::ports::pending_work_record::ItemPatch;
 
@@ -32,7 +35,7 @@ pub struct PendingWorkItemView {
 }
 
 pub(in crate::pending_work) struct PendingWorkItemIdentity {
-    pub(in crate::pending_work) project: ProjectName,
+    pub(in crate::pending_work) project: Project,
     pub(in crate::pending_work) identifier: WorkItemId,
 }
 

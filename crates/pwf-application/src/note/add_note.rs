@@ -1,12 +1,16 @@
 //! Adds one note to a managed project.
 
-use pwf_models::{note::NoteId, pending_work::Timestamp};
+use pwf_models::{note::NoteId, pending_work::Timestamp, project::Project};
 
-use super::logic::{self, ResolvedProject};
 use crate::{
-    ProjectNote,
-    pending_work::ProjectRegistry,
-    ports::{app_record::AppRecordStore, clock::Clock, project_note::NewProjectNote},
+    ports::{
+        clock::Clock,
+        project_note::{NewProjectNote, ProjectNoteStore},
+    },
+    project::{
+        ProjectStatusFilter,
+        resolve_project::{self, ResolveProject, ResolveProjectError},
+    },
 };
 
 /// Requests creation of one project note.
@@ -49,6 +53,8 @@ pub enum AddNoteError {
     #[error("Project '{project}' has no available four-digit note identifiers.")]
     IdentifierExhausted { project: String },
     #[error("{0}")]
+    Project(#[source] Box<dyn std::error::Error + Send + Sync>),
+    #[error("{0}")]
     Store(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
 
@@ -62,20 +68,31 @@ pub enum AddNoteError {
 /// [`AddNoteError::IdentifierExhausted`] when the greatest existing suffix is `9999`, or
 /// [`AddNoteError::Store`] when listing or inserting notes fails.
 #[cqrsy::command]
-pub fn execute(
+pub async fn execute(
     command: AddNote,
-    store: &impl AppRecordStore<ProjectNote>,
-    projects: &ProjectRegistry,
+    store: &impl ProjectNoteStore,
+    pool: &sqlx::SqlitePool,
     clock: &impl Clock,
 ) -> Result<AddNoteOk, AddNoteError> {
-    let ResolvedProject {
-        project_name,
-        project_id,
-    } = logic::resolve_project(projects, &command.project_identifier).ok_or_else(|| {
-        AddNoteError::UnknownProject {
-            identifier: command.project_identifier.clone(),
-        }
-    })?;
+    let identifier = command.project_identifier.clone();
+    let project = resolve_project::execute(
+        ResolveProject {
+            identifier: identifier.clone(),
+            status: ProjectStatusFilter::ACTIVE,
+        },
+        pool,
+    )
+    .await
+    .map_err(|error| project_error(identifier, error))?;
+    execute_for_project(command, store, &project, clock)
+}
+
+fn execute_for_project(
+    command: AddNote,
+    store: &impl ProjectNoteStore,
+    project: &Project,
+    clock: &impl Clock,
+) -> Result<AddNoteOk, AddNoteError> {
     let topic = normalize_inline(&command.topic);
     if topic.is_empty() {
         return Err(AddNoteError::EmptyTopic);
@@ -85,7 +102,7 @@ pub fn execute(
         return Err(AddNoteError::EmptyTldr);
     }
     let notes = store
-        .list(&project_name)
+        .list_notes(project)
         .map_err(|error| AddNoteError::Store(Box::new(error)))?;
     let next_number = notes
         .iter()
@@ -95,17 +112,17 @@ pub fn execute(
         .checked_add(1)
         .filter(|number| *number <= 9_999)
         .ok_or_else(|| AddNoteError::IdentifierExhausted {
-            project: project_name.to_string(),
+            project: project.title.to_string(),
         })?;
-    let id = NoteId::try_new(format!("{project_id}-NOTE-{next_number:04}")).map_err(|_| {
+    let id = NoteId::try_new(format!("{}-NOTE-{next_number:04}", project.id)).map_err(|_| {
         AddNoteError::IdentifierExhausted {
-            project: project_name.to_string(),
+            project: project.title.to_string(),
         }
     })?;
     let created = command.date.map_or_else(|| clock.today(), Timestamp::new);
     let created = store
-        .insert(
-            &project_name,
+        .insert_note(
+            project,
             NewProjectNote {
                 id,
                 topic: topic.clone(),
@@ -123,6 +140,13 @@ pub fn execute(
         id: created.id,
         topic: created.topic,
     })
+}
+
+fn project_error(identifier: String, error: ResolveProjectError) -> AddNoteError {
+    match error {
+        ResolveProjectError::Unknown { .. } => AddNoteError::UnknownProject { identifier },
+        error @ ResolveProjectError::Unexpected { .. } => AddNoteError::Project(Box::new(error)),
+    }
 }
 
 fn normalize_inline(value: &str) -> String {
@@ -154,16 +178,14 @@ mod tests {
     use std::error::Error as _;
 
     use pwf_models::{
-        note::NoteId,
-        pending_work::{ProjectName, Timestamp},
+        note::{NoteId, ProjectNote},
+        pending_work::Timestamp,
     };
 
     use super::{AddNote, AddNoteError};
     use crate::{
-        ProjectNote,
-        pending_work::ProjectRegistry,
         ports::clock::Clock,
-        testing::{InMemoryStore, ProjectNoteFailure},
+        testing::{InMemoryStore, ProjectNoteFailure, project},
     };
 
     #[derive(Debug, thiserror::Error)]
@@ -177,14 +199,6 @@ mod tests {
         fn today(&self) -> Timestamp {
             Timestamp::new("2026-07-26")
         }
-    }
-
-    fn registry() -> ProjectRegistry {
-        ProjectRegistry::new([(
-            ProjectName::try_new("pwf").unwrap(),
-            Some("/repo/pwf".to_string()),
-            Some("PWF".to_string()),
-        )])
     }
 
     fn note(number: u32, topic: &str) -> ProjectNote {
@@ -214,7 +228,9 @@ mod tests {
         let mut command = command("pwf");
         command.topic = " \t ".to_string();
 
-        let error = super::execute(command, &store, &registry(), &FixedClock).unwrap_err();
+        let error =
+            super::execute_for_project(command, &store, &project("PWF", "pwf"), &FixedClock)
+                .unwrap_err();
 
         assert!(matches!(error, AddNoteError::EmptyTopic));
         assert!(store.project_notes("pwf").is_empty());
@@ -226,24 +242,26 @@ mod tests {
         let mut command = command("pwf");
         command.tldr = " \t ".to_string();
 
-        let error = super::execute(command, &store, &registry(), &FixedClock).unwrap_err();
+        let error =
+            super::execute_for_project(command, &store, &project("PWF", "pwf"), &FixedClock)
+                .unwrap_err();
 
         assert!(matches!(error, AddNoteError::EmptyTldr));
         assert!(store.project_notes("pwf").is_empty());
     }
 
     #[test]
-    fn project_name_and_id_resolve_to_maximum_suffix_plus_one() {
+    fn maximum_suffix_allocates_the_next_identifier() {
         for project_identifier in ["pwf", "PWF"] {
             let store = InMemoryStore::default().with_project_notes(
                 "pwf",
                 vec![note(2, "two"), note(9, "nine"), note(4, "four")],
             );
 
-            let added = super::execute(
+            let added = super::execute_for_project(
                 command(project_identifier),
                 &store,
-                &registry(),
+                &project("PWF", "pwf"),
                 &FixedClock,
             )
             .unwrap();
@@ -261,7 +279,8 @@ mod tests {
     fn explicit_date_overrides_the_clock() {
         let store = InMemoryStore::default();
 
-        super::execute(command("pwf"), &store, &registry(), &FixedClock).unwrap();
+        super::execute_for_project(command("pwf"), &store, &project("PWF", "pwf"), &FixedClock)
+            .unwrap();
 
         assert_eq!(
             store.project_note_creations("pwf"),
@@ -275,7 +294,7 @@ mod tests {
         let mut command = command("pwf");
         command.date = None;
 
-        super::execute(command, &store, &registry(), &FixedClock).unwrap();
+        super::execute_for_project(command, &store, &project("PWF", "pwf"), &FixedClock).unwrap();
 
         assert_eq!(
             store.project_note_creations("pwf"),
@@ -287,7 +306,9 @@ mod tests {
     fn exhausted_four_digit_suffix_is_reported_without_inserting() {
         let store = InMemoryStore::default().with_project_notes("pwf", vec![note(9_999, "last")]);
 
-        let error = super::execute(command("pwf"), &store, &registry(), &FixedClock).unwrap_err();
+        let error =
+            super::execute_for_project(command("pwf"), &store, &project("PWF", "pwf"), &FixedClock)
+                .unwrap_err();
 
         assert!(matches!(
             error,

@@ -1,20 +1,26 @@
 use std::{path::PathBuf, sync::LazyLock};
 
-use pwf_models::pending_work::{
-    EffortTier, ProjectName, Tags, TaskTitle, TaskTitleError, Timestamp,
+use pwf_models::{
+    pending_work::{EffortTier, ProjectName, Tags, TaskTitle, TaskTitleError, Timestamp},
+    project::Project,
 };
 use regex::Regex;
 
 use super::{
-    ProjectRegistry, ProjectResolutionError,
     logic::pending_work_creation::{added_item, project_mapped},
     prerequisite::PrerequisiteValidationError,
     store_util, tag_policy, title,
 };
-use crate::ports::{
-    app_record::AppRecordStore,
-    clock::Clock,
-    pending_work_record::{IndexEntry, IndexSection, NewItem, PendingWorkRecord},
+use crate::{
+    ports::{
+        clock::Clock,
+        pending_work_record::{IndexEntryStore, IndexSectionStore, NewItem, PendingWorkStore},
+    },
+    project::{
+        ProjectStatusFilter,
+        get_project::{self, GetProject},
+        resolve_project::{self, ResolveProject, ResolveProjectError},
+    },
 };
 
 /// Reports the persistence phase that failed while creating an item and its index entry.
@@ -135,9 +141,9 @@ pub enum AddPendingWorkError {
     #[error("Unknown --section value '{value}'. Use one of: future, human, low-prio.")]
     InvalidSection { value: String },
     #[error(transparent)]
-    ProjectResolution(#[from] ProjectResolutionError),
-    #[error("Project '{project}' has no directory source; update the managed project record.")]
-    ProjectHasNoDirectorySource { project: String },
+    ProjectResolution(#[from] ResolveProjectError),
+    #[error("{0}")]
+    QueryProject(#[source] Box<dyn std::error::Error + Send + Sync>),
     #[error(
         "Invalid --tag value {raw:?}; use lowercase/uppercase ASCII letters, digits, '_' or '-', without leading, trailing, or repeated separators."
     )]
@@ -170,14 +176,52 @@ pub enum AddPendingWorkError {
 /// Panics if the store's `insert` violates its contract by returning a record
 /// without a canonical [`pwf_models::pending_work::WorkItemId`].
 #[cqrsy::command]
-pub fn execute(
+pub async fn execute(
     cmd: &AddPendingWorkItem,
-    store: &(
-         impl AppRecordStore<PendingWorkRecord>
-         + AppRecordStore<IndexEntry>
-         + AppRecordStore<IndexSection>
-     ),
-    projects: &ProjectRegistry,
+    store: &(impl PendingWorkStore + IndexEntryStore + IndexSectionStore),
+    pool: &sqlx::SqlitePool,
+    clock: &impl Clock,
+) -> Result<AddPendingWorkItemOk, AddPendingWorkError> {
+    let identifier = cmd
+        .project_identifier
+        .as_deref()
+        .ok_or(AddPendingWorkError::Usage)?;
+    let project = resolve_project::execute(
+        ResolveProject {
+            identifier: identifier.to_string(),
+            status: ProjectStatusFilter::ACTIVE,
+        },
+        pool,
+    )
+    .await?;
+    let mut projects = vec![project.clone()];
+    if !cmd.prerequisites.is_empty() {
+        for id in
+            super::prerequisite::project_ids(&cmd.prerequisites).map_err(map_prerequisite_error)?
+        {
+            if projects.iter().any(|project| project.id == id) {
+                continue;
+            }
+            let project = get_project::execute(
+                GetProject {
+                    id,
+                    status: ProjectStatusFilter::ACTIVE,
+                },
+                pool,
+            )
+            .await
+            .map_err(|error| AddPendingWorkError::QueryProject(Box::new(error)))?;
+            projects.push(project);
+        }
+    }
+    execute_with_projects(cmd, store, &project, &projects, clock)
+}
+
+fn execute_with_projects(
+    cmd: &AddPendingWorkItem,
+    store: &(impl PendingWorkStore + IndexEntryStore + IndexSectionStore),
+    project: &Project,
+    projects: &[Project],
     clock: &impl Clock,
 ) -> Result<AddPendingWorkItemOk, AddPendingWorkError> {
     let section = resolve_section(cmd.section.as_deref(), cmd.human)?;
@@ -194,7 +238,7 @@ pub fn execute(
                 .map_err(map_prerequisite_error)?,
         )
     };
-    let prepared = prepare_source(cmd, projects)?;
+    let prepared = prepare_source(cmd, project)?;
 
     let created = store_util::create_item(
         store,
@@ -211,7 +255,7 @@ pub fn execute(
     )
     .map_err(|source| AddPendingWorkError::WriteStore {
         diagnostics: AddPendingWorkDiagnostics {
-            project: prepared.project.to_string(),
+            project: prepared.project.title.to_string(),
             created_section: source
                 .created_section()
                 .map(|(_, section)| section.to_string()),
@@ -223,7 +267,7 @@ pub fn execute(
 }
 
 struct PreparedAdd {
-    project: ProjectName,
+    project: Project,
     title: TaskTitle,
     prompt: String,
 }
@@ -241,9 +285,9 @@ fn parse_tags(values: &[String]) -> Result<Option<Tags>, AddPendingWorkError> {
 
 fn prepare_source(
     command: &AddPendingWorkItem,
-    projects: &ProjectRegistry,
+    selected_project: &Project,
 ) -> Result<PreparedAdd, AddPendingWorkError> {
-    let identifier = command
+    command
         .project_identifier
         .as_deref()
         .ok_or(AddPendingWorkError::Usage)?;
@@ -261,14 +305,14 @@ fn prepare_source(
     if matches!(source, AddPendingWorkSource::Prompt { prompt, .. } if prompt.trim().is_empty()) {
         return Err(AddPendingWorkError::Usage);
     }
-    let project = project_mapped(identifier, projects)?;
+    let project = project_mapped(selected_project);
     let (title, prompt) = match source {
         AddPendingWorkSource::Prompt { prompt, title } => (
             title.clone().map_or_else(|| title::inferred(prompt), Ok)?,
             prompt.clone(),
         ),
         AddPendingWorkSource::Plan { path } => (
-            TaskTitle::try_new(plan_title(project.as_ref(), path))?,
+            TaskTitle::try_new(plan_title(project.title.as_ref(), path))?,
             plan_continuation_prompt(path),
         ),
     };

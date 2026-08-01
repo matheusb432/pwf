@@ -9,17 +9,13 @@ use thiserror::Error;
 use super::{Agent, AgentLaunch, DispatchTarget, LaunchDirectives, ModelTierLookup, SessionEffort};
 use crate::{
     pending_work::{
-        ProjectRegistry,
         dto::PendingWorkItemView,
         identifier,
         show_pending_work_item::{
             self, ShowOutput, ShowPendingWorkError, ShowPendingWorkItem, ShowPendingWorkItemOk,
         },
     },
-    ports::{
-        app_record::AppRecordStore, pending_work_record::PendingWorkRecord,
-        project_note::ProjectNoteStore,
-    },
+    ports::{pending_work_record::PendingWorkStore, project_note::ProjectNoteStore},
 };
 
 /// Autonomy directive inserted by `--auto`.
@@ -209,10 +205,10 @@ fn parse_effort(raw: &str) -> Option<EffortTier> {
     raw.trim().parse().ok()
 }
 
-pub(super) fn load_task_content(
+pub(super) async fn load_task_content(
     id: &str,
-    store: &(impl AppRecordStore<PendingWorkRecord> + ProjectNoteStore),
-    projects: &ProjectRegistry,
+    store: &(impl PendingWorkStore + ProjectNoteStore),
+    pool: &sqlx::SqlitePool,
 ) -> Result<String, ShowPendingWorkError> {
     let output = show_pending_work_item::execute(
         &ShowPendingWorkItem {
@@ -220,8 +216,9 @@ pub(super) fn load_task_content(
             output: ShowOutput::Markdown,
         },
         store,
-        projects,
-    )?;
+        pool,
+    )
+    .await?;
     let ShowPendingWorkItemOk::Markdown(markdown) = output else {
         unreachable!("Markdown request returned a different representation")
     };

@@ -1,0 +1,105 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT\n            projects.id AS \"id!\",\n            projects.title AS \"title!\",\n            project_sources.kind AS \"source_kind!\",\n            project_sources.value AS \"source_value!\",\n            projects.tasks_kind AS \"tasks_kind!\",\n            projects.tasks_path AS \"tasks_path!\",\n            projects.created_at AS \"created_at!\",\n            (projects.paused_at IS NOT NULL) AS \"is_paused!: bool\"\n        FROM projects\n        JOIN project_sources ON project_sources.id = projects.project_source_id\n        WHERE projects.id = ?\n          AND (? OR projects.paused_at IS NULL)\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "projects",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "title!",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "projects",
+            "name": "title"
+          }
+        }
+      },
+      {
+        "name": "source_kind!",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "project_sources",
+            "name": "kind"
+          }
+        }
+      },
+      {
+        "name": "source_value!",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "project_sources",
+            "name": "value"
+          }
+        }
+      },
+      {
+        "name": "tasks_kind!",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "projects",
+            "name": "tasks_kind"
+          }
+        }
+      },
+      {
+        "name": "tasks_path!",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "projects",
+            "name": "tasks_path"
+          }
+        }
+      },
+      {
+        "name": "created_at!",
+        "ordinal": 6,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "projects",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "name": "is_paused!: bool",
+        "ordinal": 7,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "b85ba67a5daaf28f541a65ae7fa258f71c3214fa5047ff4cedd6bf24229db2cc"
+}

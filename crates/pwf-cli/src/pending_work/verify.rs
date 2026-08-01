@@ -1,8 +1,5 @@
 use clap::Args;
-use pwf_application::pending_work::{
-    ProjectRegistry,
-    session::verify_session::{self, VerifySession},
-};
+use pwf_application::pending_work::session::verify_session::{self, VerifySession};
 use pwf_infra::{obsidian::ObsidianStore, session::AgentHarness};
 
 use super::{
@@ -27,10 +24,10 @@ pub struct Arguments {
     pub(crate) common: CommonArguments,
 }
 
-pub(super) fn run(
+pub(super) async fn run(
     arguments: &Arguments,
     store: &ObsidianStore,
-    projects: &ProjectRegistry,
+    pool: &sqlx::SqlitePool,
 ) -> Result<String, PendingWorkError> {
     let verification = verify_session::execute(
         VerifySession {
@@ -39,8 +36,9 @@ pub(super) fn run(
             model_override: arguments.model.clone().into(),
         },
         store,
-        projects,
+        pool,
         &AgentHarness,
-    )?;
+    )
+    .await?;
     Ok(render_verify(&verification))
 }

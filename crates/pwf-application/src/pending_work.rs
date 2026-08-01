@@ -24,8 +24,6 @@ pub use remove_pending_work_item::RemovedItem;
 pub use show_pending_work_item::ShowOutput;
 pub use update_pending_work_item::UpdatePendingWorkItemOk;
 
-pub use crate::project::{ProjectRegistry, ProjectResolutionError};
-
 /// Renders a prompt as Markdown while preserving placeholders and verbatim-authored prompts.
 #[must_use]
 pub fn note_body(prompt: &str) -> String {

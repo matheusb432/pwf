@@ -1,9 +1,6 @@
 use clap::Args;
 use pwf_application::{
-    pending_work::{
-        ProjectRegistry,
-        cancel_pending_work::{self, CancelPendingWork, CancelPendingWorkError},
-    },
+    pending_work::cancel_pending_work::{self, CancelPendingWork, CancelPendingWorkError},
     ports::clock::Clock,
 };
 use pwf_infra::obsidian::ObsidianStore;
@@ -32,10 +29,10 @@ pub struct Arguments {
     pub(crate) common: CommonArguments,
 }
 
-pub(super) fn run(
+pub(super) async fn run(
     arguments: &Arguments,
     store: &ObsidianStore,
-    projects: &ProjectRegistry,
+    pool: &sqlx::SqlitePool,
     clock: &impl Clock,
 ) -> Result<String, PendingWorkError> {
     let id = arguments.identifier.required("cancel")?;
@@ -50,8 +47,9 @@ pub(super) fn run(
         arguments.commits.clone(),
         arguments.review,
     );
-    let output =
-        cancel_pending_work::execute(&command, store, projects, clock).map_err(map_error)?;
+    let output = cancel_pending_work::execute(&command, store, pool, clock)
+        .await
+        .map_err(map_error)?;
     if let Some(review) = output.review_item.as_ref() {
         emit_created_section(review);
     }
@@ -76,6 +74,9 @@ fn map_error(error: CancelPendingWorkError) -> PendingWorkError {
         CancelPendingWorkError::ReviewTask(source) => {
             emit_created_section_for_error(&source);
             PendingWorkError::Cancel(CancelPendingWorkError::ReviewTask(source))
+        }
+        CancelPendingWorkError::QueryProject(source) => {
+            PendingWorkError::Cancel(CancelPendingWorkError::QueryProject(source))
         }
     }
 }

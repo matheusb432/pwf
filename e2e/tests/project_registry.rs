@@ -1,5 +1,6 @@
 use crate::shared::{
-    ProjectFixture, add_payload, assert_failure, assert_project, run_with_database, success_json,
+    ProjectFixture, add_payload, assert_failure, assert_project, assert_success, run_with_database,
+    success_json,
 };
 
 #[test]
@@ -79,7 +80,7 @@ fn invalid_runtime_task_path_is_not_persisted() {
 }
 
 #[test]
-fn pending_work_uses_only_valid_active_project_mappings() {
+fn targeted_pending_work_ignores_invalid_unrelated_project_mappings() {
     let unknown = ProjectFixture::new();
     assert_failure(unknown.run(&["missing"]), &["missing"]);
 
@@ -93,17 +94,14 @@ fn pending_work_uses_only_valid_active_project_mappings() {
     let directory = tempfile::tempdir().unwrap();
     let seed_home = directory.path().join("seed-home");
     let runtime_home = directory.path().join("runtime-home");
+    let pwf_tasks = runtime_home.join("tasks/pwf");
+    std::fs::create_dir_all(&pwf_tasks).unwrap();
+    std::fs::write(pwf_tasks.join("pwf.md"), "---\nid: PWF\ntitle: pwf\n---\n").unwrap();
     let absolute_tasks_path = runtime_home
         .join("missing/tasks/shared")
         .to_string_lossy()
         .into_owned();
-    aliased.add_with_home(
-        "pwf",
-        "pwf",
-        "/work/pwf",
-        "~/missing/tasks/shared",
-        &seed_home,
-    );
+    aliased.add_with_home("pwf", "pwf", "/work/pwf", "~/tasks/pwf", &seed_home);
     aliased.add_with_home(
         "alt",
         "other",
@@ -112,8 +110,9 @@ fn pending_work_uses_only_valid_active_project_mappings() {
         &seed_home,
     );
 
-    assert_failure(
-        aliased.run_with_home(&["list", "--project", "pwf"], &runtime_home),
-        &["ALT", "PWF", &absolute_tasks_path],
+    let listed = aliased.run_with_home(&["list", "--project", "pwf"], &runtime_home);
+    assert_success(
+        &listed,
+        "list one project with an unrelated invalid task path",
     );
 }

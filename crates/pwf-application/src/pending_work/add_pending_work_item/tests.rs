@@ -1,9 +1,12 @@
-use pwf_models::pending_work::{ProjectName, TaskTitle, Timestamp};
+use pwf_models::{
+    pending_work::{TaskTitle, Timestamp},
+    project::Project,
+};
 
-use super::{AddPendingWorkError, AddPendingWorkItem, ProjectRegistry, plan_title};
+use super::{AddPendingWorkError, AddPendingWorkItem, plan_title};
 use crate::{
     ports::{clock::Clock, pending_work_record::IndexEntryState},
-    testing::InMemoryStore,
+    testing::{InMemoryStore, project},
 };
 
 #[derive(Clone)]
@@ -15,12 +18,23 @@ impl Clock for FixedClock {
     }
 }
 
-fn registry(repo: Option<&str>) -> ProjectRegistry {
-    ProjectRegistry::new(vec![(
-        ProjectName::try_new("pwf").unwrap(),
-        repo.map(str::to_string),
-        Some("PWF".to_string()),
-    )])
+fn registry(_repo: Option<&str>) -> Project {
+    project("PWF", "pwf")
+}
+
+fn execute(
+    command: &AddPendingWorkItem,
+    store: &InMemoryStore,
+    project: &Project,
+    clock: &impl Clock,
+) -> Result<super::AddPendingWorkItemOk, AddPendingWorkError> {
+    super::execute_with_projects(
+        command,
+        store,
+        project,
+        std::slice::from_ref(project),
+        clock,
+    )
 }
 
 fn task_title(raw: &str) -> TaskTitle {
@@ -46,7 +60,7 @@ fn command(section: Option<&str>) -> AddPendingWorkItem {
 fn add_inserts_record_and_open_index_entry() {
     let store = InMemoryStore::default().with_prefix("pwf", "PWF");
 
-    let added = super::execute(
+    let added = execute(
         &command(None),
         &store,
         &registry(Some("/repo/pwf")),
@@ -75,8 +89,7 @@ fn add_forwards_an_explicit_task_title() {
     let mut command = command(None);
     command.title = Some(task_title("fix # metadata"));
 
-    let added =
-        super::execute(&command, &store, &registry(Some("/repo/pwf")), &FixedClock).unwrap();
+    let added = execute(&command, &store, &registry(Some("/repo/pwf")), &FixedClock).unwrap();
 
     assert_eq!(added.title, "fix  metadata");
     assert_eq!(store.items("pwf")[0].title, "fix  metadata");
@@ -89,8 +102,7 @@ fn add_inferred_prompt_title_is_normalized_once() {
     command.prompt = "fix # metadata".to_string();
     command.title = None;
 
-    let added =
-        super::execute(&command, &store, &registry(Some("/repo/pwf")), &FixedClock).unwrap();
+    let added = execute(&command, &store, &registry(Some("/repo/pwf")), &FixedClock).unwrap();
 
     assert_eq!(added.title, "fix  metadata");
     assert_eq!(store.items("pwf")[0].title, "fix  metadata");
@@ -102,7 +114,7 @@ fn add_uses_clock_date_when_no_date_is_explicit() {
     let mut command = command(None);
     command.date = None;
 
-    super::execute(&command, &store, &registry(Some("/repo/pwf")), &FixedClock).unwrap();
+    execute(&command, &store, &registry(Some("/repo/pwf")), &FixedClock).unwrap();
 
     assert_eq!(
         store.items("pwf")[0].created,
@@ -114,7 +126,7 @@ fn add_uses_clock_date_when_no_date_is_explicit() {
 fn add_reports_created_section_only_when_region_absent() {
     let store = InMemoryStore::default().with_prefix("pwf", "PWF");
 
-    let added = super::execute(
+    let added = execute(
         &command(Some("Human")),
         &store,
         &registry(Some("/repo/pwf")),
@@ -146,8 +158,7 @@ fn add_plan_normalizes_yaml_significant_filename_title() {
     let mut command = command(None);
     command.continue_path = Some("docs/plans/2026-07-15-fix-#-metadata.md".to_string());
 
-    let added =
-        super::execute(&command, &store, &registry(Some("/repo/pwf")), &FixedClock).unwrap();
+    let added = execute(&command, &store, &registry(Some("/repo/pwf")), &FixedClock).unwrap();
 
     assert_eq!(added.title, "pwf fix  metadata");
     assert_eq!(store.items("pwf")[0].title, "pwf fix  metadata");
@@ -159,7 +170,7 @@ fn add_does_not_report_created_section_for_existing_empty_region() {
         .with_prefix("pwf", "PWF")
         .with_sections("pwf", &["Human"]);
 
-    let added = super::execute(
+    let added = execute(
         &command(Some("Human")),
         &store,
         &registry(Some("/repo/pwf")),
@@ -168,23 +179,6 @@ fn add_does_not_report_created_section_for_existing_empty_region() {
     .unwrap();
 
     assert_eq!(added.created_section, None);
-}
-
-#[test]
-fn add_rejects_project_without_directory_source() {
-    let store = InMemoryStore::default().with_prefix("pwf", "PWF");
-
-    for registry in [registry(None), registry(Some("  "))] {
-        let error = super::execute(&command(None), &store, &registry, &FixedClock).unwrap_err();
-        assert!(matches!(
-            error,
-            AddPendingWorkError::ProjectHasNoDirectorySource { ref project } if project == "pwf"
-        ));
-        assert_eq!(
-            error.to_string(),
-            "Project 'pwf' has no directory source; update the managed project record."
-        );
-    }
 }
 
 #[test]
@@ -203,8 +197,7 @@ fn add_prerequisite_error_precedes_missing_project_and_source() {
         tags: Vec::new(),
     };
 
-    let error =
-        super::execute(&command, &store, &registry(Some("/repo/pwf")), &FixedClock).unwrap_err();
+    let error = execute(&command, &store, &registry(Some("/repo/pwf")), &FixedClock).unwrap_err();
 
     assert_eq!(error.to_string(), "Invalid --prereq id: PWF-99999.");
     assert!(store.items("pwf").is_empty());
@@ -226,8 +219,7 @@ fn add_blank_prompt_precedes_unknown_project_resolution() {
         tags: Vec::new(),
     };
 
-    let error =
-        super::execute(&command, &store, &registry(Some("/repo/pwf")), &FixedClock).unwrap_err();
+    let error = execute(&command, &store, &registry(Some("/repo/pwf")), &FixedClock).unwrap_err();
 
     assert!(matches!(error, AddPendingWorkError::Usage));
     assert_eq!(error.to_string(), "Use: pwf add <project> \"<prompt>\"");
@@ -239,8 +231,7 @@ fn explicit_section_wins_over_human_shorthand() {
     let mut command = command(Some("future"));
     command.human = true;
 
-    let added =
-        super::execute(&command, &store, &registry(Some("/repo/pwf")), &FixedClock).unwrap();
+    let added = execute(&command, &store, &registry(Some("/repo/pwf")), &FixedClock).unwrap();
 
     assert_eq!(added.created_section.as_deref(), Some("Future"));
 }
@@ -250,8 +241,7 @@ fn invalid_section_is_rejected_before_mutation() {
     let store = InMemoryStore::default().with_prefix("pwf", "PWF");
     let command = command(Some("someday"));
 
-    let error =
-        super::execute(&command, &store, &registry(Some("/repo/pwf")), &FixedClock).unwrap_err();
+    let error = execute(&command, &store, &registry(Some("/repo/pwf")), &FixedClock).unwrap_err();
 
     assert!(matches!(
         error,

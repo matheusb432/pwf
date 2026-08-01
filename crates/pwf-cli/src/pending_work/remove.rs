@@ -1,10 +1,7 @@
 use clap::Args;
 use pwf_application::{
-    pending_work::{
-        ProjectRegistry,
-        remove_pending_work_item::{
-            self, RemovePendingWorkError, RemovePendingWorkItem, RemovePendingWorkItemOk,
-        },
+    pending_work::remove_pending_work_item::{
+        self, RemovePendingWorkError, RemovePendingWorkItem, RemovePendingWorkItemOk,
     },
     ports::confirmation::{Confirmation, ConfirmationClient},
 };
@@ -74,11 +71,11 @@ fn confirmation_message(confirmation: &Confirmation) -> String {
     }
 }
 
-pub(super) fn run(
+pub(super) async fn run(
     arguments: &Arguments,
     console: Console,
     store: &ObsidianStore,
-    projects: &ProjectRegistry,
+    pool: &sqlx::SqlitePool,
 ) -> Result<String, PendingWorkError> {
     let id = arguments.identifier.required("remove")?;
 
@@ -89,9 +86,10 @@ pub(super) fn run(
     let outcome = remove_pending_work_item::execute(
         &RemovePendingWorkItem { id },
         store,
-        projects,
+        pool,
         &confirmation_client,
     )
+    .await
     .map_err(map_remove_error)?;
 
     match outcome {
@@ -122,6 +120,9 @@ fn map_remove_error(error: RemovePendingWorkError) -> PendingWorkError {
         RemovePendingWorkError::FileModelRequired => PendingWorkError::RemoveRequiresFileModel,
         RemovePendingWorkError::WriteStore(source) => {
             PendingWorkError::Remove(RemovePendingWorkError::WriteStore(source))
+        }
+        RemovePendingWorkError::QueryProject(source) => {
+            PendingWorkError::Remove(RemovePendingWorkError::QueryProject(source))
         }
     }
 }

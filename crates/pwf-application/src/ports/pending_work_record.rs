@@ -1,8 +1,7 @@
-use pwf_models::pending_work::{
-    EffortTier, ProjectName, Tags, TaskTitle, Timestamp, WorkItemId, WorkItemStatus,
+use pwf_models::{
+    pending_work::{EffortTier, Tags, TaskTitle, Timestamp, WorkItemId, WorkItemStatus},
+    project::Project,
 };
-
-use super::app_record::Record;
 
 /// A pending-work record's identity within its project.
 ///
@@ -68,13 +67,6 @@ pub struct PendingWorkRecord {
     pub materialization: Materialization,
 }
 
-impl Record for PendingWorkRecord {
-    type Scope = ProjectName;
-    type Id = WorkItemId;
-    type New = NewItem;
-    type Patch = ItemPatch;
-}
-
 /// The shape used to insert a new [`PendingWorkRecord`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewItem {
@@ -120,14 +112,6 @@ pub enum IndexEntryState {
     Done(Timestamp),
 }
 
-impl Record for IndexEntry {
-    type Scope = ProjectName;
-    type Id = WorkItemId;
-    // Insertions use upsert-by-value semantics.
-    type New = IndexEntry;
-    type Patch = IndexEntry;
-}
-
 /// Represents an `## <label>` section that can be listed or renamed.
 ///
 /// [`IndexEntry`] upserts create missing sections implicitly. Direct section insertion and
@@ -138,10 +122,41 @@ pub struct IndexSection {
     pub label: String,
 }
 
-impl Record for IndexSection {
-    type Scope = ProjectName;
-    type Id = String;
-    // Only update is supported; it renames the H2 label.
-    type New = IndexSection;
-    type Patch = IndexSection;
+pub trait PendingWorkStore: Clone + Send + Sync + 'static {
+    type Error: std::error::Error + Send + Sync + 'static;
+
+    fn get(
+        &self,
+        project: &Project,
+        id: &WorkItemId,
+    ) -> Result<Option<PendingWorkRecord>, Self::Error>;
+    fn list(&self, project: &Project) -> Result<Vec<PendingWorkRecord>, Self::Error>;
+    fn insert(&self, project: &Project, new: NewItem) -> Result<PendingWorkRecord, Self::Error>;
+    fn update(
+        &self,
+        project: &Project,
+        id: &WorkItemId,
+        patch: ItemPatch,
+    ) -> Result<(), Self::Error>;
+    fn delete(&self, project: &Project, id: &WorkItemId) -> Result<(), Self::Error>;
+}
+
+pub trait IndexEntryStore: Clone + Send + Sync + 'static {
+    type Error: std::error::Error + Send + Sync + 'static;
+
+    fn list_index_entries(&self, project: &Project) -> Result<Vec<IndexEntry>, Self::Error>;
+    fn upsert_index_entry(&self, project: &Project, entry: IndexEntry) -> Result<(), Self::Error>;
+    fn delete_index_entry(&self, project: &Project, id: &WorkItemId) -> Result<(), Self::Error>;
+}
+
+pub trait IndexSectionStore: Clone + Send + Sync + 'static {
+    type Error: std::error::Error + Send + Sync + 'static;
+
+    fn list_index_sections(&self, project: &Project) -> Result<Vec<IndexSection>, Self::Error>;
+    fn rename_index_section(
+        &self,
+        project: &Project,
+        current_label: &str,
+        new_label: &str,
+    ) -> Result<(), Self::Error>;
 }

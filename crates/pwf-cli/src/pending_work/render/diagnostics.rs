@@ -23,10 +23,10 @@ fn created_section_for_error(error: &AddPendingWorkError) -> Option<(&str, &str)
             .created_section
             .as_deref()
             .map(|section| (diagnostics.project.as_str(), section)),
-        AddPendingWorkError::ProjectHasNoDirectorySource { .. }
-        | AddPendingWorkError::Usage
+        AddPendingWorkError::Usage
         | AddPendingWorkError::InvalidSection { .. }
         | AddPendingWorkError::ProjectResolution(_)
+        | AddPendingWorkError::QueryProject(_)
         | AddPendingWorkError::InvalidTag { .. }
         | AddPendingWorkError::InvalidPrerequisiteId { .. }
         | AddPendingWorkError::MissingPrerequisiteId

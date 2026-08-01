@@ -1,15 +1,15 @@
 use std::error::Error;
 
 use super::{
-    Project,
+    Project, ProjectStatusFilter,
     dto::{ProjectRow, ProjectRowError},
 };
 
 /// Requests managed projects in ascending title order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ListProjects {
-    /// Includes paused projects when true.
-    pub include_paused: bool,
+    /// Project statuses eligible for the list.
+    pub status: ProjectStatusFilter,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -32,7 +32,7 @@ pub async fn execute(
     query: ListProjects,
     pool: &sqlx::SqlitePool,
 ) -> Result<Vec<Project>, ListProjectsError> {
-    let rows = if query.include_paused {
+    let rows = if query.status.includes_paused() {
         sqlx::query_as!(
             ProjectRow,
             r#"
@@ -109,7 +109,7 @@ mod tests {
 
         let projects = super::execute(
             ListProjects {
-                include_paused: false,
+                status: ProjectStatusFilter::ACTIVE,
             },
             &pool,
         )

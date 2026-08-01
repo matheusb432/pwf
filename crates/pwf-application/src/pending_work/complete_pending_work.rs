@@ -1,16 +1,24 @@
-use pwf_models::pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus};
+use pwf_models::{
+    pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus},
+    project::Project,
+};
 
 #[cfg(test)]
 use super::logic::pending_work_closing::review_task_prompt;
 use super::{
-    ProjectRegistry,
     add_pending_work_item::{AddPendingWorkError, AddPendingWorkItemOk},
+    identifier,
     logic::pending_work_closing::{CloseError, perform_close},
 };
-use crate::ports::{
-    app_record::AppRecordStore,
-    clock::Clock,
-    pending_work_record::{IndexEntry, IndexSection, PendingWorkRecord},
+use crate::{
+    ports::{
+        clock::Clock,
+        pending_work_record::{IndexEntryStore, IndexSectionStore, PendingWorkStore},
+    },
+    project::{
+        ProjectStatusFilter,
+        get_project::{self, GetProject, GetProjectError},
+    },
 };
 
 #[derive(Debug, Clone)]
@@ -72,17 +80,52 @@ pub enum CompletePendingWorkError {
     WriteStore(Box<dyn std::error::Error + Send + Sync>),
     #[error("{0}")]
     ReviewTask(#[source] AddPendingWorkError),
+    #[error("{0}")]
+    QueryProject(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
 
 #[cqrsy::command]
-pub fn execute(
+pub async fn execute(
     command: &CompletePendingWork,
-    store: &(
-         impl AppRecordStore<PendingWorkRecord>
-         + AppRecordStore<IndexEntry>
-         + AppRecordStore<IndexSection>
-     ),
-    projects: &ProjectRegistry,
+    store: &(impl PendingWorkStore + IndexEntryStore + IndexSectionStore),
+    pool: &sqlx::SqlitePool,
+    clock: &impl Clock,
+) -> Result<CompletePendingWorkOk, CompletePendingWorkError> {
+    let project = active_project_for_item(&command.id, pool).await?;
+    execute_with_project(command, store, &project, clock)
+}
+
+pub(super) async fn active_project_for_item(
+    raw_id: &str,
+    pool: &sqlx::SqlitePool,
+) -> Result<Project, CompletePendingWorkError> {
+    let id = identifier::parse(raw_id).ok_or_else(|| CompletePendingWorkError::ItemNotFound {
+        id: raw_id.to_string(),
+    })?;
+    match get_project::execute(
+        GetProject {
+            id: id.project_id(),
+            status: ProjectStatusFilter::ACTIVE,
+        },
+        pool,
+    )
+    .await
+    {
+        Ok(project) => Ok(project),
+        Err(GetProjectError::ProjectNotFound { id: prefix }) => {
+            Err(CompletePendingWorkError::UnknownPrefix {
+                pending_work_identifier: id.to_string(),
+                prefix: prefix.to_string(),
+            })
+        }
+        Err(error) => Err(CompletePendingWorkError::QueryProject(Box::new(error))),
+    }
+}
+
+fn execute_with_project(
+    command: &CompletePendingWork,
+    store: &(impl PendingWorkStore + IndexEntryStore + IndexSectionStore),
+    project: &Project,
     clock: &impl Clock,
 ) -> Result<CompletePendingWorkOk, CompletePendingWorkError> {
     let authored_date = command
@@ -91,7 +134,7 @@ pub fn execute(
         .map_or_else(|| clock.today(), Timestamp::new);
     perform_close(
         store,
-        projects,
+        project,
         ClosedItemAction::Done,
         &command.id,
         authored_date.as_str(),
@@ -105,21 +148,23 @@ pub fn execute(
 /// Reports failures shared by the done and cancel operations.
 #[cfg(test)]
 mod tests {
-    use pwf_models::pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus};
+    use pwf_models::{
+        pending_work::{Timestamp, WorkItemId, WorkItemStatus},
+        project::Project,
+    };
 
     use super::{
-        AddPendingWorkError, ClosedItemAction, CompletePendingWork, CompletePendingWorkError,
-        ProjectRegistry, review_task_prompt,
+        ClosedItemAction, CompletePendingWork, CompletePendingWorkError, review_task_prompt,
     };
     use crate::{
         ports::{
-            app_record::AppRecordStore,
             clock::Clock,
             pending_work_record::{
-                IndexEntry, IndexEntryState, Materialization, PendingWorkRecord, RecordId,
+                IndexEntry, IndexEntryState, IndexEntryStore, Materialization, PendingWorkRecord,
+                RecordId,
             },
         },
-        testing::InMemoryStore,
+        testing::{InMemoryStore, project},
     };
 
     #[derive(Clone)]
@@ -131,12 +176,8 @@ mod tests {
         }
     }
 
-    fn registry() -> ProjectRegistry {
-        ProjectRegistry::new(vec![(
-            ProjectName::try_new("foo-bar").unwrap(),
-            Some("/repo".to_string()),
-            Some("FOO".to_string()),
-        )])
+    fn registry() -> Project {
+        project("FOO", "foo-bar")
     }
 
     fn record(id: &str, status: WorkItemStatus) -> PendingWorkRecord {
@@ -167,8 +208,8 @@ mod tests {
         }
     }
 
-    fn foo() -> ProjectName {
-        ProjectName::try_new("foo-bar").unwrap()
+    fn foo() -> Project {
+        project("FOO", "foo-bar")
     }
 
     fn staged(items: Vec<PendingWorkRecord>, entries: Vec<IndexEntry>) -> InMemoryStore {
@@ -176,7 +217,7 @@ mod tests {
             .with_prefix("foo-bar", "FOO")
             .with_project("foo-bar", items);
         for entry in entries {
-            <InMemoryStore as AppRecordStore<IndexEntry>>::insert(&store, &foo(), entry).unwrap();
+            IndexEntryStore::upsert_index_entry(&store, &foo(), entry).unwrap();
         }
         store
     }
@@ -207,8 +248,13 @@ mod tests {
         entries.push(entry("FOO-0007", IndexEntryState::Open, "General"));
         let store = staged(items, entries);
 
-        let out =
-            super::execute(&done_command("FOO-0007"), &store, &registry(), &FixedClock).unwrap();
+        let out = super::execute_with_project(
+            &done_command("FOO-0007"),
+            &store,
+            &registry(),
+            &FixedClock,
+        )
+        .unwrap();
 
         assert_eq!(out.action, ClosedItemAction::Done);
         assert_eq!(
@@ -244,7 +290,7 @@ mod tests {
         let mut command = done_command("FOO-0001");
         command.date = None;
 
-        super::execute(&command, &store, &registry(), &FixedClock).unwrap();
+        super::execute_with_project(&command, &store, &registry(), &FixedClock).unwrap();
 
         assert_eq!(
             store.items("foo-bar")[0].completed,
@@ -259,10 +305,15 @@ mod tests {
             vec![entry("FOO-0001", IndexEntryState::Open, "Futuro")],
         );
 
-        let out =
-            super::execute(&done_command("FOO-0001"), &store, &registry(), &FixedClock).unwrap();
+        let out = super::execute_with_project(
+            &done_command("FOO-0001"),
+            &store,
+            &registry(),
+            &FixedClock,
+        )
+        .unwrap();
 
-        assert_eq!(out.futuro_renamed_project, Some(foo()));
+        assert_eq!(out.futuro_renamed_project, Some(foo().title));
     }
 
     #[test]
@@ -277,7 +328,7 @@ mod tests {
             ..done_command("FOO-0001")
         };
 
-        let out = super::execute(&cmd, &store, &registry(), &FixedClock).unwrap();
+        let out = super::execute_with_project(&cmd, &store, &registry(), &FixedClock).unwrap();
 
         let review = out.review_item.expect("review item present");
         assert_eq!(review.id, "FOO-0002");
@@ -292,37 +343,16 @@ mod tests {
     }
 
     #[test]
-    fn done_review_preserves_add_project_mapping_policy() {
-        let store = staged(
-            vec![record("FOO-0001", WorkItemStatus::Active)],
-            vec![entry("FOO-0001", IndexEntryState::Open, "General")],
-        );
-        let projects = ProjectRegistry::new(vec![(foo(), None, Some("FOO".to_string()))]);
-        let command = CompletePendingWork {
-            review: true,
-            ..done_command("FOO-0001")
-        };
-
-        let error = super::execute(&command, &store, &projects, &FixedClock).unwrap_err();
-
-        assert!(matches!(
-            error,
-            CompletePendingWorkError::ReviewTask(
-                AddPendingWorkError::ProjectHasNoDirectorySource { ref project }
-            ) if project == "foo-bar"
-        ));
-        assert_eq!(
-            error.to_string(),
-            "Project 'foo-bar' has no directory source; update the managed project record."
-        );
-    }
-
-    #[test]
     fn done_on_missing_item_reports_item_not_found() {
         let store = staged(Vec::new(), Vec::new());
 
-        let error = super::execute(&done_command("FOO-9999"), &store, &registry(), &FixedClock)
-            .unwrap_err();
+        let error = super::execute_with_project(
+            &done_command("FOO-9999"),
+            &store,
+            &registry(),
+            &FixedClock,
+        )
+        .unwrap_err();
 
         assert!(matches!(
             error,
@@ -338,8 +368,13 @@ mod tests {
     fn done_reports_an_unknown_configured_prefix() {
         let store = staged(Vec::new(), Vec::new());
 
-        let error = super::execute(&done_command("XYZ-0001"), &store, &registry(), &FixedClock)
-            .unwrap_err();
+        let error = super::execute_with_project(
+            &done_command("XYZ-0001"),
+            &store,
+            &registry(),
+            &FixedClock,
+        )
+        .unwrap_err();
 
         assert_eq!(
             error.to_string(),

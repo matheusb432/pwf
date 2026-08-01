@@ -1,15 +1,12 @@
-use pwf_models::pending_work::{
-    EffortTier, ProjectName, Tags, Timestamp, WorkItemId, WorkItemStatus,
+use pwf_models::{
+    pending_work::{EffortTier, ProjectName, Tags, Timestamp, WorkItemId, WorkItemStatus},
+    project::Project,
 };
 
 use crate::{
-    pending_work::{
-        ProjectRegistry,
-        logic::{prerequisite, resolve::resolve_record, tag_policy},
-    },
+    pending_work::logic::{prerequisite, resolve::resolve_record_from_db, tag_policy},
     ports::{
-        app_record::AppRecordStore,
-        pending_work_record::{Materialization, PendingWorkRecord, RecordId},
+        pending_work_record::{Materialization, PendingWorkRecord, PendingWorkStore, RecordId},
         project_note::ProjectNoteStore,
     },
 };
@@ -79,6 +76,8 @@ pub enum ShowPendingWorkError {
     ReadStore(#[source] Box<dyn std::error::Error + Send + Sync>),
     #[error("{0}")]
     ReadMarkdown(#[source] Box<dyn std::error::Error + Send + Sync>),
+    #[error("{0}")]
+    QueryProject(#[source] Box<dyn std::error::Error + Send + Sync>),
     #[error("Invalid pending-work item {field}: {reason}")]
     InvalidItemData { field: &'static str, reason: String },
 }
@@ -92,12 +91,21 @@ pub enum ShowPendingWorkError {
 /// [`ShowPendingWorkError::ReadMarkdown`] when a missing-note link cannot be read, or
 /// [`ShowPendingWorkError::InvalidItemData`] when persisted task data cannot be projected.
 #[cqrsy::query]
-pub fn execute(
+pub async fn execute(
     query: &ShowPendingWorkItem,
-    store: &(impl AppRecordStore<PendingWorkRecord> + ProjectNoteStore),
-    projects: &ProjectRegistry,
+    store: &(impl PendingWorkStore + ProjectNoteStore),
+    pool: &sqlx::SqlitePool,
 ) -> Result<ShowPendingWorkItemOk, ShowPendingWorkError> {
-    let (project, record) = resolve_record(store, projects, &query.id)?;
+    let (project, record) = resolve_record_from_db(store, pool, &query.id).await?;
+    present(query, store, project, record)
+}
+
+fn present(
+    query: &ShowPendingWorkItem,
+    store: &impl ProjectNoteStore,
+    project: Project,
+    record: PendingWorkRecord,
+) -> Result<ShowPendingWorkItemOk, ShowPendingWorkError> {
     match query.output {
         ShowOutput::Path => Ok(ShowPendingWorkItemOk::Path(record.locator)),
         ShowOutput::Markdown
@@ -109,7 +117,7 @@ pub fn execute(
                 .map_err(|error| ShowPendingWorkError::ReadMarkdown(Box::new(error)))
         }
         ShowOutput::Markdown => Ok(ShowPendingWorkItemOk::Markdown(record.source)),
-        ShowOutput::Json => pending_work_item_data(project, record)
+        ShowOutput::Json => pending_work_item_data(project.title, record)
             .map(Box::new)
             .map(ShowPendingWorkItemOk::Json),
     }
@@ -182,23 +190,23 @@ fn invalid_item_data(field: &'static str, error: impl std::fmt::Display) -> Show
 mod tests {
     use super::{ShowOutput, ShowPendingWorkItem, ShowPendingWorkItemOk};
     use crate::{
-        pending_work::logic::resolve::testing::{PWF_0001_SOURCE, staged, staged_ghost},
+        pending_work::logic::resolve::{
+            resolve_record_in_projects,
+            testing::{PWF_0001_SOURCE, staged, staged_ghost},
+        },
         testing::ProjectNoteFailure,
     };
 
     #[test]
     fn show_streams_source_verbatim() {
-        let (store, registry) = staged();
+        let (store, projects) = staged();
+        let query = ShowPendingWorkItem {
+            id: "PWF-0001".to_string(),
+            output: ShowOutput::Markdown,
+        };
 
-        let shown = super::execute(
-            &ShowPendingWorkItem {
-                id: "PWF-0001".to_string(),
-                output: ShowOutput::Markdown,
-            },
-            &store,
-            &registry,
-        )
-        .unwrap();
+        let (project, record) = resolve_record_in_projects(&store, &projects, &query.id).unwrap();
+        let shown = super::present(&query, &store, project, record).unwrap();
 
         assert_eq!(
             shown,
@@ -208,17 +216,14 @@ mod tests {
 
     #[test]
     fn show_path_returns_missing_note_locator_without_reading_markdown() {
-        let (store, registry) = staged_ghost();
+        let (store, projects) = staged_ghost();
+        let query = ShowPendingWorkItem {
+            id: "PWF-0002".to_string(),
+            output: ShowOutput::Path,
+        };
 
-        let shown = super::execute(
-            &ShowPendingWorkItem {
-                id: "PWF-0002".to_string(),
-                output: ShowOutput::Path,
-            },
-            &store,
-            &registry,
-        )
-        .unwrap();
+        let (project, record) = resolve_record_in_projects(&store, &projects, &query.id).unwrap();
+        let shown = super::present(&query, &store, project, record).unwrap();
 
         assert_eq!(
             shown,
@@ -228,18 +233,15 @@ mod tests {
 
     #[test]
     fn show_markdown_preserves_missing_note_source_error() {
-        let (store, registry) = staged_ghost();
+        let (store, projects) = staged_ghost();
         let store = store.with_failure(ProjectNoteFailure::Read);
+        let query = ShowPendingWorkItem {
+            id: "PWF-0002".to_string(),
+            output: ShowOutput::Markdown,
+        };
 
-        let error = super::execute(
-            &ShowPendingWorkItem {
-                id: "PWF-0002".to_string(),
-                output: ShowOutput::Markdown,
-            },
-            &store,
-            &registry,
-        )
-        .unwrap_err();
+        let (project, record) = resolve_record_in_projects(&store, &projects, &query.id).unwrap();
+        let error = super::present(&query, &store, project, record).unwrap_err();
 
         assert_eq!(
             error.to_string(),

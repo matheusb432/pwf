@@ -1,13 +1,13 @@
 use std::{fmt::Write as _, path::Path, sync::LazyLock};
 
-use pwf_application::ports::{
-    app_record::AppRecordStore,
-    pending_work_record::{
-        IndexEntryState, IndexPlacement, ItemPatch, Materialization, NewItem, PendingWorkRecord,
-        RecordId,
-    },
+use pwf_application::ports::pending_work_record::{
+    IndexEntryState, IndexPlacement, ItemPatch, Materialization, NewItem, PendingWorkRecord,
+    PendingWorkStore, RecordId,
 };
-use pwf_models::pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus};
+use pwf_models::{
+    pending_work::{Timestamp, WorkItemId, WorkItemStatus},
+    project::Project,
+};
 use regex::Regex;
 
 use super::{
@@ -136,7 +136,7 @@ fn checkbox_to_record(index_path: &Path, line: &ParsedIndexLine) -> PendingWorkR
 impl ObsidianStore {
     fn get_pending_item(
         &self,
-        project: &ProjectName,
+        project: &Project,
         id: &WorkItemId,
     ) -> Result<Option<PendingWorkRecord>, ObsidianStoreError> {
         if let Some(task) = self
@@ -176,9 +176,9 @@ impl ObsidianStore {
     /// application owns lifecycle visibility, normalization, and launchability policy.
     fn list_pending_items(
         &self,
-        project: &ProjectName,
+        project: &Project,
     ) -> Result<Vec<PendingWorkRecord>, ObsidianStoreError> {
-        let project_directory = self.project_paths.project_directory(project)?;
+        let project_directory = self.tasks_path(project)?;
         if !project_directory.exists() {
             return Err(ObsidianStoreError::NotesDirectoryNotFound {
                 path: project_directory.display().to_string(),
@@ -250,10 +250,10 @@ impl ObsidianStore {
 
     fn insert_pending_item(
         &self,
-        project: &ProjectName,
+        project: &Project,
         new: &NewItem,
     ) -> Result<PendingWorkRecord, ObsidianStoreError> {
-        let project_id = self.project_paths.project_identity(project)?.id().as_ref();
+        let project_id = project.id.as_ref();
         let note = self.write_new_note(
             project,
             project_id,
@@ -277,7 +277,7 @@ impl ObsidianStore {
 
     fn update_pending_item(
         &self,
-        project: &ProjectName,
+        project: &Project,
         id: &WorkItemId,
         patch: &ItemPatch,
     ) -> Result<(), ObsidianStoreError> {
@@ -378,7 +378,7 @@ impl ObsidianStore {
 
     fn delete_pending_item(
         &self,
-        project: &ProjectName,
+        project: &Project,
         id: &WorkItemId,
     ) -> Result<(), ObsidianStoreError> {
         let Some(task) = self
@@ -395,39 +395,35 @@ impl ObsidianStore {
     }
 }
 
-impl AppRecordStore<PendingWorkRecord> for ObsidianStore {
+impl PendingWorkStore for ObsidianStore {
     type Error = ObsidianStoreError;
 
     fn get(
         &self,
-        project: &ProjectName,
+        project: &Project,
         id: &WorkItemId,
     ) -> Result<Option<PendingWorkRecord>, Self::Error> {
         self.get_pending_item(project, id)
     }
 
-    fn list(&self, project: &ProjectName) -> Result<Vec<PendingWorkRecord>, Self::Error> {
+    fn list(&self, project: &Project) -> Result<Vec<PendingWorkRecord>, Self::Error> {
         self.list_pending_items(project)
     }
 
-    fn insert(
-        &self,
-        project: &ProjectName,
-        new: NewItem,
-    ) -> Result<PendingWorkRecord, Self::Error> {
+    fn insert(&self, project: &Project, new: NewItem) -> Result<PendingWorkRecord, Self::Error> {
         self.insert_pending_item(project, &new)
     }
 
     fn update(
         &self,
-        project: &ProjectName,
+        project: &Project,
         id: &WorkItemId,
         patch: ItemPatch,
     ) -> Result<(), Self::Error> {
         self.update_pending_item(project, id, &patch)
     }
 
-    fn delete(&self, project: &ProjectName, id: &WorkItemId) -> Result<(), Self::Error> {
+    fn delete(&self, project: &Project, id: &WorkItemId) -> Result<(), Self::Error> {
         self.delete_pending_item(project, id)
     }
 }

@@ -1,7 +1,10 @@
 use std::path::PathBuf;
 
 use pwf_application::pending_work::note_body;
-use pwf_models::pending_work::{EffortTier, ProjectName, Tags, TaskTitle};
+use pwf_models::{
+    pending_work::{EffortTier, Tags, TaskTitle},
+    project::Project,
+};
 
 use super::{ObsidianStore, ObsidianStoreError, fs::write_add_item_file};
 use crate::obsidian::note_frontmatter::{NewWorkItemFields, new_work_item_content};
@@ -28,13 +31,13 @@ impl ObsidianStore {
     /// Allocates and writes a task note without adding an index link.
     pub(super) fn write_new_note(
         &self,
-        project: &ProjectName,
+        project: &Project,
         prefix: &str,
         request: &NewNoteRequest<'_>,
     ) -> Result<WrittenNote, ObsidianStoreError> {
-        let dir = self.project_paths.project_directory(project)?;
+        let dir = self.tasks_path(project)?;
         if !dir.exists() {
-            std::fs::create_dir_all(dir)
+            std::fs::create_dir_all(&dir)
                 .map_err(|source| ObsidianStoreError::CreateProjectDir { source })?;
         }
         let id = self.next_task_id(project, prefix)?;
@@ -43,7 +46,7 @@ impl ObsidianStore {
         let content = new_work_item_content(NewWorkItemFields {
             id: &id,
             title: request.title,
-            project: project.as_ref(),
+            project: project.title.as_ref(),
             prompt: &body,
             created: request.created,
             prereq: request.prereq,

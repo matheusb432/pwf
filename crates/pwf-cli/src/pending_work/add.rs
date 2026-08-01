@@ -1,9 +1,6 @@
 use clap::Args;
 use pwf_application::{
-    pending_work::{
-        ProjectRegistry,
-        add_pending_work_item::{self, AddPendingWorkItem},
-    },
+    pending_work::add_pending_work_item::{self, AddPendingWorkItem},
     ports::clock::Clock,
 };
 use pwf_infra::obsidian::ObsidianStore;
@@ -54,11 +51,11 @@ pub struct Arguments {
     pub(crate) common: CommonArguments,
 }
 
-pub(super) fn run(
+pub(super) async fn run(
     arguments: &Arguments,
     console: Console,
     store: &ObsidianStore,
-    projects: &ProjectRegistry,
+    pool: &sqlx::SqlitePool,
     clock: &impl Clock,
 ) -> Result<String, PendingWorkError> {
     let (title, title_normalized) = arguments
@@ -84,9 +81,10 @@ pub(super) fn run(
             tags: arguments.tag.clone(),
         },
         store,
-        projects,
+        pool,
         clock,
-    );
+    )
+    .await;
     match result {
         Ok(added) => {
             emit_created_section(&added);

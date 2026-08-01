@@ -1,8 +1,5 @@
 use clap::Args;
-use pwf_application::pending_work::{
-    ProjectRegistry,
-    update_pending_work_item::{self, UpdatePendingWorkItem},
-};
+use pwf_application::pending_work::update_pending_work_item::{self, UpdatePendingWorkItem};
 use pwf_infra::obsidian::ObsidianStore;
 
 use super::shared::{CommonArguments, EffortChoice, Identifier, task_title};
@@ -56,11 +53,11 @@ use super::{
 };
 use crate::console::Console;
 
-pub(super) fn run(
+pub(super) async fn run(
     arguments: &Arguments,
     console: Console,
     store: &ObsidianStore,
-    projects: &ProjectRegistry,
+    pool: &sqlx::SqlitePool,
 ) -> Result<String, PendingWorkError> {
     let id = arguments.identifier.required("update")?;
     let (title, title_normalized) = arguments
@@ -86,8 +83,9 @@ pub(super) fn run(
             tags_clear: arguments.tags_clear,
         },
         store,
-        projects,
+        pool,
     )
+    .await
     .map_err(|error| PendingWorkError::ApplicationWrite(error.to_string()))?;
     if title_normalized {
         eprintln!("{TITLE_NORMALIZED_NOTICE}");

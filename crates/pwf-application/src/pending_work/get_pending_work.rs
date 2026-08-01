@@ -1,18 +1,24 @@
 use std::path::PathBuf;
 
-use pwf_models::pending_work::{EffortTier, ProjectName, Tags, WorkItemStatus};
+use pwf_models::{
+    pending_work::{EffortTier, ProjectName, Tags, WorkItemStatus},
+    project::Project,
+};
 
 #[cfg(test)]
 use super::dto::PrerequisiteStatus;
 use super::{dto::PendingWorkItemView, prerequisite, tag_policy};
 use crate::{
-    pending_work::{
-        ProjectRegistry,
-        enrich::{enrich, is_open_item},
-    },
+    pending_work::enrich::{enrich, is_open_item},
     ports::{
-        app_record::AppRecordStore, pending_work_record::PendingWorkRecord,
+        pending_work_record::{PendingWorkRecord, PendingWorkStore},
         project_task_location::ProjectTaskLocationClient,
+    },
+    project::{
+        ProjectStatusFilter,
+        get_project::{self, GetProject, GetProjectError},
+        list_projects::{self, ListProjects},
+        resolve_project::{self, ResolveProject},
     },
 };
 
@@ -160,11 +166,13 @@ pub enum GetPendingWorkError {
     #[error("invalid requested tags: {0}")]
     InvalidRequestedTags(#[source] TagParseError),
     #[error(transparent)]
-    ResolveProject(#[from] super::ProjectResolutionError),
+    ResolveProject(#[from] crate::project::resolve_project::ResolveProjectError),
+    #[error("{0}")]
+    QueryProject(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
 
 struct ResolvedGetPendingWork {
-    project: Option<ProjectName>,
+    project: Option<Project>,
     scope: ListScope,
     cap: Option<usize>,
     effort: Option<EffortTier>,
@@ -183,20 +191,100 @@ enum ListScope {
 }
 
 #[cqrsy::query]
-pub fn execute(
+pub async fn execute(
     query: &GetPendingWork,
-    store: &impl AppRecordStore<PendingWorkRecord>,
-    projects: &ProjectRegistry,
+    store: &impl PendingWorkStore,
+    pool: &sqlx::SqlitePool,
     task_locations: &impl ProjectTaskLocationClient,
 ) -> Result<GetPendingWorkOk, GetPendingWorkError> {
-    let query = resolve_query(query, projects)?;
+    let selected = match query.project_identifier.as_deref() {
+        Some(identifier) => Some(
+            resolve_project::execute(
+                ResolveProject {
+                    identifier: identifier.to_string(),
+                    status: ProjectStatusFilter::ACTIVE,
+                },
+                pool,
+            )
+            .await?,
+        ),
+        None => None,
+    };
+    let selected_records = selected
+        .as_ref()
+        .map(|project| {
+            store
+                .list(project)
+                .map_err(|error| GetPendingWorkError::ReadStore(Box::new(error)))
+        })
+        .transpose()?;
+    let projects = match selected.as_ref() {
+        Some(project) => {
+            let mut projects = vec![project.clone()];
+            if query.include_prerequisite_statuses {
+                for id in prerequisite::referenced_project_ids(
+                    selected_records
+                        .iter()
+                        .flatten()
+                        .filter_map(|record| record.prereq.as_deref()),
+                ) {
+                    if projects.iter().any(|project| project.id == id) {
+                        continue;
+                    }
+                    match get_project::execute(
+                        GetProject {
+                            id,
+                            status: ProjectStatusFilter::ACTIVE,
+                        },
+                        pool,
+                    )
+                    .await
+                    {
+                        Ok(project) => projects.push(project),
+                        Err(GetProjectError::ProjectNotFound { .. }) => {}
+                        Err(error) => {
+                            return Err(GetPendingWorkError::QueryProject(Box::new(error)));
+                        }
+                    }
+                }
+            }
+            projects
+        }
+        None => list_projects::execute(
+            ListProjects {
+                status: ProjectStatusFilter::ACTIVE,
+            },
+            pool,
+        )
+        .await
+        .map_err(|error| GetPendingWorkError::QueryProject(Box::new(error)))?,
+    };
+    execute_with_projects(
+        query,
+        store,
+        selected,
+        &projects,
+        selected_records.as_deref(),
+        task_locations,
+    )
+}
+
+fn execute_with_projects(
+    query: &GetPendingWork,
+    store: &impl PendingWorkStore,
+    selected: Option<Project>,
+    projects: &[Project],
+    selected_records: Option<&[PendingWorkRecord]>,
+    task_locations: &impl ProjectTaskLocationClient,
+) -> Result<GetPendingWorkOk, GetPendingWorkError> {
+    let query = resolve_query(query, selected)?;
     let project_task_path = query
         .project
         .as_ref()
         .map(|project| task_locations.project_task_path(project))
         .transpose()
         .map_err(|source| GetPendingWorkError::ReadProjectTaskPath(Box::new(source)))?;
-    let mut items = collect_list_items(&query, store, projects)?;
+    let mut items = collect_list_items(&query, store, projects, selected_records)?;
 
     items.retain(|item| scope_includes(query.scope, item.section.as_deref()));
     items.retain(|item| effort_matches(item, query.effort));
@@ -239,7 +327,7 @@ pub fn execute(
     Ok(GetPendingWorkOk {
         items,
         hidden,
-        project: query.project,
+        project: query.project.map(|project| project.title),
         project_task_path,
         status_filter: query.status_filter,
         grouped: scope_groups_output(query.scope),
@@ -248,13 +336,8 @@ pub fn execute(
 
 fn resolve_query(
     query: &GetPendingWork,
-    projects: &ProjectRegistry,
+    project: Option<Project>,
 ) -> Result<ResolvedGetPendingWork, GetPendingWorkError> {
-    let project = query
-        .project_identifier
-        .as_deref()
-        .map(|identifier| projects.resolve(identifier).cloned())
-        .transpose()?;
     let scope = if query.all {
         ListScope::All
     } else {
@@ -301,33 +384,32 @@ fn resolve_query(
 /// Reads and enriches listable lifecycle records from one project or every project in name order.
 fn collect_list_items(
     query: &ResolvedGetPendingWork,
-    store: &impl AppRecordStore<PendingWorkRecord>,
-    projects: &ProjectRegistry,
+    store: &impl PendingWorkStore,
+    projects: &[Project],
+    selected_records: Option<&[PendingWorkRecord]>,
 ) -> Result<Vec<PendingWorkItemView>, GetPendingWorkError> {
-    let scan: Vec<(ProjectName, Option<String>)> = match query.project.as_ref() {
-        Some(project) => {
-            let repo = projects.get_repository_by(project).map(str::to_string);
-            vec![(project.clone(), repo)]
-        }
-        None => projects
-            .projects()
-            .map(|(name, repo)| (name.clone(), repo.map(str::to_string)))
-            .collect(),
+    let scan: Vec<&Project> = match query.project.as_ref() {
+        Some(project) => vec![project],
+        None => projects.iter().collect(),
     };
 
     let mut items = Vec::new();
-    for (project, repo) in &scan {
-        let records = store
-            .list(project)
-            .map_err(|error| GetPendingWorkError::ReadStore(Box::new(error)))?;
+    for project in scan {
+        let records = if query.project.is_some() {
+            selected_records.map_or_else(Vec::new, <[PendingWorkRecord]>::to_vec)
+        } else {
+            store
+                .list(project)
+                .map_err(|error| GetPendingWorkError::ReadStore(Box::new(error)))?
+        };
         for record in records {
             let listable = is_open_item(&record) || record.status != WorkItemStatus::Active;
             if !listable || !query.status_filter.includes(record.status) {
                 continue;
             }
             items.push(
-                enrich(&record, repo.as_deref())
-                    .into_pending_work_item_view(project.as_ref().to_string()),
+                enrich(&record, Some(project.source.value().as_ref()))
+                    .into_pending_work_item_view(project.title.to_string()),
             );
         }
     }
@@ -437,30 +519,28 @@ fn apply_cap(
 mod tests {
     use std::{convert::Infallible, path::PathBuf};
 
-    use pwf_models::pending_work::{
-        EffortTier, ProjectName, Timestamp, WorkItemId, WorkItemStatus,
+    use pwf_models::{
+        pending_work::{EffortTier, ProjectName, Timestamp, WorkItemId, WorkItemStatus},
+        project::Project,
     };
 
     use super::{
         GetPendingWork, GetPendingWorkError, GetPendingWorkOk, ListMode, ListSection,
-        OrderDirection, OrderField, OrderSpec, PrerequisiteStatus, ProjectRegistry, StatusFilter,
+        OrderDirection, OrderField, OrderSpec, PrerequisiteStatus, StatusFilter,
     };
     use crate::{
         ports::{
-            app_record::AppRecordStore,
-            pending_work_record::{
-                IndexPlacement, ItemPatch, Materialization, NewItem, PendingWorkRecord, RecordId,
-            },
+            pending_work_record::{IndexPlacement, Materialization, PendingWorkRecord, RecordId},
             project_task_location::ProjectTaskLocationClient,
         },
-        testing::InMemoryStore,
+        testing::{InMemoryStore, insert_project, project},
     };
 
     impl ProjectTaskLocationClient for InMemoryStore {
         type Error = Infallible;
 
-        fn project_task_path(&self, project: &ProjectName) -> Result<PathBuf, Self::Error> {
-            Ok(PathBuf::from("/tasks").join(project.as_ref()))
+        fn project_task_path(&self, project: &Project) -> Result<PathBuf, Self::Error> {
+            Ok(PathBuf::from("/tasks").join(project.title.as_ref()))
         }
     }
 
@@ -496,7 +576,7 @@ mod tests {
 
     fn store_and_registry(
         items: &[(&'static str, PendingWorkRecord)],
-    ) -> (InMemoryStore, ProjectRegistry) {
+    ) -> (InMemoryStore, Vec<Project>) {
         let mut store = InMemoryStore::default();
         let mut projects: Vec<&'static str> = items.iter().map(|(project, _)| *project).collect();
         projects.sort_unstable();
@@ -509,83 +589,99 @@ mod tests {
                 .collect();
             store = store.with_project(project, staged);
         }
-        let registry = ProjectRegistry::new(projects.iter().map(|project| {
-            (
-                ProjectName::try_new(*project).unwrap(),
-                Some(format!("/repo/{project}")),
-                None,
-            )
-        }));
+        let registry = projects
+            .iter()
+            .map(|name| project(if *name == "pwf" { "PWF" } else { "CFG" }, name))
+            .collect();
         (store, registry)
     }
 
-    fn pwf_store(items: Vec<PendingWorkRecord>) -> (InMemoryStore, ProjectRegistry) {
+    fn pwf_store(items: Vec<PendingWorkRecord>) -> (InMemoryStore, Vec<Project>) {
         let staged: Vec<(&'static str, PendingWorkRecord)> =
             items.into_iter().map(|item| ("pwf", item)).collect();
         store_and_registry(&staged)
     }
 
-    fn prerequisite_registry() -> ProjectRegistry {
-        ProjectRegistry::new([
-            (
-                ProjectName::try_new("pwf").unwrap(),
-                Some("/repo/pwf".to_string()),
-                Some("PWF".to_string()),
-            ),
-            (
-                ProjectName::try_new("config-handler").unwrap(),
-                Some("/repo/config-handler".to_string()),
-                Some("CFG".to_string()),
-            ),
-        ])
+    fn prerequisite_registry() -> Vec<Project> {
+        vec![project("PWF", "pwf"), project("CFG", "config-handler")]
     }
 
-    #[derive(Clone)]
-    struct NoPrerequisiteLookupStore(InMemoryStore);
+    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
+    async fn selected_long_list_resolves_only_referenced_prerequisite_projects(
+        pool: sqlx::SqlitePool,
+    ) {
+        insert_project(&pool, "PWF", "pwf", "/work/pwf", "/tasks/pwf", false).await;
+        insert_project(
+            &pool,
+            "CFG",
+            "config-handler",
+            "/work/config-handler",
+            "/tasks/config-handler",
+            false,
+        )
+        .await;
+        insert_project(
+            &pool,
+            "ALT",
+            "unrelated",
+            "/work/unrelated",
+            "/missing/unrelated",
+            false,
+        )
+        .await;
 
-    impl AppRecordStore<PendingWorkRecord> for NoPrerequisiteLookupStore {
-        type Error = Infallible;
+        let dependent = PendingWorkRecord {
+            prereq: Some("[[CFG-0014]]".to_string()),
+            ..record("PWF-0001")
+        };
+        let prerequisite = PendingWorkRecord {
+            status: WorkItemStatus::Done,
+            ..record("CFG-0014")
+        };
+        let store = InMemoryStore::default()
+            .with_project("pwf", vec![dependent])
+            .with_project("config-handler", vec![prerequisite]);
+        let query = GetPendingWork {
+            project_identifier: Some("pwf".to_string()),
+            include_prerequisite_statuses: true,
+            ..default_query()
+        };
 
-        fn get(
-            &self,
-            _project: &ProjectName,
-            _id: &WorkItemId,
-        ) -> Result<Option<PendingWorkRecord>, Self::Error> {
-            panic!("short list must not read prerequisite records")
-        }
+        let result = super::execute(&query, &store, &pool, &store).await.unwrap();
 
-        fn list(&self, project: &ProjectName) -> Result<Vec<PendingWorkRecord>, Self::Error> {
-            <InMemoryStore as AppRecordStore<PendingWorkRecord>>::list(&self.0, project)
-        }
-
-        fn insert(
-            &self,
-            _project: &ProjectName,
-            _new: NewItem,
-        ) -> Result<PendingWorkRecord, Self::Error> {
-            unreachable!("list query does not insert records")
-        }
-
-        fn update(
-            &self,
-            _project: &ProjectName,
-            _id: &WorkItemId,
-            _patch: ItemPatch,
-        ) -> Result<(), Self::Error> {
-            unreachable!("list query does not update records")
-        }
-
-        fn delete(&self, _project: &ProjectName, _id: &WorkItemId) -> Result<(), Self::Error> {
-            unreachable!("list query does not delete records")
-        }
+        assert_eq!(
+            result.items[0].prerequisite_statuses,
+            [PrerequisiteStatus {
+                id: WorkItemId::try_new("CFG-0014").unwrap(),
+                status: Some(WorkItemStatus::Done),
+            }]
+        );
     }
 
     fn run(
         store: &InMemoryStore,
-        registry: &ProjectRegistry,
+        registry: &[Project],
         query: &GetPendingWork,
     ) -> Result<GetPendingWorkOk, GetPendingWorkError> {
-        super::execute(query, store, registry, store)
+        let selected = query.project_identifier.as_deref().and_then(|identifier| {
+            registry
+                .iter()
+                .find(|project| {
+                    project.title.as_ref() == identifier || project.id.as_ref() == identifier
+                })
+                .cloned()
+        });
+        let selected_records = selected
+            .as_ref()
+            .map(|project| store.items(project.title.as_ref()));
+        super::execute_with_projects(
+            query,
+            store,
+            selected,
+            registry,
+            selected_records.as_deref(),
+            store,
+        )
     }
 
     fn sectioned(id: &str, section: &str) -> PendingWorkRecord {
@@ -717,31 +813,6 @@ mod tests {
                 status: None,
             }]
         );
-    }
-
-    #[test]
-    fn short_list_skips_prerequisite_record_lookups() {
-        let dependent = PendingWorkRecord {
-            prereq: Some("[[CFG-0014]]".to_string()),
-            ..record("PWF-0001")
-        };
-        let store = NoPrerequisiteLookupStore(
-            InMemoryStore::default().with_project("pwf", vec![dependent]),
-        );
-
-        let got = super::execute(
-            &GetPendingWork {
-                project_identifier: Some("pwf".to_string()),
-                include_prerequisite_statuses: false,
-                ..default_query()
-            },
-            &store,
-            &prerequisite_registry(),
-            &store.0,
-        )
-        .unwrap();
-
-        assert!(got.items[0].prerequisite_statuses.is_empty());
     }
 
     #[test]

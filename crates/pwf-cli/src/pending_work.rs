@@ -1,9 +1,8 @@
+use std::path::PathBuf;
+
 use clap::Subcommand;
 use pwf_application::{
-    pending_work::{
-        ProjectRegistry,
-        reject_pending_work_create::{self, RejectPendingWorkCreate},
-    },
+    pending_work::reject_pending_work_create::{self, RejectPendingWorkCreate},
     ports::clock::Clock,
 };
 use pwf_infra::obsidian::ObsidianStore;
@@ -69,38 +68,40 @@ pub enum Command {
     Session(session::Arguments),
 }
 
-pub fn run(
+pub async fn run(
     command: &Command,
     console: Console,
     store: &ObsidianStore,
-    projects: &ProjectRegistry,
+    pool: &sqlx::SqlitePool,
+    home: &PathBuf,
     clock: &impl Clock,
 ) -> Result<String, String> {
     match command {
-        Command::Add(arguments) => add::run(arguments, console, store, projects, clock),
-        Command::List(arguments) => list::run(arguments, console, store, projects),
-        Command::Done(arguments) => done::run(arguments, store, projects, clock),
-        Command::Cancel(arguments) => cancel::run(arguments, store, projects, clock),
-        Command::Reopen(arguments) => reopen::run(arguments, store, projects),
-        Command::Update(arguments) => update::run(arguments, console, store, projects),
-        Command::Show(arguments) => show::run(arguments, store, projects),
-        Command::Verify(arguments) => verify::run(arguments, store, projects),
+        Command::Add(arguments) => add::run(arguments, console, store, pool, clock).await,
+        Command::List(arguments) => list::run(arguments, console, store, pool).await,
+        Command::Done(arguments) => done::run(arguments, store, pool, clock).await,
+        Command::Cancel(arguments) => cancel::run(arguments, store, pool, clock).await,
+        Command::Reopen(arguments) => reopen::run(arguments, store, pool).await,
+        Command::Update(arguments) => update::run(arguments, console, store, pool).await,
+        Command::Show(arguments) => show::run(arguments, store, pool).await,
+        Command::Verify(arguments) => verify::run(arguments, store, pool).await,
         Command::Route(arguments) => match route::resolve(arguments) {
             route::ResolvedCommand::List(arguments) => {
-                list::run(&arguments, console, store, projects)
+                list::run(&arguments, console, store, pool).await
             }
-            route::ResolvedCommand::Verify(arguments) => verify::run(&arguments, store, projects),
+            route::ResolvedCommand::Verify(arguments) => verify::run(&arguments, store, pool).await,
             route::ResolvedCommand::RejectCreate(arguments) => reject_pending_work_create::execute(
                 &RejectPendingWorkCreate {
                     project_identifier: arguments.project_identifier.clone(),
                 },
-                projects,
+                pool,
             )
+            .await
             .map_err(PendingWorkError::from)
             .and(Err(PendingWorkError::RouteCreateRejected)),
         },
-        Command::Remove(arguments) => remove::run(arguments, console, store, projects),
-        Command::Session(arguments) => session::run(arguments, console, store, projects),
+        Command::Remove(arguments) => remove::run(arguments, console, store, pool).await,
+        Command::Session(arguments) => session::run(arguments, console, store, pool, home).await,
     }
     .map_err(String::from)
 }

@@ -7,14 +7,13 @@ use thiserror::Error;
 use super::{Agent, DispatchMode, DispatchTarget, logic, plan_session::PreparedSessionDispatch};
 use crate::{
     pending_work::{
-        ProjectRegistry, logic::pending_work_update, show_pending_work_item::ShowPendingWorkError,
+        logic::pending_work_update, show_pending_work_item::ShowPendingWorkError,
         update_pending_work_item::UpdatePendingWorkError,
     },
     ports::{
         agent::{AgentClient, PreparedAgentLaunch},
-        app_record::AppRecordStore,
         inline_agent_session::InlineAgentSessionClient,
-        pending_work_record::PendingWorkRecord,
+        pending_work_record::PendingWorkStore,
         project_note::ProjectNoteStore,
         session::{AgentCommand, SessionClient, SessionWindow},
     },
@@ -69,10 +68,10 @@ pub enum DispatchSessionError {
 }
 
 #[cqrsy::command]
-pub fn execute(
+pub async fn execute(
     command: DispatchSession,
-    store: &(impl AppRecordStore<PendingWorkRecord> + ProjectNoteStore),
-    projects: &ProjectRegistry,
+    store: &(impl PendingWorkStore + ProjectNoteStore),
+    pool: &sqlx::SqlitePool,
     agent_client: &impl AgentClient,
     inline: &impl InlineAgentSessionClient,
     session_client: &impl SessionClient,
@@ -85,7 +84,7 @@ pub fn execute(
     } = command.prepared;
     if let Some(prepared_update) = prepared_update {
         pending_work_update::persist(prepared_update, store)?;
-        let task_content = logic::load_task_content(&plan.launch.task_id, store, projects)?;
+        let task_content = logic::load_task_content(&plan.launch.task_id, store, pool).await?;
         plan.launch.prompt =
             logic::launch_prompt(&task_content, &plan.launch.task_id, confirmation.directives);
     }

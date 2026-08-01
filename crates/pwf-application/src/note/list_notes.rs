@@ -1,12 +1,15 @@
 //! Lists one managed project's notes.
 
-use pwf_models::pending_work::ProjectName;
+use pwf_models::{pending_work::ProjectName, project::Project};
 
-use super::{
-    dto::ListedNote,
-    logic::{self, ResolvedProject},
+use super::dto::ListedNote;
+use crate::{
+    ports::project_note::ProjectNoteStore,
+    project::{
+        ProjectStatusFilter,
+        resolve_project::{self, ResolveProject, ResolveProjectError},
+    },
 };
-use crate::{ProjectNote, pending_work::ProjectRegistry, ports::app_record::AppRecordStore};
 
 const DEFAULT_NOTE_COUNT: usize = 10;
 
@@ -31,6 +34,8 @@ pub enum ListNotesError {
     #[error("Unknown project '{identifier}'; expected a managed project name or id code.")]
     UnknownProject { identifier: String },
     #[error("{0}")]
+    Project(#[source] Box<dyn std::error::Error + Send + Sync>),
+    #[error("{0}")]
     Store(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
 
@@ -41,28 +46,34 @@ pub enum ListNotesError {
 /// Returns [`ListNotesError::UnknownProject`] when the project does not resolve or
 /// [`ListNotesError::Store`] when listing notes fails.
 #[cqrsy::query]
-pub fn execute(
+pub async fn execute(
     query: ListNotes,
-    store: &impl AppRecordStore<ProjectNote>,
-    projects: &ProjectRegistry,
+    store: &impl ProjectNoteStore,
+    pool: &sqlx::SqlitePool,
 ) -> Result<ListNotesOk, ListNotesError> {
-    let ListNotes {
-        project_identifier,
-        number,
-    } = query;
-    let ResolvedProject {
-        project_name,
-        project_id: _,
-    } = logic::resolve_project(projects, &project_identifier).ok_or_else(|| {
-        ListNotesError::UnknownProject {
-            identifier: project_identifier,
-        }
-    })?;
+    let identifier = query.project_identifier.clone();
+    let project = resolve_project::execute(
+        ResolveProject {
+            identifier: identifier.clone(),
+            status: ProjectStatusFilter::ACTIVE,
+        },
+        pool,
+    )
+    .await
+    .map_err(|error| project_error(identifier, error))?;
+    execute_for_project(&query, store, &project)
+}
+
+fn execute_for_project(
+    query: &ListNotes,
+    store: &impl ProjectNoteStore,
+    project: &Project,
+) -> Result<ListNotesOk, ListNotesError> {
     let mut notes = store
-        .list(&project_name)
+        .list_notes(project)
         .map_err(|error| ListNotesError::Store(Box::new(error)))?;
     notes.sort_by_key(|note| std::cmp::Reverse(note.id.number()));
-    let count = number.unwrap_or(DEFAULT_NOTE_COUNT);
+    let count = query.number.unwrap_or(DEFAULT_NOTE_COUNT);
     let shown = if count == 0 {
         notes.len()
     } else {
@@ -78,32 +89,31 @@ pub fn execute(
         })
         .collect();
     Ok(ListNotesOk {
-        project: project_name,
+        project: project.title.clone(),
         notes,
         hidden,
     })
+}
+
+fn project_error(identifier: String, error: ResolveProjectError) -> ListNotesError {
+    match error {
+        ResolveProjectError::Unknown { .. } => ListNotesError::UnknownProject { identifier },
+        error @ ResolveProjectError::Unexpected { .. } => ListNotesError::Project(Box::new(error)),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::error::Error as _;
 
-    use pwf_models::{note::NoteId, pending_work::ProjectName};
+    use pwf_models::note::{NoteId, ProjectNote};
 
     use super::{ListNotes, ListNotesError};
-    use crate::{ProjectNote, pending_work::ProjectRegistry, testing::InMemoryStore};
+    use crate::testing::{InMemoryStore, project};
 
     #[derive(Debug, thiserror::Error)]
     #[error("sentinel store failure")]
     struct SentinelStoreError;
-
-    fn registry() -> ProjectRegistry {
-        ProjectRegistry::new([(
-            ProjectName::try_new("pwf").unwrap(),
-            Some("/repo/pwf".to_string()),
-            Some("PWF".to_string()),
-        )])
-    }
 
     fn note(number: u32) -> ProjectNote {
         ProjectNote {
@@ -126,13 +136,13 @@ mod tests {
                 .collect(),
         );
 
-        let result = super::execute(
-            ListNotes {
+        let result = super::execute_for_project(
+            &ListNotes {
                 project_identifier: "PWF".to_string(),
                 number: None,
             },
             &store,
-            &registry(),
+            &project("PWF", "pwf"),
         )
         .unwrap();
 
@@ -159,22 +169,22 @@ mod tests {
     fn zero_is_unlimited_and_explicit_cap_reports_hidden_count() {
         let store = InMemoryStore::default().with_project_notes("pwf", (1..=4).map(note).collect());
 
-        let unlimited = super::execute(
-            ListNotes {
+        let unlimited = super::execute_for_project(
+            &ListNotes {
                 project_identifier: "pwf".to_string(),
                 number: Some(0),
             },
             &store,
-            &registry(),
+            &project("PWF", "pwf"),
         )
         .unwrap();
-        let capped = super::execute(
-            ListNotes {
+        let capped = super::execute_for_project(
+            &ListNotes {
                 project_identifier: "pwf".to_string(),
                 number: Some(2),
             },
             &store,
-            &registry(),
+            &project("PWF", "pwf"),
         )
         .unwrap();
 

@@ -8,12 +8,11 @@ use thiserror::Error;
 use super::{Agent, AgentLaunch, ModelTierLookup, SessionEffort, VerifySessionOk, logic};
 use crate::{
     pending_work::{
-        ProjectRegistry, find_pending_work::FindPendingWorkError, logic::finding::find_open_item,
+        find_pending_work::FindPendingWorkError, logic::finding::find_open_item_from_db,
         show_pending_work_item::ShowPendingWorkError,
     },
     ports::{
-        agent::AgentClient, app_record::AppRecordStore, pending_work_record::PendingWorkRecord,
-        project_note::ProjectNoteStore,
+        agent::AgentClient, pending_work_record::PendingWorkStore, project_note::ProjectNoteStore,
     },
 };
 
@@ -40,16 +39,15 @@ pub enum VerifySessionError {
 /// Returns [`VerifySessionError`] when the requested item cannot be read. Model-tier failures
 /// remain soft issues in [`VerifySessionOk`].
 #[cqrsy::query]
-pub fn execute(
+pub async fn execute(
     query: VerifySession,
-    store: &(impl AppRecordStore<PendingWorkRecord> + ProjectNoteStore),
-    projects: &ProjectRegistry,
+    store: &(impl PendingWorkStore + ProjectNoteStore),
+    pool: &sqlx::SqlitePool,
     agent_client: &impl AgentClient,
 ) -> Result<VerifySessionOk, VerifySessionError> {
     let probe = agent_client.probe(query.agent);
-    let planned = prepare_verification(query, store, projects, |effort| {
-        agent_client.model_tier(effort)
-    })?;
+    let planned =
+        prepare_verification(query, store, pool, |effort| agent_client.model_tier(effort)).await?;
     let command_argv = match planned.launch.as_ref() {
         Some(launch) => agent_client.preview(launch),
         None => vec![probe.binary.clone()],
@@ -71,10 +69,10 @@ struct PreparedVerification {
     launch: Option<AgentLaunch>,
 }
 
-fn prepare_verification<E>(
+async fn prepare_verification<E>(
     query: VerifySession,
-    store: &(impl AppRecordStore<PendingWorkRecord> + ProjectNoteStore),
-    projects: &ProjectRegistry,
+    store: &(impl PendingWorkStore + ProjectNoteStore),
+    pool: &sqlx::SqlitePool,
     model_tier: impl FnOnce(EffortTier) -> Result<ModelTierLookup, E>,
 ) -> Result<PreparedVerification, VerifySessionError>
 where
@@ -89,7 +87,7 @@ where
         });
     };
 
-    let item = find_open_item(store, projects, &id)?;
+    let item = find_open_item_from_db(store, pool, &id).await?;
     let (model, model_issue) = match query.model_override.into_inner() {
         Some(model) => (Some(model), None),
         None => {
@@ -100,7 +98,7 @@ where
         }
     };
     let task_content = if item.launchable {
-        logic::load_task_content(&item.id, store, projects)?
+        logic::load_task_content(&item.id, store, pool).await?
     } else {
         item.prompt.clone()
     };
@@ -130,15 +128,15 @@ where
 mod tests {
     use std::{error::Error, fmt};
 
-    use pwf_models::pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus};
+    use pwf_models::pending_work::{Timestamp, WorkItemId, WorkItemStatus};
 
-    use super::{AgentModel, ProjectRegistry, VerifySession};
+    use super::{AgentModel, VerifySession};
     use crate::{
         pending_work::session::{Agent, ModelTierLookup},
         ports::pending_work_record::{
             IndexPlacement, Materialization, PendingWorkRecord, RecordId,
         },
-        testing::InMemoryStore,
+        testing::{InMemoryStore, insert_project},
     };
 
     const REPOSITORY: &str = "/repo/pwf";
@@ -178,14 +176,10 @@ mod tests {
         }
     }
 
-    #[test]
-    fn item_and_model_issues_are_aggregated() {
+    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
+    async fn item_and_model_issues_are_aggregated(pool: sqlx::SqlitePool) {
+        insert_project(&pool, "PWF", "pwf", REPOSITORY, "/tasks/pwf", false).await;
         let store = InMemoryStore::default().with_project("pwf", vec![record()]);
-        let projects = ProjectRegistry::new([(
-            ProjectName::try_new("pwf").unwrap(),
-            Some(REPOSITORY.to_string()),
-            Some("PWF".to_string()),
-        )]);
 
         let outcome = super::prepare_verification(
             VerifySession {
@@ -194,9 +188,10 @@ mod tests {
                 model_override: AgentModel::default(),
             },
             &store,
-            &projects,
+            &pool,
             |_| Err::<ModelTierLookup, _>(CatalogError),
         )
+        .await
         .unwrap();
 
         assert!(!outcome.launchable);

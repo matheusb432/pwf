@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT title AS \"title!\"\n        FROM projects\n        WHERE ? OR paused_at IS NULL\n        ORDER BY title ASC\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "title!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "projects",
+            "name": "title"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "a42743139e0af144cabd39a9136e9a87476537b5adf3bf94b59d3fb739c0cb82"
+}

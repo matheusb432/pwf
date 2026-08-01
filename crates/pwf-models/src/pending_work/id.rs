@@ -8,6 +8,21 @@ use crate::project::ProjectId;
 )]
 pub struct WorkItemId(String);
 
+impl WorkItemId {
+    /// Returns the validated three-letter project prefix.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if the `WorkItemId` invariant was bypassed internally.
+    pub fn project_id(&self) -> ProjectId {
+        let (code, _) = self
+            .as_ref()
+            .split_once('-')
+            .expect("WorkItemId validation requires a separator");
+        ProjectId::try_new(code).expect("WorkItemId validation requires a canonical project ID")
+    }
+}
+
 fn is_canonical_pending_id(raw: &str) -> bool {
     let Some((code, digits)) = raw.split_once('-') else {
         return false;
@@ -24,10 +39,10 @@ mod tests {
 
     #[test]
     fn work_item_id_accepts_canonical_values() {
-        assert_eq!(
-            WorkItemId::try_new("PWF-0047").unwrap().as_ref(),
-            "PWF-0047"
-        );
+        let id = WorkItemId::try_new("PWF-0047").unwrap();
+
+        assert_eq!(id.as_ref(), "PWF-0047");
+        assert_eq!(id.project_id(), ProjectId::try_new("PWF").unwrap());
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use clap::Args;
 use pwf_application::pending_work::{
-    ProjectRegistry, ShowOutput,
+    ShowOutput,
     show_pending_work_item::{self, ShowPendingWorkItem, ShowPendingWorkItemOk},
 };
 use pwf_infra::obsidian::ObsidianStore;
@@ -27,10 +27,10 @@ use super::shared::PendingWorkError;
 
 /// Returns the complete Markdown for an item regardless of status;
 /// `--path` returns the note path instead.
-pub(super) fn run(
+pub(super) async fn run(
     arguments: &Arguments,
     store: &ObsidianStore,
-    projects: &ProjectRegistry,
+    pool: &sqlx::SqlitePool,
 ) -> Result<String, PendingWorkError> {
     let id = arguments.identifier.required("show")?;
     let output = if arguments.path {
@@ -40,9 +40,9 @@ pub(super) fn run(
     } else {
         ShowOutput::Markdown
     };
-    let shown =
-        show_pending_work_item::execute(&ShowPendingWorkItem { id, output }, store, projects)
-            .map_err(|error| PendingWorkError::ApplicationRead(error.to_string()))?;
+    let shown = show_pending_work_item::execute(&ShowPendingWorkItem { id, output }, store, pool)
+        .await
+        .map_err(|error| PendingWorkError::ApplicationRead(error.to_string()))?;
     match shown {
         ShowPendingWorkItemOk::Markdown(markdown) => Ok(markdown),
         ShowPendingWorkItemOk::Path(path) => Ok(path),

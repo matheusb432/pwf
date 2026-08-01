@@ -1,5 +1,8 @@
 use clap::Args;
-use pwf_application::project::get_project::{self, GetProject};
+use pwf_application::project::{
+    ProjectStatusFilter,
+    get_project::{self, GetProject},
+};
 use pwf_models::project::ProjectId;
 use sqlx::SqlitePool;
 
@@ -13,8 +16,14 @@ pub struct Arguments {
 }
 
 pub(super) async fn run(arguments: Arguments, pool: &SqlitePool) -> Result<String, String> {
-    let project = get_project::execute(GetProject { id: arguments.id }, pool)
-        .await
-        .map_err(|error| format!("project get failed: {error}"))?;
+    let project = get_project::execute(
+        GetProject {
+            id: arguments.id,
+            status: ProjectStatusFilter::ALL,
+        },
+        pool,
+    )
+    .await
+    .map_err(|error| format!("project get failed: {error}"))?;
     output::project(project)
 }

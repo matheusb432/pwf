@@ -1,12 +1,14 @@
 //! Updates one note topic in a managed project.
 
-use pwf_models::note::NoteId;
+use pwf_models::{note::NoteId, project::Project};
 
-use super::logic::{self, ResolvedProject};
+use super::logic;
 use crate::{
-    ProjectNote,
-    pending_work::ProjectRegistry,
-    ports::{app_record::AppRecordStore, project_note::ProjectNotePatch},
+    ports::project_note::{ProjectNotePatch, ProjectNoteStore},
+    project::{
+        ProjectStatusFilter,
+        resolve_project::{self, ResolveProject, ResolveProjectError},
+    },
 };
 
 /// Requests replacement of one project note's topic.
@@ -37,6 +39,8 @@ pub enum UpdateNoteError {
     #[error("No such note {id} in {project}.")]
     NoSuchNote { id: String, project: String },
     #[error("{0}")]
+    Project(#[source] Box<dyn std::error::Error + Send + Sync>),
+    #[error("{0}")]
     Store(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
 
@@ -50,46 +54,55 @@ pub enum UpdateNoteError {
 /// [`UpdateNoteError::NoSuchNote`] when the note does not exist, or
 /// [`UpdateNoteError::Store`] when reading or updating the note fails.
 #[cqrsy::command]
-pub fn execute(
+pub async fn execute(
     command: UpdateNote,
-    store: &impl AppRecordStore<ProjectNote>,
-    projects: &ProjectRegistry,
+    store: &impl ProjectNoteStore,
+    pool: &sqlx::SqlitePool,
 ) -> Result<UpdateNoteOk, UpdateNoteError> {
-    let UpdateNote {
-        project_identifier,
-        id: raw_id,
-        topic,
-    } = command;
-    let ResolvedProject {
-        project_name,
-        project_id,
-    } = logic::resolve_project(projects, &project_identifier).ok_or_else(|| {
-        UpdateNoteError::UnknownProject {
-            identifier: project_identifier,
-        }
-    })?;
-    let topic = topic.split_whitespace().collect::<Vec<_>>().join(" ");
+    let identifier = command.project_identifier.clone();
+    let project = resolve_project::execute(
+        ResolveProject {
+            identifier: identifier.clone(),
+            status: ProjectStatusFilter::ACTIVE,
+        },
+        pool,
+    )
+    .await
+    .map_err(|error| project_error(identifier, error))?;
+    execute_for_project(command, store, &project)
+}
+
+fn execute_for_project(
+    command: UpdateNote,
+    store: &impl ProjectNoteStore,
+    project: &Project,
+) -> Result<UpdateNoteOk, UpdateNoteError> {
+    let topic = command
+        .topic
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     if topic.is_empty() {
         return Err(UpdateNoteError::EmptyTopic);
     }
-    let id = logic::resolve_note(&raw_id, &project_id).ok_or_else(|| {
+    let id = logic::resolve_note(&command.id, &project.id).ok_or_else(|| {
         UpdateNoteError::InvalidIdentifier {
-            id: raw_id,
-            project_id: project_id.to_string(),
+            id: command.id,
+            project_id: project.id.to_string(),
         }
     })?;
     let existing = store
-        .get(&project_name, &id)
+        .get_note(project, &id)
         .map_err(|error| UpdateNoteError::Store(Box::new(error)))?;
     if existing.is_none() {
         return Err(UpdateNoteError::NoSuchNote {
             id: id.to_string(),
-            project: project_name.to_string(),
+            project: project.title.to_string(),
         });
     }
     store
-        .update(
-            &project_name,
+        .update_note(
+            project,
             &id,
             ProjectNotePatch {
                 topic: topic.clone(),
@@ -99,26 +112,25 @@ pub fn execute(
     Ok(UpdateNoteOk { id, topic })
 }
 
+fn project_error(identifier: String, error: ResolveProjectError) -> UpdateNoteError {
+    match error {
+        ResolveProjectError::Unknown { .. } => UpdateNoteError::UnknownProject { identifier },
+        error @ ResolveProjectError::Unexpected { .. } => UpdateNoteError::Project(Box::new(error)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::error::Error as _;
 
-    use pwf_models::{note::NoteId, pending_work::ProjectName};
+    use pwf_models::note::{NoteId, ProjectNote};
 
     use super::{UpdateNote, UpdateNoteError};
-    use crate::{ProjectNote, pending_work::ProjectRegistry, testing::InMemoryStore};
+    use crate::testing::{InMemoryStore, project};
 
     #[derive(Debug, thiserror::Error)]
     #[error("sentinel store failure")]
     struct SentinelStoreError;
-
-    fn registry() -> ProjectRegistry {
-        ProjectRegistry::new([(
-            ProjectName::try_new("pwf").unwrap(),
-            Some("/repo/pwf".to_string()),
-            Some("PWF".to_string()),
-        )])
-    }
 
     fn note() -> ProjectNote {
         ProjectNote {
@@ -137,14 +149,14 @@ mod tests {
         ] {
             let store = InMemoryStore::default().with_project_notes("pwf", vec![note()]);
 
-            let updated = super::execute(
+            let updated = super::execute_for_project(
                 UpdateNote {
                     project_identifier: "pwf".to_string(),
                     id: identifier.to_string(),
                     topic: " new message \t".to_string(),
                 },
                 &store,
-                &registry(),
+                &project("PWF", "pwf"),
             )
             .unwrap();
 
@@ -159,14 +171,14 @@ mod tests {
     fn blank_replacement_leaves_the_existing_note_unchanged() {
         let store = InMemoryStore::default().with_project_notes("pwf", vec![note()]);
 
-        let error = super::execute(
+        let error = super::execute_for_project(
             UpdateNote {
                 project_identifier: "pwf".to_string(),
                 id: "7".to_string(),
                 topic: " \t ".to_string(),
             },
             &store,
-            &registry(),
+            &project("PWF", "pwf"),
         )
         .unwrap_err();
 
@@ -178,14 +190,14 @@ mod tests {
     fn missing_note_is_reported() {
         let store = InMemoryStore::default();
 
-        let error = super::execute(
+        let error = super::execute_for_project(
             UpdateNote {
                 project_identifier: "pwf".to_string(),
                 id: "note-0007".to_string(),
                 topic: "new message".to_string(),
             },
             &store,
-            &registry(),
+            &project("PWF", "pwf"),
         )
         .unwrap_err();
 

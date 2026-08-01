@@ -1,13 +1,15 @@
+use pwf_models::project::Project;
+
 use super::{
-    ProjectRegistry,
     add_pending_work_item::AddPendingWorkError,
-    complete_pending_work::{ClosedItemAction, CompletePendingWorkOk},
+    complete_pending_work::{
+        ClosedItemAction, CompletePendingWorkError, CompletePendingWorkOk, active_project_for_item,
+    },
     logic::pending_work_closing::{CloseError, perform_close},
 };
 use crate::ports::{
-    app_record::AppRecordStore,
     clock::Clock,
-    pending_work_record::{IndexEntry, IndexSection, PendingWorkRecord},
+    pending_work_record::{IndexEntryStore, IndexSectionStore, PendingWorkStore},
 };
 
 #[derive(Debug, Clone)]
@@ -52,17 +54,27 @@ pub enum CancelPendingWorkError {
     WriteStore(Box<dyn std::error::Error + Send + Sync>),
     #[error("{0}")]
     ReviewTask(#[source] AddPendingWorkError),
+    #[error("{0}")]
+    QueryProject(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
 
 #[cqrsy::command]
-pub fn execute(
+pub async fn execute(
     command: &CancelPendingWork,
-    store: &(
-         impl AppRecordStore<PendingWorkRecord>
-         + AppRecordStore<IndexEntry>
-         + AppRecordStore<IndexSection>
-     ),
-    projects: &ProjectRegistry,
+    store: &(impl PendingWorkStore + IndexEntryStore + IndexSectionStore),
+    pool: &sqlx::SqlitePool,
+    clock: &impl Clock,
+) -> Result<CompletePendingWorkOk, CancelPendingWorkError> {
+    let project = active_project_for_item(&command.id, pool)
+        .await
+        .map_err(map_project_error)?;
+    execute_with_project(command, store, &project, clock)
+}
+
+fn execute_with_project(
+    command: &CancelPendingWork,
+    store: &(impl PendingWorkStore + IndexEntryStore + IndexSectionStore),
+    project: &Project,
     clock: &impl Clock,
 ) -> Result<CompletePendingWorkOk, CancelPendingWorkError> {
     let authored_date = command
@@ -71,7 +83,7 @@ pub fn execute(
         .map_or_else(|| clock.today(), pwf_models::pending_work::Timestamp::new);
     perform_close(
         store,
-        projects,
+        project,
         ClosedItemAction::Cancelled,
         &command.id,
         authored_date.as_str(),
@@ -80,6 +92,29 @@ pub fn execute(
         command.review,
     )
     .map_err(map_close_error)
+}
+
+fn map_project_error(error: CompletePendingWorkError) -> CancelPendingWorkError {
+    match error {
+        CompletePendingWorkError::ItemNotFound { id } => {
+            CancelPendingWorkError::ItemNotFound { id }
+        }
+        CompletePendingWorkError::UnknownPrefix {
+            pending_work_identifier,
+            prefix,
+        } => CancelPendingWorkError::UnknownPrefix {
+            pending_work_identifier,
+            prefix,
+        },
+        CompletePendingWorkError::QueryProject(source) => {
+            CancelPendingWorkError::QueryProject(source)
+        }
+        CompletePendingWorkError::EmptyReport
+        | CompletePendingWorkError::WriteStore(_)
+        | CompletePendingWorkError::ReviewTask(_) => {
+            unreachable!("project lookup returns only identifier and query failures")
+        }
+    }
 }
 
 fn map_close_error(error: CloseError) -> CancelPendingWorkError {
@@ -100,18 +135,21 @@ fn map_close_error(error: CloseError) -> CancelPendingWorkError {
 
 #[cfg(test)]
 mod tests {
-    use pwf_models::pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus};
+    use pwf_models::{
+        pending_work::{Timestamp, WorkItemId, WorkItemStatus},
+        project::Project,
+    };
 
-    use super::{CancelPendingWork, CancelPendingWorkError, ProjectRegistry};
+    use super::{CancelPendingWork, CancelPendingWorkError};
     use crate::{
         ports::{
-            app_record::AppRecordStore,
             clock::Clock,
             pending_work_record::{
-                IndexEntry, IndexEntryState, Materialization, PendingWorkRecord, RecordId,
+                IndexEntry, IndexEntryState, IndexEntryStore, Materialization, PendingWorkRecord,
+                RecordId,
             },
         },
-        testing::InMemoryStore,
+        testing::{InMemoryStore, project},
     };
 
     #[derive(Clone)]
@@ -123,12 +161,8 @@ mod tests {
         }
     }
 
-    fn registry() -> ProjectRegistry {
-        ProjectRegistry::new(vec![(
-            ProjectName::try_new("foo-bar").unwrap(),
-            Some("/repo".to_string()),
-            Some("FOO".to_string()),
-        )])
+    fn registry() -> Project {
+        project("FOO", "foo-bar")
     }
 
     fn record(id: &str) -> PendingWorkRecord {
@@ -155,9 +189,9 @@ mod tests {
         let store = InMemoryStore::default()
             .with_prefix("foo-bar", "FOO")
             .with_project("foo-bar", vec![record("FOO-0001")]);
-        <InMemoryStore as AppRecordStore<IndexEntry>>::insert(
+        IndexEntryStore::upsert_index_entry(
             &store,
-            &ProjectName::try_new("foo-bar").unwrap(),
+            &project("FOO", "foo-bar"),
             IndexEntry {
                 id: WorkItemId::try_new("FOO-0001").unwrap(),
                 state: IndexEntryState::Open,
@@ -178,7 +212,8 @@ mod tests {
             false,
         );
 
-        let error = super::execute(&command, &staged(), &registry(), &FixedClock).unwrap_err();
+        let error =
+            super::execute_with_project(&command, &staged(), &registry(), &FixedClock).unwrap_err();
 
         assert!(matches!(error, CancelPendingWorkError::EmptyReport));
         assert_eq!(error.to_string(), "--report cannot be empty.");
@@ -195,7 +230,7 @@ mod tests {
             false,
         );
 
-        let out = super::execute(&command, &store, &registry(), &FixedClock).unwrap();
+        let out = super::execute_with_project(&command, &store, &registry(), &FixedClock).unwrap();
 
         assert_eq!(
             out.action,
@@ -223,7 +258,7 @@ mod tests {
             false,
         );
 
-        super::execute(&command, &store, &registry(), &FixedClock).unwrap();
+        super::execute_with_project(&command, &store, &registry(), &FixedClock).unwrap();
 
         assert_eq!(
             store.items("foo-bar")[0].completed,
@@ -241,7 +276,8 @@ mod tests {
             false,
         );
 
-        let error = super::execute(&command, &staged(), &registry(), &FixedClock).unwrap_err();
+        let error =
+            super::execute_with_project(&command, &staged(), &registry(), &FixedClock).unwrap_err();
 
         assert_eq!(
             error.to_string(),

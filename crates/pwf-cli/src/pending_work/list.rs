@@ -1,8 +1,10 @@
 use clap::Args;
-use pwf_application::pending_work::{
-    ListMode, ListSection, OrderDirection, OrderField, OrderSpec, ProjectRegistry,
-    ProjectResolutionError,
-    get_pending_work::{self, GetPendingWork, GetPendingWorkError},
+use pwf_application::{
+    pending_work::{
+        ListMode, ListSection, OrderDirection, OrderField, OrderSpec,
+        get_pending_work::{self, GetPendingWork, GetPendingWorkError},
+    },
+    project::resolve_project::ResolveProjectError,
 };
 use pwf_infra::obsidian::ObsidianStore;
 
@@ -53,11 +55,11 @@ pub struct Arguments {
     pub(crate) mode: ListMode,
 }
 
-pub(super) fn run(
+pub(super) async fn run(
     arguments: &Arguments,
     console: Console,
     store: &ObsidianStore,
-    projects: &ProjectRegistry,
+    pool: &sqlx::SqlitePool,
 ) -> Result<String, PendingWorkError> {
     let result = get_pending_work::execute(
         &GetPendingWork {
@@ -76,9 +78,10 @@ pub(super) fn run(
             mode: arguments.mode,
         },
         store,
-        projects,
+        pool,
         store,
     )
+    .await
     .map_err(map_get_pending_work_error)?;
     let location = result.project_task_path.as_ref().map_or_else(
         || "managed project task paths".to_string(),
@@ -94,19 +97,14 @@ pub(super) fn run(
     ))
 }
 
-fn map_project_resolution_error(error: ProjectResolutionError) -> PendingWorkError {
+fn map_project_resolution_error(error: ResolveProjectError) -> PendingWorkError {
     match error {
-        ProjectResolutionError::Unknown { identifier, known } => {
+        ResolveProjectError::Unknown { identifier, known } => {
             PendingWorkError::UnknownManagedProject { identifier, known }
         }
-        ProjectResolutionError::Ambiguous {
-            identifier,
-            matches,
-        } => PendingWorkError::AmbiguousManagedProject {
-            identifier,
-            matches,
-        },
-        other => PendingWorkError::ApplicationRead(other.to_string()),
+        ResolveProjectError::Unexpected { .. } => {
+            PendingWorkError::ApplicationRead(error.to_string())
+        }
     }
 }
 
@@ -143,7 +141,8 @@ fn map_get_pending_work_error(error: GetPendingWorkError) -> PendingWorkError {
             raw: error.raw().to_string(),
         },
         GetPendingWorkError::ReadStore(source)
-        | GetPendingWorkError::ReadProjectTaskPath(source) => {
+        | GetPendingWorkError::ReadProjectTaskPath(source)
+        | GetPendingWorkError::QueryProject(source) => {
             PendingWorkError::ApplicationList(source.to_string())
         }
         invalid @ GetPendingWorkError::InvalidTags { .. } => {

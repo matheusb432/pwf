@@ -1,16 +1,22 @@
 use std::path::PathBuf;
 
+use pwf_models::project::Project;
+
 use super::{
-    ProjectRegistry,
     find_pending_work::FindPendingWorkError,
     identifier,
-    logic::finding::find_open_item,
+    logic::finding::find_open_item_from_db,
     store_util::{self, LoadItemError},
 };
-use crate::ports::{
-    app_record::AppRecordStore,
-    confirmation::{Confirmation, ConfirmationClient},
-    pending_work_record::{IndexEntry, Materialization, PendingWorkRecord},
+use crate::{
+    ports::{
+        confirmation::{Confirmation, ConfirmationClient},
+        pending_work_record::{IndexEntryStore, Materialization, PendingWorkStore},
+    },
+    project::{
+        ProjectStatusFilter,
+        get_project::{self, GetProject, GetProjectError},
+    },
 };
 
 /// Describes the note and index link deleted by [`execute`].
@@ -54,38 +60,68 @@ pub enum RemovePendingWorkError {
     FileModelRequired,
     #[error("{0}")]
     WriteStore(Box<dyn std::error::Error + Send + Sync>),
+    #[error("{0}")]
+    QueryProject(Box<dyn std::error::Error + Send + Sync>),
 }
 
 /// Deletes an item after unlinking its index entry.
 ///
 /// An unlink failure leaves the note untouched.
 #[cqrsy::command]
-pub fn execute(
+pub async fn execute(
     cmd: &RemovePendingWorkItem,
-    store: &(impl AppRecordStore<PendingWorkRecord> + AppRecordStore<IndexEntry>),
-    projects: &ProjectRegistry,
+    store: &(impl PendingWorkStore + IndexEntryStore),
+    pool: &sqlx::SqlitePool,
     confirmation_client: &(impl ConfirmationClient + Send + Sync + 'static),
 ) -> Result<RemovePendingWorkItemOk, RemovePendingWorkError> {
     let not_found = || RemovePendingWorkError::ItemNotFound { id: cmd.id.clone() };
     let Some(pending_work_identifier) = identifier::parse(&cmd.id) else {
-        return match find_open_item(store, projects, &cmd.id) {
+        return match find_open_item_from_db(store, pool, &cmd.id).await {
             Ok(_) => Err(RemovePendingWorkError::FileModelRequired),
             Err(FindPendingWorkError::ReadStore(source)) => {
                 Err(RemovePendingWorkError::WriteStore(source))
             }
+            Err(FindPendingWorkError::QueryProject(source)) => {
+                Err(RemovePendingWorkError::QueryProject(source))
+            }
             Err(_) => Err(not_found()),
         };
     };
-    let project_id = pending_work_identifier
-        .as_ref()
-        .split_once('-')
-        .map_or("", |(project_id, _)| project_id);
-    let project = projects
-        .get_project_name_by(&pending_work_identifier)
-        .ok_or_else(|| RemovePendingWorkError::UnknownPrefix {
+    let project = match get_project::execute(
+        GetProject {
+            id: pending_work_identifier.project_id(),
+            status: ProjectStatusFilter::ACTIVE,
+        },
+        pool,
+    )
+    .await
+    {
+        Ok(project) => project,
+        Err(GetProjectError::ProjectNotFound { id: prefix }) => {
+            return Err(RemovePendingWorkError::UnknownPrefix {
+                pending_work_identifier: pending_work_identifier.to_string(),
+                prefix: prefix.to_string(),
+            });
+        }
+        Err(error) => return Err(RemovePendingWorkError::QueryProject(Box::new(error))),
+    };
+    execute_with_project(cmd, store, &project, confirmation_client)
+}
+
+fn execute_with_project(
+    cmd: &RemovePendingWorkItem,
+    store: &(impl PendingWorkStore + IndexEntryStore),
+    project: &Project,
+    confirmation_client: &(impl ConfirmationClient + Send + Sync + 'static),
+) -> Result<RemovePendingWorkItemOk, RemovePendingWorkError> {
+    let not_found = || RemovePendingWorkError::ItemNotFound { id: cmd.id.clone() };
+    let pending_work_identifier = identifier::parse(&cmd.id).ok_or_else(not_found)?;
+    if project.id != pending_work_identifier.project_id() {
+        return Err(RemovePendingWorkError::UnknownPrefix {
             pending_work_identifier: pending_work_identifier.to_string(),
-            prefix: project_id.to_string(),
-        })?;
+            prefix: pending_work_identifier.project_id().to_string(),
+        });
+    }
     let record =
         store_util::require_item(store, project, &pending_work_identifier).map_err(|error| {
             match error {
@@ -104,7 +140,7 @@ pub fn execute(
     };
     let confirmation = Confirmation::Removal {
         pending_work_identifier: pending_work_identifier.clone(),
-        project: project.clone(),
+        project: project.title.clone(),
         title: record.title.clone(),
         status: record.status,
         note_path: note_path.clone(),
@@ -115,14 +151,14 @@ pub fn execute(
         });
     }
 
-    AppRecordStore::<IndexEntry>::delete(store, project, &pending_work_identifier)
+    IndexEntryStore::delete_index_entry(store, project, &pending_work_identifier)
         .map_err(|error| RemovePendingWorkError::WriteStore(Box::new(error)))?;
-    AppRecordStore::<PendingWorkRecord>::delete(store, project, &pending_work_identifier)
+    PendingWorkStore::delete(store, project, &pending_work_identifier)
         .map_err(|error| RemovePendingWorkError::WriteStore(Box::new(error)))?;
 
     let removed = RemovedItem {
         id: pending_work_identifier.as_ref().to_string(),
-        project: project.as_ref().to_string(),
+        project: project.title.to_string(),
         title: record.title,
         deleted_path: note_path,
         unlinked: record
@@ -135,29 +171,34 @@ pub fn execute(
 
 #[cfg(test)]
 mod tests {
-    use pwf_models::pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus};
-
-    use super::{
-        ProjectRegistry, RemovePendingWorkError, RemovePendingWorkItem, RemovePendingWorkItemOk,
-        execute,
+    use pwf_models::{
+        pending_work::{Timestamp, WorkItemId, WorkItemStatus},
+        project::Project,
     };
+
+    use super::{RemovePendingWorkError, RemovePendingWorkItem, RemovePendingWorkItemOk};
     use crate::{
         ports::{
-            app_record::AppRecordStore,
             confirmation::{Confirmation, ConfirmationClient},
             pending_work_record::{
-                IndexEntry, IndexEntryState, Materialization, PendingWorkRecord, RecordId,
+                IndexEntry, IndexEntryState, IndexEntryStore, Materialization, PendingWorkRecord,
+                RecordId,
             },
         },
-        testing::InMemoryStore,
+        testing::{InMemoryStore, project},
     };
 
-    fn registry() -> ProjectRegistry {
-        ProjectRegistry::new(vec![(
-            ProjectName::try_new("pwf").unwrap(),
-            Some("/repo/pwf".to_string()),
-            Some("PWF".to_string()),
-        )])
+    fn execute(
+        command: &RemovePendingWorkItem,
+        store: &InMemoryStore,
+        project: &Project,
+        confirmation: &(impl ConfirmationClient + Send + Sync + 'static),
+    ) -> Result<RemovePendingWorkItemOk, RemovePendingWorkError> {
+        super::execute_with_project(command, store, project, confirmation)
+    }
+
+    fn registry() -> Project {
+        project("PWF", "pwf")
     }
 
     fn record(id: &str, status: WorkItemStatus) -> PendingWorkRecord {
@@ -190,9 +231,9 @@ mod tests {
         let store = InMemoryStore::default()
             .with_prefix("pwf", "PWF")
             .with_project("pwf", vec![record("PWF-0001", status)]);
-        <InMemoryStore as AppRecordStore<IndexEntry>>::insert(
+        IndexEntryStore::upsert_index_entry(
             &store,
-            &ProjectName::try_new("pwf").unwrap(),
+            &project("PWF", "pwf"),
             IndexEntry {
                 id: WorkItemId::try_new("PWF-0001").unwrap(),
                 state: index_state,
@@ -221,7 +262,7 @@ mod tests {
         let store = staged(WorkItemStatus::Active);
 
         let RemovePendingWorkItemOk::Removed(removed) =
-            super::execute(&command("PWF-0001"), &store, &registry(), &Accepted).unwrap()
+            execute(&command("PWF-0001"), &store, &registry(), &Accepted).unwrap()
         else {
             panic!("accepted removal must remove the item");
         };
@@ -241,8 +282,7 @@ mod tests {
         for status in [WorkItemStatus::Done, WorkItemStatus::Cancelled] {
             let store = staged(status);
 
-            let outcome =
-                super::execute(&command("PWF-0001"), &store, &registry(), &Accepted).unwrap();
+            let outcome = execute(&command("PWF-0001"), &store, &registry(), &Accepted).unwrap();
 
             assert!(matches!(outcome, RemovePendingWorkItemOk::Removed(_)));
             assert!(store.items("pwf").is_empty(), "{status} record retained");
@@ -254,8 +294,7 @@ mod tests {
     fn remove_missing_item_preserves_requested_id() {
         let store = staged(WorkItemStatus::Active);
 
-        let error =
-            super::execute(&command("PWF-9999"), &store, &registry(), &Accepted).unwrap_err();
+        let error = execute(&command("PWF-9999"), &store, &registry(), &Accepted).unwrap_err();
 
         assert!(matches!(
             error,
@@ -267,8 +306,7 @@ mod tests {
     fn remove_reports_an_unknown_configured_prefix() {
         let store = staged(WorkItemStatus::Active);
 
-        let error =
-            super::execute(&command("XYZ-0001"), &store, &registry(), &Accepted).unwrap_err();
+        let error = execute(&command("XYZ-0001"), &store, &registry(), &Accepted).unwrap_err();
 
         assert_eq!(
             error.to_string(),
@@ -288,8 +326,7 @@ mod tests {
             .with_prefix("pwf", "PWF")
             .with_project("pwf", vec![ghost]);
 
-        let error =
-            super::execute(&command("PWF-0001"), &store, &registry(), &Accepted).unwrap_err();
+        let error = execute(&command("PWF-0001"), &store, &registry(), &Accepted).unwrap_err();
 
         assert!(matches!(
             error,

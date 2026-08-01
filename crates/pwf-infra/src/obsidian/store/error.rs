@@ -164,8 +164,12 @@ pub enum ObsidianStoreError {
     },
     #[error("Notes directory not found: {path}")]
     NotesDirectoryNotFound { path: String },
-    #[error("Unknown project '{project}'.")]
-    UnknownProject { project: String },
+    #[error("Invalid task path for project '{project}': {source}")]
+    InvalidProjectTaskPath {
+        project: String,
+        #[source]
+        source: pwf_application::project::resolve_runtime_path::RuntimePathError,
+    },
     #[error("Cannot create project dir: {source}")]
     CreateProjectDir { source: std::io::Error },
     #[error("Cannot create index dir: {source}")]
@@ -222,10 +226,6 @@ pub enum ObsidianStoreError {
     EmptyAppend,
     #[error("Expected open task marker at {note}:{line}. The note may have changed.")]
     ExpectedOpenTaskMarker { note: String, line: usize },
-    #[error(
-        "index sections are managed implicitly by index-entry writes; direct {op} is unsupported."
-    )]
-    IndexSectionWriteUnsupported { op: &'static str },
 }
 
 impl ObsidianStoreError {

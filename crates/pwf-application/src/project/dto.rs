@@ -1,5 +1,17 @@
 use pwf_models::project::{Project, ProjectId, ProjectName, ProjectSource, ProjectTasks};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProjectStatusFilter(bool);
+
+impl ProjectStatusFilter {
+    pub const ACTIVE: Self = Self(false);
+    pub const ALL: Self = Self(true);
+
+    pub(crate) const fn includes_paused(self) -> bool {
+        self.0
+    }
+}
+
 /// Describes the current project and whether a requested state transition changed it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectStateChange {

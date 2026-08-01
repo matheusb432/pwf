@@ -1,9 +1,6 @@
 use clap::Args;
 use pwf_application::{
-    pending_work::{
-        ProjectRegistry,
-        complete_pending_work::{self, CompletePendingWork, CompletePendingWorkError},
-    },
+    pending_work::complete_pending_work::{self, CompletePendingWork, CompletePendingWorkError},
     ports::clock::Clock,
 };
 use pwf_infra::obsidian::ObsidianStore;
@@ -34,10 +31,10 @@ use super::{
     shared::PendingWorkError,
 };
 
-pub(super) fn run(
+pub(super) async fn run(
     arguments: &Arguments,
     store: &ObsidianStore,
-    projects: &ProjectRegistry,
+    pool: &sqlx::SqlitePool,
     clock: &impl Clock,
 ) -> Result<String, PendingWorkError> {
     let id = arguments.identifier.required("done")?;
@@ -50,9 +47,10 @@ pub(super) fn run(
             review: arguments.review,
         },
         store,
-        projects,
+        pool,
         clock,
     )
+    .await
     .map_err(map_complete_error)?;
     if let Some(review) = output.review_item.as_ref() {
         emit_created_section(review);
@@ -78,6 +76,9 @@ fn map_complete_error(error: CompletePendingWorkError) -> PendingWorkError {
         CompletePendingWorkError::ReviewTask(source) => {
             emit_created_section_for_error(&source);
             PendingWorkError::Complete(CompletePendingWorkError::ReviewTask(source))
+        }
+        CompletePendingWorkError::QueryProject(source) => {
+            PendingWorkError::Complete(CompletePendingWorkError::QueryProject(source))
         }
     }
 }

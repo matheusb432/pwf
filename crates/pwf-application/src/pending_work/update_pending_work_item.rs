@@ -1,10 +1,20 @@
-use pwf_models::pending_work::{EffortTier, TaskTitle};
+use pwf_models::{
+    pending_work::{EffortTier, TaskTitle},
+    project::Project,
+};
 
 use super::{
-    ProjectRegistry,
+    identifier,
     logic::pending_work_update::{persist, prepare},
+    prerequisite,
 };
-use crate::ports::{app_record::AppRecordStore, pending_work_record::PendingWorkRecord};
+use crate::{
+    ports::pending_work_record::PendingWorkStore,
+    project::{
+        ProjectStatusFilter,
+        get_project::{self, GetProject, GetProjectError},
+    },
+};
 
 /// Requests edits to one pending-work item.
 #[derive(Debug, Clone)]
@@ -63,6 +73,8 @@ pub enum UpdatePendingWorkError {
     EmptyAppend,
     #[error("{0}")]
     WriteStore(#[source] Box<dyn std::error::Error + Send + Sync>),
+    #[error("{0}")]
+    QueryProject(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -86,37 +98,87 @@ pub enum UpdatePendingWorkItemOk {
 ///
 /// Returns [`UpdatePendingWorkError`] when preparation, validation, or persistence fails.
 #[cqrsy::command]
-#[expect(
-    clippy::needless_pass_by_value,
-    reason = "preserves the public request-first operation signature"
-)]
-pub fn execute(
+pub async fn execute(
     command: UpdatePendingWorkItem,
-    store: &impl AppRecordStore<PendingWorkRecord>,
-    projects: &ProjectRegistry,
+    store: &impl PendingWorkStore,
+    pool: &sqlx::SqlitePool,
 ) -> Result<UpdatePendingWorkItemOk, UpdatePendingWorkError> {
-    let prepared = prepare(&command, store, projects)?;
+    let Some(id) = identifier::parse(&command.id) else {
+        return execute_with_projects(&command, store, &[]);
+    };
+    let project = match get_project::execute(
+        GetProject {
+            id: id.project_id(),
+            status: ProjectStatusFilter::ACTIVE,
+        },
+        pool,
+    )
+    .await
+    {
+        Ok(project) => project,
+        Err(GetProjectError::ProjectNotFound { .. }) => {
+            return Err(UpdatePendingWorkError::ItemNotFound {
+                id: command.id.clone(),
+            });
+        }
+        Err(error) => return Err(UpdatePendingWorkError::QueryProject(Box::new(error))),
+    };
+    let mut projects = vec![project];
+    if let Ok(ids) = prerequisite::project_ids(&command.prereq) {
+        for id in ids {
+            if projects.iter().any(|project| project.id == id) {
+                continue;
+            }
+            match get_project::execute(
+                GetProject {
+                    id,
+                    status: ProjectStatusFilter::ACTIVE,
+                },
+                pool,
+            )
+            .await
+            {
+                Ok(project) => projects.push(project),
+                Err(GetProjectError::ProjectNotFound { .. }) => {}
+                Err(error) => return Err(UpdatePendingWorkError::QueryProject(Box::new(error))),
+            }
+        }
+    }
+    execute_with_projects(&command, store, &projects)
+}
+
+fn execute_with_projects(
+    command: &UpdatePendingWorkItem,
+    store: &impl PendingWorkStore,
+    projects: &[Project],
+) -> Result<UpdatePendingWorkItemOk, UpdatePendingWorkError> {
+    let not_found = || UpdatePendingWorkError::ItemNotFound {
+        id: command.id.clone(),
+    };
+    let id = identifier::parse(&command.id).ok_or_else(not_found)?;
+    let project = projects
+        .iter()
+        .find(|project| project.id == id.project_id())
+        .ok_or_else(not_found)?;
+    let prepared = prepare(command, store, project, projects)?;
     persist(prepared, store)
 }
 
 #[cfg(test)]
 mod tests {
-    use pwf_models::pending_work::{ProjectName, TaskTitle, Timestamp, WorkItemId, WorkItemStatus};
-
-    use super::{
-        ProjectRegistry, UpdatePendingWorkError, UpdatePendingWorkItem, UpdatePendingWorkItemOk,
+    use pwf_models::{
+        pending_work::{TaskTitle, Timestamp, WorkItemId, WorkItemStatus},
+        project::Project,
     };
+
+    use super::{UpdatePendingWorkError, UpdatePendingWorkItem, UpdatePendingWorkItemOk};
     use crate::{
         ports::pending_work_record::{Materialization, PendingWorkRecord, RecordId},
-        testing::InMemoryStore,
+        testing::{InMemoryStore, project},
     };
 
-    fn registry() -> ProjectRegistry {
-        ProjectRegistry::new(vec![(
-            ProjectName::try_new("foo-bar").unwrap(),
-            Some("/repo".to_string()),
-            Some("FOO".to_string()),
-        )])
+    fn registry() -> Vec<Project> {
+        vec![project("FOO", "foo-bar")]
     }
 
     fn record(id: &str, status: WorkItemStatus, body: &str) -> PendingWorkRecord {
@@ -169,7 +231,8 @@ mod tests {
     fn update_rejects_empty_patch_with_nothing_to_update() {
         let store = staged(WorkItemStatus::Active, "## Goals\n- x\n");
 
-        let error = super::execute(empty("FOO-0001"), &store, &registry()).unwrap_err();
+        let error =
+            super::execute_with_projects(&empty("FOO-0001"), &store, &registry()).unwrap_err();
 
         assert!(matches!(error, UpdatePendingWorkError::NothingToUpdate));
         assert_eq!(
@@ -186,7 +249,7 @@ mod tests {
             ..empty("FOO-0001")
         };
 
-        let updated = super::execute(cmd, &store, &registry()).unwrap();
+        let updated = super::execute_with_projects(&cmd, &store, &registry()).unwrap();
 
         assert_eq!(
             updated,
@@ -209,7 +272,7 @@ mod tests {
             ..empty("FOO-0001")
         };
 
-        let error = super::execute(cmd, &store, &registry()).unwrap_err();
+        let error = super::execute_with_projects(&cmd, &store, &registry()).unwrap_err();
 
         assert!(matches!(
             error,
@@ -226,7 +289,7 @@ mod tests {
             ..empty("FOO-0001")
         };
 
-        let updated = super::execute(cmd, &store, &registry()).unwrap();
+        let updated = super::execute_with_projects(&cmd, &store, &registry()).unwrap();
 
         assert_eq!(
             updated,
@@ -263,7 +326,7 @@ mod tests {
             ..empty("FOO-0001")
         };
 
-        super::execute(cmd, &store, &registry()).unwrap();
+        super::execute_with_projects(&cmd, &store, &registry()).unwrap();
 
         assert_eq!(
             store.items("foo-bar")[0].tags.as_deref(),
@@ -280,7 +343,7 @@ mod tests {
             ..empty("FOO-0001")
         };
 
-        super::execute(cmd, &store, &registry()).unwrap();
+        super::execute_with_projects(&cmd, &store, &registry()).unwrap();
 
         assert_eq!(store.items("foo-bar")[0].tags.as_deref(), Some("[sqlite]"));
     }
@@ -293,7 +356,7 @@ mod tests {
             ..empty("FOO-0001")
         };
 
-        let error = super::execute(cmd, &store, &registry()).unwrap_err();
+        let error = super::execute_with_projects(&cmd, &store, &registry()).unwrap_err();
 
         assert!(matches!(
             error,
@@ -310,7 +373,7 @@ mod tests {
             ..empty("FOO-0001")
         };
 
-        let error = super::execute(cmd, &store, &registry()).unwrap_err();
+        let error = super::execute_with_projects(&cmd, &store, &registry()).unwrap_err();
 
         assert!(matches!(
             error,
@@ -341,7 +404,7 @@ mod tests {
             ..empty("FOO-0002")
         };
 
-        super::execute(cmd, &store, &registry()).unwrap();
+        super::execute_with_projects(&cmd, &store, &registry()).unwrap();
 
         let item = store
             .items("foo-bar")
@@ -363,7 +426,7 @@ mod tests {
             ..empty("foo-9999")
         };
 
-        let error = super::execute(cmd, &store, &registry()).unwrap_err();
+        let error = super::execute_with_projects(&cmd, &store, &registry()).unwrap_err();
 
         assert!(matches!(
             error,

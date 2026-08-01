@@ -1,16 +1,8 @@
 use std::path::PathBuf;
 
-use pwf_application::{
-    pending_work::ProjectRegistry,
-    ports::clock::Clock,
-    project::load_active_projects::{self, ActiveProject, LoadActiveProjects},
-};
+use pwf_application::ports::clock::Clock;
 use pwf_cli::{command, note, pending_work, project};
-use pwf_infra::{
-    clock::LocalClock,
-    obsidian::{ObsidianProject, ObsidianStore},
-};
-use pwf_models::pending_work::ProjectIndexIdentity;
+use pwf_infra::{clock::LocalClock, obsidian::ObsidianStore};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
@@ -42,26 +34,24 @@ async fn run(parsed: command::Cli, clock: &impl Clock) -> Result<String, String>
         }
         command::RootCommand::PendingWork(command) => {
             let pool = open_database().await?;
-            let projects = load_active_projects(&pool).await?;
+            let home = managed_project_home()?;
+            let store = ObsidianStore::new(home.clone());
             pending_work::run(
                 &command,
                 pwf_cli::console::Console::from_terminal(),
-                &projects.store,
-                &projects.registry,
+                &store,
+                &pool,
+                &home,
                 clock,
             )
+            .await
         }
         command::RootCommand::Note(arguments) => {
             let pool = open_database().await?;
-            let projects = load_active_projects(&pool).await?;
-            note::run(&arguments, &projects.store, &projects.registry, clock)
+            let store = ObsidianStore::new(managed_project_home()?);
+            note::run(&arguments, &store, &pool, clock).await
         }
     }
-}
-
-struct ActiveProjects {
-    registry: ProjectRegistry,
-    store: ObsidianStore,
 }
 
 async fn open_database() -> Result<sqlx::SqlitePool, String> {
@@ -84,36 +74,6 @@ async fn open_database() -> Result<sqlx::SqlitePool, String> {
             )
         })?;
     Ok(pool)
-}
-
-async fn load_active_projects(pool: &sqlx::SqlitePool) -> Result<ActiveProjects, String> {
-    let projects = load_active_projects::execute(
-        LoadActiveProjects {
-            home: managed_project_home()?,
-        },
-        pool,
-    )
-    .await
-    .map_err(|error| error.to_string())?;
-    Ok(compose_active_projects(&projects))
-}
-
-fn compose_active_projects(projects: &[ActiveProject]) -> ActiveProjects {
-    let registry = ProjectRegistry::new(projects.iter().map(|runtime| {
-        (
-            runtime.project.title.clone(),
-            Some(runtime.source_path.to_string_lossy().into_owned()),
-            Some(runtime.project.id.to_string()),
-        )
-    }));
-    let store = ObsidianStore::new(projects.iter().map(|runtime| {
-        ObsidianProject::new(
-            ProjectIndexIdentity::new(runtime.project.id.clone(), runtime.project.title.clone()),
-            runtime.tasks_path.clone(),
-        )
-    }));
-
-    ActiveProjects { registry, store }
 }
 
 fn project_command_home(arguments: &project::Arguments) -> Result<Option<PathBuf>, String> {

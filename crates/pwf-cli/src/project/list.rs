@@ -1,5 +1,8 @@
 use clap::Args;
-use pwf_application::project::list_projects::{self, ListProjects};
+use pwf_application::project::{
+    ProjectStatusFilter,
+    list_projects::{self, ListProjects},
+};
 use sqlx::SqlitePool;
 
 use super::output;
@@ -10,7 +13,7 @@ pub struct Arguments {}
 pub(super) async fn run(_arguments: Arguments, pool: &SqlitePool) -> Result<String, String> {
     let projects = list_projects::execute(
         ListProjects {
-            include_paused: true,
+            status: ProjectStatusFilter::ALL,
         },
         pool,
     )

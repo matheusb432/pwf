@@ -10,12 +10,16 @@ pub(crate) use database::{MIGRATOR, insert_project};
 use pwf_models::{
     note::{NoteId, ProjectNote},
     pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus},
+    project::{
+        Project, ProjectId, ProjectSource, ProjectSourceKind, ProjectSourceValue, ProjectTasks,
+        ProjectTasksKind, ProjectTasksPath,
+    },
 };
 
 use crate::ports::{
-    app_record::AppRecordStore,
     pending_work_record::{
-        IndexEntry, IndexSection, ItemPatch, Materialization, NewItem, PendingWorkRecord, RecordId,
+        IndexEntry, IndexEntryStore, IndexSection, IndexSectionStore, ItemPatch, Materialization,
+        NewItem, PendingWorkRecord, PendingWorkStore, RecordId,
     },
     project_note::{NewProjectNote, ProjectNotePatch, ProjectNoteStore},
 };
@@ -38,7 +42,7 @@ pub(crate) enum ProjectNoteFailure {
     Read,
 }
 
-/// Provides a thread-safe [`AppRecordStore`] test double for application records.
+/// Provides thread-safe in-memory persistence for application tests.
 ///
 /// Clones share one `Arc<Mutex<InMemoryState>>` and therefore observe the same writes.
 #[derive(Debug, Clone, Default)]
@@ -49,8 +53,6 @@ pub struct InMemoryStore {
 /// Reports rejected writes in the application test store.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum InMemoryStoreError {
-    #[error("index sections are managed implicitly and cannot be written directly (op: {op})")]
-    IndexSectionWriteUnsupported { op: &'static str },
     #[error("injected in-memory store failure: {operation}")]
     Injected { operation: &'static str },
     #[error("pending-work note Markdown is not staged: {locator}")]
@@ -133,15 +135,32 @@ fn project_name(project: &str) -> ProjectName {
     ProjectName::try_new(project).expect("test project name is non-empty")
 }
 
-impl AppRecordStore<PendingWorkRecord> for InMemoryStore {
+pub(crate) fn project(id: &str, title: &str) -> Project {
+    Project {
+        id: ProjectId::try_new(id).expect("test project ID is canonical"),
+        title: project_name(title),
+        source: ProjectSource::new(
+            ProjectSourceKind::Directory,
+            ProjectSourceValue::try_new(format!("/work/{title}")).unwrap(),
+        ),
+        tasks: ProjectTasks::new(
+            ProjectTasksKind::Directory,
+            ProjectTasksPath::try_new(format!("/tasks/{title}")).unwrap(),
+        ),
+        created_at: "2026-07-25T00:00:00.000Z".to_string(),
+        is_paused: false,
+    }
+}
+
+impl PendingWorkStore for InMemoryStore {
     type Error = Infallible;
 
     fn get(
         &self,
-        project: &ProjectName,
+        project: &Project,
         id: &WorkItemId,
     ) -> Result<Option<PendingWorkRecord>, Self::Error> {
-        Ok(self.lock().items.get(project).and_then(|items| {
+        Ok(self.lock().items.get(&project.title).and_then(|items| {
             items
                 .iter()
                 .find(|item| item.id.as_item() == Some(id))
@@ -149,23 +168,24 @@ impl AppRecordStore<PendingWorkRecord> for InMemoryStore {
         }))
     }
 
-    fn list(&self, project: &ProjectName) -> Result<Vec<PendingWorkRecord>, Self::Error> {
-        Ok(self.lock().items.get(project).cloned().unwrap_or_default())
+    fn list(&self, project: &Project) -> Result<Vec<PendingWorkRecord>, Self::Error> {
+        Ok(self
+            .lock()
+            .items
+            .get(&project.title)
+            .cloned()
+            .unwrap_or_default())
     }
 
     /// Allocates the next `<prefix>-NNNN` id and materializes an active record.
-    fn insert(
-        &self,
-        project: &ProjectName,
-        new: NewItem,
-    ) -> Result<PendingWorkRecord, Self::Error> {
+    fn insert(&self, project: &Project, new: NewItem) -> Result<PendingWorkRecord, Self::Error> {
         let mut state = self.lock();
         let prefix = state
             .prefixes
-            .get(project)
+            .get(&project.title)
             .cloned()
             .expect("stage a prefix via with_prefix before insert");
-        let items = state.items.entry(project.clone()).or_default();
+        let items = state.items.entry(project.title.clone()).or_default();
         let next = items
             .iter()
             .filter_map(|item| item.id.as_item())
@@ -175,7 +195,7 @@ impl AppRecordStore<PendingWorkRecord> for InMemoryStore {
             .unwrap_or(0)
             + 1;
         let id = WorkItemId::try_new(format!("{prefix}-{next:04}")).expect("allocated id");
-        let locator = format!("/mem/{}/{}.md", project.as_ref(), id.as_ref());
+        let locator = format!("/mem/{}/{}.md", project.title.as_ref(), id.as_ref());
         let record = PendingWorkRecord {
             id: RecordId::Item(id),
             title: new.title.to_string(),
@@ -200,12 +220,12 @@ impl AppRecordStore<PendingWorkRecord> for InMemoryStore {
     /// Applies an [`ItemPatch`] to the matching record's typed fields.
     fn update(
         &self,
-        project: &ProjectName,
+        project: &Project,
         id: &WorkItemId,
         patch: ItemPatch,
     ) -> Result<(), Self::Error> {
         let mut state = self.lock();
-        let items = state.items.entry(project.clone()).or_default();
+        let items = state.items.entry(project.title.clone()).or_default();
         let record = items
             .iter_mut()
             .find(|item| item.id.as_item() == Some(id))
@@ -237,9 +257,9 @@ impl AppRecordStore<PendingWorkRecord> for InMemoryStore {
         Ok(())
     }
 
-    fn delete(&self, project: &ProjectName, id: &WorkItemId) -> Result<(), Self::Error> {
+    fn delete(&self, project: &Project, id: &WorkItemId) -> Result<(), Self::Error> {
         let mut state = self.lock();
-        let items = state.items.entry(project.clone()).or_default();
+        let items = state.items.entry(project.title.clone()).or_default();
         let before = items.len();
         items.retain(|item| item.id.as_item() != Some(id));
         assert!(before > items.len(), "delete of unknown id {id:?}");
@@ -257,18 +277,18 @@ fn render_tags(tags: &pwf_models::pending_work::Tags) -> String {
     )
 }
 
-impl AppRecordStore<ProjectNote> for InMemoryStore {
+impl ProjectNoteStore for InMemoryStore {
     type Error = InMemoryStoreError;
 
-    fn get(&self, project: &ProjectName, id: &NoteId) -> Result<Option<ProjectNote>, Self::Error> {
+    fn get_note(&self, project: &Project, id: &NoteId) -> Result<Option<ProjectNote>, Self::Error> {
         Ok(self
             .lock()
             .project_notes
-            .get(project)
+            .get(&project.title)
             .and_then(|notes| notes.iter().find(|note| note.id == *id).cloned()))
     }
 
-    fn list(&self, project: &ProjectName) -> Result<Vec<ProjectNote>, Self::Error> {
+    fn list_notes(&self, project: &Project) -> Result<Vec<ProjectNote>, Self::Error> {
         if self
             .lock()
             .project_note_failures
@@ -281,14 +301,14 @@ impl AppRecordStore<ProjectNote> for InMemoryStore {
         Ok(self
             .lock()
             .project_notes
-            .get(project)
+            .get(&project.title)
             .cloned()
             .unwrap_or_default())
     }
 
-    fn insert(
+    fn insert_note(
         &self,
-        project: &ProjectName,
+        project: &Project,
         new: NewProjectNote,
     ) -> Result<ProjectNote, Self::Error> {
         let record = ProjectNote {
@@ -298,27 +318,27 @@ impl AppRecordStore<ProjectNote> for InMemoryStore {
         let mut state = self.lock();
         state
             .project_note_creations
-            .entry(project.clone())
+            .entry(project.title.clone())
             .or_default()
             .push(new.created);
         state
             .project_notes
-            .entry(project.clone())
+            .entry(project.title.clone())
             .or_default()
             .push(record.clone());
         Ok(record)
     }
 
-    fn update(
+    fn update_note(
         &self,
-        project: &ProjectName,
+        project: &Project,
         id: &NoteId,
         patch: ProjectNotePatch,
     ) -> Result<(), Self::Error> {
         let mut state = self.lock();
         let note = state
             .project_notes
-            .entry(project.clone())
+            .entry(project.title.clone())
             .or_default()
             .iter_mut()
             .find(|note| note.id == *id)
@@ -327,7 +347,7 @@ impl AppRecordStore<ProjectNote> for InMemoryStore {
         Ok(())
     }
 
-    fn delete(&self, project: &ProjectName, id: &NoteId) -> Result<(), Self::Error> {
+    fn delete_note(&self, project: &Project, id: &NoteId) -> Result<(), Self::Error> {
         if self
             .lock()
             .project_note_failures
@@ -338,31 +358,24 @@ impl AppRecordStore<ProjectNote> for InMemoryStore {
             });
         }
         let mut state = self.lock();
-        let notes = state.project_notes.entry(project.clone()).or_default();
+        let notes = state
+            .project_notes
+            .entry(project.title.clone())
+            .or_default();
         let count_before = notes.len();
         notes.retain(|note| note.id != *id);
         assert!(count_before > notes.len(), "delete of unknown project note");
         Ok(())
     }
-}
-
-impl ProjectNoteStore for InMemoryStore {
-    fn note_exists(
-        &self,
-        project: &ProjectName,
-        id: &NoteId,
-    ) -> Result<bool, <Self as AppRecordStore<ProjectNote>>::Error> {
+    fn note_exists(&self, project: &Project, id: &NoteId) -> Result<bool, Self::Error> {
         Ok(self
             .lock()
             .project_notes
-            .get(project)
+            .get(&project.title)
             .is_some_and(|notes| notes.iter().any(|note| note.id == *id)))
     }
 
-    fn read_note_markdown(
-        &self,
-        locator: &str,
-    ) -> Result<String, <Self as AppRecordStore<ProjectNote>>::Error> {
+    fn read_note_markdown(&self, locator: &str) -> Result<String, Self::Error> {
         if self
             .lock()
             .project_note_failures
@@ -384,50 +397,28 @@ impl ProjectNoteStore for InMemoryStore {
     }
 }
 
-impl AppRecordStore<IndexEntry> for InMemoryStore {
+impl IndexEntryStore for InMemoryStore {
     type Error = Infallible;
 
-    fn get(
-        &self,
-        project: &ProjectName,
-        id: &WorkItemId,
-    ) -> Result<Option<IndexEntry>, Self::Error> {
+    fn list_index_entries(&self, project: &Project) -> Result<Vec<IndexEntry>, Self::Error> {
         Ok(self
             .lock()
             .entries
-            .get(project)
-            .and_then(|entries| entries.iter().find(|entry| entry.id == *id).cloned()))
-    }
-
-    fn list(&self, project: &ProjectName) -> Result<Vec<IndexEntry>, Self::Error> {
-        Ok(self
-            .lock()
-            .entries
-            .get(project)
+            .get(&project.title)
             .cloned()
             .unwrap_or_default())
     }
 
-    fn insert(&self, project: &ProjectName, new: IndexEntry) -> Result<IndexEntry, Self::Error> {
-        self.upsert(project, new.clone());
-        Ok(new)
-    }
-
-    fn update(
-        &self,
-        project: &ProjectName,
-        _id: &WorkItemId,
-        patch: IndexEntry,
-    ) -> Result<(), Self::Error> {
-        self.upsert(project, patch);
+    fn upsert_index_entry(&self, project: &Project, entry: IndexEntry) -> Result<(), Self::Error> {
+        self.upsert(project, entry);
         Ok(())
     }
 
-    fn delete(&self, project: &ProjectName, id: &WorkItemId) -> Result<(), Self::Error> {
+    fn delete_index_entry(&self, project: &Project, id: &WorkItemId) -> Result<(), Self::Error> {
         let mut state = self.lock();
         state
             .entries
-            .entry(project.clone())
+            .entry(project.title.clone())
             .or_default()
             .retain(|entry| entry.id != *id);
         Ok(())
@@ -436,15 +427,15 @@ impl AppRecordStore<IndexEntry> for InMemoryStore {
 
 impl InMemoryStore {
     /// Replaces or appends an entry and creates its section when needed.
-    fn upsert(&self, project: &ProjectName, entry: IndexEntry) {
+    fn upsert(&self, project: &Project, entry: IndexEntry) {
         let mut state = self.lock();
         if !entry.section.is_empty() {
-            let sections = state.sections.entry(project.clone()).or_default();
+            let sections = state.sections.entry(project.title.clone()).or_default();
             if !sections.iter().any(|label| label == &entry.section) {
                 sections.push(entry.section.clone());
             }
         }
-        let entries = state.entries.entry(project.clone()).or_default();
+        let entries = state.entries.entry(project.title.clone()).or_default();
         match entries.iter_mut().find(|existing| existing.id == entry.id) {
             Some(existing) => *existing = entry,
             None => entries.push(entry),
@@ -452,24 +443,14 @@ impl InMemoryStore {
     }
 }
 
-impl AppRecordStore<IndexSection> for InMemoryStore {
+impl IndexSectionStore for InMemoryStore {
     type Error = InMemoryStoreError;
 
-    fn get(
-        &self,
-        project: &ProjectName,
-        label: &String,
-    ) -> Result<Option<IndexSection>, Self::Error> {
-        Ok(<Self as AppRecordStore<IndexSection>>::list(self, project)?
-            .into_iter()
-            .find(|section| section.label == *label))
-    }
-
-    fn list(&self, project: &ProjectName) -> Result<Vec<IndexSection>, Self::Error> {
+    fn list_index_sections(&self, project: &Project) -> Result<Vec<IndexSection>, Self::Error> {
         Ok(self
             .lock()
             .sections
-            .get(project)
+            .get(&project.title)
             .cloned()
             .unwrap_or_default()
             .into_iter()
@@ -477,42 +458,28 @@ impl AppRecordStore<IndexSection> for InMemoryStore {
             .collect())
     }
 
-    /// Rejects direct section creation, matching the production adapter.
-    fn insert(
-        &self,
-        _project: &ProjectName,
-        _new: IndexSection,
-    ) -> Result<IndexSection, Self::Error> {
-        Err(InMemoryStoreError::IndexSectionWriteUnsupported { op: "insert" })
-    }
-
     /// Renames a section and updates entries that referenced its old label.
-    fn update(
+    fn rename_index_section(
         &self,
-        project: &ProjectName,
-        label: &String,
-        patch: IndexSection,
+        project: &Project,
+        current_label: &str,
+        new_label: &str,
     ) -> Result<(), Self::Error> {
         let mut state = self.lock();
-        if let Some(sections) = state.sections.get_mut(project) {
+        if let Some(sections) = state.sections.get_mut(&project.title) {
             for existing in sections.iter_mut() {
-                if existing == label {
-                    *existing = patch.label.clone();
+                if existing == current_label {
+                    *existing = new_label.to_string();
                 }
             }
         }
-        if let Some(entries) = state.entries.get_mut(project) {
+        if let Some(entries) = state.entries.get_mut(&project.title) {
             for entry in entries.iter_mut() {
-                if entry.section == *label {
-                    entry.section = patch.label.clone();
+                if entry.section == current_label {
+                    entry.section = new_label.to_string();
                 }
             }
         }
         Ok(())
-    }
-
-    /// Rejects section deletion, matching the production adapter.
-    fn delete(&self, _project: &ProjectName, _label: &String) -> Result<(), Self::Error> {
-        Err(InMemoryStoreError::IndexSectionWriteUnsupported { op: "delete" })
     }
 }

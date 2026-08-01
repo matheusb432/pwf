@@ -1,5 +1,4 @@
 pub mod agent;
-pub mod app_record;
 pub mod clock;
 pub mod confirmation;
 pub mod inline_agent_session;

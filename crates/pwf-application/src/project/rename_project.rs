@@ -105,6 +105,7 @@ pub async fn execute(
     let current = get_project::execute(
         GetProject {
             id: command.current_id.clone(),
+            status: super::ProjectStatusFilter::ALL,
         },
         pool,
     )
