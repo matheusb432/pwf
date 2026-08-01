@@ -1483,16 +1483,31 @@ dependencies = [
 ]
 
 [[package]]
-name = "pwf"
+name = "pwf-application"
+version = "0.1.0"
+dependencies = [
+ "askama",
+ "bon",
+ "cqrsy",
+ "prompt-lanes",
+ "pwf-models",
+ "regex",
+ "sqlx",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
+name = "pwf-cli"
 version = "0.1.0"
 dependencies = [
  "anstyle",
  "clap",
  "clap-cargo",
  "directories",
- "pwf_application",
- "pwf_infra",
- "pwf_models",
+ "pwf-application",
+ "pwf-infra",
+ "pwf-models",
  "regex",
  "serde",
  "serde_json",
@@ -1504,22 +1519,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "pwf_application"
-version = "0.1.0"
-dependencies = [
- "askama",
- "bon",
- "cqrsy",
- "prompt-lanes",
- "pwf_models",
- "regex",
- "sqlx",
- "thiserror",
- "tokio",
-]
-
-[[package]]
-name = "pwf_e2e"
+name = "pwf-e2e"
 version = "0.1.0"
 dependencies = [
  "assert_cmd",
@@ -1529,15 +1529,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "pwf_infra"
+name = "pwf-infra"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
  "directories",
  "gray_matter",
- "pwf_application",
- "pwf_models",
+ "pwf-application",
+ "pwf-models",
  "regex",
  "serde",
  "serde_json",
@@ -1551,7 +1551,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "pwf_models"
+name = "pwf-models"
 version = "0.1.0"
 dependencies = [
  "nutype",

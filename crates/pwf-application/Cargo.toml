@@ -1,0 +1,25 @@
+[package]
+name = "pwf-application"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+name = "pwf_application"
+path = "src/lib.rs"
+
+[dependencies]
+askama = { workspace = true }
+bon = { workspace = true }
+prompt-lanes = { workspace = true }
+pwf-models = { workspace = true }
+cqrsy = { workspace = true }
+regex = { workspace = true }
+sqlx = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }
+
+[lints]
+workspace = true

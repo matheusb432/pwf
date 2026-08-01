@@ -1,5 +1,5 @@
 [package]
-name = "pwf_e2e"
+name = "pwf-e2e"
 version = "0.1.0"
 edition.workspace = true
 publish.workspace = true

@@ -56,13 +56,18 @@ fn prepare_arguments(check: bool) -> Vec<&'static str> {
         "--no-dotenv",
         "--",
         "--package",
-        "pwf_application",
+        "pwf-application",
     ]);
     arguments
 }
 
 fn database_setup_arguments() -> [&'static str; 4] {
-    ["database", "setup", "--source", "crates/infra/migrations"]
+    [
+        "database",
+        "setup",
+        "--source",
+        "crates/pwf-infra/migrations",
+    ]
 }
 
 fn query_environment(database_url: &str) -> [(&'static str, &str); 2] {
@@ -83,7 +88,7 @@ mod tests {
                 "--no-dotenv",
                 "--",
                 "--package",
-                "pwf_application",
+                "pwf-application",
             ]
         );
         assert_eq!(
@@ -95,7 +100,7 @@ mod tests {
                 "--no-dotenv",
                 "--",
                 "--package",
-                "pwf_application",
+                "pwf-application",
             ]
         );
     }
@@ -104,7 +109,12 @@ mod tests {
     fn database_setup_uses_the_infra_migrations() {
         assert_eq!(
             database_setup_arguments(),
-            ["database", "setup", "--source", "crates/infra/migrations"]
+            [
+                "database",
+                "setup",
+                "--source",
+                "crates/pwf-infra/migrations"
+            ]
         );
     }
 

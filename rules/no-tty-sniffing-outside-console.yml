@@ -4,7 +4,7 @@ severity: error
 files:
   - "**/*.rs"
 ignores:
-  - crates/cli/src/console.rs
+  - crates/pwf-cli/src/console.rs
 message: "TTY detection is banned outside the console edge: accept a `console::Console` resolved at the binary edge instead."
 note: |
   Interactivity and color sniffed deep in the call stack make in-process callers

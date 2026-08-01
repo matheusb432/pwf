@@ -20,7 +20,7 @@ struct EdgePolicy {
 
 const EDGE_POLICIES: [EdgePolicy; 5] = [
     EdgePolicy {
-        from: "pwf_models",
+        from: "pwf-models",
         label: "models stay independent",
         forbidden: &[
             "gray_matter",
@@ -28,40 +28,40 @@ const EDGE_POLICIES: [EdgePolicy; 5] = [
             "serde_json",
             "sqlx",
             "toml",
-            "pwf_application",
-            "pwf_infra",
-            "pwf",
+            "pwf-application",
+            "pwf-infra",
+            "pwf-cli",
             "prompt-lanes",
             "xtask",
         ],
         reason: "models must not depend on wire formats, persistence, use cases, or process roots",
     },
     EdgePolicy {
-        from: "pwf_application",
+        from: "pwf-application",
         label: "application stays independent of adapters",
-        forbidden: &["pwf_infra", "pwf", "xtask"],
+        forbidden: &["pwf-infra", "pwf-cli", "xtask"],
         reason: "infrastructure belongs behind application-owned boundaries",
     },
     EdgePolicy {
-        from: "pwf_infra",
+        from: "pwf-infra",
         label: "infra stays independent of process roots",
-        forbidden: &["pwf", "xtask"],
+        forbidden: &["pwf-cli", "xtask"],
         reason: "adapters must not depend on their runtime composition",
     },
     EdgePolicy {
         from: "prompt-lanes",
         label: "prompt lanes stays reusable",
-        forbidden: &["pwf_models", "pwf_application", "pwf_infra", "pwf"],
+        forbidden: &["pwf-models", "pwf-application", "pwf-infra", "pwf-cli"],
         reason: "shared lane syntax must remain independent of PWF product crates",
     },
     EdgePolicy {
         from: "xtask",
         label: "xtask stays outside the product graph",
         forbidden: &[
-            "pwf_models",
-            "pwf_application",
-            "pwf_infra",
-            "pwf",
+            "pwf-models",
+            "pwf-application",
+            "pwf-infra",
+            "pwf-cli",
             "prompt-lanes",
         ],
         reason: "repository automation must not become a product dependency boundary",
@@ -138,16 +138,16 @@ mod tests {
             workspace.path(),
             &[
                 (
-                    "models",
-                    "pwf_models",
+                    "pwf-models",
+                    "pwf-models",
                     "[dependencies]\nserde = { path = \"../serde\" }\n",
                 ),
                 (
-                    "application",
-                    "pwf_application",
-                    "[dependencies]\npwf_infra = { path = \"../infra\" }\n",
+                    "pwf-application",
+                    "pwf-application",
+                    "[dependencies]\npwf-infra = { path = \"../pwf-infra\" }\n",
                 ),
-                ("infra", "pwf_infra", ""),
+                ("pwf-infra", "pwf-infra", ""),
                 ("serde", "serde", ""),
             ],
         );
@@ -155,10 +155,10 @@ mod tests {
         assert_eq!(
             violations(workspace.path()),
             [
-                "application/Cargo.toml: [application stays independent of adapters] \
-                 pwf_application -> pwf_infra: infrastructure belongs behind application-owned \
+                "pwf-application/Cargo.toml: [application stays independent of adapters] \
+                 pwf-application -> pwf-infra: infrastructure belongs behind application-owned \
                  boundaries",
-                "models/Cargo.toml: [models stay independent] pwf_models -> serde: models must not \
+                "pwf-models/Cargo.toml: [models stay independent] pwf-models -> serde: models must not \
                  depend on wire formats, persistence, use cases, or process roots",
             ]
         );
@@ -171,16 +171,16 @@ mod tests {
             workspace.path(),
             &[
                 (
-                    "models",
-                    "pwf_models",
-                    "[dev-dependencies]\npwf_infra = { path = \"../infra\" }\n",
+                    "pwf-models",
+                    "pwf-models",
+                    "[dev-dependencies]\npwf-infra = { path = \"../pwf-infra\" }\n",
                 ),
                 (
-                    "application",
-                    "pwf_application",
-                    "[dependencies]\npwf_models = { path = \"../models\" }\n",
+                    "pwf-application",
+                    "pwf-application",
+                    "[dependencies]\npwf-models = { path = \"../pwf-models\" }\n",
                 ),
-                ("infra", "pwf_infra", ""),
+                ("pwf-infra", "pwf-infra", ""),
             ],
         );
 
