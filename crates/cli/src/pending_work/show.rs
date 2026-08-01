@@ -1,13 +1,7 @@
 use clap::Args;
-use pwf_application::{
-    pending_work::{
-        ProjectRegistry, ShowOutput,
-        show_pending_work_item::{self, ShowPendingWorkItem, ShowPendingWorkItemOk},
-    },
-    ports::{
-        app_record::AppRecordStore, pending_work_record::PendingWorkRecord,
-        project_note::ProjectNoteStore,
-    },
+use pwf_application::pending_work::{
+    ProjectRegistry, ShowOutput,
+    show_pending_work_item::{self, ShowPendingWorkItem, ShowPendingWorkItemOk},
 };
 use pwf_infra::obsidian::ObsidianStore;
 
@@ -31,28 +25,17 @@ pub struct Arguments {
 
 use super::shared::PendingWorkError;
 
+/// Returns the complete Markdown for an item regardless of status;
+/// `--path` returns the note path instead.
 pub(super) fn run(
     arguments: &Arguments,
     store: &ObsidianStore,
     projects: &ProjectRegistry,
 ) -> Result<String, PendingWorkError> {
-    run_show(store, projects, arguments)
-}
-
-/// Returns the complete Markdown for an item regardless of status;
-/// `--path` returns the note path instead.
-pub(in crate::pending_work) fn run_show<S>(
-    store: &S,
-    projects: &ProjectRegistry,
-    args: &Arguments,
-) -> Result<String, PendingWorkError>
-where
-    S: AppRecordStore<PendingWorkRecord> + ProjectNoteStore,
-{
-    let id = args.identifier.required("show")?;
-    let output = if args.path {
+    let id = arguments.identifier.required("show")?;
+    let output = if arguments.path {
         ShowOutput::Path
-    } else if args.json {
+    } else if arguments.json {
         ShowOutput::Json
     } else {
         ShowOutput::Markdown

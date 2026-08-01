@@ -4,11 +4,7 @@ use pwf_application::{
         ProjectRegistry,
         complete_pending_work::{self, CompletePendingWork, CompletePendingWorkError},
     },
-    ports::{
-        app_record::AppRecordStore,
-        clock::Clock,
-        pending_work_record::{IndexEntry, IndexSection, PendingWorkRecord},
-    },
+    ports::clock::Clock,
 };
 use pwf_infra::obsidian::ObsidianStore;
 
@@ -44,29 +40,14 @@ pub(super) fn run(
     projects: &ProjectRegistry,
     clock: &impl Clock,
 ) -> Result<String, PendingWorkError> {
-    run_done(store, projects, arguments, clock)
-}
-
-pub(in crate::pending_work) fn run_done<S, C>(
-    store: &S,
-    projects: &ProjectRegistry,
-    args: &Arguments,
-    clock: &C,
-) -> Result<String, PendingWorkError>
-where
-    S: AppRecordStore<PendingWorkRecord>
-        + AppRecordStore<IndexEntry>
-        + AppRecordStore<IndexSection>,
-    C: Clock,
-{
-    let id = args.identifier.required("done")?;
+    let id = arguments.identifier.required("done")?;
     let output = complete_pending_work::execute(
         &CompletePendingWork {
             id,
-            date: args.common.date.clone(),
-            report: args.report.clone(),
-            commits: args.commits.clone(),
-            review: args.review,
+            date: arguments.common.date.clone(),
+            report: arguments.report.clone(),
+            commits: arguments.commits.clone(),
+            review: arguments.review,
         },
         store,
         projects,

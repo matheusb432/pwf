@@ -1,13 +1,7 @@
 use clap::Args;
-use pwf_application::{
-    pending_work::{
-        ProjectRegistry,
-        reopen_pending_work::{self, ReopenPendingWork, ReopenPendingWorkError},
-    },
-    ports::{
-        app_record::AppRecordStore,
-        pending_work_record::{IndexEntry, PendingWorkRecord},
-    },
+use pwf_application::pending_work::{
+    ProjectRegistry,
+    reopen_pending_work::{self, ReopenPendingWork, ReopenPendingWorkError},
 };
 use pwf_infra::obsidian::ObsidianStore;
 
@@ -28,18 +22,7 @@ pub(super) fn run(
     store: &ObsidianStore,
     projects: &ProjectRegistry,
 ) -> Result<String, PendingWorkError> {
-    run_reopen(store, projects, arguments)
-}
-
-pub(in crate::pending_work) fn run_reopen<S>(
-    store: &S,
-    projects: &ProjectRegistry,
-    args: &Arguments,
-) -> Result<String, PendingWorkError>
-where
-    S: AppRecordStore<PendingWorkRecord> + AppRecordStore<IndexEntry>,
-{
-    let id = args.identifier.required("reopen")?;
+    let id = arguments.identifier.required("reopen")?;
     let outcome = reopen_pending_work::execute(&ReopenPendingWork { id }, store, projects)
         .map_err(map_reopen_error)?;
     Ok(render_reopened(&outcome))

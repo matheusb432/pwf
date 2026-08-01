@@ -1,16 +1,10 @@
 //! Converts normalized compatibility tokens into typed pending-work leaves.
 
 use clap::Args;
-use pwf_application::pending_work::{
-    ProjectRegistry,
-    reject_pending_work_create::{self, RejectPendingWorkCreate},
-};
 
 use super::{
     list,
-    shared::{
-        AgentChoice, CommonArguments, Identifier, PendingWorkError, SectionChoice, StatusChoice,
-    },
+    shared::{AgentChoice, CommonArguments, Identifier, SectionChoice, StatusChoice},
     verify,
 };
 
@@ -49,7 +43,7 @@ pub(crate) enum ResolvedCommand {
 }
 
 pub(crate) struct RejectCreateArguments {
-    project_identifier: Option<String>,
+    pub(super) project_identifier: Option<String>,
 }
 
 pub(crate) fn resolve(arguments: &Arguments) -> ResolvedCommand {
@@ -103,19 +97,6 @@ fn list_arguments(arguments: &Arguments, project: Option<String>) -> list::Argum
         common: arguments.common.clone(),
         mode: pwf_application::pending_work::ListMode::ProjectRoute,
     }
-}
-
-pub(super) fn run_reject_create(
-    arguments: &RejectCreateArguments,
-    projects: &ProjectRegistry,
-) -> Result<String, PendingWorkError> {
-    reject_pending_work_create::execute(
-        &RejectPendingWorkCreate {
-            project_identifier: arguments.project_identifier.clone(),
-        },
-        projects,
-    )?;
-    Err(PendingWorkError::RouteCreateRejected)
 }
 
 #[cfg(test)]

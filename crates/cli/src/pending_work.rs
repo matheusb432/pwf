@@ -1,8 +1,14 @@
 use clap::Subcommand;
-use pwf_application::{pending_work::ProjectRegistry, ports::clock::Clock};
+use pwf_application::{
+    pending_work::{
+        ProjectRegistry,
+        reject_pending_work_create::{self, RejectPendingWorkCreate},
+    },
+    ports::clock::Clock,
+};
 use pwf_infra::obsidian::ObsidianStore;
 
-use crate::console::Console;
+use crate::{console::Console, pending_work::shared::PendingWorkError};
 
 pub mod add;
 pub mod cancel;
@@ -87,9 +93,14 @@ where
                 list::run(&arguments, console, store, projects)
             }
             route::ResolvedCommand::Verify(arguments) => verify::run(&arguments, store, projects),
-            route::ResolvedCommand::RejectCreate(arguments) => {
-                route::run_reject_create(&arguments, projects)
-            }
+            route::ResolvedCommand::RejectCreate(arguments) => reject_pending_work_create::execute(
+                &RejectPendingWorkCreate {
+                    project_identifier: arguments.project_identifier.clone(),
+                },
+                projects,
+            )
+            .map_err(PendingWorkError::from)
+            .and(Err(PendingWorkError::RouteCreateRejected)),
         },
         Command::Remove(arguments) => remove::run(arguments, console, store, projects),
         Command::Session(arguments) => session::run(arguments, console, store, projects),

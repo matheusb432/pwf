@@ -1,10 +1,7 @@
 use clap::Args;
-use pwf_application::{
-    pending_work::{
-        ProjectRegistry, UpdatePendingWorkItemOk,
-        update_pending_work_item::{self, UpdatePendingWorkItem},
-    },
-    ports::{app_record::AppRecordStore, pending_work_record::PendingWorkRecord},
+use pwf_application::pending_work::{
+    ProjectRegistry,
+    update_pending_work_item::{self, UpdatePendingWorkItem},
 };
 use pwf_infra::obsidian::ObsidianStore;
 
@@ -65,17 +62,8 @@ pub(super) fn run(
     store: &ObsidianStore,
     projects: &ProjectRegistry,
 ) -> Result<String, PendingWorkError> {
-    let updated = run_update(store, projects, arguments)?;
-    Ok(render_updated(&updated, console.color()))
-}
-
-pub(in crate::pending_work) fn run_update(
-    store: &impl AppRecordStore<PendingWorkRecord>,
-    projects: &ProjectRegistry,
-    args: &Arguments,
-) -> Result<UpdatePendingWorkItemOk, PendingWorkError> {
-    let id = args.identifier.required("update")?;
-    let (title, title_normalized) = args
+    let id = arguments.identifier.required("update")?;
+    let (title, title_normalized) = arguments
         .title
         .as_deref()
         .map(task_title)
@@ -86,16 +74,16 @@ pub(in crate::pending_work) fn run_update(
     let updated = update_pending_work_item::execute(
         UpdatePendingWorkItem {
             id,
-            prompt: args.prompt.clone(),
+            prompt: arguments.prompt.clone(),
             title,
-            append: args.append.clone(),
-            prereq: args.prereq.clone(),
-            clear_prereq: args.clear_prereq,
-            commits: args.commits.clone(),
-            append_report: args.append_report.clone(),
-            effort: args.effort.map(Into::into),
-            tags: args.tag.clone(),
-            tags_clear: args.tags_clear,
+            append: arguments.append.clone(),
+            prereq: arguments.prereq.clone(),
+            clear_prereq: arguments.clear_prereq,
+            commits: arguments.commits.clone(),
+            append_report: arguments.append_report.clone(),
+            effort: arguments.effort.map(Into::into),
+            tags: arguments.tag.clone(),
+            tags_clear: arguments.tags_clear,
         },
         store,
         projects,
@@ -104,5 +92,5 @@ pub(in crate::pending_work) fn run_update(
     if title_normalized {
         eprintln!("{TITLE_NORMALIZED_NOTICE}");
     }
-    Ok(updated)
+    Ok(render_updated(&updated, console.color()))
 }

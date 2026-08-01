@@ -6,11 +6,7 @@ use pwf_application::{
             self, RemovePendingWorkError, RemovePendingWorkItem, RemovePendingWorkItemOk,
         },
     },
-    ports::{
-        app_record::AppRecordStore,
-        confirmation::{Confirmation, ConfirmationClient},
-        pending_work_record::{IndexEntry, PendingWorkRecord},
-    },
+    ports::confirmation::{Confirmation, ConfirmationClient},
 };
 use pwf_infra::obsidian::ObsidianStore;
 
@@ -84,23 +80,11 @@ pub(super) fn run(
     store: &ObsidianStore,
     projects: &ProjectRegistry,
 ) -> Result<String, PendingWorkError> {
-    run_remove(store, projects, arguments, console)
-}
-
-pub(in crate::pending_work) fn run_remove<S>(
-    store: &S,
-    projects: &ProjectRegistry,
-    args: &Arguments,
-    console: Console,
-) -> Result<String, PendingWorkError>
-where
-    S: AppRecordStore<PendingWorkRecord> + AppRecordStore<IndexEntry>,
-{
-    let id = args.identifier.required("remove")?;
+    let id = arguments.identifier.required("remove")?;
 
     let confirmation_client = CliConfirmationClient {
         console,
-        assume_yes: args.assume_yes,
+        assume_yes: arguments.assume_yes,
     };
     let outcome = remove_pending_work_item::execute(
         &RemovePendingWorkItem { id },
