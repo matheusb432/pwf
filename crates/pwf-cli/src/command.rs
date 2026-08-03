@@ -2,9 +2,9 @@
 
 use clap::{Parser, Subcommand};
 
-use crate::{note, pending_work, project};
+use crate::{note, project, task};
 
-/// Manages pending work and project notes across configured repositories.
+/// Manages tasks and project notes across configured repositories.
 #[derive(Parser, Debug)]
 #[command(
     name = "pwf",
@@ -24,7 +24,7 @@ pub enum RootCommand {
     /// Manages registered projects.
     Project(project::Arguments),
     #[command(flatten)]
-    PendingWork(pending_work::Command),
+    Task(task::Command),
     /// Study notes: `pwf note [list|add|update|remove] <project>`.
     Note(note::Arguments),
 }

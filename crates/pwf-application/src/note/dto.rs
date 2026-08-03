@@ -7,6 +7,6 @@ use pwf_models::note::NoteId;
 pub struct ListedNote {
     /// Identifies the note within its project.
     pub id: NoteId,
-    /// Names the focused learning topic.
-    pub topic: String,
+    /// Names the note.
+    pub title: String,
 }

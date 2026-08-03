@@ -11,7 +11,7 @@ use thiserror::Error;
 )]
 pub struct ProjectName(String);
 
-/// Identifies a managed project in pending-work identifiers.
+/// Identifies a managed project in task identifiers.
 #[nutype(
     sanitize(trim, uppercase),
     validate(predicate = is_project_id),
@@ -139,7 +139,7 @@ pub struct ProjectTasksKindError;
 )]
 pub struct ProjectTasksPath(String);
 
-/// Locates a managed project's pending-work files.
+/// Locates a managed project's task files.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectTasks {
     kind: ProjectTasksKind,
@@ -172,7 +172,7 @@ pub struct Project {
     pub title: ProjectName,
     /// Project source location.
     pub source: ProjectSource,
-    /// Pending-work task location.
+    /// Task location.
     pub tasks: ProjectTasks,
     /// RFC 3339 UTC creation timestamp.
     pub created_at: String,

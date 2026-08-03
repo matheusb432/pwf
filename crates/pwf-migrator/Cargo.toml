@@ -1,0 +1,17 @@
+[package]
+name = "pwf-migrator"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "pwf-migrator"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+pwf-infra = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt"] }
+
+[lints]
+workspace = true

@@ -62,8 +62,18 @@ fn database_open_failure_is_reported_only_as_a_diagnostic() {
 
     assert_failure(
         run_with_database(directory.path(), &["project", "ls"]),
-        &["project database"],
+        &["project database", "unable to open database file"],
     );
+}
+
+#[test]
+fn unmigrated_database_reports_the_migrator_remedy() {
+    let directory = tempfile::tempdir().unwrap();
+    let database_path = directory.path().join("projects.sqlite3");
+    let output = run_with_database(&database_path, &["project", "ls"]);
+
+    assert_eq!(output.status.code(), Some(101));
+    assert_failure(output, &["database schema is not ready", "pwf-migrator"]);
 }
 
 #[test]
@@ -80,7 +90,7 @@ fn invalid_runtime_task_path_is_not_persisted() {
 }
 
 #[test]
-fn targeted_pending_work_ignores_invalid_unrelated_project_mappings() {
+fn targeted_tasks_ignores_invalid_unrelated_project_mappings() {
     let unknown = ProjectFixture::new();
     assert_failure(unknown.run(&["missing"]), &["missing"]);
 

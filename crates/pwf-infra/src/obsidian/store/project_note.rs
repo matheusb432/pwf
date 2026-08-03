@@ -3,12 +3,12 @@ use std::{fmt::Write as _, path::Path};
 use pwf_application::ports::project_note::{NewProjectNote, ProjectNotePatch, ProjectNoteStore};
 use pwf_models::{
     note::{NoteId, ProjectNote},
-    pending_work::{ProjectId, ProjectName},
     project::Project,
+    task::{ProjectId, ProjectName},
 };
 use regex::Regex;
 
-use super::{ObsidianStore, ObsidianStoreError, fs::read_item_file};
+use super::{ObsidianStore, ObsidianStoreError, fs::read_task_file};
 use crate::obsidian::{
     frontmatter_text, fs_atomic,
     index_text::{add_note_link, remove_note_link},
@@ -31,7 +31,7 @@ impl ProjectNoteStore for ObsidianStore {
         })?;
         Ok(Some(ProjectNote {
             id: id.clone(),
-            topic: topic_of(&source),
+            title: title_of(&source),
         }))
     }
 
@@ -60,7 +60,7 @@ impl ProjectNoteStore for ObsidianStore {
         write_index(&index_path, &add_note_link(&index, new.id.as_ref()))?;
         Ok(ProjectNote {
             id: new.id,
-            topic: new.topic,
+            title: new.title,
         })
     }
 
@@ -80,7 +80,7 @@ impl ProjectNoteStore for ObsidianStore {
                 source,
             }
         })?;
-        fs_atomic::write_text_atomic(&note_path, &replace_topic(&source, &patch.topic)).map_err(
+        fs_atomic::write_text_atomic(&note_path, &replace_title(&source, &patch.title)).map_err(
             |source| ObsidianStoreError::WriteProjectNote {
                 id: id.to_string(),
                 source,
@@ -115,7 +115,7 @@ impl ProjectNoteStore for ObsidianStore {
     }
 
     fn read_note_markdown(&self, locator: &str) -> Result<String, Self::Error> {
-        read_item_file(Path::new(locator))
+        read_task_file(Path::new(locator))
     }
 }
 
@@ -144,7 +144,7 @@ fn list_notes(project_directory: &Path, project_id: &ProjectId) -> Vec<ProjectNo
         let source = std::fs::read_to_string(path).unwrap_or_default();
         notes.push(ProjectNote {
             id,
-            topic: topic_of(&source),
+            title: title_of(&source),
         });
     }
     notes
@@ -154,7 +154,7 @@ fn note_file_name(id: &NoteId) -> String {
     format!("{id}.md")
 }
 
-fn topic_of(source: &str) -> String {
+fn title_of(source: &str) -> String {
     let body = frontmatter_text::parse(source).body;
     body.lines()
         .map(str::trim)
@@ -181,8 +181,8 @@ fn note_content(project: &str, note: &NewProjectNote) -> String {
         let _ = writeln!(source, "verified: {}", yaml_string(verified));
     }
     source.push_str("---\n\n");
-    let _ = writeln!(source, "# {}\n", note.topic);
-    let _ = writeln!(source, "> **TL;DR:** {}", note.tldr);
+    let _ = writeln!(source, "# {}\n", note.title);
+    let _ = writeln!(source, "{}", note.content);
     if let Some(why) = &note.why {
         let _ = write!(source, "\n## Why it matters\n\n{why}\n");
     }
@@ -210,7 +210,7 @@ fn yaml_array(values: &[String]) -> String {
     )
 }
 
-fn replace_topic(source: &str, topic: &str) -> String {
+fn replace_title(source: &str, title: &str) -> String {
     let body_start = frontmatter_body_start(source);
     let mut line_start = body_start;
     for line in source[body_start..].split_inclusive('\n') {
@@ -218,11 +218,11 @@ fn replace_topic(source: &str, topic: &str) -> String {
         let content = content.strip_suffix('\r').unwrap_or(content);
         if content.starts_with("# ") {
             let line_end = line_start + content.len();
-            return format!("{}# {topic}{}", &source[..line_start], &source[line_end..]);
+            return format!("{}# {title}{}", &source[..line_start], &source[line_end..]);
         }
         line_start += line.len();
     }
-    note_text::replace_body(source, topic)
+    note_text::replace_body(source, title)
 }
 
 fn frontmatter_body_start(source: &str) -> usize {
@@ -272,11 +272,11 @@ mod tests {
     };
     use pwf_models::{
         note::NoteId,
-        pending_work::{ProjectId, ProjectName, Timestamp},
         project::{
             Project, ProjectSource, ProjectSourceKind, ProjectSourceValue, ProjectTasks,
             ProjectTasksKind, ProjectTasksPath,
         },
+        task::{ProjectId, ProjectName, Timestamp},
     };
 
     use super::super::{ObsidianStore, ObsidianStoreError};
@@ -306,11 +306,11 @@ mod tests {
         NoteId::try_new(format!("PWF-NOTE-{number:04}")).unwrap()
     }
 
-    fn new_note(number: u32, topic: &str) -> NewProjectNote {
+    fn new_note(number: u32, title: &str) -> NewProjectNote {
         NewProjectNote {
             id: identifier(number),
-            topic: topic.to_string(),
-            tldr: "A CLI flag needs a binary test only for an owned contract.".to_string(),
+            title: title.to_string(),
+            content: "A CLI flag needs a binary test only for an owned contract.\n\n- Preserve the process boundary.".to_string(),
             why: Some("This protects real process-boundary failures.".to_string()),
             domain: Some("testing".to_string()),
             tags: vec!["cli".to_string(), "testing".to_string()],
@@ -337,7 +337,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(inserted.id.as_ref(), "PWF-NOTE-0001");
-        assert_eq!(inserted.topic, "remember milk");
+        assert_eq!(inserted.title, "remember milk");
         assert_eq!(
             fs::read_to_string(tasks_path.join("PWF-NOTE-0001.md")).unwrap(),
             concat!(
@@ -351,7 +351,8 @@ mod tests {
                 "verified: \"2026-07-30\"\n",
                 "---\n\n",
                 "# remember milk\n\n",
-                "> **TL;DR:** A CLI flag needs a binary test only for an owned contract.\n\n",
+                "A CLI flag needs a binary test only for an owned contract.\n\n",
+                "- Preserve the process boundary.\n\n",
                 "## Why it matters\n\n",
                 "This protects real process-boundary failures.\n\n",
                 "## Sources\n\n",
@@ -392,7 +393,7 @@ mod tests {
             &project(&tasks_path),
             &identifier(1),
             ProjectNotePatch {
-                topic: "new message".to_string(),
+                title: "new message".to_string(),
             },
         )
         .unwrap();
@@ -405,7 +406,7 @@ mod tests {
     }
 
     #[test]
-    fn update_changes_only_the_canonical_topic_with_windows_line_endings() {
+    fn update_changes_only_the_canonical_title_with_windows_line_endings() {
         let directory = tempfile::tempdir().unwrap();
         let tasks_path = directory.path().join("tasks");
         fs::create_dir_all(&tasks_path).unwrap();
@@ -418,8 +419,8 @@ mod tests {
             "created: 2026-07-25\r\n",
             "# frontmatter comment\r\n",
             "---\r\n\r\n",
-            "# old topic\r\n\r\n",
-            "> **TL;DR:** Preserve this.\r\n\r\n",
+            "# old title\r\n\r\n",
+            "Preserve this.\r\n\r\n",
             "## Why it matters\r\n\r\n",
             "Keep every other byte.\r\n",
         );
@@ -431,14 +432,14 @@ mod tests {
             &project(&tasks_path),
             &identifier(1),
             ProjectNotePatch {
-                topic: "new topic".to_string(),
+                title: "new title".to_string(),
             },
         )
         .unwrap();
 
         assert_eq!(
             fs::read_to_string(tasks_path.join("PWF-NOTE-0001.md")).unwrap(),
-            source.replacen("# old topic", "# new topic", 1)
+            source.replacen("# old title", "# new title", 1)
         );
     }
 

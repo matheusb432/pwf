@@ -10,17 +10,17 @@ pub(super) fn read_text_optional(path: &Path) -> Option<String> {
     std::fs::read_to_string(path).ok()
 }
 
-pub(super) fn read_item_file(path: &Path) -> Result<String, ObsidianStoreError> {
-    std::fs::read_to_string(path).map_err(|source| ObsidianStoreError::ReadItemFile { source })
+pub(super) fn read_task_file(path: &Path) -> Result<String, ObsidianStoreError> {
+    std::fs::read_to_string(path).map_err(|source| ObsidianStoreError::ReadTaskFile { source })
 }
 
 pub(super) fn read_index(path: &Path) -> Result<String, ObsidianStoreError> {
     std::fs::read_to_string(path).map_err(|source| ObsidianStoreError::ReadIndex { source })
 }
 
-pub(super) fn write_item_file(path: &Path, content: &str) -> Result<(), ObsidianStoreError> {
+pub(super) fn write_task_file(path: &Path, content: &str) -> Result<(), ObsidianStoreError> {
     crate::obsidian::fs_atomic::write_text_atomic(path, content)
-        .map_err(|source| ObsidianStoreError::WriteItemFile { source })
+        .map_err(|source| ObsidianStoreError::WriteTaskFile { source })
 }
 
 pub(super) fn write_index(path: &Path, content: &str) -> Result<(), ObsidianStoreError> {
@@ -47,9 +47,9 @@ pub(super) fn line_start_index(content: &str, line_number: usize) -> Option<usiz
     None
 }
 
-pub(super) fn write_add_item_file(path: &Path, content: &str) -> Result<(), ObsidianStoreError> {
+pub(super) fn write_add_task_file(path: &Path, content: &str) -> Result<(), ObsidianStoreError> {
     crate::obsidian::fs_atomic::write_text_atomic(path, content)
-        .map_err(|source| ObsidianStoreError::AddWriteItemFile { source })
+        .map_err(|source| ObsidianStoreError::AddWriteTaskFile { source })
 }
 
 pub(super) fn write_add_index_file(

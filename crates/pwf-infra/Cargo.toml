@@ -10,7 +10,7 @@ path = "src/lib.rs"
 
 [dependencies]
 anyhow = { workspace = true }
-chrono = { workspace = true }
+jiff = { workspace = true }
 directories = { workspace = true }
 pwf-application = { workspace = true }
 pwf-models = { workspace = true }

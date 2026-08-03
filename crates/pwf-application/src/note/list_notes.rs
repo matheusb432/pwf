@@ -1,6 +1,6 @@
 //! Lists one managed project's notes.
 
-use pwf_models::{pending_work::ProjectName, project::Project};
+use pwf_models::task::ProjectName;
 
 use super::dto::ListedNote;
 use crate::{
@@ -61,16 +61,8 @@ pub async fn execute(
     )
     .await
     .map_err(|error| project_error(identifier, error))?;
-    execute_for_project(&query, store, &project)
-}
-
-fn execute_for_project(
-    query: &ListNotes,
-    store: &impl ProjectNoteStore,
-    project: &Project,
-) -> Result<ListNotesOk, ListNotesError> {
     let mut notes = store
-        .list_notes(project)
+        .list_notes(&project)
         .map_err(|error| ListNotesError::Store(Box::new(error)))?;
     notes.sort_by_key(|note| std::cmp::Reverse(note.id.number()));
     let count = query.number.unwrap_or(DEFAULT_NOTE_COUNT);
@@ -85,7 +77,7 @@ fn execute_for_project(
         .take(shown)
         .map(|note| ListedNote {
             id: note.id,
-            topic: note.topic,
+            title: note.title,
         })
         .collect();
     Ok(ListNotesOk {
@@ -109,7 +101,7 @@ mod tests {
     use pwf_models::note::{NoteId, ProjectNote};
 
     use super::{ListNotes, ListNotesError};
-    use crate::testing::{InMemoryStore, project};
+    use crate::testing::{InMemoryStore, insert_project};
 
     #[derive(Debug, thiserror::Error)]
     #[error("sentinel store failure")]
@@ -118,7 +110,7 @@ mod tests {
     fn note(number: u32) -> ProjectNote {
         ProjectNote {
             id: NoteId::try_new(format!("PWF-NOTE-{number:04}")).unwrap(),
-            topic: format!("note {number}"),
+            title: format!("note {number}"),
         }
     }
 
@@ -126,8 +118,9 @@ mod tests {
         result.notes.iter().map(|note| note.id.as_ref()).collect()
     }
 
-    #[test]
-    fn list_orders_newest_first_and_defaults_to_ten() {
+    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
+    async fn list_orders_newest_first_and_defaults_to_ten(pool: sqlx::SqlitePool) {
+        insert_project(&pool, "PWF", "pwf", "/repo/pwf", "/tasks/pwf", false).await;
         let store = InMemoryStore::default().with_project_notes(
             "pwf",
             [1, 12, 5, 3, 11, 8, 2, 10, 7, 4, 9, 6]
@@ -136,14 +129,15 @@ mod tests {
                 .collect(),
         );
 
-        let result = super::execute_for_project(
-            &ListNotes {
+        let result = super::execute(
+            ListNotes {
                 project_identifier: "PWF".to_string(),
                 number: None,
             },
             &store,
-            &project("PWF", "pwf"),
+            &pool,
         )
+        .await
         .unwrap();
 
         assert_eq!(
@@ -165,27 +159,30 @@ mod tests {
         assert_eq!(result.project.as_ref(), "pwf");
     }
 
-    #[test]
-    fn zero_is_unlimited_and_explicit_cap_reports_hidden_count() {
+    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
+    async fn zero_is_unlimited_and_explicit_cap_reports_hidden_count(pool: sqlx::SqlitePool) {
+        insert_project(&pool, "PWF", "pwf", "/repo/pwf", "/tasks/pwf", false).await;
         let store = InMemoryStore::default().with_project_notes("pwf", (1..=4).map(note).collect());
 
-        let unlimited = super::execute_for_project(
-            &ListNotes {
+        let unlimited = super::execute(
+            ListNotes {
                 project_identifier: "pwf".to_string(),
                 number: Some(0),
             },
             &store,
-            &project("PWF", "pwf"),
+            &pool,
         )
+        .await
         .unwrap();
-        let capped = super::execute_for_project(
-            &ListNotes {
+        let capped = super::execute(
+            ListNotes {
                 project_identifier: "pwf".to_string(),
                 number: Some(2),
             },
             &store,
-            &project("PWF", "pwf"),
+            &pool,
         )
+        .await
         .unwrap();
 
         assert_eq!(

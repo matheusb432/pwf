@@ -1,6 +1,6 @@
 use sqlx::SqlitePool;
 
-pub(crate) static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("../pwf-infra/migrations");
+pub(crate) static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!();
 
 pub(crate) async fn insert_project(
     pool: &SqlitePool,

@@ -9,24 +9,24 @@ use std::{
 pub(crate) use database::{MIGRATOR, insert_project};
 use pwf_models::{
     note::{NoteId, ProjectNote},
-    pending_work::{ProjectName, Timestamp, WorkItemId, WorkItemStatus},
     project::{
         Project, ProjectId, ProjectSource, ProjectSourceKind, ProjectSourceValue, ProjectTasks,
         ProjectTasksKind, ProjectTasksPath,
     },
+    task::{ProjectName, TaskId, TaskStatus, Timestamp},
 };
 
 use crate::ports::{
-    pending_work_record::{
-        IndexEntry, IndexEntryStore, IndexSection, IndexSectionStore, ItemPatch, Materialization,
-        NewItem, PendingWorkRecord, PendingWorkStore, RecordId,
-    },
     project_note::{NewProjectNote, ProjectNotePatch, ProjectNoteStore},
+    task_record::{
+        IndexEntry, IndexEntryStore, IndexSection, IndexSectionStore, Materialization, NewTask,
+        RecordId, TaskPatch, TaskRecord, TaskStore,
+    },
 };
 
 #[derive(Debug, Default)]
 struct InMemoryState {
-    items: BTreeMap<ProjectName, Vec<PendingWorkRecord>>,
+    tasks: BTreeMap<ProjectName, Vec<TaskRecord>>,
     entries: BTreeMap<ProjectName, Vec<IndexEntry>>,
     sections: BTreeMap<ProjectName, Vec<String>>,
     prefixes: BTreeMap<ProjectName, String>,
@@ -55,17 +55,17 @@ pub struct InMemoryStore {
 pub enum InMemoryStoreError {
     #[error("injected in-memory store failure: {operation}")]
     Injected { operation: &'static str },
-    #[error("pending-work note Markdown is not staged: {locator}")]
-    PendingWorkNoteMarkdownMissing { locator: String },
+    #[error("task note Markdown is not staged: {locator}")]
+    TaskNoteMarkdownMissing { locator: String },
 }
 
 impl InMemoryStore {
-    pub fn with_project(self, project: &str, items: Vec<PendingWorkRecord>) -> Self {
-        self.lock().items.insert(project_name(project), items);
+    pub fn with_project(self, project: &str, tasks: Vec<TaskRecord>) -> Self {
+        self.lock().tasks.insert(project_name(project), tasks);
         self
     }
 
-    /// Registers the id prefix used by item insertion.
+    /// Registers the id prefix used by task insertion.
     pub fn with_prefix(self, project: &str, prefix: &str) -> Self {
         self.lock()
             .prefixes
@@ -82,9 +82,9 @@ impl InMemoryStore {
         self
     }
 
-    pub fn items(&self, project: &str) -> Vec<PendingWorkRecord> {
+    pub fn tasks(&self, project: &str) -> Vec<TaskRecord> {
         self.lock()
-            .items
+            .tasks
             .get(&project_name(project))
             .cloned()
             .unwrap_or_default()
@@ -152,54 +152,50 @@ pub(crate) fn project(id: &str, title: &str) -> Project {
     }
 }
 
-impl PendingWorkStore for InMemoryStore {
+impl TaskStore for InMemoryStore {
     type Error = Infallible;
 
-    fn get(
-        &self,
-        project: &Project,
-        id: &WorkItemId,
-    ) -> Result<Option<PendingWorkRecord>, Self::Error> {
-        Ok(self.lock().items.get(&project.title).and_then(|items| {
-            items
+    fn get(&self, project: &Project, id: &TaskId) -> Result<Option<TaskRecord>, Self::Error> {
+        Ok(self.lock().tasks.get(&project.title).and_then(|tasks| {
+            tasks
                 .iter()
-                .find(|item| item.id.as_item() == Some(id))
+                .find(|task| task.id.as_task() == Some(id))
                 .cloned()
         }))
     }
 
-    fn list(&self, project: &Project) -> Result<Vec<PendingWorkRecord>, Self::Error> {
+    fn list(&self, project: &Project) -> Result<Vec<TaskRecord>, Self::Error> {
         Ok(self
             .lock()
-            .items
+            .tasks
             .get(&project.title)
             .cloned()
             .unwrap_or_default())
     }
 
     /// Allocates the next `<prefix>-NNNN` id and materializes an active record.
-    fn insert(&self, project: &Project, new: NewItem) -> Result<PendingWorkRecord, Self::Error> {
+    fn insert(&self, project: &Project, new: NewTask) -> Result<TaskRecord, Self::Error> {
         let mut state = self.lock();
         let prefix = state
             .prefixes
             .get(&project.title)
             .cloned()
             .expect("stage a prefix via with_prefix before insert");
-        let items = state.items.entry(project.title.clone()).or_default();
-        let next = items
+        let tasks = state.tasks.entry(project.title.clone()).or_default();
+        let next = tasks
             .iter()
-            .filter_map(|item| item.id.as_item())
+            .filter_map(|task| task.id.as_task())
             .filter_map(|id| id.as_ref().split_once('-'))
             .filter_map(|(_, number)| number.parse::<u32>().ok())
             .max()
             .unwrap_or(0)
             + 1;
-        let id = WorkItemId::try_new(format!("{prefix}-{next:04}")).expect("allocated id");
+        let id = TaskId::try_new(format!("{prefix}-{next:04}")).expect("allocated id");
         let locator = format!("/mem/{}/{}.md", project.title.as_ref(), id.as_ref());
-        let record = PendingWorkRecord {
-            id: RecordId::Item(id),
+        let record = TaskRecord {
+            id: RecordId::Task(id),
             title: new.title.to_string(),
-            status: WorkItemStatus::Active,
+            status: TaskStatus::Active,
             created: Some(new.created),
             completed: None,
             commits: None,
@@ -213,22 +209,17 @@ impl PendingWorkStore for InMemoryStore {
             placement: None,
             materialization: Materialization::NoteFile,
         };
-        items.push(record.clone());
+        tasks.push(record.clone());
         Ok(record)
     }
 
-    /// Applies an [`ItemPatch`] to the matching record's typed fields.
-    fn update(
-        &self,
-        project: &Project,
-        id: &WorkItemId,
-        patch: ItemPatch,
-    ) -> Result<(), Self::Error> {
+    /// Applies an [`TaskPatch`] to the matching record's typed fields.
+    fn update(&self, project: &Project, id: &TaskId, patch: TaskPatch) -> Result<(), Self::Error> {
         let mut state = self.lock();
-        let items = state.items.entry(project.title.clone()).or_default();
-        let record = items
+        let tasks = state.tasks.entry(project.title.clone()).or_default();
+        let record = tasks
             .iter_mut()
-            .find(|item| item.id.as_item() == Some(id))
+            .find(|task| task.id.as_task() == Some(id))
             .expect("update of unknown id");
         if let Some(status) = patch.status {
             record.status = status;
@@ -257,17 +248,17 @@ impl PendingWorkStore for InMemoryStore {
         Ok(())
     }
 
-    fn delete(&self, project: &Project, id: &WorkItemId) -> Result<(), Self::Error> {
+    fn delete(&self, project: &Project, id: &TaskId) -> Result<(), Self::Error> {
         let mut state = self.lock();
-        let items = state.items.entry(project.title.clone()).or_default();
-        let before = items.len();
-        items.retain(|item| item.id.as_item() != Some(id));
-        assert!(before > items.len(), "delete of unknown id {id:?}");
+        let tasks = state.tasks.entry(project.title.clone()).or_default();
+        let before = tasks.len();
+        tasks.retain(|task| task.id.as_task() != Some(id));
+        assert!(before > tasks.len(), "delete of unknown id {id:?}");
         Ok(())
     }
 }
 
-fn render_tags(tags: &pwf_models::pending_work::Tags) -> String {
+fn render_tags(tags: &pwf_models::task::Tags) -> String {
     format!(
         "[{}]",
         tags.iter()
@@ -313,7 +304,7 @@ impl ProjectNoteStore for InMemoryStore {
     ) -> Result<ProjectNote, Self::Error> {
         let record = ProjectNote {
             id: new.id,
-            topic: new.topic,
+            title: new.title,
         };
         let mut state = self.lock();
         state
@@ -343,7 +334,7 @@ impl ProjectNoteStore for InMemoryStore {
             .iter_mut()
             .find(|note| note.id == *id)
             .expect("update of unknown project note");
-        note.topic = patch.topic;
+        note.title = patch.title;
         Ok(())
     }
 
@@ -386,12 +377,12 @@ impl ProjectNoteStore for InMemoryStore {
             });
         }
         self.lock()
-            .items
+            .tasks
             .values()
             .flatten()
-            .find(|item| item.locator == locator)
-            .map(|item| item.source.clone())
-            .ok_or_else(|| InMemoryStoreError::PendingWorkNoteMarkdownMissing {
+            .find(|task| task.locator == locator)
+            .map(|task| task.source.clone())
+            .ok_or_else(|| InMemoryStoreError::TaskNoteMarkdownMissing {
                 locator: locator.to_string(),
             })
     }
@@ -414,7 +405,7 @@ impl IndexEntryStore for InMemoryStore {
         Ok(())
     }
 
-    fn delete_index_entry(&self, project: &Project, id: &WorkItemId) -> Result<(), Self::Error> {
+    fn delete_index_entry(&self, project: &Project, id: &TaskId) -> Result<(), Self::Error> {
         let mut state = self.lock();
         state
             .entries

@@ -4,6 +4,7 @@ use pwf_models::project::Project;
 
 pub mod add_project;
 mod dto;
+pub mod get_active_project;
 pub mod get_project;
 pub mod list_projects;
 mod logic;

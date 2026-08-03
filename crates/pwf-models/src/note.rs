@@ -7,8 +7,8 @@ use std::fmt;
 pub struct ProjectNote {
     /// Identifies the note within its project.
     pub id: NoteId,
-    /// Names the focused learning topic.
-    pub topic: String,
+    /// Names the note.
+    pub title: String,
 }
 
 /// Stores a canonical `{PREFIX}-NOTE-NNNN` identifier.

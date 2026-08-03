@@ -1,8 +1,8 @@
 use std::error::Error;
 
-use pwf_models::{pending_work::EffortTier, session::Agent};
+use pwf_models::{session::Agent, task::EffortTier};
 
-use crate::pending_work::session::{AgentLaunch, AgentProbe, ModelTierLookup};
+use crate::task::session::{AgentLaunch, AgentProbe, ModelTierLookup};
 
 pub trait AgentClient: Clone + Send + Sync + 'static {
     type ModelTierError: Error + Send + Sync + 'static;

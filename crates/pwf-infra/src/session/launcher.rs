@@ -6,12 +6,12 @@ mod codex;
 
 use std::process::Command;
 
-pub use pwf_application::pending_work::session::AgentProbe;
+pub use pwf_application::task::session::AgentProbe;
 use pwf_application::{
-    pending_work::session::{AgentLaunch, ModelTierLookup},
     ports::agent::{AgentClient, PreparedAgentLaunch},
+    task::session::{AgentLaunch, ModelTierLookup},
 };
-use pwf_models::{pending_work::EffortTier, session::Agent};
+use pwf_models::{session::Agent, task::EffortTier};
 use thiserror::Error;
 
 use super::{

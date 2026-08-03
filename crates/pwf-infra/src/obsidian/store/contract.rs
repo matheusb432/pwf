@@ -1,17 +1,16 @@
 use std::{assert_matches, fmt::Write as _, path::Path};
 
-use pwf_application::ports::pending_work_record::{
+use pwf_application::ports::task_record::{
     IndexEntry, IndexEntryState, IndexEntryStore, IndexPlacement, IndexSection, IndexSectionStore,
-    ItemPatch, Materialization, NewItem, PendingWorkRecord, PendingWorkStore, RecordId,
+    Materialization, NewTask, RecordId, TaskPatch, TaskRecord, TaskStore,
 };
 use pwf_models::{
-    pending_work::{
-        EffortTier, ProjectId, ProjectName, Tag, Tags, TaskTitle, Timestamp, WorkItemId,
-        WorkItemStatus,
-    },
     project::{
         Project, ProjectSource, ProjectSourceKind, ProjectSourceValue, ProjectTasks,
         ProjectTasksKind, ProjectTasksPath,
+    },
+    task::{
+        EffortTier, ProjectId, ProjectName, Tag, Tags, TaskId, TaskStatus, TaskTitle, Timestamp,
     },
 };
 
@@ -81,7 +80,7 @@ fn explicit_index_path_uses_the_project_title_inside_tasks_path() {
     let store = ObsidianStore::new(tasks_path.clone());
     let project_name = project("RST", "rust-learn", &tasks_path);
 
-    let records = PendingWorkStore::list(&store, &project_name).unwrap();
+    let records = TaskStore::list(&store, &project_name).unwrap();
 
     assert_eq!(records.len(), 1);
     assert_eq!(
@@ -95,14 +94,14 @@ fn explicit_projects_support_unrelated_task_parents() {
     let temporary_directory = tempfile::tempdir().unwrap();
     let first_tasks = temporary_directory.path().join("one/tasks-a");
     let second_tasks = temporary_directory.path().join("elsewhere/tasks-b");
-    for (tasks_path, id, title, item_id) in [
+    for (tasks_path, id, title, task_id) in [
         (&first_tasks, "aaa", "alpha", "AAA-0001"),
         (&second_tasks, "bbb", "beta", "BBB-0001"),
     ] {
         std::fs::create_dir_all(tasks_path).unwrap();
         std::fs::write(
             tasks_path.join(format!("{title}.md")),
-            format!("---\nid: {id}\ntitle: {title}\n---\n\n- [ ] [[{item_id}]]\n"),
+            format!("---\nid: {id}\ntitle: {title}\n---\n\n- [ ] [[{task_id}]]\n"),
         )
         .unwrap();
     }
@@ -115,8 +114,8 @@ fn explicit_projects_support_unrelated_task_parents() {
             &second_tasks
         };
         let project_name = project(&expected_id[..3], title, tasks_path);
-        let records = PendingWorkStore::list(&store, &project_name).unwrap();
-        assert_eq!(records[0].id.as_item().unwrap().as_ref(), expected_id);
+        let records = TaskStore::list(&store, &project_name).unwrap();
+        assert_eq!(records[0].id.as_task().unwrap().as_ref(), expected_id);
     }
 }
 
@@ -133,7 +132,7 @@ fn explicit_index_validation_uses_the_supplied_identity() {
     let store = ObsidianStore::new(tasks_path.clone());
     let project_name = project("NEW", "pwf", &tasks_path);
 
-    let error = PendingWorkStore::list(&store, &project_name).unwrap_err();
+    let error = TaskStore::list(&store, &project_name).unwrap_err();
 
     assert_matches!(
         error,
@@ -163,7 +162,7 @@ fn generic_list_rejects_project_index_without_identity_frontmatter() {
     let store = store_for_tasks(&notes_dir.join("pwf"));
 
     let project = pwf_project(&store);
-    let error = PendingWorkStore::list(&store, &project).unwrap_err();
+    let error = TaskStore::list(&store, &project).unwrap_err();
 
     assert_matches!(
         error,
@@ -173,7 +172,7 @@ fn generic_list_rejects_project_index_without_identity_frontmatter() {
 }
 
 #[test]
-fn generic_list_reports_an_unreadable_item_path() {
+fn generic_list_reports_an_unreadable_task_path() {
     let temp = tempfile::tempdir().unwrap();
     let project_dir = temp.path().join("pwf");
     std::fs::create_dir_all(project_dir.join("PWF-0001.md")).unwrap();
@@ -185,9 +184,9 @@ fn generic_list_reports_an_unreadable_item_path() {
     let store = store_for_tasks(&project_dir);
     let project = pwf_project(&store);
 
-    let error = PendingWorkStore::list(&store, &project).unwrap_err();
+    let error = TaskStore::list(&store, &project).unwrap_err();
 
-    assert_matches!(error, ObsidianStoreError::ReadItemFile { .. });
+    assert_matches!(error, ObsidianStoreError::ReadTaskFile { .. });
 }
 
 #[test]
@@ -233,9 +232,9 @@ fn generic_read_uses_yaml_decoded_title() {
     assert_eq!(record.title, "adapter: preserve identity");
 }
 
-fn get_record(store: &ObsidianStore, id: &str) -> Option<PendingWorkRecord> {
+fn get_record(store: &ObsidianStore, id: &str) -> Option<TaskRecord> {
     let project = pwf_project(store);
-    PendingWorkStore::get(store, &project, &WorkItemId::try_new(id).unwrap()).unwrap()
+    TaskStore::get(store, &project, &TaskId::try_new(id).unwrap()).unwrap()
 }
 
 #[test]
@@ -281,8 +280,8 @@ fn get_rejects_duplicate_frontmatter_ids() {
     let store = store_with_index_identity(&notes_dir.join("pwf"));
     let project = pwf_project(&store);
 
-    let error = PendingWorkStore::get(&store, &project, &WorkItemId::try_new("PWF-0001").unwrap())
-        .unwrap_err();
+    let error =
+        TaskStore::get(&store, &project, &TaskId::try_new("PWF-0001").unwrap()).unwrap_err();
 
     assert_matches!(
         error,
@@ -317,16 +316,13 @@ fn write_note(
 }
 
 /// Writes a note and then its open index entry through the adapter ports.
-fn generic_add(
-    store: &ObsidianStore,
-    new: NewItem,
-) -> Result<PendingWorkRecord, ObsidianStoreError> {
+fn generic_add(store: &ObsidianStore, new: NewTask) -> Result<TaskRecord, ObsidianStoreError> {
     let project = pwf_project(store);
     let section = new.section.clone().unwrap_or_default();
-    let record = PendingWorkStore::insert(store, &project, new)?;
+    let record = TaskStore::insert(store, &project, new)?;
     let id = record
         .id
-        .as_item()
+        .as_task()
         .expect("inserted record carries a canonical id")
         .clone();
     IndexEntryStore::upsert_index_entry(
@@ -341,8 +337,8 @@ fn generic_add(
     Ok(record)
 }
 
-fn new_item(prompt: &str, title: &str, section: Option<&str>) -> NewItem {
-    NewItem {
+fn new_task(prompt: &str, title: &str, section: Option<&str>) -> NewTask {
+    NewTask {
         prompt: prompt.to_string(),
         title: TaskTitle::try_new(title).unwrap(),
         created: Timestamp::new("2026-07-07"),
@@ -361,10 +357,10 @@ fn generic_add_creates_note_and_links_index() {
 
     let record = generic_add(
         &store,
-        NewItem {
+        NewTask {
             prereq: Some("[[PWF-0001]]".to_string()),
             effort: Some(EffortTier::Medium),
-            ..new_item(
+            ..new_task(
                 "Ship the adapter /d tests pass",
                 "ship adapter",
                 Some("Human"),
@@ -375,7 +371,7 @@ fn generic_add_creates_note_and_links_index() {
 
     assert_eq!(
         record.id,
-        RecordId::Item(WorkItemId::try_new("PWF-0001").unwrap())
+        RecordId::Task(TaskId::try_new("PWF-0001").unwrap())
     );
     assert_eq!(record.title, "ship adapter");
     let note = std::fs::read_to_string(notes_dir.join("pwf/PWF-0001.md")).unwrap();
@@ -405,16 +401,16 @@ fn generic_add_writes_canonical_tags_and_omits_absent_tags() {
     let tags = tags(&["sqlite", "csharp_export"]);
     let tagged = generic_add(
         &store,
-        NewItem {
+        NewTask {
             tags: Some(tags),
-            ..new_item("tagged task", "tagged task", None)
+            ..new_task("tagged task", "tagged task", None)
         },
     )
     .unwrap();
     let note = std::fs::read_to_string(tagged.locator).unwrap();
     assert!(note.contains("tags: [sqlite, csharp_export]\n"), "{note}");
 
-    let untagged = generic_add(&store, new_item("untagged task", "untagged task", None)).unwrap();
+    let untagged = generic_add(&store, new_task("untagged task", "untagged task", None)).unwrap();
     let note = std::fs::read_to_string(untagged.locator).unwrap();
     assert!(!note.contains("tags:"), "{note}");
 }
@@ -428,10 +424,10 @@ fn generic_insert_rejects_unreadable_existing_index_before_writing_a_note() {
     let store = store_with_index_identity(&project_dir);
     let project = pwf_project(&store);
 
-    let err = PendingWorkStore::insert(
+    let err = TaskStore::insert(
         &store,
         &project,
-        new_item("Ship the adapter /d tests pass", "ship adapter", None),
+        new_task("Ship the adapter /d tests pass", "ship adapter", None),
     )
     .unwrap_err();
 
@@ -456,8 +452,7 @@ fn generic_insert_rejects_mismatched_project_index_identity() {
     let store = store_with_index_identity(&notes_dir.join("pwf"));
     let project = pwf_project(&store);
 
-    let error =
-        PendingWorkStore::insert(&store, &project, new_item("task", "task", None)).unwrap_err();
+    let error = TaskStore::insert(&store, &project, new_task("task", "task", None)).unwrap_err();
 
     assert_matches!(
         error,
@@ -490,24 +485,23 @@ fn generic_insert_allocates_after_greatest_frontmatter_id() {
     let project = pwf_project(&store);
 
     let record =
-        PendingWorkStore::insert(&store, &project, new_item("next task", "next task", None))
-            .unwrap();
+        TaskStore::insert(&store, &project, new_task("next task", "next task", None)).unwrap();
 
     assert_eq!(
         record.id,
-        RecordId::Item(WorkItemId::try_new("PWF-0010").unwrap())
+        RecordId::Task(TaskId::try_new("PWF-0010").unwrap())
     );
 }
 
 /// Applies a tags-only patch; `Some(tags)` sets the field and `None` clears it.
 fn apply_tag_patch(store: &ObsidianStore, tags: Option<Tags>) {
     let project = pwf_project(store);
-    let id = WorkItemId::try_new("PWF-0001").unwrap();
-    let patch = ItemPatch {
+    let id = TaskId::try_new("PWF-0001").unwrap();
+    let patch = TaskPatch {
         tags: Some(tags),
         ..Default::default()
     };
-    PendingWorkStore::update(store, &project, &id, patch).unwrap();
+    TaskStore::update(store, &project, &id, patch).unwrap();
 }
 
 fn sqlite_tags() -> Tags {
@@ -527,16 +521,16 @@ fn tags(values: &[&str]) -> Tags {
 #[test]
 fn generic_update_sets_frontmatter_tags_without_rewriting_body_tags_line() {
     let body = "tags: body-only value\nkeep this body byte-identical";
-    let StagedOpenItem {
+    let StagedOpenTask {
         _temp,
         store,
-        item_path,
-    } = staged_open_item(None, body);
+        task_path,
+    } = staged_open_task(None, body);
 
     apply_tag_patch(&store, Some(sqlite_tags()));
 
     assert_eq!(
-        std::fs::read_to_string(item_path).unwrap(),
+        std::fs::read_to_string(task_path).unwrap(),
         concat!(
             "---\n",
             "id: PWF-0001\n",
@@ -554,16 +548,16 @@ fn generic_update_sets_frontmatter_tags_without_rewriting_body_tags_line() {
 
 #[test]
 fn generic_update_writes_a_deduplicated_tag_value() {
-    let StagedOpenItem {
+    let StagedOpenTask {
         _temp,
         store,
-        item_path,
-    } = staged_open_item_with_tags("[sqlite, godot]");
+        task_path,
+    } = staged_open_task_with_tags("[sqlite, godot]");
     let merged = tags(&["sqlite", "godot", "csharp_export"]);
 
     apply_tag_patch(&store, Some(merged));
 
-    let note = std::fs::read_to_string(item_path).unwrap();
+    let note = std::fs::read_to_string(task_path).unwrap();
     assert!(
         note.contains("tags: [sqlite, godot, csharp_export]\n"),
         "{note}"
@@ -574,31 +568,31 @@ fn generic_update_writes_a_deduplicated_tag_value() {
 #[test]
 fn generic_update_clear_preserves_body_tags_line_when_frontmatter_has_no_tags() {
     let body = "tags: body-only value\nkeep this body byte-identical";
-    let StagedOpenItem {
+    let StagedOpenTask {
         _temp,
         store,
-        item_path,
-    } = staged_open_item(None, body);
-    let before = std::fs::read_to_string(&item_path).unwrap();
+        task_path,
+    } = staged_open_task(None, body);
+    let before = std::fs::read_to_string(&task_path).unwrap();
 
     apply_tag_patch(&store, None);
 
-    assert_eq!(std::fs::read_to_string(item_path).unwrap(), before);
+    assert_eq!(std::fs::read_to_string(task_path).unwrap(), before);
 }
 
 #[test]
 fn generic_update_sets_tags_on_bom_frontmatter() {
     let before = formatted_tag_note(true, "\n", None);
-    let StagedOpenItem {
+    let StagedOpenTask {
         _temp,
         store,
-        item_path,
-    } = staged_open_item_from_note(&before);
+        task_path,
+    } = staged_open_task_from_note(&before);
 
     apply_tag_patch(&store, Some(sqlite_tags()));
 
     assert_eq!(
-        std::fs::read_to_string(item_path).unwrap(),
+        std::fs::read_to_string(task_path).unwrap(),
         formatted_tag_note(true, "\n", Some("[sqlite]"))
     );
 }
@@ -606,16 +600,16 @@ fn generic_update_sets_tags_on_bom_frontmatter() {
 #[test]
 fn generic_update_clears_tags_on_bom_frontmatter() {
     let before = formatted_tag_note(true, "\n", Some("[godot]"));
-    let StagedOpenItem {
+    let StagedOpenTask {
         _temp,
         store,
-        item_path,
-    } = staged_open_item_from_note(&before);
+        task_path,
+    } = staged_open_task_from_note(&before);
 
     apply_tag_patch(&store, None);
 
     assert_eq!(
-        std::fs::read_to_string(item_path).unwrap(),
+        std::fs::read_to_string(task_path).unwrap(),
         formatted_tag_note(true, "\n", None)
     );
 }
@@ -623,16 +617,16 @@ fn generic_update_clears_tags_on_bom_frontmatter() {
 #[test]
 fn generic_update_sets_tags_on_crlf_frontmatter() {
     let before = formatted_tag_note(false, "\r\n", None);
-    let StagedOpenItem {
+    let StagedOpenTask {
         _temp,
         store,
-        item_path,
-    } = staged_open_item_from_note(&before);
+        task_path,
+    } = staged_open_task_from_note(&before);
 
     apply_tag_patch(&store, Some(sqlite_tags()));
 
     assert_eq!(
-        std::fs::read_to_string(item_path).unwrap(),
+        std::fs::read_to_string(task_path).unwrap(),
         formatted_tag_note(false, "\r\n", Some("[sqlite]"))
     );
 }
@@ -640,16 +634,16 @@ fn generic_update_sets_tags_on_crlf_frontmatter() {
 #[test]
 fn generic_update_clears_tags_on_crlf_frontmatter() {
     let before = formatted_tag_note(false, "\r\n", Some("[godot]"));
-    let StagedOpenItem {
+    let StagedOpenTask {
         _temp,
         store,
-        item_path,
-    } = staged_open_item_from_note(&before);
+        task_path,
+    } = staged_open_task_from_note(&before);
 
     apply_tag_patch(&store, None);
 
     assert_eq!(
-        std::fs::read_to_string(item_path).unwrap(),
+        std::fs::read_to_string(task_path).unwrap(),
         formatted_tag_note(false, "\r\n", None)
     );
 }
@@ -672,10 +666,10 @@ fn generic_delete_removes_note_and_unlinks_index() {
     );
     let store = store_with_index_identity(&notes_dir.join("pwf"));
     let project = pwf_project(&store);
-    let id = WorkItemId::try_new("PWF-0001").unwrap();
+    let id = TaskId::try_new("PWF-0001").unwrap();
 
     IndexEntryStore::delete_index_entry(&store, &project, &id).unwrap();
-    PendingWorkStore::delete(&store, &project, &id).unwrap();
+    TaskStore::delete(&store, &project, &id).unwrap();
 
     assert!(!project_dir.join("PWF-0001.md").exists());
     assert_eq!(
@@ -702,7 +696,7 @@ fn get_returns_open_note_locator_from_active_index() {
     );
     let store = store_with_index_identity(&notes_dir.join("pwf"));
 
-    let record = get_record(&store, "PWF-0001").expect("open item must resolve");
+    let record = get_record(&store, "PWF-0001").expect("active task must resolve");
 
     assert_eq!(record.locator, path_str(&project_dir.join("PWF-0001.md")));
 }
@@ -725,7 +719,7 @@ fn get_returns_open_note_source_with_created_key() {
     );
     let store = store_with_index_identity(&notes_dir.join("pwf"));
 
-    let record = get_record(&store, "PWF-0001").expect("open item must resolve");
+    let record = get_record(&store, "PWF-0001").expect("active task must resolve");
 
     assert_eq!(
         record.source,
@@ -753,7 +747,7 @@ fn get_finds_closed_note_still_in_project_dir() {
     );
     let store = store_with_index_identity(&notes_dir.join("pwf"));
 
-    let record = get_record(&store, "PWF-0003").expect("closed item must resolve");
+    let record = get_record(&store, "PWF-0003").expect("closed task must resolve");
 
     assert_eq!(
         record.source,
@@ -770,45 +764,45 @@ fn store_for_tasks(tasks_path: &Path) -> ObsidianStore {
     ObsidianStore::new(tasks_path.to_path_buf())
 }
 
-struct StagedOpenItem {
+struct StagedOpenTask {
     _temp: tempfile::TempDir,
     store: ObsidianStore,
-    item_path: std::path::PathBuf,
+    task_path: std::path::PathBuf,
 }
 
-fn staged_open_item_with_tags(tags: &str) -> StagedOpenItem {
-    staged_open_item(Some(tags), "body")
+fn staged_open_task_with_tags(tags: &str) -> StagedOpenTask {
+    staged_open_task(Some(tags), "body")
 }
 
-fn staged_open_item(tags: Option<&str>, body: &str) -> StagedOpenItem {
+fn staged_open_task(tags: Option<&str>, body: &str) -> StagedOpenTask {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
     let project_dir = notes_dir.join("pwf");
     std::fs::create_dir_all(&project_dir).unwrap();
     std::fs::write(project_dir.join("pwf.md"), "- [ ] [[PWF-0001]]\n").unwrap();
-    let item_path = project_dir.join("PWF-0001.md");
-    write_note(&item_path, "tagged", "2026-07-01", None, None, tags, body);
+    let task_path = project_dir.join("PWF-0001.md");
+    write_note(&task_path, "tagged", "2026-07-01", None, None, tags, body);
     let store = store_with_index_identity(&notes_dir.join("pwf"));
-    StagedOpenItem {
+    StagedOpenTask {
         _temp: temp,
         store,
-        item_path,
+        task_path,
     }
 }
 
-fn staged_open_item_from_note(note: &str) -> StagedOpenItem {
+fn staged_open_task_from_note(note: &str) -> StagedOpenTask {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
     let project_dir = notes_dir.join("pwf");
     std::fs::create_dir_all(&project_dir).unwrap();
     std::fs::write(project_dir.join("pwf.md"), "- [ ] [[PWF-0001]]\n").unwrap();
-    let item_path = project_dir.join("PWF-0001.md");
-    std::fs::write(&item_path, note).unwrap();
+    let task_path = project_dir.join("PWF-0001.md");
+    std::fs::write(&task_path, note).unwrap();
     let store = store_with_index_identity(&notes_dir.join("pwf"));
-    StagedOpenItem {
+    StagedOpenTask {
         _temp: temp,
         store,
-        item_path,
+        task_path,
     }
 }
 
@@ -856,7 +850,7 @@ fn write_status_note(
 }
 
 #[test]
-fn item_record_roundtrips_file_model_note() {
+fn task_record_roundtrips_file_model_note() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
     let project_dir = notes_dir.join("pwf");
@@ -881,15 +875,15 @@ fn item_record_roundtrips_file_model_note() {
     let store = store_with_index_identity(&notes_dir.join("pwf"));
 
     let project = pwf_project(&store);
-    let id = WorkItemId::try_new("PWF-0001").unwrap();
-    let record = PendingWorkStore::get(&store, &project, &id)
+    let id = TaskId::try_new("PWF-0001").unwrap();
+    let record = TaskStore::get(&store, &project, &id)
         .unwrap()
         .expect("file-model record present");
 
-    assert_eq!(record.id, RecordId::Item(id));
+    assert_eq!(record.id, RecordId::Task(id));
     assert_eq!(record.materialization, Materialization::NoteFile);
     assert_eq!(record.title, "ship the adapter");
-    assert_eq!(record.status, WorkItemStatus::Active);
+    assert_eq!(record.status, TaskStatus::Active);
     assert_eq!(record.created, Some(Timestamp::new("2026-07-01")));
     assert_eq!(record.completed, None);
     assert_eq!(record.commits, None);
@@ -903,7 +897,7 @@ fn item_record_roundtrips_file_model_note() {
 }
 
 #[test]
-fn item_record_materializes_legacy_checkbox_line() {
+fn task_record_materializes_legacy_checkbox_line() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
     let project_dir = notes_dir.join("pwf");
@@ -917,15 +911,15 @@ fn item_record_materializes_legacy_checkbox_line() {
     let store = store_for_tasks(&notes_dir.join("pwf"));
 
     let project = pwf_project(&store);
-    let id = WorkItemId::try_new("PWF-0002").unwrap();
-    let record = PendingWorkStore::get(&store, &project, &id)
+    let id = TaskId::try_new("PWF-0002").unwrap();
+    let record = TaskStore::get(&store, &project, &id)
         .unwrap()
         .expect("legacy checkbox materialized");
 
     let expected_note = project_dir.join("PWF-0002.md");
-    assert_eq!(record.id, RecordId::Item(id));
+    assert_eq!(record.id, RecordId::Task(id));
     assert_eq!(record.title, "handle it");
-    assert_eq!(record.status, WorkItemStatus::Active);
+    assert_eq!(record.status, TaskStatus::Active);
     assert_eq!(record.created, None);
     assert_eq!(record.completed, None);
     assert_eq!(record.section, None);
@@ -966,17 +960,17 @@ fn index_entries_parse_open_done_and_raw_futuro_section() {
         entries,
         vec![
             IndexEntry {
-                id: WorkItemId::try_new("PWF-0001").unwrap(),
+                id: TaskId::try_new("PWF-0001").unwrap(),
                 state: IndexEntryState::Open,
                 section: String::new(),
             },
             IndexEntry {
-                id: WorkItemId::try_new("PWF-0002").unwrap(),
+                id: TaskId::try_new("PWF-0002").unwrap(),
                 state: IndexEntryState::Done(Timestamp::new("2026-07-02")),
                 section: String::new(),
             },
             IndexEntry {
-                id: WorkItemId::try_new("PWF-0003").unwrap(),
+                id: TaskId::try_new("PWF-0003").unwrap(),
                 state: IndexEntryState::Open,
                 section: "Futuro".to_string(),
             },
@@ -999,14 +993,14 @@ fn patch_status_done_flips_legacy_checkbox_with_date_stamp() {
     let store = store_for_tasks(&notes_dir.join("pwf"));
 
     let project = pwf_project(&store);
-    let id = WorkItemId::try_new("PWF-0002").unwrap();
-    let patch = ItemPatch {
-        status: Some(WorkItemStatus::Done),
+    let id = TaskId::try_new("PWF-0002").unwrap();
+    let patch = TaskPatch {
+        status: Some(TaskStatus::Done),
         completed: Some(Some(Timestamp::new("2026-07-15"))),
         ..Default::default()
     };
 
-    PendingWorkStore::update(&store, &project, &id, patch).unwrap();
+    TaskStore::update(&store, &project, &id, patch).unwrap();
 
     let index = std::fs::read_to_string(&index_path).unwrap();
     assert!(
@@ -1036,10 +1030,10 @@ fn insert_allocates_next_id_without_index_write() {
     let store = store_for_tasks(&notes_dir.join("pwf"));
 
     let project = pwf_project(&store);
-    let record = PendingWorkStore::insert(
+    let record = TaskStore::insert(
         &store,
         &project,
-        NewItem {
+        NewTask {
             prompt: "wire up the new thing".to_string(),
             title: TaskTitle::try_new("wire up the new thing").unwrap(),
             created: Timestamp::new("2026-07-15"),
@@ -1053,9 +1047,9 @@ fn insert_allocates_next_id_without_index_write() {
 
     assert_eq!(
         record.id,
-        RecordId::Item(WorkItemId::try_new("PWF-0008").unwrap())
+        RecordId::Task(TaskId::try_new("PWF-0008").unwrap())
     );
-    assert_eq!(record.status, WorkItemStatus::Active);
+    assert_eq!(record.status, TaskStatus::Active);
     assert!(record.source.contains("id: PWF-0008"));
     assert_eq!(record.locator, path_str(&project_dir.join("PWF-0008.md")));
     assert!(project_dir.join("PWF-0008.md").exists());
@@ -1100,7 +1094,7 @@ fn generic_list_records_carry_open_placement_without_hiding_unlinked_notes() {
     let store = store_for_tasks(&notes_dir.join("pwf"));
 
     let project = pwf_project(&store);
-    let records = PendingWorkStore::list(&store, &project).unwrap();
+    let records = TaskStore::list(&store, &project).unwrap();
 
     assert_eq!(records.len(), 2);
     let record = records
@@ -1108,13 +1102,13 @@ fn generic_list_records_carry_open_placement_without_hiding_unlinked_notes() {
         .find(|record| {
             record
                 .id
-                .as_item()
+                .as_task()
                 .is_some_and(|id| id.as_ref() == "PWF-0001")
         })
         .expect("linked record must be listed");
     assert_eq!(
         record.id,
-        RecordId::Item(WorkItemId::try_new("PWF-0001").unwrap())
+        RecordId::Task(TaskId::try_new("PWF-0001").unwrap())
     );
     assert_eq!(
         record.placement,
@@ -1129,7 +1123,7 @@ fn generic_list_records_carry_open_placement_without_hiding_unlinked_notes() {
         .find(|record| {
             record
                 .id
-                .as_item()
+                .as_task()
                 .is_some_and(|id| id.as_ref() == "PWF-0002")
         })
         .expect("unlinked record must be listed");
@@ -1166,7 +1160,7 @@ fn generic_list_rejects_duplicate_project_index_task_ids() {
     let store = store_for_tasks(&notes_dir.join("pwf"));
     let project = pwf_project(&store);
 
-    let error = PendingWorkStore::list(&store, &project).unwrap_err();
+    let error = TaskStore::list(&store, &project).unwrap_err();
 
     assert_matches!(
         error,
@@ -1179,7 +1173,7 @@ fn generic_list_rejects_duplicate_project_index_task_ids() {
 }
 
 #[test]
-fn list_pending_items_returns_note_history_and_index_only_records() {
+fn list_tasks_returns_note_history_and_index_only_records() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
     let project_dir = notes_dir.join("pwf");
@@ -1215,10 +1209,10 @@ fn list_pending_items_returns_note_history_and_index_only_records() {
     let store = store_for_tasks(&notes_dir.join("pwf"));
     let project = pwf_project(&store);
 
-    let records = PendingWorkStore::list(&store, &project).unwrap();
+    let records = TaskStore::list(&store, &project).unwrap();
     let mut ids: Vec<String> = records
         .iter()
-        .filter_map(|record| record.id.as_item().map(ToString::to_string))
+        .filter_map(|record| record.id.as_task().map(ToString::to_string))
         .collect();
     ids.sort();
 
@@ -1231,7 +1225,7 @@ fn list_pending_items_returns_note_history_and_index_only_records() {
     let record = |id: &str| {
         records
             .iter()
-            .find(|record| record.id.as_item().is_some_and(|item| item.as_ref() == id))
+            .find(|record| record.id.as_task().is_some_and(|task| task.as_ref() == id))
             .unwrap_or_else(|| panic!("record {id} must be listed"))
     };
     assert_eq!(
@@ -1241,16 +1235,16 @@ fn list_pending_items_returns_note_history_and_index_only_records() {
             line: 6,
         })
     );
-    assert_eq!(record("PWF-0002").status, WorkItemStatus::Done);
+    assert_eq!(record("PWF-0002").status, TaskStatus::Done);
     assert_eq!(record("PWF-0002").section.as_deref(), Some("Human"));
     assert!(record("PWF-0002").placement.is_none());
-    assert_eq!(record("PWF-0003").status, WorkItemStatus::Cancelled);
-    assert_eq!(record("PWF-0004").status, WorkItemStatus::Done);
+    assert_eq!(record("PWF-0003").status, TaskStatus::Cancelled);
+    assert_eq!(record("PWF-0004").status, TaskStatus::Done);
     assert!(record("PWF-0004").placement.is_none());
-    assert_eq!(record("PWF-0005").status, WorkItemStatus::Active);
+    assert_eq!(record("PWF-0005").status, TaskStatus::Active);
     assert!(record("PWF-0005").placement.is_none());
     let missing_done = record("PWF-0006");
-    assert_eq!(missing_done.status, WorkItemStatus::Done);
+    assert_eq!(missing_done.status, TaskStatus::Done);
     assert_matches!(
         &missing_done.materialization,
         Materialization::MissingNote { .. }
@@ -1263,7 +1257,7 @@ fn list_pending_items_returns_note_history_and_index_only_records() {
 }
 
 #[test]
-fn list_pending_items_returns_note_history_when_index_is_missing() {
+fn list_tasks_returns_note_history_when_index_is_missing() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
     let project_dir = notes_dir.join("pwf");
@@ -1278,10 +1272,10 @@ fn list_pending_items_returns_note_history_when_index_is_missing() {
     let store = store_for_tasks(&notes_dir.join("pwf"));
     let project = pwf_project(&store);
 
-    let records = PendingWorkStore::list(&store, &project).unwrap();
+    let records = TaskStore::list(&store, &project).unwrap();
 
     assert_eq!(records.len(), 1);
-    assert_eq!(records[0].status, WorkItemStatus::Done);
+    assert_eq!(records[0].status, TaskStatus::Done);
     assert!(records[0].placement.is_none());
 }
 
@@ -1462,10 +1456,10 @@ fn generic_insert_plus_upsert_writes_legacy_add_index_bytes() {
         let (_guard, store, project_dir) = stage_add_parity_vault(scenario.initial_index);
         let project = pwf_project(&store);
 
-        let record = PendingWorkStore::insert(
+        let record = TaskStore::insert(
             &store,
             &project,
-            NewItem {
+            NewTask {
                 prompt: "do the thing".to_string(),
                 title: TaskTitle::try_new("ship it").unwrap(),
                 created: Timestamp::new("2026-07-07"),
@@ -1478,7 +1472,7 @@ fn generic_insert_plus_upsert_writes_legacy_add_index_bytes() {
         .unwrap();
         let id = record
             .id
-            .as_item()
+            .as_task()
             .expect("inserted record has an id")
             .clone();
         assert_eq!(
@@ -1524,7 +1518,7 @@ fn upsert_creates_missing_index_from_identity_template() {
         &store,
         &project,
         IndexEntry {
-            id: WorkItemId::try_new("PWF-0001").unwrap(),
+            id: TaskId::try_new("PWF-0001").unwrap(),
             state: IndexEntryState::Open,
             section: String::new(),
         },
@@ -1538,7 +1532,7 @@ fn upsert_creates_missing_index_from_identity_template() {
 }
 
 #[test]
-fn delete_index_entry_errors_when_no_link_matches() {
+fn delete_index_entry_is_idempotent_when_no_link_matches() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
     let project_dir = notes_dir.join("pwf");
@@ -1547,16 +1541,26 @@ fn delete_index_entry_errors_when_no_link_matches() {
     let store = store_for_tasks(&notes_dir.join("pwf"));
     let project = pwf_project(&store);
 
-    let error = IndexEntryStore::delete_index_entry(
-        &store,
-        &project,
-        &WorkItemId::try_new("PWF-0002").unwrap(),
-    )
-    .unwrap_err();
+    IndexEntryStore::delete_index_entry(&store, &project, &TaskId::try_new("PWF-0002").unwrap())
+        .unwrap();
 
-    assert_matches!(
-        error,
-        ObsidianStoreError::IndexLinkNotFound { ref id } if id == "PWF-0002"
+    assert_eq!(
+        std::fs::read_to_string(project_dir.join("pwf.md")).unwrap(),
+        PARITY_IDENTITY
     );
-    assert_eq!(error.to_string(), "Index link not found for PWF-0002.");
+}
+
+#[test]
+fn delete_index_entry_is_idempotent_when_index_is_missing() {
+    let temp = tempfile::tempdir().unwrap();
+    let notes_dir = temp.path().join("notes");
+    let project_dir = notes_dir.join("pwf");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    let store = store_for_tasks(&project_dir);
+    let project = pwf_project(&store);
+
+    IndexEntryStore::delete_index_entry(&store, &project, &TaskId::try_new("PWF-0002").unwrap())
+        .unwrap();
+
+    assert!(!project_dir.join("pwf.md").exists());
 }

@@ -1,6 +1,6 @@
 //! Prepares native Claude Code launches.
 
-use pwf_application::pending_work::session::{AgentLaunch, AgentProbe};
+use pwf_application::task::session::{AgentLaunch, AgentProbe};
 
 use super::argv::LaunchArgv;
 use crate::session::claude_effort::ClaudeEffort;
@@ -54,7 +54,7 @@ fn prepare_argv(launch: &AgentLaunch) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use pwf_application::pending_work::session::AgentLaunch;
+    use pwf_application::task::session::AgentLaunch;
     use pwf_models::session::{Agent, SessionEffort};
 
     use super::prepare;

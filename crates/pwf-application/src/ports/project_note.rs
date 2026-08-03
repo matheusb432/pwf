@@ -1,14 +1,14 @@
 use pwf_models::{
     note::{NoteId, ProjectNote},
-    pending_work::Timestamp,
     project::Project,
+    task::Timestamp,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewProjectNote {
     pub id: NoteId,
-    pub topic: String,
-    pub tldr: String,
+    pub title: String,
+    pub content: String,
     pub why: Option<String>,
     pub domain: Option<String>,
     pub tags: Vec<String>,
@@ -19,7 +19,7 @@ pub struct NewProjectNote {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectNotePatch {
-    pub topic: String,
+    pub title: String,
 }
 
 pub trait ProjectNoteStore: Clone + Send + Sync + 'static {

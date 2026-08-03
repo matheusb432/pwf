@@ -1,12 +1,12 @@
 use std::path::PathBuf;
 
-use pwf_models::{pending_work::WorkItemId, project::Project};
+use pwf_models::{project::Project, task::TaskId};
 
 use super::{ObsidianStore, ObsidianStoreError};
 use crate::obsidian::identity::inspect_project_task_notes;
 
 pub(super) struct TaskFile {
-    pub(super) id: WorkItemId,
+    pub(super) id: TaskId,
     pub(super) path: PathBuf,
     pub(super) markdown: String,
     pub(super) title: Option<String>,

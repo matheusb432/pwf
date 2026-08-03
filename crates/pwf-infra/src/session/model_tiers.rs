@@ -2,8 +2,8 @@
 
 use std::{collections::BTreeMap, path::PathBuf};
 
-use pwf_application::pending_work::session::{ModelTier, ModelTierLookup};
-use pwf_models::pending_work::EffortTier;
+use pwf_application::task::session::{ModelTier, ModelTierLookup};
+use pwf_models::task::EffortTier;
 use serde::Deserialize;
 use thiserror::Error;
 

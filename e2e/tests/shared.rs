@@ -17,17 +17,17 @@ use serde_json::{Value, json};
 pub use session::SessionFixture;
 use tempfile::TempDir;
 
-fn binary_path() -> PathBuf {
+fn binary_path(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("E2E crate is under the workspace root")
         .join("target")
         .join("release")
-        .join(format!("pwf{}", std::env::consts::EXE_SUFFIX))
+        .join(format!("{name}{}", std::env::consts::EXE_SUFFIX))
 }
 
 pub fn command() -> Command {
-    Command::new(binary_path())
+    Command::new(binary_path("pwf"))
 }
 
 pub struct DatabaseFixture {
@@ -42,7 +42,13 @@ impl DatabaseFixture {
             .expect("database fixture path has a parent")
             .join("home");
         fs::create_dir_all(&home).expect("create isolated home");
-        Self { path, home }
+        let fixture = Self { path, home };
+        let output = Command::new(binary_path("pwf-migrator"))
+            .env("PWF_DATABASE_PATH", &fixture.path)
+            .output()
+            .expect("run pwf-migrator process");
+        assert_success(&output, "migrate test database");
+        fixture
     }
 
     pub fn command(&self) -> Command {
@@ -117,7 +123,7 @@ impl ManagedProject {
 pub fn task_json(database: &DatabaseFixture, id: &str) -> Value {
     let output = database
         .command()
-        .args(["show", id, "--json"])
+        .args(["task", "show", id, "--json"])
         .output()
         .unwrap();
     assert_success(&output, &format!("show {id}"));

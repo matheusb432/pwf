@@ -1,14 +1,14 @@
 use std::path::{Path, PathBuf};
 
 use gray_matter::{Matter, engine::YAML};
-use pwf_models::pending_work::{ProjectId, ProjectIndexIdentity, ProjectName, WorkItemId};
+use pwf_models::task::{ProjectId, ProjectIndexIdentity, ProjectName, TaskId};
 use serde::Deserialize;
 
 use super::ObsidianStoreError;
 
 /// Contains a task note discovered by frontmatter identity.
 pub struct TaskNoteIdentity {
-    pub id: WorkItemId,
+    pub id: TaskId,
     pub path: PathBuf,
     pub markdown: String,
     pub title: Option<String>,
@@ -29,9 +29,9 @@ pub fn inspect_project_task_notes(
 
     let mut tasks = Vec::new();
     for entry in std::fs::read_dir(project_dir)
-        .map_err(|source| ObsidianStoreError::ReadItemFile { source })?
+        .map_err(|source| ObsidianStoreError::ReadTaskFile { source })?
     {
-        let entry = entry.map_err(|source| ObsidianStoreError::ReadItemFile { source })?;
+        let entry = entry.map_err(|source| ObsidianStoreError::ReadTaskFile { source })?;
         let path = entry.path();
         if path == index_path
             || path.extension().and_then(|extension| extension.to_str()) != Some("md")
@@ -39,7 +39,7 @@ pub fn inspect_project_task_notes(
             continue;
         }
         let markdown = std::fs::read_to_string(&path)
-            .map_err(|source| ObsidianStoreError::ReadItemFile { source })?;
+            .map_err(|source| ObsidianStoreError::ReadTaskFile { source })?;
         let Some((id, title)) = parse_task_metadata_if_task(&path, &markdown)? else {
             continue;
         };
@@ -83,7 +83,7 @@ struct ProjectIndexFrontmatter {
 fn parse_task_metadata_if_task(
     path: &Path,
     markdown: &str,
-) -> Result<Option<(WorkItemId, Option<String>)>, ObsidianStoreError> {
+) -> Result<Option<(TaskId, Option<String>)>, ObsidianStoreError> {
     let frontmatter = parse_frontmatter::<TaskFrontmatter>(path, markdown, "id")?;
     if frontmatter.kind.as_deref() == Some("note") {
         return Ok(None);
@@ -93,7 +93,7 @@ fn parse_task_metadata_if_task(
         .ok_or_else(|| ObsidianStoreError::MissingTaskId {
             path: path.to_path_buf(),
         })?;
-    WorkItemId::try_new(&raw)
+    TaskId::try_new(&raw)
         .map(|id| Some((id, frontmatter.title)))
         .map_err(|_| ObsidianStoreError::InvalidTaskId {
             path: path.to_path_buf(),
@@ -188,7 +188,7 @@ fn required_index_property(
 mod tests {
     use std::{assert_matches, path::Path};
 
-    use pwf_models::pending_work::{ProjectId, ProjectIndexIdentity, ProjectName};
+    use pwf_models::task::{ProjectId, ProjectIndexIdentity, ProjectName};
 
     use super::{
         parse_project_index_identity, parse_task_metadata_if_task, project_index_frontmatter_id,

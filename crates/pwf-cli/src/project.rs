@@ -31,7 +31,7 @@ pub enum Command {
     Add(add::Arguments),
     /// Pauses one registered project.
     Pause(pause::Arguments),
-    /// Renames one registered project and its pending-work files.
+    /// Renames one registered project and its task files.
     Rename(rename::Arguments),
     /// Resumes one registered project.
     Resume(resume::Arguments),

@@ -1,6 +1,6 @@
 //! Adds one note to a managed project.
 
-use pwf_models::{note::NoteId, pending_work::Timestamp, project::Project};
+use pwf_models::{note::NoteId, task::Timestamp};
 
 use crate::{
     ports::{
@@ -18,10 +18,10 @@ use crate::{
 pub struct AddNote {
     /// Selects the managed project by name or id code.
     pub project_identifier: String,
-    /// Names the focused learning topic.
-    pub topic: String,
-    /// Summarizes the durable insight.
-    pub tldr: String,
+    /// Names the note.
+    pub title: String,
+    /// Supplies the note's Markdown body.
+    pub content: String,
     /// Explains the consequence when it adds useful context.
     pub why: Option<String>,
     /// Classifies the subject when known.
@@ -39,17 +39,17 @@ pub struct AddNote {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AddNoteOk {
     pub id: NoteId,
-    pub topic: String,
+    pub title: String,
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum AddNoteError {
     #[error("Unknown project '{identifier}'; expected a managed project name or id code.")]
     UnknownProject { identifier: String },
-    #[error("Note topic is empty; provide a non-empty topic.")]
-    EmptyTopic,
-    #[error("Note TL;DR is empty; provide a non-empty TL;DR.")]
-    EmptyTldr,
+    #[error("Note title is empty; provide a non-empty title.")]
+    EmptyTitle,
+    #[error("Note content is empty; provide non-empty content.")]
+    EmptyContent,
     #[error("Project '{project}' has no available four-digit note identifiers.")]
     IdentifierExhausted { project: String },
     #[error("{0}")]
@@ -63,8 +63,8 @@ pub enum AddNoteError {
 /// # Errors
 ///
 /// Returns [`AddNoteError::UnknownProject`] when the project does not resolve,
-/// [`AddNoteError::EmptyTopic`] when the normalized topic is empty,
-/// [`AddNoteError::EmptyTldr`] when the normalized TL;DR is empty,
+/// [`AddNoteError::EmptyTitle`] when the normalized title is empty,
+/// [`AddNoteError::EmptyContent`] when the trimmed content is empty,
 /// [`AddNoteError::IdentifierExhausted`] when the greatest existing suffix is `9999`, or
 /// [`AddNoteError::Store`] when listing or inserting notes fails.
 #[cqrsy::command]
@@ -84,25 +84,16 @@ pub async fn execute(
     )
     .await
     .map_err(|error| project_error(identifier, error))?;
-    execute_for_project(command, store, &project, clock)
-}
-
-fn execute_for_project(
-    command: AddNote,
-    store: &impl ProjectNoteStore,
-    project: &Project,
-    clock: &impl Clock,
-) -> Result<AddNoteOk, AddNoteError> {
-    let topic = normalize_inline(&command.topic);
-    if topic.is_empty() {
-        return Err(AddNoteError::EmptyTopic);
+    let title = normalize_inline(&command.title);
+    if title.is_empty() {
+        return Err(AddNoteError::EmptyTitle);
     }
-    let tldr = normalize_inline(&command.tldr);
-    if tldr.is_empty() {
-        return Err(AddNoteError::EmptyTldr);
+    let content = command.content.trim().to_string();
+    if content.is_empty() {
+        return Err(AddNoteError::EmptyContent);
     }
     let notes = store
-        .list_notes(project)
+        .list_notes(&project)
         .map_err(|error| AddNoteError::Store(Box::new(error)))?;
     let next_number = notes
         .iter()
@@ -122,11 +113,11 @@ fn execute_for_project(
     let created = command.date.map_or_else(|| clock.today(), Timestamp::new);
     let created = store
         .insert_note(
-            project,
+            &project,
             NewProjectNote {
                 id,
-                topic: topic.clone(),
-                tldr,
+                title: title.clone(),
+                content,
                 why: normalize_optional_block(command.why),
                 domain: normalize_optional_inline(command.domain),
                 tags: normalize_inline_values(command.tags),
@@ -138,7 +129,7 @@ fn execute_for_project(
         .map_err(|error| AddNoteError::Store(Box::new(error)))?;
     Ok(AddNoteOk {
         id: created.id,
-        topic: created.topic,
+        title: created.title,
     })
 }
 
@@ -179,13 +170,13 @@ mod tests {
 
     use pwf_models::{
         note::{NoteId, ProjectNote},
-        pending_work::Timestamp,
+        task::Timestamp,
     };
 
     use super::{AddNote, AddNoteError};
     use crate::{
         ports::clock::Clock,
-        testing::{InMemoryStore, ProjectNoteFailure, project},
+        testing::{InMemoryStore, ProjectNoteFailure, insert_project},
     };
 
     #[derive(Debug, thiserror::Error)]
@@ -201,18 +192,18 @@ mod tests {
         }
     }
 
-    fn note(number: u32, topic: &str) -> ProjectNote {
+    fn note(number: u32, title: &str) -> ProjectNote {
         ProjectNote {
             id: NoteId::try_new(format!("PWF-NOTE-{number:04}")).unwrap(),
-            topic: topic.to_string(),
+            title: title.to_string(),
         }
     }
 
     fn command(project_identifier: &str) -> AddNote {
         AddNote {
             project_identifier: project_identifier.to_string(),
-            topic: " remember milk ".to_string(),
-            tldr: " buy milk before the store closes ".to_string(),
+            title: " remember milk ".to_string(),
+            content: " buy milk before the store closes ".to_string(),
             why: None,
             domain: None,
             tags: Vec::new(),
@@ -222,52 +213,51 @@ mod tests {
         }
     }
 
-    #[test]
-    fn blank_topic_wins_over_store_listing_failure() {
+    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
+    async fn blank_title_wins_over_store_listing_failure(pool: sqlx::SqlitePool) {
+        insert_project(&pool, "PWF", "pwf", "/repo/pwf", "/tasks/pwf", false).await;
         let store = InMemoryStore::default().with_failure(ProjectNoteFailure::List);
         let mut command = command("pwf");
-        command.topic = " \t ".to_string();
+        command.title = " \t ".to_string();
 
-        let error =
-            super::execute_for_project(command, &store, &project("PWF", "pwf"), &FixedClock)
-                .unwrap_err();
+        let error = super::execute(command, &store, &pool, &FixedClock)
+            .await
+            .unwrap_err();
 
-        assert!(matches!(error, AddNoteError::EmptyTopic));
+        assert!(matches!(error, AddNoteError::EmptyTitle));
         assert!(store.project_notes("pwf").is_empty());
     }
 
-    #[test]
-    fn blank_tldr_wins_over_store_listing_failure() {
+    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
+    async fn blank_content_wins_over_store_listing_failure(pool: sqlx::SqlitePool) {
+        insert_project(&pool, "PWF", "pwf", "/repo/pwf", "/tasks/pwf", false).await;
         let store = InMemoryStore::default().with_failure(ProjectNoteFailure::List);
         let mut command = command("pwf");
-        command.tldr = " \t ".to_string();
+        command.content = " \t ".to_string();
 
-        let error =
-            super::execute_for_project(command, &store, &project("PWF", "pwf"), &FixedClock)
-                .unwrap_err();
+        let error = super::execute(command, &store, &pool, &FixedClock)
+            .await
+            .unwrap_err();
 
-        assert!(matches!(error, AddNoteError::EmptyTldr));
+        assert!(matches!(error, AddNoteError::EmptyContent));
         assert!(store.project_notes("pwf").is_empty());
     }
 
-    #[test]
-    fn maximum_suffix_allocates_the_next_identifier() {
+    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
+    async fn maximum_suffix_allocates_the_next_identifier(pool: sqlx::SqlitePool) {
+        insert_project(&pool, "PWF", "pwf", "/repo/pwf", "/tasks/pwf", false).await;
         for project_identifier in ["pwf", "PWF"] {
             let store = InMemoryStore::default().with_project_notes(
                 "pwf",
                 vec![note(2, "two"), note(9, "nine"), note(4, "four")],
             );
 
-            let added = super::execute_for_project(
-                command(project_identifier),
-                &store,
-                &project("PWF", "pwf"),
-                &FixedClock,
-            )
-            .unwrap();
+            let added = super::execute(command(project_identifier), &store, &pool, &FixedClock)
+                .await
+                .unwrap();
 
             assert_eq!(added.id.as_ref(), "PWF-NOTE-0010");
-            assert_eq!(added.topic, "remember milk");
+            assert_eq!(added.title, "remember milk");
             assert_eq!(
                 store.project_notes("pwf").last().unwrap().id.as_ref(),
                 "PWF-NOTE-0010"
@@ -275,11 +265,13 @@ mod tests {
         }
     }
 
-    #[test]
-    fn explicit_date_overrides_the_clock() {
+    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
+    async fn explicit_date_overrides_the_clock(pool: sqlx::SqlitePool) {
+        insert_project(&pool, "PWF", "pwf", "/repo/pwf", "/tasks/pwf", false).await;
         let store = InMemoryStore::default();
 
-        super::execute_for_project(command("pwf"), &store, &project("PWF", "pwf"), &FixedClock)
+        super::execute(command("pwf"), &store, &pool, &FixedClock)
+            .await
             .unwrap();
 
         assert_eq!(
@@ -288,13 +280,16 @@ mod tests {
         );
     }
 
-    #[test]
-    fn absent_date_uses_the_clock_once() {
+    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
+    async fn absent_date_uses_the_clock_once(pool: sqlx::SqlitePool) {
+        insert_project(&pool, "PWF", "pwf", "/repo/pwf", "/tasks/pwf", false).await;
         let store = InMemoryStore::default();
         let mut command = command("pwf");
         command.date = None;
 
-        super::execute_for_project(command, &store, &project("PWF", "pwf"), &FixedClock).unwrap();
+        super::execute(command, &store, &pool, &FixedClock)
+            .await
+            .unwrap();
 
         assert_eq!(
             store.project_note_creations("pwf"),
@@ -302,13 +297,14 @@ mod tests {
         );
     }
 
-    #[test]
-    fn exhausted_four_digit_suffix_is_reported_without_inserting() {
+    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
+    async fn exhausted_four_digit_suffix_is_reported_without_inserting(pool: sqlx::SqlitePool) {
+        insert_project(&pool, "PWF", "pwf", "/repo/pwf", "/tasks/pwf", false).await;
         let store = InMemoryStore::default().with_project_notes("pwf", vec![note(9_999, "last")]);
 
-        let error =
-            super::execute_for_project(command("pwf"), &store, &project("PWF", "pwf"), &FixedClock)
-                .unwrap_err();
+        let error = super::execute(command("pwf"), &store, &pool, &FixedClock)
+            .await
+            .unwrap_err();
 
         assert!(matches!(
             error,

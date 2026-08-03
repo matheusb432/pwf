@@ -60,11 +60,7 @@ pub struct ResolveRuntimePath {
 /// contract.
 #[cqrsy::query]
 pub fn execute(query: &ResolveRuntimePath) -> Result<ResolvedPath, RuntimePathError> {
-    resolve(&query.path, &query.home)
-}
-
-pub(super) fn resolve(path: &str, home: &Path) -> Result<ResolvedPath, RuntimePathError> {
-    host::resolve(path, home)
+    host::resolve(&query.path, &query.home)
 }
 
 fn home_relative_remainder(path: &str) -> Option<&str> {
@@ -517,11 +513,20 @@ mod host {
 mod tests {
     use std::path::Path;
 
+    use super::{ResolveRuntimePath, ResolvedPath, RuntimePathError};
+
+    fn resolve(path: &str, home: &Path) -> Result<ResolvedPath, RuntimePathError> {
+        super::execute(&ResolveRuntimePath {
+            path: path.to_string(),
+            home: home.to_path_buf(),
+        })
+    }
+
     #[test]
     fn home_relative_and_absolute_paths_have_the_same_identity() {
         let home = Path::new("/home/tester");
-        let home_relative = super::resolve("~/tasks/shared", home).unwrap();
-        let absolute = super::resolve("/home/tester/tasks/shared", home).unwrap();
+        let home_relative = resolve("~/tasks/shared", home).unwrap();
+        let absolute = resolve("/home/tester/tasks/shared", home).unwrap();
 
         assert_eq!(home_relative.identity(), absolute.identity());
         assert_eq!(home_relative.path(), Path::new("/home/tester/tasks/shared"));
@@ -530,8 +535,8 @@ mod tests {
     #[test]
     fn windows_and_mixed_separators_have_a_portable_identity() {
         let home = Path::new(r"C:\Users\tester");
-        let home_relative = super::resolve(r"~\tasks/shared", home).unwrap();
-        let absolute = super::resolve(r"C:/Users\tester\tasks\shared", home).unwrap();
+        let home_relative = resolve(r"~\tasks/shared", home).unwrap();
+        let absolute = resolve(r"C:/Users\tester\tasks\shared", home).unwrap();
 
         assert_eq!(home_relative.identity(), absolute.identity());
     }
@@ -546,7 +551,7 @@ mod tests {
             "~/tasks//shared",
             r"~\tasks\\shared",
         ] {
-            let error = super::resolve(raw, Path::new("/home/tester")).unwrap_err();
+            let error = resolve(raw, Path::new("/home/tester")).unwrap_err();
 
             assert_eq!(
                 error.to_string(),
@@ -565,7 +570,7 @@ mod tests {
             r"~\D:tasks",
             "~/nested/D:/tasks",
         ] {
-            let error = super::resolve(raw, Path::new("/home/tester")).unwrap_err();
+            let error = resolve(raw, Path::new("/home/tester")).unwrap_err();
 
             assert_eq!(
                 error.to_string(),
@@ -586,7 +591,7 @@ mod tests {
             r"~\nested\D:\tasks",
         ] {
             assert!(
-                super::resolve(raw, Path::new(r"C:\Users\tester")).is_err(),
+                resolve(raw, Path::new(r"C:\Users\tester")).is_err(),
                 "accepted {raw:?}"
             );
         }
@@ -601,7 +606,7 @@ mod tests {
             "/srv/tasks/./shared",
             r"C:\tasks\..\shared",
         ] {
-            let error = super::resolve(raw, Path::new("/home/tester")).unwrap_err();
+            let error = resolve(raw, Path::new("/home/tester")).unwrap_err();
 
             assert_eq!(
                 error.to_string(),
@@ -613,7 +618,7 @@ mod tests {
 
     #[test]
     fn safe_non_home_absolute_paths_remain_unchanged() {
-        let resolved = super::resolve("/srv/pwf/tasks", Path::new("/home/tester")).unwrap();
+        let resolved = resolve("/srv/pwf/tasks", Path::new("/home/tester")).unwrap();
 
         assert_eq!(resolved.path(), Path::new("/srv/pwf/tasks"));
     }

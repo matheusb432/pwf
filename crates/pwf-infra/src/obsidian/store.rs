@@ -4,11 +4,11 @@ mod contract;
 mod error;
 mod fs;
 mod index_entry;
-mod item_record;
 mod lookup;
 mod project_note;
 mod read;
 mod read_parser;
+mod task_record;
 
 use std::path::PathBuf;
 

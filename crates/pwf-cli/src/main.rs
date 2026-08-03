@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use pwf_application::ports::clock::Clock;
-use pwf_cli::{command, note, pending_work, project};
+use pwf_cli::{command, note, project, task};
 use pwf_infra::{clock::LocalClock, obsidian::ObsidianStore};
 
 #[tokio::main(flavor = "current_thread")]
@@ -32,11 +32,11 @@ async fn run(parsed: command::Cli, clock: &impl Clock) -> Result<String, String>
             let pool = open_database().await?;
             project::run(arguments, &pool, home).await
         }
-        command::RootCommand::PendingWork(command) => {
+        command::RootCommand::Task(command) => {
             let pool = open_database().await?;
             let home = managed_project_home()?;
             let store = ObsidianStore::new(home.clone());
-            pending_work::run(
+            task::run(
                 &command,
                 pwf_cli::console::Console::from_terminal(),
                 &store,
@@ -56,23 +56,21 @@ async fn run(parsed: command::Cli, clock: &impl Clock) -> Result<String, String>
 
 async fn open_database() -> Result<sqlx::SqlitePool, String> {
     let path = pwf_infra::database::database_path()
-        .map_err(|error| format!("resolving project database path failed: {error}"))?;
+        .map_err(|error| format!("resolving project database path failed: {error:#}"))?;
     let pool = pwf_infra::database::build_pool(&path)
         .await
         .map_err(|error| {
             format!(
-                "opening project database {} failed: {error}",
+                "opening project database {} failed: {error:#}",
                 path.display()
             )
         })?;
-    pwf_infra::database::migrate_database(&pool)
-        .await
-        .map_err(|error| {
-            format!(
-                "migrating project database {} failed: {error}",
-                path.display()
-            )
-        })?;
+    if let Err(error) = pwf_infra::database::check_database_ready(&pool).await {
+        panic!(
+            "project database {} failed its migration readiness check: {error:#}",
+            path.display()
+        );
+    }
     Ok(pool)
 }
 

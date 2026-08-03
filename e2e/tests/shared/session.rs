@@ -28,6 +28,7 @@ impl SessionFixture {
         database
             .command()
             .args([
+                "task",
                 "add",
                 "pwf",
                 "do the thing",

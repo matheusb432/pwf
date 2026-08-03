@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use clap::{Args, Subcommand, ValueEnum};
 use xtk_test::{Run, Test, summary};
 
-use crate::{paths, process, task::Step};
+use crate::{process, task::Step};
 
 const E2E_TIMEOUT: Duration = Duration::from_hours(1);
 
@@ -87,7 +87,7 @@ fn run_scope(scope: Scope, verbose: bool, json: bool, evidences: bool) -> Result
         .into_os_string();
     let declarations = selected_tests(scope, executable);
 
-    Run::new(scope.to_string(), declarations)
+    Run::try_new(scope.to_string(), declarations)?
         .verbose(verbose)
         .json(json)
         .evidences_from_cargo_manifest(evidences, include_str!("../../Cargo.toml"))?
@@ -106,13 +106,11 @@ fn test_coverage_step(arguments_extra: &[String]) -> Step {
 }
 
 pub(crate) fn run_e2e_worker(verbose: bool) -> Result<()> {
-    let binary = paths::repo_root()
-        .join("target")
-        .join("release")
-        .join(format!("pwf{}", std::env::consts::EXE_SUFFIX));
-    if !binary.is_file() {
-        process::run("cargo build", "cargo", &["build", "--release"])?;
-    }
+    process::run(
+        "release process build",
+        "cargo",
+        &["build", "--release", "-p", "pwf-cli", "-p", "pwf-migrator"],
+    )?;
     let mut arguments = vec!["test", "-p", "pwf-e2e", "--test", "e2e"];
     if verbose {
         arguments.extend(["--", "--nocapture"]);
@@ -132,7 +130,8 @@ fn selected_tests(scope: Scope, executable: OsString) -> Vec<xtk_test::Test> {
 
 fn tests_unit() -> Vec<Test> {
     vec![
-        Test::new("unit", "cargo")
+        Test::try_new("unit", "cargo")
+            .expect("unit test definition is valid")
             .args(["test", "--quiet", "--workspace"])
             .verbose_arguments(["--", "--nocapture"])
             .summary_parser(summary::cargo),
@@ -141,7 +140,8 @@ fn tests_unit() -> Vec<Test> {
 
 fn tests_e2e(executable: OsString) -> Vec<Test> {
     vec![
-        Test::new("e2e", executable)
+        Test::try_new("e2e", executable)
+            .expect("E2E test definition is valid")
             .arg("e2e-worker")
             .verbose_arguments(["--verbose"])
             .accepts_evidences()
@@ -153,9 +153,15 @@ fn tests_all(executable: OsString) -> Vec<Test> {
     let mut tests = tests_unit();
     tests.extend(tests_e2e(executable.clone()));
     tests.extend([
-        Test::new("architecture", executable).arg("check-architecture"),
-        Test::new("ast-rules", "ast-grep").args(["test", "--skip-snapshot-tests"]),
-        Test::new("ast-scan", "ast-grep").args(["scan", "--globs", "!xtask/xtk_test/**"]),
+        Test::try_new("architecture", executable)
+            .expect("architecture test definition is valid")
+            .arg("check-architecture"),
+        Test::try_new("ast-rules", "ast-grep")
+            .expect("AST rules test definition is valid")
+            .args(["test", "--skip-snapshot-tests"]),
+        Test::try_new("ast-scan", "ast-grep")
+            .expect("AST scan test definition is valid")
+            .args(["scan", "--globs", "!xtask/xtk_test/**"]),
     ]);
     tests
 }

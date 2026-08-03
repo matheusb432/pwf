@@ -151,6 +151,35 @@ fn codex_dry_run_forwards_max_reasoning_effort() {
 }
 
 #[test]
+fn broken_effort_tier_catalog_stops_before_dispatch() {
+    let fixture = SessionFixture::new();
+    fixture
+        .database
+        .command()
+        .args(["task", "update", "PWF-0001", "--effort", "highest"])
+        .assert()
+        .success();
+    let missing_tiers = fixture.directory().join("does-not-exist.toml");
+
+    fixture
+        .database
+        .command()
+        .args(["session", "--id", "PWF-0001", "--agent", "claude", "--yes"])
+        .env("PATH", &fixture.child_path)
+        .env("TMUX_STUB_LOG", &fixture.tmux_log_path)
+        .env("PWF_MODEL_TIERS", missing_tiers)
+        .assert()
+        .failure();
+
+    assert!(
+        !fixture.tmux_log_path.exists()
+            || fs::read_to_string(&fixture.tmux_log_path)
+                .unwrap()
+                .is_empty()
+    );
+}
+
+#[test]
 fn inline_dispatch_executes_the_concrete_claude_process() {
     let fixture = SessionFixture::new();
     fixture.install_claude();

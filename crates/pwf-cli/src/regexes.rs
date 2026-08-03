@@ -16,7 +16,7 @@ pub static STATUS_LINE_RE: LazyLock<Regex> =
 pub static FRONTMATTER_FENCE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?m)^---[ \t]*$").unwrap());
 
-/// Matches an uppercase compact pending-work ID with a 2-4 letter code and 1-4 digits.
+/// Matches an uppercase compact task ID with a 2-4 letter code and 1-4 digits.
 /// Group 1 captures the code, and group 2 captures the possibly unpadded number.
-pub static PENDING_ID_COMPACT_RE: LazyLock<Regex> =
+pub static TASK_ID_COMPACT_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^([A-Z]{2,4})-?(\d{1,4})$").unwrap());

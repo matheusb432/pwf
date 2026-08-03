@@ -1,6 +1,6 @@
 use pwf_models::{
-    pending_work::ProjectName,
     project::{Project, ProjectId},
+    task::ProjectName,
 };
 
 use super::dto::{ProjectRow, ProjectRowError};
@@ -62,7 +62,9 @@ pub(in crate::project) mod task_location {
 
     use pwf_models::project::ProjectId;
 
-    use crate::project::resolve_runtime_path::{ResolvedPath, RuntimePathError, resolve};
+    use crate::project::resolve_runtime_path::{
+        self, ResolveRuntimePath, ResolvedPath, RuntimePathError,
+    };
 
     #[derive(Debug)]
     pub(in crate::project) enum TaskLocationError {
@@ -112,7 +114,11 @@ pub(in crate::project) mod task_location {
         path: &str,
         home: &Path,
     ) -> Result<ResolvedPath, TaskLocationError> {
-        resolve(path, home).map_err(|source| TaskLocationError::InvalidPath {
+        resolve_runtime_path::execute(&ResolveRuntimePath {
+            path: path.to_string(),
+            home: home.to_path_buf(),
+        })
+        .map_err(|source| TaskLocationError::InvalidPath {
             project_id: project_id.clone(),
             path: path.to_string(),
             source,

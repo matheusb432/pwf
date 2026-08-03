@@ -1,11 +1,11 @@
 use std::{collections::BTreeMap, path::Path, sync::LazyLock};
 
-use pwf_application::ports::pending_work_record::{
+use pwf_application::ports::task_record::{
     IndexEntry, IndexEntryState, IndexEntryStore, IndexSection, IndexSectionStore,
 };
 use pwf_models::{
-    pending_work::{Timestamp, WorkItemId},
     project::Project,
+    task::{TaskId, Timestamp},
 };
 use regex::Regex;
 
@@ -35,7 +35,7 @@ static DATE_STAMP_RE: LazyLock<Regex> =
 
 /// Contains one parsed index checkbox and its raw enclosing section label.
 pub(super) struct ParsedIndexLine {
-    pub id: WorkItemId,
+    pub id: TaskId,
     pub alias: Option<String>,
     pub state: IndexEntryState,
     /// Retains the raw section label without canonicalization.
@@ -44,7 +44,7 @@ pub(super) struct ParsedIndexLine {
     pub line_number: usize,
 }
 
-/// Parses item checkbox lines with their raw enclosing H2 labels.
+/// Parses task checkbox lines with their raw enclosing H2 labels.
 ///
 /// This representation mapping rejects duplicate task identities and applies no cap, eviction, or
 /// normalization policy.
@@ -63,7 +63,7 @@ pub(super) fn parse_index_lines(
         let Some(task) = TASK_LINE_RE.captures(line) else {
             continue;
         };
-        let id = WorkItemId::try_new(&task["id"]).expect("regex guarantees canonical id");
+        let id = TaskId::try_new(&task["id"]).expect("regex guarantees canonical id");
         let alias = task.name("alias").map(|alias| alias.as_str().to_string());
         // A bare `- [[ID]]` link is open, like an unchecked checkbox.
         let is_done = matches!(task.name("mark").map(|m| m.as_str()), Some("x" | "X"));
@@ -84,7 +84,7 @@ pub(super) fn parse_index_lines(
             line_number: index + 1,
         });
     }
-    let mut line_numbers_by_id = BTreeMap::<WorkItemId, Vec<usize>>::new();
+    let mut line_numbers_by_id = BTreeMap::<TaskId, Vec<usize>>::new();
     for line in &lines {
         line_numbers_by_id
             .entry(line.id.clone())
@@ -224,18 +224,13 @@ impl ObsidianStore {
         write_index(&index_path, &rename_header_lines(&content, from, to))
     }
 
-    fn delete_index_entry(
-        &self,
-        project: &Project,
-        id: &WorkItemId,
-    ) -> Result<(), ObsidianStoreError> {
-        let index_path = self.project_index_path(project)?;
-        let content = read_index(&index_path)?;
+    fn delete_index_entry(&self, project: &Project, id: &TaskId) -> Result<(), ObsidianStoreError> {
+        let Some((index_path, content)) = self.validated_project_index(project)? else {
+            return Ok(());
+        };
         let updated = remove_index_link(&content, id.as_ref());
         if updated == content {
-            return Err(ObsidianStoreError::IndexLinkNotFound {
-                id: id.as_ref().to_string(),
-            });
+            return Ok(());
         }
         write_index(&index_path, &updated)
     }
@@ -252,7 +247,7 @@ impl IndexEntryStore for ObsidianStore {
         ObsidianStore::upsert_index_entry(self, project, &entry)
     }
 
-    fn delete_index_entry(&self, project: &Project, id: &WorkItemId) -> Result<(), Self::Error> {
+    fn delete_index_entry(&self, project: &Project, id: &TaskId) -> Result<(), Self::Error> {
         ObsidianStore::delete_index_entry(self, project, id)
     }
 }
@@ -282,15 +277,15 @@ impl IndexSectionStore for ObsidianStore {
 
 #[cfg(test)]
 mod tests {
-    use pwf_application::ports::pending_work_record::{IndexEntry, IndexEntryState};
-    use pwf_models::pending_work::{Timestamp, WorkItemId};
+    use pwf_application::ports::task_record::{IndexEntry, IndexEntryState};
+    use pwf_models::task::{TaskId, Timestamp};
 
     use super::{render_entry_line, replace_line};
 
     #[test]
     fn done_entry_replaces_only_its_index_line() {
         let entry = IndexEntry {
-            id: WorkItemId::try_new("PWF-0001").unwrap(),
+            id: TaskId::try_new("PWF-0001").unwrap(),
             state: IndexEntryState::Done(Timestamp::new("2026-07-29")),
             section: String::new(),
         };

@@ -48,6 +48,10 @@ lint:
 prepare *args:
     cargo run --quiet -p xtask -- prepare {{ args }}
 
+# Apply pending SQLite migrations through the dedicated process.
+migrate:
+    cargo run --quiet -p pwf-migrator
+
 # Run the complete read-only formatting and lint gate.
 [group('quality')]
 check:

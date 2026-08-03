@@ -15,7 +15,7 @@ askama = { version = "0.16.0", default-features = false, features = ["derive", "
 assert_cmd = "2"
 bon = "3.9.3"
 cargo_metadata = "0.23.1"
-chrono = "0.4"
+jiff = "0.2.35"
 clap = { version = "4", features = ["derive"] }
 clap-cargo = "0.18.3"
 command-group = "5.0.1"
@@ -42,7 +42,7 @@ serde_json = "1"
 shell-words = "1.1.1"
 sqlx = { version = "0.9.0", default-features = false, features = [
     "runtime-tokio",
-    "sqlite",
+    "sqlite-bundled",
     "macros",
     "migrate",
     "sqlx-toml",
@@ -52,7 +52,7 @@ thiserror = "2.0.18"
 toml = "1.1.2"
 tokio = "1"
 walkdir = "2"
-xtk_test = { git = "ssh://git@github.com/matheusb432/xtk-test.git", tag = "v0.2.0" }
+xtk_test = { git = "ssh://git@github.com/matheusb432/xtk-test.git", tag = "v0.4.0" }
 
 # Avoid tweaking, prefer fixing the lints.
 [workspace.lints.clippy]

@@ -1,6 +1,6 @@
 use std::{fmt::Write, sync::LazyLock};
 
-use pwf_models::pending_work::{EffortTier, Tags, TaskTitle, WorkItemStatus};
+use pwf_models::task::{EffortTier, Tags, TaskStatus, TaskTitle};
 use regex::Regex;
 
 static STATUS_LINE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^status:.*$").unwrap());
@@ -28,7 +28,7 @@ static FRONTMATTER_FENCE_RE: LazyLock<Regex> =
 const UTF8_BOM: char = '\u{feff}';
 
 #[derive(Clone, Copy)]
-pub(super) struct NewWorkItemFields<'a> {
+pub(super) struct NewTaskFields<'a> {
     pub id: &'a str,
     pub title: &'a TaskTitle,
     pub project: &'a str,
@@ -39,11 +39,11 @@ pub(super) struct NewWorkItemFields<'a> {
     pub tags: Option<&'a Tags>,
 }
 
-pub(super) fn new_work_item_content(fields: NewWorkItemFields<'_>) -> String {
+pub(super) fn new_task_content(fields: NewTaskFields<'_>) -> String {
     let mut out = String::new();
     out.push_str("---\n");
     let _ = writeln!(out, "id: {}", fields.id);
-    let _ = writeln!(out, "status: {}", WorkItemStatus::Active);
+    let _ = writeln!(out, "status: {}", TaskStatus::Active);
     let _ = writeln!(out, "title: {}", fields.title);
     let _ = writeln!(out, "project: {}", fields.project);
     let _ = writeln!(out, "created: {}", fields.created);
@@ -62,7 +62,7 @@ pub(super) fn new_work_item_content(fields: NewWorkItemFields<'_>) -> String {
     out
 }
 
-pub(super) fn set_status_text(content: &str, status: WorkItemStatus, completed: &str) -> String {
+pub(super) fn set_status_text(content: &str, status: TaskStatus, completed: &str) -> String {
     let status = status.as_str();
     let content = STATUS_LINE_RE
         .replace(content, format!("status: {status}").as_str())
@@ -236,7 +236,7 @@ fn tags_frontmatter_value(tags: &Tags) -> String {
 
 #[cfg(test)]
 mod tests {
-    use pwf_models::pending_work::WorkItemStatus;
+    use pwf_models::task::TaskStatus;
 
     use super::set_status_text;
 
@@ -245,7 +245,7 @@ mod tests {
         let source = "---\nid: PWF-0001\nstatus: active\ntitle: task\n---\n\nbody\n";
 
         assert_eq!(
-            set_status_text(source, WorkItemStatus::Done, "2026-07-29"),
+            set_status_text(source, TaskStatus::Done, "2026-07-29"),
             "---\nid: PWF-0001\nstatus: done\ncompleted: 2026-07-29\ntitle: task\n---\n\nbody\n"
         );
     }

@@ -139,7 +139,7 @@ fn skip_blank_lines(content: &str, mut idx: usize) -> usize {
     idx
 }
 
-fn insert_section_item(content: &str, insert_at: usize, block: &str) -> String {
+fn insert_section_task(content: &str, insert_at: usize, block: &str) -> String {
     let suffix_at = skip_blank_lines(content, insert_at);
     let prefix = content[..insert_at].trim_end();
     let suffix = &content[suffix_at..];
@@ -152,7 +152,7 @@ fn insert_section_item(content: &str, insert_at: usize, block: &str) -> String {
 
 pub(super) fn add_section_block(content: &str, block: &str, section: KnownSection) -> String {
     if let Some(idx) = find_section_index(content, section.read_headers()) {
-        return insert_section_item(content, line_end_after(content, idx), block);
+        return insert_section_task(content, line_end_after(content, idx), block);
     }
 
     let header = format!("## {}", section.as_str());

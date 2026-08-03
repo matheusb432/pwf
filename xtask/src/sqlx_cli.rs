@@ -22,8 +22,9 @@ pub(crate) fn ensure(root: &Path) -> Result<PathBuf> {
     } else {
         VersionProbe::Missing
     };
-    let sqlite_capable = version == VersionProbe::Matches && sqlite_available(root, &executable)?;
-    let action = installation_action(version, sqlite_capable);
+    let capabilities_available =
+        version == VersionProbe::Matches && required_capabilities_available(root, &executable)?;
+    let action = installation_action(version, capabilities_available);
 
     if action != InstallationAction::Keep {
         run(
@@ -35,10 +36,10 @@ pub(crate) fn ensure(root: &Path) -> Result<PathBuf> {
             INSTALL_DEADLINE,
         )?;
         if version_probe(&executable)? != VersionProbe::Matches
-            || !sqlite_available(root, &executable)?
+            || !required_capabilities_available(root, &executable)?
         {
             bail!(
-                "repository SQLx CLI is not version {VERSION} with SQLite support after installation"
+                "repository SQLx CLI is not version {VERSION} with SQLite and sqlx.toml support after installation"
             );
         }
     }
@@ -182,17 +183,22 @@ fn matches_version(output: &str) -> bool {
     output.trim().strip_prefix("sqlx-cli ") == Some(VERSION)
 }
 
-fn sqlite_available(root: &Path, executable: &Path) -> Result<bool> {
+fn required_capabilities_available(root: &Path, executable: &Path) -> Result<bool> {
     let database_directory = tempfile::tempdir()?;
     let database_path = database_directory
         .path()
         .canonicalize()
         .context("resolving SQLx capability probe directory")?
         .join("sqlx-cli-capability.db");
+    let config_path = database_directory.path().join("sqlx.toml");
+    std::fs::write(&config_path, "[migrate]\nmigrations-dir = \"migrations\"\n")
+        .context("writing SQLx capability probe config")?;
     let database_url = sqlite_url::from_path(&database_path);
     let arguments = [
         OsString::from("database"),
         OsString::from("create"),
+        OsString::from("--config"),
+        config_path.into_os_string(),
         OsString::from("--no-dotenv"),
         OsString::from("--database-url"),
         OsString::from(database_url),
@@ -203,7 +209,7 @@ fn sqlite_available(root: &Path, executable: &Path) -> Result<bool> {
     match run(
         root,
         executable,
-        "sqlx-cli SQLite capability probe",
+        "sqlx-cli capability probe",
         &arguments,
         &[],
         CAPABILITY_DEADLINE,
@@ -221,8 +227,11 @@ enum InstallationAction {
     Repair,
 }
 
-fn installation_action(version: VersionProbe, sqlite_available: bool) -> InstallationAction {
-    match (version, sqlite_available) {
+fn installation_action(
+    version: VersionProbe,
+    required_capabilities_available: bool,
+) -> InstallationAction {
+    match (version, required_capabilities_available) {
         (VersionProbe::Matches, true) => InstallationAction::Keep,
         (VersionProbe::Missing, _) => InstallationAction::Install,
         (VersionProbe::Matches | VersionProbe::Mismatch | VersionProbe::Broken, _) => {
@@ -240,7 +249,7 @@ fn install_arguments(root: &Path, action: InstallationAction) -> Vec<OsString> {
         OsString::from(VERSION),
         OsString::from("--no-default-features"),
         OsString::from("--features"),
-        OsString::from("sqlite"),
+        OsString::from("sqlite,sqlx-toml"),
         OsString::from("--root"),
         local_tool_root(root).into_os_string(),
     ];
@@ -355,7 +364,7 @@ mod tests {
     }
 
     #[test]
-    fn installation_is_exact_repository_local_and_sqlite_only() {
+    fn installation_is_exact_repository_local_and_configured_sqlite_only() {
         assert_eq!(
             install_arguments(Path::new("workspace"), InstallationAction::Install),
             [
@@ -366,7 +375,7 @@ mod tests {
                 OsString::from("0.9.0"),
                 OsString::from("--no-default-features"),
                 OsString::from("--features"),
-                OsString::from("sqlite"),
+                OsString::from("sqlite,sqlx-toml"),
                 OsString::from("--root"),
                 Path::new("workspace")
                     .join(".run")

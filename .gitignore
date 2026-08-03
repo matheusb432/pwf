@@ -13,11 +13,8 @@
 /.worktrees/**
 !/.worktrees/.gitkeep
 
-# >>> CFG: shared ignored artifacts
-# superpowers audit artifacts
 .superpowers/
 
-# Per-machine agent config (skill scoping settings.local.json, CLAUDE.local.md) — never committed
 *.local.*
 
 *.swp
@@ -30,7 +27,6 @@ testResults.xml
 
 /secrets/
 
-# Canonical secret-bearing files — defense-in-depth; never commit (any depth).
 *.env
 !*.env.example
 auth.json
@@ -47,4 +43,3 @@ id_ed25519.*
 
 /.worktrees/**
 !/.worktrees/.gitkeep
-# <<< CFG: shared ignored artifacts

@@ -7,7 +7,7 @@ message: "Import alias `as` is banned: rename the item at its source, or import 
 note: |
   An alias that reads better than the original means the original is misnamed --- fix it there, so
   every reader benefits instead of only this file. An alias needed to dodge a name clash means the
-  use site should qualify through the parent module (`pending_work::Action`) instead. `as _`, which
+  use site should qualify through the parent module (`task::Action`) instead. `as _`, which
   imports a trait without binding a name, is allowed.
 rule:
   all:

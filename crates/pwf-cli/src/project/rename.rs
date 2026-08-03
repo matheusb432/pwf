@@ -28,7 +28,7 @@ pub struct Arguments {
     /// Replacement project source directory.
     #[arg(long, value_parser = parse_project_source)]
     pub source: ProjectSourceValue,
-    /// Replacement pending-work task directory.
+    /// Replacement task directory.
     #[arg(long, value_parser = parse_project_tasks)]
     pub tasks: ProjectTasksPath,
 }

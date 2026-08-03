@@ -31,6 +31,7 @@ const EDGE_POLICIES: [EdgePolicy; 5] = [
             "pwf-application",
             "pwf-infra",
             "pwf-cli",
+            "pwf-migrator",
             "prompt-lanes",
             "xtask",
         ],
@@ -39,19 +40,25 @@ const EDGE_POLICIES: [EdgePolicy; 5] = [
     EdgePolicy {
         from: "pwf-application",
         label: "application stays independent of adapters",
-        forbidden: &["pwf-infra", "pwf-cli", "xtask"],
+        forbidden: &["pwf-infra", "pwf-cli", "pwf-migrator", "xtask"],
         reason: "infrastructure belongs behind application-owned boundaries",
     },
     EdgePolicy {
         from: "pwf-infra",
         label: "infra stays independent of process roots",
-        forbidden: &["pwf-cli", "xtask"],
+        forbidden: &["pwf-cli", "pwf-migrator", "xtask"],
         reason: "adapters must not depend on their runtime composition",
     },
     EdgePolicy {
         from: "prompt-lanes",
         label: "prompt lanes stays reusable",
-        forbidden: &["pwf-models", "pwf-application", "pwf-infra", "pwf-cli"],
+        forbidden: &[
+            "pwf-models",
+            "pwf-application",
+            "pwf-infra",
+            "pwf-cli",
+            "pwf-migrator",
+        ],
         reason: "shared lane syntax must remain independent of PWF product crates",
     },
     EdgePolicy {
@@ -62,6 +69,7 @@ const EDGE_POLICIES: [EdgePolicy; 5] = [
             "pwf-application",
             "pwf-infra",
             "pwf-cli",
+            "pwf-migrator",
             "prompt-lanes",
         ],
         reason: "repository automation must not become a product dependency boundary",
@@ -147,7 +155,12 @@ mod tests {
                     "pwf-application",
                     "[dependencies]\npwf-infra = { path = \"../pwf-infra\" }\n",
                 ),
-                ("pwf-infra", "pwf-infra", ""),
+                (
+                    "pwf-infra",
+                    "pwf-infra",
+                    "[dependencies]\npwf-migrator = { path = \"../pwf-migrator\" }\n",
+                ),
+                ("pwf-migrator", "pwf-migrator", ""),
                 ("serde", "serde", ""),
             ],
         );
@@ -158,6 +171,8 @@ mod tests {
                 "pwf-application/Cargo.toml: [application stays independent of adapters] \
                  pwf-application -> pwf-infra: infrastructure belongs behind application-owned \
                  boundaries",
+                "pwf-infra/Cargo.toml: [infra stays independent of process roots] pwf-infra -> \
+                 pwf-migrator: adapters must not depend on their runtime composition",
                 "pwf-models/Cargo.toml: [models stay independent] pwf-models -> serde: models must not \
                  depend on wire formats, persistence, use cases, or process roots",
             ]

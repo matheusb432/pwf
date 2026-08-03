@@ -174,45 +174,43 @@ pub enum ObsidianStoreError {
     CreateProjectDir { source: std::io::Error },
     #[error("Cannot create index dir: {source}")]
     CreateIndexDir { source: std::io::Error },
-    #[error("Cannot read item file: {source}")]
-    ReadItemFile { source: std::io::Error },
+    #[error("Cannot read task file: {source}")]
+    ReadTaskFile { source: std::io::Error },
     #[error("Cannot read index: {source}")]
     ReadIndex { source: std::io::Error },
-    #[error("Cannot write item file: {source}")]
-    WriteItemFile { source: std::io::Error },
+    #[error("Cannot write task file: {source}")]
+    WriteTaskFile { source: std::io::Error },
     #[error("Cannot write index: {source}")]
     WriteIndex { source: std::io::Error },
-    #[error("Failed to write item file: {source}")]
-    AddWriteItemFile { source: std::io::Error },
+    #[error("Failed to write task file: {source}")]
+    AddWriteTaskFile { source: std::io::Error },
     #[error("Failed to write index file: {source}")]
     AddWriteIndexFile {
         source: std::io::Error,
         project: String,
         created_section: Option<String>,
     },
-    #[error("Cannot remove item file: {source}")]
-    RemoveItemFile { source: std::io::Error },
+    #[error("Cannot remove task file: {source}")]
+    RemoveTaskFile { source: std::io::Error },
     #[error("Cannot create archive dir: {source}")]
     CreateArchiveDir { source: std::io::Error },
     #[error("Cannot archive {id}: {source}")]
-    ArchiveItem { id: String, source: std::io::Error },
-    #[error("Open pending-work item not found: {id}")]
-    ItemNotFound { id: String },
-    #[error("Pending-work id is ambiguous: {id}")]
+    ArchiveTask { id: String, source: std::io::Error },
+    #[error("Task not found: {id}")]
+    TaskNotFound { id: String },
+    #[error("Task id is ambiguous: {id}")]
     AmbiguousId { id: String },
-    #[error("update only supports file-model pending-work items.")]
+    #[error("update only supports file-model tasks.")]
     UpdateRequiresFileModel,
-    #[error("Index link not found for {id}.")]
-    IndexLinkNotFound { id: String },
     #[error(
         "nothing to update (pass --prompt, --title, --prereq, --clear-prereq, --tag, --tags-clear, --commits, --append-report, --append, and/or --effort)."
     )]
     NothingToUpdate,
     #[error(
-        "only --commits / --append-report can amend closed item {id} (done/cancelled); body/title/prereq/tags/append/effort need an open item."
+        "only --commits / --append-report can amend closed task {id} (done/cancelled); body/title/prereq/tags/append/effort need an active task."
     )]
-    ClosedItemAmendOnly { id: String },
-    #[error("item {id} has invalid tags frontmatter: {raw:?}.")]
+    ClosedTaskAmendOnly { id: String },
+    #[error("task {id} has invalid tags frontmatter: {raw:?}.")]
     InvalidTagsFrontmatter { id: String, raw: String },
     #[error("Invalid --prereq id: {raw}.")]
     InvalidPrereqId { raw: String },

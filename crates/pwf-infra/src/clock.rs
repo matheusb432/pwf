@@ -1,11 +1,11 @@
 use pwf_application::ports::clock::Clock;
-use pwf_models::pending_work::Timestamp;
+use pwf_models::task::Timestamp;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct LocalClock;
 
 impl Clock for LocalClock {
     fn today(&self) -> Timestamp {
-        Timestamp::new(chrono::Local::now().format("%Y-%m-%d").to_string())
+        Timestamp::new(jiff::Zoned::now().strftime("%Y-%m-%d").to_string())
     }
 }
