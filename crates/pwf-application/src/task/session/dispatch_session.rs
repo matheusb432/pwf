@@ -4,16 +4,11 @@ use std::error::Error;
 
 use thiserror::Error;
 
-use super::{Agent, DispatchMode, DispatchTarget, logic, plan_session::PreparedSessionDispatch};
-use crate::{
-    ports::{
-        agent::{AgentClient, PreparedAgentLaunch},
-        inline_agent_session::InlineAgentSessionClient,
-        project_note::ProjectNoteStore,
-        session::{AgentCommand, SessionClient, SessionWindow},
-        task_record::TaskStore,
-    },
-    task::{logic::task_update, show_task::ShowTaskError, update_task::UpdateTaskError},
+use super::{Agent, DispatchMode, DispatchTarget, plan_session::PreparedSessionDispatch};
+use crate::ports::{
+    agent::{AgentClient, PreparedAgentLaunch},
+    inline_agent_session::InlineAgentSessionClient,
+    session::{AgentCommand, SessionClient, SessionWindow},
 };
 
 pub struct DispatchSession {
@@ -41,10 +36,6 @@ pub enum DispatchSessionOk {
 
 #[derive(Debug, Error)]
 pub enum DispatchSessionError {
-    #[error(transparent)]
-    Update(#[from] UpdateTaskError),
-    #[error(transparent)]
-    Show(#[from] ShowTaskError),
     #[error("Failed to run agent inline: {message}")]
     InlineFailed { message: String },
     #[error("Failed to open multiplexer window '{window}' in session '{session}': {message}")]
@@ -65,26 +56,13 @@ pub enum DispatchSessionError {
 }
 
 #[cqrsy::command]
-pub async fn execute(
+pub fn execute(
     command: DispatchSession,
-    store: &(impl TaskStore + ProjectNoteStore),
-    pool: &sqlx::SqlitePool,
     agent_client: &impl AgentClient,
     inline: &impl InlineAgentSessionClient,
     session_client: &impl SessionClient,
 ) -> Result<DispatchSessionOk, DispatchSessionError> {
-    let PreparedSessionDispatch {
-        mut plan,
-        confirmation,
-        prepared_update,
-        ..
-    } = command.prepared;
-    if let Some(prepared_update) = prepared_update {
-        task_update::persist(prepared_update, store)?;
-        let task_content = logic::load_task_content(&plan.launch.task_id, store, pool).await?;
-        plan.launch.prompt =
-            logic::launch_prompt(&task_content, &plan.launch.task_id, confirmation.directives);
-    }
+    let PreparedSessionDispatch { plan, .. } = command.prepared;
 
     let prepared = agent_client.prepare(&plan.launch).map_err(|source| {
         DispatchSessionError::AgentPreparation {

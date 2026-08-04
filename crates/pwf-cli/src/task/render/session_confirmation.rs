@@ -37,6 +37,10 @@ pub(in crate::task) fn render_session_confirmation(confirmation: &DispatchConfir
             "worktree",
             Enabled::from(confirmation.directives.worktree).label(),
         ),
+        Field::new(
+            "prompt prefix",
+            Enabled::from(confirmation.has_pushed_prompt).label(),
+        ),
         Field::new("target", target),
     ];
     ConfirmationPrompt::new(
@@ -87,6 +91,7 @@ mod tests {
                 worktree: true,
                 autonomous: true,
             },
+            has_pushed_prompt: true,
             target: DispatchTarget {
                 session: "pwf".to_string(),
                 window: "PWF-0001".to_string(),
@@ -106,6 +111,7 @@ mod tests {
         assert!(out.contains("effort: xhigh"));
         assert!(out.contains("autonomy: yes"));
         assert!(out.contains("worktree: yes"));
+        assert!(out.contains("prompt prefix: yes"));
         assert!(out.contains("target: current terminal"));
     }
 
@@ -118,6 +124,7 @@ mod tests {
             mode: DispatchMode::Multiplexer,
             agent: Agent::Claude,
             directives: LaunchDirectives::default(),
+            has_pushed_prompt: false,
             target: DispatchTarget {
                 session: "pwf".to_string(),
                 window: "PWF-0001".to_string(),
@@ -133,6 +140,7 @@ mod tests {
         assert!(out.contains("autonomy: no"));
         assert!(out.contains("effort: high"));
         assert!(out.contains("worktree: no"));
+        assert!(out.contains("prompt prefix: no"));
         assert!(out.contains("created: (unknown)"));
     }
 }

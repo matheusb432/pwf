@@ -1,5 +1,18 @@
 use std::fmt;
 
+use nutype::nutype;
+
+/// Maximum Unicode scalar count accepted for one pushed prompt.
+pub const PUSHED_PROMPT_CHAR_MAX: usize = 2000;
+
+/// Stores bounded, non-empty session prompt text.
+#[nutype(
+    sanitize(trim),
+    validate(not_empty, len_char_max = PUSHED_PROMPT_CHAR_MAX),
+    derive(Debug, Clone, PartialEq, Eq, AsRef, Display, FromStr),
+)]
+pub struct PushedPrompt(String);
+
 /// Selects a supported agent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Agent {
@@ -80,7 +93,7 @@ impl AgentModel {
 
 #[cfg(test)]
 mod tests {
-    use super::AgentModel;
+    use super::{AgentModel, PUSHED_PROMPT_CHAR_MAX, PushedPrompt};
 
     #[test]
     fn default_and_absent_models_are_no_override() {
@@ -93,5 +106,19 @@ mod tests {
             AgentModel::from(Some("gpt-5.6".to_string())).into_inner(),
             Some("gpt-5.6".to_string())
         );
+    }
+
+    #[test]
+    fn pushed_prompt_trims_outer_whitespace_and_preserves_internal_formatting() {
+        let prompt = PushedPrompt::try_new("  first line\n  indented line  ").unwrap();
+
+        assert_eq!(prompt.as_ref(), "first line\n  indented line");
+    }
+
+    #[test]
+    fn pushed_prompt_rejects_blank_and_oversized_values() {
+        assert!(PushedPrompt::try_new(" \n\t ").is_err());
+        assert!(PushedPrompt::try_new("é".repeat(PUSHED_PROMPT_CHAR_MAX)).is_ok());
+        assert!(PushedPrompt::try_new("é".repeat(PUSHED_PROMPT_CHAR_MAX + 1)).is_err());
     }
 }

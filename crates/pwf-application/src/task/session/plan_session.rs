@@ -2,12 +2,15 @@
 
 use std::{error::Error, path::PathBuf};
 
-use pwf_models::session::AgentModel;
+use pwf_models::{
+    session::{AgentModel, PushedPrompt},
+    task::TaskId,
+};
 use thiserror::Error;
 
 use super::{
-    Agent, AgentProbe, DispatchConfirmation, DispatchMode, LaunchDirectives, SessionEffort,
-    SessionPlan, logic,
+    Agent, AgentLaunch, AgentProbe, DispatchConfirmation, DispatchMode, LaunchDirectives,
+    SessionEffort, SessionPlan, logic,
 };
 use crate::{
     ports::{
@@ -17,43 +20,34 @@ use crate::{
         session::{AgentCommand, SessionClient, SessionStart, SessionWindow},
         task_record::TaskStore,
     },
-    project::{
-        get_active_project::{self, GetActiveProject},
-        resolve_runtime_path::{self, ResolveRuntimePath},
-    },
+    project::resolve_runtime_path::{self, ResolveRuntimePath},
     task::{
-        dto::PreparedTaskUpdate,
         find_active_task::{self, FindActiveTask, FindActiveTaskError},
-        identifier,
-        logic::task_update,
         show_task::ShowTaskError,
-        update_task::{UpdateTask, UpdateTaskError},
     },
 };
 
 /// Requests one provider-neutral session plan.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, bon::Builder)]
 pub struct PlanSession {
-    pub id: String,
-    pub intent: PlanSessionIntent,
-    pub mode: DispatchMode,
-    pub directives: LaunchDirectives,
-    pub agent: Agent,
-    pub model_override: AgentModel,
-    pub effort: SessionEffort,
+    #[builder(start_fn, into)]
+    task_id: TaskId,
+    intent: PlanSessionIntent,
+    pushed_prompt: Option<PushedPrompt>,
+    mode: DispatchMode,
+    directives: LaunchDirectives,
+    agent: Agent,
+    model_override: AgentModel,
+    effort: SessionEffort,
 }
 
 /// Selects whether a plan is prepared for dispatch or rendered without effects.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlanSessionIntent {
-    Dispatch { append: Option<String> },
+    Dispatch,
     DryRun,
 }
 
-#[expect(
-    clippy::large_enum_variant,
-    reason = "the dispatch outcome keeps the approved prepared-dispatch type unboxed"
-)]
 pub enum PlanSessionOk {
     Dispatch(PreparedSessionDispatch),
     DryRun(DryRunSession),
@@ -83,11 +77,10 @@ impl DryRunSession {
     }
 }
 
-/// Contains a session plan and any append prepared for later persistence.
+/// Contains a validated session dispatch ready for confirmation.
 pub struct PreparedSessionDispatch {
     pub(super) plan: SessionPlan,
     pub(super) confirmation: DispatchConfirmation,
-    pub(super) prepared_update: Option<PreparedTaskUpdate>,
     probe: AgentProbe,
 }
 
@@ -115,8 +108,6 @@ pub enum PlanSessionError {
     #[error(transparent)]
     Find(#[from] FindActiveTaskError),
     #[error(transparent)]
-    Update(#[from] UpdateTaskError),
-    #[error(transparent)]
     Show(#[from] ShowTaskError),
     #[error("Task '{id}' is not launchable: {}", issues.join("; "))]
     NotLaunchable { id: String, issues: Vec<String> },
@@ -141,8 +132,7 @@ pub enum PlanSessionError {
 ///
 /// # Errors
 ///
-/// Returns [`PlanSessionError`] for lookup, launch validation, model selection, or append
-/// preparation failures.
+/// Returns [`PlanSessionError`] for lookup, launch validation, or model selection failures.
 #[cqrsy::command]
 #[expect(
     clippy::too_many_lines,
@@ -160,7 +150,7 @@ pub async fn execute(
     let probe = agent_client.probe(command.agent);
     let mut task = find_active_task::execute(
         &FindActiveTask {
-            id: command.id.clone(),
+            id: command.task_id.to_string(),
         },
         store,
         pool,
@@ -197,18 +187,29 @@ pub async fn execute(
         .map_err(|error| PlanSessionError::ModelTier(Box::new(error)))?,
     }
     .into();
-    let prepared_update = prepare_append(command, &task.id, store, pool).await?;
-    let target = logic::dispatch_target(&task.id);
-    let task_content = logic::load_task_content(&task.id, store, pool).await?;
+    let target = logic::dispatch_target(&command.task_id);
+    let task_content = logic::load_task_content(command.task_id.as_ref(), store, pool).await?;
     let plan = SessionPlan {
-        launch: logic::agent_launch(
-            &task,
-            &task_content,
-            command.directives,
-            command.agent,
-            model.clone().into_inner(),
-            command.effort,
-        ),
+        launch: AgentLaunch {
+            agent: command.agent,
+            task_id: command.task_id.to_string(),
+            title: logic::thread_title(
+                &task,
+                &command.task_id,
+                command.directives,
+                command.agent,
+                command.effort,
+            ),
+            repository: task.repo.clone().unwrap_or_default(),
+            prompt: logic::launch_prompt(
+                &task_content,
+                &command.task_id,
+                command.pushed_prompt.as_ref(),
+                command.directives,
+            ),
+            model: model.clone().into_inner(),
+            effort: command.effort,
+        },
         mode: command.mode,
         target: target.clone(),
     };
@@ -218,7 +219,7 @@ pub async fn execute(
             path: plan.launch.repository.clone(),
         });
     }
-    if matches!(command.intent, PlanSessionIntent::Dispatch { .. })
+    if matches!(command.intent, PlanSessionIntent::Dispatch)
         && command.mode == DispatchMode::Multiplexer
     {
         if !session_client.available() {
@@ -248,20 +249,18 @@ pub async fn execute(
         mode: command.mode,
         agent: command.agent,
         directives: command.directives,
+        has_pushed_prompt: command.pushed_prompt.is_some(),
         model: model.display_or_default(),
         effort: command.effort,
         target,
     };
 
     match command.intent {
-        PlanSessionIntent::Dispatch { .. } => {
-            Ok(PlanSessionOk::Dispatch(PreparedSessionDispatch {
-                plan,
-                confirmation,
-                prepared_update,
-                probe,
-            }))
-        }
+        PlanSessionIntent::Dispatch => Ok(PlanSessionOk::Dispatch(PreparedSessionDispatch {
+            plan,
+            confirmation,
+            probe,
+        })),
         PlanSessionIntent::DryRun => {
             let provider_argv = agent_client.preview(&plan.launch);
             let argv = match command.mode {
@@ -281,44 +280,35 @@ pub async fn execute(
     }
 }
 
-async fn prepare_append(
-    command: &PlanSession,
-    task_id: &str,
-    store: &impl TaskStore,
-    pool: &sqlx::SqlitePool,
-) -> Result<Option<PreparedTaskUpdate>, UpdateTaskError> {
-    let PlanSessionIntent::Dispatch {
-        append: Some(append),
-    } = &command.intent
-    else {
-        return Ok(None);
+#[cfg(test)]
+mod tests {
+    use pwf_models::task::TaskId;
+
+    use super::{
+        Agent, AgentModel, DispatchMode, LaunchDirectives, PlanSession, PlanSessionIntent,
+        SessionEffort,
     };
-    let id = identifier::parse(task_id).expect("planned session task has a canonical id");
-    let project = get_active_project::execute(
-        GetActiveProject {
-            id: id.project_id(),
-        },
-        pool,
-    )
-    .await
-    .map_err(|error| UpdateTaskError::QueryProject(Box::new(error)))?;
-    task_update::prepare(
-        &UpdateTask {
-            id: task_id.to_string(),
-            prompt: None,
-            title: None,
-            append: Some(append.clone()),
-            prereq: Vec::new(),
-            clear_prereq: false,
-            commits: Vec::new(),
-            append_report: None,
-            effort: None,
-            tags: Vec::new(),
-            tags_clear: false,
-        },
-        store,
-        &project,
-        std::slice::from_ref(&project),
-    )
-    .map(Some)
+
+    struct SessionTaskId(TaskId);
+
+    impl From<SessionTaskId> for TaskId {
+        fn from(value: SessionTaskId) -> Self {
+            value.0
+        }
+    }
+
+    #[test]
+    fn request_builder_maps_task_id_inputs() {
+        let task_id = TaskId::try_new("PWF-0154").unwrap();
+        let request = PlanSession::builder(SessionTaskId(task_id.clone()))
+            .intent(PlanSessionIntent::DryRun)
+            .mode(DispatchMode::Inline)
+            .directives(LaunchDirectives::default())
+            .agent(Agent::Codex)
+            .model_override(AgentModel::default())
+            .effort(SessionEffort::High)
+            .build();
+
+        assert_eq!(request.task_id, task_id);
+    }
 }

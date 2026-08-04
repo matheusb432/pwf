@@ -122,6 +122,7 @@ fn codex_naming_failure_stops_before_dispatch() {
 #[test]
 fn codex_dry_run_forwards_max_reasoning_effort() {
     let fixture = SessionFixture::new();
+    let task_before = crate::shared::task_json(&fixture.database, "PWF-0001");
     let app_server_log_path = fixture.directory().join("codex-app-server.jsonl");
     let resume_log_path = fixture.directory().join("codex-resume.log");
 
@@ -129,8 +130,17 @@ fn codex_dry_run_forwards_max_reasoning_effort() {
         .database
         .command()
         .args([
-            "session", "--id", "PWF-0001", "--agent", "codex", "--inline", "--dry", "--effort",
+            "session",
+            "--id",
+            "pwf1",
+            "--agent",
+            "codex",
+            "--inline",
+            "--dry",
+            "--effort",
             "max",
+            "--push-prompt",
+            "dry-run context",
         ])
         .env("PATH", &fixture.child_path)
         .env("CODEX_STUB_APP_SERVER_LOG", &app_server_log_path)
@@ -144,6 +154,14 @@ fn codex_dry_run_forwards_max_reasoning_effort() {
     assert!(
         stdout.contains("-c 'model_reasoning_effort=\"max\"'"),
         "{stdout}"
+    );
+    assert!(stdout.contains("<pwf_session_context>"), "{stdout}");
+    assert!(stdout.contains("dry-run context"), "{stdout}");
+    assert!(stdout.contains("</pwf_session_context>"), "{stdout}");
+    assert!(stdout.contains("<pwf_task>"), "{stdout}");
+    assert_eq!(
+        crate::shared::task_json(&fixture.database, "PWF-0001"),
+        task_before
     );
     assert!(!app_server_log_path.exists());
     assert!(!resume_log_path.exists());
@@ -216,6 +234,8 @@ fn inline_dispatch_executes_the_concrete_claude_process() {
             "arg=--",
         ]
     );
+    assert!(entries[6].starts_with("arg=<pwf_task>\n"));
     assert!(entries[6].contains("do the thing"));
+    assert!(entries[6].ends_with("\n</pwf_task>"));
     assert!(!fixture.tmux_log_path.exists());
 }

@@ -41,12 +41,13 @@ fn is_value_flag(flag: &str) -> bool {
             | "--effort"
             | "--status"
             | "--model"
+            | "--push-prompt"
     )
 }
 
 /// Reports whether a short flag consumes the next token.
 fn is_short_value_flag(tok: &str) -> bool {
-    tok == "-n" || tok == "-a" || tok == "-m"
+    tok == "-n" || tok == "-a" || tok == "-m" || tok == "-p"
 }
 
 /// Reports whether a flag consumes up to two list-order values.

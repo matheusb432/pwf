@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use nutype::nutype;
 
 use crate::project::ProjectId;
@@ -23,6 +25,35 @@ impl TaskId {
     }
 }
 
+impl FromStr for TaskId {
+    type Err = TaskIdError;
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        Self::try_new(map_task_id(raw))
+    }
+}
+
+fn map_task_id(raw: &str) -> String {
+    let trimmed = raw.trim().to_ascii_uppercase();
+    let Some(digit_start) = trimmed.find(|character: char| character.is_ascii_digit()) else {
+        return trimmed;
+    };
+    let (code, digits) = trimmed.split_at(digit_start);
+    let code = code.strip_suffix('-').unwrap_or(code);
+    if !(2..=4).contains(&code.len())
+        || !code.chars().all(|character| character.is_ascii_uppercase())
+        || digits.is_empty()
+        || digits.len() > 4
+        || !digits.chars().all(|character| character.is_ascii_digit())
+    {
+        return trimmed;
+    }
+    let Ok(number) = digits.parse::<u16>() else {
+        return trimmed;
+    };
+    format!("{code}-{number:04}")
+}
+
 fn is_canonical_task_id(raw: &str) -> bool {
     let Some((code, digits)) = raw.split_once('-') else {
         return false;
@@ -43,6 +74,21 @@ mod tests {
 
         assert_eq!(id.as_ref(), "PWF-0047");
         assert_eq!(id.project_id(), ProjectId::try_new("PWF").unwrap());
+    }
+
+    #[test]
+    fn task_id_from_str_maps_compact_user_input() {
+        for (raw, expected) in [
+            ("PWF-0098", "PWF-0098"),
+            ("pwf-0098", "PWF-0098"),
+            ("  pwf-0047  ", "PWF-0047"),
+            ("pwf-98", "PWF-0098"),
+            ("cfg57", "CFG-0057"),
+            ("CFG57", "CFG-0057"),
+            ("cfg-57", "CFG-0057"),
+        ] {
+            assert_eq!(raw.parse::<TaskId>().unwrap().as_ref(), expected);
+        }
     }
 
     #[test]

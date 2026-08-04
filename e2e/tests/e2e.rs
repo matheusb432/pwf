@@ -1,3 +1,5 @@
+#![cfg(test)]
+
 //! Exercises process-visible behavior through the release `pwf` binary.
 
 mod notes;

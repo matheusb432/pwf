@@ -37,6 +37,7 @@ pub struct DispatchConfirmation {
     pub mode: DispatchMode,
     pub agent: Agent,
     pub directives: LaunchDirectives,
+    pub has_pushed_prompt: bool,
     pub model: String,
     pub effort: SessionEffort,
     pub target: DispatchTarget,

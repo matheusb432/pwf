@@ -2,7 +2,7 @@ use clap::Args;
 use pwf_application::task::StatusFilter;
 use pwf_models::{
     session::Agent,
-    task::{EffortTier, TaskStatus, TaskTitle, TaskTitleError},
+    task::{EffortTier, TaskId, TaskStatus, TaskTitle, TaskTitleError},
 };
 use thiserror::Error;
 
@@ -31,6 +31,11 @@ impl Identifier {
         self.raw()
             .map(str::to_string)
             .ok_or(TaskError::MissingId { action })
+    }
+
+    pub(crate) fn required_task_id(&self, action: &'static str) -> Result<TaskId, TaskError> {
+        let raw = self.required(action)?;
+        raw.parse().map_err(|_| TaskError::TaskNotFound { id: raw })
     }
 }
 

@@ -9,8 +9,6 @@ disable = [
   "MD040",
   "MD041",
 ]
-exclude = ["templates/rust-cli"]
-
 [MD046]
 style = "fenced"
 

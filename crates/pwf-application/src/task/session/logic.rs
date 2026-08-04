@@ -3,21 +3,90 @@
 use std::error::Error;
 
 use askama::Template;
-use pwf_models::task::{EffortTier, ProjectId};
+use pwf_models::{
+    session::PushedPrompt,
+    task::{EffortTier, TaskId},
+};
 use thiserror::Error;
 
-use super::{Agent, AgentLaunch, DispatchTarget, LaunchDirectives, ModelTierLookup, SessionEffort};
+use super::{Agent, DispatchTarget, LaunchDirectives, ModelTierLookup, SessionEffort};
 use crate::{
     ports::{project_note::ProjectNoteStore, task_record::TaskStore},
     task::{
         dto::TaskView,
-        identifier,
         show_task::{self, ShowOutput, ShowTask, ShowTaskError, ShowTaskOk},
     },
 };
 
 /// Autonomy directive inserted by `--auto`.
 const AUTONOMY_DIRECTIVE: &str = "You MUST execute this autonomously. Do not prompt the user for questions. But if something seems critical and needs user decision, STOP execution and clarify";
+const SESSION_CONTEXT_OPEN: &str = "<pwf_session_context>\n";
+const SESSION_CONTEXT_CLOSE: &str = "\n</pwf_session_context>";
+const PWF_TASK_OPEN: &str = "<pwf_task>\n";
+const PWF_TASK_CLOSE: &str = "</pwf_task>";
+const WORKTREE_DIRECTIVE_PREFIX: &str = "Workspace: before doing anything else, use a git-worktrees skill to create a git worktree here named `";
+const WORKTREE_DIRECTIVE_SUFFIX: &str =
+    "` (the worktree name is this task's id), and do all of this task's work inside that worktree.";
+
+fn session_context_rendered_len(
+    task_id: &TaskId,
+    pushed_prompt: Option<&PushedPrompt>,
+    directives: LaunchDirectives,
+) -> usize {
+    let content_count = usize::from(pushed_prompt.is_some())
+        + usize::from(directives.autonomous)
+        + usize::from(directives.worktree);
+    if content_count == 0 {
+        return 0;
+    }
+
+    SESSION_CONTEXT_OPEN.len()
+        + SESSION_CONTEXT_CLOSE.len()
+        + pushed_prompt.map_or(0, |prompt| prompt.as_ref().len())
+        + usize::from(directives.autonomous) * AUTONOMY_DIRECTIVE.len()
+        + usize::from(directives.worktree)
+            * (WORKTREE_DIRECTIVE_PREFIX.len()
+                + task_id.as_ref().len()
+                + WORKTREE_DIRECTIVE_SUFFIX.len())
+        + (content_count - 1) * 2
+}
+
+fn write_session_context(
+    output: &mut String,
+    task_id: &TaskId,
+    pushed_prompt: Option<&PushedPrompt>,
+    directives: LaunchDirectives,
+) {
+    if pushed_prompt.is_none() && !directives.autonomous && !directives.worktree {
+        return;
+    }
+
+    output.push_str(SESSION_CONTEXT_OPEN);
+    let mut has_content = false;
+    if let Some(pushed_prompt) = pushed_prompt {
+        write_context_separator(output, &mut has_content);
+        output.push_str(pushed_prompt.as_ref());
+    }
+    if directives.autonomous {
+        write_context_separator(output, &mut has_content);
+        output.push_str(AUTONOMY_DIRECTIVE);
+    }
+    if directives.worktree {
+        write_context_separator(output, &mut has_content);
+        output.push_str(WORKTREE_DIRECTIVE_PREFIX);
+        output.push_str(task_id.as_ref());
+        output.push_str(WORKTREE_DIRECTIVE_SUFFIX);
+    }
+    output.push_str(SESSION_CONTEXT_CLOSE);
+}
+
+fn write_context_separator(output: &mut String, has_content: &mut bool) {
+    if *has_content {
+        output.push_str("\n\n");
+    } else {
+        *has_content = true;
+    }
+}
 
 #[derive(Template)]
 #[template(path = "thread_title.txt")]
@@ -38,13 +107,14 @@ struct ThreadTitleTemplate<'a> {
 
 pub(super) fn thread_title(
     task: &TaskView,
+    task_id: &TaskId,
     directives: LaunchDirectives,
     agent: Agent,
     effort: SessionEffort,
 ) -> String {
     ThreadTitleTemplate {
-        task_id: &task.id,
-        task_id_brief: task_id_brief(&task.id),
+        task_id: task_id.as_ref(),
+        task_id_brief: task_id_brief(task_id),
         task_title: &task.session,
         project: &task.project,
         effort,
@@ -59,96 +129,50 @@ pub(super) fn thread_title(
     .expect("the compile-time-checked thread-title template renders to a String")
 }
 
-pub(super) fn agent_launch(
-    task: &TaskView,
-    task_content: &str,
-    directives: LaunchDirectives,
-    agent: Agent,
-    model: Option<String>,
-    effort: SessionEffort,
-) -> AgentLaunch {
-    AgentLaunch {
-        agent,
-        task_id: task.id.clone(),
-        title: thread_title(task, directives, agent, effort),
-        repository: task.repo.clone().unwrap_or_default(),
-        prompt: launch_prompt(task_content, &task.id, directives),
-        model,
-        effort,
-    }
-}
-
-fn task_id_brief(task_id: &str) -> String {
-    let Some(task_id) = identifier::parse(task_id) else {
-        return task_id.to_string();
-    };
-    let (prefix, digits) = task_id
+fn task_id_brief(task_id: &TaskId) -> String {
+    let project_id = task_id.project_id();
+    let digits = task_id
         .as_ref()
-        .split_once('-')
-        .expect("a validated task id contains a separator");
-    let number = digits
-        .parse::<u16>()
-        .expect("a validated task id contains numeric digits");
+        .strip_prefix(project_id.as_ref())
+        .and_then(|suffix| suffix.strip_prefix('-'))
+        .unwrap_or_default();
+    let digits = digits.trim_start_matches('0');
+    let digits = if digits.is_empty() { "0" } else { digits };
 
-    format!("{}{number}", prefix.to_ascii_lowercase())
+    format!("{}{digits}", project_id.as_ref().to_ascii_lowercase())
 }
 
 pub(super) fn launch_prompt(
     task_content: &str,
-    task_id: &str,
+    task_id: &TaskId,
+    pushed_prompt: Option<&PushedPrompt>,
     directives: LaunchDirectives,
 ) -> String {
-    let mut prompt = String::new();
-    if directives.autonomous {
-        prompt.push_str(AUTONOMY_DIRECTIVE);
+    let session_context_len = session_context_rendered_len(task_id, pushed_prompt, directives);
+    let separator_len = usize::from(session_context_len > 0) * 2;
+    let task_len = PWF_TASK_OPEN.len()
+        + task_content.len()
+        + usize::from(!task_content.ends_with('\n'))
+        + PWF_TASK_CLOSE.len();
+    let prompt_len = session_context_len + separator_len + task_len;
+    let mut prompt = String::with_capacity(prompt_len);
+    write_session_context(&mut prompt, task_id, pushed_prompt, directives);
+    if session_context_len > 0 {
         prompt.push_str("\n\n");
     }
+    prompt.push_str(PWF_TASK_OPEN);
     prompt.push_str(task_content);
-    if directives.worktree {
-        if !prompt.ends_with('\n') {
-            prompt.push('\n');
-        }
+    if !task_content.ends_with('\n') {
         prompt.push('\n');
-        prompt.push_str(&worktree_instruction(task_id));
     }
+    prompt.push_str(PWF_TASK_CLOSE);
+    debug_assert_eq!(prompt.len(), prompt_len);
     prompt
 }
 
-fn worktree_instruction(id: &str) -> String {
-    let mut instruction = String::new();
-    instruction.push_str(
-        "Workspace: before doing anything else, use a git-worktrees skill to create a git worktree here named `",
-    );
-    instruction.push_str(id);
-    instruction.push_str(
-        "` (the worktree name is this task's id), and do all of this task's work inside that worktree.",
-    );
-    instruction
-}
-
-pub(super) fn dispatch_target(task_id: &str) -> DispatchTarget {
-    let Some(task_id) = identifier::parse(task_id) else {
-        return legacy_dispatch_target(task_id);
-    };
-    let canonical_id = task_id.as_ref();
-    let project_id = canonical_id
-        .split_once('-')
-        .map_or("", |(project_id, _)| project_id);
-    let project_id = ProjectId::try_new(project_id)
-        .expect("a validated task id always contains a valid project ID");
+pub(super) fn dispatch_target(task_id: &TaskId) -> DispatchTarget {
     DispatchTarget {
-        session: project_id.as_ref().to_ascii_lowercase(),
-        window: canonical_id.to_string(),
-    }
-}
-
-fn legacy_dispatch_target(task_id: &str) -> DispatchTarget {
-    DispatchTarget {
-        session: task_id
-            .split('-')
-            .next()
-            .unwrap_or_default()
-            .to_ascii_lowercase(),
+        session: task_id.project_id().as_ref().to_ascii_lowercase(),
         window: task_id.to_string(),
     }
 }
@@ -225,68 +249,71 @@ pub(super) async fn load_task_content(
 
 #[cfg(test)]
 mod tests {
-    use pwf_models::task::TaskStatus;
+    use pwf_models::{session::PushedPrompt, task::TaskId};
 
-    use super::{TaskView, agent_launch, dispatch_target};
-    use crate::task::session::{Agent, LaunchDirectives, SessionEffort};
-
-    fn task() -> TaskView {
-        TaskView {
-            id: "PWF-0076".to_string(),
-            project: "pwf".to_string(),
-            status: TaskStatus::Active,
-            session: "make session -w".to_string(),
-            prompt: "assemble the widget".to_string(),
-            repo: Some("/repo/pwf".to_string()),
-            note: "assemble the widget".to_string(),
-            task_file: Some("/notes/PWF-0076.md".to_string()),
-            line: 1,
-            format: "file".to_string(),
-            launchable: true,
-            needs_prompt: false,
-            issues: Vec::new(),
-            section: None,
-            prereq: None,
-            prerequisite_statuses: Vec::new(),
-            tags: None,
-            effort: None,
-            created: Some("2026-07-15".to_string()),
-        }
-    }
+    use super::{dispatch_target, launch_prompt};
+    use crate::task::session::LaunchDirectives;
 
     #[test]
-    fn launch_carries_only_semantic_agent_values() {
-        let launch = agent_launch(
-            &task(),
-            "task content",
-            LaunchDirectives::default(),
-            Agent::Claude,
-            Some("opus".to_string()),
-            SessionEffort::XHigh,
+    fn launch_prompt_wraps_the_task_without_rendering_an_empty_session_context() {
+        let task_id = TaskId::try_new("PWF-0076").unwrap();
+
+        assert_eq!(
+            launch_prompt("task content", &task_id, None, LaunchDirectives::default()),
+            "<pwf_task>\ntask content\n</pwf_task>"
         );
-
-        assert_eq!(launch.agent, Agent::Claude);
-        assert_eq!(launch.task_id, "PWF-0076");
-        assert_eq!(launch.title, "pwf76 :: make session -w");
-        assert_eq!(launch.repository, "/repo/pwf");
-        assert_eq!(launch.model.as_deref(), Some("opus"));
-        assert_eq!(launch.effort, SessionEffort::XHigh);
     }
 
     #[test]
-    fn canonical_target_normalizes_id_and_lowercases_the_typed_prefix() {
-        let target = dispatch_target("cfg9");
+    fn launch_prompt_orders_all_session_context_content_before_the_task() {
+        let task_id = TaskId::try_new("PWF-0076").unwrap();
+        let pushed_prompt = PushedPrompt::try_new("extra context").unwrap();
+
+        assert_eq!(
+            launch_prompt(
+                "task content",
+                &task_id,
+                Some(&pushed_prompt),
+                LaunchDirectives {
+                    autonomous: true,
+                    worktree: true,
+                },
+            ),
+            concat!(
+                "<pwf_session_context>\n",
+                "extra context\n\n",
+                "You MUST execute this autonomously. Do not prompt the user for questions. But if something seems critical and needs user decision, STOP execution and clarify\n\n",
+                "Workspace: before doing anything else, use a git-worktrees skill to create a git worktree here named `PWF-0076` (the worktree name is this task's id), and do all of this task's work inside that worktree.\n",
+                "</pwf_session_context>\n\n",
+                "<pwf_task>\n",
+                "task content\n",
+                "</pwf_task>",
+            )
+        );
+    }
+
+    #[test]
+    fn task_wrapper_preserves_an_existing_trailing_newline_without_adding_a_blank_line() {
+        let task_id = TaskId::try_new("PWF-0076").unwrap();
+
+        assert_eq!(
+            launch_prompt(
+                "task content\n",
+                &task_id,
+                None,
+                LaunchDirectives::default()
+            ),
+            "<pwf_task>\ntask content\n</pwf_task>"
+        );
+    }
+
+    #[test]
+    fn canonical_target_uses_the_typed_id_and_lowercases_its_prefix() {
+        let task_id = "cfg9".parse::<TaskId>().unwrap();
+        let target = dispatch_target(&task_id);
 
         assert_eq!(target.session, "cfg");
         assert_eq!(target.window, "CFG-0009");
-    }
-
-    #[test]
-    fn legacy_inline_target_preserves_the_legacy_id_fallback() {
-        let target = dispatch_target("pwf:1");
-
-        assert_eq!(target.session, "pwf:1");
-        assert_eq!(target.window, "pwf:1");
     }
 }
 

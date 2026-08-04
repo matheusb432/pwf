@@ -17,29 +17,9 @@
 
 *.local.*
 
-*.swp
-
-*:Zone.Identifier
-
-.playwright-mcp
 .artifacts/
-testResults.xml
 
 /secrets/
 
 *.env
 !*.env.example
-auth.json
-credentials.json
-.credentials.json
-*.pem
-*.key
-id_rsa
-id_rsa.*
-id_ed25519
-id_ed25519.*
-*.pfx
-*.p12
-
-/.worktrees/**
-!/.worktrees/.gitkeep

@@ -10,7 +10,7 @@ use pwf_infra::{
     obsidian::ObsidianStore,
     session::{AgentHarness, InlineHarness, LocalRepositoryClient, TmuxHarness, render_argv},
 };
-use pwf_models::session::{Agent, DispatchMode, LaunchDirectives, SessionEffort};
+use pwf_models::session::{Agent, DispatchMode, LaunchDirectives, PushedPrompt, SessionEffort};
 
 use super::{
     render::{
@@ -51,12 +51,11 @@ pub struct Arguments {
     /// Which agent to dispatch.
     #[arg(long = "agent", value_enum, default_value_t = AgentChoice::default())]
     pub(crate) agent: AgentChoice,
-    /// Appends content into the task's body before dispatch, growing an existing
-    /// section or creating a missing one.
-    #[arg(short = 'a', long)]
-    pub(crate) append: Option<String>,
+    /// Prefix text pushed to the agent prompt.
+    #[arg(short = 'p', long = "push-prompt", value_name = "TEXT")]
+    pub(crate) pushed_prompt: Option<PushedPrompt>,
     /// Show the exact launch command without editing the task or starting anything.
-    #[arg(long, visible_alias = "dry", conflicts_with = "append")]
+    #[arg(long, visible_alias = "dry")]
     pub(crate) dry_run: bool,
     /// Model override forwarded to the selected agent. Wins over effort-tier resolution.
     ///
@@ -111,28 +110,26 @@ pub(super) async fn run(
 ) -> Result<String, TaskError> {
     let agent = Agent::from(arguments.agent);
 
-    let request = PlanSession {
-        id: arguments.identifier.required("session")?,
-        intent: if arguments.dry_run {
+    let request = PlanSession::builder(arguments.identifier.required_task_id("session")?)
+        .intent(if arguments.dry_run {
             PlanSessionIntent::DryRun
         } else {
-            PlanSessionIntent::Dispatch {
-                append: arguments.append.clone(),
-            }
-        },
-        mode: if arguments.inline {
+            PlanSessionIntent::Dispatch
+        })
+        .maybe_pushed_prompt(arguments.pushed_prompt.clone())
+        .mode(if arguments.inline {
             DispatchMode::Inline
         } else {
             DispatchMode::Multiplexer
-        },
-        directives: LaunchDirectives {
+        })
+        .directives(LaunchDirectives {
             worktree: arguments.worktree,
             autonomous: arguments.autonomous,
-        },
-        agent,
-        model_override: arguments.model.clone().into(),
-        effort: arguments.effort.into(),
-    };
+        })
+        .agent(agent)
+        .model_override(arguments.model.clone().into())
+        .effort(arguments.effort.into())
+        .build();
     let planned = plan_session::execute(
         &request,
         store,
@@ -174,13 +171,10 @@ pub(super) async fn run(
     }
     let outcome = dispatch_session::execute(
         DispatchSession::new(planned),
-        store,
-        pool,
         &AgentHarness,
         &InlineHarness,
         &TmuxHarness,
-    )
-    .await?;
+    )?;
     Ok(render_dispatch(
         &outcome,
         console.color_with(match arguments.color {

@@ -23,7 +23,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 sqlx = { workspace = true }
 directories = { workspace = true }
-regex = { workspace = true }
+lazy-regex = { workspace = true }
 thiserror = { workspace = true }
 anstyle = { workspace = true }
 toml = { workspace = true }

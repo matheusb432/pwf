@@ -24,6 +24,7 @@ directories = "6.0.0"
 expectrl = "0.9.0"
 gray_matter = { version = "0.3.2", default-features = false, features = ["yaml"] }
 indicatif = { version = "0.18.6", default-features = false }
+lazy-regex = "3.6.1"
 libc = "0.2.186"
 nutype = "0.7.0"
 percent-encoding = "2.3.2"
@@ -53,12 +54,17 @@ toml = "1.1.2"
 tokio = "1"
 walkdir = "2"
 xtk_test = { git = "ssh://git@github.com/matheusb432/xtk-test.git", tag = "v0.4.0" }
-
-# Avoid tweaking, prefer fixing the lints.
 [workspace.lints.clippy]
 all = { level = "warn", priority = -2 }
 pedantic = { level = "warn", priority = -2 }
 correctness = { level = "deny", priority = -1 }
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+todo = "warn"
+unimplemented = "warn"
+unreachable = "warn"
+dbg_macro = "warn"
 disallowed_methods = "deny"
 cognitive_complexity = "warn"
 branches_sharing_code = "warn"

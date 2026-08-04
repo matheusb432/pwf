@@ -51,8 +51,9 @@ enum TestCommand {
 }
 
 #[derive(Args)]
+#[command(disable_help_flag = true)]
 struct TestCoverageArguments {
-    /// Extra arguments for cargo-llvm-cov.
+    /// Extra cargo-llvm-cov arguments; output defaults to --quiet when unspecified.
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     arguments_extra: Vec<String>,
 }
@@ -101,8 +102,23 @@ fn test_coverage(arguments_extra: &[String]) -> Result<()> {
 }
 
 fn test_coverage_step(arguments_extra: &[String]) -> Step {
-    Step::new("test coverage", "cargo", ["llvm-cov", "--workspace"])
-        .with_arguments(arguments_extra.iter().cloned())
+    let mut step = Step::new("test coverage", "cargo", ["llvm-cov", "--workspace"]);
+    if !coverage_output_is_explicit(arguments_extra) {
+        step = step.with_arguments(["--quiet"]);
+    }
+    step.with_arguments(arguments_extra.iter().cloned())
+}
+
+fn coverage_output_is_explicit(arguments: &[String]) -> bool {
+    arguments
+        .iter()
+        .take_while(|argument| argument.as_str() != "--")
+        .any(|argument| {
+            matches!(argument.as_str(), "--quiet" | "--verbose")
+                || argument.strip_prefix('-').is_some_and(|flags| {
+                    !flags.is_empty() && flags.bytes().all(|flag| matches!(flag, b'q' | b'v'))
+                })
+        })
 }
 
 pub(crate) fn run_e2e_worker(verbose: bool) -> Result<()> {
@@ -178,7 +194,7 @@ impl std::fmt::Display for Scope {
 
 #[cfg(test)]
 mod tests {
-    use super::test_coverage_step;
+    use super::{coverage_output_is_explicit, test_coverage_step};
 
     #[test]
     fn test_coverage_forwards_cargo_llvm_cov_arguments() {
@@ -188,7 +204,18 @@ mod tests {
         assert_eq!(step.program(), "cargo");
         assert_eq!(
             step.arguments(),
-            ["llvm-cov", "--workspace", "--show-missing-lines"]
+            ["llvm-cov", "--workspace", "--quiet", "--show-missing-lines"]
         );
+    }
+
+    #[test]
+    fn test_coverage_preserves_explicit_output_options_before_test_arguments() {
+        for option in ["-q", "-v", "-vv", "--quiet", "--verbose"] {
+            assert!(coverage_output_is_explicit(&[option.to_string()]));
+        }
+        assert!(!coverage_output_is_explicit(&[
+            "--".to_string(),
+            "--verbose".to_string(),
+        ]));
     }
 }
