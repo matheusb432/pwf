@@ -7,5 +7,4 @@ pub mod console;
 pub mod note;
 pub mod preprocess;
 pub mod project;
-pub mod regexes;
 pub mod task;

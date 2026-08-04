@@ -13,13 +13,21 @@ impl<'a> AgentCommand<'a> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, bon::Builder)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SessionStart<'a> {
     session_name: &'a str,
     working_directory: &'a str,
 }
 
-impl SessionStart<'_> {
+impl<'a> SessionStart<'a> {
+    #[must_use]
+    pub fn new(session_name: &'a str, working_directory: &'a str) -> Self {
+        Self {
+            session_name,
+            working_directory,
+        }
+    }
+
     #[must_use]
     pub fn session_name(&self) -> &str {
         self.session_name
@@ -31,7 +39,7 @@ impl SessionStart<'_> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, bon::Builder)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SessionWindow<'a> {
     session_name: &'a str,
     working_directory: &'a str,
@@ -39,7 +47,22 @@ pub struct SessionWindow<'a> {
     agent_command: AgentCommand<'a>,
 }
 
-impl SessionWindow<'_> {
+impl<'a> SessionWindow<'a> {
+    #[must_use]
+    pub fn new(
+        session_name: &'a str,
+        working_directory: &'a str,
+        window_name: &'a str,
+        agent_command: AgentCommand<'a>,
+    ) -> Self {
+        Self {
+            session_name,
+            working_directory,
+            window_name,
+            agent_command,
+        }
+    }
+
     #[must_use]
     pub fn session_name(&self) -> &str {
         self.session_name

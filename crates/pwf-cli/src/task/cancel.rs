@@ -61,12 +61,12 @@ fn map_error(error: CancelTaskError) -> TaskError {
     match error {
         CancelTaskError::EmptyReport => TaskError::EmptyReport,
         CancelTaskError::TaskNotFound { id } => TaskError::TaskNotFound { id },
-        CancelTaskError::UnknownPrefix {
-            task_identifier,
-            prefix,
-        } => TaskError::Cancel(CancelTaskError::UnknownPrefix {
-            task_identifier,
-            prefix,
+        CancelTaskError::UnknownProjectId {
+            task_id,
+            project_id,
+        } => TaskError::Cancel(CancelTaskError::UnknownProjectId {
+            task_id,
+            project_id,
         }),
         CancelTaskError::WriteStore(source) => {
             TaskError::Cancel(CancelTaskError::WriteStore(source))

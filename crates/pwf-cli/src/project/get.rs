@@ -10,7 +10,7 @@ use super::{output, parse_project_id};
 
 #[derive(Args, Debug)]
 pub struct Arguments {
-    /// Canonical project ID.
+    /// Project ID.
     #[arg(value_parser = parse_project_id)]
     pub id: ProjectId,
 }

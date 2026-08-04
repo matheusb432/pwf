@@ -1,6 +1,9 @@
 //! Updates one note title in a managed project.
 
-use pwf_models::note::NoteId;
+use pwf_models::{
+    note::NoteId,
+    project::{ProjectId, ProjectSelector},
+};
 
 use super::logic;
 use crate::{
@@ -15,7 +18,7 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct UpdateNote {
     /// Selects the managed project by name or id code.
-    pub project_identifier: String,
+    pub project_selector: ProjectSelector,
     /// Selects the note by full id, `NOTE-NNNN`, or bare numeric suffix.
     pub id: String,
     /// Supplies the replacement title.
@@ -30,12 +33,12 @@ pub struct UpdateNoteOk {
 
 #[derive(Debug, thiserror::Error)]
 pub enum UpdateNoteError {
-    #[error("Unknown project '{identifier}'; expected a managed project name or id code.")]
-    UnknownProject { identifier: String },
+    #[error("Unknown project '{selector}'; expected a managed project name or id code.")]
+    UnknownProject { selector: ProjectSelector },
     #[error("Note title is empty; provide a non-empty title.")]
     EmptyTitle,
     #[error("Invalid note id '{id}'; expected e.g. {project_id}-NOTE-0001, NOTE-0001, or 1.")]
-    InvalidIdentifier { id: String, project_id: String },
+    InvalidIdentifier { id: String, project_id: ProjectId },
     #[error("No such note {id} in {project}.")]
     NoSuchNote { id: String, project: String },
     #[error("{0}")]
@@ -59,16 +62,15 @@ pub async fn execute(
     store: &impl ProjectNoteStore,
     pool: &sqlx::SqlitePool,
 ) -> Result<UpdateNoteOk, UpdateNoteError> {
-    let identifier = command.project_identifier.clone();
     let project = resolve_project::execute(
         ResolveProject {
-            identifier: identifier.clone(),
+            selector: command.project_selector,
             status: ProjectStatusFilter::ACTIVE,
         },
         pool,
     )
     .await
-    .map_err(|error| project_error(identifier, error))?;
+    .map_err(project_error)?;
     let title = command
         .title
         .split_whitespace()
@@ -80,7 +82,7 @@ pub async fn execute(
     let id = logic::resolve_note(&command.id, &project.id).ok_or_else(|| {
         UpdateNoteError::InvalidIdentifier {
             id: command.id,
-            project_id: project.id.to_string(),
+            project_id: project.id.clone(),
         }
     })?;
     let existing = store
@@ -104,9 +106,11 @@ pub async fn execute(
     Ok(UpdateNoteOk { id, title })
 }
 
-fn project_error(identifier: String, error: ResolveProjectError) -> UpdateNoteError {
+fn project_error(error: ResolveProjectError) -> UpdateNoteError {
     match error {
-        ResolveProjectError::Unknown { .. } => UpdateNoteError::UnknownProject { identifier },
+        ResolveProjectError::Unknown { selector, .. } => {
+            UpdateNoteError::UnknownProject { selector }
+        }
         error @ ResolveProjectError::Unexpected { .. } => UpdateNoteError::Project(Box::new(error)),
     }
 }
@@ -135,7 +139,15 @@ mod tests {
     async fn full_prefixless_and_bare_identifiers_resolve_and_trim_the_replacement(
         pool: sqlx::SqlitePool,
     ) {
-        insert_project(&pool, "PWF", "pwf", "/repo/pwf", "/tasks/pwf", false).await;
+        insert_project(
+            &pool,
+            "PWF".parse().unwrap(),
+            "pwf",
+            "/projects/pwf",
+            "/tasks/pwf",
+            false,
+        )
+        .await;
         for identifier in [
             "PWF-NOTE-0007",
             concat!("pwf", "-note-0007"),
@@ -146,7 +158,7 @@ mod tests {
 
             let updated = super::execute(
                 UpdateNote {
-                    project_identifier: "pwf".to_string(),
+                    project_selector: "pwf".parse().unwrap(),
                     id: identifier.to_string(),
                     title: " new message \t".to_string(),
                 },
@@ -165,12 +177,20 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn blank_replacement_leaves_the_existing_note_unchanged(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "PWF", "pwf", "/repo/pwf", "/tasks/pwf", false).await;
+        insert_project(
+            &pool,
+            "PWF".parse().unwrap(),
+            "pwf",
+            "/projects/pwf",
+            "/tasks/pwf",
+            false,
+        )
+        .await;
         let store = InMemoryStore::default().with_project_notes("pwf", vec![note()]);
 
         let error = super::execute(
             UpdateNote {
-                project_identifier: "pwf".to_string(),
+                project_selector: "pwf".parse().unwrap(),
                 id: "7".to_string(),
                 title: " \t ".to_string(),
             },
@@ -186,12 +206,20 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn missing_note_is_reported(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "PWF", "pwf", "/repo/pwf", "/tasks/pwf", false).await;
+        insert_project(
+            &pool,
+            "PWF".parse().unwrap(),
+            "pwf",
+            "/projects/pwf",
+            "/tasks/pwf",
+            false,
+        )
+        .await;
         let store = InMemoryStore::default();
 
         let error = super::execute(
             UpdateNote {
-                project_identifier: "pwf".to_string(),
+                project_selector: "pwf".parse().unwrap(),
                 id: "note-0007".to_string(),
                 title: "new message".to_string(),
             },

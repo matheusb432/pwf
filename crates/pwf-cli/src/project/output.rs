@@ -1,10 +1,11 @@
 use pwf_application::project::ProjectStateChange;
-use pwf_models::project::{Project, ProjectSourceKind, ProjectTasksKind};
-use serde::Serialize;
+use pwf_models::project::{Project, ProjectId, ProjectSourceKind, ProjectTasksKind};
+use serde::{Serialize, Serializer};
 
 #[derive(Serialize)]
 struct ProjectOutput {
-    id: String,
+    #[serde(serialize_with = "serialize_project_id")]
+    id: ProjectId,
     title: String,
     source: ProjectSourceOutput,
     tasks: ProjectTasksOutput,
@@ -67,10 +68,17 @@ fn render(value: &impl Serialize) -> Result<String, String> {
         .map_err(|error| format!("rendering project JSON failed: {error}"))
 }
 
+fn serialize_project_id<S>(project_id: &ProjectId, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serializer.collect_str(project_id)
+}
+
 impl From<Project> for ProjectOutput {
     fn from(project: Project) -> Self {
         Self {
-            id: project.id.to_string(),
+            id: project.id,
             title: project.title.to_string(),
             source: ProjectSourceOutput {
                 kind: match project.source.kind() {

@@ -1,6 +1,7 @@
 use clap::Args;
 use pwf_application::task::StatusFilter;
 use pwf_models::{
+    project::ProjectSelector,
     session::Agent,
     task::{EffortTier, TaskId, TaskStatus, TaskTitle, TaskTitleError},
 };
@@ -17,25 +18,18 @@ pub struct CommonArguments {
 pub struct Identifier {
     /// Task id (bare positional; `--id` also accepted). E.g. `PWF-0001`, `cfg57`.
     #[arg(value_name = "ID")]
-    positional: Option<String>,
+    positional: Option<TaskId>,
     #[arg(long = "id", value_name = "ID", conflicts_with = "positional")]
-    flag: Option<String>,
+    flag: Option<TaskId>,
 }
 
 impl Identifier {
-    pub(crate) fn raw(&self) -> Option<&str> {
-        self.positional.as_deref().or(self.flag.as_deref())
-    }
-
-    pub(crate) fn required(&self, action: &'static str) -> Result<String, TaskError> {
-        self.raw()
-            .map(str::to_string)
+    pub(crate) fn required(&self, action: &'static str) -> Result<TaskId, TaskError> {
+        self.positional
+            .as_ref()
+            .or(self.flag.as_ref())
+            .cloned()
             .ok_or(TaskError::MissingId { action })
-    }
-
-    pub(crate) fn required_task_id(&self, action: &'static str) -> Result<TaskId, TaskError> {
-        let raw = self.required(action)?;
-        raw.parse().map_err(|_| TaskError::TaskNotFound { id: raw })
     }
 }
 
@@ -130,23 +124,21 @@ pub(crate) enum TaskError {
     #[error(transparent)]
     SessionDispatch(#[from] pwf_application::task::session::dispatch_session::DispatchSessionError),
     #[error(
-        "Unknown managed project identifier: {identifier}\nManaged project identifiers: {}",
+        "Unknown managed project identifier: {selector}\nManaged project identifiers: {}",
         known.join(", ")
     )]
     UnknownManagedProject {
-        identifier: String,
+        selector: ProjectSelector,
         known: Vec<String>,
     },
     #[error("Task not found: {id}")]
-    TaskNotFound { id: String },
+    TaskNotFound { id: TaskId },
     #[error("--id is required for {action}.")]
     MissingId { action: &'static str },
     #[error("--report cannot be empty.")]
     EmptyReport,
     #[error("--report is required for cancel.")]
     MissingCancelReport,
-    #[error("remove only supports file-model tasks.")]
-    RemoveRequiresFileModel,
     #[error("Task note missing: {}", path.display())]
     TaskNoteMissing { path: std::path::PathBuf },
     #[error(

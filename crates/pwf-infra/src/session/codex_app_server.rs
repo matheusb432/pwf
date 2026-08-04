@@ -162,7 +162,7 @@ fn write_shutdown_diagnostic(
 pub(super) fn start_and_name_thread(
     binary: &str,
     title: &str,
-    repository: &str,
+    project_path: &str,
     model: Option<&str>,
     effort: CodexReasoningEffort,
 ) -> Result<NamedCodexThread, CodexThreadPreparationError> {
@@ -174,7 +174,7 @@ pub(super) fn start_and_name_thread(
                 shutdown: failure.shutdown,
             }),
         })?;
-    let preparation = prepare_thread(&mut client, title, repository, model, effort);
+    let preparation = prepare_thread(&mut client, title, project_path, model, effort);
     let shutdown = client.shutdown();
 
     match preparation {
@@ -198,13 +198,13 @@ pub(super) fn start_and_name_thread(
 fn prepare_thread(
     client: &mut AppServerClient,
     title: &str,
-    repository: &str,
+    project_path: &str,
     model: Option<&str>,
     effort: CodexReasoningEffort,
 ) -> Result<OwnedCodexThread<Named>, PreparationFailure> {
     client.initialize().map_err(PreparationFailure::primary)?;
     let unnamed =
-        start_thread(client, repository, model, effort).map_err(PreparationFailure::primary)?;
+        start_thread(client, project_path, model, effort).map_err(PreparationFailure::primary)?;
     match name_thread(client, unnamed, title) {
         Ok(named) => Ok(named),
         Err((unnamed, naming)) => match delete_thread(client, unnamed) {
@@ -248,7 +248,7 @@ impl PreparationFailure {
 
 fn start_thread(
     client: &mut AppServerClient,
-    repository: &str,
+    project_path: &str,
     model: Option<&str>,
     effort: CodexReasoningEffort,
 ) -> Result<OwnedCodexThread<Unnamed>, CodexAppServerError> {
@@ -256,7 +256,7 @@ fn start_thread(
         CodexAppServerOperation::ThreadStart,
         "thread/start",
         &json!({
-            "cwd": repository,
+            "cwd": project_path,
             "model": model,
             "config": {
                 "model_reasoning_effort": effort.as_str(),
@@ -333,6 +333,7 @@ fn delete_thread(
 pub(super) mod test_fixture {
     use std::{fs, os::unix::fs::symlink, path::PathBuf};
 
+    use anyhow::Result;
     use serde_json::Value;
     use tempfile::TempDir;
 
@@ -352,53 +353,51 @@ pub(super) mod test_fixture {
     }
 
     impl AppServerFixture {
-        pub(crate) fn successful() -> Self {
+        pub(crate) fn successful() -> Result<Self> {
             Self::new(AppServerFixtureMode::Successful)
         }
 
-        pub(crate) fn naming_failure(cleanup_fails: bool) -> Self {
+        pub(crate) fn naming_failure(cleanup_fails: bool) -> Result<Self> {
             Self::new(AppServerFixtureMode::NamingFailure { cleanup_fails })
         }
 
-        pub(crate) fn oversized_response_line() -> Self {
+        pub(crate) fn oversized_response_line() -> Result<Self> {
             Self::new(AppServerFixtureMode::OversizedResponseLine)
         }
 
-        fn new(mode: AppServerFixtureMode) -> Self {
-            let directory = tempfile::tempdir().unwrap();
+        fn new(mode: AppServerFixtureMode) -> Result<Self> {
+            let directory = tempfile::tempdir()?;
             let binary = directory.path().join("codex");
             let log = directory.path().join("requests.jsonl");
             symlink(
                 PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                     .join("src/session/codex_app_server/app_server_stub.sh"),
                 &binary,
-            )
-            .unwrap();
+            )?;
             match mode {
                 AppServerFixtureMode::Successful => {}
                 AppServerFixtureMode::NamingFailure { cleanup_fails } => {
-                    fs::write(directory.path().join("naming-fails"), "").unwrap();
+                    fs::write(directory.path().join("naming-fails"), "")?;
                     if cleanup_fails {
-                        fs::write(directory.path().join("cleanup-fails"), "").unwrap();
+                        fs::write(directory.path().join("cleanup-fails"), "")?;
                     }
                 }
                 AppServerFixtureMode::OversizedResponseLine => {
-                    fs::write(directory.path().join("oversized-response-line"), "").unwrap();
+                    fs::write(directory.path().join("oversized-response-line"), "")?;
                 }
             }
-            Self {
+            Ok(Self {
                 _directory: directory,
                 binary,
                 log,
-            }
+            })
         }
 
-        pub(crate) fn requests(&self) -> Vec<Value> {
-            fs::read_to_string(&self.log)
-                .unwrap()
+        pub(crate) fn requests(&self) -> Result<Vec<Value>> {
+            Ok(fs::read_to_string(&self.log)?
                 .lines()
-                .map(|line| serde_json::from_str(line).unwrap())
-                .collect()
+                .map(serde_json::from_str)
+                .collect::<serde_json::Result<Vec<_>>>()?)
         }
     }
 }
@@ -408,6 +407,7 @@ pub(super) use test_fixture::{AppServerFixture, OWNED_THREAD_ID};
 
 #[cfg(all(test, unix))]
 mod tests {
+    use anyhow::{Context as _, Result, bail};
     use serde_json::{Value, json};
 
     use super::{start_and_name_thread, test_fixture::AppServerFixture};
@@ -417,19 +417,20 @@ mod tests {
     const TITLE: &str = "PWF-0153 - exact thread ownership";
 
     #[test]
-    fn naming_failure_deletes_only_thread_id_returned_by_start() {
-        let fixture = AppServerFixture::naming_failure(false);
+    fn naming_failure_deletes_only_thread_id_returned_by_start() -> Result<()> {
+        let fixture = AppServerFixture::naming_failure(false)?;
 
-        let error = start_and_name_thread(
-            fixture.binary.to_str().unwrap(),
+        let Err(error) = start_and_name_thread(
+            fixture.binary.to_str().context("fixture path is UTF-8")?,
             TITLE,
-            "/repo/pwf",
+            "/projects/pwf",
             Some("gpt-5.6"),
             CodexReasoningEffort::Max,
-        )
-        .unwrap_err();
+        ) else {
+            bail!("thread naming should fail");
+        };
 
-        let requests = fixture.requests();
+        let requests = fixture.requests()?;
         assert_eq!(
             requests
                 .iter()
@@ -446,7 +447,7 @@ mod tests {
         assert_eq!(
             requests[2]["params"],
             json!({
-                "cwd": "/repo/pwf",
+                "cwd": "/projects/pwf",
                 "model": "gpt-5.6",
                 "config": {
                     "model_reasoning_effort": "max",
@@ -474,22 +475,24 @@ mod tests {
             diagnostic.contains("Codex was not launched"),
             "{diagnostic}"
         );
+        Ok(())
     }
 
     #[test]
-    fn cleanup_failure_retains_both_errors_and_exact_orphan_id() {
-        let fixture = AppServerFixture::naming_failure(true);
+    fn cleanup_failure_retains_both_errors_and_exact_orphan_id() -> Result<()> {
+        let fixture = AppServerFixture::naming_failure(true)?;
 
-        let error = start_and_name_thread(
-            fixture.binary.to_str().unwrap(),
+        let Err(error) = start_and_name_thread(
+            fixture.binary.to_str().context("fixture path is UTF-8")?,
             TITLE,
-            "/repo/pwf",
+            "/projects/pwf",
             None,
             CodexReasoningEffort::High,
-        )
-        .unwrap_err();
+        ) else {
+            bail!("thread naming and cleanup should fail");
+        };
 
-        let requests = fixture.requests();
+        let requests = fixture.requests()?;
         assert_eq!(requests[2]["params"]["model"], Value::Null);
         let diagnostic = error.to_string();
         assert!(
@@ -506,20 +509,22 @@ mod tests {
             diagnostic.contains("Codex was not launched"),
             "{diagnostic}"
         );
+        Ok(())
     }
 
     #[test]
-    fn oversized_response_line_is_rejected_at_the_reader_boundary() {
-        let fixture = AppServerFixture::oversized_response_line();
+    fn oversized_response_line_is_rejected_at_the_reader_boundary() -> Result<()> {
+        let fixture = AppServerFixture::oversized_response_line()?;
 
-        let error = start_and_name_thread(
-            fixture.binary.to_str().unwrap(),
+        let Err(error) = start_and_name_thread(
+            fixture.binary.to_str().context("fixture path is UTF-8")?,
             TITLE,
-            "/repo/pwf",
+            "/projects/pwf",
             None,
             CodexReasoningEffort::High,
-        )
-        .unwrap_err();
+        ) else {
+            bail!("oversized response line should fail");
+        };
 
         let diagnostic = error.to_string();
         assert!(
@@ -532,9 +537,10 @@ mod tests {
             diagnostic.contains("Codex was not launched"),
             "{diagnostic}"
         );
-        let requests = fixture.requests();
+        let requests = fixture.requests()?;
         assert_eq!(requests.len(), 1);
         assert_eq!(requests[0]["method"], "initialize");
         assert!(!requests[0].to_string().contains("turn/start"));
+        Ok(())
     }
 }

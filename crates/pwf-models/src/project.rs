@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{fmt, str::FromStr};
 
 use nutype::nutype;
 use thiserror::Error;
@@ -15,9 +15,62 @@ pub struct ProjectName(String);
 #[nutype(
     sanitize(trim, uppercase),
     validate(predicate = is_project_id),
-    derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, AsRef, Display,)
+    derive(
+        Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, AsRef, Display, FromStr,
+    )
 )]
 pub struct ProjectId(String);
+
+/// Selects a managed project by its configured name or ID.
+///
+/// The original spelling is retained for name lookup and diagnostics. When the
+/// value is also a valid project ID, resolution can fall back to that ID after
+/// checking for an exact name match.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ProjectSelector {
+    value: String,
+    project_id: Option<ProjectId>,
+}
+
+impl ProjectSelector {
+    /// Returns the project ID candidate, when the selector has ID syntax.
+    #[must_use]
+    pub fn project_id(&self) -> Option<&ProjectId> {
+        self.project_id.as_ref()
+    }
+}
+
+impl AsRef<str> for ProjectSelector {
+    fn as_ref(&self) -> &str {
+        &self.value
+    }
+}
+
+impl fmt::Display for ProjectSelector {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.value)
+    }
+}
+
+impl FromStr for ProjectSelector {
+    type Err = ProjectSelectorError;
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        let value = raw.trim();
+        if value.is_empty() {
+            return Err(ProjectSelectorError);
+        }
+        Ok(Self {
+            value: value.to_string(),
+            project_id: ProjectId::try_new(value).ok(),
+        })
+    }
+}
+
+/// Reports an empty managed-project selector.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+#[error("project selector cannot be blank")]
+pub struct ProjectSelectorError;
 
 /// Identifies one configured project's index independently of its filename.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,7 +85,7 @@ impl ProjectIndexIdentity {
         Self { id, title }
     }
 
-    /// Returns the canonical uppercase project ID.
+    /// Returns the uppercase project ID.
     pub fn id(&self) -> &ProjectId {
         &self.id
     }
@@ -166,7 +219,7 @@ impl ProjectTasks {
 /// Describes one managed project.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Project {
-    /// Canonical project ID.
+    /// Project ID.
     pub id: ProjectId,
     /// Project title.
     pub title: ProjectName,
@@ -197,10 +250,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn project_id_normalizes_exactly_three_ascii_letters() {
-        assert_eq!(ProjectId::try_new(" pwf ").unwrap().as_ref(), "PWF");
-        assert!(ProjectId::try_new("PW").is_err());
-        assert!(ProjectId::try_new("TOOL").is_err());
+    fn project_id_parses_exactly_three_ascii_letters() {
+        assert_eq!(" pwf ".parse::<ProjectId>().unwrap().as_ref(), "PWF");
+        assert!("PW".parse::<ProjectId>().is_err());
+        assert!("TOOL".parse::<ProjectId>().is_err());
+    }
+
+    #[test]
+    fn project_selector_retains_names_and_exposes_id_candidates() {
+        let name = " config-handler ".parse::<ProjectSelector>().unwrap();
+        assert_eq!(name.as_ref(), "config-handler");
+        assert_eq!(name.project_id(), None);
+
+        let id = " pwf ".parse::<ProjectSelector>().unwrap();
+        assert_eq!(id.as_ref(), "pwf");
+        assert_eq!(id.project_id().map(AsRef::as_ref), Some("PWF"));
+        assert!(" \t ".parse::<ProjectSelector>().is_err());
     }
 
     #[test]

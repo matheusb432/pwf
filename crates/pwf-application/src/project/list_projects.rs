@@ -103,9 +103,33 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn active_list_filters_paused_projects_and_sorts_by_title(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "ZED", "zeta", "/work/zeta", "/tasks/zeta", false).await;
-        insert_project(&pool, "ALP", "alpha", "/work/alpha", "/tasks/alpha", false).await;
-        insert_project(&pool, "PAU", "beta", "/work/beta", "/tasks/beta", true).await;
+        insert_project(
+            &pool,
+            "ZED".parse().unwrap(),
+            "zeta",
+            "/work/zeta",
+            "/tasks/zeta",
+            false,
+        )
+        .await;
+        insert_project(
+            &pool,
+            "ALP".parse().unwrap(),
+            "alpha",
+            "/work/alpha",
+            "/tasks/alpha",
+            false,
+        )
+        .await;
+        insert_project(
+            &pool,
+            "PAU".parse().unwrap(),
+            "beta",
+            "/work/beta",
+            "/tasks/beta",
+            true,
+        )
+        .await;
 
         let projects = super::execute(
             ListProjects {

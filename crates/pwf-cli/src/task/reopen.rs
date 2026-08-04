@@ -29,12 +29,12 @@ pub(super) async fn run(
 fn map_reopen_error(error: ReopenTaskError) -> TaskError {
     match error {
         ReopenTaskError::TaskNotFound { id } => TaskError::TaskNotFound { id },
-        ReopenTaskError::UnknownPrefix {
-            task_identifier,
-            prefix,
-        } => TaskError::Reopen(ReopenTaskError::UnknownPrefix {
-            task_identifier,
-            prefix,
+        ReopenTaskError::UnknownProjectId {
+            task_id,
+            project_id,
+        } => TaskError::Reopen(ReopenTaskError::UnknownProjectId {
+            task_id,
+            project_id,
         }),
         ReopenTaskError::WriteStore(source) => {
             TaskError::Reopen(ReopenTaskError::WriteStore(source))

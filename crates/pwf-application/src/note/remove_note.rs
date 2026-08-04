@@ -1,6 +1,9 @@
 //! Removes one note from a managed project.
 
-use pwf_models::note::NoteId;
+use pwf_models::{
+    note::NoteId,
+    project::{ProjectId, ProjectSelector},
+};
 
 use super::logic;
 use crate::{
@@ -15,7 +18,7 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct RemoveNote {
     /// Selects the managed project by name or id code.
-    pub project_identifier: String,
+    pub project_selector: ProjectSelector,
     /// Selects the note by full id, `NOTE-NNNN`, or bare numeric suffix.
     pub id: String,
 }
@@ -27,10 +30,10 @@ pub struct RemoveNoteOk {
 
 #[derive(Debug, thiserror::Error)]
 pub enum RemoveNoteError {
-    #[error("Unknown project '{identifier}'; expected a managed project name or id code.")]
-    UnknownProject { identifier: String },
+    #[error("Unknown project '{selector}'; expected a managed project name or id code.")]
+    UnknownProject { selector: ProjectSelector },
     #[error("Invalid note id '{id}'; expected e.g. {project_id}-NOTE-0001, NOTE-0001, or 1.")]
-    InvalidIdentifier { id: String, project_id: String },
+    InvalidIdentifier { id: String, project_id: ProjectId },
     #[error("No such note {id} in {project}.")]
     NoSuchNote { id: String, project: String },
     #[error("{0}")]
@@ -53,21 +56,20 @@ pub async fn execute(
     store: &impl ProjectNoteStore,
     pool: &sqlx::SqlitePool,
 ) -> Result<RemoveNoteOk, RemoveNoteError> {
-    let identifier = command.project_identifier.clone();
     let project = resolve_project::execute(
         ResolveProject {
-            identifier: identifier.clone(),
+            selector: command.project_selector,
             status: ProjectStatusFilter::ACTIVE,
         },
         pool,
     )
     .await
-    .map_err(|error| project_error(identifier, error))?;
+    .map_err(project_error)?;
     let raw_id = command.id;
     let id = logic::resolve_note(&raw_id, &project.id).ok_or_else(|| {
         RemoveNoteError::InvalidIdentifier {
             id: raw_id,
-            project_id: project.id.to_string(),
+            project_id: project.id.clone(),
         }
     })?;
     let exists = store
@@ -85,9 +87,11 @@ pub async fn execute(
     Ok(RemoveNoteOk { id })
 }
 
-fn project_error(identifier: String, error: ResolveProjectError) -> RemoveNoteError {
+fn project_error(error: ResolveProjectError) -> RemoveNoteError {
     match error {
-        ResolveProjectError::Unknown { .. } => RemoveNoteError::UnknownProject { identifier },
+        ResolveProjectError::Unknown { selector, .. } => {
+            RemoveNoteError::UnknownProject { selector }
+        }
         error @ ResolveProjectError::Unexpected { .. } => RemoveNoteError::Project(Box::new(error)),
     }
 }
@@ -96,7 +100,10 @@ fn project_error(identifier: String, error: ResolveProjectError) -> RemoveNoteEr
 mod tests {
     use std::error::Error as _;
 
-    use pwf_models::note::{NoteId, ProjectNote};
+    use pwf_models::{
+        note::{NoteId, ProjectNote},
+        project::ProjectId,
+    };
 
     use super::{RemoveNote, RemoveNoteError};
     use crate::testing::{InMemoryStore, ProjectNoteFailure, insert_project};
@@ -114,7 +121,15 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn full_prefixless_and_bare_identifiers_resolve(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "PWF", "pwf", "/repo/pwf", "/tasks/pwf", false).await;
+        insert_project(
+            &pool,
+            "PWF".parse().unwrap(),
+            "pwf",
+            "/projects/pwf",
+            "/tasks/pwf",
+            false,
+        )
+        .await;
         for identifier in [
             "PWF-NOTE-0007",
             concat!("pwf", "-note-0007"),
@@ -125,7 +140,7 @@ mod tests {
 
             let removed = super::execute(
                 RemoveNote {
-                    project_identifier: "PWF".to_string(),
+                    project_selector: "PWF".parse().unwrap(),
                     id: identifier.to_string(),
                 },
                 &store,
@@ -141,12 +156,20 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn missing_note_wins_over_adapter_delete_failure(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "PWF", "pwf", "/repo/pwf", "/tasks/pwf", false).await;
+        insert_project(
+            &pool,
+            "PWF".parse().unwrap(),
+            "pwf",
+            "/projects/pwf",
+            "/tasks/pwf",
+            false,
+        )
+        .await;
         let store = InMemoryStore::default().with_failure(ProjectNoteFailure::Delete);
 
         let error = super::execute(
             RemoveNote {
-                project_identifier: "pwf".to_string(),
+                project_selector: "pwf".parse().unwrap(),
                 id: "1".to_string(),
             },
             &store,
@@ -166,12 +189,20 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn identifier_from_another_project_is_rejected(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "PWF", "pwf", "/repo/pwf", "/tasks/pwf", false).await;
+        insert_project(
+            &pool,
+            "PWF".parse().unwrap(),
+            "pwf",
+            "/projects/pwf",
+            "/tasks/pwf",
+            false,
+        )
+        .await;
         let store = InMemoryStore::default();
 
         let error = super::execute(
             RemoveNote {
-                project_identifier: "pwf".to_string(),
+                project_selector: "pwf".parse().unwrap(),
                 id: "FOO-NOTE-0001".to_string(),
             },
             &store,
@@ -185,7 +216,8 @@ mod tests {
             RemoveNoteError::InvalidIdentifier {
                 ref id,
                 ref project_id,
-            } if id == "FOO-NOTE-0001" && project_id == "PWF"
+            } if id == "FOO-NOTE-0001"
+                && project_id == &ProjectId::try_new("PWF").unwrap()
         ));
     }
 

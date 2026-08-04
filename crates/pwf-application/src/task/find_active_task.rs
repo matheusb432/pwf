@@ -1,28 +1,39 @@
-use super::identifier;
+use pwf_models::{
+    project::{Project, ProjectId},
+    task::TaskId,
+};
+
 use crate::{
-    ports::task_record::TaskStore,
+    ports::task_record::{TaskRecord, TaskStore},
     project::{
-        ProjectStatusFilter,
         get_active_project::{self, GetActiveProject},
         get_project::GetProjectError,
-        list_projects::{self, ListProjects},
     },
     task::{dto::TaskView, logic::finding::find_active_task_in_projects},
 };
 
 #[derive(Debug, Clone)]
 pub struct FindActiveTask {
-    pub id: String,
+    pub id: TaskId,
+}
+
+pub struct FindActiveTaskOk {
+    pub project: Project,
+    pub record: TaskRecord,
+    pub task: TaskView,
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum FindActiveTaskError {
     #[error("Active task not found: {id}")]
-    TaskNotFound { id: String },
+    TaskNotFound { id: TaskId },
     #[error("Task id is ambiguous: {id}")]
-    AmbiguousId { id: String },
-    #[error("Unknown task id prefix `{prefix}` for {id}")]
-    UnknownPrefix { id: String, prefix: String },
+    AmbiguousId { id: TaskId },
+    #[error("Unknown project ID `{project_id}` for task {task_id}")]
+    UnknownProjectId {
+        task_id: TaskId,
+        project_id: ProjectId,
+    },
     #[error("{0}")]
     ReadStore(Box<dyn std::error::Error + Send + Sync>),
     #[error("{0}")]
@@ -34,35 +45,31 @@ pub async fn execute(
     query: &FindActiveTask,
     store: &impl TaskStore,
     pool: &sqlx::SqlitePool,
-) -> Result<TaskView, FindActiveTaskError> {
-    let projects = match identifier::parse(&query.id) {
-        Some(task_id) => match get_active_project::execute(
-            GetActiveProject {
-                id: task_id.project_id(),
-            },
-            pool,
-        )
-        .await
-        {
-            Ok(project) => vec![project],
-            Err(GetProjectError::ProjectNotFound { id: prefix }) => {
-                return Err(FindActiveTaskError::UnknownPrefix {
-                    id: task_id.to_string(),
-                    prefix: prefix.to_string(),
-                });
-            }
-            Err(error) => return Err(FindActiveTaskError::QueryProject(Box::new(error))),
+) -> Result<FindActiveTaskOk, FindActiveTaskError> {
+    let project_id = query.id.project_id();
+    let project = get_active_project::execute(
+        GetActiveProject {
+            id: project_id.clone(),
         },
-        None => list_projects::execute(
-            ListProjects {
-                status: ProjectStatusFilter::ACTIVE,
-            },
-            pool,
-        )
-        .await
-        .map_err(|error| FindActiveTaskError::QueryProject(Box::new(error)))?,
-    };
-    find_active_task_in_projects(store, &projects, &query.id)
+        pool,
+    )
+    .await
+    .map_err(|error| match error {
+        GetProjectError::ProjectNotFound { .. } => FindActiveTaskError::UnknownProjectId {
+            task_id: query.id.clone(),
+            project_id,
+        },
+        error @ GetProjectError::Unexpected { .. } => {
+            FindActiveTaskError::QueryProject(Box::new(error))
+        }
+    })?;
+    let (record, task) =
+        find_active_task_in_projects(store, std::slice::from_ref(&project), &query.id)?;
+    Ok(FindActiveTaskOk {
+        project,
+        record,
+        task,
+    })
 }
 
 #[cfg(test)]
@@ -76,14 +83,14 @@ mod tests {
 
     use super::{FindActiveTaskError, TaskView};
     use crate::{
-        ports::task_record::{IndexPlacement, Materialization, RecordId, TaskRecord},
+        ports::task_record::{IndexPlacement, Materialization, TaskRecord},
         task::logic::finding::find_active_task_in_projects,
         testing::{InMemoryStore, project},
     };
 
     fn record(id: &str) -> TaskRecord {
         TaskRecord {
-            id: RecordId::Task(TaskId::try_new(id).unwrap()),
+            id: TaskId::try_new(id).unwrap(),
             title: format!("title {id}"),
             status: TaskStatus::Active,
             created: Some(Timestamp::new("2026-07-07")),
@@ -104,33 +111,10 @@ mod tests {
         }
     }
 
-    fn inline(ordinal: usize) -> TaskRecord {
-        TaskRecord {
-            id: RecordId::Inline(ordinal),
-            title: "legacy task".to_string(),
-            status: TaskStatus::Active,
-            created: None,
-            completed: None,
-            commits: None,
-            tags: None,
-            effort: None,
-            prereq: None,
-            section: None,
-            body: "do the legacy thing".to_string(),
-            source: "do the legacy thing".to_string(),
-            locator: "/notes/pwf/pwf.md".to_string(),
-            placement: Some(IndexPlacement {
-                index_path: "/notes/pwf/pwf.md".to_string(),
-                line: ordinal,
-            }),
-            materialization: Materialization::InlineLegacy,
-        }
-    }
-
     fn projects(values: &[(&str, &str)]) -> Vec<Project> {
         values
             .iter()
-            .map(|(name, project_id)| project(project_id, name))
+            .map(|(name, project_id)| project(project_id.parse().unwrap(), name))
             .collect()
     }
 
@@ -139,7 +123,8 @@ mod tests {
         projects: &[Project],
         id: &str,
     ) -> Result<TaskView, FindActiveTaskError> {
-        find_active_task_in_projects(store, projects, id)
+        find_active_task_in_projects(store, projects, &TaskId::try_new(id).unwrap())
+            .map(|(_, task)| task)
     }
 
     #[test]
@@ -149,33 +134,25 @@ mod tests {
 
         let task = find(&store, &projects, "PWF-0001").unwrap();
 
-        assert_eq!(task.id, "PWF-0001");
+        assert_eq!(task.id.as_ref(), "PWF-0001");
         assert_eq!(task.project, "pwf");
-        assert_eq!(task.repo.as_deref(), Some("/work/pwf"));
+        assert_eq!(task.project_path.as_ref(), "/work/pwf");
         assert_eq!(task.prompt, "do the thing");
         assert!(task.launchable);
     }
 
     #[test]
-    fn loose_id_normalization_is_application_owned() {
+    fn missing_task_reports_the_typed_id() {
         let store = InMemoryStore::default().with_project("pwf", vec![record("PWF-0001")]);
         let projects = projects(&[("pwf", "PWF")]);
 
-        assert_eq!(find(&store, &projects, "pwf-0001").unwrap().id, "PWF-0001");
-    }
-
-    #[test]
-    fn missing_id_errors_not_found_preserving_raw_id() {
-        let store = InMemoryStore::default().with_project("pwf", vec![record("PWF-0001")]);
-        let projects = projects(&[("pwf", "PWF")]);
-
-        let error = find(&store, &projects, "pwf-9999").unwrap_err();
+        let error = find(&store, &projects, "PWF-9999").unwrap_err();
 
         assert!(matches!(
             error,
-            FindActiveTaskError::TaskNotFound { ref id } if id == "pwf-9999"
+            FindActiveTaskError::TaskNotFound { ref id } if id.as_ref() == "PWF-9999"
         ));
-        assert_eq!(error.to_string(), "Active task not found: pwf-9999");
+        assert_eq!(error.to_string(), "Active task not found: PWF-9999");
     }
 
     #[test]
@@ -203,40 +180,32 @@ mod tests {
         let store = InMemoryStore::default().with_project("pwf", vec![done, unlinked_active]);
         let projects = projects(&[("pwf", "PWF")]);
 
-        assert_eq!(find(&store, &projects, "PWF-0002").unwrap().id, "PWF-0002");
-        assert_matches!(
-            find(&store, &projects, "PWF-0001"),
-            Err(FindActiveTaskError::TaskNotFound { id }) if id == "PWF-0001"
+        assert_eq!(
+            find(&store, &projects, "PWF-0002").unwrap().id.as_ref(),
+            "PWF-0002"
         );
+        assert_matches!(find(&store, &projects, "PWF-0001"), Err(
+            FindActiveTaskError::TaskNotFound { id }
+        ) if id.as_ref() == "PWF-0001");
     }
 
     #[test]
-    fn unknown_prefix_renders_like_the_legacy_adapter() {
+    fn unknown_project_id_reports_the_typed_identifiers() {
         let store = InMemoryStore::default().with_project("pwf", vec![record("PWF-0001")]);
         let projects = projects(&[("pwf", "PWF")]);
 
-        let error = find(&store, &projects, "xyz-0001").unwrap_err();
+        let error = find(&store, &projects, "XYZ-0001").unwrap_err();
 
         assert!(matches!(
             error,
-            FindActiveTaskError::UnknownPrefix { ref id, ref prefix }
-                if id == "XYZ-0001" && prefix == "XYZ"
+            FindActiveTaskError::UnknownProjectId {
+                ref task_id,
+                ref project_id,
+            } if task_id.as_ref() == "XYZ-0001" && project_id.as_ref() == "XYZ"
         ));
         assert_eq!(
             error.to_string(),
-            "Unknown task id prefix `XYZ` for XYZ-0001"
+            "Unknown project ID `XYZ` for task XYZ-0001"
         );
-    }
-
-    #[test]
-    fn non_canonical_id_resolves_a_legacy_inline_prompt_case_insensitively() {
-        let store = InMemoryStore::default().with_project("pwf", vec![inline(1)]);
-        let projects = projects(&[("pwf", "PWF")]);
-
-        let task = find(&store, &projects, "PWF:1").unwrap();
-
-        assert_eq!(task.id, "pwf:1");
-        assert_eq!(task.format, "legacy");
-        assert_eq!(task.session, "legacy task");
     }
 }

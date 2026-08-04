@@ -3,39 +3,42 @@ use std::fmt::Write;
 use anstyle::AnsiColor;
 use pwf_application::task::session::{SessionPlan, dispatch_session::DispatchSessionOk};
 use pwf_infra::session::render_argv;
-use pwf_models::session::{Agent, DispatchMode};
+use pwf_models::{
+    session::{Agent, DispatchMode},
+    task::TaskId,
+};
 
 use super::{agent_name, paint};
 
 pub(in crate::task) fn render_dispatch(outcome: &DispatchSessionOk, on: bool) -> String {
-    let (token, color, target, agent, repository) = match outcome {
+    let (token, color, target, agent, project_path) = match outcome {
         DispatchSessionOk::Inline { task_id } => {
             return format!("# session {task_id} — ran inline\n");
         }
         DispatchSessionOk::WindowOpened {
             target,
             agent,
-            repository,
+            project_path,
         } => (
             "dispatched",
             AnsiColor::Green,
             target,
             Some(*agent),
-            Some(repository),
+            Some(project_path),
         ),
     };
-    let session = &target.session;
-    let window = &target.window;
+    let session = target.session_name();
+    let window = &target.task_id;
     let line = paint(
         &format!("session: {session}  ·  window: {window}"),
         color,
         on,
     );
     let mut out = format!("# session {window} — {token}\n{line}\n");
-    if let (Some(agent), Some(repository)) = (agent, repository) {
+    if let (Some(agent), Some(project_path)) = (agent, project_path) {
         let _ = write!(
             out,
-            "agent: {} · cwd: {repository}\n\
+            "agent: {} · cwd: {project_path}\n\
 outside tmux: tmux attach-session -t ={session}\n\
 inside tmux: tmux switch-client -t ={session}\n",
             agent_name(agent)
@@ -44,7 +47,7 @@ inside tmux: tmux switch-client -t ={session}\n",
     out
 }
 
-pub(in crate::task) fn render_session_aborted(task_id: &str) -> String {
+pub(in crate::task) fn render_session_aborted(task_id: &TaskId) -> String {
     format!("# session {task_id} — aborted\nnothing dispatched.\n")
 }
 
@@ -56,7 +59,11 @@ pub(in crate::task) fn render_dry_run(plan: &SessionPlan, argv: &[String]) -> St
     let target = match plan.mode {
         DispatchMode::Inline => "inline".to_string(),
         DispatchMode::Multiplexer => {
-            format!("tmux: {} / {}", plan.target.session, plan.target.window)
+            format!(
+                "tmux: {} / {}",
+                plan.target.session_name(),
+                plan.target.task_id
+            )
         }
     };
     format!(
@@ -65,7 +72,7 @@ task: {}\n\
 agent: {agent}\n\
 model: {}\n\
 effort: {}\n\
-repository: {}\n\
+project_path: {}\n\
 {target}\n\
 command: {}\n\
 nothing dispatched.\n",
@@ -73,7 +80,7 @@ nothing dispatched.\n",
         plan.launch.title,
         plan.launch.model.as_deref().unwrap_or("default"),
         plan.launch.effort,
-        plan.launch.repository,
+        plan.launch.project_path,
         render_argv(argv),
     )
 }
@@ -83,14 +90,16 @@ mod tests {
     use pwf_application::task::session::{
         AgentLaunch, DispatchTarget, SessionPlan, dispatch_session::DispatchSessionOk,
     };
-    use pwf_models::session::{Agent, DispatchMode, SessionEffort};
+    use pwf_models::{
+        session::{Agent, DispatchMode, SessionEffort},
+        task::TaskId,
+    };
 
     use super::*;
 
     fn target() -> DispatchTarget {
         DispatchTarget {
-            session: "cfg".into(),
-            window: "CFG-0009".into(),
+            task_id: TaskId::try_new("CFG-0009").unwrap(),
         }
     }
 
@@ -99,7 +108,7 @@ mod tests {
         let outcome = DispatchSessionOk::WindowOpened {
             target: target(),
             agent: Agent::Claude,
-            repository: "/repo".into(),
+            project_path: "/project".into(),
         };
         let out = render_dispatch(&outcome, false);
         assert!(out.starts_with("# session CFG-0009 — dispatched"));
@@ -112,13 +121,13 @@ mod tests {
     #[test]
     fn aborted_and_inline_results_preserve_their_compact_text() {
         assert_eq!(
-            render_session_aborted("PWF-0001"),
+            render_session_aborted(&TaskId::try_new("PWF-0001").unwrap()),
             "# session PWF-0001 — aborted\nnothing dispatched.\n"
         );
         assert_eq!(
             render_dispatch(
                 &DispatchSessionOk::Inline {
-                    task_id: "PWF-0001".into()
+                    task_id: TaskId::try_new("PWF-0001").unwrap()
                 },
                 false
             ),
@@ -131,9 +140,9 @@ mod tests {
         let plan = SessionPlan {
             launch: AgentLaunch {
                 agent: Agent::Codex,
-                task_id: "PWF-0001".into(),
+                task_id: TaskId::try_new("PWF-0001").unwrap(),
                 title: "PWF-0001 - reason carefully".into(),
-                repository: "/repo".into(),
+                project_path: "/project".into(),
                 prompt: "Inspect PWF-0001.".into(),
                 model: None,
                 effort: SessionEffort::High,
@@ -156,5 +165,6 @@ mod tests {
         );
 
         assert!(out.contains("effort: high"));
+        assert!(out.contains("project_path: /project"));
     }
 }

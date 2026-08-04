@@ -1,6 +1,6 @@
 use std::{fs, path::Path};
 
-use crate::shared::{ProjectFixture, assert_failure, assert_project, success_json};
+use crate::shared::{ProjectFixture, assert_failure, assert_project, project_id, success_json};
 
 fn write_fixture(tasks_path: &Path) {
     fs::create_dir_all(tasks_path).unwrap();
@@ -27,8 +27,10 @@ fn rename_commits_registry_and_task_identity_as_one_lifecycle() {
     let destination_tasks = directory.path().join("pwf-db/self/mimux");
     fs::create_dir_all(&source).unwrap();
     write_fixture(&tasks);
+    let source_project_id = project_id("SSH");
+    let destination_project_id = project_id("MUX");
     let created = fixture.add_with_home(
-        "SSH",
+        &source_project_id,
         "ssh-agent-phone-app",
         source.to_str().unwrap(),
         tasks.to_str().unwrap(),
@@ -53,7 +55,7 @@ fn rename_commits_registry_and_task_identity_as_one_lifecycle() {
 
     assert_project(
         &renamed,
-        "MUX",
+        &destination_project_id,
         "mimux",
         destination_source.to_str().unwrap(),
         destination_tasks.to_str().unwrap(),
@@ -84,8 +86,10 @@ fn rename_commit_failure_rolls_back_and_allows_retry() {
     let destination_tasks = directory.path().join("missing-parent/mimux");
     fs::create_dir_all(&source).unwrap();
     write_fixture(&tasks);
+    let source_project_id = project_id("SSH");
+    let destination_project_id = project_id("MUX");
     let created = fixture.add_with_home(
-        "SSH",
+        &source_project_id,
         "ssh-agent-phone-app",
         source.to_str().unwrap(),
         tasks.to_str().unwrap(),
@@ -95,7 +99,7 @@ fn rename_commit_failure_rolls_back_and_allows_retry() {
         "project",
         "rename",
         "SSH",
-        "MUX",
+        destination_project_id.as_ref(),
         "--title",
         "mimux",
         "--source",
@@ -120,7 +124,7 @@ fn rename_commit_failure_rolls_back_and_allows_retry() {
 
     assert_project(
         &retried,
-        "MUX",
+        &destination_project_id,
         "mimux",
         destination_source.to_str().unwrap(),
         destination_tasks.to_str().unwrap(),

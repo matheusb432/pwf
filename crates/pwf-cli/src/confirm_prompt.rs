@@ -10,10 +10,10 @@ pub struct Field {
 
 impl Field {
     /// Creates a metadata line and flattens newlines in `value`.
-    pub fn new(key: &'static str, value: impl Into<String>) -> Self {
+    pub fn new(key: &'static str, value: impl fmt::Display) -> Self {
         Field {
             key,
-            value: flatten(value.into()),
+            value: flatten(value.to_string()),
         }
     }
 }

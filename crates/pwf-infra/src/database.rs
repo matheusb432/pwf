@@ -121,7 +121,7 @@ mod tests {
         .bind(source_id)
         .execute(&pool)
         .await
-        .expect("insert canonical project");
+        .expect("insert valid project");
 
         for (id, title, tasks_path) in [
             ("PW", "short", "/tasks/short"),

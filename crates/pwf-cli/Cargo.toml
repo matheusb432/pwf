@@ -3,7 +3,7 @@ name = "pwf-cli"
 version = "0.1.0"
 edition.workspace = true
 publish.workspace = true
-description = "Manages tasks and project notes across configured repositories."
+description = "Manages tasks and project notes across configured projects."
 
 [[bin]]
 name = "pwf"

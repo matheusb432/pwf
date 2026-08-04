@@ -13,6 +13,7 @@ use pwf_application::{
     ports::clock::Clock,
 };
 use pwf_infra::obsidian::ObsidianStore;
+use pwf_models::project::ProjectSelector;
 
 #[derive(Args, Debug)]
 pub struct Arguments {
@@ -36,7 +37,7 @@ pub(crate) enum Command {
     List {
         /// Managed project (name or id code, case-insensitive).
         #[arg(value_name = "PROJECT")]
-        project: String,
+        project: ProjectSelector,
         /// Cap to N listed notes (default 10; `-n 0` = all).
         #[arg(short = 'n', long, value_name = "N")]
         number: Option<usize>,
@@ -45,7 +46,7 @@ pub(crate) enum Command {
     Add {
         /// Managed project (name or id code, case-insensitive).
         #[arg(value_name = "PROJECT")]
-        project: String,
+        project: ProjectSelector,
         /// Title and Markdown content separated by ` / `.
         #[arg(
             value_name = "NOTE",
@@ -79,7 +80,7 @@ pub(crate) enum Command {
     Remove {
         /// Managed project (name or id code, case-insensitive).
         #[arg(value_name = "PROJECT")]
-        project: String,
+        project: ProjectSelector,
         /// Note id: full `PWF-NOTE-0001`, `NOTE-0001`, or a bare `1`.
         #[arg(value_name = "ID")]
         id: String,
@@ -88,7 +89,7 @@ pub(crate) enum Command {
     Update {
         /// Managed project (name or id code, case-insensitive).
         #[arg(value_name = "PROJECT")]
-        project: String,
+        project: ProjectSelector,
         /// Note id: full `PWF-NOTE-0001`, `NOTE-0001`, or a bare `1`.
         #[arg(value_name = "ID")]
         id: String,
@@ -107,7 +108,7 @@ pub async fn run(
     match &arguments.command {
         Command::List { project, number } => list_notes::execute(
             ListNotes {
-                project_identifier: project.clone(),
+                project_selector: project.clone(),
                 number: *number,
             },
             store,
@@ -131,7 +132,7 @@ pub async fn run(
                 resolve_add_input(note.as_deref(), title.as_deref(), content.as_deref())?;
             add_note::execute(
                 AddNote {
-                    project_identifier: project.clone(),
+                    project_selector: project.clone(),
                     title: title.to_string(),
                     content: content.to_string(),
                     why: why.clone(),
@@ -151,7 +152,7 @@ pub async fn run(
         }
         Command::Remove { project, id } => remove_note::execute(
             RemoveNote {
-                project_identifier: project.clone(),
+                project_selector: project.clone(),
                 id: id.clone(),
             },
             store,
@@ -162,7 +163,7 @@ pub async fn run(
         .map_err(|error| error.to_string()),
         Command::Update { project, id, title } => update_note::execute(
             UpdateNote {
-                project_identifier: project.clone(),
+                project_selector: project.clone(),
                 id: id.clone(),
                 title: title.join(" "),
             },

@@ -1,5 +1,6 @@
 use std::{path::Path, process::Output};
 
+use pwf_models::project::ProjectId;
 use serde_json::{Value, json};
 use tempfile::TempDir;
 
@@ -36,22 +37,28 @@ impl ProjectFixture {
             .expect("run pwf process")
     }
 
-    pub fn add(&self, id: &str, title: &str, source: &str, tasks: &str) -> Value {
+    pub fn add(
+        &self,
+        project_id: &ProjectId,
+        title: &str,
+        project_path: &str,
+        tasks_path: &str,
+    ) -> Value {
         success_json(self.run(&[
             "project",
             "add",
             "--kind",
             "directory",
-            &add_payload(id, title, source, tasks),
+            &add_payload(project_id, title, project_path, tasks_path),
         ]))
     }
 
     pub fn add_with_home(
         &self,
-        id: &str,
+        project_id: &ProjectId,
         title: &str,
-        source: &str,
-        tasks: &str,
+        project_path: &str,
+        tasks_path: &str,
         home: &Path,
     ) -> Value {
         success_json(self.run_with_home(
@@ -60,19 +67,24 @@ impl ProjectFixture {
                 "add",
                 "--kind",
                 "directory",
-                &add_payload(id, title, source, tasks),
+                &add_payload(project_id, title, project_path, tasks_path),
             ],
             home,
         ))
     }
 }
 
-pub fn add_payload(id: &str, title: &str, source: &str, tasks: &str) -> String {
+pub fn add_payload(
+    project_id: &ProjectId,
+    title: &str,
+    project_path: &str,
+    tasks_path: &str,
+) -> String {
     json!({
-        "id": id,
+        "id": project_id.as_ref(),
         "title": title,
-        "source": {"value": source},
-        "tasks": {"kind": "directory", "path": tasks},
+        "source": {"value": project_path},
+        "tasks": {"kind": "directory", "path": tasks_path},
     })
     .to_string()
 }
@@ -90,21 +102,21 @@ pub fn success_json(output: Output) -> Value {
 
 pub fn assert_project(
     project: &Value,
-    id: &str,
+    project_id: &ProjectId,
     title: &str,
-    source: &str,
-    tasks: &str,
+    project_path: &str,
+    tasks_path: &str,
     is_paused: bool,
 ) {
-    assert_eq!(project["id"], id);
+    assert_eq!(project["id"], project_id.as_ref());
     assert_eq!(project["title"], title);
     assert_eq!(
         project["source"],
-        json!({"kind": "directory", "value": source})
+        json!({"kind": "directory", "value": project_path})
     );
     assert_eq!(
         project["tasks"],
-        json!({"kind": "directory", "path": tasks})
+        json!({"kind": "directory", "path": tasks_path})
     );
     assert!(
         project["created_at"]

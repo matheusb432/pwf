@@ -1,6 +1,7 @@
 use clap::Args;
 use pwf_application::task::update_task::{self, UpdateTask};
 use pwf_infra::obsidian::ObsidianStore;
+use pwf_models::task::{PrerequisiteInput, Prerequisites};
 
 use super::shared::{CommonArguments, EffortChoice, Identifier, task_title};
 
@@ -17,7 +18,7 @@ pub struct Arguments {
     pub(crate) title: Option<String>,
     /// Prereq task id to append (repeat or comma-separate); dedups.
     #[arg(long)]
-    pub(crate) prereq: Vec<String>,
+    pub(crate) prereq: Vec<PrerequisiteInput>,
     /// Clear all prereqs on the task.
     #[arg(long, conflicts_with = "prereq")]
     pub(crate) clear_prereq: bool,
@@ -74,7 +75,7 @@ pub(super) async fn run(
             prompt: arguments.prompt.clone(),
             title,
             append: arguments.append.clone(),
-            prereq: arguments.prereq.clone(),
+            prereq: Prerequisites::from_inputs(&arguments.prereq),
             clear_prereq: arguments.clear_prereq,
             commits: arguments.commits.clone(),
             append_report: arguments.append_report.clone(),

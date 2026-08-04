@@ -6,7 +6,7 @@ use std::{
 use assert_cmd::prelude::OutputAssertExt as _;
 use tempfile::TempDir;
 
-use super::DatabaseFixture;
+use super::{DatabaseFixture, project_id};
 
 pub struct SessionFixture {
     directory: TempDir,
@@ -19,12 +19,12 @@ impl SessionFixture {
     pub fn new() -> Self {
         let directory = TempDir::new().unwrap();
         let notes = directory.path().join("notes/pwf");
-        let repository = directory.path().join("repo");
+        let project_path = directory.path().join("project");
         fs::create_dir_all(&notes).expect("create task notes directory");
-        fs::create_dir_all(&repository).expect("create repository directory");
+        fs::create_dir_all(&project_path).expect("create project directory");
         fs::write(notes.join("pwf.md"), "---\nid: pwf\ntitle: pwf\n---\n").unwrap();
         let database = DatabaseFixture::new(directory.path().join("projects.sqlite3"));
-        database.add_directory_project("PWF", "pwf", &repository, &notes);
+        database.add_directory_project(&project_id("PWF"), "pwf", &project_path, &notes);
         database
             .command()
             .args([

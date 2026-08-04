@@ -2,7 +2,7 @@ use std::fmt;
 
 use thiserror::Error;
 
-/// Stores one canonical lowercase snake-case task tag.
+/// Stores one lowercase snake-case task tag.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Tag(String);
 
@@ -15,12 +15,8 @@ impl TryFrom<&str> for Tag {
             .all(|ch| ch.is_ascii_alphanumeric() || ch == '_');
         let valid_separators = !raw.starts_with('_') && !raw.ends_with('_') && !raw.contains("__");
         let has_alphanumeric = raw.chars().any(|ch| ch.is_ascii_alphanumeric());
-        let canonical_case = !raw.chars().any(|ch| ch.is_ascii_uppercase());
-        if raw.is_empty()
-            || !valid_chars
-            || !valid_separators
-            || !has_alphanumeric
-            || !canonical_case
+        let is_lowercase = !raw.chars().any(|ch| ch.is_ascii_uppercase());
+        if raw.is_empty() || !valid_chars || !valid_separators || !has_alphanumeric || !is_lowercase
         {
             return Err(InvalidTagError {
                 raw: raw.to_string(),
@@ -42,7 +38,7 @@ impl fmt::Display for Tag {
     }
 }
 
-/// Stores a non-empty ordered collection of canonical task tags.
+/// Stores a non-empty ordered collection of task tags.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Tags(Vec<Tag>);
 
@@ -61,14 +57,14 @@ impl Tags {
     }
 }
 
-/// Reports a non-canonical tag value.
+/// Reports an invalid tag value.
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
-#[error("invalid canonical tag: {raw:?}")]
+#[error("invalid tag: {raw:?}")]
 pub struct InvalidTagError {
     raw: String,
 }
 
-/// Reports an empty canonical tag collection.
+/// Reports an empty tag collection.
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
 #[error("tags cannot be empty")]
 pub struct EmptyTagsError;
@@ -82,7 +78,7 @@ mod tests {
     }
 
     #[test]
-    fn canonical_tag_and_non_empty_collection_preserve_values() {
+    fn tag_and_non_empty_collection_preserve_values() {
         let tags = Tags::try_new(vec![
             Tag::try_from("sqlite").unwrap(),
             Tag::try_from("csharp_export").unwrap(),
@@ -93,7 +89,7 @@ mod tests {
     }
 
     #[test]
-    fn tag_rejects_noncanonical_values() {
+    fn tag_rejects_invalid_values() {
         for raw in ["SQLite", "csharp-export", " sqlite", "_sqlite", "c#"] {
             assert!(Tag::try_from(raw).is_err(), "input: {raw:?}");
         }

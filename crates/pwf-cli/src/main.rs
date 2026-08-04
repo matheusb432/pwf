@@ -65,12 +65,14 @@ async fn open_database() -> Result<sqlx::SqlitePool, String> {
                 path.display()
             )
         })?;
-    if let Err(error) = pwf_infra::database::check_database_ready(&pool).await {
-        panic!(
-            "project database {} failed its migration readiness check: {error:#}",
-            path.display()
-        );
-    }
+    pwf_infra::database::check_database_ready(&pool)
+        .await
+        .map_err(|error| {
+            format!(
+                "project database {} failed its migration readiness check: {error:#}",
+                path.display()
+            )
+        })?;
     Ok(pool)
 }
 

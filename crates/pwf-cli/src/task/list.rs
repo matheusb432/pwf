@@ -7,6 +7,7 @@ use pwf_application::{
     },
 };
 use pwf_infra::obsidian::ObsidianStore;
+use pwf_models::project::ProjectSelector;
 
 use super::{
     render::render_list,
@@ -18,7 +19,7 @@ use crate::console::Console;
 pub struct Arguments {
     /// Limit to one project.
     #[arg(long)]
-    pub(crate) project: Option<String>,
+    pub(crate) project: Option<ProjectSelector>,
     /// Long form with per-task metadata.
     #[arg(long)]
     pub(crate) long: bool,
@@ -63,7 +64,7 @@ pub(super) async fn run(
 ) -> Result<String, TaskError> {
     let result = list_tasks::execute(
         &ListTasks {
-            project_identifier: arguments.project.clone(),
+            project_selector: arguments.project.clone(),
             section: arguments.section.map(|section| match section {
                 SectionChoice::Future => ListSection::Future,
                 SectionChoice::Human => ListSection::Human,
@@ -99,8 +100,8 @@ pub(super) async fn run(
 
 fn map_project_resolution_error(error: ResolveProjectError) -> TaskError {
     match error {
-        ResolveProjectError::Unknown { identifier, known } => {
-            TaskError::UnknownManagedProject { identifier, known }
+        ResolveProjectError::Unknown { selector, known } => {
+            TaskError::UnknownManagedProject { selector, known }
         }
         ResolveProjectError::Unexpected { .. } => TaskError::ApplicationRead(error.to_string()),
     }

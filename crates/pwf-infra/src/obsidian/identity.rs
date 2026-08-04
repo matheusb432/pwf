@@ -58,7 +58,7 @@ pub fn inspect_project_task_notes(
     for pair in tasks.windows(2) {
         if pair[0].id == pair[1].id {
             return Err(ObsidianStoreError::DuplicateTaskId {
-                id: pair[0].id.as_ref().to_string(),
+                id: pair[0].id.clone(),
                 paths: vec![pair[0].path.clone(), pair[1].path.clone()],
             });
         }
@@ -135,10 +135,10 @@ pub(super) fn validate_project_index_identity(
     }
     Err(ObsidianStoreError::ProjectIndexIdentityMismatch {
         path: path.to_path_buf(),
-        actual_id: project_index_frontmatter_id(actual),
-        actual_title: actual.title().as_ref().to_string(),
-        expected_id: project_index_frontmatter_id(expected),
-        expected_title: expected.title().as_ref().to_string(),
+        actual_id: actual.id().clone(),
+        actual_title: actual.title().clone(),
+        expected_id: expected.id().clone(),
+        expected_title: expected.title().clone(),
     })
 }
 

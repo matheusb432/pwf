@@ -62,12 +62,12 @@ pub(super) async fn run(
 fn map_complete_error(error: CompleteTaskError) -> TaskError {
     match error {
         CompleteTaskError::TaskNotFound { id } => TaskError::TaskNotFound { id },
-        CompleteTaskError::UnknownPrefix {
-            task_identifier,
-            prefix,
-        } => TaskError::Complete(CompleteTaskError::UnknownPrefix {
-            task_identifier,
-            prefix,
+        CompleteTaskError::UnknownProjectId {
+            task_id,
+            project_id,
+        } => TaskError::Complete(CompleteTaskError::UnknownProjectId {
+            task_id,
+            project_id,
         }),
         CompleteTaskError::EmptyReport => TaskError::EmptyReport,
         CompleteTaskError::WriteStore(source) => {

@@ -1,10 +1,10 @@
 use assert_cmd::prelude::OutputAssertExt as _;
 
-use crate::shared::{ManagedProject, task_json};
+use crate::shared::{ManagedProject, project_id, task_id, task_json};
 
 #[test]
 fn note_lifecycle_does_not_change_tasks() {
-    let fixture = ManagedProject::new("PWF", "pwf");
+    let fixture = ManagedProject::new(project_id("PWF"), "pwf");
     fixture
         .database
         .command()
@@ -19,7 +19,7 @@ fn note_lifecycle_does_not_change_tasks() {
         ])
         .assert()
         .success();
-    let task_before = task_json(&fixture.database, "PWF-0001");
+    let task_before = task_json(&fixture.database, &task_id("PWF-0001"));
 
     fixture
         .database
@@ -121,12 +121,15 @@ fn note_lifecycle_does_not_change_tasks() {
             .unwrap()
             .contains("CLI boundaries expose owned semantics")
     );
-    assert_eq!(task_json(&fixture.database, "PWF-0001"), task_before);
+    assert_eq!(
+        task_json(&fixture.database, &task_id("PWF-0001")),
+        task_before
+    );
 }
 
 #[test]
 fn note_add_positional_shorthand_splits_once_and_preserves_slashes_in_content() {
-    let fixture = ManagedProject::new("PWF", "pwf");
+    let fixture = ManagedProject::new(project_id("PWF"), "pwf");
 
     fixture
         .database
@@ -159,7 +162,7 @@ fn note_add_positional_shorthand_splits_once_and_preserves_slashes_in_content() 
 
 #[test]
 fn note_add_help_exposes_only_title_and_content_inputs() {
-    let fixture = ManagedProject::new("PWF", "pwf");
+    let fixture = ManagedProject::new(project_id("PWF"), "pwf");
 
     let output = fixture
         .database
@@ -178,7 +181,7 @@ fn note_add_help_exposes_only_title_and_content_inputs() {
 
 #[test]
 fn note_add_rejects_incomplete_or_mixed_input_modes() {
-    let fixture = ManagedProject::new("PWF", "pwf");
+    let fixture = ManagedProject::new(project_id("PWF"), "pwf");
 
     let output = fixture
         .database

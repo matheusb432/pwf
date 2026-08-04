@@ -150,7 +150,7 @@ fn render_list_task(
     } else {
         None
     };
-    let summary = render_task_summary(&task.id, &task.session, status, on);
+    let summary = render_task_summary(task.id.as_ref(), &task.session, status, on);
     let formatted = if last && !long {
         summary
     } else {
@@ -172,12 +172,7 @@ fn render_list_task(
             out.push_str("  launch: NEEDS PROMPT\n");
         }
     }
-    match &task.repo {
-        Some(r) if !r.is_empty() => {
-            let _ = writeln!(out, "  repo: {r}");
-        }
-        _ => out.push_str("  repo: (not configured)\n"),
-    }
+    let _ = writeln!(out, "  project_path: {}", task.project_path.as_ref());
     let _ = writeln!(out, "  note: {}:{}", task.note, task.line);
     let prompt = task.prompt.replace("\r\n", " / ").replace('\n', " / ");
     let _ = writeln!(out, "  prompt: {prompt}");
@@ -211,18 +206,21 @@ fn render_list_task(
 #[cfg(test)]
 mod tests {
     use pwf_application::task::{PrerequisiteStatus, StatusFilter};
-    use pwf_models::task::{TaskId, TaskStatus};
+    use pwf_models::{
+        project::ProjectSourceValue,
+        task::{TaskId, TaskStatus},
+    };
 
     use super::*;
 
     fn sample_task() -> TaskView {
         TaskView {
-            id: "PWF-0064".to_string(),
+            id: TaskId::try_new("PWF-0064").unwrap(),
             project: "pwf".to_string(),
             status: TaskStatus::Active,
             session: "make list commands formatting less redundant".to_string(),
             prompt: String::new(),
-            repo: None,
+            project_path: ProjectSourceValue::try_new("/project").unwrap(),
             note: "pwf.md".to_string(),
             task_file: None,
             line: 1,
@@ -231,7 +229,7 @@ mod tests {
             needs_prompt: false,
             issues: Vec::new(),
             section: None,
-            prereq: None,
+            prerequisites: None,
             prerequisite_statuses: Vec::new(),
             effort: None,
             tags: None,
@@ -299,6 +297,7 @@ mod tests {
 
         assert!(output.contains("  status: active\n"), "{output}");
         assert!(output.contains("  launch: READY\n"), "{output}");
+        assert!(output.contains("  project_path: /project\n"), "{output}");
     }
 
     #[test]
@@ -307,7 +306,7 @@ mod tests {
         task.status = TaskStatus::Done;
         task.launchable = false;
         task.needs_prompt = true;
-        task.issues = vec!["missing repository".to_string()];
+        task.issues = vec!["missing project path".to_string()];
 
         let output =
             render_task_for_filter(&task, StatusFilter::Exact(TaskStatus::Done), true, false);

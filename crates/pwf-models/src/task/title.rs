@@ -6,25 +6,20 @@ const YAML_UNSAFE_LEADING_CHARACTERS: [char; 16] = [
     ',', '[', ']', '{', '}', '#', '&', '*', '!', '|', '>', '\'', '"', '%', '@', '`',
 ];
 
-/// Stores a canonical task title.
+/// Stores a task title.
 #[nutype(
-    sanitize(with = canonicalize_task_title),
+    sanitize(with = normalize_task_title),
     validate(len_char_max = TASK_TITLE_CHARACTER_LIMIT),
-    derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, AsRef, Display),
+    derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, AsRef, Display),
+    default = DEFAULT_TASK_TITLE,
 )]
 pub struct TaskTitle(String);
-
-impl Default for TaskTitle {
-    fn default() -> Self {
-        Self::try_new(DEFAULT_TASK_TITLE).expect("default task title is valid")
-    }
-}
 
 #[expect(
     clippy::needless_pass_by_value,
     reason = "nutype custom sanitizers receive the inner String by value"
 )]
-fn canonicalize_task_title(title: String) -> String {
+fn normalize_task_title(title: String) -> String {
     let lowercase = title.to_lowercase();
     let safe = yaml_plain_scalar(&lowercase);
     if safe.is_empty() {
@@ -85,7 +80,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn task_title_canonicalizes_authored_values() {
+    fn task_title_normalizes_authored_values() {
         for (raw, expected) in [
             ("  Fix Parser: Handle Colons  ", "fix parser; handle colons"),
             ("HUMAN: Do AZ-104", "human; do az-104"),

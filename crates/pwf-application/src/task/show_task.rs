@@ -1,18 +1,15 @@
 use pwf_models::task::{EffortTier, ProjectName, Tags, TaskId, TaskStatus, Timestamp};
 
-use super::identifier;
 use crate::{
     ports::{
         project_note::ProjectNoteStore,
-        task_record::{Materialization, RecordId, TaskRecord, TaskStore},
+        task_record::{Materialization, TaskRecord, TaskStore},
     },
     project::{
-        ProjectStatusFilter,
         get_active_project::{self, GetActiveProject},
         get_project::GetProjectError,
-        list_projects::{self, ListProjects},
     },
-    task::logic::{prerequisite, resolve::resolve_record_in_projects, tag_policy},
+    task::logic::{prerequisite, resolve::resolve_record, tag_policy},
 };
 
 /// Selects the representation returned by [`execute`].
@@ -29,8 +26,8 @@ pub enum ShowOutput {
 /// Contains one task's semantic data.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskData {
-    /// Canonical task id, or `<project>:<ordinal>` for an inline task.
-    pub id: String,
+    /// Task ID.
+    pub id: TaskId,
     /// Managed project containing the task.
     pub project: ProjectName,
     /// Persisted title.
@@ -43,11 +40,11 @@ pub struct TaskData {
     pub completed: Option<Timestamp>,
     /// Persisted commit provenance.
     pub commits: Option<String>,
-    /// Canonical task labels.
+    /// Task labels.
     pub tags: Option<Tags>,
     /// Validated effort tier.
     pub effort: Option<EffortTier>,
-    /// Canonical prerequisite identifiers when the relationship is present.
+    /// Prerequisite IDs when the relationship is present.
     pub prerequisites: Option<Vec<TaskId>>,
     /// Index section containing the task.
     pub section: Option<String>,
@@ -65,8 +62,8 @@ pub enum ShowTaskOk {
 /// Requests one task in a selected output representation.
 #[derive(Debug, Clone)]
 pub struct ShowTask {
-    /// Identifier spelling preserved for unmatched-id diagnostics.
-    pub id: String,
+    /// Task ID.
+    pub id: TaskId,
     /// Representation returned by [`execute`].
     pub output: ShowOutput,
 }
@@ -75,7 +72,7 @@ pub struct ShowTask {
 #[non_exhaustive]
 pub enum ShowTaskError {
     #[error("Task not found: {id}")]
-    TaskNotFound { id: String },
+    TaskNotFound { id: TaskId },
     #[error("{0}")]
     ReadStore(#[source] Box<dyn std::error::Error + Send + Sync>),
     #[error("{0}")]
@@ -100,33 +97,23 @@ pub async fn execute(
     store: &(impl TaskStore + ProjectNoteStore),
     pool: &sqlx::SqlitePool,
 ) -> Result<ShowTaskOk, ShowTaskError> {
-    let projects = match identifier::parse(&query.id) {
-        Some(task_id) => match get_active_project::execute(
-            GetActiveProject {
-                id: task_id.project_id(),
-            },
-            pool,
-        )
-        .await
-        {
-            Ok(project) => vec![project],
-            Err(GetProjectError::ProjectNotFound { .. }) => {
-                return Err(ShowTaskError::TaskNotFound {
-                    id: query.id.clone(),
-                });
-            }
-            Err(error) => return Err(ShowTaskError::QueryProject(Box::new(error))),
+    let project = match get_active_project::execute(
+        GetActiveProject {
+            id: query.id.project_id(),
         },
-        None => list_projects::execute(
-            ListProjects {
-                status: ProjectStatusFilter::ACTIVE,
-            },
-            pool,
-        )
-        .await
-        .map_err(|error| ShowTaskError::QueryProject(Box::new(error)))?,
+        pool,
+    )
+    .await
+    {
+        Ok(project) => project,
+        Err(GetProjectError::ProjectNotFound { .. }) => {
+            return Err(ShowTaskError::TaskNotFound {
+                id: query.id.clone(),
+            });
+        }
+        Err(error) => return Err(ShowTaskError::QueryProject(Box::new(error))),
     };
-    let (project, record) = resolve_record_in_projects(store, &projects, &query.id)?;
+    let record = resolve_record(store, &project, &query.id)?;
     match query.output {
         ShowOutput::Path => Ok(ShowTaskOk::Path(record.locator)),
         ShowOutput::Markdown
@@ -158,13 +145,8 @@ fn task_data(project: ProjectName, record: TaskRecord) -> Result<TaskData, ShowT
         .map(prerequisite::parse_frontmatter)
         .transpose()
         .map_err(|error| invalid_task_data("prerequisites", error))?;
-    let id = match record.id {
-        RecordId::Task(id) => id.to_string(),
-        RecordId::Inline(ordinal) => format!("{project}:{ordinal}"),
-    };
-
     Ok(TaskData {
-        id,
+        id: record.id,
         project,
         title: record.title,
         status: record.status,
@@ -206,7 +188,7 @@ fn invalid_task_data(field: &'static str, error: impl std::fmt::Display) -> Show
 
 #[cfg(test)]
 mod tests {
-    use super::{ShowOutput, ShowTask, ShowTaskOk};
+    use super::{ShowOutput, ShowTask, ShowTaskOk, TaskId};
     use crate::{
         task::logic::resolve::testing::{PWF_0001_SOURCE, staged, staged_ghost},
         testing::{ProjectNoteFailure, insert_project},
@@ -214,10 +196,18 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn show_streams_source_verbatim(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "PWF", "pwf", "/repo/pwf", "/tasks/pwf", false).await;
+        insert_project(
+            &pool,
+            "PWF".parse().unwrap(),
+            "pwf",
+            "/projects/pwf",
+            "/tasks/pwf",
+            false,
+        )
+        .await;
         let (store, _) = staged();
         let query = ShowTask {
-            id: "PWF-0001".to_string(),
+            id: TaskId::try_new("PWF-0001").unwrap(),
             output: ShowOutput::Markdown,
         };
 
@@ -230,10 +220,18 @@ mod tests {
     async fn show_path_returns_missing_note_locator_without_reading_markdown(
         pool: sqlx::SqlitePool,
     ) {
-        insert_project(&pool, "PWF", "pwf", "/repo/pwf", "/tasks/pwf", false).await;
+        insert_project(
+            &pool,
+            "PWF".parse().unwrap(),
+            "pwf",
+            "/projects/pwf",
+            "/tasks/pwf",
+            false,
+        )
+        .await;
         let (store, _) = staged_ghost();
         let query = ShowTask {
-            id: "PWF-0002".to_string(),
+            id: TaskId::try_new("PWF-0002").unwrap(),
             output: ShowOutput::Path,
         };
 
@@ -247,11 +245,19 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn show_markdown_preserves_missing_note_source_error(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "PWF", "pwf", "/repo/pwf", "/tasks/pwf", false).await;
+        insert_project(
+            &pool,
+            "PWF".parse().unwrap(),
+            "pwf",
+            "/projects/pwf",
+            "/tasks/pwf",
+            false,
+        )
+        .await;
         let (store, _) = staged_ghost();
         let store = store.with_failure(ProjectNoteFailure::Read);
         let query = ShowTask {
-            id: "PWF-0002".to_string(),
+            id: TaskId::try_new("PWF-0002").unwrap(),
             output: ShowOutput::Markdown,
         };
 

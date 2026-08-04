@@ -10,7 +10,6 @@ path = "src/lib.rs"
 
 [dependencies]
 askama = { workspace = true }
-bon = { workspace = true }
 prompt-lanes = { workspace = true }
 pwf-models = { workspace = true }
 cqrsy = { workspace = true }

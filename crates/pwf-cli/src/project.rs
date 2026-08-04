@@ -62,5 +62,5 @@ fn project_home(home: Option<PathBuf>) -> Result<PathBuf, String> {
 
 fn parse_project_id(raw: &str) -> Result<ProjectId, String> {
     ProjectId::try_new(raw)
-        .map_err(|_| "project id must contain two to four ASCII letters".to_string())
+        .map_err(|_| "project id must contain exactly three ASCII letters".to_string())
 }

@@ -1,8 +1,12 @@
 //! Plans a task session before host validation or dispatch.
 
-use std::{error::Error, path::PathBuf};
+use std::{
+    error::Error,
+    path::{Path, PathBuf},
+};
 
 use pwf_models::{
+    project::{ProjectId, ProjectSourceValue},
     session::{AgentModel, PushedPrompt},
     task::TaskId,
 };
@@ -15,30 +19,26 @@ use super::{
 use crate::{
     ports::{
         agent::AgentClient,
+        project_directory::ProjectDirectoryClient,
         project_note::ProjectNoteStore,
-        repository_directory::RepositoryDirectoryClient,
         session::{AgentCommand, SessionClient, SessionStart, SessionWindow},
-        task_record::TaskStore,
+        task_record::{Materialization, TaskRecord, TaskStore},
     },
     project::resolve_runtime_path::{self, ResolveRuntimePath},
-    task::{
-        find_active_task::{self, FindActiveTask, FindActiveTaskError},
-        show_task::ShowTaskError,
-    },
+    task::find_active_task::{self, FindActiveTask, FindActiveTaskError},
 };
 
 /// Requests one provider-neutral session plan.
-#[derive(Debug, Clone, PartialEq, Eq, bon::Builder)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlanSession {
-    #[builder(start_fn, into)]
-    task_id: TaskId,
-    intent: PlanSessionIntent,
-    pushed_prompt: Option<PushedPrompt>,
-    mode: DispatchMode,
-    directives: LaunchDirectives,
-    agent: Agent,
-    model_override: AgentModel,
-    effort: SessionEffort,
+    pub task_id: TaskId,
+    pub intent: PlanSessionIntent,
+    pub pushed_prompt: Option<PushedPrompt>,
+    pub mode: DispatchMode,
+    pub directives: LaunchDirectives,
+    pub agent: Agent,
+    pub model_override: AgentModel,
+    pub effort: SessionEffort,
 }
 
 /// Selects whether a plan is prepared for dispatch or rendered without effects.
@@ -107,12 +107,12 @@ impl PreparedSessionDispatch {
 pub enum PlanSessionError {
     #[error(transparent)]
     Find(#[from] FindActiveTaskError),
-    #[error(transparent)]
-    Show(#[from] ShowTaskError),
+    #[error("{0}")]
+    ReadTaskMarkdown(#[source] Box<dyn Error + Send + Sync>),
     #[error("Task '{id}' is not launchable: {}", issues.join("; "))]
-    NotLaunchable { id: String, issues: Vec<String> },
-    #[error("Repo directory for project '{project}' does not exist: {path}")]
-    RepositoryMissing { project: String, path: String },
+    NotLaunchable { id: TaskId, issues: Vec<String> },
+    #[error("Project path for '{project_id}' does not exist: {path}")]
+    ProjectPathMissing { project_id: ProjectId, path: String },
     #[error("Session multiplexer is unavailable; cannot dispatch a pwf session.")]
     MultiplexerNotFound,
     #[error("Checking multiplexer session '{session}' failed: {message}")]
@@ -124,8 +124,13 @@ pub enum PlanSessionError {
     },
     #[error("{0}")]
     ModelTier(#[source] Box<dyn Error + Send + Sync>),
-    #[error("Invalid repository path for project '{project}': {reason}")]
-    InvalidRepositoryPath { project: String, reason: String },
+    #[error("Failed to render session title: {0}")]
+    RenderThreadTitle(#[source] askama::Error),
+    #[error("Invalid path for project '{project_id}': {reason}")]
+    InvalidProjectPath {
+        project_id: ProjectId,
+        reason: String,
+    },
 }
 
 /// Plans one active task without performing host I/O or persistence.
@@ -134,73 +139,60 @@ pub enum PlanSessionError {
 ///
 /// Returns [`PlanSessionError`] for lookup, launch validation, or model selection failures.
 #[cqrsy::command]
-#[expect(
-    clippy::too_many_lines,
-    reason = "session planning validates one cohesive launch"
-)]
 pub async fn execute(
     command: &PlanSession,
     store: &(impl TaskStore + ProjectNoteStore),
     pool: &sqlx::SqlitePool,
     home: &PathBuf,
     agent_client: &impl AgentClient,
-    repository: &impl RepositoryDirectoryClient,
+    project_directory: &impl ProjectDirectoryClient,
     session_client: &impl SessionClient,
 ) -> Result<PlanSessionOk, PlanSessionError> {
     let probe = agent_client.probe(command.agent);
-    let mut task = find_active_task::execute(
+    let found = find_active_task::execute(
         &FindActiveTask {
-            id: command.task_id.to_string(),
+            id: command.task_id.clone(),
         },
         store,
         pool,
     )
     .await?;
+    let task = found.task;
     if !task.launchable {
         return Err(PlanSessionError::NotLaunchable {
-            id: task.id,
+            id: command.task_id.clone(),
             issues: task.issues,
         });
     }
-    let source_path = task
-        .repo
-        .clone()
-        .ok_or_else(|| PlanSessionError::InvalidRepositoryPath {
-            project: task.project.clone(),
-            reason: "project has no directory source".to_string(),
-        })?;
-    let resolved_repository = resolve_runtime_path::execute(&ResolveRuntimePath {
-        path: source_path,
-        home: home.clone(),
-    })
-    .map_err(|error| PlanSessionError::InvalidRepositoryPath {
-        project: task.project.clone(),
-        reason: error.to_string(),
-    })?;
-    task.repo = Some(resolved_repository.path().to_string_lossy().into_owned());
+    let project_id = found.project.id.clone();
+    let project_path = resolve_project_path(found.project.source.value(), &project_id, home)?;
+    let task_content = load_task_content(&found.record, store)?;
 
     let model: AgentModel = match command.model_override.clone().into_inner() {
         Some(model) => Some(model),
-        None => logic::resolve_model(command.agent, &task.id, task.effort.as_deref(), |effort| {
-            agent_client.model_tier(effort)
-        })
+        None => logic::resolve_model(
+            command.agent,
+            &command.task_id,
+            task.effort.as_deref(),
+            |effort| agent_client.model_tier(effort),
+        )
         .map_err(|error| PlanSessionError::ModelTier(Box::new(error)))?,
     }
     .into();
     let target = logic::dispatch_target(&command.task_id);
-    let task_content = logic::load_task_content(command.task_id.as_ref(), store, pool).await?;
     let plan = SessionPlan {
         launch: AgentLaunch {
             agent: command.agent,
-            task_id: command.task_id.to_string(),
+            task_id: command.task_id.clone(),
             title: logic::thread_title(
                 &task,
                 &command.task_id,
                 command.directives,
                 command.agent,
                 command.effort,
-            ),
-            repository: task.repo.clone().unwrap_or_default(),
+            )
+            .map_err(PlanSessionError::RenderThreadTitle)?,
+            project_path: project_path.clone(),
             prompt: logic::launch_prompt(
                 &task_content,
                 &command.task_id,
@@ -213,37 +205,10 @@ pub async fn execute(
         mode: command.mode,
         target: target.clone(),
     };
-    if !repository.is_directory(&plan.launch.repository) {
-        return Err(PlanSessionError::RepositoryMissing {
-            project: task.project.clone(),
-            path: plan.launch.repository.clone(),
-        });
-    }
-    if matches!(command.intent, PlanSessionIntent::Dispatch)
-        && command.mode == DispatchMode::Multiplexer
-    {
-        if !session_client.available() {
-            return Err(PlanSessionError::MultiplexerNotFound);
-        }
-        let session_exists = session_client
-            .session_exists(&plan.target.session)
-            .map_err(|message| PlanSessionError::MultiplexerSessionCheck {
-                session: plan.target.session.clone(),
-                message,
-            })?;
-        if !session_exists {
-            let start = SessionStart::builder()
-                .session_name(&plan.target.session)
-                .working_directory(&plan.launch.repository)
-                .build();
-            return Err(PlanSessionError::MultiplexerSessionMissing {
-                session: plan.target.session.clone(),
-                start_command_argv: session_client.preview_start(&start),
-            });
-        }
-    }
+    validate_project_path(project_directory, &project_id, &plan.launch.project_path)?;
+    validate_multiplexer(command, &plan, session_client)?;
     let confirmation = DispatchConfirmation {
-        task_id: task.id,
+        task_id: command.task_id.clone(),
         title: task.session,
         created: task.created,
         mode: command.mode,
@@ -266,12 +231,13 @@ pub async fn execute(
             let argv = match command.mode {
                 DispatchMode::Inline => provider_argv,
                 DispatchMode::Multiplexer => {
-                    let window = SessionWindow::builder()
-                        .session_name(&plan.target.session)
-                        .working_directory(&plan.launch.repository)
-                        .window_name(&plan.target.window)
-                        .agent_command(AgentCommand::new(&provider_argv))
-                        .build();
+                    let session_name = plan.target.session_name();
+                    let window = SessionWindow::new(
+                        &session_name,
+                        &plan.launch.project_path,
+                        plan.target.task_id.as_ref(),
+                        AgentCommand::new(&provider_argv),
+                    );
                     session_client.preview_window(&window)
                 }
             };
@@ -280,35 +246,75 @@ pub async fn execute(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use pwf_models::task::TaskId;
-
-    use super::{
-        Agent, AgentModel, DispatchMode, LaunchDirectives, PlanSession, PlanSessionIntent,
-        SessionEffort,
-    };
-
-    struct SessionTaskId(TaskId);
-
-    impl From<SessionTaskId> for TaskId {
-        fn from(value: SessionTaskId) -> Self {
-            value.0
-        }
+fn load_task_content(
+    record: &TaskRecord,
+    store: &impl ProjectNoteStore,
+) -> Result<String, PlanSessionError> {
+    if matches!(record.materialization, Materialization::MissingNote { .. }) {
+        return store
+            .read_note_markdown(&record.locator)
+            .map_err(|error| PlanSessionError::ReadTaskMarkdown(Box::new(error)));
     }
+    Ok(record.source.clone())
+}
 
-    #[test]
-    fn request_builder_maps_task_id_inputs() {
-        let task_id = TaskId::try_new("PWF-0154").unwrap();
-        let request = PlanSession::builder(SessionTaskId(task_id.clone()))
-            .intent(PlanSessionIntent::DryRun)
-            .mode(DispatchMode::Inline)
-            .directives(LaunchDirectives::default())
-            .agent(Agent::Codex)
-            .model_override(AgentModel::default())
-            .effort(SessionEffort::High)
-            .build();
+fn resolve_project_path(
+    source_value: &ProjectSourceValue,
+    project_id: &ProjectId,
+    home: &Path,
+) -> Result<String, PlanSessionError> {
+    let resolved = resolve_runtime_path::execute(&ResolveRuntimePath {
+        path: source_value.as_ref().to_string(),
+        home: home.to_path_buf(),
+    })
+    .map_err(|error| PlanSessionError::InvalidProjectPath {
+        project_id: project_id.clone(),
+        reason: error.to_string(),
+    })?;
+    Ok(resolved.path().to_string_lossy().into_owned())
+}
 
-        assert_eq!(request.task_id, task_id);
+fn validate_project_path(
+    project_directory: &impl ProjectDirectoryClient,
+    project_id: &ProjectId,
+    project_path: &str,
+) -> Result<(), PlanSessionError> {
+    if project_directory.is_directory(project_path) {
+        return Ok(());
     }
+    Err(PlanSessionError::ProjectPathMissing {
+        project_id: project_id.clone(),
+        path: project_path.to_string(),
+    })
+}
+
+fn validate_multiplexer(
+    command: &PlanSession,
+    plan: &SessionPlan,
+    session_client: &impl SessionClient,
+) -> Result<(), PlanSessionError> {
+    if !matches!(command.intent, PlanSessionIntent::Dispatch)
+        || command.mode != DispatchMode::Multiplexer
+    {
+        return Ok(());
+    }
+    if !session_client.available() {
+        return Err(PlanSessionError::MultiplexerNotFound);
+    }
+    let session_name = plan.target.session_name();
+    let session_exists = session_client
+        .session_exists(&session_name)
+        .map_err(|message| PlanSessionError::MultiplexerSessionCheck {
+            session: session_name.clone(),
+            message,
+        })?;
+    if session_exists {
+        return Ok(());
+    }
+    let start = SessionStart::new(&session_name, &plan.launch.project_path);
+    let start_command_argv = session_client.preview_start(&start);
+    Err(PlanSessionError::MultiplexerSessionMissing {
+        session: session_name,
+        start_command_argv,
+    })
 }

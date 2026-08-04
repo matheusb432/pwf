@@ -1,40 +1,17 @@
-use std::{fmt::Write, sync::LazyLock};
+use std::{fmt::Write, ops::Range};
 
-use pwf_models::task::{EffortTier, Tags, TaskStatus, TaskTitle};
-use regex::Regex;
-
-static STATUS_LINE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^status:.*$").unwrap());
-static COMPLETED_LINE_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?m)^completed:.*$").unwrap());
-static COMPLETED_LINE_NL_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?m)^completed:.*\n?").unwrap());
-static CREATED_LINE_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?m)^created:.*$").unwrap());
-static PREREQ_LINE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^prereq:.*$").unwrap());
-static PREREQ_LINE_NL_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?m)^prereq:.*\n?").unwrap());
-static COMMITS_LINE_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?m)^commits:.*$").unwrap());
-static COMMITS_LINE_NL_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?m)^commits:.*\n?").unwrap());
-static EFFORT_LINE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^effort:.*$").unwrap());
-static EFFORT_LINE_NL_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?m)^effort:.*\n?").unwrap());
-static TAGS_LINE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^tags:.*$").unwrap());
-static TAGS_LINE_NL_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^tags:.*\n?").unwrap());
-static FRONTMATTER_FENCE_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?m)^---[ \t]*\r?$").unwrap());
+use pwf_models::task::{EffortTier, Prerequisites, Tags, TaskId, TaskStatus, TaskTitle};
 
 const UTF8_BOM: char = '\u{feff}';
 
 #[derive(Clone, Copy)]
 pub(super) struct NewTaskFields<'a> {
-    pub id: &'a str,
+    pub id: &'a TaskId,
     pub title: &'a TaskTitle,
     pub project: &'a str,
     pub prompt: &'a str,
     pub created: &'a str,
-    pub prereq: Option<&'a str>,
+    pub prereq: Option<&'a Prerequisites>,
     pub effort: Option<EffortTier>,
     pub tags: Option<&'a Tags>,
 }
@@ -64,59 +41,55 @@ pub(super) fn new_task_content(fields: NewTaskFields<'_>) -> String {
 
 pub(super) fn set_status_text(content: &str, status: TaskStatus, completed: &str) -> String {
     let status = status.as_str();
-    let content = STATUS_LINE_RE
-        .replace(content, format!("status: {status}").as_str())
-        .into_owned();
-    if COMPLETED_LINE_RE.is_match(&content) {
-        return COMPLETED_LINE_RE
-            .replace(&content, format!("completed: {completed}").as_str())
-            .into_owned();
-    }
-    let after = Regex::new(&format!(r"(?m)^(status: {})$", regex::escape(status))).unwrap();
-    after
-        .replace(
+    let Some(status_range) = find_field_line(content, "status:") else {
+        return content.to_string();
+    };
+    let status_line = format!("status: {status}");
+    let content = replace_range(content, status_range.clone(), &status_line);
+    if let Some(completed_range) = find_field_line(&content, "completed:") {
+        return replace_range(
             &content,
-            format!("status: {status}\ncompleted: {completed}").as_str(),
-        )
-        .into_owned()
+            completed_range,
+            &format!("completed: {completed}"),
+        );
+    }
+    let status_end = status_range.start + status_line.len();
+    format!(
+        "{}\ncompleted: {completed}{}",
+        &content[..status_end],
+        &content[status_end..]
+    )
 }
 
 pub(super) fn reopen_status_text(content: &str) -> String {
-    let content = STATUS_LINE_RE
-        .replace(content, "status: active")
-        .into_owned();
-    COMPLETED_LINE_NL_RE.replace(&content, "").into_owned()
+    let content = replace_field_line(content, "status:", "status: active");
+    remove_field_line(&content, "completed:")
 }
 
-fn set_frontmatter_line(
-    content: &str,
-    line_re: &Regex,
-    line_nl_re: &Regex,
-    line: Option<String>,
-) -> String {
+fn set_frontmatter_line(content: &str, field: &str, line: Option<String>) -> String {
     let Some(bounds) = opening_frontmatter_bounds(content) else {
         return content.to_string();
     };
     let frontmatter = &content[bounds.start..bounds.end];
 
     let Some(line) = line else {
-        let updated = line_nl_re.replace(frontmatter, "");
+        let updated = remove_field_line(frontmatter, field);
         return replace_frontmatter_slice(content, bounds.start, bounds.end, &updated);
     };
-    if let Some(existing) = line_re.find(frontmatter) {
-        let carriage_return = if existing.as_str().ends_with('\r') {
+    if let Some(existing) = find_field_line(frontmatter, field) {
+        let carriage_return = if frontmatter[existing.clone()].ends_with('\r') {
             "\r"
         } else {
             ""
         };
         let replacement = format!("{line}{carriage_return}");
-        let updated = line_re.replace(frontmatter, replacement.as_str());
+        let updated = replace_range(frontmatter, existing, &replacement);
         return replace_frontmatter_slice(content, bounds.start, bounds.end, &updated);
     }
-    for re in [&*COMPLETED_LINE_RE, &*CREATED_LINE_RE] {
-        if let Some(m) = re.find(frontmatter) {
-            let has_carriage_return = m.as_str().ends_with('\r');
-            let line_end = bounds.start + m.end() - usize::from(has_carriage_return);
+    for field in ["completed:", "created:"] {
+        if let Some(existing) = find_field_line(frontmatter, field) {
+            let has_carriage_return = frontmatter[existing.clone()].ends_with('\r');
+            let line_end = bounds.start + existing.end - usize::from(has_carriage_return);
             let newline = if has_carriage_return {
                 "\r\n"
             } else {
@@ -147,22 +120,82 @@ struct FrontmatterBounds {
 fn opening_frontmatter_bounds(content: &str) -> Option<FrontmatterBounds> {
     let without_bom = content.strip_prefix(UTF8_BOM).unwrap_or(content);
     let bom_len = content.len() - without_bom.len();
-    let mut fences = FRONTMATTER_FENCE_RE.find_iter(without_bom);
-    let open = fences.next()?;
-    let close = fences.next()?;
-    if open.start() != 0 {
+    let open = find_fence(without_bom, 0)?;
+    let close = find_fence(without_bom, open.end.saturating_add(1))?;
+    if open.start != 0 {
         return None;
     }
-    let newline = if open.as_str().ends_with('\r') {
+    let newline = if without_bom[open.clone()].ends_with('\r') {
         "\r\n"
     } else {
         "\n"
     };
     Some(FrontmatterBounds {
-        start: bom_len + open.end(),
-        end: bom_len + close.start(),
+        start: bom_len + open.end,
+        end: bom_len + close.start,
         newline,
     })
+}
+
+fn find_field_line(content: &str, field: &str) -> Option<Range<usize>> {
+    find_line(content, 0, |line| line.starts_with(field))
+}
+
+fn find_fence(content: &str, start: usize) -> Option<Range<usize>> {
+    find_line(content, start, |line| {
+        let line = line.strip_suffix('\r').unwrap_or(line);
+        line.strip_prefix("---").is_some_and(|suffix| {
+            suffix
+                .chars()
+                .all(|character| matches!(character, ' ' | '\t'))
+        })
+    })
+}
+
+fn find_line(
+    content: &str,
+    mut start: usize,
+    predicate: impl Fn(&str) -> bool,
+) -> Option<Range<usize>> {
+    while start < content.len() {
+        let end = content[start..]
+            .find('\n')
+            .map_or(content.len(), |offset| start + offset);
+        if predicate(&content[start..end]) {
+            return Some(start..end);
+        }
+        if end == content.len() {
+            return None;
+        }
+        start = end + 1;
+    }
+    None
+}
+
+fn replace_field_line(content: &str, field: &str, replacement: &str) -> String {
+    find_field_line(content, field).map_or_else(
+        || content.to_string(),
+        |range| replace_range(content, range, replacement),
+    )
+}
+
+fn remove_field_line(content: &str, field: &str) -> String {
+    let Some(mut range) = find_field_line(content, field) else {
+        return content.to_string();
+    };
+    if content.as_bytes().get(range.end) == Some(&b'\n') {
+        range.end += 1;
+    }
+    replace_range(content, range, "")
+}
+
+fn replace_range(content: &str, range: Range<usize>, replacement: &str) -> String {
+    format!(
+        "{}{}{}",
+        &content[..range.start],
+        replacement,
+        &content[range.end..]
+    )
 }
 
 fn replace_frontmatter_slice(
@@ -179,11 +212,10 @@ fn replace_frontmatter_slice(
     )
 }
 
-pub(super) fn set_prereq_text(content: &str, value: Option<&str>) -> String {
+pub(super) fn set_prereq_text(content: &str, value: Option<&Prerequisites>) -> String {
     set_frontmatter_line(
         content,
-        &PREREQ_LINE_RE,
-        &PREREQ_LINE_NL_RE,
+        "prereq:",
         value.map(|value| format!("prereq: \"{value}\"")),
     )
 }
@@ -191,8 +223,7 @@ pub(super) fn set_prereq_text(content: &str, value: Option<&str>) -> String {
 pub(super) fn set_completed_text(content: &str, value: Option<&str>) -> String {
     set_frontmatter_line(
         content,
-        &COMPLETED_LINE_RE,
-        &COMPLETED_LINE_NL_RE,
+        "completed:",
         value.map(|value| format!("completed: {value}")),
     )
 }
@@ -200,8 +231,7 @@ pub(super) fn set_completed_text(content: &str, value: Option<&str>) -> String {
 pub(super) fn set_commits_text(content: &str, value: Option<&str>) -> String {
     set_frontmatter_line(
         content,
-        &COMMITS_LINE_RE,
-        &COMMITS_LINE_NL_RE,
+        "commits:",
         value.map(|value| format!("commits: \"{value}\"")),
     )
 }
@@ -209,8 +239,7 @@ pub(super) fn set_commits_text(content: &str, value: Option<&str>) -> String {
 pub(super) fn set_effort_text(content: &str, value: Option<EffortTier>) -> String {
     set_frontmatter_line(
         content,
-        &EFFORT_LINE_RE,
-        &EFFORT_LINE_NL_RE,
+        "effort:",
         value.map(|value| format!("effort: {value}")),
     )
 }
@@ -218,8 +247,7 @@ pub(super) fn set_effort_text(content: &str, value: Option<EffortTier>) -> Strin
 pub(super) fn set_tags_text(content: &str, value: Option<&Tags>) -> String {
     set_frontmatter_line(
         content,
-        &TAGS_LINE_RE,
-        &TAGS_LINE_NL_RE,
+        "tags:",
         value.map(|tags| format!("tags: {}", tags_frontmatter_value(tags))),
     )
 }

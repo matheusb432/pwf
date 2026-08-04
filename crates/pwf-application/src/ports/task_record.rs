@@ -1,27 +1,7 @@
 use pwf_models::{
     project::Project,
-    task::{EffortTier, Tags, TaskId, TaskStatus, TaskTitle, Timestamp},
+    task::{EffortTier, Prerequisites, Tags, TaskId, TaskStatus, TaskTitle, Timestamp},
 };
-
-/// A task record's identity within its project.
-///
-/// Canonical tasks carry a [`TaskId`]. Inline prompts use a one-based ordinal; read handlers
-/// combine it with the project as `<project>:<ordinal>`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RecordId {
-    Task(TaskId),
-    Inline(usize),
-}
-
-impl RecordId {
-    #[must_use]
-    pub fn as_task(&self) -> Option<&TaskId> {
-        match self {
-            Self::Task(id) => Some(id),
-            Self::Inline(_) => None,
-        }
-    }
-}
 
 /// Locates a record's open link by index display path and one-based line number.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,14 +18,12 @@ pub enum Materialization {
     MissingNote {
         expected: String,
     },
-    /// An inline prompt stored in the index without a note file.
-    InlineLegacy,
 }
 
 /// Carries one raw task persistence record between application operations and adapters.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskRecord {
-    pub id: RecordId,
+    pub id: TaskId,
     pub title: String,
     pub status: TaskStatus,
     pub created: Option<Timestamp>,
@@ -54,6 +32,7 @@ pub struct TaskRecord {
     /// Preserves raw `tags:` frontmatter for lazy validation by tag-filtered reads.
     pub tags: Option<String>,
     pub effort: Option<String>,
+    /// Preserves raw `prereq:` frontmatter for validation at read boundaries.
     pub prereq: Option<String>,
     pub section: Option<String>,
     /// Preserves the note body below frontmatter verbatim.
@@ -74,7 +53,7 @@ pub struct NewTask {
     pub title: TaskTitle,
     pub created: Timestamp,
     pub section: Option<String>,
-    pub prereq: Option<String>,
+    pub prereq: Option<Prerequisites>,
     pub effort: Option<EffortTier>,
     pub tags: Option<Tags>,
 }
@@ -91,7 +70,7 @@ pub struct TaskPatch {
     pub commits: Option<Option<String>>,
     pub body: Option<String>,
     pub title: Option<TaskTitle>,
-    pub prereq: Option<Option<String>>,
+    pub prereq: Option<Option<Prerequisites>>,
     pub effort: Option<EffortTier>,
     pub tags: Option<Option<Tags>>,
 }

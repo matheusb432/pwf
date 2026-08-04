@@ -1,75 +1,44 @@
 use super::{add_task, show_task};
 pub(in crate::task) mod finding {
-    use pwf_models::project::Project;
+    use pwf_models::{project::Project, task::TaskId};
 
     use crate::{
-        ports::task_record::TaskStore,
-        task::{
-            dto::TaskView,
-            find_active_task::FindActiveTaskError,
-            logic::{enrich, identifier},
-        },
+        ports::task_record::{TaskRecord, TaskStore},
+        task::{dto::TaskView, find_active_task::FindActiveTaskError, logic::enrich},
     };
 
     pub(in crate::task) fn find_active_task_in_projects(
         store: &impl TaskStore,
         projects: &[Project],
-        id: &str,
-    ) -> Result<TaskView, FindActiveTaskError> {
-        let requested = id.to_string();
-        let Some(task_id) = identifier::parse(id) else {
-            return find_inline_active_task(store, projects, &requested);
-        };
+        task_id: &TaskId,
+    ) -> Result<(TaskRecord, TaskView), FindActiveTaskError> {
         let project_id = task_id.project_id();
         let project = projects
             .iter()
             .find(|project| project.id == project_id)
-            .ok_or_else(|| FindActiveTaskError::UnknownPrefix {
-                id: task_id.as_ref().to_string(),
-                prefix: project_id.to_string(),
+            .ok_or_else(|| FindActiveTaskError::UnknownProjectId {
+                task_id: task_id.clone(),
+                project_id,
             })?;
         let records = store
             .list(project)
             .map_err(|error| FindActiveTaskError::ReadStore(Box::new(error)))?;
-        let mut matched: Vec<TaskView> = records
-            .iter()
-            .filter(|record| enrich::is_active_task(record))
-            .map(|record| {
-                enrich::enrich(record, Some(project.source.value().as_ref()))
-                    .into_task_view(project.title.to_string())
-            })
-            .filter(|task| task.id == task_id.as_ref())
-            .collect();
-        match matched.len() {
-            0 => Err(FindActiveTaskError::TaskNotFound { id: requested }),
-            1 => Ok(matched.pop().expect("length checked")),
-            _ => Err(FindActiveTaskError::AmbiguousId { id: requested }),
+        let mut matched = records
+            .into_iter()
+            .filter(|record| enrich::is_active_task(record) && record.id == *task_id);
+        let Some(record) = matched.next() else {
+            return Err(FindActiveTaskError::TaskNotFound {
+                id: task_id.clone(),
+            });
+        };
+        if matched.next().is_some() {
+            return Err(FindActiveTaskError::AmbiguousId {
+                id: task_id.clone(),
+            });
         }
-    }
-
-    fn find_inline_active_task(
-        store: &impl TaskStore,
-        projects: &[Project],
-        requested: &str,
-    ) -> Result<TaskView, FindActiveTaskError> {
-        for project in projects {
-            let records = store
-                .list(project)
-                .map_err(|error| FindActiveTaskError::ReadStore(Box::new(error)))?;
-            for record in records {
-                if !enrich::is_active_task(&record) {
-                    continue;
-                }
-                let task = enrich::enrich(&record, Some(project.source.value().as_ref()))
-                    .into_task_view(project.title.to_string());
-                if task.format == "legacy" && task.id.eq_ignore_ascii_case(requested) {
-                    return Ok(task);
-                }
-            }
-        }
-        Err(FindActiveTaskError::TaskNotFound {
-            id: requested.to_string(),
-        })
+        let task = enrich::enrich(&record, project.source.value())
+            .into_task_view(project.title.to_string());
+        Ok((record, task))
     }
 }
 
@@ -108,16 +77,17 @@ pub(in crate::task) mod commit_provenance {
 pub(in crate::task) mod enrich {
     //! Derives task launchability diagnostics for list and session operations.
 
-    use pwf_models::task::TaskStatus;
+    use pwf_models::{
+        project::ProjectSourceValue,
+        task::{TaskId, TaskStatus},
+    };
 
-    use super::{note_body::is_placeholder_prompt, section};
+    use super::{note_body::is_placeholder_prompt, prerequisite, section};
     use crate::{
-        ports::task_record::{Materialization, RecordId, TaskRecord},
+        ports::task_record::{Materialization, TaskRecord},
         task::dto::TaskView,
     };
 
-    pub(in crate::task) const ISSUE_NO_REPO: &str =
-        "Project has no directory source; update the managed project record.";
     pub(in crate::task) const ISSUE_PLACEHOLDER_PROMPT: &str =
         "Prompt is a placeholder; define a real prompt before launching.";
 
@@ -146,17 +116,10 @@ pub(in crate::task) mod enrich {
         pub(in crate::task) needs_prompt: bool,
     }
 
-    /// Derives diagnostics in repository, missing-note, placeholder order.
+    /// Derives missing-note and placeholder diagnostics.
     #[must_use]
-    pub(in crate::task) fn derive_flags(
-        repo: Option<&str>,
-        prompt: &str,
-        missing_note: Option<&str>,
-    ) -> DerivedFlags {
+    pub(in crate::task) fn derive_flags(prompt: &str, missing_note: Option<&str>) -> DerivedFlags {
         let mut issues = Vec::new();
-        if repo.is_none_or(|value| value.trim().is_empty()) {
-            issues.push(ISSUE_NO_REPO.to_string());
-        }
         if let Some(path) = missing_note {
             issues.push(missing_note_issue(path));
         }
@@ -175,11 +138,11 @@ pub(in crate::task) mod enrich {
     /// attachment.
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub(in crate::task) struct EnrichedTask {
-        pub(in crate::task) id: RecordId,
+        pub(in crate::task) id: TaskId,
         pub(in crate::task) status: TaskStatus,
         pub(in crate::task) session: String,
         pub(in crate::task) prompt: String,
-        pub(in crate::task) repo: Option<String>,
+        pub(in crate::task) project_path: ProjectSourceValue,
         pub(in crate::task) note: String,
         pub(in crate::task) task_file: Option<String>,
         pub(in crate::task) line: usize,
@@ -188,27 +151,23 @@ pub(in crate::task) mod enrich {
         pub(in crate::task) needs_prompt: bool,
         pub(in crate::task) issues: Vec<String>,
         pub(in crate::task) section: Option<String>,
-        pub(in crate::task) prereq: Option<String>,
+        pub(in crate::task) prerequisites: Option<pwf_models::task::Prerequisites>,
         pub(in crate::task) effort: Option<String>,
         pub(in crate::task) tags: Option<String>,
         pub(in crate::task) created: Option<String>,
     }
 
     impl EnrichedTask {
-        /// Attaches the project and composes inline ids as `<project>:<ordinal>`.
+        /// Attaches the managed project name.
         #[must_use]
         pub(in crate::task) fn into_task_view(self, project: String) -> TaskView {
-            let id = match &self.id {
-                RecordId::Task(id) => id.as_ref().to_string(),
-                RecordId::Inline(ordinal) => inline_record_id(&project, *ordinal),
-            };
             TaskView {
-                id,
+                id: self.id,
                 project,
                 status: self.status,
                 session: self.session,
                 prompt: self.prompt,
-                repo: self.repo,
+                project_path: self.project_path,
                 note: self.note,
                 task_file: self.task_file,
                 line: self.line,
@@ -217,7 +176,7 @@ pub(in crate::task) mod enrich {
                 needs_prompt: self.needs_prompt,
                 issues: self.issues,
                 section: self.section,
-                prereq: self.prereq,
+                prerequisites: self.prerequisites,
                 prerequisite_statuses: Vec::new(),
                 effort: self.effort,
                 tags: self.tags,
@@ -230,28 +189,27 @@ pub(in crate::task) mod enrich {
         format!("Task note missing: {path}")
     }
 
-    pub(in crate::task) fn inline_record_id(project: &str, ordinal: usize) -> String {
-        format!("{project}:{ordinal}")
-    }
-
     /// Projects a persisted task into the fields consumed by list and session.
     ///
     /// Materialization controls `format` and `task_file`; missing notes add an issue; empty titles
-    /// fall back to the canonical id; section labels are canonicalized for display.
+    /// fall back to the task ID; section labels are normalized for display.
     #[must_use]
-    pub(in crate::task) fn enrich(task: &TaskRecord, repo: Option<&str>) -> EnrichedTask {
+    pub(in crate::task) fn enrich(
+        task: &TaskRecord,
+        project_path: &ProjectSourceValue,
+    ) -> EnrichedTask {
         let prompt = task.body.trim().to_string();
         let (format, task_file, missing_note) = match &task.materialization {
             Materialization::NoteFile => ("file", Some(task.locator.clone()), None),
             Materialization::MissingNote { expected } => {
                 ("file", Some(task.locator.clone()), Some(expected.as_str()))
             }
-            Materialization::InlineLegacy => ("legacy", None, None),
         };
-        let flags = derive_flags(repo, &prompt, missing_note);
-        let session = match &task.id {
-            RecordId::Task(id) if task.title.trim().is_empty() => id.as_ref().to_string(),
-            _ => task.title.clone(),
+        let flags = derive_flags(&prompt, missing_note);
+        let session = if task.title.trim().is_empty() {
+            task.id.to_string()
+        } else {
+            task.title.clone()
         };
         let (note, line) = task.placement.as_ref().map_or_else(
             || (task.locator.clone(), 1),
@@ -262,7 +220,7 @@ pub(in crate::task) mod enrich {
             status: task.status,
             session,
             prompt,
-            repo: repo.map(str::to_string),
+            project_path: project_path.clone(),
             note,
             line,
             task_file,
@@ -271,7 +229,7 @@ pub(in crate::task) mod enrich {
             needs_prompt: flags.needs_prompt,
             issues: flags.issues,
             section: normalize_section(task.section.as_deref()),
-            prereq: task.prereq.clone(),
+            prerequisites: task.prereq.as_deref().and_then(prerequisite::extract),
             effort: task.effort.clone(),
             tags: task.tags.clone(),
             created: task.created.as_ref().map(|ts| ts.as_str().to_string()),
@@ -280,14 +238,17 @@ pub(in crate::task) mod enrich {
 
     #[cfg(test)]
     mod tests {
-        use pwf_models::task::{TaskId, TaskStatus, Timestamp};
+        use pwf_models::{
+            project::ProjectSourceValue,
+            task::{TaskId, TaskStatus, Timestamp},
+        };
 
         use super::*;
         use crate::ports::task_record::IndexPlacement;
 
         fn record(body: &str) -> TaskRecord {
             TaskRecord {
-                id: RecordId::Task(TaskId::try_new("PWF-0001").unwrap()),
+                id: TaskId::try_new("PWF-0001").unwrap(),
                 title: "tray gui".to_string(),
                 status: TaskStatus::Active,
                 created: Some(Timestamp::new("2026-01-01".to_string())),
@@ -308,14 +269,18 @@ pub(in crate::task) mod enrich {
             }
         }
 
+        fn project_path() -> ProjectSourceValue {
+            ProjectSourceValue::try_new("/project").unwrap()
+        }
+
         #[test]
-        fn launchable_when_repo_present_and_prompt_real() {
-            let enriched = enrich(&record("add startup toggle"), Some("/repo"));
+        fn launchable_when_project_path_is_present_and_prompt_is_real() {
+            let enriched = enrich(&record("add startup toggle"), &project_path());
             assert!(enriched.launchable);
             assert!(!enriched.needs_prompt);
             assert!(enriched.issues.is_empty());
             assert_eq!(enriched.prompt, "add startup toggle");
-            assert_eq!(enriched.repo.as_deref(), Some("/repo"));
+            assert_eq!(enriched.project_path.as_ref(), "/project");
         }
 
         #[test]
@@ -338,7 +303,7 @@ pub(in crate::task) mod enrich {
 
         #[test]
         fn note_and_line_render_the_index_placement_not_the_note_file() {
-            let enriched = enrich(&record("body"), Some("/repo"));
+            let enriched = enrich(&record("body"), &project_path());
             assert_eq!(enriched.note, "/notes/pwf/pwf.md");
             assert_eq!(enriched.line, 7);
             assert_eq!(
@@ -349,17 +314,11 @@ pub(in crate::task) mod enrich {
         }
 
         #[test]
-        fn missing_repo_and_placeholder_prompt_are_not_launchable() {
-            let enriched = enrich(&record("TODO"), None);
+        fn placeholder_prompt_is_not_launchable() {
+            let enriched = enrich(&record("TODO"), &project_path());
             assert!(!enriched.launchable);
             assert!(enriched.needs_prompt);
-            assert_eq!(
-                enriched.issues,
-                [
-                    ISSUE_NO_REPO.to_string(),
-                    ISSUE_PLACEHOLDER_PROMPT.to_string()
-                ]
-            );
+            assert_eq!(enriched.issues, [ISSUE_PLACEHOLDER_PROMPT.to_string()]);
         }
 
         #[test]
@@ -369,7 +328,7 @@ pub(in crate::task) mod enrich {
                 expected: "/notes/pwf/PWF-0001.md".to_string(),
             };
 
-            let enriched = enrich(&rec, Some("/repo"));
+            let enriched = enrich(&rec, &project_path());
 
             assert!(!enriched.launchable, "missing note must not be launchable");
             assert!(enriched.needs_prompt, "empty prompt is a placeholder");
@@ -389,32 +348,10 @@ pub(in crate::task) mod enrich {
         }
 
         #[test]
-        fn inline_legacy_record_projects_legacy_format_and_ordinal_id() {
-            let inline = TaskRecord {
-                id: RecordId::Inline(2),
-                title: "legacy task".to_string(),
-                body: "do the legacy thing".to_string(),
-                source: "do the legacy thing".to_string(),
-                locator: "/notes/pwf/pwf.md".to_string(),
-                materialization: Materialization::InlineLegacy,
-                ..record("")
-            };
-
-            let task = enrich(&inline, Some("/repo")).into_task_view("pwf".to_string());
-
-            assert_eq!(task.id, "pwf:2");
-            assert_eq!(task.format, "legacy");
-            assert_eq!(task.task_file, None);
-            assert_eq!(task.session, "legacy task");
-            assert_eq!(task.prompt, "do the legacy thing");
-            assert!(task.launchable);
-        }
-
-        #[test]
         fn empty_title_falls_back_to_id() {
             let mut rec = record("body");
             rec.title = "  ".to_string();
-            assert_eq!(enrich(&rec, Some("/repo")).session, "PWF-0001");
+            assert_eq!(enrich(&rec, &project_path()).session, "PWF-0001");
         }
 
         #[test]
@@ -422,7 +359,7 @@ pub(in crate::task) mod enrich {
             let mut rec = record("body");
             rec.section = Some("Futuro".to_string());
             assert_eq!(
-                enrich(&rec, Some("/repo")).section.as_deref(),
+                enrich(&rec, &project_path()).section.as_deref(),
                 Some("Future")
             );
         }
@@ -433,25 +370,16 @@ pub(in crate::task) mod enrich {
         }
 
         #[test]
-        fn derive_flags_orders_issues_no_repo_missing_note_placeholder() {
-            let flags = derive_flags(None, "", Some("/notes/pwf/PWF-0009.md"));
+        fn derive_flags_orders_missing_note_before_placeholder() {
+            let flags = derive_flags("", Some("/notes/pwf/PWF-0009.md"));
             assert_eq!(
                 flags.issues,
                 [
-                    ISSUE_NO_REPO.to_string(),
                     "Task note missing: /notes/pwf/PWF-0009.md".to_string(),
                     ISSUE_PLACEHOLDER_PROMPT.to_string(),
                 ]
             );
         }
-    }
-}
-
-pub(in crate::task) mod identifier {
-    use pwf_models::task::TaskId;
-
-    pub(in crate::task) fn parse(raw: &str) -> Option<TaskId> {
-        raw.parse().ok()
     }
 }
 
@@ -467,9 +395,8 @@ pub(in crate::task) mod note_body {
     const LANE_SECTION_HEADERS: [&str; 4] =
         ["## Goals", "## Context", "## Constraints", "## Done When"];
 
-    static PLACEHOLDER_PROMPT_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    static PLACEHOLDER_PROMPT_REGEX: LazyLock<Result<Regex, regex::Error>> = LazyLock::new(|| {
         Regex::new(r"(?i)(^\s*\[!\]\s*TODO\b|^\s*TODO\b|definir prompt|define prompt|tbd)")
-            .expect("valid placeholder regex")
     });
 
     enum PromptClassification {
@@ -499,7 +426,11 @@ pub(in crate::task) mod note_body {
     }
 
     fn prompt_classification(prompt: &str) -> PromptClassification {
-        if prompt.trim().is_empty() || PLACEHOLDER_PROMPT_REGEX.is_match(prompt) {
+        if prompt.trim().is_empty()
+            || PLACEHOLDER_PROMPT_REGEX
+                .as_ref()
+                .is_ok_and(|regex| regex.is_match(prompt))
+        {
             return PromptClassification::Placeholder;
         }
 
@@ -824,90 +755,66 @@ pub(in crate::task) mod prerequisite {
 
     use pwf_models::{
         project::Project,
-        task::{TaskId, TaskStatus},
+        task::{PrerequisiteInput, PrerequisiteInputError, Prerequisites, TaskId, TaskStatus},
     };
     use regex::Regex;
 
-    use super::identifier;
     use crate::{
         ports::task_record::{Materialization, TaskRecord, TaskStore},
         task::dto::PrerequisiteStatus,
     };
 
     const PREREQUISITE_VALUE_PATTERN: &str = r"\[\[([A-Z]{3}-\d{4})";
-    static PREREQUISITE_VALUE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(PREREQUISITE_VALUE_PATTERN).expect("valid prerequisite value regex")
-    });
-    static PERSISTED_STATUS_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(?m)^status:\s*([^\r\n]+)$").expect("valid persisted status regex")
-    });
-    static PERSISTED_FRONTMATTER_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(?s)\A(?:\u{feff})?---[ \t]*\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n|\z)")
-            .expect("valid persisted frontmatter regex")
-    });
+    static PREREQUISITE_VALUE_REGEX: LazyLock<Result<Regex, regex::Error>> =
+        LazyLock::new(|| Regex::new(PREREQUISITE_VALUE_PATTERN));
+    static PERSISTED_STATUS_REGEX: LazyLock<Result<Regex, regex::Error>> =
+        LazyLock::new(|| Regex::new(r"(?m)^status:\s*([^\r\n]+)$"));
+    static PERSISTED_FRONTMATTER_REGEX: LazyLock<Result<Regex, regex::Error>> =
+        LazyLock::new(|| {
+            Regex::new(r"(?s)\A(?:\u{feff})?---[ \t]*\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n|\z)")
+        });
+
+    fn prerequisite_value_regex() -> Option<&'static Regex> {
+        PREREQUISITE_VALUE_REGEX.as_ref().ok()
+    }
 
     #[derive(Debug, thiserror::Error)]
     pub(in crate::task) enum PrerequisiteValidationError {
-        #[error("Invalid --prereq id: {raw}.")]
-        InvalidId { raw: String },
-        #[error("--prereq requires an id.")]
-        MissingId,
-        #[error("Unknown --prereq id(s): {}.", ids.join(", "))]
-        UnknownIds { ids: Vec<String> },
+        #[error("Unknown --prereq id(s): {}.", format_task_ids(ids))]
+        UnknownIds { ids: Vec<TaskId> },
     }
 
-    fn parse_values(values: &[String]) -> Result<Vec<TaskId>, PrerequisiteValidationError> {
-        let mut identifiers = Vec::new();
-        for value in values {
-            for raw in value.split(',') {
-                let raw = raw.trim();
-                if raw.is_empty() {
-                    continue;
-                }
-                let candidate = raw
-                    .strip_prefix("[[")
-                    .and_then(|trimmed| trimmed.strip_suffix("]]"))
-                    .unwrap_or(raw);
-                let identifier = identifier::parse(candidate).ok_or_else(|| {
-                    PrerequisiteValidationError::InvalidId {
-                        raw: raw.to_string(),
-                    }
-                })?;
-                if !identifiers.contains(&identifier) {
-                    identifiers.push(identifier);
-                }
-            }
-        }
-        if identifiers.is_empty() {
-            return Err(PrerequisiteValidationError::MissingId);
-        }
-        Ok(identifiers)
+    fn format_task_ids(ids: &[TaskId]) -> String {
+        ids.iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 
     pub(in crate::task) fn project_ids(
-        values: &[String],
-    ) -> Result<Vec<pwf_models::project::ProjectId>, PrerequisiteValidationError> {
+        values: &Prerequisites,
+    ) -> Vec<pwf_models::project::ProjectId> {
         let mut projects = Vec::new();
-        for id in parse_values(values)? {
+        for id in values.iter() {
             let project = id.project_id();
             if !projects.contains(&project) {
                 projects.push(project);
             }
         }
-        Ok(projects)
+        projects
     }
 
     pub(in crate::task) fn referenced_project_ids<'a>(
         values: impl IntoIterator<Item = &'a str>,
     ) -> Vec<pwf_models::project::ProjectId> {
         let mut projects = Vec::new();
+        let Some(regex) = prerequisite_value_regex() else {
+            return projects;
+        };
         for id in values
             .into_iter()
-            .flat_map(|value| PREREQUISITE_VALUE_REGEX.captures_iter(value))
-            .map(|captures| {
-                TaskId::try_new(&captures[1])
-                    .expect("prerequisite regex captures a canonical task id")
-            })
+            .flat_map(|value| regex.captures_iter(value))
+            .filter_map(|captures| TaskId::try_new(&captures[1]).ok())
         {
             let project = id.project_id();
             if !projects.contains(&project) {
@@ -917,9 +824,17 @@ pub(in crate::task) mod prerequisite {
         projects
     }
 
+    pub(in crate::task) fn extract(raw: &str) -> Option<Prerequisites> {
+        let identifiers = prerequisite_value_regex()?
+            .captures_iter(raw)
+            .filter_map(|captures| TaskId::try_new(&captures[1]).ok())
+            .collect();
+        Prerequisites::try_new(identifiers).ok()
+    }
+
     pub(in crate::task) fn parse_frontmatter(
         raw: &str,
-    ) -> Result<Vec<TaskId>, PrerequisiteValidationError> {
+    ) -> Result<Vec<TaskId>, PrerequisiteInputError> {
         let raw = raw.trim();
         let unquoted = raw
             .strip_prefix('"')
@@ -929,39 +844,31 @@ pub(in crate::task) mod prerequisite {
                     .and_then(|value| value.strip_suffix('\''))
             })
             .unwrap_or(raw);
-        parse_values(&[unquoted.to_string()])
-    }
-
-    fn frontmatter_value(identifiers: &[TaskId]) -> String {
-        identifiers
-            .iter()
-            .map(|identifier| format!("[[{identifier}]]"))
-            .collect::<Vec<_>>()
-            .join(", ")
+        let input = unquoted.parse::<PrerequisiteInput>()?;
+        Ok(input.iter().cloned().collect())
     }
 
     pub(in crate::task) fn validate_and_merge(
         existing: Option<&str>,
-        values: &[String],
+        prerequisites: &Prerequisites,
         store: &impl TaskStore,
         projects: &[Project],
-    ) -> Result<String, PrerequisiteValidationError> {
-        let prerequisites = parse_values(values)?;
+    ) -> Result<Prerequisites, PrerequisiteValidationError> {
         let mut unknown = Vec::new();
-        for identifier in &prerequisites {
+        for identifier in prerequisites.iter() {
             let Some(project) = projects
                 .iter()
                 .find(|project| project.id == identifier.project_id())
             else {
-                unknown.push(identifier.as_ref().to_string());
+                unknown.push(identifier.clone());
                 continue;
             };
             let Ok(record) = store.get(project, identifier) else {
-                unknown.push(identifier.as_ref().to_string());
+                unknown.push(identifier.clone());
                 continue;
             };
             if record.is_none_or(|record| !has_valid_persisted_status(&record)) {
-                unknown.push(identifier.as_ref().to_string());
+                unknown.push(identifier.clone());
             }
         }
         if !unknown.is_empty() {
@@ -969,44 +876,57 @@ pub(in crate::task) mod prerequisite {
         }
 
         let mut identifiers = Vec::new();
-        for identifier in existing
-            .into_iter()
-            .flat_map(|value| PREREQUISITE_VALUE_REGEX.captures_iter(value))
-            .map(|captures| {
-                TaskId::try_new(&captures[1])
-                    .expect("prerequisite regex captures a canonical task id")
-            })
-            .chain(prerequisites)
-        {
-            if !identifiers.contains(&identifier) {
-                identifiers.push(identifier);
+        if let Some(regex) = prerequisite_value_regex() {
+            for identifier in existing
+                .into_iter()
+                .flat_map(|value| regex.captures_iter(value))
+                .filter_map(|captures| TaskId::try_new(&captures[1]).ok())
+            {
+                if !identifiers.contains(&identifier) {
+                    identifiers.push(identifier);
+                }
             }
         }
-        Ok(frontmatter_value(&identifiers))
+        for identifier in prerequisites.iter() {
+            if !identifiers.contains(identifier) {
+                identifiers.push(identifier.clone());
+            }
+        }
+        match Prerequisites::try_new(identifiers) {
+            Ok(merged) => Ok(merged),
+            Err(_) => Ok(prerequisites.clone()),
+        }
     }
 
     fn has_valid_persisted_status(record: &TaskRecord) -> bool {
+        let (Ok(frontmatter_regex), Ok(status_regex)) = (
+            PERSISTED_FRONTMATTER_REGEX.as_ref(),
+            PERSISTED_STATUS_REGEX.as_ref(),
+        ) else {
+            return false;
+        };
         matches!(record.materialization, Materialization::NoteFile)
-            && PERSISTED_FRONTMATTER_REGEX
+            && frontmatter_regex
                 .captures(&record.source)
                 .and_then(|captures| captures.get(1))
-                .and_then(|frontmatter| PERSISTED_STATUS_REGEX.captures(frontmatter.as_str()))
+                .and_then(|frontmatter| status_regex.captures(frontmatter.as_str()))
                 .and_then(|captures| captures.get(1))
                 .is_some_and(|value| value.as_str().trim().parse::<TaskStatus>().is_ok())
     }
 
     pub(in crate::task) fn statuses(
-        value: &str,
+        prerequisites: &Prerequisites,
         store: &impl TaskStore,
         projects: &[Project],
     ) -> Vec<PrerequisiteStatus> {
-        PREREQUISITE_VALUE_REGEX
-            .captures_iter(value)
-            .map(|captures| {
-                let id = TaskId::try_new(&captures[1])
-                    .expect("prerequisite regex captures a canonical task id");
-                let status = status(store, projects, &id);
-                PrerequisiteStatus { id, status }
+        prerequisites
+            .iter()
+            .map(|id| {
+                let status = status(store, projects, id);
+                PrerequisiteStatus {
+                    id: id.clone(),
+                    status,
+                }
             })
             .collect()
     }
@@ -1029,29 +949,25 @@ pub(in crate::task) mod prerequisite {
 
     #[cfg(test)]
     mod tests {
-        use super::{
-            PrerequisiteValidationError, frontmatter_value, parse_values, referenced_project_ids,
-            validate_and_merge,
-        };
+        use pwf_models::task::{PrerequisiteInput, Prerequisites};
+
+        use super::{PrerequisiteValidationError, referenced_project_ids, validate_and_merge};
         use crate::{
             ports::task_record::TaskRecord,
             task::resolve::testing::{staged, staged_ghost},
             testing::project,
         };
 
-        #[test]
-        fn loose_values_normalize_deduplicate_and_render() {
-            let prerequisites =
-                parse_values(&["cfg57, [[CFG-0014]]".to_string(), "CFG-14".to_string()]).unwrap();
+        fn inputs(values: &[&str]) -> Prerequisites {
+            let inputs = values
+                .iter()
+                .map(|value| value.parse::<PrerequisiteInput>().unwrap())
+                .collect::<Vec<_>>();
+            Prerequisites::from_inputs(&inputs).unwrap()
+        }
 
-            assert_eq!(
-                prerequisites.iter().map(AsRef::as_ref).collect::<Vec<_>>(),
-                ["CFG-0057", "CFG-0014"]
-            );
-            assert_eq!(
-                frontmatter_value(&prerequisites),
-                "[[CFG-0057]], [[CFG-0014]]"
-            );
+        #[test]
+        fn persisted_values_expose_referenced_projects() {
             assert_eq!(
                 referenced_project_ids(["[[CFG-0057]], [[PWF-0001]]", "[[CFG-0014]], ignored",])
                     .iter()
@@ -1062,50 +978,31 @@ pub(in crate::task) mod prerequisite {
         }
 
         #[test]
-        fn loose_values_reject_empty_input() {
-            assert!(parse_values(&[]).is_err());
-            assert!(parse_values(&[" , ".to_string()]).is_err());
-        }
-
-        #[test]
         fn validator_parses_checks_existence_and_merges_first_seen_ids() {
             let (store, _registry) = staged();
-            let projects = [project("PWF", "pwf")];
+            let projects = [project("PWF".parse().unwrap(), "pwf")];
             let merged = validate_and_merge(
                 Some("[[PWF-0001]], [[PWF-0001]]"),
-                &["pwf1, PWF-0001".to_string()],
+                &inputs(&["pwf1, PWF-0001"]),
                 &store,
                 &projects,
             )
             .unwrap();
 
-            assert_eq!(merged, "[[PWF-0001]]");
+            assert_eq!(merged.to_string(), "[[PWF-0001]]");
         }
 
         #[test]
         fn validator_preserves_prerequisite_diagnostics() {
             let (store, _registry) = staged();
-            let projects = [project("PWF", "pwf")];
-
-            let invalid = validate_and_merge(None, &["PWF-99999".to_string()], &store, &projects)
-                .unwrap_err();
-            assert!(matches!(
-                invalid,
-                PrerequisiteValidationError::InvalidId { ref raw } if raw == "PWF-99999"
-            ));
-            assert_eq!(invalid.to_string(), "Invalid --prereq id: PWF-99999.");
-
-            let missing =
-                validate_and_merge(None, &[", ,".to_string()], &store, &projects).unwrap_err();
-            assert!(matches!(missing, PrerequisiteValidationError::MissingId));
-            assert_eq!(missing.to_string(), "--prereq requires an id.");
+            let projects = [project("PWF".parse().unwrap(), "pwf")];
 
             let unknown =
-                validate_and_merge(None, &["PWF-9999".to_string()], &store, &projects).unwrap_err();
+                validate_and_merge(None, &inputs(&["PWF-9999"]), &store, &projects).unwrap_err();
             assert!(matches!(
                 unknown,
                 PrerequisiteValidationError::UnknownIds { ref ids }
-                    if ids == &vec!["PWF-9999".to_string()]
+                    if ids.iter().map(AsRef::as_ref).collect::<Vec<_>>() == ["PWF-9999"]
             ));
             assert_eq!(unknown.to_string(), "Unknown --prereq id(s): PWF-9999.");
         }
@@ -1113,22 +1010,22 @@ pub(in crate::task) mod prerequisite {
         #[test]
         fn validator_rejects_missing_note_materializations_as_unknown() {
             let (store, _registry) = staged_ghost();
-            let projects = [project("PWF", "pwf")];
+            let projects = [project("PWF".parse().unwrap(), "pwf")];
 
             let error =
-                validate_and_merge(None, &["PWF-0002".to_string()], &store, &projects).unwrap_err();
+                validate_and_merge(None, &inputs(&["PWF-0002"]), &store, &projects).unwrap_err();
 
             assert!(matches!(
                 error,
                 PrerequisiteValidationError::UnknownIds { ref ids }
-                    if ids == &vec!["PWF-0002".to_string()]
+                    if ids.iter().map(AsRef::as_ref).collect::<Vec<_>>() == ["PWF-0002"]
             ));
         }
 
         #[test]
         fn validator_rejects_missing_or_invalid_persisted_status_as_unknown() {
             let (staged_store, _registry) = staged();
-            let projects = [project("PWF", "pwf")];
+            let projects = [project("PWF".parse().unwrap(), "pwf")];
             let base = staged_store.tasks("pwf")[0].clone();
             for source in [
                 "---\nid: PWF-0001\ntitle: task\n---\n\nbody\n",
@@ -1142,13 +1039,13 @@ pub(in crate::task) mod prerequisite {
                 let store =
                     crate::testing::InMemoryStore::default().with_project("pwf", vec![record]);
 
-                let error = validate_and_merge(None, &["PWF-0001".to_string()], &store, &projects)
+                let error = validate_and_merge(None, &inputs(&["PWF-0001"]), &store, &projects)
                     .unwrap_err();
 
                 assert!(matches!(
                     error,
                     PrerequisiteValidationError::UnknownIds { ref ids }
-                        if ids == &vec!["PWF-0001".to_string()]
+                        if ids.iter().map(AsRef::as_ref).collect::<Vec<_>>() == ["PWF-0001"]
                 ));
             }
         }
@@ -1156,42 +1053,20 @@ pub(in crate::task) mod prerequisite {
 }
 
 pub(in crate::task) mod resolve {
-    use pwf_models::project::Project;
+    use pwf_models::{project::Project, task::TaskId};
 
-    use super::{enrich::inline_record_id, identifier, show_task::ShowTaskError};
-    use crate::ports::task_record::{RecordId, TaskRecord, TaskStore};
+    use super::show_task::ShowTaskError;
+    use crate::ports::task_record::{TaskRecord, TaskStore};
 
-    pub(in crate::task) fn resolve_record_in_projects(
+    pub(in crate::task) fn resolve_record(
         store: &impl TaskStore,
-        projects: &[Project],
-        id: &str,
-    ) -> Result<(Project, TaskRecord), ShowTaskError> {
-        let not_found = || ShowTaskError::TaskNotFound { id: id.to_string() };
-        let Some(task_id) = identifier::parse(id) else {
-            for project in projects {
-                let records = store
-                    .list(project)
-                    .map_err(|error| ShowTaskError::ReadStore(Box::new(error)))?;
-                if let Some(record) = records.into_iter().find(|record| match record.id {
-                    RecordId::Inline(ordinal) => {
-                        inline_record_id(project.title.as_ref(), ordinal).eq_ignore_ascii_case(id)
-                    }
-                    RecordId::Task(_) => false,
-                }) {
-                    return Ok((project.clone(), record));
-                }
-            }
-            return Err(not_found());
-        };
-        let project = projects
-            .iter()
-            .find(|project| project.id == task_id.project_id())
-            .ok_or_else(not_found)?;
+        project: &Project,
+        id: &TaskId,
+    ) -> Result<TaskRecord, ShowTaskError> {
         store
-            .get(project, &task_id)
+            .get(project, id)
             .map_err(|error| ShowTaskError::ReadStore(Box::new(error)))?
-            .map(|record| (project.clone(), record))
-            .ok_or_else(not_found)
+            .ok_or_else(|| ShowTaskError::TaskNotFound { id: id.clone() })
     }
 
     #[cfg(test)]
@@ -1202,7 +1077,7 @@ pub(in crate::task) mod resolve {
         };
 
         use crate::{
-            ports::task_record::{Materialization, RecordId, TaskRecord},
+            ports::task_record::{Materialization, TaskRecord},
             testing::{InMemoryStore, project},
         };
 
@@ -1210,7 +1085,7 @@ pub(in crate::task) mod resolve {
 
         pub(in crate::task) fn staged() -> (InMemoryStore, Vec<Project>) {
             let record = TaskRecord {
-                id: RecordId::Task(TaskId::try_new("PWF-0001").unwrap()),
+                id: TaskId::try_new("PWF-0001").unwrap(),
                 title: "do the thing".to_string(),
                 status: TaskStatus::Active,
                 created: Some(Timestamp::new("2026-06-20")),
@@ -1232,7 +1107,7 @@ pub(in crate::task) mod resolve {
 
         pub(in crate::task) fn staged_ghost() -> (InMemoryStore, Vec<Project>) {
             let record = TaskRecord {
-                id: RecordId::Task(TaskId::try_new("PWF-0002").unwrap()),
+                id: TaskId::try_new("PWF-0002").unwrap(),
                 title: "ghost".to_string(),
                 status: TaskStatus::Active,
                 created: None,
@@ -1254,48 +1129,27 @@ pub(in crate::task) mod resolve {
             (store, registry())
         }
 
-        pub(in crate::task) fn staged_inline() -> (InMemoryStore, Vec<Project>) {
-            let record = TaskRecord {
-                id: RecordId::Inline(1),
-                title: "legacy task".to_string(),
-                status: TaskStatus::Active,
-                created: None,
-                completed: None,
-                commits: None,
-                tags: None,
-                effort: None,
-                prereq: None,
-                section: None,
-                body: "do the legacy thing".to_string(),
-                source: "do the legacy thing".to_string(),
-                locator: "/notes/pwf/pwf.md".to_string(),
-                placement: None,
-                materialization: Materialization::InlineLegacy,
-            };
-            let store = InMemoryStore::default().with_project("pwf", vec![record]);
-            (store, registry())
-        }
-
         fn registry() -> Vec<Project> {
-            vec![project("PWF", "pwf")]
+            vec![project("PWF".parse().unwrap(), "pwf")]
         }
     }
 
     #[cfg(test)]
     mod tests {
+        use pwf_models::task::TaskId;
+
         use super::{
-            ShowTaskError, resolve_record_in_projects,
-            testing::{staged, staged_ghost, staged_inline},
+            resolve_record,
+            testing::{staged, staged_ghost},
         };
 
         #[test]
         fn resolve_record_returns_path_and_markdown() {
             let (store, projects) = staged();
 
-            let (project, resolved) =
-                resolve_record_in_projects(&store, &projects, "PWF-0001").unwrap();
+            let id = TaskId::try_new("PWF-0001").unwrap();
+            let resolved = resolve_record(&store, &projects[0], &id).unwrap();
 
-            assert_eq!(project.title.as_ref(), "pwf");
             assert_eq!(resolved.locator, "/notes/pwf/PWF-0001.md");
             assert_eq!(resolved.source, super::testing::PWF_0001_SOURCE);
         }
@@ -1304,44 +1158,10 @@ pub(in crate::task) mod resolve {
         fn resolve_returns_expected_note_path_for_missing_note_wikilink() {
             let (store, projects) = staged_ghost();
 
-            let (_project, resolved) =
-                resolve_record_in_projects(&store, &projects, "PWF-0002").unwrap();
+            let id = TaskId::try_new("PWF-0002").unwrap();
+            let resolved = resolve_record(&store, &projects[0], &id).unwrap();
 
             assert_eq!(resolved.locator, "/notes/pwf/PWF-0002.md");
-        }
-
-        #[test]
-        fn resolve_serves_inline_legacy_id_case_insensitively() {
-            let (store, projects) = staged_inline();
-
-            let (project, resolved) =
-                resolve_record_in_projects(&store, &projects, "PWF:1").unwrap();
-
-            assert_eq!(project.title.as_ref(), "pwf");
-            assert_eq!(resolved.locator, "/notes/pwf/pwf.md");
-            assert_eq!(resolved.source, "do the legacy thing");
-        }
-
-        #[test]
-        fn resolve_unknown_inline_id_preserves_raw_id() {
-            let (store, projects) = staged_inline();
-
-            let error = resolve_record_in_projects(&store, &projects, "pwf:9").unwrap_err();
-
-            assert_eq!(error.to_string(), "Task not found: pwf:9");
-        }
-
-        #[test]
-        fn resolve_missing_id_preserves_raw_lowercase_id() {
-            let (store, projects) = staged();
-
-            let error = resolve_record_in_projects(&store, &projects, "pwf-9999").unwrap_err();
-
-            assert_eq!(error.to_string(), "Task not found: pwf-9999");
-            assert!(matches!(
-                error,
-                ShowTaskError::TaskNotFound { id } if id == "pwf-9999"
-            ));
         }
     }
 }
@@ -1387,12 +1207,12 @@ pub(in crate::task) mod store_util {
     #[derive(Debug, thiserror::Error)]
     pub(in crate::task) enum LoadTaskError {
         #[error("Task not found: {id}")]
-        TaskNotFound { id: String },
+        TaskNotFound { id: TaskId },
         #[error("{0}")]
         Store(Box<dyn std::error::Error + Send + Sync>),
     }
 
-    /// Canonical labels that materialize as dedicated H2 sections.
+    /// Labels that materialize as dedicated H2 sections.
     const SECTION_LABELS: [&str; 3] = ["Future", "Human", "Low-prio"];
 
     /// Contains a created record and the new H2 section, if one was needed.
@@ -1416,9 +1236,7 @@ pub(in crate::task) mod store_util {
     ) -> Result<TaskRecord, LoadTaskError> {
         TaskStore::get(store, project, id)
             .map_err(|error| LoadTaskError::Store(Box::new(error)))?
-            .ok_or_else(|| LoadTaskError::TaskNotFound {
-                id: id.as_ref().to_string(),
-            })
+            .ok_or_else(|| LoadTaskError::TaskNotFound { id: id.clone() })
     }
 
     /// Inserts a note record, then upserts its open index entry.
@@ -1426,7 +1244,7 @@ pub(in crate::task) mod store_util {
     /// # Panics
     ///
     /// Panics if the store's `insert` violates its contract by returning a record
-    /// without a canonical [`TaskId`].
+    /// without a [`TaskId`].
     pub(in crate::task) fn create_task(
         store: &(impl TaskStore + IndexEntryStore + IndexSectionStore),
         project: &Project,
@@ -1448,11 +1266,7 @@ pub(in crate::task) mod store_util {
 
         let record = TaskStore::insert(store, project, new)
             .map_err(|error| CreateTaskError::InsertRecord(Box::new(error)))?;
-        let id = record
-            .id
-            .as_task()
-            .expect("inserted record carries a canonical id")
-            .clone();
+        let id = record.id.clone();
         IndexEntryStore::upsert_index_entry(
             store,
             project,
@@ -1484,13 +1298,13 @@ pub(in crate::task) mod store_util {
 
         use super::{LoadTaskError, create_task, require_task};
         use crate::{
-            ports::task_record::{IndexEntryState, NewTask, RecordId},
+            ports::task_record::{IndexEntryState, NewTask},
             task::resolve::testing::staged,
             testing::{InMemoryStore, project},
         };
 
         fn pwf() -> Project {
-            project("PWF", "pwf")
+            project("PWF".parse().unwrap(), "pwf")
         }
 
         fn new_task(section: Option<&str>) -> NewTask {
@@ -1506,7 +1320,7 @@ pub(in crate::task) mod store_util {
         }
 
         fn staged_store() -> InMemoryStore {
-            InMemoryStore::default().with_prefix("pwf", "PWF")
+            InMemoryStore::default().with_project_id("pwf", "PWF".parse().unwrap())
         }
 
         #[test]
@@ -1516,11 +1330,11 @@ pub(in crate::task) mod store_util {
             let created = create_task(&store, &pwf(), new_task(None)).unwrap();
 
             let id = TaskId::try_new("PWF-0001").unwrap();
-            assert_eq!(created.record.id, RecordId::Task(id.clone()));
+            assert_eq!(created.record.id, id.clone());
             assert_eq!(created.created_section, None);
             let tasks = store.tasks("pwf");
             assert_eq!(tasks.len(), 1, "record must be inserted");
-            assert_eq!(tasks[0].id, RecordId::Task(id.clone()));
+            assert_eq!(tasks[0].id, id.clone());
             let entries = store.entries("pwf");
             assert_eq!(entries.len(), 1, "open index entry must be upserted");
             assert_eq!(entries[0].id, id);
@@ -1563,11 +1377,11 @@ pub(in crate::task) mod store_util {
 
             let record = require_task(&store, &pwf(), &id).unwrap();
 
-            assert_eq!(record.id, RecordId::Task(id));
+            assert_eq!(record.id, id);
         }
 
         #[test]
-        fn require_task_missing_maps_to_legacy_not_found_display() {
+        fn require_task_missing_reports_the_typed_id() {
             let (store, _registry) = staged();
             let id = TaskId::try_new("PWF-9999").unwrap();
 
@@ -1575,7 +1389,7 @@ pub(in crate::task) mod store_util {
 
             assert!(matches!(
                 error,
-                LoadTaskError::TaskNotFound { ref id } if id == "PWF-9999"
+                LoadTaskError::TaskNotFound { ref id } if id.as_ref() == "PWF-9999"
             ));
             assert_eq!(error.to_string(), "Task not found: PWF-9999");
         }
@@ -1584,10 +1398,7 @@ pub(in crate::task) mod store_util {
         fn created_item_carries_record_and_section_fact() {
             let store = staged_store();
             let created = create_task(&store, &pwf(), new_task(Some("Low-prio"))).unwrap();
-            assert_eq!(
-                created.record.id,
-                RecordId::Task(TaskId::try_new("PWF-0001").unwrap())
-            );
+            assert_eq!(created.record.id, TaskId::try_new("PWF-0001").unwrap());
             assert_eq!(created.record.title, "ship it");
             assert_eq!(created.created_section.as_deref(), Some("Low-prio"));
         }
@@ -1647,7 +1458,10 @@ pub(in crate::task) mod tag_policy {
                 merged.push(tag.clone());
             }
         }
-        Tags::try_new(merged).expect("the existing tag collection is non-empty")
+        match Tags::try_new(merged) {
+            Ok(tags) => tags,
+            Err(_) => existing.clone(),
+        }
     }
 
     #[must_use]
@@ -1762,7 +1576,7 @@ pub(in crate::task) mod task_update {
         task::{
             dto::{PreparedTaskUpdate, TaskIdentity},
             logic::{
-                commit_provenance, identifier,
+                commit_provenance,
                 note_body::{append_lanes, append_report_block, render},
                 prerequisite::{PrerequisiteValidationError, validate_and_merge},
                 store_util::body_region,
@@ -1781,7 +1595,7 @@ pub(in crate::task) mod task_update {
         let tags = parse_tags(&command.tags)?;
         let edits_body = command.prompt.is_some()
             || command.title.is_some()
-            || !command.prereq.is_empty()
+            || command.prereq.is_some()
             || command.clear_prereq
             || command.append.is_some()
             || command.effort.is_some()
@@ -1794,14 +1608,13 @@ pub(in crate::task) mod task_update {
         let not_found = || UpdateTaskError::TaskNotFound {
             id: command.id.clone(),
         };
-        let identifier = identifier::parse(&command.id).ok_or_else(not_found)?;
         let record = store
-            .get(project, &identifier)
+            .get(project, &command.id)
             .map_err(|error| UpdateTaskError::WriteStore(Box::new(error)))?
             .ok_or_else(not_found)?;
         let identity = TaskIdentity {
             project: project.clone(),
-            identifier,
+            identifier: command.id.clone(),
         };
 
         if record.status == TaskStatus::Active {
@@ -1860,9 +1673,9 @@ pub(in crate::task) mod task_update {
         }
         if command.clear_prereq {
             patch.prereq = Some(None);
-        } else if !command.prereq.is_empty() {
+        } else if let Some(prerequisites) = command.prereq.as_ref() {
             let merged =
-                validate_and_merge(record.prereq.as_deref(), &command.prereq, store, projects)
+                validate_and_merge(record.prereq.as_deref(), prerequisites, store, projects)
                     .map_err(map_prerequisite_error)?;
             patch.prereq = Some(Some(merged));
         }
@@ -1875,7 +1688,7 @@ pub(in crate::task) mod task_update {
         patch.tags = resolve_tags(tags, command.tags_clear, &identity.identifier, record)?;
 
         let outcome = UpdateTaskOk::OpenTaskEdit {
-            id: identity.identifier.as_ref().to_string(),
+            id: identity.identifier.clone(),
             project: identity.project.title.to_string(),
             title: new_title,
         };
@@ -1925,7 +1738,7 @@ pub(in crate::task) mod task_update {
         } else if let Some(existing) = record.tags.as_deref() {
             let existing = tag_policy::parse_frontmatter(existing).map_err(|error| {
                 UpdateTaskError::InvalidTagsFrontmatter {
-                    id: id.as_ref().to_string(),
+                    id: id.clone(),
                     raw: error.raw().to_string(),
                 }
             })?;
@@ -1955,7 +1768,7 @@ pub(in crate::task) mod task_update {
             changes.push("report appended".to_string());
         }
         let outcome = UpdateTaskOk::Changed {
-            id: identity.identifier.as_ref().to_string(),
+            id: identity.identifier.clone(),
             changes,
         };
         Ok(PreparedTaskUpdate {
@@ -1971,10 +1784,6 @@ pub(in crate::task) mod task_update {
 
     fn map_prerequisite_error(error: PrerequisiteValidationError) -> UpdateTaskError {
         match error {
-            PrerequisiteValidationError::InvalidId { raw } => {
-                UpdateTaskError::InvalidPrereqId { raw }
-            }
-            PrerequisiteValidationError::MissingId => UpdateTaskError::MissingPrereqId,
             PrerequisiteValidationError::UnknownIds { ids } => {
                 UpdateTaskError::UnknownPrereqIds { ids }
             }
@@ -2008,13 +1817,7 @@ pub(in crate::task) mod task_creation {
         project: &Project,
         created: store_util::CreatedTask,
     ) -> AddTaskOk {
-        let id = created
-            .record
-            .id
-            .as_task()
-            .expect("inserted record carries a canonical id")
-            .as_ref()
-            .to_string();
+        let id = created.record.id.clone();
         AddTaskOk {
             id,
             project: project.title.to_string(),
@@ -2026,7 +1829,10 @@ pub(in crate::task) mod task_creation {
 }
 
 pub(in crate::task) mod task_closing {
-    use pwf_models::task::{TaskId, TaskStatus, Timestamp};
+    use pwf_models::{
+        project::ProjectId,
+        task::{TaskId, TaskStatus, Timestamp},
+    };
 
     use crate::{
         ports::task_record::{
@@ -2037,7 +1843,7 @@ pub(in crate::task) mod task_closing {
             add_task::{AddTaskError, AddTaskOk, TaskSection},
             complete_task::{ClosedTaskAction, CompleteTaskError, CompleteTaskOk},
             logic::{
-                commit_provenance, identifier,
+                commit_provenance,
                 note_body::append_report,
                 store_util::{self, LoadTaskError, body_region},
                 task_creation::{added_task, project_mapped},
@@ -2097,7 +1903,7 @@ pub(in crate::task) mod task_closing {
             id: &TaskId,
             completed: &Timestamp,
         ) -> Vec<TaskId> {
-            let target_section = canonical_section(target_section);
+            let target_section = normalize_section(target_section);
             let Some(cap) = section_cap(&target_section) else {
                 return Vec::new();
             };
@@ -2106,7 +1912,7 @@ pub(in crate::task) mod task_closing {
                 .iter()
                 .filter_map(|entry| match &entry.state {
                     IndexEntryState::Done(entry_completed)
-                        if canonical_section(&entry.section) == target_section =>
+                        if normalize_section(&entry.section) == target_section =>
                     {
                         Some((entry_completed.as_str(), &entry.id))
                     }
@@ -2131,14 +1937,14 @@ pub(in crate::task) mod task_closing {
             label.trim().eq_ignore_ascii_case("futuro")
         }
 
-        fn section_cap(section_canonical: &str) -> Option<usize> {
+        fn section_cap(normalized_section: &str) -> Option<usize> {
             SECTION_CAPS
                 .iter()
-                .find(|(name, _)| *name == section_canonical)
+                .find(|(name, _)| *name == normalized_section)
                 .map(|(_, cap)| *cap)
         }
 
-        fn canonical_section(label: &str) -> String {
+        fn normalize_section(label: &str) -> String {
             if label.trim().is_empty() || label.trim() == "General" {
                 return "General".to_string();
             }
@@ -2335,13 +2141,22 @@ pub(in crate::task) mod task_closing {
     }
 
     use queue::{close_decisions, is_futuro_label};
+    pub(in crate::task) struct CloseTaskRequest<'a> {
+        pub(in crate::task) action: ClosedTaskAction,
+        pub(in crate::task) id: &'a TaskId,
+        pub(in crate::task) completed: Timestamp,
+        pub(in crate::task) report: Option<&'a str>,
+        pub(in crate::task) commits: &'a [String],
+        pub(in crate::task) review: bool,
+    }
+
     pub(in crate::task) enum CloseError {
         TaskNotFound {
-            id: String,
+            id: TaskId,
         },
-        UnknownPrefix {
-            task_identifier: String,
-            prefix: String,
+        UnknownProjectId {
+            task_id: TaskId,
+            project_id: ProjectId,
         },
         EmptyReport,
         WriteStore(Box<dyn std::error::Error + Send + Sync>),
@@ -2352,12 +2167,12 @@ pub(in crate::task) mod task_closing {
         pub(in crate::task) fn into_complete(self) -> CompleteTaskError {
             match self {
                 Self::TaskNotFound { id } => CompleteTaskError::TaskNotFound { id },
-                Self::UnknownPrefix {
-                    task_identifier,
-                    prefix,
-                } => CompleteTaskError::UnknownPrefix {
-                    task_identifier,
-                    prefix,
+                Self::UnknownProjectId {
+                    task_id,
+                    project_id,
+                } => CompleteTaskError::UnknownProjectId {
+                    task_id,
+                    project_id,
                 },
                 Self::EmptyReport => CompleteTaskError::EmptyReport,
                 Self::WriteStore(source) => CompleteTaskError::WriteStore(source),
@@ -2369,41 +2184,39 @@ pub(in crate::task) mod task_closing {
     /// Closes an task through the flow shared by done and cancel.
     ///
     /// One patch applies report and status fields. Only note-backed records rotate the queue,
-    /// because inline and missing-note records have no file-backed queue entry.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "done and cancel share this orchestration"
-    )]
+    /// because missing-note records have no file-backed queue entry.
     pub(in crate::task) fn perform_close(
         store: &(impl TaskStore + IndexEntryStore + IndexSectionStore),
         project: &pwf_models::project::Project,
-        action: ClosedTaskAction,
-        id: &str,
-        completed: &str,
-        report: Option<&str>,
-        commits: &[String],
-        review: bool,
+        request: CloseTaskRequest<'_>,
     ) -> Result<CompleteTaskOk, CloseError> {
+        let CloseTaskRequest {
+            action,
+            id,
+            completed,
+            report,
+            commits,
+            review,
+        } = request;
         let commits_value = commit_provenance::normalize(commits);
-        let task_identifier =
-            identifier::parse(id).ok_or_else(|| CloseError::TaskNotFound { id: id.to_string() })?;
+        let task_identifier = id.clone();
         if project.id != task_identifier.project_id() {
-            return Err(CloseError::UnknownPrefix {
-                task_identifier: task_identifier.to_string(),
-                prefix: task_identifier.project_id().to_string(),
+            return Err(CloseError::UnknownProjectId {
+                project_id: task_identifier.project_id(),
+                task_id: task_identifier,
             });
         }
         let record =
             store_util::require_task(store, project, &task_identifier).map_err(map_load)?;
         if record.status != TaskStatus::Active {
             return Err(CloseError::TaskNotFound {
-                id: task_identifier.as_ref().to_string(),
+                id: task_identifier,
             });
         }
         let title = record.title.clone();
         let mut patch = TaskPatch {
             status: Some(action.status()),
-            completed: Some(Some(Timestamp::new(completed))),
+            completed: Some(Some(completed.clone())),
             ..TaskPatch::default()
         };
         if let Some(report) = report {
@@ -2419,7 +2232,7 @@ pub(in crate::task) mod task_closing {
 
         let (evicted_ids, futuro_renamed) =
             if matches!(record.materialization, Materialization::NoteFile) {
-                rotate_done_queue(store, project, &task_identifier, completed)?
+                rotate_done_queue(store, project, &task_identifier, completed.as_str())?
             } else {
                 (Vec::new(), false)
             };
@@ -2430,7 +2243,7 @@ pub(in crate::task) mod task_closing {
                     store,
                     project,
                     &task_identifier,
-                    completed,
+                    completed.as_str(),
                     commits_value.as_deref(),
                 )
             })
@@ -2511,7 +2324,7 @@ pub(in crate::task) mod task_closing {
         commits: Option<&str>,
     ) -> Result<AddTaskOk, CloseError> {
         let project = project_mapped(project);
-        let prompt = review_task_prompt(reviewed.as_ref(), commits);
+        let prompt = review_task_prompt(reviewed, commits);
         let review_title = title::inferred(&prompt)
             .map_err(AddTaskError::from)
             .map_err(CloseError::ReviewTask)?;
@@ -2542,7 +2355,7 @@ pub(in crate::task) mod task_closing {
         Ok(added_task(&project, created))
     }
 
-    pub(in crate::task) fn review_task_prompt(reviewed_id: &str, range: Option<&str>) -> String {
+    pub(in crate::task) fn review_task_prompt(reviewed_id: &TaskId, range: Option<&str>) -> String {
         let (title, diff) = match range {
             Some(range) => (
                 format!("review {reviewed_id}, commits: {range}"),

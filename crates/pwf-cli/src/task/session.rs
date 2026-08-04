@@ -8,7 +8,7 @@ use pwf_application::task::session::{
 };
 use pwf_infra::{
     obsidian::ObsidianStore,
-    session::{AgentHarness, InlineHarness, LocalRepositoryClient, TmuxHarness, render_argv},
+    session::{AgentHarness, InlineHarness, LocalProjectDirectoryClient, TmuxHarness, render_argv},
 };
 use pwf_models::session::{Agent, DispatchMode, LaunchDirectives, PushedPrompt, SessionEffort};
 
@@ -110,33 +110,34 @@ pub(super) async fn run(
 ) -> Result<String, TaskError> {
     let agent = Agent::from(arguments.agent);
 
-    let request = PlanSession::builder(arguments.identifier.required_task_id("session")?)
-        .intent(if arguments.dry_run {
+    let request = PlanSession {
+        task_id: arguments.identifier.required("session")?,
+        intent: if arguments.dry_run {
             PlanSessionIntent::DryRun
         } else {
             PlanSessionIntent::Dispatch
-        })
-        .maybe_pushed_prompt(arguments.pushed_prompt.clone())
-        .mode(if arguments.inline {
+        },
+        pushed_prompt: arguments.pushed_prompt.clone(),
+        mode: if arguments.inline {
             DispatchMode::Inline
         } else {
             DispatchMode::Multiplexer
-        })
-        .directives(LaunchDirectives {
+        },
+        directives: LaunchDirectives {
             worktree: arguments.worktree,
             autonomous: arguments.autonomous,
-        })
-        .agent(agent)
-        .model_override(arguments.model.clone().into())
-        .effort(arguments.effort.into())
-        .build();
+        },
+        agent,
+        model_override: arguments.model.clone().into(),
+        effort: arguments.effort.into(),
+    };
     let planned = plan_session::execute(
         &request,
         store,
         pool,
         home,
         &AgentHarness,
-        &LocalRepositoryClient,
+        &LocalProjectDirectoryClient,
         &TmuxHarness,
     )
     .await
@@ -166,7 +167,7 @@ pub(super) async fn run(
         eprintln!(
             "running {} inline in {}...",
             planned.plan().launch.task_id,
-            planned.plan().launch.repository
+            planned.plan().launch.project_path
         );
     }
     let outcome = dispatch_session::execute(

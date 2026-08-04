@@ -187,10 +187,18 @@ mod tests {
     async fn runtime_alias_of_other_paused_project_is_rejected(pool: sqlx::SqlitePool) {
         let home = PathBuf::from("/home/tester");
         let resolved_path = home.join("tasks/shared");
-        insert_project(&pool, "PWF", "pwf", "/work/PWF", "~/tasks/shared", true).await;
         insert_project(
             &pool,
-            "ALT",
+            "PWF".parse().unwrap(),
+            "pwf",
+            "/work/PWF",
+            "~/tasks/shared",
+            true,
+        )
+        .await;
+        insert_project(
+            &pool,
+            "ALT".parse().unwrap(),
             "alt",
             "/work/ALT",
             &resolved_path.to_string_lossy(),

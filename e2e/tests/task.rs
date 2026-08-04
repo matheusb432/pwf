@@ -3,11 +3,11 @@ use assert_cmd::prelude::OutputAssertExt as _;
 use expectrl::Expect;
 use serde_json::{Value, json};
 
-use crate::shared::{ManagedProject, task_json};
+use crate::shared::{ManagedProject, project_id, task_id, task_json};
 
 #[test]
 fn add_stores_the_title_separately_from_goals() {
-    let fixture = ManagedProject::new("FOO", "foo-bar");
+    let fixture = ManagedProject::new(project_id("FOO"), "foo-bar");
 
     fixture
         .database
@@ -22,14 +22,14 @@ fn add_stores_the_title_separately_from_goals() {
         .assert()
         .success();
 
-    let task = task_json(&fixture.database, "FOO-0001");
+    let task = task_json(&fixture.database, &task_id("FOO-0001"));
     assert_eq!(task["title"], "ship parser");
     assert_eq!(task["prompt"], "## Goals\n\n- preserve the authored goal");
 }
 
 #[test]
 fn add_rejects_an_inferred_title_over_200_characters_without_creating_a_task() {
-    let fixture = ManagedProject::new("FOO", "foo-bar");
+    let fixture = ManagedProject::new(project_id("FOO"), "foo-bar");
     let title = "\u{e9}".repeat(201);
 
     let output = fixture
@@ -54,7 +54,7 @@ fn add_rejects_an_inferred_title_over_200_characters_without_creating_a_task() {
 
 #[test]
 fn update_rejects_a_title_over_200_characters_without_mutating_the_task() {
-    let fixture = ManagedProject::new("FOO", "foo-bar");
+    let fixture = ManagedProject::new(project_id("FOO"), "foo-bar");
     fixture
         .database
         .command()
@@ -82,14 +82,14 @@ fn update_rejects_a_title_over_200_characters_without_mutating_the_task() {
         "Error: TaskTitle is too long: the maximum valid length is 200 characters.\n"
     );
     assert_eq!(
-        task_json(&fixture.database, "FOO-0001")["title"],
+        task_json(&fixture.database, &task_id("FOO-0001"))["title"],
         "keep this title"
     );
 }
 
 #[test]
 fn list_status_and_review_task_compose_across_commands() {
-    let fixture = ManagedProject::new("FOO", "foo-bar");
+    let fixture = ManagedProject::new(project_id("FOO"), "foo-bar");
     fixture
         .database
         .command()
@@ -146,7 +146,7 @@ fn list_status_and_review_task_compose_across_commands() {
         .assert()
         .success();
 
-    let review = task_json(&fixture.database, "FOO-0002");
+    let review = task_json(&fixture.database, &task_id("FOO-0002"));
     assert_eq!(review["status"], "active");
     assert_eq!(review["section"], "Human");
     assert_eq!(review["title"], "review foo-0001, commits; a..b");
@@ -178,7 +178,7 @@ fn list_status_and_review_task_compose_across_commands() {
 #[test]
 #[cfg(target_os = "linux")]
 fn remove_prompt_identifies_closed_status_before_deletion() {
-    let fixture = ManagedProject::new("FOO", "foo-bar");
+    let fixture = ManagedProject::new(project_id("FOO"), "foo-bar");
     fixture
         .database
         .command()
@@ -228,7 +228,7 @@ fn remove_prompt_identifies_closed_status_before_deletion() {
     reason = "one isolated public-command lifecycle owns all state transitions"
 )]
 fn lifecycle_is_observable_through_show_json() {
-    let fixture = ManagedProject::new("FOO", "foo-bar");
+    let fixture = ManagedProject::new(project_id("FOO"), "foo-bar");
     fixture
         .database
         .command()
@@ -268,7 +268,7 @@ fn lifecycle_is_observable_through_show_json() {
         .assert()
         .success();
 
-    let active = task_json(&fixture.database, "FOO-0002");
+    let active = task_json(&fixture.database, &task_id("FOO-0002"));
     assert_eq!(active["id"], "FOO-0002");
     assert_eq!(active["project"], "foo-bar");
     assert_eq!(active["title"], "just done");
@@ -296,7 +296,7 @@ fn lifecycle_is_observable_through_show_json() {
         ])
         .assert()
         .success();
-    let updated = task_json(&fixture.database, "FOO-0002");
+    let updated = task_json(&fixture.database, &task_id("FOO-0002"));
     assert_eq!(updated["title"], "ship it");
     assert_eq!(updated["tags"], json!(["cli", "sqlite", "rust"]));
     assert_eq!(updated["prerequisites"], Value::Null);
@@ -315,7 +315,7 @@ fn lifecycle_is_observable_through_show_json() {
         ])
         .assert()
         .success();
-    let done = task_json(&fixture.database, "FOO-0002");
+    let done = task_json(&fixture.database, &task_id("FOO-0002"));
     assert_eq!(done["status"], "done");
     assert_eq!(done["completed"], "2026-06-21");
     assert_eq!(done["commits"], "a..b");
@@ -326,7 +326,7 @@ fn lifecycle_is_observable_through_show_json() {
         .args(["reopen", "FOO-0002"])
         .assert()
         .success();
-    let reopened = task_json(&fixture.database, "FOO-0002");
+    let reopened = task_json(&fixture.database, &task_id("FOO-0002"));
     assert_eq!(reopened["status"], "active");
     assert_eq!(reopened["completed"], Value::Null);
     assert_eq!(reopened["commits"], Value::Null);

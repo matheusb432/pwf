@@ -1,10 +1,11 @@
+use pwf_models::project::ProjectId;
 use sqlx::SqlitePool;
 
 pub(crate) static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!();
 
 pub(crate) async fn insert_project(
     pool: &SqlitePool,
-    id: &str,
+    project_id: ProjectId,
     title: &str,
     source_value: &str,
     tasks_path: &str,
@@ -32,7 +33,7 @@ pub(crate) async fn insert_project(
         )
         VALUES (?, ?, ?, 'directory', ?, '2026-07-26T00:00:00.000Z', ?)",
     )
-    .bind(id)
+    .bind(project_id.as_ref())
     .bind(source_id)
     .bind(title)
     .bind(tasks_path)

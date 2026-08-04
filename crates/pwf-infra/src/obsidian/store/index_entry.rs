@@ -1,5 +1,6 @@
-use std::{collections::BTreeMap, path::Path, sync::LazyLock};
+use std::{collections::BTreeMap, path::Path};
 
+use lazy_regex::{Regex, regex};
 use pwf_application::ports::task_record::{
     IndexEntry, IndexEntryState, IndexEntryStore, IndexSection, IndexSectionStore,
 };
@@ -7,7 +8,6 @@ use pwf_models::{
     project::Project,
     task::{TaskId, Timestamp},
 };
-use regex::Regex;
 
 use super::{
     ObsidianStore, ObsidianStoreError,
@@ -22,16 +22,19 @@ use crate::obsidian::{
     },
 };
 
-static HEADER_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^##\s+(?P<label>.+?)\s*$").expect("valid header regex"));
-static TASK_LINE_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r"^\s*-\s*(?:\[(?P<mark>[ xX])\]\s*)?\[\[(?P<id>[A-Z]{2,4}-\d{4})(?:\|(?P<alias>[^\]]+))?\]\]",
+fn header_regex() -> &'static Regex {
+    regex!(r"^##\s+(?P<label>.+?)\s*$")
+}
+
+fn task_line_regex() -> &'static Regex {
+    regex!(
+        r"^\s*-\s*(?:\[(?P<mark>[ xX])\]\s*)?\[\[(?P<id>[A-Z]{3}-\d{4})(?:\|(?P<alias>[^\]]+))?\]\]"
     )
-    .expect("valid task-line regex")
-});
-static DATE_STAMP_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"✅\s*(\d{4}-\d{2}-\d{2})").expect("valid date stamp regex"));
+}
+
+fn date_stamp_regex() -> &'static Regex {
+    regex!(r"✅\s*(\d{4}-\d{2}-\d{2})")
+}
 
 /// Contains one parsed index checkbox and its raw enclosing section label.
 pub(super) struct ParsedIndexLine {
@@ -56,19 +59,21 @@ pub(super) fn parse_index_lines(
     let mut lines = Vec::new();
     for (index, raw) in text.split('\n').enumerate() {
         let line = raw.strip_suffix('\r').unwrap_or(raw);
-        if let Some(header) = HEADER_RE.captures(line) {
+        if let Some(header) = header_regex().captures(line) {
             section = header["label"].trim().to_string();
             continue;
         }
-        let Some(task) = TASK_LINE_RE.captures(line) else {
+        let Some(task) = task_line_regex().captures(line) else {
             continue;
         };
-        let id = TaskId::try_new(&task["id"]).expect("regex guarantees canonical id");
+        let Ok(id) = TaskId::try_new(&task["id"]) else {
+            continue;
+        };
         let alias = task.name("alias").map(|alias| alias.as_str().to_string());
         // A bare `- [[ID]]` link is open, like an unchecked checkbox.
         let is_done = matches!(task.name("mark").map(|m| m.as_str()), Some("x" | "X"));
         let state = if is_done {
-            let date = DATE_STAMP_RE
+            let date = date_stamp_regex()
                 .captures(line)
                 .map(|captures| captures[1].to_string())
                 .unwrap_or_default();
@@ -97,7 +102,7 @@ pub(super) fn parse_index_lines(
     {
         return Err(ObsidianStoreError::ProjectIndexTaskIdDuplicate {
             path: index_path.to_path_buf(),
-            id: id.to_string(),
+            id,
             lines: line_numbers,
         });
     }
@@ -109,7 +114,7 @@ pub(super) fn parse_section_labels(text: &str) -> Vec<String> {
     text.split('\n')
         .filter_map(|raw| {
             let line = raw.strip_suffix('\r').unwrap_or(raw);
-            HEADER_RE
+            header_regex()
                 .captures(line)
                 .map(|header| header["label"].trim().to_string())
         })
@@ -131,7 +136,7 @@ fn rename_header_lines(content: &str, from: &str, to: &str) -> String {
         .split('\n')
         .map(|line| {
             let stripped = line.strip_suffix('\r').unwrap_or(line);
-            match HEADER_RE.captures(stripped) {
+            match header_regex().captures(stripped) {
                 Some(header) if header["label"].trim() == from => format!("## {to}"),
                 _ => line.to_string(),
             }
@@ -277,15 +282,17 @@ impl IndexSectionStore for ObsidianStore {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use pwf_application::ports::task_record::{IndexEntry, IndexEntryState};
     use pwf_models::task::{TaskId, Timestamp};
 
-    use super::{render_entry_line, replace_line};
+    use super::{parse_index_lines, render_entry_line, replace_line};
 
     #[test]
-    fn done_entry_replaces_only_its_index_line() {
+    fn done_entry_replaces_only_its_index_line() -> Result<(), Box<dyn std::error::Error>> {
         let entry = IndexEntry {
-            id: TaskId::try_new("PWF-0001").unwrap(),
+            id: TaskId::try_new("PWF-0001")?,
             state: IndexEntryState::Done(Timestamp::new("2026-07-29")),
             section: String::new(),
         };
@@ -295,5 +302,20 @@ mod tests {
             replace_line(index, 3, &render_entry_line(&entry)),
             "# pwf\n\n- [x] [[PWF-0001]] ✅ 2026-07-29\n- [ ] [[PWF-0002]]\n"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn index_parser_accepts_only_three_letter_project_ids() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let index = "- [ ] [[PW-0001]]\n- [ ] [[PWF-0002]]\n- [ ] [[TOOL-0003]]\n";
+
+        let lines = parse_index_lines(Path::new("index.md"), index)?;
+
+        assert_eq!(
+            lines.into_iter().map(|line| line.id).collect::<Vec<_>>(),
+            [TaskId::try_new("PWF-0002")?]
+        );
+        Ok(())
     }
 }

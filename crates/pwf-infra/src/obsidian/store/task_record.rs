@@ -1,25 +1,24 @@
-use std::{fmt::Write as _, path::Path, sync::LazyLock};
+use std::{fmt::Write as _, path::Path};
 
+use lazy_regex::{Regex, regex};
 use pwf_application::ports::task_record::{
-    IndexEntryState, IndexPlacement, Materialization, NewTask, RecordId, TaskPatch, TaskRecord,
-    TaskStore,
+    IndexEntryState, IndexPlacement, Materialization, NewTask, TaskPatch, TaskRecord, TaskStore,
 };
 use pwf_models::{
     project::Project,
     task::{TaskId, TaskStatus, Timestamp},
 };
-use regex::Regex;
 
 use super::{
     ObsidianStore, ObsidianStoreError,
     add::NewNoteRequest,
     fs::{line_start_index, path_str, read_task_file, write_index, write_task_file},
     index_entry::{ParsedIndexLine, parse_index_lines},
-    read_parser::{line_number, scan_index, section_label_at},
 };
 
-static DATE_STAMP_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"✅\s*(\d{4}-\d{2}-\d{2})").expect("valid date stamp regex"));
+fn date_stamp_regex() -> &'static Regex {
+    regex!(r"✅\s*(\d{4}-\d{2}-\d{2})")
+}
 use crate::obsidian::{
     done_queue,
     note_frontmatter::{
@@ -56,7 +55,7 @@ fn note_to_record(
             .cloned()
     };
     TaskRecord {
-        id: RecordId::Task(id),
+        id,
         title,
         status,
         created: field("created").map(Timestamp::new),
@@ -87,7 +86,7 @@ fn missing_note_record(
     expected_path: &Path,
 ) -> TaskRecord {
     TaskRecord {
-        id: RecordId::Task(id),
+        id,
         title,
         status,
         created: None,
@@ -107,14 +106,14 @@ fn missing_note_record(
     }
 }
 
-fn expected_note_path(index_path: &Path, id: &str) -> std::path::PathBuf {
+fn expected_note_path(index_path: &Path, id: &TaskId) -> std::path::PathBuf {
     index_path
         .parent()
         .unwrap_or(Path::new("."))
         .join(format!("{id}.md"))
 }
 
-fn checkbox_to_record(index_path: &Path, line: &ParsedIndexLine) -> TaskRecord {
+fn index_entry_to_record(index_path: &Path, line: &ParsedIndexLine) -> TaskRecord {
     let (status, completed) = match &line.state {
         IndexEntryState::Open => (TaskStatus::Active, None),
         IndexEntryState::Done(date) => (
@@ -122,7 +121,7 @@ fn checkbox_to_record(index_path: &Path, line: &ParsedIndexLine) -> TaskRecord {
             (!date.as_str().is_empty()).then(|| date.clone()),
         ),
     };
-    let expected = expected_note_path(index_path, line.id.as_ref());
+    let expected = expected_note_path(index_path, &line.id);
     missing_note_record(
         line.id.clone(),
         line.alias.clone().unwrap_or_default(),
@@ -167,10 +166,10 @@ impl ObsidianStore {
         Ok(parse_index_lines(&index_path, &text)?
             .into_iter()
             .find(|line| line.id == *id)
-            .map(|line| checkbox_to_record(&index_path, &line)))
+            .map(|line| index_entry_to_record(&index_path, &line)))
     }
 
-    /// Lists every note-backed, index-only, and inline task record.
+    /// Lists every note-backed and index-only task record.
     ///
     /// Open index entries contribute placement. Every index entry contributes its raw section; the
     /// application owns lifecycle visibility, normalization, and launchability policy.
@@ -192,10 +191,7 @@ impl ObsidianStore {
         let index_display = path_str(&index_path);
 
         for line in parse_index_lines(&index_path, &text)? {
-            if let Some(record) = records
-                .iter_mut()
-                .find(|record| matches!(&record.id, RecordId::Task(id) if id == &line.id))
-            {
+            if let Some(record) = records.iter_mut().find(|record| record.id == line.id) {
                 if record.title.trim().is_empty() {
                     record.title = line.alias.clone().unwrap_or_default();
                 }
@@ -209,7 +205,7 @@ impl ObsidianStore {
                 continue;
             }
 
-            let mut record = checkbox_to_record(&index_path, &line);
+            let mut record = index_entry_to_record(&index_path, &line);
             if matches!(&line.state, IndexEntryState::Open) {
                 record.placement = Some(IndexPlacement {
                     index_path: index_display.clone(),
@@ -219,29 +215,6 @@ impl ObsidianStore {
             records.push(record);
         }
 
-        let scan = scan_index(&text);
-        for (index, inline) in scan.inline.iter().enumerate() {
-            records.push(TaskRecord {
-                id: RecordId::Inline(index + 1),
-                title: inline.session.clone(),
-                status: TaskStatus::Active,
-                created: None,
-                completed: None,
-                commits: None,
-                tags: None,
-                effort: None,
-                prereq: None,
-                section: section_label_at(&text, inline.start),
-                body: inline.prompt.clone(),
-                source: inline.prompt.clone(),
-                locator: index_display.clone(),
-                placement: Some(IndexPlacement {
-                    index_path: index_display.clone(),
-                    line: line_number(&text, inline.start),
-                }),
-                materialization: Materialization::InlineLegacy,
-            });
-        }
         Ok(records)
     }
 
@@ -250,22 +223,19 @@ impl ObsidianStore {
         project: &Project,
         new: &NewTask,
     ) -> Result<TaskRecord, ObsidianStoreError> {
-        let project_id = project.id.as_ref();
         let note = self.write_new_note(
             project,
-            project_id,
             &NewNoteRequest {
                 prompt: &new.prompt,
                 title: &new.title,
                 created: new.created.as_str(),
-                prereq: new.prereq.as_deref(),
+                prereq: new.prereq.as_ref(),
                 effort: new.effort,
                 tags: new.tags.as_ref(),
             },
         )?;
-        let id = TaskId::try_new(&note.id).expect("allocated id is canonical");
         Ok(note_to_record(
-            id,
+            note.id,
             &note.path,
             Some(note.title.as_ref()),
             note.content,
@@ -286,19 +256,15 @@ impl ObsidianStore {
             return Self::patch_note_file(&task.path, patch);
         }
         let Some((index_path, text)) = self.validated_project_index(project)? else {
-            return Err(ObsidianStoreError::TaskNotFound {
-                id: id.as_ref().to_string(),
-            });
+            return Err(ObsidianStoreError::TaskNotFound { id: id.clone() });
         };
         let Some(line) = parse_index_lines(&index_path, &text)?
             .into_iter()
             .find(|line| line.id == *id)
         else {
-            return Err(ObsidianStoreError::TaskNotFound {
-                id: id.as_ref().to_string(),
-            });
+            return Err(ObsidianStoreError::TaskNotFound { id: id.clone() });
         };
-        Self::patch_legacy_checkbox(&index_path, &text, &line, patch)
+        Self::patch_index_entry(&index_path, &text, &line, patch)
     }
 
     fn patch_note_file(note_path: &Path, patch: &TaskPatch) -> Result<(), ObsidianStoreError> {
@@ -331,7 +297,7 @@ impl ObsidianStore {
             }
         }
         if let Some(prereq) = &patch.prereq {
-            content = set_prereq_text(&content, prereq.as_deref());
+            content = set_prereq_text(&content, prereq.as_ref());
         }
         if let Some(effort) = patch.effort {
             content = set_effort_text(&content, Some(effort));
@@ -342,7 +308,7 @@ impl ObsidianStore {
         write_task_file(note_path, &content)
     }
 
-    fn patch_legacy_checkbox(
+    fn patch_index_entry(
         index_path: &Path,
         text: &str,
         line: &ParsedIndexLine,
@@ -350,7 +316,7 @@ impl ObsidianStore {
     ) -> Result<(), ObsidianStoreError> {
         match patch.status {
             Some(TaskStatus::Active) => {
-                if let Some(updated) = done_queue::reopen_done_link(text, line.id.as_ref()) {
+                if let Some(updated) = done_queue::reopen_done_link(text, &line.id) {
                     write_index(index_path, &updated)?;
                 }
                 Ok(())
@@ -361,7 +327,7 @@ impl ObsidianStore {
                     .as_ref()
                     .and_then(Option::as_ref)
                     .map_or("", Timestamp::as_str);
-                let updated = close_legacy_checkbox_text(
+                let updated = close_index_entry_text(
                     text,
                     line.line_number,
                     completed,
@@ -379,9 +345,7 @@ impl ObsidianStore {
             .into_iter()
             .find(|task| task.id == *id)
         else {
-            return Err(ObsidianStoreError::TaskNotFound {
-                id: id.as_ref().to_string(),
-            });
+            return Err(ObsidianStoreError::TaskNotFound { id: id.clone() });
         };
         std::fs::remove_file(&task.path)
             .map_err(|source| ObsidianStoreError::RemoveTaskFile { source })
@@ -412,9 +376,9 @@ impl TaskStore for ObsidianStore {
     }
 }
 
-/// Marks an inline checkbox done at `line` while preserving its surrounding text.
+/// Marks an index entry done at `line` while preserving its surrounding text.
 /// This must remain the only write path to preserve byte-identical CLI output.
-pub(super) fn close_legacy_checkbox_text(
+pub(super) fn close_index_entry_text(
     content: &str,
     line: usize,
     completed: &str,
@@ -440,7 +404,7 @@ pub(super) fn close_legacy_checkbox_text(
         .map_or(content.len(), |index| marker_index + index);
     let line_text = &content[marker_index..line_end];
     let mut checked_line = format!("- [x]{}", &line_text[5..]);
-    if !DATE_STAMP_RE.is_match(&checked_line) {
+    if !date_stamp_regex().is_match(&checked_line) {
         let _ = write!(checked_line, " ✅ {completed}");
     }
     Ok(format!(

@@ -20,8 +20,7 @@ fn task_root_subcommands() -> &'static [&'static str] {
 fn is_value_flag(flag: &str) -> bool {
     matches!(
         flag,
-        "--repo-root"
-            | "--id"
+        "--id"
             | "--project"
             | "--prompt"
             | "--prereq"

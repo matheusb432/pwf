@@ -1,5 +1,6 @@
 mod effort;
 mod id;
+mod prerequisite;
 mod status;
 mod tag;
 mod timestamp;
@@ -7,6 +8,9 @@ mod title;
 
 pub use effort::EffortTier;
 pub use id::TaskId;
+pub use prerequisite::{
+    EmptyPrerequisitesError, PrerequisiteInput, PrerequisiteInputError, Prerequisites,
+};
 pub use status::TaskStatus;
 pub use tag::{EmptyTagsError, InvalidTagError, Tag, Tags};
 pub use timestamp::Timestamp;

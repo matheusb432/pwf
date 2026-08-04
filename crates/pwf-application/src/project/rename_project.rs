@@ -535,9 +535,9 @@ mod tests {
         }
     }
 
-    fn fields(id: &str, title: &str, source: &str, tasks: &str) -> ProjectFields {
+    fn fields(project_id: ProjectId, title: &str, source: &str, tasks: &str) -> ProjectFields {
         ProjectFields {
-            id: ProjectId::try_new(id).unwrap(),
+            id: project_id,
             title: ProjectName::try_new(title).unwrap(),
             source: ProjectSource::new(
                 ProjectSourceKind::Directory,
@@ -554,7 +554,7 @@ mod tests {
     async fn rename_replaces_identity_and_preserves_project_state(pool: sqlx::SqlitePool) {
         insert_project(
             &pool,
-            "SSH",
+            "SSH".parse().unwrap(),
             "ssh-agent-phone-app",
             "/self/ssh-agent-phone-app",
             "/pwf-db/self/ssh-agent-phone-app",
@@ -565,7 +565,12 @@ mod tests {
         let renamed = rename_project::execute(
             RenameProject {
                 current_id: ProjectId::try_new("SSH").unwrap(),
-                fields: fields("MUX", "mimux", "/self/mimux", "/pwf-db/self/mimux"),
+                fields: fields(
+                    "MUX".parse().unwrap(),
+                    "mimux",
+                    "/self/mimux",
+                    "/pwf-db/self/mimux",
+                ),
                 home: PathBuf::from("/home/tester"),
             },
             &pool,
@@ -587,7 +592,7 @@ mod tests {
     async fn task_file_staging_failure_leaves_registry_unchanged(pool: sqlx::SqlitePool) {
         insert_project(
             &pool,
-            "SSH",
+            "SSH".parse().unwrap(),
             "ssh-agent-phone-app",
             "/self/ssh-agent-phone-app",
             "/pwf-db/self/ssh-agent-phone-app",
@@ -598,7 +603,12 @@ mod tests {
         let error = rename_project::execute(
             RenameProject {
                 current_id: ProjectId::try_new("SSH").unwrap(),
-                fields: fields("MUX", "mimux", "/self/mimux", "/pwf-db/self/mimux"),
+                fields: fields(
+                    "MUX".parse().unwrap(),
+                    "mimux",
+                    "/self/mimux",
+                    "/pwf-db/self/mimux",
+                ),
                 home: PathBuf::from("/home/tester"),
             },
             &pool,
@@ -625,7 +635,12 @@ mod tests {
         let error = rename_project::execute(
             RenameProject {
                 current_id: ProjectId::try_new("SSH").unwrap(),
-                fields: fields("MUX", "mimux", "/self/mimux", "/pwf-db/self/mimux"),
+                fields: fields(
+                    "MUX".parse().unwrap(),
+                    "mimux",
+                    "/self/mimux",
+                    "/pwf-db/self/mimux",
+                ),
                 home: PathBuf::from("/home/tester"),
             },
             &pool,
@@ -646,7 +661,7 @@ mod tests {
     async fn destination_id_conflict_leaves_source_unchanged(pool: sqlx::SqlitePool) {
         insert_project(
             &pool,
-            "SSH",
+            "SSH".parse().unwrap(),
             "ssh-agent-phone-app",
             "/self/ssh-agent-phone-app",
             "/pwf-db/self/ssh-agent-phone-app",
@@ -655,7 +670,7 @@ mod tests {
         .await;
         insert_project(
             &pool,
-            "MUX",
+            "MUX".parse().unwrap(),
             "other",
             "/self/other",
             "/pwf-db/self/other",
@@ -666,7 +681,12 @@ mod tests {
         let error = rename_project::execute(
             RenameProject {
                 current_id: ProjectId::try_new("SSH").unwrap(),
-                fields: fields("MUX", "mimux", "/self/mimux", "/pwf-db/self/mimux"),
+                fields: fields(
+                    "MUX".parse().unwrap(),
+                    "mimux",
+                    "/self/mimux",
+                    "/pwf-db/self/mimux",
+                ),
                 home: PathBuf::from("/home/tester"),
             },
             &pool,
@@ -700,7 +720,7 @@ mod tests {
     async fn destination_title_conflict_is_classified(pool: sqlx::SqlitePool) {
         insert_project(
             &pool,
-            "SSH",
+            "SSH".parse().unwrap(),
             "ssh-agent-phone-app",
             "/self/ssh-agent-phone-app",
             "/pwf-db/self/ssh-agent-phone-app",
@@ -709,7 +729,7 @@ mod tests {
         .await;
         insert_project(
             &pool,
-            "ALT",
+            "ALT".parse().unwrap(),
             "mimux",
             "/self/other",
             "/pwf-db/self/other",
@@ -720,7 +740,12 @@ mod tests {
         let error = rename_project::execute(
             RenameProject {
                 current_id: ProjectId::try_new("SSH").unwrap(),
-                fields: fields("MUX", "mimux", "/self/mimux", "/pwf-db/self/mimux"),
+                fields: fields(
+                    "MUX".parse().unwrap(),
+                    "mimux",
+                    "/self/mimux",
+                    "/pwf-db/self/mimux",
+                ),
                 home: PathBuf::from("/home/tester"),
             },
             &pool,
@@ -741,7 +766,7 @@ mod tests {
     async fn runtime_task_collision_leaves_source_unchanged(pool: sqlx::SqlitePool) {
         insert_project(
             &pool,
-            "SSH",
+            "SSH".parse().unwrap(),
             "ssh-agent-phone-app",
             "/self/ssh-agent-phone-app",
             "/pwf-db/self/ssh-agent-phone-app",
@@ -750,7 +775,7 @@ mod tests {
         .await;
         insert_project(
             &pool,
-            "ALT",
+            "ALT".parse().unwrap(),
             "other",
             "/self/other",
             "~/tasks/shared",
@@ -761,7 +786,12 @@ mod tests {
         let error = rename_project::execute(
             RenameProject {
                 current_id: ProjectId::try_new("SSH").unwrap(),
-                fields: fields("MUX", "mimux", "/self/mimux", "/home/tester/tasks/shared"),
+                fields: fields(
+                    "MUX".parse().unwrap(),
+                    "mimux",
+                    "/self/mimux",
+                    "/home/tester/tasks/shared",
+                ),
                 home: PathBuf::from("/home/tester"),
             },
             &pool,
@@ -791,7 +821,7 @@ mod tests {
     async fn invalid_task_path_is_classified(pool: sqlx::SqlitePool) {
         insert_project(
             &pool,
-            "SSH",
+            "SSH".parse().unwrap(),
             "ssh-agent-phone-app",
             "/self/ssh-agent-phone-app",
             "/pwf-db/self/ssh-agent-phone-app",
@@ -802,7 +832,12 @@ mod tests {
         let error = rename_project::execute(
             RenameProject {
                 current_id: ProjectId::try_new("SSH").unwrap(),
-                fields: fields("MUX", "mimux", "/self/mimux", "~/tasks/../mimux"),
+                fields: fields(
+                    "MUX".parse().unwrap(),
+                    "mimux",
+                    "/self/mimux",
+                    "~/tasks/../mimux",
+                ),
                 home: PathBuf::from("/home/tester"),
             },
             &pool,

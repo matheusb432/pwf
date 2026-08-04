@@ -20,7 +20,7 @@ use crate::ports::{
     project_note::{NewProjectNote, ProjectNotePatch, ProjectNoteStore},
     task_record::{
         IndexEntry, IndexEntryStore, IndexSection, IndexSectionStore, Materialization, NewTask,
-        RecordId, TaskPatch, TaskRecord, TaskStore,
+        TaskPatch, TaskRecord, TaskStore,
     },
 };
 
@@ -29,7 +29,7 @@ struct InMemoryState {
     tasks: BTreeMap<ProjectName, Vec<TaskRecord>>,
     entries: BTreeMap<ProjectName, Vec<IndexEntry>>,
     sections: BTreeMap<ProjectName, Vec<String>>,
-    prefixes: BTreeMap<ProjectName, String>,
+    project_ids: BTreeMap<ProjectName, ProjectId>,
     project_notes: BTreeMap<ProjectName, Vec<ProjectNote>>,
     project_note_creations: BTreeMap<ProjectName, Vec<Timestamp>>,
     project_note_failures: Vec<ProjectNoteFailure>,
@@ -65,11 +65,11 @@ impl InMemoryStore {
         self
     }
 
-    /// Registers the id prefix used by task insertion.
-    pub fn with_prefix(self, project: &str, prefix: &str) -> Self {
+    /// Registers the project ID used by task insertion.
+    pub fn with_project_id(self, project: &str, project_id: ProjectId) -> Self {
         self.lock()
-            .prefixes
-            .insert(project_name(project), prefix.to_string());
+            .project_ids
+            .insert(project_name(project), project_id);
         self
     }
 
@@ -135,9 +135,9 @@ fn project_name(project: &str) -> ProjectName {
     ProjectName::try_new(project).expect("test project name is non-empty")
 }
 
-pub(crate) fn project(id: &str, title: &str) -> Project {
+pub(crate) fn project(project_id: ProjectId, title: &str) -> Project {
     Project {
-        id: ProjectId::try_new(id).expect("test project ID is canonical"),
+        id: project_id,
         title: project_name(title),
         source: ProjectSource::new(
             ProjectSourceKind::Directory,
@@ -156,12 +156,11 @@ impl TaskStore for InMemoryStore {
     type Error = Infallible;
 
     fn get(&self, project: &Project, id: &TaskId) -> Result<Option<TaskRecord>, Self::Error> {
-        Ok(self.lock().tasks.get(&project.title).and_then(|tasks| {
-            tasks
-                .iter()
-                .find(|task| task.id.as_task() == Some(id))
-                .cloned()
-        }))
+        Ok(self
+            .lock()
+            .tasks
+            .get(&project.title)
+            .and_then(|tasks| tasks.iter().find(|task| task.id == *id).cloned()))
     }
 
     fn list(&self, project: &Project) -> Result<Vec<TaskRecord>, Self::Error> {
@@ -176,24 +175,24 @@ impl TaskStore for InMemoryStore {
     /// Allocates the next `<prefix>-NNNN` id and materializes an active record.
     fn insert(&self, project: &Project, new: NewTask) -> Result<TaskRecord, Self::Error> {
         let mut state = self.lock();
-        let prefix = state
-            .prefixes
+        let project_id = state
+            .project_ids
             .get(&project.title)
             .cloned()
-            .expect("stage a prefix via with_prefix before insert");
+            .expect("stage a project ID via with_project_id before insert");
         let tasks = state.tasks.entry(project.title.clone()).or_default();
         let next = tasks
             .iter()
-            .filter_map(|task| task.id.as_task())
+            .map(|task| &task.id)
             .filter_map(|id| id.as_ref().split_once('-'))
             .filter_map(|(_, number)| number.parse::<u32>().ok())
             .max()
             .unwrap_or(0)
             + 1;
-        let id = TaskId::try_new(format!("{prefix}-{next:04}")).expect("allocated id");
+        let id = TaskId::try_new(format!("{project_id}-{next:04}")).expect("allocated id");
         let locator = format!("/mem/{}/{}.md", project.title.as_ref(), id.as_ref());
         let record = TaskRecord {
-            id: RecordId::Task(id),
+            id,
             title: new.title.to_string(),
             status: TaskStatus::Active,
             created: Some(new.created),
@@ -201,7 +200,7 @@ impl TaskStore for InMemoryStore {
             commits: None,
             tags: new.tags.map(|tags| render_tags(&tags)),
             effort: new.effort.map(|effort| effort.to_string()),
-            prereq: new.prereq,
+            prereq: new.prereq.map(|prerequisites| prerequisites.to_string()),
             section: None,
             body: new.prompt.clone(),
             source: new.prompt,
@@ -219,7 +218,7 @@ impl TaskStore for InMemoryStore {
         let tasks = state.tasks.entry(project.title.clone()).or_default();
         let record = tasks
             .iter_mut()
-            .find(|task| task.id.as_task() == Some(id))
+            .find(|task| task.id == *id)
             .expect("update of unknown id");
         if let Some(status) = patch.status {
             record.status = status;
@@ -237,7 +236,7 @@ impl TaskStore for InMemoryStore {
             record.title = title.to_string();
         }
         if let Some(prereq) = patch.prereq {
-            record.prereq = prereq;
+            record.prereq = prereq.map(|prerequisites| prerequisites.to_string());
         }
         if let Some(effort) = patch.effort {
             record.effort = Some(effort.to_string());
@@ -252,7 +251,7 @@ impl TaskStore for InMemoryStore {
         let mut state = self.lock();
         let tasks = state.tasks.entry(project.title.clone()).or_default();
         let before = tasks.len();
-        tasks.retain(|task| task.id.as_task() != Some(id));
+        tasks.retain(|task| task.id != *id);
         assert!(before > tasks.len(), "delete of unknown id {id:?}");
         Ok(())
     }

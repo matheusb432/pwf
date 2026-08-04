@@ -6,12 +6,12 @@ use assert_cmd::prelude::OutputAssertExt as _;
 #[cfg(target_os = "linux")]
 use expectrl::Expect;
 
-use crate::shared::{SessionFixture, task_json};
+use crate::shared::{SessionFixture, task_id, task_json};
 
 #[test]
 fn pushed_prompt_reaches_dispatch_in_context_order_without_mutating_the_task() {
     let fixture = SessionFixture::new();
-    let task_before = task_json(&fixture.database, "PWF-0001");
+    let task_before = task_json(&fixture.database, &task_id("PWF-0001"));
 
     fixture
         .database
@@ -33,7 +33,10 @@ fn pushed_prompt_reaches_dispatch_in_context_order_without_mutating_the_task() {
         .assert()
         .success();
 
-    assert_eq!(task_json(&fixture.database, "PWF-0001"), task_before);
+    assert_eq!(
+        task_json(&fixture.database, &task_id("PWF-0001")),
+        task_before
+    );
 
     let argv = fs::read_to_string(&fixture.tmux_log_path).unwrap();
     let context_open = argv.find("<pwf_session_context>").unwrap();
@@ -53,7 +56,7 @@ fn pushed_prompt_reaches_dispatch_in_context_order_without_mutating_the_task() {
 #[cfg(target_os = "linux")]
 fn declined_pushed_prompt_leaves_the_task_unchanged_and_does_not_dispatch() {
     let fixture = SessionFixture::new();
-    let task_before = task_json(&fixture.database, "PWF-0001");
+    let task_before = task_json(&fixture.database, &task_id("PWF-0001"));
 
     let mut command = fixture.database.command();
     command
@@ -84,7 +87,10 @@ fn declined_pushed_prompt_leaves_the_task_unchanged_and_does_not_dispatch() {
         expectrl::process::unix::WaitStatus::Exited(_, 0)
     ));
 
-    assert_eq!(task_json(&fixture.database, "PWF-0001"), task_before);
+    assert_eq!(
+        task_json(&fixture.database, &task_id("PWF-0001")),
+        task_before
+    );
     let tmux_log = fs::read_to_string(&fixture.tmux_log_path).unwrap();
     assert!(!tmux_log.contains("new-window"));
 }

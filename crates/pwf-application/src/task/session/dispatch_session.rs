@@ -2,6 +2,7 @@
 
 use std::error::Error;
 
+use pwf_models::task::TaskId;
 use thiserror::Error;
 
 use super::{Agent, DispatchMode, DispatchTarget, plan_session::PreparedSessionDispatch};
@@ -25,12 +26,12 @@ impl DispatchSession {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DispatchSessionOk {
     Inline {
-        task_id: String,
+        task_id: TaskId,
     },
     WindowOpened {
         target: DispatchTarget,
         agent: Agent,
-        repository: String,
+        project_path: String,
     },
 }
 
@@ -41,7 +42,7 @@ pub enum DispatchSessionError {
     #[error("Failed to open multiplexer window '{window}' in session '{session}': {message}")]
     WindowOpen {
         session: String,
-        window: String,
+        window: TaskId,
         message: String,
     },
     #[error("{source}")]
@@ -94,7 +95,7 @@ fn dispatch_host(
     match plan.mode {
         DispatchMode::Inline => {
             inline
-                .run(AgentCommand::new(argv), &plan.launch.repository)
+                .run(AgentCommand::new(argv), &plan.launch.project_path)
                 .map_err(|message| DispatchSessionError::InlineFailed { message })?;
             Ok(DispatchSessionOk::Inline {
                 task_id: plan.launch.task_id.clone(),
@@ -109,22 +110,23 @@ fn dispatch_multiplexer(
     plan: &super::SessionPlan,
     session_client: &impl SessionClient,
 ) -> Result<DispatchSessionOk, DispatchSessionError> {
-    let window = SessionWindow::builder()
-        .session_name(&plan.target.session)
-        .working_directory(&plan.launch.repository)
-        .window_name(&plan.target.window)
-        .agent_command(AgentCommand::new(argv))
-        .build();
+    let session_name = plan.target.session_name();
+    let window = SessionWindow::new(
+        &session_name,
+        &plan.launch.project_path,
+        plan.target.task_id.as_ref(),
+        AgentCommand::new(argv),
+    );
     session_client
         .open_window(&window)
         .map_err(|message| DispatchSessionError::WindowOpen {
-            session: plan.target.session.clone(),
-            window: plan.target.window.clone(),
+            session: session_name,
+            window: plan.target.task_id.clone(),
             message,
         })?;
     Ok(DispatchSessionOk::WindowOpened {
         target: plan.target.clone(),
         agent: plan.launch.agent,
-        repository: plan.launch.repository.clone(),
+        project_path: plan.launch.project_path.clone(),
     })
 }

@@ -1,4 +1,4 @@
-use pwf_models::task::{EffortTier, TaskTitle};
+use pwf_models::task::{EffortTier, Prerequisites, TaskId, TaskTitle};
 
 use super::{
     logic::task_update::{persist, prepare},
@@ -17,15 +17,15 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct UpdateTask {
     /// Requested task identifier.
-    pub id: String,
+    pub id: TaskId,
     /// Optional replacement prompt.
     pub prompt: Option<String>,
     /// Optional replacement title.
     pub title: Option<TaskTitle>,
     /// Optional lane content appended to the body.
     pub append: Option<String>,
-    /// Raw prerequisite values appended to existing prerequisites.
-    pub prereq: Vec<String>,
+    /// Prerequisite task IDs appended to existing prerequisites.
+    pub prereq: Option<Prerequisites>,
     /// Whether existing prerequisites are cleared.
     pub clear_prereq: bool,
     /// Raw repeated commit ranges.
@@ -43,7 +43,7 @@ pub struct UpdateTask {
 #[derive(Debug, thiserror::Error)]
 pub enum UpdateTaskError {
     #[error("Task not found: {id}")]
-    TaskNotFound { id: String },
+    TaskNotFound { id: TaskId },
     #[error(
         "nothing to update (pass --prompt, --title, --prereq, --clear-prereq, --tag, --tags-clear, --commits, --append-report, --append, and/or --effort)."
     )]
@@ -51,19 +51,15 @@ pub enum UpdateTaskError {
     #[error(
         "only --commits / --append-report can amend closed task {id} (done/cancelled); body/title/prereq/tags/append/effort need an active task."
     )]
-    ClosedTaskAmendOnly { id: String },
+    ClosedTaskAmendOnly { id: TaskId },
     #[error("task {id} has invalid tags frontmatter: {raw:?}.")]
-    InvalidTagsFrontmatter { id: String, raw: String },
+    InvalidTagsFrontmatter { id: TaskId, raw: String },
     #[error(
         "Invalid --tag value {raw:?}; use lowercase/uppercase ASCII letters, digits, '_' or '-', without leading, trailing, or repeated separators."
     )]
     InvalidTag { raw: String },
-    #[error("Invalid --prereq id: {raw}.")]
-    InvalidPrereqId { raw: String },
-    #[error("--prereq requires an id.")]
-    MissingPrereqId,
-    #[error("Unknown --prereq id(s): {}.", ids.join(", "))]
-    UnknownPrereqIds { ids: Vec<String> },
+    #[error("Unknown --prereq id(s): {}.", format_task_ids(ids))]
+    UnknownPrereqIds { ids: Vec<TaskId> },
     #[error("--report cannot be empty.")]
     EmptyReport,
     #[error("--append cannot be empty.")]
@@ -77,12 +73,12 @@ pub enum UpdateTaskError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UpdateTaskOk {
     OpenTaskEdit {
-        id: String,
+        id: TaskId,
         project: String,
         title: String,
     },
     Changed {
-        id: String,
+        id: TaskId,
         changes: Vec<String>,
     },
 }
@@ -108,14 +104,14 @@ pub async fn execute(
     )
     .await
     .map_err(|error| match error {
-        ResolveTaskProjectError::TaskNotFound { id } => UpdateTaskError::TaskNotFound { id },
-        ResolveTaskProjectError::UnknownPrefix { .. } => UpdateTaskError::TaskNotFound {
+        ResolveTaskProjectError::UnknownProjectId { .. } => UpdateTaskError::TaskNotFound {
             id: command.id.clone(),
         },
         ResolveTaskProjectError::QueryProject(source) => UpdateTaskError::QueryProject(source),
     })?;
     let mut projects = vec![resolved.project];
-    if let Ok(ids) = prerequisite::project_ids(&command.prereq) {
+    if let Some(prerequisites) = command.prereq.as_ref() {
+        let ids = prerequisite::project_ids(prerequisites);
         for id in ids {
             if projects.iter().any(|project| project.id == id) {
                 continue;
@@ -138,13 +134,20 @@ pub async fn execute(
     persist(prepared, store)
 }
 
+fn format_task_ids(ids: &[TaskId]) -> String {
+    ids.iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 #[cfg(test)]
 mod tests {
     use pwf_models::task::{TaskId, TaskStatus, TaskTitle, Timestamp};
 
     use super::{UpdateTask, UpdateTaskError, UpdateTaskOk};
     use crate::{
-        ports::task_record::{Materialization, RecordId, TaskRecord},
+        ports::task_record::{Materialization, TaskRecord},
         testing::{InMemoryStore, insert_project},
     };
 
@@ -158,7 +161,7 @@ mod tests {
 
     fn record(id: &str, status: TaskStatus, body: &str) -> TaskRecord {
         TaskRecord {
-            id: RecordId::Task(TaskId::try_new(id).unwrap()),
+            id: TaskId::try_new(id).unwrap(),
             title: "tray gui".to_string(),
             status,
             created: Some(Timestamp::new("2026-01-01")),
@@ -178,7 +181,7 @@ mod tests {
 
     fn staged(status: TaskStatus, body: &str) -> InMemoryStore {
         InMemoryStore::default()
-            .with_prefix("foo-bar", "FOO")
+            .with_project_id("foo-bar", "FOO".parse().unwrap())
             .with_project("foo-bar", vec![record("FOO-0001", status, body)])
     }
 
@@ -188,11 +191,11 @@ mod tests {
 
     fn empty(id: &str) -> UpdateTask {
         UpdateTask {
-            id: id.to_string(),
+            id: id.parse().unwrap(),
             prompt: None,
             title: None,
             append: None,
-            prereq: Vec::new(),
+            prereq: None,
             clear_prereq: false,
             commits: Vec::new(),
             append_report: None,
@@ -204,7 +207,15 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn update_rejects_empty_patch_with_nothing_to_update(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "FOO", "foo-bar", "/repo/foo", "/tasks/foo", false).await;
+        insert_project(
+            &pool,
+            "FOO".parse().unwrap(),
+            "foo-bar",
+            "/projects/foo",
+            "/tasks/foo",
+            false,
+        )
+        .await;
         let store = staged(TaskStatus::Active, "## Goals\n- x\n");
 
         let error = execute(empty("FOO-0001"), &store, &pool).await.unwrap_err();
@@ -218,7 +229,15 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn update_allows_commits_amend_on_closed_task(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "FOO", "foo-bar", "/repo/foo", "/tasks/foo", false).await;
+        insert_project(
+            &pool,
+            "FOO".parse().unwrap(),
+            "foo-bar",
+            "/projects/foo",
+            "/tasks/foo",
+            false,
+        )
+        .await;
         let store = staged(TaskStatus::Done, "## Goals\n- x\n");
         let cmd = UpdateTask {
             commits: vec![" abc..def, ghi..jkl ".to_string(), "abc..def".to_string()],
@@ -230,7 +249,7 @@ mod tests {
         assert_eq!(
             updated,
             UpdateTaskOk::Changed {
-                id: "FOO-0001".to_string(),
+                id: "FOO-0001".parse().unwrap(),
                 changes: vec!["commits: abc..def, ghi..jkl".to_string()],
             }
         );
@@ -242,7 +261,15 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn update_rejects_body_edit_on_closed_task(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "FOO", "foo-bar", "/repo/foo", "/tasks/foo", false).await;
+        insert_project(
+            &pool,
+            "FOO".parse().unwrap(),
+            "foo-bar",
+            "/projects/foo",
+            "/tasks/foo",
+            false,
+        )
+        .await;
         let store = staged(TaskStatus::Done, "body\n");
         let cmd = UpdateTask {
             title: Some(task_title("new title")),
@@ -253,13 +280,21 @@ mod tests {
 
         assert!(matches!(
             error,
-            UpdateTaskError::ClosedTaskAmendOnly { ref id } if id == "FOO-0001"
+            UpdateTaskError::ClosedTaskAmendOnly { ref id } if id.as_ref() == "FOO-0001"
         ));
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn update_open_item_edits_title_and_body_and_reports_open_edit(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "FOO", "foo-bar", "/repo/foo", "/tasks/foo", false).await;
+        insert_project(
+            &pool,
+            "FOO".parse().unwrap(),
+            "foo-bar",
+            "/projects/foo",
+            "/tasks/foo",
+            false,
+        )
+        .await;
         let store = staged(TaskStatus::Active, "\nold body\n");
         let cmd = UpdateTask {
             title: Some(task_title("New Title")),
@@ -272,7 +307,7 @@ mod tests {
         assert_eq!(
             updated,
             UpdateTaskOk::OpenTaskEdit {
-                id: "FOO-0001".to_string(),
+                id: "FOO-0001".parse().unwrap(),
                 project: "foo-bar".to_string(),
                 title: "new title".to_string(),
             }
@@ -288,7 +323,7 @@ mod tests {
             ..record("FOO-0001", TaskStatus::Active, "body\n")
         };
         InMemoryStore::default()
-            .with_prefix("foo-bar", "FOO")
+            .with_project_id("foo-bar", "FOO".parse().unwrap())
             .with_project("foo-bar", vec![record])
     }
 
@@ -298,7 +333,15 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn update_merges_tags_with_existing_frontmatter(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "FOO", "foo-bar", "/repo/foo", "/tasks/foo", false).await;
+        insert_project(
+            &pool,
+            "FOO".parse().unwrap(),
+            "foo-bar",
+            "/projects/foo",
+            "/tasks/foo",
+            false,
+        )
+        .await;
         let store = staged_with_tags("[sqlite, godot]");
         let cmd = UpdateTask {
             tags: tags(&["godot", "csharp-export"]),
@@ -315,7 +358,15 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn update_tags_clear_plus_tags_replaces_without_parsing_existing(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "FOO", "foo-bar", "/repo/foo", "/tasks/foo", false).await;
+        insert_project(
+            &pool,
+            "FOO".parse().unwrap(),
+            "foo-bar",
+            "/projects/foo",
+            "/tasks/foo",
+            false,
+        )
+        .await;
         let store = staged_with_tags("still-corrupt");
         let cmd = UpdateTask {
             tags: tags(&["sqlite"]),
@@ -330,7 +381,15 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn update_rejects_corrupt_existing_tags_on_the_merge_path(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "FOO", "foo-bar", "/repo/foo", "/tasks/foo", false).await;
+        insert_project(
+            &pool,
+            "FOO".parse().unwrap(),
+            "foo-bar",
+            "/projects/foo",
+            "/tasks/foo",
+            false,
+        )
+        .await;
         let store = staged_with_tags("sqlite, godot");
         let cmd = UpdateTask {
             tags: tags(&["sqlite"]),
@@ -342,13 +401,21 @@ mod tests {
         assert!(matches!(
             error,
             UpdateTaskError::InvalidTagsFrontmatter { ref id, ref raw }
-                if id == "FOO-0001" && raw == "sqlite, godot"
+                if id.as_ref() == "FOO-0001" && raw == "sqlite, godot"
         ));
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn update_rejects_invalid_raw_tag_with_cli_display(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "FOO", "foo-bar", "/repo/foo", "/tasks/foo", false).await;
+        insert_project(
+            &pool,
+            "FOO".parse().unwrap(),
+            "foo-bar",
+            "/projects/foo",
+            "/tasks/foo",
+            false,
+        )
+        .await;
         let store = staged(TaskStatus::Active, "body\n");
         let cmd = UpdateTask {
             tags: vec!["sqlite__export".to_string()],
@@ -369,9 +436,17 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn update_validates_and_merges_prerequisites_in_the_application(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "FOO", "foo-bar", "/repo/foo", "/tasks/foo", false).await;
+        insert_project(
+            &pool,
+            "FOO".parse().unwrap(),
+            "foo-bar",
+            "/projects/foo",
+            "/tasks/foo",
+            false,
+        )
+        .await;
         let store = InMemoryStore::default()
-            .with_prefix("foo-bar", "FOO")
+            .with_project_id("foo-bar", "FOO".parse().unwrap())
             .with_project(
                 "foo-bar",
                 vec![
@@ -383,7 +458,10 @@ mod tests {
                 ],
             );
         let cmd = UpdateTask {
-            prereq: vec!["foo1, FOO-0001".to_string()],
+            prereq: Some(
+                pwf_models::task::Prerequisites::from_inputs(&["foo1, FOO-0001".parse().unwrap()])
+                    .unwrap(),
+            ),
             ..empty("FOO-0002")
         };
 
@@ -392,18 +470,22 @@ mod tests {
         let task = store
             .tasks("foo-bar")
             .into_iter()
-            .find(|task| {
-                task.id
-                    .as_task()
-                    .is_some_and(|id| id.as_ref() == "FOO-0002")
-            })
+            .find(|task| task.id.as_ref() == "FOO-0002")
             .unwrap();
         assert_eq!(task.prereq.as_deref(), Some("[[FOO-0001]]"));
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn update_missing_item_preserves_requested_id(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "FOO", "foo-bar", "/repo/foo", "/tasks/foo", false).await;
+        insert_project(
+            &pool,
+            "FOO".parse().unwrap(),
+            "foo-bar",
+            "/projects/foo",
+            "/tasks/foo",
+            false,
+        )
+        .await;
         let store = staged(TaskStatus::Active, "body\n");
         let cmd = UpdateTask {
             prompt: Some("x".to_string()),
@@ -414,7 +496,7 @@ mod tests {
 
         assert!(matches!(
             error,
-            UpdateTaskError::TaskNotFound { ref id } if id == "foo-9999"
+            UpdateTaskError::TaskNotFound { ref id } if id.as_ref() == "FOO-9999"
         ));
     }
 }

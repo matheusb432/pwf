@@ -1,6 +1,6 @@
 {
   "version": "0.1.0",
-  "description": "Manages pending work and project notes across configured repositories.",
+  "description": "Manages pending work and project notes across configured projects.",
   "homepage": "https://localhost/pwf",
   "license": "MIT",
   "architecture": {

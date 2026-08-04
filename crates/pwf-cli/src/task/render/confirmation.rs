@@ -2,6 +2,7 @@
 
 use anstyle::AnsiColor;
 use pwf_application::task::{AddTaskOk, RemovedTask, UpdateTaskOk};
+use pwf_models::task::TaskId;
 
 use super::paint;
 
@@ -34,8 +35,8 @@ pub(in crate::task) fn render_updated(task: &UpdateTaskOk, color_on: bool) -> St
     let (id, headline) = match task {
         UpdateTaskOk::OpenTaskEdit {
             id, project, title, ..
-        } => (id.as_str(), format!("{project} :: {title}")),
-        UpdateTaskOk::Changed { id, changes } => (id.as_str(), changes.join(", ")),
+        } => (id, format!("{project} :: {title}")),
+        UpdateTaskOk::Changed { id, changes } => (id, changes.join(", ")),
     };
     render_confirmation(
         "Updated pwf task",
@@ -63,7 +64,7 @@ fn added_headline(task: &AddTaskOk) -> String {
 fn render_confirmation(
     label: &str,
     color: AnsiColor,
-    id: &str,
+    id: &TaskId,
     headline: &str,
     detail_lines: &[String],
     color_on: bool,
@@ -87,7 +88,7 @@ mod tests {
 
     fn added_task() -> AddTaskOk {
         AddTaskOk {
-            id: "PWF-0087".to_string(),
+            id: TaskId::try_new("PWF-0087").unwrap(),
             project: "pwf".to_string(),
             title: "color tui output when adding pwf task".to_string(),
             note_path: PathBuf::from("/x/PWF-0087.md"),
@@ -114,7 +115,7 @@ mod tests {
     #[test]
     fn removed_plain_preserves_confirmation_shape() {
         let task = RemovedTask {
-            id: "PWF-0002".to_string(),
+            id: TaskId::try_new("PWF-0002").unwrap(),
             project: "pwf".to_string(),
             title: "stale task".to_string(),
             deleted_path: PathBuf::from("/x.md"),

@@ -86,7 +86,7 @@ fn run_scope(scope: Scope, verbose: bool, json: bool, evidences: bool) -> Result
     let executable = std::env::current_exe()
         .context("resolve the xtask executable")?
         .into_os_string();
-    let declarations = selected_tests(scope, executable);
+    let declarations = selected_tests(scope, executable)?;
 
     Run::try_new(scope.to_string(), declarations)?
         .verbose(verbose)
@@ -136,7 +136,7 @@ pub(crate) fn run_e2e_worker(verbose: bool) -> Result<()> {
     process::run("binary E2E suites", "cargo", &arguments)
 }
 
-fn selected_tests(scope: Scope, executable: OsString) -> Vec<xtk_test::Test> {
+fn selected_tests(scope: Scope, executable: OsString) -> Result<Vec<xtk_test::Test>> {
     match scope {
         Scope::Unit => tests_unit(),
         Scope::E2e => tests_e2e(executable),
@@ -144,42 +144,34 @@ fn selected_tests(scope: Scope, executable: OsString) -> Vec<xtk_test::Test> {
     }
 }
 
-fn tests_unit() -> Vec<Test> {
-    vec![
-        Test::try_new("unit", "cargo")
-            .expect("unit test definition is valid")
+fn tests_unit() -> Result<Vec<Test>> {
+    Ok(vec![
+        Test::try_new("unit", "cargo")?
             .args(["test", "--quiet", "--workspace"])
             .verbose_arguments(["--", "--nocapture"])
             .summary_parser(summary::cargo),
-    ]
+    ])
 }
 
-fn tests_e2e(executable: OsString) -> Vec<Test> {
-    vec![
-        Test::try_new("e2e", executable)
-            .expect("E2E test definition is valid")
+fn tests_e2e(executable: OsString) -> Result<Vec<Test>> {
+    Ok(vec![
+        Test::try_new("e2e", executable)?
             .arg("e2e-worker")
             .verbose_arguments(["--verbose"])
             .accepts_evidences()
             .timeout(E2E_TIMEOUT),
-    ]
+    ])
 }
 
-fn tests_all(executable: OsString) -> Vec<Test> {
-    let mut tests = tests_unit();
-    tests.extend(tests_e2e(executable.clone()));
+fn tests_all(executable: OsString) -> Result<Vec<Test>> {
+    let mut tests = tests_unit()?;
+    tests.extend(tests_e2e(executable.clone())?);
     tests.extend([
-        Test::try_new("architecture", executable)
-            .expect("architecture test definition is valid")
-            .arg("check-architecture"),
-        Test::try_new("ast-rules", "ast-grep")
-            .expect("AST rules test definition is valid")
-            .args(["test", "--skip-snapshot-tests"]),
-        Test::try_new("ast-scan", "ast-grep")
-            .expect("AST scan test definition is valid")
-            .args(["scan", "--globs", "!xtask/xtk_test/**"]),
+        Test::try_new("architecture", executable)?.arg("check-architecture"),
+        Test::try_new("ast-rules", "ast-grep")?.args(["test", "--skip-snapshot-tests"]),
+        Test::try_new("ast-scan", "ast-grep")?.args(["scan", "--globs", "!xtask/xtk_test/**"]),
     ]);
-    tests
+    Ok(tests)
 }
 
 impl std::fmt::Display for Scope {

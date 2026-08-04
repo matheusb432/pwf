@@ -1,10 +1,11 @@
-use std::{path::PathBuf, sync::LazyLock};
+use std::path::PathBuf;
 
 use pwf_models::{
-    project::Project,
-    task::{EffortTier, ProjectName, Tags, TaskTitle, TaskTitleError, Timestamp},
+    project::{Project, ProjectSelector},
+    task::{
+        EffortTier, Prerequisites, ProjectName, Tags, TaskId, TaskTitle, TaskTitleError, Timestamp,
+    },
 };
-use regex::Regex;
 
 use super::{
     logic::task_creation::{added_task, project_mapped},
@@ -54,7 +55,7 @@ impl CreateTaskError {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AddTaskOk {
-    pub id: String,
+    pub id: TaskId,
     pub project: String,
     pub title: String,
     pub note_path: PathBuf,
@@ -113,7 +114,7 @@ impl TaskSection {
 #[derive(Debug, Clone)]
 pub struct AddTask {
     /// Managed project name or project ID.
-    pub project_identifier: Option<String>,
+    pub project_selector: Option<ProjectSelector>,
     /// Direct prompt text after transport-level word joining.
     pub prompt: String,
     /// Optional plan path selected by `--continue`.
@@ -126,8 +127,8 @@ pub struct AddTask {
     pub section: Option<String>,
     /// Selects the human section when no explicit section is supplied.
     pub human: bool,
-    /// Raw repeated prerequisite values.
-    pub prerequisites: Vec<String>,
+    /// Prerequisite task IDs.
+    pub prerequisites: Option<Prerequisites>,
     /// Optional effort tier.
     pub effort: Option<EffortTier>,
     /// Raw repeated tag values.
@@ -148,12 +149,8 @@ pub enum AddTaskError {
         "Invalid --tag value {raw:?}; use lowercase/uppercase ASCII letters, digits, '_' or '-', without leading, trailing, or repeated separators."
     )]
     InvalidTag { raw: String },
-    #[error("Invalid --prereq id: {raw}.")]
-    InvalidPrerequisiteId { raw: String },
-    #[error("--prereq requires an id.")]
-    MissingPrerequisiteId,
-    #[error("Unknown --prereq id(s): {}.", ids.join(", "))]
-    UnknownPrerequisiteIds { ids: Vec<String> },
+    #[error("Unknown --prereq id(s): {}.", format_task_ids(ids))]
+    UnknownPrerequisiteIds { ids: Vec<TaskId> },
     #[error(transparent)]
     InvalidTitle(#[from] TaskTitleError),
     #[error("{source}")]
@@ -174,7 +171,7 @@ pub enum AddTaskError {
 /// # Panics
 ///
 /// Panics if the store's `insert` violates its contract by returning a record
-/// without a canonical [`pwf_models::task::TaskId`].
+/// without a [`pwf_models::task::TaskId`].
 #[cqrsy::command]
 pub async fn execute(
     cmd: &AddTask,
@@ -182,23 +179,18 @@ pub async fn execute(
     pool: &sqlx::SqlitePool,
     clock: &impl Clock,
 ) -> Result<AddTaskOk, AddTaskError> {
-    let identifier = cmd
-        .project_identifier
-        .as_deref()
-        .ok_or(AddTaskError::Usage)?;
+    let selector = cmd.project_selector.clone().ok_or(AddTaskError::Usage)?;
     let project = resolve_project::execute(
         ResolveProject {
-            identifier: identifier.to_string(),
+            selector,
             status: ProjectStatusFilter::ACTIVE,
         },
         pool,
     )
     .await?;
     let mut projects = vec![project.clone()];
-    if !cmd.prerequisites.is_empty() {
-        for id in
-            super::prerequisite::project_ids(&cmd.prerequisites).map_err(map_prerequisite_error)?
-        {
+    if let Some(prerequisites) = cmd.prerequisites.as_ref() {
+        for id in super::prerequisite::project_ids(prerequisites) {
             if projects.iter().any(|project| project.id == id) {
                 continue;
             }
@@ -214,14 +206,14 @@ pub async fn execute(
         .clone()
         .map_or_else(|| clock.today(), Timestamp::new);
     let tags = parse_tags(&cmd.tags)?;
-    let prereq = if cmd.prerequisites.is_empty() {
-        None
-    } else {
-        Some(
-            super::prerequisite::validate_and_merge(None, &cmd.prerequisites, store, &projects)
-                .map_err(map_prerequisite_error)?,
-        )
-    };
+    let prereq = cmd
+        .prerequisites
+        .as_ref()
+        .map(|prerequisites| {
+            super::prerequisite::validate_and_merge(None, prerequisites, store, &projects)
+                .map_err(map_prerequisite_error)
+        })
+        .transpose()?;
     let prepared = prepare_source(cmd, &project)?;
 
     let created = store_util::create_task(
@@ -272,8 +264,8 @@ fn prepare_source(
     selected_project: &Project,
 ) -> Result<PreparedAdd, AddTaskError> {
     command
-        .project_identifier
-        .as_deref()
+        .project_selector
+        .as_ref()
         .ok_or(AddTaskError::Usage)?;
     let source = if let Some(path) = command.continue_path.as_ref() {
         Some(AddTaskSource::Plan { path: path.clone() })
@@ -328,26 +320,21 @@ fn plan_continuation_prompt(path: &str) -> String {
 }
 
 fn plan_title(project: &str, path: &str) -> String {
-    static DASH_UNDERSCORE_REGEX: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"[-_]+").expect("valid separator regex"));
-    static DATE_SLUG_PREFIX_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"^\d{4}-\d{2}-\d{2}-").expect("valid dated slug prefix regex")
-    });
     let stem = std::path::Path::new(path)
         .file_stem()
         .and_then(|stem| stem.to_str())
         .unwrap_or("");
-    let stem = DATE_SLUG_PREFIX_REGEX.replace(stem, "");
+    let stem = strip_date_slug_prefix(stem);
     let excluded = ["kickoff", "plan"];
-    let words = DASH_UNDERSCORE_REGEX
-        .split(&stem)
+    let words = stem
+        .split(['-', '_'])
         .filter(|word| !word.is_empty())
         .map(str::to_lowercase)
         .filter(|word| !excluded.contains(&word.as_str()))
         .collect::<Vec<_>>();
-    let project = DASH_UNDERSCORE_REGEX
-        .replace_all(project, " ")
-        .split_whitespace()
+    let project = project
+        .split(['-', '_'])
+        .flat_map(str::split_whitespace)
         .collect::<Vec<_>>()
         .join(" ")
         .to_lowercase();
@@ -358,16 +345,33 @@ fn plan_title(project: &str, path: &str) -> String {
     }
 }
 
+fn strip_date_slug_prefix(stem: &str) -> &str {
+    let Some(prefix) = stem.get(..11) else {
+        return stem;
+    };
+    let bytes = prefix.as_bytes();
+    let is_date_prefix = bytes[0..4].iter().all(u8::is_ascii_digit)
+        && bytes[4] == b'-'
+        && bytes[5..7].iter().all(u8::is_ascii_digit)
+        && bytes[7] == b'-'
+        && bytes[8..10].iter().all(u8::is_ascii_digit)
+        && bytes[10] == b'-';
+    if is_date_prefix { &stem[11..] } else { stem }
+}
+
 fn map_prerequisite_error(error: PrerequisiteValidationError) -> AddTaskError {
     match error {
-        PrerequisiteValidationError::InvalidId { raw } => {
-            AddTaskError::InvalidPrerequisiteId { raw }
-        }
-        PrerequisiteValidationError::MissingId => AddTaskError::MissingPrerequisiteId,
         PrerequisiteValidationError::UnknownIds { ids } => {
             AddTaskError::UnknownPrerequisiteIds { ids }
         }
     }
+}
+
+fn format_task_ids(ids: &[TaskId]) -> String {
+    ids.iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 #[cfg(test)]

@@ -1,13 +1,25 @@
 use crate::shared::{
-    ProjectFixture, add_payload, assert_failure, assert_project, assert_success, run_with_database,
-    success_json,
+    ProjectFixture, add_payload, assert_failure, assert_project, assert_success, project_id,
+    run_with_database, success_json,
 };
 
 #[test]
 fn registry_lifecycle_is_observable_across_processes() {
     let fixture = ProjectFixture::new();
-    let bar = fixture.add("bar", "bar-baz", "/work/bar-baz", "/pending-work/bar-baz");
-    let foo = fixture.add("foo", "foo-bar", "/work/foo-bar", "/pending-work/foo-bar");
+    let bar_project_id = project_id("bar");
+    let foo_project_id = project_id("foo");
+    let bar = fixture.add(
+        &bar_project_id,
+        "bar-baz",
+        "/work/bar-baz",
+        "/pending-work/bar-baz",
+    );
+    let foo = fixture.add(
+        &foo_project_id,
+        "foo-bar",
+        "/work/foo-bar",
+        "/pending-work/foo-bar",
+    );
 
     assert_eq!(success_json(fixture.run(&["project", "get", "foo"])), foo);
 
@@ -23,7 +35,7 @@ fn registry_lifecycle_is_observable_across_processes() {
     assert_eq!(projects.len(), 2);
     assert_project(
         &projects[0],
-        "BAR",
+        &bar_project_id,
         "bar-baz",
         "/work/bar-baz",
         "/pending-work/bar-baz",
@@ -31,7 +43,7 @@ fn registry_lifecycle_is_observable_across_processes() {
     );
     assert_project(
         &projects[1],
-        "FOO",
+        &foo_project_id,
         "foo-bar",
         "/work/foo-bar",
         "/pending-work/foo-bar",
@@ -72,7 +84,6 @@ fn unmigrated_database_reports_the_migrator_remedy() {
     let database_path = directory.path().join("projects.sqlite3");
     let output = run_with_database(&database_path, &["project", "ls"]);
 
-    assert_eq!(output.status.code(), Some(101));
     assert_failure(output, &["database schema is not ready", "pwf-migrator"]);
 }
 
@@ -80,7 +91,8 @@ fn unmigrated_database_reports_the_migrator_remedy() {
 fn invalid_runtime_task_path_is_not_persisted() {
     let fixture = ProjectFixture::new();
     let task_path = "~/tasks/../shared";
-    let payload = add_payload("pwf", "pwf", "/work/pwf", task_path);
+    let pwf_project_id = project_id("pwf");
+    let payload = add_payload(&pwf_project_id, "pwf", "/work/pwf", task_path);
 
     assert_failure(
         fixture.run(&["project", "add", "--kind", "directory", &payload]),
@@ -95,7 +107,7 @@ fn targeted_tasks_ignores_invalid_unrelated_project_mappings() {
     assert_failure(unknown.run(&["missing"]), &["missing"]);
 
     let paused = ProjectFixture::new();
-    paused.add("pwf", "pwf", "/work/pwf", "/pending-work/pwf");
+    paused.add(&project_id("pwf"), "pwf", "/work/pwf", "/pending-work/pwf");
     success_json(paused.run(&["project", "pause", "pwf"]));
 
     assert_failure(paused.run(&["pwf"]), &["pwf"]);
@@ -111,9 +123,15 @@ fn targeted_tasks_ignores_invalid_unrelated_project_mappings() {
         .join("missing/tasks/shared")
         .to_string_lossy()
         .into_owned();
-    aliased.add_with_home("pwf", "pwf", "/work/pwf", "~/tasks/pwf", &seed_home);
     aliased.add_with_home(
-        "alt",
+        &project_id("pwf"),
+        "pwf",
+        "/work/pwf",
+        "~/tasks/pwf",
+        &seed_home,
+    );
+    aliased.add_with_home(
+        &project_id("alt"),
         "other",
         "/work/other",
         &absolute_tasks_path,

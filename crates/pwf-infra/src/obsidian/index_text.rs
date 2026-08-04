@@ -1,34 +1,31 @@
-use std::sync::LazyLock;
-
-use regex::Regex;
-
-static SECTION_MARK_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^##\s").unwrap());
-static NOTES_HEADER_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?m)^###\s+Notes\s*$").unwrap());
-static ANCHOR_WIKILINK_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^- \[\[").unwrap());
-static ANCHOR_CHECKBOX_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^- \[").unwrap());
-
 const NOTES_HEADER: &str = "### Notes";
 
 pub(super) fn find_section_index(content: &str, headers: &[&str]) -> Option<usize> {
-    for header in headers {
-        let pattern = format!(r"(?im)^{}\s*$", regex::escape(header));
-        if let Some(section) = Regex::new(&pattern).unwrap().find(content) {
-            return Some(section.start());
-        }
-    }
-    None
+    headers.iter().find_map(|header| {
+        line_starts(content).find_map(|(index, line)| {
+            line.trim_end()
+                .eq_ignore_ascii_case(header)
+                .then_some(index)
+        })
+    })
 }
 
 pub(super) fn remove_index_link(content: &str, id: &str) -> String {
-    let pattern = format!(
-        r"(?m)^\s*-\s*(?:\[[ xX]\]\s*)?\[\[{}(?:\|[^\]]*)?\]\].*(?:\r?\n)?",
-        regex::escape(id)
-    );
-    Regex::new(&pattern)
-        .unwrap()
-        .replace_all(content, "")
-        .into_owned()
+    let mut output = String::with_capacity(content.len());
+    let mut preceding_whitespace = String::new();
+    for line in content.split_inclusive('\n') {
+        if line.trim().is_empty() {
+            preceding_whitespace.push_str(line);
+        } else if is_index_link_for_id(line, id) {
+            preceding_whitespace.clear();
+        } else {
+            output.push_str(&preceding_whitespace);
+            preceding_whitespace.clear();
+            output.push_str(line);
+        }
+    }
+    output.push_str(&preceding_whitespace);
+    output
 }
 
 pub(super) fn add_note_link(content: &str, id: &str) -> String {
@@ -90,18 +87,25 @@ impl KnownSection {
 pub(super) fn add_link_to_index(content: &str, link: &str) -> String {
     let block = format!("{link}\n");
     let normal_end = [
-        SECTION_MARK_RE.find(content).map(|m| m.start()),
-        NOTES_HEADER_RE.find(content).map(|m| m.start()),
+        find_line(content, |line| {
+            line.strip_prefix("##")
+                .and_then(|suffix| suffix.chars().next())
+                .is_some_and(char::is_whitespace)
+        }),
+        find_line(content, |line| {
+            line.strip_prefix("###").is_some_and(|suffix| {
+                suffix.chars().next().is_some_and(char::is_whitespace) && suffix.trim() == "Notes"
+            })
+        }),
     ]
     .into_iter()
     .flatten()
     .min()
     .unwrap_or(content.len());
     let region = &content[..normal_end];
-    let insert_at = ANCHOR_WIKILINK_RE
-        .find(region)
-        .or_else(|| ANCHOR_CHECKBOX_RE.find(region))
-        .map_or(normal_end, |m| m.start());
+    let insert_at = find_line(region, |line| line.starts_with("- [["))
+        .or_else(|| find_line(region, |line| line.starts_with("- [")))
+        .unwrap_or(normal_end);
 
     let prefix = content[..insert_at].trim_end();
     let suffix = &content[insert_at..];
@@ -114,6 +118,42 @@ pub(super) fn add_link_to_index(content: &str, link: &str) -> String {
         return format!("{block}{sep}{suffix}");
     }
     format!("{prefix}\n\n{block}{sep}{suffix}")
+}
+
+fn line_starts(content: &str) -> impl Iterator<Item = (usize, &str)> {
+    let mut index = 0;
+    content.split_inclusive('\n').map(move |line| {
+        let start = index;
+        index += line.len();
+        (start, line.strip_suffix('\n').unwrap_or(line))
+    })
+}
+
+fn find_line(content: &str, predicate: impl Fn(&str) -> bool) -> Option<usize> {
+    line_starts(content).find_map(|(index, line)| predicate(line).then_some(index))
+}
+
+fn is_index_link_for_id(source_line: &str, id: &str) -> bool {
+    let Some(after_marker) = source_line.trim_start().strip_prefix('-') else {
+        return false;
+    };
+    let mut remainder = after_marker.trim_start();
+    if remainder.starts_with("[ ]") || remainder.starts_with("[x]") || remainder.starts_with("[X]")
+    {
+        remainder = remainder[3..].trim_start();
+    }
+    let Some(wikilink) = remainder.strip_prefix("[[") else {
+        return false;
+    };
+    let Some(after_id) = wikilink.strip_prefix(id) else {
+        return false;
+    };
+    after_id.starts_with("]]")
+        || after_id.strip_prefix('|').is_some_and(|alias| {
+            alias
+                .find("]]")
+                .is_some_and(|closing| !alias[..closing].contains(']'))
+        })
 }
 
 pub(super) fn section_exists(content: &str, section: KnownSection) -> bool {

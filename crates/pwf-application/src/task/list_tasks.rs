@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
 use pwf_models::{
-    project::Project,
-    task::{EffortTier, ProjectName, Tags, TaskStatus},
+    project::{Project, ProjectSelector},
+    task::{EffortTier, ProjectName, Tags, TaskId, TaskStatus},
 };
 
 #[cfg(test)]
@@ -113,7 +113,7 @@ impl Default for OrderSpec {
 
 #[derive(Debug, Clone)]
 pub struct ListTasks {
-    pub project_identifier: Option<String>,
+    pub project_selector: Option<ProjectSelector>,
     pub section: Option<ListSection>,
     pub all: bool,
     /// Explicit task cap. Omission uses the mode-specific default.
@@ -160,7 +160,7 @@ pub enum ListTasksError {
     ReadProjectTaskPath(Box<dyn std::error::Error + Send + Sync>),
     #[error("task {id} has invalid tags frontmatter: {source}")]
     InvalidTags {
-        id: String,
+        id: TaskId,
         #[source]
         source: TagParseError,
     },
@@ -198,11 +198,11 @@ pub async fn execute(
     pool: &sqlx::SqlitePool,
     task_locations: &impl ProjectTaskLocationClient,
 ) -> Result<ListTasksOk, ListTasksError> {
-    let selected = match query.project_identifier.as_deref() {
-        Some(identifier) => Some(
+    let selected = match query.project_selector.as_ref() {
+        Some(selector) => Some(
             resolve_project::execute(
                 ResolveProject {
-                    identifier: identifier.to_string(),
+                    selector: selector.clone(),
                     status: ProjectStatusFilter::ACTIVE,
                 },
                 pool,
@@ -276,9 +276,10 @@ pub async fn execute(
 
     if query.include_prerequisite_statuses {
         for task in &mut tasks {
-            task.prerequisite_statuses = task.prereq.as_deref().map_or_else(Vec::new, |value| {
-                prerequisite::statuses(value, store, &projects)
-            });
+            task.prerequisite_statuses =
+                task.prerequisites.as_ref().map_or_else(Vec::new, |value| {
+                    prerequisite::statuses(value, store, &projects)
+                });
         }
     }
 
@@ -389,8 +390,7 @@ fn collect_list_tasks(
                 continue;
             }
             tasks.push(
-                enrich(&record, Some(project.source.value().as_ref()))
-                    .into_task_view(project.title.to_string()),
+                enrich(&record, project.source.value()).into_task_view(project.title.to_string()),
             );
         }
     }
@@ -429,8 +429,9 @@ fn parse_effort_tier(raw: &str) -> Option<EffortTier> {
     raw.trim().parse().ok()
 }
 
-fn id_suffix(id: &str) -> u64 {
-    id.rsplit_once('-')
+fn id_suffix(id: &TaskId) -> u64 {
+    id.as_ref()
+        .rsplit_once('-')
         .and_then(|(_, digits)| digits.parse().ok())
         .unwrap_or(0)
 }
@@ -440,26 +441,34 @@ fn created_key(task: &TaskView) -> &str {
 }
 
 fn task_order_cmp(order: OrderSpec, a: &TaskView, b: &TaskView) -> std::cmp::Ordering {
-    if order.field == OrderField::ProjectId {
-        let project_cmp = match order.direction {
-            OrderDirection::Asc => a.project.cmp(&b.project),
-            OrderDirection::Desc => b.project.cmp(&a.project),
-        };
-        return project_cmp
-            .then_with(|| id_suffix(&b.id).cmp(&id_suffix(&a.id)))
-            .then_with(|| b.id.cmp(&a.id));
-    }
-
-    let ascending = match order.field {
-        OrderField::Created => created_key(a).cmp(created_key(b)),
-        OrderField::Id => id_suffix(&a.id).cmp(&id_suffix(&b.id)),
-        OrderField::ProjectId => unreachable!("handled above"),
-    }
-    .then_with(|| a.id.cmp(&b.id));
-
-    match order.direction {
-        OrderDirection::Asc => ascending,
-        OrderDirection::Desc => ascending.reverse(),
+    match order.field {
+        OrderField::Created => {
+            let ascending = created_key(a)
+                .cmp(created_key(b))
+                .then_with(|| a.id.cmp(&b.id));
+            match order.direction {
+                OrderDirection::Asc => ascending,
+                OrderDirection::Desc => ascending.reverse(),
+            }
+        }
+        OrderField::Id => {
+            let ascending = id_suffix(&a.id)
+                .cmp(&id_suffix(&b.id))
+                .then_with(|| a.id.cmp(&b.id));
+            match order.direction {
+                OrderDirection::Asc => ascending,
+                OrderDirection::Desc => ascending.reverse(),
+            }
+        }
+        OrderField::ProjectId => {
+            let project_cmp = match order.direction {
+                OrderDirection::Asc => a.project.cmp(&b.project),
+                OrderDirection::Desc => b.project.cmp(&a.project),
+            };
+            project_cmp
+                .then_with(|| id_suffix(&b.id).cmp(&id_suffix(&a.id)))
+                .then_with(|| b.id.cmp(&a.id))
+        }
     }
 }
 
@@ -505,7 +514,7 @@ mod tests {
     use crate::{
         ports::{
             project_task_location::ProjectTaskLocationClient,
-            task_record::{IndexPlacement, Materialization, RecordId, TaskRecord},
+            task_record::{IndexPlacement, Materialization, TaskRecord},
         },
         testing::{InMemoryStore, MIGRATOR, insert_project, project},
     };
@@ -520,7 +529,7 @@ mod tests {
 
     fn record(id: &str) -> TaskRecord {
         TaskRecord {
-            id: RecordId::Task(TaskId::try_new(id).unwrap()),
+            id: TaskId::try_new(id).unwrap(),
             title: id.to_string(),
             status: TaskStatus::Active,
             created: Some(Timestamp::new("2026-07-07")),
@@ -560,7 +569,10 @@ mod tests {
         }
         let registry = projects
             .iter()
-            .map(|name| project(if *name == "pwf" { "PWF" } else { "CFG" }, name))
+            .map(|name| {
+                let project_id = if *name == "pwf" { "PWF" } else { "CFG" };
+                project(project_id.parse().unwrap(), name)
+            })
             .collect();
         (store, registry)
     }
@@ -572,17 +584,28 @@ mod tests {
     }
 
     fn prerequisite_registry() -> Vec<Project> {
-        vec![project("PWF", "pwf"), project("CFG", "config-handler")]
+        vec![
+            project("PWF".parse().unwrap(), "pwf"),
+            project("CFG".parse().unwrap(), "config-handler"),
+        ]
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn selected_long_list_resolves_only_referenced_prerequisite_projects(
         pool: sqlx::SqlitePool,
     ) {
-        insert_project(&pool, "PWF", "pwf", "/work/pwf", "/tasks/pwf", false).await;
         insert_project(
             &pool,
-            "CFG",
+            "PWF".parse().unwrap(),
+            "pwf",
+            "/work/pwf",
+            "/tasks/pwf",
+            false,
+        )
+        .await;
+        insert_project(
+            &pool,
+            "CFG".parse().unwrap(),
             "config-handler",
             "/work/config-handler",
             "/tasks/config-handler",
@@ -591,7 +614,7 @@ mod tests {
         .await;
         insert_project(
             &pool,
-            "ALT",
+            "ALT".parse().unwrap(),
             "unrelated",
             "/work/unrelated",
             "/missing/unrelated",
@@ -611,7 +634,7 @@ mod tests {
             .with_project("pwf", vec![dependent])
             .with_project("config-handler", vec![prerequisite]);
         let query = ListTasks {
-            project_identifier: Some("pwf".to_string()),
+            project_selector: Some("pwf".parse().unwrap()),
             include_prerequisite_statuses: true,
             ..default_query()
         };
@@ -642,7 +665,7 @@ mod tests {
         for project in registry {
             insert_project(
                 &pool,
-                project.id.as_ref(),
+                project.id.clone(),
                 project.title.as_ref(),
                 project.source.value().as_ref(),
                 project.tasks.path().as_ref(),
@@ -683,7 +706,7 @@ mod tests {
 
     fn default_query() -> ListTasks {
         ListTasks {
-            project_identifier: None,
+            project_selector: None,
             section: None,
             all: false,
             number: Some(100_000),
@@ -697,7 +720,7 @@ mod tests {
     }
 
     fn listed_ids(result: &ListTasksOk) -> Vec<&str> {
-        result.tasks.iter().map(|task| task.id.as_str()).collect()
+        result.tasks.iter().map(|task| task.id.as_ref()).collect()
     }
 
     #[tokio::test]
@@ -719,7 +742,7 @@ mod tests {
             &store,
             &prerequisite_registry(),
             &ListTasks {
-                project_identifier: Some("pwf".to_string()),
+                project_selector: Some("pwf".parse().unwrap()),
                 include_prerequisite_statuses: true,
                 ..default_query()
             },
@@ -769,7 +792,7 @@ mod tests {
             &store,
             &prerequisite_registry(),
             &ListTasks {
-                project_identifier: Some("pwf".to_string()),
+                project_selector: Some("pwf".parse().unwrap()),
                 include_prerequisite_statuses: true,
                 ..default_query()
             },
@@ -1086,7 +1109,7 @@ mod tests {
         let ListTasksError::InvalidTags { id, source } = error else {
             panic!("expected invalid tags error");
         };
-        assert_eq!(id, "PWF-0001");
+        assert_eq!(id.as_ref(), "PWF-0001");
         assert_eq!(source.raw(), "sqlite, godot");
     }
 
@@ -1094,15 +1117,15 @@ mod tests {
     async fn scope_and_effort_filters_exclude_corrupt_tags_before_parsing() {
         let (store, registry) = pwf_store(vec![
             TaskRecord {
-                section: Some("Human".to_string()),
+                section: Some("Human".parse().unwrap()),
                 ..tagged_task("PWF-0003", "corrupt")
             },
             TaskRecord {
-                effort: Some("medium".to_string()),
+                effort: Some("medium".parse().unwrap()),
                 ..tagged_task("PWF-0002", "also corrupt")
             },
             TaskRecord {
-                effort: Some("high".to_string()),
+                effort: Some("high".parse().unwrap()),
                 ..tagged_task("PWF-0001", "[sqlite]")
             },
         ]);
@@ -1268,28 +1291,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn inline_legacy_records_list_with_project_scoped_ids() {
-        let inline = TaskRecord {
-            id: RecordId::Inline(1),
-            title: "legacy task".to_string(),
-            body: "do the legacy thing".to_string(),
-            source: "do the legacy thing".to_string(),
-            created: None,
-            materialization: Materialization::InlineLegacy,
-            ..record("PWF-0001")
-        };
-        let (store, registry) = pwf_store(vec![record("PWF-0002"), inline]);
-
-        let got = run(&store, &registry, &default_query()).await.unwrap();
-
-        assert_eq!(listed_ids(&got), ["PWF-0002", "pwf:1"]);
-        let legacy = &got.tasks[1];
-        assert_eq!(legacy.format, "legacy");
-        assert_eq!(legacy.task_file, None);
-        assert_eq!(legacy.session, "legacy task");
-    }
-
-    #[tokio::test]
     async fn only_project_scans_just_that_project() {
         let (store, registry) = store_and_registry(&[
             in_project("pwf", record("PWF-0001")),
@@ -1300,7 +1301,7 @@ mod tests {
             &store,
             &registry,
             &ListTasks {
-                project_identifier: Some("pwf".to_string()),
+                project_selector: Some("pwf".parse().unwrap()),
                 ..default_query()
             },
         )

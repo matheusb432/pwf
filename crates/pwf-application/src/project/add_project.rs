@@ -267,7 +267,7 @@ mod tests {
     use crate::testing::insert_project;
 
     fn project(
-        id: &str,
+        project_id: ProjectId,
         title: &str,
         source_value: &str,
         tasks_path: &str,
@@ -275,7 +275,7 @@ mod tests {
     ) -> AddProject {
         AddProject {
             fields: ProjectFields {
-                id: ProjectId::try_new(id).unwrap(),
+                id: project_id,
                 title: ProjectName::try_new(title).unwrap(),
                 source: ProjectSource::new(
                     ProjectSourceKind::Directory,
@@ -295,13 +295,25 @@ mod tests {
         let home = PathBuf::from("/home/tester");
 
         super::execute(
-            project("ONE", "one", "/work/shared", "/tasks/one", home.clone()),
+            project(
+                "ONE".parse().unwrap(),
+                "one",
+                "/work/shared",
+                "/tasks/one",
+                home.clone(),
+            ),
             &pool,
         )
         .await
         .unwrap();
         super::execute(
-            project("TWO", "two", "/work/shared", "/tasks/two", home),
+            project(
+                "TWO".parse().unwrap(),
+                "two",
+                "/work/shared",
+                "/tasks/two",
+                home,
+            ),
             &pool,
         )
         .await
@@ -319,14 +331,26 @@ mod tests {
     async fn duplicate_project_id_is_classified(pool: sqlx::SqlitePool) {
         let home = PathBuf::from("/home/tester");
         super::execute(
-            project("PWF", "pwf", "/work/pwf", "/tasks/pwf", home.clone()),
+            project(
+                "PWF".parse().unwrap(),
+                "pwf",
+                "/work/pwf",
+                "/tasks/pwf",
+                home.clone(),
+            ),
             &pool,
         )
         .await
         .unwrap();
 
         let error = super::execute(
-            project("pwf", "other", "/work/other", "/tasks/other", home),
+            project(
+                "pwf".parse().unwrap(),
+                "other",
+                "/work/other",
+                "/tasks/other",
+                home,
+            ),
             &pool,
         )
         .await
@@ -344,14 +368,26 @@ mod tests {
     async fn duplicate_project_title_is_classified(pool: sqlx::SqlitePool) {
         let home = PathBuf::from("/home/tester");
         super::execute(
-            project("PWF", "pwf", "/work/pwf", "/tasks/pwf", home.clone()),
+            project(
+                "PWF".parse().unwrap(),
+                "pwf",
+                "/work/pwf",
+                "/tasks/pwf",
+                home.clone(),
+            ),
             &pool,
         )
         .await
         .unwrap();
 
         let error = super::execute(
-            project("ALT", "pwf", "/work/other", "/tasks/other", home),
+            project(
+                "ALT".parse().unwrap(),
+                "pwf",
+                "/work/other",
+                "/tasks/other",
+                home,
+            ),
             &pool,
         )
         .await
@@ -369,14 +405,26 @@ mod tests {
     async fn failed_project_insert_rolls_back_new_source(pool: sqlx::SqlitePool) {
         let home = PathBuf::from("/home/tester");
         super::execute(
-            project("PWF", "pwf", "/work/pwf", "/tasks/pwf", home.clone()),
+            project(
+                "PWF".parse().unwrap(),
+                "pwf",
+                "/work/pwf",
+                "/tasks/pwf",
+                home.clone(),
+            ),
             &pool,
         )
         .await
         .unwrap();
 
         let error = super::execute(
-            project("ALT", "pwf", "/work/rolled-back", "/tasks/other", home),
+            project(
+                "ALT".parse().unwrap(),
+                "pwf",
+                "/work/rolled-back",
+                "/tasks/other",
+                home,
+            ),
             &pool,
         )
         .await
@@ -400,11 +448,19 @@ mod tests {
     async fn runtime_alias_of_paused_project_is_rejected(pool: sqlx::SqlitePool) {
         let home = PathBuf::from("/home/tester");
         let resolved_path = home.join("tasks/shared");
-        insert_project(&pool, "PWF", "pwf", "/work/PWF", "~/tasks/shared", true).await;
+        insert_project(
+            &pool,
+            "PWF".parse().unwrap(),
+            "pwf",
+            "/work/PWF",
+            "~/tasks/shared",
+            true,
+        )
+        .await;
 
         let error = super::execute(
             project(
-                "ALT",
+                "ALT".parse().unwrap(),
                 "other",
                 "/work/ALT",
                 &resolved_path.to_string_lossy(),

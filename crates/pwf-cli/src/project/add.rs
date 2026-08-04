@@ -39,7 +39,7 @@ impl FromStr for DirectoryPayload {
         let payload: AddPayload = serde_json::from_str(payload)
             .map_err(|error| format!("project add JSON is invalid: {error}"))?;
         let id = ProjectId::try_new(payload.id)
-            .map_err(|_| "project id must contain two to four ASCII letters".to_string())?;
+            .map_err(|_| "project id must contain exactly three ASCII letters".to_string())?;
         let title_raw = payload.title;
         let title = ProjectName::try_new(title_raw.clone()).map_err(|_| {
             if title_raw.trim().eq_ignore_ascii_case("project") {

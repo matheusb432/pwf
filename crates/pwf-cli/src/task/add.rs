@@ -4,6 +4,10 @@ use pwf_application::{
     task::add_task::{self, AddTask},
 };
 use pwf_infra::obsidian::ObsidianStore;
+use pwf_models::{
+    project::ProjectSelector,
+    task::{PrerequisiteInput, Prerequisites},
+};
 
 use super::{
     render::{
@@ -17,7 +21,7 @@ use crate::console::Console;
 pub struct Arguments {
     /// Managed project (full name or id code, case-insensitive).
     #[arg(value_name = "PROJECT")]
-    pub(crate) project: Option<String>,
+    pub(crate) project: Option<ProjectSelector>,
     /// Task prompt words (joined with single spaces).
     #[arg(value_name = "PROMPT")]
     pub(crate) prompt: Vec<String>,
@@ -38,7 +42,7 @@ pub struct Arguments {
     pub(crate) human: bool,
     /// Prereq task id; repeat or comma-separate for several.
     #[arg(long)]
-    pub(crate) prereq: Vec<String>,
+    pub(crate) prereq: Vec<PrerequisiteInput>,
     /// Discovery tag; repeat or comma-separate for several. Input accepts `snake_case` or
     /// kebab-case.
     #[arg(long, allow_hyphen_values = true)]
@@ -69,14 +73,14 @@ pub(super) async fn run(
         });
     let result = add_task::execute(
         &AddTask {
-            project_identifier: arguments.project.clone(),
+            project_selector: arguments.project.clone(),
             prompt: arguments.prompt.join(" "),
             continue_path: arguments.continue_path.clone(),
             title,
             date: arguments.common.date.clone(),
             section: arguments.section.clone(),
             human: arguments.human,
-            prerequisites: arguments.prereq.clone(),
+            prerequisites: Prerequisites::from_inputs(&arguments.prereq),
             effort: arguments.effort.map(Into::into),
             tags: arguments.tag.clone(),
         },

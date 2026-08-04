@@ -36,11 +36,7 @@ impl ObsidianStore {
         })
     }
 
-    pub(super) fn next_task_id(
-        &self,
-        project: &Project,
-        prefix: &str,
-    ) -> Result<String, ObsidianStoreError> {
+    pub(super) fn next_task_id(&self, project: &Project) -> Result<TaskId, ObsidianStoreError> {
         let maximum = self
             .task_files_for_project(project)?
             .into_iter()
@@ -52,6 +48,10 @@ impl ObsidianStore {
             })
             .max()
             .unwrap_or(0);
-        Ok(format!("{prefix}-{:04}", maximum + 1))
+        TaskId::try_new(format!("{}-{:04}", project.id, maximum + 1)).map_err(|_| {
+            ObsidianStoreError::TaskIdSequenceExhausted {
+                project_id: project.id.clone(),
+            }
+        })
     }
 }

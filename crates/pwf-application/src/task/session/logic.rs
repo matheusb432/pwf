@@ -1,4 +1,4 @@
-//! Builds provider-neutral agent launches and canonical multiplexer targets.
+//! Builds provider-neutral agent launches and typed multiplexer targets.
 
 use std::error::Error;
 
@@ -10,13 +10,7 @@ use pwf_models::{
 use thiserror::Error;
 
 use super::{Agent, DispatchTarget, LaunchDirectives, ModelTierLookup, SessionEffort};
-use crate::{
-    ports::{project_note::ProjectNoteStore, task_record::TaskStore},
-    task::{
-        dto::TaskView,
-        show_task::{self, ShowOutput, ShowTask, ShowTaskError, ShowTaskOk},
-    },
-};
+use crate::task::dto::TaskView;
 
 /// Autonomy directive inserted by `--auto`.
 const AUTONOMY_DIRECTIVE: &str = "You MUST execute this autonomously. Do not prompt the user for questions. But if something seems critical and needs user decision, STOP execution and clarify";
@@ -95,7 +89,7 @@ fn write_context_separator(output: &mut String, has_content: &mut bool) {
     reason = "fields form the compile-time thread-title template context"
 )]
 struct ThreadTitleTemplate<'a> {
-    task_id: &'a str,
+    task_id: &'a TaskId,
     task_id_brief: String,
     task_title: &'a str,
     project: &'a str,
@@ -111,9 +105,9 @@ pub(super) fn thread_title(
     directives: LaunchDirectives,
     agent: Agent,
     effort: SessionEffort,
-) -> String {
+) -> Result<String, askama::Error> {
     ThreadTitleTemplate {
-        task_id: task_id.as_ref(),
+        task_id,
         task_id_brief: task_id_brief(task_id),
         task_title: &task.session,
         project: &task.project,
@@ -126,7 +120,6 @@ pub(super) fn thread_title(
         },
     }
     .render()
-    .expect("the compile-time-checked thread-title template renders to a String")
 }
 
 fn task_id_brief(task_id: &TaskId) -> String {
@@ -172,8 +165,7 @@ pub(super) fn launch_prompt(
 
 pub(super) fn dispatch_target(task_id: &TaskId) -> DispatchTarget {
     DispatchTarget {
-        session: task_id.project_id().as_ref().to_ascii_lowercase(),
-        window: task_id.to_string(),
+        task_id: task_id.clone(),
     }
 }
 
@@ -182,7 +174,7 @@ pub(super) enum ModelSelectionError {
     #[error(
         "task {task_id} has an invalid effort value '{value}' (expected low, medium, high, or highest)."
     )]
-    InvalidEffort { task_id: String, value: String },
+    InvalidEffort { task_id: TaskId, value: String },
     #[error("{0}")]
     Catalog(#[source] Box<dyn Error + Send + Sync>),
     #[error("tier {tier} has no [tiers.{tier}] entry in {catalog}")]
@@ -193,7 +185,7 @@ pub(super) enum ModelSelectionError {
 
 pub(super) fn resolve_model<E>(
     agent: Agent,
-    task_id: &str,
+    task_id: &TaskId,
     effort: Option<&str>,
     model_tier: impl FnOnce(EffortTier) -> Result<ModelTierLookup, E>,
 ) -> Result<Option<String>, ModelSelectionError>
@@ -207,7 +199,7 @@ where
         return Ok(None);
     };
     let tier = parse_effort(raw_effort).ok_or_else(|| ModelSelectionError::InvalidEffort {
-        task_id: task_id.to_string(),
+        task_id: task_id.clone(),
         value: raw_effort.to_string(),
     })?;
     let ModelTierLookup {
@@ -225,26 +217,6 @@ where
 
 fn parse_effort(raw: &str) -> Option<EffortTier> {
     raw.trim().parse().ok()
-}
-
-pub(super) async fn load_task_content(
-    id: &str,
-    store: &(impl TaskStore + ProjectNoteStore),
-    pool: &sqlx::SqlitePool,
-) -> Result<String, ShowTaskError> {
-    let output = show_task::execute(
-        &ShowTask {
-            id: id.to_string(),
-            output: ShowOutput::Markdown,
-        },
-        store,
-        pool,
-    )
-    .await?;
-    let ShowTaskOk::Markdown(markdown) = output else {
-        unreachable!("Markdown request returned a different representation")
-    };
-    Ok(markdown)
 }
 
 #[cfg(test)]
@@ -308,12 +280,12 @@ mod tests {
     }
 
     #[test]
-    fn canonical_target_uses_the_typed_id_and_lowercases_its_prefix() {
+    fn target_uses_the_typed_id_and_lowercases_its_project_id() {
         let task_id = "cfg9".parse::<TaskId>().unwrap();
         let target = dispatch_target(&task_id);
 
-        assert_eq!(target.session, "cfg");
-        assert_eq!(target.window, "CFG-0009");
+        assert_eq!(target.task_id, task_id);
+        assert_eq!(target.session_name(), "cfg");
     }
 }
 
@@ -321,12 +293,16 @@ mod tests {
 mod model_selection_tests {
     use std::{assert_matches, error::Error, fmt};
 
-    use pwf_models::task::EffortTier;
+    use pwf_models::task::{EffortTier, TaskId};
 
     use super::{ModelSelectionError, parse_effort, resolve_model};
     use crate::task::session::{Agent, ModelTier, ModelTierLookup};
 
     const CATALOG_PATH: &str = "/config/model-tiers.toml";
+
+    fn task_id() -> TaskId {
+        TaskId::try_new("PWF-0001").unwrap()
+    }
 
     #[derive(Debug, Clone)]
     struct CatalogError(&'static str);
@@ -365,7 +341,7 @@ mod model_selection_tests {
 
     #[test]
     fn codex_ignores_effort_and_the_catalog() {
-        let model = resolve_model(Agent::Codex, "PWF-0001", Some("nine"), |_| {
+        let model = resolve_model(Agent::Codex, &task_id(), Some("nine"), |_| {
             Err(CatalogError("catalog unavailable"))
         })
         .unwrap();
@@ -375,7 +351,7 @@ mod model_selection_tests {
 
     #[test]
     fn claude_without_effort_does_not_read_the_catalog() {
-        let model = resolve_model(Agent::Claude, "PWF-0001", None, |_| {
+        let model = resolve_model(Agent::Claude, &task_id(), None, |_| {
             Err(CatalogError("catalog unavailable"))
         })
         .unwrap();
@@ -385,21 +361,23 @@ mod model_selection_tests {
 
     #[test]
     fn malformed_effort_is_an_application_error() {
-        let error = resolve_model(Agent::Claude, "PWF-0001", Some("nine"), |_| {
+        let error = resolve_model(Agent::Claude, &task_id(), Some("nine"), |_| {
             Ok::<_, CatalogError>(catalog(Some("sonnet")))
         })
         .unwrap_err();
 
         assert_matches!(
             error,
-            ModelSelectionError::InvalidEffort { ref task_id, ref value }
-                if task_id == "PWF-0001" && value == "nine"
+            ModelSelectionError::InvalidEffort {
+                task_id: ref actual_task_id,
+                ref value,
+            } if actual_task_id == &task_id() && value == "nine"
         );
     }
 
     #[test]
     fn configured_claude_model_is_selected() {
-        let model = resolve_model(Agent::Claude, "PWF-0001", Some("high"), |_| {
+        let model = resolve_model(Agent::Claude, &task_id(), Some("high"), |_| {
             Ok::<_, CatalogError>(catalog(Some("sonnet")))
         })
         .unwrap();
@@ -409,7 +387,7 @@ mod model_selection_tests {
 
     #[test]
     fn empty_claude_model_is_the_no_override_sentinel() {
-        let model = resolve_model(Agent::Claude, "PWF-0001", Some("medium"), |_| {
+        let model = resolve_model(Agent::Claude, &task_id(), Some("medium"), |_| {
             Ok::<_, CatalogError>(catalog(Some("")))
         })
         .unwrap();
@@ -419,7 +397,7 @@ mod model_selection_tests {
 
     #[test]
     fn catalog_read_error_retains_its_source() {
-        let error = resolve_model(Agent::Claude, "PWF-0001", Some("low"), |_| {
+        let error = resolve_model(Agent::Claude, &task_id(), Some("low"), |_| {
             Err(CatalogError("catalog unavailable"))
         })
         .unwrap_err();
@@ -429,7 +407,7 @@ mod model_selection_tests {
 
     #[test]
     fn missing_tier_is_an_application_error() {
-        let error = resolve_model(Agent::Claude, "PWF-0001", Some("highest"), |_| {
+        let error = resolve_model(Agent::Claude, &task_id(), Some("highest"), |_| {
             Ok::<_, CatalogError>(ModelTierLookup {
                 catalog: CATALOG_PATH.to_string(),
                 tier: None,
@@ -452,7 +430,7 @@ mod model_selection_tests {
 
     #[test]
     fn missing_claude_model_is_an_application_error() {
-        let error = resolve_model(Agent::Claude, "PWF-0001", Some("highest"), |_| {
+        let error = resolve_model(Agent::Claude, &task_id(), Some("highest"), |_| {
             Ok::<_, CatalogError>(catalog(None))
         })
         .unwrap_err();

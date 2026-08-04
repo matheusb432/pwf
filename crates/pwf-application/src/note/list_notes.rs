@@ -1,6 +1,6 @@
 //! Lists one managed project's notes.
 
-use pwf_models::task::ProjectName;
+use pwf_models::{project::ProjectSelector, task::ProjectName};
 
 use super::dto::ListedNote;
 use crate::{
@@ -17,7 +17,7 @@ const DEFAULT_NOTE_COUNT: usize = 10;
 #[derive(Debug, Clone)]
 pub struct ListNotes {
     /// Selects the managed project by name or id code.
-    pub project_identifier: String,
+    pub project_selector: ProjectSelector,
     /// Caps returned notes, with `None` selecting ten and `Some(0)` selecting all.
     pub number: Option<usize>,
 }
@@ -31,8 +31,8 @@ pub struct ListNotesOk {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ListNotesError {
-    #[error("Unknown project '{identifier}'; expected a managed project name or id code.")]
-    UnknownProject { identifier: String },
+    #[error("Unknown project '{selector}'; expected a managed project name or id code.")]
+    UnknownProject { selector: ProjectSelector },
     #[error("{0}")]
     Project(#[source] Box<dyn std::error::Error + Send + Sync>),
     #[error("{0}")]
@@ -51,16 +51,15 @@ pub async fn execute(
     store: &impl ProjectNoteStore,
     pool: &sqlx::SqlitePool,
 ) -> Result<ListNotesOk, ListNotesError> {
-    let identifier = query.project_identifier.clone();
     let project = resolve_project::execute(
         ResolveProject {
-            identifier: identifier.clone(),
+            selector: query.project_selector,
             status: ProjectStatusFilter::ACTIVE,
         },
         pool,
     )
     .await
-    .map_err(|error| project_error(identifier, error))?;
+    .map_err(project_error)?;
     let mut notes = store
         .list_notes(&project)
         .map_err(|error| ListNotesError::Store(Box::new(error)))?;
@@ -87,9 +86,11 @@ pub async fn execute(
     })
 }
 
-fn project_error(identifier: String, error: ResolveProjectError) -> ListNotesError {
+fn project_error(error: ResolveProjectError) -> ListNotesError {
     match error {
-        ResolveProjectError::Unknown { .. } => ListNotesError::UnknownProject { identifier },
+        ResolveProjectError::Unknown { selector, .. } => {
+            ListNotesError::UnknownProject { selector }
+        }
         error @ ResolveProjectError::Unexpected { .. } => ListNotesError::Project(Box::new(error)),
     }
 }
@@ -120,7 +121,15 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn list_orders_newest_first_and_defaults_to_ten(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "PWF", "pwf", "/repo/pwf", "/tasks/pwf", false).await;
+        insert_project(
+            &pool,
+            "PWF".parse().unwrap(),
+            "pwf",
+            "/projects/pwf",
+            "/tasks/pwf",
+            false,
+        )
+        .await;
         let store = InMemoryStore::default().with_project_notes(
             "pwf",
             [1, 12, 5, 3, 11, 8, 2, 10, 7, 4, 9, 6]
@@ -131,7 +140,7 @@ mod tests {
 
         let result = super::execute(
             ListNotes {
-                project_identifier: "PWF".to_string(),
+                project_selector: "PWF".parse().unwrap(),
                 number: None,
             },
             &store,
@@ -161,12 +170,20 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn zero_is_unlimited_and_explicit_cap_reports_hidden_count(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "PWF", "pwf", "/repo/pwf", "/tasks/pwf", false).await;
+        insert_project(
+            &pool,
+            "PWF".parse().unwrap(),
+            "pwf",
+            "/projects/pwf",
+            "/tasks/pwf",
+            false,
+        )
+        .await;
         let store = InMemoryStore::default().with_project_notes("pwf", (1..=4).map(note).collect());
 
         let unlimited = super::execute(
             ListNotes {
-                project_identifier: "pwf".to_string(),
+                project_selector: "pwf".parse().unwrap(),
                 number: Some(0),
             },
             &store,
@@ -176,7 +193,7 @@ mod tests {
         .unwrap();
         let capped = super::execute(
             ListNotes {
-                project_identifier: "pwf".to_string(),
+                project_selector: "pwf".parse().unwrap(),
                 number: Some(2),
             },
             &store,

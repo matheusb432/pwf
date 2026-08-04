@@ -1,6 +1,7 @@
 //! Converts normalized compatibility tokens into typed task leaves.
 
 use clap::Args;
+use pwf_models::task::PrerequisiteInput;
 
 use super::{
     list,
@@ -30,7 +31,7 @@ pub struct Arguments {
     #[arg(long, value_enum)]
     pub(crate) status: Option<StatusChoice>,
     #[arg(long)]
-    pub(crate) prereq: Vec<String>,
+    pub(crate) prereq: Vec<PrerequisiteInput>,
     #[command(flatten)]
     pub(crate) common: CommonArguments,
 }
@@ -58,13 +59,19 @@ pub(crate) fn resolve(arguments: &Arguments) -> ResolvedCommand {
     }
 
     if route_words.len() == 1 {
-        return ResolvedCommand::List(list_arguments(arguments, Some(verb)));
+        let Ok(project) = verb.parse() else {
+            return ResolvedCommand::RejectUnsupportedTaskCreation;
+        };
+        return ResolvedCommand::List(list_arguments(arguments, Some(project)));
     }
 
     ResolvedCommand::RejectUnsupportedTaskCreation
 }
 
-fn list_arguments(arguments: &Arguments, project: Option<String>) -> list::Arguments {
+fn list_arguments(
+    arguments: &Arguments,
+    project: Option<pwf_models::project::ProjectSelector>,
+) -> list::Arguments {
     list::Arguments {
         project,
         long: arguments.long,
@@ -105,7 +112,7 @@ mod tests {
             panic!("expected routed list");
         };
 
-        assert_eq!(list.project.as_deref(), Some("pwf"));
+        assert_eq!(list.project.as_ref().map(AsRef::as_ref), Some("pwf"));
         assert!(list.long);
         assert!(matches!(list.section, Some(SectionChoice::Future)));
         assert!(list.all);

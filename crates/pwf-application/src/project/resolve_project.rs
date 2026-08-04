@@ -1,6 +1,6 @@
 use std::error::Error;
 
-use pwf_models::project::ProjectId;
+use pwf_models::project::ProjectSelector;
 
 use super::{
     Project, ProjectStatusFilter,
@@ -10,18 +10,18 @@ use super::{
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolveProject {
-    pub identifier: String,
+    pub selector: ProjectSelector,
     pub status: ProjectStatusFilter,
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum ResolveProjectError {
     #[error(
-        "Unknown managed project identifier: {identifier}\nManaged project identifiers: {}",
+        "Unknown managed project identifier: {selector}\nManaged project identifiers: {}",
         known.join(", ")
     )]
     Unknown {
-        identifier: String,
+        selector: ProjectSelector,
         known: Vec<String>,
     },
     #[error("{context}: {source}")]
@@ -41,10 +41,10 @@ pub async fn execute(
         return Ok(project);
     }
 
-    if let Ok(id) = ProjectId::try_new(&query.identifier) {
+    if let Some(id) = query.selector.project_id() {
         match get_project::execute(
             GetProject {
-                id,
+                id: id.clone(),
                 status: query.status,
             },
             pool,
@@ -61,7 +61,7 @@ pub async fn execute(
 
     Err(ResolveProjectError::Unknown {
         known: known_project_names(query.status, pool).await?,
-        identifier: query.identifier,
+        selector: query.selector,
     })
 }
 
@@ -69,7 +69,7 @@ async fn find_by_title(
     query: &ResolveProject,
     pool: &sqlx::SqlitePool,
 ) -> Result<Option<Project>, ResolveProjectError> {
-    let identifier = &query.identifier;
+    let selector = query.selector.as_ref();
     let includes_paused = query.status.includes_paused();
     let row = sqlx::query_as!(
         ProjectRow,
@@ -88,7 +88,7 @@ async fn find_by_title(
         WHERE projects.title = ?
           AND (? OR projects.paused_at IS NULL)
         "#,
-        identifier,
+        selector,
         includes_paused,
     )
     .fetch_optional(pool)
@@ -135,17 +135,35 @@ fn unexpected_row(context: &'static str, source: ProjectRowError) -> ResolveProj
 
 #[cfg(test)]
 mod tests {
+    use pwf_models::project::ProjectId;
+
     use super::*;
     use crate::testing::insert_project;
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn title_match_precedes_project_id_match(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "PWF", "alt", "/work/pwf", "/tasks/pwf", false).await;
-        insert_project(&pool, "ALT", "other", "/work/alt", "/tasks/alt", false).await;
+        insert_project(
+            &pool,
+            "PWF".parse().unwrap(),
+            "alt",
+            "/work/pwf",
+            "/tasks/pwf",
+            false,
+        )
+        .await;
+        insert_project(
+            &pool,
+            "ALT".parse().unwrap(),
+            "other",
+            "/work/alt",
+            "/tasks/alt",
+            false,
+        )
+        .await;
 
         let project = super::execute(
             ResolveProject {
-                identifier: "ALT".to_string(),
+                selector: "ALT".parse().unwrap(),
                 status: ProjectStatusFilter::ACTIVE,
             },
             &pool,
@@ -160,12 +178,28 @@ mod tests {
     async fn active_resolution_excludes_paused_projects_from_matches_and_known_names(
         pool: sqlx::SqlitePool,
     ) {
-        insert_project(&pool, "PWF", "pwf", "/work/pwf", "/tasks/pwf", true).await;
-        insert_project(&pool, "ALT", "other", "/work/alt", "/tasks/alt", false).await;
+        insert_project(
+            &pool,
+            "PWF".parse().unwrap(),
+            "pwf",
+            "/work/pwf",
+            "/tasks/pwf",
+            true,
+        )
+        .await;
+        insert_project(
+            &pool,
+            "ALT".parse().unwrap(),
+            "other",
+            "/work/alt",
+            "/tasks/alt",
+            false,
+        )
+        .await;
 
         let error = super::execute(
             ResolveProject {
-                identifier: "pwf".to_string(),
+                selector: "pwf".parse().unwrap(),
                 status: ProjectStatusFilter::ACTIVE,
             },
             &pool,
@@ -175,8 +209,8 @@ mod tests {
 
         assert!(matches!(
             error,
-            ResolveProjectError::Unknown { identifier, known }
-                if identifier == "pwf" && known == ["other"]
+            ResolveProjectError::Unknown { selector, known }
+                if selector.as_ref() == "pwf" && known == ["other"]
         ));
     }
 }

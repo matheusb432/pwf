@@ -12,6 +12,7 @@ use assert_cmd::prelude::OutputAssertExt as _;
 pub use project::{
     ProjectFixture, add_payload, assert_failure, assert_project, run_with_database, success_json,
 };
+use pwf_models::{project::ProjectId, task::TaskId};
 use serde_json::{Value, json};
 #[cfg(unix)]
 pub use session::SessionFixture;
@@ -66,15 +67,15 @@ impl DatabaseFixture {
 
     pub fn add_directory_project(
         &self,
-        id: &str,
+        project_id: &ProjectId,
         title: &str,
-        repository: &Path,
+        project_path: &Path,
         tasks_path: &Path,
     ) {
         let payload = json!({
-            "id": id,
+            "id": project_id.as_ref(),
             "title": title,
-            "source": {"value": repository},
+            "source": {"value": project_path},
             "tasks": {"kind": "directory", "path": tasks_path},
         })
         .to_string();
@@ -92,22 +93,22 @@ pub struct ManagedProject {
 }
 
 impl ManagedProject {
-    pub fn new(id: &str, title: &str) -> Self {
+    pub fn new(project_id: ProjectId, title: &str) -> Self {
         let directory = TempDir::new().unwrap();
         let tasks_path = directory.path().join("notes").join(title);
-        let repository = directory.path().join("repo");
+        let project_path = directory.path().join("project");
         fs::create_dir_all(&tasks_path).unwrap();
-        fs::create_dir_all(&repository).unwrap();
+        fs::create_dir_all(&project_path).unwrap();
         fs::write(
             tasks_path.join(format!("{title}.md")),
             format!(
                 "---\nid: {}\ntitle: {title}\n---\n",
-                id.to_ascii_lowercase()
+                project_id.as_ref().to_ascii_lowercase()
             ),
         )
         .unwrap();
         let database = DatabaseFixture::new(directory.path().join("projects.sqlite3"));
-        database.add_directory_project(id, title, &repository, &tasks_path);
+        database.add_directory_project(&project_id, title, &project_path, &tasks_path);
         Self {
             _directory: directory,
             database,
@@ -120,13 +121,21 @@ impl ManagedProject {
     }
 }
 
-pub fn task_json(database: &DatabaseFixture, id: &str) -> Value {
+pub fn project_id(raw: &str) -> ProjectId {
+    ProjectId::try_new(raw).expect("fixture project ID is valid")
+}
+
+pub fn task_id(raw: &str) -> TaskId {
+    TaskId::try_new(raw).expect("fixture task ID is valid")
+}
+
+pub fn task_json(database: &DatabaseFixture, task_id: &TaskId) -> Value {
     let output = database
         .command()
-        .args(["task", "show", id, "--json"])
+        .args(["task", "show", task_id.as_ref(), "--json"])
         .output()
         .unwrap();
-    assert_success(&output, &format!("show {id}"));
+    assert_success(&output, &format!("show {task_id}"));
     serde_json::from_slice(&output.stdout).expect("show stdout is JSON")
 }
 

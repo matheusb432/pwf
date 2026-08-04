@@ -7,7 +7,7 @@ use super::{
     dto::{ProjectRow, ProjectRowError},
 };
 
-/// Requests one managed project by canonical project ID.
+/// Requests one managed project by project ID.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GetProject {
     /// Project ID.
@@ -90,7 +90,15 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn status_filter_controls_paused_project_visibility(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "PWF", "pwf", "/work/pwf", "/tasks/pwf", true).await;
+        insert_project(
+            &pool,
+            "PWF".parse().unwrap(),
+            "pwf",
+            "/work/pwf",
+            "/tasks/pwf",
+            true,
+        )
+        .await;
         let id = ProjectId::try_new("PWF").unwrap();
 
         let active = super::execute(

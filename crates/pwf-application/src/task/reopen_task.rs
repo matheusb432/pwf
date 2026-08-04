@@ -1,4 +1,7 @@
-use pwf_models::task::{ProjectName, TaskId, TaskStatus};
+use pwf_models::{
+    project::ProjectId,
+    task::{ProjectName, TaskId, TaskStatus},
+};
 
 use super::{
     resolve_task_project::{self, ResolveTaskProject, ResolveTaskProjectError},
@@ -10,7 +13,7 @@ use crate::ports::task_record::{
 
 #[derive(Debug, Clone)]
 pub struct ReopenTask {
-    pub id: String,
+    pub id: TaskId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,11 +26,11 @@ pub struct ReopenTaskOk {
 #[derive(Debug, thiserror::Error)]
 pub enum ReopenTaskError {
     #[error("Task not found: {id}")]
-    TaskNotFound { id: String },
-    #[error("Unknown task id prefix `{prefix}` for {task_identifier}")]
-    UnknownPrefix {
-        task_identifier: String,
-        prefix: String,
+    TaskNotFound { id: TaskId },
+    #[error("Unknown project ID `{project_id}` for task {task_id}")]
+    UnknownProjectId {
+        task_id: TaskId,
+        project_id: ProjectId,
     },
     #[error("{0}")]
     WriteStore(Box<dyn std::error::Error + Send + Sync>),
@@ -47,13 +50,12 @@ pub async fn execute(
     let resolved = resolve_task_project::execute(ResolveTaskProject { id: cmd.id.clone() }, pool)
         .await
         .map_err(|error| match error {
-            ResolveTaskProjectError::TaskNotFound { id } => ReopenTaskError::TaskNotFound { id },
-            ResolveTaskProjectError::UnknownPrefix {
-                task_identifier,
-                prefix,
-            } => ReopenTaskError::UnknownPrefix {
-                task_identifier,
-                prefix,
+            ResolveTaskProjectError::UnknownProjectId {
+                task_id,
+                project_id,
+            } => ReopenTaskError::UnknownProjectId {
+                task_id,
+                project_id,
             },
             ResolveTaskProjectError::QueryProject(source) => ReopenTaskError::QueryProject(source),
         })?;
@@ -123,14 +125,14 @@ mod tests {
     use super::ReopenTask;
     use crate::{
         ports::task_record::{
-            IndexEntry, IndexEntryState, IndexEntryStore, Materialization, RecordId, TaskRecord,
+            IndexEntry, IndexEntryState, IndexEntryStore, Materialization, TaskRecord,
         },
         testing::{InMemoryStore, project},
     };
 
     fn record(id: &str, status: TaskStatus) -> TaskRecord {
         TaskRecord {
-            id: RecordId::Task(TaskId::try_new(id).unwrap()),
+            id: TaskId::try_new(id).unwrap(),
             title: "tray gui".to_string(),
             status,
             created: Some(Timestamp::new("2026-01-01")),
@@ -149,12 +151,12 @@ mod tests {
     }
 
     fn foo() -> Project {
-        project("FOO", "foo-bar")
+        project("FOO".parse().unwrap(), "foo-bar")
     }
 
     fn staged(status: TaskStatus, entries: Vec<IndexEntry>) -> InMemoryStore {
         let store = InMemoryStore::default()
-            .with_prefix("foo-bar", "FOO")
+            .with_project_id("foo-bar", "FOO".parse().unwrap())
             .with_project("foo-bar", vec![record("FOO-0001", status)]);
         for entry in entries {
             IndexEntryStore::upsert_index_entry(&store, &foo(), entry).unwrap();
@@ -172,14 +174,21 @@ mod tests {
 
     fn command() -> ReopenTask {
         ReopenTask {
-            id: "FOO-0001".to_string(),
+            id: "FOO-0001".parse().unwrap(),
         }
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn reopen_restores_done_entry(pool: sqlx::SqlitePool) {
-        crate::testing::insert_project(&pool, "FOO", "foo-bar", "/repo/foo", "/tasks/foo", false)
-            .await;
+        crate::testing::insert_project(
+            &pool,
+            "FOO".parse().unwrap(),
+            "foo-bar",
+            "/projects/foo",
+            "/tasks/foo",
+            false,
+        )
+        .await;
         let store = staged(
             TaskStatus::Done,
             vec![entry(IndexEntryState::Done(Timestamp::new("2026-01-02")))],
@@ -196,8 +205,15 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn reopen_preserves_absent_index_entry(pool: sqlx::SqlitePool) {
-        crate::testing::insert_project(&pool, "FOO", "foo-bar", "/repo/foo", "/tasks/foo", false)
-            .await;
+        crate::testing::insert_project(
+            &pool,
+            "FOO".parse().unwrap(),
+            "foo-bar",
+            "/projects/foo",
+            "/tasks/foo",
+            false,
+        )
+        .await;
         let store = staged(TaskStatus::Done, Vec::new());
 
         let out = super::execute(&command(), &store, &pool).await.unwrap();
@@ -209,8 +225,15 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn reopen_already_active_is_idempotent_skip(pool: sqlx::SqlitePool) {
-        crate::testing::insert_project(&pool, "FOO", "foo-bar", "/repo/foo", "/tasks/foo", false)
-            .await;
+        crate::testing::insert_project(
+            &pool,
+            "FOO".parse().unwrap(),
+            "foo-bar",
+            "/projects/foo",
+            "/tasks/foo",
+            false,
+        )
+        .await;
         let store = staged(TaskStatus::Active, vec![entry(IndexEntryState::Open)]);
 
         let out = super::execute(&command(), &store, &pool).await.unwrap();
@@ -220,19 +243,26 @@ mod tests {
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
-    async fn reopen_reports_an_unknown_configured_prefix(pool: sqlx::SqlitePool) {
-        crate::testing::insert_project(&pool, "FOO", "foo-bar", "/repo/foo", "/tasks/foo", false)
-            .await;
+    async fn reopen_reports_an_unknown_project_id(pool: sqlx::SqlitePool) {
+        crate::testing::insert_project(
+            &pool,
+            "FOO".parse().unwrap(),
+            "foo-bar",
+            "/projects/foo",
+            "/tasks/foo",
+            false,
+        )
+        .await;
         let store = staged(TaskStatus::Done, Vec::new());
         let command = ReopenTask {
-            id: "XYZ-0001".to_string(),
+            id: "XYZ-0001".parse().unwrap(),
         };
 
         let error = super::execute(&command, &store, &pool).await.unwrap_err();
 
         assert_eq!(
             error.to_string(),
-            "Unknown task id prefix `XYZ` for XYZ-0001"
+            "Unknown project ID `XYZ` for task XYZ-0001"
         );
     }
 }

@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
+use pwf_models::{project::ProjectId, task::TaskId};
+
 use super::{
-    find_active_task::{self, FindActiveTask, FindActiveTaskError},
-    identifier,
     resolve_task_project::{self, ResolveTaskProject, ResolveTaskProjectError},
     store_util::{self, LoadTaskError},
 };
@@ -14,8 +14,8 @@ use crate::ports::{
 /// Describes the note and index link deleted by [`execute`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemovedTask {
-    /// Canonical identifier of the deleted task.
-    pub id: String,
+    /// Identifier of the deleted task.
+    pub id: TaskId,
     /// Managed project that contained the task.
     pub project: String,
     /// Title of the deleted task.
@@ -28,28 +28,26 @@ pub struct RemovedTask {
 
 #[derive(Debug, Clone)]
 pub struct RemoveTask {
-    pub id: String,
+    pub id: TaskId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RemoveTaskOk {
     Removed(RemovedTask),
-    Aborted { task_identifier: String },
+    Aborted { task_identifier: TaskId },
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum RemoveTaskError {
     #[error("Task not found: {id}")]
-    TaskNotFound { id: String },
-    #[error("Unknown task id prefix `{prefix}` for {task_identifier}")]
-    UnknownPrefix {
-        task_identifier: String,
-        prefix: String,
+    TaskNotFound { id: TaskId },
+    #[error("Unknown project ID `{project_id}` for task {task_id}")]
+    UnknownProjectId {
+        task_id: TaskId,
+        project_id: ProjectId,
     },
     #[error("Task note missing: {path}")]
     NoteMissing { path: String },
-    #[error("remove only supports file-model tasks.")]
-    FileModelRequired,
     #[error("{0}")]
     WriteStore(Box<dyn std::error::Error + Send + Sync>),
     #[error("{0}")]
@@ -66,29 +64,15 @@ pub async fn execute(
     pool: &sqlx::SqlitePool,
     confirmation_client: &(impl ConfirmationClient + Send + Sync + 'static),
 ) -> Result<RemoveTaskOk, RemoveTaskError> {
-    let not_found = || RemoveTaskError::TaskNotFound { id: cmd.id.clone() };
-    if identifier::parse(&cmd.id).is_none() {
-        return match find_active_task::execute(&FindActiveTask { id: cmd.id.clone() }, store, pool)
-            .await
-        {
-            Ok(_) => Err(RemoveTaskError::FileModelRequired),
-            Err(FindActiveTaskError::ReadStore(source)) => Err(RemoveTaskError::WriteStore(source)),
-            Err(FindActiveTaskError::QueryProject(source)) => {
-                Err(RemoveTaskError::QueryProject(source))
-            }
-            Err(_) => Err(not_found()),
-        };
-    }
     let resolved = resolve_task_project::execute(ResolveTaskProject { id: cmd.id.clone() }, pool)
         .await
         .map_err(|error| match error {
-            ResolveTaskProjectError::TaskNotFound { id } => RemoveTaskError::TaskNotFound { id },
-            ResolveTaskProjectError::UnknownPrefix {
-                task_identifier,
-                prefix,
-            } => RemoveTaskError::UnknownPrefix {
-                task_identifier,
-                prefix,
+            ResolveTaskProjectError::UnknownProjectId {
+                task_id,
+                project_id,
+            } => RemoveTaskError::UnknownProjectId {
+                task_id,
+                project_id,
             },
             ResolveTaskProjectError::QueryProject(source) => RemoveTaskError::QueryProject(source),
         })?;
@@ -108,7 +92,6 @@ pub async fn execute(
                 path: expected.clone(),
             });
         }
-        Materialization::InlineLegacy => return Err(RemoveTaskError::FileModelRequired),
     };
     let confirmation = Confirmation::Removal {
         task_identifier: task_identifier.clone(),
@@ -118,9 +101,7 @@ pub async fn execute(
         note_path: note_path.clone(),
     };
     if !confirmation_client.confirm(&confirmation) {
-        return Ok(RemoveTaskOk::Aborted {
-            task_identifier: task_identifier.to_string(),
-        });
+        return Ok(RemoveTaskOk::Aborted { task_identifier });
     }
 
     IndexEntryStore::delete_index_entry(store, &project, &task_identifier)
@@ -129,7 +110,7 @@ pub async fn execute(
         .map_err(|error| RemoveTaskError::WriteStore(Box::new(error)))?;
 
     let removed = RemovedTask {
-        id: task_identifier.as_ref().to_string(),
+        id: task_identifier,
         project: project.title.to_string(),
         title: record.title,
         deleted_path: note_path,
@@ -150,7 +131,7 @@ mod tests {
         ports::{
             confirmation::{Confirmation, ConfirmationClient},
             task_record::{
-                IndexEntry, IndexEntryState, IndexEntryStore, Materialization, RecordId, TaskRecord,
+                IndexEntry, IndexEntryState, IndexEntryStore, Materialization, TaskRecord,
             },
         },
         testing::{InMemoryStore, insert_project, project},
@@ -167,7 +148,7 @@ mod tests {
 
     fn record(id: &str, status: TaskStatus) -> TaskRecord {
         TaskRecord {
-            id: RecordId::Task(TaskId::try_new(id).unwrap()),
+            id: TaskId::try_new(id).unwrap(),
             title: "stale task".to_string(),
             status,
             created: Some(Timestamp::new("2026-07-01")),
@@ -193,11 +174,11 @@ mod tests {
             }
         };
         let store = InMemoryStore::default()
-            .with_prefix("pwf", "PWF")
+            .with_project_id("pwf", "PWF".parse().unwrap())
             .with_project("pwf", vec![record("PWF-0001", status)]);
         IndexEntryStore::upsert_index_entry(
             &store,
-            &project("PWF", "pwf"),
+            &project("PWF".parse().unwrap(), "pwf"),
             IndexEntry {
                 id: TaskId::try_new("PWF-0001").unwrap(),
                 state: index_state,
@@ -209,7 +190,9 @@ mod tests {
     }
 
     fn command(id: &str) -> RemoveTask {
-        RemoveTask { id: id.to_string() }
+        RemoveTask {
+            id: id.parse().unwrap(),
+        }
     }
 
     #[derive(Clone)]
@@ -223,7 +206,15 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn remove_deletes_record_and_index_entry(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "PWF", "pwf", "/repo/pwf", "/tasks/pwf", false).await;
+        insert_project(
+            &pool,
+            "PWF".parse().unwrap(),
+            "pwf",
+            "/projects/pwf",
+            "/tasks/pwf",
+            false,
+        )
+        .await;
         let store = staged(TaskStatus::Active);
 
         let RemoveTaskOk::Removed(removed) =
@@ -234,7 +225,7 @@ mod tests {
             panic!("accepted removal must remove the task");
         };
 
-        assert_eq!(removed.id, "PWF-0001");
+        assert_eq!(removed.id.as_ref(), "PWF-0001");
         assert_eq!(removed.project, "pwf");
         assert_eq!(removed.title, "stale task");
         assert!(store.tasks("pwf").is_empty(), "record must be deleted");
@@ -246,9 +237,17 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn remove_deletes_an_unindexed_task(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "PWF", "pwf", "/repo/pwf", "/tasks/pwf", false).await;
+        insert_project(
+            &pool,
+            "PWF".parse().unwrap(),
+            "pwf",
+            "/projects/pwf",
+            "/tasks/pwf",
+            false,
+        )
+        .await;
         let store = InMemoryStore::default()
-            .with_prefix("pwf", "PWF")
+            .with_project_id("pwf", "PWF".parse().unwrap())
             .with_project("pwf", vec![record("PWF-0001", TaskStatus::Active)]);
 
         let outcome = execute(&command("PWF-0001"), &store, &pool, &Accepted)
@@ -262,7 +261,15 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn remove_deletes_closed_items(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "PWF", "pwf", "/repo/pwf", "/tasks/pwf", false).await;
+        insert_project(
+            &pool,
+            "PWF".parse().unwrap(),
+            "pwf",
+            "/projects/pwf",
+            "/tasks/pwf",
+            false,
+        )
+        .await;
         for status in [TaskStatus::Done, TaskStatus::Cancelled] {
             let store = staged(status);
 
@@ -278,7 +285,15 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn remove_missing_item_preserves_requested_id(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "PWF", "pwf", "/repo/pwf", "/tasks/pwf", false).await;
+        insert_project(
+            &pool,
+            "PWF".parse().unwrap(),
+            "pwf",
+            "/projects/pwf",
+            "/tasks/pwf",
+            false,
+        )
+        .await;
         let store = staged(TaskStatus::Active);
 
         let error = execute(&command("PWF-9999"), &store, &pool, &Accepted)
@@ -287,13 +302,21 @@ mod tests {
 
         assert!(matches!(
             error,
-            RemoveTaskError::TaskNotFound { ref id } if id == "PWF-9999"
+            RemoveTaskError::TaskNotFound { ref id } if id.as_ref() == "PWF-9999"
         ));
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
-    async fn remove_reports_an_unknown_configured_prefix(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "PWF", "pwf", "/repo/pwf", "/tasks/pwf", false).await;
+    async fn remove_reports_an_unknown_project_id(pool: sqlx::SqlitePool) {
+        insert_project(
+            &pool,
+            "PWF".parse().unwrap(),
+            "pwf",
+            "/projects/pwf",
+            "/tasks/pwf",
+            false,
+        )
+        .await;
         let store = staged(TaskStatus::Active);
 
         let error = execute(&command("XYZ-0001"), &store, &pool, &Accepted)
@@ -302,13 +325,21 @@ mod tests {
 
         assert_eq!(
             error.to_string(),
-            "Unknown task id prefix `XYZ` for XYZ-0001"
+            "Unknown project ID `XYZ` for task XYZ-0001"
         );
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
-    async fn remove_rejects_missing_note_wikilink_with_legacy_display(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "PWF", "pwf", "/repo/pwf", "/tasks/pwf", false).await;
+    async fn remove_rejects_missing_note_wikilink_with_its_path(pool: sqlx::SqlitePool) {
+        insert_project(
+            &pool,
+            "PWF".parse().unwrap(),
+            "pwf",
+            "/projects/pwf",
+            "/tasks/pwf",
+            false,
+        )
+        .await;
         let ghost = TaskRecord {
             materialization: Materialization::MissingNote {
                 expected: "/notes/pwf/PWF-0001.md".to_string(),
@@ -316,7 +347,7 @@ mod tests {
             ..record("PWF-0001", TaskStatus::Active)
         };
         let store = InMemoryStore::default()
-            .with_prefix("pwf", "PWF")
+            .with_project_id("pwf", "PWF".parse().unwrap())
             .with_project("pwf", vec![ghost]);
 
         let error = execute(&command("PWF-0001"), &store, &pool, &Accepted)
@@ -337,7 +368,9 @@ mod tests {
         use super::{super::RemoveTaskOk, *};
 
         fn command(id: &str) -> RemoveTask {
-            RemoveTask { id: id.to_string() }
+            RemoveTask {
+                id: id.parse().unwrap(),
+            }
         }
 
         #[derive(Clone)]
@@ -353,7 +386,15 @@ mod tests {
 
         #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
         async fn remove_deletes_record_and_index_entry_after_confirmation(pool: sqlx::SqlitePool) {
-            insert_project(&pool, "PWF", "pwf", "/repo/pwf", "/tasks/pwf", false).await;
+            insert_project(
+                &pool,
+                "PWF".parse().unwrap(),
+                "pwf",
+                "/projects/pwf",
+                "/tasks/pwf",
+                false,
+            )
+            .await;
             let store = staged(TaskStatus::Active);
 
             let outcome = super::execute(
@@ -368,14 +409,22 @@ mod tests {
                 panic!("accepted removal must remove the task");
             };
 
-            assert_eq!(removed.id, "PWF-0001");
+            assert_eq!(removed.id.as_ref(), "PWF-0001");
             assert!(store.tasks("pwf").is_empty());
             assert!(store.entries("pwf").is_empty());
         }
 
         #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
         async fn remove_decline_returns_aborted_without_mutating_task(pool: sqlx::SqlitePool) {
-            insert_project(&pool, "PWF", "pwf", "/repo/pwf", "/tasks/pwf", false).await;
+            insert_project(
+                &pool,
+                "PWF".parse().unwrap(),
+                "pwf",
+                "/projects/pwf",
+                "/tasks/pwf",
+                false,
+            )
+            .await;
             let store = staged(TaskStatus::Active);
 
             let outcome = super::execute(
@@ -390,7 +439,7 @@ mod tests {
             assert_eq!(
                 outcome,
                 RemoveTaskOk::Aborted {
-                    task_identifier: "PWF-0001".to_string(),
+                    task_identifier: "PWF-0001".parse().unwrap(),
                 }
             );
             assert_eq!(store.tasks("pwf").len(), 1);

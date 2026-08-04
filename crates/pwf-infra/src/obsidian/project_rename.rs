@@ -205,10 +205,11 @@ fn copy_source(staged: &StagedProjectRename) -> Result<(), ObsidianStoreError> {
                 limit: DIRECTORY_DEPTH_MAX,
             });
         }
-        let relative = entry
-            .path()
-            .strip_prefix(&staged.source)
-            .expect("walked entry stays under project rename source");
+        let relative = entry.path().strip_prefix(&staged.source).map_err(|_| {
+            ObsidianStoreError::ProjectRenameEntryUnsupported {
+                path: entry.path().to_path_buf(),
+            }
+        })?;
         let destination = staged.staging_directory.join(relative);
         if entry.file_type().is_dir() {
             fs::create_dir(&destination).map_err(|source| {

@@ -1,27 +1,56 @@
 use std::str::FromStr;
 
-use nutype::nutype;
+use thiserror::Error;
 
 use crate::project::ProjectId;
 
-#[nutype(
-    validate(predicate = is_canonical_task_id),
-    derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, AsRef, Display,)
-)]
-pub struct TaskId(String);
+/// Identifies one task and retains its validated project identity.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TaskId {
+    value: String,
+    project_id: ProjectId,
+}
 
 impl TaskId {
-    /// Returns the validated three-letter project prefix.
+    /// Creates a task ID from its full stored spelling.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics only if the `TaskId` invariant was bypassed internally.
+    /// Returns [`TaskIdError`] unless the value contains a valid project ID,
+    /// a separator, and exactly four decimal digits.
+    pub fn try_new(raw: impl Into<String>) -> Result<Self, TaskIdError> {
+        let value = raw.into();
+        let Some((code, digits)) = value.split_once('-') else {
+            return Err(TaskIdError { value });
+        };
+        let Ok(project_id) = ProjectId::try_new(code) else {
+            return Err(TaskIdError { value });
+        };
+        let valid_project_id = project_id.as_ref() == code;
+        let valid_number =
+            digits.len() == 4 && digits.chars().all(|character| character.is_ascii_digit());
+        if !valid_project_id || !valid_number {
+            return Err(TaskIdError { value });
+        }
+        Ok(Self { value, project_id })
+    }
+
+    /// Returns the validated three-letter project ID.
+    #[must_use]
     pub fn project_id(&self) -> ProjectId {
-        let (code, _) = self
-            .as_ref()
-            .split_once('-')
-            .expect("TaskId validation requires a separator");
-        ProjectId::try_new(code).expect("TaskId validation requires a canonical project ID")
+        self.project_id.clone()
+    }
+}
+
+impl AsRef<str> for TaskId {
+    fn as_ref(&self) -> &str {
+        &self.value
+    }
+}
+
+impl std::fmt::Display for TaskId {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.value)
     }
 }
 
@@ -54,14 +83,11 @@ fn map_task_id(raw: &str) -> String {
     format!("{code}-{number:04}")
 }
 
-fn is_canonical_task_id(raw: &str) -> bool {
-    let Some((code, digits)) = raw.split_once('-') else {
-        return false;
-    };
-    let Ok(project_id) = ProjectId::try_new(code) else {
-        return false;
-    };
-    project_id.as_ref() == code && digits.len() == 4 && digits.chars().all(|ch| ch.is_ascii_digit())
+/// Reports an invalid full task ID.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[error("invalid task ID {value:?}")]
+pub struct TaskIdError {
+    value: String,
 }
 
 #[cfg(test)]
@@ -69,7 +95,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn task_id_accepts_canonical_values() {
+    fn task_id_accepts_valid_values() {
         let id = TaskId::try_new("PWF-0047").unwrap();
 
         assert_eq!(id.as_ref(), "PWF-0047");
@@ -92,7 +118,7 @@ mod tests {
     }
 
     #[test]
-    fn task_id_rejects_noncanonical_shapes() {
+    fn task_id_rejects_invalid_shapes() {
         assert!(TaskId::try_new("pwf-0047").is_err());
         assert!(TaskId::try_new("PW-0047").is_err());
         assert!(TaskId::try_new("TOOL-0047").is_err());

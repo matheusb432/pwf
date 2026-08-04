@@ -1,7 +1,9 @@
+use pwf_models::{project::ProjectId, task::TaskId};
+
 use super::{
     add_task::AddTaskError,
     complete_task::{ClosedTaskAction, CompleteTaskOk},
-    logic::task_closing::{CloseError, perform_close},
+    logic::task_closing::{CloseError, CloseTaskRequest, perform_close},
     resolve_task_project::{self, ResolveTaskProject, ResolveTaskProjectError},
 };
 use crate::ports::{
@@ -11,7 +13,7 @@ use crate::ports::{
 
 #[derive(Debug, Clone)]
 pub struct CancelTask {
-    pub id: String,
+    pub id: TaskId,
     pub date: Option<String>,
     report: String,
     pub commits: Vec<String>,
@@ -20,7 +22,7 @@ pub struct CancelTask {
 
 impl CancelTask {
     pub fn new(
-        id: String,
+        id: TaskId,
         date: Option<String>,
         report: String,
         commits: Vec<String>,
@@ -41,11 +43,11 @@ pub enum CancelTaskError {
     #[error("--report cannot be empty.")]
     EmptyReport,
     #[error("Active task not found: {id}")]
-    TaskNotFound { id: String },
-    #[error("Unknown task id prefix `{prefix}` for {task_identifier}")]
-    UnknownPrefix {
-        task_identifier: String,
-        prefix: String,
+    TaskNotFound { id: TaskId },
+    #[error("Unknown project ID `{project_id}` for task {task_id}")]
+    UnknownProjectId {
+        task_id: TaskId,
+        project_id: ProjectId,
     },
     #[error("{0}")]
     WriteStore(Box<dyn std::error::Error + Send + Sync>),
@@ -77,25 +79,26 @@ pub async fn execute(
     perform_close(
         store,
         &resolved.project,
-        ClosedTaskAction::Cancelled,
-        &command.id,
-        authored_date.as_str(),
-        Some(command.report.as_str()),
-        &command.commits,
-        command.review,
+        CloseTaskRequest {
+            action: ClosedTaskAction::Cancelled,
+            id: &command.id,
+            completed: authored_date,
+            report: Some(command.report.as_str()),
+            commits: &command.commits,
+            review: command.review,
+        },
     )
     .map_err(map_close_error)
 }
 
 fn map_project_error(error: ResolveTaskProjectError) -> CancelTaskError {
     match error {
-        ResolveTaskProjectError::TaskNotFound { id } => CancelTaskError::TaskNotFound { id },
-        ResolveTaskProjectError::UnknownPrefix {
-            task_identifier,
-            prefix,
-        } => CancelTaskError::UnknownPrefix {
-            task_identifier,
-            prefix,
+        ResolveTaskProjectError::UnknownProjectId {
+            task_id,
+            project_id,
+        } => CancelTaskError::UnknownProjectId {
+            task_id,
+            project_id,
         },
         ResolveTaskProjectError::QueryProject(source) => CancelTaskError::QueryProject(source),
     }
@@ -104,12 +107,12 @@ fn map_project_error(error: ResolveTaskProjectError) -> CancelTaskError {
 fn map_close_error(error: CloseError) -> CancelTaskError {
     match error {
         CloseError::TaskNotFound { id } => CancelTaskError::TaskNotFound { id },
-        CloseError::UnknownPrefix {
-            task_identifier,
-            prefix,
-        } => CancelTaskError::UnknownPrefix {
-            task_identifier,
-            prefix,
+        CloseError::UnknownProjectId {
+            task_id,
+            project_id,
+        } => CancelTaskError::UnknownProjectId {
+            task_id,
+            project_id,
         },
         CloseError::EmptyReport => CancelTaskError::EmptyReport,
         CloseError::WriteStore(source) => CancelTaskError::WriteStore(source),
@@ -126,7 +129,7 @@ mod tests {
         ports::{
             clock::Clock,
             task_record::{
-                IndexEntry, IndexEntryState, IndexEntryStore, Materialization, RecordId, TaskRecord,
+                IndexEntry, IndexEntryState, IndexEntryStore, Materialization, TaskRecord,
             },
         },
         testing::{InMemoryStore, project},
@@ -143,7 +146,7 @@ mod tests {
 
     fn record(id: &str) -> TaskRecord {
         TaskRecord {
-            id: RecordId::Task(TaskId::try_new(id).unwrap()),
+            id: TaskId::try_new(id).unwrap(),
             title: "tray gui".to_string(),
             status: TaskStatus::Active,
             created: Some(Timestamp::new("2026-01-01")),
@@ -163,11 +166,11 @@ mod tests {
 
     fn staged() -> InMemoryStore {
         let store = InMemoryStore::default()
-            .with_prefix("foo-bar", "FOO")
+            .with_project_id("foo-bar", "FOO".parse().unwrap())
             .with_project("foo-bar", vec![record("FOO-0001")]);
         IndexEntryStore::upsert_index_entry(
             &store,
-            &project("FOO", "foo-bar"),
+            &project("FOO".parse().unwrap(), "foo-bar"),
             IndexEntry {
                 id: TaskId::try_new("FOO-0001").unwrap(),
                 state: IndexEntryState::Open,
@@ -180,10 +183,17 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn cancel_rejects_blank_report_during_execution(pool: sqlx::SqlitePool) {
-        crate::testing::insert_project(&pool, "FOO", "foo-bar", "/repo/foo", "/tasks/foo", false)
-            .await;
+        crate::testing::insert_project(
+            &pool,
+            "FOO".parse().unwrap(),
+            "foo-bar",
+            "/projects/foo",
+            "/tasks/foo",
+            false,
+        )
+        .await;
         let command = CancelTask::new(
-            "FOO-0001".to_string(),
+            "FOO-0001".parse().unwrap(),
             Some("2026-07-14".to_string()),
             " \t\n".to_string(),
             Vec::new(),
@@ -200,11 +210,18 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn cancel_marks_item_cancelled(pool: sqlx::SqlitePool) {
-        crate::testing::insert_project(&pool, "FOO", "foo-bar", "/repo/foo", "/tasks/foo", false)
-            .await;
+        crate::testing::insert_project(
+            &pool,
+            "FOO".parse().unwrap(),
+            "foo-bar",
+            "/projects/foo",
+            "/tasks/foo",
+            false,
+        )
+        .await;
         let store = staged();
         let command = CancelTask::new(
-            "FOO-0001".to_string(),
+            "FOO-0001".parse().unwrap(),
             Some("2026-07-14".to_string()),
             "obsoleted".to_string(),
             vec![" a..b, c..d ".to_string(), "a..b".to_string()],
@@ -232,11 +249,18 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn cancel_uses_clock_date_when_no_date_is_explicit(pool: sqlx::SqlitePool) {
-        crate::testing::insert_project(&pool, "FOO", "foo-bar", "/repo/foo", "/tasks/foo", false)
-            .await;
+        crate::testing::insert_project(
+            &pool,
+            "FOO".parse().unwrap(),
+            "foo-bar",
+            "/projects/foo",
+            "/tasks/foo",
+            false,
+        )
+        .await;
         let store = staged();
         let command = CancelTask::new(
-            "FOO-0001".to_string(),
+            "FOO-0001".parse().unwrap(),
             None,
             "obsoleted".to_string(),
             Vec::new(),
@@ -254,11 +278,18 @@ mod tests {
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
-    async fn cancel_reports_an_unknown_configured_prefix(pool: sqlx::SqlitePool) {
-        crate::testing::insert_project(&pool, "FOO", "foo-bar", "/repo/foo", "/tasks/foo", false)
-            .await;
+    async fn cancel_reports_an_unknown_project_id(pool: sqlx::SqlitePool) {
+        crate::testing::insert_project(
+            &pool,
+            "FOO".parse().unwrap(),
+            "foo-bar",
+            "/projects/foo",
+            "/tasks/foo",
+            false,
+        )
+        .await;
         let command = CancelTask::new(
-            "XYZ-0001".to_string(),
+            "XYZ-0001".parse().unwrap(),
             Some("2026-07-14".to_string()),
             "obsolete".to_string(),
             Vec::new(),
@@ -271,7 +302,7 @@ mod tests {
 
         assert_eq!(
             error.to_string(),
-            "Unknown task id prefix `XYZ` for XYZ-0001"
+            "Unknown project ID `XYZ` for task XYZ-0001"
         );
     }
 }

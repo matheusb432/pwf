@@ -4,7 +4,7 @@ use std::fs;
 
 use assert_cmd::prelude::OutputAssertExt as _;
 
-use crate::shared::SessionFixture;
+use crate::shared::{SessionFixture, task_id, task_json};
 
 #[test]
 fn detached_dispatch_targets_the_existing_tmux_session() {
@@ -41,7 +41,7 @@ fn detached_dispatch_targets_the_existing_tmux_session() {
 #[test]
 fn missing_tmux_session_reports_the_start_command_without_mutation() {
     let fixture = SessionFixture::new();
-    let repository = fixture.directory().join("repo");
+    let project_path = fixture.directory().join("project");
 
     let assertion = fixture
         .database
@@ -61,7 +61,7 @@ fn missing_tmux_session_reports_the_start_command_without_mutation() {
     assert!(
         stderr.contains(&format!(
             "tmux new-session -d -s pwf -c {}",
-            repository.display()
+            project_path.display()
         )),
         "{stderr}"
     );
@@ -122,7 +122,7 @@ fn codex_naming_failure_stops_before_dispatch() {
 #[test]
 fn codex_dry_run_forwards_max_reasoning_effort() {
     let fixture = SessionFixture::new();
-    let task_before = crate::shared::task_json(&fixture.database, "PWF-0001");
+    let task_before = task_json(&fixture.database, &task_id("PWF-0001"));
     let app_server_log_path = fixture.directory().join("codex-app-server.jsonl");
     let resume_log_path = fixture.directory().join("codex-resume.log");
 
@@ -160,7 +160,7 @@ fn codex_dry_run_forwards_max_reasoning_effort() {
     assert!(stdout.contains("</pwf_session_context>"), "{stdout}");
     assert!(stdout.contains("<pwf_task>"), "{stdout}");
     assert_eq!(
-        crate::shared::task_json(&fixture.database, "PWF-0001"),
+        task_json(&fixture.database, &task_id("PWF-0001")),
         task_before
     );
     assert!(!app_server_log_path.exists());
@@ -216,14 +216,14 @@ fn inline_dispatch_executes_the_concrete_claude_process() {
         .assert()
         .code(23);
 
-    let repository = fixture.directory().join("repo");
+    let project_path = fixture.directory().join("project");
     let log = fs::read(&claude_log_path).unwrap();
     let entries = log
         .split(|byte| *byte == 0)
         .filter(|entry| !entry.is_empty())
         .map(|entry| String::from_utf8(entry.to_vec()).unwrap())
         .collect::<Vec<_>>();
-    assert_eq!(entries[0], format!("cwd={}", repository.display()));
+    assert_eq!(entries[0], format!("cwd={}", project_path.display()));
     assert_eq!(
         entries[1..6],
         [

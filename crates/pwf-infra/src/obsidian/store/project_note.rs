@@ -6,7 +6,6 @@ use pwf_models::{
     project::Project,
     task::{ProjectId, ProjectName},
 };
-use regex::Regex;
 
 use super::{ObsidianStore, ObsidianStoreError, fs::read_task_file};
 use crate::obsidian::{
@@ -120,8 +119,6 @@ impl ProjectNoteStore for ObsidianStore {
 }
 
 fn list_notes(project_directory: &Path, project_id: &ProjectId) -> Vec<ProjectNote> {
-    let pattern = format!(r"^{}-NOTE-(\d{{4}})$", regex::escape(project_id.as_ref()));
-    let identifier_pattern = Regex::new(&pattern).unwrap();
     let mut notes = Vec::new();
     for entry in std::fs::read_dir(project_directory)
         .into_iter()
@@ -135,12 +132,12 @@ fn list_notes(project_directory: &Path, project_id: &ProjectId) -> Vec<ProjectNo
         let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
             continue;
         };
-        if !identifier_pattern.is_match(stem) {
-            continue;
-        }
         let Ok(id) = NoteId::try_new(stem) else {
             continue;
         };
+        if id.project_id() != project_id {
+            continue;
+        }
         let source = std::fs::read_to_string(path).unwrap_or_default();
         notes.push(ProjectNote {
             id,
@@ -196,7 +193,7 @@ fn note_content(project: &str, note: &NewProjectNote) -> String {
 }
 
 fn yaml_string(value: &str) -> String {
-    serde_json::to_string(value).expect("serializing a string as JSON cannot fail")
+    serde_json::Value::String(value.to_string()).to_string()
 }
 
 fn yaml_array(values: &[String]) -> String {
@@ -291,7 +288,7 @@ mod tests {
             title: ProjectName::try_new("pwf").unwrap(),
             source: ProjectSource::new(
                 ProjectSourceKind::Directory,
-                ProjectSourceValue::try_new("/repo/pwf").unwrap(),
+                ProjectSourceValue::try_new("/projects/pwf").unwrap(),
             ),
             tasks: ProjectTasks::new(
                 ProjectTasksKind::Directory,

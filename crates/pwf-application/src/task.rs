@@ -19,7 +19,7 @@ pub use list_tasks::{
 };
 #[cfg(test)]
 use logic::resolve;
-use logic::{enrich, identifier, note_body, prerequisite, section, store_util, tag_policy, title};
+use logic::{enrich, note_body, prerequisite, section, store_util, tag_policy, title};
 pub use remove_task::RemovedTask;
 pub use show_task::ShowOutput;
 pub use update_task::UpdateTaskOk;

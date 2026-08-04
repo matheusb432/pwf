@@ -16,10 +16,10 @@ use super::{output, parse_project_id};
 
 #[derive(Args, Debug)]
 pub struct Arguments {
-    /// Existing canonical project ID.
+    /// Existing project ID.
     #[arg(value_parser = parse_project_id)]
     pub current_id: ProjectId,
-    /// Replacement canonical project ID.
+    /// Replacement project ID.
     #[arg(value_parser = parse_project_id)]
     pub destination_id: ProjectId,
     /// Replacement project title.

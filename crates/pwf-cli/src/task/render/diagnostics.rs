@@ -26,8 +26,6 @@ fn created_section_for_error(error: &AddTaskError) -> Option<(&str, &str)> {
         | AddTaskError::ProjectResolution(_)
         | AddTaskError::QueryProject(_)
         | AddTaskError::InvalidTag { .. }
-        | AddTaskError::InvalidPrerequisiteId { .. }
-        | AddTaskError::MissingPrerequisiteId
         | AddTaskError::UnknownPrerequisiteIds { .. }
         | AddTaskError::InvalidTitle(_) => None,
     }

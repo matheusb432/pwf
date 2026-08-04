@@ -1,10 +1,13 @@
-use pwf_models::task::{ProjectName, TaskId, TaskStatus, Timestamp};
+use pwf_models::{
+    project::ProjectId,
+    task::{ProjectName, TaskId, TaskStatus, Timestamp},
+};
 
 #[cfg(test)]
 use super::logic::task_closing::review_task_prompt;
 use super::{
     add_task::{AddTaskError, AddTaskOk},
-    logic::task_closing::{CloseError, perform_close},
+    logic::task_closing::{CloseError, CloseTaskRequest, perform_close},
     resolve_task_project::{self, ResolveTaskProject, ResolveTaskProjectError},
 };
 use crate::ports::{
@@ -14,7 +17,7 @@ use crate::ports::{
 
 #[derive(Debug, Clone)]
 pub struct CompleteTask {
-    pub id: String,
+    pub id: TaskId,
     pub date: Option<String>,
     pub report: Option<String>,
     pub commits: Vec<String>,
@@ -59,11 +62,11 @@ pub struct CompleteTaskOk {
 #[derive(Debug, thiserror::Error)]
 pub enum CompleteTaskError {
     #[error("Active task not found: {id}")]
-    TaskNotFound { id: String },
-    #[error("Unknown task id prefix `{prefix}` for {task_identifier}")]
-    UnknownPrefix {
-        task_identifier: String,
-        prefix: String,
+    TaskNotFound { id: TaskId },
+    #[error("Unknown project ID `{project_id}` for task {task_id}")]
+    UnknownProjectId {
+        task_id: TaskId,
+        project_id: ProjectId,
     },
     #[error("--report cannot be empty.")]
     EmptyReport,
@@ -97,25 +100,26 @@ pub async fn execute(
     perform_close(
         store,
         &resolved.project,
-        ClosedTaskAction::Done,
-        &command.id,
-        authored_date.as_str(),
-        command.report.as_deref(),
-        &command.commits,
-        command.review,
+        CloseTaskRequest {
+            action: ClosedTaskAction::Done,
+            id: &command.id,
+            completed: authored_date,
+            report: command.report.as_deref(),
+            commits: &command.commits,
+            review: command.review,
+        },
     )
     .map_err(CloseError::into_complete)
 }
 
 fn map_project_error(error: ResolveTaskProjectError) -> CompleteTaskError {
     match error {
-        ResolveTaskProjectError::TaskNotFound { id } => CompleteTaskError::TaskNotFound { id },
-        ResolveTaskProjectError::UnknownPrefix {
-            task_identifier,
-            prefix,
-        } => CompleteTaskError::UnknownPrefix {
-            task_identifier,
-            prefix,
+        ResolveTaskProjectError::UnknownProjectId {
+            task_id,
+            project_id,
+        } => CompleteTaskError::UnknownProjectId {
+            task_id,
+            project_id,
         },
         ResolveTaskProjectError::QueryProject(source) => CompleteTaskError::QueryProject(source),
     }
@@ -134,7 +138,7 @@ mod tests {
         ports::{
             clock::Clock,
             task_record::{
-                IndexEntry, IndexEntryState, IndexEntryStore, Materialization, RecordId, TaskRecord,
+                IndexEntry, IndexEntryState, IndexEntryStore, Materialization, TaskRecord,
             },
         },
         testing::{InMemoryStore, project},
@@ -151,7 +155,7 @@ mod tests {
 
     fn record(id: &str, status: TaskStatus) -> TaskRecord {
         TaskRecord {
-            id: RecordId::Task(TaskId::try_new(id).unwrap()),
+            id: TaskId::try_new(id).unwrap(),
             title: "tray gui".to_string(),
             status,
             created: Some(Timestamp::new("2026-01-01")),
@@ -178,12 +182,12 @@ mod tests {
     }
 
     fn foo() -> Project {
-        project("FOO", "foo-bar")
+        project("FOO".parse().unwrap(), "foo-bar")
     }
 
     fn staged(tasks: Vec<TaskRecord>, entries: Vec<IndexEntry>) -> InMemoryStore {
         let store = InMemoryStore::default()
-            .with_prefix("foo-bar", "FOO")
+            .with_project_id("foo-bar", "FOO".parse().unwrap())
             .with_project("foo-bar", tasks);
         for entry in entries {
             IndexEntryStore::upsert_index_entry(&store, &foo(), entry).unwrap();
@@ -193,7 +197,7 @@ mod tests {
 
     fn done_command(id: &str) -> CompleteTask {
         CompleteTask {
-            id: id.to_string(),
+            id: id.parse().unwrap(),
             date: Some("2026-07-07".to_string()),
             report: None,
             commits: Vec::new(),
@@ -203,8 +207,15 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn done_marks_entry_and_evicts_past_cap(pool: sqlx::SqlitePool) {
-        crate::testing::insert_project(&pool, "FOO", "foo-bar", "/repo/foo", "/tasks/foo", false)
-            .await;
+        crate::testing::insert_project(
+            &pool,
+            "FOO".parse().unwrap(),
+            "foo-bar",
+            "/projects/foo",
+            "/tasks/foo",
+            false,
+        )
+        .await;
         let mut tasks = vec![record("FOO-0007", TaskStatus::Active)];
         let mut entries: Vec<IndexEntry> = (1..=6)
             .map(|n| {
@@ -247,8 +258,15 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn done_uses_clock_date_when_no_date_is_explicit(pool: sqlx::SqlitePool) {
-        crate::testing::insert_project(&pool, "FOO", "foo-bar", "/repo/foo", "/tasks/foo", false)
-            .await;
+        crate::testing::insert_project(
+            &pool,
+            "FOO".parse().unwrap(),
+            "foo-bar",
+            "/projects/foo",
+            "/tasks/foo",
+            false,
+        )
+        .await;
         let store = staged(
             vec![record("FOO-0001", TaskStatus::Active)],
             vec![entry("FOO-0001", IndexEntryState::Open, "General")],
@@ -268,8 +286,15 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn done_updates_an_unindexed_active_task(pool: sqlx::SqlitePool) {
-        crate::testing::insert_project(&pool, "FOO", "foo-bar", "/repo/foo", "/tasks/foo", false)
-            .await;
+        crate::testing::insert_project(
+            &pool,
+            "FOO".parse().unwrap(),
+            "foo-bar",
+            "/projects/foo",
+            "/tasks/foo",
+            false,
+        )
+        .await;
         let store = staged(vec![record("FOO-0001", TaskStatus::Active)], Vec::new());
 
         let outcome = super::execute(&done_command("FOO-0001"), &store, &pool, &FixedClock)
@@ -283,8 +308,15 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn done_normalizes_futuro_header_entries(pool: sqlx::SqlitePool) {
-        crate::testing::insert_project(&pool, "FOO", "foo-bar", "/repo/foo", "/tasks/foo", false)
-            .await;
+        crate::testing::insert_project(
+            &pool,
+            "FOO".parse().unwrap(),
+            "foo-bar",
+            "/projects/foo",
+            "/tasks/foo",
+            false,
+        )
+        .await;
         let store = staged(
             vec![record("FOO-0001", TaskStatus::Active)],
             vec![entry("FOO-0001", IndexEntryState::Open, "Futuro")],
@@ -299,8 +331,15 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn done_review_inserts_review_task_and_open_entry(pool: sqlx::SqlitePool) {
-        crate::testing::insert_project(&pool, "FOO", "foo-bar", "/repo/foo", "/tasks/foo", false)
-            .await;
+        crate::testing::insert_project(
+            &pool,
+            "FOO".parse().unwrap(),
+            "foo-bar",
+            "/projects/foo",
+            "/tasks/foo",
+            false,
+        )
+        .await;
         let store = staged(
             vec![record("FOO-0001", TaskStatus::Active)],
             vec![entry("FOO-0001", IndexEntryState::Open, "General")],
@@ -316,7 +355,7 @@ mod tests {
             .unwrap();
 
         let review = out.review_task.expect("review task present");
-        assert_eq!(review.id, "FOO-0002");
+        assert_eq!(review.id.as_ref(), "FOO-0002");
         assert!(
             store
                 .entries("foo-bar")
@@ -329,8 +368,15 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn done_on_missing_item_reports_item_not_found(pool: sqlx::SqlitePool) {
-        crate::testing::insert_project(&pool, "FOO", "foo-bar", "/repo/foo", "/tasks/foo", false)
-            .await;
+        crate::testing::insert_project(
+            &pool,
+            "FOO".parse().unwrap(),
+            "foo-bar",
+            "/projects/foo",
+            "/tasks/foo",
+            false,
+        )
+        .await;
         let store = staged(Vec::new(), Vec::new());
 
         let error = super::execute(&done_command("FOO-9999"), &store, &pool, &FixedClock)
@@ -339,15 +385,22 @@ mod tests {
 
         assert!(matches!(
             error,
-            CompleteTaskError::TaskNotFound { ref id } if id == "FOO-9999"
+            CompleteTaskError::TaskNotFound { ref id } if id.as_ref() == "FOO-9999"
         ));
         assert_eq!(error.to_string(), "Active task not found: FOO-9999");
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
-    async fn done_reports_an_unknown_configured_prefix(pool: sqlx::SqlitePool) {
-        crate::testing::insert_project(&pool, "FOO", "foo-bar", "/repo/foo", "/tasks/foo", false)
-            .await;
+    async fn done_reports_an_unknown_project_id(pool: sqlx::SqlitePool) {
+        crate::testing::insert_project(
+            &pool,
+            "FOO".parse().unwrap(),
+            "foo-bar",
+            "/projects/foo",
+            "/tasks/foo",
+            false,
+        )
+        .await;
         let store = staged(Vec::new(), Vec::new());
 
         let error = super::execute(&done_command("XYZ-0001"), &store, &pool, &FixedClock)
@@ -356,18 +409,18 @@ mod tests {
 
         assert_eq!(
             error.to_string(),
-            "Unknown task id prefix `XYZ` for XYZ-0001"
+            "Unknown project ID `XYZ` for task XYZ-0001"
         );
     }
 
     #[test]
     fn review_prompt_uses_scoped_or_bare_diff() {
         assert_eq!(
-            review_task_prompt("PWF-0128", Some("a..b")),
+            review_task_prompt(&"PWF-0128".parse().unwrap(), Some("a..b")),
             "review PWF-0128, commits: a..b / git-tools diff a..b / git-tools diff-subrepos"
         );
         assert_eq!(
-            review_task_prompt("PWF-0128", None),
+            review_task_prompt(&"PWF-0128".parse().unwrap(), None),
             "review PWF-0128 / git-tools diff / git-tools diff-subrepos"
         );
     }

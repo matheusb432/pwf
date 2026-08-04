@@ -1,5 +1,10 @@
 use std::path::PathBuf;
 
+use pwf_models::{
+    project::{ProjectId, ProjectName},
+    task::TaskId,
+};
+
 #[derive(Debug, thiserror::Error)]
 pub enum ObsidianStoreError {
     #[error("Project rename destination already exists: {}", path.display())]
@@ -130,11 +135,11 @@ pub enum ObsidianStoreError {
     #[error("Invalid task frontmatter property `id` {value:?} in {}", path.display())]
     InvalidTaskId { path: PathBuf, value: String },
     #[error("More than one task has frontmatter id {id}: {}", paths.iter().map(|path| path.display().to_string()).collect::<Vec<_>>().join(", "))]
-    DuplicateTaskId { id: String, paths: Vec<PathBuf> },
+    DuplicateTaskId { id: TaskId, paths: Vec<PathBuf> },
     #[error("Project index task id {id} is duplicated in {} at lines {}", path.display(), lines.iter().map(usize::to_string).collect::<Vec<_>>().join(", "))]
     ProjectIndexTaskIdDuplicate {
         path: PathBuf,
-        id: String,
+        id: TaskId,
         lines: Vec<usize>,
     },
     #[error("Missing project-index frontmatter property `{property}` in {}", path.display())]
@@ -152,15 +157,15 @@ pub enum ObsidianStoreError {
         value: String,
     },
     #[error(
-        "Project-index identity mismatch in {}: found id={actual_id:?}, title={actual_title:?}; expected id={expected_id:?}, title={expected_title:?}",
+        "Project-index identity mismatch in {}: found id={actual_id}, title={actual_title}; expected id={expected_id}, title={expected_title}",
         path.display()
     )]
     ProjectIndexIdentityMismatch {
         path: PathBuf,
-        actual_id: String,
-        actual_title: String,
-        expected_id: String,
-        expected_title: String,
+        actual_id: ProjectId,
+        actual_title: ProjectName,
+        expected_id: ProjectId,
+        expected_title: ProjectName,
     },
     #[error("Notes directory not found: {path}")]
     NotesDirectoryNotFound { path: String },
@@ -192,36 +197,10 @@ pub enum ObsidianStoreError {
     },
     #[error("Cannot remove task file: {source}")]
     RemoveTaskFile { source: std::io::Error },
-    #[error("Cannot create archive dir: {source}")]
-    CreateArchiveDir { source: std::io::Error },
-    #[error("Cannot archive {id}: {source}")]
-    ArchiveTask { id: String, source: std::io::Error },
     #[error("Task not found: {id}")]
-    TaskNotFound { id: String },
-    #[error("Task id is ambiguous: {id}")]
-    AmbiguousId { id: String },
-    #[error("update only supports file-model tasks.")]
-    UpdateRequiresFileModel,
-    #[error(
-        "nothing to update (pass --prompt, --title, --prereq, --clear-prereq, --tag, --tags-clear, --commits, --append-report, --append, and/or --effort)."
-    )]
-    NothingToUpdate,
-    #[error(
-        "only --commits / --append-report can amend closed task {id} (done/cancelled); body/title/prereq/tags/append/effort need an active task."
-    )]
-    ClosedTaskAmendOnly { id: String },
-    #[error("task {id} has invalid tags frontmatter: {raw:?}.")]
-    InvalidTagsFrontmatter { id: String, raw: String },
-    #[error("Invalid --prereq id: {raw}.")]
-    InvalidPrereqId { raw: String },
-    #[error("--prereq requires an id.")]
-    MissingPrereqId,
-    #[error("Unknown --prereq id(s): {}.", ids.join(", "))]
-    UnknownPrereqIds { ids: Vec<String> },
-    #[error("--report cannot be empty.")]
-    EmptyReport,
-    #[error("--append cannot be empty.")]
-    EmptyAppend,
+    TaskNotFound { id: TaskId },
+    #[error("Task ID sequence is exhausted for project {project_id}")]
+    TaskIdSequenceExhausted { project_id: ProjectId },
     #[error("Expected open task marker at {note}:{line}. The note may have changed.")]
     ExpectedOpenTaskMarker { note: String, line: usize },
 }

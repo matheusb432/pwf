@@ -1,14 +1,17 @@
 //! Session operation and capability data transfer objects.
 
-use pwf_models::session::{Agent, DispatchMode, LaunchDirectives, SessionEffort};
+use pwf_models::{
+    session::{Agent, DispatchMode, LaunchDirectives, SessionEffort},
+    task::TaskId,
+};
 
 /// Describes a provider-neutral agent launch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentLaunch {
     pub agent: Agent,
-    pub task_id: String,
+    pub task_id: TaskId,
     pub title: String,
-    pub repository: String,
+    pub project_path: String,
     pub prompt: String,
     pub model: Option<String>,
     pub effort: SessionEffort,
@@ -24,14 +27,21 @@ pub struct SessionPlan {
 /// Identifies a multiplexer session and window.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DispatchTarget {
-    pub session: String,
-    pub window: String,
+    pub task_id: TaskId,
+}
+
+impl DispatchTarget {
+    /// Returns the lowercase tmux session name derived from the project ID.
+    #[must_use]
+    pub fn session_name(&self) -> String {
+        self.task_id.project_id().as_ref().to_ascii_lowercase()
+    }
 }
 
 /// Contains the context shown before an interactive dispatch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DispatchConfirmation {
-    pub task_id: String,
+    pub task_id: TaskId,
     pub title: String,
     pub created: Option<String>,
     pub mode: DispatchMode,

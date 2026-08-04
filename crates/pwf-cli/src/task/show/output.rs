@@ -25,7 +25,7 @@ pub(super) fn json(task: TaskData) -> Result<String, String> {
 impl From<TaskData> for TaskOutput {
     fn from(task: TaskData) -> Self {
         Self {
-            id: task.id,
+            id: task.id.to_string(),
             project: task.project.to_string(),
             title: task.title,
             status: task.status.to_string(),

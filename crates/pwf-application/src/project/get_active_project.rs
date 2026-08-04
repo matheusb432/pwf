@@ -5,7 +5,7 @@ use super::{
     get_project::{self, GetProject, GetProjectError},
 };
 
-/// Requests one active managed project by canonical project ID.
+/// Requests one active managed project by project ID.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GetActiveProject {
     pub id: ProjectId,

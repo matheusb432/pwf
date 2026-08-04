@@ -12,11 +12,11 @@ pub(in crate::task) fn render_session_confirmation(confirmation: &DispatchConfir
         DispatchMode::Inline => ("inline", CURRENT_TERMINAL_TARGET.to_string()),
         DispatchMode::Multiplexer => (
             "tmux",
-            format!("tmux session {}", confirmation.target.session),
+            format!("tmux session {}", confirmation.target.session_name()),
         ),
     };
     let fields = [
-        Field::new("task_id", confirmation.task_id.clone()),
+        Field::new("task_id", &confirmation.task_id),
         Field::new("title", confirmation.title.clone()),
         Field::new(
             "created",
@@ -75,14 +75,17 @@ impl From<bool> for Enabled {
 #[cfg(test)]
 mod tests {
     use pwf_application::task::session::{DispatchConfirmation, DispatchTarget};
-    use pwf_models::session::{Agent, DispatchMode, LaunchDirectives, SessionEffort};
+    use pwf_models::{
+        session::{Agent, DispatchMode, LaunchDirectives, SessionEffort},
+        task::TaskId,
+    };
 
     use super::*;
 
     #[test]
     fn question_renders_dispatch_context_metadata_without_the_prompt_body() {
         let confirmation = DispatchConfirmation {
-            task_id: "PWF-0001".to_string(),
+            task_id: TaskId::try_new("PWF-0001").unwrap(),
             title: "dispatch me".to_string(),
             created: Some("2026-07-01".to_string()),
             mode: DispatchMode::Inline,
@@ -93,8 +96,7 @@ mod tests {
             },
             has_pushed_prompt: true,
             target: DispatchTarget {
-                session: "pwf".to_string(),
-                window: "PWF-0001".to_string(),
+                task_id: TaskId::try_new("PWF-0001").unwrap(),
             },
             model: String::default(),
             effort: SessionEffort::XHigh,
@@ -118,7 +120,7 @@ mod tests {
     #[test]
     fn tmux_mode_targets_the_named_session_and_falls_back_on_missing_created() {
         let confirmation = DispatchConfirmation {
-            task_id: "PWF-0001".to_string(),
+            task_id: TaskId::try_new("PWF-0001").unwrap(),
             title: "dispatch me".to_string(),
             created: None,
             mode: DispatchMode::Multiplexer,
@@ -126,8 +128,7 @@ mod tests {
             directives: LaunchDirectives::default(),
             has_pushed_prompt: false,
             target: DispatchTarget {
-                session: "pwf".to_string(),
-                window: "PWF-0001".to_string(),
+                task_id: TaskId::try_new("PWF-0001").unwrap(),
             },
             model: String::default(),
             effort: SessionEffort::High,

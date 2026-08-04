@@ -98,15 +98,14 @@ fn map_remove_error(error: RemoveTaskError) -> TaskError {
         RemoveTaskError::TaskNotFound { id } => {
             TaskError::Remove(RemoveTaskError::TaskNotFound { id })
         }
-        RemoveTaskError::UnknownPrefix {
-            task_identifier,
-            prefix,
-        } => TaskError::Remove(RemoveTaskError::UnknownPrefix {
-            task_identifier,
-            prefix,
+        RemoveTaskError::UnknownProjectId {
+            task_id,
+            project_id,
+        } => TaskError::Remove(RemoveTaskError::UnknownProjectId {
+            task_id,
+            project_id,
         }),
         RemoveTaskError::NoteMissing { path } => TaskError::TaskNoteMissing { path: path.into() },
-        RemoveTaskError::FileModelRequired => TaskError::RemoveRequiresFileModel,
         RemoveTaskError::WriteStore(source) => {
             TaskError::Remove(RemoveTaskError::WriteStore(source))
         }
