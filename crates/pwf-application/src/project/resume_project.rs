@@ -1,11 +1,11 @@
 use std::{error::Error, path::PathBuf};
 
 use pwf_models::project::ProjectId;
+use pwf_wire::project::ProjectStateChange;
 
 use super::{
-    ProjectStateChange,
-    dto::{ProjectRow, ProjectRowError},
-    logic::task_location::{self, TaskLocationError},
+    ProjectRow, ProjectRowError,
+    task_location::{self, TaskLocationError},
 };
 
 /// Requests resuming one managed project.
@@ -124,7 +124,7 @@ pub async fn execute(
     .ok_or(ResumeProjectError::ProjectNotFound {
         id: command.id.clone(),
     })?;
-    let project = super::logic::project_from_row(row)
+    let project = super::project_from_row(row)
         .map_err(|error| unexpected_row("converting resumed project", error))?;
     transaction
         .commit()
@@ -187,18 +187,10 @@ mod tests {
     async fn runtime_alias_of_other_paused_project_is_rejected(pool: sqlx::SqlitePool) {
         let home = PathBuf::from("/home/tester");
         let resolved_path = home.join("tasks/shared");
+        insert_project(&pool, "PWF", "pwf", "/work/PWF", "~/tasks/shared", true).await;
         insert_project(
             &pool,
-            "PWF".parse().unwrap(),
-            "pwf",
-            "/work/PWF",
-            "~/tasks/shared",
-            true,
-        )
-        .await;
-        insert_project(
-            &pool,
-            "ALT".parse().unwrap(),
+            "ALT",
             "alt",
             "/work/ALT",
             &resolved_path.to_string_lossy(),

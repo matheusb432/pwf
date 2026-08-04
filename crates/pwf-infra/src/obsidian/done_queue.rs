@@ -1,19 +1,25 @@
 use pwf_models::task::TaskId;
-use regex::Regex;
+
+use super::{
+    markdown_line,
+    task_link::{self, Checkbox},
+};
 
 /// Flips a done link (`- [x] [[ID]] ...`) back to an open link (`- [ ] [[ID]]`),
 /// preserving indentation. Returns `None` when no done link for `id` exists.
 pub(super) fn reopen_done_link(content: &str, id: &TaskId) -> Option<String> {
-    let done_re = Regex::new(&format!(
-        r"(?m)^(?P<indent>\s*)-\s*\[[xX]\]\s*\[\[{}(?:\|[^\]]*)?\]\].*$",
-        regex::escape(id.as_ref())
+    let (line, parsed_link) = markdown_line::lines(content).find_map(|line| {
+        task_link::parse(line.text)
+            .filter(|link| link.checkbox == Some(Checkbox::Done) && link.id == id.as_ref())
+            .map(|link| (line, link))
+    })?;
+    Some(format!(
+        "{}{}- [ ] [[{id}]]{}{}",
+        &content[..line.start],
+        parsed_link.indentation,
+        line.newline,
+        &content[line.end..]
     ))
-    .ok()?;
-    if !done_re.is_match(content) {
-        return None;
-    }
-    let open_line = format!("${{indent}}- [ ] [[{id}]]");
-    Some(done_re.replace(content, open_line.as_str()).into_owned())
 }
 
 #[cfg(test)]

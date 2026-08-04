@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::Args;
 use pwf_application::task::session::{
-    AgentProbe, PlanSessionIntent,
+    PlanSessionIntent,
     dispatch_session::{self, DispatchSession},
     plan_session::{self, PlanSession, PlanSessionOk},
 };
@@ -11,6 +11,7 @@ use pwf_infra::{
     session::{AgentHarness, InlineHarness, LocalProjectDirectoryClient, TmuxHarness, render_argv},
 };
 use pwf_models::session::{Agent, DispatchMode, LaunchDirectives, PushedPrompt, SessionEffort};
+use pwf_wire::task::session::AgentProbe;
 
 use super::{
     render::{
@@ -144,34 +145,33 @@ pub(super) async fn run(
     .map_err(map_plan_error)?;
     let planned = match planned {
         PlanSessionOk::DryRun(dry_run) => {
-            render_probe(dry_run.probe());
-            return Ok(render_dry_run(dry_run.plan(), dry_run.argv()));
+            render_probe(&dry_run.probe);
+            return Ok(render_dry_run(&dry_run.plan, &dry_run.argv));
         }
         PlanSessionOk::Dispatch(planned) => planned,
     };
-    render_probe(planned.probe());
+    render_probe(&planned.probe);
 
     if !arguments.assume_yes
         && matches!(
             console.confirm(
-                &render_session_confirmation(planned.confirmation()),
+                &render_session_confirmation(&planned.confirmation),
                 DefaultAnswer::Yes
             ),
             Confirmation::Declined
         )
     {
-        return Ok(render_session_aborted(&planned.confirmation().task_id));
+        return Ok(render_session_aborted(&planned.confirmation.task_id));
     }
 
-    if planned.plan().mode == DispatchMode::Inline {
+    if planned.plan.mode == DispatchMode::Inline {
         eprintln!(
             "running {} inline in {}...",
-            planned.plan().launch.task_id,
-            planned.plan().launch.project_path
+            planned.plan.launch.task_id, planned.plan.launch.project_path
         );
     }
     let outcome = dispatch_session::execute(
-        DispatchSession::new(planned),
+        DispatchSession { prepared: planned },
         &AgentHarness,
         &InlineHarness,
         &TmuxHarness,

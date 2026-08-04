@@ -9,7 +9,7 @@ use crate::{
         get_active_project::{self, GetActiveProject},
         get_project::GetProjectError,
     },
-    task::logic::{prerequisite, resolve::resolve_record, tag_policy},
+    task::{prerequisites, tags},
 };
 
 /// Selects the representation returned by [`execute`].
@@ -113,7 +113,12 @@ pub async fn execute(
         }
         Err(error) => return Err(ShowTaskError::QueryProject(Box::new(error))),
     };
-    let record = resolve_record(store, &project, &query.id)?;
+    let record = store
+        .get(&project, &query.id)
+        .map_err(|error| ShowTaskError::ReadStore(Box::new(error)))?
+        .ok_or_else(|| ShowTaskError::TaskNotFound {
+            id: query.id.clone(),
+        })?;
     match query.output {
         ShowOutput::Path => Ok(ShowTaskOk::Path(record.locator)),
         ShowOutput::Markdown
@@ -135,14 +140,14 @@ fn task_data(project: ProjectName, record: TaskRecord) -> Result<TaskData, ShowT
     let tags = record
         .tags
         .as_deref()
-        .map(tag_policy::parse_frontmatter)
+        .map(tags::parse_frontmatter)
         .transpose()
         .map_err(|error| invalid_task_data("tags", error))?;
     let effort = record.effort.as_deref().map(parse_effort).transpose()?;
     let prerequisites = record
         .prereq
         .as_deref()
-        .map(prerequisite::parse_frontmatter)
+        .map(prerequisites::parse_frontmatter)
         .transpose()
         .map_err(|error| invalid_task_data("prerequisites", error))?;
     Ok(TaskData {
@@ -189,23 +194,14 @@ fn invalid_task_data(field: &'static str, error: impl std::fmt::Display) -> Show
 #[cfg(test)]
 mod tests {
     use super::{ShowOutput, ShowTask, ShowTaskOk, TaskId};
-    use crate::{
-        task::logic::resolve::testing::{PWF_0001_SOURCE, staged, staged_ghost},
-        testing::{ProjectNoteFailure, insert_project},
+    use crate::testing::{
+        PWF_0001_SOURCE, ProjectNoteFailure, insert_project, staged_missing_task, staged_task,
     };
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn show_streams_source_verbatim(pool: sqlx::SqlitePool) {
-        insert_project(
-            &pool,
-            "PWF".parse().unwrap(),
-            "pwf",
-            "/projects/pwf",
-            "/tasks/pwf",
-            false,
-        )
-        .await;
-        let (store, _) = staged();
+        insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
+        let (store, _) = staged_task();
         let query = ShowTask {
             id: TaskId::try_new("PWF-0001").unwrap(),
             output: ShowOutput::Markdown,
@@ -220,16 +216,8 @@ mod tests {
     async fn show_path_returns_missing_note_locator_without_reading_markdown(
         pool: sqlx::SqlitePool,
     ) {
-        insert_project(
-            &pool,
-            "PWF".parse().unwrap(),
-            "pwf",
-            "/projects/pwf",
-            "/tasks/pwf",
-            false,
-        )
-        .await;
-        let (store, _) = staged_ghost();
+        insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
+        let (store, _) = staged_missing_task();
         let query = ShowTask {
             id: TaskId::try_new("PWF-0002").unwrap(),
             output: ShowOutput::Path,
@@ -245,16 +233,8 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn show_markdown_preserves_missing_note_source_error(pool: sqlx::SqlitePool) {
-        insert_project(
-            &pool,
-            "PWF".parse().unwrap(),
-            "pwf",
-            "/projects/pwf",
-            "/tasks/pwf",
-            false,
-        )
-        .await;
-        let (store, _) = staged_ghost();
+        insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
+        let (store, _) = staged_missing_task();
         let store = store.with_failure(ProjectNoteFailure::Read);
         let query = ShowTask {
             id: TaskId::try_new("PWF-0002").unwrap(),

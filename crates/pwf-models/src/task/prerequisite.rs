@@ -35,9 +35,7 @@ impl FromStr for PrerequisiteInput {
                     .map_err(|_| PrerequisiteInputError::InvalidId {
                         raw: raw.to_string(),
                     })?;
-            if !identifiers.contains(&identifier) {
-                identifiers.push(identifier);
-            }
+            identifiers.push(identifier);
         }
         Prerequisites::try_new(identifiers)
             .map(Self)
@@ -53,14 +51,9 @@ impl Prerequisites {
     /// Combines parsed prerequisite arguments, returning `None` when no arguments were supplied.
     #[must_use]
     pub fn from_inputs(inputs: &[PrerequisiteInput]) -> Option<Self> {
-        Self::try_new(
-            inputs
-                .iter()
-                .flat_map(PrerequisiteInput::iter)
-                .cloned()
-                .collect(),
-        )
-        .ok()
+        let mut identifiers = inputs.iter().flat_map(PrerequisiteInput::iter).cloned();
+        let first = identifiers.next()?;
+        Some(Self::from_first_and_rest(first, identifiers))
     }
 
     /// Creates a deduplicated prerequisite set in first-seen order.
@@ -69,21 +62,36 @@ impl Prerequisites {
     ///
     /// Returns [`EmptyPrerequisitesError`] when no IDs are supplied.
     pub fn try_new(identifiers: Vec<TaskId>) -> Result<Self, EmptyPrerequisitesError> {
-        let mut unique = Vec::new();
-        for identifier in identifiers {
-            if !unique.contains(&identifier) {
-                unique.push(identifier);
-            }
-        }
-        if unique.is_empty() {
-            return Err(EmptyPrerequisitesError);
-        }
-        Ok(Self(unique))
+        let mut identifiers = identifiers.into_iter();
+        let first = identifiers.next().ok_or(EmptyPrerequisitesError)?;
+        Ok(Self::from_first_and_rest(first, identifiers))
     }
 
     /// Returns prerequisite IDs in encounter order.
     pub fn iter(&self) -> impl Iterator<Item = &TaskId> {
         self.0.iter()
+    }
+
+    /// Appends unseen task IDs while preserving first-seen order.
+    #[must_use]
+    pub fn merge(&self, appended: &Self) -> Self {
+        let mut merged = self.0.clone();
+        for identifier in appended.iter() {
+            if !merged.contains(identifier) {
+                merged.push(identifier.clone());
+            }
+        }
+        Self(merged)
+    }
+
+    fn from_first_and_rest(first: TaskId, identifiers: impl IntoIterator<Item = TaskId>) -> Self {
+        let mut unique = vec![first];
+        for identifier in identifiers {
+            if !unique.contains(&identifier) {
+                unique.push(identifier);
+            }
+        }
+        Self(unique)
     }
 }
 
@@ -141,5 +149,20 @@ mod tests {
             "PWF-99999".parse::<PrerequisiteInput>(),
             Err(PrerequisiteInputError::InvalidId { raw }) if raw == "PWF-99999"
         ));
+    }
+
+    #[test]
+    fn merge_preserves_first_seen_order() {
+        let existing = "pwf1, cfg14".parse::<PrerequisiteInput>().unwrap().0;
+        let appended = "cfg14, alt2".parse::<PrerequisiteInput>().unwrap().0;
+
+        assert_eq!(
+            existing
+                .merge(&appended)
+                .iter()
+                .map(AsRef::as_ref)
+                .collect::<Vec<_>>(),
+            ["PWF-0001", "CFG-0014", "ALT-0002"]
+        );
     }
 }

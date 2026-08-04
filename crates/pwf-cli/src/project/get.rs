@@ -1,9 +1,7 @@
 use clap::Args;
-use pwf_application::project::{
-    ProjectStatusFilter,
-    get_project::{self, GetProject},
-};
+use pwf_application::project::get_project::{self, GetProject};
 use pwf_models::project::ProjectId;
+use pwf_wire::project::ProjectStatusFilter;
 use sqlx::SqlitePool;
 
 use super::{output, parse_project_id};

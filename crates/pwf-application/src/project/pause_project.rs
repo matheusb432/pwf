@@ -1,11 +1,9 @@
 use std::error::Error;
 
 use pwf_models::project::ProjectId;
+use pwf_wire::project::ProjectStateChange;
 
-use super::{
-    ProjectStateChange,
-    dto::{ProjectRow, ProjectRowError},
-};
+use super::{ProjectRow, ProjectRowError};
 
 /// Requests pausing one managed project.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -75,7 +73,7 @@ pub async fn execute(
     .await
     .map_err(|error| unexpected("reading paused project", error))?
     .ok_or(PauseProjectError::ProjectNotFound { id: command.id })?;
-    let project = super::logic::project_from_row(row)
+    let project = super::project_from_row(row)
         .map_err(|error| unexpected_row("converting paused project", error))?;
     transaction
         .commit()

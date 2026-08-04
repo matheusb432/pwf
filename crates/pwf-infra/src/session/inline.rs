@@ -13,7 +13,6 @@ pub struct InlineHarness;
 impl InlineAgentSessionClient for InlineHarness {
     fn run(&self, command: AgentCommand<'_>, working_directory: &str) -> Result<(), String> {
         let (binary, arguments) = command
-            .arguments()
             .split_first()
             .ok_or_else(|| "empty agent command".to_string())?;
         let mut command = Command::new(binary);

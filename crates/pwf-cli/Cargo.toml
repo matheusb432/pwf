@@ -15,8 +15,9 @@ path = "src/lib.rs"
 
 [dependencies]
 pwf-application = { workspace = true }
-pwf-models = { workspace = true }
 pwf-infra = { workspace = true }
+pwf-models = { workspace = true }
+pwf-wire = { workspace = true }
 clap = { workspace = true }
 clap-cargo = { workspace = true }
 serde = { workspace = true }

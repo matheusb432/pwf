@@ -1,16 +1,18 @@
-use pwf_models::project::ProjectId;
 use sqlx::SqlitePool;
 
 pub(crate) static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!();
 
 pub(crate) async fn insert_project(
     pool: &SqlitePool,
-    project_id: ProjectId,
+    project_id: &str,
     title: &str,
     source_value: &str,
     tasks_path: &str,
     is_paused: bool,
 ) {
+    let project_id = project_id
+        .parse::<pwf_models::project::ProjectId>()
+        .expect("valid test project ID");
     let source_id = sqlx::query(
         "INSERT INTO project_sources (kind, value, created_at)
          VALUES ('directory', ?, '2026-07-26T00:00:00.000Z')",

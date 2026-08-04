@@ -55,6 +55,18 @@ impl Tags {
     pub fn iter(&self) -> impl Iterator<Item = &Tag> {
         self.0.iter()
     }
+
+    /// Appends unseen tags while preserving first-seen order.
+    #[must_use]
+    pub fn merge(&self, appended: &Self) -> Self {
+        let mut merged = self.0.clone();
+        for tag in appended.iter() {
+            if !merged.contains(tag) {
+                merged.push(tag.clone());
+            }
+        }
+        Self(merged)
+    }
 }
 
 /// Reports an invalid tag value.
@@ -86,6 +98,27 @@ mod tests {
         .unwrap();
         assert_eq!(values(&tags), ["sqlite", "csharp_export"]);
         assert!(Tags::try_new(Vec::new()).is_err());
+    }
+
+    #[test]
+    fn merge_preserves_first_seen_order() {
+        let existing = Tags::try_new(
+            ["sqlite", "godot"]
+                .map(|raw| Tag::try_from(raw).unwrap())
+                .to_vec(),
+        )
+        .unwrap();
+        let appended = Tags::try_new(
+            ["godot", "csharp_export"]
+                .map(|raw| Tag::try_from(raw).unwrap())
+                .to_vec(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            values(&existing.merge(&appended)),
+            ["sqlite", "godot", "csharp_export"]
+        );
     }
 
     #[test]

@@ -1,14 +1,12 @@
 use std::{path::PathBuf, str::FromStr};
 
 use clap::{Args, ValueEnum};
-use pwf_application::project::{
-    ProjectFields,
-    add_project::{self, AddProject},
-};
+use pwf_application::project::add_project::{self, AddProject};
 use pwf_models::project::{
     ProjectId, ProjectName, ProjectSource, ProjectSourceKind, ProjectSourceValue, ProjectTasks,
     ProjectTasksKind, ProjectTasksPath,
 };
+use pwf_wire::project::ProjectFields;
 use serde::Deserialize;
 use sqlx::SqlitePool;
 

@@ -1,8 +1,6 @@
 use clap::Args;
-use pwf_application::project::{
-    ProjectStatusFilter,
-    list_projects::{self, ListProjects},
-};
+use pwf_application::project::list_projects::{self, ListProjects};
+use pwf_wire::project::ProjectStatusFilter;
 use sqlx::SqlitePool;
 
 use super::output;

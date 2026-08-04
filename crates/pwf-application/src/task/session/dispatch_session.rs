@@ -3,9 +3,10 @@
 use std::error::Error;
 
 use pwf_models::task::TaskId;
+use pwf_wire::task::session::{DispatchTarget, SessionPlan};
 use thiserror::Error;
 
-use super::{Agent, DispatchMode, DispatchTarget, plan_session::PreparedSessionDispatch};
+use super::{Agent, DispatchMode, plan_session::PreparedSessionDispatch};
 use crate::ports::{
     agent::{AgentClient, PreparedAgentLaunch},
     inline_agent_session::InlineAgentSessionClient,
@@ -13,14 +14,7 @@ use crate::ports::{
 };
 
 pub struct DispatchSession {
-    prepared: PreparedSessionDispatch,
-}
-
-impl DispatchSession {
-    #[must_use]
-    pub fn new(prepared: PreparedSessionDispatch) -> Self {
-        Self { prepared }
-    }
+    pub prepared: PreparedSessionDispatch,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,6 +48,8 @@ pub enum DispatchSessionError {
         "Agent backend failed after naming thread '{thread_id}': {message}. The named thread was left intact."
     )]
     NamedThreadBackend { thread_id: String, message: String },
+    #[error("Agent command is empty.")]
+    EmptyAgentCommand,
 }
 
 #[cqrsy::command]
@@ -88,14 +84,16 @@ pub fn execute(
 
 fn dispatch_host(
     argv: &[String],
-    plan: &super::SessionPlan,
+    plan: &SessionPlan,
     inline: &impl InlineAgentSessionClient,
     session_client: &impl SessionClient,
 ) -> Result<DispatchSessionOk, DispatchSessionError> {
     match plan.mode {
         DispatchMode::Inline => {
+            let command =
+                AgentCommand::try_new(argv).map_err(|_| DispatchSessionError::EmptyAgentCommand)?;
             inline
-                .run(AgentCommand::new(argv), &plan.launch.project_path)
+                .run(command, &plan.launch.project_path)
                 .map_err(|message| DispatchSessionError::InlineFailed { message })?;
             Ok(DispatchSessionOk::Inline {
                 task_id: plan.launch.task_id.clone(),
@@ -107,16 +105,18 @@ fn dispatch_host(
 
 fn dispatch_multiplexer(
     argv: &[String],
-    plan: &super::SessionPlan,
+    plan: &SessionPlan,
     session_client: &impl SessionClient,
 ) -> Result<DispatchSessionOk, DispatchSessionError> {
     let session_name = plan.target.session_name();
-    let window = SessionWindow::new(
-        &session_name,
-        &plan.launch.project_path,
-        plan.target.task_id.as_ref(),
-        AgentCommand::new(argv),
-    );
+    let agent_command =
+        AgentCommand::try_new(argv).map_err(|_| DispatchSessionError::EmptyAgentCommand)?;
+    let window = SessionWindow {
+        session_name: &session_name,
+        working_directory: &plan.launch.project_path,
+        window_name: plan.target.task_id.as_ref(),
+        agent_command,
+    };
     session_client
         .open_window(&window)
         .map_err(|message| DispatchSessionError::WindowOpen {

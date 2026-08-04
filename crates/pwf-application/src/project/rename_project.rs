@@ -6,13 +6,13 @@ use std::{
 use pwf_models::project::{
     ProjectId, ProjectIndexIdentity, ProjectName, ProjectSource, ProjectTasks,
 };
+use pwf_wire::project::{ProjectFields, ProjectStatusFilter};
 
 use super::{
-    Project, ProjectFields,
-    dto::{ProjectRow, ProjectRowError},
+    Project, ProjectRow, ProjectRowError,
     get_project::{self, GetProject, GetProjectError},
-    logic::task_location::{self, TaskLocationError},
     resolve_runtime_path::{self, ResolveRuntimePath},
+    task_location::{self, TaskLocationError},
 };
 use crate::ports::project_task_files::{
     ProjectTaskFilesClient, ProjectTaskFilesRenameCommit, StagedProjectTaskFilesRename,
@@ -105,7 +105,7 @@ pub async fn execute(
     let current = get_project::execute(
         GetProject {
             id: command.current_id.clone(),
-            status: super::ProjectStatusFilter::ALL,
+            status: ProjectStatusFilter::ALL,
         },
         pool,
     )
@@ -213,7 +213,7 @@ async fn rename_registry(
     .fetch_one(&mut *transaction)
     .await
     .map_err(|error| unexpected("reading renamed project", error))?;
-    let project = super::logic::project_from_row(row)
+    let project = super::project_from_row(row)
         .map_err(|error| unexpected_row("converting renamed project", error))?;
     transaction
         .commit()
@@ -369,7 +369,7 @@ async fn validate_identity(
             id: command.current_id.clone(),
         });
     };
-    let current = super::logic::project_from_row(current_row)
+    let current = super::project_from_row(current_row)
         .map_err(|error| unexpected_row("converting source project", error))?;
     if current != *expected_current {
         return Err(RenameProjectError::SourceProjectChanged {
@@ -482,15 +482,13 @@ mod tests {
         ProjectId, ProjectIndexIdentity, ProjectName, ProjectSource, ProjectSourceKind,
         ProjectSourceValue, ProjectTasks, ProjectTasksKind, ProjectTasksPath,
     };
+    use pwf_wire::project::ProjectFields;
 
     use crate::{
         ports::project_task_files::{
             ProjectTaskFilesClient, ProjectTaskFilesRenameCommit, StagedProjectTaskFilesRename,
         },
-        project::{
-            ProjectFields,
-            rename_project::{self, RenameProject, RenameProjectError},
-        },
+        project::rename_project::{self, RenameProject, RenameProjectError},
         testing::insert_project,
     };
 
@@ -554,7 +552,7 @@ mod tests {
     async fn rename_replaces_identity_and_preserves_project_state(pool: sqlx::SqlitePool) {
         insert_project(
             &pool,
-            "SSH".parse().unwrap(),
+            "SSH",
             "ssh-agent-phone-app",
             "/self/ssh-agent-phone-app",
             "/pwf-db/self/ssh-agent-phone-app",
@@ -592,7 +590,7 @@ mod tests {
     async fn task_file_staging_failure_leaves_registry_unchanged(pool: sqlx::SqlitePool) {
         insert_project(
             &pool,
-            "SSH".parse().unwrap(),
+            "SSH",
             "ssh-agent-phone-app",
             "/self/ssh-agent-phone-app",
             "/pwf-db/self/ssh-agent-phone-app",
@@ -661,7 +659,7 @@ mod tests {
     async fn destination_id_conflict_leaves_source_unchanged(pool: sqlx::SqlitePool) {
         insert_project(
             &pool,
-            "SSH".parse().unwrap(),
+            "SSH",
             "ssh-agent-phone-app",
             "/self/ssh-agent-phone-app",
             "/pwf-db/self/ssh-agent-phone-app",
@@ -670,7 +668,7 @@ mod tests {
         .await;
         insert_project(
             &pool,
-            "MUX".parse().unwrap(),
+            "MUX",
             "other",
             "/self/other",
             "/pwf-db/self/other",
@@ -720,7 +718,7 @@ mod tests {
     async fn destination_title_conflict_is_classified(pool: sqlx::SqlitePool) {
         insert_project(
             &pool,
-            "SSH".parse().unwrap(),
+            "SSH",
             "ssh-agent-phone-app",
             "/self/ssh-agent-phone-app",
             "/pwf-db/self/ssh-agent-phone-app",
@@ -729,7 +727,7 @@ mod tests {
         .await;
         insert_project(
             &pool,
-            "ALT".parse().unwrap(),
+            "ALT",
             "mimux",
             "/self/other",
             "/pwf-db/self/other",
@@ -766,7 +764,7 @@ mod tests {
     async fn runtime_task_collision_leaves_source_unchanged(pool: sqlx::SqlitePool) {
         insert_project(
             &pool,
-            "SSH".parse().unwrap(),
+            "SSH",
             "ssh-agent-phone-app",
             "/self/ssh-agent-phone-app",
             "/pwf-db/self/ssh-agent-phone-app",
@@ -775,7 +773,7 @@ mod tests {
         .await;
         insert_project(
             &pool,
-            "ALT".parse().unwrap(),
+            "ALT",
             "other",
             "/self/other",
             "~/tasks/shared",
@@ -821,7 +819,7 @@ mod tests {
     async fn invalid_task_path_is_classified(pool: sqlx::SqlitePool) {
         insert_project(
             &pool,
-            "SSH".parse().unwrap(),
+            "SSH",
             "ssh-agent-phone-app",
             "/self/ssh-agent-phone-app",
             "/pwf-db/self/ssh-agent-phone-app",

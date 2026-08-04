@@ -29,9 +29,9 @@ impl SessionClient for TmuxHarness {
             "new-session".to_string(),
             "-d".to_string(),
             "-s".to_string(),
-            start.session_name().to_string(),
+            start.session_name.to_string(),
             "-c".to_string(),
-            start.working_directory().to_string(),
+            start.working_directory.to_string(),
         ]
     }
 
@@ -41,14 +41,14 @@ impl SessionClient for TmuxHarness {
             "new-window".to_string(),
             "-d".to_string(),
             "-t".to_string(),
-            format!("{}:", exact_session(window.session_name())),
+            format!("{}:", exact_session(window.session_name)),
             "-c".to_string(),
-            window.working_directory().to_string(),
+            window.working_directory.to_string(),
             "-n".to_string(),
-            window.window_name().to_string(),
+            window.window_name.to_string(),
             "--".to_string(),
         ];
-        process_arguments.extend(window.agent_command().arguments().iter().cloned());
+        process_arguments.extend(window.agent_command.iter().cloned());
         process_arguments
     }
 

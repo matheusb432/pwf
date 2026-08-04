@@ -10,7 +10,7 @@ mod project_directory;
 mod tmux;
 
 pub use inline::InlineHarness;
-pub use launcher::{AgentHarness, AgentPreparationError, AgentProbe, render_argv};
+pub use launcher::{AgentHarness, AgentPreparationError, render_argv};
 pub use model_tiers::ModelTiersError;
 pub use project_directory::LocalProjectDirectoryClient;
 pub use tmux::TmuxHarness;

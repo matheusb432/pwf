@@ -1,7 +1,10 @@
 use clap::Args;
 use pwf_application::{
     ports::clock::Clock,
-    task::cancel_task::{self, CancelTask, CancelTaskError},
+    task::{
+        cancel_task::{self, CancelTask, CancelTaskError},
+        complete_task::CloseTaskError,
+    },
 };
 use pwf_infra::obsidian::ObsidianStore;
 
@@ -40,43 +43,23 @@ pub(super) async fn run(
         .report
         .clone()
         .ok_or(TaskError::MissingCancelReport)?;
-    let command = CancelTask::new(
+    let command = CancelTask {
         id,
-        arguments.common.date.clone(),
+        date: arguments.common.date.clone(),
         report,
-        arguments.commits.clone(),
-        arguments.review,
-    );
+        commits: arguments.commits.clone(),
+        review: arguments.review,
+    };
     let output = cancel_task::execute(&command, store, pool, clock)
         .await
-        .map_err(map_error)?;
+        .inspect_err(|error| {
+            if let CancelTaskError::Close(CloseTaskError::ReviewTask(source)) = error {
+                emit_created_section_for_error(source);
+            }
+        })?;
     if let Some(review) = output.review_task.as_ref() {
         emit_created_section(review);
     }
     emit_close_diagnostics(&output);
     Ok(render_closed(&output))
-}
-
-fn map_error(error: CancelTaskError) -> TaskError {
-    match error {
-        CancelTaskError::EmptyReport => TaskError::EmptyReport,
-        CancelTaskError::TaskNotFound { id } => TaskError::TaskNotFound { id },
-        CancelTaskError::UnknownProjectId {
-            task_id,
-            project_id,
-        } => TaskError::Cancel(CancelTaskError::UnknownProjectId {
-            task_id,
-            project_id,
-        }),
-        CancelTaskError::WriteStore(source) => {
-            TaskError::Cancel(CancelTaskError::WriteStore(source))
-        }
-        CancelTaskError::ReviewTask(source) => {
-            emit_created_section_for_error(&source);
-            TaskError::Cancel(CancelTaskError::ReviewTask(source))
-        }
-        CancelTaskError::QueryProject(source) => {
-            TaskError::Cancel(CancelTaskError::QueryProject(source))
-        }
-    }
 }

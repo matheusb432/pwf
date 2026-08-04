@@ -223,10 +223,11 @@ fn render_updated(result: &UpdateNoteOk) -> String {
 #[cfg(test)]
 mod tests {
     use pwf_application::note::{
-        add_note::AddNoteOk, dto::ListedNote, list_notes::ListNotesOk, remove_note::RemoveNoteOk,
+        add_note::AddNoteOk, list_notes::ListNotesOk, remove_note::RemoveNoteOk,
         update_note::UpdateNoteOk,
     };
     use pwf_models::{note::NoteId, task::ProjectName};
+    use pwf_wire::note::ListedNote;
 
     use super::{render_added, render_listed, render_removed, render_updated, resolve_add_input};
 

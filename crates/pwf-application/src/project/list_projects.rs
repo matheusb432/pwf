@@ -1,9 +1,8 @@
 use std::error::Error;
 
-use super::{
-    Project, ProjectStatusFilter,
-    dto::{ProjectRow, ProjectRowError},
-};
+use pwf_wire::project::ProjectStatusFilter;
+
+use super::{Project, ProjectRow, ProjectRowError};
 
 /// Requests managed projects in ascending title order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,7 +76,7 @@ pub async fn execute(
     };
 
     rows.into_iter()
-        .map(super::logic::project_from_row)
+        .map(super::project_from_row)
         .collect::<Result<Vec<_>, ProjectRowError>>()
         .map_err(|error| unexpected_row("converting listed project", error))
 }
@@ -103,33 +102,9 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn active_list_filters_paused_projects_and_sorts_by_title(pool: sqlx::SqlitePool) {
-        insert_project(
-            &pool,
-            "ZED".parse().unwrap(),
-            "zeta",
-            "/work/zeta",
-            "/tasks/zeta",
-            false,
-        )
-        .await;
-        insert_project(
-            &pool,
-            "ALP".parse().unwrap(),
-            "alpha",
-            "/work/alpha",
-            "/tasks/alpha",
-            false,
-        )
-        .await;
-        insert_project(
-            &pool,
-            "PAU".parse().unwrap(),
-            "beta",
-            "/work/beta",
-            "/tasks/beta",
-            true,
-        )
-        .await;
+        insert_project(&pool, "ZED", "zeta", "/work/zeta", "/tasks/zeta", false).await;
+        insert_project(&pool, "ALP", "alpha", "/work/alpha", "/tasks/alpha", false).await;
+        insert_project(&pool, "PAU", "beta", "/work/beta", "/tasks/beta", true).await;
 
         let projects = super::execute(
             ListProjects {

@@ -1,10 +1,10 @@
 use std::error::Error;
 
 use pwf_models::project::ProjectSelector;
+use pwf_wire::project::ProjectStatusFilter;
 
 use super::{
-    Project, ProjectStatusFilter,
-    dto::{ProjectRow, ProjectRowError},
+    Project, ProjectRow, ProjectRowError,
     get_project::{self, GetProject, GetProjectError},
 };
 
@@ -95,7 +95,7 @@ async fn find_by_title(
     .await
     .map_err(|error| unexpected("resolving project by title", error))?;
 
-    row.map(super::logic::project_from_row)
+    row.map(super::project_from_row)
         .transpose()
         .map_err(|error| unexpected_row("converting resolved project", error))
 }
@@ -142,24 +142,8 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn title_match_precedes_project_id_match(pool: sqlx::SqlitePool) {
-        insert_project(
-            &pool,
-            "PWF".parse().unwrap(),
-            "alt",
-            "/work/pwf",
-            "/tasks/pwf",
-            false,
-        )
-        .await;
-        insert_project(
-            &pool,
-            "ALT".parse().unwrap(),
-            "other",
-            "/work/alt",
-            "/tasks/alt",
-            false,
-        )
-        .await;
+        insert_project(&pool, "PWF", "alt", "/work/pwf", "/tasks/pwf", false).await;
+        insert_project(&pool, "ALT", "other", "/work/alt", "/tasks/alt", false).await;
 
         let project = super::execute(
             ResolveProject {
@@ -178,24 +162,8 @@ mod tests {
     async fn active_resolution_excludes_paused_projects_from_matches_and_known_names(
         pool: sqlx::SqlitePool,
     ) {
-        insert_project(
-            &pool,
-            "PWF".parse().unwrap(),
-            "pwf",
-            "/work/pwf",
-            "/tasks/pwf",
-            true,
-        )
-        .await;
-        insert_project(
-            &pool,
-            "ALT".parse().unwrap(),
-            "other",
-            "/work/alt",
-            "/tasks/alt",
-            false,
-        )
-        .await;
+        insert_project(&pool, "PWF", "pwf", "/work/pwf", "/tasks/pwf", true).await;
+        insert_project(&pool, "ALT", "other", "/work/alt", "/tasks/alt", false).await;
 
         let error = super::execute(
             ResolveProject {

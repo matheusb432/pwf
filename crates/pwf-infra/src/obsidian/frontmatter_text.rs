@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
 
+use super::markdown_line;
+
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct Parsed {
     pub frontmatter: BTreeMap<String, String>,
@@ -18,16 +20,21 @@ fn is_frontmatter_key(key: &str) -> bool {
 
 pub(super) fn parse(text: &str) -> Parsed {
     let stripped = text.strip_prefix('\u{feff}').unwrap_or(text);
-    let lines: Vec<&str> = stripped.split('\n').collect();
-    let opens = !lines.is_empty() && lines[0].trim_end_matches('\r') == "---";
-    if !opens {
+    let Some(opening) = markdown_line::lines(stripped).next() else {
+        return Parsed {
+            frontmatter: BTreeMap::new(),
+            body: text.to_string(),
+        };
+    };
+    if opening.start != 0 || opening.text != "---" {
         return Parsed {
             frontmatter: BTreeMap::new(),
             body: text.to_string(),
         };
     }
-    let close = (1..lines.len()).find(|&index| lines[index].trim_end_matches('\r') == "---");
-    let Some(close) = close else {
+    let Some(close) = markdown_line::find(stripped, opening.end, |line| {
+        line.strip_suffix('\r').unwrap_or(line) == "---"
+    }) else {
         return Parsed {
             frontmatter: BTreeMap::new(),
             body: text.to_string(),
@@ -35,8 +42,8 @@ pub(super) fn parse(text: &str) -> Parsed {
     };
 
     let mut frontmatter = BTreeMap::new();
-    for line in &lines[1..close] {
-        let line = line.trim_end_matches('\r');
+    for line in markdown_line::lines(&stripped[opening.end..close.start]) {
+        let line = line.text;
         if let Some(index) = line.find(':') {
             let key = &line[..index];
             if is_frontmatter_key(key) {
@@ -46,7 +53,7 @@ pub(super) fn parse(text: &str) -> Parsed {
             }
         }
     }
-    let body = lines[close + 1..].join("\n");
+    let body = stripped[close.end..].to_string();
     Parsed { frontmatter, body }
 }
 

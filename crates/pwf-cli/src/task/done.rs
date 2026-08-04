@@ -1,7 +1,7 @@
 use clap::Args;
 use pwf_application::{
     ports::clock::Clock,
-    task::complete_task::{self, CompleteTask, CompleteTaskError},
+    task::complete_task::{self, CloseTaskError, CompleteTask, CompleteTaskError},
 };
 use pwf_infra::obsidian::ObsidianStore;
 
@@ -51,34 +51,14 @@ pub(super) async fn run(
         clock,
     )
     .await
-    .map_err(map_complete_error)?;
+    .inspect_err(|error| {
+        if let CompleteTaskError::Close(CloseTaskError::ReviewTask(source)) = error {
+            emit_created_section_for_error(source);
+        }
+    })?;
     if let Some(review) = output.review_task.as_ref() {
         emit_created_section(review);
     }
     emit_close_diagnostics(&output);
     Ok(render_closed(&output))
-}
-
-fn map_complete_error(error: CompleteTaskError) -> TaskError {
-    match error {
-        CompleteTaskError::TaskNotFound { id } => TaskError::TaskNotFound { id },
-        CompleteTaskError::UnknownProjectId {
-            task_id,
-            project_id,
-        } => TaskError::Complete(CompleteTaskError::UnknownProjectId {
-            task_id,
-            project_id,
-        }),
-        CompleteTaskError::EmptyReport => TaskError::EmptyReport,
-        CompleteTaskError::WriteStore(source) => {
-            TaskError::Complete(CompleteTaskError::WriteStore(source))
-        }
-        CompleteTaskError::ReviewTask(source) => {
-            emit_created_section_for_error(&source);
-            TaskError::Complete(CompleteTaskError::ReviewTask(source))
-        }
-        CompleteTaskError::QueryProject(source) => {
-            TaskError::Complete(CompleteTaskError::QueryProject(source))
-        }
-    }
 }

@@ -1,17 +1,33 @@
-use pwf_models::task::{EffortTier, Prerequisites, TaskId, TaskTitle};
+use pwf_models::{
+    project::Project,
+    task::{EffortTier, Prerequisites, Tags, TaskId, TaskStatus, TaskTitle},
+};
 
 use super::{
-    logic::task_update::{persist, prepare},
-    prerequisite,
+    normalize_commit_ranges,
+    note_body::{append_lanes, append_report_block, render},
+    prerequisites::{self, PrerequisiteValidationError, validate_and_merge},
     resolve_task_project::{self, ResolveTaskProject, ResolveTaskProjectError},
+    tags, task_body_region,
 };
 use crate::{
-    ports::task_record::TaskStore,
+    ports::task_record::{NullablePatch, TaskPatch, TaskRecord, TaskStore},
     project::{
         get_active_project::{self, GetActiveProject},
         get_project::GetProjectError,
     },
 };
+
+struct TaskIdentity {
+    project: Project,
+    identifier: TaskId,
+}
+
+struct PreparedTaskUpdate {
+    identity: TaskIdentity,
+    patch: TaskPatch,
+    outcome: UpdateTaskOk,
+}
 
 /// Requests edits to one task.
 #[derive(Debug, Clone)]
@@ -96,7 +112,7 @@ pub async fn execute(
     store: &impl TaskStore,
     pool: &sqlx::SqlitePool,
 ) -> Result<UpdateTaskOk, UpdateTaskError> {
-    let resolved = resolve_task_project::execute(
+    let task_project = resolve_task_project::execute(
         ResolveTaskProject {
             id: command.id.clone(),
         },
@@ -109,9 +125,9 @@ pub async fn execute(
         },
         ResolveTaskProjectError::QueryProject(source) => UpdateTaskError::QueryProject(source),
     })?;
-    let mut projects = vec![resolved.project];
+    let mut projects = vec![task_project];
     if let Some(prerequisites) = command.prereq.as_ref() {
-        let ids = prerequisite::project_ids(prerequisites);
+        let ids = prerequisites::project_ids(prerequisites);
         for id in ids {
             if projects.iter().any(|project| project.id == id) {
                 continue;
@@ -123,13 +139,7 @@ pub async fn execute(
             }
         }
     }
-    let not_found = || UpdateTaskError::TaskNotFound {
-        id: command.id.clone(),
-    };
-    let project = projects
-        .iter()
-        .find(|project| project.id == resolved.id.project_id())
-        .ok_or_else(not_found)?;
+    let project = &projects[0];
     let prepared = prepare(&command, store, project, &projects)?;
     persist(prepared, store)
 }
@@ -141,14 +151,224 @@ fn format_task_ids(ids: &[TaskId]) -> String {
         .join(", ")
 }
 
+fn prepare(
+    command: &UpdateTask,
+    store: &impl TaskStore,
+    project: &Project,
+    projects: &[Project],
+) -> Result<PreparedTaskUpdate, UpdateTaskError> {
+    let commits = normalize_commit_ranges(&command.commits);
+    let tags = parse_tags(&command.tags)?;
+    let edits_body = command.prompt.is_some()
+        || command.title.is_some()
+        || command.prereq.is_some()
+        || command.clear_prereq
+        || command.append.is_some()
+        || command.effort.is_some()
+        || tags.is_some()
+        || command.tags_clear;
+    if !edits_body && commits.is_none() && command.append_report.is_none() {
+        return Err(UpdateTaskError::NothingToUpdate);
+    }
+
+    let not_found = || UpdateTaskError::TaskNotFound {
+        id: command.id.clone(),
+    };
+    let record = store
+        .get(project, &command.id)
+        .map_err(|error| UpdateTaskError::WriteStore(Box::new(error)))?
+        .ok_or_else(not_found)?;
+    let identity = TaskIdentity {
+        project: project.clone(),
+        identifier: command.id.clone(),
+    };
+
+    if record.status == TaskStatus::Active {
+        prepare_open_task(
+            store,
+            projects,
+            identity,
+            command,
+            commits.as_deref(),
+            tags.as_ref(),
+            &record,
+        )
+    } else if edits_body {
+        Err(UpdateTaskError::ClosedTaskAmendOnly {
+            id: command.id.clone(),
+        })
+    } else {
+        amend_closed_task(identity, command, commits.as_deref(), &record)
+    }
+}
+
+fn persist(
+    prepared: PreparedTaskUpdate,
+    store: &impl TaskStore,
+) -> Result<UpdateTaskOk, UpdateTaskError> {
+    store
+        .update(
+            &prepared.identity.project,
+            &prepared.identity.identifier,
+            prepared.patch,
+        )
+        .map_err(|error| UpdateTaskError::WriteStore(Box::new(error)))?;
+    Ok(prepared.outcome)
+}
+
+fn prepare_open_task(
+    store: &impl TaskStore,
+    projects: &[Project],
+    identity: TaskIdentity,
+    command: &UpdateTask,
+    commits: Option<&str>,
+    tags: Option<&Tags>,
+    record: &TaskRecord,
+) -> Result<PreparedTaskUpdate, UpdateTaskError> {
+    let new_title = command
+        .title
+        .as_ref()
+        .map_or_else(|| record.title.clone(), ToString::to_string);
+
+    let mut patch = TaskPatch {
+        body: compute_body(command, record)?,
+        ..TaskPatch::default()
+    };
+    if command.title.is_some() {
+        patch.title.clone_from(&command.title);
+    }
+    if command.clear_prereq {
+        patch.prereq = NullablePatch::Clear;
+    } else if let Some(prerequisites) = command.prereq.as_ref() {
+        let merged = validate_and_merge(record.prereq.as_deref(), prerequisites, store, projects)
+            .map_err(map_prerequisite_error)?;
+        patch.prereq = NullablePatch::Set(merged);
+    }
+    if let Some(commits) = commits {
+        patch.commits = NullablePatch::Set(commits.to_string());
+    }
+    if let Some(effort) = command.effort {
+        patch.effort = Some(effort);
+    }
+    patch.tags = resolve_tags(tags, command.tags_clear, &identity.identifier, record)?;
+
+    let outcome = UpdateTaskOk::OpenTaskEdit {
+        id: identity.identifier.clone(),
+        project: identity.project.title.to_string(),
+        title: new_title,
+    };
+    Ok(PreparedTaskUpdate {
+        identity,
+        patch,
+        outcome,
+    })
+}
+
+fn compute_body(
+    command: &UpdateTask,
+    record: &TaskRecord,
+) -> Result<Option<String>, UpdateTaskError> {
+    let base = task_body_region(&record.body);
+    let mut body = command.prompt.as_deref().map(render);
+    if let Some(append) = &command.append {
+        let current = body.as_deref().unwrap_or(base);
+        body = Some(append_lanes(current, append).ok_or(UpdateTaskError::EmptyAppend)?);
+    }
+    if let Some(report) = &command.append_report {
+        let current = body.as_deref().unwrap_or(base);
+        body = Some(append_report_block(current, report).ok_or(UpdateTaskError::EmptyReport)?);
+    }
+    Ok(body)
+}
+
+fn resolve_tags(
+    appended: Option<&Tags>,
+    clear: bool,
+    id: &TaskId,
+    record: &TaskRecord,
+) -> Result<NullablePatch<Tags>, UpdateTaskError> {
+    let Some(appended) = appended else {
+        return Ok(if clear {
+            NullablePatch::Clear
+        } else {
+            NullablePatch::Unchanged
+        });
+    };
+    let tags = if clear {
+        appended.clone()
+    } else if let Some(existing) = record.tags.as_deref() {
+        let existing = tags::parse_frontmatter(existing).map_err(|error| {
+            UpdateTaskError::InvalidTagsFrontmatter {
+                id: id.clone(),
+                raw: error.raw().to_string(),
+            }
+        })?;
+        tags::merge(&existing, appended)
+    } else {
+        appended.clone()
+    };
+    Ok(NullablePatch::Set(tags))
+}
+
+fn amend_closed_task(
+    identity: TaskIdentity,
+    command: &UpdateTask,
+    commits: Option<&str>,
+    record: &TaskRecord,
+) -> Result<PreparedTaskUpdate, UpdateTaskError> {
+    let mut patch = TaskPatch::default();
+    let mut changes = Vec::new();
+    if let Some(commits) = commits {
+        patch.commits = NullablePatch::Set(commits.to_string());
+        changes.push(commits_change(commits));
+    }
+    if let Some(report) = &command.append_report {
+        let base = task_body_region(&record.body);
+        patch.body = Some(append_report_block(base, report).ok_or(UpdateTaskError::EmptyReport)?);
+        changes.push("report appended".to_string());
+    }
+    let outcome = UpdateTaskOk::Changed {
+        id: identity.identifier.clone(),
+        changes,
+    };
+    Ok(PreparedTaskUpdate {
+        identity,
+        patch,
+        outcome,
+    })
+}
+
+fn commits_change(commits: &str) -> String {
+    format!("commits: {commits}")
+}
+
+fn map_prerequisite_error(error: PrerequisiteValidationError) -> UpdateTaskError {
+    match error {
+        PrerequisiteValidationError::UnknownIds { ids } => {
+            UpdateTaskError::UnknownPrereqIds { ids }
+        }
+    }
+}
+
+fn parse_tags(values: &[String]) -> Result<Option<Tags>, UpdateTaskError> {
+    if values.is_empty() {
+        return Ok(None);
+    }
+    tags::parse_values(values)
+        .map(Some)
+        .map_err(|error| UpdateTaskError::InvalidTag {
+            raw: error.raw().to_string(),
+        })
+}
+
 #[cfg(test)]
 mod tests {
-    use pwf_models::task::{TaskId, TaskStatus, TaskTitle, Timestamp};
+    use pwf_models::task::{TaskStatus, TaskTitle, Timestamp};
 
     use super::{UpdateTask, UpdateTaskError, UpdateTaskOk};
     use crate::{
-        ports::task_record::{Materialization, TaskRecord},
-        testing::{InMemoryStore, insert_project},
+        ports::task_record::TaskRecord,
+        testing::{InMemoryStore, insert_project, task_record},
     };
 
     async fn execute(
@@ -161,27 +381,17 @@ mod tests {
 
     fn record(id: &str, status: TaskStatus, body: &str) -> TaskRecord {
         TaskRecord {
-            id: TaskId::try_new(id).unwrap(),
-            title: "tray gui".to_string(),
             status,
-            created: Some(Timestamp::new("2026-01-01")),
             completed: (status != TaskStatus::Active).then(|| Timestamp::new("2026-06-20")),
-            commits: None,
-            tags: None,
-            effort: None,
-            prereq: None,
-            section: None,
             body: body.to_string(),
             source: format!("---\nstatus: {status}\n---\n{body}"),
-            locator: format!("/mem/foo-bar/{id}.md"),
-            placement: None,
-            materialization: Materialization::NoteFile,
+            ..task_record(id)
         }
     }
 
     fn staged(status: TaskStatus, body: &str) -> InMemoryStore {
         InMemoryStore::default()
-            .with_project_id("foo-bar", "FOO".parse().unwrap())
+            .with_project_id("foo-bar", "FOO")
             .with_project("foo-bar", vec![record("FOO-0001", status, body)])
     }
 
@@ -209,7 +419,7 @@ mod tests {
     async fn update_rejects_empty_patch_with_nothing_to_update(pool: sqlx::SqlitePool) {
         insert_project(
             &pool,
-            "FOO".parse().unwrap(),
+            "FOO",
             "foo-bar",
             "/projects/foo",
             "/tasks/foo",
@@ -231,7 +441,7 @@ mod tests {
     async fn update_allows_commits_amend_on_closed_task(pool: sqlx::SqlitePool) {
         insert_project(
             &pool,
-            "FOO".parse().unwrap(),
+            "FOO",
             "foo-bar",
             "/projects/foo",
             "/tasks/foo",
@@ -263,7 +473,7 @@ mod tests {
     async fn update_rejects_body_edit_on_closed_task(pool: sqlx::SqlitePool) {
         insert_project(
             &pool,
-            "FOO".parse().unwrap(),
+            "FOO",
             "foo-bar",
             "/projects/foo",
             "/tasks/foo",
@@ -288,7 +498,7 @@ mod tests {
     async fn update_open_item_edits_title_and_body_and_reports_open_edit(pool: sqlx::SqlitePool) {
         insert_project(
             &pool,
-            "FOO".parse().unwrap(),
+            "FOO",
             "foo-bar",
             "/projects/foo",
             "/tasks/foo",
@@ -323,7 +533,7 @@ mod tests {
             ..record("FOO-0001", TaskStatus::Active, "body\n")
         };
         InMemoryStore::default()
-            .with_project_id("foo-bar", "FOO".parse().unwrap())
+            .with_project_id("foo-bar", "FOO")
             .with_project("foo-bar", vec![record])
     }
 
@@ -335,7 +545,7 @@ mod tests {
     async fn update_merges_tags_with_existing_frontmatter(pool: sqlx::SqlitePool) {
         insert_project(
             &pool,
-            "FOO".parse().unwrap(),
+            "FOO",
             "foo-bar",
             "/projects/foo",
             "/tasks/foo",
@@ -360,7 +570,7 @@ mod tests {
     async fn update_tags_clear_plus_tags_replaces_without_parsing_existing(pool: sqlx::SqlitePool) {
         insert_project(
             &pool,
-            "FOO".parse().unwrap(),
+            "FOO",
             "foo-bar",
             "/projects/foo",
             "/tasks/foo",
@@ -383,7 +593,7 @@ mod tests {
     async fn update_rejects_corrupt_existing_tags_on_the_merge_path(pool: sqlx::SqlitePool) {
         insert_project(
             &pool,
-            "FOO".parse().unwrap(),
+            "FOO",
             "foo-bar",
             "/projects/foo",
             "/tasks/foo",
@@ -409,7 +619,7 @@ mod tests {
     async fn update_rejects_invalid_raw_tag_with_cli_display(pool: sqlx::SqlitePool) {
         insert_project(
             &pool,
-            "FOO".parse().unwrap(),
+            "FOO",
             "foo-bar",
             "/projects/foo",
             "/tasks/foo",
@@ -438,7 +648,7 @@ mod tests {
     async fn update_validates_and_merges_prerequisites_in_the_application(pool: sqlx::SqlitePool) {
         insert_project(
             &pool,
-            "FOO".parse().unwrap(),
+            "FOO",
             "foo-bar",
             "/projects/foo",
             "/tasks/foo",
@@ -446,7 +656,7 @@ mod tests {
         )
         .await;
         let store = InMemoryStore::default()
-            .with_project_id("foo-bar", "FOO".parse().unwrap())
+            .with_project_id("foo-bar", "FOO")
             .with_project(
                 "foo-bar",
                 vec![
@@ -479,7 +689,7 @@ mod tests {
     async fn update_missing_item_preserves_requested_id(pool: sqlx::SqlitePool) {
         insert_project(
             &pool,
-            "FOO".parse().unwrap(),
+            "FOO",
             "foo-bar",
             "/projects/foo",
             "/tasks/foo",

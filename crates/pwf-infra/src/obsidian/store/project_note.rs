@@ -11,7 +11,7 @@ use super::{ObsidianStore, ObsidianStoreError, fs::read_task_file};
 use crate::obsidian::{
     frontmatter_text, fs_atomic,
     index_text::{add_note_link, remove_note_link},
-    note_text,
+    markdown_line, note_text,
 };
 
 impl ProjectNoteStore for ObsidianStore {
@@ -209,15 +209,11 @@ fn yaml_array(values: &[String]) -> String {
 
 fn replace_title(source: &str, title: &str) -> String {
     let body_start = frontmatter_body_start(source);
-    let mut line_start = body_start;
-    for line in source[body_start..].split_inclusive('\n') {
-        let content = line.strip_suffix('\n').unwrap_or(line);
-        let content = content.strip_suffix('\r').unwrap_or(content);
-        if content.starts_with("# ") {
-            let line_end = line_start + content.len();
-            return format!("{}# {title}{}", &source[..line_start], &source[line_end..]);
+    for line in markdown_line::lines(source).filter(|line| line.start >= body_start) {
+        if line.text.starts_with("# ") {
+            let line_end = line.start + line.text.len();
+            return format!("{}# {title}{}", &source[..line.start], &source[line_end..]);
         }
-        line_start += line.len();
     }
     note_text::replace_body(source, title)
 }
@@ -226,22 +222,17 @@ fn frontmatter_body_start(source: &str) -> usize {
     let byte_order_mark = source
         .strip_prefix('\u{feff}')
         .map_or(0, |_| '\u{feff}'.len_utf8());
-    let mut lines = source[byte_order_mark..].split_inclusive('\n');
-    let Some(opening) = lines.next() else {
+    let content = &source[byte_order_mark..];
+    let Some(opening) = markdown_line::lines(content).next() else {
         return 0;
     };
-    if opening.trim_end_matches(['\r', '\n']) != "---" {
+    if opening.text != "---" {
         return 0;
     }
-
-    let mut offset = byte_order_mark + opening.len();
-    for line in lines {
-        offset += line.len();
-        if line.trim_end_matches(['\r', '\n']) == "---" {
-            return offset;
-        }
-    }
-    0
+    markdown_line::find(content, opening.end, |line| {
+        line.strip_suffix('\r').unwrap_or(line) == "---"
+    })
+    .map_or(0, |closing| byte_order_mark + closing.end)
 }
 
 fn note_not_found(project: &ProjectName, id: &NoteId) -> ObsidianStoreError {

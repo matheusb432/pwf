@@ -2,7 +2,7 @@ use std::{assert_matches, fmt::Write as _, path::Path};
 
 use pwf_application::ports::task_record::{
     IndexEntry, IndexEntryState, IndexEntryStore, IndexPlacement, IndexSection, IndexSectionStore,
-    Materialization, NewTask, TaskPatch, TaskRecord, TaskStore,
+    Materialization, NewTask, NullablePatch, TaskPatch, TaskRecord, TaskStore,
 };
 use pwf_models::{
     project::{
@@ -524,7 +524,7 @@ fn apply_tag_patch(store: &ObsidianStore, tags: Option<Tags>) {
     let project = pwf_project(store);
     let id = TaskId::try_new("PWF-0001").unwrap();
     let patch = TaskPatch {
-        tags: Some(tags),
+        tags: tags.map_or(NullablePatch::Clear, NullablePatch::Set),
         ..Default::default()
     };
     TaskStore::update(store, &project, &id, patch).unwrap();
@@ -1022,7 +1022,7 @@ fn patch_status_done_closes_index_entry_with_date_stamp() {
     let id = TaskId::try_new("PWF-0002").unwrap();
     let patch = TaskPatch {
         status: Some(TaskStatus::Done),
-        completed: Some(Some(Timestamp::new("2026-07-15"))),
+        completed: NullablePatch::Set(Timestamp::new("2026-07-15")),
         ..Default::default()
     };
 

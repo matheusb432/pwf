@@ -131,16 +131,10 @@ pub(crate) enum TaskError {
         selector: ProjectSelector,
         known: Vec<String>,
     },
-    #[error("Task not found: {id}")]
-    TaskNotFound { id: TaskId },
     #[error("--id is required for {action}.")]
     MissingId { action: &'static str },
-    #[error("--report cannot be empty.")]
-    EmptyReport,
     #[error("--report is required for cancel.")]
     MissingCancelReport,
-    #[error("Task note missing: {}", path.display())]
-    TaskNoteMissing { path: std::path::PathBuf },
     #[error(
         "Invalid --tag value {raw:?}; use lowercase/uppercase ASCII letters, digits, '_' or '-', without leading, trailing, or repeated separators."
     )]

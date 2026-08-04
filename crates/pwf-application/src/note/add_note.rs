@@ -1,16 +1,14 @@
 //! Adds one note to a managed project.
 
 use pwf_models::{note::NoteId, project::ProjectSelector, task::Timestamp};
+use pwf_wire::project::ProjectStatusFilter;
 
 use crate::{
     ports::{
         clock::Clock,
         project_note::{NewProjectNote, ProjectNoteStore},
     },
-    project::{
-        ProjectStatusFilter,
-        resolve_project::{self, ResolveProject, ResolveProjectError},
-    },
+    project::resolve_project::{self, ResolveProject, ResolveProjectError},
 };
 
 /// Requests creation of one project note.
@@ -173,23 +171,11 @@ mod tests {
     };
 
     use super::{AddNote, AddNoteError};
-    use crate::{
-        ports::clock::Clock,
-        testing::{InMemoryStore, ProjectNoteFailure, insert_project},
-    };
+    use crate::testing::{FixedClock, InMemoryStore, ProjectNoteFailure, insert_project};
 
     #[derive(Debug, thiserror::Error)]
     #[error("sentinel store failure")]
     struct SentinelStoreError;
-
-    #[derive(Clone)]
-    struct FixedClock;
-
-    impl Clock for FixedClock {
-        fn today(&self) -> Timestamp {
-            Timestamp::new("2026-07-26")
-        }
-    }
 
     fn note(number: u32, title: &str) -> ProjectNote {
         ProjectNote {
@@ -214,15 +200,7 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn blank_title_wins_over_store_listing_failure(pool: sqlx::SqlitePool) {
-        insert_project(
-            &pool,
-            "PWF".parse().unwrap(),
-            "pwf",
-            "/projects/pwf",
-            "/tasks/pwf",
-            false,
-        )
-        .await;
+        insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
         let store = InMemoryStore::default().with_failure(ProjectNoteFailure::List);
         let mut command = command("pwf");
         command.title = " \t ".to_string();
@@ -237,15 +215,7 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn blank_content_wins_over_store_listing_failure(pool: sqlx::SqlitePool) {
-        insert_project(
-            &pool,
-            "PWF".parse().unwrap(),
-            "pwf",
-            "/projects/pwf",
-            "/tasks/pwf",
-            false,
-        )
-        .await;
+        insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
         let store = InMemoryStore::default().with_failure(ProjectNoteFailure::List);
         let mut command = command("pwf");
         command.content = " \t ".to_string();
@@ -260,15 +230,7 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn maximum_suffix_allocates_the_next_identifier(pool: sqlx::SqlitePool) {
-        insert_project(
-            &pool,
-            "PWF".parse().unwrap(),
-            "pwf",
-            "/projects/pwf",
-            "/tasks/pwf",
-            false,
-        )
-        .await;
+        insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
         for project_selector in ["pwf", "PWF"] {
             let store = InMemoryStore::default().with_project_notes(
                 "pwf",
@@ -290,15 +252,7 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn explicit_date_overrides_the_clock(pool: sqlx::SqlitePool) {
-        insert_project(
-            &pool,
-            "PWF".parse().unwrap(),
-            "pwf",
-            "/projects/pwf",
-            "/tasks/pwf",
-            false,
-        )
-        .await;
+        insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
         let store = InMemoryStore::default();
 
         super::execute(command("pwf"), &store, &pool, &FixedClock)
@@ -313,15 +267,7 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn absent_date_uses_the_clock_once(pool: sqlx::SqlitePool) {
-        insert_project(
-            &pool,
-            "PWF".parse().unwrap(),
-            "pwf",
-            "/projects/pwf",
-            "/tasks/pwf",
-            false,
-        )
-        .await;
+        insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
         let store = InMemoryStore::default();
         let mut command = command("pwf");
         command.date = None;
@@ -338,15 +284,7 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn exhausted_four_digit_suffix_is_reported_without_inserting(pool: sqlx::SqlitePool) {
-        insert_project(
-            &pool,
-            "PWF".parse().unwrap(),
-            "pwf",
-            "/projects/pwf",
-            "/tasks/pwf",
-            false,
-        )
-        .await;
+        insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
         let store = InMemoryStore::default().with_project_notes("pwf", vec![note(9_999, "last")]);
 
         let error = super::execute(command("pwf"), &store, &pool, &FixedClock)

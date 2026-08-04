@@ -1,87 +1,23 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+use nutype::nutype;
+
+#[nutype(
+    validate(predicate = |arguments| !arguments.is_empty()),
+    derive(Debug, Clone, Copy, PartialEq, Eq, Deref),
+)]
 pub struct AgentCommand<'a>(&'a [String]);
-
-impl<'a> AgentCommand<'a> {
-    #[must_use]
-    pub fn new(arguments: &'a [String]) -> Self {
-        Self(arguments)
-    }
-
-    #[must_use]
-    pub fn arguments(&self) -> &'a [String] {
-        self.0
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SessionStart<'a> {
-    session_name: &'a str,
-    working_directory: &'a str,
-}
-
-impl<'a> SessionStart<'a> {
-    #[must_use]
-    pub fn new(session_name: &'a str, working_directory: &'a str) -> Self {
-        Self {
-            session_name,
-            working_directory,
-        }
-    }
-
-    #[must_use]
-    pub fn session_name(&self) -> &str {
-        self.session_name
-    }
-
-    #[must_use]
-    pub fn working_directory(&self) -> &str {
-        self.working_directory
-    }
+    pub session_name: &'a str,
+    pub working_directory: &'a str,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SessionWindow<'a> {
-    session_name: &'a str,
-    working_directory: &'a str,
-    window_name: &'a str,
-    agent_command: AgentCommand<'a>,
-}
-
-impl<'a> SessionWindow<'a> {
-    #[must_use]
-    pub fn new(
-        session_name: &'a str,
-        working_directory: &'a str,
-        window_name: &'a str,
-        agent_command: AgentCommand<'a>,
-    ) -> Self {
-        Self {
-            session_name,
-            working_directory,
-            window_name,
-            agent_command,
-        }
-    }
-
-    #[must_use]
-    pub fn session_name(&self) -> &str {
-        self.session_name
-    }
-
-    #[must_use]
-    pub fn working_directory(&self) -> &str {
-        self.working_directory
-    }
-
-    #[must_use]
-    pub fn window_name(&self) -> &str {
-        self.window_name
-    }
-
-    #[must_use]
-    pub fn agent_command(&self) -> AgentCommand<'_> {
-        self.agent_command
-    }
+    pub session_name: &'a str,
+    pub working_directory: &'a str,
+    pub window_name: &'a str,
+    pub agent_command: AgentCommand<'a>,
 }
 
 pub trait SessionClient: Clone + Send + Sync + 'static {
@@ -97,4 +33,19 @@ pub trait SessionClient: Clone + Send + Sync + 'static {
     fn preview_window(&self, window: &SessionWindow<'_>) -> Vec<String>;
 
     fn open_window(&self, window: &SessionWindow<'_>) -> Result<(), String>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AgentCommand;
+
+    #[test]
+    fn agent_command_requires_at_least_the_program() {
+        let empty = Vec::<String>::new();
+        assert!(AgentCommand::try_new(&empty).is_err());
+
+        let arguments = vec!["codex".to_string(), "--model".to_string()];
+        let command = AgentCommand::try_new(&arguments).unwrap();
+        assert_eq!(*command, arguments.as_slice());
+    }
 }

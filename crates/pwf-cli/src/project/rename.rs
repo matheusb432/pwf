@@ -1,15 +1,13 @@
 use std::path::PathBuf;
 
 use clap::Args;
-use pwf_application::project::{
-    ProjectFields,
-    rename_project::{self, RenameProject},
-};
+use pwf_application::project::rename_project::{self, RenameProject};
 use pwf_infra::obsidian::ObsidianProjectTaskFilesClient;
 use pwf_models::project::{
     ProjectId, ProjectName, ProjectSource, ProjectSourceKind, ProjectSourceValue, ProjectTasks,
     ProjectTasksKind, ProjectTasksPath,
 };
+use pwf_wire::project::ProjectFields;
 use sqlx::SqlitePool;
 
 use super::{output, parse_project_id};

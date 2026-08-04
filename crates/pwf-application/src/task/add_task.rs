@@ -2,15 +2,17 @@ use std::path::PathBuf;
 
 use pwf_models::{
     project::{Project, ProjectSelector},
-    task::{
-        EffortTier, Prerequisites, ProjectName, Tags, TaskId, TaskTitle, TaskTitleError, Timestamp,
-    },
+    task::{EffortTier, Prerequisites, Tags, TaskId, TaskTitle, TaskTitleError, Timestamp},
 };
+use pwf_wire::project::ProjectStatusFilter;
 
+pub use super::create_task::CreateTaskError;
 use super::{
-    logic::task_creation::{added_task, project_mapped},
-    prerequisite::PrerequisiteValidationError,
-    store_util, tag_policy, title,
+    TaskSection,
+    create_task::{self, CreateTask},
+    created_task_output, infer_task_title,
+    prerequisites::{self, PrerequisiteValidationError},
+    tags,
 };
 use crate::{
     ports::{
@@ -18,40 +20,10 @@ use crate::{
         task_record::{IndexEntryStore, IndexSectionStore, NewTask, TaskStore},
     },
     project::{
-        ProjectStatusFilter,
         get_active_project::{self, GetActiveProject},
         resolve_project::{self, ResolveProject, ResolveProjectError},
     },
 };
-
-/// Reports the persistence phase that failed while creating an task and its index entry.
-#[derive(Debug, thiserror::Error)]
-pub enum CreateTaskError {
-    #[error("{0}")]
-    ReadSections(#[source] Box<dyn std::error::Error + Send + Sync>),
-    #[error("{0}")]
-    InsertRecord(#[source] Box<dyn std::error::Error + Send + Sync>),
-    #[error("{source}")]
-    InsertIndex {
-        project: ProjectName,
-        created_section: Option<String>,
-        #[source]
-        source: Box<dyn std::error::Error + Send + Sync>,
-    },
-}
-
-impl CreateTaskError {
-    pub fn created_section(&self) -> Option<(&ProjectName, &str)> {
-        match self {
-            Self::InsertIndex {
-                project,
-                created_section: Some(section),
-                ..
-            } => Some((project, section)),
-            _ => None,
-        }
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AddTaskOk {
@@ -80,34 +52,6 @@ enum AddTaskSource {
     Plan {
         path: String,
     },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum TaskSection {
-    Future,
-    Human,
-    LowPriority,
-}
-
-impl TaskSection {
-    #[must_use]
-    fn from_name(value: &str) -> Option<Self> {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "future" => Some(Self::Future),
-            "human" => Some(Self::Human),
-            "low-prio" => Some(Self::LowPriority),
-            _ => None,
-        }
-    }
-
-    #[must_use]
-    pub(super) fn as_str(self) -> &'static str {
-        match self {
-            Self::Future => "Future",
-            Self::Human => "Human",
-            Self::LowPriority => "Low-prio",
-        }
-    }
 }
 
 /// Requests creation of one task.
@@ -190,7 +134,7 @@ pub async fn execute(
     .await?;
     let mut projects = vec![project.clone()];
     if let Some(prerequisites) = cmd.prerequisites.as_ref() {
-        for id in super::prerequisite::project_ids(prerequisites) {
+        for id in prerequisites::project_ids(prerequisites) {
             if projects.iter().any(|project| project.id == id) {
                 continue;
             }
@@ -210,24 +154,26 @@ pub async fn execute(
         .prerequisites
         .as_ref()
         .map(|prerequisites| {
-            super::prerequisite::validate_and_merge(None, prerequisites, store, &projects)
+            prerequisites::validate_and_merge(None, prerequisites, store, &projects)
                 .map_err(map_prerequisite_error)
         })
         .transpose()?;
     let prepared = prepare_source(cmd, &project)?;
 
-    let created = store_util::create_task(
-        store,
-        &prepared.project,
-        NewTask {
-            prompt: prepared.prompt,
-            title: prepared.title,
-            created: authored_date,
-            section: section.map(TaskSection::as_str).map(str::to_string),
-            prereq,
-            effort: cmd.effort,
-            tags,
+    let created = create_task::execute(
+        CreateTask {
+            project: &prepared.project,
+            new: NewTask {
+                prompt: prepared.prompt,
+                title: prepared.title,
+                created: authored_date,
+                section: section.map(TaskSection::as_str).map(str::to_string),
+                prereq,
+                effort: cmd.effort,
+                tags,
+            },
         },
+        store,
     )
     .map_err(|source| AddTaskError::WriteStore {
         diagnostics: AddTaskDiagnostics {
@@ -239,7 +185,7 @@ pub async fn execute(
         source,
     })?;
 
-    Ok(added_task(&prepared.project, created))
+    Ok(created_task_output(&prepared.project, created))
 }
 
 struct PreparedAdd {
@@ -252,7 +198,7 @@ fn parse_tags(values: &[String]) -> Result<Option<Tags>, AddTaskError> {
     if values.is_empty() {
         return Ok(None);
     }
-    tag_policy::parse_values(values)
+    tags::parse_values(values)
         .map(Some)
         .map_err(|error| AddTaskError::InvalidTag {
             raw: error.raw().to_string(),
@@ -281,10 +227,10 @@ fn prepare_source(
     if matches!(source, AddTaskSource::Prompt { prompt, .. } if prompt.trim().is_empty()) {
         return Err(AddTaskError::Usage);
     }
-    let project = project_mapped(selected_project);
+    let project = selected_project.clone();
     let (title, prompt) = match source {
         AddTaskSource::Prompt { prompt, title } => (
-            title.clone().map_or_else(|| title::inferred(prompt), Ok)?,
+            title.clone().map_or_else(|| infer_task_title(prompt), Ok)?,
             prompt.clone(),
         ),
         AddTaskSource::Plan { path } => (

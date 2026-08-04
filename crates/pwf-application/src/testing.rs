@@ -17,12 +17,22 @@ use pwf_models::{
 };
 
 use crate::ports::{
+    clock::Clock,
     project_note::{NewProjectNote, ProjectNotePatch, ProjectNoteStore},
     task_record::{
         IndexEntry, IndexEntryStore, IndexSection, IndexSectionStore, Materialization, NewTask,
-        TaskPatch, TaskRecord, TaskStore,
+        NullablePatch, TaskPatch, TaskRecord, TaskStore,
     },
 };
+
+#[derive(Clone)]
+pub(crate) struct FixedClock;
+
+impl Clock for FixedClock {
+    fn today(&self) -> Timestamp {
+        Timestamp::new("2026-07-26")
+    }
+}
 
 #[derive(Debug, Default)]
 struct InMemoryState {
@@ -66,10 +76,11 @@ impl InMemoryStore {
     }
 
     /// Registers the project ID used by task insertion.
-    pub fn with_project_id(self, project: &str, project_id: ProjectId) -> Self {
-        self.lock()
-            .project_ids
-            .insert(project_name(project), project_id);
+    pub fn with_project_id(self, project: &str, project_id: &str) -> Self {
+        self.lock().project_ids.insert(
+            project_name(project),
+            project_id.parse().expect("valid test project ID"),
+        );
         self
     }
 
@@ -135,9 +146,9 @@ fn project_name(project: &str) -> ProjectName {
     ProjectName::try_new(project).expect("test project name is non-empty")
 }
 
-pub(crate) fn project(project_id: ProjectId, title: &str) -> Project {
+pub(crate) fn project(project_id: &str, title: &str) -> Project {
     Project {
-        id: project_id,
+        id: project_id.parse().expect("valid test project ID"),
         title: project_name(title),
         source: ProjectSource::new(
             ProjectSourceKind::Directory,
@@ -150,6 +161,60 @@ pub(crate) fn project(project_id: ProjectId, title: &str) -> Project {
         created_at: "2026-07-25T00:00:00.000Z".to_string(),
         is_paused: false,
     }
+}
+
+pub(crate) fn task_record(id: &str) -> TaskRecord {
+    TaskRecord {
+        id: TaskId::try_new(id).expect("valid test task ID"),
+        title: "tray gui".to_string(),
+        status: TaskStatus::Active,
+        created: Some(Timestamp::new("2026-01-01")),
+        completed: None,
+        commits: None,
+        tags: None,
+        effort: None,
+        prereq: None,
+        section: None,
+        body: "\nbody\n".to_string(),
+        source: "body".to_string(),
+        locator: format!("/mem/foo-bar/{id}.md"),
+        placement: None,
+        materialization: Materialization::NoteFile,
+    }
+}
+
+pub(crate) const PWF_0001_SOURCE: &str = "---\nid: PWF-0001\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- do the thing\n";
+
+pub(crate) fn staged_task() -> (InMemoryStore, Vec<Project>) {
+    let record = TaskRecord {
+        title: "do the thing".to_string(),
+        created: Some(Timestamp::new("2026-06-20")),
+        body: "\n## Goals\n- do the thing\n".to_string(),
+        source: PWF_0001_SOURCE.to_string(),
+        locator: "/notes/pwf/PWF-0001.md".to_string(),
+        ..task_record("PWF-0001")
+    };
+    (
+        InMemoryStore::default().with_project("pwf", vec![record]),
+        vec![project("PWF", "pwf")],
+    )
+}
+
+pub(crate) fn staged_missing_task() -> (InMemoryStore, Vec<Project>) {
+    let expected = "/notes/pwf/PWF-0002.md".to_string();
+    let record = TaskRecord {
+        title: "ghost".to_string(),
+        created: None,
+        body: String::new(),
+        source: String::new(),
+        locator: expected.clone(),
+        materialization: Materialization::MissingNote { expected },
+        ..task_record("PWF-0002")
+    };
+    (
+        InMemoryStore::default().with_project("pwf", vec![record]),
+        vec![project("PWF", "pwf")],
+    )
 }
 
 impl TaskStore for InMemoryStore {
@@ -223,27 +288,22 @@ impl TaskStore for InMemoryStore {
         if let Some(status) = patch.status {
             record.status = status;
         }
-        if let Some(completed) = patch.completed {
-            record.completed = completed;
-        }
-        if let Some(commits) = patch.commits {
-            record.commits = commits;
-        }
+        apply_nullable_patch(&mut record.completed, patch.completed);
+        apply_nullable_patch(&mut record.commits, patch.commits);
         if let Some(body) = patch.body {
             record.body = body;
         }
         if let Some(title) = patch.title {
             record.title = title.to_string();
         }
-        if let Some(prereq) = patch.prereq {
-            record.prereq = prereq.map(|prerequisites| prerequisites.to_string());
-        }
+        apply_nullable_patch(
+            &mut record.prereq,
+            patch.prereq.map(|prerequisites| prerequisites.to_string()),
+        );
         if let Some(effort) = patch.effort {
             record.effort = Some(effort.to_string());
         }
-        if let Some(tags) = patch.tags {
-            record.tags = tags.map(|tags| render_tags(&tags));
-        }
+        apply_nullable_patch(&mut record.tags, patch.tags.map(|tags| render_tags(&tags)));
         Ok(())
     }
 
@@ -265,6 +325,14 @@ fn render_tags(tags: &pwf_models::task::Tags) -> String {
             .collect::<Vec<_>>()
             .join(", ")
     )
+}
+
+fn apply_nullable_patch<T>(target: &mut Option<T>, patch: NullablePatch<T>) {
+    match patch {
+        NullablePatch::Unchanged => {}
+        NullablePatch::Clear => *target = None,
+        NullablePatch::Set(value) => *target = Some(value),
+    }
 }
 
 impl ProjectNoteStore for InMemoryStore {

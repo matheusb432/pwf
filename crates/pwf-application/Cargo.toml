@@ -12,8 +12,10 @@ path = "src/lib.rs"
 askama = { workspace = true }
 prompt-lanes = { workspace = true }
 pwf-models = { workspace = true }
+pwf-wire = { workspace = true }
 cqrsy = { workspace = true }
-regex = { workspace = true }
+lazy-regex = { workspace = true }
+nutype = { workspace = true }
 sqlx = { workspace = true }
 thiserror = { workspace = true }
 

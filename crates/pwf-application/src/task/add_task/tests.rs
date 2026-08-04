@@ -3,17 +3,8 @@ use pwf_models::task::{TaskTitle, Timestamp};
 use super::{AddTask, AddTaskError, plan_title};
 use crate::{
     ports::{clock::Clock, task_record::IndexEntryState},
-    testing::{InMemoryStore, insert_project},
+    testing::{FixedClock, InMemoryStore, insert_project},
 };
-
-#[derive(Clone)]
-struct FixedClock;
-
-impl Clock for FixedClock {
-    fn today(&self) -> Timestamp {
-        Timestamp::new("2026-07-26")
-    }
-}
 
 async fn execute(
     command: &AddTask,
@@ -45,16 +36,8 @@ fn command(section: Option<&str>) -> AddTask {
 
 #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
 async fn add_inserts_record_and_open_index_entry(pool: sqlx::SqlitePool) {
-    insert_project(
-        &pool,
-        "PWF".parse().unwrap(),
-        "pwf",
-        "/projects/pwf",
-        "/tasks/pwf",
-        false,
-    )
-    .await;
-    let store = InMemoryStore::default().with_project_id("pwf", "PWF".parse().unwrap());
+    insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
+    let store = InMemoryStore::default().with_project_id("pwf", "PWF");
 
     let added = execute(&command(None), &store, &pool, &FixedClock)
         .await
@@ -77,16 +60,8 @@ async fn add_inserts_record_and_open_index_entry(pool: sqlx::SqlitePool) {
 
 #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
 async fn add_forwards_an_explicit_task_title(pool: sqlx::SqlitePool) {
-    insert_project(
-        &pool,
-        "PWF".parse().unwrap(),
-        "pwf",
-        "/projects/pwf",
-        "/tasks/pwf",
-        false,
-    )
-    .await;
-    let store = InMemoryStore::default().with_project_id("pwf", "PWF".parse().unwrap());
+    insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
+    let store = InMemoryStore::default().with_project_id("pwf", "PWF");
     let mut command = command(None);
     command.title = Some(task_title("fix # metadata"));
 
@@ -98,16 +73,8 @@ async fn add_forwards_an_explicit_task_title(pool: sqlx::SqlitePool) {
 
 #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
 async fn add_inferred_prompt_title_is_normalized_once(pool: sqlx::SqlitePool) {
-    insert_project(
-        &pool,
-        "PWF".parse().unwrap(),
-        "pwf",
-        "/projects/pwf",
-        "/tasks/pwf",
-        false,
-    )
-    .await;
-    let store = InMemoryStore::default().with_project_id("pwf", "PWF".parse().unwrap());
+    insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
+    let store = InMemoryStore::default().with_project_id("pwf", "PWF");
     let mut command = command(None);
     command.prompt = "fix # metadata".to_string();
     command.title = None;
@@ -120,16 +87,8 @@ async fn add_inferred_prompt_title_is_normalized_once(pool: sqlx::SqlitePool) {
 
 #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
 async fn add_uses_clock_date_when_no_date_is_explicit(pool: sqlx::SqlitePool) {
-    insert_project(
-        &pool,
-        "PWF".parse().unwrap(),
-        "pwf",
-        "/projects/pwf",
-        "/tasks/pwf",
-        false,
-    )
-    .await;
-    let store = InMemoryStore::default().with_project_id("pwf", "PWF".parse().unwrap());
+    insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
+    let store = InMemoryStore::default().with_project_id("pwf", "PWF");
     let mut command = command(None);
     command.date = None;
 
@@ -143,16 +102,8 @@ async fn add_uses_clock_date_when_no_date_is_explicit(pool: sqlx::SqlitePool) {
 
 #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
 async fn add_reports_created_section_only_when_region_absent(pool: sqlx::SqlitePool) {
-    insert_project(
-        &pool,
-        "PWF".parse().unwrap(),
-        "pwf",
-        "/projects/pwf",
-        "/tasks/pwf",
-        false,
-    )
-    .await;
-    let store = InMemoryStore::default().with_project_id("pwf", "PWF".parse().unwrap());
+    insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
+    let store = InMemoryStore::default().with_project_id("pwf", "PWF");
 
     let added = execute(&command(Some("Human")), &store, &pool, &FixedClock)
         .await
@@ -178,16 +129,8 @@ fn plan_title_preserves_legacy_separator_whitespace_and_unicode_rules() {
 
 #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
 async fn add_plan_normalizes_yaml_significant_filename_title(pool: sqlx::SqlitePool) {
-    insert_project(
-        &pool,
-        "PWF".parse().unwrap(),
-        "pwf",
-        "/projects/pwf",
-        "/tasks/pwf",
-        false,
-    )
-    .await;
-    let store = InMemoryStore::default().with_project_id("pwf", "PWF".parse().unwrap());
+    insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
+    let store = InMemoryStore::default().with_project_id("pwf", "PWF");
     let mut command = command(None);
     command.continue_path = Some("docs/plans/2026-07-15-fix-#-metadata.md".parse().unwrap());
 
@@ -199,17 +142,9 @@ async fn add_plan_normalizes_yaml_significant_filename_title(pool: sqlx::SqliteP
 
 #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
 async fn add_does_not_report_created_section_for_existing_empty_region(pool: sqlx::SqlitePool) {
-    insert_project(
-        &pool,
-        "PWF".parse().unwrap(),
-        "pwf",
-        "/projects/pwf",
-        "/tasks/pwf",
-        false,
-    )
-    .await;
+    insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
     let store = InMemoryStore::default()
-        .with_project_id("pwf", "PWF".parse().unwrap())
+        .with_project_id("pwf", "PWF")
         .with_sections("pwf", &["Human"]);
 
     let added = execute(&command(Some("Human")), &store, &pool, &FixedClock)
@@ -221,16 +156,8 @@ async fn add_does_not_report_created_section_for_existing_empty_region(pool: sql
 
 #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
 async fn explicit_section_wins_over_human_shorthand(pool: sqlx::SqlitePool) {
-    insert_project(
-        &pool,
-        "PWF".parse().unwrap(),
-        "pwf",
-        "/projects/pwf",
-        "/tasks/pwf",
-        false,
-    )
-    .await;
-    let store = InMemoryStore::default().with_project_id("pwf", "PWF".parse().unwrap());
+    insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
+    let store = InMemoryStore::default().with_project_id("pwf", "PWF");
     let mut command = command(Some("future"));
     command.human = true;
 
@@ -241,16 +168,8 @@ async fn explicit_section_wins_over_human_shorthand(pool: sqlx::SqlitePool) {
 
 #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
 async fn invalid_section_is_rejected_before_mutation(pool: sqlx::SqlitePool) {
-    insert_project(
-        &pool,
-        "PWF".parse().unwrap(),
-        "pwf",
-        "/projects/pwf",
-        "/tasks/pwf",
-        false,
-    )
-    .await;
-    let store = InMemoryStore::default().with_project_id("pwf", "PWF".parse().unwrap());
+    insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
+    let store = InMemoryStore::default().with_project_id("pwf", "PWF");
     let command = command(Some("someday"));
 
     let error = execute(&command, &store, &pool, &FixedClock)

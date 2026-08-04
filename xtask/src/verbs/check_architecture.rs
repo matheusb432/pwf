@@ -18,7 +18,7 @@ struct EdgePolicy {
     reason: &'static str,
 }
 
-const EDGE_POLICIES: [EdgePolicy; 5] = [
+const EDGE_POLICIES: [EdgePolicy; 6] = [
     EdgePolicy {
         from: "pwf-models",
         label: "models stay independent",
@@ -28,6 +28,7 @@ const EDGE_POLICIES: [EdgePolicy; 5] = [
             "serde_json",
             "sqlx",
             "toml",
+            "pwf-wire",
             "pwf-application",
             "pwf-infra",
             "pwf-cli",
@@ -36,6 +37,19 @@ const EDGE_POLICIES: [EdgePolicy; 5] = [
             "xtask",
         ],
         reason: "models must not depend on wire formats, persistence, use cases, or process roots",
+    },
+    EdgePolicy {
+        from: "pwf-wire",
+        label: "wire stays independent of use cases and adapters",
+        forbidden: &[
+            "pwf-application",
+            "pwf-infra",
+            "pwf-cli",
+            "pwf-migrator",
+            "prompt-lanes",
+            "xtask",
+        ],
+        reason: "wire contracts must not depend on use cases, adapters, or process roots",
     },
     EdgePolicy {
         from: "pwf-application",
@@ -54,6 +68,7 @@ const EDGE_POLICIES: [EdgePolicy; 5] = [
         label: "prompt lanes stays reusable",
         forbidden: &[
             "pwf-models",
+            "pwf-wire",
             "pwf-application",
             "pwf-infra",
             "pwf-cli",
@@ -66,6 +81,7 @@ const EDGE_POLICIES: [EdgePolicy; 5] = [
         label: "xtask stays outside the product graph",
         forbidden: &[
             "pwf-models",
+            "pwf-wire",
             "pwf-application",
             "pwf-infra",
             "pwf-cli",
@@ -156,6 +172,11 @@ mod tests {
                     "[dependencies]\npwf-infra = { path = \"../pwf-infra\" }\n",
                 ),
                 (
+                    "pwf-wire",
+                    "pwf-wire",
+                    "[dependencies]\npwf-infra = { path = \"../pwf-infra\" }\n",
+                ),
+                (
                     "pwf-infra",
                     "pwf-infra",
                     "[dependencies]\npwf-migrator = { path = \"../pwf-migrator\" }\n",
@@ -175,6 +196,8 @@ mod tests {
                  pwf-migrator: adapters must not depend on their runtime composition",
                 "pwf-models/Cargo.toml: [models stay independent] pwf-models -> serde: models must not \
                  depend on wire formats, persistence, use cases, or process roots",
+                "pwf-wire/Cargo.toml: [wire stays independent of use cases and adapters] pwf-wire -> \
+                 pwf-infra: wire contracts must not depend on use cases, adapters, or process roots",
             ]
         );
     }
@@ -193,9 +216,19 @@ mod tests {
                 (
                     "pwf-application",
                     "pwf-application",
+                    "[dependencies]\npwf-models = { path = \"../pwf-models\" }\npwf-wire = { path = \
+                     \"../pwf-wire\" }\n",
+                ),
+                (
+                    "pwf-wire",
+                    "pwf-wire",
                     "[dependencies]\npwf-models = { path = \"../pwf-models\" }\n",
                 ),
-                ("pwf-infra", "pwf-infra", ""),
+                (
+                    "pwf-infra",
+                    "pwf-infra",
+                    "[dependencies]\npwf-wire = { path = \"../pwf-wire\" }\n",
+                ),
             ],
         );
 

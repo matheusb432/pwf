@@ -1,11 +1,14 @@
+use super::{markdown_line, task_link};
+
 const NOTES_HEADER: &str = "### Notes";
 
 pub(super) fn find_section_index(content: &str, headers: &[&str]) -> Option<usize> {
     headers.iter().find_map(|header| {
-        line_starts(content).find_map(|(index, line)| {
-            line.trim_end()
+        markdown_line::lines(content).find_map(|line| {
+            line.text
+                .trim_end()
                 .eq_ignore_ascii_case(header)
-                .then_some(index)
+                .then_some(line.start)
         })
     })
 }
@@ -13,15 +16,16 @@ pub(super) fn find_section_index(content: &str, headers: &[&str]) -> Option<usiz
 pub(super) fn remove_index_link(content: &str, id: &str) -> String {
     let mut output = String::with_capacity(content.len());
     let mut preceding_whitespace = String::new();
-    for line in content.split_inclusive('\n') {
-        if line.trim().is_empty() {
-            preceding_whitespace.push_str(line);
-        } else if is_index_link_for_id(line, id) {
+    for line in markdown_line::lines(content) {
+        let raw = &content[line.start..line.end];
+        if line.text.trim().is_empty() {
+            preceding_whitespace.push_str(raw);
+        } else if task_link::parse(line.text).is_some_and(|link| link.id == id) {
             preceding_whitespace.clear();
         } else {
             output.push_str(&preceding_whitespace);
             preceding_whitespace.clear();
-            output.push_str(line);
+            output.push_str(raw);
         }
     }
     output.push_str(&preceding_whitespace);
@@ -31,9 +35,7 @@ pub(super) fn remove_index_link(content: &str, id: &str) -> String {
 pub(super) fn add_note_link(content: &str, id: &str) -> String {
     let link = format!("- [[{id}]]");
     if let Some(index) = find_section_index(content, &[NOTES_HEADER]) {
-        let after_header = content[index..]
-            .find('\n')
-            .map_or(content.len(), |offset| index + offset + 1);
+        let after_header = line_end_after(content, index);
         let prefix = &content[..after_header];
         let suffix = &content[after_header..];
         return format!("{prefix}{link}\n{suffix}");
@@ -120,40 +122,11 @@ pub(super) fn add_link_to_index(content: &str, link: &str) -> String {
     format!("{prefix}\n\n{block}{sep}{suffix}")
 }
 
-fn line_starts(content: &str) -> impl Iterator<Item = (usize, &str)> {
-    let mut index = 0;
-    content.split_inclusive('\n').map(move |line| {
-        let start = index;
-        index += line.len();
-        (start, line.strip_suffix('\n').unwrap_or(line))
-    })
-}
-
 fn find_line(content: &str, predicate: impl Fn(&str) -> bool) -> Option<usize> {
-    line_starts(content).find_map(|(index, line)| predicate(line).then_some(index))
-}
-
-fn is_index_link_for_id(source_line: &str, id: &str) -> bool {
-    let Some(after_marker) = source_line.trim_start().strip_prefix('-') else {
-        return false;
-    };
-    let mut remainder = after_marker.trim_start();
-    if remainder.starts_with("[ ]") || remainder.starts_with("[x]") || remainder.starts_with("[X]")
-    {
-        remainder = remainder[3..].trim_start();
-    }
-    let Some(wikilink) = remainder.strip_prefix("[[") else {
-        return false;
-    };
-    let Some(after_id) = wikilink.strip_prefix(id) else {
-        return false;
-    };
-    after_id.starts_with("]]")
-        || after_id.strip_prefix('|').is_some_and(|alias| {
-            alias
-                .find("]]")
-                .is_some_and(|closing| !alias[..closing].contains(']'))
-        })
+    markdown_line::find(content, 0, |line| {
+        predicate(line.strip_suffix('\r').unwrap_or(line))
+    })
+    .map(|line| line.start)
 }
 
 pub(super) fn section_exists(content: &str, section: KnownSection) -> bool {
@@ -161,22 +134,12 @@ pub(super) fn section_exists(content: &str, section: KnownSection) -> bool {
 }
 
 fn line_end_after(content: &str, idx: usize) -> usize {
-    content[idx..]
-        .find('\n')
-        .map_or(content.len(), |i| idx + i + 1)
+    markdown_line::find(content, idx, |_| true).map_or(content.len(), |line| line.end)
 }
 
-fn skip_blank_lines(content: &str, mut idx: usize) -> usize {
-    while idx < content.len() {
-        let rest = &content[idx..];
-        let line_len = rest.find('\n').map_or(rest.len(), |i| i + 1);
-        let line = &rest[..line_len];
-        if !line.trim().is_empty() {
-            break;
-        }
-        idx += line_len;
-    }
-    idx
+fn skip_blank_lines(content: &str, idx: usize) -> usize {
+    markdown_line::find(content, idx, |line| !line.trim().is_empty())
+        .map_or(content.len(), |line| line.start)
 }
 
 fn insert_section_task(content: &str, insert_at: usize, block: &str) -> String {

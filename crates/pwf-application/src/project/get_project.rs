@@ -1,11 +1,9 @@
 use std::error::Error;
 
 use pwf_models::project::ProjectId;
+use pwf_wire::project::ProjectStatusFilter;
 
-use super::{
-    Project, ProjectStatusFilter,
-    dto::{ProjectRow, ProjectRowError},
-};
+use super::{Project, ProjectRow, ProjectRowError};
 
 /// Requests one managed project by project ID.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,7 +64,7 @@ pub async fn execute(
     .map_err(|error| unexpected("reading project", error))?
     .ok_or(GetProjectError::ProjectNotFound { id: query.id })?;
 
-    super::logic::project_from_row(row).map_err(|error| unexpected_row("converting project", error))
+    super::project_from_row(row).map_err(|error| unexpected_row("converting project", error))
 }
 
 fn unexpected(
@@ -90,15 +88,7 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn status_filter_controls_paused_project_visibility(pool: sqlx::SqlitePool) {
-        insert_project(
-            &pool,
-            "PWF".parse().unwrap(),
-            "pwf",
-            "/work/pwf",
-            "/tasks/pwf",
-            true,
-        )
-        .await;
+        insert_project(&pool, "PWF", "pwf", "/work/pwf", "/tasks/pwf", true).await;
         let id = ProjectId::try_new("PWF").unwrap();
 
         let active = super::execute(

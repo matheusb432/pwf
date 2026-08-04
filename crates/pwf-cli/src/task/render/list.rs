@@ -1,7 +1,8 @@
 use std::fmt::Write;
 
-use pwf_application::task::{ListTasksOk, PrerequisiteStatus, StatusFilter, TaskView};
+use pwf_application::task::{ListTasksOk, StatusFilter};
 use pwf_models::task::TaskStatus;
+use pwf_wire::task::{PrerequisiteStatus, TaskView};
 
 use super::{StatusPlacement, render_status, render_task_summary};
 
@@ -205,11 +206,12 @@ fn render_list_task(
 
 #[cfg(test)]
 mod tests {
-    use pwf_application::task::{PrerequisiteStatus, StatusFilter};
+    use pwf_application::task::StatusFilter;
     use pwf_models::{
         project::ProjectSourceValue,
         task::{TaskId, TaskStatus},
     };
+    use pwf_wire::task::PrerequisiteStatus;
 
     use super::*;
 

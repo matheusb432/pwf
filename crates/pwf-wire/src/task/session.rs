@@ -1,4 +1,4 @@
-//! Session operation and capability data transfer objects.
+//! Process-neutral session request and response contracts.
 
 use pwf_models::{
     session::{Agent, DispatchMode, LaunchDirectives, SessionEffort},
@@ -16,6 +16,7 @@ pub struct AgentLaunch {
     pub model: Option<String>,
     pub effort: SessionEffort,
 }
+
 /// Groups a provider-neutral launch with its mechanical dispatch destination.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionPlan {
@@ -74,4 +75,20 @@ pub struct ModelTier {
 pub struct ModelTierLookup {
     pub catalog: String,
     pub tier: Option<ModelTier>,
+}
+
+#[cfg(test)]
+mod tests {
+    use pwf_models::task::TaskId;
+
+    use super::DispatchTarget;
+
+    #[test]
+    fn session_name_lowercases_the_typed_project_id() {
+        let target = DispatchTarget {
+            task_id: "cfg9".parse::<TaskId>().unwrap(),
+        };
+
+        assert_eq!(target.session_name(), "cfg");
+    }
 }

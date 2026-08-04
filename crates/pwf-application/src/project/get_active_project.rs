@@ -1,7 +1,8 @@
 use pwf_models::project::ProjectId;
+use pwf_wire::project::ProjectStatusFilter;
 
 use super::{
-    Project, ProjectStatusFilter,
+    Project,
     get_project::{self, GetProject, GetProjectError},
 };
 

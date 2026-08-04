@@ -1,13 +1,10 @@
-use pwf_models::{
-    project::ProjectId,
-    task::{ProjectName, TaskId, TaskStatus, Timestamp},
-};
+use pwf_models::task::{TaskId, Timestamp};
 
 #[cfg(test)]
-use super::logic::task_closing::review_task_prompt;
+use super::close_task::review_task_prompt;
+pub use super::close_task::{CloseTaskError, ClosedTaskAction, CompleteTaskOk};
 use super::{
-    add_task::{AddTaskError, AddTaskOk},
-    logic::task_closing::{CloseError, CloseTaskRequest, perform_close},
+    close_task::{self, CloseTask},
     resolve_task_project::{self, ResolveTaskProject, ResolveTaskProjectError},
 };
 use crate::ports::{
@@ -24,58 +21,12 @@ pub struct CompleteTask {
     pub review: bool,
 }
 
-/// Selects the status and confirmation verb recorded by a close operation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ClosedTaskAction {
-    Done,
-    Cancelled,
-}
-
-impl ClosedTaskAction {
-    #[must_use]
-    pub fn past_tense(self) -> &'static str {
-        match self {
-            Self::Done => "Done",
-            Self::Cancelled => "Cancelled",
-        }
-    }
-
-    pub(in crate::task) fn status(self) -> TaskStatus {
-        match self {
-            Self::Done => TaskStatus::Done,
-            Self::Cancelled => TaskStatus::Cancelled,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CompleteTaskOk {
-    pub id: TaskId,
-    pub project: ProjectName,
-    pub title: String,
-    pub action: ClosedTaskAction,
-    pub evicted_ids: Vec<TaskId>,
-    pub futuro_renamed_project: Option<ProjectName>,
-    pub review_task: Option<AddTaskOk>,
-}
-
 #[derive(Debug, thiserror::Error)]
 pub enum CompleteTaskError {
-    #[error("Active task not found: {id}")]
-    TaskNotFound { id: TaskId },
-    #[error("Unknown project ID `{project_id}` for task {task_id}")]
-    UnknownProjectId {
-        task_id: TaskId,
-        project_id: ProjectId,
-    },
-    #[error("--report cannot be empty.")]
-    EmptyReport,
-    #[error("{0}")]
-    WriteStore(Box<dyn std::error::Error + Send + Sync>),
-    #[error("{0}")]
-    ReviewTask(#[source] AddTaskError),
-    #[error("{0}")]
-    QueryProject(#[source] Box<dyn std::error::Error + Send + Sync>),
+    #[error(transparent)]
+    ResolveProject(#[from] ResolveTaskProjectError),
+    #[error(transparent)]
+    Close(#[from] CloseTaskError),
 }
 
 #[cqrsy::command]
@@ -85,22 +36,19 @@ pub async fn execute(
     pool: &sqlx::SqlitePool,
     clock: &impl Clock,
 ) -> Result<CompleteTaskOk, CompleteTaskError> {
-    let resolved = resolve_task_project::execute(
+    let project = resolve_task_project::execute(
         ResolveTaskProject {
             id: command.id.clone(),
         },
         pool,
     )
-    .await
-    .map_err(map_project_error)?;
+    .await?;
     let authored_date = command
         .date
         .clone()
         .map_or_else(|| clock.today(), Timestamp::new);
-    perform_close(
-        store,
-        &resolved.project,
-        CloseTaskRequest {
+    close_task::execute(
+        CloseTask {
             action: ClosedTaskAction::Done,
             id: &command.id,
             completed: authored_date,
@@ -108,24 +56,13 @@ pub async fn execute(
             commits: &command.commits,
             review: command.review,
         },
+        store,
+        &project,
     )
-    .map_err(CloseError::into_complete)
+    .map_err(Into::into)
 }
 
-fn map_project_error(error: ResolveTaskProjectError) -> CompleteTaskError {
-    match error {
-        ResolveTaskProjectError::UnknownProjectId {
-            task_id,
-            project_id,
-        } => CompleteTaskError::UnknownProjectId {
-            task_id,
-            project_id,
-        },
-        ResolveTaskProjectError::QueryProject(source) => CompleteTaskError::QueryProject(source),
-    }
-}
-
-/// Reports failures shared by the done and cancel operations.
+/// Reports failures shared by the done and cancel interactors.
 #[cfg(test)]
 mod tests {
     use pwf_models::{
@@ -133,43 +70,18 @@ mod tests {
         task::{TaskId, TaskStatus, Timestamp},
     };
 
-    use super::{ClosedTaskAction, CompleteTask, CompleteTaskError, review_task_prompt};
-    use crate::{
-        ports::{
-            clock::Clock,
-            task_record::{
-                IndexEntry, IndexEntryState, IndexEntryStore, Materialization, TaskRecord,
-            },
-        },
-        testing::{InMemoryStore, project},
+    use super::{
+        CloseTaskError, ClosedTaskAction, CompleteTask, CompleteTaskError, review_task_prompt,
     };
-
-    #[derive(Clone)]
-    struct FixedClock;
-
-    impl Clock for FixedClock {
-        fn today(&self) -> Timestamp {
-            Timestamp::new("2026-07-26")
-        }
-    }
+    use crate::{
+        ports::task_record::{IndexEntry, IndexEntryState, IndexEntryStore, TaskRecord},
+        testing::{FixedClock, InMemoryStore, project, task_record},
+    };
 
     fn record(id: &str, status: TaskStatus) -> TaskRecord {
         TaskRecord {
-            id: TaskId::try_new(id).unwrap(),
-            title: "tray gui".to_string(),
             status,
-            created: Some(Timestamp::new("2026-01-01")),
-            completed: None,
-            commits: None,
-            tags: None,
-            effort: None,
-            prereq: None,
-            section: None,
-            body: "\nbody\n".to_string(),
-            source: "body".to_string(),
-            locator: format!("/mem/foo-bar/{id}.md"),
-            placement: None,
-            materialization: Materialization::NoteFile,
+            ..task_record(id)
         }
     }
 
@@ -182,12 +94,12 @@ mod tests {
     }
 
     fn foo() -> Project {
-        project("FOO".parse().unwrap(), "foo-bar")
+        project("FOO", "foo-bar")
     }
 
     fn staged(tasks: Vec<TaskRecord>, entries: Vec<IndexEntry>) -> InMemoryStore {
         let store = InMemoryStore::default()
-            .with_project_id("foo-bar", "FOO".parse().unwrap())
+            .with_project_id("foo-bar", "FOO")
             .with_project("foo-bar", tasks);
         for entry in entries {
             IndexEntryStore::upsert_index_entry(&store, &foo(), entry).unwrap();
@@ -209,7 +121,7 @@ mod tests {
     async fn done_marks_entry_and_evicts_past_cap(pool: sqlx::SqlitePool) {
         crate::testing::insert_project(
             &pool,
-            "FOO".parse().unwrap(),
+            "FOO",
             "foo-bar",
             "/projects/foo",
             "/tasks/foo",
@@ -260,7 +172,7 @@ mod tests {
     async fn done_uses_clock_date_when_no_date_is_explicit(pool: sqlx::SqlitePool) {
         crate::testing::insert_project(
             &pool,
-            "FOO".parse().unwrap(),
+            "FOO",
             "foo-bar",
             "/projects/foo",
             "/tasks/foo",
@@ -288,7 +200,7 @@ mod tests {
     async fn done_updates_an_unindexed_active_task(pool: sqlx::SqlitePool) {
         crate::testing::insert_project(
             &pool,
-            "FOO".parse().unwrap(),
+            "FOO",
             "foo-bar",
             "/projects/foo",
             "/tasks/foo",
@@ -310,7 +222,7 @@ mod tests {
     async fn done_normalizes_futuro_header_entries(pool: sqlx::SqlitePool) {
         crate::testing::insert_project(
             &pool,
-            "FOO".parse().unwrap(),
+            "FOO",
             "foo-bar",
             "/projects/foo",
             "/tasks/foo",
@@ -333,7 +245,7 @@ mod tests {
     async fn done_review_inserts_review_task_and_open_entry(pool: sqlx::SqlitePool) {
         crate::testing::insert_project(
             &pool,
-            "FOO".parse().unwrap(),
+            "FOO",
             "foo-bar",
             "/projects/foo",
             "/tasks/foo",
@@ -370,7 +282,7 @@ mod tests {
     async fn done_on_missing_item_reports_item_not_found(pool: sqlx::SqlitePool) {
         crate::testing::insert_project(
             &pool,
-            "FOO".parse().unwrap(),
+            "FOO",
             "foo-bar",
             "/projects/foo",
             "/tasks/foo",
@@ -385,7 +297,8 @@ mod tests {
 
         assert!(matches!(
             error,
-            CompleteTaskError::TaskNotFound { ref id } if id.as_ref() == "FOO-9999"
+            CompleteTaskError::Close(CloseTaskError::TaskNotFound { ref id })
+                if id.as_ref() == "FOO-9999"
         ));
         assert_eq!(error.to_string(), "Active task not found: FOO-9999");
     }
@@ -394,7 +307,7 @@ mod tests {
     async fn done_reports_an_unknown_project_id(pool: sqlx::SqlitePool) {
         crate::testing::insert_project(
             &pool,
-            "FOO".parse().unwrap(),
+            "FOO",
             "foo-bar",
             "/projects/foo",
             "/tasks/foo",

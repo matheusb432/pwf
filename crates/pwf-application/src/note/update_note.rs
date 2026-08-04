@@ -4,14 +4,12 @@ use pwf_models::{
     note::NoteId,
     project::{ProjectId, ProjectSelector},
 };
+use pwf_wire::project::ProjectStatusFilter;
 
-use super::logic;
+use super::resolve_note;
 use crate::{
     ports::project_note::{ProjectNotePatch, ProjectNoteStore},
-    project::{
-        ProjectStatusFilter,
-        resolve_project::{self, ResolveProject, ResolveProjectError},
-    },
+    project::resolve_project::{self, ResolveProject, ResolveProjectError},
 };
 
 /// Requests replacement of one project note's title.
@@ -79,7 +77,7 @@ pub async fn execute(
     if title.is_empty() {
         return Err(UpdateNoteError::EmptyTitle);
     }
-    let id = logic::resolve_note(&command.id, &project.id).ok_or_else(|| {
+    let id = resolve_note(&command.id, &project.id).ok_or_else(|| {
         UpdateNoteError::InvalidIdentifier {
             id: command.id,
             project_id: project.id.clone(),
@@ -139,15 +137,7 @@ mod tests {
     async fn full_prefixless_and_bare_identifiers_resolve_and_trim_the_replacement(
         pool: sqlx::SqlitePool,
     ) {
-        insert_project(
-            &pool,
-            "PWF".parse().unwrap(),
-            "pwf",
-            "/projects/pwf",
-            "/tasks/pwf",
-            false,
-        )
-        .await;
+        insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
         for identifier in [
             "PWF-NOTE-0007",
             concat!("pwf", "-note-0007"),
@@ -177,15 +167,7 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn blank_replacement_leaves_the_existing_note_unchanged(pool: sqlx::SqlitePool) {
-        insert_project(
-            &pool,
-            "PWF".parse().unwrap(),
-            "pwf",
-            "/projects/pwf",
-            "/tasks/pwf",
-            false,
-        )
-        .await;
+        insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
         let store = InMemoryStore::default().with_project_notes("pwf", vec![note()]);
 
         let error = super::execute(
@@ -206,15 +188,7 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn missing_note_is_reported(pool: sqlx::SqlitePool) {
-        insert_project(
-            &pool,
-            "PWF".parse().unwrap(),
-            "pwf",
-            "/projects/pwf",
-            "/tasks/pwf",
-            false,
-        )
-        .await;
+        insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
         let store = InMemoryStore::default();
 
         let error = super::execute(

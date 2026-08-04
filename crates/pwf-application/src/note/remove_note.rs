@@ -4,14 +4,12 @@ use pwf_models::{
     note::NoteId,
     project::{ProjectId, ProjectSelector},
 };
+use pwf_wire::project::ProjectStatusFilter;
 
-use super::logic;
+use super::resolve_note;
 use crate::{
     ports::project_note::ProjectNoteStore,
-    project::{
-        ProjectStatusFilter,
-        resolve_project::{self, ResolveProject, ResolveProjectError},
-    },
+    project::resolve_project::{self, ResolveProject, ResolveProjectError},
 };
 
 /// Requests deletion of one project note.
@@ -66,12 +64,11 @@ pub async fn execute(
     .await
     .map_err(project_error)?;
     let raw_id = command.id;
-    let id = logic::resolve_note(&raw_id, &project.id).ok_or_else(|| {
-        RemoveNoteError::InvalidIdentifier {
+    let id =
+        resolve_note(&raw_id, &project.id).ok_or_else(|| RemoveNoteError::InvalidIdentifier {
             id: raw_id,
             project_id: project.id.clone(),
-        }
-    })?;
+        })?;
     let exists = store
         .note_exists(&project, &id)
         .map_err(|error| RemoveNoteError::Store(Box::new(error)))?;
@@ -121,15 +118,7 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn full_prefixless_and_bare_identifiers_resolve(pool: sqlx::SqlitePool) {
-        insert_project(
-            &pool,
-            "PWF".parse().unwrap(),
-            "pwf",
-            "/projects/pwf",
-            "/tasks/pwf",
-            false,
-        )
-        .await;
+        insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
         for identifier in [
             "PWF-NOTE-0007",
             concat!("pwf", "-note-0007"),
@@ -156,15 +145,7 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn missing_note_wins_over_adapter_delete_failure(pool: sqlx::SqlitePool) {
-        insert_project(
-            &pool,
-            "PWF".parse().unwrap(),
-            "pwf",
-            "/projects/pwf",
-            "/tasks/pwf",
-            false,
-        )
-        .await;
+        insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
         let store = InMemoryStore::default().with_failure(ProjectNoteFailure::Delete);
 
         let error = super::execute(
@@ -189,15 +170,7 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn identifier_from_another_project_is_rejected(pool: sqlx::SqlitePool) {
-        insert_project(
-            &pool,
-            "PWF".parse().unwrap(),
-            "pwf",
-            "/projects/pwf",
-            "/tasks/pwf",
-            false,
-        )
-        .await;
+        insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
         let store = InMemoryStore::default();
 
         let error = super::execute(

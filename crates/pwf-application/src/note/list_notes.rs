@@ -1,14 +1,11 @@
 //! Lists one managed project's notes.
 
 use pwf_models::{project::ProjectSelector, task::ProjectName};
+use pwf_wire::{note::ListedNote, project::ProjectStatusFilter};
 
-use super::dto::ListedNote;
 use crate::{
     ports::project_note::ProjectNoteStore,
-    project::{
-        ProjectStatusFilter,
-        resolve_project::{self, ResolveProject, ResolveProjectError},
-    },
+    project::resolve_project::{self, ResolveProject, ResolveProjectError},
 };
 
 const DEFAULT_NOTE_COUNT: usize = 10;
@@ -121,15 +118,7 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn list_orders_newest_first_and_defaults_to_ten(pool: sqlx::SqlitePool) {
-        insert_project(
-            &pool,
-            "PWF".parse().unwrap(),
-            "pwf",
-            "/projects/pwf",
-            "/tasks/pwf",
-            false,
-        )
-        .await;
+        insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
         let store = InMemoryStore::default().with_project_notes(
             "pwf",
             [1, 12, 5, 3, 11, 8, 2, 10, 7, 4, 9, 6]
@@ -170,15 +159,7 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn zero_is_unlimited_and_explicit_cap_reports_hidden_count(pool: sqlx::SqlitePool) {
-        insert_project(
-            &pool,
-            "PWF".parse().unwrap(),
-            "pwf",
-            "/projects/pwf",
-            "/tasks/pwf",
-            false,
-        )
-        .await;
+        insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
         let store = InMemoryStore::default().with_project_notes("pwf", (1..=4).map(note).collect());
 
         let unlimited = super::execute(

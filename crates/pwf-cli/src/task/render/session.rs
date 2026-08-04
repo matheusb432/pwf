@@ -1,12 +1,13 @@
 use std::fmt::Write;
 
 use anstyle::AnsiColor;
-use pwf_application::task::session::{SessionPlan, dispatch_session::DispatchSessionOk};
+use pwf_application::task::session::dispatch_session::DispatchSessionOk;
 use pwf_infra::session::render_argv;
 use pwf_models::{
     session::{Agent, DispatchMode},
     task::TaskId,
 };
+use pwf_wire::task::session::SessionPlan;
 
 use super::{agent_name, paint};
 
@@ -87,13 +88,12 @@ nothing dispatched.\n",
 
 #[cfg(test)]
 mod tests {
-    use pwf_application::task::session::{
-        AgentLaunch, DispatchTarget, SessionPlan, dispatch_session::DispatchSessionOk,
-    };
+    use pwf_application::task::session::dispatch_session::DispatchSessionOk;
     use pwf_models::{
         session::{Agent, DispatchMode, SessionEffort},
         task::TaskId,
     };
+    use pwf_wire::task::session::{AgentLaunch, DispatchTarget, SessionPlan};
 
     use super::*;
 

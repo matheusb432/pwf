@@ -2,6 +2,8 @@ use std::{fmt::Write, ops::Range};
 
 use pwf_models::task::{EffortTier, Prerequisites, Tags, TaskId, TaskStatus, TaskTitle};
 
+use super::markdown_line;
+
 const UTF8_BOM: char = '\u{feff}';
 
 #[derive(Clone, Copy)]
@@ -121,55 +123,34 @@ fn opening_frontmatter_bounds(content: &str) -> Option<FrontmatterBounds> {
     let without_bom = content.strip_prefix(UTF8_BOM).unwrap_or(content);
     let bom_len = content.len() - without_bom.len();
     let open = find_fence(without_bom, 0)?;
-    let close = find_fence(without_bom, open.end.saturating_add(1))?;
+    let close = find_fence(without_bom, open.end)?;
     if open.start != 0 {
         return None;
     }
-    let newline = if without_bom[open.clone()].ends_with('\r') {
-        "\r\n"
-    } else {
-        "\n"
-    };
+    let newline = open.newline;
     Some(FrontmatterBounds {
-        start: bom_len + open.end,
+        start: bom_len + open.content_end,
         end: bom_len + close.start,
         newline,
     })
 }
 
 fn find_field_line(content: &str, field: &str) -> Option<Range<usize>> {
-    find_line(content, 0, |line| line.starts_with(field))
+    markdown_line::find(content, 0, |line| line.starts_with(field))
+        .map(|line| line.start..line.content_end)
 }
 
-fn find_fence(content: &str, start: usize) -> Option<Range<usize>> {
-    find_line(content, start, |line| {
-        let line = line.strip_suffix('\r').unwrap_or(line);
-        line.strip_prefix("---").is_some_and(|suffix| {
-            suffix
-                .chars()
-                .all(|character| matches!(character, ' ' | '\t'))
-        })
+fn find_fence(content: &str, start: usize) -> Option<markdown_line::MarkdownLine<'_>> {
+    markdown_line::find(content, start, |line| {
+        line.strip_suffix('\r')
+            .unwrap_or(line)
+            .strip_prefix("---")
+            .is_some_and(|suffix| {
+                suffix
+                    .chars()
+                    .all(|character| matches!(character, ' ' | '\t'))
+            })
     })
-}
-
-fn find_line(
-    content: &str,
-    mut start: usize,
-    predicate: impl Fn(&str) -> bool,
-) -> Option<Range<usize>> {
-    while start < content.len() {
-        let end = content[start..]
-            .find('\n')
-            .map_or(content.len(), |offset| start + offset);
-        if predicate(&content[start..end]) {
-            return Some(start..end);
-        }
-        if end == content.len() {
-            return None;
-        }
-        start = end + 1;
-    }
-    None
 }
 
 fn replace_field_line(content: &str, field: &str, replacement: &str) -> String {

@@ -1,5 +1,5 @@
-use pwf_application::task::session::DispatchConfirmation;
 use pwf_models::session::DispatchMode;
+use pwf_wire::task::session::DispatchConfirmation;
 
 use super::agent_name;
 use crate::confirm_prompt::{ConfirmationPrompt, Field};
@@ -74,11 +74,11 @@ impl From<bool> for Enabled {
 
 #[cfg(test)]
 mod tests {
-    use pwf_application::task::session::{DispatchConfirmation, DispatchTarget};
     use pwf_models::{
         session::{Agent, DispatchMode, LaunchDirectives, SessionEffort},
         task::TaskId,
     };
+    use pwf_wire::task::session::{DispatchConfirmation, DispatchTarget};
 
     use super::*;
 

@@ -15,7 +15,7 @@ lazy-regex = { workspace = true }
 directories = { workspace = true }
 pwf-application = { workspace = true }
 pwf-models = { workspace = true }
-regex = { workspace = true }
+pwf-wire = { workspace = true }
 thiserror = { workspace = true }
 gray_matter = { workspace = true }
 serde = { workspace = true }

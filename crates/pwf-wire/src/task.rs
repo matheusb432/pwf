@@ -1,9 +1,9 @@
 use pwf_models::{
-    project::{Project, ProjectSourceValue},
+    project::ProjectSourceValue,
     task::{Prerequisites, TaskId, TaskStatus},
 };
 
-use crate::ports::task_record::TaskPatch;
+pub mod session;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PrerequisiteStatus {
@@ -32,15 +32,4 @@ pub struct TaskView {
     pub effort: Option<String>,
     pub tags: Option<String>,
     pub created: Option<String>,
-}
-
-pub(in crate::task) struct TaskIdentity {
-    pub(in crate::task) project: Project,
-    pub(in crate::task) identifier: TaskId,
-}
-
-pub(in crate::task) struct PreparedTaskUpdate {
-    pub(in crate::task) identity: TaskIdentity,
-    pub(in crate::task) patch: TaskPatch,
-    pub(in crate::task) outcome: super::update_task::UpdateTaskOk,
 }

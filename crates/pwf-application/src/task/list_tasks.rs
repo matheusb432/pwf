@@ -4,23 +4,22 @@ use pwf_models::{
     project::{Project, ProjectSelector},
     task::{EffortTier, ProjectName, Tags, TaskId, TaskStatus},
 };
-
 #[cfg(test)]
-use super::dto::PrerequisiteStatus;
-use super::{dto::TaskView, prerequisite, tag_policy};
+use pwf_wire::task::PrerequisiteStatus;
+use pwf_wire::{project::ProjectStatusFilter, task::TaskView};
+
+use super::{prerequisites, tags, task_view};
 use crate::{
     ports::{
         project_task_location::ProjectTaskLocationClient,
         task_record::{TaskRecord, TaskStore},
     },
     project::{
-        ProjectStatusFilter,
         get_active_project::{self, GetActiveProject},
         get_project::GetProjectError,
         list_projects::{self, ListProjects},
         resolve_project::{self, ResolveProject},
     },
-    task::enrich::enrich,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -143,8 +142,8 @@ impl TagParseError {
     }
 }
 
-impl From<tag_policy::ParseTagsError> for TagParseError {
-    fn from(error: tag_policy::ParseTagsError) -> Self {
+impl From<tags::ParseTagsError> for TagParseError {
+    fn from(error: tags::ParseTagsError) -> Self {
         Self {
             raw: error.raw().to_string(),
             message: error.to_string(),
@@ -223,7 +222,7 @@ pub async fn execute(
         Some(project) => {
             let mut projects = vec![project.clone()];
             if query.include_prerequisite_statuses {
-                for id in prerequisite::referenced_project_ids(
+                for id in prerequisites::referenced_project_ids(
                     selected_records
                         .iter()
                         .flatten()
@@ -278,7 +277,7 @@ pub async fn execute(
         for task in &mut tasks {
             task.prerequisite_statuses =
                 task.prerequisites.as_ref().map_or_else(Vec::new, |value| {
-                    prerequisite::statuses(value, store, &projects)
+                    prerequisites::statuses(value, store, &projects)
                 });
         }
     }
@@ -306,11 +305,11 @@ fn retain_matching_tags(
             continue;
         };
         let stored =
-            tag_policy::parse_frontmatter(raw).map_err(|source| ListTasksError::InvalidTags {
+            tags::parse_frontmatter(raw).map_err(|source| ListTasksError::InvalidTags {
                 id: task.id.clone(),
                 source: source.into(),
             })?;
-        if tag_policy::contains_all(&stored, requested) {
+        if tags::contains_all(&stored, requested) {
             matched.push(task);
         }
     }
@@ -335,7 +334,7 @@ fn resolve_query(
         None
     } else {
         Some(
-            tag_policy::parse_values(&query.tags)
+            tags::parse_values(&query.tags)
                 .map_err(|error| ListTasksError::InvalidRequestedTags(error.into()))?,
         )
     };
@@ -390,7 +389,8 @@ fn collect_list_tasks(
                 continue;
             }
             tasks.push(
-                enrich(&record, project.source.value()).into_task_view(project.title.to_string()),
+                task_view::enrich(&record, project.source.value())
+                    .into_task_view(project.title.to_string()),
             );
         }
     }
@@ -516,7 +516,7 @@ mod tests {
             project_task_location::ProjectTaskLocationClient,
             task_record::{IndexPlacement, Materialization, TaskRecord},
         },
-        testing::{InMemoryStore, MIGRATOR, insert_project, project},
+        testing::{InMemoryStore, MIGRATOR, insert_project, project, task_record},
     };
 
     impl ProjectTaskLocationClient for InMemoryStore {
@@ -529,24 +529,15 @@ mod tests {
 
     fn record(id: &str) -> TaskRecord {
         TaskRecord {
-            id: TaskId::try_new(id).unwrap(),
             title: id.to_string(),
-            status: TaskStatus::Active,
             created: Some(Timestamp::new("2026-07-07")),
-            completed: None,
-            commits: None,
-            tags: None,
-            effort: None,
-            prereq: None,
-            section: None,
-            body: String::new(),
             source: String::new(),
             locator: format!("/notes/pwf/{id}.md"),
             placement: Some(IndexPlacement {
                 index_path: "/notes/pwf/pwf.md".to_string(),
                 line: 1,
             }),
-            materialization: Materialization::NoteFile,
+            ..task_record(id)
         }
     }
 
@@ -571,7 +562,7 @@ mod tests {
             .iter()
             .map(|name| {
                 let project_id = if *name == "pwf" { "PWF" } else { "CFG" };
-                project(project_id.parse().unwrap(), name)
+                project(project_id, name)
             })
             .collect();
         (store, registry)
@@ -584,28 +575,17 @@ mod tests {
     }
 
     fn prerequisite_registry() -> Vec<Project> {
-        vec![
-            project("PWF".parse().unwrap(), "pwf"),
-            project("CFG".parse().unwrap(), "config-handler"),
-        ]
+        vec![project("PWF", "pwf"), project("CFG", "config-handler")]
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn selected_long_list_resolves_only_referenced_prerequisite_projects(
         pool: sqlx::SqlitePool,
     ) {
+        insert_project(&pool, "PWF", "pwf", "/work/pwf", "/tasks/pwf", false).await;
         insert_project(
             &pool,
-            "PWF".parse().unwrap(),
-            "pwf",
-            "/work/pwf",
-            "/tasks/pwf",
-            false,
-        )
-        .await;
-        insert_project(
-            &pool,
-            "CFG".parse().unwrap(),
+            "CFG",
             "config-handler",
             "/work/config-handler",
             "/tasks/config-handler",
@@ -614,7 +594,7 @@ mod tests {
         .await;
         insert_project(
             &pool,
-            "ALT".parse().unwrap(),
+            "ALT",
             "unrelated",
             "/work/unrelated",
             "/missing/unrelated",
@@ -665,7 +645,7 @@ mod tests {
         for project in registry {
             insert_project(
                 &pool,
-                project.id.clone(),
+                project.id.as_ref(),
                 project.title.as_ref(),
                 project.source.value().as_ref(),
                 project.tasks.path().as_ref(),

@@ -2,7 +2,8 @@ use std::{fmt::Write as _, path::Path};
 
 use lazy_regex::{Regex, regex};
 use pwf_application::ports::task_record::{
-    IndexEntryState, IndexPlacement, Materialization, NewTask, TaskPatch, TaskRecord, TaskStore,
+    IndexEntryState, IndexPlacement, Materialization, NewTask, NullablePatch, TaskPatch,
+    TaskRecord, TaskStore,
 };
 use pwf_models::{
     project::Project,
@@ -276,34 +277,44 @@ impl ObsidianStore {
             content = replace_body(&content, body);
         }
         // Apply commits first to keep `commits:` anchored after `created:` during a close.
-        if let Some(commits) = &patch.commits {
-            content = set_commits_text(&content, commits.as_deref());
+        match &patch.commits {
+            NullablePatch::Unchanged => {}
+            NullablePatch::Clear => content = set_commits_text(&content, None),
+            NullablePatch::Set(commits) => {
+                content = set_commits_text(&content, Some(commits));
+            }
         }
         match patch.status {
             Some(TaskStatus::Active) => content = reopen_status_text(&content),
             Some(status) => {
-                let completed = patch
-                    .completed
-                    .as_ref()
-                    .and_then(Option::as_ref)
-                    .map_or("", Timestamp::as_str);
+                let completed = match &patch.completed {
+                    NullablePatch::Set(completed) => completed.as_str(),
+                    NullablePatch::Unchanged | NullablePatch::Clear => "",
+                };
                 content = set_status_text(&content, status, completed);
             }
-            None => {
-                if let Some(completed) = &patch.completed {
-                    content =
-                        set_completed_text(&content, completed.as_ref().map(Timestamp::as_str));
+            None => match &patch.completed {
+                NullablePatch::Unchanged => {}
+                NullablePatch::Clear => content = set_completed_text(&content, None),
+                NullablePatch::Set(completed) => {
+                    content = set_completed_text(&content, Some(completed.as_str()));
                 }
-            }
+            },
         }
-        if let Some(prereq) = &patch.prereq {
-            content = set_prereq_text(&content, prereq.as_ref());
+        match &patch.prereq {
+            NullablePatch::Unchanged => {}
+            NullablePatch::Clear => content = set_prereq_text(&content, None),
+            NullablePatch::Set(prerequisites) => {
+                content = set_prereq_text(&content, Some(prerequisites));
+            }
         }
         if let Some(effort) = patch.effort {
             content = set_effort_text(&content, Some(effort));
         }
-        if let Some(tags) = &patch.tags {
-            content = set_tags_text(&content, tags.as_ref());
+        match &patch.tags {
+            NullablePatch::Unchanged => {}
+            NullablePatch::Clear => content = set_tags_text(&content, None),
+            NullablePatch::Set(tags) => content = set_tags_text(&content, Some(tags)),
         }
         write_task_file(note_path, &content)
     }
@@ -322,11 +333,10 @@ impl ObsidianStore {
                 Ok(())
             }
             Some(TaskStatus::Done | TaskStatus::Cancelled) => {
-                let completed = patch
-                    .completed
-                    .as_ref()
-                    .and_then(Option::as_ref)
-                    .map_or("", Timestamp::as_str);
+                let completed = match &patch.completed {
+                    NullablePatch::Set(completed) => completed.as_str(),
+                    NullablePatch::Unchanged | NullablePatch::Clear => "",
+                };
                 let updated = close_index_entry_text(
                     text,
                     line.line_number,

@@ -1,14 +1,8 @@
-use pwf_models::{
-    project::ProjectId,
-    task::{ProjectName, TaskId, TaskStatus},
-};
+use pwf_models::task::{ProjectName, TaskId, TaskStatus};
 
-use super::{
-    resolve_task_project::{self, ResolveTaskProject, ResolveTaskProjectError},
-    store_util::{self, LoadTaskError},
-};
+use super::resolve_task_project::{self, ResolveTaskProject, ResolveTaskProjectError};
 use crate::ports::task_record::{
-    IndexEntry, IndexEntryState, IndexEntryStore, TaskPatch, TaskStore,
+    IndexEntry, IndexEntryState, IndexEntryStore, NullablePatch, TaskPatch, TaskStore,
 };
 
 #[derive(Debug, Clone)]
@@ -27,15 +21,10 @@ pub struct ReopenTaskOk {
 pub enum ReopenTaskError {
     #[error("Task not found: {id}")]
     TaskNotFound { id: TaskId },
-    #[error("Unknown project ID `{project_id}` for task {task_id}")]
-    UnknownProjectId {
-        task_id: TaskId,
-        project_id: ProjectId,
-    },
+    #[error(transparent)]
+    ResolveProject(#[from] ResolveTaskProjectError),
     #[error("{0}")]
     WriteStore(Box<dyn std::error::Error + Send + Sync>),
-    #[error("{0}")]
-    QueryProject(Box<dyn std::error::Error + Send + Sync>),
 }
 
 /// Reopens a closed task and restores an existing queue link.
@@ -47,27 +36,14 @@ pub async fn execute(
     store: &(impl TaskStore + IndexEntryStore),
     pool: &sqlx::SqlitePool,
 ) -> Result<ReopenTaskOk, ReopenTaskError> {
-    let resolved = resolve_task_project::execute(ResolveTaskProject { id: cmd.id.clone() }, pool)
-        .await
-        .map_err(|error| match error {
-            ResolveTaskProjectError::UnknownProjectId {
-                task_id,
-                project_id,
-            } => ReopenTaskError::UnknownProjectId {
-                task_id,
-                project_id,
-            },
-            ResolveTaskProjectError::QueryProject(source) => ReopenTaskError::QueryProject(source),
+    let project =
+        resolve_task_project::execute(ResolveTaskProject { id: cmd.id.clone() }, pool).await?;
+    let task_identifier = cmd.id.clone();
+    let record = TaskStore::get(store, &project, &task_identifier)
+        .map_err(|error| ReopenTaskError::WriteStore(Box::new(error)))?
+        .ok_or_else(|| ReopenTaskError::TaskNotFound {
+            id: task_identifier.clone(),
         })?;
-    let task_identifier = resolved.id;
-    let project = resolved.project;
-    let record =
-        store_util::require_task(store, &project, &task_identifier).map_err(
-            |error| match error {
-                LoadTaskError::TaskNotFound { id } => ReopenTaskError::TaskNotFound { id },
-                LoadTaskError::Store(source) => ReopenTaskError::WriteStore(source),
-            },
-        )?;
 
     if record.status == TaskStatus::Active {
         return Ok(ReopenTaskOk {
@@ -83,8 +59,8 @@ pub async fn execute(
         &task_identifier,
         TaskPatch {
             status: Some(TaskStatus::Active),
-            completed: Some(None),
-            commits: Some(None),
+            completed: NullablePatch::Clear,
+            commits: NullablePatch::Clear,
             ..TaskPatch::default()
         },
     )
@@ -124,39 +100,26 @@ mod tests {
 
     use super::ReopenTask;
     use crate::{
-        ports::task_record::{
-            IndexEntry, IndexEntryState, IndexEntryStore, Materialization, TaskRecord,
-        },
-        testing::{InMemoryStore, project},
+        ports::task_record::{IndexEntry, IndexEntryState, IndexEntryStore, TaskRecord},
+        testing::{InMemoryStore, project, task_record},
     };
 
     fn record(id: &str, status: TaskStatus) -> TaskRecord {
         TaskRecord {
-            id: TaskId::try_new(id).unwrap(),
-            title: "tray gui".to_string(),
             status,
-            created: Some(Timestamp::new("2026-01-01")),
             completed: (status != TaskStatus::Active).then(|| Timestamp::new("2026-01-02")),
             commits: Some("a..b".to_string()),
-            tags: None,
-            effort: None,
-            prereq: None,
-            section: None,
-            body: "\nbody\n".to_string(),
-            source: "body".to_string(),
-            locator: format!("/mem/foo-bar/{id}.md"),
-            placement: None,
-            materialization: Materialization::NoteFile,
+            ..task_record(id)
         }
     }
 
     fn foo() -> Project {
-        project("FOO".parse().unwrap(), "foo-bar")
+        project("FOO", "foo-bar")
     }
 
     fn staged(status: TaskStatus, entries: Vec<IndexEntry>) -> InMemoryStore {
         let store = InMemoryStore::default()
-            .with_project_id("foo-bar", "FOO".parse().unwrap())
+            .with_project_id("foo-bar", "FOO")
             .with_project("foo-bar", vec![record("FOO-0001", status)]);
         for entry in entries {
             IndexEntryStore::upsert_index_entry(&store, &foo(), entry).unwrap();
@@ -182,7 +145,7 @@ mod tests {
     async fn reopen_restores_done_entry(pool: sqlx::SqlitePool) {
         crate::testing::insert_project(
             &pool,
-            "FOO".parse().unwrap(),
+            "FOO",
             "foo-bar",
             "/projects/foo",
             "/tasks/foo",
@@ -207,7 +170,7 @@ mod tests {
     async fn reopen_preserves_absent_index_entry(pool: sqlx::SqlitePool) {
         crate::testing::insert_project(
             &pool,
-            "FOO".parse().unwrap(),
+            "FOO",
             "foo-bar",
             "/projects/foo",
             "/tasks/foo",
@@ -227,7 +190,7 @@ mod tests {
     async fn reopen_already_active_is_idempotent_skip(pool: sqlx::SqlitePool) {
         crate::testing::insert_project(
             &pool,
-            "FOO".parse().unwrap(),
+            "FOO",
             "foo-bar",
             "/projects/foo",
             "/tasks/foo",
@@ -246,7 +209,7 @@ mod tests {
     async fn reopen_reports_an_unknown_project_id(pool: sqlx::SqlitePool) {
         crate::testing::insert_project(
             &pool,
-            "FOO".parse().unwrap(),
+            "FOO",
             "foo-bar",
             "/projects/foo",
             "/tasks/foo",

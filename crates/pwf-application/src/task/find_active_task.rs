@@ -1,15 +1,12 @@
-use pwf_models::{
-    project::{Project, ProjectId},
-    task::TaskId,
-};
+use pwf_models::{project::Project, task::TaskId};
+use pwf_wire::task::TaskView;
 
 use crate::{
     ports::task_record::{TaskRecord, TaskStore},
-    project::{
-        get_active_project::{self, GetActiveProject},
-        get_project::GetProjectError,
+    task::{
+        resolve_task_project::{self, ResolveTaskProject, ResolveTaskProjectError},
+        task_view,
     },
-    task::{dto::TaskView, logic::finding::find_active_task_in_projects},
 };
 
 #[derive(Debug, Clone)]
@@ -17,6 +14,7 @@ pub struct FindActiveTask {
     pub id: TaskId,
 }
 
+#[derive(Debug)]
 pub struct FindActiveTaskOk {
     pub project: Project,
     pub record: TaskRecord,
@@ -29,15 +27,10 @@ pub enum FindActiveTaskError {
     TaskNotFound { id: TaskId },
     #[error("Task id is ambiguous: {id}")]
     AmbiguousId { id: TaskId },
-    #[error("Unknown project ID `{project_id}` for task {task_id}")]
-    UnknownProjectId {
-        task_id: TaskId,
-        project_id: ProjectId,
-    },
+    #[error(transparent)]
+    ResolveProject(#[from] ResolveTaskProjectError),
     #[error("{0}")]
     ReadStore(Box<dyn std::error::Error + Send + Sync>),
-    #[error("{0}")]
-    QueryProject(Box<dyn std::error::Error + Send + Sync>),
 }
 
 #[cqrsy::query]
@@ -46,30 +39,45 @@ pub async fn execute(
     store: &impl TaskStore,
     pool: &sqlx::SqlitePool,
 ) -> Result<FindActiveTaskOk, FindActiveTaskError> {
-    let project_id = query.id.project_id();
-    let project = get_active_project::execute(
-        GetActiveProject {
-            id: project_id.clone(),
+    let project = resolve_task_project::execute(
+        ResolveTaskProject {
+            id: query.id.clone(),
         },
         pool,
     )
-    .await
-    .map_err(|error| match error {
-        GetProjectError::ProjectNotFound { .. } => FindActiveTaskError::UnknownProjectId {
-            task_id: query.id.clone(),
-            project_id,
-        },
-        error @ GetProjectError::Unexpected { .. } => {
-            FindActiveTaskError::QueryProject(Box::new(error))
-        }
-    })?;
-    let (record, task) =
-        find_active_task_in_projects(store, std::slice::from_ref(&project), &query.id)?;
+    .await?;
+    let (record, task) = find_active_task(store, &project, &query.id)?;
     Ok(FindActiveTaskOk {
         project,
         record,
         task,
     })
+}
+
+fn find_active_task(
+    store: &impl TaskStore,
+    project: &Project,
+    task_id: &TaskId,
+) -> Result<(TaskRecord, TaskView), FindActiveTaskError> {
+    let records = store
+        .list(project)
+        .map_err(|error| FindActiveTaskError::ReadStore(Box::new(error)))?;
+    let mut matched = records
+        .into_iter()
+        .filter(|record| task_view::is_active_task(record) && record.id == *task_id);
+    let Some(record) = matched.next() else {
+        return Err(FindActiveTaskError::TaskNotFound {
+            id: task_id.clone(),
+        });
+    };
+    if matched.next().is_some() {
+        return Err(FindActiveTaskError::AmbiguousId {
+            id: task_id.clone(),
+        });
+    }
+    let task = task_view::enrich(&record, project.source.value())
+        .into_task_view(project.title.to_string());
+    Ok((record, task))
 }
 
 #[cfg(test)]
@@ -81,25 +89,16 @@ mod tests {
         task::{TaskId, TaskStatus, Timestamp},
     };
 
-    use super::{FindActiveTaskError, TaskView};
+    use super::{FindActiveTask, FindActiveTaskError, TaskView, find_active_task};
     use crate::{
-        ports::task_record::{IndexPlacement, Materialization, TaskRecord},
-        task::logic::finding::find_active_task_in_projects,
-        testing::{InMemoryStore, project},
+        ports::task_record::{IndexPlacement, TaskRecord},
+        testing::{InMemoryStore, project, task_record},
     };
 
     fn record(id: &str) -> TaskRecord {
         TaskRecord {
-            id: TaskId::try_new(id).unwrap(),
             title: format!("title {id}"),
-            status: TaskStatus::Active,
             created: Some(Timestamp::new("2026-07-07")),
-            completed: None,
-            commits: None,
-            tags: None,
-            effort: None,
-            prereq: None,
-            section: None,
             body: "do the thing".to_string(),
             source: String::new(),
             locator: format!("/notes/pwf/{id}.md"),
@@ -107,32 +106,24 @@ mod tests {
                 index_path: "/notes/pwf/pwf.md".to_string(),
                 line: 7,
             }),
-            materialization: Materialization::NoteFile,
+            ..task_record(id)
         }
-    }
-
-    fn projects(values: &[(&str, &str)]) -> Vec<Project> {
-        values
-            .iter()
-            .map(|(name, project_id)| project(project_id.parse().unwrap(), name))
-            .collect()
     }
 
     fn find(
         store: &InMemoryStore,
-        projects: &[Project],
+        project: &Project,
         id: &str,
     ) -> Result<TaskView, FindActiveTaskError> {
-        find_active_task_in_projects(store, projects, &TaskId::try_new(id).unwrap())
-            .map(|(_, task)| task)
+        find_active_task(store, project, &TaskId::try_new(id).unwrap()).map(|(_, task)| task)
     }
 
     #[test]
     fn finds_open_item_enriched_with_launchability() {
         let store = InMemoryStore::default().with_project("pwf", vec![record("PWF-0001")]);
-        let projects = projects(&[("pwf", "PWF")]);
+        let project = project("PWF", "pwf");
 
-        let task = find(&store, &projects, "PWF-0001").unwrap();
+        let task = find(&store, &project, "PWF-0001").unwrap();
 
         assert_eq!(task.id.as_ref(), "PWF-0001");
         assert_eq!(task.project, "pwf");
@@ -144,9 +135,9 @@ mod tests {
     #[test]
     fn missing_task_reports_the_typed_id() {
         let store = InMemoryStore::default().with_project("pwf", vec![record("PWF-0001")]);
-        let projects = projects(&[("pwf", "PWF")]);
+        let project = project("PWF", "pwf");
 
-        let error = find(&store, &projects, "PWF-9999").unwrap_err();
+        let error = find(&store, &project, "PWF-9999").unwrap_err();
 
         assert!(matches!(
             error,
@@ -159,9 +150,9 @@ mod tests {
     fn duplicate_link_in_one_project_is_ambiguous() {
         let store = InMemoryStore::default()
             .with_project("pwf", vec![record("PWF-0001"), record("PWF-0001")]);
-        let projects = projects(&[("pwf", "PWF")]);
+        let project = project("PWF", "pwf");
 
-        let error = find(&store, &projects, "PWF-0001").unwrap_err();
+        let error = find(&store, &project, "PWF-0001").unwrap_err();
 
         assert!(matches!(error, FindActiveTaskError::AmbiguousId { .. }));
     }
@@ -178,31 +169,28 @@ mod tests {
             ..record("PWF-0002")
         };
         let store = InMemoryStore::default().with_project("pwf", vec![done, unlinked_active]);
-        let projects = projects(&[("pwf", "PWF")]);
+        let project = project("PWF", "pwf");
 
         assert_eq!(
-            find(&store, &projects, "PWF-0002").unwrap().id.as_ref(),
+            find(&store, &project, "PWF-0002").unwrap().id.as_ref(),
             "PWF-0002"
         );
-        assert_matches!(find(&store, &projects, "PWF-0001"), Err(
+        assert_matches!(find(&store, &project, "PWF-0001"), Err(
             FindActiveTaskError::TaskNotFound { id }
         ) if id.as_ref() == "PWF-0001");
     }
 
-    #[test]
-    fn unknown_project_id_reports_the_typed_identifiers() {
-        let store = InMemoryStore::default().with_project("pwf", vec![record("PWF-0001")]);
-        let projects = projects(&[("pwf", "PWF")]);
+    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
+    async fn unknown_project_id_preserves_the_resolution_error(pool: sqlx::SqlitePool) {
+        let query = FindActiveTask {
+            id: "XYZ-0001".parse().unwrap(),
+        };
 
-        let error = find(&store, &projects, "XYZ-0001").unwrap_err();
+        let error = super::execute(&query, &InMemoryStore::default(), &pool)
+            .await
+            .unwrap_err();
 
-        assert!(matches!(
-            error,
-            FindActiveTaskError::UnknownProjectId {
-                ref task_id,
-                ref project_id,
-            } if task_id.as_ref() == "XYZ-0001" && project_id.as_ref() == "XYZ"
-        ));
+        assert!(matches!(error, FindActiveTaskError::ResolveProject(_)));
         assert_eq!(
             error.to_string(),
             "Unknown project ID `XYZ` for task XYZ-0001"

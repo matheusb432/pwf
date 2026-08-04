@@ -20,7 +20,7 @@ pub enum Materialization {
     },
 }
 
-/// Carries one raw task persistence record between application operations and adapters.
+/// Carries one raw task persistence record between application interactors and adapters.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskRecord {
     pub id: TaskId,
@@ -58,21 +58,37 @@ pub struct NewTask {
     pub tags: Option<Tags>,
 }
 
+/// Selects how a patch changes one nullable field.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum NullablePatch<T> {
+    #[default]
+    Unchanged,
+    Clear,
+    Set(T),
+}
+
+impl<T> NullablePatch<T> {
+    /// Maps a replacement value without changing the patch decision.
+    pub fn map<U>(self, map: impl FnOnce(T) -> U) -> NullablePatch<U> {
+        match self {
+            Self::Unchanged => NullablePatch::Unchanged,
+            Self::Clear => NullablePatch::Clear,
+            Self::Set(value) => NullablePatch::Set(map(value)),
+        }
+    }
+}
+
 /// The shape used to patch an existing [`TaskRecord`].
-///
-/// `None` leaves a field unchanged. Nested `Some(None)` clears nullable fields. The application
-/// rejects empty patches before calling the adapter.
-#[allow(clippy::option_option)]
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TaskPatch {
     pub status: Option<TaskStatus>,
-    pub completed: Option<Option<Timestamp>>,
-    pub commits: Option<Option<String>>,
+    pub completed: NullablePatch<Timestamp>,
+    pub commits: NullablePatch<String>,
     pub body: Option<String>,
     pub title: Option<TaskTitle>,
-    pub prereq: Option<Option<Prerequisites>>,
+    pub prereq: NullablePatch<Prerequisites>,
     pub effort: Option<EffortTier>,
-    pub tags: Option<Option<Tags>>,
+    pub tags: NullablePatch<Tags>,
 }
 
 /// A project index's per-task entry, tracking open/done state and section.

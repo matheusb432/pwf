@@ -1,7 +1,7 @@
 use clap::Args;
 use pwf_application::{
     ports::confirmation::{Confirmation, ConfirmationClient},
-    task::remove_task::{self, RemoveTask, RemoveTaskError, RemoveTaskOk},
+    task::remove_task::{self, RemoveTask, RemoveTaskOk},
 };
 use pwf_infra::obsidian::ObsidianStore;
 
@@ -81,37 +81,14 @@ pub(super) async fn run(
         console,
         assume_yes: arguments.assume_yes,
     };
-    let outcome = remove_task::execute(&RemoveTask { id }, store, pool, &confirmation_client)
-        .await
-        .map_err(map_remove_error)?;
+    let outcome =
+        remove_task::execute(&RemoveTask { id }, store, pool, &confirmation_client).await?;
 
     match outcome {
         RemoveTaskOk::Removed(removed) => Ok(render_removed(&removed, console.color())),
         RemoveTaskOk::Aborted { task_identifier } => Ok(format!(
             "# remove {task_identifier} — aborted\nnothing deleted.\n"
         )),
-    }
-}
-
-fn map_remove_error(error: RemoveTaskError) -> TaskError {
-    match error {
-        RemoveTaskError::TaskNotFound { id } => {
-            TaskError::Remove(RemoveTaskError::TaskNotFound { id })
-        }
-        RemoveTaskError::UnknownProjectId {
-            task_id,
-            project_id,
-        } => TaskError::Remove(RemoveTaskError::UnknownProjectId {
-            task_id,
-            project_id,
-        }),
-        RemoveTaskError::NoteMissing { path } => TaskError::TaskNoteMissing { path: path.into() },
-        RemoveTaskError::WriteStore(source) => {
-            TaskError::Remove(RemoveTaskError::WriteStore(source))
-        }
-        RemoveTaskError::QueryProject(source) => {
-            TaskError::Remove(RemoveTaskError::QueryProject(source))
-        }
     }
 }
 

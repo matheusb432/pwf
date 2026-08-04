@@ -13,12 +13,6 @@ pub struct ResolveTaskProject {
     pub id: TaskId,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ResolveTaskProjectOk {
-    pub id: TaskId,
-    pub project: Project,
-}
-
 #[derive(Debug, thiserror::Error)]
 pub enum ResolveTaskProjectError {
     #[error("Unknown project ID `{project_id}` for task {task_id}")]
@@ -34,7 +28,7 @@ pub enum ResolveTaskProjectError {
 pub async fn execute(
     query: ResolveTaskProject,
     pool: &sqlx::SqlitePool,
-) -> Result<ResolveTaskProjectOk, ResolveTaskProjectError> {
+) -> Result<Project, ResolveTaskProjectError> {
     let id = query.id;
     let project = get_active_project::execute(
         GetActiveProject {
@@ -55,5 +49,5 @@ pub async fn execute(
         }
     })?;
 
-    Ok(ResolveTaskProjectOk { id, project })
+    Ok(project)
 }

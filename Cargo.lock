@@ -1469,9 +1469,11 @@ version = "0.1.0"
 dependencies = [
  "askama",
  "cqrsy",
+ "lazy-regex",
+ "nutype",
  "prompt-lanes",
  "pwf-models",
- "regex",
+ "pwf-wire",
  "sqlx",
  "thiserror",
  "tokio",
@@ -1489,6 +1491,7 @@ dependencies = [
  "pwf-application",
  "pwf-infra",
  "pwf-models",
+ "pwf-wire",
  "serde",
  "serde_json",
  "sqlx",
@@ -1520,7 +1523,7 @@ dependencies = [
  "lazy-regex",
  "pwf-application",
  "pwf-models",
- "regex",
+ "pwf-wire",
  "serde",
  "serde_json",
  "shell-words",
@@ -1547,6 +1550,13 @@ version = "0.1.0"
 dependencies = [
  "nutype",
  "thiserror",
+]
+
+[[package]]
+name = "pwf-wire"
+version = "0.1.0"
+dependencies = [
+ "pwf-models",
 ]
 
 [[package]]

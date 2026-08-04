@@ -1,5 +1,5 @@
-use pwf_application::project::ProjectStateChange;
 use pwf_models::project::{Project, ProjectId, ProjectSourceKind, ProjectTasksKind};
+use pwf_wire::project::ProjectStateChange;
 use serde::{Serialize, Serializer};
 
 #[derive(Serialize)]
