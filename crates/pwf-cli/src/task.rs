@@ -9,6 +9,7 @@ use crate::{console::Console, task::shared::TaskError};
 pub mod add;
 pub mod cancel;
 pub mod done;
+pub mod edit;
 pub mod list;
 pub mod remove;
 mod render;
@@ -17,17 +18,14 @@ pub mod route;
 pub mod session;
 pub(crate) mod shared;
 pub mod show;
-pub mod update;
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
-    /// Manages pwf tasks.
+    /// Manages pwf tasks
     Task(TaskArguments),
-    /// Dispatch a real agent session into the project's tmux session as a new window.
-    ///
-    /// The id is a bare positional (`pwf session <id>`) or `--id`.
+    /// Dispatch an agent session into a project's cwd, via tmux session or inline
     Session(session::Arguments),
-    /// Internal word router behind bare `pwf <words...>`.
+    /// Internal word router behind bare `pwf <words...>`
     #[command(hide = true)]
     Route(route::Arguments),
 }
@@ -40,37 +38,23 @@ pub struct TaskArguments {
 
 #[derive(Subcommand, Debug)]
 enum TaskCommand {
-    /// Add a pwf task: `pwf task add <project> "<prompt>"`.
-    ///
-    /// Prompt words are joined with single spaces, so quotes are optional. Rich
-    /// prompts use lanes: `<title> / <goal> /c <context> /n <constraint> /d <done>`.
-    /// The title is stored separately from Goals and has a 200-character limit after normalization.
-    /// `--continue <path>` builds the prompt from a plan path instead of positional words.
+    /// Add a pwf task with shorthand prompt text or explicit args
     Add(add::Arguments),
-    /// List tasks (active only, capped, scoped sections hidden; `--all` lists
-    /// everything).
+    /// List tasks. `--all` lists everything
     #[command(alias = "ls")]
     List(list::Arguments),
-    /// Mark a task done in place, keeping a capped done-queue.
+    /// Mark a task done in place, keeping a capped done-queue
     Done(done::Arguments),
-    /// Mark a task cancelled in place, keeping the same capped queue as done.
+    /// Mark a task cancelled in place, keeping the same capped queue as done
     Cancel(cancel::Arguments),
-    /// Reopen a closed task: flip done/cancelled back to active, drop its
-    /// completed/commits provenance, and restore an existing index link.
+    /// Reopen a closed task. This removes it's completed/commits provenance.
     Reopen(reopen::Arguments),
-    /// Edit a task's prompt body, title, prereqs, tags, effort, or provenance.
-    ///
-    /// Replacement titles have a 200-character limit after normalization.
-    ///
-    /// Only `--commits` and `--append-report` are allowed on a closed task.
-    Update(update::Arguments),
-    /// Stream a task note's markdown (any status, incl. archived done/cancelled).
-    ///
-    /// The id is a bare positional (`pwf task show <id>`) or `--id`. `s` is an
-    /// alias. `--path` prints the note path; `--json` prints typed task data.
+    /// Edit an active task's prompt body, title, prerequisites, tags, or effort
+    Edit(edit::Arguments),
+    /// Show a task note's markdown
     #[command(alias = "s")]
     Show(show::Arguments),
-    /// Delete a task note and remove its index link.
+    /// Delete a task note and remove its index link
     Remove(remove::Arguments),
 }
 
@@ -89,7 +73,7 @@ pub async fn run(
             TaskCommand::Done(arguments) => done::run(arguments, store, pool, clock).await,
             TaskCommand::Cancel(arguments) => cancel::run(arguments, store, pool, clock).await,
             TaskCommand::Reopen(arguments) => reopen::run(arguments, store, pool).await,
-            TaskCommand::Update(arguments) => update::run(arguments, console, store, pool).await,
+            TaskCommand::Edit(arguments) => edit::run(arguments, console, store, pool).await,
             TaskCommand::Show(arguments) => show::run(arguments, store, pool).await,
             TaskCommand::Remove(arguments) => remove::run(arguments, console, store, pool).await,
         },

@@ -6,19 +6,264 @@ use serde_json::{Value, json};
 use crate::shared::{ManagedProject, project_id, task_id, task_json};
 
 #[test]
-fn add_stores_the_title_separately_from_goals() {
+fn machine_add_maps_each_explicit_value_without_parsing_lane_markers() {
     let fixture = ManagedProject::new(project_id("FOO"), "foo-bar");
 
     fixture
         .database
         .command()
         .args([
+            "task",
             "add",
             "foo-bar",
-            "ship parser / preserve the authored goal",
-            "--date",
-            "2026-07-29",
+            "--title",
+            "ship parser",
+            "--goal",
+            "preserve the authored goal",
+            "--goal",
+            "keep /d as literal text",
+            "--context",
+            "the machine supplies independent values",
+            "--constraint",
+            "preserve shorthand mode",
+            "--done-when",
+            "both input modes are covered",
         ])
+        .assert()
+        .success();
+
+    let task = task_json(&fixture.database, &task_id("FOO-0001"));
+    assert_eq!(task["title"], "ship parser");
+    assert_eq!(
+        task["prompt"],
+        "## Goals\n\n- preserve the authored goal\n- keep /d as literal text\n\n## Context\n\n- the machine supplies independent values\n\n## Constraints\n\n- preserve shorthand mode\n\n## Done When\n\n- both input modes are covered"
+    );
+}
+
+#[test]
+fn root_edit_replaces_lane_collections_with_explicit_remove_then_add_actions() {
+    let fixture = ManagedProject::new(project_id("FOO"), "foo-bar");
+    fixture
+        .database
+        .command()
+        .args([
+            "task",
+            "add",
+            "foo-bar",
+            "--title",
+            "original task",
+            "--goal",
+            "old goal",
+            "--context",
+            "old context",
+            "--constraint",
+            "old constraint",
+            "--done-when",
+            "old outcome",
+        ])
+        .assert()
+        .success();
+
+    fixture
+        .database
+        .command()
+        .args([
+            "edit",
+            "FOO-0001",
+            "--title",
+            "edited task",
+            "--remove-goals",
+            "--add-goal",
+            "new goal /c stays literal",
+            "--remove-contexts",
+            "--add-context",
+            "new context",
+            "--remove-constraints",
+            "--add-constraint",
+            "new constraint",
+            "--remove-done-whens",
+            "--add-done-when",
+            "new outcome",
+        ])
+        .assert()
+        .success();
+
+    let task = task_json(&fixture.database, &task_id("FOO-0001"));
+    assert_eq!(task["title"], "edited task");
+    assert_eq!(
+        task["prompt"],
+        "## Goals\n\n- new goal /c stays literal\n\n## Context\n\n- new context\n\n## Constraints\n\n- new constraint\n\n## Done When\n\n- new outcome"
+    );
+}
+
+#[test]
+fn task_help_exposes_only_the_supported_add_and_edit_contract() {
+    let fixture = ManagedProject::new(project_id("FOO"), "foo-bar");
+    let add = fixture
+        .database
+        .command()
+        .args(["task", "add", "--help"])
+        .output()
+        .unwrap();
+    assert!(add.status.success());
+    let add_help = String::from_utf8(add.stdout).unwrap();
+    for flag in [
+        "--title",
+        "--goal",
+        "--context",
+        "--constraint",
+        "--done-when",
+    ] {
+        assert!(add_help.contains(flag), "missing {flag}:\n{add_help}");
+    }
+    for retired in ["--continue", "--section", "--date"] {
+        assert!(!add_help.contains(retired), "found {retired}:\n{add_help}");
+    }
+
+    let edit = fixture
+        .database
+        .command()
+        .args(["task", "edit", "--help"])
+        .output()
+        .unwrap();
+    assert!(edit.status.success());
+    let edit_help = String::from_utf8(edit.stdout).unwrap();
+    for flag in [
+        "--add-goal",
+        "--remove-goals",
+        "--add-context",
+        "--remove-contexts",
+        "--add-constraint",
+        "--remove-constraints",
+        "--add-done-when",
+        "--remove-done-whens",
+        "--add-prereq",
+        "--remove-prereqs",
+        "--add-tag",
+        "--remove-tags",
+        "--remove-effort",
+    ] {
+        assert!(edit_help.contains(flag), "missing {flag}:\n{edit_help}");
+    }
+    for retired in [
+        "--clear-prereq",
+        "--tags-clear",
+        "--append-report",
+        "--commits",
+        "--date",
+    ] {
+        assert!(
+            !edit_help.contains(retired),
+            "found {retired}:\n{edit_help}"
+        );
+    }
+}
+
+#[test]
+fn shorthand_and_machine_lane_inputs_conflict_before_mutation() {
+    let fixture = ManagedProject::new(project_id("FOO"), "foo-bar");
+    fixture
+        .database
+        .command()
+        .args(["add", "foo-bar", "original / keep this goal"])
+        .assert()
+        .success();
+    let before = task_json(&fixture.database, &task_id("FOO-0001"));
+
+    fixture
+        .database
+        .command()
+        .args([
+            "edit",
+            "FOO-0001",
+            "--prompt",
+            "replacement / replacement goal",
+            "--add-goal",
+            "ambiguous goal",
+        ])
+        .assert()
+        .failure();
+
+    assert_eq!(task_json(&fixture.database, &task_id("FOO-0001")), before);
+}
+
+#[test]
+fn edit_rejects_closed_tasks_without_mutating_completion_data() {
+    let fixture = ManagedProject::new(project_id("FOO"), "foo-bar");
+    fixture
+        .database
+        .command()
+        .args(["add", "foo-bar", "closed task / keep this goal"])
+        .assert()
+        .success();
+    fixture
+        .database
+        .command()
+        .args(["done", "FOO-0001", "--commits", "a..b"])
+        .assert()
+        .success();
+    let before = task_json(&fixture.database, &task_id("FOO-0001"));
+
+    let output = fixture
+        .database
+        .command()
+        .args(["edit", "FOO-0001", "--title", "changed"])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        "Error: cannot edit closed task FOO-0001.\n"
+    );
+    assert_eq!(task_json(&fixture.database, &task_id("FOO-0001")), before);
+}
+
+#[test]
+fn retired_task_date_and_update_surfaces_are_rejected() {
+    let fixture = ManagedProject::new(project_id("FOO"), "foo-bar");
+    fixture
+        .database
+        .command()
+        .args([
+            "task",
+            "add",
+            "foo-bar",
+            "--title",
+            "dated task",
+            "--date",
+            "2026-01-01",
+        ])
+        .assert()
+        .failure();
+    fixture
+        .database
+        .command()
+        .args(["task", "update", "FOO-0001", "--title", "changed"])
+        .assert()
+        .failure();
+    fixture
+        .database
+        .command()
+        .args(["update", "FOO-0001", "--title", "changed"])
+        .assert()
+        .failure();
+    fixture
+        .database
+        .command()
+        .args(["show", "FOO-0001", "--json"])
+        .assert()
+        .failure();
+}
+
+#[test]
+fn add_stores_the_title_separately_from_goals() {
+    let fixture = ManagedProject::new(project_id("FOO"), "foo-bar");
+
+    fixture
+        .database
+        .command()
+        .args(["add", "foo-bar", "ship parser / preserve the authored goal"])
         .assert()
         .success();
 
@@ -53,18 +298,12 @@ fn add_rejects_an_inferred_title_over_200_characters_without_creating_a_task() {
 }
 
 #[test]
-fn update_rejects_a_title_over_200_characters_without_mutating_the_task() {
+fn edit_rejects_a_title_over_200_characters_without_mutating_the_task() {
     let fixture = ManagedProject::new(project_id("FOO"), "foo-bar");
     fixture
         .database
         .command()
-        .args([
-            "add",
-            "foo-bar",
-            "keep this title / keep this goal",
-            "--date",
-            "2026-07-29",
-        ])
+        .args(["add", "foo-bar", "keep this title / keep this goal"])
         .assert()
         .success();
     let title = "\u{e9}".repeat(201);
@@ -72,7 +311,7 @@ fn update_rejects_a_title_over_200_characters_without_mutating_the_task() {
     let output = fixture
         .database
         .command()
-        .args(["update", "FOO-0001", "--title", &title])
+        .args(["edit", "FOO-0001", "--title", &title])
         .output()
         .unwrap();
 
@@ -96,26 +335,17 @@ fn list_status_and_review_task_compose_across_commands() {
         .args([
             "add",
             "foo-bar",
-            "implementation work",
             "--title",
             "implementation",
-            "--date",
-            "2026-01-01",
+            "--goal",
+            "implementation work",
         ])
         .assert()
         .success();
     fixture
         .database
         .command()
-        .args([
-            "done",
-            "FOO-0001",
-            "--commits",
-            "a..b",
-            "--review",
-            "--date",
-            "2026-01-01",
-        ])
+        .args(["done", "FOO-0001", "--commits", "a..b", "--review"])
         .assert()
         .success();
     fixture
@@ -124,25 +354,17 @@ fn list_status_and_review_task_compose_across_commands() {
         .args([
             "add",
             "foo-bar",
-            "cancelled work",
             "--title",
             "cancelled",
-            "--date",
-            "2026-01-02",
+            "--goal",
+            "cancelled work",
         ])
         .assert()
         .success();
     fixture
         .database
         .command()
-        .args([
-            "cancel",
-            "FOO-0003",
-            "--report",
-            "superseded",
-            "--date",
-            "2026-01-03",
-        ])
+        .args(["cancel", "FOO-0003", "--report", "superseded"])
         .assert()
         .success();
 
@@ -185,18 +407,17 @@ fn remove_prompt_identifies_closed_status_before_deletion() {
         .args([
             "add",
             "foo-bar",
-            "remove completed work",
             "--title",
             "completed work",
-            "--date",
-            "2026-01-01",
+            "--goal",
+            "remove completed work",
         ])
         .assert()
         .success();
     fixture
         .database
         .command()
-        .args(["done", "FOO-0001", "--date", "2026-01-02"])
+        .args(["done", "FOO-0001"])
         .assert()
         .success();
 
@@ -235,11 +456,10 @@ fn lifecycle_is_observable_through_show_json() {
         .args([
             "add",
             "foo-bar",
-            "prerequisite work",
             "--title",
             "prerequisite",
-            "--date",
-            "2026-06-19",
+            "--goal",
+            "prerequisite work",
         ])
         .assert()
         .success();
@@ -249,13 +469,10 @@ fn lifecycle_is_observable_through_show_json() {
         .args([
             "add",
             "foo-bar",
-            "finish it / complete the work",
             "--title",
             "just done",
-            "--date",
-            "2026-06-20",
-            "--section",
-            "future",
+            "--goal",
+            "complete the work",
             "--prereq",
             "FOO-0001",
             "--effort",
@@ -273,51 +490,45 @@ fn lifecycle_is_observable_through_show_json() {
     assert_eq!(active["project"], "foo-bar");
     assert_eq!(active["title"], "just done");
     assert_eq!(active["status"], "active");
-    assert_eq!(active["created"], "2026-06-20");
+    assert!(active["created"].as_str().is_some());
     assert_eq!(active["tags"], json!(["cli", "sqlite"]));
     assert_eq!(active["effort"], "high");
     assert_eq!(active["prerequisites"], json!(["FOO-0001"]));
-    assert_eq!(active["section"], "Future");
+    assert_eq!(active["section"], Value::Null);
     assert_eq!(active["prompt"], "## Goals\n\n- complete the work");
 
     fixture
         .database
         .command()
         .args([
-            "update",
+            "edit",
             "FOO-0002",
-            "--title",
-            "ship it",
             "--prompt",
-            "revised work / preserve the revised goal",
-            "--tag",
+            "ship it / preserve the revised goal",
+            "--remove-tags",
+            "--add-tag",
             "rust",
-            "--clear-prereq",
+            "--remove-prereqs",
+            "--remove-effort",
         ])
         .assert()
         .success();
     let updated = task_json(&fixture.database, &task_id("FOO-0002"));
     assert_eq!(updated["title"], "ship it");
-    assert_eq!(updated["tags"], json!(["cli", "sqlite", "rust"]));
+    assert_eq!(updated["tags"], json!(["rust"]));
+    assert_eq!(updated["effort"], Value::Null);
     assert_eq!(updated["prerequisites"], Value::Null);
     assert_eq!(updated["prompt"], "## Goals\n\n- preserve the revised goal");
 
     fixture
         .database
         .command()
-        .args([
-            "done",
-            "FOO-0002",
-            "--date",
-            "2026-06-21",
-            "--commits",
-            "a..b",
-        ])
+        .args(["done", "FOO-0002", "--commits", "a..b"])
         .assert()
         .success();
     let done = task_json(&fixture.database, &task_id("FOO-0002"));
     assert_eq!(done["status"], "done");
-    assert_eq!(done["completed"], "2026-06-21");
+    assert!(done["completed"].as_str().is_some());
     assert_eq!(done["commits"], "a..b");
 
     fixture

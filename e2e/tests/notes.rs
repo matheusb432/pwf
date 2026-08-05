@@ -9,13 +9,13 @@ fn note_lifecycle_does_not_change_tasks() {
         .database
         .command()
         .args([
+            "task",
             "add",
             "pwf",
-            "real task",
             "--title",
             "real task",
-            "--date",
-            "2026-01-01",
+            "--goal",
+            "real task",
         ])
         .assert()
         .success();

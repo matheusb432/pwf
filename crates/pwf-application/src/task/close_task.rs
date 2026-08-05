@@ -515,7 +515,7 @@ fn spawn_review(
             project,
             new: NewTask {
                 title: review_title,
-                prompt,
+                body: super::note_body::render(&prompt),
                 created: Timestamp::new(completed),
                 section: Some(TaskSection::Human.as_str().to_string()),
                 prereq: None,

@@ -5,7 +5,7 @@ use pwf_application::{
 };
 use pwf_infra::obsidian::ObsidianStore;
 
-use super::shared::{CommonArguments, Identifier};
+use super::shared::Identifier;
 
 #[derive(Args, Debug)]
 pub struct Arguments {
@@ -14,8 +14,6 @@ pub struct Arguments {
     /// Skip the [Y/n] removal confirmation (assume yes).
     #[arg(long = "yes", short = 'y')]
     pub(crate) assume_yes: bool,
-    #[command(flatten)]
-    pub(crate) common: CommonArguments,
 }
 
 use super::{

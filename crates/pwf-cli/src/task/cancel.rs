@@ -12,7 +12,7 @@ use super::{
     render::{
         emit_close_diagnostics, emit_created_section, emit_created_section_for_error, render_closed,
     },
-    shared::{CommonArguments, Identifier, TaskError},
+    shared::{Identifier, TaskError},
 };
 
 #[derive(Args, Debug)]
@@ -28,8 +28,6 @@ pub struct Arguments {
     /// Also spawn a `## Human` review task with prepped git-tools diff commands.
     #[arg(long)]
     pub(crate) review: bool,
-    #[command(flatten)]
-    pub(crate) common: CommonArguments,
 }
 
 pub(super) async fn run(
@@ -45,7 +43,6 @@ pub(super) async fn run(
         .ok_or(TaskError::MissingCancelReport)?;
     let command = CancelTask {
         id,
-        date: arguments.common.date.clone(),
         report,
         commits: arguments.commits.clone(),
         review: arguments.review,

@@ -5,7 +5,7 @@ use pwf_models::task::PrerequisiteInput;
 
 use super::{
     list,
-    shared::{CommonArguments, SectionChoice, StatusChoice},
+    shared::{SectionChoice, StatusChoice},
 };
 
 #[derive(Args, Debug)]
@@ -32,8 +32,6 @@ pub struct Arguments {
     pub(crate) status: Option<StatusChoice>,
     #[arg(long)]
     pub(crate) prereq: Vec<PrerequisiteInput>,
-    #[command(flatten)]
-    pub(crate) common: CommonArguments,
 }
 
 pub(crate) enum ResolvedCommand {
@@ -82,7 +80,6 @@ fn list_arguments(
         tag: Vec::new(),
         order: None,
         status: arguments.status,
-        common: arguments.common.clone(),
         mode: pwf_application::task::ListMode::ProjectRoute,
     }
 }
@@ -102,7 +99,6 @@ mod tests {
             number: Some(3),
             status: Some(StatusChoice::All),
             prereq: Vec::new(),
-            common: CommonArguments::default(),
         }
     }
 

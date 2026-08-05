@@ -28,7 +28,7 @@ pub struct RemoveNoteOk {
 
 #[derive(Debug, thiserror::Error)]
 pub enum RemoveNoteError {
-    #[error("Unknown project '{selector}'; expected a managed project name or id code.")]
+    #[error("Unknown project '{selector}'. Expected a project name or id.")]
     UnknownProject { selector: ProjectSelector },
     #[error("Invalid note id '{id}'; expected e.g. {project_id}-NOTE-0001, NOTE-0001, or 1.")]
     InvalidIdentifier { id: String, project_id: ProjectId },

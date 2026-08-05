@@ -3,6 +3,7 @@ pub mod cancel_task;
 mod close_task;
 pub mod complete_task;
 mod create_task;
+pub mod edit_task;
 pub mod find_active_task;
 pub mod list_tasks;
 mod note_body;
@@ -13,16 +14,17 @@ pub mod resolve_task_project;
 pub mod session;
 pub mod show_task;
 mod tags;
+mod task_prompt;
 mod task_view;
-pub mod update_task;
 
 pub use add_task::AddTaskOk;
+pub use edit_task::EditTaskOk;
 pub use list_tasks::{
     ListMode, ListSection, ListTasksOk, OrderDirection, OrderField, OrderSpec, StatusFilter,
 };
 pub use remove_task::RemovedTask;
 pub use show_task::ShowOutput;
-pub use update_task::UpdateTaskOk;
+pub use task_prompt::{TaskLane, TaskLaneEdits, TaskLaneValueError, TaskLanes};
 
 /// Renders a prompt as Markdown while preserving placeholders and verbatim-authored prompts.
 #[must_use]
@@ -70,26 +72,13 @@ fn normalize_section_label(label: &str) -> String {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TaskSection {
-    Future,
     Human,
-    LowPriority,
 }
 
 impl TaskSection {
-    fn from_name(value: &str) -> Option<Self> {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "future" => Some(Self::Future),
-            "human" => Some(Self::Human),
-            "low-prio" => Some(Self::LowPriority),
-            _ => None,
-        }
-    }
-
     fn as_str(self) -> &'static str {
         match self {
-            Self::Future => "Future",
             Self::Human => "Human",
-            Self::LowPriority => "Low-prio",
         }
     }
 }

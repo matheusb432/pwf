@@ -1,18 +1,11 @@
 use clap::Args;
-use pwf_application::task::StatusFilter;
+use pwf_application::task::{StatusFilter, TaskLane, TaskLanes};
 use pwf_models::{
     project::ProjectSelector,
     session::Agent,
     task::{EffortTier, TaskId, TaskStatus, TaskTitle, TaskTitleError},
 };
 use thiserror::Error;
-
-#[derive(Args, Clone, Debug, Default)]
-pub struct CommonArguments {
-    /// Date stamp (YYYY-MM-DD); defaults to today.
-    #[arg(long)]
-    pub(crate) date: Option<String>,
-}
 
 #[derive(Args, Debug, Default)]
 pub struct Identifier {
@@ -135,6 +128,13 @@ pub(crate) enum TaskError {
     MissingId { action: &'static str },
     #[error("--report is required for cancel.")]
     MissingCancelReport,
+    #[error("{flag} cannot be empty.")]
+    EmptyValue { flag: &'static str },
+    #[error("{flag} {reason}")]
+    InvalidLaneValue {
+        flag: &'static str,
+        reason: &'static str,
+    },
     #[error(
         "Invalid --tag value {raw:?}; use lowercase/uppercase ASCII letters, digits, '_' or '-', without leading, trailing, or repeated separators."
     )]
@@ -152,15 +152,58 @@ impl From<TaskError> for String {
 pub(super) const ADD_HINT: &str = r#"Use: pwf task add <project> "<prompt>""#;
 
 pub(super) fn task_title(raw: &str) -> Result<(TaskTitle, bool), TaskError> {
+    if raw.trim().is_empty() {
+        return Err(TaskError::EmptyValue { flag: "--title" });
+    }
     let comparison = raw.trim().to_lowercase();
     let title = TaskTitle::try_new(raw)?;
     let normalized = title.as_ref() != comparison;
     Ok((title, normalized))
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(super) enum LaneFlagMode {
+    Add,
+    Edit,
+}
+
+impl LaneFlagMode {
+    fn flag(self, lane: TaskLane) -> &'static str {
+        match (self, lane) {
+            (Self::Add, TaskLane::Goal) => "--goal",
+            (Self::Add, TaskLane::Context) => "--context",
+            (Self::Add, TaskLane::Constraint) => "--constraint",
+            (Self::Add, TaskLane::DoneWhen) => "--done-when",
+            (Self::Edit, TaskLane::Goal) => "--add-goal",
+            (Self::Edit, TaskLane::Context) => "--add-context",
+            (Self::Edit, TaskLane::Constraint) => "--add-constraint",
+            (Self::Edit, TaskLane::DoneWhen) => "--add-done-when",
+        }
+    }
+}
+
+pub(super) fn task_lanes(
+    goals: &[String],
+    context: &[String],
+    constraints: &[String],
+    done_when: &[String],
+    mode: LaneFlagMode,
+) -> Result<TaskLanes, TaskError> {
+    TaskLanes::try_new(
+        goals.to_vec(),
+        context.to_vec(),
+        constraints.to_vec(),
+        done_when.to_vec(),
+    )
+    .map_err(|error| TaskError::InvalidLaneValue {
+        flag: mode.flag(error.lane()),
+        reason: error.reason(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
-    use super::task_title;
+    use super::{LaneFlagMode, task_lanes, task_title};
 
     #[test]
     fn task_title_reports_metadata_normalization_only() {
@@ -172,11 +215,35 @@ mod tests {
                 "fix parser; handle colons",
                 true,
             ),
-            ("", "n/a", true),
         ] {
             let (title, was_normalized) = task_title(raw).unwrap();
             assert_eq!(title.as_ref(), expected);
             assert_eq!(was_normalized, normalized);
         }
+    }
+
+    #[test]
+    fn task_title_rejects_blank_machine_input() {
+        assert!(task_title(" \t ").is_err());
+    }
+
+    #[test]
+    fn task_lanes_report_the_owning_machine_flag() {
+        let empty_goal =
+            task_lanes(&["  ".to_string()], &[], &[], &[], LaneFlagMode::Add).unwrap_err();
+        assert_eq!(empty_goal.to_string(), "--goal cannot be empty.");
+
+        let multiline_context = task_lanes(
+            &[],
+            &["first\nsecond".to_string()],
+            &[],
+            &[],
+            LaneFlagMode::Edit,
+        )
+        .unwrap_err();
+        assert_eq!(
+            multiline_context.to_string(),
+            "--add-context must be a single line."
+        );
     }
 }

@@ -31,11 +31,10 @@ impl SessionFixture {
                 "task",
                 "add",
                 "pwf",
-                "do the thing",
                 "--title",
                 "do the thing",
-                "--date",
-                "2026-06-20",
+                "--goal",
+                "do the thing",
             ])
             .assert()
             .success();

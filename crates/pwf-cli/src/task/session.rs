@@ -17,7 +17,7 @@ use super::{
     render::{
         render_dispatch, render_dry_run, render_session_aborted, render_session_confirmation,
     },
-    shared::{AgentChoice, CommonArguments, Identifier, TaskError},
+    shared::{AgentChoice, Identifier, TaskError},
 };
 use crate::{
     confirm::{Confirmation, DefaultAnswer},
@@ -32,43 +32,40 @@ use crate::{
 pub struct Arguments {
     #[command(flatten)]
     pub(crate) identifier: Identifier,
-    /// Color policy for the dispatch output.
+    /// Color policy for the dispatch output
     #[arg(long, value_enum, default_value_t = ColorChoice::Auto)]
     pub(crate) color: ColorChoice,
-    /// Skip the [Y/n] dispatch confirmation (assume yes).
+    /// Skip the [Y/n] dispatch confirmation
     #[arg(long = "yes", short = 'y')]
     pub(crate) assume_yes: bool,
-    /// Run the agent inline in the current terminal instead of a tmux window.
+    /// Run the agent inline in the current terminal
     #[arg(long = "inline", short = 'i')]
     pub(crate) inline: bool,
-    /// Tell the dispatched agent to isolate its work in a git worktree named after the task
-    /// id.
+    /// Instructs the agent to work in a git worktree named after the task id
     #[arg(long = "worktree", short = 'w')]
     pub(crate) worktree: bool,
     /// Append an autonomy directive so the agent runs without prompting the user (for
-    /// unattended dispatch).
+    /// unattended dispatch)
     #[arg(long = "auto")]
     pub(crate) autonomous: bool,
-    /// Which agent to dispatch.
+    /// Which agent to dispatch
     #[arg(long = "agent", value_enum, default_value_t = AgentChoice::default())]
     pub(crate) agent: AgentChoice,
-    /// Prefix text pushed to the agent prompt.
+    /// Prefix text pushed to the agent prompt
     #[arg(short = 'p', long = "push-prompt", value_name = "TEXT")]
     pub(crate) pushed_prompt: Option<PushedPrompt>,
-    /// Show the exact launch command without editing the task or starting anything.
+    /// Show the exact launch command without editing the task or starting anything
     #[arg(long, visible_alias = "dry")]
     pub(crate) dry_run: bool,
-    /// Model override forwarded to the selected agent. Wins over effort-tier resolution.
+    /// Model override forwarded to the selected agent Wins over effort-tier resolution
     ///
     /// Use `default` or omit the flag to leave selection to effort-tier policy and provider
-    /// configuration.
+    /// configuration
     #[arg(long, short = 'm')]
     pub(crate) model: Option<String>,
-    /// Reasoning effort for the dispatched agent session.
+    /// Reasoning effort for the dispatched agent session
     #[arg(long, value_enum, default_value_t = SessionEffortChoice::default())]
     pub(crate) effort: SessionEffortChoice,
-    #[command(flatten)]
-    pub(crate) common: CommonArguments,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]

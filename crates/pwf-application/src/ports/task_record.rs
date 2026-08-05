@@ -49,7 +49,7 @@ pub struct TaskRecord {
 /// The shape used to insert a new [`TaskRecord`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewTask {
-    pub prompt: String,
+    pub body: String,
     pub title: TaskTitle,
     pub created: Timestamp,
     pub section: Option<String>,
@@ -87,7 +87,7 @@ pub struct TaskPatch {
     pub body: Option<String>,
     pub title: Option<TaskTitle>,
     pub prereq: NullablePatch<Prerequisites>,
-    pub effort: Option<EffortTier>,
+    pub effort: NullablePatch<EffortTier>,
     pub tags: NullablePatch<Tags>,
 }
 

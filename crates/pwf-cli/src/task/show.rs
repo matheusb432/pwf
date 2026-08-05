@@ -5,7 +5,7 @@ use pwf_application::task::{
 };
 use pwf_infra::obsidian::ObsidianStore;
 
-use super::shared::{CommonArguments, Identifier};
+use super::shared::Identifier;
 
 mod output;
 
@@ -19,8 +19,6 @@ pub struct Arguments {
     /// Print typed task data as JSON.
     #[arg(long, conflicts_with = "path")]
     pub(crate) json: bool,
-    #[command(flatten)]
-    pub(crate) common: CommonArguments,
 }
 
 use super::shared::TaskError;

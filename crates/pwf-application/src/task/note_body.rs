@@ -1,7 +1,9 @@
 //! Applies prompt, lane, and report transforms to task note bodies.
 
 use lazy_regex::{Regex, regex};
-use prompt_lanes::{Adapter, MarkdownAdapter, parse};
+use prompt_lanes::{Adapter, MarkdownAdapter, ParsedPrompt, parse};
+
+use super::{TaskLane, TaskLaneEdits, TaskLanes};
 
 const REPORT_HEADER: &str = "### Report";
 const LANE_SECTION_HEADERS: [&str; 4] =
@@ -25,6 +27,17 @@ pub(in crate::task) fn render(prompt: &str) -> String {
         }
         PromptClassification::Authored => MarkdownAdapter.render(&parse(prompt)),
     }
+}
+
+#[must_use]
+pub(in crate::task) fn render_lanes(lanes: &TaskLanes) -> String {
+    MarkdownAdapter.render(&ParsedPrompt {
+        title: String::new(),
+        goals: lanes.goals.clone(),
+        context: lanes.context.clone(),
+        constraints: lanes.constraints.clone(),
+        done_when: lanes.done_when.clone(),
+    })
 }
 
 /// Reports whether a prompt is empty or matches `TODO`, `[!] TODO`, `define prompt`, `definir
@@ -89,6 +102,176 @@ pub(in crate::task) fn append_lanes(body: &str, prompt: &str) -> Option<String> 
     Some(out)
 }
 
+#[derive(Debug, Clone, Copy, thiserror::Error)]
+pub(in crate::task) enum EditLanesError {
+    #[error("task body contains more than one `{header}` section")]
+    DuplicateSection { header: &'static str },
+}
+
+#[derive(Debug, Clone, Copy)]
+enum LaneSection {
+    Goals,
+    Context,
+    Constraints,
+    DoneWhen,
+}
+
+impl LaneSection {
+    const ALL: [Self; 4] = [
+        Self::Goals,
+        Self::Context,
+        Self::Constraints,
+        Self::DoneWhen,
+    ];
+
+    fn header(self) -> &'static str {
+        match self {
+            Self::Goals => "## Goals",
+            Self::Context => "## Context",
+            Self::Constraints => "## Constraints",
+            Self::DoneWhen => "## Done When",
+        }
+    }
+
+    fn index(self) -> usize {
+        match self {
+            Self::Goals => 0,
+            Self::Context => 1,
+            Self::Constraints => 2,
+            Self::DoneWhen => 3,
+        }
+    }
+}
+
+pub(in crate::task) fn edit_lanes(
+    body: &str,
+    edits: &TaskLaneEdits,
+) -> Result<Option<String>, EditLanesError> {
+    reject_duplicate_lane_sections(body)?;
+    let mut edited = body.to_string();
+
+    for (section, remove) in [
+        (LaneSection::Goals, edits.removals.contains(&TaskLane::Goal)),
+        (
+            LaneSection::Context,
+            edits.removals.contains(&TaskLane::Context),
+        ),
+        (
+            LaneSection::Constraints,
+            edits.removals.contains(&TaskLane::Constraint),
+        ),
+        (
+            LaneSection::DoneWhen,
+            edits.removals.contains(&TaskLane::DoneWhen),
+        ),
+    ] {
+        if remove {
+            edited = clear_lane_section(&edited, section);
+        }
+    }
+
+    for (section, values) in [
+        (LaneSection::Goals, edits.additions.goals.as_slice()),
+        (LaneSection::Context, edits.additions.context.as_slice()),
+        (
+            LaneSection::Constraints,
+            edits.additions.constraints.as_slice(),
+        ),
+        (LaneSection::DoneWhen, edits.additions.done_when.as_slice()),
+    ] {
+        if !values.is_empty() {
+            edited = add_lane_values(&edited, section, values);
+        }
+    }
+
+    Ok((edited != body).then_some(edited))
+}
+
+fn reject_duplicate_lane_sections(body: &str) -> Result<(), EditLanesError> {
+    for section in LaneSection::ALL {
+        if header_bounds(body, section.header()).len() > 1 {
+            return Err(EditLanesError::DuplicateSection {
+                header: section.header(),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn clear_lane_section(body: &str, section: LaneSection) -> String {
+    let Some((header_start, header_end)) = header_bounds(body, section.header()).into_iter().next()
+    else {
+        return if matches!(section, LaneSection::Goals) {
+            insert_lane_section(body, section, &[])
+        } else {
+            body.to_string()
+        };
+    };
+    let section_end = section_end(body, header_end);
+    let replacement = matches!(section, LaneSection::Goals).then_some(section.header());
+    replace_region(body, header_start, section_end, replacement)
+}
+
+fn add_lane_values(body: &str, section: LaneSection, values: &[String]) -> String {
+    if header_bounds(body, section.header()).is_empty() {
+        insert_lane_section(body, section, values)
+    } else {
+        append_bullets_to_section(body, section.header(), values)
+    }
+}
+
+fn insert_lane_section(body: &str, section: LaneSection, values: &[String]) -> String {
+    let insertion_offset = LaneSection::ALL
+        .into_iter()
+        .filter(|candidate| candidate.index() > section.index())
+        .flat_map(|candidate| header_bounds(body, candidate.header()))
+        .map(|(start, _)| start)
+        .min()
+        .unwrap_or(body.len());
+    let mut inserted = section.header().to_string();
+    for (index, value) in values.iter().enumerate() {
+        inserted.push_str(if index == 0 { "\n\n- " } else { "\n- " });
+        inserted.push_str(value);
+    }
+    replace_region(body, insertion_offset, insertion_offset, Some(&inserted))
+}
+
+fn replace_region(body: &str, start: usize, end: usize, replacement: Option<&str>) -> String {
+    let before = body[..start].trim_end_matches('\n');
+    let after = body[end..].trim_start_matches('\n');
+    let mut parts = Vec::with_capacity(3);
+    if !before.is_empty() {
+        parts.push(before);
+    }
+    if let Some(replacement) = replacement {
+        parts.push(replacement.trim_matches('\n'));
+    }
+    if !after.is_empty() {
+        parts.push(after);
+    }
+    parts.join("\n\n")
+}
+
+fn header_bounds(content: &str, header: &str) -> Vec<(usize, usize)> {
+    let mut bounds = Vec::new();
+    let mut offset = 0;
+    for segment in content.split('\n') {
+        if segment
+            .strip_prefix(header)
+            .is_some_and(|rest| rest.trim().is_empty())
+        {
+            bounds.push((offset, offset + segment.len()));
+        }
+        offset += segment.len() + 1;
+    }
+    bounds
+}
+
+fn section_end(content: &str, header_end: usize) -> usize {
+    let rest = &content[header_end..];
+    header_end + next_heading_offset(rest).unwrap_or(rest.len())
+}
+
 fn append_bullets_to_section(content: &str, header: &str, bullets: &[String]) -> String {
     if bullets.is_empty() {
         return content.to_string();
@@ -97,8 +280,8 @@ fn append_bullets_to_section(content: &str, header: &str, bullets: &[String]) ->
         let mut out = content.trim_end().to_string();
         out.push_str("\n\n");
         out.push_str(header);
-        for bullet in bullets {
-            out.push_str("\n- ");
+        for (index, bullet) in bullets.iter().enumerate() {
+            out.push_str(if index == 0 { "\n\n- " } else { "\n- " });
             out.push_str(bullet);
         }
         out.push('\n');
@@ -109,8 +292,13 @@ fn append_bullets_to_section(content: &str, header: &str, bullets: &[String]) ->
     let before = content[..section_end].trim_end_matches('\n');
     let after = content[section_end..].trim_start_matches('\n');
     let mut out = before.to_string();
-    for bullet in bullets {
-        out.push_str("\n- ");
+    let section_is_empty = content[header_end..section_end].trim().is_empty();
+    for (index, bullet) in bullets.iter().enumerate() {
+        out.push_str(if section_is_empty && index == 0 {
+            "\n\n- "
+        } else {
+            "\n- "
+        });
         out.push_str(bullet);
     }
     if after.is_empty() {
@@ -152,33 +340,6 @@ fn next_heading_offset(content: &str) -> Option<usize> {
 fn is_heading_line(line: &str) -> bool {
     let hashes = line.bytes().take_while(|&b| b == b'#').count();
     (1..=6).contains(&hashes) && line[hashes..].starts_with(char::is_whitespace)
-}
-
-/// Appends a free-form Markdown report verbatim under one `### Report` heading.
-///
-/// Returns [`None`] for a whitespace-only report.
-#[must_use]
-pub(in crate::task) fn append_report_block(body: &str, report: &str) -> Option<String> {
-    let report = report.trim();
-    if report.is_empty() {
-        return None;
-    }
-    let mut out = body.trim_end().to_string();
-    if !has_report_header(&out) {
-        out.push_str("\n\n");
-        out.push_str(REPORT_HEADER);
-    }
-    out.push_str("\n\n");
-    out.push_str(report);
-    out.push('\n');
-    Some(out)
-}
-
-fn has_report_header(content: &str) -> bool {
-    content.lines().any(|line| {
-        line.strip_prefix(REPORT_HEADER)
-            .is_some_and(|rest| rest.trim().is_empty())
-    })
 }
 
 /// Appends a whitespace-collapsed report under a new `### Report` heading.
@@ -310,7 +471,7 @@ mod tests {
     fn append_lanes_creates_a_missing_section_at_the_end() {
         assert_eq!(
             append_lanes("## Goals\n- do the thing\n", "another goal /c new context").unwrap(),
-            "## Goals\n- do the thing\n- another goal\n\n## Context\n- new context\n"
+            "## Goals\n- do the thing\n- another goal\n\n## Context\n\n- new context\n"
         );
     }
 
@@ -318,31 +479,13 @@ mod tests {
     fn append_lanes_marker_first_leaves_goals_untouched() {
         assert_eq!(
             append_lanes("## Goals\n- do the thing\n", "/c context").unwrap(),
-            "## Goals\n- do the thing\n\n## Context\n- context\n"
+            "## Goals\n- do the thing\n\n## Context\n\n- context\n"
         );
     }
 
     #[test]
     fn append_lanes_rejects_whitespace_only() {
         assert_eq!(append_lanes("## Goals\n- x\n", "   \n\t"), None);
-    }
-
-    #[test]
-    fn append_report_block_appends_verbatim_and_reuses_an_existing_header() {
-        let body = "## Goals\n\n- ship it\n";
-        let report = "## Outcome\n\nShipped it.\n\n## Follow-ups\n\n- write the release notes";
-        assert_eq!(
-            append_report_block(body, report).unwrap(),
-            "## Goals\n\n- ship it\n\n### Report\n\n## Outcome\n\nShipped it.\n\n## Follow-ups\n\n- write the release notes\n"
-        );
-        let once = append_report_block(body, "first").unwrap();
-        let twice = append_report_block(&once, "second").unwrap();
-        assert_eq!(twice.matches("### Report").count(), 1, "{twice}");
-    }
-
-    #[test]
-    fn append_report_block_rejects_whitespace_only() {
-        assert_eq!(append_report_block("body\n", "   \n\t"), None);
     }
 
     #[test]

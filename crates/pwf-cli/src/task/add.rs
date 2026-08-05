@@ -1,7 +1,7 @@
 use clap::Args;
 use pwf_application::{
     ports::clock::Clock,
-    task::add_task::{self, AddTask},
+    task::add_task::{self, AddTask, AddTaskPrompt},
 };
 use pwf_infra::obsidian::ObsidianStore;
 use pwf_models::{
@@ -13,46 +13,49 @@ use super::{
     render::{
         TITLE_NORMALIZED_NOTICE, emit_created_section, emit_created_section_for_error, render_added,
     },
-    shared::{CommonArguments, EffortChoice, TaskError, task_title},
+    shared::{EffortChoice, LaneFlagMode, TaskError, task_lanes, task_title},
 };
 use crate::console::Console;
 
 #[derive(Args, Debug)]
 pub struct Arguments {
-    /// Managed project (full name or id code, case-insensitive).
+    /// Project's name or id
     #[arg(value_name = "PROJECT")]
     pub(crate) project: Option<ProjectSelector>,
-    /// Task prompt words (joined with single spaces).
-    #[arg(value_name = "PROMPT")]
+    /// Task's prompt's shorthand, using lanes. Conflicts with section-specific args.
+    #[arg(
+        value_name = "PROMPT",
+        conflicts_with_all = ["title", "goal", "context", "constraint", "done_when"]
+    )]
     pub(crate) prompt: Vec<String>,
-    /// Build the prompt to continue the plan at PATH.
-    #[arg(long = "continue", value_name = "PATH", conflicts_with = "prompt")]
-    pub(crate) continue_path: Option<String>,
-    /// File the task under a section (future|human|low-prio).
-    #[arg(long, value_name = "SECTION")]
-    pub(crate) section: Option<String>,
-    /// Explicit title (else inferred from the prompt). YAML-breaking
-    /// characters (e.g. a colon before a space) are normalized with a
-    /// stderr notice so the note's frontmatter stays parseable. The normalized
-    /// title cannot exceed 200 characters.
-    #[arg(long)]
+    /// Task's title
+    #[arg(long, required_unless_present = "prompt", conflicts_with = "prompt")]
     pub(crate) title: Option<String>,
-    /// File the task under `## Human` (shorthand for `--section human`).
+    /// Goal. repeat for several. Requires `--title`
+    #[arg(long, requires = "title", conflicts_with = "prompt")]
+    pub(crate) goal: Vec<String>,
+    /// Context. repeat for several. Requires `--title`
+    #[arg(long, requires = "title", conflicts_with = "prompt")]
+    pub(crate) context: Vec<String>,
+    /// Constraint. repeat for several. Requires `--title`
+    #[arg(long, requires = "title", conflicts_with = "prompt")]
+    pub(crate) constraint: Vec<String>,
+    /// Done When. repeat for several. Requires `--title`
+    #[arg(long, requires = "title", conflicts_with = "prompt")]
+    pub(crate) done_when: Vec<String>,
+    /// File the task under `## Human` index section
     #[arg(long)]
     pub(crate) human: bool,
-    /// Prereq task id; repeat or comma-separate for several.
+    /// Prereq task id; repeat or comma-separate for several
     #[arg(long)]
     pub(crate) prereq: Vec<PrerequisiteInput>,
     /// Discovery tag; repeat or comma-separate for several. Input accepts `snake_case` or
-    /// kebab-case.
+    /// kebab-case
     #[arg(long, allow_hyphen_values = true)]
     pub(crate) tag: Vec<String>,
-    /// Effort/complexity tier; optional. Picks a Claude model via config/model-tiers.toml when
-    /// the task is later dispatched with `pwf session` (codex ignores it).
+    /// Effort/complexity tier.
     #[arg(long, value_enum)]
     pub(crate) effort: Option<EffortChoice>,
-    #[command(flatten)]
-    pub(crate) common: CommonArguments,
 }
 
 pub(super) async fn run(
@@ -62,23 +65,24 @@ pub(super) async fn run(
     pool: &sqlx::SqlitePool,
     clock: &impl Clock,
 ) -> Result<String, TaskError> {
-    let (title, title_normalized) = arguments
-        .title
-        .as_deref()
-        .filter(|title| !title.trim().is_empty())
-        .map(task_title)
-        .transpose()?
-        .map_or((None, false), |(title, normalized)| {
-            (Some(title), normalized)
-        });
+    let (prompt, title_normalized) = match arguments.title.as_deref() {
+        Some(title) => {
+            let (title, normalized) = task_title(title)?;
+            let lanes = task_lanes(
+                &arguments.goal,
+                &arguments.context,
+                &arguments.constraint,
+                &arguments.done_when,
+                LaneFlagMode::Add,
+            )?;
+            (AddTaskPrompt::Structured { title, lanes }, normalized)
+        }
+        None => (AddTaskPrompt::Shorthand(arguments.prompt.join(" ")), false),
+    };
     let result = add_task::execute(
         &AddTask {
             project_selector: arguments.project.clone(),
-            prompt: arguments.prompt.join(" "),
-            continue_path: arguments.continue_path.clone(),
-            title,
-            date: arguments.common.date.clone(),
-            section: arguments.section.clone(),
+            prompt,
             human: arguments.human,
             prerequisites: Prerequisites::from_inputs(&arguments.prereq),
             effort: arguments.effort.map(Into::into),

@@ -25,7 +25,7 @@ pub enum RootCommand {
     Project(project::Arguments),
     #[command(flatten)]
     Task(task::Command),
-    /// Study notes: `pwf note [list|add|update|remove] <project>`.
+    /// Manages a project's study notes.
     Note(note::Arguments),
 }
 

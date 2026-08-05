@@ -267,8 +267,8 @@ impl TaskStore for InMemoryStore {
             effort: new.effort.map(|effort| effort.to_string()),
             prereq: new.prereq.map(|prerequisites| prerequisites.to_string()),
             section: None,
-            body: new.prompt.clone(),
-            source: new.prompt,
+            body: new.body.clone(),
+            source: new.body,
             locator,
             placement: None,
             materialization: Materialization::NoteFile,
@@ -300,8 +300,10 @@ impl TaskStore for InMemoryStore {
             &mut record.prereq,
             patch.prereq.map(|prerequisites| prerequisites.to_string()),
         );
-        if let Some(effort) = patch.effort {
-            record.effort = Some(effort.to_string());
+        match patch.effort {
+            NullablePatch::Unchanged => {}
+            NullablePatch::Clear => record.effort = None,
+            NullablePatch::Set(effort) => record.effort = Some(effort.to_string()),
         }
         apply_nullable_patch(&mut record.tags, patch.tags.map(|tags| render_tags(&tags)));
         Ok(())

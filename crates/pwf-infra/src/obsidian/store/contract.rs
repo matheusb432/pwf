@@ -333,9 +333,9 @@ fn generic_add(store: &ObsidianStore, new: NewTask) -> Result<TaskRecord, Obsidi
     Ok(record)
 }
 
-fn new_task(prompt: &str, title: &str, section: Option<&str>) -> NewTask {
+fn new_task(body: &str, title: &str, section: Option<&str>) -> NewTask {
     NewTask {
-        prompt: prompt.to_string(),
+        body: body.to_string(),
         title: TaskTitle::try_new(title).unwrap(),
         created: Timestamp::new("2026-07-07"),
         section: section.map(str::to_string),
@@ -360,7 +360,7 @@ fn generic_add_creates_note_and_links_index() {
             ),
             effort: Some(EffortTier::Medium),
             ..new_task(
-                "Ship the adapter /d tests pass",
+                "## Goals\n\n## Done When\n\n- tests pass",
                 "ship adapter",
                 Some("Human"),
             )
@@ -380,7 +380,7 @@ fn generic_add_creates_note_and_links_index() {
     assert!(note.contains("created: 2026-07-07"), "{note}");
     assert!(note.contains("prereq: \"[[PWF-0001]]\""), "{note}");
     assert!(note.contains("effort: medium"), "{note}");
-    let expected_body = format!("## Goals\n{S}## Done When{S}- tests pass");
+    let expected_body = format!("## Goals{S}## Done When{S}- tests pass");
     assert!(note.contains(&expected_body), "{note}");
     let index = std::fs::read_to_string(notes_dir.join("pwf/pwf.md")).unwrap();
     assert_eq!(
@@ -1060,7 +1060,7 @@ fn insert_allocates_next_id_without_index_write() {
         &store,
         &project,
         NewTask {
-            prompt: "wire up the new thing".to_string(),
+            body: "wire up the new thing".to_string(),
             title: TaskTitle::try_new("wire up the new thing").unwrap(),
             created: Timestamp::new("2026-07-15"),
             section: None,
@@ -1461,7 +1461,7 @@ fn generic_insert_plus_upsert_writes_legacy_add_index_bytes() {
             &store,
             &project,
             NewTask {
-                prompt: "do the thing".to_string(),
+                body: "do the thing".to_string(),
                 title: TaskTitle::try_new("ship it").unwrap(),
                 created: Timestamp::new("2026-07-07"),
                 section: scenario.section.map(str::to_string),

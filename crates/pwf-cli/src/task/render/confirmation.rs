@@ -1,7 +1,7 @@
 //! Formats typed mutation confirmations at their owning leaf boundaries.
 
 use anstyle::AnsiColor;
-use pwf_application::task::{AddTaskOk, RemovedTask, UpdateTaskOk};
+use pwf_application::task::{AddTaskOk, EditTaskOk, RemovedTask};
 use pwf_models::task::TaskId;
 
 use super::paint;
@@ -31,18 +31,12 @@ pub(in crate::task) fn render_removed(task: &RemovedTask, color_on: bool) -> Str
     )
 }
 
-pub(in crate::task) fn render_updated(task: &UpdateTaskOk, color_on: bool) -> String {
-    let (id, headline) = match task {
-        UpdateTaskOk::OpenTaskEdit {
-            id, project, title, ..
-        } => (id, format!("{project} :: {title}")),
-        UpdateTaskOk::Changed { id, changes } => (id, changes.join(", ")),
-    };
+pub(in crate::task) fn render_edited(task: &EditTaskOk, color_on: bool) -> String {
     render_confirmation(
-        "Updated pwf task",
+        "Edited pwf task",
         AnsiColor::Blue,
-        id,
-        &headline,
+        &task.id,
+        &format!("{} :: {}", task.project, task.title),
         &[],
         color_on,
     )
@@ -125,6 +119,20 @@ mod tests {
         assert_eq!(
             render_removed(&task, false),
             "Removed pwf task: **PWF-0002 pwf :: stale task**\n  deleted: /x.md\n  unlinked: /x.md\n"
+        );
+    }
+
+    #[test]
+    fn edited_plain_uses_the_edit_verb() {
+        let task = EditTaskOk {
+            id: TaskId::try_new("PWF-0002").unwrap(),
+            project: "pwf".to_string(),
+            title: "edited task".to_string(),
+        };
+
+        assert_eq!(
+            render_edited(&task, false),
+            "Edited pwf task: **PWF-0002 pwf :: edited task**\n"
         );
     }
 }

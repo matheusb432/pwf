@@ -227,7 +227,7 @@ impl ObsidianStore {
         let note = self.write_new_note(
             project,
             &NewNoteRequest {
-                prompt: &new.prompt,
+                body: &new.body,
                 title: &new.title,
                 created: new.created.as_str(),
                 prereq: new.prereq.as_ref(),
@@ -308,8 +308,10 @@ impl ObsidianStore {
                 content = set_prereq_text(&content, Some(prerequisites));
             }
         }
-        if let Some(effort) = patch.effort {
-            content = set_effort_text(&content, Some(effort));
+        match patch.effort {
+            NullablePatch::Unchanged => {}
+            NullablePatch::Clear => content = set_effort_text(&content, None),
+            NullablePatch::Set(effort) => content = set_effort_text(&content, Some(effort)),
         }
         match &patch.tags {
             NullablePatch::Unchanged => {}

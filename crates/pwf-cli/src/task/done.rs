@@ -5,7 +5,7 @@ use pwf_application::{
 };
 use pwf_infra::obsidian::ObsidianStore;
 
-use super::shared::{CommonArguments, Identifier};
+use super::shared::Identifier;
 
 #[derive(Args, Debug)]
 pub struct Arguments {
@@ -20,8 +20,6 @@ pub struct Arguments {
     /// Also spawn a `## Human` review task with prepped git-tools diff commands.
     #[arg(long)]
     pub(crate) review: bool,
-    #[command(flatten)]
-    pub(crate) common: CommonArguments,
 }
 
 use super::{
@@ -41,7 +39,6 @@ pub(super) async fn run(
     let output = complete_task::execute(
         &CompleteTask {
             id,
-            date: arguments.common.date.clone(),
             report: arguments.report.clone(),
             commits: arguments.commits.clone(),
             review: arguments.review,

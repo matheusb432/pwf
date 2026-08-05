@@ -120,7 +120,7 @@ mod tests {
 
     fn new_task(section: Option<&str>) -> NewTask {
         NewTask {
-            prompt: "do the thing".to_string(),
+            body: "## Goals\n\n- do the thing".to_string(),
             title: TaskTitle::try_new("ship it").unwrap(),
             created: Timestamp::new("2026-07-15"),
             section: section.map(str::to_string),

@@ -174,7 +174,7 @@ fn broken_effort_tier_catalog_stops_before_dispatch() {
     fixture
         .database
         .command()
-        .args(["task", "update", "PWF-0001", "--effort", "highest"])
+        .args(["task", "edit", "PWF-0001", "--effort", "highest"])
         .assert()
         .success();
     let missing_tiers = fixture.directory().join("does-not-exist.toml");

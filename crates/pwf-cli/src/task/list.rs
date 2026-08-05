@@ -11,7 +11,7 @@ use pwf_models::project::ProjectSelector;
 
 use super::{
     render::render_list,
-    shared::{CommonArguments, EffortChoice, SectionChoice, StatusChoice, TaskError},
+    shared::{EffortChoice, SectionChoice, StatusChoice, TaskError},
 };
 use crate::console::Console;
 
@@ -50,8 +50,6 @@ pub struct Arguments {
     /// [default: active, or all under `--all`].
     #[arg(long, value_enum)]
     pub(crate) status: Option<StatusChoice>,
-    #[command(flatten)]
-    pub(crate) common: CommonArguments,
     #[arg(skip)]
     pub(crate) mode: ListMode,
 }

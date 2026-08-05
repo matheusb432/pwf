@@ -2,14 +2,12 @@ use clap::Args;
 use pwf_application::task::reopen_task::{self, ReopenTask};
 use pwf_infra::obsidian::ObsidianStore;
 
-use super::shared::{CommonArguments, Identifier};
+use super::shared::Identifier;
 
 #[derive(Args, Debug)]
 pub struct Arguments {
     #[command(flatten)]
     pub(crate) identifier: Identifier,
-    #[command(flatten)]
-    pub(crate) common: CommonArguments,
 }
 
 use super::{render::render_reopened, shared::TaskError};

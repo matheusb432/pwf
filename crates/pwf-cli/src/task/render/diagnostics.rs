@@ -22,7 +22,6 @@ fn created_section_for_error(error: &AddTaskError) -> Option<(&str, &str)> {
             .as_deref()
             .map(|section| (diagnostics.project.as_str(), section)),
         AddTaskError::Usage
-        | AddTaskError::InvalidSection { .. }
         | AddTaskError::ProjectResolution(_)
         | AddTaskError::QueryProject(_)
         | AddTaskError::InvalidTag { .. }

@@ -2,15 +2,16 @@ use std::path::PathBuf;
 
 use pwf_models::{
     project::{Project, ProjectSelector},
-    task::{EffortTier, Prerequisites, Tags, TaskId, TaskTitle, TaskTitleError, Timestamp},
+    task::{EffortTier, Prerequisites, Tags, TaskId, TaskTitle, TaskTitleError},
 };
 use pwf_wire::project::ProjectStatusFilter;
 
 pub use super::create_task::CreateTaskError;
 use super::{
-    TaskSection,
+    TaskLanes, TaskSection,
     create_task::{self, CreateTask},
     created_task_output, infer_task_title,
+    note_body::{render, render_lanes},
     prerequisites::{self, PrerequisiteValidationError},
     tags,
 };
@@ -44,14 +45,9 @@ pub struct AddTaskDiagnostics {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum AddTaskSource {
-    Prompt {
-        prompt: String,
-        title: Option<TaskTitle>,
-    },
-    Plan {
-        path: String,
-    },
+pub enum AddTaskPrompt {
+    Shorthand(String),
+    Structured { title: TaskTitle, lanes: TaskLanes },
 }
 
 /// Requests creation of one task.
@@ -59,17 +55,9 @@ enum AddTaskSource {
 pub struct AddTask {
     /// Managed project name or project ID.
     pub project_selector: Option<ProjectSelector>,
-    /// Direct prompt text after transport-level word joining.
-    pub prompt: String,
-    /// Optional plan path selected by `--continue`.
-    pub continue_path: Option<String>,
-    /// Optional explicit title for a direct prompt.
-    pub title: Option<TaskTitle>,
-    /// Optional authored creation date.
-    pub date: Option<String>,
-    /// Optional raw section selected by `--section`.
-    pub section: Option<String>,
-    /// Selects the human section when no explicit section is supplied.
+    /// Shorthand or structured task prompt.
+    pub prompt: AddTaskPrompt,
+    /// Selects the human section.
     pub human: bool,
     /// Prerequisite task IDs.
     pub prerequisites: Option<Prerequisites>,
@@ -81,10 +69,10 @@ pub struct AddTask {
 
 #[derive(Debug, thiserror::Error)]
 pub enum AddTaskError {
-    #[error("Use: pwf task add <project> \"<prompt>\"")]
+    #[error(
+        "Use shorthand: pwf task add <project> \"<prompt>\"\nOr machine mode: pwf task add <project> --title <title> [lane flags]"
+    )]
     Usage,
-    #[error("Unknown --section value '{value}'. Use one of: future, human, low-prio.")]
-    InvalidSection { value: String },
     #[error(transparent)]
     ProjectResolution(#[from] ResolveProjectError),
     #[error("{0}")]
@@ -132,6 +120,7 @@ pub async fn execute(
         pool,
     )
     .await?;
+
     let mut projects = vec![project.clone()];
     if let Some(prerequisites) = cmd.prerequisites.as_ref() {
         for id in prerequisites::project_ids(prerequisites) {
@@ -144,11 +133,6 @@ pub async fn execute(
             projects.push(project);
         }
     }
-    let section = resolve_section(cmd.section.as_deref(), cmd.human)?;
-    let authored_date = cmd
-        .date
-        .clone()
-        .map_or_else(|| clock.today(), Timestamp::new);
     let tags = parse_tags(&cmd.tags)?;
     let prereq = cmd
         .prerequisites
@@ -164,10 +148,10 @@ pub async fn execute(
         CreateTask {
             project: &prepared.project,
             new: NewTask {
-                prompt: prepared.prompt,
+                body: prepared.body,
                 title: prepared.title,
-                created: authored_date,
-                section: section.map(TaskSection::as_str).map(str::to_string),
+                created: clock.today(),
+                section: cmd.human.then(|| TaskSection::Human.as_str().to_string()),
                 prereq,
                 effort: cmd.effort,
                 tags,
@@ -191,7 +175,7 @@ pub async fn execute(
 struct PreparedAdd {
     project: Project,
     title: TaskTitle,
-    prompt: String,
+    body: String,
 }
 
 fn parse_tags(values: &[String]) -> Result<Option<Tags>, AddTaskError> {
@@ -213,96 +197,21 @@ fn prepare_source(
         .project_selector
         .as_ref()
         .ok_or(AddTaskError::Usage)?;
-    let source = if let Some(path) = command.continue_path.as_ref() {
-        Some(AddTaskSource::Plan { path: path.clone() })
-    } else if command.prompt.is_empty() {
-        None
-    } else {
-        Some(AddTaskSource::Prompt {
-            prompt: command.prompt.clone(),
-            title: command.title.clone(),
-        })
-    };
-    let source = source.as_ref().ok_or(AddTaskError::Usage)?;
-    if matches!(source, AddTaskSource::Prompt { prompt, .. } if prompt.trim().is_empty()) {
-        return Err(AddTaskError::Usage);
-    }
     let project = selected_project.clone();
-    let (title, prompt) = match source {
-        AddTaskSource::Prompt { prompt, title } => (
-            title.clone().map_or_else(|| infer_task_title(prompt), Ok)?,
-            prompt.clone(),
-        ),
-        AddTaskSource::Plan { path } => (
-            TaskTitle::try_new(plan_title(project.title.as_ref(), path))?,
-            plan_continuation_prompt(path),
-        ),
+    let (title, body) = match &command.prompt {
+        AddTaskPrompt::Shorthand(prompt) => {
+            if prompt.trim().is_empty() {
+                return Err(AddTaskError::Usage);
+            }
+            (infer_task_title(prompt)?, render(prompt))
+        }
+        AddTaskPrompt::Structured { title, lanes } => (title.clone(), render_lanes(lanes)),
     };
     Ok(PreparedAdd {
         project,
         title,
-        prompt,
+        body,
     })
-}
-
-fn resolve_section(
-    section: Option<&str>,
-    human: bool,
-) -> Result<Option<TaskSection>, AddTaskError> {
-    match section {
-        Some(section) => {
-            TaskSection::from_name(section)
-                .map(Some)
-                .ok_or_else(|| AddTaskError::InvalidSection {
-                    value: section.to_string(),
-                })
-        }
-        None => Ok(human.then_some(TaskSection::Human)),
-    }
-}
-
-fn plan_continuation_prompt(path: &str) -> String {
-    format!("continue the plan at {path}")
-}
-
-fn plan_title(project: &str, path: &str) -> String {
-    let stem = std::path::Path::new(path)
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .unwrap_or("");
-    let stem = strip_date_slug_prefix(stem);
-    let excluded = ["kickoff", "plan"];
-    let words = stem
-        .split(['-', '_'])
-        .filter(|word| !word.is_empty())
-        .map(str::to_lowercase)
-        .filter(|word| !excluded.contains(&word.as_str()))
-        .collect::<Vec<_>>();
-    let project = project
-        .split(['-', '_'])
-        .flat_map(str::split_whitespace)
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_lowercase();
-    if words.is_empty() {
-        format!("{project} plan")
-    } else {
-        format!("{project} {}", words.join(" "))
-    }
-}
-
-fn strip_date_slug_prefix(stem: &str) -> &str {
-    let Some(prefix) = stem.get(..11) else {
-        return stem;
-    };
-    let bytes = prefix.as_bytes();
-    let is_date_prefix = bytes[0..4].iter().all(u8::is_ascii_digit)
-        && bytes[4] == b'-'
-        && bytes[5..7].iter().all(u8::is_ascii_digit)
-        && bytes[7] == b'-'
-        && bytes[8..10].iter().all(u8::is_ascii_digit)
-        && bytes[10] == b'-';
-    if is_date_prefix { &stem[11..] } else { stem }
 }
 
 fn map_prerequisite_error(error: PrerequisiteValidationError) -> AddTaskError {

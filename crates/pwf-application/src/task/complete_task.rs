@@ -1,4 +1,4 @@
-use pwf_models::task::{TaskId, Timestamp};
+use pwf_models::task::TaskId;
 
 #[cfg(test)]
 use super::close_task::review_task_prompt;
@@ -15,7 +15,6 @@ use crate::ports::{
 #[derive(Debug, Clone)]
 pub struct CompleteTask {
     pub id: TaskId,
-    pub date: Option<String>,
     pub report: Option<String>,
     pub commits: Vec<String>,
     pub review: bool,
@@ -43,15 +42,11 @@ pub async fn execute(
         pool,
     )
     .await?;
-    let authored_date = command
-        .date
-        .clone()
-        .map_or_else(|| clock.today(), Timestamp::new);
     close_task::execute(
         CloseTask {
             action: ClosedTaskAction::Done,
             id: &command.id,
-            completed: authored_date,
+            completed: clock.today(),
             report: command.report.as_deref(),
             commits: &command.commits,
             review: command.review,
@@ -110,7 +105,6 @@ mod tests {
     fn done_command(id: &str) -> CompleteTask {
         CompleteTask {
             id: id.parse().unwrap(),
-            date: Some("2026-07-07".to_string()),
             report: None,
             commits: Vec::new(),
             review: false,
@@ -157,7 +151,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             marked.state,
-            IndexEntryState::Done(Timestamp::new("2026-07-07"))
+            IndexEntryState::Done(Timestamp::new("2026-07-26"))
         );
         assert!(
             !store
@@ -169,7 +163,7 @@ mod tests {
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
-    async fn done_uses_clock_date_when_no_date_is_explicit(pool: sqlx::SqlitePool) {
+    async fn done_uses_the_clock_date(pool: sqlx::SqlitePool) {
         crate::testing::insert_project(
             &pool,
             "FOO",
@@ -183,10 +177,7 @@ mod tests {
             vec![record("FOO-0001", TaskStatus::Active)],
             vec![entry("FOO-0001", IndexEntryState::Open, "General")],
         );
-        let mut command = done_command("FOO-0001");
-        command.date = None;
-
-        super::execute(&command, &store, &pool, &FixedClock)
+        super::execute(&done_command("FOO-0001"), &store, &pool, &FixedClock)
             .await
             .unwrap();
 

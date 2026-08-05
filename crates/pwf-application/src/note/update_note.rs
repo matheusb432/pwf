@@ -31,7 +31,7 @@ pub struct UpdateNoteOk {
 
 #[derive(Debug, thiserror::Error)]
 pub enum UpdateNoteError {
-    #[error("Unknown project '{selector}'; expected a managed project name or id code.")]
+    #[error("Unknown project '{selector}'. Expected a project name or id.")]
     UnknownProject { selector: ProjectSelector },
     #[error("Note title is empty; provide a non-empty title.")]
     EmptyTitle,

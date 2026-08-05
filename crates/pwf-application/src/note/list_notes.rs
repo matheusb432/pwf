@@ -28,7 +28,7 @@ pub struct ListNotesOk {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ListNotesError {
-    #[error("Unknown project '{selector}'; expected a managed project name or id code.")]
+    #[error("Unknown project '{selector}'. Expected a project name or id.")]
     UnknownProject { selector: ProjectSelector },
     #[error("{0}")]
     Project(#[source] Box<dyn std::error::Error + Send + Sync>),

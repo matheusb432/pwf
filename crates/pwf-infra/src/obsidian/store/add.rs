@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 
-use pwf_application::task::note_body;
 use pwf_models::{
     project::Project,
     task::{EffortTier, Prerequisites, Tags, TaskId, TaskTitle},
@@ -11,7 +10,7 @@ use crate::obsidian::note_frontmatter::{NewTaskFields, new_task_content};
 
 /// Contains note-file fields independently of index linking.
 pub(super) struct NewNoteRequest<'a> {
-    pub prompt: &'a str,
+    pub body: &'a str,
     pub title: &'a TaskTitle,
     pub created: &'a str,
     pub prereq: Option<&'a Prerequisites>,
@@ -41,12 +40,11 @@ impl ObsidianStore {
         }
         let id = self.next_task_id(project)?;
         let path = dir.join(format!("{id}.md"));
-        let body = note_body(request.prompt);
         let content = new_task_content(NewTaskFields {
             id: &id,
             title: request.title,
             project: project.title.as_ref(),
-            prompt: &body,
+            prompt: request.body,
             created: request.created,
             prereq: request.prereq,
             effort: request.effort,

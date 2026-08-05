@@ -32,68 +32,68 @@ struct CommonArguments {
 
 #[derive(Subcommand, Debug)]
 pub(crate) enum Command {
-    /// List a project's notes, newest-first (`pwf note <proj>` alone also lists).
+    /// List a project's notes
     #[command(alias = "ls")]
     List {
-        /// Managed project (name or id code, case-insensitive).
+        /// Managed project name or id
         #[arg(value_name = "PROJECT")]
         project: ProjectSelector,
-        /// Cap to N listed notes (default 10; `-n 0` = all).
+        /// Cap to N listed notes (default 10)
         #[arg(short = 'n', long, value_name = "N")]
         number: Option<usize>,
     },
-    /// Add a study note from `<title> / <content>` or explicit title and content flags.
+    /// Add a study note from `<title> / <content>` or explicit title and content flags
     Add {
-        /// Managed project (name or id code, case-insensitive).
+        /// Managed project name or id
         #[arg(value_name = "PROJECT")]
         project: ProjectSelector,
-        /// Title and Markdown content separated by ` / `.
+        /// Title and Markdown content separated by ` / `
         #[arg(
             value_name = "NOTE",
             required_unless_present_any = ["title", "content"],
             conflicts_with_all = ["title", "content"]
         )]
         note: Option<String>,
-        /// Note title.
+        /// Note title
         #[arg(long, requires = "content", conflicts_with = "note")]
         title: Option<String>,
-        /// Markdown note content.
+        /// Markdown note content
         #[arg(long, requires = "title", conflicts_with = "note")]
         content: Option<String>,
-        /// Why the insight changes future judgment.
+        /// Why the insight changes future judgment
         #[arg(long)]
         why: Option<String>,
-        /// Subject classification.
+        /// Subject classification
         #[arg(long)]
         domain: Option<String>,
-        /// Discovery tag; repeat for several.
+        /// Discovery tag
         #[arg(long = "tag", value_name = "TAG")]
         tags: Vec<String>,
-        /// Supporting source or evidence; repeat for several.
+        /// Supporting source or evidence; repeat for several
         #[arg(long = "source", value_name = "SOURCE")]
         sources: Vec<String>,
-        /// Verification date or marker.
+        /// Verification date or marker
         #[arg(long)]
         verified: Option<String>,
     },
-    /// Delete a note and strip its index link: `pwf note remove <proj> <id>`.
+    /// Delete a note and strip its index link: `pwf note remove <proj> <id>`
     Remove {
-        /// Managed project (name or id code, case-insensitive).
+        /// Managed project name or id
         #[arg(value_name = "PROJECT")]
         project: ProjectSelector,
-        /// Note id: full `PWF-NOTE-0001`, `NOTE-0001`, or a bare `1`.
+        /// Note id: full `PWF-NOTE-0001`, `NOTE-0001`, or a bare `1`
         #[arg(value_name = "ID")]
         id: String,
     },
-    /// Replace a note's title: `pwf note update <proj> <id> "<title>"`.
+    /// Replace a note's title: `pwf note update <proj> <id> "<title>"`
     Update {
-        /// Managed project (name or id code, case-insensitive).
+        /// Managed project name or id
         #[arg(value_name = "PROJECT")]
         project: ProjectSelector,
-        /// Note id: full `PWF-NOTE-0001`, `NOTE-0001`, or a bare `1`.
+        /// Note id: full `PWF-NOTE-0001`, `NOTE-0001`, or a bare `1`
         #[arg(value_name = "ID")]
         id: String,
-        /// Replacement title words (joined with single spaces).
+        /// Replacement title words
         #[arg(value_name = "TITLE", required = true)]
         title: Vec<String>,
     },

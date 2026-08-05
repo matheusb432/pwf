@@ -8,7 +8,7 @@ mod task_summary;
 
 use anstyle::Ansi256Color;
 pub(super) use close::{emit_close_diagnostics, render_closed, render_reopened};
-pub(super) use confirmation::{render_added, render_removed, render_updated};
+pub(super) use confirmation::{render_added, render_edited, render_removed};
 pub(super) use diagnostics::{
     TITLE_NORMALIZED_NOTICE, emit_created_section, emit_created_section_for_error,
 };

@@ -13,7 +13,6 @@ use crate::ports::{
 #[derive(Debug, Clone)]
 pub struct CancelTask {
     pub id: TaskId,
-    pub date: Option<String>,
     pub report: String,
     pub commits: Vec<String>,
     pub review: bool,
@@ -41,15 +40,11 @@ pub async fn execute(
         pool,
     )
     .await?;
-    let authored_date = command
-        .date
-        .clone()
-        .map_or_else(|| clock.today(), pwf_models::task::Timestamp::new);
     close_task::execute(
         CloseTask {
             action: ClosedTaskAction::Cancelled,
             id: &command.id,
-            completed: authored_date,
+            completed: clock.today(),
             report: Some(command.report.as_str()),
             commits: &command.commits,
             review: command.review,
@@ -104,7 +99,6 @@ mod tests {
         .await;
         let command = CancelTask {
             id: "FOO-0001".parse().unwrap(),
-            date: Some("2026-07-14".to_string()),
             report: " \t\n".to_string(),
             commits: Vec::new(),
             review: false,
@@ -135,7 +129,6 @@ mod tests {
         let store = staged();
         let command = CancelTask {
             id: "FOO-0001".parse().unwrap(),
-            date: Some("2026-07-14".to_string()),
             report: "obsoleted".to_string(),
             commits: vec![" a..b, c..d ".to_string(), "a..b".to_string()],
             review: false,
@@ -152,7 +145,7 @@ mod tests {
         assert_eq!(store.tasks("foo-bar")[0].status, TaskStatus::Cancelled);
         assert_eq!(
             store.tasks("foo-bar")[0].completed,
-            Some(Timestamp::new("2026-07-14"))
+            Some(Timestamp::new("2026-07-26"))
         );
         assert_eq!(
             store.tasks("foo-bar")[0].commits.as_deref(),
@@ -161,7 +154,7 @@ mod tests {
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
-    async fn cancel_uses_clock_date_when_no_date_is_explicit(pool: sqlx::SqlitePool) {
+    async fn cancel_uses_the_clock_date(pool: sqlx::SqlitePool) {
         crate::testing::insert_project(
             &pool,
             "FOO",
@@ -174,7 +167,6 @@ mod tests {
         let store = staged();
         let command = CancelTask {
             id: "FOO-0001".parse().unwrap(),
-            date: None,
             report: "obsoleted".to_string(),
             commits: Vec::new(),
             review: false,
@@ -203,7 +195,6 @@ mod tests {
         .await;
         let command = CancelTask {
             id: "XYZ-0001".parse().unwrap(),
-            date: Some("2026-07-14".to_string()),
             report: "obsolete".to_string(),
             commits: Vec::new(),
             review: false,

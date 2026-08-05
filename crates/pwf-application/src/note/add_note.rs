@@ -14,7 +14,7 @@ use crate::{
 /// Requests creation of one project note.
 #[derive(Debug, Clone)]
 pub struct AddNote {
-    /// Selects the managed project by name or id code.
+    /// Project's name or id
     pub project_selector: ProjectSelector,
     /// Names the note.
     pub title: String,
@@ -42,7 +42,9 @@ pub struct AddNoteOk {
 
 #[derive(Debug, thiserror::Error)]
 pub enum AddNoteError {
-    #[error("Unknown project '{selector}'; expected a managed project name or id code.")]
+    // TODO: refactor to be tranparent error for invalid project? this is duplicated in ~4
+    // interactors
+    #[error("Unknown project '{selector}'. Expected a project name or id.")]
     UnknownProject { selector: ProjectSelector },
     #[error("Note title is empty; provide a non-empty title.")]
     EmptyTitle,
