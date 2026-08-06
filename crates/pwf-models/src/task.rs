@@ -12,7 +12,7 @@ pub use prerequisite::{
     EmptyPrerequisitesError, PrerequisiteInput, PrerequisiteInputError, Prerequisites,
 };
 pub use status::TaskStatus;
-pub use tag::{EmptyTagsError, InvalidTagError, Tag, Tags};
+pub use tag::{EmptyTagsError, InvalidTagError, Tag, TagInput, TagInputError, Tags};
 pub use timestamp::Timestamp;
 pub use title::{TaskTitle, TaskTitleError};
 

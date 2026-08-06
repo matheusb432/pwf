@@ -135,10 +135,6 @@ pub(crate) enum TaskError {
         flag: &'static str,
         reason: &'static str,
     },
-    #[error(
-        "Invalid --tag value {raw:?}; use lowercase/uppercase ASCII letters, digits, '_' or '-', without leading, trailing, or repeated separators."
-    )]
-    InvalidTag { raw: String },
     #[error("{}", ADD_HINT)]
     RejectUnsupportedTaskCreation,
 }

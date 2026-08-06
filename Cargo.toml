@@ -71,5 +71,11 @@ collection_is_never_read = "warn"
 must_use_candidate = "allow"
 missing_errors_doc = "allow"
 
+[profile.dev.package."*"]
+debug = false
+
+[profile.test.package."*"]
+debug = false
+
 [profile.release]
 strip = true

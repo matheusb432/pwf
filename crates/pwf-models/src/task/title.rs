@@ -8,20 +8,29 @@ const YAML_UNSAFE_LEADING_CHARACTERS: [char; 16] = [
 
 /// Stores a task title.
 #[nutype(
-    sanitize(with = normalize_task_title),
+    sanitize(lowercase, with = normalize_task_title),
     validate(len_char_max = TASK_TITLE_CHARACTER_LIMIT),
     derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, AsRef, Display),
     default = DEFAULT_TASK_TITLE,
 )]
 pub struct TaskTitle(String);
 
-#[expect(
-    clippy::needless_pass_by_value,
-    reason = "nutype custom sanitizers receive the inner String by value"
-)]
-fn normalize_task_title(title: String) -> String {
-    let lowercase = title.to_lowercase();
-    let safe = yaml_plain_scalar(&lowercase);
+fn normalize_task_title(mut title: String) -> String {
+    let mut collapsed = String::with_capacity(title.len());
+    let mut needs_separator = false;
+    for character in title.drain(..) {
+        if character.is_whitespace() {
+            needs_separator = !collapsed.is_empty();
+        } else {
+            if needs_separator {
+                collapsed.push(' ');
+                needs_separator = false;
+            }
+            collapsed.push(character);
+        }
+    }
+
+    let safe = yaml_plain_scalar(&collapsed);
     if safe.is_empty() {
         DEFAULT_TASK_TITLE.to_string()
     } else {
@@ -30,9 +39,8 @@ fn normalize_task_title(title: String) -> String {
 }
 
 fn yaml_plain_scalar(title: &str) -> String {
-    let collapsed = title.split_whitespace().collect::<Vec<_>>().join(" ");
-    let mut out = String::with_capacity(collapsed.len());
-    let mut characters = collapsed.chars().peekable();
+    let mut out = String::with_capacity(title.len());
+    let mut characters = title.chars().peekable();
     let mut opens_comment = true;
     while let Some(character) = characters.next() {
         match character {

@@ -36,7 +36,7 @@ fn command() -> AddTask {
         human: false,
         prerequisites: None,
         effort: None,
-        tags: Vec::new(),
+        tags: None,
     }
 }
 

@@ -28,7 +28,7 @@ fn header_regex() -> &'static Regex {
 
 fn task_line_regex() -> &'static Regex {
     regex!(
-        r"^\s*-\s*(?:\[(?P<mark>[ xX])\]\s*)?\[\[(?P<id>[A-Z]{3}-\d{4})(?:\|(?P<alias>[^\]]+))?\]\]"
+        r"^\s*-\s*(?:\[(?P<mark>[ xX])\]\s*)?\[\[(?P<id>[A-Z]{2,4}-\d{4})(?:\|(?P<alias>[^\]]+))?\]\]"
     )
 }
 
@@ -306,16 +306,18 @@ mod tests {
     }
 
     #[test]
-    fn index_parser_accepts_only_three_letter_project_ids() -> Result<(), Box<dyn std::error::Error>>
-    {
-        let index = "- [ ] [[PW-0001]]\n- [ ] [[PWF-0002]]\n- [ ] [[TOOL-0003]]\n";
+    fn index_parser_accepts_two_to_four_letter_project_ids() {
+        let index = "- [ ] [[P-0001]]\n- [ ] [[PW-0002]]\n- [ ] [[PWF-0003]]\n- [ ] [[TOOL-0004]]\n- [ ] [[TOOLS-0005]]\n";
 
-        let lines = parse_index_lines(Path::new("index.md"), index)?;
+        let lines = parse_index_lines(Path::new("index.md"), index).unwrap();
 
         assert_eq!(
             lines.into_iter().map(|line| line.id).collect::<Vec<_>>(),
-            [TaskId::try_new("PWF-0002")?]
+            [
+                TaskId::try_new("PW-0002").unwrap(),
+                TaskId::try_new("PWF-0003").unwrap(),
+                TaskId::try_new("TOOL-0004").unwrap(),
+            ]
         );
-        Ok(())
     }
 }

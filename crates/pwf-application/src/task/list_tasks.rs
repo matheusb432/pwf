@@ -118,7 +118,7 @@ pub struct ListTasks {
     /// Explicit task cap. Omission uses the mode-specific default.
     pub number: Option<usize>,
     pub effort: Option<EffortTier>,
-    pub tags: Vec<String>,
+    pub tags: Option<Tags>,
     pub order: Option<OrderSpec>,
     /// Explicit lifecycle filter. Omission uses the mode-specific default.
     pub status: Option<StatusFilter>,
@@ -163,8 +163,6 @@ pub enum ListTasksError {
         #[source]
         source: TagParseError,
     },
-    #[error("invalid requested tags: {0}")]
-    InvalidRequestedTags(#[source] TagParseError),
     #[error(transparent)]
     ResolveProject(#[from] crate::project::resolve_project::ResolveProjectError),
     #[error("{0}")]
@@ -251,7 +249,7 @@ pub async fn execute(
         .await
         .map_err(|error| ListTasksError::QueryProject(Box::new(error)))?,
     };
-    let query = resolve_query(query, selected)?;
+    let query = resolve_query(query, selected);
     let project_task_path = query
         .project
         .as_ref()
@@ -316,10 +314,7 @@ fn retain_matching_tags(
     Ok(matched)
 }
 
-fn resolve_query(
-    query: &ListTasks,
-    project: Option<Project>,
-) -> Result<ResolvedListTasks, ListTasksError> {
+fn resolve_query(query: &ListTasks, project: Option<Project>) -> ResolvedListTasks {
     let scope = if query.all {
         ListScope::All
     } else {
@@ -330,14 +325,6 @@ fn resolve_query(
         }
     };
     let cap = query.number.or((!query.all).then_some(10));
-    let tags = if query.tags.is_empty() {
-        None
-    } else {
-        Some(
-            tags::parse_values(&query.tags)
-                .map_err(|error| ListTasksError::InvalidRequestedTags(error.into()))?,
-        )
-    };
     let order = query.order.unwrap_or(match query.mode {
         ListMode::Direct => OrderSpec::default(),
         ListMode::ProjectRoute => OrderSpec {
@@ -351,16 +338,16 @@ fn resolve_query(
         StatusFilter::default()
     });
 
-    Ok(ResolvedListTasks {
+    ResolvedListTasks {
         project,
         scope,
         cap,
         effort: query.effort,
-        tags,
+        tags: query.tags.clone(),
         order,
         status_filter,
         include_prerequisite_statuses: query.include_prerequisite_statuses,
-    })
+    }
 }
 
 /// Reads and enriches listable lifecycle records from one project or every project in name order.
@@ -504,7 +491,7 @@ mod tests {
 
     use pwf_models::{
         project::Project,
-        task::{EffortTier, ProjectName, TaskId, TaskStatus, Timestamp},
+        task::{EffortTier, ProjectName, Tags, TaskId, TaskStatus, Timestamp},
     };
 
     use super::{
@@ -677,6 +664,10 @@ mod tests {
         }
     }
 
+    fn requested_tags(raw: &str) -> Option<Tags> {
+        Tags::from_inputs(&[raw.parse().unwrap()])
+    }
+
     fn dated_task(id: &str, created: &str) -> TaskRecord {
         TaskRecord {
             created: Some(Timestamp::new(created)),
@@ -691,7 +682,7 @@ mod tests {
             all: false,
             number: Some(100_000),
             effort: None,
-            tags: Vec::new(),
+            tags: None,
             order: None,
             status: None,
             include_prerequisite_statuses: false,
@@ -1060,7 +1051,7 @@ mod tests {
             &store,
             &registry,
             &ListTasks {
-                tags: vec!["SQLite,godot".to_string()],
+                tags: requested_tags("SQLite,godot"),
                 ..default_query()
             },
         )
@@ -1079,7 +1070,7 @@ mod tests {
             &store,
             &registry,
             &ListTasks {
-                tags: vec!["sqlite".to_string()],
+                tags: requested_tags("sqlite"),
                 ..default_query()
             },
         )
@@ -1115,7 +1106,7 @@ mod tests {
             &registry,
             &ListTasks {
                 effort: Some(EffortTier::High),
-                tags: vec!["sqlite".to_string()],
+                tags: requested_tags("sqlite"),
                 ..default_query()
             },
         )
@@ -1138,7 +1129,7 @@ mod tests {
             &registry,
             &ListTasks {
                 number: Some(1),
-                tags: vec!["sqlite".to_string()],
+                tags: requested_tags("sqlite"),
                 ..default_query()
             },
         )

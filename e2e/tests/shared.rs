@@ -93,7 +93,7 @@ pub struct ManagedProject {
 }
 
 impl ManagedProject {
-    pub fn new(project_id: ProjectId, title: &str) -> Self {
+    pub fn new(project_id: &ProjectId, title: &str) -> Self {
         let directory = TempDir::new().unwrap();
         let tasks_path = directory.path().join("notes").join(title);
         let project_path = directory.path().join("project");
@@ -108,7 +108,7 @@ impl ManagedProject {
         )
         .unwrap();
         let database = DatabaseFixture::new(directory.path().join("projects.sqlite3"));
-        database.add_directory_project(&project_id, title, &project_path, &tasks_path);
+        database.add_directory_project(project_id, title, &project_path, &tasks_path);
         Self {
             _directory: directory,
             database,

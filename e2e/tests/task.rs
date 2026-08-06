@@ -7,7 +7,7 @@ use crate::shared::{ManagedProject, project_id, task_id, task_json};
 
 #[test]
 fn machine_add_maps_each_explicit_value_without_parsing_lane_markers() {
-    let fixture = ManagedProject::new(project_id("FOO"), "foo-bar");
+    let fixture = ManagedProject::new(&project_id("FOO"), "foo-bar");
 
     fixture
         .database
@@ -42,7 +42,7 @@ fn machine_add_maps_each_explicit_value_without_parsing_lane_markers() {
 
 #[test]
 fn root_edit_replaces_lane_collections_with_explicit_remove_then_add_actions() {
-    let fixture = ManagedProject::new(project_id("FOO"), "foo-bar");
+    let fixture = ManagedProject::new(&project_id("FOO"), "foo-bar");
     fixture
         .database
         .command()
@@ -98,7 +98,7 @@ fn root_edit_replaces_lane_collections_with_explicit_remove_then_add_actions() {
 
 #[test]
 fn task_help_exposes_only_the_supported_add_and_edit_contract() {
-    let fixture = ManagedProject::new(project_id("FOO"), "foo-bar");
+    let fixture = ManagedProject::new(&project_id("FOO"), "foo-bar");
     let add = fixture
         .database
         .command()
@@ -161,7 +161,7 @@ fn task_help_exposes_only_the_supported_add_and_edit_contract() {
 
 #[test]
 fn shorthand_and_machine_lane_inputs_conflict_before_mutation() {
-    let fixture = ManagedProject::new(project_id("FOO"), "foo-bar");
+    let fixture = ManagedProject::new(&project_id("FOO"), "foo-bar");
     fixture
         .database
         .command()
@@ -189,7 +189,7 @@ fn shorthand_and_machine_lane_inputs_conflict_before_mutation() {
 
 #[test]
 fn edit_rejects_closed_tasks_without_mutating_completion_data() {
-    let fixture = ManagedProject::new(project_id("FOO"), "foo-bar");
+    let fixture = ManagedProject::new(&project_id("FOO"), "foo-bar");
     fixture
         .database
         .command()
@@ -221,7 +221,7 @@ fn edit_rejects_closed_tasks_without_mutating_completion_data() {
 
 #[test]
 fn retired_task_date_and_update_surfaces_are_rejected() {
-    let fixture = ManagedProject::new(project_id("FOO"), "foo-bar");
+    let fixture = ManagedProject::new(&project_id("FOO"), "foo-bar");
     fixture
         .database
         .command()
@@ -258,7 +258,7 @@ fn retired_task_date_and_update_surfaces_are_rejected() {
 
 #[test]
 fn add_stores_the_title_separately_from_goals() {
-    let fixture = ManagedProject::new(project_id("FOO"), "foo-bar");
+    let fixture = ManagedProject::new(&project_id("FOO"), "foo-bar");
 
     fixture
         .database
@@ -274,7 +274,7 @@ fn add_stores_the_title_separately_from_goals() {
 
 #[test]
 fn add_rejects_an_inferred_title_over_200_characters_without_creating_a_task() {
-    let fixture = ManagedProject::new(project_id("FOO"), "foo-bar");
+    let fixture = ManagedProject::new(&project_id("FOO"), "foo-bar");
     let title = "\u{e9}".repeat(201);
 
     let output = fixture
@@ -299,7 +299,7 @@ fn add_rejects_an_inferred_title_over_200_characters_without_creating_a_task() {
 
 #[test]
 fn edit_rejects_a_title_over_200_characters_without_mutating_the_task() {
-    let fixture = ManagedProject::new(project_id("FOO"), "foo-bar");
+    let fixture = ManagedProject::new(&project_id("FOO"), "foo-bar");
     fixture
         .database
         .command()
@@ -328,7 +328,7 @@ fn edit_rejects_a_title_over_200_characters_without_mutating_the_task() {
 
 #[test]
 fn list_status_and_review_task_compose_across_commands() {
-    let fixture = ManagedProject::new(project_id("FOO"), "foo-bar");
+    let fixture = ManagedProject::new(&project_id("FOO"), "foo-bar");
     fixture
         .database
         .command()
@@ -400,7 +400,7 @@ fn list_status_and_review_task_compose_across_commands() {
 #[test]
 #[cfg(target_os = "linux")]
 fn remove_prompt_identifies_closed_status_before_deletion() {
-    let fixture = ManagedProject::new(project_id("FOO"), "foo-bar");
+    let fixture = ManagedProject::new(&project_id("FOO"), "foo-bar");
     fixture
         .database
         .command()
@@ -444,12 +444,8 @@ fn remove_prompt_identifies_closed_status_before_deletion() {
 }
 
 #[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one isolated public-command lifecycle owns all state transitions"
-)]
 fn lifecycle_is_observable_through_show_json() {
-    let fixture = ManagedProject::new(project_id("FOO"), "foo-bar");
+    let fixture = ManagedProject::new(&project_id("FOO"), "foo-bar");
     fixture
         .database
         .command()

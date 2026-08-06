@@ -50,7 +50,7 @@ enum TaskCommand {
     /// Reopen a closed task. This removes it's completed/commits provenance.
     Reopen(reopen::Arguments),
     /// Edit an active task's prompt body, title, prerequisites, tags, or effort
-    Edit(edit::Arguments),
+    Edit(Box<edit::Arguments>),
     /// Show a task note's markdown
     #[command(alias = "s")]
     Show(show::Arguments),

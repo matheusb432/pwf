@@ -9,24 +9,33 @@ use crate::{
 };
 
 pub(crate) fn run() -> Result<()> {
-    task::check_all(&[check_step()], "run `just fix`")?;
+    task::check_all(&check_steps(), "run `just fix`")?;
     process::result(Verb::LINT, Status::Pass);
     Ok(())
 }
 
-pub(super) fn check_step() -> Step {
-    Step::new(
-        "clippy",
-        "cargo",
-        [
+pub(super) fn check_steps() -> [Step; 2] {
+    [
+        Step::new(
             "clippy",
-            "--workspace",
-            "--all-targets",
-            "--",
-            "-D",
-            "warnings",
-        ],
-    )
+            "cargo",
+            [
+                "clippy",
+                "--workspace",
+                "--all-targets",
+                "--",
+                "-D",
+                "warnings",
+            ],
+        ),
+        Step::new(
+            "clippy:e2e",
+            "cargo",
+            [
+                "clippy", "-p", "pwf-e2e", "--test", "e2e", "--", "-D", "warnings",
+            ],
+        ),
+    ]
 }
 
 pub(super) fn fix_step(arguments_extra: &[String]) -> Step {
@@ -49,11 +58,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn check_step_targets_the_workspace_with_denied_warnings() {
-        let step = check_step();
-        assert_eq!(step.program(), "cargo");
+    fn check_steps_cover_the_workspace_and_hidden_e2e_target() {
+        let steps = check_steps();
+
+        assert_eq!(steps[0].program(), "cargo");
         assert_eq!(
-            step.arguments(),
+            steps[0].arguments(),
             [
                 "clippy",
                 "--workspace",
@@ -61,6 +71,13 @@ mod tests {
                 "--",
                 "-D",
                 "warnings"
+            ]
+        );
+        assert_eq!(steps[1].program(), "cargo");
+        assert_eq!(
+            steps[1].arguments(),
+            [
+                "clippy", "-p", "pwf-e2e", "--test", "e2e", "--", "-D", "warnings"
             ]
         );
     }

@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{fmt, str::FromStr};
 
 use thiserror::Error;
 
@@ -38,11 +38,60 @@ impl fmt::Display for Tag {
     }
 }
 
+/// Contains the normalized tags parsed from one authored argument.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TagInput(Tags);
+
+impl TagInput {
+    /// Returns the parsed tags in encounter order.
+    pub fn iter(&self) -> impl Iterator<Item = &Tag> {
+        self.0.iter()
+    }
+}
+
+impl FromStr for TagInput {
+    type Err = TagInputError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let segments = value.split(',').collect::<Vec<_>>();
+        if segments.iter().any(|raw| raw.trim().is_empty()) {
+            return Err(TagInputError::MissingTag {
+                raw: value.to_string(),
+            });
+        }
+
+        let mut tags = Vec::new();
+        for raw in segments {
+            let normalized = raw.trim().to_ascii_lowercase().replace('-', "_");
+            let tag =
+                Tag::try_from(normalized.as_str()).map_err(|_| TagInputError::InvalidTag {
+                    raw: raw.to_string(),
+                })?;
+            if !tags.contains(&tag) {
+                tags.push(tag);
+            }
+        }
+        Tags::try_new(tags)
+            .map(Self)
+            .map_err(|_| TagInputError::MissingTag {
+                raw: value.to_string(),
+            })
+    }
+}
+
 /// Stores a non-empty ordered collection of task tags.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Tags(Vec<Tag>);
 
 impl Tags {
+    /// Combines parsed tag arguments, returning `None` when no arguments were supplied.
+    #[must_use]
+    pub fn from_inputs(inputs: &[TagInput]) -> Option<Self> {
+        let mut tags = inputs.iter().flat_map(TagInput::iter).cloned();
+        let first = tags.next()?;
+        Some(Self::from_first_and_rest(first, tags))
+    }
+
     /// Creates a non-empty ordered collection.
     pub fn try_new(values: Vec<Tag>) -> Result<Self, EmptyTagsError> {
         if values.is_empty() {
@@ -67,6 +116,16 @@ impl Tags {
         }
         Self(merged)
     }
+
+    fn from_first_and_rest(first: Tag, tags: impl IntoIterator<Item = Tag>) -> Self {
+        let mut unique = vec![first];
+        for tag in tags {
+            if !unique.contains(&tag) {
+                unique.push(tag);
+            }
+        }
+        Self(unique)
+    }
 }
 
 /// Reports an invalid tag value.
@@ -76,6 +135,29 @@ pub struct InvalidTagError {
     raw: String,
 }
 
+/// Reports invalid authored tag syntax.
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum TagInputError {
+    /// The argument contains an empty tag segment.
+    #[error("missing tag value: {raw:?}")]
+    MissingTag { raw: String },
+    /// A non-empty segment cannot be normalized into a valid tag.
+    #[error(
+        "invalid tag value {raw:?}; use ASCII letters, digits, '_' or '-', without leading, trailing, or repeated separators"
+    )]
+    InvalidTag { raw: String },
+}
+
+impl TagInputError {
+    /// Returns the authored text responsible for the error.
+    #[must_use]
+    pub fn raw(&self) -> &str {
+        match self {
+            Self::MissingTag { raw } | Self::InvalidTag { raw } => raw,
+        }
+    }
+}
+
 /// Reports an empty tag collection.
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
 #[error("tags cannot be empty")]
@@ -83,7 +165,7 @@ pub struct EmptyTagsError;
 
 #[cfg(test)]
 mod tests {
-    use super::{Tag, Tags};
+    use super::{Tag, TagInput, TagInputError, Tags};
 
     fn values(tags: &Tags) -> Vec<&str> {
         tags.iter().map(AsRef::as_ref).collect()
@@ -98,6 +180,36 @@ mod tests {
         .unwrap();
         assert_eq!(values(&tags), ["sqlite", "csharp_export"]);
         assert!(Tags::try_new(Vec::new()).is_err());
+    }
+
+    #[test]
+    fn authored_inputs_normalize_and_deduplicate_in_encounter_order() {
+        let inputs = ["SQLite,csharp-export", "sqlite", " godot ", "csharp_export"]
+            .map(|raw| raw.parse::<TagInput>().unwrap());
+
+        let tags = Tags::from_inputs(&inputs).unwrap();
+
+        assert_eq!(values(&tags), ["sqlite", "csharp_export", "godot"]);
+    }
+
+    #[test]
+    fn authored_inputs_reject_empty_segments_and_invalid_characters() {
+        for raw in [
+            "",
+            ",",
+            "sqlite,",
+            "_sqlite",
+            "sqlite_",
+            "sqlite__export",
+            "c#",
+        ] {
+            let error = raw.parse::<TagInput>().unwrap_err();
+            assert!(matches!(
+                error,
+                TagInputError::MissingTag { .. } | TagInputError::InvalidTag { .. }
+            ));
+            assert_eq!(error.raw(), raw);
+        }
     }
 
     #[test]

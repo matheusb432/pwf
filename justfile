@@ -9,7 +9,7 @@ _default:
 build:
     cargo build --release
 
-# First-time setup of the global pwf shim.
+# First-time setup of the global pwf binary.
 [group('build')]
 install:
     cargo run --quiet -p xtask -- install
@@ -19,7 +19,7 @@ install:
 bootstrap *args:
     mise bootstrap --yes {{ args }}
 
-# Refresh the global pwf shim after a rebuild.
+# Refresh the global pwf binary after a rebuild.
 [group('build')]
 update *args:
     cargo run --quiet -p xtask -- update {{ args }}

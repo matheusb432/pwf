@@ -6,7 +6,7 @@ use pwf_application::{
 use pwf_infra::obsidian::ObsidianStore;
 use pwf_models::{
     project::ProjectSelector,
-    task::{PrerequisiteInput, Prerequisites},
+    task::{PrerequisiteInput, Prerequisites, TagInput, Tags},
 };
 
 use super::{
@@ -52,7 +52,7 @@ pub struct Arguments {
     /// Discovery tag; repeat or comma-separate for several. Input accepts `snake_case` or
     /// kebab-case
     #[arg(long, allow_hyphen_values = true)]
-    pub(crate) tag: Vec<String>,
+    pub(crate) tag: Vec<TagInput>,
     /// Effort/complexity tier.
     #[arg(long, value_enum)]
     pub(crate) effort: Option<EffortChoice>,
@@ -86,7 +86,7 @@ pub(super) async fn run(
             human: arguments.human,
             prerequisites: Prerequisites::from_inputs(&arguments.prereq),
             effort: arguments.effort.map(Into::into),
-            tags: arguments.tag.clone(),
+            tags: Tags::from_inputs(&arguments.tag),
         },
         store,
         pool,

@@ -10,24 +10,32 @@ use crate::{process, task::Step};
 
 const E2E_TIMEOUT: Duration = Duration::from_hours(1);
 
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "CLI flags map directly to Clap arguments"
-)]
 #[derive(Args)]
 #[command(args_conflicts_with_subcommands = true)]
 pub(crate) struct TestArgs {
     #[command(subcommand)]
     command: Option<TestCommand>,
+    #[command(flatten)]
+    output: TestOutputArguments,
+    #[command(flatten)]
+    selection: TestSelectionArguments,
+}
+
+#[derive(Args, Clone, Copy, Default)]
+struct TestOutputArguments {
     /// Stream full test output live; the log still captures it.
     #[arg(long)]
-    pub(crate) verbose: bool,
+    verbose: bool,
     /// Emit one JSON report to stdout.
     #[arg(long)]
-    pub(crate) json: bool,
+    json: bool,
     /// Provide an evidence directory to E2E tests and save report.json.
     #[arg(long)]
-    pub(crate) evidences: bool,
+    evidences: bool,
+}
+
+#[derive(Args)]
+struct TestSelectionArguments {
     /// Which part of the suite to run.
     #[arg(
         long,
@@ -35,7 +43,7 @@ pub(crate) struct TestArgs {
         default_value_t = Scope::Unit,
         default_value_ifs = [("e2e", "true", "e2e"), ("all", "true", "all")]
     )]
-    pub(crate) scope: Scope,
+    scope: Scope,
     /// Shorthand for `--scope e2e`.
     #[arg(long, conflicts_with_all = ["all", "scope"])]
     e2e: bool,
@@ -70,35 +78,38 @@ pub(crate) fn run(arguments: &TestArgs) -> Result<()> {
         return test_coverage(&coverage.arguments_extra);
     }
 
-    run_scope(
-        arguments.scope,
-        arguments.verbose,
-        arguments.json,
-        arguments.evidences,
-    )
+    run_scope(arguments.selection.scope, arguments.output)
 }
 
 pub(crate) fn run_all() -> Result<()> {
-    run_scope(Scope::All, false, false, false)
+    run_scope(Scope::All, TestOutputArguments::default())
 }
 
-fn run_scope(scope: Scope, verbose: bool, json: bool, evidences: bool) -> Result<()> {
+fn run_scope(scope: Scope, output: TestOutputArguments) -> Result<()> {
     let executable = std::env::current_exe()
         .context("resolve the xtask executable")?
         .into_os_string();
     let declarations = selected_tests(scope, executable)?;
 
     Run::try_new(scope.to_string(), declarations)?
-        .verbose(verbose)
-        .json(json)
-        .evidences_from_cargo_manifest(evidences, include_str!("../../Cargo.toml"))?
+        .verbose(output.verbose)
+        .json(output.json)
+        .evidences_from_cargo_manifest(output.evidences, include_str!("../../Cargo.toml"))?
         .execute()?;
 
     Ok(())
 }
 
 fn test_coverage(arguments_extra: &[String]) -> Result<()> {
-    process::run_step(&test_coverage_step(arguments_extra))
+    process::run_step(&test_coverage_step(arguments_extra))?;
+    if coverage_cleanup_is_required(arguments_extra) {
+        process::run_step(&Step::new(
+            "clean coverage artifacts",
+            "cargo",
+            ["clean", "--target-dir", "target/llvm-cov-target"],
+        ))?;
+    }
+    Ok(())
 }
 
 fn test_coverage_step(arguments_extra: &[String]) -> Step {
@@ -107,6 +118,13 @@ fn test_coverage_step(arguments_extra: &[String]) -> Step {
         step = step.with_arguments(["--quiet"]);
     }
     step.with_arguments(arguments_extra.iter().cloned())
+}
+
+fn coverage_cleanup_is_required(arguments: &[String]) -> bool {
+    !arguments
+        .iter()
+        .take_while(|argument| argument.as_str() != "--")
+        .any(|argument| matches!(argument.as_str(), "-h" | "--help" | "--no-report"))
 }
 
 fn coverage_output_is_explicit(arguments: &[String]) -> bool {
@@ -186,7 +204,7 @@ impl std::fmt::Display for Scope {
 
 #[cfg(test)]
 mod tests {
-    use super::{coverage_output_is_explicit, test_coverage_step};
+    use super::{coverage_cleanup_is_required, coverage_output_is_explicit, test_coverage_step};
 
     #[test]
     fn test_coverage_forwards_cargo_llvm_cov_arguments() {
@@ -208,6 +226,16 @@ mod tests {
         assert!(!coverage_output_is_explicit(&[
             "--".to_string(),
             "--verbose".to_string(),
+        ]));
+    }
+
+    #[test]
+    fn test_coverage_cleanup_requires_a_generated_report() {
+        assert!(!coverage_cleanup_is_required(&["--help".to_string()]));
+        assert!(!coverage_cleanup_is_required(&["--no-report".to_string()]));
+        assert!(coverage_cleanup_is_required(&[
+            "--".to_string(),
+            "--help".to_string(),
         ]));
     }
 }

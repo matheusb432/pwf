@@ -35,7 +35,7 @@ impl TaskId {
         Ok(Self { value, project_id })
     }
 
-    /// Returns the validated three-letter project ID.
+    /// Returns the validated two-to-four-letter project ID.
     #[must_use]
     pub fn project_id(&self) -> ProjectId {
         self.project_id.clone()
@@ -96,10 +96,10 @@ mod tests {
 
     #[test]
     fn task_id_accepts_valid_values() {
-        let id = TaskId::try_new("PWF-0047").unwrap();
-
-        assert_eq!(id.as_ref(), "PWF-0047");
-        assert_eq!(id.project_id(), ProjectId::try_new("PWF").unwrap());
+        for raw in ["PW-0047", "PWF-0047", "TOOL-0047"] {
+            let id = TaskId::try_new(raw).unwrap();
+            assert_eq!(id.as_ref(), raw);
+        }
     }
 
     #[test]
@@ -112,6 +112,8 @@ mod tests {
             ("cfg57", "CFG-0057"),
             ("CFG57", "CFG-0057"),
             ("cfg-57", "CFG-0057"),
+            ("pw7", "PW-0007"),
+            ("tool42", "TOOL-0042"),
         ] {
             assert_eq!(raw.parse::<TaskId>().unwrap().as_ref(), expected);
         }
@@ -120,8 +122,8 @@ mod tests {
     #[test]
     fn task_id_rejects_invalid_shapes() {
         assert!(TaskId::try_new("pwf-0047").is_err());
-        assert!(TaskId::try_new("PW-0047").is_err());
-        assert!(TaskId::try_new("TOOL-0047").is_err());
+        assert!(TaskId::try_new("P-0047").is_err());
+        assert!(TaskId::try_new("TOOLS-0047").is_err());
         assert!(TaskId::try_new("PWF-47").is_err());
         assert!(TaskId::try_new("cfg57").is_err());
         assert!(TaskId::try_new("PWF-0047-extra").is_err());

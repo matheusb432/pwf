@@ -2,13 +2,27 @@ use assert_cmd::prelude::OutputAssertExt as _;
 
 use crate::shared::{ManagedProject, project_id, task_id, task_json};
 
-#[test]
-fn note_lifecycle_does_not_change_tasks() {
-    let fixture = ManagedProject::new(project_id("PWF"), "pwf");
+fn run_successfully(fixture: &ManagedProject, arguments: &[&str]) {
     fixture
         .database
         .command()
-        .args([
+        .args(arguments)
+        .assert()
+        .success();
+}
+
+fn successful_stdout(fixture: &ManagedProject, arguments: &[&str]) -> String {
+    let output = fixture.database.command().args(arguments).output().unwrap();
+    assert!(output.status.success());
+    String::from_utf8(output.stdout).unwrap()
+}
+
+#[test]
+fn note_lifecycle_does_not_change_tasks() {
+    let fixture = ManagedProject::new(&project_id("PWF"), "pwf");
+    run_successfully(
+        &fixture,
+        &[
             "task",
             "add",
             "pwf",
@@ -16,15 +30,13 @@ fn note_lifecycle_does_not_change_tasks() {
             "real task",
             "--goal",
             "real task",
-        ])
-        .assert()
-        .success();
+        ],
+    );
     let task_before = task_json(&fixture.database, &task_id("PWF-0001"));
 
-    fixture
-        .database
-        .command()
-        .args([
+    run_successfully(
+        &fixture,
+        &[
             "note",
             "add",
             "pwf",
@@ -46,9 +58,8 @@ fn note_lifecycle_does_not_change_tasks() {
             "2026-07-30",
             "--date",
             "2026-07-30",
-        ])
-        .assert()
-        .success();
+        ],
+    );
     let note_before_update = fixture.note_markdown("PWF-NOTE-0001");
     for expected in [
         "created: 2026-07-30",
@@ -68,18 +79,16 @@ fn note_lifecycle_does_not_change_tasks() {
             "note did not contain {expected:?}:\n{note_before_update}"
         );
     }
-    fixture
-        .database
-        .command()
-        .args([
+    run_successfully(
+        &fixture,
+        &[
             "note",
             "update",
             "PWF",
             "1",
             "CLI boundaries expose owned semantics",
-        ])
-        .assert()
-        .success();
+        ],
+    );
     assert_eq!(
         fixture.note_markdown("PWF-NOTE-0001"),
         note_before_update.replacen(
@@ -89,38 +98,13 @@ fn note_lifecycle_does_not_change_tasks() {
         )
     );
 
-    let listed = fixture
-        .database
-        .command()
-        .args(["note", "pwf"])
-        .output()
-        .unwrap();
-    assert!(listed.status.success());
-    assert!(
-        String::from_utf8(listed.stdout)
-            .unwrap()
-            .contains("CLI boundaries expose owned semantics")
-    );
+    let listed = successful_stdout(&fixture, &["note", "pwf"]);
+    assert!(listed.contains("CLI boundaries expose owned semantics"));
 
-    fixture
-        .database
-        .command()
-        .args(["note", "remove", "pwf", "1"])
-        .assert()
-        .success();
+    run_successfully(&fixture, &["note", "remove", "pwf", "1"]);
 
-    let listed = fixture
-        .database
-        .command()
-        .args(["note", "pwf"])
-        .output()
-        .unwrap();
-    assert!(listed.status.success());
-    assert!(
-        !String::from_utf8(listed.stdout)
-            .unwrap()
-            .contains("CLI boundaries expose owned semantics")
-    );
+    let listed = successful_stdout(&fixture, &["note", "pwf"]);
+    assert!(!listed.contains("CLI boundaries expose owned semantics"));
     assert_eq!(
         task_json(&fixture.database, &task_id("PWF-0001")),
         task_before
@@ -129,7 +113,7 @@ fn note_lifecycle_does_not_change_tasks() {
 
 #[test]
 fn note_add_positional_shorthand_splits_once_and_preserves_slashes_in_content() {
-    let fixture = ManagedProject::new(project_id("PWF"), "pwf");
+    let fixture = ManagedProject::new(&project_id("PWF"), "pwf");
 
     fixture
         .database
@@ -162,7 +146,7 @@ fn note_add_positional_shorthand_splits_once_and_preserves_slashes_in_content() 
 
 #[test]
 fn note_add_help_exposes_only_title_and_content_inputs() {
-    let fixture = ManagedProject::new(project_id("PWF"), "pwf");
+    let fixture = ManagedProject::new(&project_id("PWF"), "pwf");
 
     let output = fixture
         .database
@@ -181,7 +165,7 @@ fn note_add_help_exposes_only_title_and_content_inputs() {
 
 #[test]
 fn note_add_rejects_incomplete_or_mixed_input_modes() {
-    let fixture = ManagedProject::new(project_id("PWF"), "pwf");
+    let fixture = ManagedProject::new(&project_id("PWF"), "pwf");
 
     let output = fixture
         .database

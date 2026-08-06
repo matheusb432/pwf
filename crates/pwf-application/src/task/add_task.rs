@@ -13,7 +13,6 @@ use super::{
     created_task_output, infer_task_title,
     note_body::{render, render_lanes},
     prerequisites::{self, PrerequisiteValidationError},
-    tags,
 };
 use crate::{
     ports::{
@@ -63,8 +62,8 @@ pub struct AddTask {
     pub prerequisites: Option<Prerequisites>,
     /// Optional effort tier.
     pub effort: Option<EffortTier>,
-    /// Raw repeated tag values.
-    pub tags: Vec<String>,
+    /// Optional normalized discovery tags.
+    pub tags: Option<Tags>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -77,10 +76,6 @@ pub enum AddTaskError {
     ProjectResolution(#[from] ResolveProjectError),
     #[error("{0}")]
     QueryProject(#[source] Box<dyn std::error::Error + Send + Sync>),
-    #[error(
-        "Invalid --tag value {raw:?}; use lowercase/uppercase ASCII letters, digits, '_' or '-', without leading, trailing, or repeated separators."
-    )]
-    InvalidTag { raw: String },
     #[error("Unknown --prereq id(s): {}.", format_task_ids(ids))]
     UnknownPrerequisiteIds { ids: Vec<TaskId> },
     #[error(transparent)]
@@ -133,7 +128,6 @@ pub async fn execute(
             projects.push(project);
         }
     }
-    let tags = parse_tags(&cmd.tags)?;
     let prereq = cmd
         .prerequisites
         .as_ref()
@@ -154,7 +148,7 @@ pub async fn execute(
                 section: cmd.human.then(|| TaskSection::Human.as_str().to_string()),
                 prereq,
                 effort: cmd.effort,
-                tags,
+                tags: cmd.tags.clone(),
             },
         },
         store,
@@ -176,17 +170,6 @@ struct PreparedAdd {
     project: Project,
     title: TaskTitle,
     body: String,
-}
-
-fn parse_tags(values: &[String]) -> Result<Option<Tags>, AddTaskError> {
-    if values.is_empty() {
-        return Ok(None);
-    }
-    tags::parse_values(values)
-        .map(Some)
-        .map_err(|error| AddTaskError::InvalidTag {
-            raw: error.raw().to_string(),
-        })
 }
 
 fn prepare_source(

@@ -7,7 +7,7 @@ locked = true
 
 [tools]
 rust = [
-  { version = "1.97.1", profile = "minimal", components = [
+  { version = "stable", profile = "minimal", components = [
     "clippy",
     "rustfmt",
   ] },

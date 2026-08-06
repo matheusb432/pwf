@@ -238,7 +238,7 @@ fn is_project_name(raw: &str) -> bool {
 }
 
 fn is_project_id(raw: &str) -> bool {
-    raw.len() == 3 && raw.chars().all(|ch| ch.is_ascii_uppercase())
+    (2..=4).contains(&raw.len()) && raw.chars().all(|ch| ch.is_ascii_uppercase())
 }
 
 fn is_not_blank(raw: &str) -> bool {
@@ -250,10 +250,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn project_id_parses_exactly_three_ascii_letters() {
-        assert_eq!(" pwf ".parse::<ProjectId>().unwrap().as_ref(), "PWF");
-        assert!("PW".parse::<ProjectId>().is_err());
-        assert!("TOOL".parse::<ProjectId>().is_err());
+    fn project_id_parses_two_to_four_ascii_letters() {
+        for (raw, expected) in [(" pw ", "PW"), (" pwf ", "PWF"), (" tool ", "TOOL")] {
+            assert_eq!(raw.parse::<ProjectId>().unwrap().as_ref(), expected);
+        }
+        for raw in ["P", "TOOLS", "P1", "P_E"] {
+            assert!(raw.parse::<ProjectId>().is_err(), "accepted {raw:?}");
+        }
     }
 
     #[test]
@@ -265,6 +268,14 @@ mod tests {
         let id = " pwf ".parse::<ProjectSelector>().unwrap();
         assert_eq!(id.as_ref(), "pwf");
         assert_eq!(id.project_id().map(AsRef::as_ref), Some("PWF"));
+        assert_eq!(
+            " tool "
+                .parse::<ProjectSelector>()
+                .unwrap()
+                .project_id()
+                .map(AsRef::as_ref),
+            Some("TOOL")
+        );
         assert!(" \t ".parse::<ProjectSelector>().is_err());
     }
 

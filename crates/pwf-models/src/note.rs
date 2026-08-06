@@ -89,12 +89,15 @@ mod tests {
     use super::{NoteId, ProjectId};
 
     #[test]
-    fn valid_full_identifier_exposes_number() {
-        let id = NoteId::try_new("PWF-NOTE-0042").unwrap();
+    fn valid_full_identifiers_expose_number() {
+        for raw in ["PW-NOTE-0042", "PWF-NOTE-0042", "TOOL-NOTE-0042"] {
+            let id = NoteId::try_new(raw).unwrap();
+            let project_id = raw.split_once("-NOTE-").unwrap().0;
 
-        assert_eq!(id.as_ref(), "PWF-NOTE-0042");
-        assert_eq!(id.project_id(), &ProjectId::try_new("PWF").unwrap());
-        assert_eq!(id.number(), 42);
+            assert_eq!(id.as_ref(), raw);
+            assert_eq!(id.project_id(), &ProjectId::try_new(project_id).unwrap());
+            assert_eq!(id.number(), 42);
+        }
     }
 
     #[test]
@@ -102,8 +105,6 @@ mod tests {
         for raw in [
             "pwf-NOTE-0001",
             "P-NOTE-0001",
-            "PW-NOTE-0001",
-            "TOOL-NOTE-0001",
             "TOOLS-NOTE-0001",
             "PWF-NOTE-001",
             "PWF-NOTE-00001",

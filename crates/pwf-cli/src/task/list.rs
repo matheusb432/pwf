@@ -7,7 +7,10 @@ use pwf_application::{
     },
 };
 use pwf_infra::obsidian::ObsidianStore;
-use pwf_models::project::ProjectSelector;
+use pwf_models::{
+    project::ProjectSelector,
+    task::{TagInput, Tags},
+};
 
 use super::{
     render::render_list,
@@ -39,7 +42,7 @@ pub struct Arguments {
     /// Discovery tag filter; repeat or comma-separate for several. Every requested tag must
     /// match.
     #[arg(long, allow_hyphen_values = true)]
-    pub(crate) tag: Vec<String>,
+    pub(crate) tag: Vec<TagInput>,
     /// Sort key `field[:direction]`: field created|id|project-id, direction
     /// asc|desc [default: created:desc, flat across every listed project].
     /// `project-id` defaults to asc and groups by project, newest id first
@@ -70,7 +73,7 @@ pub(super) async fn run(
             all: arguments.all,
             number: arguments.number,
             effort: arguments.effort.map(Into::into),
-            tags: arguments.tag.clone(),
+            tags: Tags::from_inputs(&arguments.tag),
             order: arguments.order,
             status: arguments.status.map(StatusChoice::filter),
             include_prerequisite_statuses: arguments.long,
@@ -134,9 +137,6 @@ fn parse_order(value: &str) -> Result<OrderSpec, String> {
 fn map_list_tasks_error(error: ListTasksError) -> TaskError {
     match error {
         ListTasksError::ResolveProject(error) => map_project_resolution_error(error),
-        ListTasksError::InvalidRequestedTags(error) => TaskError::InvalidTag {
-            raw: error.raw().to_string(),
-        },
         ListTasksError::ReadStore(source)
         | ListTasksError::ReadProjectTaskPath(source)
         | ListTasksError::QueryProject(source) => TaskError::ApplicationList(source.to_string()),

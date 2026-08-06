@@ -1,10 +1,10 @@
 use clap::{ArgGroup, Args};
 use pwf_application::task::{
     TaskLane, TaskLaneEdits,
-    edit_task::{self, EditTask, EditTaskContent},
+    edit_task::{self, CollectionEdit, EditTask, EditTaskContent, TaskEdits, ValueEdit},
 };
 use pwf_infra::obsidian::ObsidianStore;
-use pwf_models::task::{PrerequisiteInput, Prerequisites};
+use pwf_models::task::{EffortTier, PrerequisiteInput, Prerequisites, TagInput, Tags};
 
 use super::{
     render::{TITLE_NORMALIZED_NOTICE, render_edited},
@@ -37,10 +37,6 @@ use crate::console::Console;
             "remove_effort",
         ])
 ))]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "clap mirrors independent remove actions"
-)]
 pub struct Arguments {
     #[command(flatten)]
     pub(crate) identifier: Identifier,
@@ -81,48 +77,124 @@ pub struct Arguments {
         ]
     )]
     pub(crate) append: Option<String>,
+    #[command(flatten)]
+    goals: GoalEdits,
+    #[command(flatten)]
+    contexts: ContextEdits,
+    #[command(flatten)]
+    constraints: ConstraintEdits,
+    #[command(flatten)]
+    done_whens: DoneWhenEdits,
+    #[command(flatten)]
+    prerequisites: PrerequisiteEdits,
+    #[command(flatten)]
+    tags: TagEdits,
+    #[command(flatten)]
+    effort: EffortEdit,
+}
+
+#[derive(Args, Debug)]
+struct GoalEdits {
     /// Append a Goal bullet; repeat for several.
     #[arg(long, conflicts_with_all = ["prompt", "append"])]
-    pub(crate) add_goal: Vec<String>,
+    add_goal: Vec<String>,
     /// Remove every Goal before applying `--add-goal` values.
     #[arg(long, conflicts_with_all = ["prompt", "append"])]
-    pub(crate) remove_goals: bool,
+    remove_goals: bool,
+}
+
+#[derive(Args, Debug)]
+struct ContextEdits {
     /// Append a Context bullet; repeat for several.
     #[arg(long, conflicts_with_all = ["prompt", "append"])]
-    pub(crate) add_context: Vec<String>,
+    add_context: Vec<String>,
     /// Remove every Context before applying `--add-context` values.
     #[arg(long, conflicts_with_all = ["prompt", "append"])]
-    pub(crate) remove_contexts: bool,
+    remove_contexts: bool,
+}
+
+#[derive(Args, Debug)]
+struct ConstraintEdits {
     /// Append a Constraint bullet; repeat for several.
     #[arg(long, conflicts_with_all = ["prompt", "append"])]
-    pub(crate) add_constraint: Vec<String>,
+    add_constraint: Vec<String>,
     /// Remove every Constraint before applying `--add-constraint` values.
     #[arg(long, conflicts_with_all = ["prompt", "append"])]
-    pub(crate) remove_constraints: bool,
+    remove_constraints: bool,
+}
+
+#[derive(Args, Debug)]
+struct DoneWhenEdits {
     /// Append a Done When bullet; repeat for several.
     #[arg(long, conflicts_with_all = ["prompt", "append"])]
-    pub(crate) add_done_when: Vec<String>,
+    add_done_when: Vec<String>,
     /// Remove every Done When before applying `--add-done-when` values.
     #[arg(long, conflicts_with_all = ["prompt", "append"])]
-    pub(crate) remove_done_whens: bool,
+    remove_done_whens: bool,
+}
+
+#[derive(Args, Debug)]
+struct PrerequisiteEdits {
     /// Append a prerequisite task ID; repeat or comma-separate for several.
     #[arg(long)]
-    pub(crate) add_prereq: Vec<PrerequisiteInput>,
+    add_prereq: Vec<PrerequisiteInput>,
     /// Remove every prerequisite before applying `--add-prereq` values.
     #[arg(long)]
-    pub(crate) remove_prereqs: bool,
+    remove_prereqs: bool,
+}
+
+impl PrerequisiteEdits {
+    fn edit(&self) -> CollectionEdit<Prerequisites> {
+        collection_edit(
+            Prerequisites::from_inputs(&self.add_prereq),
+            self.remove_prereqs,
+        )
+    }
+}
+
+#[derive(Args, Debug)]
+struct TagEdits {
     /// Append a discovery tag; repeat or comma-separate for several.
     #[arg(long, allow_hyphen_values = true)]
-    pub(crate) add_tag: Vec<String>,
+    add_tag: Vec<TagInput>,
     /// Remove every tag before applying `--add-tag` values.
     #[arg(long)]
-    pub(crate) remove_tags: bool,
+    remove_tags: bool,
+}
+
+impl TagEdits {
+    fn edit(&self) -> CollectionEdit<Tags> {
+        collection_edit(Tags::from_inputs(&self.add_tag), self.remove_tags)
+    }
+}
+
+#[derive(Args, Debug)]
+struct EffortEdit {
     /// Replace the effort tier.
     #[arg(long, value_enum, conflicts_with = "remove_effort")]
-    pub(crate) effort: Option<EffortChoice>,
+    effort: Option<EffortChoice>,
     /// Remove the effort tier.
     #[arg(long, conflicts_with = "effort")]
-    pub(crate) remove_effort: bool,
+    remove_effort: bool,
+}
+
+impl EffortEdit {
+    fn edit(&self) -> ValueEdit<EffortTier> {
+        match self.effort {
+            Some(effort) => ValueEdit::Set(effort.into()),
+            None if self.remove_effort => ValueEdit::Clear,
+            None => ValueEdit::Unchanged,
+        }
+    }
+}
+
+fn collection_edit<T>(addition: Option<T>, remove_existing: bool) -> CollectionEdit<T> {
+    match (addition, remove_existing) {
+        (Some(values), true) => CollectionEdit::Replace(values),
+        (Some(values), false) => CollectionEdit::Append(values),
+        (None, true) => CollectionEdit::Clear,
+        (None, false) => CollectionEdit::Unchanged,
+    }
 }
 
 pub(super) async fn run(
@@ -141,17 +213,26 @@ pub(super) async fn run(
             (Some(title), normalized)
         });
     let additions = task_lanes(
-        &arguments.add_goal,
-        &arguments.add_context,
-        &arguments.add_constraint,
-        &arguments.add_done_when,
+        &arguments.goals.add_goal,
+        &arguments.contexts.add_context,
+        &arguments.constraints.add_constraint,
+        &arguments.done_whens.add_done_when,
         LaneFlagMode::Edit,
     )?;
     let removals = [
-        arguments.remove_goals.then_some(TaskLane::Goal),
-        arguments.remove_contexts.then_some(TaskLane::Context),
-        arguments.remove_constraints.then_some(TaskLane::Constraint),
-        arguments.remove_done_whens.then_some(TaskLane::DoneWhen),
+        arguments.goals.remove_goals.then_some(TaskLane::Goal),
+        arguments
+            .contexts
+            .remove_contexts
+            .then_some(TaskLane::Context),
+        arguments
+            .constraints
+            .remove_constraints
+            .then_some(TaskLane::Constraint),
+        arguments
+            .done_whens
+            .remove_done_whens
+            .then_some(TaskLane::DoneWhen),
     ]
     .into_iter()
     .flatten();
@@ -170,22 +251,16 @@ pub(super) async fn run(
     } else {
         None
     };
-    let edited = edit_task::execute(
-        EditTask {
-            id,
-            content,
-            add_prerequisites: Prerequisites::from_inputs(&arguments.add_prereq),
-            remove_prerequisites: arguments.remove_prereqs,
-            effort: arguments.effort.map(Into::into),
-            remove_effort: arguments.remove_effort,
-            add_tags: arguments.add_tag.clone(),
-            remove_tags: arguments.remove_tags,
-        },
-        store,
-        pool,
+    let edits = TaskEdits::try_new(
+        content,
+        arguments.prerequisites.edit(),
+        arguments.effort.edit(),
+        arguments.tags.edit(),
     )
-    .await
     .map_err(|error| TaskError::ApplicationWrite(error.to_string()))?;
+    let edited = edit_task::execute(EditTask { id, edits }, store, pool)
+        .await
+        .map_err(|error| TaskError::ApplicationWrite(error.to_string()))?;
     if title_normalized {
         eprintln!("{TITLE_NORMALIZED_NOTICE}");
     }

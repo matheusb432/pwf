@@ -114,19 +114,29 @@ mod tests {
         .expect("insert project source")
         .last_insert_rowid();
 
-        sqlx::query(
-            "INSERT INTO projects (id, project_source_id, title, tasks_kind, tasks_path)
-             VALUES ('PWF', ?, 'pwf', 'directory', '/tasks/pwf')",
-        )
-        .bind(source_id)
-        .execute(&pool)
-        .await
-        .expect("insert valid project");
+        for (id, title, tasks_path) in [
+            ("PW", "two", "/tasks/two"),
+            ("PWF", "three", "/tasks/three"),
+            ("TOOL", "four", "/tasks/four"),
+        ] {
+            sqlx::query(
+                "INSERT INTO projects (id, project_source_id, title, tasks_kind, tasks_path)
+                 VALUES (?, ?, ?, 'directory', ?)",
+            )
+            .bind(id)
+            .bind(source_id)
+            .bind(title)
+            .bind(tasks_path)
+            .execute(&pool)
+            .await
+            .unwrap_or_else(|error| panic!("rejected valid project ID {id}: {error}"));
+        }
 
         for (id, title, tasks_path) in [
-            ("PW", "short", "/tasks/short"),
-            ("TOOL", "long", "/tasks/long"),
+            ("P", "short", "/tasks/short"),
+            ("TOOLS", "long", "/tasks/long"),
             ("alt", "lowercase", "/tasks/lowercase"),
+            ("P1", "numeric", "/tasks/numeric"),
         ] {
             let invalid_id = sqlx::query(
                 "INSERT INTO projects (id, project_source_id, title, tasks_kind, tasks_path)
@@ -143,7 +153,7 @@ mod tests {
 
         let duplicate_title = sqlx::query(
             "INSERT INTO projects (id, project_source_id, title, tasks_kind, tasks_path)
-             VALUES ('ALT', ?, 'PWF', 'directory', '/tasks/alt')",
+             VALUES ('ALT', ?, 'THREE', 'directory', '/tasks/alt')",
         )
         .bind(source_id)
         .execute(&pool)

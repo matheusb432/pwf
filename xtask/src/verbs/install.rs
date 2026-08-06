@@ -1,6 +1,6 @@
-//! Installs or updates the release binary's global shim.
+//! Installs or updates the release binary.
 //!
-//! Unix uses a symlink and shell PATH entry. Windows uses the manually certified Scoop path.
+//! Unix uses an atomic copy and shell PATH entry. Windows uses the manually certified Scoop path.
 
 use std::{
     env, fs,
@@ -20,40 +20,47 @@ use crate::{
 /// Flags for the `update` verb.
 #[derive(Args)]
 pub(crate) struct UpdateArgs {
-    /// Preview the shim change and run `--help` without touching the system.
+    /// Preview the installed binary change without touching the system.
     #[arg(long, visible_alias = "dry-run")]
     pub(crate) dry: bool,
-    /// Skip the full check preflight (still builds + refreshes the shim).
+    /// Skip the full check preflight (still builds + refreshes the binary).
     #[arg(short = 'f', long)]
     pub(crate) force: bool,
 }
 
-/// Describes a shim placement result.
+/// Describes an installed binary placement result.
 #[derive(Debug, PartialEq, Eq)]
-enum Linked {
-    Created,
-    Retargeted,
+enum Placed {
+    Installed,
+    Updated,
     Unchanged,
 }
 
-/// Ensures `link` points to `target` and reports whether it changed.
 #[cfg(unix)]
-fn ensure_symlink(target: &Path, link: &Path) -> Result<Linked> {
-    if let Some(parent) = link.parent() {
+fn place_binary(source: &Path, destination: &Path) -> Result<Placed> {
+    if let Some(parent) = destination.parent() {
         fs::create_dir_all(parent)?;
     }
-    if link.read_link().is_ok_and(|current| current == target) {
-        return Ok(Linked::Unchanged);
+    let destination_metadata = destination.symlink_metadata();
+    if destination_metadata
+        .as_ref()
+        .is_ok_and(|metadata| metadata.file_type().is_file())
+        && fs::read(source)? == fs::read(destination)?
+    {
+        return Ok(Placed::Unchanged);
     }
-    let existed = link.symlink_metadata().is_ok();
-    if existed {
-        fs::remove_file(link)?;
+
+    let temporary = destination.with_file_name(format!(".pwf.{}.xtask-tmp", std::process::id()));
+    fs::copy(source, &temporary)?;
+    if let Err(error) = fs::rename(&temporary, destination) {
+        let _ = fs::remove_file(&temporary);
+        return Err(error.into());
     }
-    std::os::unix::fs::symlink(target, link)?;
-    Ok(if existed {
-        Linked::Retargeted
+
+    Ok(if destination_metadata.is_ok() {
+        Placed::Updated
     } else {
-        Linked::Created
+        Placed::Installed
     })
 }
 
@@ -78,7 +85,7 @@ fn release_bin() -> PathBuf {
         .join(bin_name())
 }
 
-/// Installs the global pwf shim.
+/// Installs the global pwf binary.
 pub(crate) fn install() -> Result<()> {
     #[cfg(windows)]
     {
@@ -94,7 +101,7 @@ pub(crate) fn install() -> Result<()> {
     }
 }
 
-/// Rebuilds and refreshes the shim after the format preflight unless forced.
+/// Rebuilds and refreshes the installed binary after the format preflight unless forced.
 pub(crate) fn update(args: &UpdateArgs) -> Result<()> {
     if !args.force {
         check::run()?;
@@ -112,7 +119,7 @@ pub(crate) fn update(args: &UpdateArgs) -> Result<()> {
         } else {
             std::fs::copy(release_bin(), &dest)
                 .with_context(|| format!("copying to {}", dest.display()))?;
-            eprintln!("refreshed global pwf shim -> {}", dest.display());
+            eprintln!("refreshed global pwf binary -> {}", dest.display());
         }
         process::result(Verb::UPDATE, Status::Done);
         return Ok(());
@@ -125,29 +132,29 @@ pub(crate) fn update(args: &UpdateArgs) -> Result<()> {
     }
 }
 
-/// Builds and links the Unix binary, then ensures its directory is on PATH.
+/// Builds and installs the Unix binary, then ensures its directory is on PATH.
 #[cfg(unix)]
 fn place_unix(dry: bool) -> Result<()> {
-    let target = release_bin();
-    let link = link_path()?;
+    let source = release_bin();
+    let destination = install_path()?;
     if dry {
         eprintln!(
-            "DRY-RUN: would ensure symlink {} -> {}",
-            link.display(),
-            target.display()
+            "DRY-RUN: would copy {} -> {}",
+            source.display(),
+            destination.display()
         );
         return Ok(());
     }
     process::run("cargo build", "cargo", &["build", "--release"])?;
-    let placed = ensure_symlink(&target, &link)?;
-    eprintln!("pwf shim {placed:?} -> {}", target.display());
-    wire_path(link.parent().context("link has no parent")?)?;
+    let placed = place_binary(&source, &destination)?;
+    eprintln!("pwf binary {placed:?} -> {}", destination.display());
+    wire_path(destination.parent().context("install path has no parent")?)?;
     Ok(())
 }
 
 /// Resolves `~/.local/bin/pwf`.
 #[cfg(unix)]
-fn link_path() -> Result<PathBuf> {
+fn install_path() -> Result<PathBuf> {
     let home = env::var_os("HOME").context("HOME is not set")?;
     Ok(PathBuf::from(home).join(".local").join("bin").join("pwf"))
 }
@@ -177,16 +184,51 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn symlink_is_idempotent() {
+    fn binary_install_replaces_a_target_symlink_with_a_copy() {
         let dir = tempfile::tempdir().unwrap();
-        let target = dir.path().join("pwf-bin");
-        fs::write(&target, b"v1").unwrap();
-        let link = dir.path().join("bin").join("pwf");
-        assert_eq!(ensure_symlink(&target, &link).unwrap(), Linked::Created);
-        assert_eq!(ensure_symlink(&target, &link).unwrap(), Linked::Unchanged);
-        let other = dir.path().join("other");
-        fs::write(&other, b"v2").unwrap();
-        assert_eq!(ensure_symlink(&other, &link).unwrap(), Linked::Retargeted);
+        let source = dir.path().join("pwf-bin");
+        fs::write(&source, b"v1").unwrap();
+        let destination = dir.path().join("bin").join("pwf");
+        fs::create_dir_all(destination.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&source, &destination).unwrap();
+
+        assert_eq!(
+            place_binary(&source, &destination).unwrap(),
+            Placed::Updated
+        );
+        assert!(
+            !destination
+                .symlink_metadata()
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(fs::read(destination).unwrap(), b"v1");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn binary_install_is_idempotent_and_updates_changed_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("pwf-bin");
+        let destination = dir.path().join("bin").join("pwf");
+        fs::write(&source, b"v1").unwrap();
+
+        assert_eq!(
+            place_binary(&source, &destination).unwrap(),
+            Placed::Installed
+        );
+        assert_eq!(
+            place_binary(&source, &destination).unwrap(),
+            Placed::Unchanged
+        );
+
+        fs::write(&source, b"v2").unwrap();
+        assert_eq!(
+            place_binary(&source, &destination).unwrap(),
+            Placed::Updated
+        );
+        assert_eq!(fs::read(destination).unwrap(), b"v2");
     }
 
     #[test]

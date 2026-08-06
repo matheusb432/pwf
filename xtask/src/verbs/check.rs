@@ -23,7 +23,7 @@ pub(crate) fn run() -> Result<()> {
 }
 
 fn steps(mut formatting: Vec<Step>) -> Vec<Step> {
-    formatting.push(lint::check_step());
+    formatting.extend(lint::check_steps());
     formatting.push(ast_rules_scan_step());
     formatting.push(
         Step::new(
@@ -64,6 +64,7 @@ mod tests {
                 "rustfmt",
                 "rumdl",
                 "clippy",
+                "clippy:e2e",
                 "check-ast-rules",
                 "sqlx-prepare-check"
             ]

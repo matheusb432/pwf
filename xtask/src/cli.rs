@@ -62,11 +62,11 @@ pub(crate) enum Command {
     /// Run the release preflight and build the release binary.
     #[command(name = Verb::SHIP.as_str())]
     Ship(ShipArguments),
-    /// First-time setup of the global pwf shim (`~/.local/bin/pwf` on Unix; scoop on Windows).
+    /// First-time setup of the global pwf binary (`~/.local/bin/pwf` on Unix; Scoop on Windows).
     #[command(name = Verb::INSTALL.as_str())]
     Install,
-    /// Rebuild + refresh the installed shim. `--dry` previews; `-f`/`--force` skips the full check
-    /// preflight.
+    /// Rebuild + refresh the installed binary. `--dry` previews; `-f`/`--force` skips the full
+    /// check preflight.
     #[command(name = Verb::UPDATE.as_str())]
     Update(UpdateArgs),
     /// Reject forbidden outward workspace dependency edges.

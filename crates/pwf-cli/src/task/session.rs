@@ -25,38 +25,24 @@ use crate::{
 };
 
 #[derive(Args, Debug)]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "clap mirrors independent command-line switches"
-)]
 pub struct Arguments {
     #[command(flatten)]
     pub(crate) identifier: Identifier,
     /// Color policy for the dispatch output
     #[arg(long, value_enum, default_value_t = ColorChoice::Auto)]
     pub(crate) color: ColorChoice,
-    /// Skip the [Y/n] dispatch confirmation
-    #[arg(long = "yes", short = 'y')]
-    pub(crate) assume_yes: bool,
-    /// Run the agent inline in the current terminal
-    #[arg(long = "inline", short = 'i')]
-    pub(crate) inline: bool,
-    /// Instructs the agent to work in a git worktree named after the task id
-    #[arg(long = "worktree", short = 'w')]
-    pub(crate) worktree: bool,
-    /// Append an autonomy directive so the agent runs without prompting the user (for
-    /// unattended dispatch)
-    #[arg(long = "auto")]
-    pub(crate) autonomous: bool,
+    #[command(flatten)]
+    confirmation: ConfirmationArguments,
+    #[command(flatten)]
+    execution: ExecutionArguments,
+    #[command(flatten)]
+    launch: LaunchDirectiveArguments,
     /// Which agent to dispatch
     #[arg(long = "agent", value_enum, default_value_t = AgentChoice::default())]
     pub(crate) agent: AgentChoice,
     /// Prefix text pushed to the agent prompt
     #[arg(short = 'p', long = "push-prompt", value_name = "TEXT")]
     pub(crate) pushed_prompt: Option<PushedPrompt>,
-    /// Show the exact launch command without editing the task or starting anything
-    #[arg(long, visible_alias = "dry")]
-    pub(crate) dry_run: bool,
     /// Model override forwarded to the selected agent Wins over effort-tier resolution
     ///
     /// Use `default` or omit the flag to leave selection to effort-tier policy and provider
@@ -66,6 +52,67 @@ pub struct Arguments {
     /// Reasoning effort for the dispatched agent session
     #[arg(long, value_enum, default_value_t = SessionEffortChoice::default())]
     pub(crate) effort: SessionEffortChoice,
+}
+
+#[derive(Args, Debug)]
+struct ConfirmationArguments {
+    /// Skip the [Y/n] dispatch confirmation
+    #[arg(long = "yes", short = 'y')]
+    assume_yes: bool,
+}
+
+impl ConfirmationArguments {
+    fn is_required(&self) -> bool {
+        !self.assume_yes
+    }
+}
+
+#[derive(Args, Debug)]
+struct ExecutionArguments {
+    /// Run the agent inline in the current terminal
+    #[arg(long = "inline", short = 'i')]
+    inline: bool,
+    /// Show the exact launch command without editing the task or starting anything
+    #[arg(long, visible_alias = "dry")]
+    dry_run: bool,
+}
+
+impl ExecutionArguments {
+    fn intent(&self) -> PlanSessionIntent {
+        if self.dry_run {
+            PlanSessionIntent::DryRun
+        } else {
+            PlanSessionIntent::Dispatch
+        }
+    }
+
+    fn mode(&self) -> DispatchMode {
+        if self.inline {
+            DispatchMode::Inline
+        } else {
+            DispatchMode::Multiplexer
+        }
+    }
+}
+
+#[derive(Args, Debug)]
+struct LaunchDirectiveArguments {
+    /// Instructs the agent to work in a git worktree named after the task id
+    #[arg(long = "worktree", short = 'w')]
+    worktree: bool,
+    /// Append an autonomy directive so the agent runs without prompting the user (for
+    /// unattended dispatch)
+    #[arg(long = "auto")]
+    autonomous: bool,
+}
+
+impl LaunchDirectiveArguments {
+    fn directives(&self) -> LaunchDirectives {
+        LaunchDirectives {
+            worktree: self.worktree,
+            autonomous: self.autonomous,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
@@ -110,21 +157,10 @@ pub(super) async fn run(
 
     let request = PlanSession {
         task_id: arguments.identifier.required("session")?,
-        intent: if arguments.dry_run {
-            PlanSessionIntent::DryRun
-        } else {
-            PlanSessionIntent::Dispatch
-        },
+        intent: arguments.execution.intent(),
         pushed_prompt: arguments.pushed_prompt.clone(),
-        mode: if arguments.inline {
-            DispatchMode::Inline
-        } else {
-            DispatchMode::Multiplexer
-        },
-        directives: LaunchDirectives {
-            worktree: arguments.worktree,
-            autonomous: arguments.autonomous,
-        },
+        mode: arguments.execution.mode(),
+        directives: arguments.launch.directives(),
         agent,
         model_override: arguments.model.clone().into(),
         effort: arguments.effort.into(),
@@ -149,7 +185,7 @@ pub(super) async fn run(
     };
     render_probe(&planned.probe);
 
-    if !arguments.assume_yes
+    if arguments.confirmation.is_required()
         && matches!(
             console.confirm(
                 &render_session_confirmation(&planned.confirmation),
