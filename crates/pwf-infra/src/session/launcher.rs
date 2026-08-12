@@ -8,7 +8,7 @@ use std::process::Command;
 
 use pwf_application::ports::agent::{AgentClient, PreparedAgentLaunch};
 use pwf_models::{session::Agent, task::EffortTier};
-use pwf_wire::task::session::{AgentLaunch, AgentProbe, ModelTierLookup};
+use pwf_wire::task::session::{AgentAvailability, AgentLaunch, AgentProbe, ModelTierLookup};
 use thiserror::Error;
 
 use super::{
@@ -56,53 +56,33 @@ impl AgentClient for AgentHarness {
     }
 }
 
-fn probe(binary: &str) -> AgentProbe {
-    let (available, path, version) = match which_binary(binary) {
-        None => (false, None, None),
-        Some(path) => {
-            let version = run_version(&path);
-            (true, Some(path), version)
-        }
+fn probe(agent: Agent, binary: &str) -> AgentProbe {
+    let availability = if binary_available(binary) {
+        AgentAvailability::Available
+    } else {
+        AgentAvailability::Missing
     };
     AgentProbe {
-        binary: binary.to_string(),
-        available,
-        path,
-        version,
+        agent,
+        availability,
     }
 }
 
-fn which_binary(name: &str) -> Option<String> {
+fn binary_available(name: &str) -> bool {
     #[cfg(windows)]
     {
-        let output = Command::new("where").arg(name).output().ok()?;
-        if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            return stdout.lines().next().map(|line| line.trim().to_string());
-        }
-        None
+        Command::new("where")
+            .arg(name)
+            .output()
+            .is_ok_and(|output| output.status.success())
     }
     #[cfg(not(windows))]
     {
-        let output = Command::new("sh")
+        Command::new("sh")
             .args(["-c", &format!("command -v {name}")])
             .output()
-            .ok()?;
-        if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let first = stdout.lines().next()?.trim();
-            if !first.is_empty() {
-                return Some(first.to_string());
-            }
-        }
-        None
+            .is_ok_and(|output| output.status.success())
     }
-}
-
-fn run_version(path: &str) -> Option<String> {
-    let output = Command::new(path).arg("--version").output().ok()?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    stdout.lines().next().map(|line| line.trim().to_string())
 }
 
 /// Renders complete argv as a shell-safe command preview.

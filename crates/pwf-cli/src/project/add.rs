@@ -2,15 +2,14 @@ use std::{path::PathBuf, str::FromStr};
 
 use clap::{Args, ValueEnum};
 use pwf_application::project::add_project::{self, AddProject};
-use pwf_models::project::{
-    ProjectId, ProjectName, ProjectSource, ProjectSourceKind, ProjectSourceValue, ProjectTasks,
-    ProjectTasksKind, ProjectTasksPath,
-};
+use pwf_models::project::{ProjectSource, ProjectSourceKind, ProjectTasks, ProjectTasksKind};
 use pwf_wire::project::ProjectFields;
 use serde::Deserialize;
 use sqlx::SqlitePool;
 
-use super::output;
+use super::{
+    output, parse_project_id, parse_project_source, parse_project_tasks, parse_project_title,
+};
 
 #[derive(Args, Debug)]
 pub struct Arguments {
@@ -36,21 +35,11 @@ impl FromStr for DirectoryPayload {
     fn from_str(payload: &str) -> Result<Self, Self::Err> {
         let payload: AddPayload = serde_json::from_str(payload)
             .map_err(|error| format!("project add JSON is invalid: {error}"))?;
-        let id = ProjectId::try_new(payload.id)
-            .map_err(|_| "project id must contain exactly three ASCII letters".to_string())?;
-        let title_raw = payload.title;
-        let title = ProjectName::try_new(title_raw.clone()).map_err(|_| {
-            if title_raw.trim().eq_ignore_ascii_case("project") {
-                "project title is reserved".to_string()
-            } else {
-                "project title must not be blank".to_string()
-            }
-        })?;
-        let source_value = ProjectSourceValue::try_new(payload.source.value)
-            .map_err(|_| "project source value must not be blank".to_string())?;
+        let id = parse_project_id(&payload.id)?;
+        let title = parse_project_title(&payload.title)?;
+        let source_value = parse_project_source(&payload.source.value)?;
         let TasksPayload::Directory { path } = payload.tasks;
-        let tasks_path = ProjectTasksPath::try_new(path)
-            .map_err(|_| "project tasks path must not be blank".to_string())?;
+        let tasks_path = parse_project_tasks(&path)?;
 
         Ok(Self(ProjectFields {
             id,

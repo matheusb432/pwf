@@ -1,11 +1,17 @@
 use pwf_application::ports::clock::Clock;
-use pwf_models::task::Timestamp;
+use pwf_models::AppDate;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct LocalClock;
 
 impl Clock for LocalClock {
-    fn today(&self) -> Timestamp {
-        Timestamp::new(jiff::Zoned::now().strftime("%Y-%m-%d").to_string())
+    #[allow(
+        clippy::expect_used,
+        reason = "a current Jiff date always satisfies AppDate's canonical range"
+    )]
+    fn today(&self) -> AppDate {
+        let today = jiff::Zoned::now().date();
+        AppDate::from_calendar_date(today.year(), today.month(), today.day())
+            .expect("the system's local date must fit AppDate")
     }
 }

@@ -32,7 +32,7 @@ pub async fn execute(
     let id = query.id;
     let project = get_active_project::execute(
         GetActiveProject {
-            id: id.project_id(),
+            id: id.project_id().clone(),
         },
         pool,
     )

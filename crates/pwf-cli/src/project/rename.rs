@@ -10,7 +10,9 @@ use pwf_models::project::{
 use pwf_wire::project::ProjectFields;
 use sqlx::SqlitePool;
 
-use super::{output, parse_project_id};
+use super::{
+    output, parse_project_id, parse_project_source, parse_project_tasks, parse_project_title,
+};
 
 #[derive(Args, Debug)]
 pub struct Arguments {
@@ -54,24 +56,4 @@ pub(super) async fn run(
     .await
     .map_err(|error| error.to_string())?;
     output::project(renamed)
-}
-
-fn parse_project_title(raw: &str) -> Result<ProjectName, String> {
-    ProjectName::try_new(raw.to_string()).map_err(|_| {
-        if raw.trim().eq_ignore_ascii_case("project") {
-            "project title is reserved".to_string()
-        } else {
-            "project title must not be blank".to_string()
-        }
-    })
-}
-
-fn parse_project_source(raw: &str) -> Result<ProjectSourceValue, String> {
-    ProjectSourceValue::try_new(raw.to_string())
-        .map_err(|_| "project source value must not be blank".to_string())
-}
-
-fn parse_project_tasks(raw: &str) -> Result<ProjectTasksPath, String> {
-    ProjectTasksPath::try_new(raw.to_string())
-        .map_err(|_| "project tasks path must not be blank".to_string())
 }

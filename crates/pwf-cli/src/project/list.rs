@@ -11,7 +11,7 @@ pub struct Arguments {}
 pub(super) async fn run(_arguments: Arguments, pool: &SqlitePool) -> Result<String, String> {
     let projects = list_projects::execute(
         ListProjects {
-            status: ProjectStatusFilter::ALL,
+            status: ProjectStatusFilter::IncludingPaused,
         },
         pool,
     )

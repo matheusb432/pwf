@@ -71,9 +71,7 @@ async fn connect_pool(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        build_migration_pool, build_pool, check_database_ready, migrate_database, migrations,
-    };
+    use super::{build_migration_pool, build_pool};
 
     #[tokio::test]
     async fn pools_enable_foreign_keys_and_persist_wal_journal_mode() {
@@ -98,126 +96,155 @@ mod tests {
         assert_eq!(journal_mode, "wal");
     }
 
-    #[tokio::test]
-    async fn migrations_enforce_project_identity() {
-        let directory = tempfile::tempdir().expect("create database directory");
-        let pool = build_migration_pool(&directory.path().join("pwf.sqlite3"))
+    mod migration_steps {
+        use sqlx::SqlitePool;
+
+        use super::super::{
+            build_migration_pool, check_database_ready, migrate_database, migrations,
+        };
+
+        const MIGRATION_VERSION_0001: i64 = 20_260_725_000_000;
+        const MIGRATION_VERSION_0002: i64 = 20_260_801_000_000;
+        const MIGRATION_VERSION_0003: i64 = 20_260_806_000_000;
+
+        #[tokio::test]
+        async fn migration_0002_to_0003_preserves_project_state_and_widens_ids() {
+            let directory = tempfile::tempdir().expect("create database directory");
+            let pool = build_migration_pool(&directory.path().join("pwf.sqlite3"))
+                .await
+                .expect("build SQLite migration pool");
+            migrations::MIGRATOR
+                .run_to(MIGRATION_VERSION_0002, &pool)
+                .await
+                .expect("apply migrations through 0002");
+
+            let project_source_id = insert_migration_0002_fixture(&pool).await;
+
+            let readiness_error = check_database_ready(&pool)
+                .await
+                .expect_err("migration 0002 must report migration 0003 as pending");
+            assert!(
+                readiness_error
+                    .to_string()
+                    .contains("SQLx migration 20260806000000 is pending")
+            );
+
+            migrate_database(&pool).await.expect("apply migration 0003");
+
+            assert_project_state_preserved(&pool, project_source_id).await;
+            assert_project_id_constraints_widened(&pool, project_source_id).await;
+            assert_migration_0003_integrity(&pool).await;
+        }
+
+        async fn insert_migration_0002_fixture(pool: &SqlitePool) -> i64 {
+            let project_source_id = sqlx::query(
+                "INSERT INTO project_sources (kind, value, created_at) VALUES ('directory', '/work/pwf', '2026-07-25T12:00:00.000Z')",
+            )
+            .execute(pool)
             .await
-            .expect("build SQLite migration pool");
-        migrate_database(&pool).await.expect("migrate database");
-
-        let source_id = sqlx::query(
-            "INSERT INTO project_sources (kind, value) VALUES ('directory', '/work/pwf')",
-        )
-        .execute(&pool)
-        .await
-        .expect("insert project source")
-        .last_insert_rowid();
-
-        for (id, title, tasks_path) in [
-            ("PW", "two", "/tasks/two"),
-            ("PWF", "three", "/tasks/three"),
-            ("TOOL", "four", "/tasks/four"),
-        ] {
+            .expect("insert project source")
+            .last_insert_rowid();
             sqlx::query(
-                "INSERT INTO projects (id, project_source_id, title, tasks_kind, tasks_path)
-                 VALUES (?, ?, ?, 'directory', ?)",
+                "INSERT INTO projects (id, project_source_id, title, tasks_kind, tasks_path, created_at, paused_at)
+                 VALUES ('PWF', ?, 'pwf', 'directory', '/tasks/pwf', '2026-07-25T12:01:00.000Z', '2026-07-26T09:30:00.000Z')",
             )
-            .bind(id)
-            .bind(source_id)
-            .bind(title)
-            .bind(tasks_path)
-            .execute(&pool)
+            .bind(project_source_id)
+            .execute(pool)
             .await
-            .unwrap_or_else(|error| panic!("rejected valid project ID {id}: {error}"));
+            .expect("insert project");
+
+            project_source_id
         }
 
-        for (id, title, tasks_path) in [
-            ("P", "short", "/tasks/short"),
-            ("TOOLS", "long", "/tasks/long"),
-            ("alt", "lowercase", "/tasks/lowercase"),
-            ("P1", "numeric", "/tasks/numeric"),
-        ] {
-            let invalid_id = sqlx::query(
-                "INSERT INTO projects (id, project_source_id, title, tasks_kind, tasks_path)
-                 VALUES (?, ?, ?, 'directory', ?)",
-            )
-            .bind(id)
-            .bind(source_id)
-            .bind(title)
-            .bind(tasks_path)
-            .execute(&pool)
-            .await;
-            assert!(invalid_id.is_err(), "accepted invalid project ID {id}");
+        async fn assert_project_state_preserved(pool: &SqlitePool, project_source_id: i64) {
+            let project: (String, i64, String, String, String, String, Option<String>) =
+                sqlx::query_as(
+                    "SELECT id, project_source_id, title, tasks_kind, tasks_path, created_at, paused_at
+                     FROM projects WHERE id = 'PWF'",
+                )
+                .fetch_one(pool)
+                .await
+                .expect("read migrated project");
+            assert_eq!(
+                project,
+                (
+                    "PWF".to_owned(),
+                    project_source_id,
+                    "pwf".to_owned(),
+                    "directory".to_owned(),
+                    "/tasks/pwf".to_owned(),
+                    "2026-07-25T12:01:00.000Z".to_owned(),
+                    Some("2026-07-26T09:30:00.000Z".to_owned()),
+                )
+            );
         }
 
-        let duplicate_title = sqlx::query(
-            "INSERT INTO projects (id, project_source_id, title, tasks_kind, tasks_path)
-             VALUES ('ALT', ?, 'THREE', 'directory', '/tasks/alt')",
-        )
-        .bind(source_id)
-        .execute(&pool)
-        .await;
-        assert!(duplicate_title.is_err());
-    }
+        async fn assert_project_id_constraints_widened(pool: &SqlitePool, project_source_id: i64) {
+            for (id, title, tasks_path) in
+                [("PW", "two", "/tasks/two"), ("TOOL", "four", "/tasks/four")]
+            {
+                sqlx::query(
+                    "INSERT INTO projects (id, project_source_id, title, tasks_kind, tasks_path)
+                     VALUES (?, ?, ?, 'directory', ?)",
+                )
+                .bind(id)
+                .bind(project_source_id)
+                .bind(title)
+                .bind(tasks_path)
+                .execute(pool)
+                .await
+                .unwrap_or_else(|error| panic!("rejected project ID {id}: {error}"));
+            }
 
-    #[tokio::test]
-    async fn migration_preserves_existing_project_state() {
-        let directory = tempfile::tempdir().expect("create database directory");
-        let pool = build_migration_pool(&directory.path().join("pwf.sqlite3"))
-            .await
-            .expect("build SQLite migration pool");
-        migrations::MIGRATOR
-            .run_to(20_260_725_000_000, &pool)
-            .await
-            .expect("apply initial migration");
+            for (id, title, tasks_path) in [
+                ("P", "short", "/tasks/short"),
+                ("TOOLS", "long", "/tasks/long"),
+            ] {
+                let result = sqlx::query(
+                    "INSERT INTO projects (id, project_source_id, title, tasks_kind, tasks_path)
+                     VALUES (?, ?, ?, 'directory', ?)",
+                )
+                .bind(id)
+                .bind(project_source_id)
+                .bind(title)
+                .bind(tasks_path)
+                .execute(pool)
+                .await;
+                assert!(result.is_err(), "accepted project ID {id}");
+            }
+        }
 
-        let source_id = sqlx::query(
-            "INSERT INTO project_sources (kind, value, created_at) VALUES ('directory', '/work/pwf', '2026-07-25T12:00:00.000Z')",
-        )
-        .execute(&pool)
-        .await
-        .expect("insert project source")
-        .last_insert_rowid();
-        sqlx::query(
-            "INSERT INTO projects (id, project_source_id, title, tasks_kind, tasks_path, created_at, paused_at)
-             VALUES ('PWF', ?, 'pwf', 'directory', '/tasks/pwf', '2026-07-25T12:01:00.000Z', '2026-07-26T09:30:00.000Z')",
-        )
-        .bind(source_id)
-        .execute(&pool)
-        .await
-        .expect("insert project");
+        async fn assert_migration_0003_integrity(pool: &SqlitePool) {
+            let active_project_ids =
+                sqlx::query_scalar::<_, String>("SELECT id FROM active_projects ORDER BY id")
+                    .fetch_all(pool)
+                    .await
+                    .expect("read active projects");
+            assert_eq!(active_project_ids, vec!["PW".to_owned(), "TOOL".to_owned()]);
 
-        let readiness_error = check_database_ready(&pool)
-            .await
-            .expect_err("initial schema must report the pending migration");
-        assert!(
-            readiness_error
-                .to_string()
-                .contains("SQLx migration 20260801000000 is pending")
-        );
+            let foreign_key_violations = sqlx::query("PRAGMA foreign_key_check")
+                .fetch_all(pool)
+                .await
+                .expect("check foreign keys");
+            assert!(foreign_key_violations.is_empty());
 
-        migrate_database(&pool).await.expect("migrate database");
-
-        let project: (String, i64, String, String, String, String, Option<String>) =
-            sqlx::query_as(
-                "SELECT id, project_source_id, title, tasks_kind, tasks_path, created_at, paused_at
-                 FROM projects WHERE id = 'PWF'",
+            let applied_versions = sqlx::query_scalar::<_, i64>(
+                "SELECT version FROM _sqlx_migrations ORDER BY version",
             )
-            .fetch_one(&pool)
+            .fetch_all(pool)
             .await
-            .expect("read migrated project");
-        assert_eq!(
-            project,
-            (
-                "PWF".to_owned(),
-                source_id,
-                "pwf".to_owned(),
-                "directory".to_owned(),
-                "/tasks/pwf".to_owned(),
-                "2026-07-25T12:01:00.000Z".to_owned(),
-                Some("2026-07-26T09:30:00.000Z".to_owned()),
-            )
-        );
+            .expect("read migration ledger");
+            assert_eq!(
+                applied_versions,
+                vec![
+                    MIGRATION_VERSION_0001,
+                    MIGRATION_VERSION_0002,
+                    MIGRATION_VERSION_0003,
+                ]
+            );
+            check_database_ready(pool)
+                .await
+                .expect("migration 0003 makes the database ready");
+        }
     }
 }

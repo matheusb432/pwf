@@ -17,30 +17,21 @@ pub(in crate::task) fn render_session_confirmation(confirmation: &DispatchConfir
     };
     let fields = [
         Field::new("task_id", &confirmation.task_id),
-        Field::new("title", confirmation.title.clone()),
+        Field::new("title", confirmation.title.to_string()),
         Field::new(
             "created",
             confirmation
                 .created
-                .clone()
-                .unwrap_or_else(|| UNKNOWN_CREATED.to_string()),
+                .as_ref()
+                .map_or_else(|| UNKNOWN_CREATED.to_string(), ToString::to_string),
         ),
         Field::new("mode", mode),
         Field::new("agent", agent_name(confirmation.agent)),
-        Field::new("model", confirmation.model.clone()),
+        Field::new("model", confirmation.model.to_string()),
         Field::new("effort", confirmation.effort.to_string()),
-        Field::new(
-            "autonomy",
-            Enabled::from(confirmation.directives.autonomous).label(),
-        ),
-        Field::new(
-            "worktree",
-            Enabled::from(confirmation.directives.worktree).label(),
-        ),
-        Field::new(
-            "prompt prefix",
-            Enabled::from(confirmation.has_pushed_prompt).label(),
-        ),
+        Field::new("autonomy", yes_no(confirmation.directives.autonomous)),
+        Field::new("worktree", yes_no(confirmation.directives.worktree)),
+        Field::new("prompt prefix", yes_no(confirmation.has_pushed_prompt)),
         Field::new("target", target),
     ];
     ConfirmationPrompt::new(
@@ -51,34 +42,20 @@ pub(in crate::task) fn render_session_confirmation(confirmation: &DispatchConfir
     .to_string()
 }
 
-#[derive(Clone, Copy)]
-enum Enabled {
-    Yes,
-    No,
-}
-
-impl Enabled {
-    fn label(self) -> &'static str {
-        match self {
-            Enabled::Yes => "yes",
-            Enabled::No => "no",
-        }
-    }
-}
-
-impl From<bool> for Enabled {
-    fn from(value: bool) -> Self {
-        if value { Enabled::Yes } else { Enabled::No }
-    }
+fn yes_no(enabled: bool) -> &'static str {
+    if enabled { "yes" } else { "no" }
 }
 
 #[cfg(test)]
 mod tests {
     use pwf_models::{
-        session::{Agent, DispatchMode, LaunchDirectives, SessionEffort},
-        task::TaskId,
+        session::{Agent, AgentModel, DispatchMode, LaunchDirectives, SessionEffort},
+        task::{TaskId, TaskTitle},
     };
-    use pwf_wire::task::session::{DispatchConfirmation, DispatchTarget};
+    use pwf_wire::task::{
+        TaskHeading,
+        session::{DispatchConfirmation, DispatchTarget},
+    };
 
     use super::*;
 
@@ -86,8 +63,8 @@ mod tests {
     fn question_renders_dispatch_context_metadata_without_the_prompt_body() {
         let confirmation = DispatchConfirmation {
             task_id: TaskId::try_new("PWF-0001").unwrap(),
-            title: "dispatch me".to_string(),
-            created: Some("2026-07-01".to_string()),
+            title: TaskHeading::Title(TaskTitle::try_new("dispatch me").unwrap()),
+            created: Some("2026-07-01".parse().unwrap()),
             mode: DispatchMode::Inline,
             agent: Agent::Codex,
             directives: LaunchDirectives {
@@ -98,7 +75,7 @@ mod tests {
             target: DispatchTarget {
                 task_id: TaskId::try_new("PWF-0001").unwrap(),
             },
-            model: String::default(),
+            model: AgentModel::default(),
             effort: SessionEffort::XHigh,
         };
 
@@ -121,7 +98,7 @@ mod tests {
     fn tmux_mode_targets_the_named_session_and_falls_back_on_missing_created() {
         let confirmation = DispatchConfirmation {
             task_id: TaskId::try_new("PWF-0001").unwrap(),
-            title: "dispatch me".to_string(),
+            title: TaskHeading::Title(TaskTitle::try_new("dispatch me").unwrap()),
             created: None,
             mode: DispatchMode::Multiplexer,
             agent: Agent::Claude,
@@ -130,7 +107,7 @@ mod tests {
             target: DispatchTarget {
                 task_id: TaskId::try_new("PWF-0001").unwrap(),
             },
-            model: String::default(),
+            model: AgentModel::default(),
             effort: SessionEffort::High,
         };
 

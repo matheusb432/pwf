@@ -1,21 +1,18 @@
+use std::num::NonZeroUsize;
+
 use clap::Args;
 use pwf_application::{
     project::resolve_project::ResolveProjectError,
-    task::{
-        ListMode, ListSection, OrderDirection, OrderField, OrderSpec,
-        list_tasks::{self, ListTasks, ListTasksError},
-    },
+    task::list_tasks::{self, ListTasks, ListTasksError},
 };
 use pwf_infra::obsidian::ObsidianStore;
 use pwf_models::{
     project::ProjectSelector,
-    task::{TagInput, Tags},
+    task::{TagInput, TaskTags},
 };
+use pwf_wire::task::{ListDetail, ListMode, ListScope, OrderDirection, OrderField, OrderSpec};
 
-use super::{
-    render::render_list,
-    shared::{EffortChoice, SectionChoice, StatusChoice, TaskError},
-};
+use super::{EffortChoice, SectionChoice, StatusChoice, TaskError, render::render_list};
 use crate::console::Console;
 
 #[derive(Args, Debug)]
@@ -66,17 +63,17 @@ pub(super) async fn run(
     let result = list_tasks::execute(
         &ListTasks {
             project_selector: arguments.project.clone(),
-            section: arguments.section.map(|section| match section {
-                SectionChoice::Future => ListSection::Future,
-                SectionChoice::Human => ListSection::Human,
-            }),
-            all: arguments.all,
-            number: arguments.number,
+            scope: list_scope(arguments),
+            number: arguments.number.and_then(NonZeroUsize::new),
             effort: arguments.effort.map(Into::into),
-            tags: Tags::from_inputs(&arguments.tag),
+            tags: TaskTags::from_inputs(&arguments.tag),
             order: arguments.order,
             status: arguments.status.map(StatusChoice::filter),
-            include_prerequisite_statuses: arguments.long,
+            detail: if arguments.long {
+                ListDetail::Detailed
+            } else {
+                ListDetail::Summary
+            },
             mode: arguments.mode,
         },
         store,
@@ -87,24 +84,19 @@ pub(super) async fn run(
     .map_err(map_list_tasks_error)?;
     let location = result.project_task_path.as_ref().map_or_else(
         || "managed project task paths".to_string(),
-        |path| path.display().to_string(),
+        ToString::to_string,
     );
-    Ok(render_list(
-        &result,
-        &location,
-        result.status_filter,
-        arguments.long,
-        result.grouped,
-        console.color(),
-    ))
+    Ok(render_list(&result, &location, console.color()))
 }
 
-fn map_project_resolution_error(error: ResolveProjectError) -> TaskError {
-    match error {
-        ResolveProjectError::Unknown { selector, known } => {
-            TaskError::UnknownManagedProject { selector, known }
-        }
-        ResolveProjectError::Unexpected { .. } => TaskError::ApplicationRead(error.to_string()),
+fn list_scope(arguments: &Arguments) -> ListScope {
+    if arguments.all {
+        return ListScope::All;
+    }
+    match arguments.section {
+        Some(SectionChoice::Future) => ListScope::Future,
+        Some(SectionChoice::Human) => ListScope::Human,
+        None => ListScope::Default,
     }
 }
 
@@ -136,13 +128,10 @@ fn parse_order(value: &str) -> Result<OrderSpec, String> {
 
 fn map_list_tasks_error(error: ListTasksError) -> TaskError {
     match error {
-        ListTasksError::ResolveProject(error) => map_project_resolution_error(error),
-        ListTasksError::ReadStore(source)
-        | ListTasksError::ReadProjectTaskPath(source)
-        | ListTasksError::QueryProject(source) => TaskError::ApplicationList(source.to_string()),
-        invalid @ ListTasksError::InvalidTags { .. } => {
-            TaskError::ApplicationList(invalid.to_string())
+        ListTasksError::ResolveProject(ResolveProjectError::Unknown { selector, known }) => {
+            TaskError::UnknownManagedProject { selector, known }
         }
+        error => TaskError::List(error),
     }
 }
 

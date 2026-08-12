@@ -4,7 +4,7 @@ use std::{ffi::OsString, time::Duration};
 
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand, ValueEnum};
-use xtk_test::{Run, Test, summary};
+use xtk_test::{OutputPath, Run, Test, TestCountDiscovery, surface};
 
 use crate::{process, task::Step};
 
@@ -29,9 +29,6 @@ struct TestOutputArguments {
     /// Emit one JSON report to stdout.
     #[arg(long)]
     json: bool,
-    /// Provide an evidence directory to E2E tests and save report.json.
-    #[arg(long)]
-    evidences: bool,
 }
 
 #[derive(Args)]
@@ -94,7 +91,7 @@ fn run_scope(scope: Scope, output: TestOutputArguments) -> Result<()> {
     Run::try_new(scope.to_string(), declarations)?
         .verbose(output.verbose)
         .json(output.json)
-        .evidences_from_cargo_manifest(output.evidences, include_str!("../../Cargo.toml"))?
+        .output_path(OutputPath::default())
         .execute()?;
 
     Ok(())
@@ -164,19 +161,18 @@ fn selected_tests(scope: Scope, executable: OsString) -> Result<Vec<xtk_test::Te
 
 fn tests_unit() -> Result<Vec<Test>> {
     Ok(vec![
-        Test::try_new("unit", "cargo")?
+        Test::try_new("unit", surface::CARGO, "cargo")?
             .args(["test", "--quiet", "--workspace"])
-            .verbose_arguments(["--", "--nocapture"])
-            .summary_parser(summary::cargo),
+            .test_count_discovery(TestCountDiscovery::CARGO_TEST_HARNESS)
+            .verbose_arguments(["--", "--nocapture"]),
     ])
 }
 
 fn tests_e2e(executable: OsString) -> Result<Vec<Test>> {
     Ok(vec![
-        Test::try_new("e2e", executable)?
+        Test::try_new("e2e", surface::OPAQUE, executable)?
             .arg("e2e-worker")
             .verbose_arguments(["--verbose"])
-            .accepts_evidences()
             .timeout(E2E_TIMEOUT),
     ])
 }
@@ -185,9 +181,14 @@ fn tests_all(executable: OsString) -> Result<Vec<Test>> {
     let mut tests = tests_unit()?;
     tests.extend(tests_e2e(executable.clone())?);
     tests.extend([
-        Test::try_new("architecture", executable)?.arg("check-architecture"),
-        Test::try_new("ast-rules", "ast-grep")?.args(["test", "--skip-snapshot-tests"]),
-        Test::try_new("ast-scan", "ast-grep")?.args(["scan", "--globs", "!xtask/xtk_test/**"]),
+        Test::try_new("architecture", surface::OPAQUE, executable)?.arg("check-architecture"),
+        Test::try_new("ast-rules", surface::OPAQUE, "ast-grep")?
+            .args(["test", "--skip-snapshot-tests"]),
+        Test::try_new("ast-scan", surface::OPAQUE, "ast-grep")?.args([
+            "scan",
+            "--globs",
+            "!xtask/xtk_test/**",
+        ]),
     ]);
     Ok(tests)
 }

@@ -4,14 +4,14 @@ use std::{
 };
 
 use pwf_models::project::{
-    ProjectId, ProjectIndexIdentity, ProjectName, ProjectSource, ProjectTasks,
+    ProjectId, ProjectIndexIdentity, ProjectName, ProjectSource, ProjectTasks, ProjectTasksPath,
 };
 use pwf_wire::project::{ProjectFields, ProjectStatusFilter};
 
 use super::{
-    Project, ProjectRow, ProjectRowError,
+    Project, ProjectRow,
     get_project::{self, GetProject, GetProjectError},
-    resolve_runtime_path::{self, ResolveRuntimePath},
+    runtime_path,
     task_location::{self, TaskLocationError},
 };
 use crate::ports::project_task_files::{
@@ -44,9 +44,9 @@ pub enum RenameProjectError {
     )]
     InvalidTaskPath {
         project_id: ProjectId,
-        path: String,
+        path: ProjectTasksPath,
         #[source]
-        source: super::resolve_runtime_path::RuntimePathError,
+        source: super::runtime_path::RuntimePathError,
     },
     #[error(
         "project rename failed: managed projects {first_id} and {second_id} resolve to the same task location: {}",
@@ -105,7 +105,7 @@ pub async fn execute(
     let current = get_project::execute(
         GetProject {
             id: command.current_id.clone(),
-            status: ProjectStatusFilter::ALL,
+            status: ProjectStatusFilter::IncludingPaused,
         },
         pool,
     )
@@ -184,7 +184,7 @@ async fn rename_registry(
     let existing = other_task_locations(&mut transaction, &command.current_id).await?;
     task_location::reject_collision(
         &command.fields.id,
-        command.fields.tasks.path().as_ref(),
+        command.fields.tasks.path(),
         existing,
         &command.home,
     )
@@ -214,7 +214,7 @@ async fn rename_registry(
     .await
     .map_err(|error| unexpected("reading renamed project", error))?;
     let project = super::project_from_row(row)
-        .map_err(|error| unexpected_row("converting renamed project", error))?;
+        .map_err(|error| unexpected("converting renamed project", error))?;
     transaction
         .commit()
         .await
@@ -316,16 +316,13 @@ fn resolve_tasks_path(
     tasks: &ProjectTasks,
     home: &Path,
 ) -> Result<PathBuf, RenameProjectError> {
-    resolve_runtime_path::execute(&ResolveRuntimePath {
-        path: tasks.path().as_ref().to_string(),
-        home: home.to_path_buf(),
-    })
-    .map(|resolved| resolved.path().to_path_buf())
-    .map_err(|source| RenameProjectError::InvalidTaskPath {
-        project_id: project_id.clone(),
-        path: tasks.path().as_ref().to_string(),
-        source,
-    })
+    runtime_path::resolve(tasks.path().as_ref(), home)
+        .map(|resolved| resolved.path().to_path_buf())
+        .map_err(|source| RenameProjectError::InvalidTaskPath {
+            project_id: project_id.clone(),
+            path: tasks.path().clone(),
+            source,
+        })
 }
 
 fn project_fields(project: &Project) -> ProjectFields {
@@ -370,7 +367,7 @@ async fn validate_identity(
         });
     };
     let current = super::project_from_row(current_row)
-        .map_err(|error| unexpected_row("converting source project", error))?;
+        .map_err(|error| unexpected("converting source project", error))?;
     if current != *expected_current {
         return Err(RenameProjectError::SourceProjectChanged {
             id: command.current_id.clone(),
@@ -417,7 +414,7 @@ async fn validate_identity(
 async fn other_task_locations(
     transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     current_id: &ProjectId,
-) -> Result<Vec<(ProjectId, String)>, RenameProjectError> {
+) -> Result<Vec<(ProjectId, ProjectTasksPath)>, RenameProjectError> {
     sqlx::query_as::<_, (String, String)>(
         "SELECT id, tasks_path FROM projects WHERE id != ? ORDER BY id ASC",
     )
@@ -427,9 +424,11 @@ async fn other_task_locations(
     .map_err(|error| unexpected("reading project task locations", error))?
     .into_iter()
     .map(|(id, tasks_path)| {
-        ProjectId::try_new(id)
-            .map(|id| (id, tasks_path))
-            .map_err(|error| unexpected("converting project task location", error))
+        let id = ProjectId::try_new(id)
+            .map_err(|error| unexpected("converting project task location id", error))?;
+        let tasks_path = ProjectTasksPath::try_new(tasks_path)
+            .map_err(|error| unexpected("converting project task location path", error))?;
+        Ok((id, tasks_path))
     })
     .collect()
 }
@@ -465,10 +464,6 @@ fn unexpected(
         context,
         source: Box::new(source),
     }
-}
-
-fn unexpected_row(context: &'static str, source: ProjectRowError) -> RenameProjectError {
-    unexpected(context, source)
 }
 
 #[cfg(test)]
@@ -581,7 +576,7 @@ mod tests {
         assert_eq!(renamed.title.as_ref(), "mimux");
         assert_eq!(renamed.source.value().as_ref(), "/self/mimux");
         assert_eq!(renamed.tasks.path().as_ref(), "/pwf-db/self/mimux");
-        assert_eq!(renamed.created_at, "2026-07-26T00:00:00.000Z");
+        assert_eq!(renamed.created_at.as_ref(), "2026-07-26T00:00:00.000Z");
         assert!(renamed.is_paused);
         pool.close().await;
     }

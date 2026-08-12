@@ -8,20 +8,22 @@ use std::{
 
 pub(crate) use database::{MIGRATOR, insert_project};
 use pwf_models::{
+    AppDate,
     note::{NoteId, ProjectNote},
     project::{
-        Project, ProjectId, ProjectSource, ProjectSourceKind, ProjectSourceValue, ProjectTasks,
-        ProjectTasksKind, ProjectTasksPath,
+        Project, ProjectId, ProjectName, ProjectSource, ProjectSourceKind, ProjectSourceValue,
+        ProjectTasks, ProjectTasksKind, ProjectTasksPath,
     },
-    task::{ProjectName, TaskId, TaskStatus, Timestamp},
+    task::{TaskId, TaskSection, TaskStatus, TaskTags},
 };
+use pwf_wire::task::RawTaskTags;
 
 use crate::ports::{
     clock::Clock,
     project_note::{NewProjectNote, ProjectNotePatch, ProjectNoteStore},
     task_record::{
-        IndexEntry, IndexEntryStore, IndexSection, IndexSectionStore, Materialization, NewTask,
-        NullablePatch, TaskPatch, TaskRecord, TaskStore,
+        IndexEntry, IndexEntryStore, IndexSectionStore, Materialization, NewTask, NullablePatch,
+        TaskPatch, TaskRecord, TaskStore,
     },
 };
 
@@ -29,8 +31,8 @@ use crate::ports::{
 pub(crate) struct FixedClock;
 
 impl Clock for FixedClock {
-    fn today(&self) -> Timestamp {
-        Timestamp::new("2026-07-26")
+    fn today(&self) -> AppDate {
+        app_date("2026-07-26")
     }
 }
 
@@ -38,10 +40,10 @@ impl Clock for FixedClock {
 struct InMemoryState {
     tasks: BTreeMap<ProjectName, Vec<TaskRecord>>,
     entries: BTreeMap<ProjectName, Vec<IndexEntry>>,
-    sections: BTreeMap<ProjectName, Vec<String>>,
+    sections: BTreeMap<ProjectName, Vec<TaskSection>>,
     project_ids: BTreeMap<ProjectName, ProjectId>,
     project_notes: BTreeMap<ProjectName, Vec<ProjectNote>>,
-    project_note_creations: BTreeMap<ProjectName, Vec<Timestamp>>,
+    project_note_creations: BTreeMap<ProjectName, Vec<AppDate>>,
     project_note_failures: Vec<ProjectNoteFailure>,
 }
 
@@ -88,7 +90,10 @@ impl InMemoryStore {
     pub fn with_sections(self, project: &str, labels: &[&str]) -> Self {
         self.lock().sections.insert(
             project_name(project),
-            labels.iter().map(|label| (*label).to_string()).collect(),
+            labels
+                .iter()
+                .map(|label| TaskSection::try_new(*label).expect("valid test section"))
+                .collect(),
         );
         self
     }
@@ -124,7 +129,7 @@ impl InMemoryStore {
             .unwrap_or_default()
     }
 
-    pub fn project_note_creations(&self, project: &str) -> Vec<Timestamp> {
+    pub fn project_note_creations(&self, project: &str) -> Vec<AppDate> {
         self.lock()
             .project_note_creations
             .get(&project_name(project))
@@ -158,9 +163,13 @@ pub(crate) fn project(project_id: &str, title: &str) -> Project {
             ProjectTasksKind::Directory,
             ProjectTasksPath::try_new(format!("/tasks/{title}")).unwrap(),
         ),
-        created_at: "2026-07-25T00:00:00.000Z".to_string(),
+        created_at: "2026-07-25T00:00:00.000Z".parse().unwrap(),
         is_paused: false,
     }
+}
+
+pub(crate) fn app_date(raw: impl AsRef<str>) -> AppDate {
+    raw.as_ref().parse().expect("valid test application date")
 }
 
 pub(crate) fn task_record(id: &str) -> TaskRecord {
@@ -168,12 +177,12 @@ pub(crate) fn task_record(id: &str) -> TaskRecord {
         id: TaskId::try_new(id).expect("valid test task ID"),
         title: "tray gui".to_string(),
         status: TaskStatus::Active,
-        created: Some(Timestamp::new("2026-01-01")),
+        created: Some(app_date("2026-01-01")),
         completed: None,
         commits: None,
         tags: None,
         effort: None,
-        prereq: None,
+        blocked_by: None,
         section: None,
         body: "\nbody\n".to_string(),
         source: "body".to_string(),
@@ -188,7 +197,7 @@ pub(crate) const PWF_0001_SOURCE: &str = "---\nid: PWF-0001\nstatus: active\ntit
 pub(crate) fn staged_task() -> (InMemoryStore, Vec<Project>) {
     let record = TaskRecord {
         title: "do the thing".to_string(),
-        created: Some(Timestamp::new("2026-06-20")),
+        created: Some(app_date("2026-06-20")),
         body: "\n## Goals\n- do the thing\n".to_string(),
         source: PWF_0001_SOURCE.to_string(),
         locator: "/notes/pwf/PWF-0001.md".to_string(),
@@ -246,14 +255,7 @@ impl TaskStore for InMemoryStore {
             .cloned()
             .expect("stage a project ID via with_project_id before insert");
         let tasks = state.tasks.entry(project.title.clone()).or_default();
-        let next = tasks
-            .iter()
-            .map(|task| &task.id)
-            .filter_map(|id| id.as_ref().split_once('-'))
-            .filter_map(|(_, number)| number.parse::<u32>().ok())
-            .max()
-            .unwrap_or(0)
-            + 1;
+        let next = tasks.iter().map(|task| task.id.number()).max().unwrap_or(0) + 1;
         let id = TaskId::try_new(format!("{project_id}-{next:04}")).expect("allocated id");
         let locator = format!("/mem/{}/{}.md", project.title.as_ref(), id.as_ref());
         let record = TaskRecord {
@@ -265,7 +267,7 @@ impl TaskStore for InMemoryStore {
             commits: None,
             tags: new.tags.map(|tags| render_tags(&tags)),
             effort: new.effort.map(|effort| effort.to_string()),
-            prereq: new.prereq.map(|prerequisites| prerequisites.to_string()),
+            blocked_by: new.blocked_by.map(|blocked_by| blocked_by.to_string()),
             section: None,
             body: new.body.clone(),
             source: new.body,
@@ -297,8 +299,8 @@ impl TaskStore for InMemoryStore {
             record.title = title.to_string();
         }
         apply_nullable_patch(
-            &mut record.prereq,
-            patch.prereq.map(|prerequisites| prerequisites.to_string()),
+            &mut record.blocked_by,
+            patch.blocked_by.map(|blocked_by| blocked_by.to_string()),
         );
         match patch.effort {
             NullablePatch::Unchanged => {}
@@ -319,14 +321,14 @@ impl TaskStore for InMemoryStore {
     }
 }
 
-fn render_tags(tags: &pwf_models::task::Tags) -> String {
-    format!(
+fn render_tags(tags: &TaskTags) -> RawTaskTags {
+    RawTaskTags::new(format!(
         "[{}]",
         tags.iter()
             .map(ToString::to_string)
             .collect::<Vec<_>>()
             .join(", ")
-    )
+    ))
 }
 
 fn apply_nullable_patch<T>(target: &mut Option<T>, patch: NullablePatch<T>) {
@@ -489,10 +491,10 @@ impl InMemoryStore {
     /// Replaces or appends an entry and creates its section when needed.
     fn upsert(&self, project: &Project, entry: IndexEntry) {
         let mut state = self.lock();
-        if !entry.section.is_empty() {
+        if let Some(section) = entry.section.as_ref() {
             let sections = state.sections.entry(project.title.clone()).or_default();
-            if !sections.iter().any(|label| label == &entry.section) {
-                sections.push(entry.section.clone());
+            if !sections.contains(section) {
+                sections.push(section.clone());
             }
         }
         let entries = state.entries.entry(project.title.clone()).or_default();
@@ -506,7 +508,7 @@ impl InMemoryStore {
 impl IndexSectionStore for InMemoryStore {
     type Error = InMemoryStoreError;
 
-    fn list_index_sections(&self, project: &Project) -> Result<Vec<IndexSection>, Self::Error> {
+    fn list_index_sections(&self, project: &Project) -> Result<Vec<TaskSection>, Self::Error> {
         Ok(self
             .lock()
             .sections
@@ -514,7 +516,6 @@ impl IndexSectionStore for InMemoryStore {
             .cloned()
             .unwrap_or_default()
             .into_iter()
-            .map(|label| IndexSection { label })
             .collect())
     }
 
@@ -522,21 +523,21 @@ impl IndexSectionStore for InMemoryStore {
     fn rename_index_section(
         &self,
         project: &Project,
-        current_label: &str,
-        new_label: &str,
+        current_label: &TaskSection,
+        new_label: &TaskSection,
     ) -> Result<(), Self::Error> {
         let mut state = self.lock();
         if let Some(sections) = state.sections.get_mut(&project.title) {
             for existing in sections.iter_mut() {
                 if existing == current_label {
-                    *existing = new_label.to_string();
+                    *existing = new_label.clone();
                 }
             }
         }
         if let Some(entries) = state.entries.get_mut(&project.title) {
             for entry in entries.iter_mut() {
-                if entry.section == current_label {
-                    entry.section = new_label.to_string();
+                if entry.section.as_ref() == Some(current_label) {
+                    entry.section = Some(new_label.clone());
                 }
             }
         }

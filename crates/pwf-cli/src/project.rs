@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use clap::{Args, Subcommand};
-use pwf_models::project::ProjectId;
+use pwf_models::project::{ProjectId, ProjectName, ProjectSourceValue, ProjectTasksPath};
 use sqlx::SqlitePool;
 
 pub mod add;
@@ -62,5 +62,18 @@ fn project_home(home: Option<PathBuf>) -> Result<PathBuf, String> {
 
 fn parse_project_id(raw: &str) -> Result<ProjectId, String> {
     ProjectId::try_new(raw)
-        .map_err(|_| "project id must contain exactly three ASCII letters".to_string())
+        .map_err(|_| "project id must contain two to four ASCII letters".to_string())
+}
+
+fn parse_project_title(raw: &str) -> Result<ProjectName, String> {
+    ProjectName::try_new(raw).map_err(|error| error.to_string())
+}
+
+fn parse_project_source(raw: &str) -> Result<ProjectSourceValue, String> {
+    ProjectSourceValue::try_new(raw)
+        .map_err(|_| "project source value must not be blank".to_string())
+}
+
+fn parse_project_tasks(raw: &str) -> Result<ProjectTasksPath, String> {
+    ProjectTasksPath::try_new(raw).map_err(|_| "project tasks path must not be blank".to_string())
 }

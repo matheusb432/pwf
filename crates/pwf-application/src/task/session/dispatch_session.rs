@@ -3,10 +3,10 @@
 use std::error::Error;
 
 use pwf_models::task::TaskId;
-use pwf_wire::task::session::{DispatchTarget, SessionPlan};
+use pwf_wire::task::session::{DispatchedSession, PreparedSessionDispatch, SessionPlan};
 use thiserror::Error;
 
-use super::{Agent, DispatchMode, plan_session::PreparedSessionDispatch};
+use super::DispatchMode;
 use crate::ports::{
     agent::{AgentClient, PreparedAgentLaunch},
     inline_agent_session::InlineAgentSessionClient,
@@ -15,18 +15,6 @@ use crate::ports::{
 
 pub struct DispatchSession {
     pub prepared: PreparedSessionDispatch,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DispatchSessionOk {
-    Inline {
-        task_id: TaskId,
-    },
-    WindowOpened {
-        target: DispatchTarget,
-        agent: Agent,
-        project_path: String,
-    },
 }
 
 #[derive(Debug, Error)]
@@ -58,7 +46,7 @@ pub fn execute(
     agent_client: &impl AgentClient,
     inline: &impl InlineAgentSessionClient,
     session_client: &impl SessionClient,
-) -> Result<DispatchSessionOk, DispatchSessionError> {
+) -> Result<DispatchedSession, DispatchSessionError> {
     let PreparedSessionDispatch { plan, .. } = command.prepared;
 
     let prepared = agent_client.prepare(&plan.launch).map_err(|source| {
@@ -87,7 +75,7 @@ fn dispatch_host(
     plan: &SessionPlan,
     inline: &impl InlineAgentSessionClient,
     session_client: &impl SessionClient,
-) -> Result<DispatchSessionOk, DispatchSessionError> {
+) -> Result<DispatchedSession, DispatchSessionError> {
     match plan.mode {
         DispatchMode::Inline => {
             let command =
@@ -95,7 +83,7 @@ fn dispatch_host(
             inline
                 .run(command, &plan.launch.project_path)
                 .map_err(|message| DispatchSessionError::InlineFailed { message })?;
-            Ok(DispatchSessionOk::Inline {
+            Ok(DispatchedSession::Inline {
                 task_id: plan.launch.task_id.clone(),
             })
         }
@@ -107,7 +95,7 @@ fn dispatch_multiplexer(
     argv: &[String],
     plan: &SessionPlan,
     session_client: &impl SessionClient,
-) -> Result<DispatchSessionOk, DispatchSessionError> {
+) -> Result<DispatchedSession, DispatchSessionError> {
     let session_name = plan.target.session_name();
     let agent_command =
         AgentCommand::try_new(argv).map_err(|_| DispatchSessionError::EmptyAgentCommand)?;
@@ -124,7 +112,7 @@ fn dispatch_multiplexer(
             window: plan.target.task_id.clone(),
             message,
         })?;
-    Ok(DispatchSessionOk::WindowOpened {
+    Ok(DispatchedSession::WindowOpened {
         target: plan.target.clone(),
         agent: plan.launch.agent,
         project_path: plan.launch.project_path.clone(),

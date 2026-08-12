@@ -1,56 +1,29 @@
+mod active_task;
 pub mod add_task;
+mod blocked_by;
 pub mod cancel_task;
-mod close_task;
 pub mod complete_task;
-mod create_task;
 pub mod edit_task;
-pub mod find_active_task;
+pub mod get_task;
 pub mod list_tasks;
 mod note_body;
-mod prerequisites;
 pub mod remove_task;
 pub mod reopen_task;
 pub mod resolve_task_project;
 pub mod session;
-pub mod show_task;
 mod tags;
+mod task_closure;
+mod task_creation;
 mod task_prompt;
 mod task_view;
 
-pub use add_task::AddTaskOk;
-pub use edit_task::EditTaskOk;
-pub use list_tasks::{
-    ListMode, ListSection, ListTasksOk, OrderDirection, OrderField, OrderSpec, StatusFilter,
-};
-pub use remove_task::RemovedTask;
-pub use show_task::ShowOutput;
+pub use task_closure::CloseTaskError;
 pub use task_prompt::{TaskLane, TaskLaneEdits, TaskLaneValueError, TaskLanes};
 
-/// Renders a prompt as Markdown while preserving placeholders and verbatim-authored prompts.
-#[must_use]
-pub fn note_body(prompt: &str) -> String {
-    note_body::render(prompt)
-}
-
-fn normalize_commit_ranges(values: &[String]) -> Option<String> {
-    let mut ranges = Vec::new();
-    for range in values
-        .iter()
-        .flat_map(|value| value.split(','))
-        .map(str::trim)
-        .filter(|range| !range.is_empty())
-    {
-        if !ranges.contains(&range) {
-            ranges.push(range);
-        }
-    }
-    (!ranges.is_empty()).then(|| ranges.join(", "))
-}
-
 fn infer_task_title(
-    prompt: &str,
+    prompt: &pwf_models::task::TaskPrompt,
 ) -> Result<pwf_models::task::TaskTitle, pwf_models::task::TaskTitleError> {
-    pwf_models::task::TaskTitle::try_new(prompt_lanes::parse(prompt).title)
+    pwf_models::task::TaskTitle::try_new(prompt_lanes::parse(prompt.as_ref()).title)
 }
 
 fn task_body_region(body: &str) -> &str {
@@ -66,56 +39,31 @@ fn section_alias(label: &str) -> Option<&'static str> {
     }
 }
 
-fn normalize_section_label(label: &str) -> String {
-    section_alias(label).map_or_else(|| label.trim().to_string(), str::to_string)
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TaskSection {
-    Human,
-}
-
-impl TaskSection {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Human => "Human",
-        }
+fn normalize_section_label(label: &pwf_models::task::TaskSection) -> pwf_models::task::TaskSection {
+    match section_alias(label.as_ref()) {
+        Some("Future") => pwf_models::task::TaskSection::future(),
+        Some("Human") => pwf_models::task::TaskSection::human(),
+        Some("Low-prio") => pwf_models::task::TaskSection::low_priority(),
+        Some(_) | None => label.clone(),
     }
 }
 
 fn created_task_output(
     project: &pwf_models::project::Project,
-    created: create_task::CreatedTask,
-) -> add_task::AddTaskOk {
-    let id = created.record.id.clone();
-    add_task::AddTaskOk {
-        id,
-        project: project.title.to_string(),
-        title: created.record.title,
-        note_path: std::path::PathBuf::from(created.record.locator),
+    created: task_creation::CreatedTask,
+) -> pwf_wire::task::AddedTask {
+    pwf_wire::task::AddedTask {
+        id: created.id,
+        project: project.title.clone(),
+        title: created.title,
+        note_path: created.note_path,
         created_section: created.created_section,
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_commit_ranges, normalize_section_label, section_alias};
-
-    #[test]
-    fn repeated_raw_ranges_are_normalized_in_first_seen_order() {
-        let values = [" a..b,c..d ", "a..b", "", " e..f "]
-            .map(str::to_string)
-            .to_vec();
-
-        assert_eq!(
-            normalize_commit_ranges(&values).as_deref(),
-            Some("a..b, c..d, e..f")
-        );
-        assert_eq!(
-            normalize_commit_ranges(&[String::new(), "  , ".to_string()]),
-            None
-        );
-    }
+    use super::{normalize_section_label, section_alias};
 
     #[test]
     fn section_aliases_map_only_known_labels() {
@@ -124,6 +72,7 @@ mod tests {
         assert_eq!(section_alias("HUMAN"), Some("Human"));
         assert_eq!(section_alias("low-priority"), Some("Low-prio"));
         assert_eq!(section_alias("Someday"), None);
-        assert_eq!(normalize_section_label(" SomeDay "), "SomeDay");
+        let someday = " SomeDay ".parse().unwrap();
+        assert_eq!(normalize_section_label(&someday).as_ref(), "SomeDay");
     }
 }

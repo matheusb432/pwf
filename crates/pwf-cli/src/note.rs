@@ -1,19 +1,27 @@
 //! Owns project-note parsing, request mapping, and execution.
 
-use std::fmt::Write;
+use std::{fmt::Write, str::FromStr};
 
 use clap::{Args, Subcommand};
 use pwf_application::{
     note::{
-        add_note::{self, AddNote, AddNoteOk},
-        list_notes::{self, ListNotes, ListNotesOk},
-        remove_note::{self, RemoveNote, RemoveNoteOk},
-        update_note::{self, UpdateNote, UpdateNoteOk},
+        add_note::{self, AddNote},
+        list_notes::{self, ListNotes},
+        remove_note::{self, RemoveNote},
+        update_note::{self, UpdateNote},
     },
     ports::clock::Clock,
 };
 use pwf_infra::obsidian::ObsidianStore;
-use pwf_models::project::ProjectSelector;
+use pwf_models::{
+    AppDate,
+    note::{
+        NoteContent, NoteDomain, NoteSelector, NoteSource, NoteTag, NoteTitle, NoteVerification,
+        NoteWhy,
+    },
+    project::ProjectSelector,
+};
+use pwf_wire::note::{AddedNote, ListedNotes, RemovedNote, UpdatedNote};
 
 #[derive(Args, Debug)]
 pub struct Arguments {
@@ -27,7 +35,7 @@ pub struct Arguments {
 struct CommonArguments {
     /// Date stamp (YYYY-MM-DD); defaults to today.
     #[arg(long, global = true)]
-    date: Option<String>,
+    date: Option<AppDate>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -53,28 +61,28 @@ pub(crate) enum Command {
             required_unless_present_any = ["title", "content"],
             conflicts_with_all = ["title", "content"]
         )]
-        note: Option<String>,
+        note: Option<PositionalNote>,
         /// Note title
         #[arg(long, requires = "content", conflicts_with = "note")]
-        title: Option<String>,
+        title: Option<NoteTitle>,
         /// Markdown note content
         #[arg(long, requires = "title", conflicts_with = "note")]
-        content: Option<String>,
+        content: Option<NoteContent>,
         /// Why the insight changes future judgment
         #[arg(long)]
-        why: Option<String>,
+        why: Option<NoteWhy>,
         /// Subject classification
         #[arg(long)]
-        domain: Option<String>,
+        domain: Option<NoteDomain>,
         /// Discovery tag
         #[arg(long = "tag", value_name = "TAG")]
-        tags: Vec<String>,
+        tags: Vec<NoteTag>,
         /// Supporting source or evidence; repeat for several
         #[arg(long = "source", value_name = "SOURCE")]
-        sources: Vec<String>,
+        sources: Vec<NoteSource>,
         /// Verification date or marker
         #[arg(long)]
-        verified: Option<String>,
+        verified: Option<NoteVerification>,
     },
     /// Delete a note and strip its index link: `pwf note remove <proj> <id>`
     Remove {
@@ -83,7 +91,7 @@ pub(crate) enum Command {
         project: ProjectSelector,
         /// Note id: full `PWF-NOTE-0001`, `NOTE-0001`, or a bare `1`
         #[arg(value_name = "ID")]
-        id: String,
+        id: NoteSelector,
     },
     /// Replace a note's title: `pwf note update <proj> <id> "<title>"`
     Update {
@@ -92,11 +100,31 @@ pub(crate) enum Command {
         project: ProjectSelector,
         /// Note id: full `PWF-NOTE-0001`, `NOTE-0001`, or a bare `1`
         #[arg(value_name = "ID")]
-        id: String,
+        id: NoteSelector,
         /// Replacement title words
-        #[arg(value_name = "TITLE", required = true)]
+        #[arg(value_name = "TITLE", required = true, num_args = 1..)]
         title: Vec<String>,
     },
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct PositionalNote {
+    title: NoteTitle,
+    content: NoteContent,
+}
+
+impl FromStr for PositionalNote {
+    type Err = String;
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        let (title, content) = raw.split_once(" / ").ok_or_else(|| {
+            "Positional note must contain ' / ' between its title and content.".to_string()
+        })?;
+        Ok(Self {
+            title: NoteTitle::try_new(title).map_err(|error| error.to_string())?,
+            content: NoteContent::try_new(content).map_err(|error| error.to_string())?,
+        })
+    }
 }
 
 pub async fn run(
@@ -109,7 +137,7 @@ pub async fn run(
         Command::List { project, number } => list_notes::execute(
             ListNotes {
                 project_selector: project.clone(),
-                number: *number,
+                limit: (*number).into(),
             },
             store,
             pool,
@@ -128,19 +156,27 @@ pub async fn run(
             sources,
             verified,
         } => {
-            let (title, content) =
-                resolve_add_input(note.as_deref(), title.as_deref(), content.as_deref())?;
+            let (title, content) = match (note, title, content) {
+                (Some(note), None, None) => (note.title.clone(), note.content.clone()),
+                (None, Some(title), Some(content)) => (title.clone(), content.clone()),
+                _ => {
+                    return Err(
+                        "Provide either '<title> / <content>' or both --title and --content."
+                            .to_string(),
+                    );
+                }
+            };
             add_note::execute(
                 AddNote {
                     project_selector: project.clone(),
-                    title: title.to_string(),
-                    content: content.to_string(),
+                    title,
+                    content,
                     why: why.clone(),
                     domain: domain.clone(),
                     tags: tags.clone(),
                     sources: sources.clone(),
                     verified: verified.clone(),
-                    date: arguments.common.date.clone(),
+                    date: arguments.common.date,
                 },
                 store,
                 pool,
@@ -153,7 +189,7 @@ pub async fn run(
         Command::Remove { project, id } => remove_note::execute(
             RemoveNote {
                 project_selector: project.clone(),
-                id: id.clone(),
+                selector: id.clone(),
             },
             store,
             pool,
@@ -164,8 +200,8 @@ pub async fn run(
         Command::Update { project, id, title } => update_note::execute(
             UpdateNote {
                 project_selector: project.clone(),
-                id: id.clone(),
-                title: title.join(" "),
+                selector: id.clone(),
+                title: NoteTitle::try_new(title.join(" ")).map_err(|error| error.to_string())?,
             },
             store,
             pool,
@@ -176,21 +212,7 @@ pub async fn run(
     }
 }
 
-fn resolve_add_input<'a>(
-    note: Option<&'a str>,
-    title: Option<&'a str>,
-    content: Option<&'a str>,
-) -> Result<(&'a str, &'a str), String> {
-    match (note, title, content) {
-        (Some(note), None, None) => note.split_once(" / ").ok_or_else(|| {
-            "Positional note must contain ' / ' between its title and content.".to_string()
-        }),
-        (None, Some(title), Some(content)) => Ok((title, content)),
-        _ => Err("Provide either '<title> / <content>' or both --title and --content.".to_string()),
-    }
-}
-
-fn render_listed(result: &ListNotesOk) -> String {
+fn render_listed(result: &ListedNotes) -> String {
     if result.notes.is_empty() {
         return format!("No notes for {}.\n", result.project);
     }
@@ -208,28 +230,27 @@ fn render_listed(result: &ListNotesOk) -> String {
     output
 }
 
-fn render_added(result: &AddNoteOk) -> String {
+fn render_added(result: &AddedNote) -> String {
     format!("Added {} :: {}\n", result.id, result.title)
 }
 
-fn render_removed(result: &RemoveNoteOk) -> String {
+fn render_removed(result: &RemovedNote) -> String {
     format!("Removed {}\n", result.id)
 }
 
-fn render_updated(result: &UpdateNoteOk) -> String {
+fn render_updated(result: &UpdatedNote) -> String {
     format!("Updated {} :: {}\n", result.id, result.title)
 }
 
 #[cfg(test)]
 mod tests {
-    use pwf_application::note::{
-        add_note::AddNoteOk, list_notes::ListNotesOk, remove_note::RemoveNoteOk,
-        update_note::UpdateNoteOk,
+    use pwf_models::{
+        note::{NoteId, NoteTitle},
+        project::ProjectName,
     };
-    use pwf_models::{note::NoteId, task::ProjectName};
-    use pwf_wire::note::ListedNote;
+    use pwf_wire::note::{AddedNote, ListedNote, ListedNotes, RemovedNote, UpdatedNote};
 
-    use super::{render_added, render_listed, render_removed, render_updated, resolve_add_input};
+    use super::{PositionalNote, render_added, render_listed, render_removed, render_updated};
 
     fn identifier(number: u32) -> NoteId {
         NoteId::try_new(format!("PWF-NOTE-{number:04}")).unwrap()
@@ -238,20 +259,20 @@ mod tests {
     #[test]
     fn typed_results_render_the_existing_note_output_contract() {
         assert_eq!(
-            render_added(&AddNoteOk {
+            render_added(&AddedNote {
                 id: identifier(1),
-                title: "remember milk".to_string(),
+                title: NoteTitle::try_new("remember milk").unwrap(),
             }),
             "Added PWF-NOTE-0001 :: remember milk\n"
         );
         assert_eq!(
-            render_removed(&RemoveNoteOk { id: identifier(1) }),
+            render_removed(&RemovedNote { id: identifier(1) }),
             "Removed PWF-NOTE-0001\n"
         );
         assert_eq!(
-            render_updated(&UpdateNoteOk {
+            render_updated(&UpdatedNote {
                 id: identifier(1),
-                title: "remember oat milk".to_string(),
+                title: NoteTitle::try_new("remember oat milk").unwrap(),
             }),
             "Updated PWF-NOTE-0001 :: remember oat milk\n"
         );
@@ -261,7 +282,7 @@ mod tests {
     fn listed_results_render_empty_lines_and_hidden_hint() {
         let project = ProjectName::try_new("pwf").unwrap();
         assert_eq!(
-            render_listed(&ListNotesOk {
+            render_listed(&ListedNotes {
                 project: project.clone(),
                 notes: Vec::new(),
                 hidden: 0,
@@ -269,16 +290,16 @@ mod tests {
             "No notes for pwf.\n"
         );
         assert_eq!(
-            render_listed(&ListNotesOk {
+            render_listed(&ListedNotes {
                 project,
                 notes: vec![
                     ListedNote {
                         id: identifier(2),
-                        title: "second".to_string(),
+                        title: NoteTitle::try_new("second").unwrap(),
                     },
                     ListedNote {
                         id: identifier(1),
-                        title: "first".to_string(),
+                        title: NoteTitle::try_new("first").unwrap(),
                     },
                 ],
                 hidden: 3,
@@ -289,20 +310,15 @@ mod tests {
 
     #[test]
     fn positional_note_splits_once_on_the_exact_separator() {
+        let note = "using join / preserve docs/async.md / and later separators"
+            .parse::<PositionalNote>()
+            .unwrap();
+
+        assert_eq!(note.title.as_ref(), "using join");
         assert_eq!(
-            resolve_add_input(
-                Some("using join / preserve docs/async.md / and later separators"),
-                None,
-                None,
-            ),
-            Ok((
-                "using join",
-                "preserve docs/async.md / and later separators"
-            ))
+            note.content.as_ref(),
+            "preserve docs/async.md / and later separators"
         );
-        assert_eq!(
-            resolve_add_input(Some("title/content"), None, None),
-            Err("Positional note must contain ' / ' between its title and content.".to_string())
-        );
+        assert!("title/content".parse::<PositionalNote>().is_err());
     }
 }

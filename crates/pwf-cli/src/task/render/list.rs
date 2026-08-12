@@ -1,21 +1,16 @@
 use std::fmt::Write;
 
-use pwf_application::task::{ListTasksOk, StatusFilter};
 use pwf_models::task::TaskStatus;
-use pwf_wire::task::{PrerequisiteStatus, TaskView};
+use pwf_wire::task::{
+    BlockedByStatus, ListDetail, ListLayout, ListedTasks, StatusFilter, TaskView,
+};
 
 use super::{StatusPlacement, render_status, render_task_summary};
 
-pub(in crate::task) fn render_list(
-    result: &ListTasksOk,
-    location: &str,
-    status_filter: StatusFilter,
-    long: bool,
-    grouped: bool,
-    on: bool,
-) -> String {
+pub(in crate::task) fn render_list(result: &ListedTasks, location: &str, on: bool) -> String {
+    let long = result.detail == ListDetail::Detailed;
     if result.tasks.is_empty() {
-        return match status_filter {
+        return match result.status_filter {
             StatusFilter::Exact(TaskStatus::Active) => {
                 format!("No active task prompts found in {location}.\n")
             }
@@ -28,12 +23,19 @@ pub(in crate::task) fn render_list(
         };
     }
     let mut out = String::new();
-    if grouped {
-        render_grouped_list(&mut out, &result.tasks, status_filter, long, on);
+    if result.layout == ListLayout::BySection {
+        render_grouped_list(&mut out, &result.tasks, result.status_filter, long, on);
     } else {
         let last_idx = result.tasks.len() - 1;
         for (idx, task) in result.tasks.iter().enumerate() {
-            render_list_task(&mut out, task, status_filter, long, idx == last_idx, on);
+            render_list_task(
+                &mut out,
+                task,
+                result.status_filter,
+                long,
+                idx == last_idx,
+                on,
+            );
         }
     }
     if result.hidden > 0 {
@@ -99,7 +101,9 @@ fn render_grouped_list(
     for group in RENDER_GROUPS {
         let group_tasks: Vec<&TaskView> = tasks
             .iter()
-            .filter(|task| RenderGroup::from_section(task.section.as_deref()) == group)
+            .filter(|task| {
+                RenderGroup::from_section(task.section.as_ref().map(AsRef::as_ref)) == group
+            })
             .collect();
         if group_tasks.is_empty() {
             continue;
@@ -125,14 +129,14 @@ fn render_grouped_list(
     }
 }
 
-fn prerequisite_status_summary(statuses: &[PrerequisiteStatus]) -> String {
+fn blocked_by_status_summary(statuses: &[BlockedByStatus]) -> String {
     statuses
         .iter()
-        .map(|prerequisite| {
-            let status = prerequisite
+        .map(|blocked_by| {
+            let status = blocked_by
                 .status
                 .map_or_else(|| "missing".to_string(), |status| status.to_string());
-            format!("{} ({status})", prerequisite.id)
+            format!("{} ({status})", blocked_by.id)
         })
         .collect::<Vec<_>>()
         .join(", ")
@@ -151,7 +155,7 @@ fn render_list_task(
     } else {
         None
     };
-    let summary = render_task_summary(task.id.as_ref(), &task.session, status, on);
+    let summary = render_task_summary(task.id.as_ref(), task.heading.as_ref(), status, on);
     let formatted = if last && !long {
         summary
     } else {
@@ -163,25 +167,34 @@ fn render_list_task(
     }
     let _ = writeln!(out, "  status: {}", render_status(task.status, on));
     if task.status == TaskStatus::Active {
-        let launch = if task.launchable {
+        let launch = if task.launch.is_ready() {
             "READY"
         } else {
             "NEEDS ATTENTION"
         };
         let _ = writeln!(out, "  launch: {launch}");
-        if task.needs_prompt {
+        if task.launch.needs_prompt() {
             out.push_str("  launch: NEEDS PROMPT\n");
         }
     }
     let _ = writeln!(out, "  project_path: {}", task.project_path.as_ref());
-    let _ = writeln!(out, "  note: {}:{}", task.note, task.line);
-    let prompt = task.prompt.replace("\r\n", " / ").replace('\n', " / ");
+    let _ = writeln!(
+        out,
+        "  note: {}:{}",
+        task.location.index_path(),
+        task.location.line()
+    );
+    let prompt = task
+        .prompt
+        .as_ref()
+        .replace("\r\n", " / ")
+        .replace('\n', " / ");
     let _ = writeln!(out, "  prompt: {prompt}");
-    if !task.prerequisite_statuses.is_empty() {
+    if !task.blocked_by_statuses.is_empty() {
         let _ = writeln!(
             out,
-            "  prereq: {}",
-            prerequisite_status_summary(&task.prerequisite_statuses)
+            "  blocked_by: {}",
+            blocked_by_status_summary(&task.blocked_by_statuses)
         );
     }
     if let Some(e) = &task.effort {
@@ -191,14 +204,14 @@ fn render_list_task(
         let _ = writeln!(out, "  tags: {tags}");
     }
     if task.status == TaskStatus::Active {
-        for issue in &task.issues {
+        for issue in task.launch.issues() {
             let _ = writeln!(out, "  issue: {issue}");
         }
-        if !task.launchable {
+        if !task.launch.is_ready() {
             let _ = writeln!(
                 out,
                 "  fix: edit {} or update the managed project record",
-                task.note
+                task.location.index_path()
             );
         }
     }
@@ -206,33 +219,32 @@ fn render_list_task(
 
 #[cfg(test)]
 mod tests {
-    use pwf_application::task::StatusFilter;
     use pwf_models::{
-        project::ProjectSourceValue,
-        task::{TaskId, TaskStatus},
+        project::{ProjectName, ProjectSourceValue},
+        task::{TaskId, TaskStatus, TaskTitle},
     };
-    use pwf_wire::task::PrerequisiteStatus;
+    use pwf_wire::task::{
+        BlockedByStatus, ListDetail, ListLayout, ListedTasks, StatusFilter, TaskHeading,
+        TaskIndexPath, TaskIssue, TaskLaunch, TaskLocation,
+    };
 
     use super::*;
 
     fn sample_task() -> TaskView {
         TaskView {
             id: TaskId::try_new("PWF-0064").unwrap(),
-            project: "pwf".to_string(),
+            project: ProjectName::try_new("pwf").unwrap(),
             status: TaskStatus::Active,
-            session: "make list commands formatting less redundant".to_string(),
-            prompt: String::new(),
+            heading: TaskHeading::Title(
+                TaskTitle::try_new("make list commands formatting less redundant").unwrap(),
+            ),
+            prompt: pwf_models::task::TaskPrompt::default(),
             project_path: ProjectSourceValue::try_new("/project").unwrap(),
-            note: "pwf.md".to_string(),
-            task_file: None,
-            line: 1,
-            format: String::new(),
-            launchable: true,
-            needs_prompt: false,
-            issues: Vec::new(),
+            location: TaskLocation::try_new(TaskIndexPath::new("pwf.md".into()), 1).unwrap(),
+            launch: TaskLaunch::from_issues(Vec::new()),
             section: None,
-            prerequisites: None,
-            prerequisite_statuses: Vec::new(),
+            blocked_by: None,
+            blocked_by_statuses: Vec::new(),
             effort: None,
             tags: None,
             created: None,
@@ -306,9 +318,7 @@ mod tests {
     fn closed_long_form_omits_active_launch_diagnostics() {
         let mut task = sample_task();
         task.status = TaskStatus::Done;
-        task.launchable = false;
-        task.needs_prompt = true;
-        task.issues = vec!["missing project path".to_string()];
+        task.launch = TaskLaunch::from_issues(vec![TaskIssue::PlaceholderPrompt]);
 
         let output =
             render_task_for_filter(&task, StatusFilter::Exact(TaskStatus::Done), true, false);
@@ -320,18 +330,18 @@ mod tests {
     }
 
     #[test]
-    fn long_form_formats_typed_prerequisite_statuses() {
+    fn long_form_formats_typed_blocked_by_statuses() {
         let mut task = sample_task();
-        task.prerequisite_statuses = vec![
-            PrerequisiteStatus {
+        task.blocked_by_statuses = vec![
+            BlockedByStatus {
                 id: TaskId::try_new("CFG-0014").unwrap(),
                 status: Some(TaskStatus::Done),
             },
-            PrerequisiteStatus {
+            BlockedByStatus {
                 id: TaskId::try_new("CFG-0015").unwrap(),
                 status: Some(TaskStatus::Active),
             },
-            PrerequisiteStatus {
+            BlockedByStatus {
                 id: TaskId::try_new("CFG-9999").unwrap(),
                 status: None,
             },
@@ -340,33 +350,46 @@ mod tests {
         let output = render_task_for_filter(&task, StatusFilter::default(), true, false);
 
         assert!(
-            output.contains("  prereq: CFG-0014 (done), CFG-0015 (active), CFG-9999 (missing)\n"),
+            output
+                .contains("  blocked_by: CFG-0014 (done), CFG-0015 (active), CFG-9999 (missing)\n"),
             "{output}"
         );
     }
 
     #[test]
     fn list_footer_mentions_hidden_count_and_escape_hatch() {
-        let result = ListTasksOk {
+        let result = ListedTasks {
             tasks: vec![sample_task()],
             hidden: 2,
             project: None,
             project_task_path: None,
             status_filter: StatusFilter::default(),
-            grouped: false,
+            layout: ListLayout::Flat,
+            detail: ListDetail::Summary,
         };
-        let output = render_list(
-            &result,
-            "notes",
-            StatusFilter::default(),
-            false,
-            false,
-            false,
-        );
+        let output = render_list(&result, "notes", false);
 
         assert!(
             output.ends_with("\n... and 2 more; use '--all' to list everything"),
             "got: {output}"
         );
+    }
+
+    #[test]
+    fn listed_detail_selects_metadata_rendering_without_a_second_flag() {
+        let result = ListedTasks {
+            tasks: vec![sample_task()],
+            hidden: 0,
+            project: None,
+            project_task_path: None,
+            status_filter: StatusFilter::default(),
+            layout: ListLayout::Flat,
+            detail: ListDetail::Detailed,
+        };
+
+        let output = render_list(&result, "notes", false);
+
+        assert!(output.contains("  status: active\n"), "{output}");
+        assert!(output.contains("  project_path: /project\n"), "{output}");
     }
 }

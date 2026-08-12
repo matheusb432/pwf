@@ -2,11 +2,12 @@ use std::{collections::BTreeMap, path::Path};
 
 use lazy_regex::{Regex, regex};
 use pwf_application::ports::task_record::{
-    IndexEntry, IndexEntryState, IndexEntryStore, IndexSection, IndexSectionStore,
+    IndexEntry, IndexEntryState, IndexEntryStore, IndexSectionStore,
 };
 use pwf_models::{
+    AppDate,
     project::Project,
-    task::{TaskId, Timestamp},
+    task::{TaskId, TaskSection},
 };
 
 use super::{
@@ -42,7 +43,7 @@ pub(super) struct ParsedIndexLine {
     pub alias: Option<String>,
     pub state: IndexEntryState,
     /// Retains the raw section label without canonicalization.
-    pub section: String,
+    pub section: Option<TaskSection>,
     /// Uses a one-based line number within the index.
     pub line_number: usize,
 }
@@ -55,12 +56,20 @@ pub(super) fn parse_index_lines(
     index_path: &Path,
     text: &str,
 ) -> Result<Vec<ParsedIndexLine>, ObsidianStoreError> {
-    let mut section = String::new();
+    let mut section = None;
     let mut lines = Vec::new();
     for (index, raw) in text.split('\n').enumerate() {
         let line = raw.strip_suffix('\r').unwrap_or(raw);
         if let Some(header) = header_regex().captures(line) {
-            section = header["label"].trim().to_string();
+            let value = header["label"].trim();
+            section = Some(TaskSection::try_new(value).map_err(|source| {
+                ObsidianStoreError::InvalidProjectIndexSection {
+                    path: index_path.to_path_buf(),
+                    line: index + 1,
+                    value: value.to_string(),
+                    source,
+                }
+            })?);
             continue;
         }
         let Some(task) = task_line_regex().captures(line) else {
@@ -76,8 +85,18 @@ pub(super) fn parse_index_lines(
             let date = date_stamp_regex()
                 .captures(line)
                 .map(|captures| captures[1].to_string())
-                .unwrap_or_default();
-            IndexEntryState::Done(Timestamp::new(date))
+                .map(|value| {
+                    value.parse::<AppDate>().map_err(|source| {
+                        ObsidianStoreError::InvalidProjectIndexDate {
+                            path: index_path.to_path_buf(),
+                            line: index + 1,
+                            value,
+                            source,
+                        }
+                    })
+                })
+                .transpose()?;
+            IndexEntryState::Done(date)
         } else {
             IndexEntryState::Open
         };
@@ -110,13 +129,27 @@ pub(super) fn parse_index_lines(
 }
 
 /// Returns raw H2 labels in document order using the entry parser's header rules.
-pub(super) fn parse_section_labels(text: &str) -> Vec<String> {
+pub(super) fn parse_section_labels(
+    index_path: &Path,
+    text: &str,
+) -> Result<Vec<TaskSection>, ObsidianStoreError> {
     text.split('\n')
-        .filter_map(|raw| {
+        .enumerate()
+        .filter_map(|(index, raw)| {
             let line = raw.strip_suffix('\r').unwrap_or(raw);
             header_regex()
                 .captures(line)
-                .map(|header| header["label"].trim().to_string())
+                .map(|header| (index + 1, header["label"].trim().to_string()))
+        })
+        .map(|(line, value)| {
+            TaskSection::try_new(&value).map_err(|source| {
+                ObsidianStoreError::InvalidProjectIndexSection {
+                    path: index_path.to_path_buf(),
+                    line,
+                    value,
+                    source,
+                }
+            })
         })
         .collect()
 }
@@ -124,9 +157,10 @@ pub(super) fn parse_section_labels(text: &str) -> Vec<String> {
 fn render_entry_line(entry: &IndexEntry) -> String {
     match &entry.state {
         IndexEntryState::Open => format!("- [ ] [[{}]]", entry.id.as_ref()),
-        IndexEntryState::Done(date) => {
-            format!("- [x] [[{}]] ✅ {}", entry.id.as_ref(), date.as_str())
+        IndexEntryState::Done(Some(date)) => {
+            format!("- [x] [[{}]] ✅ {date}", entry.id.as_ref())
         }
+        IndexEntryState::Done(None) => format!("- [x] [[{}]]", entry.id.as_ref()),
     }
 }
 
@@ -202,18 +236,24 @@ impl ObsidianStore {
             let updated = replace_line(&content, existing.line_number, &new_line);
             return write_index(&index_path, &updated);
         }
-        let (updated, created_section) = match KnownSection::parse(&entry.section) {
-            Some(section) => (
-                add_section_block(&content, &format!("{new_line}\n"), section),
-                (!section_exists(&content, section)).then(|| entry.section.clone()),
-            ),
+        let (updated, created_section) = match entry.section.as_ref().and_then(KnownSection::parse)
+        {
+            Some(section) => {
+                let created_section = (!section_exists(&content, section))
+                    .then(|| entry.section.clone())
+                    .flatten();
+                (
+                    add_section_block(&content, &format!("{new_line}\n"), section),
+                    created_section,
+                )
+            }
             None => (add_link_to_index(&content, &new_line), None),
         };
         write_add_index_file(
             &index_path,
             &updated,
             project.title.as_ref(),
-            created_section.as_deref(),
+            created_section.as_ref(),
         )
     }
 
@@ -221,12 +261,15 @@ impl ObsidianStore {
     fn rename_section_header(
         &self,
         project: &Project,
-        from: &str,
-        to: &str,
+        from: &TaskSection,
+        to: &TaskSection,
     ) -> Result<(), ObsidianStoreError> {
         let index_path = self.project_index_path(project)?;
         let content = read_index(&index_path)?;
-        write_index(&index_path, &rename_header_lines(&content, from, to))
+        write_index(
+            &index_path,
+            &rename_header_lines(&content, from.as_ref(), to.as_ref()),
+        )
     }
 
     fn delete_index_entry(&self, project: &Project, id: &TaskId) -> Result<(), ObsidianStoreError> {
@@ -260,21 +303,18 @@ impl IndexEntryStore for ObsidianStore {
 impl IndexSectionStore for ObsidianStore {
     type Error = ObsidianStoreError;
 
-    fn list_index_sections(&self, project: &Project) -> Result<Vec<IndexSection>, Self::Error> {
-        let Some((_, text)) = self.validated_project_index(project)? else {
+    fn list_index_sections(&self, project: &Project) -> Result<Vec<TaskSection>, Self::Error> {
+        let Some((index_path, text)) = self.validated_project_index(project)? else {
             return Ok(Vec::new());
         };
-        Ok(parse_section_labels(&text)
-            .into_iter()
-            .map(|label| IndexSection { label })
-            .collect())
+        parse_section_labels(&index_path, &text)
     }
 
     fn rename_index_section(
         &self,
         project: &Project,
-        current_label: &str,
-        new_label: &str,
+        current_label: &TaskSection,
+        new_label: &TaskSection,
     ) -> Result<(), Self::Error> {
         self.rename_section_header(project, current_label, new_label)
     }
@@ -282,19 +322,19 @@ impl IndexSectionStore for ObsidianStore {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::{assert_matches, path::Path};
 
     use pwf_application::ports::task_record::{IndexEntry, IndexEntryState};
-    use pwf_models::task::{TaskId, Timestamp};
+    use pwf_models::{AppDate, task::TaskId};
 
-    use super::{parse_index_lines, render_entry_line, replace_line};
+    use super::{ObsidianStoreError, parse_index_lines, render_entry_line, replace_line};
 
     #[test]
     fn done_entry_replaces_only_its_index_line() -> Result<(), Box<dyn std::error::Error>> {
         let entry = IndexEntry {
             id: TaskId::try_new("PWF-0001")?,
-            state: IndexEntryState::Done(Timestamp::new("2026-07-29")),
-            section: String::new(),
+            state: IndexEntryState::Done(Some("2026-07-29".parse::<AppDate>()?)),
+            section: None,
         };
         let index = "# pwf\n\n- [ ] [[PWF-0001]]\n- [ ] [[PWF-0002]]\n";
 
@@ -318,6 +358,24 @@ mod tests {
                 TaskId::try_new("PWF-0003").unwrap(),
                 TaskId::try_new("TOOL-0004").unwrap(),
             ]
+        );
+    }
+
+    #[test]
+    fn index_parser_rejects_an_invalid_completion_date() {
+        let Err(error) =
+            parse_index_lines(Path::new("index.md"), "- [x] [[PWF-0001]] ✅ 2026-02-30\n")
+        else {
+            panic!("invalid completion date must be rejected");
+        };
+
+        assert_matches!(
+            error,
+            ObsidianStoreError::InvalidProjectIndexDate {
+                line: 1,
+                ref value,
+                ..
+            } if value == "2026-02-30"
         );
     }
 }

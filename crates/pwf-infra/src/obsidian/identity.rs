@@ -1,7 +1,10 @@
 use std::path::{Path, PathBuf};
 
 use gray_matter::{Matter, engine::YAML};
-use pwf_models::task::{ProjectId, ProjectIndexIdentity, ProjectName, TaskId};
+use pwf_models::{
+    project::{ProjectId, ProjectIndexIdentity, ProjectName},
+    task::TaskId,
+};
 use serde::Deserialize;
 
 use super::ObsidianStoreError;
@@ -188,7 +191,7 @@ fn required_index_property(
 mod tests {
     use std::{assert_matches, path::Path};
 
-    use pwf_models::task::{ProjectId, ProjectIndexIdentity, ProjectName};
+    use pwf_models::project::{ProjectId, ProjectIndexIdentity, ProjectName};
 
     use super::{
         parse_project_index_identity, parse_task_metadata_if_task, project_index_frontmatter_id,

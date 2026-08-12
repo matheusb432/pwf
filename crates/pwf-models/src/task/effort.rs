@@ -1,5 +1,7 @@
 use std::{fmt, str::FromStr};
 
+use thiserror::Error;
+
 /// Classifies the effort required to complete a task.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EffortTier {
@@ -27,7 +29,7 @@ impl fmt::Display for EffortTier {
 }
 
 impl FromStr for EffortTier {
-    type Err = &'static str;
+    type Err = EffortTierError;
 
     fn from_str(raw: &str) -> Result<Self, Self::Err> {
         match raw {
@@ -35,10 +37,15 @@ impl FromStr for EffortTier {
             "medium" => Ok(Self::Medium),
             "high" => Ok(Self::High),
             "highest" => Ok(Self::Highest),
-            _ => Err("expected one of: low, medium, high, highest"),
+            _ => Err(EffortTierError),
         }
     }
 }
+
+/// Reports an unsupported task effort name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+#[error("expected one of: low, medium, high, highest")]
+pub struct EffortTierError;
 
 #[cfg(test)]
 mod tests {

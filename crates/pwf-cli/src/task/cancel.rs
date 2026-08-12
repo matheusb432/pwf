@@ -2,17 +2,18 @@ use clap::Args;
 use pwf_application::{
     ports::clock::Clock,
     task::{
+        CloseTaskError,
         cancel_task::{self, CancelTask, CancelTaskError},
-        complete_task::CloseTaskError,
     },
 };
 use pwf_infra::obsidian::ObsidianStore;
+use pwf_models::task::{CommitRanges, TaskReport};
 
 use super::{
+    Identifier, TaskError,
     render::{
         emit_close_diagnostics, emit_created_section, emit_created_section_for_error, render_closed,
     },
-    shared::{Identifier, TaskError},
 };
 
 #[derive(Args, Debug)]
@@ -39,12 +40,13 @@ pub(super) async fn run(
     let id = arguments.identifier.required("cancel")?;
     let report = arguments
         .report
-        .clone()
-        .ok_or(TaskError::MissingCancelReport)?;
+        .as_deref()
+        .ok_or(TaskError::MissingCancelReport)?
+        .parse::<TaskReport>()?;
     let command = CancelTask {
         id,
         report,
-        commits: arguments.commits.clone(),
+        commits: CommitRanges::from_inputs(&arguments.commits),
         review: arguments.review,
     };
     let output = cancel_task::execute(&command, store, pool, clock)

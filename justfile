@@ -64,8 +64,8 @@ fix *args:
 
 # Report missing mise state without changing the host.
 [group('quality')]
-doctor *args:
-    mise bootstrap status --missing {{ args }}
+doctor:
+    @mise ls --local --missing --locked --no-header
 
 # Run tests, or use `just test coverage`; coverage defaults to quiet and forwards cargo-llvm-cov arguments.
 [group('quality')]

@@ -1,4 +1,5 @@
 use nutype::nutype;
+use pwf_models::session::SessionWorkingDirectory;
 
 #[nutype(
     validate(predicate = |arguments| !arguments.is_empty()),
@@ -9,13 +10,13 @@ pub struct AgentCommand<'a>(&'a [String]);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SessionStart<'a> {
     pub session_name: &'a str,
-    pub working_directory: &'a str,
+    pub working_directory: &'a SessionWorkingDirectory,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SessionWindow<'a> {
     pub session_name: &'a str,
-    pub working_directory: &'a str,
+    pub working_directory: &'a SessionWorkingDirectory,
     pub window_name: &'a str,
     pub agent_command: AgentCommand<'a>,
 }

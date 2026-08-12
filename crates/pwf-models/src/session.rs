@@ -13,6 +13,18 @@ pub const PUSHED_PROMPT_CHAR_MAX: usize = 2000;
 )]
 pub struct PushedPrompt(String);
 
+/// Stores the rendered title assigned to an agent session.
+#[nutype(derive(Debug, Clone, PartialEq, Eq, AsRef, Display))]
+pub struct SessionThreadTitle(String);
+
+/// Stores the complete prompt passed to an agent launch.
+#[nutype(derive(Debug, Clone, PartialEq, Eq, AsRef, Display))]
+pub struct LaunchPrompt(String);
+
+/// Identifies the runtime working directory for one agent session.
+#[nutype(derive(Debug, Clone, PartialEq, Eq, AsRef, Display))]
+pub struct SessionWorkingDirectory(String);
+
 /// Selects a supported agent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Agent {
@@ -63,19 +75,11 @@ pub struct AgentModel(Option<String>);
 
 impl From<Option<String>> for AgentModel {
     fn from(value: Option<String>) -> Self {
-        Self(value.filter(|model| model != Self::MODEL_DEFAULT))
-    }
-}
-
-impl From<String> for AgentModel {
-    fn from(value: String) -> Self {
-        Some(value).into()
-    }
-}
-
-impl From<Option<&str>> for AgentModel {
-    fn from(value: Option<&str>) -> Self {
-        value.map(str::to_string).into()
+        Self(
+            value
+                .map(|model| model.trim().to_string())
+                .filter(|model| !model.is_empty() && model != Self::MODEL_DEFAULT),
+        )
     }
 }
 
@@ -86,8 +90,15 @@ impl AgentModel {
         self.0
     }
 
-    pub fn display_or_default(&self) -> String {
-        self.0.clone().unwrap_or(Self::MODEL_DEFAULT.to_string())
+    #[must_use]
+    pub fn as_deref(&self) -> Option<&str> {
+        self.0.as_deref()
+    }
+}
+
+impl fmt::Display for AgentModel {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.0.as_deref().unwrap_or(Self::MODEL_DEFAULT))
     }
 }
 
@@ -96,14 +107,15 @@ mod tests {
     use super::{AgentModel, PUSHED_PROMPT_CHAR_MAX, PushedPrompt};
 
     #[test]
-    fn default_and_absent_models_are_no_override() {
+    fn default_blank_and_absent_models_are_no_override() {
         assert_eq!(AgentModel::from(None::<String>).into_inner(), None);
         assert_eq!(
             AgentModel::from(Some("default".to_string())).into_inner(),
             None
         );
+        assert_eq!(AgentModel::from(Some("  ".to_string())).into_inner(), None);
         assert_eq!(
-            AgentModel::from(Some("gpt-5.6".to_string())).into_inner(),
+            AgentModel::from(Some(" gpt-5.6 ".to_string())).into_inner(),
             Some("gpt-5.6".to_string())
         );
     }

@@ -21,7 +21,7 @@ pub async fn execute(
     get_project::execute(
         GetProject {
             id: query.id,
-            status: ProjectStatusFilter::ACTIVE,
+            status: ProjectStatusFilter::ActiveOnly,
         },
         pool,
     )

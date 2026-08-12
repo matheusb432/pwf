@@ -4,9 +4,6 @@ version = "0.1.0"
 edition.workspace = true
 publish.workspace = true
 
-[package.metadata.xtk_test.evidences]
-TEST_EVIDENCES_OUTPUT_PATH = ".artifacts/e2e"
-
 [[bin]]
 name = "xtask"
 path = "src/main.rs"
@@ -19,7 +16,7 @@ clap-cargo = { workspace = true }
 percent-encoding = { workspace = true }
 process-wrap = { workspace = true }
 tempfile = { workspace = true }
-xtk_test = { workspace = true }
+xtk-test = { workspace = true }
 
 [lints]
 workspace = true

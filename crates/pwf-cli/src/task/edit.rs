@@ -4,11 +4,12 @@ use pwf_application::task::{
     edit_task::{self, CollectionEdit, EditTask, EditTaskContent, TaskEdits, ValueEdit},
 };
 use pwf_infra::obsidian::ObsidianStore;
-use pwf_models::task::{EffortTier, PrerequisiteInput, Prerequisites, TagInput, Tags};
+use pwf_models::task::{BlockedBy, BlockedByInput, EffortTier, TagInput, TaskPrompt, TaskTags};
 
 use super::{
+    EffortChoice, Identifier, LaneFlagMode, TaskError,
     render::{TITLE_NORMALIZED_NOTICE, render_edited},
-    shared::{EffortChoice, Identifier, LaneFlagMode, TaskError, task_lanes, task_title},
+    task_lanes, task_title,
 };
 use crate::console::Console;
 
@@ -29,8 +30,8 @@ use crate::console::Console;
             "remove_constraints",
             "add_done_when",
             "remove_done_whens",
-            "add_prereq",
-            "remove_prereqs",
+            "add_blocked_by",
+            "remove_blocked_by",
             "add_tag",
             "remove_tags",
             "effort",
@@ -86,7 +87,7 @@ pub struct Arguments {
     #[command(flatten)]
     done_whens: DoneWhenEdits,
     #[command(flatten)]
-    prerequisites: PrerequisiteEdits,
+    blocked_by: BlockedByEdits,
     #[command(flatten)]
     tags: TagEdits,
     #[command(flatten)]
@@ -134,20 +135,20 @@ struct DoneWhenEdits {
 }
 
 #[derive(Args, Debug)]
-struct PrerequisiteEdits {
-    /// Append a prerequisite task ID; repeat or comma-separate for several.
+struct BlockedByEdits {
+    /// Append a blocked-by task ID; repeat or comma-separate for several.
     #[arg(long)]
-    add_prereq: Vec<PrerequisiteInput>,
-    /// Remove every prerequisite before applying `--add-prereq` values.
+    add_blocked_by: Vec<BlockedByInput>,
+    /// Remove every blocked-by task before applying `--add-blocked-by` values.
     #[arg(long)]
-    remove_prereqs: bool,
+    remove_blocked_by: bool,
 }
 
-impl PrerequisiteEdits {
-    fn edit(&self) -> CollectionEdit<Prerequisites> {
+impl BlockedByEdits {
+    fn edit(&self) -> CollectionEdit<BlockedBy> {
         collection_edit(
-            Prerequisites::from_inputs(&self.add_prereq),
-            self.remove_prereqs,
+            BlockedBy::from_inputs(&self.add_blocked_by),
+            self.remove_blocked_by,
         )
     }
 }
@@ -163,8 +164,8 @@ struct TagEdits {
 }
 
 impl TagEdits {
-    fn edit(&self) -> CollectionEdit<Tags> {
-        collection_edit(Tags::from_inputs(&self.add_tag), self.remove_tags)
+    fn edit(&self) -> CollectionEdit<TaskTags> {
+        collection_edit(TaskTags::from_inputs(&self.add_tag), self.remove_tags)
     }
 }
 
@@ -238,29 +239,26 @@ pub(super) async fn run(
     .flatten();
     let lanes = TaskLaneEdits::new(additions, removals);
     let content = if let Some(prompt) = arguments.prompt.as_ref() {
-        Some(EditTaskContent::ReplaceShorthand {
-            prompt: prompt.clone(),
-        })
+        Some(EditTaskContent::replace_shorthand(TaskPrompt::new(
+            prompt.clone(),
+        ))?)
     } else if let Some(prompt) = arguments.append.as_ref() {
-        Some(EditTaskContent::AppendShorthand {
+        Some(EditTaskContent::append_shorthand(
             title,
-            prompt: prompt.clone(),
-        })
+            TaskPrompt::new(prompt.clone()),
+        )?)
     } else if title.is_some() || !lanes.is_empty() {
-        Some(EditTaskContent::Structured { title, lanes })
+        Some(EditTaskContent::structured(title, lanes)?)
     } else {
         None
     };
     let edits = TaskEdits::try_new(
         content,
-        arguments.prerequisites.edit(),
+        arguments.blocked_by.edit(),
         arguments.effort.edit(),
         arguments.tags.edit(),
-    )
-    .map_err(|error| TaskError::ApplicationWrite(error.to_string()))?;
-    let edited = edit_task::execute(EditTask { id, edits }, store, pool)
-        .await
-        .map_err(|error| TaskError::ApplicationWrite(error.to_string()))?;
+    )?;
+    let edited = edit_task::execute(EditTask { id, edits }, store, pool).await?;
     if title_normalized {
         eprintln!("{TITLE_NORMALIZED_NOTICE}");
     }

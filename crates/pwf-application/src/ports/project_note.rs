@@ -1,25 +1,28 @@
 use pwf_models::{
-    note::{NoteId, ProjectNote},
+    AppDate,
+    note::{
+        NoteContent, NoteDomain, NoteId, NoteSource, NoteTag, NoteTitle, NoteVerification, NoteWhy,
+        ProjectNote,
+    },
     project::Project,
-    task::Timestamp,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewProjectNote {
     pub id: NoteId,
-    pub title: String,
-    pub content: String,
-    pub why: Option<String>,
-    pub domain: Option<String>,
-    pub tags: Vec<String>,
-    pub sources: Vec<String>,
-    pub verified: Option<String>,
-    pub created: Timestamp,
+    pub title: NoteTitle,
+    pub content: NoteContent,
+    pub why: Option<NoteWhy>,
+    pub domain: Option<NoteDomain>,
+    pub tags: Vec<NoteTag>,
+    pub sources: Vec<NoteSource>,
+    pub verified: Option<NoteVerification>,
+    pub created: AppDate,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectNotePatch {
-    pub title: String,
+    pub title: NoteTitle,
 }
 
 pub trait ProjectNoteStore: Clone + Send + Sync + 'static {

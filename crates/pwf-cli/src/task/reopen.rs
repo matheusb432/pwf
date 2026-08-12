@@ -2,7 +2,7 @@ use clap::Args;
 use pwf_application::task::reopen_task::{self, ReopenTask};
 use pwf_infra::obsidian::ObsidianStore;
 
-use super::shared::Identifier;
+use super::Identifier;
 
 #[derive(Args, Debug)]
 pub struct Arguments {
@@ -10,7 +10,7 @@ pub struct Arguments {
     pub(crate) identifier: Identifier,
 }
 
-use super::{render::render_reopened, shared::TaskError};
+use super::{TaskError, render::render_reopened};
 
 pub(super) async fn run(
     arguments: &Arguments,

@@ -1,6 +1,9 @@
 use std::{fmt::Write, ops::Range};
 
-use pwf_models::task::{EffortTier, Prerequisites, Tags, TaskId, TaskStatus, TaskTitle};
+use pwf_models::{
+    AppDate,
+    task::{BlockedBy, EffortTier, TaskId, TaskStatus, TaskTags, TaskTitle},
+};
 
 use super::markdown_line;
 
@@ -11,11 +14,11 @@ pub(super) struct NewTaskFields<'a> {
     pub id: &'a TaskId,
     pub title: &'a TaskTitle,
     pub project: &'a str,
-    pub prompt: &'a str,
-    pub created: &'a str,
-    pub prereq: Option<&'a Prerequisites>,
+    pub body: &'a str,
+    pub created: &'a AppDate,
+    pub blocked_by: Option<&'a BlockedBy>,
     pub effort: Option<EffortTier>,
-    pub tags: Option<&'a Tags>,
+    pub tags: Option<&'a TaskTags>,
 }
 
 pub(super) fn new_task_content(fields: NewTaskFields<'_>) -> String {
@@ -26,8 +29,8 @@ pub(super) fn new_task_content(fields: NewTaskFields<'_>) -> String {
     let _ = writeln!(out, "title: {}", fields.title);
     let _ = writeln!(out, "project: {}", fields.project);
     let _ = writeln!(out, "created: {}", fields.created);
-    if let Some(prereq) = fields.prereq {
-        let _ = writeln!(out, "prereq: \"{prereq}\"");
+    if let Some(blocked_by) = fields.blocked_by {
+        let _ = writeln!(out, "blocked_by: \"{blocked_by}\"");
     }
     if let Some(effort) = fields.effort {
         let _ = writeln!(out, "effort: {effort}");
@@ -36,13 +39,18 @@ pub(super) fn new_task_content(fields: NewTaskFields<'_>) -> String {
         let _ = writeln!(out, "tags: {}", tags_frontmatter_value(tags));
     }
     out.push_str("---\n\n");
-    out.push_str(fields.prompt.trim_end());
+    out.push_str(fields.body.trim_end());
     out.push('\n');
     out
 }
 
-pub(super) fn set_status_text(content: &str, status: TaskStatus, completed: &str) -> String {
+pub(super) fn set_status_text(
+    content: &str,
+    status: TaskStatus,
+    completed: Option<&AppDate>,
+) -> String {
     let status = status.as_str();
+    let completed = completed.map(ToString::to_string).unwrap_or_default();
     let Some(status_range) = find_field_line(content, "status:") else {
         return content.to_string();
     };
@@ -193,15 +201,15 @@ fn replace_frontmatter_slice(
     )
 }
 
-pub(super) fn set_prereq_text(content: &str, value: Option<&Prerequisites>) -> String {
+pub(super) fn set_blocked_by_text(content: &str, value: Option<&BlockedBy>) -> String {
     set_frontmatter_line(
         content,
-        "prereq:",
-        value.map(|value| format!("prereq: \"{value}\"")),
+        "blocked_by:",
+        value.map(|value| format!("blocked_by: \"{value}\"")),
     )
 }
 
-pub(super) fn set_completed_text(content: &str, value: Option<&str>) -> String {
+pub(super) fn set_completed_text(content: &str, value: Option<&AppDate>) -> String {
     set_frontmatter_line(
         content,
         "completed:",
@@ -225,7 +233,7 @@ pub(super) fn set_effort_text(content: &str, value: Option<EffortTier>) -> Strin
     )
 }
 
-pub(super) fn set_tags_text(content: &str, value: Option<&Tags>) -> String {
+pub(super) fn set_tags_text(content: &str, value: Option<&TaskTags>) -> String {
     set_frontmatter_line(
         content,
         "tags:",
@@ -233,7 +241,7 @@ pub(super) fn set_tags_text(content: &str, value: Option<&Tags>) -> String {
     )
 }
 
-fn tags_frontmatter_value(tags: &Tags) -> String {
+fn tags_frontmatter_value(tags: &TaskTags) -> String {
     format!(
         "[{}]",
         tags.iter()
@@ -245,7 +253,7 @@ fn tags_frontmatter_value(tags: &Tags) -> String {
 
 #[cfg(test)]
 mod tests {
-    use pwf_models::task::TaskStatus;
+    use pwf_models::{AppDate, task::TaskStatus};
 
     use super::set_status_text;
 
@@ -254,7 +262,11 @@ mod tests {
         let source = "---\nid: PWF-0001\nstatus: active\ntitle: task\n---\n\nbody\n";
 
         assert_eq!(
-            set_status_text(source, TaskStatus::Done, "2026-07-29"),
+            set_status_text(
+                source,
+                TaskStatus::Done,
+                Some(&"2026-07-29".parse::<AppDate>().unwrap()),
+            ),
             "---\nid: PWF-0001\nstatus: done\ncompleted: 2026-07-29\ntitle: task\n---\n\nbody\n"
         );
     }

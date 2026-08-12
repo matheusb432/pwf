@@ -6,14 +6,15 @@ use pwf_application::{
 use pwf_infra::obsidian::ObsidianStore;
 use pwf_models::{
     project::ProjectSelector,
-    task::{PrerequisiteInput, Prerequisites, TagInput, Tags},
+    task::{BlockedBy, BlockedByInput, IndexSection, TagInput, TaskPrompt, TaskTags},
 };
 
 use super::{
+    EffortChoice, LaneFlagMode, TaskError,
     render::{
         TITLE_NORMALIZED_NOTICE, emit_created_section, emit_created_section_for_error, render_added,
     },
-    shared::{EffortChoice, LaneFlagMode, TaskError, task_lanes, task_title},
+    task_lanes, task_title,
 };
 use crate::console::Console;
 
@@ -46,9 +47,9 @@ pub struct Arguments {
     /// File the task under `## Human` index section
     #[arg(long)]
     pub(crate) human: bool,
-    /// Prereq task id; repeat or comma-separate for several
+    /// Blocked-by task id; repeat or comma-separate for several
     #[arg(long)]
-    pub(crate) prereq: Vec<PrerequisiteInput>,
+    pub(crate) blocked_by: Vec<BlockedByInput>,
     /// Discovery tag; repeat or comma-separate for several. Input accepts `snake_case` or
     /// kebab-case
     #[arg(long, allow_hyphen_values = true)]
@@ -65,28 +66,23 @@ pub(super) async fn run(
     pool: &sqlx::SqlitePool,
     clock: &impl Clock,
 ) -> Result<String, TaskError> {
-    let (prompt, title_normalized) = match arguments.title.as_deref() {
-        Some(title) => {
-            let (title, normalized) = task_title(title)?;
-            let lanes = task_lanes(
-                &arguments.goal,
-                &arguments.context,
-                &arguments.constraint,
-                &arguments.done_when,
-                LaneFlagMode::Add,
-            )?;
-            (AddTaskPrompt::Structured { title, lanes }, normalized)
-        }
-        None => (AddTaskPrompt::Shorthand(arguments.prompt.join(" ")), false),
-    };
+    let project_selector = arguments
+        .project
+        .clone()
+        .ok_or(TaskError::InvalidAddRequest)?;
+    let (prompt, title_normalized) = request_prompt(arguments)?;
     let result = add_task::execute(
         &AddTask {
-            project_selector: arguments.project.clone(),
+            project_selector,
             prompt,
-            human: arguments.human,
-            prerequisites: Prerequisites::from_inputs(&arguments.prereq),
+            index_section: if arguments.human {
+                IndexSection::Human
+            } else {
+                IndexSection::default()
+            },
+            blocked_by: BlockedBy::from_inputs(&arguments.blocked_by),
             effort: arguments.effort.map(Into::into),
-            tags: Tags::from_inputs(&arguments.tag),
+            tags: TaskTags::from_inputs(&arguments.tag),
         },
         store,
         pool,
@@ -106,4 +102,22 @@ pub(super) async fn run(
             Err(TaskError::Add(error))
         }
     }
+}
+
+fn request_prompt(arguments: &Arguments) -> Result<(AddTaskPrompt, bool), TaskError> {
+    if let Some(title) = arguments.title.as_deref() {
+        let (title, normalized) = task_title(title)?;
+        let lanes = task_lanes(
+            &arguments.goal,
+            &arguments.context,
+            &arguments.constraint,
+            &arguments.done_when,
+            LaneFlagMode::Add,
+        )?;
+        return Ok((AddTaskPrompt::structured(title, lanes), normalized));
+    }
+
+    let prompt = AddTaskPrompt::shorthand(TaskPrompt::new(arguments.prompt.join(" ")))
+        .map_err(|_| TaskError::InvalidAddRequest)?;
+    Ok((prompt, false))
 }

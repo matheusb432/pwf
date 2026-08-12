@@ -9,6 +9,7 @@ use crate::project::ProjectId;
 pub struct TaskId {
     value: String,
     project_id: ProjectId,
+    number: u16,
 }
 
 impl TaskId {
@@ -32,13 +33,26 @@ impl TaskId {
         if !valid_project_id || !valid_number {
             return Err(TaskIdError { value });
         }
-        Ok(Self { value, project_id })
+        let number = digits.parse().map_err(|_| TaskIdError {
+            value: value.clone(),
+        })?;
+        Ok(Self {
+            value,
+            project_id,
+            number,
+        })
     }
 
     /// Returns the validated two-to-four-letter project ID.
     #[must_use]
-    pub fn project_id(&self) -> ProjectId {
-        self.project_id.clone()
+    pub fn project_id(&self) -> &ProjectId {
+        &self.project_id
+    }
+
+    /// Returns the decimal numeric suffix.
+    #[must_use]
+    pub fn number(&self) -> u16 {
+        self.number
     }
 }
 
@@ -96,9 +110,10 @@ mod tests {
 
     #[test]
     fn task_id_accepts_valid_values() {
-        for raw in ["PW-0047", "PWF-0047", "TOOL-0047"] {
+        for (raw, number) in [("PW-0047", 47), ("PWF-0047", 47), ("TOOL-9999", 9999)] {
             let id = TaskId::try_new(raw).unwrap();
             assert_eq!(id.as_ref(), raw);
+            assert_eq!(id.number(), number);
         }
     }
 

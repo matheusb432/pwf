@@ -57,3 +57,48 @@ pub fn project_help() -> String {
     }
     help
 }
+
+#[cfg(test)]
+mod tests {
+    use pwf_models::note::NOTE_TITLE_CHARACTER_LIMIT;
+
+    use super::RootCommand;
+    use crate::note;
+
+    #[test]
+    fn note_title_validation_happens_during_argument_parsing() {
+        let title = "e".repeat(NOTE_TITLE_CHARACTER_LIMIT + 1);
+
+        let error = super::parse_argv(vec![
+            "note".to_string(),
+            "add".to_string(),
+            "pwf".to_string(),
+            "--title".to_string(),
+            title,
+            "--content".to_string(),
+            "content".to_string(),
+        ])
+        .unwrap_err();
+
+        assert_eq!(error.kind(), clap::error::ErrorKind::ValueValidation);
+    }
+
+    #[test]
+    fn note_update_keeps_accepting_unquoted_title_words() {
+        let cli = super::parse_argv(
+            ["note", "update", "pwf", "1", "new", "title"]
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
+        )
+        .unwrap();
+
+        let RootCommand::Note(arguments) = cli.command else {
+            panic!("expected note command");
+        };
+        let note::Command::Update { title, .. } = arguments.command else {
+            panic!("expected note update command");
+        };
+        assert_eq!(title, ["new", "title"]);
+    }
+}

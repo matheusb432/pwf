@@ -1,12 +1,11 @@
 //! Removes one note from a managed project.
 
 use pwf_models::{
-    note::NoteId,
-    project::{ProjectId, ProjectSelector},
+    note::NoteSelector,
+    project::{ProjectId, ProjectName, ProjectSelector},
 };
-use pwf_wire::project::ProjectStatusFilter;
+use pwf_wire::{note::RemovedNote, project::ProjectStatusFilter};
 
-use super::resolve_note;
 use crate::{
     ports::project_note::ProjectNoteStore,
     project::resolve_project::{self, ResolveProject, ResolveProjectError},
@@ -18,24 +17,23 @@ pub struct RemoveNote {
     /// Selects the managed project by name or id code.
     pub project_selector: ProjectSelector,
     /// Selects the note by full id, `NOTE-NNNN`, or bare numeric suffix.
-    pub id: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RemoveNoteOk {
-    pub id: NoteId,
+    pub selector: NoteSelector,
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum RemoveNoteError {
-    #[error("Unknown project '{selector}'. Expected a project name or id.")]
-    UnknownProject { selector: ProjectSelector },
-    #[error("Invalid note id '{id}'; expected e.g. {project_id}-NOTE-0001, NOTE-0001, or 1.")]
-    InvalidIdentifier { id: String, project_id: ProjectId },
+    #[error(transparent)]
+    ResolveProject(#[from] ResolveProjectError),
+    #[error("Note id '{selector}' does not belong to project {project_id}.")]
+    ProjectMismatch {
+        selector: NoteSelector,
+        project_id: ProjectId,
+    },
     #[error("No such note {id} in {project}.")]
-    NoSuchNote { id: String, project: String },
-    #[error("{0}")]
-    Project(#[source] Box<dyn std::error::Error + Send + Sync>),
+    NoSuchNote {
+        id: pwf_models::note::NoteId,
+        project: ProjectName,
+    },
     #[error("{0}")]
     Store(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
@@ -44,8 +42,8 @@ pub enum RemoveNoteError {
 ///
 /// # Errors
 ///
-/// Returns [`RemoveNoteError::UnknownProject`] when the project does not resolve,
-/// [`RemoveNoteError::InvalidIdentifier`] when the note id is invalid for that project,
+/// Returns [`RemoveNoteError::ResolveProject`] when the project does not resolve,
+/// [`RemoveNoteError::ProjectMismatch`] when the note id names another project,
 /// [`RemoveNoteError::NoSuchNote`] when the note does not exist, or
 /// [`RemoveNoteError::Store`] when existence inspection or deletion fails.
 #[cqrsy::command]
@@ -53,44 +51,36 @@ pub async fn execute(
     command: RemoveNote,
     store: &impl ProjectNoteStore,
     pool: &sqlx::SqlitePool,
-) -> Result<RemoveNoteOk, RemoveNoteError> {
+) -> Result<RemovedNote, RemoveNoteError> {
     let project = resolve_project::execute(
         ResolveProject {
             selector: command.project_selector,
-            status: ProjectStatusFilter::ACTIVE,
+            status: ProjectStatusFilter::ActiveOnly,
         },
         pool,
     )
-    .await
-    .map_err(project_error)?;
-    let raw_id = command.id;
+    .await?;
     let id =
-        resolve_note(&raw_id, &project.id).ok_or_else(|| RemoveNoteError::InvalidIdentifier {
-            id: raw_id,
-            project_id: project.id.clone(),
-        })?;
+        command
+            .selector
+            .resolve(&project.id)
+            .ok_or_else(|| RemoveNoteError::ProjectMismatch {
+                selector: command.selector,
+                project_id: project.id.clone(),
+            })?;
     let exists = store
         .note_exists(&project, &id)
         .map_err(|error| RemoveNoteError::Store(Box::new(error)))?;
     if !exists {
         return Err(RemoveNoteError::NoSuchNote {
-            id: id.to_string(),
-            project: project.title.to_string(),
+            id,
+            project: project.title,
         });
     }
     store
         .delete_note(&project, &id)
         .map_err(|error| RemoveNoteError::Store(Box::new(error)))?;
-    Ok(RemoveNoteOk { id })
-}
-
-fn project_error(error: ResolveProjectError) -> RemoveNoteError {
-    match error {
-        ResolveProjectError::Unknown { selector, .. } => {
-            RemoveNoteError::UnknownProject { selector }
-        }
-        error @ ResolveProjectError::Unexpected { .. } => RemoveNoteError::Project(Box::new(error)),
-    }
+    Ok(RemovedNote { id })
 }
 
 #[cfg(test)]
@@ -98,7 +88,7 @@ mod tests {
     use std::error::Error as _;
 
     use pwf_models::{
-        note::{NoteId, ProjectNote},
+        note::{NoteId, NoteTitle, ProjectNote},
         project::ProjectId,
     };
 
@@ -112,7 +102,7 @@ mod tests {
     fn note() -> ProjectNote {
         ProjectNote {
             id: NoteId::try_new("PWF-NOTE-0007").unwrap(),
-            title: "remember milk".to_string(),
+            title: NoteTitle::try_new("remember milk").unwrap(),
         }
     }
 
@@ -130,7 +120,7 @@ mod tests {
             let removed = super::execute(
                 RemoveNote {
                     project_selector: "PWF".parse().unwrap(),
-                    id: identifier.to_string(),
+                    selector: identifier.parse().unwrap(),
                 },
                 &store,
                 &pool,
@@ -151,7 +141,7 @@ mod tests {
         let error = super::execute(
             RemoveNote {
                 project_selector: "pwf".parse().unwrap(),
-                id: "1".to_string(),
+                selector: "1".parse().unwrap(),
             },
             &store,
             &pool,
@@ -164,7 +154,7 @@ mod tests {
             RemoveNoteError::NoSuchNote {
                 ref id,
                 ref project,
-            } if id == "PWF-NOTE-0001" && project == "pwf"
+            } if id.as_ref() == "PWF-NOTE-0001" && project.as_ref() == "pwf"
         ));
     }
 
@@ -176,7 +166,7 @@ mod tests {
         let error = super::execute(
             RemoveNote {
                 project_selector: "pwf".parse().unwrap(),
-                id: "FOO-NOTE-0001".to_string(),
+                selector: "FOO-NOTE-0001".parse().unwrap(),
             },
             &store,
             &pool,
@@ -186,10 +176,10 @@ mod tests {
 
         assert!(matches!(
             error,
-            RemoveNoteError::InvalidIdentifier {
-                ref id,
+            RemoveNoteError::ProjectMismatch {
+                ref selector,
                 ref project_id,
-            } if id == "FOO-NOTE-0001"
+            } if selector.to_string() == "FOO-NOTE-0001"
                 && project_id == &ProjectId::try_new("PWF").unwrap()
         ));
     }

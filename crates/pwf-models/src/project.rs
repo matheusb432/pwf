@@ -3,13 +3,41 @@ use std::{fmt, str::FromStr};
 use nutype::nutype;
 use thiserror::Error;
 
-/// Names a managed project.
+/// Maximum Unicode scalar count accepted for one managed-project name.
+pub const PROJECT_NAME_CHARACTER_LIMIT: usize = 200;
+
+/// Reports why a managed-project name is invalid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum ProjectNameError {
+    #[error("project name cannot be blank")]
+    Blank,
+    #[error("project name 'project' is reserved")]
+    Reserved,
+    #[error("project name cannot exceed {PROJECT_NAME_CHARACTER_LIMIT} characters")]
+    TooLong,
+    #[error("project name cannot contain path separators or control characters")]
+    UnsafeCharacter,
+}
+
+/// Names a managed project with a bounded value safe to use as one path component.
 #[nutype(
     sanitize(trim),
-    validate(predicate = is_project_name),
+    validate(with = validate_project_name, error = ProjectNameError),
     derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, AsRef, Display,)
 )]
 pub struct ProjectName(String);
+
+/// Reports a project-creation value that is not a UTC timestamp.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+#[error("project creation timestamp must be an RFC 3339 UTC value")]
+pub struct ProjectCreatedAtError;
+
+/// Stores one persisted UTC project-creation timestamp.
+#[nutype(
+    validate(with = validate_utc_timestamp, error = ProjectCreatedAtError),
+    derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, AsRef, Display, FromStr,)
+)]
+pub struct ProjectCreatedAt(String);
 
 /// Identifies a managed project in task identifiers.
 #[nutype(
@@ -228,13 +256,36 @@ pub struct Project {
     /// Task location.
     pub tasks: ProjectTasks,
     /// RFC 3339 UTC creation timestamp.
-    pub created_at: String,
+    pub created_at: ProjectCreatedAt,
     /// Reports whether the project is paused.
     pub is_paused: bool,
 }
 
-fn is_project_name(raw: &str) -> bool {
-    !raw.is_empty() && !raw.eq_ignore_ascii_case("project")
+fn validate_project_name(raw: &str) -> Result<(), ProjectNameError> {
+    if raw.is_empty() {
+        return Err(ProjectNameError::Blank);
+    }
+    if raw.eq_ignore_ascii_case("project") {
+        return Err(ProjectNameError::Reserved);
+    }
+    if raw.chars().count() > PROJECT_NAME_CHARACTER_LIMIT {
+        return Err(ProjectNameError::TooLong);
+    }
+    if raw
+        .chars()
+        .any(|character| character.is_control() || matches!(character, '/' | '\\'))
+    {
+        return Err(ProjectNameError::UnsafeCharacter);
+    }
+    Ok(())
+}
+
+fn validate_utc_timestamp(raw: &str) -> Result<(), ProjectCreatedAtError> {
+    if raw.ends_with('Z') && raw.parse::<jiff::Timestamp>().is_ok() {
+        Ok(())
+    } else {
+        Err(ProjectCreatedAtError)
+    }
 }
 
 fn is_project_id(raw: &str) -> bool {

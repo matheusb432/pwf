@@ -1,15 +1,17 @@
-use std::path::PathBuf;
-
-use pwf_models::task::{ProjectName, TaskId, TaskStatus};
+use pwf_models::{
+    project::ProjectName,
+    task::{TaskId, TaskStatus, TaskTitle},
+};
+use pwf_wire::task::TaskNotePath;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Confirmation {
     Removal {
         task_identifier: TaskId,
         project: ProjectName,
-        title: String,
+        title: TaskTitle,
         status: TaskStatus,
-        note_path: PathBuf,
+        note_path: TaskNotePath,
     },
 }
 

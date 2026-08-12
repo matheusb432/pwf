@@ -1,3 +1,5 @@
+use pwf_models::session::SessionWorkingDirectory;
+
 use super::session::AgentCommand;
 
 pub trait InlineAgentSessionClient: Clone + Send + Sync + 'static {
@@ -6,5 +8,9 @@ pub trait InlineAgentSessionClient: Clone + Send + Sync + 'static {
     /// # Errors
     ///
     /// Returns a process error or unsuccessful exit status.
-    fn run(&self, command: AgentCommand<'_>, working_directory: &str) -> Result<(), String>;
+    fn run(
+        &self,
+        command: AgentCommand<'_>,
+        working_directory: &SessionWorkingDirectory,
+    ) -> Result<(), String>;
 }

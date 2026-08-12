@@ -1,11 +1,12 @@
 use clap::Args;
 use pwf_application::{
     ports::confirmation::{Confirmation, ConfirmationClient},
-    task::remove_task::{self, RemoveTask, RemoveTaskOk},
+    task::remove_task::{self, RemoveTask},
 };
 use pwf_infra::obsidian::ObsidianStore;
+use pwf_wire::task::RemovedTaskOutcome;
 
-use super::shared::Identifier;
+use super::Identifier;
 
 #[derive(Args, Debug)]
 pub struct Arguments {
@@ -17,13 +18,10 @@ pub struct Arguments {
 }
 
 use super::{
+    TaskError,
     render::{StatusPlacement, render_removed, render_task_summary},
-    shared::TaskError,
 };
-use crate::{
-    confirm::{self, DefaultAnswer},
-    console::Console,
-};
+use crate::{confirm, console::Console};
 
 #[derive(Clone, Copy)]
 struct CliConfirmationClient {
@@ -37,8 +35,7 @@ impl ConfirmationClient for CliConfirmationClient {
             return true;
         }
         matches!(
-            self.console
-                .confirm(&confirmation_message(confirmation), DefaultAnswer::Yes),
+            self.console.confirm(&confirmation_message(confirmation)),
             confirm::Confirmation::Accepted | confirm::Confirmation::NonInteractive
         )
     }
@@ -55,13 +52,12 @@ fn confirmation_message(confirmation: &Confirmation) -> String {
         } => {
             let summary = render_task_summary(
                 task_identifier.as_ref(),
-                title,
+                title.as_ref(),
                 Some((*status, StatusPlacement::AfterTitle)),
                 false,
             );
             format!(
-                "# Confirm task removal\n\n{summary}\n\nproject: {project}\nnote: {}\n\nRemove this task?",
-                note_path.display()
+                "# Confirm task removal\n\n{summary}\n\nproject: {project}\nnote: {note_path}\n\nRemove this task?"
             )
         }
     }
@@ -83,19 +79,21 @@ pub(super) async fn run(
         remove_task::execute(&RemoveTask { id }, store, pool, &confirmation_client).await?;
 
     match outcome {
-        RemoveTaskOk::Removed(removed) => Ok(render_removed(&removed, console.color())),
-        RemoveTaskOk::Aborted { task_identifier } => Ok(format!(
-            "# remove {task_identifier} — aborted\nnothing deleted.\n"
-        )),
+        RemovedTaskOutcome::Removed(removed) => Ok(render_removed(&removed, console.color())),
+        RemovedTaskOutcome::Aborted { task_id } => {
+            Ok(format!("# remove {task_id} — aborted\nnothing deleted.\n"))
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
     use pwf_application::ports::confirmation::Confirmation;
-    use pwf_models::task::{ProjectName, TaskId, TaskStatus};
+    use pwf_models::{
+        project::ProjectName,
+        task::{TaskId, TaskStatus, TaskTitle},
+    };
+    use pwf_wire::task::TaskNotePath;
 
     use super::confirmation_message;
 
@@ -104,9 +102,9 @@ mod tests {
         let confirmation = Confirmation::Removal {
             task_identifier: TaskId::try_new("PWF-0001").unwrap(),
             project: ProjectName::try_new("pwf").unwrap(),
-            title: "stale task".to_string(),
+            title: TaskTitle::try_new("stale task").unwrap(),
             status: TaskStatus::Active,
-            note_path: PathBuf::from("/notes/pwf/PWF-0001.md"),
+            note_path: TaskNotePath::new("/notes/pwf/PWF-0001.md".into()),
         };
 
         assert_eq!(

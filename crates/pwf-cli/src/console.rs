@@ -1,6 +1,6 @@
 //! Resolves terminal capabilities once at the process edge.
 
-use crate::confirm::{self, Confirmation, DefaultAnswer};
+use crate::confirm::{self, Confirmation};
 
 /// Terminal capabilities resolved at the binary edge.
 ///
@@ -33,7 +33,8 @@ impl Console {
     }
 
     /// A non-interactive console that renders plain markdown.
-    pub fn plain() -> Self {
+    #[cfg(test)]
+    fn plain() -> Self {
         Self {
             interactive: false,
             color_forced: None,
@@ -42,20 +43,20 @@ impl Console {
     }
 
     /// Asks on the terminal when interactive; otherwise reports `NonInteractive`.
-    pub fn confirm(self, question: &str, default: DefaultAnswer) -> Confirmation {
+    pub(crate) fn confirm(self, question: &str) -> Confirmation {
         if !self.interactive {
             return Confirmation::NonInteractive;
         }
-        confirm::prompt(question, default)
+        confirm::prompt(question)
     }
 
     /// Whether auto-detected stdout styling is enabled.
-    pub fn color(self) -> bool {
+    pub(crate) fn color(self) -> bool {
         self.color_forced.unwrap_or(self.stdout_terminal)
     }
 
     /// Styling with an explicit request; forcing environment variables still win.
-    pub fn color_with(self, requested: Option<bool>) -> bool {
+    pub(crate) fn color_with(self, requested: Option<bool>) -> bool {
         self.color_forced
             .unwrap_or_else(|| requested.unwrap_or(self.stdout_terminal))
     }
@@ -69,10 +70,7 @@ mod tests {
     fn plain_console_never_prompts_and_never_styles() {
         let console = Console::plain();
 
-        assert_eq!(
-            console.confirm("proceed?", DefaultAnswer::Yes),
-            Confirmation::NonInteractive
-        );
+        assert_eq!(console.confirm("proceed?"), Confirmation::NonInteractive);
         assert!(!console.color());
         assert!(!console.color_with(None));
     }

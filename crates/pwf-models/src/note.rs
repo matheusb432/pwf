@@ -1,8 +1,69 @@
-//! Defines project-note identifiers.
+//! Defines project-note values and identifiers.
 
-use std::fmt;
+use std::{fmt, str::FromStr};
+
+use nutype::nutype;
 
 use crate::project::ProjectId;
+
+/// Maximum Unicode scalar count accepted for one project-note title.
+pub const NOTE_TITLE_CHARACTER_LIMIT: usize = 200;
+
+/// Stores a bounded, non-empty project-note title.
+#[nutype(
+    sanitize(with = normalize_inline),
+    validate(not_empty, len_char_max = NOTE_TITLE_CHARACTER_LIMIT),
+    derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, AsRef, Display, FromStr),
+)]
+pub struct NoteTitle(String);
+
+/// Stores non-empty Markdown content for one project note.
+#[nutype(
+    sanitize(trim),
+    validate(not_empty),
+    derive(Debug, Clone, PartialEq, Eq, AsRef, Display, FromStr)
+)]
+pub struct NoteContent(String);
+
+/// Stores a non-empty explanation of why a project note matters.
+#[nutype(
+    sanitize(trim),
+    validate(not_empty),
+    derive(Debug, Clone, PartialEq, Eq, AsRef, Display, FromStr)
+)]
+pub struct NoteWhy(String);
+
+/// Stores a non-empty project-note subject classification.
+#[nutype(
+    sanitize(with = normalize_inline),
+    validate(not_empty),
+    derive(Debug, Clone, PartialEq, Eq, AsRef, Display, FromStr),
+)]
+pub struct NoteDomain(String);
+
+/// Stores one non-empty project-note discovery label.
+#[nutype(
+    sanitize(with = normalize_inline),
+    validate(not_empty),
+    derive(Debug, Clone, PartialEq, Eq, AsRef, Display, FromStr),
+)]
+pub struct NoteTag(String);
+
+/// Stores one non-empty project-note evidence source.
+#[nutype(
+    sanitize(with = normalize_inline),
+    validate(not_empty),
+    derive(Debug, Clone, PartialEq, Eq, AsRef, Display, FromStr),
+)]
+pub struct NoteSource(String);
+
+/// Stores one non-empty project-note verification marker.
+#[nutype(
+    sanitize(with = normalize_inline),
+    validate(not_empty),
+    derive(Debug, Clone, PartialEq, Eq, AsRef, Display, FromStr),
+)]
+pub struct NoteVerification(String);
 
 /// Describes one project note.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -10,7 +71,7 @@ pub struct ProjectNote {
     /// Identifies the note within its project.
     pub id: NoteId,
     /// Names the note.
-    pub title: String,
+    pub title: NoteTitle,
 }
 
 /// Stores a `{PROJECT_ID}-NOTE-NNNN` identifier.
@@ -65,6 +126,81 @@ impl NoteId {
     }
 }
 
+/// Selects a project note by full ID, `NOTE-NNNN`, or bare numeric suffix.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NoteSelector {
+    project_id: Option<ProjectId>,
+    number: u32,
+}
+
+impl NoteSelector {
+    /// Resolves the selector for `project_id`, returning `None` for a different explicit project.
+    #[must_use]
+    pub fn resolve(&self, project_id: &ProjectId) -> Option<NoteId> {
+        if self
+            .project_id
+            .as_ref()
+            .is_some_and(|selected| selected != project_id)
+        {
+            return None;
+        }
+        Some(NoteId {
+            value: format!("{project_id}-NOTE-{:04}", self.number),
+            project_id: project_id.clone(),
+            number: self.number,
+        })
+    }
+}
+
+impl FromStr for NoteSelector {
+    type Err = NoteSelectorError;
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        let normalized = raw.trim().to_ascii_uppercase();
+        let invalid = || NoteSelectorError {
+            raw: raw.to_string(),
+        };
+        let (project_id, digits, exact_width) =
+            if let Some((project, digits)) = normalized.split_once("-NOTE-") {
+                let project_id = ProjectId::try_new(project).map_err(|_| invalid())?;
+                (Some(project_id), digits, true)
+            } else if let Some(digits) = normalized.strip_prefix("NOTE-") {
+                (None, digits, true)
+            } else {
+                (None, normalized.as_str(), false)
+            };
+        let valid_width = if exact_width {
+            digits.len() == 4
+        } else {
+            (1..=4).contains(&digits.len())
+        };
+        if !valid_width || !digits.chars().all(|character| character.is_ascii_digit()) {
+            return Err(invalid());
+        }
+        let number = digits.parse::<u32>().map_err(|_| invalid())?;
+        if number > 9_999 {
+            return Err(invalid());
+        }
+        Ok(Self { project_id, number })
+    }
+}
+
+impl fmt::Display for NoteSelector {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.project_id {
+            Some(project_id) => write!(formatter, "{project_id}-NOTE-{:04}", self.number),
+            None => write!(formatter, "NOTE-{:04}", self.number),
+        }
+    }
+}
+
+/// Reports invalid project-note selector syntax.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("invalid note selector {raw:?}; expected PROJECT-NOTE-NNNN, NOTE-NNNN, or a number")]
+pub struct NoteSelectorError {
+    raw: String,
+}
+
 impl AsRef<str> for NoteId {
     fn as_ref(&self) -> &str {
         &self.value
@@ -82,6 +218,14 @@ impl fmt::Display for NoteId {
 #[error("invalid note id {value:?}")]
 pub struct NoteIdError {
     value: String,
+}
+
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "nutype string sanitizers receive owned values"
+)]
+fn normalize_inline(value: String) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 #[cfg(test)]

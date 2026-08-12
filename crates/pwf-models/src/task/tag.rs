@@ -40,11 +40,11 @@ impl fmt::Display for Tag {
 
 /// Contains the normalized tags parsed from one authored argument.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TagInput(Tags);
+pub struct TagInput(TaskTags);
 
 impl TagInput {
     /// Returns the parsed tags in encounter order.
-    pub fn iter(&self) -> impl Iterator<Item = &Tag> {
+    fn iter(&self) -> impl Iterator<Item = &Tag> {
         self.0.iter()
     }
 }
@@ -71,7 +71,7 @@ impl FromStr for TagInput {
                 tags.push(tag);
             }
         }
-        Tags::try_new(tags)
+        TaskTags::try_new(tags)
             .map(Self)
             .map_err(|_| TagInputError::MissingTag {
                 raw: value.to_string(),
@@ -81,9 +81,9 @@ impl FromStr for TagInput {
 
 /// Stores a non-empty ordered collection of task tags.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Tags(Vec<Tag>);
+pub struct TaskTags(Vec<Tag>);
 
-impl Tags {
+impl TaskTags {
     /// Combines parsed tag arguments, returning `None` when no arguments were supplied.
     #[must_use]
     pub fn from_inputs(inputs: &[TagInput]) -> Option<Self> {
@@ -93,9 +93,9 @@ impl Tags {
     }
 
     /// Creates a non-empty ordered collection.
-    pub fn try_new(values: Vec<Tag>) -> Result<Self, EmptyTagsError> {
+    pub fn try_new(values: Vec<Tag>) -> Result<Self, EmptyTaskTagsError> {
         if values.is_empty() {
-            return Err(EmptyTagsError);
+            return Err(EmptyTaskTagsError);
         }
         Ok(Self(values))
     }
@@ -161,25 +161,25 @@ impl TagInputError {
 /// Reports an empty tag collection.
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
 #[error("tags cannot be empty")]
-pub struct EmptyTagsError;
+pub struct EmptyTaskTagsError;
 
 #[cfg(test)]
 mod tests {
-    use super::{Tag, TagInput, TagInputError, Tags};
+    use super::{Tag, TagInput, TagInputError, TaskTags};
 
-    fn values(tags: &Tags) -> Vec<&str> {
+    fn values(tags: &TaskTags) -> Vec<&str> {
         tags.iter().map(AsRef::as_ref).collect()
     }
 
     #[test]
     fn tag_and_non_empty_collection_preserve_values() {
-        let tags = Tags::try_new(vec![
+        let tags = TaskTags::try_new(vec![
             Tag::try_from("sqlite").unwrap(),
             Tag::try_from("csharp_export").unwrap(),
         ])
         .unwrap();
         assert_eq!(values(&tags), ["sqlite", "csharp_export"]);
-        assert!(Tags::try_new(Vec::new()).is_err());
+        assert!(TaskTags::try_new(Vec::new()).is_err());
     }
 
     #[test]
@@ -187,7 +187,7 @@ mod tests {
         let inputs = ["SQLite,csharp-export", "sqlite", " godot ", "csharp_export"]
             .map(|raw| raw.parse::<TagInput>().unwrap());
 
-        let tags = Tags::from_inputs(&inputs).unwrap();
+        let tags = TaskTags::from_inputs(&inputs).unwrap();
 
         assert_eq!(values(&tags), ["sqlite", "csharp_export", "godot"]);
     }
@@ -214,13 +214,13 @@ mod tests {
 
     #[test]
     fn merge_preserves_first_seen_order() {
-        let existing = Tags::try_new(
+        let existing = TaskTags::try_new(
             ["sqlite", "godot"]
                 .map(|raw| Tag::try_from(raw).unwrap())
                 .to_vec(),
         )
         .unwrap();
-        let appended = Tags::try_new(
+        let appended = TaskTags::try_new(
             ["godot", "csharp_export"]
                 .map(|raw| Tag::try_from(raw).unwrap())
                 .to_vec(),

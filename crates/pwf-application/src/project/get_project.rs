@@ -3,7 +3,7 @@ use std::error::Error;
 use pwf_models::project::ProjectId;
 use pwf_wire::project::ProjectStatusFilter;
 
-use super::{Project, ProjectRow, ProjectRowError};
+use super::{Project, ProjectRow};
 
 /// Requests one managed project by project ID.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,7 +64,7 @@ pub async fn execute(
     .map_err(|error| unexpected("reading project", error))?
     .ok_or(GetProjectError::ProjectNotFound { id: query.id })?;
 
-    super::project_from_row(row).map_err(|error| unexpected_row("converting project", error))
+    super::project_from_row(row).map_err(|error| unexpected("converting project", error))
 }
 
 fn unexpected(
@@ -75,10 +75,6 @@ fn unexpected(
         context,
         source: Box::new(source),
     }
-}
-
-fn unexpected_row(context: &'static str, source: ProjectRowError) -> GetProjectError {
-    unexpected(context, source)
 }
 
 #[cfg(test)]
@@ -94,7 +90,7 @@ mod tests {
         let active = super::execute(
             GetProject {
                 id: id.clone(),
-                status: ProjectStatusFilter::ACTIVE,
+                status: ProjectStatusFilter::ActiveOnly,
             },
             &pool,
         )
@@ -102,7 +98,7 @@ mod tests {
         let all = super::execute(
             GetProject {
                 id,
-                status: ProjectStatusFilter::ALL,
+                status: ProjectStatusFilter::IncludingPaused,
             },
             &pool,
         )

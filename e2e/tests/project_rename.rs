@@ -68,11 +68,11 @@ fn rename_commits_registry_and_task_identity_as_one_lifecycle() {
     );
     assert_failure(fixture.run(&["project", "get", "SSH"]), &["SSH"]);
 
-    let shown = fixture.run(&["show", "MUX-0079"]);
-    assert!(shown.status.success());
-    let shown_stdout = String::from_utf8(shown.stdout).unwrap();
-    assert!(shown_stdout.contains("status: active"));
-    assert!(shown_stdout.contains("Task body remains intact."));
+    let gotten = fixture.run(&["get", "MUX-0079"]);
+    assert!(gotten.status.success());
+    let gotten_stdout = String::from_utf8(gotten.stdout).unwrap();
+    assert!(gotten_stdout.contains("status: active"));
+    assert!(gotten_stdout.contains("Task body remains intact."));
 }
 
 #[test]
@@ -117,7 +117,7 @@ fn rename_commit_failure_rolls_back_and_allows_retry() {
         created
     );
     assert_failure(fixture.run(&["project", "get", "MUX"]), &["MUX"]);
-    assert!(fixture.run(&["show", "SSH-0079"]).status.success());
+    assert!(fixture.run(&["get", "SSH-0079"]).status.success());
 
     fs::create_dir_all(destination_tasks.parent().unwrap()).unwrap();
     let retried = success_json(fixture.run_with_home(&rename_arguments, &home));
@@ -130,5 +130,5 @@ fn rename_commit_failure_rolls_back_and_allows_retry() {
         destination_tasks.to_str().unwrap(),
         false,
     );
-    assert!(fixture.run(&["show", "MUX-0079"]).status.success());
+    assert!(fixture.run(&["get", "MUX-0079"]).status.success());
 }

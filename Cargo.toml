@@ -18,7 +18,7 @@ jiff = "0.2.35"
 clap = { version = "4", features = ["derive"] }
 clap-cargo = "0.18.3"
 command-group = "5.0.1"
-cqrsy = { git = "ssh://git@github.com/matheusb432/cqrsy.git", tag = "v0.10.0" }
+cqrsy = { git = "ssh://git@github.com/matheusb432/cqrsy.git", tag = "v0.10.1" }
 directories = "6.0.0"
 expectrl = "0.9.0"
 gray_matter = { version = "0.3.2", default-features = false, features = ["yaml"] }
@@ -52,7 +52,7 @@ thiserror = "2.0.18"
 toml = "1.1.2"
 tokio = "1"
 walkdir = "2"
-xtk_test = { git = "ssh://git@github.com/matheusb432/xtk-test.git", tag = "v0.4.0" }
+xtk-test = { git = "ssh://git@github.com/matheusb432/xtk-test.git", tag = "v0.8.2", features = ["json"] }
 [workspace.lints.clippy]
 all = { level = "warn", priority = -2 }
 pedantic = { level = "warn", priority = -2 }

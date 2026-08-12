@@ -9,6 +9,7 @@ name = "pwf_models"
 path = "src/lib.rs"
 
 [dependencies]
+jiff = { workspace = true }
 nutype = { workspace = true }
 thiserror = { workspace = true }
 

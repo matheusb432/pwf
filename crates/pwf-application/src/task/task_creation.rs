@@ -1,10 +1,14 @@
 //! Creates a task record and its open index entry.
 
-use pwf_models::{project::Project, task::ProjectName};
+use pwf_models::{
+    project::{Project, ProjectName},
+    task::{TaskId, TaskSection, TaskTitle},
+};
+use pwf_wire::task::TaskNotePath;
 
 use super::normalize_section_label;
 use crate::ports::task_record::{
-    IndexEntry, IndexEntryState, IndexEntryStore, IndexSectionStore, NewTask, TaskRecord, TaskStore,
+    IndexEntry, IndexEntryState, IndexEntryStore, IndexSectionStore, NewTask, TaskStore,
 };
 
 /// Reports the persistence phase that failed while creating a task.
@@ -17,14 +21,14 @@ pub enum CreateTaskError {
     #[error("{source}")]
     InsertIndex {
         project: ProjectName,
-        created_section: Option<String>,
+        created_section: Option<TaskSection>,
         #[source]
         source: Box<dyn std::error::Error + Send + Sync>,
     },
 }
 
 impl CreateTaskError {
-    pub fn created_section(&self) -> Option<(&ProjectName, &str)> {
+    pub fn created_section(&self) -> Option<(&ProjectName, &TaskSection)> {
         match self {
             Self::InsertIndex {
                 project,
@@ -37,44 +41,44 @@ impl CreateTaskError {
 }
 
 /// Labels that materialize as dedicated H2 sections.
-const SECTION_LABELS: [&str; 3] = ["Future", "Human", "Low-prio"];
+fn is_dedicated_section(section: &TaskSection) -> bool {
+    matches!(section.as_ref(), "Future" | "Human" | "Low-prio")
+}
 
 /// Contains a created record and the new H2 section, if one was needed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::task) struct CreatedTask {
-    pub(in crate::task) record: TaskRecord,
-    pub(in crate::task) created_section: Option<String>,
+    pub(in crate::task) id: TaskId,
+    pub(in crate::task) title: TaskTitle,
+    pub(in crate::task) note_path: TaskNotePath,
+    pub(in crate::task) created_section: Option<TaskSection>,
 }
 
-pub(in crate::task) struct CreateTask<'a> {
+pub(in crate::task) struct TaskCreation<'a> {
     pub(in crate::task) project: &'a Project,
     pub(in crate::task) new: NewTask,
 }
 
 /// Inserts a note record, then upserts its open index entry.
-///
-/// # Panics
-///
-/// Panics if the store's `insert` violates its contract by returning a record
-/// without a [`TaskId`].
-pub(in crate::task) fn execute(
-    command: CreateTask<'_>,
+pub(in crate::task) fn create(
+    command: TaskCreation<'_>,
     store: &(impl TaskStore + IndexEntryStore + IndexSectionStore),
 ) -> Result<CreatedTask, CreateTaskError> {
-    let CreateTask { project, new } = command;
+    let TaskCreation { project, new } = command;
     let target_section = new.section.clone();
+    let title = new.title.clone();
     // Read sections before writing so an invalid index leaves no orphaned note.
     let existing = IndexSectionStore::list_index_sections(store, project)
         .map_err(|error| CreateTaskError::ReadSections(Box::new(error)))?;
     let created_section = target_section
-        .as_deref()
-        .filter(|label| SECTION_LABELS.contains(label))
+        .as_ref()
+        .filter(|label| is_dedicated_section(label))
         .filter(|label| {
             !existing
                 .iter()
-                .any(|section| normalize_section_label(&section.label) == *label)
+                .any(|section| normalize_section_label(section) == **label)
         })
-        .map(str::to_string);
+        .cloned();
 
     let record = TaskStore::insert(store, project, new)
         .map_err(|error| CreateTaskError::InsertRecord(Box::new(error)))?;
@@ -83,10 +87,10 @@ pub(in crate::task) fn execute(
         store,
         project,
         IndexEntry {
-            id,
+            id: id.clone(),
             state: IndexEntryState::Open,
             // Preserve the raw label; the adapter owns placement.
-            section: target_section.unwrap_or_default(),
+            section: target_section,
         },
     )
     .map_err(|error| CreateTaskError::InsertIndex {
@@ -96,7 +100,9 @@ pub(in crate::task) fn execute(
     })?;
 
     Ok(CreatedTask {
-        record,
+        id,
+        title,
+        note_path: TaskNotePath::new(record.locator.into()),
         created_section,
     })
 }
@@ -105,13 +111,13 @@ pub(in crate::task) fn execute(
 mod tests {
     use pwf_models::{
         project::Project,
-        task::{TaskId, TaskTitle, Timestamp},
+        task::{TaskId, TaskTitle},
     };
 
-    use super::{CreateTask, execute};
+    use super::{TaskCreation, create};
     use crate::{
         ports::task_record::{IndexEntryState, NewTask},
-        testing::{InMemoryStore, project},
+        testing::{InMemoryStore, app_date, project},
     };
 
     fn pwf() -> Project {
@@ -122,9 +128,9 @@ mod tests {
         NewTask {
             body: "## Goals\n\n- do the thing".to_string(),
             title: TaskTitle::try_new("ship it").unwrap(),
-            created: Timestamp::new("2026-07-15"),
-            section: section.map(str::to_string),
-            prereq: None,
+            created: app_date("2026-07-15"),
+            section: section.map(|section| section.parse().unwrap()),
+            blocked_by: None,
             effort: None,
             tags: None,
         }
@@ -139,8 +145,8 @@ mod tests {
         let store = staged_store();
 
         let project = pwf();
-        let created = execute(
-            CreateTask {
+        let created = create(
+            TaskCreation {
                 project: &project,
                 new: new_task(None),
             },
@@ -149,7 +155,7 @@ mod tests {
         .unwrap();
 
         let id = TaskId::try_new("PWF-0001").unwrap();
-        assert_eq!(created.record.id, id.clone());
+        assert_eq!(created.id, id.clone());
         assert_eq!(created.created_section, None);
         let tasks = store.tasks("pwf");
         assert_eq!(tasks.len(), 1, "record must be inserted");
@@ -158,7 +164,7 @@ mod tests {
         assert_eq!(entries.len(), 1, "open index entry must be upserted");
         assert_eq!(entries[0].id, id);
         assert_eq!(entries[0].state, IndexEntryState::Open);
-        assert_eq!(entries[0].section, "");
+        assert_eq!(entries[0].section, None);
     }
 
     #[test]
@@ -166,8 +172,8 @@ mod tests {
         let store = staged_store();
 
         let project = pwf();
-        let created = execute(
-            CreateTask {
+        let created = create(
+            TaskCreation {
                 project: &project,
                 new: new_task(Some("Human")),
             },
@@ -175,8 +181,14 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(created.created_section.as_deref(), Some("Human"));
-        assert_eq!(store.entries("pwf")[0].section, "Human");
+        assert_eq!(
+            created.created_section.as_ref().map(AsRef::as_ref),
+            Some("Human")
+        );
+        assert_eq!(
+            store.entries("pwf")[0].section.as_ref().map(AsRef::as_ref),
+            Some("Human")
+        );
     }
 
     #[test]
@@ -184,8 +196,8 @@ mod tests {
         let store = staged_store().with_sections("pwf", &["Human"]);
 
         let project = pwf();
-        let created = execute(
-            CreateTask {
+        let created = create(
+            TaskCreation {
                 project: &project,
                 new: new_task(Some("Human")),
             },
@@ -201,8 +213,8 @@ mod tests {
         let store = staged_store().with_sections("pwf", &["Futuro"]);
 
         let project = pwf();
-        let created = execute(
-            CreateTask {
+        let created = create(
+            TaskCreation {
                 project: &project,
                 new: new_task(Some("Future")),
             },
@@ -217,16 +229,19 @@ mod tests {
     fn created_item_carries_record_and_section_fact() {
         let store = staged_store();
         let project = pwf();
-        let created = execute(
-            CreateTask {
+        let created = create(
+            TaskCreation {
                 project: &project,
                 new: new_task(Some("Low-prio")),
             },
             &store,
         )
         .unwrap();
-        assert_eq!(created.record.id, TaskId::try_new("PWF-0001").unwrap());
-        assert_eq!(created.record.title, "ship it");
-        assert_eq!(created.created_section.as_deref(), Some("Low-prio"));
+        assert_eq!(created.id, TaskId::try_new("PWF-0001").unwrap());
+        assert_eq!(created.title.as_ref(), "ship it");
+        assert_eq!(
+            created.created_section.as_ref().map(AsRef::as_ref),
+            Some("Low-prio")
+        );
     }
 }

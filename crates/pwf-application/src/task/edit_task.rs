@@ -1,12 +1,15 @@
 use pwf_models::{
     project::Project,
-    task::{EffortTier, Prerequisites, Tags, TaskId, TaskStatus, TaskTitle, TaskTitleError},
+    task::{
+        BlockedBy, EffortTier, TaskId, TaskPrompt, TaskStatus, TaskTags, TaskTitle, TaskTitleError,
+    },
 };
+use pwf_wire::task::EditedTask;
 
 use super::{
     TaskLaneEdits,
+    blocked_by::{self, BlockedByValidationError, validate_and_merge},
     note_body::{EditLanesError, append_lanes, edit_lanes, render},
-    prerequisites::{self, PrerequisiteValidationError, validate_and_merge},
     resolve_task_project::{self, ResolveTaskProject, ResolveTaskProjectError},
     tags, task_body_region,
 };
@@ -26,22 +29,77 @@ struct TaskIdentity {
 struct PreparedTaskEdit {
     identity: TaskIdentity,
     patch: TaskPatch,
-    outcome: EditTaskOk,
+    outcome: EditedTask,
 }
 
 #[derive(Debug, Clone)]
-pub enum EditTaskContent {
+enum EditTaskContentKind {
     Structured {
         title: Option<TaskTitle>,
         lanes: TaskLaneEdits,
     },
     AppendShorthand {
         title: Option<TaskTitle>,
-        prompt: String,
+        prompt: TaskPrompt,
     },
     ReplaceShorthand {
-        prompt: String,
+        prompt: TaskPrompt,
+        title: TaskTitle,
     },
+}
+
+/// Carries one structurally valid task-content change.
+#[derive(Debug, Clone)]
+pub struct EditTaskContent(EditTaskContentKind);
+
+impl EditTaskContent {
+    /// Creates an explicit title or lane edit.
+    pub fn structured(
+        title: Option<TaskTitle>,
+        lanes: TaskLaneEdits,
+    ) -> Result<Self, EditTaskContentError> {
+        if title.is_none() && lanes.is_empty() {
+            return Err(EditTaskContentError::EmptyStructured);
+        }
+        Ok(Self(EditTaskContentKind::Structured { title, lanes }))
+    }
+
+    /// Creates a non-empty shorthand append.
+    pub fn append_shorthand(
+        title: Option<TaskTitle>,
+        prompt: TaskPrompt,
+    ) -> Result<Self, EditTaskContentError> {
+        if prompt.as_ref().trim().is_empty() {
+            return Err(EditTaskContentError::EmptyAppend);
+        }
+        Ok(Self(EditTaskContentKind::AppendShorthand { title, prompt }))
+    }
+
+    /// Creates a shorthand replacement with a validated leading title.
+    pub fn replace_shorthand(prompt: TaskPrompt) -> Result<Self, EditTaskContentError> {
+        let parsed = prompt_lanes::parse(prompt.as_ref());
+        if parsed.title.trim().is_empty() {
+            return Err(EditTaskContentError::MissingPromptTitle);
+        }
+        let title = TaskTitle::try_new(parsed.title)?;
+        Ok(Self(EditTaskContentKind::ReplaceShorthand {
+            prompt,
+            title,
+        }))
+    }
+}
+
+/// Reports an invalid task-content edit before application execution.
+#[derive(Debug, thiserror::Error)]
+pub enum EditTaskContentError {
+    #[error("task content edit cannot be empty")]
+    EmptyStructured,
+    #[error("--append cannot be empty.")]
+    EmptyAppend,
+    #[error("--prompt must start with a nonempty title before any lane marker.")]
+    MissingPromptTitle,
+    #[error(transparent)]
+    InvalidTitle(#[from] TaskTitleError),
 }
 
 /// Selects how an optional collection changes.
@@ -93,9 +151,9 @@ impl<T> ValueEdit<T> {
 #[derive(Debug, Clone)]
 pub struct TaskEdits {
     content: Option<EditTaskContent>,
-    prerequisites: CollectionEdit<Prerequisites>,
+    blocked_by: CollectionEdit<BlockedBy>,
     effort: ValueEdit<EffortTier>,
-    tags: CollectionEdit<Tags>,
+    tags: CollectionEdit<TaskTags>,
 }
 
 impl TaskEdits {
@@ -106,18 +164,12 @@ impl TaskEdits {
     /// Returns [`EmptyTaskEdits`] when every field is unchanged.
     pub fn try_new(
         content: Option<EditTaskContent>,
-        prerequisites: CollectionEdit<Prerequisites>,
+        blocked_by: CollectionEdit<BlockedBy>,
         effort: ValueEdit<EffortTier>,
-        tags: CollectionEdit<Tags>,
+        tags: CollectionEdit<TaskTags>,
     ) -> Result<Self, EmptyTaskEdits> {
-        let content = content.filter(|content| match content {
-            EditTaskContent::Structured { title, lanes } => title.is_some() || !lanes.is_empty(),
-            EditTaskContent::AppendShorthand { .. } | EditTaskContent::ReplaceShorthand { .. } => {
-                true
-            }
-        });
         if content.is_none()
-            && prerequisites.is_unchanged()
+            && blocked_by.is_unchanged()
             && effort.is_unchanged()
             && tags.is_unchanged()
         {
@@ -125,7 +177,7 @@ impl TaskEdits {
         }
         Ok(Self {
             content,
-            prerequisites,
+            blocked_by,
             effort,
             tags,
         })
@@ -149,29 +201,25 @@ pub enum EditTaskError {
     TaskNotFound { id: TaskId },
     #[error("cannot edit closed task {id}.")]
     ClosedTask { id: TaskId },
-    #[error("--prompt must start with a nonempty title before any lane marker.")]
-    MissingPromptTitle,
-    #[error(transparent)]
-    InvalidTitle(#[from] TaskTitleError),
+    #[error("task {id} has an invalid persisted title: {source}")]
+    InvalidPersistedTitle {
+        id: TaskId,
+        #[source]
+        source: TaskTitleError,
+    },
     #[error("task {id} has invalid tags frontmatter: {raw:?}.")]
     InvalidTagsFrontmatter { id: TaskId, raw: String },
-    #[error("Unknown --add-prereq id(s): {}.", format_task_ids(ids))]
-    UnknownPrerequisiteIds { ids: Vec<TaskId> },
-    #[error("--append cannot be empty.")]
-    EmptyAppend,
+    #[error(
+        "Unknown --add-blocked-by id(s): {}.",
+        blocked_by::format_task_ids(ids)
+    )]
+    UnknownBlockedByIds { ids: Vec<TaskId> },
     #[error("cannot edit lanes: task body contains more than one `{header}` section.")]
     AmbiguousLanes { header: &'static str },
     #[error("{0}")]
     WriteStore(#[source] Box<dyn std::error::Error + Send + Sync>),
     #[error("{0}")]
     QueryProject(#[source] Box<dyn std::error::Error + Send + Sync>),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EditTaskOk {
-    pub id: TaskId,
-    pub project: String,
-    pub title: String,
 }
 
 /// Applies content and metadata edits to one active task.
@@ -184,7 +232,7 @@ pub async fn execute(
     command: EditTask,
     store: &impl TaskStore,
     pool: &sqlx::SqlitePool,
-) -> Result<EditTaskOk, EditTaskError> {
+) -> Result<EditedTask, EditTaskError> {
     let project = resolve_task_project::execute(
         ResolveTaskProject {
             id: command.id.clone(),
@@ -205,7 +253,7 @@ pub async fn execute(
         });
     }
 
-    let projects = resolve_prerequisite_projects(&command, project.clone(), pool).await?;
+    let projects = resolve_blocked_by_projects(&command, project.clone(), pool).await?;
     let prepared = prepare(command, &record, &projects, store)?;
     persist(prepared, store)
 }
@@ -219,16 +267,16 @@ fn map_project_error(error: ResolveTaskProjectError, id: &TaskId) -> EditTaskErr
     }
 }
 
-async fn resolve_prerequisite_projects(
+async fn resolve_blocked_by_projects(
     command: &EditTask,
     task_project: Project,
     pool: &sqlx::SqlitePool,
 ) -> Result<Vec<Project>, EditTaskError> {
     let mut projects = vec![task_project];
-    let Some(prerequisites) = command.edits.prerequisites.addition() else {
+    let Some(blocked_by) = command.edits.blocked_by.addition() else {
         return Ok(projects);
     };
-    for id in prerequisites::project_ids(prerequisites) {
+    for id in blocked_by::project_ids(blocked_by) {
         if projects.iter().any(|project| project.id == id) {
             continue;
         }
@@ -251,18 +299,19 @@ fn prepare(
         project: projects[0].clone(),
         id: command.id.clone(),
     };
-    let (body, title, outcome_title) = prepare_content(command.edits.content.as_ref(), record)?;
+    let (body, title, outcome_title) =
+        prepare_content(command.edits.content.as_ref(), record, &command.id)?;
     let patch = TaskPatch {
         body,
         title,
-        prereq: resolve_prerequisites(&command.edits.prerequisites, record, store, projects)?,
+        blocked_by: resolve_blocked_by(&command.edits.blocked_by, record, store, projects)?,
         effort: resolve_effort(&command.edits.effort),
         tags: resolve_tags(&command.edits.tags, &command.id, record)?,
         ..TaskPatch::default()
     };
-    let outcome = EditTaskOk {
+    let outcome = EditedTask {
         id: command.id,
-        project: identity.project.title.to_string(),
+        project: identity.project.title.clone(),
         title: outcome_title,
     };
     Ok(PreparedTaskEdit {
@@ -275,53 +324,56 @@ fn prepare(
 fn prepare_content(
     content: Option<&EditTaskContent>,
     record: &TaskRecord,
-) -> Result<(Option<String>, Option<TaskTitle>, String), EditTaskError> {
+    id: &TaskId,
+) -> Result<(Option<String>, Option<TaskTitle>, TaskTitle), EditTaskError> {
     let current_body = task_body_region(&record.body);
-    match content {
-        None => Ok((None, None, record.title.clone())),
-        Some(EditTaskContent::Structured { title, lanes }) => Ok((
+    let current_title = || {
+        TaskTitle::try_new(record.title.clone()).map_err(|source| {
+            EditTaskError::InvalidPersistedTitle {
+                id: id.clone(),
+                source,
+            }
+        })
+    };
+    match content.map(|content| &content.0) {
+        None => Ok((None, None, current_title()?)),
+        Some(EditTaskContentKind::Structured { title, lanes }) => Ok((
             edit_lanes(current_body, lanes).map_err(map_lane_error)?,
             title.clone(),
-            title
-                .as_ref()
-                .map_or_else(|| record.title.clone(), ToString::to_string),
+            title.clone().map_or_else(current_title, Ok)?,
         )),
-        Some(EditTaskContent::AppendShorthand { title, prompt }) => Ok((
-            Some(append_lanes(current_body, prompt).ok_or(EditTaskError::EmptyAppend)?),
+        Some(EditTaskContentKind::AppendShorthand { title, prompt }) => Ok((
+            Some(append_lanes(current_body, prompt)),
             title.clone(),
-            title
-                .as_ref()
-                .map_or_else(|| record.title.clone(), ToString::to_string),
+            title.clone().map_or_else(current_title, Ok)?,
         )),
-        Some(EditTaskContent::ReplaceShorthand { prompt }) => {
-            let parsed = prompt_lanes::parse(prompt);
-            if parsed.title.trim().is_empty() {
-                return Err(EditTaskError::MissingPromptTitle);
-            }
-            let title = TaskTitle::try_new(parsed.title)?;
-            let outcome_title = title.to_string();
-            Ok((Some(render(prompt)), Some(title), outcome_title))
+        Some(EditTaskContentKind::ReplaceShorthand { prompt, title }) => {
+            Ok((Some(render(prompt)), Some(title.clone()), title.clone()))
         }
     }
 }
 
-fn resolve_prerequisites(
-    edit: &CollectionEdit<Prerequisites>,
+fn resolve_blocked_by(
+    edit: &CollectionEdit<BlockedBy>,
     record: &TaskRecord,
     store: &impl TaskStore,
     projects: &[Project],
-) -> Result<NullablePatch<Prerequisites>, EditTaskError> {
+) -> Result<NullablePatch<BlockedBy>, EditTaskError> {
     match edit {
         CollectionEdit::Unchanged => Ok(NullablePatch::Unchanged),
         CollectionEdit::Clear => Ok(NullablePatch::Clear),
         CollectionEdit::Append(added) => {
-            validate_and_merge(record.prereq.as_deref(), added, store, projects)
+            validate_and_merge(record.blocked_by.as_deref(), added, store, projects)
                 .map(NullablePatch::Set)
-                .map_err(map_prerequisite_error)
+                .map_err(|BlockedByValidationError::UnknownIds { ids }| {
+                    EditTaskError::UnknownBlockedByIds { ids }
+                })
         }
         CollectionEdit::Replace(added) => validate_and_merge(None, added, store, projects)
             .map(NullablePatch::Set)
-            .map_err(map_prerequisite_error),
+            .map_err(|BlockedByValidationError::UnknownIds { ids }| {
+                EditTaskError::UnknownBlockedByIds { ids }
+            }),
     }
 }
 
@@ -334,16 +386,16 @@ fn resolve_effort(edit: &ValueEdit<EffortTier>) -> NullablePatch<EffortTier> {
 }
 
 fn resolve_tags(
-    edit: &CollectionEdit<Tags>,
+    edit: &CollectionEdit<TaskTags>,
     id: &TaskId,
     record: &TaskRecord,
-) -> Result<NullablePatch<Tags>, EditTaskError> {
+) -> Result<NullablePatch<TaskTags>, EditTaskError> {
     match edit {
         CollectionEdit::Unchanged => Ok(NullablePatch::Unchanged),
         CollectionEdit::Clear => Ok(NullablePatch::Clear),
         CollectionEdit::Replace(tags) => Ok(NullablePatch::Set(tags.clone())),
         CollectionEdit::Append(appended) => {
-            let resolved = match record.tags.as_deref() {
+            let resolved = match record.tags.as_ref() {
                 Some(existing) => {
                     let existing = tags::parse_frontmatter(existing).map_err(|error| {
                         EditTaskError::InvalidTagsFrontmatter {
@@ -351,7 +403,7 @@ fn resolve_tags(
                             raw: error.raw().to_string(),
                         }
                     })?;
-                    tags::merge(&existing, appended)
+                    existing.merge(appended)
                 }
                 None => appended.clone(),
             };
@@ -363,7 +415,7 @@ fn resolve_tags(
 fn persist(
     prepared: PreparedTaskEdit,
     store: &impl TaskStore,
-) -> Result<EditTaskOk, EditTaskError> {
+) -> Result<EditedTask, EditTaskError> {
     store
         .update(
             &prepared.identity.project,
@@ -374,21 +426,6 @@ fn persist(
     Ok(prepared.outcome)
 }
 
-fn format_task_ids(ids: &[TaskId]) -> String {
-    ids.iter()
-        .map(ToString::to_string)
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-fn map_prerequisite_error(error: PrerequisiteValidationError) -> EditTaskError {
-    match error {
-        PrerequisiteValidationError::UnknownIds { ids } => {
-            EditTaskError::UnknownPrerequisiteIds { ids }
-        }
-    }
-}
-
 fn map_lane_error(error: EditLanesError) -> EditTaskError {
     match error {
         EditLanesError::DuplicateSection { header } => EditTaskError::AmbiguousLanes { header },
@@ -397,22 +434,23 @@ fn map_lane_error(error: EditLanesError) -> EditTaskError {
 
 #[cfg(test)]
 mod tests {
-    use pwf_models::task::{EffortTier, Prerequisites, Tags, TaskStatus, TaskTitle, Timestamp};
+    use pwf_models::task::{BlockedBy, EffortTier, TaskPrompt, TaskStatus, TaskTags, TaskTitle};
+    use pwf_wire::task::{EditedTask, RawTaskTags};
 
     use super::{
-        CollectionEdit, EditTask, EditTaskContent, EditTaskError, EditTaskOk, EmptyTaskEdits,
-        TaskEdits, ValueEdit,
+        CollectionEdit, EditTask, EditTaskContent, EditTaskContentError, EditTaskError,
+        EmptyTaskEdits, TaskEdits, ValueEdit,
     };
     use crate::{
         ports::task_record::TaskRecord,
         task::{TaskLane, TaskLaneEdits, TaskLanes},
-        testing::{InMemoryStore, insert_project, task_record},
+        testing::{InMemoryStore, app_date, insert_project, task_record},
     };
 
     fn record(id: &str, status: TaskStatus, body: &str) -> TaskRecord {
         TaskRecord {
             status,
-            completed: (status != TaskStatus::Active).then(|| Timestamp::new("2026-06-20")),
+            completed: (status != TaskStatus::Active).then(|| app_date("2026-06-20")),
             body: body.to_string(),
             source: format!("---\nstatus: {status}\n---\n{body}"),
             ..task_record(id)
@@ -428,13 +466,13 @@ mod tests {
     fn edit(
         id: &str,
         content: Option<EditTaskContent>,
-        prerequisites: CollectionEdit<Prerequisites>,
+        blocked_by: CollectionEdit<BlockedBy>,
         effort: ValueEdit<EffortTier>,
-        tags: CollectionEdit<Tags>,
+        tags: CollectionEdit<TaskTags>,
     ) -> EditTask {
         EditTask {
             id: id.parse().unwrap(),
-            edits: TaskEdits::try_new(content, prerequisites, effort, tags).unwrap(),
+            edits: TaskEdits::try_new(content, blocked_by, effort, tags).unwrap(),
         }
     }
 
@@ -452,15 +490,15 @@ mod tests {
         TaskTitle::try_new(raw).unwrap()
     }
 
-    fn tags(raw: &str) -> Tags {
-        Tags::from_inputs(&[raw.parse().unwrap()]).unwrap()
+    fn tags(raw: &str) -> TaskTags {
+        TaskTags::from_inputs(&[raw.parse().unwrap()]).unwrap()
     }
 
     async fn run(
         command: EditTask,
         store: &InMemoryStore,
         pool: &sqlx::SqlitePool,
-    ) -> Result<EditTaskOk, EditTaskError> {
+    ) -> Result<EditedTask, EditTaskError> {
         super::execute(command, store, pool).await
     }
 
@@ -470,23 +508,31 @@ mod tests {
 
     #[test]
     fn task_edits_reject_no_changes_without_database_access() {
-        for content in [
+        let error = TaskEdits::try_new(
             None,
-            Some(EditTaskContent::Structured {
-                title: None,
-                lanes: TaskLaneEdits::default(),
-            }),
-        ] {
-            let error = TaskEdits::try_new(
-                content,
-                CollectionEdit::Unchanged,
-                ValueEdit::Unchanged,
-                CollectionEdit::Unchanged,
-            )
-            .unwrap_err();
+            CollectionEdit::Unchanged,
+            ValueEdit::Unchanged,
+            CollectionEdit::Unchanged,
+        )
+        .unwrap_err();
 
-            assert_eq!(error, EmptyTaskEdits);
-        }
+        assert_eq!(error, EmptyTaskEdits);
+    }
+
+    #[test]
+    fn task_content_rejects_invalid_shapes_before_request_creation() {
+        assert!(matches!(
+            EditTaskContent::structured(None, TaskLaneEdits::default()),
+            Err(EditTaskContentError::EmptyStructured)
+        ));
+        assert!(matches!(
+            EditTaskContent::append_shorthand(None, TaskPrompt::new(" \n\t ")),
+            Err(EditTaskContentError::EmptyAppend)
+        ));
+        assert!(matches!(
+            EditTaskContent::replace_shorthand(TaskPrompt::new("/g replacement")),
+            Err(EditTaskContentError::MissingPromptTitle)
+        ));
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
@@ -499,10 +545,8 @@ mod tests {
         )]);
         let command = content_edit(
             "FOO-0001",
-            EditTaskContent::Structured {
-                title: Some(title("new title")),
-                lanes: TaskLaneEdits::default(),
-            },
+            EditTaskContent::structured(Some(title("new title")), TaskLaneEdits::default())
+                .unwrap(),
         );
 
         let error = run(command, &store, &pool).await.unwrap_err();
@@ -524,41 +568,19 @@ mod tests {
         )]);
         let command = content_edit(
             "FOO-0001",
-            EditTaskContent::ReplaceShorthand {
-                prompt: "New Title / new goal /d complete".to_string(),
-            },
+            EditTaskContent::replace_shorthand(TaskPrompt::new("New Title / new goal /d complete"))
+                .unwrap(),
         );
 
         let outcome = run(command, &store, &pool).await.unwrap();
 
-        assert_eq!(outcome.title, "new title");
+        assert_eq!(outcome.title.as_ref(), "new title");
         let edited = &store.tasks("foo-bar")[0];
         assert_eq!(edited.title, "new title");
         assert_eq!(
             edited.body,
             "## Goals\n\n- new goal\n\n## Done When\n\n- complete"
         );
-    }
-
-    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
-    async fn prompt_requires_a_leading_title(pool: sqlx::SqlitePool) {
-        register_project(&pool).await;
-        let store = staged(vec![record(
-            "FOO-0001",
-            TaskStatus::Active,
-            "## Goals\n\n- keep",
-        )]);
-        let command = content_edit(
-            "FOO-0001",
-            EditTaskContent::ReplaceShorthand {
-                prompt: "/g replacement".to_string(),
-            },
-        );
-
-        let error = run(command, &store, &pool).await.unwrap_err();
-
-        assert!(matches!(error, EditTaskError::MissingPromptTitle));
-        assert_eq!(store.tasks("foo-bar")[0].body, "## Goals\n\n- keep");
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
@@ -580,13 +602,14 @@ mod tests {
         .unwrap();
         let command = content_edit(
             "FOO-0001",
-            EditTaskContent::Structured {
-                title: None,
-                lanes: TaskLaneEdits::new(
+            EditTaskContent::structured(
+                None,
+                TaskLaneEdits::new(
                     additions,
                     [TaskLane::Goal, TaskLane::Context, TaskLane::DoneWhen],
                 ),
-            },
+            )
+            .unwrap(),
         );
 
         run(command, &store, &pool).await.unwrap();
@@ -604,10 +627,11 @@ mod tests {
         let store = staged(vec![record("FOO-0001", TaskStatus::Active, body)]);
         let command = content_edit(
             "FOO-0001",
-            EditTaskContent::Structured {
-                title: None,
-                lanes: TaskLaneEdits::new(TaskLanes::default(), [TaskLane::Goal]),
-            },
+            EditTaskContent::structured(
+                None,
+                TaskLaneEdits::new(TaskLanes::default(), [TaskLane::Goal]),
+            )
+            .unwrap(),
         );
 
         let error = run(command, &store, &pool).await.unwrap_err();
@@ -629,10 +653,11 @@ mod tests {
         )]);
         let command = content_edit(
             "FOO-0001",
-            EditTaskContent::AppendShorthand {
-                title: Some(title("renamed")),
-                prompt: "additional /c context".to_string(),
-            },
+            EditTaskContent::append_shorthand(
+                Some(title("renamed")),
+                TaskPrompt::new("additional /c context"),
+            )
+            .unwrap(),
         );
 
         run(command, &store, &pool).await.unwrap();
@@ -646,11 +671,11 @@ mod tests {
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
-    async fn remove_then_add_replaces_tags_prerequisites_and_effort(pool: sqlx::SqlitePool) {
+    async fn remove_then_add_replaces_tags_blocked_by_and_effort(pool: sqlx::SqlitePool) {
         register_project(&pool).await;
         let target = TaskRecord {
-            tags: Some("[old]".to_string()),
-            prereq: Some("[[FOO-0001]]".to_string()),
+            tags: Some(RawTaskTags::new("[old]")),
+            blocked_by: Some("[[FOO-0001]]".to_string()),
             effort: Some("medium".to_string()),
             ..record("FOO-0002", TaskStatus::Active, "## Goals\n")
         };
@@ -659,7 +684,7 @@ mod tests {
             "FOO-0002",
             None,
             CollectionEdit::Replace(
-                Prerequisites::from_inputs(&["FOO-0001".parse().unwrap()]).unwrap(),
+                BlockedBy::from_inputs(&["FOO-0001".parse().unwrap()]).unwrap(),
             ),
             ValueEdit::Set(EffortTier::High),
             CollectionEdit::Replace(tags("new-tag")),
@@ -672,8 +697,8 @@ mod tests {
             .into_iter()
             .find(|task| task.id.as_ref() == "FOO-0002")
             .unwrap();
-        assert_eq!(edited.tags.as_deref(), Some("[new_tag]"));
-        assert_eq!(edited.prereq.as_deref(), Some("[[FOO-0001]]"));
+        assert_eq!(edited.tags.as_ref().map(AsRef::as_ref), Some("[new_tag]"));
+        assert_eq!(edited.blocked_by.as_deref(), Some("[[FOO-0001]]"));
         assert_eq!(edited.effort.as_deref(), Some("high"));
     }
 
@@ -694,6 +719,29 @@ mod tests {
 
         run(command, &store, &pool).await.unwrap();
 
+        assert_eq!(store.tasks("foo-bar")[0].effort, None);
+    }
+
+    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
+    async fn metadata_edit_rejects_an_invalid_persisted_title_before_mutation(
+        pool: sqlx::SqlitePool,
+    ) {
+        register_project(&pool).await;
+        let store = staged(vec![TaskRecord {
+            title: "x".repeat(201),
+            ..record("FOO-0001", TaskStatus::Active, "## Goals\n")
+        }]);
+        let command = edit(
+            "FOO-0001",
+            None,
+            CollectionEdit::Unchanged,
+            ValueEdit::Set(EffortTier::High),
+            CollectionEdit::Unchanged,
+        );
+
+        let error = run(command, &store, &pool).await.unwrap_err();
+
+        assert!(matches!(error, EditTaskError::InvalidPersistedTitle { .. }));
         assert_eq!(store.tasks("foo-bar")[0].effort, None);
     }
 }

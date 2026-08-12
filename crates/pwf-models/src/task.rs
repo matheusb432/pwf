@@ -1,19 +1,19 @@
+mod blocked_by;
+mod completion;
 mod effort;
 mod id;
-mod prerequisite;
+mod prompt;
+mod section;
 mod status;
 mod tag;
-mod timestamp;
 mod title;
 
-pub use effort::EffortTier;
+pub use blocked_by::{BlockedBy, BlockedByInput, BlockedByInputError, EmptyBlockedByError};
+pub use completion::{CommitRanges, TaskReport, TaskReportError};
+pub use effort::{EffortTier, EffortTierError};
 pub use id::TaskId;
-pub use prerequisite::{
-    EmptyPrerequisitesError, PrerequisiteInput, PrerequisiteInputError, Prerequisites,
-};
+pub use prompt::TaskPrompt;
+pub use section::{IndexSection, TaskSection, TaskSectionError};
 pub use status::TaskStatus;
-pub use tag::{EmptyTagsError, InvalidTagError, Tag, TagInput, TagInputError, Tags};
-pub use timestamp::Timestamp;
+pub use tag::{EmptyTaskTagsError, InvalidTagError, Tag, TagInput, TagInputError, TaskTags};
 pub use title::{TaskTitle, TaskTitleError};
-
-pub use crate::project::{ProjectId, ProjectIndexIdentity, ProjectName};

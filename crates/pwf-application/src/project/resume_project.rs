@@ -1,10 +1,10 @@
 use std::{error::Error, path::PathBuf};
 
-use pwf_models::project::ProjectId;
+use pwf_models::project::{ProjectId, ProjectTasksPath};
 use pwf_wire::project::ProjectStateChange;
 
 use super::{
-    ProjectRow, ProjectRowError,
+    ProjectRow,
     task_location::{self, TaskLocationError},
 };
 
@@ -24,9 +24,9 @@ pub enum ResumeProjectError {
     #[error("managed project {project_id} task path '{path}' is invalid: {source}")]
     InvalidTaskPath {
         project_id: ProjectId,
-        path: String,
+        path: ProjectTasksPath,
         #[source]
-        source: super::resolve_runtime_path::RuntimePathError,
+        source: super::runtime_path::RuntimePathError,
     },
     #[error(
         "managed projects {first_id} and {second_id} resolve to the same task location: {}",
@@ -73,6 +73,8 @@ pub async fn execute(
             .ok_or_else(|| ResumeProjectError::ProjectNotFound {
                 id: command.id.clone(),
             })?;
+    let candidate_path = ProjectTasksPath::try_new(candidate_path)
+        .map_err(|error| unexpected("converting resumed project task location", error))?;
     let existing = sqlx::query_as::<_, (String, String)>(
         "SELECT id, tasks_path FROM projects WHERE id != ? ORDER BY id ASC",
     )
@@ -82,9 +84,11 @@ pub async fn execute(
     .map_err(|error| unexpected("reading project task locations", error))?
     .into_iter()
     .map(|(id, tasks_path)| {
-        ProjectId::try_new(id)
-            .map(|id| (id, tasks_path))
-            .map_err(|error| unexpected("converting project task location", error))
+        let id = ProjectId::try_new(id)
+            .map_err(|error| unexpected("converting project task location id", error))?;
+        let tasks_path = ProjectTasksPath::try_new(tasks_path)
+            .map_err(|error| unexpected("converting project task location path", error))?;
+        Ok((id, tasks_path))
     })
     .collect::<Result<Vec<_>, _>>()?;
     task_location::reject_collision(&command.id, &candidate_path, existing, &command.home)
@@ -125,7 +129,7 @@ pub async fn execute(
         id: command.id.clone(),
     })?;
     let project = super::project_from_row(row)
-        .map_err(|error| unexpected_row("converting resumed project", error))?;
+        .map_err(|error| unexpected("converting resumed project", error))?;
     transaction
         .commit()
         .await
@@ -145,10 +149,6 @@ fn unexpected(
         context,
         source: Box::new(source),
     }
-}
-
-fn unexpected_row(context: &'static str, source: ProjectRowError) -> ResumeProjectError {
-    unexpected(context, source)
 }
 
 fn task_location_error(error: TaskLocationError) -> ResumeProjectError {

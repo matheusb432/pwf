@@ -5,8 +5,8 @@ use std::{
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedPath {
-    pub(super) path: PathBuf,
-    pub(super) identity: RuntimePathIdentity,
+    path: PathBuf,
+    identity: RuntimePathIdentity,
 }
 
 impl ResolvedPath {
@@ -20,7 +20,7 @@ impl ResolvedPath {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct RuntimePathIdentity(pub(super) OsString);
+pub struct RuntimePathIdentity(OsString);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum RuntimePathError {
@@ -43,24 +43,14 @@ pub enum RuntimePathError {
     RelativeHome,
 }
 
-/// Requests portable resolution of one managed-project path.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ResolveRuntimePath {
-    /// Persisted path value.
-    pub path: String,
-    /// Home directory used for home-relative paths.
-    pub home: PathBuf,
-}
-
 /// Resolves one managed-project path for runtime use.
 ///
 /// # Errors
 ///
 /// Returns [`RuntimePathError`] when the path or home directory violates the portable path
 /// contract.
-#[cqrsy::query]
-pub fn execute(query: &ResolveRuntimePath) -> Result<ResolvedPath, RuntimePathError> {
-    host::resolve(&query.path, &query.home)
+pub fn resolve(path: &str, home: &Path) -> Result<ResolvedPath, RuntimePathError> {
+    host::resolve(path, home)
 }
 
 fn home_relative_remainder(path: &str) -> Option<&str> {
@@ -513,13 +503,10 @@ mod host {
 mod tests {
     use std::path::Path;
 
-    use super::{ResolveRuntimePath, ResolvedPath, RuntimePathError};
+    use super::{ResolvedPath, RuntimePathError};
 
     fn resolve(path: &str, home: &Path) -> Result<ResolvedPath, RuntimePathError> {
-        super::execute(&ResolveRuntimePath {
-            path: path.to_string(),
-            home: home.to_path_buf(),
-        })
+        super::resolve(path, home)
     }
 
     #[test]

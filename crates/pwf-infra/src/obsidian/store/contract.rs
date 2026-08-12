@@ -1,22 +1,29 @@
 use std::{assert_matches, fmt::Write as _, path::Path};
 
 use pwf_application::ports::task_record::{
-    IndexEntry, IndexEntryState, IndexEntryStore, IndexPlacement, IndexSection, IndexSectionStore,
+    IndexEntry, IndexEntryState, IndexEntryStore, IndexPlacement, IndexSectionStore,
     Materialization, NewTask, NullablePatch, TaskPatch, TaskRecord, TaskStore,
 };
 use pwf_models::{
+    AppDate,
     project::{
-        Project, ProjectSource, ProjectSourceKind, ProjectSourceValue, ProjectTasks,
-        ProjectTasksKind, ProjectTasksPath,
+        Project, ProjectId, ProjectName, ProjectSource, ProjectSourceKind, ProjectSourceValue,
+        ProjectTasks, ProjectTasksKind, ProjectTasksPath,
     },
-    task::{
-        EffortTier, ProjectId, ProjectName, Tag, Tags, TaskId, TaskStatus, TaskTitle, Timestamp,
-    },
+    task::{EffortTier, Tag, TaskId, TaskSection, TaskStatus, TaskTags, TaskTitle},
 };
 
 use super::{ObsidianStore, ObsidianStoreError, fs::path_str};
 
 const S: &str = "\n\n";
+
+fn app_date(raw: &str) -> AppDate {
+    raw.parse().unwrap()
+}
+
+fn task_section(raw: &str) -> TaskSection {
+    raw.parse().unwrap()
+}
 
 fn project(id: &str, title: &str, tasks_path: &Path) -> Project {
     Project {
@@ -30,7 +37,7 @@ fn project(id: &str, title: &str, tasks_path: &Path) -> Project {
             ProjectTasksKind::Directory,
             ProjectTasksPath::try_new(path_str(tasks_path)).unwrap(),
         ),
-        created_at: "2026-07-25T00:00:00.000Z".to_string(),
+        created_at: "2026-07-25T00:00:00.000Z".parse().unwrap(),
         is_paused: false,
     }
 }
@@ -208,7 +215,11 @@ fn generic_read_retains_raw_tags_frontmatter() {
     let store = store_with_index_identity(&notes_dir.join("pwf"));
 
     assert_eq!(
-        get_record(&store, "PWF-0001").unwrap().tags.as_deref(),
+        get_record(&store, "PWF-0001")
+            .unwrap()
+            .tags
+            .as_ref()
+            .map(AsRef::as_ref),
         Some("[SQLite, malformed-but-displayable]")
     );
 }
@@ -293,7 +304,7 @@ fn write_note(
     path: &Path,
     title: &str,
     created: &str,
-    prereq: Option<&str>,
+    blocked_by: Option<&str>,
     effort: Option<&str>,
     tags: Option<&str>,
     body: &str,
@@ -302,8 +313,8 @@ fn write_note(
     let mut note = format!(
         "---\nid: {id}\nstatus: active\ntitle: {title}\nproject: pwf\ncreated: {created}\n"
     );
-    if let Some(prereq) = prereq {
-        let _ = writeln!(note, "prereq: {prereq}");
+    if let Some(blocked_by) = blocked_by {
+        let _ = writeln!(note, "blocked_by: {blocked_by}");
     }
     if let Some(effort) = effort {
         let _ = writeln!(note, "effort: {effort}");
@@ -318,7 +329,7 @@ fn write_note(
 /// Writes a note and then its open index entry through the adapter ports.
 fn generic_add(store: &ObsidianStore, new: NewTask) -> Result<TaskRecord, ObsidianStoreError> {
     let project = pwf_project(store);
-    let section = new.section.clone().unwrap_or_default();
+    let section = new.section.clone();
     let record = TaskStore::insert(store, &project, new)?;
     let id = record.id.clone();
     IndexEntryStore::upsert_index_entry(
@@ -337,9 +348,9 @@ fn new_task(body: &str, title: &str, section: Option<&str>) -> NewTask {
     NewTask {
         body: body.to_string(),
         title: TaskTitle::try_new(title).unwrap(),
-        created: Timestamp::new("2026-07-07"),
-        section: section.map(str::to_string),
-        prereq: None,
+        created: app_date("2026-07-07"),
+        section: section.map(task_section),
+        blocked_by: None,
         effort: None,
         tags: None,
     }
@@ -354,8 +365,8 @@ fn generic_add_creates_note_and_links_index() {
     let record = generic_add(
         &store,
         NewTask {
-            prereq: Some(
-                pwf_models::task::Prerequisites::from_inputs(&["[[PWF-0001]]".parse().unwrap()])
+            blocked_by: Some(
+                pwf_models::task::BlockedBy::from_inputs(&["[[PWF-0001]]".parse().unwrap()])
                     .unwrap(),
             ),
             effort: Some(EffortTier::Medium),
@@ -378,7 +389,7 @@ fn generic_add_creates_note_and_links_index() {
     assert!(note.contains("status: active"), "{note}");
     assert!(note.contains("title: ship adapter"), "{note}");
     assert!(note.contains("created: 2026-07-07"), "{note}");
-    assert!(note.contains("prereq: \"[[PWF-0001]]\""), "{note}");
+    assert!(note.contains("blocked_by: \"[[PWF-0001]]\""), "{note}");
     assert!(note.contains("effort: medium"), "{note}");
     let expected_body = format!("## Goals{S}## Done When{S}- tests pass");
     assert!(note.contains(&expected_body), "{note}");
@@ -520,7 +531,7 @@ fn generic_insert_reports_exhausted_task_id_sequence() {
 }
 
 /// Applies a tags-only patch; `Some(tags)` sets the field and `None` clears it.
-fn apply_tag_patch(store: &ObsidianStore, tags: Option<Tags>) {
+fn apply_tag_patch(store: &ObsidianStore, tags: Option<TaskTags>) {
     let project = pwf_project(store);
     let id = TaskId::try_new("PWF-0001").unwrap();
     let patch = TaskPatch {
@@ -530,12 +541,12 @@ fn apply_tag_patch(store: &ObsidianStore, tags: Option<Tags>) {
     TaskStore::update(store, &project, &id, patch).unwrap();
 }
 
-fn sqlite_tags() -> Tags {
+fn sqlite_tags() -> TaskTags {
     tags(&["sqlite"])
 }
 
-fn tags(values: &[&str]) -> Tags {
-    Tags::try_new(
+fn tags(values: &[&str]) -> TaskTags {
+    TaskTags::try_new(
         values
             .iter()
             .map(|value| Tag::try_from(*value).unwrap())
@@ -890,7 +901,7 @@ fn task_record_roundtrips_file_model_note() {
         "title: ship the adapter\n",
         "project: pwf\n",
         "created: 2026-07-01\n",
-        "prereq: \"[[CFG-0001]]\"\n",
+        "blocked_by: \"[[CFG-0001]]\"\n",
         "effort: medium\n",
         "tags: [sqlite, godot]\n",
         "---\n",
@@ -910,16 +921,53 @@ fn task_record_roundtrips_file_model_note() {
     assert_eq!(record.materialization, Materialization::NoteFile);
     assert_eq!(record.title, "ship the adapter");
     assert_eq!(record.status, TaskStatus::Active);
-    assert_eq!(record.created, Some(Timestamp::new("2026-07-01")));
+    assert_eq!(record.created, Some(app_date("2026-07-01")));
     assert_eq!(record.completed, None);
     assert_eq!(record.commits, None);
-    assert_eq!(record.prereq.as_deref(), Some("\"[[CFG-0001]]\""));
+    assert_eq!(record.blocked_by.as_deref(), Some("\"[[CFG-0001]]\""));
     assert_eq!(record.effort.as_deref(), Some("medium"));
-    assert_eq!(record.tags.as_deref(), Some("[sqlite, godot]"));
+    assert_eq!(
+        record.tags.as_ref().map(AsRef::as_ref),
+        Some("[sqlite, godot]")
+    );
     assert_eq!(record.section, None);
     assert_eq!(record.body, "\nship the adapter body\n");
     assert_eq!(record.locator, path_str(&note_path));
     assert_eq!(record.source, source);
+}
+
+#[test]
+fn task_record_rejects_an_invalid_created_date() {
+    let temp = tempfile::tempdir().unwrap();
+    let notes_dir = temp.path().join("notes");
+    let project_dir = notes_dir.join("pwf");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    std::fs::write(project_dir.join("pwf.md"), "- [ ] [[PWF-0001]]\n").unwrap();
+    let note_path = project_dir.join("PWF-0001.md");
+    write_note(
+        &note_path,
+        "invalid date",
+        "2026-02-30",
+        None,
+        None,
+        None,
+        "body",
+    );
+    let store = store_with_index_identity(&project_dir);
+    let project = pwf_project(&store);
+
+    let error =
+        TaskStore::get(&store, &project, &TaskId::try_new("PWF-0001").unwrap()).unwrap_err();
+
+    assert_matches!(
+        error,
+        ObsidianStoreError::InvalidTaskDate {
+            path,
+            property: "created",
+            ref value,
+            ..
+        } if path == note_path && value == "2026-02-30"
+    );
 }
 
 #[test]
@@ -988,17 +1036,17 @@ fn index_entries_parse_open_done_and_raw_futuro_section() {
             IndexEntry {
                 id: TaskId::try_new("PWF-0001").unwrap(),
                 state: IndexEntryState::Open,
-                section: String::new(),
+                section: None,
             },
             IndexEntry {
                 id: TaskId::try_new("PWF-0002").unwrap(),
-                state: IndexEntryState::Done(Timestamp::new("2026-07-02")),
-                section: String::new(),
+                state: IndexEntryState::Done(Some(app_date("2026-07-02"))),
+                section: None,
             },
             IndexEntry {
                 id: TaskId::try_new("PWF-0003").unwrap(),
                 state: IndexEntryState::Open,
-                section: "Futuro".to_string(),
+                section: Some(task_section("Futuro")),
             },
         ]
     );
@@ -1022,7 +1070,7 @@ fn patch_status_done_closes_index_entry_with_date_stamp() {
     let id = TaskId::try_new("PWF-0002").unwrap();
     let patch = TaskPatch {
         status: Some(TaskStatus::Done),
-        completed: NullablePatch::Set(Timestamp::new("2026-07-15")),
+        completed: NullablePatch::Set(app_date("2026-07-15")),
         ..Default::default()
     };
 
@@ -1062,9 +1110,9 @@ fn insert_allocates_next_id_without_index_write() {
         NewTask {
             body: "wire up the new thing".to_string(),
             title: TaskTitle::try_new("wire up the new thing").unwrap(),
-            created: Timestamp::new("2026-07-15"),
+            created: app_date("2026-07-15"),
             section: None,
-            prereq: None,
+            blocked_by: None,
             effort: None,
             tags: None,
         },
@@ -1132,7 +1180,7 @@ fn generic_list_records_carry_open_placement_without_hiding_unlinked_notes() {
             line: 7,
         })
     );
-    assert_eq!(record.section.as_deref(), Some("Futuro"));
+    assert_eq!(record.section.as_ref().map(AsRef::as_ref), Some("Futuro"));
     let unlinked = records
         .iter()
         .find(|record| record.id.as_ref() == "PWF-0002")
@@ -1242,7 +1290,10 @@ fn list_tasks_returns_note_history_and_index_only_records() {
         })
     );
     assert_eq!(record("PWF-0002").status, TaskStatus::Done);
-    assert_eq!(record("PWF-0002").section.as_deref(), Some("Human"));
+    assert_eq!(
+        record("PWF-0002").section.as_ref().map(AsRef::as_ref),
+        Some("Human")
+    );
     assert!(record("PWF-0002").placement.is_none());
     assert_eq!(record("PWF-0003").status, TaskStatus::Cancelled);
     assert_eq!(record("PWF-0004").status, TaskStatus::Done);
@@ -1306,17 +1357,7 @@ fn index_sections_list_raw_h2_labels_in_document_order() {
     // RAW labels in document order; H3 regions (### Notes) are not sections.
     assert_eq!(
         sections,
-        vec![
-            IndexSection {
-                label: "Human".to_string()
-            },
-            IndexSection {
-                label: "Futuro".to_string()
-            },
-            IndexSection {
-                label: "Low-prio".to_string()
-            },
-        ]
+        ["Human", "Futuro", "Low-prio"].map(task_section).to_vec()
     );
 }
 
@@ -1348,7 +1389,13 @@ fn index_section_update_renames_header_in_place() {
     let store = store_for_tasks(&notes_dir.join("pwf"));
     let project = pwf_project(&store);
 
-    IndexSectionStore::rename_index_section(&store, &project, "Futuro", "Future").unwrap();
+    IndexSectionStore::rename_index_section(
+        &store,
+        &project,
+        &task_section("Futuro"),
+        &TaskSection::future(),
+    )
+    .unwrap();
 
     assert_eq!(
         std::fs::read_to_string(project_dir.join("pwf.md")).unwrap(),
@@ -1463,9 +1510,9 @@ fn generic_insert_plus_upsert_writes_legacy_add_index_bytes() {
             NewTask {
                 body: "do the thing".to_string(),
                 title: TaskTitle::try_new("ship it").unwrap(),
-                created: Timestamp::new("2026-07-07"),
-                section: scenario.section.map(str::to_string),
-                prereq: None,
+                created: app_date("2026-07-07"),
+                section: scenario.section.map(task_section),
+                blocked_by: None,
                 effort: None,
                 tags: None,
             },
@@ -1484,7 +1531,7 @@ fn generic_insert_plus_upsert_writes_legacy_add_index_bytes() {
             IndexEntry {
                 id,
                 state: IndexEntryState::Open,
-                section: scenario.section.unwrap_or("").to_string(),
+                section: scenario.section.map(task_section),
             },
         )
         .unwrap();
@@ -1517,7 +1564,7 @@ fn upsert_creates_missing_index_from_identity_template() {
         IndexEntry {
             id: TaskId::try_new("PWF-0001").unwrap(),
             state: IndexEntryState::Open,
-            section: String::new(),
+            section: None,
         },
     )
     .unwrap();

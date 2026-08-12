@@ -132,11 +132,11 @@ pub fn task_id(raw: &str) -> TaskId {
 pub fn task_json(database: &DatabaseFixture, task_id: &TaskId) -> Value {
     let output = database
         .command()
-        .args(["task", "show", task_id.as_ref(), "--json"])
+        .args(["task", "get", task_id.as_ref(), "--json"])
         .output()
         .unwrap();
-    assert_success(&output, &format!("show {task_id}"));
-    serde_json::from_slice(&output.stdout).expect("show stdout is JSON")
+    assert_success(&output, &format!("get {task_id}"));
+    serde_json::from_slice(&output.stdout).expect("get stdout is JSON")
 }
 
 pub fn assert_success(output: &Output, operation: &str) {

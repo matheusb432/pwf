@@ -78,7 +78,7 @@ pub async fn execute(
     rows.into_iter()
         .map(super::project_from_row)
         .collect::<Result<Vec<_>, ProjectRowError>>()
-        .map_err(|error| unexpected_row("converting listed project", error))
+        .map_err(|error| unexpected("converting listed project", error))
 }
 
 fn unexpected(
@@ -89,10 +89,6 @@ fn unexpected(
         context,
         source: Box::new(source),
     }
-}
-
-fn unexpected_row(context: &'static str, source: ProjectRowError) -> ListProjectsError {
-    unexpected(context, source)
 }
 
 #[cfg(test)]
@@ -108,7 +104,7 @@ mod tests {
 
         let projects = super::execute(
             ListProjects {
-                status: ProjectStatusFilter::ACTIVE,
+                status: ProjectStatusFilter::ActiveOnly,
             },
             &pool,
         )

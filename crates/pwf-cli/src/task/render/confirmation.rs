@@ -1,18 +1,18 @@
 //! Formats typed mutation confirmations at their owning leaf boundaries.
 
 use anstyle::AnsiColor;
-use pwf_application::task::{AddTaskOk, EditTaskOk, RemovedTask};
 use pwf_models::task::TaskId;
+use pwf_wire::task::{AddedTask, EditedTask, RemovedTask};
 
 use super::paint;
 
-pub(in crate::task) fn render_added(task: &AddTaskOk, color_on: bool) -> String {
+pub(in crate::task) fn render_added(task: &AddedTask, color_on: bool) -> String {
     render_confirmation(
         "Added pwf task",
         AnsiColor::Green,
         &task.id,
         &added_headline(task),
-        &[format!("  file: {}", task.note_path.display())],
+        &[format!("  file: {}", task.note_path)],
         color_on,
     )
 }
@@ -24,14 +24,19 @@ pub(in crate::task) fn render_removed(task: &RemovedTask, color_on: bool) -> Str
         &task.id,
         &format!("{} :: {}", task.project, task.title),
         &[
-            format!("  deleted: {}", task.deleted_path.display()),
-            format!("  unlinked: {}", task.unlinked),
+            format!("  deleted: {}", task.deleted_path),
+            format!(
+                "  unlinked: {}",
+                task.unlinked
+                    .as_ref()
+                    .map_or_else(String::new, ToString::to_string)
+            ),
         ],
         color_on,
     )
 }
 
-pub(in crate::task) fn render_edited(task: &EditTaskOk, color_on: bool) -> String {
+pub(in crate::task) fn render_edited(task: &EditedTask, color_on: bool) -> String {
     render_confirmation(
         "Edited pwf task",
         AnsiColor::Blue,
@@ -42,16 +47,16 @@ pub(in crate::task) fn render_edited(task: &EditTaskOk, color_on: bool) -> Strin
     )
 }
 
-pub(super) fn render_review_task(task: &AddTaskOk) -> String {
+pub(super) fn render_review_task(task: &AddedTask) -> String {
     format!(
         "ADDED PWF TASK [{}] {}\n  file: {}\n",
         task.id,
         added_headline(task),
-        task.note_path.display()
+        task.note_path
     )
 }
 
-fn added_headline(task: &AddTaskOk) -> String {
+fn added_headline(task: &AddedTask) -> String {
     format!("{} :: {}", task.project, task.title)
 }
 
@@ -76,16 +81,17 @@ fn render_confirmation(
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use pwf_models::{project::ProjectName, task::TaskTitle};
+    use pwf_wire::task::{TaskIndexPath, TaskNotePath};
 
     use super::*;
 
-    fn added_task() -> AddTaskOk {
-        AddTaskOk {
+    fn added_task() -> AddedTask {
+        AddedTask {
             id: TaskId::try_new("PWF-0087").unwrap(),
-            project: "pwf".to_string(),
-            title: "color tui output when adding pwf task".to_string(),
-            note_path: PathBuf::from("/x/PWF-0087.md"),
+            project: ProjectName::try_new("pwf").unwrap(),
+            title: TaskTitle::try_new("color tui output when adding pwf task").unwrap(),
+            note_path: TaskNotePath::new("/x/PWF-0087.md".into()),
             created_section: None,
         }
     }
@@ -110,10 +116,10 @@ mod tests {
     fn removed_plain_preserves_confirmation_shape() {
         let task = RemovedTask {
             id: TaskId::try_new("PWF-0002").unwrap(),
-            project: "pwf".to_string(),
-            title: "stale task".to_string(),
-            deleted_path: PathBuf::from("/x.md"),
-            unlinked: "/x.md".to_string(),
+            project: ProjectName::try_new("pwf").unwrap(),
+            title: TaskTitle::try_new("stale task").unwrap(),
+            deleted_path: TaskNotePath::new("/x.md".into()),
+            unlinked: Some(TaskIndexPath::new("/x.md".into())),
         };
 
         assert_eq!(
@@ -124,10 +130,10 @@ mod tests {
 
     #[test]
     fn edited_plain_uses_the_edit_verb() {
-        let task = EditTaskOk {
+        let task = EditedTask {
             id: TaskId::try_new("PWF-0002").unwrap(),
-            project: "pwf".to_string(),
-            title: "edited task".to_string(),
+            project: ProjectName::try_new("pwf").unwrap(),
+            title: TaskTitle::try_new("edited task").unwrap(),
         };
 
         assert_eq!(

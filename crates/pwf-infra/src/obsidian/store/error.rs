@@ -1,8 +1,10 @@
 use std::path::PathBuf;
 
 use pwf_models::{
+    AppDateError,
+    note::NoteTitleError,
     project::{ProjectId, ProjectName},
-    task::TaskId,
+    task::{TaskId, TaskSection, TaskSectionError},
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -106,6 +108,12 @@ pub enum ObsidianStoreError {
     },
     #[error("Cannot read note {id}: {source}")]
     ReadProjectNote { id: String, source: std::io::Error },
+    #[error("Invalid note {id} title: {source}")]
+    InvalidProjectNoteTitle {
+        id: String,
+        #[source]
+        source: NoteTitleError,
+    },
     #[error("Cannot inspect note {id}: {source}")]
     InspectProjectNote { id: String, source: std::io::Error },
     #[error("Cannot write note {id}: {source}")]
@@ -134,6 +142,14 @@ pub enum ObsidianStoreError {
     MissingTaskId { path: PathBuf },
     #[error("Invalid task frontmatter property `id` {value:?} in {}", path.display())]
     InvalidTaskId { path: PathBuf, value: String },
+    #[error("Invalid task frontmatter property `{property}` {value:?} in {}: {source}", path.display())]
+    InvalidTaskDate {
+        path: PathBuf,
+        property: &'static str,
+        value: String,
+        #[source]
+        source: AppDateError,
+    },
     #[error("More than one task has frontmatter id {id}: {}", paths.iter().map(|path| path.display().to_string()).collect::<Vec<_>>().join(", "))]
     DuplicateTaskId { id: TaskId, paths: Vec<PathBuf> },
     #[error("Project index task id {id} is duplicated in {} at lines {}", path.display(), lines.iter().map(usize::to_string).collect::<Vec<_>>().join(", "))]
@@ -141,6 +157,22 @@ pub enum ObsidianStoreError {
         path: PathBuf,
         id: TaskId,
         lines: Vec<usize>,
+    },
+    #[error("Invalid project-index completion date {value:?} in {} at line {line}: {source}", path.display())]
+    InvalidProjectIndexDate {
+        path: PathBuf,
+        line: usize,
+        value: String,
+        #[source]
+        source: AppDateError,
+    },
+    #[error("Invalid project-index section {value:?} in {} at line {line}: {source}", path.display())]
+    InvalidProjectIndexSection {
+        path: PathBuf,
+        line: usize,
+        value: String,
+        #[source]
+        source: TaskSectionError,
     },
     #[error("Missing project-index frontmatter property `{property}` in {}", path.display())]
     MissingProjectIndexProperty {
@@ -173,7 +205,7 @@ pub enum ObsidianStoreError {
     InvalidProjectTaskPath {
         project: String,
         #[source]
-        source: pwf_application::project::resolve_runtime_path::RuntimePathError,
+        source: pwf_application::project::runtime_path::RuntimePathError,
     },
     #[error("Cannot create project dir: {source}")]
     CreateProjectDir { source: std::io::Error },
@@ -193,7 +225,7 @@ pub enum ObsidianStoreError {
     AddWriteIndexFile {
         source: std::io::Error,
         project: String,
-        created_section: Option<String>,
+        created_section: Option<TaskSection>,
     },
     #[error("Cannot remove task file: {source}")]
     RemoveTaskFile { source: std::io::Error },
@@ -206,13 +238,13 @@ pub enum ObsidianStoreError {
 }
 
 impl ObsidianStoreError {
-    pub fn created_section_diagnostic(&self) -> Option<(&str, &str)> {
+    pub fn created_section_diagnostic(&self) -> Option<(&str, &TaskSection)> {
         match self {
             Self::AddWriteIndexFile {
                 project,
                 created_section: Some(section),
                 ..
-            } => Some((project.as_str(), section.as_str())),
+            } => Some((project.as_str(), section)),
             _ => None,
         }
     }

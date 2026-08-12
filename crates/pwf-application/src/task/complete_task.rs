@@ -1,11 +1,12 @@
-use pwf_models::task::TaskId;
+use pwf_models::task::{CommitRanges, TaskId, TaskReport};
+use pwf_wire::task::{ClosedTask, ClosedTaskAction};
 
 #[cfg(test)]
-use super::close_task::review_task_prompt;
-pub use super::close_task::{CloseTaskError, ClosedTaskAction, CompleteTaskOk};
+use super::task_closure::review_task_prompt;
 use super::{
-    close_task::{self, CloseTask},
+    CloseTaskError,
     resolve_task_project::{self, ResolveTaskProject, ResolveTaskProjectError},
+    task_closure::{self, TaskClosure},
 };
 use crate::ports::{
     clock::Clock,
@@ -15,8 +16,8 @@ use crate::ports::{
 #[derive(Debug, Clone)]
 pub struct CompleteTask {
     pub id: TaskId,
-    pub report: Option<String>,
-    pub commits: Vec<String>,
+    pub report: Option<TaskReport>,
+    pub commits: Option<CommitRanges>,
     pub review: bool,
 }
 
@@ -34,7 +35,7 @@ pub async fn execute(
     store: &(impl TaskStore + IndexEntryStore + IndexSectionStore),
     pool: &sqlx::SqlitePool,
     clock: &impl Clock,
-) -> Result<CompleteTaskOk, CompleteTaskError> {
+) -> Result<ClosedTask, CompleteTaskError> {
     let project = resolve_task_project::execute(
         ResolveTaskProject {
             id: command.id.clone(),
@@ -42,13 +43,13 @@ pub async fn execute(
         pool,
     )
     .await?;
-    close_task::execute(
-        CloseTask {
+    task_closure::close(
+        &TaskClosure {
             action: ClosedTaskAction::Done,
             id: &command.id,
             completed: clock.today(),
-            report: command.report.as_deref(),
-            commits: &command.commits,
+            report: command.report.as_ref(),
+            commits: command.commits.as_ref(),
             review: command.review,
         },
         store,
@@ -62,7 +63,7 @@ pub async fn execute(
 mod tests {
     use pwf_models::{
         project::Project,
-        task::{TaskId, TaskStatus, Timestamp},
+        task::{TaskId, TaskStatus},
     };
 
     use super::{
@@ -70,7 +71,7 @@ mod tests {
     };
     use crate::{
         ports::task_record::{IndexEntry, IndexEntryState, IndexEntryStore, TaskRecord},
-        testing::{FixedClock, InMemoryStore, project, task_record},
+        testing::{FixedClock, InMemoryStore, app_date, project, task_record},
     };
 
     fn record(id: &str, status: TaskStatus) -> TaskRecord {
@@ -84,7 +85,7 @@ mod tests {
         IndexEntry {
             id: TaskId::try_new(id).unwrap(),
             state,
-            section: section.to_string(),
+            section: (!section.is_empty()).then(|| section.parse().unwrap()),
         }
     }
 
@@ -106,7 +107,7 @@ mod tests {
         CompleteTask {
             id: id.parse().unwrap(),
             report: None,
-            commits: Vec::new(),
+            commits: None,
             review: false,
         }
     }
@@ -128,7 +129,7 @@ mod tests {
                 tasks.push(record(&format!("FOO-{n:04}"), TaskStatus::Done));
                 entry(
                     &format!("FOO-{n:04}"),
-                    IndexEntryState::Done(Timestamp::new(format!("2026-01-{n:02}"))),
+                    IndexEntryState::Done(Some(app_date(format!("2026-01-{n:02}")))),
                     "General",
                 )
             })
@@ -151,7 +152,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             marked.state,
-            IndexEntryState::Done(Timestamp::new("2026-07-26"))
+            IndexEntryState::Done(Some(app_date("2026-07-26")))
         );
         assert!(
             !store
@@ -183,7 +184,7 @@ mod tests {
 
         assert_eq!(
             store.tasks("foo-bar")[0].completed,
-            Some(Timestamp::new("2026-07-26"))
+            Some(app_date("2026-07-26"))
         );
     }
 
@@ -249,7 +250,7 @@ mod tests {
         );
         let cmd = CompleteTask {
             review: true,
-            commits: vec!["a..b".to_string()],
+            commits: "a..b".parse().ok(),
             ..done_command("FOO-0001")
         };
 
@@ -295,6 +296,37 @@ mod tests {
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
+    async fn done_rejects_an_invalid_persisted_title_before_mutation(pool: sqlx::SqlitePool) {
+        crate::testing::insert_project(
+            &pool,
+            "FOO",
+            "foo-bar",
+            "/projects/foo",
+            "/tasks/foo",
+            false,
+        )
+        .await;
+        let invalid = TaskRecord {
+            title: "x".repeat(201),
+            ..record("FOO-0001", TaskStatus::Active)
+        };
+        let store = staged(
+            vec![invalid],
+            vec![entry("FOO-0001", IndexEntryState::Open, "General")],
+        );
+
+        let error = super::execute(&done_command("FOO-0001"), &store, &pool, &FixedClock)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            CompleteTaskError::Close(CloseTaskError::InvalidTitle { .. })
+        ));
+        assert_eq!(store.tasks("foo-bar")[0].status, TaskStatus::Active);
+    }
+
+    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn done_reports_an_unknown_project_id(pool: sqlx::SqlitePool) {
         crate::testing::insert_project(
             &pool,
@@ -320,11 +352,11 @@ mod tests {
     #[test]
     fn review_prompt_uses_scoped_or_bare_diff() {
         assert_eq!(
-            review_task_prompt(&"PWF-0128".parse().unwrap(), Some("a..b")),
+            review_task_prompt(&"PWF-0128".parse().unwrap(), Some("a..b")).as_ref(),
             "review PWF-0128, commits: a..b / git-tools diff a..b / git-tools diff-subrepos"
         );
         assert_eq!(
-            review_task_prompt(&"PWF-0128".parse().unwrap(), None),
+            review_task_prompt(&"PWF-0128".parse().unwrap(), None).as_ref(),
             "review PWF-0128 / git-tools diff / git-tools diff-subrepos"
         );
     }

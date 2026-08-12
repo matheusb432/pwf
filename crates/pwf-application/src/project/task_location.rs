@@ -1,16 +1,14 @@
 use std::path::{Path, PathBuf};
 
-use pwf_models::project::ProjectId;
+use pwf_models::project::{ProjectId, ProjectTasksPath};
 
-use crate::project::resolve_runtime_path::{
-    self, ResolveRuntimePath, ResolvedPath, RuntimePathError,
-};
+use crate::project::runtime_path::{self, ResolvedPath, RuntimePathError};
 
 #[derive(Debug)]
 pub(in crate::project) enum TaskLocationError {
     InvalidPath {
         project_id: ProjectId,
-        path: String,
+        path: ProjectTasksPath,
         source: RuntimePathError,
     },
     Collision {
@@ -22,8 +20,8 @@ pub(in crate::project) enum TaskLocationError {
 
 pub(in crate::project) fn reject_collision(
     candidate_id: &ProjectId,
-    candidate_path: &str,
-    existing: impl IntoIterator<Item = (ProjectId, String)>,
+    candidate_path: &ProjectTasksPath,
+    existing: impl IntoIterator<Item = (ProjectId, ProjectTasksPath)>,
     home: &Path,
 ) -> Result<ResolvedPath, TaskLocationError> {
     let candidate = resolve_path(candidate_id, candidate_path, home)?;
@@ -51,16 +49,12 @@ pub(in crate::project) fn reject_collision(
 
 fn resolve_path(
     project_id: &ProjectId,
-    path: &str,
+    path: &ProjectTasksPath,
     home: &Path,
 ) -> Result<ResolvedPath, TaskLocationError> {
-    resolve_runtime_path::execute(&ResolveRuntimePath {
-        path: path.to_string(),
-        home: home.to_path_buf(),
-    })
-    .map_err(|source| TaskLocationError::InvalidPath {
+    runtime_path::resolve(path.as_ref(), home).map_err(|source| TaskLocationError::InvalidPath {
         project_id: project_id.clone(),
-        path: path.to_string(),
+        path: path.clone(),
         source,
     })
 }

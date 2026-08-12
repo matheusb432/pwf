@@ -5,18 +5,25 @@ use std::process::Command;
 use pwf_application::ports::{
     inline_agent_session::InlineAgentSessionClient, session::AgentCommand,
 };
+use pwf_models::session::SessionWorkingDirectory;
 
 /// Executes prepared agent commands inline.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct InlineHarness;
 
 impl InlineAgentSessionClient for InlineHarness {
-    fn run(&self, command: AgentCommand<'_>, working_directory: &str) -> Result<(), String> {
+    fn run(
+        &self,
+        command: AgentCommand<'_>,
+        working_directory: &SessionWorkingDirectory,
+    ) -> Result<(), String> {
         let (binary, arguments) = command
             .split_first()
             .ok_or_else(|| "empty agent command".to_string())?;
         let mut command = Command::new(binary);
-        command.args(arguments).current_dir(working_directory);
+        command
+            .args(arguments)
+            .current_dir(working_directory.as_ref());
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt;

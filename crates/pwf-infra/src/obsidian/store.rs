@@ -26,17 +26,12 @@ impl ObsidianStore {
     }
 
     fn tasks_path(&self, project: &Project) -> Result<PathBuf, ObsidianStoreError> {
-        pwf_application::project::resolve_runtime_path::execute(
-            &pwf_application::project::resolve_runtime_path::ResolveRuntimePath {
-                path: project.tasks.path().to_string(),
-                home: self.home.clone(),
-            },
-        )
-        .map(|resolved| resolved.path().to_path_buf())
-        .map_err(|source| ObsidianStoreError::InvalidProjectTaskPath {
-            project: project.title.to_string(),
-            source,
-        })
+        pwf_application::project::runtime_path::resolve(project.tasks.path().as_ref(), &self.home)
+            .map(|resolved| resolved.path().to_path_buf())
+            .map_err(|source| ObsidianStoreError::InvalidProjectTaskPath {
+                project: project.title.to_string(),
+                source,
+            })
     }
 
     fn project_index_path(&self, project: &Project) -> Result<PathBuf, ObsidianStoreError> {

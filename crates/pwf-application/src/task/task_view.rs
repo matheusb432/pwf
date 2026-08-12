@@ -1,52 +1,64 @@
 //! Derives task launchability diagnostics for task views.
 
 use pwf_models::{
-    project::ProjectSourceValue,
-    task::{TaskId, TaskStatus},
+    AppDate,
+    project::{ProjectName, ProjectSourceValue},
+    task::{
+        EffortTier, EffortTierError, TaskId, TaskPrompt, TaskSection, TaskStatus, TaskTitle,
+        TaskTitleError,
+    },
 };
-use pwf_wire::task::TaskView;
+use pwf_wire::task::{
+    RawTaskTags, TaskHeading, TaskIndexPath, TaskIssue, TaskLaunch, TaskLocation, TaskNotePath,
+    TaskView,
+};
 
-use super::{normalize_section_label, note_body::is_placeholder_prompt, prerequisites};
+use super::{blocked_by, normalize_section_label, note_body::is_placeholder_prompt};
 use crate::ports::task_record::{Materialization, TaskRecord};
-
-pub(in crate::task) const ISSUE_PLACEHOLDER_PROMPT: &str =
-    "Prompt is a placeholder; define a real prompt before launching.";
-
-#[must_use]
-pub(in crate::task) fn normalize_section(section: Option<&str>) -> Option<String> {
-    section.map(normalize_section_label)
-}
-
-/// Returns whether an task is active.
-#[must_use]
-pub(in crate::task) fn is_active_task(task: &TaskRecord) -> bool {
-    task.status == TaskStatus::Active
-}
 
 /// Contains launchability flags and diagnostics derived from a task.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::task) struct DerivedFlags {
-    pub(in crate::task) issues: Vec<String>,
-    pub(in crate::task) launchable: bool,
-    pub(in crate::task) needs_prompt: bool,
+    pub(in crate::task) launch: TaskLaunch,
 }
 
 /// Derives missing-note and placeholder diagnostics.
 #[must_use]
-pub(in crate::task) fn derive_flags(prompt: &str, missing_note: Option<&str>) -> DerivedFlags {
+pub(in crate::task) fn derive_flags(
+    prompt: &TaskPrompt,
+    missing_note: Option<&str>,
+) -> DerivedFlags {
     let mut issues = Vec::new();
     if let Some(path) = missing_note {
-        issues.push(missing_note_issue(path));
+        issues.push(TaskIssue::MissingNote {
+            path: TaskNotePath::new(path.into()),
+        });
     }
-    let needs_prompt = is_placeholder_prompt(prompt);
-    if needs_prompt {
-        issues.push(ISSUE_PLACEHOLDER_PROMPT.to_string());
+    if is_placeholder_prompt(prompt) {
+        issues.push(TaskIssue::PlaceholderPrompt);
     }
     DerivedFlags {
-        launchable: issues.is_empty(),
-        needs_prompt,
-        issues,
+        launch: TaskLaunch::from_issues(issues),
     }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(in crate::task) enum TaskViewError {
+    #[error("task {id} has an invalid title: {source}")]
+    Title {
+        id: TaskId,
+        #[source]
+        source: TaskTitleError,
+    },
+    #[error("task {id} has an invalid effort value {value:?}: {source}")]
+    Effort {
+        id: TaskId,
+        value: String,
+        #[source]
+        source: EffortTierError,
+    },
+    #[error("task {id} has an invalid display location")]
+    Location { id: TaskId },
 }
 
 /// Contains a task's persisted data and derived diagnostics before project
@@ -55,44 +67,34 @@ pub(in crate::task) fn derive_flags(prompt: &str, missing_note: Option<&str>) ->
 pub(in crate::task) struct EnrichedTask {
     pub(in crate::task) id: TaskId,
     pub(in crate::task) status: TaskStatus,
-    pub(in crate::task) session: String,
-    pub(in crate::task) prompt: String,
+    pub(in crate::task) heading: TaskHeading,
+    pub(in crate::task) prompt: TaskPrompt,
     pub(in crate::task) project_path: ProjectSourceValue,
-    pub(in crate::task) note: String,
-    pub(in crate::task) task_file: Option<String>,
-    pub(in crate::task) line: usize,
-    pub(in crate::task) format: String,
-    pub(in crate::task) launchable: bool,
-    pub(in crate::task) needs_prompt: bool,
-    pub(in crate::task) issues: Vec<String>,
-    pub(in crate::task) section: Option<String>,
-    pub(in crate::task) prerequisites: Option<pwf_models::task::Prerequisites>,
-    pub(in crate::task) effort: Option<String>,
-    pub(in crate::task) tags: Option<String>,
-    pub(in crate::task) created: Option<String>,
+    pub(in crate::task) location: TaskLocation,
+    pub(in crate::task) launch: TaskLaunch,
+    pub(in crate::task) section: Option<TaskSection>,
+    pub(in crate::task) blocked_by: Option<pwf_models::task::BlockedBy>,
+    pub(in crate::task) effort: Option<EffortTier>,
+    pub(in crate::task) tags: Option<RawTaskTags>,
+    pub(in crate::task) created: Option<AppDate>,
 }
 
 impl EnrichedTask {
     /// Attaches the managed project name.
     #[must_use]
-    pub(in crate::task) fn into_task_view(self, project: String) -> TaskView {
+    pub(in crate::task) fn into_task_view(self, project: ProjectName) -> TaskView {
         TaskView {
             id: self.id,
             project,
             status: self.status,
-            session: self.session,
+            heading: self.heading,
             prompt: self.prompt,
             project_path: self.project_path,
-            note: self.note,
-            task_file: self.task_file,
-            line: self.line,
-            format: self.format,
-            launchable: self.launchable,
-            needs_prompt: self.needs_prompt,
-            issues: self.issues,
+            location: self.location,
+            launch: self.launch,
             section: self.section,
-            prerequisites: self.prerequisites,
-            prerequisite_statuses: Vec::new(),
+            blocked_by: self.blocked_by,
+            blocked_by_statuses: Vec::new(),
             effort: self.effort,
             tags: self.tags,
             created: self.created,
@@ -100,60 +102,70 @@ impl EnrichedTask {
     }
 }
 
-fn missing_note_issue(path: &str) -> String {
-    format!("Task note missing: {path}")
-}
-
 /// Projects a persisted task into the fields consumed by list and session.
 ///
-/// Materialization controls `format` and `task_file`; missing notes add an issue; empty titles
-/// fall back to the task ID; section labels are normalized for display.
-#[must_use]
+/// Missing notes add an issue, empty titles fall back to the task ID, and section labels are
+/// normalized for display.
 pub(in crate::task) fn enrich(
     task: &TaskRecord,
     project_path: &ProjectSourceValue,
-) -> EnrichedTask {
-    let prompt = task.body.trim().to_string();
-    let (format, task_file, missing_note) = match &task.materialization {
-        Materialization::NoteFile => ("file", Some(task.locator.clone()), None),
-        Materialization::MissingNote { expected } => {
-            ("file", Some(task.locator.clone()), Some(expected.as_str()))
-        }
+) -> Result<EnrichedTask, TaskViewError> {
+    let prompt = TaskPrompt::new(task.body.trim());
+    let missing_note = match &task.materialization {
+        Materialization::NoteFile => None,
+        Materialization::MissingNote { expected } => Some(expected.as_str()),
     };
     let flags = derive_flags(&prompt, missing_note);
-    let session = if task.title.trim().is_empty() {
-        task.id.to_string()
+    let heading = if task.title.trim().is_empty() {
+        TaskHeading::Identifier(task.id.clone())
     } else {
-        task.title.clone()
+        TaskHeading::Title(TaskTitle::try_new(&task.title).map_err(|source| {
+            TaskViewError::Title {
+                id: task.id.clone(),
+                source,
+            }
+        })?)
     };
     let (note, line) = task.placement.as_ref().map_or_else(
         || (task.locator.clone(), 1),
         |placement| (placement.index_path.clone(), placement.line),
     );
-    EnrichedTask {
+    let location =
+        TaskLocation::try_new(TaskIndexPath::new(note.into()), line).ok_or_else(|| {
+            TaskViewError::Location {
+                id: task.id.clone(),
+            }
+        })?;
+    let effort = task
+        .effort
+        .as_deref()
+        .map(str::trim)
+        .map(str::parse)
+        .transpose()
+        .map_err(|source| TaskViewError::Effort {
+            id: task.id.clone(),
+            value: task.effort.clone().unwrap_or_default(),
+            source,
+        })?;
+    Ok(EnrichedTask {
         id: task.id.clone(),
         status: task.status,
-        session,
+        heading,
         prompt,
         project_path: project_path.clone(),
-        note,
-        line,
-        task_file,
-        format: format.to_string(),
-        launchable: flags.launchable,
-        needs_prompt: flags.needs_prompt,
-        issues: flags.issues,
-        section: normalize_section(task.section.as_deref()),
-        prerequisites: task.prereq.as_deref().and_then(prerequisites::extract),
-        effort: task.effort.clone(),
+        location,
+        launch: flags.launch,
+        section: task.section.as_ref().map(normalize_section_label),
+        blocked_by: task.blocked_by.as_deref().and_then(blocked_by::extract),
+        effort,
         tags: task.tags.clone(),
-        created: task.created.as_ref().map(|ts| ts.as_str().to_string()),
-    }
+        created: task.created,
+    })
 }
 
 #[cfg(test)]
 mod tests {
-    use pwf_models::{project::ProjectSourceValue, task::TaskStatus};
+    use pwf_models::project::ProjectSourceValue;
 
     use super::*;
     use crate::{ports::task_record::IndexPlacement, testing::task_record};
@@ -177,50 +189,30 @@ mod tests {
 
     #[test]
     fn launchable_when_project_path_is_present_and_prompt_is_real() {
-        let enriched = enrich(&record("add startup toggle"), &project_path());
-        assert!(enriched.launchable);
-        assert!(!enriched.needs_prompt);
-        assert!(enriched.issues.is_empty());
-        assert_eq!(enriched.prompt, "add startup toggle");
+        let enriched = enrich(&record("add startup toggle"), &project_path()).unwrap();
+        assert!(enriched.launch.is_ready());
+        assert!(!enriched.launch.needs_prompt());
+        assert!(enriched.launch.issues().is_empty());
+        assert_eq!(enriched.prompt.as_ref(), "add startup toggle");
         assert_eq!(enriched.project_path.as_ref(), "/project");
     }
 
     #[test]
-    fn active_item_requires_only_active_status() {
-        let active = record("body");
-        assert!(is_active_task(&active));
-
-        let unlinked = TaskRecord {
-            placement: None,
-            ..active.clone()
-        };
-        assert!(is_active_task(&unlinked));
-
-        let done = TaskRecord {
-            status: TaskStatus::Done,
-            ..active
-        };
-        assert!(!is_active_task(&done));
-    }
-
-    #[test]
     fn note_and_line_render_the_index_placement_not_the_note_file() {
-        let enriched = enrich(&record("body"), &project_path());
-        assert_eq!(enriched.note, "/notes/pwf/pwf.md");
-        assert_eq!(enriched.line, 7);
+        let enriched = enrich(&record("body"), &project_path()).unwrap();
         assert_eq!(
-            enriched.task_file.as_deref(),
-            Some("/notes/pwf/PWF-0001.md")
+            enriched.location.index_path().as_path(),
+            std::path::Path::new("/notes/pwf/pwf.md")
         );
-        assert_eq!(enriched.format, "file");
+        assert_eq!(enriched.location.line().get(), 7);
     }
 
     #[test]
     fn placeholder_prompt_is_not_launchable() {
-        let enriched = enrich(&record("TODO"), &project_path());
-        assert!(!enriched.launchable);
-        assert!(enriched.needs_prompt);
-        assert_eq!(enriched.issues, [ISSUE_PLACEHOLDER_PROMPT.to_string()]);
+        let enriched = enrich(&record("TODO"), &project_path()).unwrap();
+        assert!(!enriched.launch.is_ready());
+        assert!(enriched.launch.needs_prompt());
+        assert_eq!(enriched.launch.issues(), [TaskIssue::PlaceholderPrompt]);
     }
 
     #[test]
@@ -230,51 +222,78 @@ mod tests {
             expected: "/notes/pwf/PWF-0001.md".to_string(),
         };
 
-        let enriched = enrich(&rec, &project_path());
+        let enriched = enrich(&rec, &project_path()).unwrap();
 
-        assert!(!enriched.launchable, "missing note must not be launchable");
-        assert!(enriched.needs_prompt, "empty prompt is a placeholder");
+        assert!(!enriched.launch.is_ready());
+        assert!(enriched.launch.needs_prompt());
         assert_eq!(
-            enriched.issues,
+            enriched.launch.issues(),
             [
-                "Task note missing: /notes/pwf/PWF-0001.md".to_string(),
-                ISSUE_PLACEHOLDER_PROMPT.to_string(),
+                TaskIssue::MissingNote {
+                    path: TaskNotePath::new("/notes/pwf/PWF-0001.md".into()),
+                },
+                TaskIssue::PlaceholderPrompt,
             ]
         );
-        assert_eq!(enriched.prompt, "");
-        assert_eq!(enriched.format, "file");
-        assert_eq!(
-            enriched.task_file.as_deref(),
-            Some("/notes/pwf/PWF-0001.md")
-        );
+        assert_eq!(enriched.prompt.as_ref(), "");
     }
 
     #[test]
     fn empty_title_falls_back_to_id() {
         let mut rec = record("body");
         rec.title = "  ".to_string();
-        assert_eq!(enrich(&rec, &project_path()).session, "PWF-0001");
+        assert_eq!(
+            enrich(&rec, &project_path()).unwrap().heading.as_ref(),
+            "PWF-0001"
+        );
     }
 
     #[test]
     fn section_label_is_normalized() {
         let mut rec = record("body");
-        rec.section = Some("Futuro".to_string());
+        rec.section = Some("Futuro".parse().unwrap());
         assert_eq!(
-            enrich(&rec, &project_path()).section.as_deref(),
+            enrich(&rec, &project_path())
+                .unwrap()
+                .section
+                .as_ref()
+                .map(AsRef::as_ref),
             Some("Future")
         );
     }
 
     #[test]
     fn derive_flags_orders_missing_note_before_placeholder() {
-        let flags = derive_flags("", Some("/notes/pwf/PWF-0009.md"));
+        let flags = derive_flags(&TaskPrompt::default(), Some("/notes/pwf/PWF-0009.md"));
         assert_eq!(
-            flags.issues,
+            flags.launch.issues(),
             [
-                "Task note missing: /notes/pwf/PWF-0009.md".to_string(),
-                ISSUE_PLACEHOLDER_PROMPT.to_string(),
+                TaskIssue::MissingNote {
+                    path: TaskNotePath::new("/notes/pwf/PWF-0009.md".into()),
+                },
+                TaskIssue::PlaceholderPrompt,
             ]
         );
+    }
+
+    #[test]
+    fn invalid_persisted_effort_does_not_enter_a_task_view() {
+        let mut rec = record("body");
+        rec.effort = Some("extreme".to_string());
+
+        assert!(matches!(
+            enrich(&rec, &project_path()),
+            Err(TaskViewError::Effort { ref value, .. }) if value == "extreme"
+        ));
+    }
+
+    #[test]
+    fn oversized_persisted_title_does_not_enter_a_task_view() {
+        let mut rec = record("body");
+        rec.title = "x".repeat(201);
+
+        let error = enrich(&rec, &project_path()).unwrap_err();
+
+        assert!(matches!(error, TaskViewError::Title { .. }));
     }
 }

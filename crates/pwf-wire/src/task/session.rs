@@ -1,19 +1,27 @@
 //! Process-neutral session request and response contracts.
 
+use std::path::PathBuf;
+
 use pwf_models::{
-    session::{Agent, DispatchMode, LaunchDirectives, SessionEffort},
+    AppDate,
+    session::{
+        Agent, AgentModel, DispatchMode, LaunchDirectives, LaunchPrompt, SessionEffort,
+        SessionThreadTitle, SessionWorkingDirectory,
+    },
     task::TaskId,
 };
+
+use super::TaskHeading;
 
 /// Describes a provider-neutral agent launch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentLaunch {
     pub agent: Agent,
     pub task_id: TaskId,
-    pub title: String,
-    pub project_path: String,
-    pub prompt: String,
-    pub model: Option<String>,
+    pub title: SessionThreadTitle,
+    pub project_path: SessionWorkingDirectory,
+    pub prompt: LaunchPrompt,
+    pub model: AgentModel,
     pub effort: SessionEffort,
 }
 
@@ -23,6 +31,42 @@ pub struct SessionPlan {
     pub launch: AgentLaunch,
     pub mode: DispatchMode,
     pub target: DispatchTarget,
+}
+
+/// Describes a validated dry-run plan and its exact process arguments.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DryRunSession {
+    pub plan: SessionPlan,
+    pub argv: Vec<String>,
+    pub probe: AgentProbe,
+}
+
+/// Contains a validated session dispatch ready for confirmation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreparedSessionDispatch {
+    pub plan: SessionPlan,
+    pub confirmation: DispatchConfirmation,
+    pub probe: AgentProbe,
+}
+
+/// Carries either a dispatch-ready plan or a side-effect-free preview.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PlannedSession {
+    Dispatch(PreparedSessionDispatch),
+    DryRun(DryRunSession),
+}
+
+/// Describes the host target reached by a dispatched session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DispatchedSession {
+    Inline {
+        task_id: TaskId,
+    },
+    WindowOpened {
+        target: DispatchTarget,
+        agent: Agent,
+        project_path: SessionWorkingDirectory,
+    },
 }
 
 /// Identifies a multiplexer session and window.
@@ -43,24 +87,44 @@ impl DispatchTarget {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DispatchConfirmation {
     pub task_id: TaskId,
-    pub title: String,
-    pub created: Option<String>,
+    pub title: TaskHeading,
+    pub created: Option<AppDate>,
     pub mode: DispatchMode,
     pub agent: Agent,
     pub directives: LaunchDirectives,
     pub has_pushed_prompt: bool,
-    pub model: String,
+    pub model: AgentModel,
     pub effort: SessionEffort,
     pub target: DispatchTarget,
 }
 
-/// Contains an agent binary's availability and discovered metadata.
+/// Reports whether the selected agent's executable is available.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentProbe {
-    pub binary: String,
-    pub available: bool,
-    pub path: Option<String>,
-    pub version: Option<String>,
+    pub agent: Agent,
+    pub availability: AgentAvailability,
+}
+
+impl AgentProbe {
+    #[must_use]
+    pub const fn is_available(&self) -> bool {
+        matches!(&self.availability, AgentAvailability::Available)
+    }
+
+    #[must_use]
+    pub const fn binary(&self) -> &'static str {
+        match self.agent {
+            Agent::Claude => "claude",
+            Agent::Codex => "codex",
+        }
+    }
+}
+
+/// Classifies one agent executable as missing or available.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AgentAvailability {
+    Missing,
+    Available,
 }
 
 /// Contains a raw model-tier catalog entry.
@@ -73,7 +137,7 @@ pub struct ModelTier {
 /// Contains a model-tier result and its diagnostic-facing catalog path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelTierLookup {
-    pub catalog: String,
+    pub catalog: PathBuf,
     pub tier: Option<ModelTier>,
 }
 

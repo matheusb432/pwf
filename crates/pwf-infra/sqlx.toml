@@ -2,5 +2,5 @@
 migrations-dir = "./migrations"
 
 [migrate.defaults]
-migration-type = "reversible"
-migration-versioning = "sequential"
+migration-type = "simple"
+migration-versioning = "timestamp"

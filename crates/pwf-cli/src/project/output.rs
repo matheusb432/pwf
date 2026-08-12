@@ -92,7 +92,7 @@ impl From<Project> for ProjectOutput {
                 },
                 path: project.tasks.path().to_string(),
             },
-            created_at: project.created_at,
+            created_at: project.created_at.to_string(),
             is_paused: project.is_paused,
         }
     }

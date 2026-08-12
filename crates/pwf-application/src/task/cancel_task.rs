@@ -1,9 +1,10 @@
-use pwf_models::task::TaskId;
+use pwf_models::task::{CommitRanges, TaskId, TaskReport};
+use pwf_wire::task::{ClosedTask, ClosedTaskAction};
 
 use super::{
-    close_task::{self, CloseTask},
-    complete_task::{CloseTaskError, ClosedTaskAction, CompleteTaskOk},
+    CloseTaskError,
     resolve_task_project::{self, ResolveTaskProject, ResolveTaskProjectError},
+    task_closure::{self, TaskClosure},
 };
 use crate::ports::{
     clock::Clock,
@@ -13,8 +14,8 @@ use crate::ports::{
 #[derive(Debug, Clone)]
 pub struct CancelTask {
     pub id: TaskId,
-    pub report: String,
-    pub commits: Vec<String>,
+    pub report: TaskReport,
+    pub commits: Option<CommitRanges>,
     pub review: bool,
 }
 
@@ -32,7 +33,7 @@ pub async fn execute(
     store: &(impl TaskStore + IndexEntryStore + IndexSectionStore),
     pool: &sqlx::SqlitePool,
     clock: &impl Clock,
-) -> Result<CompleteTaskOk, CancelTaskError> {
+) -> Result<ClosedTask, CancelTaskError> {
     let project = resolve_task_project::execute(
         ResolveTaskProject {
             id: command.id.clone(),
@@ -40,13 +41,13 @@ pub async fn execute(
         pool,
     )
     .await?;
-    close_task::execute(
-        CloseTask {
+    task_closure::close(
+        &TaskClosure {
             action: ClosedTaskAction::Cancelled,
             id: &command.id,
             completed: clock.today(),
-            report: Some(command.report.as_str()),
-            commits: &command.commits,
+            report: Some(&command.report),
+            commits: command.commits.as_ref(),
             review: command.review,
         },
         store,
@@ -57,12 +58,12 @@ pub async fn execute(
 
 #[cfg(test)]
 mod tests {
-    use pwf_models::task::{TaskId, TaskStatus, Timestamp};
+    use pwf_models::task::{TaskId, TaskStatus};
 
-    use super::{CancelTask, CancelTaskError, CloseTaskError};
+    use super::CancelTask;
     use crate::{
         ports::task_record::{IndexEntry, IndexEntryState, IndexEntryStore, TaskRecord},
-        testing::{FixedClock, InMemoryStore, project, task_record},
+        testing::{FixedClock, InMemoryStore, app_date, project, task_record},
     };
 
     fn record(id: &str) -> TaskRecord {
@@ -79,40 +80,11 @@ mod tests {
             IndexEntry {
                 id: TaskId::try_new("FOO-0001").unwrap(),
                 state: IndexEntryState::Open,
-                section: String::new(),
+                section: None,
             },
         )
         .unwrap();
         store
-    }
-
-    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
-    async fn cancel_rejects_blank_report_during_execution(pool: sqlx::SqlitePool) {
-        crate::testing::insert_project(
-            &pool,
-            "FOO",
-            "foo-bar",
-            "/projects/foo",
-            "/tasks/foo",
-            false,
-        )
-        .await;
-        let command = CancelTask {
-            id: "FOO-0001".parse().unwrap(),
-            report: " \t\n".to_string(),
-            commits: Vec::new(),
-            review: false,
-        };
-
-        let error = super::execute(&command, &staged(), &pool, &FixedClock)
-            .await
-            .unwrap_err();
-
-        assert!(matches!(
-            error,
-            CancelTaskError::Close(CloseTaskError::EmptyReport)
-        ));
-        assert_eq!(error.to_string(), "--report cannot be empty.");
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
@@ -129,8 +101,8 @@ mod tests {
         let store = staged();
         let command = CancelTask {
             id: "FOO-0001".parse().unwrap(),
-            report: "obsoleted".to_string(),
-            commits: vec![" a..b, c..d ".to_string(), "a..b".to_string()],
+            report: "obsoleted".parse().unwrap(),
+            commits: "a..b, c..d".parse().ok(),
             review: false,
         };
 
@@ -138,14 +110,11 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(
-            out.action,
-            super::super::complete_task::ClosedTaskAction::Cancelled
-        );
+        assert_eq!(out.action, pwf_wire::task::ClosedTaskAction::Cancelled);
         assert_eq!(store.tasks("foo-bar")[0].status, TaskStatus::Cancelled);
         assert_eq!(
             store.tasks("foo-bar")[0].completed,
-            Some(Timestamp::new("2026-07-26"))
+            Some(app_date("2026-07-26"))
         );
         assert_eq!(
             store.tasks("foo-bar")[0].commits.as_deref(),
@@ -167,8 +136,8 @@ mod tests {
         let store = staged();
         let command = CancelTask {
             id: "FOO-0001".parse().unwrap(),
-            report: "obsoleted".to_string(),
-            commits: Vec::new(),
+            report: "obsoleted".parse().unwrap(),
+            commits: None,
             review: false,
         };
 
@@ -178,7 +147,7 @@ mod tests {
 
         assert_eq!(
             store.tasks("foo-bar")[0].completed,
-            Some(Timestamp::new("2026-07-26"))
+            Some(app_date("2026-07-26"))
         );
     }
 
@@ -195,8 +164,8 @@ mod tests {
         .await;
         let command = CancelTask {
             id: "XYZ-0001".parse().unwrap(),
-            report: "obsolete".to_string(),
-            commits: Vec::new(),
+            report: "obsolete".parse().unwrap(),
+            commits: None,
             review: false,
         };
 

@@ -1,3 +1,5 @@
+use pwf_models::task::TaskSection;
+
 use super::{markdown_line, task_link};
 
 const NOTES_HEADER: &str = "### Notes";
@@ -60,8 +62,8 @@ pub(super) enum KnownSection {
 }
 
 impl KnownSection {
-    pub(super) fn parse(value: &str) -> Option<Self> {
-        match value {
+    pub(super) fn parse(value: &TaskSection) -> Option<Self> {
+        match value.as_ref() {
             "Future" => Some(Self::Future),
             "Human" => Some(Self::Human),
             "Low-prio" => Some(Self::LowPrio),

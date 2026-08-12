@@ -2,6 +2,7 @@
 
 use lazy_regex::{Regex, regex};
 use prompt_lanes::{Adapter, MarkdownAdapter, ParsedPrompt, parse};
+use pwf_models::task::TaskPrompt;
 
 use super::{TaskLane, TaskLaneEdits, TaskLanes};
 
@@ -20,12 +21,12 @@ enum PromptClassification {
 }
 
 #[must_use]
-pub(in crate::task) fn render(prompt: &str) -> String {
+pub(in crate::task) fn render(prompt: &TaskPrompt) -> String {
     match prompt_classification(prompt) {
         PromptClassification::Placeholder | PromptClassification::AuthoredVerbatimLegacy => {
             prompt.to_string()
         }
-        PromptClassification::Authored => MarkdownAdapter.render(&parse(prompt)),
+        PromptClassification::Authored => MarkdownAdapter.render(&parse(prompt.as_ref())),
     }
 }
 
@@ -43,14 +44,15 @@ pub(in crate::task) fn render_lanes(lanes: &TaskLanes) -> String {
 /// Reports whether a prompt is empty or matches `TODO`, `[!] TODO`, `define prompt`, `definir
 /// prompt`, or `tbd` case-insensitively.
 #[must_use]
-pub(in crate::task) fn is_placeholder_prompt(prompt: &str) -> bool {
+pub(in crate::task) fn is_placeholder_prompt(prompt: &TaskPrompt) -> bool {
     matches!(
         prompt_classification(prompt),
         PromptClassification::Placeholder
     )
 }
 
-fn prompt_classification(prompt: &str) -> PromptClassification {
+fn prompt_classification(prompt: &TaskPrompt) -> PromptClassification {
+    let prompt = prompt.as_ref();
     if prompt.trim().is_empty() || placeholder_prompt_regex().is_match(prompt) {
         return PromptClassification::Placeholder;
     }
@@ -62,7 +64,7 @@ fn prompt_classification(prompt: &str) -> PromptClassification {
     if [Some(prompt_trimmed), prompt_after_marker]
         .into_iter()
         .flatten()
-        .any(prompt_starts_with_todo_word_boundary_ascii)
+        .any(starts_with_todo_word_boundary_ascii)
     {
         PromptClassification::AuthoredVerbatimLegacy
     } else {
@@ -70,8 +72,8 @@ fn prompt_classification(prompt: &str) -> PromptClassification {
     }
 }
 
-fn prompt_starts_with_todo_word_boundary_ascii(prompt: &str) -> bool {
-    prompt.strip_prefix("todo").is_some_and(|rest| {
+fn starts_with_todo_word_boundary_ascii(text: &str) -> bool {
+    text.strip_prefix("todo").is_some_and(|rest| {
         !rest.starts_with(|character: char| character.is_ascii_alphanumeric() || character == '_')
     })
 }
@@ -80,11 +82,9 @@ fn prompt_starts_with_todo_word_boundary_ascii(prompt: &str) -> bool {
 ///
 /// Returns [`None`] for a whitespace-only prompt.
 #[must_use]
-pub(in crate::task) fn append_lanes(body: &str, prompt: &str) -> Option<String> {
-    let prompt = prompt.trim();
-    if prompt.is_empty() {
-        return None;
-    }
+pub(in crate::task) fn append_lanes(body: &str, prompt: &TaskPrompt) -> String {
+    let prompt = prompt.as_ref().trim();
+    debug_assert!(!prompt.is_empty(), "task append prompts are validated");
     let mut parsed = parse(prompt);
     if !parsed.title.is_empty() {
         parsed.goals.insert(0, std::mem::take(&mut parsed.title));
@@ -99,7 +99,7 @@ pub(in crate::task) fn append_lanes(body: &str, prompt: &str) -> Option<String> 
     for (header, bullets) in LANE_SECTION_HEADERS.iter().zip(sections) {
         out = append_bullets_to_section(&out, header, bullets);
     }
-    Some(out)
+    out
 }
 
 #[derive(Debug, Clone, Copy, thiserror::Error)]
@@ -343,29 +343,15 @@ fn is_heading_line(line: &str) -> bool {
 }
 
 /// Appends a whitespace-collapsed report under a new `### Report` heading.
-///
-/// Returns [`None`] for a blank report.
 #[must_use]
-pub(in crate::task) fn append_report(body: &str, report: &str) -> Option<String> {
-    let report = normalized_report(report)?;
+pub(in crate::task) fn append_report(body: &str, report: &str) -> String {
     let mut out = body.trim_end().to_string();
     out.push_str("\n\n");
     out.push_str(REPORT_HEADER);
     out.push_str("\n\n");
-    out.push_str(&report);
+    out.push_str(report);
     out.push('\n');
-    Some(out)
-}
-
-fn normalized_report(report: &str) -> Option<String> {
-    let mut parts = Vec::new();
-    for line in report.lines() {
-        let line = line.trim();
-        if !line.is_empty() {
-            parts.push(line);
-        }
-    }
-    (!parts.is_empty()).then(|| parts.join(" "))
+    out
 }
 
 #[cfg(test)]
@@ -373,6 +359,18 @@ mod tests {
     use super::*;
 
     const S: &str = "\n\n";
+
+    fn render(raw: &str) -> String {
+        super::render(&TaskPrompt::new(raw))
+    }
+
+    fn is_placeholder_prompt(raw: &str) -> bool {
+        super::is_placeholder_prompt(&TaskPrompt::new(raw))
+    }
+
+    fn append_lanes(body: &str, raw: &str) -> String {
+        super::append_lanes(body, &TaskPrompt::new(raw))
+    }
 
     #[test]
     fn placeholder_prompt_detection() {
@@ -462,7 +460,7 @@ mod tests {
     #[test]
     fn append_lanes_grows_an_existing_section_in_place() {
         assert_eq!(
-            append_lanes("## Goals\n- do the thing\n", "also this").unwrap(),
+            append_lanes("## Goals\n- do the thing\n", "also this"),
             "## Goals\n- do the thing\n- also this\n"
         );
     }
@@ -470,7 +468,7 @@ mod tests {
     #[test]
     fn append_lanes_creates_a_missing_section_at_the_end() {
         assert_eq!(
-            append_lanes("## Goals\n- do the thing\n", "another goal /c new context").unwrap(),
+            append_lanes("## Goals\n- do the thing\n", "another goal /c new context"),
             "## Goals\n- do the thing\n- another goal\n\n## Context\n\n- new context\n"
         );
     }
@@ -478,22 +476,16 @@ mod tests {
     #[test]
     fn append_lanes_marker_first_leaves_goals_untouched() {
         assert_eq!(
-            append_lanes("## Goals\n- do the thing\n", "/c context").unwrap(),
+            append_lanes("## Goals\n- do the thing\n", "/c context"),
             "## Goals\n- do the thing\n\n## Context\n\n- context\n"
         );
     }
 
     #[test]
-    fn append_lanes_rejects_whitespace_only() {
-        assert_eq!(append_lanes("## Goals\n- x\n", "   \n\t"), None);
-    }
-
-    #[test]
     fn append_report_collapses_multiline_into_a_single_line_block() {
         assert_eq!(
-            append_report("body\n", "line one\n\nline two").unwrap(),
+            append_report("body\n", "line one line two"),
             "body\n\n### Report\n\nline one line two\n"
         );
-        assert_eq!(append_report("body\n", "  \n\t"), None);
     }
 }

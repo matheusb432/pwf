@@ -1,4 +1,4 @@
-//! Plans a task session before host validation or dispatch.
+//! Plans and host-validates a task session before dispatch.
 
 use std::{
     error::Error,
@@ -8,13 +8,16 @@ use std::{
 use askama::Template;
 use pwf_models::{
     project::{ProjectId, ProjectSourceValue},
-    session::{AgentModel, PushedPrompt},
+    session::{
+        AgentModel, LaunchPrompt, PushedPrompt, SessionThreadTitle, SessionWorkingDirectory,
+    },
     task::{EffortTier, TaskId},
 };
 use pwf_wire::task::{
     TaskView,
     session::{
-        AgentLaunch, AgentProbe, DispatchConfirmation, DispatchTarget, ModelTierLookup, SessionPlan,
+        AgentLaunch, DispatchConfirmation, DispatchTarget, DryRunSession, ModelTierLookup,
+        PlannedSession, PreparedSessionDispatch, SessionPlan,
     },
 };
 use thiserror::Error;
@@ -28,8 +31,8 @@ use crate::{
         session::{AgentCommand, SessionClient, SessionStart, SessionWindow},
         task_record::{Materialization, TaskRecord, TaskStore},
     },
-    project::resolve_runtime_path::{self, ResolveRuntimePath},
-    task::find_active_task::{self, FindActiveTask, FindActiveTaskError},
+    project::runtime_path,
+    task::active_task,
 };
 
 /// Requests one provider-neutral session plan.
@@ -52,35 +55,22 @@ pub enum PlanSessionIntent {
     DryRun,
 }
 
-pub enum PlanSessionOk {
-    Dispatch(PreparedSessionDispatch),
-    DryRun(DryRunSession),
-}
-
-/// Contains a validated dry-run plan and its exact process argv.
-pub struct DryRunSession {
-    pub plan: SessionPlan,
-    pub argv: Vec<String>,
-    pub probe: AgentProbe,
-}
-
-/// Contains a validated session dispatch ready for confirmation.
-pub struct PreparedSessionDispatch {
-    pub plan: SessionPlan,
-    pub confirmation: DispatchConfirmation,
-    pub probe: AgentProbe,
-}
-
 #[derive(Debug, Error)]
 pub enum PlanSessionError {
-    #[error(transparent)]
-    Find(#[from] FindActiveTaskError),
+    #[error("{0}")]
+    FindTask(#[source] Box<dyn Error + Send + Sync>),
     #[error("{0}")]
     ReadTaskMarkdown(#[source] Box<dyn Error + Send + Sync>),
-    #[error("Task '{id}' is not launchable: {}", issues.join("; "))]
-    NotLaunchable { id: TaskId, issues: Vec<String> },
+    #[error("Task '{id}' is not launchable: {launch}")]
+    NotLaunchable {
+        id: TaskId,
+        launch: pwf_wire::task::TaskLaunch,
+    },
     #[error("Project path for '{project_id}' does not exist: {path}")]
-    ProjectPathMissing { project_id: ProjectId, path: String },
+    ProjectPathMissing {
+        project_id: ProjectId,
+        path: SessionWorkingDirectory,
+    },
     #[error("Session multiplexer is unavailable; cannot dispatch a pwf session.")]
     MultiplexerNotFound,
     #[error("Checking multiplexer session '{session}' failed: {message}")]
@@ -103,7 +93,7 @@ pub enum PlanSessionError {
     EmptyAgentCommand,
 }
 
-/// Plans one active task without performing host I/O or persistence.
+/// Plans one active task without mutating its note or dispatching an agent.
 ///
 /// # Errors
 ///
@@ -117,59 +107,54 @@ pub async fn execute(
     agent_client: &impl AgentClient,
     project_directory: &impl ProjectDirectoryClient,
     session_client: &impl SessionClient,
-) -> Result<PlanSessionOk, PlanSessionError> {
+) -> Result<PlannedSession, PlanSessionError> {
     let probe = agent_client.probe(command.agent);
-    let found = find_active_task::execute(
-        &FindActiveTask {
-            id: command.task_id.clone(),
-        },
-        store,
-        pool,
-    )
-    .await?;
+    let found = active_task::find(&command.task_id, store, pool)
+        .await
+        .map_err(|error| PlanSessionError::FindTask(Box::new(error)))?;
     let task = found.task;
-    if !task.launchable {
+    if !task.launch.is_ready() {
         return Err(PlanSessionError::NotLaunchable {
             id: command.task_id.clone(),
-            issues: task.issues,
+            launch: task.launch.clone(),
         });
     }
     let project_id = found.project.id.clone();
     let project_path = resolve_project_path(found.project.source.value(), &project_id, home)?;
     let task_content = load_task_content(&found.record, store)?;
 
-    let model: AgentModel = match command.model_override.clone().into_inner() {
-        Some(model) => Some(model),
-        None => resolve_model(
-            command.agent,
-            &command.task_id,
-            task.effort.as_deref(),
-            |effort| agent_client.model_tier(effort),
-        )
-        .map_err(|error| PlanSessionError::ModelTier(Box::new(error)))?,
-    }
-    .into();
+    let model = match command.model_override.as_deref() {
+        Some(_) => command.model_override.clone(),
+        None => AgentModel::from(
+            resolve_model(command.agent, task.effort, |effort| {
+                agent_client.model_tier(effort)
+            })
+            .map_err(|error| PlanSessionError::ModelTier(Box::new(error)))?,
+        ),
+    };
     let target = dispatch_target(&command.task_id);
     let plan = SessionPlan {
         launch: AgentLaunch {
             agent: command.agent,
             task_id: command.task_id.clone(),
-            title: thread_title(
-                &task,
-                &command.task_id,
-                command.directives,
-                command.agent,
-                command.effort,
-            )
-            .map_err(PlanSessionError::RenderThreadTitle)?,
+            title: SessionThreadTitle::new(
+                thread_title(
+                    &task,
+                    &command.task_id,
+                    command.directives,
+                    command.agent,
+                    command.effort,
+                )
+                .map_err(PlanSessionError::RenderThreadTitle)?,
+            ),
             project_path: project_path.clone(),
-            prompt: launch_prompt(
+            prompt: LaunchPrompt::new(launch_prompt(
                 &task_content,
                 &command.task_id,
                 command.pushed_prompt.as_ref(),
                 command.directives,
-            ),
-            model: model.clone().into_inner(),
+            )),
+            model: model.clone(),
             effort: command.effort,
         },
         mode: command.mode,
@@ -179,19 +164,19 @@ pub async fn execute(
     validate_multiplexer(command, &plan, session_client)?;
     let confirmation = DispatchConfirmation {
         task_id: command.task_id.clone(),
-        title: task.session,
+        title: task.heading,
         created: task.created,
         mode: command.mode,
         agent: command.agent,
         directives: command.directives,
         has_pushed_prompt: command.pushed_prompt.is_some(),
-        model: model.display_or_default(),
+        model,
         effort: command.effort,
         target,
     };
 
     match command.intent {
-        PlanSessionIntent::Dispatch => Ok(PlanSessionOk::Dispatch(PreparedSessionDispatch {
+        PlanSessionIntent::Dispatch => Ok(PlannedSession::Dispatch(PreparedSessionDispatch {
             plan,
             confirmation,
             probe,
@@ -199,7 +184,7 @@ pub async fn execute(
         PlanSessionIntent::DryRun => {
             let provider_argv = agent_client.preview(&plan.launch);
             let argv = preview_dispatch_argv(provider_argv, &plan, session_client)?;
-            Ok(PlanSessionOk::DryRun(DryRunSession { plan, argv, probe }))
+            Ok(PlannedSession::DryRun(DryRunSession { plan, argv, probe }))
         }
     }
 }
@@ -245,29 +230,33 @@ fn resolve_project_path(
     source_value: &ProjectSourceValue,
     project_id: &ProjectId,
     home: &Path,
-) -> Result<String, PlanSessionError> {
-    let resolved = resolve_runtime_path::execute(&ResolveRuntimePath {
-        path: source_value.as_ref().to_string(),
-        home: home.to_path_buf(),
-    })
-    .map_err(|error| PlanSessionError::InvalidProjectPath {
-        project_id: project_id.clone(),
-        reason: error.to_string(),
+) -> Result<SessionWorkingDirectory, PlanSessionError> {
+    let resolved = runtime_path::resolve(source_value.as_ref(), home).map_err(|error| {
+        PlanSessionError::InvalidProjectPath {
+            project_id: project_id.clone(),
+            reason: error.to_string(),
+        }
     })?;
-    Ok(resolved.path().to_string_lossy().into_owned())
+    let path = resolved.path().to_str().map(str::to_owned).ok_or_else(|| {
+        PlanSessionError::InvalidProjectPath {
+            project_id: project_id.clone(),
+            reason: "resolved path is not valid Unicode".to_string(),
+        }
+    })?;
+    Ok(SessionWorkingDirectory::new(path))
 }
 
 fn validate_project_path(
     project_directory: &impl ProjectDirectoryClient,
     project_id: &ProjectId,
-    project_path: &str,
+    project_path: &SessionWorkingDirectory,
 ) -> Result<(), PlanSessionError> {
     if project_directory.is_directory(project_path) {
         return Ok(());
     }
     Err(PlanSessionError::ProjectPathMissing {
         project_id: project_id.clone(),
-        path: project_path.to_string(),
+        path: project_path.clone(),
     })
 }
 
@@ -402,8 +391,8 @@ fn thread_title(
     ThreadTitleTemplate {
         task_id,
         task_id_brief: task_id_brief(task_id),
-        task_title: &task.session,
-        project: &task.project,
+        task_title: task.heading.as_ref(),
+        project: task.project.as_ref(),
         effort,
         autonomous: directives.autonomous,
         worktree: directives.worktree,
@@ -417,15 +406,11 @@ fn thread_title(
 
 fn task_id_brief(task_id: &TaskId) -> String {
     let project_id = task_id.project_id();
-    let digits = task_id
-        .as_ref()
-        .strip_prefix(project_id.as_ref())
-        .and_then(|suffix| suffix.strip_prefix('-'))
-        .unwrap_or_default();
-    let digits = digits.trim_start_matches('0');
-    let digits = if digits.is_empty() { "0" } else { digits };
-
-    format!("{}{digits}", project_id.as_ref().to_ascii_lowercase())
+    format!(
+        "{}{}",
+        project_id.as_ref().to_ascii_lowercase(),
+        task_id.number()
+    )
 }
 
 fn launch_prompt(
@@ -464,22 +449,17 @@ fn dispatch_target(task_id: &TaskId) -> DispatchTarget {
 
 #[derive(Debug, Error)]
 enum ModelSelectionError {
-    #[error(
-        "task {task_id} has an invalid effort value '{value}' (expected low, medium, high, or highest)."
-    )]
-    InvalidEffort { task_id: TaskId, value: String },
     #[error("{0}")]
     Catalog(#[source] Box<dyn Error + Send + Sync>),
-    #[error("tier {tier} has no [tiers.{tier}] entry in {catalog}")]
-    MissingTier { tier: EffortTier, catalog: String },
-    #[error("tier {tier} in {catalog} has no claude_model set")]
-    MissingClaudeModel { tier: EffortTier, catalog: String },
+    #[error("tier {tier} has no [tiers.{tier}] entry in {}", catalog.display())]
+    MissingTier { tier: EffortTier, catalog: PathBuf },
+    #[error("tier {tier} in {} has no claude_model set", catalog.display())]
+    MissingClaudeModel { tier: EffortTier, catalog: PathBuf },
 }
 
 fn resolve_model<E>(
     agent: Agent,
-    task_id: &TaskId,
-    effort: Option<&str>,
+    effort: Option<EffortTier>,
     model_tier: impl FnOnce(EffortTier) -> Result<ModelTierLookup, E>,
 ) -> Result<Option<String>, ModelSelectionError>
 where
@@ -488,13 +468,9 @@ where
     if agent == Agent::Codex {
         return Ok(None);
     }
-    let Some(raw_effort) = effort else {
+    let Some(tier) = effort else {
         return Ok(None);
     };
-    let tier = parse_effort(raw_effort).ok_or_else(|| ModelSelectionError::InvalidEffort {
-        task_id: task_id.clone(),
-        value: raw_effort.to_string(),
-    })?;
     let ModelTierLookup {
         catalog,
         tier: entry,
@@ -508,14 +484,17 @@ where
     Ok(if model.is_empty() { None } else { Some(model) })
 }
 
-fn parse_effort(raw: &str) -> Option<EffortTier> {
-    raw.trim().parse().ok()
-}
-
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    use std::{ffi::OsString, os::unix::ffi::OsStringExt, path::PathBuf};
+
+    #[cfg(unix)]
+    use pwf_models::project::{ProjectId, ProjectSourceValue};
     use pwf_models::{session::PushedPrompt, task::TaskId};
 
+    #[cfg(unix)]
+    use super::{PlanSessionError, resolve_project_path};
     use super::{dispatch_target, launch_prompt};
     use crate::task::session::LaunchDirectives;
 
@@ -579,23 +558,34 @@ mod tests {
 
         assert_eq!(target.task_id, task_id);
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_unicode_runtime_project_path_is_rejected_before_session_planning() {
+        let home = PathBuf::from(OsString::from_vec(vec![
+            b'/', b'h', b'o', b'm', b'e', b'/', 0xff,
+        ]));
+        let source = ProjectSourceValue::try_new("~").unwrap();
+        let project_id = ProjectId::try_new("PWF").unwrap();
+
+        let error = resolve_project_path(&source, &project_id, &home).unwrap_err();
+
+        assert!(matches!(error, PlanSessionError::InvalidProjectPath { .. }));
+        assert!(error.to_string().contains("not valid Unicode"));
+    }
 }
 
 #[cfg(test)]
 mod model_selection_tests {
     use std::{assert_matches, error::Error, fmt};
 
-    use pwf_models::task::{EffortTier, TaskId};
+    use pwf_models::task::EffortTier;
     use pwf_wire::task::session::{ModelTier, ModelTierLookup};
 
-    use super::{ModelSelectionError, parse_effort, resolve_model};
+    use super::{ModelSelectionError, resolve_model};
     use crate::task::session::Agent;
 
     const CATALOG_PATH: &str = "/config/model-tiers.toml";
-
-    fn task_id() -> TaskId {
-        TaskId::try_new("PWF-0001").unwrap()
-    }
 
     #[derive(Debug, Clone)]
     struct CatalogError(&'static str);
@@ -610,7 +600,7 @@ mod model_selection_tests {
 
     fn catalog(claude_model: Option<&str>) -> ModelTierLookup {
         ModelTierLookup {
-            catalog: CATALOG_PATH.to_string(),
+            catalog: CATALOG_PATH.into(),
             tier: Some(ModelTier {
                 claude_model: claude_model.map(str::to_string),
             }),
@@ -618,23 +608,8 @@ mod model_selection_tests {
     }
 
     #[test]
-    fn effort_text_decodes_only_plain_english_names() {
-        for (raw, expected) in [
-            ("low", EffortTier::Low),
-            ("medium", EffortTier::Medium),
-            ("high", EffortTier::High),
-            ("highest", EffortTier::Highest),
-        ] {
-            assert_eq!(parse_effort(raw), Some(expected));
-        }
-        for raw in ["1", "4", "abc", ""] {
-            assert!(parse_effort(raw).is_none());
-        }
-    }
-
-    #[test]
     fn codex_ignores_effort_and_the_catalog() {
-        let model = resolve_model(Agent::Codex, &task_id(), Some("nine"), |_| {
+        let model = resolve_model(Agent::Codex, Some(EffortTier::Highest), |_| {
             Err(CatalogError("catalog unavailable"))
         })
         .unwrap();
@@ -644,7 +619,7 @@ mod model_selection_tests {
 
     #[test]
     fn claude_without_effort_does_not_read_the_catalog() {
-        let model = resolve_model(Agent::Claude, &task_id(), None, |_| {
+        let model = resolve_model(Agent::Claude, None, |_| {
             Err(CatalogError("catalog unavailable"))
         })
         .unwrap();
@@ -653,24 +628,8 @@ mod model_selection_tests {
     }
 
     #[test]
-    fn malformed_effort_is_an_application_error() {
-        let error = resolve_model(Agent::Claude, &task_id(), Some("nine"), |_| {
-            Ok::<_, CatalogError>(catalog(Some("sonnet")))
-        })
-        .unwrap_err();
-
-        assert_matches!(
-            error,
-            ModelSelectionError::InvalidEffort {
-                task_id: ref actual_task_id,
-                ref value,
-            } if actual_task_id == &task_id() && value == "nine"
-        );
-    }
-
-    #[test]
     fn configured_claude_model_is_selected() {
-        let model = resolve_model(Agent::Claude, &task_id(), Some("high"), |_| {
+        let model = resolve_model(Agent::Claude, Some(EffortTier::High), |_| {
             Ok::<_, CatalogError>(catalog(Some("sonnet")))
         })
         .unwrap();
@@ -680,7 +639,7 @@ mod model_selection_tests {
 
     #[test]
     fn empty_claude_model_is_the_no_override_sentinel() {
-        let model = resolve_model(Agent::Claude, &task_id(), Some("medium"), |_| {
+        let model = resolve_model(Agent::Claude, Some(EffortTier::Medium), |_| {
             Ok::<_, CatalogError>(catalog(Some("")))
         })
         .unwrap();
@@ -690,7 +649,7 @@ mod model_selection_tests {
 
     #[test]
     fn catalog_read_error_retains_its_source() {
-        let error = resolve_model(Agent::Claude, &task_id(), Some("low"), |_| {
+        let error = resolve_model(Agent::Claude, Some(EffortTier::Low), |_| {
             Err(CatalogError("catalog unavailable"))
         })
         .unwrap_err();
@@ -700,9 +659,9 @@ mod model_selection_tests {
 
     #[test]
     fn missing_tier_is_an_application_error() {
-        let error = resolve_model(Agent::Claude, &task_id(), Some("highest"), |_| {
+        let error = resolve_model(Agent::Claude, Some(EffortTier::Highest), |_| {
             Ok::<_, CatalogError>(ModelTierLookup {
-                catalog: CATALOG_PATH.to_string(),
+                catalog: CATALOG_PATH.into(),
                 tier: None,
             })
         })
@@ -723,7 +682,7 @@ mod model_selection_tests {
 
     #[test]
     fn missing_claude_model_is_an_application_error() {
-        let error = resolve_model(Agent::Claude, &task_id(), Some("highest"), |_| {
+        let error = resolve_model(Agent::Claude, Some(EffortTier::Highest), |_| {
             Ok::<_, CatalogError>(catalog(None))
         })
         .unwrap_err();

@@ -1,4 +1,5 @@
-use pwf_models::task::{ProjectName, TaskId, TaskStatus};
+use pwf_models::task::{TaskId, TaskStatus};
+use pwf_wire::task::ReopenedTask;
 
 use super::resolve_task_project::{self, ResolveTaskProject, ResolveTaskProjectError};
 use crate::ports::task_record::{
@@ -10,13 +11,6 @@ pub struct ReopenTask {
     pub id: TaskId,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReopenTaskOk {
-    pub id: TaskId,
-    pub project: ProjectName,
-    pub already_active: bool,
-}
-
 #[derive(Debug, thiserror::Error)]
 pub enum ReopenTaskError {
     #[error("Task not found: {id}")]
@@ -24,7 +18,7 @@ pub enum ReopenTaskError {
     #[error(transparent)]
     ResolveProject(#[from] ResolveTaskProjectError),
     #[error("{0}")]
-    WriteStore(Box<dyn std::error::Error + Send + Sync>),
+    WriteStore(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
 
 /// Reopens a closed task and restores an existing queue link.
@@ -35,7 +29,7 @@ pub async fn execute(
     cmd: &ReopenTask,
     store: &(impl TaskStore + IndexEntryStore),
     pool: &sqlx::SqlitePool,
-) -> Result<ReopenTaskOk, ReopenTaskError> {
+) -> Result<ReopenedTask, ReopenTaskError> {
     let project =
         resolve_task_project::execute(ResolveTaskProject { id: cmd.id.clone() }, pool).await?;
     let task_identifier = cmd.id.clone();
@@ -46,10 +40,9 @@ pub async fn execute(
         })?;
 
     if record.status == TaskStatus::Active {
-        return Ok(ReopenTaskOk {
+        return Ok(ReopenedTask::AlreadyActive {
             id: task_identifier,
             project: project.title.clone(),
-            already_active: true,
         });
     }
 
@@ -78,16 +71,15 @@ pub async fn execute(
             IndexEntry {
                 id: task_identifier.clone(),
                 state: IndexEntryState::Open,
-                section: String::new(),
+                section: None,
             },
         )
         .map_err(|error| ReopenTaskError::WriteStore(Box::new(error)))?;
     }
 
-    Ok(ReopenTaskOk {
+    Ok(ReopenedTask::Reopened {
         id: task_identifier,
         project: project.title.clone(),
-        already_active: false,
     })
 }
 
@@ -95,19 +87,20 @@ pub async fn execute(
 mod tests {
     use pwf_models::{
         project::Project,
-        task::{TaskId, TaskStatus, Timestamp},
+        task::{TaskId, TaskStatus},
     };
+    use pwf_wire::task::ReopenedTask;
 
     use super::ReopenTask;
     use crate::{
         ports::task_record::{IndexEntry, IndexEntryState, IndexEntryStore, TaskRecord},
-        testing::{InMemoryStore, project, task_record},
+        testing::{InMemoryStore, app_date, project, task_record},
     };
 
     fn record(id: &str, status: TaskStatus) -> TaskRecord {
         TaskRecord {
             status,
-            completed: (status != TaskStatus::Active).then(|| Timestamp::new("2026-01-02")),
+            completed: (status != TaskStatus::Active).then(|| app_date("2026-01-02")),
             commits: Some("a..b".to_string()),
             ..task_record(id)
         }
@@ -131,7 +124,7 @@ mod tests {
         IndexEntry {
             id: TaskId::try_new("FOO-0001").unwrap(),
             state,
-            section: String::new(),
+            section: None,
         }
     }
 
@@ -154,12 +147,12 @@ mod tests {
         .await;
         let store = staged(
             TaskStatus::Done,
-            vec![entry(IndexEntryState::Done(Timestamp::new("2026-01-02")))],
+            vec![entry(IndexEntryState::Done(Some(app_date("2026-01-02"))))],
         );
 
         let out = super::execute(&command(), &store, &pool).await.unwrap();
 
-        assert!(!out.already_active);
+        assert!(matches!(out, ReopenedTask::Reopened { .. }));
         assert_eq!(store.tasks("foo-bar")[0].status, TaskStatus::Active);
         assert_eq!(store.tasks("foo-bar")[0].completed, None);
         assert_eq!(store.tasks("foo-bar")[0].commits, None);
@@ -181,7 +174,7 @@ mod tests {
 
         let out = super::execute(&command(), &store, &pool).await.unwrap();
 
-        assert!(!out.already_active);
+        assert!(matches!(out, ReopenedTask::Reopened { .. }));
         assert_eq!(store.tasks("foo-bar")[0].status, TaskStatus::Active);
         assert!(store.entries("foo-bar").is_empty());
     }
@@ -201,7 +194,7 @@ mod tests {
 
         let out = super::execute(&command(), &store, &pool).await.unwrap();
 
-        assert!(out.already_active);
+        assert!(matches!(out, ReopenedTask::AlreadyActive { .. }));
         assert_eq!(store.tasks("foo-bar")[0].commits.as_deref(), Some("a..b"));
     }
 

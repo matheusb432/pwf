@@ -1,7 +1,9 @@
 use pwf_models::{
+    AppDate,
     project::Project,
-    task::{EffortTier, Prerequisites, Tags, TaskId, TaskStatus, TaskTitle, Timestamp},
+    task::{BlockedBy, EffortTier, TaskId, TaskSection, TaskStatus, TaskTags, TaskTitle},
 };
+use pwf_wire::task::RawTaskTags;
 
 /// Locates a record's open link by index display path and one-based line number.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,18 +28,18 @@ pub struct TaskRecord {
     pub id: TaskId,
     pub title: String,
     pub status: TaskStatus,
-    pub created: Option<Timestamp>,
-    pub completed: Option<Timestamp>,
+    pub created: Option<AppDate>,
+    pub completed: Option<AppDate>,
     pub commits: Option<String>,
     /// Preserves raw `tags:` frontmatter for lazy validation by tag-filtered reads.
-    pub tags: Option<String>,
+    pub tags: Option<RawTaskTags>,
     pub effort: Option<String>,
-    /// Preserves raw `prereq:` frontmatter for validation at read boundaries.
-    pub prereq: Option<String>,
-    pub section: Option<String>,
+    /// Preserves raw `blocked_by:` frontmatter for validation at read boundaries.
+    pub blocked_by: Option<String>,
+    pub section: Option<TaskSection>,
     /// Preserves the note body below frontmatter verbatim.
     pub body: String,
-    /// Preserves the raw note source byte-for-byte for `pwf task show`.
+    /// Preserves the raw note source byte-for-byte for `pwf task get`.
     pub source: String,
     /// Stores the display path; writes relocate the record by scope and id.
     pub locator: String,
@@ -51,11 +53,11 @@ pub struct TaskRecord {
 pub struct NewTask {
     pub body: String,
     pub title: TaskTitle,
-    pub created: Timestamp,
-    pub section: Option<String>,
-    pub prereq: Option<Prerequisites>,
+    pub created: AppDate,
+    pub section: Option<TaskSection>,
+    pub blocked_by: Option<BlockedBy>,
     pub effort: Option<EffortTier>,
-    pub tags: Option<Tags>,
+    pub tags: Option<TaskTags>,
 }
 
 /// Selects how a patch changes one nullable field.
@@ -82,13 +84,13 @@ impl<T> NullablePatch<T> {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TaskPatch {
     pub status: Option<TaskStatus>,
-    pub completed: NullablePatch<Timestamp>,
+    pub completed: NullablePatch<AppDate>,
     pub commits: NullablePatch<String>,
     pub body: Option<String>,
     pub title: Option<TaskTitle>,
-    pub prereq: NullablePatch<Prerequisites>,
+    pub blocked_by: NullablePatch<BlockedBy>,
     pub effort: NullablePatch<EffortTier>,
-    pub tags: NullablePatch<Tags>,
+    pub tags: NullablePatch<TaskTags>,
 }
 
 /// A project index's per-task entry, tracking open/done state and section.
@@ -97,24 +99,14 @@ pub struct IndexEntry {
     pub id: TaskId,
     pub state: IndexEntryState,
     /// Retains the raw stored label; the application owns normalization.
-    pub section: String,
+    pub section: Option<TaskSection>,
 }
 
 /// Records whether an index entry is open or completed on a date.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IndexEntryState {
     Open,
-    Done(Timestamp),
-}
-
-/// Represents an `## <label>` section that can be listed or renamed.
-///
-/// [`IndexEntry`] upserts create missing sections implicitly. Direct section insertion and
-/// deletion are unsupported.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct IndexSection {
-    /// Retains the raw H2 label; the application owns normalization.
-    pub label: String,
+    Done(Option<AppDate>),
 }
 
 pub trait TaskStore: Clone + Send + Sync + 'static {
@@ -138,11 +130,11 @@ pub trait IndexEntryStore: Clone + Send + Sync + 'static {
 pub trait IndexSectionStore: Clone + Send + Sync + 'static {
     type Error: std::error::Error + Send + Sync + 'static;
 
-    fn list_index_sections(&self, project: &Project) -> Result<Vec<IndexSection>, Self::Error>;
+    fn list_index_sections(&self, project: &Project) -> Result<Vec<TaskSection>, Self::Error>;
     fn rename_index_section(
         &self,
         project: &Project,
-        current_label: &str,
-        new_label: &str,
+        current_label: &TaskSection,
+        new_label: &TaskSection,
     ) -> Result<(), Self::Error>;
 }

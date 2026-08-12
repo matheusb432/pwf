@@ -1,14 +1,20 @@
-use std::path::PathBuf;
+use std::num::NonZeroUsize;
 
 use pwf_models::{
     project::{Project, ProjectSelector},
-    task::{EffortTier, ProjectName, Tags, TaskId, TaskStatus},
+    task::{EffortTier, TaskId, TaskSection, TaskTags},
 };
 #[cfg(test)]
-use pwf_wire::task::PrerequisiteStatus;
-use pwf_wire::{project::ProjectStatusFilter, task::TaskView};
+use pwf_wire::task::BlockedByStatus;
+use pwf_wire::{
+    project::ProjectStatusFilter,
+    task::{
+        ListDetail, ListLayout, ListMode, ListScope, ListedTasks, OrderDirection, OrderField,
+        OrderSpec, ProjectTaskPath, StatusFilter, TaskView,
+    },
+};
 
-use super::{prerequisites, tags, task_view};
+use super::{blocked_by, tags, task_view};
 use crate::{
     ports::{
         project_task_location::ProjectTaskLocationClient,
@@ -22,117 +28,28 @@ use crate::{
     },
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ListTasksOk {
-    pub tasks: Vec<TaskView>,
-    pub hidden: usize,
-    pub project: Option<ProjectName>,
-    pub project_task_path: Option<PathBuf>,
-    pub status_filter: StatusFilter,
-    pub grouped: bool,
-}
-
-/// Selects one lifecycle status or includes every lifecycle status.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StatusFilter {
-    Exact(TaskStatus),
-    All,
-}
-
-impl StatusFilter {
-    #[must_use]
-    pub fn includes(self, status: TaskStatus) -> bool {
-        match self {
-            Self::Exact(expected) => expected == status,
-            Self::All => true,
-        }
-    }
-}
-
-impl Default for StatusFilter {
-    fn default() -> Self {
-        Self::Exact(TaskStatus::Active)
-    }
-}
-
-/// Selects an explicit task index section.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ListSection {
-    /// Includes only tasks in the normalized `Human` section.
-    Human,
-    /// Includes only tasks in the normalized `Future` section.
-    Future,
-}
-
-/// Selects the defaults used by the direct list command or project compatibility route.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ListMode {
-    #[default]
-    Direct,
-    ProjectRoute,
-}
-
-/// Selects the primary list ordering field.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OrderField {
-    /// Orders by the persisted creation value.
-    Created,
-    /// Orders by the numeric task-id suffix.
-    Id,
-    /// Orders by project name, then by newest task id within each project.
-    ProjectId,
-}
-
-/// Selects ascending or descending list ordering.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OrderDirection {
-    /// Orders the selected field from lower to higher values.
-    Asc,
-    /// Orders the selected field from higher to lower values.
-    Desc,
-}
-
-/// Combines the list ordering field and direction.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct OrderSpec {
-    /// Primary field used to order listed tasks.
-    pub field: OrderField,
-    /// Direction applied to the primary ordering field.
-    pub direction: OrderDirection,
-}
-
-impl Default for OrderSpec {
-    fn default() -> Self {
-        Self {
-            field: OrderField::Created,
-            direction: OrderDirection::Desc,
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct ListTasks {
     pub project_selector: Option<ProjectSelector>,
-    pub section: Option<ListSection>,
-    pub all: bool,
+    pub scope: ListScope,
     /// Explicit task cap. Omission uses the mode-specific default.
-    pub number: Option<usize>,
+    pub number: Option<NonZeroUsize>,
     pub effort: Option<EffortTier>,
-    pub tags: Option<Tags>,
+    pub tags: Option<TaskTags>,
     pub order: Option<OrderSpec>,
     /// Explicit lifecycle filter. Omission uses the mode-specific default.
     pub status: Option<StatusFilter>,
-    /// Projects prerequisite statuses for long-list rendering when enabled.
-    pub include_prerequisite_statuses: bool,
+    pub detail: ListDetail,
     pub mode: ListMode,
 }
 
 /// Retains invalid requested or persisted tag text for list diagnostics.
 #[derive(Debug, thiserror::Error)]
-#[error("{message}")]
+#[error("{source}")]
 pub struct TagParseError {
     raw: String,
-    message: String,
+    #[source]
+    source: tags::ParseTagsError,
 }
 
 impl TagParseError {
@@ -146,7 +63,7 @@ impl From<tags::ParseTagsError> for TagParseError {
     fn from(error: tags::ParseTagsError) -> Self {
         Self {
             raw: error.raw().to_string(),
-            message: error.to_string(),
+            source: error,
         }
     }
 }
@@ -154,15 +71,17 @@ impl From<tags::ParseTagsError> for TagParseError {
 #[derive(Debug, thiserror::Error)]
 pub enum ListTasksError {
     #[error("task read failed: {0}")]
-    ReadStore(Box<dyn std::error::Error + Send + Sync>),
+    ReadStore(#[source] Box<dyn std::error::Error + Send + Sync>),
     #[error("managed project task path read failed: {0}")]
-    ReadProjectTaskPath(Box<dyn std::error::Error + Send + Sync>),
+    ReadProjectTaskPath(#[source] Box<dyn std::error::Error + Send + Sync>),
     #[error("task {id} has invalid tags frontmatter: {source}")]
     InvalidTags {
         id: TaskId,
         #[source]
         source: TagParseError,
     },
+    #[error("{0}")]
+    InvalidTaskView(#[source] Box<dyn std::error::Error + Send + Sync>),
     #[error(transparent)]
     ResolveProject(#[from] crate::project::resolve_project::ResolveProjectError),
     #[error("{0}")]
@@ -174,18 +93,10 @@ struct ResolvedListTasks {
     scope: ListScope,
     cap: Option<usize>,
     effort: Option<EffortTier>,
-    tags: Option<Tags>,
+    tags: Option<TaskTags>,
     order: OrderSpec,
     status_filter: StatusFilter,
-    include_prerequisite_statuses: bool,
-}
-
-#[derive(Clone, Copy)]
-enum ListScope {
-    Default,
-    HumanOnly,
-    FutureOnly,
-    All,
+    detail: ListDetail,
 }
 
 #[cqrsy::query]
@@ -194,13 +105,13 @@ pub async fn execute(
     store: &impl TaskStore,
     pool: &sqlx::SqlitePool,
     task_locations: &impl ProjectTaskLocationClient,
-) -> Result<ListTasksOk, ListTasksError> {
+) -> Result<ListedTasks, ListTasksError> {
     let selected = match query.project_selector.as_ref() {
         Some(selector) => Some(
             resolve_project::execute(
                 ResolveProject {
                     selector: selector.clone(),
-                    status: ProjectStatusFilter::ACTIVE,
+                    status: ProjectStatusFilter::ActiveOnly,
                 },
                 pool,
             )
@@ -219,12 +130,12 @@ pub async fn execute(
     let projects = match selected.as_ref() {
         Some(project) => {
             let mut projects = vec![project.clone()];
-            if query.include_prerequisite_statuses {
-                for id in prerequisites::referenced_project_ids(
+            if query.detail.includes_relationship_statuses() {
+                for id in blocked_by::referenced_project_ids(
                     selected_records
                         .iter()
                         .flatten()
-                        .filter_map(|record| record.prereq.as_deref()),
+                        .filter_map(|record| record.blocked_by.as_deref()),
                 ) {
                     if projects.iter().any(|project| project.id == id) {
                         continue;
@@ -242,7 +153,7 @@ pub async fn execute(
         }
         None => list_projects::execute(
             ListProjects {
-                status: ProjectStatusFilter::ACTIVE,
+                status: ProjectStatusFilter::ActiveOnly,
             },
             pool,
         )
@@ -255,15 +166,16 @@ pub async fn execute(
         .as_ref()
         .map(|project| task_locations.project_task_path(project))
         .transpose()
-        .map_err(|source| ListTasksError::ReadProjectTaskPath(Box::new(source)))?;
+        .map_err(|source| ListTasksError::ReadProjectTaskPath(Box::new(source)))?
+        .map(ProjectTaskPath::new);
     let mut tasks = collect_list_tasks(&query, store, &projects, selected_records.as_deref())?;
 
-    tasks.retain(|task| scope_includes(query.scope, task.section.as_deref()));
+    tasks.retain(|task| scope_includes(query.scope, task.section.as_ref()));
     tasks.retain(|task| effort_matches(task, query.effort));
 
     tasks = retain_matching_tags(tasks, query.tags.as_ref())?;
 
-    if scope_groups_output(query.scope) {
+    if list_layout(query.scope) == ListLayout::BySection {
         sort_by_group_then_order(&mut tasks, query.order);
     } else {
         sort_by_order(&mut tasks, query.order);
@@ -271,35 +183,35 @@ pub async fn execute(
 
     let (mut tasks, hidden) = apply_cap(tasks, query.cap);
 
-    if query.include_prerequisite_statuses {
+    if query.detail.includes_relationship_statuses() {
         for task in &mut tasks {
-            task.prerequisite_statuses =
-                task.prerequisites.as_ref().map_or_else(Vec::new, |value| {
-                    prerequisites::statuses(value, store, &projects)
-                });
+            task.blocked_by_statuses = task.blocked_by.as_ref().map_or_else(Vec::new, |value| {
+                blocked_by::statuses(value, store, &projects)
+            });
         }
     }
 
-    Ok(ListTasksOk {
+    Ok(ListedTasks {
         tasks,
         hidden,
         project: query.project.map(|project| project.title),
         project_task_path,
         status_filter: query.status_filter,
-        grouped: scope_groups_output(query.scope),
+        layout: list_layout(query.scope),
+        detail: query.detail,
     })
 }
 
 fn retain_matching_tags(
     tasks: Vec<TaskView>,
-    requested: Option<&Tags>,
+    requested: Option<&TaskTags>,
 ) -> Result<Vec<TaskView>, ListTasksError> {
     let Some(requested) = requested else {
         return Ok(tasks);
     };
     let mut matched = Vec::with_capacity(tasks.len());
     for task in tasks {
-        let Some(raw) = task.tags.as_deref() else {
+        let Some(raw) = task.tags.as_ref() else {
             continue;
         };
         let stored =
@@ -307,7 +219,10 @@ fn retain_matching_tags(
                 id: task.id.clone(),
                 source: source.into(),
             })?;
-        if tags::contains_all(&stored, requested) {
+        if requested
+            .iter()
+            .all(|requested| stored.iter().any(|stored| stored == requested))
+        {
             matched.push(task);
         }
     }
@@ -315,16 +230,11 @@ fn retain_matching_tags(
 }
 
 fn resolve_query(query: &ListTasks, project: Option<Project>) -> ResolvedListTasks {
-    let scope = if query.all {
-        ListScope::All
-    } else {
-        match query.section {
-            None => ListScope::Default,
-            Some(ListSection::Human) => ListScope::HumanOnly,
-            Some(ListSection::Future) => ListScope::FutureOnly,
-        }
-    };
-    let cap = query.number.or((!query.all).then_some(10));
+    let scope = query.scope;
+    let cap = query
+        .number
+        .map(NonZeroUsize::get)
+        .or((scope != ListScope::All).then_some(10));
     let order = query.order.unwrap_or(match query.mode {
         ListMode::Direct => OrderSpec::default(),
         ListMode::ProjectRoute => OrderSpec {
@@ -332,7 +242,7 @@ fn resolve_query(query: &ListTasks, project: Option<Project>) -> ResolvedListTas
             direction: OrderDirection::Asc,
         },
     });
-    let status_filter = query.status.unwrap_or(if query.all {
+    let status_filter = query.status.unwrap_or(if scope == ListScope::All {
         StatusFilter::All
     } else {
         StatusFilter::default()
@@ -346,7 +256,7 @@ fn resolve_query(query: &ListTasks, project: Option<Project>) -> ResolvedListTas
         tags: query.tags.clone(),
         order,
         status_filter,
-        include_prerequisite_statuses: query.include_prerequisite_statuses,
+        detail: query.detail,
     }
 }
 
@@ -377,28 +287,33 @@ fn collect_list_tasks(
             }
             tasks.push(
                 task_view::enrich(&record, project.source.value())
-                    .into_task_view(project.title.to_string()),
+                    .map_err(|error| ListTasksError::InvalidTaskView(Box::new(error)))?
+                    .into_task_view(project.title.clone()),
             );
         }
     }
     Ok(tasks)
 }
 
-fn scope_includes(scope: ListScope, section: Option<&str>) -> bool {
+fn scope_includes(scope: ListScope, section: Option<&TaskSection>) -> bool {
     match scope {
         ListScope::Default => section.is_none(),
-        ListScope::HumanOnly => matches!(section, Some("Human")),
-        ListScope::FutureOnly => matches!(section, Some("Future")),
+        ListScope::Human => section.is_some_and(|section| section.as_ref() == "Human"),
+        ListScope::Future => section.is_some_and(|section| section.as_ref() == "Future"),
         ListScope::All => true,
     }
 }
 
-fn scope_groups_output(scope: ListScope) -> bool {
-    matches!(scope, ListScope::All)
+fn list_layout(scope: ListScope) -> ListLayout {
+    if matches!(scope, ListScope::All) {
+        ListLayout::BySection
+    } else {
+        ListLayout::Flat
+    }
 }
 
-fn section_group_rank(section: Option<&str>) -> u8 {
-    match section {
+fn section_group_rank(section: Option<&TaskSection>) -> u8 {
+    match section.map(AsRef::as_ref) {
         None => 0,
         Some("Low-prio") => 1,
         Some("Human") => 2,
@@ -409,39 +324,23 @@ fn section_group_rank(section: Option<&str>) -> u8 {
 
 fn effort_matches(task: &TaskView, wanted: Option<EffortTier>) -> bool {
     let Some(wanted) = wanted else { return true };
-    task.effort.as_deref().and_then(parse_effort_tier) == Some(wanted)
-}
-
-fn parse_effort_tier(raw: &str) -> Option<EffortTier> {
-    raw.trim().parse().ok()
-}
-
-fn id_suffix(id: &TaskId) -> u64 {
-    id.as_ref()
-        .rsplit_once('-')
-        .and_then(|(_, digits)| digits.parse().ok())
-        .unwrap_or(0)
-}
-
-fn created_key(task: &TaskView) -> &str {
-    task.created.as_deref().unwrap_or("")
+    task.effort == Some(wanted)
 }
 
 fn task_order_cmp(order: OrderSpec, a: &TaskView, b: &TaskView) -> std::cmp::Ordering {
     match order.field {
         OrderField::Created => {
-            let ascending = created_key(a)
-                .cmp(created_key(b))
-                .then_with(|| a.id.cmp(&b.id));
+            let ascending = a.created.cmp(&b.created).then_with(|| a.id.cmp(&b.id));
             match order.direction {
                 OrderDirection::Asc => ascending,
                 OrderDirection::Desc => ascending.reverse(),
             }
         }
         OrderField::Id => {
-            let ascending = id_suffix(&a.id)
-                .cmp(&id_suffix(&b.id))
-                .then_with(|| a.id.cmp(&b.id));
+            let ascending =
+                a.id.number()
+                    .cmp(&b.id.number())
+                    .then_with(|| a.id.cmp(&b.id));
             match order.direction {
                 OrderDirection::Asc => ascending,
                 OrderDirection::Desc => ascending.reverse(),
@@ -453,7 +352,7 @@ fn task_order_cmp(order: OrderSpec, a: &TaskView, b: &TaskView) -> std::cmp::Ord
                 OrderDirection::Desc => b.project.cmp(&a.project),
             };
             project_cmp
-                .then_with(|| id_suffix(&b.id).cmp(&id_suffix(&a.id)))
+                .then_with(|| b.id.number().cmp(&a.id.number()))
                 .then_with(|| b.id.cmp(&a.id))
         }
     }
@@ -465,8 +364,8 @@ fn sort_by_order(tasks: &mut [TaskView], order: OrderSpec) {
 
 fn sort_by_group_then_order(tasks: &mut [TaskView], order: OrderSpec) {
     tasks.sort_by(|a, b| {
-        section_group_rank(a.section.as_deref())
-            .cmp(&section_group_rank(b.section.as_deref()))
+        section_group_rank(a.section.as_ref())
+            .cmp(&section_group_rank(b.section.as_ref()))
             .then_with(|| task_order_cmp(order, a, b))
     });
 }
@@ -487,23 +386,24 @@ fn apply_cap(tasks: Vec<TaskView>, cap: Option<usize>) -> (Vec<TaskView>, usize)
 
 #[cfg(test)]
 mod tests {
-    use std::{convert::Infallible, path::PathBuf};
+    use std::{convert::Infallible, num::NonZeroUsize, path::PathBuf};
 
     use pwf_models::{
-        project::Project,
-        task::{EffortTier, ProjectName, Tags, TaskId, TaskStatus, Timestamp},
+        project::{Project, ProjectName},
+        task::{EffortTier, TaskId, TaskStatus, TaskTags},
+    };
+    use pwf_wire::task::{
+        ListDetail, ListLayout, ListMode, ListScope, ListedTasks, OrderDirection, OrderField,
+        OrderSpec, ProjectTaskPath, RawTaskTags, StatusFilter,
     };
 
-    use super::{
-        ListMode, ListSection, ListTasks, ListTasksError, ListTasksOk, OrderDirection, OrderField,
-        OrderSpec, PrerequisiteStatus, StatusFilter,
-    };
+    use super::{BlockedByStatus, ListTasks, ListTasksError};
     use crate::{
         ports::{
             project_task_location::ProjectTaskLocationClient,
             task_record::{IndexPlacement, Materialization, TaskRecord},
         },
-        testing::{InMemoryStore, MIGRATOR, insert_project, project, task_record},
+        testing::{InMemoryStore, MIGRATOR, app_date, insert_project, project, task_record},
     };
 
     impl ProjectTaskLocationClient for InMemoryStore {
@@ -517,7 +417,7 @@ mod tests {
     fn record(id: &str) -> TaskRecord {
         TaskRecord {
             title: id.to_string(),
-            created: Some(Timestamp::new("2026-07-07")),
+            created: Some(app_date("2026-07-07")),
             source: String::new(),
             locator: format!("/notes/pwf/{id}.md"),
             placement: Some(IndexPlacement {
@@ -561,12 +461,12 @@ mod tests {
         store_and_registry(&staged)
     }
 
-    fn prerequisite_registry() -> Vec<Project> {
+    fn blocked_by_registry() -> Vec<Project> {
         vec![project("PWF", "pwf"), project("CFG", "config-handler")]
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
-    async fn selected_long_list_resolves_only_referenced_prerequisite_projects(
+    async fn selected_long_list_resolves_only_referenced_blocked_by_projects(
         pool: sqlx::SqlitePool,
     ) {
         insert_project(&pool, "PWF", "pwf", "/work/pwf", "/tasks/pwf", false).await;
@@ -590,27 +490,27 @@ mod tests {
         .await;
 
         let dependent = TaskRecord {
-            prereq: Some("[[CFG-0014]]".to_string()),
+            blocked_by: Some("[[CFG-0014]]".to_string()),
             ..record("PWF-0001")
         };
-        let prerequisite = TaskRecord {
+        let blocking_task = TaskRecord {
             status: TaskStatus::Done,
             ..record("CFG-0014")
         };
         let store = InMemoryStore::default()
             .with_project("pwf", vec![dependent])
-            .with_project("config-handler", vec![prerequisite]);
+            .with_project("config-handler", vec![blocking_task]);
         let query = ListTasks {
             project_selector: Some("pwf".parse().unwrap()),
-            include_prerequisite_statuses: true,
+            detail: ListDetail::Detailed,
             ..default_query()
         };
 
         let result = super::execute(&query, &store, &pool, &store).await.unwrap();
 
         assert_eq!(
-            result.tasks[0].prerequisite_statuses,
-            [PrerequisiteStatus {
+            result.tasks[0].blocked_by_statuses,
+            [BlockedByStatus {
                 id: TaskId::try_new("CFG-0014").unwrap(),
                 status: Some(TaskStatus::Done),
             }]
@@ -621,7 +521,7 @@ mod tests {
         store: &InMemoryStore,
         registry: &[Project],
         query: &ListTasks,
-    ) -> Result<ListTasksOk, ListTasksError> {
+    ) -> Result<ListedTasks, ListTasksError> {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:")
             .await
             .expect("in-memory database connects");
@@ -645,7 +545,7 @@ mod tests {
 
     fn sectioned(id: &str, section: &str) -> TaskRecord {
         TaskRecord {
-            section: Some(section.to_string()),
+            section: Some(section.parse().unwrap()),
             ..record(id)
         }
     }
@@ -659,18 +559,18 @@ mod tests {
 
     fn tagged_task(id: &str, tags: &str) -> TaskRecord {
         TaskRecord {
-            tags: Some(tags.to_string()),
+            tags: Some(RawTaskTags::new(tags)),
             ..record(id)
         }
     }
 
-    fn requested_tags(raw: &str) -> Option<Tags> {
-        Tags::from_inputs(&[raw.parse().unwrap()])
+    fn requested_tags(raw: &str) -> Option<TaskTags> {
+        TaskTags::from_inputs(&[raw.parse().unwrap()])
     }
 
     fn dated_task(id: &str, created: &str) -> TaskRecord {
         TaskRecord {
-            created: Some(Timestamp::new(created)),
+            created: Some(app_date(created)),
             ..record(id)
         }
     }
@@ -678,26 +578,25 @@ mod tests {
     fn default_query() -> ListTasks {
         ListTasks {
             project_selector: None,
-            section: None,
-            all: false,
-            number: Some(100_000),
+            scope: ListScope::Default,
+            number: NonZeroUsize::new(100_000),
             effort: None,
             tags: None,
             order: None,
             status: None,
-            include_prerequisite_statuses: false,
+            detail: ListDetail::Summary,
             mode: ListMode::Direct,
         }
     }
 
-    fn listed_ids(result: &ListTasksOk) -> Vec<&str> {
+    fn listed_ids(result: &ListedTasks) -> Vec<&str> {
         result.tasks.iter().map(|task| task.id.as_ref()).collect()
     }
 
     #[tokio::test]
-    async fn long_list_projects_done_active_and_missing_prerequisite_statuses() {
+    async fn long_list_projects_done_active_and_missing_blocked_by_statuses() {
         let dependent = TaskRecord {
-            prereq: Some("[[CFG-0014]], [[CFG-0015]], [[CFG-9999]]".to_string()),
+            blocked_by: Some("[[CFG-0014]], [[CFG-0015]], [[CFG-9999]]".to_string()),
             ..record("PWF-0001")
         };
         let done = TaskRecord {
@@ -711,10 +610,10 @@ mod tests {
 
         let got = run(
             &store,
-            &prerequisite_registry(),
+            &blocked_by_registry(),
             &ListTasks {
                 project_selector: Some("pwf".parse().unwrap()),
-                include_prerequisite_statuses: true,
+                detail: ListDetail::Detailed,
                 ..default_query()
             },
         )
@@ -722,17 +621,17 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            got.tasks[0].prerequisite_statuses,
+            got.tasks[0].blocked_by_statuses,
             [
-                PrerequisiteStatus {
+                BlockedByStatus {
                     id: TaskId::try_new("CFG-0014").unwrap(),
                     status: Some(TaskStatus::Done),
                 },
-                PrerequisiteStatus {
+                BlockedByStatus {
                     id: TaskId::try_new("CFG-0015").unwrap(),
                     status: Some(TaskStatus::Active),
                 },
-                PrerequisiteStatus {
+                BlockedByStatus {
                     id: TaskId::try_new("CFG-9999").unwrap(),
                     status: None,
                 },
@@ -741,9 +640,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn long_list_treats_indexed_prerequisite_without_note_as_missing() {
+    async fn long_list_treats_indexed_blocked_by_without_note_as_missing() {
         let dependent = TaskRecord {
-            prereq: Some("[[CFG-0014]]".to_string()),
+            blocked_by: Some("[[CFG-0014]]".to_string()),
             ..record("PWF-0001")
         };
         let missing_note = TaskRecord {
@@ -761,10 +660,10 @@ mod tests {
 
         let got = run(
             &store,
-            &prerequisite_registry(),
+            &blocked_by_registry(),
             &ListTasks {
                 project_selector: Some("pwf".parse().unwrap()),
-                include_prerequisite_statuses: true,
+                detail: ListDetail::Detailed,
                 ..default_query()
             },
         )
@@ -772,8 +671,8 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            got.tasks[0].prerequisite_statuses,
-            [PrerequisiteStatus {
+            got.tasks[0].blocked_by_statuses,
+            [BlockedByStatus {
                 id: TaskId::try_new("CFG-0014").unwrap(),
                 status: None,
             }]
@@ -882,19 +781,19 @@ mod tests {
     #[tokio::test]
     async fn status_filter_applies_before_cap_and_hidden_count() {
         let active = TaskRecord {
-            created: Some(Timestamp::new("2026-07-09")),
+            created: Some(app_date("2026-07-09")),
             ..record("PWF-0009")
         };
         let done_newer = TaskRecord {
             status: TaskStatus::Done,
             placement: None,
-            created: Some(Timestamp::new("2026-07-08")),
+            created: Some(app_date("2026-07-08")),
             ..record("PWF-0002")
         };
         let done_older = TaskRecord {
             status: TaskStatus::Done,
             placement: None,
-            created: Some(Timestamp::new("2026-07-07")),
+            created: Some(app_date("2026-07-07")),
             ..record("PWF-0001")
         };
         let (store, registry) = pwf_store(vec![active, done_newer, done_older]);
@@ -903,7 +802,7 @@ mod tests {
             &store,
             &registry,
             &ListTasks {
-                number: Some(1),
+                number: NonZeroUsize::new(1),
                 status: Some(StatusFilter::Exact(TaskStatus::Done)),
                 ..default_query()
             },
@@ -937,7 +836,7 @@ mod tests {
             &store,
             &registry,
             &ListTasks {
-                section: Some(ListSection::Future),
+                scope: ListScope::Future,
                 ..default_query()
             },
         )
@@ -960,7 +859,7 @@ mod tests {
             &store,
             &registry,
             &ListTasks {
-                all: true,
+                scope: ListScope::All,
                 ..default_query()
             },
         )
@@ -985,7 +884,7 @@ mod tests {
             &store,
             &registry,
             &ListTasks {
-                section: Some(ListSection::Human),
+                scope: ListScope::Human,
                 ..default_query()
             },
         )
@@ -1018,12 +917,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stored_effort_trims_names_and_rejects_numeric_metadata() {
-        let (store, registry) = pwf_store(vec![
-            effort_task("PWF-0003", " high "),
-            effort_task("PWF-0002", "3"),
-            effort_task("PWF-0001", "unknown"),
-        ]);
+    async fn stored_effort_trims_valid_names() {
+        let (store, registry) = pwf_store(vec![effort_task("PWF-0003", " high ")]);
 
         let matched = run(
             &store,
@@ -1036,6 +931,16 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(listed_ids(&matched), ["PWF-0003"]);
+    }
+
+    #[tokio::test]
+    async fn invalid_stored_effort_fails_at_the_list_boundary() {
+        let (store, registry) = pwf_store(vec![effort_task("PWF-0002", "3")]);
+
+        let error = run(&store, &registry, &default_query()).await.unwrap_err();
+
+        assert!(matches!(error, ListTasksError::InvalidTaskView { .. }));
+        assert!(error.to_string().contains("invalid effort value \"3\""));
     }
 
     #[tokio::test]
@@ -1128,7 +1033,7 @@ mod tests {
             &store,
             &registry,
             &ListTasks {
-                number: Some(1),
+                number: NonZeroUsize::new(1),
                 tags: requested_tags("sqlite"),
                 ..default_query()
             },
@@ -1233,7 +1138,7 @@ mod tests {
             &store,
             &registry,
             &ListTasks {
-                all: true,
+                scope: ListScope::All,
                 number: None,
                 ..default_query()
             },
@@ -1243,7 +1148,7 @@ mod tests {
         assert_eq!(all.tasks.len(), 12);
         assert_eq!(all.hidden, 0);
         assert_eq!(all.status_filter, StatusFilter::All);
-        assert!(all.grouped);
+        assert_eq!(all.layout, ListLayout::BySection);
 
         let capped = run(
             &store,
@@ -1258,7 +1163,7 @@ mod tests {
         assert_eq!(capped.tasks.len(), 10);
         assert_eq!(capped.hidden, 2);
         assert_eq!(capped.status_filter, StatusFilter::default());
-        assert!(!capped.grouped);
+        assert_eq!(capped.layout, ListLayout::Flat);
     }
 
     #[tokio::test]
@@ -1281,6 +1186,9 @@ mod tests {
 
         assert_eq!(listed_ids(&got), ["PWF-0001"]);
         assert_eq!(got.project, Some(ProjectName::try_new("pwf").unwrap()));
-        assert_eq!(got.project_task_path, Some(PathBuf::from("/tasks/pwf")));
+        assert_eq!(
+            got.project_task_path,
+            Some(ProjectTaskPath::new("/tasks/pwf".into()))
+        );
     }
 }

@@ -1,11 +1,15 @@
 use clap::Args;
 use pwf_application::{
     ports::clock::Clock,
-    task::complete_task::{self, CloseTaskError, CompleteTask, CompleteTaskError},
+    task::{
+        CloseTaskError,
+        complete_task::{self, CompleteTask, CompleteTaskError},
+    },
 };
 use pwf_infra::obsidian::ObsidianStore;
+use pwf_models::task::{CommitRanges, TaskReport};
 
-use super::shared::Identifier;
+use super::Identifier;
 
 #[derive(Args, Debug)]
 pub struct Arguments {
@@ -23,10 +27,10 @@ pub struct Arguments {
 }
 
 use super::{
+    TaskError,
     render::{
         emit_close_diagnostics, emit_created_section, emit_created_section_for_error, render_closed,
     },
-    shared::TaskError,
 };
 
 pub(super) async fn run(
@@ -39,8 +43,12 @@ pub(super) async fn run(
     let output = complete_task::execute(
         &CompleteTask {
             id,
-            report: arguments.report.clone(),
-            commits: arguments.commits.clone(),
+            report: arguments
+                .report
+                .as_deref()
+                .map(str::parse::<TaskReport>)
+                .transpose()?,
+            commits: CommitRanges::from_inputs(&arguments.commits),
             review: arguments.review,
         },
         store,

@@ -7,7 +7,7 @@
 /// Returns task verbs accepted with or without the canonical `task` noun.
 fn task_subcommands() -> &'static [&'static str] {
     &[
-        "add", "list", "ls", "done", "cancel", "reopen", "edit", "show", "s", "remove",
+        "add", "list", "ls", "done", "cancel", "reopen", "edit", "get", "g", "remove",
     ]
 }
 
@@ -23,8 +23,8 @@ fn is_value_flag(flag: &str) -> bool {
         "--id"
             | "--project"
             | "--prompt"
-            | "--prereq"
-            | "--add-prereq"
+            | "--blocked-by"
+            | "--add-blocked-by"
             | "--tag"
             | "--add-tag"
             | "--commits"
@@ -66,13 +66,18 @@ fn is_order_flag(tok: &str) -> bool {
 fn is_id_facing_verb(verb: &str) -> bool {
     matches!(
         verb,
-        "done" | "cancel" | "reopen" | "edit" | "show" | "s" | "session" | "remove"
+        "done" | "cancel" | "reopen" | "edit" | "get" | "g" | "session" | "remove"
     )
 }
 
 /// Returns note verbs recognized as clap subcommands.
 fn note_subcommands() -> &'static [&'static str] {
     &["list", "ls", "add", "remove", "update", "help"]
+}
+
+/// Returns note verbs retired from the implicit project-list fallback.
+fn note_reserved_subcommands() -> &'static [&'static str] {
+    &["get"]
 }
 
 /// Injects `ls` before a bare `note <project>` so an omitted verb lists.
@@ -84,7 +89,7 @@ fn normalize_note(argv: Vec<String>) -> Vec<String> {
             i += if is_value_flag(tok) { 2 } else { 1 };
         } else if tok.starts_with('-') {
             i += 1;
-        } else if note_subcommands().contains(&tok) {
+        } else if note_subcommands().contains(&tok) || note_reserved_subcommands().contains(&tok) {
             return argv;
         } else {
             let mut out = argv;

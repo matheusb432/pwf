@@ -1,9 +1,6 @@
 //! Provides managed-project application interactors.
 
-use pwf_models::{
-    project::{Project, ProjectId},
-    task::ProjectName,
-};
+use pwf_models::project::{Project, ProjectCreatedAt, ProjectId, ProjectName};
 
 #[derive(Debug)]
 pub(in crate::project) struct ProjectRow {
@@ -32,8 +29,8 @@ pub mod list_projects;
 pub mod pause_project;
 pub mod rename_project;
 pub mod resolve_project;
-pub mod resolve_runtime_path;
 pub mod resume_project;
+pub mod runtime_path;
 mod task_location;
 
 fn project_from_row(row: ProjectRow) -> Result<Project, ProjectRowError> {
@@ -55,20 +52,14 @@ fn project_from_row(row: ProjectRow) -> Result<Project, ProjectRowError> {
         row.tasks_path,
         pwf_models::project::ProjectTasksPath::try_new,
     )?;
-    if row.created_at.is_empty() {
-        return Err(ProjectRowError {
-            field: "created_at",
-            value: row.created_at,
-            reason: "value cannot be empty".to_string(),
-        });
-    }
+    let created_at = project_value("created_at", row.created_at, ProjectCreatedAt::try_new)?;
 
     Ok(Project {
         id,
         title,
         source: pwf_models::project::ProjectSource::new(source_kind, source_value),
         tasks: pwf_models::project::ProjectTasks::new(tasks_kind, tasks_path),
-        created_at: row.created_at,
+        created_at,
         is_paused: row.is_paused,
     })
 }

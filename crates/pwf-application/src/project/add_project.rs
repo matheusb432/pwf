@@ -1,11 +1,11 @@
 use std::{error::Error, path::PathBuf};
 
-use pwf_models::project::{ProjectId, ProjectName};
+use pwf_models::project::{ProjectId, ProjectName, ProjectTasksPath};
 use pwf_wire::project::ProjectFields;
 use sqlx::error::ErrorKind;
 
 use super::{
-    Project, ProjectRow, ProjectRowError,
+    Project, ProjectRow,
     task_location::{self, TaskLocationError},
 };
 
@@ -27,9 +27,9 @@ pub enum AddProjectError {
     #[error("managed project {project_id} task path '{path}' is invalid: {source}")]
     InvalidTaskPath {
         project_id: ProjectId,
-        path: String,
+        path: ProjectTasksPath,
         #[source]
-        source: super::resolve_runtime_path::RuntimePathError,
+        source: super::runtime_path::RuntimePathError,
     },
     #[error(
         "managed projects {first_id} and {second_id} resolve to the same task location: {}",
@@ -69,7 +69,7 @@ pub async fn execute(
     let existing = other_task_locations(&mut transaction, &command.fields.id).await?;
     task_location::reject_collision(
         &command.fields.id,
-        command.fields.tasks.path().as_ref(),
+        command.fields.tasks.path(),
         existing,
         &command.home,
     )
@@ -147,7 +147,7 @@ pub async fn execute(
     .await
     .map_err(|error| unexpected("reading created project", error))?;
     let project = super::project_from_row(row)
-        .map_err(|error| unexpected_row("converting created project", error))?;
+        .map_err(|error| unexpected("converting created project", error))?;
     transaction
         .commit()
         .await
@@ -158,7 +158,7 @@ pub async fn execute(
 async fn other_task_locations(
     transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     candidate_id: &ProjectId,
-) -> Result<Vec<(ProjectId, String)>, AddProjectError> {
+) -> Result<Vec<(ProjectId, ProjectTasksPath)>, AddProjectError> {
     sqlx::query_as::<_, (String, String)>(
         "SELECT id, tasks_path FROM projects WHERE id != ? ORDER BY id ASC",
     )
@@ -168,9 +168,11 @@ async fn other_task_locations(
     .map_err(|error| unexpected("reading project task locations", error))?
     .into_iter()
     .map(|(id, tasks_path)| {
-        ProjectId::try_new(id)
-            .map(|id| (id, tasks_path))
-            .map_err(|error| unexpected("converting project task location", error))
+        let id = ProjectId::try_new(id)
+            .map_err(|error| unexpected("converting project task location id", error))?;
+        let tasks_path = ProjectTasksPath::try_new(tasks_path)
+            .map_err(|error| unexpected("converting project task location path", error))?;
+        Ok((id, tasks_path))
     })
     .collect()
 }
@@ -225,10 +227,6 @@ fn unexpected(
         context,
         source: Box::new(source),
     }
-}
-
-fn unexpected_row(context: &'static str, source: ProjectRowError) -> AddProjectError {
-    unexpected(context, source)
 }
 
 fn task_location_error(error: TaskLocationError) -> AddProjectError {

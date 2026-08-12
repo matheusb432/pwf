@@ -1,50 +1,41 @@
 use std::fmt::Write;
 
 use anstyle::AnsiColor;
-use pwf_application::task::session::dispatch_session::DispatchSessionOk;
 use pwf_infra::session::render_argv;
 use pwf_models::{
     session::{Agent, DispatchMode},
     task::TaskId,
 };
-use pwf_wire::task::session::SessionPlan;
+use pwf_wire::task::session::{DispatchedSession, SessionPlan};
 
 use super::{agent_name, paint};
 
-pub(in crate::task) fn render_dispatch(outcome: &DispatchSessionOk, on: bool) -> String {
-    let (token, color, target, agent, project_path) = match outcome {
-        DispatchSessionOk::Inline { task_id } => {
+pub(in crate::task) fn render_dispatch(outcome: &DispatchedSession, on: bool) -> String {
+    let (target, agent, project_path) = match outcome {
+        DispatchedSession::Inline { task_id } => {
             return format!("# session {task_id} — ran inline\n");
         }
-        DispatchSessionOk::WindowOpened {
+        DispatchedSession::WindowOpened {
             target,
             agent,
             project_path,
-        } => (
-            "dispatched",
-            AnsiColor::Green,
-            target,
-            Some(*agent),
-            Some(project_path),
-        ),
+        } => (target, *agent, project_path),
     };
     let session = target.session_name();
     let window = &target.task_id;
     let line = paint(
         &format!("session: {session}  ·  window: {window}"),
-        color,
+        AnsiColor::Green,
         on,
     );
-    let mut out = format!("# session {window} — {token}\n{line}\n");
-    if let (Some(agent), Some(project_path)) = (agent, project_path) {
-        let _ = write!(
-            out,
-            "agent: {} · cwd: {project_path}\n\
+    let mut out = format!("# session {window} — dispatched\n{line}\n");
+    let _ = write!(
+        out,
+        "agent: {} · cwd: {project_path}\n\
 outside tmux: tmux attach-session -t ={session}\n\
 inside tmux: tmux switch-client -t ={session}\n",
-            agent_name(agent)
-        );
-    }
+        agent_name(agent)
+    );
     out
 }
 
@@ -79,7 +70,7 @@ command: {}\n\
 nothing dispatched.\n",
         plan.launch.task_id,
         plan.launch.title,
-        plan.launch.model.as_deref().unwrap_or("default"),
+        plan.launch.model,
         plan.launch.effort,
         plan.launch.project_path,
         render_argv(argv),
@@ -88,9 +79,11 @@ nothing dispatched.\n",
 
 #[cfg(test)]
 mod tests {
-    use pwf_application::task::session::dispatch_session::DispatchSessionOk;
     use pwf_models::{
-        session::{Agent, DispatchMode, SessionEffort},
+        session::{
+            Agent, AgentModel, DispatchMode, LaunchPrompt, SessionEffort, SessionThreadTitle,
+            SessionWorkingDirectory,
+        },
         task::TaskId,
     };
     use pwf_wire::task::session::{AgentLaunch, DispatchTarget, SessionPlan};
@@ -105,10 +98,10 @@ mod tests {
 
     #[test]
     fn success_renders_green_token_and_bold_session_window_plain() {
-        let outcome = DispatchSessionOk::WindowOpened {
+        let outcome = DispatchedSession::WindowOpened {
             target: target(),
             agent: Agent::Claude,
-            project_path: "/project".into(),
+            project_path: SessionWorkingDirectory::new("/project".to_string()),
         };
         let out = render_dispatch(&outcome, false);
         assert!(out.starts_with("# session CFG-0009 — dispatched"));
@@ -126,7 +119,7 @@ mod tests {
         );
         assert_eq!(
             render_dispatch(
-                &DispatchSessionOk::Inline {
+                &DispatchedSession::Inline {
                     task_id: TaskId::try_new("PWF-0001").unwrap()
                 },
                 false
@@ -141,10 +134,10 @@ mod tests {
             launch: AgentLaunch {
                 agent: Agent::Codex,
                 task_id: TaskId::try_new("PWF-0001").unwrap(),
-                title: "PWF-0001 - reason carefully".into(),
-                project_path: "/project".into(),
-                prompt: "Inspect PWF-0001.".into(),
-                model: None,
+                title: SessionThreadTitle::new("PWF-0001 - reason carefully".to_string()),
+                project_path: SessionWorkingDirectory::new("/project".to_string()),
+                prompt: LaunchPrompt::new("Inspect PWF-0001.".to_string()),
+                model: AgentModel::default(),
                 effort: SessionEffort::High,
             },
             mode: DispatchMode::Inline,

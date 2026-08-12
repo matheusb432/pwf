@@ -113,6 +113,7 @@ fn task_help_exposes_only_the_supported_add_and_edit_contract() {
         "--context",
         "--constraint",
         "--done-when",
+        "--blocked-by",
     ] {
         assert!(add_help.contains(flag), "missing {flag}:\n{add_help}");
     }
@@ -137,8 +138,8 @@ fn task_help_exposes_only_the_supported_add_and_edit_contract() {
         "--remove-constraints",
         "--add-done-when",
         "--remove-done-whens",
-        "--add-prereq",
-        "--remove-prereqs",
+        "--add-blocked-by",
+        "--remove-blocked-by",
         "--add-tag",
         "--remove-tags",
         "--remove-effort",
@@ -146,7 +147,7 @@ fn task_help_exposes_only_the_supported_add_and_edit_contract() {
         assert!(edit_help.contains(flag), "missing {flag}:\n{edit_help}");
     }
     for retired in [
-        "--clear-prereq",
+        "--clear-blocked-by",
         "--tags-clear",
         "--append-report",
         "--commits",
@@ -251,7 +252,7 @@ fn retired_task_date_and_update_surfaces_are_rejected() {
     fixture
         .database
         .command()
-        .args(["show", "FOO-0001", "--json"])
+        .args(["get", "FOO-0001", "--json"])
         .assert()
         .failure();
 }
@@ -292,7 +293,7 @@ fn add_rejects_an_inferred_title_over_200_characters_without_creating_a_task() {
     fixture
         .database
         .command()
-        .args(["show", "FOO-0001", "--json"])
+        .args(["get", "FOO-0001", "--json"])
         .assert()
         .failure();
 }
@@ -438,13 +439,13 @@ fn remove_prompt_identifies_closed_status_before_deletion() {
     fixture
         .database
         .command()
-        .args(["show", "FOO-0001", "--json"])
+        .args(["get", "FOO-0001", "--json"])
         .assert()
         .failure();
 }
 
 #[test]
-fn lifecycle_is_observable_through_show_json() {
+fn lifecycle_is_observable_through_get_json() {
     let fixture = ManagedProject::new(&project_id("FOO"), "foo-bar");
     fixture
         .database
@@ -453,9 +454,9 @@ fn lifecycle_is_observable_through_show_json() {
             "add",
             "foo-bar",
             "--title",
-            "prerequisite",
+            "blocker",
             "--goal",
-            "prerequisite work",
+            "blocking work",
         ])
         .assert()
         .success();
@@ -469,7 +470,7 @@ fn lifecycle_is_observable_through_show_json() {
             "just done",
             "--goal",
             "complete the work",
-            "--prereq",
+            "--blocked-by",
             "FOO-0001",
             "--effort",
             "high",
@@ -489,7 +490,7 @@ fn lifecycle_is_observable_through_show_json() {
     assert!(active["created"].as_str().is_some());
     assert_eq!(active["tags"], json!(["cli", "sqlite"]));
     assert_eq!(active["effort"], "high");
-    assert_eq!(active["prerequisites"], json!(["FOO-0001"]));
+    assert_eq!(active["blocked_by"], json!(["FOO-0001"]));
     assert_eq!(active["section"], Value::Null);
     assert_eq!(active["prompt"], "## Goals\n\n- complete the work");
 
@@ -504,7 +505,7 @@ fn lifecycle_is_observable_through_show_json() {
             "--remove-tags",
             "--add-tag",
             "rust",
-            "--remove-prereqs",
+            "--remove-blocked-by",
             "--remove-effort",
         ])
         .assert()
@@ -513,7 +514,7 @@ fn lifecycle_is_observable_through_show_json() {
     assert_eq!(updated["title"], "ship it");
     assert_eq!(updated["tags"], json!(["rust"]));
     assert_eq!(updated["effort"], Value::Null);
-    assert_eq!(updated["prerequisites"], Value::Null);
+    assert_eq!(updated["blocked_by"], Value::Null);
     assert_eq!(updated["prompt"], "## Goals\n\n- preserve the revised goal");
 
     fixture
@@ -537,5 +538,5 @@ fn lifecycle_is_observable_through_show_json() {
     assert_eq!(reopened["status"], "active");
     assert_eq!(reopened["completed"], Value::Null);
     assert_eq!(reopened["commits"], Value::Null);
-    assert_eq!(reopened["prerequisites"], Value::Null);
+    assert_eq!(reopened["blocked_by"], Value::Null);
 }

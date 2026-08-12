@@ -2,9 +2,8 @@ use std::{fmt::Write as _, path::Path};
 
 use pwf_application::ports::project_note::{NewProjectNote, ProjectNotePatch, ProjectNoteStore};
 use pwf_models::{
-    note::{NoteId, ProjectNote},
-    project::Project,
-    task::{ProjectId, ProjectName},
+    note::{NoteId, NoteTitle, NoteTitleError, ProjectNote},
+    project::{Project, ProjectId, ProjectName},
 };
 
 use super::{ObsidianStore, ObsidianStoreError, fs::read_task_file};
@@ -28,15 +27,12 @@ impl ProjectNoteStore for ObsidianStore {
                 source,
             }
         })?;
-        Ok(Some(ProjectNote {
-            id: id.clone(),
-            title: title_of(&source),
-        }))
+        project_note(id.clone(), &source).map(Some)
     }
 
     fn list_notes(&self, project: &Project) -> Result<Vec<ProjectNote>, Self::Error> {
         let project_directory = self.tasks_path(project)?;
-        Ok(list_notes(&project_directory, &project.id))
+        list_notes(&project_directory, &project.id)
     }
 
     fn insert_note(
@@ -118,7 +114,10 @@ impl ProjectNoteStore for ObsidianStore {
     }
 }
 
-fn list_notes(project_directory: &Path, project_id: &ProjectId) -> Vec<ProjectNote> {
+fn list_notes(
+    project_directory: &Path,
+    project_id: &ProjectId,
+) -> Result<Vec<ProjectNote>, ObsidianStoreError> {
     let mut notes = Vec::new();
     for entry in std::fs::read_dir(project_directory)
         .into_iter()
@@ -138,35 +137,46 @@ fn list_notes(project_directory: &Path, project_id: &ProjectId) -> Vec<ProjectNo
         if id.project_id() != project_id {
             continue;
         }
-        let source = std::fs::read_to_string(path).unwrap_or_default();
-        notes.push(ProjectNote {
-            id,
-            title: title_of(&source),
-        });
+        let source = std::fs::read_to_string(path).map_err(|source| {
+            ObsidianStoreError::ReadProjectNote {
+                id: id.to_string(),
+                source,
+            }
+        })?;
+        notes.push(project_note(id, &source)?);
     }
-    notes
+    Ok(notes)
 }
 
 fn note_file_name(id: &NoteId) -> String {
     format!("{id}.md")
 }
 
-fn title_of(source: &str) -> String {
+fn title_of(source: &str) -> Result<NoteTitle, NoteTitleError> {
     let body = frontmatter_text::parse(source).body;
-    body.lines()
+    let title = body
+        .lines()
         .map(str::trim)
         .find_map(|line| line.strip_prefix("# ").map(str::trim))
         .or_else(|| body.lines().map(str::trim).find(|line| !line.is_empty()))
-        .unwrap_or("")
-        .to_string()
+        .unwrap_or("");
+    NoteTitle::try_new(title)
+}
+
+fn project_note(id: NoteId, source: &str) -> Result<ProjectNote, ObsidianStoreError> {
+    let title = title_of(source).map_err(|source| ObsidianStoreError::InvalidProjectNoteTitle {
+        id: id.to_string(),
+        source,
+    })?;
+    Ok(ProjectNote { id, title })
 }
 
 fn note_content(project: &str, note: &NewProjectNote) -> String {
     let mut source = String::from("---\ntype: note\n");
     let _ = writeln!(source, "project: {project}");
-    let _ = writeln!(source, "created: {}", note.created.as_str());
+    let _ = writeln!(source, "created: {}", note.created);
     if let Some(domain) = &note.domain {
-        let _ = writeln!(source, "domain: {}", yaml_string(domain));
+        let _ = writeln!(source, "domain: {}", yaml_string(domain.as_ref()));
     }
     if !note.tags.is_empty() {
         let _ = writeln!(source, "tags: {}", yaml_array(&note.tags));
@@ -175,7 +185,7 @@ fn note_content(project: &str, note: &NewProjectNote) -> String {
         let _ = writeln!(source, "sources: {}", yaml_array(&note.sources));
     }
     if let Some(verified) = &note.verified {
-        let _ = writeln!(source, "verified: {}", yaml_string(verified));
+        let _ = writeln!(source, "verified: {}", yaml_string(verified.as_ref()));
     }
     source.push_str("---\n\n");
     let _ = writeln!(source, "# {}\n", note.title);
@@ -196,18 +206,18 @@ fn yaml_string(value: &str) -> String {
     serde_json::Value::String(value.to_string()).to_string()
 }
 
-fn yaml_array(values: &[String]) -> String {
+fn yaml_array(values: &[impl AsRef<str>]) -> String {
     format!(
         "[{}]",
         values
             .iter()
-            .map(|value| yaml_string(value))
+            .map(|value| yaml_string(value.as_ref()))
             .collect::<Vec<_>>()
             .join(", ")
     )
 }
 
-fn replace_title(source: &str, title: &str) -> String {
+fn replace_title(source: &str, title: &NoteTitle) -> String {
     let body_start = frontmatter_body_start(source);
     for line in markdown_line::lines(source).filter(|line| line.start >= body_start) {
         if line.text.starts_with("# ") {
@@ -215,7 +225,7 @@ fn replace_title(source: &str, title: &str) -> String {
             return format!("{}# {title}{}", &source[..line.start], &source[line_end..]);
         }
     }
-    note_text::replace_body(source, title)
+    note_text::replace_body(source, title.as_ref())
 }
 
 fn frontmatter_body_start(source: &str) -> usize {
@@ -259,12 +269,14 @@ mod tests {
         NewProjectNote, ProjectNotePatch, ProjectNoteStore,
     };
     use pwf_models::{
-        note::NoteId,
-        project::{
-            Project, ProjectSource, ProjectSourceKind, ProjectSourceValue, ProjectTasks,
-            ProjectTasksKind, ProjectTasksPath,
+        note::{
+            NoteContent, NoteDomain, NoteId, NoteSource, NoteTag, NoteTitle, NoteVerification,
+            NoteWhy,
         },
-        task::{ProjectId, ProjectName, Timestamp},
+        project::{
+            Project, ProjectId, ProjectName, ProjectSource, ProjectSourceKind, ProjectSourceValue,
+            ProjectTasks, ProjectTasksKind, ProjectTasksPath,
+        },
     };
 
     use super::super::{ObsidianStore, ObsidianStoreError};
@@ -285,7 +297,7 @@ mod tests {
                 ProjectTasksKind::Directory,
                 ProjectTasksPath::try_new(tasks_path.to_string_lossy()).unwrap(),
             ),
-            created_at: "2026-07-25T00:00:00.000Z".to_string(),
+            created_at: "2026-07-25T00:00:00.000Z".parse().unwrap(),
             is_paused: false,
         }
     }
@@ -297,14 +309,21 @@ mod tests {
     fn new_note(number: u32, title: &str) -> NewProjectNote {
         NewProjectNote {
             id: identifier(number),
-            title: title.to_string(),
-            content: "A CLI flag needs a binary test only for an owned contract.\n\n- Preserve the process boundary.".to_string(),
-            why: Some("This protects real process-boundary failures.".to_string()),
-            domain: Some("testing".to_string()),
-            tags: vec!["cli".to_string(), "testing".to_string()],
-            sources: vec!["PWF-0165 implementation evidence".to_string()],
-            verified: Some("2026-07-30".to_string()),
-            created: Timestamp::new("2026-07-26"),
+            title: NoteTitle::try_new(title).unwrap(),
+            content: NoteContent::try_new("A CLI flag needs a binary test only for an owned contract.\n\n- Preserve the process boundary.").unwrap(),
+            why: Some(
+                NoteWhy::try_new("This protects real process-boundary failures.").unwrap(),
+            ),
+            domain: Some(NoteDomain::try_new("testing").unwrap()),
+            tags: vec![
+                NoteTag::try_new("cli").unwrap(),
+                NoteTag::try_new("testing").unwrap(),
+            ],
+            sources: vec![
+                NoteSource::try_new("PWF-0165 implementation evidence").unwrap(),
+            ],
+            verified: Some(NoteVerification::try_new("2026-07-30").unwrap()),
+            created: "2026-07-26".parse().unwrap(),
         }
     }
 
@@ -325,7 +344,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(inserted.id.as_ref(), "PWF-NOTE-0001");
-        assert_eq!(inserted.title, "remember milk");
+        assert_eq!(inserted.title.as_ref(), "remember milk");
         assert_eq!(
             fs::read_to_string(tasks_path.join("PWF-NOTE-0001.md")).unwrap(),
             concat!(
@@ -381,7 +400,7 @@ mod tests {
             &project(&tasks_path),
             &identifier(1),
             ProjectNotePatch {
-                title: "new message".to_string(),
+                title: NoteTitle::try_new("new message").unwrap(),
             },
         )
         .unwrap();
@@ -420,7 +439,7 @@ mod tests {
             &project(&tasks_path),
             &identifier(1),
             ProjectNotePatch {
-                title: "new title".to_string(),
+                title: NoteTitle::try_new("new title").unwrap(),
             },
         )
         .unwrap();
@@ -428,6 +447,28 @@ mod tests {
         assert_eq!(
             fs::read_to_string(tasks_path.join("PWF-NOTE-0001.md")).unwrap(),
             source.replacen("# old title", "# new title", 1)
+        );
+    }
+
+    #[test]
+    fn persisted_note_without_a_title_is_reported_as_invalid() {
+        let directory = tempfile::tempdir().unwrap();
+        let tasks_path = directory.path().join("tasks");
+        fs::create_dir_all(&tasks_path).unwrap();
+        fs::write(
+            tasks_path.join("PWF-NOTE-0001.md"),
+            "---\ntype: note\nproject: pwf\n---\n",
+        )
+        .unwrap();
+        let store = store(&tasks_path);
+
+        let error =
+            ProjectNoteStore::get_note(&store, &project(&tasks_path), &identifier(1)).unwrap_err();
+
+        assert_matches!(
+            error,
+            ObsidianStoreError::InvalidProjectNoteTitle { ref id, .. }
+                if id == "PWF-NOTE-0001"
         );
     }
 

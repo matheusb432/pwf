@@ -1,4 +1,9 @@
-use pwf_models::{project::Project, task::TaskId};
+//! Resolves one active task with its persisted record and launch view.
+
+use pwf_models::{
+    project::Project,
+    task::{TaskId, TaskStatus},
+};
 use pwf_wire::task::TaskView;
 
 use crate::{
@@ -9,20 +14,15 @@ use crate::{
     },
 };
 
-#[derive(Debug, Clone)]
-pub struct FindActiveTask {
-    pub id: TaskId,
-}
-
 #[derive(Debug)]
-pub struct FindActiveTaskOk {
-    pub project: Project,
-    pub record: TaskRecord,
-    pub task: TaskView,
+pub(in crate::task) struct FoundActiveTask {
+    pub(in crate::task) project: Project,
+    pub(in crate::task) record: TaskRecord,
+    pub(in crate::task) task: TaskView,
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum FindActiveTaskError {
+pub(in crate::task) enum FindActiveTaskError {
     #[error("Active task not found: {id}")]
     TaskNotFound { id: TaskId },
     #[error("Task id is ambiguous: {id}")]
@@ -30,24 +30,20 @@ pub enum FindActiveTaskError {
     #[error(transparent)]
     ResolveProject(#[from] ResolveTaskProjectError),
     #[error("{0}")]
-    ReadStore(Box<dyn std::error::Error + Send + Sync>),
+    ReadStore(#[source] Box<dyn std::error::Error + Send + Sync>),
+    #[error(transparent)]
+    InvalidTaskView(#[from] task_view::TaskViewError),
 }
 
-#[cqrsy::query]
-pub async fn execute(
-    query: &FindActiveTask,
+pub(in crate::task) async fn find(
+    id: &TaskId,
     store: &impl TaskStore,
     pool: &sqlx::SqlitePool,
-) -> Result<FindActiveTaskOk, FindActiveTaskError> {
-    let project = resolve_task_project::execute(
-        ResolveTaskProject {
-            id: query.id.clone(),
-        },
-        pool,
-    )
-    .await?;
-    let (record, task) = find_active_task(store, &project, &query.id)?;
-    Ok(FindActiveTaskOk {
+) -> Result<FoundActiveTask, FindActiveTaskError> {
+    let project =
+        resolve_task_project::execute(ResolveTaskProject { id: id.clone() }, pool).await?;
+    let (record, task) = find_active_task(store, &project, id)?;
+    Ok(FoundActiveTask {
         project,
         record,
         task,
@@ -64,7 +60,7 @@ fn find_active_task(
         .map_err(|error| FindActiveTaskError::ReadStore(Box::new(error)))?;
     let mut matched = records
         .into_iter()
-        .filter(|record| task_view::is_active_task(record) && record.id == *task_id);
+        .filter(|record| record.status == TaskStatus::Active && record.id == *task_id);
     let Some(record) = matched.next() else {
         return Err(FindActiveTaskError::TaskNotFound {
             id: task_id.clone(),
@@ -75,8 +71,8 @@ fn find_active_task(
             id: task_id.clone(),
         });
     }
-    let task = task_view::enrich(&record, project.source.value())
-        .into_task_view(project.title.to_string());
+    let task =
+        task_view::enrich(&record, project.source.value())?.into_task_view(project.title.clone());
     Ok((record, task))
 }
 
@@ -86,19 +82,19 @@ mod tests {
 
     use pwf_models::{
         project::Project,
-        task::{TaskId, TaskStatus, Timestamp},
+        task::{TaskId, TaskStatus},
     };
 
-    use super::{FindActiveTask, FindActiveTaskError, TaskView, find_active_task};
+    use super::{FindActiveTaskError, TaskView, find_active_task};
     use crate::{
         ports::task_record::{IndexPlacement, TaskRecord},
-        testing::{InMemoryStore, project, task_record},
+        testing::{InMemoryStore, app_date, project, task_record},
     };
 
     fn record(id: &str) -> TaskRecord {
         TaskRecord {
             title: format!("title {id}"),
-            created: Some(Timestamp::new("2026-07-07")),
+            created: Some(app_date("2026-07-07")),
             body: "do the thing".to_string(),
             source: String::new(),
             locator: format!("/notes/pwf/{id}.md"),
@@ -126,10 +122,10 @@ mod tests {
         let task = find(&store, &project, "PWF-0001").unwrap();
 
         assert_eq!(task.id.as_ref(), "PWF-0001");
-        assert_eq!(task.project, "pwf");
+        assert_eq!(task.project.as_ref(), "pwf");
         assert_eq!(task.project_path.as_ref(), "/work/pwf");
-        assert_eq!(task.prompt, "do the thing");
-        assert!(task.launchable);
+        assert_eq!(task.prompt.as_ref(), "do the thing");
+        assert!(task.launch.is_ready());
     }
 
     #[test]
@@ -182,11 +178,9 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn unknown_project_id_preserves_the_resolution_error(pool: sqlx::SqlitePool) {
-        let query = FindActiveTask {
-            id: "XYZ-0001".parse().unwrap(),
-        };
+        let id = "XYZ-0001".parse().unwrap();
 
-        let error = super::execute(&query, &InMemoryStore::default(), &pool)
+        let error = super::find(&id, &InMemoryStore::default(), &pool)
             .await
             .unwrap_err();
 

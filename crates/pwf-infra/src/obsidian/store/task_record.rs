@@ -6,9 +6,11 @@ use pwf_application::ports::task_record::{
     TaskRecord, TaskStore,
 };
 use pwf_models::{
+    AppDate,
     project::Project,
-    task::{TaskId, TaskStatus, Timestamp},
+    task::{TaskId, TaskSection, TaskStatus},
 };
+use pwf_wire::task::RawTaskTags;
 
 use super::{
     ObsidianStore, ObsidianStoreError,
@@ -23,8 +25,8 @@ fn date_stamp_regex() -> &'static Regex {
 use crate::obsidian::{
     done_queue,
     note_frontmatter::{
-        reopen_status_text, set_commits_text, set_completed_text, set_effort_text, set_prereq_text,
-        set_status_text, set_tags_text,
+        reopen_status_text, set_blocked_by_text, set_commits_text, set_completed_text,
+        set_effort_text, set_status_text, set_tags_text,
     },
     note_text::{replace_body, replace_title},
 };
@@ -35,7 +37,7 @@ fn note_to_record(
     path: &Path,
     decoded_title: Option<&str>,
     source: String,
-) -> TaskRecord {
+) -> Result<TaskRecord, ObsidianStoreError> {
     let parsed = crate::obsidian::frontmatter_text::parse(&source);
     let frontmatter = &parsed.frontmatter;
     let status = frontmatter
@@ -48,30 +50,44 @@ fn note_to_record(
         .or_else(|| frontmatter.get("title").cloned())
         .unwrap_or_default();
     // Preserve raw tags so unfiltered reads do not fail on invalid tag syntax.
-    let tags = frontmatter.get("tags").cloned();
+    let tags = frontmatter.get("tags").cloned().map(RawTaskTags::new);
     let field = |key: &str| {
         frontmatter
             .get(key)
             .filter(|value| !value.trim().is_empty())
             .cloned()
     };
-    TaskRecord {
+    let date = |property: &'static str| -> Result<Option<AppDate>, ObsidianStoreError> {
+        field(property)
+            .map(|value| {
+                value
+                    .parse()
+                    .map_err(|source| ObsidianStoreError::InvalidTaskDate {
+                        path: path.to_path_buf(),
+                        property,
+                        value,
+                        source,
+                    })
+            })
+            .transpose()
+    };
+    Ok(TaskRecord {
         id,
         title,
         status,
-        created: field("created").map(Timestamp::new),
-        completed: field("completed").map(Timestamp::new),
+        created: date("created")?,
+        completed: date("completed")?,
         commits: field("commits"),
         tags,
         effort: field("effort"),
-        prereq: field("prereq"),
+        blocked_by: field("blocked_by"),
         section: None,
         body: parsed.body,
         source,
         locator: path_str(path),
         placement: None,
         materialization: Materialization::NoteFile,
-    }
+    })
 }
 
 /// Materializes an index link whose note file is missing.
@@ -82,8 +98,8 @@ fn missing_note_record(
     id: TaskId,
     title: String,
     status: TaskStatus,
-    completed: Option<Timestamp>,
-    section: Option<String>,
+    completed: Option<AppDate>,
+    section: Option<TaskSection>,
     expected_path: &Path,
 ) -> TaskRecord {
     TaskRecord {
@@ -95,7 +111,7 @@ fn missing_note_record(
         commits: None,
         tags: None,
         effort: None,
-        prereq: None,
+        blocked_by: None,
         section,
         body: String::new(),
         source: String::new(),
@@ -117,10 +133,7 @@ fn expected_note_path(index_path: &Path, id: &TaskId) -> std::path::PathBuf {
 fn index_entry_to_record(index_path: &Path, line: &ParsedIndexLine) -> TaskRecord {
     let (status, completed) = match &line.state {
         IndexEntryState::Open => (TaskStatus::Active, None),
-        IndexEntryState::Done(date) => (
-            TaskStatus::Done,
-            (!date.as_str().is_empty()).then(|| date.clone()),
-        ),
+        IndexEntryState::Done(date) => (TaskStatus::Done, *date),
     };
     let expected = expected_note_path(index_path, &line.id);
     missing_note_record(
@@ -128,7 +141,7 @@ fn index_entry_to_record(index_path: &Path, line: &ParsedIndexLine) -> TaskRecor
         line.alias.clone().unwrap_or_default(),
         status,
         completed,
-        (!line.section.is_empty()).then(|| line.section.clone()),
+        line.section.clone(),
         &expected,
     )
 }
@@ -145,13 +158,13 @@ impl ObsidianStore {
             .find(|task| task.id == *id)
         {
             let mut record =
-                note_to_record(task.id, &task.path, task.title.as_deref(), task.markdown);
+                note_to_record(task.id, &task.path, task.title.as_deref(), task.markdown)?;
             if let Some((index_path, text)) = self.validated_project_index(project)?
                 && let Some(line) = parse_index_lines(&index_path, &text)?
                     .into_iter()
                     .find(|line| line.id == *id)
             {
-                record.section = (!line.section.is_empty()).then_some(line.section);
+                record.section = line.section;
                 if matches!(line.state, IndexEntryState::Open) {
                     record.placement = Some(IndexPlacement {
                         index_path: path_str(&index_path),
@@ -185,7 +198,7 @@ impl ObsidianStore {
         let mut records: Vec<TaskRecord> = tasks
             .into_iter()
             .map(|task| note_to_record(task.id, &task.path, task.title.as_deref(), task.markdown))
-            .collect();
+            .collect::<Result<_, _>>()?;
         let Some((index_path, text)) = self.validated_project_index(project)? else {
             return Ok(records);
         };
@@ -196,7 +209,7 @@ impl ObsidianStore {
                 if record.title.trim().is_empty() {
                     record.title = line.alias.clone().unwrap_or_default();
                 }
-                record.section = (!line.section.is_empty()).then(|| line.section.clone());
+                record.section.clone_from(&line.section);
                 if matches!(&line.state, IndexEntryState::Open) {
                     record.placement = Some(IndexPlacement {
                         index_path: index_display.clone(),
@@ -229,18 +242,13 @@ impl ObsidianStore {
             &NewNoteRequest {
                 body: &new.body,
                 title: &new.title,
-                created: new.created.as_str(),
-                prereq: new.prereq.as_ref(),
+                created: &new.created,
+                blocked_by: new.blocked_by.as_ref(),
                 effort: new.effort,
                 tags: new.tags.as_ref(),
             },
         )?;
-        Ok(note_to_record(
-            note.id,
-            &note.path,
-            Some(note.title.as_ref()),
-            note.content,
-        ))
+        note_to_record(note.id, &note.path, Some(note.title.as_ref()), note.content)
     }
 
     fn update_task(
@@ -288,8 +296,8 @@ impl ObsidianStore {
             Some(TaskStatus::Active) => content = reopen_status_text(&content),
             Some(status) => {
                 let completed = match &patch.completed {
-                    NullablePatch::Set(completed) => completed.as_str(),
-                    NullablePatch::Unchanged | NullablePatch::Clear => "",
+                    NullablePatch::Set(completed) => Some(completed),
+                    NullablePatch::Unchanged | NullablePatch::Clear => None,
                 };
                 content = set_status_text(&content, status, completed);
             }
@@ -297,15 +305,15 @@ impl ObsidianStore {
                 NullablePatch::Unchanged => {}
                 NullablePatch::Clear => content = set_completed_text(&content, None),
                 NullablePatch::Set(completed) => {
-                    content = set_completed_text(&content, Some(completed.as_str()));
+                    content = set_completed_text(&content, Some(completed));
                 }
             },
         }
-        match &patch.prereq {
+        match &patch.blocked_by {
             NullablePatch::Unchanged => {}
-            NullablePatch::Clear => content = set_prereq_text(&content, None),
-            NullablePatch::Set(prerequisites) => {
-                content = set_prereq_text(&content, Some(prerequisites));
+            NullablePatch::Clear => content = set_blocked_by_text(&content, None),
+            NullablePatch::Set(blocked_by) => {
+                content = set_blocked_by_text(&content, Some(blocked_by));
             }
         }
         match patch.effort {
@@ -336,8 +344,8 @@ impl ObsidianStore {
             }
             Some(TaskStatus::Done | TaskStatus::Cancelled) => {
                 let completed = match &patch.completed {
-                    NullablePatch::Set(completed) => completed.as_str(),
-                    NullablePatch::Unchanged | NullablePatch::Clear => "",
+                    NullablePatch::Set(completed) => Some(completed),
+                    NullablePatch::Unchanged | NullablePatch::Clear => None,
                 };
                 let updated = close_index_entry_text(
                     text,
@@ -393,7 +401,7 @@ impl TaskStore for ObsidianStore {
 pub(super) fn close_index_entry_text(
     content: &str,
     line: usize,
-    completed: &str,
+    completed: Option<&AppDate>,
     note: &str,
 ) -> Result<String, ObsidianStoreError> {
     let marker_index = line_start_index(content, line).ok_or_else(|| {
@@ -416,7 +424,9 @@ pub(super) fn close_index_entry_text(
         .map_or(content.len(), |index| marker_index + index);
     let line_text = &content[marker_index..line_end];
     let mut checked_line = format!("- [x]{}", &line_text[5..]);
-    if !date_stamp_regex().is_match(&checked_line) {
+    if !date_stamp_regex().is_match(&checked_line)
+        && let Some(completed) = completed
+    {
         let _ = write!(checked_line, " ✅ {completed}");
     }
     Ok(format!(

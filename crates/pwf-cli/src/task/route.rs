@@ -1,12 +1,10 @@
 //! Converts normalized compatibility tokens into typed task leaves.
 
 use clap::Args;
-use pwf_models::task::PrerequisiteInput;
+use pwf_models::task::BlockedByInput;
+use pwf_wire::task::ListMode;
 
-use super::{
-    list,
-    shared::{SectionChoice, StatusChoice},
-};
+use super::{SectionChoice, StatusChoice, list};
 
 #[derive(Args, Debug)]
 pub struct Arguments {
@@ -31,7 +29,7 @@ pub struct Arguments {
     #[arg(long, value_enum)]
     pub(crate) status: Option<StatusChoice>,
     #[arg(long)]
-    pub(crate) prereq: Vec<PrerequisiteInput>,
+    pub(crate) blocked_by: Vec<BlockedByInput>,
 }
 
 pub(crate) enum ResolvedCommand {
@@ -80,13 +78,13 @@ fn list_arguments(
         tag: Vec::new(),
         order: None,
         status: arguments.status,
-        mode: pwf_application::task::ListMode::ProjectRoute,
+        mode: ListMode::ProjectRoute,
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use pwf_application::task::{ListMode, StatusFilter};
+    use pwf_wire::task::{ListMode, StatusFilter};
 
     use super::*;
 
@@ -95,10 +93,10 @@ mod tests {
             words: words.iter().map(|word| (*word).to_string()).collect(),
             long: true,
             section: Some(SectionChoice::Future),
-            all: true,
+            all: false,
             number: Some(3),
             status: Some(StatusChoice::All),
-            prereq: Vec::new(),
+            blocked_by: Vec::new(),
         }
     }
 
@@ -111,7 +109,7 @@ mod tests {
         assert_eq!(list.project.as_ref().map(AsRef::as_ref), Some("pwf"));
         assert!(list.long);
         assert!(matches!(list.section, Some(SectionChoice::Future)));
-        assert!(list.all);
+        assert!(!list.all);
         assert_eq!(list.number, Some(3));
         assert_eq!(list.mode, ListMode::ProjectRoute);
         assert_eq!(

@@ -1,5 +1,5 @@
-use pwf_models::task::Timestamp;
+use pwf_models::AppDate;
 
 pub trait Clock: Clone + Send + Sync + 'static {
-    fn today(&self) -> Timestamp;
+    fn today(&self) -> AppDate;
 }

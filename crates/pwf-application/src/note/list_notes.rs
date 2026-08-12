@@ -1,7 +1,12 @@
 //! Lists one managed project's notes.
 
-use pwf_models::{project::ProjectSelector, task::ProjectName};
-use pwf_wire::{note::ListedNote, project::ProjectStatusFilter};
+use std::num::NonZeroUsize;
+
+use pwf_models::project::ProjectSelector;
+use pwf_wire::{
+    note::{ListedNote, ListedNotes},
+    project::ProjectStatusFilter,
+};
 
 use crate::{
     ports::project_note::ProjectNoteStore,
@@ -15,23 +20,43 @@ const DEFAULT_NOTE_COUNT: usize = 10;
 pub struct ListNotes {
     /// Selects the managed project by name or id code.
     pub project_selector: ProjectSelector,
-    /// Caps returned notes, with `None` selecting ten and `Some(0)` selecting all.
-    pub number: Option<usize>,
+    /// Caps returned notes.
+    pub limit: NoteListLimit,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ListNotesOk {
-    pub project: ProjectName,
-    pub notes: Vec<ListedNote>,
-    pub hidden: usize,
+/// Selects the default cap, no cap, or an explicit non-zero cap.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum NoteListLimit {
+    #[default]
+    Default,
+    Unlimited,
+    AtMost(NonZeroUsize),
+}
+
+impl From<Option<usize>> for NoteListLimit {
+    fn from(number: Option<usize>) -> Self {
+        match number.and_then(NonZeroUsize::new) {
+            Some(number) => Self::AtMost(number),
+            None if number.is_some() => Self::Unlimited,
+            None => Self::Default,
+        }
+    }
+}
+
+impl NoteListLimit {
+    fn shown_count(self, available: usize) -> usize {
+        match self {
+            Self::Default => DEFAULT_NOTE_COUNT.min(available),
+            Self::Unlimited => available,
+            Self::AtMost(limit) => limit.get().min(available),
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum ListNotesError {
-    #[error("Unknown project '{selector}'. Expected a project name or id.")]
-    UnknownProject { selector: ProjectSelector },
-    #[error("{0}")]
-    Project(#[source] Box<dyn std::error::Error + Send + Sync>),
+    #[error(transparent)]
+    ResolveProject(#[from] ResolveProjectError),
     #[error("{0}")]
     Store(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
@@ -40,33 +65,27 @@ pub enum ListNotesError {
 ///
 /// # Errors
 ///
-/// Returns [`ListNotesError::UnknownProject`] when the project does not resolve or
+/// Returns [`ListNotesError::ResolveProject`] when the project does not resolve or
 /// [`ListNotesError::Store`] when listing notes fails.
 #[cqrsy::query]
 pub async fn execute(
     query: ListNotes,
     store: &impl ProjectNoteStore,
     pool: &sqlx::SqlitePool,
-) -> Result<ListNotesOk, ListNotesError> {
+) -> Result<ListedNotes, ListNotesError> {
     let project = resolve_project::execute(
         ResolveProject {
             selector: query.project_selector,
-            status: ProjectStatusFilter::ACTIVE,
+            status: ProjectStatusFilter::ActiveOnly,
         },
         pool,
     )
-    .await
-    .map_err(project_error)?;
+    .await?;
     let mut notes = store
         .list_notes(&project)
         .map_err(|error| ListNotesError::Store(Box::new(error)))?;
     notes.sort_by_key(|note| std::cmp::Reverse(note.id.number()));
-    let count = query.number.unwrap_or(DEFAULT_NOTE_COUNT);
-    let shown = if count == 0 {
-        notes.len()
-    } else {
-        count.min(notes.len())
-    };
+    let shown = query.limit.shown_count(notes.len());
     let hidden = notes.len() - shown;
     let notes = notes
         .into_iter()
@@ -76,27 +95,19 @@ pub async fn execute(
             title: note.title,
         })
         .collect();
-    Ok(ListNotesOk {
+    Ok(ListedNotes {
         project: project.title.clone(),
         notes,
         hidden,
     })
 }
 
-fn project_error(error: ResolveProjectError) -> ListNotesError {
-    match error {
-        ResolveProjectError::Unknown { selector, .. } => {
-            ListNotesError::UnknownProject { selector }
-        }
-        error @ ResolveProjectError::Unexpected { .. } => ListNotesError::Project(Box::new(error)),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::error::Error as _;
 
-    use pwf_models::note::{NoteId, ProjectNote};
+    use pwf_models::note::{NoteId, NoteTitle, ProjectNote};
+    use pwf_wire::note::ListedNotes;
 
     use super::{ListNotes, ListNotesError};
     use crate::testing::{InMemoryStore, insert_project};
@@ -108,11 +119,11 @@ mod tests {
     fn note(number: u32) -> ProjectNote {
         ProjectNote {
             id: NoteId::try_new(format!("PWF-NOTE-{number:04}")).unwrap(),
-            title: format!("note {number}"),
+            title: NoteTitle::try_new(format!("note {number}")).unwrap(),
         }
     }
 
-    fn identifiers(result: &super::ListNotesOk) -> Vec<&str> {
+    fn identifiers(result: &ListedNotes) -> Vec<&str> {
         result.notes.iter().map(|note| note.id.as_ref()).collect()
     }
 
@@ -130,7 +141,7 @@ mod tests {
         let result = super::execute(
             ListNotes {
                 project_selector: "PWF".parse().unwrap(),
-                number: None,
+                limit: None.into(),
             },
             &store,
             &pool,
@@ -165,7 +176,7 @@ mod tests {
         let unlimited = super::execute(
             ListNotes {
                 project_selector: "pwf".parse().unwrap(),
-                number: Some(0),
+                limit: Some(0).into(),
             },
             &store,
             &pool,
@@ -175,7 +186,7 @@ mod tests {
         let capped = super::execute(
             ListNotes {
                 project_selector: "pwf".parse().unwrap(),
-                number: Some(2),
+                limit: Some(2).into(),
             },
             &store,
             &pool,

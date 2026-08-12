@@ -17,7 +17,7 @@ pub(super) async fn run(arguments: Arguments, pool: &SqlitePool) -> Result<Strin
     let project = get_project::execute(
         GetProject {
             id: arguments.id,
-            status: ProjectStatusFilter::ALL,
+            status: ProjectStatusFilter::IncludingPaused,
         },
         pool,
     )

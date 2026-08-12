@@ -1,6 +1,8 @@
-use pwf_models::task::{TagInput, TagInputError, Tags};
+use pwf_models::task::{TagInput, TagInputError, TaskTags};
+use pwf_wire::task::RawTaskTags;
 
-pub(in crate::task) fn parse_frontmatter(raw: &str) -> Result<Tags, ParseTagsError> {
+pub(in crate::task) fn parse_frontmatter(raw: &RawTaskTags) -> Result<TaskTags, ParseTagsError> {
+    let raw = raw.as_ref();
     let trimmed = raw.trim();
     let Some(inner) = trimmed
         .strip_prefix('[')
@@ -19,21 +21,9 @@ pub(in crate::task) fn parse_frontmatter(raw: &str) -> Result<Tags, ParseTagsErr
         TagInputError::MissingTag { raw } => ParseTagsError::MissingTag { raw },
         TagInputError::InvalidTag { raw } => ParseTagsError::InvalidTag { raw },
     })?;
-    Tags::from_inputs(&[input]).ok_or_else(|| ParseTagsError::MissingTag {
+    TaskTags::from_inputs(&[input]).ok_or_else(|| ParseTagsError::MissingTag {
         raw: raw.to_string(),
     })
-}
-
-#[must_use]
-pub(in crate::task) fn merge(existing: &Tags, appended: &Tags) -> Tags {
-    existing.merge(appended)
-}
-
-#[must_use]
-pub(in crate::task) fn contains_all(stored: &Tags, requested: &Tags) -> bool {
-    requested
-        .iter()
-        .all(|requested| stored.iter().any(|stored| stored == requested))
 }
 
 #[must_use]
@@ -59,34 +49,28 @@ impl ParseTagsError {
 
 #[cfg(test)]
 mod tests {
-    use pwf_models::task::Tags;
+    use pwf_models::task::TaskTags;
+    use pwf_wire::task::RawTaskTags;
 
-    use super::{ParseTagsError, contains_all, merge, parse_frontmatter};
+    use super::{ParseTagsError, parse_frontmatter};
 
-    fn values(tags: &Tags) -> Vec<&str> {
+    fn values(tags: &TaskTags) -> Vec<&str> {
         tags.iter().map(AsRef::as_ref).collect()
+    }
+
+    fn raw_tags(raw: &str) -> RawTaskTags {
+        RawTaskTags::new(raw)
     }
 
     #[test]
     fn frontmatter_requires_an_inline_array_and_reuses_tag_validation() {
-        let tags = parse_frontmatter("[SQLite, csharp-export]").unwrap();
+        let tags = parse_frontmatter(&raw_tags("[SQLite, csharp-export]")).unwrap();
         assert_eq!(values(&tags), ["sqlite", "csharp_export"]);
 
         assert!(matches!(
-            parse_frontmatter("sqlite"),
+            parse_frontmatter(&raw_tags("sqlite")),
             Err(ParseTagsError::InvalidFrontmatter { .. })
         ));
-        assert!(parse_frontmatter("[]").is_err());
-    }
-
-    #[test]
-    fn merge_and_inclusion_preserve_set_semantics() {
-        let existing = parse_frontmatter("[sqlite, godot]").unwrap();
-        let appended = Tags::from_inputs(&["godot,csharp-export".parse().unwrap()]).unwrap();
-        let merged = merge(&existing, &appended);
-
-        assert_eq!(values(&merged), ["sqlite", "godot", "csharp_export"]);
-        assert!(contains_all(&merged, &appended));
-        assert!(!contains_all(&appended, &existing));
+        assert!(parse_frontmatter(&raw_tags("[]")).is_err());
     }
 }

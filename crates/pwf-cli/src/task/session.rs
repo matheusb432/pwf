@@ -4,25 +4,22 @@ use clap::Args;
 use pwf_application::task::session::{
     PlanSessionIntent,
     dispatch_session::{self, DispatchSession},
-    plan_session::{self, PlanSession, PlanSessionOk},
+    plan_session::{self, PlanSession},
 };
 use pwf_infra::{
     obsidian::ObsidianStore,
     session::{AgentHarness, InlineHarness, LocalProjectDirectoryClient, TmuxHarness, render_argv},
 };
 use pwf_models::session::{Agent, DispatchMode, LaunchDirectives, PushedPrompt, SessionEffort};
-use pwf_wire::task::session::AgentProbe;
+use pwf_wire::task::session::{AgentProbe, PlannedSession};
 
 use super::{
+    AgentChoice, Identifier, TaskError,
     render::{
         render_dispatch, render_dry_run, render_session_aborted, render_session_confirmation,
     },
-    shared::{AgentChoice, Identifier, TaskError},
 };
-use crate::{
-    confirm::{Confirmation, DefaultAnswer},
-    console::Console,
-};
+use crate::{confirm::Confirmation, console::Console};
 
 #[derive(Args, Debug)]
 pub struct Arguments {
@@ -177,20 +174,17 @@ pub(super) async fn run(
     .await
     .map_err(map_plan_error)?;
     let planned = match planned {
-        PlanSessionOk::DryRun(dry_run) => {
+        PlannedSession::DryRun(dry_run) => {
             render_probe(&dry_run.probe);
             return Ok(render_dry_run(&dry_run.plan, &dry_run.argv));
         }
-        PlanSessionOk::Dispatch(planned) => planned,
+        PlannedSession::Dispatch(planned) => planned,
     };
     render_probe(&planned.probe);
 
     if arguments.confirmation.is_required()
         && matches!(
-            console.confirm(
-                &render_session_confirmation(&planned.confirmation),
-                DefaultAnswer::Yes
-            ),
+            console.confirm(&render_session_confirmation(&planned.confirmation)),
             Confirmation::Declined
         )
     {
@@ -233,10 +227,10 @@ fn map_plan_error(error: plan_session::PlanSessionError) -> TaskError {
 }
 
 fn render_probe(probe: &AgentProbe) {
-    if !probe.available {
+    if !probe.is_available() {
         eprintln!(
             "note: {} not found on PATH from here; the agent will surface the error if it can't run.",
-            probe.binary
+            probe.binary()
         );
     }
 }

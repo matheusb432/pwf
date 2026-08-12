@@ -1,6 +1,5 @@
-use std::path::PathBuf;
-
-use pwf_models::task::TaskId;
+use pwf_models::task::{TaskId, TaskTitle, TaskTitleError};
+use pwf_wire::task::{RemovedTask, RemovedTaskOutcome, TaskIndexPath, TaskNotePath};
 
 use super::resolve_task_project::{self, ResolveTaskProject, ResolveTaskProjectError};
 use crate::ports::{
@@ -8,30 +7,9 @@ use crate::ports::{
     task_record::{IndexEntryStore, Materialization, TaskStore},
 };
 
-/// Describes the note and index link deleted by [`execute`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RemovedTask {
-    /// Identifier of the deleted task.
-    pub id: TaskId,
-    /// Managed project that contained the task.
-    pub project: String,
-    /// Title of the deleted task.
-    pub title: String,
-    /// Path of the deleted task note.
-    pub deleted_path: PathBuf,
-    /// Index note from which the task link was removed.
-    pub unlinked: String,
-}
-
 #[derive(Debug, Clone)]
 pub struct RemoveTask {
     pub id: TaskId,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RemoveTaskOk {
-    Removed(RemovedTask),
-    Aborted { task_identifier: TaskId },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -41,9 +19,15 @@ pub enum RemoveTaskError {
     #[error(transparent)]
     ResolveProject(#[from] ResolveTaskProjectError),
     #[error("Task note missing: {path}")]
-    NoteMissing { path: String },
+    NoteMissing { path: TaskNotePath },
+    #[error("task {id} has an invalid persisted title: {source}")]
+    InvalidTitle {
+        id: TaskId,
+        #[source]
+        source: TaskTitleError,
+    },
     #[error("{0}")]
-    WriteStore(Box<dyn std::error::Error + Send + Sync>),
+    WriteStore(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
 
 /// Deletes a task after unlinking its index entry.
@@ -55,7 +39,7 @@ pub async fn execute(
     store: &(impl TaskStore + IndexEntryStore),
     pool: &sqlx::SqlitePool,
     confirmation_client: &(impl ConfirmationClient + Send + Sync + 'static),
-) -> Result<RemoveTaskOk, RemoveTaskError> {
+) -> Result<RemovedTaskOutcome, RemoveTaskError> {
     let project =
         resolve_task_project::execute(ResolveTaskProject { id: cmd.id.clone() }, pool).await?;
     let task_identifier = cmd.id.clone();
@@ -65,22 +49,29 @@ pub async fn execute(
             id: task_identifier.clone(),
         })?;
     let note_path = match &record.materialization {
-        Materialization::NoteFile => PathBuf::from(&record.locator),
+        Materialization::NoteFile => TaskNotePath::new(record.locator.clone().into()),
         Materialization::MissingNote { expected } => {
             return Err(RemoveTaskError::NoteMissing {
-                path: expected.clone(),
+                path: TaskNotePath::new(expected.into()),
             });
         }
     };
+    let title =
+        TaskTitle::try_new(record.title).map_err(|source| RemoveTaskError::InvalidTitle {
+            id: task_identifier.clone(),
+            source,
+        })?;
     let confirmation = Confirmation::Removal {
         task_identifier: task_identifier.clone(),
         project: project.title.clone(),
-        title: record.title.clone(),
+        title: title.clone(),
         status: record.status,
         note_path: note_path.clone(),
     };
     if !confirmation_client.confirm(&confirmation) {
-        return Ok(RemoveTaskOk::Aborted { task_identifier });
+        return Ok(RemovedTaskOutcome::Aborted {
+            task_id: task_identifier,
+        });
     }
 
     IndexEntryStore::delete_index_entry(store, &project, &task_identifier)
@@ -90,22 +81,22 @@ pub async fn execute(
 
     let removed = RemovedTask {
         id: task_identifier,
-        project: project.title.to_string(),
-        title: record.title,
+        project: project.title,
+        title,
         deleted_path: note_path,
         unlinked: record
             .placement
-            .map(|placement| placement.index_path)
-            .unwrap_or_default(),
+            .map(|placement| TaskIndexPath::new(placement.index_path.into())),
     };
-    Ok(RemoveTaskOk::Removed(removed))
+    Ok(RemovedTaskOutcome::Removed(removed))
 }
 
 #[cfg(test)]
 mod tests {
-    use pwf_models::task::{TaskId, TaskStatus, Timestamp};
+    use pwf_models::task::{TaskId, TaskStatus};
+    use pwf_wire::task::RemovedTaskOutcome;
 
-    use super::{RemoveTask, RemoveTaskError, RemoveTaskOk};
+    use super::{RemoveTask, RemoveTaskError};
     use crate::{
         ports::{
             confirmation::{Confirmation, ConfirmationClient},
@@ -113,7 +104,7 @@ mod tests {
                 IndexEntry, IndexEntryState, IndexEntryStore, Materialization, TaskRecord,
             },
         },
-        testing::{InMemoryStore, insert_project, project, task_record},
+        testing::{InMemoryStore, app_date, insert_project, project, task_record},
     };
 
     async fn execute(
@@ -121,7 +112,7 @@ mod tests {
         store: &InMemoryStore,
         pool: &sqlx::SqlitePool,
         confirmation: &(impl ConfirmationClient + Send + Sync + 'static),
-    ) -> Result<RemoveTaskOk, RemoveTaskError> {
+    ) -> Result<RemovedTaskOutcome, RemoveTaskError> {
         super::execute(command, store, pool, confirmation).await
     }
 
@@ -129,7 +120,7 @@ mod tests {
         TaskRecord {
             title: "stale task".to_string(),
             status,
-            created: Some(Timestamp::new("2026-07-01")),
+            created: Some(app_date("2026-07-01")),
             locator: format!("/notes/pwf/{id}.md"),
             ..task_record(id)
         }
@@ -139,7 +130,7 @@ mod tests {
         let index_state = match status {
             TaskStatus::Active => IndexEntryState::Open,
             TaskStatus::Done | TaskStatus::Cancelled => {
-                IndexEntryState::Done(Timestamp::new("2026-07-02"))
+                IndexEntryState::Done(Some(app_date("2026-07-02")))
             }
         };
         let store = InMemoryStore::default()
@@ -151,7 +142,7 @@ mod tests {
             IndexEntry {
                 id: TaskId::try_new("PWF-0001").unwrap(),
                 state: index_state,
-                section: String::new(),
+                section: None,
             },
         )
         .unwrap();
@@ -178,7 +169,7 @@ mod tests {
         insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
         let store = staged(TaskStatus::Active);
 
-        let RemoveTaskOk::Removed(removed) =
+        let RemovedTaskOutcome::Removed(removed) =
             execute(&command("PWF-0001"), &store, &pool, &Accepted)
                 .await
                 .unwrap()
@@ -187,13 +178,34 @@ mod tests {
         };
 
         assert_eq!(removed.id.as_ref(), "PWF-0001");
-        assert_eq!(removed.project, "pwf");
-        assert_eq!(removed.title, "stale task");
+        assert_eq!(removed.project.as_ref(), "pwf");
+        assert_eq!(removed.title.as_ref(), "stale task");
         assert!(store.tasks("pwf").is_empty(), "record must be deleted");
         assert!(
             store.entries("pwf").is_empty(),
             "index entry must be unlinked"
         );
+    }
+
+    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
+    async fn remove_rejects_an_invalid_persisted_title_before_mutation(pool: sqlx::SqlitePool) {
+        insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
+        let store = InMemoryStore::default()
+            .with_project_id("pwf", "PWF")
+            .with_project(
+                "pwf",
+                vec![TaskRecord {
+                    title: "x".repeat(201),
+                    ..record("PWF-0001", TaskStatus::Active)
+                }],
+            );
+
+        let error = execute(&command("PWF-0001"), &store, &pool, &Accepted)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, RemoveTaskError::InvalidTitle { .. }));
+        assert_eq!(store.tasks("pwf").len(), 1);
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
@@ -207,7 +219,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(matches!(outcome, RemoveTaskOk::Removed(_)));
+        assert!(matches!(outcome, RemovedTaskOutcome::Removed(_)));
         assert!(store.tasks("pwf").is_empty());
         assert!(store.entries("pwf").is_empty());
     }
@@ -222,7 +234,7 @@ mod tests {
                 .await
                 .unwrap();
 
-            assert!(matches!(outcome, RemoveTaskOk::Removed(_)));
+            assert!(matches!(outcome, RemovedTaskOutcome::Removed(_)));
             assert!(store.tasks("pwf").is_empty(), "{status} record retained");
             assert!(store.entries("pwf").is_empty(), "{status} index retained");
         }
@@ -277,7 +289,8 @@ mod tests {
 
         assert!(matches!(
             error,
-            RemoveTaskError::NoteMissing { ref path } if path == "/notes/pwf/PWF-0001.md"
+            RemoveTaskError::NoteMissing { ref path }
+                if path.as_path() == std::path::Path::new("/notes/pwf/PWF-0001.md")
         ));
         assert_eq!(
             error.to_string(),
@@ -286,7 +299,9 @@ mod tests {
     }
 
     mod pwf_0144 {
-        use super::{super::RemoveTaskOk, *};
+        use pwf_wire::task::RemovedTaskOutcome;
+
+        use super::*;
 
         fn command(id: &str) -> RemoveTask {
             RemoveTask {
@@ -318,7 +333,7 @@ mod tests {
             )
             .await
             .unwrap();
-            let RemoveTaskOk::Removed(removed) = outcome else {
+            let RemovedTaskOutcome::Removed(removed) = outcome else {
                 panic!("accepted removal must remove the task");
             };
 
@@ -343,8 +358,8 @@ mod tests {
 
             assert_eq!(
                 outcome,
-                RemoveTaskOk::Aborted {
-                    task_identifier: "PWF-0001".parse().unwrap(),
+                RemovedTaskOutcome::Aborted {
+                    task_id: "PWF-0001".parse().unwrap(),
                 }
             );
             assert_eq!(store.tasks("pwf").len(), 1);

@@ -1,8 +1,9 @@
 use std::path::PathBuf;
 
 use pwf_models::{
+    AppDate,
     project::Project,
-    task::{EffortTier, Prerequisites, Tags, TaskId, TaskTitle},
+    task::{BlockedBy, EffortTier, TaskId, TaskTags, TaskTitle},
 };
 
 use super::{ObsidianStore, ObsidianStoreError, fs::write_add_task_file};
@@ -12,10 +13,10 @@ use crate::obsidian::note_frontmatter::{NewTaskFields, new_task_content};
 pub(super) struct NewNoteRequest<'a> {
     pub body: &'a str,
     pub title: &'a TaskTitle,
-    pub created: &'a str,
-    pub prereq: Option<&'a Prerequisites>,
+    pub created: &'a AppDate,
+    pub blocked_by: Option<&'a BlockedBy>,
     pub effort: Option<EffortTier>,
-    pub tags: Option<&'a Tags>,
+    pub tags: Option<&'a TaskTags>,
 }
 
 /// Contains a written task note's identity, path, title, and exact bytes.
@@ -44,9 +45,9 @@ impl ObsidianStore {
             id: &id,
             title: request.title,
             project: project.title.as_ref(),
-            prompt: request.body,
+            body: request.body,
             created: request.created,
-            prereq: request.prereq,
+            blocked_by: request.blocked_by,
             effort: request.effort,
             tags: request.tags,
         });

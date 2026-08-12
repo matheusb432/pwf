@@ -2,15 +2,17 @@ use pwf_models::project::{Project, ProjectId, ProjectName, ProjectSource, Projec
 
 /// Selects whether paused projects are eligible for a request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ProjectStatusFilter(bool);
+pub enum ProjectStatusFilter {
+    /// Includes only active projects.
+    ActiveOnly,
+    /// Includes active and paused projects.
+    IncludingPaused,
+}
 
 impl ProjectStatusFilter {
-    pub const ACTIVE: Self = Self(false);
-    pub const ALL: Self = Self(true);
-
     #[must_use]
     pub const fn includes_paused(self) -> bool {
-        self.0
+        matches!(self, Self::IncludingPaused)
     }
 }
 

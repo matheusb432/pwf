@@ -1,10 +1,10 @@
 use std::error::Error;
 
-use pwf_models::project::ProjectSelector;
+use pwf_models::project::{ProjectName, ProjectSelector};
 use pwf_wire::project::ProjectStatusFilter;
 
 use super::{
-    Project, ProjectRow, ProjectRowError,
+    Project, ProjectRow,
     get_project::{self, GetProject, GetProjectError},
 };
 
@@ -18,11 +18,11 @@ pub struct ResolveProject {
 pub enum ResolveProjectError {
     #[error(
         "Unknown managed project identifier: {selector}\nManaged project identifiers: {}",
-        known.join(", ")
+        format_project_names(known)
     )]
     Unknown {
         selector: ProjectSelector,
-        known: Vec<String>,
+        known: Vec<ProjectName>,
     },
     #[error("{context}: {source}")]
     Unexpected {
@@ -97,15 +97,15 @@ async fn find_by_title(
 
     row.map(super::project_from_row)
         .transpose()
-        .map_err(|error| unexpected_row("converting resolved project", error))
+        .map_err(|error| unexpected("converting resolved project", error))
 }
 
 async fn known_project_names(
     status: ProjectStatusFilter,
     pool: &sqlx::SqlitePool,
-) -> Result<Vec<String>, ResolveProjectError> {
+) -> Result<Vec<ProjectName>, ResolveProjectError> {
     let includes_paused = status.includes_paused();
-    sqlx::query_scalar!(
+    let names = sqlx::query_scalar!(
         r#"
         SELECT title AS "title!"
         FROM projects
@@ -116,7 +116,22 @@ async fn known_project_names(
     )
     .fetch_all(pool)
     .await
-    .map_err(|error| unexpected("listing known project identifiers", error))
+    .map_err(|error| unexpected("listing known project identifiers", error))?;
+    names
+        .into_iter()
+        .map(|name| {
+            ProjectName::try_new(name)
+                .map_err(|error| unexpected("converting known project identifier", error))
+        })
+        .collect()
+}
+
+fn format_project_names(names: &[ProjectName]) -> String {
+    names
+        .iter()
+        .map(AsRef::as_ref)
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn unexpected(
@@ -127,10 +142,6 @@ fn unexpected(
         context,
         source: Box::new(source),
     }
-}
-
-fn unexpected_row(context: &'static str, source: ProjectRowError) -> ResolveProjectError {
-    unexpected(context, source)
 }
 
 #[cfg(test)]
@@ -148,7 +159,7 @@ mod tests {
         let project = super::execute(
             ResolveProject {
                 selector: "ALT".parse().unwrap(),
-                status: ProjectStatusFilter::ACTIVE,
+                status: ProjectStatusFilter::ActiveOnly,
             },
             &pool,
         )
@@ -168,7 +179,7 @@ mod tests {
         let error = super::execute(
             ResolveProject {
                 selector: "pwf".parse().unwrap(),
-                status: ProjectStatusFilter::ACTIVE,
+                status: ProjectStatusFilter::ActiveOnly,
             },
             &pool,
         )
@@ -178,7 +189,8 @@ mod tests {
         assert!(matches!(
             error,
             ResolveProjectError::Unknown { selector, known }
-                if selector.as_ref() == "pwf" && known == ["other"]
+                if selector.as_ref() == "pwf"
+                    && known.iter().map(AsRef::as_ref).collect::<Vec<_>>() == ["other"]
         ));
     }
 }

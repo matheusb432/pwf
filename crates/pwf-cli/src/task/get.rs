@@ -1,11 +1,9 @@
 use clap::Args;
-use pwf_application::task::{
-    ShowOutput,
-    show_task::{self, ShowTask, ShowTaskOk},
-};
+use pwf_application::task::get_task::{self, GetTask};
 use pwf_infra::obsidian::ObsidianStore;
+use pwf_wire::task::{TaskRead, TaskReadFormat};
 
-use super::shared::Identifier;
+use super::Identifier;
 
 mod output;
 
@@ -21,7 +19,7 @@ pub struct Arguments {
     pub(crate) json: bool,
 }
 
-use super::shared::TaskError;
+use super::TaskError;
 
 /// Returns the complete Markdown for a task regardless of status;
 /// `--path` returns the note path instead.
@@ -30,20 +28,18 @@ pub(super) async fn run(
     store: &ObsidianStore,
     pool: &sqlx::SqlitePool,
 ) -> Result<String, TaskError> {
-    let id = arguments.identifier.required("show")?;
+    let id = arguments.identifier.required("get")?;
     let output = if arguments.path {
-        ShowOutput::Path
+        TaskReadFormat::Path
     } else if arguments.json {
-        ShowOutput::Json
+        TaskReadFormat::Data
     } else {
-        ShowOutput::Markdown
+        TaskReadFormat::Markdown
     };
-    let shown = show_task::execute(&ShowTask { id, output }, store, pool)
-        .await
-        .map_err(|error| TaskError::ApplicationRead(error.to_string()))?;
-    match shown {
-        ShowTaskOk::Markdown(markdown) => Ok(markdown),
-        ShowTaskOk::Path(path) => Ok(path),
-        ShowTaskOk::Json(task) => output::json(*task).map_err(TaskError::ApplicationRead),
+    let gotten = get_task::execute(&GetTask { id, output }, store, pool).await?;
+    match gotten {
+        TaskRead::Markdown(markdown) => Ok(markdown),
+        TaskRead::Path(path) => Ok(path.as_path().to_string_lossy().into_owned()),
+        TaskRead::Data(task) => Ok(output::json(*task)?),
     }
 }

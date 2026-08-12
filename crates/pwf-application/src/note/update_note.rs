@@ -1,12 +1,11 @@
 //! Updates one note title in a managed project.
 
 use pwf_models::{
-    note::NoteId,
-    project::{ProjectId, ProjectSelector},
+    note::{NoteSelector, NoteTitle},
+    project::{ProjectId, ProjectName, ProjectSelector},
 };
-use pwf_wire::project::ProjectStatusFilter;
+use pwf_wire::{note::UpdatedNote, project::ProjectStatusFilter};
 
-use super::resolve_note;
 use crate::{
     ports::project_note::{ProjectNotePatch, ProjectNoteStore},
     project::resolve_project::{self, ResolveProject, ResolveProjectError},
@@ -18,29 +17,25 @@ pub struct UpdateNote {
     /// Selects the managed project by name or id code.
     pub project_selector: ProjectSelector,
     /// Selects the note by full id, `NOTE-NNNN`, or bare numeric suffix.
-    pub id: String,
+    pub selector: NoteSelector,
     /// Supplies the replacement title.
-    pub title: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UpdateNoteOk {
-    pub id: NoteId,
-    pub title: String,
+    pub title: NoteTitle,
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum UpdateNoteError {
-    #[error("Unknown project '{selector}'. Expected a project name or id.")]
-    UnknownProject { selector: ProjectSelector },
-    #[error("Note title is empty; provide a non-empty title.")]
-    EmptyTitle,
-    #[error("Invalid note id '{id}'; expected e.g. {project_id}-NOTE-0001, NOTE-0001, or 1.")]
-    InvalidIdentifier { id: String, project_id: ProjectId },
+    #[error(transparent)]
+    ResolveProject(#[from] ResolveProjectError),
+    #[error("Note id '{selector}' does not belong to project {project_id}.")]
+    ProjectMismatch {
+        selector: NoteSelector,
+        project_id: ProjectId,
+    },
     #[error("No such note {id} in {project}.")]
-    NoSuchNote { id: String, project: String },
-    #[error("{0}")]
-    Project(#[source] Box<dyn std::error::Error + Send + Sync>),
+    NoSuchNote {
+        id: pwf_models::note::NoteId,
+        project: ProjectName,
+    },
     #[error("{0}")]
     Store(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
@@ -49,9 +44,8 @@ pub enum UpdateNoteError {
 ///
 /// # Errors
 ///
-/// Returns [`UpdateNoteError::UnknownProject`] when the project does not resolve,
-/// [`UpdateNoteError::EmptyTitle`] when the normalized replacement is empty,
-/// [`UpdateNoteError::InvalidIdentifier`] when the note id is invalid for that project,
+/// Returns [`UpdateNoteError::ResolveProject`] when the project does not resolve,
+/// [`UpdateNoteError::ProjectMismatch`] when the note id names another project,
 /// [`UpdateNoteError::NoSuchNote`] when the note does not exist, or
 /// [`UpdateNoteError::Store`] when reading or updating the note fails.
 #[cqrsy::command]
@@ -59,37 +53,30 @@ pub async fn execute(
     command: UpdateNote,
     store: &impl ProjectNoteStore,
     pool: &sqlx::SqlitePool,
-) -> Result<UpdateNoteOk, UpdateNoteError> {
+) -> Result<UpdatedNote, UpdateNoteError> {
     let project = resolve_project::execute(
         ResolveProject {
             selector: command.project_selector,
-            status: ProjectStatusFilter::ACTIVE,
+            status: ProjectStatusFilter::ActiveOnly,
         },
         pool,
     )
-    .await
-    .map_err(project_error)?;
-    let title = command
-        .title
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
-    if title.is_empty() {
-        return Err(UpdateNoteError::EmptyTitle);
-    }
-    let id = resolve_note(&command.id, &project.id).ok_or_else(|| {
-        UpdateNoteError::InvalidIdentifier {
-            id: command.id,
-            project_id: project.id.clone(),
-        }
-    })?;
+    .await?;
+    let id =
+        command
+            .selector
+            .resolve(&project.id)
+            .ok_or_else(|| UpdateNoteError::ProjectMismatch {
+                selector: command.selector,
+                project_id: project.id.clone(),
+            })?;
     let existing = store
         .get_note(&project, &id)
         .map_err(|error| UpdateNoteError::Store(Box::new(error)))?;
     if existing.is_none() {
         return Err(UpdateNoteError::NoSuchNote {
-            id: id.to_string(),
-            project: project.title.to_string(),
+            id,
+            project: project.title,
         });
     }
     store
@@ -97,27 +84,21 @@ pub async fn execute(
             &project,
             &id,
             ProjectNotePatch {
-                title: title.clone(),
+                title: command.title.clone(),
             },
         )
         .map_err(|error| UpdateNoteError::Store(Box::new(error)))?;
-    Ok(UpdateNoteOk { id, title })
-}
-
-fn project_error(error: ResolveProjectError) -> UpdateNoteError {
-    match error {
-        ResolveProjectError::Unknown { selector, .. } => {
-            UpdateNoteError::UnknownProject { selector }
-        }
-        error @ ResolveProjectError::Unexpected { .. } => UpdateNoteError::Project(Box::new(error)),
-    }
+    Ok(UpdatedNote {
+        id,
+        title: command.title,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use std::error::Error as _;
 
-    use pwf_models::note::{NoteId, ProjectNote};
+    use pwf_models::note::{NoteId, NoteTitle, ProjectNote};
 
     use super::{UpdateNote, UpdateNoteError};
     use crate::testing::{InMemoryStore, insert_project};
@@ -129,7 +110,7 @@ mod tests {
     fn note() -> ProjectNote {
         ProjectNote {
             id: NoteId::try_new("PWF-NOTE-0007").unwrap(),
-            title: "old message".to_string(),
+            title: NoteTitle::try_new("old message").unwrap(),
         }
     }
 
@@ -149,8 +130,8 @@ mod tests {
             let updated = super::execute(
                 UpdateNote {
                     project_selector: "pwf".parse().unwrap(),
-                    id: identifier.to_string(),
-                    title: " new message \t".to_string(),
+                    selector: identifier.parse().unwrap(),
+                    title: NoteTitle::try_new(" new message \t").unwrap(),
                 },
                 &store,
                 &pool,
@@ -159,31 +140,10 @@ mod tests {
             .unwrap();
 
             assert_eq!(updated.id.as_ref(), "PWF-NOTE-0007");
-            assert_eq!(updated.title, "new message");
-            assert_eq!(store.project_notes("pwf")[0].title, "new message");
+            assert_eq!(updated.title.as_ref(), "new message");
+            assert_eq!(store.project_notes("pwf")[0].title.as_ref(), "new message");
             assert!(store.entries("pwf").is_empty());
         }
-    }
-
-    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
-    async fn blank_replacement_leaves_the_existing_note_unchanged(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
-        let store = InMemoryStore::default().with_project_notes("pwf", vec![note()]);
-
-        let error = super::execute(
-            UpdateNote {
-                project_selector: "pwf".parse().unwrap(),
-                id: "7".to_string(),
-                title: " \t ".to_string(),
-            },
-            &store,
-            &pool,
-        )
-        .await
-        .unwrap_err();
-
-        assert!(matches!(error, UpdateNoteError::EmptyTitle));
-        assert_eq!(store.project_notes("pwf"), vec![note()]);
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
@@ -194,8 +154,8 @@ mod tests {
         let error = super::execute(
             UpdateNote {
                 project_selector: "pwf".parse().unwrap(),
-                id: "note-0007".to_string(),
-                title: "new message".to_string(),
+                selector: "note-0007".parse().unwrap(),
+                title: NoteTitle::try_new("new message").unwrap(),
             },
             &store,
             &pool,
@@ -208,7 +168,7 @@ mod tests {
             UpdateNoteError::NoSuchNote {
                 ref id,
                 ref project,
-            } if id == "PWF-NOTE-0007" && project == "pwf"
+            } if id.as_ref() == "PWF-NOTE-0007" && project.as_ref() == "pwf"
         ));
         assert!(store.project_notes("pwf").is_empty());
     }

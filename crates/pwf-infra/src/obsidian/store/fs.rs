@@ -1,5 +1,7 @@
 use std::path::Path;
 
+use pwf_models::task::TaskSection;
+
 use super::ObsidianStoreError;
 
 pub(super) fn path_str(path: &Path) -> String {
@@ -56,13 +58,13 @@ pub(super) fn write_add_index_file(
     path: &Path,
     content: &str,
     project: &str,
-    created_section: Option<&str>,
+    created_section: Option<&TaskSection>,
 ) -> Result<(), ObsidianStoreError> {
     crate::obsidian::fs_atomic::write_text_atomic(path, content).map_err(|source| {
         ObsidianStoreError::AddWriteIndexFile {
             source,
             project: project.to_string(),
-            created_section: created_section.map(str::to_string),
+            created_section: created_section.cloned(),
         }
     })
 }
