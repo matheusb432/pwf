@@ -1,13 +1,10 @@
 //! Plans and host-validates a task session before dispatch.
 
-use std::{
-    error::Error,
-    path::{Path, PathBuf},
-};
+use std::{error::Error, path::PathBuf};
 
 use askama::Template;
 use pwf_models::{
-    project::{ProjectId, ProjectSourceValue},
+    project::{HomeDirectory, ProjectId, ProjectSourceValue},
     session::{
         AgentModel, LaunchPrompt, PushedPrompt, SessionThreadTitle, SessionWorkingDirectory,
     },
@@ -16,8 +13,8 @@ use pwf_models::{
 use pwf_wire::task::{
     TaskView,
     session::{
-        AgentLaunch, DispatchConfirmation, DispatchTarget, DryRunSession, ModelTierLookup,
-        PlannedSession, PreparedSessionDispatch, SessionPlan,
+        AgentLaunch, DispatchConfirmation, DryRunSession, ModelTierLookup, PlanSession,
+        PlanSessionIntent, PlannedSession, PreparedSessionDispatch, SessionPlan,
     },
 };
 use thiserror::Error;
@@ -34,26 +31,6 @@ use crate::{
     project::runtime_path,
     task::active_task,
 };
-
-/// Requests one provider-neutral session plan.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PlanSession {
-    pub task_id: TaskId,
-    pub intent: PlanSessionIntent,
-    pub pushed_prompt: Option<PushedPrompt>,
-    pub mode: DispatchMode,
-    pub directives: LaunchDirectives,
-    pub agent: Agent,
-    pub model_override: AgentModel,
-    pub effort: SessionEffort,
-}
-
-/// Selects whether a plan is prepared for dispatch or rendered without effects.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PlanSessionIntent {
-    Dispatch,
-    DryRun,
-}
 
 #[derive(Debug, Error)]
 pub enum PlanSessionError {
@@ -73,8 +50,12 @@ pub enum PlanSessionError {
     },
     #[error("Session multiplexer is unavailable; cannot dispatch a pwf session.")]
     MultiplexerNotFound,
-    #[error("Checking multiplexer session '{session}' failed: {message}")]
-    MultiplexerSessionCheck { session: String, message: String },
+    #[error("Checking multiplexer session '{session}' failed: {source}")]
+    MultiplexerSessionCheck {
+        session: String,
+        #[source]
+        source: Box<dyn Error + Send + Sync>,
+    },
     #[error("Multiplexer session '{session}' does not exist")]
     MultiplexerSessionMissing {
         session: String,
@@ -84,13 +65,22 @@ pub enum PlanSessionError {
     ModelTier(#[source] Box<dyn Error + Send + Sync>),
     #[error("Failed to render session title: {0}")]
     RenderThreadTitle(#[source] askama::Error),
-    #[error("Invalid path for project '{project_id}': {reason}")]
+    #[error("Invalid path for project '{project_id}': {source}")]
     InvalidProjectPath {
         project_id: ProjectId,
-        reason: String,
+        #[source]
+        source: SessionProjectPathError,
     },
     #[error("Agent command is empty.")]
     EmptyAgentCommand,
+}
+
+#[derive(Debug, Error)]
+pub enum SessionProjectPathError {
+    #[error(transparent)]
+    Runtime(#[from] runtime_path::RuntimePathError),
+    #[error("resolved path is not valid Unicode")]
+    NonUnicode,
 }
 
 /// Plans one active task without mutating its note or dispatching an agent.
@@ -103,7 +93,7 @@ pub async fn execute(
     command: &PlanSession,
     store: &(impl TaskStore + ProjectNoteStore),
     pool: &sqlx::SqlitePool,
-    home: &PathBuf,
+    home: &HomeDirectory,
     agent_client: &impl AgentClient,
     project_directory: &impl ProjectDirectoryClient,
     session_client: &impl SessionClient,
@@ -132,7 +122,6 @@ pub async fn execute(
             .map_err(|error| PlanSessionError::ModelTier(Box::new(error)))?,
         ),
     };
-    let target = dispatch_target(&command.task_id);
     let plan = SessionPlan {
         launch: AgentLaunch {
             agent: command.agent,
@@ -158,7 +147,6 @@ pub async fn execute(
             effort: command.effort,
         },
         mode: command.mode,
-        target: target.clone(),
     };
     validate_project_path(project_directory, &project_id, &plan.launch.project_path)?;
     validate_multiplexer(command, &plan, session_client)?;
@@ -172,7 +160,6 @@ pub async fn execute(
         has_pushed_prompt: command.pushed_prompt.is_some(),
         model,
         effort: command.effort,
-        target,
     };
 
     match command.intent {
@@ -201,13 +188,14 @@ fn preview_dispatch_argv(
             Ok(provider_argv)
         }
         DispatchMode::Multiplexer => {
-            let session_name = plan.target.session_name();
+            let target = plan.target();
+            let session_name = target.session_name();
             let agent_command = AgentCommand::try_new(&provider_argv)
                 .map_err(|_| PlanSessionError::EmptyAgentCommand)?;
             Ok(session_client.preview_window(&SessionWindow {
                 session_name: &session_name,
                 working_directory: &plan.launch.project_path,
-                window_name: plan.target.task_id.as_ref(),
+                window_name: target.task_id().as_ref(),
                 agent_command,
             }))
         }
@@ -229,18 +217,18 @@ fn load_task_content(
 fn resolve_project_path(
     source_value: &ProjectSourceValue,
     project_id: &ProjectId,
-    home: &Path,
+    home: &HomeDirectory,
 ) -> Result<SessionWorkingDirectory, PlanSessionError> {
-    let resolved = runtime_path::resolve(source_value.as_ref(), home).map_err(|error| {
+    let resolved = runtime_path::resolve(source_value.as_ref(), home).map_err(|source| {
         PlanSessionError::InvalidProjectPath {
             project_id: project_id.clone(),
-            reason: error.to_string(),
+            source: source.into(),
         }
     })?;
     let path = resolved.path().to_str().map(str::to_owned).ok_or_else(|| {
         PlanSessionError::InvalidProjectPath {
             project_id: project_id.clone(),
-            reason: "resolved path is not valid Unicode".to_string(),
+            source: SessionProjectPathError::NonUnicode,
         }
     })?;
     Ok(SessionWorkingDirectory::new(path))
@@ -273,12 +261,12 @@ fn validate_multiplexer(
     if !session_client.available() {
         return Err(PlanSessionError::MultiplexerNotFound);
     }
-    let session_name = plan.target.session_name();
+    let session_name = plan.target().session_name();
     let session_exists = session_client
         .session_exists(&session_name)
-        .map_err(|message| PlanSessionError::MultiplexerSessionCheck {
+        .map_err(|source| PlanSessionError::MultiplexerSessionCheck {
             session: session_name.clone(),
-            message,
+            source: Box::new(source),
         })?;
     if session_exists {
         return Ok(());
@@ -441,12 +429,6 @@ fn launch_prompt(
     prompt
 }
 
-fn dispatch_target(task_id: &TaskId) -> DispatchTarget {
-    DispatchTarget {
-        task_id: task_id.clone(),
-    }
-}
-
 #[derive(Debug, Error)]
 enum ModelSelectionError {
     #[error("{0}")]
@@ -486,16 +468,17 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
     #[cfg(unix)]
-    use std::{ffi::OsString, os::unix::ffi::OsStringExt, path::PathBuf};
+    use std::{ffi::OsString, os::unix::ffi::OsStringExt};
 
-    #[cfg(unix)]
-    use pwf_models::project::{ProjectId, ProjectSourceValue};
-    use pwf_models::{session::PushedPrompt, task::TaskId};
+    use pwf_models::{
+        project::{HomeDirectory, ProjectId, ProjectSourceValue},
+        session::PushedPrompt,
+        task::TaskId,
+    };
 
-    #[cfg(unix)]
-    use super::{PlanSessionError, resolve_project_path};
-    use super::{dispatch_target, launch_prompt};
+    use super::{launch_prompt, resolve_project_path};
     use crate::task::session::LaunchDirectives;
 
     #[test]
@@ -551,27 +534,39 @@ mod tests {
         );
     }
 
-    #[test]
-    fn target_preserves_the_typed_task_id() {
-        let task_id = "cfg9".parse::<TaskId>().unwrap();
-        let target = dispatch_target(&task_id);
-
-        assert_eq!(target.task_id, task_id);
-    }
-
     #[cfg(unix)]
     #[test]
     fn non_unicode_runtime_project_path_is_rejected_before_session_planning() {
-        let home = PathBuf::from(OsString::from_vec(vec![
+        let home = HomeDirectory::new(PathBuf::from(OsString::from_vec(vec![
             b'/', b'h', b'o', b'm', b'e', b'/', 0xff,
-        ]));
+        ])));
         let source = ProjectSourceValue::try_new("~").unwrap();
         let project_id = ProjectId::try_new("PWF").unwrap();
 
         let error = resolve_project_path(&source, &project_id, &home).unwrap_err();
 
-        assert!(matches!(error, PlanSessionError::InvalidProjectPath { .. }));
+        assert!(matches!(
+            error,
+            super::PlanSessionError::InvalidProjectPath { .. }
+        ));
         assert!(error.to_string().contains("not valid Unicode"));
+    }
+
+    #[test]
+    fn invalid_runtime_project_path_retains_the_resolution_error() {
+        let home = HomeDirectory::new(PathBuf::from("/home/dev"));
+        let source = ProjectSourceValue::try_new("~/../pwf").unwrap();
+        let project_id = ProjectId::try_new("PWF").unwrap();
+
+        let error = resolve_project_path(&source, &project_id, &home).unwrap_err();
+
+        assert!(matches!(
+            error,
+            super::PlanSessionError::InvalidProjectPath {
+                source: super::SessionProjectPathError::Runtime(_),
+                ..
+            }
+        ));
     }
 }
 

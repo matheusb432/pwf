@@ -13,7 +13,7 @@ use super::{agent_name, paint};
 pub(in crate::task) fn render_dispatch(outcome: &DispatchedSession, on: bool) -> String {
     let (target, agent, project_path) = match outcome {
         DispatchedSession::Inline { task_id } => {
-            return format!("# session {task_id} — ran inline\n");
+            return format!("# session {task_id}: ran inline\n");
         }
         DispatchedSession::WindowOpened {
             target,
@@ -22,13 +22,13 @@ pub(in crate::task) fn render_dispatch(outcome: &DispatchedSession, on: bool) ->
         } => (target, *agent, project_path),
     };
     let session = target.session_name();
-    let window = &target.task_id;
+    let window = target.task_id();
     let line = paint(
         &format!("session: {session}  ·  window: {window}"),
         AnsiColor::Green,
         on,
     );
-    let mut out = format!("# session {window} — dispatched\n{line}\n");
+    let mut out = format!("# session {window}: dispatched\n{line}\n");
     let _ = write!(
         out,
         "agent: {} · cwd: {project_path}\n\
@@ -40,7 +40,7 @@ inside tmux: tmux switch-client -t ={session}\n",
 }
 
 pub(in crate::task) fn render_session_aborted(task_id: &TaskId) -> String {
-    format!("# session {task_id} — aborted\nnothing dispatched.\n")
+    format!("# session {task_id}: aborted\nnothing dispatched.\n")
 }
 
 pub(in crate::task) fn render_dry_run(plan: &SessionPlan, argv: &[String]) -> String {
@@ -51,11 +51,8 @@ pub(in crate::task) fn render_dry_run(plan: &SessionPlan, argv: &[String]) -> St
     let target = match plan.mode {
         DispatchMode::Inline => "inline".to_string(),
         DispatchMode::Multiplexer => {
-            format!(
-                "tmux: {} / {}",
-                plan.target.session_name(),
-                plan.target.task_id
-            )
+            let target = plan.target();
+            format!("tmux: {} / {}", target.session_name(), target.task_id())
         }
     };
     format!(
@@ -91,9 +88,7 @@ mod tests {
     use super::*;
 
     fn target() -> DispatchTarget {
-        DispatchTarget {
-            task_id: TaskId::try_new("CFG-0009").unwrap(),
-        }
+        DispatchTarget::new(TaskId::try_new("AUX-0009").unwrap())
     }
 
     #[test]
@@ -104,10 +99,10 @@ mod tests {
             project_path: SessionWorkingDirectory::new("/project".to_string()),
         };
         let out = render_dispatch(&outcome, false);
-        assert!(out.starts_with("# session CFG-0009 — dispatched"));
-        assert!(out.contains("**session: cfg  ·  window: CFG-0009**"));
-        assert!(out.contains("outside tmux: tmux attach-session -t =cfg"));
-        assert!(out.contains("inside tmux: tmux switch-client -t =cfg"));
+        assert!(out.starts_with("# session AUX-0009: dispatched"));
+        assert!(out.contains("**session: aux  ·  window: AUX-0009**"));
+        assert!(out.contains("outside tmux: tmux attach-session -t =aux"));
+        assert!(out.contains("inside tmux: tmux switch-client -t =aux"));
         assert!(!out.contains('\u{1b}'));
     }
 
@@ -115,7 +110,7 @@ mod tests {
     fn aborted_and_inline_results_preserve_their_compact_text() {
         assert_eq!(
             render_session_aborted(&TaskId::try_new("PWF-0001").unwrap()),
-            "# session PWF-0001 — aborted\nnothing dispatched.\n"
+            "# session PWF-0001: aborted\nnothing dispatched.\n"
         );
         assert_eq!(
             render_dispatch(
@@ -124,7 +119,7 @@ mod tests {
                 },
                 false
             ),
-            "# session PWF-0001 — ran inline\n"
+            "# session PWF-0001: ran inline\n"
         );
     }
 
@@ -141,7 +136,6 @@ mod tests {
                 effort: SessionEffort::High,
             },
             mode: DispatchMode::Inline,
-            target: target(),
         };
 
         let out = render_dry_run(

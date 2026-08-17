@@ -226,26 +226,26 @@ mod tests {
 
     #[test]
     fn parses_project_index_identity_into_domain_types() {
-        let path = Path::new("/vault/rust-learn/index.md");
-        let markdown = "---\nid: rst\ntitle: rust-learn\n---\n\n# Tasks\n";
+        let path = Path::new("/vault/sample-project/index.md");
+        let markdown = "---\nid: smp\ntitle: sample-project\n---\n\n# Tasks\n";
 
         let identity = parse_project_index_identity(path, markdown).unwrap();
 
-        assert_eq!(identity.id().as_ref(), "RST");
-        assert_eq!(project_index_frontmatter_id(&identity), "rst");
-        assert_eq!(identity.title().as_ref(), "rust-learn");
+        assert_eq!(identity.id().as_ref(), "SMP");
+        assert_eq!(project_index_frontmatter_id(&identity), "smp");
+        assert_eq!(identity.title().as_ref(), "sample-project");
     }
 
     #[test]
     fn rejects_project_index_identity_that_disagrees_with_supplied_identity() {
-        let path = Path::new("/vault/rust-learn/index.md");
+        let path = Path::new("/vault/sample-project/index.md");
         let actual = ProjectIndexIdentity::new(
             ProjectId::try_new("pwf").unwrap(),
             ProjectName::try_new("pwf").unwrap(),
         );
         let expected = ProjectIndexIdentity::new(
-            ProjectId::try_new("rst").unwrap(),
-            ProjectName::try_new("rust-learn").unwrap(),
+            ProjectId::try_new("smp").unwrap(),
+            ProjectName::try_new("sample-project").unwrap(),
         );
 
         let error = validate_project_index_identity(path, &actual, &expected).unwrap_err();

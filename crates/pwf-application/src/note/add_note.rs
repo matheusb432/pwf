@@ -1,44 +1,18 @@
 //! Adds one note to a managed project.
 
-use pwf_models::{
-    AppDate,
-    note::{
-        NoteContent, NoteDomain, NoteId, NoteSource, NoteTag, NoteTitle, NoteVerification, NoteWhy,
-    },
-    project::{ProjectName, ProjectSelector},
+use pwf_models::{note::NoteId, project::ProjectName};
+use pwf_wire::{
+    note::{AddNote, AddedNote},
+    project::{ProjectStatusFilter, ResolveProject},
 };
-use pwf_wire::{note::AddedNote, project::ProjectStatusFilter};
 
 use crate::{
     ports::{
         clock::Clock,
         project_note::{NewProjectNote, ProjectNoteStore},
     },
-    project::resolve_project::{self, ResolveProject, ResolveProjectError},
+    project::resolve_project::{self, ResolveProjectError},
 };
-
-/// Requests creation of one project note.
-#[derive(Debug, Clone)]
-pub struct AddNote {
-    /// Project's name or id
-    pub project_selector: ProjectSelector,
-    /// Names the note.
-    pub title: NoteTitle,
-    /// Supplies the note's Markdown body.
-    pub content: NoteContent,
-    /// Explains the consequence when it adds useful context.
-    pub why: Option<NoteWhy>,
-    /// Classifies the subject when known.
-    pub domain: Option<NoteDomain>,
-    /// Supplies discovery labels.
-    pub tags: Vec<NoteTag>,
-    /// Records supporting evidence.
-    pub sources: Vec<NoteSource>,
-    /// Records the supplied verification marker.
-    pub verified: Option<NoteVerification>,
-    /// Overrides the clock date when present.
-    pub date: Option<AppDate>,
-}
 
 #[derive(Debug, thiserror::Error)]
 pub enum AddNoteError {
@@ -123,7 +97,10 @@ mod tests {
     };
 
     use super::{AddNote, AddNoteError};
-    use crate::testing::{FixedClock, InMemoryStore, insert_project};
+    use crate::{
+        note::add_note,
+        testing::{FixedClock, InMemoryStore, insert_project},
+    };
 
     #[derive(Debug, thiserror::Error)]
     #[error("sentinel store failure")]
@@ -159,7 +136,7 @@ mod tests {
                 vec![note(2, "two"), note(9, "nine"), note(4, "four")],
             );
 
-            let added = super::execute(command(project_selector), &store, &pool, &FixedClock)
+            let added = add_note::execute(command(project_selector), &store, &pool, &FixedClock)
                 .await
                 .unwrap();
 
@@ -177,7 +154,7 @@ mod tests {
         insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
         let store = InMemoryStore::default();
 
-        super::execute(command("pwf"), &store, &pool, &FixedClock)
+        add_note::execute(command("pwf"), &store, &pool, &FixedClock)
             .await
             .unwrap();
 
@@ -194,7 +171,7 @@ mod tests {
         let mut command = command("pwf");
         command.date = None;
 
-        super::execute(command, &store, &pool, &FixedClock)
+        add_note::execute(command, &store, &pool, &FixedClock)
             .await
             .unwrap();
 
@@ -209,7 +186,7 @@ mod tests {
         insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
         let store = InMemoryStore::default().with_project_notes("pwf", vec![note(9_999, "last")]);
 
-        let error = super::execute(command("pwf"), &store, &pool, &FixedClock)
+        let error = add_note::execute(command("pwf"), &store, &pool, &FixedClock)
             .await
             .unwrap_err();
 

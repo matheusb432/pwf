@@ -1,18 +1,9 @@
 use std::error::Error;
 
 use pwf_models::project::ProjectId;
-use pwf_wire::project::ProjectStatusFilter;
+use pwf_wire::project::GetProject;
 
 use super::{Project, ProjectRow};
-
-/// Requests one managed project by project ID.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GetProject {
-    /// Project ID.
-    pub id: ProjectId,
-    /// Project statuses eligible for the lookup.
-    pub status: ProjectStatusFilter,
-}
 
 #[derive(Debug, thiserror::Error)]
 pub enum GetProjectError {
@@ -79,15 +70,17 @@ fn unexpected(
 
 #[cfg(test)]
 mod tests {
+    use pwf_wire::project::ProjectStatusFilter;
+
     use super::*;
-    use crate::testing::insert_project;
+    use crate::{project::get_project, testing::insert_project};
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn status_filter_controls_paused_project_visibility(pool: sqlx::SqlitePool) {
         insert_project(&pool, "PWF", "pwf", "/work/pwf", "/tasks/pwf", true).await;
         let id = ProjectId::try_new("PWF").unwrap();
 
-        let active = super::execute(
+        let active = get_project::execute(
             GetProject {
                 id: id.clone(),
                 status: ProjectStatusFilter::ActiveOnly,
@@ -95,7 +88,7 @@ mod tests {
             &pool,
         )
         .await;
-        let all = super::execute(
+        let all = get_project::execute(
             GetProject {
                 id,
                 status: ProjectStatusFilter::IncludingPaused,

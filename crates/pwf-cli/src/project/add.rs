@@ -1,14 +1,17 @@
-use std::{path::PathBuf, str::FromStr};
+use std::str::FromStr;
 
 use clap::{Args, ValueEnum};
-use pwf_application::project::add_project::{self, AddProject};
-use pwf_models::project::{ProjectSource, ProjectSourceKind, ProjectTasks, ProjectTasksKind};
-use pwf_wire::project::ProjectFields;
+use pwf_application::project::add_project::{self, AddProjectError};
+use pwf_models::project::{
+    HomeDirectory, ProjectSource, ProjectSourceKind, ProjectTasks, ProjectTasksKind,
+};
+use pwf_wire::project::{AddProject, AddProjectApiError, ProjectFields};
 use serde::Deserialize;
 use sqlx::SqlitePool;
 
 use super::{
-    output, parse_project_id, parse_project_source, parse_project_tasks, parse_project_title,
+    map_task_location_error, output, parse_project_id, parse_project_source, parse_project_tasks,
+    parse_project_title,
 };
 
 #[derive(Args, Debug)]
@@ -53,21 +56,37 @@ impl FromStr for DirectoryPayload {
 pub(super) async fn run(
     arguments: Arguments,
     pool: &SqlitePool,
-    home: PathBuf,
-) -> Result<String, String> {
+    home: Option<HomeDirectory>,
+) -> Result<String, AddProjectApiError> {
+    let home = home.ok_or(AddProjectApiError::HomeDirectoryUnavailable)?;
     match arguments.kind {
         SourceKind::Directory => {
             let project = add_project::execute(
                 AddProject {
                     fields: arguments.payload.0,
-                    home,
                 },
                 pool,
+                &home,
             )
             .await
-            .map_err(|error| format!("project add failed: {error}"))?;
-            output::project(project)
+            .map_err(map_error)?;
+            output::project(project).map_err(|error| AddProjectApiError::RenderJson {
+                message: error.to_string(),
+            })
         }
+    }
+}
+
+fn map_error(error: AddProjectError) -> AddProjectApiError {
+    match error {
+        AddProjectError::DuplicateProjectId { id } => AddProjectApiError::DuplicateProjectId { id },
+        AddProjectError::DuplicateProjectTitle { title } => {
+            AddProjectApiError::DuplicateProjectTitle { title }
+        }
+        AddProjectError::TaskLocation(error) => map_task_location_error(error).into(),
+        AddProjectError::Unexpected { context, source } => AddProjectApiError::Unexpected {
+            message: format!("{context}: {source}"),
+        },
     }
 }
 

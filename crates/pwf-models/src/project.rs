@@ -1,10 +1,30 @@
-use std::{fmt, str::FromStr};
+use std::{
+    fmt,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
 use nutype::nutype;
 use thiserror::Error;
 
 /// Maximum Unicode scalar count accepted for one managed-project name.
 pub const PROJECT_NAME_CHARACTER_LIMIT: usize = 200;
+
+/// Identifies the host home directory used to resolve managed-project paths.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HomeDirectory(PathBuf);
+
+impl HomeDirectory {
+    #[must_use]
+    pub fn new(path: PathBuf) -> Self {
+        Self(path)
+    }
+
+    #[must_use]
+    pub fn as_path(&self) -> &Path {
+        &self.0
+    }
+}
 
 /// Reports why a managed-project name is invalid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
@@ -312,8 +332,8 @@ mod tests {
 
     #[test]
     fn project_selector_retains_names_and_exposes_id_candidates() {
-        let name = " config-handler ".parse::<ProjectSelector>().unwrap();
-        assert_eq!(name.as_ref(), "config-handler");
+        let name = " companion-project ".parse::<ProjectSelector>().unwrap();
+        assert_eq!(name.as_ref(), "companion-project");
         assert_eq!(name.project_id(), None);
 
         let id = " pwf ".parse::<ProjectSelector>().unwrap();

@@ -1,25 +1,31 @@
-use std::path::PathBuf;
-
 use clap::Args;
 use pwf_application::task::session::{
-    PlanSessionIntent,
-    dispatch_session::{self, DispatchSession},
-    plan_session::{self, PlanSession},
+    dispatch_session::{self, DispatchSessionError},
+    plan_session::{self, PlanSessionError},
 };
 use pwf_infra::{
     obsidian::ObsidianStore,
     session::{AgentHarness, InlineHarness, LocalProjectDirectoryClient, TmuxHarness, render_argv},
 };
-use pwf_models::session::{Agent, DispatchMode, LaunchDirectives, PushedPrompt, SessionEffort};
-use pwf_wire::task::session::{AgentProbe, PlannedSession};
+use pwf_models::{
+    project::HomeDirectory,
+    session::{Agent, DispatchMode, LaunchDirectives, PushedPrompt, SessionEffort},
+};
+use pwf_wire::task::session::{
+    AgentProbe, DispatchSession, DispatchSessionApiError, PlanSession, PlanSessionApiError,
+    PlanSessionIntent, PlannedSession,
+};
 
 use super::{
-    AgentChoice, Identifier, TaskError,
+    AgentChoice, Identifier,
     render::{
         render_dispatch, render_dry_run, render_session_aborted, render_session_confirmation,
     },
 };
-use crate::{confirm::Confirmation, console::Console};
+use crate::{
+    confirmation::{ConfirmationAnswer, ConfirmationMode, prompt_error},
+    console::Console,
+};
 
 #[derive(Args, Debug)]
 pub struct Arguments {
@@ -53,15 +59,9 @@ pub struct Arguments {
 
 #[derive(Args, Debug)]
 struct ConfirmationArguments {
-    /// Skip the [Y/n] dispatch confirmation
+    /// Skip the dispatch confirmation (assume yes)
     #[arg(long = "yes", short = 'y')]
     assume_yes: bool,
-}
-
-impl ConfirmationArguments {
-    fn is_required(&self) -> bool {
-        !self.assume_yes
-    }
 }
 
 #[derive(Args, Debug)]
@@ -148,12 +148,20 @@ pub(super) async fn run(
     console: Console,
     store: &ObsidianStore,
     pool: &sqlx::SqlitePool,
-    home: &PathBuf,
-) -> Result<String, TaskError> {
+    home: &HomeDirectory,
+) -> anyhow::Result<String> {
     let agent = Agent::from(arguments.agent);
+    let task_id = arguments
+        .identifier
+        .required(PlanSessionApiError::MissingId)?;
+    let confirmation_mode = if arguments.execution.dry_run {
+        ConfirmationMode::AssumeYes
+    } else {
+        console.confirmation_mode(arguments.confirmation.assume_yes)?
+    };
 
     let request = PlanSession {
-        task_id: arguments.identifier.required("session")?,
+        task_id,
         intent: arguments.execution.intent(),
         pushed_prompt: arguments.pushed_prompt.clone(),
         mode: arguments.execution.mode(),
@@ -182,13 +190,13 @@ pub(super) async fn run(
     };
     render_probe(&planned.probe);
 
-    if arguments.confirmation.is_required()
-        && matches!(
-            console.confirm(&render_session_confirmation(&planned.confirmation)),
-            Confirmation::Declined
-        )
-    {
-        return Ok(render_session_aborted(&planned.confirmation.task_id));
+    if confirmation_mode == ConfirmationMode::Prompt {
+        let answer = console
+            .confirm(&render_session_confirmation(&planned.confirmation))
+            .map_err(|source| prompt_error("session dispatch", source))?;
+        if answer == ConfirmationAnswer::Declined {
+            return Ok(render_session_aborted(&planned.confirmation.task_id));
+        }
     }
 
     if planned.plan.mode == DispatchMode::Inline {
@@ -202,7 +210,8 @@ pub(super) async fn run(
         &AgentHarness,
         &InlineHarness,
         &TmuxHarness,
-    )?;
+    )
+    .map_err(map_dispatch_error)?;
     Ok(render_dispatch(
         &outcome,
         console.color_with(match arguments.color {
@@ -213,16 +222,55 @@ pub(super) async fn run(
     ))
 }
 
-fn map_plan_error(error: plan_session::PlanSessionError) -> TaskError {
+fn map_plan_error(error: PlanSessionError) -> PlanSessionApiError {
     match error {
-        plan_session::PlanSessionError::MultiplexerSessionMissing {
+        PlanSessionError::NotLaunchable { id, launch } => {
+            PlanSessionApiError::NotLaunchable { id, launch }
+        }
+        PlanSessionError::ProjectPathMissing { project_id, path } => {
+            PlanSessionApiError::ProjectPathMissing { project_id, path }
+        }
+        PlanSessionError::MultiplexerNotFound => PlanSessionApiError::MultiplexerNotFound,
+        PlanSessionError::MultiplexerSessionMissing {
             session,
             start_command_argv,
-        } => TaskError::TmuxSessionMissing {
+        } => PlanSessionApiError::MultiplexerSessionMissing {
             session,
             start_command: render_argv(&start_command_argv),
         },
-        error => TaskError::SessionPlan(error),
+        PlanSessionError::EmptyAgentCommand => PlanSessionApiError::EmptyAgentCommand,
+        error => PlanSessionApiError::Unexpected {
+            message: error.to_string(),
+        },
+    }
+}
+
+fn map_dispatch_error(error: DispatchSessionError) -> DispatchSessionApiError {
+    match error {
+        DispatchSessionError::InlineFailed { source } => DispatchSessionApiError::InlineFailed {
+            reason: source.to_string(),
+        },
+        DispatchSessionError::WindowOpen {
+            session,
+            window,
+            source,
+        } => DispatchSessionApiError::WindowOpen {
+            session,
+            window,
+            reason: source.to_string(),
+        },
+        DispatchSessionError::AgentPreparation { source } => {
+            DispatchSessionApiError::AgentPreparation {
+                message: source.to_string(),
+            }
+        }
+        DispatchSessionError::NamedThreadBackend { thread_id, source } => {
+            DispatchSessionApiError::NamedThreadBackend {
+                thread_id,
+                reason: source.to_string(),
+            }
+        }
+        DispatchSessionError::EmptyAgentCommand => DispatchSessionApiError::EmptyAgentCommand,
     }
 }
 

@@ -1,26 +1,18 @@
 //! Updates one note title in a managed project.
 
 use pwf_models::{
-    note::{NoteSelector, NoteTitle},
-    project::{ProjectId, ProjectName, ProjectSelector},
+    note::NoteSelector,
+    project::{ProjectId, ProjectName},
 };
-use pwf_wire::{note::UpdatedNote, project::ProjectStatusFilter};
+use pwf_wire::{
+    note::{UpdateNote, UpdatedNote},
+    project::{ProjectStatusFilter, ResolveProject},
+};
 
 use crate::{
     ports::project_note::{ProjectNotePatch, ProjectNoteStore},
-    project::resolve_project::{self, ResolveProject, ResolveProjectError},
+    project::resolve_project::{self, ResolveProjectError},
 };
-
-/// Requests replacement of one project note's title.
-#[derive(Debug, Clone)]
-pub struct UpdateNote {
-    /// Selects the managed project by name or id code.
-    pub project_selector: ProjectSelector,
-    /// Selects the note by full id, `NOTE-NNNN`, or bare numeric suffix.
-    pub selector: NoteSelector,
-    /// Supplies the replacement title.
-    pub title: NoteTitle,
-}
 
 #[derive(Debug, thiserror::Error)]
 pub enum UpdateNoteError {
@@ -101,7 +93,10 @@ mod tests {
     use pwf_models::note::{NoteId, NoteTitle, ProjectNote};
 
     use super::{UpdateNote, UpdateNoteError};
-    use crate::testing::{InMemoryStore, insert_project};
+    use crate::{
+        note::update_note,
+        testing::{InMemoryStore, insert_project},
+    };
 
     #[derive(Debug, thiserror::Error)]
     #[error("sentinel store failure")]
@@ -127,7 +122,7 @@ mod tests {
         ] {
             let store = InMemoryStore::default().with_project_notes("pwf", vec![note()]);
 
-            let updated = super::execute(
+            let updated = update_note::execute(
                 UpdateNote {
                     project_selector: "pwf".parse().unwrap(),
                     selector: identifier.parse().unwrap(),
@@ -151,7 +146,7 @@ mod tests {
         insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
         let store = InMemoryStore::default();
 
-        let error = super::execute(
+        let error = update_note::execute(
             UpdateNote {
                 project_selector: "pwf".parse().unwrap(),
                 selector: "note-0007".parse().unwrap(),

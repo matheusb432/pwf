@@ -1,15 +1,13 @@
 use clap::Args;
 use pwf_application::{
     ports::clock::Clock,
-    task::{
-        CloseTaskError,
-        complete_task::{self, CompleteTask, CompleteTaskError},
-    },
+    task::complete_task::{self, CompleteTaskError},
 };
 use pwf_infra::obsidian::ObsidianStore;
 use pwf_models::task::{CommitRanges, TaskReport};
+use pwf_wire::task::{CloseTaskApiError, CompleteTask, CompleteTaskApiError};
 
-use super::Identifier;
+use super::{Identifier, map_close_task_error, map_resolve_task_project_error};
 
 #[derive(Args, Debug)]
 pub struct Arguments {
@@ -21,16 +19,13 @@ pub struct Arguments {
     /// Commit range(s) to record as provenance (repeat or comma-separate).
     #[arg(long)]
     pub(crate) commits: Vec<String>,
-    /// Also spawn a `## Human` review task with prepped git-tools diff commands.
+    /// Also spawn a `## Human` review task with prepped Git diff commands.
     #[arg(long)]
     pub(crate) review: bool,
 }
 
-use super::{
-    TaskError,
-    render::{
-        emit_close_diagnostics, emit_created_section, emit_created_section_for_error, render_closed,
-    },
+use super::render::{
+    emit_close_diagnostics, emit_created_section, emit_created_section_for_error, render_closed,
 };
 
 pub(super) async fn run(
@@ -38,8 +33,10 @@ pub(super) async fn run(
     store: &ObsidianStore,
     pool: &sqlx::SqlitePool,
     clock: &impl Clock,
-) -> Result<String, TaskError> {
-    let id = arguments.identifier.required("done")?;
+) -> Result<String, CompleteTaskApiError> {
+    let id = arguments
+        .identifier
+        .required(CompleteTaskApiError::MissingId)?;
     let output = complete_task::execute(
         &CompleteTask {
             id,
@@ -47,7 +44,10 @@ pub(super) async fn run(
                 .report
                 .as_deref()
                 .map(str::parse::<TaskReport>)
-                .transpose()?,
+                .transpose()
+                .map_err(|error| CompleteTaskApiError::InvalidReport {
+                    message: error.to_string(),
+                })?,
             commits: CommitRanges::from_inputs(&arguments.commits),
             review: arguments.review,
         },
@@ -56,8 +56,9 @@ pub(super) async fn run(
         clock,
     )
     .await
+    .map_err(map_error)
     .inspect_err(|error| {
-        if let CompleteTaskError::Close(CloseTaskError::ReviewTask(source)) = error {
+        if let CompleteTaskApiError::Close(CloseTaskApiError::ReviewTask(source)) = error {
             emit_created_section_for_error(source);
         }
     })?;
@@ -66,4 +67,11 @@ pub(super) async fn run(
     }
     emit_close_diagnostics(&output);
     Ok(render_closed(&output))
+}
+
+fn map_error(error: CompleteTaskError) -> CompleteTaskApiError {
+    CompleteTaskApiError::Close(match error {
+        CompleteTaskError::ResolveProject(error) => map_resolve_task_project_error(error).into(),
+        CompleteTaskError::Close(error) => map_close_task_error(error),
+    })
 }

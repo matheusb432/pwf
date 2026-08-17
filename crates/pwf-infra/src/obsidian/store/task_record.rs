@@ -1,4 +1,4 @@
-use std::{fmt::Write as _, path::Path};
+use std::{fmt::Write as _, num::NonZeroUsize, path::Path};
 
 use lazy_regex::{Regex, regex};
 use pwf_application::ports::task_record::{
@@ -10,7 +10,7 @@ use pwf_models::{
     project::Project,
     task::{TaskId, TaskSection, TaskStatus},
 };
-use pwf_wire::task::RawTaskTags;
+use pwf_wire::task::{RawTaskTags, TaskIndexPath, TaskNotePath};
 
 use super::{
     ObsidianStore, ObsidianStoreError,
@@ -42,8 +42,15 @@ fn note_to_record(
     let frontmatter = &parsed.frontmatter;
     let status = frontmatter
         .get("status")
-        .and_then(|status| status.parse().ok())
-        .unwrap_or(TaskStatus::Active);
+        .map_or(Ok(TaskStatus::Active), |value| {
+            value
+                .parse()
+                .map_err(|source| ObsidianStoreError::InvalidTaskStatus {
+                    path: path.to_path_buf(),
+                    value: value.clone(),
+                    source,
+                })
+        })?;
     let title = decoded_title
         .filter(|title| !title.trim().is_empty())
         .map(str::to_string)
@@ -84,7 +91,7 @@ fn note_to_record(
         section: None,
         body: parsed.body,
         source,
-        locator: path_str(path),
+        locator: TaskNotePath::new(path.to_path_buf()),
         placement: None,
         materialization: Materialization::NoteFile,
     })
@@ -115,10 +122,10 @@ fn missing_note_record(
         section,
         body: String::new(),
         source: String::new(),
-        locator: path_str(expected_path),
+        locator: TaskNotePath::new(expected_path.to_path_buf()),
         placement: None,
         materialization: Materialization::MissingNote {
-            expected: expected_path.display().to_string(),
+            expected: TaskNotePath::new(expected_path.to_path_buf()),
         },
     }
 }
@@ -146,6 +153,13 @@ fn index_entry_to_record(index_path: &Path, line: &ParsedIndexLine) -> TaskRecor
     )
 }
 
+fn index_placement(index_path: &Path, line: NonZeroUsize) -> IndexPlacement {
+    IndexPlacement {
+        index_path: TaskIndexPath::new(index_path.to_path_buf()),
+        line,
+    }
+}
+
 impl ObsidianStore {
     fn get_task(
         &self,
@@ -166,10 +180,7 @@ impl ObsidianStore {
             {
                 record.section = line.section;
                 if matches!(line.state, IndexEntryState::Open) {
-                    record.placement = Some(IndexPlacement {
-                        index_path: path_str(&index_path),
-                        line: line.line_number,
-                    });
+                    record.placement = Some(index_placement(&index_path, line.line_number));
                 }
             }
             return Ok(Some(record));
@@ -202,8 +213,6 @@ impl ObsidianStore {
         let Some((index_path, text)) = self.validated_project_index(project)? else {
             return Ok(records);
         };
-        let index_display = path_str(&index_path);
-
         for line in parse_index_lines(&index_path, &text)? {
             if let Some(record) = records.iter_mut().find(|record| record.id == line.id) {
                 if record.title.trim().is_empty() {
@@ -211,20 +220,14 @@ impl ObsidianStore {
                 }
                 record.section.clone_from(&line.section);
                 if matches!(&line.state, IndexEntryState::Open) {
-                    record.placement = Some(IndexPlacement {
-                        index_path: index_display.clone(),
-                        line: line.line_number,
-                    });
+                    record.placement = Some(index_placement(&index_path, line.line_number));
                 }
                 continue;
             }
 
             let mut record = index_entry_to_record(&index_path, &line);
             if matches!(&line.state, IndexEntryState::Open) {
-                record.placement = Some(IndexPlacement {
-                    index_path: index_display.clone(),
-                    line: line.line_number,
-                });
+                record.placement = Some(index_placement(&index_path, line.line_number));
             }
             records.push(record);
         }
@@ -349,7 +352,7 @@ impl ObsidianStore {
                 };
                 let updated = close_index_entry_text(
                     text,
-                    line.line_number,
+                    line.line_number.get(),
                     completed,
                     &path_str(index_path),
                 )?;

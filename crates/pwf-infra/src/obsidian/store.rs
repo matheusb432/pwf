@@ -13,15 +13,16 @@ use std::path::PathBuf;
 
 pub use error::ObsidianStoreError;
 use pwf_application::ports::project_task_location::ProjectTaskLocationClient;
-use pwf_models::project::{Project, ProjectIndexIdentity};
+use pwf_models::project::{HomeDirectory, Project, ProjectIndexIdentity};
+use pwf_wire::task::ProjectTaskPath;
 
 #[derive(Clone)]
 pub struct ObsidianStore {
-    home: PathBuf,
+    home: HomeDirectory,
 }
 
 impl ObsidianStore {
-    pub fn new(home: PathBuf) -> Self {
+    pub fn new(home: HomeDirectory) -> Self {
         Self { home }
     }
 
@@ -48,7 +49,7 @@ impl ObsidianStore {
 impl ProjectTaskLocationClient for ObsidianStore {
     type Error = ObsidianStoreError;
 
-    fn project_task_path(&self, project: &Project) -> Result<PathBuf, Self::Error> {
-        self.tasks_path(project)
+    fn project_task_path(&self, project: &Project) -> Result<ProjectTaskPath, Self::Error> {
+        self.tasks_path(project).map(ProjectTaskPath::new)
     }
 }

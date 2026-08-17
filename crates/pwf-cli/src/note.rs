@@ -5,10 +5,10 @@ use std::{fmt::Write, str::FromStr};
 use clap::{Args, Subcommand};
 use pwf_application::{
     note::{
-        add_note::{self, AddNote},
-        list_notes::{self, ListNotes},
-        remove_note::{self, RemoveNote},
-        update_note::{self, UpdateNote},
+        add_note::{self, AddNoteError},
+        list_notes::{self, ListNotesError},
+        remove_note::{self, RemoveNoteError},
+        update_note::{self, UpdateNoteError},
     },
     ports::clock::Clock,
 };
@@ -21,7 +21,12 @@ use pwf_models::{
     },
     project::ProjectSelector,
 };
-use pwf_wire::note::{AddedNote, ListedNotes, RemovedNote, UpdatedNote};
+use pwf_wire::note::{
+    AddNote, AddNoteApiError, AddedNote, ListNotes, ListNotesApiError, ListedNotes, RemoveNote,
+    RemoveNoteApiError, RemovedNote, UpdateNote, UpdateNoteApiError, UpdatedNote,
+};
+
+use crate::project::map_resolve_project_error;
 
 #[derive(Args, Debug)]
 pub struct Arguments {
@@ -114,15 +119,21 @@ pub(crate) struct PositionalNote {
 }
 
 impl FromStr for PositionalNote {
-    type Err = String;
+    type Err = AddNoteApiError;
 
     fn from_str(raw: &str) -> Result<Self, Self::Err> {
-        let (title, content) = raw.split_once(" / ").ok_or_else(|| {
-            "Positional note must contain ' / ' between its title and content.".to_string()
-        })?;
+        let (title, content) = raw
+            .split_once(" / ")
+            .ok_or(AddNoteApiError::MissingSeparator)?;
         Ok(Self {
-            title: NoteTitle::try_new(title).map_err(|error| error.to_string())?,
-            content: NoteContent::try_new(content).map_err(|error| error.to_string())?,
+            title: NoteTitle::try_new(title).map_err(|error| AddNoteApiError::InvalidTitle {
+                message: error.to_string(),
+            })?,
+            content: NoteContent::try_new(content).map_err(|error| {
+                AddNoteApiError::InvalidContent {
+                    message: error.to_string(),
+                }
+            })?,
         })
     }
 }
@@ -132,8 +143,8 @@ pub async fn run(
     store: &ObsidianStore,
     pool: &sqlx::SqlitePool,
     clock: &impl Clock,
-) -> Result<String, String> {
-    match &arguments.command {
+) -> anyhow::Result<String> {
+    let output = match &arguments.command {
         Command::List { project, number } => list_notes::execute(
             ListNotes {
                 project_selector: project.clone(),
@@ -144,7 +155,7 @@ pub async fn run(
         )
         .await
         .map(|result| render_listed(&result))
-        .map_err(|error| error.to_string()),
+        .map_err(map_list_notes_error)?,
         Command::Add {
             project,
             note,
@@ -160,10 +171,7 @@ pub async fn run(
                 (Some(note), None, None) => (note.title.clone(), note.content.clone()),
                 (None, Some(title), Some(content)) => (title.clone(), content.clone()),
                 _ => {
-                    return Err(
-                        "Provide either '<title> / <content>' or both --title and --content."
-                            .to_string(),
-                    );
+                    return Err(AddNoteApiError::InvalidRequest.into());
                 }
             };
             add_note::execute(
@@ -184,7 +192,7 @@ pub async fn run(
             )
             .await
             .map(|result| render_added(&result))
-            .map_err(|error| error.to_string())
+            .map_err(map_add_note_error)?
         }
         Command::Remove { project, id } => remove_note::execute(
             RemoveNote {
@@ -196,19 +204,83 @@ pub async fn run(
         )
         .await
         .map(|result| render_removed(&result))
-        .map_err(|error| error.to_string()),
+        .map_err(map_remove_note_error)?,
         Command::Update { project, id, title } => update_note::execute(
             UpdateNote {
                 project_selector: project.clone(),
                 selector: id.clone(),
-                title: NoteTitle::try_new(title.join(" ")).map_err(|error| error.to_string())?,
+                title: NoteTitle::try_new(title.join(" ")).map_err(|error| {
+                    UpdateNoteApiError::InvalidTitle {
+                        message: error.to_string(),
+                    }
+                })?,
             },
             store,
             pool,
         )
         .await
         .map(|result| render_updated(&result))
-        .map_err(|error| error.to_string()),
+        .map_err(map_update_note_error)?,
+    };
+    Ok(output)
+}
+
+fn map_add_note_error(error: AddNoteError) -> AddNoteApiError {
+    match error {
+        AddNoteError::ResolveProject(error) => map_resolve_project_error(error).into(),
+        AddNoteError::IdentifierExhausted { project } => {
+            AddNoteApiError::IdentifierExhausted { project }
+        }
+        AddNoteError::Store(source) => AddNoteApiError::Unexpected {
+            message: source.to_string(),
+        },
+    }
+}
+
+fn map_list_notes_error(error: ListNotesError) -> ListNotesApiError {
+    match error {
+        ListNotesError::ResolveProject(error) => map_resolve_project_error(error).into(),
+        ListNotesError::Store(source) => ListNotesApiError::Unexpected {
+            message: source.to_string(),
+        },
+    }
+}
+
+fn map_remove_note_error(error: RemoveNoteError) -> RemoveNoteApiError {
+    match error {
+        RemoveNoteError::ResolveProject(error) => map_resolve_project_error(error).into(),
+        RemoveNoteError::ProjectMismatch {
+            selector,
+            project_id,
+        } => RemoveNoteApiError::ProjectMismatch {
+            selector,
+            project_id,
+        },
+        RemoveNoteError::NoSuchNote { id, project } => {
+            RemoveNoteApiError::NoSuchNote { id, project }
+        }
+        RemoveNoteError::Store(source) => RemoveNoteApiError::Unexpected {
+            message: source.to_string(),
+        },
+    }
+}
+
+fn map_update_note_error(error: UpdateNoteError) -> UpdateNoteApiError {
+    match error {
+        UpdateNoteError::ResolveProject(error) => map_resolve_project_error(error).into(),
+        UpdateNoteError::ProjectMismatch {
+            selector,
+            project_id,
+        } => UpdateNoteApiError::ProjectMismatch {
+            selector,
+            project_id,
+        },
+        UpdateNoteError::NoSuchNote { id, project } => {
+            UpdateNoteApiError::NoSuchNote { id, project }
+        }
+        UpdateNoteError::Store(source) => UpdateNoteApiError::Unexpected {
+            message: source.to_string(),
+        },
     }
 }
 
@@ -248,9 +320,14 @@ mod tests {
         note::{NoteId, NoteTitle},
         project::ProjectName,
     };
-    use pwf_wire::note::{AddedNote, ListedNote, ListedNotes, RemovedNote, UpdatedNote};
+    use pwf_wire::note::{
+        AddNoteApiError, AddedNote, ListedNote, ListedNotes, RemovedNote, UpdatedNote,
+    };
 
-    use super::{PositionalNote, render_added, render_listed, render_removed, render_updated};
+    use super::{
+        AddNoteError, PositionalNote, map_add_note_error, render_added, render_listed,
+        render_removed, render_updated,
+    };
 
     fn identifier(number: u32) -> NoteId {
         NoteId::try_new(format!("PWF-NOTE-{number:04}")).unwrap()
@@ -320,5 +397,19 @@ mod tests {
             "preserve docs/async.md / and later separators"
         );
         assert!("title/content".parse::<PositionalNote>().is_err());
+    }
+
+    #[test]
+    fn application_failures_map_to_the_public_api_contract() {
+        let error = map_add_note_error(AddNoteError::Store(Box::new(std::io::Error::other(
+            "note store unavailable",
+        ))));
+
+        assert_eq!(
+            error,
+            AddNoteApiError::Unexpected {
+                message: "note store unavailable".to_string(),
+            }
+        );
     }
 }

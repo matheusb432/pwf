@@ -1,2 +1,8 @@
+[profile.dev]
+incremental = true
+
+[profile.test]
+incremental = true
+
 [env]
 SQLX_OFFLINE = "true"

@@ -1,34 +1,24 @@
-//! Installs or updates the release binary.
-//!
-//! Unix uses an atomic copy and shell PATH entry. Windows uses the manually certified Scoop path.
-
 use std::{
     env, fs,
     path::{Path, PathBuf},
+    process::Command,
 };
 
 use anyhow::{Context, Result};
 use clap::Args;
 
-use crate::{
-    paths,
-    process::{self, Status},
-    verb::Verb,
-    verbs::check,
-};
+use crate::{paths, process};
 
-/// Flags for the `update` verb.
 #[derive(Args)]
 pub(crate) struct UpdateArgs {
     /// Preview the installed binary change without touching the system.
     #[arg(long, visible_alias = "dry-run")]
-    pub(crate) dry: bool,
+    dry: bool,
     /// Skip the full check preflight (still builds + refreshes the binary).
     #[arg(short = 'f', long)]
-    pub(crate) force: bool,
+    force: bool,
 }
 
-/// Describes an installed binary placement result.
 #[derive(Debug, PartialEq, Eq)]
 enum Placed {
     Installed,
@@ -64,7 +54,6 @@ fn place_binary(source: &Path, destination: &Path) -> Result<Placed> {
     })
 }
 
-/// Returns a PATH export when `dir` is absent from both PATH and shell configuration.
 fn path_export_line(dir: &Path, path_var: &str, rc_contents: &str) -> Option<String> {
     let dir_str = dir.to_string_lossy();
     let on_path = env::split_paths(path_var).any(|e| e == dir);
@@ -85,30 +74,30 @@ fn release_bin() -> PathBuf {
         .join(bin_name())
 }
 
-/// Installs the global pwf binary.
 pub(crate) fn install() -> Result<()> {
     #[cfg(windows)]
     {
-        process::run("scoop install", "scoop", &["install", "pwf.json"])?;
-        process::result(Verb::INSTALL, Status::Done);
-        return Ok(());
+        return process::run(
+            "scoop install",
+            Command::new("scoop").args(["install", "pwf.json"]),
+        );
     }
     #[cfg(unix)]
     {
-        place_unix(false)?;
-        process::result(Verb::INSTALL, Status::Done);
-        Ok(())
+        place_unix(false)
     }
 }
 
-/// Rebuilds and refreshes the installed binary after the format preflight unless forced.
 pub(crate) fn update(args: &UpdateArgs) -> Result<()> {
     if !args.force {
-        check::run()?;
+        process::run("quality check", Command::new("just").arg("check"))?;
     }
     #[cfg(windows)]
     {
-        process::run("cargo build", "cargo", &["build", "--release"])?;
+        process::run(
+            "cargo build",
+            Command::new("cargo").args(["build", "--release"]),
+        )?;
         let dest = dirs_scoop_pwf()?;
         if args.dry {
             eprintln!(
@@ -121,18 +110,14 @@ pub(crate) fn update(args: &UpdateArgs) -> Result<()> {
                 .with_context(|| format!("copying to {}", dest.display()))?;
             eprintln!("refreshed global pwf binary -> {}", dest.display());
         }
-        process::result(Verb::UPDATE, Status::Done);
         return Ok(());
     }
     #[cfg(unix)]
     {
-        place_unix(args.dry)?;
-        process::result(Verb::UPDATE, Status::Done);
-        Ok(())
+        place_unix(args.dry)
     }
 }
 
-/// Builds and installs the Unix binary, then ensures its directory is on PATH.
 #[cfg(unix)]
 fn place_unix(dry: bool) -> Result<()> {
     let source = release_bin();
@@ -145,21 +130,22 @@ fn place_unix(dry: bool) -> Result<()> {
         );
         return Ok(());
     }
-    process::run("cargo build", "cargo", &["build", "--release"])?;
+    process::run(
+        "cargo build",
+        Command::new("cargo").args(["build", "--release"]),
+    )?;
     let placed = place_binary(&source, &destination)?;
     eprintln!("pwf binary {placed:?} -> {}", destination.display());
     wire_path(destination.parent().context("install path has no parent")?)?;
     Ok(())
 }
 
-/// Resolves `~/.local/bin/pwf`.
 #[cfg(unix)]
 fn install_path() -> Result<PathBuf> {
     let home = env::var_os("HOME").context("HOME is not set")?;
     Ok(PathBuf::from(home).join(".local").join("bin").join("pwf"))
 }
 
-/// Appends a PATH export to `~/.zshrc` when needed.
 #[cfg(unix)]
 fn wire_path(dir: &Path) -> Result<()> {
     let path_var = env::var("PATH").unwrap_or_default();

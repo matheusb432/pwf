@@ -1,18 +1,12 @@
 use std::error::Error;
 
 use pwf_models::project::{ProjectName, ProjectSelector};
-use pwf_wire::project::ProjectStatusFilter;
+use pwf_wire::project::{GetProject, ResolveProject};
 
 use super::{
     Project, ProjectRow,
-    get_project::{self, GetProject, GetProjectError},
+    get_project::{self, GetProjectError},
 };
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ResolveProject {
-    pub selector: ProjectSelector,
-    pub status: ProjectStatusFilter,
-}
 
 #[derive(Debug, thiserror::Error)]
 pub enum ResolveProjectError {
@@ -101,7 +95,7 @@ async fn find_by_title(
 }
 
 async fn known_project_names(
-    status: ProjectStatusFilter,
+    status: pwf_wire::project::ProjectStatusFilter,
     pool: &sqlx::SqlitePool,
 ) -> Result<Vec<ProjectName>, ResolveProjectError> {
     let includes_paused = status.includes_paused();
@@ -147,16 +141,17 @@ fn unexpected(
 #[cfg(test)]
 mod tests {
     use pwf_models::project::ProjectId;
+    use pwf_wire::project::ProjectStatusFilter;
 
     use super::*;
-    use crate::testing::insert_project;
+    use crate::{project::resolve_project, testing::insert_project};
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn title_match_precedes_project_id_match(pool: sqlx::SqlitePool) {
         insert_project(&pool, "PWF", "alt", "/work/pwf", "/tasks/pwf", false).await;
         insert_project(&pool, "ALT", "other", "/work/alt", "/tasks/alt", false).await;
 
-        let project = super::execute(
+        let project = resolve_project::execute(
             ResolveProject {
                 selector: "ALT".parse().unwrap(),
                 status: ProjectStatusFilter::ActiveOnly,
@@ -176,7 +171,7 @@ mod tests {
         insert_project(&pool, "PWF", "pwf", "/work/pwf", "/tasks/pwf", true).await;
         insert_project(&pool, "ALT", "other", "/work/alt", "/tasks/alt", false).await;
 
-        let error = super::execute(
+        let error = resolve_project::execute(
             ResolveProject {
                 selector: "pwf".parse().unwrap(),
                 status: ProjectStatusFilter::ActiveOnly,

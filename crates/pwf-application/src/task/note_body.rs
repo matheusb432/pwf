@@ -3,10 +3,9 @@
 use lazy_regex::{Regex, regex};
 use prompt_lanes::{Adapter, MarkdownAdapter, ParsedPrompt, parse};
 use pwf_models::task::TaskPrompt;
+use pwf_wire::task::{TaskLane, TaskLaneEdits, TaskLanes};
 
-use super::{TaskLane, TaskLaneEdits, TaskLanes};
-
-const REPORT_HEADER: &str = "### Report";
+const REPORT_SEPARATOR: &str = "\n\n### Report\n\n";
 const LANE_SECTION_HEADERS: [&str; 4] =
     ["## Goals", "## Context", "## Constraints", "## Done When"];
 
@@ -34,10 +33,10 @@ pub(in crate::task) fn render(prompt: &TaskPrompt) -> String {
 pub(in crate::task) fn render_lanes(lanes: &TaskLanes) -> String {
     MarkdownAdapter.render(&ParsedPrompt {
         title: String::new(),
-        goals: lanes.goals.clone(),
-        context: lanes.context.clone(),
-        constraints: lanes.constraints.clone(),
-        done_when: lanes.done_when.clone(),
+        goals: lanes.goals().to_vec(),
+        context: lanes.context().to_vec(),
+        constraints: lanes.constraints().to_vec(),
+        done_when: lanes.done_when().to_vec(),
     })
 }
 
@@ -151,18 +150,21 @@ pub(in crate::task) fn edit_lanes(
     let mut edited = body.to_string();
 
     for (section, remove) in [
-        (LaneSection::Goals, edits.removals.contains(&TaskLane::Goal)),
+        (
+            LaneSection::Goals,
+            edits.removals().contains(&TaskLane::Goal),
+        ),
         (
             LaneSection::Context,
-            edits.removals.contains(&TaskLane::Context),
+            edits.removals().contains(&TaskLane::Context),
         ),
         (
             LaneSection::Constraints,
-            edits.removals.contains(&TaskLane::Constraint),
+            edits.removals().contains(&TaskLane::Constraint),
         ),
         (
             LaneSection::DoneWhen,
-            edits.removals.contains(&TaskLane::DoneWhen),
+            edits.removals().contains(&TaskLane::DoneWhen),
         ),
     ] {
         if remove {
@@ -171,13 +173,10 @@ pub(in crate::task) fn edit_lanes(
     }
 
     for (section, values) in [
-        (LaneSection::Goals, edits.additions.goals.as_slice()),
-        (LaneSection::Context, edits.additions.context.as_slice()),
-        (
-            LaneSection::Constraints,
-            edits.additions.constraints.as_slice(),
-        ),
-        (LaneSection::DoneWhen, edits.additions.done_when.as_slice()),
+        (LaneSection::Goals, edits.additions().goals()),
+        (LaneSection::Context, edits.additions().context()),
+        (LaneSection::Constraints, edits.additions().constraints()),
+        (LaneSection::DoneWhen, edits.additions().done_when()),
     ] {
         if !values.is_empty() {
             edited = add_lane_values(&edited, section, values);
@@ -346,12 +345,24 @@ fn is_heading_line(line: &str) -> bool {
 #[must_use]
 pub(in crate::task) fn append_report(body: &str, report: &str) -> String {
     let mut out = body.trim_end().to_string();
-    out.push_str("\n\n");
-    out.push_str(REPORT_HEADER);
-    out.push_str("\n\n");
+    out.push_str(REPORT_SEPARATOR);
     out.push_str(report);
     out.push('\n');
     out
+}
+
+/// Removes the last completion report appended by [`append_report`].
+#[must_use]
+pub(in crate::task) fn remove_report(body: &str) -> (String, Option<String>) {
+    body.rsplit_once(REPORT_SEPARATOR).map_or_else(
+        || (body.to_string(), None),
+        |(prompt, report)| {
+            (
+                prompt.trim_end().to_string(),
+                Some(report.trim_end().to_string()),
+            )
+        },
+    )
 }
 
 #[cfg(test)]

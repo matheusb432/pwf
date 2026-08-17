@@ -1,15 +1,17 @@
+use std::num::NonZeroUsize;
+
 use pwf_models::{
     AppDate,
     project::Project,
     task::{BlockedBy, EffortTier, TaskId, TaskSection, TaskStatus, TaskTags, TaskTitle},
 };
-use pwf_wire::task::RawTaskTags;
+use pwf_wire::task::{RawTaskTags, TaskIndexPath, TaskNotePath};
 
 /// Locates a record's open link by index display path and one-based line number.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IndexPlacement {
-    pub index_path: String,
-    pub line: usize,
+    pub index_path: TaskIndexPath,
+    pub line: NonZeroUsize,
 }
 
 /// How the vault materializes a record.
@@ -18,7 +20,7 @@ pub enum Materialization {
     NoteFile,
     /// An index link without a note file; `expected` is the platform-formatted diagnostic path.
     MissingNote {
-        expected: String,
+        expected: TaskNotePath,
     },
 }
 
@@ -42,7 +44,7 @@ pub struct TaskRecord {
     /// Preserves the raw note source byte-for-byte for `pwf task get`.
     pub source: String,
     /// Stores the display path; writes relocate the record by scope and id.
-    pub locator: String,
+    pub locator: TaskNotePath,
     /// Identifies the open index link used to read this record, when present.
     pub placement: Option<IndexPlacement>,
     pub materialization: Materialization,

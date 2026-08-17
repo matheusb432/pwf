@@ -9,7 +9,9 @@ name = "pwf_wire"
 path = "src/lib.rs"
 
 [dependencies]
+prompt-lanes = { workspace = true }
 pwf-models = { workspace = true }
+thiserror = { workspace = true }
 
 [lints]
 workspace = true

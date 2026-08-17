@@ -1,4 +1,4 @@
-use std::{assert_matches, fmt::Write as _, path::Path};
+use std::{assert_matches, fmt::Write as _, num::NonZeroUsize, path::Path};
 
 use pwf_application::ports::task_record::{
     IndexEntry, IndexEntryState, IndexEntryStore, IndexPlacement, IndexSectionStore,
@@ -7,11 +7,12 @@ use pwf_application::ports::task_record::{
 use pwf_models::{
     AppDate,
     project::{
-        Project, ProjectId, ProjectName, ProjectSource, ProjectSourceKind, ProjectSourceValue,
-        ProjectTasks, ProjectTasksKind, ProjectTasksPath,
+        HomeDirectory, Project, ProjectId, ProjectName, ProjectSource, ProjectSourceKind,
+        ProjectSourceValue, ProjectTasks, ProjectTasksKind, ProjectTasksPath,
     },
     task::{EffortTier, Tag, TaskId, TaskSection, TaskStatus, TaskTags, TaskTitle},
 };
+use pwf_wire::task::{TaskIndexPath, TaskNotePath};
 
 use super::{ObsidianStore, ObsidianStoreError, fs::path_str};
 
@@ -43,7 +44,7 @@ fn project(id: &str, title: &str, tasks_path: &Path) -> Project {
 }
 
 fn pwf_project(store: &ObsidianStore) -> Project {
-    project("PWF", "pwf", &store.home)
+    project("PWF", "pwf", store.home.as_path())
 }
 
 #[test]
@@ -65,11 +66,11 @@ fn explicit_task_path_is_the_complete_project_directory() {
         None,
         "body",
     );
-    let store = ObsidianStore::new(tasks_path.clone());
+    let store = ObsidianStore::new(HomeDirectory::new(tasks_path.clone()));
 
     let record = get_record(&store, "PWF-0001").unwrap();
 
-    assert_eq!(record.locator, path_str(&tasks_path.join("PWF-0001.md")));
+    assert_eq!(record.locator.as_path(), tasks_path.join("PWF-0001.md"));
     assert!(!tasks_path.join("pwf").exists());
 }
 
@@ -78,21 +79,21 @@ fn explicit_index_path_uses_the_project_title_inside_tasks_path() {
     let temporary_directory = tempfile::tempdir().unwrap();
     let tasks_path = temporary_directory.path().join("records");
     std::fs::create_dir_all(&tasks_path).unwrap();
-    let index_path = tasks_path.join("rust-learn.md");
+    let index_path = tasks_path.join("sample-project.md");
     std::fs::write(
         &index_path,
-        "---\nid: rst\ntitle: rust-learn\n---\n\n- [ ] [[RST-0001]]\n",
+        "---\nid: smp\ntitle: sample-project\n---\n\n- [ ] [[SMP-0001]]\n",
     )
     .unwrap();
-    let store = ObsidianStore::new(tasks_path.clone());
-    let project_name = project("RST", "rust-learn", &tasks_path);
+    let store = ObsidianStore::new(HomeDirectory::new(tasks_path.clone()));
+    let project_name = project("SMP", "sample-project", &tasks_path);
 
     let records = TaskStore::list(&store, &project_name).unwrap();
 
     assert_eq!(records.len(), 1);
     assert_eq!(
-        records[0].placement.as_ref().unwrap().index_path,
-        path_str(&index_path)
+        records[0].placement.as_ref().unwrap().index_path.as_path(),
+        index_path
     );
 }
 
@@ -112,7 +113,7 @@ fn explicit_projects_support_unrelated_task_parents() {
         )
         .unwrap();
     }
-    let store = ObsidianStore::new(temporary_directory.path().to_path_buf());
+    let store = ObsidianStore::new(HomeDirectory::new(temporary_directory.path().to_path_buf()));
 
     for (title, expected_id) in [("alpha", "AAA-0001"), ("beta", "BBB-0001")] {
         let tasks_path = if title == "alpha" {
@@ -136,7 +137,7 @@ fn explicit_index_validation_uses_the_supplied_identity() {
         "---\nid: old\ntitle: pwf\n---\n\n",
     )
     .unwrap();
-    let store = ObsidianStore::new(tasks_path.clone());
+    let store = ObsidianStore::new(HomeDirectory::new(tasks_path.clone()));
     let project_name = project("NEW", "pwf", &tasks_path);
 
     let error = TaskStore::list(&store, &project_name).unwrap_err();
@@ -265,8 +266,8 @@ fn get_resolves_frontmatter_id_to_descriptive_filename_locator() {
     let record = get_record(&store, "PWF-0001").expect("record must resolve by frontmatter id");
 
     assert_eq!(
-        record.locator,
-        path_str(&project_dir.join("descriptive-name.md"))
+        record.locator.as_path(),
+        project_dir.join("descriptive-name.md")
     );
 }
 
@@ -414,11 +415,11 @@ fn generic_add_writes_tags_and_omits_absent_tags() {
         },
     )
     .unwrap();
-    let note = std::fs::read_to_string(tagged.locator).unwrap();
+    let note = std::fs::read_to_string(tagged.locator.as_path()).unwrap();
     assert!(note.contains("tags: [sqlite, csharp_export]\n"), "{note}");
 
     let untagged = generic_add(&store, new_task("untagged task", "untagged task", None)).unwrap();
-    let note = std::fs::read_to_string(untagged.locator).unwrap();
+    let note = std::fs::read_to_string(untagged.locator.as_path()).unwrap();
     assert!(!note.contains("tags:"), "{note}");
 }
 
@@ -453,7 +454,7 @@ fn generic_insert_rejects_mismatched_project_index_identity() {
     std::fs::create_dir_all(&project_dir).unwrap();
     std::fs::write(
         project_dir.join("pwf.md"),
-        "---\nid: rst\ntitle: rust-learn\n---\n\n# wrong\n",
+        "---\nid: smp\ntitle: sample-project\n---\n\n# wrong\n",
     )
     .unwrap();
     let store = store_with_index_identity(&notes_dir.join("pwf"));
@@ -735,7 +736,7 @@ fn get_returns_open_note_locator_from_active_index() {
 
     let record = get_record(&store, "PWF-0001").expect("active task must resolve");
 
-    assert_eq!(record.locator, path_str(&project_dir.join("PWF-0001.md")));
+    assert_eq!(record.locator.as_path(), project_dir.join("PWF-0001.md"));
 }
 
 #[test]
@@ -798,7 +799,7 @@ fn store_with_index_identity(tasks_path: &Path) -> ObsidianStore {
 }
 
 fn store_for_tasks(tasks_path: &Path) -> ObsidianStore {
-    ObsidianStore::new(tasks_path.to_path_buf())
+    ObsidianStore::new(HomeDirectory::new(tasks_path.to_path_buf()))
 }
 
 struct StagedOpenTask {
@@ -901,7 +902,7 @@ fn task_record_roundtrips_file_model_note() {
         "title: ship the adapter\n",
         "project: pwf\n",
         "created: 2026-07-01\n",
-        "blocked_by: \"[[CFG-0001]]\"\n",
+        "blocked_by: \"[[AUX-0001]]\"\n",
         "effort: medium\n",
         "tags: [sqlite, godot]\n",
         "---\n",
@@ -924,7 +925,7 @@ fn task_record_roundtrips_file_model_note() {
     assert_eq!(record.created, Some(app_date("2026-07-01")));
     assert_eq!(record.completed, None);
     assert_eq!(record.commits, None);
-    assert_eq!(record.blocked_by.as_deref(), Some("\"[[CFG-0001]]\""));
+    assert_eq!(record.blocked_by.as_deref(), Some("\"[[AUX-0001]]\""));
     assert_eq!(record.effort.as_deref(), Some("medium"));
     assert_eq!(
         record.tags.as_ref().map(AsRef::as_ref),
@@ -932,7 +933,7 @@ fn task_record_roundtrips_file_model_note() {
     );
     assert_eq!(record.section, None);
     assert_eq!(record.body, "\nship the adapter body\n");
-    assert_eq!(record.locator, path_str(&note_path));
+    assert_eq!(record.locator.as_path(), note_path);
     assert_eq!(record.source, source);
 }
 
@@ -971,6 +972,35 @@ fn task_record_rejects_an_invalid_created_date() {
 }
 
 #[test]
+fn task_record_rejects_an_invalid_status() {
+    let temp = tempfile::tempdir().unwrap();
+    let notes_dir = temp.path().join("notes");
+    let project_dir = notes_dir.join("pwf");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    std::fs::write(project_dir.join("pwf.md"), "- [ ] [[PWF-0001]]\n").unwrap();
+    let note_path = project_dir.join("PWF-0001.md");
+    std::fs::write(
+        &note_path,
+        "---\nid: PWF-0001\nstatus: paused\ntitle: invalid status\n---\n\nbody\n",
+    )
+    .unwrap();
+    let store = store_with_index_identity(&project_dir);
+    let project = pwf_project(&store);
+
+    let error =
+        TaskStore::get(&store, &project, &TaskId::try_new("PWF-0001").unwrap()).unwrap_err();
+
+    assert_matches!(
+        error,
+        ObsidianStoreError::InvalidTaskStatus {
+            path,
+            ref value,
+            ..
+        } if path == note_path && value == "paused"
+    );
+}
+
+#[test]
 fn task_record_materializes_index_entry_without_a_note() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
@@ -997,13 +1027,13 @@ fn task_record_materializes_index_entry_without_a_note() {
     assert_eq!(record.created, None);
     assert_eq!(record.completed, None);
     assert_eq!(record.section, None);
-    assert_eq!(record.locator, path_str(&expected_note));
+    assert_eq!(record.locator.as_path(), expected_note);
     assert_eq!(record.source, "");
     assert_eq!(record.body, "");
     assert_eq!(
         record.materialization,
         Materialization::MissingNote {
-            expected: expected_note.display().to_string()
+            expected: TaskNotePath::new(expected_note)
         }
     );
 }
@@ -1122,7 +1152,7 @@ fn insert_allocates_next_id_without_index_write() {
     assert_eq!(record.id, TaskId::try_new("PWF-0008").unwrap());
     assert_eq!(record.status, TaskStatus::Active);
     assert!(record.source.contains("id: PWF-0008"));
-    assert_eq!(record.locator, path_str(&project_dir.join("PWF-0008.md")));
+    assert_eq!(record.locator.as_path(), project_dir.join("PWF-0008.md"));
     assert!(project_dir.join("PWF-0008.md").exists());
     assert_eq!(std::fs::read_to_string(&index_path).unwrap(), index_before);
 }
@@ -1176,8 +1206,8 @@ fn generic_list_records_carry_open_placement_without_hiding_unlinked_notes() {
     assert_eq!(
         record.placement,
         Some(IndexPlacement {
-            index_path: path_str(&index_path),
-            line: 7,
+            index_path: TaskIndexPath::new(index_path.clone()),
+            line: NonZeroUsize::new(7).unwrap(),
         })
     );
     assert_eq!(record.section.as_ref().map(AsRef::as_ref), Some("Futuro"));
@@ -1285,8 +1315,8 @@ fn list_tasks_returns_note_history_and_index_only_records() {
     assert_eq!(
         record("PWF-0001").placement,
         Some(IndexPlacement {
-            index_path: path_str(&index_path),
-            line: 6,
+            index_path: TaskIndexPath::new(index_path.clone()),
+            line: NonZeroUsize::new(6).unwrap(),
         })
     );
     assert_eq!(record("PWF-0002").status, TaskStatus::Done);

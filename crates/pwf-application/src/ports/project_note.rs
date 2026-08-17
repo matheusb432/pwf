@@ -6,6 +6,7 @@ use pwf_models::{
     },
     project::Project,
 };
+use pwf_wire::task::TaskNotePath;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewProjectNote {
@@ -44,5 +45,5 @@ pub trait ProjectNoteStore: Clone + Send + Sync + 'static {
     fn delete_note(&self, project: &Project, id: &NoteId) -> Result<(), Self::Error>;
     fn note_exists(&self, project: &Project, id: &NoteId) -> Result<bool, Self::Error>;
 
-    fn read_note_markdown(&self, locator: &str) -> Result<String, Self::Error>;
+    fn read_note_markdown(&self, locator: &TaskNotePath) -> Result<String, Self::Error>;
 }

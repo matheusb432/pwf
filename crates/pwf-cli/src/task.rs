@@ -1,18 +1,18 @@
-use std::path::PathBuf;
-
 use clap::{Args, Subcommand};
 use pwf_application::{
     ports::clock::Clock,
-    task::{TaskLane, TaskLanes},
+    task::{CloseTaskError, resolve_task_project::ResolveTaskProjectError},
 };
 use pwf_infra::obsidian::ObsidianStore;
 use pwf_models::{
-    project::{ProjectName, ProjectSelector},
+    project::HomeDirectory,
     session::Agent,
-    task::{EffortTier, TaskId, TaskStatus, TaskTitle, TaskTitleError},
+    task::{EffortTier, TaskId, TaskStatus, TaskTitle},
 };
-use pwf_wire::task::StatusFilter;
-use thiserror::Error;
+use pwf_wire::task::{
+    AddTaskApiError, CloseTaskApiError, ResolveTaskProjectApiError, StatusFilter,
+    TaskInputApiError, TaskLane, TaskLanes,
+};
 
 use crate::console::Console;
 
@@ -38,12 +38,12 @@ pub(crate) struct Identifier {
 }
 
 impl Identifier {
-    fn required(&self, action: &'static str) -> Result<TaskId, TaskError> {
+    fn required<Error>(&self, error: Error) -> Result<TaskId, Error> {
         self.positional
             .as_ref()
             .or(self.flag.as_ref())
             .cloned()
-            .ok_or(TaskError::MissingId { action })
+            .ok_or(error)
     }
 }
 
@@ -108,92 +108,14 @@ impl StatusChoice {
     }
 }
 
-#[derive(Debug, Error)]
-pub(crate) enum TaskError {
-    #[error(transparent)]
-    Add(#[from] pwf_application::task::add_task::AddTaskError),
-    #[error(transparent)]
-    InvalidTitle(#[from] TaskTitleError),
-    #[error(transparent)]
-    InvalidReport(#[from] pwf_models::task::TaskReportError),
-    #[error(transparent)]
-    InvalidEditContent(#[from] pwf_application::task::edit_task::EditTaskContentError),
-    #[error(transparent)]
-    EmptyEdits(#[from] pwf_application::task::edit_task::EmptyTaskEdits),
-    #[error(transparent)]
-    Edit(#[from] pwf_application::task::edit_task::EditTaskError),
-    #[error(transparent)]
-    Get(#[from] pwf_application::task::get_task::GetTaskError),
-    #[error(transparent)]
-    List(#[from] pwf_application::task::list_tasks::ListTasksError),
-    #[error("rendering task JSON failed: {0}")]
-    RenderTaskJson(#[from] serde_json::Error),
-    #[error(transparent)]
-    Complete(#[from] pwf_application::task::complete_task::CompleteTaskError),
-    #[error(transparent)]
-    Cancel(#[from] pwf_application::task::cancel_task::CancelTaskError),
-    #[error(transparent)]
-    Reopen(#[from] pwf_application::task::reopen_task::ReopenTaskError),
-    #[error(transparent)]
-    Remove(#[from] pwf_application::task::remove_task::RemoveTaskError),
-    #[error(transparent)]
-    SessionPlan(pwf_application::task::session::plan_session::PlanSessionError),
-    #[error("tmux session '{session}' does not exist.\nStart it with:\n{start_command}")]
-    TmuxSessionMissing {
-        session: String,
-        start_command: String,
-    },
-    #[error(transparent)]
-    SessionDispatch(#[from] pwf_application::task::session::dispatch_session::DispatchSessionError),
-    #[error(
-        "Unknown managed project identifier: {selector}\nManaged project identifiers: {}",
-        format_project_names(known)
-    )]
-    UnknownManagedProject {
-        selector: ProjectSelector,
-        known: Vec<ProjectName>,
-    },
-    #[error("--id is required for {action}.")]
-    MissingId { action: &'static str },
-    #[error("--report is required for cancel.")]
-    MissingCancelReport,
-    #[error("{flag} cannot be empty.")]
-    EmptyValue { flag: &'static str },
-    #[error(
-        "Use shorthand: pwf task add <project> \"<prompt>\"\nOr machine mode: pwf task add <project> --title <title> [lane flags]"
-    )]
-    InvalidAddRequest,
-    #[error("{flag} {reason}")]
-    InvalidLaneValue {
-        flag: &'static str,
-        reason: &'static str,
-    },
-    #[error("{}", ADD_HINT)]
-    RejectUnsupportedTaskCreation,
-}
-
-impl From<TaskError> for String {
-    fn from(error: TaskError) -> Self {
-        error.to_string()
-    }
-}
-
-const ADD_HINT: &str = r#"Use: pwf task add <project> "<prompt>""#;
-
-fn format_project_names(names: &[ProjectName]) -> String {
-    names
-        .iter()
-        .map(AsRef::as_ref)
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-fn task_title(raw: &str) -> Result<(TaskTitle, bool), TaskError> {
+fn task_title(raw: &str) -> Result<(TaskTitle, bool), TaskInputApiError> {
     if raw.trim().is_empty() {
-        return Err(TaskError::EmptyValue { flag: "--title" });
+        return Err(TaskInputApiError::EmptyTitle);
     }
     let comparison = raw.trim().to_lowercase();
-    let title = TaskTitle::try_new(raw)?;
+    let title = TaskTitle::try_new(raw).map_err(|error| TaskInputApiError::InvalidTitle {
+        message: error.to_string(),
+    })?;
     let normalized = title.as_ref() != comparison;
     Ok((title, normalized))
 }
@@ -225,17 +147,55 @@ fn task_lanes(
     constraints: &[String],
     done_when: &[String],
     mode: LaneFlagMode,
-) -> Result<TaskLanes, TaskError> {
+) -> Result<TaskLanes, TaskInputApiError> {
     TaskLanes::try_new(
         goals.to_vec(),
         context.to_vec(),
         constraints.to_vec(),
         done_when.to_vec(),
     )
-    .map_err(|error| TaskError::InvalidLaneValue {
+    .map_err(|error| TaskInputApiError::InvalidLaneValue {
         flag: mode.flag(error.lane()),
         reason: error.reason(),
     })
+}
+
+fn map_resolve_task_project_error(error: ResolveTaskProjectError) -> ResolveTaskProjectApiError {
+    match error {
+        ResolveTaskProjectError::UnknownProjectId {
+            task_id,
+            project_id,
+        } => ResolveTaskProjectApiError::UnknownProjectId {
+            task_id,
+            project_id,
+        },
+        ResolveTaskProjectError::QueryProject(source) => ResolveTaskProjectApiError::Unexpected {
+            message: source.to_string(),
+        },
+    }
+}
+
+fn map_close_task_error(error: CloseTaskError) -> CloseTaskApiError {
+    match error {
+        CloseTaskError::TaskNotFound { id } => CloseTaskApiError::TaskNotFound { id },
+        CloseTaskError::UnknownProjectId {
+            task_id,
+            project_id,
+        } => CloseTaskApiError::ResolveProject(ResolveTaskProjectApiError::UnknownProjectId {
+            task_id,
+            project_id,
+        }),
+        CloseTaskError::InvalidTitle { id, source } => CloseTaskApiError::InvalidTitle {
+            id,
+            reason: source.to_string(),
+        },
+        CloseTaskError::WriteStore(source) => CloseTaskApiError::Unexpected {
+            message: source.to_string(),
+        },
+        CloseTaskError::ReviewTask(source) => {
+            CloseTaskApiError::ReviewTask(Box::new(add::map_add_task_error(source)))
+        }
+    }
 }
 
 #[derive(Subcommand, Debug)]
@@ -266,7 +226,7 @@ enum TaskCommand {
     Done(done::Arguments),
     /// Mark a task cancelled in place, keeping the same capped queue as done
     Cancel(cancel::Arguments),
-    /// Reopen a closed task. This removes it's completed/commits provenance.
+    /// Reopen a closed task after confirming deletion of its completion data
     Reopen(reopen::Arguments),
     /// Edit an active task's prompt body, title, blocked-by tasks, tags, or effort
     Edit(Box<edit::Arguments>),
@@ -282,31 +242,31 @@ pub async fn run(
     console: Console,
     store: &ObsidianStore,
     pool: &sqlx::SqlitePool,
-    home: &PathBuf,
+    home: &HomeDirectory,
     clock: &impl Clock,
-) -> Result<String, String> {
-    match command {
+) -> anyhow::Result<String> {
+    let output = match command {
         Command::Task(arguments) => match &arguments.command {
-            TaskCommand::Add(arguments) => add::run(arguments, console, store, pool, clock).await,
-            TaskCommand::List(arguments) => list::run(arguments, console, store, pool).await,
-            TaskCommand::Done(arguments) => done::run(arguments, store, pool, clock).await,
-            TaskCommand::Cancel(arguments) => cancel::run(arguments, store, pool, clock).await,
-            TaskCommand::Reopen(arguments) => reopen::run(arguments, store, pool).await,
-            TaskCommand::Edit(arguments) => edit::run(arguments, console, store, pool).await,
-            TaskCommand::Get(arguments) => get::run(arguments, store, pool).await,
-            TaskCommand::Remove(arguments) => remove::run(arguments, console, store, pool).await,
+            TaskCommand::Add(arguments) => add::run(arguments, console, store, pool, clock).await?,
+            TaskCommand::List(arguments) => list::run(arguments, console, store, pool).await?,
+            TaskCommand::Done(arguments) => done::run(arguments, store, pool, clock).await?,
+            TaskCommand::Cancel(arguments) => cancel::run(arguments, store, pool, clock).await?,
+            TaskCommand::Reopen(arguments) => reopen::run(arguments, console, store, pool).await?,
+            TaskCommand::Edit(arguments) => edit::run(arguments, console, store, pool).await?,
+            TaskCommand::Get(arguments) => get::run(arguments, store, pool).await?,
+            TaskCommand::Remove(arguments) => remove::run(arguments, console, store, pool).await?,
         },
-        Command::Session(arguments) => session::run(arguments, console, store, pool, home).await,
+        Command::Session(arguments) => session::run(arguments, console, store, pool, home).await?,
         Command::Route(arguments) => match route::resolve(arguments) {
             route::ResolvedCommand::List(arguments) => {
-                list::run(&arguments, console, store, pool).await
+                list::run(&arguments, console, store, pool).await?
             }
             route::ResolvedCommand::RejectUnsupportedTaskCreation => {
-                Err(TaskError::RejectUnsupportedTaskCreation)
+                return Err(AddTaskApiError::UnsupportedTaskCreation.into());
             }
         },
-    }
-    .map_err(String::from)
+    };
+    Ok(output)
 }
 
 #[cfg(test)]

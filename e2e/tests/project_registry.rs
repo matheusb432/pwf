@@ -60,11 +60,18 @@ fn registry_lifecycle_is_observable_across_processes() {
 }
 
 #[test]
-fn unknown_project_operations_fail_without_stdout() {
+fn application_project_errors_are_emitted_without_command_prefixes() {
     let fixture = ProjectFixture::new();
 
     for operation in ["get", "pause", "resume"] {
-        assert_failure(fixture.run(&["project", operation, "xyz"]), &["XYZ"]);
+        let output = fixture.run(&["project", operation, "xyz"]);
+
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+        assert_eq!(
+            String::from_utf8(output.stderr).unwrap(),
+            "Error: project not found: XYZ\n"
+        );
     }
 }
 

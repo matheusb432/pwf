@@ -1,5 +1,7 @@
 //! Derives task launchability diagnostics for task views.
 
+use std::num::NonZeroUsize;
+
 use pwf_models::{
     AppDate,
     project::{ProjectName, ProjectSourceValue},
@@ -26,13 +28,11 @@ pub(in crate::task) struct DerivedFlags {
 #[must_use]
 pub(in crate::task) fn derive_flags(
     prompt: &TaskPrompt,
-    missing_note: Option<&str>,
+    missing_note: Option<&TaskNotePath>,
 ) -> DerivedFlags {
     let mut issues = Vec::new();
     if let Some(path) = missing_note {
-        issues.push(TaskIssue::MissingNote {
-            path: TaskNotePath::new(path.into()),
-        });
+        issues.push(TaskIssue::MissingNote { path: path.clone() });
     }
     if is_placeholder_prompt(prompt) {
         issues.push(TaskIssue::PlaceholderPrompt);
@@ -57,8 +57,6 @@ pub(in crate::task) enum TaskViewError {
         #[source]
         source: EffortTierError,
     },
-    #[error("task {id} has an invalid display location")]
-    Location { id: TaskId },
 }
 
 /// Contains a task's persisted data and derived diagnostics before project
@@ -113,7 +111,7 @@ pub(in crate::task) fn enrich(
     let prompt = TaskPrompt::new(task.body.trim());
     let missing_note = match &task.materialization {
         Materialization::NoteFile => None,
-        Materialization::MissingNote { expected } => Some(expected.as_str()),
+        Materialization::MissingNote { expected } => Some(expected),
     };
     let flags = derive_flags(&prompt, missing_note);
     let heading = if task.title.trim().is_empty() {
@@ -126,16 +124,16 @@ pub(in crate::task) fn enrich(
             }
         })?)
     };
-    let (note, line) = task.placement.as_ref().map_or_else(
-        || (task.locator.clone(), 1),
+    let (index_path, line) = task.placement.as_ref().map_or_else(
+        || {
+            (
+                TaskIndexPath::new(task.locator.as_path().to_path_buf()),
+                NonZeroUsize::MIN,
+            )
+        },
         |placement| (placement.index_path.clone(), placement.line),
     );
-    let location =
-        TaskLocation::try_new(TaskIndexPath::new(note.into()), line).ok_or_else(|| {
-            TaskViewError::Location {
-                id: task.id.clone(),
-            }
-        })?;
+    let location = TaskLocation::new(index_path, line);
     let effort = task
         .effort
         .as_deref()
@@ -174,10 +172,10 @@ mod tests {
         TaskRecord {
             body: body.to_string(),
             source: String::new(),
-            locator: "/notes/pwf/PWF-0001.md".to_string(),
+            locator: TaskNotePath::new("/notes/pwf/PWF-0001.md".into()),
             placement: Some(IndexPlacement {
-                index_path: "/notes/pwf/pwf.md".to_string(),
-                line: 7,
+                index_path: TaskIndexPath::new("/notes/pwf/pwf.md".into()),
+                line: NonZeroUsize::new(7).unwrap(),
             }),
             ..task_record("PWF-0001")
         }
@@ -219,7 +217,7 @@ mod tests {
     fn missing_note_wikilink_needs_attention_with_missing_note_issue() {
         let mut rec = record("");
         rec.materialization = Materialization::MissingNote {
-            expected: "/notes/pwf/PWF-0001.md".to_string(),
+            expected: TaskNotePath::new("/notes/pwf/PWF-0001.md".into()),
         };
 
         let enriched = enrich(&rec, &project_path()).unwrap();
@@ -264,7 +262,8 @@ mod tests {
 
     #[test]
     fn derive_flags_orders_missing_note_before_placeholder() {
-        let flags = derive_flags(&TaskPrompt::default(), Some("/notes/pwf/PWF-0009.md"));
+        let missing = TaskNotePath::new("/notes/pwf/PWF-0009.md".into());
+        let flags = derive_flags(&TaskPrompt::default(), Some(&missing));
         assert_eq!(
             flags.launch.issues(),
             [

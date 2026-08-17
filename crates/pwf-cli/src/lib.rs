@@ -1,8 +1,7 @@
 //! Exposes pwf command parsing and shared CLI support.
 
 pub mod command;
-mod confirm;
-mod confirm_prompt;
+mod confirmation;
 pub mod console;
 pub mod note;
 mod preprocess;

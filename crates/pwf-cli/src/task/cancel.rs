@@ -1,16 +1,14 @@
 use clap::Args;
 use pwf_application::{
     ports::clock::Clock,
-    task::{
-        CloseTaskError,
-        cancel_task::{self, CancelTask, CancelTaskError},
-    },
+    task::cancel_task::{self, CancelTaskError},
 };
 use pwf_infra::obsidian::ObsidianStore;
 use pwf_models::task::{CommitRanges, TaskReport};
+use pwf_wire::task::{CancelTask, CancelTaskApiError, CloseTaskApiError};
 
 use super::{
-    Identifier, TaskError,
+    Identifier, map_close_task_error, map_resolve_task_project_error,
     render::{
         emit_close_diagnostics, emit_created_section, emit_created_section_for_error, render_closed,
     },
@@ -26,7 +24,7 @@ pub struct Arguments {
     /// Commit range(s) to record as provenance (repeat or comma-separate).
     #[arg(long)]
     pub(crate) commits: Vec<String>,
-    /// Also spawn a `## Human` review task with prepped git-tools diff commands.
+    /// Also spawn a `## Human` review task with prepped Git diff commands.
     #[arg(long)]
     pub(crate) review: bool,
 }
@@ -36,13 +34,18 @@ pub(super) async fn run(
     store: &ObsidianStore,
     pool: &sqlx::SqlitePool,
     clock: &impl Clock,
-) -> Result<String, TaskError> {
-    let id = arguments.identifier.required("cancel")?;
+) -> Result<String, CancelTaskApiError> {
+    let id = arguments
+        .identifier
+        .required(CancelTaskApiError::MissingId)?;
     let report = arguments
         .report
         .as_deref()
-        .ok_or(TaskError::MissingCancelReport)?
-        .parse::<TaskReport>()?;
+        .ok_or(CancelTaskApiError::MissingReport)?
+        .parse::<TaskReport>()
+        .map_err(|error| CancelTaskApiError::InvalidReport {
+            message: error.to_string(),
+        })?;
     let command = CancelTask {
         id,
         report,
@@ -51,8 +54,9 @@ pub(super) async fn run(
     };
     let output = cancel_task::execute(&command, store, pool, clock)
         .await
+        .map_err(map_error)
         .inspect_err(|error| {
-            if let CancelTaskError::Close(CloseTaskError::ReviewTask(source)) = error {
+            if let CancelTaskApiError::Close(CloseTaskApiError::ReviewTask(source)) = error {
                 emit_created_section_for_error(source);
             }
         })?;
@@ -61,4 +65,11 @@ pub(super) async fn run(
     }
     emit_close_diagnostics(&output);
     Ok(render_closed(&output))
+}
+
+fn map_error(error: CancelTaskError) -> CancelTaskApiError {
+    CancelTaskApiError::Close(match error {
+        CancelTaskError::ResolveProject(error) => map_resolve_task_project_error(error).into(),
+        CancelTaskError::Close(error) => map_close_task_error(error),
+    })
 }

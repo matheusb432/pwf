@@ -4,7 +4,7 @@ use pwf_models::{
     AppDateError,
     note::NoteTitleError,
     project::{ProjectId, ProjectName},
-    task::{TaskId, TaskSection, TaskSectionError},
+    task::{ParseTaskStatusError, TaskId, TaskSection, TaskSectionError},
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -149,6 +149,13 @@ pub enum ObsidianStoreError {
         value: String,
         #[source]
         source: AppDateError,
+    },
+    #[error("Invalid task frontmatter property `status` {value:?} in {}: {source}", path.display())]
+    InvalidTaskStatus {
+        path: PathBuf,
+        value: String,
+        #[source]
+        source: ParseTaskStatusError,
     },
     #[error("More than one task has frontmatter id {id}: {}", paths.iter().map(|path| path.display().to_string()).collect::<Vec<_>>().join(", "))]
     DuplicateTaskId { id: TaskId, paths: Vec<PathBuf> },

@@ -6,14 +6,637 @@ use std::{
 
 use pwf_models::{
     AppDate,
-    project::{ProjectName, ProjectSourceValue},
+    project::{ProjectId, ProjectName, ProjectSelector, ProjectSourceValue},
     task::{
-        BlockedBy, CommitRanges, EffortTier, TaskId, TaskPrompt, TaskSection, TaskStatus, TaskTags,
-        TaskTitle,
+        BlockedBy, CommitRanges, EffortTier, IndexSection, TaskId, TaskPrompt, TaskReport,
+        TaskSection, TaskStatus, TaskTags, TaskTitle,
     },
 };
 
+use crate::project::ResolveProjectApiError;
+
 pub mod session;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskLane {
+    Goal,
+    Context,
+    Constraint,
+    DoneWhen,
+}
+
+impl TaskLane {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Goal => "goal",
+            Self::Context => "context",
+            Self::Constraint => "constraint",
+            Self::DoneWhen => "done when",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum TaskLaneValueError {
+    #[error("{} cannot be empty.", lane.label())]
+    Empty { lane: TaskLane },
+    #[error("{} must be a single line.", lane.label())]
+    Multiline { lane: TaskLane },
+}
+
+impl TaskLaneValueError {
+    #[must_use]
+    pub fn lane(&self) -> TaskLane {
+        match self {
+            Self::Empty { lane } | Self::Multiline { lane } => *lane,
+        }
+    }
+
+    #[must_use]
+    pub fn reason(&self) -> &'static str {
+        match self {
+            Self::Empty { .. } => "cannot be empty.",
+            Self::Multiline { .. } => "must be a single line.",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TaskLanes {
+    goals: Vec<String>,
+    context: Vec<String>,
+    constraints: Vec<String>,
+    done_when: Vec<String>,
+}
+
+impl TaskLanes {
+    /// Constructs ordered task lanes after trimming each single-line value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TaskLaneValueError`] when any value is blank or contains a line break.
+    pub fn try_new(
+        goals: Vec<String>,
+        context: Vec<String>,
+        constraints: Vec<String>,
+        done_when: Vec<String>,
+    ) -> Result<Self, TaskLaneValueError> {
+        Ok(Self {
+            goals: normalize_lane(TaskLane::Goal, goals)?,
+            context: normalize_lane(TaskLane::Context, context)?,
+            constraints: normalize_lane(TaskLane::Constraint, constraints)?,
+            done_when: normalize_lane(TaskLane::DoneWhen, done_when)?,
+        })
+    }
+
+    #[must_use]
+    pub fn goals(&self) -> &[String] {
+        &self.goals
+    }
+
+    #[must_use]
+    pub fn context(&self) -> &[String] {
+        &self.context
+    }
+
+    #[must_use]
+    pub fn constraints(&self) -> &[String] {
+        &self.constraints
+    }
+
+    #[must_use]
+    pub fn done_when(&self) -> &[String] {
+        &self.done_when
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.goals.is_empty()
+            && self.context.is_empty()
+            && self.constraints.is_empty()
+            && self.done_when.is_empty()
+    }
+}
+
+fn normalize_lane(lane: TaskLane, values: Vec<String>) -> Result<Vec<String>, TaskLaneValueError> {
+    values
+        .into_iter()
+        .map(|value| {
+            if value.contains(['\n', '\r']) {
+                return Err(TaskLaneValueError::Multiline { lane });
+            }
+            let value = value.trim().to_string();
+            if value.is_empty() {
+                return Err(TaskLaneValueError::Empty { lane });
+            }
+            Ok(value)
+        })
+        .collect()
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TaskLaneEdits {
+    additions: TaskLanes,
+    removals: Vec<TaskLane>,
+}
+
+impl TaskLaneEdits {
+    #[must_use]
+    pub fn new(additions: TaskLanes, removals: impl IntoIterator<Item = TaskLane>) -> Self {
+        let mut normalized_removals = Vec::new();
+        for lane in removals {
+            if !normalized_removals.contains(&lane) {
+                normalized_removals.push(lane);
+            }
+        }
+        Self {
+            additions,
+            removals: normalized_removals,
+        }
+    }
+
+    #[must_use]
+    pub fn additions(&self) -> &TaskLanes {
+        &self.additions
+    }
+
+    #[must_use]
+    pub fn removals(&self) -> &[TaskLane] {
+        &self.removals
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.additions.is_empty() && self.removals.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AddTaskPromptKind {
+    Shorthand(TaskPrompt),
+    Structured { title: TaskTitle, lanes: TaskLanes },
+}
+
+/// Carries one structurally valid shorthand or structured add prompt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AddTaskPrompt(AddTaskPromptKind);
+
+impl AddTaskPrompt {
+    /// Creates a non-empty shorthand prompt.
+    pub fn shorthand(prompt: TaskPrompt) -> Result<Self, EmptyShorthandPrompt> {
+        if prompt.as_ref().trim().is_empty() {
+            return Err(EmptyShorthandPrompt);
+        }
+        Ok(Self(AddTaskPromptKind::Shorthand(prompt)))
+    }
+
+    #[must_use]
+    pub fn structured(title: TaskTitle, lanes: TaskLanes) -> Self {
+        Self(AddTaskPromptKind::Structured { title, lanes })
+    }
+
+    #[must_use]
+    pub fn kind(&self) -> &AddTaskPromptKind {
+        &self.0
+    }
+}
+
+/// Reports a shorthand add prompt without authored content.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("task shorthand prompt cannot be empty")]
+pub struct EmptyShorthandPrompt;
+
+/// Requests creation of one task.
+#[derive(Debug, Clone)]
+pub struct AddTask {
+    /// Managed project name or project ID.
+    pub project_selector: ProjectSelector,
+    /// Shorthand or structured task prompt.
+    pub prompt: AddTaskPrompt,
+    /// Selects the task's index placement.
+    pub index_section: IndexSection,
+    /// Task IDs in the `blocked_by` relationship.
+    pub blocked_by: Option<BlockedBy>,
+    /// Optional effort tier.
+    pub effort: Option<EffortTier>,
+    /// Optional normalized discovery tags.
+    pub tags: Option<TaskTags>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum AddTaskApiError {
+    #[error(
+        "Use shorthand: pwf task add <project> \"<prompt>\"\nOr machine mode: pwf task add <project> --title <title> [lane flags]"
+    )]
+    InvalidRequest,
+    #[error("Use: pwf task add <project> \"<prompt>\"")]
+    UnsupportedTaskCreation,
+    #[error(transparent)]
+    Input(#[from] TaskInputApiError),
+    #[error(transparent)]
+    ResolveProject(#[from] ResolveProjectApiError),
+    #[error("Unknown --blocked-by id(s): {}.", format_task_ids(ids))]
+    UnknownBlockedByIds { ids: Vec<TaskId> },
+    #[error("cannot validate --blocked-by task {id}: {reason}")]
+    ReadBlockedBy { id: TaskId, reason: String },
+    #[error("{message}")]
+    Unexpected { message: String },
+    #[error("{message}")]
+    WriteStore {
+        diagnostics: AddTaskDiagnostics,
+        message: String,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct CancelTask {
+    pub id: TaskId,
+    pub report: TaskReport,
+    pub commits: Option<CommitRanges>,
+    pub review: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum CancelTaskApiError {
+    #[error("--id is required for cancel.")]
+    MissingId,
+    #[error("--report is required for cancel.")]
+    MissingReport,
+    #[error("{message}")]
+    InvalidReport { message: String },
+    #[error(transparent)]
+    Close(#[from] CloseTaskApiError),
+}
+
+#[derive(Debug, Clone)]
+pub struct CompleteTask {
+    pub id: TaskId,
+    pub report: Option<TaskReport>,
+    pub commits: Option<CommitRanges>,
+    pub review: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum CompleteTaskApiError {
+    #[error("--id is required for done.")]
+    MissingId,
+    #[error("{message}")]
+    InvalidReport { message: String },
+    #[error(transparent)]
+    Close(#[from] CloseTaskApiError),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum CloseTaskApiError {
+    #[error(transparent)]
+    ResolveProject(#[from] ResolveTaskProjectApiError),
+    #[error("Active task not found: {id}")]
+    TaskNotFound { id: TaskId },
+    #[error("task {id} has an invalid persisted title: {reason}")]
+    InvalidTitle { id: TaskId, reason: String },
+    #[error("{message}")]
+    Unexpected { message: String },
+    #[error(transparent)]
+    ReviewTask(Box<AddTaskApiError>),
+}
+
+#[derive(Debug, Clone)]
+pub enum EditTaskContentKind {
+    Structured {
+        title: Option<TaskTitle>,
+        lanes: TaskLaneEdits,
+    },
+    AppendShorthand {
+        title: Option<TaskTitle>,
+        prompt: TaskPrompt,
+    },
+    ReplaceShorthand {
+        prompt: TaskPrompt,
+        title: TaskTitle,
+    },
+}
+
+/// Carries one structurally valid task-content change.
+#[derive(Debug, Clone)]
+pub struct EditTaskContent(EditTaskContentKind);
+
+impl EditTaskContent {
+    /// Creates an explicit title or lane edit.
+    pub fn structured(
+        title: Option<TaskTitle>,
+        lanes: TaskLaneEdits,
+    ) -> Result<Self, EditTaskContentError> {
+        if title.is_none() && lanes.is_empty() {
+            return Err(EditTaskContentError::EmptyStructured);
+        }
+        Ok(Self(EditTaskContentKind::Structured { title, lanes }))
+    }
+
+    /// Creates a non-empty shorthand append.
+    pub fn append_shorthand(
+        title: Option<TaskTitle>,
+        prompt: TaskPrompt,
+    ) -> Result<Self, EditTaskContentError> {
+        if prompt.as_ref().trim().is_empty() {
+            return Err(EditTaskContentError::EmptyAppend);
+        }
+        Ok(Self(EditTaskContentKind::AppendShorthand { title, prompt }))
+    }
+
+    /// Creates a shorthand replacement with a validated leading title.
+    pub fn replace_shorthand(prompt: TaskPrompt) -> Result<Self, EditTaskContentError> {
+        let parsed = prompt_lanes::parse(prompt.as_ref());
+        if parsed.title.trim().is_empty() {
+            return Err(EditTaskContentError::MissingPromptTitle);
+        }
+        let title = TaskTitle::try_new(parsed.title).map_err(|error| {
+            EditTaskContentError::InvalidTitle {
+                message: error.to_string(),
+            }
+        })?;
+        Ok(Self(EditTaskContentKind::ReplaceShorthand {
+            prompt,
+            title,
+        }))
+    }
+
+    #[must_use]
+    pub fn kind(&self) -> &EditTaskContentKind {
+        &self.0
+    }
+}
+
+/// Reports an invalid task-content edit before application execution.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum EditTaskContentError {
+    #[error("task content edit cannot be empty")]
+    EmptyStructured,
+    #[error("--append cannot be empty.")]
+    EmptyAppend,
+    #[error("--prompt must start with a nonempty title before any lane marker.")]
+    MissingPromptTitle,
+    #[error("{message}")]
+    InvalidTitle { message: String },
+}
+
+/// Selects how an optional collection changes.
+#[derive(Debug, Clone, Default)]
+pub enum CollectionEdit<T> {
+    /// Leaves the stored collection unchanged.
+    #[default]
+    Unchanged,
+    /// Appends values to the stored collection.
+    Append(T),
+    /// Replaces the stored collection with the supplied values.
+    Replace(T),
+    /// Removes the stored collection.
+    Clear,
+}
+
+impl<T> CollectionEdit<T> {
+    #[must_use]
+    pub fn addition(&self) -> Option<&T> {
+        match self {
+            Self::Append(value) | Self::Replace(value) => Some(value),
+            Self::Unchanged | Self::Clear => None,
+        }
+    }
+
+    fn is_unchanged(&self) -> bool {
+        matches!(self, Self::Unchanged)
+    }
+}
+
+/// Selects how an optional scalar value changes.
+#[derive(Debug, Clone, Default)]
+pub enum ValueEdit<T> {
+    /// Leaves the stored value unchanged.
+    #[default]
+    Unchanged,
+    /// Replaces the stored value.
+    Set(T),
+    /// Removes the stored value.
+    Clear,
+}
+
+impl<T> ValueEdit<T> {
+    fn is_unchanged(&self) -> bool {
+        matches!(self, Self::Unchanged)
+    }
+}
+
+/// Carries at least one requested task change.
+#[derive(Debug, Clone)]
+pub struct TaskEdits {
+    content: Option<EditTaskContent>,
+    blocked_by: CollectionEdit<BlockedBy>,
+    effort: ValueEdit<EffortTier>,
+    tags: CollectionEdit<TaskTags>,
+}
+
+impl TaskEdits {
+    /// Creates a non-empty set of task changes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EmptyTaskEdits`] when every field is unchanged.
+    pub fn try_new(
+        content: Option<EditTaskContent>,
+        blocked_by: CollectionEdit<BlockedBy>,
+        effort: ValueEdit<EffortTier>,
+        tags: CollectionEdit<TaskTags>,
+    ) -> Result<Self, EmptyTaskEdits> {
+        if content.is_none()
+            && blocked_by.is_unchanged()
+            && effort.is_unchanged()
+            && tags.is_unchanged()
+        {
+            return Err(EmptyTaskEdits);
+        }
+        Ok(Self {
+            content,
+            blocked_by,
+            effort,
+            tags,
+        })
+    }
+
+    #[must_use]
+    pub fn content(&self) -> Option<&EditTaskContent> {
+        self.content.as_ref()
+    }
+
+    #[must_use]
+    pub fn blocked_by(&self) -> &CollectionEdit<BlockedBy> {
+        &self.blocked_by
+    }
+
+    #[must_use]
+    pub fn effort(&self) -> &ValueEdit<EffortTier> {
+        &self.effort
+    }
+
+    #[must_use]
+    pub fn tags(&self) -> &CollectionEdit<TaskTags> {
+        &self.tags
+    }
+}
+
+/// Reports an edit request with no changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("nothing to edit; pass at least one edit flag.")]
+pub struct EmptyTaskEdits;
+
+#[derive(Debug, Clone)]
+pub struct EditTask {
+    pub id: TaskId,
+    pub edits: TaskEdits,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum EditTaskApiError {
+    #[error("--id is required for edit.")]
+    MissingId,
+    #[error(transparent)]
+    Input(#[from] TaskInputApiError),
+    #[error("{message}")]
+    InvalidContent { message: String },
+    #[error("nothing to edit; pass at least one edit flag.")]
+    EmptyEdits,
+    #[error("Task not found: {id}")]
+    TaskNotFound { id: TaskId },
+    #[error("cannot edit closed task {id}; run `pwf task reopen {id}` first.")]
+    ClosedTask { id: TaskId },
+    #[error("task {id} has an invalid persisted title: {reason}")]
+    InvalidPersistedTitle { id: TaskId, reason: String },
+    #[error("task {id} has invalid tags frontmatter: {raw:?}.")]
+    InvalidTagsFrontmatter { id: TaskId, raw: String },
+    #[error("Unknown --add-blocked-by id(s): {}.", format_task_ids(ids))]
+    UnknownBlockedByIds { ids: Vec<TaskId> },
+    #[error("cannot validate --add-blocked-by task {id}: {reason}")]
+    ReadBlockedBy { id: TaskId, reason: String },
+    #[error("cannot edit lanes: task body contains more than one `{header}` section.")]
+    AmbiguousLanes { header: &'static str },
+    #[error("{message}")]
+    Unexpected { message: String },
+}
+
+/// Requests one task in a selected output representation.
+#[derive(Debug, Clone)]
+pub struct GetTask {
+    /// Task ID.
+    pub id: TaskId,
+    /// Representation returned by the interactor.
+    pub output: TaskReadFormat,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum GetTaskApiError {
+    #[error("--id is required for get.")]
+    MissingId,
+    #[error("Task not found: {id}")]
+    TaskNotFound { id: TaskId },
+    #[error("{message}")]
+    Unexpected { message: String },
+    #[error("rendering task JSON failed: {message}")]
+    RenderJson { message: String },
+}
+
+#[derive(Debug, Clone)]
+pub struct ListTasks {
+    pub project_selector: Option<ProjectSelector>,
+    pub scope: ListScope,
+    /// Explicit task cap. Omission uses the mode-specific default.
+    pub number: Option<NonZeroUsize>,
+    pub effort: Option<EffortTier>,
+    pub tags: Option<TaskTags>,
+    pub order: Option<OrderSpec>,
+    /// Explicit lifecycle filter. Omission uses the mode-specific default.
+    pub status: Option<StatusFilter>,
+    pub detail: ListDetail,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ListTasksApiError {
+    #[error(transparent)]
+    ResolveProject(#[from] ResolveProjectApiError),
+    #[error("{message}")]
+    Unexpected { message: String },
+}
+
+#[derive(Debug, Clone)]
+pub struct RemoveTask {
+    pub id: TaskId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum RemoveTaskApiError {
+    #[error("--id is required for remove.")]
+    MissingId,
+    #[error("Task not found: {id}")]
+    TaskNotFound { id: TaskId },
+    #[error(transparent)]
+    ResolveProject(#[from] ResolveTaskProjectApiError),
+    #[error("Task note missing: {path}")]
+    NoteMissing { path: TaskNotePath },
+    #[error("task {id} has an invalid persisted title: {reason}")]
+    InvalidTitle { id: TaskId, reason: String },
+    #[error("{message}")]
+    Unexpected { message: String },
+}
+
+#[derive(Debug, Clone)]
+pub struct ReopenTask {
+    pub id: TaskId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ReopenTaskApiError {
+    #[error("--id is required for reopen.")]
+    MissingId,
+    #[error("Task not found: {id}")]
+    TaskNotFound { id: TaskId },
+    #[error(transparent)]
+    ResolveProject(#[from] ResolveTaskProjectApiError),
+    #[error("{message}")]
+    Unexpected { message: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolveTaskProject {
+    pub id: TaskId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ResolveTaskProjectApiError {
+    #[error("Unknown project ID `{project_id}` for task {task_id}")]
+    UnknownProjectId {
+        task_id: TaskId,
+        project_id: ProjectId,
+    },
+    #[error("{message}")]
+    Unexpected { message: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum TaskInputApiError {
+    #[error("--title cannot be empty.")]
+    EmptyTitle,
+    #[error("{message}")]
+    InvalidTitle { message: String },
+    #[error("{flag} {reason}")]
+    InvalidLaneValue {
+        flag: &'static str,
+        reason: &'static str,
+    },
+}
+
+fn format_task_ids(ids: &[TaskId]) -> String {
+    ids.iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
 
 /// Identifies a task note's filesystem path.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,6 +651,11 @@ impl TaskNotePath {
     #[must_use]
     pub fn as_path(&self) -> &Path {
         &self.0
+    }
+
+    #[must_use]
+    pub fn into_path_buf(self) -> PathBuf {
+        self.0
     }
 }
 
@@ -51,6 +679,11 @@ impl TaskIndexPath {
     pub fn as_path(&self) -> &Path {
         &self.0
     }
+
+    #[must_use]
+    pub fn into_path_buf(self) -> PathBuf {
+        self.0
+    }
 }
 
 impl fmt::Display for TaskIndexPath {
@@ -72,6 +705,11 @@ impl ProjectTaskPath {
     #[must_use]
     pub fn as_path(&self) -> &Path {
         &self.0
+    }
+
+    #[must_use]
+    pub fn into_path_buf(self) -> PathBuf {
+        self.0
     }
 }
 
@@ -135,11 +773,12 @@ pub struct ClosedTask {
     pub review_task: Option<AddedTask>,
 }
 
-/// Describes the result of reopening a task without a redundant boolean flag.
+/// Describes the result of a task-reopening request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReopenedTask {
     Reopened { id: TaskId, project: ProjectName },
     AlreadyActive { id: TaskId, project: ProjectName },
+    Aborted { id: TaskId },
 }
 
 /// Describes the note and optional index link deleted with a task.
@@ -223,14 +862,6 @@ pub enum ListScope {
     Human,
     Future,
     All,
-}
-
-/// Selects the defaults used by the direct list command or project compatibility route.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ListMode {
-    #[default]
-    Direct,
-    ProjectRoute,
 }
 
 /// Selects summary or metadata-rich task-list output.
@@ -406,14 +1037,8 @@ pub struct TaskLocation {
 
 impl TaskLocation {
     #[must_use]
-    pub fn try_new(index_path: TaskIndexPath, line: usize) -> Option<Self> {
-        if index_path.as_path().as_os_str().is_empty() {
-            return None;
-        }
-        Some(Self {
-            index_path,
-            line: NonZeroUsize::new(line)?,
-        })
+    pub fn new(index_path: TaskIndexPath, line: NonZeroUsize) -> Self {
+        Self { index_path, line }
     }
 
     #[must_use]
@@ -455,4 +1080,87 @@ pub struct ListedTasks {
     pub status_filter: StatusFilter,
     pub layout: ListLayout,
     pub detail: ListDetail,
+}
+
+#[cfg(test)]
+mod tests {
+    use pwf_models::task::TaskPrompt;
+
+    use super::{
+        AddTaskApiError, AddTaskPrompt, CollectionEdit, EditTaskContent, EditTaskContentError,
+        EmptyTaskEdits, TaskEdits, TaskInputApiError, TaskLaneEdits, TaskLaneValueError, TaskLanes,
+        ValueEdit,
+    };
+
+    #[test]
+    fn lanes_trim_outer_whitespace_and_preserve_literal_markers() {
+        let lanes = TaskLanes::try_new(
+            vec!["  keep /c literal  ".to_string()],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+        .unwrap();
+
+        assert_eq!(lanes.goals(), ["keep /c literal"]);
+    }
+
+    #[test]
+    fn lanes_reject_blank_and_multiline_values() {
+        assert!(matches!(
+            TaskLanes::try_new(vec!["  ".to_string()], Vec::new(), Vec::new(), Vec::new()),
+            Err(TaskLaneValueError::Empty { .. })
+        ));
+        assert!(matches!(
+            TaskLanes::try_new(
+                Vec::new(),
+                vec!["one\ntwo".to_string()],
+                Vec::new(),
+                Vec::new(),
+            ),
+            Err(TaskLaneValueError::Multiline { .. })
+        ));
+    }
+
+    #[test]
+    fn add_prompt_rejects_blank_shorthand() {
+        assert!(AddTaskPrompt::shorthand(TaskPrompt::new(" \n\t ")).is_err());
+    }
+
+    #[test]
+    fn edit_contracts_reject_empty_shapes() {
+        assert!(matches!(
+            EditTaskContent::structured(None, TaskLaneEdits::default()),
+            Err(EditTaskContentError::EmptyStructured)
+        ));
+        assert!(matches!(
+            EditTaskContent::append_shorthand(None, TaskPrompt::new(" \n\t ")),
+            Err(EditTaskContentError::EmptyAppend)
+        ));
+        assert!(matches!(
+            EditTaskContent::replace_shorthand(TaskPrompt::new("/g replacement")),
+            Err(EditTaskContentError::MissingPromptTitle)
+        ));
+
+        let error = TaskEdits::try_new(
+            None,
+            CollectionEdit::Unchanged,
+            ValueEdit::Unchanged,
+            CollectionEdit::Unchanged,
+        )
+        .unwrap_err();
+        assert_eq!(error, EmptyTaskEdits);
+    }
+
+    #[test]
+    fn api_errors_preserve_cli_text() {
+        assert_eq!(
+            AddTaskApiError::Input(TaskInputApiError::InvalidLaneValue {
+                flag: "--goal",
+                reason: "cannot be empty.",
+            })
+            .to_string(),
+            "--goal cannot be empty."
+        );
+    }
 }

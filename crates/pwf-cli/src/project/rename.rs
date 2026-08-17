@@ -1,17 +1,16 @@
-use std::path::PathBuf;
-
 use clap::Args;
-use pwf_application::project::rename_project::{self, RenameProject};
+use pwf_application::project::rename_project::{self, RenameProjectError};
 use pwf_infra::obsidian::ObsidianProjectTaskFilesClient;
 use pwf_models::project::{
-    ProjectId, ProjectName, ProjectSource, ProjectSourceKind, ProjectSourceValue, ProjectTasks,
-    ProjectTasksKind, ProjectTasksPath,
+    HomeDirectory, ProjectId, ProjectName, ProjectSource, ProjectSourceKind, ProjectSourceValue,
+    ProjectTasks, ProjectTasksKind, ProjectTasksPath,
 };
-use pwf_wire::project::ProjectFields;
+use pwf_wire::project::{ProjectFields, RenameProject, RenameProjectApiError};
 use sqlx::SqlitePool;
 
 use super::{
-    output, parse_project_id, parse_project_source, parse_project_tasks, parse_project_title,
+    map_task_location_error, output, parse_project_id, parse_project_source, parse_project_tasks,
+    parse_project_title,
 };
 
 #[derive(Args, Debug)]
@@ -36,8 +35,9 @@ pub struct Arguments {
 pub(super) async fn run(
     arguments: Arguments,
     pool: &SqlitePool,
-    home: PathBuf,
-) -> Result<String, String> {
+    home: Option<HomeDirectory>,
+) -> Result<String, RenameProjectApiError> {
+    let home = home.ok_or(RenameProjectApiError::HomeDirectoryUnavailable)?;
     let fields = ProjectFields {
         id: arguments.destination_id,
         title: arguments.title,
@@ -48,12 +48,35 @@ pub(super) async fn run(
         RenameProject {
             current_id: arguments.current_id,
             fields,
-            home,
         },
         pool,
         &ObsidianProjectTaskFilesClient,
+        &home,
     )
     .await
-    .map_err(|error| error.to_string())?;
-    output::project(renamed)
+    .map_err(map_error)?;
+    output::project(renamed).map_err(|error| RenameProjectApiError::RenderJson {
+        message: error.to_string(),
+    })
+}
+
+fn map_error(error: RenameProjectError) -> RenameProjectApiError {
+    match error {
+        RenameProjectError::SourceProjectNotFound { id } => {
+            RenameProjectApiError::SourceProjectNotFound { id }
+        }
+        RenameProjectError::SourceProjectChanged { id } => {
+            RenameProjectApiError::SourceProjectChanged { id }
+        }
+        RenameProjectError::DestinationProjectIdExists { id } => {
+            RenameProjectApiError::DestinationProjectIdExists { id }
+        }
+        RenameProjectError::DestinationProjectTitleExists { title } => {
+            RenameProjectApiError::DestinationProjectTitleExists { title }
+        }
+        RenameProjectError::TaskLocation(error) => map_task_location_error(error).into(),
+        error => RenameProjectApiError::Unexpected {
+            message: error.to_string(),
+        },
+    }
 }

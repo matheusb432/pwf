@@ -1,42 +1,16 @@
-use std::{error::Error, path::PathBuf};
+use std::error::Error;
 
-use pwf_models::project::{ProjectId, ProjectTasksPath};
-use pwf_wire::project::ProjectStateChange;
+use pwf_models::project::{HomeDirectory, ProjectId, ProjectTasksPath};
+use pwf_wire::project::{ProjectStateChange, ResumeProject};
 
-use super::{
-    ProjectRow,
-    task_location::{self, TaskLocationError},
-};
-
-/// Requests resuming one managed project.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ResumeProject {
-    /// Project ID.
-    pub id: ProjectId,
-    /// Home directory used to expand home-relative task paths.
-    pub home: PathBuf,
-}
+use super::{ProjectRow, TaskLocationError, task_location};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ResumeProjectError {
     #[error("project not found: {id}")]
     ProjectNotFound { id: ProjectId },
-    #[error("managed project {project_id} task path '{path}' is invalid: {source}")]
-    InvalidTaskPath {
-        project_id: ProjectId,
-        path: ProjectTasksPath,
-        #[source]
-        source: super::runtime_path::RuntimePathError,
-    },
-    #[error(
-        "managed projects {first_id} and {second_id} resolve to the same task location: {}",
-        path.display()
-    )]
-    DuplicateRuntimeTaskLocation {
-        first_id: ProjectId,
-        second_id: ProjectId,
-        path: PathBuf,
-    },
+    #[error(transparent)]
+    TaskLocation(#[from] TaskLocationError),
     #[error("{context}: {source}")]
     Unexpected {
         context: &'static str,
@@ -50,14 +24,13 @@ pub enum ResumeProjectError {
 /// # Errors
 ///
 /// Returns [`ResumeProjectError::ProjectNotFound`] when no project has the requested ID. Returns
-/// [`ResumeProjectError::InvalidTaskPath`] when the resumed or another project task path cannot be
-/// resolved, and [`ResumeProjectError::DuplicateRuntimeTaskLocation`] when two projects resolve to
-/// the same task location. Returns [`ResumeProjectError::Unexpected`] for database and
-/// persisted-data failures.
+/// [`ResumeProjectError::TaskLocation`] when a task path is invalid or collides with another
+/// project. Returns [`ResumeProjectError::Unexpected`] for database and persisted-data failures.
 #[cqrsy::command]
 pub async fn execute(
     command: ResumeProject,
     pool: &sqlx::SqlitePool,
+    home: &HomeDirectory,
 ) -> Result<ProjectStateChange, ResumeProjectError> {
     let mut transaction = pool
         .begin_with("BEGIN IMMEDIATE")
@@ -90,9 +63,8 @@ pub async fn execute(
             .map_err(|error| unexpected("converting project task location path", error))?;
         Ok((id, tasks_path))
     })
-    .collect::<Result<Vec<_>, _>>()?;
-    task_location::reject_collision(&command.id, &candidate_path, existing, &command.home)
-        .map_err(task_location_error)?;
+    .collect::<Result<Vec<_>, ResumeProjectError>>()?;
+    task_location::reject_collision(&command.id, &candidate_path, existing, home)?;
     let update = sqlx::query!(
         r#"
         UPDATE projects
@@ -151,42 +123,20 @@ fn unexpected(
     }
 }
 
-fn task_location_error(error: TaskLocationError) -> ResumeProjectError {
-    match error {
-        TaskLocationError::InvalidPath {
-            project_id,
-            path,
-            source,
-        } => ResumeProjectError::InvalidTaskPath {
-            project_id,
-            path,
-            source,
-        },
-        TaskLocationError::Collision {
-            first_id,
-            second_id,
-            path,
-        } => ResumeProjectError::DuplicateRuntimeTaskLocation {
-            first_id,
-            second_id,
-            path,
-        },
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
 
-    use pwf_models::project::ProjectId;
+    use pwf_models::project::{HomeDirectory, ProjectId};
 
     use super::*;
-    use crate::testing::insert_project;
+    use crate::{project::resume_project, testing::insert_project};
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn runtime_alias_of_other_paused_project_is_rejected(pool: sqlx::SqlitePool) {
-        let home = PathBuf::from("/home/tester");
-        let resolved_path = home.join("tasks/shared");
+        let home_path = PathBuf::from("/home/tester");
+        let home = HomeDirectory::new(home_path.clone());
+        let resolved_path = home_path.join("tasks/shared");
         insert_project(&pool, "PWF", "pwf", "/work/PWF", "~/tasks/shared", true).await;
         insert_project(
             &pool,
@@ -198,12 +148,12 @@ mod tests {
         )
         .await;
 
-        let error = super::execute(
+        let error = resume_project::execute(
             ResumeProject {
                 id: ProjectId::try_new("PWF").unwrap(),
-                home,
             },
             &pool,
+            &home,
         )
         .await
         .unwrap_err();

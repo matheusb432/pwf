@@ -23,6 +23,14 @@ provenance = "github-attestations"
 version = "0.8.7"
 backend = "cargo:cargo-llvm-cov"
 
+[[tools."cargo:sqlx-cli"]]
+version = "0.9.0"
+backend = "cargo:sqlx-cli"
+
+[tools."cargo:sqlx-cli".options]
+default-features = "false"
+features = "rustls postgres sqlite sqlx-toml"
+
 [[tools.just]]
 version = "1.56.0"
 backend = "aqua:casey/just"
@@ -31,24 +39,6 @@ backend = "aqua:casey/just"
 checksum = "sha256:fa2a8ec1015d9df5330941ade12437488fc40d33f9c9f8cd4eb70a26de11b639"
 url = "https://github.com/casey/just/releases/download/1.56.0/just-1.56.0-x86_64-unknown-linux-musl.tar.gz"
 url_api = "https://api.github.com/repos/casey/just/releases/assets/472074624"
-
-[[tools.rumdl]]
-version = "0.2.41"
-backend = "aqua:rvben/rumdl"
-
-[tools.rumdl."platforms.linux-x64"]
-checksum = "sha256:f2a6e5f11b2bae89b3319ad909a5df76b79a8e23a6ec9394c3e738b71ef11a74"
-url = "https://github.com/rvben/rumdl/releases/download/v0.2.41/rumdl-v0.2.41-x86_64-unknown-linux-musl.tar.gz"
-url_api = "https://api.github.com/repos/rvben/rumdl/releases/assets/487015981"
-provenance = "github-attestations"
-
-[[tools.rust]]
-version = "nightly-2026-06-23"
-backend = "core:rust"
-
-[tools.rust.options]
-components = "rustfmt"
-profile = "minimal"
 
 [[tools.rust]]
 version = "stable"

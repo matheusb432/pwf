@@ -24,13 +24,16 @@ pub(in crate::task) fn render_reopened(outcome: &ReopenedTask) -> String {
     match outcome {
         ReopenedTask::AlreadyActive { id, project } => {
             format!(
-                "{} already active ({}) — skipped\n",
+                "{} is already active ({}), so it was skipped.\n",
                 id.as_ref(),
                 project.as_ref()
             )
         }
         ReopenedTask::Reopened { id, project } => {
             format!("Reopened {} ({})\n", id.as_ref(), project.as_ref())
+        }
+        ReopenedTask::Aborted { id } => {
+            format!("# reopen {id}: aborted\nnothing changed.\n")
         }
     }
 }

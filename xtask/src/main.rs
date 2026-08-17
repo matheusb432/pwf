@@ -1,5 +1,3 @@
-//! Repository automation invoked as `cargo run -p xtask -- <verb>`; the binary is not installed.
-
 use anyhow::Result;
 use clap::Parser;
 
@@ -8,9 +6,6 @@ mod cli;
 mod paths;
 mod process;
 mod sqlite_url;
-mod sqlx_cli;
-mod task;
-mod verb;
 mod verbs;
 
 fn main() {
@@ -23,15 +18,13 @@ fn main() {
 fn run(command: cli::Command) -> Result<()> {
     use cli::Command;
     match command {
-        Command::Format => verbs::format::run(),
-        Command::FormatCheck => verbs::format::check(),
-        Command::Lint => verbs::lint::run(),
-        Command::Check => verbs::check::run(),
         Command::Prepare { check } => verbs::prepare::run(check),
-        Command::Fix(arguments) => verbs::fix::run(&arguments.arguments_extra),
         Command::Test(test) => verbs::test::run(&test),
-        Command::E2eWorker { verbose } => verbs::test::run_e2e_worker(verbose),
-        Command::Ship(arguments) => verbs::ship::run(arguments.force),
+        Command::E2eWorker {
+            verbose,
+            cargo_arguments,
+        } => verbs::test::run_e2e_worker(verbose, &cargo_arguments),
+        Command::Ship(arguments) => verbs::ship::run(&arguments),
         Command::Install => verbs::install::install(),
         Command::Update(update) => verbs::install::update(&update),
         Command::CheckArchitecture { root } => verbs::check_architecture::run(root.as_deref()),

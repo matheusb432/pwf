@@ -1,16 +1,22 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use pwf_models::project::{ProjectId, ProjectTasksPath};
+use pwf_models::project::{HomeDirectory, ProjectId, ProjectTasksPath};
 
 use crate::project::runtime_path::{self, ResolvedPath, RuntimePathError};
 
-#[derive(Debug)]
-pub(in crate::project) enum TaskLocationError {
+#[derive(Debug, thiserror::Error)]
+pub enum TaskLocationError {
+    #[error("managed project {project_id} task path '{path}' is invalid: {source}")]
     InvalidPath {
         project_id: ProjectId,
         path: ProjectTasksPath,
+        #[source]
         source: RuntimePathError,
     },
+    #[error(
+        "managed projects {first_id} and {second_id} resolve to the same task location: {}",
+        path.display()
+    )]
     Collision {
         first_id: ProjectId,
         second_id: ProjectId,
@@ -22,7 +28,7 @@ pub(in crate::project) fn reject_collision(
     candidate_id: &ProjectId,
     candidate_path: &ProjectTasksPath,
     existing: impl IntoIterator<Item = (ProjectId, ProjectTasksPath)>,
-    home: &Path,
+    home: &HomeDirectory,
 ) -> Result<ResolvedPath, TaskLocationError> {
     let candidate = resolve_path(candidate_id, candidate_path, home)?;
     let mut existing = existing.into_iter().collect::<Vec<_>>();
@@ -50,7 +56,7 @@ pub(in crate::project) fn reject_collision(
 fn resolve_path(
     project_id: &ProjectId,
     path: &ProjectTasksPath,
-    home: &Path,
+    home: &HomeDirectory,
 ) -> Result<ResolvedPath, TaskLocationError> {
     runtime_path::resolve(path.as_ref(), home).map_err(|source| TaskLocationError::InvalidPath {
         project_id: project_id.clone(),

@@ -4,14 +4,84 @@ use std::path::PathBuf;
 
 use pwf_models::{
     AppDate,
+    project::ProjectId,
     session::{
-        Agent, AgentModel, DispatchMode, LaunchDirectives, LaunchPrompt, SessionEffort,
-        SessionThreadTitle, SessionWorkingDirectory,
+        Agent, AgentModel, DispatchMode, LaunchDirectives, LaunchPrompt, PushedPrompt,
+        SessionEffort, SessionThreadTitle, SessionWorkingDirectory,
     },
     task::TaskId,
 };
 
-use super::TaskHeading;
+use super::{TaskHeading, TaskLaunch};
+
+/// Requests dispatch of one confirmed task session.
+pub struct DispatchSession {
+    pub prepared: PreparedSessionDispatch,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum DispatchSessionApiError {
+    #[error("Failed to run agent inline: {reason}")]
+    InlineFailed { reason: String },
+    #[error("Failed to open multiplexer window '{window}' in session '{session}': {reason}")]
+    WindowOpen {
+        session: String,
+        window: TaskId,
+        reason: String,
+    },
+    #[error("{message}")]
+    AgentPreparation { message: String },
+    #[error(
+        "Agent backend failed after naming thread '{thread_id}': {reason}. The named thread was left intact."
+    )]
+    NamedThreadBackend { thread_id: String, reason: String },
+    #[error("Agent command is empty.")]
+    EmptyAgentCommand,
+}
+
+/// Requests one provider-neutral session plan.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlanSession {
+    pub task_id: TaskId,
+    pub intent: PlanSessionIntent,
+    pub pushed_prompt: Option<PushedPrompt>,
+    pub mode: DispatchMode,
+    pub directives: LaunchDirectives,
+    pub agent: Agent,
+    pub model_override: AgentModel,
+    pub effort: SessionEffort,
+}
+
+/// Selects whether a plan is prepared for dispatch or rendered without effects.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PlanSessionIntent {
+    Dispatch,
+    DryRun,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum PlanSessionApiError {
+    #[error("--id is required for session.")]
+    MissingId,
+    #[error("Task '{id}' is not launchable: {launch}")]
+    NotLaunchable { id: TaskId, launch: TaskLaunch },
+    #[error("Project path for '{project_id}' does not exist: {path}")]
+    ProjectPathMissing {
+        project_id: ProjectId,
+        path: SessionWorkingDirectory,
+    },
+    #[error("Session multiplexer is unavailable; cannot dispatch a pwf session.")]
+    MultiplexerNotFound,
+    #[error("tmux session '{session}' does not exist.\nStart it with:\n{start_command}")]
+    MultiplexerSessionMissing {
+        session: String,
+        start_command: String,
+    },
+    #[error("Agent command is empty.")]
+    EmptyAgentCommand,
+    #[error("{message}")]
+    Unexpected { message: String },
+}
 
 /// Describes a provider-neutral agent launch.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,7 +100,13 @@ pub struct AgentLaunch {
 pub struct SessionPlan {
     pub launch: AgentLaunch,
     pub mode: DispatchMode,
-    pub target: DispatchTarget,
+}
+
+impl SessionPlan {
+    #[must_use]
+    pub fn target(&self) -> DispatchTarget {
+        DispatchTarget::new(self.launch.task_id.clone())
+    }
 }
 
 /// Describes a validated dry-run plan and its exact process arguments.
@@ -71,15 +147,23 @@ pub enum DispatchedSession {
 
 /// Identifies a multiplexer session and window.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DispatchTarget {
-    pub task_id: TaskId,
-}
+pub struct DispatchTarget(TaskId);
 
 impl DispatchTarget {
+    #[must_use]
+    pub fn new(task_id: TaskId) -> Self {
+        Self(task_id)
+    }
+
+    #[must_use]
+    pub fn task_id(&self) -> &TaskId {
+        &self.0
+    }
+
     /// Returns the lowercase tmux session name derived from the project ID.
     #[must_use]
     pub fn session_name(&self) -> String {
-        self.task_id.project_id().as_ref().to_ascii_lowercase()
+        self.0.project_id().as_ref().to_ascii_lowercase()
     }
 }
 
@@ -95,7 +179,13 @@ pub struct DispatchConfirmation {
     pub has_pushed_prompt: bool,
     pub model: AgentModel,
     pub effort: SessionEffort,
-    pub target: DispatchTarget,
+}
+
+impl DispatchConfirmation {
+    #[must_use]
+    pub fn target(&self) -> DispatchTarget {
+        DispatchTarget::new(self.task_id.clone())
+    }
 }
 
 /// Reports whether the selected agent's executable is available.
@@ -149,10 +239,8 @@ mod tests {
 
     #[test]
     fn session_name_lowercases_the_typed_project_id() {
-        let target = DispatchTarget {
-            task_id: "cfg9".parse::<TaskId>().unwrap(),
-        };
+        let target = DispatchTarget::new("aux9".parse::<TaskId>().unwrap());
 
-        assert_eq!(target.session_name(), "cfg");
+        assert_eq!(target.session_name(), "aux");
     }
 }

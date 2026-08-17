@@ -1,16 +1,9 @@
 use std::error::Error;
 
 use pwf_models::project::ProjectId;
-use pwf_wire::project::ProjectStateChange;
+use pwf_wire::project::{PauseProject, ProjectStateChange};
 
 use super::ProjectRow;
-
-/// Requests pausing one managed project.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PauseProject {
-    /// Project ID.
-    pub id: ProjectId,
-}
 
 #[derive(Debug, thiserror::Error)]
 pub enum PauseProjectError {

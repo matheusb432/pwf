@@ -102,7 +102,7 @@ pub(in crate::task) fn create(
     Ok(CreatedTask {
         id,
         title,
-        note_path: TaskNotePath::new(record.locator.into()),
+        note_path: record.locator,
         created_section,
     })
 }

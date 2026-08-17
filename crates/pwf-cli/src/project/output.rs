@@ -43,11 +43,11 @@ struct ProjectStateChangeOutput {
     changed: bool,
 }
 
-pub(super) fn project(project: Project) -> Result<String, String> {
+pub(super) fn project(project: Project) -> Result<String, serde_json::Error> {
     render(&ProjectOutput::from(project))
 }
 
-pub(super) fn projects(projects: Vec<Project>) -> Result<String, String> {
+pub(super) fn projects(projects: Vec<Project>) -> Result<String, serde_json::Error> {
     render(
         &projects
             .into_iter()
@@ -56,16 +56,15 @@ pub(super) fn projects(projects: Vec<Project>) -> Result<String, String> {
     )
 }
 
-pub(super) fn state_change(change: ProjectStateChange) -> Result<String, String> {
+pub(super) fn state_change(change: ProjectStateChange) -> Result<String, serde_json::Error> {
     render(&ProjectStateChangeOutput {
         project: ProjectOutput::from(change.project),
         changed: change.changed,
     })
 }
 
-fn render(value: &impl Serialize) -> Result<String, String> {
+fn render(value: &impl Serialize) -> Result<String, serde_json::Error> {
     serde_json::to_string_pretty(value)
-        .map_err(|error| format!("rendering project JSON failed: {error}"))
 }
 
 fn serialize_project_id<S>(project_id: &ProjectId, serializer: S) -> Result<S::Ok, S::Error>

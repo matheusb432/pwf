@@ -2,23 +2,17 @@
 
 use pwf_models::{
     note::NoteSelector,
-    project::{ProjectId, ProjectName, ProjectSelector},
+    project::{ProjectId, ProjectName},
 };
-use pwf_wire::{note::RemovedNote, project::ProjectStatusFilter};
+use pwf_wire::{
+    note::{RemoveNote, RemovedNote},
+    project::{ProjectStatusFilter, ResolveProject},
+};
 
 use crate::{
     ports::project_note::ProjectNoteStore,
-    project::resolve_project::{self, ResolveProject, ResolveProjectError},
+    project::resolve_project::{self, ResolveProjectError},
 };
-
-/// Requests deletion of one project note.
-#[derive(Debug, Clone)]
-pub struct RemoveNote {
-    /// Selects the managed project by name or id code.
-    pub project_selector: ProjectSelector,
-    /// Selects the note by full id, `NOTE-NNNN`, or bare numeric suffix.
-    pub selector: NoteSelector,
-}
 
 #[derive(Debug, thiserror::Error)]
 pub enum RemoveNoteError {
@@ -93,7 +87,10 @@ mod tests {
     };
 
     use super::{RemoveNote, RemoveNoteError};
-    use crate::testing::{InMemoryStore, ProjectNoteFailure, insert_project};
+    use crate::{
+        note::remove_note,
+        testing::{InMemoryStore, ProjectNoteFailure, insert_project},
+    };
 
     #[derive(Debug, thiserror::Error)]
     #[error("sentinel store failure")]
@@ -117,7 +114,7 @@ mod tests {
         ] {
             let store = InMemoryStore::default().with_project_notes("pwf", vec![note()]);
 
-            let removed = super::execute(
+            let removed = remove_note::execute(
                 RemoveNote {
                     project_selector: "PWF".parse().unwrap(),
                     selector: identifier.parse().unwrap(),
@@ -138,7 +135,7 @@ mod tests {
         insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
         let store = InMemoryStore::default().with_failure(ProjectNoteFailure::Delete);
 
-        let error = super::execute(
+        let error = remove_note::execute(
             RemoveNote {
                 project_selector: "pwf".parse().unwrap(),
                 selector: "1".parse().unwrap(),
@@ -163,7 +160,7 @@ mod tests {
         insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
         let store = InMemoryStore::default();
 
-        let error = super::execute(
+        let error = remove_note::execute(
             RemoveNote {
                 project_selector: "pwf".parse().unwrap(),
                 selector: "FOO-NOTE-0001".parse().unwrap(),

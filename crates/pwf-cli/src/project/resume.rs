@@ -1,11 +1,10 @@
-use std::path::PathBuf;
-
 use clap::Args;
-use pwf_application::project::resume_project::{self, ResumeProject};
-use pwf_models::project::ProjectId;
+use pwf_application::project::resume_project::{self, ResumeProjectError};
+use pwf_models::project::{HomeDirectory, ProjectId};
+use pwf_wire::project::{ResumeProject, ResumeProjectApiError};
 use sqlx::SqlitePool;
 
-use super::{output, parse_project_id};
+use super::{map_task_location_error, output, parse_project_id};
 
 #[derive(Args, Debug)]
 pub struct Arguments {
@@ -17,16 +16,23 @@ pub struct Arguments {
 pub(super) async fn run(
     arguments: Arguments,
     pool: &SqlitePool,
-    home: PathBuf,
-) -> Result<String, String> {
-    let change = resume_project::execute(
-        ResumeProject {
-            id: arguments.id,
-            home,
+    home: Option<HomeDirectory>,
+) -> Result<String, ResumeProjectApiError> {
+    let home = home.ok_or(ResumeProjectApiError::HomeDirectoryUnavailable)?;
+    let change = resume_project::execute(ResumeProject { id: arguments.id }, pool, &home)
+        .await
+        .map_err(map_error)?;
+    output::state_change(change).map_err(|error| ResumeProjectApiError::RenderJson {
+        message: error.to_string(),
+    })
+}
+
+fn map_error(error: ResumeProjectError) -> ResumeProjectApiError {
+    match error {
+        ResumeProjectError::ProjectNotFound { id } => ResumeProjectApiError::ProjectNotFound { id },
+        ResumeProjectError::TaskLocation(error) => map_task_location_error(error).into(),
+        ResumeProjectError::Unexpected { context, source } => ResumeProjectApiError::Unexpected {
+            message: format!("{context}: {source}"),
         },
-        pool,
-    )
-    .await
-    .map_err(|error| format!("project resume failed: {error}"))?;
-    output::state_change(change)
+    }
 }

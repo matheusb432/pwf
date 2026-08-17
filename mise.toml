@@ -6,22 +6,24 @@ lockfile = true
 locked = true
 
 [tools]
-rust = [
-  { version = "stable", profile = "minimal", components = [
-    "clippy",
-    "rustfmt",
-  ] },
-  { version = "nightly-2026-06-23", profile = "minimal", components = [
-    "rustfmt",
-  ] },
-]
+rust = { version = "stable", profile = "minimal", components = [
+  "clippy",
+  "rustfmt",
+] }
 just = "1.56.0"
-rumdl = "0.2.41"
 ast-grep = "0.44.1"
 "cargo-binstall" = "1.21.1"
 "cargo:cargo-llvm-cov" = { version = "0.8.7", depends = [
   "rust",
   "cargo-binstall",
+] }
+"cargo:sqlx-cli" = { version = "0.9.0", default-features = false, features = [
+  "rustls",
+  "postgres",
+  "sqlite",
+  "sqlx-toml",
+], depends = [
+  "rust",
 ] }
 
 [bootstrap.packages]

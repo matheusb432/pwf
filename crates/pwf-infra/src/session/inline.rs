@@ -1,6 +1,6 @@
 //! Executes prepared agent commands in the current terminal.
 
-use std::process::Command;
+use std::{io, process::Command};
 
 use pwf_application::ports::{
     inline_agent_session::InlineAgentSessionClient, session::AgentCommand,
@@ -11,54 +11,75 @@ use pwf_models::session::SessionWorkingDirectory;
 #[derive(Debug, Clone, Copy, Default)]
 pub struct InlineHarness;
 
+#[derive(Debug, thiserror::Error)]
+pub enum InlineSessionError {
+    #[error("{source}")]
+    Execute {
+        #[source]
+        source: io::Error,
+    },
+    #[error("agent exited with status {status}")]
+    AgentExited { status: i32 },
+}
+
 impl InlineAgentSessionClient for InlineHarness {
+    type Error = InlineSessionError;
+
     fn run(
         &self,
         command: AgentCommand<'_>,
         working_directory: &SessionWorkingDirectory,
-    ) -> Result<(), String> {
-        let (binary, arguments) = command
-            .split_first()
-            .ok_or_else(|| "empty agent command".to_string())?;
-        let mut command = Command::new(binary);
-        command
-            .args(arguments)
+    ) -> Result<(), Self::Error> {
+        let mut process = Command::new(command.program());
+        process
+            .args(command.arguments())
             .current_dir(working_directory.as_ref());
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt;
-            Err(command.exec().to_string())
+            Err(InlineSessionError::Execute {
+                source: process.exec(),
+            })
         }
         #[cfg(not(unix))]
         {
-            let status = command.status().map_err(|error| error.to_string())?;
+            let status = process
+                .status()
+                .map_err(|source| InlineSessionError::Execute { source })?;
             map_spawn_status(status.success(), status.code())
         }
     }
 }
 
 #[cfg(any(not(unix), test))]
-fn map_spawn_status(success: bool, code: Option<i32>) -> Result<(), String> {
+fn map_spawn_status(success: bool, code: Option<i32>) -> Result<(), InlineSessionError> {
     if success {
         Ok(())
     } else {
-        Err(format!("agent exited with status {}", code.unwrap_or(-1)))
+        Err(InlineSessionError::AgentExited {
+            status: code.unwrap_or(-1),
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::map_spawn_status;
+    use super::{InlineSessionError, map_spawn_status};
 
     #[test]
     fn unsuccessful_status_retains_the_exit_classification() {
-        assert_eq!(
-            map_spawn_status(false, Some(17)),
-            Err("agent exited with status 17".to_string())
-        );
-        assert_eq!(
-            map_spawn_status(false, None),
-            Err("agent exited with status -1".to_string())
-        );
+        let error = map_spawn_status(false, Some(17)).unwrap_err();
+        assert!(matches!(
+            error,
+            InlineSessionError::AgentExited { status: 17 }
+        ));
+        assert_eq!(error.to_string(), "agent exited with status 17");
+
+        let error = map_spawn_status(false, None).unwrap_err();
+        assert!(matches!(
+            error,
+            InlineSessionError::AgentExited { status: -1 }
+        ));
+        assert_eq!(error.to_string(), "agent exited with status -1");
     }
 }

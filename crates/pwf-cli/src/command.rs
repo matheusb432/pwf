@@ -101,4 +101,17 @@ mod tests {
         };
         assert_eq!(title, ["new", "title"]);
     }
+
+    #[test]
+    fn project_route_rejects_unsupported_blocked_by_input() {
+        let error = super::parse_argv(
+            ["pwf", "--blocked-by", "AUX-0001"]
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
+        )
+        .unwrap_err();
+
+        assert_eq!(error.kind(), clap::error::ErrorKind::UnknownArgument);
+    }
 }

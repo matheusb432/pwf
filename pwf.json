@@ -5,7 +5,7 @@
   "license": "MIT",
   "architecture": {
     "64bit": {
-      "url": "file:///C:/Users/mathe/tools/pwf/Cargo.toml"
+      "url": "file:///C:/Users/user/tools/pwf/Cargo.toml"
     }
   },
   "bin": "pwf.exe",

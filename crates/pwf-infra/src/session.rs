@@ -9,8 +9,8 @@ mod model_tiers;
 mod project_directory;
 mod tmux;
 
-pub use inline::InlineHarness;
+pub use inline::{InlineHarness, InlineSessionError};
 pub use launcher::{AgentHarness, AgentPreparationError, render_argv};
 pub use model_tiers::ModelTiersError;
 pub use project_directory::LocalProjectDirectoryClient;
-pub use tmux::TmuxHarness;
+pub use tmux::{TmuxError, TmuxHarness};

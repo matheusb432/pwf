@@ -1,16 +1,16 @@
 use std::num::NonZeroUsize;
 
 use pwf_models::{
-    project::{Project, ProjectSelector},
+    project::Project,
     task::{EffortTier, TaskId, TaskSection, TaskTags},
 };
 #[cfg(test)]
 use pwf_wire::task::BlockedByStatus;
 use pwf_wire::{
-    project::ProjectStatusFilter,
+    project::{GetActiveProject, ListProjects, ProjectStatusFilter, ResolveProject},
     task::{
-        ListDetail, ListLayout, ListMode, ListScope, ListedTasks, OrderDirection, OrderField,
-        OrderSpec, ProjectTaskPath, StatusFilter, TaskView,
+        ListDetail, ListLayout, ListScope, ListTasks, ListedTasks, OrderDirection, OrderField,
+        OrderSpec, StatusFilter, TaskView,
     },
 };
 
@@ -20,28 +20,8 @@ use crate::{
         project_task_location::ProjectTaskLocationClient,
         task_record::{TaskRecord, TaskStore},
     },
-    project::{
-        get_active_project::{self, GetActiveProject},
-        get_project::GetProjectError,
-        list_projects::{self, ListProjects},
-        resolve_project::{self, ResolveProject},
-    },
+    project::{get_active_project, get_project::GetProjectError, list_projects, resolve_project},
 };
-
-#[derive(Debug, Clone)]
-pub struct ListTasks {
-    pub project_selector: Option<ProjectSelector>,
-    pub scope: ListScope,
-    /// Explicit task cap. Omission uses the mode-specific default.
-    pub number: Option<NonZeroUsize>,
-    pub effort: Option<EffortTier>,
-    pub tags: Option<TaskTags>,
-    pub order: Option<OrderSpec>,
-    /// Explicit lifecycle filter. Omission uses the mode-specific default.
-    pub status: Option<StatusFilter>,
-    pub detail: ListDetail,
-    pub mode: ListMode,
-}
 
 /// Retains invalid requested or persisted tag text for list diagnostics.
 #[derive(Debug, thiserror::Error)]
@@ -82,6 +62,8 @@ pub enum ListTasksError {
     },
     #[error("{0}")]
     InvalidTaskView(#[source] Box<dyn std::error::Error + Send + Sync>),
+    #[error("{0}")]
+    ReadBlockedByStatus(#[source] Box<dyn std::error::Error + Send + Sync>),
     #[error(transparent)]
     ResolveProject(#[from] crate::project::resolve_project::ResolveProjectError),
     #[error("{0}")]
@@ -166,8 +148,7 @@ pub async fn execute(
         .as_ref()
         .map(|project| task_locations.project_task_path(project))
         .transpose()
-        .map_err(|source| ListTasksError::ReadProjectTaskPath(Box::new(source)))?
-        .map(ProjectTaskPath::new);
+        .map_err(|source| ListTasksError::ReadProjectTaskPath(Box::new(source)))?;
     let mut tasks = collect_list_tasks(&query, store, &projects, selected_records.as_deref())?;
 
     tasks.retain(|task| scope_includes(query.scope, task.section.as_ref()));
@@ -185,9 +166,13 @@ pub async fn execute(
 
     if query.detail.includes_relationship_statuses() {
         for task in &mut tasks {
-            task.blocked_by_statuses = task.blocked_by.as_ref().map_or_else(Vec::new, |value| {
-                blocked_by::statuses(value, store, &projects)
-            });
+            task.blocked_by_statuses = task
+                .blocked_by
+                .as_ref()
+                .map(|value| blocked_by::statuses(value, store, &projects))
+                .transpose()
+                .map_err(|source| ListTasksError::ReadBlockedByStatus(Box::new(source)))?
+                .unwrap_or_default();
         }
     }
 
@@ -235,13 +220,7 @@ fn resolve_query(query: &ListTasks, project: Option<Project>) -> ResolvedListTas
         .number
         .map(NonZeroUsize::get)
         .or((scope != ListScope::All).then_some(10));
-    let order = query.order.unwrap_or(match query.mode {
-        ListMode::Direct => OrderSpec::default(),
-        ListMode::ProjectRoute => OrderSpec {
-            field: OrderField::ProjectId,
-            direction: OrderDirection::Asc,
-        },
-    });
+    let order = query.order.unwrap_or_default();
     let status_filter = query.status.unwrap_or(if scope == ListScope::All {
         StatusFilter::All
     } else {
@@ -386,15 +365,15 @@ fn apply_cap(tasks: Vec<TaskView>, cap: Option<usize>) -> (Vec<TaskView>, usize)
 
 #[cfg(test)]
 mod tests {
-    use std::{convert::Infallible, num::NonZeroUsize, path::PathBuf};
+    use std::{convert::Infallible, num::NonZeroUsize};
 
     use pwf_models::{
         project::{Project, ProjectName},
         task::{EffortTier, TaskId, TaskStatus, TaskTags},
     };
     use pwf_wire::task::{
-        ListDetail, ListLayout, ListMode, ListScope, ListedTasks, OrderDirection, OrderField,
-        OrderSpec, ProjectTaskPath, RawTaskTags, StatusFilter,
+        ListDetail, ListLayout, ListScope, ListedTasks, OrderDirection, OrderField, OrderSpec,
+        ProjectTaskPath, RawTaskTags, StatusFilter, TaskIndexPath, TaskNotePath,
     };
 
     use super::{BlockedByStatus, ListTasks, ListTasksError};
@@ -403,14 +382,17 @@ mod tests {
             project_task_location::ProjectTaskLocationClient,
             task_record::{IndexPlacement, Materialization, TaskRecord},
         },
+        task::list_tasks,
         testing::{InMemoryStore, MIGRATOR, app_date, insert_project, project, task_record},
     };
 
     impl ProjectTaskLocationClient for InMemoryStore {
         type Error = Infallible;
 
-        fn project_task_path(&self, project: &Project) -> Result<PathBuf, Self::Error> {
-            Ok(PathBuf::from("/tasks").join(project.title.as_ref()))
+        fn project_task_path(&self, project: &Project) -> Result<ProjectTaskPath, Self::Error> {
+            Ok(ProjectTaskPath::new(
+                std::path::Path::new("/tasks").join(project.title.as_ref()),
+            ))
         }
     }
 
@@ -419,10 +401,10 @@ mod tests {
             title: id.to_string(),
             created: Some(app_date("2026-07-07")),
             source: String::new(),
-            locator: format!("/notes/pwf/{id}.md"),
+            locator: TaskNotePath::new(format!("/notes/pwf/{id}.md").into()),
             placement: Some(IndexPlacement {
-                index_path: "/notes/pwf/pwf.md".to_string(),
-                line: 1,
+                index_path: TaskIndexPath::new("/notes/pwf/pwf.md".into()),
+                line: NonZeroUsize::MIN,
             }),
             ..task_record(id)
         }
@@ -448,7 +430,7 @@ mod tests {
         let registry = projects
             .iter()
             .map(|name| {
-                let project_id = if *name == "pwf" { "PWF" } else { "CFG" };
+                let project_id = if *name == "pwf" { "PWF" } else { "AUX" };
                 project(project_id, name)
             })
             .collect();
@@ -462,7 +444,7 @@ mod tests {
     }
 
     fn blocked_by_registry() -> Vec<Project> {
-        vec![project("PWF", "pwf"), project("CFG", "config-handler")]
+        vec![project("PWF", "pwf"), project("AUX", "companion-project")]
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
@@ -472,10 +454,10 @@ mod tests {
         insert_project(&pool, "PWF", "pwf", "/work/pwf", "/tasks/pwf", false).await;
         insert_project(
             &pool,
-            "CFG",
-            "config-handler",
-            "/work/config-handler",
-            "/tasks/config-handler",
+            "AUX",
+            "companion-project",
+            "/work/companion-project",
+            "/tasks/companion-project",
             false,
         )
         .await;
@@ -490,28 +472,30 @@ mod tests {
         .await;
 
         let dependent = TaskRecord {
-            blocked_by: Some("[[CFG-0014]]".to_string()),
+            blocked_by: Some("[[AUX-0014]]".to_string()),
             ..record("PWF-0001")
         };
         let blocking_task = TaskRecord {
             status: TaskStatus::Done,
-            ..record("CFG-0014")
+            ..record("AUX-0014")
         };
         let store = InMemoryStore::default()
             .with_project("pwf", vec![dependent])
-            .with_project("config-handler", vec![blocking_task]);
+            .with_project("companion-project", vec![blocking_task]);
         let query = ListTasks {
             project_selector: Some("pwf".parse().unwrap()),
             detail: ListDetail::Detailed,
             ..default_query()
         };
 
-        let result = super::execute(&query, &store, &pool, &store).await.unwrap();
+        let result = list_tasks::execute(&query, &store, &pool, &store)
+            .await
+            .unwrap();
 
         assert_eq!(
             result.tasks[0].blocked_by_statuses,
             [BlockedByStatus {
-                id: TaskId::try_new("CFG-0014").unwrap(),
+                id: TaskId::try_new("AUX-0014").unwrap(),
                 status: Some(TaskStatus::Done),
             }]
         );
@@ -540,7 +524,7 @@ mod tests {
             )
             .await;
         }
-        super::execute(query, store, &pool, store).await
+        list_tasks::execute(query, store, &pool, store).await
     }
 
     fn sectioned(id: &str, section: &str) -> TaskRecord {
@@ -585,7 +569,6 @@ mod tests {
             order: None,
             status: None,
             detail: ListDetail::Summary,
-            mode: ListMode::Direct,
         }
     }
 
@@ -596,17 +579,17 @@ mod tests {
     #[tokio::test]
     async fn long_list_projects_done_active_and_missing_blocked_by_statuses() {
         let dependent = TaskRecord {
-            blocked_by: Some("[[CFG-0014]], [[CFG-0015]], [[CFG-9999]]".to_string()),
+            blocked_by: Some("[[AUX-0014]], [[AUX-0015]], [[AUX-9999]]".to_string()),
             ..record("PWF-0001")
         };
         let done = TaskRecord {
             status: TaskStatus::Done,
-            ..record("CFG-0014")
+            ..record("AUX-0014")
         };
-        let active = record("CFG-0015");
+        let active = record("AUX-0015");
         let store = InMemoryStore::default()
             .with_project("pwf", vec![dependent])
-            .with_project("config-handler", vec![done, active]);
+            .with_project("companion-project", vec![done, active]);
 
         let got = run(
             &store,
@@ -624,15 +607,15 @@ mod tests {
             got.tasks[0].blocked_by_statuses,
             [
                 BlockedByStatus {
-                    id: TaskId::try_new("CFG-0014").unwrap(),
+                    id: TaskId::try_new("AUX-0014").unwrap(),
                     status: Some(TaskStatus::Done),
                 },
                 BlockedByStatus {
-                    id: TaskId::try_new("CFG-0015").unwrap(),
+                    id: TaskId::try_new("AUX-0015").unwrap(),
                     status: Some(TaskStatus::Active),
                 },
                 BlockedByStatus {
-                    id: TaskId::try_new("CFG-9999").unwrap(),
+                    id: TaskId::try_new("AUX-9999").unwrap(),
                     status: None,
                 },
             ]
@@ -642,7 +625,7 @@ mod tests {
     #[tokio::test]
     async fn long_list_treats_indexed_blocked_by_without_note_as_missing() {
         let dependent = TaskRecord {
-            blocked_by: Some("[[CFG-0014]]".to_string()),
+            blocked_by: Some("[[AUX-0014]]".to_string()),
             ..record("PWF-0001")
         };
         let missing_note = TaskRecord {
@@ -650,13 +633,13 @@ mod tests {
             body: String::new(),
             placement: None,
             materialization: Materialization::MissingNote {
-                expected: "/notes/config-handler/CFG-0014.md".to_string(),
+                expected: TaskNotePath::new("/notes/companion-project/AUX-0014.md".into()),
             },
-            ..record("CFG-0014")
+            ..record("AUX-0014")
         };
         let store = InMemoryStore::default()
             .with_project("pwf", vec![dependent])
-            .with_project("config-handler", vec![missing_note]);
+            .with_project("companion-project", vec![missing_note]);
 
         let got = run(
             &store,
@@ -673,7 +656,7 @@ mod tests {
         assert_eq!(
             got.tasks[0].blocked_by_statuses,
             [BlockedByStatus {
-                id: TaskId::try_new("CFG-0014").unwrap(),
+                id: TaskId::try_new("AUX-0014").unwrap(),
                 status: None,
             }]
         );
@@ -1049,12 +1032,12 @@ mod tests {
     async fn created_desc_is_default_and_flat_across_projects() {
         let (store, registry) = store_and_registry(&[
             in_project("pwf", dated_task("PWF-0001", "2026-01-01")),
-            in_project("config-handler", dated_task("CFG-0001", "2026-03-01")),
+            in_project("companion-project", dated_task("AUX-0001", "2026-03-01")),
         ]);
 
         let got = run(&store, &registry, &default_query()).await.unwrap();
 
-        assert_eq!(listed_ids(&got), ["CFG-0001", "PWF-0001"]);
+        assert_eq!(listed_ids(&got), ["AUX-0001", "PWF-0001"]);
     }
 
     #[tokio::test]
@@ -1085,7 +1068,7 @@ mod tests {
     #[tokio::test]
     async fn id_desc_is_flat_across_projects() {
         let (store, registry) = store_and_registry(&[
-            in_project("config-handler", record("CFG-0001")),
+            in_project("companion-project", record("AUX-0001")),
             in_project("pwf", record("PWF-0099")),
         ]);
 
@@ -1103,34 +1086,36 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(listed_ids(&got), ["PWF-0099", "CFG-0001"]);
+        assert_eq!(listed_ids(&got), ["PWF-0099", "AUX-0001"]);
     }
 
     #[tokio::test]
-    async fn project_route_defaults_to_project_id_order() {
+    async fn project_id_order_groups_projects_and_orders_ids_descending() {
         let (store, registry) = store_and_registry(&[
             in_project("pwf", record("PWF-9999")),
-            in_project("config-handler", record("CFG-0001")),
-            in_project("config-handler", record("CFG-0002")),
+            in_project("companion-project", record("AUX-0001")),
+            in_project("companion-project", record("AUX-0002")),
         ]);
 
         let got = run(
             &store,
             &registry,
             &ListTasks {
-                order: None,
-                mode: ListMode::ProjectRoute,
+                order: Some(OrderSpec {
+                    field: OrderField::ProjectId,
+                    direction: OrderDirection::Asc,
+                }),
                 ..default_query()
             },
         )
         .await
         .unwrap();
 
-        assert_eq!(listed_ids(&got), ["CFG-0002", "CFG-0001", "PWF-9999"]);
+        assert_eq!(listed_ids(&got), ["AUX-0002", "AUX-0001", "PWF-9999"]);
     }
 
     #[tokio::test]
-    async fn all_uncaps_and_direct_mode_uses_the_default_cap() {
+    async fn all_uncaps_and_default_scope_uses_the_default_cap() {
         let (store, registry) =
             pwf_store((1..=12).map(|n| record(&format!("FOO-{n:04}"))).collect());
 
@@ -1170,7 +1155,7 @@ mod tests {
     async fn only_project_scans_just_that_project() {
         let (store, registry) = store_and_registry(&[
             in_project("pwf", record("PWF-0001")),
-            in_project("config-handler", record("CFG-0001")),
+            in_project("companion-project", record("AUX-0001")),
         ]);
 
         let got = run(

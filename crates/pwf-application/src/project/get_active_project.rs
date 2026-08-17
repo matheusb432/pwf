@@ -1,16 +1,9 @@
-use pwf_models::project::ProjectId;
-use pwf_wire::project::ProjectStatusFilter;
+use pwf_wire::project::{GetActiveProject, GetProject, ProjectStatusFilter};
 
 use super::{
     Project,
-    get_project::{self, GetProject, GetProjectError},
+    get_project::{self, GetProjectError},
 };
-
-/// Requests one active managed project by project ID.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GetActiveProject {
-    pub id: ProjectId,
-}
 
 /// Reads one active managed project.
 #[cqrsy::query]

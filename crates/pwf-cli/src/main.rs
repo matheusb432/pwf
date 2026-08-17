@@ -1,8 +1,7 @@
-use std::path::PathBuf;
-
 use pwf_application::ports::clock::Clock;
 use pwf_cli::{command, note, project, task};
 use pwf_infra::{clock::LocalClock, obsidian::ObsidianStore};
+use pwf_models::project::HomeDirectory;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
@@ -22,7 +21,7 @@ async fn main() {
     }
 }
 
-async fn run(parsed: command::Cli, clock: &impl Clock) -> Result<String, String> {
+async fn run(parsed: command::Cli, clock: &impl Clock) -> anyhow::Result<String> {
     match parsed.command {
         command::RootCommand::Project(arguments) if arguments.command.is_none() => {
             Ok(command::project_help())
@@ -54,13 +53,13 @@ async fn run(parsed: command::Cli, clock: &impl Clock) -> Result<String, String>
     }
 }
 
-async fn open_database() -> Result<sqlx::SqlitePool, String> {
+async fn open_database() -> anyhow::Result<sqlx::SqlitePool> {
     let path = pwf_infra::database::database_path()
-        .map_err(|error| format!("resolving project database path failed: {error:#}"))?;
+        .map_err(|error| anyhow::anyhow!("resolving project database path failed: {error:#}"))?;
     let pool = pwf_infra::database::build_pool(&path)
         .await
         .map_err(|error| {
-            format!(
+            anyhow::anyhow!(
                 "opening project database {} failed: {error:#}",
                 path.display()
             )
@@ -68,7 +67,7 @@ async fn open_database() -> Result<sqlx::SqlitePool, String> {
     pwf_infra::database::check_database_ready(&pool)
         .await
         .map_err(|error| {
-            format!(
+            anyhow::anyhow!(
                 "project database {} failed its migration readiness check: {error:#}",
                 path.display()
             )
@@ -76,7 +75,7 @@ async fn open_database() -> Result<sqlx::SqlitePool, String> {
     Ok(pool)
 }
 
-fn project_command_home(arguments: &project::Arguments) -> Result<Option<PathBuf>, String> {
+fn project_command_home(arguments: &project::Arguments) -> anyhow::Result<Option<HomeDirectory>> {
     match arguments.command.as_ref() {
         Some(project::Command::Add(_)) => managed_project_home().map(Some),
         Some(project::Command::Rename(_) | project::Command::Resume(_)) => {
@@ -86,8 +85,8 @@ fn project_command_home(arguments: &project::Arguments) -> Result<Option<PathBuf
     }
 }
 
-fn managed_project_home() -> Result<PathBuf, String> {
+fn managed_project_home() -> anyhow::Result<HomeDirectory> {
     directories::BaseDirs::new()
-        .map(|directories| directories.home_dir().to_path_buf())
-        .ok_or_else(|| "resolving the home directory for managed projects failed".to_string())
+        .map(|directories| HomeDirectory::new(directories.home_dir().to_path_buf()))
+        .ok_or_else(|| anyhow::anyhow!("resolving the home directory for managed projects failed"))
 }

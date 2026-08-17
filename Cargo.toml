@@ -11,6 +11,8 @@ publish = false
 [workspace.dependencies]
 anyhow = "1"
 anstyle = "1"
+# TODO: implement
+repository-client = { path = "../.repository-workspace/crates/repository-client", features = ["cli"] }
 askama = { version = "0.16.0", default-features = false, features = ["derive", "std"] }
 assert_cmd = "2"
 cargo_metadata = "0.23.1"
@@ -20,6 +22,7 @@ clap-cargo = "0.18.3"
 command-group = "5.0.1"
 cqrsy = { git = "ssh://git@github.com/matheusb432/cqrsy.git", tag = "v0.10.1" }
 directories = "6.0.0"
+dialoguer = { version = "0.12.0", default-features = false }
 expectrl = "0.9.0"
 gray_matter = { version = "0.3.2", default-features = false, features = ["yaml"] }
 indicatif = { version = "0.18.6", default-features = false }
@@ -52,7 +55,7 @@ thiserror = "2.0.18"
 toml = "1.1.2"
 tokio = "1"
 walkdir = "2"
-xtk-test = { git = "ssh://git@github.com/matheusb432/xtk-test.git", tag = "v0.8.2", features = ["json"] }
+xtk-test = { version = "0.10", features = ["json"] }
 [workspace.lints.clippy]
 all = { level = "warn", priority = -2 }
 pedantic = { level = "warn", priority = -2 }

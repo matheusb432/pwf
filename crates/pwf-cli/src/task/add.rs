@@ -1,22 +1,23 @@
 use clap::Args;
 use pwf_application::{
     ports::clock::Clock,
-    task::add_task::{self, AddTask, AddTaskPrompt},
+    task::add_task::{self, AddTaskError},
 };
 use pwf_infra::obsidian::ObsidianStore;
 use pwf_models::{
     project::ProjectSelector,
     task::{BlockedBy, BlockedByInput, IndexSection, TagInput, TaskPrompt, TaskTags},
 };
+use pwf_wire::task::{AddTask, AddTaskApiError, AddTaskPrompt, TaskInputApiError};
 
 use super::{
-    EffortChoice, LaneFlagMode, TaskError,
+    EffortChoice, LaneFlagMode,
     render::{
         TITLE_NORMALIZED_NOTICE, emit_created_section, emit_created_section_for_error, render_added,
     },
     task_lanes, task_title,
 };
-use crate::console::Console;
+use crate::{console::Console, project::map_resolve_project_error};
 
 #[derive(Args, Debug)]
 pub struct Arguments {
@@ -65,11 +66,11 @@ pub(super) async fn run(
     store: &ObsidianStore,
     pool: &sqlx::SqlitePool,
     clock: &impl Clock,
-) -> Result<String, TaskError> {
+) -> Result<String, AddTaskApiError> {
     let project_selector = arguments
         .project
         .clone()
-        .ok_or(TaskError::InvalidAddRequest)?;
+        .ok_or(AddTaskApiError::InvalidRequest)?;
     let (prompt, title_normalized) = request_prompt(arguments)?;
     let result = add_task::execute(
         &AddTask {
@@ -98,13 +99,14 @@ pub(super) async fn run(
             Ok(render_added(&added, console.color()))
         }
         Err(error) => {
+            let error = map_add_task_error(error);
             emit_created_section_for_error(&error);
-            Err(TaskError::Add(error))
+            Err(error)
         }
     }
 }
 
-fn request_prompt(arguments: &Arguments) -> Result<(AddTaskPrompt, bool), TaskError> {
+fn request_prompt(arguments: &Arguments) -> Result<(AddTaskPrompt, bool), AddTaskApiError> {
     if let Some(title) = arguments.title.as_deref() {
         let (title, normalized) = task_title(title)?;
         let lanes = task_lanes(
@@ -118,6 +120,31 @@ fn request_prompt(arguments: &Arguments) -> Result<(AddTaskPrompt, bool), TaskEr
     }
 
     let prompt = AddTaskPrompt::shorthand(TaskPrompt::new(arguments.prompt.join(" ")))
-        .map_err(|_| TaskError::InvalidAddRequest)?;
+        .map_err(|_| AddTaskApiError::InvalidRequest)?;
     Ok((prompt, false))
+}
+
+pub(super) fn map_add_task_error(error: AddTaskError) -> AddTaskApiError {
+    match error {
+        AddTaskError::ProjectResolution(error) => map_resolve_project_error(error).into(),
+        AddTaskError::QueryProject(source) => AddTaskApiError::Unexpected {
+            message: source.to_string(),
+        },
+        AddTaskError::UnknownBlockedByIds { ids } => AddTaskApiError::UnknownBlockedByIds { ids },
+        AddTaskError::ReadBlockedBy { id, source } => AddTaskApiError::ReadBlockedBy {
+            id,
+            reason: source.to_string(),
+        },
+        AddTaskError::InvalidTitle(source) => TaskInputApiError::InvalidTitle {
+            message: source.to_string(),
+        }
+        .into(),
+        AddTaskError::WriteStore {
+            diagnostics,
+            source,
+        } => AddTaskApiError::WriteStore {
+            diagnostics,
+            message: source.to_string(),
+        },
+    }
 }

@@ -1,13 +1,14 @@
 use clap::{ArgGroup, Args};
-use pwf_application::task::{
-    TaskLane, TaskLaneEdits,
-    edit_task::{self, CollectionEdit, EditTask, EditTaskContent, TaskEdits, ValueEdit},
-};
+use pwf_application::task::edit_task::{self, EditTaskError};
 use pwf_infra::obsidian::ObsidianStore;
 use pwf_models::task::{BlockedBy, BlockedByInput, EffortTier, TagInput, TaskPrompt, TaskTags};
+use pwf_wire::task::{
+    CollectionEdit, EditTask, EditTaskApiError, EditTaskContent, TaskEdits, TaskLane,
+    TaskLaneEdits, ValueEdit,
+};
 
 use super::{
-    EffortChoice, Identifier, LaneFlagMode, TaskError,
+    EffortChoice, Identifier, LaneFlagMode,
     render::{TITLE_NORMALIZED_NOTICE, render_edited},
     task_lanes, task_title,
 };
@@ -203,13 +204,14 @@ pub(super) async fn run(
     console: Console,
     store: &ObsidianStore,
     pool: &sqlx::SqlitePool,
-) -> Result<String, TaskError> {
-    let id = arguments.identifier.required("edit")?;
+) -> Result<String, EditTaskApiError> {
+    let id = arguments.identifier.required(EditTaskApiError::MissingId)?;
     let (title, title_normalized) = arguments
         .title
         .as_deref()
         .map(task_title)
-        .transpose()?
+        .transpose()
+        .map_err(EditTaskApiError::from)?
         .map_or((None, false), |(title, normalized)| {
             (Some(title), normalized)
         });
@@ -239,16 +241,27 @@ pub(super) async fn run(
     .flatten();
     let lanes = TaskLaneEdits::new(additions, removals);
     let content = if let Some(prompt) = arguments.prompt.as_ref() {
-        Some(EditTaskContent::replace_shorthand(TaskPrompt::new(
-            prompt.clone(),
-        ))?)
+        Some(
+            EditTaskContent::replace_shorthand(TaskPrompt::new(prompt.clone())).map_err(
+                |error| EditTaskApiError::InvalidContent {
+                    message: error.to_string(),
+                },
+            )?,
+        )
     } else if let Some(prompt) = arguments.append.as_ref() {
-        Some(EditTaskContent::append_shorthand(
-            title,
-            TaskPrompt::new(prompt.clone()),
-        )?)
+        Some(
+            EditTaskContent::append_shorthand(title, TaskPrompt::new(prompt.clone())).map_err(
+                |error| EditTaskApiError::InvalidContent {
+                    message: error.to_string(),
+                },
+            )?,
+        )
     } else if title.is_some() || !lanes.is_empty() {
-        Some(EditTaskContent::structured(title, lanes)?)
+        Some(EditTaskContent::structured(title, lanes).map_err(|error| {
+            EditTaskApiError::InvalidContent {
+                message: error.to_string(),
+            }
+        })?)
     } else {
         None
     };
@@ -257,10 +270,40 @@ pub(super) async fn run(
         arguments.blocked_by.edit(),
         arguments.effort.edit(),
         arguments.tags.edit(),
-    )?;
-    let edited = edit_task::execute(EditTask { id, edits }, store, pool).await?;
+    )
+    .map_err(|_| EditTaskApiError::EmptyEdits)?;
+    let edited = edit_task::execute(EditTask { id, edits }, store, pool)
+        .await
+        .map_err(map_error)?;
     if title_normalized {
         eprintln!("{TITLE_NORMALIZED_NOTICE}");
     }
     Ok(render_edited(&edited, console.color()))
+}
+
+fn map_error(error: EditTaskError) -> EditTaskApiError {
+    match error {
+        EditTaskError::TaskNotFound { id } => EditTaskApiError::TaskNotFound { id },
+        EditTaskError::ClosedTask { id } => EditTaskApiError::ClosedTask { id },
+        EditTaskError::InvalidPersistedTitle { id, source } => {
+            EditTaskApiError::InvalidPersistedTitle {
+                id,
+                reason: source.to_string(),
+            }
+        }
+        EditTaskError::InvalidTagsFrontmatter { id, raw } => {
+            EditTaskApiError::InvalidTagsFrontmatter { id, raw }
+        }
+        EditTaskError::UnknownBlockedByIds { ids } => EditTaskApiError::UnknownBlockedByIds { ids },
+        EditTaskError::ReadBlockedBy { id, source } => EditTaskApiError::ReadBlockedBy {
+            id,
+            reason: source.to_string(),
+        },
+        EditTaskError::AmbiguousLanes { header } => EditTaskApiError::AmbiguousLanes { header },
+        EditTaskError::WriteStore(source) | EditTaskError::QueryProject(source) => {
+            EditTaskApiError::Unexpected {
+                message: source.to_string(),
+            }
+        }
+    }
 }

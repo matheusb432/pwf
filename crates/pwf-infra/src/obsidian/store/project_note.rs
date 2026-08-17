@@ -109,8 +109,11 @@ impl ProjectNoteStore for ObsidianStore {
             })
     }
 
-    fn read_note_markdown(&self, locator: &str) -> Result<String, Self::Error> {
-        read_task_file(Path::new(locator))
+    fn read_note_markdown(
+        &self,
+        locator: &pwf_wire::task::TaskNotePath,
+    ) -> Result<String, Self::Error> {
+        read_task_file(locator.as_path())
     }
 }
 
@@ -274,15 +277,15 @@ mod tests {
             NoteWhy,
         },
         project::{
-            Project, ProjectId, ProjectName, ProjectSource, ProjectSourceKind, ProjectSourceValue,
-            ProjectTasks, ProjectTasksKind, ProjectTasksPath,
+            HomeDirectory, Project, ProjectId, ProjectName, ProjectSource, ProjectSourceKind,
+            ProjectSourceValue, ProjectTasks, ProjectTasksKind, ProjectTasksPath,
         },
     };
 
     use super::super::{ObsidianStore, ObsidianStoreError};
 
     fn store(tasks_path: &Path) -> ObsidianStore {
-        ObsidianStore::new(tasks_path.to_path_buf())
+        ObsidianStore::new(HomeDirectory::new(tasks_path.to_path_buf()))
     }
 
     fn project(tasks_path: &Path) -> Project {

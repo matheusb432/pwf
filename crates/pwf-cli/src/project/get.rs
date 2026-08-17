@@ -1,7 +1,7 @@
 use clap::Args;
-use pwf_application::project::get_project::{self, GetProject};
+use pwf_application::project::get_project::{self, GetProjectError};
 use pwf_models::project::ProjectId;
-use pwf_wire::project::ProjectStatusFilter;
+use pwf_wire::project::{GetProject, GetProjectApiError, ProjectStatusFilter};
 use sqlx::SqlitePool;
 
 use super::{output, parse_project_id};
@@ -13,7 +13,10 @@ pub struct Arguments {
     pub id: ProjectId,
 }
 
-pub(super) async fn run(arguments: Arguments, pool: &SqlitePool) -> Result<String, String> {
+pub(super) async fn run(
+    arguments: Arguments,
+    pool: &SqlitePool,
+) -> Result<String, GetProjectApiError> {
     let project = get_project::execute(
         GetProject {
             id: arguments.id,
@@ -22,6 +25,17 @@ pub(super) async fn run(arguments: Arguments, pool: &SqlitePool) -> Result<Strin
         pool,
     )
     .await
-    .map_err(|error| format!("project get failed: {error}"))?;
-    output::project(project)
+    .map_err(map_error)?;
+    output::project(project).map_err(|error| GetProjectApiError::RenderJson {
+        message: error.to_string(),
+    })
+}
+
+fn map_error(error: GetProjectError) -> GetProjectApiError {
+    match error {
+        GetProjectError::ProjectNotFound { id } => GetProjectApiError::ProjectNotFound { id },
+        GetProjectError::Unexpected { context, source } => GetProjectApiError::Unexpected {
+            message: format!("{context}: {source}"),
+        },
+    }
 }

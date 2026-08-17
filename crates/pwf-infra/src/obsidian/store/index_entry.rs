@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, path::Path};
+use std::{collections::BTreeMap, num::NonZeroUsize, path::Path};
 
 use lazy_regex::{Regex, regex};
 use pwf_application::ports::task_record::{
@@ -45,7 +45,7 @@ pub(super) struct ParsedIndexLine {
     /// Retains the raw section label without canonicalization.
     pub section: Option<TaskSection>,
     /// Uses a one-based line number within the index.
-    pub line_number: usize,
+    pub line_number: NonZeroUsize,
 }
 
 /// Parses task checkbox lines with their raw enclosing H2 labels.
@@ -105,7 +105,7 @@ pub(super) fn parse_index_lines(
             alias,
             state,
             section: section.clone(),
-            line_number: index + 1,
+            line_number: NonZeroUsize::MIN.saturating_add(index),
         });
     }
     let mut line_numbers_by_id = BTreeMap::<TaskId, Vec<usize>>::new();
@@ -113,7 +113,7 @@ pub(super) fn parse_index_lines(
         line_numbers_by_id
             .entry(line.id.clone())
             .or_default()
-            .push(line.line_number);
+            .push(line.line_number.get());
     }
     if let Some((id, line_numbers)) = line_numbers_by_id
         .into_iter()
@@ -233,7 +233,7 @@ impl ObsidianStore {
             .into_iter()
             .find(|line| line.id == entry.id)
         {
-            let updated = replace_line(&content, existing.line_number, &new_line);
+            let updated = replace_line(&content, existing.line_number.get(), &new_line);
             return write_index(&index_path, &updated);
         }
         let (updated, created_section) = match entry.section.as_ref().and_then(KnownSection::parse)

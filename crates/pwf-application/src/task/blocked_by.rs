@@ -23,6 +23,22 @@ fn persisted_frontmatter_regex() -> &'static Regex {
 pub(in crate::task) enum BlockedByValidationError {
     #[error("Unknown --blocked-by id(s): {}.", format_task_ids(ids))]
     UnknownIds { ids: Vec<TaskId> },
+    #[error("cannot read --blocked-by task {id}: {source}")]
+    ReadStore {
+        id: TaskId,
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(in crate::task) enum BlockedByStatusError {
+    #[error("cannot read blocked-by task {id}: {source}")]
+    ReadStore {
+        id: TaskId,
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
 }
 
 pub(in crate::task) fn format_task_ids(ids: &[TaskId]) -> String {
@@ -98,10 +114,12 @@ pub(in crate::task) fn validate_and_merge(
             unknown.push(identifier.clone());
             continue;
         };
-        let Ok(record) = store.get(project, identifier) else {
-            unknown.push(identifier.clone());
-            continue;
-        };
+        let record = store.get(project, identifier).map_err(|source| {
+            BlockedByValidationError::ReadStore {
+                id: identifier.clone(),
+                source: Box::new(source),
+            }
+        })?;
         if record.is_none_or(|record| !has_valid_persisted_status(&record)) {
             unknown.push(identifier.clone());
         }
@@ -128,44 +146,98 @@ pub(in crate::task) fn statuses(
     blocked_by: &BlockedBy,
     store: &impl TaskStore,
     projects: &[Project],
-) -> Vec<BlockedByStatus> {
+) -> Result<Vec<BlockedByStatus>, BlockedByStatusError> {
     blocked_by
         .iter()
         .map(|id| {
-            let status = status(store, projects, id);
-            BlockedByStatus {
+            let status = status(store, projects, id)?;
+            Ok(BlockedByStatus {
                 id: id.clone(),
                 status,
-            }
+            })
         })
         .collect()
 }
 
-#[rustfmt::skip]
 fn status(
     store: &impl TaskStore,
     projects: &[Project],
     id: &TaskId,
-) -> Option<TaskStatus> {
-    let project = projects.iter().find(|project| &project.id == id.project_id())?;
-    // FIXME: Distinguish an absent blocked-by task from a read or parse failure; both currently render as "missing" and can hide vault corruption.
-    store
+) -> Result<Option<TaskStatus>, BlockedByStatusError> {
+    let Some(project) = projects
+        .iter()
+        .find(|project| &project.id == id.project_id())
+    else {
+        return Ok(None);
+    };
+    let task = store
         .get(project, id)
-        .ok()
-        .flatten()
-        .filter(|task| !matches!(&task.materialization, Materialization::MissingNote { .. }))
-        .map(|task| task.status)
+        .map_err(|source| BlockedByStatusError::ReadStore {
+            id: id.clone(),
+            source: Box::new(source),
+        })?;
+    let Some(task) = task else {
+        return Ok(None);
+    };
+    if matches!(task.materialization, Materialization::MissingNote { .. }) {
+        return Ok(None);
+    }
+    Ok(Some(task.status))
 }
 
 #[cfg(test)]
 mod tests {
-    use pwf_models::task::{BlockedBy, BlockedByInput};
+    use std::error::Error as _;
 
-    use super::{BlockedByValidationError, referenced_project_ids, validate_and_merge};
+    use pwf_models::{
+        project::Project,
+        task::{BlockedBy, BlockedByInput, TaskId},
+    };
+
+    use super::{
+        BlockedByStatusError, BlockedByValidationError, referenced_project_ids, statuses,
+        validate_and_merge,
+    };
     use crate::{
-        ports::task_record::TaskRecord,
+        ports::task_record::{NewTask, TaskPatch, TaskRecord, TaskStore},
         testing::{project, staged_missing_task, staged_task},
     };
+
+    #[derive(Debug, Clone, Copy, thiserror::Error)]
+    #[error("vault read failed")]
+    struct FailingStoreError;
+
+    #[derive(Clone, Copy)]
+    struct FailingStore;
+
+    impl TaskStore for FailingStore {
+        type Error = FailingStoreError;
+
+        fn get(&self, _project: &Project, _id: &TaskId) -> Result<Option<TaskRecord>, Self::Error> {
+            Err(FailingStoreError)
+        }
+
+        fn list(&self, _project: &Project) -> Result<Vec<TaskRecord>, Self::Error> {
+            Err(FailingStoreError)
+        }
+
+        fn insert(&self, _project: &Project, _new: NewTask) -> Result<TaskRecord, Self::Error> {
+            Err(FailingStoreError)
+        }
+
+        fn update(
+            &self,
+            _project: &Project,
+            _id: &TaskId,
+            _patch: TaskPatch,
+        ) -> Result<(), Self::Error> {
+            Err(FailingStoreError)
+        }
+
+        fn delete(&self, _project: &Project, _id: &TaskId) -> Result<(), Self::Error> {
+            Err(FailingStoreError)
+        }
+    }
 
     fn inputs(values: &[&str]) -> BlockedBy {
         let inputs = values
@@ -179,13 +251,13 @@ mod tests {
     fn persisted_values_expose_referenced_projects() {
         assert_eq!(
             referenced_project_ids([
-                "[[PW-0002]], [[CFG-0057]], [[PWF-0001]]",
-                "[[CFG-0014]], [[TOOL-0042]], ignored",
+                "[[PW-0002]], [[AUX-0057]], [[PWF-0001]]",
+                "[[AUX-0014]], [[TOOL-0042]], ignored",
             ])
             .iter()
             .map(AsRef::as_ref)
             .collect::<Vec<_>>(),
-            ["PW", "CFG", "PWF", "TOOL"]
+            ["PW", "AUX", "PWF", "TOOL"]
         );
     }
 
@@ -217,6 +289,20 @@ mod tests {
                 if ids.iter().map(AsRef::as_ref).collect::<Vec<_>>() == ["PWF-9999"]
         ));
         assert_eq!(unknown.to_string(), "Unknown --blocked-by id(s): PWF-9999.");
+    }
+
+    #[test]
+    fn validator_preserves_store_read_failures() {
+        let projects = [project("PWF", "pwf")];
+
+        let error =
+            validate_and_merge(None, &inputs(&["PWF-0001"]), &FailingStore, &projects).unwrap_err();
+
+        assert!(matches!(
+            error,
+            BlockedByValidationError::ReadStore { ref id, .. } if id.as_ref() == "PWF-0001"
+        ));
+        assert_eq!(error.source().unwrap().to_string(), "vault read failed");
     }
 
     #[test]
@@ -259,5 +345,18 @@ mod tests {
                     if ids.iter().map(AsRef::as_ref).collect::<Vec<_>>() == ["PWF-0001"]
             ));
         }
+    }
+
+    #[test]
+    fn statuses_preserve_store_read_failures() {
+        let projects = [project("PWF", "pwf")];
+
+        let error = statuses(&inputs(&["PWF-0001"]), &FailingStore, &projects).unwrap_err();
+
+        assert!(matches!(
+            error,
+            BlockedByStatusError::ReadStore { ref id, .. } if id.as_ref() == "PWF-0001"
+        ));
+        assert_eq!(error.source().unwrap().to_string(), "vault read failed");
     }
 }

@@ -1,25 +1,16 @@
-use pwf_models::task::{CommitRanges, TaskId, TaskReport};
-use pwf_wire::task::{ClosedTask, ClosedTaskAction};
+use pwf_wire::task::{ClosedTask, ClosedTaskAction, CompleteTask, ResolveTaskProject};
 
 #[cfg(test)]
-use super::task_closure::review_task_prompt;
+use super::task_closure::{NESTED_REVIEW_COMMAND, review_task_prompt};
 use super::{
     CloseTaskError,
-    resolve_task_project::{self, ResolveTaskProject, ResolveTaskProjectError},
+    resolve_task_project::{self, ResolveTaskProjectError},
     task_closure::{self, TaskClosure},
 };
 use crate::ports::{
     clock::Clock,
     task_record::{IndexEntryStore, IndexSectionStore, TaskStore},
 };
-
-#[derive(Debug, Clone)]
-pub struct CompleteTask {
-    pub id: TaskId,
-    pub report: Option<TaskReport>,
-    pub commits: Option<CommitRanges>,
-    pub review: bool,
-}
 
 #[derive(Debug, thiserror::Error)]
 pub enum CompleteTaskError {
@@ -67,10 +58,12 @@ mod tests {
     };
 
     use super::{
-        CloseTaskError, ClosedTaskAction, CompleteTask, CompleteTaskError, review_task_prompt,
+        CloseTaskError, ClosedTaskAction, CompleteTask, CompleteTaskError, NESTED_REVIEW_COMMAND,
+        review_task_prompt,
     };
     use crate::{
         ports::task_record::{IndexEntry, IndexEntryState, IndexEntryStore, TaskRecord},
+        task::complete_task,
         testing::{FixedClock, InMemoryStore, app_date, project, task_record},
     };
 
@@ -137,7 +130,7 @@ mod tests {
         entries.push(entry("FOO-0007", IndexEntryState::Open, "General"));
         let store = staged(tasks, entries);
 
-        let out = super::execute(&done_command("FOO-0007"), &store, &pool, &FixedClock)
+        let out = complete_task::execute(&done_command("FOO-0007"), &store, &pool, &FixedClock)
             .await
             .unwrap();
 
@@ -178,7 +171,7 @@ mod tests {
             vec![record("FOO-0001", TaskStatus::Active)],
             vec![entry("FOO-0001", IndexEntryState::Open, "General")],
         );
-        super::execute(&done_command("FOO-0001"), &store, &pool, &FixedClock)
+        complete_task::execute(&done_command("FOO-0001"), &store, &pool, &FixedClock)
             .await
             .unwrap();
 
@@ -201,7 +194,7 @@ mod tests {
         .await;
         let store = staged(vec![record("FOO-0001", TaskStatus::Active)], Vec::new());
 
-        let outcome = super::execute(&done_command("FOO-0001"), &store, &pool, &FixedClock)
+        let outcome = complete_task::execute(&done_command("FOO-0001"), &store, &pool, &FixedClock)
             .await
             .unwrap();
 
@@ -226,7 +219,7 @@ mod tests {
             vec![entry("FOO-0001", IndexEntryState::Open, "Futuro")],
         );
 
-        let out = super::execute(&done_command("FOO-0001"), &store, &pool, &FixedClock)
+        let out = complete_task::execute(&done_command("FOO-0001"), &store, &pool, &FixedClock)
             .await
             .unwrap();
 
@@ -254,7 +247,7 @@ mod tests {
             ..done_command("FOO-0001")
         };
 
-        let out = super::execute(&cmd, &store, &pool, &FixedClock)
+        let out = complete_task::execute(&cmd, &store, &pool, &FixedClock)
             .await
             .unwrap();
 
@@ -283,7 +276,7 @@ mod tests {
         .await;
         let store = staged(Vec::new(), Vec::new());
 
-        let error = super::execute(&done_command("FOO-9999"), &store, &pool, &FixedClock)
+        let error = complete_task::execute(&done_command("FOO-9999"), &store, &pool, &FixedClock)
             .await
             .unwrap_err();
 
@@ -315,7 +308,7 @@ mod tests {
             vec![entry("FOO-0001", IndexEntryState::Open, "General")],
         );
 
-        let error = super::execute(&done_command("FOO-0001"), &store, &pool, &FixedClock)
+        let error = complete_task::execute(&done_command("FOO-0001"), &store, &pool, &FixedClock)
             .await
             .unwrap_err();
 
@@ -339,7 +332,7 @@ mod tests {
         .await;
         let store = staged(Vec::new(), Vec::new());
 
-        let error = super::execute(&done_command("XYZ-0001"), &store, &pool, &FixedClock)
+        let error = complete_task::execute(&done_command("XYZ-0001"), &store, &pool, &FixedClock)
             .await
             .unwrap_err();
 
@@ -353,11 +346,13 @@ mod tests {
     fn review_prompt_uses_scoped_or_bare_diff() {
         assert_eq!(
             review_task_prompt(&"PWF-0128".parse().unwrap(), Some("a..b")).as_ref(),
-            "review PWF-0128, commits: a..b / git-tools diff a..b / git-tools diff-subrepos"
+            format!("review PWF-0128, commits: a..b / git diff a..b / {NESTED_REVIEW_COMMAND}")
         );
         assert_eq!(
             review_task_prompt(&"PWF-0128".parse().unwrap(), None).as_ref(),
-            "review PWF-0128 / git-tools diff / git-tools diff-subrepos"
+            format!(
+                "review PWF-0128 / bash -c 'base=$(git rev-parse --verify \"@{{upstream}}\" 2>/dev/null || git rev-parse --verify main) || exit 1; git diff \"$base..HEAD\"' / {NESTED_REVIEW_COMMAND}"
+            )
         );
     }
 }

@@ -2,28 +2,19 @@ use pwf_models::{
     project::ProjectName,
     task::{CommitRanges, EffortTier, TaskId, TaskPrompt, TaskTitle},
 };
-use pwf_wire::task::{TaskData, TaskNotePath, TaskRead, TaskReadFormat};
+use pwf_wire::{
+    project::GetActiveProject,
+    task::{GetTask, TaskData, TaskRead, TaskReadFormat},
+};
 
 use crate::{
     ports::{
         project_note::ProjectNoteStore,
         task_record::{Materialization, TaskRecord, TaskStore},
     },
-    project::{
-        get_active_project::{self, GetActiveProject},
-        get_project::GetProjectError,
-    },
+    project::{get_active_project, get_project::GetProjectError},
     task::{blocked_by, tags},
 };
-
-/// Requests one task in a selected output representation.
-#[derive(Debug, Clone)]
-pub struct GetTask {
-    /// Task ID.
-    pub id: TaskId,
-    /// Representation returned by [`execute`].
-    pub output: TaskReadFormat,
-}
 
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -81,7 +72,7 @@ pub async fn execute(
             id: query.id.clone(),
         })?;
     match query.output {
-        TaskReadFormat::Path => Ok(TaskRead::Path(TaskNotePath::new(record.locator.into()))),
+        TaskReadFormat::Path => Ok(TaskRead::Path(record.locator)),
         TaskReadFormat::Markdown
             if matches!(record.materialization, Materialization::MissingNote { .. }) =>
         {
@@ -170,6 +161,7 @@ mod tests {
     use super::{GetTask, GetTaskError, TaskId};
     use crate::{
         ports::task_record::TaskRecord,
+        task::get_task,
         testing::{
             InMemoryStore, PWF_0001_SOURCE, ProjectNoteFailure, app_date, insert_project,
             staged_missing_task, staged_task, task_record,
@@ -185,7 +177,7 @@ mod tests {
             output: TaskReadFormat::Markdown,
         };
 
-        let gotten = super::execute(&query, &store, &pool).await.unwrap();
+        let gotten = get_task::execute(&query, &store, &pool).await.unwrap();
 
         assert_eq!(gotten, TaskRead::Markdown(PWF_0001_SOURCE.to_string()));
     }
@@ -201,7 +193,7 @@ mod tests {
             output: TaskReadFormat::Path,
         };
 
-        let gotten = super::execute(&query, &store, &pool).await.unwrap();
+        let gotten = get_task::execute(&query, &store, &pool).await.unwrap();
 
         assert_eq!(
             gotten,
@@ -219,7 +211,7 @@ mod tests {
             output: TaskReadFormat::Markdown,
         };
 
-        let error = super::execute(&query, &store, &pool).await.unwrap_err();
+        let error = get_task::execute(&query, &store, &pool).await.unwrap_err();
 
         assert_eq!(
             error.to_string(),
@@ -239,14 +231,14 @@ mod tests {
                 commits: Some("'a..b, c..d'".to_string()),
                 tags: Some(RawTaskTags::new("[rust, sqlite]")),
                 effort: Some(" high ".to_string()),
-                blocked_by: Some("'[[CFG-0014]]'".to_string()),
+                blocked_by: Some("'[[AUX-0014]]'".to_string()),
                 section: Some("Human".parse().unwrap()),
                 body: "\n  authored body  \n".to_string(),
                 ..task_record("PWF-0001")
             }],
         );
 
-        let read = super::execute(
+        let read = get_task::execute(
             &GetTask {
                 id: "PWF-0001".parse().unwrap(),
                 output: TaskReadFormat::Data,
@@ -267,7 +259,7 @@ mod tests {
             task.blocked_by
                 .as_ref()
                 .map(|blocked| blocked.iter().map(AsRef::as_ref).collect::<Vec<_>>()),
-            Some(vec!["CFG-0014"])
+            Some(vec!["AUX-0014"])
         );
         assert_eq!(task.prompt.as_ref(), "authored body");
     }
@@ -283,7 +275,7 @@ mod tests {
             }],
         );
 
-        let error = super::execute(
+        let error = get_task::execute(
             &GetTask {
                 id: "PWF-0001".parse().unwrap(),
                 output: TaskReadFormat::Data,

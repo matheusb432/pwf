@@ -10,6 +10,7 @@ path = "src/lib.rs"
 
 [dependencies]
 anyhow = { workspace = true }
+repository-client = { workspace = true }
 jiff = { workspace = true }
 lazy-regex = { workspace = true }
 directories = { workspace = true }

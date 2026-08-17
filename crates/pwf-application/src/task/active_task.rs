@@ -4,12 +4,12 @@ use pwf_models::{
     project::Project,
     task::{TaskId, TaskStatus},
 };
-use pwf_wire::task::TaskView;
+use pwf_wire::task::{ResolveTaskProject, TaskView};
 
 use crate::{
     ports::task_record::{TaskRecord, TaskStore},
     task::{
-        resolve_task_project::{self, ResolveTaskProject, ResolveTaskProjectError},
+        resolve_task_project::{self, ResolveTaskProjectError},
         task_view,
     },
 };
@@ -78,12 +78,13 @@ fn find_active_task(
 
 #[cfg(test)]
 mod tests {
-    use std::assert_matches;
+    use std::{assert_matches, num::NonZeroUsize};
 
     use pwf_models::{
         project::Project,
         task::{TaskId, TaskStatus},
     };
+    use pwf_wire::task::{TaskIndexPath, TaskNotePath};
 
     use super::{FindActiveTaskError, TaskView, find_active_task};
     use crate::{
@@ -97,10 +98,10 @@ mod tests {
             created: Some(app_date("2026-07-07")),
             body: "do the thing".to_string(),
             source: String::new(),
-            locator: format!("/notes/pwf/{id}.md"),
+            locator: TaskNotePath::new(format!("/notes/pwf/{id}.md").into()),
             placement: Some(IndexPlacement {
-                index_path: "/notes/pwf/pwf.md".to_string(),
-                line: 7,
+                index_path: TaskIndexPath::new("/notes/pwf/pwf.md".into()),
+                line: NonZeroUsize::new(7).unwrap(),
             }),
             ..task_record(id)
         }

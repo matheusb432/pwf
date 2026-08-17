@@ -1,16 +1,14 @@
 use pwf_models::task::{TaskId, TaskTitle, TaskTitleError};
-use pwf_wire::task::{RemovedTask, RemovedTaskOutcome, TaskIndexPath, TaskNotePath};
-
-use super::resolve_task_project::{self, ResolveTaskProject, ResolveTaskProjectError};
-use crate::ports::{
-    confirmation::{Confirmation, ConfirmationClient},
-    task_record::{IndexEntryStore, Materialization, TaskStore},
+use pwf_wire::{
+    confirmation::{Confirmation, RemoveTaskConfirmation},
+    task::{RemoveTask, RemovedTask, RemovedTaskOutcome, ResolveTaskProject, TaskNotePath},
 };
 
-#[derive(Debug, Clone)]
-pub struct RemoveTask {
-    pub id: TaskId,
-}
+use super::resolve_task_project::{self, ResolveTaskProjectError};
+use crate::ports::{
+    confirmation::ConfirmationClient,
+    task_record::{IndexEntryStore, Materialization, TaskStore},
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum RemoveTaskError {
@@ -49,10 +47,10 @@ pub async fn execute(
             id: task_identifier.clone(),
         })?;
     let note_path = match &record.materialization {
-        Materialization::NoteFile => TaskNotePath::new(record.locator.clone().into()),
+        Materialization::NoteFile => record.locator.clone(),
         Materialization::MissingNote { expected } => {
             return Err(RemoveTaskError::NoteMissing {
-                path: TaskNotePath::new(expected.into()),
+                path: expected.clone(),
             });
         }
     };
@@ -61,13 +59,13 @@ pub async fn execute(
             id: task_identifier.clone(),
             source,
         })?;
-    let confirmation = Confirmation::Removal {
+    let confirmation = Confirmation::RemoveTask(RemoveTaskConfirmation {
         task_identifier: task_identifier.clone(),
         project: project.title.clone(),
         title: title.clone(),
         status: record.status,
         note_path: note_path.clone(),
-    };
+    });
     if !confirmation_client.confirm(&confirmation) {
         return Ok(RemovedTaskOutcome::Aborted {
             task_id: task_identifier,
@@ -84,9 +82,7 @@ pub async fn execute(
         project: project.title,
         title,
         deleted_path: note_path,
-        unlinked: record
-            .placement
-            .map(|placement| TaskIndexPath::new(placement.index_path.into())),
+        unlinked: record.placement.map(|placement| placement.index_path),
     };
     Ok(RemovedTaskOutcome::Removed(removed))
 }
@@ -94,26 +90,30 @@ pub async fn execute(
 #[cfg(test)]
 mod tests {
     use pwf_models::task::{TaskId, TaskStatus};
-    use pwf_wire::task::RemovedTaskOutcome;
+    use pwf_wire::{
+        confirmation::Confirmation,
+        task::{RemovedTaskOutcome, TaskNotePath},
+    };
 
     use super::{RemoveTask, RemoveTaskError};
     use crate::{
         ports::{
-            confirmation::{Confirmation, ConfirmationClient},
+            confirmation::ConfirmationClient,
             task_record::{
                 IndexEntry, IndexEntryState, IndexEntryStore, Materialization, TaskRecord,
             },
         },
+        task::remove_task,
         testing::{InMemoryStore, app_date, insert_project, project, task_record},
     };
 
-    async fn execute(
+    async fn run(
         command: &RemoveTask,
         store: &InMemoryStore,
         pool: &sqlx::SqlitePool,
         confirmation: &(impl ConfirmationClient + Send + Sync + 'static),
     ) -> Result<RemovedTaskOutcome, RemoveTaskError> {
-        super::execute(command, store, pool, confirmation).await
+        remove_task::execute(command, store, pool, confirmation).await
     }
 
     fn record(id: &str, status: TaskStatus) -> TaskRecord {
@@ -121,7 +121,7 @@ mod tests {
             title: "stale task".to_string(),
             status,
             created: Some(app_date("2026-07-01")),
-            locator: format!("/notes/pwf/{id}.md"),
+            locator: TaskNotePath::new(format!("/notes/pwf/{id}.md").into()),
             ..task_record(id)
         }
     }
@@ -170,7 +170,7 @@ mod tests {
         let store = staged(TaskStatus::Active);
 
         let RemovedTaskOutcome::Removed(removed) =
-            execute(&command("PWF-0001"), &store, &pool, &Accepted)
+            run(&command("PWF-0001"), &store, &pool, &Accepted)
                 .await
                 .unwrap()
         else {
@@ -200,7 +200,7 @@ mod tests {
                 }],
             );
 
-        let error = execute(&command("PWF-0001"), &store, &pool, &Accepted)
+        let error = run(&command("PWF-0001"), &store, &pool, &Accepted)
             .await
             .unwrap_err();
 
@@ -215,7 +215,7 @@ mod tests {
             .with_project_id("pwf", "PWF")
             .with_project("pwf", vec![record("PWF-0001", TaskStatus::Active)]);
 
-        let outcome = execute(&command("PWF-0001"), &store, &pool, &Accepted)
+        let outcome = run(&command("PWF-0001"), &store, &pool, &Accepted)
             .await
             .unwrap();
 
@@ -230,7 +230,7 @@ mod tests {
         for status in [TaskStatus::Done, TaskStatus::Cancelled] {
             let store = staged(status);
 
-            let outcome = execute(&command("PWF-0001"), &store, &pool, &Accepted)
+            let outcome = run(&command("PWF-0001"), &store, &pool, &Accepted)
                 .await
                 .unwrap();
 
@@ -245,7 +245,7 @@ mod tests {
         insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
         let store = staged(TaskStatus::Active);
 
-        let error = execute(&command("PWF-9999"), &store, &pool, &Accepted)
+        let error = run(&command("PWF-9999"), &store, &pool, &Accepted)
             .await
             .unwrap_err();
 
@@ -260,7 +260,7 @@ mod tests {
         insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
         let store = staged(TaskStatus::Active);
 
-        let error = execute(&command("XYZ-0001"), &store, &pool, &Accepted)
+        let error = run(&command("XYZ-0001"), &store, &pool, &Accepted)
             .await
             .unwrap_err();
 
@@ -275,7 +275,7 @@ mod tests {
         insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
         let ghost = TaskRecord {
             materialization: Materialization::MissingNote {
-                expected: "/notes/pwf/PWF-0001.md".to_string(),
+                expected: TaskNotePath::new("/notes/pwf/PWF-0001.md".into()),
             },
             ..record("PWF-0001", TaskStatus::Active)
         };
@@ -283,7 +283,7 @@ mod tests {
             .with_project_id("pwf", "PWF")
             .with_project("pwf", vec![ghost]);
 
-        let error = execute(&command("PWF-0001"), &store, &pool, &Accepted)
+        let error = run(&command("PWF-0001"), &store, &pool, &Accepted)
             .await
             .unwrap_err();
 
@@ -325,7 +325,7 @@ mod tests {
             insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
             let store = staged(TaskStatus::Active);
 
-            let outcome = super::execute(
+            let outcome = remove_task::execute(
                 &command("PWF-0001"),
                 &store,
                 &pool,
@@ -347,7 +347,7 @@ mod tests {
             insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
             let store = staged(TaskStatus::Active);
 
-            let outcome = super::execute(
+            let outcome = remove_task::execute(
                 &command("PWF-0001"),
                 &store,
                 &pool,

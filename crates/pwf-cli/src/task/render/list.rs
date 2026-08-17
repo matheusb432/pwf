@@ -5,7 +5,7 @@ use pwf_wire::task::{
     BlockedByStatus, ListDetail, ListLayout, ListedTasks, StatusFilter, TaskView,
 };
 
-use super::{StatusPlacement, render_status, render_task_summary};
+use super::{render_status, render_task_summary};
 
 pub(in crate::task) fn render_list(result: &ListedTasks, location: &str, on: bool) -> String {
     let long = result.detail == ListDetail::Detailed;
@@ -151,7 +151,7 @@ fn render_list_task(
     on: bool,
 ) {
     let status = if status_filter == StatusFilter::All {
-        Some((task.status, StatusPlacement::AfterIdentifier))
+        Some(task.status)
     } else {
         None
     };
@@ -219,6 +219,8 @@ fn render_list_task(
 
 #[cfg(test)]
 mod tests {
+    use std::num::NonZeroUsize;
+
     use pwf_models::{
         project::{ProjectName, ProjectSourceValue},
         task::{TaskId, TaskStatus, TaskTitle},
@@ -240,7 +242,7 @@ mod tests {
             ),
             prompt: pwf_models::task::TaskPrompt::default(),
             project_path: ProjectSourceValue::try_new("/project").unwrap(),
-            location: TaskLocation::try_new(TaskIndexPath::new("pwf.md".into()), 1).unwrap(),
+            location: TaskLocation::new(TaskIndexPath::new("pwf.md".into()), NonZeroUsize::MIN),
             launch: TaskLaunch::from_issues(Vec::new()),
             section: None,
             blocked_by: None,
@@ -334,15 +336,15 @@ mod tests {
         let mut task = sample_task();
         task.blocked_by_statuses = vec![
             BlockedByStatus {
-                id: TaskId::try_new("CFG-0014").unwrap(),
+                id: TaskId::try_new("AUX-0014").unwrap(),
                 status: Some(TaskStatus::Done),
             },
             BlockedByStatus {
-                id: TaskId::try_new("CFG-0015").unwrap(),
+                id: TaskId::try_new("AUX-0015").unwrap(),
                 status: Some(TaskStatus::Active),
             },
             BlockedByStatus {
-                id: TaskId::try_new("CFG-9999").unwrap(),
+                id: TaskId::try_new("AUX-9999").unwrap(),
                 status: None,
             },
         ];
@@ -351,7 +353,7 @@ mod tests {
 
         assert!(
             output
-                .contains("  blocked_by: CFG-0014 (done), CFG-0015 (active), CFG-9999 (missing)\n"),
+                .contains("  blocked_by: AUX-0014 (done), AUX-0015 (active), AUX-9999 (missing)\n"),
             "{output}"
         );
     }

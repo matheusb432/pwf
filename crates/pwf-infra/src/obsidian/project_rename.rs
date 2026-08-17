@@ -439,18 +439,18 @@ mod tests {
     fn write_fixture(source: &Path) {
         fs::create_dir_all(source).unwrap();
         fs::write(
-            source.join("ssh-agent-phone-app.md"),
-            "---\nid: ssh\ntitle: ssh-agent-phone-app\n---\n\n# Pending\n- [ ] [[SSH-0079]]\n- [x] [[SSH-NOTE-0001]]\n",
+            source.join("sample-app.md"),
+            "---\nid: old\ntitle: sample-app\n---\n\n# Pending\n- [ ] [[OLD-0079]]\n- [x] [[OLD-NOTE-0001]]\n",
         )
         .unwrap();
         fs::write(
-            source.join("SSH-0079.md"),
-            "---\nid: SSH-0079\nproject: ssh-agent-phone-app\nstatus: active\ncreated: 2026-07-01T12:00:00Z\n---\n\nKeep this body and bare SSH-0079 text unchanged.\n",
+            source.join("OLD-0079.md"),
+            "---\nid: OLD-0079\nproject: sample-app\nstatus: active\ncreated: 2026-07-01T12:00:00Z\n---\n\nKeep this body and bare OLD-0079 text unchanged.\n",
         )
         .unwrap();
         fs::write(
-            source.join("SSH-NOTE-0001.md"),
-            "---\nid: SSH-NOTE-0001\nproject: ssh-agent-phone-app\nstatus: done\ncreated: 2026-06-01T12:00:00Z\ncompleted: 2026-06-02T12:00:00Z\n---\n\nCompleted body stays byte-for-byte.\n",
+            source.join("OLD-NOTE-0001.md"),
+            "---\nid: OLD-NOTE-0001\nproject: sample-app\nstatus: done\ncreated: 2026-06-01T12:00:00Z\ncompleted: 2026-06-02T12:00:00Z\n---\n\nCompleted body stays byte-for-byte.\n",
         )
         .unwrap();
     }
@@ -458,33 +458,33 @@ mod tests {
     #[test]
     fn stage_rewrites_project_identity_without_changing_task_state_or_bodies() {
         let directory = tempfile::tempdir().unwrap();
-        let source = directory.path().join("ssh-agent-phone-app");
-        let destination = directory.path().join("mimux");
+        let source = directory.path().join("sample-app");
+        let destination = directory.path().join("renamed-app");
         write_fixture(&source);
 
         let staged = stage(
             &source,
             &destination,
-            &identity("SSH", "ssh-agent-phone-app"),
-            &identity("MUX", "mimux"),
+            &identity("OLD", "sample-app"),
+            &identity("NEW", "renamed-app"),
         )
         .unwrap();
 
-        assert!(staged.staging_directory.join("mimux.md").is_file());
-        assert!(staged.staging_directory.join("MUX-0079.md").is_file());
-        assert!(staged.staging_directory.join("MUX-NOTE-0001.md").is_file());
-        assert!(!staged.staging_directory.join("SSH-0079.md").exists());
+        assert!(staged.staging_directory.join("renamed-app.md").is_file());
+        assert!(staged.staging_directory.join("NEW-0079.md").is_file());
+        assert!(staged.staging_directory.join("NEW-NOTE-0001.md").is_file());
+        assert!(!staged.staging_directory.join("OLD-0079.md").exists());
         assert_eq!(
-            fs::read_to_string(staged.staging_directory.join("mimux.md")).unwrap(),
-            "---\nid: mux\ntitle: mimux\n---\n\n# Pending\n- [ ] [[MUX-0079]]\n- [x] [[MUX-NOTE-0001]]\n"
+            fs::read_to_string(staged.staging_directory.join("renamed-app.md")).unwrap(),
+            "---\nid: new\ntitle: renamed-app\n---\n\n# Pending\n- [ ] [[NEW-0079]]\n- [x] [[NEW-NOTE-0001]]\n"
         );
         assert_eq!(
-            fs::read_to_string(staged.staging_directory.join("MUX-0079.md")).unwrap(),
-            "---\nid: MUX-0079\nproject: mimux\nstatus: active\ncreated: 2026-07-01T12:00:00Z\n---\n\nKeep this body and bare SSH-0079 text unchanged.\n"
+            fs::read_to_string(staged.staging_directory.join("NEW-0079.md")).unwrap(),
+            "---\nid: NEW-0079\nproject: renamed-app\nstatus: active\ncreated: 2026-07-01T12:00:00Z\n---\n\nKeep this body and bare OLD-0079 text unchanged.\n"
         );
         assert_eq!(
-            fs::read_to_string(staged.staging_directory.join("MUX-NOTE-0001.md")).unwrap(),
-            "---\nid: MUX-NOTE-0001\nproject: mimux\nstatus: done\ncreated: 2026-06-01T12:00:00Z\ncompleted: 2026-06-02T12:00:00Z\n---\n\nCompleted body stays byte-for-byte.\n"
+            fs::read_to_string(staged.staging_directory.join("NEW-NOTE-0001.md")).unwrap(),
+            "---\nid: NEW-NOTE-0001\nproject: renamed-app\nstatus: done\ncreated: 2026-06-01T12:00:00Z\ncompleted: 2026-06-02T12:00:00Z\n---\n\nCompleted body stays byte-for-byte.\n"
         );
         assert!(source.is_dir());
         assert!(!destination.exists());
@@ -493,26 +493,26 @@ mod tests {
     #[test]
     fn commit_restores_source_when_installing_staging_directory_fails() {
         let directory = tempfile::tempdir().unwrap();
-        let source = directory.path().join("ssh-agent-phone-app");
-        let destination = directory.path().join("mimux");
+        let source = directory.path().join("sample-app");
+        let destination = directory.path().join("renamed-app");
         write_fixture(&source);
         let staged = stage(
             &source,
             &destination,
-            &identity("SSH", "ssh-agent-phone-app"),
-            &identity("MUX", "mimux"),
+            &identity("OLD", "sample-app"),
+            &identity("NEW", "renamed-app"),
         )
         .unwrap();
         fs::remove_dir_all(&staged.staging_directory).unwrap();
 
         staged.commit().unwrap_err();
 
-        assert!(source.join("SSH-0079.md").is_file());
+        assert!(source.join("OLD-0079.md").is_file());
         assert!(!destination.exists());
         assert!(
             !directory
                 .path()
-                .join(".ssh-agent-phone-app.pwf-rename-backup")
+                .join(".sample-app.pwf-rename-backup")
                 .exists()
         );
     }
@@ -520,14 +520,14 @@ mod tests {
     #[test]
     fn backup_cleanup_failure_reports_committed_filesystem_state() {
         let directory = tempfile::tempdir().unwrap();
-        let source = directory.path().join("ssh-agent-phone-app");
-        let destination = directory.path().join("mimux");
+        let source = directory.path().join("sample-app");
+        let destination = directory.path().join("renamed-app");
         write_fixture(&source);
         let staged = stage(
             &source,
             &destination,
-            &identity("SSH", "ssh-agent-phone-app"),
-            &identity("MUX", "mimux"),
+            &identity("OLD", "sample-app"),
+            &identity("NEW", "renamed-app"),
         )
         .unwrap();
         let backup = staged.backup_directory.clone();
@@ -546,7 +546,7 @@ mod tests {
             ProjectTaskFilesRenameCommit::BackupRetained { path, .. } if path == backup
         );
         assert!(!source.exists());
-        assert!(destination.join("MUX-0079.md").is_file());
-        assert!(backup.join("SSH-0079.md").is_file());
+        assert!(destination.join("NEW-0079.md").is_file());
+        assert!(backup.join("OLD-0079.md").is_file());
     }
 }

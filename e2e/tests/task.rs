@@ -3,7 +3,7 @@ use assert_cmd::prelude::OutputAssertExt as _;
 use expectrl::Expect;
 use serde_json::{Value, json};
 
-use crate::shared::{ManagedProject, project_id, task_id, task_json};
+use crate::shared::{ManagedProject, assert_failure, project_id, task_id, task_json};
 
 #[test]
 fn machine_add_maps_each_explicit_value_without_parsing_lane_markers() {
@@ -215,7 +215,7 @@ fn edit_rejects_closed_tasks_without_mutating_completion_data() {
     assert!(!output.status.success());
     assert_eq!(
         String::from_utf8(output.stderr).unwrap(),
-        "Error: cannot edit closed task FOO-0001.\n"
+        "Error: cannot edit closed task FOO-0001; run `pwf task reopen FOO-0001` first.\n"
     );
     assert_eq!(task_json(&fixture.database, &task_id("FOO-0001")), before);
 }
@@ -375,7 +375,7 @@ fn list_status_and_review_task_compose_across_commands() {
     assert_eq!(review["title"], "review foo-0001, commits; a..b");
     assert_eq!(
         review["prompt"],
-        "## Goals\n\n- git-tools diff a..b\n- git-tools diff-subrepos"
+        "## Goals\n\n- git diff a..b\n- bash -c 'failed=0; while IFS= read -r -d \"\" marker; do if [[ \"$marker\" == ./.git ]]; then continue; fi; if [[ -f \"$marker\" ]] && tr \"\\\\\" \"/\" < \"$marker\" | grep -q /worktrees/; then continue; fi; repo=${marker%/.git}; base=$(git -C \"$repo\" rev-parse --verify \"@{upstream}\" 2>/dev/null || git -C \"$repo\" rev-parse --verify main) || { failed=1; continue; }; git -C \"$repo\" diff \"$base..HEAD\" || failed=1; done < <(find . \\( -name .git -o -name target -o -name node_modules \\) -prune -name .git -print0); exit \"$failed\"'"
     );
 
     for (status, present, absent) in [
@@ -427,9 +427,15 @@ fn remove_prompt_identifies_closed_status_before_deletion() {
 
     let mut session = expectrl::Session::spawn(command).unwrap();
     session.set_expect_timeout(Some(std::time::Duration::from_secs(10)));
-    session.expect("FOO-0001 :: completed work (done)").unwrap();
-    session.expect("[Y/n]").unwrap();
-    session.send_line("y").unwrap();
+    session.expect("Task").unwrap();
+    session.expect("FOO-0001").unwrap();
+    session.expect("Title").unwrap();
+    session.expect("completed work").unwrap();
+    session.expect("Status").unwrap();
+    session.expect("done").unwrap();
+    session.expect("(y/n)").unwrap();
+    session.expect("no").unwrap();
+    session.send("y").unwrap();
     session.expect(expectrl::Eof).unwrap();
     assert!(matches!(
         session.get_process().wait().unwrap(),
@@ -442,6 +448,175 @@ fn remove_prompt_identifies_closed_status_before_deletion() {
         .args(["get", "FOO-0001", "--json"])
         .assert()
         .failure();
+}
+
+#[test]
+fn remove_requires_yes_without_a_terminal() {
+    let fixture = ManagedProject::new(&project_id("FOO"), "foo-bar");
+    fixture
+        .database
+        .command()
+        .args([
+            "add",
+            "foo-bar",
+            "--title",
+            "keep this task",
+            "--goal",
+            "require explicit confirmation",
+        ])
+        .assert()
+        .success();
+
+    let output = fixture
+        .database
+        .command()
+        .args(["remove", "FOO-0001"])
+        .output()
+        .unwrap();
+
+    assert_failure(
+        output,
+        &["interactive confirmation requires a terminal", "--yes"],
+    );
+    assert_eq!(
+        task_json(&fixture.database, &task_id("FOO-0001"))["title"],
+        "keep this task"
+    );
+    fixture
+        .database
+        .command()
+        .args(["remove", "FOO-0001", "--yes"])
+        .assert()
+        .success();
+    fixture
+        .database
+        .command()
+        .args(["get", "FOO-0001", "--json"])
+        .assert()
+        .failure();
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn reopen_prompt_names_deleted_completion_data_and_honors_immediate_answers() {
+    let fixture = ManagedProject::new(&project_id("FOO"), "foo-bar");
+    fixture
+        .database
+        .command()
+        .args([
+            "add",
+            "foo-bar",
+            "--title",
+            "completed work",
+            "--goal",
+            "reopen safely",
+        ])
+        .assert()
+        .success();
+    fixture
+        .database
+        .command()
+        .args([
+            "done",
+            "FOO-0001",
+            "--report",
+            "validated every completion artifact",
+            "--commits",
+            "abc..def",
+        ])
+        .assert()
+        .success();
+    let closed = task_json(&fixture.database, &task_id("FOO-0001"));
+    let completed = closed["completed"].as_str().unwrap();
+    let spawn_reopen = || {
+        let mut command = fixture.database.command();
+        command.args(["reopen", "FOO-0001"]).env("NO_COLOR", "1");
+        let mut session = expectrl::Session::spawn(command).unwrap();
+        session.set_expect_timeout(Some(std::time::Duration::from_secs(10)));
+        session
+    };
+
+    let mut declined = spawn_reopen();
+    declined.expect("Completed").unwrap();
+    declined.expect(completed).unwrap();
+    declined.expect("Commits").unwrap();
+    declined.expect("abc..def").unwrap();
+    declined.expect("Report").unwrap();
+    declined
+        .expect("validated every completion artifact")
+        .unwrap();
+    declined.expect("(y/n)").unwrap();
+    declined.expect("no").unwrap();
+    declined.send("n").unwrap();
+    declined.expect(expectrl::Eof).unwrap();
+    assert!(matches!(
+        declined.get_process().wait().unwrap(),
+        expectrl::process::unix::WaitStatus::Exited(_, 0)
+    ));
+    assert_eq!(task_json(&fixture.database, &task_id("FOO-0001")), closed);
+
+    let mut accepted = spawn_reopen();
+    accepted.expect("(y/n)").unwrap();
+    accepted.expect("no").unwrap();
+    accepted.send("y").unwrap();
+    accepted.expect(expectrl::Eof).unwrap();
+    assert!(matches!(
+        accepted.get_process().wait().unwrap(),
+        expectrl::process::unix::WaitStatus::Exited(_, 0)
+    ));
+    let reopened = task_json(&fixture.database, &task_id("FOO-0001"));
+    assert_eq!(reopened["status"], "active");
+    assert_eq!(reopened["completed"], Value::Null);
+    assert_eq!(reopened["commits"], Value::Null);
+    assert_eq!(reopened["prompt"], "## Goals\n\n- reopen safely");
+}
+
+#[test]
+fn reopen_requires_yes_without_a_terminal() {
+    let fixture = ManagedProject::new(&project_id("FOO"), "foo-bar");
+    fixture
+        .database
+        .command()
+        .args(["add", "foo-bar", "closed task / preserve completion data"])
+        .assert()
+        .success();
+    fixture
+        .database
+        .command()
+        .args([
+            "done",
+            "FOO-0001",
+            "--report",
+            "ready to reopen",
+            "--commits",
+            "a..b",
+        ])
+        .assert()
+        .success();
+    let closed = task_json(&fixture.database, &task_id("FOO-0001"));
+
+    let output = fixture
+        .database
+        .command()
+        .args(["reopen", "FOO-0001"])
+        .output()
+        .unwrap();
+
+    assert_failure(
+        output,
+        &["interactive confirmation requires a terminal", "--yes"],
+    );
+    assert_eq!(task_json(&fixture.database, &task_id("FOO-0001")), closed);
+    fixture
+        .database
+        .command()
+        .args(["reopen", "FOO-0001", "--yes"])
+        .assert()
+        .success();
+    assert_eq!(
+        task_json(&fixture.database, &task_id("FOO-0001"))["status"],
+        "active"
+    );
 }
 
 #[test]
@@ -531,7 +706,7 @@ fn lifecycle_is_observable_through_get_json() {
     fixture
         .database
         .command()
-        .args(["reopen", "FOO-0002"])
+        .args(["reopen", "FOO-0002", "--yes"])
         .assert()
         .success();
     let reopened = task_json(&fixture.database, &task_id("FOO-0002"));

@@ -1,19 +1,17 @@
-use std::{ffi::OsString, path::Path, time::Duration};
+use std::{path::Path, process::Command, time::Duration};
 
 use anyhow::{Context, Result};
 
-use crate::{paths, sqlite_url, sqlx_cli};
+use crate::{paths, process, sqlite_url};
 
 const DATABASE_SETUP_DEADLINE: Duration = Duration::from_secs(30);
 const QUERY_PREPARE_DEADLINE: Duration = Duration::from_mins(5);
-const DATABASE_SETUP_SUCCESS: &str = "Prepared temporary SQLx database for query validation.";
 
 pub(crate) fn run(check: bool) -> Result<()> {
     exec(&paths::repo_root(), check)
 }
 
 fn exec(root: &Path, check: bool) -> Result<()> {
-    let executable = sqlx_cli::ensure(root)?;
     let database_directory = tempfile::tempdir()?;
     let database_path = database_directory
         .path()
@@ -23,27 +21,35 @@ fn exec(root: &Path, check: bool) -> Result<()> {
     let database_url = sqlite_url::from_path(&database_path);
     let environment = query_environment(&database_url);
 
-    sqlx_cli::run_with_success_summary(
+    run_sqlx(
         root,
-        &executable,
         "create SQLx preparation database",
-        &strings_os(database_setup_arguments()),
+        &database_setup_arguments(),
         &environment,
         DATABASE_SETUP_DEADLINE,
-        DATABASE_SETUP_SUCCESS,
     )?;
-    sqlx_cli::run(
+    run_sqlx(
         root,
-        &executable,
         "prepare checked SQLx queries",
-        &strings_os(prepare_arguments(check)),
+        &prepare_arguments(check),
         &environment,
         QUERY_PREPARE_DEADLINE,
     )
 }
 
-fn strings_os(arguments: impl IntoIterator<Item = &'static str>) -> Vec<OsString> {
-    arguments.into_iter().map(OsString::from).collect()
+fn run_sqlx(
+    root: &Path,
+    label: &str,
+    arguments: &[&str],
+    environment: &[(&str, &str)],
+    deadline: Duration,
+) -> Result<()> {
+    let mut command = Command::new("sqlx");
+    command
+        .args(arguments)
+        .current_dir(root)
+        .envs(environment.iter().copied());
+    process::run_bounded(label, command, deadline)
 }
 
 fn prepare_arguments(check: bool) -> Vec<&'static str> {

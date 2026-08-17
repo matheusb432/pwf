@@ -72,10 +72,6 @@ pub(crate) fn run(command: Command, label: &str, deadline: Duration) -> Result<E
     .into())
 }
 
-pub(crate) fn is_timeout(error: &anyhow::Error) -> bool {
-    error.downcast_ref::<TimeoutError>().is_some()
-}
-
 fn wait_for(
     child: &mut dyn ChildWrapper,
     duration: Duration,

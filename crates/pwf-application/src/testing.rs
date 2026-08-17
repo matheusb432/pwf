@@ -186,7 +186,7 @@ pub(crate) fn task_record(id: &str) -> TaskRecord {
         section: None,
         body: "\nbody\n".to_string(),
         source: "body".to_string(),
-        locator: format!("/mem/foo-bar/{id}.md"),
+        locator: pwf_wire::task::TaskNotePath::new(format!("/mem/foo-bar/{id}.md").into()),
         placement: None,
         materialization: Materialization::NoteFile,
     }
@@ -200,7 +200,7 @@ pub(crate) fn staged_task() -> (InMemoryStore, Vec<Project>) {
         created: Some(app_date("2026-06-20")),
         body: "\n## Goals\n- do the thing\n".to_string(),
         source: PWF_0001_SOURCE.to_string(),
-        locator: "/notes/pwf/PWF-0001.md".to_string(),
+        locator: pwf_wire::task::TaskNotePath::new("/notes/pwf/PWF-0001.md".into()),
         ..task_record("PWF-0001")
     };
     (
@@ -216,8 +216,10 @@ pub(crate) fn staged_missing_task() -> (InMemoryStore, Vec<Project>) {
         created: None,
         body: String::new(),
         source: String::new(),
-        locator: expected.clone(),
-        materialization: Materialization::MissingNote { expected },
+        locator: pwf_wire::task::TaskNotePath::new(expected.clone().into()),
+        materialization: Materialization::MissingNote {
+            expected: pwf_wire::task::TaskNotePath::new(expected.into()),
+        },
         ..task_record("PWF-0002")
     };
     (
@@ -257,7 +259,9 @@ impl TaskStore for InMemoryStore {
         let tasks = state.tasks.entry(project.title.clone()).or_default();
         let next = tasks.iter().map(|task| task.id.number()).max().unwrap_or(0) + 1;
         let id = TaskId::try_new(format!("{project_id}-{next:04}")).expect("allocated id");
-        let locator = format!("/mem/{}/{}.md", project.title.as_ref(), id.as_ref());
+        let locator = pwf_wire::task::TaskNotePath::new(
+            format!("/mem/{}/{}.md", project.title.as_ref(), id.as_ref()).into(),
+        );
         let record = TaskRecord {
             id,
             title: new.title.to_string(),
@@ -437,7 +441,10 @@ impl ProjectNoteStore for InMemoryStore {
             .is_some_and(|notes| notes.iter().any(|note| note.id == *id)))
     }
 
-    fn read_note_markdown(&self, locator: &str) -> Result<String, Self::Error> {
+    fn read_note_markdown(
+        &self,
+        locator: &pwf_wire::task::TaskNotePath,
+    ) -> Result<String, Self::Error> {
         if self
             .lock()
             .project_note_failures
@@ -451,7 +458,7 @@ impl ProjectNoteStore for InMemoryStore {
             .tasks
             .values()
             .flatten()
-            .find(|task| task.locator == locator)
+            .find(|task| &task.locator == locator)
             .map(|task| task.source.clone())
             .ok_or_else(|| InMemoryStoreError::TaskNoteMarkdownMissing {
                 locator: locator.to_string(),

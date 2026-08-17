@@ -1,57 +1,16 @@
 //! Lists one managed project's notes.
 
-use std::num::NonZeroUsize;
-
-use pwf_models::project::ProjectSelector;
 use pwf_wire::{
-    note::{ListedNote, ListedNotes},
-    project::ProjectStatusFilter,
+    note::{ListNotes, ListedNote, ListedNotes, NoteListLimit},
+    project::{ProjectStatusFilter, ResolveProject},
 };
 
 use crate::{
     ports::project_note::ProjectNoteStore,
-    project::resolve_project::{self, ResolveProject, ResolveProjectError},
+    project::resolve_project::{self, ResolveProjectError},
 };
 
 const DEFAULT_NOTE_COUNT: usize = 10;
-
-/// Requests one project's notes in newest-first order.
-#[derive(Debug, Clone)]
-pub struct ListNotes {
-    /// Selects the managed project by name or id code.
-    pub project_selector: ProjectSelector,
-    /// Caps returned notes.
-    pub limit: NoteListLimit,
-}
-
-/// Selects the default cap, no cap, or an explicit non-zero cap.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum NoteListLimit {
-    #[default]
-    Default,
-    Unlimited,
-    AtMost(NonZeroUsize),
-}
-
-impl From<Option<usize>> for NoteListLimit {
-    fn from(number: Option<usize>) -> Self {
-        match number.and_then(NonZeroUsize::new) {
-            Some(number) => Self::AtMost(number),
-            None if number.is_some() => Self::Unlimited,
-            None => Self::Default,
-        }
-    }
-}
-
-impl NoteListLimit {
-    fn shown_count(self, available: usize) -> usize {
-        match self {
-            Self::Default => DEFAULT_NOTE_COUNT.min(available),
-            Self::Unlimited => available,
-            Self::AtMost(limit) => limit.get().min(available),
-        }
-    }
-}
 
 #[derive(Debug, thiserror::Error)]
 pub enum ListNotesError {
@@ -85,7 +44,7 @@ pub async fn execute(
         .list_notes(&project)
         .map_err(|error| ListNotesError::Store(Box::new(error)))?;
     notes.sort_by_key(|note| std::cmp::Reverse(note.id.number()));
-    let shown = query.limit.shown_count(notes.len());
+    let shown = shown_count(query.limit, notes.len());
     let hidden = notes.len() - shown;
     let notes = notes
         .into_iter()
@@ -102,6 +61,14 @@ pub async fn execute(
     })
 }
 
+fn shown_count(limit: NoteListLimit, available: usize) -> usize {
+    match limit {
+        NoteListLimit::Default => DEFAULT_NOTE_COUNT.min(available),
+        NoteListLimit::Unlimited => available,
+        NoteListLimit::AtMost(limit) => limit.get().min(available),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::error::Error as _;
@@ -110,7 +77,10 @@ mod tests {
     use pwf_wire::note::ListedNotes;
 
     use super::{ListNotes, ListNotesError};
-    use crate::testing::{InMemoryStore, insert_project};
+    use crate::{
+        note::list_notes,
+        testing::{InMemoryStore, insert_project},
+    };
 
     #[derive(Debug, thiserror::Error)]
     #[error("sentinel store failure")]
@@ -138,7 +108,7 @@ mod tests {
                 .collect(),
         );
 
-        let result = super::execute(
+        let result = list_notes::execute(
             ListNotes {
                 project_selector: "PWF".parse().unwrap(),
                 limit: None.into(),
@@ -173,7 +143,7 @@ mod tests {
         insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
         let store = InMemoryStore::default().with_project_notes("pwf", (1..=4).map(note).collect());
 
-        let unlimited = super::execute(
+        let unlimited = list_notes::execute(
             ListNotes {
                 project_selector: "pwf".parse().unwrap(),
                 limit: Some(0).into(),
@@ -183,7 +153,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let capped = super::execute(
+        let capped = list_notes::execute(
             ListNotes {
                 project_selector: "pwf".parse().unwrap(),
                 limit: Some(2).into(),

@@ -1,15 +1,9 @@
-//! CLI reporting for stable Cargo dependency policies.
-
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 use cargo_metadata::{DependencyKind, Metadata, MetadataCommand};
 
-use crate::{
-    paths,
-    process::{self, Status},
-    verb::Verb,
-};
+use crate::paths;
 
 struct EdgePolicy {
     from: &'static str,
@@ -46,7 +40,6 @@ const EDGE_POLICIES: [EdgePolicy; 6] = [
             "pwf-infra",
             "pwf-cli",
             "pwf-migrator",
-            "prompt-lanes",
             "xtask",
         ],
         reason: "wire contracts must not depend on use cases, adapters, or process roots",
@@ -103,14 +96,13 @@ pub(crate) fn run(root: Option<&Path>) -> Result<()> {
     let violations = collect_violations(&metadata);
 
     if violations.is_empty() {
-        process::result(Verb::CHECK_ARCHITECTURE, Status::Pass);
-        Ok(())
-    } else {
-        for violation in &violations {
-            eprintln!("{violation}");
-        }
-        bail!("check-architecture found {} violation(s)", violations.len());
+        return Ok(());
     }
+
+    for violation in &violations {
+        eprintln!("{violation}");
+    }
+    bail!("check-architecture found {} violation(s)", violations.len());
 }
 
 fn collect_violations(metadata: &Metadata) -> Vec<String> {
@@ -222,13 +214,14 @@ mod tests {
                 (
                     "pwf-wire",
                     "pwf-wire",
-                    "[dependencies]\npwf-models = { path = \"../pwf-models\" }\n",
+                    "[dependencies]\npwf-models = { path = \"../pwf-models\" }\nprompt-lanes = { path = \"../prompt-lanes\" }\n",
                 ),
                 (
                     "pwf-infra",
                     "pwf-infra",
                     "[dependencies]\npwf-wire = { path = \"../pwf-wire\" }\n",
                 ),
+                ("prompt-lanes", "prompt-lanes", ""),
             ],
         );
 

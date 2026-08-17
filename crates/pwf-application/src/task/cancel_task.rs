@@ -1,23 +1,14 @@
-use pwf_models::task::{CommitRanges, TaskId, TaskReport};
-use pwf_wire::task::{ClosedTask, ClosedTaskAction};
+use pwf_wire::task::{CancelTask, ClosedTask, ClosedTaskAction, ResolveTaskProject};
 
 use super::{
     CloseTaskError,
-    resolve_task_project::{self, ResolveTaskProject, ResolveTaskProjectError},
+    resolve_task_project::{self, ResolveTaskProjectError},
     task_closure::{self, TaskClosure},
 };
 use crate::ports::{
     clock::Clock,
     task_record::{IndexEntryStore, IndexSectionStore, TaskStore},
 };
-
-#[derive(Debug, Clone)]
-pub struct CancelTask {
-    pub id: TaskId,
-    pub report: TaskReport,
-    pub commits: Option<CommitRanges>,
-    pub review: bool,
-}
 
 #[derive(Debug, thiserror::Error)]
 pub enum CancelTaskError {
@@ -63,6 +54,7 @@ mod tests {
     use super::CancelTask;
     use crate::{
         ports::task_record::{IndexEntry, IndexEntryState, IndexEntryStore, TaskRecord},
+        task::cancel_task,
         testing::{FixedClock, InMemoryStore, app_date, project, task_record},
     };
 
@@ -106,7 +98,7 @@ mod tests {
             review: false,
         };
 
-        let out = super::execute(&command, &store, &pool, &FixedClock)
+        let out = cancel_task::execute(&command, &store, &pool, &FixedClock)
             .await
             .unwrap();
 
@@ -141,7 +133,7 @@ mod tests {
             review: false,
         };
 
-        super::execute(&command, &store, &pool, &FixedClock)
+        cancel_task::execute(&command, &store, &pool, &FixedClock)
             .await
             .unwrap();
 
@@ -169,7 +161,7 @@ mod tests {
             review: false,
         };
 
-        let error = super::execute(&command, &staged(), &pool, &FixedClock)
+        let error = cancel_task::execute(&command, &staged(), &pool, &FixedClock)
             .await
             .unwrap_err();
 

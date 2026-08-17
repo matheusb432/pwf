@@ -14,11 +14,9 @@ pub mod session;
 mod tags;
 mod task_closure;
 mod task_creation;
-mod task_prompt;
 mod task_view;
 
 pub use task_closure::CloseTaskError;
-pub use task_prompt::{TaskLane, TaskLaneEdits, TaskLaneValueError, TaskLanes};
 
 fn infer_task_title(
     prompt: &pwf_models::task::TaskPrompt,

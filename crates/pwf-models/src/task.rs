@@ -14,6 +14,6 @@ pub use effort::{EffortTier, EffortTierError};
 pub use id::TaskId;
 pub use prompt::TaskPrompt;
 pub use section::{IndexSection, TaskSection, TaskSectionError};
-pub use status::TaskStatus;
+pub use status::{ParseTaskStatusError, TaskStatus};
 pub use tag::{EmptyTaskTagsError, InvalidTagError, Tag, TagInput, TagInputError, TaskTags};
 pub use title::{TaskTitle, TaskTitleError};

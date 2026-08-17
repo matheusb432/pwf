@@ -5,13 +5,13 @@ use crate::shared::{ProjectFixture, assert_failure, assert_project, project_id, 
 fn write_fixture(tasks_path: &Path) {
     fs::create_dir_all(tasks_path).unwrap();
     fs::write(
-        tasks_path.join("ssh-agent-phone-app.md"),
-        "---\nid: ssh\ntitle: ssh-agent-phone-app\n---\n\n- [ ] [[SSH-0079]]\n",
+        tasks_path.join("sample-app.md"),
+        "---\nid: old\ntitle: sample-app\n---\n\n- [ ] [[OLD-0079]]\n",
     )
     .unwrap();
     fs::write(
-        tasks_path.join("SSH-0079.md"),
-        "---\nid: SSH-0079\nstatus: active\ntitle: keep body\nproject: ssh-agent-phone-app\ncreated: 2026-07-01\n---\n\nTask body remains intact.\n",
+        tasks_path.join("OLD-0079.md"),
+        "---\nid: OLD-0079\nstatus: active\ntitle: keep body\nproject: sample-app\ncreated: 2026-07-01\n---\n\nTask body remains intact.\n",
     )
     .unwrap();
 }
@@ -21,17 +21,17 @@ fn rename_commits_registry_and_task_identity_as_one_lifecycle() {
     let fixture = ProjectFixture::new();
     let directory = tempfile::tempdir().unwrap();
     let home = directory.path().join("home");
-    let source = directory.path().join("self/ssh-agent-phone-app");
-    let destination_source = directory.path().join("self/mimux");
-    let tasks = directory.path().join("pwf-db/self/ssh-agent-phone-app");
-    let destination_tasks = directory.path().join("pwf-db/self/mimux");
+    let source = directory.path().join("self/sample-app");
+    let destination_source = directory.path().join("self/renamed-app");
+    let tasks = directory.path().join("project-notes/self/sample-app");
+    let destination_tasks = directory.path().join("project-notes/self/renamed-app");
     fs::create_dir_all(&source).unwrap();
     write_fixture(&tasks);
-    let source_project_id = project_id("SSH");
-    let destination_project_id = project_id("MUX");
+    let source_project_id = project_id("OLD");
+    let destination_project_id = project_id("NEW");
     let created = fixture.add_with_home(
         &source_project_id,
-        "ssh-agent-phone-app",
+        "sample-app",
         source.to_str().unwrap(),
         tasks.to_str().unwrap(),
         &home,
@@ -41,10 +41,10 @@ fn rename_commits_registry_and_task_identity_as_one_lifecycle() {
         &[
             "project",
             "rename",
-            "SSH",
-            "MUX",
+            "OLD",
+            "NEW",
             "--title",
-            "mimux",
+            "renamed-app",
             "--source",
             destination_source.to_str().unwrap(),
             "--tasks",
@@ -56,19 +56,19 @@ fn rename_commits_registry_and_task_identity_as_one_lifecycle() {
     assert_project(
         &renamed,
         &destination_project_id,
-        "mimux",
+        "renamed-app",
         destination_source.to_str().unwrap(),
         destination_tasks.to_str().unwrap(),
         false,
     );
     assert_eq!(renamed["created_at"], created["created_at"]);
     assert_eq!(
-        success_json(fixture.run(&["project", "get", "MUX"])),
+        success_json(fixture.run(&["project", "get", "NEW"])),
         renamed
     );
-    assert_failure(fixture.run(&["project", "get", "SSH"]), &["SSH"]);
+    assert_failure(fixture.run(&["project", "get", "OLD"]), &["OLD"]);
 
-    let gotten = fixture.run(&["get", "MUX-0079"]);
+    let gotten = fixture.run(&["get", "NEW-0079"]);
     assert!(gotten.status.success());
     let gotten_stdout = String::from_utf8(gotten.stdout).unwrap();
     assert!(gotten_stdout.contains("status: active"));
@@ -80,17 +80,17 @@ fn rename_commit_failure_rolls_back_and_allows_retry() {
     let fixture = ProjectFixture::new();
     let directory = tempfile::tempdir().unwrap();
     let home = directory.path().join("home");
-    let source = directory.path().join("self/ssh-agent-phone-app");
-    let destination_source = directory.path().join("self/mimux");
-    let tasks = directory.path().join("pwf-db/self/ssh-agent-phone-app");
-    let destination_tasks = directory.path().join("missing-parent/mimux");
+    let source = directory.path().join("self/sample-app");
+    let destination_source = directory.path().join("self/renamed-app");
+    let tasks = directory.path().join("project-notes/self/sample-app");
+    let destination_tasks = directory.path().join("missing-parent/renamed-app");
     fs::create_dir_all(&source).unwrap();
     write_fixture(&tasks);
-    let source_project_id = project_id("SSH");
-    let destination_project_id = project_id("MUX");
+    let source_project_id = project_id("OLD");
+    let destination_project_id = project_id("NEW");
     let created = fixture.add_with_home(
         &source_project_id,
-        "ssh-agent-phone-app",
+        "sample-app",
         source.to_str().unwrap(),
         tasks.to_str().unwrap(),
         &home,
@@ -98,10 +98,10 @@ fn rename_commit_failure_rolls_back_and_allows_retry() {
     let rename_arguments = [
         "project",
         "rename",
-        "SSH",
+        "OLD",
         destination_project_id.as_ref(),
         "--title",
-        "mimux",
+        "renamed-app",
         "--source",
         destination_source.to_str().unwrap(),
         "--tasks",
@@ -113,11 +113,11 @@ fn rename_commit_failure_rolls_back_and_allows_retry() {
         &["rename", "rollback"],
     );
     assert_eq!(
-        success_json(fixture.run(&["project", "get", "SSH"])),
+        success_json(fixture.run(&["project", "get", "OLD"])),
         created
     );
-    assert_failure(fixture.run(&["project", "get", "MUX"]), &["MUX"]);
-    assert!(fixture.run(&["get", "SSH-0079"]).status.success());
+    assert_failure(fixture.run(&["project", "get", "NEW"]), &["NEW"]);
+    assert!(fixture.run(&["get", "OLD-0079"]).status.success());
 
     fs::create_dir_all(destination_tasks.parent().unwrap()).unwrap();
     let retried = success_json(fixture.run_with_home(&rename_arguments, &home));
@@ -125,10 +125,10 @@ fn rename_commit_failure_rolls_back_and_allows_retry() {
     assert_project(
         &retried,
         &destination_project_id,
-        "mimux",
+        "renamed-app",
         destination_source.to_str().unwrap(),
         destination_tasks.to_str().unwrap(),
         false,
     );
-    assert!(fixture.run(&["get", "MUX-0079"]).status.success());
+    assert!(fixture.run(&["get", "NEW-0079"]).status.success());
 }

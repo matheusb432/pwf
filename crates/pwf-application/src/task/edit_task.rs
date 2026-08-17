@@ -1,24 +1,24 @@
 use pwf_models::{
     project::Project,
+    task::{BlockedBy, EffortTier, TaskId, TaskStatus, TaskTags, TaskTitle, TaskTitleError},
+};
+use pwf_wire::{
+    project::GetActiveProject,
     task::{
-        BlockedBy, EffortTier, TaskId, TaskPrompt, TaskStatus, TaskTags, TaskTitle, TaskTitleError,
+        CollectionEdit, EditTask, EditTaskContent, EditTaskContentKind, EditedTask,
+        ResolveTaskProject, ValueEdit,
     },
 };
-use pwf_wire::task::EditedTask;
 
 use super::{
-    TaskLaneEdits,
     blocked_by::{self, BlockedByValidationError, validate_and_merge},
     note_body::{EditLanesError, append_lanes, edit_lanes, render},
-    resolve_task_project::{self, ResolveTaskProject, ResolveTaskProjectError},
+    resolve_task_project::{self, ResolveTaskProjectError},
     tags, task_body_region,
 };
 use crate::{
     ports::task_record::{NullablePatch, TaskPatch, TaskRecord, TaskStore},
-    project::{
-        get_active_project::{self, GetActiveProject},
-        get_project::GetProjectError,
-    },
+    project::{get_active_project, get_project::GetProjectError},
 };
 
 struct TaskIdentity {
@@ -32,174 +32,11 @@ struct PreparedTaskEdit {
     outcome: EditedTask,
 }
 
-#[derive(Debug, Clone)]
-enum EditTaskContentKind {
-    Structured {
-        title: Option<TaskTitle>,
-        lanes: TaskLaneEdits,
-    },
-    AppendShorthand {
-        title: Option<TaskTitle>,
-        prompt: TaskPrompt,
-    },
-    ReplaceShorthand {
-        prompt: TaskPrompt,
-        title: TaskTitle,
-    },
-}
-
-/// Carries one structurally valid task-content change.
-#[derive(Debug, Clone)]
-pub struct EditTaskContent(EditTaskContentKind);
-
-impl EditTaskContent {
-    /// Creates an explicit title or lane edit.
-    pub fn structured(
-        title: Option<TaskTitle>,
-        lanes: TaskLaneEdits,
-    ) -> Result<Self, EditTaskContentError> {
-        if title.is_none() && lanes.is_empty() {
-            return Err(EditTaskContentError::EmptyStructured);
-        }
-        Ok(Self(EditTaskContentKind::Structured { title, lanes }))
-    }
-
-    /// Creates a non-empty shorthand append.
-    pub fn append_shorthand(
-        title: Option<TaskTitle>,
-        prompt: TaskPrompt,
-    ) -> Result<Self, EditTaskContentError> {
-        if prompt.as_ref().trim().is_empty() {
-            return Err(EditTaskContentError::EmptyAppend);
-        }
-        Ok(Self(EditTaskContentKind::AppendShorthand { title, prompt }))
-    }
-
-    /// Creates a shorthand replacement with a validated leading title.
-    pub fn replace_shorthand(prompt: TaskPrompt) -> Result<Self, EditTaskContentError> {
-        let parsed = prompt_lanes::parse(prompt.as_ref());
-        if parsed.title.trim().is_empty() {
-            return Err(EditTaskContentError::MissingPromptTitle);
-        }
-        let title = TaskTitle::try_new(parsed.title)?;
-        Ok(Self(EditTaskContentKind::ReplaceShorthand {
-            prompt,
-            title,
-        }))
-    }
-}
-
-/// Reports an invalid task-content edit before application execution.
-#[derive(Debug, thiserror::Error)]
-pub enum EditTaskContentError {
-    #[error("task content edit cannot be empty")]
-    EmptyStructured,
-    #[error("--append cannot be empty.")]
-    EmptyAppend,
-    #[error("--prompt must start with a nonempty title before any lane marker.")]
-    MissingPromptTitle,
-    #[error(transparent)]
-    InvalidTitle(#[from] TaskTitleError),
-}
-
-/// Selects how an optional collection changes.
-#[derive(Debug, Clone, Default)]
-pub enum CollectionEdit<T> {
-    /// Leaves the stored collection unchanged.
-    #[default]
-    Unchanged,
-    /// Appends values to the stored collection.
-    Append(T),
-    /// Replaces the stored collection with the supplied values.
-    Replace(T),
-    /// Removes the stored collection.
-    Clear,
-}
-
-impl<T> CollectionEdit<T> {
-    fn addition(&self) -> Option<&T> {
-        match self {
-            Self::Append(value) | Self::Replace(value) => Some(value),
-            Self::Unchanged | Self::Clear => None,
-        }
-    }
-
-    fn is_unchanged(&self) -> bool {
-        matches!(self, Self::Unchanged)
-    }
-}
-
-/// Selects how an optional scalar value changes.
-#[derive(Debug, Clone, Default)]
-pub enum ValueEdit<T> {
-    /// Leaves the stored value unchanged.
-    #[default]
-    Unchanged,
-    /// Replaces the stored value.
-    Set(T),
-    /// Removes the stored value.
-    Clear,
-}
-
-impl<T> ValueEdit<T> {
-    fn is_unchanged(&self) -> bool {
-        matches!(self, Self::Unchanged)
-    }
-}
-
-/// Carries at least one requested task change.
-#[derive(Debug, Clone)]
-pub struct TaskEdits {
-    content: Option<EditTaskContent>,
-    blocked_by: CollectionEdit<BlockedBy>,
-    effort: ValueEdit<EffortTier>,
-    tags: CollectionEdit<TaskTags>,
-}
-
-impl TaskEdits {
-    /// Creates a non-empty set of task changes.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`EmptyTaskEdits`] when every field is unchanged.
-    pub fn try_new(
-        content: Option<EditTaskContent>,
-        blocked_by: CollectionEdit<BlockedBy>,
-        effort: ValueEdit<EffortTier>,
-        tags: CollectionEdit<TaskTags>,
-    ) -> Result<Self, EmptyTaskEdits> {
-        if content.is_none()
-            && blocked_by.is_unchanged()
-            && effort.is_unchanged()
-            && tags.is_unchanged()
-        {
-            return Err(EmptyTaskEdits);
-        }
-        Ok(Self {
-            content,
-            blocked_by,
-            effort,
-            tags,
-        })
-    }
-}
-
-/// Reports an edit request with no changes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("nothing to edit; pass at least one edit flag.")]
-pub struct EmptyTaskEdits;
-
-#[derive(Debug, Clone)]
-pub struct EditTask {
-    pub id: TaskId,
-    pub edits: TaskEdits,
-}
-
 #[derive(Debug, thiserror::Error)]
 pub enum EditTaskError {
     #[error("Task not found: {id}")]
     TaskNotFound { id: TaskId },
-    #[error("cannot edit closed task {id}.")]
+    #[error("cannot edit closed task {id}; run `pwf task reopen {id}` first.")]
     ClosedTask { id: TaskId },
     #[error("task {id} has an invalid persisted title: {source}")]
     InvalidPersistedTitle {
@@ -214,6 +51,12 @@ pub enum EditTaskError {
         blocked_by::format_task_ids(ids)
     )]
     UnknownBlockedByIds { ids: Vec<TaskId> },
+    #[error("cannot validate --add-blocked-by task {id}: {source}")]
+    ReadBlockedBy {
+        id: TaskId,
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
     #[error("cannot edit lanes: task body contains more than one `{header}` section.")]
     AmbiguousLanes { header: &'static str },
     #[error("{0}")]
@@ -273,7 +116,7 @@ async fn resolve_blocked_by_projects(
     pool: &sqlx::SqlitePool,
 ) -> Result<Vec<Project>, EditTaskError> {
     let mut projects = vec![task_project];
-    let Some(blocked_by) = command.edits.blocked_by.addition() else {
+    let Some(blocked_by) = command.edits.blocked_by().addition() else {
         return Ok(projects);
     };
     for id in blocked_by::project_ids(blocked_by) {
@@ -300,13 +143,13 @@ fn prepare(
         id: command.id.clone(),
     };
     let (body, title, outcome_title) =
-        prepare_content(command.edits.content.as_ref(), record, &command.id)?;
+        prepare_content(command.edits.content(), record, &command.id)?;
     let patch = TaskPatch {
         body,
         title,
-        blocked_by: resolve_blocked_by(&command.edits.blocked_by, record, store, projects)?,
-        effort: resolve_effort(&command.edits.effort),
-        tags: resolve_tags(&command.edits.tags, &command.id, record)?,
+        blocked_by: resolve_blocked_by(command.edits.blocked_by(), record, store, projects)?,
+        effort: resolve_effort(command.edits.effort()),
+        tags: resolve_tags(command.edits.tags(), &command.id, record)?,
         ..TaskPatch::default()
     };
     let outcome = EditedTask {
@@ -335,7 +178,7 @@ fn prepare_content(
             }
         })
     };
-    match content.map(|content| &content.0) {
+    match content.map(EditTaskContent::kind) {
         None => Ok((None, None, current_title()?)),
         Some(EditTaskContentKind::Structured { title, lanes }) => Ok((
             edit_lanes(current_body, lanes).map_err(map_lane_error)?,
@@ -365,15 +208,20 @@ fn resolve_blocked_by(
         CollectionEdit::Append(added) => {
             validate_and_merge(record.blocked_by.as_deref(), added, store, projects)
                 .map(NullablePatch::Set)
-                .map_err(|BlockedByValidationError::UnknownIds { ids }| {
-                    EditTaskError::UnknownBlockedByIds { ids }
-                })
+                .map_err(map_blocked_by_error)
         }
         CollectionEdit::Replace(added) => validate_and_merge(None, added, store, projects)
             .map(NullablePatch::Set)
-            .map_err(|BlockedByValidationError::UnknownIds { ids }| {
-                EditTaskError::UnknownBlockedByIds { ids }
-            }),
+            .map_err(map_blocked_by_error),
+    }
+}
+
+fn map_blocked_by_error(error: BlockedByValidationError) -> EditTaskError {
+    match error {
+        BlockedByValidationError::UnknownIds { ids } => EditTaskError::UnknownBlockedByIds { ids },
+        BlockedByValidationError::ReadStore { id, source } => {
+            EditTaskError::ReadBlockedBy { id, source }
+        }
     }
 }
 
@@ -435,15 +283,15 @@ fn map_lane_error(error: EditLanesError) -> EditTaskError {
 #[cfg(test)]
 mod tests {
     use pwf_models::task::{BlockedBy, EffortTier, TaskPrompt, TaskStatus, TaskTags, TaskTitle};
-    use pwf_wire::task::{EditedTask, RawTaskTags};
-
-    use super::{
-        CollectionEdit, EditTask, EditTaskContent, EditTaskContentError, EditTaskError,
-        EmptyTaskEdits, TaskEdits, ValueEdit,
+    use pwf_wire::task::{
+        CollectionEdit, EditTask, EditTaskContent, EditedTask, RawTaskTags, TaskEdits, TaskLane,
+        TaskLaneEdits, TaskLanes, ValueEdit,
     };
+
+    use super::EditTaskError;
     use crate::{
         ports::task_record::TaskRecord,
-        task::{TaskLane, TaskLaneEdits, TaskLanes},
+        task::edit_task,
         testing::{InMemoryStore, app_date, insert_project, task_record},
     };
 
@@ -499,40 +347,11 @@ mod tests {
         store: &InMemoryStore,
         pool: &sqlx::SqlitePool,
     ) -> Result<EditedTask, EditTaskError> {
-        super::execute(command, store, pool).await
+        edit_task::execute(command, store, pool).await
     }
 
     async fn register_project(pool: &sqlx::SqlitePool) {
         insert_project(pool, "FOO", "foo-bar", "/projects/foo", "/tasks/foo", false).await;
-    }
-
-    #[test]
-    fn task_edits_reject_no_changes_without_database_access() {
-        let error = TaskEdits::try_new(
-            None,
-            CollectionEdit::Unchanged,
-            ValueEdit::Unchanged,
-            CollectionEdit::Unchanged,
-        )
-        .unwrap_err();
-
-        assert_eq!(error, EmptyTaskEdits);
-    }
-
-    #[test]
-    fn task_content_rejects_invalid_shapes_before_request_creation() {
-        assert!(matches!(
-            EditTaskContent::structured(None, TaskLaneEdits::default()),
-            Err(EditTaskContentError::EmptyStructured)
-        ));
-        assert!(matches!(
-            EditTaskContent::append_shorthand(None, TaskPrompt::new(" \n\t ")),
-            Err(EditTaskContentError::EmptyAppend)
-        ));
-        assert!(matches!(
-            EditTaskContent::replace_shorthand(TaskPrompt::new("/g replacement")),
-            Err(EditTaskContentError::MissingPromptTitle)
-        ));
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]

@@ -3,16 +3,10 @@ use pwf_models::task::TaskStatus;
 
 use super::{ID_ORANGE, paint};
 
-#[derive(Clone, Copy)]
-pub(in crate::task) enum StatusPlacement {
-    AfterIdentifier,
-    AfterTitle,
-}
-
 pub(in crate::task) fn render_task_summary(
     identifier: &str,
     title: &str,
-    status: Option<(TaskStatus, StatusPlacement)>,
+    status: Option<TaskStatus>,
     color_on: bool,
 ) -> String {
     // Plain output is a raw-text contract; Markdown emphasis is reserved for ANSI rendering.
@@ -23,15 +17,9 @@ pub(in crate::task) fn render_task_summary(
     };
     match status {
         None => format!("{identifier} :: {title}"),
-        Some((status, StatusPlacement::AfterIdentifier)) => {
+        Some(status) => {
             format!(
                 "{identifier} [{}] :: {title}",
-                render_status(status, color_on)
-            )
-        }
-        Some((status, StatusPlacement::AfterTitle)) => {
-            format!(
-                "{identifier} :: {title} ({})",
                 render_status(status, color_on)
             )
         }

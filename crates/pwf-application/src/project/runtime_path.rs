@@ -3,6 +3,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use pwf_models::project::HomeDirectory;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedPath {
     path: PathBuf,
@@ -49,8 +51,8 @@ pub enum RuntimePathError {
 ///
 /// Returns [`RuntimePathError`] when the path or home directory violates the portable path
 /// contract.
-pub fn resolve(path: &str, home: &Path) -> Result<ResolvedPath, RuntimePathError> {
-    host::resolve(path, home)
+pub fn resolve(path: &str, home: &HomeDirectory) -> Result<ResolvedPath, RuntimePathError> {
+    host::resolve(path, home.as_path())
 }
 
 fn home_relative_remainder(path: &str) -> Option<&str> {
@@ -501,12 +503,14 @@ mod host {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
+
+    use pwf_models::project::HomeDirectory;
 
     use super::{ResolvedPath, RuntimePathError};
 
     fn resolve(path: &str, home: &Path) -> Result<ResolvedPath, RuntimePathError> {
-        super::resolve(path, home)
+        super::resolve(path, &HomeDirectory::new(PathBuf::from(home)))
     }
 
     #[test]

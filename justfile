@@ -32,21 +32,22 @@ ship *args:
 # Apply every repository formatter.
 [group('quality')]
 fmt:
-    cargo run --quiet -p xtask -- fmt
+    cargo fmt --all
 
 # Check formatting without modifying files.
 [group('quality')]
 fmt-check:
-    cargo run --quiet -p xtask -- fmt-check
+    cargo fmt --all --check
 
 # Run repository linters.
 [group('quality')]
 lint:
-    cargo run --quiet -p xtask -- lint
+    cargo clippy --workspace --all-targets -- -D warnings
+    cargo clippy -p pwf-e2e --test e2e -- -D warnings
 
 # Refresh or verify the committed SQLx checked-query cache.
 prepare *args:
-    cargo run --quiet -p xtask -- prepare {{ args }}
+    mise exec cargo:sqlx-cli -- cargo run --quiet -p xtask -- prepare {{ args }}
 
 # Apply pending SQLite migrations through the dedicated process.
 migrate:
@@ -55,12 +56,16 @@ migrate:
 # Run the complete read-only formatting and lint gate.
 [group('quality')]
 check:
-    cargo run --quiet -p xtask -- check
+    just fmt-check
+    just lint
+    ast-grep scan
+    just prepare --check
 
 # Apply machine-applicable fixes and reformat.
 [group('quality')]
 fix *args:
-    cargo run --quiet -p xtask -- fix {{ args }}
+    cargo clippy --fix --workspace --all-targets --allow-dirty {{ args }}
+    just fmt
 
 # Report missing mise state without changing the host.
 [group('quality')]

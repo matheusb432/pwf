@@ -1,19 +1,18 @@
 use std::num::NonZeroUsize;
 
 use clap::Args;
-use pwf_application::{
-    project::resolve_project::ResolveProjectError,
-    task::list_tasks::{self, ListTasks, ListTasksError},
-};
+use pwf_application::task::list_tasks::{self, ListTasksError};
 use pwf_infra::obsidian::ObsidianStore;
 use pwf_models::{
     project::ProjectSelector,
     task::{TagInput, TaskTags},
 };
-use pwf_wire::task::{ListDetail, ListMode, ListScope, OrderDirection, OrderField, OrderSpec};
+use pwf_wire::task::{
+    ListDetail, ListScope, ListTasks, ListTasksApiError, OrderDirection, OrderField, OrderSpec,
+};
 
-use super::{EffortChoice, SectionChoice, StatusChoice, TaskError, render::render_list};
-use crate::console::Console;
+use super::{EffortChoice, SectionChoice, StatusChoice, render::render_list};
+use crate::{console::Console, project::map_resolve_project_error};
 
 #[derive(Args, Debug)]
 pub struct Arguments {
@@ -50,8 +49,6 @@ pub struct Arguments {
     /// [default: active, or all under `--all`].
     #[arg(long, value_enum)]
     pub(crate) status: Option<StatusChoice>,
-    #[arg(skip)]
-    pub(crate) mode: ListMode,
 }
 
 pub(super) async fn run(
@@ -59,7 +56,7 @@ pub(super) async fn run(
     console: Console,
     store: &ObsidianStore,
     pool: &sqlx::SqlitePool,
-) -> Result<String, TaskError> {
+) -> Result<String, ListTasksApiError> {
     let result = list_tasks::execute(
         &ListTasks {
             project_selector: arguments.project.clone(),
@@ -74,7 +71,6 @@ pub(super) async fn run(
             } else {
                 ListDetail::Summary
             },
-            mode: arguments.mode,
         },
         store,
         pool,
@@ -126,12 +122,12 @@ fn parse_order(value: &str) -> Result<OrderSpec, String> {
     Ok(OrderSpec { field, direction })
 }
 
-fn map_list_tasks_error(error: ListTasksError) -> TaskError {
+fn map_list_tasks_error(error: ListTasksError) -> ListTasksApiError {
     match error {
-        ListTasksError::ResolveProject(ResolveProjectError::Unknown { selector, known }) => {
-            TaskError::UnknownManagedProject { selector, known }
-        }
-        error => TaskError::List(error),
+        ListTasksError::ResolveProject(error) => map_resolve_project_error(error).into(),
+        error => ListTasksApiError::Unexpected {
+            message: error.to_string(),
+        },
     }
 }
 

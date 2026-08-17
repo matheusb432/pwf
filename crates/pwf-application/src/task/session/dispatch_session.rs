@@ -3,7 +3,9 @@
 use std::error::Error;
 
 use pwf_models::task::TaskId;
-use pwf_wire::task::session::{DispatchedSession, PreparedSessionDispatch, SessionPlan};
+use pwf_wire::task::session::{
+    DispatchSession, DispatchedSession, PreparedSessionDispatch, SessionPlan,
+};
 use thiserror::Error;
 
 use super::DispatchMode;
@@ -13,19 +15,19 @@ use crate::ports::{
     session::{AgentCommand, SessionClient, SessionWindow},
 };
 
-pub struct DispatchSession {
-    pub prepared: PreparedSessionDispatch,
-}
-
 #[derive(Debug, Error)]
 pub enum DispatchSessionError {
-    #[error("Failed to run agent inline: {message}")]
-    InlineFailed { message: String },
-    #[error("Failed to open multiplexer window '{window}' in session '{session}': {message}")]
+    #[error("Failed to run agent inline: {source}")]
+    InlineFailed {
+        #[source]
+        source: Box<dyn Error + Send + Sync>,
+    },
+    #[error("Failed to open multiplexer window '{window}' in session '{session}': {source}")]
     WindowOpen {
         session: String,
         window: TaskId,
-        message: String,
+        #[source]
+        source: Box<dyn Error + Send + Sync>,
     },
     #[error("{source}")]
     AgentPreparation {
@@ -33,9 +35,13 @@ pub enum DispatchSessionError {
         source: Box<dyn Error + Send + Sync>,
     },
     #[error(
-        "Agent backend failed after naming thread '{thread_id}': {message}. The named thread was left intact."
+        "Agent backend failed after naming thread '{thread_id}': {source}. The named thread was left intact."
     )]
-    NamedThreadBackend { thread_id: String, message: String },
+    NamedThreadBackend {
+        thread_id: String,
+        #[source]
+        source: Box<Self>,
+    },
     #[error("Agent command is empty.")]
     EmptyAgentCommand,
 }
@@ -61,10 +67,10 @@ pub fn execute(
         PreparedAgentLaunch::NamedThread {
             arguments,
             thread_id,
-        } => dispatch_host(&arguments, &plan, inline, session_client).map_err(|error| {
+        } => dispatch_host(&arguments, &plan, inline, session_client).map_err(|source| {
             DispatchSessionError::NamedThreadBackend {
                 thread_id,
-                message: error.to_string(),
+                source: Box::new(source),
             }
         }),
     }
@@ -82,7 +88,9 @@ fn dispatch_host(
                 AgentCommand::try_new(argv).map_err(|_| DispatchSessionError::EmptyAgentCommand)?;
             inline
                 .run(command, &plan.launch.project_path)
-                .map_err(|message| DispatchSessionError::InlineFailed { message })?;
+                .map_err(|source| DispatchSessionError::InlineFailed {
+                    source: Box::new(source),
+                })?;
             Ok(DispatchedSession::Inline {
                 task_id: plan.launch.task_id.clone(),
             })
@@ -96,25 +104,53 @@ fn dispatch_multiplexer(
     plan: &SessionPlan,
     session_client: &impl SessionClient,
 ) -> Result<DispatchedSession, DispatchSessionError> {
-    let session_name = plan.target.session_name();
+    let target = plan.target();
+    let session_name = target.session_name();
     let agent_command =
         AgentCommand::try_new(argv).map_err(|_| DispatchSessionError::EmptyAgentCommand)?;
     let window = SessionWindow {
         session_name: &session_name,
         working_directory: &plan.launch.project_path,
-        window_name: plan.target.task_id.as_ref(),
+        window_name: target.task_id().as_ref(),
         agent_command,
     };
     session_client
         .open_window(&window)
-        .map_err(|message| DispatchSessionError::WindowOpen {
+        .map_err(|source| DispatchSessionError::WindowOpen {
             session: session_name,
-            window: plan.target.task_id.clone(),
-            message,
+            window: target.task_id().clone(),
+            source: Box::new(source),
         })?;
     Ok(DispatchedSession::WindowOpened {
-        target: plan.target.clone(),
+        target,
         agent: plan.launch.agent,
         project_path: plan.launch.project_path.clone(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::error::Error as _;
+
+    use super::DispatchSessionError;
+
+    #[derive(Debug, thiserror::Error)]
+    #[error("inline process unavailable")]
+    struct SentinelError;
+
+    #[test]
+    fn named_thread_failures_retain_the_dispatch_source_chain() {
+        let error = DispatchSessionError::NamedThreadBackend {
+            thread_id: "thread-42".to_string(),
+            source: Box::new(DispatchSessionError::InlineFailed {
+                source: Box::new(SentinelError),
+            }),
+        };
+
+        let dispatch_error = error.source().unwrap();
+        assert_eq!(
+            dispatch_error.source().unwrap().to_string(),
+            "inline process unavailable"
+        );
+    }
 }

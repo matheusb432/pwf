@@ -1,15 +1,20 @@
 use pwf_models::task::{TaskId, TaskStatus};
-use pwf_wire::task::ReopenedTask;
-
-use super::resolve_task_project::{self, ResolveTaskProject, ResolveTaskProjectError};
-use crate::ports::task_record::{
-    IndexEntry, IndexEntryState, IndexEntryStore, NullablePatch, TaskPatch, TaskStore,
+use pwf_wire::{
+    confirmation::{Confirmation, ReopenTaskConfirmation},
+    task::{ReopenTask, ReopenedTask, ResolveTaskProject},
 };
 
-#[derive(Debug, Clone)]
-pub struct ReopenTask {
-    pub id: TaskId,
-}
+use super::{
+    note_body::remove_report,
+    resolve_task_project::{self, ResolveTaskProjectError},
+    task_body_region,
+};
+use crate::ports::{
+    confirmation::ConfirmationClient,
+    task_record::{
+        IndexEntry, IndexEntryState, IndexEntryStore, NullablePatch, TaskPatch, TaskStore,
+    },
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ReopenTaskError {
@@ -23,12 +28,14 @@ pub enum ReopenTaskError {
 
 /// Reopens a closed task and restores an existing queue link.
 ///
-/// The update clears `completed:` and `commits:`. An active task returns an idempotent skip.
+/// The update clears completion metadata and its appended report. An active task returns an
+/// idempotent skip.
 #[cqrsy::command]
 pub async fn execute(
     cmd: &ReopenTask,
     store: &(impl TaskStore + IndexEntryStore),
     pool: &sqlx::SqlitePool,
+    confirmation_client: &(impl ConfirmationClient + Send + Sync + 'static),
 ) -> Result<ReopenedTask, ReopenTaskError> {
     let project =
         resolve_task_project::execute(ResolveTaskProject { id: cmd.id.clone() }, pool).await?;
@@ -46,6 +53,20 @@ pub async fn execute(
         });
     }
 
+    let (body_without_report, report) = remove_report(task_body_region(&record.body));
+    let confirmation = Confirmation::ReopenTask(ReopenTaskConfirmation {
+        task_identifier: task_identifier.clone(),
+        project: project.title.clone(),
+        completion_date: record.completed,
+        commit_provenance: record.commits.clone(),
+        report: report.clone(),
+    });
+    if !confirmation_client.confirm(&confirmation) {
+        return Ok(ReopenedTask::Aborted {
+            id: task_identifier,
+        });
+    }
+
     TaskStore::update(
         store,
         &project,
@@ -54,6 +75,7 @@ pub async fn execute(
             status: Some(TaskStatus::Active),
             completed: NullablePatch::Clear,
             commits: NullablePatch::Clear,
+            body: report.is_some().then_some(body_without_report),
             ..TaskPatch::default()
         },
     )
@@ -85,23 +107,69 @@ pub async fn execute(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+
     use pwf_models::{
-        project::Project,
+        project::{Project, ProjectName},
         task::{TaskId, TaskStatus},
     };
-    use pwf_wire::task::ReopenedTask;
+    use pwf_wire::{
+        confirmation::{Confirmation, ReopenTaskConfirmation},
+        task::ReopenedTask,
+    };
 
     use super::ReopenTask;
     use crate::{
-        ports::task_record::{IndexEntry, IndexEntryState, IndexEntryStore, TaskRecord},
+        ports::{
+            confirmation::ConfirmationClient,
+            task_record::{IndexEntry, IndexEntryState, IndexEntryStore, TaskRecord},
+        },
+        task::reopen_task,
         testing::{InMemoryStore, app_date, project, task_record},
     };
+
+    struct TestConfirmation {
+        accepted: bool,
+        recorded: Mutex<Vec<Confirmation>>,
+    }
+
+    impl TestConfirmation {
+        fn accepting() -> Self {
+            Self {
+                accepted: true,
+                recorded: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn declining() -> Self {
+            Self {
+                accepted: false,
+                recorded: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn recorded(&self) -> Vec<Confirmation> {
+            self.recorded.lock().unwrap().clone()
+        }
+    }
+
+    impl ConfirmationClient for TestConfirmation {
+        fn confirm(&self, confirmation: &Confirmation) -> bool {
+            self.recorded.lock().unwrap().push(confirmation.clone());
+            self.accepted
+        }
+    }
 
     fn record(id: &str, status: TaskStatus) -> TaskRecord {
         TaskRecord {
             status,
             completed: (status != TaskStatus::Active).then(|| app_date("2026-01-02")),
             commits: Some("a..b".to_string()),
+            body: if status == TaskStatus::Active {
+                "## Goals\n\n- ship the work\n".to_string()
+            } else {
+                "## Goals\n\n- ship the work\n\n### Report\n\ncompleted safely\n".to_string()
+            },
             ..task_record(id)
         }
     }
@@ -149,13 +217,30 @@ mod tests {
             TaskStatus::Done,
             vec![entry(IndexEntryState::Done(Some(app_date("2026-01-02"))))],
         );
+        let confirmation = TestConfirmation::accepting();
 
-        let out = super::execute(&command(), &store, &pool).await.unwrap();
+        let out = reopen_task::execute(&command(), &store, &pool, &confirmation)
+            .await
+            .unwrap();
 
         assert!(matches!(out, ReopenedTask::Reopened { .. }));
+        assert_eq!(
+            confirmation.recorded(),
+            vec![Confirmation::ReopenTask(ReopenTaskConfirmation {
+                task_identifier: "FOO-0001".parse().unwrap(),
+                project: ProjectName::try_new("foo-bar").unwrap(),
+                completion_date: Some(app_date("2026-01-02")),
+                commit_provenance: Some("a..b".to_string()),
+                report: Some("completed safely".to_string()),
+            })]
+        );
         assert_eq!(store.tasks("foo-bar")[0].status, TaskStatus::Active);
         assert_eq!(store.tasks("foo-bar")[0].completed, None);
         assert_eq!(store.tasks("foo-bar")[0].commits, None);
+        assert_eq!(
+            store.tasks("foo-bar")[0].body,
+            "## Goals\n\n- ship the work"
+        );
         assert_eq!(store.entries("foo-bar")[0].state, IndexEntryState::Open);
     }
 
@@ -171,8 +256,11 @@ mod tests {
         )
         .await;
         let store = staged(TaskStatus::Done, Vec::new());
+        let confirmation = TestConfirmation::accepting();
 
-        let out = super::execute(&command(), &store, &pool).await.unwrap();
+        let out = reopen_task::execute(&command(), &store, &pool, &confirmation)
+            .await
+            .unwrap();
 
         assert!(matches!(out, ReopenedTask::Reopened { .. }));
         assert_eq!(store.tasks("foo-bar")[0].status, TaskStatus::Active);
@@ -191,11 +279,48 @@ mod tests {
         )
         .await;
         let store = staged(TaskStatus::Active, vec![entry(IndexEntryState::Open)]);
+        let confirmation = TestConfirmation::accepting();
 
-        let out = super::execute(&command(), &store, &pool).await.unwrap();
+        let out = reopen_task::execute(&command(), &store, &pool, &confirmation)
+            .await
+            .unwrap();
 
         assert!(matches!(out, ReopenedTask::AlreadyActive { .. }));
+        assert!(confirmation.recorded().is_empty());
         assert_eq!(store.tasks("foo-bar")[0].commits.as_deref(), Some("a..b"));
+    }
+
+    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
+    async fn declined_reopen_preserves_every_completion_artifact(pool: sqlx::SqlitePool) {
+        crate::testing::insert_project(
+            &pool,
+            "FOO",
+            "foo-bar",
+            "/projects/foo",
+            "/tasks/foo",
+            false,
+        )
+        .await;
+        let store = staged(
+            TaskStatus::Done,
+            vec![entry(IndexEntryState::Done(Some(app_date("2026-01-02"))))],
+        );
+        let tasks_before = store.tasks("foo-bar");
+        let entries_before = store.entries("foo-bar");
+        let confirmation = TestConfirmation::declining();
+
+        let outcome = reopen_task::execute(&command(), &store, &pool, &confirmation)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            outcome,
+            ReopenedTask::Aborted {
+                id: "FOO-0001".parse().unwrap(),
+            }
+        );
+        assert_eq!(store.tasks("foo-bar"), tasks_before);
+        assert_eq!(store.entries("foo-bar"), entries_before);
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
@@ -213,8 +338,11 @@ mod tests {
         let command = ReopenTask {
             id: "XYZ-0001".parse().unwrap(),
         };
+        let confirmation = TestConfirmation::accepting();
 
-        let error = super::execute(&command, &store, &pool).await.unwrap_err();
+        let error = reopen_task::execute(&command, &store, &pool, &confirmation)
+            .await
+            .unwrap_err();
 
         assert_eq!(
             error.to_string(),

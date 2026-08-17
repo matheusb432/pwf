@@ -483,12 +483,178 @@ pub(in crate::task) fn review_task_prompt(reviewed_id: &TaskId, range: Option<&s
     let (title, diff) = match range {
         Some(range) => (
             format!("review {reviewed_id}, commits: {range}"),
-            format!("git-tools diff {range}"),
+            format!("git diff {range}"),
         ),
-        None => (
-            format!("review {reviewed_id}"),
-            "git-tools diff".to_string(),
-        ),
+        None => (format!("review {reviewed_id}"), root_review_command()),
     };
-    TaskPrompt::new(format!("{title} / {diff} / git-tools diff-subrepos"))
+    TaskPrompt::new(format!("{title} / {diff} / {NESTED_REVIEW_COMMAND}"))
+}
+
+pub(in crate::task) const NESTED_REVIEW_COMMAND: &str = r#"bash -c 'failed=0; while IFS= read -r -d "" marker; do if [[ "$marker" == ./.git ]]; then continue; fi; if [[ -f "$marker" ]] && tr "\\" "/" < "$marker" | grep -q /worktrees/; then continue; fi; repo=${marker%/.git}; base=$(git -C "$repo" rev-parse --verify "@{upstream}" 2>/dev/null || git -C "$repo" rev-parse --verify main) || { failed=1; continue; }; git -C "$repo" diff "$base..HEAD" || failed=1; done < <(find . \( -name .git -o -name target -o -name node_modules \) -prune -name .git -print0); exit "$failed"'"#;
+
+fn root_review_command() -> String {
+    r#"bash -c 'base=$(git rev-parse --verify "@{upstream}" 2>/dev/null || git rev-parse --verify main) || exit 1; git diff "$base..HEAD"'"#.to_string()
+}
+
+#[cfg(all(test, unix))]
+#[allow(clippy::unwrap_used)]
+mod review_command_tests {
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        process::Command,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    use super::NESTED_REVIEW_COMMAND;
+
+    struct TestDirectory(PathBuf);
+
+    impl TestDirectory {
+        fn new() -> Self {
+            let nonce = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!("pwf-review-{nonce}"));
+            fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            fs::remove_dir_all(&self.0).unwrap();
+        }
+    }
+
+    fn git(directory: &Path, arguments: &[&str]) {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(directory)
+            .args(arguments)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {arguments:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn initialize_review_repo(path: &Path, change: &str) {
+        fs::create_dir_all(path).unwrap();
+        git(path, &["init", "-q"]);
+        git(path, &["config", "user.name", "Tester"]);
+        git(path, &["config", "user.email", "tester@example.invalid"]);
+        fs::write(path.join("review.txt"), "base\n").unwrap();
+        git(path, &["add", "review.txt"]);
+        git(path, &["commit", "-qm", "base"]);
+        git(path, &["branch", "-M", "main"]);
+        git(path, &["switch", "-qc", "feature"]);
+        fs::write(path.join("review.txt"), format!("base\n{change}\n")).unwrap();
+        git(path, &["commit", "-qam", "review"]);
+    }
+
+    fn run(root: &Path) -> std::process::Output {
+        Command::new("bash")
+            .args(["-c", NESTED_REVIEW_COMMAND])
+            .current_dir(root)
+            .output()
+            .unwrap()
+    }
+
+    #[test]
+    fn nested_review_discovers_and_filters_repositories_without_masking_failures() {
+        let directory = TestDirectory::new();
+        let root = directory.path().join("root");
+        fs::create_dir_all(&root).unwrap();
+        git(&root, &["init", "-q"]);
+
+        let ordinary = root.join("ordinary");
+        initialize_review_repo(&ordinary, "ordinary-change");
+        git(&ordinary, &["branch", "--set-upstream-to", "main"]);
+        initialize_review_repo(&root.join("line\nbreak"), "newline-change");
+
+        let submodule = root.join("submodule");
+        let submodule_git = root.join(".git/modules/submodule");
+        fs::create_dir_all(&submodule).unwrap();
+        fs::create_dir_all(submodule_git.parent().unwrap()).unwrap();
+        git(
+            &root,
+            &[
+                "init",
+                "-q",
+                "--separate-git-dir",
+                submodule_git.to_str().unwrap(),
+                submodule.to_str().unwrap(),
+            ],
+        );
+        git(&submodule, &["config", "user.name", "Tester"]);
+        git(
+            &submodule,
+            &["config", "user.email", "tester@example.invalid"],
+        );
+        fs::write(submodule.join("review.txt"), "base\n").unwrap();
+        git(&submodule, &["add", "review.txt"]);
+        git(&submodule, &["commit", "-qm", "base"]);
+        git(&submodule, &["branch", "-M", "main"]);
+        git(&submodule, &["switch", "-qc", "feature"]);
+        fs::write(submodule.join("review.txt"), "base\nsubmodule-change\n").unwrap();
+        git(&submodule, &["commit", "-qam", "review"]);
+
+        let worktree_source = directory.path().join("worktree-source");
+        initialize_review_repo(&worktree_source, "source-change");
+        git(&worktree_source, &["switch", "main"]);
+        let linked_worktree = root.join("linked-worktree");
+        git(
+            &worktree_source,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                linked_worktree.to_str().unwrap(),
+                "-b",
+                "linked",
+            ],
+        );
+        fs::write(
+            linked_worktree.join("review.txt"),
+            "base\nworktree-change\n",
+        )
+        .unwrap();
+        git(&linked_worktree, &["commit", "-qam", "review"]);
+
+        initialize_review_repo(&root.join("target/hidden"), "target-change");
+        initialize_review_repo(&root.join("node_modules/hidden"), "node-modules-change");
+
+        let output = run(&root);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        for expected in ["ordinary-change", "newline-change", "submodule-change"] {
+            assert!(stdout.contains(expected), "missing {expected}: {stdout}");
+        }
+        for excluded in [
+            "source-change",
+            "worktree-change",
+            "target-change",
+            "node-modules-change",
+        ] {
+            assert!(!stdout.contains(excluded), "included {excluded}: {stdout}");
+        }
+
+        let broken = root.join("broken");
+        fs::create_dir_all(&broken).unwrap();
+        git(&broken, &["init", "-q"]);
+        let failed = run(&root);
+        assert!(!failed.status.success());
+    }
 }

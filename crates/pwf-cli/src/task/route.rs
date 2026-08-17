@@ -1,15 +1,13 @@
 //! Converts normalized compatibility tokens into typed task leaves.
 
 use clap::Args;
-use pwf_models::task::BlockedByInput;
-use pwf_wire::task::ListMode;
+use pwf_wire::task::{OrderDirection, OrderField, OrderSpec};
 
 use super::{SectionChoice, StatusChoice, list};
 
 #[derive(Args, Debug)]
 pub struct Arguments {
     /// Free-form route words (project + prompt, or a sub-verb).
-    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     pub(crate) words: Vec<String>,
     /// Long form with per-task metadata.
     #[arg(long)]
@@ -28,8 +26,6 @@ pub struct Arguments {
     /// [default: active, or all under `--all`].
     #[arg(long, value_enum)]
     pub(crate) status: Option<StatusChoice>,
-    #[arg(long)]
-    pub(crate) blocked_by: Vec<BlockedByInput>,
 }
 
 pub(crate) enum ResolvedCommand {
@@ -76,15 +72,17 @@ fn list_arguments(
         number: arguments.number,
         effort: None,
         tag: Vec::new(),
-        order: None,
+        order: Some(OrderSpec {
+            field: OrderField::ProjectId,
+            direction: OrderDirection::Asc,
+        }),
         status: arguments.status,
-        mode: ListMode::ProjectRoute,
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use pwf_wire::task::{ListMode, StatusFilter};
+    use pwf_wire::task::StatusFilter;
 
     use super::*;
 
@@ -96,7 +94,6 @@ mod tests {
             all: false,
             number: Some(3),
             status: Some(StatusChoice::All),
-            blocked_by: Vec::new(),
         }
     }
 
@@ -111,7 +108,13 @@ mod tests {
         assert!(matches!(list.section, Some(SectionChoice::Future)));
         assert!(!list.all);
         assert_eq!(list.number, Some(3));
-        assert_eq!(list.mode, ListMode::ProjectRoute);
+        assert_eq!(
+            list.order,
+            Some(OrderSpec {
+                field: OrderField::ProjectId,
+                direction: OrderDirection::Asc,
+            })
+        );
         assert_eq!(
             list.status.expect("explicit status").filter(),
             StatusFilter::All

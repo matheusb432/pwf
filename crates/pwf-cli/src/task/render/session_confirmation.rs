@@ -2,44 +2,47 @@ use pwf_models::session::DispatchMode;
 use pwf_wire::task::session::DispatchConfirmation;
 
 use super::agent_name;
-use crate::confirm_prompt::{ConfirmationPrompt, Field};
+use crate::confirmation::{ConfirmationDefault, ConfirmationDialog, ConfirmationTone, Detail};
 
 const CURRENT_TERMINAL_TARGET: &str = "current terminal";
 const UNKNOWN_CREATED: &str = "(unknown)";
 
-pub(in crate::task) fn render_session_confirmation(confirmation: &DispatchConfirmation) -> String {
+pub(in crate::task) fn render_session_confirmation(
+    confirmation: &DispatchConfirmation,
+) -> ConfirmationDialog {
     let (mode, target) = match confirmation.mode {
         DispatchMode::Inline => ("inline", CURRENT_TERMINAL_TARGET.to_string()),
         DispatchMode::Multiplexer => (
             "tmux",
-            format!("tmux session {}", confirmation.target.session_name()),
+            format!("tmux session {}", confirmation.target().session_name()),
         ),
     };
-    let fields = [
-        Field::new("task_id", &confirmation.task_id),
-        Field::new("title", confirmation.title.to_string()),
-        Field::new(
-            "created",
+    let details = [
+        Detail::new("Task", &confirmation.task_id),
+        Detail::new("Title", confirmation.title.to_string()),
+        Detail::new(
+            "Created",
             confirmation
                 .created
                 .as_ref()
                 .map_or_else(|| UNKNOWN_CREATED.to_string(), ToString::to_string),
         ),
-        Field::new("mode", mode),
-        Field::new("agent", agent_name(confirmation.agent)),
-        Field::new("model", confirmation.model.to_string()),
-        Field::new("effort", confirmation.effort.to_string()),
-        Field::new("autonomy", yes_no(confirmation.directives.autonomous)),
-        Field::new("worktree", yes_no(confirmation.directives.worktree)),
-        Field::new("prompt prefix", yes_no(confirmation.has_pushed_prompt)),
-        Field::new("target", target),
+        Detail::new("Mode", mode),
+        Detail::new("Agent", agent_name(confirmation.agent)),
+        Detail::new("Model", confirmation.model.to_string()),
+        Detail::new("Effort", confirmation.effort.to_string()),
+        Detail::new("Autonomy", yes_no(confirmation.directives.autonomous)),
+        Detail::new("Worktree", yes_no(confirmation.directives.worktree)),
+        Detail::new("Prompt prefix", yes_no(confirmation.has_pushed_prompt)),
+        Detail::new("Target", target),
     ];
-    ConfirmationPrompt::new(
+    ConfirmationDialog::new(
         "Confirm session dispatch",
-        &fields,
+        details.into(),
         "Proceed with session dispatch?",
+        ConfirmationDefault::Yes,
+        ConfirmationTone::Informational,
     )
-    .to_string()
 }
 
 fn yes_no(enabled: bool) -> &'static str {
@@ -52,10 +55,7 @@ mod tests {
         session::{Agent, AgentModel, DispatchMode, LaunchDirectives, SessionEffort},
         task::{TaskId, TaskTitle},
     };
-    use pwf_wire::task::{
-        TaskHeading,
-        session::{DispatchConfirmation, DispatchTarget},
-    };
+    use pwf_wire::task::{TaskHeading, session::DispatchConfirmation};
 
     use super::*;
 
@@ -72,26 +72,16 @@ mod tests {
                 autonomous: true,
             },
             has_pushed_prompt: true,
-            target: DispatchTarget {
-                task_id: TaskId::try_new("PWF-0001").unwrap(),
-            },
             model: AgentModel::default(),
             effort: SessionEffort::XHigh,
         };
 
-        let out = render_session_confirmation(&confirmation);
+        let out = render_session_confirmation(&confirmation).render(false);
 
-        assert!(out.contains("# Confirm session dispatch"));
-        assert!(out.contains("task_id: PWF-0001"));
-        assert!(out.contains("title: dispatch me"));
-        assert!(out.contains("created: 2026-07-01"));
-        assert!(out.contains("mode: inline"));
-        assert!(out.contains("agent: codex"));
-        assert!(out.contains("effort: xhigh"));
-        assert!(out.contains("autonomy: yes"));
-        assert!(out.contains("worktree: yes"));
-        assert!(out.contains("prompt prefix: yes"));
-        assert!(out.contains("target: current terminal"));
+        assert_eq!(
+            out,
+            "Confirm session dispatch\n\n  Task           PWF-0001\n  Title          dispatch me\n  Created        2026-07-01\n  Mode           inline\n  Agent          codex\n  Model          default\n  Effort         xhigh\n  Autonomy       yes\n  Worktree       yes\n  Prompt prefix  yes\n  Target         current terminal"
+        );
     }
 
     #[test]
@@ -104,21 +94,15 @@ mod tests {
             agent: Agent::Claude,
             directives: LaunchDirectives::default(),
             has_pushed_prompt: false,
-            target: DispatchTarget {
-                task_id: TaskId::try_new("PWF-0001").unwrap(),
-            },
             model: AgentModel::default(),
             effort: SessionEffort::High,
         };
 
-        let out = render_session_confirmation(&confirmation);
+        let out = render_session_confirmation(&confirmation).render(false);
 
-        assert!(out.contains("mode: tmux"));
-        assert!(out.contains("target: tmux session pwf"));
-        assert!(out.contains("autonomy: no"));
-        assert!(out.contains("effort: high"));
-        assert!(out.contains("worktree: no"));
-        assert!(out.contains("prompt prefix: no"));
-        assert!(out.contains("created: (unknown)"));
+        assert_eq!(
+            out,
+            "Confirm session dispatch\n\n  Task           PWF-0001\n  Title          dispatch me\n  Created        (unknown)\n  Mode           tmux\n  Agent          claude\n  Model          default\n  Effort         high\n  Autonomy       no\n  Worktree       no\n  Prompt prefix  no\n  Target         tmux session pwf"
+        );
     }
 }

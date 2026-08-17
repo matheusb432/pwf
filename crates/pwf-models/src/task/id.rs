@@ -124,9 +124,9 @@ mod tests {
             ("pwf-0098", "PWF-0098"),
             ("  pwf-0047  ", "PWF-0047"),
             ("pwf-98", "PWF-0098"),
-            ("cfg57", "CFG-0057"),
-            ("CFG57", "CFG-0057"),
-            ("cfg-57", "CFG-0057"),
+            ("aux57", "AUX-0057"),
+            ("AUX57", "AUX-0057"),
+            ("aux-57", "AUX-0057"),
             ("pw7", "PW-0007"),
             ("tool42", "TOOL-0042"),
         ] {
@@ -140,10 +140,10 @@ mod tests {
         assert!(TaskId::try_new("P-0047").is_err());
         assert!(TaskId::try_new("TOOLS-0047").is_err());
         assert!(TaskId::try_new("PWF-47").is_err());
-        assert!(TaskId::try_new("cfg57").is_err());
+        assert!(TaskId::try_new("aux57").is_err());
         assert!(TaskId::try_new("PWF-0047-extra").is_err());
         assert!(TaskId::try_new("TOOLONG-0047").is_err());
-        assert!(TaskId::try_new("CFG-99999").is_err());
+        assert!(TaskId::try_new("AUX-99999").is_err());
         assert!(TaskId::try_new("nope").is_err());
     }
 }

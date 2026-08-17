@@ -128,15 +128,15 @@ mod tests {
 
     #[test]
     fn input_parses_compact_comma_separated_and_wikilink_ids() {
-        let input = "cfg57, [[CFG-0014]], CFG-14"
+        let input = "aux57, [[AUX-0014]], AUX-14"
             .parse::<BlockedByInput>()
             .unwrap();
 
         assert_eq!(
             input.iter().map(AsRef::as_ref).collect::<Vec<_>>(),
-            ["CFG-0057", "CFG-0014"]
+            ["AUX-0057", "AUX-0014"]
         );
-        assert_eq!(input.0.to_string(), "[[CFG-0057]], [[CFG-0014]]");
+        assert_eq!(input.0.to_string(), "[[AUX-0057]], [[AUX-0014]]");
     }
 
     #[test]
@@ -153,8 +153,8 @@ mod tests {
 
     #[test]
     fn merge_preserves_first_seen_order() {
-        let existing = "pwf1, cfg14".parse::<BlockedByInput>().unwrap().0;
-        let appended = "cfg14, alt2".parse::<BlockedByInput>().unwrap().0;
+        let existing = "pwf1, aux14".parse::<BlockedByInput>().unwrap().0;
+        let appended = "aux14, alt2".parse::<BlockedByInput>().unwrap().0;
 
         assert_eq!(
             existing
@@ -162,7 +162,7 @@ mod tests {
                 .iter()
                 .map(AsRef::as_ref)
                 .collect::<Vec<_>>(),
-            ["PWF-0001", "CFG-0014", "ALT-0002"]
+            ["PWF-0001", "AUX-0014", "ALT-0002"]
         );
     }
 }
