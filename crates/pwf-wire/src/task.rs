@@ -239,6 +239,17 @@ pub enum AddTaskApiError {
     UnknownBlockedByIds { ids: Vec<TaskId> },
     #[error("cannot validate --blocked-by task {id}: {reason}")]
     ReadBlockedBy { id: TaskId, reason: String },
+    #[error("task {target} cannot be blocked by itself ({blocker})")]
+    SelfBlockedBy { target: TaskId, blocker: TaskId },
+    #[error("blocked_by cycle: {}", format_task_id_path(path))]
+    BlockedByCycle { path: Vec<TaskId> },
+    #[error("task {task} at {path} has malformed blocked_by metadata {raw:?}: {reason}")]
+    MalformedBlockedBy {
+        task: TaskId,
+        path: Box<TaskNotePath>,
+        raw: Box<str>,
+        reason: Box<str>,
+    },
     #[error("{message}")]
     Unexpected { message: String },
     #[error("{message}")]
@@ -511,10 +522,21 @@ pub enum EditTaskApiError {
     InvalidPersistedTitle { id: TaskId, reason: String },
     #[error("task {id} has invalid tags frontmatter: {raw:?}.")]
     InvalidTagsFrontmatter { id: TaskId, raw: String },
+    #[error("task {id} at {path} has malformed blocked_by metadata {raw:?}: {reason}")]
+    MalformedBlockedBy {
+        id: TaskId,
+        path: Box<TaskNotePath>,
+        raw: Box<str>,
+        reason: Box<str>,
+    },
     #[error("Unknown --add-blocked-by id(s): {}.", format_task_ids(ids))]
     UnknownBlockedByIds { ids: Vec<TaskId> },
     #[error("cannot validate --add-blocked-by task {id}: {reason}")]
     ReadBlockedBy { id: TaskId, reason: String },
+    #[error("task {target} cannot be blocked by itself ({blocker})")]
+    SelfBlockedBy { target: TaskId, blocker: TaskId },
+    #[error("blocked_by cycle: {}", format_task_id_path(path))]
+    BlockedByCycle { path: Vec<TaskId> },
     #[error("cannot edit lanes: task body contains more than one `{header}` section.")]
     AmbiguousLanes { header: &'static str },
     #[error("{message}")]
@@ -581,6 +603,21 @@ pub enum RemoveTaskApiError {
     NoteMissing { path: TaskNotePath },
     #[error("task {id} has an invalid persisted title: {reason}")]
     InvalidTitle { id: TaskId, reason: String },
+    #[error(
+        "cannot remove task {target}; dependent task(s): {}",
+        format_task_ids(dependents)
+    )]
+    HasDependents {
+        target: TaskId,
+        dependents: Vec<TaskId>,
+    },
+    #[error("task {task} at {path} has malformed blocked_by metadata {raw:?}: {reason}")]
+    MalformedBlockedBy {
+        task: TaskId,
+        path: Box<TaskNotePath>,
+        raw: Box<str>,
+        reason: Box<str>,
+    },
     #[error("{message}")]
     Unexpected { message: String },
 }
@@ -636,6 +673,13 @@ fn format_task_ids(ids: &[TaskId]) -> String {
         .map(ToString::to_string)
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+fn format_task_id_path(ids: &[TaskId]) -> String {
+    ids.iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(" -> ")
 }
 
 /// Identifies a task note's filesystem path.
@@ -921,7 +965,42 @@ impl Default for OrderSpec {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlockedByStatus {
     pub id: TaskId,
-    pub status: Option<TaskStatus>,
+    pub title: Option<String>,
+    pub resolution: BlockedByResolution,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BlockedByResolution {
+    Found(TaskStatus),
+    Missing,
+    Unavailable { reason: String },
+}
+
+impl BlockedByResolution {
+    #[must_use]
+    pub fn is_warning(&self) -> bool {
+        !matches!(self, Self::Found(TaskStatus::Done))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BlockedByIssue {
+    Malformed {
+        path: TaskNotePath,
+        raw: String,
+        reason: String,
+    },
+}
+
+impl fmt::Display for BlockedByIssue {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Malformed { path, raw, reason } => write!(
+                formatter,
+                "Malformed blocked_by metadata {raw:?} in {path}: {reason}"
+            ),
+        }
+    }
 }
 
 /// Preserves authored task-tags frontmatter until a use case requires validation.
@@ -1065,6 +1144,7 @@ pub struct TaskView {
     pub section: Option<TaskSection>,
     pub blocked_by: Option<BlockedBy>,
     pub blocked_by_statuses: Vec<BlockedByStatus>,
+    pub blocked_by_issues: Vec<BlockedByIssue>,
     pub effort: Option<EffortTier>,
     pub tags: Option<RawTaskTags>,
     pub created: Option<AppDate>,

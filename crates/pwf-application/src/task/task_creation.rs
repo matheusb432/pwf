@@ -56,6 +56,7 @@ pub(in crate::task) struct CreatedTask {
 
 pub(in crate::task) struct TaskCreation<'a> {
     pub(in crate::task) project: &'a Project,
+    pub(in crate::task) id: &'a TaskId,
     pub(in crate::task) new: NewTask,
 }
 
@@ -64,7 +65,7 @@ pub(in crate::task) fn create(
     command: TaskCreation<'_>,
     store: &(impl TaskStore + IndexEntryStore + IndexSectionStore),
 ) -> Result<CreatedTask, CreateTaskError> {
-    let TaskCreation { project, new } = command;
+    let TaskCreation { project, id, new } = command;
     let target_section = new.section.clone();
     let title = new.title.clone();
     // Read sections before writing so an invalid index leaves no orphaned note.
@@ -80,7 +81,7 @@ pub(in crate::task) fn create(
         })
         .cloned();
 
-    let record = TaskStore::insert(store, project, new)
+    let record = TaskStore::insert(store, project, id, new)
         .map_err(|error| CreateTaskError::InsertRecord(Box::new(error)))?;
     let id = record.id.clone();
     IndexEntryStore::upsert_index_entry(
@@ -140,19 +141,25 @@ mod tests {
         InMemoryStore::default().with_project_id("pwf", "PWF")
     }
 
+    fn create_task(store: &InMemoryStore, section: Option<&str>) -> super::CreatedTask {
+        let project = pwf();
+        let id = TaskId::try_new("PWF-0001").unwrap();
+        create(
+            TaskCreation {
+                project: &project,
+                id: &id,
+                new: new_task(section),
+            },
+            store,
+        )
+        .unwrap()
+    }
+
     #[test]
     fn create_task_inserts_record_and_open_index_entry() {
         let store = staged_store();
 
-        let project = pwf();
-        let created = create(
-            TaskCreation {
-                project: &project,
-                new: new_task(None),
-            },
-            &store,
-        )
-        .unwrap();
+        let created = create_task(&store, None);
 
         let id = TaskId::try_new("PWF-0001").unwrap();
         assert_eq!(created.id, id.clone());
@@ -171,15 +178,7 @@ mod tests {
     fn create_task_reports_created_section_when_region_absent() {
         let store = staged_store();
 
-        let project = pwf();
-        let created = create(
-            TaskCreation {
-                project: &project,
-                new: new_task(Some("Human")),
-            },
-            &store,
-        )
-        .unwrap();
+        let created = create_task(&store, Some("Human"));
 
         assert_eq!(
             created.created_section.as_ref().map(AsRef::as_ref),
@@ -195,15 +194,7 @@ mod tests {
     fn create_task_does_not_report_existing_empty_section_region() {
         let store = staged_store().with_sections("pwf", &["Human"]);
 
-        let project = pwf();
-        let created = create(
-            TaskCreation {
-                project: &project,
-                new: new_task(Some("Human")),
-            },
-            &store,
-        )
-        .unwrap();
+        let created = create_task(&store, Some("Human"));
 
         assert_eq!(created.created_section, None);
     }
@@ -212,15 +203,7 @@ mod tests {
     fn create_task_matches_section_aliases_like_the_legacy_read_headers() {
         let store = staged_store().with_sections("pwf", &["Futuro"]);
 
-        let project = pwf();
-        let created = create(
-            TaskCreation {
-                project: &project,
-                new: new_task(Some("Future")),
-            },
-            &store,
-        )
-        .unwrap();
+        let created = create_task(&store, Some("Future"));
 
         assert_eq!(created.created_section, None);
     }
@@ -228,15 +211,7 @@ mod tests {
     #[test]
     fn created_item_carries_record_and_section_fact() {
         let store = staged_store();
-        let project = pwf();
-        let created = create(
-            TaskCreation {
-                project: &project,
-                new: new_task(Some("Low-prio")),
-            },
-            &store,
-        )
-        .unwrap();
+        let created = create_task(&store, Some("Low-prio"));
         assert_eq!(created.id, TaskId::try_new("PWF-0001").unwrap());
         assert_eq!(created.title.as_ref(), "ship it");
         assert_eq!(

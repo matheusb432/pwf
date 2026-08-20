@@ -169,6 +169,80 @@ fn codex_dry_run_forwards_max_reasoning_effort() {
 }
 
 #[test]
+fn direct_blocker_warning_is_emitted_for_dry_run_and_assume_yes_dispatch() {
+    let fixture = SessionFixture::new();
+    fixture
+        .database
+        .command()
+        .args([
+            "task",
+            "add",
+            "pwf",
+            "--title",
+            "blocking work",
+            "--goal",
+            "finish first",
+        ])
+        .assert()
+        .success();
+    fixture
+        .database
+        .command()
+        .args(["task", "edit", "PWF-0001", "--add-blocked-by", "PWF-0002"])
+        .assert()
+        .success();
+
+    let dry_run = fixture
+        .database
+        .command()
+        .args([
+            "session",
+            "--id",
+            "PWF-0001",
+            "--agent",
+            "codex",
+            "--inline",
+            "--dry-run",
+        ])
+        .env("PATH", &fixture.child_path)
+        .assert()
+        .success();
+    let dry_stderr = String::from_utf8(dry_run.get_output().stderr.clone()).unwrap();
+    assert_eq!(
+        dry_stderr
+            .matches("warning: blocked_by information")
+            .count(),
+        1,
+        "{dry_stderr}"
+    );
+    assert!(
+        dry_stderr.contains("PWF-0002 (active): blocking work"),
+        "{dry_stderr}"
+    );
+
+    let dispatched = fixture
+        .database
+        .command()
+        .args(["session", "--id", "PWF-0001", "--agent", "claude", "--yes"])
+        .env("PATH", &fixture.child_path)
+        .env("TMUX_STUB_LOG", &fixture.tmux_log_path)
+        .assert()
+        .success();
+    let dispatch_stderr = String::from_utf8(dispatched.get_output().stderr.clone()).unwrap();
+    assert_eq!(
+        dispatch_stderr
+            .matches("warning: blocked_by information")
+            .count(),
+        1,
+        "{dispatch_stderr}"
+    );
+    assert!(
+        dispatch_stderr.contains("PWF-0002 (active): blocking work"),
+        "{dispatch_stderr}"
+    );
+}
+
+#[test]
 fn broken_effort_tier_catalog_stops_before_dispatch() {
     let fixture = SessionFixture::new();
     fixture

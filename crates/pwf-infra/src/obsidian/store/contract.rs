@@ -2,7 +2,7 @@ use std::{assert_matches, fmt::Write as _, num::NonZeroUsize, path::Path};
 
 use pwf_application::ports::task_record::{
     IndexEntry, IndexEntryState, IndexEntryStore, IndexPlacement, IndexSectionStore,
-    Materialization, NewTask, NullablePatch, TaskPatch, TaskRecord, TaskStore,
+    Materialization, NewTask, NullablePatch, StoredBlockedBy, TaskPatch, TaskRecord, TaskStore,
 };
 use pwf_models::{
     AppDate,
@@ -10,7 +10,7 @@ use pwf_models::{
         HomeDirectory, Project, ProjectId, ProjectName, ProjectSource, ProjectSourceKind,
         ProjectSourceValue, ProjectTasks, ProjectTasksKind, ProjectTasksPath,
     },
-    task::{EffortTier, Tag, TaskId, TaskSection, TaskStatus, TaskTags, TaskTitle},
+    task::{BlockedBy, EffortTier, Tag, TaskId, TaskSection, TaskStatus, TaskTags, TaskTitle},
 };
 use pwf_wire::task::{TaskIndexPath, TaskNotePath};
 
@@ -72,6 +72,19 @@ fn explicit_task_path_is_the_complete_project_directory() {
 
     assert_eq!(record.locator.as_path(), tasks_path.join("PWF-0001.md"));
     assert!(!tasks_path.join("pwf").exists());
+}
+
+#[test]
+fn list_returns_empty_when_project_directory_is_missing() {
+    let temporary_directory = tempfile::tempdir().unwrap();
+    let tasks_path = temporary_directory.path().join("missing");
+    let store = store_for_tasks(&tasks_path);
+    let project = pwf_project(&store);
+
+    let records = TaskStore::list(&store, &project).unwrap();
+
+    assert!(records.is_empty());
+    assert!(!tasks_path.exists());
 }
 
 #[test]
@@ -331,7 +344,7 @@ fn write_note(
 fn generic_add(store: &ObsidianStore, new: NewTask) -> Result<TaskRecord, ObsidianStoreError> {
     let project = pwf_project(store);
     let section = new.section.clone();
-    let record = TaskStore::insert(store, &project, new)?;
+    let record = insert_next(store, &project, new)?;
     let id = record.id.clone();
     IndexEntryStore::upsert_index_entry(
         store,
@@ -343,6 +356,15 @@ fn generic_add(store: &ObsidianStore, new: NewTask) -> Result<TaskRecord, Obsidi
         },
     )?;
     Ok(record)
+}
+
+fn insert_next(
+    store: &ObsidianStore,
+    project: &Project,
+    new: NewTask,
+) -> Result<TaskRecord, ObsidianStoreError> {
+    let id = TaskStore::next_id(store, project)?;
+    TaskStore::insert(store, project, &id, new)
 }
 
 fn new_task(body: &str, title: &str, section: Option<&str>) -> NewTask {
@@ -367,8 +389,7 @@ fn generic_add_creates_note_and_links_index() {
         &store,
         NewTask {
             blocked_by: Some(
-                pwf_models::task::BlockedBy::from_inputs(&["[[PWF-0001]]".parse().unwrap()])
-                    .unwrap(),
+                pwf_models::task::BlockedBy::try_new(["PWF-0001".parse().unwrap()]).unwrap(),
             ),
             effort: Some(EffortTier::Medium),
             ..new_task(
@@ -390,7 +411,7 @@ fn generic_add_creates_note_and_links_index() {
     assert!(note.contains("status: active"), "{note}");
     assert!(note.contains("title: ship adapter"), "{note}");
     assert!(note.contains("created: 2026-07-07"), "{note}");
-    assert!(note.contains("blocked_by: \"[[PWF-0001]]\""), "{note}");
+    assert!(note.contains("blocked_by: [\"[[PWF-0001]]\"]"), "{note}");
     assert!(note.contains("effort: medium"), "{note}");
     let expected_body = format!("## Goals{S}## Done When{S}- tests pass");
     assert!(note.contains(&expected_body), "{note}");
@@ -432,7 +453,7 @@ fn generic_insert_rejects_unreadable_existing_index_before_writing_a_note() {
     let store = store_with_index_identity(&project_dir);
     let project = pwf_project(&store);
 
-    let err = TaskStore::insert(
+    let err = insert_next(
         &store,
         &project,
         new_task("Ship the adapter /d tests pass", "ship adapter", None),
@@ -460,7 +481,7 @@ fn generic_insert_rejects_mismatched_project_index_identity() {
     let store = store_with_index_identity(&notes_dir.join("pwf"));
     let project = pwf_project(&store);
 
-    let error = TaskStore::insert(&store, &project, new_task("task", "task", None)).unwrap_err();
+    let error = insert_next(&store, &project, new_task("task", "task", None)).unwrap_err();
 
     assert_matches!(
         error,
@@ -492,8 +513,7 @@ fn generic_insert_allocates_after_greatest_frontmatter_id() {
     let store = store_with_index_identity(&notes_dir.join("pwf"));
     let project = pwf_project(&store);
 
-    let record =
-        TaskStore::insert(&store, &project, new_task("next task", "next task", None)).unwrap();
+    let record = insert_next(&store, &project, new_task("next task", "next task", None)).unwrap();
 
     assert_eq!(record.id, TaskId::try_new("PWF-0010").unwrap());
 }
@@ -522,7 +542,7 @@ fn generic_insert_reports_exhausted_task_id_sequence() {
     let project = pwf_project(&store);
 
     let error =
-        TaskStore::insert(&store, &project, new_task("next task", "next task", None)).unwrap_err();
+        insert_next(&store, &project, new_task("next task", "next task", None)).unwrap_err();
 
     assert_matches!(
         error,
@@ -902,7 +922,8 @@ fn task_record_roundtrips_file_model_note() {
         "title: ship the adapter\n",
         "project: pwf\n",
         "created: 2026-07-01\n",
-        "blocked_by: \"[[AUX-0001]]\"\n",
+        "blocked_by:\n",
+        "  - \"[[AUX-0001]]\"\n",
         "effort: medium\n",
         "tags: [sqlite, godot]\n",
         "---\n",
@@ -925,7 +946,12 @@ fn task_record_roundtrips_file_model_note() {
     assert_eq!(record.created, Some(app_date("2026-07-01")));
     assert_eq!(record.completed, None);
     assert_eq!(record.commits, None);
-    assert_eq!(record.blocked_by.as_deref(), Some("\"[[AUX-0001]]\""));
+    assert_eq!(
+        record.blocked_by,
+        StoredBlockedBy::Valid(
+            BlockedBy::try_new(vec![TaskId::try_new("AUX-0001").unwrap()]).unwrap()
+        )
+    );
     assert_eq!(record.effort.as_deref(), Some("medium"));
     assert_eq!(
         record.tags.as_ref().map(AsRef::as_ref),
@@ -935,6 +961,34 @@ fn task_record_roundtrips_file_model_note() {
     assert_eq!(record.body, "\nship the adapter body\n");
     assert_eq!(record.locator.as_path(), note_path);
     assert_eq!(record.source, source);
+}
+
+#[test]
+fn task_record_preserves_malformed_blocked_by_without_failing_the_read() {
+    let temp = tempfile::tempdir().unwrap();
+    let notes_dir = temp.path().join("notes");
+    let project_dir = notes_dir.join("pwf");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    std::fs::write(project_dir.join("pwf.md"), "- [ ] [[PWF-0001]]\n").unwrap();
+    let note_path = project_dir.join("PWF-0001.md");
+    write_note(
+        &note_path,
+        "malformed dependency",
+        "2026-07-01",
+        Some("\"[[AUX-0001]]\""),
+        None,
+        None,
+        "body",
+    );
+    let store = store_with_index_identity(&project_dir);
+
+    let record = get_record(&store, "PWF-0001").unwrap();
+
+    assert!(matches!(
+        record.blocked_by,
+        StoredBlockedBy::Malformed { ref raw, ref reason }
+            if raw == "\"[[AUX-0001]]\"" && reason.contains("sequence")
+    ));
 }
 
 #[test]
@@ -1134,7 +1188,7 @@ fn insert_allocates_next_id_without_index_write() {
     let store = store_for_tasks(&notes_dir.join("pwf"));
 
     let project = pwf_project(&store);
-    let record = TaskStore::insert(
+    let record = insert_next(
         &store,
         &project,
         NewTask {
@@ -1155,6 +1209,43 @@ fn insert_allocates_next_id_without_index_write() {
     assert_eq!(record.locator.as_path(), project_dir.join("PWF-0008.md"));
     assert!(project_dir.join("PWF-0008.md").exists());
     assert_eq!(std::fs::read_to_string(&index_path).unwrap(), index_before);
+}
+
+#[test]
+fn exact_insert_rejects_an_id_occupied_after_allocation_without_replacing_it() {
+    let temp = tempfile::tempdir().unwrap();
+    let notes_dir = temp.path().join("notes");
+    let project_dir = notes_dir.join("pwf");
+    let store = store_with_index_identity(&project_dir);
+    let project = pwf_project(&store);
+    let id = TaskStore::next_id(&store, &project).unwrap();
+    let path = project_dir.join("PWF-0001.md");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    write_note(
+        &path,
+        "concurrent task",
+        "2026-07-15",
+        None,
+        None,
+        None,
+        "keep me",
+    );
+    let before = std::fs::read_to_string(&path).unwrap();
+
+    let error = TaskStore::insert(
+        &store,
+        &project,
+        &id,
+        new_task("replacement", "replacement", None),
+    )
+    .unwrap_err();
+
+    assert_matches!(
+        error,
+        ObsidianStoreError::TaskIdOccupied { ref id, path: ref error_path }
+            if id.as_ref() == "PWF-0001" && error_path == &path
+    );
+    assert_eq!(std::fs::read_to_string(path).unwrap(), before);
 }
 
 /// Verifies that open index links contribute placement without owning list membership.
@@ -1534,7 +1625,7 @@ fn generic_insert_plus_upsert_writes_legacy_add_index_bytes() {
         let (_guard, store, project_dir) = stage_add_parity_vault(scenario.initial_index);
         let project = pwf_project(&store);
 
-        let record = TaskStore::insert(
+        let record = insert_next(
             &store,
             &project,
             NewTask {

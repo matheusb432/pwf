@@ -56,8 +56,24 @@ fn map_error(error: RemoveTaskError) -> RemoveTaskApiError {
             id,
             reason: source.to_string(),
         },
-        RemoveTaskError::WriteStore(source) => RemoveTaskApiError::Unexpected {
-            message: source.to_string(),
+        RemoveTaskError::HasDependents { target, dependents } => {
+            RemoveTaskApiError::HasDependents { target, dependents }
+        }
+        RemoveTaskError::MalformedBlockedBy {
+            task,
+            path,
+            raw,
+            reason,
+        } => RemoveTaskApiError::MalformedBlockedBy {
+            task,
+            path,
+            raw,
+            reason,
         },
+        RemoveTaskError::WriteStore(source) | RemoveTaskError::ReadDependents(source) => {
+            RemoveTaskApiError::Unexpected {
+                message: source.to_string(),
+            }
+        }
     }
 }

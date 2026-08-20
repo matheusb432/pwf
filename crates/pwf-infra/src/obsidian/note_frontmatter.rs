@@ -1,13 +1,23 @@
 use std::{fmt::Write, ops::Range};
 
+use gray_matter::{Matter, engine::YAML};
+use pwf_application::ports::task_record::StoredBlockedBy;
 use pwf_models::{
     AppDate,
     task::{BlockedBy, EffortTier, TaskId, TaskStatus, TaskTags, TaskTitle},
 };
+use serde::Deserialize;
+use serde_json::Value;
 
 use super::markdown_line;
 
 const UTF8_BOM: char = '\u{feff}';
+
+#[derive(Deserialize)]
+struct BlockedByFrontmatter {
+    #[serde(default)]
+    blocked_by: Value,
+}
 
 #[derive(Clone, Copy)]
 pub(super) struct NewTaskFields<'a> {
@@ -30,7 +40,11 @@ pub(super) fn new_task_content(fields: NewTaskFields<'_>) -> String {
     let _ = writeln!(out, "project: {}", fields.project);
     let _ = writeln!(out, "created: {}", fields.created);
     if let Some(blocked_by) = fields.blocked_by {
-        let _ = writeln!(out, "blocked_by: \"{blocked_by}\"");
+        let _ = writeln!(
+            out,
+            "blocked_by: {}",
+            blocked_by_frontmatter_value(blocked_by)
+        );
     }
     if let Some(effort) = fields.effort {
         let _ = writeln!(out, "effort: {effort}");
@@ -83,11 +97,14 @@ fn set_frontmatter_line(content: &str, field: &str, line: Option<String>) -> Str
     let frontmatter = &content[bounds.start..bounds.end];
 
     let Some(line) = line else {
-        let updated = remove_field_line(frontmatter, field);
+        let updated = remove_field_block(frontmatter, field);
         return replace_frontmatter_slice(content, bounds.start, bounds.end, &updated);
     };
-    if let Some(existing) = find_field_line(frontmatter, field) {
-        let carriage_return = if frontmatter[existing.clone()].ends_with('\r') {
+    if let Some(existing) = find_field_block(frontmatter, field) {
+        let Some(first_line) = find_field_line(frontmatter, field) else {
+            return content.to_string();
+        };
+        let carriage_return = if frontmatter[first_line].ends_with('\r') {
             "\r"
         } else {
             ""
@@ -148,6 +165,18 @@ fn find_field_line(content: &str, field: &str) -> Option<Range<usize>> {
         .map(|line| line.start..line.content_end)
 }
 
+fn find_field_block(content: &str, field: &str) -> Option<Range<usize>> {
+    let first = markdown_line::find(content, 0, |line| line.starts_with(field))?;
+    let mut end = first.content_end;
+    for line in markdown_line::lines(&content[first.end..]) {
+        if !line.text.starts_with([' ', '\t']) {
+            break;
+        }
+        end = first.end + line.content_end;
+    }
+    Some(first.start..end)
+}
+
 fn find_fence(content: &str, start: usize) -> Option<markdown_line::MarkdownLine<'_>> {
     markdown_line::find(content, start, |line| {
         line.strip_suffix('\r')
@@ -170,6 +199,16 @@ fn replace_field_line(content: &str, field: &str, replacement: &str) -> String {
 
 fn remove_field_line(content: &str, field: &str) -> String {
     let Some(mut range) = find_field_line(content, field) else {
+        return content.to_string();
+    };
+    if content.as_bytes().get(range.end) == Some(&b'\n') {
+        range.end += 1;
+    }
+    replace_range(content, range, "")
+}
+
+fn remove_field_block(content: &str, field: &str) -> String {
+    let Some(mut range) = find_field_block(content, field) else {
         return content.to_string();
     };
     if content.as_bytes().get(range.end) == Some(&b'\n') {
@@ -205,8 +244,90 @@ pub(super) fn set_blocked_by_text(content: &str, value: Option<&BlockedBy>) -> S
     set_frontmatter_line(
         content,
         "blocked_by:",
-        value.map(|value| format!("blocked_by: \"{value}\"")),
+        value.map(|value| format!("blocked_by: {}", blocked_by_frontmatter_value(value))),
     )
+}
+
+fn blocked_by_frontmatter_value(blocked_by: &BlockedBy) -> String {
+    format!(
+        "[{}]",
+        blocked_by
+            .iter()
+            .map(|id| format!("\"[[{id}]]\""))
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
+pub(super) fn parse_blocked_by(content: &str) -> StoredBlockedBy {
+    let Some(raw) = frontmatter_field_value(content, "blocked_by:") else {
+        return StoredBlockedBy::Absent;
+    };
+    let parsed = match Matter::<YAML>::new()
+        .parse::<BlockedByFrontmatter>(content.strip_prefix(UTF8_BOM).unwrap_or(content))
+    {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            return StoredBlockedBy::Malformed {
+                raw,
+                reason: error.to_string(),
+            };
+        }
+    };
+    let Some(frontmatter) = parsed.data else {
+        return malformed_blocked_by(raw, "expected YAML frontmatter");
+    };
+    let Value::Array(values) = frontmatter.blocked_by else {
+        return malformed_blocked_by(raw, "expected a YAML sequence of quoted wikilinks");
+    };
+    if values.is_empty() {
+        return StoredBlockedBy::Absent;
+    }
+
+    let mut identifiers = Vec::with_capacity(values.len());
+    for value in values {
+        let Value::String(value) = value else {
+            return malformed_blocked_by(
+                raw,
+                "expected every blocked_by entry to be a quoted wikilink",
+            );
+        };
+        let Some(identifier) = value
+            .strip_prefix("[[")
+            .and_then(|value| value.strip_suffix("]]"))
+        else {
+            return malformed_blocked_by(
+                raw,
+                "expected every blocked_by entry to be an Obsidian wikilink",
+            );
+        };
+        let Ok(identifier) = identifier.parse::<TaskId>() else {
+            return malformed_blocked_by(raw, "blocked_by contains an invalid task ID");
+        };
+        identifiers.push(identifier);
+    }
+
+    match BlockedBy::try_new(identifiers) {
+        Ok(blocked_by) => StoredBlockedBy::Valid(blocked_by),
+        Err(_) => StoredBlockedBy::Absent,
+    }
+}
+
+fn frontmatter_field_value(content: &str, field: &str) -> Option<String> {
+    let bounds = opening_frontmatter_bounds(content)?;
+    let frontmatter = &content[bounds.start..bounds.end];
+    let range = find_field_block(frontmatter, field)?;
+    frontmatter[range]
+        .strip_prefix(field)
+        .map(str::trim)
+        .map(str::to_string)
+}
+
+fn malformed_blocked_by(raw: String, reason: impl Into<String>) -> StoredBlockedBy {
+    StoredBlockedBy::Malformed {
+        raw,
+        reason: reason.into(),
+    }
 }
 
 pub(super) fn set_completed_text(content: &str, value: Option<&AppDate>) -> String {
@@ -253,9 +374,100 @@ fn tags_frontmatter_value(tags: &TaskTags) -> String {
 
 #[cfg(test)]
 mod tests {
-    use pwf_models::{AppDate, task::TaskStatus};
+    use pwf_application::ports::task_record::StoredBlockedBy;
+    use pwf_models::{
+        AppDate,
+        task::{BlockedBy, TaskId, TaskStatus, TaskTitle},
+    };
 
-    use super::set_status_text;
+    use super::{
+        NewTaskFields, new_task_content, parse_blocked_by, set_blocked_by_text, set_status_text,
+    };
+
+    fn blocked_by(ids: &[&str]) -> BlockedBy {
+        BlockedBy::try_new(ids.iter().map(|id| id.parse().unwrap()).collect::<Vec<_>>()).unwrap()
+    }
+
+    #[test]
+    fn new_task_renders_blocked_by_as_a_quoted_wikilink_array() {
+        let id = TaskId::try_new("PWF-0003").unwrap();
+        let title = TaskTitle::try_new("follow up").unwrap();
+        let created = "2026-08-20".parse::<AppDate>().unwrap();
+        let blockers = blocked_by(&["pwf1", "AUX-0014"]);
+
+        let note = new_task_content(NewTaskFields {
+            id: &id,
+            title: &title,
+            project: "pwf",
+            body: "body",
+            created: &created,
+            blocked_by: Some(&blockers),
+            effort: None,
+            tags: None,
+        });
+
+        assert!(
+            note.contains("blocked_by: [\"[[PWF-0001]]\", \"[[AUX-0014]]\"]\n"),
+            "{note}"
+        );
+    }
+
+    #[test]
+    fn blocked_by_edit_replaces_an_existing_block_sequence_without_touching_other_bytes() {
+        let source = concat!(
+            "---\n",
+            "id: PWF-0003\n",
+            "blocked_by:\n",
+            "  - \"[[PWF-0001]]\"\n",
+            "  - \"[[PWF-0002]]\"\n",
+            "effort: medium\n",
+            "---\n\n",
+            "body\n",
+        );
+
+        let updated = set_blocked_by_text(source, Some(&blocked_by(&["AUX-0014"])));
+
+        assert_eq!(
+            updated,
+            concat!(
+                "---\n",
+                "id: PWF-0003\n",
+                "blocked_by: [\"[[AUX-0014]]\"]\n",
+                "effort: medium\n",
+                "---\n\n",
+                "body\n",
+            )
+        );
+    }
+
+    #[test]
+    fn blocked_by_parser_accepts_inline_and_block_sequences() {
+        for source in [
+            "---\nblocked_by: [\"[[PWF-0001]]\", \"[[AUX-0014]]\"]\n---\n",
+            "---\nblocked_by:\n  - \"[[PWF-0001]]\"\n  - \"[[AUX-0014]]\"\n---\n",
+        ] {
+            let StoredBlockedBy::Valid(blocked_by) = parse_blocked_by(source) else {
+                panic!("expected valid blocked_by metadata");
+            };
+
+            assert_eq!(
+                blocked_by.iter().map(AsRef::as_ref).collect::<Vec<_>>(),
+                ["PWF-0001", "AUX-0014"]
+            );
+        }
+    }
+
+    #[test]
+    fn blocked_by_parser_preserves_a_malformed_scalar_for_boundary_specific_diagnostics() {
+        let source = "---\nblocked_by: \"[[PWF-0001]]\"\n---\n";
+
+        let StoredBlockedBy::Malformed { raw, reason } = parse_blocked_by(source) else {
+            panic!("expected malformed blocked_by metadata");
+        };
+
+        assert_eq!(raw, "\"[[PWF-0001]]\"");
+        assert!(reason.contains("sequence"), "{reason}");
+    }
 
     #[test]
     fn close_status_inserts_completion_without_rewriting_other_bytes() {

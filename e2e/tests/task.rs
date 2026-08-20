@@ -373,10 +373,7 @@ fn list_status_and_review_task_compose_across_commands() {
     assert_eq!(review["status"], "active");
     assert_eq!(review["section"], "Human");
     assert_eq!(review["title"], "review foo-0001, commits; a..b");
-    assert_eq!(
-        review["prompt"],
-        "## Goals\n\n- git diff a..b\n- bash -c 'failed=0; while IFS= read -r -d \"\" marker; do if [[ \"$marker\" == ./.git ]]; then continue; fi; if [[ -f \"$marker\" ]] && tr \"\\\\\" \"/\" < \"$marker\" | grep -q /worktrees/; then continue; fi; repo=${marker%/.git}; base=$(git -C \"$repo\" rev-parse --verify \"@{upstream}\" 2>/dev/null || git -C \"$repo\" rev-parse --verify main) || { failed=1; continue; }; git -C \"$repo\" diff \"$base..HEAD\" || failed=1; done < <(find . \\( -name .git -o -name target -o -name node_modules \\) -prune -name .git -print0); exit \"$failed\"'"
-    );
+    assert_eq!(review["prompt"], "## Goals");
 
     for (status, present, absent) in [
         ("active", "FOO-0002", ["FOO-0001", "FOO-0003"]),
@@ -494,6 +491,44 @@ fn remove_requires_yes_without_a_terminal() {
         .args(["get", "FOO-0001", "--json"])
         .assert()
         .failure();
+}
+
+#[test]
+fn remove_reports_dependents_and_preserves_both_notes() {
+    let fixture = ManagedProject::new(&project_id("FOO"), "foo-bar");
+    fixture
+        .database
+        .command()
+        .args(["add", "foo-bar", "blocker / keep this"])
+        .assert()
+        .success();
+    fixture
+        .database
+        .command()
+        .args([
+            "add",
+            "foo-bar",
+            "dependent / keep the edge",
+            "--blocked-by",
+            "FOO-0001",
+        ])
+        .assert()
+        .success();
+    let blocker_before = fixture.note_markdown("FOO-0001");
+    let dependent_before = fixture.note_markdown("FOO-0002");
+
+    let assertion = fixture
+        .database
+        .command()
+        .args(["remove", "FOO-0001", "--yes"])
+        .assert()
+        .failure();
+
+    let stderr = String::from_utf8(assertion.get_output().stderr.clone()).unwrap();
+    assert!(stderr.contains("cannot remove task FOO-0001"), "{stderr}");
+    assert!(stderr.contains("dependent task(s): FOO-0002"), "{stderr}");
+    assert_eq!(fixture.note_markdown("FOO-0001"), blocker_before);
+    assert_eq!(fixture.note_markdown("FOO-0002"), dependent_before);
 }
 
 #[test]
@@ -666,6 +701,11 @@ fn lifecycle_is_observable_through_get_json() {
     assert_eq!(active["tags"], json!(["cli", "sqlite"]));
     assert_eq!(active["effort"], "high");
     assert_eq!(active["blocked_by"], json!(["FOO-0001"]));
+    assert!(
+        fixture
+            .note_markdown("FOO-0002")
+            .contains("blocked_by: [\"[[FOO-0001]]\"]\n")
+    );
     assert_eq!(active["section"], Value::Null);
     assert_eq!(active["prompt"], "## Goals\n\n- complete the work");
 

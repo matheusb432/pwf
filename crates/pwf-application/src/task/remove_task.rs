@@ -1,13 +1,20 @@
 use pwf_models::task::{TaskId, TaskTitle, TaskTitleError};
 use pwf_wire::{
     confirmation::{Confirmation, RemoveTaskConfirmation},
+    project::{ListProjects, ProjectStatusFilter},
     task::{RemoveTask, RemovedTask, RemovedTaskOutcome, ResolveTaskProject, TaskNotePath},
 };
 
-use super::resolve_task_project::{self, ResolveTaskProjectError};
-use crate::ports::{
-    confirmation::ConfirmationClient,
-    task_record::{IndexEntryStore, Materialization, TaskStore},
+use super::{
+    blocked_by,
+    resolve_task_project::{self, ResolveTaskProjectError},
+};
+use crate::{
+    ports::{
+        confirmation::ConfirmationClient,
+        task_record::{IndexEntryStore, Materialization, StoredBlockedBy, TaskStore},
+    },
+    project::list_projects,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -24,6 +31,23 @@ pub enum RemoveTaskError {
         #[source]
         source: TaskTitleError,
     },
+    #[error(
+        "cannot remove task {target}; dependent task(s): {}",
+        blocked_by::format_task_ids(dependents)
+    )]
+    HasDependents {
+        target: TaskId,
+        dependents: Vec<TaskId>,
+    },
+    #[error("task {task} at {path} has malformed blocked_by metadata {raw:?}: {reason}")]
+    MalformedBlockedBy {
+        task: TaskId,
+        path: Box<TaskNotePath>,
+        raw: Box<str>,
+        reason: Box<str>,
+    },
+    #[error("cannot inspect task dependents: {0}")]
+    ReadDependents(#[source] Box<dyn std::error::Error + Send + Sync>),
     #[error("{0}")]
     WriteStore(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
@@ -59,6 +83,13 @@ pub async fn execute(
             id: task_identifier.clone(),
             source,
         })?;
+    let dependents = find_dependents(&task_identifier, store, pool).await?;
+    if !dependents.is_empty() {
+        return Err(RemoveTaskError::HasDependents {
+            target: task_identifier,
+            dependents,
+        });
+    }
     let confirmation = Confirmation::RemoveTask(RemoveTaskConfirmation {
         task_identifier: task_identifier.clone(),
         project: project.title.clone(),
@@ -87,6 +118,48 @@ pub async fn execute(
     Ok(RemovedTaskOutcome::Removed(removed))
 }
 
+async fn find_dependents(
+    target: &TaskId,
+    store: &impl TaskStore,
+    pool: &sqlx::SqlitePool,
+) -> Result<Vec<TaskId>, RemoveTaskError> {
+    let projects = list_projects::execute(
+        ListProjects {
+            status: ProjectStatusFilter::IncludingPaused,
+        },
+        pool,
+    )
+    .await
+    .map_err(|error| RemoveTaskError::ReadDependents(Box::new(error)))?;
+    let mut dependents = Vec::new();
+    for project in projects {
+        let records = store
+            .list(&project)
+            .map_err(|error| RemoveTaskError::ReadDependents(Box::new(error)))?;
+        for record in records {
+            match record.blocked_by {
+                StoredBlockedBy::Valid(blocked_by)
+                    if blocked_by.iter().any(|blocker| blocker == target) =>
+                {
+                    dependents.push(record.id);
+                }
+                StoredBlockedBy::Absent | StoredBlockedBy::Valid(_) => {}
+                StoredBlockedBy::Malformed { raw, reason } => {
+                    return Err(RemoveTaskError::MalformedBlockedBy {
+                        task: record.id,
+                        path: Box::new(record.locator),
+                        raw: raw.into_boxed_str(),
+                        reason: reason.into_boxed_str(),
+                    });
+                }
+            }
+        }
+    }
+    dependents.sort();
+    dependents.dedup();
+    Ok(dependents)
+}
+
 #[cfg(test)]
 mod tests {
     use pwf_models::task::{TaskId, TaskStatus};
@@ -104,7 +177,9 @@ mod tests {
             },
         },
         task::remove_task,
-        testing::{InMemoryStore, app_date, insert_project, project, task_record},
+        testing::{
+            InMemoryStore, app_date, insert_project, project, stored_blocked_by, task_record,
+        },
     };
 
     async fn run(
@@ -185,6 +260,51 @@ mod tests {
             store.entries("pwf").is_empty(),
             "index entry must be unlinked"
         );
+    }
+
+    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
+    async fn remove_reports_all_dependents_including_paused_projects_without_mutating(
+        pool: sqlx::SqlitePool,
+    ) {
+        insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
+        insert_project(
+            &pool,
+            "AUX",
+            "paused-project",
+            "/projects/paused",
+            "/tasks/paused",
+            true,
+        )
+        .await;
+        let local_dependent = TaskRecord {
+            blocked_by: stored_blocked_by(&["PWF-0001"]),
+            ..record("PWF-0003", TaskStatus::Done)
+        };
+        let paused_dependent = TaskRecord {
+            blocked_by: stored_blocked_by(&["PWF-0001"]),
+            ..record("AUX-0002", TaskStatus::Active)
+        };
+        let store = staged(TaskStatus::Active)
+            .with_project(
+                "pwf",
+                vec![record("PWF-0001", TaskStatus::Active), local_dependent],
+            )
+            .with_project("paused-project", vec![paused_dependent]);
+        let before = store.tasks("pwf");
+
+        let error = run(&command("PWF-0001"), &store, &pool, &Accepted)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            RemoveTaskError::HasDependents { ref target, ref dependents }
+                if target.as_ref() == "PWF-0001"
+                    && dependents.iter().map(AsRef::as_ref).collect::<Vec<_>>()
+                        == ["AUX-0002", "PWF-0003"]
+        ));
+        assert_eq!(store.tasks("pwf"), before);
+        assert_eq!(store.entries("pwf").len(), 1);
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]

@@ -2,7 +2,8 @@ use std::fmt::Write;
 
 use pwf_models::task::TaskStatus;
 use pwf_wire::task::{
-    BlockedByStatus, ListDetail, ListLayout, ListedTasks, StatusFilter, TaskView,
+    BlockedByResolution, BlockedByStatus, ListDetail, ListLayout, ListedTasks, StatusFilter,
+    TaskView,
 };
 
 use super::{render_status, render_task_summary};
@@ -133,9 +134,13 @@ fn blocked_by_status_summary(statuses: &[BlockedByStatus]) -> String {
     statuses
         .iter()
         .map(|blocked_by| {
-            let status = blocked_by
-                .status
-                .map_or_else(|| "missing".to_string(), |status| status.to_string());
+            let status = match &blocked_by.resolution {
+                BlockedByResolution::Found(status) => status.to_string(),
+                BlockedByResolution::Missing => "missing".to_string(),
+                BlockedByResolution::Unavailable { reason } => {
+                    format!("unavailable: {}", reason.replace(['\r', '\n'], " "))
+                }
+            };
             format!("{} ({status})", blocked_by.id)
         })
         .collect::<Vec<_>>()
@@ -167,7 +172,14 @@ fn render_list_task(
     }
     let _ = writeln!(out, "  status: {}", render_status(task.status, on));
     if task.status == TaskStatus::Active {
-        let launch = if task.launch.is_ready() {
+        let relationship_warning = !task.blocked_by_issues.is_empty()
+            || task
+                .blocked_by_statuses
+                .iter()
+                .any(|blocked_by| blocked_by.resolution.is_warning());
+        let launch = if task.launch.is_ready() && relationship_warning {
+            "READY WITH WARNINGS"
+        } else if task.launch.is_ready() {
             "READY"
         } else {
             "NEEDS ATTENTION"
@@ -203,6 +215,9 @@ fn render_list_task(
     if let Some(tags) = &task.tags {
         let _ = writeln!(out, "  tags: {tags}");
     }
+    for issue in &task.blocked_by_issues {
+        let _ = writeln!(out, "  issue: {issue}");
+    }
     if task.status == TaskStatus::Active {
         for issue in task.launch.issues() {
             let _ = writeln!(out, "  issue: {issue}");
@@ -226,8 +241,9 @@ mod tests {
         task::{TaskId, TaskStatus, TaskTitle},
     };
     use pwf_wire::task::{
-        BlockedByStatus, ListDetail, ListLayout, ListedTasks, StatusFilter, TaskHeading,
-        TaskIndexPath, TaskIssue, TaskLaunch, TaskLocation,
+        BlockedByIssue, BlockedByResolution, BlockedByStatus, ListDetail, ListLayout, ListedTasks,
+        StatusFilter, TaskHeading, TaskIndexPath, TaskIssue, TaskLaunch, TaskLocation,
+        TaskNotePath,
     };
 
     use super::*;
@@ -247,6 +263,7 @@ mod tests {
             section: None,
             blocked_by: None,
             blocked_by_statuses: Vec::new(),
+            blocked_by_issues: Vec::new(),
             effort: None,
             tags: None,
             created: None,
@@ -337,15 +354,25 @@ mod tests {
         task.blocked_by_statuses = vec![
             BlockedByStatus {
                 id: TaskId::try_new("AUX-0014").unwrap(),
-                status: Some(TaskStatus::Done),
+                title: None,
+                resolution: BlockedByResolution::Found(TaskStatus::Done),
             },
             BlockedByStatus {
                 id: TaskId::try_new("AUX-0015").unwrap(),
-                status: Some(TaskStatus::Active),
+                title: None,
+                resolution: BlockedByResolution::Found(TaskStatus::Active),
             },
             BlockedByStatus {
                 id: TaskId::try_new("AUX-9999").unwrap(),
-                status: None,
+                title: None,
+                resolution: BlockedByResolution::Missing,
+            },
+            BlockedByStatus {
+                id: TaskId::try_new("ALT-0001").unwrap(),
+                title: None,
+                resolution: BlockedByResolution::Unavailable {
+                    reason: "vault read failed".to_string(),
+                },
             },
         ];
 
@@ -353,7 +380,32 @@ mod tests {
 
         assert!(
             output
-                .contains("  blocked_by: AUX-0014 (done), AUX-0015 (active), AUX-9999 (missing)\n"),
+                .contains("  blocked_by: AUX-0014 (done), AUX-0015 (active), AUX-9999 (missing), ALT-0001 (unavailable: vault read failed)\n"),
+            "{output}"
+        );
+        assert!(
+            output.contains("  launch: READY WITH WARNINGS\n"),
+            "{output}"
+        );
+    }
+
+    #[test]
+    fn long_form_reports_malformed_blocked_by_without_making_the_task_unlaunchable() {
+        let mut task = sample_task();
+        task.blocked_by_issues = vec![BlockedByIssue::Malformed {
+            path: TaskNotePath::new("/tasks/PWF-0064.md".into()),
+            raw: "\"[[AUX-0001]]\"".to_string(),
+            reason: "expected a sequence".to_string(),
+        }];
+
+        let output = render_task_for_filter(&task, StatusFilter::default(), true, false);
+
+        assert!(
+            output.contains("  launch: READY WITH WARNINGS\n"),
+            "{output}"
+        );
+        assert!(
+            output.contains("  issue: Malformed blocked_by metadata"),
             "{output}"
         );
     }

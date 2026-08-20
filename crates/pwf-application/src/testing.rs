@@ -14,7 +14,7 @@ use pwf_models::{
         Project, ProjectId, ProjectName, ProjectSource, ProjectSourceKind, ProjectSourceValue,
         ProjectTasks, ProjectTasksKind, ProjectTasksPath,
     },
-    task::{TaskId, TaskSection, TaskStatus, TaskTags},
+    task::{BlockedBy, TaskId, TaskSection, TaskStatus, TaskTags},
 };
 use pwf_wire::task::RawTaskTags;
 
@@ -23,7 +23,7 @@ use crate::ports::{
     project_note::{NewProjectNote, ProjectNotePatch, ProjectNoteStore},
     task_record::{
         IndexEntry, IndexEntryStore, IndexSectionStore, Materialization, NewTask, NullablePatch,
-        TaskPatch, TaskRecord, TaskStore,
+        StoredBlockedBy, TaskPatch, TaskRecord, TaskStore,
     },
 };
 
@@ -69,6 +69,8 @@ pub enum InMemoryStoreError {
     Injected { operation: &'static str },
     #[error("task note Markdown is not staged: {locator}")]
     TaskNoteMarkdownMissing { locator: String },
+    #[error("task {id} already exists")]
+    TaskAlreadyExists { id: TaskId },
 }
 
 impl InMemoryStore {
@@ -182,7 +184,7 @@ pub(crate) fn task_record(id: &str) -> TaskRecord {
         commits: None,
         tags: None,
         effort: None,
-        blocked_by: None,
+        blocked_by: crate::ports::task_record::StoredBlockedBy::Absent,
         section: None,
         body: "\nbody\n".to_string(),
         source: "body".to_string(),
@@ -190,6 +192,14 @@ pub(crate) fn task_record(id: &str) -> TaskRecord {
         placement: None,
         materialization: Materialization::NoteFile,
     }
+}
+
+pub(crate) fn blocked_by(ids: &[&str]) -> BlockedBy {
+    BlockedBy::try_new(ids.iter().map(|id| id.parse().unwrap())).unwrap()
+}
+
+pub(crate) fn stored_blocked_by(ids: &[&str]) -> StoredBlockedBy {
+    StoredBlockedBy::Valid(blocked_by(ids))
 }
 
 pub(crate) const PWF_0001_SOURCE: &str = "---\nid: PWF-0001\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- do the thing\n";
@@ -229,7 +239,7 @@ pub(crate) fn staged_missing_task() -> (InMemoryStore, Vec<Project>) {
 }
 
 impl TaskStore for InMemoryStore {
-    type Error = Infallible;
+    type Error = InMemoryStoreError;
 
     fn get(&self, project: &Project, id: &TaskId) -> Result<Option<TaskRecord>, Self::Error> {
         Ok(self
@@ -248,22 +258,42 @@ impl TaskStore for InMemoryStore {
             .unwrap_or_default())
     }
 
-    /// Allocates the next `<prefix>-NNNN` id and materializes an active record.
-    fn insert(&self, project: &Project, new: NewTask) -> Result<TaskRecord, Self::Error> {
-        let mut state = self.lock();
+    fn next_id(&self, project: &Project) -> Result<TaskId, Self::Error> {
+        let state = self.lock();
         let project_id = state
             .project_ids
             .get(&project.title)
             .cloned()
             .expect("stage a project ID via with_project_id before insert");
+        let next = state
+            .tasks
+            .get(&project.title)
+            .into_iter()
+            .flatten()
+            .map(|task| task.id.number())
+            .max()
+            .unwrap_or(0)
+            + 1;
+        Ok(TaskId::try_new(format!("{project_id}-{next:04}")).expect("allocated id"))
+    }
+
+    /// Materializes an active record at the exact prevalidated task ID.
+    fn insert(
+        &self,
+        project: &Project,
+        id: &TaskId,
+        new: NewTask,
+    ) -> Result<TaskRecord, Self::Error> {
+        let mut state = self.lock();
         let tasks = state.tasks.entry(project.title.clone()).or_default();
-        let next = tasks.iter().map(|task| task.id.number()).max().unwrap_or(0) + 1;
-        let id = TaskId::try_new(format!("{project_id}-{next:04}")).expect("allocated id");
+        if tasks.iter().any(|task| task.id == *id) {
+            return Err(InMemoryStoreError::TaskAlreadyExists { id: id.clone() });
+        }
         let locator = pwf_wire::task::TaskNotePath::new(
             format!("/mem/{}/{}.md", project.title.as_ref(), id.as_ref()).into(),
         );
         let record = TaskRecord {
-            id,
+            id: id.clone(),
             title: new.title.to_string(),
             status: TaskStatus::Active,
             created: Some(new.created),
@@ -271,7 +301,10 @@ impl TaskStore for InMemoryStore {
             commits: None,
             tags: new.tags.map(|tags| render_tags(&tags)),
             effort: new.effort.map(|effort| effort.to_string()),
-            blocked_by: new.blocked_by.map(|blocked_by| blocked_by.to_string()),
+            blocked_by: new.blocked_by.map_or(
+                crate::ports::task_record::StoredBlockedBy::Absent,
+                crate::ports::task_record::StoredBlockedBy::Valid,
+            ),
             section: None,
             body: new.body.clone(),
             source: new.body,
@@ -302,10 +335,15 @@ impl TaskStore for InMemoryStore {
         if let Some(title) = patch.title {
             record.title = title.to_string();
         }
-        apply_nullable_patch(
-            &mut record.blocked_by,
-            patch.blocked_by.map(|blocked_by| blocked_by.to_string()),
-        );
+        match patch.blocked_by {
+            NullablePatch::Unchanged => {}
+            NullablePatch::Clear => {
+                record.blocked_by = crate::ports::task_record::StoredBlockedBy::Absent;
+            }
+            NullablePatch::Set(blocked_by) => {
+                record.blocked_by = crate::ports::task_record::StoredBlockedBy::Valid(blocked_by);
+            }
+        }
         match patch.effort {
             NullablePatch::Unchanged => {}
             NullablePatch::Clear => record.effort = None,

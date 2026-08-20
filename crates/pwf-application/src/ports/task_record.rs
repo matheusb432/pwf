@@ -7,6 +7,28 @@ use pwf_models::{
 };
 use pwf_wire::task::{RawTaskTags, TaskIndexPath, TaskNotePath};
 
+/// Represents the optional `blocked_by` property after infrastructure parsing.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum StoredBlockedBy {
+    #[default]
+    Absent,
+    Valid(BlockedBy),
+    Malformed {
+        raw: String,
+        reason: String,
+    },
+}
+
+impl StoredBlockedBy {
+    #[must_use]
+    pub fn valid(&self) -> Option<&BlockedBy> {
+        match self {
+            Self::Valid(blocked_by) => Some(blocked_by),
+            Self::Absent | Self::Malformed { .. } => None,
+        }
+    }
+}
+
 /// Locates a record's open link by index display path and one-based line number.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IndexPlacement {
@@ -36,8 +58,8 @@ pub struct TaskRecord {
     /// Preserves raw `tags:` frontmatter for lazy validation by tag-filtered reads.
     pub tags: Option<RawTaskTags>,
     pub effort: Option<String>,
-    /// Preserves raw `blocked_by:` frontmatter for validation at read boundaries.
-    pub blocked_by: Option<String>,
+    /// Carries typed or malformed `blocked_by` metadata for boundary-specific handling.
+    pub blocked_by: StoredBlockedBy,
     pub section: Option<TaskSection>,
     /// Preserves the note body below frontmatter verbatim.
     pub body: String,
@@ -116,7 +138,13 @@ pub trait TaskStore: Clone + Send + Sync + 'static {
 
     fn get(&self, project: &Project, id: &TaskId) -> Result<Option<TaskRecord>, Self::Error>;
     fn list(&self, project: &Project) -> Result<Vec<TaskRecord>, Self::Error>;
-    fn insert(&self, project: &Project, new: NewTask) -> Result<TaskRecord, Self::Error>;
+    fn next_id(&self, project: &Project) -> Result<TaskId, Self::Error>;
+    fn insert(
+        &self,
+        project: &Project,
+        id: &TaskId,
+        new: NewTask,
+    ) -> Result<TaskRecord, Self::Error>;
     fn update(&self, project: &Project, id: &TaskId, patch: TaskPatch) -> Result<(), Self::Error>;
     fn delete(&self, project: &Project, id: &TaskId) -> Result<(), Self::Error>;
 }

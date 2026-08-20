@@ -24,7 +24,7 @@ pub struct Arguments {
     /// Commit range(s) to record as provenance (repeat or comma-separate).
     #[arg(long)]
     pub(crate) commits: Vec<String>,
-    /// Also spawn a `## Human` review task with prepped Git diff commands.
+    /// Also spawn a `## Human` review task.
     #[arg(long)]
     pub(crate) review: bool,
 }

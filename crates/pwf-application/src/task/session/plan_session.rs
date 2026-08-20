@@ -10,11 +10,15 @@ use pwf_models::{
     },
     task::{EffortTier, TaskId},
 };
-use pwf_wire::task::{
-    TaskView,
-    session::{
-        AgentLaunch, DispatchConfirmation, DryRunSession, ModelTierLookup, PlanSession,
-        PlanSessionIntent, PlannedSession, PreparedSessionDispatch, SessionPlan,
+use pwf_wire::{
+    project::{ListProjects, ProjectStatusFilter},
+    task::{
+        BlockedByIssue, BlockedByResolution, BlockedByStatus, TaskView,
+        session::{
+            AgentLaunch, DispatchConfirmation, DryRunSession, ModelTierLookup, PlanSession,
+            PlanSessionIntent, PlannedSession, PreparedSessionDispatch, SessionPlan,
+            SessionWarning,
+        },
     },
 };
 use thiserror::Error;
@@ -26,10 +30,10 @@ use crate::{
         project_directory::ProjectDirectoryClient,
         project_note::ProjectNoteStore,
         session::{AgentCommand, SessionClient, SessionStart, SessionWindow},
-        task_record::{Materialization, TaskRecord, TaskStore},
+        task_record::{Materialization, StoredBlockedBy, TaskRecord, TaskStore},
     },
-    project::runtime_path,
-    task::active_task,
+    project::{list_projects, runtime_path},
+    task::{active_task, blocked_by},
 };
 
 #[derive(Debug, Error)]
@@ -109,6 +113,7 @@ pub async fn execute(
             launch: task.launch.clone(),
         });
     }
+    let warnings = blocker_warnings(&found.record, store, pool).await;
     let project_id = found.project.id.clone();
     let project_path = resolve_project_path(found.project.source.value(), &project_id, home)?;
     let task_content = load_task_content(&found.record, store)?;
@@ -167,13 +172,64 @@ pub async fn execute(
             plan,
             confirmation,
             probe,
+            warnings,
         })),
         PlanSessionIntent::DryRun => {
             let provider_argv = agent_client.preview(&plan.launch);
             let argv = preview_dispatch_argv(provider_argv, &plan, session_client)?;
-            Ok(PlannedSession::DryRun(DryRunSession { plan, argv, probe }))
+            Ok(PlannedSession::DryRun(DryRunSession {
+                plan,
+                argv,
+                probe,
+                warnings,
+            }))
         }
     }
+}
+
+async fn blocker_warnings(
+    record: &TaskRecord,
+    store: &impl TaskStore,
+    pool: &sqlx::SqlitePool,
+) -> Vec<SessionWarning> {
+    let blocked_by = match &record.blocked_by {
+        StoredBlockedBy::Absent => return Vec::new(),
+        StoredBlockedBy::Malformed { raw, reason } => {
+            return vec![SessionWarning::BlockedByMetadata(
+                BlockedByIssue::Malformed {
+                    path: record.locator.clone(),
+                    raw: raw.clone(),
+                    reason: reason.clone(),
+                },
+            )];
+        }
+        StoredBlockedBy::Valid(blocked_by) => blocked_by,
+    };
+    let statuses = match list_projects::execute(
+        ListProjects {
+            status: ProjectStatusFilter::IncludingPaused,
+        },
+        pool,
+    )
+    .await
+    {
+        Ok(projects) => blocked_by::statuses(blocked_by, store, None, &projects),
+        Err(error) => blocked_by
+            .iter()
+            .map(|id| BlockedByStatus {
+                id: id.clone(),
+                title: None,
+                resolution: BlockedByResolution::Unavailable {
+                    reason: error.to_string(),
+                },
+            })
+            .collect(),
+    };
+    statuses
+        .into_iter()
+        .filter(|status| status.resolution.is_warning())
+        .map(SessionWarning::BlockedBy)
+        .collect()
 }
 
 fn preview_dispatch_argv(
@@ -692,6 +748,91 @@ mod model_selection_tests {
         assert_eq!(
             error.to_string(),
             format!("tier highest in {CATALOG_PATH} has no claude_model set")
+        );
+    }
+}
+
+#[cfg(test)]
+mod blocker_warning_tests {
+    use pwf_models::task::TaskStatus;
+    use pwf_wire::task::{
+        BlockedByIssue, BlockedByResolution, BlockedByStatus, session::SessionWarning,
+    };
+
+    use super::blocker_warnings;
+    use crate::{
+        ports::task_record::{StoredBlockedBy, TaskRecord},
+        testing::{InMemoryStore, insert_project, stored_blocked_by, task_record},
+    };
+
+    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
+    async fn direct_blocker_warnings_include_unresolved_missing_and_malformed_data(
+        pool: sqlx::SqlitePool,
+    ) {
+        insert_project(
+            &pool,
+            "AUX",
+            "paused-project",
+            "/projects/paused",
+            "/tasks/paused",
+            true,
+        )
+        .await;
+        let done = TaskRecord {
+            status: TaskStatus::Done,
+            ..task_record("AUX-0001")
+        };
+        let active = task_record("AUX-0002");
+        let cancelled = TaskRecord {
+            status: TaskStatus::Cancelled,
+            ..task_record("AUX-0003")
+        };
+        let store =
+            InMemoryStore::default().with_project("paused-project", vec![done, active, cancelled]);
+        let target = TaskRecord {
+            blocked_by: stored_blocked_by(&["AUX-0001", "AUX-0002", "AUX-0003", "AUX-9999"]),
+            ..task_record("PWF-0001")
+        };
+
+        let warnings = blocker_warnings(&target, &store, &pool).await;
+
+        assert_eq!(
+            warnings,
+            [
+                SessionWarning::BlockedBy(BlockedByStatus {
+                    id: "AUX-0002".parse().unwrap(),
+                    title: Some("tray gui".to_string()),
+                    resolution: BlockedByResolution::Found(TaskStatus::Active),
+                }),
+                SessionWarning::BlockedBy(BlockedByStatus {
+                    id: "AUX-0003".parse().unwrap(),
+                    title: Some("tray gui".to_string()),
+                    resolution: BlockedByResolution::Found(TaskStatus::Cancelled),
+                }),
+                SessionWarning::BlockedBy(BlockedByStatus {
+                    id: "AUX-9999".parse().unwrap(),
+                    title: None,
+                    resolution: BlockedByResolution::Missing,
+                }),
+            ]
+        );
+
+        let malformed = TaskRecord {
+            blocked_by: StoredBlockedBy::Malformed {
+                raw: "\"[[AUX-0001]]\"".to_string(),
+                reason: "expected a sequence".to_string(),
+            },
+            ..task_record("PWF-0001")
+        };
+        assert_eq!(
+            blocker_warnings(&malformed, &store, &pool).await,
+            [SessionWarning::BlockedByMetadata(
+                BlockedByIssue::Malformed {
+                    path: malformed.locator,
+                    raw: "\"[[AUX-0001]]\"".to_string(),
+                    reason: "expected a sequence".to_string(),
+                }
+            )]
         );
     }
 }

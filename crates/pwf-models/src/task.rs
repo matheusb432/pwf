@@ -8,7 +8,7 @@ mod status;
 mod tag;
 mod title;
 
-pub use blocked_by::{BlockedBy, BlockedByInput, BlockedByInputError, EmptyBlockedByError};
+pub use blocked_by::{BlockedBy, EmptyBlockedByError};
 pub use completion::{CommitRanges, TaskReport, TaskReportError};
 pub use effort::{EffortTier, EffortTierError};
 pub use id::TaskId;

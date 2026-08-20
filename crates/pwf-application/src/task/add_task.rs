@@ -3,7 +3,7 @@ use pwf_models::{
     task::{TaskId, TaskTitle, TaskTitleError},
 };
 use pwf_wire::{
-    project::{GetActiveProject, ProjectStatusFilter, ResolveProject},
+    project::{ListProjects, ProjectStatusFilter, ResolveProject},
     task::{AddTask, AddTaskDiagnostics, AddTaskPromptKind, AddedTask},
 };
 
@@ -20,7 +20,7 @@ use crate::{
         task_record::{IndexEntryStore, IndexSectionStore, NewTask, TaskStore},
     },
     project::{
-        get_active_project,
+        list_projects,
         resolve_project::{self, ResolveProjectError},
     },
 };
@@ -31,6 +31,12 @@ pub enum AddTaskError {
     ProjectResolution(#[from] ResolveProjectError),
     #[error("{0}")]
     QueryProject(#[source] Box<dyn std::error::Error + Send + Sync>),
+    #[error("cannot determine the next task ID for {project}: {source}")]
+    AllocateTaskId {
+        project: pwf_models::project::ProjectName,
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
     #[error("Unknown --blocked-by id(s): {}.", blocked_by::format_task_ids(ids))]
     UnknownBlockedByIds { ids: Vec<TaskId> },
     #[error("cannot validate --blocked-by task {id}: {source}")]
@@ -38,6 +44,17 @@ pub enum AddTaskError {
         id: TaskId,
         #[source]
         source: Box<dyn std::error::Error + Send + Sync>,
+    },
+    #[error("task {target} cannot be blocked by itself ({blocker})")]
+    SelfBlockedBy { target: TaskId, blocker: TaskId },
+    #[error("blocked_by cycle: {}", blocked_by::format_task_ids_path(path))]
+    BlockedByCycle { path: Vec<TaskId> },
+    #[error("task {task} at {path} has malformed blocked_by metadata {raw:?}: {reason}")]
+    MalformedBlockedBy {
+        task: TaskId,
+        path: Box<pwf_wire::task::TaskNotePath>,
+        raw: Box<str>,
+        reason: Box<str>,
     },
     #[error(transparent)]
     InvalidTitle(#[from] TaskTitleError),
@@ -70,32 +87,36 @@ pub async fn execute(
         pool,
     )
     .await?;
+    let id = store
+        .next_id(&project)
+        .map_err(|source| AddTaskError::AllocateTaskId {
+            project: project.title.clone(),
+            source: Box::new(source),
+        })?;
 
-    let mut projects = vec![project.clone()];
-    if let Some(blocked_by) = cmd.blocked_by.as_ref() {
-        for id in blocked_by::project_ids(blocked_by) {
-            if projects.iter().any(|project| project.id == id) {
-                continue;
-            }
-            let project = get_active_project::execute(GetActiveProject { id }, pool)
-                .await
-                .map_err(|error| AddTaskError::QueryProject(Box::new(error)))?;
-            projects.push(project);
+    let blocked_by = match cmd.blocked_by.as_ref() {
+        Some(blocked_by) => {
+            let projects = list_projects::execute(
+                ListProjects {
+                    status: ProjectStatusFilter::IncludingPaused,
+                },
+                pool,
+            )
+            .await
+            .map_err(|error| AddTaskError::QueryProject(Box::new(error)))?;
+            Some(
+                blocked_by::validate_and_merge(&id, None, blocked_by, store, &projects)
+                    .map_err(map_blocked_by_error)?,
+            )
         }
-    }
-    let blocked_by = cmd
-        .blocked_by
-        .as_ref()
-        .map(|blocked_by| {
-            blocked_by::validate_and_merge(None, blocked_by, store, &projects)
-                .map_err(map_blocked_by_error)
-        })
-        .transpose()?;
+        None => None,
+    };
     let prepared = prepare_source(cmd, &project)?;
 
     let created = task_creation::create(
         TaskCreation {
             project: &prepared.project,
+            id: &id,
             new: NewTask {
                 body: prepared.body,
                 title: prepared.title,
@@ -125,6 +146,21 @@ fn map_blocked_by_error(error: BlockedByValidationError) -> AddTaskError {
         BlockedByValidationError::ReadStore { id, source } => {
             AddTaskError::ReadBlockedBy { id, source }
         }
+        BlockedByValidationError::SelfDependency { target, blocker } => {
+            AddTaskError::SelfBlockedBy { target, blocker }
+        }
+        BlockedByValidationError::Cycle { path } => AddTaskError::BlockedByCycle { path },
+        BlockedByValidationError::MalformedMetadata {
+            task,
+            path,
+            raw,
+            reason,
+        } => AddTaskError::MalformedBlockedBy {
+            task,
+            path,
+            raw,
+            reason,
+        },
     }
 }
 

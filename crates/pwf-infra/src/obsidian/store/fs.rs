@@ -50,7 +50,7 @@ pub(super) fn line_start_index(content: &str, line_number: usize) -> Option<usiz
 }
 
 pub(super) fn write_add_task_file(path: &Path, content: &str) -> Result<(), ObsidianStoreError> {
-    crate::obsidian::fs_atomic::write_text_atomic(path, content)
+    crate::obsidian::fs_atomic::write_text_atomic_new(path, content)
         .map_err(|source| ObsidianStoreError::AddWriteTaskFile { source })
 }
 

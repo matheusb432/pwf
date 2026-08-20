@@ -1,7 +1,7 @@
 use clap::{ArgGroup, Args};
 use pwf_application::task::edit_task::{self, EditTaskError};
 use pwf_infra::obsidian::ObsidianStore;
-use pwf_models::task::{BlockedBy, BlockedByInput, EffortTier, TagInput, TaskPrompt, TaskTags};
+use pwf_models::task::{BlockedBy, EffortTier, TagInput, TaskPrompt, TaskTags};
 use pwf_wire::task::{
     CollectionEdit, EditTask, EditTaskApiError, EditTaskContent, TaskEdits, TaskLane,
     TaskLaneEdits, ValueEdit,
@@ -9,6 +9,7 @@ use pwf_wire::task::{
 
 use super::{
     EffortChoice, Identifier, LaneFlagMode,
+    blocked_by_input::{self, BlockedByInput},
     render::{TITLE_NORMALIZED_NOTICE, render_edited},
     task_lanes, task_title,
 };
@@ -137,7 +138,7 @@ struct DoneWhenEdits {
 
 #[derive(Args, Debug)]
 struct BlockedByEdits {
-    /// Append a blocked-by task ID; repeat or comma-separate for several.
+    /// Append a blocked-by task ID or [[ID]]; repeat or comma-separate for several.
     #[arg(long)]
     add_blocked_by: Vec<BlockedByInput>,
     /// Remove every blocked-by task before applying `--add-blocked-by` values.
@@ -148,7 +149,7 @@ struct BlockedByEdits {
 impl BlockedByEdits {
     fn edit(&self) -> CollectionEdit<BlockedBy> {
         collection_edit(
-            BlockedBy::from_inputs(&self.add_blocked_by),
+            blocked_by_input::collect(&self.add_blocked_by),
             self.remove_blocked_by,
         )
     }
@@ -294,11 +295,26 @@ fn map_error(error: EditTaskError) -> EditTaskApiError {
         EditTaskError::InvalidTagsFrontmatter { id, raw } => {
             EditTaskApiError::InvalidTagsFrontmatter { id, raw }
         }
+        EditTaskError::MalformedBlockedBy {
+            id,
+            path,
+            raw,
+            reason,
+        } => EditTaskApiError::MalformedBlockedBy {
+            id,
+            path,
+            raw,
+            reason,
+        },
         EditTaskError::UnknownBlockedByIds { ids } => EditTaskApiError::UnknownBlockedByIds { ids },
         EditTaskError::ReadBlockedBy { id, source } => EditTaskApiError::ReadBlockedBy {
             id,
             reason: source.to_string(),
         },
+        EditTaskError::SelfBlockedBy { target, blocker } => {
+            EditTaskApiError::SelfBlockedBy { target, blocker }
+        }
+        EditTaskError::BlockedByCycle { path } => EditTaskApiError::BlockedByCycle { path },
         EditTaskError::AmbiguousLanes { header } => EditTaskApiError::AmbiguousLanes { header },
         EditTaskError::WriteStore(source) | EditTaskError::QueryProject(source) => {
             EditTaskApiError::Unexpected {

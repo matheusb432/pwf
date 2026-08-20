@@ -11,12 +11,12 @@ use pwf_models::{
     },
 };
 use pwf_wire::task::{
-    RawTaskTags, TaskHeading, TaskIndexPath, TaskIssue, TaskLaunch, TaskLocation, TaskNotePath,
-    TaskView,
+    BlockedByIssue, RawTaskTags, TaskHeading, TaskIndexPath, TaskIssue, TaskLaunch, TaskLocation,
+    TaskNotePath, TaskView,
 };
 
-use super::{blocked_by, normalize_section_label, note_body::is_placeholder_prompt};
-use crate::ports::task_record::{Materialization, TaskRecord};
+use super::{normalize_section_label, note_body::is_placeholder_prompt};
+use crate::ports::task_record::{Materialization, StoredBlockedBy, TaskRecord};
 
 /// Contains launchability flags and diagnostics derived from a task.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,6 +72,7 @@ pub(in crate::task) struct EnrichedTask {
     pub(in crate::task) launch: TaskLaunch,
     pub(in crate::task) section: Option<TaskSection>,
     pub(in crate::task) blocked_by: Option<pwf_models::task::BlockedBy>,
+    pub(in crate::task) blocked_by_issues: Vec<BlockedByIssue>,
     pub(in crate::task) effort: Option<EffortTier>,
     pub(in crate::task) tags: Option<RawTaskTags>,
     pub(in crate::task) created: Option<AppDate>,
@@ -93,6 +94,7 @@ impl EnrichedTask {
             section: self.section,
             blocked_by: self.blocked_by,
             blocked_by_statuses: Vec::new(),
+            blocked_by_issues: self.blocked_by_issues,
             effort: self.effort,
             tags: self.tags,
             created: self.created,
@@ -145,6 +147,18 @@ pub(in crate::task) fn enrich(
             value: task.effort.clone().unwrap_or_default(),
             source,
         })?;
+    let (blocked_by, blocked_by_issues) = match &task.blocked_by {
+        StoredBlockedBy::Absent => (None, Vec::new()),
+        StoredBlockedBy::Valid(blocked_by) => (Some(blocked_by.clone()), Vec::new()),
+        StoredBlockedBy::Malformed { raw, reason } => (
+            None,
+            vec![BlockedByIssue::Malformed {
+                path: task.locator.clone(),
+                raw: raw.clone(),
+                reason: reason.clone(),
+            }],
+        ),
+    };
     Ok(EnrichedTask {
         id: task.id.clone(),
         status: task.status,
@@ -154,7 +168,8 @@ pub(in crate::task) fn enrich(
         location,
         launch: flags.launch,
         section: task.section.as_ref().map(normalize_section_label),
-        blocked_by: task.blocked_by.as_deref().and_then(blocked_by::extract),
+        blocked_by,
+        blocked_by_issues,
         effort,
         tags: task.tags.clone(),
         created: task.created,
@@ -166,7 +181,10 @@ mod tests {
     use pwf_models::project::ProjectSourceValue;
 
     use super::*;
-    use crate::{ports::task_record::IndexPlacement, testing::task_record};
+    use crate::{
+        ports::task_record::{IndexPlacement, StoredBlockedBy},
+        testing::task_record,
+    };
 
     fn record(body: &str) -> TaskRecord {
         TaskRecord {
@@ -234,6 +252,23 @@ mod tests {
             ]
         );
         assert_eq!(enriched.prompt.as_ref(), "");
+    }
+
+    #[test]
+    fn malformed_blocked_by_is_an_observation_not_a_launch_blocker() {
+        let mut rec = record("body");
+        rec.blocked_by = StoredBlockedBy::Malformed {
+            raw: "\"[[AUX-0001]]\"".to_string(),
+            reason: "expected a sequence".to_string(),
+        };
+
+        let enriched = enrich(&rec, &project_path()).unwrap();
+
+        assert!(enriched.launch.is_ready());
+        assert!(matches!(
+            enriched.blocked_by_issues.as_slice(),
+            [BlockedByIssue::Malformed { raw, .. }] if raw == "\"[[AUX-0001]]\""
+        ));
     }
 
     #[test]

@@ -12,7 +12,7 @@ use pwf_models::{
     task::TaskId,
 };
 
-use super::{TaskHeading, TaskLaunch};
+use super::{BlockedByIssue, BlockedByStatus, TaskHeading, TaskLaunch};
 
 /// Requests dispatch of one confirmed task session.
 pub struct DispatchSession {
@@ -115,6 +115,7 @@ pub struct DryRunSession {
     pub plan: SessionPlan,
     pub argv: Vec<String>,
     pub probe: AgentProbe,
+    pub warnings: Vec<SessionWarning>,
 }
 
 /// Contains a validated session dispatch ready for confirmation.
@@ -123,6 +124,13 @@ pub struct PreparedSessionDispatch {
     pub plan: SessionPlan,
     pub confirmation: DispatchConfirmation,
     pub probe: AgentProbe,
+    pub warnings: Vec<SessionWarning>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionWarning {
+    BlockedBy(BlockedByStatus),
+    BlockedByMetadata(BlockedByIssue),
 }
 
 /// Carries either a dispatch-ready plan or a side-effect-free preview.

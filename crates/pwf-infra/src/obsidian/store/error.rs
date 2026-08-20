@@ -206,8 +206,6 @@ pub enum ObsidianStoreError {
         expected_id: ProjectId,
         expected_title: ProjectName,
     },
-    #[error("Notes directory not found: {path}")]
-    NotesDirectoryNotFound { path: String },
     #[error("Invalid task path for project '{project}': {source}")]
     InvalidProjectTaskPath {
         project: String,
@@ -240,6 +238,8 @@ pub enum ObsidianStoreError {
     TaskNotFound { id: TaskId },
     #[error("Task ID sequence is exhausted for project {project_id}")]
     TaskIdSequenceExhausted { project_id: ProjectId },
+    #[error("task ID {id} is already occupied at {}; retry the command", path.display())]
+    TaskIdOccupied { id: TaskId, path: PathBuf },
     #[error("Expected open task marker at {note}:{line}. The note may have changed.")]
     ExpectedOpenTaskMarker { note: String, line: usize },
 }

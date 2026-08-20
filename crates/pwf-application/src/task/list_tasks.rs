@@ -4,10 +4,8 @@ use pwf_models::{
     project::Project,
     task::{EffortTier, TaskId, TaskSection, TaskTags},
 };
-#[cfg(test)]
-use pwf_wire::task::BlockedByStatus;
 use pwf_wire::{
-    project::{GetActiveProject, ListProjects, ProjectStatusFilter, ResolveProject},
+    project::{ListProjects, ProjectStatusFilter, ResolveProject},
     task::{
         ListDetail, ListLayout, ListScope, ListTasks, ListedTasks, OrderDirection, OrderField,
         OrderSpec, StatusFilter, TaskView,
@@ -20,7 +18,7 @@ use crate::{
         project_task_location::ProjectTaskLocationClient,
         task_record::{TaskRecord, TaskStore},
     },
-    project::{get_active_project, get_project::GetProjectError, list_projects, resolve_project},
+    project::{list_projects, resolve_project},
 };
 
 /// Retains invalid requested or persisted tag text for list diagnostics.
@@ -62,8 +60,6 @@ pub enum ListTasksError {
     },
     #[error("{0}")]
     InvalidTaskView(#[source] Box<dyn std::error::Error + Send + Sync>),
-    #[error("{0}")]
-    ReadBlockedByStatus(#[source] Box<dyn std::error::Error + Send + Sync>),
     #[error(transparent)]
     ResolveProject(#[from] crate::project::resolve_project::ResolveProjectError),
     #[error("{0}")]
@@ -109,30 +105,8 @@ pub async fn execute(
                 .map_err(|error| ListTasksError::ReadStore(Box::new(error)))
         })
         .transpose()?;
-    let projects = match selected.as_ref() {
-        Some(project) => {
-            let mut projects = vec![project.clone()];
-            if query.detail.includes_relationship_statuses() {
-                for id in blocked_by::referenced_project_ids(
-                    selected_records
-                        .iter()
-                        .flatten()
-                        .filter_map(|record| record.blocked_by.as_deref()),
-                ) {
-                    if projects.iter().any(|project| project.id == id) {
-                        continue;
-                    }
-                    match get_active_project::execute(GetActiveProject { id }, pool).await {
-                        Ok(project) => projects.push(project),
-                        Err(GetProjectError::ProjectNotFound { .. }) => {}
-                        Err(error) => {
-                            return Err(ListTasksError::QueryProject(Box::new(error)));
-                        }
-                    }
-                }
-            }
-            projects
-        }
+    let task_projects = match selected.as_ref() {
+        Some(_) => Vec::new(),
         None => list_projects::execute(
             ListProjects {
                 status: ProjectStatusFilter::ActiveOnly,
@@ -142,6 +116,18 @@ pub async fn execute(
         .await
         .map_err(|error| ListTasksError::QueryProject(Box::new(error)))?,
     };
+    let relationship_projects = if query.detail.includes_relationship_statuses() {
+        list_projects::execute(
+            ListProjects {
+                status: ProjectStatusFilter::IncludingPaused,
+            },
+            pool,
+        )
+        .await
+        .map_err(|error| ListTasksError::QueryProject(Box::new(error)))?
+    } else {
+        Vec::new()
+    };
     let query = resolve_query(query, selected);
     let project_task_path = query
         .project
@@ -149,7 +135,7 @@ pub async fn execute(
         .map(|project| task_locations.project_task_path(project))
         .transpose()
         .map_err(|source| ListTasksError::ReadProjectTaskPath(Box::new(source)))?;
-    let mut tasks = collect_list_tasks(&query, store, &projects, selected_records.as_deref())?;
+    let mut tasks = collect_list_tasks(&query, store, &task_projects, selected_records.as_deref())?;
 
     tasks.retain(|task| scope_includes(query.scope, task.section.as_ref()));
     tasks.retain(|task| effort_matches(task, query.effort));
@@ -169,9 +155,14 @@ pub async fn execute(
             task.blocked_by_statuses = task
                 .blocked_by
                 .as_ref()
-                .map(|value| blocked_by::statuses(value, store, &projects))
-                .transpose()
-                .map_err(|source| ListTasksError::ReadBlockedByStatus(Box::new(source)))?
+                .map(|value| {
+                    blocked_by::statuses(
+                        value,
+                        store,
+                        query.project.as_ref(),
+                        &relationship_projects,
+                    )
+                })
                 .unwrap_or_default();
         }
     }
@@ -246,10 +237,10 @@ fn collect_list_tasks(
     projects: &[Project],
     selected_records: Option<&[TaskRecord]>,
 ) -> Result<Vec<TaskView>, ListTasksError> {
-    let scan: Vec<&Project> = match query.project.as_ref() {
-        Some(project) => vec![project],
-        None => projects.iter().collect(),
-    };
+    let scan = query
+        .project
+        .as_ref()
+        .map_or(projects, std::slice::from_ref);
 
     let mut tasks = Vec::new();
     for project in scan {
@@ -372,18 +363,22 @@ mod tests {
         task::{EffortTier, TaskId, TaskStatus, TaskTags},
     };
     use pwf_wire::task::{
-        ListDetail, ListLayout, ListScope, ListedTasks, OrderDirection, OrderField, OrderSpec,
-        ProjectTaskPath, RawTaskTags, StatusFilter, TaskIndexPath, TaskNotePath,
+        BlockedByResolution, BlockedByStatus, ListDetail, ListLayout, ListScope, ListedTasks,
+        OrderDirection, OrderField, OrderSpec, ProjectTaskPath, RawTaskTags, StatusFilter,
+        TaskIndexPath, TaskNotePath,
     };
 
-    use super::{BlockedByStatus, ListTasks, ListTasksError};
+    use super::{ListTasks, ListTasksError};
     use crate::{
         ports::{
             project_task_location::ProjectTaskLocationClient,
             task_record::{IndexPlacement, Materialization, TaskRecord},
         },
         task::list_tasks,
-        testing::{InMemoryStore, MIGRATOR, app_date, insert_project, project, task_record},
+        testing::{
+            InMemoryStore, MIGRATOR, app_date, insert_project, project, stored_blocked_by,
+            task_record,
+        },
     };
 
     impl ProjectTaskLocationClient for InMemoryStore {
@@ -448,9 +443,7 @@ mod tests {
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
-    async fn selected_long_list_resolves_only_referenced_blocked_by_projects(
-        pool: sqlx::SqlitePool,
-    ) {
+    async fn selected_long_list_resolves_blockers_from_paused_projects(pool: sqlx::SqlitePool) {
         insert_project(&pool, "PWF", "pwf", "/work/pwf", "/tasks/pwf", false).await;
         insert_project(
             &pool,
@@ -458,7 +451,7 @@ mod tests {
             "companion-project",
             "/work/companion-project",
             "/tasks/companion-project",
-            false,
+            true,
         )
         .await;
         insert_project(
@@ -472,7 +465,7 @@ mod tests {
         .await;
 
         let dependent = TaskRecord {
-            blocked_by: Some("[[AUX-0014]]".to_string()),
+            blocked_by: stored_blocked_by(&["AUX-0014"]),
             ..record("PWF-0001")
         };
         let blocking_task = TaskRecord {
@@ -496,7 +489,8 @@ mod tests {
             result.tasks[0].blocked_by_statuses,
             [BlockedByStatus {
                 id: TaskId::try_new("AUX-0014").unwrap(),
-                status: Some(TaskStatus::Done),
+                title: Some("AUX-0014".to_string()),
+                resolution: BlockedByResolution::Found(TaskStatus::Done),
             }]
         );
     }
@@ -579,7 +573,7 @@ mod tests {
     #[tokio::test]
     async fn long_list_projects_done_active_and_missing_blocked_by_statuses() {
         let dependent = TaskRecord {
-            blocked_by: Some("[[AUX-0014]], [[AUX-0015]], [[AUX-9999]]".to_string()),
+            blocked_by: stored_blocked_by(&["AUX-0014", "AUX-0015", "AUX-9999"]),
             ..record("PWF-0001")
         };
         let done = TaskRecord {
@@ -608,15 +602,18 @@ mod tests {
             [
                 BlockedByStatus {
                     id: TaskId::try_new("AUX-0014").unwrap(),
-                    status: Some(TaskStatus::Done),
+                    title: Some("AUX-0014".to_string()),
+                    resolution: BlockedByResolution::Found(TaskStatus::Done),
                 },
                 BlockedByStatus {
                     id: TaskId::try_new("AUX-0015").unwrap(),
-                    status: Some(TaskStatus::Active),
+                    title: Some("AUX-0015".to_string()),
+                    resolution: BlockedByResolution::Found(TaskStatus::Active),
                 },
                 BlockedByStatus {
                     id: TaskId::try_new("AUX-9999").unwrap(),
-                    status: None,
+                    title: None,
+                    resolution: BlockedByResolution::Missing,
                 },
             ]
         );
@@ -625,7 +622,7 @@ mod tests {
     #[tokio::test]
     async fn long_list_treats_indexed_blocked_by_without_note_as_missing() {
         let dependent = TaskRecord {
-            blocked_by: Some("[[AUX-0014]]".to_string()),
+            blocked_by: stored_blocked_by(&["AUX-0014"]),
             ..record("PWF-0001")
         };
         let missing_note = TaskRecord {
@@ -657,7 +654,8 @@ mod tests {
             got.tasks[0].blocked_by_statuses,
             [BlockedByStatus {
                 id: TaskId::try_new("AUX-0014").unwrap(),
-                status: None,
+                title: None,
+                resolution: BlockedByResolution::Missing,
             }]
         );
     }

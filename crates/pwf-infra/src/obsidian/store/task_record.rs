@@ -87,7 +87,7 @@ fn note_to_record(
         commits: field("commits"),
         tags,
         effort: field("effort"),
-        blocked_by: field("blocked_by"),
+        blocked_by: crate::obsidian::note_frontmatter::parse_blocked_by(&source),
         section: None,
         body: parsed.body,
         source,
@@ -118,7 +118,7 @@ fn missing_note_record(
         commits: None,
         tags: None,
         effort: None,
-        blocked_by: None,
+        blocked_by: pwf_application::ports::task_record::StoredBlockedBy::Absent,
         section,
         body: String::new(),
         source: String::new(),
@@ -199,12 +199,6 @@ impl ObsidianStore {
     /// Open index entries contribute placement. Every index entry contributes its raw section; the
     /// application owns lifecycle visibility, normalization, and launchability policy.
     fn list_tasks(&self, project: &Project) -> Result<Vec<TaskRecord>, ObsidianStoreError> {
-        let project_directory = self.tasks_path(project)?;
-        if !project_directory.exists() {
-            return Err(ObsidianStoreError::NotesDirectoryNotFound {
-                path: project_directory.display().to_string(),
-            });
-        }
         let tasks = self.task_files_for_project(project)?;
         let mut records: Vec<TaskRecord> = tasks
             .into_iter()
@@ -238,11 +232,13 @@ impl ObsidianStore {
     fn insert_task(
         &self,
         project: &Project,
+        id: &TaskId,
         new: &NewTask,
     ) -> Result<TaskRecord, ObsidianStoreError> {
         let note = self.write_new_note(
             project,
             &NewNoteRequest {
+                id,
                 body: &new.body,
                 title: &new.title,
                 created: &new.created,
@@ -386,8 +382,17 @@ impl TaskStore for ObsidianStore {
         self.list_tasks(project)
     }
 
-    fn insert(&self, project: &Project, new: NewTask) -> Result<TaskRecord, Self::Error> {
-        self.insert_task(project, &new)
+    fn next_id(&self, project: &Project) -> Result<TaskId, Self::Error> {
+        self.next_task_id(project)
+    }
+
+    fn insert(
+        &self,
+        project: &Project,
+        id: &TaskId,
+        new: NewTask,
+    ) -> Result<TaskRecord, Self::Error> {
+        self.insert_task(project, id, &new)
     }
 
     fn update(&self, project: &Project, id: &TaskId, patch: TaskPatch) -> Result<(), Self::Error> {

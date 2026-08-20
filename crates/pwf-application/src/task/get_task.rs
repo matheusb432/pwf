@@ -10,10 +10,10 @@ use pwf_wire::{
 use crate::{
     ports::{
         project_note::ProjectNoteStore,
-        task_record::{Materialization, TaskRecord, TaskStore},
+        task_record::{Materialization, StoredBlockedBy, TaskRecord, TaskStore},
     },
     project::{get_active_project, get_project::GetProjectError},
-    task::{blocked_by, tags},
+    task::tags,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -32,6 +32,13 @@ pub enum GetTaskError {
         field: &'static str,
         #[source]
         source: Box<dyn std::error::Error + Send + Sync>,
+    },
+    #[error("task {id} at {path} has malformed blocked_by metadata {raw:?}: {reason}")]
+    MalformedBlockedBy {
+        id: TaskId,
+        path: Box<pwf_wire::task::TaskNotePath>,
+        raw: Box<str>,
+        reason: Box<str>,
     },
 }
 
@@ -98,12 +105,18 @@ fn task_data(project: ProjectName, record: TaskRecord) -> Result<TaskData, GetTa
         .transpose()
         .map_err(|error| invalid_task_data("tags", error))?;
     let effort = record.effort.as_deref().map(parse_effort).transpose()?;
-    let blocked_by = record
-        .blocked_by
-        .as_deref()
-        .map(blocked_by::parse_frontmatter)
-        .transpose()
-        .map_err(|error| invalid_task_data("blocked_by", error))?;
+    let blocked_by = match &record.blocked_by {
+        StoredBlockedBy::Absent => None,
+        StoredBlockedBy::Valid(blocked_by) => Some(blocked_by.clone()),
+        StoredBlockedBy::Malformed { raw, reason } => {
+            return Err(GetTaskError::MalformedBlockedBy {
+                id: record.id.clone(),
+                path: Box::new(record.locator.clone()),
+                raw: raw.clone().into_boxed_str(),
+                reason: reason.clone().into_boxed_str(),
+            });
+        }
+    };
     let commits = record
         .commits
         .map(|value| CommitRanges::try_new(unquote_scalar(&value).to_string()))
@@ -160,11 +173,11 @@ mod tests {
 
     use super::{GetTask, GetTaskError, TaskId};
     use crate::{
-        ports::task_record::TaskRecord,
+        ports::task_record::{StoredBlockedBy, TaskRecord},
         task::get_task,
         testing::{
             InMemoryStore, PWF_0001_SOURCE, ProjectNoteFailure, app_date, insert_project,
-            staged_missing_task, staged_task, task_record,
+            staged_missing_task, staged_task, stored_blocked_by, task_record,
         },
     };
 
@@ -231,7 +244,7 @@ mod tests {
                 commits: Some("'a..b, c..d'".to_string()),
                 tags: Some(RawTaskTags::new("[rust, sqlite]")),
                 effort: Some(" high ".to_string()),
-                blocked_by: Some("'[[AUX-0014]]'".to_string()),
+                blocked_by: stored_blocked_by(&["AUX-0014"]),
                 section: Some("Human".parse().unwrap()),
                 body: "\n  authored body  \n".to_string(),
                 ..task_record("PWF-0001")
@@ -291,5 +304,41 @@ mod tests {
             GetTaskError::InvalidTaskData { field: "title", .. }
         ));
         assert!(error.source().is_some());
+    }
+
+    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
+    async fn data_read_reports_malformed_blocked_by_with_task_path_and_raw_value(
+        pool: sqlx::SqlitePool,
+    ) {
+        insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
+        let store = InMemoryStore::default().with_project(
+            "pwf",
+            vec![TaskRecord {
+                blocked_by: StoredBlockedBy::Malformed {
+                    raw: "\"[[AUX-0001]]\"".to_string(),
+                    reason: "expected a sequence".to_string(),
+                },
+                ..task_record("PWF-0001")
+            }],
+        );
+
+        let error = get_task::execute(
+            &GetTask {
+                id: "PWF-0001".parse().unwrap(),
+                output: TaskReadFormat::Data,
+            },
+            &store,
+            &pool,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            GetTaskError::MalformedBlockedBy { ref id, ref path, ref raw, .. }
+                if id.as_ref() == "PWF-0001"
+                    && path.as_path() == std::path::Path::new("/mem/foo-bar/PWF-0001.md")
+                    && raw.as_ref() == "\"[[AUX-0001]]\""
+        ));
     }
 }

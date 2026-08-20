@@ -17,6 +17,7 @@ use pwf_wire::task::{
 use crate::console::Console;
 
 mod add;
+mod blocked_by_input;
 mod cancel;
 mod done;
 mod edit;
@@ -193,7 +194,7 @@ fn map_close_task_error(error: CloseTaskError) -> CloseTaskApiError {
             message: source.to_string(),
         },
         CloseTaskError::ReviewTask(source) => {
-            CloseTaskApiError::ReviewTask(Box::new(add::map_add_task_error(source)))
+            CloseTaskApiError::ReviewTask(Box::new(add::map_add_task_error(*source)))
         }
     }
 }

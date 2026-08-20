@@ -11,9 +11,12 @@ use pwf_models::{
     project::HomeDirectory,
     session::{Agent, DispatchMode, LaunchDirectives, PushedPrompt, SessionEffort},
 };
-use pwf_wire::task::session::{
-    AgentProbe, DispatchSession, DispatchSessionApiError, PlanSession, PlanSessionApiError,
-    PlanSessionIntent, PlannedSession,
+use pwf_wire::task::{
+    BlockedByResolution,
+    session::{
+        AgentProbe, DispatchSession, DispatchSessionApiError, PlanSession, PlanSessionApiError,
+        PlanSessionIntent, PlannedSession, SessionWarning,
+    },
 };
 
 use super::{
@@ -183,11 +186,13 @@ pub(super) async fn run(
     .map_err(map_plan_error)?;
     let planned = match planned {
         PlannedSession::DryRun(dry_run) => {
+            emit_session_warnings(&dry_run.warnings);
             render_probe(&dry_run.probe);
             return Ok(render_dry_run(&dry_run.plan, &dry_run.argv));
         }
         PlannedSession::Dispatch(planned) => planned,
     };
+    emit_session_warnings(&planned.warnings);
     render_probe(&planned.probe);
 
     if confirmation_mode == ConfirmationMode::Prompt {
@@ -279,6 +284,94 @@ fn render_probe(probe: &AgentProbe) {
         eprintln!(
             "note: {} not found on PATH from here; the agent will surface the error if it can't run.",
             probe.binary()
+        );
+    }
+}
+
+fn emit_session_warnings(warnings: &[SessionWarning]) {
+    if let Some(rendered) = render_session_warnings(warnings) {
+        eprintln!("{rendered}");
+    }
+}
+
+fn render_session_warnings(warnings: &[SessionWarning]) -> Option<String> {
+    if warnings.is_empty() {
+        return None;
+    }
+    let mut lines = vec!["warning: blocked_by information for this session:".to_string()];
+    for warning in warnings {
+        let line = match warning {
+            SessionWarning::BlockedBy(blocked_by) => {
+                let title = blocked_by
+                    .title
+                    .as_deref()
+                    .map(|title| format!(": {title}"))
+                    .unwrap_or_default();
+                match &blocked_by.resolution {
+                    BlockedByResolution::Found(status) => {
+                        format!("  - {} ({status}){title}", blocked_by.id)
+                    }
+                    BlockedByResolution::Missing => {
+                        format!("  - {} (missing; ignored as a blocker)", blocked_by.id)
+                    }
+                    BlockedByResolution::Unavailable { reason } => format!(
+                        "  - {} (unavailable: {})",
+                        blocked_by.id,
+                        reason.replace(['\r', '\n'], " ")
+                    ),
+                }
+            }
+            SessionWarning::BlockedByMetadata(issue) => format!("  - {issue}"),
+        };
+        lines.push(line);
+    }
+    lines.push(
+        "session will continue; resolve active or cancelled blockers first when they still apply."
+            .to_string(),
+    );
+    Some(lines.join("\n"))
+}
+
+#[cfg(test)]
+mod tests {
+    use pwf_models::task::TaskStatus;
+    use pwf_wire::task::{
+        BlockedByIssue, BlockedByResolution, BlockedByStatus, TaskNotePath, session::SessionWarning,
+    };
+
+    use super::render_session_warnings;
+
+    #[test]
+    fn renders_all_session_blocker_diagnostics_as_one_informative_block() {
+        let warnings = [
+            SessionWarning::BlockedBy(BlockedByStatus {
+                id: "AUX-0002".parse().unwrap(),
+                title: Some("prepare prior art".to_string()),
+                resolution: BlockedByResolution::Found(TaskStatus::Active),
+            }),
+            SessionWarning::BlockedBy(BlockedByStatus {
+                id: "AUX-9999".parse().unwrap(),
+                title: None,
+                resolution: BlockedByResolution::Missing,
+            }),
+            SessionWarning::BlockedByMetadata(BlockedByIssue::Malformed {
+                path: TaskNotePath::new("/tasks/PWF-0001.md".into()),
+                raw: "\"[[AUX-0001]]\"".to_string(),
+                reason: "expected a sequence".to_string(),
+            }),
+        ];
+
+        let rendered = render_session_warnings(&warnings).unwrap();
+
+        assert_eq!(
+            rendered,
+            concat!(
+                "warning: blocked_by information for this session:\n",
+                "  - AUX-0002 (active): prepare prior art\n",
+                "  - AUX-9999 (missing; ignored as a blocker)\n",
+                "  - Malformed blocked_by metadata \"\\\"[[AUX-0001]]\\\"\" in /tasks/PWF-0001.md: expected a sequence\n",
+                "session will continue; resolve active or cancelled blockers first when they still apply."
+            )
         );
     }
 }

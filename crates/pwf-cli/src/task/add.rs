@@ -6,12 +6,13 @@ use pwf_application::{
 use pwf_infra::obsidian::ObsidianStore;
 use pwf_models::{
     project::ProjectSelector,
-    task::{BlockedBy, BlockedByInput, IndexSection, TagInput, TaskPrompt, TaskTags},
+    task::{IndexSection, TagInput, TaskPrompt, TaskTags},
 };
 use pwf_wire::task::{AddTask, AddTaskApiError, AddTaskPrompt, TaskInputApiError};
 
 use super::{
     EffortChoice, LaneFlagMode,
+    blocked_by_input::{self, BlockedByInput},
     render::{
         TITLE_NORMALIZED_NOTICE, emit_created_section, emit_created_section_for_error, render_added,
     },
@@ -48,7 +49,7 @@ pub struct Arguments {
     /// File the task under `## Human` index section
     #[arg(long)]
     pub(crate) human: bool,
-    /// Blocked-by task id; repeat or comma-separate for several
+    /// Blocked-by task ID or [[ID]]; repeat or comma-separate for several
     #[arg(long)]
     pub(crate) blocked_by: Vec<BlockedByInput>,
     /// Discovery tag; repeat or comma-separate for several. Input accepts `snake_case` or
@@ -81,7 +82,7 @@ pub(super) async fn run(
             } else {
                 IndexSection::default()
             },
-            blocked_by: BlockedBy::from_inputs(&arguments.blocked_by),
+            blocked_by: blocked_by_input::collect(&arguments.blocked_by),
             effort: arguments.effort.map(Into::into),
             tags: TaskTags::from_inputs(&arguments.tag),
         },
@@ -127,13 +128,30 @@ fn request_prompt(arguments: &Arguments) -> Result<(AddTaskPrompt, bool), AddTas
 pub(super) fn map_add_task_error(error: AddTaskError) -> AddTaskApiError {
     match error {
         AddTaskError::ProjectResolution(error) => map_resolve_project_error(error).into(),
-        AddTaskError::QueryProject(source) => AddTaskApiError::Unexpected {
-            message: source.to_string(),
-        },
+        AddTaskError::QueryProject(source) | AddTaskError::AllocateTaskId { source, .. } => {
+            AddTaskApiError::Unexpected {
+                message: source.to_string(),
+            }
+        }
         AddTaskError::UnknownBlockedByIds { ids } => AddTaskApiError::UnknownBlockedByIds { ids },
         AddTaskError::ReadBlockedBy { id, source } => AddTaskApiError::ReadBlockedBy {
             id,
             reason: source.to_string(),
+        },
+        AddTaskError::SelfBlockedBy { target, blocker } => {
+            AddTaskApiError::SelfBlockedBy { target, blocker }
+        }
+        AddTaskError::BlockedByCycle { path } => AddTaskApiError::BlockedByCycle { path },
+        AddTaskError::MalformedBlockedBy {
+            task,
+            path,
+            raw,
+            reason,
+        } => AddTaskApiError::MalformedBlockedBy {
+            task,
+            path,
+            raw,
+            reason,
         },
         AddTaskError::InvalidTitle(source) => TaskInputApiError::InvalidTitle {
             message: source.to_string(),

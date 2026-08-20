@@ -1,7 +1,7 @@
 use pwf_wire::task::{ClosedTask, ClosedTaskAction, CompleteTask, ResolveTaskProject};
 
 #[cfg(test)]
-use super::task_closure::{NESTED_REVIEW_COMMAND, review_task_prompt};
+use super::task_closure::review_task_prompt;
 use super::{
     CloseTaskError,
     resolve_task_project::{self, ResolveTaskProjectError},
@@ -58,8 +58,7 @@ mod tests {
     };
 
     use super::{
-        CloseTaskError, ClosedTaskAction, CompleteTask, CompleteTaskError, NESTED_REVIEW_COMMAND,
-        review_task_prompt,
+        CloseTaskError, ClosedTaskAction, CompleteTask, CompleteTaskError, review_task_prompt,
     };
     use crate::{
         ports::task_record::{IndexEntry, IndexEntryState, IndexEntryStore, TaskRecord},
@@ -343,16 +342,15 @@ mod tests {
     }
 
     #[test]
-    fn review_prompt_uses_scoped_or_bare_diff() {
+    fn review_prompt_mentions_only_supplied_commits() {
+        let commits = "a..b".parse().unwrap();
         assert_eq!(
-            review_task_prompt(&"PWF-0128".parse().unwrap(), Some("a..b")).as_ref(),
-            format!("review PWF-0128, commits: a..b / git diff a..b / {NESTED_REVIEW_COMMAND}")
+            review_task_prompt(&"PWF-0128".parse().unwrap(), Some(&commits)).as_ref(),
+            "review PWF-0128, commits: a..b"
         );
         assert_eq!(
             review_task_prompt(&"PWF-0128".parse().unwrap(), None).as_ref(),
-            format!(
-                "review PWF-0128 / bash -c 'base=$(git rev-parse --verify \"@{{upstream}}\" 2>/dev/null || git rev-parse --verify main) || exit 1; git diff \"$base..HEAD\"' / {NESTED_REVIEW_COMMAND}"
-            )
+            "review PWF-0128"
         );
     }
 }

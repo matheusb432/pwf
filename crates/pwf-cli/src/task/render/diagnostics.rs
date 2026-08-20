@@ -27,6 +27,9 @@ fn created_section_for_error(error: &AddTaskApiError) -> Option<(&str, &str)> {
         | AddTaskApiError::ResolveProject(_)
         | AddTaskApiError::UnknownBlockedByIds { .. }
         | AddTaskApiError::ReadBlockedBy { .. }
+        | AddTaskApiError::SelfBlockedBy { .. }
+        | AddTaskApiError::BlockedByCycle { .. }
+        | AddTaskApiError::MalformedBlockedBy { .. }
         | AddTaskApiError::Unexpected { .. } => None,
     }
 }

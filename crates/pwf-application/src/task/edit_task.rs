@@ -3,7 +3,7 @@ use pwf_models::{
     task::{BlockedBy, EffortTier, TaskId, TaskStatus, TaskTags, TaskTitle, TaskTitleError},
 };
 use pwf_wire::{
-    project::GetActiveProject,
+    project::{ListProjects, ProjectStatusFilter},
     task::{
         CollectionEdit, EditTask, EditTaskContent, EditTaskContentKind, EditedTask,
         ResolveTaskProject, ValueEdit,
@@ -17,8 +17,8 @@ use super::{
     tags, task_body_region,
 };
 use crate::{
-    ports::task_record::{NullablePatch, TaskPatch, TaskRecord, TaskStore},
-    project::{get_active_project, get_project::GetProjectError},
+    ports::task_record::{NullablePatch, StoredBlockedBy, TaskPatch, TaskRecord, TaskStore},
+    project::list_projects,
 };
 
 struct TaskIdentity {
@@ -46,6 +46,13 @@ pub enum EditTaskError {
     },
     #[error("task {id} has invalid tags frontmatter: {raw:?}.")]
     InvalidTagsFrontmatter { id: TaskId, raw: String },
+    #[error("task {id} at {path} has malformed blocked_by metadata {raw:?}: {reason}")]
+    MalformedBlockedBy {
+        id: TaskId,
+        path: Box<pwf_wire::task::TaskNotePath>,
+        raw: Box<str>,
+        reason: Box<str>,
+    },
     #[error(
         "Unknown --add-blocked-by id(s): {}.",
         blocked_by::format_task_ids(ids)
@@ -57,6 +64,10 @@ pub enum EditTaskError {
         #[source]
         source: Box<dyn std::error::Error + Send + Sync>,
     },
+    #[error("task {target} cannot be blocked by itself ({blocker})")]
+    SelfBlockedBy { target: TaskId, blocker: TaskId },
+    #[error("blocked_by cycle: {}", blocked_by::format_task_ids_path(path))]
+    BlockedByCycle { path: Vec<TaskId> },
     #[error("cannot edit lanes: task body contains more than one `{header}` section.")]
     AmbiguousLanes { header: &'static str },
     #[error("{0}")]
@@ -96,8 +107,8 @@ pub async fn execute(
         });
     }
 
-    let projects = resolve_blocked_by_projects(&command, project.clone(), pool).await?;
-    let prepared = prepare(command, &record, &projects, store)?;
+    let projects = resolve_blocked_by_projects(&command, pool).await?;
+    let prepared = prepare(command, project, &record, &projects, store)?;
     persist(prepared, store)
 }
 
@@ -112,34 +123,31 @@ fn map_project_error(error: ResolveTaskProjectError, id: &TaskId) -> EditTaskErr
 
 async fn resolve_blocked_by_projects(
     command: &EditTask,
-    task_project: Project,
     pool: &sqlx::SqlitePool,
 ) -> Result<Vec<Project>, EditTaskError> {
-    let mut projects = vec![task_project];
-    let Some(blocked_by) = command.edits.blocked_by().addition() else {
-        return Ok(projects);
-    };
-    for id in blocked_by::project_ids(blocked_by) {
-        if projects.iter().any(|project| project.id == id) {
-            continue;
-        }
-        match get_active_project::execute(GetActiveProject { id }, pool).await {
-            Ok(project) => projects.push(project),
-            Err(GetProjectError::ProjectNotFound { .. }) => {}
-            Err(error) => return Err(EditTaskError::QueryProject(Box::new(error))),
-        }
+    if command.edits.blocked_by().addition().is_none() {
+        return Ok(Vec::new());
     }
-    Ok(projects)
+    list_projects::execute(
+        ListProjects {
+            status: ProjectStatusFilter::IncludingPaused,
+        },
+        pool,
+    )
+    .await
+    .map_err(|error| EditTaskError::QueryProject(Box::new(error)))
 }
 
 fn prepare(
     command: EditTask,
+    project: Project,
     record: &TaskRecord,
     projects: &[Project],
     store: &impl TaskStore,
 ) -> Result<PreparedTaskEdit, EditTaskError> {
+    let blocked_by = resolve_blocked_by(command.edits.blocked_by(), record, store, projects)?;
     let identity = TaskIdentity {
-        project: projects[0].clone(),
+        project,
         id: command.id.clone(),
     };
     let (body, title, outcome_title) =
@@ -147,7 +155,7 @@ fn prepare(
     let patch = TaskPatch {
         body,
         title,
-        blocked_by: resolve_blocked_by(command.edits.blocked_by(), record, store, projects)?,
+        blocked_by,
         effort: resolve_effort(command.edits.effort()),
         tags: resolve_tags(command.edits.tags(), &command.id, record)?,
         ..TaskPatch::default()
@@ -202,17 +210,31 @@ fn resolve_blocked_by(
     store: &impl TaskStore,
     projects: &[Project],
 ) -> Result<NullablePatch<BlockedBy>, EditTaskError> {
+    let existing = match &record.blocked_by {
+        StoredBlockedBy::Absent => None,
+        StoredBlockedBy::Valid(blocked_by) => Some(blocked_by),
+        StoredBlockedBy::Malformed { raw, reason } => {
+            return Err(EditTaskError::MalformedBlockedBy {
+                id: record.id.clone(),
+                path: Box::new(record.locator.clone()),
+                raw: raw.clone().into_boxed_str(),
+                reason: reason.clone().into_boxed_str(),
+            });
+        }
+    };
     match edit {
         CollectionEdit::Unchanged => Ok(NullablePatch::Unchanged),
         CollectionEdit::Clear => Ok(NullablePatch::Clear),
         CollectionEdit::Append(added) => {
-            validate_and_merge(record.blocked_by.as_deref(), added, store, projects)
+            validate_and_merge(&record.id, existing, added, store, projects)
                 .map(NullablePatch::Set)
                 .map_err(map_blocked_by_error)
         }
-        CollectionEdit::Replace(added) => validate_and_merge(None, added, store, projects)
-            .map(NullablePatch::Set)
-            .map_err(map_blocked_by_error),
+        CollectionEdit::Replace(added) => {
+            validate_and_merge(&record.id, None, added, store, projects)
+                .map(NullablePatch::Set)
+                .map_err(map_blocked_by_error)
+        }
     }
 }
 
@@ -222,6 +244,21 @@ fn map_blocked_by_error(error: BlockedByValidationError) -> EditTaskError {
         BlockedByValidationError::ReadStore { id, source } => {
             EditTaskError::ReadBlockedBy { id, source }
         }
+        BlockedByValidationError::SelfDependency { target, blocker } => {
+            EditTaskError::SelfBlockedBy { target, blocker }
+        }
+        BlockedByValidationError::Cycle { path } => EditTaskError::BlockedByCycle { path },
+        BlockedByValidationError::MalformedMetadata {
+            task,
+            path,
+            raw,
+            reason,
+        } => EditTaskError::MalformedBlockedBy {
+            id: task,
+            path,
+            raw,
+            reason,
+        },
     }
 }
 
@@ -292,7 +329,7 @@ mod tests {
     use crate::{
         ports::task_record::TaskRecord,
         task::edit_task,
-        testing::{InMemoryStore, app_date, insert_project, task_record},
+        testing::{InMemoryStore, app_date, insert_project, stored_blocked_by, task_record},
     };
 
     fn record(id: &str, status: TaskStatus, body: &str) -> TaskRecord {
@@ -494,7 +531,7 @@ mod tests {
         register_project(&pool).await;
         let target = TaskRecord {
             tags: Some(RawTaskTags::new("[old]")),
-            blocked_by: Some("[[FOO-0001]]".to_string()),
+            blocked_by: stored_blocked_by(&["FOO-0001"]),
             effort: Some("medium".to_string()),
             ..record("FOO-0002", TaskStatus::Active, "## Goals\n")
         };
@@ -502,9 +539,7 @@ mod tests {
         let command = edit(
             "FOO-0002",
             None,
-            CollectionEdit::Replace(
-                BlockedBy::from_inputs(&["FOO-0001".parse().unwrap()]).unwrap(),
-            ),
+            CollectionEdit::Replace(crate::testing::blocked_by(&["FOO-0001"])),
             ValueEdit::Set(EffortTier::High),
             CollectionEdit::Replace(tags("new-tag")),
         );
@@ -517,8 +552,53 @@ mod tests {
             .find(|task| task.id.as_ref() == "FOO-0002")
             .unwrap();
         assert_eq!(edited.tags.as_ref().map(AsRef::as_ref), Some("[new_tag]"));
-        assert_eq!(edited.blocked_by.as_deref(), Some("[[FOO-0001]]"));
+        assert_eq!(
+            edited
+                .blocked_by
+                .valid()
+                .map(|value| value.iter().map(AsRef::as_ref).collect::<Vec<_>>()),
+            Some(vec!["FOO-0001"])
+        );
         assert_eq!(edited.effort.as_deref(), Some("high"));
+    }
+
+    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
+    async fn blocked_by_edit_rejects_a_multihop_cycle_without_mutating_the_task(
+        pool: sqlx::SqlitePool,
+    ) {
+        register_project(&pool).await;
+        let first = TaskRecord {
+            blocked_by: stored_blocked_by(&["FOO-0002"]),
+            ..record("FOO-0001", TaskStatus::Done, "first")
+        };
+        let second = TaskRecord {
+            blocked_by: stored_blocked_by(&["FOO-0003"]),
+            ..record("FOO-0002", TaskStatus::Cancelled, "second")
+        };
+        let target = record("FOO-0003", TaskStatus::Active, "target");
+        let store = staged(vec![first, second, target]);
+        let before = store.tasks("foo-bar");
+        let command = edit(
+            "FOO-0003",
+            None,
+            CollectionEdit::Append(crate::testing::blocked_by(&["FOO-0001"])),
+            ValueEdit::Unchanged,
+            CollectionEdit::Unchanged,
+        );
+
+        let error = run(command, &store, &pool).await.unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "blocked_by cycle: FOO-0003 -> FOO-0001 -> FOO-0002 -> FOO-0003"
+        );
+        assert!(matches!(
+            &error,
+            EditTaskError::BlockedByCycle { path }
+                if path.iter().map(AsRef::as_ref).collect::<Vec<_>>()
+                    == ["FOO-0003", "FOO-0001", "FOO-0002", "FOO-0003"]
+        ));
+        assert_eq!(store.tasks("foo-bar"), before);
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
