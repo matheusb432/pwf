@@ -1,12 +1,12 @@
 use std::error::Error;
 
 use pwf_models::project::{ProjectName, ProjectSelector};
-use pwf_wire::project::{GetProject, ResolveProject};
 
 use super::{
     Project, ProjectRow,
     get_project::{self, GetProjectError},
 };
+use crate::contract::project::{GetProject, ResolveProject};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ResolveProjectError {
@@ -95,7 +95,7 @@ async fn find_by_title(
 }
 
 async fn known_project_names(
-    status: pwf_wire::project::ProjectStatusFilter,
+    status: crate::contract::project::ProjectStatusFilter,
     pool: &sqlx::SqlitePool,
 ) -> Result<Vec<ProjectName>, ResolveProjectError> {
     let includes_paused = status.includes_paused();
@@ -141,10 +141,11 @@ fn unexpected(
 #[cfg(test)]
 mod tests {
     use pwf_models::project::ProjectId;
-    use pwf_wire::project::ProjectStatusFilter;
 
     use super::*;
-    use crate::{project::resolve_project, testing::insert_project};
+    use crate::{
+        contract::project::ProjectStatusFilter, project::resolve_project, testing::insert_project,
+    };
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn title_match_precedes_project_id_match(pool: sqlx::SqlitePool) {

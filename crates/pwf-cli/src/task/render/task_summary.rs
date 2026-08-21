@@ -1,5 +1,5 @@
 use anstyle::AnsiColor;
-use pwf_models::task::TaskStatus;
+use pwf_client::v1::TaskStatus;
 
 use super::{ID_ORANGE, paint};
 
@@ -27,14 +27,20 @@ pub(in crate::task) fn render_task_summary(
 }
 
 pub(in crate::task) fn render_status(status: TaskStatus, color_on: bool) -> String {
-    let text = status.to_string();
+    let text = match status {
+        TaskStatus::Active => "active",
+        TaskStatus::Done => "done",
+        TaskStatus::Cancelled => "cancelled",
+        TaskStatus::Unspecified => "unspecified",
+    };
     if !color_on {
-        return text;
+        return text.to_string();
     }
     let color: anstyle::Color = match status {
         TaskStatus::Active => ID_ORANGE.into(),
         TaskStatus::Done => AnsiColor::Green.into(),
         TaskStatus::Cancelled => AnsiColor::Red.into(),
+        TaskStatus::Unspecified => AnsiColor::Yellow.into(),
     };
-    paint(&text, color, true)
+    paint(text, color, true)
 }

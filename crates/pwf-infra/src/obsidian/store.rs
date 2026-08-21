@@ -12,9 +12,10 @@ mod task_record;
 use std::path::PathBuf;
 
 pub use error::ObsidianStoreError;
-use pwf_application::ports::project_task_location::ProjectTaskLocationClient;
+use pwf_application::{
+    contract::task::ProjectTaskPath, ports::project_task_location::ProjectTaskLocationClient,
+};
 use pwf_models::project::{HomeDirectory, Project, ProjectIndexIdentity};
-use pwf_wire::task::ProjectTaskPath;
 
 #[derive(Clone)]
 pub struct ObsidianStore {

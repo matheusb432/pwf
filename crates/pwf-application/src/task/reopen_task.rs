@@ -1,18 +1,20 @@
 use pwf_models::task::{TaskId, TaskStatus};
-use pwf_wire::{
-    confirmation::{Confirmation, ReopenTaskConfirmation},
-    task::{ReopenTask, ReopenedTask, ResolveTaskProject},
-};
 
 use super::{
     note_body::remove_report,
     resolve_task_project::{self, ResolveTaskProjectError},
     task_body_region,
 };
-use crate::ports::{
-    confirmation::ConfirmationClient,
-    task_record::{
-        IndexEntry, IndexEntryState, IndexEntryStore, NullablePatch, TaskPatch, TaskStore,
+use crate::{
+    contract::{
+        confirmation::{Confirmation, ReopenTaskConfirmation},
+        task::{ReopenTask, ReopenedTask, ResolveTaskProject},
+    },
+    ports::{
+        confirmation::ConfirmationClient,
+        task_record::{
+            IndexEntry, IndexEntryState, IndexEntryStore, NullablePatch, TaskPatch, TaskStore,
+        },
     },
 };
 
@@ -61,7 +63,7 @@ pub async fn execute(
         commit_provenance: record.commits.clone(),
         report: report.clone(),
     });
-    if !confirmation_client.confirm(&confirmation) {
+    if !confirmation_client.confirm(&confirmation).await {
         return Ok(ReopenedTask::Aborted {
             id: task_identifier,
         });
@@ -113,13 +115,13 @@ mod tests {
         project::{Project, ProjectName},
         task::{TaskId, TaskStatus},
     };
-    use pwf_wire::{
-        confirmation::{Confirmation, ReopenTaskConfirmation},
-        task::ReopenedTask,
-    };
 
     use super::ReopenTask;
     use crate::{
+        contract::{
+            confirmation::{Confirmation, ReopenTaskConfirmation},
+            task::ReopenedTask,
+        },
         ports::{
             confirmation::ConfirmationClient,
             task_record::{IndexEntry, IndexEntryState, IndexEntryStore, TaskRecord},
@@ -154,9 +156,14 @@ mod tests {
     }
 
     impl ConfirmationClient for TestConfirmation {
-        fn confirm(&self, confirmation: &Confirmation) -> bool {
-            self.recorded.lock().unwrap().push(confirmation.clone());
-            self.accepted
+        fn confirm<'a>(
+            &'a self,
+            confirmation: &'a Confirmation,
+        ) -> futures::future::BoxFuture<'a, bool> {
+            Box::pin(async move {
+                self.recorded.lock().unwrap().push(confirmation.clone());
+                self.accepted
+            })
         }
     }
 

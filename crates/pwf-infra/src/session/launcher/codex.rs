@@ -1,12 +1,15 @@
 //! Creates named Codex threads and prepares resume launches.
 
-use pwf_application::ports::agent::PreparedAgentLaunch;
+use pwf_application::{
+    contract::task::session::{AgentLaunch, AgentProbe},
+    ports::agent::PreparedAgentLaunch,
+};
 use pwf_models::session::{AgentModel, LaunchPrompt, SessionThreadTitle, SessionWorkingDirectory};
-use pwf_wire::task::session::{AgentLaunch, AgentProbe};
 
 use super::{
     super::{
-        codex_app_server::{CodexThreadPreparationError, start_and_name_thread},
+        ProcessEnvironment,
+        codex_app_server::{CodexThreadPreparationError, start_and_name_thread_with_environment},
         codex_reasoning_effort::CodexReasoningEffort,
     },
     argv::LaunchArgv,
@@ -35,8 +38,8 @@ impl From<&AgentLaunch> for CodexLaunchPlan {
     }
 }
 
-pub(super) fn probe() -> AgentProbe {
-    super::probe(pwf_models::session::Agent::Codex, BINARY)
+pub(super) fn probe(environment: &ProcessEnvironment) -> AgentProbe {
+    super::probe(environment, pwf_models::session::Agent::Codex, BINARY)
 }
 
 pub(super) fn preview(launch: &AgentLaunch) -> Vec<String> {
@@ -46,21 +49,32 @@ pub(super) fn preview(launch: &AgentLaunch) -> Vec<String> {
 
 pub(super) fn prepare(
     launch: &AgentLaunch,
+    environment: &ProcessEnvironment,
 ) -> Result<PreparedAgentLaunch, CodexThreadPreparationError> {
-    prepare_with_binary(launch, BINARY)
+    prepare_with_binary_and_environment(launch, BINARY, environment)
 }
 
+#[cfg(test)]
 fn prepare_with_binary(
     launch: &AgentLaunch,
     app_server_binary: &str,
 ) -> Result<PreparedAgentLaunch, CodexThreadPreparationError> {
+    prepare_with_binary_and_environment(launch, app_server_binary, &ProcessEnvironment::inherited())
+}
+
+fn prepare_with_binary_and_environment(
+    launch: &AgentLaunch,
+    app_server_binary: &str,
+    environment: &ProcessEnvironment,
+) -> Result<PreparedAgentLaunch, CodexThreadPreparationError> {
     let plan = CodexLaunchPlan::from(launch);
-    let named_thread = start_and_name_thread(
+    let named_thread = start_and_name_thread_with_environment(
         app_server_binary,
         plan.title.as_ref(),
         plan.project_path.as_ref(),
         plan.model.as_deref(),
         plan.effort,
+        environment,
     )?;
     let thread_id = named_thread.into_id();
     let arguments = resume_argv(plan, thread_id.clone());
@@ -87,7 +101,9 @@ fn resume_argv(plan: CodexLaunchPlan, thread_id: String) -> Vec<String> {
 mod tests {
     #[cfg(unix)]
     use anyhow::{Context as _, Result};
-    use pwf_application::ports::agent::PreparedAgentLaunch;
+    use pwf_application::{
+        contract::task::session::AgentLaunch, ports::agent::PreparedAgentLaunch,
+    };
     use pwf_models::{
         session::{
             Agent, AgentModel, LaunchPrompt, SessionEffort, SessionThreadTitle,
@@ -95,7 +111,6 @@ mod tests {
         },
         task::TaskId,
     };
-    use pwf_wire::task::session::AgentLaunch;
 
     use super::prepare_with_binary;
     #[cfg(unix)]

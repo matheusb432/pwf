@@ -4,14 +4,15 @@ mod argv;
 mod claude;
 mod codex;
 
-use std::process::Command;
-
-use pwf_application::ports::agent::{AgentClient, PreparedAgentLaunch};
+use pwf_application::{
+    contract::task::session::{AgentAvailability, AgentLaunch, AgentProbe, ModelTierLookup},
+    ports::agent::{AgentClient, PreparedAgentLaunch},
+};
 use pwf_models::{session::Agent, task::EffortTier};
-use pwf_wire::task::session::{AgentAvailability, AgentLaunch, AgentProbe, ModelTierLookup};
 use thiserror::Error;
 
 use super::{
+    ProcessEnvironment,
     codex_app_server::CodexThreadPreparationError,
     model_tiers::{self, ModelTiersError},
 };
@@ -21,8 +22,17 @@ use super::{
 pub struct AgentPreparationError(#[from] CodexThreadPreparationError);
 
 /// Implements agent discovery, configuration, and launch preparation.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct AgentHarness;
+#[derive(Debug, Clone, Default)]
+pub struct AgentHarness {
+    environment: ProcessEnvironment,
+}
+
+impl AgentHarness {
+    #[must_use]
+    pub fn new(environment: ProcessEnvironment) -> Self {
+        Self { environment }
+    }
+}
 
 impl AgentClient for AgentHarness {
     type ModelTierError = ModelTiersError;
@@ -30,13 +40,13 @@ impl AgentClient for AgentHarness {
 
     fn probe(&self, agent: Agent) -> AgentProbe {
         match agent {
-            Agent::Claude => claude::probe(),
-            Agent::Codex => codex::probe(),
+            Agent::Claude => claude::probe(&self.environment),
+            Agent::Codex => codex::probe(&self.environment),
         }
     }
 
     fn model_tier(&self, effort: EffortTier) -> Result<ModelTierLookup, Self::ModelTierError> {
-        model_tiers::tier(effort)
+        model_tiers::tier(effort, &self.environment)
     }
 
     fn preview(&self, launch: &AgentLaunch) -> Vec<String> {
@@ -51,13 +61,13 @@ impl AgentClient for AgentHarness {
             Agent::Claude => Ok(PreparedAgentLaunch::Process {
                 arguments: claude::prepare(launch),
             }),
-            Agent::Codex => codex::prepare(launch).map_err(Into::into),
+            Agent::Codex => codex::prepare(launch, &self.environment).map_err(Into::into),
         }
     }
 }
 
-fn probe(agent: Agent, binary: &str) -> AgentProbe {
-    let availability = if binary_available(binary) {
+fn probe(environment: &ProcessEnvironment, agent: Agent, binary: &str) -> AgentProbe {
+    let availability = if binary_available(environment, binary) {
         AgentAvailability::Available
     } else {
         AgentAvailability::Missing
@@ -68,28 +78,21 @@ fn probe(agent: Agent, binary: &str) -> AgentProbe {
     }
 }
 
-fn binary_available(name: &str) -> bool {
+fn binary_available(environment: &ProcessEnvironment, name: &str) -> bool {
     #[cfg(windows)]
     {
-        Command::new("where")
+        environment
+            .command("where")
             .arg(name)
             .output()
             .is_ok_and(|output| output.status.success())
     }
     #[cfg(not(windows))]
     {
-        Command::new("sh")
+        environment
+            .command("/bin/sh")
             .args(["-c", &format!("command -v {name}")])
             .output()
             .is_ok_and(|output| output.status.success())
     }
-}
-
-/// Renders complete argv as a shell-safe command preview.
-#[must_use]
-pub fn render_argv(argv: &[String]) -> String {
-    argv.iter()
-        .map(|argument| shell_words::quote(argument))
-        .collect::<Vec<_>>()
-        .join(" ")
 }

@@ -43,7 +43,7 @@ fmt-check:
 [group('quality')]
 lint:
     cargo clippy --workspace --all-targets -- -D warnings
-    cargo clippy -p pwf-e2e --test e2e -- -D warnings
+    cargo clippy -p pwf-cli --test binary --test e2e -- -D warnings
 
 # Refresh or verify the committed SQLx checked-query cache.
 prepare *args:

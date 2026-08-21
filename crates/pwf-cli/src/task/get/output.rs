@@ -1,4 +1,4 @@
-use pwf_wire::task::TaskData;
+use pwf_client::v1::{EffortTier, TaskData, TaskStatus};
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -24,22 +24,39 @@ pub(super) fn json(task: TaskData) -> Result<String, serde_json::Error> {
 impl From<TaskData> for TaskOutput {
     fn from(task: TaskData) -> Self {
         Self {
-            id: task.id.to_string(),
-            project: task.project.to_string(),
-            title: task.title.to_string(),
-            status: task.status.to_string(),
-            created: task.created.map(|value| value.to_string()),
-            completed: task.completed.map(|value| value.to_string()),
-            commits: task.commits.map(|commits| commits.to_string()),
-            tags: task
-                .tags
-                .map(|tags| tags.iter().map(|tag| tag.as_ref().to_string()).collect()),
-            effort: task.effort.map(|effort| effort.to_string()),
-            blocked_by: task
-                .blocked_by
-                .map(|identifiers| identifiers.iter().map(ToString::to_string).collect()),
-            section: task.section.map(|section| section.to_string()),
-            prompt: task.prompt.to_string(),
+            id: task.id,
+            project: task.project,
+            title: task.title,
+            status: task_status(task.status).to_string(),
+            created: task.created,
+            completed: task.completed,
+            commits: task.commits,
+            tags: (!task.tags.is_empty()).then_some(task.tags),
+            effort: task
+                .effort
+                .and_then(|effort| effort_name(effort).map(str::to_string)),
+            blocked_by: (!task.blocked_by.is_empty()).then_some(task.blocked_by),
+            section: task.section,
+            prompt: task.prompt,
         }
+    }
+}
+
+fn task_status(value: i32) -> &'static str {
+    match TaskStatus::try_from(value).ok() {
+        Some(TaskStatus::Active) => "active",
+        Some(TaskStatus::Done) => "done",
+        Some(TaskStatus::Cancelled) => "cancelled",
+        Some(TaskStatus::Unspecified) | None => "unspecified",
+    }
+}
+
+fn effort_name(value: i32) -> Option<&'static str> {
+    match EffortTier::try_from(value).ok()? {
+        EffortTier::Low => Some("low"),
+        EffortTier::Medium => Some("medium"),
+        EffortTier::High => Some("high"),
+        EffortTier::Highest => Some("highest"),
+        EffortTier::Unspecified => None,
     }
 }

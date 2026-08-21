@@ -4,6 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 publish.workspace = true
 description = "Manages tasks and project notes across configured projects."
+autotests = false
 
 [[bin]]
 name = "pwf"
@@ -13,24 +14,39 @@ path = "src/main.rs"
 name = "pwf_cli"
 path = "src/lib.rs"
 
+[[test]]
+name = "binary"
+path = "tests/binary.rs"
+test = false
+
+[[test]]
+name = "e2e"
+path = "tests/e2e.rs"
+test = false
+
 [dependencies]
 anyhow = { workspace = true }
-pwf-application = { workspace = true }
-pwf-infra = { workspace = true }
+prost = { workspace = true }
+prompt-lanes = { workspace = true }
+pwf-client = { workspace = true }
 pwf-models = { workspace = true }
-pwf-wire = { workspace = true }
 clap = { workspace = true }
 clap-cargo = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-sqlx = { workspace = true }
-directories = { workspace = true }
 dialoguer = { workspace = true }
 lazy-regex = { workspace = true }
 anstyle = { workspace = true }
 toml = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt"] }
 walkdir = { workspace = true }
+
+[dev-dependencies]
+assert_cmd = { workspace = true }
+tempfile = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+expectrl = { workspace = true }
 
 [lints]
 workspace = true

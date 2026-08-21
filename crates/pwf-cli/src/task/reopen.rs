@@ -1,9 +1,10 @@
 use clap::Args;
-use pwf_application::task::reopen_task::{self, ReopenTaskError};
-use pwf_infra::obsidian::ObsidianStore;
-use pwf_wire::task::{ReopenTask, ReopenTaskApiError};
+use pwf_client::{
+    task::{ConfirmedRequestError, TaskClient},
+    v1::ReopenTaskRequest,
+};
 
-use super::{Identifier, map_resolve_task_project_error};
+use super::Identifier;
 
 #[derive(Args, Debug)]
 pub struct Arguments {
@@ -23,29 +24,27 @@ use crate::{
 pub(super) async fn run(
     arguments: &Arguments,
     console: Console,
-    store: &ObsidianStore,
-    pool: &sqlx::SqlitePool,
+    client: &TaskClient,
 ) -> anyhow::Result<String> {
     let id = arguments
         .identifier
-        .required(ReopenTaskApiError::MissingId)?;
+        .required(anyhow::anyhow!("--id is required for reopen."))?;
     let confirmation_mode = console.confirmation_mode(arguments.assume_yes)?;
     let confirmation_client = CliConfirmationClient::new(console, confirmation_mode);
-    let outcome = reopen_task::execute(&ReopenTask { id }, store, pool, &confirmation_client)
+    let outcome = match client
+        .reopen_task(
+            ReopenTaskRequest { id: id.to_string() },
+            confirmation_client,
+        )
         .await
-        .map_err(map_error)?;
-    if let Some(source) = confirmation_client.into_prompt_error() {
-        return Err(prompt_error("task reopening", source));
-    }
+    {
+        Ok(outcome) => outcome,
+        Err(ConfirmedRequestError::Operation(error)) => {
+            return Err(anyhow::anyhow!(error.message().to_string()));
+        }
+        Err(ConfirmedRequestError::Prompt(source)) => {
+            return Err(prompt_error("task reopening", source));
+        }
+    };
     Ok(render_reopened(&outcome))
-}
-
-fn map_error(error: ReopenTaskError) -> ReopenTaskApiError {
-    match error {
-        ReopenTaskError::TaskNotFound { id } => ReopenTaskApiError::TaskNotFound { id },
-        ReopenTaskError::ResolveProject(error) => map_resolve_task_project_error(error).into(),
-        ReopenTaskError::WriteStore(source) => ReopenTaskApiError::Unexpected {
-            message: source.to_string(),
-        },
-    }
 }

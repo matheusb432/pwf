@@ -12,6 +12,7 @@ rust = { version = "stable", profile = "minimal", components = [
 ] }
 just = "1.56.0"
 ast-grep = "0.44.1"
+protoc = "35.1"
 "cargo-binstall" = "1.21.1"
 "cargo:cargo-llvm-cov" = { version = "0.8.7", depends = [
   "rust",

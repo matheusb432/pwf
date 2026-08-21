@@ -1,13 +1,8 @@
 use clap::Args;
-use pwf_application::{
-    ports::clock::Clock,
-    task::complete_task::{self, CompleteTaskError},
-};
-use pwf_infra::obsidian::ObsidianStore;
-use pwf_models::task::{CommitRanges, TaskReport};
-use pwf_wire::task::{CloseTaskApiError, CompleteTask, CompleteTaskApiError};
+use pwf_client::{task::TaskClient, v1::CompleteTaskRequest};
+use pwf_models::task::TaskReport;
 
-use super::{Identifier, map_close_task_error, map_resolve_task_project_error};
+use super::Identifier;
 
 #[derive(Args, Debug)]
 pub struct Arguments {
@@ -28,50 +23,31 @@ use super::render::{
     emit_close_diagnostics, emit_created_section, emit_created_section_for_error, render_closed,
 };
 
-pub(super) async fn run(
-    arguments: &Arguments,
-    store: &ObsidianStore,
-    pool: &sqlx::SqlitePool,
-    clock: &impl Clock,
-) -> Result<String, CompleteTaskApiError> {
+pub(super) async fn run(arguments: &Arguments, client: &TaskClient) -> anyhow::Result<String> {
     let id = arguments
         .identifier
-        .required(CompleteTaskApiError::MissingId)?;
-    let output = complete_task::execute(
-        &CompleteTask {
-            id,
+        .required(anyhow::anyhow!("--id is required for done."))?;
+    let output = client
+        .complete_task(CompleteTaskRequest {
+            id: id.to_string(),
             report: arguments
                 .report
                 .as_deref()
                 .map(str::parse::<TaskReport>)
                 .transpose()
-                .map_err(|error| CompleteTaskApiError::InvalidReport {
-                    message: error.to_string(),
-                })?,
-            commits: CommitRanges::from_inputs(&arguments.commits),
+                .map_err(|error| anyhow::anyhow!(error.to_string()))?
+                .map(|report| report.to_string()),
+            commits: arguments.commits.clone(),
             review: arguments.review,
-        },
-        store,
-        pool,
-        clock,
-    )
-    .await
-    .map_err(map_error)
-    .inspect_err(|error| {
-        if let CompleteTaskApiError::Close(CloseTaskApiError::ReviewTask(source)) = error {
-            emit_created_section_for_error(source);
-        }
-    })?;
+        })
+        .await
+        .map_err(|error| {
+            emit_created_section_for_error(&error);
+            crate::rpc_error(error)
+        })?;
     if let Some(review) = output.review_task.as_ref() {
         emit_created_section(review);
     }
     emit_close_diagnostics(&output);
     Ok(render_closed(&output))
-}
-
-fn map_error(error: CompleteTaskError) -> CompleteTaskApiError {
-    CompleteTaskApiError::Close(match error {
-        CompleteTaskError::ResolveProject(error) => map_resolve_task_project_error(error).into(),
-        CompleteTaskError::Close(error) => map_close_task_error(error),
-    })
 }

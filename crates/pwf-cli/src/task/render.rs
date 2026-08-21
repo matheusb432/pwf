@@ -13,14 +13,15 @@ pub(super) use diagnostics::{
     TITLE_NORMALIZED_NOTICE, emit_created_section, emit_created_section_for_error,
 };
 pub(super) use list::render_list;
-pub(super) use session::{render_dispatch, render_dry_run, render_session_aborted};
+pub(super) use session::{render_dispatch, render_dry_run};
 pub(super) use session_confirmation::render_session_confirmation;
 pub(super) use task_summary::{render_status, render_task_summary};
 
-fn agent_name(agent: pwf_models::session::Agent) -> &'static str {
+fn agent_name(agent: pwf_client::v1::Agent) -> &'static str {
     match agent {
-        pwf_models::session::Agent::Claude => "claude",
-        pwf_models::session::Agent::Codex => "codex",
+        pwf_client::v1::Agent::Claude => "claude",
+        pwf_client::v1::Agent::Codex => "codex",
+        pwf_client::v1::Agent::Unspecified => "agent",
     }
 }
 

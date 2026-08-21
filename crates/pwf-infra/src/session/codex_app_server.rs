@@ -159,6 +159,7 @@ fn write_shutdown_diagnostic(
     Ok(())
 }
 
+#[cfg(test)]
 pub(super) fn start_and_name_thread(
     binary: &str,
     title: &str,
@@ -166,14 +167,33 @@ pub(super) fn start_and_name_thread(
     model: Option<&str>,
     effort: CodexReasoningEffort,
 ) -> Result<NamedCodexThread, CodexThreadPreparationError> {
-    let mut client =
-        AppServerClient::start(binary).map_err(|failure| CodexThreadPreparationError {
+    start_and_name_thread_with_environment(
+        binary,
+        title,
+        project_path,
+        model,
+        effort,
+        &super::ProcessEnvironment::inherited(),
+    )
+}
+
+pub(super) fn start_and_name_thread_with_environment(
+    binary: &str,
+    title: &str,
+    project_path: &str,
+    model: Option<&str>,
+    effort: CodexReasoningEffort,
+    environment: &super::ProcessEnvironment,
+) -> Result<NamedCodexThread, CodexThreadPreparationError> {
+    let mut client = AppServerClient::start(binary, environment).map_err(|failure| {
+        CodexThreadPreparationError {
             title: title.to_string(),
             failure: Box::new(PreparationFailure::Primary {
                 primary: failure.primary,
                 shutdown: failure.shutdown,
             }),
-        })?;
+        }
+    })?;
     let preparation = prepare_thread(&mut client, title, project_path, model, effort);
     let shutdown = client.shutdown();
 

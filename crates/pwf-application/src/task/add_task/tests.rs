@@ -2,9 +2,9 @@ use pwf_models::{
     AppDate,
     task::{IndexSection, TaskPrompt, TaskTitle},
 };
-use pwf_wire::task::{AddTask, AddTaskPrompt, TaskLanes};
 
 use crate::{
+    contract::task::{AddTask, AddTaskPrompt, TaskLanes},
     ports::task_record::IndexEntryState,
     task::add_task::{self, AddTaskError},
     testing::{

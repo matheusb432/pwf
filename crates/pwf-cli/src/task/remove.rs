@@ -1,9 +1,10 @@
 use clap::Args;
-use pwf_application::task::remove_task::{self, RemoveTaskError};
-use pwf_infra::obsidian::ObsidianStore;
-use pwf_wire::task::{RemoveTask, RemoveTaskApiError, RemovedTaskOutcome};
+use pwf_client::{
+    task::{ConfirmedRequestError, TaskClient},
+    v1::{RemoveTaskRequest, RemovedTaskOutcomeKind},
+};
 
-use super::{Identifier, map_resolve_task_project_error};
+use super::Identifier;
 
 #[derive(Args, Debug)]
 pub struct Arguments {
@@ -23,57 +24,42 @@ use crate::{
 pub(super) async fn run(
     arguments: &Arguments,
     console: Console,
-    store: &ObsidianStore,
-    pool: &sqlx::SqlitePool,
+    client: &TaskClient,
 ) -> anyhow::Result<String> {
     let id = arguments
         .identifier
-        .required(RemoveTaskApiError::MissingId)?;
+        .required(anyhow::anyhow!("--id is required for remove."))?;
     let confirmation_mode = console.confirmation_mode(arguments.assume_yes)?;
 
     let confirmation_client = CliConfirmationClient::new(console, confirmation_mode);
-    let outcome = remove_task::execute(&RemoveTask { id }, store, pool, &confirmation_client)
+    let outcome = match client
+        .remove_task(
+            RemoveTaskRequest { id: id.to_string() },
+            confirmation_client,
+        )
         .await
-        .map_err(map_error)?;
-    if let Some(source) = confirmation_client.into_prompt_error() {
-        return Err(prompt_error("task removal", source));
-    }
+    {
+        Ok(outcome) => outcome,
+        Err(ConfirmedRequestError::Operation(error)) => {
+            return Err(anyhow::anyhow!(error.message().to_string()));
+        }
+        Err(ConfirmedRequestError::Prompt(source)) => {
+            return Err(prompt_error("task removal", source));
+        }
+    };
 
-    match outcome {
-        RemovedTaskOutcome::Removed(removed) => Ok(render_removed(&removed, console.color())),
-        RemovedTaskOutcome::Aborted { task_id } => {
-            Ok(format!("# remove {task_id}: aborted\nnothing deleted.\n"))
-        }
-    }
-}
-
-fn map_error(error: RemoveTaskError) -> RemoveTaskApiError {
-    match error {
-        RemoveTaskError::TaskNotFound { id } => RemoveTaskApiError::TaskNotFound { id },
-        RemoveTaskError::ResolveProject(error) => map_resolve_task_project_error(error).into(),
-        RemoveTaskError::NoteMissing { path } => RemoveTaskApiError::NoteMissing { path },
-        RemoveTaskError::InvalidTitle { id, source } => RemoveTaskApiError::InvalidTitle {
-            id,
-            reason: source.to_string(),
-        },
-        RemoveTaskError::HasDependents { target, dependents } => {
-            RemoveTaskApiError::HasDependents { target, dependents }
-        }
-        RemoveTaskError::MalformedBlockedBy {
-            task,
-            path,
-            raw,
-            reason,
-        } => RemoveTaskApiError::MalformedBlockedBy {
-            task,
-            path,
-            raw,
-            reason,
-        },
-        RemoveTaskError::WriteStore(source) | RemoveTaskError::ReadDependents(source) => {
-            RemoveTaskApiError::Unexpected {
-                message: source.to_string(),
-            }
-        }
+    match RemovedTaskOutcomeKind::try_from(outcome.outcome).ok() {
+        Some(RemovedTaskOutcomeKind::Removed) => outcome
+            .removed
+            .as_ref()
+            .map(|removed| render_removed(removed, console.color()))
+            .ok_or_else(|| anyhow::anyhow!("pwf-server returned removal without task details")),
+        Some(RemovedTaskOutcomeKind::Aborted) => Ok(format!(
+            "# remove {}: aborted\nnothing deleted.\n",
+            outcome.task_id
+        )),
+        Some(RemovedTaskOutcomeKind::Unspecified) | None => Err(anyhow::anyhow!(
+            "pwf-server returned an invalid removal outcome"
+        )),
     }
 }

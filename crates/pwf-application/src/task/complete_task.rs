@@ -1,5 +1,3 @@
-use pwf_wire::task::{ClosedTask, ClosedTaskAction, CompleteTask, ResolveTaskProject};
-
 #[cfg(test)]
 use super::task_closure::review_task_prompt;
 use super::{
@@ -7,9 +5,12 @@ use super::{
     resolve_task_project::{self, ResolveTaskProjectError},
     task_closure::{self, TaskClosure},
 };
-use crate::ports::{
-    clock::Clock,
-    task_record::{IndexEntryStore, IndexSectionStore, TaskStore},
+use crate::{
+    contract::task::{ClosedTask, ClosedTaskAction, CompleteTask, ResolveTaskProject},
+    ports::{
+        clock::Clock,
+        task_record::{IndexEntryStore, IndexSectionStore, TaskStore},
+    },
 };
 
 #[derive(Debug, thiserror::Error)]

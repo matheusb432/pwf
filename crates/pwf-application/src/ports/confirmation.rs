@@ -1,5 +1,7 @@
-use pwf_wire::confirmation::Confirmation;
+use futures::future::BoxFuture;
+
+use crate::contract::confirmation::Confirmation;
 
 pub trait ConfirmationClient {
-    fn confirm(&self, confirmation: &Confirmation) -> bool;
+    fn confirm<'a>(&'a self, confirmation: &'a Confirmation) -> BoxFuture<'a, bool>;
 }

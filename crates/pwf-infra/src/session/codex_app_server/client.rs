@@ -2,7 +2,7 @@ mod reader;
 
 use std::{
     io::Write as _,
-    process::{Child, ChildStdin, Command, Stdio},
+    process::{Child, ChildStdin, Stdio},
     sync::mpsc::{Receiver, RecvTimeoutError},
     thread,
     time::{Duration, Instant},
@@ -12,6 +12,7 @@ use reader::{ReaderFailure, start_response_reader};
 use serde_json::{Value, json};
 
 use super::{CodexAppServerError, CodexAppServerOperation};
+use crate::session::ProcessEnvironment;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
@@ -30,19 +31,22 @@ pub(super) struct AppServerClient {
 }
 
 impl AppServerClient {
-    pub(super) fn start(binary: &str) -> Result<Self, AppServerStartFailure> {
-        let mut child = Command::new(binary)
+    pub(super) fn start(
+        binary: &str,
+        environment: &ProcessEnvironment,
+    ) -> Result<Self, AppServerStartFailure> {
+        let mut command = environment.command(binary);
+        command
             .args(["app-server", "--stdio"])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|error| AppServerStartFailure {
-                primary: CodexAppServerError::ProcessStart {
-                    message: error.to_string(),
-                },
-                shutdown: None,
-            })?;
+            .stderr(Stdio::null());
+        let mut child = command.spawn().map_err(|error| AppServerStartFailure {
+            primary: CodexAppServerError::ProcessStart {
+                message: error.to_string(),
+            },
+            shutdown: None,
+        })?;
         let Some(stdin) = child.stdin.take() else {
             return Err(fail_started_child(
                 child,

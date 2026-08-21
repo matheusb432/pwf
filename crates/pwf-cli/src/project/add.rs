@@ -1,17 +1,14 @@
 use std::str::FromStr;
 
 use clap::{Args, ValueEnum};
-use pwf_application::project::add_project::{self, AddProjectError};
-use pwf_models::project::{
-    HomeDirectory, ProjectSource, ProjectSourceKind, ProjectTasks, ProjectTasksKind,
+use pwf_client::{
+    project::ProjectClient,
+    v1::{AddProjectRequest, ProjectFields},
 };
-use pwf_wire::project::{AddProject, AddProjectApiError, ProjectFields};
 use serde::Deserialize;
-use sqlx::SqlitePool;
 
 use super::{
-    map_task_location_error, output, parse_project_id, parse_project_source, parse_project_tasks,
-    parse_project_title,
+    output, parse_project_id, parse_project_source, parse_project_tasks, parse_project_title,
 };
 
 #[derive(Args, Debug)]
@@ -45,48 +42,27 @@ impl FromStr for DirectoryPayload {
         let tasks_path = parse_project_tasks(&path)?;
 
         Ok(Self(ProjectFields {
-            id,
-            title,
-            source: ProjectSource::new(ProjectSourceKind::Directory, source_value),
-            tasks: ProjectTasks::new(ProjectTasksKind::Directory, tasks_path),
+            id: id.to_string(),
+            title: title.to_string(),
+            source_kind: "directory".to_string(),
+            source_value: source_value.to_string(),
+            tasks_kind: "directory".to_string(),
+            tasks_path: tasks_path.to_string(),
         }))
     }
 }
 
-pub(super) async fn run(
-    arguments: Arguments,
-    pool: &SqlitePool,
-    home: Option<HomeDirectory>,
-) -> Result<String, AddProjectApiError> {
-    let home = home.ok_or(AddProjectApiError::HomeDirectoryUnavailable)?;
+pub(super) async fn run(arguments: Arguments, client: &ProjectClient) -> anyhow::Result<String> {
     match arguments.kind {
         SourceKind::Directory => {
-            let project = add_project::execute(
-                AddProject {
-                    fields: arguments.payload.0,
-                },
-                pool,
-                &home,
-            )
-            .await
-            .map_err(map_error)?;
-            output::project(project).map_err(|error| AddProjectApiError::RenderJson {
-                message: error.to_string(),
-            })
+            let project = client
+                .add_project(AddProjectRequest {
+                    fields: Some(arguments.payload.0),
+                })
+                .await
+                .map_err(crate::rpc_error)?;
+            output::project(project)
         }
-    }
-}
-
-fn map_error(error: AddProjectError) -> AddProjectApiError {
-    match error {
-        AddProjectError::DuplicateProjectId { id } => AddProjectApiError::DuplicateProjectId { id },
-        AddProjectError::DuplicateProjectTitle { title } => {
-            AddProjectApiError::DuplicateProjectTitle { title }
-        }
-        AddProjectError::TaskLocation(error) => map_task_location_error(error).into(),
-        AddProjectError::Unexpected { context, source } => AddProjectApiError::Unexpected {
-            message: format!("{context}: {source}"),
-        },
     }
 }
 

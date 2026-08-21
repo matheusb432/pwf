@@ -1,15 +1,15 @@
 use pwf_models::task::{TaskId, TaskTitle, TaskTitleError};
-use pwf_wire::{
-    confirmation::{Confirmation, RemoveTaskConfirmation},
-    project::{ListProjects, ProjectStatusFilter},
-    task::{RemoveTask, RemovedTask, RemovedTaskOutcome, ResolveTaskProject, TaskNotePath},
-};
 
 use super::{
     blocked_by,
     resolve_task_project::{self, ResolveTaskProjectError},
 };
 use crate::{
+    contract::{
+        confirmation::{Confirmation, RemoveTaskConfirmation},
+        project::{ListProjects, ProjectStatusFilter},
+        task::{RemoveTask, RemovedTask, RemovedTaskOutcome, ResolveTaskProject, TaskNotePath},
+    },
     ports::{
         confirmation::ConfirmationClient,
         task_record::{IndexEntryStore, Materialization, StoredBlockedBy, TaskStore},
@@ -97,7 +97,7 @@ pub async fn execute(
         status: record.status,
         note_path: note_path.clone(),
     });
-    if !confirmation_client.confirm(&confirmation) {
+    if !confirmation_client.confirm(&confirmation).await {
         return Ok(RemovedTaskOutcome::Aborted {
             task_id: task_identifier,
         });
@@ -163,13 +163,13 @@ async fn find_dependents(
 #[cfg(test)]
 mod tests {
     use pwf_models::task::{TaskId, TaskStatus};
-    use pwf_wire::{
-        confirmation::Confirmation,
-        task::{RemovedTaskOutcome, TaskNotePath},
-    };
 
     use super::{RemoveTask, RemoveTaskError};
     use crate::{
+        contract::{
+            confirmation::Confirmation,
+            task::{RemovedTaskOutcome, TaskNotePath},
+        },
         ports::{
             confirmation::ConfirmationClient,
             task_record::{
@@ -234,8 +234,11 @@ mod tests {
     struct Accepted;
 
     impl ConfirmationClient for Accepted {
-        fn confirm(&self, _confirmation: &Confirmation) -> bool {
-            true
+        fn confirm<'a>(
+            &'a self,
+            _confirmation: &'a Confirmation,
+        ) -> futures::future::BoxFuture<'a, bool> {
+            Box::pin(async { true })
         }
     }
 
@@ -419,9 +422,8 @@ mod tests {
     }
 
     mod pwf_0144 {
-        use pwf_wire::task::RemovedTaskOutcome;
-
         use super::*;
+        use crate::contract::task::RemovedTaskOutcome;
 
         fn command(id: &str) -> RemoveTask {
             RemoveTask {
@@ -435,8 +437,11 @@ mod tests {
         }
 
         impl ConfirmationClient for StaticInteraction {
-            fn confirm(&self, _confirmation: &Confirmation) -> bool {
-                self.accepted
+            fn confirm<'a>(
+                &'a self,
+                _confirmation: &'a Confirmation,
+            ) -> futures::future::BoxFuture<'a, bool> {
+                Box::pin(async { self.accepted })
             }
         }
 

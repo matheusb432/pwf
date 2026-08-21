@@ -2,9 +2,11 @@ use pwf_models::{
     project::{Project, ProjectId},
     task::TaskId,
 };
-use pwf_wire::{project::GetActiveProject, task::ResolveTaskProject};
 
-use crate::project::{get_active_project, get_project::GetProjectError};
+use crate::{
+    contract::{project::GetActiveProject, task::ResolveTaskProject},
+    project::{get_active_project, get_project::GetProjectError},
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ResolveTaskProjectError {

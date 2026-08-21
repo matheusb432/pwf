@@ -1,29 +1,17 @@
 use clap::Args;
-use pwf_application::task::session::{
-    dispatch_session::{self, DispatchSessionError},
-    plan_session::{self, PlanSessionError},
-};
-use pwf_infra::{
-    obsidian::ObsidianStore,
-    session::{AgentHarness, InlineHarness, LocalProjectDirectoryClient, TmuxHarness, render_argv},
-};
-use pwf_models::{
-    project::HomeDirectory,
-    session::{Agent, DispatchMode, LaunchDirectives, PushedPrompt, SessionEffort},
-};
-use pwf_wire::task::{
-    BlockedByResolution,
-    session::{
-        AgentProbe, DispatchSession, DispatchSessionApiError, PlanSession, PlanSessionApiError,
-        PlanSessionIntent, PlannedSession, SessionWarning,
+use pwf_client::{
+    task::{Confirmation, ConfirmationPrompt, ConfirmedRequestError, TaskClient},
+    v1::{
+        Agent, AgentAvailability, BlockedByResolutionKind, DispatchMode, DispatchSessionOutcome,
+        LaunchDirectives, PlanSessionIntent, PlanSessionRequest, SessionEffort, SessionWarning,
+        TaskStatus, session_warning,
     },
 };
+use pwf_models::session::PushedPrompt;
 
 use super::{
     AgentChoice, Identifier,
-    render::{
-        render_dispatch, render_dry_run, render_session_aborted, render_session_confirmation,
-    },
+    render::{render_dispatch, render_dry_run, render_session_confirmation},
 };
 use crate::{
     confirmation::{ConfirmationAnswer, ConfirmationMode, prompt_error},
@@ -140,7 +128,7 @@ impl From<SessionEffortChoice> for SessionEffort {
             SessionEffortChoice::Low => Self::Low,
             SessionEffortChoice::Medium => Self::Medium,
             SessionEffortChoice::High => Self::High,
-            SessionEffortChoice::XHigh => Self::XHigh,
+            SessionEffortChoice::XHigh => Self::Xhigh,
             SessionEffortChoice::Max => Self::Max,
         }
     }
@@ -149,141 +137,122 @@ impl From<SessionEffortChoice> for SessionEffort {
 pub(super) async fn run(
     arguments: &Arguments,
     console: Console,
-    store: &ObsidianStore,
-    pool: &sqlx::SqlitePool,
-    home: &HomeDirectory,
+    client: &TaskClient,
 ) -> anyhow::Result<String> {
-    let agent = Agent::from(arguments.agent);
+    let agent = match arguments.agent {
+        AgentChoice::Claude => Agent::Claude,
+        AgentChoice::Codex => Agent::Codex,
+    };
     let task_id = arguments
         .identifier
-        .required(PlanSessionApiError::MissingId)?;
+        .required(anyhow::anyhow!("--id is required for session."))?;
     let confirmation_mode = if arguments.execution.dry_run {
         ConfirmationMode::AssumeYes
     } else {
         console.confirmation_mode(arguments.confirmation.assume_yes)?
     };
 
-    let request = PlanSession {
-        task_id,
-        intent: arguments.execution.intent(),
-        pushed_prompt: arguments.pushed_prompt.clone(),
-        mode: arguments.execution.mode(),
-        directives: arguments.launch.directives(),
-        agent,
-        model_override: arguments.model.clone().into(),
-        effort: arguments.effort.into(),
+    let request = PlanSessionRequest {
+        task_id: task_id.to_string(),
+        intent: arguments.execution.intent() as i32,
+        pushed_prompt: arguments.pushed_prompt.as_ref().map(ToString::to_string),
+        mode: arguments.execution.mode() as i32,
+        directives: Some(arguments.launch.directives()),
+        agent: agent as i32,
+        model_override: arguments.model.clone(),
+        effort: SessionEffort::from(arguments.effort) as i32,
+        environment: process_environment(),
     };
-    let planned = plan_session::execute(
-        &request,
-        store,
-        pool,
-        home,
-        &AgentHarness,
-        &LocalProjectDirectoryClient,
-        &TmuxHarness,
-    )
-    .await
-    .map_err(map_plan_error)?;
-    let planned = match planned {
-        PlannedSession::DryRun(dry_run) => {
-            emit_session_warnings(&dry_run.warnings);
-            render_probe(&dry_run.probe);
-            return Ok(render_dry_run(&dry_run.plan, &dry_run.argv));
+    if arguments.execution.dry_run {
+        let dry_run = client
+            .plan_session(request)
+            .await
+            .map_err(crate::rpc_error)?;
+        emit_session_warnings(&dry_run.warnings);
+        if let Some(probe) = &dry_run.probe {
+            render_probe(*probe);
         }
-        PlannedSession::Dispatch(planned) => planned,
-    };
-    emit_session_warnings(&planned.warnings);
-    render_probe(&planned.probe);
-
-    if confirmation_mode == ConfirmationMode::Prompt {
-        let answer = console
-            .confirm(&render_session_confirmation(&planned.confirmation))
-            .map_err(|source| prompt_error("session dispatch", source))?;
-        if answer == ConfirmationAnswer::Declined {
-            return Ok(render_session_aborted(&planned.confirmation.task_id));
-        }
+        return render_dry_run(&dry_run);
     }
 
-    if planned.plan.mode == DispatchMode::Inline {
-        eprintln!(
-            "running {} inline in {}...",
-            planned.plan.launch.task_id, planned.plan.launch.project_path
-        );
+    let prompt = SessionPrompt {
+        console,
+        mode: confirmation_mode,
+    };
+    let outcome = match client.dispatch_session(request, prompt).await {
+        Ok(outcome) => outcome,
+        Err(ConfirmedRequestError::Operation(status)) => {
+            return Err(anyhow::anyhow!(status.message().to_string()));
+        }
+        Err(ConfirmedRequestError::Prompt(source)) => {
+            return Err(prompt_error("session dispatch", source));
+        }
+    };
+    if DispatchSessionOutcome::try_from(outcome.outcome).ok()
+        == Some(DispatchSessionOutcome::InlineLaunch)
+    {
+        let launch = outcome.inline_launch.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("pwf-server returned an inline dispatch without a launch")
+        })?;
+        return execute_inline(launch);
     }
-    let outcome = dispatch_session::execute(
-        DispatchSession { prepared: planned },
-        &AgentHarness,
-        &InlineHarness,
-        &TmuxHarness,
-    )
-    .map_err(map_dispatch_error)?;
-    Ok(render_dispatch(
+    render_dispatch(
         &outcome,
         console.color_with(match arguments.color {
             ColorChoice::Auto => None,
             ColorChoice::Always => Some(true),
             ColorChoice::Never => Some(false),
         }),
-    ))
+    )
 }
 
-fn map_plan_error(error: PlanSessionError) -> PlanSessionApiError {
-    match error {
-        PlanSessionError::NotLaunchable { id, launch } => {
-            PlanSessionApiError::NotLaunchable { id, launch }
+fn process_environment() -> std::collections::HashMap<String, String> {
+    std::env::vars_os()
+        .filter_map(|(key, value)| Some((key.into_string().ok()?, value.into_string().ok()?)))
+        .collect()
+}
+
+struct SessionPrompt {
+    console: Console,
+    mode: ConfirmationMode,
+}
+
+impl ConfirmationPrompt for SessionPrompt {
+    type Error = dialoguer::Error;
+
+    fn confirm(&self, confirmation: &Confirmation) -> Result<bool, Self::Error> {
+        let Confirmation::DispatchSession(preflight) = confirmation else {
+            return Ok(false);
+        };
+        emit_session_warnings(&preflight.warnings);
+        if let Some(probe) = &preflight.probe {
+            render_probe(*probe);
         }
-        PlanSessionError::ProjectPathMissing { project_id, path } => {
-            PlanSessionApiError::ProjectPathMissing { project_id, path }
+        let Some(confirmation) = &preflight.confirmation else {
+            return Ok(false);
+        };
+        if DispatchMode::try_from(confirmation.mode).ok() == Some(DispatchMode::Inline) {
+            eprintln!("running {} inline...", confirmation.task_id);
         }
-        PlanSessionError::MultiplexerNotFound => PlanSessionApiError::MultiplexerNotFound,
-        PlanSessionError::MultiplexerSessionMissing {
-            session,
-            start_command_argv,
-        } => PlanSessionApiError::MultiplexerSessionMissing {
-            session,
-            start_command: render_argv(&start_command_argv),
-        },
-        PlanSessionError::EmptyAgentCommand => PlanSessionApiError::EmptyAgentCommand,
-        error => PlanSessionApiError::Unexpected {
-            message: error.to_string(),
-        },
+        match self.mode {
+            ConfirmationMode::AssumeYes => Ok(true),
+            ConfirmationMode::Prompt => self
+                .console
+                .confirm(&render_session_confirmation(confirmation))
+                .map(|answer| answer == ConfirmationAnswer::Accepted),
+        }
     }
 }
 
-fn map_dispatch_error(error: DispatchSessionError) -> DispatchSessionApiError {
-    match error {
-        DispatchSessionError::InlineFailed { source } => DispatchSessionApiError::InlineFailed {
-            reason: source.to_string(),
-        },
-        DispatchSessionError::WindowOpen {
-            session,
-            window,
-            source,
-        } => DispatchSessionApiError::WindowOpen {
-            session,
-            window,
-            reason: source.to_string(),
-        },
-        DispatchSessionError::AgentPreparation { source } => {
-            DispatchSessionApiError::AgentPreparation {
-                message: source.to_string(),
-            }
-        }
-        DispatchSessionError::NamedThreadBackend { thread_id, source } => {
-            DispatchSessionApiError::NamedThreadBackend {
-                thread_id,
-                reason: source.to_string(),
-            }
-        }
-        DispatchSessionError::EmptyAgentCommand => DispatchSessionApiError::EmptyAgentCommand,
-    }
-}
-
-fn render_probe(probe: &AgentProbe) {
-    if !probe.is_available() {
+fn render_probe(probe: pwf_client::v1::AgentProbe) {
+    if AgentAvailability::try_from(probe.availability).ok() != Some(AgentAvailability::Available) {
+        let binary = match Agent::try_from(probe.agent).ok() {
+            Some(Agent::Claude) => "claude",
+            Some(Agent::Codex) => "codex",
+            Some(Agent::Unspecified) | None => "agent",
+        };
         eprintln!(
-            "note: {} not found on PATH from here; the agent will surface the error if it can't run.",
-            probe.binary()
+            "note: {binary} not found on PATH from here; the agent will surface the error if it can't run."
         );
     }
 }
@@ -300,28 +269,43 @@ fn render_session_warnings(warnings: &[SessionWarning]) -> Option<String> {
     }
     let mut lines = vec!["warning: blocked_by information for this session:".to_string()];
     for warning in warnings {
-        let line = match warning {
-            SessionWarning::BlockedBy(blocked_by) => {
+        let line = match warning.value.as_ref() {
+            Some(session_warning::Value::BlockedBy(blocked_by)) => {
                 let title = blocked_by
                     .title
                     .as_deref()
                     .map(|title| format!(": {title}"))
                     .unwrap_or_default();
-                match &blocked_by.resolution {
-                    BlockedByResolution::Found(status) => {
-                        format!("  - {} ({status}){title}", blocked_by.id)
+                match BlockedByResolutionKind::try_from(blocked_by.resolution).ok() {
+                    Some(BlockedByResolutionKind::Found) => {
+                        format!(
+                            "  - {} ({}){title}",
+                            blocked_by.id,
+                            status_name(blocked_by.status)
+                        )
                     }
-                    BlockedByResolution::Missing => {
+                    Some(BlockedByResolutionKind::Missing) => {
                         format!("  - {} (missing; ignored as a blocker)", blocked_by.id)
                     }
-                    BlockedByResolution::Unavailable { reason } => format!(
+                    Some(BlockedByResolutionKind::Unavailable) => format!(
                         "  - {} (unavailable: {})",
                         blocked_by.id,
-                        reason.replace(['\r', '\n'], " ")
+                        blocked_by
+                            .reason
+                            .as_deref()
+                            .unwrap_or("unknown")
+                            .replace(['\r', '\n'], " ")
                     ),
+                    Some(BlockedByResolutionKind::Unspecified) | None => {
+                        format!("  - {} (unavailable: invalid status)", blocked_by.id)
+                    }
                 }
             }
-            SessionWarning::BlockedByMetadata(issue) => format!("  - {issue}"),
+            Some(session_warning::Value::BlockedByMetadata(issue)) => format!(
+                "  - Malformed blocked_by metadata {:?} in {}: {}",
+                issue.raw, issue.path, issue.reason
+            ),
+            None => "  - unavailable blocker diagnostic".to_string(),
         };
         lines.push(line);
     }
@@ -332,11 +316,51 @@ fn render_session_warnings(warnings: &[SessionWarning]) -> Option<String> {
     Some(lines.join("\n"))
 }
 
+fn status_name(value: Option<i32>) -> &'static str {
+    match value.and_then(|value| TaskStatus::try_from(value).ok()) {
+        Some(TaskStatus::Active) => "active",
+        Some(TaskStatus::Done) => "done",
+        Some(TaskStatus::Cancelled) => "cancelled",
+        Some(TaskStatus::Unspecified) | None => "unspecified",
+    }
+}
+
+#[cfg(unix)]
+fn execute_inline(launch: &pwf_client::v1::InlineLaunch) -> anyhow::Result<String> {
+    use std::os::unix::process::CommandExt as _;
+
+    let (program, arguments) = launch
+        .argv
+        .split_first()
+        .ok_or_else(|| anyhow::anyhow!("pwf-server returned an empty inline launch"))?;
+    let error = std::process::Command::new(program)
+        .args(arguments)
+        .current_dir(&launch.working_directory)
+        .exec();
+    Err(anyhow::Error::new(error).context("executing the inline agent session"))
+}
+
+#[cfg(not(unix))]
+fn execute_inline(launch: &pwf_client::v1::InlineLaunch) -> anyhow::Result<String> {
+    let (program, arguments) = launch
+        .argv
+        .split_first()
+        .ok_or_else(|| anyhow::anyhow!("pwf-server returned an empty inline launch"))?;
+    let status = std::process::Command::new(program)
+        .args(arguments)
+        .current_dir(&launch.working_directory)
+        .status()?;
+    if !status.success() {
+        return Err(anyhow::anyhow!("inline agent session exited with {status}"));
+    }
+    Ok(format!("# session {}: ran inline\n", launch.task_id))
+}
+
 #[cfg(test)]
 mod tests {
-    use pwf_models::task::TaskStatus;
-    use pwf_wire::task::{
-        BlockedByIssue, BlockedByResolution, BlockedByStatus, TaskNotePath, session::SessionWarning,
+    use pwf_client::v1::{
+        BlockedByIssue, BlockedByResolutionKind, BlockedByStatus, SessionWarning, TaskStatus,
+        session_warning,
     };
 
     use super::render_session_warnings;
@@ -344,21 +368,31 @@ mod tests {
     #[test]
     fn renders_all_session_blocker_diagnostics_as_one_informative_block() {
         let warnings = [
-            SessionWarning::BlockedBy(BlockedByStatus {
-                id: "AUX-0002".parse().unwrap(),
-                title: Some("prepare prior art".to_string()),
-                resolution: BlockedByResolution::Found(TaskStatus::Active),
-            }),
-            SessionWarning::BlockedBy(BlockedByStatus {
-                id: "AUX-9999".parse().unwrap(),
-                title: None,
-                resolution: BlockedByResolution::Missing,
-            }),
-            SessionWarning::BlockedByMetadata(BlockedByIssue::Malformed {
-                path: TaskNotePath::new("/tasks/PWF-0001.md".into()),
-                raw: "\"[[AUX-0001]]\"".to_string(),
-                reason: "expected a sequence".to_string(),
-            }),
+            SessionWarning {
+                value: Some(session_warning::Value::BlockedBy(BlockedByStatus {
+                    id: "AUX-0002".to_string(),
+                    title: Some("prepare prior art".to_string()),
+                    resolution: BlockedByResolutionKind::Found as i32,
+                    status: Some(TaskStatus::Active as i32),
+                    reason: None,
+                })),
+            },
+            SessionWarning {
+                value: Some(session_warning::Value::BlockedBy(BlockedByStatus {
+                    id: "AUX-9999".to_string(),
+                    title: None,
+                    resolution: BlockedByResolutionKind::Missing as i32,
+                    status: None,
+                    reason: None,
+                })),
+            },
+            SessionWarning {
+                value: Some(session_warning::Value::BlockedByMetadata(BlockedByIssue {
+                    path: "/tasks/PWF-0001.md".to_string(),
+                    raw: "\"[[AUX-0001]]\"".to_string(),
+                    reason: "expected a sequence".to_string(),
+                })),
+            },
         ];
 
         let rendered = render_session_warnings(&warnings).unwrap();

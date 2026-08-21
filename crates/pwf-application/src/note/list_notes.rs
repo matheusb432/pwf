@@ -1,11 +1,10 @@
 //! Lists one managed project's notes.
 
-use pwf_wire::{
-    note::{ListNotes, ListedNote, ListedNotes, NoteListLimit},
-    project::{ProjectStatusFilter, ResolveProject},
-};
-
 use crate::{
+    contract::{
+        note::{ListNotes, ListedNote, ListedNotes, NoteListLimit},
+        project::{ProjectStatusFilter, ResolveProject},
+    },
     ports::project_note::ProjectNoteStore,
     project::resolve_project::{self, ResolveProjectError},
 };
@@ -74,10 +73,10 @@ mod tests {
     use std::error::Error as _;
 
     use pwf_models::note::{NoteId, NoteTitle, ProjectNote};
-    use pwf_wire::note::ListedNotes;
 
     use super::{ListNotes, ListNotesError};
     use crate::{
+        contract::note::ListedNotes,
         note::list_notes,
         testing::{InMemoryStore, insert_project},
     };

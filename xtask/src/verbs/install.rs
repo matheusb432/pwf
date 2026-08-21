@@ -9,6 +9,8 @@ use clap::Args;
 
 use crate::{paths, process};
 
+mod linux_server;
+
 #[derive(Args)]
 pub(crate) struct UpdateArgs {
     /// Preview the installed binary change without touching the system.
@@ -67,11 +69,16 @@ fn bin_name() -> &'static str {
     if cfg!(windows) { "pwf.exe" } else { "pwf" }
 }
 
-fn release_bin() -> PathBuf {
-    paths::repo_root()
-        .join("target")
-        .join("release")
-        .join(bin_name())
+fn server_bin_name() -> &'static str {
+    if cfg!(windows) {
+        "pwf-server.exe"
+    } else {
+        "pwf-server"
+    }
+}
+
+fn release_bin(name: &str) -> PathBuf {
+    paths::repo_root().join("target").join("release").join(name)
 }
 
 pub(crate) fn install() -> Result<()> {
@@ -102,11 +109,11 @@ pub(crate) fn update(args: &UpdateArgs) -> Result<()> {
         if args.dry {
             eprintln!(
                 "DRY-RUN: would copy {} -> {}",
-                release_bin().display(),
+                release_bin(bin_name()).display(),
                 dest.display()
             );
         } else {
-            std::fs::copy(release_bin(), &dest)
+            std::fs::copy(release_bin(bin_name()), &dest)
                 .with_context(|| format!("copying to {}", dest.display()))?;
             eprintln!("refreshed global pwf binary -> {}", dest.display());
         }
@@ -120,30 +127,46 @@ pub(crate) fn update(args: &UpdateArgs) -> Result<()> {
 
 #[cfg(unix)]
 fn place_unix(dry: bool) -> Result<()> {
-    let source = release_bin();
-    let destination = install_path()?;
+    let cli_source = release_bin(bin_name());
+    let server_source = release_bin(server_bin_name());
+    let directory = install_directory()?;
+    let cli_destination = directory.join(bin_name());
+    let server_destination = directory.join(server_bin_name());
     if dry {
         eprintln!(
             "DRY-RUN: would copy {} -> {}",
-            source.display(),
-            destination.display()
+            cli_source.display(),
+            cli_destination.display()
+        );
+        eprintln!(
+            "DRY-RUN: would copy {} -> {} and refresh its user service",
+            server_source.display(),
+            server_destination.display()
         );
         return Ok(());
     }
     process::run(
         "cargo build",
-        Command::new("cargo").args(["build", "--release"]),
+        Command::new("cargo").args(["build", "--release", "-p", "pwf-cli", "-p", "pwf-server"]),
     )?;
-    let placed = place_binary(&source, &destination)?;
-    eprintln!("pwf binary {placed:?} -> {}", destination.display());
-    wire_path(destination.parent().context("install path has no parent")?)?;
+    let cli_placed = place_binary(&cli_source, &cli_destination)?;
+    eprintln!("pwf binary {cli_placed:?} -> {}", cli_destination.display());
+    let server_placed = place_binary(&server_source, &server_destination)?;
+    eprintln!(
+        "pwf-server binary {server_placed:?} -> {}",
+        server_destination.display()
+    );
+    if let Some(path) = linux_server::install(&server_destination)? {
+        eprintln!("pwf-server user service -> {}", path.display());
+    }
+    wire_path(&directory)?;
     Ok(())
 }
 
 #[cfg(unix)]
-fn install_path() -> Result<PathBuf> {
+fn install_directory() -> Result<PathBuf> {
     let home = env::var_os("HOME").context("HOME is not set")?;
-    Ok(PathBuf::from(home).join(".local").join("bin").join("pwf"))
+    Ok(PathBuf::from(home).join(".local").join("bin"))
 }
 
 #[cfg(unix)]

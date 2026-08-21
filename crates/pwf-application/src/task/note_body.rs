@@ -3,7 +3,8 @@
 use lazy_regex::{Regex, regex};
 use prompt_lanes::{Adapter, MarkdownAdapter, ParsedPrompt, parse};
 use pwf_models::task::TaskPrompt;
-use pwf_wire::task::{TaskLane, TaskLaneEdits, TaskLanes};
+
+use crate::contract::task::{TaskLane, TaskLaneEdits, TaskLanes};
 
 const REPORT_SEPARATOR: &str = "\n\n### Report\n\n";
 const LANE_SECTION_HEADERS: [&str; 4] =

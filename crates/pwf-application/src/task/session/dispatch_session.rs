@@ -3,25 +3,21 @@
 use std::error::Error;
 
 use pwf_models::task::TaskId;
-use pwf_wire::task::session::{
-    DispatchSession, DispatchedSession, PreparedSessionDispatch, SessionPlan,
-};
 use thiserror::Error;
 
 use super::DispatchMode;
-use crate::ports::{
-    agent::{AgentClient, PreparedAgentLaunch},
-    inline_agent_session::InlineAgentSessionClient,
-    session::{AgentCommand, SessionClient, SessionWindow},
+use crate::{
+    contract::task::session::{
+        DispatchSession, DispatchedSession, PreparedSessionDispatch, SessionPlan,
+    },
+    ports::{
+        agent::{AgentClient, PreparedAgentLaunch},
+        session::{AgentCommand, SessionClient, SessionWindow},
+    },
 };
 
 #[derive(Debug, Error)]
 pub enum DispatchSessionError {
-    #[error("Failed to run agent inline: {source}")]
-    InlineFailed {
-        #[source]
-        source: Box<dyn Error + Send + Sync>,
-    },
     #[error("Failed to open multiplexer window '{window}' in session '{session}': {source}")]
     WindowOpen {
         session: String,
@@ -50,7 +46,6 @@ pub enum DispatchSessionError {
 pub fn execute(
     command: DispatchSession,
     agent_client: &impl AgentClient,
-    inline: &impl InlineAgentSessionClient,
     session_client: &impl SessionClient,
 ) -> Result<DispatchedSession, DispatchSessionError> {
     let PreparedSessionDispatch { plan, .. } = command.prepared;
@@ -62,12 +57,12 @@ pub fn execute(
     })?;
     match prepared {
         PreparedAgentLaunch::Process { arguments } => {
-            dispatch_host(&arguments, &plan, inline, session_client)
+            dispatch_host(&arguments, &plan, session_client)
         }
         PreparedAgentLaunch::NamedThread {
             arguments,
             thread_id,
-        } => dispatch_host(&arguments, &plan, inline, session_client).map_err(|source| {
+        } => dispatch_host(&arguments, &plan, session_client).map_err(|source| {
             DispatchSessionError::NamedThreadBackend {
                 thread_id,
                 source: Box::new(source),
@@ -79,20 +74,15 @@ pub fn execute(
 fn dispatch_host(
     argv: &[String],
     plan: &SessionPlan,
-    inline: &impl InlineAgentSessionClient,
     session_client: &impl SessionClient,
 ) -> Result<DispatchedSession, DispatchSessionError> {
     match plan.mode {
         DispatchMode::Inline => {
-            let command =
-                AgentCommand::try_new(argv).map_err(|_| DispatchSessionError::EmptyAgentCommand)?;
-            inline
-                .run(command, &plan.launch.project_path)
-                .map_err(|source| DispatchSessionError::InlineFailed {
-                    source: Box::new(source),
-                })?;
-            Ok(DispatchedSession::Inline {
+            AgentCommand::try_new(argv).map_err(|_| DispatchSessionError::EmptyAgentCommand)?;
+            Ok(DispatchedSession::InlineLaunch {
                 task_id: plan.launch.task_id.clone(),
+                argv: argv.to_vec(),
+                working_directory: plan.launch.project_path.clone(),
             })
         }
         DispatchMode::Multiplexer => dispatch_multiplexer(argv, plan, session_client),
@@ -142,7 +132,7 @@ mod tests {
     fn named_thread_failures_retain_the_dispatch_source_chain() {
         let error = DispatchSessionError::NamedThreadBackend {
             thread_id: "thread-42".to_string(),
-            source: Box::new(DispatchSessionError::InlineFailed {
+            source: Box::new(DispatchSessionError::AgentPreparation {
                 source: Box::new(SentinelError),
             }),
         };

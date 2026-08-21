@@ -10,21 +10,21 @@ use pwf_models::{
     },
     task::{EffortTier, TaskId},
 };
-use pwf_wire::{
-    project::{ListProjects, ProjectStatusFilter},
-    task::{
-        BlockedByIssue, BlockedByResolution, BlockedByStatus, TaskView,
-        session::{
-            AgentLaunch, DispatchConfirmation, DryRunSession, ModelTierLookup, PlanSession,
-            PlanSessionIntent, PlannedSession, PreparedSessionDispatch, SessionPlan,
-            SessionWarning,
-        },
-    },
-};
 use thiserror::Error;
 
 use super::{Agent, DispatchMode, LaunchDirectives, SessionEffort};
 use crate::{
+    contract::{
+        project::{ListProjects, ProjectStatusFilter},
+        task::{
+            BlockedByIssue, BlockedByResolution, BlockedByStatus, TaskView,
+            session::{
+                AgentLaunch, DispatchConfirmation, DryRunSession, ModelTierLookup, PlanSession,
+                PlanSessionIntent, PlannedSession, PreparedSessionDispatch, SessionPlan,
+                SessionWarning,
+            },
+        },
+    },
     ports::{
         agent::AgentClient,
         project_directory::ProjectDirectoryClient,
@@ -45,7 +45,7 @@ pub enum PlanSessionError {
     #[error("Task '{id}' is not launchable: {launch}")]
     NotLaunchable {
         id: TaskId,
-        launch: pwf_wire::task::TaskLaunch,
+        launch: crate::contract::task::TaskLaunch,
     },
     #[error("Project path for '{project_id}' does not exist: {path}")]
     ProjectPathMissing {
@@ -87,6 +87,23 @@ pub enum SessionProjectPathError {
     NonUnicode,
 }
 
+pub struct SessionPlanningClients<A, P, S> {
+    pub(crate) agent: A,
+    pub(crate) project_directory: P,
+    pub(crate) session: S,
+}
+
+impl<A, P, S> SessionPlanningClients<A, P, S> {
+    #[must_use]
+    pub const fn new(agent: A, project_directory: P, session: S) -> Self {
+        Self {
+            agent,
+            project_directory,
+            session,
+        }
+    }
+}
+
 /// Plans one active task without mutating its note or dispatching an agent.
 ///
 /// # Errors
@@ -98,11 +115,13 @@ pub async fn execute(
     store: &(impl TaskStore + ProjectNoteStore),
     pool: &sqlx::SqlitePool,
     home: &HomeDirectory,
-    agent_client: &impl AgentClient,
-    project_directory: &impl ProjectDirectoryClient,
-    session_client: &impl SessionClient,
+    clients: &SessionPlanningClients<
+        impl AgentClient,
+        impl ProjectDirectoryClient,
+        impl SessionClient,
+    >,
 ) -> Result<PlannedSession, PlanSessionError> {
-    let probe = agent_client.probe(command.agent);
+    let probe = clients.agent.probe(command.agent);
     let found = active_task::find(&command.task_id, store, pool)
         .await
         .map_err(|error| PlanSessionError::FindTask(Box::new(error)))?;
@@ -122,7 +141,7 @@ pub async fn execute(
         Some(_) => command.model_override.clone(),
         None => AgentModel::from(
             resolve_model(command.agent, task.effort, |effort| {
-                agent_client.model_tier(effort)
+                clients.agent.model_tier(effort)
             })
             .map_err(|error| PlanSessionError::ModelTier(Box::new(error)))?,
         ),
@@ -153,8 +172,12 @@ pub async fn execute(
         },
         mode: command.mode,
     };
-    validate_project_path(project_directory, &project_id, &plan.launch.project_path)?;
-    validate_multiplexer(command, &plan, session_client)?;
+    validate_project_path(
+        &clients.project_directory,
+        &project_id,
+        &plan.launch.project_path,
+    )?;
+    validate_multiplexer(command, &plan, &clients.session)?;
     let confirmation = DispatchConfirmation {
         task_id: command.task_id.clone(),
         title: task.heading,
@@ -175,8 +198,8 @@ pub async fn execute(
             warnings,
         })),
         PlanSessionIntent::DryRun => {
-            let provider_argv = agent_client.preview(&plan.launch);
-            let argv = preview_dispatch_argv(provider_argv, &plan, session_client)?;
+            let provider_argv = clients.agent.preview(&plan.launch);
+            let argv = preview_dispatch_argv(provider_argv, &plan, &clients.session)?;
             Ok(PlannedSession::DryRun(DryRunSession {
                 plan,
                 argv,
@@ -631,10 +654,12 @@ mod model_selection_tests {
     use std::{assert_matches, error::Error, fmt};
 
     use pwf_models::task::EffortTier;
-    use pwf_wire::task::session::{ModelTier, ModelTierLookup};
 
     use super::{ModelSelectionError, resolve_model};
-    use crate::task::session::Agent;
+    use crate::{
+        contract::task::session::{ModelTier, ModelTierLookup},
+        task::session::Agent,
+    };
 
     const CATALOG_PATH: &str = "/config/model-tiers.toml";
 
@@ -755,12 +780,12 @@ mod model_selection_tests {
 #[cfg(test)]
 mod blocker_warning_tests {
     use pwf_models::task::TaskStatus;
-    use pwf_wire::task::{
-        BlockedByIssue, BlockedByResolution, BlockedByStatus, session::SessionWarning,
-    };
 
     use super::blocker_warnings;
     use crate::{
+        contract::task::{
+            BlockedByIssue, BlockedByResolution, BlockedByStatus, session::SessionWarning,
+        },
         ports::task_record::{StoredBlockedBy, TaskRecord},
         testing::{InMemoryStore, insert_project, stored_blocked_by, task_record},
     };

@@ -2,12 +2,12 @@ use pwf_models::{
     project::ProjectName,
     task::{CommitRanges, EffortTier, TaskId, TaskPrompt, TaskTitle},
 };
-use pwf_wire::{
-    project::GetActiveProject,
-    task::{GetTask, TaskData, TaskRead, TaskReadFormat},
-};
 
 use crate::{
+    contract::{
+        project::GetActiveProject,
+        task::{GetTask, TaskData, TaskRead, TaskReadFormat},
+    },
     ports::{
         project_note::ProjectNoteStore,
         task_record::{Materialization, StoredBlockedBy, TaskRecord, TaskStore},
@@ -36,7 +36,7 @@ pub enum GetTaskError {
     #[error("task {id} at {path} has malformed blocked_by metadata {raw:?}: {reason}")]
     MalformedBlockedBy {
         id: TaskId,
-        path: Box<pwf_wire::task::TaskNotePath>,
+        path: Box<crate::contract::task::TaskNotePath>,
         raw: Box<str>,
         reason: Box<str>,
     },
@@ -169,10 +169,10 @@ mod tests {
     use std::error::Error as _;
 
     use pwf_models::task::TaskStatus;
-    use pwf_wire::task::{RawTaskTags, TaskNotePath, TaskRead, TaskReadFormat};
 
     use super::{GetTask, GetTaskError, TaskId};
     use crate::{
+        contract::task::{RawTaskTags, TaskNotePath, TaskRead, TaskReadFormat},
         ports::task_record::{StoredBlockedBy, TaskRecord},
         task::get_task,
         testing::{

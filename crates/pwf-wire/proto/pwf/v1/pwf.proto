@@ -1,0 +1,679 @@
+syntax = "proto3";
+
+package pwf.v1;
+
+service ProjectService {
+  rpc AddProject(AddProjectRequest) returns (Project);
+  rpc GetProject(GetProjectRequest) returns (Project);
+  rpc ListProjects(ListProjectsRequest) returns (ListProjectsResponse);
+  rpc PauseProject(PauseProjectRequest) returns (ProjectStateChange);
+  rpc RenameProject(RenameProjectRequest) returns (Project);
+  rpc ResumeProject(ResumeProjectRequest) returns (ProjectStateChange);
+}
+
+service NoteService {
+  rpc AddNote(AddNoteRequest) returns (AddedNote);
+  rpc ListNotes(ListNotesRequest) returns (ListedNotes);
+  rpc RemoveNote(RemoveNoteRequest) returns (RemovedNote);
+  rpc UpdateNote(UpdateNoteRequest) returns (UpdatedNote);
+}
+
+service TaskService {
+  rpc AddTask(AddTaskRequest) returns (AddedTask);
+  rpc CancelTask(CancelTaskRequest) returns (ClosedTask);
+  rpc CompleteTask(CompleteTaskRequest) returns (ClosedTask);
+  rpc EditTask(EditTaskRequest) returns (EditedTask);
+  rpc GetTask(GetTaskRequest) returns (TaskRead);
+  rpc ListTasks(ListTasksRequest) returns (ListedTasks);
+  rpc RemoveTask(stream RemoveTaskClientMessage) returns (stream RemoveTaskServerMessage);
+  rpc ReopenTask(stream ReopenTaskClientMessage) returns (stream ReopenTaskServerMessage);
+}
+
+service SessionService {
+  rpc PlanSession(PlanSessionRequest) returns (DryRunSession);
+  rpc DispatchSession(stream DispatchSessionClientMessage) returns (stream DispatchSessionServerMessage);
+}
+
+enum ProjectStatusFilter {
+  PROJECT_STATUS_FILTER_UNSPECIFIED = 0;
+  PROJECT_STATUS_FILTER_ACTIVE_ONLY = 1;
+  PROJECT_STATUS_FILTER_INCLUDING_PAUSED = 2;
+}
+
+message ProjectFields {
+  string id = 1;
+  string title = 2;
+  string source_kind = 3;
+  string source_value = 4;
+  string tasks_kind = 5;
+  string tasks_path = 6;
+}
+
+message Project {
+  string id = 1;
+  string title = 2;
+  string source_kind = 3;
+  string source_value = 4;
+  string tasks_kind = 5;
+  string tasks_path = 6;
+  string created_at = 7;
+  bool is_paused = 8;
+}
+
+message AddProjectRequest { ProjectFields fields = 1; }
+
+message GetProjectRequest {
+  string id = 1;
+  ProjectStatusFilter status = 2;
+}
+
+message ListProjectsRequest { ProjectStatusFilter status = 1; }
+message ListProjectsResponse { repeated Project projects = 1; }
+message PauseProjectRequest { string id = 1; }
+
+message RenameProjectRequest {
+  string current_id = 1;
+  ProjectFields fields = 2;
+}
+
+message ResumeProjectRequest { string id = 1; }
+
+message ProjectStateChange {
+  Project project = 1;
+  bool changed = 2;
+}
+
+message AddNoteRequest {
+  string project_selector = 1;
+  string title = 2;
+  string content = 3;
+  optional string why = 4;
+  optional string domain = 5;
+  repeated string tags = 6;
+  repeated string sources = 7;
+  optional string verified = 8;
+  optional string date = 9;
+}
+
+enum NoteListLimitKind {
+  NOTE_LIST_LIMIT_KIND_UNSPECIFIED = 0;
+  NOTE_LIST_LIMIT_KIND_DEFAULT = 1;
+  NOTE_LIST_LIMIT_KIND_UNLIMITED = 2;
+  NOTE_LIST_LIMIT_KIND_AT_MOST = 3;
+}
+
+message ListNotesRequest {
+  string project_selector = 1;
+  NoteListLimitKind limit_kind = 2;
+  uint64 limit = 3;
+}
+
+message RemoveNoteRequest {
+  string project_selector = 1;
+  string selector = 2;
+}
+
+message UpdateNoteRequest {
+  string project_selector = 1;
+  string selector = 2;
+  string title = 3;
+}
+
+message AddedNote {
+  string id = 1;
+  string title = 2;
+}
+
+message ListedNote {
+  string id = 1;
+  string title = 2;
+}
+
+message ListedNotes {
+  string project = 1;
+  repeated ListedNote notes = 2;
+  uint64 hidden = 3;
+}
+
+message RemovedNote { string id = 1; }
+
+message UpdatedNote {
+  string id = 1;
+  string title = 2;
+}
+
+enum TaskLane {
+  TASK_LANE_UNSPECIFIED = 0;
+  TASK_LANE_GOAL = 1;
+  TASK_LANE_CONTEXT = 2;
+  TASK_LANE_CONSTRAINT = 3;
+  TASK_LANE_DONE_WHEN = 4;
+}
+
+message TaskLanes {
+  repeated string goals = 1;
+  repeated string context = 2;
+  repeated string constraints = 3;
+  repeated string done_when = 4;
+}
+
+message StructuredTaskPrompt {
+  string title = 1;
+  TaskLanes lanes = 2;
+}
+
+enum IndexSection {
+  INDEX_SECTION_UNSPECIFIED = 0;
+  INDEX_SECTION_GENERAL = 1;
+  INDEX_SECTION_HUMAN = 2;
+}
+
+enum EffortTier {
+  EFFORT_TIER_UNSPECIFIED = 0;
+  EFFORT_TIER_LOW = 1;
+  EFFORT_TIER_MEDIUM = 2;
+  EFFORT_TIER_HIGH = 3;
+  EFFORT_TIER_HIGHEST = 4;
+}
+
+message AddTaskRequest {
+  string project_selector = 1;
+  oneof prompt {
+    string shorthand = 2;
+    StructuredTaskPrompt structured = 3;
+  }
+  IndexSection index_section = 4;
+  repeated string blocked_by = 5;
+  optional EffortTier effort = 6;
+  repeated string tags = 7;
+}
+
+message CancelTaskRequest {
+  string id = 1;
+  string report = 2;
+  repeated string commits = 3;
+  bool review = 4;
+}
+
+message CompleteTaskRequest {
+  string id = 1;
+  optional string report = 2;
+  repeated string commits = 3;
+  bool review = 4;
+}
+
+enum CollectionEditMode {
+  COLLECTION_EDIT_MODE_UNSPECIFIED = 0;
+  COLLECTION_EDIT_MODE_UNCHANGED = 1;
+  COLLECTION_EDIT_MODE_APPEND = 2;
+  COLLECTION_EDIT_MODE_REPLACE = 3;
+  COLLECTION_EDIT_MODE_CLEAR = 4;
+}
+
+message StringCollectionEdit {
+  CollectionEditMode mode = 1;
+  repeated string values = 2;
+}
+
+enum ValueEditMode {
+  VALUE_EDIT_MODE_UNSPECIFIED = 0;
+  VALUE_EDIT_MODE_UNCHANGED = 1;
+  VALUE_EDIT_MODE_SET = 2;
+  VALUE_EDIT_MODE_CLEAR = 3;
+}
+
+message EffortEdit {
+  ValueEditMode mode = 1;
+  EffortTier value = 2;
+}
+
+message StructuredTaskEdit {
+  optional string title = 1;
+  TaskLanes additions = 2;
+  repeated TaskLane removals = 3;
+}
+
+message AppendTaskPrompt {
+  optional string title = 1;
+  string prompt = 2;
+}
+
+message TaskContentEdit {
+  oneof content {
+    StructuredTaskEdit structured = 1;
+    AppendTaskPrompt append = 2;
+    string replace = 3;
+  }
+}
+
+message EditTaskRequest {
+  string id = 1;
+  TaskContentEdit content = 2;
+  StringCollectionEdit blocked_by = 3;
+  EffortEdit effort = 4;
+  StringCollectionEdit tags = 5;
+}
+
+enum TaskReadFormat {
+  TASK_READ_FORMAT_UNSPECIFIED = 0;
+  TASK_READ_FORMAT_MARKDOWN = 1;
+  TASK_READ_FORMAT_PATH = 2;
+  TASK_READ_FORMAT_DATA = 3;
+}
+
+message GetTaskRequest {
+  string id = 1;
+  TaskReadFormat output = 2;
+}
+
+enum ListScope {
+  LIST_SCOPE_UNSPECIFIED = 0;
+  LIST_SCOPE_DEFAULT = 1;
+  LIST_SCOPE_HUMAN = 2;
+  LIST_SCOPE_FUTURE = 3;
+  LIST_SCOPE_ALL = 4;
+}
+
+enum ListDetail {
+  LIST_DETAIL_UNSPECIFIED = 0;
+  LIST_DETAIL_SUMMARY = 1;
+  LIST_DETAIL_DETAILED = 2;
+}
+
+enum TaskStatusFilter {
+  TASK_STATUS_FILTER_UNSPECIFIED = 0;
+  TASK_STATUS_FILTER_ACTIVE = 1;
+  TASK_STATUS_FILTER_DONE = 2;
+  TASK_STATUS_FILTER_CANCELLED = 3;
+  TASK_STATUS_FILTER_ALL = 4;
+}
+
+enum OrderField {
+  ORDER_FIELD_UNSPECIFIED = 0;
+  ORDER_FIELD_CREATED = 1;
+  ORDER_FIELD_ID = 2;
+  ORDER_FIELD_PROJECT_ID = 3;
+}
+
+enum OrderDirection {
+  ORDER_DIRECTION_UNSPECIFIED = 0;
+  ORDER_DIRECTION_ASC = 1;
+  ORDER_DIRECTION_DESC = 2;
+}
+
+message OrderSpec {
+  OrderField field = 1;
+  OrderDirection direction = 2;
+}
+
+message ListTasksRequest {
+  optional string project_selector = 1;
+  ListScope scope = 2;
+  optional uint64 number = 3;
+  optional EffortTier effort = 4;
+  repeated string tags = 5;
+  OrderSpec order = 6;
+  optional TaskStatusFilter status = 7;
+  ListDetail detail = 8;
+}
+
+message RemoveTaskRequest { string id = 1; }
+message ReopenTaskRequest { string id = 1; }
+
+message AddedTask {
+  string id = 1;
+  string project = 2;
+  string title = 3;
+  string note_path = 4;
+  optional string created_section = 5;
+}
+
+message AddTaskFailureDetails {
+  string project = 1;
+  optional string created_section = 2;
+}
+
+message EditedTask {
+  string id = 1;
+  string project = 2;
+  string title = 3;
+}
+
+enum ClosedTaskAction {
+  CLOSED_TASK_ACTION_UNSPECIFIED = 0;
+  CLOSED_TASK_ACTION_DONE = 1;
+  CLOSED_TASK_ACTION_CANCELLED = 2;
+}
+
+message ClosedTask {
+  string id = 1;
+  string project = 2;
+  string title = 3;
+  ClosedTaskAction action = 4;
+  repeated string evicted_ids = 5;
+  optional string futuro_renamed_project = 6;
+  AddedTask review_task = 7;
+}
+
+enum ReopenedTaskOutcome {
+  REOPENED_TASK_OUTCOME_UNSPECIFIED = 0;
+  REOPENED_TASK_OUTCOME_REOPENED = 1;
+  REOPENED_TASK_OUTCOME_ALREADY_ACTIVE = 2;
+  REOPENED_TASK_OUTCOME_ABORTED = 3;
+}
+
+message ReopenedTask {
+  ReopenedTaskOutcome outcome = 1;
+  string id = 2;
+  optional string project = 3;
+}
+
+message RemovedTask {
+  string id = 1;
+  string project = 2;
+  string title = 3;
+  string deleted_path = 4;
+  optional string unlinked = 5;
+}
+
+enum RemovedTaskOutcomeKind {
+  REMOVED_TASK_OUTCOME_KIND_UNSPECIFIED = 0;
+  REMOVED_TASK_OUTCOME_KIND_REMOVED = 1;
+  REMOVED_TASK_OUTCOME_KIND_ABORTED = 2;
+}
+
+message RemovedTaskOutcome {
+  RemovedTaskOutcomeKind outcome = 1;
+  string task_id = 2;
+  RemovedTask removed = 3;
+}
+
+enum TaskStatus {
+  TASK_STATUS_UNSPECIFIED = 0;
+  TASK_STATUS_ACTIVE = 1;
+  TASK_STATUS_DONE = 2;
+  TASK_STATUS_CANCELLED = 3;
+}
+
+message TaskData {
+  string id = 1;
+  string project = 2;
+  string title = 3;
+  TaskStatus status = 4;
+  optional string created = 5;
+  optional string completed = 6;
+  optional string commits = 7;
+  repeated string tags = 8;
+  optional EffortTier effort = 9;
+  repeated string blocked_by = 10;
+  optional string section = 11;
+  string prompt = 12;
+}
+
+message TaskRead {
+  oneof value {
+    string markdown = 1;
+    string path = 2;
+    TaskData data = 3;
+  }
+}
+
+enum ListLayout {
+  LIST_LAYOUT_UNSPECIFIED = 0;
+  LIST_LAYOUT_FLAT = 1;
+  LIST_LAYOUT_BY_SECTION = 2;
+}
+
+enum BlockedByResolutionKind {
+  BLOCKED_BY_RESOLUTION_KIND_UNSPECIFIED = 0;
+  BLOCKED_BY_RESOLUTION_KIND_FOUND = 1;
+  BLOCKED_BY_RESOLUTION_KIND_MISSING = 2;
+  BLOCKED_BY_RESOLUTION_KIND_UNAVAILABLE = 3;
+}
+
+message BlockedByStatus {
+  string id = 1;
+  optional string title = 2;
+  BlockedByResolutionKind resolution = 3;
+  optional TaskStatus status = 4;
+  optional string reason = 5;
+}
+
+message BlockedByIssue {
+  string path = 1;
+  string raw = 2;
+  string reason = 3;
+}
+
+enum TaskIssueKind {
+  TASK_ISSUE_KIND_UNSPECIFIED = 0;
+  TASK_ISSUE_KIND_MISSING_NOTE = 1;
+  TASK_ISSUE_KIND_PLACEHOLDER_PROMPT = 2;
+}
+
+message TaskIssue {
+  TaskIssueKind kind = 1;
+  optional string path = 2;
+}
+
+message TaskLocation {
+  string index_path = 1;
+  uint64 line = 2;
+}
+
+message TaskView {
+  string id = 1;
+  string project = 2;
+  TaskStatus status = 3;
+  string heading = 4;
+  string prompt = 5;
+  string project_path = 6;
+  TaskLocation location = 7;
+  repeated TaskIssue launch_issues = 8;
+  optional string section = 9;
+  repeated string blocked_by = 10;
+  repeated BlockedByStatus blocked_by_statuses = 11;
+  repeated BlockedByIssue blocked_by_issues = 12;
+  optional EffortTier effort = 13;
+  optional string raw_tags = 14;
+  optional string created = 15;
+}
+
+message ListedTasks {
+  repeated TaskView tasks = 1;
+  uint64 hidden = 2;
+  optional string project = 3;
+  optional string project_task_path = 4;
+  TaskStatusFilter status_filter = 5;
+  ListLayout layout = 6;
+  ListDetail detail = 7;
+}
+
+message RemoveTaskConfirmation {
+  string task_id = 1;
+  string project = 2;
+  string title = 3;
+  TaskStatus status = 4;
+  string note_path = 5;
+}
+
+message ReopenTaskConfirmation {
+  string task_id = 1;
+  string project = 2;
+  optional string completion_date = 3;
+  optional string commits = 4;
+  optional string report = 5;
+}
+
+message ConfirmationDecision { bool confirmed = 1; }
+
+message RemoveTaskClientMessage {
+  oneof value {
+    RemoveTaskRequest start = 1;
+    ConfirmationDecision decision = 2;
+  }
+}
+
+message RemoveTaskServerMessage {
+  oneof value {
+    RemoveTaskConfirmation preflight = 1;
+    RemovedTaskOutcome result = 2;
+  }
+}
+
+message ReopenTaskClientMessage {
+  oneof value {
+    ReopenTaskRequest start = 1;
+    ConfirmationDecision decision = 2;
+  }
+}
+
+message ReopenTaskServerMessage {
+  oneof value {
+    ReopenTaskConfirmation preflight = 1;
+    ReopenedTask result = 2;
+  }
+}
+
+enum Agent {
+  AGENT_UNSPECIFIED = 0;
+  AGENT_CLAUDE = 1;
+  AGENT_CODEX = 2;
+}
+
+enum DispatchMode {
+  DISPATCH_MODE_UNSPECIFIED = 0;
+  DISPATCH_MODE_INLINE = 1;
+  DISPATCH_MODE_MULTIPLEXER = 2;
+}
+
+enum SessionEffort {
+  SESSION_EFFORT_UNSPECIFIED = 0;
+  SESSION_EFFORT_LOW = 1;
+  SESSION_EFFORT_MEDIUM = 2;
+  SESSION_EFFORT_HIGH = 3;
+  SESSION_EFFORT_XHIGH = 4;
+  SESSION_EFFORT_MAX = 5;
+}
+
+enum PlanSessionIntent {
+  PLAN_SESSION_INTENT_UNSPECIFIED = 0;
+  PLAN_SESSION_INTENT_DRY_RUN = 1;
+  PLAN_SESSION_INTENT_DISPATCH = 2;
+}
+
+message LaunchDirectives {
+  bool worktree = 1;
+  bool autonomous = 2;
+}
+
+message PlanSessionRequest {
+  string task_id = 1;
+  PlanSessionIntent intent = 2;
+  optional string pushed_prompt = 3;
+  DispatchMode mode = 4;
+  LaunchDirectives directives = 5;
+  Agent agent = 6;
+  optional string model_override = 7;
+  SessionEffort effort = 8;
+  map<string, string> environment = 9;
+}
+
+message AgentLaunch {
+  Agent agent = 1;
+  string task_id = 2;
+  string title = 3;
+  string project_path = 4;
+  string prompt = 5;
+  optional string model = 6;
+  SessionEffort effort = 7;
+}
+
+message SessionPlan {
+  AgentLaunch launch = 1;
+  DispatchMode mode = 2;
+}
+
+enum AgentAvailability {
+  AGENT_AVAILABILITY_UNSPECIFIED = 0;
+  AGENT_AVAILABILITY_MISSING = 1;
+  AGENT_AVAILABILITY_AVAILABLE = 2;
+}
+
+message AgentProbe {
+  Agent agent = 1;
+  AgentAvailability availability = 2;
+}
+
+message SessionWarning {
+  oneof value {
+    BlockedByStatus blocked_by = 1;
+    BlockedByIssue blocked_by_metadata = 2;
+  }
+}
+
+message DryRunSession {
+  SessionPlan plan = 1;
+  repeated string argv = 2;
+  AgentProbe probe = 3;
+  repeated SessionWarning warnings = 4;
+}
+
+message DispatchConfirmation {
+  string task_id = 1;
+  string title = 2;
+  optional string created = 3;
+  DispatchMode mode = 4;
+  Agent agent = 5;
+  LaunchDirectives directives = 6;
+  bool has_pushed_prompt = 7;
+  optional string model = 8;
+  SessionEffort effort = 9;
+}
+
+message SessionDispatchPreflight {
+  DispatchConfirmation confirmation = 1;
+  AgentProbe probe = 2;
+  repeated SessionWarning warnings = 3;
+}
+
+message InlineLaunch {
+  string task_id = 1;
+  repeated string argv = 2;
+  string working_directory = 3;
+}
+
+message WindowOpened {
+  string task_id = 1;
+  string session = 2;
+  Agent agent = 3;
+  string project_path = 4;
+}
+
+enum DispatchSessionOutcome {
+  DISPATCH_SESSION_OUTCOME_UNSPECIFIED = 0;
+  DISPATCH_SESSION_OUTCOME_ABORTED = 1;
+  DISPATCH_SESSION_OUTCOME_INLINE_LAUNCH = 2;
+  DISPATCH_SESSION_OUTCOME_WINDOW_OPENED = 3;
+}
+
+message DispatchedSession {
+  DispatchSessionOutcome outcome = 1;
+  string task_id = 2;
+  InlineLaunch inline_launch = 3;
+  WindowOpened window_opened = 4;
+}
+
+message DispatchSessionClientMessage {
+  oneof value {
+    PlanSessionRequest start = 1;
+    ConfirmationDecision decision = 2;
+  }
+}
+
+message DispatchSessionServerMessage {
+  oneof value {
+    SessionDispatchPreflight preflight = 1;
+    DispatchedSession result = 2;
+  }
+}

@@ -1,5 +1,6 @@
 use pwf_models::task::{TagInput, TagInputError, TaskTags};
-use pwf_wire::task::RawTaskTags;
+
+use crate::contract::task::RawTaskTags;
 
 pub(in crate::task) fn parse_frontmatter(raw: &RawTaskTags) -> Result<TaskTags, ParseTagsError> {
     let raw = raw.as_ref();
@@ -50,9 +51,9 @@ impl ParseTagsError {
 #[cfg(test)]
 mod tests {
     use pwf_models::task::TaskTags;
-    use pwf_wire::task::RawTaskTags;
 
     use super::{ParseTagsError, parse_frontmatter};
+    use crate::contract::task::RawTaskTags;
 
     fn values(tags: &TaskTags) -> Vec<&str> {
         tags.iter().map(AsRef::as_ref).collect()

@@ -12,7 +12,7 @@ struct EdgePolicy {
     reason: &'static str,
 }
 
-const EDGE_POLICIES: [EdgePolicy; 6] = [
+const EDGE_POLICIES: [EdgePolicy; 10] = [
     EdgePolicy {
         from: "pwf-models",
         label: "models stay independent",
@@ -24,9 +24,11 @@ const EDGE_POLICIES: [EdgePolicy; 6] = [
             "toml",
             "pwf-wire",
             "pwf-application",
+            "pwf-client",
             "pwf-infra",
             "pwf-cli",
             "pwf-migrator",
+            "pwf-server",
             "prompt-lanes",
             "xtask",
         ],
@@ -34,27 +36,109 @@ const EDGE_POLICIES: [EdgePolicy; 6] = [
     },
     EdgePolicy {
         from: "pwf-wire",
-        label: "wire stays independent of use cases and adapters",
+        label: "wire stays generated and transport-only",
         forbidden: &[
+            "pwf-models",
+            "prompt-lanes",
             "pwf-application",
+            "pwf-client",
             "pwf-infra",
             "pwf-cli",
+            "pwf-local-auth",
             "pwf-migrator",
+            "pwf-server",
             "xtask",
         ],
-        reason: "wire contracts must not depend on use cases, adapters, or process roots",
+        reason: "protobuf-generated wire contracts must not depend on product policy or process roots",
     },
     EdgePolicy {
         from: "pwf-application",
         label: "application stays independent of adapters",
-        forbidden: &["pwf-infra", "pwf-cli", "pwf-migrator", "xtask"],
+        forbidden: &[
+            "pwf-wire",
+            "pwf-client",
+            "pwf-infra",
+            "pwf-cli",
+            "pwf-local-auth",
+            "pwf-migrator",
+            "pwf-server",
+            "xtask",
+        ],
         reason: "infrastructure belongs behind application-owned boundaries",
     },
     EdgePolicy {
         from: "pwf-infra",
         label: "infra stays independent of process roots",
-        forbidden: &["pwf-cli", "pwf-migrator", "xtask"],
+        forbidden: &[
+            "pwf-wire",
+            "pwf-client",
+            "pwf-cli",
+            "pwf-local-auth",
+            "pwf-migrator",
+            "pwf-server",
+            "xtask",
+        ],
         reason: "adapters must not depend on their runtime composition",
+    },
+    EdgePolicy {
+        from: "pwf-client",
+        label: "client stays transport-only",
+        forbidden: &[
+            "directories",
+            "prompt-lanes",
+            "pwf-application",
+            "pwf-cli",
+            "pwf-infra",
+            "pwf-migrator",
+            "pwf-models",
+            "pwf-server",
+            "sqlx",
+            "xtask",
+        ],
+        reason: "the client may own transport mechanics but no application policy or persistence",
+    },
+    EdgePolicy {
+        from: "pwf-cli",
+        label: "cli stays a frontend",
+        forbidden: &[
+            "directories",
+            "pwf-application",
+            "pwf-infra",
+            "pwf-local-auth",
+            "pwf-server",
+            "pwf-wire",
+            "sqlx",
+        ],
+        reason: "CLI parsing and presentation must cross the client boundary",
+    },
+    EdgePolicy {
+        from: "pwf-local-auth",
+        label: "local auth stays process-neutral",
+        forbidden: &[
+            "prompt-lanes",
+            "pwf-application",
+            "pwf-cli",
+            "pwf-client",
+            "pwf-infra",
+            "pwf-migrator",
+            "pwf-models",
+            "pwf-server",
+            "pwf-wire",
+            "xtask",
+        ],
+        reason: "local endpoint and capability storage must not depend on product layers",
+    },
+    EdgePolicy {
+        from: "pwf-server",
+        label: "server stays a process root",
+        forbidden: &[
+            "prompt-lanes",
+            "pwf-cli",
+            "pwf-client",
+            "pwf-migrator",
+            "xtask",
+        ],
+        reason: "the server composes application and infrastructure without depending on frontends",
     },
     EdgePolicy {
         from: "prompt-lanes",
@@ -63,9 +147,11 @@ const EDGE_POLICIES: [EdgePolicy; 6] = [
             "pwf-models",
             "pwf-wire",
             "pwf-application",
+            "pwf-client",
             "pwf-infra",
             "pwf-cli",
             "pwf-migrator",
+            "pwf-server",
         ],
         reason: "shared lane syntax must remain independent of PWF product crates",
     },
@@ -76,9 +162,11 @@ const EDGE_POLICIES: [EdgePolicy; 6] = [
             "pwf-models",
             "pwf-wire",
             "pwf-application",
+            "pwf-client",
             "pwf-infra",
             "pwf-cli",
             "pwf-migrator",
+            "pwf-server",
             "prompt-lanes",
         ],
         reason: "repository automation must not become a product dependency boundary",
@@ -169,12 +257,23 @@ mod tests {
                     "[dependencies]\npwf-infra = { path = \"../pwf-infra\" }\n",
                 ),
                 (
+                    "pwf-client",
+                    "pwf-client",
+                    "[dependencies]\npwf-infra = { path = \"../pwf-infra\" }\nsqlx = { path = \"../sqlx\" }\n",
+                ),
+                (
+                    "pwf-cli",
+                    "pwf-cli",
+                    "[dependencies]\npwf-application = { path = \"../pwf-application\" }\n",
+                ),
+                (
                     "pwf-infra",
                     "pwf-infra",
                     "[dependencies]\npwf-migrator = { path = \"../pwf-migrator\" }\n",
                 ),
                 ("pwf-migrator", "pwf-migrator", ""),
                 ("serde", "serde", ""),
+                ("sqlx", "sqlx", ""),
             ],
         );
 
@@ -184,12 +283,19 @@ mod tests {
                 "pwf-application/Cargo.toml: [application stays independent of adapters] \
                  pwf-application -> pwf-infra: infrastructure belongs behind application-owned \
                  boundaries",
+                "pwf-cli/Cargo.toml: [cli stays a frontend] pwf-cli -> pwf-application: CLI \
+                 parsing and presentation must cross the client boundary",
+                "pwf-client/Cargo.toml: [client stays transport-only] pwf-client -> pwf-infra: the \
+                 client may own transport mechanics but no application policy or persistence",
+                "pwf-client/Cargo.toml: [client stays transport-only] pwf-client -> sqlx: the client \
+                 may own transport mechanics but no application policy or persistence",
                 "pwf-infra/Cargo.toml: [infra stays independent of process roots] pwf-infra -> \
                  pwf-migrator: adapters must not depend on their runtime composition",
                 "pwf-models/Cargo.toml: [models stay independent] pwf-models -> serde: models must not \
                  depend on wire formats, persistence, use cases, or process roots",
-                "pwf-wire/Cargo.toml: [wire stays independent of use cases and adapters] pwf-wire -> \
-                 pwf-infra: wire contracts must not depend on use cases, adapters, or process roots",
+                "pwf-wire/Cargo.toml: [wire stays generated and transport-only] pwf-wire -> \
+                 pwf-infra: protobuf-generated wire contracts must not depend on product policy or \
+                 process roots",
             ]
         );
     }
@@ -208,19 +314,25 @@ mod tests {
                 (
                     "pwf-application",
                     "pwf-application",
-                    "[dependencies]\npwf-models = { path = \"../pwf-models\" }\npwf-wire = { path = \
-                     \"../pwf-wire\" }\n",
-                ),
-                (
-                    "pwf-wire",
-                    "pwf-wire",
                     "[dependencies]\npwf-models = { path = \"../pwf-models\" }\nprompt-lanes = { path = \"../prompt-lanes\" }\n",
                 ),
+                ("pwf-wire", "pwf-wire", ""),
+                (
+                    "pwf-client",
+                    "pwf-client",
+                    "[dependencies]\npwf-wire = { path = \"../pwf-wire\" }\npwf-local-auth = { path = \"../pwf-local-auth\" }\n",
+                ),
+                (
+                    "pwf-cli",
+                    "pwf-cli",
+                    "[dependencies]\npwf-client = { path = \"../pwf-client\" }\npwf-models = { path = \"../pwf-models\" }\nprompt-lanes = { path = \"../prompt-lanes\" }\n",
+                ),
                 (
                     "pwf-infra",
                     "pwf-infra",
-                    "[dependencies]\npwf-wire = { path = \"../pwf-wire\" }\n",
+                    "[dependencies]\npwf-application = { path = \"../pwf-application\" }\npwf-models = { path = \"../pwf-models\" }\n",
                 ),
+                ("pwf-local-auth", "pwf-local-auth", ""),
                 ("prompt-lanes", "prompt-lanes", ""),
             ],
         );

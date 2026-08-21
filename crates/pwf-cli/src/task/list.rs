@@ -1,18 +1,19 @@
 use std::num::NonZeroUsize;
 
 use clap::Args;
-use pwf_application::task::list_tasks::{self, ListTasksError};
-use pwf_infra::obsidian::ObsidianStore;
+use pwf_client::{
+    task::TaskClient,
+    v1::{
+        EffortTier, ListDetail, ListScope, ListTasksRequest, OrderDirection, OrderField, OrderSpec,
+    },
+};
 use pwf_models::{
     project::ProjectSelector,
     task::{TagInput, TaskTags},
 };
-use pwf_wire::task::{
-    ListDetail, ListScope, ListTasks, ListTasksApiError, OrderDirection, OrderField, OrderSpec,
-};
 
 use super::{EffortChoice, SectionChoice, StatusChoice, render::render_list};
-use crate::{console::Console, project::map_resolve_project_error};
+use crate::console::Console;
 
 #[derive(Args, Debug)]
 pub struct Arguments {
@@ -54,30 +55,35 @@ pub struct Arguments {
 pub(super) async fn run(
     arguments: &Arguments,
     console: Console,
-    store: &ObsidianStore,
-    pool: &sqlx::SqlitePool,
-) -> Result<String, ListTasksApiError> {
-    let result = list_tasks::execute(
-        &ListTasks {
-            project_selector: arguments.project.clone(),
+    client: &TaskClient,
+) -> anyhow::Result<String> {
+    let result = client
+        .list_tasks(ListTasksRequest {
+            project_selector: arguments.project.as_ref().map(ToString::to_string),
             scope: list_scope(arguments),
-            number: arguments.number.and_then(NonZeroUsize::new),
-            effort: arguments.effort.map(Into::into),
-            tags: TaskTags::from_inputs(&arguments.tag),
+            number: arguments
+                .number
+                .and_then(NonZeroUsize::new)
+                .map(|value| value.get() as u64),
+            effort: arguments.effort.map(|value| match value {
+                EffortChoice::Low => EffortTier::Low as i32,
+                EffortChoice::Medium => EffortTier::Medium as i32,
+                EffortChoice::High => EffortTier::High as i32,
+                EffortChoice::Highest => EffortTier::Highest as i32,
+            }),
+            tags: TaskTags::from_inputs(&arguments.tag)
+                .map(|tags| tags.iter().map(ToString::to_string).collect())
+                .unwrap_or_default(),
             order: arguments.order,
-            status: arguments.status.map(StatusChoice::filter),
+            status: arguments.status.map(|status| status.filter() as i32),
             detail: if arguments.long {
-                ListDetail::Detailed
+                ListDetail::Detailed as i32
             } else {
-                ListDetail::Summary
+                ListDetail::Summary as i32
             },
-        },
-        store,
-        pool,
-        store,
-    )
-    .await
-    .map_err(map_list_tasks_error)?;
+        })
+        .await
+        .map_err(crate::rpc_error)?;
     let location = result.project_task_path.as_ref().map_or_else(
         || "managed project task paths".to_string(),
         ToString::to_string,
@@ -85,14 +91,14 @@ pub(super) async fn run(
     Ok(render_list(&result, &location, console.color()))
 }
 
-fn list_scope(arguments: &Arguments) -> ListScope {
+fn list_scope(arguments: &Arguments) -> i32 {
     if arguments.all {
-        return ListScope::All;
+        return ListScope::All as i32;
     }
     match arguments.section {
-        Some(SectionChoice::Future) => ListScope::Future,
-        Some(SectionChoice::Human) => ListScope::Human,
-        None => ListScope::Default,
+        Some(SectionChoice::Future) => ListScope::Future as i32,
+        Some(SectionChoice::Human) => ListScope::Human as i32,
+        None => ListScope::Default as i32,
     }
 }
 
@@ -114,21 +120,16 @@ fn parse_order(value: &str) -> Result<OrderSpec, String> {
         None => match field {
             OrderField::Created | OrderField::Id => OrderDirection::Desc,
             OrderField::ProjectId => OrderDirection::Asc,
+            OrderField::Unspecified => return Err(USAGE.to_string()),
         },
         Some("asc") => OrderDirection::Asc,
         Some("desc") => OrderDirection::Desc,
         Some(_) => return Err(USAGE.to_string()),
     };
-    Ok(OrderSpec { field, direction })
-}
-
-fn map_list_tasks_error(error: ListTasksError) -> ListTasksApiError {
-    match error {
-        ListTasksError::ResolveProject(error) => map_resolve_project_error(error).into(),
-        error => ListTasksApiError::Unexpected {
-            message: error.to_string(),
-        },
-    }
+    Ok(OrderSpec {
+        field: field as i32,
+        direction: direction as i32,
+    })
 }
 
 #[cfg(test)]
@@ -140,22 +141,22 @@ mod tests {
         assert_eq!(
             parse_order("id").unwrap(),
             OrderSpec {
-                field: OrderField::Id,
-                direction: OrderDirection::Desc,
+                field: OrderField::Id as i32,
+                direction: OrderDirection::Desc as i32,
             }
         );
         assert_eq!(
             parse_order("created:asc").unwrap(),
             OrderSpec {
-                field: OrderField::Created,
-                direction: OrderDirection::Asc,
+                field: OrderField::Created as i32,
+                direction: OrderDirection::Asc as i32,
             }
         );
         assert_eq!(
             parse_order("project-id").unwrap(),
             OrderSpec {
-                field: OrderField::ProjectId,
-                direction: OrderDirection::Asc,
+                field: OrderField::ProjectId as i32,
+                direction: OrderDirection::Asc as i32,
             }
         );
     }

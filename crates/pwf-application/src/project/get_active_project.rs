@@ -1,9 +1,8 @@
-use pwf_wire::project::{GetActiveProject, GetProject, ProjectStatusFilter};
-
 use super::{
     Project,
     get_project::{self, GetProjectError},
 };
+use crate::contract::project::{GetActiveProject, GetProject, ProjectStatusFilter};
 
 /// Reads one active managed project.
 #[cqrsy::query]

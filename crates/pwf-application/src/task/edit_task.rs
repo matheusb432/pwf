@@ -2,13 +2,6 @@ use pwf_models::{
     project::Project,
     task::{BlockedBy, EffortTier, TaskId, TaskStatus, TaskTags, TaskTitle, TaskTitleError},
 };
-use pwf_wire::{
-    project::{ListProjects, ProjectStatusFilter},
-    task::{
-        CollectionEdit, EditTask, EditTaskContent, EditTaskContentKind, EditedTask,
-        ResolveTaskProject, ValueEdit,
-    },
-};
 
 use super::{
     blocked_by::{self, BlockedByValidationError, validate_and_merge},
@@ -17,6 +10,13 @@ use super::{
     tags, task_body_region,
 };
 use crate::{
+    contract::{
+        project::{ListProjects, ProjectStatusFilter},
+        task::{
+            CollectionEdit, EditTask, EditTaskContent, EditTaskContentKind, EditedTask,
+            ResolveTaskProject, ValueEdit,
+        },
+    },
     ports::task_record::{NullablePatch, StoredBlockedBy, TaskPatch, TaskRecord, TaskStore},
     project::list_projects,
 };
@@ -49,7 +49,7 @@ pub enum EditTaskError {
     #[error("task {id} at {path} has malformed blocked_by metadata {raw:?}: {reason}")]
     MalformedBlockedBy {
         id: TaskId,
-        path: Box<pwf_wire::task::TaskNotePath>,
+        path: Box<crate::contract::task::TaskNotePath>,
         raw: Box<str>,
         reason: Box<str>,
     },
@@ -320,13 +320,13 @@ fn map_lane_error(error: EditLanesError) -> EditTaskError {
 #[cfg(test)]
 mod tests {
     use pwf_models::task::{BlockedBy, EffortTier, TaskPrompt, TaskStatus, TaskTags, TaskTitle};
-    use pwf_wire::task::{
-        CollectionEdit, EditTask, EditTaskContent, EditedTask, RawTaskTags, TaskEdits, TaskLane,
-        TaskLaneEdits, TaskLanes, ValueEdit,
-    };
 
     use super::EditTaskError;
     use crate::{
+        contract::task::{
+            CollectionEdit, EditTask, EditTaskContent, EditedTask, RawTaskTags, TaskEdits,
+            TaskLane, TaskLaneEdits, TaskLanes, ValueEdit,
+        },
         ports::task_record::TaskRecord,
         task::edit_task,
         testing::{InMemoryStore, app_date, insert_project, stored_blocked_by, task_record},

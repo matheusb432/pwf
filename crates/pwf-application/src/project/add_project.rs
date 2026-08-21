@@ -1,10 +1,10 @@
 use std::error::Error;
 
 use pwf_models::project::{HomeDirectory, ProjectId, ProjectName, ProjectTasksPath};
-use pwf_wire::project::AddProject;
 use sqlx::error::ErrorKind;
 
 use super::{Project, ProjectRow, TaskLocationError, task_location};
+use crate::contract::project::AddProject;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AddProjectError {
@@ -207,10 +207,9 @@ mod tests {
         HomeDirectory, ProjectId, ProjectName, ProjectSource, ProjectSourceKind,
         ProjectSourceValue, ProjectTasks, ProjectTasksKind, ProjectTasksPath,
     };
-    use pwf_wire::project::ProjectFields;
 
     use super::*;
-    use crate::{project::add_project, testing::insert_project};
+    use crate::{contract::project::ProjectFields, project::add_project, testing::insert_project};
 
     fn project(project_id: &str, title: &str, source_value: &str, tasks_path: &str) -> AddProject {
         AddProject {

@@ -2,13 +2,24 @@
 
 use std::{
     io,
-    process::{Command, ExitStatus, Output},
+    process::{ExitStatus, Output},
 };
 
 use pwf_application::ports::session::{SessionClient, SessionStart, SessionWindow};
 
-#[derive(Debug, Clone, Copy, Default)]
-pub struct TmuxHarness;
+use super::ProcessEnvironment;
+
+#[derive(Debug, Clone, Default)]
+pub struct TmuxHarness {
+    environment: ProcessEnvironment,
+}
+
+impl TmuxHarness {
+    #[must_use]
+    pub fn new(environment: ProcessEnvironment) -> Self {
+        Self { environment }
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum TmuxError {
@@ -27,14 +38,17 @@ impl SessionClient for TmuxHarness {
     type Error = TmuxError;
 
     fn available(&self) -> bool {
-        Command::new("tmux")
+        self.environment
+            .command("tmux")
             .arg("-V")
             .output()
             .is_ok_and(|output| output.status.success())
     }
 
     fn session_exists(&self, session_name: &str) -> Result<bool, Self::Error> {
-        let output = Command::new("tmux")
+        let output = self
+            .environment
+            .command("tmux")
             .args(["has-session", "-t", &exact_session(session_name)])
             .output()
             .map_err(|source| TmuxError::Execute { source })?;
@@ -72,7 +86,9 @@ impl SessionClient for TmuxHarness {
 
     fn open_window(&self, window: &SessionWindow<'_>) -> Result<(), Self::Error> {
         let process_arguments = self.preview_window(window);
-        let output = Command::new(&process_arguments[0])
+        let output = self
+            .environment
+            .command(&process_arguments[0])
             .args(&process_arguments[1..])
             .output()
             .map_err(|source| TmuxError::Execute { source })?;

@@ -1,7 +1,7 @@
 //! Converts normalized compatibility tokens into typed task leaves.
 
 use clap::Args;
-use pwf_wire::task::{OrderDirection, OrderField, OrderSpec};
+use pwf_client::v1::{OrderDirection, OrderField, OrderSpec};
 
 use super::{SectionChoice, StatusChoice, list};
 
@@ -73,8 +73,8 @@ fn list_arguments(
         effort: None,
         tag: Vec::new(),
         order: Some(OrderSpec {
-            field: OrderField::ProjectId,
-            direction: OrderDirection::Asc,
+            field: OrderField::ProjectId as i32,
+            direction: OrderDirection::Asc as i32,
         }),
         status: arguments.status,
     }
@@ -82,7 +82,7 @@ fn list_arguments(
 
 #[cfg(test)]
 mod tests {
-    use pwf_wire::task::StatusFilter;
+    use pwf_client::v1::TaskStatusFilter;
 
     use super::*;
 
@@ -111,13 +111,13 @@ mod tests {
         assert_eq!(
             list.order,
             Some(OrderSpec {
-                field: OrderField::ProjectId,
-                direction: OrderDirection::Asc,
+                field: OrderField::ProjectId as i32,
+                direction: OrderDirection::Asc as i32,
             })
         );
         assert_eq!(
             list.status.expect("explicit status").filter(),
-            StatusFilter::All
+            TaskStatusFilter::All
         );
     }
 

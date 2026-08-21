@@ -2,10 +2,12 @@
 
 use std::{collections::BTreeMap, path::PathBuf};
 
+use pwf_application::contract::task::session::{ModelTier, ModelTierLookup};
 use pwf_models::task::EffortTier;
-use pwf_wire::task::session::{ModelTier, ModelTierLookup};
 use serde::Deserialize;
 use thiserror::Error;
+
+use super::ProcessEnvironment;
 
 const MODEL_TIERS_ENV: &str = "PWF_MODEL_TIERS";
 
@@ -24,8 +26,11 @@ pub enum ModelTiersError {
     ),
 }
 
-pub(super) fn tier(effort: EffortTier) -> Result<ModelTierLookup, ModelTiersError> {
-    let catalog = default_model_tiers_path().ok_or(ModelTiersError::PathUnresolvable)?;
+pub(super) fn tier(
+    effort: EffortTier,
+    environment: &ProcessEnvironment,
+) -> Result<ModelTierLookup, ModelTiersError> {
+    let catalog = default_model_tiers_path(environment).ok_or(ModelTiersError::PathUnresolvable)?;
     tier_at(&catalog, effort)
 }
 
@@ -39,9 +44,9 @@ struct TierEntry {
     claude_model: Option<String>,
 }
 
-fn default_model_tiers_path() -> Option<PathBuf> {
+fn default_model_tiers_path(environment: &ProcessEnvironment) -> Option<PathBuf> {
     resolve_model_tiers_path(
-        std::env::var_os(MODEL_TIERS_ENV).map(PathBuf::from),
+        environment.value(MODEL_TIERS_ENV).map(PathBuf::from),
         std::env::current_exe().ok(),
     )
 }

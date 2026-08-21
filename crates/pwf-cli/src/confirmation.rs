@@ -1,6 +1,6 @@
 //! Presents typed confirmation details and collects one terminal decision.
 
-use std::{fmt, sync::OnceLock};
+use std::fmt;
 
 use anstyle::AnsiColor;
 use dialoguer::{
@@ -8,8 +8,7 @@ use dialoguer::{
     console::Term,
     theme::{ColorfulTheme, Theme},
 };
-use pwf_application::ports::confirmation::ConfirmationClient;
-use pwf_wire::confirmation::Confirmation;
+use pwf_client::task::{Confirmation, ConfirmationPrompt};
 
 use crate::console::Console;
 
@@ -49,37 +48,24 @@ pub(crate) enum ConfirmationMode {
 pub(crate) struct CliConfirmationClient {
     console: Console,
     mode: ConfirmationMode,
-    prompt_error: OnceLock<dialoguer::Error>,
 }
 
 impl CliConfirmationClient {
     pub(crate) fn new(console: Console, mode: ConfirmationMode) -> Self {
-        Self {
-            console,
-            mode,
-            prompt_error: OnceLock::new(),
-        }
-    }
-
-    pub(crate) fn into_prompt_error(self) -> Option<dialoguer::Error> {
-        self.prompt_error.into_inner()
+        Self { console, mode }
     }
 }
 
-impl ConfirmationClient for CliConfirmationClient {
-    fn confirm(&self, confirmation: &Confirmation) -> bool {
+impl ConfirmationPrompt for CliConfirmationClient {
+    type Error = dialoguer::Error;
+
+    fn confirm(&self, confirmation: &Confirmation) -> Result<bool, Self::Error> {
         match self.mode {
-            ConfirmationMode::AssumeYes => true,
-            ConfirmationMode::Prompt => {
-                match self.console.confirm(&confirmation_dialog(confirmation)) {
-                    Ok(ConfirmationAnswer::Accepted) => true,
-                    Ok(ConfirmationAnswer::Declined) => false,
-                    Err(error) => {
-                        drop(self.prompt_error.set(error));
-                        false
-                    }
-                }
-            }
+            ConfirmationMode::AssumeYes => Ok(true),
+            ConfirmationMode::Prompt => self
+                .console
+                .confirm(&confirmation_dialog(confirmation))
+                .map(|answer| answer == ConfirmationAnswer::Accepted),
         }
     }
 }
@@ -184,9 +170,9 @@ fn confirmation_dialog(confirmation: &Confirmation) -> ConfirmationDialog {
         Confirmation::RemoveTask(confirmation) => ConfirmationDialog::new(
             "Confirm task removal",
             vec![
-                Detail::new("Task", &confirmation.task_identifier),
+                Detail::new("Task", &confirmation.task_id),
                 Detail::new("Title", &confirmation.title),
-                Detail::new("Status", confirmation.status),
+                Detail::new("Status", task_status(confirmation.status)),
                 Detail::new("Project", &confirmation.project),
                 Detail::new("Note", &confirmation.note_path),
             ],
@@ -197,27 +183,48 @@ fn confirmation_dialog(confirmation: &Confirmation) -> ConfirmationDialog {
         Confirmation::ReopenTask(confirmation) => ConfirmationDialog::new(
             "Reopen task and delete completion data",
             vec![
-                Detail::new("Task", &confirmation.task_identifier),
+                Detail::new("Task", &confirmation.task_id),
                 Detail::new("Project", &confirmation.project),
                 Detail::new(
                     "Completed",
-                    optional_display(confirmation.completion_date.as_ref()),
+                    optional_text(confirmation.completion_date.as_deref()),
                 ),
-                Detail::new(
-                    "Commits",
-                    optional_text(confirmation.commit_provenance.as_deref()),
-                ),
+                Detail::new("Commits", optional_text(confirmation.commits.as_deref())),
                 Detail::new("Report", optional_text(confirmation.report.as_deref())),
             ],
             "Delete this completion data and reopen the task?",
             ConfirmationDefault::No,
             ConfirmationTone::Destructive,
         ),
+        Confirmation::DispatchSession(preflight) => {
+            let confirmation = preflight.confirmation.as_ref();
+            ConfirmationDialog::new(
+                "Confirm session dispatch",
+                vec![
+                    Detail::new(
+                        "Task",
+                        confirmation.map_or("(unknown)", |value| value.task_id.as_str()),
+                    ),
+                    Detail::new(
+                        "Title",
+                        confirmation.map_or("(unknown)", |value| value.title.as_str()),
+                    ),
+                ],
+                "Proceed with session dispatch?",
+                ConfirmationDefault::Yes,
+                ConfirmationTone::Informational,
+            )
+        }
     }
 }
 
-fn optional_display(value: Option<&impl fmt::Display>) -> String {
-    value.map_or_else(|| "(not recorded)".to_string(), ToString::to_string)
+fn task_status(value: i32) -> &'static str {
+    match pwf_client::v1::TaskStatus::try_from(value).ok() {
+        Some(pwf_client::v1::TaskStatus::Active) => "active",
+        Some(pwf_client::v1::TaskStatus::Done) => "done",
+        Some(pwf_client::v1::TaskStatus::Cancelled) => "cancelled",
+        Some(pwf_client::v1::TaskStatus::Unspecified) | None => "unspecified",
+    }
 }
 
 fn optional_text(value: Option<&str>) -> &str {
@@ -277,15 +284,7 @@ impl Theme for ConfirmationTheme {
 
 #[cfg(test)]
 mod tests {
-    use pwf_models::{
-        AppDate,
-        project::ProjectName,
-        task::{TaskId, TaskStatus, TaskTitle},
-    };
-    use pwf_wire::{
-        confirmation::{RemoveTaskConfirmation, ReopenTaskConfirmation},
-        task::TaskNotePath,
-    };
+    use pwf_client::v1::{RemoveTaskConfirmation, ReopenTaskConfirmation, TaskStatus};
 
     use super::*;
 
@@ -316,11 +315,11 @@ mod tests {
     #[test]
     fn removal_confirmation_renders_aligned_task_details() {
         let confirmation = Confirmation::RemoveTask(RemoveTaskConfirmation {
-            task_identifier: TaskId::try_new("PWF-0001").unwrap(),
-            project: ProjectName::try_new("pwf").unwrap(),
-            title: TaskTitle::try_new("stale task").unwrap(),
-            status: TaskStatus::Active,
-            note_path: TaskNotePath::new("/notes/pwf/PWF-0001.md".into()),
+            task_id: "PWF-0001".to_string(),
+            project: "pwf".to_string(),
+            title: "stale task".to_string(),
+            status: TaskStatus::Active as i32,
+            note_path: "/notes/pwf/PWF-0001.md".to_string(),
         });
 
         assert_eq!(
@@ -332,10 +331,10 @@ mod tests {
     #[test]
     fn reopen_confirmation_emphasizes_every_deleted_artifact() {
         let confirmation = Confirmation::ReopenTask(ReopenTaskConfirmation {
-            task_identifier: TaskId::try_new("PWF-0001").unwrap(),
-            project: ProjectName::try_new("pwf").unwrap(),
-            completion_date: Some(AppDate::from_calendar_date(2026, 8, 17).unwrap()),
-            commit_provenance: Some("abc..def".to_string()),
+            task_id: "PWF-0001".to_string(),
+            project: "pwf".to_string(),
+            completion_date: Some("2026-08-17".to_string()),
+            commits: Some("abc..def".to_string()),
             report: Some("validated the release".to_string()),
         });
 

@@ -1,14 +1,9 @@
 use clap::Args;
-use pwf_application::{
-    ports::clock::Clock,
-    task::cancel_task::{self, CancelTaskError},
-};
-use pwf_infra::obsidian::ObsidianStore;
-use pwf_models::task::{CommitRanges, TaskReport};
-use pwf_wire::task::{CancelTask, CancelTaskApiError, CloseTaskApiError};
+use pwf_client::{task::TaskClient, v1::CancelTaskRequest};
+use pwf_models::task::TaskReport;
 
 use super::{
-    Identifier, map_close_task_error, map_resolve_task_project_error,
+    Identifier,
     render::{
         emit_close_diagnostics, emit_created_section, emit_created_section_for_error, render_closed,
     },
@@ -29,47 +24,29 @@ pub struct Arguments {
     pub(crate) review: bool,
 }
 
-pub(super) async fn run(
-    arguments: &Arguments,
-    store: &ObsidianStore,
-    pool: &sqlx::SqlitePool,
-    clock: &impl Clock,
-) -> Result<String, CancelTaskApiError> {
+pub(super) async fn run(arguments: &Arguments, client: &TaskClient) -> anyhow::Result<String> {
     let id = arguments
         .identifier
-        .required(CancelTaskApiError::MissingId)?;
+        .required(anyhow::anyhow!("--id is required for cancel."))?;
     let report = arguments
         .report
         .as_deref()
-        .ok_or(CancelTaskApiError::MissingReport)?
+        .ok_or_else(|| anyhow::anyhow!("--report is required for cancel."))?
         .parse::<TaskReport>()
-        .map_err(|error| CancelTaskApiError::InvalidReport {
-            message: error.to_string(),
-        })?;
-    let command = CancelTask {
-        id,
-        report,
-        commits: CommitRanges::from_inputs(&arguments.commits),
+        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    let command = CancelTaskRequest {
+        id: id.to_string(),
+        report: report.to_string(),
+        commits: arguments.commits.clone(),
         review: arguments.review,
     };
-    let output = cancel_task::execute(&command, store, pool, clock)
-        .await
-        .map_err(map_error)
-        .inspect_err(|error| {
-            if let CancelTaskApiError::Close(CloseTaskApiError::ReviewTask(source)) = error {
-                emit_created_section_for_error(source);
-            }
-        })?;
+    let output = client.cancel_task(command).await.map_err(|error| {
+        emit_created_section_for_error(&error);
+        crate::rpc_error(error)
+    })?;
     if let Some(review) = output.review_task.as_ref() {
         emit_created_section(review);
     }
     emit_close_diagnostics(&output);
     Ok(render_closed(&output))
-}
-
-fn map_error(error: CancelTaskError) -> CancelTaskApiError {
-    CancelTaskApiError::Close(match error {
-        CancelTaskError::ResolveProject(error) => map_resolve_task_project_error(error).into(),
-        CancelTaskError::Close(error) => map_close_task_error(error),
-    })
 }

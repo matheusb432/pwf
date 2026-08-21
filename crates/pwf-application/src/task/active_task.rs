@@ -4,9 +4,9 @@ use pwf_models::{
     project::Project,
     task::{TaskId, TaskStatus},
 };
-use pwf_wire::task::{ResolveTaskProject, TaskView};
 
 use crate::{
+    contract::task::{ResolveTaskProject, TaskView},
     ports::task_record::{TaskRecord, TaskStore},
     task::{
         resolve_task_project::{self, ResolveTaskProjectError},
@@ -84,10 +84,10 @@ mod tests {
         project::Project,
         task::{TaskId, TaskStatus},
     };
-    use pwf_wire::task::{TaskIndexPath, TaskNotePath};
 
     use super::{FindActiveTaskError, TaskView, find_active_task};
     use crate::{
+        contract::task::{TaskIndexPath, TaskNotePath},
         ports::task_record::{IndexPlacement, TaskRecord},
         testing::{InMemoryStore, app_date, project, task_record},
     };

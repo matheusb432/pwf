@@ -8,9 +8,9 @@ use pwf_models::{
         TaskTitleError,
     },
 };
-use pwf_wire::task::{AddTaskDiagnostics, AddedTask, ClosedTask, ClosedTaskAction};
 
 use crate::{
+    contract::task::{AddTaskDiagnostics, AddedTask, ClosedTask, ClosedTaskAction},
     ports::task_record::{
         IndexEntry, IndexEntryState, IndexEntryStore, IndexSectionStore, Materialization, NewTask,
         NullablePatch, TaskPatch, TaskStore,

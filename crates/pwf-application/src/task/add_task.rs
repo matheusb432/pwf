@@ -2,10 +2,6 @@ use pwf_models::{
     project::Project,
     task::{TaskId, TaskTitle, TaskTitleError},
 };
-use pwf_wire::{
-    project::{ListProjects, ProjectStatusFilter, ResolveProject},
-    task::{AddTask, AddTaskDiagnostics, AddTaskPromptKind, AddedTask},
-};
 
 pub use super::task_creation::CreateTaskError;
 use super::{
@@ -15,6 +11,10 @@ use super::{
     task_creation::{self, TaskCreation},
 };
 use crate::{
+    contract::{
+        project::{ListProjects, ProjectStatusFilter, ResolveProject},
+        task::{AddTask, AddTaskDiagnostics, AddTaskPromptKind, AddedTask},
+    },
     ports::{
         clock::Clock,
         task_record::{IndexEntryStore, IndexSectionStore, NewTask, TaskStore},
@@ -52,7 +52,7 @@ pub enum AddTaskError {
     #[error("task {task} at {path} has malformed blocked_by metadata {raw:?}: {reason}")]
     MalformedBlockedBy {
         task: TaskId,
-        path: Box<pwf_wire::task::TaskNotePath>,
+        path: Box<crate::contract::task::TaskNotePath>,
         raw: Box<str>,
         reason: Box<str>,
     },

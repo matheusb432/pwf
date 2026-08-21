@@ -4,9 +4,11 @@ use pwf_models::{
     project::{Project, ProjectId},
     task::{BlockedBy, TaskId},
 };
-use pwf_wire::task::{BlockedByResolution, BlockedByStatus};
 
-use crate::ports::task_record::{Materialization, StoredBlockedBy, TaskStore};
+use crate::{
+    contract::task::{BlockedByResolution, BlockedByStatus},
+    ports::task_record::{Materialization, StoredBlockedBy, TaskStore},
+};
 
 #[derive(Debug, thiserror::Error)]
 pub(in crate::task) enum BlockedByValidationError {
@@ -25,7 +27,7 @@ pub(in crate::task) enum BlockedByValidationError {
     #[error("task {task} at {path} has malformed blocked_by metadata {raw:?}: {reason}")]
     MalformedMetadata {
         task: TaskId,
-        path: Box<pwf_wire::task::TaskNotePath>,
+        path: Box<crate::contract::task::TaskNotePath>,
         raw: Box<str>,
         reason: Box<str>,
     },
@@ -236,10 +238,10 @@ mod tests {
     use std::error::Error as _;
 
     use pwf_models::{project::Project, task::TaskId};
-    use pwf_wire::task::BlockedByResolution;
 
     use super::{BlockedByValidationError, statuses, validate_and_merge};
     use crate::{
+        contract::task::BlockedByResolution,
         ports::task_record::{NewTask, TaskPatch, TaskRecord, TaskStore},
         testing::{
             InMemoryStore, blocked_by, project, staged_missing_task, staged_task,

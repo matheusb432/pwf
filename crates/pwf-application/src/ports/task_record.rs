@@ -5,7 +5,8 @@ use pwf_models::{
     project::Project,
     task::{BlockedBy, EffortTier, TaskId, TaskSection, TaskStatus, TaskTags, TaskTitle},
 };
-use pwf_wire::task::{RawTaskTags, TaskIndexPath, TaskNotePath};
+
+use crate::contract::task::{RawTaskTags, TaskIndexPath, TaskNotePath};
 
 /// Represents the optional `blocked_by` property after infrastructure parsing.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

@@ -1,8 +1,7 @@
 //! Formats typed mutation confirmations at their owning leaf boundaries.
 
 use anstyle::AnsiColor;
-use pwf_models::task::TaskId;
-use pwf_wire::task::{AddedTask, EditedTask, RemovedTask};
+use pwf_client::v1::{AddedTask, EditedTask, RemovedTask};
 
 use super::paint;
 
@@ -63,7 +62,7 @@ fn added_headline(task: &AddedTask) -> String {
 fn render_confirmation(
     label: &str,
     color: AnsiColor,
-    id: &TaskId,
+    id: &str,
     headline: &str,
     detail_lines: &[String],
     color_on: bool,
@@ -81,17 +80,14 @@ fn render_confirmation(
 
 #[cfg(test)]
 mod tests {
-    use pwf_models::{project::ProjectName, task::TaskTitle};
-    use pwf_wire::task::{TaskIndexPath, TaskNotePath};
-
     use super::*;
 
     fn added_task() -> AddedTask {
         AddedTask {
-            id: TaskId::try_new("PWF-0087").unwrap(),
-            project: ProjectName::try_new("pwf").unwrap(),
-            title: TaskTitle::try_new("color tui output when adding pwf task").unwrap(),
-            note_path: TaskNotePath::new("/x/PWF-0087.md".into()),
+            id: "PWF-0087".to_string(),
+            project: "pwf".to_string(),
+            title: "color tui output when adding pwf task".to_string(),
+            note_path: "/x/PWF-0087.md".to_string(),
             created_section: None,
         }
     }
@@ -115,11 +111,11 @@ mod tests {
     #[test]
     fn removed_plain_preserves_confirmation_shape() {
         let task = RemovedTask {
-            id: TaskId::try_new("PWF-0002").unwrap(),
-            project: ProjectName::try_new("pwf").unwrap(),
-            title: TaskTitle::try_new("stale task").unwrap(),
-            deleted_path: TaskNotePath::new("/x.md".into()),
-            unlinked: Some(TaskIndexPath::new("/x.md".into())),
+            id: "PWF-0002".to_string(),
+            project: "pwf".to_string(),
+            title: "stale task".to_string(),
+            deleted_path: "/x.md".to_string(),
+            unlinked: Some("/x.md".to_string()),
         };
 
         assert_eq!(
@@ -131,9 +127,9 @@ mod tests {
     #[test]
     fn edited_plain_uses_the_edit_verb() {
         let task = EditedTask {
-            id: TaskId::try_new("PWF-0002").unwrap(),
-            project: ProjectName::try_new("pwf").unwrap(),
-            title: TaskTitle::try_new("edited task").unwrap(),
+            id: "PWF-0002".to_string(),
+            project: "pwf".to_string(),
+            title: "edited task".to_string(),
         };
 
         assert_eq!(

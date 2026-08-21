@@ -4,15 +4,17 @@ use pwf_models::project::{
     HomeDirectory, ProjectId, ProjectIndexIdentity, ProjectName, ProjectSource, ProjectTasks,
     ProjectTasksPath,
 };
-use pwf_wire::project::{GetProject, ProjectFields, ProjectStatusFilter, RenameProject};
 
 use super::{
     Project, ProjectRow, TaskLocationError,
     get_project::{self, GetProjectError},
     runtime_path, task_location,
 };
-use crate::ports::project_task_files::{
-    ProjectTaskFilesClient, ProjectTaskFilesRenameCommit, StagedProjectTaskFilesRename,
+use crate::{
+    contract::project::{GetProject, ProjectFields, ProjectStatusFilter, RenameProject},
+    ports::project_task_files::{
+        ProjectTaskFilesClient, ProjectTaskFilesRenameCommit, StagedProjectTaskFilesRename,
+    },
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -423,9 +425,9 @@ mod tests {
         HomeDirectory, ProjectId, ProjectIndexIdentity, ProjectName, ProjectSource,
         ProjectSourceKind, ProjectSourceValue, ProjectTasks, ProjectTasksKind, ProjectTasksPath,
     };
-    use pwf_wire::project::ProjectFields;
 
     use crate::{
+        contract::project::ProjectFields,
         ports::project_task_files::{
             ProjectTaskFilesClient, ProjectTaskFilesRenameCommit, StagedProjectTaskFilesRename,
         },

@@ -1,16 +1,12 @@
 use clap::Args;
-use pwf_application::project::rename_project::{self, RenameProjectError};
-use pwf_infra::obsidian::ObsidianProjectTaskFilesClient;
-use pwf_models::project::{
-    HomeDirectory, ProjectId, ProjectName, ProjectSource, ProjectSourceKind, ProjectSourceValue,
-    ProjectTasks, ProjectTasksKind, ProjectTasksPath,
+use pwf_client::{
+    project::ProjectClient,
+    v1::{ProjectFields, RenameProjectRequest},
 };
-use pwf_wire::project::{ProjectFields, RenameProject, RenameProjectApiError};
-use sqlx::SqlitePool;
+use pwf_models::project::{ProjectId, ProjectName, ProjectSourceValue, ProjectTasksPath};
 
 use super::{
-    map_task_location_error, output, parse_project_id, parse_project_source, parse_project_tasks,
-    parse_project_title,
+    output, parse_project_id, parse_project_source, parse_project_tasks, parse_project_title,
 };
 
 #[derive(Args, Debug)]
@@ -32,51 +28,21 @@ pub struct Arguments {
     pub tasks: ProjectTasksPath,
 }
 
-pub(super) async fn run(
-    arguments: Arguments,
-    pool: &SqlitePool,
-    home: Option<HomeDirectory>,
-) -> Result<String, RenameProjectApiError> {
-    let home = home.ok_or(RenameProjectApiError::HomeDirectoryUnavailable)?;
+pub(super) async fn run(arguments: Arguments, client: &ProjectClient) -> anyhow::Result<String> {
     let fields = ProjectFields {
-        id: arguments.destination_id,
-        title: arguments.title,
-        source: ProjectSource::new(ProjectSourceKind::Directory, arguments.source),
-        tasks: ProjectTasks::new(ProjectTasksKind::Directory, arguments.tasks),
+        id: arguments.destination_id.to_string(),
+        title: arguments.title.to_string(),
+        source_kind: "directory".to_string(),
+        source_value: arguments.source.to_string(),
+        tasks_kind: "directory".to_string(),
+        tasks_path: arguments.tasks.to_string(),
     };
-    let renamed = rename_project::execute(
-        RenameProject {
-            current_id: arguments.current_id,
-            fields,
-        },
-        pool,
-        &ObsidianProjectTaskFilesClient,
-        &home,
-    )
-    .await
-    .map_err(map_error)?;
-    output::project(renamed).map_err(|error| RenameProjectApiError::RenderJson {
-        message: error.to_string(),
-    })
-}
-
-fn map_error(error: RenameProjectError) -> RenameProjectApiError {
-    match error {
-        RenameProjectError::SourceProjectNotFound { id } => {
-            RenameProjectApiError::SourceProjectNotFound { id }
-        }
-        RenameProjectError::SourceProjectChanged { id } => {
-            RenameProjectApiError::SourceProjectChanged { id }
-        }
-        RenameProjectError::DestinationProjectIdExists { id } => {
-            RenameProjectApiError::DestinationProjectIdExists { id }
-        }
-        RenameProjectError::DestinationProjectTitleExists { title } => {
-            RenameProjectApiError::DestinationProjectTitleExists { title }
-        }
-        RenameProjectError::TaskLocation(error) => map_task_location_error(error).into(),
-        error => RenameProjectApiError::Unexpected {
-            message: error.to_string(),
-        },
-    }
+    let renamed = client
+        .rename_project(RenameProjectRequest {
+            current_id: arguments.current_id.to_string(),
+            fields: Some(fields),
+        })
+        .await
+        .map_err(crate::rpc_error)?;
+    output::project(renamed)
 }

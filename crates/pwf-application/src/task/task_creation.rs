@@ -4,11 +4,13 @@ use pwf_models::{
     project::{Project, ProjectName},
     task::{TaskId, TaskSection, TaskTitle},
 };
-use pwf_wire::task::TaskNotePath;
 
 use super::normalize_section_label;
-use crate::ports::task_record::{
-    IndexEntry, IndexEntryState, IndexEntryStore, IndexSectionStore, NewTask, TaskStore,
+use crate::{
+    contract::task::TaskNotePath,
+    ports::task_record::{
+        IndexEntry, IndexEntryState, IndexEntryStore, IndexSectionStore, NewTask, TaskStore,
+    },
 };
 
 /// Reports the persistence phase that failed while creating a task.

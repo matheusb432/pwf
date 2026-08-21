@@ -1,9 +1,9 @@
 use std::error::Error;
 
 use pwf_models::project::{HomeDirectory, ProjectId, ProjectTasksPath};
-use pwf_wire::project::{ProjectStateChange, ResumeProject};
 
 use super::{ProjectRow, TaskLocationError, task_location};
+use crate::contract::project::{ProjectStateChange, ResumeProject};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ResumeProjectError {

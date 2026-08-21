@@ -1,8 +1,11 @@
 use std::{assert_matches, fmt::Write as _, num::NonZeroUsize, path::Path};
 
-use pwf_application::ports::task_record::{
-    IndexEntry, IndexEntryState, IndexEntryStore, IndexPlacement, IndexSectionStore,
-    Materialization, NewTask, NullablePatch, StoredBlockedBy, TaskPatch, TaskRecord, TaskStore,
+use pwf_application::{
+    contract::task::{TaskIndexPath, TaskNotePath},
+    ports::task_record::{
+        IndexEntry, IndexEntryState, IndexEntryStore, IndexPlacement, IndexSectionStore,
+        Materialization, NewTask, NullablePatch, StoredBlockedBy, TaskPatch, TaskRecord, TaskStore,
+    },
 };
 use pwf_models::{
     AppDate,
@@ -12,7 +15,6 @@ use pwf_models::{
     },
     task::{BlockedBy, EffortTier, Tag, TaskId, TaskSection, TaskStatus, TaskTags, TaskTitle},
 };
-use pwf_wire::task::{TaskIndexPath, TaskNotePath};
 
 use super::{ObsidianStore, ObsidianStoreError, fs::path_str};
 

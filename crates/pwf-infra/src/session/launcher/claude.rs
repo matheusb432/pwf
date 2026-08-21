@@ -1,10 +1,10 @@
 //! Prepares native Claude Code launches.
 
+use pwf_application::contract::task::session::{AgentLaunch, AgentProbe};
 use pwf_models::session::{AgentModel, LaunchPrompt, SessionThreadTitle};
-use pwf_wire::task::session::{AgentLaunch, AgentProbe};
 
 use super::argv::LaunchArgv;
-use crate::session::claude_effort::ClaudeEffort;
+use crate::session::{ProcessEnvironment, claude_effort::ClaudeEffort};
 
 const BINARY: &str = "claude";
 
@@ -26,8 +26,8 @@ impl From<&AgentLaunch> for ClaudeLaunchPlan {
     }
 }
 
-pub(super) fn probe() -> AgentProbe {
-    super::probe(pwf_models::session::Agent::Claude, BINARY)
+pub(super) fn probe(environment: &ProcessEnvironment) -> AgentProbe {
+    super::probe(environment, pwf_models::session::Agent::Claude, BINARY)
 }
 
 pub(super) fn preview(launch: &AgentLaunch) -> Vec<String> {
@@ -55,6 +55,7 @@ fn prepare_argv(launch: &AgentLaunch) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    use pwf_application::contract::task::session::AgentLaunch;
     use pwf_models::{
         session::{
             Agent, AgentModel, LaunchPrompt, SessionEffort, SessionThreadTitle,
@@ -62,7 +63,6 @@ mod tests {
         },
         task::TaskId,
     };
-    use pwf_wire::task::session::AgentLaunch;
 
     use super::prepare;
 

@@ -4,12 +4,12 @@ use pwf_models::{
     note::NoteSelector,
     project::{ProjectId, ProjectName},
 };
-use pwf_wire::{
-    note::{RemoveNote, RemovedNote},
-    project::{ProjectStatusFilter, ResolveProject},
-};
 
 use crate::{
+    contract::{
+        note::{RemoveNote, RemovedNote},
+        project::{ProjectStatusFilter, ResolveProject},
+    },
     ports::project_note::ProjectNoteStore,
     project::resolve_project::{self, ResolveProjectError},
 };

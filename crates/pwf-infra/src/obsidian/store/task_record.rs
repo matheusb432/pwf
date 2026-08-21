@@ -1,16 +1,18 @@
 use std::{fmt::Write as _, num::NonZeroUsize, path::Path};
 
 use lazy_regex::{Regex, regex};
-use pwf_application::ports::task_record::{
-    IndexEntryState, IndexPlacement, Materialization, NewTask, NullablePatch, TaskPatch,
-    TaskRecord, TaskStore,
+use pwf_application::{
+    contract::task::{RawTaskTags, TaskIndexPath, TaskNotePath},
+    ports::task_record::{
+        IndexEntryState, IndexPlacement, Materialization, NewTask, NullablePatch, TaskPatch,
+        TaskRecord, TaskStore,
+    },
 };
 use pwf_models::{
     AppDate,
     project::Project,
     task::{TaskId, TaskSection, TaskStatus},
 };
-use pwf_wire::task::{RawTaskTags, TaskIndexPath, TaskNotePath};
 
 use super::{
     ObsidianStore, ObsidianStoreError,

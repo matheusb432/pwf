@@ -1,13 +1,14 @@
-use pwf_wire::task::{CancelTask, ClosedTask, ClosedTaskAction, ResolveTaskProject};
-
 use super::{
     CloseTaskError,
     resolve_task_project::{self, ResolveTaskProjectError},
     task_closure::{self, TaskClosure},
 };
-use crate::ports::{
-    clock::Clock,
-    task_record::{IndexEntryStore, IndexSectionStore, TaskStore},
+use crate::{
+    contract::task::{CancelTask, ClosedTask, ClosedTaskAction, ResolveTaskProject},
+    ports::{
+        clock::Clock,
+        task_record::{IndexEntryStore, IndexSectionStore, TaskStore},
+    },
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -102,7 +103,10 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(out.action, pwf_wire::task::ClosedTaskAction::Cancelled);
+        assert_eq!(
+            out.action,
+            crate::contract::task::ClosedTaskAction::Cancelled
+        );
         assert_eq!(store.tasks("foo-bar")[0].status, TaskStatus::Cancelled);
         assert_eq!(
             store.tasks("foo-bar")[0].completed,

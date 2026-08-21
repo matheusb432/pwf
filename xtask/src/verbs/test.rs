@@ -6,7 +6,7 @@ use xtk_test::{OutputPath, Run, Test, TestCountDiscovery, surface};
 
 use crate::process;
 
-const E2E_TIMEOUT: Duration = Duration::from_hours(1);
+const PROCESS_TIMEOUT: Duration = Duration::from_hours(1);
 
 #[derive(Args)]
 #[command(args_conflicts_with_subcommands = true)]
@@ -39,11 +39,18 @@ struct TestSelectionArguments {
         long,
         value_enum,
         default_value_t = Scope::Unit,
-        default_value_ifs = [("e2e", "true", "e2e"), ("all", "true", "all")]
+        default_value_ifs = [
+            ("binary", "true", "binary"),
+            ("e2e", "true", "e2e"),
+            ("all", "true", "all")
+        ]
     )]
     scope: Scope,
+    /// Shorthand for `--scope binary`.
+    #[arg(long, conflicts_with_all = ["e2e", "all", "scope"])]
+    binary: bool,
     /// Shorthand for `--scope e2e`.
-    #[arg(long, conflicts_with_all = ["all", "scope"])]
+    #[arg(long, conflicts_with_all = ["binary", "all", "scope"])]
     e2e: bool,
     /// Shorthand for `--scope all`.
     #[arg(long, conflicts_with = "scope")]
@@ -67,6 +74,14 @@ struct TestCoverageArguments {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 pub(crate) enum Scope {
     Unit,
+    Binary,
+    E2e,
+    All,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub(crate) enum ProcessScope {
+    Binary,
     E2e,
     All,
 }
@@ -89,7 +104,7 @@ pub(crate) fn run_all() -> Result<()> {
 
 fn run_scope(scope: Scope, output: TestOutputArguments, cargo_arguments: &[String]) -> Result<()> {
     if scope == Scope::All && !cargo_arguments.is_empty() {
-        bail!("cargo test arguments require the unit or e2e test scope");
+        bail!("cargo test arguments require the unit, binary, or e2e test scope");
     }
 
     let executable = std::env::current_exe()
@@ -151,14 +166,27 @@ fn cargo_output_is_explicit(arguments: &[String]) -> bool {
         })
 }
 
-pub(crate) fn run_e2e_worker(verbose: bool, cargo_arguments: &[String]) -> Result<()> {
+pub(crate) fn run_process_worker(
+    scope: ProcessScope,
+    verbose: bool,
+    cargo_arguments: &[String],
+) -> Result<()> {
     process::run(
         "release process build",
-        Command::new("cargo").args(["build", "--release", "-p", "pwf-cli", "-p", "pwf-migrator"]),
+        Command::new("cargo").args([
+            "build",
+            "--release",
+            "-p",
+            "pwf-cli",
+            "-p",
+            "pwf-migrator",
+            "-p",
+            "pwf-server",
+        ]),
     )?;
     process::run(
-        "binary E2E suites",
-        Command::new("cargo").args(e2e_test_arguments(cargo_arguments, verbose)?),
+        scope.operation_name(),
+        Command::new("cargo").args(process_test_arguments(scope, cargo_arguments, verbose)?),
     )
 }
 
@@ -170,7 +198,8 @@ fn selected_tests(
 ) -> Result<Vec<Test>> {
     match scope {
         Scope::Unit => tests_unit(cargo_arguments),
-        Scope::E2e => tests_e2e(executable, cargo_arguments, verbose),
+        Scope::Binary => tests_process(executable, ProcessScope::Binary, cargo_arguments, verbose),
+        Scope::E2e => tests_process(executable, ProcessScope::E2e, cargo_arguments, verbose),
         Scope::All => tests_all(executable, verbose),
     }
 }
@@ -196,21 +225,32 @@ fn tests_unit(cargo_arguments: &[String]) -> Result<Vec<Test>> {
     Ok(vec![test])
 }
 
-fn tests_e2e(executable: OsString, cargo_arguments: &[String], verbose: bool) -> Result<Vec<Test>> {
-    validate_e2e_test_arguments(cargo_arguments)?;
-    let mut test = Test::try_new("e2e", surface::OPAQUE, executable)?.arg("e2e-worker");
+fn tests_process(
+    executable: OsString,
+    scope: ProcessScope,
+    cargo_arguments: &[String],
+    verbose: bool,
+) -> Result<Vec<Test>> {
+    validate_process_test_arguments(cargo_arguments)?;
+    let mut test = Test::try_new(scope.test_name(), surface::OPAQUE, executable)?
+        .args(["process-worker", scope.as_str()]);
     if verbose {
         test = test.arg("--verbose");
     }
     if !cargo_arguments.is_empty() {
         test = test.arg("--").args(cargo_arguments.iter().cloned());
     }
-    Ok(vec![test.timeout(E2E_TIMEOUT)])
+    Ok(vec![test.timeout(PROCESS_TIMEOUT)])
 }
 
 fn tests_all(executable: OsString, verbose: bool) -> Result<Vec<Test>> {
     let mut tests = tests_unit(&[])?;
-    tests.extend(tests_e2e(executable.clone(), &[], verbose)?);
+    tests.extend(tests_process(
+        executable.clone(),
+        ProcessScope::All,
+        &[],
+        verbose,
+    )?);
     tests.extend([
         Test::try_new("architecture", surface::OPAQUE, executable)?.arg("check-architecture"),
         Test::try_new("ast-scan", surface::OPAQUE, "ast-grep")?.arg("scan"),
@@ -227,28 +267,31 @@ fn cargo_test_arguments(arguments_extra: &[String]) -> Vec<String> {
     arguments
 }
 
-fn e2e_test_arguments(arguments_extra: &[String], verbose: bool) -> Result<Vec<String>> {
-    validate_e2e_test_arguments(arguments_extra)?;
+fn process_test_arguments(
+    scope: ProcessScope,
+    arguments_extra: &[String],
+    verbose: bool,
+) -> Result<Vec<String>> {
+    validate_process_test_arguments(arguments_extra)?;
     let mut arguments = vec!["test".to_owned()];
     if !verbose && !cargo_output_is_explicit(arguments_extra) {
         arguments.push("--quiet".to_owned());
     }
-    arguments.extend(
-        ["-p", "pwf-e2e", "--test", "e2e"]
-            .into_iter()
-            .map(str::to_owned),
-    );
+    arguments.extend(["-p", "pwf-cli"].into_iter().map(str::to_owned));
+    for target in scope.target_names() {
+        arguments.extend(["--test".to_owned(), (*target).to_owned()]);
+    }
     arguments.extend(arguments_extra.iter().cloned());
     Ok(arguments)
 }
 
-fn validate_e2e_test_arguments(arguments: &[String]) -> Result<()> {
+fn validate_process_test_arguments(arguments: &[String]) -> Result<()> {
     if arguments
         .iter()
         .take_while(|argument| argument.as_str() != "--")
         .any(|argument| cargo_scope_option_is_explicit(argument))
     {
-        bail!("the e2e scope fixes the Cargo package and test target");
+        bail!("the binary and e2e scopes fix the Cargo package and test target");
     }
     Ok(())
 }
@@ -308,8 +351,42 @@ impl Scope {
     const fn as_str(self) -> &'static str {
         match self {
             Self::Unit => "unit",
+            Self::Binary => "binary",
             Self::E2e => "e2e",
             Self::All => "all",
+        }
+    }
+}
+
+impl ProcessScope {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Binary => "binary",
+            Self::E2e => "e2e",
+            Self::All => "all",
+        }
+    }
+
+    const fn test_name(self) -> &'static str {
+        match self {
+            Self::All => "process",
+            scope => scope.as_str(),
+        }
+    }
+
+    const fn operation_name(self) -> &'static str {
+        match self {
+            Self::Binary => "binary integration suite",
+            Self::E2e => "E2E journey suite",
+            Self::All => "binary integration and E2E suites",
+        }
+    }
+
+    const fn target_names(self) -> &'static [&'static str] {
+        match self {
+            Self::Binary => &["binary"],
+            Self::E2e => &["e2e"],
+            Self::All => &["binary", "e2e"],
         }
     }
 }
@@ -347,9 +424,10 @@ mod tests {
     }
 
     #[test]
-    fn e2e_test_preserves_native_test_filters() {
+    fn process_test_preserves_native_test_filters() {
         assert_eq!(
-            e2e_test_arguments(
+            process_test_arguments(
+                ProcessScope::E2e,
                 &[
                     "task::lists_tasks".to_owned(),
                     "--".to_owned(),
@@ -362,7 +440,7 @@ mod tests {
                 "test",
                 "--quiet",
                 "-p",
-                "pwf-e2e",
+                "pwf-cli",
                 "--test",
                 "e2e",
                 "task::lists_tasks",
@@ -373,14 +451,35 @@ mod tests {
     }
 
     #[test]
-    fn e2e_test_rejects_a_conflicting_package_scope() {
-        let error = e2e_test_arguments(
+    fn process_test_selects_binary_and_combined_targets() {
+        assert_eq!(
+            process_test_arguments(ProcessScope::Binary, &[], false).unwrap(),
+            ["test", "--quiet", "-p", "pwf-cli", "--test", "binary"]
+        );
+        assert_eq!(
+            process_test_arguments(ProcessScope::All, &[], false).unwrap(),
+            [
+                "test", "--quiet", "-p", "pwf-cli", "--test", "binary", "--test", "e2e",
+            ]
+        );
+    }
+
+    #[test]
+    fn combined_process_scope_uses_the_clap_value_for_the_worker() {
+        assert_eq!(ProcessScope::All.as_str(), "all");
+        assert_eq!(ProcessScope::All.test_name(), "process");
+    }
+
+    #[test]
+    fn process_test_rejects_a_conflicting_package_scope() {
+        let error = process_test_arguments(
+            ProcessScope::Binary,
             &["--package".to_owned(), "different-package".to_owned()],
             false,
         )
         .unwrap_err();
 
-        assert!(error.to_string().contains("fixes the Cargo package"));
+        assert!(error.to_string().contains("fix the Cargo package"));
     }
 
     #[test]

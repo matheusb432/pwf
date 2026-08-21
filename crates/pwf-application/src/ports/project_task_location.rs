@@ -1,7 +1,8 @@
 use std::error::Error;
 
 use pwf_models::project::Project;
-use pwf_wire::task::ProjectTaskPath;
+
+use crate::contract::task::ProjectTaskPath;
 
 /// Resolves one managed project's runtime task directory.
 pub trait ProjectTaskLocationClient: Clone + Send + Sync + 'static {

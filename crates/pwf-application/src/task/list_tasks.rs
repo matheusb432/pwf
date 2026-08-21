@@ -4,16 +4,16 @@ use pwf_models::{
     project::Project,
     task::{EffortTier, TaskId, TaskSection, TaskTags},
 };
-use pwf_wire::{
-    project::{ListProjects, ProjectStatusFilter, ResolveProject},
-    task::{
-        ListDetail, ListLayout, ListScope, ListTasks, ListedTasks, OrderDirection, OrderField,
-        OrderSpec, StatusFilter, TaskView,
-    },
-};
 
 use super::{blocked_by, tags, task_view};
 use crate::{
+    contract::{
+        project::{ListProjects, ProjectStatusFilter, ResolveProject},
+        task::{
+            ListDetail, ListLayout, ListScope, ListTasks, ListedTasks, OrderDirection, OrderField,
+            OrderSpec, StatusFilter, TaskView,
+        },
+    },
     ports::{
         project_task_location::ProjectTaskLocationClient,
         task_record::{TaskRecord, TaskStore},
@@ -362,14 +362,14 @@ mod tests {
         project::{Project, ProjectName},
         task::{EffortTier, TaskId, TaskStatus, TaskTags},
     };
-    use pwf_wire::task::{
-        BlockedByResolution, BlockedByStatus, ListDetail, ListLayout, ListScope, ListedTasks,
-        OrderDirection, OrderField, OrderSpec, ProjectTaskPath, RawTaskTags, StatusFilter,
-        TaskIndexPath, TaskNotePath,
-    };
 
     use super::{ListTasks, ListTasksError};
     use crate::{
+        contract::task::{
+            BlockedByResolution, BlockedByStatus, ListDetail, ListLayout, ListScope, ListedTasks,
+            OrderDirection, OrderField, OrderSpec, ProjectTaskPath, RawTaskTags, StatusFilter,
+            TaskIndexPath, TaskNotePath,
+        },
         ports::{
             project_task_location::ProjectTaskLocationClient,
             task_record::{IndexPlacement, Materialization, TaskRecord},

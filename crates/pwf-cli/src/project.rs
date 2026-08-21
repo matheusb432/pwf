@@ -1,12 +1,8 @@
 //! Parses and dispatches managed-project commands.
 
 use clap::{Args, Subcommand};
-use pwf_application::project::{TaskLocationError, resolve_project::ResolveProjectError};
-use pwf_models::project::{
-    HomeDirectory, ProjectId, ProjectName, ProjectSourceValue, ProjectTasksPath,
-};
-use pwf_wire::project::{ProjectTaskLocationApiError, ResolveProjectApiError};
-use sqlx::SqlitePool;
+use pwf_client::project::ProjectClient;
+use pwf_models::project::{ProjectId, ProjectName, ProjectSourceValue, ProjectTasksPath};
 
 pub mod add;
 pub mod get;
@@ -39,58 +35,20 @@ pub enum Command {
     Resume(resume::Arguments),
 }
 
-pub async fn run(
-    arguments: Arguments,
-    pool: &SqlitePool,
-    home: Option<HomeDirectory>,
-) -> anyhow::Result<String> {
+pub async fn run(arguments: Arguments, client: &ProjectClient) -> anyhow::Result<String> {
     let Some(command) = arguments.command else {
         return Ok(crate::command::project_help());
     };
 
     let output = match command {
-        Command::List(arguments) => list::run(arguments, pool).await?,
-        Command::Get(arguments) => get::run(arguments, pool).await?,
-        Command::Add(arguments) => add::run(arguments, pool, home).await?,
-        Command::Pause(arguments) => pause::run(arguments, pool).await?,
-        Command::Rename(arguments) => rename::run(arguments, pool, home).await?,
-        Command::Resume(arguments) => resume::run(arguments, pool, home).await?,
+        Command::List(arguments) => list::run(arguments, client).await?,
+        Command::Get(arguments) => get::run(arguments, client).await?,
+        Command::Add(arguments) => add::run(arguments, client).await?,
+        Command::Pause(arguments) => pause::run(arguments, client).await?,
+        Command::Rename(arguments) => rename::run(arguments, client).await?,
+        Command::Resume(arguments) => resume::run(arguments, client).await?,
     };
     Ok(output)
-}
-
-pub(crate) fn map_resolve_project_error(error: ResolveProjectError) -> ResolveProjectApiError {
-    match error {
-        ResolveProjectError::Unknown { selector, known } => {
-            ResolveProjectApiError::Unknown { selector, known }
-        }
-        error @ ResolveProjectError::Unexpected { .. } => ResolveProjectApiError::Unexpected {
-            message: error.to_string(),
-        },
-    }
-}
-
-pub(crate) fn map_task_location_error(error: TaskLocationError) -> ProjectTaskLocationApiError {
-    match error {
-        TaskLocationError::InvalidPath {
-            project_id,
-            path,
-            source,
-        } => ProjectTaskLocationApiError::InvalidTaskPath {
-            project_id,
-            path,
-            reason: source.to_string(),
-        },
-        TaskLocationError::Collision {
-            first_id,
-            second_id,
-            path,
-        } => ProjectTaskLocationApiError::DuplicateRuntimeTaskLocation {
-            first_id,
-            second_id,
-            path,
-        },
-    }
 }
 
 fn parse_project_id(raw: &str) -> Result<ProjectId, String> {

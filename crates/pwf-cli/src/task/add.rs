@@ -1,14 +1,12 @@
 use clap::Args;
-use pwf_application::{
-    ports::clock::Clock,
-    task::add_task::{self, AddTaskError},
+use pwf_client::{
+    task::TaskClient,
+    v1::{AddTaskRequest, EffortTier, IndexSection, StructuredTaskPrompt, add_task_request},
 };
-use pwf_infra::obsidian::ObsidianStore;
 use pwf_models::{
     project::ProjectSelector,
-    task::{IndexSection, TagInput, TaskPrompt, TaskTags},
+    task::{TagInput, TaskTags},
 };
-use pwf_wire::task::{AddTask, AddTaskApiError, AddTaskPrompt, TaskInputApiError};
 
 use super::{
     EffortChoice, LaneFlagMode,
@@ -18,7 +16,7 @@ use super::{
     },
     task_lanes, task_title,
 };
-use crate::{console::Console, project::map_resolve_project_error};
+use crate::console::Console;
 
 #[derive(Args, Debug)]
 pub struct Arguments {
@@ -64,33 +62,38 @@ pub struct Arguments {
 pub(super) async fn run(
     arguments: &Arguments,
     console: Console,
-    store: &ObsidianStore,
-    pool: &sqlx::SqlitePool,
-    clock: &impl Clock,
-) -> Result<String, AddTaskApiError> {
+    client: &TaskClient,
+) -> anyhow::Result<String> {
     let project_selector = arguments
         .project
         .clone()
-        .ok_or(AddTaskApiError::InvalidRequest)?;
+        .ok_or_else(|| anyhow::anyhow!(
+            "Use shorthand: pwf task add <project> \"<prompt>\"\nOr machine mode: pwf task add <project> --title <title> [lane flags]"
+        ))?;
     let (prompt, title_normalized) = request_prompt(arguments)?;
-    let result = add_task::execute(
-        &AddTask {
-            project_selector,
-            prompt,
+    let result = client
+        .add_task(AddTaskRequest {
+            project_selector: project_selector.to_string(),
+            prompt: Some(prompt),
             index_section: if arguments.human {
-                IndexSection::Human
+                IndexSection::Human as i32
             } else {
-                IndexSection::default()
+                IndexSection::General as i32
             },
-            blocked_by: blocked_by_input::collect(&arguments.blocked_by),
-            effort: arguments.effort.map(Into::into),
-            tags: TaskTags::from_inputs(&arguments.tag),
-        },
-        store,
-        pool,
-        clock,
-    )
-    .await;
+            blocked_by: blocked_by_input::collect(&arguments.blocked_by)
+                .map(|values| values.iter().map(ToString::to_string).collect())
+                .unwrap_or_default(),
+            effort: arguments.effort.map(|effort| match effort {
+                super::EffortChoice::Low => EffortTier::Low as i32,
+                super::EffortChoice::Medium => EffortTier::Medium as i32,
+                super::EffortChoice::High => EffortTier::High as i32,
+                super::EffortChoice::Highest => EffortTier::Highest as i32,
+            }),
+            tags: TaskTags::from_inputs(&arguments.tag)
+                .map(|tags| tags.iter().map(ToString::to_string).collect())
+                .unwrap_or_default(),
+        })
+        .await;
     match result {
         Ok(added) => {
             emit_created_section(&added);
@@ -100,14 +103,13 @@ pub(super) async fn run(
             Ok(render_added(&added, console.color()))
         }
         Err(error) => {
-            let error = map_add_task_error(error);
             emit_created_section_for_error(&error);
-            Err(error)
+            Err(crate::rpc_error(error))
         }
     }
 }
 
-fn request_prompt(arguments: &Arguments) -> Result<(AddTaskPrompt, bool), AddTaskApiError> {
+fn request_prompt(arguments: &Arguments) -> anyhow::Result<(add_task_request::Prompt, bool)> {
     if let Some(title) = arguments.title.as_deref() {
         let (title, normalized) = task_title(title)?;
         let lanes = task_lanes(
@@ -117,52 +119,20 @@ fn request_prompt(arguments: &Arguments) -> Result<(AddTaskPrompt, bool), AddTas
             &arguments.done_when,
             LaneFlagMode::Add,
         )?;
-        return Ok((AddTaskPrompt::structured(title, lanes), normalized));
+        return Ok((
+            add_task_request::Prompt::Structured(StructuredTaskPrompt {
+                title: title.to_string(),
+                lanes: Some(lanes),
+            }),
+            normalized,
+        ));
     }
 
-    let prompt = AddTaskPrompt::shorthand(TaskPrompt::new(arguments.prompt.join(" ")))
-        .map_err(|_| AddTaskApiError::InvalidRequest)?;
-    Ok((prompt, false))
-}
-
-pub(super) fn map_add_task_error(error: AddTaskError) -> AddTaskApiError {
-    match error {
-        AddTaskError::ProjectResolution(error) => map_resolve_project_error(error).into(),
-        AddTaskError::QueryProject(source) | AddTaskError::AllocateTaskId { source, .. } => {
-            AddTaskApiError::Unexpected {
-                message: source.to_string(),
-            }
-        }
-        AddTaskError::UnknownBlockedByIds { ids } => AddTaskApiError::UnknownBlockedByIds { ids },
-        AddTaskError::ReadBlockedBy { id, source } => AddTaskApiError::ReadBlockedBy {
-            id,
-            reason: source.to_string(),
-        },
-        AddTaskError::SelfBlockedBy { target, blocker } => {
-            AddTaskApiError::SelfBlockedBy { target, blocker }
-        }
-        AddTaskError::BlockedByCycle { path } => AddTaskApiError::BlockedByCycle { path },
-        AddTaskError::MalformedBlockedBy {
-            task,
-            path,
-            raw,
-            reason,
-        } => AddTaskApiError::MalformedBlockedBy {
-            task,
-            path,
-            raw,
-            reason,
-        },
-        AddTaskError::InvalidTitle(source) => TaskInputApiError::InvalidTitle {
-            message: source.to_string(),
-        }
-        .into(),
-        AddTaskError::WriteStore {
-            diagnostics,
-            source,
-        } => AddTaskApiError::WriteStore {
-            diagnostics,
-            message: source.to_string(),
-        },
+    let prompt = arguments.prompt.join(" ");
+    if prompt.trim().is_empty() {
+        return Err(anyhow::anyhow!(
+            "Use shorthand: pwf task add <project> \"<prompt>\"\nOr machine mode: pwf task add <project> --title <title> [lane flags]"
+        ));
     }
+    Ok((add_task_request::Prompt::Shorthand(prompt), false))
 }

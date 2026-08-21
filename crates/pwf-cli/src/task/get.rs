@@ -1,7 +1,8 @@
 use clap::Args;
-use pwf_application::task::get_task::{self, GetTaskError};
-use pwf_infra::obsidian::ObsidianStore;
-use pwf_wire::task::{GetTask, GetTaskApiError, TaskRead, TaskReadFormat};
+use pwf_client::{
+    task::TaskClient,
+    v1::{GetTaskRequest, TaskReadFormat, task_read},
+};
 
 use super::Identifier;
 
@@ -21,12 +22,10 @@ pub struct Arguments {
 
 /// Returns the complete Markdown for a task regardless of status;
 /// `--path` returns the note path instead.
-pub(super) async fn run(
-    arguments: &Arguments,
-    store: &ObsidianStore,
-    pool: &sqlx::SqlitePool,
-) -> Result<String, GetTaskApiError> {
-    let id = arguments.identifier.required(GetTaskApiError::MissingId)?;
+pub(super) async fn run(arguments: &Arguments, client: &TaskClient) -> anyhow::Result<String> {
+    let id = arguments
+        .identifier
+        .required(anyhow::anyhow!("--id is required for get."))?;
     let output = if arguments.path {
         TaskReadFormat::Path
     } else if arguments.json {
@@ -34,23 +33,17 @@ pub(super) async fn run(
     } else {
         TaskReadFormat::Markdown
     };
-    let gotten = get_task::execute(&GetTask { id, output }, store, pool)
+    let gotten = client
+        .get_task(GetTaskRequest {
+            id: id.to_string(),
+            output: output as i32,
+        })
         .await
-        .map_err(map_error)?;
-    match gotten {
-        TaskRead::Markdown(markdown) => Ok(markdown),
-        TaskRead::Path(path) => Ok(path.as_path().to_string_lossy().into_owned()),
-        TaskRead::Data(task) => output::json(*task).map_err(|error| GetTaskApiError::RenderJson {
-            message: error.to_string(),
-        }),
-    }
-}
-
-fn map_error(error: GetTaskError) -> GetTaskApiError {
-    match error {
-        GetTaskError::TaskNotFound { id } => GetTaskApiError::TaskNotFound { id },
-        error => GetTaskApiError::Unexpected {
-            message: error.to_string(),
-        },
+        .map_err(crate::rpc_error)?;
+    match gotten.value {
+        Some(task_read::Value::Markdown(markdown)) => Ok(markdown),
+        Some(task_read::Value::Path(path)) => Ok(path),
+        Some(task_read::Value::Data(task)) => output::json(*task).map_err(Into::into),
+        None => Err(anyhow::anyhow!("pwf-server returned an empty task read")),
     }
 }

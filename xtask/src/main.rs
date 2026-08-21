@@ -20,10 +20,11 @@ fn run(command: cli::Command) -> Result<()> {
     match command {
         Command::Prepare { check } => verbs::prepare::run(check),
         Command::Test(test) => verbs::test::run(&test),
-        Command::E2eWorker {
+        Command::ProcessWorker {
+            scope,
             verbose,
             cargo_arguments,
-        } => verbs::test::run_e2e_worker(verbose, &cargo_arguments),
+        } => verbs::test::run_process_worker(scope, verbose, &cargo_arguments),
         Command::Ship(arguments) => verbs::ship::run(&arguments),
         Command::Install => verbs::install::install(),
         Command::Update(update) => verbs::install::update(&update),

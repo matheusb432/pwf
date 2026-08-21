@@ -111,7 +111,7 @@ impl ProjectNoteStore for ObsidianStore {
 
     fn read_note_markdown(
         &self,
-        locator: &pwf_wire::task::TaskNotePath,
+        locator: &pwf_application::contract::task::TaskNotePath,
     ) -> Result<String, Self::Error> {
         read_task_file(locator.as_path())
     }

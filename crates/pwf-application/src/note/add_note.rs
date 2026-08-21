@@ -1,12 +1,12 @@
 //! Adds one note to a managed project.
 
 use pwf_models::{note::NoteId, project::ProjectName};
-use pwf_wire::{
-    note::{AddNote, AddedNote},
-    project::{ProjectStatusFilter, ResolveProject},
-};
 
 use crate::{
+    contract::{
+        note::{AddNote, AddedNote},
+        project::{ProjectStatusFilter, ResolveProject},
+    },
     ports::{
         clock::Clock,
         project_note::{NewProjectNote, ProjectNoteStore},

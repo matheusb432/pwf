@@ -1,8 +1,7 @@
 use std::error::Error;
 
-use pwf_wire::project::ListProjects;
-
 use super::{Project, ProjectRow, ProjectRowError};
+use crate::contract::project::ListProjects;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ListProjectsError {
@@ -86,10 +85,10 @@ fn unexpected(
 
 #[cfg(test)]
 mod tests {
-    use pwf_wire::project::ProjectStatusFilter;
-
     use super::*;
-    use crate::{project::list_projects, testing::insert_project};
+    use crate::{
+        contract::project::ProjectStatusFilter, project::list_projects, testing::insert_project,
+    };
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn active_list_filters_paused_projects_and_sorts_by_title(pool: sqlx::SqlitePool) {

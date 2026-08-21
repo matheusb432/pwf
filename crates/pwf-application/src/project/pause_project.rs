@@ -1,9 +1,9 @@
 use std::error::Error;
 
 use pwf_models::project::ProjectId;
-use pwf_wire::project::{PauseProject, ProjectStateChange};
 
 use super::ProjectRow;
+use crate::contract::project::{PauseProject, ProjectStateChange};
 
 #[derive(Debug, thiserror::Error)]
 pub enum PauseProjectError {
