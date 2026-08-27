@@ -1,7 +1,8 @@
 use std::error::Error;
 
+use pwf_wire::project::ProjectStatusFilter;
+
 use super::{Project, ProjectRow, ProjectRowError};
-use crate::contract::project::ListProjects;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ListProjectsError {
@@ -9,21 +10,17 @@ pub enum ListProjectsError {
     Unexpected {
         context: &'static str,
         #[source]
-        source: Box<dyn Error + Send + Sync>,
+        source: anyhow::Error,
     },
 }
 
 /// Lists managed projects in ascending title order.
-///
-/// # Errors
-///
-/// Returns [`ListProjectsError`] for database and persisted-data failures.
 #[cqrsy::query]
 pub async fn execute(
-    query: ListProjects,
+    status: ProjectStatusFilter,
     pool: &sqlx::SqlitePool,
 ) -> Result<Vec<Project>, ListProjectsError> {
-    let rows = if query.status.includes_paused() {
+    let rows = if status.includes_paused() {
         sqlx::query_as!(
             ProjectRow,
             r#"
@@ -79,16 +76,15 @@ fn unexpected(
 ) -> ListProjectsError {
     ListProjectsError::Unexpected {
         context,
-        source: Box::new(source),
+        source: anyhow::Error::new(source),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{
-        contract::project::ProjectStatusFilter, project::list_projects, testing::insert_project,
-    };
+    use pwf_wire::project::ProjectStatusFilter;
+
+    use crate::{project::list_projects, testing::insert_project};
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn active_list_filters_paused_projects_and_sorts_by_title(pool: sqlx::SqlitePool) {
@@ -96,14 +92,9 @@ mod tests {
         insert_project(&pool, "ALP", "alpha", "/work/alpha", "/tasks/alpha", false).await;
         insert_project(&pool, "PAU", "beta", "/work/beta", "/tasks/beta", true).await;
 
-        let projects = list_projects::execute(
-            ListProjects {
-                status: ProjectStatusFilter::ActiveOnly,
-            },
-            &pool,
-        )
-        .await
-        .unwrap();
+        let projects = list_projects::execute(ProjectStatusFilter::ActiveOnly, &pool)
+            .await
+            .unwrap();
 
         assert_eq!(
             projects

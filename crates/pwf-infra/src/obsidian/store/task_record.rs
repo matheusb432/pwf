@@ -1,23 +1,21 @@
 use std::{fmt::Write as _, num::NonZeroUsize, path::Path};
 
 use lazy_regex::{Regex, regex};
-use pwf_application::{
-    contract::task::{RawTaskTags, TaskIndexPath, TaskNotePath},
-    ports::task_record::{
-        IndexEntryState, IndexPlacement, Materialization, NewTask, NullablePatch, TaskPatch,
-        TaskRecord, TaskStore,
-    },
+use pwf_application::ports::task_record::{
+    IndexEntryState, IndexPlacement, Materialization, NewTask, NullablePatch, TaskPatch,
+    TaskRecord, TaskStore,
 };
 use pwf_models::{
     AppDate,
     project::Project,
     task::{TaskId, TaskSection, TaskStatus},
 };
+use pwf_wire::task::{RawTaskTags, TaskIndexPath, TaskNotePath};
 
 use super::{
     ObsidianStore, ObsidianStoreError,
     add::NewNoteRequest,
-    fs::{line_start_index, path_str, read_task_file, write_index, write_task_file},
+    fs::{line_start_index, open_task_file, path_str, save_task_file, write_index},
     index_entry::{ParsedIndexLine, parse_index_lines},
 };
 
@@ -25,10 +23,10 @@ fn date_stamp_regex() -> &'static Regex {
     regex!(r"✅\s*(\d{4}-\d{2}-\d{2})")
 }
 use crate::obsidian::{
-    done_queue,
+    MarkdownFile, MarkdownFileError, done_queue,
     note_frontmatter::{
-        reopen_status_text, set_blocked_by_text, set_commits_text, set_completed_text,
-        set_effort_text, set_status_text, set_tags_text,
+        parse_blocked_by, reopen_status, set_blocked_by, set_commits, set_completed, set_effort,
+        set_status, set_tags,
     },
     note_text::{replace_body, replace_title},
 };
@@ -40,34 +38,39 @@ fn note_to_record(
     decoded_title: Option<&str>,
     source: String,
 ) -> Result<TaskRecord, ObsidianStoreError> {
-    let parsed = crate::obsidian::frontmatter_text::parse(&source);
-    let frontmatter = &parsed.frontmatter;
-    let status = frontmatter
-        .get("status")
+    let file = MarkdownFile::from_source(path.to_path_buf(), source);
+    let frontmatter = file.frontmatter_view().map_err(read_task_file_error)?;
+    let field = |key: &str| {
+        frontmatter
+            .as_ref()
+            .map_or(Ok(None), |frontmatter| frontmatter.get(key))
+            .map(|value| {
+                value
+                    .filter(|value| !value.trim().is_empty())
+                    .map(str::to_string)
+            })
+            .map_err(read_task_file_error)
+    };
+    let status = field("status")?
+        .as_deref()
         .map_or(Ok(TaskStatus::Active), |value| {
             value
                 .parse()
                 .map_err(|source| ObsidianStoreError::InvalidTaskStatus {
                     path: path.to_path_buf(),
-                    value: value.clone(),
+                    value: value.to_string(),
                     source,
                 })
         })?;
     let title = decoded_title
         .filter(|title| !title.trim().is_empty())
         .map(str::to_string)
-        .or_else(|| frontmatter.get("title").cloned())
+        .or(field("title")?)
         .unwrap_or_default();
     // Preserve raw tags so unfiltered reads do not fail on invalid tag syntax.
-    let tags = frontmatter.get("tags").cloned().map(RawTaskTags::new);
-    let field = |key: &str| {
-        frontmatter
-            .get(key)
-            .filter(|value| !value.trim().is_empty())
-            .cloned()
-    };
+    let tags = field("tags")?.map(RawTaskTags::new);
     let date = |property: &'static str| -> Result<Option<AppDate>, ObsidianStoreError> {
-        field(property)
+        field(property)?
             .map(|value| {
                 value
                     .parse()
@@ -80,18 +83,26 @@ fn note_to_record(
             })
             .transpose()
     };
+    let created = date("created")?;
+    let completed = date("completed")?;
+    let commits = field("commits")?;
+    let effort = field("effort")?;
+    let blocked_by = parse_blocked_by(frontmatter.as_ref());
+    drop(frontmatter);
+    let body = file.body().to_string();
+    let source = file.into_source();
     Ok(TaskRecord {
         id,
         title,
         status,
-        created: date("created")?,
-        completed: date("completed")?,
-        commits: field("commits"),
+        created,
+        completed,
+        commits,
         tags,
-        effort: field("effort"),
-        blocked_by: crate::obsidian::note_frontmatter::parse_blocked_by(&source),
+        effort,
+        blocked_by,
         section: None,
-        body: parsed.body,
+        body,
         source,
         locator: TaskNotePath::new(path.to_path_buf()),
         placement: None,
@@ -278,56 +289,68 @@ impl ObsidianStore {
     }
 
     fn patch_note_file(note_path: &Path, patch: &TaskPatch) -> Result<(), ObsidianStoreError> {
-        let mut content = read_task_file(note_path)?;
+        let mut file = open_task_file(note_path)?;
         if let Some(title) = &patch.title {
-            content = replace_title(&content, title.as_ref());
+            let updated = replace_title(file.source(), title.as_ref());
+            file.replace_source(updated);
         }
         if let Some(body) = &patch.body {
-            content = replace_body(&content, body);
+            let updated = replace_body(file.source(), body);
+            file.replace_source(updated);
         }
         // Apply commits first to keep `commits:` anchored after `created:` during a close.
         match &patch.commits {
             NullablePatch::Unchanged => {}
-            NullablePatch::Clear => content = set_commits_text(&content, None),
+            NullablePatch::Clear => set_commits(&mut file, None).map_err(write_task_file_error)?,
             NullablePatch::Set(commits) => {
-                content = set_commits_text(&content, Some(commits));
+                set_commits(&mut file, Some(commits)).map_err(write_task_file_error)?;
             }
         }
         match patch.status {
-            Some(TaskStatus::Active) => content = reopen_status_text(&content),
+            Some(TaskStatus::Active) => {
+                reopen_status(&mut file).map_err(write_task_file_error)?;
+            }
             Some(status) => {
                 let completed = match &patch.completed {
                     NullablePatch::Set(completed) => Some(completed),
                     NullablePatch::Unchanged | NullablePatch::Clear => None,
                 };
-                content = set_status_text(&content, status, completed);
+                set_status(&mut file, status, completed).map_err(write_task_file_error)?;
             }
             None => match &patch.completed {
                 NullablePatch::Unchanged => {}
-                NullablePatch::Clear => content = set_completed_text(&content, None),
+                NullablePatch::Clear => {
+                    set_completed(&mut file, None).map_err(write_task_file_error)?;
+                }
                 NullablePatch::Set(completed) => {
-                    content = set_completed_text(&content, Some(completed));
+                    set_completed(&mut file, Some(completed)).map_err(write_task_file_error)?;
                 }
             },
         }
         match &patch.blocked_by {
             NullablePatch::Unchanged => {}
-            NullablePatch::Clear => content = set_blocked_by_text(&content, None),
+            NullablePatch::Clear => {
+                set_blocked_by(&mut file, None).map_err(write_task_file_error)?;
+            }
             NullablePatch::Set(blocked_by) => {
-                content = set_blocked_by_text(&content, Some(blocked_by));
+                set_blocked_by(&mut file, Some(blocked_by)).map_err(write_task_file_error)?;
             }
         }
         match patch.effort {
             NullablePatch::Unchanged => {}
-            NullablePatch::Clear => content = set_effort_text(&content, None),
-            NullablePatch::Set(effort) => content = set_effort_text(&content, Some(effort)),
+            NullablePatch::Clear => set_effort(&mut file, None).map_err(write_task_file_error)?,
+            NullablePatch::Set(effort) => {
+                set_effort(&mut file, Some(effort)).map_err(write_task_file_error)?;
+            }
         }
         match &patch.tags {
             NullablePatch::Unchanged => {}
-            NullablePatch::Clear => content = set_tags_text(&content, None),
-            NullablePatch::Set(tags) => content = set_tags_text(&content, Some(tags)),
+            NullablePatch::Clear => set_tags(&mut file, None).map_err(write_task_file_error)?,
+            NullablePatch::Set(tags) => {
+                set_tags(&mut file, Some(tags)).map_err(write_task_file_error)?;
+            }
         }
-        write_task_file(note_path, &content)
+        save_task_file(&file)
     }
 
     fn patch_index_entry(
@@ -370,6 +393,18 @@ impl ObsidianStore {
         };
         std::fs::remove_file(&task.path)
             .map_err(|source| ObsidianStoreError::RemoveTaskFile { source })
+    }
+}
+
+fn read_task_file_error(source: MarkdownFileError) -> ObsidianStoreError {
+    ObsidianStoreError::ReadTaskFile {
+        source: source.into_io_error(),
+    }
+}
+
+fn write_task_file_error(source: MarkdownFileError) -> ObsidianStoreError {
+    ObsidianStoreError::WriteTaskFile {
+        source: source.into_io_error(),
     }
 }
 

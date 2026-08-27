@@ -6,8 +6,7 @@ use pwf_models::{
     },
     project::Project,
 };
-
-use crate::contract::task::TaskNotePath;
+use pwf_wire::task::TaskNotePath;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewProjectNote {

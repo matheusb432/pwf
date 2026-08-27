@@ -5,7 +5,8 @@ use pwf_models::task::TaskReport;
 use super::{
     Identifier,
     render::{
-        emit_close_diagnostics, emit_created_section, emit_created_section_for_error, render_closed,
+        emit_cancel_diagnostics, emit_created_section, emit_created_section_for_error,
+        render_cancelled,
     },
 };
 
@@ -47,6 +48,6 @@ pub(super) async fn run(arguments: &Arguments, client: &TaskClient) -> anyhow::R
     if let Some(review) = output.review_task.as_ref() {
         emit_created_section(review);
     }
-    emit_close_diagnostics(&output);
-    Ok(render_closed(&output))
+    emit_cancel_diagnostics(&output);
+    Ok(render_cancelled(&output))
 }

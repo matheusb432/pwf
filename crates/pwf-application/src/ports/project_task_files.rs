@@ -15,7 +15,7 @@ pub enum ProjectTaskFilesRenameCommit {
         /// Retained backup directory.
         path: PathBuf,
         /// Backup removal failure.
-        source: Box<dyn Error + Send + Sync>,
+        source: anyhow::Error,
     },
 }
 
@@ -25,18 +25,9 @@ pub trait StagedProjectTaskFilesRename: Send + 'static {
     type Error: Error + Send + Sync + 'static;
 
     /// Installs the staged destination and removes the source.
-    ///
-    /// # Errors
-    ///
-    /// Returns the adapter error when the staged destination cannot be installed while preserving
-    /// or restoring the source.
     fn commit(self) -> Result<ProjectTaskFilesRenameCommit, Self::Error>;
 
     /// Removes the staged destination without changing the source.
-    ///
-    /// # Errors
-    ///
-    /// Returns the adapter error when the staging directory cannot be removed.
     fn discard(self) -> Result<(), Self::Error>;
 }
 
@@ -48,10 +39,6 @@ pub trait ProjectTaskFilesClient: Clone + Send + Sync + 'static {
     type StagedRename: StagedProjectTaskFilesRename<Error = Self::Error>;
 
     /// Copies and rewrites project task files without changing the source.
-    ///
-    /// # Errors
-    ///
-    /// Returns the adapter error when source validation, copying, or rewriting fails.
     fn stage_project_rename(
         &self,
         source: &Path,

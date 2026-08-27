@@ -9,11 +9,15 @@ name = "pwf_wire"
 path = "src/lib.rs"
 
 [dependencies]
+prompt-lanes = { workspace = true }
 prost = { workspace = true }
+pwf-models = { workspace = true }
+thiserror = { workspace = true }
 tonic = { workspace = true }
 tonic-prost = { workspace = true }
 
 [build-dependencies]
+anyhow = { workspace = true }
 tonic-prost-build = { workspace = true }
 
 [lints]

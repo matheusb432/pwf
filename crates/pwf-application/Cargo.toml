@@ -9,9 +9,11 @@ name = "pwf_application"
 path = "src/lib.rs"
 
 [dependencies]
+anyhow = { workspace = true }
 askama = { workspace = true }
 prompt-lanes = { workspace = true }
 pwf-models = { workspace = true }
+pwf-wire = { workspace = true }
 cqrsy = { workspace = true }
 futures = { workspace = true }
 lazy-regex = { workspace = true }

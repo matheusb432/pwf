@@ -1,17 +1,17 @@
 use pwf_models::task::{TaskId, TaskTitle, TaskTitleError};
+use pwf_wire::{
+    confirmation::RemoveTaskConfirmation,
+    project::ProjectStatusFilter,
+    task::{RemovedTask, RemovedTaskOutcome, TaskNotePath},
+};
 
 use super::{
     blocked_by,
     resolve_task_project::{self, ResolveTaskProjectError},
 };
 use crate::{
-    contract::{
-        confirmation::{Confirmation, RemoveTaskConfirmation},
-        project::{ListProjects, ProjectStatusFilter},
-        task::{RemoveTask, RemovedTask, RemovedTaskOutcome, ResolveTaskProject, TaskNotePath},
-    },
     ports::{
-        confirmation::ConfirmationClient,
+        confirmation::{ConfirmationClient, ConfirmationClientError},
         task_record::{IndexEntryStore, Materialization, StoredBlockedBy, TaskStore},
     },
     project::list_projects,
@@ -23,6 +23,8 @@ pub enum RemoveTaskError {
     TaskNotFound { id: TaskId },
     #[error(transparent)]
     ResolveProject(#[from] ResolveTaskProjectError),
+    #[error(transparent)]
+    Confirmation(#[from] ConfirmationClientError),
     #[error("Task note missing: {path}")]
     NoteMissing { path: TaskNotePath },
     #[error("task {id} has an invalid persisted title: {source}")]
@@ -47,9 +49,9 @@ pub enum RemoveTaskError {
         reason: Box<str>,
     },
     #[error("cannot inspect task dependents: {0}")]
-    ReadDependents(#[source] Box<dyn std::error::Error + Send + Sync>),
-    #[error("{0}")]
-    WriteStore(#[source] Box<dyn std::error::Error + Send + Sync>),
+    ReadDependents(#[source] anyhow::Error),
+    #[error(transparent)]
+    WriteStore(anyhow::Error),
 }
 
 /// Deletes a task after unlinking its index entry.
@@ -57,16 +59,15 @@ pub enum RemoveTaskError {
 /// An unlink failure leaves the note untouched.
 #[cqrsy::command]
 pub async fn execute(
-    cmd: &RemoveTask,
+    task_id: &TaskId,
     store: &(impl TaskStore + IndexEntryStore),
     pool: &sqlx::SqlitePool,
-    confirmation_client: &(impl ConfirmationClient + Send + Sync + 'static),
+    confirmation_client: &mut dyn ConfirmationClient<Confirmation = RemoveTaskConfirmation>,
 ) -> Result<RemovedTaskOutcome, RemoveTaskError> {
-    let project =
-        resolve_task_project::execute(ResolveTaskProject { id: cmd.id.clone() }, pool).await?;
-    let task_identifier = cmd.id.clone();
+    let project = resolve_task_project::execute(task_id.clone(), pool).await?;
+    let task_identifier = task_id.clone();
     let record = TaskStore::get(store, &project, &task_identifier)
-        .map_err(|error| RemoveTaskError::WriteStore(Box::new(error)))?
+        .map_err(|error| RemoveTaskError::WriteStore(anyhow::Error::new(error)))?
         .ok_or_else(|| RemoveTaskError::TaskNotFound {
             id: task_identifier.clone(),
         })?;
@@ -90,23 +91,23 @@ pub async fn execute(
             dependents,
         });
     }
-    let confirmation = Confirmation::RemoveTask(RemoveTaskConfirmation {
+    let confirmation = RemoveTaskConfirmation {
         task_identifier: task_identifier.clone(),
         project: project.title.clone(),
         title: title.clone(),
         status: record.status,
         note_path: note_path.clone(),
-    });
-    if !confirmation_client.confirm(&confirmation).await {
+    };
+    if !confirmation_client.confirm(&confirmation).await? {
         return Ok(RemovedTaskOutcome::Aborted {
             task_id: task_identifier,
         });
     }
 
     IndexEntryStore::delete_index_entry(store, &project, &task_identifier)
-        .map_err(|error| RemoveTaskError::WriteStore(Box::new(error)))?;
+        .map_err(|error| RemoveTaskError::WriteStore(anyhow::Error::new(error)))?;
     TaskStore::delete(store, &project, &task_identifier)
-        .map_err(|error| RemoveTaskError::WriteStore(Box::new(error)))?;
+        .map_err(|error| RemoveTaskError::WriteStore(anyhow::Error::new(error)))?;
 
     let removed = RemovedTask {
         id: task_identifier,
@@ -123,19 +124,14 @@ async fn find_dependents(
     store: &impl TaskStore,
     pool: &sqlx::SqlitePool,
 ) -> Result<Vec<TaskId>, RemoveTaskError> {
-    let projects = list_projects::execute(
-        ListProjects {
-            status: ProjectStatusFilter::IncludingPaused,
-        },
-        pool,
-    )
-    .await
-    .map_err(|error| RemoveTaskError::ReadDependents(Box::new(error)))?;
+    let projects = list_projects::execute(ProjectStatusFilter::IncludingPaused, pool)
+        .await
+        .map_err(|error| RemoveTaskError::ReadDependents(anyhow::Error::new(error)))?;
     let mut dependents = Vec::new();
     for project in projects {
         let records = store
             .list(&project)
-            .map_err(|error| RemoveTaskError::ReadDependents(Box::new(error)))?;
+            .map_err(|error| RemoveTaskError::ReadDependents(anyhow::Error::new(error)))?;
         for record in records {
             match record.blocked_by {
                 StoredBlockedBy::Valid(blocked_by)
@@ -163,15 +159,15 @@ async fn find_dependents(
 #[cfg(test)]
 mod tests {
     use pwf_models::task::{TaskId, TaskStatus};
+    use pwf_wire::{
+        confirmation::RemoveTaskConfirmation,
+        task::{RemovedTaskOutcome, TaskNotePath},
+    };
 
-    use super::{RemoveTask, RemoveTaskError};
+    use super::RemoveTaskError;
     use crate::{
-        contract::{
-            confirmation::Confirmation,
-            task::{RemovedTaskOutcome, TaskNotePath},
-        },
         ports::{
-            confirmation::ConfirmationClient,
+            confirmation::{ConfirmationClient, ConfirmationClientError},
             task_record::{
                 IndexEntry, IndexEntryState, IndexEntryStore, Materialization, TaskRecord,
             },
@@ -183,12 +179,12 @@ mod tests {
     };
 
     async fn run(
-        command: &RemoveTask,
+        task_id: &TaskId,
         store: &InMemoryStore,
         pool: &sqlx::SqlitePool,
-        confirmation: &(impl ConfirmationClient + Send + Sync + 'static),
+        confirmation: &mut dyn ConfirmationClient<Confirmation = RemoveTaskConfirmation>,
     ) -> Result<RemovedTaskOutcome, RemoveTaskError> {
-        remove_task::execute(command, store, pool, confirmation).await
+        remove_task::execute(task_id, store, pool, confirmation).await
     }
 
     fn record(id: &str, status: TaskStatus) -> TaskRecord {
@@ -224,21 +220,20 @@ mod tests {
         store
     }
 
-    fn command(id: &str) -> RemoveTask {
-        RemoveTask {
-            id: id.parse().unwrap(),
-        }
+    fn task_id(id: &str) -> TaskId {
+        id.parse().unwrap()
     }
 
-    #[derive(Clone)]
     struct Accepted;
 
     impl ConfirmationClient for Accepted {
+        type Confirmation = RemoveTaskConfirmation;
+
         fn confirm<'a>(
-            &'a self,
-            _confirmation: &'a Confirmation,
-        ) -> futures::future::BoxFuture<'a, bool> {
-            Box::pin(async { true })
+            &'a mut self,
+            _confirmation: &'a RemoveTaskConfirmation,
+        ) -> futures::future::BoxFuture<'a, Result<bool, ConfirmationClientError>> {
+            Box::pin(async { Ok(true) })
         }
     }
 
@@ -248,7 +243,7 @@ mod tests {
         let store = staged(TaskStatus::Active);
 
         let RemovedTaskOutcome::Removed(removed) =
-            run(&command("PWF-0001"), &store, &pool, &Accepted)
+            run(&task_id("PWF-0001"), &store, &pool, &mut Accepted)
                 .await
                 .unwrap()
         else {
@@ -295,7 +290,7 @@ mod tests {
             .with_project("paused-project", vec![paused_dependent]);
         let before = store.tasks("pwf");
 
-        let error = run(&command("PWF-0001"), &store, &pool, &Accepted)
+        let error = run(&task_id("PWF-0001"), &store, &pool, &mut Accepted)
             .await
             .unwrap_err();
 
@@ -323,7 +318,7 @@ mod tests {
                 }],
             );
 
-        let error = run(&command("PWF-0001"), &store, &pool, &Accepted)
+        let error = run(&task_id("PWF-0001"), &store, &pool, &mut Accepted)
             .await
             .unwrap_err();
 
@@ -338,7 +333,7 @@ mod tests {
             .with_project_id("pwf", "PWF")
             .with_project("pwf", vec![record("PWF-0001", TaskStatus::Active)]);
 
-        let outcome = run(&command("PWF-0001"), &store, &pool, &Accepted)
+        let outcome = run(&task_id("PWF-0001"), &store, &pool, &mut Accepted)
             .await
             .unwrap();
 
@@ -353,7 +348,7 @@ mod tests {
         for status in [TaskStatus::Done, TaskStatus::Cancelled] {
             let store = staged(status);
 
-            let outcome = run(&command("PWF-0001"), &store, &pool, &Accepted)
+            let outcome = run(&task_id("PWF-0001"), &store, &pool, &mut Accepted)
                 .await
                 .unwrap();
 
@@ -368,7 +363,7 @@ mod tests {
         insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
         let store = staged(TaskStatus::Active);
 
-        let error = run(&command("PWF-9999"), &store, &pool, &Accepted)
+        let error = run(&task_id("PWF-9999"), &store, &pool, &mut Accepted)
             .await
             .unwrap_err();
 
@@ -383,7 +378,7 @@ mod tests {
         insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
         let store = staged(TaskStatus::Active);
 
-        let error = run(&command("XYZ-0001"), &store, &pool, &Accepted)
+        let error = run(&task_id("XYZ-0001"), &store, &pool, &mut Accepted)
             .await
             .unwrap_err();
 
@@ -406,7 +401,7 @@ mod tests {
             .with_project_id("pwf", "PWF")
             .with_project("pwf", vec![ghost]);
 
-        let error = run(&command("PWF-0001"), &store, &pool, &Accepted)
+        let error = run(&task_id("PWF-0001"), &store, &pool, &mut Accepted)
             .await
             .unwrap_err();
 
@@ -422,26 +417,22 @@ mod tests {
     }
 
     mod pwf_0144 {
+        use pwf_wire::task::RemovedTaskOutcome;
+
         use super::*;
-        use crate::contract::task::RemovedTaskOutcome;
 
-        fn command(id: &str) -> RemoveTask {
-            RemoveTask {
-                id: id.parse().unwrap(),
-            }
-        }
-
-        #[derive(Clone)]
         struct StaticInteraction {
             accepted: bool,
         }
 
         impl ConfirmationClient for StaticInteraction {
+            type Confirmation = RemoveTaskConfirmation;
+
             fn confirm<'a>(
-                &'a self,
-                _confirmation: &'a Confirmation,
-            ) -> futures::future::BoxFuture<'a, bool> {
-                Box::pin(async { self.accepted })
+                &'a mut self,
+                _confirmation: &'a RemoveTaskConfirmation,
+            ) -> futures::future::BoxFuture<'a, Result<bool, ConfirmationClientError>> {
+                Box::pin(async { Ok(self.accepted) })
             }
         }
 
@@ -451,10 +442,10 @@ mod tests {
             let store = staged(TaskStatus::Active);
 
             let outcome = remove_task::execute(
-                &command("PWF-0001"),
+                &task_id("PWF-0001"),
                 &store,
                 &pool,
-                &StaticInteraction { accepted: true },
+                &mut StaticInteraction { accepted: true },
             )
             .await
             .unwrap();
@@ -473,10 +464,10 @@ mod tests {
             let store = staged(TaskStatus::Active);
 
             let outcome = remove_task::execute(
-                &command("PWF-0001"),
+                &task_id("PWF-0001"),
                 &store,
                 &pool,
-                &StaticInteraction { accepted: false },
+                &mut StaticInteraction { accepted: false },
             )
             .await
             .unwrap();

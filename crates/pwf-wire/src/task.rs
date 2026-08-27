@@ -6,14 +6,12 @@ use std::{
 
 use pwf_models::{
     AppDate,
-    project::{ProjectId, ProjectName, ProjectSelector, ProjectSourceValue},
+    project::{ProjectName, ProjectSelector, ProjectSourceValue},
     task::{
         BlockedBy, CommitRanges, EffortTier, IndexSection, TaskId, TaskPrompt, TaskReport,
         TaskSection, TaskStatus, TaskTags, TaskTitle,
     },
 };
-
-use super::project::ResolveProjectApiError;
 
 pub mod session;
 
@@ -223,42 +221,6 @@ pub struct AddTask {
     pub tags: Option<TaskTags>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum AddTaskApiError {
-    #[error(
-        "Use shorthand: pwf task add <project> \"<prompt>\"\nOr machine mode: pwf task add <project> --title <title> [lane flags]"
-    )]
-    InvalidRequest,
-    #[error("Use: pwf task add <project> \"<prompt>\"")]
-    UnsupportedTaskCreation,
-    #[error(transparent)]
-    Input(#[from] TaskInputApiError),
-    #[error(transparent)]
-    ResolveProject(#[from] ResolveProjectApiError),
-    #[error("Unknown --blocked-by id(s): {}.", format_task_ids(ids))]
-    UnknownBlockedByIds { ids: Vec<TaskId> },
-    #[error("cannot validate --blocked-by task {id}: {reason}")]
-    ReadBlockedBy { id: TaskId, reason: String },
-    #[error("task {target} cannot be blocked by itself ({blocker})")]
-    SelfBlockedBy { target: TaskId, blocker: TaskId },
-    #[error("blocked_by cycle: {}", format_task_id_path(path))]
-    BlockedByCycle { path: Vec<TaskId> },
-    #[error("task {task} at {path} has malformed blocked_by metadata {raw:?}: {reason}")]
-    MalformedBlockedBy {
-        task: TaskId,
-        path: Box<TaskNotePath>,
-        raw: Box<str>,
-        reason: Box<str>,
-    },
-    #[error("{message}")]
-    Unexpected { message: String },
-    #[error("{message}")]
-    WriteStore {
-        diagnostics: AddTaskDiagnostics,
-        message: String,
-    },
-}
-
 #[derive(Debug, Clone)]
 pub struct CancelTask {
     pub id: TaskId,
@@ -267,48 +229,12 @@ pub struct CancelTask {
     pub review: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum CancelTaskApiError {
-    #[error("--id is required for cancel.")]
-    MissingId,
-    #[error("--report is required for cancel.")]
-    MissingReport,
-    #[error("{message}")]
-    InvalidReport { message: String },
-    #[error(transparent)]
-    Close(#[from] CloseTaskApiError),
-}
-
 #[derive(Debug, Clone)]
 pub struct CompleteTask {
     pub id: TaskId,
     pub report: Option<TaskReport>,
     pub commits: Option<CommitRanges>,
     pub review: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum CompleteTaskApiError {
-    #[error("--id is required for done.")]
-    MissingId,
-    #[error("{message}")]
-    InvalidReport { message: String },
-    #[error(transparent)]
-    Close(#[from] CloseTaskApiError),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum CloseTaskApiError {
-    #[error(transparent)]
-    ResolveProject(#[from] ResolveTaskProjectApiError),
-    #[error("Active task not found: {id}")]
-    TaskNotFound { id: TaskId },
-    #[error("task {id} has an invalid persisted title: {reason}")]
-    InvalidTitle { id: TaskId, reason: String },
-    #[error("{message}")]
-    Unexpected { message: String },
-    #[error(transparent)]
-    ReviewTask(Box<AddTaskApiError>),
 }
 
 #[derive(Debug, Clone)]
@@ -504,45 +430,6 @@ pub struct EditTask {
     pub edits: TaskEdits,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum EditTaskApiError {
-    #[error("--id is required for edit.")]
-    MissingId,
-    #[error(transparent)]
-    Input(#[from] TaskInputApiError),
-    #[error("{message}")]
-    InvalidContent { message: String },
-    #[error("nothing to edit; pass at least one edit flag.")]
-    EmptyEdits,
-    #[error("Task not found: {id}")]
-    TaskNotFound { id: TaskId },
-    #[error("cannot edit closed task {id}; run `pwf task reopen {id}` first.")]
-    ClosedTask { id: TaskId },
-    #[error("task {id} has an invalid persisted title: {reason}")]
-    InvalidPersistedTitle { id: TaskId, reason: String },
-    #[error("task {id} has invalid tags frontmatter: {raw:?}.")]
-    InvalidTagsFrontmatter { id: TaskId, raw: String },
-    #[error("task {id} at {path} has malformed blocked_by metadata {raw:?}: {reason}")]
-    MalformedBlockedBy {
-        id: TaskId,
-        path: Box<TaskNotePath>,
-        raw: Box<str>,
-        reason: Box<str>,
-    },
-    #[error("Unknown --add-blocked-by id(s): {}.", format_task_ids(ids))]
-    UnknownBlockedByIds { ids: Vec<TaskId> },
-    #[error("cannot validate --add-blocked-by task {id}: {reason}")]
-    ReadBlockedBy { id: TaskId, reason: String },
-    #[error("task {target} cannot be blocked by itself ({blocker})")]
-    SelfBlockedBy { target: TaskId, blocker: TaskId },
-    #[error("blocked_by cycle: {}", format_task_id_path(path))]
-    BlockedByCycle { path: Vec<TaskId> },
-    #[error("cannot edit lanes: task body contains more than one `{header}` section.")]
-    AmbiguousLanes { header: &'static str },
-    #[error("{message}")]
-    Unexpected { message: String },
-}
-
 /// Requests one task in a selected output representation.
 #[derive(Debug, Clone)]
 pub struct GetTask {
@@ -550,18 +437,6 @@ pub struct GetTask {
     pub id: TaskId,
     /// Representation returned by the interactor.
     pub output: TaskReadFormat,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum GetTaskApiError {
-    #[error("--id is required for get.")]
-    MissingId,
-    #[error("Task not found: {id}")]
-    TaskNotFound { id: TaskId },
-    #[error("{message}")]
-    Unexpected { message: String },
-    #[error("rendering task JSON failed: {message}")]
-    RenderJson { message: String },
 }
 
 #[derive(Debug, Clone)]
@@ -576,110 +451,6 @@ pub struct ListTasks {
     /// Explicit lifecycle filter. Omission uses the mode-specific default.
     pub status: Option<StatusFilter>,
     pub detail: ListDetail,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum ListTasksApiError {
-    #[error(transparent)]
-    ResolveProject(#[from] ResolveProjectApiError),
-    #[error("{message}")]
-    Unexpected { message: String },
-}
-
-#[derive(Debug, Clone)]
-pub struct RemoveTask {
-    pub id: TaskId,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum RemoveTaskApiError {
-    #[error("--id is required for remove.")]
-    MissingId,
-    #[error("Task not found: {id}")]
-    TaskNotFound { id: TaskId },
-    #[error(transparent)]
-    ResolveProject(#[from] ResolveTaskProjectApiError),
-    #[error("Task note missing: {path}")]
-    NoteMissing { path: TaskNotePath },
-    #[error("task {id} has an invalid persisted title: {reason}")]
-    InvalidTitle { id: TaskId, reason: String },
-    #[error(
-        "cannot remove task {target}; dependent task(s): {}",
-        format_task_ids(dependents)
-    )]
-    HasDependents {
-        target: TaskId,
-        dependents: Vec<TaskId>,
-    },
-    #[error("task {task} at {path} has malformed blocked_by metadata {raw:?}: {reason}")]
-    MalformedBlockedBy {
-        task: TaskId,
-        path: Box<TaskNotePath>,
-        raw: Box<str>,
-        reason: Box<str>,
-    },
-    #[error("{message}")]
-    Unexpected { message: String },
-}
-
-#[derive(Debug, Clone)]
-pub struct ReopenTask {
-    pub id: TaskId,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum ReopenTaskApiError {
-    #[error("--id is required for reopen.")]
-    MissingId,
-    #[error("Task not found: {id}")]
-    TaskNotFound { id: TaskId },
-    #[error(transparent)]
-    ResolveProject(#[from] ResolveTaskProjectApiError),
-    #[error("{message}")]
-    Unexpected { message: String },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ResolveTaskProject {
-    pub id: TaskId,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum ResolveTaskProjectApiError {
-    #[error("Unknown project ID `{project_id}` for task {task_id}")]
-    UnknownProjectId {
-        task_id: TaskId,
-        project_id: ProjectId,
-    },
-    #[error("{message}")]
-    Unexpected { message: String },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum TaskInputApiError {
-    #[error("--title cannot be empty.")]
-    EmptyTitle,
-    #[error("{message}")]
-    InvalidTitle { message: String },
-    #[error("{flag} {reason}")]
-    InvalidLaneValue {
-        flag: &'static str,
-        reason: &'static str,
-    },
-}
-
-fn format_task_ids(ids: &[TaskId]) -> String {
-    ids.iter()
-        .map(ToString::to_string)
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-fn format_task_id_path(ids: &[TaskId]) -> String {
-    ids.iter()
-        .map(ToString::to_string)
-        .collect::<Vec<_>>()
-        .join(" -> ")
 }
 
 /// Identifies a task note's filesystem path.
@@ -1167,9 +938,8 @@ mod tests {
     use pwf_models::task::TaskPrompt;
 
     use super::{
-        AddTaskApiError, AddTaskPrompt, CollectionEdit, EditTaskContent, EditTaskContentError,
-        EmptyTaskEdits, TaskEdits, TaskInputApiError, TaskLaneEdits, TaskLaneValueError, TaskLanes,
-        ValueEdit,
+        AddTaskPrompt, CollectionEdit, EditTaskContent, EditTaskContentError, EmptyTaskEdits,
+        TaskEdits, TaskLaneEdits, TaskLaneValueError, TaskLanes, ValueEdit,
     };
 
     #[test]
@@ -1230,17 +1000,5 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(error, EmptyTaskEdits);
-    }
-
-    #[test]
-    fn api_errors_preserve_cli_text() {
-        assert_eq!(
-            AddTaskApiError::Input(TaskInputApiError::InvalidLaneValue {
-                flag: "--goal",
-                reason: "cannot be empty.",
-            })
-            .to_string(),
-            "--goal cannot be empty."
-        );
     }
 }

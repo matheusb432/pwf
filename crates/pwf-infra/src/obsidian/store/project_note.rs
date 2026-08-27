@@ -8,7 +8,7 @@ use pwf_models::{
 
 use super::{ObsidianStore, ObsidianStoreError, fs::read_task_file};
 use crate::obsidian::{
-    frontmatter_text, fs_atomic,
+    MarkdownFile,
     index_text::{add_note_link, remove_note_link},
     markdown_line, note_text,
 };
@@ -21,13 +21,12 @@ impl ProjectNoteStore for ObsidianStore {
         if !path.exists() {
             return Ok(None);
         }
-        let source = std::fs::read_to_string(path).map_err(|source| {
-            ObsidianStoreError::ReadProjectNote {
+        let file =
+            MarkdownFile::open(path).map_err(|source| ObsidianStoreError::ReadProjectNote {
                 id: id.to_string(),
-                source,
-            }
-        })?;
-        project_note(id.clone(), &source).map(Some)
+                source: source.into_io_error(),
+            })?;
+        project_note(id.clone(), &file).map(Some)
     }
 
     fn list_notes(&self, project: &Project) -> Result<Vec<ProjectNote>, Self::Error> {
@@ -43,15 +42,17 @@ impl ProjectNoteStore for ObsidianStore {
         let project_directory = self.tasks_path(project)?;
         let note_path = project_directory.join(note_file_name(&new.id));
         let source = note_content(project.title.as_ref(), &new);
-        fs_atomic::write_text_atomic(&note_path, &source).map_err(|source| {
+        MarkdownFile::create_rendered_new(note_path, source).map_err(|source| {
             ObsidianStoreError::WriteProjectNote {
                 id: new.id.to_string(),
-                source,
+                source: source.into_io_error(),
             }
         })?;
 
         let index_path = self.project_index_path(project)?;
-        let index = std::fs::read_to_string(&index_path).unwrap_or_default();
+        let index = MarkdownFile::open(&index_path)
+            .map(MarkdownFile::into_source)
+            .unwrap_or_default();
         write_index(&index_path, &add_note_link(&index, new.id.as_ref()))?;
         Ok(ProjectNote {
             id: new.id,
@@ -69,18 +70,19 @@ impl ProjectNoteStore for ObsidianStore {
         if !note_path.exists() {
             return Err(note_not_found(&project.title, id));
         }
-        let source = std::fs::read_to_string(&note_path).map_err(|source| {
+        let mut file = MarkdownFile::open(&note_path).map_err(|source| {
             ObsidianStoreError::ReadProjectNote {
                 id: id.to_string(),
-                source,
+                source: source.into_io_error(),
             }
         })?;
-        fs_atomic::write_text_atomic(&note_path, &replace_title(&source, &patch.title)).map_err(
-            |source| ObsidianStoreError::WriteProjectNote {
+        let updated = replace_title(&file, &patch.title);
+        file.replace_source(updated);
+        file.save()
+            .map_err(|source| ObsidianStoreError::WriteProjectNote {
                 id: id.to_string(),
-                source,
-            },
-        )
+                source: source.into_io_error(),
+            })
     }
 
     fn delete_note(&self, project: &Project, id: &NoteId) -> Result<(), Self::Error> {
@@ -96,7 +98,9 @@ impl ProjectNoteStore for ObsidianStore {
         })?;
 
         let index_path = self.project_index_path(project)?;
-        let index = std::fs::read_to_string(&index_path).unwrap_or_default();
+        let index = MarkdownFile::open(&index_path)
+            .map(MarkdownFile::into_source)
+            .unwrap_or_default();
         write_index(&index_path, &remove_note_link(&index, id.as_ref()))
     }
     fn note_exists(&self, project: &Project, id: &NoteId) -> Result<bool, Self::Error> {
@@ -111,7 +115,7 @@ impl ProjectNoteStore for ObsidianStore {
 
     fn read_note_markdown(
         &self,
-        locator: &pwf_application::contract::task::TaskNotePath,
+        locator: &pwf_wire::task::TaskNotePath,
     ) -> Result<String, Self::Error> {
         read_task_file(locator.as_path())
     }
@@ -140,13 +144,12 @@ fn list_notes(
         if id.project_id() != project_id {
             continue;
         }
-        let source = std::fs::read_to_string(path).map_err(|source| {
-            ObsidianStoreError::ReadProjectNote {
+        let file =
+            MarkdownFile::open(path).map_err(|source| ObsidianStoreError::ReadProjectNote {
                 id: id.to_string(),
-                source,
-            }
-        })?;
-        notes.push(project_note(id, &source)?);
+                source: source.into_io_error(),
+            })?;
+        notes.push(project_note(id, &file)?);
     }
     Ok(notes)
 }
@@ -155,8 +158,8 @@ fn note_file_name(id: &NoteId) -> String {
     format!("{id}.md")
 }
 
-fn title_of(source: &str) -> Result<NoteTitle, NoteTitleError> {
-    let body = frontmatter_text::parse(source).body;
+fn title_of(file: &MarkdownFile) -> Result<NoteTitle, NoteTitleError> {
+    let body = file.body();
     let title = body
         .lines()
         .map(str::trim)
@@ -166,8 +169,8 @@ fn title_of(source: &str) -> Result<NoteTitle, NoteTitleError> {
     NoteTitle::try_new(title)
 }
 
-fn project_note(id: NoteId, source: &str) -> Result<ProjectNote, ObsidianStoreError> {
-    let title = title_of(source).map_err(|source| ObsidianStoreError::InvalidProjectNoteTitle {
+fn project_note(id: NoteId, file: &MarkdownFile) -> Result<ProjectNote, ObsidianStoreError> {
+    let title = title_of(file).map_err(|source| ObsidianStoreError::InvalidProjectNoteTitle {
         id: id.to_string(),
         source,
     })?;
@@ -220,8 +223,9 @@ fn yaml_array(values: &[impl AsRef<str>]) -> String {
     )
 }
 
-fn replace_title(source: &str, title: &NoteTitle) -> String {
-    let body_start = frontmatter_body_start(source);
+fn replace_title(file: &MarkdownFile, title: &NoteTitle) -> String {
+    let source = file.source();
+    let body_start = source.len() - file.body().len();
     for line in markdown_line::lines(source).filter(|line| line.start >= body_start) {
         if line.text.starts_with("# ") {
             let line_end = line.start + line.text.len();
@@ -229,23 +233,6 @@ fn replace_title(source: &str, title: &NoteTitle) -> String {
         }
     }
     note_text::replace_body(source, title.as_ref())
-}
-
-fn frontmatter_body_start(source: &str) -> usize {
-    let byte_order_mark = source
-        .strip_prefix('\u{feff}')
-        .map_or(0, |_| '\u{feff}'.len_utf8());
-    let content = &source[byte_order_mark..];
-    let Some(opening) = markdown_line::lines(content).next() else {
-        return 0;
-    };
-    if opening.text != "---" {
-        return 0;
-    }
-    markdown_line::find(content, opening.end, |line| {
-        line.strip_suffix('\r').unwrap_or(line) == "---"
-    })
-    .map_or(0, |closing| byte_order_mark + closing.end)
 }
 
 fn note_not_found(project: &ProjectName, id: &NoteId) -> ObsidianStoreError {
@@ -256,10 +243,10 @@ fn note_not_found(project: &ProjectName, id: &NoteId) -> ObsidianStoreError {
 }
 
 fn write_index(path: &Path, source: &str) -> Result<(), ObsidianStoreError> {
-    fs_atomic::write_text_atomic(path, source).map_err(|source| {
+    MarkdownFile::write_rendered(path.to_path_buf(), source.to_string()).map_err(|source| {
         ObsidianStoreError::WriteProjectNoteIndex {
             path: path.to_path_buf(),
-            source,
+            source: source.into_io_error(),
         }
     })
 }

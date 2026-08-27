@@ -20,7 +20,7 @@ pub(in crate::project) struct ProjectRowError {
     pub(in crate::project) field: &'static str,
     pub(in crate::project) value: String,
     #[source]
-    pub(in crate::project) source: Box<dyn std::error::Error + Send + Sync>,
+    pub(in crate::project) source: anyhow::Error,
 }
 
 pub mod add_project;
@@ -78,7 +78,7 @@ where
     conversion(value.clone()).map_err(|source| ProjectRowError {
         field,
         value,
-        source: Box::new(source),
+        source: anyhow::Error::new(source),
     })
 }
 

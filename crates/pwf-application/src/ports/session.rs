@@ -14,10 +14,6 @@ pub struct EmptyAgentCommand;
 
 impl<'a> AgentCommand<'a> {
     /// Separates a non-empty argument vector into its program and remaining arguments.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`EmptyAgentCommand`] when `argv` has no program.
     pub fn try_new(argv: &'a [String]) -> Result<Self, EmptyAgentCommand> {
         let Some((program, arguments)) = argv.split_first() else {
             return Err(EmptyAgentCommand);

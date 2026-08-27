@@ -10,15 +10,13 @@ use pwf_models::{
         TaskTitleError,
     },
 };
+use pwf_wire::task::{
+    BlockedByIssue, RawTaskTags, TaskHeading, TaskIndexPath, TaskIssue, TaskLaunch, TaskLocation,
+    TaskNotePath, TaskView,
+};
 
 use super::{normalize_section_label, note_body::is_placeholder_prompt};
-use crate::{
-    contract::task::{
-        BlockedByIssue, RawTaskTags, TaskHeading, TaskIndexPath, TaskIssue, TaskLaunch,
-        TaskLocation, TaskNotePath, TaskView,
-    },
-    ports::task_record::{Materialization, StoredBlockedBy, TaskRecord},
-};
+use crate::ports::task_record::{Materialization, StoredBlockedBy, TaskRecord};
 
 /// Contains launchability flags and diagnostics derived from a task.
 #[derive(Debug, Clone, PartialEq, Eq)]

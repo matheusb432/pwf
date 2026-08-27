@@ -4,7 +4,7 @@ use anstyle::AnsiColor;
 use pwf_client::{
     render_argv,
     v1::{
-        Agent, DispatchMode, DispatchSessionOutcome, DispatchedSession, DryRunSession,
+        Agent, DispatchMode, DispatchSessionOutcome, DispatchedSession, PlanSessionResponse,
         SessionEffort,
     },
 };
@@ -53,7 +53,7 @@ pub(in crate::task) fn render_session_aborted(task_id: &str) -> String {
     format!("# session {task_id}: aborted\nnothing dispatched.\n")
 }
 
-pub(in crate::task) fn render_dry_run(outcome: &DryRunSession) -> anyhow::Result<String> {
+pub(in crate::task) fn render_dry_run(outcome: &PlanSessionResponse) -> anyhow::Result<String> {
     let plan = outcome
         .plan
         .as_ref()
@@ -171,7 +171,7 @@ mod tests {
 
     #[test]
     fn dry_run_renders_reasoning_effort() {
-        let outcome = DryRunSession {
+        let outcome = PlanSessionResponse {
             plan: Some(SessionPlan {
                 launch: Some(AgentLaunch {
                     agent: Agent::Codex as i32,

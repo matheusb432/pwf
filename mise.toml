@@ -12,21 +12,13 @@ rust = { version = "stable", profile = "minimal", components = [
 ] }
 just = "1.56.0"
 ast-grep = "0.44.1"
+buf = "1.72.0"
 protoc = "35.1"
 "cargo-binstall" = "1.21.1"
 "cargo:cargo-llvm-cov" = { version = "0.8.7", depends = [
   "rust",
   "cargo-binstall",
 ] }
-"cargo:sqlx-cli" = { version = "0.9.0", default-features = false, features = [
-  "rustls",
-  "postgres",
-  "sqlite",
-  "sqlx-toml",
-], depends = [
-  "rust",
-] }
-
 [bootstrap.packages]
 "apt:bash" = "latest"
 "apt:build-essential" = "latest"

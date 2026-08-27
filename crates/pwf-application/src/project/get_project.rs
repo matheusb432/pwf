@@ -1,9 +1,9 @@
 use std::error::Error;
 
 use pwf_models::project::ProjectId;
+use pwf_wire::project::GetProject;
 
 use super::{Project, ProjectRow};
-use crate::contract::project::GetProject;
 
 #[derive(Debug, thiserror::Error)]
 pub enum GetProjectError {
@@ -13,16 +13,11 @@ pub enum GetProjectError {
     Unexpected {
         context: &'static str,
         #[source]
-        source: Box<dyn Error + Send + Sync>,
+        source: anyhow::Error,
     },
 }
 
 /// Reads one managed project.
-///
-/// # Errors
-///
-/// Returns [`GetProjectError::ProjectNotFound`] when no project has the requested ID. Returns
-/// [`GetProjectError::Unexpected`] for database and persisted-data failures.
 #[cqrsy::query]
 pub async fn execute(
     query: GetProject,
@@ -64,16 +59,16 @@ fn unexpected(
 ) -> GetProjectError {
     GetProjectError::Unexpected {
         context,
-        source: Box::new(source),
+        source: anyhow::Error::new(source),
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use pwf_wire::project::ProjectStatusFilter;
+
     use super::*;
-    use crate::{
-        contract::project::ProjectStatusFilter, project::get_project, testing::insert_project,
-    };
+    use crate::{project::get_project, testing::insert_project};
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn status_filter_controls_paused_project_visibility(pool: sqlx::SqlitePool) {

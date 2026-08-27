@@ -3,35 +3,35 @@ syntax = "proto3";
 package pwf.v1;
 
 service ProjectService {
-  rpc AddProject(AddProjectRequest) returns (Project);
-  rpc GetProject(GetProjectRequest) returns (Project);
+  rpc AddProject(AddProjectRequest) returns (AddProjectResponse);
+  rpc GetProject(GetProjectRequest) returns (GetProjectResponse);
   rpc ListProjects(ListProjectsRequest) returns (ListProjectsResponse);
-  rpc PauseProject(PauseProjectRequest) returns (ProjectStateChange);
-  rpc RenameProject(RenameProjectRequest) returns (Project);
-  rpc ResumeProject(ResumeProjectRequest) returns (ProjectStateChange);
+  rpc PauseProject(PauseProjectRequest) returns (PauseProjectResponse);
+  rpc RenameProject(RenameProjectRequest) returns (RenameProjectResponse);
+  rpc ResumeProject(ResumeProjectRequest) returns (ResumeProjectResponse);
 }
 
 service NoteService {
-  rpc AddNote(AddNoteRequest) returns (AddedNote);
-  rpc ListNotes(ListNotesRequest) returns (ListedNotes);
-  rpc RemoveNote(RemoveNoteRequest) returns (RemovedNote);
-  rpc UpdateNote(UpdateNoteRequest) returns (UpdatedNote);
+  rpc AddNote(AddNoteRequest) returns (AddNoteResponse);
+  rpc ListNotes(ListNotesRequest) returns (ListNotesResponse);
+  rpc RemoveNote(RemoveNoteRequest) returns (RemoveNoteResponse);
+  rpc UpdateNote(UpdateNoteRequest) returns (UpdateNoteResponse);
 }
 
 service TaskService {
-  rpc AddTask(AddTaskRequest) returns (AddedTask);
-  rpc CancelTask(CancelTaskRequest) returns (ClosedTask);
-  rpc CompleteTask(CompleteTaskRequest) returns (ClosedTask);
-  rpc EditTask(EditTaskRequest) returns (EditedTask);
-  rpc GetTask(GetTaskRequest) returns (TaskRead);
-  rpc ListTasks(ListTasksRequest) returns (ListedTasks);
-  rpc RemoveTask(stream RemoveTaskClientMessage) returns (stream RemoveTaskServerMessage);
-  rpc ReopenTask(stream ReopenTaskClientMessage) returns (stream ReopenTaskServerMessage);
+  rpc AddTask(AddTaskRequest) returns (AddTaskResponse);
+  rpc CancelTask(CancelTaskRequest) returns (CancelTaskResponse);
+  rpc CompleteTask(CompleteTaskRequest) returns (CompleteTaskResponse);
+  rpc EditTask(EditTaskRequest) returns (EditTaskResponse);
+  rpc GetTask(GetTaskRequest) returns (GetTaskResponse);
+  rpc ListTasks(ListTasksRequest) returns (ListTasksResponse);
+  rpc RemoveTask(stream RemoveTaskRequest) returns (stream RemoveTaskResponse);
+  rpc ReopenTask(stream ReopenTaskRequest) returns (stream ReopenTaskResponse);
 }
 
 service SessionService {
-  rpc PlanSession(PlanSessionRequest) returns (DryRunSession);
-  rpc DispatchSession(stream DispatchSessionClientMessage) returns (stream DispatchSessionServerMessage);
+  rpc PlanSession(PlanSessionRequest) returns (PlanSessionResponse);
+  rpc DispatchSession(stream DispatchSessionRequest) returns (stream DispatchSessionResponse);
 }
 
 enum ProjectStatusFilter {
@@ -62,23 +62,61 @@ message Project {
 
 message AddProjectRequest { ProjectFields fields = 1; }
 
+message AddProjectResponse {
+  string id = 1;
+  string title = 2;
+  string source_kind = 3;
+  string source_value = 4;
+  string tasks_kind = 5;
+  string tasks_path = 6;
+  string created_at = 7;
+  bool is_paused = 8;
+}
+
 message GetProjectRequest {
   string id = 1;
   ProjectStatusFilter status = 2;
+}
+
+message GetProjectResponse {
+  string id = 1;
+  string title = 2;
+  string source_kind = 3;
+  string source_value = 4;
+  string tasks_kind = 5;
+  string tasks_path = 6;
+  string created_at = 7;
+  bool is_paused = 8;
 }
 
 message ListProjectsRequest { ProjectStatusFilter status = 1; }
 message ListProjectsResponse { repeated Project projects = 1; }
 message PauseProjectRequest { string id = 1; }
 
+message PauseProjectResponse {
+  Project project = 1;
+  bool changed = 2;
+}
+
 message RenameProjectRequest {
   string current_id = 1;
   ProjectFields fields = 2;
 }
 
+message RenameProjectResponse {
+  string id = 1;
+  string title = 2;
+  string source_kind = 3;
+  string source_value = 4;
+  string tasks_kind = 5;
+  string tasks_path = 6;
+  string created_at = 7;
+  bool is_paused = 8;
+}
+
 message ResumeProjectRequest { string id = 1; }
 
-message ProjectStateChange {
+message ResumeProjectResponse {
   Project project = 1;
   bool changed = 2;
 }
@@ -119,7 +157,7 @@ message UpdateNoteRequest {
   string title = 3;
 }
 
-message AddedNote {
+message AddNoteResponse {
   string id = 1;
   string title = 2;
 }
@@ -129,15 +167,15 @@ message ListedNote {
   string title = 2;
 }
 
-message ListedNotes {
+message ListNotesResponse {
   string project = 1;
   repeated ListedNote notes = 2;
   uint64 hidden = 3;
 }
 
-message RemovedNote { string id = 1; }
+message RemoveNoteResponse { string id = 1; }
 
-message UpdatedNote {
+message UpdateNoteResponse {
   string id = 1;
   string title = 2;
 }
@@ -317,10 +355,10 @@ message ListTasksRequest {
   ListDetail detail = 8;
 }
 
-message RemoveTaskRequest { string id = 1; }
-message ReopenTaskRequest { string id = 1; }
+message RemoveTaskStart { string id = 1; }
+message ReopenTaskStart { string id = 1; }
 
-message AddedTask {
+message AddTaskResponse {
   string id = 1;
   string project = 2;
   string title = 3;
@@ -333,7 +371,7 @@ message AddTaskFailureDetails {
   optional string created_section = 2;
 }
 
-message EditedTask {
+message EditTaskResponse {
   string id = 1;
   string project = 2;
   string title = 3;
@@ -345,14 +383,24 @@ enum ClosedTaskAction {
   CLOSED_TASK_ACTION_CANCELLED = 2;
 }
 
-message ClosedTask {
+message CancelTaskResponse {
   string id = 1;
   string project = 2;
   string title = 3;
   ClosedTaskAction action = 4;
   repeated string evicted_ids = 5;
   optional string futuro_renamed_project = 6;
-  AddedTask review_task = 7;
+  AddTaskResponse review_task = 7;
+}
+
+message CompleteTaskResponse {
+  string id = 1;
+  string project = 2;
+  string title = 3;
+  ClosedTaskAction action = 4;
+  repeated string evicted_ids = 5;
+  optional string futuro_renamed_project = 6;
+  AddTaskResponse review_task = 7;
 }
 
 enum ReopenedTaskOutcome {
@@ -410,7 +458,7 @@ message TaskData {
   string prompt = 12;
 }
 
-message TaskRead {
+message GetTaskResponse {
   oneof value {
     string markdown = 1;
     string path = 2;
@@ -479,7 +527,7 @@ message TaskView {
   optional string created = 15;
 }
 
-message ListedTasks {
+message ListTasksResponse {
   repeated TaskView tasks = 1;
   uint64 hidden = 2;
   optional string project = 3;
@@ -507,28 +555,28 @@ message ReopenTaskConfirmation {
 
 message ConfirmationDecision { bool confirmed = 1; }
 
-message RemoveTaskClientMessage {
+message RemoveTaskRequest {
   oneof value {
-    RemoveTaskRequest start = 1;
+    RemoveTaskStart start = 1;
     ConfirmationDecision decision = 2;
   }
 }
 
-message RemoveTaskServerMessage {
+message RemoveTaskResponse {
   oneof value {
     RemoveTaskConfirmation preflight = 1;
     RemovedTaskOutcome result = 2;
   }
 }
 
-message ReopenTaskClientMessage {
+message ReopenTaskRequest {
   oneof value {
-    ReopenTaskRequest start = 1;
+    ReopenTaskStart start = 1;
     ConfirmationDecision decision = 2;
   }
 }
 
-message ReopenTaskServerMessage {
+message ReopenTaskResponse {
   oneof value {
     ReopenTaskConfirmation preflight = 1;
     ReopenedTask result = 2;
@@ -612,7 +660,7 @@ message SessionWarning {
   }
 }
 
-message DryRunSession {
+message PlanSessionResponse {
   SessionPlan plan = 1;
   repeated string argv = 2;
   AgentProbe probe = 3;
@@ -664,14 +712,14 @@ message DispatchedSession {
   WindowOpened window_opened = 4;
 }
 
-message DispatchSessionClientMessage {
+message DispatchSessionRequest {
   oneof value {
     PlanSessionRequest start = 1;
     ConfirmationDecision decision = 2;
   }
 }
 
-message DispatchSessionServerMessage {
+message DispatchSessionResponse {
   oneof value {
     SessionDispatchPreflight preflight = 1;
     DispatchedSession result = 2;

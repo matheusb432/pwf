@@ -1,20 +1,15 @@
 use pwf_models::task::{TaskId, TaskStatus};
+use pwf_wire::{confirmation::ReopenTaskConfirmation, task::ReopenedTask};
 
 use super::{
     note_body::remove_report,
     resolve_task_project::{self, ResolveTaskProjectError},
     task_body_region,
 };
-use crate::{
-    contract::{
-        confirmation::{Confirmation, ReopenTaskConfirmation},
-        task::{ReopenTask, ReopenedTask, ResolveTaskProject},
-    },
-    ports::{
-        confirmation::ConfirmationClient,
-        task_record::{
-            IndexEntry, IndexEntryState, IndexEntryStore, NullablePatch, TaskPatch, TaskStore,
-        },
+use crate::ports::{
+    confirmation::{ConfirmationClient, ConfirmationClientError},
+    task_record::{
+        IndexEntry, IndexEntryState, IndexEntryStore, NullablePatch, TaskPatch, TaskStore,
     },
 };
 
@@ -24,8 +19,10 @@ pub enum ReopenTaskError {
     TaskNotFound { id: TaskId },
     #[error(transparent)]
     ResolveProject(#[from] ResolveTaskProjectError),
-    #[error("{0}")]
-    WriteStore(#[source] Box<dyn std::error::Error + Send + Sync>),
+    #[error(transparent)]
+    Confirmation(#[from] ConfirmationClientError),
+    #[error(transparent)]
+    WriteStore(anyhow::Error),
 }
 
 /// Reopens a closed task and restores an existing queue link.
@@ -34,16 +31,15 @@ pub enum ReopenTaskError {
 /// idempotent skip.
 #[cqrsy::command]
 pub async fn execute(
-    cmd: &ReopenTask,
+    task_id: &TaskId,
     store: &(impl TaskStore + IndexEntryStore),
     pool: &sqlx::SqlitePool,
-    confirmation_client: &(impl ConfirmationClient + Send + Sync + 'static),
+    confirmation_client: &mut dyn ConfirmationClient<Confirmation = ReopenTaskConfirmation>,
 ) -> Result<ReopenedTask, ReopenTaskError> {
-    let project =
-        resolve_task_project::execute(ResolveTaskProject { id: cmd.id.clone() }, pool).await?;
-    let task_identifier = cmd.id.clone();
+    let project = resolve_task_project::execute(task_id.clone(), pool).await?;
+    let task_identifier = task_id.clone();
     let record = TaskStore::get(store, &project, &task_identifier)
-        .map_err(|error| ReopenTaskError::WriteStore(Box::new(error)))?
+        .map_err(|error| ReopenTaskError::WriteStore(anyhow::Error::new(error)))?
         .ok_or_else(|| ReopenTaskError::TaskNotFound {
             id: task_identifier.clone(),
         })?;
@@ -56,14 +52,14 @@ pub async fn execute(
     }
 
     let (body_without_report, report) = remove_report(task_body_region(&record.body));
-    let confirmation = Confirmation::ReopenTask(ReopenTaskConfirmation {
+    let confirmation = ReopenTaskConfirmation {
         task_identifier: task_identifier.clone(),
         project: project.title.clone(),
         completion_date: record.completed,
         commit_provenance: record.commits.clone(),
         report: report.clone(),
-    });
-    if !confirmation_client.confirm(&confirmation).await {
+    };
+    if !confirmation_client.confirm(&confirmation).await? {
         return Ok(ReopenedTask::Aborted {
             id: task_identifier,
         });
@@ -81,10 +77,10 @@ pub async fn execute(
             ..TaskPatch::default()
         },
     )
-    .map_err(|error| ReopenTaskError::WriteStore(Box::new(error)))?;
+    .map_err(|error| ReopenTaskError::WriteStore(anyhow::Error::new(error)))?;
 
     let entries = IndexEntryStore::list_index_entries(store, &project)
-        .map_err(|error| ReopenTaskError::WriteStore(Box::new(error)))?;
+        .map_err(|error| ReopenTaskError::WriteStore(anyhow::Error::new(error)))?;
     if entries
         .iter()
         .any(|entry| entry.id == task_identifier && matches!(entry.state, IndexEntryState::Done(_)))
@@ -98,7 +94,7 @@ pub async fn execute(
                 section: None,
             },
         )
-        .map_err(|error| ReopenTaskError::WriteStore(Box::new(error)))?;
+        .map_err(|error| ReopenTaskError::WriteStore(anyhow::Error::new(error)))?;
     }
 
     Ok(ReopenedTask::Reopened {
@@ -109,21 +105,15 @@ pub async fn execute(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex;
-
     use pwf_models::{
         project::{Project, ProjectName},
         task::{TaskId, TaskStatus},
     };
+    use pwf_wire::{confirmation::ReopenTaskConfirmation, task::ReopenedTask};
 
-    use super::ReopenTask;
     use crate::{
-        contract::{
-            confirmation::{Confirmation, ReopenTaskConfirmation},
-            task::ReopenedTask,
-        },
         ports::{
-            confirmation::ConfirmationClient,
+            confirmation::{ConfirmationClient, ConfirmationClientError},
             task_record::{IndexEntry, IndexEntryState, IndexEntryStore, TaskRecord},
         },
         task::reopen_task,
@@ -132,37 +122,39 @@ mod tests {
 
     struct TestConfirmation {
         accepted: bool,
-        recorded: Mutex<Vec<Confirmation>>,
+        recorded: Vec<ReopenTaskConfirmation>,
     }
 
     impl TestConfirmation {
         fn accepting() -> Self {
             Self {
                 accepted: true,
-                recorded: Mutex::new(Vec::new()),
+                recorded: Vec::new(),
             }
         }
 
         fn declining() -> Self {
             Self {
                 accepted: false,
-                recorded: Mutex::new(Vec::new()),
+                recorded: Vec::new(),
             }
         }
 
-        fn recorded(&self) -> Vec<Confirmation> {
-            self.recorded.lock().unwrap().clone()
+        fn recorded(&self) -> &[ReopenTaskConfirmation] {
+            &self.recorded
         }
     }
 
     impl ConfirmationClient for TestConfirmation {
+        type Confirmation = ReopenTaskConfirmation;
+
         fn confirm<'a>(
-            &'a self,
-            confirmation: &'a Confirmation,
-        ) -> futures::future::BoxFuture<'a, bool> {
+            &'a mut self,
+            confirmation: &'a ReopenTaskConfirmation,
+        ) -> futures::future::BoxFuture<'a, Result<bool, ConfirmationClientError>> {
             Box::pin(async move {
-                self.recorded.lock().unwrap().push(confirmation.clone());
-                self.accepted
+                self.recorded.push(confirmation.clone());
+                Ok(self.accepted)
             })
         }
     }
@@ -203,10 +195,8 @@ mod tests {
         }
     }
 
-    fn command() -> ReopenTask {
-        ReopenTask {
-            id: "FOO-0001".parse().unwrap(),
-        }
+    fn task_id() -> TaskId {
+        "FOO-0001".parse().unwrap()
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
@@ -224,22 +214,22 @@ mod tests {
             TaskStatus::Done,
             vec![entry(IndexEntryState::Done(Some(app_date("2026-01-02"))))],
         );
-        let confirmation = TestConfirmation::accepting();
+        let mut confirmation = TestConfirmation::accepting();
 
-        let out = reopen_task::execute(&command(), &store, &pool, &confirmation)
+        let out = reopen_task::execute(&task_id(), &store, &pool, &mut confirmation)
             .await
             .unwrap();
 
         assert!(matches!(out, ReopenedTask::Reopened { .. }));
         assert_eq!(
             confirmation.recorded(),
-            vec![Confirmation::ReopenTask(ReopenTaskConfirmation {
+            vec![ReopenTaskConfirmation {
                 task_identifier: "FOO-0001".parse().unwrap(),
                 project: ProjectName::try_new("foo-bar").unwrap(),
                 completion_date: Some(app_date("2026-01-02")),
                 commit_provenance: Some("a..b".to_string()),
                 report: Some("completed safely".to_string()),
-            })]
+            }]
         );
         assert_eq!(store.tasks("foo-bar")[0].status, TaskStatus::Active);
         assert_eq!(store.tasks("foo-bar")[0].completed, None);
@@ -263,9 +253,9 @@ mod tests {
         )
         .await;
         let store = staged(TaskStatus::Done, Vec::new());
-        let confirmation = TestConfirmation::accepting();
+        let mut confirmation = TestConfirmation::accepting();
 
-        let out = reopen_task::execute(&command(), &store, &pool, &confirmation)
+        let out = reopen_task::execute(&task_id(), &store, &pool, &mut confirmation)
             .await
             .unwrap();
 
@@ -286,9 +276,9 @@ mod tests {
         )
         .await;
         let store = staged(TaskStatus::Active, vec![entry(IndexEntryState::Open)]);
-        let confirmation = TestConfirmation::accepting();
+        let mut confirmation = TestConfirmation::accepting();
 
-        let out = reopen_task::execute(&command(), &store, &pool, &confirmation)
+        let out = reopen_task::execute(&task_id(), &store, &pool, &mut confirmation)
             .await
             .unwrap();
 
@@ -314,9 +304,9 @@ mod tests {
         );
         let tasks_before = store.tasks("foo-bar");
         let entries_before = store.entries("foo-bar");
-        let confirmation = TestConfirmation::declining();
+        let mut confirmation = TestConfirmation::declining();
 
-        let outcome = reopen_task::execute(&command(), &store, &pool, &confirmation)
+        let outcome = reopen_task::execute(&task_id(), &store, &pool, &mut confirmation)
             .await
             .unwrap();
 
@@ -342,12 +332,10 @@ mod tests {
         )
         .await;
         let store = staged(TaskStatus::Done, Vec::new());
-        let command = ReopenTask {
-            id: "XYZ-0001".parse().unwrap(),
-        };
-        let confirmation = TestConfirmation::accepting();
+        let task_id = "XYZ-0001".parse().unwrap();
+        let mut confirmation = TestConfirmation::accepting();
 
-        let error = reopen_task::execute(&command, &store, &pool, &confirmation)
+        let error = reopen_task::execute(&task_id, &store, &pool, &mut confirmation)
             .await
             .unwrap_err();
 

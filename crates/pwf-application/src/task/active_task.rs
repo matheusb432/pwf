@@ -4,9 +4,9 @@ use pwf_models::{
     project::Project,
     task::{TaskId, TaskStatus},
 };
+use pwf_wire::task::TaskView;
 
 use crate::{
-    contract::task::{ResolveTaskProject, TaskView},
     ports::task_record::{TaskRecord, TaskStore},
     task::{
         resolve_task_project::{self, ResolveTaskProjectError},
@@ -29,8 +29,8 @@ pub(in crate::task) enum FindActiveTaskError {
     AmbiguousId { id: TaskId },
     #[error(transparent)]
     ResolveProject(#[from] ResolveTaskProjectError),
-    #[error("{0}")]
-    ReadStore(#[source] Box<dyn std::error::Error + Send + Sync>),
+    #[error(transparent)]
+    ReadStore(anyhow::Error),
     #[error(transparent)]
     InvalidTaskView(#[from] task_view::TaskViewError),
 }
@@ -40,8 +40,7 @@ pub(in crate::task) async fn find(
     store: &impl TaskStore,
     pool: &sqlx::SqlitePool,
 ) -> Result<FoundActiveTask, FindActiveTaskError> {
-    let project =
-        resolve_task_project::execute(ResolveTaskProject { id: id.clone() }, pool).await?;
+    let project = resolve_task_project::execute(id.clone(), pool).await?;
     let (record, task) = find_active_task(store, &project, id)?;
     Ok(FoundActiveTask {
         project,
@@ -57,7 +56,7 @@ fn find_active_task(
 ) -> Result<(TaskRecord, TaskView), FindActiveTaskError> {
     let records = store
         .list(project)
-        .map_err(|error| FindActiveTaskError::ReadStore(Box::new(error)))?;
+        .map_err(|error| FindActiveTaskError::ReadStore(anyhow::Error::new(error)))?;
     let mut matched = records
         .into_iter()
         .filter(|record| record.status == TaskStatus::Active && record.id == *task_id);
@@ -84,10 +83,10 @@ mod tests {
         project::Project,
         task::{TaskId, TaskStatus},
     };
+    use pwf_wire::task::{TaskIndexPath, TaskNotePath};
 
     use super::{FindActiveTaskError, TaskView, find_active_task};
     use crate::{
-        contract::task::{TaskIndexPath, TaskNotePath},
         ports::task_record::{IndexPlacement, TaskRecord},
         testing::{InMemoryStore, app_date, project, task_record},
     };

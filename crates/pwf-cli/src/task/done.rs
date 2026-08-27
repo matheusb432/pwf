@@ -20,7 +20,8 @@ pub struct Arguments {
 }
 
 use super::render::{
-    emit_close_diagnostics, emit_created_section, emit_created_section_for_error, render_closed,
+    emit_complete_diagnostics, emit_created_section, emit_created_section_for_error,
+    render_completed,
 };
 
 pub(super) async fn run(arguments: &Arguments, client: &TaskClient) -> anyhow::Result<String> {
@@ -48,6 +49,6 @@ pub(super) async fn run(arguments: &Arguments, client: &TaskClient) -> anyhow::R
     if let Some(review) = output.review_task.as_ref() {
         emit_created_section(review);
     }
-    emit_close_diagnostics(&output);
-    Ok(render_closed(&output))
+    emit_complete_diagnostics(&output);
+    Ok(render_completed(&output))
 }

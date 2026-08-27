@@ -10,21 +10,21 @@ use pwf_models::{
     },
     task::{EffortTier, TaskId},
 };
+use pwf_wire::{
+    project::ProjectStatusFilter,
+    task::{
+        BlockedByIssue, BlockedByResolution, BlockedByStatus, TaskView,
+        session::{
+            AgentLaunch, DispatchConfirmation, DryRunSession, ModelTierLookup, PlanSession,
+            PlanSessionIntent, PlannedSession, PreparedSessionDispatch, SessionPlan,
+            SessionWarning,
+        },
+    },
+};
 use thiserror::Error;
 
 use super::{Agent, DispatchMode, LaunchDirectives, SessionEffort};
 use crate::{
-    contract::{
-        project::{ListProjects, ProjectStatusFilter},
-        task::{
-            BlockedByIssue, BlockedByResolution, BlockedByStatus, TaskView,
-            session::{
-                AgentLaunch, DispatchConfirmation, DryRunSession, ModelTierLookup, PlanSession,
-                PlanSessionIntent, PlannedSession, PreparedSessionDispatch, SessionPlan,
-                SessionWarning,
-            },
-        },
-    },
     ports::{
         agent::AgentClient,
         project_directory::ProjectDirectoryClient,
@@ -38,14 +38,14 @@ use crate::{
 
 #[derive(Debug, Error)]
 pub enum PlanSessionError {
-    #[error("{0}")]
-    FindTask(#[source] Box<dyn Error + Send + Sync>),
-    #[error("{0}")]
-    ReadTaskMarkdown(#[source] Box<dyn Error + Send + Sync>),
+    #[error(transparent)]
+    FindTask(anyhow::Error),
+    #[error(transparent)]
+    ReadTaskMarkdown(anyhow::Error),
     #[error("Task '{id}' is not launchable: {launch}")]
     NotLaunchable {
         id: TaskId,
-        launch: crate::contract::task::TaskLaunch,
+        launch: pwf_wire::task::TaskLaunch,
     },
     #[error("Project path for '{project_id}' does not exist: {path}")]
     ProjectPathMissing {
@@ -58,15 +58,15 @@ pub enum PlanSessionError {
     MultiplexerSessionCheck {
         session: String,
         #[source]
-        source: Box<dyn Error + Send + Sync>,
+        source: anyhow::Error,
     },
     #[error("Multiplexer session '{session}' does not exist")]
     MultiplexerSessionMissing {
         session: String,
         start_command_argv: Vec<String>,
     },
-    #[error("{0}")]
-    ModelTier(#[source] Box<dyn Error + Send + Sync>),
+    #[error(transparent)]
+    ModelTier(anyhow::Error),
     #[error("Failed to render session title: {0}")]
     RenderThreadTitle(#[source] askama::Error),
     #[error("Invalid path for project '{project_id}': {source}")]
@@ -105,10 +105,6 @@ impl<A, P, S> SessionPlanningClients<A, P, S> {
 }
 
 /// Plans one active task without mutating its note or dispatching an agent.
-///
-/// # Errors
-///
-/// Returns [`PlanSessionError`] for lookup, launch validation, or model selection failures.
 #[cqrsy::command]
 pub async fn execute(
     command: &PlanSession,
@@ -124,7 +120,7 @@ pub async fn execute(
     let probe = clients.agent.probe(command.agent);
     let found = active_task::find(&command.task_id, store, pool)
         .await
-        .map_err(|error| PlanSessionError::FindTask(Box::new(error)))?;
+        .map_err(|error| PlanSessionError::FindTask(anyhow::Error::new(error)))?;
     let task = found.task;
     if !task.launch.is_ready() {
         return Err(PlanSessionError::NotLaunchable {
@@ -143,7 +139,7 @@ pub async fn execute(
             resolve_model(command.agent, task.effort, |effort| {
                 clients.agent.model_tier(effort)
             })
-            .map_err(|error| PlanSessionError::ModelTier(Box::new(error)))?,
+            .map_err(|error| PlanSessionError::ModelTier(anyhow::Error::new(error)))?,
         ),
     };
     let plan = SessionPlan {
@@ -228,14 +224,7 @@ async fn blocker_warnings(
         }
         StoredBlockedBy::Valid(blocked_by) => blocked_by,
     };
-    let statuses = match list_projects::execute(
-        ListProjects {
-            status: ProjectStatusFilter::IncludingPaused,
-        },
-        pool,
-    )
-    .await
-    {
+    let statuses = match list_projects::execute(ProjectStatusFilter::IncludingPaused, pool).await {
         Ok(projects) => blocked_by::statuses(blocked_by, store, None, &projects),
         Err(error) => blocked_by
             .iter()
@@ -288,7 +277,7 @@ fn load_task_content(
     if matches!(record.materialization, Materialization::MissingNote { .. }) {
         return store
             .read_note_markdown(&record.locator)
-            .map_err(|error| PlanSessionError::ReadTaskMarkdown(Box::new(error)));
+            .map_err(|error| PlanSessionError::ReadTaskMarkdown(anyhow::Error::new(error)));
     }
     Ok(record.source.clone())
 }
@@ -345,7 +334,7 @@ fn validate_multiplexer(
         .session_exists(&session_name)
         .map_err(|source| PlanSessionError::MultiplexerSessionCheck {
             session: session_name.clone(),
-            source: Box::new(source),
+            source: anyhow::Error::new(source),
         })?;
     if session_exists {
         return Ok(());
@@ -510,8 +499,8 @@ fn launch_prompt(
 
 #[derive(Debug, Error)]
 enum ModelSelectionError {
-    #[error("{0}")]
-    Catalog(#[source] Box<dyn Error + Send + Sync>),
+    #[error(transparent)]
+    Catalog(anyhow::Error),
     #[error("tier {tier} has no [tiers.{tier}] entry in {}", catalog.display())]
     MissingTier { tier: EffortTier, catalog: PathBuf },
     #[error("tier {tier} in {} has no claude_model set", catalog.display())]
@@ -535,7 +524,8 @@ where
     let ModelTierLookup {
         catalog,
         tier: entry,
-    } = model_tier(tier).map_err(|error| ModelSelectionError::Catalog(Box::new(error)))?;
+    } = model_tier(tier)
+        .map_err(|error| ModelSelectionError::Catalog(anyhow::Error::new(error)))?;
     let Some(entry) = entry else {
         return Err(ModelSelectionError::MissingTier { tier, catalog });
     };
@@ -654,12 +644,10 @@ mod model_selection_tests {
     use std::{assert_matches, error::Error, fmt};
 
     use pwf_models::task::EffortTier;
+    use pwf_wire::task::session::{ModelTier, ModelTierLookup};
 
     use super::{ModelSelectionError, resolve_model};
-    use crate::{
-        contract::task::session::{ModelTier, ModelTierLookup},
-        task::session::Agent,
-    };
+    use crate::task::session::Agent;
 
     const CATALOG_PATH: &str = "/config/model-tiers.toml";
 
@@ -724,13 +712,18 @@ mod model_selection_tests {
     }
 
     #[test]
-    fn catalog_read_error_retains_its_source() {
+    fn catalog_read_error_retains_its_root_cause() {
         let error = resolve_model(Agent::Claude, Some(EffortTier::Low), |_| {
             Err(CatalogError("catalog unavailable"))
         })
         .unwrap_err();
 
-        assert_eq!(error.source().unwrap().to_string(), "catalog unavailable");
+        assert_eq!(error.to_string(), "catalog unavailable");
+        let ModelSelectionError::Catalog(source) = error else {
+            panic!("expected the catalog error");
+        };
+        assert!(source.downcast_ref::<CatalogError>().is_some());
+        assert_eq!(source.root_cause().to_string(), "catalog unavailable");
     }
 
     #[test]
@@ -780,12 +773,12 @@ mod model_selection_tests {
 #[cfg(test)]
 mod blocker_warning_tests {
     use pwf_models::task::TaskStatus;
+    use pwf_wire::task::{
+        BlockedByIssue, BlockedByResolution, BlockedByStatus, session::SessionWarning,
+    };
 
     use super::blocker_warnings;
     use crate::{
-        contract::task::{
-            BlockedByIssue, BlockedByResolution, BlockedByStatus, session::SessionWarning,
-        },
         ports::task_record::{StoredBlockedBy, TaskRecord},
         testing::{InMemoryStore, insert_project, stored_blocked_by, task_record},
     };

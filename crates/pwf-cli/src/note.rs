@@ -6,8 +6,8 @@ use clap::{Args, Subcommand};
 use pwf_client::{
     note::NoteClient,
     v1::{
-        AddNoteRequest, AddedNote, ListNotesRequest, ListedNotes, NoteListLimitKind,
-        RemoveNoteRequest, RemovedNote, UpdateNoteRequest, UpdatedNote,
+        AddNoteRequest, AddNoteResponse, ListNotesRequest, ListNotesResponse, NoteListLimitKind,
+        RemoveNoteRequest, RemoveNoteResponse, UpdateNoteRequest, UpdateNoteResponse,
     },
 };
 use pwf_models::{
@@ -197,7 +197,7 @@ pub async fn run(arguments: &Arguments, client: &NoteClient) -> anyhow::Result<S
     Ok(output)
 }
 
-fn render_listed(result: &ListedNotes) -> String {
+fn render_listed(result: &ListNotesResponse) -> String {
     if result.notes.is_empty() {
         return format!("No notes for {}.\n", result.project);
     }
@@ -215,21 +215,23 @@ fn render_listed(result: &ListedNotes) -> String {
     output
 }
 
-fn render_added(result: &AddedNote) -> String {
+fn render_added(result: &AddNoteResponse) -> String {
     format!("Added {} :: {}\n", result.id, result.title)
 }
 
-fn render_removed(result: &RemovedNote) -> String {
+fn render_removed(result: &RemoveNoteResponse) -> String {
     format!("Removed {}\n", result.id)
 }
 
-fn render_updated(result: &UpdatedNote) -> String {
+fn render_updated(result: &UpdateNoteResponse) -> String {
     format!("Updated {} :: {}\n", result.id, result.title)
 }
 
 #[cfg(test)]
 mod tests {
-    use pwf_client::v1::{AddedNote, ListedNote, ListedNotes, RemovedNote, UpdatedNote};
+    use pwf_client::v1::{
+        AddNoteResponse, ListNotesResponse, ListedNote, RemoveNoteResponse, UpdateNoteResponse,
+    };
 
     use super::{PositionalNote, render_added, render_listed, render_removed, render_updated};
 
@@ -240,18 +242,18 @@ mod tests {
     #[test]
     fn typed_results_render_the_existing_note_output_contract() {
         assert_eq!(
-            render_added(&AddedNote {
+            render_added(&AddNoteResponse {
                 id: identifier(1),
                 title: "remember milk".to_string(),
             }),
             "Added PWF-NOTE-0001 :: remember milk\n"
         );
         assert_eq!(
-            render_removed(&RemovedNote { id: identifier(1) }),
+            render_removed(&RemoveNoteResponse { id: identifier(1) }),
             "Removed PWF-NOTE-0001\n"
         );
         assert_eq!(
-            render_updated(&UpdatedNote {
+            render_updated(&UpdateNoteResponse {
                 id: identifier(1),
                 title: "remember oat milk".to_string(),
             }),
@@ -263,7 +265,7 @@ mod tests {
     fn listed_results_render_empty_lines_and_hidden_hint() {
         let project = "pwf".to_string();
         assert_eq!(
-            render_listed(&ListedNotes {
+            render_listed(&ListNotesResponse {
                 project: project.clone(),
                 notes: Vec::new(),
                 hidden: 0,
@@ -271,7 +273,7 @@ mod tests {
             "No notes for pwf.\n"
         );
         assert_eq!(
-            render_listed(&ListedNotes {
+            render_listed(&ListNotesResponse {
                 project,
                 notes: vec![
                     ListedNote {

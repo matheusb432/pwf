@@ -238,7 +238,6 @@ mod tests {
     use std::{
         cell::RefCell,
         collections::VecDeque,
-        error::Error,
         fs,
         io::{self, Write as _},
         path::{Path, PathBuf},
@@ -254,7 +253,7 @@ mod tests {
         build_non_blocking_writer, jsonl_paths, log_directory, read_json_records,
     };
 
-    type TestResult<T = ()> = Result<T, Box<dyn Error>>;
+    type TestResult<T = ()> = anyhow::Result<T>;
 
     #[test]
     fn resolves_log_directory_from_the_state_root() {
@@ -298,7 +297,7 @@ mod tests {
         let record = records
             .iter()
             .find(|record| record["fields"]["message"] == "structured record")
-            .ok_or("durable sink omitted the structured record")?;
+            .ok_or_else(|| anyhow::anyhow!("durable sink omitted the structured record"))?;
         assert!(
             record["timestamp"]
                 .as_str()
@@ -311,7 +310,7 @@ mod tests {
         assert_eq!(record["span"]["inner_field"], 11);
         let span_names = record["spans"]
             .as_array()
-            .ok_or("durable record omitted its span list")?
+            .ok_or_else(|| anyhow::anyhow!("durable record omitted its span list"))?
             .iter()
             .map(|span| span["name"].as_str().unwrap_or_default())
             .collect::<Vec<_>>();
@@ -376,7 +375,9 @@ mod tests {
         let settings = test_settings(log_directory.clone(), 1024, 1, 16);
 
         let Err(error) = build_dispatch(&settings, EnvFilter::new("trace")) else {
-            return Err("dispatcher construction unexpectedly succeeded".into());
+            return Err(anyhow::anyhow!(
+                "dispatcher construction unexpectedly succeeded"
+            ));
         };
         let message = format!("{error:#}");
         assert!(message.contains("creating observability directory"));

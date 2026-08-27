@@ -2,12 +2,9 @@ use pwf_models::{
     project::ProjectName,
     task::{CommitRanges, EffortTier, TaskId, TaskPrompt, TaskTitle},
 };
+use pwf_wire::task::{GetTask, TaskData, TaskRead, TaskReadFormat};
 
 use crate::{
-    contract::{
-        project::GetActiveProject,
-        task::{GetTask, TaskData, TaskRead, TaskReadFormat},
-    },
     ports::{
         project_note::ProjectNoteStore,
         task_record::{Materialization, StoredBlockedBy, TaskRecord, TaskStore},
@@ -21,60 +18,46 @@ use crate::{
 pub enum GetTaskError {
     #[error("Task not found: {id}")]
     TaskNotFound { id: TaskId },
-    #[error("{0}")]
-    ReadStore(#[source] Box<dyn std::error::Error + Send + Sync>),
-    #[error("{0}")]
-    ReadMarkdown(#[source] Box<dyn std::error::Error + Send + Sync>),
-    #[error("{0}")]
-    QueryProject(#[source] Box<dyn std::error::Error + Send + Sync>),
+    #[error(transparent)]
+    ReadStore(anyhow::Error),
+    #[error(transparent)]
+    ReadMarkdown(anyhow::Error),
+    #[error(transparent)]
+    QueryProject(anyhow::Error),
     #[error("Invalid task {field}: {source}")]
     InvalidTaskData {
         field: &'static str,
         #[source]
-        source: Box<dyn std::error::Error + Send + Sync>,
+        source: anyhow::Error,
     },
     #[error("task {id} at {path} has malformed blocked_by metadata {raw:?}: {reason}")]
     MalformedBlockedBy {
         id: TaskId,
-        path: Box<crate::contract::task::TaskNotePath>,
+        path: Box<pwf_wire::task::TaskNotePath>,
         raw: Box<str>,
         reason: Box<str>,
     },
 }
 
 /// Returns a task's selected representation.
-///
-/// # Errors
-///
-/// Returns [`GetTaskError::TaskNotFound`] when the identifier cannot be resolved,
-/// [`GetTaskError::ReadStore`] when record resolution fails, or
-/// [`GetTaskError::ReadMarkdown`] when a missing-note link cannot be read, or
-/// [`GetTaskError::InvalidTaskData`] when persisted task data cannot be projected.
 #[cqrsy::query]
 pub async fn execute(
     query: &GetTask,
     store: &(impl TaskStore + ProjectNoteStore),
     pool: &sqlx::SqlitePool,
 ) -> Result<TaskRead, GetTaskError> {
-    let project = match get_active_project::execute(
-        GetActiveProject {
-            id: query.id.project_id().clone(),
-        },
-        pool,
-    )
-    .await
-    {
+    let project = match get_active_project::execute(query.id.project_id().clone(), pool).await {
         Ok(project) => project,
         Err(GetProjectError::ProjectNotFound { .. }) => {
             return Err(GetTaskError::TaskNotFound {
                 id: query.id.clone(),
             });
         }
-        Err(error) => return Err(GetTaskError::QueryProject(Box::new(error))),
+        Err(error) => return Err(GetTaskError::QueryProject(anyhow::Error::new(error))),
     };
     let record = store
         .get(&project, &query.id)
-        .map_err(|error| GetTaskError::ReadStore(Box::new(error)))?
+        .map_err(|error| GetTaskError::ReadStore(anyhow::Error::new(error)))?
         .ok_or_else(|| GetTaskError::TaskNotFound {
             id: query.id.clone(),
         })?;
@@ -86,7 +69,7 @@ pub async fn execute(
             store
                 .read_note_markdown(&record.locator)
                 .map(TaskRead::Markdown)
-                .map_err(|error| GetTaskError::ReadMarkdown(Box::new(error)))
+                .map_err(|error| GetTaskError::ReadMarkdown(anyhow::Error::new(error)))
         }
         TaskReadFormat::Markdown => Ok(TaskRead::Markdown(record.source)),
         TaskReadFormat::Data => task_data(project.title, record)
@@ -160,7 +143,7 @@ fn invalid_task_data(
 ) -> GetTaskError {
     GetTaskError::InvalidTaskData {
         field,
-        source: Box::new(source),
+        source: anyhow::Error::new(source),
     }
 }
 
@@ -169,10 +152,10 @@ mod tests {
     use std::error::Error as _;
 
     use pwf_models::task::TaskStatus;
+    use pwf_wire::task::{RawTaskTags, TaskNotePath, TaskRead, TaskReadFormat};
 
     use super::{GetTask, GetTaskError, TaskId};
     use crate::{
-        contract::task::{RawTaskTags, TaskNotePath, TaskRead, TaskReadFormat},
         ports::task_record::{StoredBlockedBy, TaskRecord},
         task::get_task,
         testing::{

@@ -2,6 +2,10 @@ use pwf_models::{
     project::Project,
     task::{BlockedBy, EffortTier, TaskId, TaskStatus, TaskTags, TaskTitle, TaskTitleError},
 };
+use pwf_wire::{
+    project::ProjectStatusFilter,
+    task::{CollectionEdit, EditTask, EditTaskContent, EditTaskContentKind, EditedTask, ValueEdit},
+};
 
 use super::{
     blocked_by::{self, BlockedByValidationError, validate_and_merge},
@@ -10,13 +14,6 @@ use super::{
     tags, task_body_region,
 };
 use crate::{
-    contract::{
-        project::{ListProjects, ProjectStatusFilter},
-        task::{
-            CollectionEdit, EditTask, EditTaskContent, EditTaskContentKind, EditedTask,
-            ResolveTaskProject, ValueEdit,
-        },
-    },
     ports::task_record::{NullablePatch, StoredBlockedBy, TaskPatch, TaskRecord, TaskStore},
     project::list_projects,
 };
@@ -49,7 +46,7 @@ pub enum EditTaskError {
     #[error("task {id} at {path} has malformed blocked_by metadata {raw:?}: {reason}")]
     MalformedBlockedBy {
         id: TaskId,
-        path: Box<crate::contract::task::TaskNotePath>,
+        path: Box<pwf_wire::task::TaskNotePath>,
         raw: Box<str>,
         reason: Box<str>,
     },
@@ -62,7 +59,7 @@ pub enum EditTaskError {
     ReadBlockedBy {
         id: TaskId,
         #[source]
-        source: Box<dyn std::error::Error + Send + Sync>,
+        source: anyhow::Error,
     },
     #[error("task {target} cannot be blocked by itself ({blocker})")]
     SelfBlockedBy { target: TaskId, blocker: TaskId },
@@ -70,34 +67,25 @@ pub enum EditTaskError {
     BlockedByCycle { path: Vec<TaskId> },
     #[error("cannot edit lanes: task body contains more than one `{header}` section.")]
     AmbiguousLanes { header: &'static str },
-    #[error("{0}")]
-    WriteStore(#[source] Box<dyn std::error::Error + Send + Sync>),
-    #[error("{0}")]
-    QueryProject(#[source] Box<dyn std::error::Error + Send + Sync>),
+    #[error(transparent)]
+    WriteStore(anyhow::Error),
+    #[error(transparent)]
+    QueryProject(anyhow::Error),
 }
 
 /// Applies content and metadata edits to one active task.
-///
-/// # Errors
-///
-/// Returns [`EditTaskError`] when validation, task lookup, or persistence fails.
 #[cqrsy::command]
 pub async fn execute(
     command: EditTask,
     store: &impl TaskStore,
     pool: &sqlx::SqlitePool,
 ) -> Result<EditedTask, EditTaskError> {
-    let project = resolve_task_project::execute(
-        ResolveTaskProject {
-            id: command.id.clone(),
-        },
-        pool,
-    )
-    .await
-    .map_err(|error| map_project_error(error, &command.id))?;
+    let project = resolve_task_project::execute(command.id.clone(), pool)
+        .await
+        .map_err(|error| map_project_error(error, &command.id))?;
     let record = store
         .get(&project, &command.id)
-        .map_err(|error| EditTaskError::WriteStore(Box::new(error)))?
+        .map_err(|error| EditTaskError::WriteStore(anyhow::Error::new(error)))?
         .ok_or_else(|| EditTaskError::TaskNotFound {
             id: command.id.clone(),
         })?;
@@ -128,14 +116,9 @@ async fn resolve_blocked_by_projects(
     if command.edits.blocked_by().addition().is_none() {
         return Ok(Vec::new());
     }
-    list_projects::execute(
-        ListProjects {
-            status: ProjectStatusFilter::IncludingPaused,
-        },
-        pool,
-    )
-    .await
-    .map_err(|error| EditTaskError::QueryProject(Box::new(error)))
+    list_projects::execute(ProjectStatusFilter::IncludingPaused, pool)
+        .await
+        .map_err(|error| EditTaskError::QueryProject(anyhow::Error::new(error)))
 }
 
 fn prepare(
@@ -307,7 +290,7 @@ fn persist(
             &prepared.identity.id,
             prepared.patch,
         )
-        .map_err(|error| EditTaskError::WriteStore(Box::new(error)))?;
+        .map_err(|error| EditTaskError::WriteStore(anyhow::Error::new(error)))?;
     Ok(prepared.outcome)
 }
 
@@ -320,13 +303,13 @@ fn map_lane_error(error: EditLanesError) -> EditTaskError {
 #[cfg(test)]
 mod tests {
     use pwf_models::task::{BlockedBy, EffortTier, TaskPrompt, TaskStatus, TaskTags, TaskTitle};
+    use pwf_wire::task::{
+        CollectionEdit, EditTask, EditTaskContent, EditedTask, RawTaskTags, TaskEdits, TaskLane,
+        TaskLaneEdits, TaskLanes, ValueEdit,
+    };
 
     use super::EditTaskError;
     use crate::{
-        contract::task::{
-            CollectionEdit, EditTask, EditTaskContent, EditedTask, RawTaskTags, TaskEdits,
-            TaskLane, TaskLaneEdits, TaskLanes, ValueEdit,
-        },
         ports::task_record::TaskRecord,
         task::edit_task,
         testing::{InMemoryStore, app_date, insert_project, stored_blocked_by, task_record},

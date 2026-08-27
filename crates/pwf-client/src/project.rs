@@ -19,7 +19,7 @@ impl ProjectClient {
     pub async fn add_project(
         &self,
         request: v1::AddProjectRequest,
-    ) -> Result<v1::Project, ClientError> {
+    ) -> Result<v1::AddProjectResponse, ClientError> {
         self.client()
             .add_project(request)
             .await
@@ -30,7 +30,7 @@ impl ProjectClient {
     pub async fn get_project(
         &self,
         request: v1::GetProjectRequest,
-    ) -> Result<v1::Project, ClientError> {
+    ) -> Result<v1::GetProjectResponse, ClientError> {
         self.client()
             .get_project(request)
             .await
@@ -52,7 +52,7 @@ impl ProjectClient {
     pub async fn pause_project(
         &self,
         request: v1::PauseProjectRequest,
-    ) -> Result<v1::ProjectStateChange, ClientError> {
+    ) -> Result<v1::PauseProjectResponse, ClientError> {
         self.client()
             .pause_project(request)
             .await
@@ -63,7 +63,7 @@ impl ProjectClient {
     pub async fn rename_project(
         &self,
         request: v1::RenameProjectRequest,
-    ) -> Result<v1::Project, ClientError> {
+    ) -> Result<v1::RenameProjectResponse, ClientError> {
         self.client()
             .rename_project(request)
             .await
@@ -74,7 +74,7 @@ impl ProjectClient {
     pub async fn resume_project(
         &self,
         request: v1::ResumeProjectRequest,
-    ) -> Result<v1::ProjectStateChange, ClientError> {
+    ) -> Result<v1::ResumeProjectResponse, ClientError> {
         self.client()
             .resume_project(request)
             .await

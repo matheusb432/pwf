@@ -177,6 +177,42 @@ impl TestServer {
             .expect("connect raw generated client")
     }
 
+    async fn open_remove_confirmation(
+        &self,
+        task_id: &str,
+    ) -> (
+        mpsc::Sender<v1::RemoveTaskRequest>,
+        tonic::Streaming<v1::RemoveTaskResponse>,
+    ) {
+        let (sender, receiver) = mpsc::channel(2);
+        sender
+            .send(v1::RemoveTaskRequest {
+                value: Some(v1::remove_task_request::Value::Start(v1::RemoveTaskStart {
+                    id: task_id.to_string(),
+                })),
+            })
+            .await
+            .expect("send remove start");
+        let mut stream = TaskServiceClient::new(self.channel().await)
+            .remove_task(authenticated(
+                Request::new(ReceiverStream::new(receiver)),
+                &self.token,
+            ))
+            .await
+            .expect("open remove stream")
+            .into_inner();
+        let preflight = stream
+            .message()
+            .await
+            .expect("read remove preflight")
+            .expect("remove preflight exists");
+        assert!(matches!(
+            preflight.value,
+            Some(v1::remove_task_response::Value::Preflight(_))
+        ));
+        (sender, stream)
+    }
+
     fn begin_shutdown(&mut self) {
         self.shutdown
             .take()
@@ -272,7 +308,7 @@ async fn generated_client_preserves_operations_statuses_and_confirmation_flows()
         .client
         .task()
         .remove_task(
-            v1::RemoveTaskRequest {
+            v1::RemoveTaskStart {
                 id: task_id.clone(),
             },
             remove_prompt.clone(),
@@ -314,7 +350,7 @@ async fn generated_client_preserves_operations_statuses_and_confirmation_flows()
         .client
         .task()
         .reopen_task(
-            v1::ReopenTaskRequest {
+            v1::ReopenTaskStart {
                 id: task_id.clone(),
             },
             reopen_prompt.clone(),
@@ -331,7 +367,7 @@ async fn generated_client_preserves_operations_statuses_and_confirmation_flows()
         .client
         .task()
         .reopen_task(
-            v1::ReopenTaskRequest {
+            v1::ReopenTaskStart {
                 id: task_id.clone(),
             },
             RecordingPrompt::new(true),
@@ -351,7 +387,36 @@ async fn generated_client_preserves_operations_statuses_and_confirmation_flows()
         })
         .await
         .expect("read task after declined remove and confirmed reopen");
-    assert!(matches!(read.value, Some(v1::task_read::Value::Path(_))));
+    assert!(matches!(
+        read.value,
+        Some(v1::get_task_response::Value::Path(_))
+    ));
+
+    server.finish().await;
+}
+
+#[tokio::test]
+async fn closing_confirmation_stream_before_decision_cancels_without_removing_task() {
+    let server = TestServer::start(Duration::from_secs(2)).await;
+    let task_id = server.add_project_and_task().await;
+    let (sender, mut remove) = server.open_remove_confirmation(&task_id).await;
+
+    drop(sender);
+
+    let status = remove
+        .message()
+        .await
+        .expect_err("closed confirmation request is cancelled");
+    assert_eq!(status.code(), Code::Cancelled);
+    server
+        .client
+        .task()
+        .get_task(v1::GetTaskRequest {
+            id: task_id,
+            output: TaskReadFormat::Path as i32,
+        })
+        .await
+        .expect("cancelled confirmation leaves the task untouched");
 
     server.finish().await;
 }
@@ -450,32 +515,7 @@ async fn shutdown_publishes_not_serving_and_bounds_an_unanswered_stream() {
         ServingStatus::Serving as i32
     );
 
-    let (sender, receiver) = mpsc::channel(2);
-    sender
-        .send(v1::RemoveTaskClientMessage {
-            value: Some(v1::remove_task_client_message::Value::Start(
-                v1::RemoveTaskRequest { id: task_id },
-            )),
-        })
-        .await
-        .expect("send remove start");
-    let mut remove = TaskServiceClient::new(channel)
-        .remove_task(authenticated(
-            Request::new(ReceiverStream::new(receiver)),
-            &server.token,
-        ))
-        .await
-        .expect("open remove stream")
-        .into_inner();
-    let preflight = remove
-        .message()
-        .await
-        .expect("read remove preflight")
-        .expect("remove preflight exists");
-    assert!(matches!(
-        preflight.value,
-        Some(v1::remove_task_server_message::Value::Preflight(_))
-    ));
+    let (_sender, _remove) = server.open_remove_confirmation(&task_id).await;
 
     server.begin_shutdown();
     server.wait_for(ServerState::NotServing).await;

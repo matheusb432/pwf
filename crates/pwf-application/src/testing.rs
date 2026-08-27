@@ -16,16 +16,14 @@ use pwf_models::{
     },
     task::{BlockedBy, TaskId, TaskSection, TaskStatus, TaskTags},
 };
+use pwf_wire::task::RawTaskTags;
 
-use crate::{
-    contract::task::RawTaskTags,
-    ports::{
-        clock::Clock,
-        project_note::{NewProjectNote, ProjectNotePatch, ProjectNoteStore},
-        task_record::{
-            IndexEntry, IndexEntryStore, IndexSectionStore, Materialization, NewTask,
-            NullablePatch, StoredBlockedBy, TaskPatch, TaskRecord, TaskStore,
-        },
+use crate::ports::{
+    clock::Clock,
+    project_note::{NewProjectNote, ProjectNotePatch, ProjectNoteStore},
+    task_record::{
+        IndexEntry, IndexEntryStore, IndexSectionStore, Materialization, NewTask, NullablePatch,
+        StoredBlockedBy, TaskPatch, TaskRecord, TaskStore,
     },
 };
 
@@ -190,7 +188,7 @@ pub(crate) fn task_record(id: &str) -> TaskRecord {
         section: None,
         body: "\nbody\n".to_string(),
         source: "body".to_string(),
-        locator: crate::contract::task::TaskNotePath::new(format!("/mem/foo-bar/{id}.md").into()),
+        locator: pwf_wire::task::TaskNotePath::new(format!("/mem/foo-bar/{id}.md").into()),
         placement: None,
         materialization: Materialization::NoteFile,
     }
@@ -212,7 +210,7 @@ pub(crate) fn staged_task() -> (InMemoryStore, Vec<Project>) {
         created: Some(app_date("2026-06-20")),
         body: "\n## Goals\n- do the thing\n".to_string(),
         source: PWF_0001_SOURCE.to_string(),
-        locator: crate::contract::task::TaskNotePath::new("/notes/pwf/PWF-0001.md".into()),
+        locator: pwf_wire::task::TaskNotePath::new("/notes/pwf/PWF-0001.md".into()),
         ..task_record("PWF-0001")
     };
     (
@@ -228,9 +226,9 @@ pub(crate) fn staged_missing_task() -> (InMemoryStore, Vec<Project>) {
         created: None,
         body: String::new(),
         source: String::new(),
-        locator: crate::contract::task::TaskNotePath::new(expected.clone().into()),
+        locator: pwf_wire::task::TaskNotePath::new(expected.clone().into()),
         materialization: Materialization::MissingNote {
-            expected: crate::contract::task::TaskNotePath::new(expected.into()),
+            expected: pwf_wire::task::TaskNotePath::new(expected.into()),
         },
         ..task_record("PWF-0002")
     };
@@ -291,7 +289,7 @@ impl TaskStore for InMemoryStore {
         if tasks.iter().any(|task| task.id == *id) {
             return Err(InMemoryStoreError::TaskAlreadyExists { id: id.clone() });
         }
-        let locator = crate::contract::task::TaskNotePath::new(
+        let locator = pwf_wire::task::TaskNotePath::new(
             format!("/mem/{}/{}.md", project.title.as_ref(), id.as_ref()).into(),
         );
         let record = TaskRecord {
@@ -483,7 +481,7 @@ impl ProjectNoteStore for InMemoryStore {
 
     fn read_note_markdown(
         &self,
-        locator: &crate::contract::task::TaskNotePath,
+        locator: &pwf_wire::task::TaskNotePath,
     ) -> Result<String, Self::Error> {
         if self
             .lock()

@@ -15,6 +15,7 @@ use super::{
     fs::{line_start_index, read_index, write_add_index_file, write_index},
 };
 use crate::obsidian::{
+    MarkdownFile,
     identity::{
         new_project_index_content, parse_project_index_identity, validate_project_index_identity,
     },
@@ -222,9 +223,10 @@ impl ObsidianStore {
         let identity = Self::project_identity(project);
         let content = if index_path.is_file() {
             let content = read_index(&index_path)?;
-            let actual = parse_project_index_identity(&index_path, &content)?;
+            let file = MarkdownFile::from_source(index_path.clone(), content);
+            let actual = parse_project_index_identity(&file)?;
             validate_project_index_identity(&index_path, &actual, &identity)?;
-            content
+            file.into_source()
         } else {
             new_project_index_content(&identity)
         };
@@ -330,7 +332,7 @@ mod tests {
     use super::{ObsidianStoreError, parse_index_lines, render_entry_line, replace_line};
 
     #[test]
-    fn done_entry_replaces_only_its_index_line() -> Result<(), Box<dyn std::error::Error>> {
+    fn done_entry_replaces_only_its_index_line() -> anyhow::Result<()> {
         let entry = IndexEntry {
             id: TaskId::try_new("PWF-0001")?,
             state: IndexEntryState::Done(Some("2026-07-29".parse::<AppDate>()?)),

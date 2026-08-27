@@ -3,31 +3,47 @@ use std::path::Path;
 use pwf_models::task::TaskSection;
 
 use super::ObsidianStoreError;
+use crate::obsidian::MarkdownFile;
 
 pub(super) fn path_str(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 
 pub(super) fn read_text_optional(path: &Path) -> Option<String> {
-    std::fs::read_to_string(path).ok()
+    MarkdownFile::open(path).ok().map(MarkdownFile::into_source)
 }
 
 pub(super) fn read_task_file(path: &Path) -> Result<String, ObsidianStoreError> {
-    std::fs::read_to_string(path).map_err(|source| ObsidianStoreError::ReadTaskFile { source })
+    open_task_file(path).map(MarkdownFile::into_source)
 }
 
 pub(super) fn read_index(path: &Path) -> Result<String, ObsidianStoreError> {
-    std::fs::read_to_string(path).map_err(|source| ObsidianStoreError::ReadIndex { source })
+    MarkdownFile::open(path)
+        .map(MarkdownFile::into_source)
+        .map_err(|source| ObsidianStoreError::ReadIndex {
+            source: source.into_io_error(),
+        })
 }
 
-pub(super) fn write_task_file(path: &Path, content: &str) -> Result<(), ObsidianStoreError> {
-    crate::obsidian::fs_atomic::write_text_atomic(path, content)
-        .map_err(|source| ObsidianStoreError::WriteTaskFile { source })
+pub(super) fn open_task_file(path: &Path) -> Result<MarkdownFile, ObsidianStoreError> {
+    MarkdownFile::open(path).map_err(|source| ObsidianStoreError::ReadTaskFile {
+        source: source.into_io_error(),
+    })
+}
+
+pub(super) fn save_task_file(file: &MarkdownFile) -> Result<(), ObsidianStoreError> {
+    file.save()
+        .map_err(|source| ObsidianStoreError::WriteTaskFile {
+            source: source.into_io_error(),
+        })
 }
 
 pub(super) fn write_index(path: &Path, content: &str) -> Result<(), ObsidianStoreError> {
-    crate::obsidian::fs_atomic::write_text_atomic(path, content)
-        .map_err(|source| ObsidianStoreError::WriteIndex { source })
+    MarkdownFile::write_rendered(path.to_path_buf(), content.to_string()).map_err(|source| {
+        ObsidianStoreError::WriteIndex {
+            source: source.into_io_error(),
+        }
+    })
 }
 
 pub(super) fn line_start_index(content: &str, line_number: usize) -> Option<usize> {
@@ -50,8 +66,11 @@ pub(super) fn line_start_index(content: &str, line_number: usize) -> Option<usiz
 }
 
 pub(super) fn write_add_task_file(path: &Path, content: &str) -> Result<(), ObsidianStoreError> {
-    crate::obsidian::fs_atomic::write_text_atomic_new(path, content)
-        .map_err(|source| ObsidianStoreError::AddWriteTaskFile { source })
+    MarkdownFile::create_rendered_new(path.to_path_buf(), content.to_string())
+        .map(|_| ())
+        .map_err(|source| ObsidianStoreError::AddWriteTaskFile {
+            source: source.into_io_error(),
+        })
 }
 
 pub(super) fn write_add_index_file(
@@ -60,9 +79,9 @@ pub(super) fn write_add_index_file(
     project: &str,
     created_section: Option<&TaskSection>,
 ) -> Result<(), ObsidianStoreError> {
-    crate::obsidian::fs_atomic::write_text_atomic(path, content).map_err(|source| {
+    MarkdownFile::write_rendered(path.to_path_buf(), content.to_string()).map_err(|source| {
         ObsidianStoreError::AddWriteIndexFile {
-            source,
+            source: source.into_io_error(),
             project: project.to_string(),
             created_section: created_section.cloned(),
         }

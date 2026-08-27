@@ -18,5 +18,5 @@ pub(super) async fn run(arguments: Arguments, client: &ProjectClient) -> anyhow:
         })
         .await
         .map_err(crate::rpc_error)?;
-    output::state_change(change)
+    output::render_pause_project(change)
 }

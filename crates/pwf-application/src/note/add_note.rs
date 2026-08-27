@@ -1,12 +1,12 @@
 //! Adds one note to a managed project.
 
 use pwf_models::{note::NoteId, project::ProjectName};
+use pwf_wire::{
+    note::{AddNote, NoteSummary},
+    project::{ProjectStatusFilter, ResolveProject},
+};
 
 use crate::{
-    contract::{
-        note::{AddNote, AddedNote},
-        project::{ProjectStatusFilter, ResolveProject},
-    },
     ports::{
         clock::Clock,
         project_note::{NewProjectNote, ProjectNoteStore},
@@ -20,24 +20,18 @@ pub enum AddNoteError {
     ResolveProject(#[from] ResolveProjectError),
     #[error("Project '{project}' has no available four-digit note identifiers.")]
     IdentifierExhausted { project: ProjectName },
-    #[error("{0}")]
-    Store(#[source] Box<dyn std::error::Error + Send + Sync>),
+    #[error(transparent)]
+    Store(anyhow::Error),
 }
 
 /// Validates, allocates, and persists one project note.
-///
-/// # Errors
-///
-/// Returns [`AddNoteError::ResolveProject`] when the project does not resolve,
-/// [`AddNoteError::IdentifierExhausted`] when the greatest existing suffix is `9999`, or
-/// [`AddNoteError::Store`] when listing or inserting notes fails.
 #[cqrsy::command]
 pub async fn execute(
     command: AddNote,
     store: &impl ProjectNoteStore,
     pool: &sqlx::SqlitePool,
     clock: &impl Clock,
-) -> Result<AddedNote, AddNoteError> {
+) -> Result<NoteSummary, AddNoteError> {
     let project = resolve_project::execute(
         ResolveProject {
             selector: command.project_selector,
@@ -48,7 +42,7 @@ pub async fn execute(
     .await?;
     let notes = store
         .list_notes(&project)
-        .map_err(|error| AddNoteError::Store(Box::new(error)))?;
+        .map_err(|error| AddNoteError::Store(anyhow::Error::new(error)))?;
     let next_number = notes
         .iter()
         .map(|note| note.id.number())
@@ -80,8 +74,8 @@ pub async fn execute(
                 created,
             },
         )
-        .map_err(|error| AddNoteError::Store(Box::new(error)))?;
-    Ok(AddedNote {
+        .map_err(|error| AddNoteError::Store(anyhow::Error::new(error)))?;
+    Ok(NoteSummary {
         id: created.id,
         title: created.title,
     })
@@ -89,8 +83,6 @@ pub async fn execute(
 
 #[cfg(test)]
 mod tests {
-    use std::error::Error as _;
-
     use pwf_models::{
         AppDate,
         note::{NoteContent, NoteId, NoteTitle, ProjectNote},
@@ -198,12 +190,14 @@ mod tests {
     }
 
     #[test]
-    fn store_error_preserves_display_and_source() {
-        let error = AddNoteError::Store(Box::new(SentinelStoreError));
+    fn store_error_preserves_display_and_root_cause() {
+        let error = AddNoteError::Store(anyhow::Error::new(SentinelStoreError));
 
         assert_eq!(error.to_string(), "sentinel store failure");
-        let source = error.source().expect("store error retains its source");
+        let AddNoteError::Store(source) = error else {
+            panic!("expected the store error");
+        };
         assert!(source.downcast_ref::<SentinelStoreError>().is_some());
-        assert_eq!(source.to_string(), "sentinel store failure");
+        assert_eq!(source.root_cause().to_string(), "sentinel store failure");
     }
 }

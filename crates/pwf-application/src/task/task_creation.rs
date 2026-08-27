@@ -4,28 +4,26 @@ use pwf_models::{
     project::{Project, ProjectName},
     task::{TaskId, TaskSection, TaskTitle},
 };
+use pwf_wire::task::TaskNotePath;
 
 use super::normalize_section_label;
-use crate::{
-    contract::task::TaskNotePath,
-    ports::task_record::{
-        IndexEntry, IndexEntryState, IndexEntryStore, IndexSectionStore, NewTask, TaskStore,
-    },
+use crate::ports::task_record::{
+    IndexEntry, IndexEntryState, IndexEntryStore, IndexSectionStore, NewTask, TaskStore,
 };
 
 /// Reports the persistence phase that failed while creating a task.
 #[derive(Debug, thiserror::Error)]
 pub enum CreateTaskError {
-    #[error("{0}")]
-    ReadSections(#[source] Box<dyn std::error::Error + Send + Sync>),
-    #[error("{0}")]
-    InsertRecord(#[source] Box<dyn std::error::Error + Send + Sync>),
+    #[error(transparent)]
+    ReadSections(anyhow::Error),
+    #[error(transparent)]
+    InsertRecord(anyhow::Error),
     #[error("{source}")]
     InsertIndex {
         project: ProjectName,
         created_section: Option<TaskSection>,
         #[source]
-        source: Box<dyn std::error::Error + Send + Sync>,
+        source: anyhow::Error,
     },
 }
 
@@ -72,7 +70,7 @@ pub(in crate::task) fn create(
     let title = new.title.clone();
     // Read sections before writing so an invalid index leaves no orphaned note.
     let existing = IndexSectionStore::list_index_sections(store, project)
-        .map_err(|error| CreateTaskError::ReadSections(Box::new(error)))?;
+        .map_err(|error| CreateTaskError::ReadSections(anyhow::Error::new(error)))?;
     let created_section = target_section
         .as_ref()
         .filter(|label| is_dedicated_section(label))
@@ -84,7 +82,7 @@ pub(in crate::task) fn create(
         .cloned();
 
     let record = TaskStore::insert(store, project, id, new)
-        .map_err(|error| CreateTaskError::InsertRecord(Box::new(error)))?;
+        .map_err(|error| CreateTaskError::InsertRecord(anyhow::Error::new(error)))?;
     let id = record.id.clone();
     IndexEntryStore::upsert_index_entry(
         store,
@@ -99,7 +97,7 @@ pub(in crate::task) fn create(
     .map_err(|error| CreateTaskError::InsertIndex {
         project: project.title.clone(),
         created_section: created_section.clone(),
-        source: Box::new(error),
+        source: anyhow::Error::new(error),
     })?;
 
     Ok(CreatedTask {

@@ -46,11 +46,6 @@ pub enum RuntimePathError {
 }
 
 /// Resolves one managed-project path for runtime use.
-///
-/// # Errors
-///
-/// Returns [`RuntimePathError`] when the path or home directory violates the portable path
-/// contract.
 pub fn resolve(path: &str, home: &HomeDirectory) -> Result<ResolvedPath, RuntimePathError> {
     host::resolve(path, home.as_path())
 }

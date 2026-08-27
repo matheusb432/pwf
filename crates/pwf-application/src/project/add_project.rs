@@ -1,10 +1,10 @@
 use std::error::Error;
 
 use pwf_models::project::{HomeDirectory, ProjectId, ProjectName, ProjectTasksPath};
+use pwf_wire::project::ProjectFields;
 use sqlx::error::ErrorKind;
 
 use super::{Project, ProjectRow, TaskLocationError, task_location};
-use crate::contract::project::AddProject;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AddProjectError {
@@ -18,20 +18,14 @@ pub enum AddProjectError {
     Unexpected {
         context: &'static str,
         #[source]
-        source: Box<dyn Error + Send + Sync>,
+        source: anyhow::Error,
     },
 }
 
 /// Creates one managed project and reuses an identical source location.
-///
-/// # Errors
-///
-/// Returns a conflict variant when the ID or title exists. Returns
-/// [`AddProjectError::TaskLocation`] when a task path is invalid or collides with another project.
-/// Returns [`AddProjectError::Unexpected`] for database and persisted-data failures.
 #[cqrsy::command]
 pub async fn execute(
-    command: AddProject,
+    fields: ProjectFields,
     pool: &sqlx::SqlitePool,
     home: &HomeDirectory,
 ) -> Result<Project, AddProjectError> {
@@ -39,15 +33,10 @@ pub async fn execute(
         .begin_with("BEGIN IMMEDIATE")
         .await
         .map_err(|error| unexpected("starting project creation transaction", error))?;
-    let existing = other_task_locations(&mut transaction, &command.fields.id).await?;
-    task_location::reject_collision(
-        &command.fields.id,
-        command.fields.tasks.path(),
-        existing,
-        home,
-    )?;
-    let source_kind = command.fields.source.kind().to_string();
-    let source_value = command.fields.source.value().as_ref();
+    let existing = other_task_locations(&mut transaction, &fields.id).await?;
+    task_location::reject_collision(&fields.id, fields.tasks.path(), existing, home)?;
+    let source_kind = fields.source.kind().to_string();
+    let source_value = fields.source.value().as_ref();
     let source_id = sqlx::query_scalar!(
         r#"
         SELECT id AS "id!"
@@ -76,10 +65,10 @@ pub async fn execute(
         .last_insert_rowid(),
     };
 
-    let id = command.fields.id.as_ref();
-    let title = command.fields.title.as_ref();
-    let tasks_kind = command.fields.tasks.kind().to_string();
-    let tasks_path = command.fields.tasks.path().as_ref();
+    let id = fields.id.as_ref();
+    let title = fields.title.as_ref();
+    let tasks_kind = fields.tasks.kind().to_string();
+    let tasks_path = fields.tasks.path().as_ref();
     let insert_result = sqlx::query!(
         r#"
         INSERT INTO projects (id, project_source_id, title, tasks_kind, tasks_path)
@@ -94,7 +83,7 @@ pub async fn execute(
     .execute(&mut *transaction)
     .await;
     if let Err(error) = insert_result {
-        return Err(project_insertion_error(&mut transaction, &command, error).await);
+        return Err(project_insertion_error(&mut transaction, &fields, error).await);
     }
 
     let row = sqlx::query_as!(
@@ -151,7 +140,7 @@ async fn other_task_locations(
 
 async fn project_insertion_error(
     transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
-    command: &AddProject,
+    fields: &ProjectFields,
     error: sqlx::Error,
 ) -> AddProjectError {
     if !error
@@ -161,8 +150,8 @@ async fn project_insertion_error(
         return unexpected("inserting project", error);
     }
 
-    let id = command.fields.id.as_ref();
-    let title = command.fields.title.as_ref();
+    let id = fields.id.as_ref();
+    let title = fields.title.as_ref();
     let conflicts = sqlx::query!(
         r#"
         SELECT
@@ -180,12 +169,12 @@ async fn project_insertion_error(
     };
     if conflicts.id_exists {
         return AddProjectError::DuplicateProjectId {
-            id: command.fields.id.clone(),
+            id: fields.id.clone(),
         };
     }
     if conflicts.title_exists {
         return AddProjectError::DuplicateProjectTitle {
-            title: command.fields.title.clone(),
+            title: fields.title.clone(),
         };
     }
     unexpected("inserting project", error)
@@ -197,7 +186,7 @@ fn unexpected(
 ) -> AddProjectError {
     AddProjectError::Unexpected {
         context,
-        source: Box::new(source),
+        source: anyhow::Error::new(source),
     }
 }
 
@@ -207,24 +196,28 @@ mod tests {
         HomeDirectory, ProjectId, ProjectName, ProjectSource, ProjectSourceKind,
         ProjectSourceValue, ProjectTasks, ProjectTasksKind, ProjectTasksPath,
     };
+    use pwf_wire::project::ProjectFields;
 
     use super::*;
-    use crate::{contract::project::ProjectFields, project::add_project, testing::insert_project};
+    use crate::{project::add_project, testing::insert_project};
 
-    fn project(project_id: &str, title: &str, source_value: &str, tasks_path: &str) -> AddProject {
-        AddProject {
-            fields: ProjectFields {
-                id: project_id.parse().expect("valid test project ID"),
-                title: ProjectName::try_new(title).unwrap(),
-                source: ProjectSource::new(
-                    ProjectSourceKind::Directory,
-                    ProjectSourceValue::try_new(source_value).unwrap(),
-                ),
-                tasks: ProjectTasks::new(
-                    ProjectTasksKind::Directory,
-                    ProjectTasksPath::try_new(tasks_path).unwrap(),
-                ),
-            },
+    fn project(
+        project_id: &str,
+        title: &str,
+        source_value: &str,
+        tasks_path: &str,
+    ) -> ProjectFields {
+        ProjectFields {
+            id: project_id.parse().expect("valid test project ID"),
+            title: ProjectName::try_new(title).unwrap(),
+            source: ProjectSource::new(
+                ProjectSourceKind::Directory,
+                ProjectSourceValue::try_new(source_value).unwrap(),
+            ),
+            tasks: ProjectTasks::new(
+                ProjectTasksKind::Directory,
+                ProjectTasksPath::try_new(tasks_path).unwrap(),
+            ),
         }
     }
 

@@ -8,13 +8,6 @@ use pwf_models::{
 
 use super::task::TaskNotePath;
 
-/// Carries the data required for one confirmation interaction.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Confirmation {
-    RemoveTask(RemoveTaskConfirmation),
-    ReopenTask(ReopenTaskConfirmation),
-}
-
 /// Identifies the task and note deleted after confirmation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoveTaskConfirmation {

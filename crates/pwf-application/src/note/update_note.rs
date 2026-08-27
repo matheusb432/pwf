@@ -4,12 +4,12 @@ use pwf_models::{
     note::NoteSelector,
     project::{ProjectId, ProjectName},
 };
+use pwf_wire::{
+    note::{NoteSummary, UpdateNote},
+    project::{ProjectStatusFilter, ResolveProject},
+};
 
 use crate::{
-    contract::{
-        note::{UpdateNote, UpdatedNote},
-        project::{ProjectStatusFilter, ResolveProject},
-    },
     ports::project_note::{ProjectNotePatch, ProjectNoteStore},
     project::resolve_project::{self, ResolveProjectError},
 };
@@ -28,24 +28,17 @@ pub enum UpdateNoteError {
         id: pwf_models::note::NoteId,
         project: ProjectName,
     },
-    #[error("{0}")]
-    Store(#[source] Box<dyn std::error::Error + Send + Sync>),
+    #[error(transparent)]
+    Store(anyhow::Error),
 }
 
 /// Resolves one note and replaces its title while preserving stored content and metadata.
-///
-/// # Errors
-///
-/// Returns [`UpdateNoteError::ResolveProject`] when the project does not resolve,
-/// [`UpdateNoteError::ProjectMismatch`] when the note id names another project,
-/// [`UpdateNoteError::NoSuchNote`] when the note does not exist, or
-/// [`UpdateNoteError::Store`] when reading or updating the note fails.
 #[cqrsy::command]
 pub async fn execute(
     command: UpdateNote,
     store: &impl ProjectNoteStore,
     pool: &sqlx::SqlitePool,
-) -> Result<UpdatedNote, UpdateNoteError> {
+) -> Result<NoteSummary, UpdateNoteError> {
     let project = resolve_project::execute(
         ResolveProject {
             selector: command.project_selector,
@@ -64,7 +57,7 @@ pub async fn execute(
             })?;
     let existing = store
         .get_note(&project, &id)
-        .map_err(|error| UpdateNoteError::Store(Box::new(error)))?;
+        .map_err(|error| UpdateNoteError::Store(anyhow::Error::new(error)))?;
     if existing.is_none() {
         return Err(UpdateNoteError::NoSuchNote {
             id,
@@ -79,8 +72,8 @@ pub async fn execute(
                 title: command.title.clone(),
             },
         )
-        .map_err(|error| UpdateNoteError::Store(Box::new(error)))?;
-    Ok(UpdatedNote {
+        .map_err(|error| UpdateNoteError::Store(anyhow::Error::new(error)))?;
+    Ok(NoteSummary {
         id,
         title: command.title,
     })
@@ -88,8 +81,6 @@ pub async fn execute(
 
 #[cfg(test)]
 mod tests {
-    use std::error::Error as _;
-
     use pwf_models::note::{NoteId, NoteTitle, ProjectNote};
 
     use super::{UpdateNote, UpdateNoteError};
@@ -169,12 +160,14 @@ mod tests {
     }
 
     #[test]
-    fn store_error_preserves_display_and_source() {
-        let error = UpdateNoteError::Store(Box::new(SentinelStoreError));
+    fn store_error_preserves_display_and_root_cause() {
+        let error = UpdateNoteError::Store(anyhow::Error::new(SentinelStoreError));
 
         assert_eq!(error.to_string(), "sentinel store failure");
-        let source = error.source().expect("store error retains its source");
+        let UpdateNoteError::Store(source) = error else {
+            panic!("expected the store error");
+        };
         assert!(source.downcast_ref::<SentinelStoreError>().is_some());
-        assert_eq!(source.to_string(), "sentinel store failure");
+        assert_eq!(source.root_cause().to_string(), "sentinel store failure");
     }
 }

@@ -1,14 +1,13 @@
+use pwf_wire::task::{CancelTask, ClosedTask, ClosedTaskAction};
+
 use super::{
     CloseTaskError,
     resolve_task_project::{self, ResolveTaskProjectError},
     task_closure::{self, TaskClosure},
 };
-use crate::{
-    contract::task::{CancelTask, ClosedTask, ClosedTaskAction, ResolveTaskProject},
-    ports::{
-        clock::Clock,
-        task_record::{IndexEntryStore, IndexSectionStore, TaskStore},
-    },
+use crate::ports::{
+    clock::Clock,
+    task_record::{IndexEntryStore, IndexSectionStore, TaskStore},
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -26,13 +25,7 @@ pub async fn execute(
     pool: &sqlx::SqlitePool,
     clock: &impl Clock,
 ) -> Result<ClosedTask, CancelTaskError> {
-    let project = resolve_task_project::execute(
-        ResolveTaskProject {
-            id: command.id.clone(),
-        },
-        pool,
-    )
-    .await?;
+    let project = resolve_task_project::execute(command.id.clone(), pool).await?;
     task_closure::close(
         &TaskClosure {
             action: ClosedTaskAction::Cancelled,
@@ -103,10 +96,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(
-            out.action,
-            crate::contract::task::ClosedTaskAction::Cancelled
-        );
+        assert_eq!(out.action, pwf_wire::task::ClosedTaskAction::Cancelled);
         assert_eq!(store.tasks("foo-bar")[0].status, TaskStatus::Cancelled);
         assert_eq!(
             store.tasks("foo-bar")[0].completed,

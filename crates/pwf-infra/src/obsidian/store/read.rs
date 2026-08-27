@@ -3,7 +3,10 @@ use std::path::PathBuf;
 use pwf_models::project::Project;
 
 use super::{ObsidianStore, ObsidianStoreError, fs::read_text_optional};
-use crate::obsidian::identity::{parse_project_index_identity, validate_project_index_identity};
+use crate::obsidian::{
+    MarkdownFile,
+    identity::{parse_project_index_identity, validate_project_index_identity},
+};
 
 impl ObsidianStore {
     /// Reads a project index only after validating its identity frontmatter.
@@ -15,9 +18,10 @@ impl ObsidianStore {
         let Some(text) = read_text_optional(&index_path) else {
             return Ok(None);
         };
-        let actual = parse_project_index_identity(&index_path, &text)?;
+        let file = MarkdownFile::from_source(index_path.clone(), text);
+        let actual = parse_project_index_identity(&file)?;
         let expected = Self::project_identity(project);
         validate_project_index_identity(&index_path, &actual, &expected)?;
-        Ok(Some((index_path, text)))
+        Ok(Some((index_path, file.into_source())))
     }
 }

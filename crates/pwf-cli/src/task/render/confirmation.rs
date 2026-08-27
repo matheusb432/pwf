@@ -1,11 +1,11 @@
 //! Formats typed mutation confirmations at their owning leaf boundaries.
 
 use anstyle::AnsiColor;
-use pwf_client::v1::{AddedTask, EditedTask, RemovedTask};
+use pwf_client::v1::{AddTaskResponse, EditTaskResponse, RemovedTask};
 
 use super::paint;
 
-pub(in crate::task) fn render_added(task: &AddedTask, color_on: bool) -> String {
+pub(in crate::task) fn render_added(task: &AddTaskResponse, color_on: bool) -> String {
     render_confirmation(
         "Added pwf task",
         AnsiColor::Green,
@@ -35,7 +35,7 @@ pub(in crate::task) fn render_removed(task: &RemovedTask, color_on: bool) -> Str
     )
 }
 
-pub(in crate::task) fn render_edited(task: &EditedTask, color_on: bool) -> String {
+pub(in crate::task) fn render_edited(task: &EditTaskResponse, color_on: bool) -> String {
     render_confirmation(
         "Edited pwf task",
         AnsiColor::Blue,
@@ -46,7 +46,7 @@ pub(in crate::task) fn render_edited(task: &EditedTask, color_on: bool) -> Strin
     )
 }
 
-pub(super) fn render_review_task(task: &AddedTask) -> String {
+pub(super) fn render_review_task(task: &AddTaskResponse) -> String {
     format!(
         "ADDED PWF TASK [{}] {}\n  file: {}\n",
         task.id,
@@ -55,7 +55,7 @@ pub(super) fn render_review_task(task: &AddedTask) -> String {
     )
 }
 
-fn added_headline(task: &AddedTask) -> String {
+fn added_headline(task: &AddTaskResponse) -> String {
     format!("{} :: {}", task.project, task.title)
 }
 
@@ -82,8 +82,8 @@ fn render_confirmation(
 mod tests {
     use super::*;
 
-    fn added_task() -> AddedTask {
-        AddedTask {
+    fn added_task() -> AddTaskResponse {
+        AddTaskResponse {
             id: "PWF-0087".to_string(),
             project: "pwf".to_string(),
             title: "color tui output when adding pwf task".to_string(),
@@ -126,7 +126,7 @@ mod tests {
 
     #[test]
     fn edited_plain_uses_the_edit_verb() {
-        let task = EditedTask {
+        let task = EditTaskResponse {
             id: "PWF-0002".to_string(),
             project: "pwf".to_string(),
             title: "edited task".to_string(),

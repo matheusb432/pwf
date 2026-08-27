@@ -1,9 +1,9 @@
 use std::error::Error;
 
 use pwf_models::project::ProjectId;
+use pwf_wire::project::ProjectStateChange;
 
 use super::ProjectRow;
-use crate::contract::project::{PauseProject, ProjectStateChange};
 
 #[derive(Debug, thiserror::Error)]
 pub enum PauseProjectError {
@@ -13,26 +13,21 @@ pub enum PauseProjectError {
     Unexpected {
         context: &'static str,
         #[source]
-        source: Box<dyn Error + Send + Sync>,
+        source: anyhow::Error,
     },
 }
 
 /// Pauses one project and reports whether persisted state changed.
-///
-/// # Errors
-///
-/// Returns [`PauseProjectError::ProjectNotFound`] when no project has the requested ID. Returns
-/// [`PauseProjectError::Unexpected`] for database and persisted-data failures.
 #[cqrsy::command]
 pub async fn execute(
-    command: PauseProject,
+    project_id: ProjectId,
     pool: &sqlx::SqlitePool,
 ) -> Result<ProjectStateChange, PauseProjectError> {
     let mut transaction = pool
         .begin_with("BEGIN IMMEDIATE")
         .await
         .map_err(|error| unexpected("starting project pause transaction", error))?;
-    let id = command.id.as_ref();
+    let id = project_id.as_ref();
     let update = sqlx::query!(
         r#"
         UPDATE projects
@@ -65,7 +60,7 @@ pub async fn execute(
     .fetch_optional(&mut *transaction)
     .await
     .map_err(|error| unexpected("reading paused project", error))?
-    .ok_or(PauseProjectError::ProjectNotFound { id: command.id })?;
+    .ok_or(PauseProjectError::ProjectNotFound { id: project_id })?;
     let project = super::project_from_row(row)
         .map_err(|error| unexpected("converting paused project", error))?;
     transaction
@@ -85,6 +80,6 @@ fn unexpected(
 ) -> PauseProjectError {
     PauseProjectError::Unexpected {
         context,
-        source: Box::new(source),
+        source: anyhow::Error::new(source),
     }
 }

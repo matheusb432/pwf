@@ -36,10 +36,8 @@ const EDGE_POLICIES: [EdgePolicy; 10] = [
     },
     EdgePolicy {
         from: "pwf-wire",
-        label: "wire stays generated and transport-only",
+        label: "wire stays process-neutral",
         forbidden: &[
-            "pwf-models",
-            "prompt-lanes",
             "pwf-application",
             "pwf-client",
             "pwf-infra",
@@ -49,13 +47,12 @@ const EDGE_POLICIES: [EdgePolicy; 10] = [
             "pwf-server",
             "xtask",
         ],
-        reason: "protobuf-generated wire contracts must not depend on product policy or process roots",
+        reason: "wire contracts must not depend on use cases, adapters, or process roots",
     },
     EdgePolicy {
         from: "pwf-application",
         label: "application stays independent of adapters",
         forbidden: &[
-            "pwf-wire",
             "pwf-client",
             "pwf-infra",
             "pwf-cli",
@@ -70,7 +67,6 @@ const EDGE_POLICIES: [EdgePolicy; 10] = [
         from: "pwf-infra",
         label: "infra stays independent of process roots",
         forbidden: &[
-            "pwf-wire",
             "pwf-client",
             "pwf-cli",
             "pwf-local-auth",
@@ -293,9 +289,8 @@ mod tests {
                  pwf-migrator: adapters must not depend on their runtime composition",
                 "pwf-models/Cargo.toml: [models stay independent] pwf-models -> serde: models must not \
                  depend on wire formats, persistence, use cases, or process roots",
-                "pwf-wire/Cargo.toml: [wire stays generated and transport-only] pwf-wire -> \
-                 pwf-infra: protobuf-generated wire contracts must not depend on product policy or \
-                 process roots",
+                "pwf-wire/Cargo.toml: [wire stays process-neutral] pwf-wire -> \
+                 pwf-infra: wire contracts must not depend on use cases, adapters, or process roots",
             ]
         );
     }
@@ -314,9 +309,13 @@ mod tests {
                 (
                     "pwf-application",
                     "pwf-application",
+                    "[dependencies]\npwf-models = { path = \"../pwf-models\" }\npwf-wire = { path = \"../pwf-wire\" }\nprompt-lanes = { path = \"../prompt-lanes\" }\n",
+                ),
+                (
+                    "pwf-wire",
+                    "pwf-wire",
                     "[dependencies]\npwf-models = { path = \"../pwf-models\" }\nprompt-lanes = { path = \"../prompt-lanes\" }\n",
                 ),
-                ("pwf-wire", "pwf-wire", ""),
                 (
                     "pwf-client",
                     "pwf-client",
@@ -330,7 +329,7 @@ mod tests {
                 (
                     "pwf-infra",
                     "pwf-infra",
-                    "[dependencies]\npwf-application = { path = \"../pwf-application\" }\npwf-models = { path = \"../pwf-models\" }\n",
+                    "[dependencies]\npwf-application = { path = \"../pwf-application\" }\npwf-models = { path = \"../pwf-models\" }\npwf-wire = { path = \"../pwf-wire\" }\n",
                 ),
                 ("pwf-local-auth", "pwf-local-auth", ""),
                 ("prompt-lanes", "prompt-lanes", ""),

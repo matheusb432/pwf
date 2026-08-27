@@ -9,35 +9,34 @@ use pwf_application::project::{
     resume_project::{self, ResumeProjectError},
 };
 use pwf_infra::obsidian::ObsidianProjectTaskFilesClient;
-use pwf_wire::v1::{self, project_service_server::ProjectService};
+use pwf_wire::{
+    proto,
+    v1::{self, project_service_server::ProjectService},
+};
 use tonic::{Request, Response, Status};
 
-use crate::{
-    AppState,
-    conversion::{input, output},
-};
+use crate::AppState;
 
-#[derive(Clone)]
-pub(crate) struct ProjectApi {
+pub(crate) struct ProjectGrpcService {
     state: AppState,
 }
 
-impl ProjectApi {
+impl ProjectGrpcService {
     pub(crate) fn new(state: AppState) -> Self {
         Self { state }
     }
 }
 
 #[tonic::async_trait]
-impl ProjectService for ProjectApi {
+impl ProjectService for ProjectGrpcService {
     async fn add_project(
         &self,
         request: Request<v1::AddProjectRequest>,
-    ) -> Result<Response<v1::Project>, Status> {
-        let command = input::add_project(request.into_inner())?;
-        add_project::execute(command, &self.state.pool, &self.state.home)
+    ) -> Result<Response<v1::AddProjectResponse>, Status> {
+        let fields = proto::project::add_project_request(request.into_inner())?;
+        add_project::execute(fields, &self.state.pool, &self.state.home)
             .await
-            .map(|project| output::project(&project))
+            .map(proto::project::add_project_response)
             .map(Response::new)
             .map_err(add_project_status)
     }
@@ -45,11 +44,11 @@ impl ProjectService for ProjectApi {
     async fn get_project(
         &self,
         request: Request<v1::GetProjectRequest>,
-    ) -> Result<Response<v1::Project>, Status> {
-        let query = input::get_project(request.into_inner())?;
+    ) -> Result<Response<v1::GetProjectResponse>, Status> {
+        let query = proto::project::get_project_request(request.into_inner())?;
         get_project::execute(query, &self.state.pool)
             .await
-            .map(|project| output::project(&project))
+            .map(proto::project::get_project_response)
             .map(Response::new)
             .map_err(|error| get_project_status(&error))
     }
@@ -58,12 +57,10 @@ impl ProjectService for ProjectApi {
         &self,
         request: Request<v1::ListProjectsRequest>,
     ) -> Result<Response<v1::ListProjectsResponse>, Status> {
-        let query = input::list_projects(request.into_inner())?;
-        list_projects::execute(query, &self.state.pool)
+        let status = proto::project::list_projects_request(request.into_inner())?;
+        list_projects::execute(status, &self.state.pool)
             .await
-            .map(|projects| v1::ListProjectsResponse {
-                projects: projects.iter().map(output::project).collect(),
-            })
+            .map(proto::project::list_projects_response)
             .map(Response::new)
             .map_err(|error| list_projects_status(&error))
     }
@@ -71,11 +68,11 @@ impl ProjectService for ProjectApi {
     async fn pause_project(
         &self,
         request: Request<v1::PauseProjectRequest>,
-    ) -> Result<Response<v1::ProjectStateChange>, Status> {
-        let command = input::pause_project(request.into_inner())?;
-        pause_project::execute(command, &self.state.pool)
+    ) -> Result<Response<v1::PauseProjectResponse>, Status> {
+        let project_id = proto::project::pause_project_request(request.into_inner())?;
+        pause_project::execute(project_id, &self.state.pool)
             .await
-            .map(|change| output::project_state_change(&change))
+            .map(proto::project::pause_project_response)
             .map(Response::new)
             .map_err(|error| pause_project_status(&error))
     }
@@ -83,8 +80,8 @@ impl ProjectService for ProjectApi {
     async fn rename_project(
         &self,
         request: Request<v1::RenameProjectRequest>,
-    ) -> Result<Response<v1::Project>, Status> {
-        let command = input::rename_project(request.into_inner())?;
+    ) -> Result<Response<v1::RenameProjectResponse>, Status> {
+        let command = proto::project::rename_project_request(request.into_inner())?;
         rename_project::execute(
             command,
             &self.state.pool,
@@ -92,7 +89,7 @@ impl ProjectService for ProjectApi {
             &self.state.home,
         )
         .await
-        .map(|project| output::project(&project))
+        .map(proto::project::rename_project_response)
         .map(Response::new)
         .map_err(rename_project_status)
     }
@@ -100,11 +97,11 @@ impl ProjectService for ProjectApi {
     async fn resume_project(
         &self,
         request: Request<v1::ResumeProjectRequest>,
-    ) -> Result<Response<v1::ProjectStateChange>, Status> {
-        let command = input::resume_project(request.into_inner())?;
-        resume_project::execute(command, &self.state.pool, &self.state.home)
+    ) -> Result<Response<v1::ResumeProjectResponse>, Status> {
+        let project_id = proto::project::resume_project_request(request.into_inner())?;
+        resume_project::execute(project_id, &self.state.pool, &self.state.home)
             .await
-            .map(|change| output::project_state_change(&change))
+            .map(proto::project::resume_project_response)
             .map(Response::new)
             .map_err(resume_project_status)
     }

@@ -1,7 +1,7 @@
 //! Prepares native Claude Code launches.
 
-use pwf_application::contract::task::session::{AgentLaunch, AgentProbe};
 use pwf_models::session::{AgentModel, LaunchPrompt, SessionThreadTitle};
+use pwf_wire::task::session::{AgentLaunch, AgentProbe};
 
 use super::argv::LaunchArgv;
 use crate::session::{ProcessEnvironment, claude_effort::ClaudeEffort};
@@ -55,7 +55,6 @@ fn prepare_argv(launch: &AgentLaunch) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use pwf_application::contract::task::session::AgentLaunch;
     use pwf_models::{
         session::{
             Agent, AgentModel, LaunchPrompt, SessionEffort, SessionThreadTitle,
@@ -63,6 +62,7 @@ mod tests {
         },
         task::TaskId,
     };
+    use pwf_wire::task::session::AgentLaunch;
 
     use super::prepare;
 

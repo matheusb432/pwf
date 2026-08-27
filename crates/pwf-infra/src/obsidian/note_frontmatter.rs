@@ -1,6 +1,5 @@
-use std::{fmt::Write, ops::Range};
+use std::fmt::Write as _;
 
-use gray_matter::{Matter, engine::YAML};
 use pwf_application::ports::task_record::StoredBlockedBy;
 use pwf_models::{
     AppDate,
@@ -9,9 +8,7 @@ use pwf_models::{
 use serde::Deserialize;
 use serde_json::Value;
 
-use super::markdown_line;
-
-const UTF8_BOM: char = '\u{feff}';
+use super::{FrontmatterView, MarkdownFile, MarkdownFileError};
 
 #[derive(Deserialize)]
 struct BlockedByFrontmatter {
@@ -58,194 +55,35 @@ pub(super) fn new_task_content(fields: NewTaskFields<'_>) -> String {
     out
 }
 
-pub(super) fn set_status_text(
-    content: &str,
+pub(super) fn set_status(
+    file: &mut MarkdownFile,
     status: TaskStatus,
     completed: Option<&AppDate>,
-) -> String {
-    let status = status.as_str();
+) -> Result<(), MarkdownFileError> {
+    if file.property_text("status")?.is_none() {
+        return Ok(());
+    }
+    file.set_property_rendered("status", Some(status.as_str()), &[])?;
     let completed = completed.map(ToString::to_string).unwrap_or_default();
-    let Some(status_range) = find_field_line(content, "status:") else {
-        return content.to_string();
-    };
-    let status_line = format!("status: {status}");
-    let content = replace_range(content, status_range.clone(), &status_line);
-    if let Some(completed_range) = find_field_line(&content, "completed:") {
-        return replace_range(
-            &content,
-            completed_range,
-            &format!("completed: {completed}"),
-        );
+    file.set_property_rendered("completed", Some(&completed), &["status"])?;
+    Ok(())
+}
+
+pub(super) fn reopen_status(file: &mut MarkdownFile) -> Result<(), MarkdownFileError> {
+    if file.property_text("status")?.is_some() {
+        file.set_property_rendered("status", Some("active"), &[])?;
     }
-    let status_end = status_range.start + status_line.len();
-    format!(
-        "{}\ncompleted: {completed}{}",
-        &content[..status_end],
-        &content[status_end..]
-    )
+    file.remove_property("completed")?;
+    Ok(())
 }
 
-pub(super) fn reopen_status_text(content: &str) -> String {
-    let content = replace_field_line(content, "status:", "status: active");
-    remove_field_line(&content, "completed:")
-}
-
-fn set_frontmatter_line(content: &str, field: &str, line: Option<String>) -> String {
-    let Some(bounds) = opening_frontmatter_bounds(content) else {
-        return content.to_string();
-    };
-    let frontmatter = &content[bounds.start..bounds.end];
-
-    let Some(line) = line else {
-        let updated = remove_field_block(frontmatter, field);
-        return replace_frontmatter_slice(content, bounds.start, bounds.end, &updated);
-    };
-    if let Some(existing) = find_field_block(frontmatter, field) {
-        let Some(first_line) = find_field_line(frontmatter, field) else {
-            return content.to_string();
-        };
-        let carriage_return = if frontmatter[first_line].ends_with('\r') {
-            "\r"
-        } else {
-            ""
-        };
-        let replacement = format!("{line}{carriage_return}");
-        let updated = replace_range(frontmatter, existing, &replacement);
-        return replace_frontmatter_slice(content, bounds.start, bounds.end, &updated);
-    }
-    for field in ["completed:", "created:"] {
-        if let Some(existing) = find_field_line(frontmatter, field) {
-            let has_carriage_return = frontmatter[existing.clone()].ends_with('\r');
-            let line_end = bounds.start + existing.end - usize::from(has_carriage_return);
-            let newline = if has_carriage_return {
-                "\r\n"
-            } else {
-                bounds.newline
-            };
-            return format!(
-                "{}{newline}{line}{}",
-                &content[..line_end],
-                &content[line_end..]
-            );
-        }
-    }
-    format!(
-        "{}{line}{}{}",
-        &content[..bounds.end],
-        bounds.newline,
-        &content[bounds.end..]
-    )
-}
-
-#[derive(Clone, Copy)]
-struct FrontmatterBounds {
-    start: usize,
-    end: usize,
-    newline: &'static str,
-}
-
-fn opening_frontmatter_bounds(content: &str) -> Option<FrontmatterBounds> {
-    let without_bom = content.strip_prefix(UTF8_BOM).unwrap_or(content);
-    let bom_len = content.len() - without_bom.len();
-    let open = find_fence(without_bom, 0)?;
-    let close = find_fence(without_bom, open.end)?;
-    if open.start != 0 {
-        return None;
-    }
-    let newline = open.newline;
-    Some(FrontmatterBounds {
-        start: bom_len + open.content_end,
-        end: bom_len + close.start,
-        newline,
-    })
-}
-
-fn find_field_line(content: &str, field: &str) -> Option<Range<usize>> {
-    markdown_line::find(content, 0, |line| line.starts_with(field))
-        .map(|line| line.start..line.content_end)
-}
-
-fn find_field_block(content: &str, field: &str) -> Option<Range<usize>> {
-    let first = markdown_line::find(content, 0, |line| line.starts_with(field))?;
-    let mut end = first.content_end;
-    for line in markdown_line::lines(&content[first.end..]) {
-        if !line.text.starts_with([' ', '\t']) {
-            break;
-        }
-        end = first.end + line.content_end;
-    }
-    Some(first.start..end)
-}
-
-fn find_fence(content: &str, start: usize) -> Option<markdown_line::MarkdownLine<'_>> {
-    markdown_line::find(content, start, |line| {
-        line.strip_suffix('\r')
-            .unwrap_or(line)
-            .strip_prefix("---")
-            .is_some_and(|suffix| {
-                suffix
-                    .chars()
-                    .all(|character| matches!(character, ' ' | '\t'))
-            })
-    })
-}
-
-fn replace_field_line(content: &str, field: &str, replacement: &str) -> String {
-    find_field_line(content, field).map_or_else(
-        || content.to_string(),
-        |range| replace_range(content, range, replacement),
-    )
-}
-
-fn remove_field_line(content: &str, field: &str) -> String {
-    let Some(mut range) = find_field_line(content, field) else {
-        return content.to_string();
-    };
-    if content.as_bytes().get(range.end) == Some(&b'\n') {
-        range.end += 1;
-    }
-    replace_range(content, range, "")
-}
-
-fn remove_field_block(content: &str, field: &str) -> String {
-    let Some(mut range) = find_field_block(content, field) else {
-        return content.to_string();
-    };
-    if content.as_bytes().get(range.end) == Some(&b'\n') {
-        range.end += 1;
-    }
-    replace_range(content, range, "")
-}
-
-fn replace_range(content: &str, range: Range<usize>, replacement: &str) -> String {
-    format!(
-        "{}{}{}",
-        &content[..range.start],
-        replacement,
-        &content[range.end..]
-    )
-}
-
-fn replace_frontmatter_slice(
-    content: &str,
-    frontmatter_start: usize,
-    frontmatter_end: usize,
-    updated: &str,
-) -> String {
-    format!(
-        "{}{}{}",
-        &content[..frontmatter_start],
-        updated,
-        &content[frontmatter_end..]
-    )
-}
-
-pub(super) fn set_blocked_by_text(content: &str, value: Option<&BlockedBy>) -> String {
-    set_frontmatter_line(
-        content,
-        "blocked_by:",
-        value.map(|value| format!("blocked_by: {}", blocked_by_frontmatter_value(value))),
-    )
+pub(super) fn set_blocked_by(
+    file: &mut MarkdownFile,
+    value: Option<&BlockedBy>,
+) -> Result<(), MarkdownFileError> {
+    let rendered = value.map(blocked_by_frontmatter_value);
+    file.set_property_rendered("blocked_by", rendered.as_deref(), &["completed", "created"])?;
+    Ok(())
 }
 
 fn blocked_by_frontmatter_value(blocked_by: &BlockedBy) -> String {
@@ -259,23 +97,18 @@ fn blocked_by_frontmatter_value(blocked_by: &BlockedBy) -> String {
     )
 }
 
-pub(super) fn parse_blocked_by(content: &str) -> StoredBlockedBy {
-    let Some(raw) = frontmatter_field_value(content, "blocked_by:") else {
+pub(super) fn parse_blocked_by(frontmatter: Option<&FrontmatterView<'_>>) -> StoredBlockedBy {
+    let Some(frontmatter) = frontmatter else {
         return StoredBlockedBy::Absent;
     };
-    let parsed = match Matter::<YAML>::new()
-        .parse::<BlockedByFrontmatter>(content.strip_prefix(UTF8_BOM).unwrap_or(content))
-    {
-        Ok(parsed) => parsed,
-        Err(error) => {
-            return StoredBlockedBy::Malformed {
-                raw,
-                reason: error.to_string(),
-            };
-        }
+    let raw = match frontmatter.get("blocked_by") {
+        Ok(Some(raw)) => raw.to_string(),
+        Ok(None) => return StoredBlockedBy::Absent,
+        Err(error) => return malformed_blocked_by(String::new(), error.to_string()),
     };
-    let Some(frontmatter) = parsed.data else {
-        return malformed_blocked_by(raw, "expected YAML frontmatter");
+    let frontmatter = match frontmatter.deserialize::<BlockedByFrontmatter>() {
+        Ok(frontmatter) => frontmatter,
+        Err(error) => return malformed_blocked_by(raw, error.to_string()),
     };
     let Value::Array(values) = frontmatter.blocked_by else {
         return malformed_blocked_by(raw, "expected a YAML sequence of quoted wikilinks");
@@ -313,16 +146,6 @@ pub(super) fn parse_blocked_by(content: &str) -> StoredBlockedBy {
     }
 }
 
-fn frontmatter_field_value(content: &str, field: &str) -> Option<String> {
-    let bounds = opening_frontmatter_bounds(content)?;
-    let frontmatter = &content[bounds.start..bounds.end];
-    let range = find_field_block(frontmatter, field)?;
-    frontmatter[range]
-        .strip_prefix(field)
-        .map(str::trim)
-        .map(str::to_string)
-}
-
 fn malformed_blocked_by(raw: String, reason: impl Into<String>) -> StoredBlockedBy {
     StoredBlockedBy::Malformed {
         raw,
@@ -330,36 +153,46 @@ fn malformed_blocked_by(raw: String, reason: impl Into<String>) -> StoredBlocked
     }
 }
 
-pub(super) fn set_completed_text(content: &str, value: Option<&AppDate>) -> String {
-    set_frontmatter_line(
-        content,
-        "completed:",
-        value.map(|value| format!("completed: {value}")),
-    )
+pub(super) fn set_completed(
+    file: &mut MarkdownFile,
+    value: Option<&AppDate>,
+) -> Result<(), MarkdownFileError> {
+    let rendered = value.map(ToString::to_string);
+    file.set_property_rendered("completed", rendered.as_deref(), &["created"])?;
+    Ok(())
 }
 
-pub(super) fn set_commits_text(content: &str, value: Option<&str>) -> String {
-    set_frontmatter_line(
-        content,
-        "commits:",
-        value.map(|value| format!("commits: \"{value}\"")),
-    )
+pub(super) fn set_commits(
+    file: &mut MarkdownFile,
+    value: Option<&str>,
+) -> Result<(), MarkdownFileError> {
+    match value {
+        Some(value) => {
+            file.set_property_after("commits", value, &["completed", "created"])?;
+        }
+        None => {
+            file.remove_property("commits")?;
+        }
+    }
+    Ok(())
 }
 
-pub(super) fn set_effort_text(content: &str, value: Option<EffortTier>) -> String {
-    set_frontmatter_line(
-        content,
-        "effort:",
-        value.map(|value| format!("effort: {value}")),
-    )
+pub(super) fn set_effort(
+    file: &mut MarkdownFile,
+    value: Option<EffortTier>,
+) -> Result<(), MarkdownFileError> {
+    let rendered = value.map(|value| value.to_string());
+    file.set_property_rendered("effort", rendered.as_deref(), &["completed", "created"])?;
+    Ok(())
 }
 
-pub(super) fn set_tags_text(content: &str, value: Option<&TaskTags>) -> String {
-    set_frontmatter_line(
-        content,
-        "tags:",
-        value.map(|tags| format!("tags: {}", tags_frontmatter_value(tags))),
-    )
+pub(super) fn set_tags(
+    file: &mut MarkdownFile,
+    value: Option<&TaskTags>,
+) -> Result<(), MarkdownFileError> {
+    let rendered = value.map(tags_frontmatter_value);
+    file.set_property_rendered("tags", rendered.as_deref(), &["completed", "created"])?;
+    Ok(())
 }
 
 fn tags_frontmatter_value(tags: &TaskTags) -> String {
@@ -374,18 +207,27 @@ fn tags_frontmatter_value(tags: &TaskTags) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use pwf_application::ports::task_record::StoredBlockedBy;
     use pwf_models::{
         AppDate,
         task::{BlockedBy, TaskId, TaskStatus, TaskTitle},
     };
 
-    use super::{
-        NewTaskFields, new_task_content, parse_blocked_by, set_blocked_by_text, set_status_text,
-    };
+    use super::{NewTaskFields, new_task_content, parse_blocked_by, set_blocked_by, set_status};
+    use crate::obsidian::MarkdownFile;
 
     fn blocked_by(ids: &[&str]) -> BlockedBy {
         BlockedBy::try_new(ids.iter().map(|id| id.parse().unwrap()).collect::<Vec<_>>()).unwrap()
+    }
+
+    fn file(source: &str) -> MarkdownFile {
+        MarkdownFile::from_source(Path::new("task.md").to_path_buf(), source.to_string())
+    }
+
+    fn parsed_blocked_by(file: &MarkdownFile) -> StoredBlockedBy {
+        parse_blocked_by(file.frontmatter_view().unwrap().as_ref())
     }
 
     #[test]
@@ -414,7 +256,7 @@ mod tests {
 
     #[test]
     fn blocked_by_edit_replaces_an_existing_block_sequence_without_touching_other_bytes() {
-        let source = concat!(
+        let mut file = file(concat!(
             "---\n",
             "id: PWF-0003\n",
             "blocked_by:\n",
@@ -423,12 +265,12 @@ mod tests {
             "effort: medium\n",
             "---\n\n",
             "body\n",
-        );
+        ));
 
-        let updated = set_blocked_by_text(source, Some(&blocked_by(&["AUX-0014"])));
+        set_blocked_by(&mut file, Some(&blocked_by(&["AUX-0014"]))).unwrap();
 
         assert_eq!(
-            updated,
+            file.source(),
             concat!(
                 "---\n",
                 "id: PWF-0003\n",
@@ -446,7 +288,8 @@ mod tests {
             "---\nblocked_by: [\"[[PWF-0001]]\", \"[[AUX-0014]]\"]\n---\n",
             "---\nblocked_by:\n  - \"[[PWF-0001]]\"\n  - \"[[AUX-0014]]\"\n---\n",
         ] {
-            let StoredBlockedBy::Valid(blocked_by) = parse_blocked_by(source) else {
+            let file = file(source);
+            let StoredBlockedBy::Valid(blocked_by) = parsed_blocked_by(&file) else {
                 panic!("expected valid blocked_by metadata");
             };
 
@@ -459,9 +302,9 @@ mod tests {
 
     #[test]
     fn blocked_by_parser_preserves_a_malformed_scalar_for_boundary_specific_diagnostics() {
-        let source = "---\nblocked_by: \"[[PWF-0001]]\"\n---\n";
+        let file = file("---\nblocked_by: \"[[PWF-0001]]\"\n---\n");
 
-        let StoredBlockedBy::Malformed { raw, reason } = parse_blocked_by(source) else {
+        let StoredBlockedBy::Malformed { raw, reason } = parsed_blocked_by(&file) else {
             panic!("expected malformed blocked_by metadata");
         };
 
@@ -471,14 +314,17 @@ mod tests {
 
     #[test]
     fn close_status_inserts_completion_without_rewriting_other_bytes() {
-        let source = "---\nid: PWF-0001\nstatus: active\ntitle: task\n---\n\nbody\n";
+        let mut file = file("---\nid: PWF-0001\nstatus: active\ntitle: task\n---\n\nbody\n");
+
+        set_status(
+            &mut file,
+            TaskStatus::Done,
+            Some(&"2026-07-29".parse::<AppDate>().unwrap()),
+        )
+        .unwrap();
 
         assert_eq!(
-            set_status_text(
-                source,
-                TaskStatus::Done,
-                Some(&"2026-07-29".parse::<AppDate>().unwrap()),
-            ),
+            file.source(),
             "---\nid: PWF-0001\nstatus: done\ncompleted: 2026-07-29\ntitle: task\n---\n\nbody\n"
         );
     }

@@ -131,7 +131,7 @@ pub enum ObsidianStoreError {
     FrontmatterParse {
         path: PathBuf,
         property: &'static str,
-        source: gray_matter::Error,
+        source: crate::obsidian::MarkdownFileError,
     },
     #[error("Missing frontmatter property `{property}` in {}", path.display())]
     MissingFrontmatter {

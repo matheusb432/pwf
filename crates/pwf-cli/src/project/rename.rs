@@ -44,5 +44,5 @@ pub(super) async fn run(arguments: Arguments, client: &ProjectClient) -> anyhow:
         })
         .await
         .map_err(crate::rpc_error)?;
-    output::project(renamed)
+    output::render_response(renamed)
 }

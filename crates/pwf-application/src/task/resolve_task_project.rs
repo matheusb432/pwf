@@ -3,10 +3,7 @@ use pwf_models::{
     task::TaskId,
 };
 
-use crate::{
-    contract::{project::GetActiveProject, task::ResolveTaskProject},
-    project::{get_active_project, get_project::GetProjectError},
-};
+use crate::project::{get_active_project, get_project::GetProjectError};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ResolveTaskProjectError {
@@ -15,34 +12,28 @@ pub enum ResolveTaskProjectError {
         task_id: TaskId,
         project_id: ProjectId,
     },
-    #[error("{0}")]
-    QueryProject(#[source] Box<dyn std::error::Error + Send + Sync>),
+    #[error(transparent)]
+    QueryProject(anyhow::Error),
 }
 
 #[cqrsy::query]
 pub async fn execute(
-    query: ResolveTaskProject,
+    id: TaskId,
     pool: &sqlx::SqlitePool,
 ) -> Result<Project, ResolveTaskProjectError> {
-    let id = query.id;
-    let project = get_active_project::execute(
-        GetActiveProject {
-            id: id.project_id().clone(),
-        },
-        pool,
-    )
-    .await
-    .map_err(|error| match error {
-        GetProjectError::ProjectNotFound { id: project_id } => {
-            ResolveTaskProjectError::UnknownProjectId {
-                task_id: id.clone(),
-                project_id,
+    let project = get_active_project::execute(id.project_id().clone(), pool)
+        .await
+        .map_err(|error| match error {
+            GetProjectError::ProjectNotFound { id: project_id } => {
+                ResolveTaskProjectError::UnknownProjectId {
+                    task_id: id.clone(),
+                    project_id,
+                }
             }
-        }
-        error @ GetProjectError::Unexpected { .. } => {
-            ResolveTaskProjectError::QueryProject(Box::new(error))
-        }
-    })?;
+            error @ GetProjectError::Unexpected { .. } => {
+                ResolveTaskProjectError::QueryProject(anyhow::Error::new(error))
+            }
+        })?;
 
     Ok(project)
 }

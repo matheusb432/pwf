@@ -1,8 +1,8 @@
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> anyhow::Result<()> {
     let protos = ["proto/pwf/v1/pwf.proto"];
     tonic_prost_build::configure()
         .build_transport(false)
-        .boxed(".pwf.v1.TaskRead.value.data")
+        .boxed(".pwf.v1.GetTaskResponse.value.data")
         .file_descriptor_set_path(std::env::var("OUT_DIR")? + "/pwf_descriptor.bin")
         .compile_protos(&protos, &["proto"])?;
 

@@ -1,13 +1,12 @@
 use std::path::{Path, PathBuf};
 
-use gray_matter::{Matter, engine::YAML};
 use pwf_models::{
     project::{ProjectId, ProjectIndexIdentity, ProjectName},
     task::TaskId,
 };
 use serde::Deserialize;
 
-use super::ObsidianStoreError;
+use super::{MarkdownFile, ObsidianStoreError};
 
 /// Contains a task note discovered by frontmatter identity.
 pub struct TaskNoteIdentity {
@@ -24,9 +23,11 @@ pub fn inspect_project_task_notes(
     expected_identity: &ProjectIndexIdentity,
 ) -> Result<Vec<TaskNoteIdentity>, ObsidianStoreError> {
     if index_path.exists() {
-        let index_markdown = std::fs::read_to_string(index_path)
-            .map_err(|source| ObsidianStoreError::ReadIndex { source })?;
-        let actual = parse_project_index_identity(index_path, &index_markdown)?;
+        let index_file =
+            MarkdownFile::open(index_path).map_err(|source| ObsidianStoreError::ReadIndex {
+                source: source.into_io_error(),
+            })?;
+        let actual = parse_project_index_identity(&index_file)?;
         validate_project_index_identity(index_path, &actual, expected_identity)?;
     }
 
@@ -41,11 +42,13 @@ pub fn inspect_project_task_notes(
         {
             continue;
         }
-        let markdown = std::fs::read_to_string(&path)
-            .map_err(|source| ObsidianStoreError::ReadTaskFile { source })?;
-        let Some((id, title)) = parse_task_metadata_if_task(&path, &markdown)? else {
+        let file = MarkdownFile::open(path).map_err(|source| ObsidianStoreError::ReadTaskFile {
+            source: source.into_io_error(),
+        })?;
+        let Some((id, title)) = parse_task_metadata_if_task(&file)? else {
             continue;
         };
+        let (path, markdown) = file.into_parts();
         tasks.push(TaskNoteIdentity {
             id,
             path,
@@ -84,10 +87,10 @@ struct ProjectIndexFrontmatter {
 }
 
 fn parse_task_metadata_if_task(
-    path: &Path,
-    markdown: &str,
+    file: &MarkdownFile,
 ) -> Result<Option<(TaskId, Option<String>)>, ObsidianStoreError> {
-    let frontmatter = parse_frontmatter::<TaskFrontmatter>(path, markdown, "id")?;
+    let path = file.path();
+    let frontmatter = parse_frontmatter::<TaskFrontmatter>(file, "id")?;
     if frontmatter.kind.as_deref() == Some("note") {
         return Ok(None);
     }
@@ -105,10 +108,10 @@ fn parse_task_metadata_if_task(
 }
 
 pub(super) fn parse_project_index_identity(
-    path: &Path,
-    markdown: &str,
+    file: &MarkdownFile,
 ) -> Result<ProjectIndexIdentity, ObsidianStoreError> {
-    let frontmatter = parse_frontmatter::<ProjectIndexFrontmatter>(path, markdown, "id/title")?;
+    let path = file.path();
+    let frontmatter = parse_frontmatter::<ProjectIndexFrontmatter>(file, "id/title")?;
     let raw_id = required_index_property(path, "id", frontmatter.id)?;
     let raw_title = required_index_property(path, "title", frontmatter.title)?;
     let id = ProjectId::try_new(&raw_id).map_err(|_| {
@@ -158,20 +161,17 @@ pub(super) fn project_index_frontmatter_id(identity: &ProjectIndexIdentity) -> S
 }
 
 fn parse_frontmatter<T: serde::de::DeserializeOwned>(
-    path: &Path,
-    markdown: &str,
+    file: &MarkdownFile,
     property: &'static str,
 ) -> Result<T, ObsidianStoreError> {
-    Matter::<YAML>::new()
-        .parse::<T>(markdown.strip_prefix('\u{feff}').unwrap_or(markdown))
+    file.frontmatter::<T>()
         .map_err(|source| ObsidianStoreError::FrontmatterParse {
-            path: path.to_path_buf(),
+            path: file.path().to_path_buf(),
             property,
             source,
         })?
-        .data
         .ok_or_else(|| ObsidianStoreError::MissingFrontmatter {
-            path: path.to_path_buf(),
+            path: file.path().to_path_buf(),
             property,
         })
 }
@@ -203,10 +203,9 @@ mod tests {
     fn parses_task_id_independently_of_filename() {
         let path = Path::new("/vault/pwf/descriptive-name.md");
         let markdown = "---\nid: PWF-0124\nstatus: active\n---\n\nbody\n";
+        let file = crate::obsidian::MarkdownFile::from_source(path, markdown.to_string());
 
-        let (id, _) = parse_task_metadata_if_task(path, markdown)
-            .unwrap()
-            .unwrap();
+        let (id, _) = parse_task_metadata_if_task(&file).unwrap().unwrap();
 
         assert_eq!(id.as_ref(), "PWF-0124");
     }
@@ -214,8 +213,12 @@ mod tests {
     #[test]
     fn missing_task_id_is_path_specific_corruption() {
         let path = Path::new("/vault/pwf/PWF-0124.md");
+        let file = crate::obsidian::MarkdownFile::from_source(
+            path,
+            "---\nstatus: active\n---\n".to_string(),
+        );
 
-        let error = parse_task_metadata_if_task(path, "---\nstatus: active\n---\n").unwrap_err();
+        let error = parse_task_metadata_if_task(&file).unwrap_err();
 
         assert_matches!(
             error,
@@ -228,8 +231,9 @@ mod tests {
     fn parses_project_index_identity_into_domain_types() {
         let path = Path::new("/vault/sample-project/index.md");
         let markdown = "---\nid: smp\ntitle: sample-project\n---\n\n# Tasks\n";
+        let file = crate::obsidian::MarkdownFile::from_source(path, markdown.to_string());
 
-        let identity = parse_project_index_identity(path, markdown).unwrap();
+        let identity = parse_project_index_identity(&file).unwrap();
 
         assert_eq!(identity.id().as_ref(), "SMP");
         assert_eq!(project_index_frontmatter_id(&identity), "smp");

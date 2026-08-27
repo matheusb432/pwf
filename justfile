@@ -42,6 +42,7 @@ fmt-check:
 # Run repository linters.
 [group('quality')]
 lint:
+    buf lint
     cargo clippy --workspace --all-targets -- -D warnings
     cargo clippy -p pwf-cli --test binary --test e2e -- -D warnings
 
@@ -76,3 +77,20 @@ doctor:
 [group('quality')]
 test *args:
     @cargo run --quiet -p xtask -- test {{ args }}
+
+# Compare Criterion benchmarks against the local baseline. Use --update to replace it.
+[arg("benchmark", help="Benchmark target or all", pattern="all|obsidian-frontmatter-read|obsidian-markdown-file|obsidian-store-io")]
+[arg("case", help="Exact Criterion benchmark case")]
+[arg("update", long="update", value="--save-baseline local", help="Compare and replace the local baseline")]
+[arg("quick", long="quick", value="--quick", help="Stop once Criterion reaches statistical significance")]
+[group('performance')]
+bench benchmark="all" case="" update="--baseline local" quick="":
+    CRITERION_HOME="{{ justfile_directory() }}/.artifacts/benchmarks/criterion" cargo bench --locked -p pwf-infra {{ if benchmark == "all" { "--benches" } else { "--bench " + replace(benchmark, "-", "_") } }} -- {{ if case == "" { "" } else { quote(case) + " --exact" } }} {{ update }} {{ quick }}
+
+# Compare deterministic allocation reports against their local baselines.
+[arg("update", long="update", value="--update", help="Compare and replace the local baselines")]
+[group('performance')]
+bench-allocations update="":
+    cargo run --quiet --locked --release -p pwf-infra --example obsidian_store_allocations -- {{ update }}
+    cargo run --quiet --locked --release -p pwf-infra --example obsidian_markdown_file_allocations -- {{ update }}
+    cargo run --quiet --locked --release -p pwf-infra --example obsidian_frontmatter_read_allocations -- {{ update }}

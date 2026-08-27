@@ -9,6 +9,16 @@ checksum = "sha256:611f9e5e76f2611ecea1a35dd3468ceedf600641a11224b80341d79c6ee7b
 url = "https://github.com/ast-grep/ast-grep/releases/download/0.44.1/app-x86_64-unknown-linux-gnu.zip"
 url_api = "https://api.github.com/repos/ast-grep/ast-grep/releases/assets/466366790"
 
+[[tools.buf]]
+version = "1.72.0"
+backend = "aqua:bufbuild/buf"
+
+[tools.buf."platforms.linux-x64"]
+checksum = "sha256:a9c6186cf6fcf062b247345e1b7b12c26f580c1b2a4bbf4d3fe080abf85ceee8"
+url = "https://github.com/bufbuild/buf/releases/download/v1.72.0/buf-Linux-x86_64.tar.gz"
+url_api = "https://api.github.com/repos/bufbuild/buf/releases/assets/480772583"
+provenance = "minisign"
+
 [[tools.cargo-binstall]]
 version = "1.21.1"
 backend = "aqua:cargo-bins/cargo-binstall"
@@ -22,14 +32,6 @@ provenance = "github-attestations"
 [[tools."cargo:cargo-llvm-cov"]]
 version = "0.8.7"
 backend = "cargo:cargo-llvm-cov"
-
-[[tools."cargo:sqlx-cli"]]
-version = "0.9.0"
-backend = "cargo:sqlx-cli"
-
-[tools."cargo:sqlx-cli".options]
-default-features = "false"
-features = "rustls postgres sqlite sqlx-toml"
 
 [[tools.just]]
 version = "1.56.0"

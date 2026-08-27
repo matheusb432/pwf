@@ -1,11 +1,31 @@
 //! Renders byte-stable close and reopen confirmations plus ordered done-queue diagnostics.
 
-use pwf_client::v1::{ClosedTask, ClosedTaskAction, ReopenedTask, ReopenedTaskOutcome};
+use pwf_client::v1::{
+    AddTaskResponse, CancelTaskResponse, ClosedTaskAction, CompleteTaskResponse, ReopenedTask,
+    ReopenedTaskOutcome,
+};
 
 use super::confirmation::render_review_task;
 
-/// Renders the byte-stable close confirmation and optional review-task allocation.
-pub(in crate::task) fn render_closed(outcome: &ClosedTask) -> String {
+struct ClosedTaskView<'a> {
+    id: &'a str,
+    project: &'a str,
+    title: &'a str,
+    action: i32,
+    evicted_ids: &'a [String],
+    futuro_renamed_project: Option<&'a str>,
+    review_task: Option<&'a AddTaskResponse>,
+}
+
+pub(in crate::task) fn render_cancelled(outcome: &CancelTaskResponse) -> String {
+    render_closed(&outcome.into())
+}
+
+pub(in crate::task) fn render_completed(outcome: &CompleteTaskResponse) -> String {
+    render_closed(&outcome.into())
+}
+
+fn render_closed(outcome: &ClosedTaskView<'_>) -> String {
     let mut text = format!(
         "{} {} ({} :: {})\n",
         closed_action(outcome.action),
@@ -13,7 +33,7 @@ pub(in crate::task) fn render_closed(outcome: &ClosedTask) -> String {
         outcome.project,
         outcome.title
     );
-    if let Some(review) = &outcome.review_task {
+    if let Some(review) = outcome.review_task {
         text.push_str(&render_review_task(review));
     }
     text
@@ -53,9 +73,16 @@ fn closed_action(value: i32) -> &'static str {
     }
 }
 
-/// Emits header-normalization before section-cap-eviction diagnostics on stderr.
-pub(in crate::task) fn emit_close_diagnostics(outcome: &ClosedTask) {
-    if let Some(project) = &outcome.futuro_renamed_project {
+pub(in crate::task) fn emit_cancel_diagnostics(outcome: &CancelTaskResponse) {
+    emit_close_diagnostics(&outcome.into());
+}
+
+pub(in crate::task) fn emit_complete_diagnostics(outcome: &CompleteTaskResponse) {
+    emit_close_diagnostics(&outcome.into());
+}
+
+fn emit_close_diagnostics(outcome: &ClosedTaskView<'_>) {
+    if let Some(project) = outcome.futuro_renamed_project {
         eprintln!("info: normalized `## Futuro` header to `## Future` in {project}");
     }
     if !outcome.evicted_ids.is_empty() {
@@ -69,5 +96,33 @@ pub(in crate::task) fn emit_close_diagnostics(outcome: &ClosedTask) {
                 .collect::<Vec<_>>()
                 .join(", ")
         );
+    }
+}
+
+impl<'a> From<&'a CancelTaskResponse> for ClosedTaskView<'a> {
+    fn from(response: &'a CancelTaskResponse) -> Self {
+        Self {
+            id: &response.id,
+            project: &response.project,
+            title: &response.title,
+            action: response.action,
+            evicted_ids: &response.evicted_ids,
+            futuro_renamed_project: response.futuro_renamed_project.as_deref(),
+            review_task: response.review_task.as_ref(),
+        }
+    }
+}
+
+impl<'a> From<&'a CompleteTaskResponse> for ClosedTaskView<'a> {
+    fn from(response: &'a CompleteTaskResponse) -> Self {
+        Self {
+            id: &response.id,
+            project: &response.project,
+            title: &response.title,
+            action: response.action,
+            evicted_ids: &response.evicted_ids,
+            futuro_renamed_project: response.futuro_renamed_project.as_deref(),
+            review_task: response.review_task.as_ref(),
+        }
     }
 }

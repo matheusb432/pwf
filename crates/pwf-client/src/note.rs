@@ -19,7 +19,7 @@ impl NoteClient {
     pub async fn add_note(
         &self,
         request: v1::AddNoteRequest,
-    ) -> Result<v1::AddedNote, ClientError> {
+    ) -> Result<v1::AddNoteResponse, ClientError> {
         self.client()
             .add_note(request)
             .await
@@ -30,7 +30,7 @@ impl NoteClient {
     pub async fn list_notes(
         &self,
         request: v1::ListNotesRequest,
-    ) -> Result<v1::ListedNotes, ClientError> {
+    ) -> Result<v1::ListNotesResponse, ClientError> {
         self.client()
             .list_notes(request)
             .await
@@ -41,7 +41,7 @@ impl NoteClient {
     pub async fn remove_note(
         &self,
         request: v1::RemoveNoteRequest,
-    ) -> Result<v1::RemovedNote, ClientError> {
+    ) -> Result<v1::RemoveNoteResponse, ClientError> {
         self.client()
             .remove_note(request)
             .await
@@ -52,7 +52,7 @@ impl NoteClient {
     pub async fn update_note(
         &self,
         request: v1::UpdateNoteRequest,
-    ) -> Result<v1::UpdatedNote, ClientError> {
+    ) -> Result<v1::UpdateNoteResponse, ClientError> {
         self.client()
             .update_note(request)
             .await

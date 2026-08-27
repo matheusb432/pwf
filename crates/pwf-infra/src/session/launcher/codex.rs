@@ -1,10 +1,8 @@
 //! Creates named Codex threads and prepares resume launches.
 
-use pwf_application::{
-    contract::task::session::{AgentLaunch, AgentProbe},
-    ports::agent::PreparedAgentLaunch,
-};
+use pwf_application::ports::agent::PreparedAgentLaunch;
 use pwf_models::session::{AgentModel, LaunchPrompt, SessionThreadTitle, SessionWorkingDirectory};
+use pwf_wire::task::session::{AgentLaunch, AgentProbe};
 
 use super::{
     super::{
@@ -101,9 +99,7 @@ fn resume_argv(plan: CodexLaunchPlan, thread_id: String) -> Vec<String> {
 mod tests {
     #[cfg(unix)]
     use anyhow::{Context as _, Result};
-    use pwf_application::{
-        contract::task::session::AgentLaunch, ports::agent::PreparedAgentLaunch,
-    };
+    use pwf_application::ports::agent::PreparedAgentLaunch;
     use pwf_models::{
         session::{
             Agent, AgentModel, LaunchPrompt, SessionEffort, SessionThreadTitle,
@@ -111,6 +107,7 @@ mod tests {
         },
         task::TaskId,
     };
+    use pwf_wire::task::session::AgentLaunch;
 
     use super::prepare_with_binary;
     #[cfg(unix)]

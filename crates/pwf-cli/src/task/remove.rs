@@ -1,7 +1,7 @@
 use clap::Args;
 use pwf_client::{
     task::{ConfirmedRequestError, TaskClient},
-    v1::{RemoveTaskRequest, RemovedTaskOutcomeKind},
+    v1::{RemoveTaskStart, RemovedTaskOutcomeKind},
 };
 
 use super::Identifier;
@@ -33,10 +33,7 @@ pub(super) async fn run(
 
     let confirmation_client = CliConfirmationClient::new(console, confirmation_mode);
     let outcome = match client
-        .remove_task(
-            RemoveTaskRequest { id: id.to_string() },
-            confirmation_client,
-        )
+        .remove_task(RemoveTaskStart { id: id.to_string() }, confirmation_client)
         .await
     {
         Ok(outcome) => outcome,

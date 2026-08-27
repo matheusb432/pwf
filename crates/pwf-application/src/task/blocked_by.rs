@@ -4,11 +4,9 @@ use pwf_models::{
     project::{Project, ProjectId},
     task::{BlockedBy, TaskId},
 };
+use pwf_wire::task::{BlockedByResolution, BlockedByStatus};
 
-use crate::{
-    contract::task::{BlockedByResolution, BlockedByStatus},
-    ports::task_record::{Materialization, StoredBlockedBy, TaskStore},
-};
+use crate::ports::task_record::{Materialization, StoredBlockedBy, TaskStore};
 
 #[derive(Debug, thiserror::Error)]
 pub(in crate::task) enum BlockedByValidationError {
@@ -18,7 +16,7 @@ pub(in crate::task) enum BlockedByValidationError {
     ReadStore {
         id: TaskId,
         #[source]
-        source: Box<dyn std::error::Error + Send + Sync>,
+        source: anyhow::Error,
     },
     #[error("task {target} cannot be blocked by itself ({blocker})")]
     SelfDependency { target: TaskId, blocker: TaskId },
@@ -27,7 +25,7 @@ pub(in crate::task) enum BlockedByValidationError {
     #[error("task {task} at {path} has malformed blocked_by metadata {raw:?}: {reason}")]
     MalformedMetadata {
         task: TaskId,
-        path: Box<crate::contract::task::TaskNotePath>,
+        path: Box<pwf_wire::task::TaskNotePath>,
         raw: Box<str>,
         reason: Box<str>,
     },
@@ -82,7 +80,7 @@ pub(in crate::task) fn validate(
         let record = store.get(project, identifier).map_err(|source| {
             BlockedByValidationError::ReadStore {
                 id: identifier.clone(),
-                source: Box::new(source),
+                source: anyhow::Error::new(source),
             }
         })?;
         if record.is_none_or(|record| !matches!(record.materialization, Materialization::NoteFile))
@@ -142,7 +140,7 @@ fn visit(
                 .get(project, id)
                 .map_err(|source| BlockedByValidationError::ReadStore {
                     id: id.clone(),
-                    source: Box::new(source),
+                    source: anyhow::Error::new(source),
                 })?
         }
         None => None,
@@ -238,10 +236,10 @@ mod tests {
     use std::error::Error as _;
 
     use pwf_models::{project::Project, task::TaskId};
+    use pwf_wire::task::BlockedByResolution;
 
     use super::{BlockedByValidationError, statuses, validate_and_merge};
     use crate::{
-        contract::task::BlockedByResolution,
         ports::task_record::{NewTask, TaskPatch, TaskRecord, TaskStore},
         testing::{
             InMemoryStore, blocked_by, project, staged_missing_task, staged_task,

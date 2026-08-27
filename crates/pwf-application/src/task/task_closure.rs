@@ -8,9 +8,9 @@ use pwf_models::{
         TaskTitleError,
     },
 };
+use pwf_wire::task::{AddTaskDiagnostics, AddedTask, ClosedTask, ClosedTaskAction};
 
 use crate::{
-    contract::task::{AddTaskDiagnostics, AddedTask, ClosedTask, ClosedTaskAction},
     ports::task_record::{
         IndexEntry, IndexEntryState, IndexEntryStore, IndexSectionStore, Materialization, NewTask,
         NullablePatch, TaskPatch, TaskStore,
@@ -39,8 +39,8 @@ pub enum CloseTaskError {
         #[source]
         source: TaskTitleError,
     },
-    #[error("{0}")]
-    WriteStore(#[source] Box<dyn std::error::Error + Send + Sync>),
+    #[error(transparent)]
+    WriteStore(anyhow::Error),
     #[error("{0}")]
     ReviewTask(#[source] Box<AddTaskError>),
 }
@@ -325,7 +325,7 @@ pub(in crate::task) fn close(
         });
     }
     let record = TaskStore::get(store, project, &task_identifier)
-        .map_err(|error| CloseTaskError::WriteStore(Box::new(error)))?
+        .map_err(|error| CloseTaskError::WriteStore(anyhow::Error::new(error)))?
         .ok_or_else(|| CloseTaskError::TaskNotFound {
             id: task_identifier.clone(),
         })?;
@@ -353,7 +353,7 @@ pub(in crate::task) fn close(
         patch.commits = NullablePatch::Set(commits.to_string());
     }
     TaskStore::update(store, project, &task_identifier, patch)
-        .map_err(|error| CloseTaskError::WriteStore(Box::new(error)))?;
+        .map_err(|error| CloseTaskError::WriteStore(anyhow::Error::new(error)))?;
 
     let (evicted_ids, futuro_renamed) =
         if matches!(record.materialization, Materialization::NoteFile) {
@@ -392,9 +392,9 @@ fn rotate_done_queue(
     completed: AppDate,
 ) -> Result<(Vec<TaskId>, bool), CloseTaskError> {
     let entries = IndexEntryStore::list_index_entries(store, project)
-        .map_err(|error| CloseTaskError::WriteStore(Box::new(error)))?;
+        .map_err(|error| CloseTaskError::WriteStore(anyhow::Error::new(error)))?;
     let sections = IndexSectionStore::list_index_sections(store, project)
-        .map_err(|error| CloseTaskError::WriteStore(Box::new(error)))?;
+        .map_err(|error| CloseTaskError::WriteStore(anyhow::Error::new(error)))?;
     let decisions = close_decisions(&entries, &sections, id, completed);
 
     if decisions.normalize_futuro_header {
@@ -410,11 +410,11 @@ fn rotate_done_queue(
                 section: None,
             },
         )
-        .map_err(|error| CloseTaskError::WriteStore(Box::new(error)))?;
+        .map_err(|error| CloseTaskError::WriteStore(anyhow::Error::new(error)))?;
     }
     for evicted in &decisions.evicted_ids {
         IndexEntryStore::delete_index_entry(store, project, evicted)
-            .map_err(|error| CloseTaskError::WriteStore(Box::new(error)))?;
+            .map_err(|error| CloseTaskError::WriteStore(anyhow::Error::new(error)))?;
     }
     Ok((decisions.evicted_ids, decisions.normalize_futuro_header))
 }
@@ -428,7 +428,7 @@ fn rename_futuro_headers(
     let future = TaskSection::future();
     for section in sections.iter().filter(|section| is_futuro_label(section)) {
         IndexSectionStore::rename_index_section(store, project, section, &future)
-            .map_err(|error| CloseTaskError::WriteStore(Box::new(error)))?;
+            .map_err(|error| CloseTaskError::WriteStore(anyhow::Error::new(error)))?;
     }
     Ok(())
 }
@@ -447,7 +447,7 @@ fn spawn_review(
     let id = store.next_id(project).map_err(|source| {
         CloseTaskError::ReviewTask(Box::new(AddTaskError::AllocateTaskId {
             project: project.title.clone(),
-            source: Box::new(source),
+            source: anyhow::Error::new(source),
         }))
     })?;
     let created = task_creation::create(

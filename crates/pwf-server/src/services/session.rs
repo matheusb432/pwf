@@ -1,9 +1,8 @@
-use std::{pin::Pin, sync::Arc, time::Duration};
+use std::pin::Pin;
 
-use futures::{Stream, future::BoxFuture};
+use futures::Stream;
 use pwf_application::{
-    contract::task::session::{PlanSessionIntent, PlannedSession, PreparedSessionDispatch},
-    ports::session_confirmation::SessionConfirmationClient,
+    ports::confirmation::ConfirmationClientError,
     task::session::{
         dispatch_confirmed_session::{self, DispatchConfirmedSessionError},
         dispatch_session::DispatchSessionError,
@@ -11,17 +10,18 @@ use pwf_application::{
     },
 };
 use pwf_infra::session::{AgentHarness, ProcessEnvironment, TmuxHarness};
-use pwf_wire::v1::{self, session_service_server::SessionService};
-use tokio::sync::{Mutex, mpsc};
+use pwf_wire::{
+    proto,
+    task::session::{PlanSessionIntent, PlannedSession, PreparedSessionDispatch},
+    v1::{self, session_service_server::SessionService},
+};
+use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status, Streaming};
 
-use crate::{
-    AppState,
-    conversion::{input, output},
-};
+use super::confirmation::{GrpcConfirmationClient, confirmation_status};
+use crate::AppState;
 
-const CONFIRMATION_TIMEOUT: Duration = Duration::from_mins(30);
 const STREAM_BUFFER: usize = 4;
 const ENVIRONMENT_VARIABLES_MAX: usize = 512;
 const ENVIRONMENT_KEY_BYTES_MAX: usize = 256;
@@ -29,26 +29,25 @@ const ENVIRONMENT_VALUE_BYTES_MAX: usize = 32 * 1024;
 
 type ResponseStream<T> = Pin<Box<dyn Stream<Item = Result<T, Status>> + Send + 'static>>;
 
-#[derive(Clone)]
-pub(crate) struct SessionApi {
+pub(crate) struct SessionGrpcService {
     state: AppState,
 }
 
-impl SessionApi {
+impl SessionGrpcService {
     pub(crate) fn new(state: AppState) -> Self {
         Self { state }
     }
 }
 
 #[tonic::async_trait]
-impl SessionService for SessionApi {
+impl SessionService for SessionGrpcService {
     async fn plan_session(
         &self,
         request: Request<v1::PlanSessionRequest>,
-    ) -> Result<Response<v1::DryRunSession>, Status> {
+    ) -> Result<Response<v1::PlanSessionResponse>, Status> {
         let mut request = request.into_inner();
         let environment = process_environment(&mut request)?;
-        let command = input::plan_session(request)?;
+        let command = proto::session::plan_session_request(request)?;
         if command.intent != PlanSessionIntent::DryRun {
             return Err(Status::invalid_argument(
                 "PlanSession requires PLAN_SESSION_INTENT_DRY_RUN",
@@ -67,30 +66,48 @@ impl SessionService for SessionApi {
         .await
         .map_err(|error| plan_session_status(&error))?;
         match planned {
-            PlannedSession::DryRun(value) => Ok(Response::new(output::dry_run_session(value))),
+            PlannedSession::DryRun(value) => {
+                Ok(Response::new(proto::session::plan_session_response(value)))
+            }
             PlannedSession::Dispatch(_) => Err(Status::internal(
                 "dry-run application operation returned a dispatch plan",
             )),
         }
     }
 
-    type DispatchSessionStream = ResponseStream<v1::DispatchSessionServerMessage>;
+    type DispatchSessionStream = ResponseStream<v1::DispatchSessionResponse>;
 
     async fn dispatch_session(
         &self,
-        request: Request<Streaming<v1::DispatchSessionClientMessage>>,
+        request: Request<Streaming<v1::DispatchSessionRequest>>,
     ) -> Result<Response<Self::DispatchSessionStream>, Status> {
         let mut inbound = request.into_inner();
         let mut start = next_start(&mut inbound).await?;
         let environment = process_environment(&mut start)?;
-        let command = input::plan_session(start)?;
+        let command = proto::session::plan_session_request(start)?;
         if command.intent != PlanSessionIntent::Dispatch {
             return Err(Status::invalid_argument(
                 "DispatchSession requires PLAN_SESSION_INTENT_DISPATCH",
             ));
         }
         let (outbound, receiver) = mpsc::channel(STREAM_BUFFER);
-        let confirmation = Arc::new(SessionConfirmation::new(inbound, outbound.clone()));
+        let mut confirmation = GrpcConfirmationClient::new(
+            inbound,
+            outbound.clone(),
+            |prepared: &PreparedSessionDispatch| v1::DispatchSessionResponse {
+                value: Some(v1::dispatch_session_response::Value::Preflight(
+                    proto::session::dispatch_session_preflight(prepared),
+                )),
+            },
+            |message| match message.value {
+                Some(v1::dispatch_session_request::Value::Decision(decision)) => {
+                    Ok(decision.confirmed)
+                }
+                Some(v1::dispatch_session_request::Value::Start(_)) | None => {
+                    Err(ConfirmationClientError::UnexpectedMessage)
+                }
+            },
+        );
         let state = self.state.clone();
         let agent = AgentHarness::new(environment.clone());
         let session = TmuxHarness::new(environment);
@@ -102,18 +119,15 @@ impl SessionService for SessionApi {
                 &state.pool,
                 &state.home,
                 &clients,
-                confirmation.as_ref(),
+                &mut confirmation,
             )
             .await;
-            let item = match confirmation.take_failure() {
-                Some(status) => Err(status),
-                None => result
-                    .map(output::dispatched_session)
-                    .map(|result| v1::DispatchSessionServerMessage {
-                        value: Some(v1::dispatch_session_server_message::Value::Result(result)),
-                    })
-                    .map_err(dispatch_confirmed_status),
-            };
+            let item = result
+                .map(proto::session::dispatch_session_result)
+                .map(|result| v1::DispatchSessionResponse {
+                    value: Some(v1::dispatch_session_response::Value::Result(result)),
+                })
+                .map_err(dispatch_confirmed_status);
             let _ = outbound.send(item).await;
         });
         Ok(Response::new(Box::pin(ReceiverStream::new(receiver))))
@@ -146,89 +160,17 @@ fn process_environment(request: &mut v1::PlanSessionRequest) -> Result<ProcessEn
 }
 
 async fn next_start(
-    inbound: &mut Streaming<v1::DispatchSessionClientMessage>,
+    inbound: &mut Streaming<v1::DispatchSessionRequest>,
 ) -> Result<v1::PlanSessionRequest, Status> {
     let message = inbound
         .message()
         .await?
         .ok_or_else(|| Status::invalid_argument("session stream requires a start message"))?;
     match message.value {
-        Some(v1::dispatch_session_client_message::Value::Start(start)) => Ok(start),
-        Some(v1::dispatch_session_client_message::Value::Decision(_)) | None => Err(
+        Some(v1::dispatch_session_request::Value::Start(start)) => Ok(start),
+        Some(v1::dispatch_session_request::Value::Decision(_)) | None => Err(
             Status::invalid_argument("session stream must start with start"),
         ),
-    }
-}
-
-struct SessionConfirmation {
-    inbound: Mutex<Streaming<v1::DispatchSessionClientMessage>>,
-    outbound: mpsc::Sender<Result<v1::DispatchSessionServerMessage, Status>>,
-    failure: std::sync::Mutex<Option<Status>>,
-}
-
-impl SessionConfirmation {
-    fn new(
-        inbound: Streaming<v1::DispatchSessionClientMessage>,
-        outbound: mpsc::Sender<Result<v1::DispatchSessionServerMessage, Status>>,
-    ) -> Self {
-        Self {
-            inbound: Mutex::new(inbound),
-            outbound,
-            failure: std::sync::Mutex::new(None),
-        }
-    }
-
-    fn fail(&self, status: Status) {
-        if let Ok(mut failure) = self.failure.lock() {
-            *failure = Some(status);
-        }
-    }
-
-    fn take_failure(&self) -> Option<Status> {
-        self.failure.lock().ok().and_then(|mut value| value.take())
-    }
-}
-
-impl SessionConfirmationClient for SessionConfirmation {
-    fn confirm<'a>(&'a self, prepared: &'a PreparedSessionDispatch) -> BoxFuture<'a, bool> {
-        Box::pin(async move {
-            let preflight = v1::DispatchSessionServerMessage {
-                value: Some(v1::dispatch_session_server_message::Value::Preflight(
-                    output::session_preflight(prepared),
-                )),
-            };
-            if self.outbound.send(Ok(preflight)).await.is_err() {
-                self.fail(Status::cancelled("session confirmation stream closed"));
-                return false;
-            }
-            let mut inbound = self.inbound.lock().await;
-            let decision = tokio::time::timeout(CONFIRMATION_TIMEOUT, inbound.message()).await;
-            match decision {
-                Ok(Ok(Some(message))) => match message.value {
-                    Some(v1::dispatch_session_client_message::Value::Decision(decision)) => {
-                        decision.confirmed
-                    }
-                    Some(v1::dispatch_session_client_message::Value::Start(_)) | None => {
-                        self.fail(Status::invalid_argument(
-                            "session stream requires one decision after preflight",
-                        ));
-                        false
-                    }
-                },
-                Ok(Ok(None)) => {
-                    self.fail(Status::cancelled("session confirmation stream closed"));
-                    false
-                }
-                Ok(Err(status)) => {
-                    self.fail(status);
-                    false
-                }
-                Err(_) => {
-                    self.fail(Status::deadline_exceeded("session confirmation timed out"));
-                    false
-                }
-            }
-        })
     }
 }
 
@@ -236,6 +178,7 @@ fn dispatch_confirmed_status(error: DispatchConfirmedSessionError) -> Status {
     match error {
         DispatchConfirmedSessionError::Plan(error) => plan_session_status(&error),
         DispatchConfirmedSessionError::Dispatch(error) => dispatch_session_status(&error),
+        DispatchConfirmedSessionError::Confirmation(error) => confirmation_status(&error),
         DispatchConfirmedSessionError::DryRunPlan => Status::internal(error.to_string()),
     }
 }

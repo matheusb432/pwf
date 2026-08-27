@@ -1,9 +1,9 @@
 use std::error::Error;
 
 use pwf_models::project::{HomeDirectory, ProjectId, ProjectTasksPath};
+use pwf_wire::project::ProjectStateChange;
 
 use super::{ProjectRow, TaskLocationError, task_location};
-use crate::contract::project::{ProjectStateChange, ResumeProject};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ResumeProjectError {
@@ -15,20 +15,14 @@ pub enum ResumeProjectError {
     Unexpected {
         context: &'static str,
         #[source]
-        source: Box<dyn Error + Send + Sync>,
+        source: anyhow::Error,
     },
 }
 
 /// Resumes one project and reports whether persisted state changed.
-///
-/// # Errors
-///
-/// Returns [`ResumeProjectError::ProjectNotFound`] when no project has the requested ID. Returns
-/// [`ResumeProjectError::TaskLocation`] when a task path is invalid or collides with another
-/// project. Returns [`ResumeProjectError::Unexpected`] for database and persisted-data failures.
 #[cqrsy::command]
 pub async fn execute(
-    command: ResumeProject,
+    project_id: ProjectId,
     pool: &sqlx::SqlitePool,
     home: &HomeDirectory,
 ) -> Result<ProjectStateChange, ResumeProjectError> {
@@ -36,7 +30,7 @@ pub async fn execute(
         .begin_with("BEGIN IMMEDIATE")
         .await
         .map_err(|error| unexpected("starting project resume transaction", error))?;
-    let id = command.id.as_ref();
+    let id = project_id.as_ref();
     let candidate_path =
         sqlx::query_scalar::<_, String>("SELECT tasks_path FROM projects WHERE id = ?")
             .bind(id)
@@ -44,7 +38,7 @@ pub async fn execute(
             .await
             .map_err(|error| unexpected("reading resumed project task location", error))?
             .ok_or_else(|| ResumeProjectError::ProjectNotFound {
-                id: command.id.clone(),
+                id: project_id.clone(),
             })?;
     let candidate_path = ProjectTasksPath::try_new(candidate_path)
         .map_err(|error| unexpected("converting resumed project task location", error))?;
@@ -64,7 +58,7 @@ pub async fn execute(
         Ok((id, tasks_path))
     })
     .collect::<Result<Vec<_>, ResumeProjectError>>()?;
-    task_location::reject_collision(&command.id, &candidate_path, existing, home)?;
+    task_location::reject_collision(&project_id, &candidate_path, existing, home)?;
     let update = sqlx::query!(
         r#"
         UPDATE projects
@@ -98,7 +92,7 @@ pub async fn execute(
     .await
     .map_err(|error| unexpected("reading resumed project", error))?
     .ok_or(ResumeProjectError::ProjectNotFound {
-        id: command.id.clone(),
+        id: project_id.clone(),
     })?;
     let project = super::project_from_row(row)
         .map_err(|error| unexpected("converting resumed project", error))?;
@@ -119,7 +113,7 @@ fn unexpected(
 ) -> ResumeProjectError {
     ResumeProjectError::Unexpected {
         context,
-        source: Box::new(source),
+        source: anyhow::Error::new(source),
     }
 }
 
@@ -129,7 +123,6 @@ mod tests {
 
     use pwf_models::project::{HomeDirectory, ProjectId};
 
-    use super::*;
     use crate::{project::resume_project, testing::insert_project};
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
@@ -148,15 +141,9 @@ mod tests {
         )
         .await;
 
-        let error = resume_project::execute(
-            ResumeProject {
-                id: ProjectId::try_new("PWF").unwrap(),
-            },
-            &pool,
-            &home,
-        )
-        .await
-        .unwrap_err();
+        let error = resume_project::execute(ProjectId::try_new("PWF").unwrap(), &pool, &home)
+            .await
+            .unwrap_err();
 
         assert_eq!(
             error.to_string(),

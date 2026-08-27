@@ -1,9 +1,12 @@
 use anyhow::Context as _;
-use pwf_client::v1::{Project, ProjectStateChange};
+use pwf_client::v1::{
+    AddProjectResponse, GetProjectResponse, PauseProjectResponse, Project, RenameProjectResponse,
+    ResumeProjectResponse,
+};
 use serde::Serialize;
 
 #[derive(Serialize)]
-struct ProjectOutput {
+pub(super) struct ProjectOutput {
     id: String,
     title: String,
     source: ProjectSourceOutput,
@@ -42,8 +45,8 @@ struct ProjectStateChangeOutput {
     changed: bool,
 }
 
-pub(super) fn project(project: Project) -> anyhow::Result<String> {
-    render(&ProjectOutput::from(project)).map_err(Into::into)
+pub(super) fn render_response(response: impl Into<ProjectOutput>) -> anyhow::Result<String> {
+    render(&response.into()).map_err(Into::into)
 }
 
 pub(super) fn projects(projects: Vec<Project>) -> anyhow::Result<String> {
@@ -56,13 +59,20 @@ pub(super) fn projects(projects: Vec<Project>) -> anyhow::Result<String> {
     .map_err(Into::into)
 }
 
-pub(super) fn state_change(change: ProjectStateChange) -> anyhow::Result<String> {
-    let project = change
-        .project
-        .context("pwf-server returned a project state change without a project")?;
+pub(super) fn render_pause_project(response: PauseProjectResponse) -> anyhow::Result<String> {
+    state_change(response.project, response.changed)
+}
+
+pub(super) fn render_resume_project(response: ResumeProjectResponse) -> anyhow::Result<String> {
+    state_change(response.project, response.changed)
+}
+
+fn state_change(project: Option<Project>, changed: bool) -> anyhow::Result<String> {
+    let project =
+        project.context("pwf-server returned a project state change without a project")?;
     render(&ProjectStateChangeOutput {
         project: ProjectOutput::from(project),
-        changed: change.changed,
+        changed,
     })
     .map_err(Into::into)
 }
@@ -73,19 +83,78 @@ fn render(value: &impl Serialize) -> Result<String, serde_json::Error> {
 
 impl From<Project> for ProjectOutput {
     fn from(project: Project) -> Self {
+        Self::new(
+            project.id,
+            project.title,
+            project.source_value,
+            project.tasks_path,
+            project.created_at,
+            project.is_paused,
+        )
+    }
+}
+
+impl From<AddProjectResponse> for ProjectOutput {
+    fn from(response: AddProjectResponse) -> Self {
+        Self::new(
+            response.id,
+            response.title,
+            response.source_value,
+            response.tasks_path,
+            response.created_at,
+            response.is_paused,
+        )
+    }
+}
+
+impl From<GetProjectResponse> for ProjectOutput {
+    fn from(response: GetProjectResponse) -> Self {
+        Self::new(
+            response.id,
+            response.title,
+            response.source_value,
+            response.tasks_path,
+            response.created_at,
+            response.is_paused,
+        )
+    }
+}
+
+impl From<RenameProjectResponse> for ProjectOutput {
+    fn from(response: RenameProjectResponse) -> Self {
+        Self::new(
+            response.id,
+            response.title,
+            response.source_value,
+            response.tasks_path,
+            response.created_at,
+            response.is_paused,
+        )
+    }
+}
+
+impl ProjectOutput {
+    fn new(
+        id: String,
+        title: String,
+        source_value: String,
+        tasks_path: String,
+        created_at: String,
+        is_paused: bool,
+    ) -> Self {
         Self {
-            id: project.id,
-            title: project.title,
+            id,
+            title,
             source: ProjectSourceOutput {
                 kind: ProjectSourceKindOutput::Directory,
-                value: project.source_value,
+                value: source_value,
             },
             tasks: ProjectTasksOutput {
                 kind: ProjectTasksKindOutput::Directory,
-                path: project.tasks_path,
+                path: tasks_path,
             },
-            created_at: project.created_at,
-            is_paused: project.is_paused,
+            created_at,
+            is_paused,
         }
     }
 }

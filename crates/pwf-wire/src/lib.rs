@@ -1,4 +1,10 @@
-//! Versioned protobuf contract shared by the PWF gRPC client and server.
+//! Process-neutral operation contracts and their versioned protobuf representation.
+
+pub mod confirmation;
+pub mod note;
+pub mod project;
+pub mod proto;
+pub mod task;
 
 #[allow(
     clippy::default_trait_access,

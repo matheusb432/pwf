@@ -1,7 +1,7 @@
 use clap::Args;
 use pwf_client::{
     task::TaskClient,
-    v1::{GetTaskRequest, TaskReadFormat, task_read},
+    v1::{GetTaskRequest, TaskReadFormat, get_task_response},
 };
 
 use super::Identifier;
@@ -41,9 +41,9 @@ pub(super) async fn run(arguments: &Arguments, client: &TaskClient) -> anyhow::R
         .await
         .map_err(crate::rpc_error)?;
     match gotten.value {
-        Some(task_read::Value::Markdown(markdown)) => Ok(markdown),
-        Some(task_read::Value::Path(path)) => Ok(path),
-        Some(task_read::Value::Data(task)) => output::json(*task).map_err(Into::into),
+        Some(get_task_response::Value::Markdown(markdown)) => Ok(markdown),
+        Some(get_task_response::Value::Path(path)) => Ok(path),
+        Some(get_task_response::Value::Data(task)) => output::json(*task).map_err(Into::into),
         None => Err(anyhow::anyhow!("pwf-server returned an empty task read")),
     }
 }

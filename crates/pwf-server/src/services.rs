@@ -1,9 +1,10 @@
+mod confirmation;
 mod note;
 mod project;
 mod session;
 mod task;
 
-pub(crate) use note::NoteApi;
-pub(crate) use project::ProjectApi;
-pub(crate) use session::SessionApi;
-pub(crate) use task::TaskApi;
+pub(crate) use note::NoteGrpcService;
+pub(crate) use project::ProjectGrpcService;
+pub(crate) use session::SessionGrpcService;
+pub(crate) use task::TaskGrpcService;

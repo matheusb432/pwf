@@ -4,11 +4,9 @@ mod argv;
 mod claude;
 mod codex;
 
-use pwf_application::{
-    contract::task::session::{AgentAvailability, AgentLaunch, AgentProbe, ModelTierLookup},
-    ports::agent::{AgentClient, PreparedAgentLaunch},
-};
+use pwf_application::ports::agent::{AgentClient, PreparedAgentLaunch};
 use pwf_models::{session::Agent, task::EffortTier};
+use pwf_wire::task::session::{AgentAvailability, AgentLaunch, AgentProbe, ModelTierLookup};
 use thiserror::Error;
 
 use super::{

@@ -1,13 +1,13 @@
 use std::fmt::Write;
 
 use pwf_client::v1::{
-    BlockedByResolutionKind, BlockedByStatus, EffortTier, ListDetail, ListLayout, ListedTasks,
-    TaskIssue, TaskIssueKind, TaskStatus, TaskStatusFilter, TaskView,
+    BlockedByResolutionKind, BlockedByStatus, EffortTier, ListDetail, ListLayout,
+    ListTasksResponse, TaskIssue, TaskIssueKind, TaskStatus, TaskStatusFilter, TaskView,
 };
 
 use super::{render_status, render_task_summary};
 
-pub(in crate::task) fn render_list(result: &ListedTasks, location: &str, on: bool) -> String {
+pub(in crate::task) fn render_list(result: &ListTasksResponse, location: &str, on: bool) -> String {
     let detail = ListDetail::try_from(result.detail).unwrap_or(ListDetail::Unspecified);
     let status_filter =
         TaskStatusFilter::try_from(result.status_filter).unwrap_or(TaskStatusFilter::Unspecified);
@@ -454,7 +454,7 @@ mod tests {
 
     #[test]
     fn list_footer_mentions_hidden_count_and_escape_hatch() {
-        let result = ListedTasks {
+        let result = ListTasksResponse {
             tasks: vec![sample_task()],
             hidden: 2,
             project: None,
@@ -472,7 +472,7 @@ mod tests {
 
     #[test]
     fn listed_detail_selects_metadata_rendering_without_a_second_flag() {
-        let result = ListedTasks {
+        let result = ListTasksResponse {
             tasks: vec![sample_task()],
             hidden: 0,
             project: None,

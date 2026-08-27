@@ -1,18 +1,17 @@
+use pwf_models::project::ProjectId;
+use pwf_wire::project::{GetProject, ProjectStatusFilter};
+
 use super::{
     Project,
     get_project::{self, GetProjectError},
 };
-use crate::contract::project::{GetActiveProject, GetProject, ProjectStatusFilter};
 
 /// Reads one active managed project.
 #[cqrsy::query]
-pub async fn execute(
-    query: GetActiveProject,
-    pool: &sqlx::SqlitePool,
-) -> Result<Project, GetProjectError> {
+pub async fn execute(id: ProjectId, pool: &sqlx::SqlitePool) -> Result<Project, GetProjectError> {
     get_project::execute(
         GetProject {
-            id: query.id,
+            id,
             status: ProjectStatusFilter::ActiveOnly,
         },
         pool,

@@ -1,0 +1,5 @@
+schema_version = 1
+small_body_line_count = 8
+large_body_line_count = 4096
+list_task_count = 64
+allocation_sample_count = 30

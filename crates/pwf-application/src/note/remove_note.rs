@@ -1,15 +1,15 @@
 //! Removes one note from a managed project.
 
 use pwf_models::{
-    note::NoteSelector,
+    note::{NoteId, NoteSelector},
     project::{ProjectId, ProjectName},
+};
+use pwf_wire::{
+    note::RemoveNote,
+    project::{ProjectStatusFilter, ResolveProject},
 };
 
 use crate::{
-    contract::{
-        note::{RemoveNote, RemovedNote},
-        project::{ProjectStatusFilter, ResolveProject},
-    },
     ports::project_note::ProjectNoteStore,
     project::resolve_project::{self, ResolveProjectError},
 };
@@ -28,24 +28,17 @@ pub enum RemoveNoteError {
         id: pwf_models::note::NoteId,
         project: ProjectName,
     },
-    #[error("{0}")]
-    Store(#[source] Box<dyn std::error::Error + Send + Sync>),
+    #[error(transparent)]
+    Store(anyhow::Error),
 }
 
 /// Resolves and deletes one note after confirming its representation exists.
-///
-/// # Errors
-///
-/// Returns [`RemoveNoteError::ResolveProject`] when the project does not resolve,
-/// [`RemoveNoteError::ProjectMismatch`] when the note id names another project,
-/// [`RemoveNoteError::NoSuchNote`] when the note does not exist, or
-/// [`RemoveNoteError::Store`] when existence inspection or deletion fails.
 #[cqrsy::command]
 pub async fn execute(
     command: RemoveNote,
     store: &impl ProjectNoteStore,
     pool: &sqlx::SqlitePool,
-) -> Result<RemovedNote, RemoveNoteError> {
+) -> Result<NoteId, RemoveNoteError> {
     let project = resolve_project::execute(
         ResolveProject {
             selector: command.project_selector,
@@ -64,7 +57,7 @@ pub async fn execute(
             })?;
     let exists = store
         .note_exists(&project, &id)
-        .map_err(|error| RemoveNoteError::Store(Box::new(error)))?;
+        .map_err(|error| RemoveNoteError::Store(anyhow::Error::new(error)))?;
     if !exists {
         return Err(RemoveNoteError::NoSuchNote {
             id,
@@ -73,14 +66,12 @@ pub async fn execute(
     }
     store
         .delete_note(&project, &id)
-        .map_err(|error| RemoveNoteError::Store(Box::new(error)))?;
-    Ok(RemovedNote { id })
+        .map_err(|error| RemoveNoteError::Store(anyhow::Error::new(error)))?;
+    Ok(id)
 }
 
 #[cfg(test)]
 mod tests {
-    use std::error::Error as _;
-
     use pwf_models::{
         note::{NoteId, NoteTitle, ProjectNote},
         project::ProjectId,
@@ -125,7 +116,7 @@ mod tests {
             .await
             .unwrap();
 
-            assert_eq!(removed.id.as_ref(), "PWF-NOTE-0007");
+            assert_eq!(removed.as_ref(), "PWF-NOTE-0007");
             assert!(store.project_notes("pwf").is_empty());
         }
     }
@@ -182,12 +173,14 @@ mod tests {
     }
 
     #[test]
-    fn store_error_preserves_display_and_source() {
-        let error = RemoveNoteError::Store(Box::new(SentinelStoreError));
+    fn store_error_preserves_display_and_root_cause() {
+        let error = RemoveNoteError::Store(anyhow::Error::new(SentinelStoreError));
 
         assert_eq!(error.to_string(), "sentinel store failure");
-        let source = error.source().expect("store error retains its source");
+        let RemoveNoteError::Store(source) = error else {
+            panic!("expected the store error");
+        };
         assert!(source.downcast_ref::<SentinelStoreError>().is_some());
-        assert_eq!(source.to_string(), "sentinel store failure");
+        assert_eq!(source.root_cause().to_string(), "sentinel store failure");
     }
 }

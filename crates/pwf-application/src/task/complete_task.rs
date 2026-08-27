@@ -1,3 +1,5 @@
+use pwf_wire::task::{ClosedTask, ClosedTaskAction, CompleteTask};
+
 #[cfg(test)]
 use super::task_closure::review_task_prompt;
 use super::{
@@ -5,12 +7,9 @@ use super::{
     resolve_task_project::{self, ResolveTaskProjectError},
     task_closure::{self, TaskClosure},
 };
-use crate::{
-    contract::task::{ClosedTask, ClosedTaskAction, CompleteTask, ResolveTaskProject},
-    ports::{
-        clock::Clock,
-        task_record::{IndexEntryStore, IndexSectionStore, TaskStore},
-    },
+use crate::ports::{
+    clock::Clock,
+    task_record::{IndexEntryStore, IndexSectionStore, TaskStore},
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -28,13 +27,7 @@ pub async fn execute(
     pool: &sqlx::SqlitePool,
     clock: &impl Clock,
 ) -> Result<ClosedTask, CompleteTaskError> {
-    let project = resolve_task_project::execute(
-        ResolveTaskProject {
-            id: command.id.clone(),
-        },
-        pool,
-    )
-    .await?;
+    let project = resolve_task_project::execute(command.id.clone(), pool).await?;
     task_closure::close(
         &TaskClosure {
             action: ClosedTaskAction::Done,

@@ -1,6 +1,5 @@
 //! Authenticated loopback gRPC process root for PWF.
 
-mod conversion;
 mod observability;
 mod server;
 mod services;

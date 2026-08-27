@@ -1,10 +1,11 @@
 //! Lists one managed project's notes.
 
+use pwf_wire::{
+    note::{ListNotes, ListedNotes, NoteListLimit, NoteSummary},
+    project::{ProjectStatusFilter, ResolveProject},
+};
+
 use crate::{
-    contract::{
-        note::{ListNotes, ListedNote, ListedNotes, NoteListLimit},
-        project::{ProjectStatusFilter, ResolveProject},
-    },
     ports::project_note::ProjectNoteStore,
     project::resolve_project::{self, ResolveProjectError},
 };
@@ -15,16 +16,11 @@ const DEFAULT_NOTE_COUNT: usize = 10;
 pub enum ListNotesError {
     #[error(transparent)]
     ResolveProject(#[from] ResolveProjectError),
-    #[error("{0}")]
-    Store(#[source] Box<dyn std::error::Error + Send + Sync>),
+    #[error(transparent)]
+    Store(anyhow::Error),
 }
 
 /// Reads, orders, and caps one project's notes.
-///
-/// # Errors
-///
-/// Returns [`ListNotesError::ResolveProject`] when the project does not resolve or
-/// [`ListNotesError::Store`] when listing notes fails.
 #[cqrsy::query]
 pub async fn execute(
     query: ListNotes,
@@ -41,14 +37,14 @@ pub async fn execute(
     .await?;
     let mut notes = store
         .list_notes(&project)
-        .map_err(|error| ListNotesError::Store(Box::new(error)))?;
+        .map_err(|error| ListNotesError::Store(anyhow::Error::new(error)))?;
     notes.sort_by_key(|note| std::cmp::Reverse(note.id.number()));
     let shown = shown_count(query.limit, notes.len());
     let hidden = notes.len() - shown;
     let notes = notes
         .into_iter()
         .take(shown)
-        .map(|note| ListedNote {
+        .map(|note| NoteSummary {
             id: note.id,
             title: note.title,
         })
@@ -70,13 +66,11 @@ fn shown_count(limit: NoteListLimit, available: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use std::error::Error as _;
-
     use pwf_models::note::{NoteId, NoteTitle, ProjectNote};
+    use pwf_wire::note::ListedNotes;
 
     use super::{ListNotes, ListNotesError};
     use crate::{
-        contract::note::ListedNotes,
         note::list_notes,
         testing::{InMemoryStore, insert_project},
     };
@@ -178,12 +172,14 @@ mod tests {
     }
 
     #[test]
-    fn store_error_preserves_display_and_source() {
-        let error = ListNotesError::Store(Box::new(SentinelStoreError));
+    fn store_error_preserves_display_and_root_cause() {
+        let error = ListNotesError::Store(anyhow::Error::new(SentinelStoreError));
 
         assert_eq!(error.to_string(), "sentinel store failure");
-        let source = error.source().expect("store error retains its source");
+        let ListNotesError::Store(source) = error else {
+            panic!("expected the store error");
+        };
         assert!(source.downcast_ref::<SentinelStoreError>().is_some());
-        assert_eq!(source.to_string(), "sentinel store failure");
+        assert_eq!(source.root_cause().to_string(), "sentinel store failure");
     }
 }

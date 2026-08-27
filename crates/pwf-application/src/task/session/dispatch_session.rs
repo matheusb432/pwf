@@ -1,19 +1,13 @@
 //! Dispatches one confirmed task session.
 
-use std::error::Error;
-
 use pwf_models::task::TaskId;
+use pwf_wire::task::session::{DispatchedSession, PreparedSessionDispatch, SessionPlan};
 use thiserror::Error;
 
 use super::DispatchMode;
-use crate::{
-    contract::task::session::{
-        DispatchSession, DispatchedSession, PreparedSessionDispatch, SessionPlan,
-    },
-    ports::{
-        agent::{AgentClient, PreparedAgentLaunch},
-        session::{AgentCommand, SessionClient, SessionWindow},
-    },
+use crate::ports::{
+    agent::{AgentClient, PreparedAgentLaunch},
+    session::{AgentCommand, SessionClient, SessionWindow},
 };
 
 #[derive(Debug, Error)]
@@ -23,13 +17,10 @@ pub enum DispatchSessionError {
         session: String,
         window: TaskId,
         #[source]
-        source: Box<dyn Error + Send + Sync>,
+        source: anyhow::Error,
     },
-    #[error("{source}")]
-    AgentPreparation {
-        #[source]
-        source: Box<dyn Error + Send + Sync>,
-    },
+    #[error(transparent)]
+    AgentPreparation { source: anyhow::Error },
     #[error(
         "Agent backend failed after naming thread '{thread_id}': {source}. The named thread was left intact."
     )]
@@ -44,15 +35,15 @@ pub enum DispatchSessionError {
 
 #[cqrsy::command]
 pub fn execute(
-    command: DispatchSession,
+    prepared: PreparedSessionDispatch,
     agent_client: &impl AgentClient,
     session_client: &impl SessionClient,
 ) -> Result<DispatchedSession, DispatchSessionError> {
-    let PreparedSessionDispatch { plan, .. } = command.prepared;
+    let PreparedSessionDispatch { plan, .. } = prepared;
 
     let prepared = agent_client.prepare(&plan.launch).map_err(|source| {
         DispatchSessionError::AgentPreparation {
-            source: Box::new(source),
+            source: anyhow::Error::new(source),
         }
     })?;
     match prepared {
@@ -109,7 +100,7 @@ fn dispatch_multiplexer(
         .map_err(|source| DispatchSessionError::WindowOpen {
             session: session_name,
             window: target.task_id().clone(),
-            source: Box::new(source),
+            source: anyhow::Error::new(source),
         })?;
     Ok(DispatchedSession::WindowOpened {
         target,
@@ -129,17 +120,31 @@ mod tests {
     struct SentinelError;
 
     #[test]
-    fn named_thread_failures_retain_the_dispatch_source_chain() {
+    fn named_thread_failures_retain_the_typed_dispatch_and_root_errors() {
         let error = DispatchSessionError::NamedThreadBackend {
             thread_id: "thread-42".to_string(),
             source: Box::new(DispatchSessionError::AgentPreparation {
-                source: Box::new(SentinelError),
+                source: anyhow::Error::new(SentinelError),
             }),
         };
 
-        let dispatch_error = error.source().unwrap();
         assert_eq!(
-            dispatch_error.source().unwrap().to_string(),
+            error.source().unwrap().to_string(),
+            "inline process unavailable"
+        );
+        let DispatchSessionError::NamedThreadBackend {
+            source: dispatch_error,
+            ..
+        } = error
+        else {
+            panic!("expected the named thread error");
+        };
+        let DispatchSessionError::AgentPreparation { source } = *dispatch_error else {
+            panic!("expected the agent preparation error");
+        };
+        assert!(source.downcast_ref::<SentinelError>().is_some());
+        assert_eq!(
+            source.root_cause().to_string(),
             "inline process unavailable"
         );
     }

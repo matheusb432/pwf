@@ -49,8 +49,8 @@ fn normalize_section_label(label: &pwf_models::task::TaskSection) -> pwf_models:
 fn created_task_output(
     project: &pwf_models::project::Project,
     created: task_creation::CreatedTask,
-) -> crate::contract::task::AddedTask {
-    crate::contract::task::AddedTask {
+) -> pwf_wire::task::AddedTask {
+    pwf_wire::task::AddedTask {
         id: created.id,
         project: project.title.clone(),
         title: created.title,

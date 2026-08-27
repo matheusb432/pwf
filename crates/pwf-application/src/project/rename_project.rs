@@ -4,17 +4,15 @@ use pwf_models::project::{
     HomeDirectory, ProjectId, ProjectIndexIdentity, ProjectName, ProjectSource, ProjectTasks,
     ProjectTasksPath,
 };
+use pwf_wire::project::{GetProject, ProjectFields, ProjectStatusFilter, RenameProject};
 
 use super::{
     Project, ProjectRow, TaskLocationError,
     get_project::{self, GetProjectError},
     runtime_path, task_location,
 };
-use crate::{
-    contract::project::{GetProject, ProjectFields, ProjectStatusFilter, RenameProject},
-    ports::project_task_files::{
-        ProjectTaskFilesClient, ProjectTaskFilesRenameCommit, StagedProjectTaskFilesRename,
-    },
+use crate::ports::project_task_files::{
+    ProjectTaskFilesClient, ProjectTaskFilesRenameCommit, StagedProjectTaskFilesRename,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -33,17 +31,17 @@ pub enum RenameProjectError {
     Unexpected {
         context: &'static str,
         #[source]
-        source: Box<dyn Error + Send + Sync>,
+        source: anyhow::Error,
     },
     #[error("project rename staging failed: {source}")]
     StageTaskFiles {
         #[source]
-        source: Box<dyn Error + Send + Sync>,
+        source: anyhow::Error,
     },
     #[error("{rename_error}; removing staging directory failed: {discard_error}")]
     DiscardTaskFiles {
         rename_error: Box<Self>,
-        discard_error: Box<dyn Error + Send + Sync>,
+        discard_error: anyhow::Error,
     },
     #[error(
         "project rename committed, but removing filesystem backup {} failed: {source}; registry remains renamed",
@@ -52,17 +50,15 @@ pub enum RenameProjectError {
     BackupRetained {
         path: PathBuf,
         #[source]
-        source: Box<dyn Error + Send + Sync>,
+        source: anyhow::Error,
     },
     #[error("project rename filesystem commit failed: {commit_error}; registry rollback succeeded")]
-    TaskFilesCommitRolledBack {
-        commit_error: Box<dyn Error + Send + Sync>,
-    },
+    TaskFilesCommitRolledBack { commit_error: anyhow::Error },
     #[error(
         "project rename filesystem commit failed: {commit_error}; registry rollback failed: {rollback_error}"
     )]
     TaskFilesCommitRollbackFailed {
-        commit_error: Box<dyn Error + Send + Sync>,
+        commit_error: anyhow::Error,
         rollback_error: Box<Self>,
     },
 }
@@ -97,7 +93,7 @@ pub async fn execute(
             &next_identity,
         )
         .map_err(|source| RenameProjectError::StageTaskFiles {
-            source: Box::new(source),
+            source: anyhow::Error::new(source),
         })?;
     let renamed = match rename_registry(command, &current, pool, home).await {
         Ok(renamed) => renamed,
@@ -106,7 +102,7 @@ pub async fn execute(
                 Ok(()) => Err(rename_error),
                 Err(discard_error) => Err(RenameProjectError::DiscardTaskFiles {
                     rename_error: Box::new(rename_error),
-                    discard_error: Box::new(discard_error),
+                    discard_error: anyhow::Error::new(discard_error),
                 }),
             };
         }
@@ -130,10 +126,10 @@ pub async fn execute(
             .await;
             match rollback {
                 Ok(_) => Err(RenameProjectError::TaskFilesCommitRolledBack {
-                    commit_error: Box::new(commit_error),
+                    commit_error: anyhow::Error::new(commit_error),
                 }),
                 Err(rollback_error) => Err(RenameProjectError::TaskFilesCommitRollbackFailed {
-                    commit_error: Box::new(commit_error),
+                    commit_error: anyhow::Error::new(commit_error),
                     rollback_error: Box::new(rollback_error),
                 }),
             }
@@ -413,7 +409,7 @@ fn unexpected(
 ) -> RenameProjectError {
     RenameProjectError::Unexpected {
         context,
-        source: Box::new(source),
+        source: anyhow::Error::new(source),
     }
 }
 
@@ -425,9 +421,9 @@ mod tests {
         HomeDirectory, ProjectId, ProjectIndexIdentity, ProjectName, ProjectSource,
         ProjectSourceKind, ProjectSourceValue, ProjectTasks, ProjectTasksKind, ProjectTasksPath,
     };
+    use pwf_wire::project::ProjectFields;
 
     use crate::{
-        contract::project::ProjectFields,
         ports::project_task_files::{
             ProjectTaskFilesClient, ProjectTaskFilesRenameCommit, StagedProjectTaskFilesRename,
         },

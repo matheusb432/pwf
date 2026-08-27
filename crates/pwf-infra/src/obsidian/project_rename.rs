@@ -10,7 +10,7 @@ use pwf_application::ports::project_task_files::{
 use pwf_models::project::ProjectIndexIdentity;
 use walkdir::WalkDir;
 
-use super::{ObsidianStoreError, identity::project_index_frontmatter_id};
+use super::{MarkdownFile, ObsidianStoreError, identity::project_index_frontmatter_id};
 
 const DIRECTORY_DEPTH_MAX: usize = 64;
 const ENTRY_COUNT_MAX: usize = 100_000;
@@ -165,7 +165,7 @@ impl StagedProjectRename {
             Ok(()) => Ok(ProjectTaskFilesRenameCommit::Complete),
             Err(source) => Ok(ProjectTaskFilesRenameCommit::BackupRetained {
                 path: self.backup_directory,
-                source: Box::new(source),
+                source: anyhow::Error::new(source),
             }),
         }
     }
@@ -296,24 +296,27 @@ fn rewrite_markdown_file(
     current: &ProjectIndexIdentity,
     next: &ProjectIndexIdentity,
 ) -> Result<(), ObsidianStoreError> {
-    let bytes =
-        fs::read(path).map_err(|source| ObsidianStoreError::ReadStagedProjectRenameFile {
-            path: path.to_path_buf(),
-            source,
-        })?;
-    let markdown = String::from_utf8(bytes).map_err(|_| {
-        ObsidianStoreError::StagedProjectRenameFileNotUtf8 {
-            path: path.to_path_buf(),
-        }
-    })?;
-    let rewritten = rewrite_markdown_text(&markdown, current, next);
-    if rewritten != markdown {
-        fs::write(path, rewritten).map_err(|source| {
-            ObsidianStoreError::WriteStagedProjectRenameFile {
+    let mut file = MarkdownFile::open(path).map_err(|source| {
+        let source = source.into_io_error();
+        if source.kind() == io::ErrorKind::InvalidData {
+            ObsidianStoreError::StagedProjectRenameFileNotUtf8 {
+                path: path.to_path_buf(),
+            }
+        } else {
+            ObsidianStoreError::ReadStagedProjectRenameFile {
                 path: path.to_path_buf(),
                 source,
             }
-        })?;
+        }
+    })?;
+    let rewritten = rewrite_markdown_text(file.source(), current, next);
+    if rewritten != file.source() {
+        file.replace_source(rewritten);
+        file.save()
+            .map_err(|source| ObsidianStoreError::WriteStagedProjectRenameFile {
+                path: path.to_path_buf(),
+                source: source.into_io_error(),
+            })?;
     }
     Ok(())
 }

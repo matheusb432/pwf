@@ -1,4 +1,3 @@
-pub mod contract;
 pub mod note;
 pub mod ports;
 pub mod project;

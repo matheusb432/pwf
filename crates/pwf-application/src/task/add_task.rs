@@ -2,6 +2,10 @@ use pwf_models::{
     project::Project,
     task::{TaskId, TaskTitle, TaskTitleError},
 };
+use pwf_wire::{
+    project::{ProjectStatusFilter, ResolveProject},
+    task::{AddTask, AddTaskDiagnostics, AddTaskPromptKind, AddedTask},
+};
 
 pub use super::task_creation::CreateTaskError;
 use super::{
@@ -11,10 +15,6 @@ use super::{
     task_creation::{self, TaskCreation},
 };
 use crate::{
-    contract::{
-        project::{ListProjects, ProjectStatusFilter, ResolveProject},
-        task::{AddTask, AddTaskDiagnostics, AddTaskPromptKind, AddedTask},
-    },
     ports::{
         clock::Clock,
         task_record::{IndexEntryStore, IndexSectionStore, NewTask, TaskStore},
@@ -29,13 +29,13 @@ use crate::{
 pub enum AddTaskError {
     #[error(transparent)]
     ProjectResolution(#[from] ResolveProjectError),
-    #[error("{0}")]
-    QueryProject(#[source] Box<dyn std::error::Error + Send + Sync>),
+    #[error(transparent)]
+    QueryProject(anyhow::Error),
     #[error("cannot determine the next task ID for {project}: {source}")]
     AllocateTaskId {
         project: pwf_models::project::ProjectName,
         #[source]
-        source: Box<dyn std::error::Error + Send + Sync>,
+        source: anyhow::Error,
     },
     #[error("Unknown --blocked-by id(s): {}.", blocked_by::format_task_ids(ids))]
     UnknownBlockedByIds { ids: Vec<TaskId> },
@@ -43,7 +43,7 @@ pub enum AddTaskError {
     ReadBlockedBy {
         id: TaskId,
         #[source]
-        source: Box<dyn std::error::Error + Send + Sync>,
+        source: anyhow::Error,
     },
     #[error("task {target} cannot be blocked by itself ({blocker})")]
     SelfBlockedBy { target: TaskId, blocker: TaskId },
@@ -52,7 +52,7 @@ pub enum AddTaskError {
     #[error("task {task} at {path} has malformed blocked_by metadata {raw:?}: {reason}")]
     MalformedBlockedBy {
         task: TaskId,
-        path: Box<crate::contract::task::TaskNotePath>,
+        path: Box<pwf_wire::task::TaskNotePath>,
         raw: Box<str>,
         reason: Box<str>,
     },
@@ -67,11 +67,6 @@ pub enum AddTaskError {
 }
 
 /// Creates a task record and its open index entry for a mapped project.
-///
-/// # Errors
-///
-/// Returns [`AddTaskError`] when project preparation fails or the store cannot create the
-/// task and index entry.
 #[cqrsy::command]
 pub async fn execute(
     cmd: &AddTask,
@@ -91,19 +86,14 @@ pub async fn execute(
         .next_id(&project)
         .map_err(|source| AddTaskError::AllocateTaskId {
             project: project.title.clone(),
-            source: Box::new(source),
+            source: anyhow::Error::new(source),
         })?;
 
     let blocked_by = match cmd.blocked_by.as_ref() {
         Some(blocked_by) => {
-            let projects = list_projects::execute(
-                ListProjects {
-                    status: ProjectStatusFilter::IncludingPaused,
-                },
-                pool,
-            )
-            .await
-            .map_err(|error| AddTaskError::QueryProject(Box::new(error)))?;
+            let projects = list_projects::execute(ProjectStatusFilter::IncludingPaused, pool)
+                .await
+                .map_err(|error| AddTaskError::QueryProject(anyhow::Error::new(error)))?;
             Some(
                 blocked_by::validate_and_merge(&id, None, blocked_by, store, &projects)
                     .map_err(map_blocked_by_error)?,

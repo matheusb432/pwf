@@ -1,13 +1,13 @@
 use prost::Message as _;
 use pwf_client::{
     ClientError,
-    v1::{AddTaskFailureDetails, AddedTask},
+    v1::{AddTaskFailureDetails, AddTaskResponse},
 };
 
 pub(in crate::task) const TITLE_NORMALIZED_NOTICE: &str =
     "info: title normalized to keep metadata valid";
 
-pub(in crate::task) fn emit_created_section(task: &AddedTask) {
+pub(in crate::task) fn emit_created_section(task: &AddTaskResponse) {
     if let Some(section) = task.created_section.as_ref() {
         eprintln!("info: created `## {section}` section in {}", task.project);
     }

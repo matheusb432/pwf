@@ -22,7 +22,7 @@ use tower_http::{
 
 use crate::{
     AppState,
-    services::{NoteApi, ProjectApi, SessionApi, TaskApi},
+    services::{NoteGrpcService, ProjectGrpcService, SessionGrpcService, TaskGrpcService},
 };
 
 const MAX_CONCURRENT_REQUESTS_PER_CONNECTION: usize = 16;
@@ -32,10 +32,10 @@ const MAX_RESPONSE_MESSAGE_SIZE: usize = 4 * 1024 * 1024;
 const AUTHORIZATION_METADATA_KEY: &str = "authorization";
 const AUTHORIZATION_SCHEME: &str = "Bearer ";
 const APPLICATION_SERVICE_NAMES: [&str; 4] = [
-    ProjectServiceServer::<ProjectApi>::NAME,
-    NoteServiceServer::<NoteApi>::NAME,
-    TaskServiceServer::<TaskApi>::NAME,
-    SessionServiceServer::<SessionApi>::NAME,
+    ProjectServiceServer::<ProjectGrpcService>::NAME,
+    NoteServiceServer::<NoteGrpcService>::NAME,
+    TaskServiceServer::<TaskGrpcService>::NAME,
+    SessionServiceServer::<SessionGrpcService>::NAME,
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -104,6 +104,7 @@ pub async fn serve(
     state: AppState,
     lifecycle: ServerLifecycle,
 ) -> anyhow::Result<()> {
+    let incoming = TcpIncoming::from(listener).with_nodelay(Some(true));
     let (health_reporter, health_server) = tonic_health::server::health_reporter();
     publish_health(
         &health_reporter,
@@ -115,16 +116,16 @@ pub async fn serve(
     let health_server = health_server
         .max_decoding_message_size(MAX_REQUEST_MESSAGE_SIZE)
         .max_encoding_message_size(MAX_RESPONSE_MESSAGE_SIZE);
-    let project_server = ProjectServiceServer::new(ProjectApi::new(state.clone()))
+    let project_server = ProjectServiceServer::new(ProjectGrpcService::new(state.clone()))
         .max_decoding_message_size(MAX_REQUEST_MESSAGE_SIZE)
         .max_encoding_message_size(MAX_RESPONSE_MESSAGE_SIZE);
-    let note_server = NoteServiceServer::new(NoteApi::new(state.clone()))
+    let note_server = NoteServiceServer::new(NoteGrpcService::new(state.clone()))
         .max_decoding_message_size(MAX_REQUEST_MESSAGE_SIZE)
         .max_encoding_message_size(MAX_RESPONSE_MESSAGE_SIZE);
-    let task_server = TaskServiceServer::new(TaskApi::new(state.clone()))
+    let task_server = TaskServiceServer::new(TaskGrpcService::new(state.clone()))
         .max_decoding_message_size(MAX_REQUEST_MESSAGE_SIZE)
         .max_encoding_message_size(MAX_RESPONSE_MESSAGE_SIZE);
-    let session_server = SessionServiceServer::new(SessionApi::new(state))
+    let session_server = SessionServiceServer::new(SessionGrpcService::new(state))
         .max_decoding_message_size(MAX_REQUEST_MESSAGE_SIZE)
         .max_encoding_message_size(MAX_RESPONSE_MESSAGE_SIZE);
     let reflection_server = tonic_reflection::server::Builder::configure()
@@ -185,7 +186,7 @@ pub async fn serve(
         .add_service(note_server)
         .add_service(task_server)
         .add_service(session_server)
-        .serve_with_incoming_shutdown(TcpIncoming::from(listener), shutdown);
+        .serve_with_incoming_shutdown(incoming, shutdown);
     tokio::pin!(grpc_server);
 
     let result = tokio::select! {

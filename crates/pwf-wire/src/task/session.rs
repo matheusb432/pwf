@@ -4,7 +4,6 @@ use std::path::PathBuf;
 
 use pwf_models::{
     AppDate,
-    project::ProjectId,
     session::{
         Agent, AgentModel, DispatchMode, LaunchDirectives, LaunchPrompt, PushedPrompt,
         SessionEffort, SessionThreadTitle, SessionWorkingDirectory,
@@ -12,32 +11,7 @@ use pwf_models::{
     task::TaskId,
 };
 
-use super::{BlockedByIssue, BlockedByStatus, TaskHeading, TaskLaunch};
-
-/// Requests dispatch of one confirmed task session.
-pub struct DispatchSession {
-    pub prepared: PreparedSessionDispatch,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum DispatchSessionApiError {
-    #[error("Failed to run agent inline: {reason}")]
-    InlineFailed { reason: String },
-    #[error("Failed to open multiplexer window '{window}' in session '{session}': {reason}")]
-    WindowOpen {
-        session: String,
-        window: TaskId,
-        reason: String,
-    },
-    #[error("{message}")]
-    AgentPreparation { message: String },
-    #[error(
-        "Agent backend failed after naming thread '{thread_id}': {reason}. The named thread was left intact."
-    )]
-    NamedThreadBackend { thread_id: String, reason: String },
-    #[error("Agent command is empty.")]
-    EmptyAgentCommand,
-}
+use super::{BlockedByIssue, BlockedByStatus, TaskHeading};
 
 /// Requests one provider-neutral session plan.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,30 +31,6 @@ pub struct PlanSession {
 pub enum PlanSessionIntent {
     Dispatch,
     DryRun,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum PlanSessionApiError {
-    #[error("--id is required for session.")]
-    MissingId,
-    #[error("Task '{id}' is not launchable: {launch}")]
-    NotLaunchable { id: TaskId, launch: TaskLaunch },
-    #[error("Project path for '{project_id}' does not exist: {path}")]
-    ProjectPathMissing {
-        project_id: ProjectId,
-        path: SessionWorkingDirectory,
-    },
-    #[error("Session multiplexer is unavailable; cannot dispatch a pwf session.")]
-    MultiplexerNotFound,
-    #[error("tmux session '{session}' does not exist.\nStart it with:\n{start_command}")]
-    MultiplexerSessionMissing {
-        session: String,
-        start_command: String,
-    },
-    #[error("Agent command is empty.")]
-    EmptyAgentCommand,
-    #[error("{message}")]
-    Unexpected { message: String },
 }
 
 /// Describes a provider-neutral agent launch.

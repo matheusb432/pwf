@@ -1,7 +1,7 @@
 use clap::Args;
 use pwf_client::{
     task::{ConfirmedRequestError, TaskClient},
-    v1::ReopenTaskRequest,
+    v1::ReopenTaskStart,
 };
 
 use super::Identifier;
@@ -32,10 +32,7 @@ pub(super) async fn run(
     let confirmation_mode = console.confirmation_mode(arguments.assume_yes)?;
     let confirmation_client = CliConfirmationClient::new(console, confirmation_mode);
     let outcome = match client
-        .reopen_task(
-            ReopenTaskRequest { id: id.to_string() },
-            confirmation_client,
-        )
+        .reopen_task(ReopenTaskStart { id: id.to_string() }, confirmation_client)
         .await
     {
         Ok(outcome) => outcome,

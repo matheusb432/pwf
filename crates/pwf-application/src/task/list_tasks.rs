@@ -4,16 +4,16 @@ use pwf_models::{
     project::Project,
     task::{EffortTier, TaskId, TaskSection, TaskTags},
 };
+use pwf_wire::{
+    project::{ProjectStatusFilter, ResolveProject},
+    task::{
+        ListDetail, ListLayout, ListScope, ListTasks, ListedTasks, OrderDirection, OrderField,
+        OrderSpec, StatusFilter, TaskView,
+    },
+};
 
 use super::{blocked_by, tags, task_view};
 use crate::{
-    contract::{
-        project::{ListProjects, ProjectStatusFilter, ResolveProject},
-        task::{
-            ListDetail, ListLayout, ListScope, ListTasks, ListedTasks, OrderDirection, OrderField,
-            OrderSpec, StatusFilter, TaskView,
-        },
-    },
     ports::{
         project_task_location::ProjectTaskLocationClient,
         task_record::{TaskRecord, TaskStore},
@@ -49,21 +49,21 @@ impl From<tags::ParseTagsError> for TagParseError {
 #[derive(Debug, thiserror::Error)]
 pub enum ListTasksError {
     #[error("task read failed: {0}")]
-    ReadStore(#[source] Box<dyn std::error::Error + Send + Sync>),
+    ReadStore(#[source] anyhow::Error),
     #[error("managed project task path read failed: {0}")]
-    ReadProjectTaskPath(#[source] Box<dyn std::error::Error + Send + Sync>),
+    ReadProjectTaskPath(#[source] anyhow::Error),
     #[error("task {id} has invalid tags frontmatter: {source}")]
     InvalidTags {
         id: TaskId,
         #[source]
         source: TagParseError,
     },
-    #[error("{0}")]
-    InvalidTaskView(#[source] Box<dyn std::error::Error + Send + Sync>),
+    #[error(transparent)]
+    InvalidTaskView(anyhow::Error),
     #[error(transparent)]
     ResolveProject(#[from] crate::project::resolve_project::ResolveProjectError),
-    #[error("{0}")]
-    QueryProject(#[source] Box<dyn std::error::Error + Send + Sync>),
+    #[error(transparent)]
+    QueryProject(anyhow::Error),
 }
 
 struct ResolvedListTasks {
@@ -102,29 +102,19 @@ pub async fn execute(
         .map(|project| {
             store
                 .list(project)
-                .map_err(|error| ListTasksError::ReadStore(Box::new(error)))
+                .map_err(|error| ListTasksError::ReadStore(anyhow::Error::new(error)))
         })
         .transpose()?;
     let task_projects = match selected.as_ref() {
         Some(_) => Vec::new(),
-        None => list_projects::execute(
-            ListProjects {
-                status: ProjectStatusFilter::ActiveOnly,
-            },
-            pool,
-        )
-        .await
-        .map_err(|error| ListTasksError::QueryProject(Box::new(error)))?,
+        None => list_projects::execute(ProjectStatusFilter::ActiveOnly, pool)
+            .await
+            .map_err(|error| ListTasksError::QueryProject(anyhow::Error::new(error)))?,
     };
     let relationship_projects = if query.detail.includes_relationship_statuses() {
-        list_projects::execute(
-            ListProjects {
-                status: ProjectStatusFilter::IncludingPaused,
-            },
-            pool,
-        )
-        .await
-        .map_err(|error| ListTasksError::QueryProject(Box::new(error)))?
+        list_projects::execute(ProjectStatusFilter::IncludingPaused, pool)
+            .await
+            .map_err(|error| ListTasksError::QueryProject(anyhow::Error::new(error)))?
     } else {
         Vec::new()
     };
@@ -134,7 +124,7 @@ pub async fn execute(
         .as_ref()
         .map(|project| task_locations.project_task_path(project))
         .transpose()
-        .map_err(|source| ListTasksError::ReadProjectTaskPath(Box::new(source)))?;
+        .map_err(|source| ListTasksError::ReadProjectTaskPath(anyhow::Error::new(source)))?;
     let mut tasks = collect_list_tasks(&query, store, &task_projects, selected_records.as_deref())?;
 
     tasks.retain(|task| scope_includes(query.scope, task.section.as_ref()));
@@ -249,7 +239,7 @@ fn collect_list_tasks(
         } else {
             store
                 .list(project)
-                .map_err(|error| ListTasksError::ReadStore(Box::new(error)))?
+                .map_err(|error| ListTasksError::ReadStore(anyhow::Error::new(error)))?
         };
         for record in records {
             if !query.status_filter.includes(record.status) {
@@ -257,7 +247,7 @@ fn collect_list_tasks(
             }
             tasks.push(
                 task_view::enrich(&record, project.source.value())
-                    .map_err(|error| ListTasksError::InvalidTaskView(Box::new(error)))?
+                    .map_err(|error| ListTasksError::InvalidTaskView(anyhow::Error::new(error)))?
                     .into_task_view(project.title.clone()),
             );
         }
@@ -362,14 +352,14 @@ mod tests {
         project::{Project, ProjectName},
         task::{EffortTier, TaskId, TaskStatus, TaskTags},
     };
+    use pwf_wire::task::{
+        BlockedByResolution, BlockedByStatus, ListDetail, ListLayout, ListScope, ListedTasks,
+        OrderDirection, OrderField, OrderSpec, ProjectTaskPath, RawTaskTags, StatusFilter,
+        TaskIndexPath, TaskNotePath,
+    };
 
     use super::{ListTasks, ListTasksError};
     use crate::{
-        contract::task::{
-            BlockedByResolution, BlockedByStatus, ListDetail, ListLayout, ListScope, ListedTasks,
-            OrderDirection, OrderField, OrderSpec, ProjectTaskPath, RawTaskTags, StatusFilter,
-            TaskIndexPath, TaskNotePath,
-        },
         ports::{
             project_task_location::ProjectTaskLocationClient,
             task_record::{IndexPlacement, Materialization, TaskRecord},

@@ -4,33 +4,32 @@ use pwf_application::note::{
     remove_note::{self, RemoveNoteError},
     update_note::{self, UpdateNoteError},
 };
-use pwf_wire::v1::{self, note_service_server::NoteService};
+use pwf_wire::{
+    proto,
+    v1::{self, note_service_server::NoteService},
+};
 use tonic::{Request, Response, Status};
 
 use super::project::resolve_project_status;
-use crate::{
-    AppState,
-    conversion::{input, output},
-};
+use crate::AppState;
 
-#[derive(Clone)]
-pub(crate) struct NoteApi {
+pub(crate) struct NoteGrpcService {
     state: AppState,
 }
 
-impl NoteApi {
+impl NoteGrpcService {
     pub(crate) fn new(state: AppState) -> Self {
         Self { state }
     }
 }
 
 #[tonic::async_trait]
-impl NoteService for NoteApi {
+impl NoteService for NoteGrpcService {
     async fn add_note(
         &self,
         request: Request<v1::AddNoteRequest>,
-    ) -> Result<Response<v1::AddedNote>, Status> {
-        let command = input::add_note(request.into_inner())?;
+    ) -> Result<Response<v1::AddNoteResponse>, Status> {
+        let command = proto::note::add_note_request(request.into_inner())?;
         add_note::execute(
             command,
             &self.state.store,
@@ -38,7 +37,7 @@ impl NoteService for NoteApi {
             &self.state.clock,
         )
         .await
-        .map(|note| output::added_note(&note))
+        .map(proto::note::add_note_response)
         .map(Response::new)
         .map_err(add_note_status)
     }
@@ -46,11 +45,11 @@ impl NoteService for NoteApi {
     async fn list_notes(
         &self,
         request: Request<v1::ListNotesRequest>,
-    ) -> Result<Response<v1::ListedNotes>, Status> {
-        let query = input::list_notes(request.into_inner())?;
+    ) -> Result<Response<v1::ListNotesResponse>, Status> {
+        let query = proto::note::list_notes_request(request.into_inner())?;
         list_notes::execute(query, &self.state.store, &self.state.pool)
             .await
-            .map(output::listed_notes)
+            .map(proto::note::list_notes_response)
             .map(Response::new)
             .map_err(list_notes_status)
     }
@@ -58,11 +57,11 @@ impl NoteService for NoteApi {
     async fn remove_note(
         &self,
         request: Request<v1::RemoveNoteRequest>,
-    ) -> Result<Response<v1::RemovedNote>, Status> {
-        let command = input::remove_note(request.into_inner())?;
+    ) -> Result<Response<v1::RemoveNoteResponse>, Status> {
+        let command = proto::note::remove_note_request(request.into_inner())?;
         remove_note::execute(command, &self.state.store, &self.state.pool)
             .await
-            .map(|note| output::removed_note(&note))
+            .map(|id| proto::note::remove_note_response(&id))
             .map(Response::new)
             .map_err(remove_note_status)
     }
@@ -70,11 +69,11 @@ impl NoteService for NoteApi {
     async fn update_note(
         &self,
         request: Request<v1::UpdateNoteRequest>,
-    ) -> Result<Response<v1::UpdatedNote>, Status> {
-        let command = input::update_note(request.into_inner())?;
+    ) -> Result<Response<v1::UpdateNoteResponse>, Status> {
+        let command = proto::note::update_note_request(request.into_inner())?;
         update_note::execute(command, &self.state.store, &self.state.pool)
             .await
-            .map(|note| output::updated_note(&note))
+            .map(proto::note::update_note_response)
             .map(Response::new)
             .map_err(update_note_status)
     }
