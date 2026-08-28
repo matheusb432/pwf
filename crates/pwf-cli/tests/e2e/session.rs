@@ -8,8 +8,8 @@ use crate::support::{SessionFixture, task_id, task_json};
 
 #[test]
 fn session_dispatches_the_task_without_persisting_ephemeral_context() {
-    let fixture = SessionFixture::new();
-    let task_before = task_json(&fixture.database, &task_id("PWF-0001"));
+    let fixture = SessionFixture::new().unwrap();
+    let task_before = task_json(&fixture.database, &task_id("FOO-0001").unwrap()).unwrap();
 
     fixture
         .database
@@ -17,7 +17,7 @@ fn session_dispatches_the_task_without_persisting_ephemeral_context() {
         .args([
             "session",
             "--id",
-            "PWF-0001",
+            "FOO-0001",
             "--agent",
             "claude",
             "--yes",
@@ -36,7 +36,7 @@ fn session_dispatches_the_task_without_persisting_ephemeral_context() {
         "{dispatch:?}"
     );
     assert_eq!(
-        task_json(&fixture.database, &task_id("PWF-0001")),
+        task_json(&fixture.database, &task_id("FOO-0001").unwrap()).unwrap(),
         task_before
     );
 }

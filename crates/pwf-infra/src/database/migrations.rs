@@ -109,13 +109,9 @@ mod tests {
 
     #[tokio::test]
     async fn readiness_is_read_only_and_migration_is_idempotent() {
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:")
-            .await
-            .expect("connect to in-memory SQLite database");
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
 
-        let error = check_database_ready(&pool)
-            .await
-            .expect_err("a fresh database must not be ready");
+        let error = check_database_ready(&pool).await.unwrap_err();
         assert!(error.to_string().contains("pwf-migrator"));
 
         let migration_table_exists: bool = sqlx::query_scalar(
@@ -123,18 +119,12 @@ mod tests {
         )
         .fetch_one(&pool)
         .await
-        .expect("read migration table state");
+        .unwrap();
         assert!(!migration_table_exists);
 
-        crate::database::migrate_database(&pool)
-            .await
-            .expect("first migration succeeds");
-        crate::database::migrate_database(&pool)
-            .await
-            .expect("second migration succeeds");
-        check_database_ready(&pool)
-            .await
-            .expect("migrated database is ready");
+        crate::database::migrate_database(&pool).await.unwrap();
+        crate::database::migrate_database(&pool).await.unwrap();
+        check_database_ready(&pool).await.unwrap();
     }
 
     #[test]

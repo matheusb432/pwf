@@ -21,13 +21,13 @@ fn app_date(raw: &str) -> AppDate {
 }
 
 async fn registered_store(pool: &sqlx::SqlitePool) -> InMemoryStore {
-    insert_project(pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
-    InMemoryStore::default().with_project_id("pwf", "PWF")
+    insert_project(pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
+    InMemoryStore::default().with_project_id("foo", "FOO")
 }
 
 fn command() -> AddTask {
     AddTask {
-        project_selector: "pwf".parse().unwrap(),
+        project_selector: "foo".parse().unwrap(),
         prompt: AddTaskPrompt::structured(
             task_title("ship it"),
             TaskLanes::try_new(
@@ -53,16 +53,16 @@ async fn add_inserts_record_and_open_index_entry(pool: sqlx::SqlitePool) {
         .await
         .unwrap();
 
-    assert_eq!(added.id.as_ref(), "PWF-0001");
-    assert_eq!(added.project.as_ref(), "pwf");
+    assert_eq!(added.id.as_ref(), "FOO-0001");
+    assert_eq!(added.project.as_ref(), "foo");
     assert_eq!(added.title.as_ref(), "ship it");
     assert_eq!(added.created_section, None);
-    let entries = store.entries("pwf");
+    let entries = store.entries("foo");
     assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].id.as_ref(), "PWF-0001");
+    assert_eq!(entries[0].id.as_ref(), "FOO-0001");
     assert_eq!(entries[0].state, IndexEntryState::Open);
-    assert_eq!(store.tasks("pwf").len(), 1);
-    assert_eq!(store.tasks("pwf")[0].created, Some(app_date("2026-07-26")));
+    assert_eq!(store.tasks("foo").len(), 1);
+    assert_eq!(store.tasks("foo")[0].created, Some(app_date("2026-07-26")));
 }
 
 #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
@@ -76,7 +76,7 @@ async fn add_forwards_an_explicit_task_title(pool: sqlx::SqlitePool) {
         .unwrap();
 
     assert_eq!(added.title.as_ref(), "fix  metadata");
-    assert_eq!(store.tasks("pwf")[0].title, "fix  metadata");
+    assert_eq!(store.tasks("foo")[0].title, "fix  metadata");
 }
 
 #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
@@ -90,7 +90,7 @@ async fn add_inferred_prompt_title_is_normalized_once(pool: sqlx::SqlitePool) {
         .unwrap();
 
     assert_eq!(added.title.as_ref(), "fix  metadata");
-    assert_eq!(store.tasks("pwf")[0].title, "fix  metadata");
+    assert_eq!(store.tasks("foo")[0].title, "fix  metadata");
 }
 
 #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
@@ -100,7 +100,7 @@ async fn add_uses_the_clock_date(pool: sqlx::SqlitePool) {
         .await
         .unwrap();
 
-    assert_eq!(store.tasks("pwf")[0].created, Some(app_date("2026-07-26")));
+    assert_eq!(store.tasks("foo")[0].created, Some(app_date("2026-07-26")));
 }
 
 #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
@@ -140,7 +140,7 @@ async fn structured_add_renders_lane_values_without_shorthand_parsing(pool: sqlx
 
     assert_eq!(added.title.as_ref(), "machine prompt");
     assert_eq!(
-        store.tasks("pwf")[0].body,
+        store.tasks("foo")[0].body,
         "## Goals\n\n- keep /d literal\n\n## Context\n\n- known context"
     );
 }
@@ -149,7 +149,7 @@ async fn structured_add_renders_lane_values_without_shorthand_parsing(pool: sqlx
 async fn add_does_not_report_created_section_for_existing_empty_region(pool: sqlx::SqlitePool) {
     let store = registered_store(&pool)
         .await
-        .with_sections("pwf", &["Human"]);
+        .with_sections("foo", &["Human"]);
 
     let mut command = command();
     command.index_section = IndexSection::Human;
@@ -179,7 +179,7 @@ async fn add_reports_a_blocked_by_id_from_an_unknown_project(pool: sqlx::SqliteP
 
 #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
 async fn add_accepts_a_blocker_from_a_paused_project(pool: sqlx::SqlitePool) {
-    insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
+    insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
     insert_project(
         &pool,
         "PAU",
@@ -190,7 +190,7 @@ async fn add_accepts_a_blocker_from_a_paused_project(pool: sqlx::SqlitePool) {
     )
     .await;
     let store = InMemoryStore::default()
-        .with_project_id("pwf", "PWF")
+        .with_project_id("foo", "FOO")
         .with_project("paused-project", vec![task_record("PAU-0001")]);
     let mut command = command();
     command.blocked_by = Some(blocked_by(&["PAU-0001"]));
@@ -199,21 +199,21 @@ async fn add_accepts_a_blocker_from_a_paused_project(pool: sqlx::SqlitePool) {
         .await
         .unwrap();
 
-    assert_eq!(added.id.as_ref(), "PWF-0001");
+    assert_eq!(added.id.as_ref(), "FOO-0001");
 }
 
 #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
 async fn add_rejects_a_cycle_through_its_prospective_id_without_writing(pool: sqlx::SqlitePool) {
-    insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
+    insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
     let origin = crate::ports::task_record::TaskRecord {
-        blocked_by: stored_blocked_by(&["PWF-0002"]),
-        ..task_record("PWF-0001")
+        blocked_by: stored_blocked_by(&["FOO-0002"]),
+        ..task_record("FOO-0001")
     };
     let store = InMemoryStore::default()
-        .with_project_id("pwf", "PWF")
-        .with_project("pwf", vec![origin]);
+        .with_project_id("foo", "FOO")
+        .with_project("foo", vec![origin]);
     let mut command = command();
-    command.blocked_by = Some(blocked_by(&["PWF-0001"]));
+    command.blocked_by = Some(blocked_by(&["FOO-0001"]));
 
     let error = add_task::execute(&command, &store, &pool, &FixedClock)
         .await
@@ -221,14 +221,14 @@ async fn add_rejects_a_cycle_through_its_prospective_id_without_writing(pool: sq
 
     assert_eq!(
         error.to_string(),
-        "blocked_by cycle: PWF-0002 -> PWF-0001 -> PWF-0002"
+        "blocked_by cycle: FOO-0002 -> FOO-0001 -> FOO-0002"
     );
     assert!(matches!(
         &error,
         AddTaskError::BlockedByCycle { path }
             if path.iter().map(AsRef::as_ref).collect::<Vec<_>>()
-                == ["PWF-0002", "PWF-0001", "PWF-0002"]
+                == ["FOO-0002", "FOO-0001", "FOO-0002"]
     ));
-    assert_eq!(store.tasks("pwf").len(), 1);
-    assert!(store.entries("pwf").is_empty());
+    assert_eq!(store.tasks("foo").len(), 1);
+    assert!(store.entries("foo").is_empty());
 }

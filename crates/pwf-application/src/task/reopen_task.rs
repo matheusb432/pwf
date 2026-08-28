@@ -152,10 +152,8 @@ mod tests {
             &'a mut self,
             confirmation: &'a ReopenTaskConfirmation,
         ) -> futures::future::BoxFuture<'a, Result<bool, ConfirmationClientError>> {
-            Box::pin(async move {
-                self.recorded.push(confirmation.clone());
-                Ok(self.accepted)
-            })
+            self.recorded.push(confirmation.clone());
+            Box::pin(futures::future::ready(Ok(self.accepted)))
         }
     }
 

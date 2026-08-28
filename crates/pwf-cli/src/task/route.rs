@@ -99,11 +99,14 @@ mod tests {
 
     #[test]
     fn project_route_preserves_list_options() {
-        let ResolvedCommand::List(list) = resolve(&arguments(&["pwf"])) else {
-            panic!("expected routed list");
+        let list = match resolve(&arguments(&["foo"])) {
+            ResolvedCommand::List(list) => Some(list),
+            ResolvedCommand::RejectUnsupportedTaskCreation => None,
         };
+        assert!(list.is_some());
+        let list = list.unwrap();
 
-        assert_eq!(list.project.as_ref().map(AsRef::as_ref), Some("pwf"));
+        assert_eq!(list.project.as_ref().map(AsRef::as_ref), Some("foo"));
         assert!(list.long);
         assert!(matches!(list.section, Some(SectionChoice::Future)));
         assert!(!list.all);
@@ -115,22 +118,18 @@ mod tests {
                 direction: OrderDirection::Asc as i32,
             })
         );
-        assert_eq!(
-            list.status.expect("explicit status").filter(),
-            TaskStatusFilter::All
-        );
+        assert_eq!(list.status.unwrap().filter(), TaskStatusFilter::All);
     }
 
     #[test]
     fn create_and_multiword_routes_reach_the_rejection_owner() {
-        let ResolvedCommand::RejectUnsupportedTaskCreation = resolve(&arguments(&["add"])) else {
-            panic!("expected rejected create");
-        };
-
-        let ResolvedCommand::RejectUnsupportedTaskCreation =
-            resolve(&arguments(&["pwf", "build", "it"]))
-        else {
-            panic!("expected rejected create");
-        };
+        assert!(matches!(
+            resolve(&arguments(&["add"])),
+            ResolvedCommand::RejectUnsupportedTaskCreation
+        ));
+        assert!(matches!(
+            resolve(&arguments(&["foo", "build", "it"])),
+            ResolvedCommand::RejectUnsupportedTaskCreation
+        ));
     }
 }

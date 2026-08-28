@@ -97,9 +97,9 @@ mod tests {
             created: Some(app_date("2026-07-07")),
             body: "do the thing".to_string(),
             source: String::new(),
-            locator: TaskNotePath::new(format!("/notes/pwf/{id}.md").into()),
+            locator: TaskNotePath::new(format!("/notes/foo/{id}.md").into()),
             placement: Some(IndexPlacement {
-                index_path: TaskIndexPath::new("/notes/pwf/pwf.md".into()),
+                index_path: TaskIndexPath::new("/notes/foo/foo.md".into()),
                 line: NonZeroUsize::new(7).unwrap(),
             }),
             ..task_record(id)
@@ -116,39 +116,39 @@ mod tests {
 
     #[test]
     fn finds_open_item_enriched_with_launchability() {
-        let store = InMemoryStore::default().with_project("pwf", vec![record("PWF-0001")]);
-        let project = project("PWF", "pwf");
+        let store = InMemoryStore::default().with_project("foo", vec![record("FOO-0001")]);
+        let project = project("FOO", "foo");
 
-        let task = find(&store, &project, "PWF-0001").unwrap();
+        let task = find(&store, &project, "FOO-0001").unwrap();
 
-        assert_eq!(task.id.as_ref(), "PWF-0001");
-        assert_eq!(task.project.as_ref(), "pwf");
-        assert_eq!(task.project_path.as_ref(), "/work/pwf");
+        assert_eq!(task.id.as_ref(), "FOO-0001");
+        assert_eq!(task.project.as_ref(), "foo");
+        assert_eq!(task.project_path.as_ref(), "/work/foo");
         assert_eq!(task.prompt.as_ref(), "do the thing");
         assert!(task.launch.is_ready());
     }
 
     #[test]
     fn missing_task_reports_the_typed_id() {
-        let store = InMemoryStore::default().with_project("pwf", vec![record("PWF-0001")]);
-        let project = project("PWF", "pwf");
+        let store = InMemoryStore::default().with_project("foo", vec![record("FOO-0001")]);
+        let project = project("FOO", "foo");
 
-        let error = find(&store, &project, "PWF-9999").unwrap_err();
+        let error = find(&store, &project, "FOO-9999").unwrap_err();
 
         assert!(matches!(
             error,
-            FindActiveTaskError::TaskNotFound { ref id } if id.as_ref() == "PWF-9999"
+            FindActiveTaskError::TaskNotFound { ref id } if id.as_ref() == "FOO-9999"
         ));
-        assert_eq!(error.to_string(), "Active task not found: PWF-9999");
+        assert_eq!(error.to_string(), "Active task not found: FOO-9999");
     }
 
     #[test]
     fn duplicate_link_in_one_project_is_ambiguous() {
         let store = InMemoryStore::default()
-            .with_project("pwf", vec![record("PWF-0001"), record("PWF-0001")]);
-        let project = project("PWF", "pwf");
+            .with_project("foo", vec![record("FOO-0001"), record("FOO-0001")]);
+        let project = project("FOO", "foo");
 
-        let error = find(&store, &project, "PWF-0001").unwrap_err();
+        let error = find(&store, &project, "FOO-0001").unwrap_err();
 
         assert!(matches!(error, FindActiveTaskError::AmbiguousId { .. }));
     }
@@ -158,22 +158,22 @@ mod tests {
         let done = TaskRecord {
             status: TaskStatus::Done,
             placement: None,
-            ..record("PWF-0001")
+            ..record("FOO-0001")
         };
         let unlinked_active = TaskRecord {
             placement: None,
-            ..record("PWF-0002")
+            ..record("FOO-0002")
         };
-        let store = InMemoryStore::default().with_project("pwf", vec![done, unlinked_active]);
-        let project = project("PWF", "pwf");
+        let store = InMemoryStore::default().with_project("foo", vec![done, unlinked_active]);
+        let project = project("FOO", "foo");
 
         assert_eq!(
-            find(&store, &project, "PWF-0002").unwrap().id.as_ref(),
-            "PWF-0002"
+            find(&store, &project, "FOO-0002").unwrap().id.as_ref(),
+            "FOO-0002"
         );
-        assert_matches!(find(&store, &project, "PWF-0001"), Err(
+        assert_matches!(find(&store, &project, "FOO-0001"), Err(
             FindActiveTaskError::TaskNotFound { id }
-        ) if id.as_ref() == "PWF-0001");
+        ) if id.as_ref() == "FOO-0001");
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]

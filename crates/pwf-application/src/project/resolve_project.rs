@@ -148,7 +148,7 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn title_match_precedes_project_id_match(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "PWF", "alt", "/work/pwf", "/tasks/pwf", false).await;
+        insert_project(&pool, "FOO", "alt", "/work/foo", "/tasks/foo", false).await;
         insert_project(&pool, "ALT", "other", "/work/alt", "/tasks/alt", false).await;
 
         let project = resolve_project::execute(
@@ -161,19 +161,19 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(project.id, ProjectId::try_new("PWF").unwrap());
+        assert_eq!(project.id, ProjectId::try_new("FOO").unwrap());
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn active_resolution_excludes_paused_projects_from_matches_and_known_names(
         pool: sqlx::SqlitePool,
     ) {
-        insert_project(&pool, "PWF", "pwf", "/work/pwf", "/tasks/pwf", true).await;
+        insert_project(&pool, "FOO", "foo", "/work/foo", "/tasks/foo", true).await;
         insert_project(&pool, "ALT", "other", "/work/alt", "/tasks/alt", false).await;
 
         let error = resolve_project::execute(
             ResolveProject {
-                selector: "pwf".parse().unwrap(),
+                selector: "foo".parse().unwrap(),
                 status: ProjectStatusFilter::ActiveOnly,
             },
             &pool,
@@ -184,7 +184,7 @@ mod tests {
         assert!(matches!(
             error,
             ResolveProjectError::Unknown { selector, known }
-                if selector.as_ref() == "pwf"
+                if selector.as_ref() == "foo"
                     && known.iter().map(AsRef::as_ref).collect::<Vec<_>>() == ["other"]
         ));
     }

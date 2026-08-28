@@ -278,6 +278,7 @@ fn start_thread(
         &json!({
             "cwd": project_path,
             "model": model,
+            "historyMode": "legacy",
             "config": {
                 "model_reasoning_effort": effort.as_str(),
                 "features": {
@@ -394,18 +395,7 @@ pub(super) mod test_fixture {
                     .join("src/session/codex_app_server/app_server_stub.sh"),
                 &binary,
             )?;
-            match mode {
-                AppServerFixtureMode::Successful => {}
-                AppServerFixtureMode::NamingFailure { cleanup_fails } => {
-                    fs::write(directory.path().join("naming-fails"), "")?;
-                    if cleanup_fails {
-                        fs::write(directory.path().join("cleanup-fails"), "")?;
-                    }
-                }
-                AppServerFixtureMode::OversizedResponseLine => {
-                    fs::write(directory.path().join("oversized-response-line"), "")?;
-                }
-            }
+            configure_fixture(directory.path(), mode)?;
             Ok(Self {
                 _directory: directory,
                 binary,
@@ -419,6 +409,27 @@ pub(super) mod test_fixture {
                 .map(serde_json::from_str)
                 .collect::<serde_json::Result<Vec<_>>>()?)
         }
+    }
+
+    fn configure_fixture(path: &std::path::Path, mode: AppServerFixtureMode) -> Result<()> {
+        match mode {
+            AppServerFixtureMode::Successful => Ok(()),
+            AppServerFixtureMode::NamingFailure { cleanup_fails } => {
+                fs::write(path.join("naming-fails"), "")?;
+                write_cleanup_failure_marker(path, cleanup_fails)
+            }
+            AppServerFixtureMode::OversizedResponseLine => {
+                fs::write(path.join("oversized-response-line"), "")?;
+                Ok(())
+            }
+        }
+    }
+
+    fn write_cleanup_failure_marker(path: &std::path::Path, enabled: bool) -> Result<()> {
+        if enabled {
+            fs::write(path.join("cleanup-fails"), "")?;
+        }
+        Ok(())
     }
 }
 
@@ -434,7 +445,7 @@ mod tests {
     use crate::session::codex_reasoning_effort::CodexReasoningEffort;
 
     const OWNED_THREAD_ID: &str = "thr-owned-by-this-request";
-    const TITLE: &str = "PWF-0153 - exact thread ownership";
+    const TITLE: &str = "FOO-0001 - sample task";
 
     #[test]
     fn naming_failure_deletes_only_thread_id_returned_by_start() -> Result<()> {
@@ -443,7 +454,7 @@ mod tests {
         let Err(error) = start_and_name_thread(
             fixture.binary.to_str().context("fixture path is UTF-8")?,
             TITLE,
-            "/projects/pwf",
+            "/projects/foo",
             Some("gpt-5.6"),
             CodexReasoningEffort::Max,
         ) else {
@@ -467,8 +478,9 @@ mod tests {
         assert_eq!(
             requests[2]["params"],
             json!({
-                "cwd": "/projects/pwf",
+                "cwd": "/projects/foo",
                 "model": "gpt-5.6",
+                "historyMode": "legacy",
                 "config": {
                     "model_reasoning_effort": "max",
                     "features": {
@@ -505,7 +517,7 @@ mod tests {
         let Err(error) = start_and_name_thread(
             fixture.binary.to_str().context("fixture path is UTF-8")?,
             TITLE,
-            "/projects/pwf",
+            "/projects/foo",
             None,
             CodexReasoningEffort::High,
         ) else {
@@ -539,7 +551,7 @@ mod tests {
         let Err(error) = start_and_name_thread(
             fixture.binary.to_str().context("fixture path is UTF-8")?,
             TITLE,
-            "/projects/pwf",
+            "/projects/foo",
             None,
             CodexReasoningEffort::High,
         ) else {

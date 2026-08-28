@@ -67,6 +67,7 @@ fn plain(prompt: &str) -> ParsedPrompt {
 /// Parses one-line lane syntax into a [`ParsedPrompt`].
 ///
 /// Text before the first lane marker is the title and is not copied into Goals.
+#[must_use]
 pub fn parse(prompt: &str) -> ParsedPrompt {
     let tokens: Vec<&str> = prompt.split_whitespace().collect();
     if !tokens.iter().any(|token| is_marker(token)) {
@@ -79,20 +80,20 @@ pub fn parse(prompt: &str) -> ParsedPrompt {
     let mut seen_first_marker = false;
 
     for token in tokens {
-        if is_marker(token) {
-            if seen_first_marker {
-                push(&mut parsed, current, words_to_text(&buffer));
-            } else {
-                let title = words_to_text(&buffer);
-                parsed.title.clone_from(&title);
-            }
-            buffer.clear();
-            seen_first_marker = true;
-            if let Some(section) = Section::from_marker(token) {
-                current = section;
-            }
-        } else {
+        if !is_marker(token) {
             buffer.push(token);
+            continue;
+        }
+        if seen_first_marker {
+            push(&mut parsed, current, words_to_text(&buffer));
+        } else {
+            let title = words_to_text(&buffer);
+            parsed.title.clone_from(&title);
+        }
+        buffer.clear();
+        seen_first_marker = true;
+        if let Some(section) = Section::from_marker(token) {
+            current = section;
         }
     }
 

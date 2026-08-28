@@ -91,12 +91,12 @@ mod tests {
     #[test]
     fn invalid_persisted_project_values_retain_the_model_error() {
         let error = project_from_row(ProjectRow {
-            id: "PWF".to_string(),
+            id: "FOO".to_string(),
             title: "x".repeat(201),
             source_kind: "directory".to_string(),
-            source_value: "/work/pwf".to_string(),
+            source_value: "/work/foo".to_string(),
             tasks_kind: "directory".to_string(),
-            tasks_path: "/tasks/pwf".to_string(),
+            tasks_path: "/tasks/foo".to_string(),
             created_at: "2026-07-25T00:00:00.000Z".to_string(),
             is_paused: false,
         })

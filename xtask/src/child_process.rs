@@ -139,9 +139,9 @@ mod tests {
 
     #[test]
     fn deadline_terminates_and_reaps_a_sleeping_process_tree() {
-        let directory = tempfile::tempdir().expect("temporary fixture directory");
+        let directory = tempfile::tempdir().unwrap();
         let ready_path = directory.path().join("grandchild-port");
-        let executable = std::env::current_exe().expect("current test executable");
+        let executable = std::env::current_exe().unwrap();
         let mut command = Command::new(executable);
         command
             .args([
@@ -153,8 +153,7 @@ mod tests {
             .env(GRANDCHILD_READY_ENVIRONMENT, &ready_path);
 
         let started = Instant::now();
-        let error = run(command, "sleeping process tree", Duration::from_secs(2))
-            .expect_err("sleeping process tree must time out");
+        let error = run(command, "sleeping process tree", Duration::from_secs(2)).unwrap_err();
 
         assert!(
             error
@@ -164,20 +163,18 @@ mod tests {
         assert!(started.elapsed() < Duration::from_secs(8));
 
         let port = std::fs::read_to_string(&ready_path)
-            .expect("sleeping grandchild readiness")
+            .unwrap()
             .parse::<u16>()
-            .expect("sleeping grandchild port");
+            .unwrap();
         let address = ("127.0.0.1", port);
         let release_deadline = Instant::now() + Duration::from_secs(1);
-        loop {
-            match TcpListener::bind(address) {
-                Ok(_) => break,
-                Err(_error) if Instant::now() < release_deadline => {
-                    thread::sleep(Duration::from_millis(10));
-                }
-                Err(error) => panic!("sleeping grandchild remains alive: {error}"),
-            }
+        while Instant::now() < release_deadline && TcpListener::bind(address).is_err() {
+            thread::sleep(Duration::from_millis(10));
         }
+        assert!(
+            TcpListener::bind(address).is_ok(),
+            "sleeping grandchild remains alive"
+        );
     }
 
     #[test]
@@ -187,9 +184,8 @@ mod tests {
             return;
         }
 
-        let ready_path =
-            std::env::var_os(GRANDCHILD_READY_ENVIRONMENT).expect("grandchild readiness path");
-        let executable = std::env::current_exe().expect("current test executable");
+        let ready_path = std::env::var_os(GRANDCHILD_READY_ENVIRONMENT).unwrap();
+        let executable = std::env::current_exe().unwrap();
         let mut grandchild = Command::new(executable)
             .args([
                 "--exact",
@@ -198,7 +194,7 @@ mod tests {
             ])
             .env(GRANDCHILD_READY_ENVIRONMENT, &ready_path)
             .spawn()
-            .expect("sleeping grandchild");
+            .unwrap();
 
         let readiness_deadline = Instant::now() + Duration::from_secs(5);
         while !Path::new(&ready_path).is_file() {
@@ -220,9 +216,9 @@ mod tests {
         let Some(ready_path) = std::env::var_os(GRANDCHILD_READY_ENVIRONMENT) else {
             return;
         };
-        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("grandchild listener");
-        let port = listener.local_addr().expect("grandchild address").port();
-        std::fs::write(ready_path, port.to_string()).expect("grandchild readiness");
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::fs::write(ready_path, port.to_string()).unwrap();
 
         thread::sleep(Duration::from_secs(10));
     }

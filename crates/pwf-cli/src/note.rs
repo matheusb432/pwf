@@ -236,7 +236,7 @@ mod tests {
     use super::{PositionalNote, render_added, render_listed, render_removed, render_updated};
 
     fn identifier(number: u32) -> String {
-        format!("PWF-NOTE-{number:04}")
+        format!("FOO-NOTE-{number:04}")
     }
 
     #[test]
@@ -246,31 +246,31 @@ mod tests {
                 id: identifier(1),
                 title: "remember milk".to_string(),
             }),
-            "Added PWF-NOTE-0001 :: remember milk\n"
+            "Added FOO-NOTE-0001 :: remember milk\n"
         );
         assert_eq!(
             render_removed(&RemoveNoteResponse { id: identifier(1) }),
-            "Removed PWF-NOTE-0001\n"
+            "Removed FOO-NOTE-0001\n"
         );
         assert_eq!(
             render_updated(&UpdateNoteResponse {
                 id: identifier(1),
                 title: "remember oat milk".to_string(),
             }),
-            "Updated PWF-NOTE-0001 :: remember oat milk\n"
+            "Updated FOO-NOTE-0001 :: remember oat milk\n"
         );
     }
 
     #[test]
     fn listed_results_render_empty_lines_and_hidden_hint() {
-        let project = "pwf".to_string();
+        let project = "foo".to_string();
         assert_eq!(
             render_listed(&ListNotesResponse {
                 project: project.clone(),
                 notes: Vec::new(),
                 hidden: 0,
             }),
-            "No notes for pwf.\n"
+            "No notes for foo.\n"
         );
         assert_eq!(
             render_listed(&ListNotesResponse {
@@ -287,7 +287,7 @@ mod tests {
                 ],
                 hidden: 3,
             }),
-            "PWF-NOTE-0002 :: second\nPWF-NOTE-0001 :: first\n... and 3 more; run 'pwf note <proj> ls -n 0' to show all\n"
+            "FOO-NOTE-0002 :: second\nFOO-NOTE-0001 :: first\n... and 3 more; run 'pwf note <proj> ls -n 0' to show all\n"
         );
     }
 

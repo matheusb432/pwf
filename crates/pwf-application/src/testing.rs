@@ -81,10 +81,9 @@ impl InMemoryStore {
 
     /// Registers the project ID used by task insertion.
     pub fn with_project_id(self, project: &str, project_id: &str) -> Self {
-        self.lock().project_ids.insert(
-            project_name(project),
-            project_id.parse().expect("valid test project ID"),
-        );
+        self.lock()
+            .project_ids
+            .insert(project_name(project), project_id.parse().unwrap());
         self
     }
 
@@ -94,7 +93,7 @@ impl InMemoryStore {
             project_name(project),
             labels
                 .iter()
-                .map(|label| TaskSection::try_new(*label).expect("valid test section"))
+                .map(|label| TaskSection::try_new(*label).unwrap())
                 .collect(),
         );
         self
@@ -145,17 +144,17 @@ impl InMemoryStore {
     }
 
     fn lock(&self) -> MutexGuard<'_, InMemoryState> {
-        self.state.lock().expect("in-memory store lock poisoned")
+        self.state.lock().unwrap()
     }
 }
 
 fn project_name(project: &str) -> ProjectName {
-    ProjectName::try_new(project).expect("test project name is non-empty")
+    ProjectName::try_new(project).unwrap()
 }
 
 pub(crate) fn project(project_id: &str, title: &str) -> Project {
     Project {
-        id: project_id.parse().expect("valid test project ID"),
+        id: project_id.parse().unwrap(),
         title: project_name(title),
         source: ProjectSource::new(
             ProjectSourceKind::Directory,
@@ -171,12 +170,12 @@ pub(crate) fn project(project_id: &str, title: &str) -> Project {
 }
 
 pub(crate) fn app_date(raw: impl AsRef<str>) -> AppDate {
-    raw.as_ref().parse().expect("valid test application date")
+    raw.as_ref().parse().unwrap()
 }
 
 pub(crate) fn task_record(id: &str) -> TaskRecord {
     TaskRecord {
-        id: TaskId::try_new(id).expect("valid test task ID"),
+        id: TaskId::try_new(id).unwrap(),
         title: "tray gui".to_string(),
         status: TaskStatus::Active,
         created: Some(app_date("2026-01-01")),
@@ -202,25 +201,25 @@ pub(crate) fn stored_blocked_by(ids: &[&str]) -> StoredBlockedBy {
     StoredBlockedBy::Valid(blocked_by(ids))
 }
 
-pub(crate) const PWF_0001_SOURCE: &str = "---\nid: PWF-0001\nstatus: active\ntitle: do the thing\nproject: pwf\ncreated: 2026-06-20\n---\n\n## Goals\n- do the thing\n";
+pub(crate) const FOO_0001_SOURCE: &str = "---\nid: FOO-0001\nstatus: active\ntitle: do the thing\nproject: foo\ncreated: 2026-06-20\n---\n\n## Goals\n- do the thing\n";
 
 pub(crate) fn staged_task() -> (InMemoryStore, Vec<Project>) {
     let record = TaskRecord {
         title: "do the thing".to_string(),
         created: Some(app_date("2026-06-20")),
         body: "\n## Goals\n- do the thing\n".to_string(),
-        source: PWF_0001_SOURCE.to_string(),
-        locator: pwf_wire::task::TaskNotePath::new("/notes/pwf/PWF-0001.md".into()),
-        ..task_record("PWF-0001")
+        source: FOO_0001_SOURCE.to_string(),
+        locator: pwf_wire::task::TaskNotePath::new("/notes/foo/FOO-0001.md".into()),
+        ..task_record("FOO-0001")
     };
     (
-        InMemoryStore::default().with_project("pwf", vec![record]),
-        vec![project("PWF", "pwf")],
+        InMemoryStore::default().with_project("foo", vec![record]),
+        vec![project("FOO", "foo")],
     )
 }
 
 pub(crate) fn staged_missing_task() -> (InMemoryStore, Vec<Project>) {
-    let expected = "/notes/pwf/PWF-0002.md".to_string();
+    let expected = "/notes/foo/FOO-0002.md".to_string();
     let record = TaskRecord {
         title: "ghost".to_string(),
         created: None,
@@ -230,11 +229,11 @@ pub(crate) fn staged_missing_task() -> (InMemoryStore, Vec<Project>) {
         materialization: Materialization::MissingNote {
             expected: pwf_wire::task::TaskNotePath::new(expected.into()),
         },
-        ..task_record("PWF-0002")
+        ..task_record("FOO-0002")
     };
     (
-        InMemoryStore::default().with_project("pwf", vec![record]),
-        vec![project("PWF", "pwf")],
+        InMemoryStore::default().with_project("foo", vec![record]),
+        vec![project("FOO", "foo")],
     )
 }
 
@@ -260,11 +259,7 @@ impl TaskStore for InMemoryStore {
 
     fn next_id(&self, project: &Project) -> Result<TaskId, Self::Error> {
         let state = self.lock();
-        let project_id = state
-            .project_ids
-            .get(&project.title)
-            .cloned()
-            .expect("stage a project ID via with_project_id before insert");
+        let project_id = state.project_ids.get(&project.title).cloned().unwrap();
         let next = state
             .tasks
             .get(&project.title)
@@ -274,7 +269,7 @@ impl TaskStore for InMemoryStore {
             .max()
             .unwrap_or(0)
             + 1;
-        Ok(TaskId::try_new(format!("{project_id}-{next:04}")).expect("allocated id"))
+        Ok(TaskId::try_new(format!("{project_id}-{next:04}")).unwrap())
     }
 
     /// Materializes an active record at the exact prevalidated task ID.
@@ -320,10 +315,7 @@ impl TaskStore for InMemoryStore {
     fn update(&self, project: &Project, id: &TaskId, patch: TaskPatch) -> Result<(), Self::Error> {
         let mut state = self.lock();
         let tasks = state.tasks.entry(project.title.clone()).or_default();
-        let record = tasks
-            .iter_mut()
-            .find(|task| task.id == *id)
-            .expect("update of unknown id");
+        let record = tasks.iter_mut().find(|task| task.id == *id).unwrap();
         if let Some(status) = patch.status {
             record.status = status;
         }
@@ -446,7 +438,7 @@ impl ProjectNoteStore for InMemoryStore {
             .or_default()
             .iter_mut()
             .find(|note| note.id == *id)
-            .expect("update of unknown project note");
+            .unwrap();
         note.title = patch.title;
         Ok(())
     }
@@ -538,9 +530,7 @@ impl InMemoryStore {
         let mut state = self.lock();
         if let Some(section) = entry.section.as_ref() {
             let sections = state.sections.entry(project.title.clone()).or_default();
-            if !sections.contains(section) {
-                sections.push(section.clone());
-            }
+            push_unseen_section(sections, section);
         }
         let entries = state.entries.entry(project.title.clone()).or_default();
         match entries.iter_mut().find(|existing| existing.id == entry.id) {
@@ -548,6 +538,36 @@ impl InMemoryStore {
             None => entries.push(entry),
         }
     }
+}
+
+fn push_unseen_section(sections: &mut Vec<TaskSection>, section: &TaskSection) {
+    if !sections.contains(section) {
+        sections.push(section.clone());
+    }
+}
+
+fn rename_section(
+    sections: &mut [TaskSection],
+    current_label: &TaskSection,
+    new_label: &TaskSection,
+) {
+    if let Some(existing) = sections
+        .iter_mut()
+        .find(|section| *section == current_label)
+    {
+        *existing = new_label.clone();
+    }
+}
+
+fn rename_entry_sections(
+    entries: &mut [IndexEntry],
+    current_label: &TaskSection,
+    new_label: &TaskSection,
+) {
+    entries
+        .iter_mut()
+        .filter(|entry| entry.section.as_ref() == Some(current_label))
+        .for_each(|entry| entry.section = Some(new_label.clone()));
 }
 
 impl IndexSectionStore for InMemoryStore {
@@ -573,18 +593,10 @@ impl IndexSectionStore for InMemoryStore {
     ) -> Result<(), Self::Error> {
         let mut state = self.lock();
         if let Some(sections) = state.sections.get_mut(&project.title) {
-            for existing in sections.iter_mut() {
-                if existing == current_label {
-                    *existing = new_label.clone();
-                }
-            }
+            rename_section(sections, current_label, new_label);
         }
         if let Some(entries) = state.entries.get_mut(&project.title) {
-            for entry in entries.iter_mut() {
-                if entry.section.as_ref() == Some(current_label) {
-                    entry.section = Some(new_label.clone());
-                }
-            }
+            rename_entry_sections(entries, current_label, new_label);
         }
         Ok(())
     }

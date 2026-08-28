@@ -87,6 +87,7 @@ pub fn dispatch_session_preflight(
     }
 }
 
+#[must_use]
 pub fn dispatch_session_result(session: session::DispatchedSession) -> v1::DispatchedSession {
     match session {
         session::DispatchedSession::Aborted { task_id } => v1::DispatchedSession {

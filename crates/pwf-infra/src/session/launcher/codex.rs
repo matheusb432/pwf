@@ -98,7 +98,7 @@ fn resume_argv(plan: CodexLaunchPlan, thread_id: String) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     #[cfg(unix)]
-    use anyhow::{Context as _, Result};
+    use anyhow::{Context as _, Result, bail};
     use pwf_application::ports::agent::PreparedAgentLaunch;
     use pwf_models::{
         session::{
@@ -115,11 +115,11 @@ mod tests {
 
     #[test]
     #[cfg(unix)]
-    fn prepares_named_id_model_and_hostile_values_as_separate_arguments() -> Result<()> {
+    fn prepares_resumable_named_thread_and_hostile_values_as_separate_arguments() -> Result<()> {
         let fixture = AppServerFixture::successful()?;
         let launch = AgentLaunch {
             agent: Agent::Codex,
-            task_id: TaskId::try_new("PWF-0068")?,
+            task_id: TaskId::try_new("FOO-0001")?,
             title: SessionThreadTitle::new("\"; thread/delete everything".to_string()),
             project_path: SessionWorkingDirectory::new("/projects".to_string()),
             prompt: LaunchPrompt::new(
@@ -138,7 +138,7 @@ mod tests {
             thread_id,
         } = prepared
         else {
-            panic!("Codex preparation must preserve its named thread")
+            bail!("Codex preparation must preserve its named thread")
         };
 
         assert_eq!(
@@ -157,8 +157,13 @@ mod tests {
         );
         assert_eq!(thread_id, OWNED_THREAD_ID);
         let requests = fixture.requests()?;
+        assert_eq!(
+            requests[0]["params"]["capabilities"]["experimentalApi"],
+            true
+        );
         assert_eq!(requests[2]["params"]["cwd"], "/projects");
         assert_eq!(requests[2]["params"]["model"], "gpt-8-billion");
+        assert_eq!(requests[2]["params"]["historyMode"], "legacy");
         assert_eq!(
             requests[2]["params"]["config"]["model_reasoning_effort"],
             "max"

@@ -129,16 +129,19 @@ pub struct ProjectIndexIdentity {
 
 impl ProjectIndexIdentity {
     /// Creates a project index identity.
+    #[must_use]
     pub fn new(id: ProjectId, title: ProjectName) -> Self {
         Self { id, title }
     }
 
     /// Returns the uppercase project ID.
+    #[must_use]
     pub fn id(&self) -> &ProjectId {
         &self.id
     }
 
     /// Returns the configured project name stored as the index title.
+    #[must_use]
     pub fn title(&self) -> &ProjectName {
         &self.title
     }
@@ -189,16 +192,19 @@ pub struct ProjectSource {
 
 impl ProjectSource {
     /// Creates a project source location.
+    #[must_use]
     pub fn new(kind: ProjectSourceKind, value: ProjectSourceValue) -> Self {
         Self { kind, value }
     }
 
     /// Returns the source location kind.
+    #[must_use]
     pub fn kind(&self) -> ProjectSourceKind {
         self.kind
     }
 
     /// Returns the source location value.
+    #[must_use]
     pub fn value(&self) -> &ProjectSourceValue {
         &self.value
     }
@@ -249,16 +255,19 @@ pub struct ProjectTasks {
 
 impl ProjectTasks {
     /// Creates a project tasks location.
+    #[must_use]
     pub fn new(kind: ProjectTasksKind, path: ProjectTasksPath) -> Self {
         Self { kind, path }
     }
 
     /// Returns the tasks location kind.
+    #[must_use]
     pub fn kind(&self) -> ProjectTasksKind {
         self.kind
     }
 
     /// Returns the tasks location path.
+    #[must_use]
     pub fn path(&self) -> &ProjectTasksPath {
         &self.path
     }
@@ -322,7 +331,7 @@ mod tests {
 
     #[test]
     fn project_id_parses_two_to_four_ascii_letters() {
-        for (raw, expected) in [(" pw ", "PW"), (" pwf ", "PWF"), (" tool ", "TOOL")] {
+        for (raw, expected) in [(" pw ", "PW"), (" foo ", "FOO"), (" tool ", "TOOL")] {
             assert_eq!(raw.parse::<ProjectId>().unwrap().as_ref(), expected);
         }
         for raw in ["P", "TOOLS", "P1", "P_E"] {
@@ -336,9 +345,9 @@ mod tests {
         assert_eq!(name.as_ref(), "companion-project");
         assert_eq!(name.project_id(), None);
 
-        let id = " pwf ".parse::<ProjectSelector>().unwrap();
-        assert_eq!(id.as_ref(), "pwf");
-        assert_eq!(id.project_id().map(AsRef::as_ref), Some("PWF"));
+        let id = " foo ".parse::<ProjectSelector>().unwrap();
+        assert_eq!(id.as_ref(), "foo");
+        assert_eq!(id.project_id().map(AsRef::as_ref), Some("FOO"));
         assert_eq!(
             " tool "
                 .parse::<ProjectSelector>()
@@ -355,7 +364,7 @@ mod tests {
         for value in ["project", " Project ", "PROJECT"] {
             assert!(ProjectName::try_new(value).is_err());
         }
-        assert_eq!(ProjectName::try_new("pwf").unwrap().as_ref(), "pwf");
+        assert_eq!(ProjectName::try_new("foo").unwrap().as_ref(), "foo");
     }
 
     #[test]

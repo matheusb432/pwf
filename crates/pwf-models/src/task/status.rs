@@ -10,6 +10,7 @@ pub enum TaskStatus {
 }
 
 impl TaskStatus {
+    #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Active => "active",

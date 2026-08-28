@@ -4,6 +4,7 @@ use pwf_models::task::{EffortTier, TaskStatus};
 
 use crate::{confirmation, task, v1};
 
+#[must_use]
 pub fn add_task_response(task: task::AddedTask) -> v1::AddTaskResponse {
     v1::AddTaskResponse {
         id: task.id.to_string(),
@@ -26,6 +27,7 @@ pub fn add_task_failure_details(
     }
 }
 
+#[must_use]
 pub fn edit_task_response(task: task::EditedTask) -> v1::EditTaskResponse {
     let task::EditedTask { id, project, title } = task;
     v1::EditTaskResponse {
@@ -71,6 +73,7 @@ pub fn complete_task_response(task: task::ClosedTask) -> v1::CompleteTaskRespons
     }
 }
 
+#[must_use]
 pub fn reopen_task_result(task: task::ReopenedTask) -> v1::ReopenedTask {
     match task {
         task::ReopenedTask::Reopened { id, project } => v1::ReopenedTask {
@@ -91,6 +94,7 @@ pub fn reopen_task_result(task: task::ReopenedTask) -> v1::ReopenedTask {
     }
 }
 
+#[must_use]
 pub fn remove_task_result(task: task::RemovedTaskOutcome) -> v1::RemovedTaskOutcome {
     match task {
         task::RemovedTaskOutcome::Removed(value) => v1::RemovedTaskOutcome {
@@ -112,6 +116,7 @@ pub fn remove_task_result(task: task::RemovedTaskOutcome) -> v1::RemovedTaskOutc
     }
 }
 
+#[must_use]
 pub fn get_task_response(task: task::TaskRead) -> v1::GetTaskResponse {
     let value = match task {
         task::TaskRead::Markdown(value) => v1::get_task_response::Value::Markdown(value),
@@ -149,6 +154,7 @@ pub fn list_tasks_response(tasks: task::ListedTasks) -> v1::ListTasksResponse {
     }
 }
 
+#[must_use]
 pub fn remove_task_confirmation(
     confirmation: &confirmation::RemoveTaskConfirmation,
 ) -> v1::RemoveTaskConfirmation {
@@ -161,6 +167,7 @@ pub fn remove_task_confirmation(
     }
 }
 
+#[must_use]
 pub fn reopen_task_confirmation(
     confirmation: &confirmation::ReopenTaskConfirmation,
 ) -> v1::ReopenTaskConfirmation {

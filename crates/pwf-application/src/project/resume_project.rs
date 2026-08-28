@@ -130,7 +130,7 @@ mod tests {
         let home_path = PathBuf::from("/home/tester");
         let home = HomeDirectory::new(home_path.clone());
         let resolved_path = home_path.join("tasks/shared");
-        insert_project(&pool, "PWF", "pwf", "/work/PWF", "~/tasks/shared", true).await;
+        insert_project(&pool, "FOO", "foo", "/work/foo", "~/tasks/shared", true).await;
         insert_project(
             &pool,
             "ALT",
@@ -141,19 +141,19 @@ mod tests {
         )
         .await;
 
-        let error = resume_project::execute(ProjectId::try_new("PWF").unwrap(), &pool, &home)
+        let error = resume_project::execute(ProjectId::try_new("FOO").unwrap(), &pool, &home)
             .await
             .unwrap_err();
 
         assert_eq!(
             error.to_string(),
             format!(
-                "managed projects ALT and PWF resolve to the same task location: {}",
+                "managed projects ALT and FOO resolve to the same task location: {}",
                 resolved_path.display()
             )
         );
         let paused_at: Option<String> =
-            sqlx::query_scalar("SELECT paused_at FROM projects WHERE id = 'PWF'")
+            sqlx::query_scalar("SELECT paused_at FROM projects WHERE id = 'FOO'")
                 .fetch_one(&pool)
                 .await
                 .unwrap();

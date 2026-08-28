@@ -8,7 +8,7 @@ use pwf_application::ports::project_task_files::{
     ProjectTaskFilesClient, ProjectTaskFilesRenameCommit, StagedProjectTaskFilesRename,
 };
 use pwf_models::project::ProjectIndexIdentity;
-use walkdir::WalkDir;
+use walkdir::{DirEntry, WalkDir};
 
 use super::{MarkdownFile, ObsidianStoreError, identity::project_index_frontmatter_id};
 
@@ -124,51 +124,63 @@ impl StagedProjectRename {
         self,
         remove_backup: impl FnOnce(&Path) -> io::Result<()>,
     ) -> Result<ProjectTaskFilesRenameCommit, ObsidianStoreError> {
-        reject_existing_destination(&self.destination)?;
-        reject_existing_backup(&self.backup_directory)?;
-        if let Err(source_error) = fs::rename(&self.source, &self.backup_directory) {
-            let _ = fs::remove_dir_all(&self.staging_directory);
-            return Err(ObsidianStoreError::MoveProjectRenameSource {
-                from: self.source,
-                to: self.backup_directory,
-                source: source_error,
-            });
-        }
-        if let Err(install_source) = fs::rename(&self.staging_directory, &self.destination) {
-            return match fs::rename(&self.backup_directory, &self.source) {
-                Ok(()) => match fs::remove_dir_all(&self.staging_directory) {
-                    Ok(()) => Err(ObsidianStoreError::InstallStagedProjectRename {
-                        from: self.staging_directory,
-                        to: self.destination,
-                        source: install_source,
-                    }),
-                    Err(cleanup_source) => {
-                        Err(ObsidianStoreError::RemoveRestoredProjectRenameStaging {
-                            path: self.staging_directory,
-                            from: self.source,
-                            to: self.destination,
-                            install_source,
-                            cleanup_source,
-                        })
-                    }
-                },
-                Err(restore_source) => Err(ObsidianStoreError::RestoreProjectRenameSource {
-                    source_path: self.source,
-                    from: self.staging_directory,
-                    to: self.destination,
-                    install_source,
-                    restore_source,
-                }),
-            };
-        }
-        match remove_backup(&self.backup_directory) {
-            Ok(()) => Ok(ProjectTaskFilesRenameCommit::Complete),
-            Err(source) => Ok(ProjectTaskFilesRenameCommit::BackupRetained {
-                path: self.backup_directory,
-                source: anyhow::Error::new(source),
-            }),
-        }
+        commit_staged_rename(self, remove_backup)
     }
+}
+
+fn commit_staged_rename(
+    staged: StagedProjectRename,
+    remove_backup: impl FnOnce(&Path) -> io::Result<()>,
+) -> Result<ProjectTaskFilesRenameCommit, ObsidianStoreError> {
+    reject_existing_destination(&staged.destination)?;
+    reject_existing_backup(&staged.backup_directory)?;
+    if let Err(source) = fs::rename(&staged.source, &staged.backup_directory) {
+        let _ = fs::remove_dir_all(&staged.staging_directory);
+        return Err(ObsidianStoreError::MoveProjectRenameSource {
+            from: staged.source,
+            to: staged.backup_directory,
+            source,
+        });
+    }
+    if let Err(source) = fs::rename(&staged.staging_directory, &staged.destination) {
+        return rollback_failed_install(staged, source);
+    }
+    match remove_backup(&staged.backup_directory) {
+        Ok(()) => Ok(ProjectTaskFilesRenameCommit::Complete),
+        Err(source) => Ok(ProjectTaskFilesRenameCommit::BackupRetained {
+            path: staged.backup_directory,
+            source: anyhow::Error::new(source),
+        }),
+    }
+}
+
+fn rollback_failed_install(
+    staged: StagedProjectRename,
+    install_source: io::Error,
+) -> Result<ProjectTaskFilesRenameCommit, ObsidianStoreError> {
+    if let Err(restore_source) = fs::rename(&staged.backup_directory, &staged.source) {
+        return Err(ObsidianStoreError::RestoreProjectRenameSource {
+            source_path: staged.source,
+            from: staged.staging_directory,
+            to: staged.destination,
+            install_source,
+            restore_source,
+        });
+    }
+    if let Err(cleanup_source) = fs::remove_dir_all(&staged.staging_directory) {
+        return Err(ObsidianStoreError::RemoveRestoredProjectRenameStaging {
+            path: staged.staging_directory,
+            from: staged.source,
+            to: staged.destination,
+            install_source,
+            cleanup_source,
+        });
+    }
+    Err(ObsidianStoreError::InstallStagedProjectRename {
+        from: staged.staging_directory,
+        to: staged.destination,
+        source: install_source,
+    })
 }
 
 fn copy_and_rewrite(
@@ -189,50 +201,58 @@ fn copy_source(staged: &StagedProjectRename) -> Result<(), ObsidianStoreError> {
         .into_iter()
         .enumerate()
     {
-        if index >= ENTRY_COUNT_MAX {
-            return Err(ObsidianStoreError::ProjectRenameEntryLimit {
-                path: staged.source.clone(),
-                limit: ENTRY_COUNT_MAX,
-            });
-        }
-        let entry = entry.map_err(|source| ObsidianStoreError::WalkProjectRenameSource {
-            path: staged.source.clone(),
-            source,
-        })?;
-        if entry.depth() > DIRECTORY_DEPTH_MAX {
-            return Err(ObsidianStoreError::ProjectRenameDepthLimit {
-                path: entry.path().to_path_buf(),
-                limit: DIRECTORY_DEPTH_MAX,
-            });
-        }
-        let relative = entry.path().strip_prefix(&staged.source).map_err(|_| {
-            ObsidianStoreError::ProjectRenameEntryUnsupported {
-                path: entry.path().to_path_buf(),
-            }
-        })?;
-        let destination = staged.staging_directory.join(relative);
-        if entry.file_type().is_dir() {
-            fs::create_dir(&destination).map_err(|source| {
-                ObsidianStoreError::CreateStagedProjectRenameDirectory {
-                    path: destination,
-                    source,
-                }
-            })?;
-        } else if entry.file_type().is_file() {
-            fs::copy(entry.path(), &destination).map_err(|source| {
-                ObsidianStoreError::CopyProjectRenameEntry {
-                    from: entry.path().to_path_buf(),
-                    to: destination,
-                    source,
-                }
-            })?;
-        } else {
-            return Err(ObsidianStoreError::ProjectRenameEntryUnsupported {
-                path: entry.path().to_path_buf(),
-            });
-        }
+        copy_source_entry(staged, index, entry)?;
     }
     Ok(())
+}
+
+fn copy_source_entry(
+    staged: &StagedProjectRename,
+    index: usize,
+    entry: Result<DirEntry, walkdir::Error>,
+) -> Result<(), ObsidianStoreError> {
+    if index >= ENTRY_COUNT_MAX {
+        return Err(ObsidianStoreError::ProjectRenameEntryLimit {
+            path: staged.source.clone(),
+            limit: ENTRY_COUNT_MAX,
+        });
+    }
+    let entry = entry.map_err(|source| ObsidianStoreError::WalkProjectRenameSource {
+        path: staged.source.clone(),
+        source,
+    })?;
+    if entry.depth() > DIRECTORY_DEPTH_MAX {
+        return Err(ObsidianStoreError::ProjectRenameDepthLimit {
+            path: entry.path().to_path_buf(),
+            limit: DIRECTORY_DEPTH_MAX,
+        });
+    }
+    let relative = entry.path().strip_prefix(&staged.source).map_err(|_| {
+        ObsidianStoreError::ProjectRenameEntryUnsupported {
+            path: entry.path().to_path_buf(),
+        }
+    })?;
+    let destination = staged.staging_directory.join(relative);
+    if entry.file_type().is_dir() {
+        return fs::create_dir(&destination).map_err(|source| {
+            ObsidianStoreError::CreateStagedProjectRenameDirectory {
+                path: destination,
+                source,
+            }
+        });
+    }
+    if entry.file_type().is_file() {
+        return fs::copy(entry.path(), &destination)
+            .map(|_| ())
+            .map_err(|source| ObsidianStoreError::CopyProjectRenameEntry {
+                from: entry.path().to_path_buf(),
+                to: destination,
+                source,
+            });
+    }
+    Err(ObsidianStoreError::ProjectRenameEntryUnsupported {
+        path: entry.path().to_path_buf(),
+    })
 }
 
 fn rewrite_markdown(
@@ -268,12 +288,8 @@ fn rewrite_markdown(
 
     let mut renames = Vec::new();
     for path in &markdown_paths {
-        if let Some(name) = renamed_markdown_name(path, current, next) {
-            let destination = path.with_file_name(name);
-            if destination != *path && destination.exists() {
-                return Err(ObsidianStoreError::ProjectRenameFileExists { path: destination });
-            }
-            renames.push((path.clone(), destination));
+        if let Some(rename) = plan_markdown_rename(path, current, next)? {
+            renames.push(rename);
         }
     }
     for path in markdown_paths {
@@ -289,6 +305,21 @@ fn rewrite_markdown(
         })?;
     }
     Ok(())
+}
+
+fn plan_markdown_rename(
+    path: &Path,
+    current: &ProjectIndexIdentity,
+    next: &ProjectIndexIdentity,
+) -> Result<Option<(PathBuf, PathBuf)>, ObsidianStoreError> {
+    let Some(name) = renamed_markdown_name(path, current, next) else {
+        return Ok(None);
+    };
+    let destination = path.with_file_name(name);
+    if destination != path && destination.exists() {
+        return Err(ObsidianStoreError::ProjectRenameFileExists { path: destination });
+    }
+    Ok(Some((path.to_path_buf(), destination)))
 }
 
 fn rewrite_markdown_file(
@@ -326,12 +357,8 @@ fn rewrite_markdown_text(
     current: &ProjectIndexIdentity,
     next: &ProjectIndexIdentity,
 ) -> String {
-    let current_task_id = format!("id: {}-", current.id());
-    let next_task_id = format!("id: {}-", next.id());
-    let current_link = format!("[[{}-", current.id());
-    let next_link = format!("[[{}-", next.id());
-    let mut frontmatter = false;
-    let mut frontmatter_complete = false;
+    let markers = MarkdownRewriteMarkers::new(current, next);
+    let mut state = MarkdownRewriteState::default();
     let mut rewritten = String::with_capacity(markdown.len());
 
     for line in markdown.split_inclusive('\n') {
@@ -341,31 +368,90 @@ fn rewrite_markdown_text(
         let (body, carriage_return) = body
             .strip_suffix('\r')
             .map_or((body, ""), |body| (body, "\r"));
-        let mut body = body.to_string();
-        if !frontmatter_complete && body == "---" {
-            if frontmatter {
-                frontmatter = false;
-                frontmatter_complete = true;
-            } else {
-                frontmatter = true;
-            }
-        } else if frontmatter {
-            if body == format!("id: {}", project_index_frontmatter_id(current)) {
-                body = format!("id: {}", project_index_frontmatter_id(next));
-            } else if body == format!("title: {}", current.title()) {
-                body = format!("title: {}", next.title());
-            } else if body == format!("project: {}", current.title()) {
-                body = format!("project: {}", next.title());
-            } else if body.starts_with(&current_task_id) {
-                body = body.replacen(&current_task_id, &next_task_id, 1);
-            }
-        }
-        body = body.replace(&current_link, &next_link);
+        let body = rewrite_markdown_line(body, &mut state, &markers);
         rewritten.push_str(&body);
         rewritten.push_str(carriage_return);
         rewritten.push_str(newline);
     }
     rewritten
+}
+
+#[derive(Default)]
+struct MarkdownRewriteState {
+    frontmatter: bool,
+    frontmatter_complete: bool,
+}
+
+struct MarkdownRewriteMarkers {
+    current_index_id: String,
+    next_index_id: String,
+    current_title: String,
+    next_title: String,
+    current_project: String,
+    next_project: String,
+    current_task_id: String,
+    next_task_id: String,
+    current_link: String,
+    next_link: String,
+}
+
+impl MarkdownRewriteMarkers {
+    fn new(current: &ProjectIndexIdentity, next: &ProjectIndexIdentity) -> Self {
+        Self {
+            current_index_id: format!("id: {}", project_index_frontmatter_id(current)),
+            next_index_id: format!("id: {}", project_index_frontmatter_id(next)),
+            current_title: format!("title: {}", current.title()),
+            next_title: format!("title: {}", next.title()),
+            current_project: format!("project: {}", current.title()),
+            next_project: format!("project: {}", next.title()),
+            current_task_id: format!("id: {}-", current.id()),
+            next_task_id: format!("id: {}-", next.id()),
+            current_link: format!("[[{}-", current.id()),
+            next_link: format!("[[{}-", next.id()),
+        }
+    }
+}
+
+fn rewrite_markdown_line(
+    body: &str,
+    state: &mut MarkdownRewriteState,
+    markers: &MarkdownRewriteMarkers,
+) -> String {
+    if !state.frontmatter_complete && body == "---" {
+        update_frontmatter_state(state);
+        return body.replace(&markers.current_link, &markers.next_link);
+    }
+    let body = if state.frontmatter {
+        rewrite_frontmatter_line(body, markers)
+    } else {
+        body.to_owned()
+    };
+    body.replace(&markers.current_link, &markers.next_link)
+}
+
+fn update_frontmatter_state(state: &mut MarkdownRewriteState) {
+    if state.frontmatter {
+        state.frontmatter = false;
+        state.frontmatter_complete = true;
+        return;
+    }
+    state.frontmatter = true;
+}
+
+fn rewrite_frontmatter_line(body: &str, markers: &MarkdownRewriteMarkers) -> String {
+    if body == markers.current_index_id {
+        return markers.next_index_id.clone();
+    }
+    if body == markers.current_title {
+        return markers.next_title.clone();
+    }
+    if body == markers.current_project {
+        return markers.next_project.clone();
+    }
+    if body.starts_with(&markers.current_task_id) {
+        return body.replacen(&markers.current_task_id, &markers.next_task_id, 1);
+    }
+    body.to_owned()
 }
 
 fn renamed_markdown_name(

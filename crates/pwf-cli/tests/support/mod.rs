@@ -9,6 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use anyhow::{Context as _, bail};
 use assert_cmd::prelude::OutputAssertExt as _;
 pub use project::{
     ProjectFixture, add_payload, assert_failure, assert_project, run_server_with_database,
@@ -22,9 +23,7 @@ use tempfile::TempDir;
 
 fn binary_path(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .expect("pwf-cli is under the workspace crates directory")
+        .join("../..")
         .join("target")
         .join("release")
         .join(format!("{name}{}", std::env::consts::EXE_SUFFIX))
@@ -41,19 +40,18 @@ pub struct DatabaseFixture {
 }
 
 impl DatabaseFixture {
-    pub fn new(path: PathBuf) -> Self {
+    pub fn new(path: PathBuf) -> anyhow::Result<Self> {
         let home = path
             .parent()
-            .expect("database fixture path has a parent")
+            .context("database fixture path has no parent")?
             .join("home");
-        fs::create_dir_all(&home).expect("create isolated home");
+        fs::create_dir_all(&home)?;
         let output = Command::new(binary_path("pwf-migrator"))
             .env("PWF_DATABASE_PATH", &path)
-            .output()
-            .expect("run pwf-migrator process");
+            .output()?;
         assert_success(&output, "migrate test database");
-        let server = ServerProcess::start(&path, &home);
-        Self { server, path, home }
+        let server = ServerProcess::start(&path, &home)?;
+        Ok(Self { server, path, home })
     }
 
     pub fn command(&self) -> Command {
@@ -94,17 +92,17 @@ struct ServerProcess {
 }
 
 impl ServerProcess {
-    fn start(database_path: &Path, home: &Path) -> Self {
+    fn start(database_path: &Path, home: &Path) -> anyhow::Result<Self> {
         let root = database_path
             .parent()
-            .expect("database fixture path has a parent");
+            .context("database fixture path has no parent")?;
         let data_root = root.join("pwf-server-data");
         let state_root = root.join("xdg-state");
         let local_data_root = root.join("xdg-data");
         let log_path = root.join("pwf-server.stderr.log");
-        fs::create_dir_all(&state_root).expect("create isolated state directory");
-        fs::create_dir_all(&local_data_root).expect("create isolated data directory");
-        let stderr = fs::File::create(&log_path).expect("create server diagnostic log");
+        fs::create_dir_all(&state_root)?;
+        fs::create_dir_all(&local_data_root)?;
+        let stderr = fs::File::create(&log_path)?;
         let mut command = Command::new(binary_path("pwf-server"));
         configure_command(&mut command, database_path, home, &data_root);
         let child = command
@@ -113,44 +111,48 @@ impl ServerProcess {
             .env("RUST_LOG", "warn")
             .stdout(Stdio::null())
             .stderr(Stdio::from(stderr))
-            .spawn()
-            .expect("start pwf-server process");
+            .spawn()?;
         let mut server = Self {
             child,
             data_root,
             log_path,
         };
-        server.wait_until_ready(database_path, home);
-        server
+        wait_until_ready(&mut server, database_path, home)?;
+        Ok(server)
     }
+}
 
-    fn wait_until_ready(&mut self, database_path: &Path, home: &Path) {
-        let deadline = Instant::now() + Duration::from_secs(5);
-        loop {
-            if let Some(status) = self.child.try_wait().expect("inspect pwf-server process") {
-                panic!(
-                    "pwf-server exited with {status}: {}",
-                    fs::read_to_string(&self.log_path).unwrap_or_default()
-                );
-            }
-            let mut probe = command();
-            configure_command(&mut probe, database_path, home, &self.data_root);
-            if probe
-                .args(["project", "ls"])
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status()
-                .is_ok_and(|status| status.success())
-            {
-                return;
-            }
-            assert!(
-                Instant::now() < deadline,
-                "pwf-server did not become ready: {}",
-                fs::read_to_string(&self.log_path).unwrap_or_default()
+fn wait_until_ready(
+    server: &mut ServerProcess,
+    database_path: &Path,
+    home: &Path,
+) -> anyhow::Result<()> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Some(status) = server.child.try_wait()? {
+            bail!(
+                "pwf-server exited with {status}: {}",
+                fs::read_to_string(&server.log_path).unwrap_or_default()
             );
-            std::thread::sleep(Duration::from_millis(20));
         }
+        let mut probe = command();
+        configure_command(&mut probe, database_path, home, &server.data_root);
+        if probe
+            .args(["project", "ls"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
+        {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            bail!(
+                "pwf-server did not become ready: {}",
+                fs::read_to_string(&server.log_path).unwrap_or_default()
+            );
+        }
+        std::thread::sleep(Duration::from_millis(20));
     }
 }
 
@@ -175,45 +177,43 @@ pub struct ManagedProject {
 }
 
 impl ManagedProject {
-    pub fn new(project_id: &ProjectId, title: &str) -> Self {
-        let directory = TempDir::new().unwrap();
+    pub fn new(project_id: &ProjectId, title: &str) -> anyhow::Result<Self> {
+        let directory = TempDir::new()?;
         let tasks_path = directory.path().join("notes").join(title);
         let project_path = directory.path().join("project");
-        fs::create_dir_all(&tasks_path).unwrap();
-        fs::create_dir_all(&project_path).unwrap();
+        fs::create_dir_all(&tasks_path)?;
+        fs::create_dir_all(&project_path)?;
         fs::write(
             tasks_path.join(format!("{title}.md")),
             format!(
                 "---\nid: {}\ntitle: {title}\n---\n",
                 project_id.as_ref().to_ascii_lowercase()
             ),
-        )
-        .unwrap();
-        let database = DatabaseFixture::new(directory.path().join("projects.sqlite3"));
+        )?;
+        let database = DatabaseFixture::new(directory.path().join("projects.sqlite3"))?;
         database.add_directory_project(project_id, title, &project_path, &tasks_path);
-        Self {
+        Ok(Self {
             database,
             _directory: directory,
-        }
+        })
     }
 }
 
-pub fn project_id(raw: &str) -> ProjectId {
-    ProjectId::try_new(raw).expect("fixture project ID is valid")
+pub fn project_id(raw: &str) -> anyhow::Result<ProjectId> {
+    Ok(ProjectId::try_new(raw)?)
 }
 
-pub fn task_id(raw: &str) -> TaskId {
-    TaskId::try_new(raw).expect("fixture task ID is valid")
+pub fn task_id(raw: &str) -> anyhow::Result<TaskId> {
+    Ok(TaskId::try_new(raw)?)
 }
 
-pub fn task_json(database: &DatabaseFixture, task_id: &TaskId) -> Value {
+pub fn task_json(database: &DatabaseFixture, task_id: &TaskId) -> anyhow::Result<Value> {
     let output = database
         .command()
         .args(["task", "get", task_id.as_ref(), "--json"])
-        .output()
-        .unwrap();
+        .output()?;
     assert_success(&output, &format!("get {task_id}"));
-    serde_json::from_slice(&output.stdout).expect("get stdout is JSON")
+    Ok(serde_json::from_slice(&output.stdout)?)
 }
 
 pub fn assert_success(output: &Output, operation: &str) {

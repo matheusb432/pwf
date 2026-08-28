@@ -2,7 +2,7 @@ use pwf_models::project::{PROJECT_NAME_CHARACTER_LIMIT, ProjectCreatedAt, Projec
 
 #[test]
 fn project_name_is_a_bounded_safe_filename_component() {
-    assert_eq!(ProjectName::try_new(" pwf ").unwrap().as_ref(), "pwf");
+    assert_eq!(ProjectName::try_new(" foo ").unwrap().as_ref(), "foo");
     assert!(ProjectName::try_new("p".repeat(PROJECT_NAME_CHARACTER_LIMIT)).is_ok());
 
     for invalid in [

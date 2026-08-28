@@ -279,10 +279,7 @@ fn append_bullets_to_section(content: &str, header: &str, bullets: &[String]) ->
         let mut out = content.trim_end().to_string();
         out.push_str("\n\n");
         out.push_str(header);
-        for (index, bullet) in bullets.iter().enumerate() {
-            out.push_str(if index == 0 { "\n\n- " } else { "\n- " });
-            out.push_str(bullet);
-        }
+        append_bullets(&mut out, bullets, "\n\n- ");
         out.push('\n');
         return out;
     };
@@ -292,14 +289,8 @@ fn append_bullets_to_section(content: &str, header: &str, bullets: &[String]) ->
     let after = content[section_end..].trim_start_matches('\n');
     let mut out = before.to_string();
     let section_is_empty = content[header_end..section_end].trim().is_empty();
-    for (index, bullet) in bullets.iter().enumerate() {
-        out.push_str(if section_is_empty && index == 0 {
-            "\n\n- "
-        } else {
-            "\n- "
-        });
-        out.push_str(bullet);
-    }
+    let first_separator = if section_is_empty { "\n\n- " } else { "\n- " };
+    append_bullets(&mut out, bullets, first_separator);
     if after.is_empty() {
         out.push('\n');
     } else {
@@ -307,6 +298,15 @@ fn append_bullets_to_section(content: &str, header: &str, bullets: &[String]) ->
         out.push_str(after);
     }
     out
+}
+
+fn append_bullets(out: &mut String, bullets: &[String], first_separator: &'static str) {
+    let mut separator = first_separator;
+    for bullet in bullets {
+        out.push_str(separator);
+        out.push_str(bullet);
+        separator = "\n- ";
+    }
 }
 
 /// Returns the byte offset after an exact header line, allowing trailing whitespace.

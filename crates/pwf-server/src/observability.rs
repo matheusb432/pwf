@@ -326,16 +326,7 @@ mod tests {
         let (dispatch, guard) = build_dispatch(&settings, EnvFilter::new("trace"))?;
         let payload = "x".repeat(256);
 
-        tracing::dispatcher::with_default(&dispatch, || {
-            for record_index in 0..8 {
-                tracing::info!(
-                    target: "pwf_server::rotation_test",
-                    record_index,
-                    payload,
-                    "rotation record"
-                );
-            }
-        });
+        tracing::dispatcher::with_default(&dispatch, || write_rotation_records(&payload));
         drop(guard);
 
         let paths = jsonl_paths(&settings.directory)?;
@@ -365,6 +356,17 @@ mod tests {
                 .all(|record| record["fields"]["record_index"] != 0)
         );
         Ok(())
+    }
+
+    fn write_rotation_records(payload: &str) {
+        for record_index in 0..8 {
+            tracing::info!(
+                target: "pwf_server::rotation_test",
+                record_index,
+                payload,
+                "rotation record"
+            );
+        }
     }
 
     #[test]
@@ -456,21 +458,29 @@ mod tests {
 
     impl io::Write for GateWriter {
         fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
-            if self.gate_next_write {
-                self.gate_next_write = false;
-                self.write_started_sender
-                    .send(())
-                    .map_err(|_| io::Error::other("write-start receiver closed"))?;
-                self.write_release_receiver
-                    .recv()
-                    .map_err(|_| io::Error::other("write-release sender closed"))?;
-            }
+            wait_for_write_release(self)?;
             Ok(buffer.len())
         }
 
         fn flush(&mut self) -> io::Result<()> {
             Ok(())
         }
+    }
+
+    fn wait_for_write_release(writer: &mut GateWriter) -> io::Result<()> {
+        if !writer.gate_next_write {
+            return Ok(());
+        }
+        writer.gate_next_write = false;
+        writer
+            .write_started_sender
+            .send(())
+            .map_err(|_| io::Error::other("write-start receiver closed"))?;
+        writer
+            .write_release_receiver
+            .recv()
+            .map_err(|_| io::Error::other("write-release sender closed"))?;
+        Ok(())
     }
 
     struct ScriptedWriter {

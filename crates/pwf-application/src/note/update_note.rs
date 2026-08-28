@@ -95,7 +95,7 @@ mod tests {
 
     fn note() -> ProjectNote {
         ProjectNote {
-            id: NoteId::try_new("PWF-NOTE-0007").unwrap(),
+            id: NoteId::try_new("FOO-NOTE-0007").unwrap(),
             title: NoteTitle::try_new("old message").unwrap(),
         }
     }
@@ -104,18 +104,18 @@ mod tests {
     async fn full_prefixless_and_bare_identifiers_resolve_and_trim_the_replacement(
         pool: sqlx::SqlitePool,
     ) {
-        insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
+        insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
         for identifier in [
-            "PWF-NOTE-0007",
-            concat!("pwf", "-note-0007"),
+            "FOO-NOTE-0007",
+            concat!("foo", "-note-0007"),
             "note-0007",
             "7",
         ] {
-            let store = InMemoryStore::default().with_project_notes("pwf", vec![note()]);
+            let store = InMemoryStore::default().with_project_notes("foo", vec![note()]);
 
             let updated = update_note::execute(
                 UpdateNote {
-                    project_selector: "pwf".parse().unwrap(),
+                    project_selector: "foo".parse().unwrap(),
                     selector: identifier.parse().unwrap(),
                     title: NoteTitle::try_new(" new message \t").unwrap(),
                 },
@@ -125,21 +125,21 @@ mod tests {
             .await
             .unwrap();
 
-            assert_eq!(updated.id.as_ref(), "PWF-NOTE-0007");
+            assert_eq!(updated.id.as_ref(), "FOO-NOTE-0007");
             assert_eq!(updated.title.as_ref(), "new message");
-            assert_eq!(store.project_notes("pwf")[0].title.as_ref(), "new message");
-            assert!(store.entries("pwf").is_empty());
+            assert_eq!(store.project_notes("foo")[0].title.as_ref(), "new message");
+            assert!(store.entries("foo").is_empty());
         }
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn missing_note_is_reported(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
+        insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
         let store = InMemoryStore::default();
 
         let error = update_note::execute(
             UpdateNote {
-                project_selector: "pwf".parse().unwrap(),
+                project_selector: "foo".parse().unwrap(),
                 selector: "note-0007".parse().unwrap(),
                 title: NoteTitle::try_new("new message").unwrap(),
             },
@@ -154,9 +154,9 @@ mod tests {
             UpdateNoteError::NoSuchNote {
                 ref id,
                 ref project,
-            } if id.as_ref() == "PWF-NOTE-0007" && project.as_ref() == "pwf"
+            } if id.as_ref() == "FOO-NOTE-0007" && project.as_ref() == "foo"
         ));
-        assert!(store.project_notes("pwf").is_empty());
+        assert!(store.project_notes("foo").is_empty());
     }
 
     #[test]
@@ -164,9 +164,12 @@ mod tests {
         let error = UpdateNoteError::Store(anyhow::Error::new(SentinelStoreError));
 
         assert_eq!(error.to_string(), "sentinel store failure");
-        let UpdateNoteError::Store(source) = error else {
-            panic!("expected the store error");
+        let source = match error {
+            UpdateNoteError::Store(source) => Some(source),
+            _ => None,
         };
+        assert!(source.is_some());
+        let source = source.unwrap();
         assert!(source.downcast_ref::<SentinelStoreError>().is_some());
         assert_eq!(source.root_cause().to_string(), "sentinel store failure");
     }

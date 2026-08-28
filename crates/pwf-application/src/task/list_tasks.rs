@@ -141,20 +141,12 @@ pub async fn execute(
     let (mut tasks, hidden) = apply_cap(tasks, query.cap);
 
     if query.detail.includes_relationship_statuses() {
-        for task in &mut tasks {
-            task.blocked_by_statuses = task
-                .blocked_by
-                .as_ref()
-                .map(|value| {
-                    blocked_by::statuses(
-                        value,
-                        store,
-                        query.project.as_ref(),
-                        &relationship_projects,
-                    )
-                })
-                .unwrap_or_default();
-        }
+        populate_relationship_statuses(
+            &mut tasks,
+            store,
+            query.project.as_ref(),
+            &relationship_projects,
+        );
     }
 
     Ok(ListedTasks {
@@ -166,6 +158,19 @@ pub async fn execute(
         layout: list_layout(query.scope),
         detail: query.detail,
     })
+}
+
+fn populate_relationship_statuses(
+    tasks: &mut [TaskView],
+    store: &impl TaskStore,
+    selected_project: Option<&Project>,
+    projects: &[Project],
+) {
+    for task in tasks {
+        task.blocked_by_statuses = task.blocked_by.as_ref().map_or_else(Vec::new, |value| {
+            blocked_by::statuses(value, store, selected_project, projects)
+        });
+    }
 }
 
 fn retain_matching_tags(
@@ -234,25 +239,38 @@ fn collect_list_tasks(
 
     let mut tasks = Vec::new();
     for project in scan {
-        let records = if query.project.is_some() {
-            selected_records.map_or_else(Vec::new, <[TaskRecord]>::to_vec)
-        } else {
-            store
-                .list(project)
-                .map_err(|error| ListTasksError::ReadStore(anyhow::Error::new(error)))?
-        };
-        for record in records {
-            if !query.status_filter.includes(record.status) {
-                continue;
-            }
-            tasks.push(
-                task_view::enrich(&record, project.source.value())
-                    .map_err(|error| ListTasksError::InvalidTaskView(anyhow::Error::new(error)))?
-                    .into_task_view(project.title.clone()),
-            );
-        }
+        tasks.extend(collect_project_tasks(
+            query,
+            store,
+            project,
+            selected_records,
+        )?);
     }
     Ok(tasks)
+}
+
+fn collect_project_tasks(
+    query: &ResolvedListTasks,
+    store: &impl TaskStore,
+    project: &Project,
+    selected_records: Option<&[TaskRecord]>,
+) -> Result<Vec<TaskView>, ListTasksError> {
+    let records = if query.project.is_some() {
+        selected_records.map_or_else(Vec::new, <[TaskRecord]>::to_vec)
+    } else {
+        store
+            .list(project)
+            .map_err(|error| ListTasksError::ReadStore(anyhow::Error::new(error)))?
+    };
+    records
+        .into_iter()
+        .filter(|record| query.status_filter.includes(record.status))
+        .map(|record| {
+            task_view::enrich(&record, project.source.value())
+                .map_err(|error| ListTasksError::InvalidTaskView(anyhow::Error::new(error)))
+                .map(|task| task.into_task_view(project.title.clone()))
+        })
+        .collect()
 }
 
 fn scope_includes(scope: ListScope, section: Option<&TaskSection>) -> bool {
@@ -386,9 +404,9 @@ mod tests {
             title: id.to_string(),
             created: Some(app_date("2026-07-07")),
             source: String::new(),
-            locator: TaskNotePath::new(format!("/notes/pwf/{id}.md").into()),
+            locator: TaskNotePath::new(format!("/notes/foo/{id}.md").into()),
             placement: Some(IndexPlacement {
-                index_path: TaskIndexPath::new("/notes/pwf/pwf.md".into()),
+                index_path: TaskIndexPath::new("/notes/foo/foo.md".into()),
                 line: NonZeroUsize::MIN,
             }),
             ..task_record(id)
@@ -414,27 +432,28 @@ mod tests {
         }
         let registry = projects
             .iter()
-            .map(|name| {
-                let project_id = if *name == "pwf" { "PWF" } else { "AUX" };
-                project(project_id, name)
-            })
+            .map(|name| project(project_id_for_name(name), name))
             .collect();
         (store, registry)
     }
 
-    fn pwf_store(tasks: Vec<TaskRecord>) -> (InMemoryStore, Vec<Project>) {
+    fn project_id_for_name(name: &str) -> &'static str {
+        if name == "foo" { "FOO" } else { "AUX" }
+    }
+
+    fn foo_store(tasks: Vec<TaskRecord>) -> (InMemoryStore, Vec<Project>) {
         let staged: Vec<(&'static str, TaskRecord)> =
-            tasks.into_iter().map(|task| ("pwf", task)).collect();
+            tasks.into_iter().map(|task| ("foo", task)).collect();
         store_and_registry(&staged)
     }
 
     fn blocked_by_registry() -> Vec<Project> {
-        vec![project("PWF", "pwf"), project("AUX", "companion-project")]
+        vec![project("FOO", "foo"), project("AUX", "companion-project")]
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn selected_long_list_resolves_blockers_from_paused_projects(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "PWF", "pwf", "/work/pwf", "/tasks/pwf", false).await;
+        insert_project(&pool, "FOO", "foo", "/work/foo", "/tasks/foo", false).await;
         insert_project(
             &pool,
             "AUX",
@@ -456,17 +475,17 @@ mod tests {
 
         let dependent = TaskRecord {
             blocked_by: stored_blocked_by(&["AUX-0014"]),
-            ..record("PWF-0001")
+            ..record("FOO-0001")
         };
         let blocking_task = TaskRecord {
             status: TaskStatus::Done,
             ..record("AUX-0014")
         };
         let store = InMemoryStore::default()
-            .with_project("pwf", vec![dependent])
+            .with_project("foo", vec![dependent])
             .with_project("companion-project", vec![blocking_task]);
         let query = ListTasks {
-            project_selector: Some("pwf".parse().unwrap()),
+            project_selector: Some("foo".parse().unwrap()),
             detail: ListDetail::Detailed,
             ..default_query()
         };
@@ -490,13 +509,8 @@ mod tests {
         registry: &[Project],
         query: &ListTasks,
     ) -> Result<ListedTasks, ListTasksError> {
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:")
-            .await
-            .expect("in-memory database connects");
-        MIGRATOR
-            .run(&pool)
-            .await
-            .expect("application test migrations succeed");
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        MIGRATOR.run(&pool).await.unwrap();
         for project in registry {
             insert_project(
                 &pool,
@@ -560,11 +574,30 @@ mod tests {
         result.tasks.iter().map(|task| task.id.as_ref()).collect()
     }
 
+    async fn assert_filter_ids(
+        store: &InMemoryStore,
+        registry: &[Project],
+        status: StatusFilter,
+        expected: &[&str],
+    ) {
+        let got = run(
+            store,
+            registry,
+            &ListTasks {
+                status: Some(status),
+                ..default_query()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(listed_ids(&got), expected);
+    }
+
     #[tokio::test]
     async fn long_list_projects_done_active_and_missing_blocked_by_statuses() {
         let dependent = TaskRecord {
             blocked_by: stored_blocked_by(&["AUX-0014", "AUX-0015", "AUX-9999"]),
-            ..record("PWF-0001")
+            ..record("FOO-0001")
         };
         let done = TaskRecord {
             status: TaskStatus::Done,
@@ -572,14 +605,14 @@ mod tests {
         };
         let active = record("AUX-0015");
         let store = InMemoryStore::default()
-            .with_project("pwf", vec![dependent])
+            .with_project("foo", vec![dependent])
             .with_project("companion-project", vec![done, active]);
 
         let got = run(
             &store,
             &blocked_by_registry(),
             &ListTasks {
-                project_selector: Some("pwf".parse().unwrap()),
+                project_selector: Some("foo".parse().unwrap()),
                 detail: ListDetail::Detailed,
                 ..default_query()
             },
@@ -613,7 +646,7 @@ mod tests {
     async fn long_list_treats_indexed_blocked_by_without_note_as_missing() {
         let dependent = TaskRecord {
             blocked_by: stored_blocked_by(&["AUX-0014"]),
-            ..record("PWF-0001")
+            ..record("FOO-0001")
         };
         let missing_note = TaskRecord {
             source: String::new(),
@@ -625,14 +658,14 @@ mod tests {
             ..record("AUX-0014")
         };
         let store = InMemoryStore::default()
-            .with_project("pwf", vec![dependent])
+            .with_project("foo", vec![dependent])
             .with_project("companion-project", vec![missing_note]);
 
         let got = run(
             &store,
             &blocked_by_registry(),
             &ListTasks {
-                project_selector: Some("pwf".parse().unwrap()),
+                project_selector: Some("foo".parse().unwrap()),
                 detail: ListDetail::Detailed,
                 ..default_query()
             },
@@ -654,17 +687,17 @@ mod tests {
     async fn list_filters_active_only() {
         let done = TaskRecord {
             status: TaskStatus::Done,
-            ..record("PWF-0002")
+            ..record("FOO-0002")
         };
         let cancelled = TaskRecord {
             status: TaskStatus::Cancelled,
-            ..record("PWF-0003")
+            ..record("FOO-0003")
         };
-        let (store, registry) = pwf_store(vec![record("PWF-0001"), done, cancelled]);
+        let (store, registry) = foo_store(vec![record("FOO-0001"), done, cancelled]);
 
         let got = run(&store, &registry, &default_query()).await.unwrap();
 
-        assert_eq!(listed_ids(&got), ["PWF-0001"]);
+        assert_eq!(listed_ids(&got), ["FOO-0001"]);
     }
 
     #[tokio::test]
@@ -676,9 +709,11 @@ mod tests {
         let done = StatusFilter::Exact(TaskStatus::Done);
         assert!(done.includes(TaskStatus::Done));
         assert!(!done.includes(TaskStatus::Active));
-        for status in [TaskStatus::Active, TaskStatus::Done, TaskStatus::Cancelled] {
-            assert!(StatusFilter::All.includes(status));
-        }
+        assert!(
+            [TaskStatus::Active, TaskStatus::Done, TaskStatus::Cancelled]
+                .into_iter()
+                .all(|status| StatusFilter::All.includes(status))
+        );
     }
 
     #[tokio::test]
@@ -686,32 +721,36 @@ mod tests {
         let done = TaskRecord {
             status: TaskStatus::Done,
             placement: None,
-            ..record("PWF-0002")
+            ..record("FOO-0002")
         };
         let cancelled = TaskRecord {
             status: TaskStatus::Cancelled,
             placement: None,
-            ..record("PWF-0003")
+            ..record("FOO-0003")
         };
-        let (store, registry) = pwf_store(vec![record("PWF-0001"), done, cancelled]);
+        let (store, registry) = foo_store(vec![record("FOO-0001"), done, cancelled]);
 
-        for (status, expected) in [
-            (TaskStatus::Active, vec!["PWF-0001"]),
-            (TaskStatus::Done, vec!["PWF-0002"]),
-            (TaskStatus::Cancelled, vec!["PWF-0003"]),
-        ] {
-            let got = run(
-                &store,
-                &registry,
-                &ListTasks {
-                    status: Some(StatusFilter::Exact(status)),
-                    ..default_query()
-                },
-            )
-            .await
-            .unwrap();
-            assert_eq!(listed_ids(&got), expected);
-        }
+        assert_filter_ids(
+            &store,
+            &registry,
+            StatusFilter::Exact(TaskStatus::Active),
+            &["FOO-0001"],
+        )
+        .await;
+        assert_filter_ids(
+            &store,
+            &registry,
+            StatusFilter::Exact(TaskStatus::Done),
+            &["FOO-0002"],
+        )
+        .await;
+        assert_filter_ids(
+            &store,
+            &registry,
+            StatusFilter::Exact(TaskStatus::Cancelled),
+            &["FOO-0003"],
+        )
+        .await;
 
         let all = run(
             &store,
@@ -723,51 +762,52 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(listed_ids(&all), ["PWF-0003", "PWF-0002", "PWF-0001"]);
+        assert_eq!(listed_ids(&all), ["FOO-0003", "FOO-0002", "FOO-0001"]);
     }
 
     #[tokio::test]
     async fn unindexed_active_task_is_included_in_active_and_all_lists() {
         let unindexed = TaskRecord {
             placement: None,
-            ..record("PWF-0002")
+            ..record("FOO-0002")
         };
-        let (store, registry) = pwf_store(vec![record("PWF-0001"), unindexed]);
+        let (store, registry) = foo_store(vec![record("FOO-0001"), unindexed]);
 
-        for status_filter in [StatusFilter::Exact(TaskStatus::Active), StatusFilter::All] {
-            let got = run(
-                &store,
-                &registry,
-                &ListTasks {
-                    status: Some(status_filter),
-                    ..default_query()
-                },
-            )
-            .await
-            .unwrap();
-            assert_eq!(listed_ids(&got), ["PWF-0002", "PWF-0001"]);
-        }
+        assert_filter_ids(
+            &store,
+            &registry,
+            StatusFilter::Exact(TaskStatus::Active),
+            &["FOO-0002", "FOO-0001"],
+        )
+        .await;
+        assert_filter_ids(
+            &store,
+            &registry,
+            StatusFilter::All,
+            &["FOO-0002", "FOO-0001"],
+        )
+        .await;
     }
 
     #[tokio::test]
     async fn status_filter_applies_before_cap_and_hidden_count() {
         let active = TaskRecord {
             created: Some(app_date("2026-07-09")),
-            ..record("PWF-0009")
+            ..record("FOO-0009")
         };
         let done_newer = TaskRecord {
             status: TaskStatus::Done,
             placement: None,
             created: Some(app_date("2026-07-08")),
-            ..record("PWF-0002")
+            ..record("FOO-0002")
         };
         let done_older = TaskRecord {
             status: TaskStatus::Done,
             placement: None,
             created: Some(app_date("2026-07-07")),
-            ..record("PWF-0001")
+            ..record("FOO-0001")
         };
-        let (store, registry) = pwf_store(vec![active, done_newer, done_older]);
+        let (store, registry) = foo_store(vec![active, done_newer, done_older]);
 
         let got = run(
             &store,
@@ -781,27 +821,27 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(listed_ids(&got), ["PWF-0002"]);
+        assert_eq!(listed_ids(&got), ["FOO-0002"]);
         assert_eq!(got.hidden, 1);
     }
 
     #[tokio::test]
     async fn default_scope_hides_human_future_and_low_prio_sections() {
-        let (store, registry) = pwf_store(vec![
-            record("PWF-0004"),
-            sectioned("PWF-0003", "Human"),
-            sectioned("PWF-0002", "Future"),
-            sectioned("PWF-0001", "Low-prio"),
+        let (store, registry) = foo_store(vec![
+            record("FOO-0004"),
+            sectioned("FOO-0003", "Human"),
+            sectioned("FOO-0002", "Future"),
+            sectioned("FOO-0001", "Low-prio"),
         ]);
 
         let got = run(&store, &registry, &default_query()).await.unwrap();
 
-        assert_eq!(listed_ids(&got), ["PWF-0004"]);
+        assert_eq!(listed_ids(&got), ["FOO-0004"]);
     }
 
     #[tokio::test]
     async fn raw_section_label_is_normalized_before_scoping() {
-        let (store, registry) = pwf_store(vec![sectioned("PWF-0001", "Futuro")]);
+        let (store, registry) = foo_store(vec![sectioned("FOO-0001", "Futuro")]);
 
         let got = run(
             &store,
@@ -814,12 +854,12 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(listed_ids(&got), ["PWF-0001"]);
+        assert_eq!(listed_ids(&got), ["FOO-0001"]);
     }
 
     #[tokio::test]
     async fn all_scope_groups_by_section_rank() {
-        let (store, registry) = pwf_store(vec![
+        let (store, registry) = foo_store(vec![
             sectioned("FOO-0004", "Future"),
             sectioned("FOO-0003", "Human"),
             sectioned("FOO-0002", "Low-prio"),
@@ -845,10 +885,10 @@ mod tests {
 
     #[tokio::test]
     async fn human_scope_shows_only_human_items() {
-        let (store, registry) = pwf_store(vec![
-            record("PWF-0003"),
-            sectioned("PWF-0002", "Human"),
-            sectioned("PWF-0001", "Future"),
+        let (store, registry) = foo_store(vec![
+            record("FOO-0003"),
+            sectioned("FOO-0002", "Human"),
+            sectioned("FOO-0001", "Future"),
         ]);
 
         let got = run(
@@ -862,15 +902,15 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(listed_ids(&got), ["PWF-0002"]);
+        assert_eq!(listed_ids(&got), ["FOO-0002"]);
     }
 
     #[tokio::test]
     async fn effort_filter_matches_exact_tier_only() {
-        let (store, registry) = pwf_store(vec![
-            effort_task("PWF-0003", "high"),
-            effort_task("PWF-0002", "medium"),
-            record("PWF-0001"),
+        let (store, registry) = foo_store(vec![
+            effort_task("FOO-0003", "high"),
+            effort_task("FOO-0002", "medium"),
+            record("FOO-0001"),
         ]);
 
         let got = run(
@@ -884,12 +924,12 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(listed_ids(&got), ["PWF-0003"]);
+        assert_eq!(listed_ids(&got), ["FOO-0003"]);
     }
 
     #[tokio::test]
     async fn stored_effort_trims_valid_names() {
-        let (store, registry) = pwf_store(vec![effort_task("PWF-0003", " high ")]);
+        let (store, registry) = foo_store(vec![effort_task("FOO-0003", " high ")]);
 
         let matched = run(
             &store,
@@ -901,12 +941,12 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(listed_ids(&matched), ["PWF-0003"]);
+        assert_eq!(listed_ids(&matched), ["FOO-0003"]);
     }
 
     #[tokio::test]
     async fn invalid_stored_effort_fails_at_the_list_boundary() {
-        let (store, registry) = pwf_store(vec![effort_task("PWF-0002", "3")]);
+        let (store, registry) = foo_store(vec![effort_task("FOO-0002", "3")]);
 
         let error = run(&store, &registry, &default_query()).await.unwrap_err();
 
@@ -916,11 +956,11 @@ mod tests {
 
     #[tokio::test]
     async fn tag_filter_requires_every_requested_tag() {
-        let (store, registry) = pwf_store(vec![
-            tagged_task("PWF-0004", "[sqlite_tools, godot]"),
-            tagged_task("PWF-0003", "[sqlite, godot]"),
-            tagged_task("PWF-0002", "[sqlite]"),
-            record("PWF-0001"),
+        let (store, registry) = foo_store(vec![
+            tagged_task("FOO-0004", "[sqlite_tools, godot]"),
+            tagged_task("FOO-0003", "[sqlite, godot]"),
+            tagged_task("FOO-0002", "[sqlite]"),
+            record("FOO-0001"),
         ]);
 
         let got = run(
@@ -934,12 +974,12 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(listed_ids(&got), ["PWF-0003"]);
+        assert_eq!(listed_ids(&got), ["FOO-0003"]);
     }
 
     #[tokio::test]
     async fn corrupt_tags_fail_only_when_a_tag_filter_is_requested() {
-        let (store, registry) = pwf_store(vec![tagged_task("PWF-0001", "sqlite, godot")]);
+        let (store, registry) = foo_store(vec![tagged_task("FOO-0001", "sqlite, godot")]);
         assert!(run(&store, &registry, &default_query()).await.is_ok());
 
         let error = run(
@@ -953,27 +993,30 @@ mod tests {
         .await
         .unwrap_err();
 
-        let ListTasksError::InvalidTags { id, source } = error else {
-            panic!("expected invalid tags error");
+        let invalid_tags = match error {
+            ListTasksError::InvalidTags { id, source } => Some((id, source)),
+            _ => None,
         };
-        assert_eq!(id.as_ref(), "PWF-0001");
+        assert!(invalid_tags.is_some());
+        let (id, source) = invalid_tags.unwrap();
+        assert_eq!(id.as_ref(), "FOO-0001");
         assert_eq!(source.raw(), "sqlite, godot");
     }
 
     #[tokio::test]
     async fn scope_and_effort_filters_exclude_corrupt_tags_before_parsing() {
-        let (store, registry) = pwf_store(vec![
+        let (store, registry) = foo_store(vec![
             TaskRecord {
                 section: Some("Human".parse().unwrap()),
-                ..tagged_task("PWF-0003", "corrupt")
+                ..tagged_task("FOO-0003", "corrupt")
             },
             TaskRecord {
                 effort: Some("medium".parse().unwrap()),
-                ..tagged_task("PWF-0002", "also corrupt")
+                ..tagged_task("FOO-0002", "also corrupt")
             },
             TaskRecord {
                 effort: Some("high".parse().unwrap()),
-                ..tagged_task("PWF-0001", "[sqlite]")
+                ..tagged_task("FOO-0001", "[sqlite]")
             },
         ]);
 
@@ -989,15 +1032,15 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(listed_ids(&got), ["PWF-0001"]);
+        assert_eq!(listed_ids(&got), ["FOO-0001"]);
     }
 
     #[tokio::test]
     async fn tag_filter_applies_before_cap_and_hidden_count() {
-        let (store, registry) = pwf_store(vec![
-            record("PWF-9999"),
-            tagged_task("PWF-0002", "[sqlite]"),
-            tagged_task("PWF-0001", "[sqlite]"),
+        let (store, registry) = foo_store(vec![
+            record("FOO-9999"),
+            tagged_task("FOO-0002", "[sqlite]"),
+            tagged_task("FOO-0001", "[sqlite]"),
         ]);
 
         let got = run(
@@ -1012,25 +1055,25 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(listed_ids(&got), ["PWF-0002"]);
+        assert_eq!(listed_ids(&got), ["FOO-0002"]);
         assert_eq!(got.hidden, 1);
     }
 
     #[tokio::test]
     async fn created_desc_is_default_and_flat_across_projects() {
         let (store, registry) = store_and_registry(&[
-            in_project("pwf", dated_task("PWF-0001", "2026-01-01")),
+            in_project("foo", dated_task("FOO-0001", "2026-01-01")),
             in_project("companion-project", dated_task("AUX-0001", "2026-03-01")),
         ]);
 
         let got = run(&store, &registry, &default_query()).await.unwrap();
 
-        assert_eq!(listed_ids(&got), ["AUX-0001", "PWF-0001"]);
+        assert_eq!(listed_ids(&got), ["AUX-0001", "FOO-0001"]);
     }
 
     #[tokio::test]
     async fn created_asc_orders_oldest_first() {
-        let (store, registry) = pwf_store(vec![
+        let (store, registry) = foo_store(vec![
             dated_task("FOO-0001", "2026-01-01"),
             dated_task("FOO-0002", "2026-03-01"),
             dated_task("FOO-0003", "2026-02-01"),
@@ -1057,7 +1100,7 @@ mod tests {
     async fn id_desc_is_flat_across_projects() {
         let (store, registry) = store_and_registry(&[
             in_project("companion-project", record("AUX-0001")),
-            in_project("pwf", record("PWF-0099")),
+            in_project("foo", record("FOO-0099")),
         ]);
 
         let got = run(
@@ -1074,13 +1117,13 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(listed_ids(&got), ["PWF-0099", "AUX-0001"]);
+        assert_eq!(listed_ids(&got), ["FOO-0099", "AUX-0001"]);
     }
 
     #[tokio::test]
     async fn project_id_order_groups_projects_and_orders_ids_descending() {
         let (store, registry) = store_and_registry(&[
-            in_project("pwf", record("PWF-9999")),
+            in_project("foo", record("FOO-9999")),
             in_project("companion-project", record("AUX-0001")),
             in_project("companion-project", record("AUX-0002")),
         ]);
@@ -1099,13 +1142,13 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(listed_ids(&got), ["AUX-0002", "AUX-0001", "PWF-9999"]);
+        assert_eq!(listed_ids(&got), ["AUX-0002", "AUX-0001", "FOO-9999"]);
     }
 
     #[tokio::test]
     async fn all_uncaps_and_default_scope_uses_the_default_cap() {
         let (store, registry) =
-            pwf_store((1..=12).map(|n| record(&format!("FOO-{n:04}"))).collect());
+            foo_store((1..=12).map(|n| record(&format!("FOO-{n:04}"))).collect());
 
         let all = run(
             &store,
@@ -1142,7 +1185,7 @@ mod tests {
     #[tokio::test]
     async fn only_project_scans_just_that_project() {
         let (store, registry) = store_and_registry(&[
-            in_project("pwf", record("PWF-0001")),
+            in_project("foo", record("FOO-0001")),
             in_project("companion-project", record("AUX-0001")),
         ]);
 
@@ -1150,18 +1193,18 @@ mod tests {
             &store,
             &registry,
             &ListTasks {
-                project_selector: Some("pwf".parse().unwrap()),
+                project_selector: Some("foo".parse().unwrap()),
                 ..default_query()
             },
         )
         .await
         .unwrap();
 
-        assert_eq!(listed_ids(&got), ["PWF-0001"]);
-        assert_eq!(got.project, Some(ProjectName::try_new("pwf").unwrap()));
+        assert_eq!(listed_ids(&got), ["FOO-0001"]);
+        assert_eq!(got.project, Some(ProjectName::try_new("foo").unwrap()));
         assert_eq!(
             got.project_task_path,
-            Some(ProjectTaskPath::new("/tasks/pwf".into()))
+            Some(ProjectTaskPath::new("/tasks/foo".into()))
         );
     }
 }

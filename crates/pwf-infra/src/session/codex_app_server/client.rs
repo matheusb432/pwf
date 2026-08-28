@@ -94,6 +94,9 @@ impl AppServerClient {
                     "name": "pwf",
                     "title": "pwf Codex session preparation",
                     "version": env!("CARGO_PKG_VERSION")
+                },
+                "capabilities": {
+                    "experimentalApi": true
                 }
             }),
         )?;
@@ -120,51 +123,7 @@ impl AppServerClient {
                 "params": params
             }),
         )?;
-
-        let deadline = Instant::now() + REQUEST_TIMEOUT;
-        loop {
-            let now = Instant::now();
-            if now >= deadline {
-                return Err(CodexAppServerError::Timeout { operation });
-            }
-            match self.responses.recv_timeout(deadline - now) {
-                Ok(Ok(response)) => {
-                    if response.get("id").and_then(Value::as_u64) != Some(request_id) {
-                        continue;
-                    }
-                    if let Some(error) = response.get("error") {
-                        return Err(protocol_error(operation, error));
-                    }
-                    return response.get("result").cloned().ok_or_else(|| {
-                        CodexAppServerError::MalformedResponse {
-                            operation,
-                            message: "matching response has no result".to_string(),
-                        }
-                    });
-                }
-                Ok(Err(ReaderFailure::Transport(message))) => {
-                    return Err(CodexAppServerError::Transport { operation, message });
-                }
-                Ok(Err(ReaderFailure::Malformed(message))) => {
-                    return Err(CodexAppServerError::MalformedResponse { operation, message });
-                }
-                Ok(Err(ReaderFailure::ResponseLineBytesLimitExceeded { bytes_max })) => {
-                    return Err(CodexAppServerError::MalformedResponse {
-                        operation,
-                        message: format!("response line exceeds {bytes_max}-byte limit"),
-                    });
-                }
-                Ok(Err(ReaderFailure::Closed)) | Err(RecvTimeoutError::Disconnected) => {
-                    return Err(CodexAppServerError::Transport {
-                        operation,
-                        message: "app-server closed stdout".to_string(),
-                    });
-                }
-                Err(RecvTimeoutError::Timeout) => {
-                    return Err(CodexAppServerError::Timeout { operation });
-                }
-            }
-        }
+        wait_for_response(&self.responses, operation, request_id)
     }
 
     fn notify(
@@ -222,6 +181,86 @@ impl AppServerClient {
     }
 }
 
+fn wait_for_response(
+    responses: &Receiver<Result<Value, ReaderFailure>>,
+    operation: CodexAppServerOperation,
+    request_id: u64,
+) -> Result<Value, CodexAppServerError> {
+    let deadline = Instant::now() + REQUEST_TIMEOUT;
+    loop {
+        let timeout = response_timeout_remaining(operation, deadline)?;
+        let received = responses.recv_timeout(timeout);
+        if let Some(outcome) = decode_received_response(received, operation, request_id) {
+            return outcome;
+        }
+    }
+}
+
+fn response_timeout_remaining(
+    operation: CodexAppServerOperation,
+    deadline: Instant,
+) -> Result<Duration, CodexAppServerError> {
+    let now = Instant::now();
+    if now >= deadline {
+        return Err(CodexAppServerError::Timeout { operation });
+    }
+    Ok(deadline - now)
+}
+
+fn decode_received_response(
+    received: Result<Result<Value, ReaderFailure>, RecvTimeoutError>,
+    operation: CodexAppServerOperation,
+    request_id: u64,
+) -> Option<Result<Value, CodexAppServerError>> {
+    match received {
+        Ok(Ok(response)) => matching_response(&response, operation, request_id),
+        Ok(Err(ReaderFailure::Transport(message))) => {
+            Some(Err(CodexAppServerError::Transport { operation, message }))
+        }
+        Ok(Err(ReaderFailure::Malformed(message))) => {
+            Some(Err(CodexAppServerError::MalformedResponse {
+                operation,
+                message,
+            }))
+        }
+        Ok(Err(ReaderFailure::ResponseLineBytesLimitExceeded { bytes_max })) => {
+            Some(Err(CodexAppServerError::MalformedResponse {
+                operation,
+                message: format!("response line exceeds {bytes_max}-byte limit"),
+            }))
+        }
+        Ok(Err(ReaderFailure::Closed)) | Err(RecvTimeoutError::Disconnected) => {
+            Some(Err(CodexAppServerError::Transport {
+                operation,
+                message: "app-server closed stdout".to_string(),
+            }))
+        }
+        Err(RecvTimeoutError::Timeout) => Some(Err(CodexAppServerError::Timeout { operation })),
+    }
+}
+
+fn matching_response(
+    response: &Value,
+    operation: CodexAppServerOperation,
+    request_id: u64,
+) -> Option<Result<Value, CodexAppServerError>> {
+    if response.get("id").and_then(Value::as_u64) != Some(request_id) {
+        return None;
+    }
+    if let Some(error) = response.get("error") {
+        return Some(Err(protocol_error(operation, error)));
+    }
+    Some(
+        response
+            .get("result")
+            .cloned()
+            .ok_or_else(|| CodexAppServerError::MalformedResponse {
+                operation,
+                message: "matching response has no result".to_string(),
+            }),
+    )
+}
+
 fn fail_started_child(mut child: Child, primary: CodexAppServerError) -> AppServerStartFailure {
     drop(child.stdin.take());
     drop(child.stdout.take());
@@ -241,15 +280,9 @@ fn terminate_and_reap(child: &mut Child) -> Result<(), CodexAppServerError> {
                 thread::sleep(SHUTDOWN_POLL_INTERVAL);
             }
             Ok(None) => {
-                let message = termination_error.map_or_else(
-                    || "process did not exit within 2 seconds".to_string(),
-                    |error| {
-                        format!(
-                            "process termination failed ({error}) and it did not exit within 2 seconds"
-                        )
-                    },
-                );
-                return Err(CodexAppServerError::Shutdown { message });
+                return Err(CodexAppServerError::Shutdown {
+                    message: shutdown_timeout_message(termination_error),
+                });
             }
             Err(error) => {
                 return Err(CodexAppServerError::Shutdown {
@@ -258,6 +291,15 @@ fn terminate_and_reap(child: &mut Child) -> Result<(), CodexAppServerError> {
             }
         }
     }
+}
+
+fn shutdown_timeout_message(termination_error: Option<String>) -> String {
+    termination_error.map_or_else(
+        || "process did not exit within 2 seconds".to_string(),
+        |error| {
+            format!("process termination failed ({error}) and it did not exit within 2 seconds")
+        },
+    )
 }
 
 fn protocol_error(operation: CodexAppServerOperation, error: &Value) -> CodexAppServerError {

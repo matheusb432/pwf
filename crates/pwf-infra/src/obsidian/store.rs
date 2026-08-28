@@ -22,6 +22,7 @@ pub struct ObsidianStore {
 }
 
 impl ObsidianStore {
+    #[must_use]
     pub fn new(home: HomeDirectory) -> Self {
         Self { home }
     }

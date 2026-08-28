@@ -244,7 +244,7 @@ mod tests {
             .await
             .unwrap();
 
-        let review = out.review_task.expect("review task present");
+        let review = out.review_task.unwrap();
         assert_eq!(review.id.as_ref(), "FOO-0002");
         assert!(
             store
@@ -339,12 +339,12 @@ mod tests {
     fn review_prompt_mentions_only_supplied_commits() {
         let commits = "a..b".parse().unwrap();
         assert_eq!(
-            review_task_prompt(&"PWF-0128".parse().unwrap(), Some(&commits)).as_ref(),
-            "review PWF-0128, commits: a..b"
+            review_task_prompt(&"FOO-0001".parse().unwrap(), Some(&commits)).as_ref(),
+            "review FOO-0001, commits: a..b"
         );
         assert_eq!(
-            review_task_prompt(&"PWF-0128".parse().unwrap(), None).as_ref(),
-            "review PWF-0128"
+            review_task_prompt(&"FOO-0001".parse().unwrap(), None).as_ref(),
+            "review FOO-0001"
         );
     }
 }

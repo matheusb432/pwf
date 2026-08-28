@@ -277,11 +277,11 @@ mod tests {
 
     fn project(tasks_path: &Path) -> Project {
         Project {
-            id: ProjectId::try_new("PWF").unwrap(),
-            title: ProjectName::try_new("pwf").unwrap(),
+            id: ProjectId::try_new("FOO").unwrap(),
+            title: ProjectName::try_new("foo").unwrap(),
             source: ProjectSource::new(
                 ProjectSourceKind::Directory,
-                ProjectSourceValue::try_new("/projects/pwf").unwrap(),
+                ProjectSourceValue::try_new("/projects/foo").unwrap(),
             ),
             tasks: ProjectTasks::new(
                 ProjectTasksKind::Directory,
@@ -293,7 +293,7 @@ mod tests {
     }
 
     fn identifier(number: u32) -> NoteId {
-        NoteId::try_new(format!("PWF-NOTE-{number:04}")).unwrap()
+        NoteId::try_new(format!("FOO-NOTE-{number:04}")).unwrap()
     }
 
     fn new_note(number: u32, title: &str) -> NewProjectNote {
@@ -310,7 +310,7 @@ mod tests {
                 NoteTag::try_new("testing").unwrap(),
             ],
             sources: vec![
-                NoteSource::try_new("PWF-0165 implementation evidence").unwrap(),
+                NoteSource::try_new("FOO-0001 sample evidence").unwrap(),
             ],
             verified: Some(NoteVerification::try_new("2026-07-30").unwrap()),
             created: "2026-07-26".parse().unwrap(),
@@ -322,8 +322,8 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let tasks_path = directory.path().join("tasks");
         fs::create_dir_all(&tasks_path).unwrap();
-        let index_path = tasks_path.join("pwf.md");
-        fs::write(&index_path, "- [ ] [[PWF-0001|task]]\n").unwrap();
+        let index_path = tasks_path.join("foo.md");
+        fs::write(&index_path, "- [ ] [[FOO-0001|task]]\n").unwrap();
         let store = store(&tasks_path);
 
         let inserted = ProjectNoteStore::insert_note(
@@ -333,18 +333,18 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(inserted.id.as_ref(), "PWF-NOTE-0001");
+        assert_eq!(inserted.id.as_ref(), "FOO-NOTE-0001");
         assert_eq!(inserted.title.as_ref(), "remember milk");
         assert_eq!(
-            fs::read_to_string(tasks_path.join("PWF-NOTE-0001.md")).unwrap(),
+            fs::read_to_string(tasks_path.join("FOO-NOTE-0001.md")).unwrap(),
             concat!(
                 "---\n",
                 "type: note\n",
-                "project: pwf\n",
+                "project: foo\n",
                 "created: 2026-07-26\n",
                 "domain: \"testing\"\n",
                 "tags: [\"cli\", \"testing\"]\n",
-                "sources: [\"PWF-0165 implementation evidence\"]\n",
+                "sources: [\"FOO-0001 sample evidence\"]\n",
                 "verified: \"2026-07-30\"\n",
                 "---\n\n",
                 "# remember milk\n\n",
@@ -353,12 +353,12 @@ mod tests {
                 "## Why it matters\n\n",
                 "This protects real process-boundary failures.\n\n",
                 "## Sources\n\n",
-                "- PWF-0165 implementation evidence\n",
+                "- FOO-0001 sample evidence\n",
             )
         );
         assert_eq!(
             fs::read_to_string(&index_path).unwrap(),
-            "- [ ] [[PWF-0001|task]]\n\n### Notes\n\n- [[PWF-NOTE-0001]]\n"
+            "- [ ] [[FOO-0001|task]]\n\n### Notes\n\n- [[FOO-NOTE-0001]]\n"
         );
         assert_eq!(
             ProjectNoteStore::list_notes(&store, &project(&tasks_path)).unwrap(),
@@ -371,15 +371,15 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let tasks_path = directory.path().join("tasks");
         fs::create_dir_all(&tasks_path).unwrap();
-        let index_path = tasks_path.join("pwf.md");
+        let index_path = tasks_path.join("foo.md");
         fs::write(
             &index_path,
-            "### Notes\n- [[PWF-NOTE-0001]]\n- [ ] [[PWF-0001|task]]\n",
+            "### Notes\n- [[FOO-NOTE-0001]]\n- [ ] [[FOO-0001|task]]\n",
         )
         .unwrap();
         fs::write(
-            tasks_path.join("PWF-NOTE-0001.md"),
-            "---\ntype: note\nproject: pwf\ncreated: 2026-07-25\n---\n\nold message\n",
+            tasks_path.join("FOO-NOTE-0001.md"),
+            "---\ntype: note\nproject: foo\ncreated: 2026-07-25\n---\n\nold message\n",
         )
         .unwrap();
         let index_before = fs::read(&index_path).unwrap();
@@ -397,8 +397,8 @@ mod tests {
 
         assert_eq!(fs::read(&index_path).unwrap(), index_before);
         assert_eq!(
-            fs::read_to_string(tasks_path.join("PWF-NOTE-0001.md")).unwrap(),
-            "---\ntype: note\nproject: pwf\ncreated: 2026-07-25\n---\n\nnew message\n"
+            fs::read_to_string(tasks_path.join("FOO-NOTE-0001.md")).unwrap(),
+            "---\ntype: note\nproject: foo\ncreated: 2026-07-25\n---\n\nnew message\n"
         );
     }
 
@@ -407,12 +407,12 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let tasks_path = directory.path().join("tasks");
         fs::create_dir_all(&tasks_path).unwrap();
-        let index_path = tasks_path.join("pwf.md");
-        fs::write(&index_path, "### Notes\r\n\r\n- [[PWF-NOTE-0001]]\r\n").unwrap();
+        let index_path = tasks_path.join("foo.md");
+        fs::write(&index_path, "### Notes\r\n\r\n- [[FOO-NOTE-0001]]\r\n").unwrap();
         let source = concat!(
             "---\r\n",
             "type: note\r\n",
-            "project: pwf\r\n",
+            "project: foo\r\n",
             "created: 2026-07-25\r\n",
             "# frontmatter comment\r\n",
             "---\r\n\r\n",
@@ -421,7 +421,7 @@ mod tests {
             "## Why it matters\r\n\r\n",
             "Keep every other byte.\r\n",
         );
-        fs::write(tasks_path.join("PWF-NOTE-0001.md"), source).unwrap();
+        fs::write(tasks_path.join("FOO-NOTE-0001.md"), source).unwrap();
         let store = store(&tasks_path);
 
         ProjectNoteStore::update_note(
@@ -435,7 +435,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            fs::read_to_string(tasks_path.join("PWF-NOTE-0001.md")).unwrap(),
+            fs::read_to_string(tasks_path.join("FOO-NOTE-0001.md")).unwrap(),
             source.replacen("# old title", "# new title", 1)
         );
     }
@@ -446,8 +446,8 @@ mod tests {
         let tasks_path = directory.path().join("tasks");
         fs::create_dir_all(&tasks_path).unwrap();
         fs::write(
-            tasks_path.join("PWF-NOTE-0001.md"),
-            "---\ntype: note\nproject: pwf\n---\n",
+            tasks_path.join("FOO-NOTE-0001.md"),
+            "---\ntype: note\nproject: foo\n---\n",
         )
         .unwrap();
         let store = store(&tasks_path);
@@ -458,7 +458,7 @@ mod tests {
         assert_matches!(
             error,
             ObsidianStoreError::InvalidProjectNoteTitle { ref id, .. }
-                if id == "PWF-NOTE-0001"
+                if id == "FOO-NOTE-0001"
         );
     }
 
@@ -467,8 +467,8 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let tasks_path = directory.path().join("tasks");
         fs::create_dir_all(&tasks_path).unwrap();
-        let index_path = tasks_path.join("pwf.md");
-        let index = "### Notes\n- [[PWF-NOTE-0001]]\n";
+        let index_path = tasks_path.join("foo.md");
+        let index = "### Notes\n- [[FOO-NOTE-0001]]\n";
         fs::write(&index_path, index).unwrap();
         let store = store(&tasks_path);
 
@@ -478,7 +478,7 @@ mod tests {
         assert_matches!(
             error,
             ObsidianStoreError::ProjectNoteNotFound { ref id, ref project }
-                if id == "PWF-NOTE-0001" && project == "pwf"
+                if id == "FOO-NOTE-0001" && project == "foo"
         );
         assert_eq!(fs::read_to_string(index_path).unwrap(), index);
     }
@@ -488,12 +488,12 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let tasks_path = directory.path().join("tasks");
         fs::create_dir_all(&tasks_path).unwrap();
-        let note_path = tasks_path.join("PWF-NOTE-0001.md");
+        let note_path = tasks_path.join("FOO-NOTE-0001.md");
         fs::write(&note_path, [0xff, 0xfe]).unwrap();
-        let index_path = tasks_path.join("pwf.md");
+        let index_path = tasks_path.join("foo.md");
         fs::write(
             &index_path,
-            "- [ ] [[PWF-0001]]\n\n### Notes\n\n- [[PWF-NOTE-0001]]\n",
+            "- [ ] [[FOO-0001]]\n\n### Notes\n\n- [[FOO-NOTE-0001]]\n",
         )
         .unwrap();
         let store = store(&tasks_path);
@@ -502,7 +502,7 @@ mod tests {
         assert!(!note_path.exists());
         assert_eq!(
             fs::read_to_string(index_path).unwrap(),
-            "- [ ] [[PWF-0001]]\n\n### Notes\n"
+            "- [ ] [[FOO-0001]]\n\n### Notes\n"
         );
     }
 
@@ -511,13 +511,13 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let tasks_path = directory.path().join("tasks");
         fs::create_dir_all(&tasks_path).unwrap();
-        let note_path = tasks_path.join("PWF-NOTE-0001.md");
+        let note_path = tasks_path.join("FOO-NOTE-0001.md");
         fs::write(
             &note_path,
-            "---\ntype: note\nproject: pwf\ncreated: 2026-07-25\n---\n\nmessage\n",
+            "---\ntype: note\nproject: foo\ncreated: 2026-07-25\n---\n\nmessage\n",
         )
         .unwrap();
-        fs::create_dir(tasks_path.join("pwf.md")).unwrap();
+        fs::create_dir(tasks_path.join("foo.md")).unwrap();
         let store = store(&tasks_path);
 
         let error = ProjectNoteStore::delete_note(&store, &project(&tasks_path), &identifier(1))

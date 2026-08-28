@@ -234,7 +234,7 @@ mod tests {
 
     #[test]
     fn valid_full_identifiers_expose_number() {
-        for raw in ["PW-NOTE-0042", "PWF-NOTE-0042", "TOOL-NOTE-0042"] {
+        for raw in ["PW-NOTE-0042", "FOO-NOTE-0042", "TOOL-NOTE-0042"] {
             let id = NoteId::try_new(raw).unwrap();
             let project_id = raw.split_once("-NOTE-").unwrap().0;
 
@@ -247,13 +247,13 @@ mod tests {
     #[test]
     fn identifier_rejects_invalid_project_ids_and_suffix_shapes() {
         for raw in [
-            "pwf-NOTE-0001",
+            "foo-NOTE-0001",
             "P-NOTE-0001",
             "TOOLS-NOTE-0001",
-            "PWF-NOTE-001",
-            "PWF-NOTE-00001",
-            "PWF-NOTE-abcd",
-            "PWF-0001",
+            "FOO-NOTE-001",
+            "FOO-NOTE-00001",
+            "FOO-NOTE-abcd",
+            "FOO-0001",
         ] {
             assert!(NoteId::try_new(raw).is_err(), "accepted {raw}");
         }

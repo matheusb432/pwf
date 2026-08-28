@@ -51,24 +51,31 @@ impl ObsidianStore {
             effort: request.effort,
             tags: request.tags,
         });
-        if let Err(error) = write_add_task_file(&path, &content) {
-            if matches!(
-                &error,
-                ObsidianStoreError::AddWriteTaskFile { source }
-                    if source.kind() == std::io::ErrorKind::AlreadyExists
-            ) {
-                return Err(ObsidianStoreError::TaskIdOccupied {
-                    id: request.id.clone(),
-                    path,
-                });
-            }
-            return Err(error);
-        }
+        write_add_task_file(&path, &content)
+            .map_err(|error| map_add_task_error(error, request.id, &path))?;
         Ok(WrittenNote {
             id: request.id.clone(),
             path,
             title: request.title.clone(),
             content,
         })
+    }
+}
+
+fn map_add_task_error(
+    error: ObsidianStoreError,
+    id: &TaskId,
+    path: &std::path::Path,
+) -> ObsidianStoreError {
+    match error {
+        ObsidianStoreError::AddWriteTaskFile { ref source }
+            if source.kind() == std::io::ErrorKind::AlreadyExists =>
+        {
+            ObsidianStoreError::TaskIdOccupied {
+                id: id.clone(),
+                path: path.to_path_buf(),
+            }
+        }
+        error => error,
     }
 }

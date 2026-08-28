@@ -28,6 +28,7 @@ pub enum CreateTaskError {
 }
 
 impl CreateTaskError {
+    #[must_use]
     pub fn created_section(&self) -> Option<(&ProjectName, &TaskSection)> {
         match self {
             Self::InsertIndex {
@@ -121,8 +122,8 @@ mod tests {
         testing::{InMemoryStore, app_date, project},
     };
 
-    fn pwf() -> Project {
-        project("PWF", "pwf")
+    fn foo() -> Project {
+        project("FOO", "foo")
     }
 
     fn new_task(section: Option<&str>) -> NewTask {
@@ -138,12 +139,12 @@ mod tests {
     }
 
     fn staged_store() -> InMemoryStore {
-        InMemoryStore::default().with_project_id("pwf", "PWF")
+        InMemoryStore::default().with_project_id("foo", "FOO")
     }
 
     fn create_task(store: &InMemoryStore, section: Option<&str>) -> super::CreatedTask {
-        let project = pwf();
-        let id = TaskId::try_new("PWF-0001").unwrap();
+        let project = foo();
+        let id = TaskId::try_new("FOO-0001").unwrap();
         create(
             TaskCreation {
                 project: &project,
@@ -161,13 +162,13 @@ mod tests {
 
         let created = create_task(&store, None);
 
-        let id = TaskId::try_new("PWF-0001").unwrap();
+        let id = TaskId::try_new("FOO-0001").unwrap();
         assert_eq!(created.id, id.clone());
         assert_eq!(created.created_section, None);
-        let tasks = store.tasks("pwf");
+        let tasks = store.tasks("foo");
         assert_eq!(tasks.len(), 1, "record must be inserted");
         assert_eq!(tasks[0].id, id.clone());
-        let entries = store.entries("pwf");
+        let entries = store.entries("foo");
         assert_eq!(entries.len(), 1, "open index entry must be upserted");
         assert_eq!(entries[0].id, id);
         assert_eq!(entries[0].state, IndexEntryState::Open);
@@ -185,14 +186,14 @@ mod tests {
             Some("Human")
         );
         assert_eq!(
-            store.entries("pwf")[0].section.as_ref().map(AsRef::as_ref),
+            store.entries("foo")[0].section.as_ref().map(AsRef::as_ref),
             Some("Human")
         );
     }
 
     #[test]
     fn create_task_does_not_report_existing_empty_section_region() {
-        let store = staged_store().with_sections("pwf", &["Human"]);
+        let store = staged_store().with_sections("foo", &["Human"]);
 
         let created = create_task(&store, Some("Human"));
 
@@ -201,7 +202,7 @@ mod tests {
 
     #[test]
     fn create_task_matches_section_aliases_like_the_legacy_read_headers() {
-        let store = staged_store().with_sections("pwf", &["Futuro"]);
+        let store = staged_store().with_sections("foo", &["Futuro"]);
 
         let created = create_task(&store, Some("Future"));
 
@@ -212,7 +213,7 @@ mod tests {
     fn created_item_carries_record_and_section_fact() {
         let store = staged_store();
         let created = create_task(&store, Some("Low-prio"));
-        assert_eq!(created.id, TaskId::try_new("PWF-0001").unwrap());
+        assert_eq!(created.id, TaskId::try_new("FOO-0001").unwrap());
         assert_eq!(created.title.as_ref(), "ship it");
         assert_eq!(
             created.created_section.as_ref().map(AsRef::as_ref),

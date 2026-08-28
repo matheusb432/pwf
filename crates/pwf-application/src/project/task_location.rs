@@ -36,21 +36,33 @@ pub(in crate::project) fn reject_collision(
 
     for (existing_id, existing_path) in existing {
         let existing = resolve_path(&existing_id, &existing_path, home)?;
-        if candidate.identity() == existing.identity() {
-            let (first_id, second_id) = if candidate_id <= &existing_id {
-                (candidate_id.clone(), existing_id)
-            } else {
-                (existing_id, candidate_id.clone())
-            };
-            return Err(TaskLocationError::Collision {
-                first_id,
-                second_id,
-                path: candidate.path().to_path_buf(),
-            });
+        if let Some(collision) = collision(candidate_id, &candidate, existing_id, &existing) {
+            return Err(collision);
         }
     }
 
     Ok(candidate)
+}
+
+fn collision(
+    candidate_id: &ProjectId,
+    candidate: &ResolvedPath,
+    existing_id: ProjectId,
+    existing: &ResolvedPath,
+) -> Option<TaskLocationError> {
+    if candidate.identity() != existing.identity() {
+        return None;
+    }
+    let (first_id, second_id) = if candidate_id <= &existing_id {
+        (candidate_id.clone(), existing_id)
+    } else {
+        (existing_id, candidate_id.clone())
+    };
+    Some(TaskLocationError::Collision {
+        first_id,
+        second_id,
+        path: candidate.path().to_path_buf(),
+    })
 }
 
 fn resolve_path(

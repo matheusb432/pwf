@@ -42,12 +42,12 @@ mod tests {
 
     #[test]
     fn replacements_preserve_the_unedited_note_region() {
-        let source = "---\nid: PWF-0001\nstatus: active\ntitle: old\n---\n\nold body\n";
+        let source = "---\nid: FOO-0001\nstatus: active\ntitle: old\n---\n\nold body\n";
         let titled = replace_title(source, "new title");
 
         assert_eq!(
             replace_body(&titled, "new body"),
-            "---\nid: PWF-0001\nstatus: active\ntitle: new title\n---\n\nnew body\n"
+            "---\nid: FOO-0001\nstatus: active\ntitle: new title\n---\n\nnew body\n"
         );
     }
 

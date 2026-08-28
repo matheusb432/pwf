@@ -138,8 +138,6 @@ pub enum ObsidianStoreError {
         path: PathBuf,
         property: &'static str,
     },
-    #[error("Missing task frontmatter property `id` in {}", path.display())]
-    MissingTaskId { path: PathBuf },
     #[error("Invalid task frontmatter property `id` {value:?} in {}", path.display())]
     InvalidTaskId { path: PathBuf, value: String },
     #[error("Invalid task frontmatter property `{property}` {value:?} in {}: {source}", path.display())]
@@ -245,6 +243,7 @@ pub enum ObsidianStoreError {
 }
 
 impl ObsidianStoreError {
+    #[must_use]
     pub fn created_section_diagnostic(&self) -> Option<(&str, &TaskSection)> {
         match self {
             Self::AddWriteIndexFile {

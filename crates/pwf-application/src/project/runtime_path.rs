@@ -12,10 +12,12 @@ pub struct ResolvedPath {
 }
 
 impl ResolvedPath {
+    #[must_use]
     pub fn path(&self) -> &Path {
         &self.path
     }
 
+    #[must_use]
     pub fn identity(&self) -> &RuntimePathIdentity {
         &self.identity
     }
@@ -79,9 +81,7 @@ mod host {
     impl ParsedPath {
         fn parse(path: &OsStr) -> Result<Self, RuntimePathError> {
             let bytes = path.as_bytes();
-            if bytes.is_empty() {
-                return Err(RuntimePathError::Empty);
-            }
+            bytes.first().ok_or(RuntimePathError::Empty)?;
 
             let (root, remainder) = parse_root(bytes)?;
             let root_only = root != PathRoot::Relative && remainder.is_empty();
@@ -95,55 +95,65 @@ mod host {
         }
 
         fn identity(&self) -> RuntimePathIdentity {
-            let mut identity = match self.root {
-                PathRoot::Relative => b"relative:".to_vec(),
-                PathRoot::Unix => b"unix:/".to_vec(),
-                PathRoot::Drive(drive) => {
-                    vec![
-                        b'd',
-                        b'r',
-                        b'i',
-                        b'v',
-                        b'e',
-                        b':',
-                        drive.to_ascii_lowercase(),
-                        b':',
-                        b'/',
-                    ]
-                }
-            };
-
-            for (index, component) in self.components.iter().enumerate() {
-                if index > 0 {
-                    identity.push(b'/');
-                }
-                let mut bytes = component.as_bytes().to_vec();
-                if matches!(self.root, PathRoot::Drive(_)) {
-                    bytes.make_ascii_lowercase();
-                }
-                identity.extend(bytes);
-            }
-
-            RuntimePathIdentity(OsString::from_vec(identity))
+            runtime_path_identity(self.root, &self.components)
         }
 
         fn to_path_buf(&self) -> PathBuf {
-            let mut bytes = match self.root {
-                PathRoot::Relative => Vec::new(),
-                PathRoot::Unix => vec![b'/'],
-                PathRoot::Drive(drive) => {
-                    vec![drive.to_ascii_uppercase(), b':', b'/']
-                }
-            };
+            runtime_path_buf(self.root, &self.components)
+        }
+    }
 
-            for (index, component) in self.components.iter().enumerate() {
-                if index > 0 {
-                    bytes.push(b'/');
-                }
-                bytes.extend(component.as_bytes());
+    fn runtime_path_identity(root: PathRoot, components: &[OsString]) -> RuntimePathIdentity {
+        let mut identity = identity_prefix(root);
+        let mut components = components.iter();
+        if let Some(first) = components.next() {
+            append_identity_component(&mut identity, first, root);
+        }
+        for component in components {
+            identity.push(b'/');
+            append_identity_component(&mut identity, component, root);
+        }
+        RuntimePathIdentity(OsString::from_vec(identity))
+    }
+
+    fn runtime_path_buf(root: PathRoot, components: &[OsString]) -> PathBuf {
+        let mut bytes = path_prefix(root);
+        let mut components = components.iter();
+        if let Some(first) = components.next() {
+            bytes.extend(first.as_bytes());
+        }
+        for component in components {
+            bytes.push(b'/');
+            bytes.extend(component.as_bytes());
+        }
+        PathBuf::from(OsString::from_vec(bytes))
+    }
+
+    fn identity_prefix(root: PathRoot) -> Vec<u8> {
+        match root {
+            PathRoot::Relative => b"relative:".to_vec(),
+            PathRoot::Unix => b"unix:/".to_vec(),
+            PathRoot::Drive(drive) => {
+                let mut prefix = b"drive:".to_vec();
+                prefix.extend([drive.to_ascii_lowercase(), b':', b'/']);
+                prefix
             }
+        }
+    }
 
-            PathBuf::from(OsString::from_vec(bytes))
+    fn append_identity_component(identity: &mut Vec<u8>, component: &OsStr, root: PathRoot) {
+        let mut bytes = component.as_bytes().to_vec();
+        if matches!(root, PathRoot::Drive(_)) {
+            bytes.make_ascii_lowercase();
+        }
+        identity.extend(bytes);
+    }
+
+    fn path_prefix(root: PathRoot) -> Vec<u8> {
+        match root {
+            PathRoot::Relative => Vec::new(),
+            PathRoot::Unix => vec![b'/'],
+            PathRoot::Drive(drive) => vec![drive.to_ascii_uppercase(), b':', b'/'],
         }
     }
 
@@ -190,40 +200,46 @@ mod host {
 
     fn parse_root(bytes: &[u8]) -> Result<(PathRoot, &[u8]), RuntimePathError> {
         if is_separator(bytes[0]) {
-            if bytes.get(1).is_some_and(|byte| is_separator(*byte)) {
-                return Err(RuntimePathError::RepeatedSeparator);
-            }
-            return Ok((PathRoot::Unix, &bytes[1..]));
+            return parse_unix_root(bytes);
         }
 
         if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
-            let remainder = &bytes[2..];
-            let Some(remainder) = remainder
-                .first()
-                .filter(|byte| is_separator(**byte))
-                .map(|_| &remainder[1..])
-            else {
-                return Err(RuntimePathError::DriveRelative);
-            };
-            if remainder.first().is_some_and(|byte| is_separator(*byte)) {
-                return Err(RuntimePathError::RepeatedSeparator);
-            }
-            return Ok((PathRoot::Drive(bytes[0]), remainder));
+            return parse_drive_root(bytes);
         }
 
         Ok((PathRoot::Relative, bytes))
+    }
+
+    fn parse_unix_root(bytes: &[u8]) -> Result<(PathRoot, &[u8]), RuntimePathError> {
+        if bytes.get(1).is_some_and(|byte| is_separator(*byte)) {
+            return Err(RuntimePathError::RepeatedSeparator);
+        }
+        Ok((PathRoot::Unix, &bytes[1..]))
+    }
+
+    fn parse_drive_root(bytes: &[u8]) -> Result<(PathRoot, &[u8]), RuntimePathError> {
+        let remainder = &bytes[2..];
+        let Some(remainder) = remainder
+            .first()
+            .filter(|byte| is_separator(**byte))
+            .map(|_| &remainder[1..])
+        else {
+            return Err(RuntimePathError::DriveRelative);
+        };
+        if remainder.first().is_some_and(|byte| is_separator(*byte)) {
+            return Err(RuntimePathError::RepeatedSeparator);
+        }
+        Ok((PathRoot::Drive(bytes[0]), remainder))
     }
 
     fn parse_components(
         remainder: &[u8],
         root_only: bool,
     ) -> Result<Vec<OsString>, RuntimePathError> {
-        if remainder.is_empty() {
-            return if root_only {
-                Ok(Vec::new())
-            } else {
-                Err(RuntimePathError::Empty)
-            };
+        match (remainder.is_empty(), root_only) {
+            (true, true) => return Ok(Vec::new()),
+            (true, false) => return Err(RuntimePathError::Empty),
+            (false, _) => {}
         }
         if remainder.last().is_some_and(|byte| is_separator(*byte)) {
             return Err(RuntimePathError::TrailingSeparator);
@@ -231,16 +247,18 @@ mod host {
 
         remainder
             .split(|byte| is_separator(*byte))
-            .map(|component| {
-                if component.is_empty() {
-                    return Err(RuntimePathError::RepeatedSeparator);
-                }
-                if matches!(component, b"." | b"..") {
-                    return Err(RuntimePathError::DotComponent);
-                }
-                Ok(OsString::from_vec(component.to_vec()))
-            })
+            .map(parse_component)
             .collect()
+    }
+
+    fn parse_component(component: &[u8]) -> Result<OsString, RuntimePathError> {
+        if component.is_empty() {
+            return Err(RuntimePathError::RepeatedSeparator);
+        }
+        if matches!(component, b"." | b"..") {
+            return Err(RuntimePathError::DotComponent);
+        }
+        Ok(OsString::from_vec(component.to_vec()))
     }
 
     fn is_normal(component: &OsStr) -> bool {
@@ -604,8 +622,8 @@ mod tests {
 
     #[test]
     fn safe_non_home_absolute_paths_remain_unchanged() {
-        let resolved = resolve("/srv/pwf/tasks", Path::new("/home/tester")).unwrap();
+        let resolved = resolve("/srv/foo/tasks", Path::new("/home/tester")).unwrap();
 
-        assert_eq!(resolved.path(), Path::new("/srv/pwf/tasks"));
+        assert_eq!(resolved.path(), Path::new("/srv/foo/tasks"));
     }
 }

@@ -86,6 +86,7 @@ impl From<Option<String>> for AgentModel {
 impl AgentModel {
     pub const MODEL_DEFAULT: &str = "default";
 
+    #[must_use]
     pub fn into_inner(self) -> Option<String> {
         self.0
     }

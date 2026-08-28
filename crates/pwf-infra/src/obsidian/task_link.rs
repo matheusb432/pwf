@@ -48,23 +48,23 @@ mod tests {
     #[test]
     fn parses_bare_open_and_done_links_with_aliases() {
         assert_eq!(
-            parse("- [[PWF-NOTE-0001]]"),
+            parse("- [[FOO-NOTE-0001]]"),
             Some(TaskLink {
                 indentation: "",
                 checkbox: None,
-                id: "PWF-NOTE-0001",
+                id: "FOO-NOTE-0001",
             })
         );
         assert_eq!(
-            parse("  - [ ] [[PWF-0001|task]]"),
+            parse("  - [ ] [[FOO-0001|task]]"),
             Some(TaskLink {
                 indentation: "  ",
                 checkbox: Some(Checkbox::Open),
-                id: "PWF-0001",
+                id: "FOO-0001",
             })
         );
         assert_eq!(
-            parse("\t- [X] [[PWF-0002]]").unwrap().checkbox,
+            parse("\t- [X] [[FOO-0002]]").unwrap().checkbox,
             Some(Checkbox::Done)
         );
     }

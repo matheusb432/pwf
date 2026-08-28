@@ -299,14 +299,14 @@ mod tests {
 
     fn sample_task() -> TaskView {
         TaskView {
-            id: "PWF-0064".to_string(),
-            project: "pwf".to_string(),
+            id: "FOO-0001".to_string(),
+            project: "foo".to_string(),
             status: TaskStatus::Active as i32,
-            heading: "make list commands formatting less redundant".to_string(),
+            heading: "sample task".to_string(),
             prompt: String::new(),
             project_path: "/project".to_string(),
             location: Some(TaskLocation {
-                index_path: "pwf.md".to_string(),
+                index_path: "foo.md".to_string(),
                 line: 1,
             }),
             launch_issues: Vec::new(),
@@ -334,18 +334,9 @@ mod tests {
     #[test]
     fn all_status_short_lines_place_plain_lifecycle_after_the_identifier() {
         for (status, expected) in [
-            (
-                TaskStatus::Active,
-                "PWF-0064 [active] :: make list commands formatting less redundant",
-            ),
-            (
-                TaskStatus::Done,
-                "PWF-0064 [done] :: make list commands formatting less redundant",
-            ),
-            (
-                TaskStatus::Cancelled,
-                "PWF-0064 [cancelled] :: make list commands formatting less redundant",
-            ),
+            (TaskStatus::Active, "FOO-0001 [active] :: sample task"),
+            (TaskStatus::Done, "FOO-0001 [done] :: sample task"),
+            (TaskStatus::Cancelled, "FOO-0001 [cancelled] :: sample task"),
         ] {
             let mut task = sample_task();
             task.status = status as i32;
@@ -358,10 +349,7 @@ mod tests {
     #[test]
     fn exact_status_short_lines_keep_the_existing_shape() {
         let output = render_task_for_filter(&sample_task(), TaskStatusFilter::Active, false, false);
-        assert_eq!(
-            output,
-            "PWF-0064 :: make list commands formatting less redundant"
-        );
+        assert_eq!(output, "FOO-0001 :: sample task");
     }
 
     #[test]
@@ -437,7 +425,7 @@ mod tests {
     fn long_form_reports_malformed_blocked_by_without_making_the_task_unlaunchable() {
         let mut task = sample_task();
         task.blocked_by_issues = vec![BlockedByIssue {
-            path: "/tasks/PWF-0064.md".to_string(),
+            path: "/tasks/FOO-0064.md".to_string(),
             raw: "\"[[AUX-0001]]\"".to_string(),
             reason: "expected a sequence".to_string(),
         }];

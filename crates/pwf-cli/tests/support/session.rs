@@ -16,21 +16,21 @@ pub struct SessionFixture {
 }
 
 impl SessionFixture {
-    pub fn new() -> Self {
-        let directory = TempDir::new().unwrap();
-        let notes = directory.path().join("notes/pwf");
+    pub fn new() -> anyhow::Result<Self> {
+        let directory = TempDir::new()?;
+        let notes = directory.path().join("notes/foo");
         let project_path = directory.path().join("project");
-        fs::create_dir_all(&notes).expect("create task notes directory");
-        fs::create_dir_all(&project_path).expect("create project directory");
-        fs::write(notes.join("pwf.md"), "---\nid: pwf\ntitle: pwf\n---\n").unwrap();
-        let database = DatabaseFixture::new(directory.path().join("projects.sqlite3"));
-        database.add_directory_project(&project_id("PWF"), "pwf", &project_path, &notes);
+        fs::create_dir_all(&notes)?;
+        fs::create_dir_all(&project_path)?;
+        fs::write(notes.join("foo.md"), "---\nid: foo\ntitle: foo\n---\n")?;
+        let database = DatabaseFixture::new(directory.path().join("projects.sqlite3"))?;
+        database.add_directory_project(&project_id("FOO")?, "foo", &project_path, &notes);
         database
             .command()
             .args([
                 "task",
                 "add",
-                "pwf",
+                "foo",
                 "--title",
                 "do the thing",
                 "--goal",
@@ -40,9 +40,9 @@ impl SessionFixture {
             .success();
 
         let binary_directory = directory.path().join("bin");
-        fs::create_dir_all(&binary_directory).unwrap();
+        fs::create_dir_all(&binary_directory)?;
         for name in ["tmux", "codex"] {
-            install_fixture(&binary_directory, name);
+            install_fixture(&binary_directory, name)?;
         }
         let child_path = format!(
             "{}:{}",
@@ -51,35 +51,36 @@ impl SessionFixture {
         );
         let tmux_log_path = directory.path().join("tmux.log");
 
-        Self {
+        Ok(Self {
             database,
             directory,
             child_path,
             tmux_log_path,
-        }
+        })
     }
 
     pub fn directory(&self) -> &Path {
         self.directory.path()
     }
 
-    pub fn install_claude(&self) -> PathBuf {
+    pub fn install_claude(&self) -> std::io::Result<PathBuf> {
         let path = self.directory.path().join("bin/claude");
-        install_fixture_at(&path, "claude");
-        path
+        install_fixture_at(&path, "claude")?;
+        Ok(path)
     }
 }
 
-fn install_fixture(binary_directory: &Path, name: &str) {
-    install_fixture_at(&binary_directory.join(name), name);
+fn install_fixture(binary_directory: &Path, name: &str) -> std::io::Result<()> {
+    install_fixture_at(&binary_directory.join(name), name)
 }
 
-fn install_fixture_at(destination: &Path, name: &str) {
+fn install_fixture_at(destination: &Path, name: &str) -> std::io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
 
     let source = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures")
         .join(format!("{name}-stub.sh"));
-    fs::copy(source, destination).unwrap();
-    fs::set_permissions(destination, fs::Permissions::from_mode(0o755)).unwrap();
+    fs::copy(source, destination)?;
+    fs::set_permissions(destination, fs::Permissions::from_mode(0o755))?;
+    Ok(())
 }

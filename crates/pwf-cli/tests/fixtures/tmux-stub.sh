@@ -13,7 +13,7 @@ case "${1:-}" in
     if [ "${TMUX_STUB_SESSION_EXISTS:-1}" = "1" ]; then
       exit 0
     fi
-    printf '%s\n' "can't find session: pwf" >&2
+    printf '%s\n' "can't find session: foo" >&2
     exit 1
     ;;
   new-window)

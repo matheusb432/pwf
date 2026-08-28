@@ -92,11 +92,9 @@ unimplemented = "warn"
 unreachable = "warn"
 dbg_macro = "warn"
 disallowed_methods = "deny"
-cognitive_complexity = "warn"
-branches_sharing_code = "warn"
 collection_is_never_read = "warn"
-must_use_candidate = "allow"
 missing_errors_doc = "allow"
+struct_field_names = "allow"
 
 [profile.dev.package."*"]
 debug = false

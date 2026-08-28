@@ -90,6 +90,7 @@ pub fn update_note_request(request: v1::UpdateNoteRequest) -> Result<note::Updat
     })
 }
 
+#[must_use]
 pub fn add_note_response(note: note::NoteSummary) -> v1::AddNoteResponse {
     let note::NoteSummary { id, title } = note;
     v1::AddNoteResponse {
@@ -98,6 +99,7 @@ pub fn add_note_response(note: note::NoteSummary) -> v1::AddNoteResponse {
     }
 }
 
+#[must_use]
 pub fn list_notes_response(notes: note::ListedNotes) -> v1::ListNotesResponse {
     v1::ListNotesResponse {
         project: notes.project.to_string(),
@@ -113,10 +115,12 @@ pub fn list_notes_response(notes: note::ListedNotes) -> v1::ListNotesResponse {
     }
 }
 
+#[must_use]
 pub fn remove_note_response(id: &NoteId) -> v1::RemoveNoteResponse {
     v1::RemoveNoteResponse { id: id.to_string() }
 }
 
+#[must_use]
 pub fn update_note_response(note: note::NoteSummary) -> v1::UpdateNoteResponse {
     let note::NoteSummary { id, title } = note;
     v1::UpdateNoteResponse {

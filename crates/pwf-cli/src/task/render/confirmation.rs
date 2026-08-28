@@ -84,10 +84,10 @@ mod tests {
 
     fn added_task() -> AddTaskResponse {
         AddTaskResponse {
-            id: "PWF-0087".to_string(),
-            project: "pwf".to_string(),
-            title: "color tui output when adding pwf task".to_string(),
-            note_path: "/x/PWF-0087.md".to_string(),
+            id: "FOO-0001".to_string(),
+            project: "foo".to_string(),
+            title: "sample task".to_string(),
+            note_path: "/x/FOO-0001.md".to_string(),
             created_section: None,
         }
     }
@@ -96,7 +96,7 @@ mod tests {
     fn added_plain_prefixes_label_with_no_leading_blank_line() {
         assert_eq!(
             render_added(&added_task(), false),
-            "Added pwf task: **PWF-0087 pwf :: color tui output when adding pwf task**\n  file: /x/PWF-0087.md\n"
+            "Added pwf task: **FOO-0001 foo :: sample task**\n  file: /x/FOO-0001.md\n"
         );
     }
 
@@ -104,15 +104,15 @@ mod tests {
     fn review_task_preserves_the_existing_added_line() {
         assert_eq!(
             render_review_task(&added_task()),
-            "ADDED PWF TASK [PWF-0087] pwf :: color tui output when adding pwf task\n  file: /x/PWF-0087.md\n"
+            "ADDED PWF TASK [FOO-0001] foo :: sample task\n  file: /x/FOO-0001.md\n"
         );
     }
 
     #[test]
     fn removed_plain_preserves_confirmation_shape() {
         let task = RemovedTask {
-            id: "PWF-0002".to_string(),
-            project: "pwf".to_string(),
+            id: "FOO-0002".to_string(),
+            project: "foo".to_string(),
             title: "stale task".to_string(),
             deleted_path: "/x.md".to_string(),
             unlinked: Some("/x.md".to_string()),
@@ -120,21 +120,21 @@ mod tests {
 
         assert_eq!(
             render_removed(&task, false),
-            "Removed pwf task: **PWF-0002 pwf :: stale task**\n  deleted: /x.md\n  unlinked: /x.md\n"
+            "Removed pwf task: **FOO-0002 foo :: stale task**\n  deleted: /x.md\n  unlinked: /x.md\n"
         );
     }
 
     #[test]
     fn edited_plain_uses_the_edit_verb() {
         let task = EditTaskResponse {
-            id: "PWF-0002".to_string(),
-            project: "pwf".to_string(),
+            id: "FOO-0002".to_string(),
+            project: "foo".to_string(),
             title: "edited task".to_string(),
         };
 
         assert_eq!(
             render_edited(&task, false),
-            "Edited pwf task: **PWF-0002 pwf :: edited task**\n"
+            "Edited pwf task: **FOO-0002 foo :: edited task**\n"
         );
     }
 }

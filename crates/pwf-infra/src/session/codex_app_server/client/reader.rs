@@ -49,27 +49,20 @@ fn read_response_line(
 ) -> Result<Option<Vec<u8>>, ReaderFailure> {
     let mut line = Vec::with_capacity(RESPONSE_LINE_BYTES_MAX + 1);
     loop {
-        let (bytes_consumed, newline_found) = {
-            let available = stdout
-                .fill_buf()
-                .map_err(|error| ReaderFailure::Transport(error.to_string()))?;
-            if available.is_empty() {
-                return if line.is_empty() {
-                    Ok(None)
-                } else {
-                    Ok(Some(line))
-                };
-            }
-
-            let newline_index = available.iter().position(|byte| *byte == b'\n');
-            let bytes_consumed =
-                newline_index.map_or(available.len(), |newline_index| newline_index + 1);
-            let content_length = newline_index.unwrap_or(bytes_consumed);
-            let bytes_remaining = RESPONSE_LINE_BYTES_MAX + 1 - line.len();
-            let bytes_copied = content_length.min(bytes_remaining);
-            line.extend_from_slice(&available[..bytes_copied]);
-            (bytes_consumed, newline_index.is_some())
-        };
+        let available = stdout
+            .fill_buf()
+            .map_err(|error| ReaderFailure::Transport(error.to_string()))?;
+        if available.is_empty() {
+            return Ok((!line.is_empty()).then_some(line));
+        }
+        let newline_index = available.iter().position(|byte| *byte == b'\n');
+        let bytes_consumed =
+            newline_index.map_or(available.len(), |newline_index| newline_index + 1);
+        let content_length = newline_index.unwrap_or(bytes_consumed);
+        let bytes_remaining = RESPONSE_LINE_BYTES_MAX + 1 - line.len();
+        let bytes_copied = content_length.min(bytes_remaining);
+        line.extend_from_slice(&available[..bytes_copied]);
+        let newline_found = newline_index.is_some();
         stdout.consume(bytes_consumed);
 
         if line.len() > RESPONSE_LINE_BYTES_MAX {

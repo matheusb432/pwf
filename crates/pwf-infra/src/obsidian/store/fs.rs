@@ -55,11 +55,12 @@ pub(super) fn line_start_index(content: &str, line_number: usize) -> Option<usiz
     }
     let mut current_line = 1;
     for (index, byte) in content.bytes().enumerate() {
-        if byte == b'\n' {
-            current_line += 1;
-            if current_line == line_number {
-                return Some(index + 1);
-            }
+        if byte != b'\n' {
+            continue;
+        }
+        current_line += 1;
+        if current_line == line_number {
+            return Some(index + 1);
         }
     }
     None

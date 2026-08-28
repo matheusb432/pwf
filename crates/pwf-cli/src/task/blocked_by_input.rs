@@ -91,8 +91,8 @@ mod tests {
             Err(BlockedByInputError::MissingId)
         ));
         assert!(matches!(
-            "PWF-99999".parse::<BlockedByInput>(),
-            Err(BlockedByInputError::InvalidId { raw }) if raw == "PWF-99999"
+            "FOO-99999".parse::<BlockedByInput>(),
+            Err(BlockedByInputError::InvalidId { raw }) if raw == "FOO-99999"
         ));
     }
 }

@@ -67,9 +67,7 @@ impl FromStr for TagInput {
                 Tag::try_from(normalized.as_str()).map_err(|_| TagInputError::InvalidTag {
                     raw: raw.to_string(),
                 })?;
-            if !tags.contains(&tag) {
-                tags.push(tag);
-            }
+            push_unseen_tag(&mut tags, tag);
         }
         TaskTags::try_new(tags)
             .map(Self)
@@ -110,9 +108,7 @@ impl TaskTags {
     pub fn merge(&self, appended: &Self) -> Self {
         let mut merged = self.0.clone();
         for tag in appended.iter() {
-            if !merged.contains(tag) {
-                merged.push(tag.clone());
-            }
+            push_unseen_tag(&mut merged, tag.clone());
         }
         Self(merged)
     }
@@ -120,11 +116,15 @@ impl TaskTags {
     fn from_first_and_rest(first: Tag, tags: impl IntoIterator<Item = Tag>) -> Self {
         let mut unique = vec![first];
         for tag in tags {
-            if !unique.contains(&tag) {
-                unique.push(tag);
-            }
+            push_unseen_tag(&mut unique, tag);
         }
         Self(unique)
+    }
+}
+
+fn push_unseen_tag(tags: &mut Vec<Tag>, tag: Tag) {
+    if !tags.contains(&tag) {
+        tags.push(tag);
     }
 }
 

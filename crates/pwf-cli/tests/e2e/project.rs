@@ -6,30 +6,37 @@ use crate::support::{
 
 #[test]
 fn project_registry_lifecycle_is_observable_across_processes() {
-    let fixture = ProjectFixture::new();
-    let bar_project_id = project_id("bar");
-    let foo_project_id = project_id("foo");
-    fixture.add(
-        &bar_project_id,
-        "bar-baz",
-        "/work/bar-baz",
-        "/pending-work/bar-baz",
-    );
-    let foo = fixture.add(
-        &foo_project_id,
-        "foo-bar",
-        "/work/foo-bar",
-        "/pending-work/foo-bar",
-    );
+    let fixture = ProjectFixture::new().unwrap();
+    let bar_project_id = project_id("bar").unwrap();
+    let foo_project_id = project_id("foo").unwrap();
+    fixture
+        .add(
+            &bar_project_id,
+            "bar-baz",
+            "/work/bar-baz",
+            "/pending-work/bar-baz",
+        )
+        .unwrap();
+    let foo = fixture
+        .add(
+            &foo_project_id,
+            "foo-bar",
+            "/work/foo-bar",
+            "/pending-work/foo-bar",
+        )
+        .unwrap();
 
-    assert_eq!(success_json(fixture.run(&["project", "get", "foo"])), foo);
     assert_eq!(
-        success_json(fixture.run(&["project", "pause", "bar"]))["changed"],
+        success_json(fixture.run(&["project", "get", "foo"]).unwrap()).unwrap(),
+        foo
+    );
+    assert_eq!(
+        success_json(fixture.run(&["project", "pause", "bar"]).unwrap()).unwrap()["changed"],
         true
     );
 
-    let projects = success_json(fixture.run(&["project", "ls"]));
-    let projects = projects.as_array().expect("list returns an array");
+    let projects = success_json(fixture.run(&["project", "ls"]).unwrap()).unwrap();
+    let projects = projects.as_array().unwrap();
     assert_eq!(projects.len(), 2);
     assert_project(
         &projects[0],
@@ -49,18 +56,18 @@ fn project_registry_lifecycle_is_observable_across_processes() {
     );
 
     assert_eq!(
-        success_json(fixture.run(&["project", "resume", "bar"]))["changed"],
+        success_json(fixture.run(&["project", "resume", "bar"]).unwrap()).unwrap()["changed"],
         true
     );
     assert_eq!(
-        success_json(fixture.run(&["project", "get", "bar"]))["is_paused"],
+        success_json(fixture.run(&["project", "get", "bar"]).unwrap()).unwrap()["is_paused"],
         false
     );
 }
 
 #[test]
 fn project_rename_updates_registry_and_task_identity() {
-    let fixture = ProjectFixture::new();
+    let fixture = ProjectFixture::new().unwrap();
     let directory = tempfile::tempdir().unwrap();
     let home = directory.path().join("home");
     let source = directory.path().join("self/sample-app");
@@ -68,31 +75,38 @@ fn project_rename_updates_registry_and_task_identity() {
     let tasks = directory.path().join("project-notes/self/sample-app");
     let destination_tasks = directory.path().join("project-notes/self/renamed-app");
     fs::create_dir_all(&source).unwrap();
-    write_project_rename_fixture(&tasks);
-    let destination_project_id = project_id("NEW");
-    let created = fixture.add_with_home(
-        &project_id("OLD"),
-        "sample-app",
-        source.to_str().unwrap(),
-        tasks.to_str().unwrap(),
-        &home,
-    );
+    write_project_rename_fixture(&tasks).unwrap();
+    let destination_project_id = project_id("NEW").unwrap();
+    let created = fixture
+        .add_with_home(
+            &project_id("OLD").unwrap(),
+            "sample-app",
+            source.to_str().unwrap(),
+            tasks.to_str().unwrap(),
+            &home,
+        )
+        .unwrap();
 
-    let renamed = success_json(fixture.run_with_home(
-        &[
-            "project",
-            "rename",
-            "OLD",
-            "NEW",
-            "--title",
-            "renamed-app",
-            "--source",
-            destination_source.to_str().unwrap(),
-            "--tasks",
-            destination_tasks.to_str().unwrap(),
-        ],
-        &home,
-    ));
+    let renamed = success_json(
+        fixture
+            .run_with_home(
+                &[
+                    "project",
+                    "rename",
+                    "OLD",
+                    "NEW",
+                    "--title",
+                    "renamed-app",
+                    "--source",
+                    destination_source.to_str().unwrap(),
+                    "--tasks",
+                    destination_tasks.to_str().unwrap(),
+                ],
+                &home,
+            )
+            .unwrap(),
+    )
+    .unwrap();
 
     assert_project(
         &renamed,
@@ -104,11 +118,11 @@ fn project_rename_updates_registry_and_task_identity() {
     );
     assert_eq!(renamed["created_at"], created["created_at"]);
     assert_eq!(
-        success_json(fixture.run(&["project", "get", "NEW"])),
+        success_json(fixture.run(&["project", "get", "NEW"]).unwrap()).unwrap(),
         renamed
     );
 
-    let task = fixture.run(&["get", "NEW-0079"]);
+    let task = fixture.run(&["get", "NEW-0079"]).unwrap();
     assert!(task.status.success());
     let task = String::from_utf8(task.stdout).unwrap();
     assert!(task.contains("status: active"));

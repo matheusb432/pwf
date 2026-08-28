@@ -165,6 +165,14 @@ mod queue {
             }
         }
 
+        fn numbered_done(number: u16, section: &str) -> IndexEntry {
+            done(
+                &format!("FOO-{number:04}"),
+                &format!("2026-01-{number:02}"),
+                section,
+            )
+        }
+
         fn open(raw_id: &str, section: &str) -> IndexEntry {
             IndexEntry {
                 id: id(raw_id),
@@ -175,65 +183,52 @@ mod queue {
 
         #[test]
         fn cap_boundary_evicts_single_oldest_beyond_cap() {
-            let mut entries: Vec<IndexEntry> = (1..=6)
-                .map(|number| {
-                    done(
-                        &format!("PWF-{number:04}"),
-                        &format!("2026-01-{number:02}"),
-                        "",
-                    )
-                })
-                .collect();
-            entries.push(open("PWF-0007", ""));
+            let mut entries: Vec<IndexEntry> =
+                (1..=6).map(|number| numbered_done(number, "")).collect();
+            entries.push(open("FOO-0007", ""));
 
-            let decisions = close_decisions(&entries, &[], &id("PWF-0007"), app_date("2026-07-07"));
+            let decisions = close_decisions(&entries, &[], &id("FOO-0007"), app_date("2026-07-07"));
 
-            assert_eq!(decisions.evicted_ids, vec![id("PWF-0001")]);
+            assert_eq!(decisions.evicted_ids, vec![id("FOO-0001")]);
             assert!(decisions.mark_target);
         }
 
         #[test]
         fn tied_completed_dates_break_by_ascending_id() {
             let entries = vec![
-                done("PWF-0002", "2026-01-01", "Human"),
-                done("PWF-0001", "2026-01-01", "Human"),
-                done("PWF-0003", "2026-01-02", "Human"),
-                open("PWF-0004", "Human"),
+                done("FOO-0002", "2026-01-01", "Human"),
+                done("FOO-0001", "2026-01-01", "Human"),
+                done("FOO-0003", "2026-01-02", "Human"),
+                open("FOO-0004", "Human"),
             ];
 
-            let decisions = close_decisions(&entries, &[], &id("PWF-0004"), app_date("2026-01-03"));
+            let decisions = close_decisions(&entries, &[], &id("FOO-0004"), app_date("2026-01-03"));
 
-            assert_eq!(decisions.evicted_ids, vec![id("PWF-0001")]);
+            assert_eq!(decisions.evicted_ids, vec![id("FOO-0001")]);
         }
 
         #[test]
         fn missing_completed_date_sorts_before_any_dated_entry() {
             let entries = vec![
-                done("PWF-0001", "", "Human"),
-                done("PWF-0002", "2026-01-01", "Human"),
-                done("PWF-0003", "2026-01-02", "Human"),
-                open("PWF-0004", "Human"),
+                done("FOO-0001", "", "Human"),
+                done("FOO-0002", "2026-01-01", "Human"),
+                done("FOO-0003", "2026-01-02", "Human"),
+                open("FOO-0004", "Human"),
             ];
 
-            let decisions = close_decisions(&entries, &[], &id("PWF-0004"), app_date("2026-01-03"));
+            let decisions = close_decisions(&entries, &[], &id("FOO-0004"), app_date("2026-01-03"));
 
-            assert_eq!(decisions.evicted_ids, vec![id("PWF-0001")]);
+            assert_eq!(decisions.evicted_ids, vec![id("FOO-0001")]);
         }
 
         #[test]
         fn section_without_a_cap_evicts_nothing() {
             let mut entries: Vec<IndexEntry> = (1..=9)
-                .map(|number| {
-                    done(
-                        &format!("PWF-{number:04}"),
-                        &format!("2026-01-{number:02}"),
-                        "Someday",
-                    )
-                })
+                .map(|number| numbered_done(number, "Someday"))
                 .collect();
-            entries.push(open("PWF-0010", "Someday"));
+            entries.push(open("FOO-0010", "Someday"));
 
-            let decisions = close_decisions(&entries, &[], &id("PWF-0010"), app_date("2026-07-07"));
+            let decisions = close_decisions(&entries, &[], &id("FOO-0010"), app_date("2026-07-07"));
 
             assert!(decisions.evicted_ids.is_empty());
         }
@@ -241,19 +236,13 @@ mod queue {
         #[test]
         fn raw_section_label_aliases_before_cap_lookup() {
             let mut entries: Vec<IndexEntry> = (1..=3)
-                .map(|number| {
-                    done(
-                        &format!("PWF-{number:04}"),
-                        &format!("2026-01-{number:02}"),
-                        "futuro",
-                    )
-                })
+                .map(|number| numbered_done(number, "futuro"))
                 .collect();
-            entries.push(open("PWF-0004", "Futuro"));
+            entries.push(open("FOO-0004", "Futuro"));
 
-            let decisions = close_decisions(&entries, &[], &id("PWF-0004"), app_date("2026-07-07"));
+            let decisions = close_decisions(&entries, &[], &id("FOO-0004"), app_date("2026-07-07"));
 
-            assert_eq!(decisions.evicted_ids, vec![id("PWF-0001")]);
+            assert_eq!(decisions.evicted_ids, vec![id("FOO-0001")]);
         }
 
         #[test]
@@ -261,7 +250,7 @@ mod queue {
             let sections = ["Futuro".parse().unwrap()];
 
             let decisions =
-                close_decisions(&[], &sections, &id("PWF-0001"), app_date("2026-07-07"));
+                close_decisions(&[], &sections, &id("FOO-0001"), app_date("2026-07-07"));
 
             assert!(decisions.normalize_futuro_header);
             assert!(!decisions.mark_target);
@@ -273,7 +262,7 @@ mod queue {
             let sections = ["  FUTURO  ".parse().unwrap()];
 
             let decisions =
-                close_decisions(&[], &sections, &id("PWF-0001"), app_date("2026-07-07"));
+                close_decisions(&[], &sections, &id("FOO-0001"), app_date("2026-07-07"));
 
             assert!(decisions.normalize_futuro_header);
         }
@@ -283,7 +272,7 @@ mod queue {
             let sections = [TaskSection::human(), TaskSection::future()];
 
             let decisions =
-                close_decisions(&[], &sections, &id("PWF-0001"), app_date("2026-07-07"));
+                close_decisions(&[], &sections, &id("FOO-0001"), app_date("2026-07-07"));
 
             assert!(!decisions.normalize_futuro_header);
         }

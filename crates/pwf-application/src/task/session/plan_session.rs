@@ -552,7 +552,7 @@ mod tests {
 
     #[test]
     fn launch_prompt_wraps_the_task_without_rendering_an_empty_session_context() {
-        let task_id = TaskId::try_new("PWF-0076").unwrap();
+        let task_id = TaskId::try_new("FOO-0001").unwrap();
 
         assert_eq!(
             launch_prompt("task content", &task_id, None, LaunchDirectives::default()),
@@ -562,7 +562,7 @@ mod tests {
 
     #[test]
     fn launch_prompt_orders_all_session_context_content_before_the_task() {
-        let task_id = TaskId::try_new("PWF-0076").unwrap();
+        let task_id = TaskId::try_new("FOO-0001").unwrap();
         let pushed_prompt = PushedPrompt::try_new("extra context").unwrap();
 
         assert_eq!(
@@ -579,7 +579,7 @@ mod tests {
                 "<pwf_session_context>\n",
                 "extra context\n\n",
                 "You MUST execute this autonomously. Do not prompt the user for questions. But if something seems critical and needs user decision, STOP execution and clarify\n\n",
-                "Workspace: before doing anything else, use a git-worktrees skill to create a git worktree here named `PWF-0076` (the worktree name is this task's id), and do all of this task's work inside that worktree.\n",
+                "Workspace: before doing anything else, use a git-worktrees skill to create a git worktree here named `FOO-0001` (the worktree name is this task's id), and do all of this task's work inside that worktree.\n",
                 "</pwf_session_context>\n\n",
                 "<pwf_task>\n",
                 "task content\n",
@@ -590,7 +590,7 @@ mod tests {
 
     #[test]
     fn task_wrapper_preserves_an_existing_trailing_newline_without_adding_a_blank_line() {
-        let task_id = TaskId::try_new("PWF-0076").unwrap();
+        let task_id = TaskId::try_new("FOO-0001").unwrap();
 
         assert_eq!(
             launch_prompt(
@@ -610,7 +610,7 @@ mod tests {
             b'/', b'h', b'o', b'm', b'e', b'/', 0xff,
         ])));
         let source = ProjectSourceValue::try_new("~").unwrap();
-        let project_id = ProjectId::try_new("PWF").unwrap();
+        let project_id = ProjectId::try_new("FOO").unwrap();
 
         let error = resolve_project_path(&source, &project_id, &home).unwrap_err();
 
@@ -624,8 +624,8 @@ mod tests {
     #[test]
     fn invalid_runtime_project_path_retains_the_resolution_error() {
         let home = HomeDirectory::new(PathBuf::from("/home/dev"));
-        let source = ProjectSourceValue::try_new("~/../pwf").unwrap();
-        let project_id = ProjectId::try_new("PWF").unwrap();
+        let source = ProjectSourceValue::try_new("~/../foo").unwrap();
+        let project_id = ProjectId::try_new("FOO").unwrap();
 
         let error = resolve_project_path(&source, &project_id, &home).unwrap_err();
 
@@ -719,9 +719,12 @@ mod model_selection_tests {
         .unwrap_err();
 
         assert_eq!(error.to_string(), "catalog unavailable");
-        let ModelSelectionError::Catalog(source) = error else {
-            panic!("expected the catalog error");
+        let source = match error {
+            ModelSelectionError::Catalog(source) => Some(source),
+            _ => None,
         };
+        assert!(source.is_some());
+        let source = source.unwrap();
         assert!(source.downcast_ref::<CatalogError>().is_some());
         assert_eq!(source.root_cause().to_string(), "catalog unavailable");
     }
@@ -809,7 +812,7 @@ mod blocker_warning_tests {
             InMemoryStore::default().with_project("paused-project", vec![done, active, cancelled]);
         let target = TaskRecord {
             blocked_by: stored_blocked_by(&["AUX-0001", "AUX-0002", "AUX-0003", "AUX-9999"]),
-            ..task_record("PWF-0001")
+            ..task_record("FOO-0001")
         };
 
         let warnings = blocker_warnings(&target, &store, &pool).await;
@@ -840,7 +843,7 @@ mod blocker_warning_tests {
                 raw: "\"[[AUX-0001]]\"".to_string(),
                 reason: "expected a sequence".to_string(),
             },
-            ..task_record("PWF-0001")
+            ..task_record("FOO-0001")
         };
         assert_eq!(
             blocker_warnings(&malformed, &store, &pool).await,

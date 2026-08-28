@@ -6,7 +6,7 @@ use pwf_models::{
 };
 use pwf_wire::task::{BlockedByResolution, BlockedByStatus};
 
-use crate::ports::task_record::{Materialization, StoredBlockedBy, TaskStore};
+use crate::ports::task_record::{Materialization, StoredBlockedBy, TaskRecord, TaskStore};
 
 #[derive(Debug, thiserror::Error)]
 pub(in crate::task) enum BlockedByValidationError {
@@ -145,29 +145,39 @@ fn visit(
         }
         None => None,
     };
-    if let Some(record) = record
-        && matches!(record.materialization, Materialization::NoteFile)
-    {
-        match record.blocked_by {
-            StoredBlockedBy::Absent => {}
-            StoredBlockedBy::Valid(blocked_by) => {
-                for blocker in blocked_by.iter() {
-                    visit(blocker, target, store, projects, states, path)?;
-                }
-            }
-            StoredBlockedBy::Malformed { raw, reason } => {
-                return Err(BlockedByValidationError::MalformedMetadata {
-                    task: record.id,
-                    path: Box::new(record.locator),
-                    raw: raw.into_boxed_str(),
-                    reason: reason.into_boxed_str(),
-                });
-            }
-        }
+    if let Some(record) = record {
+        visit_record(record, target, store, projects, states, path)?;
     }
     path.pop();
     states.insert(id.clone(), VisitState::Complete);
     Ok(())
+}
+
+fn visit_record(
+    record: TaskRecord,
+    target: &TaskId,
+    store: &impl TaskStore,
+    projects: &[Project],
+    states: &mut HashMap<TaskId, VisitState>,
+    path: &mut Vec<TaskId>,
+) -> Result<(), BlockedByValidationError> {
+    if !matches!(record.materialization, Materialization::NoteFile) {
+        return Ok(());
+    }
+    match record.blocked_by {
+        StoredBlockedBy::Absent => Ok(()),
+        StoredBlockedBy::Valid(blocked_by) => blocked_by
+            .iter()
+            .try_for_each(|blocker| visit(blocker, target, store, projects, states, path)),
+        StoredBlockedBy::Malformed { raw, reason } => {
+            Err(BlockedByValidationError::MalformedMetadata {
+                task: record.id,
+                path: Box::new(record.locator),
+                raw: raw.into_boxed_str(),
+                reason: reason.into_boxed_str(),
+            })
+        }
+    }
 }
 
 pub(in crate::task) fn statuses(
@@ -295,13 +305,13 @@ mod tests {
     #[test]
     fn validator_parses_checks_existence_and_merges_first_seen_ids() {
         let (store, _registry) = staged_task();
-        let project = project("PWF", "pwf");
-        let target = "PWF-0002".parse().unwrap();
-        let existing = blocked_by(&["PWF-0001", "PWF-0001"]);
+        let project = project("FOO", "foo");
+        let target = "FOO-0002".parse().unwrap();
+        let existing = blocked_by(&["FOO-0001", "FOO-0001"]);
         let merged = validate_and_merge(
             &target,
             Some(&existing),
-            &blocked_by(&["PWF-0001", "PWF-0001"]),
+            &blocked_by(&["FOO-0001", "FOO-0001"]),
             &store,
             &[project],
         )
@@ -309,20 +319,20 @@ mod tests {
 
         assert_eq!(
             merged.iter().map(AsRef::as_ref).collect::<Vec<_>>(),
-            ["PWF-0001"]
+            ["FOO-0001"]
         );
     }
 
     #[test]
     fn validator_preserves_blocked_by_diagnostics() {
         let (store, _registry) = staged_task();
-        let project = project("PWF", "pwf");
-        let target = "PWF-0002".parse().unwrap();
+        let project = project("FOO", "foo");
+        let target = "FOO-0002".parse().unwrap();
 
         let unknown = validate_and_merge(
             &target,
             None,
-            &blocked_by(&["PWF-9999"]),
+            &blocked_by(&["FOO-9999"]),
             &store,
             &[project],
         )
@@ -330,39 +340,39 @@ mod tests {
         assert!(matches!(
             unknown,
             BlockedByValidationError::UnknownIds { ref ids }
-                if ids.iter().map(AsRef::as_ref).collect::<Vec<_>>() == ["PWF-9999"]
+                if ids.iter().map(AsRef::as_ref).collect::<Vec<_>>() == ["FOO-9999"]
         ));
-        assert_eq!(unknown.to_string(), "Unknown --blocked-by id(s): PWF-9999.");
+        assert_eq!(unknown.to_string(), "Unknown --blocked-by id(s): FOO-9999.");
     }
 
     #[test]
     fn validator_rejects_a_self_dependency_before_lookup() {
-        let target = "PWF-0002".parse().unwrap();
-        let blockers = blocked_by(&["PWF-0002"]);
+        let target = "FOO-0002".parse().unwrap();
+        let blockers = blocked_by(&["FOO-0002"]);
 
         let error = super::validate(&target, &blockers, &blockers, &FailingStore, &[]).unwrap_err();
 
         assert!(matches!(
             error,
             BlockedByValidationError::SelfDependency { ref target, ref blocker }
-                if target.as_ref() == "PWF-0002" && blocker.as_ref() == "PWF-0002"
+                if target.as_ref() == "FOO-0002" && blocker.as_ref() == "FOO-0002"
         ));
     }
 
     #[test]
     fn validator_reports_an_existing_reachable_cycle() {
         let first = TaskRecord {
-            blocked_by: stored_blocked_by(&["PWF-0002"]),
-            ..task_record("PWF-0001")
+            blocked_by: stored_blocked_by(&["FOO-0002"]),
+            ..task_record("FOO-0001")
         };
         let second = TaskRecord {
-            blocked_by: stored_blocked_by(&["PWF-0001"]),
-            ..task_record("PWF-0002")
+            blocked_by: stored_blocked_by(&["FOO-0001"]),
+            ..task_record("FOO-0002")
         };
-        let store = InMemoryStore::default().with_project("pwf", vec![first, second]);
-        let projects = [project("PWF", "pwf")];
-        let target = "PWF-0003".parse().unwrap();
-        let blockers = blocked_by(&["PWF-0001"]);
+        let store = InMemoryStore::default().with_project("foo", vec![first, second]);
+        let projects = [project("FOO", "foo")];
+        let target = "FOO-0003".parse().unwrap();
+        let blockers = blocked_by(&["FOO-0001"]);
 
         let error = super::validate(&target, &blockers, &blockers, &store, &projects).unwrap_err();
 
@@ -370,19 +380,19 @@ mod tests {
             error,
             BlockedByValidationError::Cycle { ref path }
                 if path.iter().map(AsRef::as_ref).collect::<Vec<_>>()
-                    == ["PWF-0001", "PWF-0002", "PWF-0001"]
+                    == ["FOO-0001", "FOO-0002", "FOO-0001"]
         ));
     }
 
     #[test]
     fn validator_preserves_store_read_failures() {
-        let project = project("PWF", "pwf");
-        let target = "PWF-0002".parse().unwrap();
+        let project = project("FOO", "foo");
+        let target = "FOO-0002".parse().unwrap();
 
         let error = validate_and_merge(
             &target,
             None,
-            &blocked_by(&["PWF-0001"]),
+            &blocked_by(&["FOO-0001"]),
             &FailingStore,
             &[project],
         )
@@ -390,7 +400,7 @@ mod tests {
 
         assert!(matches!(
             error,
-            BlockedByValidationError::ReadStore { ref id, .. } if id.as_ref() == "PWF-0001"
+            BlockedByValidationError::ReadStore { ref id, .. } if id.as_ref() == "FOO-0001"
         ));
         assert_eq!(error.source().unwrap().to_string(), "vault read failed");
     }
@@ -398,13 +408,13 @@ mod tests {
     #[test]
     fn validator_rejects_missing_note_materializations_as_unknown() {
         let (store, _registry) = staged_missing_task();
-        let project = project("PWF", "pwf");
-        let target = "PWF-0001".parse().unwrap();
+        let project = project("FOO", "foo");
+        let target = "FOO-0001".parse().unwrap();
 
         let error = validate_and_merge(
             &target,
             None,
-            &blocked_by(&["PWF-0002"]),
+            &blocked_by(&["FOO-0002"]),
             &store,
             &[project],
         )
@@ -413,16 +423,16 @@ mod tests {
         assert!(matches!(
             error,
             BlockedByValidationError::UnknownIds { ref ids }
-                if ids.iter().map(AsRef::as_ref).collect::<Vec<_>>() == ["PWF-0002"]
+                if ids.iter().map(AsRef::as_ref).collect::<Vec<_>>() == ["FOO-0002"]
         ));
     }
 
     #[test]
     fn statuses_expose_store_read_failures_as_unavailable() {
-        let project = project("PWF", "pwf");
+        let project = project("FOO", "foo");
 
         let statuses = statuses(
-            &blocked_by(&["PWF-0001"]),
+            &blocked_by(&["FOO-0001"]),
             &FailingStore,
             Some(&project),
             &[],
@@ -434,7 +444,7 @@ mod tests {
                 id,
                 resolution: BlockedByResolution::Unavailable { reason },
                 ..
-            }] if id.as_ref() == "PWF-0001" && reason == "vault read failed"
+            }] if id.as_ref() == "FOO-0001" && reason == "vault read failed"
         ));
     }
 }

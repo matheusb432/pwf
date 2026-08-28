@@ -86,18 +86,25 @@ fn normalize_note(argv: Vec<String>) -> Vec<String> {
     while i < argv.len() {
         let tok = argv[i].as_str();
         if tok.starts_with("--") {
-            i += if is_value_flag(tok) { 2 } else { 1 };
-        } else if tok.starts_with('-') {
-            i += 1;
-        } else if note_subcommands().contains(&tok) || note_reserved_subcommands().contains(&tok) {
-            return argv;
-        } else {
-            let mut out = argv;
-            out.insert(i, "ls".to_string());
-            return out;
+            i += long_option_width(tok);
+            continue;
         }
+        if tok.starts_with('-') {
+            i += 1;
+            continue;
+        }
+        if note_subcommands().contains(&tok) || note_reserved_subcommands().contains(&tok) {
+            return argv;
+        }
+        let mut out = argv;
+        out.insert(i, "ls".to_string());
+        return out;
     }
     argv
+}
+
+fn long_option_width(option: &str) -> usize {
+    if is_value_flag(option) { 2 } else { 1 }
 }
 
 /// Reports whether a token is the 2-4 letter code half of a split ID.
@@ -168,42 +175,57 @@ fn split_options(argv: &[String]) -> (Vec<String>, Vec<String>) {
     while i < argv.len() {
         let tok = &argv[i];
         if is_order_flag(tok) {
-            opts.push(tok.clone());
-            i += 1;
-            for _ in 0..2 {
-                match argv.get(i) {
-                    Some(val) if !val.starts_with('-') => {
-                        opts.push(val.clone());
-                        i += 1;
-                    }
-                    _ => break,
-                }
-            }
-        } else if tok.starts_with("--") {
-            opts.push(tok.clone());
-            if is_value_flag(tok)
-                && let Some(val) = argv.get(i + 1)
-            {
-                opts.push(val.clone());
-                i += 2;
-                continue;
-            }
-            i += 1;
-        } else if is_short_value_flag(tok) {
-            opts.push(tok.clone());
-            if let Some(val) = argv.get(i + 1) {
-                opts.push(val.clone());
-                i += 2;
-                continue;
-            }
-            i += 1;
-        } else {
-            positionals.push(tok.clone());
-            i += 1;
+            i += push_order_option(argv, i, &mut opts);
+            continue;
         }
+        if tok.starts_with("--") {
+            i += push_long_option(argv, i, &mut opts);
+            continue;
+        }
+        if is_short_value_flag(tok) {
+            i += push_short_value_option(argv, i, &mut opts);
+            continue;
+        }
+        positionals.push(tok.clone());
+        i += 1;
     }
 
     (opts, positionals)
+}
+
+fn push_order_option(argv: &[String], index: usize, options: &mut Vec<String>) -> usize {
+    options.push(argv[index].clone());
+    let values = argv
+        .iter()
+        .skip(index + 1)
+        .take(2)
+        .take_while(|value| !value.starts_with('-'))
+        .cloned()
+        .collect::<Vec<_>>();
+    let consumed = values.len() + 1;
+    options.extend(values);
+    consumed
+}
+
+fn push_long_option(argv: &[String], index: usize, options: &mut Vec<String>) -> usize {
+    let option = &argv[index];
+    options.push(option.clone());
+    if is_value_flag(option)
+        && let Some(value) = argv.get(index + 1)
+    {
+        options.push(value.clone());
+        return 2;
+    }
+    1
+}
+
+fn push_short_value_option(argv: &[String], index: usize, options: &mut Vec<String>) -> usize {
+    options.push(argv[index].clone());
+    if let Some(value) = argv.get(index + 1) {
+        options.push(value.clone());
+        return 2;
+    }
+    1
 }
 
 fn normalize_command(verb: String, opts: Vec<String>, mut positionals: Vec<String>) -> Vec<String> {

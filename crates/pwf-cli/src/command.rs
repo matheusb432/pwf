@@ -43,6 +43,7 @@ pub fn parse_argv(argv: Vec<String>) -> Result<Cli, clap::Error> {
 }
 
 /// Renders help scoped to the project command.
+#[must_use]
 pub fn project_help() -> String {
     let mut root = Cli::command();
     let mut help = match root.find_subcommand("project") {
@@ -86,26 +87,29 @@ mod tests {
     #[test]
     fn note_update_keeps_accepting_unquoted_title_words() {
         let cli = super::parse_argv(
-            ["note", "update", "pwf", "1", "new", "title"]
+            ["note", "update", "foo", "1", "new", "title"]
                 .into_iter()
                 .map(str::to_string)
                 .collect(),
         )
         .unwrap();
 
-        let RootCommand::Note(arguments) = cli.command else {
-            panic!("expected note command");
+        let arguments = match cli.command {
+            RootCommand::Note(arguments) => Some(arguments),
+            _ => None,
         };
-        let note::Command::Update { title, .. } = arguments.command else {
-            panic!("expected note update command");
+        assert!(arguments.is_some());
+        let title = match arguments.unwrap().command {
+            note::Command::Update { title, .. } => Some(title),
+            _ => None,
         };
-        assert_eq!(title, ["new", "title"]);
+        assert_eq!(title.unwrap(), ["new", "title"]);
     }
 
     #[test]
     fn project_route_rejects_unsupported_blocked_by_input() {
         let error = super::parse_argv(
-            ["pwf", "--blocked-by", "AUX-0001"]
+            ["foo", "--blocked-by", "AUX-0001"]
                 .into_iter()
                 .map(str::to_string)
                 .collect(),

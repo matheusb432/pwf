@@ -61,56 +61,91 @@ pub(super) fn parse_index_lines(
     let mut lines = Vec::new();
     for (index, raw) in text.split('\n').enumerate() {
         let line = raw.strip_suffix('\r').unwrap_or(raw);
-        if let Some(header) = header_regex().captures(line) {
-            let value = header["label"].trim();
-            section = Some(TaskSection::try_new(value).map_err(|source| {
-                ObsidianStoreError::InvalidProjectIndexSection {
-                    path: index_path.to_path_buf(),
-                    line: index + 1,
-                    value: value.to_string(),
-                    source,
-                }
-            })?);
+        if let Some(parsed) = parse_index_header(index_path, line, index + 1)? {
+            section = Some(parsed);
             continue;
         }
-        let Some(task) = task_line_regex().captures(line) else {
-            continue;
-        };
-        let Ok(id) = TaskId::try_new(&task["id"]) else {
-            continue;
-        };
-        let alias = task.name("alias").map(|alias| alias.as_str().to_string());
-        // A bare `- [[ID]]` link is open, like an unchecked checkbox.
-        let is_done = matches!(task.name("mark").map(|m| m.as_str()), Some("x" | "X"));
-        let state = if is_done {
-            let date = date_stamp_regex()
-                .captures(line)
-                .map(|captures| captures[1].to_string())
-                .map(|value| {
-                    value.parse::<AppDate>().map_err(|source| {
-                        ObsidianStoreError::InvalidProjectIndexDate {
-                            path: index_path.to_path_buf(),
-                            line: index + 1,
-                            value,
-                            source,
-                        }
-                    })
-                })
-                .transpose()?;
-            IndexEntryState::Done(date)
-        } else {
-            IndexEntryState::Open
-        };
-        lines.push(ParsedIndexLine {
-            id,
-            alias,
-            state,
-            section: section.clone(),
-            line_number: NonZeroUsize::MIN.saturating_add(index),
-        });
+        if let Some(parsed) = parse_index_task(index_path, line, index, section.as_ref())? {
+            lines.push(parsed);
+        }
     }
+    reject_duplicate_task_ids(index_path, &lines)?;
+    Ok(lines)
+}
+
+fn parse_index_header(
+    index_path: &Path,
+    line: &str,
+    line_number: usize,
+) -> Result<Option<TaskSection>, ObsidianStoreError> {
+    let Some(header) = header_regex().captures(line) else {
+        return Ok(None);
+    };
+    let value = header["label"].trim();
+    TaskSection::try_new(value).map(Some).map_err(|source| {
+        ObsidianStoreError::InvalidProjectIndexSection {
+            path: index_path.to_path_buf(),
+            line: line_number,
+            value: value.to_string(),
+            source,
+        }
+    })
+}
+
+fn parse_index_task(
+    index_path: &Path,
+    line: &str,
+    index: usize,
+    section: Option<&TaskSection>,
+) -> Result<Option<ParsedIndexLine>, ObsidianStoreError> {
+    let Some(task) = task_line_regex().captures(line) else {
+        return Ok(None);
+    };
+    let Ok(id) = TaskId::try_new(&task["id"]) else {
+        return Ok(None);
+    };
+    let alias = task.name("alias").map(|alias| alias.as_str().to_string());
+    // A bare `- [[ID]]` link is open, like an unchecked checkbox.
+    let is_done = matches!(task.name("mark").map(|mark| mark.as_str()), Some("x" | "X"));
+    let state = if is_done {
+        IndexEntryState::Done(parse_completion_date(index_path, line, index + 1)?)
+    } else {
+        IndexEntryState::Open
+    };
+    Ok(Some(ParsedIndexLine {
+        id,
+        alias,
+        state,
+        section: section.cloned(),
+        line_number: NonZeroUsize::MIN.saturating_add(index),
+    }))
+}
+
+fn parse_completion_date(
+    index_path: &Path,
+    line: &str,
+    line_number: usize,
+) -> Result<Option<AppDate>, ObsidianStoreError> {
+    let Some(captures) = date_stamp_regex().captures(line) else {
+        return Ok(None);
+    };
+    let value = captures[1].to_string();
+    value.parse::<AppDate>().map(Some).map_err(|source| {
+        ObsidianStoreError::InvalidProjectIndexDate {
+            path: index_path.to_path_buf(),
+            line: line_number,
+            value,
+            source,
+        }
+    })
+}
+
+fn reject_duplicate_task_ids(
+    index_path: &Path,
+    lines: &[ParsedIndexLine],
+) -> Result<(), ObsidianStoreError> {
     let mut line_numbers_by_id = BTreeMap::<TaskId, Vec<usize>>::new();
-    for line in &lines {
+    for line in lines {
         line_numbers_by_id
             .entry(line.id.clone())
             .or_default()
@@ -126,7 +161,7 @@ pub(super) fn parse_index_lines(
             lines: line_numbers,
         });
     }
-    Ok(lines)
+    Ok(())
 }
 
 /// Returns raw H2 labels in document order using the entry parser's header rules.
@@ -334,22 +369,22 @@ mod tests {
     #[test]
     fn done_entry_replaces_only_its_index_line() -> anyhow::Result<()> {
         let entry = IndexEntry {
-            id: TaskId::try_new("PWF-0001")?,
+            id: TaskId::try_new("FOO-0001")?,
             state: IndexEntryState::Done(Some("2026-07-29".parse::<AppDate>()?)),
             section: None,
         };
-        let index = "# pwf\n\n- [ ] [[PWF-0001]]\n- [ ] [[PWF-0002]]\n";
+        let index = "# foo\n\n- [ ] [[FOO-0001]]\n- [ ] [[FOO-0002]]\n";
 
         assert_eq!(
             replace_line(index, 3, &render_entry_line(&entry)),
-            "# pwf\n\n- [x] [[PWF-0001]] ✅ 2026-07-29\n- [ ] [[PWF-0002]]\n"
+            "# foo\n\n- [x] [[FOO-0001]] ✅ 2026-07-29\n- [ ] [[FOO-0002]]\n"
         );
         Ok(())
     }
 
     #[test]
     fn index_parser_accepts_two_to_four_letter_project_ids() {
-        let index = "- [ ] [[P-0001]]\n- [ ] [[PW-0002]]\n- [ ] [[PWF-0003]]\n- [ ] [[TOOL-0004]]\n- [ ] [[TOOLS-0005]]\n";
+        let index = "- [ ] [[P-0001]]\n- [ ] [[PW-0002]]\n- [ ] [[FOO-0003]]\n- [ ] [[TOOL-0004]]\n- [ ] [[TOOLS-0005]]\n";
 
         let lines = parse_index_lines(Path::new("index.md"), index).unwrap();
 
@@ -357,7 +392,7 @@ mod tests {
             lines.into_iter().map(|line| line.id).collect::<Vec<_>>(),
             [
                 TaskId::try_new("PW-0002").unwrap(),
-                TaskId::try_new("PWF-0003").unwrap(),
+                TaskId::try_new("FOO-0003").unwrap(),
                 TaskId::try_new("TOOL-0004").unwrap(),
             ]
         );
@@ -365,11 +400,9 @@ mod tests {
 
     #[test]
     fn index_parser_rejects_an_invalid_completion_date() {
-        let Err(error) =
-            parse_index_lines(Path::new("index.md"), "- [x] [[PWF-0001]] ✅ 2026-02-30\n")
-        else {
-            panic!("invalid completion date must be rejected");
-        };
+        let error = parse_index_lines(Path::new("index.md"), "- [x] [[FOO-0001]] ✅ 2026-02-30\n")
+            .err()
+            .unwrap();
 
         assert_matches!(
             error,

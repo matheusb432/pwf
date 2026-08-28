@@ -90,17 +90,43 @@ fn parse_task_metadata_if_task(
     file: &MarkdownFile,
 ) -> Result<Option<(TaskId, Option<String>)>, ObsidianStoreError> {
     let path = file.path();
-    let frontmatter = parse_frontmatter::<TaskFrontmatter>(file, "id")?;
-    if frontmatter.kind.as_deref() == Some("note") {
+    let Some(frontmatter) =
+        file.frontmatter_view()
+            .map_err(|source| ObsidianStoreError::FrontmatterParse {
+                path: path.to_path_buf(),
+                property: "id",
+                source,
+            })?
+    else {
+        return Ok(None);
+    };
+    let Some(raw_id) =
+        frontmatter
+            .get("id")
+            .map_err(|source| ObsidianStoreError::FrontmatterParse {
+                path: path.to_path_buf(),
+                property: "id",
+                source,
+            })?
+    else {
+        return Ok(None);
+    };
+    let task = frontmatter
+        .deserialize::<TaskFrontmatter>()
+        .map_err(|source| ObsidianStoreError::FrontmatterParse {
+            path: path.to_path_buf(),
+            property: "id",
+            source,
+        })?;
+    if task.kind.as_deref() == Some("note") {
         return Ok(None);
     }
-    let raw = frontmatter
-        .id
-        .ok_or_else(|| ObsidianStoreError::MissingTaskId {
-            path: path.to_path_buf(),
-        })?;
+    let raw = task.id.ok_or_else(|| ObsidianStoreError::InvalidTaskId {
+        path: path.to_path_buf(),
+        value: raw_id.to_string(),
+    })?;
     TaskId::try_new(&raw)
-        .map(|id| Some((id, frontmatter.title)))
+        .map(|id| Some((id, task.title)))
         .map_err(|_| ObsidianStoreError::InvalidTaskId {
             path: path.to_path_buf(),
             value: raw,
@@ -201,30 +227,13 @@ mod tests {
 
     #[test]
     fn parses_task_id_independently_of_filename() {
-        let path = Path::new("/vault/pwf/descriptive-name.md");
-        let markdown = "---\nid: PWF-0124\nstatus: active\n---\n\nbody\n";
+        let path = Path::new("/vault/foo/descriptive-name.md");
+        let markdown = "---\nid: FOO-0001\nstatus: active\n---\n\nbody\n";
         let file = crate::obsidian::MarkdownFile::from_source(path, markdown.to_string());
 
         let (id, _) = parse_task_metadata_if_task(&file).unwrap().unwrap();
 
-        assert_eq!(id.as_ref(), "PWF-0124");
-    }
-
-    #[test]
-    fn missing_task_id_is_path_specific_corruption() {
-        let path = Path::new("/vault/pwf/PWF-0124.md");
-        let file = crate::obsidian::MarkdownFile::from_source(
-            path,
-            "---\nstatus: active\n---\n".to_string(),
-        );
-
-        let error = parse_task_metadata_if_task(&file).unwrap_err();
-
-        assert_matches!(
-            error,
-            ObsidianStoreError::MissingTaskId { path: ref actual }
-                if actual == path
-        );
+        assert_eq!(id.as_ref(), "FOO-0001");
     }
 
     #[test]
@@ -244,8 +253,8 @@ mod tests {
     fn rejects_project_index_identity_that_disagrees_with_supplied_identity() {
         let path = Path::new("/vault/sample-project/index.md");
         let actual = ProjectIndexIdentity::new(
-            ProjectId::try_new("pwf").unwrap(),
-            ProjectName::try_new("pwf").unwrap(),
+            ProjectId::try_new("foo").unwrap(),
+            ProjectName::try_new("foo").unwrap(),
         );
         let expected = ProjectIndexIdentity::new(
             ProjectId::try_new("smp").unwrap(),

@@ -79,13 +79,13 @@ test *args:
     @cargo run --quiet -p xtask -- test {{ args }}
 
 # Compare Criterion benchmarks against the local baseline. Use --update to replace it.
-[arg("benchmark", help="Benchmark target or all", pattern="all|obsidian-frontmatter-read|obsidian-markdown-file|obsidian-store-io")]
+[arg("benchmark", help="Benchmark target or all", pattern="all|prompt-lanes|obsidian-frontmatter-read|obsidian-markdown-file|obsidian-store-io")]
 [arg("case", help="Exact Criterion benchmark case")]
 [arg("update", long="update", value="--save-baseline local", help="Compare and replace the local baseline")]
 [arg("quick", long="quick", value="--quick", help="Stop once Criterion reaches statistical significance")]
 [group('performance')]
 bench benchmark="all" case="" update="--baseline local" quick="":
-    CRITERION_HOME="{{ justfile_directory() }}/.artifacts/benchmarks/criterion" cargo bench --locked -p pwf-infra {{ if benchmark == "all" { "--benches" } else { "--bench " + replace(benchmark, "-", "_") } }} -- {{ if case == "" { "" } else { quote(case) + " --exact" } }} {{ update }} {{ quick }}
+    CRITERION_HOME="{{ justfile_directory() }}/.artifacts/benchmarks/criterion" cargo bench --locked {{ if benchmark == "all" { "--workspace --benches" } else if benchmark == "prompt-lanes" { "-p prompt-lanes --bench prompt_lanes" } else { "-p pwf-infra --bench " + replace(benchmark, "-", "_") } }} -- {{ if case == "" { "" } else { quote(case) + " --exact" } }} {{ update }} {{ quick }}
 
 # Compare deterministic allocation reports against their local baselines.
 [arg("update", long="update", value="--update", help="Compare and replace the local baselines")]

@@ -48,6 +48,7 @@ pub fn resume_project_request(request: v1::ResumeProjectRequest) -> Result<Proje
     parse("id", &id)
 }
 
+#[must_use]
 pub fn add_project_response(project: Project) -> v1::AddProjectResponse {
     let Project {
         id,
@@ -69,6 +70,7 @@ pub fn add_project_response(project: Project) -> v1::AddProjectResponse {
     }
 }
 
+#[must_use]
 pub fn get_project_response(project: Project) -> v1::GetProjectResponse {
     let Project {
         id,
@@ -96,6 +98,7 @@ pub fn list_projects_response(projects: Vec<Project>) -> v1::ListProjectsRespons
     }
 }
 
+#[must_use]
 pub fn pause_project_response(change: project::ProjectStateChange) -> v1::PauseProjectResponse {
     v1::PauseProjectResponse {
         project: Some(project_message(change.project)),
@@ -103,6 +106,7 @@ pub fn pause_project_response(change: project::ProjectStateChange) -> v1::PauseP
     }
 }
 
+#[must_use]
 pub fn rename_project_response(project: Project) -> v1::RenameProjectResponse {
     let Project {
         id,
@@ -124,6 +128,7 @@ pub fn rename_project_response(project: Project) -> v1::RenameProjectResponse {
     }
 }
 
+#[must_use]
 pub fn resume_project_response(change: project::ProjectStateChange) -> v1::ResumeProjectResponse {
     v1::ResumeProjectResponse {
         project: Some(project_message(change.project)),

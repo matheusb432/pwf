@@ -197,47 +197,47 @@ mod tests {
 
     #[test]
     fn remove_index_link_strips_bare_wikilink_note_line() {
-        let content = "# proj\n\n### Notes\n- [[PWF-NOTE-0001]]\n- [[PWF-NOTE-0002]]\n";
+        let content = "# proj\n\n### Notes\n- [[FOO-NOTE-0001]]\n- [[FOO-NOTE-0002]]\n";
         assert_eq!(
-            remove_index_link(content, "PWF-NOTE-0001"),
-            "# proj\n\n### Notes\n- [[PWF-NOTE-0002]]\n"
+            remove_index_link(content, "FOO-NOTE-0001"),
+            "# proj\n\n### Notes\n- [[FOO-NOTE-0002]]\n"
         );
     }
 
     #[test]
     fn note_link_creates_final_section_without_clobbering_tasks() {
-        let content = "- [ ] [[PWF-0001|task]]\n\n## Future\n- [ ] [[PWF-0002|later]]\n";
+        let content = "- [ ] [[FOO-0001|task]]\n\n## Future\n- [ ] [[FOO-0002|later]]\n";
         assert_eq!(
-            add_note_link(content, "PWF-NOTE-0001"),
-            "- [ ] [[PWF-0001|task]]\n\n## Future\n- [ ] [[PWF-0002|later]]\n\n### Notes\n\n- [[PWF-NOTE-0001]]\n"
+            add_note_link(content, "FOO-NOTE-0001"),
+            "- [ ] [[FOO-0001|task]]\n\n## Future\n- [ ] [[FOO-0002|later]]\n\n### Notes\n\n- [[FOO-NOTE-0001]]\n"
         );
     }
 
     #[test]
     fn note_link_creates_section_in_empty_index() {
         assert_eq!(
-            add_note_link("", "PWF-NOTE-0001"),
-            "### Notes\n\n- [[PWF-NOTE-0001]]\n"
+            add_note_link("", "FOO-NOTE-0001"),
+            "### Notes\n\n- [[FOO-NOTE-0001]]\n"
         );
     }
 
     #[test]
     fn note_link_inserts_newest_first_under_existing_header() {
-        let content = "# pwf\n\n### Notes\n- [[PWF-NOTE-0001]]\n";
-        let updated = add_note_link(content, "PWF-NOTE-0002");
+        let content = "# foo\n\n### Notes\n- [[FOO-NOTE-0001]]\n";
+        let updated = add_note_link(content, "FOO-NOTE-0002");
         assert_eq!(
             updated,
-            "# pwf\n\n### Notes\n- [[PWF-NOTE-0002]]\n- [[PWF-NOTE-0001]]\n"
+            "# foo\n\n### Notes\n- [[FOO-NOTE-0002]]\n- [[FOO-NOTE-0001]]\n"
         );
         assert_eq!(updated.matches("### Notes").count(), 1);
     }
 
     #[test]
     fn note_link_removal_strips_only_the_target() {
-        let content = "### Notes\n- [[PWF-NOTE-0001]]\n- [[PWF-NOTE-0002]]\n";
+        let content = "### Notes\n- [[FOO-NOTE-0001]]\n- [[FOO-NOTE-0002]]\n";
         assert_eq!(
-            remove_note_link(content, "PWF-NOTE-0001"),
-            "### Notes\n- [[PWF-NOTE-0002]]\n"
+            remove_note_link(content, "FOO-NOTE-0001"),
+            "### Notes\n- [[FOO-NOTE-0002]]\n"
         );
     }
 }

@@ -68,31 +68,18 @@ impl MarkdownFile {
         let serde_json::Value::Object(properties) = value else {
             return Err(MarkdownFileError::FrontmatterMustBeMapping { path });
         };
-        let mut source = String::from("---\n");
-        for (name, value) in properties {
-            validate_property_name(&name)?;
-            let rendered = serde_json::to_string(&value).map_err(|source| {
-                MarkdownFileError::SerializeFrontmatter {
-                    path: path.clone(),
-                    source: FrontmatterSerializeError(source),
-                }
-            })?;
-            source.push_str(&name);
-            source.push_str(": ");
-            source.push_str(&rendered);
-            source.push('\n');
-        }
-        source.push_str("---\n\n");
-        source.push_str(body);
+        let source = render_new_source(&path, properties, body)?;
         Self::create_rendered_new(path, source)
     }
 
     /// Returns the file's current path.
+    #[must_use]
     pub fn path(&self) -> &Path {
         &self.path
     }
 
     /// Returns the complete in-memory Markdown source.
+    #[must_use]
     pub fn source(&self) -> &str {
         &self.source
     }
@@ -100,6 +87,7 @@ impl MarkdownFile {
     /// Returns the body after the closing frontmatter fence.
     ///
     /// A document without a complete opening frontmatter block is entirely body text.
+    #[must_use]
     pub fn body(&self) -> &str {
         frontmatter_bounds(&self.path, &self.source)
             .ok()
@@ -217,58 +205,7 @@ impl MarkdownFile {
         value: Option<&str>,
         insert_after: &[&str],
     ) -> Result<bool, MarkdownFileError> {
-        validate_property_name(name)?;
-        let bounds = frontmatter_bounds(&self.path, &self.source)?;
-        let Some(bounds) = bounds else {
-            if let Some(value) = value {
-                self.source = add_frontmatter(&self.source, name, value);
-            }
-            return Ok(false);
-        };
-        let TargetPropertyRanges { existing, anchor } = {
-            let frontmatter = &self.source[bounds.properties.clone()];
-            target_property_ranges(&self.path, frontmatter, name, insert_after)?
-        };
-        let Some(value) = value else {
-            let Some(mut range) = existing else {
-                return Ok(false);
-            };
-            range.start += bounds.properties.start;
-            range.end += bounds.properties.start;
-            if self.source.as_bytes().get(range.end) == Some(&b'\n') {
-                range.end += 1;
-            }
-            self.source.replace_range(range, "");
-            return Ok(true);
-        };
-        let line = format!("{name}: {value}");
-        if let Some(mut range) = existing {
-            let carriage_return = self.source
-                [bounds.properties.start + range.start..bounds.properties.start + range.end]
-                .ends_with('\r');
-            range.start += bounds.properties.start;
-            range.end += bounds.properties.start;
-            let replacement = if carriage_return {
-                format!("{line}\r")
-            } else {
-                line
-            };
-            self.source.replace_range(range, &replacement);
-            return Ok(true);
-        }
-
-        if let Some(range) = anchor {
-            let absolute_end = bounds.properties.start + range.end;
-            let carriage_return = self.source.as_bytes().get(absolute_end - 1) == Some(&b'\r');
-            let insertion = absolute_end - usize::from(carriage_return);
-            self.source
-                .insert_str(insertion, &format!("{}{line}", bounds.newline));
-            return Ok(false);
-        }
-
-        self.source
-            .insert_str(bounds.properties.end, &format!("{line}{}", bounds.newline));
-        Ok(false)
+        set_property_rendered_source(&mut self.source, &self.path, name, value, insert_after)
     }
 }
 
@@ -386,6 +323,7 @@ pub enum MarkdownFileError {
 
 impl MarkdownFileError {
     /// Returns whether no-clobber creation found an existing destination.
+    #[must_use]
     pub fn is_already_exists(&self) -> bool {
         matches!(
             self,
@@ -442,15 +380,159 @@ struct FrontmatterBounds {
     newline: &'static str,
 }
 
+fn render_new_source(
+    path: &Path,
+    properties: serde_json::Map<String, serde_json::Value>,
+    body: &str,
+) -> Result<String, MarkdownFileError> {
+    let mut source = String::from("---\n");
+    for (name, value) in properties {
+        validate_property_name(&name)?;
+        let rendered = serde_json::to_string(&value).map_err(|source| {
+            MarkdownFileError::SerializeFrontmatter {
+                path: path.to_path_buf(),
+                source: FrontmatterSerializeError(source),
+            }
+        })?;
+        source.push_str(&name);
+        source.push_str(": ");
+        source.push_str(&rendered);
+        source.push('\n');
+    }
+    source.push_str("---\n\n");
+    source.push_str(body);
+    Ok(source)
+}
+
+fn set_property_rendered_source(
+    source: &mut String,
+    path: &Path,
+    name: &str,
+    value: Option<&str>,
+    insert_after: &[&str],
+) -> Result<bool, MarkdownFileError> {
+    validate_property_name(name)?;
+    let Some(bounds) = frontmatter_bounds(path, source)? else {
+        add_property_to_document_without_frontmatter(source, name, value);
+        return Ok(false);
+    };
+    let frontmatter = &source[bounds.properties.clone()];
+    let ranges = target_property_ranges(path, frontmatter, name, insert_after)?;
+    match value {
+        Some(value) => Ok(set_rendered_property(source, &bounds, name, value, ranges)),
+        None => Ok(remove_rendered_property(source, &bounds, ranges.existing)),
+    }
+}
+
+fn add_property_to_document_without_frontmatter(
+    source: &mut String,
+    name: &str,
+    value: Option<&str>,
+) {
+    let Some(value) = value else {
+        return;
+    };
+    *source = add_frontmatter(source, name, value);
+}
+
+fn remove_rendered_property(
+    source: &mut String,
+    bounds: &FrontmatterBounds,
+    range: Option<Range<usize>>,
+) -> bool {
+    let Some(mut range) = range else {
+        return false;
+    };
+    range.start += bounds.properties.start;
+    range.end += bounds.properties.start;
+    if source.as_bytes().get(range.end) == Some(&b'\n') {
+        range.end += 1;
+    }
+    source.replace_range(range, "");
+    true
+}
+
+fn set_rendered_property(
+    source: &mut String,
+    bounds: &FrontmatterBounds,
+    name: &str,
+    value: &str,
+    ranges: TargetPropertyRanges,
+) -> bool {
+    let line = format!("{name}: {value}");
+    if let Some(range) = ranges.existing {
+        replace_rendered_property(source, bounds, range, line);
+        return true;
+    }
+    if let Some(range) = ranges.anchor {
+        insert_rendered_property_after(source, bounds, range, &line);
+        return false;
+    }
+    source.insert_str(bounds.properties.end, &format!("{line}{}", bounds.newline));
+    false
+}
+
+fn replace_rendered_property(
+    source: &mut String,
+    bounds: &FrontmatterBounds,
+    mut range: Range<usize>,
+    line: String,
+) {
+    let carriage_return = source
+        [bounds.properties.start + range.start..bounds.properties.start + range.end]
+        .ends_with('\r');
+    range.start += bounds.properties.start;
+    range.end += bounds.properties.start;
+    let replacement = if carriage_return {
+        format!("{line}\r")
+    } else {
+        line
+    };
+    source.replace_range(range, &replacement);
+}
+
+fn insert_rendered_property_after(
+    source: &mut String,
+    bounds: &FrontmatterBounds,
+    range: Range<usize>,
+    line: &str,
+) {
+    let absolute_end = bounds.properties.start + range.end;
+    let carriage_return = source.as_bytes().get(absolute_end - 1) == Some(&b'\r');
+    let insertion = absolute_end - usize::from(carriage_return);
+    source.insert_str(insertion, &format!("{}{line}", bounds.newline));
+}
+
+struct FrontmatterReadState {
+    source: Vec<u8>,
+    first_line: bool,
+    line_start: usize,
+}
+
+impl FrontmatterReadState {
+    fn new() -> Self {
+        Self {
+            source: Vec::with_capacity(256),
+            first_line: true,
+            line_start: 0,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum FrontmatterReadProgress {
+    Continue,
+    NotFrontmatter,
+    Complete,
+}
+
 fn read_frontmatter_source(path: &Path) -> Result<Option<String>, MarkdownFileError> {
     let mut file = fs::File::open(path).map_err(|source| MarkdownFileError::Read {
         path: path.to_path_buf(),
         source,
     })?;
     let mut buffer = [0_u8; 4096];
-    let mut source = Vec::with_capacity(256);
-    let mut first_line = true;
-    let mut line_start = 0;
+    let mut state = FrontmatterReadState::new();
 
     loop {
         let byte_count = file
@@ -460,44 +542,93 @@ fn read_frontmatter_source(path: &Path) -> Result<Option<String>, MarkdownFileEr
                 source,
             })?;
         if byte_count == 0 {
-            if first_line && source.is_empty() {
-                return Ok(None);
-            }
-            if line_start < source.len() {
-                match inspect_frontmatter_line(path, &source[line_start..], first_line)? {
-                    FrontmatterLine::NotFrontmatter => return Ok(None),
-                    FrontmatterLine::Complete => return frontmatter_string(path, source).map(Some),
-                    FrontmatterLine::Continue => {}
-                }
-            }
-            return Err(MarkdownFileError::MalformedFrontmatter {
-                path: path.to_path_buf(),
-            });
+            return finish_frontmatter_read(path, state);
         }
+        match inspect_frontmatter_chunk(path, &buffer[..byte_count], &mut state)? {
+            FrontmatterReadProgress::Continue => {}
+            FrontmatterReadProgress::NotFrontmatter => return Ok(None),
+            FrontmatterReadProgress::Complete => {
+                return frontmatter_string(path, state.source).map(Some);
+            }
+        }
+    }
+}
 
-        for byte in &buffer[..byte_count] {
-            source.push(*byte);
-            if source.len() > FRONTMATTER_BYTE_COUNT_MAX {
-                return Err(MarkdownFileError::FrontmatterTooLarge {
-                    path: path.to_path_buf(),
-                    byte_count_max: FRONTMATTER_BYTE_COUNT_MAX,
-                });
-            }
-            if first_line && *byte != b'\n' && !can_still_be_opening_fence(&source[line_start..]) {
-                return Ok(None);
-            }
-            if *byte != b'\n' {
-                continue;
-            }
-            match inspect_frontmatter_line(path, &source[line_start..], first_line)? {
-                FrontmatterLine::NotFrontmatter => return Ok(None),
-                FrontmatterLine::Complete => return frontmatter_string(path, source).map(Some),
-                FrontmatterLine::Continue => {
-                    first_line = false;
-                    line_start = source.len();
-                }
-            }
+fn inspect_frontmatter_chunk(
+    path: &Path,
+    chunk: &[u8],
+    state: &mut FrontmatterReadState,
+) -> Result<FrontmatterReadProgress, MarkdownFileError> {
+    for &byte in chunk {
+        let progress = inspect_frontmatter_byte(path, byte, state)?;
+        if !matches!(progress, FrontmatterReadProgress::Continue) {
+            return Ok(progress);
         }
+    }
+    Ok(FrontmatterReadProgress::Continue)
+}
+
+fn inspect_frontmatter_byte(
+    path: &Path,
+    byte: u8,
+    state: &mut FrontmatterReadState,
+) -> Result<FrontmatterReadProgress, MarkdownFileError> {
+    state.source.push(byte);
+    if state.source.len() > FRONTMATTER_BYTE_COUNT_MAX {
+        return Err(MarkdownFileError::FrontmatterTooLarge {
+            path: path.to_path_buf(),
+            byte_count_max: FRONTMATTER_BYTE_COUNT_MAX,
+        });
+    }
+    if opening_fence_is_impossible(byte, state) {
+        return Ok(FrontmatterReadProgress::NotFrontmatter);
+    }
+    if byte != b'\n' {
+        return Ok(FrontmatterReadProgress::Continue);
+    }
+    let line = inspect_frontmatter_line(path, &state.source[state.line_start..], state.first_line)?;
+    if matches!(line, FrontmatterLine::Continue) {
+        state.first_line = false;
+        state.line_start = state.source.len();
+    }
+    Ok(match line {
+        FrontmatterLine::NotFrontmatter => FrontmatterReadProgress::NotFrontmatter,
+        FrontmatterLine::Continue => FrontmatterReadProgress::Continue,
+        FrontmatterLine::Complete => FrontmatterReadProgress::Complete,
+    })
+}
+
+fn opening_fence_is_impossible(byte: u8, state: &FrontmatterReadState) -> bool {
+    state.first_line
+        && byte != b'\n'
+        && !can_still_be_opening_fence(&state.source[state.line_start..])
+}
+
+fn finish_frontmatter_read(
+    path: &Path,
+    state: FrontmatterReadState,
+) -> Result<Option<String>, MarkdownFileError> {
+    if state.first_line && state.source.is_empty() {
+        return Ok(None);
+    }
+    if state.line_start < state.source.len() {
+        return finish_partial_frontmatter_line(path, state);
+    }
+    Err(MarkdownFileError::MalformedFrontmatter {
+        path: path.to_path_buf(),
+    })
+}
+
+fn finish_partial_frontmatter_line(
+    path: &Path,
+    state: FrontmatterReadState,
+) -> Result<Option<String>, MarkdownFileError> {
+    match inspect_frontmatter_line(path, &state.source[state.line_start..], state.first_line)? {
+        FrontmatterLine::NotFrontmatter => Ok(None),
+        FrontmatterLine::Complete => frontmatter_string(path, state.source).map(Some),
+        FrontmatterLine::Continue => Err(MarkdownFileError::MalformedFrontmatter {
+            path: path.to_path_buf(),
+        }),
     }
 }
 
@@ -724,18 +855,19 @@ fn property_range(frontmatter: &str, first: markdown_line::MarkdownLine<'_>) -> 
         .text
         .split_once(':')
         .is_some_and(|(_, value)| value.trim().is_empty() || value.trim().starts_with(['|', '>']));
-    let mut end = first.content_end;
-    for line in markdown_line::lines(&frontmatter[first.end..]) {
-        if has_block_value {
-            if property_name(line.text).is_some() {
-                break;
-            }
-        } else if !line.text.starts_with([' ', '\t']) {
-            break;
-        }
-        end = first.end + line.content_end;
-    }
+    let end = markdown_line::lines(&frontmatter[first.end..])
+        .take_while(|line| property_continues(has_block_value, line.text))
+        .map(|line| first.end + line.content_end)
+        .last()
+        .unwrap_or(first.content_end);
     first.start..end
+}
+
+fn property_continues(has_block_value: bool, line: &str) -> bool {
+    if has_block_value {
+        return property_name(line).is_none();
+    }
+    line.starts_with([' ', '\t'])
 }
 
 fn add_frontmatter(source: &str, name: &str, value: &str) -> String {

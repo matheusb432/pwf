@@ -43,8 +43,8 @@ fn project(id: &str, title: &str, tasks_path: &Path) -> Project {
     }
 }
 
-fn pwf_project(store: &ObsidianStore) -> Project {
-    project("PWF", "pwf", store.home.as_path())
+fn foo_project(store: &ObsidianStore) -> Project {
+    project("FOO", "foo", store.home.as_path())
 }
 
 #[test]
@@ -53,12 +53,12 @@ fn explicit_task_path_is_the_complete_project_directory() {
     let tasks_path = temporary_directory.path().join("custom/tasks");
     std::fs::create_dir_all(&tasks_path).unwrap();
     std::fs::write(
-        tasks_path.join("pwf.md"),
-        "---\nid: pwf\ntitle: pwf\n---\n\n- [ ] [[PWF-0001]]\n",
+        tasks_path.join("foo.md"),
+        "---\nid: foo\ntitle: foo\n---\n\n- [ ] [[FOO-0001]]\n",
     )
     .unwrap();
     write_note(
-        &tasks_path.join("PWF-0001.md"),
+        &tasks_path.join("FOO-0001.md"),
         "exact path",
         "2026-07-25",
         None,
@@ -68,10 +68,10 @@ fn explicit_task_path_is_the_complete_project_directory() {
     );
     let store = ObsidianStore::new(HomeDirectory::new(tasks_path.clone()));
 
-    let record = get_record(&store, "PWF-0001").unwrap();
+    let record = get_record(&store, "FOO-0001").unwrap();
 
-    assert_eq!(record.locator.as_path(), tasks_path.join("PWF-0001.md"));
-    assert!(!tasks_path.join("pwf").exists());
+    assert_eq!(record.locator.as_path(), tasks_path.join("FOO-0001.md"));
+    assert!(!tasks_path.join("foo").exists());
 }
 
 #[test]
@@ -79,12 +79,46 @@ fn list_returns_empty_when_project_directory_is_missing() {
     let temporary_directory = tempfile::tempdir().unwrap();
     let tasks_path = temporary_directory.path().join("missing");
     let store = store_for_tasks(&tasks_path);
-    let project = pwf_project(&store);
+    let project = foo_project(&store);
 
     let records = TaskStore::list(&store, &project).unwrap();
 
     assert!(records.is_empty());
     assert!(!tasks_path.exists());
+}
+
+#[test]
+fn list_ignores_markdown_without_task_id() {
+    let temporary_directory = tempfile::tempdir().unwrap();
+    let tasks_path = temporary_directory.path().join("foo");
+    std::fs::create_dir_all(&tasks_path).unwrap();
+    std::fs::write(
+        tasks_path.join("foo.md"),
+        "---\nid: foo\ntitle: foo\n---\n\n",
+    )
+    .unwrap();
+    let store = store_for_tasks(&tasks_path);
+    write_note(
+        &tasks_path.join("FOO-0001.md"),
+        "declared task",
+        "2026-07-25",
+        None,
+        None,
+        None,
+        "body",
+    );
+    std::fs::write(
+        tasks_path.join("FOO-0002.plan.md"),
+        "---\ntitle: supporting plan\n---\n\nplan\n",
+    )
+    .unwrap();
+    std::fs::write(tasks_path.join("supporting-note.md"), "# Supporting note\n").unwrap();
+    let project = foo_project(&store);
+
+    let records = TaskStore::list(&store, &project).unwrap();
+
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].id, TaskId::try_new("FOO-0001").unwrap());
 }
 
 #[test]
@@ -146,12 +180,12 @@ fn explicit_index_validation_uses_the_supplied_identity() {
     let tasks_path = temporary_directory.path().join("tasks");
     std::fs::create_dir_all(&tasks_path).unwrap();
     std::fs::write(
-        tasks_path.join("pwf.md"),
-        "---\nid: old\ntitle: pwf\n---\n\n",
+        tasks_path.join("foo.md"),
+        "---\nid: old\ntitle: foo\n---\n\n",
     )
     .unwrap();
     let store = ObsidianStore::new(HomeDirectory::new(tasks_path.clone()));
-    let project_name = project("NEW", "pwf", &tasks_path);
+    let project_name = project("NEW", "foo", &tasks_path);
 
     let error = TaskStore::list(&store, &project_name).unwrap_err();
 
@@ -168,11 +202,11 @@ fn explicit_index_validation_uses_the_supplied_identity() {
 fn generic_list_rejects_project_index_without_identity_frontmatter() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
-    let project_dir = notes_dir.join("pwf");
+    let project_dir = notes_dir.join("foo");
     std::fs::create_dir_all(&project_dir).unwrap();
-    std::fs::write(project_dir.join("pwf.md"), "- [ ] [[PWF-0001]]\n").unwrap();
+    std::fs::write(project_dir.join("foo.md"), "- [ ] [[FOO-0001]]\n").unwrap();
     write_note(
-        &project_dir.join("PWF-0001.md"),
+        &project_dir.join("FOO-0001.md"),
         "task",
         "2026-07-12",
         None,
@@ -180,9 +214,9 @@ fn generic_list_rejects_project_index_without_identity_frontmatter() {
         None,
         "body",
     );
-    let store = store_for_tasks(&notes_dir.join("pwf"));
+    let store = store_for_tasks(&notes_dir.join("foo"));
 
-    let project = pwf_project(&store);
+    let project = foo_project(&store);
     let error = TaskStore::list(&store, &project).unwrap_err();
 
     assert_matches!(
@@ -195,15 +229,15 @@ fn generic_list_rejects_project_index_without_identity_frontmatter() {
 #[test]
 fn generic_list_reports_an_unreadable_task_path() {
     let temp = tempfile::tempdir().unwrap();
-    let project_dir = temp.path().join("pwf");
-    std::fs::create_dir_all(project_dir.join("PWF-0001.md")).unwrap();
+    let project_dir = temp.path().join("foo");
+    std::fs::create_dir_all(project_dir.join("FOO-0001.md")).unwrap();
     std::fs::write(
-        project_dir.join("pwf.md"),
-        "---\nid: pwf\ntitle: pwf\n---\n\n- [ ] [[PWF-0001]]\n",
+        project_dir.join("foo.md"),
+        "---\nid: foo\ntitle: foo\n---\n\n- [ ] [[FOO-0001]]\n",
     )
     .unwrap();
     let store = store_for_tasks(&project_dir);
-    let project = pwf_project(&store);
+    let project = foo_project(&store);
 
     let error = TaskStore::list(&store, &project).unwrap_err();
 
@@ -214,11 +248,11 @@ fn generic_list_reports_an_unreadable_task_path() {
 fn generic_read_retains_raw_tags_frontmatter() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
-    let project_dir = notes_dir.join("pwf");
+    let project_dir = notes_dir.join("foo");
     std::fs::create_dir_all(&project_dir).unwrap();
-    std::fs::write(project_dir.join("pwf.md"), "- [ ] [[PWF-0001]]\n").unwrap();
+    std::fs::write(project_dir.join("foo.md"), "- [ ] [[FOO-0001]]\n").unwrap();
     write_note(
-        &project_dir.join("PWF-0001.md"),
+        &project_dir.join("FOO-0001.md"),
         "tagged",
         "2026-07-01",
         None,
@@ -226,10 +260,10 @@ fn generic_read_retains_raw_tags_frontmatter() {
         Some("[SQLite, malformed-but-displayable]"),
         "body",
     );
-    let store = store_with_index_identity(&notes_dir.join("pwf"));
+    let store = store_with_index_identity(&notes_dir.join("foo"));
 
     assert_eq!(
-        get_record(&store, "PWF-0001")
+        get_record(&store, "FOO-0001")
             .unwrap()
             .tags
             .as_ref()
@@ -242,23 +276,23 @@ fn generic_read_retains_raw_tags_frontmatter() {
 fn generic_read_uses_yaml_decoded_title() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
-    let project_dir = notes_dir.join("pwf");
+    let project_dir = notes_dir.join("foo");
     std::fs::create_dir_all(&project_dir).unwrap();
-    std::fs::write(project_dir.join("pwf.md"), "- [ ] [[PWF-0001]]\n").unwrap();
+    std::fs::write(project_dir.join("foo.md"), "- [ ] [[FOO-0001]]\n").unwrap();
     std::fs::write(
-        project_dir.join("PWF-0001.md"),
-        "---\nid: PWF-0001\nstatus: active\ntitle: \"adapter: preserve identity\"\nproject: pwf\ncreated: 2026-07-12\n---\n\nbody\n",
+        project_dir.join("FOO-0001.md"),
+        "---\nid: FOO-0001\nstatus: active\ntitle: \"adapter: preserve identity\"\nproject: foo\ncreated: 2026-07-12\n---\n\nbody\n",
     )
     .unwrap();
-    let store = store_with_index_identity(&notes_dir.join("pwf"));
+    let store = store_with_index_identity(&notes_dir.join("foo"));
 
-    let record = get_record(&store, "PWF-0001").unwrap();
+    let record = get_record(&store, "FOO-0001").unwrap();
 
     assert_eq!(record.title, "adapter: preserve identity");
 }
 
 fn get_record(store: &ObsidianStore, id: &str) -> Option<TaskRecord> {
-    let project = pwf_project(store);
+    let project = foo_project(store);
     TaskStore::get(store, &project, &TaskId::try_new(id).unwrap()).unwrap()
 }
 
@@ -266,17 +300,17 @@ fn get_record(store: &ObsidianStore, id: &str) -> Option<TaskRecord> {
 fn get_resolves_frontmatter_id_to_descriptive_filename_locator() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
-    let project_dir = notes_dir.join("pwf");
+    let project_dir = notes_dir.join("foo");
     std::fs::create_dir_all(&project_dir).unwrap();
-    std::fs::write(project_dir.join("pwf.md"), "- [ ] [[PWF-0001]]\n").unwrap();
+    std::fs::write(project_dir.join("foo.md"), "- [ ] [[FOO-0001]]\n").unwrap();
     std::fs::write(
         project_dir.join("descriptive-name.md"),
-        "---\nid: PWF-0001\nstatus: active\ntitle: descriptive\nproject: pwf\ncreated: 2026-07-12\n---\n\nbody\n",
+        "---\nid: FOO-0001\nstatus: active\ntitle: descriptive\nproject: foo\ncreated: 2026-07-12\n---\n\nbody\n",
     )
     .unwrap();
-    let store = store_with_index_identity(&notes_dir.join("pwf"));
+    let store = store_with_index_identity(&notes_dir.join("foo"));
 
-    let record = get_record(&store, "PWF-0001").expect("record must resolve by frontmatter id");
+    let record = get_record(&store, "FOO-0001").unwrap();
 
     assert_eq!(
         record.locator.as_path(),
@@ -288,29 +322,29 @@ fn get_resolves_frontmatter_id_to_descriptive_filename_locator() {
 fn get_rejects_duplicate_frontmatter_ids() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
-    let project_dir = notes_dir.join("pwf");
+    let project_dir = notes_dir.join("foo");
     std::fs::create_dir_all(&project_dir).unwrap();
-    std::fs::write(project_dir.join("pwf.md"), "- [ ] [[PWF-0001]]\n").unwrap();
+    std::fs::write(project_dir.join("foo.md"), "- [ ] [[FOO-0001]]\n").unwrap();
     for (filename, id) in [
-        ("a.md", "PWF-0001"),
-        ("b.md", "PWF-0002"),
-        ("c.md", "PWF-0001"),
+        ("a.md", "FOO-0001"),
+        ("b.md", "FOO-0002"),
+        ("c.md", "FOO-0001"),
     ] {
         std::fs::write(
             project_dir.join(filename),
-            format!("---\nid: {id}\nstatus: active\ntitle: task\nproject: pwf\ncreated: 2026-07-12\n---\n\nbody\n"),
+            format!("---\nid: {id}\nstatus: active\ntitle: task\nproject: foo\ncreated: 2026-07-12\n---\n\nbody\n"),
         )
         .unwrap();
     }
-    let store = store_with_index_identity(&notes_dir.join("pwf"));
-    let project = pwf_project(&store);
+    let store = store_with_index_identity(&notes_dir.join("foo"));
+    let project = foo_project(&store);
 
     let error =
-        TaskStore::get(&store, &project, &TaskId::try_new("PWF-0001").unwrap()).unwrap_err();
+        TaskStore::get(&store, &project, &TaskId::try_new("FOO-0001").unwrap()).unwrap_err();
 
     assert_matches!(
         error,
-        ObsidianStoreError::DuplicateTaskId { ref id, .. } if id.as_ref() == "PWF-0001"
+        ObsidianStoreError::DuplicateTaskId { ref id, .. } if id.as_ref() == "FOO-0001"
     );
 }
 
@@ -325,7 +359,7 @@ fn write_note(
 ) {
     let id = path.file_stem().and_then(|stem| stem.to_str()).unwrap();
     let mut note = format!(
-        "---\nid: {id}\nstatus: active\ntitle: {title}\nproject: pwf\ncreated: {created}\n"
+        "---\nid: {id}\nstatus: active\ntitle: {title}\nproject: foo\ncreated: {created}\n"
     );
     if let Some(blocked_by) = blocked_by {
         let _ = writeln!(note, "blocked_by: {blocked_by}");
@@ -342,7 +376,7 @@ fn write_note(
 
 /// Writes a note and then its open index entry through the adapter ports.
 fn generic_add(store: &ObsidianStore, new: NewTask) -> Result<TaskRecord, ObsidianStoreError> {
-    let project = pwf_project(store);
+    let project = foo_project(store);
     let section = new.section.clone();
     let record = insert_next(store, &project, new)?;
     let id = record.id.clone();
@@ -383,13 +417,13 @@ fn new_task(body: &str, title: &str, section: Option<&str>) -> NewTask {
 fn generic_add_creates_note_and_links_index() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
-    let store = store_with_index_identity(&notes_dir.join("pwf"));
+    let store = store_with_index_identity(&notes_dir.join("foo"));
 
     let record = generic_add(
         &store,
         NewTask {
             blocked_by: Some(
-                pwf_models::task::BlockedBy::try_new(["PWF-0001".parse().unwrap()]).unwrap(),
+                pwf_models::task::BlockedBy::try_new(["FOO-0001".parse().unwrap()]).unwrap(),
             ),
             effort: Some(EffortTier::Medium),
             ..new_task(
@@ -401,24 +435,24 @@ fn generic_add_creates_note_and_links_index() {
     )
     .unwrap();
 
-    assert_eq!(record.id, TaskId::try_new("PWF-0001").unwrap());
+    assert_eq!(record.id, TaskId::try_new("FOO-0001").unwrap());
     assert_eq!(record.title, "ship adapter");
-    let note = std::fs::read_to_string(notes_dir.join("pwf/PWF-0001.md")).unwrap();
+    let note = std::fs::read_to_string(notes_dir.join("foo/FOO-0001.md")).unwrap();
     assert!(
-        note.starts_with("---\nid: PWF-0001\nstatus: active\n"),
+        note.starts_with("---\nid: FOO-0001\nstatus: active\n"),
         "{note}"
     );
     assert!(note.contains("status: active"), "{note}");
     assert!(note.contains("title: ship adapter"), "{note}");
     assert!(note.contains("created: 2026-07-07"), "{note}");
-    assert!(note.contains("blocked_by: [\"[[PWF-0001]]\"]"), "{note}");
+    assert!(note.contains("blocked_by: [\"[[FOO-0001]]\"]"), "{note}");
     assert!(note.contains("effort: medium"), "{note}");
     let expected_body = format!("## Goals{S}## Done When{S}- tests pass");
     assert!(note.contains(&expected_body), "{note}");
-    let index = std::fs::read_to_string(notes_dir.join("pwf/pwf.md")).unwrap();
+    let index = std::fs::read_to_string(notes_dir.join("foo/foo.md")).unwrap();
     assert_eq!(
         index,
-        "---\nid: pwf\ntitle: pwf\n---\n\n## Human\n\n- [ ] [[PWF-0001]]\n"
+        "---\nid: foo\ntitle: foo\n---\n\n## Human\n\n- [ ] [[FOO-0001]]\n"
     );
 }
 
@@ -426,7 +460,7 @@ fn generic_add_creates_note_and_links_index() {
 fn generic_add_writes_tags_and_omits_absent_tags() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
-    let store = store_with_index_identity(&notes_dir.join("pwf"));
+    let store = store_with_index_identity(&notes_dir.join("foo"));
     let tags = tags(&["sqlite", "csharp_export"]);
     let tagged = generic_add(
         &store,
@@ -448,10 +482,10 @@ fn generic_add_writes_tags_and_omits_absent_tags() {
 fn generic_insert_rejects_unreadable_existing_index_before_writing_a_note() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
-    let project_dir = notes_dir.join("pwf");
-    std::fs::create_dir_all(project_dir.join("pwf.md")).unwrap();
+    let project_dir = notes_dir.join("foo");
+    std::fs::create_dir_all(project_dir.join("foo.md")).unwrap();
     let store = store_with_index_identity(&project_dir);
-    let project = pwf_project(&store);
+    let project = foo_project(&store);
 
     let err = insert_next(
         &store,
@@ -462,7 +496,7 @@ fn generic_insert_rejects_unreadable_existing_index_before_writing_a_note() {
 
     assert!(err.to_string().starts_with("Cannot read index: "));
     assert!(
-        !project_dir.join("PWF-0001.md").exists(),
+        !project_dir.join("FOO-0001.md").exists(),
         "the failed insert must not leave a note behind"
     );
 }
@@ -471,15 +505,15 @@ fn generic_insert_rejects_unreadable_existing_index_before_writing_a_note() {
 fn generic_insert_rejects_mismatched_project_index_identity() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
-    let project_dir = notes_dir.join("pwf");
+    let project_dir = notes_dir.join("foo");
     std::fs::create_dir_all(&project_dir).unwrap();
     std::fs::write(
-        project_dir.join("pwf.md"),
+        project_dir.join("foo.md"),
         "---\nid: smp\ntitle: sample-project\n---\n\n# wrong\n",
     )
     .unwrap();
-    let store = store_with_index_identity(&notes_dir.join("pwf"));
-    let project = pwf_project(&store);
+    let store = store_with_index_identity(&notes_dir.join("foo"));
+    let project = foo_project(&store);
 
     let error = insert_next(&store, &project, new_task("task", "task", None)).unwrap_err();
 
@@ -493,44 +527,44 @@ fn generic_insert_rejects_mismatched_project_index_identity() {
 fn generic_insert_allocates_after_greatest_frontmatter_id() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
-    let project_dir = notes_dir.join("pwf");
+    let project_dir = notes_dir.join("foo");
     std::fs::create_dir_all(&project_dir).unwrap();
     std::fs::write(
-        project_dir.join("pwf.md"),
-        "---\nid: pwf\ntitle: pwf\n---\n\n- [ ] [[PWF-0009]]\n",
+        project_dir.join("foo.md"),
+        "---\nid: foo\ntitle: foo\n---\n\n- [ ] [[FOO-0009]]\n",
     )
     .unwrap();
     std::fs::write(
         project_dir.join("descriptive.md"),
-        "---\nid: PWF-0009\nstatus: active\ntitle: existing\nproject: pwf\ncreated: 2026-07-12\n---\n\nbody\n",
+        "---\nid: FOO-0009\nstatus: active\ntitle: existing\nproject: foo\ncreated: 2026-07-12\n---\n\nbody\n",
     )
     .unwrap();
     std::fs::write(
-        project_dir.join("PWF-0099.md"),
+        project_dir.join("FOO-0099.md"),
         "---\ntype: note\n---\n\nnote\n",
     )
     .unwrap();
-    let store = store_with_index_identity(&notes_dir.join("pwf"));
-    let project = pwf_project(&store);
+    let store = store_with_index_identity(&notes_dir.join("foo"));
+    let project = foo_project(&store);
 
     let record = insert_next(&store, &project, new_task("next task", "next task", None)).unwrap();
 
-    assert_eq!(record.id, TaskId::try_new("PWF-0010").unwrap());
+    assert_eq!(record.id, TaskId::try_new("FOO-0010").unwrap());
 }
 
 #[test]
 fn generic_insert_reports_exhausted_task_id_sequence() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
-    let project_dir = notes_dir.join("pwf");
+    let project_dir = notes_dir.join("foo");
     std::fs::create_dir_all(&project_dir).unwrap();
     std::fs::write(
-        project_dir.join("pwf.md"),
-        "---\nid: pwf\ntitle: pwf\n---\n\n- [ ] [[PWF-9999]]\n",
+        project_dir.join("foo.md"),
+        "---\nid: foo\ntitle: foo\n---\n\n- [ ] [[FOO-9999]]\n",
     )
     .unwrap();
     write_note(
-        &project_dir.join("PWF-9999.md"),
+        &project_dir.join("FOO-9999.md"),
         "last task",
         "2026-07-01",
         None,
@@ -539,7 +573,7 @@ fn generic_insert_reports_exhausted_task_id_sequence() {
         "body",
     );
     let store = store_with_index_identity(&project_dir);
-    let project = pwf_project(&store);
+    let project = foo_project(&store);
 
     let error =
         insert_next(&store, &project, new_task("next task", "next task", None)).unwrap_err();
@@ -547,14 +581,14 @@ fn generic_insert_reports_exhausted_task_id_sequence() {
     assert_matches!(
         error,
         ObsidianStoreError::TaskIdSequenceExhausted { ref project_id }
-            if project_id.as_ref() == "PWF"
+            if project_id.as_ref() == "FOO"
     );
 }
 
 /// Applies a tags-only patch; `Some(tags)` sets the field and `None` clears it.
 fn apply_tag_patch(store: &ObsidianStore, tags: Option<TaskTags>) {
-    let project = pwf_project(store);
-    let id = TaskId::try_new("PWF-0001").unwrap();
+    let project = foo_project(store);
+    let id = TaskId::try_new("FOO-0001").unwrap();
     let patch = TaskPatch {
         tags: tags.map_or(NullablePatch::Clear, NullablePatch::Set),
         ..Default::default()
@@ -591,10 +625,10 @@ fn generic_update_sets_frontmatter_tags_without_rewriting_body_tags_line() {
         std::fs::read_to_string(task_path).unwrap(),
         concat!(
             "---\n",
-            "id: PWF-0001\n",
+            "id: FOO-0001\n",
             "status: active\n",
             "title: tagged\n",
-            "project: pwf\n",
+            "project: foo\n",
             "created: 2026-07-01\n",
             "tags: [sqlite]\n",
             "---\n\n",
@@ -710,11 +744,11 @@ fn generic_update_clears_tags_on_crlf_frontmatter() {
 fn generic_delete_removes_note_and_unlinks_index() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
-    let project_dir = notes_dir.join("pwf");
+    let project_dir = notes_dir.join("foo");
     std::fs::create_dir_all(&project_dir).unwrap();
-    std::fs::write(project_dir.join("pwf.md"), "- [ ] [[PWF-0001]]\n").unwrap();
+    std::fs::write(project_dir.join("foo.md"), "- [ ] [[FOO-0001]]\n").unwrap();
     write_note(
-        &project_dir.join("PWF-0001.md"),
+        &project_dir.join("FOO-0001.md"),
         "stale task",
         "2026-07-01",
         None,
@@ -722,17 +756,17 @@ fn generic_delete_removes_note_and_unlinks_index() {
         None,
         "remove me",
     );
-    let store = store_with_index_identity(&notes_dir.join("pwf"));
-    let project = pwf_project(&store);
-    let id = TaskId::try_new("PWF-0001").unwrap();
+    let store = store_with_index_identity(&notes_dir.join("foo"));
+    let project = foo_project(&store);
+    let id = TaskId::try_new("FOO-0001").unwrap();
 
     IndexEntryStore::delete_index_entry(&store, &project, &id).unwrap();
     TaskStore::delete(&store, &project, &id).unwrap();
 
-    assert!(!project_dir.join("PWF-0001.md").exists());
+    assert!(!project_dir.join("FOO-0001.md").exists());
     assert_eq!(
-        std::fs::read_to_string(project_dir.join("pwf.md")).unwrap(),
-        "---\nid: pwf\ntitle: pwf\n---\n"
+        std::fs::read_to_string(project_dir.join("foo.md")).unwrap(),
+        "---\nid: foo\ntitle: foo\n---\n"
     );
 }
 
@@ -740,11 +774,11 @@ fn generic_delete_removes_note_and_unlinks_index() {
 fn get_returns_open_note_locator_from_active_index() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
-    let project_dir = notes_dir.join("pwf");
+    let project_dir = notes_dir.join("foo");
     std::fs::create_dir_all(&project_dir).unwrap();
-    std::fs::write(project_dir.join("pwf.md"), "- [ ] [[PWF-0001]]\n").unwrap();
+    std::fs::write(project_dir.join("foo.md"), "- [ ] [[FOO-0001]]\n").unwrap();
     write_note(
-        &project_dir.join("PWF-0001.md"),
+        &project_dir.join("FOO-0001.md"),
         "active task",
         "2026-07-01",
         None,
@@ -752,22 +786,22 @@ fn get_returns_open_note_locator_from_active_index() {
         None,
         "body",
     );
-    let store = store_with_index_identity(&notes_dir.join("pwf"));
+    let store = store_with_index_identity(&notes_dir.join("foo"));
 
-    let record = get_record(&store, "PWF-0001").expect("active task must resolve");
+    let record = get_record(&store, "FOO-0001").unwrap();
 
-    assert_eq!(record.locator.as_path(), project_dir.join("PWF-0001.md"));
+    assert_eq!(record.locator.as_path(), project_dir.join("FOO-0001.md"));
 }
 
 #[test]
 fn get_returns_open_note_source_with_created_key() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
-    let project_dir = notes_dir.join("pwf");
+    let project_dir = notes_dir.join("foo");
     std::fs::create_dir_all(&project_dir).unwrap();
-    std::fs::write(project_dir.join("pwf.md"), "- [ ] [[PWF-0001]]\n").unwrap();
+    std::fs::write(project_dir.join("foo.md"), "- [ ] [[FOO-0001]]\n").unwrap();
     write_note(
-        &project_dir.join("PWF-0001.md"),
+        &project_dir.join("FOO-0001.md"),
         "active task",
         "2026-07-01",
         None,
@@ -775,13 +809,13 @@ fn get_returns_open_note_source_with_created_key() {
         None,
         "## Goals\n- body",
     );
-    let store = store_with_index_identity(&notes_dir.join("pwf"));
+    let store = store_with_index_identity(&notes_dir.join("foo"));
 
-    let record = get_record(&store, "PWF-0001").expect("active task must resolve");
+    let record = get_record(&store, "FOO-0001").unwrap();
 
     assert_eq!(
         record.source,
-        "---\nid: PWF-0001\nstatus: active\ntitle: active task\nproject: pwf\ncreated: 2026-07-01\n---\n\n## Goals\n- body\n"
+        "---\nid: FOO-0001\nstatus: active\ntitle: active task\nproject: foo\ncreated: 2026-07-01\n---\n\n## Goals\n- body\n"
     );
 }
 
@@ -789,32 +823,32 @@ fn get_returns_open_note_source_with_created_key() {
 fn get_finds_closed_note_still_in_project_dir() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
-    let project_dir = notes_dir.join("pwf");
+    let project_dir = notes_dir.join("foo");
     std::fs::create_dir_all(&project_dir).unwrap();
     std::fs::write(
-        project_dir.join("pwf.md"),
-        "- [x] [[PWF-0003]] ✅ 2026-07-07\n",
+        project_dir.join("foo.md"),
+        "- [x] [[FOO-0003]] ✅ 2026-07-07\n",
     )
     .unwrap();
     write_status_note(
-        &project_dir.join("PWF-0003.md"),
+        &project_dir.join("FOO-0003.md"),
         "done task",
         "done",
         Some("2026-07-07"),
         None,
     );
-    let store = store_with_index_identity(&notes_dir.join("pwf"));
+    let store = store_with_index_identity(&notes_dir.join("foo"));
 
-    let record = get_record(&store, "PWF-0003").expect("closed task must resolve");
+    let record = get_record(&store, "FOO-0003").unwrap();
 
     assert_eq!(
         record.source,
-        "---\nid: PWF-0003\nstatus: done\ntitle: done task\nproject: pwf\ncreated: 2026-07-01\ncompleted: 2026-07-07\n---\n\nbody\n"
+        "---\nid: FOO-0003\nstatus: done\ntitle: done task\nproject: foo\ncreated: 2026-07-01\ncompleted: 2026-07-07\n---\n\nbody\n"
     );
 }
 
 fn store_with_index_identity(tasks_path: &Path) -> ObsidianStore {
-    ensure_test_index_identity(&tasks_path.join("pwf.md"), "pwf", "pwf");
+    ensure_test_index_identity(&tasks_path.join("foo.md"), "foo", "foo");
     store_for_tasks(tasks_path)
 }
 
@@ -835,12 +869,12 @@ fn staged_open_task_with_tags(tags: &str) -> StagedOpenTask {
 fn staged_open_task(tags: Option<&str>, body: &str) -> StagedOpenTask {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
-    let project_dir = notes_dir.join("pwf");
+    let project_dir = notes_dir.join("foo");
     std::fs::create_dir_all(&project_dir).unwrap();
-    std::fs::write(project_dir.join("pwf.md"), "- [ ] [[PWF-0001]]\n").unwrap();
-    let task_path = project_dir.join("PWF-0001.md");
+    std::fs::write(project_dir.join("foo.md"), "- [ ] [[FOO-0001]]\n").unwrap();
+    let task_path = project_dir.join("FOO-0001.md");
     write_note(&task_path, "tagged", "2026-07-01", None, None, tags, body);
-    let store = store_with_index_identity(&notes_dir.join("pwf"));
+    let store = store_with_index_identity(&notes_dir.join("foo"));
     StagedOpenTask {
         _temp: temp,
         store,
@@ -851,12 +885,12 @@ fn staged_open_task(tags: Option<&str>, body: &str) -> StagedOpenTask {
 fn staged_open_task_from_note(note: &str) -> StagedOpenTask {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
-    let project_dir = notes_dir.join("pwf");
+    let project_dir = notes_dir.join("foo");
     std::fs::create_dir_all(&project_dir).unwrap();
-    std::fs::write(project_dir.join("pwf.md"), "- [ ] [[PWF-0001]]\n").unwrap();
-    let task_path = project_dir.join("PWF-0001.md");
+    std::fs::write(project_dir.join("foo.md"), "- [ ] [[FOO-0001]]\n").unwrap();
+    let task_path = project_dir.join("FOO-0001.md");
     std::fs::write(&task_path, note).unwrap();
-    let store = store_with_index_identity(&notes_dir.join("pwf"));
+    let store = store_with_index_identity(&notes_dir.join("foo"));
     StagedOpenTask {
         _temp: temp,
         store,
@@ -868,7 +902,7 @@ fn formatted_tag_note(bom: bool, newline: &str, tags: Option<&str>) -> String {
     let bom = if bom { "\u{feff}" } else { "" };
     let tags = tags.map_or_else(String::new, |tags| format!("tags: {tags}{newline}"));
     format!(
-        "{bom}---{newline}id: PWF-0001{newline}status: active{newline}title: tagged{newline}project: pwf{newline}created: 2026-07-01{newline}{tags}---{newline}{newline}tags: body-only value{newline}keep this body byte-identical{newline}"
+        "{bom}---{newline}id: FOO-0001{newline}status: active{newline}title: tagged{newline}project: foo{newline}created: 2026-07-01{newline}{tags}---{newline}{newline}tags: body-only value{newline}keep this body byte-identical{newline}"
     )
 }
 
@@ -895,7 +929,7 @@ fn write_status_note(
 ) {
     let id = path.file_stem().and_then(|stem| stem.to_str()).unwrap();
     let mut note = format!(
-        "---\nid: {id}\nstatus: {status}\ntitle: {title}\nproject: pwf\ncreated: 2026-07-01\n"
+        "---\nid: {id}\nstatus: {status}\ntitle: {title}\nproject: foo\ncreated: 2026-07-01\n"
     );
     if let Some(completed) = completed {
         let _ = writeln!(note, "completed: {completed}");
@@ -911,16 +945,16 @@ fn write_status_note(
 fn task_record_roundtrips_file_model_note() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
-    let project_dir = notes_dir.join("pwf");
+    let project_dir = notes_dir.join("foo");
     std::fs::create_dir_all(&project_dir).unwrap();
-    std::fs::write(project_dir.join("pwf.md"), "- [ ] [[PWF-0001]]\n").unwrap();
-    let note_path = project_dir.join("PWF-0001.md");
+    std::fs::write(project_dir.join("foo.md"), "- [ ] [[FOO-0001]]\n").unwrap();
+    let note_path = project_dir.join("FOO-0001.md");
     let source = concat!(
         "---\n",
-        "id: PWF-0001\n",
+        "id: FOO-0001\n",
         "status: active\n",
         "title: ship the adapter\n",
-        "project: pwf\n",
+        "project: foo\n",
         "created: 2026-07-01\n",
         "blocked_by:\n",
         "  - \"[[AUX-0001]]\"\n",
@@ -931,13 +965,11 @@ fn task_record_roundtrips_file_model_note() {
         "ship the adapter body\n",
     );
     std::fs::write(&note_path, source).unwrap();
-    let store = store_with_index_identity(&notes_dir.join("pwf"));
+    let store = store_with_index_identity(&notes_dir.join("foo"));
 
-    let project = pwf_project(&store);
-    let id = TaskId::try_new("PWF-0001").unwrap();
-    let record = TaskStore::get(&store, &project, &id)
-        .unwrap()
-        .expect("file-model record present");
+    let project = foo_project(&store);
+    let id = TaskId::try_new("FOO-0001").unwrap();
+    let record = TaskStore::get(&store, &project, &id).unwrap().unwrap();
 
     assert_eq!(record.id, id);
     assert_eq!(record.materialization, Materialization::NoteFile);
@@ -967,10 +999,10 @@ fn task_record_roundtrips_file_model_note() {
 fn task_record_preserves_malformed_blocked_by_without_failing_the_read() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
-    let project_dir = notes_dir.join("pwf");
+    let project_dir = notes_dir.join("foo");
     std::fs::create_dir_all(&project_dir).unwrap();
-    std::fs::write(project_dir.join("pwf.md"), "- [ ] [[PWF-0001]]\n").unwrap();
-    let note_path = project_dir.join("PWF-0001.md");
+    std::fs::write(project_dir.join("foo.md"), "- [ ] [[FOO-0001]]\n").unwrap();
+    let note_path = project_dir.join("FOO-0001.md");
     write_note(
         &note_path,
         "malformed dependency",
@@ -982,7 +1014,7 @@ fn task_record_preserves_malformed_blocked_by_without_failing_the_read() {
     );
     let store = store_with_index_identity(&project_dir);
 
-    let record = get_record(&store, "PWF-0001").unwrap();
+    let record = get_record(&store, "FOO-0001").unwrap();
 
     assert!(matches!(
         record.blocked_by,
@@ -995,10 +1027,10 @@ fn task_record_preserves_malformed_blocked_by_without_failing_the_read() {
 fn task_record_rejects_an_invalid_created_date() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
-    let project_dir = notes_dir.join("pwf");
+    let project_dir = notes_dir.join("foo");
     std::fs::create_dir_all(&project_dir).unwrap();
-    std::fs::write(project_dir.join("pwf.md"), "- [ ] [[PWF-0001]]\n").unwrap();
-    let note_path = project_dir.join("PWF-0001.md");
+    std::fs::write(project_dir.join("foo.md"), "- [ ] [[FOO-0001]]\n").unwrap();
+    let note_path = project_dir.join("FOO-0001.md");
     write_note(
         &note_path,
         "invalid date",
@@ -1009,10 +1041,10 @@ fn task_record_rejects_an_invalid_created_date() {
         "body",
     );
     let store = store_with_index_identity(&project_dir);
-    let project = pwf_project(&store);
+    let project = foo_project(&store);
 
     let error =
-        TaskStore::get(&store, &project, &TaskId::try_new("PWF-0001").unwrap()).unwrap_err();
+        TaskStore::get(&store, &project, &TaskId::try_new("FOO-0001").unwrap()).unwrap_err();
 
     assert_matches!(
         error,
@@ -1029,20 +1061,20 @@ fn task_record_rejects_an_invalid_created_date() {
 fn task_record_rejects_an_invalid_status() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
-    let project_dir = notes_dir.join("pwf");
+    let project_dir = notes_dir.join("foo");
     std::fs::create_dir_all(&project_dir).unwrap();
-    std::fs::write(project_dir.join("pwf.md"), "- [ ] [[PWF-0001]]\n").unwrap();
-    let note_path = project_dir.join("PWF-0001.md");
+    std::fs::write(project_dir.join("foo.md"), "- [ ] [[FOO-0001]]\n").unwrap();
+    let note_path = project_dir.join("FOO-0001.md");
     std::fs::write(
         &note_path,
-        "---\nid: PWF-0001\nstatus: paused\ntitle: invalid status\n---\n\nbody\n",
+        "---\nid: FOO-0001\nstatus: paused\ntitle: invalid status\n---\n\nbody\n",
     )
     .unwrap();
     let store = store_with_index_identity(&project_dir);
-    let project = pwf_project(&store);
+    let project = foo_project(&store);
 
     let error =
-        TaskStore::get(&store, &project, &TaskId::try_new("PWF-0001").unwrap()).unwrap_err();
+        TaskStore::get(&store, &project, &TaskId::try_new("FOO-0001").unwrap()).unwrap_err();
 
     assert_matches!(
         error,
@@ -1058,23 +1090,21 @@ fn task_record_rejects_an_invalid_status() {
 fn task_record_materializes_index_entry_without_a_note() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
-    let project_dir = notes_dir.join("pwf");
+    let project_dir = notes_dir.join("foo");
     std::fs::create_dir_all(&project_dir).unwrap();
-    let index_path = project_dir.join("pwf.md");
+    let index_path = project_dir.join("foo.md");
     std::fs::write(
         &index_path,
-        "---\nid: pwf\ntitle: pwf\n---\n\n- [ ] [[PWF-0002|handle it]]\n",
+        "---\nid: foo\ntitle: foo\n---\n\n- [ ] [[FOO-0002|handle it]]\n",
     )
     .unwrap();
-    let store = store_for_tasks(&notes_dir.join("pwf"));
+    let store = store_for_tasks(&notes_dir.join("foo"));
 
-    let project = pwf_project(&store);
-    let id = TaskId::try_new("PWF-0002").unwrap();
-    let record = TaskStore::get(&store, &project, &id)
-        .unwrap()
-        .expect("index entry materialized");
+    let project = foo_project(&store);
+    let id = TaskId::try_new("FOO-0002").unwrap();
+    let record = TaskStore::get(&store, &project, &id).unwrap().unwrap();
 
-    let expected_note = project_dir.join("PWF-0002.md");
+    let expected_note = project_dir.join("FOO-0002.md");
     assert_eq!(record.id, id);
     assert_eq!(record.title, "handle it");
     assert_eq!(record.status, TaskStatus::Active);
@@ -1096,39 +1126,39 @@ fn task_record_materializes_index_entry_without_a_note() {
 fn index_entries_parse_open_done_and_raw_futuro_section() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
-    let project_dir = notes_dir.join("pwf");
+    let project_dir = notes_dir.join("foo");
     std::fs::create_dir_all(&project_dir).unwrap();
     std::fs::write(
-        project_dir.join("pwf.md"),
+        project_dir.join("foo.md"),
         concat!(
-            "---\nid: pwf\ntitle: pwf\n---\n\n",
-            "- [ ] [[PWF-0001]]\n",
-            "- [x] [[PWF-0002]] \u{2705} 2026-07-02\n",
+            "---\nid: foo\ntitle: foo\n---\n\n",
+            "- [ ] [[FOO-0001]]\n",
+            "- [x] [[FOO-0002]] \u{2705} 2026-07-02\n",
             "\n## Futuro\n",
-            "- [ ] [[PWF-0003]]\n",
+            "- [ ] [[FOO-0003]]\n",
         ),
     )
     .unwrap();
-    let store = store_for_tasks(&notes_dir.join("pwf"));
+    let store = store_for_tasks(&notes_dir.join("foo"));
 
-    let project = pwf_project(&store);
+    let project = foo_project(&store);
     let entries = IndexEntryStore::list_index_entries(&store, &project).unwrap();
 
     assert_eq!(
         entries,
         vec![
             IndexEntry {
-                id: TaskId::try_new("PWF-0001").unwrap(),
+                id: TaskId::try_new("FOO-0001").unwrap(),
                 state: IndexEntryState::Open,
                 section: None,
             },
             IndexEntry {
-                id: TaskId::try_new("PWF-0002").unwrap(),
+                id: TaskId::try_new("FOO-0002").unwrap(),
                 state: IndexEntryState::Done(Some(app_date("2026-07-02"))),
                 section: None,
             },
             IndexEntry {
-                id: TaskId::try_new("PWF-0003").unwrap(),
+                id: TaskId::try_new("FOO-0003").unwrap(),
                 state: IndexEntryState::Open,
                 section: Some(task_section("Futuro")),
             },
@@ -1140,18 +1170,18 @@ fn index_entries_parse_open_done_and_raw_futuro_section() {
 fn patch_status_done_closes_index_entry_with_date_stamp() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
-    let project_dir = notes_dir.join("pwf");
+    let project_dir = notes_dir.join("foo");
     std::fs::create_dir_all(&project_dir).unwrap();
-    let index_path = project_dir.join("pwf.md");
+    let index_path = project_dir.join("foo.md");
     std::fs::write(
         &index_path,
-        "---\nid: pwf\ntitle: pwf\n---\n\n- [ ] [[PWF-0002|handle it]]\n",
+        "---\nid: foo\ntitle: foo\n---\n\n- [ ] [[FOO-0002|handle it]]\n",
     )
     .unwrap();
-    let store = store_for_tasks(&notes_dir.join("pwf"));
+    let store = store_for_tasks(&notes_dir.join("foo"));
 
-    let project = pwf_project(&store);
-    let id = TaskId::try_new("PWF-0002").unwrap();
+    let project = foo_project(&store);
+    let id = TaskId::try_new("FOO-0002").unwrap();
     let patch = TaskPatch {
         status: Some(TaskStatus::Done),
         completed: NullablePatch::Set(app_date("2026-07-15")),
@@ -1162,7 +1192,7 @@ fn patch_status_done_closes_index_entry_with_date_stamp() {
 
     let index = std::fs::read_to_string(&index_path).unwrap();
     assert!(
-        index.contains("- [x] [[PWF-0002|handle it]] \u{2705} 2026-07-15"),
+        index.contains("- [x] [[FOO-0002|handle it]] \u{2705} 2026-07-15"),
         "checkbox not flipped/stamped; got:\n{index}"
     );
 }
@@ -1171,13 +1201,13 @@ fn patch_status_done_closes_index_entry_with_date_stamp() {
 fn insert_allocates_next_id_without_index_write() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
-    let project_dir = notes_dir.join("pwf");
+    let project_dir = notes_dir.join("foo");
     std::fs::create_dir_all(&project_dir).unwrap();
-    let index_path = project_dir.join("pwf.md");
-    let index_before = "---\nid: pwf\ntitle: pwf\n---\n\n- [ ] [[PWF-0007]]\n";
+    let index_path = project_dir.join("foo.md");
+    let index_before = "---\nid: foo\ntitle: foo\n---\n\n- [ ] [[FOO-0007]]\n";
     std::fs::write(&index_path, index_before).unwrap();
     write_note(
-        &project_dir.join("PWF-0007.md"),
+        &project_dir.join("FOO-0007.md"),
         "existing",
         "2026-07-01",
         None,
@@ -1185,9 +1215,9 @@ fn insert_allocates_next_id_without_index_write() {
         None,
         "already here",
     );
-    let store = store_for_tasks(&notes_dir.join("pwf"));
+    let store = store_for_tasks(&notes_dir.join("foo"));
 
-    let project = pwf_project(&store);
+    let project = foo_project(&store);
     let record = insert_next(
         &store,
         &project,
@@ -1203,11 +1233,11 @@ fn insert_allocates_next_id_without_index_write() {
     )
     .unwrap();
 
-    assert_eq!(record.id, TaskId::try_new("PWF-0008").unwrap());
+    assert_eq!(record.id, TaskId::try_new("FOO-0008").unwrap());
     assert_eq!(record.status, TaskStatus::Active);
-    assert!(record.source.contains("id: PWF-0008"));
-    assert_eq!(record.locator.as_path(), project_dir.join("PWF-0008.md"));
-    assert!(project_dir.join("PWF-0008.md").exists());
+    assert!(record.source.contains("id: FOO-0008"));
+    assert_eq!(record.locator.as_path(), project_dir.join("FOO-0008.md"));
+    assert!(project_dir.join("FOO-0008.md").exists());
     assert_eq!(std::fs::read_to_string(&index_path).unwrap(), index_before);
 }
 
@@ -1215,11 +1245,11 @@ fn insert_allocates_next_id_without_index_write() {
 fn exact_insert_rejects_an_id_occupied_after_allocation_without_replacing_it() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
-    let project_dir = notes_dir.join("pwf");
+    let project_dir = notes_dir.join("foo");
     let store = store_with_index_identity(&project_dir);
-    let project = pwf_project(&store);
+    let project = foo_project(&store);
     let id = TaskStore::next_id(&store, &project).unwrap();
-    let path = project_dir.join("PWF-0001.md");
+    let path = project_dir.join("FOO-0001.md");
     std::fs::create_dir_all(&project_dir).unwrap();
     write_note(
         &path,
@@ -1243,7 +1273,7 @@ fn exact_insert_rejects_an_id_occupied_after_allocation_without_replacing_it() {
     assert_matches!(
         error,
         ObsidianStoreError::TaskIdOccupied { ref id, path: ref error_path }
-            if id.as_ref() == "PWF-0001" && error_path == &path
+            if id.as_ref() == "FOO-0001" && error_path == &path
     );
     assert_eq!(std::fs::read_to_string(path).unwrap(), before);
 }
@@ -1253,20 +1283,20 @@ fn exact_insert_rejects_an_id_occupied_after_allocation_without_replacing_it() {
 fn generic_list_records_carry_open_placement_without_hiding_unlinked_notes() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
-    let project_dir = notes_dir.join("pwf");
+    let project_dir = notes_dir.join("foo");
     std::fs::create_dir_all(&project_dir).unwrap();
-    let index_path = project_dir.join("pwf.md");
+    let index_path = project_dir.join("foo.md");
     std::fs::write(
         &index_path,
         concat!(
-            "---\nid: pwf\ntitle: pwf\n---\n\n",
+            "---\nid: foo\ntitle: foo\n---\n\n",
             "## Futuro\n",
-            "- [ ] [[PWF-0001|linked]]\n",
+            "- [ ] [[FOO-0001|linked]]\n",
         ),
     )
     .unwrap();
     write_note(
-        &project_dir.join("PWF-0001.md"),
+        &project_dir.join("FOO-0001.md"),
         "linked",
         "2026-07-01",
         None,
@@ -1275,7 +1305,7 @@ fn generic_list_records_carry_open_placement_without_hiding_unlinked_notes() {
         "body",
     );
     write_note(
-        &project_dir.join("PWF-0002.md"),
+        &project_dir.join("FOO-0002.md"),
         "unlinked",
         "2026-07-01",
         None,
@@ -1283,17 +1313,17 @@ fn generic_list_records_carry_open_placement_without_hiding_unlinked_notes() {
         None,
         "body",
     );
-    let store = store_for_tasks(&notes_dir.join("pwf"));
+    let store = store_for_tasks(&notes_dir.join("foo"));
 
-    let project = pwf_project(&store);
+    let project = foo_project(&store);
     let records = TaskStore::list(&store, &project).unwrap();
 
     assert_eq!(records.len(), 2);
     let record = records
         .iter()
-        .find(|record| record.id.as_ref() == "PWF-0001")
-        .expect("linked record must be listed");
-    assert_eq!(record.id, TaskId::try_new("PWF-0001").unwrap());
+        .find(|record| record.id.as_ref() == "FOO-0001")
+        .unwrap();
+    assert_eq!(record.id, TaskId::try_new("FOO-0001").unwrap());
     assert_eq!(
         record.placement,
         Some(IndexPlacement {
@@ -1304,8 +1334,8 @@ fn generic_list_records_carry_open_placement_without_hiding_unlinked_notes() {
     assert_eq!(record.section.as_ref().map(AsRef::as_ref), Some("Futuro"));
     let unlinked = records
         .iter()
-        .find(|record| record.id.as_ref() == "PWF-0002")
-        .expect("unlinked record must be listed");
+        .find(|record| record.id.as_ref() == "FOO-0002")
+        .unwrap();
     assert!(unlinked.placement.is_none());
     assert_eq!(unlinked.section, None);
 }
@@ -1314,21 +1344,21 @@ fn generic_list_records_carry_open_placement_without_hiding_unlinked_notes() {
 fn generic_list_rejects_duplicate_project_index_task_ids() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
-    let project_dir = notes_dir.join("pwf");
+    let project_dir = notes_dir.join("foo");
     std::fs::create_dir_all(&project_dir).unwrap();
-    let index_path = project_dir.join("pwf.md");
+    let index_path = project_dir.join("foo.md");
     std::fs::write(
         &index_path,
         concat!(
-            "---\nid: pwf\ntitle: pwf\n---\n\n",
-            "- [ ] [[PWF-0001|first]]\n",
+            "---\nid: foo\ntitle: foo\n---\n\n",
+            "- [ ] [[FOO-0001|first]]\n",
             "## Human\n",
-            "- [ ] [[PWF-0001|duplicate]]\n",
+            "- [ ] [[FOO-0001|duplicate]]\n",
         ),
     )
     .unwrap();
     write_note(
-        &project_dir.join("PWF-0001.md"),
+        &project_dir.join("FOO-0001.md"),
         "task",
         "2026-07-18",
         None,
@@ -1336,8 +1366,8 @@ fn generic_list_rejects_duplicate_project_index_task_ids() {
         None,
         "body",
     );
-    let store = store_for_tasks(&notes_dir.join("pwf"));
-    let project = pwf_project(&store);
+    let store = store_for_tasks(&notes_dir.join("foo"));
+    let project = foo_project(&store);
 
     let error = TaskStore::list(&store, &project).unwrap_err();
 
@@ -1347,7 +1377,7 @@ fn generic_list_rejects_duplicate_project_index_task_ids() {
             path,
             id,
             lines,
-        } if path == index_path && id.as_ref() == "PWF-0001" && lines == [6, 8]
+        } if path == index_path && id.as_ref() == "FOO-0001" && lines == [6, 8]
     );
 }
 
@@ -1355,26 +1385,26 @@ fn generic_list_rejects_duplicate_project_index_task_ids() {
 fn list_tasks_returns_note_history_and_index_only_records() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
-    let project_dir = notes_dir.join("pwf");
+    let project_dir = notes_dir.join("foo");
     std::fs::create_dir_all(&project_dir).unwrap();
-    let index_path = project_dir.join("pwf.md");
+    let index_path = project_dir.join("foo.md");
     std::fs::write(
         &index_path,
         concat!(
-            "---\nid: pwf\ntitle: pwf\n---\n\n",
-            "- [ ] [[PWF-0001|linked active]]\n",
+            "---\nid: foo\ntitle: foo\n---\n\n",
+            "- [ ] [[FOO-0001|linked active]]\n",
             "## Human\n",
-            "- [x] [[PWF-0002|linked done]] ✅ 2026-07-02\n",
-            "- [x] [[PWF-0006|missing done]] ✅ 2026-07-06\n",
+            "- [x] [[FOO-0002|linked done]] ✅ 2026-07-02\n",
+            "- [x] [[FOO-0006|missing done]] ✅ 2026-07-06\n",
         ),
     )
     .unwrap();
     for (id, status, completed) in [
-        ("PWF-0001", "active", None),
-        ("PWF-0002", "done", Some("2026-07-02")),
-        ("PWF-0003", "cancelled", Some("2026-07-03")),
-        ("PWF-0004", "done", Some("2026-07-04")),
-        ("PWF-0005", "active", None),
+        ("FOO-0001", "active", None),
+        ("FOO-0002", "done", Some("2026-07-02")),
+        ("FOO-0003", "cancelled", Some("2026-07-03")),
+        ("FOO-0004", "done", Some("2026-07-04")),
+        ("FOO-0005", "active", None),
     ] {
         write_status_note(
             &project_dir.join(format!("{id}.md")),
@@ -1384,8 +1414,8 @@ fn list_tasks_returns_note_history_and_index_only_records() {
             None,
         );
     }
-    let store = store_for_tasks(&notes_dir.join("pwf"));
-    let project = pwf_project(&store);
+    let store = store_for_tasks(&notes_dir.join("foo"));
+    let project = foo_project(&store);
 
     let records = TaskStore::list(&store, &project).unwrap();
     let mut ids: Vec<String> = records.iter().map(|record| record.id.to_string()).collect();
@@ -1394,34 +1424,34 @@ fn list_tasks_returns_note_history_and_index_only_records() {
     assert_eq!(
         ids,
         [
-            "PWF-0001", "PWF-0002", "PWF-0003", "PWF-0004", "PWF-0005", "PWF-0006",
+            "FOO-0001", "FOO-0002", "FOO-0003", "FOO-0004", "FOO-0005", "FOO-0006",
         ]
     );
     let record = |id: &str| {
         records
             .iter()
             .find(|record| record.id.as_ref() == id)
-            .unwrap_or_else(|| panic!("record {id} must be listed"))
+            .unwrap()
     };
     assert_eq!(
-        record("PWF-0001").placement,
+        record("FOO-0001").placement,
         Some(IndexPlacement {
             index_path: TaskIndexPath::new(index_path.clone()),
             line: NonZeroUsize::new(6).unwrap(),
         })
     );
-    assert_eq!(record("PWF-0002").status, TaskStatus::Done);
+    assert_eq!(record("FOO-0002").status, TaskStatus::Done);
     assert_eq!(
-        record("PWF-0002").section.as_ref().map(AsRef::as_ref),
+        record("FOO-0002").section.as_ref().map(AsRef::as_ref),
         Some("Human")
     );
-    assert!(record("PWF-0002").placement.is_none());
-    assert_eq!(record("PWF-0003").status, TaskStatus::Cancelled);
-    assert_eq!(record("PWF-0004").status, TaskStatus::Done);
-    assert!(record("PWF-0004").placement.is_none());
-    assert_eq!(record("PWF-0005").status, TaskStatus::Active);
-    assert!(record("PWF-0005").placement.is_none());
-    let missing_done = record("PWF-0006");
+    assert!(record("FOO-0002").placement.is_none());
+    assert_eq!(record("FOO-0003").status, TaskStatus::Cancelled);
+    assert_eq!(record("FOO-0004").status, TaskStatus::Done);
+    assert!(record("FOO-0004").placement.is_none());
+    assert_eq!(record("FOO-0005").status, TaskStatus::Active);
+    assert!(record("FOO-0005").placement.is_none());
+    let missing_done = record("FOO-0006");
     assert_eq!(missing_done.status, TaskStatus::Done);
     assert_matches!(
         &missing_done.materialization,
@@ -1433,17 +1463,17 @@ fn list_tasks_returns_note_history_and_index_only_records() {
 fn list_tasks_returns_note_history_when_index_is_missing() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
-    let project_dir = notes_dir.join("pwf");
+    let project_dir = notes_dir.join("foo");
     std::fs::create_dir_all(&project_dir).unwrap();
     write_status_note(
-        &project_dir.join("PWF-0001.md"),
+        &project_dir.join("FOO-0001.md"),
         "evicted done task",
         "done",
         Some("2026-07-01"),
         None,
     );
-    let store = store_for_tasks(&notes_dir.join("pwf"));
-    let project = pwf_project(&store);
+    let store = store_for_tasks(&notes_dir.join("foo"));
+    let project = foo_project(&store);
 
     let records = TaskStore::list(&store, &project).unwrap();
 
@@ -1456,22 +1486,22 @@ fn list_tasks_returns_note_history_when_index_is_missing() {
 fn index_sections_list_raw_h2_labels_in_document_order() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
-    let project_dir = notes_dir.join("pwf");
+    let project_dir = notes_dir.join("foo");
     std::fs::create_dir_all(&project_dir).unwrap();
     std::fs::write(
-        project_dir.join("pwf.md"),
+        project_dir.join("foo.md"),
         concat!(
-            "---\nid: pwf\ntitle: pwf\n---\n\n",
-            "- [ ] [[PWF-0001|alias]]\n\n",
-            "## Human\n- [ ] [[PWF-0002|h]]\n\n",
+            "---\nid: foo\ntitle: foo\n---\n\n",
+            "- [ ] [[FOO-0001|alias]]\n\n",
+            "## Human\n- [ ] [[FOO-0002|h]]\n\n",
             "## Futuro\n\n",
             "## Low-prio\n\n",
-            "### Notes\n- [[PWF-NOTE-0001]]\n",
+            "### Notes\n- [[FOO-NOTE-0001]]\n",
         ),
     )
     .unwrap();
-    let store = store_for_tasks(&notes_dir.join("pwf"));
-    let project = pwf_project(&store);
+    let store = store_for_tasks(&notes_dir.join("foo"));
+    let project = foo_project(&store);
 
     let sections = IndexSectionStore::list_index_sections(&store, &project).unwrap();
 
@@ -1486,9 +1516,9 @@ fn index_sections_list_raw_h2_labels_in_document_order() {
 fn index_sections_list_empty_when_index_missing() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
-    std::fs::create_dir_all(notes_dir.join("pwf")).unwrap();
-    let store = store_for_tasks(&notes_dir.join("pwf"));
-    let project = pwf_project(&store);
+    std::fs::create_dir_all(notes_dir.join("foo")).unwrap();
+    let store = store_for_tasks(&notes_dir.join("foo"));
+    let project = foo_project(&store);
 
     let sections = IndexSectionStore::list_index_sections(&store, &project).unwrap();
 
@@ -1500,15 +1530,15 @@ fn index_sections_list_empty_when_index_missing() {
 fn index_section_update_renames_header_in_place() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
-    let project_dir = notes_dir.join("pwf");
+    let project_dir = notes_dir.join("foo");
     std::fs::create_dir_all(&project_dir).unwrap();
     std::fs::write(
-        project_dir.join("pwf.md"),
-        "---\nid: pwf\ntitle: pwf\n---\n\n## Futuro\n\n- [ ] [[PWF-0001]]\n",
+        project_dir.join("foo.md"),
+        "---\nid: foo\ntitle: foo\n---\n\n## Futuro\n\n- [ ] [[FOO-0001]]\n",
     )
     .unwrap();
-    let store = store_for_tasks(&notes_dir.join("pwf"));
-    let project = pwf_project(&store);
+    let store = store_for_tasks(&notes_dir.join("foo"));
+    let project = foo_project(&store);
 
     IndexSectionStore::rename_index_section(
         &store,
@@ -1519,8 +1549,8 @@ fn index_section_update_renames_header_in_place() {
     .unwrap();
 
     assert_eq!(
-        std::fs::read_to_string(project_dir.join("pwf.md")).unwrap(),
-        "---\nid: pwf\ntitle: pwf\n---\n\n## Future\n\n- [ ] [[PWF-0001]]\n"
+        std::fs::read_to_string(project_dir.join("foo.md")).unwrap(),
+        "---\nid: foo\ntitle: foo\n---\n\n## Future\n\n- [ ] [[FOO-0001]]\n"
     );
 }
 
@@ -1532,65 +1562,65 @@ struct AddParityScenario {
     expected_index: &'static str,
 }
 
-const PARITY_IDENTITY: &str = "---\nid: pwf\ntitle: pwf\n---\n\n";
+const PARITY_IDENTITY: &str = "---\nid: foo\ntitle: foo\n---\n\n";
 
 fn add_parity_scenarios() -> Vec<AddParityScenario> {
     vec![
         AddParityScenario {
             name: "general section with existing anchor",
-            initial_index: Some("---\nid: pwf\ntitle: pwf\n---\n\n- [ ] [[PWF-0001|tray gui]]\n"),
+            initial_index: Some("---\nid: foo\ntitle: foo\n---\n\n- [ ] [[FOO-0001|tray gui]]\n"),
             section: None,
-            expected_index: "---\nid: pwf\ntitle: pwf\n---\n\n- [ ] [[PWF-0002]]\n- [ ] [[PWF-0001|tray gui]]\n",
+            expected_index: "---\nid: foo\ntitle: foo\n---\n\n- [ ] [[FOO-0002]]\n- [ ] [[FOO-0001|tray gui]]\n",
         },
         AddParityScenario {
             name: "human section created before existing future",
             initial_index: Some(
-                "---\nid: pwf\ntitle: pwf\n---\n\n- [ ] [[PWF-0001|tray gui]]\n\n## Future\n\n- [ ] [[PWF-0009|later]]\n",
+                "---\nid: foo\ntitle: foo\n---\n\n- [ ] [[FOO-0001|tray gui]]\n\n## Future\n\n- [ ] [[FOO-0009|later]]\n",
             ),
             section: Some("Human"),
-            expected_index: "---\nid: pwf\ntitle: pwf\n---\n\n- [ ] [[PWF-0001|tray gui]]\n\n## Human\n\n- [ ] [[PWF-0002]]\n## Future\n\n- [ ] [[PWF-0009|later]]\n",
+            expected_index: "---\nid: foo\ntitle: foo\n---\n\n- [ ] [[FOO-0001|tray gui]]\n\n## Human\n\n- [ ] [[FOO-0002]]\n## Future\n\n- [ ] [[FOO-0009|later]]\n",
         },
         AddParityScenario {
             name: "existing empty human header is not re-created",
             initial_index: Some(
-                "---\nid: pwf\ntitle: pwf\n---\n\n- [ ] [[PWF-0001|tray gui]]\n\n## Human\n",
+                "---\nid: foo\ntitle: foo\n---\n\n- [ ] [[FOO-0001|tray gui]]\n\n## Human\n",
             ),
             section: Some("Human"),
-            expected_index: "---\nid: pwf\ntitle: pwf\n---\n\n- [ ] [[PWF-0001|tray gui]]\n\n## Human\n- [ ] [[PWF-0002]]\n",
+            expected_index: "---\nid: foo\ntitle: foo\n---\n\n- [ ] [[FOO-0001|tray gui]]\n\n## Human\n- [ ] [[FOO-0002]]\n",
         },
         AddParityScenario {
             name: "future lands under legacy futuro alias header",
             initial_index: Some(
-                "---\nid: pwf\ntitle: pwf\n---\n\n## Futuro\n\n- [ ] [[PWF-0009|later]]\n",
+                "---\nid: foo\ntitle: foo\n---\n\n## Futuro\n\n- [ ] [[FOO-0009|later]]\n",
             ),
             section: Some("Future"),
-            expected_index: "---\nid: pwf\ntitle: pwf\n---\n\n## Futuro\n- [ ] [[PWF-0002]]\n\n- [ ] [[PWF-0009|later]]\n",
+            expected_index: "---\nid: foo\ntitle: foo\n---\n\n## Futuro\n- [ ] [[FOO-0002]]\n\n- [ ] [[FOO-0009|later]]\n",
         },
         AddParityScenario {
             name: "low-prio section created at end",
-            initial_index: Some("---\nid: pwf\ntitle: pwf\n---\n\n- [ ] [[PWF-0001|tray gui]]\n"),
+            initial_index: Some("---\nid: foo\ntitle: foo\n---\n\n- [ ] [[FOO-0001|tray gui]]\n"),
             section: Some("Low-prio"),
-            expected_index: "---\nid: pwf\ntitle: pwf\n---\n\n- [ ] [[PWF-0001|tray gui]]\n\n## Low-prio\n\n- [ ] [[PWF-0002]]\n",
+            expected_index: "---\nid: foo\ntitle: foo\n---\n\n- [ ] [[FOO-0001|tray gui]]\n\n## Low-prio\n\n- [ ] [[FOO-0002]]\n",
         },
         AddParityScenario {
             name: "fresh vault creates identity template",
             initial_index: None,
             section: None,
-            expected_index: "---\nid: pwf\ntitle: pwf\n---\n\n- [ ] [[PWF-0002]]\n",
+            expected_index: "---\nid: foo\ntitle: foo\n---\n\n- [ ] [[FOO-0002]]\n",
         },
         AddParityScenario {
             name: "fresh vault with section creates template and section",
             initial_index: None,
             section: Some("Human"),
-            expected_index: "---\nid: pwf\ntitle: pwf\n---\n\n## Human\n\n- [ ] [[PWF-0002]]\n",
+            expected_index: "---\nid: foo\ntitle: foo\n---\n\n## Human\n\n- [ ] [[FOO-0002]]\n",
         },
         AddParityScenario {
             name: "general add stays above trailing notes block",
             initial_index: Some(
-                "---\nid: pwf\ntitle: pwf\n---\n\n- [ ] [[PWF-0001|tray gui]]\n\n### Notes\n- [[PWF-NOTE-0001]]\n",
+                "---\nid: foo\ntitle: foo\n---\n\n- [ ] [[FOO-0001|tray gui]]\n\n### Notes\n- [[FOO-NOTE-0001]]\n",
             ),
             section: None,
-            expected_index: "---\nid: pwf\ntitle: pwf\n---\n\n- [ ] [[PWF-0002]]\n- [ ] [[PWF-0001|tray gui]]\n\n### Notes\n- [[PWF-NOTE-0001]]\n",
+            expected_index: "---\nid: foo\ntitle: foo\n---\n\n- [ ] [[FOO-0002]]\n- [ ] [[FOO-0001|tray gui]]\n\n### Notes\n- [[FOO-NOTE-0001]]\n",
         },
     ]
 }
@@ -1600,10 +1630,10 @@ fn stage_add_parity_vault(
 ) -> (tempfile::TempDir, ObsidianStore, std::path::PathBuf) {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
-    let project_dir = notes_dir.join("pwf");
+    let project_dir = notes_dir.join("foo");
     std::fs::create_dir_all(&project_dir).unwrap();
     write_note(
-        &project_dir.join("PWF-0001.md"),
+        &project_dir.join("FOO-0001.md"),
         "tray gui",
         "2026-01-01",
         None,
@@ -1612,9 +1642,9 @@ fn stage_add_parity_vault(
         "add toggle",
     );
     if let Some(index) = initial_index {
-        std::fs::write(project_dir.join("pwf.md"), index).unwrap();
+        std::fs::write(project_dir.join("foo.md"), index).unwrap();
     }
-    let store = store_for_tasks(&notes_dir.join("pwf"));
+    let store = store_for_tasks(&notes_dir.join("foo"));
     (temp, store, project_dir)
 }
 
@@ -1623,7 +1653,7 @@ fn stage_add_parity_vault(
 fn generic_insert_plus_upsert_writes_legacy_add_index_bytes() {
     for scenario in add_parity_scenarios() {
         let (_guard, store, project_dir) = stage_add_parity_vault(scenario.initial_index);
-        let project = pwf_project(&store);
+        let project = foo_project(&store);
 
         let record = insert_next(
             &store,
@@ -1642,7 +1672,7 @@ fn generic_insert_plus_upsert_writes_legacy_add_index_bytes() {
         let id = record.id.clone();
         assert_eq!(
             id.as_ref(),
-            "PWF-0002",
+            "FOO-0002",
             "allocated id for `{}`",
             scenario.name
         );
@@ -1658,13 +1688,13 @@ fn generic_insert_plus_upsert_writes_legacy_add_index_bytes() {
         .unwrap();
 
         assert_eq!(
-            std::fs::read_to_string(project_dir.join("pwf.md")).unwrap(),
+            std::fs::read_to_string(project_dir.join("foo.md")).unwrap(),
             scenario.expected_index,
             "index bytes for scenario `{}`",
             scenario.name
         );
         assert!(
-            project_dir.join("PWF-0002.md").exists(),
+            project_dir.join("FOO-0002.md").exists(),
             "note file for scenario `{}`",
             scenario.name
         );
@@ -1675,15 +1705,15 @@ fn generic_insert_plus_upsert_writes_legacy_add_index_bytes() {
 fn upsert_creates_missing_index_from_identity_template() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
-    std::fs::create_dir_all(notes_dir.join("pwf")).unwrap();
-    let store = store_for_tasks(&notes_dir.join("pwf"));
-    let project = pwf_project(&store);
+    std::fs::create_dir_all(notes_dir.join("foo")).unwrap();
+    let store = store_for_tasks(&notes_dir.join("foo"));
+    let project = foo_project(&store);
 
     IndexEntryStore::upsert_index_entry(
         &store,
         &project,
         IndexEntry {
-            id: TaskId::try_new("PWF-0001").unwrap(),
+            id: TaskId::try_new("FOO-0001").unwrap(),
             state: IndexEntryState::Open,
             section: None,
         },
@@ -1691,8 +1721,8 @@ fn upsert_creates_missing_index_from_identity_template() {
     .unwrap();
 
     assert_eq!(
-        std::fs::read_to_string(notes_dir.join("pwf/pwf.md")).unwrap(),
-        "---\nid: pwf\ntitle: pwf\n---\n\n- [ ] [[PWF-0001]]\n"
+        std::fs::read_to_string(notes_dir.join("foo/foo.md")).unwrap(),
+        "---\nid: foo\ntitle: foo\n---\n\n- [ ] [[FOO-0001]]\n"
     );
 }
 
@@ -1700,17 +1730,17 @@ fn upsert_creates_missing_index_from_identity_template() {
 fn delete_index_entry_is_idempotent_when_no_link_matches() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
-    let project_dir = notes_dir.join("pwf");
+    let project_dir = notes_dir.join("foo");
     std::fs::create_dir_all(&project_dir).unwrap();
-    std::fs::write(project_dir.join("pwf.md"), PARITY_IDENTITY).unwrap();
-    let store = store_for_tasks(&notes_dir.join("pwf"));
-    let project = pwf_project(&store);
+    std::fs::write(project_dir.join("foo.md"), PARITY_IDENTITY).unwrap();
+    let store = store_for_tasks(&notes_dir.join("foo"));
+    let project = foo_project(&store);
 
-    IndexEntryStore::delete_index_entry(&store, &project, &TaskId::try_new("PWF-0002").unwrap())
+    IndexEntryStore::delete_index_entry(&store, &project, &TaskId::try_new("FOO-0002").unwrap())
         .unwrap();
 
     assert_eq!(
-        std::fs::read_to_string(project_dir.join("pwf.md")).unwrap(),
+        std::fs::read_to_string(project_dir.join("foo.md")).unwrap(),
         PARITY_IDENTITY
     );
 }
@@ -1719,13 +1749,13 @@ fn delete_index_entry_is_idempotent_when_no_link_matches() {
 fn delete_index_entry_is_idempotent_when_index_is_missing() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
-    let project_dir = notes_dir.join("pwf");
+    let project_dir = notes_dir.join("foo");
     std::fs::create_dir_all(&project_dir).unwrap();
     let store = store_for_tasks(&project_dir);
-    let project = pwf_project(&store);
+    let project = foo_project(&store);
 
-    IndexEntryStore::delete_index_entry(&store, &project, &TaskId::try_new("PWF-0002").unwrap())
+    IndexEntryStore::delete_index_entry(&store, &project, &TaskId::try_new("FOO-0002").unwrap())
         .unwrap();
 
-    assert!(!project_dir.join("pwf.md").exists());
+    assert!(!project_dir.join("foo.md").exists());
 }

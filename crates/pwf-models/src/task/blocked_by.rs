@@ -30,9 +30,7 @@ impl BlockedBy {
     pub fn merge(&self, appended: &Self) -> Self {
         let mut merged = self.0.clone();
         for identifier in appended.iter() {
-            if !merged.contains(identifier) {
-                merged.push(identifier.clone());
-            }
+            push_unseen_identifier(&mut merged, identifier.clone());
         }
         Self(merged)
     }
@@ -40,11 +38,15 @@ impl BlockedBy {
     fn from_first_and_rest(first: TaskId, identifiers: impl IntoIterator<Item = TaskId>) -> Self {
         let mut unique = vec![first];
         for identifier in identifiers {
-            if !unique.contains(&identifier) {
-                unique.push(identifier);
-            }
+            push_unseen_identifier(&mut unique, identifier);
         }
         Self(unique)
+    }
+}
+
+fn push_unseen_identifier(identifiers: &mut Vec<TaskId>, identifier: TaskId) {
+    if !identifiers.contains(&identifier) {
+        identifiers.push(identifier);
     }
 }
 
@@ -60,7 +62,7 @@ mod tests {
     #[test]
     fn merge_preserves_first_seen_order() {
         let existing =
-            BlockedBy::try_new(["pwf1", "aux14"].into_iter().map(|id| id.parse().unwrap()))
+            BlockedBy::try_new(["foo1", "aux14"].into_iter().map(|id| id.parse().unwrap()))
                 .unwrap();
         let appended =
             BlockedBy::try_new(["aux14", "alt2"].into_iter().map(|id| id.parse().unwrap()))
@@ -72,7 +74,7 @@ mod tests {
                 .iter()
                 .map(AsRef::as_ref)
                 .collect::<Vec<_>>(),
-            ["PWF-0001", "AUX-0014", "ALT-0002"]
+            ["FOO-0001", "AUX-0014", "ALT-0002"]
         );
     }
 }

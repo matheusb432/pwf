@@ -230,17 +230,35 @@ mod tests {
         parse_blocked_by(file.frontmatter_view().unwrap().as_ref())
     }
 
+    fn valid_blocked_by(file: &MarkdownFile) -> BlockedBy {
+        let blocked_by = match parsed_blocked_by(file) {
+            StoredBlockedBy::Valid(blocked_by) => Some(blocked_by),
+            StoredBlockedBy::Absent | StoredBlockedBy::Malformed { .. } => None,
+        };
+        assert!(blocked_by.is_some());
+        blocked_by.unwrap()
+    }
+
+    fn malformed_blocked_by(file: &MarkdownFile) -> (String, String) {
+        let malformed = match parsed_blocked_by(file) {
+            StoredBlockedBy::Malformed { raw, reason } => Some((raw, reason)),
+            StoredBlockedBy::Absent | StoredBlockedBy::Valid(_) => None,
+        };
+        assert!(malformed.is_some());
+        malformed.unwrap()
+    }
+
     #[test]
     fn new_task_renders_blocked_by_as_a_quoted_wikilink_array() {
-        let id = TaskId::try_new("PWF-0003").unwrap();
+        let id = TaskId::try_new("FOO-0003").unwrap();
         let title = TaskTitle::try_new("follow up").unwrap();
         let created = "2026-08-20".parse::<AppDate>().unwrap();
-        let blockers = blocked_by(&["pwf1", "AUX-0014"]);
+        let blockers = blocked_by(&["foo1", "AUX-0014"]);
 
         let note = new_task_content(NewTaskFields {
             id: &id,
             title: &title,
-            project: "pwf",
+            project: "foo",
             body: "body",
             created: &created,
             blocked_by: Some(&blockers),
@@ -249,7 +267,7 @@ mod tests {
         });
 
         assert!(
-            note.contains("blocked_by: [\"[[PWF-0001]]\", \"[[AUX-0014]]\"]\n"),
+            note.contains("blocked_by: [\"[[FOO-0001]]\", \"[[AUX-0014]]\"]\n"),
             "{note}"
         );
     }
@@ -258,10 +276,10 @@ mod tests {
     fn blocked_by_edit_replaces_an_existing_block_sequence_without_touching_other_bytes() {
         let mut file = file(concat!(
             "---\n",
-            "id: PWF-0003\n",
+            "id: FOO-0003\n",
             "blocked_by:\n",
-            "  - \"[[PWF-0001]]\"\n",
-            "  - \"[[PWF-0002]]\"\n",
+            "  - \"[[FOO-0001]]\"\n",
+            "  - \"[[FOO-0002]]\"\n",
             "effort: medium\n",
             "---\n\n",
             "body\n",
@@ -273,7 +291,7 @@ mod tests {
             file.source(),
             concat!(
                 "---\n",
-                "id: PWF-0003\n",
+                "id: FOO-0003\n",
                 "blocked_by: [\"[[AUX-0014]]\"]\n",
                 "effort: medium\n",
                 "---\n\n",
@@ -285,36 +303,32 @@ mod tests {
     #[test]
     fn blocked_by_parser_accepts_inline_and_block_sequences() {
         for source in [
-            "---\nblocked_by: [\"[[PWF-0001]]\", \"[[AUX-0014]]\"]\n---\n",
-            "---\nblocked_by:\n  - \"[[PWF-0001]]\"\n  - \"[[AUX-0014]]\"\n---\n",
+            "---\nblocked_by: [\"[[FOO-0001]]\", \"[[AUX-0014]]\"]\n---\n",
+            "---\nblocked_by:\n  - \"[[FOO-0001]]\"\n  - \"[[AUX-0014]]\"\n---\n",
         ] {
             let file = file(source);
-            let StoredBlockedBy::Valid(blocked_by) = parsed_blocked_by(&file) else {
-                panic!("expected valid blocked_by metadata");
-            };
+            let blocked_by = valid_blocked_by(&file);
 
             assert_eq!(
                 blocked_by.iter().map(AsRef::as_ref).collect::<Vec<_>>(),
-                ["PWF-0001", "AUX-0014"]
+                ["FOO-0001", "AUX-0014"]
             );
         }
     }
 
     #[test]
     fn blocked_by_parser_preserves_a_malformed_scalar_for_boundary_specific_diagnostics() {
-        let file = file("---\nblocked_by: \"[[PWF-0001]]\"\n---\n");
+        let file = file("---\nblocked_by: \"[[FOO-0001]]\"\n---\n");
 
-        let StoredBlockedBy::Malformed { raw, reason } = parsed_blocked_by(&file) else {
-            panic!("expected malformed blocked_by metadata");
-        };
+        let (raw, reason) = malformed_blocked_by(&file);
 
-        assert_eq!(raw, "\"[[PWF-0001]]\"");
+        assert_eq!(raw, "\"[[FOO-0001]]\"");
         assert!(reason.contains("sequence"), "{reason}");
     }
 
     #[test]
     fn close_status_inserts_completion_without_rewriting_other_bytes() {
-        let mut file = file("---\nid: PWF-0001\nstatus: active\ntitle: task\n---\n\nbody\n");
+        let mut file = file("---\nid: FOO-0001\nstatus: active\ntitle: task\n---\n\nbody\n");
 
         set_status(
             &mut file,
@@ -325,7 +339,7 @@ mod tests {
 
         assert_eq!(
             file.source(),
-            "---\nid: PWF-0001\nstatus: done\ncompleted: 2026-07-29\ntitle: task\n---\n\nbody\n"
+            "---\nid: FOO-0001\nstatus: done\ncompleted: 2026-07-29\ntitle: task\n---\n\nbody\n"
         );
     }
 }

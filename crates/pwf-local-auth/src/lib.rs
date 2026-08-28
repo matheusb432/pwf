@@ -83,21 +83,17 @@ mod tests {
     use super::*;
 
     fn local_auth(directory: &tempfile::TempDir) -> LocalAuth {
-        LocalAuth::from_data_root(directory.path()).expect("absolute temporary data root")
+        LocalAuth::from_data_root(directory.path()).unwrap()
     }
 
     #[test]
     fn capability_persists_across_server_restarts() {
-        let directory = tempfile::tempdir().expect("temporary data root");
+        let directory = tempfile::tempdir().unwrap();
         let auth = local_auth(&directory);
 
-        let provisioned = auth
-            .load_or_create_server_token()
-            .expect("provision capability");
-        let restarted = auth
-            .load_or_create_server_token()
-            .expect("load persisted capability");
-        let client = auth.load_client_token().expect("load client capability");
+        let provisioned = auth.load_or_create_server_token().unwrap();
+        let restarted = auth.load_or_create_server_token().unwrap();
+        let client = auth.load_client_token().unwrap();
 
         assert!(provisioned.authenticates(restarted.expose_secret()));
         assert!(provisioned.authenticates(client.expose_secret()));
@@ -106,18 +102,16 @@ mod tests {
 
     #[test]
     fn endpoint_publication_is_instance_owned() {
-        let directory = tempfile::tempdir().expect("temporary data root");
+        let directory = tempfile::tempdir().unwrap();
         let auth = local_auth(&directory);
         let endpoint = ServerEndpoint::try_new(
             SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 4317)),
             ServerInstanceId::generate(),
         )
-        .expect("loopback endpoint");
+        .unwrap();
 
-        let published = auth
-            .publish_endpoint(endpoint.clone())
-            .expect("publish endpoint");
-        assert_eq!(auth.load_endpoint().expect("load endpoint"), endpoint);
+        let published = auth.publish_endpoint(endpoint.clone()).unwrap();
+        assert_eq!(auth.load_endpoint().unwrap(), endpoint);
 
         drop(published);
         assert!(matches!(
@@ -142,16 +136,15 @@ mod tests {
     fn capability_and_endpoint_are_user_private() {
         use std::os::unix::fs::MetadataExt as _;
 
-        let directory = tempfile::tempdir().expect("temporary data root");
+        let directory = tempfile::tempdir().unwrap();
         let auth = local_auth(&directory);
-        auth.load_or_create_server_token()
-            .expect("provision capability");
+        auth.load_or_create_server_token().unwrap();
         let endpoint = ServerEndpoint::try_new(
             "127.0.0.1:4317".parse().unwrap(),
             ServerInstanceId::generate(),
         )
-        .expect("loopback endpoint");
-        let _published = auth.publish_endpoint(endpoint).expect("publish endpoint");
+        .unwrap();
+        let _published = auth.publish_endpoint(endpoint).unwrap();
         let server_directory = auth.data_root().join(SERVER_DIRECTORY_NAME);
 
         assert_eq!(

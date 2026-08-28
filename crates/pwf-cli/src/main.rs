@@ -6,15 +6,17 @@ async fn main() {
     let parsed = command::parse_argv(std::env::args().skip(1).collect())
         .unwrap_or_else(|error| error.exit());
     match run(parsed).await {
-        Ok(out) => {
-            if !out.is_empty() {
-                println!("{out}");
-            }
-        }
-        Err(e) => {
-            eprintln!("Error: {e}");
+        Ok(output) => print_output(&output),
+        Err(error) => {
+            eprintln!("Error: {error}");
             std::process::exit(1);
         }
+    }
+}
+
+fn print_output(output: &str) {
+    if !output.is_empty() {
+        println!("{output}");
     }
 }
 

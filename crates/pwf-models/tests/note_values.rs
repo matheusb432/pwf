@@ -38,8 +38,8 @@ fn note_content_and_metadata_construct_only_meaningful_values() {
     );
     assert_eq!(NoteTag::try_new(" cli ").unwrap().as_ref(), "cli");
     assert_eq!(
-        NoteSource::try_new("  issue   PWF-0001 ").unwrap().as_ref(),
-        "issue PWF-0001"
+        NoteSource::try_new("  issue   FOO-0001 ").unwrap().as_ref(),
+        "issue FOO-0001"
     );
     assert_eq!(
         NoteVerification::try_new("  checked   locally ")
@@ -58,19 +58,19 @@ fn note_content_and_metadata_construct_only_meaningful_values() {
 
 #[test]
 fn note_selector_resolves_supported_aliases_for_one_project() {
-    let project_id = ProjectId::try_new("PWF").unwrap();
+    let project_id = ProjectId::try_new("FOO").unwrap();
 
-    for raw in ["PWF-NOTE-0007", "pwf-note-0007", "NOTE-0007", "7"] {
+    for raw in ["FOO-NOTE-0007", "foo-note-0007", "NOTE-0007", "7"] {
         let selector = raw.parse::<NoteSelector>().unwrap();
         assert_eq!(
             selector.resolve(&project_id).unwrap().as_ref(),
-            "PWF-NOTE-0007"
+            "FOO-NOTE-0007"
         );
     }
 
-    let other = "FOO-NOTE-0007".parse::<NoteSelector>().unwrap();
+    let other = "BAR-NOTE-0007".parse::<NoteSelector>().unwrap();
     assert!(other.resolve(&project_id).is_none());
-    for invalid in ["", "NOTE-", "NOTE-10000", "PWF-NOTE-007", "bad"] {
+    for invalid in ["", "NOTE-", "NOTE-10000", "FOO-NOTE-007", "bad"] {
         assert!(
             invalid.parse::<NoteSelector>().is_err(),
             "accepted {invalid:?}"

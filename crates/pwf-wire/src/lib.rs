@@ -9,7 +9,9 @@ pub mod task;
 #[allow(
     clippy::default_trait_access,
     clippy::doc_markdown,
+    clippy::excessive_nesting,
     clippy::match_single_binding,
+    clippy::must_use_candidate,
     clippy::too_many_lines,
     clippy::trivially_copy_pass_by_ref
 )]

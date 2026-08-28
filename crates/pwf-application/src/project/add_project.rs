@@ -208,7 +208,7 @@ mod tests {
         tasks_path: &str,
     ) -> ProjectFields {
         ProjectFields {
-            id: project_id.parse().expect("valid test project ID"),
+            id: project_id.parse().unwrap(),
             title: ProjectName::try_new(title).unwrap(),
             source: ProjectSource::new(
                 ProjectSourceKind::Directory,
@@ -256,7 +256,7 @@ mod tests {
     async fn duplicate_project_id_is_classified(pool: sqlx::SqlitePool) {
         let home = home();
         add_project::execute(
-            project("PWF", "pwf", "/work/pwf", "/tasks/pwf"),
+            project("FOO", "foo", "/work/foo", "/tasks/foo"),
             &pool,
             &home,
         )
@@ -264,7 +264,7 @@ mod tests {
         .unwrap();
 
         let error = add_project::execute(
-            project("pwf", "other", "/work/other", "/tasks/other"),
+            project("foo", "other", "/work/other", "/tasks/other"),
             &pool,
             &home,
         )
@@ -274,7 +274,7 @@ mod tests {
         assert!(matches!(
             error,
             AddProjectError::DuplicateProjectId { id }
-                if id == ProjectId::try_new("PWF").unwrap()
+                if id == ProjectId::try_new("FOO").unwrap()
         ));
         pool.close().await;
     }
@@ -283,7 +283,7 @@ mod tests {
     async fn duplicate_project_title_is_classified(pool: sqlx::SqlitePool) {
         let home = home();
         add_project::execute(
-            project("PWF", "pwf", "/work/pwf", "/tasks/pwf"),
+            project("FOO", "foo", "/work/foo", "/tasks/foo"),
             &pool,
             &home,
         )
@@ -291,7 +291,7 @@ mod tests {
         .unwrap();
 
         let error = add_project::execute(
-            project("ALT", "pwf", "/work/other", "/tasks/other"),
+            project("ALT", "foo", "/work/other", "/tasks/other"),
             &pool,
             &home,
         )
@@ -301,7 +301,7 @@ mod tests {
         assert!(matches!(
             error,
             AddProjectError::DuplicateProjectTitle { title }
-                if title == ProjectName::try_new("pwf").unwrap()
+                if title == ProjectName::try_new("foo").unwrap()
         ));
         pool.close().await;
     }
@@ -310,7 +310,7 @@ mod tests {
     async fn failed_project_insert_rolls_back_new_source(pool: sqlx::SqlitePool) {
         let home = home();
         add_project::execute(
-            project("PWF", "pwf", "/work/pwf", "/tasks/pwf"),
+            project("FOO", "foo", "/work/foo", "/tasks/foo"),
             &pool,
             &home,
         )
@@ -318,7 +318,7 @@ mod tests {
         .unwrap();
 
         let error = add_project::execute(
-            project("ALT", "pwf", "/work/rolled-back", "/tasks/other"),
+            project("ALT", "foo", "/work/rolled-back", "/tasks/other"),
             &pool,
             &home,
         )
@@ -344,7 +344,7 @@ mod tests {
         let home_path = std::path::PathBuf::from("/home/tester");
         let home = HomeDirectory::new(home_path.clone());
         let resolved_path = home_path.join("tasks/shared");
-        insert_project(&pool, "PWF", "pwf", "/work/PWF", "~/tasks/shared", true).await;
+        insert_project(&pool, "FOO", "foo", "/work/foo", "~/tasks/shared", true).await;
 
         let error = add_project::execute(
             project(
@@ -362,7 +362,7 @@ mod tests {
         assert_eq!(
             error.to_string(),
             format!(
-                "managed projects ALT and PWF resolve to the same task location: {}",
+                "managed projects ALT and FOO resolve to the same task location: {}",
                 resolved_path.display()
             )
         );

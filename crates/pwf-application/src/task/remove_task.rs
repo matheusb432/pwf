@@ -1,4 +1,7 @@
-use pwf_models::task::{TaskId, TaskTitle, TaskTitleError};
+use pwf_models::{
+    project::Project,
+    task::{TaskId, TaskTitle, TaskTitleError},
+};
 use pwf_wire::{
     confirmation::RemoveTaskConfirmation,
     project::ProjectStatusFilter,
@@ -12,7 +15,7 @@ use super::{
 use crate::{
     ports::{
         confirmation::{ConfirmationClient, ConfirmationClientError},
-        task_record::{IndexEntryStore, Materialization, StoredBlockedBy, TaskStore},
+        task_record::{IndexEntryStore, Materialization, StoredBlockedBy, TaskRecord, TaskStore},
     },
     project::list_projects,
 };
@@ -129,31 +132,42 @@ async fn find_dependents(
         .map_err(|error| RemoveTaskError::ReadDependents(anyhow::Error::new(error)))?;
     let mut dependents = Vec::new();
     for project in projects {
-        let records = store
-            .list(&project)
-            .map_err(|error| RemoveTaskError::ReadDependents(anyhow::Error::new(error)))?;
-        for record in records {
-            match record.blocked_by {
-                StoredBlockedBy::Valid(blocked_by)
-                    if blocked_by.iter().any(|blocker| blocker == target) =>
-                {
-                    dependents.push(record.id);
-                }
-                StoredBlockedBy::Absent | StoredBlockedBy::Valid(_) => {}
-                StoredBlockedBy::Malformed { raw, reason } => {
-                    return Err(RemoveTaskError::MalformedBlockedBy {
-                        task: record.id,
-                        path: Box::new(record.locator),
-                        raw: raw.into_boxed_str(),
-                        reason: reason.into_boxed_str(),
-                    });
-                }
-            }
-        }
+        dependents.extend(project_dependents(target, store, &project)?);
     }
     dependents.sort();
     dependents.dedup();
     Ok(dependents)
+}
+
+fn project_dependents(
+    target: &TaskId,
+    store: &impl TaskStore,
+    project: &Project,
+) -> Result<Vec<TaskId>, RemoveTaskError> {
+    let records = store
+        .list(project)
+        .map_err(|error| RemoveTaskError::ReadDependents(anyhow::Error::new(error)))?;
+    let candidates = records
+        .into_iter()
+        .map(|record| dependent_id(record, target))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(candidates.into_iter().flatten().collect())
+}
+
+fn dependent_id(record: TaskRecord, target: &TaskId) -> Result<Option<TaskId>, RemoveTaskError> {
+    match record.blocked_by {
+        StoredBlockedBy::Valid(blocked_by) => Ok(blocked_by
+            .iter()
+            .any(|blocker| blocker == target)
+            .then_some(record.id)),
+        StoredBlockedBy::Absent => Ok(None),
+        StoredBlockedBy::Malformed { raw, reason } => Err(RemoveTaskError::MalformedBlockedBy {
+            task: record.id,
+            path: Box::new(record.locator),
+            raw: raw.into_boxed_str(),
+            reason: reason.into_boxed_str(),
+        }),
+    }
 }
 
 #[cfg(test)]
@@ -192,7 +206,7 @@ mod tests {
             title: "stale task".to_string(),
             status,
             created: Some(app_date("2026-07-01")),
-            locator: TaskNotePath::new(format!("/notes/pwf/{id}.md").into()),
+            locator: TaskNotePath::new(format!("/notes/foo/{id}.md").into()),
             ..task_record(id)
         }
     }
@@ -205,13 +219,13 @@ mod tests {
             }
         };
         let store = InMemoryStore::default()
-            .with_project_id("pwf", "PWF")
-            .with_project("pwf", vec![record("PWF-0001", status)]);
+            .with_project_id("foo", "FOO")
+            .with_project("foo", vec![record("FOO-0001", status)]);
         IndexEntryStore::upsert_index_entry(
             &store,
-            &project("PWF", "pwf"),
+            &project("FOO", "foo"),
             IndexEntry {
-                id: TaskId::try_new("PWF-0001").unwrap(),
+                id: TaskId::try_new("FOO-0001").unwrap(),
                 state: index_state,
                 section: None,
             },
@@ -233,29 +247,46 @@ mod tests {
             &'a mut self,
             _confirmation: &'a RemoveTaskConfirmation,
         ) -> futures::future::BoxFuture<'a, Result<bool, ConfirmationClientError>> {
-            Box::pin(async { Ok(true) })
+            Box::pin(futures::future::ready(Ok(true)))
+        }
+    }
+
+    struct StaticInteraction {
+        accepted: bool,
+    }
+
+    impl ConfirmationClient for StaticInteraction {
+        type Confirmation = RemoveTaskConfirmation;
+
+        fn confirm<'a>(
+            &'a mut self,
+            _confirmation: &'a RemoveTaskConfirmation,
+        ) -> futures::future::BoxFuture<'a, Result<bool, ConfirmationClientError>> {
+            Box::pin(futures::future::ready(Ok(self.accepted)))
         }
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn remove_deletes_record_and_index_entry(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
+        insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
         let store = staged(TaskStatus::Active);
 
-        let RemovedTaskOutcome::Removed(removed) =
-            run(&task_id("PWF-0001"), &store, &pool, &mut Accepted)
-                .await
-                .unwrap()
-        else {
-            panic!("accepted removal must remove the task");
+        let outcome = run(&task_id("FOO-0001"), &store, &pool, &mut Accepted)
+            .await
+            .unwrap();
+        let removed = match outcome {
+            RemovedTaskOutcome::Removed(removed) => Some(removed),
+            RemovedTaskOutcome::Aborted { .. } => None,
         };
+        assert!(removed.is_some());
+        let removed = removed.unwrap();
 
-        assert_eq!(removed.id.as_ref(), "PWF-0001");
-        assert_eq!(removed.project.as_ref(), "pwf");
+        assert_eq!(removed.id.as_ref(), "FOO-0001");
+        assert_eq!(removed.project.as_ref(), "foo");
         assert_eq!(removed.title.as_ref(), "stale task");
-        assert!(store.tasks("pwf").is_empty(), "record must be deleted");
+        assert!(store.tasks("foo").is_empty(), "record must be deleted");
         assert!(
-            store.entries("pwf").is_empty(),
+            store.entries("foo").is_empty(),
             "index entry must be unlinked"
         );
     }
@@ -264,7 +295,7 @@ mod tests {
     async fn remove_reports_all_dependents_including_paused_projects_without_mutating(
         pool: sqlx::SqlitePool,
     ) {
-        insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
+        insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
         insert_project(
             &pool,
             "AUX",
@@ -275,107 +306,107 @@ mod tests {
         )
         .await;
         let local_dependent = TaskRecord {
-            blocked_by: stored_blocked_by(&["PWF-0001"]),
-            ..record("PWF-0003", TaskStatus::Done)
+            blocked_by: stored_blocked_by(&["FOO-0001"]),
+            ..record("FOO-0003", TaskStatus::Done)
         };
         let paused_dependent = TaskRecord {
-            blocked_by: stored_blocked_by(&["PWF-0001"]),
+            blocked_by: stored_blocked_by(&["FOO-0001"]),
             ..record("AUX-0002", TaskStatus::Active)
         };
         let store = staged(TaskStatus::Active)
             .with_project(
-                "pwf",
-                vec![record("PWF-0001", TaskStatus::Active), local_dependent],
+                "foo",
+                vec![record("FOO-0001", TaskStatus::Active), local_dependent],
             )
             .with_project("paused-project", vec![paused_dependent]);
-        let before = store.tasks("pwf");
+        let before = store.tasks("foo");
 
-        let error = run(&task_id("PWF-0001"), &store, &pool, &mut Accepted)
+        let error = run(&task_id("FOO-0001"), &store, &pool, &mut Accepted)
             .await
             .unwrap_err();
 
         assert!(matches!(
             error,
             RemoveTaskError::HasDependents { ref target, ref dependents }
-                if target.as_ref() == "PWF-0001"
+                if target.as_ref() == "FOO-0001"
                     && dependents.iter().map(AsRef::as_ref).collect::<Vec<_>>()
-                        == ["AUX-0002", "PWF-0003"]
+                        == ["AUX-0002", "FOO-0003"]
         ));
-        assert_eq!(store.tasks("pwf"), before);
-        assert_eq!(store.entries("pwf").len(), 1);
+        assert_eq!(store.tasks("foo"), before);
+        assert_eq!(store.entries("foo").len(), 1);
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn remove_rejects_an_invalid_persisted_title_before_mutation(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
+        insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
         let store = InMemoryStore::default()
-            .with_project_id("pwf", "PWF")
+            .with_project_id("foo", "FOO")
             .with_project(
-                "pwf",
+                "foo",
                 vec![TaskRecord {
                     title: "x".repeat(201),
-                    ..record("PWF-0001", TaskStatus::Active)
+                    ..record("FOO-0001", TaskStatus::Active)
                 }],
             );
 
-        let error = run(&task_id("PWF-0001"), &store, &pool, &mut Accepted)
+        let error = run(&task_id("FOO-0001"), &store, &pool, &mut Accepted)
             .await
             .unwrap_err();
 
         assert!(matches!(error, RemoveTaskError::InvalidTitle { .. }));
-        assert_eq!(store.tasks("pwf").len(), 1);
+        assert_eq!(store.tasks("foo").len(), 1);
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn remove_deletes_an_unindexed_task(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
+        insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
         let store = InMemoryStore::default()
-            .with_project_id("pwf", "PWF")
-            .with_project("pwf", vec![record("PWF-0001", TaskStatus::Active)]);
+            .with_project_id("foo", "FOO")
+            .with_project("foo", vec![record("FOO-0001", TaskStatus::Active)]);
 
-        let outcome = run(&task_id("PWF-0001"), &store, &pool, &mut Accepted)
+        let outcome = run(&task_id("FOO-0001"), &store, &pool, &mut Accepted)
             .await
             .unwrap();
 
         assert!(matches!(outcome, RemovedTaskOutcome::Removed(_)));
-        assert!(store.tasks("pwf").is_empty());
-        assert!(store.entries("pwf").is_empty());
+        assert!(store.tasks("foo").is_empty());
+        assert!(store.entries("foo").is_empty());
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn remove_deletes_closed_items(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
+        insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
         for status in [TaskStatus::Done, TaskStatus::Cancelled] {
             let store = staged(status);
 
-            let outcome = run(&task_id("PWF-0001"), &store, &pool, &mut Accepted)
+            let outcome = run(&task_id("FOO-0001"), &store, &pool, &mut Accepted)
                 .await
                 .unwrap();
 
             assert!(matches!(outcome, RemovedTaskOutcome::Removed(_)));
-            assert!(store.tasks("pwf").is_empty(), "{status} record retained");
-            assert!(store.entries("pwf").is_empty(), "{status} index retained");
+            assert!(store.tasks("foo").is_empty(), "{status} record retained");
+            assert!(store.entries("foo").is_empty(), "{status} index retained");
         }
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn remove_missing_item_preserves_requested_id(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
+        insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
         let store = staged(TaskStatus::Active);
 
-        let error = run(&task_id("PWF-9999"), &store, &pool, &mut Accepted)
+        let error = run(&task_id("FOO-9999"), &store, &pool, &mut Accepted)
             .await
             .unwrap_err();
 
         assert!(matches!(
             error,
-            RemoveTaskError::TaskNotFound { ref id } if id.as_ref() == "PWF-9999"
+            RemoveTaskError::TaskNotFound { ref id } if id.as_ref() == "FOO-9999"
         ));
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn remove_reports_an_unknown_project_id(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
+        insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
         let store = staged(TaskStatus::Active);
 
         let error = run(&task_id("XYZ-0001"), &store, &pool, &mut Accepted)
@@ -390,81 +421,69 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn remove_rejects_missing_note_wikilink_with_its_path(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
+        insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
         let ghost = TaskRecord {
             materialization: Materialization::MissingNote {
-                expected: TaskNotePath::new("/notes/pwf/PWF-0001.md".into()),
+                expected: TaskNotePath::new("/notes/foo/FOO-0001.md".into()),
             },
-            ..record("PWF-0001", TaskStatus::Active)
+            ..record("FOO-0001", TaskStatus::Active)
         };
         let store = InMemoryStore::default()
-            .with_project_id("pwf", "PWF")
-            .with_project("pwf", vec![ghost]);
+            .with_project_id("foo", "FOO")
+            .with_project("foo", vec![ghost]);
 
-        let error = run(&task_id("PWF-0001"), &store, &pool, &mut Accepted)
+        let error = run(&task_id("FOO-0001"), &store, &pool, &mut Accepted)
             .await
             .unwrap_err();
 
         assert!(matches!(
             error,
             RemoveTaskError::NoteMissing { ref path }
-                if path.as_path() == std::path::Path::new("/notes/pwf/PWF-0001.md")
+                if path.as_path() == std::path::Path::new("/notes/foo/FOO-0001.md")
         ));
         assert_eq!(
             error.to_string(),
-            "Task note missing: /notes/pwf/PWF-0001.md"
+            "Task note missing: /notes/foo/FOO-0001.md"
         );
     }
 
-    mod pwf_0144 {
+    mod confirmed_removal {
         use pwf_wire::task::RemovedTaskOutcome;
 
         use super::*;
 
-        struct StaticInteraction {
-            accepted: bool,
-        }
-
-        impl ConfirmationClient for StaticInteraction {
-            type Confirmation = RemoveTaskConfirmation;
-
-            fn confirm<'a>(
-                &'a mut self,
-                _confirmation: &'a RemoveTaskConfirmation,
-            ) -> futures::future::BoxFuture<'a, Result<bool, ConfirmationClientError>> {
-                Box::pin(async { Ok(self.accepted) })
-            }
-        }
-
         #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
         async fn remove_deletes_record_and_index_entry_after_confirmation(pool: sqlx::SqlitePool) {
-            insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
+            insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
             let store = staged(TaskStatus::Active);
 
             let outcome = remove_task::execute(
-                &task_id("PWF-0001"),
+                &task_id("FOO-0001"),
                 &store,
                 &pool,
                 &mut StaticInteraction { accepted: true },
             )
             .await
             .unwrap();
-            let RemovedTaskOutcome::Removed(removed) = outcome else {
-                panic!("accepted removal must remove the task");
+            let removed = match outcome {
+                RemovedTaskOutcome::Removed(removed) => Some(removed),
+                RemovedTaskOutcome::Aborted { .. } => None,
             };
+            assert!(removed.is_some());
+            let removed = removed.unwrap();
 
-            assert_eq!(removed.id.as_ref(), "PWF-0001");
-            assert!(store.tasks("pwf").is_empty());
-            assert!(store.entries("pwf").is_empty());
+            assert_eq!(removed.id.as_ref(), "FOO-0001");
+            assert!(store.tasks("foo").is_empty());
+            assert!(store.entries("foo").is_empty());
         }
 
         #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
         async fn remove_decline_returns_aborted_without_mutating_task(pool: sqlx::SqlitePool) {
-            insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
+            insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
             let store = staged(TaskStatus::Active);
 
             let outcome = remove_task::execute(
-                &task_id("PWF-0001"),
+                &task_id("FOO-0001"),
                 &store,
                 &pool,
                 &mut StaticInteraction { accepted: false },
@@ -475,11 +494,11 @@ mod tests {
             assert_eq!(
                 outcome,
                 RemovedTaskOutcome::Aborted {
-                    task_id: "PWF-0001".parse().unwrap(),
+                    task_id: "FOO-0001".parse().unwrap(),
                 }
             );
-            assert_eq!(store.tasks("pwf").len(), 1);
-            assert_eq!(store.entries("pwf").len(), 1);
+            assert_eq!(store.tasks("foo").len(), 1);
+            assert_eq!(store.entries("foo").len(), 1);
         }
     }
 }

@@ -68,7 +68,7 @@ mod tests {
     #[test]
     fn question_renders_dispatch_context_metadata_without_the_prompt_body() {
         let confirmation = DispatchConfirmation {
-            task_id: "PWF-0001".to_string(),
+            task_id: "FOO-0001".to_string(),
             title: "dispatch me".to_string(),
             created: Some("2026-07-01".to_string()),
             mode: DispatchMode::Inline as i32,
@@ -84,14 +84,14 @@ mod tests {
         let out = render_session_confirmation(&confirmation).render(false);
         assert_eq!(
             out,
-            "Confirm session dispatch\n\n  Task           PWF-0001\n  Title          dispatch me\n  Created        2026-07-01\n  Mode           inline\n  Agent          codex\n  Model          default\n  Effort         xhigh\n  Autonomy       yes\n  Worktree       yes\n  Prompt prefix  yes\n  Target         current terminal"
+            "Confirm session dispatch\n\n  Task           FOO-0001\n  Title          dispatch me\n  Created        2026-07-01\n  Mode           inline\n  Agent          codex\n  Model          default\n  Effort         xhigh\n  Autonomy       yes\n  Worktree       yes\n  Prompt prefix  yes\n  Target         current terminal"
         );
     }
 
     #[test]
     fn tmux_mode_targets_the_named_session_and_falls_back_on_missing_created() {
         let confirmation = DispatchConfirmation {
-            task_id: "PWF-0001".to_string(),
+            task_id: "FOO-0001".to_string(),
             title: "dispatch me".to_string(),
             created: None,
             mode: DispatchMode::Multiplexer as i32,
@@ -104,7 +104,7 @@ mod tests {
         let out = render_session_confirmation(&confirmation).render(false);
         assert_eq!(
             out,
-            "Confirm session dispatch\n\n  Task           PWF-0001\n  Title          dispatch me\n  Created        (unknown)\n  Mode           tmux\n  Agent          claude\n  Model          default\n  Effort         high\n  Autonomy       no\n  Worktree       no\n  Prompt prefix  no\n  Target         tmux session pwf"
+            "Confirm session dispatch\n\n  Task           FOO-0001\n  Title          dispatch me\n  Created        (unknown)\n  Mode           tmux\n  Agent          claude\n  Model          default\n  Effort         high\n  Autonomy       no\n  Worktree       no\n  Prompt prefix  no\n  Target         tmux session foo"
         );
     }
 }

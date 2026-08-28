@@ -14,12 +14,12 @@ fn note_add_help_exposes_only_title_and_content_inputs() {
 
 #[test]
 fn note_add_rejects_incomplete_or_mixed_input_modes() {
-    let fixture = ManagedProject::new(&project_id("PWF"), "pwf");
+    let fixture = ManagedProject::new(&project_id("FOO").unwrap(), "foo").unwrap();
 
     let output = fixture
         .database
         .command()
-        .args(["note", "add", "pwf", "missing separator"])
+        .args(["note", "add", "foo", "missing separator"])
         .output()
         .unwrap();
     assert!(!output.status.success());
@@ -31,7 +31,7 @@ fn note_add_rejects_incomplete_or_mixed_input_modes() {
     fixture
         .database
         .command()
-        .args(["note", "add", "pwf", "--title", "missing content"])
+        .args(["note", "add", "foo", "--title", "missing content"])
         .assert()
         .failure();
     fixture
@@ -40,7 +40,7 @@ fn note_add_rejects_incomplete_or_mixed_input_modes() {
         .args([
             "note",
             "add",
-            "pwf",
+            "foo",
             "title / content",
             "--title",
             "duplicate title",

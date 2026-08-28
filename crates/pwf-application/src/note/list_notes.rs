@@ -81,7 +81,7 @@ mod tests {
 
     fn note(number: u32) -> ProjectNote {
         ProjectNote {
-            id: NoteId::try_new(format!("PWF-NOTE-{number:04}")).unwrap(),
+            id: NoteId::try_new(format!("FOO-NOTE-{number:04}")).unwrap(),
             title: NoteTitle::try_new(format!("note {number}")).unwrap(),
         }
     }
@@ -92,9 +92,9 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn list_orders_newest_first_and_defaults_to_ten(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
+        insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
         let store = InMemoryStore::default().with_project_notes(
-            "pwf",
+            "foo",
             [1, 12, 5, 3, 11, 8, 2, 10, 7, 4, 9, 6]
                 .into_iter()
                 .map(note)
@@ -103,7 +103,7 @@ mod tests {
 
         let result = list_notes::execute(
             ListNotes {
-                project_selector: "PWF".parse().unwrap(),
+                project_selector: "FOO".parse().unwrap(),
                 limit: None.into(),
             },
             &store,
@@ -115,30 +115,30 @@ mod tests {
         assert_eq!(
             identifiers(&result),
             vec![
-                "PWF-NOTE-0012",
-                "PWF-NOTE-0011",
-                "PWF-NOTE-0010",
-                "PWF-NOTE-0009",
-                "PWF-NOTE-0008",
-                "PWF-NOTE-0007",
-                "PWF-NOTE-0006",
-                "PWF-NOTE-0005",
-                "PWF-NOTE-0004",
-                "PWF-NOTE-0003",
+                "FOO-NOTE-0012",
+                "FOO-NOTE-0011",
+                "FOO-NOTE-0010",
+                "FOO-NOTE-0009",
+                "FOO-NOTE-0008",
+                "FOO-NOTE-0007",
+                "FOO-NOTE-0006",
+                "FOO-NOTE-0005",
+                "FOO-NOTE-0004",
+                "FOO-NOTE-0003",
             ]
         );
         assert_eq!(result.hidden, 2);
-        assert_eq!(result.project.as_ref(), "pwf");
+        assert_eq!(result.project.as_ref(), "foo");
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn zero_is_unlimited_and_explicit_cap_reports_hidden_count(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
-        let store = InMemoryStore::default().with_project_notes("pwf", (1..=4).map(note).collect());
+        insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
+        let store = InMemoryStore::default().with_project_notes("foo", (1..=4).map(note).collect());
 
         let unlimited = list_notes::execute(
             ListNotes {
-                project_selector: "pwf".parse().unwrap(),
+                project_selector: "foo".parse().unwrap(),
                 limit: Some(0).into(),
             },
             &store,
@@ -148,7 +148,7 @@ mod tests {
         .unwrap();
         let capped = list_notes::execute(
             ListNotes {
-                project_selector: "pwf".parse().unwrap(),
+                project_selector: "foo".parse().unwrap(),
                 limit: Some(2).into(),
             },
             &store,
@@ -160,14 +160,14 @@ mod tests {
         assert_eq!(
             identifiers(&unlimited),
             vec![
-                "PWF-NOTE-0004",
-                "PWF-NOTE-0003",
-                "PWF-NOTE-0002",
-                "PWF-NOTE-0001",
+                "FOO-NOTE-0004",
+                "FOO-NOTE-0003",
+                "FOO-NOTE-0002",
+                "FOO-NOTE-0001",
             ]
         );
         assert_eq!(unlimited.hidden, 0);
-        assert_eq!(identifiers(&capped), vec!["PWF-NOTE-0004", "PWF-NOTE-0003"]);
+        assert_eq!(identifiers(&capped), vec!["FOO-NOTE-0004", "FOO-NOTE-0003"]);
         assert_eq!(capped.hidden, 2);
     }
 
@@ -176,9 +176,12 @@ mod tests {
         let error = ListNotesError::Store(anyhow::Error::new(SentinelStoreError));
 
         assert_eq!(error.to_string(), "sentinel store failure");
-        let ListNotesError::Store(source) = error else {
-            panic!("expected the store error");
+        let source = match error {
+            ListNotesError::Store(source) => Some(source),
+            ListNotesError::ResolveProject(_) => None,
         };
+        assert!(source.is_some());
+        let source = source.unwrap();
         assert!(source.downcast_ref::<SentinelStoreError>().is_some());
         assert_eq!(source.root_cause().to_string(), "sentinel store failure");
     }

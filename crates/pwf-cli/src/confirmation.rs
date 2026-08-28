@@ -293,7 +293,7 @@ mod tests {
         let dialog = ConfirmationDialog::new(
             "Confirm",
             vec![
-                Detail::new("Task", "PWF-0001"),
+                Detail::new("Task", "FOO-0001"),
                 Detail::new("Long label", "first\nsecond\r\nthird"),
             ],
             "Proceed?",
@@ -303,7 +303,7 @@ mod tests {
 
         assert_eq!(
             dialog.render(false),
-            "Confirm\n\n  Task        PWF-0001\n  Long label  first second third"
+            "Confirm\n\n  Task        FOO-0001\n  Long label  first second third"
         );
     }
 
@@ -315,24 +315,24 @@ mod tests {
     #[test]
     fn removal_confirmation_renders_aligned_task_details() {
         let confirmation = Confirmation::RemoveTask(RemoveTaskConfirmation {
-            task_id: "PWF-0001".to_string(),
-            project: "pwf".to_string(),
+            task_id: "FOO-0001".to_string(),
+            project: "foo".to_string(),
             title: "stale task".to_string(),
             status: TaskStatus::Active as i32,
-            note_path: "/notes/pwf/PWF-0001.md".to_string(),
+            note_path: "/notes/foo/FOO-0001.md".to_string(),
         });
 
         assert_eq!(
             confirmation_dialog(&confirmation).render(false),
-            "Confirm task removal\n\n  Task     PWF-0001\n  Title    stale task\n  Status   active\n  Project  pwf\n  Note     /notes/pwf/PWF-0001.md"
+            "Confirm task removal\n\n  Task     FOO-0001\n  Title    stale task\n  Status   active\n  Project  foo\n  Note     /notes/foo/FOO-0001.md"
         );
     }
 
     #[test]
     fn reopen_confirmation_emphasizes_every_deleted_artifact() {
         let confirmation = Confirmation::ReopenTask(ReopenTaskConfirmation {
-            task_id: "PWF-0001".to_string(),
-            project: "pwf".to_string(),
+            task_id: "FOO-0001".to_string(),
+            project: "foo".to_string(),
             completion_date: Some("2026-08-17".to_string()),
             commits: Some("abc..def".to_string()),
             report: Some("validated the release".to_string()),
@@ -340,7 +340,7 @@ mod tests {
 
         assert_eq!(
             confirmation_dialog(&confirmation).render(false),
-            "Reopen task and delete completion data\n\n  Task       PWF-0001\n  Project    pwf\n  Completed  2026-08-17\n  Commits    abc..def\n  Report     validated the release"
+            "Reopen task and delete completion data\n\n  Task       FOO-0001\n  Project    foo\n  Completed  2026-08-17\n  Commits    abc..def\n  Report     validated the release"
         );
     }
 }

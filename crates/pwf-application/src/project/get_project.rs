@@ -72,8 +72,8 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn status_filter_controls_paused_project_visibility(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "PWF", "pwf", "/work/pwf", "/tasks/pwf", true).await;
-        let id = ProjectId::try_new("PWF").unwrap();
+        insert_project(&pool, "FOO", "foo", "/work/foo", "/tasks/foo", true).await;
+        let id = ProjectId::try_new("FOO").unwrap();
 
         let active = get_project::execute(
             GetProject {

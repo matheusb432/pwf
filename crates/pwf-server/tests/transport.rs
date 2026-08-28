@@ -1,9 +1,3 @@
-#![allow(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "transport-test setup and assertions fail immediately with operation-specific context"
-)]
-
 use std::{
     convert::Infallible,
     net::Ipv4Addr,
@@ -11,6 +5,7 @@ use std::{
     time::Duration,
 };
 
+use anyhow::Context as _;
 use pwf_client::{
     ClientError, PwfClient,
     task::{Confirmation, ConfirmationPrompt},
@@ -52,39 +47,23 @@ struct TestServer {
 }
 
 impl TestServer {
-    async fn start(shutdown_grace_period: Duration) -> Self {
-        let root = tempfile::tempdir().expect("create test server root");
+    async fn start(shutdown_grace_period: Duration) -> anyhow::Result<Self> {
+        let root = tempfile::tempdir()?;
         let database_path = root.path().join("pwf.sqlite3");
-        let migration_pool = pwf_infra::database::build_migration_pool(&database_path)
-            .await
-            .expect("open migration database");
-        pwf_infra::database::migrate_database(&migration_pool)
-            .await
-            .expect("migrate test database");
+        let migration_pool = pwf_infra::database::build_migration_pool(&database_path).await?;
+        pwf_infra::database::migrate_database(&migration_pool).await?;
         migration_pool.close().await;
-        let pool = pwf_infra::database::build_pool(&database_path)
-            .await
-            .expect("open application database");
+        let pool = pwf_infra::database::build_pool(&database_path).await?;
         let home_path = root.path().join("home");
-        std::fs::create_dir_all(&home_path).expect("create test home");
+        std::fs::create_dir_all(&home_path)?;
         let state = AppState::new(pool, HomeDirectory::new(home_path));
 
-        let auth =
-            LocalAuth::from_data_root(root.path().join("auth")).expect("create local auth root");
-        let token = auth
-            .load_or_create_server_token()
-            .expect("provision test capability");
-        let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
-            .await
-            .expect("bind test server");
-        let endpoint = ServerEndpoint::try_new(
-            listener.local_addr().expect("read listener address"),
-            ServerInstanceId::generate(),
-        )
-        .expect("create loopback endpoint");
-        let published = auth
-            .publish_endpoint(endpoint.clone())
-            .expect("publish test endpoint");
+        let auth = LocalAuth::from_data_root(root.path().join("auth"))?;
+        let token = auth.load_or_create_server_token()?;
+        let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
+        let endpoint =
+            ServerEndpoint::try_new(listener.local_addr()?, ServerInstanceId::generate())?;
+        let published = auth.publish_endpoint(endpoint.clone())?;
         let (shutdown_sender, shutdown_receiver) = oneshot::channel();
         let (lifecycle_handle, mut lifecycle) = ServerLifecycle::channel();
         let task = tokio::spawn(serve(
@@ -97,12 +76,10 @@ impl TestServer {
             state,
             lifecycle_handle,
         ));
-        wait_for_state(&mut lifecycle, ServerState::Serving).await;
-        let client = PwfClient::connect(&auth)
-            .await
-            .expect("connect generated client to test server");
+        wait_for_state(&mut lifecycle, ServerState::Serving).await?;
+        let client = PwfClient::connect(&auth).await?;
 
-        Self {
+        Ok(Self {
             root,
             token,
             endpoint,
@@ -111,19 +88,18 @@ impl TestServer {
             lifecycle,
             task: Some(task),
             _published: published,
-        }
+        })
     }
 
-    async fn add_project_and_task(&self) -> String {
+    async fn add_project_and_task(&self) -> anyhow::Result<String> {
         let project_path = self.root.path().join("project");
         let tasks_path = self.root.path().join("notes").join("foo-bar");
-        std::fs::create_dir_all(&project_path).expect("create project source");
-        std::fs::create_dir_all(&tasks_path).expect("create project task directory");
+        std::fs::create_dir_all(&project_path)?;
+        std::fs::create_dir_all(&tasks_path)?;
         std::fs::write(
             tasks_path.join("foo-bar.md"),
             "---\nid: foo\ntitle: foo-bar\n---\n",
-        )
-        .expect("write task index");
+        )?;
 
         let project = self
             .client
@@ -138,8 +114,7 @@ impl TestServer {
                     tasks_path: tasks_path.to_string_lossy().into_owned(),
                 }),
             })
-            .await
-            .expect("add project through gRPC");
+            .await?;
         assert_eq!(project.id, "FOO");
 
         let task = self
@@ -163,27 +138,26 @@ impl TestServer {
                 effort: None,
                 tags: Vec::new(),
             })
-            .await
-            .expect("add task through gRPC");
+            .await?;
         assert_eq!(task.id, "FOO-0001");
-        task.id
+        Ok(task.id)
     }
 
-    async fn channel(&self) -> Channel {
-        tonic::transport::Endpoint::from_shared(format!("http://{}", self.endpoint.address()))
-            .expect("valid test endpoint")
-            .connect()
-            .await
-            .expect("connect raw generated client")
+    async fn channel(&self) -> anyhow::Result<Channel> {
+        Ok(
+            tonic::transport::Endpoint::from_shared(format!("http://{}", self.endpoint.address()))?
+                .connect()
+                .await?,
+        )
     }
 
     async fn open_remove_confirmation(
         &self,
         task_id: &str,
-    ) -> (
+    ) -> anyhow::Result<(
         mpsc::Sender<v1::RemoveTaskRequest>,
         tonic::Streaming<v1::RemoveTaskResponse>,
-    ) {
+    )> {
         let (sender, receiver) = mpsc::channel(2);
         sender
             .send(v1::RemoveTaskRequest {
@@ -191,51 +165,48 @@ impl TestServer {
                     id: task_id.to_string(),
                 })),
             })
-            .await
-            .expect("send remove start");
-        let mut stream = TaskServiceClient::new(self.channel().await)
+            .await?;
+        let mut stream = TaskServiceClient::new(self.channel().await?)
             .remove_task(authenticated(
                 Request::new(ReceiverStream::new(receiver)),
                 &self.token,
-            ))
-            .await
-            .expect("open remove stream")
+            )?)
+            .await?
             .into_inner();
         let preflight = stream
             .message()
-            .await
-            .expect("read remove preflight")
-            .expect("remove preflight exists");
+            .await?
+            .context("remove preflight response is missing")?;
         assert!(matches!(
             preflight.value,
             Some(v1::remove_task_response::Value::Preflight(_))
         ));
-        (sender, stream)
+        Ok((sender, stream))
     }
 
-    fn begin_shutdown(&mut self) {
-        self.shutdown
+    fn begin_shutdown(&mut self) -> anyhow::Result<()> {
+        let shutdown = self
+            .shutdown
             .take()
-            .expect("shutdown is sent once")
+            .context("server shutdown sender is missing")?;
+        shutdown
             .send(())
-            .expect("server receives shutdown");
+            .map_err(|()| anyhow::anyhow!("server shutdown receiver is closed"))
     }
 
-    async fn wait_for(&mut self, state: ServerState) {
-        wait_for_state(&mut self.lifecycle, state).await;
+    async fn wait_for(&mut self, state: ServerState) -> anyhow::Result<()> {
+        wait_for_state(&mut self.lifecycle, state).await
     }
 
-    async fn finish(mut self) {
+    async fn finish(mut self) -> anyhow::Result<()> {
         if self.shutdown.is_some() {
-            self.begin_shutdown();
+            self.begin_shutdown()?;
         }
-        let task = self.task.take().expect("server task exists");
-        tokio::time::timeout(TEST_TIMEOUT, task)
-            .await
-            .expect("server stops within test timeout")
-            .expect("join test server")
-            .expect("test server exits successfully");
+        let task = self.task.take().context("server task is missing")?;
+        let outcome = tokio::time::timeout(TEST_TIMEOUT, task).await?;
+        outcome??;
         assert_eq!(*self.lifecycle.borrow(), ServerState::Stopped);
+        Ok(())
     }
 }
 
@@ -254,7 +225,7 @@ impl RecordingPrompt {
     }
 
     fn seen(&self) -> Vec<&'static str> {
-        self.seen.lock().expect("prompt lock").clone()
+        with_seen(&self.seen, |seen| seen.clone())
     }
 }
 
@@ -267,9 +238,20 @@ impl ConfirmationPrompt for RecordingPrompt {
             Confirmation::ReopenTask(_) => "reopen",
             Confirmation::DispatchSession(_) => "session",
         };
-        self.seen.lock().expect("prompt lock").push(operation);
+        with_seen(&self.seen, |seen| seen.push(operation));
         Ok(self.confirmed)
     }
+}
+
+fn with_seen<T>(
+    seen: &Mutex<Vec<&'static str>>,
+    operation: impl FnOnce(&mut Vec<&'static str>) -> T,
+) -> T {
+    let mut seen = match seen.lock() {
+        Ok(seen) => seen,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    operation(&mut seen)
 }
 
 #[tokio::test]
@@ -277,9 +259,10 @@ impl ConfirmationPrompt for RecordingPrompt {
     clippy::too_many_lines,
     reason = "one real-server lifecycle verifies the related operation and confirmation invariants"
 )]
-async fn generated_client_preserves_operations_statuses_and_confirmation_flows() {
-    let server = TestServer::start(Duration::from_secs(2)).await;
-    let task_id = server.add_project_and_task().await;
+async fn generated_client_preserves_operations_statuses_and_confirmation_flows()
+-> anyhow::Result<()> {
+    let server = TestServer::start(Duration::from_secs(2)).await?;
+    let task_id = server.add_project_and_task().await?;
 
     let invalid = server
         .client
@@ -289,7 +272,7 @@ async fn generated_client_preserves_operations_statuses_and_confirmation_flows()
             status: ProjectStatusFilter::ActiveOnly as i32,
         })
         .await
-        .expect_err("empty project id is invalid");
+        .unwrap_err();
     assert_eq!(rpc_status(invalid).code(), Code::InvalidArgument);
 
     let missing = server
@@ -300,7 +283,7 @@ async fn generated_client_preserves_operations_statuses_and_confirmation_flows()
             status: ProjectStatusFilter::ActiveOnly as i32,
         })
         .await
-        .expect_err("unknown project is not found");
+        .unwrap_err();
     assert_eq!(rpc_status(missing).code(), Code::NotFound);
 
     let remove_prompt = RecordingPrompt::new(false);
@@ -314,7 +297,7 @@ async fn generated_client_preserves_operations_statuses_and_confirmation_flows()
             remove_prompt.clone(),
         )
         .await
-        .expect("decline remove through stream");
+        .unwrap();
     assert_eq!(
         RemovedTaskOutcomeKind::try_from(remove_result.outcome).ok(),
         Some(RemovedTaskOutcomeKind::Aborted)
@@ -327,7 +310,7 @@ async fn generated_client_preserves_operations_statuses_and_confirmation_flows()
         .task()
         .dispatch_session(session_request(&task_id), session_prompt.clone())
         .await
-        .expect("decline session through stream");
+        .unwrap();
     assert_eq!(
         DispatchSessionOutcome::try_from(session_result.outcome).ok(),
         Some(DispatchSessionOutcome::Aborted)
@@ -344,7 +327,7 @@ async fn generated_client_preserves_operations_statuses_and_confirmation_flows()
             review: false,
         })
         .await
-        .expect("complete task through unary RPC");
+        .unwrap();
     let reopen_prompt = RecordingPrompt::new(false);
     let declined = server
         .client
@@ -356,7 +339,7 @@ async fn generated_client_preserves_operations_statuses_and_confirmation_flows()
             reopen_prompt.clone(),
         )
         .await
-        .expect("decline reopen through stream");
+        .unwrap();
     assert_eq!(
         ReopenedTaskOutcome::try_from(declined.outcome).ok(),
         Some(ReopenedTaskOutcome::Aborted)
@@ -373,7 +356,7 @@ async fn generated_client_preserves_operations_statuses_and_confirmation_flows()
             RecordingPrompt::new(true),
         )
         .await
-        .expect("confirm reopen through stream");
+        .unwrap();
     assert_eq!(
         ReopenedTaskOutcome::try_from(reopened.outcome).ok(),
         Some(ReopenedTaskOutcome::Reopened)
@@ -386,27 +369,25 @@ async fn generated_client_preserves_operations_statuses_and_confirmation_flows()
             output: TaskReadFormat::Path as i32,
         })
         .await
-        .expect("read task after declined remove and confirmed reopen");
+        .unwrap();
     assert!(matches!(
         read.value,
         Some(v1::get_task_response::Value::Path(_))
     ));
 
-    server.finish().await;
+    server.finish().await
 }
 
 #[tokio::test]
-async fn closing_confirmation_stream_before_decision_cancels_without_removing_task() {
-    let server = TestServer::start(Duration::from_secs(2)).await;
-    let task_id = server.add_project_and_task().await;
-    let (sender, mut remove) = server.open_remove_confirmation(&task_id).await;
+async fn closing_confirmation_stream_before_decision_cancels_without_removing_task()
+-> anyhow::Result<()> {
+    let server = TestServer::start(Duration::from_secs(2)).await?;
+    let task_id = server.add_project_and_task().await?;
+    let (sender, mut remove) = server.open_remove_confirmation(&task_id).await?;
 
     drop(sender);
 
-    let status = remove
-        .message()
-        .await
-        .expect_err("closed confirmation request is cancelled");
+    let status = remove.message().await.unwrap_err();
     assert_eq!(status.code(), Code::Cancelled);
     server
         .client
@@ -416,23 +397,24 @@ async fn closing_confirmation_stream_before_decision_cancels_without_removing_ta
             output: TaskReadFormat::Path as i32,
         })
         .await
-        .expect("cancelled confirmation leaves the task untouched");
+        .unwrap();
 
-    server.finish().await;
+    server.finish().await
 }
 
 #[tokio::test]
-async fn health_and_reflection_require_authentication_and_requests_are_bounded() {
-    let server = TestServer::start(Duration::from_secs(2)).await;
-    server.add_project_and_task().await;
-    let channel = server.channel().await;
+async fn health_and_reflection_require_authentication_and_requests_are_bounded()
+-> anyhow::Result<()> {
+    let server = TestServer::start(Duration::from_secs(2)).await?;
+    server.add_project_and_task().await?;
+    let channel = server.channel().await?;
 
     let unauthenticated = HealthClient::new(channel.clone())
         .check(HealthCheckRequest {
             service: String::new(),
         })
         .await
-        .expect_err("health rejects missing capability");
+        .unwrap_err();
     assert_eq!(unauthenticated.code(), Code::Unauthenticated);
 
     let reflection_request = ServerReflectionRequest {
@@ -444,21 +426,21 @@ async fn health_and_reflection_require_authentication_and_requests_are_bounded()
     let request = authenticated(
         Request::new(tokio_stream::once(reflection_request)),
         &server.token,
-    );
+    )?;
     let mut reflection = ServerReflectionClient::new(channel.clone())
         .server_reflection_info(request)
         .await
-        .expect("authenticated reflection request")
+        .unwrap()
         .into_inner();
     let response = reflection
         .next()
         .await
-        .expect("reflection response exists")
-        .expect("reflection response succeeds")
+        .unwrap()
+        .unwrap()
         .message_response
-        .expect("reflection response has a value");
+        .unwrap();
     let MessageResponse::FileDescriptorResponse(descriptors) = response else {
-        panic!("reflection returned the wrong response kind");
+        anyhow::bail!("reflection returned the wrong response kind");
     };
     assert!(
         descriptors
@@ -481,19 +463,19 @@ async fn health_and_reflection_require_authentication_and_requests_are_bounded()
                 date: None,
             }),
             &server.token,
-        ))
+        )?)
         .await
-        .expect_err("server rejects a request beyond its message limit");
+        .unwrap_err();
     assert_eq!(oversized.code(), Code::OutOfRange);
 
-    server.finish().await;
+    server.finish().await
 }
 
 #[tokio::test]
-async fn shutdown_publishes_not_serving_and_bounds_an_unanswered_stream() {
-    let mut server = TestServer::start(Duration::from_millis(100)).await;
-    let task_id = server.add_project_and_task().await;
-    let channel = server.channel().await;
+async fn shutdown_publishes_not_serving_and_bounds_an_unanswered_stream() -> anyhow::Result<()> {
+    let mut server = TestServer::start(Duration::from_millis(100)).await?;
+    let task_id = server.add_project_and_task().await?;
+    let channel = server.channel().await?;
 
     let mut health = HealthClient::new(channel.clone())
         .watch(authenticated(
@@ -501,34 +483,24 @@ async fn shutdown_publishes_not_serving_and_bounds_an_unanswered_stream() {
                 service: String::new(),
             }),
             &server.token,
-        ))
+        )?)
         .await
-        .expect("open authenticated health watch")
+        .unwrap()
         .into_inner();
     assert_eq!(
-        health
-            .message()
-            .await
-            .expect("read initial health")
-            .expect("initial health exists")
-            .status,
+        health.message().await.unwrap().unwrap().status,
         ServingStatus::Serving as i32
     );
 
-    let (_sender, _remove) = server.open_remove_confirmation(&task_id).await;
+    let (_sender, _remove) = server.open_remove_confirmation(&task_id).await?;
 
-    server.begin_shutdown();
-    server.wait_for(ServerState::NotServing).await;
+    server.begin_shutdown()?;
+    server.wait_for(ServerState::NotServing).await?;
     assert_eq!(
-        health
-            .message()
-            .await
-            .expect("read shutdown health")
-            .expect("shutdown health exists")
-            .status,
+        health.message().await.unwrap().unwrap().status,
         ServingStatus::NotServing as i32
     );
-    server.finish().await;
+    server.finish().await
 }
 
 fn session_request(task_id: &str) -> v1::PlanSessionRequest {
@@ -550,28 +522,33 @@ fn rpc_status(error: ClientError) -> Status {
     status
 }
 
-fn authenticated<T>(mut request: Request<T>, token: &CapabilityToken) -> Request<T> {
-    request.metadata_mut().insert(
-        "authorization",
-        format!("Bearer {}", token.expose_secret())
-            .parse()
-            .expect("capability is valid metadata"),
-    );
+fn authenticated<T>(
+    mut request: Request<T>,
+    token: &CapabilityToken,
+) -> anyhow::Result<Request<T>> {
+    let authorization = format!("Bearer {}", token.expose_secret()).parse()?;
     request
+        .metadata_mut()
+        .insert("authorization", authorization);
+    Ok(request)
 }
 
-async fn wait_for_state(lifecycle: &mut watch::Receiver<ServerState>, expected: ServerState) {
-    tokio::time::timeout(TEST_TIMEOUT, async {
-        loop {
-            if *lifecycle.borrow_and_update() == expected {
-                return;
-            }
-            lifecycle
-                .changed()
-                .await
-                .expect("server lifecycle remains observable");
+async fn wait_for_state(
+    lifecycle: &mut watch::Receiver<ServerState>,
+    expected: ServerState,
+) -> anyhow::Result<()> {
+    tokio::time::timeout(TEST_TIMEOUT, observe_state(lifecycle, expected)).await??;
+    Ok(())
+}
+
+async fn observe_state(
+    lifecycle: &mut watch::Receiver<ServerState>,
+    expected: ServerState,
+) -> anyhow::Result<()> {
+    loop {
+        if *lifecycle.borrow_and_update() == expected {
+            return Ok(());
         }
-    })
-    .await
-    .unwrap_or_else(|_| panic!("server did not reach {expected:?}"));
+        lifecycle.changed().await?;
+    }
 }

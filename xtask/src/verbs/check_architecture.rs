@@ -204,17 +204,16 @@ fn collect_violations(metadata: &Metadata) -> Vec<String> {
             .dependencies
             .iter()
             .filter(|dependency| dependency.kind == DependencyKind::Normal)
+            .filter(|dependency| policy.forbidden.contains(&dependency.name.as_str()))
         {
-            if policy.forbidden.contains(&dependency.name.as_str()) {
-                let manifest = package
-                    .manifest_path
-                    .strip_prefix(&metadata.workspace_root)
-                    .unwrap_or(&package.manifest_path);
-                violations.push(format!(
-                    "{manifest}: [{}] {} -> {}: {}",
-                    policy.label, policy.from, dependency.name, policy.reason,
-                ));
-            }
+            let manifest = package
+                .manifest_path
+                .strip_prefix(&metadata.workspace_root)
+                .unwrap_or(&package.manifest_path);
+            violations.push(format!(
+                "{manifest}: [{}] {} -> {}: {}",
+                policy.label, policy.from, dependency.name, policy.reason,
+            ));
         }
     }
 
@@ -233,7 +232,7 @@ mod tests {
 
     #[test]
     fn rejects_forbidden_product_edges() {
-        let workspace = tempfile::tempdir().expect("create temporary workspace");
+        let workspace = tempfile::tempdir().unwrap();
         write_workspace(
             workspace.path(),
             &[
@@ -297,7 +296,7 @@ mod tests {
 
     #[test]
     fn accepts_inward_and_development_edges() {
-        let workspace = tempfile::tempdir().expect("create temporary workspace");
+        let workspace = tempfile::tempdir().unwrap();
         write_workspace(
             workspace.path(),
             &[
@@ -344,7 +343,7 @@ mod tests {
             .manifest_path(root.join("Cargo.toml"))
             .no_deps()
             .exec()
-            .expect("read fixture metadata");
+            .unwrap();
         collect_violations(&metadata)
     }
 
@@ -358,11 +357,11 @@ mod tests {
             root.join("Cargo.toml"),
             format!("[workspace]\nresolver = \"3\"\nmembers = [{members}]\n"),
         )
-        .expect("write workspace manifest");
+        .unwrap();
 
         for (directory, name, dependencies) in packages {
             let package = root.join(directory);
-            fs::create_dir_all(package.join("src")).expect("create package source directory");
+            fs::create_dir_all(package.join("src")).unwrap();
             fs::write(
                 package.join("Cargo.toml"),
                 format!(
@@ -370,8 +369,8 @@ mod tests {
                      {dependencies}"
                 ),
             )
-            .expect("write package manifest");
-            fs::write(package.join("src/lib.rs"), "").expect("write package source");
+            .unwrap();
+            fs::write(package.join("src/lib.rs"), "").unwrap();
         }
     }
 }

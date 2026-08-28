@@ -89,25 +89,25 @@ mod tests {
 
     fn note() -> ProjectNote {
         ProjectNote {
-            id: NoteId::try_new("PWF-NOTE-0007").unwrap(),
+            id: NoteId::try_new("FOO-NOTE-0007").unwrap(),
             title: NoteTitle::try_new("remember milk").unwrap(),
         }
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn full_prefixless_and_bare_identifiers_resolve(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
+        insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
         for identifier in [
-            "PWF-NOTE-0007",
-            concat!("pwf", "-note-0007"),
+            "FOO-NOTE-0007",
+            concat!("foo", "-note-0007"),
             "note-0007",
             "7",
         ] {
-            let store = InMemoryStore::default().with_project_notes("pwf", vec![note()]);
+            let store = InMemoryStore::default().with_project_notes("foo", vec![note()]);
 
             let removed = remove_note::execute(
                 RemoveNote {
-                    project_selector: "PWF".parse().unwrap(),
+                    project_selector: "FOO".parse().unwrap(),
                     selector: identifier.parse().unwrap(),
                 },
                 &store,
@@ -116,19 +116,19 @@ mod tests {
             .await
             .unwrap();
 
-            assert_eq!(removed.as_ref(), "PWF-NOTE-0007");
-            assert!(store.project_notes("pwf").is_empty());
+            assert_eq!(removed.as_ref(), "FOO-NOTE-0007");
+            assert!(store.project_notes("foo").is_empty());
         }
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn missing_note_wins_over_adapter_delete_failure(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
+        insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
         let store = InMemoryStore::default().with_failure(ProjectNoteFailure::Delete);
 
         let error = remove_note::execute(
             RemoveNote {
-                project_selector: "pwf".parse().unwrap(),
+                project_selector: "foo".parse().unwrap(),
                 selector: "1".parse().unwrap(),
             },
             &store,
@@ -142,19 +142,19 @@ mod tests {
             RemoveNoteError::NoSuchNote {
                 ref id,
                 ref project,
-            } if id.as_ref() == "PWF-NOTE-0001" && project.as_ref() == "pwf"
+            } if id.as_ref() == "FOO-NOTE-0001" && project.as_ref() == "foo"
         ));
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn identifier_from_another_project_is_rejected(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
+        insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
         let store = InMemoryStore::default();
 
         let error = remove_note::execute(
             RemoveNote {
-                project_selector: "pwf".parse().unwrap(),
-                selector: "FOO-NOTE-0001".parse().unwrap(),
+                project_selector: "foo".parse().unwrap(),
+                selector: "BAR-NOTE-0001".parse().unwrap(),
             },
             &store,
             &pool,
@@ -167,8 +167,8 @@ mod tests {
             RemoveNoteError::ProjectMismatch {
                 ref selector,
                 ref project_id,
-            } if selector.to_string() == "FOO-NOTE-0001"
-                && project_id == &ProjectId::try_new("PWF").unwrap()
+            } if selector.to_string() == "BAR-NOTE-0001"
+                && project_id == &ProjectId::try_new("FOO").unwrap()
         ));
     }
 
@@ -177,9 +177,12 @@ mod tests {
         let error = RemoveNoteError::Store(anyhow::Error::new(SentinelStoreError));
 
         assert_eq!(error.to_string(), "sentinel store failure");
-        let RemoveNoteError::Store(source) = error else {
-            panic!("expected the store error");
+        let source = match error {
+            RemoveNoteError::Store(source) => Some(source),
+            _ => None,
         };
+        assert!(source.is_some());
+        let source = source.unwrap();
         assert!(source.downcast_ref::<SentinelStoreError>().is_some());
         assert_eq!(source.root_cause().to_string(), "sentinel store failure");
     }

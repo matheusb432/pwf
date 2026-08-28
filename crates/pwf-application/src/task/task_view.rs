@@ -190,12 +190,12 @@ mod tests {
         TaskRecord {
             body: body.to_string(),
             source: String::new(),
-            locator: TaskNotePath::new("/notes/pwf/PWF-0001.md".into()),
+            locator: TaskNotePath::new("/notes/foo/FOO-0001.md".into()),
             placement: Some(IndexPlacement {
-                index_path: TaskIndexPath::new("/notes/pwf/pwf.md".into()),
+                index_path: TaskIndexPath::new("/notes/foo/foo.md".into()),
                 line: NonZeroUsize::new(7).unwrap(),
             }),
-            ..task_record("PWF-0001")
+            ..task_record("FOO-0001")
         }
     }
 
@@ -218,7 +218,7 @@ mod tests {
         let enriched = enrich(&record("body"), &project_path()).unwrap();
         assert_eq!(
             enriched.location.index_path().as_path(),
-            std::path::Path::new("/notes/pwf/pwf.md")
+            std::path::Path::new("/notes/foo/foo.md")
         );
         assert_eq!(enriched.location.line().get(), 7);
     }
@@ -235,7 +235,7 @@ mod tests {
     fn missing_note_wikilink_needs_attention_with_missing_note_issue() {
         let mut rec = record("");
         rec.materialization = Materialization::MissingNote {
-            expected: TaskNotePath::new("/notes/pwf/PWF-0001.md".into()),
+            expected: TaskNotePath::new("/notes/foo/FOO-0001.md".into()),
         };
 
         let enriched = enrich(&rec, &project_path()).unwrap();
@@ -246,7 +246,7 @@ mod tests {
             enriched.launch.issues(),
             [
                 TaskIssue::MissingNote {
-                    path: TaskNotePath::new("/notes/pwf/PWF-0001.md".into()),
+                    path: TaskNotePath::new("/notes/foo/FOO-0001.md".into()),
                 },
                 TaskIssue::PlaceholderPrompt,
             ]
@@ -277,7 +277,7 @@ mod tests {
         rec.title = "  ".to_string();
         assert_eq!(
             enrich(&rec, &project_path()).unwrap().heading.as_ref(),
-            "PWF-0001"
+            "FOO-0001"
         );
     }
 
@@ -297,13 +297,13 @@ mod tests {
 
     #[test]
     fn derive_flags_orders_missing_note_before_placeholder() {
-        let missing = TaskNotePath::new("/notes/pwf/PWF-0009.md".into());
+        let missing = TaskNotePath::new("/notes/foo/FOO-0009.md".into());
         let flags = derive_flags(&TaskPrompt::default(), Some(&missing));
         assert_eq!(
             flags.launch.issues(),
             [
                 TaskIssue::MissingNote {
-                    path: TaskNotePath::new("/notes/pwf/PWF-0009.md".into()),
+                    path: TaskNotePath::new("/notes/foo/FOO-0009.md".into()),
                 },
                 TaskIssue::PlaceholderPrompt,
             ]

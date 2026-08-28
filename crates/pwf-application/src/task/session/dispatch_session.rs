@@ -132,16 +132,17 @@ mod tests {
             error.source().unwrap().to_string(),
             "inline process unavailable"
         );
-        let DispatchSessionError::NamedThreadBackend {
-            source: dispatch_error,
-            ..
-        } = error
-        else {
-            panic!("expected the named thread error");
+        let dispatch_error = match error {
+            DispatchSessionError::NamedThreadBackend { source, .. } => Some(source),
+            _ => None,
         };
-        let DispatchSessionError::AgentPreparation { source } = *dispatch_error else {
-            panic!("expected the agent preparation error");
+        assert!(dispatch_error.is_some());
+        let source = match *dispatch_error.unwrap() {
+            DispatchSessionError::AgentPreparation { source } => Some(source),
+            _ => None,
         };
+        assert!(source.is_some());
+        let source = source.unwrap();
         assert!(source.downcast_ref::<SentinelError>().is_some());
         assert_eq!(
             source.root_cause().to_string(),

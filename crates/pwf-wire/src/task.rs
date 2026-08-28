@@ -143,9 +143,7 @@ impl TaskLaneEdits {
     pub fn new(additions: TaskLanes, removals: impl IntoIterator<Item = TaskLane>) -> Self {
         let mut normalized_removals = Vec::new();
         for lane in removals {
-            if !normalized_removals.contains(&lane) {
-                normalized_removals.push(lane);
-            }
+            push_unseen_lane(&mut normalized_removals, lane);
         }
         Self {
             additions,
@@ -166,6 +164,12 @@ impl TaskLaneEdits {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.additions.is_empty() && self.removals.is_empty()
+    }
+}
+
+fn push_unseen_lane(lanes: &mut Vec<TaskLane>, lane: TaskLane) {
+    if !lanes.contains(&lane) {
+        lanes.push(lane);
     }
 }
 
@@ -868,11 +872,12 @@ impl TaskLaunch {
 
 impl fmt::Display for TaskLaunch {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for (index, issue) in self.issues.iter().enumerate() {
-            if index > 0 {
-                formatter.write_str("; ")?;
-            }
-            write!(formatter, "{issue}")?;
+        let mut issues = self.issues.iter();
+        if let Some(first) = issues.next() {
+            write!(formatter, "{first}")?;
+        }
+        for issue in issues {
+            write!(formatter, "; {issue}")?;
         }
         Ok(())
     }

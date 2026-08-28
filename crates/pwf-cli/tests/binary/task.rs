@@ -6,7 +6,7 @@ use crate::support::{ManagedProject, command, project_id, task_id, task_json};
 
 #[test]
 fn machine_add_maps_each_explicit_value_without_parsing_lane_markers() {
-    let fixture = ManagedProject::new(&project_id("FOO"), "foo-bar");
+    let fixture = ManagedProject::new(&project_id("FOO").unwrap(), "foo-bar").unwrap();
 
     fixture
         .database
@@ -31,7 +31,7 @@ fn machine_add_maps_each_explicit_value_without_parsing_lane_markers() {
         .assert()
         .success();
 
-    let task = task_json(&fixture.database, &task_id("FOO-0001"));
+    let task = task_json(&fixture.database, &task_id("FOO-0001").unwrap()).unwrap();
     assert_eq!(task["title"], "ship parser");
     assert_eq!(
         task["prompt"],
@@ -41,7 +41,7 @@ fn machine_add_maps_each_explicit_value_without_parsing_lane_markers() {
 
 #[test]
 fn root_edit_replaces_lane_collections_with_explicit_remove_then_add_actions() {
-    let fixture = ManagedProject::new(&project_id("FOO"), "foo-bar");
+    let fixture = ManagedProject::new(&project_id("FOO").unwrap(), "foo-bar").unwrap();
     fixture
         .database
         .command()
@@ -87,7 +87,7 @@ fn root_edit_replaces_lane_collections_with_explicit_remove_then_add_actions() {
         .assert()
         .success();
 
-    let task = task_json(&fixture.database, &task_id("FOO-0001"));
+    let task = task_json(&fixture.database, &task_id("FOO-0001").unwrap()).unwrap();
     assert_eq!(task["title"], "edited task");
     assert_eq!(
         task["prompt"],
@@ -135,14 +135,14 @@ fn task_help_exposes_only_the_supported_add_and_edit_contract() {
 
 #[test]
 fn shorthand_and_machine_lane_inputs_conflict_before_mutation() {
-    let fixture = ManagedProject::new(&project_id("FOO"), "foo-bar");
+    let fixture = ManagedProject::new(&project_id("FOO").unwrap(), "foo-bar").unwrap();
     fixture
         .database
         .command()
         .args(["add", "foo-bar", "original / keep this goal"])
         .assert()
         .success();
-    let before = task_json(&fixture.database, &task_id("FOO-0001"));
+    let before = task_json(&fixture.database, &task_id("FOO-0001").unwrap()).unwrap();
 
     fixture
         .database
@@ -158,13 +158,16 @@ fn shorthand_and_machine_lane_inputs_conflict_before_mutation() {
         .assert()
         .failure();
 
-    assert_eq!(task_json(&fixture.database, &task_id("FOO-0001")), before);
+    assert_eq!(
+        task_json(&fixture.database, &task_id("FOO-0001").unwrap()).unwrap(),
+        before
+    );
 }
 
 #[test]
 #[cfg(target_os = "linux")]
 fn remove_prompt_identifies_closed_status_before_deletion() {
-    let fixture = ManagedProject::new(&project_id("FOO"), "foo-bar");
+    let fixture = ManagedProject::new(&project_id("FOO").unwrap(), "foo-bar").unwrap();
     fixture
         .database
         .command()

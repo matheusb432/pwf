@@ -4,7 +4,10 @@ use pwf_models::{
 };
 use pwf_wire::{
     project::ProjectStatusFilter,
-    task::{CollectionEdit, EditTask, EditTaskContent, EditTaskContentKind, EditedTask, ValueEdit},
+    task::{
+        CollectionEdit, EditTask, EditTaskContent, EditTaskContentKind, EditedTask, RawTaskTags,
+        ValueEdit,
+    },
 };
 
 use super::{
@@ -264,20 +267,26 @@ fn resolve_tags(
         CollectionEdit::Replace(tags) => Ok(NullablePatch::Set(tags.clone())),
         CollectionEdit::Append(appended) => {
             let resolved = match record.tags.as_ref() {
-                Some(existing) => {
-                    let existing = tags::parse_frontmatter(existing).map_err(|error| {
-                        EditTaskError::InvalidTagsFrontmatter {
-                            id: id.clone(),
-                            raw: error.raw().to_string(),
-                        }
-                    })?;
-                    existing.merge(appended)
-                }
+                Some(existing) => merge_appended_tags(id, existing, appended)?,
                 None => appended.clone(),
             };
             Ok(NullablePatch::Set(resolved))
         }
     }
+}
+
+fn merge_appended_tags(
+    id: &TaskId,
+    existing: &RawTaskTags,
+    appended: &TaskTags,
+) -> Result<TaskTags, EditTaskError> {
+    let existing = tags::parse_frontmatter(existing).map_err(|error| {
+        EditTaskError::InvalidTagsFrontmatter {
+            id: id.clone(),
+            raw: error.raw().to_string(),
+        }
+    })?;
+    Ok(existing.merge(appended))
 }
 
 fn persist(

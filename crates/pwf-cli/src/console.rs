@@ -16,6 +16,7 @@ pub struct Console {
 
 impl Console {
     /// Reads process TTY and color environment state; call only from the binary edge.
+    #[must_use]
     pub fn from_terminal() -> Self {
         use std::io::IsTerminal;
 

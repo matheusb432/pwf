@@ -12,7 +12,7 @@ pub(crate) async fn insert_project(
 ) {
     let project_id = project_id
         .parse::<pwf_models::project::ProjectId>()
-        .expect("valid test project ID");
+        .unwrap();
     let source_id = sqlx::query(
         "INSERT INTO project_sources (kind, value, created_at)
          VALUES ('directory', ?, '2026-07-26T00:00:00.000Z')",

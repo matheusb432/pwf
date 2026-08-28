@@ -159,33 +159,33 @@ mod tests {
         ports::task_record::{StoredBlockedBy, TaskRecord},
         task::get_task,
         testing::{
-            InMemoryStore, PWF_0001_SOURCE, ProjectNoteFailure, app_date, insert_project,
+            FOO_0001_SOURCE, InMemoryStore, ProjectNoteFailure, app_date, insert_project,
             staged_missing_task, staged_task, stored_blocked_by, task_record,
         },
     };
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn get_streams_source_verbatim(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
+        insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
         let (store, _) = staged_task();
         let query = GetTask {
-            id: TaskId::try_new("PWF-0001").unwrap(),
+            id: TaskId::try_new("FOO-0001").unwrap(),
             output: TaskReadFormat::Markdown,
         };
 
         let gotten = get_task::execute(&query, &store, &pool).await.unwrap();
 
-        assert_eq!(gotten, TaskRead::Markdown(PWF_0001_SOURCE.to_string()));
+        assert_eq!(gotten, TaskRead::Markdown(FOO_0001_SOURCE.to_string()));
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn get_path_returns_missing_note_locator_without_reading_markdown(
         pool: sqlx::SqlitePool,
     ) {
-        insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
+        insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
         let (store, _) = staged_missing_task();
         let query = GetTask {
-            id: TaskId::try_new("PWF-0002").unwrap(),
+            id: TaskId::try_new("FOO-0002").unwrap(),
             output: TaskReadFormat::Path,
         };
 
@@ -193,17 +193,17 @@ mod tests {
 
         assert_eq!(
             gotten,
-            TaskRead::Path(TaskNotePath::new("/notes/pwf/PWF-0002.md".into()))
+            TaskRead::Path(TaskNotePath::new("/notes/foo/FOO-0002.md".into()))
         );
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn get_markdown_preserves_missing_note_source_error(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
+        insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
         let (store, _) = staged_missing_task();
         let store = store.with_failure(ProjectNoteFailure::Read);
         let query = GetTask {
-            id: TaskId::try_new("PWF-0002").unwrap(),
+            id: TaskId::try_new("FOO-0002").unwrap(),
             output: TaskReadFormat::Markdown,
         };
 
@@ -217,9 +217,9 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn data_read_validates_and_types_persisted_task_fields(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
+        insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
         let store = InMemoryStore::default().with_project(
-            "pwf",
+            "foo",
             vec![TaskRecord {
                 title: "Typed task".to_string(),
                 status: TaskStatus::Done,
@@ -230,13 +230,13 @@ mod tests {
                 blocked_by: stored_blocked_by(&["AUX-0014"]),
                 section: Some("Human".parse().unwrap()),
                 body: "\n  authored body  \n".to_string(),
-                ..task_record("PWF-0001")
+                ..task_record("FOO-0001")
             }],
         );
 
         let read = get_task::execute(
             &GetTask {
-                id: "PWF-0001".parse().unwrap(),
+                id: "FOO-0001".parse().unwrap(),
                 output: TaskReadFormat::Data,
             },
             &store,
@@ -244,9 +244,12 @@ mod tests {
         )
         .await
         .unwrap();
-        let TaskRead::Data(task) = read else {
-            panic!("expected typed task data");
+        let task = match read {
+            TaskRead::Data(task) => Some(task),
+            _ => None,
         };
+        assert!(task.is_some());
+        let task = task.unwrap();
 
         assert_eq!(task.title.as_ref(), "typed task");
         assert_eq!(task.commits.as_ref().map(AsRef::as_ref), Some("a..b, c..d"));
@@ -262,18 +265,18 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn data_read_reports_an_invalid_persisted_title(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
+        insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
         let store = InMemoryStore::default().with_project(
-            "pwf",
+            "foo",
             vec![TaskRecord {
                 title: "x".repeat(201),
-                ..task_record("PWF-0001")
+                ..task_record("FOO-0001")
             }],
         );
 
         let error = get_task::execute(
             &GetTask {
-                id: "PWF-0001".parse().unwrap(),
+                id: "FOO-0001".parse().unwrap(),
                 output: TaskReadFormat::Data,
             },
             &store,
@@ -293,21 +296,21 @@ mod tests {
     async fn data_read_reports_malformed_blocked_by_with_task_path_and_raw_value(
         pool: sqlx::SqlitePool,
     ) {
-        insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
+        insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
         let store = InMemoryStore::default().with_project(
-            "pwf",
+            "foo",
             vec![TaskRecord {
                 blocked_by: StoredBlockedBy::Malformed {
                     raw: "\"[[AUX-0001]]\"".to_string(),
                     reason: "expected a sequence".to_string(),
                 },
-                ..task_record("PWF-0001")
+                ..task_record("FOO-0001")
             }],
         );
 
         let error = get_task::execute(
             &GetTask {
-                id: "PWF-0001".parse().unwrap(),
+                id: "FOO-0001".parse().unwrap(),
                 output: TaskReadFormat::Data,
             },
             &store,
@@ -319,8 +322,8 @@ mod tests {
         assert!(matches!(
             error,
             GetTaskError::MalformedBlockedBy { ref id, ref path, ref raw, .. }
-                if id.as_ref() == "PWF-0001"
-                    && path.as_path() == std::path::Path::new("/mem/foo-bar/PWF-0001.md")
+                if id.as_ref() == "FOO-0001"
+                    && path.as_path() == std::path::Path::new("/mem/foo-bar/FOO-0001.md")
                     && raw.as_ref() == "\"[[AUX-0001]]\""
         ));
     }

@@ -2,9 +2,9 @@ use clap::Args;
 use pwf_client::{
     task::{Confirmation, ConfirmationPrompt, ConfirmedRequestError, TaskClient},
     v1::{
-        Agent, AgentAvailability, BlockedByResolutionKind, DispatchMode, DispatchSessionOutcome,
-        LaunchDirectives, PlanSessionIntent, PlanSessionRequest, SessionEffort, SessionWarning,
-        TaskStatus, session_warning,
+        Agent, AgentAvailability, BlockedByResolutionKind, BlockedByStatus, DispatchMode,
+        DispatchSessionOutcome, LaunchDirectives, PlanSessionIntent, PlanSessionRequest,
+        SessionEffort, SessionWarning, TaskStatus, session_warning,
     },
 };
 use pwf_models::session::PushedPrompt;
@@ -271,35 +271,7 @@ fn render_session_warnings(warnings: &[SessionWarning]) -> Option<String> {
     for warning in warnings {
         let line = match warning.value.as_ref() {
             Some(session_warning::Value::BlockedBy(blocked_by)) => {
-                let title = blocked_by
-                    .title
-                    .as_deref()
-                    .map(|title| format!(": {title}"))
-                    .unwrap_or_default();
-                match BlockedByResolutionKind::try_from(blocked_by.resolution).ok() {
-                    Some(BlockedByResolutionKind::Found) => {
-                        format!(
-                            "  - {} ({}){title}",
-                            blocked_by.id,
-                            status_name(blocked_by.status)
-                        )
-                    }
-                    Some(BlockedByResolutionKind::Missing) => {
-                        format!("  - {} (missing; ignored as a blocker)", blocked_by.id)
-                    }
-                    Some(BlockedByResolutionKind::Unavailable) => format!(
-                        "  - {} (unavailable: {})",
-                        blocked_by.id,
-                        blocked_by
-                            .reason
-                            .as_deref()
-                            .unwrap_or("unknown")
-                            .replace(['\r', '\n'], " ")
-                    ),
-                    Some(BlockedByResolutionKind::Unspecified) | None => {
-                        format!("  - {} (unavailable: invalid status)", blocked_by.id)
-                    }
-                }
+                render_blocked_by_warning(blocked_by)
             }
             Some(session_warning::Value::BlockedByMetadata(issue)) => format!(
                 "  - Malformed blocked_by metadata {:?} in {}: {}",
@@ -314,6 +286,36 @@ fn render_session_warnings(warnings: &[SessionWarning]) -> Option<String> {
             .to_string(),
     );
     Some(lines.join("\n"))
+}
+
+fn render_blocked_by_warning(blocked_by: &BlockedByStatus) -> String {
+    let title = blocked_by
+        .title
+        .as_deref()
+        .map(|title| format!(": {title}"))
+        .unwrap_or_default();
+    match BlockedByResolutionKind::try_from(blocked_by.resolution).ok() {
+        Some(BlockedByResolutionKind::Found) => format!(
+            "  - {} ({}){title}",
+            blocked_by.id,
+            status_name(blocked_by.status)
+        ),
+        Some(BlockedByResolutionKind::Missing) => {
+            format!("  - {} (missing; ignored as a blocker)", blocked_by.id)
+        }
+        Some(BlockedByResolutionKind::Unavailable) => format!(
+            "  - {} (unavailable: {})",
+            blocked_by.id,
+            blocked_by
+                .reason
+                .as_deref()
+                .unwrap_or("unknown")
+                .replace(['\r', '\n'], " ")
+        ),
+        Some(BlockedByResolutionKind::Unspecified) | None => {
+            format!("  - {} (unavailable: invalid status)", blocked_by.id)
+        }
+    }
 }
 
 fn status_name(value: Option<i32>) -> &'static str {
@@ -388,7 +390,7 @@ mod tests {
             },
             SessionWarning {
                 value: Some(session_warning::Value::BlockedByMetadata(BlockedByIssue {
-                    path: "/tasks/PWF-0001.md".to_string(),
+                    path: "/tasks/FOO-0001.md".to_string(),
                     raw: "\"[[AUX-0001]]\"".to_string(),
                     reason: "expected a sequence".to_string(),
                 })),
@@ -403,7 +405,7 @@ mod tests {
                 "warning: blocked_by information for this session:\n",
                 "  - AUX-0002 (active): prepare prior art\n",
                 "  - AUX-9999 (missing; ignored as a blocker)\n",
-                "  - Malformed blocked_by metadata \"\\\"[[AUX-0001]]\\\"\" in /tasks/PWF-0001.md: expected a sequence\n",
+                "  - Malformed blocked_by metadata \"\\\"[[AUX-0001]]\\\"\" in /tasks/FOO-0001.md: expected a sequence\n",
                 "session will continue; resolve active or cancelled blockers first when they still apply."
             )
         );

@@ -5,7 +5,7 @@ use crate::support::{ManagedProject, project_id, task_id, task_json};
 
 #[test]
 fn completing_a_task_can_create_a_review_task() {
-    let fixture = ManagedProject::new(&project_id("FOO"), "foo-bar");
+    let fixture = ManagedProject::new(&project_id("FOO").unwrap(), "foo-bar").unwrap();
     fixture
         .database
         .command()
@@ -26,7 +26,7 @@ fn completing_a_task_can_create_a_review_task() {
         .assert()
         .success();
 
-    let review = task_json(&fixture.database, &task_id("FOO-0002"));
+    let review = task_json(&fixture.database, &task_id("FOO-0002").unwrap()).unwrap();
     assert_eq!(review["status"], "active");
     assert_eq!(review["section"], "Human");
     assert_eq!(review["title"], "review foo-0001, commits; a..b");
@@ -45,7 +45,7 @@ fn completing_a_task_can_create_a_review_task() {
 
 #[test]
 fn task_lifecycle_is_observable_through_json() {
-    let fixture = ManagedProject::new(&project_id("FOO"), "foo-bar");
+    let fixture = ManagedProject::new(&project_id("FOO").unwrap(), "foo-bar").unwrap();
     fixture
         .database
         .command()
@@ -81,7 +81,7 @@ fn task_lifecycle_is_observable_through_json() {
         .assert()
         .success();
 
-    let active = task_json(&fixture.database, &task_id("FOO-0002"));
+    let active = task_json(&fixture.database, &task_id("FOO-0002").unwrap()).unwrap();
     assert_eq!(active["id"], "FOO-0002");
     assert_eq!(active["project"], "foo-bar");
     assert_eq!(active["title"], "just done");
@@ -106,7 +106,7 @@ fn task_lifecycle_is_observable_through_json() {
         ])
         .assert()
         .success();
-    let updated = task_json(&fixture.database, &task_id("FOO-0002"));
+    let updated = task_json(&fixture.database, &task_id("FOO-0002").unwrap()).unwrap();
     assert_eq!(updated["title"], "ship it");
     assert_eq!(updated["tags"], json!(["rust"]));
     assert_eq!(updated["effort"], Value::Null);
@@ -118,7 +118,7 @@ fn task_lifecycle_is_observable_through_json() {
         .args(["done", "FOO-0002", "--commits", "a..b"])
         .assert()
         .success();
-    let done = task_json(&fixture.database, &task_id("FOO-0002"));
+    let done = task_json(&fixture.database, &task_id("FOO-0002").unwrap()).unwrap();
     assert_eq!(done["status"], "done");
     assert!(done["completed"].as_str().is_some());
     assert_eq!(done["commits"], "a..b");
@@ -129,7 +129,7 @@ fn task_lifecycle_is_observable_through_json() {
         .args(["reopen", "FOO-0002", "--yes"])
         .assert()
         .success();
-    let reopened = task_json(&fixture.database, &task_id("FOO-0002"));
+    let reopened = task_json(&fixture.database, &task_id("FOO-0002").unwrap()).unwrap();
     assert_eq!(reopened["status"], "active");
     assert_eq!(reopened["completed"], Value::Null);
     assert_eq!(reopened["commits"], Value::Null);

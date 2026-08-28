@@ -100,7 +100,7 @@ mod tests {
 
     fn note(number: u32, title: &str) -> ProjectNote {
         ProjectNote {
-            id: NoteId::try_new(format!("PWF-NOTE-{number:04}")).unwrap(),
+            id: NoteId::try_new(format!("FOO-NOTE-{number:04}")).unwrap(),
             title: NoteTitle::try_new(title).unwrap(),
         }
     }
@@ -121,10 +121,10 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn maximum_suffix_allocates_the_next_identifier(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
-        for project_selector in ["pwf", "PWF"] {
+        insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
+        for project_selector in ["foo", "FOO"] {
             let store = InMemoryStore::default().with_project_notes(
-                "pwf",
+                "foo",
                 vec![note(2, "two"), note(9, "nine"), note(4, "four")],
             );
 
@@ -132,35 +132,35 @@ mod tests {
                 .await
                 .unwrap();
 
-            assert_eq!(added.id.as_ref(), "PWF-NOTE-0010");
+            assert_eq!(added.id.as_ref(), "FOO-NOTE-0010");
             assert_eq!(added.title.as_ref(), "remember milk");
             assert_eq!(
-                store.project_notes("pwf").last().unwrap().id.as_ref(),
-                "PWF-NOTE-0010"
+                store.project_notes("foo").last().unwrap().id.as_ref(),
+                "FOO-NOTE-0010"
             );
         }
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn explicit_date_overrides_the_clock(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
+        insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
         let store = InMemoryStore::default();
 
-        add_note::execute(command("pwf"), &store, &pool, &FixedClock)
+        add_note::execute(command("foo"), &store, &pool, &FixedClock)
             .await
             .unwrap();
 
         assert_eq!(
-            store.project_note_creations("pwf"),
+            store.project_note_creations("foo"),
             vec!["2026-07-15".parse::<AppDate>().unwrap()]
         );
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn absent_date_uses_the_clock_once(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
+        insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
         let store = InMemoryStore::default();
-        let mut command = command("pwf");
+        let mut command = command("foo");
         command.date = None;
 
         add_note::execute(command, &store, &pool, &FixedClock)
@@ -168,25 +168,25 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            store.project_note_creations("pwf"),
+            store.project_note_creations("foo"),
             vec!["2026-07-26".parse::<AppDate>().unwrap()]
         );
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn exhausted_four_digit_suffix_is_reported_without_inserting(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "PWF", "pwf", "/projects/pwf", "/tasks/pwf", false).await;
-        let store = InMemoryStore::default().with_project_notes("pwf", vec![note(9_999, "last")]);
+        insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
+        let store = InMemoryStore::default().with_project_notes("foo", vec![note(9_999, "last")]);
 
-        let error = add_note::execute(command("pwf"), &store, &pool, &FixedClock)
+        let error = add_note::execute(command("foo"), &store, &pool, &FixedClock)
             .await
             .unwrap_err();
 
         assert!(matches!(
             error,
-            AddNoteError::IdentifierExhausted { ref project } if project.as_ref() == "pwf"
+            AddNoteError::IdentifierExhausted { ref project } if project.as_ref() == "foo"
         ));
-        assert_eq!(store.project_notes("pwf"), vec![note(9_999, "last")]);
+        assert_eq!(store.project_notes("foo"), vec![note(9_999, "last")]);
     }
 
     #[test]
@@ -194,9 +194,12 @@ mod tests {
         let error = AddNoteError::Store(anyhow::Error::new(SentinelStoreError));
 
         assert_eq!(error.to_string(), "sentinel store failure");
-        let AddNoteError::Store(source) = error else {
-            panic!("expected the store error");
+        let source = match error {
+            AddNoteError::Store(source) => Some(source),
+            _ => None,
         };
+        assert!(source.is_some());
+        let source = source.unwrap();
         assert!(source.downcast_ref::<SentinelStoreError>().is_some());
         assert_eq!(source.root_cause().to_string(), "sentinel store failure");
     }

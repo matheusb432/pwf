@@ -28,17 +28,14 @@ mod tests {
 
     #[test]
     fn reopens_only_the_requested_done_link() {
-        let id = match TaskId::try_new("PWF-0001") {
-            Ok(id) => id,
-            Err(error) => panic!("test task ID must be valid: {error}"),
-        };
-        let content = "  - [x] [[PWF-0001|done task]] \u{2705} 2026-08-04\n- [x] [[PWF-0002]]\n";
+        let id = TaskId::try_new("FOO-0001").unwrap();
+        let content = "  - [x] [[FOO-0001|done task]] \u{2705} 2026-08-04\n- [x] [[FOO-0002]]\n";
 
         let updated = reopen_done_link(content, &id);
 
         assert_eq!(
             updated.as_deref(),
-            Some("  - [ ] [[PWF-0001]]\n- [x] [[PWF-0002]]\n")
+            Some("  - [ ] [[FOO-0001]]\n- [x] [[FOO-0002]]\n")
         );
     }
 }

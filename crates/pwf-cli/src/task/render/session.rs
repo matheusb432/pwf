@@ -150,14 +150,14 @@ mod tests {
     #[test]
     fn aborted_and_inline_results_preserve_their_compact_text() {
         assert_eq!(
-            render_session_aborted("PWF-0001"),
-            "# session PWF-0001: aborted\nnothing dispatched.\n"
+            render_session_aborted("FOO-0001"),
+            "# session FOO-0001: aborted\nnothing dispatched.\n"
         );
         let outcome = DispatchedSession {
             outcome: DispatchSessionOutcome::InlineLaunch as i32,
-            task_id: "PWF-0001".to_string(),
+            task_id: "FOO-0001".to_string(),
             inline_launch: Some(InlineLaunch {
-                task_id: "PWF-0001".to_string(),
+                task_id: "FOO-0001".to_string(),
                 argv: vec!["codex".to_string()],
                 working_directory: "/project".to_string(),
             }),
@@ -165,7 +165,7 @@ mod tests {
         };
         assert_eq!(
             render_dispatch(&outcome, false).unwrap(),
-            "# session PWF-0001: ran inline\n"
+            "# session FOO-0001: ran inline\n"
         );
     }
 
@@ -175,10 +175,10 @@ mod tests {
             plan: Some(SessionPlan {
                 launch: Some(AgentLaunch {
                     agent: Agent::Codex as i32,
-                    task_id: "PWF-0001".to_string(),
-                    title: "PWF-0001 - reason carefully".to_string(),
+                    task_id: "FOO-0001".to_string(),
+                    title: "FOO-0001 - reason carefully".to_string(),
                     project_path: "/project".to_string(),
-                    prompt: "Inspect PWF-0001.".to_string(),
+                    prompt: "Inspect FOO-0001.".to_string(),
                     model: None,
                     effort: SessionEffort::High as i32,
                 }),
@@ -191,7 +191,7 @@ mod tests {
                 "model_reasoning_effort=\"high\"".to_string(),
                 "<thread-id returned by thread/start>".to_string(),
                 "--".to_string(),
-                "Inspect PWF-0001.".to_string(),
+                "Inspect FOO-0001.".to_string(),
             ],
             probe: None,
             warnings: Vec::new(),

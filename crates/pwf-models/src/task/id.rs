@@ -110,7 +110,7 @@ mod tests {
 
     #[test]
     fn task_id_accepts_valid_values() {
-        for (raw, number) in [("PW-0047", 47), ("PWF-0047", 47), ("TOOL-9999", 9999)] {
+        for (raw, number) in [("PW-0047", 47), ("FOO-0047", 47), ("TOOL-9999", 9999)] {
             let id = TaskId::try_new(raw).unwrap();
             assert_eq!(id.as_ref(), raw);
             assert_eq!(id.number(), number);
@@ -120,10 +120,10 @@ mod tests {
     #[test]
     fn task_id_from_str_maps_compact_user_input() {
         for (raw, expected) in [
-            ("PWF-0098", "PWF-0098"),
-            ("pwf-0098", "PWF-0098"),
-            ("  pwf-0047  ", "PWF-0047"),
-            ("pwf-98", "PWF-0098"),
+            ("FOO-0098", "FOO-0098"),
+            ("foo-0098", "FOO-0098"),
+            ("  foo-0047  ", "FOO-0047"),
+            ("foo-98", "FOO-0098"),
             ("aux57", "AUX-0057"),
             ("AUX57", "AUX-0057"),
             ("aux-57", "AUX-0057"),
@@ -136,12 +136,12 @@ mod tests {
 
     #[test]
     fn task_id_rejects_invalid_shapes() {
-        assert!(TaskId::try_new("pwf-0047").is_err());
+        assert!(TaskId::try_new("foo-0047").is_err());
         assert!(TaskId::try_new("P-0047").is_err());
         assert!(TaskId::try_new("TOOLS-0047").is_err());
-        assert!(TaskId::try_new("PWF-47").is_err());
+        assert!(TaskId::try_new("FOO-47").is_err());
         assert!(TaskId::try_new("aux57").is_err());
-        assert!(TaskId::try_new("PWF-0047-extra").is_err());
+        assert!(TaskId::try_new("FOO-0047-extra").is_err());
         assert!(TaskId::try_new("TOOLONG-0047").is_err());
         assert!(TaskId::try_new("AUX-99999").is_err());
         assert!(TaskId::try_new("nope").is_err());

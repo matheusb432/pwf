@@ -173,38 +173,97 @@ fn index_placement(index_path: &Path, line: NonZeroUsize) -> IndexPlacement {
     }
 }
 
+fn open_index_placement(index_path: &Path, line: &ParsedIndexLine) -> Option<IndexPlacement> {
+    matches!(line.state, IndexEntryState::Open)
+        .then(|| index_placement(index_path, line.line_number))
+}
+
+fn get_task_record(
+    store: &ObsidianStore,
+    project: &Project,
+    id: &TaskId,
+) -> Result<Option<TaskRecord>, ObsidianStoreError> {
+    let task = store
+        .task_files_for_project(project)?
+        .into_iter()
+        .find(|task| task.id == *id);
+    if let Some(task) = task {
+        let mut record = note_to_record(task.id, &task.path, task.title.as_deref(), task.markdown)?;
+        apply_index_metadata(store, project, id, &mut record)?;
+        return Ok(Some(record));
+    }
+    let Some((index_path, text)) = store.validated_project_index(project)? else {
+        return Ok(None);
+    };
+    Ok(parse_index_lines(&index_path, &text)?
+        .into_iter()
+        .find(|line| line.id == *id)
+        .map(|line| index_entry_to_record(&index_path, &line)))
+}
+
+fn apply_index_metadata(
+    store: &ObsidianStore,
+    project: &Project,
+    id: &TaskId,
+    record: &mut TaskRecord,
+) -> Result<(), ObsidianStoreError> {
+    let Some((index_path, text)) = store.validated_project_index(project)? else {
+        return Ok(());
+    };
+    let Some(line) = parse_index_lines(&index_path, &text)?
+        .into_iter()
+        .find(|line| line.id == *id)
+    else {
+        return Ok(());
+    };
+    record.section.clone_from(&line.section);
+    record.placement = open_index_placement(&index_path, &line);
+    Ok(())
+}
+
+fn list_task_records(
+    store: &ObsidianStore,
+    project: &Project,
+) -> Result<Vec<TaskRecord>, ObsidianStoreError> {
+    let tasks = store.task_files_for_project(project)?;
+    let mut records: Vec<TaskRecord> = tasks
+        .into_iter()
+        .map(|task| note_to_record(task.id, &task.path, task.title.as_deref(), task.markdown))
+        .collect::<Result<_, _>>()?;
+    let Some((index_path, text)) = store.validated_project_index(project)? else {
+        return Ok(records);
+    };
+    for line in parse_index_lines(&index_path, &text)? {
+        merge_index_line(&mut records, &index_path, &line);
+    }
+    Ok(records)
+}
+
+fn merge_index_line(records: &mut Vec<TaskRecord>, index_path: &Path, line: &ParsedIndexLine) {
+    if let Some(record) = records.iter_mut().find(|record| record.id == line.id) {
+        merge_existing_index_line(record, index_path, line);
+        return;
+    }
+    let mut record = index_entry_to_record(index_path, line);
+    record.placement = open_index_placement(index_path, line);
+    records.push(record);
+}
+
+fn merge_existing_index_line(record: &mut TaskRecord, index_path: &Path, line: &ParsedIndexLine) {
+    if record.title.trim().is_empty() {
+        record.title = line.alias.clone().unwrap_or_default();
+    }
+    record.section.clone_from(&line.section);
+    record.placement = open_index_placement(index_path, line);
+}
+
 impl ObsidianStore {
     fn get_task(
         &self,
         project: &Project,
         id: &TaskId,
     ) -> Result<Option<TaskRecord>, ObsidianStoreError> {
-        if let Some(task) = self
-            .task_files_for_project(project)?
-            .into_iter()
-            .find(|task| task.id == *id)
-        {
-            let mut record =
-                note_to_record(task.id, &task.path, task.title.as_deref(), task.markdown)?;
-            if let Some((index_path, text)) = self.validated_project_index(project)?
-                && let Some(line) = parse_index_lines(&index_path, &text)?
-                    .into_iter()
-                    .find(|line| line.id == *id)
-            {
-                record.section = line.section;
-                if matches!(line.state, IndexEntryState::Open) {
-                    record.placement = Some(index_placement(&index_path, line.line_number));
-                }
-            }
-            return Ok(Some(record));
-        }
-        let Some((index_path, text)) = self.validated_project_index(project)? else {
-            return Ok(None);
-        };
-        Ok(parse_index_lines(&index_path, &text)?
-            .into_iter()
-            .find(|line| line.id == *id)
-            .map(|line| index_entry_to_record(&index_path, &line)))
+        get_task_record(self, project, id)
     }
 
     /// Lists every note-backed and index-only task record.
@@ -212,34 +271,7 @@ impl ObsidianStore {
     /// Open index entries contribute placement. Every index entry contributes its raw section; the
     /// application owns lifecycle visibility, normalization, and launchability policy.
     fn list_tasks(&self, project: &Project) -> Result<Vec<TaskRecord>, ObsidianStoreError> {
-        let tasks = self.task_files_for_project(project)?;
-        let mut records: Vec<TaskRecord> = tasks
-            .into_iter()
-            .map(|task| note_to_record(task.id, &task.path, task.title.as_deref(), task.markdown))
-            .collect::<Result<_, _>>()?;
-        let Some((index_path, text)) = self.validated_project_index(project)? else {
-            return Ok(records);
-        };
-        for line in parse_index_lines(&index_path, &text)? {
-            if let Some(record) = records.iter_mut().find(|record| record.id == line.id) {
-                if record.title.trim().is_empty() {
-                    record.title = line.alias.clone().unwrap_or_default();
-                }
-                record.section.clone_from(&line.section);
-                if matches!(&line.state, IndexEntryState::Open) {
-                    record.placement = Some(index_placement(&index_path, line.line_number));
-                }
-                continue;
-            }
-
-            let mut record = index_entry_to_record(&index_path, &line);
-            if matches!(&line.state, IndexEntryState::Open) {
-                record.placement = Some(index_placement(&index_path, line.line_number));
-            }
-            records.push(record);
-        }
-
-        Ok(records)
+        list_task_records(self, project)
     }
 
     fn insert_task(
@@ -359,28 +391,7 @@ impl ObsidianStore {
         line: &ParsedIndexLine,
         patch: &TaskPatch,
     ) -> Result<(), ObsidianStoreError> {
-        match patch.status {
-            Some(TaskStatus::Active) => {
-                if let Some(updated) = done_queue::reopen_done_link(text, &line.id) {
-                    write_index(index_path, &updated)?;
-                }
-                Ok(())
-            }
-            Some(TaskStatus::Done | TaskStatus::Cancelled) => {
-                let completed = match &patch.completed {
-                    NullablePatch::Set(completed) => Some(completed),
-                    NullablePatch::Unchanged | NullablePatch::Clear => None,
-                };
-                let updated = close_index_entry_text(
-                    text,
-                    line.line_number.get(),
-                    completed,
-                    &path_str(index_path),
-                )?;
-                write_index(index_path, &updated)
-            }
-            None => Ok(()),
-        }
+        patch_index_entry(index_path, text, line, patch)
     }
 
     fn delete_task(&self, project: &Project, id: &TaskId) -> Result<(), ObsidianStoreError> {
@@ -393,6 +404,36 @@ impl ObsidianStore {
         };
         std::fs::remove_file(&task.path)
             .map_err(|source| ObsidianStoreError::RemoveTaskFile { source })
+    }
+}
+
+fn patch_index_entry(
+    index_path: &Path,
+    text: &str,
+    line: &ParsedIndexLine,
+    patch: &TaskPatch,
+) -> Result<(), ObsidianStoreError> {
+    match patch.status {
+        Some(TaskStatus::Active) => {
+            if let Some(updated) = done_queue::reopen_done_link(text, &line.id) {
+                write_index(index_path, &updated)?;
+            }
+            Ok(())
+        }
+        Some(TaskStatus::Done | TaskStatus::Cancelled) => {
+            let completed = match &patch.completed {
+                NullablePatch::Set(completed) => Some(completed),
+                NullablePatch::Unchanged | NullablePatch::Clear => None,
+            };
+            let updated = close_index_entry_text(
+                text,
+                line.line_number.get(),
+                completed,
+                &path_str(index_path),
+            )?;
+            write_index(index_path, &updated)
+        }
+        None => Ok(()),
     }
 }
 

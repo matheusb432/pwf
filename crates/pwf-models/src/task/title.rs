@@ -21,13 +21,13 @@ fn normalize_task_title(mut title: String) -> String {
     for character in title.drain(..) {
         if character.is_whitespace() {
             needs_separator = !collapsed.is_empty();
-        } else {
-            if needs_separator {
-                collapsed.push(' ');
-                needs_separator = false;
-            }
-            collapsed.push(character);
+            continue;
         }
+        if needs_separator {
+            collapsed.push(' ');
+            needs_separator = false;
+        }
+        collapsed.push(character);
     }
 
     let safe = yaml_plain_scalar(&collapsed);
@@ -45,15 +45,7 @@ fn yaml_plain_scalar(title: &str) -> String {
     while let Some(character) = characters.next() {
         match character {
             ':' => {
-                let mut run_length = 1;
-                while characters.next_if_eq(&':').is_some() {
-                    run_length += 1;
-                }
-                match characters.peek() {
-                    None => {}
-                    Some(' ') => out.push(';'),
-                    Some(_) => out.extend(std::iter::repeat_n(':', run_length)),
-                }
+                append_colon_run(&mut out, &mut characters);
                 opens_comment = false;
             }
             '#' if opens_comment => {}
@@ -64,6 +56,18 @@ fn yaml_plain_scalar(title: &str) -> String {
         }
     }
     strip_unsafe_leading_characters(out.trim_end()).to_string()
+}
+
+fn append_colon_run(out: &mut String, characters: &mut std::iter::Peekable<std::str::Chars<'_>>) {
+    let mut run_length = 1;
+    while characters.next_if_eq(&':').is_some() {
+        run_length += 1;
+    }
+    match characters.peek() {
+        None => {}
+        Some(' ') => out.push(';'),
+        Some(_) => out.extend(std::iter::repeat_n(':', run_length)),
+    }
 }
 
 fn strip_unsafe_leading_characters(mut value: &str) -> &str {
