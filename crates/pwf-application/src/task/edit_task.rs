@@ -1,6 +1,6 @@
 use pwf_models::{
     project::Project,
-    task::{BlockedBy, EffortTier, TaskId, TaskStatus, TaskTags, TaskTitle, TaskTitleError},
+    task::{BlockedBy, TaskId, TaskStatus, TaskTags, TaskTitle, TaskTitleError},
 };
 use pwf_wire::{
     project::ProjectStatusFilter,
@@ -142,7 +142,8 @@ fn prepare(
         body,
         title,
         blocked_by,
-        effort: resolve_effort(command.edits.effort()),
+        effort: resolve_value(command.edits.effort()),
+        priority: resolve_value(command.edits.priority()),
         tags: resolve_tags(command.edits.tags(), &command.id, record)?,
         ..TaskPatch::default()
     };
@@ -248,10 +249,10 @@ fn map_blocked_by_error(error: BlockedByValidationError) -> EditTaskError {
     }
 }
 
-fn resolve_effort(edit: &ValueEdit<EffortTier>) -> NullablePatch<EffortTier> {
+fn resolve_value<T: Copy>(edit: &ValueEdit<T>) -> NullablePatch<T> {
     match edit {
         ValueEdit::Unchanged => NullablePatch::Unchanged,
-        ValueEdit::Set(effort) => NullablePatch::Set(*effort),
+        ValueEdit::Set(value) => NullablePatch::Set(*value),
         ValueEdit::Clear => NullablePatch::Clear,
     }
 }
@@ -350,7 +351,8 @@ mod tests {
     ) -> EditTask {
         EditTask {
             id: id.parse().unwrap(),
-            edits: TaskEdits::try_new(content, blocked_by, effort, tags).unwrap(),
+            edits: TaskEdits::try_new(content, blocked_by, effort, tags, ValueEdit::Unchanged)
+                .unwrap(),
         }
     }
 

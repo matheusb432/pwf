@@ -1,6 +1,6 @@
 use pwf_models::{
     project::ProjectName,
-    task::{CommitRanges, EffortTier, TaskId, TaskPrompt, TaskTimestamp, TaskTitle},
+    task::{CommitRanges, EffortTier, PriorityTier, TaskId, TaskPrompt, TaskTimestamp, TaskTitle},
 };
 use pwf_wire::task::{GetTask, TaskData, TaskRead, TaskReadFormat};
 
@@ -88,6 +88,7 @@ fn task_data(project: ProjectName, record: TaskRecord) -> Result<TaskData, GetTa
         .transpose()
         .map_err(|error| invalid_task_data("tags", error))?;
     let effort = record.effort.as_deref().map(parse_effort).transpose()?;
+    let priority = record.priority.as_deref().map(parse_priority).transpose()?;
     let blocked_by = match &record.blocked_by {
         StoredBlockedBy::Absent => None,
         StoredBlockedBy::Valid(blocked_by) => Some(blocked_by.clone()),
@@ -115,6 +116,7 @@ fn task_data(project: ProjectName, record: TaskRecord) -> Result<TaskData, GetTa
         commits,
         tags,
         effort,
+        priority,
         blocked_by,
         section: record.section,
         prompt: TaskPrompt::new(record.body.trim()),
@@ -135,6 +137,12 @@ fn parse_effort(raw: &str) -> Result<EffortTier, GetTaskError> {
     raw.trim()
         .parse()
         .map_err(|error| invalid_task_data("effort", error))
+}
+
+fn parse_priority(raw: &str) -> Result<PriorityTier, GetTaskError> {
+    raw.trim()
+        .parse()
+        .map_err(|error| invalid_task_data("priority", error))
 }
 
 fn invalid_task_data(
@@ -227,6 +235,7 @@ mod tests {
                 commits: Some("'a..b, c..d'".to_string()),
                 tags: Some(RawTaskTags::new("[rust, sqlite]")),
                 effort: Some(" high ".to_string()),
+                priority: Some(" highest ".to_string()),
                 blocked_by: stored_blocked_by(&["AUX-0014"]),
                 section: Some("Human".parse().unwrap()),
                 body: "\n  authored body  \n".to_string(),
@@ -254,6 +263,7 @@ mod tests {
         assert_eq!(task.title.as_ref(), "typed task");
         assert_eq!(task.commits.as_ref().map(AsRef::as_ref), Some("a..b, c..d"));
         assert_eq!(task.effort.as_ref().map(AsRef::as_ref), Some("high"));
+        assert_eq!(task.priority.as_ref().map(AsRef::as_ref), Some("highest"));
         assert_eq!(
             task.blocked_by
                 .as_ref()

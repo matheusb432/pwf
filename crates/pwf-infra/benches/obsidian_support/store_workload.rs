@@ -126,6 +126,7 @@ impl InsertWorkload {
                 section: None,
                 blocked_by: Some(blocked_by()),
                 effort: Some(EffortTier::Medium),
+                priority: None,
                 tags: Some(task_tags()),
             }),
         }
@@ -237,6 +238,7 @@ fn update_patch() -> TaskPatch {
         title: None,
         blocked_by: NullablePatch::Set(blocked_by()),
         effort: NullablePatch::Set(EffortTier::High),
+        priority: NullablePatch::Unchanged,
         tags: NullablePatch::Set(task_tags()),
     }
 }

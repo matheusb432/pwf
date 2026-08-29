@@ -1,7 +1,10 @@
 use clap::Args;
 use pwf_client::{
     task::TaskClient,
-    v1::{AddTaskRequest, EffortTier, IndexSection, StructuredTaskPrompt, add_task_request},
+    v1::{
+        AddTaskRequest, EffortTier, IndexSection, PriorityTier, StructuredTaskPrompt,
+        add_task_request,
+    },
 };
 use pwf_models::{
     project::ProjectSelector,
@@ -9,7 +12,7 @@ use pwf_models::{
 };
 
 use super::{
-    EffortChoice, LaneFlagMode,
+    EffortChoice, LaneFlagMode, PriorityChoice,
     blocked_by_input::{self, BlockedByInput},
     render::{
         TITLE_NORMALIZED_NOTICE, emit_created_section, emit_created_section_for_error, render_added,
@@ -57,6 +60,9 @@ pub struct Arguments {
     /// Effort/complexity tier.
     #[arg(long, value_enum)]
     pub(crate) effort: Option<EffortChoice>,
+    /// Scheduling priority tier.
+    #[arg(long, value_enum)]
+    pub(crate) priority: Option<PriorityChoice>,
 }
 
 pub(super) async fn run(
@@ -92,6 +98,12 @@ pub(super) async fn run(
             tags: TaskTags::from_inputs(&arguments.tag)
                 .map(|tags| tags.iter().map(ToString::to_string).collect())
                 .unwrap_or_default(),
+            priority: arguments.priority.map(|priority| match priority {
+                PriorityChoice::Low => PriorityTier::Low as i32,
+                PriorityChoice::Medium => PriorityTier::Medium as i32,
+                PriorityChoice::High => PriorityTier::High as i32,
+                PriorityChoice::Highest => PriorityTier::Highest as i32,
+            }),
         })
         .await;
     match result {

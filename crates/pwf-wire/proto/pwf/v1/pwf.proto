@@ -214,6 +214,14 @@ enum EffortTier {
   EFFORT_TIER_HIGHEST = 4;
 }
 
+enum PriorityTier {
+  PRIORITY_TIER_UNSPECIFIED = 0;
+  PRIORITY_TIER_LOW = 1;
+  PRIORITY_TIER_MEDIUM = 2;
+  PRIORITY_TIER_HIGH = 3;
+  PRIORITY_TIER_HIGHEST = 4;
+}
+
 message AddTaskRequest {
   string project_selector = 1;
   oneof prompt {
@@ -224,6 +232,7 @@ message AddTaskRequest {
   repeated string blocked_by = 5;
   optional EffortTier effort = 6;
   repeated string tags = 7;
+  optional PriorityTier priority = 8;
 }
 
 message CancelTaskRequest {
@@ -265,6 +274,11 @@ message EffortEdit {
   EffortTier value = 2;
 }
 
+message PriorityEdit {
+  ValueEditMode mode = 1;
+  PriorityTier value = 2;
+}
+
 message StructuredTaskEdit {
   optional string title = 1;
   TaskLanes additions = 2;
@@ -290,6 +304,7 @@ message EditTaskRequest {
   StringCollectionEdit blocked_by = 3;
   EffortEdit effort = 4;
   StringCollectionEdit tags = 5;
+  PriorityEdit priority = 6;
 }
 
 enum TaskReadFormat {
@@ -353,6 +368,7 @@ message ListTasksRequest {
   OrderSpec order = 6;
   optional TaskStatusFilter status = 7;
   ListDetail detail = 8;
+  optional PriorityTier priority = 9;
 }
 
 message RemoveTaskStart { string id = 1; }
@@ -456,6 +472,7 @@ message TaskData {
   repeated string blocked_by = 10;
   optional string section = 11;
   string prompt = 12;
+  optional PriorityTier priority = 13;
 }
 
 message GetTaskResponse {
@@ -525,6 +542,7 @@ message TaskView {
   optional EffortTier effort = 13;
   optional string raw_tags = 14;
   optional string created = 15;
+  optional PriorityTier priority = 16;
 }
 
 message ListTasksResponse {

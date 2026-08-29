@@ -134,6 +134,7 @@ mod tests {
             section: section.map(|section| section.parse().unwrap()),
             blocked_by: None,
             effort: None,
+            priority: None,
             tags: None,
         }
     }

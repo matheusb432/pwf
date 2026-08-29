@@ -2,7 +2,7 @@ use std::num::NonZeroUsize;
 
 use pwf_models::{
     project::Project,
-    task::{EffortTier, TaskId, TaskSection, TaskTags},
+    task::{EffortTier, PriorityTier, TaskId, TaskSection, TaskTags},
 };
 use pwf_wire::{
     project::{ProjectStatusFilter, ResolveProject},
@@ -71,6 +71,7 @@ struct ResolvedListTasks {
     scope: ListScope,
     cap: Option<usize>,
     effort: Option<EffortTier>,
+    priority: Option<PriorityTier>,
     tags: Option<TaskTags>,
     order: OrderSpec,
     status_filter: StatusFilter,
@@ -129,6 +130,7 @@ pub async fn execute(
 
     tasks.retain(|task| scope_includes(query.scope, task.section.as_ref()));
     tasks.retain(|task| effort_matches(task, query.effort));
+    tasks.retain(|task| priority_matches(task, query.priority));
 
     tasks = retain_matching_tags(tasks, query.tags.as_ref())?;
 
@@ -218,6 +220,7 @@ fn resolve_query(query: &ListTasks, project: Option<Project>) -> ResolvedListTas
         scope,
         cap,
         effort: query.effort,
+        priority: query.priority,
         tags: query.tags.clone(),
         order,
         status_filter,
@@ -305,6 +308,11 @@ fn effort_matches(task: &TaskView, wanted: Option<EffortTier>) -> bool {
     task.effort == Some(wanted)
 }
 
+fn priority_matches(task: &TaskView, wanted: Option<PriorityTier>) -> bool {
+    let Some(wanted) = wanted else { return true };
+    task.priority == Some(wanted)
+}
+
 fn task_order_cmp(order: OrderSpec, a: &TaskView, b: &TaskView) -> std::cmp::Ordering {
     match order.field {
         OrderField::Created => {
@@ -368,7 +376,7 @@ mod tests {
 
     use pwf_models::{
         project::{Project, ProjectName},
-        task::{EffortTier, TaskId, TaskStatus, TaskTags},
+        task::{EffortTier, PriorityTier, TaskId, TaskStatus, TaskTags},
     };
     use pwf_wire::task::{
         BlockedByResolution, BlockedByStatus, ListDetail, ListLayout, ListScope, ListedTasks,
@@ -539,6 +547,13 @@ mod tests {
         }
     }
 
+    fn priority_task(id: &str, priority: &str) -> TaskRecord {
+        TaskRecord {
+            priority: Some(priority.to_string()),
+            ..record(id)
+        }
+    }
+
     fn tagged_task(id: &str, tags: &str) -> TaskRecord {
         TaskRecord {
             tags: Some(RawTaskTags::new(tags)),
@@ -563,6 +578,7 @@ mod tests {
             scope: ListScope::Default,
             number: NonZeroUsize::new(100_000),
             effort: None,
+            priority: None,
             tags: None,
             order: None,
             status: None,
@@ -918,6 +934,28 @@ mod tests {
             &registry,
             &ListTasks {
                 effort: Some(EffortTier::High),
+                ..default_query()
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(listed_ids(&got), ["FOO-0003"]);
+    }
+
+    #[tokio::test]
+    async fn priority_filter_matches_exact_tier_only() {
+        let (store, registry) = foo_store(vec![
+            priority_task("FOO-0003", "highest"),
+            priority_task("FOO-0002", "medium"),
+            record("FOO-0001"),
+        ]);
+
+        let got = run(
+            &store,
+            &registry,
+            &ListTasks {
+                priority: Some(PriorityTier::Highest),
                 ..default_query()
             },
         )

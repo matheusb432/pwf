@@ -81,6 +81,14 @@ pub(crate) enum EffortChoice {
     Highest,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub(crate) enum PriorityChoice {
+    Low,
+    Medium,
+    High,
+    Highest,
+}
+
 impl From<EffortChoice> for EffortTier {
     fn from(choice: EffortChoice) -> Self {
         match choice {

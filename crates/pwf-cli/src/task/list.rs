@@ -5,6 +5,7 @@ use pwf_client::{
     task::TaskClient,
     v1::{
         EffortTier, ListDetail, ListScope, ListTasksRequest, OrderDirection, OrderField, OrderSpec,
+        PriorityTier,
     },
 };
 use pwf_models::{
@@ -12,7 +13,7 @@ use pwf_models::{
     task::{TagInput, TaskTags},
 };
 
-use super::{EffortChoice, SectionChoice, StatusChoice, render::render_list};
+use super::{EffortChoice, PriorityChoice, SectionChoice, StatusChoice, render::render_list};
 use crate::console::Console;
 
 #[derive(Args, Debug)]
@@ -36,6 +37,9 @@ pub struct Arguments {
     /// Show only tasks tagged with this exact effort/complexity tier.
     #[arg(long, value_enum)]
     pub(crate) effort: Option<EffortChoice>,
+    /// Show only tasks with this scheduling priority.
+    #[arg(long, value_enum)]
+    pub(crate) priority: Option<PriorityChoice>,
     /// Discovery tag filter; repeat or comma-separate for several. Every requested tag must
     /// match.
     #[arg(long, allow_hyphen_values = true)]
@@ -81,6 +85,12 @@ pub(super) async fn run(
             } else {
                 ListDetail::Summary as i32
             },
+            priority: arguments.priority.map(|value| match value {
+                PriorityChoice::Low => PriorityTier::Low as i32,
+                PriorityChoice::Medium => PriorityTier::Medium as i32,
+                PriorityChoice::High => PriorityTier::High as i32,
+                PriorityChoice::Highest => PriorityTier::Highest as i32,
+            }),
         })
         .await
         .map_err(crate::rpc_error)?;

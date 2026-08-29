@@ -518,6 +518,7 @@ fn spawn_review(
                 section: Some(TaskSection::human()),
                 blocked_by: None,
                 effort: None,
+                priority: None,
                 tags: None,
             },
         },

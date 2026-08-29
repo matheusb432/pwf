@@ -116,6 +116,7 @@ pub async fn execute(
                 section: cmd.index_section.task_section(),
                 blocked_by,
                 effort: cmd.effort,
+                priority: cmd.priority,
                 tags: cmd.tags.clone(),
             },
         },

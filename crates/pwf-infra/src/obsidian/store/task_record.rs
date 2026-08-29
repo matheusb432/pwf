@@ -20,7 +20,7 @@ use crate::obsidian::{
     MarkdownFile, MarkdownFileError, done_queue,
     note_frontmatter::{
         parse_blocked_by, reopen_status, set_blocked_by, set_commits, set_completed_at, set_effort,
-        set_status, set_tags,
+        set_priority, set_status, set_tags,
     },
     note_text::{replace_body, replace_title},
 };
@@ -81,6 +81,7 @@ fn note_to_record(
     let completed_at = timestamp("completed_at")?;
     let commits = field("commits")?;
     let effort = field("effort")?;
+    let priority = field("priority")?;
     let blocked_by = parse_blocked_by(frontmatter.as_ref());
     drop(frontmatter);
     let body = file.body().to_string();
@@ -94,6 +95,7 @@ fn note_to_record(
         commits,
         tags,
         effort,
+        priority,
         blocked_by,
         section: None,
         body,
@@ -125,6 +127,7 @@ fn missing_note_record(
         commits: None,
         tags: None,
         effort: None,
+        priority: None,
         blocked_by: pwf_application::ports::task_record::StoredBlockedBy::Absent,
         section,
         body: String::new(),
@@ -283,6 +286,7 @@ impl ObsidianStore {
                 created_at: &new.created_at,
                 blocked_by: new.blocked_by.as_ref(),
                 effort: new.effort,
+                priority: new.priority,
                 tags: new.tags.as_ref(),
             },
         )?;
@@ -368,6 +372,13 @@ impl ObsidianStore {
             NullablePatch::Clear => set_effort(&mut file, None).map_err(write_task_file_error)?,
             NullablePatch::Set(effort) => {
                 set_effort(&mut file, Some(effort)).map_err(write_task_file_error)?;
+            }
+        }
+        match patch.priority {
+            NullablePatch::Unchanged => {}
+            NullablePatch::Clear => set_priority(&mut file, None).map_err(write_task_file_error)?,
+            NullablePatch::Set(priority) => {
+                set_priority(&mut file, Some(priority)).map_err(write_task_file_error)?;
             }
         }
         match &patch.tags {

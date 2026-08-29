@@ -1,4 +1,4 @@
-use pwf_client::v1::{EffortTier, TaskData, TaskStatus};
+use pwf_client::v1::{EffortTier, PriorityTier, TaskData, TaskStatus};
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -12,6 +12,7 @@ struct TaskOutput {
     commits: Option<String>,
     tags: Option<Vec<String>>,
     effort: Option<String>,
+    priority: Option<String>,
     blocked_by: Option<Vec<String>>,
     section: Option<String>,
     prompt: String,
@@ -35,6 +36,9 @@ impl From<TaskData> for TaskOutput {
             effort: task
                 .effort
                 .and_then(|effort| effort_name(effort).map(str::to_string)),
+            priority: task
+                .priority
+                .and_then(|priority| priority_name(priority).map(str::to_string)),
             blocked_by: (!task.blocked_by.is_empty()).then_some(task.blocked_by),
             section: task.section,
             prompt: task.prompt,
@@ -58,5 +62,15 @@ fn effort_name(value: i32) -> Option<&'static str> {
         EffortTier::High => Some("high"),
         EffortTier::Highest => Some("highest"),
         EffortTier::Unspecified => None,
+    }
+}
+
+fn priority_name(value: i32) -> Option<&'static str> {
+    match PriorityTier::try_from(value).ok()? {
+        PriorityTier::Low => Some("low"),
+        PriorityTier::Medium => Some("medium"),
+        PriorityTier::High => Some("high"),
+        PriorityTier::Highest => Some("highest"),
+        PriorityTier::Unspecified => None,
     }
 }

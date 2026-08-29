@@ -2,7 +2,7 @@ use std::fmt::Write as _;
 
 use pwf_application::ports::task_record::StoredBlockedBy;
 use pwf_models::task::{
-    BlockedBy, EffortTier, TaskId, TaskStatus, TaskTags, TaskTimestamp, TaskTitle,
+    BlockedBy, EffortTier, PriorityTier, TaskId, TaskStatus, TaskTags, TaskTimestamp, TaskTitle,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -24,6 +24,7 @@ pub(super) struct NewTaskFields<'a> {
     pub created_at: &'a TaskTimestamp,
     pub blocked_by: Option<&'a BlockedBy>,
     pub effort: Option<EffortTier>,
+    pub priority: Option<PriorityTier>,
     pub tags: Option<&'a TaskTags>,
 }
 
@@ -44,6 +45,9 @@ pub(super) fn new_task_content(fields: NewTaskFields<'_>) -> String {
     }
     if let Some(effort) = fields.effort {
         let _ = writeln!(out, "effort: {effort}");
+    }
+    if let Some(priority) = fields.priority {
+        let _ = writeln!(out, "priority: {priority}");
     }
     if let Some(tags) = fields.tags {
         let _ = writeln!(out, "tags: {}", tags_frontmatter_value(tags));
@@ -196,12 +200,29 @@ pub(super) fn set_effort(
     Ok(())
 }
 
+pub(super) fn set_priority(
+    file: &mut MarkdownFile,
+    value: Option<PriorityTier>,
+) -> Result<(), MarkdownFileError> {
+    let rendered = value.map(|value| value.to_string());
+    file.set_property_rendered(
+        "priority",
+        rendered.as_deref(),
+        &["effort", "completed_at", "created_at"],
+    )?;
+    Ok(())
+}
+
 pub(super) fn set_tags(
     file: &mut MarkdownFile,
     value: Option<&TaskTags>,
 ) -> Result<(), MarkdownFileError> {
     let rendered = value.map(tags_frontmatter_value);
-    file.set_property_rendered("tags", rendered.as_deref(), &["completed_at", "created_at"])?;
+    file.set_property_rendered(
+        "tags",
+        rendered.as_deref(),
+        &["priority", "effort", "completed_at", "created_at"],
+    )?;
     Ok(())
 }
 
@@ -273,6 +294,7 @@ mod tests {
             created_at: &created_at,
             blocked_by: Some(&blockers),
             effort: None,
+            priority: None,
             tags: None,
         });
 

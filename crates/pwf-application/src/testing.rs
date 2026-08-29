@@ -187,6 +187,7 @@ pub(crate) fn task_record(id: &str) -> TaskRecord {
         commits: None,
         tags: None,
         effort: None,
+        priority: None,
         blocked_by: crate::ports::task_record::StoredBlockedBy::Absent,
         section: None,
         body: "\nbody\n".to_string(),
@@ -300,6 +301,7 @@ impl TaskStore for InMemoryStore {
             commits: None,
             tags: new.tags.map(|tags| render_tags(&tags)),
             effort: new.effort.map(|effort| effort.to_string()),
+            priority: new.priority.map(|priority| priority.to_string()),
             blocked_by: new.blocked_by.map_or(
                 crate::ports::task_record::StoredBlockedBy::Absent,
                 crate::ports::task_record::StoredBlockedBy::Valid,
@@ -345,6 +347,10 @@ impl TaskStore for InMemoryStore {
             NullablePatch::Clear => record.effort = None,
             NullablePatch::Set(effort) => record.effort = Some(effort.to_string()),
         }
+        apply_nullable_patch(
+            &mut record.priority,
+            patch.priority.map(|priority| priority.to_string()),
+        );
         apply_nullable_patch(&mut record.tags, patch.tags.map(|tags| render_tags(&tags)));
         Ok(())
     }

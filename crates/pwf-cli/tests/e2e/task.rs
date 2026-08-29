@@ -73,6 +73,8 @@ fn task_lifecycle_is_observable_through_json() {
             "FOO-0001",
             "--effort",
             "high",
+            "--priority",
+            "highest",
             "--tag",
             "cli",
             "--tag",
@@ -88,6 +90,7 @@ fn task_lifecycle_is_observable_through_json() {
     assert_eq!(active["status"], "active");
     assert_eq!(active["tags"], json!(["cli", "sqlite"]));
     assert_eq!(active["effort"], "high");
+    assert_eq!(active["priority"], "highest");
     assert_eq!(active["blocked_by"], json!(["FOO-0001"]));
 
     fixture
@@ -103,6 +106,8 @@ fn task_lifecycle_is_observable_through_json() {
             "rust",
             "--remove-blocked-by",
             "--remove-effort",
+            "--priority",
+            "medium",
         ])
         .assert()
         .success();
@@ -110,7 +115,17 @@ fn task_lifecycle_is_observable_through_json() {
     assert_eq!(updated["title"], "ship it");
     assert_eq!(updated["tags"], json!(["rust"]));
     assert_eq!(updated["effort"], Value::Null);
+    assert_eq!(updated["priority"], "medium");
     assert_eq!(updated["blocked_by"], Value::Null);
+
+    fixture
+        .database
+        .command()
+        .args(["edit", "FOO-0002", "--remove-priority"])
+        .assert()
+        .success();
+    let updated = task_json(&fixture.database, &task_id("FOO-0002").unwrap()).unwrap();
+    assert_eq!(updated["priority"], Value::Null);
 
     fixture
         .database

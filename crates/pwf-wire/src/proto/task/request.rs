@@ -5,8 +5,8 @@ use std::num::NonZeroUsize;
 use pwf_models::{
     project::ProjectSelector,
     task::{
-        BlockedBy, CommitRanges, EffortTier, IndexSection, Tag, TaskId, TaskPrompt, TaskReport,
-        TaskStatus, TaskTags, TaskTitle,
+        BlockedBy, CommitRanges, EffortTier, IndexSection, PriorityTier, Tag, TaskId, TaskPrompt,
+        TaskReport, TaskStatus, TaskTags, TaskTitle,
     },
 };
 use tonic::Status;
@@ -39,6 +39,7 @@ pub fn add_task_request(request: v1::AddTaskRequest) -> Result<task::AddTask, St
         blocked_by: blocked_by_values(request.blocked_by)?,
         effort: request.effort.map(effort_tier).transpose()?,
         tags: task_tag_values(request.tags)?,
+        priority: request.priority.map(priority_tier).transpose()?,
     })
 }
 
@@ -84,6 +85,7 @@ pub fn edit_task_request(request: v1::EditTaskRequest) -> Result<task::EditTask,
         collection_edit(request.blocked_by, blocked_by_values)?,
         effort_edit(request.effort)?,
         collection_edit(request.tags, task_tag_values)?,
+        priority_edit(request.priority)?,
     )
     .map_err(|error| invalid("edits", error))?;
     Ok(task::EditTask {
@@ -142,6 +144,7 @@ pub fn list_tasks_request(request: v1::ListTasksRequest) -> Result<task::ListTas
             })
             .transpose()?,
         effort: request.effort.map(effort_tier).transpose()?,
+        priority: request.priority.map(priority_tier).transpose()?,
         tags: task_tag_values(request.tags)?,
         order: request.order.map(order_spec).transpose()?,
         status: request.status.map(status_filter).transpose()?,
@@ -209,6 +212,16 @@ fn effort_tier(value: i32) -> Result<EffortTier, Status> {
         Some(v1::EffortTier::High) => Ok(EffortTier::High),
         Some(v1::EffortTier::Highest) => Ok(EffortTier::Highest),
         Some(v1::EffortTier::Unspecified) | None => Err(invalid("effort", "must be specified")),
+    }
+}
+
+fn priority_tier(value: i32) -> Result<PriorityTier, Status> {
+    match v1::PriorityTier::try_from(value).ok() {
+        Some(v1::PriorityTier::Low) => Ok(PriorityTier::Low),
+        Some(v1::PriorityTier::Medium) => Ok(PriorityTier::Medium),
+        Some(v1::PriorityTier::High) => Ok(PriorityTier::High),
+        Some(v1::PriorityTier::Highest) => Ok(PriorityTier::Highest),
+        Some(v1::PriorityTier::Unspecified) | None => Err(invalid("priority", "must be specified")),
     }
 }
 
@@ -289,6 +302,20 @@ fn effort_edit(value: Option<v1::EffortEdit>) -> Result<task::ValueEdit<EffortTi
         Some(v1::ValueEditMode::Set) => Ok(task::ValueEdit::Set(effort_tier(value.value)?)),
         Some(v1::ValueEditMode::Unspecified) | None => {
             Err(invalid("effort.mode", "must be specified"))
+        }
+    }
+}
+
+fn priority_edit(value: Option<v1::PriorityEdit>) -> Result<task::ValueEdit<PriorityTier>, Status> {
+    let Some(value) = value else {
+        return Ok(task::ValueEdit::Unchanged);
+    };
+    match v1::ValueEditMode::try_from(value.mode).ok() {
+        Some(v1::ValueEditMode::Unchanged) => Ok(task::ValueEdit::Unchanged),
+        Some(v1::ValueEditMode::Clear) => Ok(task::ValueEdit::Clear),
+        Some(v1::ValueEditMode::Set) => Ok(task::ValueEdit::Set(priority_tier(value.value)?)),
+        Some(v1::ValueEditMode::Unspecified) | None => {
+            Err(invalid("priority.mode", "must be specified"))
         }
     }
 }

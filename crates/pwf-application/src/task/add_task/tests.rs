@@ -38,6 +38,7 @@ fn command() -> AddTask {
         index_section: IndexSection::default(),
         blocked_by: None,
         effort: None,
+        priority: None,
         tags: None,
     }
 }

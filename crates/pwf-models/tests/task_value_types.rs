@@ -1,6 +1,6 @@
 use pwf_models::{
     AppDate,
-    task::{IndexSection, TaskPrompt, TaskSection, TaskTimestamp},
+    task::{IndexSection, PriorityTier, TaskPrompt, TaskSection, TaskTimestamp},
 };
 
 #[test]
@@ -72,4 +72,23 @@ fn index_section_maps_the_add_choice_to_a_task_section() {
         IndexSection::Human.task_section().unwrap().as_ref(),
         "Human"
     );
+}
+
+#[test]
+fn priority_tier_accepts_only_canonical_names() {
+    for (raw, expected) in [
+        ("low", PriorityTier::Low),
+        ("medium", PriorityTier::Medium),
+        ("high", PriorityTier::High),
+        ("highest", PriorityTier::Highest),
+    ] {
+        let priority = raw.parse::<PriorityTier>().unwrap();
+
+        assert_eq!(priority, expected);
+        assert_eq!(priority.to_string(), raw);
+    }
+
+    for raw in ["1", "2", "3", "4", "urgent"] {
+        assert!(raw.parse::<PriorityTier>().is_err(), "{raw} was accepted");
+    }
 }

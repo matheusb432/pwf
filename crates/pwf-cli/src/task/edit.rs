@@ -9,7 +9,7 @@ use pwf_client::{
 use pwf_models::task::{TagInput, TaskTags, TaskTitle};
 
 use super::{
-    EffortChoice, Identifier, LaneFlagMode,
+    EffortChoice, Identifier, LaneFlagMode, PriorityChoice,
     blocked_by_input::{self, BlockedByInput},
     render::{TITLE_NORMALIZED_NOTICE, render_edited},
     task_lanes, task_title,
@@ -39,6 +39,8 @@ use crate::console::Console;
             "remove_tags",
             "effort",
             "remove_effort",
+            "priority",
+            "remove_priority",
         ])
 ))]
 pub struct Arguments {
@@ -95,6 +97,8 @@ pub struct Arguments {
     tags: TagEdits,
     #[command(flatten)]
     effort: EffortEdit,
+    #[command(flatten)]
+    priority: PriorityEdit,
 }
 
 #[derive(Args, Debug)]
@@ -200,6 +204,35 @@ impl EffortEdit {
                 Some(v1::EffortEdit {
                     mode: ValueEditMode::Set as i32,
                     value: wire_effort(effort) as i32,
+                })
+            },
+        )
+    }
+}
+
+#[derive(Args, Debug)]
+struct PriorityEdit {
+    /// Replace the priority tier.
+    #[arg(long, value_enum, conflicts_with = "remove_priority")]
+    priority: Option<PriorityChoice>,
+    /// Remove the priority tier.
+    #[arg(long, conflicts_with = "priority")]
+    remove_priority: bool,
+}
+
+impl PriorityEdit {
+    fn edit(&self) -> Option<v1::PriorityEdit> {
+        self.priority.map_or_else(
+            || {
+                self.remove_priority.then_some(v1::PriorityEdit {
+                    mode: ValueEditMode::Clear as i32,
+                    value: v1::PriorityTier::Unspecified as i32,
+                })
+            },
+            |priority| {
+                Some(v1::PriorityEdit {
+                    mode: ValueEditMode::Set as i32,
+                    value: wire_priority(priority) as i32,
                 })
             },
         )
@@ -312,11 +345,13 @@ pub(super) async fn run(
         blocked_by: arguments.blocked_by.edit(),
         effort: arguments.effort.edit(),
         tags: arguments.tags.edit(),
+        priority: arguments.priority.edit(),
     };
     if request.content.is_none()
         && request.blocked_by.is_none()
         && request.effort.is_none()
         && request.tags.is_none()
+        && request.priority.is_none()
     {
         return Err(anyhow::anyhow!(
             "nothing to edit; pass at least one edit flag."
@@ -335,5 +370,14 @@ fn wire_effort(value: EffortChoice) -> v1::EffortTier {
         EffortChoice::Medium => v1::EffortTier::Medium,
         EffortChoice::High => v1::EffortTier::High,
         EffortChoice::Highest => v1::EffortTier::Highest,
+    }
+}
+
+fn wire_priority(value: PriorityChoice) -> v1::PriorityTier {
+    match value {
+        PriorityChoice::Low => v1::PriorityTier::Low,
+        PriorityChoice::Medium => v1::PriorityTier::Medium,
+        PriorityChoice::High => v1::PriorityTier::High,
+        PriorityChoice::Highest => v1::PriorityTier::Highest,
     }
 }

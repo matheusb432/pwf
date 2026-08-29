@@ -40,6 +40,49 @@ fn machine_add_maps_each_explicit_value_without_parsing_lane_markers() {
 }
 
 #[test]
+fn list_priority_filters_and_renders_the_selected_tier() {
+    let fixture = ManagedProject::new(&project_id("FOO").unwrap(), "foo-bar").unwrap();
+    for (title, priority) in [("low task", "low"), ("highest task", "highest")] {
+        fixture
+            .database
+            .command()
+            .args([
+                "add",
+                "foo-bar",
+                "--title",
+                title,
+                "--goal",
+                "exercise priority listing",
+                "--priority",
+                priority,
+            ])
+            .assert()
+            .success();
+    }
+
+    let listed = fixture
+        .database
+        .command()
+        .args([
+            "list",
+            "--project",
+            "foo-bar",
+            "--all",
+            "--long",
+            "--priority",
+            "highest",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(listed.status.success());
+    let output = String::from_utf8(listed.stdout).unwrap();
+    assert!(output.contains("FOO-0002"), "{output}");
+    assert!(!output.contains("FOO-0001"), "{output}");
+    assert!(output.contains("priority: highest"), "{output}");
+}
+
+#[test]
 fn root_edit_replaces_lane_collections_with_explicit_remove_then_add_actions() {
     let fixture = ManagedProject::new(&project_id("FOO").unwrap(), "foo-bar").unwrap();
     fixture
@@ -107,6 +150,7 @@ fn task_help_exposes_only_the_supported_add_and_edit_contract() {
         "--constraint",
         "--done-when",
         "--blocked-by",
+        "--priority",
     ] {
         assert!(add_help.contains(flag), "missing {flag}:\n{add_help}");
     }
@@ -128,9 +172,19 @@ fn task_help_exposes_only_the_supported_add_and_edit_contract() {
         "--add-tag",
         "--remove-tags",
         "--remove-effort",
+        "--priority",
+        "--remove-priority",
     ] {
         assert!(edit_help.contains(flag), "missing {flag}:\n{edit_help}");
     }
+
+    let list = command().args(["task", "list", "--help"]).output().unwrap();
+    assert!(list.status.success());
+    let list_help = String::from_utf8(list.stdout).unwrap();
+    assert!(
+        list_help.contains("--priority"),
+        "missing --priority:\n{list_help}"
+    );
 }
 
 #[test]

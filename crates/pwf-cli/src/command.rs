@@ -120,6 +120,20 @@ mod tests {
     }
 
     #[test]
+    fn root_task_commands_keep_priority_with_its_value() {
+        for arguments in [
+            ["add", "foo", "ship it", "--priority", "highest"].as_slice(),
+            ["edit", "foo1", "--priority", "high"].as_slice(),
+            ["list", "--priority", "medium"].as_slice(),
+        ] {
+            assert!(
+                super::parse_argv(arguments.iter().map(ToString::to_string).collect()).is_ok(),
+                "failed to parse {arguments:?}"
+            );
+        }
+    }
+
+    #[test]
     fn session_accepts_one_comma_separated_task_id_value() {
         for arguments in [
             ["session", "foo23,foo15"].as_slice(),

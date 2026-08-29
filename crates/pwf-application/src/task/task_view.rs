@@ -6,8 +6,8 @@ use pwf_models::{
     AppDate,
     project::{ProjectName, ProjectSourceValue},
     task::{
-        EffortTier, EffortTierError, TaskId, TaskPrompt, TaskSection, TaskStatus, TaskTimestamp,
-        TaskTitle, TaskTitleError,
+        EffortTier, EffortTierError, PriorityTier, PriorityTierError, TaskId, TaskPrompt,
+        TaskSection, TaskStatus, TaskTimestamp, TaskTitle, TaskTitleError,
     },
 };
 use pwf_wire::task::{
@@ -57,6 +57,13 @@ pub(in crate::task) enum TaskViewError {
         #[source]
         source: EffortTierError,
     },
+    #[error("task {id} has an invalid priority value {value:?}: {source}")]
+    Priority {
+        id: TaskId,
+        value: String,
+        #[source]
+        source: PriorityTierError,
+    },
 }
 
 /// Contains a task's persisted data and derived diagnostics before project
@@ -74,6 +81,7 @@ pub(in crate::task) struct EnrichedTask {
     pub(in crate::task) blocked_by: Option<pwf_models::task::BlockedBy>,
     pub(in crate::task) blocked_by_issues: Vec<BlockedByIssue>,
     pub(in crate::task) effort: Option<EffortTier>,
+    pub(in crate::task) priority: Option<PriorityTier>,
     pub(in crate::task) tags: Option<RawTaskTags>,
     pub(in crate::task) created: Option<AppDate>,
 }
@@ -96,6 +104,7 @@ impl EnrichedTask {
             blocked_by_statuses: Vec::new(),
             blocked_by_issues: self.blocked_by_issues,
             effort: self.effort,
+            priority: self.priority,
             tags: self.tags,
             created: self.created,
         }
@@ -147,6 +156,17 @@ pub(in crate::task) fn enrich(
             value: task.effort.clone().unwrap_or_default(),
             source,
         })?;
+    let priority = task
+        .priority
+        .as_deref()
+        .map(str::trim)
+        .map(str::parse)
+        .transpose()
+        .map_err(|source| TaskViewError::Priority {
+            id: task.id.clone(),
+            value: task.priority.clone().unwrap_or_default(),
+            source,
+        })?;
     let (blocked_by, blocked_by_issues) = match &task.blocked_by {
         StoredBlockedBy::Absent => (None, Vec::new()),
         StoredBlockedBy::Valid(blocked_by) => (Some(blocked_by.clone()), Vec::new()),
@@ -171,6 +191,7 @@ pub(in crate::task) fn enrich(
         blocked_by,
         blocked_by_issues,
         effort,
+        priority,
         tags: task.tags.clone(),
         created: task.created_at.map(TaskTimestamp::date),
     })
@@ -318,6 +339,17 @@ mod tests {
         assert!(matches!(
             enrich(&rec, &project_path()),
             Err(TaskViewError::Effort { ref value, .. }) if value == "extreme"
+        ));
+    }
+
+    #[test]
+    fn invalid_persisted_priority_does_not_enter_a_task_view() {
+        let mut rec = record("body");
+        rec.priority = Some("urgent".to_string());
+
+        assert!(matches!(
+            enrich(&rec, &project_path()),
+            Err(TaskViewError::Priority { ref value, .. }) if value == "urgent"
         ));
     }
 

@@ -123,6 +123,14 @@ impl TestServer {
     }
 
     async fn add_task(&self, title: &str) -> anyhow::Result<String> {
+        Ok(self.add_task_with_priority(title, None).await?)
+    }
+
+    async fn add_task_with_priority(
+        &self,
+        title: &str,
+        priority: Option<v1::PriorityTier>,
+    ) -> Result<String, ClientError> {
         let task = self
             .client
             .task()
@@ -143,6 +151,7 @@ impl TestServer {
                 blocked_by: Vec::new(),
                 effort: None,
                 tags: Vec::new(),
+                priority: priority.map(|priority| priority as i32),
             })
             .await?;
         Ok(task.id)
@@ -257,6 +266,76 @@ fn with_seen<T>(
         Err(poisoned) => poisoned.into_inner(),
     };
     operation(&mut seen)
+}
+
+#[tokio::test]
+async fn task_priority_round_trips_through_supported_rpcs() -> anyhow::Result<()> {
+    let server = TestServer::start(Duration::from_secs(2)).await?;
+    server.add_project_and_task().await?;
+    let invalid = server
+        .add_task_with_priority(
+            "invalid priority transport task",
+            Some(v1::PriorityTier::Unspecified),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(rpc_status(invalid).code(), Code::InvalidArgument);
+    let task_id = server
+        .add_task_with_priority("priority transport task", Some(v1::PriorityTier::Highest))
+        .await?;
+    assert_eq!(task_id, "FOO-0002");
+
+    let listed = server
+        .client
+        .task()
+        .list_tasks(v1::ListTasksRequest {
+            project_selector: Some("foo-bar".to_string()),
+            scope: v1::ListScope::All as i32,
+            number: None,
+            effort: None,
+            tags: Vec::new(),
+            order: None,
+            status: Some(v1::TaskStatusFilter::Active as i32),
+            detail: v1::ListDetail::Detailed as i32,
+            priority: Some(v1::PriorityTier::Highest as i32),
+        })
+        .await?;
+    assert_eq!(listed.tasks.len(), 1);
+    assert_eq!(listed.tasks[0].id, task_id);
+    assert_eq!(
+        listed.tasks[0].priority,
+        Some(v1::PriorityTier::Highest as i32)
+    );
+
+    server
+        .client
+        .task()
+        .edit_task(v1::EditTaskRequest {
+            id: task_id.clone(),
+            content: None,
+            blocked_by: None,
+            effort: None,
+            tags: None,
+            priority: Some(v1::PriorityEdit {
+                mode: v1::ValueEditMode::Set as i32,
+                value: v1::PriorityTier::Medium as i32,
+            }),
+        })
+        .await?;
+    let read = server
+        .client
+        .task()
+        .get_task(v1::GetTaskRequest {
+            id: task_id,
+            output: TaskReadFormat::Data as i32,
+        })
+        .await?;
+    let Some(v1::get_task_response::Value::Data(data)) = read.value else {
+        anyhow::bail!("task data response is missing");
+    };
+    assert_eq!(data.priority, Some(v1::PriorityTier::Medium as i32));
+
+    server.finish().await
 }
 
 #[tokio::test]

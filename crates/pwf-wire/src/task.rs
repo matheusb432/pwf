@@ -8,8 +8,8 @@ use pwf_models::{
     AppDate,
     project::{ProjectName, ProjectSelector, ProjectSourceValue},
     task::{
-        BlockedBy, CommitRanges, EffortTier, IndexSection, TaskId, TaskPrompt, TaskReport,
-        TaskSection, TaskStatus, TaskTags, TaskTitle,
+        BlockedBy, CommitRanges, EffortTier, IndexSection, PriorityTier, TaskId, TaskPrompt,
+        TaskReport, TaskSection, TaskStatus, TaskTags, TaskTitle,
     },
 };
 
@@ -223,6 +223,8 @@ pub struct AddTask {
     pub effort: Option<EffortTier>,
     /// Optional normalized discovery tags.
     pub tags: Option<TaskTags>,
+    /// Optional scheduling priority.
+    pub priority: Option<PriorityTier>,
 }
 
 #[derive(Debug, Clone)]
@@ -373,6 +375,7 @@ pub struct TaskEdits {
     blocked_by: CollectionEdit<BlockedBy>,
     effort: ValueEdit<EffortTier>,
     tags: CollectionEdit<TaskTags>,
+    priority: ValueEdit<PriorityTier>,
 }
 
 impl TaskEdits {
@@ -386,11 +389,13 @@ impl TaskEdits {
         blocked_by: CollectionEdit<BlockedBy>,
         effort: ValueEdit<EffortTier>,
         tags: CollectionEdit<TaskTags>,
+        priority: ValueEdit<PriorityTier>,
     ) -> Result<Self, EmptyTaskEdits> {
         if content.is_none()
             && blocked_by.is_unchanged()
             && effort.is_unchanged()
             && tags.is_unchanged()
+            && priority.is_unchanged()
         {
             return Err(EmptyTaskEdits);
         }
@@ -399,6 +404,7 @@ impl TaskEdits {
             blocked_by,
             effort,
             tags,
+            priority,
         })
     }
 
@@ -420,6 +426,11 @@ impl TaskEdits {
     #[must_use]
     pub fn tags(&self) -> &CollectionEdit<TaskTags> {
         &self.tags
+    }
+
+    #[must_use]
+    pub fn priority(&self) -> &ValueEdit<PriorityTier> {
+        &self.priority
     }
 }
 
@@ -450,6 +461,7 @@ pub struct ListTasks {
     /// Explicit task cap. Omission uses the mode-specific default.
     pub number: Option<NonZeroUsize>,
     pub effort: Option<EffortTier>,
+    pub priority: Option<PriorityTier>,
     pub tags: Option<TaskTags>,
     pub order: Option<OrderSpec>,
     /// Explicit lifecycle filter. Omission uses the mode-specific default.
@@ -637,6 +649,7 @@ pub struct TaskData {
     pub commits: Option<CommitRanges>,
     pub tags: Option<TaskTags>,
     pub effort: Option<EffortTier>,
+    pub priority: Option<PriorityTier>,
     pub blocked_by: Option<BlockedBy>,
     pub section: Option<TaskSection>,
     pub prompt: TaskPrompt,
@@ -922,6 +935,7 @@ pub struct TaskView {
     pub blocked_by_statuses: Vec<BlockedByStatus>,
     pub blocked_by_issues: Vec<BlockedByIssue>,
     pub effort: Option<EffortTier>,
+    pub priority: Option<PriorityTier>,
     pub tags: Option<RawTaskTags>,
     pub created: Option<AppDate>,
 }
@@ -1002,6 +1016,7 @@ mod tests {
             CollectionEdit::Unchanged,
             ValueEdit::Unchanged,
             CollectionEdit::Unchanged,
+            ValueEdit::Unchanged,
         )
         .unwrap_err();
         assert_eq!(error, EmptyTaskEdits);

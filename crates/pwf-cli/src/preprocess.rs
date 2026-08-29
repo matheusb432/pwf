@@ -46,6 +46,7 @@ fn is_value_flag(flag: &str) -> bool {
             | "--color"
             | "--agent"
             | "--effort"
+            | "--priority"
             | "--status"
             | "--model"
             | "--push-prompt"

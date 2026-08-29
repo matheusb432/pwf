@@ -2,7 +2,8 @@ use std::fmt::Write;
 
 use pwf_client::v1::{
     BlockedByResolutionKind, BlockedByStatus, EffortTier, ListDetail, ListLayout,
-    ListTasksResponse, TaskIssue, TaskIssueKind, TaskStatus, TaskStatusFilter, TaskView,
+    ListTasksResponse, PriorityTier, TaskIssue, TaskIssueKind, TaskStatus, TaskStatusFilter,
+    TaskView,
 };
 
 use super::{render_status, render_task_summary};
@@ -223,6 +224,12 @@ fn render_list_task(
     {
         let _ = writeln!(out, "  effort: {}", effort_name(effort));
     }
+    if let Some(priority) = task
+        .priority
+        .and_then(|priority| PriorityTier::try_from(priority).ok())
+    {
+        let _ = writeln!(out, "  priority: {}", priority_name(priority));
+    }
     if let Some(tags) = &task.raw_tags {
         let _ = writeln!(out, "  tags: {tags}");
     }
@@ -282,6 +289,16 @@ fn effort_name(effort: EffortTier) -> &'static str {
     }
 }
 
+fn priority_name(priority: PriorityTier) -> &'static str {
+    match priority {
+        PriorityTier::Low => "low",
+        PriorityTier::Medium => "medium",
+        PriorityTier::High => "high",
+        PriorityTier::Highest => "highest",
+        PriorityTier::Unspecified => "unspecified",
+    }
+}
+
 fn task_status_name(status: TaskStatus) -> &'static str {
     match status {
         TaskStatus::Active => "active",
@@ -317,6 +334,7 @@ mod tests {
             effort: None,
             raw_tags: None,
             created: None,
+            priority: None,
         }
     }
 

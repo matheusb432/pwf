@@ -3,7 +3,8 @@ use std::num::NonZeroUsize;
 use pwf_models::{
     project::Project,
     task::{
-        BlockedBy, EffortTier, TaskId, TaskSection, TaskStatus, TaskTags, TaskTimestamp, TaskTitle,
+        BlockedBy, EffortTier, PriorityTier, TaskId, TaskSection, TaskStatus, TaskTags,
+        TaskTimestamp, TaskTitle,
     },
 };
 use pwf_wire::task::{RawTaskTags, TaskIndexPath, TaskNotePath};
@@ -59,6 +60,7 @@ pub struct TaskRecord {
     /// Preserves raw `tags:` frontmatter for lazy validation by tag-filtered reads.
     pub tags: Option<RawTaskTags>,
     pub effort: Option<String>,
+    pub priority: Option<String>,
     /// Carries typed or malformed `blocked_by` metadata for boundary-specific handling.
     pub blocked_by: StoredBlockedBy,
     pub section: Option<TaskSection>,
@@ -82,6 +84,7 @@ pub struct NewTask {
     pub section: Option<TaskSection>,
     pub blocked_by: Option<BlockedBy>,
     pub effort: Option<EffortTier>,
+    pub priority: Option<PriorityTier>,
     pub tags: Option<TaskTags>,
 }
 
@@ -115,6 +118,7 @@ pub struct TaskPatch {
     pub title: Option<TaskTitle>,
     pub blocked_by: NullablePatch<BlockedBy>,
     pub effort: NullablePatch<EffortTier>,
+    pub priority: NullablePatch<PriorityTier>,
     pub tags: NullablePatch<TaskTags>,
 }
 

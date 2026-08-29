@@ -1,6 +1,6 @@
 //! Protobuf response mappings for task operations.
 
-use pwf_models::task::{EffortTier, TaskStatus};
+use pwf_models::task::{EffortTier, PriorityTier, TaskStatus};
 
 use crate::{confirmation, task, v1};
 
@@ -231,6 +231,7 @@ fn task_data(task: task::TaskData) -> v1::TaskData {
             .unwrap_or_default(),
         section: task.section.map(|section| section.to_string()),
         prompt: task.prompt.to_string(),
+        priority: task.priority.map(priority_tier_value),
     }
 }
 
@@ -265,6 +266,7 @@ fn task_view(task: task::TaskView) -> v1::TaskView {
         effort: task.effort.map(effort_tier_value),
         raw_tags: task.tags.map(|tags| tags.to_string()),
         created: task.created.map(|date| date.to_string()),
+        priority: task.priority.map(priority_tier_value),
     }
 }
 
@@ -302,5 +304,14 @@ fn effort_tier_value(effort: EffortTier) -> i32 {
         EffortTier::Medium => v1::EffortTier::Medium as i32,
         EffortTier::High => v1::EffortTier::High as i32,
         EffortTier::Highest => v1::EffortTier::Highest as i32,
+    }
+}
+
+fn priority_tier_value(priority: PriorityTier) -> i32 {
+    match priority {
+        PriorityTier::Low => v1::PriorityTier::Low as i32,
+        PriorityTier::Medium => v1::PriorityTier::Medium as i32,
+        PriorityTier::High => v1::PriorityTier::High as i32,
+        PriorityTier::Highest => v1::PriorityTier::Highest as i32,
     }
 }

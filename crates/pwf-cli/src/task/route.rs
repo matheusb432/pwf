@@ -71,6 +71,7 @@ fn list_arguments(
         all: arguments.all,
         number: arguments.number,
         effort: None,
+        priority: None,
         tag: Vec::new(),
         order: Some(OrderSpec {
             field: OrderField::ProjectId as i32,

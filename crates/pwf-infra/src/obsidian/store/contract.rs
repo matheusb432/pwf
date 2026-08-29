@@ -10,8 +10,8 @@ use pwf_models::{
         ProjectSourceValue, ProjectTasks, ProjectTasksKind, ProjectTasksPath,
     },
     task::{
-        BlockedBy, EffortTier, Tag, TaskId, TaskSection, TaskStatus, TaskTags, TaskTimestamp,
-        TaskTitle,
+        BlockedBy, EffortTier, PriorityTier, Tag, TaskId, TaskSection, TaskStatus, TaskTags,
+        TaskTimestamp, TaskTitle,
     },
 };
 use pwf_wire::task::{TaskIndexPath, TaskNotePath};
@@ -411,6 +411,7 @@ fn new_task(body: &str, title: &str, section: Option<&str>) -> NewTask {
         section: section.map(task_section),
         blocked_by: None,
         effort: None,
+        priority: None,
         tags: None,
     }
 }
@@ -428,6 +429,7 @@ fn generic_add_creates_note_and_links_index() {
                 pwf_models::task::BlockedBy::try_new(["FOO-0001".parse().unwrap()]).unwrap(),
             ),
             effort: Some(EffortTier::Medium),
+            priority: Some(PriorityTier::Highest),
             ..new_task(
                 "## Goals\n\n## Done When\n\n- tests pass",
                 "ship adapter",
@@ -449,6 +451,7 @@ fn generic_add_creates_note_and_links_index() {
     assert!(note.contains("created_at: 2026-07-07T12:34:56Z"), "{note}");
     assert!(note.contains("blocked_by: [\"[[FOO-0001]]\"]"), "{note}");
     assert!(note.contains("effort: medium"), "{note}");
+    assert!(note.contains("priority: highest"), "{note}");
     let expected_body = format!("## Goals{S}## Done When{S}- tests pass");
     assert!(note.contains(&expected_body), "{note}");
     let index = std::fs::read_to_string(notes_dir.join("foo/foo.md")).unwrap();
@@ -961,6 +964,7 @@ fn task_record_roundtrips_file_model_note() {
         "blocked_by:\n",
         "  - \"[[AUX-0001]]\"\n",
         "effort: medium\n",
+        "priority: highest\n",
         "tags: [sqlite, godot]\n",
         "---\n",
         "\n",
@@ -990,6 +994,7 @@ fn task_record_roundtrips_file_model_note() {
         )
     );
     assert_eq!(record.effort.as_deref(), Some("medium"));
+    assert_eq!(record.priority.as_deref(), Some("highest"));
     assert_eq!(
         record.tags.as_ref().map(AsRef::as_ref),
         Some("[sqlite, godot]")
@@ -1234,6 +1239,7 @@ fn insert_allocates_next_id_without_index_write() {
             section: None,
             blocked_by: None,
             effort: None,
+            priority: None,
             tags: None,
         },
     )
@@ -1671,6 +1677,7 @@ fn generic_insert_and_upsert_preserve_index_placement_bytes() {
                 section: scenario.section.map(task_section),
                 blocked_by: None,
                 effort: None,
+                priority: None,
                 tags: None,
             },
         )
