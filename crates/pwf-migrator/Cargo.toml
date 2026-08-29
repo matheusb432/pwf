@@ -10,7 +10,11 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = { workspace = true }
+clap = { workspace = true }
+directories = { workspace = true }
+pwf-application = { workspace = true }
 pwf-infra = { workspace = true }
+pwf-models = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt"] }
 
 [lints]

@@ -44,6 +44,17 @@ pub async fn build_migration_pool(path: &Path) -> anyhow::Result<SqlitePool> {
     connect_pool(path, options, DATABASE_MIGRATION_CONNECTIONS_MAX).await
 }
 
+/// Opens an existing database without creating files or permitting writes.
+pub async fn build_read_only_pool(path: &Path) -> anyhow::Result<SqlitePool> {
+    let options = connect_options(path).read_only(true);
+    SqlitePoolOptions::new()
+        .max_connections(DATABASE_MIGRATION_CONNECTIONS_MAX)
+        .acquire_timeout(DATABASE_WAIT_MAX)
+        .connect_with(options)
+        .await
+        .with_context(|| format!("opening database read-only at {}", path.display()))
+}
+
 fn connect_options(path: &Path) -> SqliteConnectOptions {
     SqliteConnectOptions::new()
         .filename(path)
@@ -75,8 +86,20 @@ mod tests {
     use sqlx::SqlitePool;
 
     use super::{
-        build_migration_pool, build_pool, check_database_ready, migrate_database, migrations,
+        build_migration_pool, build_pool, build_read_only_pool, check_database_ready,
+        migrate_database, migrations,
     };
+
+    #[tokio::test]
+    async fn read_only_pool_does_not_create_a_missing_database_or_parent() {
+        let directory = tempfile::tempdir().unwrap();
+        let parent = directory.path().join("missing");
+        let path = parent.join("pwf.sqlite3");
+
+        assert!(build_read_only_pool(&path).await.is_err());
+        assert!(!parent.exists());
+        assert!(!path.exists());
+    }
 
     #[tokio::test]
     async fn pools_enable_foreign_keys_and_persist_wal_journal_mode() {

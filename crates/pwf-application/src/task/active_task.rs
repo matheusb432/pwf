@@ -88,13 +88,13 @@ mod tests {
     use super::{FindActiveTaskError, TaskView, find_active_task};
     use crate::{
         ports::task_record::{IndexPlacement, TaskRecord},
-        testing::{InMemoryStore, app_date, project, task_record},
+        testing::{InMemoryStore, project, task_record, task_timestamp},
     };
 
     fn record(id: &str) -> TaskRecord {
         TaskRecord {
             title: format!("title {id}"),
-            created: Some(app_date("2026-07-07")),
+            created_at: Some(task_timestamp("2026-07-07T12:34:56Z")),
             body: "do the thing".to_string(),
             source: String::new(),
             locator: TaskNotePath::new(format!("/notes/foo/{id}.md").into()),

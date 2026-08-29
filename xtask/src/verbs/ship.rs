@@ -3,7 +3,7 @@ use std::process::Command;
 use anyhow::Result;
 use clap::Args;
 
-use crate::{process, verbs::test};
+use crate::process;
 
 #[derive(Args)]
 pub(crate) struct ShipArguments {
@@ -16,10 +16,10 @@ pub(crate) fn run(arguments: &ShipArguments) -> Result<()> {
     if arguments.force {
         eprintln!("ship: --force - skipping the test preflight");
     } else {
-        test::run_all()?;
+        process::run("test preflight", Command::new("just").arg("test-all"))?;
     }
     process::run(
         "release build",
-        Command::new("cargo").args(["build", "--release"]),
+        Command::new("cargo").args(["build", "--release", "-p", "pwf-cli"]),
     )
 }

@@ -1,6 +1,6 @@
 use pwf_models::{
     AppDate,
-    task::{IndexSection, TaskPrompt, TaskSection},
+    task::{IndexSection, TaskPrompt, TaskSection, TaskTimestamp},
 };
 
 #[test]
@@ -13,6 +13,41 @@ fn app_date_accepts_only_canonical_civil_dates() {
     assert!(AppDate::from_calendar_date(2023, 2, 29).is_err());
     assert!("2024-2-29".parse::<AppDate>().is_err());
     assert!("2024-02-29T00:00:00Z".parse::<AppDate>().is_err());
+}
+
+#[test]
+fn task_timestamp_accepts_only_utc_second_precision() {
+    let timestamp = "2026-08-29T18:42:07Z".parse::<TaskTimestamp>().unwrap();
+
+    assert_eq!(timestamp.to_string(), "2026-08-29T18:42:07Z");
+    assert_eq!(timestamp.date(), "2026-08-29".parse::<AppDate>().unwrap());
+    assert!("2026-08-29T18:42:07.123Z".parse::<TaskTimestamp>().is_err());
+    assert!(
+        "2026-08-29T18:42:07+00:00"
+            .parse::<TaskTimestamp>()
+            .is_err()
+    );
+    assert!("2026-08-29 18:42:07Z".parse::<TaskTimestamp>().is_err());
+    assert!("2026-08-29".parse::<TaskTimestamp>().is_err());
+}
+
+#[test]
+fn task_timestamp_converts_dates_and_truncates_external_instants() {
+    let date = "2026-08-29".parse::<AppDate>().unwrap();
+    let timestamp = "2026-08-29T18:42:07.987654321Z"
+        .parse::<jiff::Timestamp>()
+        .unwrap();
+
+    assert_eq!(
+        TaskTimestamp::at_midnight_utc(date).unwrap().to_string(),
+        "2026-08-29T00:00:00Z"
+    );
+    assert_eq!(
+        TaskTimestamp::from_timestamp(timestamp)
+            .unwrap()
+            .to_string(),
+        "2026-08-29T18:42:07Z"
+    );
 }
 
 #[test]

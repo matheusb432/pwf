@@ -1,9 +1,8 @@
 use std::fmt::Write as _;
 
 use pwf_application::ports::task_record::StoredBlockedBy;
-use pwf_models::{
-    AppDate,
-    task::{BlockedBy, EffortTier, TaskId, TaskStatus, TaskTags, TaskTitle},
+use pwf_models::task::{
+    BlockedBy, EffortTier, TaskId, TaskStatus, TaskTags, TaskTimestamp, TaskTitle,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -22,7 +21,7 @@ pub(super) struct NewTaskFields<'a> {
     pub title: &'a TaskTitle,
     pub project: &'a str,
     pub body: &'a str,
-    pub created: &'a AppDate,
+    pub created_at: &'a TaskTimestamp,
     pub blocked_by: Option<&'a BlockedBy>,
     pub effort: Option<EffortTier>,
     pub tags: Option<&'a TaskTags>,
@@ -35,7 +34,7 @@ pub(super) fn new_task_content(fields: NewTaskFields<'_>) -> String {
     let _ = writeln!(out, "status: {}", TaskStatus::Active);
     let _ = writeln!(out, "title: {}", fields.title);
     let _ = writeln!(out, "project: {}", fields.project);
-    let _ = writeln!(out, "created: {}", fields.created);
+    let _ = writeln!(out, "created_at: {}", fields.created_at);
     if let Some(blocked_by) = fields.blocked_by {
         let _ = writeln!(
             out,
@@ -58,14 +57,15 @@ pub(super) fn new_task_content(fields: NewTaskFields<'_>) -> String {
 pub(super) fn set_status(
     file: &mut MarkdownFile,
     status: TaskStatus,
-    completed: Option<&AppDate>,
+    completed_at: Option<&TaskTimestamp>,
 ) -> Result<(), MarkdownFileError> {
     if file.property_text("status")?.is_none() {
         return Ok(());
     }
     file.set_property_rendered("status", Some(status.as_str()), &[])?;
-    let completed = completed.map(ToString::to_string).unwrap_or_default();
-    file.set_property_rendered("completed", Some(&completed), &["status"])?;
+    let completed_at = completed_at.map(ToString::to_string);
+    file.set_property_rendered("completed_at", completed_at.as_deref(), &["status"])?;
+    file.remove_property("completed")?;
     Ok(())
 }
 
@@ -73,6 +73,7 @@ pub(super) fn reopen_status(file: &mut MarkdownFile) -> Result<(), MarkdownFileE
     if file.property_text("status")?.is_some() {
         file.set_property_rendered("status", Some("active"), &[])?;
     }
+    file.remove_property("completed_at")?;
     file.remove_property("completed")?;
     Ok(())
 }
@@ -82,7 +83,11 @@ pub(super) fn set_blocked_by(
     value: Option<&BlockedBy>,
 ) -> Result<(), MarkdownFileError> {
     let rendered = value.map(blocked_by_frontmatter_value);
-    file.set_property_rendered("blocked_by", rendered.as_deref(), &["completed", "created"])?;
+    file.set_property_rendered(
+        "blocked_by",
+        rendered.as_deref(),
+        &["completed_at", "created_at"],
+    )?;
     Ok(())
 }
 
@@ -153,12 +158,13 @@ fn malformed_blocked_by(raw: String, reason: impl Into<String>) -> StoredBlocked
     }
 }
 
-pub(super) fn set_completed(
+pub(super) fn set_completed_at(
     file: &mut MarkdownFile,
-    value: Option<&AppDate>,
+    value: Option<&TaskTimestamp>,
 ) -> Result<(), MarkdownFileError> {
     let rendered = value.map(ToString::to_string);
-    file.set_property_rendered("completed", rendered.as_deref(), &["created"])?;
+    file.set_property_rendered("completed_at", rendered.as_deref(), &["created_at"])?;
+    file.remove_property("completed")?;
     Ok(())
 }
 
@@ -168,7 +174,7 @@ pub(super) fn set_commits(
 ) -> Result<(), MarkdownFileError> {
     match value {
         Some(value) => {
-            file.set_property_after("commits", value, &["completed", "created"])?;
+            file.set_property_after("commits", value, &["completed_at", "created_at"])?;
         }
         None => {
             file.remove_property("commits")?;
@@ -182,7 +188,11 @@ pub(super) fn set_effort(
     value: Option<EffortTier>,
 ) -> Result<(), MarkdownFileError> {
     let rendered = value.map(|value| value.to_string());
-    file.set_property_rendered("effort", rendered.as_deref(), &["completed", "created"])?;
+    file.set_property_rendered(
+        "effort",
+        rendered.as_deref(),
+        &["completed_at", "created_at"],
+    )?;
     Ok(())
 }
 
@@ -191,7 +201,7 @@ pub(super) fn set_tags(
     value: Option<&TaskTags>,
 ) -> Result<(), MarkdownFileError> {
     let rendered = value.map(tags_frontmatter_value);
-    file.set_property_rendered("tags", rendered.as_deref(), &["completed", "created"])?;
+    file.set_property_rendered("tags", rendered.as_deref(), &["completed_at", "created_at"])?;
     Ok(())
 }
 
@@ -210,12 +220,12 @@ mod tests {
     use std::path::Path;
 
     use pwf_application::ports::task_record::StoredBlockedBy;
-    use pwf_models::{
-        AppDate,
-        task::{BlockedBy, TaskId, TaskStatus, TaskTitle},
-    };
+    use pwf_models::task::{BlockedBy, TaskId, TaskStatus, TaskTimestamp, TaskTitle};
 
-    use super::{NewTaskFields, new_task_content, parse_blocked_by, set_blocked_by, set_status};
+    use super::{
+        NewTaskFields, new_task_content, parse_blocked_by, reopen_status, set_blocked_by,
+        set_status,
+    };
     use crate::obsidian::MarkdownFile;
 
     fn blocked_by(ids: &[&str]) -> BlockedBy {
@@ -252,7 +262,7 @@ mod tests {
     fn new_task_renders_blocked_by_as_a_quoted_wikilink_array() {
         let id = TaskId::try_new("FOO-0003").unwrap();
         let title = TaskTitle::try_new("follow up").unwrap();
-        let created = "2026-08-20".parse::<AppDate>().unwrap();
+        let created_at = "2026-08-20T12:34:56Z".parse::<TaskTimestamp>().unwrap();
         let blockers = blocked_by(&["foo1", "AUX-0014"]);
 
         let note = new_task_content(NewTaskFields {
@@ -260,7 +270,7 @@ mod tests {
             title: &title,
             project: "foo",
             body: "body",
-            created: &created,
+            created_at: &created_at,
             blocked_by: Some(&blockers),
             effort: None,
             tags: None,
@@ -328,18 +338,34 @@ mod tests {
 
     #[test]
     fn close_status_inserts_completion_without_rewriting_other_bytes() {
-        let mut file = file("---\nid: FOO-0001\nstatus: active\ntitle: task\n---\n\nbody\n");
+        let mut file = file(
+            "---\nid: FOO-0001\nstatus: active\ncompleted: 2026-07-28\ntitle: task\n---\n\nbody\n",
+        );
 
         set_status(
             &mut file,
             TaskStatus::Done,
-            Some(&"2026-07-29".parse::<AppDate>().unwrap()),
+            Some(&"2026-07-29T12:34:56Z".parse::<TaskTimestamp>().unwrap()),
         )
         .unwrap();
 
         assert_eq!(
             file.source(),
-            "---\nid: FOO-0001\nstatus: done\ncompleted: 2026-07-29\ntitle: task\n---\n\nbody\n"
+            "---\nid: FOO-0001\nstatus: done\ncompleted_at: 2026-07-29T12:34:56Z\ntitle: task\n---\n\nbody\n"
+        );
+    }
+
+    #[test]
+    fn reopen_removes_every_completion_property() {
+        let mut file = file(
+            "---\nid: FOO-0001\nstatus: done\ncompleted: 2026-07-28\ncompleted_at: 2026-07-29T12:34:56Z\ntitle: task\n---\n\nbody\n",
+        );
+
+        reopen_status(&mut file).unwrap();
+
+        assert_eq!(
+            file.source(),
+            "---\nid: FOO-0001\nstatus: active\ntitle: task\n---\n\nbody\n"
         );
     }
 }

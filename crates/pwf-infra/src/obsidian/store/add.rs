@@ -1,9 +1,8 @@
 use std::path::PathBuf;
 
 use pwf_models::{
-    AppDate,
     project::Project,
-    task::{BlockedBy, EffortTier, TaskId, TaskTags, TaskTitle},
+    task::{BlockedBy, EffortTier, TaskId, TaskTags, TaskTimestamp, TaskTitle},
 };
 
 use super::{ObsidianStore, ObsidianStoreError, fs::write_add_task_file};
@@ -14,7 +13,7 @@ pub(super) struct NewNoteRequest<'a> {
     pub id: &'a TaskId,
     pub body: &'a str,
     pub title: &'a TaskTitle,
-    pub created: &'a AppDate,
+    pub created_at: &'a TaskTimestamp,
     pub blocked_by: Option<&'a BlockedBy>,
     pub effort: Option<EffortTier>,
     pub tags: Option<&'a TaskTags>,
@@ -46,7 +45,7 @@ impl ObsidianStore {
             title: request.title,
             project: project.title.as_ref(),
             body: request.body,
-            created: request.created,
+            created_at: request.created_at,
             blocked_by: request.blocked_by,
             effort: request.effort,
             tags: request.tags,

@@ -86,7 +86,7 @@ struct ProjectIndexFrontmatter {
     title: Option<String>,
 }
 
-fn parse_task_metadata_if_task(
+pub(super) fn parse_task_metadata_if_task(
     file: &MarkdownFile,
 ) -> Result<Option<(TaskId, Option<String>)>, ObsidianStoreError> {
     let path = file.path();

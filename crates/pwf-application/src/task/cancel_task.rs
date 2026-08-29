@@ -1,3 +1,4 @@
+use pwf_models::task::TaskTimestampError;
 use pwf_wire::task::{CancelTask, ClosedTask, ClosedTaskAction};
 
 use super::{
@@ -16,6 +17,8 @@ pub enum CancelTaskError {
     ResolveProject(#[from] ResolveTaskProjectError),
     #[error(transparent)]
     Close(#[from] CloseTaskError),
+    #[error("cannot read the task cancellation time: {0}")]
+    Clock(#[from] TaskTimestampError),
 }
 
 #[cqrsy::command]
@@ -30,7 +33,7 @@ pub async fn execute(
         &TaskClosure {
             action: ClosedTaskAction::Cancelled,
             id: &command.id,
-            completed: clock.today(),
+            completed_at: clock.now()?,
             report: Some(&command.report),
             commits: command.commits.as_ref(),
             review: command.review,
@@ -49,7 +52,7 @@ mod tests {
     use crate::{
         ports::task_record::{IndexEntry, IndexEntryState, IndexEntryStore, TaskRecord},
         task::cancel_task,
-        testing::{FixedClock, InMemoryStore, app_date, project, task_record},
+        testing::{FixedClock, InMemoryStore, project, task_record, task_timestamp},
     };
 
     fn record(id: &str) -> TaskRecord {
@@ -99,8 +102,8 @@ mod tests {
         assert_eq!(out.action, pwf_wire::task::ClosedTaskAction::Cancelled);
         assert_eq!(store.tasks("foo-bar")[0].status, TaskStatus::Cancelled);
         assert_eq!(
-            store.tasks("foo-bar")[0].completed,
-            Some(app_date("2026-07-26"))
+            store.tasks("foo-bar")[0].completed_at,
+            Some(task_timestamp("2026-07-26T12:34:56Z"))
         );
         assert_eq!(
             store.tasks("foo-bar")[0].commits.as_deref(),
@@ -109,7 +112,7 @@ mod tests {
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
-    async fn cancel_uses_the_clock_date(pool: sqlx::SqlitePool) {
+    async fn cancel_uses_the_clock_timestamp(pool: sqlx::SqlitePool) {
         crate::testing::insert_project(
             &pool,
             "FOO",
@@ -132,8 +135,8 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            store.tasks("foo-bar")[0].completed,
-            Some(app_date("2026-07-26"))
+            store.tasks("foo-bar")[0].completed_at,
+            Some(task_timestamp("2026-07-26T12:34:56Z"))
         );
     }
 

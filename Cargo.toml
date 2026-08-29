@@ -1,6 +1,5 @@
 [workspace]
 members = ["crates/*", "shared/prompt-lanes", "xtask"]
-default-members = ["crates/pwf-cli"]
 resolver = "3"
 
 [workspace.package]
@@ -19,7 +18,6 @@ cargo_metadata = "0.23.1"
 jiff = "0.2.35"
 clap = { version = "4", features = ["derive"] }
 clap-cargo = "0.18.3"
-command-group = "5.0.1"
 cqrsy = "0.11.0"
 criterion = "0.8.2"
 directories = "6.0.0"
@@ -28,7 +26,6 @@ expectrl = "0.9.0"
 futures = { version = "0.3.34", default-features = false, features = ["std"] }
 getrandom = "0.4.3"
 gray_matter = { version = "0.3.2", default-features = false, features = ["yaml"] }
-indicatif = { version = "0.18.6", default-features = false }
 lazy-regex = "3.6.1"
 libc = "0.2.186"
 nutype = "0.7.0"
@@ -79,7 +76,6 @@ tracing-subscriber = { version = "0.3.23", default-features = false, features = 
 subtle = { version = "2.6.1", default-features = false }
 uuid = { version = "1", features = ["v4"] }
 walkdir = "2"
-xtk-test = { version = "0.10", features = ["json"] }
 [workspace.lints.clippy]
 all = { level = "warn", priority = -2 }
 pedantic = { level = "warn", priority = -2 }

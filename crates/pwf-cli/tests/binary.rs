@@ -2,6 +2,8 @@
 
 //! Exercises public CLI contracts through the release `pwf` binary.
 
+#[path = "binary/migrator.rs"]
+mod migrator;
 #[path = "binary/notes.rs"]
 mod notes;
 #[path = "binary/project_registry.rs"]

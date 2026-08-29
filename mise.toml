@@ -19,6 +19,10 @@ protoc = "35.1"
   "rust",
   "cargo-binstall",
 ] }
+"cargo:cargo-nextest" = { version = "0.9.143", depends = [
+  "rust",
+  "cargo-binstall",
+] }
 [bootstrap.packages]
 "apt:bash" = "latest"
 "apt:build-essential" = "latest"

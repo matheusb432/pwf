@@ -14,7 +14,7 @@ use pwf_models::{
         Project, ProjectId, ProjectName, ProjectSource, ProjectSourceKind, ProjectSourceValue,
         ProjectTasks, ProjectTasksKind, ProjectTasksPath,
     },
-    task::{BlockedBy, TaskId, TaskSection, TaskStatus, TaskTags},
+    task::{BlockedBy, TaskId, TaskSection, TaskStatus, TaskTags, TaskTimestamp},
 };
 use pwf_wire::task::RawTaskTags;
 
@@ -31,8 +31,8 @@ use crate::ports::{
 pub(crate) struct FixedClock;
 
 impl Clock for FixedClock {
-    fn today(&self) -> AppDate {
-        app_date("2026-07-26")
+    fn now(&self) -> Result<TaskTimestamp, pwf_models::task::TaskTimestampError> {
+        "2026-07-26T12:34:56Z".parse()
     }
 }
 
@@ -173,13 +173,17 @@ pub(crate) fn app_date(raw: impl AsRef<str>) -> AppDate {
     raw.as_ref().parse().unwrap()
 }
 
+pub(crate) fn task_timestamp(raw: impl AsRef<str>) -> TaskTimestamp {
+    raw.as_ref().parse().unwrap()
+}
+
 pub(crate) fn task_record(id: &str) -> TaskRecord {
     TaskRecord {
         id: TaskId::try_new(id).unwrap(),
         title: "tray gui".to_string(),
         status: TaskStatus::Active,
-        created: Some(app_date("2026-01-01")),
-        completed: None,
+        created_at: Some(task_timestamp("2026-01-01T00:00:00Z")),
+        completed_at: None,
         commits: None,
         tags: None,
         effort: None,
@@ -201,12 +205,12 @@ pub(crate) fn stored_blocked_by(ids: &[&str]) -> StoredBlockedBy {
     StoredBlockedBy::Valid(blocked_by(ids))
 }
 
-pub(crate) const FOO_0001_SOURCE: &str = "---\nid: FOO-0001\nstatus: active\ntitle: do the thing\nproject: foo\ncreated: 2026-06-20\n---\n\n## Goals\n- do the thing\n";
+pub(crate) const FOO_0001_SOURCE: &str = "---\nid: FOO-0001\nstatus: active\ntitle: do the thing\nproject: foo\ncreated_at: 2026-06-20T00:00:00Z\n---\n\n## Goals\n- do the thing\n";
 
 pub(crate) fn staged_task() -> (InMemoryStore, Vec<Project>) {
     let record = TaskRecord {
         title: "do the thing".to_string(),
-        created: Some(app_date("2026-06-20")),
+        created_at: Some(task_timestamp("2026-06-20T00:00:00Z")),
         body: "\n## Goals\n- do the thing\n".to_string(),
         source: FOO_0001_SOURCE.to_string(),
         locator: pwf_wire::task::TaskNotePath::new("/notes/foo/FOO-0001.md".into()),
@@ -222,7 +226,7 @@ pub(crate) fn staged_missing_task() -> (InMemoryStore, Vec<Project>) {
     let expected = "/notes/foo/FOO-0002.md".to_string();
     let record = TaskRecord {
         title: "ghost".to_string(),
-        created: None,
+        created_at: None,
         body: String::new(),
         source: String::new(),
         locator: pwf_wire::task::TaskNotePath::new(expected.clone().into()),
@@ -291,8 +295,8 @@ impl TaskStore for InMemoryStore {
             id: id.clone(),
             title: new.title.to_string(),
             status: TaskStatus::Active,
-            created: Some(new.created),
-            completed: None,
+            created_at: Some(new.created_at),
+            completed_at: None,
             commits: None,
             tags: new.tags.map(|tags| render_tags(&tags)),
             effort: new.effort.map(|effort| effort.to_string()),
@@ -319,7 +323,7 @@ impl TaskStore for InMemoryStore {
         if let Some(status) = patch.status {
             record.status = status;
         }
-        apply_nullable_patch(&mut record.completed, patch.completed);
+        apply_nullable_patch(&mut record.completed_at, patch.completed_at);
         apply_nullable_patch(&mut record.commits, patch.commits);
         if let Some(body) = patch.body {
             record.body = body;

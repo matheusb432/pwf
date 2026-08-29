@@ -6,6 +6,7 @@ pub mod complete_task;
 pub mod edit_task;
 pub mod get_task;
 pub mod list_tasks;
+pub mod migrate_task_metadata;
 mod note_body;
 pub mod remove_task;
 pub mod reopen_task;

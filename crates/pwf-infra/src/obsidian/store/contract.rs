@@ -5,12 +5,14 @@ use pwf_application::ports::task_record::{
     Materialization, NewTask, NullablePatch, StoredBlockedBy, TaskPatch, TaskRecord, TaskStore,
 };
 use pwf_models::{
-    AppDate,
     project::{
         HomeDirectory, Project, ProjectId, ProjectName, ProjectSource, ProjectSourceKind,
         ProjectSourceValue, ProjectTasks, ProjectTasksKind, ProjectTasksPath,
     },
-    task::{BlockedBy, EffortTier, Tag, TaskId, TaskSection, TaskStatus, TaskTags, TaskTitle},
+    task::{
+        BlockedBy, EffortTier, Tag, TaskId, TaskSection, TaskStatus, TaskTags, TaskTimestamp,
+        TaskTitle,
+    },
 };
 use pwf_wire::task::{TaskIndexPath, TaskNotePath};
 
@@ -18,7 +20,7 @@ use super::{ObsidianStore, ObsidianStoreError, fs::path_str};
 
 const S: &str = "\n\n";
 
-fn app_date(raw: &str) -> AppDate {
+fn task_timestamp(raw: &str) -> TaskTimestamp {
     raw.parse().unwrap()
 }
 
@@ -351,7 +353,7 @@ fn get_rejects_duplicate_frontmatter_ids() {
 fn write_note(
     path: &Path,
     title: &str,
-    created: &str,
+    created_date: &str,
     blocked_by: Option<&str>,
     effort: Option<&str>,
     tags: Option<&str>,
@@ -359,7 +361,7 @@ fn write_note(
 ) {
     let id = path.file_stem().and_then(|stem| stem.to_str()).unwrap();
     let mut note = format!(
-        "---\nid: {id}\nstatus: active\ntitle: {title}\nproject: foo\ncreated: {created}\n"
+        "---\nid: {id}\nstatus: active\ntitle: {title}\nproject: foo\ncreated_at: {created_date}T00:00:00Z\n"
     );
     if let Some(blocked_by) = blocked_by {
         let _ = writeln!(note, "blocked_by: {blocked_by}");
@@ -405,7 +407,7 @@ fn new_task(body: &str, title: &str, section: Option<&str>) -> NewTask {
     NewTask {
         body: body.to_string(),
         title: TaskTitle::try_new(title).unwrap(),
-        created: app_date("2026-07-07"),
+        created_at: task_timestamp("2026-07-07T12:34:56Z"),
         section: section.map(task_section),
         blocked_by: None,
         effort: None,
@@ -444,7 +446,7 @@ fn generic_add_creates_note_and_links_index() {
     );
     assert!(note.contains("status: active"), "{note}");
     assert!(note.contains("title: ship adapter"), "{note}");
-    assert!(note.contains("created: 2026-07-07"), "{note}");
+    assert!(note.contains("created_at: 2026-07-07T12:34:56Z"), "{note}");
     assert!(note.contains("blocked_by: [\"[[FOO-0001]]\"]"), "{note}");
     assert!(note.contains("effort: medium"), "{note}");
     let expected_body = format!("## Goals{S}## Done When{S}- tests pass");
@@ -629,7 +631,7 @@ fn generic_update_sets_frontmatter_tags_without_rewriting_body_tags_line() {
             "status: active\n",
             "title: tagged\n",
             "project: foo\n",
-            "created: 2026-07-01\n",
+            "created_at: 2026-07-01T00:00:00Z\n",
             "tags: [sqlite]\n",
             "---\n\n",
             "tags: body-only value\n",
@@ -794,7 +796,7 @@ fn get_returns_open_note_locator_from_active_index() {
 }
 
 #[test]
-fn get_returns_open_note_source_with_created_key() {
+fn get_returns_open_note_source_with_created_at_key() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
     let project_dir = notes_dir.join("foo");
@@ -815,7 +817,7 @@ fn get_returns_open_note_source_with_created_key() {
 
     assert_eq!(
         record.source,
-        "---\nid: FOO-0001\nstatus: active\ntitle: active task\nproject: foo\ncreated: 2026-07-01\n---\n\n## Goals\n- body\n"
+        "---\nid: FOO-0001\nstatus: active\ntitle: active task\nproject: foo\ncreated_at: 2026-07-01T00:00:00Z\n---\n\n## Goals\n- body\n"
     );
 }
 
@@ -843,7 +845,7 @@ fn get_finds_closed_note_still_in_project_dir() {
 
     assert_eq!(
         record.source,
-        "---\nid: FOO-0003\nstatus: done\ntitle: done task\nproject: foo\ncreated: 2026-07-01\ncompleted: 2026-07-07\n---\n\nbody\n"
+        "---\nid: FOO-0003\nstatus: done\ntitle: done task\nproject: foo\ncreated_at: 2026-07-01T00:00:00Z\ncompleted_at: 2026-07-07T00:00:00Z\n---\n\nbody\n"
     );
 }
 
@@ -902,7 +904,7 @@ fn formatted_tag_note(bom: bool, newline: &str, tags: Option<&str>) -> String {
     let bom = if bom { "\u{feff}" } else { "" };
     let tags = tags.map_or_else(String::new, |tags| format!("tags: {tags}{newline}"));
     format!(
-        "{bom}---{newline}id: FOO-0001{newline}status: active{newline}title: tagged{newline}project: foo{newline}created: 2026-07-01{newline}{tags}---{newline}{newline}tags: body-only value{newline}keep this body byte-identical{newline}"
+        "{bom}---{newline}id: FOO-0001{newline}status: active{newline}title: tagged{newline}project: foo{newline}created_at: 2026-07-01T00:00:00Z{newline}{tags}---{newline}{newline}tags: body-only value{newline}keep this body byte-identical{newline}"
     )
 }
 
@@ -924,15 +926,15 @@ fn write_status_note(
     path: &Path,
     title: &str,
     status: &str,
-    completed: Option<&str>,
+    completed_date: Option<&str>,
     commits: Option<&str>,
 ) {
     let id = path.file_stem().and_then(|stem| stem.to_str()).unwrap();
     let mut note = format!(
-        "---\nid: {id}\nstatus: {status}\ntitle: {title}\nproject: foo\ncreated: 2026-07-01\n"
+        "---\nid: {id}\nstatus: {status}\ntitle: {title}\nproject: foo\ncreated_at: 2026-07-01T00:00:00Z\n"
     );
-    if let Some(completed) = completed {
-        let _ = writeln!(note, "completed: {completed}");
+    if let Some(completed_date) = completed_date {
+        let _ = writeln!(note, "completed_at: {completed_date}T00:00:00Z");
     }
     if let Some(commits) = commits {
         let _ = writeln!(note, "commits: \"{commits}\"");
@@ -955,7 +957,7 @@ fn task_record_roundtrips_file_model_note() {
         "status: active\n",
         "title: ship the adapter\n",
         "project: foo\n",
-        "created: 2026-07-01\n",
+        "created_at: 2026-07-01T00:00:00Z\n",
         "blocked_by:\n",
         "  - \"[[AUX-0001]]\"\n",
         "effort: medium\n",
@@ -975,8 +977,11 @@ fn task_record_roundtrips_file_model_note() {
     assert_eq!(record.materialization, Materialization::NoteFile);
     assert_eq!(record.title, "ship the adapter");
     assert_eq!(record.status, TaskStatus::Active);
-    assert_eq!(record.created, Some(app_date("2026-07-01")));
-    assert_eq!(record.completed, None);
+    assert_eq!(
+        record.created_at,
+        Some(task_timestamp("2026-07-01T00:00:00Z"))
+    );
+    assert_eq!(record.completed_at, None);
     assert_eq!(record.commits, None);
     assert_eq!(
         record.blocked_by,
@@ -1024,7 +1029,7 @@ fn task_record_preserves_malformed_blocked_by_without_failing_the_read() {
 }
 
 #[test]
-fn task_record_rejects_an_invalid_created_date() {
+fn task_record_rejects_an_invalid_created_at_timestamp() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
     let project_dir = notes_dir.join("foo");
@@ -1048,12 +1053,12 @@ fn task_record_rejects_an_invalid_created_date() {
 
     assert_matches!(
         error,
-        ObsidianStoreError::InvalidTaskDate {
+        ObsidianStoreError::InvalidTaskTimestamp {
             path,
-            property: "created",
+            property: "created_at",
             ref value,
             ..
-        } if path == note_path && value == "2026-02-30"
+        } if path == note_path && value == "2026-02-30T00:00:00Z"
     );
 }
 
@@ -1108,8 +1113,8 @@ fn task_record_materializes_index_entry_without_a_note() {
     assert_eq!(record.id, id);
     assert_eq!(record.title, "handle it");
     assert_eq!(record.status, TaskStatus::Active);
-    assert_eq!(record.created, None);
-    assert_eq!(record.completed, None);
+    assert_eq!(record.created_at, None);
+    assert_eq!(record.completed_at, None);
     assert_eq!(record.section, None);
     assert_eq!(record.locator.as_path(), expected_note);
     assert_eq!(record.source, "");
@@ -1154,7 +1159,7 @@ fn index_entries_parse_open_done_and_raw_futuro_section() {
             },
             IndexEntry {
                 id: TaskId::try_new("FOO-0002").unwrap(),
-                state: IndexEntryState::Done(Some(app_date("2026-07-02"))),
+                state: IndexEntryState::Done(Some(task_timestamp("2026-07-02T00:00:00Z",))),
                 section: None,
             },
             IndexEntry {
@@ -1167,7 +1172,7 @@ fn index_entries_parse_open_done_and_raw_futuro_section() {
 }
 
 #[test]
-fn patch_status_done_closes_index_entry_with_date_stamp() {
+fn patch_status_done_closes_index_entry_without_a_date_stamp() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
     let project_dir = notes_dir.join("foo");
@@ -1184,7 +1189,7 @@ fn patch_status_done_closes_index_entry_with_date_stamp() {
     let id = TaskId::try_new("FOO-0002").unwrap();
     let patch = TaskPatch {
         status: Some(TaskStatus::Done),
-        completed: NullablePatch::Set(app_date("2026-07-15")),
+        completed_at: NullablePatch::Set(task_timestamp("2026-07-15T12:34:56Z")),
         ..Default::default()
     };
 
@@ -1192,9 +1197,10 @@ fn patch_status_done_closes_index_entry_with_date_stamp() {
 
     let index = std::fs::read_to_string(&index_path).unwrap();
     assert!(
-        index.contains("- [x] [[FOO-0002|handle it]] \u{2705} 2026-07-15"),
-        "checkbox not flipped/stamped; got:\n{index}"
+        index.contains("- [x] [[FOO-0002|handle it]]"),
+        "checkbox not flipped; got:\n{index}"
     );
+    assert!(!index.contains('\u{2705}'), "date stamp retained:\n{index}");
 }
 
 #[test]
@@ -1224,7 +1230,7 @@ fn insert_allocates_next_id_without_index_write() {
         NewTask {
             body: "wire up the new thing".to_string(),
             title: TaskTitle::try_new("wire up the new thing").unwrap(),
-            created: app_date("2026-07-15"),
+            created_at: task_timestamp("2026-07-15T12:34:56Z"),
             section: None,
             blocked_by: None,
             effort: None,
@@ -1650,7 +1656,7 @@ fn stage_add_parity_vault(
 
 /// Verifies byte-exact section placement, H3 safety, link format, and fresh-index creation.
 #[test]
-fn generic_insert_plus_upsert_writes_legacy_add_index_bytes() {
+fn generic_insert_and_upsert_preserve_index_placement_bytes() {
     for scenario in add_parity_scenarios() {
         let (_guard, store, project_dir) = stage_add_parity_vault(scenario.initial_index);
         let project = foo_project(&store);
@@ -1661,7 +1667,7 @@ fn generic_insert_plus_upsert_writes_legacy_add_index_bytes() {
             NewTask {
                 body: "do the thing".to_string(),
                 title: TaskTitle::try_new("ship it").unwrap(),
-                created: app_date("2026-07-07"),
+                created_at: task_timestamp("2026-07-07T12:34:56Z"),
                 section: scenario.section.map(task_section),
                 blocked_by: None,
                 effort: None,

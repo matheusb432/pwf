@@ -5,9 +5,8 @@ use pwf_application::ports::task_record::{
     IndexEntry, IndexEntryState, IndexEntryStore, IndexSectionStore,
 };
 use pwf_models::{
-    AppDate,
     project::Project,
-    task::{TaskId, TaskSection},
+    task::{TaskId, TaskSection, TaskTimestamp},
 };
 
 use super::{
@@ -125,19 +124,20 @@ fn parse_completion_date(
     index_path: &Path,
     line: &str,
     line_number: usize,
-) -> Result<Option<AppDate>, ObsidianStoreError> {
+) -> Result<Option<TaskTimestamp>, ObsidianStoreError> {
     let Some(captures) = date_stamp_regex().captures(line) else {
         return Ok(None);
     };
     let value = captures[1].to_string();
-    value.parse::<AppDate>().map(Some).map_err(|source| {
-        ObsidianStoreError::InvalidProjectIndexDate {
+    format!("{value}T00:00:00Z")
+        .parse::<TaskTimestamp>()
+        .map(Some)
+        .map_err(|source| ObsidianStoreError::InvalidProjectIndexDate {
             path: index_path.to_path_buf(),
             line: line_number,
             value,
             source,
-        }
-    })
+        })
 }
 
 fn reject_duplicate_task_ids(
@@ -193,10 +193,7 @@ pub(super) fn parse_section_labels(
 fn render_entry_line(entry: &IndexEntry) -> String {
     match &entry.state {
         IndexEntryState::Open => format!("- [ ] [[{}]]", entry.id.as_ref()),
-        IndexEntryState::Done(Some(date)) => {
-            format!("- [x] [[{}]] ✅ {date}", entry.id.as_ref())
-        }
-        IndexEntryState::Done(None) => format!("- [x] [[{}]]", entry.id.as_ref()),
+        IndexEntryState::Done(_) => format!("- [x] [[{}]]", entry.id.as_ref()),
     }
 }
 
@@ -362,7 +359,7 @@ mod tests {
     use std::{assert_matches, path::Path};
 
     use pwf_application::ports::task_record::{IndexEntry, IndexEntryState};
-    use pwf_models::{AppDate, task::TaskId};
+    use pwf_models::task::{TaskId, TaskTimestamp};
 
     use super::{ObsidianStoreError, parse_index_lines, render_entry_line, replace_line};
 
@@ -370,14 +367,14 @@ mod tests {
     fn done_entry_replaces_only_its_index_line() -> anyhow::Result<()> {
         let entry = IndexEntry {
             id: TaskId::try_new("FOO-0001")?,
-            state: IndexEntryState::Done(Some("2026-07-29".parse::<AppDate>()?)),
+            state: IndexEntryState::Done(Some("2026-07-29T12:34:56Z".parse::<TaskTimestamp>()?)),
             section: None,
         };
         let index = "# foo\n\n- [ ] [[FOO-0001]]\n- [ ] [[FOO-0002]]\n";
 
         assert_eq!(
             replace_line(index, 3, &render_entry_line(&entry)),
-            "# foo\n\n- [x] [[FOO-0001]] ✅ 2026-07-29\n- [ ] [[FOO-0002]]\n"
+            "# foo\n\n- [x] [[FOO-0001]]\n- [ ] [[FOO-0002]]\n"
         );
         Ok(())
     }

@@ -83,7 +83,7 @@ fn add_note_status(error: AddNoteError) -> Status {
     match error {
         AddNoteError::ResolveProject(error) => resolve_project_status(&error),
         AddNoteError::IdentifierExhausted { .. } => Status::resource_exhausted(error.to_string()),
-        AddNoteError::Store(_) => Status::internal(error.to_string()),
+        AddNoteError::Store(_) | AddNoteError::Clock(_) => Status::internal(error.to_string()),
     }
 }
 

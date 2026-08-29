@@ -7,6 +7,7 @@ mod index_entry;
 mod lookup;
 mod project_note;
 mod read;
+mod task_metadata_migration;
 mod task_record;
 
 use std::path::PathBuf;

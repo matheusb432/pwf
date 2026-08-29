@@ -1,14 +1,12 @@
-use std::{fmt::Write as _, num::NonZeroUsize, path::Path};
+use std::{num::NonZeroUsize, path::Path};
 
-use lazy_regex::{Regex, regex};
 use pwf_application::ports::task_record::{
     IndexEntryState, IndexPlacement, Materialization, NewTask, NullablePatch, TaskPatch,
     TaskRecord, TaskStore,
 };
 use pwf_models::{
-    AppDate,
     project::Project,
-    task::{TaskId, TaskSection, TaskStatus},
+    task::{TaskId, TaskSection, TaskStatus, TaskTimestamp},
 };
 use pwf_wire::task::{RawTaskTags, TaskIndexPath, TaskNotePath};
 
@@ -18,14 +16,10 @@ use super::{
     fs::{line_start_index, open_task_file, path_str, save_task_file, write_index},
     index_entry::{ParsedIndexLine, parse_index_lines},
 };
-
-fn date_stamp_regex() -> &'static Regex {
-    regex!(r"✅\s*(\d{4}-\d{2}-\d{2})")
-}
 use crate::obsidian::{
     MarkdownFile, MarkdownFileError, done_queue,
     note_frontmatter::{
-        parse_blocked_by, reopen_status, set_blocked_by, set_commits, set_completed, set_effort,
+        parse_blocked_by, reopen_status, set_blocked_by, set_commits, set_completed_at, set_effort,
         set_status, set_tags,
     },
     note_text::{replace_body, replace_title},
@@ -69,12 +63,12 @@ fn note_to_record(
         .unwrap_or_default();
     // Preserve raw tags so unfiltered reads do not fail on invalid tag syntax.
     let tags = field("tags")?.map(RawTaskTags::new);
-    let date = |property: &'static str| -> Result<Option<AppDate>, ObsidianStoreError> {
+    let timestamp = |property: &'static str| -> Result<Option<TaskTimestamp>, ObsidianStoreError> {
         field(property)?
             .map(|value| {
                 value
                     .parse()
-                    .map_err(|source| ObsidianStoreError::InvalidTaskDate {
+                    .map_err(|source| ObsidianStoreError::InvalidTaskTimestamp {
                         path: path.to_path_buf(),
                         property,
                         value,
@@ -83,8 +77,8 @@ fn note_to_record(
             })
             .transpose()
     };
-    let created = date("created")?;
-    let completed = date("completed")?;
+    let created_at = timestamp("created_at")?;
+    let completed_at = timestamp("completed_at")?;
     let commits = field("commits")?;
     let effort = field("effort")?;
     let blocked_by = parse_blocked_by(frontmatter.as_ref());
@@ -95,8 +89,8 @@ fn note_to_record(
         id,
         title,
         status,
-        created,
-        completed,
+        created_at,
+        completed_at,
         commits,
         tags,
         effort,
@@ -118,7 +112,7 @@ fn missing_note_record(
     id: TaskId,
     title: String,
     status: TaskStatus,
-    completed: Option<AppDate>,
+    completed_at: Option<TaskTimestamp>,
     section: Option<TaskSection>,
     expected_path: &Path,
 ) -> TaskRecord {
@@ -126,8 +120,8 @@ fn missing_note_record(
         id,
         title,
         status,
-        created: None,
-        completed,
+        created_at: None,
+        completed_at,
         commits: None,
         tags: None,
         effort: None,
@@ -151,7 +145,7 @@ fn expected_note_path(index_path: &Path, id: &TaskId) -> std::path::PathBuf {
 }
 
 fn index_entry_to_record(index_path: &Path, line: &ParsedIndexLine) -> TaskRecord {
-    let (status, completed) = match &line.state {
+    let (status, completed_at) = match &line.state {
         IndexEntryState::Open => (TaskStatus::Active, None),
         IndexEntryState::Done(date) => (TaskStatus::Done, *date),
     };
@@ -160,7 +154,7 @@ fn index_entry_to_record(index_path: &Path, line: &ParsedIndexLine) -> TaskRecor
         line.id.clone(),
         line.alias.clone().unwrap_or_default(),
         status,
-        completed,
+        completed_at,
         line.section.clone(),
         &expected,
     )
@@ -286,7 +280,7 @@ impl ObsidianStore {
                 id,
                 body: &new.body,
                 title: &new.title,
-                created: &new.created,
+                created_at: &new.created_at,
                 blocked_by: new.blocked_by.as_ref(),
                 effort: new.effort,
                 tags: new.tags.as_ref(),
@@ -330,7 +324,7 @@ impl ObsidianStore {
             let updated = replace_body(file.source(), body);
             file.replace_source(updated);
         }
-        // Apply commits first to keep `commits:` anchored after `created:` during a close.
+        // Apply commits first to keep it adjacent to completion metadata during a close.
         match &patch.commits {
             NullablePatch::Unchanged => {}
             NullablePatch::Clear => set_commits(&mut file, None).map_err(write_task_file_error)?,
@@ -343,19 +337,20 @@ impl ObsidianStore {
                 reopen_status(&mut file).map_err(write_task_file_error)?;
             }
             Some(status) => {
-                let completed = match &patch.completed {
-                    NullablePatch::Set(completed) => Some(completed),
+                let completed_at = match &patch.completed_at {
+                    NullablePatch::Set(completed_at) => Some(completed_at),
                     NullablePatch::Unchanged | NullablePatch::Clear => None,
                 };
-                set_status(&mut file, status, completed).map_err(write_task_file_error)?;
+                set_status(&mut file, status, completed_at).map_err(write_task_file_error)?;
             }
-            None => match &patch.completed {
+            None => match &patch.completed_at {
                 NullablePatch::Unchanged => {}
                 NullablePatch::Clear => {
-                    set_completed(&mut file, None).map_err(write_task_file_error)?;
+                    set_completed_at(&mut file, None).map_err(write_task_file_error)?;
                 }
-                NullablePatch::Set(completed) => {
-                    set_completed(&mut file, Some(completed)).map_err(write_task_file_error)?;
+                NullablePatch::Set(completed_at) => {
+                    set_completed_at(&mut file, Some(completed_at))
+                        .map_err(write_task_file_error)?;
                 }
             },
         }
@@ -421,16 +416,8 @@ fn patch_index_entry(
             Ok(())
         }
         Some(TaskStatus::Done | TaskStatus::Cancelled) => {
-            let completed = match &patch.completed {
-                NullablePatch::Set(completed) => Some(completed),
-                NullablePatch::Unchanged | NullablePatch::Clear => None,
-            };
-            let updated = close_index_entry_text(
-                text,
-                line.line_number.get(),
-                completed,
-                &path_str(index_path),
-            )?;
+            let updated =
+                close_index_entry_text(text, line.line_number.get(), &path_str(index_path))?;
             write_index(index_path, &updated)
         }
         None => Ok(()),
@@ -487,7 +474,6 @@ impl TaskStore for ObsidianStore {
 pub(super) fn close_index_entry_text(
     content: &str,
     line: usize,
-    completed: Option<&AppDate>,
     note: &str,
 ) -> Result<String, ObsidianStoreError> {
     let marker_index = line_start_index(content, line).ok_or_else(|| {
@@ -509,12 +495,7 @@ pub(super) fn close_index_entry_text(
         .find(['\r', '\n'])
         .map_or(content.len(), |index| marker_index + index);
     let line_text = &content[marker_index..line_end];
-    let mut checked_line = format!("- [x]{}", &line_text[5..]);
-    if !date_stamp_regex().is_match(&checked_line)
-        && let Some(completed) = completed
-    {
-        let _ = write!(checked_line, " ✅ {completed}");
-    }
+    let checked_line = format!("- [x]{}", &line_text[5..]);
     Ok(format!(
         "{}{}{}",
         &content[..marker_index],

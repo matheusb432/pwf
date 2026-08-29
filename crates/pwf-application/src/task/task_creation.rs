@@ -119,7 +119,7 @@ mod tests {
     use super::{TaskCreation, create};
     use crate::{
         ports::task_record::{IndexEntryState, NewTask},
-        testing::{InMemoryStore, app_date, project},
+        testing::{InMemoryStore, project, task_timestamp},
     };
 
     fn foo() -> Project {
@@ -130,7 +130,7 @@ mod tests {
         NewTask {
             body: "## Goals\n\n- do the thing".to_string(),
             title: TaskTitle::try_new("ship it").unwrap(),
-            created: app_date("2026-07-15"),
+            created_at: task_timestamp("2026-07-15T12:34:56Z"),
             section: section.map(|section| section.parse().unwrap()),
             blocked_by: None,
             effort: None,
@@ -201,7 +201,7 @@ mod tests {
     }
 
     #[test]
-    fn create_task_matches_section_aliases_like_the_legacy_read_headers() {
+    fn create_task_matches_supported_index_header_aliases() {
         let store = staged_store().with_sections("foo", &["Futuro"]);
 
         let created = create_task(&store, Some("Future"));

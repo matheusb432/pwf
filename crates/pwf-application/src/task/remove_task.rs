@@ -188,7 +188,7 @@ mod tests {
         },
         task::remove_task,
         testing::{
-            InMemoryStore, app_date, insert_project, project, stored_blocked_by, task_record,
+            InMemoryStore, insert_project, project, stored_blocked_by, task_record, task_timestamp,
         },
     };
 
@@ -205,7 +205,7 @@ mod tests {
         TaskRecord {
             title: "stale task".to_string(),
             status,
-            created: Some(app_date("2026-07-01")),
+            created_at: Some(task_timestamp("2026-07-01T12:34:56Z")),
             locator: TaskNotePath::new(format!("/notes/foo/{id}.md").into()),
             ..task_record(id)
         }
@@ -215,7 +215,7 @@ mod tests {
         let index_state = match status {
             TaskStatus::Active => IndexEntryState::Open,
             TaskStatus::Done | TaskStatus::Cancelled => {
-                IndexEntryState::Done(Some(app_date("2026-07-02")))
+                IndexEntryState::Done(Some(task_timestamp("2026-07-02T12:34:56Z")))
             }
         };
         let store = InMemoryStore::default()

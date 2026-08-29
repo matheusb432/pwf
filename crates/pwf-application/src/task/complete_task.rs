@@ -1,3 +1,4 @@
+use pwf_models::task::TaskTimestampError;
 use pwf_wire::task::{ClosedTask, ClosedTaskAction, CompleteTask};
 
 #[cfg(test)]
@@ -18,6 +19,8 @@ pub enum CompleteTaskError {
     ResolveProject(#[from] ResolveTaskProjectError),
     #[error(transparent)]
     Close(#[from] CloseTaskError),
+    #[error("cannot read the task completion time: {0}")]
+    Clock(#[from] TaskTimestampError),
 }
 
 #[cqrsy::command]
@@ -32,7 +35,7 @@ pub async fn execute(
         &TaskClosure {
             action: ClosedTaskAction::Done,
             id: &command.id,
-            completed: clock.today(),
+            completed_at: clock.now()?,
             report: command.report.as_ref(),
             commits: command.commits.as_ref(),
             review: command.review,
@@ -57,7 +60,7 @@ mod tests {
     use crate::{
         ports::task_record::{IndexEntry, IndexEntryState, IndexEntryStore, TaskRecord},
         task::complete_task,
-        testing::{FixedClock, InMemoryStore, app_date, project, task_record},
+        testing::{FixedClock, InMemoryStore, project, task_record, task_timestamp},
     };
 
     fn record(id: &str, status: TaskStatus) -> TaskRecord {
@@ -99,7 +102,9 @@ mod tests {
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
-    async fn done_marks_entry_and_evicts_past_cap(pool: sqlx::SqlitePool) {
+    async fn done_evicts_the_oldest_note_completion_when_index_dates_are_absent(
+        pool: sqlx::SqlitePool,
+    ) {
         crate::testing::insert_project(
             &pool,
             "FOO",
@@ -112,10 +117,13 @@ mod tests {
         let mut tasks = vec![record("FOO-0007", TaskStatus::Active)];
         let mut entries: Vec<IndexEntry> = (1..=6)
             .map(|n| {
-                tasks.push(record(&format!("FOO-{n:04}"), TaskStatus::Done));
+                tasks.push(TaskRecord {
+                    completed_at: Some(task_timestamp(format!("2026-01-{:02}T00:00:00Z", 7 - n))),
+                    ..record(&format!("FOO-{n:04}"), TaskStatus::Done)
+                });
                 entry(
                     &format!("FOO-{n:04}"),
-                    IndexEntryState::Done(Some(app_date(format!("2026-01-{n:02}")))),
+                    IndexEntryState::Done(None),
                     "General",
                 )
             })
@@ -128,7 +136,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(out.action, ClosedTaskAction::Done);
-        assert_eq!(out.evicted_ids, vec![TaskId::try_new("FOO-0001").unwrap()]);
+        assert_eq!(out.evicted_ids, vec![TaskId::try_new("FOO-0006").unwrap()]);
         assert_eq!(out.futuro_renamed_project, None);
         assert_eq!(store.tasks("foo-bar")[0].status, TaskStatus::Done);
         let marked = store
@@ -138,19 +146,19 @@ mod tests {
             .unwrap();
         assert_eq!(
             marked.state,
-            IndexEntryState::Done(Some(app_date("2026-07-26")))
+            IndexEntryState::Done(Some(task_timestamp("2026-07-26T12:34:56Z")))
         );
         assert!(
             !store
                 .entries("foo-bar")
                 .iter()
-                .any(|e| e.id == TaskId::try_new("FOO-0001").unwrap()),
+                .any(|e| e.id == TaskId::try_new("FOO-0006").unwrap()),
             "evicted entry must be unlinked"
         );
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
-    async fn done_uses_the_clock_date(pool: sqlx::SqlitePool) {
+    async fn done_uses_the_clock_timestamp(pool: sqlx::SqlitePool) {
         crate::testing::insert_project(
             &pool,
             "FOO",
@@ -169,8 +177,8 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            store.tasks("foo-bar")[0].completed,
-            Some(app_date("2026-07-26"))
+            store.tasks("foo-bar")[0].completed_at,
+            Some(task_timestamp("2026-07-26T12:34:56Z"))
         );
     }
 

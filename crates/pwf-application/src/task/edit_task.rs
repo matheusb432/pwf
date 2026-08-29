@@ -321,13 +321,14 @@ mod tests {
     use crate::{
         ports::task_record::TaskRecord,
         task::edit_task,
-        testing::{InMemoryStore, app_date, insert_project, stored_blocked_by, task_record},
+        testing::{InMemoryStore, insert_project, stored_blocked_by, task_record, task_timestamp},
     };
 
     fn record(id: &str, status: TaskStatus, body: &str) -> TaskRecord {
         TaskRecord {
             status,
-            completed: (status != TaskStatus::Active).then(|| app_date("2026-06-20")),
+            completed_at: (status != TaskStatus::Active)
+                .then(|| task_timestamp("2026-06-20T12:34:56Z")),
             body: body.to_string(),
             source: format!("---\nstatus: {status}\n---\n{body}"),
             ..task_record(id)

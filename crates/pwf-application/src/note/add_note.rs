@@ -1,6 +1,6 @@
 //! Adds one note to a managed project.
 
-use pwf_models::{note::NoteId, project::ProjectName};
+use pwf_models::{note::NoteId, project::ProjectName, task::TaskTimestampError};
 use pwf_wire::{
     note::{AddNote, NoteSummary},
     project::{ProjectStatusFilter, ResolveProject},
@@ -22,6 +22,8 @@ pub enum AddNoteError {
     IdentifierExhausted { project: ProjectName },
     #[error(transparent)]
     Store(anyhow::Error),
+    #[error("cannot read the current date: {0}")]
+    Clock(#[from] TaskTimestampError),
 }
 
 /// Validates, allocates, and persists one project note.
@@ -58,7 +60,10 @@ pub async fn execute(
             project: project.title.clone(),
         }
     })?;
-    let created = command.date.unwrap_or_else(|| clock.today());
+    let created = match command.date {
+        Some(date) => date,
+        None => clock.today()?,
+    };
     let created = store
         .insert_note(
             &project,

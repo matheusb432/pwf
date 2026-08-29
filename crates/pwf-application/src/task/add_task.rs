@@ -1,6 +1,6 @@
 use pwf_models::{
     project::Project,
-    task::{TaskId, TaskTitle, TaskTitleError},
+    task::{TaskId, TaskTimestampError, TaskTitle, TaskTitleError},
 };
 use pwf_wire::{
     project::{ProjectStatusFilter, ResolveProject},
@@ -58,6 +58,8 @@ pub enum AddTaskError {
     },
     #[error(transparent)]
     InvalidTitle(#[from] TaskTitleError),
+    #[error("cannot read the task creation time: {0}")]
+    Clock(#[from] TaskTimestampError),
     #[error("{source}")]
     WriteStore {
         diagnostics: AddTaskDiagnostics,
@@ -110,7 +112,7 @@ pub async fn execute(
             new: NewTask {
                 body: prepared.body,
                 title: prepared.title,
-                created: clock.today(),
+                created_at: clock.now()?,
                 section: cmd.index_section.task_section(),
                 blocked_by,
                 effort: cmd.effort,

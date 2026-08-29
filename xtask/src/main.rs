@@ -19,12 +19,6 @@ fn run(command: cli::Command) -> Result<()> {
     use cli::Command;
     match command {
         Command::Prepare { check } => verbs::prepare::run(check),
-        Command::Test(test) => verbs::test::run(&test),
-        Command::ProcessWorker {
-            scope,
-            verbose,
-            cargo_arguments,
-        } => verbs::test::run_process_worker(scope, verbose, &cargo_arguments),
         Command::Ship(arguments) => verbs::ship::run(&arguments),
         Command::Install => verbs::install::install(),
         Command::Update(update) => verbs::install::update(&update),

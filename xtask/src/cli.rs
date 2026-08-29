@@ -2,12 +2,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
-use crate::verbs::{
-    Verb,
-    install::UpdateArgs,
-    ship::ShipArguments,
-    test::{ProcessScope, TestArgs},
-};
+use crate::verbs::{Verb, install::UpdateArgs, ship::ShipArguments};
 
 /// pwf's embedded dev/release automation (xtask). Never installed; run via `cargo run -p xtask`.
 #[derive(Parser)]
@@ -29,22 +24,6 @@ pub(crate) enum Command {
         /// Verify that committed query metadata matches the checked queries.
         #[arg(long)]
         check: bool,
-    },
-    /// Run the test suite (terse). `--verbose` streams logs; select unit, binary, E2E, or all.
-    #[command(name = Verb::TEST.as_str())]
-    Test(TestArgs),
-    /// Build the release binary when needed, then run the binary suites.
-    #[command(hide = true)]
-    ProcessWorker {
-        /// Process-test targets to run.
-        #[arg(value_enum)]
-        scope: ProcessScope,
-        /// Stream Cargo test output from the worker.
-        #[arg(long)]
-        verbose: bool,
-        /// Cargo test arguments.
-        #[arg(last = true, allow_hyphen_values = true)]
-        cargo_arguments: Vec<String>,
     },
     /// Run the release preflight and build the release binary.
     #[command(name = Verb::SHIP.as_str())]

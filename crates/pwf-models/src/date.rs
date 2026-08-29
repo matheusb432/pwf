@@ -17,6 +17,10 @@ impl AppDate {
         let raw = format!("{year:04}-{month:02}-{day:02}");
         raw.parse()
     }
+
+    pub(crate) const fn from_jiff(date: Date) -> Self {
+        Self(date)
+    }
 }
 
 impl FromStr for AppDate {

@@ -263,9 +263,9 @@ fn add_task_status(error: AddTaskError) -> Status {
         AddTaskError::WriteStore { diagnostics, .. } => {
             status_with_add_details(message, &diagnostics)
         }
-        AddTaskError::QueryProject(_) | AddTaskError::AllocateTaskId { .. } => {
-            Status::internal(message)
-        }
+        AddTaskError::QueryProject(_)
+        | AddTaskError::AllocateTaskId { .. }
+        | AddTaskError::Clock(_) => Status::internal(message),
     }
 }
 
@@ -301,6 +301,7 @@ fn cancel_task_status(error: CancelTaskError) -> Status {
     match error {
         CancelTaskError::ResolveProject(error) => resolve_task_project_status(&error),
         CancelTaskError::Close(error) => close_task_status(error),
+        CancelTaskError::Clock(_) => Status::internal(error.to_string()),
     }
 }
 
@@ -308,6 +309,7 @@ fn complete_task_status(error: CompleteTaskError) -> Status {
     match error {
         CompleteTaskError::ResolveProject(error) => resolve_task_project_status(&error),
         CompleteTaskError::Close(error) => close_task_status(error),
+        CompleteTaskError::Clock(_) => Status::internal(error.to_string()),
     }
 }
 

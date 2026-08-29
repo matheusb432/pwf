@@ -1,5 +1,12 @@
-use pwf_models::AppDate;
+use pwf_models::{
+    AppDate,
+    task::{TaskTimestamp, TaskTimestampError},
+};
 
 pub trait Clock: Clone + Send + Sync + 'static {
-    fn today(&self) -> AppDate;
+    fn now(&self) -> Result<TaskTimestamp, TaskTimestampError>;
+
+    fn today(&self) -> Result<AppDate, TaskTimestampError> {
+        self.now().map(TaskTimestamp::date)
+    }
 }

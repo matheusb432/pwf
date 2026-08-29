@@ -16,7 +16,6 @@ clap-cargo = { workspace = true }
 percent-encoding = { workspace = true }
 process-wrap = { workspace = true }
 tempfile = { workspace = true }
-xtk-test = { workspace = true }
 
 [lints]
 workspace = true

@@ -1,4 +1,4 @@
-use pwf_models::task::{TaskId, TaskStatus};
+use pwf_models::task::{TaskId, TaskStatus, TaskTimestamp};
 use pwf_wire::{confirmation::ReopenTaskConfirmation, task::ReopenedTask};
 
 use super::{
@@ -55,7 +55,7 @@ pub async fn execute(
     let confirmation = ReopenTaskConfirmation {
         task_identifier: task_identifier.clone(),
         project: project.title.clone(),
-        completion_date: record.completed,
+        completion_date: record.completed_at.map(TaskTimestamp::date),
         commit_provenance: record.commits.clone(),
         report: report.clone(),
     };
@@ -71,7 +71,7 @@ pub async fn execute(
         &task_identifier,
         TaskPatch {
             status: Some(TaskStatus::Active),
-            completed: NullablePatch::Clear,
+            completed_at: NullablePatch::Clear,
             commits: NullablePatch::Clear,
             body: report.is_some().then_some(body_without_report),
             ..TaskPatch::default()
@@ -117,7 +117,7 @@ mod tests {
             task_record::{IndexEntry, IndexEntryState, IndexEntryStore, TaskRecord},
         },
         task::reopen_task,
-        testing::{InMemoryStore, app_date, project, task_record},
+        testing::{InMemoryStore, app_date, project, task_record, task_timestamp},
     };
 
     struct TestConfirmation {
@@ -160,7 +160,8 @@ mod tests {
     fn record(id: &str, status: TaskStatus) -> TaskRecord {
         TaskRecord {
             status,
-            completed: (status != TaskStatus::Active).then(|| app_date("2026-01-02")),
+            completed_at: (status != TaskStatus::Active)
+                .then(|| task_timestamp("2026-01-02T12:34:56Z")),
             commits: Some("a..b".to_string()),
             body: if status == TaskStatus::Active {
                 "## Goals\n\n- ship the work\n".to_string()
@@ -210,7 +211,9 @@ mod tests {
         .await;
         let store = staged(
             TaskStatus::Done,
-            vec![entry(IndexEntryState::Done(Some(app_date("2026-01-02"))))],
+            vec![entry(IndexEntryState::Done(Some(task_timestamp(
+                "2026-01-02T12:34:56Z",
+            ))))],
         );
         let mut confirmation = TestConfirmation::accepting();
 
@@ -230,7 +233,7 @@ mod tests {
             }]
         );
         assert_eq!(store.tasks("foo-bar")[0].status, TaskStatus::Active);
-        assert_eq!(store.tasks("foo-bar")[0].completed, None);
+        assert_eq!(store.tasks("foo-bar")[0].completed_at, None);
         assert_eq!(store.tasks("foo-bar")[0].commits, None);
         assert_eq!(
             store.tasks("foo-bar")[0].body,
@@ -298,7 +301,9 @@ mod tests {
         .await;
         let store = staged(
             TaskStatus::Done,
-            vec![entry(IndexEntryState::Done(Some(app_date("2026-01-02"))))],
+            vec![entry(IndexEntryState::Done(Some(task_timestamp(
+                "2026-01-02T12:34:56Z",
+            ))))],
         );
         let tasks_before = store.tasks("foo-bar");
         let entries_before = store.entries("foo-bar");

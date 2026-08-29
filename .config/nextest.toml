@@ -1,0 +1,9 @@
+[profile.default]
+status-level = "fail"
+final-status-level = "fail"
+failure-output = "immediate"
+success-output = "never"
+
+[profile.process]
+inherits = "default"
+global-timeout = "1h"

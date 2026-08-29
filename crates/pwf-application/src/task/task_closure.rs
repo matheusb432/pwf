@@ -1,11 +1,10 @@
 //! Applies the shared task completion and cancellation transition.
 
 use pwf_models::{
-    AppDate,
     project::ProjectId,
     task::{
-        CommitRanges, TaskId, TaskPrompt, TaskReport, TaskSection, TaskStatus, TaskTitle,
-        TaskTitleError,
+        CommitRanges, TaskId, TaskPrompt, TaskReport, TaskSection, TaskStatus, TaskTimestamp,
+        TaskTitle, TaskTitleError,
     },
 };
 use pwf_wire::task::{AddTaskDiagnostics, AddedTask, ClosedTask, ClosedTaskAction};
@@ -46,13 +45,12 @@ pub enum CloseTaskError {
 }
 
 mod queue {
-    use pwf_models::{
-        AppDate,
-        task::{TaskId, TaskSection},
-    };
+    use std::collections::BTreeMap;
+
+    use pwf_models::task::{TaskId, TaskSection, TaskTimestamp};
 
     use crate::{
-        ports::task_record::{IndexEntry, IndexEntryState},
+        ports::task_record::{IndexEntry, IndexEntryState, TaskRecord},
         task::section_alias,
     };
 
@@ -65,11 +63,39 @@ mod queue {
         pub(super) mark_target: bool,
     }
 
+    pub(super) fn apply_task_completion_timestamps(
+        entries: &mut [IndexEntry],
+        tasks: &[TaskRecord],
+    ) {
+        let timestamps = tasks
+            .iter()
+            .filter_map(|task| {
+                task.completed_at
+                    .map(|completed_at| (task.id.clone(), completed_at))
+            })
+            .collect::<BTreeMap<_, _>>();
+        for entry in entries {
+            entry.state = completion_state(&entry.state, timestamps.get(&entry.id));
+        }
+    }
+
+    fn completion_state(
+        state: &IndexEntryState,
+        completed_at: Option<&TaskTimestamp>,
+    ) -> IndexEntryState {
+        match (state, completed_at) {
+            (IndexEntryState::Done(_), Some(completed_at)) => {
+                IndexEntryState::Done(Some(*completed_at))
+            }
+            (state, _) => state.clone(),
+        }
+    }
+
     pub(super) fn close_decisions(
         entries: &[IndexEntry],
         sections: &[TaskSection],
         id: &TaskId,
-        completed: AppDate,
+        completed_at: TaskTimestamp,
     ) -> CloseDecisions {
         let normalize_futuro_header = sections.iter().any(is_futuro_label);
 
@@ -85,7 +111,7 @@ mod queue {
         };
 
         CloseDecisions {
-            evicted_ids: evict_beyond_cap(entries, target.section.as_ref(), id, completed),
+            evicted_ids: evict_beyond_cap(entries, target.section.as_ref(), id, completed_at),
             normalize_futuro_header,
             mark_target: true,
         }
@@ -95,14 +121,14 @@ mod queue {
         entries: &[IndexEntry],
         target_section: Option<&TaskSection>,
         id: &TaskId,
-        completed: AppDate,
+        completed_at: TaskTimestamp,
     ) -> Vec<TaskId> {
         let target_section = normalize_section(target_section);
         let Some(cap) = section_cap(&target_section) else {
             return Vec::new();
         };
 
-        let mut done: Vec<(Option<AppDate>, &TaskId)> = entries
+        let mut done: Vec<(Option<TaskTimestamp>, &TaskId)> = entries
             .iter()
             .filter_map(|entry| match &entry.state {
                 IndexEntryState::Done(entry_completed)
@@ -113,7 +139,7 @@ mod queue {
                 IndexEntryState::Open | IndexEntryState::Done(_) => None,
             })
             .collect();
-        done.push((Some(completed), id));
+        done.push((Some(completed_at), id));
 
         if done.len() <= cap {
             return Vec::new();
@@ -151,16 +177,18 @@ mod queue {
     #[cfg(test)]
     mod tests {
         use super::*;
-        use crate::testing::app_date;
+        use crate::testing::task_timestamp;
 
         fn id(raw: &str) -> TaskId {
             TaskId::try_new(raw).unwrap()
         }
 
-        fn done(raw_id: &str, date: &str, section: &str) -> IndexEntry {
+        fn done(raw_id: &str, completed_at: &str, section: &str) -> IndexEntry {
             IndexEntry {
                 id: id(raw_id),
-                state: IndexEntryState::Done((!date.is_empty()).then(|| app_date(date))),
+                state: IndexEntryState::Done(
+                    (!completed_at.is_empty()).then(|| task_timestamp(completed_at)),
+                ),
                 section: (!section.is_empty()).then(|| section.parse().unwrap()),
             }
         }
@@ -168,7 +196,7 @@ mod queue {
         fn numbered_done(number: u16, section: &str) -> IndexEntry {
             done(
                 &format!("FOO-{number:04}"),
-                &format!("2026-01-{number:02}"),
+                &format!("2026-01-{number:02}T00:00:00Z"),
                 section,
             )
         }
@@ -187,36 +215,51 @@ mod queue {
                 (1..=6).map(|number| numbered_done(number, "")).collect();
             entries.push(open("FOO-0007", ""));
 
-            let decisions = close_decisions(&entries, &[], &id("FOO-0007"), app_date("2026-07-07"));
+            let decisions = close_decisions(
+                &entries,
+                &[],
+                &id("FOO-0007"),
+                task_timestamp("2026-07-07T12:34:56Z"),
+            );
 
             assert_eq!(decisions.evicted_ids, vec![id("FOO-0001")]);
             assert!(decisions.mark_target);
         }
 
         #[test]
-        fn tied_completed_dates_break_by_ascending_id() {
+        fn tied_completion_timestamps_break_by_ascending_id() {
             let entries = vec![
-                done("FOO-0002", "2026-01-01", "Human"),
-                done("FOO-0001", "2026-01-01", "Human"),
-                done("FOO-0003", "2026-01-02", "Human"),
+                done("FOO-0002", "2026-01-01T00:00:00Z", "Human"),
+                done("FOO-0001", "2026-01-01T00:00:00Z", "Human"),
+                done("FOO-0003", "2026-01-02T00:00:00Z", "Human"),
                 open("FOO-0004", "Human"),
             ];
 
-            let decisions = close_decisions(&entries, &[], &id("FOO-0004"), app_date("2026-01-03"));
+            let decisions = close_decisions(
+                &entries,
+                &[],
+                &id("FOO-0004"),
+                task_timestamp("2026-01-03T12:34:56Z"),
+            );
 
             assert_eq!(decisions.evicted_ids, vec![id("FOO-0001")]);
         }
 
         #[test]
-        fn missing_completed_date_sorts_before_any_dated_entry() {
+        fn missing_completion_timestamp_sorts_before_any_timestamped_entry() {
             let entries = vec![
                 done("FOO-0001", "", "Human"),
-                done("FOO-0002", "2026-01-01", "Human"),
-                done("FOO-0003", "2026-01-02", "Human"),
+                done("FOO-0002", "2026-01-01T00:00:00Z", "Human"),
+                done("FOO-0003", "2026-01-02T00:00:00Z", "Human"),
                 open("FOO-0004", "Human"),
             ];
 
-            let decisions = close_decisions(&entries, &[], &id("FOO-0004"), app_date("2026-01-03"));
+            let decisions = close_decisions(
+                &entries,
+                &[],
+                &id("FOO-0004"),
+                task_timestamp("2026-01-03T12:34:56Z"),
+            );
 
             assert_eq!(decisions.evicted_ids, vec![id("FOO-0001")]);
         }
@@ -228,7 +271,12 @@ mod queue {
                 .collect();
             entries.push(open("FOO-0010", "Someday"));
 
-            let decisions = close_decisions(&entries, &[], &id("FOO-0010"), app_date("2026-07-07"));
+            let decisions = close_decisions(
+                &entries,
+                &[],
+                &id("FOO-0010"),
+                task_timestamp("2026-07-07T12:34:56Z"),
+            );
 
             assert!(decisions.evicted_ids.is_empty());
         }
@@ -240,7 +288,12 @@ mod queue {
                 .collect();
             entries.push(open("FOO-0004", "Futuro"));
 
-            let decisions = close_decisions(&entries, &[], &id("FOO-0004"), app_date("2026-07-07"));
+            let decisions = close_decisions(
+                &entries,
+                &[],
+                &id("FOO-0004"),
+                task_timestamp("2026-07-07T12:34:56Z"),
+            );
 
             assert_eq!(decisions.evicted_ids, vec![id("FOO-0001")]);
         }
@@ -249,8 +302,12 @@ mod queue {
         fn futuro_header_normalizes_when_target_entry_is_missing() {
             let sections = ["Futuro".parse().unwrap()];
 
-            let decisions =
-                close_decisions(&[], &sections, &id("FOO-0001"), app_date("2026-07-07"));
+            let decisions = close_decisions(
+                &[],
+                &sections,
+                &id("FOO-0001"),
+                task_timestamp("2026-07-07T12:34:56Z"),
+            );
 
             assert!(decisions.normalize_futuro_header);
             assert!(!decisions.mark_target);
@@ -261,8 +318,12 @@ mod queue {
         fn futuro_header_check_is_case_insensitive_and_trims_whitespace() {
             let sections = ["  FUTURO  ".parse().unwrap()];
 
-            let decisions =
-                close_decisions(&[], &sections, &id("FOO-0001"), app_date("2026-07-07"));
+            let decisions = close_decisions(
+                &[],
+                &sections,
+                &id("FOO-0001"),
+                task_timestamp("2026-07-07T12:34:56Z"),
+            );
 
             assert!(decisions.normalize_futuro_header);
         }
@@ -271,19 +332,23 @@ mod queue {
         fn unrelated_headers_do_not_normalize() {
             let sections = [TaskSection::human(), TaskSection::future()];
 
-            let decisions =
-                close_decisions(&[], &sections, &id("FOO-0001"), app_date("2026-07-07"));
+            let decisions = close_decisions(
+                &[],
+                &sections,
+                &id("FOO-0001"),
+                task_timestamp("2026-07-07T12:34:56Z"),
+            );
 
             assert!(!decisions.normalize_futuro_header);
         }
     }
 }
 
-use queue::{close_decisions, is_futuro_label};
+use queue::{apply_task_completion_timestamps, close_decisions, is_futuro_label};
 pub(in crate::task) struct TaskClosure<'a> {
     pub(in crate::task) action: ClosedTaskAction,
     pub(in crate::task) id: &'a TaskId,
-    pub(in crate::task) completed: AppDate,
+    pub(in crate::task) completed_at: TaskTimestamp,
     pub(in crate::task) report: Option<&'a TaskReport>,
     pub(in crate::task) commits: Option<&'a CommitRanges>,
     pub(in crate::task) review: bool,
@@ -301,7 +366,7 @@ pub(in crate::task) fn close(
     let TaskClosure {
         action,
         id,
-        completed,
+        completed_at,
         report,
         commits,
         review,
@@ -331,7 +396,7 @@ pub(in crate::task) fn close(
     })?;
     let mut patch = TaskPatch {
         status: Some(close_status(action)),
-        completed: NullablePatch::Set(completed),
+        completed_at: NullablePatch::Set(completed_at),
         ..TaskPatch::default()
     };
     if let Some(report) = report {
@@ -346,13 +411,13 @@ pub(in crate::task) fn close(
 
     let (evicted_ids, futuro_renamed) =
         if matches!(record.materialization, Materialization::NoteFile) {
-            rotate_done_queue(store, project, &task_identifier, completed)?
+            rotate_done_queue(store, project, &task_identifier, completed_at)?
         } else {
             (Vec::new(), false)
         };
 
     let review_task = review
-        .then(|| spawn_review(store, project, &task_identifier, completed, commits))
+        .then(|| spawn_review(store, project, &task_identifier, completed_at, commits))
         .transpose()?;
 
     Ok(ClosedTask {
@@ -375,16 +440,19 @@ fn close_status(action: ClosedTaskAction) -> TaskStatus {
 
 /// Applies header normalization, the closed entry, and cap-based evictions to the index.
 fn rotate_done_queue(
-    store: &(impl IndexEntryStore + IndexSectionStore),
+    store: &(impl TaskStore + IndexEntryStore + IndexSectionStore),
     project: &pwf_models::project::Project,
     id: &TaskId,
-    completed: AppDate,
+    completed_at: TaskTimestamp,
 ) -> Result<(Vec<TaskId>, bool), CloseTaskError> {
-    let entries = IndexEntryStore::list_index_entries(store, project)
+    let mut entries = IndexEntryStore::list_index_entries(store, project)
         .map_err(|error| CloseTaskError::WriteStore(anyhow::Error::new(error)))?;
+    let tasks = TaskStore::list(store, project)
+        .map_err(|error| CloseTaskError::WriteStore(anyhow::Error::new(error)))?;
+    apply_task_completion_timestamps(&mut entries, &tasks);
     let sections = IndexSectionStore::list_index_sections(store, project)
         .map_err(|error| CloseTaskError::WriteStore(anyhow::Error::new(error)))?;
-    let decisions = close_decisions(&entries, &sections, id, completed);
+    let decisions = close_decisions(&entries, &sections, id, completed_at);
 
     if decisions.normalize_futuro_header {
         rename_futuro_headers(store, project, &sections)?;
@@ -395,7 +463,7 @@ fn rotate_done_queue(
             project,
             IndexEntry {
                 id: id.clone(),
-                state: IndexEntryState::Done(Some(completed)),
+                state: IndexEntryState::Done(Some(completed_at)),
                 section: None,
             },
         )
@@ -426,7 +494,7 @@ fn spawn_review(
     store: &(impl TaskStore + IndexEntryStore + IndexSectionStore),
     project: &pwf_models::project::Project,
     reviewed: &TaskId,
-    completed: AppDate,
+    completed_at: TaskTimestamp,
     commits: Option<&CommitRanges>,
 ) -> Result<AddedTask, CloseTaskError> {
     let prompt = review_task_prompt(reviewed, commits);
@@ -446,7 +514,7 @@ fn spawn_review(
             new: NewTask {
                 title: review_title,
                 body: super::note_body::render(&prompt),
-                created: completed,
+                created_at: completed_at,
                 section: Some(TaskSection::human()),
                 blocked_by: None,
                 effort: None,

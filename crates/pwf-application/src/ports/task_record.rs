@@ -1,9 +1,10 @@
 use std::num::NonZeroUsize;
 
 use pwf_models::{
-    AppDate,
     project::Project,
-    task::{BlockedBy, EffortTier, TaskId, TaskSection, TaskStatus, TaskTags, TaskTitle},
+    task::{
+        BlockedBy, EffortTier, TaskId, TaskSection, TaskStatus, TaskTags, TaskTimestamp, TaskTitle,
+    },
 };
 use pwf_wire::task::{RawTaskTags, TaskIndexPath, TaskNotePath};
 
@@ -52,8 +53,8 @@ pub struct TaskRecord {
     pub id: TaskId,
     pub title: String,
     pub status: TaskStatus,
-    pub created: Option<AppDate>,
-    pub completed: Option<AppDate>,
+    pub created_at: Option<TaskTimestamp>,
+    pub completed_at: Option<TaskTimestamp>,
     pub commits: Option<String>,
     /// Preserves raw `tags:` frontmatter for lazy validation by tag-filtered reads.
     pub tags: Option<RawTaskTags>,
@@ -77,7 +78,7 @@ pub struct TaskRecord {
 pub struct NewTask {
     pub body: String,
     pub title: TaskTitle,
-    pub created: AppDate,
+    pub created_at: TaskTimestamp,
     pub section: Option<TaskSection>,
     pub blocked_by: Option<BlockedBy>,
     pub effort: Option<EffortTier>,
@@ -108,7 +109,7 @@ impl<T> NullablePatch<T> {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TaskPatch {
     pub status: Option<TaskStatus>,
-    pub completed: NullablePatch<AppDate>,
+    pub completed_at: NullablePatch<TaskTimestamp>,
     pub commits: NullablePatch<String>,
     pub body: Option<String>,
     pub title: Option<TaskTitle>,
@@ -126,11 +127,11 @@ pub struct IndexEntry {
     pub section: Option<TaskSection>,
 }
 
-/// Records whether an index entry is open or completed on a date.
+/// Records whether an index entry is open or completed at a known instant.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IndexEntryState {
     Open,
-    Done(Option<AppDate>),
+    Done(Option<TaskTimestamp>),
 }
 
 pub trait TaskStore: Clone + Send + Sync + 'static {

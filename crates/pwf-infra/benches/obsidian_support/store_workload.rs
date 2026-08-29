@@ -5,12 +5,11 @@ use pwf_application::ports::task_record::{
 };
 use pwf_infra::obsidian::{ObsidianStore, ObsidianStoreError};
 use pwf_models::{
-    AppDate,
     project::{
         HomeDirectory, Project, ProjectId, ProjectName, ProjectSource, ProjectSourceKind,
         ProjectSourceValue, ProjectTasks, ProjectTasksKind, ProjectTasksPath,
     },
-    task::{BlockedBy, EffortTier, Tag, TaskId, TaskStatus, TaskTags, TaskTitle},
+    task::{BlockedBy, EffortTier, Tag, TaskId, TaskStatus, TaskTags, TaskTimestamp, TaskTitle},
 };
 use tempfile::TempDir;
 
@@ -123,7 +122,7 @@ impl InsertWorkload {
                     TaskTitle::try_new("inserted benchmark task"),
                     "constructing benchmark task title",
                 ),
-                created: app_date(),
+                created_at: task_timestamp(),
                 section: None,
                 blocked_by: Some(blocked_by()),
                 effort: Some(EffortTier::Medium),
@@ -153,7 +152,7 @@ pub fn validate() {
         require(update.update(), "updating benchmark task");
         let record = require(update.updated_record(), "reading updated benchmark task");
         assert_eq!(record.status, TaskStatus::Done);
-        assert_eq!(record.completed, Some(app_date()));
+        assert_eq!(record.completed_at, Some(task_timestamp()));
         assert_eq!(record.commits.as_deref(), Some("\"abc123..def456\""));
         assert_eq!(record.effort.as_deref(), Some("high"));
     }
@@ -232,7 +231,7 @@ fn project(tasks_path: &Path) -> Project {
 fn update_patch() -> TaskPatch {
     TaskPatch {
         status: Some(TaskStatus::Done),
-        completed: NullablePatch::Set(app_date()),
+        completed_at: NullablePatch::Set(task_timestamp()),
         commits: NullablePatch::Set("abc123..def456".to_string()),
         body: None,
         title: None,
@@ -271,8 +270,11 @@ fn task_id_for_project(project: &str, task_number: usize) -> TaskId {
     )
 }
 
-fn app_date() -> AppDate {
-    require("2026-08-27".parse(), "constructing benchmark task date")
+fn task_timestamp() -> TaskTimestamp {
+    require(
+        "2026-08-27T12:34:56Z".parse(),
+        "constructing benchmark task timestamp",
+    )
 }
 
 fn require_some<T>(value: Option<T>, context: &str) -> T {

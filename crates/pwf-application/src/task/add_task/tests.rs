@@ -1,7 +1,4 @@
-use pwf_models::{
-    AppDate,
-    task::{IndexSection, TaskPrompt, TaskTitle},
-};
+use pwf_models::task::{IndexSection, TaskPrompt, TaskTimestamp, TaskTitle};
 use pwf_wire::task::{AddTask, AddTaskPrompt, TaskLanes};
 
 use crate::{
@@ -16,7 +13,7 @@ fn task_title(raw: &str) -> TaskTitle {
     TaskTitle::try_new(raw).unwrap()
 }
 
-fn app_date(raw: &str) -> AppDate {
+fn task_timestamp(raw: &str) -> TaskTimestamp {
     raw.parse().unwrap()
 }
 
@@ -62,7 +59,10 @@ async fn add_inserts_record_and_open_index_entry(pool: sqlx::SqlitePool) {
     assert_eq!(entries[0].id.as_ref(), "FOO-0001");
     assert_eq!(entries[0].state, IndexEntryState::Open);
     assert_eq!(store.tasks("foo").len(), 1);
-    assert_eq!(store.tasks("foo")[0].created, Some(app_date("2026-07-26")));
+    assert_eq!(
+        store.tasks("foo")[0].created_at,
+        Some(task_timestamp("2026-07-26T12:34:56Z"))
+    );
 }
 
 #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
@@ -94,13 +94,16 @@ async fn add_inferred_prompt_title_is_normalized_once(pool: sqlx::SqlitePool) {
 }
 
 #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
-async fn add_uses_the_clock_date(pool: sqlx::SqlitePool) {
+async fn add_uses_the_clock_timestamp(pool: sqlx::SqlitePool) {
     let store = registered_store(&pool).await;
     add_task::execute(&command(), &store, &pool, &FixedClock)
         .await
         .unwrap();
 
-    assert_eq!(store.tasks("foo")[0].created, Some(app_date("2026-07-26")));
+    assert_eq!(
+        store.tasks("foo")[0].created_at,
+        Some(task_timestamp("2026-07-26T12:34:56Z"))
+    );
 }
 
 #[sqlx::test(migrator = "crate::testing::MIGRATOR")]

@@ -1,10 +1,9 @@
 use std::path::PathBuf;
 
 use pwf_models::{
-    AppDateError,
     note::NoteTitleError,
     project::{ProjectId, ProjectName},
-    task::{ParseTaskStatusError, TaskId, TaskSection, TaskSectionError},
+    task::{ParseTaskStatusError, TaskId, TaskSection, TaskSectionError, TaskTimestampError},
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -141,12 +140,12 @@ pub enum ObsidianStoreError {
     #[error("Invalid task frontmatter property `id` {value:?} in {}", path.display())]
     InvalidTaskId { path: PathBuf, value: String },
     #[error("Invalid task frontmatter property `{property}` {value:?} in {}: {source}", path.display())]
-    InvalidTaskDate {
+    InvalidTaskTimestamp {
         path: PathBuf,
         property: &'static str,
         value: String,
         #[source]
-        source: AppDateError,
+        source: TaskTimestampError,
     },
     #[error("Invalid task frontmatter property `status` {value:?} in {}: {source}", path.display())]
     InvalidTaskStatus {
@@ -169,7 +168,7 @@ pub enum ObsidianStoreError {
         line: usize,
         value: String,
         #[source]
-        source: AppDateError,
+        source: TaskTimestampError,
     },
     #[error("Invalid project-index section {value:?} in {} at line {line}: {source}", path.display())]
     InvalidProjectIndexSection {

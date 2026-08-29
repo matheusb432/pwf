@@ -6,6 +6,7 @@ mod prompt;
 mod section;
 mod status;
 mod tag;
+mod timestamp;
 mod title;
 
 pub use blocked_by::{BlockedBy, EmptyBlockedByError};
@@ -16,4 +17,5 @@ pub use prompt::TaskPrompt;
 pub use section::{IndexSection, TaskSection, TaskSectionError};
 pub use status::{ParseTaskStatusError, TaskStatus};
 pub use tag::{EmptyTaskTagsError, InvalidTagError, Tag, TagInput, TagInputError, TaskTags};
+pub use timestamp::{TaskTimestamp, TaskTimestampError};
 pub use title::{TaskTitle, TaskTitleError};

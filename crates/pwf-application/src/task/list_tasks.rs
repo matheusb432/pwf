@@ -384,8 +384,8 @@ mod tests {
         },
         task::list_tasks,
         testing::{
-            InMemoryStore, MIGRATOR, app_date, insert_project, project, stored_blocked_by,
-            task_record,
+            InMemoryStore, MIGRATOR, insert_project, project, stored_blocked_by, task_record,
+            task_timestamp,
         },
     };
 
@@ -402,7 +402,7 @@ mod tests {
     fn record(id: &str) -> TaskRecord {
         TaskRecord {
             title: id.to_string(),
-            created: Some(app_date("2026-07-07")),
+            created_at: Some(task_timestamp("2026-07-07T12:34:56Z")),
             source: String::new(),
             locator: TaskNotePath::new(format!("/notes/foo/{id}.md").into()),
             placement: Some(IndexPlacement {
@@ -550,9 +550,9 @@ mod tests {
         TaskTags::from_inputs(&[raw.parse().unwrap()])
     }
 
-    fn dated_task(id: &str, created: &str) -> TaskRecord {
+    fn dated_task(id: &str, created_date: &str) -> TaskRecord {
         TaskRecord {
-            created: Some(app_date(created)),
+            created_at: Some(task_timestamp(format!("{created_date}T00:00:00Z"))),
             ..record(id)
         }
     }
@@ -792,19 +792,19 @@ mod tests {
     #[tokio::test]
     async fn status_filter_applies_before_cap_and_hidden_count() {
         let active = TaskRecord {
-            created: Some(app_date("2026-07-09")),
+            created_at: Some(task_timestamp("2026-07-09T12:34:56Z")),
             ..record("FOO-0009")
         };
         let done_newer = TaskRecord {
             status: TaskStatus::Done,
             placement: None,
-            created: Some(app_date("2026-07-08")),
+            created_at: Some(task_timestamp("2026-07-08T12:34:56Z")),
             ..record("FOO-0002")
         };
         let done_older = TaskRecord {
             status: TaskStatus::Done,
             placement: None,
-            created: Some(app_date("2026-07-07")),
+            created_at: Some(task_timestamp("2026-07-07T12:34:56Z")),
             ..record("FOO-0001")
         };
         let (store, registry) = foo_store(vec![active, done_newer, done_older]);

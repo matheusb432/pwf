@@ -1,6 +1,6 @@
 use pwf_models::{
     project::ProjectName,
-    task::{CommitRanges, EffortTier, TaskId, TaskPrompt, TaskTitle},
+    task::{CommitRanges, EffortTier, TaskId, TaskPrompt, TaskTimestamp, TaskTitle},
 };
 use pwf_wire::task::{GetTask, TaskData, TaskRead, TaskReadFormat};
 
@@ -110,8 +110,8 @@ fn task_data(project: ProjectName, record: TaskRecord) -> Result<TaskData, GetTa
         project,
         title,
         status: record.status,
-        created: record.created,
-        completed: record.completed,
+        created: record.created_at.map(TaskTimestamp::date),
+        completed: record.completed_at.map(TaskTimestamp::date),
         commits,
         tags,
         effort,
@@ -159,8 +159,8 @@ mod tests {
         ports::task_record::{StoredBlockedBy, TaskRecord},
         task::get_task,
         testing::{
-            FOO_0001_SOURCE, InMemoryStore, ProjectNoteFailure, app_date, insert_project,
-            staged_missing_task, staged_task, stored_blocked_by, task_record,
+            FOO_0001_SOURCE, InMemoryStore, ProjectNoteFailure, insert_project,
+            staged_missing_task, staged_task, stored_blocked_by, task_record, task_timestamp,
         },
     };
 
@@ -223,7 +223,7 @@ mod tests {
             vec![TaskRecord {
                 title: "Typed task".to_string(),
                 status: TaskStatus::Done,
-                completed: Some(app_date("2026-08-12")),
+                completed_at: Some(task_timestamp("2026-08-12T12:34:56Z")),
                 commits: Some("'a..b, c..d'".to_string()),
                 tags: Some(RawTaskTags::new("[rust, sqlite]")),
                 effort: Some(" high ".to_string()),

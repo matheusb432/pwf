@@ -6,8 +6,8 @@ use pwf_models::{
     AppDate,
     project::{ProjectName, ProjectSourceValue},
     task::{
-        EffortTier, EffortTierError, TaskId, TaskPrompt, TaskSection, TaskStatus, TaskTitle,
-        TaskTitleError,
+        EffortTier, EffortTierError, TaskId, TaskPrompt, TaskSection, TaskStatus, TaskTimestamp,
+        TaskTitle, TaskTitleError,
     },
 };
 use pwf_wire::task::{
@@ -172,7 +172,7 @@ pub(in crate::task) fn enrich(
         blocked_by_issues,
         effort,
         tags: task.tags.clone(),
-        created: task.created,
+        created: task.created_at.map(TaskTimestamp::date),
     })
 }
 

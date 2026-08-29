@@ -1,5 +1,6 @@
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 set windows-shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+set positional-arguments
 
 _default:
     @just --list --unsorted
@@ -7,7 +8,7 @@ _default:
 # Build the release binary.
 [group('build')]
 build:
-    cargo build --release
+    cargo build --release -p pwf-cli
 
 # First-time setup of the global pwf binary.
 [group('build')]
@@ -50,9 +51,9 @@ lint:
 prepare *args:
     mise exec cargo:sqlx-cli -- cargo run --quiet -p xtask -- prepare {{ args }}
 
-# Apply pending SQLite migrations through the dedicated process.
-migrate:
-    cargo run --quiet -p pwf-migrator
+# Apply or check persistence migrations through the dedicated process.
+migrate *args:
+    cargo run --quiet -p pwf-migrator -- {{ args }}
 
 # Run the complete read-only formatting and lint gate.
 [group('quality')]
@@ -73,10 +74,38 @@ fix *args:
 doctor:
     @mise ls --local --missing --locked --no-header
 
-# Run tests, or use `just test coverage`; coverage defaults to quiet and forwards cargo-llvm-cov arguments.
+# Run Rust workspace tests with cargo-nextest.
 [group('quality')]
 test *args:
-    @cargo run --quiet -p xtask -- test {{ args }}
+    @cargo nextest run "$@"
+
+[private]
+_test-process-build:
+    @cargo build --release -p pwf-cli -p pwf-migrator -p pwf-server
+
+# Run CLI binary integration contracts against release process binaries.
+[group('quality')]
+test-binary *args: _test-process-build
+    @cargo nextest run --profile process -p pwf-cli --test binary "$@"
+
+# Run process-spanning E2E journeys against release process binaries.
+[group('quality')]
+test-e2e *args: _test-process-build
+    @cargo nextest run --profile process -p pwf-cli --test e2e "$@"
+
+# Run workspace, process, architecture, and syntax test gates.
+[group('quality')]
+test-all: _test-process-build
+    @cargo nextest run
+    @cargo nextest run --profile process -p pwf-cli --test binary --test e2e
+    @cargo run --quiet -p xtask -- check-architecture
+    @ast-grep scan
+
+# Collect Rust coverage with cargo-nextest, then remove instrumented build artifacts.
+[group('quality')]
+coverage *args:
+    @cargo llvm-cov nextest "$@"
+    @cargo clean --target-dir target/llvm-cov-target
 
 # Compare Criterion benchmarks against the local baseline. Use --update to replace it.
 [arg("benchmark", help="Benchmark target or all", pattern="all|prompt-lanes|obsidian-frontmatter-read|obsidian-markdown-file|obsidian-store-io")]

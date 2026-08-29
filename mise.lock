@@ -33,6 +33,10 @@ provenance = "github-attestations"
 version = "0.8.7"
 backend = "cargo:cargo-llvm-cov"
 
+[[tools."cargo:cargo-nextest"]]
+version = "0.9.143"
+backend = "cargo:cargo-nextest"
+
 [[tools.just]]
 version = "1.56.0"
 backend = "aqua:casey/just"
