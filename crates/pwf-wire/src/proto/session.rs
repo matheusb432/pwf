@@ -1,7 +1,10 @@
 //! Explicit protobuf mappings for session operations.
 
 use pwf_models::{
-    session::{Agent, AgentModel, DispatchMode, LaunchDirectives, PushedPrompt, SessionEffort},
+    session::{
+        Agent, AgentModel, DispatchMode, LaunchDirectives, PushedPrompt, SessionEffort,
+        SessionTaskIds,
+    },
     task::TaskId,
 };
 use tonic::Status;
@@ -45,7 +48,7 @@ pub fn plan_session_request(
     };
     let directives = request.directives.unwrap_or_default();
     Ok(session::PlanSession {
-        task_id: parse::<TaskId>("task_id", &request.task_id)?,
+        task_ids: request_task_ids(&request.task_ids)?,
         intent,
         pushed_prompt: request
             .pushed_prompt
@@ -90,55 +93,73 @@ pub fn dispatch_session_preflight(
 #[must_use]
 pub fn dispatch_session_result(session: session::DispatchedSession) -> v1::DispatchedSession {
     match session {
-        session::DispatchedSession::Aborted { task_id } => v1::DispatchedSession {
-            outcome: v1::DispatchSessionOutcome::Aborted as i32,
-            task_id: task_id.to_string(),
-            inline_launch: None,
-            window_opened: None,
-        },
+        session::DispatchedSession::Aborted { task_ids } => {
+            let session_name = task_ids.identity();
+            v1::DispatchedSession {
+                outcome: v1::DispatchSessionOutcome::Aborted as i32,
+                task_ids: task_id_values(&task_ids),
+                inline_launch: None,
+                window_opened: None,
+                session_name,
+            }
+        }
         session::DispatchedSession::InlineLaunch {
-            task_id,
+            task_ids,
             argv,
             working_directory,
-        } => v1::DispatchedSession {
-            outcome: v1::DispatchSessionOutcome::InlineLaunch as i32,
-            task_id: task_id.to_string(),
-            inline_launch: Some(v1::InlineLaunch {
-                task_id: task_id.to_string(),
-                argv,
-                working_directory: working_directory.to_string(),
-            }),
-            window_opened: None,
-        },
+        } => {
+            let task_id_values = task_id_values(&task_ids);
+            let session_name = task_ids.identity();
+            v1::DispatchedSession {
+                outcome: v1::DispatchSessionOutcome::InlineLaunch as i32,
+                task_ids: task_id_values.clone(),
+                inline_launch: Some(v1::InlineLaunch {
+                    task_ids: task_id_values,
+                    argv,
+                    working_directory: working_directory.to_string(),
+                    session_name: session_name.clone(),
+                }),
+                window_opened: None,
+                session_name,
+            }
+        }
         session::DispatchedSession::WindowOpened {
             target,
             agent,
             project_path,
-        } => v1::DispatchedSession {
-            outcome: v1::DispatchSessionOutcome::WindowOpened as i32,
-            task_id: target.task_id().to_string(),
-            inline_launch: None,
-            window_opened: Some(v1::WindowOpened {
-                task_id: target.task_id().to_string(),
-                session: target.session_name(),
-                agent: agent_value(agent),
-                project_path: project_path.to_string(),
-            }),
-        },
+        } => {
+            let task_id_values = task_id_values(target.task_ids());
+            let window_name = target.window_name();
+            v1::DispatchedSession {
+                outcome: v1::DispatchSessionOutcome::WindowOpened as i32,
+                task_ids: task_id_values.clone(),
+                inline_launch: None,
+                window_opened: Some(v1::WindowOpened {
+                    task_ids: task_id_values,
+                    session: target.multiplexer_session_name(),
+                    agent: agent_value(agent),
+                    project_path: project_path.to_string(),
+                    window: window_name.clone(),
+                }),
+                session_name: window_name,
+            }
+        }
     }
 }
 
 fn session_plan(plan: session::SessionPlan) -> v1::SessionPlan {
     let session::SessionPlan { launch, mode } = plan;
+    let session_name = launch.task_ids.identity();
     v1::SessionPlan {
         launch: Some(v1::AgentLaunch {
             agent: agent_value(launch.agent),
-            task_id: launch.task_id.to_string(),
+            task_ids: task_id_values(&launch.task_ids),
             title: launch.title.to_string(),
             project_path: launch.project_path.to_string(),
             prompt: launch.prompt.to_string(),
             model: launch.model.as_deref().map(str::to_string),
             effort: effort_value(launch.effort),
+            session_name,
         }),
         mode: dispatch_mode_value(mode),
     }
@@ -146,7 +167,7 @@ fn session_plan(plan: session::SessionPlan) -> v1::SessionPlan {
 
 fn dispatch_confirmation(confirmation: &session::DispatchConfirmation) -> v1::DispatchConfirmation {
     v1::DispatchConfirmation {
-        task_id: confirmation.task_id.to_string(),
+        task_ids: task_id_values(&confirmation.task_ids),
         title: confirmation.title.to_string(),
         created: confirmation.created.as_ref().map(ToString::to_string),
         mode: dispatch_mode_value(confirmation.mode),
@@ -158,7 +179,20 @@ fn dispatch_confirmation(confirmation: &session::DispatchConfirmation) -> v1::Di
         has_pushed_prompt: confirmation.has_pushed_prompt,
         model: confirmation.model.as_deref().map(str::to_string),
         effort: effort_value(confirmation.effort),
+        session_name: confirmation.task_ids.identity(),
     }
+}
+
+fn request_task_ids(task_ids: &[String]) -> Result<SessionTaskIds, Status> {
+    let parsed = task_ids
+        .iter()
+        .map(|task_id| parse::<TaskId>("task_ids", task_id))
+        .collect::<Result<Vec<_>, _>>()?;
+    SessionTaskIds::try_new(parsed).map_err(|error| invalid("task_ids", error))
+}
+
+fn task_id_values(task_ids: &SessionTaskIds) -> Vec<String> {
+    task_ids.iter().map(ToString::to_string).collect()
 }
 
 fn agent_probe(probe: &session::AgentProbe) -> v1::AgentProbe {
@@ -205,5 +239,56 @@ fn effort_value(effort: SessionEffort) -> i32 {
         SessionEffort::High => v1::SessionEffort::High as i32,
         SessionEffort::XHigh => v1::SessionEffort::Xhigh as i32,
         SessionEffort::Max => v1::SessionEffort::Max as i32,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tonic::Code;
+
+    use super::*;
+
+    fn request(task_ids: &[&str]) -> v1::PlanSessionRequest {
+        v1::PlanSessionRequest {
+            task_ids: task_ids.iter().map(ToString::to_string).collect(),
+            intent: v1::PlanSessionIntent::DryRun as i32,
+            pushed_prompt: None,
+            mode: v1::DispatchMode::Inline as i32,
+            directives: Some(v1::LaunchDirectives::default()),
+            agent: v1::Agent::Codex as i32,
+            model_override: None,
+            effort: v1::SessionEffort::High as i32,
+            environment: std::collections::HashMap::default(),
+        }
+    }
+
+    #[test]
+    fn request_mapping_preserves_multi_task_input_order() {
+        let mapped = plan_session_request(request(&["foo23", "foo15"])).unwrap();
+
+        assert_eq!(
+            mapped
+                .task_ids
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+            ["FOO-0023", "FOO-0015"]
+        );
+        assert_eq!(mapped.task_ids.identity(), "foo15,foo23");
+    }
+
+    #[test]
+    fn request_mapping_rejects_invalid_collections() {
+        let cases = [
+            request(&[]),
+            request(&["foo1", "foo1"]),
+            request(&["foo1", "bar2"]),
+            request(&["foo1", "foo2", "foo3", "foo4", "foo5", "foo6"]),
+        ];
+
+        for request in cases {
+            let error = plan_session_request(request).unwrap_err();
+            assert_eq!(error.code(), Code::InvalidArgument);
+        }
     }
 }

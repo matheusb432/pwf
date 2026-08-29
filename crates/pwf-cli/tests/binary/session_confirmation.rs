@@ -88,6 +88,12 @@ fn session_help_exposes_only_the_ephemeral_prompt_prefix() {
 
     assert!(stdout.contains("-p, --push-prompt <TEXT>"), "{stdout}");
     assert!(
+        stdout.contains("Usage: pwf session [OPTIONS] [IDS]"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("--id <IDS>"), "{stdout}");
+    assert!(stdout.contains("comma-separated value"), "{stdout}");
+    assert!(
         stdout.contains("Prefix text pushed to the agent prompt"),
         "{stdout}"
     );

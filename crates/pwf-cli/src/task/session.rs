@@ -7,10 +7,13 @@ use pwf_client::{
         SessionEffort, SessionWarning, TaskStatus, session_warning,
     },
 };
-use pwf_models::session::PushedPrompt;
+use pwf_models::{
+    session::{PushedPrompt, SessionTaskIds},
+    task::TaskId,
+};
 
 use super::{
-    AgentChoice, Identifier,
+    AgentChoice,
     render::{render_dispatch, render_dry_run, render_session_confirmation},
 };
 use crate::{
@@ -21,7 +24,7 @@ use crate::{
 #[derive(Args, Debug)]
 pub struct Arguments {
     #[command(flatten)]
-    pub(crate) identifier: Identifier,
+    pub(crate) identifiers: SessionIdentifiers,
     /// Color policy for the dispatch output
     #[arg(long, value_enum, default_value_t = ColorChoice::Auto)]
     pub(crate) color: ColorChoice,
@@ -45,6 +48,46 @@ pub struct Arguments {
     /// Reasoning effort for the dispatched agent session
     #[arg(long, value_enum, default_value_t = SessionEffortChoice::default())]
     pub(crate) effort: SessionEffortChoice,
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct SessionIdentifiers {
+    /// Task IDs for one session, supplied as one comma-separated value
+    #[arg(value_name = "IDS")]
+    positional: Option<SessionTaskIdsInput>,
+    /// Task IDs for one session, supplied as one comma-separated value
+    #[arg(long = "id", value_name = "IDS", conflicts_with = "positional")]
+    flag: Option<SessionTaskIdsInput>,
+}
+
+impl SessionIdentifiers {
+    fn required(&self) -> anyhow::Result<SessionTaskIds> {
+        self.positional
+            .as_ref()
+            .or(self.flag.as_ref())
+            .map(|input| input.0.clone())
+            .ok_or_else(|| {
+                anyhow::anyhow!("--id or a positional task ID list is required for session.")
+            })
+    }
+}
+
+#[derive(Debug, Clone)]
+struct SessionTaskIdsInput(SessionTaskIds);
+
+impl std::str::FromStr for SessionTaskIdsInput {
+    type Err = String;
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        let task_ids = raw
+            .split(',')
+            .map(str::parse::<TaskId>)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?;
+        SessionTaskIds::try_new(task_ids)
+            .map(Self)
+            .map_err(|error| error.to_string())
+    }
 }
 
 #[derive(Args, Debug)]
@@ -84,7 +127,7 @@ impl ExecutionArguments {
 
 #[derive(Args, Debug)]
 struct LaunchDirectiveArguments {
-    /// Instructs the agent to work in a git worktree named after the task id
+    /// Instructs the agent to work in a git worktree named after the session identity
     #[arg(long = "worktree", short = 'w')]
     worktree: bool,
     /// Append an autonomy directive so the agent runs without prompting the user (for
@@ -142,9 +185,7 @@ pub(super) async fn run(
         AgentChoice::Claude => Agent::Claude,
         AgentChoice::Codex => Agent::Codex,
     };
-    let task_id = arguments
-        .identifier
-        .required(anyhow::anyhow!("--id is required for session."))?;
+    let task_ids = arguments.identifiers.required()?;
     let confirmation_mode = if arguments.execution.dry_run {
         ConfirmationMode::AssumeYes
     } else {
@@ -152,7 +193,7 @@ pub(super) async fn run(
     };
 
     let request = PlanSessionRequest {
-        task_id: task_id.to_string(),
+        task_ids: task_ids.iter().map(ToString::to_string).collect(),
         intent: arguments.execution.intent() as i32,
         pushed_prompt: arguments.pushed_prompt.as_ref().map(ToString::to_string),
         mode: arguments.execution.mode() as i32,
@@ -231,7 +272,7 @@ impl ConfirmationPrompt for SessionPrompt {
             return Ok(false);
         };
         if DispatchMode::try_from(confirmation.mode).ok() == Some(DispatchMode::Inline) {
-            eprintln!("running {} inline...", confirmation.task_id);
+            eprintln!("running {} inline...", confirmation.session_name);
         }
         match self.mode {
             ConfirmationMode::AssumeYes => Ok(true),
@@ -354,7 +395,7 @@ fn execute_inline(launch: &pwf_client::v1::InlineLaunch) -> anyhow::Result<Strin
     if !status.success() {
         return Err(anyhow::anyhow!("inline agent session exited with {status}"));
     }
-    Ok(format!("# session {}: ran inline\n", launch.task_id))
+    Ok(format!("# session {}: ran inline\n", launch.session_name))
 }
 
 #[cfg(test)]

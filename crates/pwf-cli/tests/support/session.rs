@@ -68,6 +68,14 @@ impl SessionFixture {
         install_fixture_at(&path, "claude")?;
         Ok(path)
     }
+
+    pub fn add_task(&self, title: &str) {
+        self.database
+            .command()
+            .args(["task", "add", "foo", "--title", title, "--goal", title])
+            .assert()
+            .success();
+    }
 }
 
 fn install_fixture(binary_directory: &Path, name: &str) -> std::io::Result<()> {

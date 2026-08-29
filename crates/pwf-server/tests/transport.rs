@@ -117,6 +117,12 @@ impl TestServer {
             .await?;
         assert_eq!(project.id, "FOO");
 
+        let task_id = self.add_task("transport task").await?;
+        assert_eq!(task_id, "FOO-0001");
+        Ok(task_id)
+    }
+
+    async fn add_task(&self, title: &str) -> anyhow::Result<String> {
         let task = self
             .client
             .task()
@@ -124,7 +130,7 @@ impl TestServer {
                 project_selector: "foo-bar".to_string(),
                 prompt: Some(add_task_request::Prompt::Structured(
                     v1::StructuredTaskPrompt {
-                        title: "transport task".to_string(),
+                        title: title.to_string(),
                         lanes: Some(v1::TaskLanes {
                             goals: vec!["exercise the real server".to_string()],
                             context: Vec::new(),
@@ -139,7 +145,6 @@ impl TestServer {
                 tags: Vec::new(),
             })
             .await?;
-        assert_eq!(task.id, "FOO-0001");
         Ok(task.id)
     }
 
@@ -263,6 +268,7 @@ async fn generated_client_preserves_operations_statuses_and_confirmation_flows()
 -> anyhow::Result<()> {
     let server = TestServer::start(Duration::from_secs(2)).await?;
     let task_id = server.add_project_and_task().await?;
+    let second_task_id = server.add_task("second transport task").await?;
 
     let invalid = server
         .client
@@ -305,16 +311,20 @@ async fn generated_client_preserves_operations_statuses_and_confirmation_flows()
     assert_eq!(remove_prompt.seen(), ["remove"]);
 
     let session_prompt = RecordingPrompt::new(false);
+    let mut request = session_request(&task_id);
+    request.task_ids = vec![second_task_id.clone(), task_id.clone()];
     let session_result = server
         .client
         .task()
-        .dispatch_session(session_request(&task_id), session_prompt.clone())
+        .dispatch_session(request, session_prompt.clone())
         .await
         .unwrap();
     assert_eq!(
         DispatchSessionOutcome::try_from(session_result.outcome).ok(),
         Some(DispatchSessionOutcome::Aborted)
     );
+    assert_eq!(session_result.task_ids, [second_task_id, task_id.clone()]);
+    assert_eq!(session_result.session_name, "foo1,foo2");
     assert_eq!(session_prompt.seen(), ["session"]);
 
     server
@@ -505,7 +515,7 @@ async fn shutdown_publishes_not_serving_and_bounds_an_unanswered_stream() -> any
 
 fn session_request(task_id: &str) -> v1::PlanSessionRequest {
     v1::PlanSessionRequest {
-        task_id: task_id.to_string(),
+        task_ids: vec![task_id.to_string()],
         intent: PlanSessionIntent::Dispatch as i32,
         pushed_prompt: None,
         mode: DispatchMode::Inline as i32,

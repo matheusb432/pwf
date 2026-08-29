@@ -15,21 +15,22 @@ pub(in crate::task) fn render_dispatch(
     outcome: &DispatchedSession,
     on: bool,
 ) -> anyhow::Result<String> {
+    let session_identity = &outcome.session_name;
     match DispatchSessionOutcome::try_from(outcome.outcome).ok() {
-        Some(DispatchSessionOutcome::Aborted) => Ok(render_session_aborted(&outcome.task_id)),
+        Some(DispatchSessionOutcome::Aborted) => Ok(render_session_aborted(session_identity)),
         Some(DispatchSessionOutcome::InlineLaunch) => {
-            Ok(format!("# session {}: ran inline\n", outcome.task_id))
+            Ok(format!("# session {session_identity}: ran inline\n"))
         }
         Some(DispatchSessionOutcome::WindowOpened) => {
             let opened = outcome.window_opened.as_ref().ok_or_else(|| {
                 anyhow::anyhow!("pwf-server returned a window dispatch without a target")
             })?;
             let line = paint(
-                &format!("session: {}  ·  window: {}", opened.session, opened.task_id),
+                &format!("session: {}  ·  window: {}", opened.session, opened.window),
                 AnsiColor::Green,
                 on,
             );
-            let mut out = format!("# session {}: dispatched\n{line}\n", opened.task_id);
+            let mut out = format!("# session {session_identity}: dispatched\n{line}\n");
             let agent = Agent::try_from(opened.agent).unwrap_or(Agent::Unspecified);
             let _ = write!(
                 out,
@@ -64,19 +65,31 @@ pub(in crate::task) fn render_dry_run(outcome: &PlanSessionResponse) -> anyhow::
         .ok_or_else(|| anyhow::anyhow!("pwf-server returned a dry run without a launch"))?;
     let agent = Agent::try_from(launch.agent).unwrap_or(Agent::Unspecified);
     let mode = DispatchMode::try_from(plan.mode).unwrap_or(DispatchMode::Unspecified);
+    let identity = &launch.session_name;
+    let first_task_id = launch
+        .task_ids
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("pwf-server returned a dry run without task IDs"))?;
     let target = match mode {
         DispatchMode::Inline => "inline".to_string(),
-        DispatchMode::Multiplexer => format!(
-            "tmux: {} / {}",
-            session_name(&launch.task_id),
-            launch.task_id
-        ),
+        DispatchMode::Multiplexer => {
+            format!("tmux: {} / {}", session_name(first_task_id), identity)
+        }
         DispatchMode::Unspecified => "unknown target".to_string(),
     };
     let effort = SessionEffort::try_from(launch.effort).unwrap_or(SessionEffort::Unspecified);
+    let task_details = if launch.task_ids.len() > 1 {
+        format!(
+            "tasks: {}\nthread: {}",
+            launch.task_ids.join(", "),
+            launch.title
+        )
+    } else {
+        format!("task: {}", launch.title)
+    };
     Ok(format!(
         "# session {} - dry run\n\
-task: {}\n\
+{}\n\
 agent: {}\n\
 model: {}\n\
 effort: {}\n\
@@ -84,8 +97,8 @@ project_path: {}\n\
 {target}\n\
 command: {}\n\
 nothing dispatched.\n",
-        launch.task_id,
-        launch.title,
+        identity,
+        task_details,
         title_agent_name(agent),
         launch.model.as_deref().unwrap_or("default"),
         effort_name(effort),
@@ -130,14 +143,16 @@ mod tests {
     fn success_renders_green_token_and_bold_session_window_plain() {
         let outcome = DispatchedSession {
             outcome: DispatchSessionOutcome::WindowOpened as i32,
-            task_id: "AUX-0009".to_string(),
+            task_ids: vec!["AUX-0009".to_string()],
             inline_launch: None,
             window_opened: Some(WindowOpened {
-                task_id: "AUX-0009".to_string(),
+                task_ids: vec!["AUX-0009".to_string()],
                 session: "aux".to_string(),
                 agent: Agent::Claude as i32,
                 project_path: "/project".to_string(),
+                window: "AUX-0009".to_string(),
             }),
+            session_name: "AUX-0009".to_string(),
         };
         let out = render_dispatch(&outcome, false).unwrap();
         assert!(out.starts_with("# session AUX-0009: dispatched"));
@@ -155,13 +170,15 @@ mod tests {
         );
         let outcome = DispatchedSession {
             outcome: DispatchSessionOutcome::InlineLaunch as i32,
-            task_id: "FOO-0001".to_string(),
+            task_ids: vec!["FOO-0001".to_string()],
             inline_launch: Some(InlineLaunch {
-                task_id: "FOO-0001".to_string(),
+                task_ids: vec!["FOO-0001".to_string()],
                 argv: vec!["codex".to_string()],
                 working_directory: "/project".to_string(),
+                session_name: "FOO-0001".to_string(),
             }),
             window_opened: None,
+            session_name: "FOO-0001".to_string(),
         };
         assert_eq!(
             render_dispatch(&outcome, false).unwrap(),
@@ -175,12 +192,13 @@ mod tests {
             plan: Some(SessionPlan {
                 launch: Some(AgentLaunch {
                     agent: Agent::Codex as i32,
-                    task_id: "FOO-0001".to_string(),
+                    task_ids: vec!["FOO-0001".to_string()],
                     title: "FOO-0001 - reason carefully".to_string(),
                     project_path: "/project".to_string(),
                     prompt: "Inspect FOO-0001.".to_string(),
                     model: None,
                     effort: SessionEffort::High as i32,
+                    session_name: "FOO-0001".to_string(),
                 }),
                 mode: DispatchMode::Inline as i32,
             }),
@@ -199,5 +217,27 @@ mod tests {
         let out = render_dry_run(&outcome).unwrap();
         assert!(out.contains("effort: high"));
         assert!(out.contains("project_path: /project"));
+    }
+
+    #[test]
+    fn multi_task_dispatch_renders_the_compound_identity_and_window() {
+        let outcome = DispatchedSession {
+            outcome: DispatchSessionOutcome::WindowOpened as i32,
+            task_ids: vec!["FOO-0023".to_string(), "FOO-0015".to_string()],
+            inline_launch: None,
+            window_opened: Some(WindowOpened {
+                task_ids: vec!["FOO-0023".to_string(), "FOO-0015".to_string()],
+                session: "foo".to_string(),
+                agent: Agent::Codex as i32,
+                project_path: "/project".to_string(),
+                window: "foo15,foo23".to_string(),
+            }),
+            session_name: "foo15,foo23".to_string(),
+        };
+
+        let out = render_dispatch(&outcome, false).unwrap();
+
+        assert!(out.starts_with("# session foo15,foo23: dispatched"));
+        assert!(out.contains("window: foo15,foo23"));
     }
 }

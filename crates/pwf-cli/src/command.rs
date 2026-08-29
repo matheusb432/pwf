@@ -118,4 +118,40 @@ mod tests {
 
         assert_eq!(error.kind(), clap::error::ErrorKind::UnknownArgument);
     }
+
+    #[test]
+    fn session_accepts_one_comma_separated_task_id_value() {
+        for arguments in [
+            ["session", "foo23,foo15"].as_slice(),
+            ["session", "--id", "foo23,foo15"].as_slice(),
+        ] {
+            assert!(super::parse_argv(arguments.iter().map(ToString::to_string).collect()).is_ok());
+        }
+    }
+
+    #[test]
+    fn session_rejects_duplicate_mixed_project_and_oversized_id_lists() {
+        for ids in ["foo1,foo1", "foo1,bar2", "foo1,foo2,foo3,foo4,foo5,foo6"] {
+            let error = super::parse_argv(vec![
+                "session".to_string(),
+                "--id".to_string(),
+                ids.to_string(),
+            ])
+            .unwrap_err();
+
+            assert_eq!(error.kind(), clap::error::ErrorKind::ValueValidation);
+        }
+    }
+
+    #[test]
+    fn session_rejects_space_separated_and_repeated_id_arguments() {
+        for arguments in [
+            vec!["session", "foo1", "foo2"],
+            vec!["session", "--id", "foo1", "--id", "foo2"],
+        ] {
+            assert!(
+                super::parse_argv(arguments.into_iter().map(str::to_string).collect()).is_err()
+            );
+        }
+    }
 }

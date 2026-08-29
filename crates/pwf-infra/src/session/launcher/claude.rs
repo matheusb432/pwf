@@ -55,12 +55,9 @@ fn prepare_argv(launch: &AgentLaunch) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use pwf_models::{
-        session::{
-            Agent, AgentModel, LaunchPrompt, SessionEffort, SessionThreadTitle,
-            SessionWorkingDirectory,
-        },
-        task::TaskId,
+    use pwf_models::session::{
+        Agent, AgentModel, LaunchPrompt, SessionEffort, SessionTaskIds, SessionThreadTitle,
+        SessionWorkingDirectory,
     };
     use pwf_wire::task::session::AgentLaunch;
 
@@ -70,7 +67,7 @@ mod tests {
     fn prepares_native_name_optional_model_and_hostile_values_as_separate_arguments() {
         let launch = AgentLaunch {
             agent: Agent::Claude,
-            task_id: TaskId::try_new("FOO-0001").unwrap(),
+            task_ids: SessionTaskIds::try_new(["FOO-0001".parse().unwrap()]).unwrap(),
             title: SessionThreadTitle::new("--dangerously-skip-permissions".to_string()),
             project_path: SessionWorkingDirectory::new("/projects/foo".to_string()),
             prompt: LaunchPrompt::new(

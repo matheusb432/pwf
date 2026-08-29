@@ -100,12 +100,9 @@ mod tests {
     #[cfg(unix)]
     use anyhow::{Context as _, Result, bail};
     use pwf_application::ports::agent::PreparedAgentLaunch;
-    use pwf_models::{
-        session::{
-            Agent, AgentModel, LaunchPrompt, SessionEffort, SessionThreadTitle,
-            SessionWorkingDirectory,
-        },
-        task::TaskId,
+    use pwf_models::session::{
+        Agent, AgentModel, LaunchPrompt, SessionEffort, SessionTaskIds, SessionThreadTitle,
+        SessionWorkingDirectory,
     };
     use pwf_wire::task::session::AgentLaunch;
 
@@ -119,7 +116,7 @@ mod tests {
         let fixture = AppServerFixture::successful()?;
         let launch = AgentLaunch {
             agent: Agent::Codex,
-            task_id: TaskId::try_new("FOO-0001")?,
+            task_ids: SessionTaskIds::try_new(["FOO-0001".parse()?])?,
             title: SessionThreadTitle::new("\"; thread/delete everything".to_string()),
             project_path: SessionWorkingDirectory::new("/projects".to_string()),
             prompt: LaunchPrompt::new(

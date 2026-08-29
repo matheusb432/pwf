@@ -49,7 +49,7 @@ pub async fn execute(
     };
     if !confirmation.confirm(&prepared).await? {
         return Ok(DispatchedSession::Aborted {
-            task_id: prepared.confirmation.task_id.clone(),
+            task_ids: prepared.confirmation.task_ids.clone(),
         });
     }
     dispatch_session::execute(prepared, &clients.agent, &clients.session).map_err(Into::into)

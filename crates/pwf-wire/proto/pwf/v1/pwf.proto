@@ -616,7 +616,7 @@ message LaunchDirectives {
 }
 
 message PlanSessionRequest {
-  string task_id = 1;
+  repeated string task_ids = 1;
   PlanSessionIntent intent = 2;
   optional string pushed_prompt = 3;
   DispatchMode mode = 4;
@@ -629,12 +629,13 @@ message PlanSessionRequest {
 
 message AgentLaunch {
   Agent agent = 1;
-  string task_id = 2;
+  repeated string task_ids = 2;
   string title = 3;
   string project_path = 4;
   string prompt = 5;
   optional string model = 6;
   SessionEffort effort = 7;
+  string session_name = 8;
 }
 
 message SessionPlan {
@@ -668,7 +669,7 @@ message PlanSessionResponse {
 }
 
 message DispatchConfirmation {
-  string task_id = 1;
+  repeated string task_ids = 1;
   string title = 2;
   optional string created = 3;
   DispatchMode mode = 4;
@@ -677,6 +678,7 @@ message DispatchConfirmation {
   bool has_pushed_prompt = 7;
   optional string model = 8;
   SessionEffort effort = 9;
+  string session_name = 10;
 }
 
 message SessionDispatchPreflight {
@@ -686,16 +688,18 @@ message SessionDispatchPreflight {
 }
 
 message InlineLaunch {
-  string task_id = 1;
+  repeated string task_ids = 1;
   repeated string argv = 2;
   string working_directory = 3;
+  string session_name = 4;
 }
 
 message WindowOpened {
-  string task_id = 1;
+  repeated string task_ids = 1;
   string session = 2;
   Agent agent = 3;
   string project_path = 4;
+  string window = 5;
 }
 
 enum DispatchSessionOutcome {
@@ -707,9 +711,10 @@ enum DispatchSessionOutcome {
 
 message DispatchedSession {
   DispatchSessionOutcome outcome = 1;
-  string task_id = 2;
+  repeated string task_ids = 2;
   InlineLaunch inline_launch = 3;
   WindowOpened window_opened = 4;
+  string session_name = 5;
 }
 
 message DispatchSessionRequest {

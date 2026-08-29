@@ -4,9 +4,8 @@ use pwf_models::{
     AppDate,
     session::{
         Agent, AgentModel, DispatchMode, LaunchDirectives, LaunchPrompt, PushedPrompt,
-        SessionEffort, SessionThreadTitle, SessionWorkingDirectory,
+        SessionEffort, SessionTaskIds, SessionThreadTitle, SessionWorkingDirectory,
     },
-    task::TaskId,
 };
 
 use super::{BlockedByIssue, BlockedByStatus, TaskHeading};
@@ -14,7 +13,7 @@ use super::{BlockedByIssue, BlockedByStatus, TaskHeading};
 /// Requests one provider-neutral session plan.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlanSession {
-    pub task_id: TaskId,
+    pub task_ids: SessionTaskIds,
     pub intent: PlanSessionIntent,
     pub pushed_prompt: Option<PushedPrompt>,
     pub mode: DispatchMode,
@@ -35,7 +34,7 @@ pub enum PlanSessionIntent {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentLaunch {
     pub agent: Agent,
-    pub task_id: TaskId,
+    pub task_ids: SessionTaskIds,
     pub title: SessionThreadTitle,
     pub project_path: SessionWorkingDirectory,
     pub prompt: LaunchPrompt,
@@ -53,7 +52,7 @@ pub struct SessionPlan {
 impl SessionPlan {
     #[must_use]
     pub fn target(&self) -> DispatchTarget {
-        DispatchTarget::new(self.launch.task_id.clone())
+        DispatchTarget::new(self.launch.task_ids.clone())
     }
 }
 
@@ -92,10 +91,10 @@ pub enum PlannedSession {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DispatchedSession {
     Aborted {
-        task_id: TaskId,
+        task_ids: SessionTaskIds,
     },
     InlineLaunch {
-        task_id: TaskId,
+        task_ids: SessionTaskIds,
         argv: Vec<String>,
         working_directory: SessionWorkingDirectory,
     },
@@ -108,31 +107,39 @@ pub enum DispatchedSession {
 
 /// Identifies a multiplexer session and window.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DispatchTarget(TaskId);
+pub struct DispatchTarget(SessionTaskIds);
 
 impl DispatchTarget {
     #[must_use]
-    pub fn new(task_id: TaskId) -> Self {
-        Self(task_id)
+    pub fn new(task_ids: SessionTaskIds) -> Self {
+        Self(task_ids)
     }
 
     #[must_use]
-    pub fn task_id(&self) -> &TaskId {
+    pub fn task_ids(&self) -> &SessionTaskIds {
         &self.0
     }
 
     /// Returns the lowercase tmux session name derived from the project ID.
     #[must_use]
-    pub fn session_name(&self) -> String {
+    pub fn multiplexer_session_name(&self) -> String {
         self.0.project_id().as_ref().to_ascii_lowercase()
+    }
+
+    /// Returns the stable tmux window and agent-session name.
+    #[must_use]
+    pub fn window_name(&self) -> String {
+        self.0.identity()
     }
 }
 
 /// Contains the context shown before an interactive dispatch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DispatchConfirmation {
-    pub task_id: TaskId,
+    pub task_ids: SessionTaskIds,
+    /// Heading of the first task, retained for singleton compatibility.
     pub title: TaskHeading,
+    /// Creation date of the first task, retained for singleton compatibility.
     pub created: Option<AppDate>,
     pub mode: DispatchMode,
     pub agent: Agent,
@@ -145,7 +152,7 @@ pub struct DispatchConfirmation {
 impl DispatchConfirmation {
     #[must_use]
     pub fn target(&self) -> DispatchTarget {
-        DispatchTarget::new(self.task_id.clone())
+        DispatchTarget::new(self.task_ids.clone())
     }
 }
 
@@ -180,14 +187,17 @@ pub enum AgentAvailability {
 
 #[cfg(test)]
 mod tests {
-    use pwf_models::task::TaskId;
+    use pwf_models::session::SessionTaskIds;
 
     use super::DispatchTarget;
 
     #[test]
-    fn session_name_lowercases_the_typed_project_id() {
-        let target = DispatchTarget::new("aux9".parse::<TaskId>().unwrap());
+    fn dispatch_target_separates_the_project_session_from_the_compound_window() {
+        let target = DispatchTarget::new(
+            SessionTaskIds::try_new(["aux9".parse().unwrap(), "aux2".parse().unwrap()]).unwrap(),
+        );
 
-        assert_eq!(target.session_name(), "aux");
+        assert_eq!(target.multiplexer_session_name(), "aux");
+        assert_eq!(target.window_name(), "aux2,aux9");
     }
 }

@@ -198,18 +198,19 @@ fn confirmation_dialog(confirmation: &Confirmation) -> ConfirmationDialog {
         ),
         Confirmation::DispatchSession(preflight) => {
             let confirmation = preflight.confirmation.as_ref();
+            let identity = confirmation.map_or("(unknown)", |value| value.session_name.as_str());
+            let is_compound = confirmation.is_some_and(|value| value.task_ids.len() > 1);
+            let task_label = if is_compound { "Tasks" } else { "Task" };
+            let mut details = vec![Detail::new(task_label, identity)];
+            if !is_compound {
+                details.push(Detail::new(
+                    "Title",
+                    confirmation.map_or("(unknown)", |value| value.title.as_str()),
+                ));
+            }
             ConfirmationDialog::new(
                 "Confirm session dispatch",
-                vec![
-                    Detail::new(
-                        "Task",
-                        confirmation.map_or("(unknown)", |value| value.task_id.as_str()),
-                    ),
-                    Detail::new(
-                        "Title",
-                        confirmation.map_or("(unknown)", |value| value.title.as_str()),
-                    ),
-                ],
+                details,
                 "Proceed with session dispatch?",
                 ConfirmationDefault::Yes,
                 ConfirmationTone::Informational,
