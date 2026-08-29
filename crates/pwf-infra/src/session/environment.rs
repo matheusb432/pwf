@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, ffi::OsString, process::Command, sync::Arc};
+use std::{collections::BTreeMap, process::Command, sync::Arc};
 
 /// Request-scoped environment used by session subprocess adapters.
 #[derive(Clone)]
@@ -23,10 +23,6 @@ impl ProcessEnvironment {
         let mut command = Command::new(program);
         command.env_clear().envs(self.0.iter());
         command
-    }
-
-    pub(super) fn value(&self, key: &str) -> Option<OsString> {
-        self.0.get(key).map(OsString::from)
     }
 }
 

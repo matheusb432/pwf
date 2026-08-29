@@ -208,7 +208,6 @@ fn plan_session_status(error: &PlanSessionError) -> Status {
         PlanSessionError::FindTask(_)
         | PlanSessionError::ReadTaskMarkdown(_)
         | PlanSessionError::MultiplexerSessionCheck { .. }
-        | PlanSessionError::ModelTier(_)
         | PlanSessionError::RenderThreadTitle(_) => Status::internal(message),
     }
 }

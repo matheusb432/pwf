@@ -37,10 +37,9 @@ pub struct Arguments {
     /// Prefix text pushed to the agent prompt
     #[arg(short = 'p', long = "push-prompt", value_name = "TEXT")]
     pub(crate) pushed_prompt: Option<PushedPrompt>,
-    /// Model override forwarded to the selected agent Wins over effort-tier resolution
+    /// Model override forwarded to the selected agent
     ///
-    /// Use `default` or omit the flag to leave selection to effort-tier policy and provider
-    /// configuration
+    /// Use `default` or omit the flag to let the provider choose its default model
     #[arg(long, short = 'm')]
     pub(crate) model: Option<String>,
     /// Reasoning effort for the dispatched agent session

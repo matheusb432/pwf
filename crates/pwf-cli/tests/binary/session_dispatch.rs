@@ -142,7 +142,7 @@ fn codex_dry_run_forwards_max_reasoning_effort() {
 }
 
 #[test]
-fn inline_dispatch_executes_the_concrete_claude_process() {
+fn inline_dispatch_forwards_the_explicit_model_to_the_concrete_claude_process() {
     let fixture = SessionFixture::new().unwrap();
     fixture.install_claude().unwrap();
     let claude_log_path = fixture.directory().join("claude.log");
@@ -151,7 +151,15 @@ fn inline_dispatch_executes_the_concrete_claude_process() {
         .database
         .command()
         .args([
-            "session", "--id", "FOO-0001", "--agent", "claude", "--inline", "--yes",
+            "session",
+            "--id",
+            "FOO-0001",
+            "--agent",
+            "claude",
+            "--inline",
+            "--yes",
+            "--model",
+            "manual-model",
         ])
         .env("PATH", &fixture.child_path)
         .env("CLAUDE_STUB_EXIT_CODE", "23")
@@ -169,17 +177,19 @@ fn inline_dispatch_executes_the_concrete_claude_process() {
         .collect::<Vec<_>>();
     assert_eq!(entries[0], format!("cwd={}", project_path.display()));
     assert_eq!(
-        entries[1..6],
+        entries[1..8],
         [
             "arg=--name",
             "arg=foo1 :: do the thing",
+            "arg=--model",
+            "arg=manual-model",
             "arg=--effort",
             "arg=high",
             "arg=--",
         ]
     );
-    assert!(entries[6].starts_with("arg=<pwf_task>\n"));
-    assert!(entries[6].contains("do the thing"));
-    assert!(entries[6].ends_with("\n</pwf_task>"));
+    assert!(entries[8].starts_with("arg=<pwf_task>\n"));
+    assert!(entries[8].contains("do the thing"));
+    assert!(entries[8].ends_with("\n</pwf_task>"));
     assert!(!fixture.tmux_log_path.exists());
 }

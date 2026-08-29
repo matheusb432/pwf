@@ -9,9 +9,6 @@
     }
   },
   "bin": "pwf.exe",
-  "env_set": {
-    "PWF_MODEL_TIERS": "$env:USERPROFILE\\tools\\pwf\\config\\model-tiers.toml"
-  },
   "pre_install": [
     "$src = Join-Path $env:USERPROFILE 'tools\\pwf'",
     "cargo build --release --manifest-path (Join-Path $src 'Cargo.toml')",

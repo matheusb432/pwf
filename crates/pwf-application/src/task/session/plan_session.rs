@@ -1,23 +1,18 @@
 //! Plans and host-validates a task session before dispatch.
 
-use std::{error::Error, path::PathBuf};
-
 use askama::Template;
 use pwf_models::{
     project::{HomeDirectory, ProjectId, ProjectSourceValue},
-    session::{
-        AgentModel, LaunchPrompt, PushedPrompt, SessionThreadTitle, SessionWorkingDirectory,
-    },
-    task::{EffortTier, TaskId},
+    session::{LaunchPrompt, PushedPrompt, SessionThreadTitle, SessionWorkingDirectory},
+    task::TaskId,
 };
 use pwf_wire::{
     project::ProjectStatusFilter,
     task::{
         BlockedByIssue, BlockedByResolution, BlockedByStatus, TaskView,
         session::{
-            AgentLaunch, DispatchConfirmation, DryRunSession, ModelTierLookup, PlanSession,
-            PlanSessionIntent, PlannedSession, PreparedSessionDispatch, SessionPlan,
-            SessionWarning,
+            AgentLaunch, DispatchConfirmation, DryRunSession, PlanSession, PlanSessionIntent,
+            PlannedSession, PreparedSessionDispatch, SessionPlan, SessionWarning,
         },
     },
 };
@@ -65,8 +60,6 @@ pub enum PlanSessionError {
         session: String,
         start_command_argv: Vec<String>,
     },
-    #[error(transparent)]
-    ModelTier(anyhow::Error),
     #[error("Failed to render session title: {0}")]
     RenderThreadTitle(#[source] askama::Error),
     #[error("Invalid path for project '{project_id}': {source}")]
@@ -133,15 +126,7 @@ pub async fn execute(
     let project_path = resolve_project_path(found.project.source.value(), &project_id, home)?;
     let task_content = load_task_content(&found.record, store)?;
 
-    let model = match command.model_override.as_deref() {
-        Some(_) => command.model_override.clone(),
-        None => AgentModel::from(
-            resolve_model(command.agent, task.effort, |effort| {
-                clients.agent.model_tier(effort)
-            })
-            .map_err(|error| PlanSessionError::ModelTier(anyhow::Error::new(error)))?,
-        ),
-    };
+    let model = command.model_override.clone();
     let plan = SessionPlan {
         launch: AgentLaunch {
             agent: command.agent,
@@ -497,44 +482,6 @@ fn launch_prompt(
     prompt
 }
 
-#[derive(Debug, Error)]
-enum ModelSelectionError {
-    #[error(transparent)]
-    Catalog(anyhow::Error),
-    #[error("tier {tier} has no [tiers.{tier}] entry in {}", catalog.display())]
-    MissingTier { tier: EffortTier, catalog: PathBuf },
-    #[error("tier {tier} in {} has no claude_model set", catalog.display())]
-    MissingClaudeModel { tier: EffortTier, catalog: PathBuf },
-}
-
-fn resolve_model<E>(
-    agent: Agent,
-    effort: Option<EffortTier>,
-    model_tier: impl FnOnce(EffortTier) -> Result<ModelTierLookup, E>,
-) -> Result<Option<String>, ModelSelectionError>
-where
-    E: Error + Send + Sync + 'static,
-{
-    if agent == Agent::Codex {
-        return Ok(None);
-    }
-    let Some(tier) = effort else {
-        return Ok(None);
-    };
-    let ModelTierLookup {
-        catalog,
-        tier: entry,
-    } = model_tier(tier)
-        .map_err(|error| ModelSelectionError::Catalog(anyhow::Error::new(error)))?;
-    let Some(entry) = entry else {
-        return Err(ModelSelectionError::MissingTier { tier, catalog });
-    };
-    let model = entry
-        .claude_model
-        .ok_or(ModelSelectionError::MissingClaudeModel { tier, catalog })?;
-    Ok(if model.is_empty() { None } else { Some(model) })
-}
-
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -640,136 +587,151 @@ mod tests {
 }
 
 #[cfg(test)]
-mod model_selection_tests {
-    use std::{assert_matches, error::Error, fmt};
+mod planned_model_tests {
+    use std::convert::Infallible;
 
-    use pwf_models::task::EffortTier;
-    use pwf_wire::task::session::{ModelTier, ModelTierLookup};
+    use pwf_models::{
+        project::HomeDirectory,
+        session::{
+            Agent, AgentModel, DispatchMode, LaunchDirectives, SessionEffort,
+            SessionWorkingDirectory,
+        },
+        task::EffortTier,
+    };
+    use pwf_wire::task::session::{
+        AgentAvailability, AgentLaunch, AgentProbe, PlanSession, PlanSessionIntent, PlannedSession,
+    };
 
-    use super::{ModelSelectionError, resolve_model};
-    use crate::task::session::Agent;
+    use super::SessionPlanningClients;
+    use crate::{
+        ports::{
+            agent::{AgentClient, PreparedAgentLaunch},
+            project_directory::ProjectDirectoryClient,
+            session::{SessionClient, SessionStart, SessionWindow},
+            task_record::TaskRecord,
+        },
+        task::session::plan_session,
+        testing::{InMemoryStore, insert_project, task_record},
+    };
 
-    const CATALOG_PATH: &str = "/config/model-tiers.toml";
+    #[derive(Clone, Copy)]
+    struct AgentStub;
 
-    #[derive(Debug, Clone)]
-    struct CatalogError(&'static str);
+    impl AgentClient for AgentStub {
+        type PreparationError = Infallible;
 
-    impl fmt::Display for CatalogError {
-        fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-            formatter.write_str(self.0)
+        fn probe(&self, agent: Agent) -> AgentProbe {
+            AgentProbe {
+                agent,
+                availability: AgentAvailability::Available,
+            }
         }
-    }
 
-    impl Error for CatalogError {}
-
-    fn catalog(claude_model: Option<&str>) -> ModelTierLookup {
-        ModelTierLookup {
-            catalog: CATALOG_PATH.into(),
-            tier: Some(ModelTier {
-                claude_model: claude_model.map(str::to_string),
-            }),
+        fn preview(&self, _: &AgentLaunch) -> Vec<String> {
+            vec!["claude".to_string()]
         }
-    }
 
-    #[test]
-    fn codex_ignores_effort_and_the_catalog() {
-        let model = resolve_model(Agent::Codex, Some(EffortTier::Highest), |_| {
-            Err(CatalogError("catalog unavailable"))
-        })
-        .unwrap();
-
-        assert_eq!(model, None);
-    }
-
-    #[test]
-    fn claude_without_effort_does_not_read_the_catalog() {
-        let model = resolve_model(Agent::Claude, None, |_| {
-            Err(CatalogError("catalog unavailable"))
-        })
-        .unwrap();
-
-        assert_eq!(model, None);
-    }
-
-    #[test]
-    fn configured_claude_model_is_selected() {
-        let model = resolve_model(Agent::Claude, Some(EffortTier::High), |_| {
-            Ok::<_, CatalogError>(catalog(Some("sonnet")))
-        })
-        .unwrap();
-
-        assert_eq!(model.as_deref(), Some("sonnet"));
-    }
-
-    #[test]
-    fn empty_claude_model_is_the_no_override_sentinel() {
-        let model = resolve_model(Agent::Claude, Some(EffortTier::Medium), |_| {
-            Ok::<_, CatalogError>(catalog(Some("")))
-        })
-        .unwrap();
-
-        assert_eq!(model, None);
-    }
-
-    #[test]
-    fn catalog_read_error_retains_its_root_cause() {
-        let error = resolve_model(Agent::Claude, Some(EffortTier::Low), |_| {
-            Err(CatalogError("catalog unavailable"))
-        })
-        .unwrap_err();
-
-        assert_eq!(error.to_string(), "catalog unavailable");
-        let source = match error {
-            ModelSelectionError::Catalog(source) => Some(source),
-            _ => None,
-        };
-        assert!(source.is_some());
-        let source = source.unwrap();
-        assert!(source.downcast_ref::<CatalogError>().is_some());
-        assert_eq!(source.root_cause().to_string(), "catalog unavailable");
-    }
-
-    #[test]
-    fn missing_tier_is_an_application_error() {
-        let error = resolve_model(Agent::Claude, Some(EffortTier::Highest), |_| {
-            Ok::<_, CatalogError>(ModelTierLookup {
-                catalog: CATALOG_PATH.into(),
-                tier: None,
+        fn prepare(&self, _: &AgentLaunch) -> Result<PreparedAgentLaunch, Self::PreparationError> {
+            Ok(PreparedAgentLaunch::Process {
+                arguments: vec!["claude".to_string()],
             })
-        })
-        .unwrap_err();
-
-        assert_matches!(
-            &error,
-            ModelSelectionError::MissingTier {
-                tier: EffortTier::Highest,
-                ..
-            }
-        );
-        assert_eq!(
-            error.to_string(),
-            format!("tier highest has no [tiers.highest] entry in {CATALOG_PATH}")
-        );
+        }
     }
 
-    #[test]
-    fn missing_claude_model_is_an_application_error() {
-        let error = resolve_model(Agent::Claude, Some(EffortTier::Highest), |_| {
-            Ok::<_, CatalogError>(catalog(None))
-        })
-        .unwrap_err();
+    #[derive(Clone, Copy)]
+    struct ExistingProjectDirectory;
 
-        assert_matches!(
-            &error,
-            ModelSelectionError::MissingClaudeModel {
-                tier: EffortTier::Highest,
-                ..
+    impl ProjectDirectoryClient for ExistingProjectDirectory {
+        fn is_directory(&self, _: &SessionWorkingDirectory) -> bool {
+            true
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    struct UnusedSessionClient;
+
+    impl SessionClient for UnusedSessionClient {
+        type Error = Infallible;
+
+        fn available(&self) -> bool {
+            false
+        }
+
+        fn session_exists(&self, _: &str) -> Result<bool, Self::Error> {
+            Ok(false)
+        }
+
+        fn preview_start(&self, _: &SessionStart<'_>) -> Vec<String> {
+            Vec::new()
+        }
+
+        fn preview_window(&self, _: &SessionWindow<'_>) -> Vec<String> {
+            Vec::new()
+        }
+
+        fn open_window(&self, _: &SessionWindow<'_>) -> Result<(), Self::Error> {
+            Ok(())
+        }
+    }
+
+    fn command(model_override: Option<&str>) -> PlanSession {
+        PlanSession {
+            task_id: "FOO-0001".parse().unwrap(),
+            intent: PlanSessionIntent::DryRun,
+            pushed_prompt: None,
+            mode: DispatchMode::Inline,
+            directives: LaunchDirectives::default(),
+            agent: Agent::Claude,
+            model_override: AgentModel::from(model_override.map(str::to_string)),
+            effort: SessionEffort::Max,
+        }
+    }
+
+    async fn planned_model(
+        command: &PlanSession,
+        store: &InMemoryStore,
+        pool: &sqlx::SqlitePool,
+        clients: &SessionPlanningClients<AgentStub, ExistingProjectDirectory, UnusedSessionClient>,
+    ) -> anyhow::Result<(AgentModel, SessionEffort)> {
+        let planned = plan_session::execute(
+            command,
+            store,
+            pool,
+            &HomeDirectory::new("/home/dev".into()),
+            clients,
+        )
+        .await?;
+        let dry_run = match planned {
+            PlannedSession::DryRun(dry_run) => dry_run,
+            PlannedSession::Dispatch(_) => {
+                return Err(anyhow::anyhow!("test command must produce a dry-run plan"));
             }
-        );
-        assert_eq!(
-            error.to_string(),
-            format!("tier highest in {CATALOG_PATH} has no claude_model set")
-        );
+        };
+        Ok((dry_run.plan.launch.model, dry_run.plan.launch.effort))
+    }
+
+    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
+    async fn planning_uses_only_the_explicit_model_override(pool: sqlx::SqlitePool) {
+        insert_project(&pool, "FOO", "foo", "/work/foo", "/tasks/foo", false).await;
+        let record = TaskRecord {
+            effort: Some(EffortTier::Highest.to_string()),
+            ..task_record("FOO-0001")
+        };
+        let store = InMemoryStore::default().with_project("foo", vec![record]);
+        let clients =
+            SessionPlanningClients::new(AgentStub, ExistingProjectDirectory, UnusedSessionClient);
+
+        let (default_model, effort) = planned_model(&command(None), &store, &pool, &clients)
+            .await
+            .unwrap();
+        let (explicit_model, _) =
+            planned_model(&command(Some("manual-model")), &store, &pool, &clients)
+                .await
+                .unwrap();
+
+        assert_eq!(default_model.as_deref(), None);
+        assert_eq!(explicit_model.as_deref(), Some("manual-model"));
+        assert_eq!(effort, SessionEffort::Max);
     }
 }
 

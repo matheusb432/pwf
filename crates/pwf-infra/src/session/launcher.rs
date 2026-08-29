@@ -5,15 +5,11 @@ mod claude;
 mod codex;
 
 use pwf_application::ports::agent::{AgentClient, PreparedAgentLaunch};
-use pwf_models::{session::Agent, task::EffortTier};
-use pwf_wire::task::session::{AgentAvailability, AgentLaunch, AgentProbe, ModelTierLookup};
+use pwf_models::session::Agent;
+use pwf_wire::task::session::{AgentAvailability, AgentLaunch, AgentProbe};
 use thiserror::Error;
 
-use super::{
-    ProcessEnvironment,
-    codex_app_server::CodexThreadPreparationError,
-    model_tiers::{self, ModelTiersError},
-};
+use super::{ProcessEnvironment, codex_app_server::CodexThreadPreparationError};
 
 #[derive(Debug, Error)]
 #[error(transparent)]
@@ -33,7 +29,6 @@ impl AgentHarness {
 }
 
 impl AgentClient for AgentHarness {
-    type ModelTierError = ModelTiersError;
     type PreparationError = AgentPreparationError;
 
     fn probe(&self, agent: Agent) -> AgentProbe {
@@ -41,10 +36,6 @@ impl AgentClient for AgentHarness {
             Agent::Claude => claude::probe(&self.environment),
             Agent::Codex => codex::probe(&self.environment),
         }
-    }
-
-    fn model_tier(&self, effort: EffortTier) -> Result<ModelTierLookup, Self::ModelTierError> {
-        model_tiers::tier(effort, &self.environment)
     }
 
     fn preview(&self, launch: &AgentLaunch) -> Vec<String> {

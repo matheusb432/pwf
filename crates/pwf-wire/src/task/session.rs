@@ -1,7 +1,5 @@
 //! Process-neutral session request and response contracts.
 
-use std::path::PathBuf;
-
 use pwf_models::{
     AppDate,
     session::{
@@ -178,20 +176,6 @@ impl AgentProbe {
 pub enum AgentAvailability {
     Missing,
     Available,
-}
-
-/// Contains a raw model-tier catalog entry.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ModelTier {
-    /// Preserves an empty configured value for application validation.
-    pub claude_model: Option<String>,
-}
-
-/// Contains a model-tier result and its diagnostic-facing catalog path.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ModelTierLookup {
-    pub catalog: PathBuf,
-    pub tier: Option<ModelTier>,
 }
 
 #[cfg(test)]

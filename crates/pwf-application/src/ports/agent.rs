@@ -1,16 +1,13 @@
 use std::error::Error;
 
-use pwf_models::{session::Agent, task::EffortTier};
-use pwf_wire::task::session::{AgentLaunch, AgentProbe, ModelTierLookup};
+use pwf_models::session::Agent;
+use pwf_wire::task::session::{AgentLaunch, AgentProbe};
 
 pub trait AgentClient: Clone + Send + Sync + 'static {
-    type ModelTierError: Error + Send + Sync + 'static;
     type PreparationError: Error + Send + Sync + 'static;
 
     #[must_use]
     fn probe(&self, agent: Agent) -> AgentProbe;
-
-    fn model_tier(&self, effort: EffortTier) -> Result<ModelTierLookup, Self::ModelTierError>;
 
     #[must_use]
     fn preview(&self, launch: &AgentLaunch) -> Vec<String>;
