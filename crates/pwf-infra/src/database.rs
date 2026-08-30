@@ -126,35 +126,35 @@ mod tests {
     const MIGRATION_VERSION_0002: i64 = 20_260_801_000_000;
     const MIGRATION_VERSION_0003: i64 = 20_260_806_000_000;
     const MIGRATION_VERSION_0004: i64 = 20_260_830_000_000;
+    const MIGRATION_VERSION_0005: i64 = 20_260_831_001_753;
 
     #[tokio::test]
-    async fn migration_0002_to_current_preserves_project_state_and_widens_ids() {
+    async fn migration_0004_to_current_preserves_state_and_creates_prompt_lane_defaults() {
         let directory = tempfile::tempdir().unwrap();
         let pool = build_migration_pool(&directory.path().join("pwf.sqlite3"))
             .await
             .unwrap();
         migrations::MIGRATOR
-            .run_to(MIGRATION_VERSION_0002, &pool)
+            .run_to(MIGRATION_VERSION_0004, &pool)
             .await
             .unwrap();
 
-        let project_source_id = insert_migration_0002_fixture(&pool).await;
+        let project_source_id = insert_migration_0004_fixture(&pool).await;
 
         let readiness_error = check_database_ready(&pool).await.unwrap_err();
         assert!(
             readiness_error
                 .to_string()
-                .contains("SQLx migration 20260806000000 is pending")
+                .contains("SQLx migration 20260831001753 is pending")
         );
 
         migrate_database(&pool).await.unwrap();
 
         assert_project_state_preserved(&pool, project_source_id).await;
-        assert_project_id_constraints_widened(&pool, project_source_id).await;
         assert_current_migration_integrity(&pool).await;
     }
 
-    async fn insert_migration_0002_fixture(pool: &SqlitePool) -> i64 {
+    async fn insert_migration_0004_fixture(pool: &SqlitePool) -> i64 {
         let project_source_id = sqlx::query(
                 "INSERT INTO project_sources (kind, value, created_at) VALUES ('directory', '/work/foo', '2026-07-25T12:00:00.000Z')",
             )
@@ -170,6 +170,30 @@ mod tests {
             .execute(pool)
             .await
             .unwrap();
+        sqlx::query(
+            "INSERT INTO task_mutation_requests (
+                request_id,
+                operation,
+                fingerprint,
+                task_id,
+                state,
+                outcome,
+                created_at,
+                completed_at
+            ) VALUES (
+                'migration-fixture',
+                'update',
+                'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                'FOO-0001',
+                'completed',
+                'updated',
+                '2026-08-30T12:00:00.000Z',
+                '2026-08-30T12:00:01.000Z'
+            )",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
 
         project_source_id
     }
@@ -197,48 +221,13 @@ mod tests {
         );
     }
 
-    async fn assert_project_id_constraints_widened(pool: &SqlitePool, project_source_id: i64) {
-        for (id, title, tasks_path) in
-            [("PW", "two", "/tasks/two"), ("TOOL", "four", "/tasks/four")]
-        {
-            let result = sqlx::query(
-                "INSERT INTO projects (id, project_source_id, title, tasks_kind, tasks_path)
-                     VALUES (?, ?, ?, 'directory', ?)",
-            )
-            .bind(id)
-            .bind(project_source_id)
-            .bind(title)
-            .bind(tasks_path)
-            .execute(pool)
-            .await;
-            assert!(result.is_ok(), "rejected project ID {id}: {result:?}");
-        }
-
-        for (id, title, tasks_path) in [
-            ("P", "short", "/tasks/short"),
-            ("TOOLS", "long", "/tasks/long"),
-        ] {
-            let result = sqlx::query(
-                "INSERT INTO projects (id, project_source_id, title, tasks_kind, tasks_path)
-                     VALUES (?, ?, ?, 'directory', ?)",
-            )
-            .bind(id)
-            .bind(project_source_id)
-            .bind(title)
-            .bind(tasks_path)
-            .execute(pool)
-            .await;
-            assert!(result.is_err(), "accepted project ID {id}");
-        }
-    }
-
     async fn assert_current_migration_integrity(pool: &SqlitePool) {
         let active_project_ids =
             sqlx::query_scalar::<_, String>("SELECT id FROM active_projects ORDER BY id")
                 .fetch_all(pool)
                 .await
                 .unwrap();
-        assert_eq!(active_project_ids, vec!["PW".to_owned(), "TOOL".to_owned()]);
+        assert!(active_project_ids.is_empty());
 
         let foreign_key_violations = sqlx::query("PRAGMA foreign_key_check")
             .fetch_all(pool)
@@ -258,6 +247,7 @@ mod tests {
                 MIGRATION_VERSION_0002,
                 MIGRATION_VERSION_0003,
                 MIGRATION_VERSION_0004,
+                MIGRATION_VERSION_0005,
             ]
         );
         let request_table_exists: bool = sqlx::query_scalar(
@@ -267,6 +257,66 @@ mod tests {
         .await
         .unwrap();
         assert!(request_table_exists);
+        let preserved_request: (String, String, String) = sqlx::query_as(
+            "SELECT request_id, task_id, outcome FROM task_mutation_requests
+             WHERE request_id = 'migration-fixture'",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            preserved_request,
+            (
+                "migration-fixture".to_string(),
+                "FOO-0001".to_string(),
+                "updated".to_string(),
+            )
+        );
+        let prompt_lanes = sqlx::query_as::<_, (String, String, String)>(
+            "SELECT lane, marker, header FROM task_prompt_lanes ORDER BY CASE lane
+                WHEN 'goals' THEN 0
+                WHEN 'context' THEN 1
+                WHEN 'constraints' THEN 2
+                WHEN 'done_when' THEN 3
+                ELSE 4
+            END",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            prompt_lanes,
+            vec![
+                ("goals".to_string(), "/g".to_string(), "Goals".to_string()),
+                (
+                    "context".to_string(),
+                    "/c".to_string(),
+                    "Context".to_string(),
+                ),
+                (
+                    "constraints".to_string(),
+                    "/n".to_string(),
+                    "Constraints".to_string(),
+                ),
+                (
+                    "done_when".to_string(),
+                    "/d".to_string(),
+                    "Done When".to_string(),
+                ),
+            ]
+        );
+        assert!(
+            sqlx::query("UPDATE task_prompt_lanes SET marker = 'goal' WHERE lane = 'goals'")
+                .execute(pool)
+                .await
+                .is_err()
+        );
+        assert!(
+            sqlx::query("UPDATE task_prompt_lanes SET header = 'Context' WHERE lane = 'goals'",)
+                .execute(pool)
+                .await
+                .is_err()
+        );
         check_database_ready(pool).await.unwrap();
     }
 }

@@ -1,13 +1,16 @@
 use std::{hint::black_box, time::Duration};
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use prompt_lanes::{Adapter as _, MarkdownAdapter, ParsedPrompt, parse};
+use prompt_lanes::{
+    Adapter as _, LaneConfiguration, LaneDefinition, MarkdownAdapter, ParsedPrompt, parse,
+};
 
 const SAMPLE_SIZE: usize = 20;
 const PLAIN_PROMPT: &str = "refactor the prompt lane parser without changing its output";
 const STRUCTURED_PROMPT: &str = "refactor prompt lanes / preserve authored goals / keep marker order stable /c parsing currently allocates token and bullet buffers /n retain the public ParsedPrompt contract /n preserve whitespace normalization /d parser and renderer tests remain green /d benchmarks show the cost of each stage";
 
 fn prompt_lanes(criterion: &mut Criterion) {
+    let configuration = configuration();
     let dense_prompt = dense_prompt();
     let cases = [
         PromptCase::new("plain", PLAIN_PROMPT),
@@ -15,12 +18,16 @@ fn prompt_lanes(criterion: &mut Criterion) {
         PromptCase::new("marker-dense", &dense_prompt),
     ];
 
-    benchmark_parse(criterion, &cases);
-    benchmark_render_markdown(criterion, &cases);
-    benchmark_parse_and_render(criterion, &cases);
+    benchmark_parse(criterion, &configuration, &cases);
+    benchmark_render_markdown(criterion, &configuration, &cases);
+    benchmark_parse_and_render(criterion, &configuration, &cases);
 }
 
-fn benchmark_parse(criterion: &mut Criterion, cases: &[PromptCase<'_>]) {
+fn benchmark_parse(
+    criterion: &mut Criterion,
+    configuration: &LaneConfiguration<4>,
+    cases: &[PromptCase<'_>],
+) {
     let mut group = criterion.benchmark_group("prompt-lanes/parse");
     for case in cases {
         group.throughput(Throughput::Bytes(case.prompt.len() as u64));
@@ -28,53 +35,101 @@ fn benchmark_parse(criterion: &mut Criterion, cases: &[PromptCase<'_>]) {
             BenchmarkId::from_parameter(case.name),
             &case.prompt,
             |bencher, prompt| {
-                bencher.iter(|| black_box(parse(black_box(prompt))));
+                bencher.iter(|| black_box(parse(black_box(prompt), black_box(configuration))));
             },
         );
     }
     group.finish();
 }
 
-fn benchmark_render_markdown(criterion: &mut Criterion, cases: &[PromptCase<'_>]) {
+fn benchmark_render_markdown(
+    criterion: &mut Criterion,
+    configuration: &LaneConfiguration<4>,
+    cases: &[PromptCase<'_>],
+) {
     let parsed = cases
         .iter()
         .map(|case| ParsedCase {
             name: case.name,
-            prompt: parse(case.prompt),
+            prompt: parse(case.prompt, configuration),
         })
         .collect::<Vec<_>>();
     let mut group = criterion.benchmark_group("prompt-lanes/render-markdown");
     for case in &parsed {
-        let rendered_bytes = MarkdownAdapter.render(&case.prompt).len() as u64;
+        let adapter = MarkdownAdapter::new(configuration);
+        let rendered_bytes = adapter.render(&case.prompt).len() as u64;
         group.throughput(Throughput::Bytes(rendered_bytes));
         group.bench_with_input(
             BenchmarkId::from_parameter(case.name),
             &case.prompt,
             |bencher, prompt| {
-                bencher.iter(|| black_box(MarkdownAdapter.render(black_box(prompt))));
+                bencher.iter(|| black_box(adapter.render(black_box(prompt))));
             },
         );
     }
     group.finish();
 }
 
-fn benchmark_parse_and_render(criterion: &mut Criterion, cases: &[PromptCase<'_>]) {
+fn benchmark_parse_and_render(
+    criterion: &mut Criterion,
+    configuration: &LaneConfiguration<4>,
+    cases: &[PromptCase<'_>],
+) {
     let mut group = criterion.benchmark_group("prompt-lanes/parse-and-render");
     for case in cases {
-        group.throughput(Throughput::Bytes(case.prompt.len() as u64));
-        group.bench_with_input(
-            BenchmarkId::from_parameter(case.name),
-            &case.prompt,
-            |bencher, prompt| {
-                bencher.iter(|| black_box(parse_and_render(black_box(prompt))));
-            },
-        );
+        benchmark_parse_and_render_case(&mut group, configuration, case);
     }
     group.finish();
 }
 
-fn parse_and_render(prompt: &str) -> String {
-    MarkdownAdapter.render(&parse(prompt))
+fn benchmark_parse_and_render_case(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    configuration: &LaneConfiguration<4>,
+    case: &PromptCase<'_>,
+) {
+    group.throughput(Throughput::Bytes(case.prompt.len() as u64));
+    group.bench_with_input(
+        BenchmarkId::from_parameter(case.name),
+        &case.prompt,
+        |bencher, prompt| {
+            bencher.iter(|| {
+                black_box(parse_and_render(
+                    black_box(prompt),
+                    black_box(configuration),
+                ))
+            });
+        },
+    );
+}
+
+fn parse_and_render(prompt: &str, configuration: &LaneConfiguration<4>) -> String {
+    MarkdownAdapter::new(configuration).render(&parse(prompt, configuration))
+}
+
+fn configuration() -> LaneConfiguration<4> {
+    require_configuration(LaneConfiguration::try_new([
+        require_lane(LaneDefinition::try_new("/g", "Goals")),
+        require_lane(LaneDefinition::try_new("/c", "Context")),
+        require_lane(LaneDefinition::try_new("/n", "Constraints")),
+        require_lane(LaneDefinition::try_new("/d", "Done When")),
+    ]))
+}
+
+fn require_lane(
+    result: Result<LaneDefinition, prompt_lanes::LaneDefinitionError>,
+) -> LaneDefinition {
+    result.unwrap_or_else(|error| benchmark_configuration_error(&error))
+}
+
+fn require_configuration(
+    result: Result<LaneConfiguration<4>, prompt_lanes::LaneConfigurationError>,
+) -> LaneConfiguration<4> {
+    result.unwrap_or_else(|error| benchmark_configuration_error(&error))
+}
+
+fn benchmark_configuration_error(error: &dyn std::fmt::Display) -> ! {
+    eprintln!("invalid prompt-lanes benchmark configuration: {error}");
+    std::process::exit(1)
 }
 
 fn dense_prompt() -> String {
@@ -107,7 +162,7 @@ impl<'prompt> PromptCase<'prompt> {
 
 struct ParsedCase {
     name: &'static str,
-    prompt: ParsedPrompt,
+    prompt: ParsedPrompt<4>,
 }
 
 criterion_group! {

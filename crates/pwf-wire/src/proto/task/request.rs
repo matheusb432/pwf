@@ -289,10 +289,9 @@ fn task_content_edit(edit: pb::TaskContentEdit) -> Result<task::EditTaskContent,
             task::EditTaskContent::append_shorthand(title, TaskPrompt::new(value.prompt))
                 .map_err(|error| invalid("content", error))
         }
-        pb::task_content_edit::Content::Replace(value) => {
-            task::EditTaskContent::replace_shorthand(TaskPrompt::new(value))
-                .map_err(|error| invalid("content", error))
-        }
+        pb::task_content_edit::Content::Replace(value) => Ok(
+            task::EditTaskContent::replace_shorthand(TaskPrompt::new(value)),
+        ),
     }
 }
 

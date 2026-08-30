@@ -38,6 +38,7 @@ const EDGE_POLICIES: [EdgePolicy; 10] = [
         from: "pwf-wire",
         label: "wire stays process-neutral",
         forbidden: &[
+            "prompt-lanes",
             "pwf-application",
             "pwf-client",
             "pwf-infra",
@@ -47,7 +48,7 @@ const EDGE_POLICIES: [EdgePolicy; 10] = [
             "pwf-server",
             "xtask",
         ],
-        reason: "wire contracts must not depend on use cases, adapters, or process roots",
+        reason: "wire contracts must not depend on prompt syntax, use cases, adapters, or process roots",
     },
     EdgePolicy {
         from: "pwf-application",
@@ -98,6 +99,7 @@ const EDGE_POLICIES: [EdgePolicy; 10] = [
         label: "cli stays a frontend",
         forbidden: &[
             "directories",
+            "prompt-lanes",
             "pwf-application",
             "pwf-infra",
             "pwf-local-auth",
@@ -105,7 +107,7 @@ const EDGE_POLICIES: [EdgePolicy; 10] = [
             "pwf-wire",
             "sqlx",
         ],
-        reason: "CLI parsing and presentation must cross the client boundary",
+        reason: "the CLI must not own prompt syntax, application policy, or persistence",
     },
     EdgePolicy {
         from: "pwf-local-auth",
@@ -249,7 +251,7 @@ mod tests {
                 (
                     "pwf-wire",
                     "pwf-wire",
-                    "[dependencies]\npwf-infra = { path = \"../pwf-infra\" }\n",
+                    "[dependencies]\npwf-infra = { path = \"../pwf-infra\" }\nprompt-lanes = { path = \"../prompt-lanes\" }\n",
                 ),
                 (
                     "pwf-client",
@@ -259,7 +261,7 @@ mod tests {
                 (
                     "pwf-cli",
                     "pwf-cli",
-                    "[dependencies]\npwf-application = { path = \"../pwf-application\" }\n",
+                    "[dependencies]\npwf-application = { path = \"../pwf-application\" }\nprompt-lanes = { path = \"../prompt-lanes\" }\n",
                 ),
                 (
                     "pwf-infra",
@@ -267,6 +269,7 @@ mod tests {
                     "[dependencies]\npwf-migrator = { path = \"../pwf-migrator\" }\n",
                 ),
                 ("pwf-migrator", "pwf-migrator", ""),
+                ("prompt-lanes", "prompt-lanes", ""),
                 ("serde", "serde", ""),
                 ("sqlx", "sqlx", ""),
             ],
@@ -278,8 +281,10 @@ mod tests {
                 "pwf-application/Cargo.toml: [application stays independent of adapters] \
                  pwf-application -> pwf-infra: infrastructure belongs behind application-owned \
                  boundaries",
-                "pwf-cli/Cargo.toml: [cli stays a frontend] pwf-cli -> pwf-application: CLI \
-                 parsing and presentation must cross the client boundary",
+                "pwf-cli/Cargo.toml: [cli stays a frontend] pwf-cli -> prompt-lanes: the CLI must \
+                 not own prompt syntax, application policy, or persistence",
+                "pwf-cli/Cargo.toml: [cli stays a frontend] pwf-cli -> pwf-application: the CLI \
+                 must not own prompt syntax, application policy, or persistence",
                 "pwf-client/Cargo.toml: [client stays transport-only] pwf-client -> pwf-infra: the \
                  client may own transport mechanics but no application policy or persistence",
                 "pwf-client/Cargo.toml: [client stays transport-only] pwf-client -> sqlx: the client \
@@ -289,7 +294,10 @@ mod tests {
                 "pwf-models/Cargo.toml: [models stay independent] pwf-models -> serde: models must not \
                  depend on wire formats, persistence, use cases, or process roots",
                 "pwf-wire/Cargo.toml: [wire stays process-neutral] pwf-wire -> \
-                 pwf-infra: wire contracts must not depend on use cases, adapters, or process roots",
+                 prompt-lanes: wire contracts must not depend on prompt syntax, use cases, adapters, \
+                 or process roots",
+                "pwf-wire/Cargo.toml: [wire stays process-neutral] pwf-wire -> pwf-infra: wire \
+                 contracts must not depend on prompt syntax, use cases, adapters, or process roots",
             ]
         );
     }
@@ -313,7 +321,7 @@ mod tests {
                 (
                     "pwf-wire",
                     "pwf-wire",
-                    "[dependencies]\npwf-models = { path = \"../pwf-models\" }\nprompt-lanes = { path = \"../prompt-lanes\" }\n",
+                    "[dependencies]\npwf-models = { path = \"../pwf-models\" }\n",
                 ),
                 (
                     "pwf-client",
@@ -323,7 +331,7 @@ mod tests {
                 (
                     "pwf-cli",
                     "pwf-cli",
-                    "[dependencies]\npwf-client = { path = \"../pwf-client\" }\npwf-models = { path = \"../pwf-models\" }\nprompt-lanes = { path = \"../prompt-lanes\" }\n",
+                    "[dependencies]\npwf-client = { path = \"../pwf-client\" }\npwf-models = { path = \"../pwf-models\" }\n",
                 ),
                 (
                     "pwf-infra",

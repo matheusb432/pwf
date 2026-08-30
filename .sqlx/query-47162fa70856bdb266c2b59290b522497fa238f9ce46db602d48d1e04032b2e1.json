@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT\n                lane AS \"lane!\",\n                marker AS \"marker!\",\n                header AS \"header!\"\n            FROM task_prompt_lanes\n            ORDER BY CASE lane\n                WHEN 'goals' THEN 0\n                WHEN 'context' THEN 1\n                WHEN 'constraints' THEN 2\n                WHEN 'done_when' THEN 3\n                ELSE 4\n            END\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "lane!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "task_prompt_lanes",
+            "name": "lane"
+          }
+        }
+      },
+      {
+        "name": "marker!",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "task_prompt_lanes",
+            "name": "marker"
+          }
+        }
+      },
+      {
+        "name": "header!",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "task_prompt_lanes",
+            "name": "header"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "47162fa70856bdb266c2b59290b522497fa238f9ce46db602d48d1e04032b2e1"
+}

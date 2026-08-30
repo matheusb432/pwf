@@ -5,6 +5,7 @@ pub mod cancel_task;
 pub mod complete_task;
 pub mod edit_task;
 pub mod get_task;
+mod lane_configuration;
 pub mod list_tasks;
 pub mod migrate_task_metadata;
 mod mutation_request;
@@ -18,13 +19,28 @@ mod task_closure;
 mod task_creation;
 mod task_view;
 
+pub use lane_configuration::TaskPromptLanesError;
 pub use mutation_request::MutationRequestError;
 pub use task_closure::CloseTaskError;
 
+/// Reports a shorthand prompt without a usable leading task title.
+#[derive(Debug, thiserror::Error)]
+pub enum TaskPromptTitleError {
+    #[error("--prompt must start with a nonempty title before any lane marker.")]
+    Missing,
+    #[error(transparent)]
+    Invalid(#[from] pwf_models::task::TaskTitleError),
+}
+
 fn infer_task_title(
     prompt: &pwf_models::task::TaskPrompt,
-) -> Result<pwf_models::task::TaskTitle, pwf_models::task::TaskTitleError> {
-    pwf_models::task::TaskTitle::try_new(prompt_lanes::parse(prompt.as_ref()).title)
+    lanes: &lane_configuration::TaskPromptLanes,
+) -> Result<pwf_models::task::TaskTitle, TaskPromptTitleError> {
+    let (title, _) = lanes.parse(prompt.as_ref()).into_parts();
+    if title.is_empty() {
+        return Err(TaskPromptTitleError::Missing);
+    }
+    pwf_models::task::TaskTitle::try_new(title).map_err(Into::into)
 }
 
 fn task_body_region(body: &str) -> &str {

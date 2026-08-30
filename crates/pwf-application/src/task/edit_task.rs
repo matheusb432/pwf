@@ -10,8 +10,10 @@ use pwf_wire::{
 };
 
 use super::{
+    TaskPromptTitleError,
     blocked_by::{self, BlockedByValidationError, validate_and_merge},
-    ensure_task_revision,
+    ensure_task_revision, infer_task_title,
+    lane_configuration::{TaskPromptLanes, TaskPromptLanesError},
     mutation_request::{self, MutationOperation, MutationRequestState, MutationStart},
     note_body::{EditLanesError, append_lanes, edit_lanes, render},
     resolve_task_project::{self, ResolveTaskProjectError},
@@ -48,6 +50,10 @@ pub enum EditTaskError {
     Revision(#[from] super::TaskRevisionConflict),
     #[error(transparent)]
     MutationRequest(#[from] mutation_request::MutationRequestError),
+    #[error(transparent)]
+    InvalidTitle(#[from] TaskPromptTitleError),
+    #[error(transparent)]
+    PromptLanes(#[from] TaskPromptLanesError),
     #[error("task {id} has invalid tags frontmatter: {raw:?}.")]
     InvalidTagsFrontmatter { id: TaskId, raw: String },
     #[error("task {id} at {path} has malformed blocked_by metadata {raw:?}: {reason}")]
@@ -73,7 +79,7 @@ pub enum EditTaskError {
     #[error("blocked_by cycle: {}", blocked_by::format_task_ids_path(path))]
     BlockedByCycle { path: Vec<TaskId> },
     #[error("cannot edit lanes: task body contains more than one `{header}` section.")]
-    AmbiguousLanes { header: &'static str },
+    AmbiguousLanes { header: String },
     #[error(transparent)]
     WriteStore(anyhow::Error),
     #[error(transparent)]
@@ -130,7 +136,14 @@ async fn update(
     }
 
     let projects = resolve_blocked_by_projects(&command, pool).await?;
-    let prepared = prepare(command, project, &record, &projects, store)?;
+    let content_patch = match command.edits.content() {
+        Some(content) => {
+            let lane_configuration = TaskPromptLanes::load(pool).await?;
+            prepare_content(content, &record, &lane_configuration)?
+        }
+        None => (None, None),
+    };
+    let prepared = prepare(command, project, &record, &projects, store, content_patch)?;
     if let Some(identity) = identity.as_ref()
         && let MutationStart::Existing(replay) =
             mutation_request::start(pool, identity, MutationOperation::Update, &prepared.id).await?
@@ -181,9 +194,10 @@ fn prepare(
     record: &TaskRecord,
     projects: &[Project],
     store: &impl TaskStore,
+    content_patch: (Option<String>, Option<TaskTitle>),
 ) -> Result<PreparedTaskEdit, EditTaskError> {
     let blocked_by = resolve_blocked_by(command.edits.blocked_by(), record, store, projects)?;
-    let (body, title) = prepare_content(command.edits.content(), record)?;
+    let (body, title) = content_patch;
     let patch = TaskPatch {
         body,
         title,
@@ -201,21 +215,23 @@ fn prepare(
 }
 
 fn prepare_content(
-    content: Option<&EditTaskContent>,
+    content: &EditTaskContent,
     record: &TaskRecord,
+    lane_configuration: &TaskPromptLanes,
 ) -> Result<(Option<String>, Option<TaskTitle>), EditTaskError> {
     let current_body = task_body_region(&record.body);
-    match content.map(EditTaskContent::kind) {
-        None => Ok((None, None)),
-        Some(EditTaskContentKind::Structured { title, lanes }) => Ok((
-            edit_lanes(current_body, lanes).map_err(map_lane_error)?,
+    match content.kind() {
+        EditTaskContentKind::Structured { title, lanes } => Ok((
+            edit_lanes(current_body, lanes, lane_configuration).map_err(map_lane_error)?,
             title.clone(),
         )),
-        Some(EditTaskContentKind::AppendShorthand { title, prompt }) => {
-            Ok((Some(append_lanes(current_body, prompt)), title.clone()))
-        }
-        Some(EditTaskContentKind::ReplaceShorthand { prompt, title }) => {
-            Ok((Some(render(prompt)), Some(title.clone())))
+        EditTaskContentKind::AppendShorthand { title, prompt } => Ok((
+            Some(append_lanes(current_body, prompt, lane_configuration)),
+            title.clone(),
+        )),
+        EditTaskContentKind::ReplaceShorthand { prompt } => {
+            let title = infer_task_title(prompt, lane_configuration)?;
+            Ok((Some(render(prompt, lane_configuration)), Some(title)))
         }
     }
 }
@@ -447,8 +463,7 @@ mod tests {
         )]);
         let command = content_edit(
             "FOO-0001",
-            EditTaskContent::replace_shorthand(TaskPrompt::new("New Title / new goal /d complete"))
-                .unwrap(),
+            EditTaskContent::replace_shorthand(TaskPrompt::new("New Title / new goal /d complete")),
         );
 
         run(command, &store, &pool).await.unwrap();
@@ -459,6 +474,66 @@ mod tests {
             edited.body,
             "## Goals\n\n- new goal\n\n## Done When\n\n- complete"
         );
+    }
+
+    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
+    async fn prompt_replacement_uses_runtime_markers_and_headers(pool: sqlx::SqlitePool) {
+        register_project(&pool).await;
+        sqlx::query(
+            "UPDATE task_prompt_lanes SET marker = '/o', header = 'Objectives' WHERE lane = 'goals'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "UPDATE task_prompt_lanes SET marker = '/v', header = 'Verification' WHERE lane = 'done_when'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let store = staged(vec![record(
+            "FOO-0001",
+            TaskStatus::Active,
+            "## Goals\n\n- old",
+        )]);
+        let command = content_edit(
+            "FOO-0001",
+            EditTaskContent::replace_shorthand(TaskPrompt::new(
+                "New Title /o new objective /v tests pass",
+            )),
+        );
+
+        run(command, &store, &pool).await.unwrap();
+
+        let edited = &store.tasks("foo-bar")[0];
+        assert_eq!(edited.title, "new title");
+        assert_eq!(
+            edited.body,
+            "## Objectives\n\n- new objective\n\n## Verification\n\n- tests pass"
+        );
+    }
+
+    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
+    async fn prompt_replacement_rejects_a_runtime_marker_before_the_title(pool: sqlx::SqlitePool) {
+        register_project(&pool).await;
+        sqlx::query("UPDATE task_prompt_lanes SET marker = '/o' WHERE lane = 'goals'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let store = staged(vec![record(
+            "FOO-0001",
+            TaskStatus::Active,
+            "## Goals\n\n- old",
+        )]);
+        let command = content_edit(
+            "FOO-0001",
+            EditTaskContent::replace_shorthand(TaskPrompt::new("/o no title")),
+        );
+
+        let error = run(command, &store, &pool).await.unwrap_err();
+
+        assert!(matches!(error, EditTaskError::InvalidTitle(_)));
+        assert_eq!(store.tasks("foo-bar")[0].body, "## Goals\n\n- old");
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
@@ -516,7 +591,7 @@ mod tests {
 
         assert!(matches!(
             error,
-            EditTaskError::AmbiguousLanes { header: "## Goals" }
+            EditTaskError::AmbiguousLanes { ref header } if header == "## Goals"
         ));
         assert_eq!(store.tasks("foo-bar")[0].body, body);
     }

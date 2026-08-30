@@ -2045,6 +2045,7 @@ name = "prompt-lanes"
 version = "0.1.0"
 dependencies = [
  "criterion",
+ "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -2163,7 +2164,6 @@ dependencies = [
  "dialoguer",
  "expectrl",
  "lazy-regex",
- "prompt-lanes",
  "pwf-client",
  "pwf-models",
  "serde",
@@ -2288,7 +2288,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "blake3",
- "prompt-lanes",
  "prost",
  "pwf-models",
  "thiserror 2.0.19",

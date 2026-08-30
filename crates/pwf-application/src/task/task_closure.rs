@@ -2,10 +2,7 @@
 
 use pwf_models::{
     project::ProjectId,
-    task::{
-        CommitRanges, TaskId, TaskPrompt, TaskReport, TaskSection, TaskStatus, TaskTimestamp,
-        TaskTitleError,
-    },
+    task::{CommitRanges, TaskId, TaskPrompt, TaskReport, TaskSection, TaskStatus, TaskTimestamp},
 };
 use pwf_wire::task::{AddTaskDiagnostics, ClosedTaskAction};
 
@@ -17,6 +14,7 @@ use crate::{
     task::{
         add_task::AddTaskError,
         infer_task_title,
+        lane_configuration::TaskPromptLanes,
         note_body::append_report,
         task_body_region,
         task_creation::{self, TaskCreation},
@@ -31,12 +29,6 @@ pub enum CloseTaskError {
     UnknownProjectId {
         task_id: TaskId,
         project_id: ProjectId,
-    },
-    #[error("task {id} has an invalid persisted title: {source}")]
-    InvalidTitle {
-        id: TaskId,
-        #[source]
-        source: TaskTitleError,
     },
     #[error(transparent)]
     Revision(#[from] super::TaskRevisionConflict),
@@ -353,7 +345,7 @@ pub(in crate::task) struct TaskClosure<'a> {
     pub(in crate::task) completed_at: TaskTimestamp,
     pub(in crate::task) report: Option<&'a TaskReport>,
     pub(in crate::task) commits: Option<&'a CommitRanges>,
-    pub(in crate::task) review: bool,
+    pub(in crate::task) review_lanes: Option<&'a TaskPromptLanes>,
     pub(in crate::task) expected_revision: Option<&'a pwf_wire::task::TaskRevision>,
 }
 
@@ -377,7 +369,7 @@ pub(in crate::task) fn close(
         completed_at,
         report,
         commits,
-        review,
+        review_lanes,
         expected_revision,
     } = *command;
     let task_identifier = id.clone();
@@ -417,8 +409,17 @@ pub(in crate::task) fn close(
         rotate_done_queue(store, project, &task_identifier, completed_at)?;
     }
 
-    let review_task = review
-        .then(|| spawn_review(store, project, &task_identifier, completed_at, commits))
+    let review_task = review_lanes
+        .map(|lanes| {
+            spawn_review(
+                store,
+                project,
+                &task_identifier,
+                completed_at,
+                commits,
+                lanes,
+            )
+        })
         .transpose()?;
 
     Ok(ClosedTaskEffects { review_task })
@@ -489,9 +490,10 @@ fn spawn_review(
     reviewed: &TaskId,
     completed_at: TaskTimestamp,
     commits: Option<&CommitRanges>,
+    lanes: &TaskPromptLanes,
 ) -> Result<task_creation::CreatedTask, CloseTaskError> {
     let prompt = review_task_prompt(reviewed, commits);
-    let review_title = infer_task_title(&prompt)
+    let review_title = infer_task_title(&prompt, lanes)
         .map_err(AddTaskError::from)
         .map_err(|error| CloseTaskError::ReviewTask(Box::new(error)))?;
     let id = store.next_id(project).map_err(|source| {
@@ -506,7 +508,7 @@ fn spawn_review(
             id: &id,
             new: NewTask {
                 title: review_title,
-                body: super::note_body::render(&prompt),
+                body: super::note_body::render(&prompt, lanes),
                 created_at: completed_at,
                 section: Some(TaskSection::human()),
                 blocked_by: None,

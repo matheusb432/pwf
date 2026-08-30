@@ -4,7 +4,8 @@ use pwf_wire::task::{ClosedTaskAction, CompleteTask};
 #[cfg(test)]
 use super::task_closure::review_task_prompt;
 use super::{
-    CloseTaskError,
+    CloseTaskError, TaskPromptLanesError,
+    lane_configuration::TaskPromptLanes,
     mutation_request::{self, MutationOperation, MutationRequestState, MutationStart},
     resolve_task_project::{self, ResolveTaskProjectError},
     task_closure::{self, TaskClosure},
@@ -24,6 +25,8 @@ pub enum CompleteTaskError {
     Clock(#[from] TaskTimestampError),
     #[error(transparent)]
     MutationRequest(#[from] mutation_request::MutationRequestError),
+    #[error(transparent)]
+    PromptLanes(#[from] TaskPromptLanesError),
 }
 
 #[cqrsy::command]
@@ -47,6 +50,11 @@ pub async fn execute(
         };
     }
     let project = resolve_task_project::execute(command.id.clone(), pool).await?;
+    let review_lanes = if command.review {
+        Some(TaskPromptLanes::load(pool).await?)
+    } else {
+        None
+    };
     let completed_at = clock.now()?;
     if let Some(identity) = identity.as_ref()
         && let MutationStart::Existing(replay) =
@@ -65,7 +73,7 @@ pub async fn execute(
             completed_at,
             report: command.report.as_ref(),
             commits: command.commits.as_ref(),
-            review: command.review,
+            review_lanes: review_lanes.as_ref(),
             expected_revision: command.expected_revision.as_ref(),
         },
         store,
@@ -305,6 +313,12 @@ mod tests {
             false,
         )
         .await;
+        sqlx::query(
+            "UPDATE task_prompt_lanes SET marker = '/o', header = 'Objectives' WHERE lane = 'goals'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
         let store = staged(
             vec![record("FOO-0001", TaskStatus::Active)],
             vec![entry("FOO-0001", IndexEntryState::Open, "General")],
@@ -329,6 +343,12 @@ mod tests {
                     && e.state == IndexEntryState::Open),
             "review task must get an open index entry"
         );
+        let review_task = store
+            .tasks("foo-bar")
+            .into_iter()
+            .find(|task| task.id.as_ref() == "FOO-0002")
+            .unwrap();
+        assert_eq!(review_task.body, "## Objectives\n");
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]

@@ -94,6 +94,39 @@ async fn add_inferred_prompt_title_is_normalized_once(pool: sqlx::SqlitePool) {
 }
 
 #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
+async fn shorthand_add_uses_runtime_markers_and_headers(pool: sqlx::SqlitePool) {
+    let store = registered_store(&pool).await;
+    sqlx::query(
+        "UPDATE task_prompt_lanes SET marker = '/o', header = 'Objectives' WHERE lane = 'goals'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE task_prompt_lanes SET marker = '/b', header = 'Background' WHERE lane = 'context'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let mut command = command();
+    command.prompt = AddTaskPrompt::shorthand(TaskPrompt::new(
+        "custom title /o custom goal /b custom context",
+    ))
+    .unwrap();
+
+    add_task::execute(&command, &store, &pool, &FixedClock)
+        .await
+        .unwrap();
+
+    let task = &store.tasks("foo")[0];
+    assert_eq!(task.title, "custom title");
+    assert_eq!(
+        task.body,
+        "## Objectives\n\n- custom goal\n\n## Background\n\n- custom context"
+    );
+}
+
+#[sqlx::test(migrator = "crate::testing::MIGRATOR")]
 async fn add_uses_the_clock_timestamp(pool: sqlx::SqlitePool) {
     let store = registered_store(&pool).await;
     add_task::execute(&command(), &store, &pool, &FixedClock)

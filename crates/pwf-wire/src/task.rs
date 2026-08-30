@@ -267,7 +267,6 @@ pub enum EditTaskContentKind {
     },
     ReplaceShorthand {
         prompt: TaskPrompt,
-        title: TaskTitle,
     },
 }
 
@@ -298,21 +297,10 @@ impl EditTaskContent {
         Ok(Self(EditTaskContentKind::AppendShorthand { title, prompt }))
     }
 
-    /// Creates a shorthand replacement with a validated leading title.
-    pub fn replace_shorthand(prompt: TaskPrompt) -> Result<Self, EditTaskContentError> {
-        let parsed = prompt_lanes::parse(prompt.as_ref());
-        if parsed.title.trim().is_empty() {
-            return Err(EditTaskContentError::MissingPromptTitle);
-        }
-        let title = TaskTitle::try_new(parsed.title).map_err(|error| {
-            EditTaskContentError::InvalidTitle {
-                message: error.to_string(),
-            }
-        })?;
-        Ok(Self(EditTaskContentKind::ReplaceShorthand {
-            prompt,
-            title,
-        }))
+    /// Creates a shorthand replacement for application parsing with the runtime lane syntax.
+    #[must_use]
+    pub fn replace_shorthand(prompt: TaskPrompt) -> Self {
+        Self(EditTaskContentKind::ReplaceShorthand { prompt })
     }
 
     #[must_use]
@@ -328,10 +316,6 @@ pub enum EditTaskContentError {
     EmptyStructured,
     #[error("--append cannot be empty.")]
     EmptyAppend,
-    #[error("--prompt must start with a nonempty title before any lane marker.")]
-    MissingPromptTitle,
-    #[error("{message}")]
-    InvalidTitle { message: String },
 }
 
 /// Carries at least one requested task change.
@@ -1167,11 +1151,6 @@ mod tests {
             EditTaskContent::append_shorthand(None, TaskPrompt::new(" \n\t ")),
             Err(EditTaskContentError::EmptyAppend)
         ));
-        assert!(matches!(
-            EditTaskContent::replace_shorthand(TaskPrompt::new("/g replacement")),
-            Err(EditTaskContentError::MissingPromptTitle)
-        ));
-
         let error = TaskEdits::try_new(
             None,
             CollectionEdit::Unchanged,

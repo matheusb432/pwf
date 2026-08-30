@@ -1,203 +1,221 @@
-//! Tokenizes the one-line lane syntax into a [`ParsedPrompt`].
+//! Tokenizes one-line lane syntax without intermediate token or word buffers.
 
-use crate::{model::ParsedPrompt, title::single_line};
+use crate::{
+    configuration::{LaneConfiguration, MarkerLane},
+    model::ParsedPrompt,
+    text::single_line,
+};
+
+/// Separates consecutive items in the currently selected lane.
+pub const ITEM_MARKER: &str = "/";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Section {
-    Goals,
-    Context,
-    Constraints,
-    DoneWhen,
+enum TokenClassification {
+    Text,
+    ItemMarker,
+    ConfiguredLane(usize),
+    UnknownLane,
 }
 
-impl Section {
-    fn from_marker(token: &str) -> Option<Self> {
-        match token {
-            "/g" => Some(Self::Goals),
-            "/c" => Some(Self::Context),
-            "/n" => Some(Self::Constraints),
-            "/d" => Some(Self::DoneWhen),
-            _ => None,
-        }
+fn is_lane_marker_shaped(token: &str) -> bool {
+    let bytes = token.as_bytes();
+    bytes.len() == 2 && bytes[0] == b'/' && bytes[1].is_ascii_alphabetic()
+}
+
+fn classify<const N: usize>(
+    token: &str,
+    configuration: &LaneConfiguration<N>,
+) -> TokenClassification {
+    if token == ITEM_MARKER {
+        return TokenClassification::ItemMarker;
+    }
+    if !is_lane_marker_shaped(token) {
+        return TokenClassification::Text;
+    }
+    match configuration.marker_lane(token.as_bytes()[1]) {
+        MarkerLane::Configured(index) => TokenClassification::ConfiguredLane(index),
+        MarkerLane::Unknown => TokenClassification::UnknownLane,
     }
 }
 
-/// Reports whether a token has the `/` plus one ASCII letter marker shape.
-///
-/// This recognizes unknown markers such as `/x` without treating paths such as `/etc/hosts` as
-/// markers.
-fn is_marker_shaped(token: &str) -> bool {
-    let mut chars = token.chars();
-    chars.next() == Some('/')
-        && chars.next().is_some_and(|c| c.is_ascii_alphabetic())
-        && chars.next().is_none()
-}
-
-/// Reports whether a token flushes the current bullet buffer.
-///
-/// Bare `/` and unknown marker-shaped tokens flush without selecting a new section.
-fn is_marker(token: &str) -> bool {
-    token == "/" || Section::from_marker(token).is_some() || is_marker_shaped(token)
-}
-
-fn words_to_text(words: &[&str]) -> String {
-    words.join(" ")
-}
-
-fn push(parsed: &mut ParsedPrompt, section: Section, text: String) {
-    if text.is_empty() {
+fn push<const N: usize>(
+    parsed: &mut ParsedPrompt<N>,
+    lane_index: usize,
+    prompt: &str,
+    text_start: Option<usize>,
+    text_end: usize,
+) {
+    let Some(text_start) = text_start else {
         return;
-    }
-    match section {
-        Section::Goals => parsed.goals.push(text),
-        Section::Context => parsed.context.push(text),
-        Section::Constraints => parsed.constraints.push(text),
-        Section::DoneWhen => parsed.done_when.push(text),
+    };
+    let text = single_line(&prompt[text_start..text_end]);
+    if !text.is_empty() {
+        parsed.lane_items[lane_index].push(text);
     }
 }
 
-fn plain(prompt: &str) -> ParsedPrompt {
-    let title = single_line(prompt);
-    ParsedPrompt {
-        title,
-        ..ParsedPrompt::default()
-    }
-}
-
-/// Parses one-line lane syntax into a [`ParsedPrompt`].
+/// Parses one-line lane syntax using the supplied runtime configuration.
 ///
-/// Text before the first lane marker is the title and is not copied into Goals.
+/// Text before the first marker is the title. Bare `/` and unknown lane-shaped markers start a
+/// new item without changing the selected lane.
 #[must_use]
-pub fn parse(prompt: &str) -> ParsedPrompt {
-    let tokens: Vec<&str> = prompt.split_whitespace().collect();
-    if !tokens.iter().any(|token| is_marker(token)) {
-        return plain(prompt);
+pub fn parse<const N: usize>(
+    prompt: &str,
+    configuration: &LaneConfiguration<N>,
+) -> ParsedPrompt<N> {
+    debug_assert!(N > 0, "LaneConfiguration rejects empty configurations");
+    let prompt_address = prompt.as_ptr() as usize;
+    let mut parsed = ParsedPrompt {
+        title: String::new(),
+        lane_items: LaneConfiguration::<N>::empty_lane_items(),
+    };
+    let mut current_lane = 0;
+    let mut text_start = None;
+    let mut text_end = 0;
+    let mut seen_marker = false;
+
+    for token in prompt.split_whitespace() {
+        match classify(token, configuration) {
+            TokenClassification::Text => {
+                let token_start = token.as_ptr() as usize - prompt_address;
+                text_start.get_or_insert(token_start);
+                text_end = token_start + token.len();
+            }
+            TokenClassification::ItemMarker | TokenClassification::UnknownLane => {
+                flush(
+                    &mut parsed,
+                    current_lane,
+                    prompt,
+                    &mut text_start,
+                    text_end,
+                    &mut seen_marker,
+                );
+            }
+            TokenClassification::ConfiguredLane(lane_index) => {
+                flush(
+                    &mut parsed,
+                    current_lane,
+                    prompt,
+                    &mut text_start,
+                    text_end,
+                    &mut seen_marker,
+                );
+                current_lane = lane_index;
+            }
+        }
     }
 
-    let mut parsed = ParsedPrompt::default();
-    let mut current = Section::Goals;
-    let mut buffer = Vec::new();
-    let mut seen_first_marker = false;
-
-    for token in tokens {
-        if !is_marker(token) {
-            buffer.push(token);
-            continue;
-        }
-        if seen_first_marker {
-            push(&mut parsed, current, words_to_text(&buffer));
-        } else {
-            let title = words_to_text(&buffer);
-            parsed.title.clone_from(&title);
-        }
-        buffer.clear();
-        seen_first_marker = true;
-        if let Some(section) = Section::from_marker(token) {
-            current = section;
-        }
+    if seen_marker {
+        push(&mut parsed, current_lane, prompt, text_start, text_end);
+    } else if let Some(text_start) = text_start {
+        parsed.title = single_line(&prompt[text_start..text_end]);
     }
-
-    push(&mut parsed, current, words_to_text(&buffer));
     parsed
+}
+
+fn flush<const N: usize>(
+    parsed: &mut ParsedPrompt<N>,
+    current_lane: usize,
+    prompt: &str,
+    text_start: &mut Option<usize>,
+    text_end: usize,
+    seen_marker: &mut bool,
+) {
+    if *seen_marker {
+        push(parsed, current_lane, prompt, text_start.take(), text_end);
+    } else {
+        if let Some(start) = text_start.take() {
+            parsed.title = single_line(&prompt[start..text_end]);
+        }
+        *seen_marker = true;
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::LaneDefinition;
 
-    #[test]
-    fn plain_prompt_sets_the_title_without_repeating_it_as_a_goal() {
-        let parsed = parse("fix rich prompt parser");
-        assert_eq!(parsed.title, "fix rich prompt parser");
-        assert!(parsed.goals.is_empty());
-        assert!(parsed.context.is_empty());
-        assert!(parsed.constraints.is_empty());
-        assert!(parsed.done_when.is_empty());
+    fn configuration() -> LaneConfiguration<4> {
+        LaneConfiguration::try_new([
+            LaneDefinition::try_new("/g", "Goals").unwrap(),
+            LaneDefinition::try_new("/c", "Context").unwrap(),
+            LaneDefinition::try_new("/n", "Constraints").unwrap(),
+            LaneDefinition::try_new("/d", "Done When").unwrap(),
+        ])
+        .unwrap()
     }
 
     #[test]
-    fn plain_prompt_with_section_start_appends_only_section() {
-        let parsed = parse("/c currently, x does y");
-        assert!(parsed.title.is_empty());
-        assert!(parsed.goals.is_empty());
-        assert_eq!(parsed.context, vec!["currently, x does y".to_string()]);
-        assert!(parsed.constraints.is_empty());
-        assert!(parsed.done_when.is_empty());
+    fn plain_prompt_sets_only_the_title() {
+        let parsed = parse("fix rich prompt parser", &configuration());
+        assert_eq!(parsed.title(), "fix rich prompt parser");
+        assert!(parsed.lane_items().iter().all(Vec::is_empty));
     }
 
     #[test]
-    fn slash_lanes_populate_each_section() {
+    fn marker_first_prompt_sets_only_the_selected_lane() {
+        let parsed = parse("/c currently, x does y", &configuration());
+        assert!(parsed.title().is_empty());
+        assert!(parsed.lane_items()[0].is_empty());
+        assert_eq!(parsed.lane_items()[1], ["currently, x does y"]);
+    }
+
+    #[test]
+    fn configured_lanes_preserve_items_and_encounter_order() {
         let prompt = "fix rich prompt parser / preserve ampersands in prose / keep code intact /c current add splits on ampersand /n no parser crate /d tests cover add and update";
-        let parsed = parse(prompt);
-        assert_eq!(parsed.title, "fix rich prompt parser");
+        let parsed = parse(prompt, &configuration());
+        assert_eq!(parsed.title(), "fix rich prompt parser");
         assert_eq!(
-            parsed.goals,
-            vec![
-                "preserve ampersands in prose".to_string(),
-                "keep code intact".to_string(),
-            ]
+            parsed.lane_items()[0],
+            ["preserve ampersands in prose", "keep code intact"]
         );
-        assert_eq!(
-            parsed.context,
-            vec!["current add splits on ampersand".to_string()]
-        );
-        assert_eq!(parsed.constraints, vec!["no parser crate".to_string()]);
-        assert_eq!(
-            parsed.done_when,
-            vec!["tests cover add and update".to_string()]
-        );
+        assert_eq!(parsed.lane_items()[1], ["current add splits on ampersand"]);
+        assert_eq!(parsed.lane_items()[2], ["no parser crate"]);
+        assert_eq!(parsed.lane_items()[3], ["tests cover add and update"]);
     }
 
     #[test]
-    fn standalone_slash_continues_the_current_section() {
-        let parsed = parse("title /c context one / context two /d done one / done two");
-        assert!(parsed.goals.is_empty());
-        assert_eq!(
-            parsed.context,
-            vec!["context one".to_string(), "context two".to_string()]
+    fn bare_marker_continues_the_selected_lane() {
+        let parsed = parse(
+            "title /c context one / context two /d done one / done two",
+            &configuration(),
         );
-        assert_eq!(
-            parsed.done_when,
-            vec!["done one".to_string(), "done two".to_string()]
-        );
+        assert_eq!(parsed.lane_items()[1], ["context one", "context two"]);
+        assert_eq!(parsed.lane_items()[3], ["done one", "done two"]);
     }
 
     #[test]
-    fn sections_can_be_interleaved_and_append_in_encounter_order() {
-        let parsed = parse("some title /c some context1 /g another goal /c some context2");
-        assert_eq!(parsed.goals, vec!["another goal".to_string()]);
-        assert_eq!(
-            parsed.context,
-            vec!["some context1".to_string(), "some context2".to_string()]
+    fn lanes_can_be_interleaved() {
+        let parsed = parse(
+            "some title /c some context1 /g another goal /c some context2",
+            &configuration(),
         );
+        assert_eq!(parsed.lane_items()[0], ["another goal"]);
+        assert_eq!(parsed.lane_items()[1], ["some context1", "some context2"]);
     }
 
     #[test]
-    fn empty_lead_before_marker_emits_only_authored_content() {
-        let parsed = parse("/ only second");
-        assert!(parsed.title.is_empty());
-        assert_eq!(parsed.goals, vec!["only second".to_string()]);
-    }
-
-    #[test]
-    fn two_unrecognized_markers_do_not_corrupt_surrounding_bullets() {
+    fn unknown_lane_markers_acknowledge_item_boundaries_without_leaking() {
         let prompt = "alpha beta /x gamma delta /g epsilon zeta /c eta theta /x iota kappa /c lambda mu / nu xi";
-        let parsed = parse(prompt);
+        let parsed = parse(prompt, &configuration());
+        assert_eq!(parsed.title(), "alpha beta");
+        assert_eq!(parsed.lane_items()[0], ["gamma delta", "epsilon zeta"]);
         assert_eq!(
-            parsed.goals,
-            vec!["gamma delta".to_string(), "epsilon zeta".to_string(),]
+            parsed.lane_items()[1],
+            ["eta theta", "iota kappa", "lambda mu", "nu xi"]
         );
-        assert_eq!(
-            parsed.context,
-            vec![
-                "eta theta".to_string(),
-                "iota kappa".to_string(),
-                "lambda mu".to_string(),
-                "nu xi".to_string(),
-            ]
-        );
-        for bullet in parsed.goals.iter().chain(parsed.context.iter()) {
-            assert!(!bullet.contains('/'), "marker leaked into bullet: {bullet}");
-        }
+    }
+
+    #[test]
+    fn runtime_markers_replace_compile_time_defaults() {
+        let configuration = LaneConfiguration::try_new([
+            LaneDefinition::try_new("/o", "Objectives").unwrap(),
+            LaneDefinition::try_new("/b", "Background").unwrap(),
+        ])
+        .unwrap();
+        let parsed = parse("title /o first /b second /g third", &configuration);
+        assert_eq!(parsed.lane_items()[0], ["first"]);
+        assert_eq!(parsed.lane_items()[1], ["second", "third"]);
     }
 }

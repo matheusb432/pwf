@@ -1,13 +1,19 @@
 //! Applies prompt, lane, and report transforms to task note bodies.
 
 use lazy_regex::{Regex, regex};
-use prompt_lanes::{Adapter, MarkdownAdapter, ParsedPrompt, parse};
+use prompt_lanes::ParsedPrompt;
 use pwf_models::task::TaskPrompt;
 use pwf_wire::task::{TaskLane, TaskLaneEdits, TaskLanes};
 
+use super::lane_configuration::TaskPromptLanes;
+
 const REPORT_SEPARATOR: &str = "\n\n### Report\n\n";
-const LANE_SECTION_HEADERS: [&str; 4] =
-    ["## Goals", "## Context", "## Constraints", "## Done When"];
+const TASK_LANES: [TaskLane; 4] = [
+    TaskLane::Goal,
+    TaskLane::Context,
+    TaskLane::Constraint,
+    TaskLane::DoneWhen,
+];
 
 fn placeholder_prompt_regex() -> &'static Regex {
     regex!(r"(?i)(^\s*\[!\]\s*TODO\b|^\s*TODO\b|definir prompt|define prompt|tbd)")
@@ -20,24 +26,29 @@ enum PromptClassification {
 }
 
 #[must_use]
-pub(in crate::task) fn render(prompt: &TaskPrompt) -> String {
+pub(in crate::task) fn render(prompt: &TaskPrompt, lanes: &TaskPromptLanes) -> String {
     match prompt_classification(prompt) {
         PromptClassification::Placeholder | PromptClassification::AuthoredVerbatimLegacy => {
             prompt.to_string()
         }
-        PromptClassification::Authored => MarkdownAdapter.render(&parse(prompt.as_ref())),
+        PromptClassification::Authored => lanes.render(&lanes.parse(prompt.as_ref())),
     }
 }
 
 #[must_use]
-pub(in crate::task) fn render_lanes(lanes: &TaskLanes) -> String {
-    MarkdownAdapter.render(&ParsedPrompt {
-        title: String::new(),
-        goals: lanes.goals().to_vec(),
-        context: lanes.context().to_vec(),
-        constraints: lanes.constraints().to_vec(),
-        done_when: lanes.done_when().to_vec(),
-    })
+pub(in crate::task) fn render_lanes(
+    task_lanes: &TaskLanes,
+    configuration: &TaskPromptLanes,
+) -> String {
+    configuration.render(&ParsedPrompt::new(
+        String::new(),
+        [
+            task_lanes.goals().to_vec(),
+            task_lanes.context().to_vec(),
+            task_lanes.constraints().to_vec(),
+            task_lanes.done_when().to_vec(),
+        ],
+    ))
 }
 
 /// Reports whether a prompt is empty or matches `TODO`, `[!] TODO`, `define prompt`, `definir
@@ -78,156 +89,130 @@ fn starts_with_todo_word_boundary_ascii(text: &str) -> bool {
 }
 
 /// Splices lane bullets into existing sections and appends missing sections.
-///
-/// Returns [`None`] for a whitespace-only prompt.
 #[must_use]
-pub(in crate::task) fn append_lanes(body: &str, prompt: &TaskPrompt) -> String {
+pub(in crate::task) fn append_lanes(
+    body: &str,
+    prompt: &TaskPrompt,
+    configuration: &TaskPromptLanes,
+) -> String {
     let prompt = prompt.as_ref().trim();
     debug_assert!(!prompt.is_empty(), "task append prompts are validated");
-    let mut parsed = parse(prompt);
-    if !parsed.title.is_empty() {
-        parsed.goals.insert(0, std::mem::take(&mut parsed.title));
+    let (title, mut sections) = configuration.parse(prompt).into_parts();
+    if !title.is_empty() {
+        sections[0].insert(0, title);
     }
-    let sections: [&[String]; 4] = [
-        &parsed.goals,
-        &parsed.context,
-        &parsed.constraints,
-        &parsed.done_when,
-    ];
     let mut out = body.to_string();
-    for (header, bullets) in LANE_SECTION_HEADERS.iter().zip(sections) {
-        out = append_bullets_to_section(&out, header, bullets);
+    for (lane, bullets) in TASK_LANES.into_iter().zip(&sections) {
+        out = append_bullets_to_section(&out, configuration.header(lane), bullets);
     }
     out
 }
 
-#[derive(Debug, Clone, Copy, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub(in crate::task) enum EditLanesError {
     #[error("task body contains more than one `{header}` section")]
-    DuplicateSection { header: &'static str },
-}
-
-#[derive(Debug, Clone, Copy)]
-enum LaneSection {
-    Goals,
-    Context,
-    Constraints,
-    DoneWhen,
-}
-
-impl LaneSection {
-    const ALL: [Self; 4] = [
-        Self::Goals,
-        Self::Context,
-        Self::Constraints,
-        Self::DoneWhen,
-    ];
-
-    fn header(self) -> &'static str {
-        match self {
-            Self::Goals => "## Goals",
-            Self::Context => "## Context",
-            Self::Constraints => "## Constraints",
-            Self::DoneWhen => "## Done When",
-        }
-    }
-
-    fn index(self) -> usize {
-        match self {
-            Self::Goals => 0,
-            Self::Context => 1,
-            Self::Constraints => 2,
-            Self::DoneWhen => 3,
-        }
-    }
+    DuplicateSection { header: String },
 }
 
 pub(in crate::task) fn edit_lanes(
     body: &str,
     edits: &TaskLaneEdits,
+    configuration: &TaskPromptLanes,
 ) -> Result<Option<String>, EditLanesError> {
-    reject_duplicate_lane_sections(body)?;
+    reject_duplicate_lane_sections(body, configuration)?;
     let mut edited = body.to_string();
 
-    for (section, remove) in [
+    for (lane, remove) in [
+        (TaskLane::Goal, edits.removals().contains(&TaskLane::Goal)),
         (
-            LaneSection::Goals,
-            edits.removals().contains(&TaskLane::Goal),
-        ),
-        (
-            LaneSection::Context,
+            TaskLane::Context,
             edits.removals().contains(&TaskLane::Context),
         ),
         (
-            LaneSection::Constraints,
+            TaskLane::Constraint,
             edits.removals().contains(&TaskLane::Constraint),
         ),
         (
-            LaneSection::DoneWhen,
+            TaskLane::DoneWhen,
             edits.removals().contains(&TaskLane::DoneWhen),
         ),
     ] {
         if remove {
-            edited = clear_lane_section(&edited, section);
+            edited = clear_lane_section(&edited, lane, configuration);
         }
     }
 
-    for (section, values) in [
-        (LaneSection::Goals, edits.additions().goals()),
-        (LaneSection::Context, edits.additions().context()),
-        (LaneSection::Constraints, edits.additions().constraints()),
-        (LaneSection::DoneWhen, edits.additions().done_when()),
+    for (lane, values) in [
+        (TaskLane::Goal, edits.additions().goals()),
+        (TaskLane::Context, edits.additions().context()),
+        (TaskLane::Constraint, edits.additions().constraints()),
+        (TaskLane::DoneWhen, edits.additions().done_when()),
     ] {
         if !values.is_empty() {
-            edited = add_lane_values(&edited, section, values);
+            edited = add_lane_values(&edited, lane, values, configuration);
         }
     }
 
     Ok((edited != body).then_some(edited))
 }
 
-fn reject_duplicate_lane_sections(body: &str) -> Result<(), EditLanesError> {
-    for section in LaneSection::ALL {
-        if header_bounds(body, section.header()).len() > 1 {
+fn reject_duplicate_lane_sections(
+    body: &str,
+    configuration: &TaskPromptLanes,
+) -> Result<(), EditLanesError> {
+    for lane in TASK_LANES {
+        let header = configuration.header(lane);
+        if header_bounds(body, header).len() > 1 {
             return Err(EditLanesError::DuplicateSection {
-                header: section.header(),
+                header: markdown_header(header),
             });
         }
     }
     Ok(())
 }
 
-fn clear_lane_section(body: &str, section: LaneSection) -> String {
-    let Some((header_start, header_end)) = header_bounds(body, section.header()).into_iter().next()
-    else {
-        return if matches!(section, LaneSection::Goals) {
-            insert_lane_section(body, section, &[])
+fn clear_lane_section(body: &str, lane: TaskLane, configuration: &TaskPromptLanes) -> String {
+    let header = configuration.header(lane);
+    let Some((header_start, header_end)) = header_bounds(body, header).into_iter().next() else {
+        return if lane == TaskLane::Goal {
+            insert_lane_section(body, lane, &[], configuration)
         } else {
             body.to_string()
         };
     };
     let section_end = section_end(body, header_end);
-    let replacement = matches!(section, LaneSection::Goals).then_some(section.header());
-    replace_region(body, header_start, section_end, replacement)
+    let replacement = (lane == TaskLane::Goal).then(|| markdown_header(header));
+    replace_region(body, header_start, section_end, replacement.as_deref())
 }
 
-fn add_lane_values(body: &str, section: LaneSection, values: &[String]) -> String {
-    if header_bounds(body, section.header()).is_empty() {
-        insert_lane_section(body, section, values)
+fn add_lane_values(
+    body: &str,
+    lane: TaskLane,
+    values: &[String],
+    configuration: &TaskPromptLanes,
+) -> String {
+    let header = configuration.header(lane);
+    if header_bounds(body, header).is_empty() {
+        insert_lane_section(body, lane, values, configuration)
     } else {
-        append_bullets_to_section(body, section.header(), values)
+        append_bullets_to_section(body, header, values)
     }
 }
 
-fn insert_lane_section(body: &str, section: LaneSection, values: &[String]) -> String {
-    let insertion_offset = LaneSection::ALL
+fn insert_lane_section(
+    body: &str,
+    lane: TaskLane,
+    values: &[String],
+    configuration: &TaskPromptLanes,
+) -> String {
+    let insertion_offset = TASK_LANES
         .into_iter()
-        .filter(|candidate| candidate.index() > section.index())
-        .flat_map(|candidate| header_bounds(body, candidate.header()))
+        .filter(|candidate| lane_index(*candidate) > lane_index(lane))
+        .flat_map(|candidate| header_bounds(body, configuration.header(candidate)))
         .map(|(start, _)| start)
         .min()
         .unwrap_or(body.len());
-    let mut inserted = section.header().to_string();
+    let mut inserted = markdown_header(configuration.header(lane));
     for (index, value) in values.iter().enumerate() {
         inserted.push_str(if index == 0 { "\n\n- " } else { "\n- " });
         inserted.push_str(value);
@@ -255,10 +240,7 @@ fn header_bounds(content: &str, header: &str) -> Vec<(usize, usize)> {
     let mut bounds = Vec::new();
     let mut offset = 0;
     for segment in content.split('\n') {
-        if segment
-            .strip_prefix(header)
-            .is_some_and(|rest| rest.trim().is_empty())
-        {
+        if is_lane_header_line(segment, header) {
             bounds.push((offset, offset + segment.len()));
         }
         offset += segment.len() + 1;
@@ -278,6 +260,7 @@ fn append_bullets_to_section(content: &str, header: &str, bullets: &[String]) ->
     let Some(header_end) = header_line_end(content, header) else {
         let mut out = content.trim_end().to_string();
         out.push_str("\n\n");
+        out.push_str("## ");
         out.push_str(header);
         append_bullets(&mut out, bullets, "\n\n- ");
         out.push('\n');
@@ -313,15 +296,34 @@ fn append_bullets(out: &mut String, bullets: &[String], first_separator: &'stati
 fn header_line_end(content: &str, header: &str) -> Option<usize> {
     let mut offset = 0;
     for segment in content.split('\n') {
-        if segment
-            .strip_prefix(header)
-            .is_some_and(|rest| rest.trim().is_empty())
-        {
+        if is_lane_header_line(segment, header) {
             return Some(offset + segment.len());
         }
         offset += segment.len() + 1;
     }
     None
+}
+
+fn is_lane_header_line(line: &str, header: &str) -> bool {
+    line.strip_prefix("## ")
+        .and_then(|line| line.strip_prefix(header))
+        .is_some_and(|rest| rest.trim().is_empty())
+}
+
+fn markdown_header(header: &str) -> String {
+    let mut markdown = String::with_capacity("## ".len() + header.len());
+    markdown.push_str("## ");
+    markdown.push_str(header);
+    markdown
+}
+
+const fn lane_index(lane: TaskLane) -> usize {
+    match lane {
+        TaskLane::Goal => 0,
+        TaskLane::Context => 1,
+        TaskLane::Constraint => 2,
+        TaskLane::DoneWhen => 3,
+    }
 }
 
 /// Returns the byte offset of the first Markdown heading line.
@@ -372,7 +374,7 @@ mod tests {
     const S: &str = "\n\n";
 
     fn render(raw: &str) -> String {
-        super::render(&TaskPrompt::new(raw))
+        super::render(&TaskPrompt::new(raw), &TaskPromptLanes::default_fixture())
     }
 
     fn is_placeholder_prompt(raw: &str) -> bool {
@@ -380,7 +382,11 @@ mod tests {
     }
 
     fn append_lanes(body: &str, raw: &str) -> String {
-        super::append_lanes(body, &TaskPrompt::new(raw))
+        super::append_lanes(
+            body,
+            &TaskPrompt::new(raw),
+            &TaskPromptLanes::default_fixture(),
+        )
     }
 
     #[test]

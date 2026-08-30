@@ -2,7 +2,8 @@ use pwf_models::task::{TaskId, TaskTimestampError};
 use pwf_wire::task::{CancelTask, ClosedTaskAction};
 
 use super::{
-    CloseTaskError,
+    CloseTaskError, TaskPromptLanesError,
+    lane_configuration::TaskPromptLanes,
     mutation_request::{self, MutationOperation, MutationRequestState, MutationStart},
     resolve_task_project::{self, ResolveTaskProjectError},
     task_closure::{self, TaskClosure},
@@ -22,6 +23,8 @@ pub enum CancelTaskError {
     Clock(#[from] TaskTimestampError),
     #[error(transparent)]
     MutationRequest(#[from] mutation_request::MutationRequestError),
+    #[error(transparent)]
+    PromptLanes(#[from] TaskPromptLanesError),
 }
 
 #[cqrsy::command]
@@ -45,6 +48,11 @@ pub async fn execute(
         };
     }
     let project = resolve_task_project::execute(command.id.clone(), pool).await?;
+    let review_lanes = if command.review {
+        Some(TaskPromptLanes::load(pool).await?)
+    } else {
+        None
+    };
     let completed_at = clock.now()?;
     if let Some(identity) = identity.as_ref()
         && let MutationStart::Existing(replay) =
@@ -62,7 +70,7 @@ pub async fn execute(
             completed_at,
             report: Some(&command.report),
             commits: command.commits.as_ref(),
-            review: command.review,
+            review_lanes: review_lanes.as_ref(),
             expected_revision: command.expected_revision.as_ref(),
         },
         store,

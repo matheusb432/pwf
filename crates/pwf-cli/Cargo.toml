@@ -26,7 +26,6 @@ test = false
 
 [dependencies]
 anyhow = { workspace = true }
-prompt-lanes = { workspace = true }
 pwf-client = { workspace = true }
 pwf-models = { workspace = true }
 clap = { workspace = true }

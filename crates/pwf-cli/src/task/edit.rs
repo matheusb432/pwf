@@ -315,13 +315,6 @@ fn content_edit(
     .flatten();
     let removals = removals.map(|lane| lane as i32).collect::<Vec<_>>();
     let content = if let Some(prompt) = arguments.prompt.as_ref() {
-        let parsed = prompt_lanes::parse(prompt);
-        if parsed.title.trim().is_empty() {
-            return Err(anyhow::anyhow!(
-                "--prompt must start with a nonempty title before any lane marker."
-            ));
-        }
-        TaskTitle::try_new(parsed.title).map_err(|error| anyhow::anyhow!(error.to_string()))?;
         Some(TaskContentEdit {
             content: Some(task_content_edit::Content::Replace(prompt.clone())),
         })

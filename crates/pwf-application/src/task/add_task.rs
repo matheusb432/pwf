@@ -1,6 +1,6 @@
 use pwf_models::{
     project::Project,
-    task::{TaskId, TaskTimestampError, TaskTitle, TaskTitleError},
+    task::{TaskId, TaskTimestampError, TaskTitle},
 };
 use pwf_wire::{
     project::{ProjectStatusFilter, ResolveProject},
@@ -9,8 +9,10 @@ use pwf_wire::{
 
 pub use super::task_creation::CreateTaskError;
 use super::{
+    TaskPromptTitleError,
     blocked_by::{self, BlockedByValidationError},
     infer_task_title,
+    lane_configuration::{TaskPromptLanes, TaskPromptLanesError},
     mutation_request::{self, MutationOperation, MutationRequestState, MutationStart},
     note_body::{render, render_lanes},
     task_creation::{self, TaskCreation},
@@ -61,7 +63,9 @@ pub enum AddTaskError {
         reason: Box<str>,
     },
     #[error(transparent)]
-    InvalidTitle(#[from] TaskTitleError),
+    InvalidTitle(#[from] TaskPromptTitleError),
+    #[error(transparent)]
+    PromptLanes(#[from] TaskPromptLanesError),
     #[error("reserved task {id} no longer matches its create request")]
     ReservedTaskChanged { id: TaskId },
     #[error("cannot inspect reserved task {id}: {source}")]
@@ -119,7 +123,8 @@ async fn add(
         pool,
     )
     .await?;
-    let prepared = prepare_source(cmd, &project)?;
+    let lane_configuration = TaskPromptLanes::load(pool).await?;
+    let prepared = prepare_source(cmd, &project, &lane_configuration)?;
     let id = match replay.as_ref() {
         Some(replay) => replay.task_id.clone(),
         None => store
@@ -270,11 +275,17 @@ struct PreparedAdd {
 fn prepare_source(
     command: &AddTask,
     selected_project: &Project,
+    lane_configuration: &TaskPromptLanes,
 ) -> Result<PreparedAdd, AddTaskError> {
     let project = selected_project.clone();
     let (title, body) = match command.prompt.kind() {
-        AddTaskPromptKind::Shorthand(prompt) => (infer_task_title(prompt)?, render(prompt)),
-        AddTaskPromptKind::Structured { title, lanes } => (title.clone(), render_lanes(lanes)),
+        AddTaskPromptKind::Shorthand(prompt) => (
+            infer_task_title(prompt, lane_configuration)?,
+            render(prompt, lane_configuration),
+        ),
+        AddTaskPromptKind::Structured { title, lanes } => {
+            (title.clone(), render_lanes(lanes, lane_configuration))
+        }
     };
     Ok(PreparedAdd {
         project,
