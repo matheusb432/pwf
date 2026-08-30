@@ -1,13 +1,13 @@
 use prost::Message as _;
 use pwf_client::{
     ClientError,
-    v1::{AddTaskFailureDetails, AddTaskResponse},
+    v1::{CreateTaskFailureDetails, CreatedTask},
 };
 
 pub(in crate::task) const TITLE_NORMALIZED_NOTICE: &str =
     "info: title normalized to keep metadata valid";
 
-pub(in crate::task) fn emit_created_section(task: &AddTaskResponse) {
+pub(in crate::task) fn emit_created_section(task: &CreatedTask) {
     if let Some(section) = task.created_section.as_ref() {
         eprintln!("info: created `## {section}` section in {}", task.project);
     }
@@ -25,7 +25,7 @@ fn created_section_for_error(error: &ClientError) -> Option<(String, String)> {
 }
 
 fn created_section_from_details(details: &[u8]) -> Option<(String, String)> {
-    let details = AddTaskFailureDetails::decode(details).ok()?;
+    let details = CreateTaskFailureDetails::decode(details).ok()?;
     details
         .created_section
         .map(|section| (details.project, section))
@@ -33,13 +33,13 @@ fn created_section_from_details(details: &[u8]) -> Option<(String, String)> {
 
 #[cfg(test)]
 mod tests {
-    use pwf_client::v1::AddTaskFailureDetails;
+    use pwf_client::v1::CreateTaskFailureDetails;
 
     use super::*;
 
     #[test]
     fn add_write_index_error_exposes_created_section_diagnostic_data() {
-        let details = AddTaskFailureDetails {
+        let details = CreateTaskFailureDetails {
             project: "foo-bar".to_string(),
             created_section: Some("Human".to_string()),
         };

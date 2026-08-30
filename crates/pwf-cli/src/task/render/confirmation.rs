@@ -1,11 +1,11 @@
 //! Formats typed mutation confirmations at their owning leaf boundaries.
 
 use anstyle::AnsiColor;
-use pwf_client::v1::{AddTaskResponse, EditTaskResponse, RemovedTask};
+use pwf_client::v1::{CreatedTask, DeletedTask, UpdatedTask};
 
 use super::paint;
 
-pub(in crate::task) fn render_added(task: &AddTaskResponse, color_on: bool) -> String {
+pub(in crate::task) fn render_added(task: &CreatedTask, color_on: bool) -> String {
     render_confirmation(
         "Added pwf task",
         AnsiColor::Green,
@@ -16,7 +16,7 @@ pub(in crate::task) fn render_added(task: &AddTaskResponse, color_on: bool) -> S
     )
 }
 
-pub(in crate::task) fn render_removed(task: &RemovedTask, color_on: bool) -> String {
+pub(in crate::task) fn render_removed(task: &DeletedTask, color_on: bool) -> String {
     render_confirmation(
         "Removed pwf task",
         AnsiColor::Red,
@@ -35,7 +35,7 @@ pub(in crate::task) fn render_removed(task: &RemovedTask, color_on: bool) -> Str
     )
 }
 
-pub(in crate::task) fn render_edited(task: &EditTaskResponse, color_on: bool) -> String {
+pub(in crate::task) fn render_edited(task: &UpdatedTask, color_on: bool) -> String {
     render_confirmation(
         "Edited pwf task",
         AnsiColor::Blue,
@@ -46,7 +46,7 @@ pub(in crate::task) fn render_edited(task: &EditTaskResponse, color_on: bool) ->
     )
 }
 
-pub(super) fn render_review_task(task: &AddTaskResponse) -> String {
+pub(super) fn render_review_task(task: &CreatedTask) -> String {
     format!(
         "ADDED PWF TASK [{}] {}\n  file: {}\n",
         task.id,
@@ -55,7 +55,7 @@ pub(super) fn render_review_task(task: &AddTaskResponse) -> String {
     )
 }
 
-fn added_headline(task: &AddTaskResponse) -> String {
+fn added_headline(task: &CreatedTask) -> String {
     format!("{} :: {}", task.project, task.title)
 }
 
@@ -82,8 +82,8 @@ fn render_confirmation(
 mod tests {
     use super::*;
 
-    fn added_task() -> AddTaskResponse {
-        AddTaskResponse {
+    fn added_task() -> CreatedTask {
+        CreatedTask {
             id: "FOO-0001".to_string(),
             project: "foo".to_string(),
             title: "sample task".to_string(),
@@ -110,7 +110,7 @@ mod tests {
 
     #[test]
     fn removed_plain_preserves_confirmation_shape() {
-        let task = RemovedTask {
+        let task = DeletedTask {
             id: "FOO-0002".to_string(),
             project: "foo".to_string(),
             title: "stale task".to_string(),
@@ -126,7 +126,7 @@ mod tests {
 
     #[test]
     fn edited_plain_uses_the_edit_verb() {
-        let task = EditTaskResponse {
+        let task = UpdatedTask {
             id: "FOO-0002".to_string(),
             project: "foo".to_string(),
             title: "edited task".to_string(),

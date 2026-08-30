@@ -1,5 +1,3 @@
-use std::num::NonZeroUsize;
-
 use pwf_models::{
     project::Project,
     task::{EffortTier, PriorityTier, TaskId, TaskSection, TaskTags},
@@ -206,7 +204,7 @@ fn resolve_query(query: &ListTasks, project: Option<Project>) -> ResolvedListTas
     let scope = query.scope;
     let cap = query
         .number
-        .map(NonZeroUsize::get)
+        .map(pwf_wire::task::TaskListLimit::get)
         .or((scope != ListScope::All).then_some(10));
     let order = query.order.unwrap_or_default();
     let status_filter = query.status.unwrap_or(if scope == ListScope::All {
@@ -381,7 +379,7 @@ mod tests {
     use pwf_wire::task::{
         BlockedByResolution, BlockedByStatus, ListDetail, ListLayout, ListScope, ListedTasks,
         OrderDirection, OrderField, OrderSpec, ProjectTaskPath, RawTaskTags, StatusFilter,
-        TaskIndexPath, TaskNotePath,
+        TaskIndexPath, TaskListLimit, TaskNotePath,
     };
 
     use super::{ListTasks, ListTasksError};
@@ -576,7 +574,7 @@ mod tests {
         ListTasks {
             project_selector: None,
             scope: ListScope::Default,
-            number: NonZeroUsize::new(100_000),
+            number: TaskListLimit::try_new(100_000).ok(),
             effort: None,
             priority: None,
             tags: None,
@@ -829,7 +827,7 @@ mod tests {
             &store,
             &registry,
             &ListTasks {
-                number: NonZeroUsize::new(1),
+                number: TaskListLimit::try_new(1).ok(),
                 status: Some(StatusFilter::Exact(TaskStatus::Done)),
                 ..default_query()
             },
@@ -1085,7 +1083,7 @@ mod tests {
             &store,
             &registry,
             &ListTasks {
-                number: NonZeroUsize::new(1),
+                number: TaskListLimit::try_new(1).ok(),
                 tags: requested_tags("sqlite"),
                 ..default_query()
             },

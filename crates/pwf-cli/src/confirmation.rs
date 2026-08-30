@@ -167,7 +167,7 @@ pub(crate) fn prompt_error(context: &str, source: dialoguer::Error) -> anyhow::E
 
 fn confirmation_dialog(confirmation: &Confirmation) -> ConfirmationDialog {
     match confirmation {
-        Confirmation::RemoveTask(confirmation) => ConfirmationDialog::new(
+        Confirmation::DeleteTask(confirmation) => ConfirmationDialog::new(
             "Confirm task removal",
             vec![
                 Detail::new("Task", &confirmation.task_id),
@@ -285,7 +285,7 @@ impl Theme for ConfirmationTheme {
 
 #[cfg(test)]
 mod tests {
-    use pwf_client::v1::{RemoveTaskConfirmation, ReopenTaskConfirmation, TaskStatus};
+    use pwf_client::v1::{DeleteTaskConfirmation, ReopenTaskConfirmation, TaskStatus};
 
     use super::*;
 
@@ -315,7 +315,7 @@ mod tests {
 
     #[test]
     fn removal_confirmation_renders_aligned_task_details() {
-        let confirmation = Confirmation::RemoveTask(RemoveTaskConfirmation {
+        let confirmation = Confirmation::DeleteTask(DeleteTaskConfirmation {
             task_id: "FOO-0001".to_string(),
             project: "foo".to_string(),
             title: "stale task".to_string(),

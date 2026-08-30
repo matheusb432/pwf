@@ -1,7 +1,7 @@
 use clap::Args;
 use pwf_client::{
     task::{ConfirmedRequestError, TaskClient},
-    v1::{RemoveTaskStart, RemovedTaskOutcomeKind},
+    v1::{DeleteTaskStart, delete_task_result},
 };
 
 use super::Identifier;
@@ -33,7 +33,7 @@ pub(super) async fn run(
 
     let confirmation_client = CliConfirmationClient::new(console, confirmation_mode);
     let outcome = match client
-        .remove_task(RemoveTaskStart { id: id.to_string() }, confirmation_client)
+        .delete_task(DeleteTaskStart { id: id.to_string() }, confirmation_client)
         .await
     {
         Ok(outcome) => outcome,
@@ -45,17 +45,14 @@ pub(super) async fn run(
         }
     };
 
-    match RemovedTaskOutcomeKind::try_from(outcome.outcome).ok() {
-        Some(RemovedTaskOutcomeKind::Removed) => outcome
-            .removed
-            .as_ref()
-            .map(|removed| render_removed(removed, console.color()))
-            .ok_or_else(|| anyhow::anyhow!("pwf-server returned removal without task details")),
-        Some(RemovedTaskOutcomeKind::Aborted) => Ok(format!(
-            "# remove {}: aborted\nnothing deleted.\n",
-            outcome.task_id
-        )),
-        Some(RemovedTaskOutcomeKind::Unspecified) | None => Err(anyhow::anyhow!(
+    match outcome.outcome.as_ref() {
+        Some(delete_task_result::Outcome::Deleted(task)) => {
+            Ok(render_removed(task, console.color()))
+        }
+        Some(delete_task_result::Outcome::Aborted(task)) => {
+            Ok(format!("# remove {}: aborted\nnothing deleted.\n", task.id))
+        }
+        None => Err(anyhow::anyhow!(
             "pwf-server returned an invalid removal outcome"
         )),
     }

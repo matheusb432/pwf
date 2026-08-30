@@ -19,13 +19,13 @@ service NoteService {
 }
 
 service TaskService {
-  rpc AddTask(AddTaskRequest) returns (AddTaskResponse);
+  rpc CreateTask(CreateTaskRequest) returns (CreateTaskResponse);
   rpc CancelTask(CancelTaskRequest) returns (CancelTaskResponse);
   rpc CompleteTask(CompleteTaskRequest) returns (CompleteTaskResponse);
-  rpc EditTask(EditTaskRequest) returns (EditTaskResponse);
+  rpc UpdateTask(UpdateTaskRequest) returns (UpdateTaskResponse);
   rpc GetTask(GetTaskRequest) returns (GetTaskResponse);
   rpc ListTasks(ListTasksRequest) returns (ListTasksResponse);
-  rpc RemoveTask(stream RemoveTaskRequest) returns (stream RemoveTaskResponse);
+  rpc DeleteTask(stream DeleteTaskRequest) returns (stream DeleteTaskResponse);
   rpc ReopenTask(stream ReopenTaskRequest) returns (stream ReopenTaskResponse);
 }
 
@@ -222,7 +222,7 @@ enum PriorityTier {
   PRIORITY_TIER_HIGHEST = 4;
 }
 
-message AddTaskRequest {
+message CreateTaskRequest {
   string project_selector = 1;
   oneof prompt {
     string shorthand = 2;
@@ -249,34 +249,30 @@ message CompleteTaskRequest {
   bool review = 4;
 }
 
-enum CollectionEditMode {
-  COLLECTION_EDIT_MODE_UNSPECIFIED = 0;
-  COLLECTION_EDIT_MODE_UNCHANGED = 1;
-  COLLECTION_EDIT_MODE_APPEND = 2;
-  COLLECTION_EDIT_MODE_REPLACE = 3;
-  COLLECTION_EDIT_MODE_CLEAR = 4;
-}
+message ClearTaskField {}
+
+message StringValues { repeated string values = 1; }
 
 message StringCollectionEdit {
-  CollectionEditMode mode = 1;
-  repeated string values = 2;
-}
-
-enum ValueEditMode {
-  VALUE_EDIT_MODE_UNSPECIFIED = 0;
-  VALUE_EDIT_MODE_UNCHANGED = 1;
-  VALUE_EDIT_MODE_SET = 2;
-  VALUE_EDIT_MODE_CLEAR = 3;
+  oneof operation {
+    StringValues append = 1;
+    StringValues replace = 2;
+    ClearTaskField clear = 3;
+  }
 }
 
 message EffortEdit {
-  ValueEditMode mode = 1;
-  EffortTier value = 2;
+  oneof operation {
+    EffortTier set = 1;
+    ClearTaskField clear = 2;
+  }
 }
 
 message PriorityEdit {
-  ValueEditMode mode = 1;
-  PriorityTier value = 2;
+  oneof operation {
+    PriorityTier set = 1;
+    ClearTaskField clear = 2;
+  }
 }
 
 message StructuredTaskEdit {
@@ -298,7 +294,7 @@ message TaskContentEdit {
   }
 }
 
-message EditTaskRequest {
+message UpdateTaskRequest {
   string id = 1;
   TaskContentEdit content = 2;
   StringCollectionEdit blocked_by = 3;
@@ -371,10 +367,10 @@ message ListTasksRequest {
   optional PriorityTier priority = 9;
 }
 
-message RemoveTaskStart { string id = 1; }
+message DeleteTaskStart { string id = 1; }
 message ReopenTaskStart { string id = 1; }
 
-message AddTaskResponse {
+message CreatedTask {
   string id = 1;
   string project = 2;
   string title = 3;
@@ -382,57 +378,55 @@ message AddTaskResponse {
   optional string created_section = 5;
 }
 
-message AddTaskFailureDetails {
+message CreateTaskResponse { CreatedTask task = 1; }
+
+message CreateTaskFailureDetails {
   string project = 1;
   optional string created_section = 2;
 }
 
-message EditTaskResponse {
+message UpdatedTask {
   string id = 1;
   string project = 2;
   string title = 3;
 }
 
-enum ClosedTaskAction {
-  CLOSED_TASK_ACTION_UNSPECIFIED = 0;
-  CLOSED_TASK_ACTION_DONE = 1;
-  CLOSED_TASK_ACTION_CANCELLED = 2;
-}
+message UpdateTaskResponse { UpdatedTask task = 1; }
 
-message CancelTaskResponse {
+message ClosedTask {
   string id = 1;
   string project = 2;
   string title = 3;
-  ClosedTaskAction action = 4;
-  repeated string evicted_ids = 5;
-  optional string futuro_renamed_project = 6;
-  AddTaskResponse review_task = 7;
+  repeated string evicted_ids = 4;
+  optional string futuro_renamed_project = 5;
+  CreatedTask review_task = 6;
 }
 
-message CompleteTaskResponse {
-  string id = 1;
-  string project = 2;
-  string title = 3;
-  ClosedTaskAction action = 4;
-  repeated string evicted_ids = 5;
-  optional string futuro_renamed_project = 6;
-  AddTaskResponse review_task = 7;
-}
+message CancelTaskResponse { ClosedTask task = 1; }
 
-enum ReopenedTaskOutcome {
-  REOPENED_TASK_OUTCOME_UNSPECIFIED = 0;
-  REOPENED_TASK_OUTCOME_REOPENED = 1;
-  REOPENED_TASK_OUTCOME_ALREADY_ACTIVE = 2;
-  REOPENED_TASK_OUTCOME_ABORTED = 3;
-}
+message CompleteTaskResponse { ClosedTask task = 1; }
 
 message ReopenedTask {
-  ReopenedTaskOutcome outcome = 1;
-  string id = 2;
-  optional string project = 3;
+  string id = 1;
+  string project = 2;
 }
 
-message RemovedTask {
+message AlreadyActiveTask {
+  string id = 1;
+  string project = 2;
+}
+
+message AbortedTaskOperation { string id = 1; }
+
+message ReopenTaskResult {
+  oneof outcome {
+    ReopenedTask reopened = 1;
+    AlreadyActiveTask already_active = 2;
+    AbortedTaskOperation aborted = 3;
+  }
+}
+
+message DeletedTask {
   string id = 1;
   string project = 2;
   string title = 3;
@@ -440,16 +434,11 @@ message RemovedTask {
   optional string unlinked = 5;
 }
 
-enum RemovedTaskOutcomeKind {
-  REMOVED_TASK_OUTCOME_KIND_UNSPECIFIED = 0;
-  REMOVED_TASK_OUTCOME_KIND_REMOVED = 1;
-  REMOVED_TASK_OUTCOME_KIND_ABORTED = 2;
-}
-
-message RemovedTaskOutcome {
-  RemovedTaskOutcomeKind outcome = 1;
-  string task_id = 2;
-  RemovedTask removed = 3;
+message DeleteTaskResult {
+  oneof outcome {
+    DeletedTask deleted = 1;
+    AbortedTaskOperation aborted = 2;
+  }
 }
 
 enum TaskStatus {
@@ -555,7 +544,7 @@ message ListTasksResponse {
   ListDetail detail = 7;
 }
 
-message RemoveTaskConfirmation {
+message DeleteTaskConfirmation {
   string task_id = 1;
   string project = 2;
   string title = 3;
@@ -573,17 +562,17 @@ message ReopenTaskConfirmation {
 
 message ConfirmationDecision { bool confirmed = 1; }
 
-message RemoveTaskRequest {
+message DeleteTaskRequest {
   oneof value {
-    RemoveTaskStart start = 1;
+    DeleteTaskStart start = 1;
     ConfirmationDecision decision = 2;
   }
 }
 
-message RemoveTaskResponse {
+message DeleteTaskResponse {
   oneof value {
-    RemoveTaskConfirmation preflight = 1;
-    RemovedTaskOutcome result = 2;
+    DeleteTaskConfirmation preflight = 1;
+    DeleteTaskResult result = 2;
   }
 }
 
@@ -597,7 +586,7 @@ message ReopenTaskRequest {
 message ReopenTaskResponse {
   oneof value {
     ReopenTaskConfirmation preflight = 1;
-    ReopenedTask result = 2;
+    ReopenTaskResult result = 2;
   }
 }
 

@@ -2,8 +2,9 @@ use clap::{ArgGroup, Args};
 use pwf_client::{
     task::TaskClient,
     v1::{
-        self, AppendTaskPrompt, CollectionEditMode, EditTaskRequest, StringCollectionEdit,
-        StructuredTaskEdit, TaskContentEdit, TaskLane, ValueEditMode, task_content_edit,
+        self, AppendTaskPrompt, ClearTaskField, StringCollectionEdit, StringValues,
+        StructuredTaskEdit, TaskContentEdit, TaskLane, UpdateTaskRequest, effort_edit,
+        priority_edit, string_collection_edit, task_content_edit,
     },
 };
 use pwf_models::task::{TagInput, TaskTags, TaskTitle};
@@ -196,14 +197,12 @@ impl EffortEdit {
         self.effort.map_or_else(
             || {
                 self.remove_effort.then_some(v1::EffortEdit {
-                    mode: ValueEditMode::Clear as i32,
-                    value: v1::EffortTier::Unspecified as i32,
+                    operation: Some(effort_edit::Operation::Clear(ClearTaskField {})),
                 })
             },
             |effort| {
                 Some(v1::EffortEdit {
-                    mode: ValueEditMode::Set as i32,
-                    value: wire_effort(effort) as i32,
+                    operation: Some(effort_edit::Operation::Set(wire_effort(effort) as i32)),
                 })
             },
         )
@@ -225,14 +224,12 @@ impl PriorityEdit {
         self.priority.map_or_else(
             || {
                 self.remove_priority.then_some(v1::PriorityEdit {
-                    mode: ValueEditMode::Clear as i32,
-                    value: v1::PriorityTier::Unspecified as i32,
+                    operation: Some(priority_edit::Operation::Clear(ClearTaskField {})),
                 })
             },
             |priority| {
                 Some(v1::PriorityEdit {
-                    mode: ValueEditMode::Set as i32,
-                    value: wire_priority(priority) as i32,
+                    operation: Some(priority_edit::Operation::Set(wire_priority(priority) as i32)),
                 })
             },
         )
@@ -245,16 +242,17 @@ fn string_collection_edit(
 ) -> Option<StringCollectionEdit> {
     match (addition, remove_existing) {
         (Some(values), true) => Some(StringCollectionEdit {
-            mode: CollectionEditMode::Replace as i32,
-            values,
+            operation: Some(string_collection_edit::Operation::Replace(StringValues {
+                values,
+            })),
         }),
         (Some(values), false) => Some(StringCollectionEdit {
-            mode: CollectionEditMode::Append as i32,
-            values,
+            operation: Some(string_collection_edit::Operation::Append(StringValues {
+                values,
+            })),
         }),
         (None, true) => Some(StringCollectionEdit {
-            mode: CollectionEditMode::Clear as i32,
-            values: Vec::new(),
+            operation: Some(string_collection_edit::Operation::Clear(ClearTaskField {})),
         }),
         (None, false) => None,
     }
@@ -276,6 +274,39 @@ pub(super) async fn run(
         .map_or((None, false), |(title, normalized)| {
             (Some(title), normalized)
         });
+    let content = content_edit(arguments, title.as_ref())?;
+    let request = UpdateTaskRequest {
+        id: id.to_string(),
+        content,
+        blocked_by: arguments.blocked_by.edit(),
+        effort: arguments.effort.edit(),
+        tags: arguments.tags.edit(),
+        priority: arguments.priority.edit(),
+    };
+    if request.content.is_none()
+        && request.blocked_by.is_none()
+        && request.effort.is_none()
+        && request.tags.is_none()
+        && request.priority.is_none()
+    {
+        return Err(anyhow::anyhow!(
+            "nothing to edit; pass at least one edit flag."
+        ));
+    }
+    let edited = client
+        .update_task(request)
+        .await
+        .map_err(crate::rpc_error)?;
+    if title_normalized {
+        eprintln!("{TITLE_NORMALIZED_NOTICE}");
+    }
+    Ok(render_edited(&edited, console.color()))
+}
+
+fn content_edit(
+    arguments: &Arguments,
+    title: Option<&TaskTitle>,
+) -> anyhow::Result<Option<TaskContentEdit>> {
     let additions = task_lanes(
         &arguments.goals.add_goal,
         &arguments.contexts.add_context,
@@ -318,7 +349,7 @@ pub(super) async fn run(
         }
         Some(TaskContentEdit {
             content: Some(task_content_edit::Content::Append(AppendTaskPrompt {
-                title: title.as_ref().map(ToString::to_string),
+                title: title.map(ToString::to_string),
                 prompt: prompt.clone(),
             })),
         })
@@ -331,7 +362,7 @@ pub(super) async fn run(
     {
         Some(TaskContentEdit {
             content: Some(task_content_edit::Content::Structured(StructuredTaskEdit {
-                title: title.as_ref().map(ToString::to_string),
+                title: title.map(ToString::to_string),
                 additions: Some(additions),
                 removals,
             })),
@@ -339,29 +370,7 @@ pub(super) async fn run(
     } else {
         None
     };
-    let request = EditTaskRequest {
-        id: id.to_string(),
-        content,
-        blocked_by: arguments.blocked_by.edit(),
-        effort: arguments.effort.edit(),
-        tags: arguments.tags.edit(),
-        priority: arguments.priority.edit(),
-    };
-    if request.content.is_none()
-        && request.blocked_by.is_none()
-        && request.effort.is_none()
-        && request.tags.is_none()
-        && request.priority.is_none()
-    {
-        return Err(anyhow::anyhow!(
-            "nothing to edit; pass at least one edit flag."
-        ));
-    }
-    let edited = client.edit_task(request).await.map_err(crate::rpc_error)?;
-    if title_normalized {
-        eprintln!("{TITLE_NORMALIZED_NOTICE}");
-    }
-    Ok(render_edited(&edited, console.color()))
+    Ok(content)
 }
 
 fn wire_effort(value: EffortChoice) -> v1::EffortTier {

@@ -48,11 +48,11 @@ impl TaskGrpcService {
 
 #[tonic::async_trait]
 impl TaskService for TaskGrpcService {
-    async fn add_task(
+    async fn create_task(
         &self,
-        request: Request<v1::AddTaskRequest>,
-    ) -> Result<Response<v1::AddTaskResponse>, Status> {
-        let command = proto::task::add_task_request(request.into_inner())?;
+        request: Request<v1::CreateTaskRequest>,
+    ) -> Result<Response<v1::CreateTaskResponse>, Status> {
+        let command = proto::task::create_task_request(request.into_inner())?;
         add_task::execute(
             &command,
             &self.state.store,
@@ -60,9 +60,9 @@ impl TaskService for TaskGrpcService {
             &self.state.clock,
         )
         .await
-        .map(proto::task::add_task_response)
+        .map(proto::task::create_task_response)
         .map(Response::new)
-        .map_err(add_task_status)
+        .map_err(create_task_status)
     }
 
     async fn cancel_task(
@@ -99,14 +99,14 @@ impl TaskService for TaskGrpcService {
         .map_err(complete_task_status)
     }
 
-    async fn edit_task(
+    async fn update_task(
         &self,
-        request: Request<v1::EditTaskRequest>,
-    ) -> Result<Response<v1::EditTaskResponse>, Status> {
-        let command = proto::task::edit_task_request(request.into_inner())?;
+        request: Request<v1::UpdateTaskRequest>,
+    ) -> Result<Response<v1::UpdateTaskResponse>, Status> {
+        let command = proto::task::update_task_request(request.into_inner())?;
         edit_task::execute(command, &self.state.store, &self.state.pool)
             .await
-            .map(proto::task::edit_task_response)
+            .map(proto::task::update_task_response)
             .map(Response::new)
             .map_err(|error| edit_task_status(&error))
     }
@@ -140,27 +140,27 @@ impl TaskService for TaskGrpcService {
         .map_err(list_tasks_status)
     }
 
-    type RemoveTaskStream = ResponseStream<v1::RemoveTaskResponse>;
+    type DeleteTaskStream = ResponseStream<v1::DeleteTaskResponse>;
 
-    async fn remove_task(
+    async fn delete_task(
         &self,
-        request: Request<Streaming<v1::RemoveTaskRequest>>,
-    ) -> Result<Response<Self::RemoveTaskStream>, Status> {
+        request: Request<Streaming<v1::DeleteTaskRequest>>,
+    ) -> Result<Response<Self::DeleteTaskStream>, Status> {
         let mut inbound = request.into_inner();
-        let start = next_remove_start(&mut inbound).await?;
-        let task_id = proto::task::remove_task_start(start)?;
+        let start = next_delete_start(&mut inbound).await?;
+        let task_id = proto::task::delete_task_start(start)?;
         let (outbound, receiver) = mpsc::channel(STREAM_BUFFER);
         let mut confirmation = GrpcConfirmationClient::new(
             inbound,
             outbound.clone(),
-            |confirmation: &RemoveTaskConfirmation| v1::RemoveTaskResponse {
-                value: Some(v1::remove_task_response::Value::Preflight(
-                    proto::task::remove_task_confirmation(confirmation),
+            |confirmation: &RemoveTaskConfirmation| v1::DeleteTaskResponse {
+                value: Some(v1::delete_task_response::Value::Preflight(
+                    proto::task::delete_task_confirmation(confirmation),
                 )),
             },
             |message| match message.value {
-                Some(v1::remove_task_request::Value::Decision(decision)) => Ok(decision.confirmed),
-                Some(v1::remove_task_request::Value::Start(_)) | None => {
+                Some(v1::delete_task_request::Value::Decision(decision)) => Ok(decision.confirmed),
+                Some(v1::delete_task_request::Value::Start(_)) | None => {
                     Err(ConfirmationClientError::UnexpectedMessage)
                 }
             },
@@ -169,11 +169,11 @@ impl TaskService for TaskGrpcService {
         tokio::spawn(async move {
             let item = remove_task::execute(&task_id, &state.store, &state.pool, &mut confirmation)
                 .await
-                .map(proto::task::remove_task_result)
-                .map(|result| v1::RemoveTaskResponse {
-                    value: Some(v1::remove_task_response::Value::Result(result)),
+                .map(proto::task::delete_task_result)
+                .map(|result| v1::DeleteTaskResponse {
+                    value: Some(v1::delete_task_response::Value::Result(result)),
                 })
-                .map_err(remove_task_status);
+                .map_err(delete_task_status);
             let _ = outbound.send(item).await;
         });
         Ok(Response::new(Box::pin(ReceiverStream::new(receiver))))
@@ -219,17 +219,17 @@ impl TaskService for TaskGrpcService {
     }
 }
 
-async fn next_remove_start(
-    inbound: &mut Streaming<v1::RemoveTaskRequest>,
-) -> Result<v1::RemoveTaskStart, Status> {
+async fn next_delete_start(
+    inbound: &mut Streaming<v1::DeleteTaskRequest>,
+) -> Result<v1::DeleteTaskStart, Status> {
     let message = inbound
         .message()
         .await?
-        .ok_or_else(|| Status::invalid_argument("remove stream requires a start message"))?;
+        .ok_or_else(|| Status::invalid_argument("delete stream requires a start message"))?;
     match message.value {
-        Some(v1::remove_task_request::Value::Start(start)) => Ok(start),
-        Some(v1::remove_task_request::Value::Decision(_)) | None => Err(Status::invalid_argument(
-            "remove stream must start with start",
+        Some(v1::delete_task_request::Value::Start(start)) => Ok(start),
+        Some(v1::delete_task_request::Value::Decision(_)) | None => Err(Status::invalid_argument(
+            "delete stream must start with start",
         )),
     }
 }
@@ -249,7 +249,7 @@ async fn next_reopen_start(
     }
 }
 
-fn add_task_status(error: AddTaskError) -> Status {
+fn create_task_status(error: AddTaskError) -> Status {
     let message = error.to_string();
     match error {
         AddTaskError::ProjectResolution(error) => resolve_project_status(&error),
@@ -261,7 +261,7 @@ fn add_task_status(error: AddTaskError) -> Status {
             Status::failed_precondition(message)
         }
         AddTaskError::WriteStore { diagnostics, .. } => {
-            status_with_add_details(message, &diagnostics)
+            status_with_create_details(message, &diagnostics)
         }
         AddTaskError::QueryProject(_)
         | AddTaskError::AllocateTaskId { .. }
@@ -269,11 +269,11 @@ fn add_task_status(error: AddTaskError) -> Status {
     }
 }
 
-fn status_with_add_details(
+fn status_with_create_details(
     message: String,
     diagnostics: &pwf_wire::task::AddTaskDiagnostics,
 ) -> Status {
-    let details = proto::task::add_task_failure_details(diagnostics);
+    let details = proto::task::create_task_failure_details(diagnostics);
     let details = details.encode_to_vec();
     Status::with_details(Code::Internal, message, details.into())
 }
@@ -293,7 +293,7 @@ fn close_task_status(error: CloseTaskError) -> Status {
         }
         CloseTaskError::InvalidTitle { .. } => Status::failed_precondition(message),
         CloseTaskError::WriteStore(_) => Status::internal(message),
-        CloseTaskError::ReviewTask(error) => add_task_status(*error),
+        CloseTaskError::ReviewTask(error) => create_task_status(*error),
     }
 }
 
@@ -345,7 +345,7 @@ fn list_tasks_status(error: ListTasksError) -> Status {
     }
 }
 
-fn remove_task_status(error: RemoveTaskError) -> Status {
+fn delete_task_status(error: RemoveTaskError) -> Status {
     let message = error.to_string();
     match error {
         RemoveTaskError::TaskNotFound { .. } => Status::not_found(message),

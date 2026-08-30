@@ -11,7 +11,7 @@ const STREAM_BUFFER: usize = 2;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Confirmation {
-    RemoveTask(v1::RemoveTaskConfirmation),
+    DeleteTask(v1::DeleteTaskConfirmation),
     ReopenTask(v1::ReopenTaskConfirmation),
     DispatchSession(v1::SessionDispatchPreflight),
 }
@@ -47,48 +47,56 @@ impl TaskClient {
         }
     }
 
-    pub async fn add_task(
+    pub async fn create_task(
         &self,
-        request: v1::AddTaskRequest,
-    ) -> Result<v1::AddTaskResponse, ClientError> {
-        self.client()
-            .add_task(request)
+        request: v1::CreateTaskRequest,
+    ) -> Result<v1::CreatedTask, ClientError> {
+        let response = self
+            .client()
+            .create_task(request)
             .await
             .map(tonic::Response::into_inner)
-            .map_err(Into::into)
+            .map_err(ClientError::from)?;
+        required_response(response.task, "create response is missing its task")
     }
 
     pub async fn cancel_task(
         &self,
         request: v1::CancelTaskRequest,
-    ) -> Result<v1::CancelTaskResponse, ClientError> {
-        self.client()
+    ) -> Result<v1::ClosedTask, ClientError> {
+        let response = self
+            .client()
             .cancel_task(request)
             .await
             .map(tonic::Response::into_inner)
-            .map_err(Into::into)
+            .map_err(ClientError::from)?;
+        required_response(response.task, "cancel response is missing its task")
     }
 
     pub async fn complete_task(
         &self,
         request: v1::CompleteTaskRequest,
-    ) -> Result<v1::CompleteTaskResponse, ClientError> {
-        self.client()
+    ) -> Result<v1::ClosedTask, ClientError> {
+        let response = self
+            .client()
             .complete_task(request)
             .await
             .map(tonic::Response::into_inner)
-            .map_err(Into::into)
+            .map_err(ClientError::from)?;
+        required_response(response.task, "complete response is missing its task")
     }
 
-    pub async fn edit_task(
+    pub async fn update_task(
         &self,
-        request: v1::EditTaskRequest,
-    ) -> Result<v1::EditTaskResponse, ClientError> {
-        self.client()
-            .edit_task(request)
+        request: v1::UpdateTaskRequest,
+    ) -> Result<v1::UpdatedTask, ClientError> {
+        let response = self
+            .client()
+            .update_task(request)
             .await
             .map(tonic::Response::into_inner)
-            .map_err(Into::into)
+            .map_err(ClientError::from)?;
+        required_response(response.task, "update response is missing its task")
     }
 
     pub async fn get_task(
@@ -124,24 +132,24 @@ impl TaskClient {
             .map_err(Into::into)
     }
 
-    pub async fn remove_task<Prompt>(
+    pub async fn delete_task<Prompt>(
         &self,
-        request: v1::RemoveTaskStart,
+        request: v1::DeleteTaskStart,
         prompt: Prompt,
-    ) -> Result<v1::RemovedTaskOutcome, ConfirmedRequestError<Prompt::Error>>
+    ) -> Result<v1::DeleteTaskResult, ConfirmedRequestError<Prompt::Error>>
     where
         Prompt: ConfirmationPrompt,
     {
         let (sender, receiver) = mpsc::channel(STREAM_BUFFER);
         sender
-            .send(v1::RemoveTaskRequest {
-                value: Some(v1::remove_task_request::Value::Start(request)),
+            .send(v1::DeleteTaskRequest {
+                value: Some(v1::delete_task_request::Value::Start(request)),
             })
             .await
-            .map_err(|_| protocol("remove request stream closed"))?;
+            .map_err(|_| protocol("delete request stream closed"))?;
         let mut stream = self
             .client()
-            .remove_task(ReceiverStream::new(receiver))
+            .delete_task(ReceiverStream::new(receiver))
             .await
             .map_err(ConfirmedRequestError::Operation)?
             .into_inner();
@@ -149,34 +157,34 @@ impl TaskClient {
             .message()
             .await
             .map_err(ConfirmedRequestError::Operation)?
-            .ok_or_else(|| protocol("remove response stream closed before preflight"))?;
+            .ok_or_else(|| protocol("delete response stream closed before preflight"))?;
         match first.value {
-            Some(v1::remove_task_response::Value::Preflight(preflight)) => {
+            Some(v1::delete_task_response::Value::Preflight(preflight)) => {
                 let confirmed = prompt
-                    .confirm(&Confirmation::RemoveTask(preflight))
+                    .confirm(&Confirmation::DeleteTask(preflight))
                     .map_err(ConfirmedRequestError::Prompt)?;
                 sender
-                    .send(v1::RemoveTaskRequest {
-                        value: Some(v1::remove_task_request::Value::Decision(
+                    .send(v1::DeleteTaskRequest {
+                        value: Some(v1::delete_task_request::Value::Decision(
                             v1::ConfirmationDecision { confirmed },
                         )),
                     })
                     .await
-                    .map_err(|_| protocol("remove decision stream closed"))?;
+                    .map_err(|_| protocol("delete decision stream closed"))?;
                 let result = stream
                     .message()
                     .await
                     .map_err(ConfirmedRequestError::Operation)?
-                    .ok_or_else(|| protocol("remove response stream closed before result"))?;
+                    .ok_or_else(|| protocol("delete response stream closed before result"))?;
                 match result.value {
-                    Some(v1::remove_task_response::Value::Result(result)) => Ok(result),
-                    Some(v1::remove_task_response::Value::Preflight(_)) | None => Err(protocol(
-                        "remove response stream returned an invalid result",
+                    Some(v1::delete_task_response::Value::Result(result)) => Ok(result),
+                    Some(v1::delete_task_response::Value::Preflight(_)) | None => Err(protocol(
+                        "delete response stream returned an invalid result",
                     )),
                 }
             }
-            Some(v1::remove_task_response::Value::Result(result)) => Ok(result),
-            None => Err(protocol("remove response stream returned an empty message")),
+            Some(v1::delete_task_response::Value::Result(result)) => Ok(result),
+            None => Err(protocol("delete response stream returned an empty message")),
         }
     }
 
@@ -184,7 +192,7 @@ impl TaskClient {
         &self,
         request: v1::ReopenTaskStart,
         prompt: Prompt,
-    ) -> Result<v1::ReopenedTask, ConfirmedRequestError<Prompt::Error>>
+    ) -> Result<v1::ReopenTaskResult, ConfirmedRequestError<Prompt::Error>>
     where
         Prompt: ConfirmationPrompt,
     {
@@ -317,4 +325,8 @@ where
     PromptError: Error + 'static,
 {
     ConfirmedRequestError::Operation(Status::internal(message))
+}
+
+fn required_response<T>(value: Option<T>, message: &'static str) -> Result<T, ClientError> {
+    value.ok_or_else(|| ClientError::from(Status::internal(message)))
 }

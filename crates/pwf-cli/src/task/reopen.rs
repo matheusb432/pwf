@@ -43,5 +43,5 @@ pub(super) async fn run(
             return Err(prompt_error("task reopening", source));
         }
     };
-    Ok(render_reopened(&outcome))
+    Ok(render_reopened(id.as_ref(), &outcome))
 }

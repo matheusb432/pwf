@@ -5,8 +5,14 @@ use pwf_models::task::{EffortTier, PriorityTier, TaskStatus};
 use crate::{confirmation, task, v1};
 
 #[must_use]
-pub fn add_task_response(task: task::AddedTask) -> v1::AddTaskResponse {
-    v1::AddTaskResponse {
+pub fn create_task_response(task: task::AddedTask) -> v1::CreateTaskResponse {
+    v1::CreateTaskResponse {
+        task: Some(created_task(task)),
+    }
+}
+
+fn created_task(task: task::AddedTask) -> v1::CreatedTask {
+    v1::CreatedTask {
         id: task.id.to_string(),
         project: task.project.to_string(),
         title: task.title.to_string(),
@@ -15,10 +21,10 @@ pub fn add_task_response(task: task::AddedTask) -> v1::AddTaskResponse {
     }
 }
 
-pub fn add_task_failure_details(
+pub fn create_task_failure_details(
     diagnostics: &task::AddTaskDiagnostics,
-) -> v1::AddTaskFailureDetails {
-    v1::AddTaskFailureDetails {
+) -> v1::CreateTaskFailureDetails {
+    v1::CreateTaskFailureDetails {
         project: diagnostics.project.to_string(),
         created_section: diagnostics
             .created_section
@@ -28,39 +34,36 @@ pub fn add_task_failure_details(
 }
 
 #[must_use]
-pub fn edit_task_response(task: task::EditedTask) -> v1::EditTaskResponse {
+pub fn update_task_response(task: task::EditedTask) -> v1::UpdateTaskResponse {
     let task::EditedTask { id, project, title } = task;
-    v1::EditTaskResponse {
-        id: id.to_string(),
-        project: project.to_string(),
-        title: title.to_string(),
+    v1::UpdateTaskResponse {
+        task: Some(v1::UpdatedTask {
+            id: id.to_string(),
+            project: project.to_string(),
+            title: title.to_string(),
+        }),
     }
 }
 
+#[must_use]
 pub fn cancel_task_response(task: task::ClosedTask) -> v1::CancelTaskResponse {
     v1::CancelTaskResponse {
-        id: task.id.to_string(),
-        project: task.project.to_string(),
-        title: task.title.to_string(),
-        action: closed_task_action(task.action),
-        evicted_ids: task
-            .evicted_ids
-            .into_iter()
-            .map(|id| id.to_string())
-            .collect(),
-        futuro_renamed_project: task
-            .futuro_renamed_project
-            .map(|project| project.to_string()),
-        review_task: task.review_task.map(add_task_response),
+        task: Some(closed_task(task)),
     }
 }
 
+#[must_use]
 pub fn complete_task_response(task: task::ClosedTask) -> v1::CompleteTaskResponse {
     v1::CompleteTaskResponse {
+        task: Some(closed_task(task)),
+    }
+}
+
+fn closed_task(task: task::ClosedTask) -> v1::ClosedTask {
+    v1::ClosedTask {
         id: task.id.to_string(),
         project: task.project.to_string(),
         title: task.title.to_string(),
-        action: closed_task_action(task.action),
         evicted_ids: task
             .evicted_ids
             .into_iter()
@@ -69,50 +72,56 @@ pub fn complete_task_response(task: task::ClosedTask) -> v1::CompleteTaskRespons
         futuro_renamed_project: task
             .futuro_renamed_project
             .map(|project| project.to_string()),
-        review_task: task.review_task.map(add_task_response),
+        review_task: task.review_task.map(created_task),
     }
 }
 
 #[must_use]
-pub fn reopen_task_result(task: task::ReopenedTask) -> v1::ReopenedTask {
-    match task {
-        task::ReopenedTask::Reopened { id, project } => v1::ReopenedTask {
-            outcome: v1::ReopenedTaskOutcome::Reopened as i32,
-            id: id.to_string(),
-            project: Some(project.to_string()),
-        },
-        task::ReopenedTask::AlreadyActive { id, project } => v1::ReopenedTask {
-            outcome: v1::ReopenedTaskOutcome::AlreadyActive as i32,
-            id: id.to_string(),
-            project: Some(project.to_string()),
-        },
-        task::ReopenedTask::Aborted { id } => v1::ReopenedTask {
-            outcome: v1::ReopenedTaskOutcome::Aborted as i32,
-            id: id.to_string(),
-            project: None,
-        },
+pub fn reopen_task_result(task: task::ReopenedTask) -> v1::ReopenTaskResult {
+    let outcome = match task {
+        task::ReopenedTask::Reopened { id, project } => {
+            v1::reopen_task_result::Outcome::Reopened(v1::ReopenedTask {
+                id: id.to_string(),
+                project: project.to_string(),
+            })
+        }
+        task::ReopenedTask::AlreadyActive { id, project } => {
+            v1::reopen_task_result::Outcome::AlreadyActive(v1::AlreadyActiveTask {
+                id: id.to_string(),
+                project: project.to_string(),
+            })
+        }
+        task::ReopenedTask::Aborted { id } => {
+            v1::reopen_task_result::Outcome::Aborted(v1::AbortedTaskOperation {
+                id: id.to_string(),
+            })
+        }
+    };
+    v1::ReopenTaskResult {
+        outcome: Some(outcome),
     }
 }
 
 #[must_use]
-pub fn remove_task_result(task: task::RemovedTaskOutcome) -> v1::RemovedTaskOutcome {
-    match task {
-        task::RemovedTaskOutcome::Removed(value) => v1::RemovedTaskOutcome {
-            outcome: v1::RemovedTaskOutcomeKind::Removed as i32,
-            task_id: value.id.to_string(),
-            removed: Some(v1::RemovedTask {
+pub fn delete_task_result(task: task::RemovedTaskOutcome) -> v1::DeleteTaskResult {
+    let outcome = match task {
+        task::RemovedTaskOutcome::Removed(value) => {
+            v1::delete_task_result::Outcome::Deleted(v1::DeletedTask {
                 id: value.id.to_string(),
                 project: value.project.to_string(),
                 title: value.title.to_string(),
                 deleted_path: value.deleted_path.to_string(),
                 unlinked: value.unlinked.map(|path| path.to_string()),
-            }),
-        },
-        task::RemovedTaskOutcome::Aborted { task_id } => v1::RemovedTaskOutcome {
-            outcome: v1::RemovedTaskOutcomeKind::Aborted as i32,
-            task_id: task_id.to_string(),
-            removed: None,
-        },
+            })
+        }
+        task::RemovedTaskOutcome::Aborted { task_id } => {
+            v1::delete_task_result::Outcome::Aborted(v1::AbortedTaskOperation {
+                id: task_id.to_string(),
+            })
+        }
+    };
+    v1::DeleteTaskResult {
+        outcome: Some(outcome),
     }
 }
 
@@ -155,10 +164,10 @@ pub fn list_tasks_response(tasks: task::ListedTasks) -> v1::ListTasksResponse {
 }
 
 #[must_use]
-pub fn remove_task_confirmation(
+pub fn delete_task_confirmation(
     confirmation: &confirmation::RemoveTaskConfirmation,
-) -> v1::RemoveTaskConfirmation {
-    v1::RemoveTaskConfirmation {
+) -> v1::DeleteTaskConfirmation {
+    v1::DeleteTaskConfirmation {
         task_id: confirmation.task_identifier.to_string(),
         project: confirmation.project.to_string(),
         title: confirmation.title.to_string(),
@@ -280,13 +289,6 @@ fn task_issue(issue: &task::TaskIssue) -> v1::TaskIssue {
             kind: v1::TaskIssueKind::PlaceholderPrompt as i32,
             path: None,
         },
-    }
-}
-
-fn closed_task_action(action: task::ClosedTaskAction) -> i32 {
-    match action {
-        task::ClosedTaskAction::Done => v1::ClosedTaskAction::Done as i32,
-        task::ClosedTaskAction::Cancelled => v1::ClosedTaskAction::Cancelled as i32,
     }
 }
 

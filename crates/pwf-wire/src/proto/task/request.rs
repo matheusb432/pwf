@@ -1,7 +1,5 @@
 //! Protobuf request mappings for task operations.
 
-use std::num::NonZeroUsize;
-
 use pwf_models::{
     project::ProjectSelector,
     task::{
@@ -14,13 +12,13 @@ use tonic::Status;
 use super::super::{invalid, parse, required};
 use crate::{task, v1};
 
-pub fn add_task_request(request: v1::AddTaskRequest) -> Result<task::AddTask, Status> {
+pub fn create_task_request(request: v1::CreateTaskRequest) -> Result<task::AddTask, Status> {
     let prompt = match required("prompt", request.prompt)? {
-        v1::add_task_request::Prompt::Shorthand(value) => {
+        v1::create_task_request::Prompt::Shorthand(value) => {
             task::AddTaskPrompt::shorthand(TaskPrompt::new(value))
                 .map_err(|error| invalid("prompt", error))?
         }
-        v1::add_task_request::Prompt::Structured(value) => {
+        v1::create_task_request::Prompt::Structured(value) => {
             let title =
                 TaskTitle::try_new(value.title).map_err(|error| invalid("prompt.title", error))?;
             task::AddTaskPrompt::structured(title, task_lanes(value.lanes.unwrap_or_default())?)
@@ -78,7 +76,7 @@ pub fn complete_task_request(
     })
 }
 
-pub fn edit_task_request(request: v1::EditTaskRequest) -> Result<task::EditTask, Status> {
+pub fn update_task_request(request: v1::UpdateTaskRequest) -> Result<task::EditTask, Status> {
     let content = request.content.map(task_content_edit).transpose()?;
     let edits = task::TaskEdits::try_new(
         content,
@@ -138,9 +136,11 @@ pub fn list_tasks_request(request: v1::ListTasksRequest) -> Result<task::ListTas
             .number
             .map(|value| {
                 usize::try_from(value)
-                    .ok()
-                    .and_then(NonZeroUsize::new)
-                    .ok_or_else(|| invalid("number", "must be a positive platform-sized integer"))
+                    .map_err(|_| invalid("number", "must fit the platform integer size"))
+                    .and_then(|value| {
+                        task::TaskListLimit::try_new(value)
+                            .map_err(|error| invalid("number", error))
+                    })
             })
             .transpose()?,
         effort: request.effort.map(effort_tier).transpose()?,
@@ -152,8 +152,8 @@ pub fn list_tasks_request(request: v1::ListTasksRequest) -> Result<task::ListTas
     })
 }
 
-pub fn remove_task_start(start: v1::RemoveTaskStart) -> Result<TaskId, Status> {
-    let v1::RemoveTaskStart { id } = start;
+pub fn delete_task_start(start: v1::DeleteTaskStart) -> Result<TaskId, Status> {
+    let v1::DeleteTaskStart { id } = start;
     parse("id", &id)
 }
 
@@ -266,29 +266,14 @@ fn collection_edit<T>(
     let Some(value) = value else {
         return Ok(task::CollectionEdit::Unchanged);
     };
-    let mode = v1::CollectionEditMode::try_from(value.mode)
-        .map_err(|_| invalid("collection_edit.mode", "unknown value"))?;
-    match mode {
-        v1::CollectionEditMode::Unchanged if value.values.is_empty() => {
-            Ok(task::CollectionEdit::Unchanged)
-        }
-        v1::CollectionEditMode::Clear if value.values.is_empty() => Ok(task::CollectionEdit::Clear),
-        v1::CollectionEditMode::Append | v1::CollectionEditMode::Replace => {
-            let parsed = parse_values(value.values)?
-                .ok_or_else(|| invalid("collection_edit.values", "cannot be empty"))?;
-            Ok(if mode == v1::CollectionEditMode::Append {
-                task::CollectionEdit::Append(parsed)
-            } else {
-                task::CollectionEdit::Replace(parsed)
-            })
-        }
-        v1::CollectionEditMode::Unspecified => {
-            Err(invalid("collection_edit.mode", "must be specified"))
-        }
-        v1::CollectionEditMode::Unchanged | v1::CollectionEditMode::Clear => Err(invalid(
-            "collection_edit.values",
-            "must be empty for this mode",
-        )),
+    match required("collection_edit.operation", value.operation)? {
+        v1::string_collection_edit::Operation::Append(values) => parse_values(values.values)?
+            .map(task::CollectionEdit::Append)
+            .ok_or_else(|| invalid("collection_edit.values", "cannot be empty")),
+        v1::string_collection_edit::Operation::Replace(values) => parse_values(values.values)?
+            .map(task::CollectionEdit::Replace)
+            .ok_or_else(|| invalid("collection_edit.values", "cannot be empty")),
+        v1::string_collection_edit::Operation::Clear(_) => Ok(task::CollectionEdit::Clear),
     }
 }
 
@@ -296,13 +281,9 @@ fn effort_edit(value: Option<v1::EffortEdit>) -> Result<task::ValueEdit<EffortTi
     let Some(value) = value else {
         return Ok(task::ValueEdit::Unchanged);
     };
-    match v1::ValueEditMode::try_from(value.mode).ok() {
-        Some(v1::ValueEditMode::Unchanged) => Ok(task::ValueEdit::Unchanged),
-        Some(v1::ValueEditMode::Clear) => Ok(task::ValueEdit::Clear),
-        Some(v1::ValueEditMode::Set) => Ok(task::ValueEdit::Set(effort_tier(value.value)?)),
-        Some(v1::ValueEditMode::Unspecified) | None => {
-            Err(invalid("effort.mode", "must be specified"))
-        }
+    match required("effort.operation", value.operation)? {
+        v1::effort_edit::Operation::Set(value) => Ok(task::ValueEdit::Set(effort_tier(value)?)),
+        v1::effort_edit::Operation::Clear(_) => Ok(task::ValueEdit::Clear),
     }
 }
 
@@ -310,13 +291,9 @@ fn priority_edit(value: Option<v1::PriorityEdit>) -> Result<task::ValueEdit<Prio
     let Some(value) = value else {
         return Ok(task::ValueEdit::Unchanged);
     };
-    match v1::ValueEditMode::try_from(value.mode).ok() {
-        Some(v1::ValueEditMode::Unchanged) => Ok(task::ValueEdit::Unchanged),
-        Some(v1::ValueEditMode::Clear) => Ok(task::ValueEdit::Clear),
-        Some(v1::ValueEditMode::Set) => Ok(task::ValueEdit::Set(priority_tier(value.value)?)),
-        Some(v1::ValueEditMode::Unspecified) | None => {
-            Err(invalid("priority.mode", "must be specified"))
-        }
+    match required("priority.operation", value.operation)? {
+        v1::priority_edit::Operation::Set(value) => Ok(task::ValueEdit::Set(priority_tier(value)?)),
+        v1::priority_edit::Operation::Clear(_) => Ok(task::ValueEdit::Clear),
     }
 }
 

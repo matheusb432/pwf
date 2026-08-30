@@ -459,7 +459,7 @@ pub struct ListTasks {
     pub project_selector: Option<ProjectSelector>,
     pub scope: ListScope,
     /// Explicit task cap. Omission uses the mode-specific default.
-    pub number: Option<NonZeroUsize>,
+    pub number: Option<TaskListLimit>,
     pub effort: Option<EffortTier>,
     pub priority: Option<PriorityTier>,
     pub tags: Option<TaskTags>,
@@ -467,6 +467,38 @@ pub struct ListTasks {
     /// Explicit lifecycle filter. Omission uses the mode-specific default.
     pub status: Option<StatusFilter>,
     pub detail: ListDetail,
+}
+
+/// Caps one task-list response before transport message limits apply.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TaskListLimit(NonZeroUsize);
+
+impl TaskListLimit {
+    pub const MAX: usize = 100_000;
+
+    /// Constructs a nonzero task-list limit within the supported response cap.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TaskListLimitError`] when `value` is zero or exceeds [`Self::MAX`].
+    pub fn try_new(value: usize) -> Result<Self, TaskListLimitError> {
+        NonZeroUsize::new(value)
+            .filter(|value| value.get() <= Self::MAX)
+            .map(Self)
+            .ok_or(TaskListLimitError { value })
+    }
+
+    #[must_use]
+    pub const fn get(self) -> usize {
+        self.0.get()
+    }
+}
+
+/// Reports a task-list limit outside the supported response cap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("{value} must be between 1 and {}", TaskListLimit::MAX)]
+pub struct TaskListLimitError {
+    value: usize,
 }
 
 /// Identifies a task note's filesystem path.

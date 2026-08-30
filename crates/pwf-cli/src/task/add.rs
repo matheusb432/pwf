@@ -2,8 +2,8 @@ use clap::Args;
 use pwf_client::{
     task::TaskClient,
     v1::{
-        AddTaskRequest, EffortTier, IndexSection, PriorityTier, StructuredTaskPrompt,
-        add_task_request,
+        CreateTaskRequest, EffortTier, IndexSection, PriorityTier, StructuredTaskPrompt,
+        create_task_request,
     },
 };
 use pwf_models::{
@@ -78,7 +78,7 @@ pub(super) async fn run(
         ))?;
     let (prompt, title_normalized) = request_prompt(arguments)?;
     let result = client
-        .add_task(AddTaskRequest {
+        .create_task(CreateTaskRequest {
             project_selector: project_selector.to_string(),
             prompt: Some(prompt),
             index_section: if arguments.human {
@@ -121,7 +121,7 @@ pub(super) async fn run(
     }
 }
 
-fn request_prompt(arguments: &Arguments) -> anyhow::Result<(add_task_request::Prompt, bool)> {
+fn request_prompt(arguments: &Arguments) -> anyhow::Result<(create_task_request::Prompt, bool)> {
     if let Some(title) = arguments.title.as_deref() {
         let (title, normalized) = task_title(title)?;
         let lanes = task_lanes(
@@ -132,7 +132,7 @@ fn request_prompt(arguments: &Arguments) -> anyhow::Result<(add_task_request::Pr
             LaneFlagMode::Add,
         )?;
         return Ok((
-            add_task_request::Prompt::Structured(StructuredTaskPrompt {
+            create_task_request::Prompt::Structured(StructuredTaskPrompt {
                 title: title.to_string(),
                 lanes: Some(lanes),
             }),
@@ -146,5 +146,5 @@ fn request_prompt(arguments: &Arguments) -> anyhow::Result<(add_task_request::Pr
             "Use shorthand: pwf task add <project> \"<prompt>\"\nOr machine mode: pwf task add <project> --title <title> [lane flags]"
         ));
     }
-    Ok((add_task_request::Prompt::Shorthand(prompt), false))
+    Ok((create_task_request::Prompt::Shorthand(prompt), false))
 }
