@@ -9,7 +9,7 @@ use clap::Args;
 
 use crate::{paths, process};
 
-mod linux_server;
+mod server_service;
 
 #[derive(Args)]
 pub(crate) struct UpdateArgs {
@@ -149,15 +149,22 @@ fn place_unix(dry: bool) -> Result<()> {
         "cargo build",
         Command::new("cargo").args(["build", "--release", "-p", "pwf-cli", "-p", "pwf-server"]),
     )?;
+    let service = server_service::prepare(&server_destination)?;
     let cli_placed = place_binary(&cli_source, &cli_destination)?;
     eprintln!("pwf binary {cli_placed:?} -> {}", cli_destination.display());
+    if let Some(service) = service.as_ref()
+        && service.unregister_if_installed()?
+    {
+        eprintln!("stopped and unregistered the existing pwf-server user service");
+    }
     let server_placed = place_binary(&server_source, &server_destination)?;
     eprintln!(
         "pwf-server binary {server_placed:?} -> {}",
         server_destination.display()
     );
-    if let Some(path) = linux_server::install(&server_destination)? {
-        eprintln!("pwf-server user service -> {}", path.display());
+    if let Some(service) = service {
+        service.install_and_start()?;
+        eprintln!("pwf-server user service installed and started");
     }
     wire_path(&directory)?;
     Ok(())
