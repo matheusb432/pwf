@@ -2,12 +2,15 @@
 
 use std::{fmt::Write, str::FromStr};
 
-use clap::{Args, Subcommand};
+use anstyle::AnsiColor;
+use clap::{ArgGroup, Args, Subcommand};
 use pwf_client::{
+    confirmation::ConfirmedRequestError,
     note::NoteClient,
     v1::{
-        AddNoteRequest, AddNoteResponse, ListNotesRequest, ListNotesResponse, NoteListLimitKind,
-        RemoveNoteRequest, RemoveNoteResponse, UpdateNoteRequest, UpdateNoteResponse,
+        AddNoteRequest, AddNoteResponse, DeleteNoteStart, DeletedNote, ListNotesRequest,
+        ListNotesResponse, NoteListLimitKind, UpdateNoteRequest, UpdateNoteResponse,
+        delete_note_result,
     },
 };
 use pwf_models::{
@@ -19,88 +22,190 @@ use pwf_models::{
     project::ProjectSelector,
 };
 
+use crate::{
+    confirmation::{CliConfirmationClient, prompt_error},
+    console::Console,
+    edit::{string_collection_edit, string_field_edit},
+    render::{render_confirmation, render_summary},
+};
+
 #[derive(Args, Debug)]
 pub struct Arguments {
     #[command(subcommand)]
     pub(crate) command: Command,
-    #[command(flatten)]
-    common: CommonArguments,
-}
-
-#[derive(Args, Debug, Default)]
-struct CommonArguments {
-    /// Date stamp (YYYY-MM-DD); defaults to today.
-    #[arg(long, global = true)]
-    date: Option<AppDate>,
 }
 
 #[derive(Subcommand, Debug)]
 pub(crate) enum Command {
     /// List a project's notes
     #[command(alias = "ls")]
-    List {
-        /// Managed project name or id
-        #[arg(value_name = "PROJECT")]
-        project: ProjectSelector,
-        /// Cap to N listed notes (default 10)
-        #[arg(short = 'n', long, value_name = "N")]
-        number: Option<usize>,
-    },
-    /// Add a study note from `<title> / <content>` or explicit title and content flags
-    Add {
-        /// Managed project name or id
-        #[arg(value_name = "PROJECT")]
-        project: ProjectSelector,
-        /// Title and Markdown content separated by ` / `
-        #[arg(
-            value_name = "NOTE",
-            required_unless_present_any = ["title", "content"],
-            conflicts_with_all = ["title", "content"]
-        )]
-        note: Option<PositionalNote>,
-        /// Note title
-        #[arg(long, requires = "content", conflicts_with = "note")]
-        title: Option<NoteTitle>,
-        /// Markdown note content
-        #[arg(long, requires = "title", conflicts_with = "note")]
-        content: Option<NoteContent>,
-        /// Why the insight changes future judgment
-        #[arg(long)]
-        why: Option<NoteWhy>,
-        /// Subject classification
-        #[arg(long)]
-        domain: Option<NoteDomain>,
-        /// Discovery tag
-        #[arg(long = "tag", value_name = "TAG")]
-        tags: Vec<NoteTag>,
-        /// Supporting source or evidence; repeat for several
-        #[arg(long = "source", value_name = "SOURCE")]
-        sources: Vec<NoteSource>,
-        /// Verification date or marker
-        #[arg(long)]
-        verified: Option<NoteVerification>,
-    },
-    /// Delete a note and strip its index link: `pwf note remove <proj> <id>`
-    Remove {
-        /// Managed project name or id
-        #[arg(value_name = "PROJECT")]
-        project: ProjectSelector,
-        /// Note id: full `PWF-NOTE-0001`, `NOTE-0001`, or a bare `1`
-        #[arg(value_name = "ID")]
-        id: NoteSelector,
-    },
-    /// Replace a note's title: `pwf note update <proj> <id> "<title>"`
-    Update {
-        /// Managed project name or id
-        #[arg(value_name = "PROJECT")]
-        project: ProjectSelector,
-        /// Note id: full `PWF-NOTE-0001`, `NOTE-0001`, or a bare `1`
-        #[arg(value_name = "ID")]
-        id: NoteSelector,
-        /// Replacement title words
-        #[arg(value_name = "TITLE", required = true, num_args = 1..)]
-        title: Vec<String>,
-    },
+    List(ListArguments),
+    /// Add a study note from `<title> / <content>` or explicit fields
+    Add(Box<AddArguments>),
+    /// Delete a note and strip its index link
+    Remove(RemoveArguments),
+    /// Edit selected note fields while preserving every omitted field
+    Edit(Box<EditArguments>),
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct ListArguments {
+    /// Managed project name or id
+    #[arg(value_name = "PROJECT")]
+    project: ProjectSelector,
+    /// Cap to N listed notes (default 10)
+    #[arg(short = 'n', long, value_name = "N")]
+    number: Option<usize>,
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct AddArguments {
+    /// Managed project name or id
+    #[arg(value_name = "PROJECT")]
+    project: ProjectSelector,
+    /// Title and Markdown content separated by ` / `
+    #[arg(
+        value_name = "NOTE",
+        required_unless_present_any = ["title", "content"],
+        conflicts_with_all = ["title", "content"]
+    )]
+    note: Option<PositionalNote>,
+    /// Note title
+    #[arg(long, requires = "content", conflicts_with = "note")]
+    title: Option<NoteTitle>,
+    /// Markdown note content
+    #[arg(long, requires = "title", conflicts_with = "note")]
+    content: Option<NoteContent>,
+    /// Why the insight changes future judgment
+    #[arg(long)]
+    why: Option<NoteWhy>,
+    /// Subject classification
+    #[arg(long)]
+    domain: Option<NoteDomain>,
+    /// Discovery tag; repeat for several
+    #[arg(long = "tag", value_name = "TAG")]
+    tags: Vec<NoteTag>,
+    /// Supporting source or evidence; repeat for several
+    #[arg(long = "source", value_name = "SOURCE")]
+    sources: Vec<NoteSource>,
+    /// Verification date or marker
+    #[arg(long)]
+    verified: Option<NoteVerification>,
+    /// Date stamp (YYYY-MM-DD); defaults to today
+    #[arg(long)]
+    date: Option<AppDate>,
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct RemoveArguments {
+    /// Managed project name or id
+    #[arg(value_name = "PROJECT")]
+    project: ProjectSelector,
+    /// Note id: full `PWF-NOTE-0001`, `NOTE-0001`, or a bare `1`
+    #[arg(value_name = "ID")]
+    id: NoteSelector,
+    /// Skip the removal confirmation (assume yes)
+    #[arg(long = "yes", short = 'y')]
+    assume_yes: bool,
+}
+
+#[derive(Args, Debug)]
+#[command(group(
+    ArgGroup::new("edit")
+        .required(true)
+        .multiple(true)
+        .args([
+            "shorthand_title",
+            "title",
+            "content",
+            "why",
+            "remove_why",
+            "domain",
+            "remove_domain",
+            "add_tag",
+            "remove_tags",
+            "add_source",
+            "remove_sources",
+            "verified",
+            "remove_verified",
+        ])
+))]
+pub(crate) struct EditArguments {
+    /// Managed project name or id
+    #[arg(value_name = "PROJECT")]
+    project: ProjectSelector,
+    /// Note id: full `PWF-NOTE-0001`, `NOTE-0001`, or a bare `1`
+    #[arg(value_name = "ID")]
+    id: NoteSelector,
+    /// Replacement title words; shorthand alternative to `--title`
+    #[arg(value_name = "TITLE", num_args = 1.., conflicts_with = "title")]
+    shorthand_title: Vec<String>,
+    /// Replace the title
+    #[arg(long, conflicts_with = "shorthand_title")]
+    title: Option<NoteTitle>,
+    /// Replace the Markdown content
+    #[arg(long)]
+    content: Option<NoteContent>,
+    #[command(flatten)]
+    why: WhyEdits,
+    #[command(flatten)]
+    domain: DomainEdits,
+    #[command(flatten)]
+    tags: TagEdits,
+    #[command(flatten)]
+    sources: SourceEdits,
+    #[command(flatten)]
+    verification: VerificationEdits,
+}
+
+#[derive(Args, Debug)]
+struct WhyEdits {
+    /// Replace why the insight matters
+    #[arg(long, conflicts_with = "remove_why")]
+    why: Option<NoteWhy>,
+    /// Remove why the insight matters
+    #[arg(long, conflicts_with = "why")]
+    remove_why: bool,
+}
+
+#[derive(Args, Debug)]
+struct DomainEdits {
+    /// Replace the subject classification
+    #[arg(long, conflicts_with = "remove_domain")]
+    domain: Option<NoteDomain>,
+    /// Remove the subject classification
+    #[arg(long, conflicts_with = "domain")]
+    remove_domain: bool,
+}
+
+#[derive(Args, Debug)]
+struct TagEdits {
+    /// Append a discovery tag; repeat for several
+    #[arg(long, value_name = "TAG")]
+    add_tag: Vec<NoteTag>,
+    /// Remove every tag before applying `--add-tag` values
+    #[arg(long)]
+    remove_tags: bool,
+}
+
+#[derive(Args, Debug)]
+struct SourceEdits {
+    /// Append a supporting source; repeat for several
+    #[arg(long, value_name = "SOURCE")]
+    add_source: Vec<NoteSource>,
+    /// Remove every source before applying `--add-source` values
+    #[arg(long)]
+    remove_sources: bool,
+}
+
+#[derive(Args, Debug)]
+struct VerificationEdits {
+    /// Replace the verification date or marker
+    #[arg(long, conflicts_with = "remove_verified")]
+    verified: Option<NoteVerification>,
+    /// Remove the verification date or marker
+    #[arg(long, conflicts_with = "verified")]
+    remove_verified: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -123,171 +228,319 @@ impl FromStr for PositionalNote {
     }
 }
 
-pub async fn run(arguments: &Arguments, client: &NoteClient) -> anyhow::Result<String> {
-    let output = match &arguments.command {
-        Command::List { project, number } => client
-            .list_notes(ListNotesRequest {
-                project_selector: project.to_string(),
-                limit_kind: match number {
-                    None => NoteListLimitKind::Default as i32,
-                    Some(0) => NoteListLimitKind::Unlimited as i32,
-                    Some(_) => NoteListLimitKind::AtMost as i32,
-                },
-                limit: number.unwrap_or_default() as u64,
-            })
-            .await
-            .map_err(crate::rpc_error)
-            .map(|result| render_listed(&result))?,
-        Command::Add {
-            project,
-            note,
-            title,
-            content,
-            why,
-            domain,
-            tags,
-            sources,
-            verified,
-        } => {
-            let (title, content) = match (note, title, content) {
-                (Some(note), None, None) => (note.title.clone(), note.content.clone()),
-                (None, Some(title), Some(content)) => (title.clone(), content.clone()),
-                _ => {
-                    return Err(anyhow::anyhow!(
-                        "Provide either '<title> / <content>' or both --title and --content."
-                    ));
-                }
-            };
-            client
-                .add_note(AddNoteRequest {
-                    project_selector: project.to_string(),
-                    title: title.to_string(),
-                    content: content.to_string(),
-                    why: why.as_ref().map(ToString::to_string),
-                    domain: domain.as_ref().map(ToString::to_string),
-                    tags: tags.iter().map(ToString::to_string).collect(),
-                    sources: sources.iter().map(ToString::to_string).collect(),
-                    verified: verified.as_ref().map(ToString::to_string),
-                    date: arguments.common.date.map(|date| date.to_string()),
-                })
-                .await
-                .map_err(crate::rpc_error)
-                .map(|result| render_added(&result))?
-        }
-        Command::Remove { project, id } => client
-            .remove_note(RemoveNoteRequest {
-                project_selector: project.to_string(),
-                selector: id.to_string(),
-            })
-            .await
-            .map_err(crate::rpc_error)
-            .map(|result| render_removed(&result))?,
-        Command::Update { project, id, title } => client
-            .update_note(UpdateNoteRequest {
-                project_selector: project.to_string(),
-                selector: id.to_string(),
-                title: NoteTitle::try_new(title.join(" "))
-                    .map_err(|error| anyhow::anyhow!(error.to_string()))?
-                    .to_string(),
-            })
-            .await
-            .map_err(crate::rpc_error)
-            .map(|result| render_updated(&result))?,
-    };
-    Ok(output)
+pub async fn run(
+    arguments: &Arguments,
+    console: Console,
+    client: &NoteClient,
+) -> anyhow::Result<String> {
+    match &arguments.command {
+        Command::List(arguments) => list(arguments, console, client).await,
+        Command::Add(arguments) => add(arguments, console, client).await,
+        Command::Remove(arguments) => remove(arguments, console, client).await,
+        Command::Edit(arguments) => edit(arguments, console, client).await,
+    }
 }
 
-fn render_listed(result: &ListNotesResponse) -> String {
+async fn list(
+    arguments: &ListArguments,
+    console: Console,
+    client: &NoteClient,
+) -> anyhow::Result<String> {
+    client
+        .list_notes(ListNotesRequest {
+            project_selector: arguments.project.to_string(),
+            limit_kind: match arguments.number {
+                None => NoteListLimitKind::Default as i32,
+                Some(0) => NoteListLimitKind::Unlimited as i32,
+                Some(_) => NoteListLimitKind::AtMost as i32,
+            },
+            limit: arguments.number.unwrap_or_default() as u64,
+        })
+        .await
+        .map_err(crate::rpc_error)
+        .map(|result| render_listed(&result, console.color()))
+}
+
+async fn add(
+    arguments: &AddArguments,
+    console: Console,
+    client: &NoteClient,
+) -> anyhow::Result<String> {
+    let (title, content) = match (&arguments.note, &arguments.title, &arguments.content) {
+        (Some(note), None, None) => (note.title.clone(), note.content.clone()),
+        (None, Some(title), Some(content)) => (title.clone(), content.clone()),
+        _ => {
+            return Err(anyhow::anyhow!(
+                "Provide either '<title> / <content>' or both --title and --content."
+            ));
+        }
+    };
+    client
+        .add_note(AddNoteRequest {
+            project_selector: arguments.project.to_string(),
+            title: title.to_string(),
+            content: content.to_string(),
+            why: arguments.why.as_ref().map(ToString::to_string),
+            domain: arguments.domain.as_ref().map(ToString::to_string),
+            tags: arguments.tags.iter().map(ToString::to_string).collect(),
+            sources: arguments.sources.iter().map(ToString::to_string).collect(),
+            verified: arguments.verified.as_ref().map(ToString::to_string),
+            date: arguments.date.map(|date| date.to_string()),
+        })
+        .await
+        .map_err(crate::rpc_error)
+        .map(|result| render_added(&result, console.color()))
+}
+
+async fn remove(
+    arguments: &RemoveArguments,
+    console: Console,
+    client: &NoteClient,
+) -> anyhow::Result<String> {
+    let confirmation_mode = console.confirmation_mode(arguments.assume_yes)?;
+    let confirmation_client = CliConfirmationClient::new(console, confirmation_mode);
+    let outcome = match client
+        .delete_note(
+            DeleteNoteStart {
+                project_selector: arguments.project.to_string(),
+                selector: arguments.id.to_string(),
+            },
+            confirmation_client,
+        )
+        .await
+    {
+        Ok(outcome) => outcome,
+        Err(ConfirmedRequestError::Operation(error)) => {
+            return Err(anyhow::anyhow!(error.message().to_string()));
+        }
+        Err(ConfirmedRequestError::Prompt(source)) => {
+            return Err(prompt_error("note removal", source));
+        }
+    };
+    match outcome.outcome.as_ref() {
+        Some(delete_note_result::Outcome::Deleted(note)) => {
+            Ok(render_removed(note, console.color()))
+        }
+        Some(delete_note_result::Outcome::Aborted(note)) => {
+            Ok(format!("# remove {}: aborted\nnothing deleted.\n", note.id))
+        }
+        None => Err(anyhow::anyhow!(
+            "pwf-server returned an invalid note removal outcome"
+        )),
+    }
+}
+
+async fn edit(
+    arguments: &EditArguments,
+    console: Console,
+    client: &NoteClient,
+) -> anyhow::Result<String> {
+    let title = if arguments.shorthand_title.is_empty() {
+        arguments.title.clone()
+    } else {
+        Some(
+            NoteTitle::try_new(arguments.shorthand_title.join(" "))
+                .map_err(|error| anyhow::anyhow!(error.to_string()))?,
+        )
+    };
+    client
+        .update_note(UpdateNoteRequest {
+            project_selector: arguments.project.to_string(),
+            selector: arguments.id.to_string(),
+            title: title.map(|title| title.to_string()),
+            content: arguments.content.as_ref().map(ToString::to_string),
+            why: string_field_edit(
+                arguments.why.why.as_ref().map(ToString::to_string),
+                arguments.why.remove_why,
+            ),
+            domain: string_field_edit(
+                arguments.domain.domain.as_ref().map(ToString::to_string),
+                arguments.domain.remove_domain,
+            ),
+            tags: string_collection_edit(
+                arguments
+                    .tags
+                    .add_tag
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect(),
+                arguments.tags.remove_tags,
+            ),
+            sources: string_collection_edit(
+                arguments
+                    .sources
+                    .add_source
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect(),
+                arguments.sources.remove_sources,
+            ),
+            verified: string_field_edit(
+                arguments
+                    .verification
+                    .verified
+                    .as_ref()
+                    .map(ToString::to_string),
+                arguments.verification.remove_verified,
+            ),
+        })
+        .await
+        .map_err(crate::rpc_error)
+        .map(|result| render_edited(&result, console.color()))
+}
+
+fn render_listed(result: &ListNotesResponse, color_on: bool) -> String {
     if result.notes.is_empty() {
         return format!("No notes for {}.\n", result.project);
     }
-    let mut output = String::new();
-    for note in &result.notes {
-        let _ = writeln!(output, "{} :: {}", note.id, note.title);
-    }
+    let mut output = result
+        .notes
+        .iter()
+        .map(|note| render_summary(&note.id, &note.title, color_on))
+        .collect::<Vec<_>>()
+        .join("\n");
     if result.hidden > 0 {
-        let _ = writeln!(
+        let _ = write!(
             output,
-            "... and {} more; run 'pwf note <proj> ls -n 0' to show all",
+            "\n... and {} more; run 'pwf note <proj> ls -n 0' to show all",
             result.hidden
         );
     }
     output
 }
 
-fn render_added(result: &AddNoteResponse) -> String {
-    format!("Added {} :: {}\n", result.id, result.title)
+fn render_added(result: &AddNoteResponse, color_on: bool) -> String {
+    render_note_mutation(
+        "Added pwf note",
+        AnsiColor::Green,
+        &result.id,
+        &result.project,
+        &result.title,
+        color_on,
+    )
 }
 
-fn render_removed(result: &RemoveNoteResponse) -> String {
-    format!("Removed {}\n", result.id)
+fn render_edited(result: &UpdateNoteResponse, color_on: bool) -> String {
+    render_note_mutation(
+        "Edited pwf note",
+        AnsiColor::Blue,
+        &result.id,
+        &result.project,
+        &result.title,
+        color_on,
+    )
 }
 
-fn render_updated(result: &UpdateNoteResponse) -> String {
-    format!("Updated {} :: {}\n", result.id, result.title)
+fn render_removed(result: &DeletedNote, color_on: bool) -> String {
+    render_note_mutation(
+        "Removed pwf note",
+        AnsiColor::Red,
+        &result.id,
+        &result.project,
+        &result.title,
+        color_on,
+    )
+}
+
+fn render_note_mutation(
+    label: &str,
+    color: AnsiColor,
+    id: &str,
+    project: &str,
+    title: &str,
+    color_on: bool,
+) -> String {
+    render_confirmation(
+        label,
+        color,
+        id,
+        &format!("{project} :: {title}"),
+        &[],
+        color_on,
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use pwf_client::v1::{
-        AddNoteResponse, ListNotesResponse, ListedNote, RemoveNoteResponse, UpdateNoteResponse,
+        AddNoteResponse, DeletedNote, ListNotesResponse, ListedNote, UpdateNoteResponse,
     };
 
-    use super::{PositionalNote, render_added, render_listed, render_removed, render_updated};
+    use super::{PositionalNote, render_added, render_edited, render_listed, render_removed};
 
     fn identifier(number: u32) -> String {
         format!("FOO-NOTE-{number:04}")
     }
 
     #[test]
-    fn typed_results_render_the_existing_note_output_contract() {
+    fn mutations_use_the_shared_task_style() {
         assert_eq!(
-            render_added(&AddNoteResponse {
-                id: identifier(1),
-                title: "remember milk".to_string(),
-            }),
-            "Added FOO-NOTE-0001 :: remember milk\n"
+            render_added(
+                &AddNoteResponse {
+                    id: identifier(1),
+                    title: "remember milk".to_string(),
+                    project: "foo".to_string(),
+                },
+                false,
+            ),
+            "Added pwf note: **FOO-NOTE-0001 foo :: remember milk**\n"
         );
         assert_eq!(
-            render_removed(&RemoveNoteResponse { id: identifier(1) }),
-            "Removed FOO-NOTE-0001\n"
+            render_edited(
+                &UpdateNoteResponse {
+                    id: identifier(1),
+                    title: "remember oat milk".to_string(),
+                    project: "foo".to_string(),
+                },
+                false,
+            ),
+            "Edited pwf note: **FOO-NOTE-0001 foo :: remember oat milk**\n"
         );
         assert_eq!(
-            render_updated(&UpdateNoteResponse {
-                id: identifier(1),
-                title: "remember oat milk".to_string(),
-            }),
-            "Updated FOO-NOTE-0001 :: remember oat milk\n"
+            render_removed(
+                &DeletedNote {
+                    id: identifier(1),
+                    title: "remember oat milk".to_string(),
+                    project: "foo".to_string(),
+                },
+                false,
+            ),
+            "Removed pwf note: **FOO-NOTE-0001 foo :: remember oat milk**\n"
         );
     }
 
     #[test]
     fn listed_results_render_empty_lines_and_hidden_hint() {
-        let project = "foo".to_string();
         assert_eq!(
-            render_listed(&ListNotesResponse {
-                project: project.clone(),
-                notes: Vec::new(),
-                hidden: 0,
-            }),
+            render_listed(
+                &ListNotesResponse {
+                    project: "foo".to_string(),
+                    notes: Vec::new(),
+                    hidden: 0,
+                },
+                false,
+            ),
             "No notes for foo.\n"
         );
         assert_eq!(
-            render_listed(&ListNotesResponse {
-                project,
-                notes: vec![
-                    ListedNote {
-                        id: identifier(2),
-                        title: "second".to_string(),
-                    },
-                    ListedNote {
-                        id: identifier(1),
-                        title: "first".to_string(),
-                    },
-                ],
-                hidden: 3,
-            }),
-            "FOO-NOTE-0002 :: second\nFOO-NOTE-0001 :: first\n... and 3 more; run 'pwf note <proj> ls -n 0' to show all\n"
+            render_listed(
+                &ListNotesResponse {
+                    project: "foo".to_string(),
+                    notes: vec![
+                        ListedNote {
+                            id: identifier(2),
+                            title: "second".to_string(),
+                        },
+                        ListedNote {
+                            id: identifier(1),
+                            title: "first".to_string(),
+                        },
+                    ],
+                    hidden: 3,
+                },
+                false,
+            ),
+            "FOO-NOTE-0002 :: second\nFOO-NOTE-0001 :: first\n... and 3 more; run 'pwf note <proj> ls -n 0' to show all"
         );
     }
 

@@ -3,11 +3,10 @@ use pwf_models::{
     task::{BlockedBy, TaskId, TaskStatus, TaskTags, TaskTitle, TaskTitleError},
 };
 use pwf_wire::{
+    collection_edit::CollectionEdit,
     field_update::FieldUpdate,
     project::ProjectStatusFilter,
-    task::{
-        CollectionEdit, EditTask, EditTaskContent, EditTaskContentKind, EditedTask, RawTaskTags,
-    },
+    task::{EditTask, EditTaskContent, EditTaskContentKind, EditedTask, RawTaskTags},
 };
 
 use super::{
@@ -314,10 +313,11 @@ fn map_lane_error(error: EditLanesError) -> EditTaskError {
 mod tests {
     use pwf_models::task::{BlockedBy, EffortTier, TaskPrompt, TaskStatus, TaskTags, TaskTitle};
     use pwf_wire::{
+        collection_edit::CollectionEdit,
         field_update::FieldUpdate,
         task::{
-            CollectionEdit, EditTask, EditTaskContent, EditedTask, RawTaskTags, TaskEdits,
-            TaskLane, TaskLaneEdits, TaskLanes,
+            EditTask, EditTaskContent, EditedTask, RawTaskTags, TaskEdits, TaskLane, TaskLaneEdits,
+            TaskLanes,
         },
     };
 

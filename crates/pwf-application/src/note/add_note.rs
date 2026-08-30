@@ -2,7 +2,7 @@
 
 use pwf_models::{note::NoteId, project::ProjectName, task::TaskTimestampError};
 use pwf_wire::{
-    note::{AddNote, NoteSummary},
+    note::{AddNote, MutatedNote},
     project::{ProjectStatusFilter, ResolveProject},
 };
 
@@ -33,7 +33,7 @@ pub async fn execute(
     store: &impl ProjectNoteStore,
     pool: &sqlx::SqlitePool,
     clock: &impl Clock,
-) -> Result<NoteSummary, AddNoteError> {
+) -> Result<MutatedNote, AddNoteError> {
     let project = resolve_project::execute(
         ResolveProject {
             selector: command.project_selector,
@@ -80,8 +80,9 @@ pub async fn execute(
             },
         )
         .map_err(|error| AddNoteError::Store(anyhow::Error::new(error)))?;
-    Ok(NoteSummary {
+    Ok(MutatedNote {
         id: created.id,
+        project: project.title,
         title: created.title,
     })
 }

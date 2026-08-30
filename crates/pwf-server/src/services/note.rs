@@ -1,17 +1,33 @@
-use pwf_application::note::{
-    add_note::{self, AddNoteError},
-    list_notes::{self, ListNotesError},
-    remove_note::{self, RemoveNoteError},
-    update_note::{self, UpdateNoteError},
+use std::pin::Pin;
+
+use futures::Stream;
+use pwf_application::{
+    note::{
+        add_note::{self, AddNoteError},
+        edit_note::{self, EditNoteError},
+        list_notes::{self, ListNotesError},
+        remove_note::{self, RemoveNoteError},
+    },
+    ports::confirmation::ConfirmationClientError,
 };
 use pwf_wire::{
+    confirmation::RemoveNoteConfirmation,
     proto,
     v1::{self, note_service_server::NoteService},
 };
-use tonic::{Request, Response, Status};
+use tokio::sync::mpsc;
+use tokio_stream::wrappers::ReceiverStream;
+use tonic::{Request, Response, Status, Streaming};
 
-use super::project::resolve_project_status;
+use super::{
+    confirmation::{GrpcConfirmationClient, confirmation_status},
+    project::resolve_project_status,
+};
 use crate::AppState;
+
+const STREAM_BUFFER: usize = 4;
+
+type ResponseStream<T> = Pin<Box<dyn Stream<Item = Result<T, Status>> + Send + 'static>>;
 
 pub(crate) struct NoteGrpcService {
     state: AppState,
@@ -37,7 +53,7 @@ impl NoteService for NoteGrpcService {
             &self.state.clock,
         )
         .await
-        .map(proto::note::add_note_response)
+        .map(|note| proto::note::add_note_response(&note))
         .map(Response::new)
         .map_err(add_note_status)
     }
@@ -54,28 +70,70 @@ impl NoteService for NoteGrpcService {
             .map_err(list_notes_status)
     }
 
-    async fn remove_note(
-        &self,
-        request: Request<v1::RemoveNoteRequest>,
-    ) -> Result<Response<v1::RemoveNoteResponse>, Status> {
-        let command = proto::note::remove_note_request(request.into_inner())?;
-        remove_note::execute(command, &self.state.store, &self.state.pool)
-            .await
-            .map(|id| proto::note::remove_note_response(&id))
-            .map(Response::new)
-            .map_err(remove_note_status)
-    }
-
     async fn update_note(
         &self,
         request: Request<v1::UpdateNoteRequest>,
     ) -> Result<Response<v1::UpdateNoteResponse>, Status> {
         let command = proto::note::update_note_request(request.into_inner())?;
-        update_note::execute(command, &self.state.store, &self.state.pool)
+        edit_note::execute(command, &self.state.store, &self.state.pool)
             .await
-            .map(proto::note::update_note_response)
+            .map(|note| proto::note::update_note_response(&note))
             .map(Response::new)
-            .map_err(update_note_status)
+            .map_err(edit_note_status)
+    }
+
+    type DeleteNoteStream = ResponseStream<v1::DeleteNoteResponse>;
+
+    async fn delete_note(
+        &self,
+        request: Request<Streaming<v1::DeleteNoteRequest>>,
+    ) -> Result<Response<Self::DeleteNoteStream>, Status> {
+        let mut inbound = request.into_inner();
+        let start = next_delete_note_start(&mut inbound).await?;
+        let command = proto::note::delete_note_start(&start)?;
+        let (outbound, receiver) = mpsc::channel(STREAM_BUFFER);
+        let mut confirmation = GrpcConfirmationClient::new(
+            inbound,
+            outbound.clone(),
+            |confirmation: &RemoveNoteConfirmation| v1::DeleteNoteResponse {
+                value: Some(v1::delete_note_response::Value::Preflight(
+                    proto::note::delete_note_confirmation(confirmation),
+                )),
+            },
+            |message| match message.value {
+                Some(v1::delete_note_request::Value::Decision(decision)) => Ok(decision.confirmed),
+                Some(v1::delete_note_request::Value::Start(_)) | None => {
+                    Err(ConfirmationClientError::UnexpectedMessage)
+                }
+            },
+        );
+        let state = self.state.clone();
+        tokio::spawn(async move {
+            let item = remove_note::execute(command, &state.store, &state.pool, &mut confirmation)
+                .await
+                .map(proto::note::delete_note_result)
+                .map(|result| v1::DeleteNoteResponse {
+                    value: Some(v1::delete_note_response::Value::Result(result)),
+                })
+                .map_err(remove_note_status);
+            let _ = outbound.send(item).await;
+        });
+        Ok(Response::new(Box::pin(ReceiverStream::new(receiver))))
+    }
+}
+
+async fn next_delete_note_start(
+    inbound: &mut Streaming<v1::DeleteNoteRequest>,
+) -> Result<v1::DeleteNoteStart, Status> {
+    let message = inbound
+        .message()
+        .await?
+        .ok_or_else(|| Status::invalid_argument("note delete stream requires a start message"))?;
+    match message.value {
+        Some(v1::delete_note_request::Value::Start(start)) => Ok(start),
+        Some(v1::delete_note_request::Value::Decision(_)) | None => Err(Status::invalid_argument(
+            "note delete stream must start with start",
+        )),
     }
 }
 
@@ -99,15 +157,16 @@ fn remove_note_status(error: RemoveNoteError) -> Status {
         RemoveNoteError::ResolveProject(error) => resolve_project_status(&error),
         RemoveNoteError::ProjectMismatch { .. } => Status::failed_precondition(error.to_string()),
         RemoveNoteError::NoSuchNote { .. } => Status::not_found(error.to_string()),
+        RemoveNoteError::Confirmation(error) => confirmation_status(&error),
         RemoveNoteError::Store(_) => Status::internal(error.to_string()),
     }
 }
 
-fn update_note_status(error: UpdateNoteError) -> Status {
+fn edit_note_status(error: EditNoteError) -> Status {
     match error {
-        UpdateNoteError::ResolveProject(error) => resolve_project_status(&error),
-        UpdateNoteError::ProjectMismatch { .. } => Status::failed_precondition(error.to_string()),
-        UpdateNoteError::NoSuchNote { .. } => Status::not_found(error.to_string()),
-        UpdateNoteError::Store(_) => Status::internal(error.to_string()),
+        EditNoteError::ResolveProject(error) => resolve_project_status(&error),
+        EditNoteError::ProjectMismatch { .. } => Status::failed_precondition(error.to_string()),
+        EditNoteError::NoSuchNote { .. } => Status::not_found(error.to_string()),
+        EditNoteError::Store(_) => Status::internal(error.to_string()),
     }
 }

@@ -13,7 +13,7 @@ use pwf_models::{
     },
 };
 
-use crate::field_update::FieldUpdate;
+use crate::{collection_edit::CollectionEdit, field_update::FieldUpdate};
 
 pub mod session;
 
@@ -322,34 +322,6 @@ pub enum EditTaskContentError {
     MissingPromptTitle,
     #[error("{message}")]
     InvalidTitle { message: String },
-}
-
-/// Selects how an optional collection changes.
-#[derive(Debug, Clone, Default)]
-pub enum CollectionEdit<T> {
-    /// Leaves the stored collection unchanged.
-    #[default]
-    Unchanged,
-    /// Appends values to the stored collection.
-    Append(T),
-    /// Replaces the stored collection with the supplied values.
-    Replace(T),
-    /// Removes the stored collection.
-    Clear,
-}
-
-impl<T> CollectionEdit<T> {
-    #[must_use]
-    pub fn addition(&self) -> Option<&T> {
-        match self {
-            Self::Append(value) | Self::Replace(value) => Some(value),
-            Self::Unchanged | Self::Clear => None,
-        }
-    }
-
-    fn is_unchanged(&self) -> bool {
-        matches!(self, Self::Unchanged)
-    }
 }
 
 /// Carries at least one requested task change.
@@ -973,10 +945,10 @@ mod tests {
     use pwf_models::task::TaskPrompt;
 
     use super::{
-        AddTaskPrompt, CollectionEdit, EditTaskContent, EditTaskContentError, EmptyTaskEdits,
-        TaskEdits, TaskLaneEdits, TaskLaneValueError, TaskLanes,
+        AddTaskPrompt, EditTaskContent, EditTaskContentError, EmptyTaskEdits, TaskEdits,
+        TaskLaneEdits, TaskLaneValueError, TaskLanes,
     };
-    use crate::field_update::FieldUpdate;
+    use crate::{collection_edit::CollectionEdit, field_update::FieldUpdate};
 
     #[test]
     fn lanes_trim_outer_whitespace_and_preserve_literal_markers() {

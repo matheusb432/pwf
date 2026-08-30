@@ -9,7 +9,8 @@ use pwf_client::{
     },
 };
 
-use super::{agent_name, paint};
+use super::agent_name;
+use crate::render::paint;
 
 pub(in crate::task) fn render_dispatch(
     outcome: &DispatchedSession,

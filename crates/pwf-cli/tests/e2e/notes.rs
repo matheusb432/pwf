@@ -33,25 +33,45 @@ fn note_lifecycle_is_observable_through_the_cli() -> anyhow::Result<()> {
             "Keep process behavior at the process boundary.",
         ],
     )?;
-    assert!(added.contains("FOO-NOTE-0001"), "{added}");
+    assert_eq!(
+        added,
+        "Added pwf note: **FOO-NOTE-0001 foo :: CLI contracts expose owned semantics**\n\n"
+    );
 
     let listed = successful_stdout(&fixture, &["note", "foo"])?;
     assert!(listed.contains("CLI contracts expose owned semantics"));
 
-    successful_stdout(
+    let edited = successful_stdout(
         &fixture,
         &[
             "note",
-            "update",
+            "edit",
             "FOO",
             "1",
+            "--title",
             "CLI boundaries expose owned semantics",
+            "--content",
+            "Keep explicit values independent from shorthand parsing.",
+            "--why",
+            "Machine callers need presence semantics.",
+            "--add-tag",
+            "cli",
+            "--add-source",
+            "PWF-0180 implementation",
         ],
     )?;
+    assert_eq!(
+        edited,
+        "Edited pwf note: **FOO-NOTE-0001 foo :: CLI boundaries expose owned semantics**\n\n"
+    );
     let listed = successful_stdout(&fixture, &["note", "foo"])?;
     assert!(listed.contains("CLI boundaries expose owned semantics"));
 
-    successful_stdout(&fixture, &["note", "remove", "foo", "1"])?;
+    let removed = successful_stdout(&fixture, &["note", "remove", "foo", "1", "--yes"])?;
+    assert_eq!(
+        removed,
+        "Removed pwf note: **FOO-NOTE-0001 foo :: CLI boundaries expose owned semantics**\n\n"
+    );
     let listed = successful_stdout(&fixture, &["note", "foo"])?;
     assert!(!listed.contains("CLI boundaries expose owned semantics"));
     Ok(())

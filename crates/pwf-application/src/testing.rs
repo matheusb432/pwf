@@ -44,6 +44,7 @@ struct InMemoryState {
     project_ids: BTreeMap<ProjectName, ProjectId>,
     project_notes: BTreeMap<ProjectName, Vec<ProjectNote>>,
     project_note_creations: BTreeMap<ProjectName, Vec<AppDate>>,
+    project_note_patches: BTreeMap<ProjectName, Vec<ProjectNotePatch>>,
     project_note_failures: Vec<ProjectNoteFailure>,
 }
 
@@ -133,6 +134,14 @@ impl InMemoryStore {
     pub fn project_note_creations(&self, project: &str) -> Vec<AppDate> {
         self.lock()
             .project_note_creations
+            .get(&project_name(project))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    pub fn project_note_patches(&self, project: &str) -> Vec<ProjectNotePatch> {
+        self.lock()
+            .project_note_patches
             .get(&project_name(project))
             .cloned()
             .unwrap_or_default()
@@ -442,6 +451,11 @@ impl ProjectNoteStore for InMemoryStore {
         patch: ProjectNotePatch,
     ) -> Result<(), Self::Error> {
         let mut state = self.lock();
+        state
+            .project_note_patches
+            .entry(project.title.clone())
+            .or_default()
+            .push(patch.clone());
         let note = state
             .project_notes
             .entry(project.title.clone())
@@ -449,7 +463,9 @@ impl ProjectNoteStore for InMemoryStore {
             .iter_mut()
             .find(|note| note.id == *id)
             .unwrap();
-        note.title = patch.title;
+        if let Some(title) = patch.title {
+            note.title = title;
+        }
         Ok(())
     }
 
@@ -473,14 +489,6 @@ impl ProjectNoteStore for InMemoryStore {
         assert!(count_before > notes.len(), "delete of unknown project note");
         Ok(())
     }
-    fn note_exists(&self, project: &Project, id: &NoteId) -> Result<bool, Self::Error> {
-        Ok(self
-            .lock()
-            .project_notes
-            .get(&project.title)
-            .is_some_and(|notes| notes.iter().any(|note| note.id == *id)))
-    }
-
     fn read_note_markdown(
         &self,
         locator: &pwf_wire::task::TaskNotePath,

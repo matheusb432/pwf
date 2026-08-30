@@ -1,6 +1,7 @@
 use clap::Args;
 use pwf_client::{
-    task::{Confirmation, ConfirmationPrompt, ConfirmedRequestError, TaskClient},
+    confirmation::{Confirmation, ConfirmationPrompt, ConfirmedRequestError},
+    task::TaskClient,
     v1::{
         Agent, AgentAvailability, BlockedByResolutionKind, BlockedByStatus, DispatchMode,
         DispatchSessionOutcome, LaunchDirectives, PlanSessionIntent, PlanSessionRequest,

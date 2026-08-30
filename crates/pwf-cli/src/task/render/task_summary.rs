@@ -1,7 +1,7 @@
 use anstyle::AnsiColor;
 use pwf_client::v1::TaskStatus;
 
-use super::{ID_ORANGE, paint};
+use crate::render::{ID_ORANGE, paint, render_summary};
 
 pub(in crate::task) fn render_task_summary(
     identifier: &str,
@@ -9,21 +9,19 @@ pub(in crate::task) fn render_task_summary(
     status: Option<TaskStatus>,
     color_on: bool,
 ) -> String {
+    let Some(status) = status else {
+        return render_summary(identifier, title, color_on);
+    };
     // Plain output is a raw-text contract; Markdown emphasis is reserved for ANSI rendering.
     let identifier = if color_on {
         paint(identifier, ID_ORANGE, true)
     } else {
         identifier.to_string()
     };
-    match status {
-        None => format!("{identifier} :: {title}"),
-        Some(status) => {
-            format!(
-                "{identifier} [{}] :: {title}",
-                render_status(status, color_on)
-            )
-        }
-    }
+    format!(
+        "{identifier} [{}] :: {title}",
+        render_status(status, color_on)
+    )
 }
 
 pub(in crate::task) fn render_status(status: TaskStatus, color_on: bool) -> String {

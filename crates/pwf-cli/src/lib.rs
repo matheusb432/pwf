@@ -3,9 +3,11 @@
 pub mod command;
 mod confirmation;
 pub mod console;
+mod edit;
 pub mod note;
 mod preprocess;
 pub mod project;
+mod render;
 pub mod task;
 
 pub(crate) fn rpc_error(error: pwf_client::ClientError) -> anyhow::Error {

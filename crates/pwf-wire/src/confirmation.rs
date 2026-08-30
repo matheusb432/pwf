@@ -2,11 +2,20 @@
 
 use pwf_models::{
     AppDate,
+    note::{NoteId, NoteTitle},
     project::ProjectName,
     task::{TaskId, TaskStatus, TaskTitle},
 };
 
 use super::task::TaskNotePath;
+
+/// Identifies the project note deleted after confirmation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoveNoteConfirmation {
+    pub note_identifier: NoteId,
+    pub project: ProjectName,
+    pub title: NoteTitle,
+}
 
 /// Identifies the task and note deleted after confirmation.
 #[derive(Debug, Clone, PartialEq, Eq)]

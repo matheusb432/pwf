@@ -8,7 +8,7 @@ use dialoguer::{
     console::Term,
     theme::{ColorfulTheme, Theme},
 };
-use pwf_client::task::{Confirmation, ConfirmationPrompt};
+use pwf_client::confirmation::{Confirmation, ConfirmationPrompt};
 
 use crate::console::Console;
 
@@ -167,6 +167,17 @@ pub(crate) fn prompt_error(context: &str, source: dialoguer::Error) -> anyhow::E
 
 fn confirmation_dialog(confirmation: &Confirmation) -> ConfirmationDialog {
     match confirmation {
+        Confirmation::DeleteNote(confirmation) => ConfirmationDialog::new(
+            "Confirm note removal",
+            vec![
+                Detail::new("Note", &confirmation.note_id),
+                Detail::new("Title", &confirmation.title),
+                Detail::new("Project", &confirmation.project),
+            ],
+            "Remove this note?",
+            ConfirmationDefault::No,
+            ConfirmationTone::Destructive,
+        ),
         Confirmation::DeleteTask(confirmation) => ConfirmationDialog::new(
             "Confirm task removal",
             vec![
@@ -285,7 +296,9 @@ impl Theme for ConfirmationTheme {
 
 #[cfg(test)]
 mod tests {
-    use pwf_client::v1::{DeleteTaskConfirmation, ReopenTaskConfirmation, TaskStatus};
+    use pwf_client::v1::{
+        DeleteNoteConfirmation, DeleteTaskConfirmation, ReopenTaskConfirmation, TaskStatus,
+    };
 
     use super::*;
 
@@ -326,6 +339,23 @@ mod tests {
         assert_eq!(
             confirmation_dialog(&confirmation).render(false),
             "Confirm task removal\n\n  Task     FOO-0001\n  Title    stale task\n  Status   active\n  Project  foo\n  Note     /notes/foo/FOO-0001.md"
+        );
+    }
+
+    #[test]
+    fn note_removal_uses_the_destructive_default_no_dialog() {
+        let confirmation = Confirmation::DeleteNote(DeleteNoteConfirmation {
+            note_id: "FOO-NOTE-0001".to_string(),
+            project: "foo".to_string(),
+            title: "stale insight".to_string(),
+        });
+
+        let dialog = confirmation_dialog(&confirmation);
+        assert_eq!(dialog.default, ConfirmationDefault::No);
+        assert_eq!(dialog.tone, ConfirmationTone::Destructive);
+        assert_eq!(
+            dialog.render(false),
+            "Confirm note removal\n\n  Note     FOO-NOTE-0001\n  Title    stale insight\n  Project  foo"
         );
     }
 

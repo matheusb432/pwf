@@ -9,7 +9,7 @@ use pwf_models::{
 };
 use tonic::Status;
 
-use super::super::{invalid, parse, required};
+use super::super::{collection_edit, invalid, parse, required};
 use crate::{field_update::FieldUpdate, task, v1};
 
 pub fn create_task_request(request: v1::CreateTaskRequest) -> Result<task::AddTask, Status> {
@@ -256,24 +256,6 @@ fn status_filter(value: i32) -> Result<task::StatusFilter, Status> {
         Some(v1::TaskStatusFilter::Unspecified) | None => {
             Err(invalid("status", "must be specified"))
         }
-    }
-}
-
-fn collection_edit<T>(
-    value: Option<v1::StringCollectionEdit>,
-    parse_values: fn(Vec<String>) -> Result<Option<T>, Status>,
-) -> Result<task::CollectionEdit<T>, Status> {
-    let Some(value) = value else {
-        return Ok(task::CollectionEdit::Unchanged);
-    };
-    match required("collection_edit.operation", value.operation)? {
-        v1::string_collection_edit::Operation::Append(values) => parse_values(values.values)?
-            .map(task::CollectionEdit::Append)
-            .ok_or_else(|| invalid("collection_edit.values", "cannot be empty")),
-        v1::string_collection_edit::Operation::Replace(values) => parse_values(values.values)?
-            .map(task::CollectionEdit::Replace)
-            .ok_or_else(|| invalid("collection_edit.values", "cannot be empty")),
-        v1::string_collection_edit::Operation::Clear(_) => Ok(task::CollectionEdit::Clear),
     }
 }
 

@@ -1,6 +1,7 @@
 use clap::Args;
 use pwf_client::{
-    task::{ConfirmedRequestError, TaskClient},
+    confirmation::ConfirmedRequestError,
+    task::TaskClient,
     v1::{DeleteTaskStart, delete_task_result},
 };
 

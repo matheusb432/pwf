@@ -1,5 +1,6 @@
 //! Process-neutral operation contracts and their versioned protobuf representation.
 
+pub mod collection_edit;
 pub mod confirmation;
 pub mod field_update;
 pub mod note;

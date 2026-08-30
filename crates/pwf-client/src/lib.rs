@@ -11,6 +11,7 @@ use tonic::{
 };
 use tonic_health::pb::{HealthCheckRequest, health_client::HealthClient};
 
+pub mod confirmation;
 pub mod note;
 pub mod project;
 pub mod task;

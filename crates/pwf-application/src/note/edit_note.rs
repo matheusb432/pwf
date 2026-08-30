@@ -1,0 +1,206 @@
+//! Edits selected fields of one note in a managed project.
+
+use pwf_models::{
+    note::NoteSelector,
+    project::{ProjectId, ProjectName},
+};
+use pwf_wire::{
+    note::{EditNote, MutatedNote},
+    project::{ProjectStatusFilter, ResolveProject},
+};
+
+use crate::{
+    ports::project_note::{ProjectNotePatch, ProjectNoteStore},
+    project::resolve_project::{self, ResolveProjectError},
+};
+
+#[derive(Debug, thiserror::Error)]
+pub enum EditNoteError {
+    #[error(transparent)]
+    ResolveProject(#[from] ResolveProjectError),
+    #[error("Note id '{selector}' does not belong to project {project_id}.")]
+    ProjectMismatch {
+        selector: NoteSelector,
+        project_id: ProjectId,
+    },
+    #[error("No such note {id} in {project}.")]
+    NoSuchNote {
+        id: pwf_models::note::NoteId,
+        project: ProjectName,
+    },
+    #[error(transparent)]
+    Store(anyhow::Error),
+}
+
+/// Resolves one note and applies only the explicitly selected changes.
+#[cqrsy::command]
+pub async fn execute(
+    command: EditNote,
+    store: &impl ProjectNoteStore,
+    pool: &sqlx::SqlitePool,
+) -> Result<MutatedNote, EditNoteError> {
+    let project = resolve_project::execute(
+        ResolveProject {
+            selector: command.project_selector,
+            status: ProjectStatusFilter::ActiveOnly,
+        },
+        pool,
+    )
+    .await?;
+    let id =
+        command
+            .selector
+            .resolve(&project.id)
+            .ok_or_else(|| EditNoteError::ProjectMismatch {
+                selector: command.selector,
+                project_id: project.id.clone(),
+            })?;
+    let existing = store
+        .get_note(&project, &id)
+        .map_err(|error| EditNoteError::Store(anyhow::Error::new(error)))?
+        .ok_or_else(|| EditNoteError::NoSuchNote {
+            id: id.clone(),
+            project: project.title.clone(),
+        })?;
+    let title = command.edits.title().cloned().unwrap_or(existing.title);
+    let patch = ProjectNotePatch {
+        title: command.edits.title().cloned(),
+        content: command.edits.content().cloned(),
+        why: command.edits.why().clone(),
+        domain: command.edits.domain().clone(),
+        tags: command.edits.tags().clone(),
+        sources: command.edits.sources().clone(),
+        verified: command.edits.verified().clone(),
+    };
+    store
+        .update_note(&project, &id, patch)
+        .map_err(|error| EditNoteError::Store(anyhow::Error::new(error)))?;
+    Ok(MutatedNote {
+        id,
+        project: project.title,
+        title,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use pwf_models::note::{
+        NoteContent, NoteDomain, NoteId, NoteSource, NoteTag, NoteTitle, NoteVerification, NoteWhy,
+        ProjectNote,
+    };
+    use pwf_wire::{
+        collection_edit::CollectionEdit,
+        field_update::FieldUpdate,
+        note::{EditNote, NoteEdits},
+    };
+
+    use super::EditNoteError;
+    use crate::{
+        note::edit_note,
+        ports::project_note::ProjectNotePatch,
+        testing::{InMemoryStore, insert_project},
+    };
+
+    fn note() -> ProjectNote {
+        ProjectNote {
+            id: NoteId::try_new("FOO-NOTE-0007").unwrap(),
+            title: NoteTitle::try_new("old message").unwrap(),
+        }
+    }
+
+    fn edits(title: Option<&str>) -> NoteEdits {
+        NoteEdits::try_new(
+            title.map(|value| NoteTitle::try_new(value).unwrap()),
+            Some(NoteContent::try_new("new content").unwrap()),
+            FieldUpdate::Update(NoteWhy::try_new("new reason").unwrap()),
+            FieldUpdate::Clear,
+            CollectionEdit::Append(vec![NoteTag::try_new("new-tag").unwrap()]),
+            CollectionEdit::Replace(vec![NoteSource::try_new("new source").unwrap()]),
+            FieldUpdate::Update(NoteVerification::try_new("2026-08-30").unwrap()),
+        )
+        .unwrap()
+    }
+
+    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
+    async fn explicit_edits_preserve_omitted_title_and_pass_each_patch_operation(
+        pool: sqlx::SqlitePool,
+    ) {
+        insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
+        let store = InMemoryStore::default().with_project_notes("foo", vec![note()]);
+
+        let edited = edit_note::execute(
+            EditNote {
+                project_selector: "foo".parse().unwrap(),
+                selector: "7".parse().unwrap(),
+                edits: edits(None),
+            },
+            &store,
+            &pool,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(edited.id.as_ref(), "FOO-NOTE-0007");
+        assert_eq!(edited.project.as_ref(), "foo");
+        assert_eq!(edited.title.as_ref(), "old message");
+        assert_eq!(
+            store.project_note_patches("foo"),
+            vec![ProjectNotePatch {
+                title: None,
+                content: Some(NoteContent::try_new("new content").unwrap()),
+                why: FieldUpdate::Update(NoteWhy::try_new("new reason").unwrap()),
+                domain: FieldUpdate::<NoteDomain>::Clear,
+                tags: CollectionEdit::Append(vec![NoteTag::try_new("new-tag").unwrap()]),
+                sources: CollectionEdit::Replace(vec![NoteSource::try_new("new source").unwrap(),]),
+                verified: FieldUpdate::Update(NoteVerification::try_new("2026-08-30").unwrap(),),
+            }]
+        );
+    }
+
+    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
+    async fn full_prefixless_and_bare_identifiers_resolve(pool: sqlx::SqlitePool) {
+        insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
+        for identifier in ["FOO-NOTE-0007", "foo-note-0007", "note-0007", "7"] {
+            let store = InMemoryStore::default().with_project_notes("foo", vec![note()]);
+
+            let edited = edit_note::execute(
+                EditNote {
+                    project_selector: "foo".parse().unwrap(),
+                    selector: identifier.parse().unwrap(),
+                    edits: edits(Some("new message")),
+                },
+                &store,
+                &pool,
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(edited.title.as_ref(), "new message");
+            assert_eq!(store.project_notes("foo")[0].title.as_ref(), "new message");
+        }
+    }
+
+    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
+    async fn missing_note_is_reported(pool: sqlx::SqlitePool) {
+        insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
+        let store = InMemoryStore::default();
+
+        let error = edit_note::execute(
+            EditNote {
+                project_selector: "foo".parse().unwrap(),
+                selector: "7".parse().unwrap(),
+                edits: edits(Some("new message")),
+            },
+            &store,
+            &pool,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            EditNoteError::NoSuchNote { ref id, ref project }
+                if id.as_ref() == "FOO-NOTE-0007" && project.as_ref() == "foo"
+        ));
+    }
+}

@@ -2,15 +2,17 @@ use std::{fmt::Write as _, path::Path};
 
 use pwf_application::ports::project_note::{NewProjectNote, ProjectNotePatch, ProjectNoteStore};
 use pwf_models::{
-    note::{NoteId, NoteTitle, NoteTitleError, ProjectNote},
+    note::{NoteId, NoteSource, NoteTag, NoteTitle, NoteTitleError, ProjectNote},
     project::{Project, ProjectId, ProjectName},
 };
+use pwf_wire::{collection_edit::CollectionEdit, field_update::FieldUpdate};
+use serde::Deserialize;
 
 use super::{ObsidianStore, ObsidianStoreError, fs::read_task_file};
 use crate::obsidian::{
     MarkdownFile,
     index_text::{add_note_link, remove_note_link},
-    markdown_line, note_text,
+    markdown_line,
 };
 
 impl ProjectNoteStore for ObsidianStore {
@@ -76,8 +78,7 @@ impl ProjectNoteStore for ObsidianStore {
                 source: source.into_io_error(),
             }
         })?;
-        let updated = replace_title(&file, &patch.title);
-        file.replace_source(updated);
+        apply_note_patch(&mut file, id, patch)?;
         file.save()
             .map_err(|source| ObsidianStoreError::WriteProjectNote {
                 id: id.to_string(),
@@ -103,16 +104,6 @@ impl ProjectNoteStore for ObsidianStore {
             .unwrap_or_default();
         write_index(&index_path, &remove_note_link(&index, id.as_ref()))
     }
-    fn note_exists(&self, project: &Project, id: &NoteId) -> Result<bool, Self::Error> {
-        let note_path = self.tasks_path(project)?.join(note_file_name(id));
-        note_path
-            .try_exists()
-            .map_err(|source| ObsidianStoreError::InspectProjectNote {
-                id: id.to_string(),
-                source,
-            })
-    }
-
     fn read_note_markdown(
         &self,
         locator: &pwf_wire::task::TaskNotePath,
@@ -223,16 +214,340 @@ fn yaml_array(values: &[impl AsRef<str>]) -> String {
     )
 }
 
-fn replace_title(file: &MarkdownFile, title: &NoteTitle) -> String {
-    let source = file.source();
-    let body_start = source.len() - file.body().len();
-    for line in markdown_line::lines(source).filter(|line| line.start >= body_start) {
-        if line.text.starts_with("# ") {
-            let line_end = line.start + line.text.len();
-            return format!("{}# {title}{}", &source[..line.start], &source[line_end..]);
+fn apply_note_patch(
+    file: &mut MarkdownFile,
+    id: &NoteId,
+    patch: ProjectNotePatch,
+) -> Result<(), ObsidianStoreError> {
+    let ProjectNotePatch {
+        title,
+        content,
+        why,
+        domain,
+        tags,
+        sources,
+        verified,
+    } = patch;
+    let resolved_tags = resolve_collection(tags, || stored_tags(file, id))?;
+    let resolved_sources = resolve_collection(sources, || stored_sources(file, id))?;
+    let body_start = file.source().len() - file.body().len();
+    let mut source = file.source().to_string();
+    if let Some(title) = title {
+        source = replace_title(&source, body_start, &title);
+    }
+    if let Some(content) = content {
+        source = replace_content(&source, body_start, content.as_ref());
+    }
+    source = match why {
+        FieldUpdate::Unchanged => source,
+        FieldUpdate::Update(why) => edit_section(
+            &source,
+            body_start,
+            "## Why it matters",
+            Some(why.as_ref()),
+            Some("## Sources"),
+        ),
+        FieldUpdate::Clear => edit_section(
+            &source,
+            body_start,
+            "## Why it matters",
+            None,
+            Some("## Sources"),
+        ),
+    };
+    if let Some(sources) = &resolved_sources {
+        let rendered = sources
+            .iter()
+            .map(|source| format!("- {source}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        source = edit_section(
+            &source,
+            body_start,
+            "## Sources",
+            (!sources.is_empty()).then_some(rendered.as_str()),
+            None,
+        );
+    }
+    file.replace_source(source);
+    apply_field_update(file, id, "domain", domain)?;
+    apply_collection_update(file, id, "tags", resolved_tags)?;
+    apply_collection_update(file, id, "sources", resolved_sources)?;
+    apply_field_update(file, id, "verified", verified)?;
+    Ok(())
+}
+
+fn resolve_collection<T: Clone + PartialEq>(
+    edit: CollectionEdit<Vec<T>>,
+    current: impl FnOnce() -> Result<Vec<T>, ObsidianStoreError>,
+) -> Result<Option<Vec<T>>, ObsidianStoreError> {
+    match edit {
+        CollectionEdit::Unchanged => Ok(None),
+        CollectionEdit::Clear => Ok(Some(Vec::new())),
+        CollectionEdit::Replace(values) => Ok(Some(unique(values))),
+        CollectionEdit::Append(values) => {
+            let mut merged = current()?;
+            append_unique(&mut merged, values);
+            Ok(Some(merged))
         }
     }
-    note_text::replace_body(source, title.as_ref())
+}
+
+fn append_unique<T: PartialEq>(values: &mut Vec<T>, additions: Vec<T>) {
+    for value in additions {
+        if !values.contains(&value) {
+            values.push(value);
+        }
+    }
+}
+
+fn unique<T: PartialEq>(values: Vec<T>) -> Vec<T> {
+    let mut unique = Vec::new();
+    for value in values {
+        if !unique.contains(&value) {
+            unique.push(value);
+        }
+    }
+    unique
+}
+
+#[derive(Default, Deserialize)]
+struct StoredTags {
+    #[serde(default)]
+    tags: Vec<String>,
+}
+
+fn stored_tags(file: &MarkdownFile, id: &NoteId) -> Result<Vec<NoteTag>, ObsidianStoreError> {
+    let values = file
+        .frontmatter::<StoredTags>()
+        .map_err(|source| ObsidianStoreError::FrontmatterParse {
+            path: file.path().to_path_buf(),
+            property: "tags",
+            source,
+        })?
+        .unwrap_or_default()
+        .tags;
+    values
+        .into_iter()
+        .enumerate()
+        .map(|(index, value)| {
+            NoteTag::try_new(value).map_err(|source| ObsidianStoreError::InvalidProjectNoteTag {
+                id: id.to_string(),
+                index,
+                source,
+            })
+        })
+        .collect()
+}
+
+#[derive(Default, Deserialize)]
+struct StoredSources {
+    #[serde(default)]
+    sources: Vec<String>,
+}
+
+fn stored_sources(file: &MarkdownFile, id: &NoteId) -> Result<Vec<NoteSource>, ObsidianStoreError> {
+    let values = file
+        .frontmatter::<StoredSources>()
+        .map_err(|source| ObsidianStoreError::FrontmatterParse {
+            path: file.path().to_path_buf(),
+            property: "sources",
+            source,
+        })?
+        .unwrap_or_default()
+        .sources;
+    values
+        .into_iter()
+        .enumerate()
+        .map(|(index, value)| {
+            NoteSource::try_new(value).map_err(|source| {
+                ObsidianStoreError::InvalidProjectNoteSource {
+                    id: id.to_string(),
+                    index,
+                    source,
+                }
+            })
+        })
+        .collect()
+}
+
+fn apply_field_update<T: ToString>(
+    file: &mut MarkdownFile,
+    id: &NoteId,
+    property: &str,
+    update: FieldUpdate<T>,
+) -> Result<(), ObsidianStoreError> {
+    match update {
+        FieldUpdate::Unchanged => Ok(()),
+        FieldUpdate::Update(value) => file
+            .set_property(property, &value.to_string())
+            .map_err(|source| project_note_edit_error(id, source)),
+        FieldUpdate::Clear => file
+            .remove_property(property)
+            .map(|_| ())
+            .map_err(|source| project_note_edit_error(id, source)),
+    }
+}
+
+fn apply_collection_update<T: ToString>(
+    file: &mut MarkdownFile,
+    id: &NoteId,
+    property: &str,
+    values: Option<Vec<T>>,
+) -> Result<(), ObsidianStoreError> {
+    let Some(values) = values else {
+        return Ok(());
+    };
+    if values.is_empty() {
+        return file
+            .remove_property(property)
+            .map(|_| ())
+            .map_err(|source| project_note_edit_error(id, source));
+    }
+    let values = values
+        .into_iter()
+        .map(|value| value.to_string())
+        .collect::<Vec<_>>();
+    file.set_property(property, &values)
+        .map_err(|source| project_note_edit_error(id, source))
+}
+
+fn project_note_edit_error(
+    id: &NoteId,
+    source: crate::obsidian::MarkdownFileError,
+) -> ObsidianStoreError {
+    ObsidianStoreError::EditProjectNote {
+        id: id.to_string(),
+        source,
+    }
+}
+
+fn replace_title(source: &str, body_start: usize, title: &NoteTitle) -> String {
+    let Some(line) = title_line(source, body_start) else {
+        return source.to_string();
+    };
+    let replacement = if line.text.starts_with("# ") {
+        format!("# {title}")
+    } else {
+        title.to_string()
+    };
+    format!(
+        "{}{}{}",
+        &source[..line.start],
+        replacement,
+        &source[line.start + line.text.len()..]
+    )
+}
+
+fn replace_content(source: &str, body_start: usize, content: &str) -> String {
+    let Some(title) = title_line(source, body_start) else {
+        return source.to_string();
+    };
+    let section_start = markdown_line::lines(source)
+        .filter(|line| line.start >= title.end)
+        .find(|line| matches!(line.text.trim(), "## Why it matters" | "## Sources"))
+        .map_or(source.len(), |line| line.start);
+    let newline = body_newline(source, body_start);
+    let content = normalize_newlines(content, newline);
+    let suffix_separator = if section_start < source.len() {
+        newline
+    } else {
+        ""
+    };
+    format!(
+        "{}{newline}{content}{newline}{suffix_separator}{}",
+        &source[..title.end],
+        &source[section_start..]
+    )
+}
+
+fn edit_section(
+    source: &str,
+    body_start: usize,
+    heading: &str,
+    value: Option<&str>,
+    insert_before: Option<&str>,
+) -> String {
+    let newline = body_newline(source, body_start);
+    let existing = markdown_line::lines(source)
+        .filter(|line| line.start >= body_start)
+        .find(|line| line.text.trim() == heading);
+    if let Some(start) = existing {
+        let end = markdown_line::lines(source)
+            .filter(|line| line.start >= start.end)
+            .find(|line| line.text.trim_start().starts_with("## "))
+            .map_or(source.len(), |line| line.start);
+        let replacement = value.map_or_else(String::new, |value| {
+            render_section(heading, value, newline, end < source.len())
+        });
+        return format!(
+            "{}{}{}",
+            &source[..start.start],
+            replacement,
+            &source[end..]
+        );
+    }
+    let Some(value) = value else {
+        return source.to_string();
+    };
+    let position = insert_before
+        .and_then(|target| {
+            markdown_line::lines(source)
+                .filter(|line| line.start >= body_start)
+                .find(|line| line.text.trim() == target)
+                .map(|line| line.start)
+        })
+        .unwrap_or(source.len());
+    let mut prefix = source[..position].to_string();
+    ensure_blank_line(&mut prefix, newline);
+    let section = render_section(heading, value, newline, position < source.len());
+    format!("{prefix}{section}{}", &source[position..])
+}
+
+fn render_section(heading: &str, value: &str, newline: &str, followed: bool) -> String {
+    let value = normalize_newlines(value, newline);
+    let trailing = if followed {
+        format!("{newline}{newline}")
+    } else {
+        newline.to_string()
+    };
+    format!("{heading}{newline}{newline}{value}{trailing}")
+}
+
+fn ensure_blank_line(source: &mut String, newline: &str) {
+    if !source.ends_with(newline) {
+        source.push_str(newline);
+    }
+    let separator = format!("{newline}{newline}");
+    if !source.ends_with(&separator) {
+        source.push_str(newline);
+    }
+}
+
+fn title_line(source: &str, body_start: usize) -> Option<markdown_line::MarkdownLine<'_>> {
+    markdown_line::lines(source)
+        .filter(|line| line.start >= body_start)
+        .find(|line| line.text.starts_with("# "))
+        .or_else(|| {
+            markdown_line::lines(source)
+                .filter(|line| line.start >= body_start)
+                .find(|line| !line.text.trim().is_empty())
+        })
+}
+
+fn body_newline(source: &str, body_start: usize) -> &'static str {
+    markdown_line::lines(&source[body_start..])
+        .find(|line| !line.newline.is_empty())
+        .map_or("\n", |line| line.newline)
+}
+
+fn normalize_newlines(value: &str, newline: &str) -> String {
+    let normalized = value.replace("\r\n", "\n").replace('\r', "\n");
+    if newline == "\n" {
+        normalized
+    } else {
+        normalized.replace('\n', newline)
+    }
 }
 
 fn note_not_found(project: &ProjectName, id: &NoteId) -> ObsidianStoreError {
@@ -268,8 +583,20 @@ mod tests {
             ProjectSourceValue, ProjectTasks, ProjectTasksKind, ProjectTasksPath,
         },
     };
+    use pwf_wire::{collection_edit::CollectionEdit, field_update::FieldUpdate};
 
     use super::super::{ObsidianStore, ObsidianStoreError};
+    use crate::obsidian::MarkdownFile;
+
+    #[derive(Debug, serde::Deserialize)]
+    struct NoteFrontmatter {
+        domain: Option<String>,
+        #[serde(default)]
+        tags: Vec<String>,
+        #[serde(default)]
+        sources: Vec<String>,
+        verified: Option<String>,
+    }
 
     fn store(tasks_path: &Path) -> ObsidianStore {
         ObsidianStore::new(HomeDirectory::new(tasks_path.to_path_buf()))
@@ -390,7 +717,8 @@ mod tests {
             &project(&tasks_path),
             &identifier(1),
             ProjectNotePatch {
-                title: NoteTitle::try_new("new message").unwrap(),
+                title: Some(NoteTitle::try_new("new message").unwrap()),
+                ..ProjectNotePatch::default()
             },
         )
         .unwrap();
@@ -429,7 +757,8 @@ mod tests {
             &project(&tasks_path),
             &identifier(1),
             ProjectNotePatch {
-                title: NoteTitle::try_new("new title").unwrap(),
+                title: Some(NoteTitle::try_new("new title").unwrap()),
+                ..ProjectNotePatch::default()
             },
         )
         .unwrap();
@@ -437,6 +766,102 @@ mod tests {
         assert_eq!(
             fs::read_to_string(tasks_path.join("FOO-NOTE-0001.md")).unwrap(),
             source.replacen("# old title", "# new title", 1)
+        );
+    }
+
+    #[test]
+    fn update_applies_explicit_scalar_and_collection_edits() {
+        let directory = tempfile::tempdir().unwrap();
+        let tasks_path = directory.path().join("tasks");
+        fs::create_dir_all(&tasks_path).unwrap();
+        fs::write(tasks_path.join("foo.md"), "").unwrap();
+        let store = store(&tasks_path);
+        ProjectNoteStore::insert_note(&store, &project(&tasks_path), new_note(1, "old title"))
+            .unwrap();
+
+        ProjectNoteStore::update_note(
+            &store,
+            &project(&tasks_path),
+            &identifier(1),
+            ProjectNotePatch {
+                title: Some(NoteTitle::try_new("new title").unwrap()),
+                content: Some(NoteContent::try_new("New body.\n\n- Keep structure.").unwrap()),
+                why: FieldUpdate::Update(NoteWhy::try_new("New consequence.").unwrap()),
+                domain: FieldUpdate::Clear,
+                tags: CollectionEdit::Append(vec![
+                    NoteTag::try_new("testing").unwrap(),
+                    NoteTag::try_new("rust").unwrap(),
+                ]),
+                sources: CollectionEdit::Replace(vec![
+                    NoteSource::try_new("PWF-0180 implementation").unwrap(),
+                ]),
+                verified: FieldUpdate::Clear,
+            },
+        )
+        .unwrap();
+
+        let file = MarkdownFile::open(tasks_path.join("FOO-NOTE-0001.md")).unwrap();
+        let metadata = file.frontmatter::<NoteFrontmatter>().unwrap().unwrap();
+        assert_eq!(metadata.domain, None);
+        assert_eq!(metadata.tags, ["cli", "testing", "rust"]);
+        assert_eq!(metadata.sources, ["PWF-0180 implementation"]);
+        assert_eq!(metadata.verified, None);
+        assert_eq!(
+            file.body(),
+            concat!(
+                "\n# new title\n\n",
+                "New body.\n\n",
+                "- Keep structure.\n\n",
+                "## Why it matters\n\n",
+                "New consequence.\n\n",
+                "## Sources\n\n",
+                "- PWF-0180 implementation\n",
+            )
+        );
+    }
+
+    #[test]
+    fn update_removes_only_fields_with_explicit_clear_operations() {
+        let directory = tempfile::tempdir().unwrap();
+        let tasks_path = directory.path().join("tasks");
+        fs::create_dir_all(&tasks_path).unwrap();
+        fs::write(tasks_path.join("foo.md"), "").unwrap();
+        let store = store(&tasks_path);
+        ProjectNoteStore::insert_note(
+            &store,
+            &project(&tasks_path),
+            new_note(1, "preserved title"),
+        )
+        .unwrap();
+
+        ProjectNoteStore::update_note(
+            &store,
+            &project(&tasks_path),
+            &identifier(1),
+            ProjectNotePatch {
+                why: FieldUpdate::Clear,
+                domain: FieldUpdate::Clear,
+                tags: CollectionEdit::Clear,
+                sources: CollectionEdit::Clear,
+                verified: FieldUpdate::Clear,
+                ..ProjectNotePatch::default()
+            },
+        )
+        .unwrap();
+
+        let file = MarkdownFile::open(tasks_path.join("FOO-NOTE-0001.md")).unwrap();
+        let metadata = file.frontmatter::<NoteFrontmatter>().unwrap().unwrap();
+        assert_eq!(metadata.domain, None);
+        assert!(metadata.tags.is_empty());
+        assert!(metadata.sources.is_empty());
+        assert_eq!(metadata.verified, None);
+        assert_eq!(
+            file.body(),
+            concat!(
+                "\n# preserved title\n\n",
+                "A CLI flag needs a binary test only for an owned contract.\n\n",
+                "- Preserve the process boundary.\n\n",
+            )
         );
     }
 

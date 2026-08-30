@@ -1,16 +1,20 @@
 //! Removes one note from a managed project.
 
 use pwf_models::{
-    note::{NoteId, NoteSelector},
+    note::NoteSelector,
     project::{ProjectId, ProjectName},
 };
 use pwf_wire::{
-    note::RemoveNote,
+    confirmation::RemoveNoteConfirmation,
+    note::{MutatedNote, RemoveNote, RemovedNoteOutcome},
     project::{ProjectStatusFilter, ResolveProject},
 };
 
 use crate::{
-    ports::project_note::ProjectNoteStore,
+    ports::{
+        confirmation::{ConfirmationClient, ConfirmationClientError},
+        project_note::ProjectNoteStore,
+    },
     project::resolve_project::{self, ResolveProjectError},
 };
 
@@ -30,6 +34,8 @@ pub enum RemoveNoteError {
     },
     #[error(transparent)]
     Store(anyhow::Error),
+    #[error(transparent)]
+    Confirmation(#[from] ConfirmationClientError),
 }
 
 /// Resolves and deletes one note after confirming its representation exists.
@@ -38,7 +44,8 @@ pub async fn execute(
     command: RemoveNote,
     store: &impl ProjectNoteStore,
     pool: &sqlx::SqlitePool,
-) -> Result<NoteId, RemoveNoteError> {
+    confirmation_client: &mut dyn ConfirmationClient<Confirmation = RemoveNoteConfirmation>,
+) -> Result<RemovedNoteOutcome, RemoveNoteError> {
     let project = resolve_project::execute(
         ResolveProject {
             selector: command.project_selector,
@@ -55,37 +62,89 @@ pub async fn execute(
                 selector: command.selector,
                 project_id: project.id.clone(),
             })?;
-    let exists = store
-        .note_exists(&project, &id)
+    let note = store
+        .get_note(&project, &id)
         .map_err(|error| RemoveNoteError::Store(anyhow::Error::new(error)))?;
-    if !exists {
+    let Some(note) = note else {
         return Err(RemoveNoteError::NoSuchNote {
             id,
             project: project.title,
         });
+    };
+    let confirmation = RemoveNoteConfirmation {
+        note_identifier: id.clone(),
+        project: project.title.clone(),
+        title: note.title.clone(),
+    };
+    if !confirmation_client.confirm(&confirmation).await? {
+        return Ok(RemovedNoteOutcome::Aborted { note_id: id });
     }
     store
         .delete_note(&project, &id)
         .map_err(|error| RemoveNoteError::Store(anyhow::Error::new(error)))?;
-    Ok(id)
+    Ok(RemovedNoteOutcome::Removed(MutatedNote {
+        id,
+        project: project.title,
+        title: note.title,
+    }))
 }
 
 #[cfg(test)]
 mod tests {
+    use futures::future::BoxFuture;
     use pwf_models::{
         note::{NoteId, NoteTitle, ProjectNote},
-        project::ProjectId,
+        project::{ProjectId, ProjectName},
+    };
+    use pwf_wire::{
+        confirmation::RemoveNoteConfirmation,
+        note::{RemoveNote, RemovedNoteOutcome},
     };
 
-    use super::{RemoveNote, RemoveNoteError};
+    use super::RemoveNoteError;
     use crate::{
         note::remove_note,
+        ports::confirmation::{ConfirmationClient, ConfirmationClientError},
         testing::{InMemoryStore, ProjectNoteFailure, insert_project},
     };
 
     #[derive(Debug, thiserror::Error)]
     #[error("sentinel store failure")]
     struct SentinelStoreError;
+
+    struct TestConfirmation {
+        accepted: bool,
+        recorded: Vec<RemoveNoteConfirmation>,
+    }
+
+    impl TestConfirmation {
+        fn accepting() -> Self {
+            Self {
+                accepted: true,
+                recorded: Vec::new(),
+            }
+        }
+
+        fn declining() -> Self {
+            Self {
+                accepted: false,
+                recorded: Vec::new(),
+            }
+        }
+    }
+
+    impl ConfirmationClient for TestConfirmation {
+        type Confirmation = RemoveNoteConfirmation;
+
+        fn confirm<'a>(
+            &'a mut self,
+            confirmation: &'a RemoveNoteConfirmation,
+        ) -> BoxFuture<'a, Result<bool, ConfirmationClientError>> {
+            self.recorded.push(confirmation.clone());
+            let accepted = self.accepted;
+            Box::pin(std::future::ready(Ok(accepted)))
+        }
+    }
 
     fn note() -> ProjectNote {
         ProjectNote {
@@ -104,6 +163,7 @@ mod tests {
             "7",
         ] {
             let store = InMemoryStore::default().with_project_notes("foo", vec![note()]);
+            let mut confirmation = TestConfirmation::accepting();
 
             let removed = remove_note::execute(
                 RemoveNote {
@@ -112,11 +172,23 @@ mod tests {
                 },
                 &store,
                 &pool,
+                &mut confirmation,
             )
             .await
             .unwrap();
 
-            assert_eq!(removed.as_ref(), "FOO-NOTE-0007");
+            assert!(matches!(
+                removed,
+                RemovedNoteOutcome::Removed(ref note) if note.id.as_ref() == "FOO-NOTE-0007"
+            ));
+            assert_eq!(
+                confirmation.recorded,
+                vec![RemoveNoteConfirmation {
+                    note_identifier: NoteId::try_new("FOO-NOTE-0007").unwrap(),
+                    project: ProjectName::try_new("foo").unwrap(),
+                    title: NoteTitle::try_new("remember milk").unwrap(),
+                }]
+            );
             assert!(store.project_notes("foo").is_empty());
         }
     }
@@ -125,6 +197,7 @@ mod tests {
     async fn missing_note_wins_over_adapter_delete_failure(pool: sqlx::SqlitePool) {
         insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
         let store = InMemoryStore::default().with_failure(ProjectNoteFailure::Delete);
+        let mut confirmation = TestConfirmation::accepting();
 
         let error = remove_note::execute(
             RemoveNote {
@@ -133,6 +206,7 @@ mod tests {
             },
             &store,
             &pool,
+            &mut confirmation,
         )
         .await
         .unwrap_err();
@@ -150,6 +224,7 @@ mod tests {
     async fn identifier_from_another_project_is_rejected(pool: sqlx::SqlitePool) {
         insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
         let store = InMemoryStore::default();
+        let mut confirmation = TestConfirmation::accepting();
 
         let error = remove_note::execute(
             RemoveNote {
@@ -158,6 +233,7 @@ mod tests {
             },
             &store,
             &pool,
+            &mut confirmation,
         )
         .await
         .unwrap_err();
@@ -170,6 +246,28 @@ mod tests {
             } if selector.to_string() == "BAR-NOTE-0001"
                 && project_id == &ProjectId::try_new("FOO").unwrap()
         ));
+    }
+
+    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
+    async fn decline_preserves_the_note(pool: sqlx::SqlitePool) {
+        insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
+        let store = InMemoryStore::default().with_project_notes("foo", vec![note()]);
+        let mut confirmation = TestConfirmation::declining();
+
+        let outcome = remove_note::execute(
+            RemoveNote {
+                project_selector: "foo".parse().unwrap(),
+                selector: "7".parse().unwrap(),
+            },
+            &store,
+            &pool,
+            &mut confirmation,
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(outcome, RemovedNoteOutcome::Aborted { .. }));
+        assert_eq!(store.project_notes("foo"), vec![note()]);
     }
 
     #[test]

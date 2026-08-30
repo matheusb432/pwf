@@ -117,6 +117,26 @@ pub enum ObsidianStoreError {
     InspectProjectNote { id: String, source: std::io::Error },
     #[error("Cannot write note {id}: {source}")]
     WriteProjectNote { id: String, source: std::io::Error },
+    #[error("Cannot edit note {id}: {source}")]
+    EditProjectNote {
+        id: String,
+        #[source]
+        source: crate::obsidian::MarkdownFileError,
+    },
+    #[error("Invalid note {id} tag at index {index}: {source}")]
+    InvalidProjectNoteTag {
+        id: String,
+        index: usize,
+        #[source]
+        source: pwf_models::note::NoteTagError,
+    },
+    #[error("Invalid note {id} source at index {index}: {source}")]
+    InvalidProjectNoteSource {
+        id: String,
+        index: usize,
+        #[source]
+        source: pwf_models::note::NoteSourceError,
+    },
     #[error("Cannot remove note {id}: {source}")]
     RemoveProjectNote { id: String, source: std::io::Error },
     #[error("No such note {id} in {project}.")]

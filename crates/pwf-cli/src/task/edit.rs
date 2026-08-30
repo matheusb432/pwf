@@ -2,9 +2,9 @@ use clap::{ArgGroup, Args};
 use pwf_client::{
     task::TaskClient,
     v1::{
-        self, AppendTaskPrompt, ClearField, StringCollectionEdit, StringValues, StructuredTaskEdit,
+        self, AppendTaskPrompt, ClearField, StringCollectionEdit, StructuredTaskEdit,
         TaskContentEdit, TaskLane, UpdateTaskRequest, effort_edit, priority_edit,
-        string_collection_edit, task_content_edit,
+        task_content_edit,
     },
 };
 use pwf_models::task::{TagInput, TaskTags, TaskTitle};
@@ -15,7 +15,7 @@ use super::{
     render::{TITLE_NORMALIZED_NOTICE, render_edited},
     task_lanes, task_title,
 };
-use crate::console::Console;
+use crate::{console::Console, edit::string_collection_edit};
 
 #[derive(Args, Debug)]
 #[command(group(
@@ -156,7 +156,8 @@ impl BlockedByEdits {
     fn edit(&self) -> Option<StringCollectionEdit> {
         string_collection_edit(
             blocked_by_input::collect(&self.add_blocked_by)
-                .map(|values| values.iter().map(ToString::to_string).collect()),
+                .map(|values| values.iter().map(ToString::to_string).collect())
+                .unwrap_or_default(),
             self.remove_blocked_by,
         )
     }
@@ -176,7 +177,8 @@ impl TagEdits {
     fn edit(&self) -> Option<StringCollectionEdit> {
         string_collection_edit(
             TaskTags::from_inputs(&self.add_tag)
-                .map(|tags| tags.iter().map(ToString::to_string).collect()),
+                .map(|tags| tags.iter().map(ToString::to_string).collect())
+                .unwrap_or_default(),
             self.remove_tags,
         )
     }
@@ -233,28 +235,6 @@ impl PriorityEdit {
                 })
             },
         )
-    }
-}
-
-fn string_collection_edit(
-    addition: Option<Vec<String>>,
-    remove_existing: bool,
-) -> Option<StringCollectionEdit> {
-    match (addition, remove_existing) {
-        (Some(values), true) => Some(StringCollectionEdit {
-            operation: Some(string_collection_edit::Operation::Replace(StringValues {
-                values,
-            })),
-        }),
-        (Some(values), false) => Some(StringCollectionEdit {
-            operation: Some(string_collection_edit::Operation::Append(StringValues {
-                values,
-            })),
-        }),
-        (None, true) => Some(StringCollectionEdit {
-            operation: Some(string_collection_edit::Operation::Clear(ClearField {})),
-        }),
-        (None, false) => None,
     }
 }
 

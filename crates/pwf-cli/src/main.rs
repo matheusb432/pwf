@@ -45,7 +45,12 @@ async fn run(parsed: command::Cli) -> anyhow::Result<String> {
         }
         command::RootCommand::Note(arguments) => {
             let note_client = client.note();
-            note::run(&arguments, &note_client).await
+            note::run(
+                &arguments,
+                pwf_cli::console::Console::from_terminal(),
+                &note_client,
+            )
+            .await
         }
     }
 }

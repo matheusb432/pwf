@@ -85,9 +85,9 @@ mod tests {
     }
 
     #[test]
-    fn note_update_keeps_accepting_unquoted_title_words() {
+    fn note_edit_keeps_accepting_unquoted_title_words() {
         let cli = super::parse_argv(
-            ["note", "update", "foo", "1", "new", "title"]
+            ["note", "edit", "foo", "1", "new", "title"]
                 .into_iter()
                 .map(str::to_string)
                 .collect(),
@@ -99,11 +99,20 @@ mod tests {
             _ => None,
         };
         assert!(arguments.is_some());
-        let title = match arguments.unwrap().command {
-            note::Command::Update { title, .. } => Some(title),
-            _ => None,
-        };
-        assert_eq!(title.unwrap(), ["new", "title"]);
+        assert!(matches!(arguments.unwrap().command, note::Command::Edit(_)));
+    }
+
+    #[test]
+    fn note_update_is_not_an_alias_or_an_implicit_project_listing() {
+        let error = super::parse_argv(
+            ["note", "update", "foo", "1", "new title"]
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
+        )
+        .unwrap_err();
+
+        assert_eq!(error.kind(), clap::error::ErrorKind::InvalidSubcommand);
     }
 
     #[test]

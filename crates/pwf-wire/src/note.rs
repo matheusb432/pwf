@@ -9,6 +9,8 @@ use pwf_models::{
     project::{ProjectName, ProjectSelector},
 };
 
+use crate::{collection_edit::CollectionEdit, field_update::FieldUpdate};
+
 /// Requests creation of one project note.
 #[derive(Debug, Clone)]
 pub struct AddNote {
@@ -69,15 +71,104 @@ pub struct RemoveNote {
     pub selector: NoteSelector,
 }
 
-/// Requests replacement of one project note's title.
+/// Carries at least one requested note change.
 #[derive(Debug, Clone)]
-pub struct UpdateNote {
+pub struct NoteEdits {
+    title: Option<NoteTitle>,
+    content: Option<NoteContent>,
+    why: FieldUpdate<NoteWhy>,
+    domain: FieldUpdate<NoteDomain>,
+    tags: CollectionEdit<Vec<NoteTag>>,
+    sources: CollectionEdit<Vec<NoteSource>>,
+    verified: FieldUpdate<NoteVerification>,
+}
+
+impl NoteEdits {
+    /// Creates a non-empty set of note changes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EmptyNoteEdits`] when every field is unchanged.
+    pub fn try_new(
+        title: Option<NoteTitle>,
+        content: Option<NoteContent>,
+        why: FieldUpdate<NoteWhy>,
+        domain: FieldUpdate<NoteDomain>,
+        tags: CollectionEdit<Vec<NoteTag>>,
+        sources: CollectionEdit<Vec<NoteSource>>,
+        verified: FieldUpdate<NoteVerification>,
+    ) -> Result<Self, EmptyNoteEdits> {
+        if title.is_none()
+            && content.is_none()
+            && why.is_unchanged()
+            && domain.is_unchanged()
+            && tags.is_unchanged()
+            && sources.is_unchanged()
+            && verified.is_unchanged()
+        {
+            return Err(EmptyNoteEdits);
+        }
+        Ok(Self {
+            title,
+            content,
+            why,
+            domain,
+            tags,
+            sources,
+            verified,
+        })
+    }
+
+    #[must_use]
+    pub fn title(&self) -> Option<&NoteTitle> {
+        self.title.as_ref()
+    }
+
+    #[must_use]
+    pub fn content(&self) -> Option<&NoteContent> {
+        self.content.as_ref()
+    }
+
+    #[must_use]
+    pub fn why(&self) -> &FieldUpdate<NoteWhy> {
+        &self.why
+    }
+
+    #[must_use]
+    pub fn domain(&self) -> &FieldUpdate<NoteDomain> {
+        &self.domain
+    }
+
+    #[must_use]
+    pub fn tags(&self) -> &CollectionEdit<Vec<NoteTag>> {
+        &self.tags
+    }
+
+    #[must_use]
+    pub fn sources(&self) -> &CollectionEdit<Vec<NoteSource>> {
+        &self.sources
+    }
+
+    #[must_use]
+    pub fn verified(&self) -> &FieldUpdate<NoteVerification> {
+        &self.verified
+    }
+}
+
+/// Reports an edit request with no changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("nothing to edit; pass at least one edit flag")]
+pub struct EmptyNoteEdits;
+
+/// Requests a partial edit of one project note.
+#[derive(Debug, Clone)]
+pub struct EditNote {
     /// Selects the managed project by name or id code.
     pub project_selector: ProjectSelector,
     /// Selects the note by full id, `NOTE-NNNN`, or bare numeric suffix.
     pub selector: NoteSelector,
-    /// Supplies the replacement title.
-    pub title: NoteTitle,
+    /// Selects explicit changes while preserving every omitted field.
+    pub edits: NoteEdits,
 }
 
 /// Identifies and names one project note.
@@ -85,6 +176,21 @@ pub struct UpdateNote {
 pub struct NoteSummary {
     pub id: NoteId,
     pub title: NoteTitle,
+}
+
+/// Identifies one note mutation for frontend feedback.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MutatedNote {
+    pub id: NoteId,
+    pub project: ProjectName,
+    pub title: NoteTitle,
+}
+
+/// Reports whether a confirmed note removal completed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RemovedNoteOutcome {
+    Removed(MutatedNote),
+    Aborted { note_id: NoteId },
 }
 
 /// Describes one capped project-note listing.

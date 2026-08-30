@@ -6,7 +6,6 @@ mod session;
 mod session_confirmation;
 mod task_summary;
 
-use anstyle::Ansi256Color;
 pub(super) use close::{
     emit_cancel_diagnostics, emit_complete_diagnostics, render_cancelled, render_completed,
     render_reopened,
@@ -26,14 +25,4 @@ fn agent_name(agent: pwf_client::v1::Agent) -> &'static str {
         pwf_client::v1::Agent::Codex => "codex",
         pwf_client::v1::Agent::Unspecified => "agent",
     }
-}
-
-const ID_ORANGE: Ansi256Color = Ansi256Color(208);
-
-fn paint(text: &str, color: impl Into<anstyle::Color>, enabled: bool) -> String {
-    if !enabled {
-        return format!("**{text}**");
-    }
-    let style = anstyle::Style::new().bold().fg_color(Some(color.into()));
-    format!("{}{}{}", style.render(), text, style.render_reset())
 }

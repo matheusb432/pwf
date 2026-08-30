@@ -6,7 +6,7 @@ use pwf_models::{
     },
     project::Project,
 };
-use pwf_wire::task::TaskNotePath;
+use pwf_wire::{collection_edit::CollectionEdit, field_update::FieldUpdate, task::TaskNotePath};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewProjectNote {
@@ -21,9 +21,15 @@ pub struct NewProjectNote {
     pub created: AppDate,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ProjectNotePatch {
-    pub title: NoteTitle,
+    pub title: Option<NoteTitle>,
+    pub content: Option<NoteContent>,
+    pub why: FieldUpdate<NoteWhy>,
+    pub domain: FieldUpdate<NoteDomain>,
+    pub tags: CollectionEdit<Vec<NoteTag>>,
+    pub sources: CollectionEdit<Vec<NoteSource>>,
+    pub verified: FieldUpdate<NoteVerification>,
 }
 
 pub trait ProjectNoteStore: Clone + Send + Sync + 'static {
@@ -43,7 +49,6 @@ pub trait ProjectNoteStore: Clone + Send + Sync + 'static {
         patch: ProjectNotePatch,
     ) -> Result<(), Self::Error>;
     fn delete_note(&self, project: &Project, id: &NoteId) -> Result<(), Self::Error>;
-    fn note_exists(&self, project: &Project, id: &NoteId) -> Result<bool, Self::Error>;
 
     fn read_note_markdown(&self, locator: &TaskNotePath) -> Result<String, Self::Error>;
 }

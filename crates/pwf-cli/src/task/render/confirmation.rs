@@ -3,7 +3,7 @@
 use anstyle::AnsiColor;
 use pwf_client::v1::{CreatedTask, DeletedTask, UpdatedTask};
 
-use super::paint;
+use crate::render::render_confirmation;
 
 pub(in crate::task) fn render_added(task: &CreatedTask, color_on: bool) -> String {
     render_confirmation(
@@ -57,25 +57,6 @@ pub(super) fn render_review_task(task: &CreatedTask) -> String {
 
 fn added_headline(task: &CreatedTask) -> String {
     format!("{} :: {}", task.project, task.title)
-}
-
-fn render_confirmation(
-    label: &str,
-    color: AnsiColor,
-    id: &str,
-    headline: &str,
-    detail_lines: &[String],
-    color_on: bool,
-) -> String {
-    let mut output = format!(
-        "{label}: {}\n",
-        paint(&format!("{id} {headline}"), color, color_on)
-    );
-    for line in detail_lines {
-        output.push_str(line);
-        output.push('\n');
-    }
-    output
 }
 
 #[cfg(test)]

@@ -1,6 +1,13 @@
 use pwf_wire::v1::{self, note_service_client::NoteServiceClient};
+use tokio::sync::mpsc;
+use tokio_stream::wrappers::ReceiverStream;
 
-use crate::{AuthenticatedChannel, ClientError, RequestPolicy};
+use crate::{
+    AuthenticatedChannel, ClientError, RequestPolicy,
+    confirmation::{Confirmation, ConfirmationPrompt, ConfirmedRequestError, protocol},
+};
+
+const STREAM_BUFFER: usize = 2;
 
 #[derive(Clone)]
 pub struct NoteClient {
@@ -38,15 +45,62 @@ impl NoteClient {
             .map_err(Into::into)
     }
 
-    pub async fn remove_note(
+    pub async fn delete_note<Prompt>(
         &self,
-        request: v1::RemoveNoteRequest,
-    ) -> Result<v1::RemoveNoteResponse, ClientError> {
-        self.client()
-            .remove_note(request)
+        request: v1::DeleteNoteStart,
+        prompt: Prompt,
+    ) -> Result<v1::DeleteNoteResult, ConfirmedRequestError<Prompt::Error>>
+    where
+        Prompt: ConfirmationPrompt,
+    {
+        let (sender, receiver) = mpsc::channel(STREAM_BUFFER);
+        sender
+            .send(v1::DeleteNoteRequest {
+                value: Some(v1::delete_note_request::Value::Start(request)),
+            })
             .await
-            .map(tonic::Response::into_inner)
-            .map_err(Into::into)
+            .map_err(|_| protocol("note delete request stream closed"))?;
+        let mut stream = self
+            .client()
+            .delete_note(ReceiverStream::new(receiver))
+            .await
+            .map_err(ConfirmedRequestError::Operation)?
+            .into_inner();
+        let first = stream
+            .message()
+            .await
+            .map_err(ConfirmedRequestError::Operation)?
+            .ok_or_else(|| protocol("note delete response stream closed before preflight"))?;
+        match first.value {
+            Some(v1::delete_note_response::Value::Preflight(preflight)) => {
+                let confirmed = prompt
+                    .confirm(&Confirmation::DeleteNote(preflight))
+                    .map_err(ConfirmedRequestError::Prompt)?;
+                sender
+                    .send(v1::DeleteNoteRequest {
+                        value: Some(v1::delete_note_request::Value::Decision(
+                            v1::ConfirmationDecision { confirmed },
+                        )),
+                    })
+                    .await
+                    .map_err(|_| protocol("note delete decision stream closed"))?;
+                let result = stream
+                    .message()
+                    .await
+                    .map_err(ConfirmedRequestError::Operation)?
+                    .ok_or_else(|| protocol("note delete response stream closed before result"))?;
+                match result.value {
+                    Some(v1::delete_note_response::Value::Result(result)) => Ok(result),
+                    Some(v1::delete_note_response::Value::Preflight(_)) | None => Err(protocol(
+                        "note delete response stream returned an invalid result",
+                    )),
+                }
+            }
+            Some(v1::delete_note_response::Value::Result(result)) => Ok(result),
+            None => Err(protocol(
+                "note delete response stream returned an empty message",
+            )),
+        }
     }
 
     pub async fn update_note(

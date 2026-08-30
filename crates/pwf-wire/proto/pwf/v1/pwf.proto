@@ -15,8 +15,8 @@ service ProjectService {
 service NoteService {
   rpc AddNote(AddNoteRequest) returns (AddNoteResponse);
   rpc ListNotes(ListNotesRequest) returns (ListNotesResponse);
-  rpc RemoveNote(RemoveNoteRequest) returns (RemoveNoteResponse);
   rpc UpdateNote(UpdateNoteRequest) returns (UpdateNoteResponse);
+  rpc DeleteNote(stream DeleteNoteRequest) returns (stream DeleteNoteResponse);
 }
 
 service TaskService {
@@ -163,20 +163,22 @@ message ListNotesRequest {
   uint64 limit = 3;
 }
 
-message RemoveNoteRequest {
-  string project_selector = 1;
-  string selector = 2;
-}
-
 message UpdateNoteRequest {
   string project_selector = 1;
   string selector = 2;
-  string title = 3;
+  optional string title = 3;
+  optional string content = 4;
+  StringFieldUpdate why = 5;
+  StringFieldUpdate domain = 6;
+  StringCollectionEdit tags = 7;
+  StringCollectionEdit sources = 8;
+  StringFieldUpdate verified = 9;
 }
 
 message AddNoteResponse {
   string id = 1;
   string title = 2;
+  string project = 3;
 }
 
 message ListedNote {
@@ -190,11 +192,50 @@ message ListNotesResponse {
   uint64 hidden = 3;
 }
 
-message RemoveNoteResponse { string id = 1; }
-
 message UpdateNoteResponse {
   string id = 1;
   string title = 2;
+  string project = 3;
+}
+
+message DeleteNoteStart {
+  string project_selector = 1;
+  string selector = 2;
+}
+
+message DeleteNoteConfirmation {
+  string note_id = 1;
+  string project = 2;
+  string title = 3;
+}
+
+message DeletedNote {
+  string id = 1;
+  string project = 2;
+  string title = 3;
+}
+
+message AbortedNoteOperation { string id = 1; }
+
+message DeleteNoteResult {
+  oneof outcome {
+    DeletedNote deleted = 1;
+    AbortedNoteOperation aborted = 2;
+  }
+}
+
+message DeleteNoteRequest {
+  oneof value {
+    DeleteNoteStart start = 1;
+    ConfirmationDecision decision = 2;
+  }
+}
+
+message DeleteNoteResponse {
+  oneof value {
+    DeleteNoteConfirmation preflight = 1;
+    DeleteNoteResult result = 2;
+  }
 }
 
 enum TaskLane {

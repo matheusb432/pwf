@@ -1,37 +1,14 @@
-use std::error::Error;
-
 use pwf_wire::v1::{self, task_service_client::TaskServiceClient};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::Status;
 
-use crate::{AuthenticatedChannel, ClientError, RequestPolicy};
+use crate::{
+    AuthenticatedChannel, ClientError, RequestPolicy,
+    confirmation::{Confirmation, ConfirmationPrompt, ConfirmedRequestError, protocol},
+};
 
 const STREAM_BUFFER: usize = 2;
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum Confirmation {
-    DeleteTask(v1::DeleteTaskConfirmation),
-    ReopenTask(v1::ReopenTaskConfirmation),
-    DispatchSession(v1::SessionDispatchPreflight),
-}
-
-pub trait ConfirmationPrompt: Send + Sync + 'static {
-    type Error: Error + Send + Sync + 'static;
-
-    fn confirm(&self, confirmation: &Confirmation) -> Result<bool, Self::Error>;
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum ConfirmedRequestError<PromptError>
-where
-    PromptError: Error + 'static,
-{
-    #[error(transparent)]
-    Operation(Status),
-    #[error(transparent)]
-    Prompt(PromptError),
-}
 
 #[derive(Clone)]
 pub struct TaskClient {
@@ -318,13 +295,6 @@ impl TaskClient {
         .max_encoding_message_size(super::MAX_REQUEST_MESSAGE_SIZE)
         .max_decoding_message_size(super::MAX_RESPONSE_MESSAGE_SIZE)
     }
-}
-
-fn protocol<PromptError>(message: &'static str) -> ConfirmedRequestError<PromptError>
-where
-    PromptError: Error + 'static,
-{
-    ConfirmedRequestError::Operation(Status::internal(message))
 }
 
 fn required_response<T>(value: Option<T>, message: &'static str) -> Result<T, ClientError> {

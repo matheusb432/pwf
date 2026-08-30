@@ -8,12 +8,12 @@ use std::{
 use anyhow::Context as _;
 use pwf_client::{
     ClientError, PwfClient,
-    task::{Confirmation, ConfirmationPrompt},
+    confirmation::{Confirmation, ConfirmationPrompt},
     v1::{
         self, Agent, DispatchMode, DispatchSessionOutcome, IndexSection, PlanSessionIntent,
         ProjectStatusFilter, SessionEffort, TaskReadFormat, create_task_request,
-        delete_task_result, note_service_client::NoteServiceClient, reopen_task_result,
-        task_service_client::TaskServiceClient,
+        delete_note_result, delete_task_result, note_service_client::NoteServiceClient,
+        reopen_task_result, task_service_client::TaskServiceClient,
     },
 };
 use pwf_local_auth::{
@@ -248,6 +248,7 @@ impl ConfirmationPrompt for RecordingPrompt {
 
     fn confirm(&self, confirmation: &Confirmation) -> Result<bool, Self::Error> {
         let operation = match confirmation {
+            Confirmation::DeleteNote(_) => "note-remove",
             Confirmation::DeleteTask(_) => "remove",
             Confirmation::ReopenTask(_) => "reopen",
             Confirmation::DispatchSession(_) => "session",
@@ -548,6 +549,92 @@ async fn generated_client_preserves_delete_and_session_confirmation_flows() -> a
         .await
         .unwrap_err();
     assert_eq!(rpc_status(missing).code(), Code::NotFound);
+
+    server.finish().await
+}
+
+#[tokio::test]
+async fn generated_client_preserves_note_removal_confirmation_flow() -> anyhow::Result<()> {
+    let server = TestServer::start(Duration::from_secs(2)).await?;
+    server.add_project_and_task().await?;
+    let added = server
+        .client
+        .note()
+        .add_note(v1::AddNoteRequest {
+            project_selector: "foo-bar".to_string(),
+            title: "transport note".to_string(),
+            content: "Exercise note confirmation over the real transport.".to_string(),
+            why: None,
+            domain: None,
+            tags: Vec::new(),
+            sources: Vec::new(),
+            verified: None,
+            date: None,
+        })
+        .await?;
+    assert_eq!(added.id, "FOO-NOTE-0001");
+
+    let decline_prompt = RecordingPrompt::new(false);
+    let declined = server
+        .client
+        .note()
+        .delete_note(
+            v1::DeleteNoteStart {
+                project_selector: "foo-bar".to_string(),
+                selector: "1".to_string(),
+            },
+            decline_prompt.clone(),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        declined.outcome,
+        Some(delete_note_result::Outcome::Aborted(ref note))
+            if note.id == "FOO-NOTE-0001"
+    ));
+    assert_eq!(decline_prompt.seen(), ["note-remove"]);
+    let listed = server
+        .client
+        .note()
+        .list_notes(v1::ListNotesRequest {
+            project_selector: "foo-bar".to_string(),
+            limit_kind: v1::NoteListLimitKind::Default as i32,
+            limit: 0,
+        })
+        .await?;
+    assert_eq!(listed.notes.len(), 1);
+
+    let accept_prompt = RecordingPrompt::new(true);
+    let deleted = server
+        .client
+        .note()
+        .delete_note(
+            v1::DeleteNoteStart {
+                project_selector: "foo-bar".to_string(),
+                selector: "1".to_string(),
+            },
+            accept_prompt.clone(),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        deleted.outcome,
+        Some(delete_note_result::Outcome::Deleted(ref note))
+            if note.id == "FOO-NOTE-0001"
+                && note.project == "foo-bar"
+                && note.title == "transport note"
+    ));
+    assert_eq!(accept_prompt.seen(), ["note-remove"]);
+    let listed = server
+        .client
+        .note()
+        .list_notes(v1::ListNotesRequest {
+            project_selector: "foo-bar".to_string(),
+            limit_kind: v1::NoteListLimitKind::Default as i32,
+            limit: 0,
+        })
+        .await?;
+    assert!(listed.notes.is_empty());
 
     server.finish().await
 }

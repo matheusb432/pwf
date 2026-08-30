@@ -73,12 +73,12 @@ fn is_id_facing_verb(verb: &str) -> bool {
 
 /// Returns note verbs recognized as clap subcommands.
 fn note_subcommands() -> &'static [&'static str] {
-    &["list", "ls", "add", "remove", "update", "help"]
+    &["list", "ls", "add", "remove", "edit", "help"]
 }
 
 /// Returns note verbs retired from the implicit project-list fallback.
 fn note_reserved_subcommands() -> &'static [&'static str] {
-    &["get"]
+    &["get", "update"]
 }
 
 /// Injects `ls` before a bare `note <project>` so an omitted verb lists.
