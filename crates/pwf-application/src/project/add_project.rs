@@ -4,7 +4,7 @@ use pwf_models::project::{HomeDirectory, ProjectId, ProjectName, ProjectTasksPat
 use pwf_wire::project::ProjectFields;
 use sqlx::error::ErrorKind;
 
-use super::{Project, ProjectRow, TaskLocationError, task_location};
+use super::{Project, ProjectRow, TaskLocationError, source_record, task_location};
 
 #[derive(Debug, thiserror::Error)]
 pub enum AddProjectError {
@@ -35,35 +35,9 @@ pub async fn execute(
         .map_err(|error| unexpected("starting project creation transaction", error))?;
     let existing = other_task_locations(&mut transaction, &fields.id).await?;
     task_location::reject_collision(&fields.id, fields.tasks.path(), existing, home)?;
-    let source_kind = fields.source.kind().to_string();
-    let source_value = fields.source.value().as_ref();
-    let source_id = sqlx::query_scalar!(
-        r#"
-        SELECT id AS "id!"
-        FROM project_sources
-        WHERE kind = ? AND value = ?
-        "#,
-        source_kind,
-        source_value,
-    )
-    .fetch_optional(&mut *transaction)
-    .await
-    .map_err(|error| unexpected("reading project source", error))?;
-    let source_id = match source_id {
-        Some(source_id) => source_id,
-        None => sqlx::query!(
-            r#"
-            INSERT INTO project_sources (kind, value)
-            VALUES (?, ?)
-            "#,
-            source_kind,
-            source_value,
-        )
-        .execute(&mut *transaction)
+    let source_id = source_record::get_or_insert(&mut transaction, &fields.source)
         .await
-        .map_err(|error| unexpected("inserting project source", error))?
-        .last_insert_rowid(),
-    };
+        .map_err(|error| unexpected("resolving project source", error))?;
 
     let id = fields.id.as_ref();
     let title = fields.title.as_ref();

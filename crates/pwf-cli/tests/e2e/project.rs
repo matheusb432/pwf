@@ -1,7 +1,8 @@
 use std::fs;
 
 use crate::support::{
-    ProjectFixture, assert_project, project_id, success_json, write_project_rename_fixture,
+    ProjectFixture, assert_project, assert_success, project_id, success_json,
+    write_project_rename_fixture,
 };
 
 #[test]
@@ -30,6 +31,21 @@ fn project_registry_lifecycle_is_observable_across_processes() {
         success_json(fixture.run(&["project", "get", "foo"]).unwrap()).unwrap(),
         foo
     );
+    let edited = fixture
+        .run(&["project", "edit", "foo", "--source", "/work/foo-updated"])
+        .unwrap();
+    assert_success(&edited, "edit project source");
+    assert!(edited.stdout.is_empty());
+    assert!(edited.stderr.is_empty());
+    let foo = success_json(fixture.run(&["project", "get", "foo"]).unwrap()).unwrap();
+    assert_project(
+        &foo,
+        &foo_project_id,
+        "foo-bar",
+        "/work/foo-updated",
+        "/pending-work/foo-bar",
+        false,
+    );
     assert_eq!(
         success_json(fixture.run(&["project", "pause", "bar"]).unwrap()).unwrap()["changed"],
         true
@@ -50,7 +66,7 @@ fn project_registry_lifecycle_is_observable_across_processes() {
         &projects[1],
         &foo_project_id,
         "foo-bar",
-        "/work/foo-bar",
+        "/work/foo-updated",
         "/pending-work/foo-bar",
         false,
     );

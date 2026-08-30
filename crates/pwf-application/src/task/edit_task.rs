@@ -3,10 +3,10 @@ use pwf_models::{
     task::{BlockedBy, TaskId, TaskStatus, TaskTags, TaskTitle, TaskTitleError},
 };
 use pwf_wire::{
+    field_update::FieldUpdate,
     project::ProjectStatusFilter,
     task::{
         CollectionEdit, EditTask, EditTaskContent, EditTaskContentKind, EditedTask, RawTaskTags,
-        ValueEdit,
     },
 };
 
@@ -249,11 +249,11 @@ fn map_blocked_by_error(error: BlockedByValidationError) -> EditTaskError {
     }
 }
 
-fn resolve_value<T: Copy>(edit: &ValueEdit<T>) -> NullablePatch<T> {
+fn resolve_value<T: Copy>(edit: &FieldUpdate<T>) -> NullablePatch<T> {
     match edit {
-        ValueEdit::Unchanged => NullablePatch::Unchanged,
-        ValueEdit::Set(value) => NullablePatch::Set(*value),
-        ValueEdit::Clear => NullablePatch::Clear,
+        FieldUpdate::Unchanged => NullablePatch::Unchanged,
+        FieldUpdate::Update(value) => NullablePatch::Set(*value),
+        FieldUpdate::Clear => NullablePatch::Clear,
     }
 }
 
@@ -313,9 +313,12 @@ fn map_lane_error(error: EditLanesError) -> EditTaskError {
 #[cfg(test)]
 mod tests {
     use pwf_models::task::{BlockedBy, EffortTier, TaskPrompt, TaskStatus, TaskTags, TaskTitle};
-    use pwf_wire::task::{
-        CollectionEdit, EditTask, EditTaskContent, EditedTask, RawTaskTags, TaskEdits, TaskLane,
-        TaskLaneEdits, TaskLanes, ValueEdit,
+    use pwf_wire::{
+        field_update::FieldUpdate,
+        task::{
+            CollectionEdit, EditTask, EditTaskContent, EditedTask, RawTaskTags, TaskEdits,
+            TaskLane, TaskLaneEdits, TaskLanes,
+        },
     };
 
     use super::EditTaskError;
@@ -346,12 +349,12 @@ mod tests {
         id: &str,
         content: Option<EditTaskContent>,
         blocked_by: CollectionEdit<BlockedBy>,
-        effort: ValueEdit<EffortTier>,
+        effort: FieldUpdate<EffortTier>,
         tags: CollectionEdit<TaskTags>,
     ) -> EditTask {
         EditTask {
             id: id.parse().unwrap(),
-            edits: TaskEdits::try_new(content, blocked_by, effort, tags, ValueEdit::Unchanged)
+            edits: TaskEdits::try_new(content, blocked_by, effort, tags, FieldUpdate::Unchanged)
                 .unwrap(),
         }
     }
@@ -361,7 +364,7 @@ mod tests {
             id,
             Some(content),
             CollectionEdit::Unchanged,
-            ValueEdit::Unchanged,
+            FieldUpdate::Unchanged,
             CollectionEdit::Unchanged,
         )
     }
@@ -535,7 +538,7 @@ mod tests {
             "FOO-0002",
             None,
             CollectionEdit::Replace(crate::testing::blocked_by(&["FOO-0001"])),
-            ValueEdit::Set(EffortTier::High),
+            FieldUpdate::Update(EffortTier::High),
             CollectionEdit::Replace(tags("new-tag")),
         );
 
@@ -577,7 +580,7 @@ mod tests {
             "FOO-0003",
             None,
             CollectionEdit::Append(crate::testing::blocked_by(&["FOO-0001"])),
-            ValueEdit::Unchanged,
+            FieldUpdate::Unchanged,
             CollectionEdit::Unchanged,
         );
 
@@ -607,7 +610,7 @@ mod tests {
             "FOO-0001",
             None,
             CollectionEdit::Unchanged,
-            ValueEdit::Clear,
+            FieldUpdate::Clear,
             CollectionEdit::Unchanged,
         );
 
@@ -629,7 +632,7 @@ mod tests {
             "FOO-0001",
             None,
             CollectionEdit::Unchanged,
-            ValueEdit::Set(EffortTier::High),
+            FieldUpdate::Update(EffortTier::High),
             CollectionEdit::Unchanged,
         );
 

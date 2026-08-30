@@ -10,7 +10,7 @@ use pwf_models::{
 use tonic::Status;
 
 use super::super::{invalid, parse, required};
-use crate::{task, v1};
+use crate::{field_update::FieldUpdate, task, v1};
 
 pub fn create_task_request(request: v1::CreateTaskRequest) -> Result<task::AddTask, Status> {
     let prompt = match required("prompt", request.prompt)? {
@@ -277,23 +277,23 @@ fn collection_edit<T>(
     }
 }
 
-fn effort_edit(value: Option<v1::EffortEdit>) -> Result<task::ValueEdit<EffortTier>, Status> {
+fn effort_edit(value: Option<v1::EffortEdit>) -> Result<FieldUpdate<EffortTier>, Status> {
     let Some(value) = value else {
-        return Ok(task::ValueEdit::Unchanged);
+        return Ok(FieldUpdate::Unchanged);
     };
     match required("effort.operation", value.operation)? {
-        v1::effort_edit::Operation::Set(value) => Ok(task::ValueEdit::Set(effort_tier(value)?)),
-        v1::effort_edit::Operation::Clear(_) => Ok(task::ValueEdit::Clear),
+        v1::effort_edit::Operation::Set(value) => Ok(FieldUpdate::Update(effort_tier(value)?)),
+        v1::effort_edit::Operation::Clear(_) => Ok(FieldUpdate::Clear),
     }
 }
 
-fn priority_edit(value: Option<v1::PriorityEdit>) -> Result<task::ValueEdit<PriorityTier>, Status> {
+fn priority_edit(value: Option<v1::PriorityEdit>) -> Result<FieldUpdate<PriorityTier>, Status> {
     let Some(value) = value else {
-        return Ok(task::ValueEdit::Unchanged);
+        return Ok(FieldUpdate::Unchanged);
     };
     match required("priority.operation", value.operation)? {
-        v1::priority_edit::Operation::Set(value) => Ok(task::ValueEdit::Set(priority_tier(value)?)),
-        v1::priority_edit::Operation::Clear(_) => Ok(task::ValueEdit::Clear),
+        v1::priority_edit::Operation::Set(value) => Ok(FieldUpdate::Update(priority_tier(value)?)),
+        v1::priority_edit::Operation::Clear(_) => Ok(FieldUpdate::Clear),
     }
 }
 

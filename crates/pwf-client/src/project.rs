@@ -82,6 +82,17 @@ impl ProjectClient {
             .map_err(Into::into)
     }
 
+    pub async fn update_project(
+        &self,
+        request: v1::UpdateProjectRequest,
+    ) -> Result<v1::UpdateProjectResponse, ClientError> {
+        self.client()
+            .update_project(request)
+            .await
+            .map(tonic::Response::into_inner)
+            .map_err(Into::into)
+    }
+
     fn client(&self) -> ProjectServiceClient<AuthenticatedChannel> {
         ProjectServiceClient::with_interceptor(self.channel.clone(), self.request_policy.clone())
             .max_encoding_message_size(super::MAX_REQUEST_MESSAGE_SIZE)

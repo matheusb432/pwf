@@ -377,7 +377,7 @@ async fn task_priority_round_trips_through_supported_rpcs() -> anyhow::Result<()
         .task()
         .update_task(priority_update(
             &task_id,
-            Some(v1::priority_edit::Operation::Clear(v1::ClearTaskField {})),
+            Some(v1::priority_edit::Operation::Clear(v1::ClearField {})),
         ))
         .await?;
     let data = task_data(&server, &task_id).await?;
@@ -408,6 +408,69 @@ async fn generated_client_maps_validation_and_not_found_statuses() -> anyhow::Re
         .get_project(v1::GetProjectRequest {
             id: "BAR".to_string(),
             status: ProjectStatusFilter::ActiveOnly as i32,
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(rpc_status(missing).code(), Code::NotFound);
+
+    server.finish().await
+}
+
+#[tokio::test]
+async fn project_source_update_round_trips_through_the_generated_client() -> anyhow::Result<()> {
+    let server = TestServer::start(Duration::from_secs(2)).await?;
+    server.add_project_and_task().await?;
+    let source_value = server.root.path().join("updated-project");
+    let source_value = source_value.to_string_lossy().into_owned();
+    let request = v1::UpdateProjectRequest {
+        id: "FOO".to_string(),
+        source_value: Some(v1::StringFieldUpdate {
+            operation: Some(v1::string_field_update::Operation::Update(
+                source_value.clone(),
+            )),
+        }),
+    };
+
+    server
+        .client
+        .project()
+        .update_project(request.clone())
+        .await?;
+    server.client.project().update_project(request).await?;
+
+    let project = server
+        .client
+        .project()
+        .get_project(v1::GetProjectRequest {
+            id: "FOO".to_string(),
+            status: ProjectStatusFilter::IncludingPaused as i32,
+        })
+        .await?;
+    assert_eq!(project.source_value, source_value);
+
+    let invalid = server
+        .client
+        .project()
+        .update_project(v1::UpdateProjectRequest {
+            id: "FOO".to_string(),
+            source_value: Some(v1::StringFieldUpdate {
+                operation: Some(v1::string_field_update::Operation::Clear(v1::ClearField {})),
+            }),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(rpc_status(invalid).code(), Code::InvalidArgument);
+
+    let missing = server
+        .client
+        .project()
+        .update_project(v1::UpdateProjectRequest {
+            id: "MISS".to_string(),
+            source_value: Some(v1::StringFieldUpdate {
+                operation: Some(v1::string_field_update::Operation::Update(
+                    "/work/missing".to_string(),
+                )),
+            }),
         })
         .await
         .unwrap_err();

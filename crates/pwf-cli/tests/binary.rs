@@ -6,6 +6,8 @@
 mod migrator;
 #[path = "binary/notes.rs"]
 mod notes;
+#[path = "binary/project_edit.rs"]
+mod project_edit;
 #[path = "binary/project_registry.rs"]
 mod project_registry;
 #[path = "binary/project_rename.rs"]

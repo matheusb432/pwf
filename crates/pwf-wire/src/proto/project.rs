@@ -7,7 +7,7 @@ use pwf_models::project::{
 use tonic::Status;
 
 use super::{invalid, parse, required};
-use crate::{project, v1};
+use crate::{field_update::FieldUpdate, project, v1};
 
 pub fn add_project_request(
     request: v1::AddProjectRequest,
@@ -46,6 +46,20 @@ pub fn rename_project_request(
 pub fn resume_project_request(request: v1::ResumeProjectRequest) -> Result<ProjectId, Status> {
     let v1::ResumeProjectRequest { id } = request;
     parse("id", &id)
+}
+
+pub fn update_project_request(
+    request: v1::UpdateProjectRequest,
+) -> Result<project::UpdateProject, Status> {
+    let source_value = match source_value_update(request.source_value)? {
+        FieldUpdate::Update(source_value) => source_value,
+        FieldUpdate::Clear => return Err(invalid("source_value", "cannot be cleared")),
+        FieldUpdate::Unchanged => return Err(invalid("source_value", "update is required")),
+    };
+    Ok(project::UpdateProject {
+        id: parse("id", &request.id)?,
+        source: ProjectSource::new(ProjectSourceKind::Directory, source_value),
+    })
 }
 
 #[must_use]
@@ -136,6 +150,11 @@ pub fn resume_project_response(change: project::ProjectStateChange) -> v1::Resum
     }
 }
 
+#[must_use]
+pub fn update_project_response() -> v1::UpdateProjectResponse {
+    v1::UpdateProjectResponse {}
+}
+
 fn project_fields(fields: v1::ProjectFields) -> Result<project::ProjectFields, Status> {
     let source_kind = ProjectSourceKind::try_from(fields.source_kind.as_str())
         .map_err(|error| invalid("fields.source_kind", error))?;
@@ -157,6 +176,20 @@ fn project_fields(fields: v1::ProjectFields) -> Result<project::ProjectFields, S
                 .map_err(|_| invalid("fields.tasks_path", "must not be blank"))?,
         ),
     })
+}
+
+fn source_value_update(
+    update: Option<v1::StringFieldUpdate>,
+) -> Result<FieldUpdate<ProjectSourceValue>, Status> {
+    let Some(update) = update else {
+        return Ok(FieldUpdate::Unchanged);
+    };
+    match required("source_value.operation", update.operation)? {
+        v1::string_field_update::Operation::Update(value) => ProjectSourceValue::try_new(value)
+            .map(FieldUpdate::Update)
+            .map_err(|_| invalid("source_value", "must not be blank")),
+        v1::string_field_update::Operation::Clear(_) => Ok(FieldUpdate::Clear),
+    }
 }
 
 fn project_message(project: Project) -> v1::Project {
@@ -188,6 +221,48 @@ fn project_status_filter(value: i32) -> Result<project::ProjectStatusFilter, Sta
         }
         Some(v1::ProjectStatusFilter::Unspecified) | None => {
             Err(invalid("status", "must be specified"))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tonic::Code;
+
+    use crate::v1::{ClearField, StringFieldUpdate, UpdateProjectRequest, string_field_update};
+
+    #[test]
+    fn update_project_request_requires_one_valid_source_update() {
+        let command = super::update_project_request(UpdateProjectRequest {
+            id: "foo".to_string(),
+            source_value: Some(StringFieldUpdate {
+                operation: Some(string_field_update::Operation::Update(
+                    "/work/new".to_string(),
+                )),
+            }),
+        })
+        .unwrap();
+
+        assert_eq!(command.id.as_ref(), "FOO");
+        assert_eq!(command.source.value().as_ref(), "/work/new");
+
+        for source_value in [
+            None,
+            Some(StringFieldUpdate { operation: None }),
+            Some(StringFieldUpdate {
+                operation: Some(string_field_update::Operation::Clear(ClearField {})),
+            }),
+            Some(StringFieldUpdate {
+                operation: Some(string_field_update::Operation::Update(" ".to_string())),
+            }),
+        ] {
+            let error = super::update_project_request(UpdateProjectRequest {
+                id: "FOO".to_string(),
+                source_value,
+            })
+            .unwrap_err();
+
+            assert_eq!(error.code(), Code::InvalidArgument);
         }
     }
 }

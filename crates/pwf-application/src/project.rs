@@ -32,7 +32,9 @@ pub mod rename_project;
 pub mod resolve_project;
 pub mod resume_project;
 pub mod runtime_path;
+mod source_record;
 mod task_location;
+pub mod update_project;
 
 pub use task_location::TaskLocationError;
 

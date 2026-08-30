@@ -13,6 +13,8 @@ use pwf_models::{
     },
 };
 
+use crate::field_update::FieldUpdate;
+
 pub mod session;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -350,32 +352,14 @@ impl<T> CollectionEdit<T> {
     }
 }
 
-/// Selects how an optional scalar value changes.
-#[derive(Debug, Clone, Default)]
-pub enum ValueEdit<T> {
-    /// Leaves the stored value unchanged.
-    #[default]
-    Unchanged,
-    /// Replaces the stored value.
-    Set(T),
-    /// Removes the stored value.
-    Clear,
-}
-
-impl<T> ValueEdit<T> {
-    fn is_unchanged(&self) -> bool {
-        matches!(self, Self::Unchanged)
-    }
-}
-
 /// Carries at least one requested task change.
 #[derive(Debug, Clone)]
 pub struct TaskEdits {
     content: Option<EditTaskContent>,
     blocked_by: CollectionEdit<BlockedBy>,
-    effort: ValueEdit<EffortTier>,
+    effort: FieldUpdate<EffortTier>,
     tags: CollectionEdit<TaskTags>,
-    priority: ValueEdit<PriorityTier>,
+    priority: FieldUpdate<PriorityTier>,
 }
 
 impl TaskEdits {
@@ -387,9 +371,9 @@ impl TaskEdits {
     pub fn try_new(
         content: Option<EditTaskContent>,
         blocked_by: CollectionEdit<BlockedBy>,
-        effort: ValueEdit<EffortTier>,
+        effort: FieldUpdate<EffortTier>,
         tags: CollectionEdit<TaskTags>,
-        priority: ValueEdit<PriorityTier>,
+        priority: FieldUpdate<PriorityTier>,
     ) -> Result<Self, EmptyTaskEdits> {
         if content.is_none()
             && blocked_by.is_unchanged()
@@ -419,7 +403,7 @@ impl TaskEdits {
     }
 
     #[must_use]
-    pub fn effort(&self) -> &ValueEdit<EffortTier> {
+    pub fn effort(&self) -> &FieldUpdate<EffortTier> {
         &self.effort
     }
 
@@ -429,7 +413,7 @@ impl TaskEdits {
     }
 
     #[must_use]
-    pub fn priority(&self) -> &ValueEdit<PriorityTier> {
+    pub fn priority(&self) -> &FieldUpdate<PriorityTier> {
         &self.priority
     }
 }
@@ -990,8 +974,9 @@ mod tests {
 
     use super::{
         AddTaskPrompt, CollectionEdit, EditTaskContent, EditTaskContentError, EmptyTaskEdits,
-        TaskEdits, TaskLaneEdits, TaskLaneValueError, TaskLanes, ValueEdit,
+        TaskEdits, TaskLaneEdits, TaskLaneValueError, TaskLanes,
     };
+    use crate::field_update::FieldUpdate;
 
     #[test]
     fn lanes_trim_outer_whitespace_and_preserve_literal_markers() {
@@ -1046,9 +1031,9 @@ mod tests {
         let error = TaskEdits::try_new(
             None,
             CollectionEdit::Unchanged,
-            ValueEdit::Unchanged,
+            FieldUpdate::Unchanged,
             CollectionEdit::Unchanged,
-            ValueEdit::Unchanged,
+            FieldUpdate::Unchanged,
         )
         .unwrap_err();
         assert_eq!(error, EmptyTaskEdits);

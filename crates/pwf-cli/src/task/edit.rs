@@ -2,9 +2,9 @@ use clap::{ArgGroup, Args};
 use pwf_client::{
     task::TaskClient,
     v1::{
-        self, AppendTaskPrompt, ClearTaskField, StringCollectionEdit, StringValues,
-        StructuredTaskEdit, TaskContentEdit, TaskLane, UpdateTaskRequest, effort_edit,
-        priority_edit, string_collection_edit, task_content_edit,
+        self, AppendTaskPrompt, ClearField, StringCollectionEdit, StringValues, StructuredTaskEdit,
+        TaskContentEdit, TaskLane, UpdateTaskRequest, effort_edit, priority_edit,
+        string_collection_edit, task_content_edit,
     },
 };
 use pwf_models::task::{TagInput, TaskTags, TaskTitle};
@@ -197,7 +197,7 @@ impl EffortEdit {
         self.effort.map_or_else(
             || {
                 self.remove_effort.then_some(v1::EffortEdit {
-                    operation: Some(effort_edit::Operation::Clear(ClearTaskField {})),
+                    operation: Some(effort_edit::Operation::Clear(ClearField {})),
                 })
             },
             |effort| {
@@ -224,7 +224,7 @@ impl PriorityEdit {
         self.priority.map_or_else(
             || {
                 self.remove_priority.then_some(v1::PriorityEdit {
-                    operation: Some(priority_edit::Operation::Clear(ClearTaskField {})),
+                    operation: Some(priority_edit::Operation::Clear(ClearField {})),
                 })
             },
             |priority| {
@@ -252,7 +252,7 @@ fn string_collection_edit(
             })),
         }),
         (None, true) => Some(StringCollectionEdit {
-            operation: Some(string_collection_edit::Operation::Clear(ClearTaskField {})),
+            operation: Some(string_collection_edit::Operation::Clear(ClearField {})),
         }),
         (None, false) => None,
     }

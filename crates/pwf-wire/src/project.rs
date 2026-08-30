@@ -20,6 +20,15 @@ pub struct RenameProject {
     pub fields: ProjectFields,
 }
 
+/// Requests one managed-project source update.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UpdateProject {
+    /// Project ID.
+    pub id: ProjectId,
+    /// Replacement source location.
+    pub source: ProjectSource,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolveProject {
     pub selector: ProjectSelector,

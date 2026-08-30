@@ -7,6 +7,7 @@ use pwf_application::project::{
     rename_project::{self, RenameProjectError},
     resolve_project::ResolveProjectError,
     resume_project::{self, ResumeProjectError},
+    update_project::{self, UpdateProjectError},
 };
 use pwf_infra::obsidian::ObsidianProjectTaskFilesClient;
 use pwf_wire::{
@@ -105,6 +106,18 @@ impl ProjectService for ProjectGrpcService {
             .map(Response::new)
             .map_err(resume_project_status)
     }
+
+    async fn update_project(
+        &self,
+        request: Request<v1::UpdateProjectRequest>,
+    ) -> Result<Response<v1::UpdateProjectResponse>, Status> {
+        let command = proto::project::update_project_request(request.into_inner())?;
+        update_project::execute(command, &self.state.pool)
+            .await
+            .map(|()| proto::project::update_project_response())
+            .map(Response::new)
+            .map_err(|error| update_project_status(&error))
+    }
 }
 
 pub(super) fn resolve_project_status(error: &ResolveProjectError) -> Status {
@@ -172,5 +185,12 @@ fn resume_project_status(error: ResumeProjectError) -> Status {
         ResumeProjectError::ProjectNotFound { .. } => Status::not_found(error.to_string()),
         ResumeProjectError::TaskLocation(error) => task_location_status(&error),
         ResumeProjectError::Unexpected { .. } => Status::internal(error.to_string()),
+    }
+}
+
+fn update_project_status(error: &UpdateProjectError) -> Status {
+    match error {
+        UpdateProjectError::ProjectNotFound { .. } => Status::not_found(error.to_string()),
+        UpdateProjectError::Unexpected { .. } => Status::internal(error.to_string()),
     }
 }

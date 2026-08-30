@@ -9,6 +9,7 @@ service ProjectService {
   rpc PauseProject(PauseProjectRequest) returns (PauseProjectResponse);
   rpc RenameProject(RenameProjectRequest) returns (RenameProjectResponse);
   rpc ResumeProject(ResumeProjectRequest) returns (ResumeProjectResponse);
+  rpc UpdateProject(UpdateProjectRequest) returns (UpdateProjectResponse);
 }
 
 service NoteService {
@@ -47,6 +48,15 @@ message ProjectFields {
   string source_value = 4;
   string tasks_kind = 5;
   string tasks_path = 6;
+}
+
+message ClearField {}
+
+message StringFieldUpdate {
+  oneof operation {
+    string update = 1;
+    ClearField clear = 2;
+  }
 }
 
 message Project {
@@ -120,6 +130,13 @@ message ResumeProjectResponse {
   Project project = 1;
   bool changed = 2;
 }
+
+message UpdateProjectRequest {
+  string id = 1;
+  StringFieldUpdate source_value = 2;
+}
+
+message UpdateProjectResponse {}
 
 message AddNoteRequest {
   string project_selector = 1;
@@ -249,29 +266,27 @@ message CompleteTaskRequest {
   bool review = 4;
 }
 
-message ClearTaskField {}
-
 message StringValues { repeated string values = 1; }
 
 message StringCollectionEdit {
   oneof operation {
     StringValues append = 1;
     StringValues replace = 2;
-    ClearTaskField clear = 3;
+    ClearField clear = 3;
   }
 }
 
 message EffortEdit {
   oneof operation {
     EffortTier set = 1;
-    ClearTaskField clear = 2;
+    ClearField clear = 2;
   }
 }
 
 message PriorityEdit {
   oneof operation {
     PriorityTier set = 1;
-    ClearTaskField clear = 2;
+    ClearField clear = 2;
   }
 }
 

@@ -1,15 +1,14 @@
 use std::{error::Error, path::PathBuf};
 
 use pwf_models::project::{
-    HomeDirectory, ProjectId, ProjectIndexIdentity, ProjectName, ProjectSource, ProjectTasks,
-    ProjectTasksPath,
+    HomeDirectory, ProjectId, ProjectIndexIdentity, ProjectName, ProjectTasks, ProjectTasksPath,
 };
 use pwf_wire::project::{GetProject, ProjectFields, ProjectStatusFilter, RenameProject};
 
 use super::{
     Project, ProjectRow, TaskLocationError,
     get_project::{self, GetProjectError},
-    runtime_path, task_location,
+    runtime_path, source_record, task_location,
 };
 use crate::ports::project_task_files::{
     ProjectTaskFilesClient, ProjectTaskFilesRenameCommit, StagedProjectTaskFilesRename,
@@ -156,7 +155,9 @@ async fn rename_registry(
         existing,
         home,
     )?;
-    let source_id = destination_source_id(&mut transaction, &command.fields.source).await?;
+    let source_id = source_record::get_or_insert(&mut transaction, &command.fields.source)
+        .await
+        .map_err(|error| unexpected("resolving destination project source", error))?;
     replace_project_row(&mut transaction, &command, source_id).await?;
 
     let row = sqlx::query_as!(
@@ -187,41 +188,6 @@ async fn rename_registry(
         .await
         .map_err(|error| unexpected("committing project rename", error))?;
     Ok(project)
-}
-
-async fn destination_source_id(
-    transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
-    source: &ProjectSource,
-) -> Result<i64, RenameProjectError> {
-    let source_kind = source.kind().to_string();
-    let source_value = source.value().as_ref();
-    let source_id = sqlx::query_scalar!(
-        r#"
-        SELECT id AS "id!"
-        FROM project_sources
-        WHERE kind = ? AND value = ?
-        "#,
-        source_kind,
-        source_value,
-    )
-    .fetch_optional(&mut **transaction)
-    .await
-    .map_err(|error| unexpected("reading destination project source", error))?;
-    match source_id {
-        Some(source_id) => Ok(source_id),
-        None => sqlx::query!(
-            r#"
-            INSERT INTO project_sources (kind, value)
-            VALUES (?, ?)
-            "#,
-            source_kind,
-            source_value,
-        )
-        .execute(&mut **transaction)
-        .await
-        .map(|result| result.last_insert_rowid())
-        .map_err(|error| unexpected("inserting destination project source", error)),
-    }
 }
 
 async fn replace_project_row(
