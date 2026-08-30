@@ -94,9 +94,11 @@ impl TestServer {
 
     async fn add_project_and_task(&self) -> anyhow::Result<String> {
         let project_path = self.root.path().join("project");
-        let tasks_path = self.root.path().join("notes").join("foo-bar");
+        let vault_path = self.root.path().join("notes");
+        let tasks_path = vault_path.join("foo-bar");
         std::fs::create_dir_all(&project_path)?;
         std::fs::create_dir_all(&tasks_path)?;
+        std::fs::create_dir_all(vault_path.join(".obsidian"))?;
         std::fs::write(
             tasks_path.join("foo-bar.md"),
             "---\nid: foo\ntitle: foo-bar\n---\n",

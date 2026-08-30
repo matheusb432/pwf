@@ -746,14 +746,16 @@ fn generic_update_clears_tags_on_crlf_frontmatter() {
 }
 
 #[test]
-fn generic_delete_removes_note_and_unlinks_index() {
+fn generic_delete_moves_note_to_vault_trash_and_unlinks_index() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
     let project_dir = notes_dir.join("foo");
     std::fs::create_dir_all(&project_dir).unwrap();
+    std::fs::create_dir(notes_dir.join(".obsidian")).unwrap();
     std::fs::write(project_dir.join("foo.md"), "- [ ] [[FOO-0001]]\n").unwrap();
+    let task_path = project_dir.join("FOO-0001.md");
     write_note(
-        &project_dir.join("FOO-0001.md"),
+        &task_path,
         "stale task",
         "2026-07-01",
         None,
@@ -768,7 +770,11 @@ fn generic_delete_removes_note_and_unlinks_index() {
     IndexEntryStore::delete_index_entry(&store, &project, &id).unwrap();
     TaskStore::delete(&store, &project, &id).unwrap();
 
-    assert!(!project_dir.join("FOO-0001.md").exists());
+    assert!(!task_path.exists());
+    assert_eq!(
+        std::fs::read_to_string(notes_dir.join(".trash/FOO-0001.md")).unwrap(),
+        "---\nid: FOO-0001\nstatus: active\ntitle: stale task\nproject: foo\ncreated_at: 2026-07-01T00:00:00Z\n---\n\nremove me\n"
+    );
     assert_eq!(
         std::fs::read_to_string(project_dir.join("foo.md")).unwrap(),
         "---\nid: foo\ntitle: foo\n---\n"

@@ -8,6 +8,7 @@ mod note_text;
 mod project_rename;
 mod store;
 mod task_link;
+mod trash;
 
 pub use identity::{TaskNoteIdentity, inspect_project_task_notes};
 pub use markdown_file::{

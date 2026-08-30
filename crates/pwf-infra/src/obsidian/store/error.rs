@@ -249,8 +249,28 @@ pub enum ObsidianStoreError {
         project: String,
         created_section: Option<TaskSection>,
     },
-    #[error("Cannot remove task file: {source}")]
-    RemoveTaskFile { source: std::io::Error },
+    #[error("Cannot locate the Obsidian vault containing task file {}", path.display())]
+    TaskVaultNotFound { path: PathBuf },
+    #[error("Task file path has no file name: {}", path.display())]
+    TaskFileNameMissing { path: PathBuf },
+    #[error("Cannot create Obsidian trash directory {}: {source}", path.display())]
+    CreateTaskTrashDirectory {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("Cannot inspect Obsidian trash destination {}: {source}", path.display())]
+    InspectTaskTrashDestination {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("Obsidian trash destination already exists: {}", path.display())]
+    TaskTrashDestinationExists { path: PathBuf },
+    #[error("Cannot move task file from {} to Obsidian trash at {}: {source}", from.display(), to.display())]
+    MoveTaskFileToTrash {
+        from: PathBuf,
+        to: PathBuf,
+        source: std::io::Error,
+    },
     #[error("Task not found: {id}")]
     TaskNotFound { id: TaskId },
     #[error("Task ID sequence is exhausted for project {project_id}")]

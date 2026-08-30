@@ -190,9 +190,11 @@ pub struct ManagedProject {
 impl ManagedProject {
     pub fn new(project_id: &ProjectId, title: &str) -> anyhow::Result<Self> {
         let directory = TempDir::new()?;
-        let tasks_path = directory.path().join("notes").join(title);
+        let vault_path = directory.path().join("notes");
+        let tasks_path = vault_path.join(title);
         let project_path = directory.path().join("project");
         fs::create_dir_all(&tasks_path)?;
+        fs::create_dir_all(vault_path.join(".obsidian"))?;
         fs::create_dir_all(&project_path)?;
         fs::write(
             tasks_path.join(format!("{title}.md")),

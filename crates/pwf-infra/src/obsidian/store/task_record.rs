@@ -23,6 +23,7 @@ use crate::obsidian::{
         set_priority, set_status, set_tags,
     },
     note_text::{replace_body, replace_title},
+    trash::move_task_file_to_vault_trash,
 };
 
 /// Maps a task note to typed frontmatter fields while preserving its byte-exact source.
@@ -408,8 +409,7 @@ impl ObsidianStore {
         else {
             return Err(ObsidianStoreError::TaskNotFound { id: id.clone() });
         };
-        std::fs::remove_file(&task.path)
-            .map_err(|source| ObsidianStoreError::RemoveTaskFile { source })
+        move_task_file_to_vault_trash(&task.path)
     }
 }
 
