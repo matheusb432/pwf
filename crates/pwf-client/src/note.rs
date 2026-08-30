@@ -1,4 +1,4 @@
-use pwf_wire::v1::{self, note_service_client::NoteServiceClient};
+use pwf_wire::pb::{self, note_service_client::NoteServiceClient};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
@@ -25,8 +25,8 @@ impl NoteClient {
 
     pub async fn add_note(
         &self,
-        request: v1::AddNoteRequest,
-    ) -> Result<v1::AddNoteResponse, ClientError> {
+        request: pb::AddNoteRequest,
+    ) -> Result<pb::AddNoteResponse, ClientError> {
         self.client()
             .add_note(request)
             .await
@@ -36,8 +36,8 @@ impl NoteClient {
 
     pub async fn list_notes(
         &self,
-        request: v1::ListNotesRequest,
-    ) -> Result<v1::ListNotesResponse, ClientError> {
+        request: pb::ListNotesRequest,
+    ) -> Result<pb::ListNotesResponse, ClientError> {
         self.client()
             .list_notes(request)
             .await
@@ -47,16 +47,16 @@ impl NoteClient {
 
     pub async fn delete_note<Prompt>(
         &self,
-        request: v1::DeleteNoteStart,
+        request: pb::DeleteNoteStart,
         prompt: Prompt,
-    ) -> Result<v1::DeleteNoteResult, ConfirmedRequestError<Prompt::Error>>
+    ) -> Result<pb::DeleteNoteResult, ConfirmedRequestError<Prompt::Error>>
     where
         Prompt: ConfirmationPrompt,
     {
         let (sender, receiver) = mpsc::channel(STREAM_BUFFER);
         sender
-            .send(v1::DeleteNoteRequest {
-                value: Some(v1::delete_note_request::Value::Start(request)),
+            .send(pb::DeleteNoteRequest {
+                value: Some(pb::delete_note_request::Value::Start(request)),
             })
             .await
             .map_err(|_| protocol("note delete request stream closed"))?;
@@ -72,14 +72,14 @@ impl NoteClient {
             .map_err(ConfirmedRequestError::Operation)?
             .ok_or_else(|| protocol("note delete response stream closed before preflight"))?;
         match first.value {
-            Some(v1::delete_note_response::Value::Preflight(preflight)) => {
+            Some(pb::delete_note_response::Value::Preflight(preflight)) => {
                 let confirmed = prompt
                     .confirm(&Confirmation::DeleteNote(preflight))
                     .map_err(ConfirmedRequestError::Prompt)?;
                 sender
-                    .send(v1::DeleteNoteRequest {
-                        value: Some(v1::delete_note_request::Value::Decision(
-                            v1::ConfirmationDecision { confirmed },
+                    .send(pb::DeleteNoteRequest {
+                        value: Some(pb::delete_note_request::Value::Decision(
+                            pb::ConfirmationDecision { confirmed },
                         )),
                     })
                     .await
@@ -90,13 +90,13 @@ impl NoteClient {
                     .map_err(ConfirmedRequestError::Operation)?
                     .ok_or_else(|| protocol("note delete response stream closed before result"))?;
                 match result.value {
-                    Some(v1::delete_note_response::Value::Result(result)) => Ok(result),
-                    Some(v1::delete_note_response::Value::Preflight(_)) | None => Err(protocol(
+                    Some(pb::delete_note_response::Value::Result(result)) => Ok(result),
+                    Some(pb::delete_note_response::Value::Preflight(_)) | None => Err(protocol(
                         "note delete response stream returned an invalid result",
                     )),
                 }
             }
-            Some(v1::delete_note_response::Value::Result(result)) => Ok(result),
+            Some(pb::delete_note_response::Value::Result(result)) => Ok(result),
             None => Err(protocol(
                 "note delete response stream returned an empty message",
             )),
@@ -105,8 +105,8 @@ impl NoteClient {
 
     pub async fn update_note(
         &self,
-        request: v1::UpdateNoteRequest,
-    ) -> Result<v1::UpdateNoteResponse, ClientError> {
+        request: pb::UpdateNoteRequest,
+    ) -> Result<pb::UpdateNoteResponse, ClientError> {
         self.client()
             .update_note(request)
             .await

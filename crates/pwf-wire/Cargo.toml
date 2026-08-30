@@ -9,6 +9,7 @@ name = "pwf_wire"
 path = "src/lib.rs"
 
 [dependencies]
+blake3 = { workspace = true }
 prompt-lanes = { workspace = true }
 prost = { workspace = true }
 pwf-models = { workspace = true }

@@ -9,9 +9,9 @@ use pwf_models::{
 use tonic::Status;
 
 use super::{collection_edit, invalid, parse, required};
-use crate::{confirmation, field_update::FieldUpdate, note, v1};
+use crate::{confirmation, field_update::FieldUpdate, note, pb};
 
-pub fn add_note_request(request: v1::AddNoteRequest) -> Result<note::AddNote, Status> {
+pub fn add_note_request(request: pb::AddNoteRequest) -> Result<note::AddNote, Status> {
     Ok(note::AddNote {
         project_selector: parse("project_selector", &request.project_selector)?,
         title: parse("title", &request.title)?,
@@ -41,22 +41,22 @@ pub fn add_note_request(request: v1::AddNoteRequest) -> Result<note::AddNote, St
     })
 }
 
-pub fn list_notes_request(request: v1::ListNotesRequest) -> Result<note::ListNotes, Status> {
-    let v1::ListNotesRequest {
+pub fn list_notes_request(request: pb::ListNotesRequest) -> Result<note::ListNotes, Status> {
+    let pb::ListNotesRequest {
         project_selector,
         limit_kind,
         limit,
     } = request;
-    let limit = match v1::NoteListLimitKind::try_from(limit_kind).ok() {
-        Some(v1::NoteListLimitKind::Default) => note::NoteListLimit::Default,
-        Some(v1::NoteListLimitKind::Unlimited) => note::NoteListLimit::Unlimited,
-        Some(v1::NoteListLimitKind::AtMost) => note::NoteListLimit::AtMost(
+    let limit = match pb::NoteListLimitKind::try_from(limit_kind).ok() {
+        Some(pb::NoteListLimitKind::Default) => note::NoteListLimit::Default,
+        Some(pb::NoteListLimitKind::Unlimited) => note::NoteListLimit::Unlimited,
+        Some(pb::NoteListLimitKind::AtMost) => note::NoteListLimit::AtMost(
             usize::try_from(limit)
                 .ok()
                 .and_then(NonZeroUsize::new)
                 .ok_or_else(|| invalid("limit", "must be a positive platform-sized integer"))?,
         ),
-        Some(v1::NoteListLimitKind::Unspecified) | None => {
+        Some(pb::NoteListLimitKind::Unspecified) | None => {
             return Err(invalid("limit_kind", "must be specified"));
         }
     };
@@ -66,8 +66,8 @@ pub fn list_notes_request(request: v1::ListNotesRequest) -> Result<note::ListNot
     })
 }
 
-pub fn update_note_request(request: v1::UpdateNoteRequest) -> Result<note::EditNote, Status> {
-    let v1::UpdateNoteRequest {
+pub fn update_note_request(request: pb::UpdateNoteRequest) -> Result<note::EditNote, Status> {
+    let pb::UpdateNoteRequest {
         project_selector,
         selector,
         title,
@@ -101,7 +101,7 @@ pub fn update_note_request(request: v1::UpdateNoteRequest) -> Result<note::EditN
     })
 }
 
-pub fn delete_note_start(start: &v1::DeleteNoteStart) -> Result<note::RemoveNote, Status> {
+pub fn delete_note_start(start: &pb::DeleteNoteStart) -> Result<note::RemoveNote, Status> {
     Ok(note::RemoveNote {
         project_selector: parse("project_selector", &start.project_selector)?,
         selector: parse("selector", &start.selector)?,
@@ -109,8 +109,8 @@ pub fn delete_note_start(start: &v1::DeleteNoteStart) -> Result<note::RemoveNote
 }
 
 #[must_use]
-pub fn add_note_response(note: &note::MutatedNote) -> v1::AddNoteResponse {
-    v1::AddNoteResponse {
+pub fn add_note_response(note: &note::MutatedNote) -> pb::AddNoteResponse {
+    pb::AddNoteResponse {
         id: note.id.to_string(),
         title: note.title.to_string(),
         project: note.project.to_string(),
@@ -118,13 +118,13 @@ pub fn add_note_response(note: &note::MutatedNote) -> v1::AddNoteResponse {
 }
 
 #[must_use]
-pub fn list_notes_response(notes: note::ListedNotes) -> v1::ListNotesResponse {
-    v1::ListNotesResponse {
+pub fn list_notes_response(notes: note::ListedNotes) -> pb::ListNotesResponse {
+    pb::ListNotesResponse {
         project: notes.project.to_string(),
         notes: notes
             .notes
             .into_iter()
-            .map(|note| v1::ListedNote {
+            .map(|note| pb::ListedNote {
                 id: note.id.to_string(),
                 title: note.title.to_string(),
             })
@@ -134,8 +134,8 @@ pub fn list_notes_response(notes: note::ListedNotes) -> v1::ListNotesResponse {
 }
 
 #[must_use]
-pub fn update_note_response(note: &note::MutatedNote) -> v1::UpdateNoteResponse {
-    v1::UpdateNoteResponse {
+pub fn update_note_response(note: &note::MutatedNote) -> pb::UpdateNoteResponse {
+    pb::UpdateNoteResponse {
         id: note.id.to_string(),
         title: note.title.to_string(),
         project: note.project.to_string(),
@@ -145,8 +145,8 @@ pub fn update_note_response(note: &note::MutatedNote) -> v1::UpdateNoteResponse 
 #[must_use]
 pub fn delete_note_confirmation(
     confirmation: &confirmation::RemoveNoteConfirmation,
-) -> v1::DeleteNoteConfirmation {
-    v1::DeleteNoteConfirmation {
+) -> pb::DeleteNoteConfirmation {
+    pb::DeleteNoteConfirmation {
         note_id: confirmation.note_identifier.to_string(),
         project: confirmation.project.to_string(),
         title: confirmation.title.to_string(),
@@ -154,29 +154,29 @@ pub fn delete_note_confirmation(
 }
 
 #[must_use]
-pub fn delete_note_result(outcome: note::RemovedNoteOutcome) -> v1::DeleteNoteResult {
+pub fn delete_note_result(outcome: note::RemovedNoteOutcome) -> pb::DeleteNoteResult {
     let outcome = match outcome {
         note::RemovedNoteOutcome::Removed(note) => {
-            v1::delete_note_result::Outcome::Deleted(v1::DeletedNote {
+            pb::delete_note_result::Outcome::Deleted(pb::DeletedNote {
                 id: note.id.to_string(),
                 project: note.project.to_string(),
                 title: note.title.to_string(),
             })
         }
         note::RemovedNoteOutcome::Aborted { note_id } => {
-            v1::delete_note_result::Outcome::Aborted(v1::AbortedNoteOperation {
+            pb::delete_note_result::Outcome::Aborted(pb::AbortedNoteOperation {
                 id: note_id.to_string(),
             })
         }
     };
-    v1::DeleteNoteResult {
+    pb::DeleteNoteResult {
         outcome: Some(outcome),
     }
 }
 
 fn note_field_update<T>(
     field: &str,
-    update: Option<v1::StringFieldUpdate>,
+    update: Option<pb::StringFieldUpdate>,
 ) -> Result<FieldUpdate<T>, Status>
 where
     T: FromStr,
@@ -186,10 +186,10 @@ where
         return Ok(FieldUpdate::Unchanged);
     };
     match required(field, update.operation)? {
-        v1::string_field_update::Operation::Update(value) => {
+        pb::string_field_update::Operation::Update(value) => {
             parse(field, &value).map(FieldUpdate::Update)
         }
-        v1::string_field_update::Operation::Clear(_) => Ok(FieldUpdate::Clear),
+        pb::string_field_update::Operation::Clear(_) => Ok(FieldUpdate::Clear),
     }
 }
 
@@ -230,7 +230,7 @@ mod tests {
     use crate::{
         collection_edit::CollectionEdit,
         field_update::FieldUpdate,
-        v1::{
+        pb::{
             ClearField, StringCollectionEdit, StringFieldUpdate, StringValues, UpdateNoteRequest,
             string_collection_edit, string_field_update,
         },

@@ -9,7 +9,7 @@ pub use request::{
 };
 pub(crate) use response::{blocked_by_issue, blocked_by_status};
 pub use response::{
-    cancel_task_response, complete_task_response, create_task_failure_details,
-    create_task_response, delete_task_confirmation, delete_task_result, get_task_response,
-    list_tasks_response, reopen_task_confirmation, reopen_task_result, update_task_response,
+    cancel_task_response, complete_task_response, create_task_response, delete_task_preflight,
+    delete_task_result, get_task_response, list_tasks_response, reopen_task_preflight,
+    reopen_task_result, update_task_response,
 };

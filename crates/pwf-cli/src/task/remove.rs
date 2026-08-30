@@ -1,8 +1,8 @@
 use clap::Args;
 use pwf_client::{
     confirmation::ConfirmedRequestError,
+    pb::{DeleteTaskStart, delete_task_result},
     task::TaskClient,
-    v1::{DeleteTaskStart, delete_task_result},
 };
 
 use super::Identifier;
@@ -34,7 +34,13 @@ pub(super) async fn run(
 
     let confirmation_client = CliConfirmationClient::new(console, confirmation_mode);
     let outcome = match client
-        .delete_task(DeleteTaskStart { id: id.to_string() }, confirmation_client)
+        .delete_task(
+            DeleteTaskStart {
+                id: id.to_string(),
+                request_id: String::new(),
+            },
+            confirmation_client,
+        )
         .await
     {
         Ok(outcome) => outcome,
@@ -47,11 +53,11 @@ pub(super) async fn run(
     };
 
     match outcome.outcome.as_ref() {
-        Some(delete_task_result::Outcome::Deleted(task)) => {
-            Ok(render_removed(task, console.color()))
+        Some(delete_task_result::Outcome::Deleted(_)) => {
+            Ok(render_removed(id.as_ref(), console.color()))
         }
-        Some(delete_task_result::Outcome::Aborted(task)) => {
-            Ok(format!("# remove {}: aborted\nnothing deleted.\n", task.id))
+        Some(delete_task_result::Outcome::Aborted(_)) => {
+            Ok(format!("# remove {id}: aborted\nnothing deleted.\n"))
         }
         None => Err(anyhow::anyhow!(
             "pwf-server returned an invalid removal outcome"

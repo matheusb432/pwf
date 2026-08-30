@@ -1,7 +1,7 @@
 use clap::Args;
 use pwf_client::{
+    pb::{ProjectFields, RenameProjectRequest},
     project::ProjectClient,
-    v1::{ProjectFields, RenameProjectRequest},
 };
 use pwf_models::project::{ProjectId, ProjectName, ProjectSourceValue, ProjectTasksPath};
 

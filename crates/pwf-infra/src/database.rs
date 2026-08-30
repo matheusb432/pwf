@@ -125,9 +125,10 @@ mod tests {
     const MIGRATION_VERSION_0001: i64 = 20_260_725_000_000;
     const MIGRATION_VERSION_0002: i64 = 20_260_801_000_000;
     const MIGRATION_VERSION_0003: i64 = 20_260_806_000_000;
+    const MIGRATION_VERSION_0004: i64 = 20_260_830_000_000;
 
     #[tokio::test]
-    async fn migration_0002_to_0003_preserves_project_state_and_widens_ids() {
+    async fn migration_0002_to_current_preserves_project_state_and_widens_ids() {
         let directory = tempfile::tempdir().unwrap();
         let pool = build_migration_pool(&directory.path().join("pwf.sqlite3"))
             .await
@@ -150,7 +151,7 @@ mod tests {
 
         assert_project_state_preserved(&pool, project_source_id).await;
         assert_project_id_constraints_widened(&pool, project_source_id).await;
-        assert_migration_0003_integrity(&pool).await;
+        assert_current_migration_integrity(&pool).await;
     }
 
     async fn insert_migration_0002_fixture(pool: &SqlitePool) -> i64 {
@@ -231,7 +232,7 @@ mod tests {
         }
     }
 
-    async fn assert_migration_0003_integrity(pool: &SqlitePool) {
+    async fn assert_current_migration_integrity(pool: &SqlitePool) {
         let active_project_ids =
             sqlx::query_scalar::<_, String>("SELECT id FROM active_projects ORDER BY id")
                 .fetch_all(pool)
@@ -256,8 +257,16 @@ mod tests {
                 MIGRATION_VERSION_0001,
                 MIGRATION_VERSION_0002,
                 MIGRATION_VERSION_0003,
+                MIGRATION_VERSION_0004,
             ]
         );
+        let request_table_exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'task_mutation_requests')",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        assert!(request_table_exists);
         check_database_ready(pool).await.unwrap();
     }
 }

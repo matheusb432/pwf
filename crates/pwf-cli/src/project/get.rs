@@ -1,7 +1,7 @@
 use clap::Args;
 use pwf_client::{
+    pb::{GetProjectRequest, ProjectStatusFilter},
     project::ProjectClient,
-    v1::{GetProjectRequest, ProjectStatusFilter},
 };
 use pwf_models::project::ProjectId;
 

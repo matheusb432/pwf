@@ -1,5 +1,5 @@
 use anstyle::AnsiColor;
-use pwf_client::v1::TaskStatus;
+use pwf_client::pb::TaskStatus;
 
 use crate::render::{ID_ORANGE, paint, render_summary};
 

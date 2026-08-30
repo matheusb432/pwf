@@ -7,16 +7,16 @@ use pwf_models::project::{
 use tonic::Status;
 
 use super::{invalid, parse, required};
-use crate::{field_update::FieldUpdate, project, v1};
+use crate::{field_update::FieldUpdate, pb, project};
 
 pub fn add_project_request(
-    request: v1::AddProjectRequest,
+    request: pb::AddProjectRequest,
 ) -> Result<project::ProjectFields, Status> {
     project_fields(required("fields", request.fields)?)
 }
 
-pub fn get_project_request(request: v1::GetProjectRequest) -> Result<project::GetProject, Status> {
-    let v1::GetProjectRequest { id, status } = request;
+pub fn get_project_request(request: pb::GetProjectRequest) -> Result<project::GetProject, Status> {
+    let pb::GetProjectRequest { id, status } = request;
     Ok(project::GetProject {
         id: parse("id", &id)?,
         status: project_status_filter(status)?,
@@ -24,18 +24,18 @@ pub fn get_project_request(request: v1::GetProjectRequest) -> Result<project::Ge
 }
 
 pub fn list_projects_request(
-    request: v1::ListProjectsRequest,
+    request: pb::ListProjectsRequest,
 ) -> Result<project::ProjectStatusFilter, Status> {
     project_status_filter(request.status)
 }
 
-pub fn pause_project_request(request: v1::PauseProjectRequest) -> Result<ProjectId, Status> {
-    let v1::PauseProjectRequest { id } = request;
+pub fn pause_project_request(request: pb::PauseProjectRequest) -> Result<ProjectId, Status> {
+    let pb::PauseProjectRequest { id } = request;
     parse("id", &id)
 }
 
 pub fn rename_project_request(
-    request: v1::RenameProjectRequest,
+    request: pb::RenameProjectRequest,
 ) -> Result<project::RenameProject, Status> {
     Ok(project::RenameProject {
         current_id: parse("current_id", &request.current_id)?,
@@ -43,13 +43,13 @@ pub fn rename_project_request(
     })
 }
 
-pub fn resume_project_request(request: v1::ResumeProjectRequest) -> Result<ProjectId, Status> {
-    let v1::ResumeProjectRequest { id } = request;
+pub fn resume_project_request(request: pb::ResumeProjectRequest) -> Result<ProjectId, Status> {
+    let pb::ResumeProjectRequest { id } = request;
     parse("id", &id)
 }
 
 pub fn update_project_request(
-    request: v1::UpdateProjectRequest,
+    request: pb::UpdateProjectRequest,
 ) -> Result<project::UpdateProject, Status> {
     let source_value = match source_value_update(request.source_value)? {
         FieldUpdate::Update(source_value) => source_value,
@@ -63,7 +63,7 @@ pub fn update_project_request(
 }
 
 #[must_use]
-pub fn add_project_response(project: Project) -> v1::AddProjectResponse {
+pub fn add_project_response(project: Project) -> pb::AddProjectResponse {
     let Project {
         id,
         title,
@@ -72,7 +72,7 @@ pub fn add_project_response(project: Project) -> v1::AddProjectResponse {
         created_at,
         is_paused,
     } = project;
-    v1::AddProjectResponse {
+    pb::AddProjectResponse {
         id: id.to_string(),
         title: title.to_string(),
         source_kind: source.kind().to_string(),
@@ -85,7 +85,7 @@ pub fn add_project_response(project: Project) -> v1::AddProjectResponse {
 }
 
 #[must_use]
-pub fn get_project_response(project: Project) -> v1::GetProjectResponse {
+pub fn get_project_response(project: Project) -> pb::GetProjectResponse {
     let Project {
         id,
         title,
@@ -94,7 +94,7 @@ pub fn get_project_response(project: Project) -> v1::GetProjectResponse {
         created_at,
         is_paused,
     } = project;
-    v1::GetProjectResponse {
+    pb::GetProjectResponse {
         id: id.to_string(),
         title: title.to_string(),
         source_kind: source.kind().to_string(),
@@ -106,22 +106,22 @@ pub fn get_project_response(project: Project) -> v1::GetProjectResponse {
     }
 }
 
-pub fn list_projects_response(projects: Vec<Project>) -> v1::ListProjectsResponse {
-    v1::ListProjectsResponse {
+pub fn list_projects_response(projects: Vec<Project>) -> pb::ListProjectsResponse {
+    pb::ListProjectsResponse {
         projects: projects.into_iter().map(project_message).collect(),
     }
 }
 
 #[must_use]
-pub fn pause_project_response(change: project::ProjectStateChange) -> v1::PauseProjectResponse {
-    v1::PauseProjectResponse {
+pub fn pause_project_response(change: project::ProjectStateChange) -> pb::PauseProjectResponse {
+    pb::PauseProjectResponse {
         project: Some(project_message(change.project)),
         changed: change.changed,
     }
 }
 
 #[must_use]
-pub fn rename_project_response(project: Project) -> v1::RenameProjectResponse {
+pub fn rename_project_response(project: Project) -> pb::RenameProjectResponse {
     let Project {
         id,
         title,
@@ -130,7 +130,7 @@ pub fn rename_project_response(project: Project) -> v1::RenameProjectResponse {
         created_at,
         is_paused,
     } = project;
-    v1::RenameProjectResponse {
+    pb::RenameProjectResponse {
         id: id.to_string(),
         title: title.to_string(),
         source_kind: source.kind().to_string(),
@@ -143,19 +143,19 @@ pub fn rename_project_response(project: Project) -> v1::RenameProjectResponse {
 }
 
 #[must_use]
-pub fn resume_project_response(change: project::ProjectStateChange) -> v1::ResumeProjectResponse {
-    v1::ResumeProjectResponse {
+pub fn resume_project_response(change: project::ProjectStateChange) -> pb::ResumeProjectResponse {
+    pb::ResumeProjectResponse {
         project: Some(project_message(change.project)),
         changed: change.changed,
     }
 }
 
 #[must_use]
-pub fn update_project_response() -> v1::UpdateProjectResponse {
-    v1::UpdateProjectResponse {}
+pub fn update_project_response() -> pb::UpdateProjectResponse {
+    pb::UpdateProjectResponse {}
 }
 
-fn project_fields(fields: v1::ProjectFields) -> Result<project::ProjectFields, Status> {
+fn project_fields(fields: pb::ProjectFields) -> Result<project::ProjectFields, Status> {
     let source_kind = ProjectSourceKind::try_from(fields.source_kind.as_str())
         .map_err(|error| invalid("fields.source_kind", error))?;
     let tasks_kind = ProjectTasksKind::try_from(fields.tasks_kind.as_str())
@@ -179,20 +179,20 @@ fn project_fields(fields: v1::ProjectFields) -> Result<project::ProjectFields, S
 }
 
 fn source_value_update(
-    update: Option<v1::StringFieldUpdate>,
+    update: Option<pb::StringFieldUpdate>,
 ) -> Result<FieldUpdate<ProjectSourceValue>, Status> {
     let Some(update) = update else {
         return Ok(FieldUpdate::Unchanged);
     };
     match required("source_value.operation", update.operation)? {
-        v1::string_field_update::Operation::Update(value) => ProjectSourceValue::try_new(value)
+        pb::string_field_update::Operation::Update(value) => ProjectSourceValue::try_new(value)
             .map(FieldUpdate::Update)
             .map_err(|_| invalid("source_value", "must not be blank")),
-        v1::string_field_update::Operation::Clear(_) => Ok(FieldUpdate::Clear),
+        pb::string_field_update::Operation::Clear(_) => Ok(FieldUpdate::Clear),
     }
 }
 
-fn project_message(project: Project) -> v1::Project {
+fn project_message(project: Project) -> pb::Project {
     let Project {
         id,
         title,
@@ -201,7 +201,7 @@ fn project_message(project: Project) -> v1::Project {
         created_at,
         is_paused,
     } = project;
-    v1::Project {
+    pb::Project {
         id: id.to_string(),
         title: title.to_string(),
         source_kind: source.kind().to_string(),
@@ -214,12 +214,12 @@ fn project_message(project: Project) -> v1::Project {
 }
 
 fn project_status_filter(value: i32) -> Result<project::ProjectStatusFilter, Status> {
-    match v1::ProjectStatusFilter::try_from(value).ok() {
-        Some(v1::ProjectStatusFilter::ActiveOnly) => Ok(project::ProjectStatusFilter::ActiveOnly),
-        Some(v1::ProjectStatusFilter::IncludingPaused) => {
+    match pb::ProjectStatusFilter::try_from(value).ok() {
+        Some(pb::ProjectStatusFilter::ActiveOnly) => Ok(project::ProjectStatusFilter::ActiveOnly),
+        Some(pb::ProjectStatusFilter::IncludingPaused) => {
             Ok(project::ProjectStatusFilter::IncludingPaused)
         }
-        Some(v1::ProjectStatusFilter::Unspecified) | None => {
+        Some(pb::ProjectStatusFilter::Unspecified) | None => {
             Err(invalid("status", "must be specified"))
         }
     }
@@ -229,7 +229,7 @@ fn project_status_filter(value: i32) -> Result<project::ProjectStatusFilter, Sta
 mod tests {
     use tonic::Code;
 
-    use crate::v1::{ClearField, StringFieldUpdate, UpdateProjectRequest, string_field_update};
+    use crate::pb::{ClearField, StringFieldUpdate, UpdateProjectRequest, string_field_update};
 
     #[test]
     fn update_project_request_requires_one_valid_source_update() {

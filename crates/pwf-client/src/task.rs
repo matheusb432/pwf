@@ -1,7 +1,7 @@
-use pwf_wire::v1::{self, task_service_client::TaskServiceClient};
+use pwf_wire::pb::{self, task_service_client::TaskServiceClient};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
-use tonic::Status;
+use uuid::Uuid;
 
 use crate::{
     AuthenticatedChannel, ClientError, RequestPolicy,
@@ -26,60 +26,56 @@ impl TaskClient {
 
     pub async fn create_task(
         &self,
-        request: v1::CreateTaskRequest,
-    ) -> Result<v1::CreatedTask, ClientError> {
-        let response = self
-            .client()
+        mut request: pb::CreateTaskRequest,
+    ) -> Result<pb::CreateTaskResponse, ClientError> {
+        ensure_request_id(&mut request.request_id);
+        self.client()
             .create_task(request)
             .await
             .map(tonic::Response::into_inner)
-            .map_err(ClientError::from)?;
-        required_response(response.task, "create response is missing its task")
+            .map_err(ClientError::from)
     }
 
     pub async fn cancel_task(
         &self,
-        request: v1::CancelTaskRequest,
-    ) -> Result<v1::ClosedTask, ClientError> {
-        let response = self
-            .client()
+        mut request: pb::CancelTaskRequest,
+    ) -> Result<pb::CancelTaskResponse, ClientError> {
+        ensure_request_id(&mut request.request_id);
+        self.client()
             .cancel_task(request)
             .await
             .map(tonic::Response::into_inner)
-            .map_err(ClientError::from)?;
-        required_response(response.task, "cancel response is missing its task")
+            .map_err(ClientError::from)
     }
 
     pub async fn complete_task(
         &self,
-        request: v1::CompleteTaskRequest,
-    ) -> Result<v1::ClosedTask, ClientError> {
-        let response = self
-            .client()
+        mut request: pb::CompleteTaskRequest,
+    ) -> Result<pb::CompleteTaskResponse, ClientError> {
+        ensure_request_id(&mut request.request_id);
+        self.client()
             .complete_task(request)
             .await
             .map(tonic::Response::into_inner)
-            .map_err(ClientError::from)?;
-        required_response(response.task, "complete response is missing its task")
+            .map_err(ClientError::from)
     }
 
     pub async fn update_task(
         &self,
-        request: v1::UpdateTaskRequest,
-    ) -> Result<v1::UpdatedTask, ClientError> {
-        let response = self
-            .client()
+        mut request: pb::UpdateTaskRequest,
+    ) -> Result<pb::UpdateTaskResponse, ClientError> {
+        ensure_request_id(&mut request.request_id);
+        self.client()
             .update_task(request)
             .await
             .map(tonic::Response::into_inner)
-            .map_err(ClientError::from)?;
-        required_response(response.task, "update response is missing its task")
+            .map_err(ClientError::from)
     }
 
     pub async fn get_task(
         &self,
-        request: v1::GetTaskRequest,
-    ) -> Result<v1::GetTaskResponse, ClientError> {
+        request: pb::GetTaskRequest,
+    ) -> Result<pb::GetTaskResponse, ClientError> {
         self.client()
             .get_task(request)
             .await
@@ -89,8 +85,8 @@ impl TaskClient {
 
     pub async fn list_tasks(
         &self,
-        request: v1::ListTasksRequest,
-    ) -> Result<v1::ListTasksResponse, ClientError> {
+        request: pb::ListTasksRequest,
+    ) -> Result<pb::ListTasksResponse, ClientError> {
         self.client()
             .list_tasks(request)
             .await
@@ -100,8 +96,8 @@ impl TaskClient {
 
     pub async fn plan_session(
         &self,
-        request: v1::PlanSessionRequest,
-    ) -> Result<v1::PlanSessionResponse, ClientError> {
+        request: pb::PlanSessionRequest,
+    ) -> Result<pb::PlanSessionResponse, ClientError> {
         self.session_client()
             .plan_session(request)
             .await
@@ -111,16 +107,17 @@ impl TaskClient {
 
     pub async fn delete_task<Prompt>(
         &self,
-        request: v1::DeleteTaskStart,
+        mut request: pb::DeleteTaskStart,
         prompt: Prompt,
-    ) -> Result<v1::DeleteTaskResult, ConfirmedRequestError<Prompt::Error>>
+    ) -> Result<pb::DeleteTaskResult, ConfirmedRequestError<Prompt::Error>>
     where
         Prompt: ConfirmationPrompt,
     {
+        ensure_request_id(&mut request.request_id);
         let (sender, receiver) = mpsc::channel(STREAM_BUFFER);
         sender
-            .send(v1::DeleteTaskRequest {
-                value: Some(v1::delete_task_request::Value::Start(request)),
+            .send(pb::DeleteTaskRequest {
+                value: Some(pb::delete_task_request::Value::Start(request)),
             })
             .await
             .map_err(|_| protocol("delete request stream closed"))?;
@@ -136,14 +133,17 @@ impl TaskClient {
             .map_err(ConfirmedRequestError::Operation)?
             .ok_or_else(|| protocol("delete response stream closed before preflight"))?;
         match first.value {
-            Some(v1::delete_task_response::Value::Preflight(preflight)) => {
+            Some(pb::delete_task_response::Value::Preflight(preflight)) => {
+                let confirmation = preflight
+                    .confirmation
+                    .ok_or_else(|| protocol("delete preflight is missing its confirmation"))?;
                 let confirmed = prompt
-                    .confirm(&Confirmation::DeleteTask(preflight))
+                    .confirm(&Confirmation::DeleteTask(confirmation))
                     .map_err(ConfirmedRequestError::Prompt)?;
                 sender
-                    .send(v1::DeleteTaskRequest {
-                        value: Some(v1::delete_task_request::Value::Decision(
-                            v1::ConfirmationDecision { confirmed },
+                    .send(pb::DeleteTaskRequest {
+                        value: Some(pb::delete_task_request::Value::Decision(
+                            pb::ConfirmationDecision { confirmed },
                         )),
                     })
                     .await
@@ -154,29 +154,30 @@ impl TaskClient {
                     .map_err(ConfirmedRequestError::Operation)?
                     .ok_or_else(|| protocol("delete response stream closed before result"))?;
                 match result.value {
-                    Some(v1::delete_task_response::Value::Result(result)) => Ok(result),
-                    Some(v1::delete_task_response::Value::Preflight(_)) | None => Err(protocol(
+                    Some(pb::delete_task_response::Value::Result(result)) => Ok(result),
+                    Some(pb::delete_task_response::Value::Preflight(_)) | None => Err(protocol(
                         "delete response stream returned an invalid result",
                     )),
                 }
             }
-            Some(v1::delete_task_response::Value::Result(result)) => Ok(result),
+            Some(pb::delete_task_response::Value::Result(result)) => Ok(result),
             None => Err(protocol("delete response stream returned an empty message")),
         }
     }
 
     pub async fn reopen_task<Prompt>(
         &self,
-        request: v1::ReopenTaskStart,
+        mut request: pb::ReopenTaskStart,
         prompt: Prompt,
-    ) -> Result<v1::ReopenTaskResult, ConfirmedRequestError<Prompt::Error>>
+    ) -> Result<pb::ReopenTaskResult, ConfirmedRequestError<Prompt::Error>>
     where
         Prompt: ConfirmationPrompt,
     {
+        ensure_request_id(&mut request.request_id);
         let (sender, receiver) = mpsc::channel(STREAM_BUFFER);
         sender
-            .send(v1::ReopenTaskRequest {
-                value: Some(v1::reopen_task_request::Value::Start(request)),
+            .send(pb::ReopenTaskRequest {
+                value: Some(pb::reopen_task_request::Value::Start(request)),
             })
             .await
             .map_err(|_| protocol("reopen request stream closed"))?;
@@ -192,14 +193,17 @@ impl TaskClient {
             .map_err(ConfirmedRequestError::Operation)?
             .ok_or_else(|| protocol("reopen response stream closed before result"))?;
         match first.value {
-            Some(v1::reopen_task_response::Value::Preflight(preflight)) => {
+            Some(pb::reopen_task_response::Value::Preflight(preflight)) => {
+                let confirmation = preflight
+                    .confirmation
+                    .ok_or_else(|| protocol("reopen preflight is missing its confirmation"))?;
                 let confirmed = prompt
-                    .confirm(&Confirmation::ReopenTask(preflight))
+                    .confirm(&Confirmation::ReopenTask(confirmation))
                     .map_err(ConfirmedRequestError::Prompt)?;
                 sender
-                    .send(v1::ReopenTaskRequest {
-                        value: Some(v1::reopen_task_request::Value::Decision(
-                            v1::ConfirmationDecision { confirmed },
+                    .send(pb::ReopenTaskRequest {
+                        value: Some(pb::reopen_task_request::Value::Decision(
+                            pb::ConfirmationDecision { confirmed },
                         )),
                     })
                     .await
@@ -210,29 +214,29 @@ impl TaskClient {
                     .map_err(ConfirmedRequestError::Operation)?
                     .ok_or_else(|| protocol("reopen response stream closed before result"))?;
                 match result.value {
-                    Some(v1::reopen_task_response::Value::Result(result)) => Ok(result),
-                    Some(v1::reopen_task_response::Value::Preflight(_)) | None => Err(protocol(
+                    Some(pb::reopen_task_response::Value::Result(result)) => Ok(result),
+                    Some(pb::reopen_task_response::Value::Preflight(_)) | None => Err(protocol(
                         "reopen response stream returned an invalid result",
                     )),
                 }
             }
-            Some(v1::reopen_task_response::Value::Result(result)) => Ok(result),
+            Some(pb::reopen_task_response::Value::Result(result)) => Ok(result),
             None => Err(protocol("reopen response stream returned an empty message")),
         }
     }
 
     pub async fn dispatch_session<Prompt>(
         &self,
-        request: v1::PlanSessionRequest,
+        request: pb::DispatchSessionStart,
         prompt: Prompt,
-    ) -> Result<v1::DispatchedSession, ConfirmedRequestError<Prompt::Error>>
+    ) -> Result<pb::DispatchedSession, ConfirmedRequestError<Prompt::Error>>
     where
         Prompt: ConfirmationPrompt,
     {
         let (sender, receiver) = mpsc::channel(STREAM_BUFFER);
         sender
-            .send(v1::DispatchSessionRequest {
-                value: Some(v1::dispatch_session_request::Value::Start(request)),
+            .send(pb::DispatchSessionRequest {
+                value: Some(pb::dispatch_session_request::Value::Start(request)),
             })
             .await
             .map_err(|_| protocol("session request stream closed"))?;
@@ -248,14 +252,14 @@ impl TaskClient {
             .map_err(ConfirmedRequestError::Operation)?
             .ok_or_else(|| protocol("session response stream closed before preflight"))?;
         match first.value {
-            Some(v1::dispatch_session_response::Value::Preflight(preflight)) => {
+            Some(pb::dispatch_session_response::Value::Preflight(preflight)) => {
                 let confirmed = prompt
                     .confirm(&Confirmation::DispatchSession(preflight))
                     .map_err(ConfirmedRequestError::Prompt)?;
                 sender
-                    .send(v1::DispatchSessionRequest {
-                        value: Some(v1::dispatch_session_request::Value::Decision(
-                            v1::ConfirmationDecision { confirmed },
+                    .send(pb::DispatchSessionRequest {
+                        value: Some(pb::dispatch_session_request::Value::Decision(
+                            pb::ConfirmationDecision { confirmed },
                         )),
                     })
                     .await
@@ -266,13 +270,13 @@ impl TaskClient {
                     .map_err(ConfirmedRequestError::Operation)?
                     .ok_or_else(|| protocol("session response stream closed before result"))?;
                 match result.value {
-                    Some(v1::dispatch_session_response::Value::Result(result)) => Ok(result),
-                    Some(v1::dispatch_session_response::Value::Preflight(_)) | None => Err(
+                    Some(pb::dispatch_session_response::Value::Result(result)) => Ok(result),
+                    Some(pb::dispatch_session_response::Value::Preflight(_)) | None => Err(
                         protocol("session response stream returned an invalid result"),
                     ),
                 }
             }
-            Some(v1::dispatch_session_response::Value::Result(result)) => Ok(result),
+            Some(pb::dispatch_session_response::Value::Result(result)) => Ok(result),
             None => Err(protocol(
                 "session response stream returned an empty message",
             )),
@@ -287,8 +291,8 @@ impl TaskClient {
 
     fn session_client(
         &self,
-    ) -> v1::session_service_client::SessionServiceClient<AuthenticatedChannel> {
-        v1::session_service_client::SessionServiceClient::with_interceptor(
+    ) -> pb::session_service_client::SessionServiceClient<AuthenticatedChannel> {
+        pb::session_service_client::SessionServiceClient::with_interceptor(
             self.channel.clone(),
             self.request_policy.clone(),
         )
@@ -297,6 +301,8 @@ impl TaskClient {
     }
 }
 
-fn required_response<T>(value: Option<T>, message: &'static str) -> Result<T, ClientError> {
-    value.ok_or_else(|| ClientError::from(Status::internal(message)))
+fn ensure_request_id(request_id: &mut String) {
+    if request_id.is_empty() {
+        *request_id = Uuid::new_v4().to_string();
+    }
 }

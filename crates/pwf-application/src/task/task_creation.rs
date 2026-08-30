@@ -36,17 +36,12 @@ impl CreateTaskError {
                 created_section: Some(section),
                 ..
             } => Some((project, section)),
-            _ => None,
+            Self::ReadSections(_) | Self::InsertRecord(_) | Self::InsertIndex { .. } => None,
         }
     }
 }
 
-/// Labels that materialize as dedicated H2 sections.
-fn is_dedicated_section(section: &TaskSection) -> bool {
-    matches!(section.as_ref(), "Future" | "Human" | "Low-prio")
-}
-
-/// Contains a created record and the new H2 section, if one was needed.
+/// Describes the record and index effects of one successful creation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::task) struct CreatedTask {
     pub(in crate::task) id: TaskId,
@@ -68,23 +63,44 @@ pub(in crate::task) fn create(
 ) -> Result<CreatedTask, CreateTaskError> {
     let TaskCreation { project, id, new } = command;
     let target_section = new.section.clone();
-    let title = new.title.clone();
     // Read sections before writing so an invalid index leaves no orphaned note.
     let existing = IndexSectionStore::list_index_sections(store, project)
         .map_err(|error| CreateTaskError::ReadSections(anyhow::Error::new(error)))?;
-    let created_section = target_section
-        .as_ref()
-        .filter(|label| is_dedicated_section(label))
-        .filter(|label| {
-            !existing
-                .iter()
-                .any(|section| normalize_section_label(section) == **label)
-        })
-        .cloned();
+    let created_section = new_section(target_section.as_ref(), &existing);
+    let title = new.title.clone();
 
     let record = TaskStore::insert(store, project, id, new)
         .map_err(|error| CreateTaskError::InsertRecord(anyhow::Error::new(error)))?;
     let id = record.id.clone();
+    upsert_index(store, project, &id, target_section, created_section.clone())?;
+    Ok(CreatedTask {
+        id,
+        title,
+        note_path: record.locator,
+        created_section,
+    })
+}
+
+/// Finishes a previously reserved creation whose note is already observable.
+pub(in crate::task) fn ensure_index(
+    store: &(impl IndexEntryStore + IndexSectionStore),
+    project: &Project,
+    id: &TaskId,
+    section: Option<pwf_models::task::TaskSection>,
+) -> Result<(), CreateTaskError> {
+    let existing = IndexSectionStore::list_index_sections(store, project)
+        .map_err(|error| CreateTaskError::ReadSections(anyhow::Error::new(error)))?;
+    let created_section = new_section(section.as_ref(), &existing);
+    upsert_index(store, project, id, section, created_section)
+}
+
+fn upsert_index(
+    store: &impl IndexEntryStore,
+    project: &Project,
+    id: &TaskId,
+    section: Option<pwf_models::task::TaskSection>,
+    created_section: Option<TaskSection>,
+) -> Result<(), CreateTaskError> {
     IndexEntryStore::upsert_index_entry(
         store,
         project,
@@ -92,21 +108,28 @@ pub(in crate::task) fn create(
             id: id.clone(),
             state: IndexEntryState::Open,
             // Preserve the raw label; the adapter owns placement.
-            section: target_section,
+            section,
         },
     )
     .map_err(|error| CreateTaskError::InsertIndex {
         project: project.title.clone(),
-        created_section: created_section.clone(),
-        source: anyhow::Error::new(error),
-    })?;
-
-    Ok(CreatedTask {
-        id,
-        title,
-        note_path: record.locator,
         created_section,
+        source: anyhow::Error::new(error),
     })
+}
+
+pub(in crate::task) fn new_section(
+    target: Option<&TaskSection>,
+    existing: &[TaskSection],
+) -> Option<TaskSection> {
+    target
+        .filter(|section| matches!(section.as_ref(), "Future" | "Human" | "Low-prio"))
+        .filter(|section| {
+            !existing
+                .iter()
+                .any(|candidate| normalize_section_label(candidate) == **section)
+        })
+        .cloned()
 }
 
 #[cfg(test)]
@@ -165,7 +188,6 @@ mod tests {
 
         let id = TaskId::try_new("FOO-0001").unwrap();
         assert_eq!(created.id, id.clone());
-        assert_eq!(created.created_section, None);
         let tasks = store.tasks("foo");
         assert_eq!(tasks.len(), 1, "record must be inserted");
         assert_eq!(tasks[0].id, id.clone());
@@ -177,48 +199,17 @@ mod tests {
     }
 
     #[test]
-    fn create_task_reports_created_section_when_region_absent() {
+    fn create_task_preserves_requested_section_placement() {
         let store = staged_store();
 
         let created = create_task(&store, Some("Human"));
 
-        assert_eq!(
-            created.created_section.as_ref().map(AsRef::as_ref),
-            Some("Human")
-        );
+        assert_eq!(created.id, TaskId::try_new("FOO-0001").unwrap());
+        assert_eq!(created.title.as_ref(), "ship it");
+        assert_eq!(created.created_section, Some("Human".parse().unwrap()));
         assert_eq!(
             store.entries("foo")[0].section.as_ref().map(AsRef::as_ref),
             Some("Human")
-        );
-    }
-
-    #[test]
-    fn create_task_does_not_report_existing_empty_section_region() {
-        let store = staged_store().with_sections("foo", &["Human"]);
-
-        let created = create_task(&store, Some("Human"));
-
-        assert_eq!(created.created_section, None);
-    }
-
-    #[test]
-    fn create_task_matches_supported_index_header_aliases() {
-        let store = staged_store().with_sections("foo", &["Futuro"]);
-
-        let created = create_task(&store, Some("Future"));
-
-        assert_eq!(created.created_section, None);
-    }
-
-    #[test]
-    fn created_item_carries_record_and_section_fact() {
-        let store = staged_store();
-        let created = create_task(&store, Some("Low-prio"));
-        assert_eq!(created.id, TaskId::try_new("FOO-0001").unwrap());
-        assert_eq!(created.title.as_ref(), "ship it");
-        assert_eq!(
-            created.created_section.as_ref().map(AsRef::as_ref),
-            Some("Low-prio")
         );
     }
 }

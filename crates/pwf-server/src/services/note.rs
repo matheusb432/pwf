@@ -12,8 +12,8 @@ use pwf_application::{
 };
 use pwf_wire::{
     confirmation::RemoveNoteConfirmation,
+    pb::{self, note_service_server::NoteService},
     proto,
-    v1::{self, note_service_server::NoteService},
 };
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
@@ -43,8 +43,8 @@ impl NoteGrpcService {
 impl NoteService for NoteGrpcService {
     async fn add_note(
         &self,
-        request: Request<v1::AddNoteRequest>,
-    ) -> Result<Response<v1::AddNoteResponse>, Status> {
+        request: Request<pb::AddNoteRequest>,
+    ) -> Result<Response<pb::AddNoteResponse>, Status> {
         let command = proto::note::add_note_request(request.into_inner())?;
         add_note::execute(
             command,
@@ -60,8 +60,8 @@ impl NoteService for NoteGrpcService {
 
     async fn list_notes(
         &self,
-        request: Request<v1::ListNotesRequest>,
-    ) -> Result<Response<v1::ListNotesResponse>, Status> {
+        request: Request<pb::ListNotesRequest>,
+    ) -> Result<Response<pb::ListNotesResponse>, Status> {
         let query = proto::note::list_notes_request(request.into_inner())?;
         list_notes::execute(query, &self.state.store, &self.state.pool)
             .await
@@ -72,8 +72,8 @@ impl NoteService for NoteGrpcService {
 
     async fn update_note(
         &self,
-        request: Request<v1::UpdateNoteRequest>,
-    ) -> Result<Response<v1::UpdateNoteResponse>, Status> {
+        request: Request<pb::UpdateNoteRequest>,
+    ) -> Result<Response<pb::UpdateNoteResponse>, Status> {
         let command = proto::note::update_note_request(request.into_inner())?;
         edit_note::execute(command, &self.state.store, &self.state.pool)
             .await
@@ -82,11 +82,11 @@ impl NoteService for NoteGrpcService {
             .map_err(edit_note_status)
     }
 
-    type DeleteNoteStream = ResponseStream<v1::DeleteNoteResponse>;
+    type DeleteNoteStream = ResponseStream<pb::DeleteNoteResponse>;
 
     async fn delete_note(
         &self,
-        request: Request<Streaming<v1::DeleteNoteRequest>>,
+        request: Request<Streaming<pb::DeleteNoteRequest>>,
     ) -> Result<Response<Self::DeleteNoteStream>, Status> {
         let mut inbound = request.into_inner();
         let start = next_delete_note_start(&mut inbound).await?;
@@ -95,14 +95,14 @@ impl NoteService for NoteGrpcService {
         let mut confirmation = GrpcConfirmationClient::new(
             inbound,
             outbound.clone(),
-            |confirmation: &RemoveNoteConfirmation| v1::DeleteNoteResponse {
-                value: Some(v1::delete_note_response::Value::Preflight(
+            |confirmation: &RemoveNoteConfirmation| pb::DeleteNoteResponse {
+                value: Some(pb::delete_note_response::Value::Preflight(
                     proto::note::delete_note_confirmation(confirmation),
                 )),
             },
             |message| match message.value {
-                Some(v1::delete_note_request::Value::Decision(decision)) => Ok(decision.confirmed),
-                Some(v1::delete_note_request::Value::Start(_)) | None => {
+                Some(pb::delete_note_request::Value::Decision(decision)) => Ok(decision.confirmed),
+                Some(pb::delete_note_request::Value::Start(_)) | None => {
                     Err(ConfirmationClientError::UnexpectedMessage)
                 }
             },
@@ -112,8 +112,8 @@ impl NoteService for NoteGrpcService {
             let item = remove_note::execute(command, &state.store, &state.pool, &mut confirmation)
                 .await
                 .map(proto::note::delete_note_result)
-                .map(|result| v1::DeleteNoteResponse {
-                    value: Some(v1::delete_note_response::Value::Result(result)),
+                .map(|result| pb::DeleteNoteResponse {
+                    value: Some(pb::delete_note_response::Value::Result(result)),
                 })
                 .map_err(remove_note_status);
             let _ = outbound.send(item).await;
@@ -123,15 +123,15 @@ impl NoteService for NoteGrpcService {
 }
 
 async fn next_delete_note_start(
-    inbound: &mut Streaming<v1::DeleteNoteRequest>,
-) -> Result<v1::DeleteNoteStart, Status> {
+    inbound: &mut Streaming<pb::DeleteNoteRequest>,
+) -> Result<pb::DeleteNoteStart, Status> {
     let message = inbound
         .message()
         .await?
         .ok_or_else(|| Status::invalid_argument("note delete stream requires a start message"))?;
     match message.value {
-        Some(v1::delete_note_request::Value::Start(start)) => Ok(start),
-        Some(v1::delete_note_request::Value::Decision(_)) | None => Err(Status::invalid_argument(
+        Some(pb::delete_note_request::Value::Start(start)) => Ok(start),
+        Some(pb::delete_note_request::Value::Decision(_)) | None => Err(Status::invalid_argument(
             "note delete stream must start with start",
         )),
     }

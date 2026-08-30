@@ -17,7 +17,7 @@ pub mod task;
     clippy::too_many_lines,
     clippy::trivially_copy_pass_by_ref
 )]
-pub mod v1 {
+pub mod pb {
     tonic::include_proto!("pwf.v1");
 }
 

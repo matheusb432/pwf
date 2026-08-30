@@ -1,7 +1,7 @@
 use clap::{Args, Subcommand};
 use pwf_client::{
+    pb::{TaskLane, TaskLanes, TaskStatusFilter},
     task::TaskClient,
-    v1::{TaskLane, TaskLanes, TaskStatusFilter},
 };
 use pwf_models::{
     session::Agent,

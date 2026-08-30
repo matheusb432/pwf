@@ -2,8 +2,8 @@ use std::str::FromStr;
 
 use clap::{Args, ValueEnum};
 use pwf_client::{
+    pb::{AddProjectRequest, ProjectFields},
     project::ProjectClient,
-    v1::{AddProjectRequest, ProjectFields},
 };
 use serde::Deserialize;
 

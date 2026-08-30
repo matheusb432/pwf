@@ -5,11 +5,12 @@ use pwf_models::{
 use pwf_wire::{
     confirmation::RemoveTaskConfirmation,
     project::ProjectStatusFilter,
-    task::{RemovedTask, RemovedTaskOutcome, TaskNotePath},
+    task::{DeleteTask, DeleteTaskOutcome, TaskNotePath},
 };
 
 use super::{
     blocked_by,
+    mutation_request::{self, MutationOperation, MutationRequestState, MutationStart},
     resolve_task_project::{self, ResolveTaskProjectError},
 };
 use crate::{
@@ -30,6 +31,10 @@ pub enum RemoveTaskError {
     Confirmation(#[from] ConfirmationClientError),
     #[error("Task note missing: {path}")]
     NoteMissing { path: TaskNotePath },
+    #[error(transparent)]
+    Revision(#[from] super::TaskRevisionConflict),
+    #[error(transparent)]
+    MutationRequest(#[from] mutation_request::MutationRequestError),
     #[error("task {id} has an invalid persisted title: {source}")]
     InvalidTitle {
         id: TaskId,
@@ -62,17 +67,82 @@ pub enum RemoveTaskError {
 /// An unlink failure leaves the note untouched.
 #[cqrsy::command]
 pub async fn execute(
-    task_id: &TaskId,
+    command: &DeleteTask,
     store: &(impl TaskStore + IndexEntryStore),
     pool: &sqlx::SqlitePool,
     confirmation_client: &mut dyn ConfirmationClient<Confirmation = RemoveTaskConfirmation>,
-) -> Result<RemovedTaskOutcome, RemoveTaskError> {
+) -> Result<DeleteTaskOutcome, RemoveTaskError> {
+    let identity = mutation_request::identity(
+        command.request_id.as_ref(),
+        command.request_fingerprint.as_ref(),
+    )?;
+    if let Some(identity) = identity.as_ref()
+        && let Some(replay) =
+            mutation_request::find(pool, identity, MutationOperation::Delete).await?
+    {
+        return delete_replay(&replay, identity);
+    }
+
+    let prepared = prepare_removal(&command.id, store, pool).await?;
+    let confirmed = confirmation_client.confirm(&prepared.confirmation).await?;
+    if confirmed {
+        validate_removal(&prepared, store, pool).await?;
+    }
+    if let Some(identity) = identity.as_ref()
+        && let MutationStart::Existing(replay) =
+            mutation_request::start(pool, identity, MutationOperation::Delete, &command.id).await?
+    {
+        return delete_replay(&replay, identity);
+    }
+    if !confirmed {
+        if let Some(identity) = identity.as_ref() {
+            mutation_request::complete(
+                pool,
+                identity,
+                MutationOperation::Delete,
+                Some("aborted"),
+                None,
+            )
+            .await?;
+        }
+        return Ok(DeleteTaskOutcome::Aborted);
+    }
+    if let Err(error) = validate_target_revision(&prepared, store) {
+        if let Some(identity) = identity.as_ref() {
+            mutation_request::discard(pool, identity, MutationOperation::Delete).await?;
+        }
+        return Err(error);
+    }
+    delete_prepared(&prepared, store)?;
+    if let Some(identity) = identity.as_ref() {
+        mutation_request::complete(
+            pool,
+            identity,
+            MutationOperation::Delete,
+            Some("deleted"),
+            None,
+        )
+        .await?;
+    }
+    Ok(DeleteTaskOutcome::Deleted)
+}
+
+struct PreparedRemoval {
+    project: Project,
+    task_id: TaskId,
+    confirmation: RemoveTaskConfirmation,
+}
+
+async fn prepare_removal(
+    task_id: &TaskId,
+    store: &impl TaskStore,
+    pool: &sqlx::SqlitePool,
+) -> Result<PreparedRemoval, RemoveTaskError> {
     let project = resolve_task_project::execute(task_id.clone(), pool).await?;
-    let task_identifier = task_id.clone();
-    let record = TaskStore::get(store, &project, &task_identifier)
+    let record = TaskStore::get(store, &project, task_id)
         .map_err(|error| RemoveTaskError::WriteStore(anyhow::Error::new(error)))?
         .ok_or_else(|| RemoveTaskError::TaskNotFound {
-            id: task_identifier.clone(),
+            id: task_id.clone(),
         })?;
     let note_path = match &record.materialization {
         Materialization::NoteFile => record.locator.clone(),
@@ -82,44 +152,92 @@ pub async fn execute(
             });
         }
     };
-    let title =
-        TaskTitle::try_new(record.title).map_err(|source| RemoveTaskError::InvalidTitle {
-            id: task_identifier.clone(),
+    let title = TaskTitle::try_new(record.title.clone()).map_err(|source| {
+        RemoveTaskError::InvalidTitle {
+            id: task_id.clone(),
             source,
-        })?;
-    let dependents = find_dependents(&task_identifier, store, pool).await?;
-    if !dependents.is_empty() {
-        return Err(RemoveTaskError::HasDependents {
-            target: task_identifier,
-            dependents,
-        });
-    }
+        }
+    })?;
+    ensure_no_dependents(task_id, store, pool).await?;
     let confirmation = RemoveTaskConfirmation {
-        task_identifier: task_identifier.clone(),
+        task_identifier: task_id.clone(),
         project: project.title.clone(),
         title: title.clone(),
         status: record.status,
         note_path: note_path.clone(),
+        revision: super::task_revision(&record),
     };
-    if !confirmation_client.confirm(&confirmation).await? {
-        return Ok(RemovedTaskOutcome::Aborted {
-            task_id: task_identifier,
+    Ok(PreparedRemoval {
+        project,
+        task_id: task_id.clone(),
+        confirmation,
+    })
+}
+
+async fn validate_removal(
+    prepared: &PreparedRemoval,
+    store: &impl TaskStore,
+    pool: &sqlx::SqlitePool,
+) -> Result<(), RemoveTaskError> {
+    ensure_no_dependents(&prepared.task_id, store, pool).await?;
+    validate_target_revision(prepared, store)
+}
+
+fn validate_target_revision(
+    prepared: &PreparedRemoval,
+    store: &impl TaskStore,
+) -> Result<(), RemoveTaskError> {
+    let current = TaskStore::get(store, &prepared.project, &prepared.task_id)
+        .map_err(|error| RemoveTaskError::WriteStore(anyhow::Error::new(error)))?
+        .ok_or_else(|| RemoveTaskError::TaskNotFound {
+            id: prepared.task_id.clone(),
+        })?;
+    super::ensure_task_revision(Some(&prepared.confirmation.revision), &current)?;
+    Ok(())
+}
+
+fn delete_prepared(
+    prepared: &PreparedRemoval,
+    store: &(impl TaskStore + IndexEntryStore),
+) -> Result<(), RemoveTaskError> {
+    IndexEntryStore::delete_index_entry(store, &prepared.project, &prepared.task_id)
+        .map_err(|error| RemoveTaskError::WriteStore(anyhow::Error::new(error)))?;
+    TaskStore::delete(store, &prepared.project, &prepared.task_id)
+        .map_err(|error| RemoveTaskError::WriteStore(anyhow::Error::new(error)))?;
+    Ok(())
+}
+
+async fn ensure_no_dependents(
+    task_id: &TaskId,
+    store: &impl TaskStore,
+    pool: &sqlx::SqlitePool,
+) -> Result<(), RemoveTaskError> {
+    let dependents = find_dependents(task_id, store, pool).await?;
+    if !dependents.is_empty() {
+        return Err(RemoveTaskError::HasDependents {
+            target: task_id.clone(),
+            dependents,
         });
     }
+    Ok(())
+}
 
-    IndexEntryStore::delete_index_entry(store, &project, &task_identifier)
-        .map_err(|error| RemoveTaskError::WriteStore(anyhow::Error::new(error)))?;
-    TaskStore::delete(store, &project, &task_identifier)
-        .map_err(|error| RemoveTaskError::WriteStore(anyhow::Error::new(error)))?;
-
-    let removed = RemovedTask {
-        id: task_identifier,
-        project: project.title,
-        title,
-        deleted_path: note_path,
-        unlinked: record.placement.map(|placement| placement.index_path),
-    };
-    Ok(RemovedTaskOutcome::Removed(removed))
+fn delete_replay(
+    replay: &mutation_request::MutationRequestRecord,
+    identity: &mutation_request::MutationIdentity,
+) -> Result<DeleteTaskOutcome, RemoveTaskError> {
+    if replay.state == MutationRequestState::Pending {
+        return Err(identity.incomplete().into());
+    }
+    match replay.outcome.as_deref() {
+        Some("deleted") => Ok(DeleteTaskOutcome::Deleted),
+        Some("aborted") => Ok(DeleteTaskOutcome::Aborted),
+        Some(_) | None => Err(mutation_request::MutationRequestError::Corrupt {
+            request_id: identity.request_id().to_string(),
+            reason: "delete outcome is invalid",
+        }
+        .into()),
+    }
 }
 
 async fn find_dependents(
@@ -175,7 +293,7 @@ mod tests {
     use pwf_models::task::{TaskId, TaskStatus};
     use pwf_wire::{
         confirmation::RemoveTaskConfirmation,
-        task::{RemovedTaskOutcome, TaskNotePath},
+        task::{DeleteTask, DeleteTaskOutcome, TaskNotePath},
     };
 
     use super::RemoveTaskError;
@@ -197,8 +315,18 @@ mod tests {
         store: &InMemoryStore,
         pool: &sqlx::SqlitePool,
         confirmation: &mut dyn ConfirmationClient<Confirmation = RemoveTaskConfirmation>,
-    ) -> Result<RemovedTaskOutcome, RemoveTaskError> {
-        remove_task::execute(task_id, store, pool, confirmation).await
+    ) -> Result<DeleteTaskOutcome, RemoveTaskError> {
+        remove_task::execute(
+            &DeleteTask {
+                id: task_id.clone(),
+                request_id: None,
+                request_fingerprint: None,
+            },
+            store,
+            pool,
+            confirmation,
+        )
+        .await
     }
 
     fn record(id: &str, status: TaskStatus) -> TaskRecord {
@@ -274,16 +402,7 @@ mod tests {
         let outcome = run(&task_id("FOO-0001"), &store, &pool, &mut Accepted)
             .await
             .unwrap();
-        let removed = match outcome {
-            RemovedTaskOutcome::Removed(removed) => Some(removed),
-            RemovedTaskOutcome::Aborted { .. } => None,
-        };
-        assert!(removed.is_some());
-        let removed = removed.unwrap();
-
-        assert_eq!(removed.id.as_ref(), "FOO-0001");
-        assert_eq!(removed.project.as_ref(), "foo");
-        assert_eq!(removed.title.as_ref(), "stale task");
+        assert_eq!(outcome, DeleteTaskOutcome::Deleted);
         assert!(store.tasks("foo").is_empty(), "record must be deleted");
         assert!(
             store.entries("foo").is_empty(),
@@ -368,7 +487,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(matches!(outcome, RemovedTaskOutcome::Removed(_)));
+        assert_eq!(outcome, DeleteTaskOutcome::Deleted);
         assert!(store.tasks("foo").is_empty());
         assert!(store.entries("foo").is_empty());
     }
@@ -383,7 +502,7 @@ mod tests {
                 .await
                 .unwrap();
 
-            assert!(matches!(outcome, RemovedTaskOutcome::Removed(_)));
+            assert_eq!(outcome, DeleteTaskOutcome::Deleted);
             assert!(store.tasks("foo").is_empty(), "{status} record retained");
             assert!(store.entries("foo").is_empty(), "{status} index retained");
         }
@@ -448,7 +567,7 @@ mod tests {
     }
 
     mod confirmed_removal {
-        use pwf_wire::task::RemovedTaskOutcome;
+        use pwf_wire::task::DeleteTaskOutcome;
 
         use super::*;
 
@@ -457,7 +576,7 @@ mod tests {
             insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
             let store = staged(TaskStatus::Active);
 
-            let outcome = remove_task::execute(
+            let outcome = run(
                 &task_id("FOO-0001"),
                 &store,
                 &pool,
@@ -465,14 +584,7 @@ mod tests {
             )
             .await
             .unwrap();
-            let removed = match outcome {
-                RemovedTaskOutcome::Removed(removed) => Some(removed),
-                RemovedTaskOutcome::Aborted { .. } => None,
-            };
-            assert!(removed.is_some());
-            let removed = removed.unwrap();
-
-            assert_eq!(removed.id.as_ref(), "FOO-0001");
+            assert_eq!(outcome, DeleteTaskOutcome::Deleted);
             assert!(store.tasks("foo").is_empty());
             assert!(store.entries("foo").is_empty());
         }
@@ -482,7 +594,7 @@ mod tests {
             insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
             let store = staged(TaskStatus::Active);
 
-            let outcome = remove_task::execute(
+            let outcome = run(
                 &task_id("FOO-0001"),
                 &store,
                 &pool,
@@ -491,12 +603,7 @@ mod tests {
             .await
             .unwrap();
 
-            assert_eq!(
-                outcome,
-                RemovedTaskOutcome::Aborted {
-                    task_id: "FOO-0001".parse().unwrap(),
-                }
-            );
+            assert_eq!(outcome, DeleteTaskOutcome::Aborted);
             assert_eq!(store.tasks("foo").len(), 1);
             assert_eq!(store.entries("foo").len(), 1);
         }

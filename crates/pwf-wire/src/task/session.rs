@@ -24,7 +24,7 @@ pub struct PlanSession {
 }
 
 /// Selects whether a plan is prepared for dispatch or rendered without effects.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlanSessionIntent {
     Dispatch,
     DryRun,

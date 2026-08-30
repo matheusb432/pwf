@@ -1,7 +1,7 @@
 use clap::Args;
 use pwf_client::{
+    pb::{StringFieldUpdate, UpdateProjectRequest, string_field_update},
     project::ProjectClient,
-    v1::{StringFieldUpdate, UpdateProjectRequest, string_field_update},
 };
 use pwf_models::project::{ProjectId, ProjectSourceValue};
 

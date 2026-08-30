@@ -1,14 +1,8 @@
 use clap::Args;
-use pwf_client::{task::TaskClient, v1::CancelTaskRequest};
+use pwf_client::{pb::CancelTaskRequest, task::TaskClient};
 use pwf_models::task::TaskReport;
 
-use super::{
-    Identifier,
-    render::{
-        emit_cancel_diagnostics, emit_created_section, emit_created_section_for_error,
-        render_cancelled,
-    },
-};
+use super::{Identifier, render::render_cancelled};
 
 #[derive(Args, Debug)]
 pub struct Arguments {
@@ -40,14 +34,15 @@ pub(super) async fn run(arguments: &Arguments, client: &TaskClient) -> anyhow::R
         report: report.to_string(),
         commits: arguments.commits.clone(),
         review: arguments.review,
+        expected_revision: None,
+        request_id: String::new(),
     };
-    let output = client.cancel_task(command).await.map_err(|error| {
-        emit_created_section_for_error(&error);
-        crate::rpc_error(error)
-    })?;
-    if let Some(review) = output.review_task.as_ref() {
-        emit_created_section(review);
-    }
-    emit_cancel_diagnostics(&output);
-    Ok(render_cancelled(&output))
+    let output = client
+        .cancel_task(command)
+        .await
+        .map_err(crate::rpc_error)?;
+    Ok(render_cancelled(
+        id.as_ref(),
+        output.review_task_id.as_deref(),
+    ))
 }

@@ -1,4 +1,4 @@
-use pwf_client::v1::{EffortTier, PriorityTier, TaskData, TaskStatus};
+use pwf_client::pb::{EffortTier, PriorityTier, TaskData, TaskStatus};
 use serde::Serialize;
 
 #[derive(Serialize)]

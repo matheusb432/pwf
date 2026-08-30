@@ -1,5 +1,5 @@
 use clap::Args;
-use pwf_client::{project::ProjectClient, v1::ResumeProjectRequest};
+use pwf_client::{pb::ResumeProjectRequest, project::ProjectClient};
 use pwf_models::project::ProjectId;
 
 use super::{output, parse_project_id};

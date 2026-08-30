@@ -1,11 +1,10 @@
 use std::pin::Pin;
 
 use futures::Stream;
-use prost::Message as _;
 use pwf_application::{
     ports::confirmation::ConfirmationClientError,
     task::{
-        CloseTaskError,
+        CloseTaskError, MutationRequestError,
         add_task::{self, AddTaskError},
         cancel_task::{self, CancelTaskError},
         complete_task::{self, CompleteTaskError},
@@ -19,12 +18,11 @@ use pwf_application::{
 };
 use pwf_wire::{
     confirmation::{RemoveTaskConfirmation, ReopenTaskConfirmation},
-    proto,
-    v1::{self, task_service_server::TaskService},
+    pb, proto,
 };
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
-use tonic::{Code, Request, Response, Status, Streaming};
+use tonic::{Request, Response, Status, Streaming};
 
 use super::{
     confirmation::{GrpcConfirmationClient, confirmation_status},
@@ -47,12 +45,13 @@ impl TaskGrpcService {
 }
 
 #[tonic::async_trait]
-impl TaskService for TaskGrpcService {
+impl pb::task_service_server::TaskService for TaskGrpcService {
     async fn create_task(
         &self,
-        request: Request<v1::CreateTaskRequest>,
-    ) -> Result<Response<v1::CreateTaskResponse>, Status> {
+        request: Request<pb::CreateTaskRequest>,
+    ) -> Result<Response<pb::CreateTaskResponse>, Status> {
         let command = proto::task::create_task_request(request.into_inner())?;
+        let _mutation_guard = self.state.task_mutations.lock().await;
         add_task::execute(
             &command,
             &self.state.store,
@@ -60,16 +59,17 @@ impl TaskService for TaskGrpcService {
             &self.state.clock,
         )
         .await
-        .map(proto::task::create_task_response)
+        .map(|id| proto::task::create_task_response(&id))
         .map(Response::new)
         .map_err(create_task_status)
     }
 
     async fn cancel_task(
         &self,
-        request: Request<v1::CancelTaskRequest>,
-    ) -> Result<Response<v1::CancelTaskResponse>, Status> {
+        request: Request<pb::CancelTaskRequest>,
+    ) -> Result<Response<pb::CancelTaskResponse>, Status> {
         let command = proto::task::cancel_task_request(request.into_inner())?;
+        let _mutation_guard = self.state.task_mutations.lock().await;
         cancel_task::execute(
             &command,
             &self.state.store,
@@ -84,9 +84,10 @@ impl TaskService for TaskGrpcService {
 
     async fn complete_task(
         &self,
-        request: Request<v1::CompleteTaskRequest>,
-    ) -> Result<Response<v1::CompleteTaskResponse>, Status> {
+        request: Request<pb::CompleteTaskRequest>,
+    ) -> Result<Response<pb::CompleteTaskResponse>, Status> {
         let command = proto::task::complete_task_request(request.into_inner())?;
+        let _mutation_guard = self.state.task_mutations.lock().await;
         complete_task::execute(
             &command,
             &self.state.store,
@@ -101,20 +102,21 @@ impl TaskService for TaskGrpcService {
 
     async fn update_task(
         &self,
-        request: Request<v1::UpdateTaskRequest>,
-    ) -> Result<Response<v1::UpdateTaskResponse>, Status> {
+        request: Request<pb::UpdateTaskRequest>,
+    ) -> Result<Response<pb::UpdateTaskResponse>, Status> {
         let command = proto::task::update_task_request(request.into_inner())?;
+        let _mutation_guard = self.state.task_mutations.lock().await;
         edit_task::execute(command, &self.state.store, &self.state.pool)
             .await
-            .map(proto::task::update_task_response)
+            .map(|()| proto::task::update_task_response())
             .map(Response::new)
             .map_err(|error| edit_task_status(&error))
     }
 
     async fn get_task(
         &self,
-        request: Request<v1::GetTaskRequest>,
-    ) -> Result<Response<v1::GetTaskResponse>, Status> {
+        request: Request<pb::GetTaskRequest>,
+    ) -> Result<Response<pb::GetTaskResponse>, Status> {
         let query = proto::task::get_task_request(request.into_inner())?;
         get_task::execute(&query, &self.state.store, &self.state.pool)
             .await
@@ -125,8 +127,8 @@ impl TaskService for TaskGrpcService {
 
     async fn list_tasks(
         &self,
-        request: Request<v1::ListTasksRequest>,
-    ) -> Result<Response<v1::ListTasksResponse>, Status> {
+        request: Request<pb::ListTasksRequest>,
+    ) -> Result<Response<pb::ListTasksResponse>, Status> {
         let query = proto::task::list_tasks_request(request.into_inner())?;
         list_tasks::execute(
             &query,
@@ -140,38 +142,38 @@ impl TaskService for TaskGrpcService {
         .map_err(list_tasks_status)
     }
 
-    type DeleteTaskStream = ResponseStream<v1::DeleteTaskResponse>;
+    type DeleteTaskStream = ResponseStream<pb::DeleteTaskResponse>;
 
     async fn delete_task(
         &self,
-        request: Request<Streaming<v1::DeleteTaskRequest>>,
+        request: Request<Streaming<pb::DeleteTaskRequest>>,
     ) -> Result<Response<Self::DeleteTaskStream>, Status> {
         let mut inbound = request.into_inner();
         let start = next_delete_start(&mut inbound).await?;
-        let task_id = proto::task::delete_task_start(start)?;
+        let command = proto::task::delete_task_start(start)?;
         let (outbound, receiver) = mpsc::channel(STREAM_BUFFER);
         let mut confirmation = GrpcConfirmationClient::new(
             inbound,
             outbound.clone(),
-            |confirmation: &RemoveTaskConfirmation| v1::DeleteTaskResponse {
-                value: Some(v1::delete_task_response::Value::Preflight(
-                    proto::task::delete_task_confirmation(confirmation),
+            |confirmation: &RemoveTaskConfirmation| pb::DeleteTaskResponse {
+                value: Some(pb::delete_task_response::Value::Preflight(
+                    proto::task::delete_task_preflight(confirmation),
                 )),
             },
             |message| match message.value {
-                Some(v1::delete_task_request::Value::Decision(decision)) => Ok(decision.confirmed),
-                Some(v1::delete_task_request::Value::Start(_)) | None => {
+                Some(pb::delete_task_request::Value::Decision(decision)) => Ok(decision.confirmed),
+                Some(pb::delete_task_request::Value::Start(_)) | None => {
                     Err(ConfirmationClientError::UnexpectedMessage)
                 }
             },
         );
         let state = self.state.clone();
         tokio::spawn(async move {
-            let item = remove_task::execute(&task_id, &state.store, &state.pool, &mut confirmation)
+            let item = remove_task::execute(&command, &state.store, &state.pool, &mut confirmation)
                 .await
                 .map(proto::task::delete_task_result)
-                .map(|result| v1::DeleteTaskResponse {
-                    value: Some(v1::delete_task_response::Value::Result(result)),
+                .map(|result| pb::DeleteTaskResponse {
+                    value: Some(pb::delete_task_response::Value::Result(result)),
                 })
                 .map_err(delete_task_status);
             let _ = outbound.send(item).await;
@@ -179,38 +181,38 @@ impl TaskService for TaskGrpcService {
         Ok(Response::new(Box::pin(ReceiverStream::new(receiver))))
     }
 
-    type ReopenTaskStream = ResponseStream<v1::ReopenTaskResponse>;
+    type ReopenTaskStream = ResponseStream<pb::ReopenTaskResponse>;
 
     async fn reopen_task(
         &self,
-        request: Request<Streaming<v1::ReopenTaskRequest>>,
+        request: Request<Streaming<pb::ReopenTaskRequest>>,
     ) -> Result<Response<Self::ReopenTaskStream>, Status> {
         let mut inbound = request.into_inner();
         let start = next_reopen_start(&mut inbound).await?;
-        let task_id = proto::task::reopen_task_start(start)?;
+        let command = proto::task::reopen_task_start(start)?;
         let (outbound, receiver) = mpsc::channel(STREAM_BUFFER);
         let mut confirmation = GrpcConfirmationClient::new(
             inbound,
             outbound.clone(),
-            |confirmation: &ReopenTaskConfirmation| v1::ReopenTaskResponse {
-                value: Some(v1::reopen_task_response::Value::Preflight(
-                    proto::task::reopen_task_confirmation(confirmation),
+            |confirmation: &ReopenTaskConfirmation| pb::ReopenTaskResponse {
+                value: Some(pb::reopen_task_response::Value::Preflight(
+                    proto::task::reopen_task_preflight(confirmation),
                 )),
             },
             |message| match message.value {
-                Some(v1::reopen_task_request::Value::Decision(decision)) => Ok(decision.confirmed),
-                Some(v1::reopen_task_request::Value::Start(_)) | None => {
+                Some(pb::reopen_task_request::Value::Decision(decision)) => Ok(decision.confirmed),
+                Some(pb::reopen_task_request::Value::Start(_)) | None => {
                     Err(ConfirmationClientError::UnexpectedMessage)
                 }
             },
         );
         let state = self.state.clone();
         tokio::spawn(async move {
-            let item = reopen_task::execute(&task_id, &state.store, &state.pool, &mut confirmation)
+            let item = reopen_task::execute(&command, &state.store, &state.pool, &mut confirmation)
                 .await
                 .map(proto::task::reopen_task_result)
-                .map(|result| v1::ReopenTaskResponse {
-                    value: Some(v1::reopen_task_response::Value::Result(result)),
+                .map(|result| pb::ReopenTaskResponse {
+                    value: Some(pb::reopen_task_response::Value::Result(result)),
                 })
                 .map_err(reopen_task_status);
             let _ = outbound.send(item).await;
@@ -220,30 +222,30 @@ impl TaskService for TaskGrpcService {
 }
 
 async fn next_delete_start(
-    inbound: &mut Streaming<v1::DeleteTaskRequest>,
-) -> Result<v1::DeleteTaskStart, Status> {
+    inbound: &mut Streaming<pb::DeleteTaskRequest>,
+) -> Result<pb::DeleteTaskStart, Status> {
     let message = inbound
         .message()
         .await?
         .ok_or_else(|| Status::invalid_argument("delete stream requires a start message"))?;
     match message.value {
-        Some(v1::delete_task_request::Value::Start(start)) => Ok(start),
-        Some(v1::delete_task_request::Value::Decision(_)) | None => Err(Status::invalid_argument(
+        Some(pb::delete_task_request::Value::Start(start)) => Ok(start),
+        Some(pb::delete_task_request::Value::Decision(_)) | None => Err(Status::invalid_argument(
             "delete stream must start with start",
         )),
     }
 }
 
 async fn next_reopen_start(
-    inbound: &mut Streaming<v1::ReopenTaskRequest>,
-) -> Result<v1::ReopenTaskStart, Status> {
+    inbound: &mut Streaming<pb::ReopenTaskRequest>,
+) -> Result<pb::ReopenTaskStart, Status> {
     let message = inbound
         .message()
         .await?
         .ok_or_else(|| Status::invalid_argument("reopen stream requires a start message"))?;
     match message.value {
-        Some(v1::reopen_task_request::Value::Start(start)) => Ok(start),
-        Some(v1::reopen_task_request::Value::Decision(_)) | None => Err(Status::invalid_argument(
+        Some(pb::reopen_task_request::Value::Start(start)) => Ok(start),
+        Some(pb::reopen_task_request::Value::Decision(_)) | None => Err(Status::invalid_argument(
             "reopen stream must start with start",
         )),
     }
@@ -257,25 +259,17 @@ fn create_task_status(error: AddTaskError) -> Status {
         | AddTaskError::SelfBlockedBy { .. }
         | AddTaskError::BlockedByCycle { .. } => Status::failed_precondition(message),
         AddTaskError::InvalidTitle(_) => Status::invalid_argument(message),
-        AddTaskError::ReadBlockedBy { .. } | AddTaskError::MalformedBlockedBy { .. } => {
-            Status::failed_precondition(message)
+        AddTaskError::MalformedBlockedBy { .. } | AddTaskError::ReservedTaskChanged { .. } => {
+            Status::data_loss(message)
         }
-        AddTaskError::WriteStore { diagnostics, .. } => {
-            status_with_create_details(message, &diagnostics)
-        }
-        AddTaskError::QueryProject(_)
+        AddTaskError::MutationRequest(error) => mutation_request_status(&error),
+        AddTaskError::WriteStore { .. }
+        | AddTaskError::ReadBlockedBy { .. }
+        | AddTaskError::ReadReservedTask { .. }
+        | AddTaskError::QueryProject(_)
         | AddTaskError::AllocateTaskId { .. }
         | AddTaskError::Clock(_) => Status::internal(message),
     }
-}
-
-fn status_with_create_details(
-    message: String,
-    diagnostics: &pwf_wire::task::AddTaskDiagnostics,
-) -> Status {
-    let details = proto::task::create_task_failure_details(diagnostics);
-    let details = details.encode_to_vec();
-    Status::with_details(Code::Internal, message, details.into())
 }
 
 fn resolve_task_project_status(error: &ResolveTaskProjectError) -> Status {
@@ -291,6 +285,7 @@ fn close_task_status(error: CloseTaskError) -> Status {
         CloseTaskError::TaskNotFound { .. } | CloseTaskError::UnknownProjectId { .. } => {
             Status::not_found(message)
         }
+        CloseTaskError::Revision(_) => Status::aborted(message),
         CloseTaskError::InvalidTitle { .. } => Status::failed_precondition(message),
         CloseTaskError::WriteStore(_) => Status::internal(message),
         CloseTaskError::ReviewTask(error) => create_task_status(*error),
@@ -302,6 +297,7 @@ fn cancel_task_status(error: CancelTaskError) -> Status {
         CancelTaskError::ResolveProject(error) => resolve_task_project_status(&error),
         CancelTaskError::Close(error) => close_task_status(error),
         CancelTaskError::Clock(_) => Status::internal(error.to_string()),
+        CancelTaskError::MutationRequest(error) => mutation_request_status(&error),
     }
 }
 
@@ -310,6 +306,7 @@ fn complete_task_status(error: CompleteTaskError) -> Status {
         CompleteTaskError::ResolveProject(error) => resolve_task_project_status(&error),
         CompleteTaskError::Close(error) => close_task_status(error),
         CompleteTaskError::Clock(_) => Status::internal(error.to_string()),
+        CompleteTaskError::MutationRequest(error) => mutation_request_status(&error),
     }
 }
 
@@ -317,30 +314,49 @@ fn edit_task_status(error: &EditTaskError) -> Status {
     let message = error.to_string();
     match error {
         EditTaskError::TaskNotFound { .. } => Status::not_found(message),
+        EditTaskError::Revision(_) => Status::aborted(message),
+        EditTaskError::MutationRequest(error) => mutation_request_status(error),
         EditTaskError::ClosedTask { .. }
+        | EditTaskError::NoteMissing { .. }
         | EditTaskError::InvalidPersistedTitle { .. }
-        | EditTaskError::InvalidTagsFrontmatter { .. }
-        | EditTaskError::MalformedBlockedBy { .. }
         | EditTaskError::UnknownBlockedByIds { .. }
-        | EditTaskError::ReadBlockedBy { .. }
         | EditTaskError::SelfBlockedBy { .. }
         | EditTaskError::BlockedByCycle { .. }
         | EditTaskError::AmbiguousLanes { .. } => Status::failed_precondition(message),
-        EditTaskError::WriteStore(_) | EditTaskError::QueryProject(_) => Status::internal(message),
+        EditTaskError::InvalidTagsFrontmatter { .. } | EditTaskError::MalformedBlockedBy { .. } => {
+            Status::data_loss(message)
+        }
+        EditTaskError::ReadBlockedBy { .. }
+        | EditTaskError::WriteStore(_)
+        | EditTaskError::QueryProject(_) => Status::internal(message),
+    }
+}
+
+fn mutation_request_status(error: &MutationRequestError) -> Status {
+    match error {
+        MutationRequestError::Conflict { .. } => Status::already_exists(error.to_string()),
+        MutationRequestError::Incomplete { .. } => Status::aborted(error.to_string()),
+        MutationRequestError::Corrupt { .. } => Status::data_loss(error.to_string()),
+        MutationRequestError::InvalidIdentity { .. } | MutationRequestError::Database(_) => {
+            Status::internal(error.to_string())
+        }
     }
 }
 
 fn get_task_status(error: &GetTaskError) -> Status {
-    if matches!(error, GetTaskError::TaskNotFound { .. }) {
-        Status::not_found(error.to_string())
-    } else {
-        Status::internal(error.to_string())
+    match error {
+        GetTaskError::TaskNotFound { .. } => Status::not_found(error.to_string()),
+        GetTaskError::InvalidTaskData { .. } | GetTaskError::MalformedBlockedBy { .. } => {
+            Status::data_loss(error.to_string())
+        }
+        _ => Status::internal(error.to_string()),
     }
 }
 
 fn list_tasks_status(error: ListTasksError) -> Status {
     match error {
         ListTasksError::ResolveProject(error) => resolve_project_status(&error),
+        ListTasksError::InvalidPageToken { .. } => Status::invalid_argument(error.to_string()),
         error => Status::internal(error.to_string()),
     }
 }
@@ -351,10 +367,14 @@ fn delete_task_status(error: RemoveTaskError) -> Status {
         RemoveTaskError::TaskNotFound { .. } => Status::not_found(message),
         RemoveTaskError::ResolveProject(error) => resolve_task_project_status(&error),
         RemoveTaskError::Confirmation(error) => confirmation_status(&error),
-        RemoveTaskError::NoteMissing { .. }
-        | RemoveTaskError::InvalidTitle { .. }
-        | RemoveTaskError::HasDependents { .. }
-        | RemoveTaskError::MalformedBlockedBy { .. } => Status::failed_precondition(message),
+        RemoveTaskError::Revision(_) => Status::aborted(message),
+        RemoveTaskError::MutationRequest(error) => mutation_request_status(&error),
+        RemoveTaskError::NoteMissing { .. } | RemoveTaskError::HasDependents { .. } => {
+            Status::failed_precondition(message)
+        }
+        RemoveTaskError::InvalidTitle { .. } | RemoveTaskError::MalformedBlockedBy { .. } => {
+            Status::data_loss(message)
+        }
         RemoveTaskError::ReadDependents(_) | RemoveTaskError::WriteStore(_) => {
             Status::internal(message)
         }
@@ -366,6 +386,8 @@ fn reopen_task_status(error: ReopenTaskError) -> Status {
         ReopenTaskError::TaskNotFound { .. } => Status::not_found(error.to_string()),
         ReopenTaskError::ResolveProject(error) => resolve_task_project_status(&error),
         ReopenTaskError::Confirmation(error) => confirmation_status(&error),
+        ReopenTaskError::Revision(_) => Status::aborted(error.to_string()),
+        ReopenTaskError::MutationRequest(error) => mutation_request_status(&error),
         ReopenTaskError::WriteStore(_) => Status::internal(error.to_string()),
     }
 }

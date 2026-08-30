@@ -1,71 +1,49 @@
-//! Renders byte-stable close and reopen confirmations plus ordered done-queue diagnostics.
+//! Renders byte-stable close and reopen confirmations.
 
-use pwf_client::v1::{ClosedTask, ReopenTaskResult, reopen_task_result};
+use pwf_client::pb::{ReopenTaskResult, reopen_task_result};
 
 use super::confirmation::render_review_task;
 
-pub(in crate::task) fn render_cancelled(outcome: &ClosedTask) -> String {
-    render_closed("Cancelled", outcome)
+pub(in crate::task) fn render_cancelled(task_id: &str, review_task_id: Option<&str>) -> String {
+    render_closed("Cancelled", task_id, review_task_id)
 }
 
-pub(in crate::task) fn render_completed(outcome: &ClosedTask) -> String {
-    render_closed("Done", outcome)
+pub(in crate::task) fn render_completed(task_id: &str, review_task_id: Option<&str>) -> String {
+    render_closed("Done", task_id, review_task_id)
 }
 
-fn render_closed(action: &str, outcome: &ClosedTask) -> String {
-    let mut text = format!(
-        "{} {} ({} :: {})\n",
-        action, outcome.id, outcome.project, outcome.title
-    );
-    if let Some(review) = outcome.review_task.as_ref() {
-        text.push_str(&render_review_task(review));
+fn render_closed(action: &str, task_id: &str, review_task_id: Option<&str>) -> String {
+    let mut text = format!("{action} {task_id}\n");
+    if let Some(review_task_id) = review_task_id {
+        text.push_str(&render_review_task(review_task_id));
     }
     text
 }
 
 /// Renders the byte-stable reopen or already-active confirmation.
-pub(in crate::task) fn render_reopened(task_id: &str, outcome: &ReopenTaskResult) -> String {
-    match outcome.outcome.as_ref() {
-        Some(reopen_task_result::Outcome::AlreadyActive(task)) => {
-            format!(
-                "{} is already active ({}), so it was skipped.\n",
-                task.id, task.project
-            )
+pub(in crate::task) fn render_reopened(task_id: &str, outcome: ReopenTaskResult) -> String {
+    match outcome.outcome {
+        Some(reopen_task_result::Outcome::AlreadyActive(_)) => {
+            format!("{task_id} is already active, so it was skipped.\n")
         }
-        Some(reopen_task_result::Outcome::Reopened(task)) => {
-            format!("Reopened {} ({})\n", task.id, task.project)
+        Some(reopen_task_result::Outcome::Reopened(_)) => format!("Reopened {task_id}\n"),
+        Some(reopen_task_result::Outcome::Aborted(_)) => {
+            format!("# reopen {task_id}: aborted\nnothing changed.\n")
         }
-        Some(reopen_task_result::Outcome::Aborted(task)) => {
-            format!("# reopen {}: aborted\nnothing changed.\n", task.id)
-        }
-        None => {
-            format!("# reopen {task_id}: invalid server response\n")
-        }
+        None => format!("# reopen {task_id}: invalid server response\n"),
     }
 }
 
-pub(in crate::task) fn emit_cancel_diagnostics(outcome: &ClosedTask) {
-    emit_close_diagnostics(outcome);
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-pub(in crate::task) fn emit_complete_diagnostics(outcome: &ClosedTask) {
-    emit_close_diagnostics(outcome);
-}
-
-fn emit_close_diagnostics(outcome: &ClosedTask) {
-    if let Some(project) = outcome.futuro_renamed_project.as_deref() {
-        eprintln!("info: normalized `## Futuro` header to `## Future` in {project}");
-    }
-    if !outcome.evicted_ids.is_empty() {
-        eprintln!(
-            "info: archived {} done task(s) past the section cap: {}",
-            outcome.evicted_ids.len(),
-            outcome
-                .evicted_ids
-                .iter()
-                .map(String::as_str)
-                .collect::<Vec<_>>()
-                .join(", ")
+    #[test]
+    fn close_confirmation_includes_only_identifiers() {
+        assert_eq!(render_completed("FOO-0001", None), "Done FOO-0001\n");
+        assert_eq!(
+            render_cancelled("FOO-0001", Some("FOO-0002")),
+            "Cancelled FOO-0001\nADDED PWF TASK [FOO-0002]\n"
         );
     }
 }

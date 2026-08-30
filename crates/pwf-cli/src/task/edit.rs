@@ -1,11 +1,11 @@
 use clap::{ArgGroup, Args};
 use pwf_client::{
-    task::TaskClient,
-    v1::{
+    pb::{
         self, AppendTaskPrompt, ClearField, StringCollectionEdit, StructuredTaskEdit,
         TaskContentEdit, TaskLane, UpdateTaskRequest, effort_edit, priority_edit,
         task_content_edit,
     },
+    task::TaskClient,
 };
 use pwf_models::task::{TagInput, TaskTags, TaskTitle};
 
@@ -195,15 +195,15 @@ struct EffortEdit {
 }
 
 impl EffortEdit {
-    fn edit(&self) -> Option<v1::EffortEdit> {
+    fn edit(&self) -> Option<pb::EffortEdit> {
         self.effort.map_or_else(
             || {
-                self.remove_effort.then_some(v1::EffortEdit {
+                self.remove_effort.then_some(pb::EffortEdit {
                     operation: Some(effort_edit::Operation::Clear(ClearField {})),
                 })
             },
             |effort| {
-                Some(v1::EffortEdit {
+                Some(pb::EffortEdit {
                     operation: Some(effort_edit::Operation::Set(wire_effort(effort) as i32)),
                 })
             },
@@ -222,15 +222,15 @@ struct PriorityEdit {
 }
 
 impl PriorityEdit {
-    fn edit(&self) -> Option<v1::PriorityEdit> {
+    fn edit(&self) -> Option<pb::PriorityEdit> {
         self.priority.map_or_else(
             || {
-                self.remove_priority.then_some(v1::PriorityEdit {
+                self.remove_priority.then_some(pb::PriorityEdit {
                     operation: Some(priority_edit::Operation::Clear(ClearField {})),
                 })
             },
             |priority| {
-                Some(v1::PriorityEdit {
+                Some(pb::PriorityEdit {
                     operation: Some(priority_edit::Operation::Set(wire_priority(priority) as i32)),
                 })
             },
@@ -262,6 +262,8 @@ pub(super) async fn run(
         effort: arguments.effort.edit(),
         tags: arguments.tags.edit(),
         priority: arguments.priority.edit(),
+        expected_revision: None,
+        request_id: String::new(),
     };
     if request.content.is_none()
         && request.blocked_by.is_none()
@@ -273,14 +275,14 @@ pub(super) async fn run(
             "nothing to edit; pass at least one edit flag."
         ));
     }
-    let edited = client
+    client
         .update_task(request)
         .await
         .map_err(crate::rpc_error)?;
     if title_normalized {
         eprintln!("{TITLE_NORMALIZED_NOTICE}");
     }
-    Ok(render_edited(&edited, console.color()))
+    Ok(render_edited(id.as_ref(), console.color()))
 }
 
 fn content_edit(
@@ -353,20 +355,20 @@ fn content_edit(
     Ok(content)
 }
 
-fn wire_effort(value: EffortChoice) -> v1::EffortTier {
+fn wire_effort(value: EffortChoice) -> pb::EffortTier {
     match value {
-        EffortChoice::Low => v1::EffortTier::Low,
-        EffortChoice::Medium => v1::EffortTier::Medium,
-        EffortChoice::High => v1::EffortTier::High,
-        EffortChoice::Highest => v1::EffortTier::Highest,
+        EffortChoice::Low => pb::EffortTier::Low,
+        EffortChoice::Medium => pb::EffortTier::Medium,
+        EffortChoice::High => pb::EffortTier::High,
+        EffortChoice::Highest => pb::EffortTier::Highest,
     }
 }
 
-fn wire_priority(value: PriorityChoice) -> v1::PriorityTier {
+fn wire_priority(value: PriorityChoice) -> pb::PriorityTier {
     match value {
-        PriorityChoice::Low => v1::PriorityTier::Low,
-        PriorityChoice::Medium => v1::PriorityTier::Medium,
-        PriorityChoice::High => v1::PriorityTier::High,
-        PriorityChoice::Highest => v1::PriorityTier::Highest,
+        PriorityChoice::Low => pb::PriorityTier::Low,
+        PriorityChoice::Medium => pb::PriorityTier::Medium,
+        PriorityChoice::High => pb::PriorityTier::High,
+        PriorityChoice::Highest => pb::PriorityTier::Highest,
     }
 }

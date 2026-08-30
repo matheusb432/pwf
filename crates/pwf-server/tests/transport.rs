@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeSet,
     convert::Infallible,
     net::Ipv4Addr,
     sync::{Arc, Mutex},
@@ -9,11 +10,10 @@ use anyhow::Context as _;
 use pwf_client::{
     ClientError, PwfClient,
     confirmation::{Confirmation, ConfirmationPrompt},
-    v1::{
-        self, Agent, DispatchMode, DispatchSessionOutcome, IndexSection, PlanSessionIntent,
-        ProjectStatusFilter, SessionEffort, TaskReadFormat, create_task_request,
-        delete_note_result, delete_task_result, note_service_client::NoteServiceClient,
-        reopen_task_result, task_service_client::TaskServiceClient,
+    pb::{
+        self, Agent, DispatchMode, IndexSection, ProjectStatusFilter, SessionEffort,
+        TaskReadFormat, delete_note_result, note_service_client::NoteServiceClient,
+        task_service_client::TaskServiceClient,
     },
 };
 use pwf_local_auth::{
@@ -21,6 +21,7 @@ use pwf_local_auth::{
 };
 use pwf_models::project::HomeDirectory;
 use pwf_server::{AppState, ServerLifecycle, ServerState, serve};
+use pwf_wire::pb::{delete_task_result, dispatched_session, get_task_response, reopen_task_result};
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio_stream::{StreamExt as _, wrappers::ReceiverStream};
 use tonic::{Code, Request, Status, transport::Channel};
@@ -104,8 +105,8 @@ impl TestServer {
         let project = self
             .client
             .project()
-            .add_project(v1::AddProjectRequest {
-                fields: Some(v1::ProjectFields {
+            .add_project(pb::AddProjectRequest {
+                fields: Some(pb::ProjectFields {
                     id: "FOO".to_string(),
                     title: "foo-bar".to_string(),
                     source_kind: "directory".to_string(),
@@ -129,17 +130,17 @@ impl TestServer {
     async fn add_task_with_priority(
         &self,
         title: &str,
-        priority: Option<v1::PriorityTier>,
+        priority: Option<pb::PriorityTier>,
     ) -> Result<String, ClientError> {
         let task = self
             .client
             .task()
-            .create_task(v1::CreateTaskRequest {
+            .create_task(pb::CreateTaskRequest {
                 project_selector: "foo-bar".to_string(),
-                prompt: Some(create_task_request::Prompt::Structured(
-                    v1::StructuredTaskPrompt {
+                prompt: Some(pb::create_task_request::Prompt::Structured(
+                    pb::StructuredTaskPrompt {
                         title: title.to_string(),
-                        lanes: Some(v1::TaskLanes {
+                        lanes: Some(pb::TaskLanes {
                             goals: vec!["exercise the real server".to_string()],
                             context: Vec::new(),
                             constraints: Vec::new(),
@@ -152,6 +153,7 @@ impl TestServer {
                 effort: None,
                 tags: Vec::new(),
                 priority: priority.map(|priority| priority as i32),
+                request_id: String::new(),
             })
             .await?;
         Ok(task.id)
@@ -169,14 +171,15 @@ impl TestServer {
         &self,
         task_id: &str,
     ) -> anyhow::Result<(
-        mpsc::Sender<v1::DeleteTaskRequest>,
-        tonic::Streaming<v1::DeleteTaskResponse>,
+        mpsc::Sender<pb::DeleteTaskRequest>,
+        tonic::Streaming<pb::DeleteTaskResponse>,
     )> {
         let (sender, receiver) = mpsc::channel(2);
         sender
-            .send(v1::DeleteTaskRequest {
-                value: Some(v1::delete_task_request::Value::Start(v1::DeleteTaskStart {
+            .send(pb::DeleteTaskRequest {
+                value: Some(pb::delete_task_request::Value::Start(pb::DeleteTaskStart {
                     id: task_id.to_string(),
+                    request_id: "transport-open-remove".to_string(),
                 })),
             })
             .await?;
@@ -193,7 +196,7 @@ impl TestServer {
             .context("remove preflight response is missing")?;
         assert!(matches!(
             preflight.value,
-            Some(v1::delete_task_response::Value::Preflight(_))
+            Some(pb::delete_task_response::Value::Preflight(_))
         ));
         Ok((sender, stream))
     }
@@ -271,48 +274,388 @@ fn with_seen<T>(
 
 fn priority_update(
     task_id: &str,
-    operation: Option<v1::priority_edit::Operation>,
-) -> v1::UpdateTaskRequest {
-    v1::UpdateTaskRequest {
+    operation: Option<pb::priority_edit::Operation>,
+) -> pb::UpdateTaskRequest {
+    pb::UpdateTaskRequest {
         id: task_id.to_string(),
         content: None,
         blocked_by: None,
         effort: None,
         tags: None,
-        priority: Some(v1::PriorityEdit { operation }),
+        priority: Some(pb::PriorityEdit { operation }),
+        expected_revision: None,
+        request_id: String::new(),
     }
 }
 
 fn task_list_request(
     number: Option<u64>,
-    priority: Option<v1::PriorityTier>,
-) -> v1::ListTasksRequest {
-    v1::ListTasksRequest {
+    priority: Option<pb::PriorityTier>,
+) -> pb::ListTasksRequest {
+    pb::ListTasksRequest {
         project_selector: Some("foo-bar".to_string()),
-        scope: v1::ListScope::All as i32,
+        scope: pb::ListScope::All as i32,
         number,
         effort: None,
         tags: Vec::new(),
         order: None,
-        status: Some(v1::TaskStatusFilter::Active as i32),
-        detail: v1::ListDetail::Detailed as i32,
+        status: Some(pb::TaskStatusFilter::Active as i32),
+        detail: pb::ListDetail::Detailed as i32,
         priority: priority.map(|value| value as i32),
+        page_size: 0,
+        page_token: None,
     }
 }
 
-async fn task_data(server: &TestServer, task_id: &str) -> anyhow::Result<Box<v1::TaskData>> {
+async fn task_data(server: &TestServer, task_id: &str) -> anyhow::Result<Box<pb::TaskData>> {
     let read = server
         .client
         .task()
-        .get_task(v1::GetTaskRequest {
+        .get_task(pb::GetTaskRequest {
             id: task_id.to_string(),
             output: TaskReadFormat::Data as i32,
         })
         .await?;
-    let Some(v1::get_task_response::Value::Data(data)) = read.value else {
+    let Some(get_task_response::Value::Data(data)) = read.value else {
         anyhow::bail!("task data response is missing");
     };
     Ok(data)
+}
+
+#[tokio::test]
+async fn v1_create_task_returns_only_the_new_identifier() -> anyhow::Result<()> {
+    let server = TestServer::start(Duration::from_secs(2)).await?;
+    server.add_project_and_task().await?;
+
+    let response = pb::task_service_client::TaskServiceClient::new(server.channel().await?)
+        .create_task(authenticated(
+            Request::new(pb::CreateTaskRequest {
+                project_selector: "foo-bar".to_string(),
+                prompt: Some(pb::create_task_request::Prompt::Structured(
+                    pb::StructuredTaskPrompt {
+                        title: "minimal response".to_string(),
+                        lanes: Some(pb::TaskLanes {
+                            goals: vec!["return only the task ID".to_string()],
+                            context: Vec::new(),
+                            constraints: Vec::new(),
+                            done_when: Vec::new(),
+                        }),
+                    },
+                )),
+                index_section: IndexSection::General as i32,
+                blocked_by: Vec::new(),
+                effort: None,
+                tags: Vec::new(),
+                priority: None,
+                request_id: "transport-create-minimal-response".to_string(),
+            }),
+            &server.token,
+        )?)
+        .await?
+        .into_inner();
+
+    assert_eq!(
+        response,
+        pb::CreateTaskResponse {
+            id: "FOO-0002".to_string()
+        }
+    );
+    server.finish().await
+}
+
+#[tokio::test]
+async fn v1_request_ids_replay_mutations_without_duplicate_effects() -> anyhow::Result<()> {
+    let server = TestServer::start(Duration::from_secs(2)).await?;
+    let original_id = server.add_project_and_task().await?;
+    let create = pb::CreateTaskRequest {
+        project_selector: "foo-bar".to_string(),
+        prompt: Some(pb::create_task_request::Prompt::Structured(
+            pb::StructuredTaskPrompt {
+                title: "replayable task".to_string(),
+                lanes: Some(pb::TaskLanes {
+                    goals: vec!["exercise durable request identity".to_string()],
+                    context: Vec::new(),
+                    constraints: Vec::new(),
+                    done_when: Vec::new(),
+                }),
+            },
+        )),
+        index_section: IndexSection::General as i32,
+        blocked_by: Vec::new(),
+        effort: None,
+        tags: Vec::new(),
+        priority: None,
+        request_id: "transport-replay-create".to_string(),
+    };
+
+    let first = server.client.task().create_task(create.clone()).await?;
+    let replayed = server.client.task().create_task(create.clone()).await?;
+    assert_eq!(first.id, "FOO-0002");
+    assert_eq!(replayed.id, first.id);
+
+    let mut conflicting = create;
+    conflicting.tags = vec!["changed".to_string()];
+    let conflict = server
+        .client
+        .task()
+        .create_task(conflicting)
+        .await
+        .unwrap_err();
+    assert_eq!(rpc_status(conflict).code(), Code::AlreadyExists);
+
+    let append = pb::UpdateTaskRequest {
+        id: first.id.clone(),
+        content: Some(pb::TaskContentEdit {
+            content: Some(pb::task_content_edit::Content::Append(
+                pb::AppendTaskPrompt {
+                    title: None,
+                    prompt: "additional /c replayed context".to_string(),
+                },
+            )),
+        }),
+        blocked_by: None,
+        effort: None,
+        tags: None,
+        priority: None,
+        expected_revision: None,
+        request_id: "transport-replay-update".to_string(),
+    };
+    server.client.task().update_task(append.clone()).await?;
+    server.client.task().update_task(append).await?;
+    let markdown = server
+        .client
+        .task()
+        .get_task(pb::GetTaskRequest {
+            id: first.id,
+            output: TaskReadFormat::Markdown as i32,
+        })
+        .await?;
+    let Some(get_task_response::Value::Markdown(markdown)) = markdown.value else {
+        anyhow::bail!("replayed task markdown response is missing");
+    };
+    assert_eq!(markdown.matches("replayed context").count(), 1);
+
+    let complete = pb::CompleteTaskRequest {
+        id: original_id,
+        report: None,
+        commits: Vec::new(),
+        review: true,
+        expected_revision: None,
+        request_id: "transport-replay-complete".to_string(),
+    };
+    let completed = server.client.task().complete_task(complete.clone()).await?;
+    let completed_replay = server.client.task().complete_task(complete).await?;
+    assert_eq!(completed.review_task_id.as_deref(), Some("FOO-0003"));
+    assert_eq!(completed_replay, completed);
+
+    let mut list = task_list_request(None, None);
+    list.status = Some(pb::TaskStatusFilter::All as i32);
+    list.page_size = 256;
+    let listed = server.client.task().list_tasks(list).await?;
+    assert_eq!(listed.tasks.len(), 3, "replays must not create extra tasks");
+
+    server.finish().await
+}
+
+#[tokio::test]
+async fn v1_confirmed_mutation_replays_skip_the_second_prompt() -> anyhow::Result<()> {
+    let server = TestServer::start(Duration::from_secs(2)).await?;
+    let task_id = server.add_project_and_task().await?;
+    let deleted_id = server.add_task("delete replay target").await?;
+    let delete = pb::DeleteTaskStart {
+        id: deleted_id,
+        request_id: "transport-replay-delete".to_string(),
+    };
+    let deleted = server
+        .client
+        .task()
+        .delete_task(delete.clone(), RecordingPrompt::new(true))
+        .await
+        .unwrap();
+    assert!(matches!(
+        deleted.outcome,
+        Some(delete_task_result::Outcome::Deleted(_))
+    ));
+    let delete_replay_prompt = RecordingPrompt::new(false);
+    let deleted_replay = server
+        .client
+        .task()
+        .delete_task(delete, delete_replay_prompt.clone())
+        .await
+        .unwrap();
+    assert!(matches!(
+        deleted_replay.outcome,
+        Some(delete_task_result::Outcome::Deleted(_))
+    ));
+    assert!(delete_replay_prompt.seen().is_empty());
+
+    server
+        .client
+        .task()
+        .complete_task(pb::CompleteTaskRequest {
+            id: task_id.clone(),
+            report: None,
+            commits: Vec::new(),
+            review: false,
+            expected_revision: None,
+            request_id: "transport-close-before-reopen-replay".to_string(),
+        })
+        .await?;
+    let reopen = pb::ReopenTaskStart {
+        id: task_id,
+        request_id: "transport-replay-reopen".to_string(),
+    };
+    let reopened = server
+        .client
+        .task()
+        .reopen_task(reopen.clone(), RecordingPrompt::new(true))
+        .await
+        .unwrap();
+    assert!(matches!(
+        reopened.outcome,
+        Some(reopen_task_result::Outcome::Reopened(_))
+    ));
+    let reopen_replay_prompt = RecordingPrompt::new(false);
+    let reopened_replay = server
+        .client
+        .task()
+        .reopen_task(reopen, reopen_replay_prompt.clone())
+        .await
+        .unwrap();
+    assert!(matches!(
+        reopened_replay.outcome,
+        Some(reopen_task_result::Outcome::Reopened(_))
+    ));
+    assert!(reopen_replay_prompt.seen().is_empty());
+
+    server.finish().await
+}
+
+#[tokio::test]
+async fn v1_task_revisions_support_conditional_empty_updates() -> anyhow::Result<()> {
+    let server = TestServer::start(Duration::from_secs(2)).await?;
+    let task_id = server.add_project_and_task().await?;
+    let first = server
+        .client
+        .task()
+        .get_task(pb::GetTaskRequest {
+            id: task_id.clone(),
+            output: TaskReadFormat::Data as i32,
+        })
+        .await?;
+    assert_eq!(first.revision.len(), 64);
+
+    let response = server
+        .client
+        .task()
+        .update_task(pb::UpdateTaskRequest {
+            id: task_id.clone(),
+            content: None,
+            blocked_by: None,
+            effort: None,
+            tags: None,
+            priority: Some(pb::PriorityEdit {
+                operation: Some(pb::priority_edit::Operation::Set(
+                    pb::PriorityTier::High as i32,
+                )),
+            }),
+            expected_revision: Some(first.revision.clone()),
+            request_id: "transport-conditional-update".to_string(),
+        })
+        .await?;
+    assert_eq!(response, pb::UpdateTaskResponse {});
+
+    let updated = server
+        .client
+        .task()
+        .get_task(pb::GetTaskRequest {
+            id: task_id.clone(),
+            output: TaskReadFormat::Data as i32,
+        })
+        .await?;
+    assert_ne!(updated.revision, first.revision);
+    let Some(get_task_response::Value::Data(data)) = updated.value else {
+        anyhow::bail!("updated task data response is missing");
+    };
+    assert_eq!(data.priority, Some(pb::PriorityTier::High as i32));
+
+    let stale = server
+        .client
+        .task()
+        .update_task(pb::UpdateTaskRequest {
+            id: task_id,
+            content: None,
+            blocked_by: None,
+            effort: Some(pb::EffortEdit {
+                operation: Some(pb::effort_edit::Operation::Set(pb::EffortTier::Low as i32)),
+            }),
+            tags: None,
+            priority: None,
+            expected_revision: Some(first.revision),
+            request_id: "transport-stale-update".to_string(),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(rpc_status(stale).code(), Code::Aborted);
+
+    server.finish().await
+}
+
+#[tokio::test]
+async fn v1_task_list_pages_are_bounded_and_query_bound() -> anyhow::Result<()> {
+    let server = TestServer::start(Duration::from_secs(2)).await?;
+    server.add_project_and_task().await?;
+    server.add_task("second transport task").await?;
+    server.add_task("third transport task").await?;
+    let mut request = task_list_request(None, None);
+    request.page_size = 2;
+    request.order = Some(pb::OrderSpec {
+        field: pb::OrderField::Id as i32,
+        direction: pb::OrderDirection::Asc as i32,
+    });
+
+    let first = server.client.task().list_tasks(request.clone()).await?;
+    assert_eq!(
+        first
+            .tasks
+            .iter()
+            .map(|task| task.id.as_str())
+            .collect::<Vec<_>>(),
+        ["FOO-0001", "FOO-0002"]
+    );
+    let token = first.next_page_token.context("first page must continue")?;
+
+    request.page_token = Some(token.clone());
+    let second = server.client.task().list_tasks(request.clone()).await?;
+    assert_eq!(
+        second
+            .tasks
+            .iter()
+            .map(|task| task.id.as_str())
+            .collect::<Vec<_>>(),
+        ["FOO-0003"]
+    );
+    assert_eq!(second.next_page_token, None);
+
+    request.page_token = Some(token);
+    request.order = Some(pb::OrderSpec {
+        field: pb::OrderField::Id as i32,
+        direction: pb::OrderDirection::Desc as i32,
+    });
+    let changed = server.client.task().list_tasks(request).await.unwrap_err();
+    assert_eq!(rpc_status(changed).code(), Code::InvalidArgument);
+
+    let mut oversized = task_list_request(None, None);
+    oversized.page_size = 257;
+    let oversized = server
+        .client
+        .task()
+        .list_tasks(oversized)
+        .await
+        .unwrap_err();
+    assert_eq!(rpc_status(oversized).code(), Code::InvalidArgument);
+
+    server.finish().await
 }
 
 #[tokio::test]
@@ -322,13 +665,13 @@ async fn task_priority_round_trips_through_supported_rpcs() -> anyhow::Result<()
     let invalid = server
         .add_task_with_priority(
             "invalid priority transport task",
-            Some(v1::PriorityTier::Unspecified),
+            Some(pb::PriorityTier::Unspecified),
         )
         .await
         .unwrap_err();
     assert_eq!(rpc_status(invalid).code(), Code::InvalidArgument);
     let task_id = server
-        .add_task_with_priority("priority transport task", Some(v1::PriorityTier::Highest))
+        .add_task_with_priority("priority transport task", Some(pb::PriorityTier::Highest))
         .await?;
     assert_eq!(task_id, "FOO-0002");
 
@@ -351,13 +694,13 @@ async fn task_priority_round_trips_through_supported_rpcs() -> anyhow::Result<()
     let listed = server
         .client
         .task()
-        .list_tasks(task_list_request(None, Some(v1::PriorityTier::Highest)))
+        .list_tasks(task_list_request(None, Some(pb::PriorityTier::Highest)))
         .await?;
     assert_eq!(listed.tasks.len(), 1);
     assert_eq!(listed.tasks[0].id, task_id);
     assert_eq!(
         listed.tasks[0].priority,
-        Some(v1::PriorityTier::Highest as i32)
+        Some(pb::PriorityTier::Highest as i32)
     );
 
     server
@@ -365,20 +708,20 @@ async fn task_priority_round_trips_through_supported_rpcs() -> anyhow::Result<()
         .task()
         .update_task(priority_update(
             &task_id,
-            Some(v1::priority_edit::Operation::Set(
-                v1::PriorityTier::Medium as i32,
+            Some(pb::priority_edit::Operation::Set(
+                pb::PriorityTier::Medium as i32,
             )),
         ))
         .await?;
     let data = task_data(&server, &task_id).await?;
-    assert_eq!(data.priority, Some(v1::PriorityTier::Medium as i32));
+    assert_eq!(data.priority, Some(pb::PriorityTier::Medium as i32));
 
     server
         .client
         .task()
         .update_task(priority_update(
             &task_id,
-            Some(v1::priority_edit::Operation::Clear(v1::ClearField {})),
+            Some(pb::priority_edit::Operation::Clear(pb::ClearField {})),
         ))
         .await?;
     let data = task_data(&server, &task_id).await?;
@@ -395,7 +738,7 @@ async fn generated_client_maps_validation_and_not_found_statuses() -> anyhow::Re
     let invalid = server
         .client
         .project()
-        .get_project(v1::GetProjectRequest {
+        .get_project(pb::GetProjectRequest {
             id: String::new(),
             status: ProjectStatusFilter::ActiveOnly as i32,
         })
@@ -406,13 +749,35 @@ async fn generated_client_maps_validation_and_not_found_statuses() -> anyhow::Re
     let missing = server
         .client
         .project()
-        .get_project(v1::GetProjectRequest {
+        .get_project(pb::GetProjectRequest {
             id: "BAR".to_string(),
             status: ProjectStatusFilter::ActiveOnly as i32,
         })
         .await
         .unwrap_err();
     assert_eq!(rpc_status(missing).code(), Code::NotFound);
+
+    let oversized_collection = server
+        .client
+        .task()
+        .create_task(pb::CreateTaskRequest {
+            project_selector: "foo-bar".to_string(),
+            prompt: Some(pb::create_task_request::Prompt::Shorthand(
+                "bounded collection".to_string(),
+            )),
+            index_section: IndexSection::General as i32,
+            blocked_by: Vec::new(),
+            effort: None,
+            tags: (0..65).map(|index| format!("tag-{index}")).collect(),
+            priority: None,
+            request_id: String::new(),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(
+        rpc_status(oversized_collection).code(),
+        Code::InvalidArgument
+    );
 
     server.finish().await
 }
@@ -423,10 +788,10 @@ async fn project_source_update_round_trips_through_the_generated_client() -> any
     server.add_project_and_task().await?;
     let source_value = server.root.path().join("updated-project");
     let source_value = source_value.to_string_lossy().into_owned();
-    let request = v1::UpdateProjectRequest {
+    let request = pb::UpdateProjectRequest {
         id: "FOO".to_string(),
-        source_value: Some(v1::StringFieldUpdate {
-            operation: Some(v1::string_field_update::Operation::Update(
+        source_value: Some(pb::StringFieldUpdate {
+            operation: Some(pb::string_field_update::Operation::Update(
                 source_value.clone(),
             )),
         }),
@@ -442,7 +807,7 @@ async fn project_source_update_round_trips_through_the_generated_client() -> any
     let project = server
         .client
         .project()
-        .get_project(v1::GetProjectRequest {
+        .get_project(pb::GetProjectRequest {
             id: "FOO".to_string(),
             status: ProjectStatusFilter::IncludingPaused as i32,
         })
@@ -452,10 +817,10 @@ async fn project_source_update_round_trips_through_the_generated_client() -> any
     let invalid = server
         .client
         .project()
-        .update_project(v1::UpdateProjectRequest {
+        .update_project(pb::UpdateProjectRequest {
             id: "FOO".to_string(),
-            source_value: Some(v1::StringFieldUpdate {
-                operation: Some(v1::string_field_update::Operation::Clear(v1::ClearField {})),
+            source_value: Some(pb::StringFieldUpdate {
+                operation: Some(pb::string_field_update::Operation::Clear(pb::ClearField {})),
             }),
         })
         .await
@@ -465,10 +830,10 @@ async fn project_source_update_round_trips_through_the_generated_client() -> any
     let missing = server
         .client
         .project()
-        .update_project(v1::UpdateProjectRequest {
+        .update_project(pb::UpdateProjectRequest {
             id: "MISS".to_string(),
-            source_value: Some(v1::StringFieldUpdate {
-                operation: Some(v1::string_field_update::Operation::Update(
+            source_value: Some(pb::StringFieldUpdate {
+                operation: Some(pb::string_field_update::Operation::Update(
                     "/work/missing".to_string(),
                 )),
             }),
@@ -491,8 +856,9 @@ async fn generated_client_preserves_delete_and_session_confirmation_flows() -> a
         .client
         .task()
         .delete_task(
-            v1::DeleteTaskStart {
+            pb::DeleteTaskStart {
                 id: task_id.clone(),
+                request_id: String::new(),
             },
             remove_prompt.clone(),
         )
@@ -513,23 +879,19 @@ async fn generated_client_preserves_delete_and_session_confirmation_flows() -> a
         .dispatch_session(request, session_prompt.clone())
         .await
         .unwrap();
-    assert_eq!(
-        DispatchSessionOutcome::try_from(session_result.outcome).ok(),
-        Some(DispatchSessionOutcome::Aborted)
-    );
-    assert_eq!(
-        session_result.task_ids,
-        [second_task_id.clone(), task_id.clone()]
-    );
-    assert_eq!(session_result.session_name, "foo1,foo2");
+    assert!(matches!(
+        session_result.outcome,
+        Some(dispatched_session::Outcome::Aborted(_))
+    ));
     assert_eq!(session_prompt.seen(), ["session"]);
 
     let delete_result = server
         .client
         .task()
         .delete_task(
-            v1::DeleteTaskStart {
+            pb::DeleteTaskStart {
                 id: second_task_id.clone(),
+                request_id: String::new(),
             },
             RecordingPrompt::new(true),
         )
@@ -537,12 +899,12 @@ async fn generated_client_preserves_delete_and_session_confirmation_flows() -> a
         .unwrap();
     assert!(matches!(
         delete_result.outcome,
-        Some(delete_task_result::Outcome::Deleted(ref task)) if task.id == second_task_id
+        Some(delete_task_result::Outcome::Deleted(_))
     ));
     let missing = server
         .client
         .task()
-        .get_task(v1::GetTaskRequest {
+        .get_task(pb::GetTaskRequest {
             id: second_task_id,
             output: TaskReadFormat::Path as i32,
         })
@@ -560,7 +922,7 @@ async fn generated_client_preserves_note_removal_confirmation_flow() -> anyhow::
     let added = server
         .client
         .note()
-        .add_note(v1::AddNoteRequest {
+        .add_note(pb::AddNoteRequest {
             project_selector: "foo-bar".to_string(),
             title: "transport note".to_string(),
             content: "Exercise note confirmation over the real transport.".to_string(),
@@ -579,7 +941,7 @@ async fn generated_client_preserves_note_removal_confirmation_flow() -> anyhow::
         .client
         .note()
         .delete_note(
-            v1::DeleteNoteStart {
+            pb::DeleteNoteStart {
                 project_selector: "foo-bar".to_string(),
                 selector: "1".to_string(),
             },
@@ -596,9 +958,9 @@ async fn generated_client_preserves_note_removal_confirmation_flow() -> anyhow::
     let listed = server
         .client
         .note()
-        .list_notes(v1::ListNotesRequest {
+        .list_notes(pb::ListNotesRequest {
             project_selector: "foo-bar".to_string(),
-            limit_kind: v1::NoteListLimitKind::Default as i32,
+            limit_kind: pb::NoteListLimitKind::Default as i32,
             limit: 0,
         })
         .await?;
@@ -609,7 +971,7 @@ async fn generated_client_preserves_note_removal_confirmation_flow() -> anyhow::
         .client
         .note()
         .delete_note(
-            v1::DeleteNoteStart {
+            pb::DeleteNoteStart {
                 project_selector: "foo-bar".to_string(),
                 selector: "1".to_string(),
             },
@@ -628,9 +990,9 @@ async fn generated_client_preserves_note_removal_confirmation_flow() -> anyhow::
     let listed = server
         .client
         .note()
-        .list_notes(v1::ListNotesRequest {
+        .list_notes(pb::ListNotesRequest {
             project_selector: "foo-bar".to_string(),
-            limit_kind: v1::NoteListLimitKind::Default as i32,
+            limit_kind: pb::NoteListLimitKind::Default as i32,
             limit: 0,
         })
         .await?;
@@ -647,11 +1009,13 @@ async fn generated_client_preserves_reopen_confirmation_flow() -> anyhow::Result
     server
         .client
         .task()
-        .complete_task(v1::CompleteTaskRequest {
+        .complete_task(pb::CompleteTaskRequest {
             id: task_id.clone(),
             report: None,
             commits: vec!["a..b".to_string()],
             review: false,
+            expected_revision: None,
+            request_id: String::new(),
         })
         .await
         .unwrap();
@@ -660,8 +1024,9 @@ async fn generated_client_preserves_reopen_confirmation_flow() -> anyhow::Result
         .client
         .task()
         .reopen_task(
-            v1::ReopenTaskStart {
+            pb::ReopenTaskStart {
                 id: task_id.clone(),
+                request_id: String::new(),
             },
             reopen_prompt.clone(),
         )
@@ -677,8 +1042,9 @@ async fn generated_client_preserves_reopen_confirmation_flow() -> anyhow::Result
         .client
         .task()
         .reopen_task(
-            v1::ReopenTaskStart {
+            pb::ReopenTaskStart {
                 id: task_id.clone(),
+                request_id: String::new(),
             },
             RecordingPrompt::new(true),
         )
@@ -691,7 +1057,7 @@ async fn generated_client_preserves_reopen_confirmation_flow() -> anyhow::Result
     let read = server
         .client
         .task()
-        .get_task(v1::GetTaskRequest {
+        .get_task(pb::GetTaskRequest {
             id: task_id,
             output: TaskReadFormat::Path as i32,
         })
@@ -699,7 +1065,7 @@ async fn generated_client_preserves_reopen_confirmation_flow() -> anyhow::Result
         .unwrap();
     assert!(matches!(
         read.value,
-        Some(v1::get_task_response::Value::Path(_))
+        Some(get_task_response::Value::Path(_))
     ));
 
     server.finish().await
@@ -719,7 +1085,7 @@ async fn closing_confirmation_stream_before_decision_cancels_without_removing_ta
     server
         .client
         .task()
-        .get_task(v1::GetTaskRequest {
+        .get_task(pb::GetTaskRequest {
             id: task_id,
             output: TaskReadFormat::Path as i32,
         })
@@ -744,28 +1110,38 @@ async fn health_and_reflection_require_authentication_and_requests_are_bounded()
         .unwrap_err();
     assert_eq!(unauthenticated.code(), Code::Unauthenticated);
 
-    let reflection_request = ServerReflectionRequest {
-        host: String::new(),
-        message_request: Some(MessageRequest::FileContainingSymbol(
-            "pwf.v1.ProjectService".to_string(),
-        )),
-    };
-    let request = authenticated(
-        Request::new(tokio_stream::once(reflection_request)),
+    let response = reflection_response(
+        &channel,
         &server.token,
-    )?;
-    let mut reflection = ServerReflectionClient::new(channel.clone())
-        .server_reflection_info(request)
-        .await
-        .unwrap()
-        .into_inner();
-    let response = reflection
-        .next()
-        .await
-        .unwrap()
-        .unwrap()
-        .message_response
-        .unwrap();
+        MessageRequest::ListServices(String::new()),
+    )
+    .await?;
+    let MessageResponse::ListServicesResponse(services) = response else {
+        anyhow::bail!("reflection returned the wrong service-list response kind");
+    };
+    let service_names = services
+        .service
+        .into_iter()
+        .map(|service| service.name)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        service_names,
+        BTreeSet::from([
+            "grpc.health.v1.Health".to_string(),
+            "grpc.reflection.v1.ServerReflection".to_string(),
+            "pwf.v1.NoteService".to_string(),
+            "pwf.v1.ProjectService".to_string(),
+            "pwf.v1.SessionService".to_string(),
+            "pwf.v1.TaskService".to_string(),
+        ])
+    );
+
+    let response = reflection_response(
+        &channel,
+        &server.token,
+        MessageRequest::FileContainingSymbol("pwf.v1.ProjectService".to_string()),
+    )
+    .await?;
     let MessageResponse::FileDescriptorResponse(descriptors) = response else {
         anyhow::bail!("reflection returned the wrong response kind");
     };
@@ -778,7 +1154,7 @@ async fn health_and_reflection_require_authentication_and_requests_are_bounded()
 
     let oversized = NoteServiceClient::new(channel)
         .add_note(authenticated(
-            Request::new(v1::AddNoteRequest {
+            Request::new(pb::AddNoteRequest {
                 project_selector: "foo-bar".to_string(),
                 title: "oversized".to_string(),
                 content: "x".repeat(70 * 1024),
@@ -830,13 +1206,12 @@ async fn shutdown_publishes_not_serving_and_bounds_an_unanswered_stream() -> any
     server.finish().await
 }
 
-fn session_request(task_id: &str) -> v1::PlanSessionRequest {
-    v1::PlanSessionRequest {
+fn session_request(task_id: &str) -> pb::DispatchSessionStart {
+    pb::DispatchSessionStart {
         task_ids: vec![task_id.to_string()],
-        intent: PlanSessionIntent::Dispatch as i32,
         pushed_prompt: None,
         mode: DispatchMode::Inline as i32,
-        directives: Some(v1::LaunchDirectives::default()),
+        directives: Some(pb::LaunchDirectives::default()),
         agent: Agent::Codex as i32,
         model_override: None,
         effort: SessionEffort::High as i32,
@@ -858,6 +1233,30 @@ fn authenticated<T>(
         .metadata_mut()
         .insert("authorization", authorization);
     Ok(request)
+}
+
+async fn reflection_response(
+    channel: &Channel,
+    token: &CapabilityToken,
+    message_request: MessageRequest,
+) -> anyhow::Result<MessageResponse> {
+    let request = authenticated(
+        Request::new(tokio_stream::once(ServerReflectionRequest {
+            host: String::new(),
+            message_request: Some(message_request),
+        })),
+        token,
+    )?;
+    let mut reflection = ServerReflectionClient::new(channel.clone())
+        .server_reflection_info(request)
+        .await?
+        .into_inner();
+    reflection
+        .next()
+        .await
+        .context("reflection response stream is empty")??
+        .message_response
+        .context("reflection response message is missing")
 }
 
 async fn wait_for_state(

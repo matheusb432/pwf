@@ -11,9 +11,8 @@ use pwf_application::{
 };
 use pwf_infra::session::{AgentHarness, ProcessEnvironment, TmuxHarness};
 use pwf_wire::{
-    proto,
-    task::session::{PlanSessionIntent, PlannedSession, PreparedSessionDispatch},
-    v1::{self, session_service_server::SessionService},
+    pb, proto,
+    task::session::{PlannedSession, PreparedSessionDispatch},
 };
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
@@ -40,19 +39,14 @@ impl SessionGrpcService {
 }
 
 #[tonic::async_trait]
-impl SessionService for SessionGrpcService {
+impl pb::session_service_server::SessionService for SessionGrpcService {
     async fn plan_session(
         &self,
-        request: Request<v1::PlanSessionRequest>,
-    ) -> Result<Response<v1::PlanSessionResponse>, Status> {
+        request: Request<pb::PlanSessionRequest>,
+    ) -> Result<Response<pb::PlanSessionResponse>, Status> {
         let mut request = request.into_inner();
         let environment = process_environment(&mut request)?;
         let command = proto::session::plan_session_request(request)?;
-        if command.intent != PlanSessionIntent::DryRun {
-            return Err(Status::invalid_argument(
-                "PlanSession requires PLAN_SESSION_INTENT_DRY_RUN",
-            ));
-        }
         let agent = AgentHarness::new(environment.clone());
         let session = TmuxHarness::new(environment);
         let clients = SessionPlanningClients::new(agent, self.state.project_directory, session);
@@ -75,35 +69,30 @@ impl SessionService for SessionGrpcService {
         }
     }
 
-    type DispatchSessionStream = ResponseStream<v1::DispatchSessionResponse>;
+    type DispatchSessionStream = ResponseStream<pb::DispatchSessionResponse>;
 
     async fn dispatch_session(
         &self,
-        request: Request<Streaming<v1::DispatchSessionRequest>>,
+        request: Request<Streaming<pb::DispatchSessionRequest>>,
     ) -> Result<Response<Self::DispatchSessionStream>, Status> {
         let mut inbound = request.into_inner();
         let mut start = next_start(&mut inbound).await?;
-        let environment = process_environment(&mut start)?;
-        let command = proto::session::plan_session_request(start)?;
-        if command.intent != PlanSessionIntent::Dispatch {
-            return Err(Status::invalid_argument(
-                "DispatchSession requires PLAN_SESSION_INTENT_DISPATCH",
-            ));
-        }
+        let environment = process_dispatch_environment(&mut start)?;
+        let command = proto::session::dispatch_session_request(start)?;
         let (outbound, receiver) = mpsc::channel(STREAM_BUFFER);
         let mut confirmation = GrpcConfirmationClient::new(
             inbound,
             outbound.clone(),
-            |prepared: &PreparedSessionDispatch| v1::DispatchSessionResponse {
-                value: Some(v1::dispatch_session_response::Value::Preflight(
+            |prepared: &PreparedSessionDispatch| pb::DispatchSessionResponse {
+                value: Some(pb::dispatch_session_response::Value::Preflight(
                     proto::session::dispatch_session_preflight(prepared),
                 )),
             },
             |message| match message.value {
-                Some(v1::dispatch_session_request::Value::Decision(decision)) => {
+                Some(pb::dispatch_session_request::Value::Decision(decision)) => {
                     Ok(decision.confirmed)
                 }
-                Some(v1::dispatch_session_request::Value::Start(_)) | None => {
+                Some(pb::dispatch_session_request::Value::Start(_)) | None => {
                     Err(ConfirmationClientError::UnexpectedMessage)
                 }
             },
@@ -124,8 +113,8 @@ impl SessionService for SessionGrpcService {
             .await;
             let item = result
                 .map(proto::session::dispatch_session_result)
-                .map(|result| v1::DispatchSessionResponse {
-                    value: Some(v1::dispatch_session_response::Value::Result(result)),
+                .map(|result| pb::DispatchSessionResponse {
+                    value: Some(pb::dispatch_session_response::Value::Result(result)),
                 })
                 .map_err(dispatch_confirmed_status);
             let _ = outbound.send(item).await;
@@ -134,8 +123,21 @@ impl SessionService for SessionGrpcService {
     }
 }
 
-fn process_environment(request: &mut v1::PlanSessionRequest) -> Result<ProcessEnvironment, Status> {
+fn process_environment(request: &mut pb::PlanSessionRequest) -> Result<ProcessEnvironment, Status> {
     let values = std::mem::take(&mut request.environment);
+    validate_process_environment(values)
+}
+
+fn process_dispatch_environment(
+    request: &mut pb::DispatchSessionStart,
+) -> Result<ProcessEnvironment, Status> {
+    let values = std::mem::take(&mut request.environment);
+    validate_process_environment(values)
+}
+
+fn validate_process_environment(
+    values: std::collections::HashMap<String, String>,
+) -> Result<ProcessEnvironment, Status> {
     if values.is_empty() {
         return Ok(ProcessEnvironment::inherited());
     }
@@ -160,15 +162,15 @@ fn process_environment(request: &mut v1::PlanSessionRequest) -> Result<ProcessEn
 }
 
 async fn next_start(
-    inbound: &mut Streaming<v1::DispatchSessionRequest>,
-) -> Result<v1::PlanSessionRequest, Status> {
+    inbound: &mut Streaming<pb::DispatchSessionRequest>,
+) -> Result<pb::DispatchSessionStart, Status> {
     let message = inbound
         .message()
         .await?
         .ok_or_else(|| Status::invalid_argument("session stream requires a start message"))?;
     match message.value {
-        Some(v1::dispatch_session_request::Value::Start(start)) => Ok(start),
-        Some(v1::dispatch_session_request::Value::Decision(_)) | None => Err(
+        Some(pb::dispatch_session_request::Value::Start(start)) => Ok(start),
+        Some(pb::dispatch_session_request::Value::Decision(_)) | None => Err(
             Status::invalid_argument("session stream must start with start"),
         ),
     }

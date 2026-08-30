@@ -6,29 +6,28 @@ use pwf_wire::{
     collection_edit::CollectionEdit,
     field_update::FieldUpdate,
     project::ProjectStatusFilter,
-    task::{EditTask, EditTaskContent, EditTaskContentKind, EditedTask, RawTaskTags},
+    task::{EditTask, EditTaskContent, EditTaskContentKind, RawTaskTags, TaskNotePath},
 };
 
 use super::{
     blocked_by::{self, BlockedByValidationError, validate_and_merge},
+    ensure_task_revision,
+    mutation_request::{self, MutationOperation, MutationRequestState, MutationStart},
     note_body::{EditLanesError, append_lanes, edit_lanes, render},
     resolve_task_project::{self, ResolveTaskProjectError},
     tags, task_body_region,
 };
 use crate::{
-    ports::task_record::{NullablePatch, StoredBlockedBy, TaskPatch, TaskRecord, TaskStore},
+    ports::task_record::{
+        Materialization, NullablePatch, StoredBlockedBy, TaskPatch, TaskRecord, TaskStore,
+    },
     project::list_projects,
 };
 
-struct TaskIdentity {
+struct PreparedTaskEdit {
     project: Project,
     id: TaskId,
-}
-
-struct PreparedTaskEdit {
-    identity: TaskIdentity,
     patch: TaskPatch,
-    outcome: EditedTask,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -37,12 +36,18 @@ pub enum EditTaskError {
     TaskNotFound { id: TaskId },
     #[error("cannot edit closed task {id}; run `pwf task reopen {id}` first.")]
     ClosedTask { id: TaskId },
+    #[error("Task note missing: {path}")]
+    NoteMissing { path: TaskNotePath },
     #[error("task {id} has an invalid persisted title: {source}")]
     InvalidPersistedTitle {
         id: TaskId,
         #[source]
         source: TaskTitleError,
     },
+    #[error(transparent)]
+    Revision(#[from] super::TaskRevisionConflict),
+    #[error(transparent)]
+    MutationRequest(#[from] mutation_request::MutationRequestError),
     #[error("task {id} has invalid tags frontmatter: {raw:?}.")]
     InvalidTagsFrontmatter { id: TaskId, raw: String },
     #[error("task {id} at {path} has malformed blocked_by metadata {raw:?}: {reason}")]
@@ -81,7 +86,28 @@ pub async fn execute(
     command: EditTask,
     store: &impl TaskStore,
     pool: &sqlx::SqlitePool,
-) -> Result<EditedTask, EditTaskError> {
+) -> Result<(), EditTaskError> {
+    update(command, store, pool).await
+}
+
+async fn update(
+    command: EditTask,
+    store: &impl TaskStore,
+    pool: &sqlx::SqlitePool,
+) -> Result<(), EditTaskError> {
+    let identity = mutation_request::identity(
+        command.request_id.as_ref(),
+        command.request_fingerprint.as_ref(),
+    )?;
+    if let Some(identity) = identity.as_ref()
+        && let Some(replay) =
+            mutation_request::find(pool, identity, MutationOperation::Update).await?
+    {
+        return match replay.state {
+            MutationRequestState::Completed => Ok(()),
+            MutationRequestState::Pending => Err(identity.incomplete().into()),
+        };
+    }
     let project = resolve_task_project::execute(command.id.clone(), pool)
         .await
         .map_err(|error| map_project_error(error, &command.id))?;
@@ -91,15 +117,41 @@ pub async fn execute(
         .ok_or_else(|| EditTaskError::TaskNotFound {
             id: command.id.clone(),
         })?;
+    ensure_task_revision(command.expected_revision.as_ref(), &record)?;
     if record.status != TaskStatus::Active {
         return Err(EditTaskError::ClosedTask {
             id: command.id.clone(),
         });
     }
+    if let Materialization::MissingNote { expected } = &record.materialization {
+        return Err(EditTaskError::NoteMissing {
+            path: expected.clone(),
+        });
+    }
 
     let projects = resolve_blocked_by_projects(&command, pool).await?;
     let prepared = prepare(command, project, &record, &projects, store)?;
-    persist(prepared, store)
+    if let Some(identity) = identity.as_ref()
+        && let MutationStart::Existing(replay) =
+            mutation_request::start(pool, identity, MutationOperation::Update, &prepared.id).await?
+    {
+        return match replay.state {
+            MutationRequestState::Completed => Ok(()),
+            MutationRequestState::Pending => Err(identity.incomplete().into()),
+        };
+    }
+    persist(prepared, store)?;
+    if let Some(identity) = identity.as_ref() {
+        mutation_request::complete(
+            pool,
+            identity,
+            MutationOperation::Update,
+            Some("updated"),
+            None,
+        )
+        .await?;
+    }
+    Ok(())
 }
 
 fn map_project_error(error: ResolveTaskProjectError, id: &TaskId) -> EditTaskError {
@@ -131,12 +183,7 @@ fn prepare(
     store: &impl TaskStore,
 ) -> Result<PreparedTaskEdit, EditTaskError> {
     let blocked_by = resolve_blocked_by(command.edits.blocked_by(), record, store, projects)?;
-    let identity = TaskIdentity {
-        project,
-        id: command.id.clone(),
-    };
-    let (body, title, outcome_title) =
-        prepare_content(command.edits.content(), record, &command.id)?;
+    let (body, title) = prepare_content(command.edits.content(), record)?;
     let patch = TaskPatch {
         body,
         title,
@@ -146,46 +193,29 @@ fn prepare(
         tags: resolve_tags(command.edits.tags(), &command.id, record)?,
         ..TaskPatch::default()
     };
-    let outcome = EditedTask {
-        id: command.id,
-        project: identity.project.title.clone(),
-        title: outcome_title,
-    };
     Ok(PreparedTaskEdit {
-        identity,
+        project,
+        id: command.id,
         patch,
-        outcome,
     })
 }
 
 fn prepare_content(
     content: Option<&EditTaskContent>,
     record: &TaskRecord,
-    id: &TaskId,
-) -> Result<(Option<String>, Option<TaskTitle>, TaskTitle), EditTaskError> {
+) -> Result<(Option<String>, Option<TaskTitle>), EditTaskError> {
     let current_body = task_body_region(&record.body);
-    let current_title = || {
-        TaskTitle::try_new(record.title.clone()).map_err(|source| {
-            EditTaskError::InvalidPersistedTitle {
-                id: id.clone(),
-                source,
-            }
-        })
-    };
     match content.map(EditTaskContent::kind) {
-        None => Ok((None, None, current_title()?)),
+        None => Ok((None, None)),
         Some(EditTaskContentKind::Structured { title, lanes }) => Ok((
             edit_lanes(current_body, lanes).map_err(map_lane_error)?,
             title.clone(),
-            title.clone().map_or_else(current_title, Ok)?,
         )),
-        Some(EditTaskContentKind::AppendShorthand { title, prompt }) => Ok((
-            Some(append_lanes(current_body, prompt)),
-            title.clone(),
-            title.clone().map_or_else(current_title, Ok)?,
-        )),
+        Some(EditTaskContentKind::AppendShorthand { title, prompt }) => {
+            Ok((Some(append_lanes(current_body, prompt)), title.clone()))
+        }
         Some(EditTaskContentKind::ReplaceShorthand { prompt, title }) => {
-            Ok((Some(render(prompt)), Some(title.clone()), title.clone()))
+            Ok((Some(render(prompt)), Some(title.clone())))
         }
     }
 }
@@ -289,18 +319,10 @@ fn merge_appended_tags(
     Ok(existing.merge(appended))
 }
 
-fn persist(
-    prepared: PreparedTaskEdit,
-    store: &impl TaskStore,
-) -> Result<EditedTask, EditTaskError> {
+fn persist(prepared: PreparedTaskEdit, store: &impl TaskStore) -> Result<(), EditTaskError> {
     store
-        .update(
-            &prepared.identity.project,
-            &prepared.identity.id,
-            prepared.patch,
-        )
-        .map_err(|error| EditTaskError::WriteStore(anyhow::Error::new(error)))?;
-    Ok(prepared.outcome)
+        .update(&prepared.project, &prepared.id, prepared.patch)
+        .map_err(|error| EditTaskError::WriteStore(anyhow::Error::new(error)))
 }
 
 fn map_lane_error(error: EditLanesError) -> EditTaskError {
@@ -316,14 +338,14 @@ mod tests {
         collection_edit::CollectionEdit,
         field_update::FieldUpdate,
         task::{
-            EditTask, EditTaskContent, EditedTask, RawTaskTags, TaskEdits, TaskLane, TaskLaneEdits,
-            TaskLanes,
+            EditTask, EditTaskContent, RawTaskTags, TaskEdits, TaskLane, TaskLaneEdits, TaskLanes,
+            TaskNotePath,
         },
     };
 
     use super::EditTaskError;
     use crate::{
-        ports::task_record::TaskRecord,
+        ports::task_record::{Materialization, TaskRecord},
         task::edit_task,
         testing::{InMemoryStore, insert_project, stored_blocked_by, task_record, task_timestamp},
     };
@@ -356,6 +378,9 @@ mod tests {
             id: id.parse().unwrap(),
             edits: TaskEdits::try_new(content, blocked_by, effort, tags, FieldUpdate::Unchanged)
                 .unwrap(),
+            expected_revision: None,
+            request_id: None,
+            request_fingerprint: None,
         }
     }
 
@@ -381,7 +406,7 @@ mod tests {
         command: EditTask,
         store: &InMemoryStore,
         pool: &sqlx::SqlitePool,
-    ) -> Result<EditedTask, EditTaskError> {
+    ) -> Result<(), EditTaskError> {
         edit_task::execute(command, store, pool).await
     }
 
@@ -426,9 +451,8 @@ mod tests {
                 .unwrap(),
         );
 
-        let outcome = run(command, &store, &pool).await.unwrap();
+        run(command, &store, &pool).await.unwrap();
 
-        assert_eq!(outcome.title.as_ref(), "new title");
         let edited = &store.tasks("foo-bar")[0];
         assert_eq!(edited.title, "new title");
         assert_eq!(
@@ -620,9 +644,7 @@ mod tests {
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
-    async fn metadata_edit_rejects_an_invalid_persisted_title_before_mutation(
-        pool: sqlx::SqlitePool,
-    ) {
+    async fn metadata_edit_does_not_validate_an_unreturned_persisted_title(pool: sqlx::SqlitePool) {
         register_project(&pool).await;
         let store = staged(vec![TaskRecord {
             title: "x".repeat(201),
@@ -636,9 +658,37 @@ mod tests {
             CollectionEdit::Unchanged,
         );
 
+        run(command, &store, &pool).await.unwrap();
+
+        assert_eq!(store.tasks("foo-bar")[0].effort.as_deref(), Some("high"));
+    }
+
+    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
+    async fn edit_rejects_an_index_only_task_instead_of_reporting_false_success(
+        pool: sqlx::SqlitePool,
+    ) {
+        register_project(&pool).await;
+        let store = staged(vec![TaskRecord {
+            materialization: Materialization::MissingNote {
+                expected: TaskNotePath::new("/notes/foo/FOO-0001.md".into()),
+            },
+            ..record("FOO-0001", TaskStatus::Active, "")
+        }]);
+        let command = edit(
+            "FOO-0001",
+            None,
+            CollectionEdit::Unchanged,
+            FieldUpdate::Update(EffortTier::High),
+            CollectionEdit::Unchanged,
+        );
+
         let error = run(command, &store, &pool).await.unwrap_err();
 
-        assert!(matches!(error, EditTaskError::InvalidPersistedTitle { .. }));
+        assert!(matches!(
+            error,
+            EditTaskError::NoteMissing { ref path }
+                if path.as_path() == std::path::Path::new("/notes/foo/FOO-0001.md")
+        ));
         assert_eq!(store.tasks("foo-bar")[0].effort, None);
     }
 }

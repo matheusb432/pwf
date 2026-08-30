@@ -11,8 +11,8 @@ use pwf_application::project::{
 };
 use pwf_infra::obsidian::ObsidianProjectTaskFilesClient;
 use pwf_wire::{
+    pb::{self, project_service_server::ProjectService},
     proto,
-    v1::{self, project_service_server::ProjectService},
 };
 use tonic::{Request, Response, Status};
 
@@ -32,8 +32,8 @@ impl ProjectGrpcService {
 impl ProjectService for ProjectGrpcService {
     async fn add_project(
         &self,
-        request: Request<v1::AddProjectRequest>,
-    ) -> Result<Response<v1::AddProjectResponse>, Status> {
+        request: Request<pb::AddProjectRequest>,
+    ) -> Result<Response<pb::AddProjectResponse>, Status> {
         let fields = proto::project::add_project_request(request.into_inner())?;
         add_project::execute(fields, &self.state.pool, &self.state.home)
             .await
@@ -44,8 +44,8 @@ impl ProjectService for ProjectGrpcService {
 
     async fn get_project(
         &self,
-        request: Request<v1::GetProjectRequest>,
-    ) -> Result<Response<v1::GetProjectResponse>, Status> {
+        request: Request<pb::GetProjectRequest>,
+    ) -> Result<Response<pb::GetProjectResponse>, Status> {
         let query = proto::project::get_project_request(request.into_inner())?;
         get_project::execute(query, &self.state.pool)
             .await
@@ -56,8 +56,8 @@ impl ProjectService for ProjectGrpcService {
 
     async fn list_projects(
         &self,
-        request: Request<v1::ListProjectsRequest>,
-    ) -> Result<Response<v1::ListProjectsResponse>, Status> {
+        request: Request<pb::ListProjectsRequest>,
+    ) -> Result<Response<pb::ListProjectsResponse>, Status> {
         let status = proto::project::list_projects_request(request.into_inner())?;
         list_projects::execute(status, &self.state.pool)
             .await
@@ -68,8 +68,8 @@ impl ProjectService for ProjectGrpcService {
 
     async fn pause_project(
         &self,
-        request: Request<v1::PauseProjectRequest>,
-    ) -> Result<Response<v1::PauseProjectResponse>, Status> {
+        request: Request<pb::PauseProjectRequest>,
+    ) -> Result<Response<pb::PauseProjectResponse>, Status> {
         let project_id = proto::project::pause_project_request(request.into_inner())?;
         pause_project::execute(project_id, &self.state.pool)
             .await
@@ -80,8 +80,8 @@ impl ProjectService for ProjectGrpcService {
 
     async fn rename_project(
         &self,
-        request: Request<v1::RenameProjectRequest>,
-    ) -> Result<Response<v1::RenameProjectResponse>, Status> {
+        request: Request<pb::RenameProjectRequest>,
+    ) -> Result<Response<pb::RenameProjectResponse>, Status> {
         let command = proto::project::rename_project_request(request.into_inner())?;
         rename_project::execute(
             command,
@@ -97,8 +97,8 @@ impl ProjectService for ProjectGrpcService {
 
     async fn resume_project(
         &self,
-        request: Request<v1::ResumeProjectRequest>,
-    ) -> Result<Response<v1::ResumeProjectResponse>, Status> {
+        request: Request<pb::ResumeProjectRequest>,
+    ) -> Result<Response<pb::ResumeProjectResponse>, Status> {
         let project_id = proto::project::resume_project_request(request.into_inner())?;
         resume_project::execute(project_id, &self.state.pool, &self.state.home)
             .await
@@ -109,8 +109,8 @@ impl ProjectService for ProjectGrpcService {
 
     async fn update_project(
         &self,
-        request: Request<v1::UpdateProjectRequest>,
-    ) -> Result<Response<v1::UpdateProjectResponse>, Status> {
+        request: Request<pb::UpdateProjectRequest>,
+    ) -> Result<Response<pb::UpdateProjectResponse>, Status> {
         let command = proto::project::update_project_request(request.into_inner())?;
         update_project::execute(command, &self.state.pool)
             .await

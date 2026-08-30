@@ -1,10 +1,11 @@
-use pwf_models::task::TaskTimestampError;
-use pwf_wire::task::{ClosedTask, ClosedTaskAction, CompleteTask};
+use pwf_models::task::{TaskId, TaskTimestampError};
+use pwf_wire::task::{ClosedTaskAction, CompleteTask};
 
 #[cfg(test)]
 use super::task_closure::review_task_prompt;
 use super::{
     CloseTaskError,
+    mutation_request::{self, MutationOperation, MutationRequestState, MutationStart},
     resolve_task_project::{self, ResolveTaskProjectError},
     task_closure::{self, TaskClosure},
 };
@@ -21,6 +22,8 @@ pub enum CompleteTaskError {
     Close(#[from] CloseTaskError),
     #[error("cannot read the task completion time: {0}")]
     Clock(#[from] TaskTimestampError),
+    #[error(transparent)]
+    MutationRequest(#[from] mutation_request::MutationRequestError),
 }
 
 #[cqrsy::command]
@@ -29,21 +32,76 @@ pub async fn execute(
     store: &(impl TaskStore + IndexEntryStore + IndexSectionStore),
     pool: &sqlx::SqlitePool,
     clock: &impl Clock,
-) -> Result<ClosedTask, CompleteTaskError> {
+) -> Result<Option<TaskId>, CompleteTaskError> {
+    let identity = mutation_request::identity(
+        command.request_id.as_ref(),
+        command.request_fingerprint.as_ref(),
+    )?;
+    if let Some(identity) = identity.as_ref()
+        && let Some(replay) =
+            mutation_request::find(pool, identity, MutationOperation::Complete).await?
+    {
+        return match replay.state {
+            MutationRequestState::Completed => Ok(replay.result_task_id),
+            MutationRequestState::Pending => Err(identity.incomplete().into()),
+        };
+    }
     let project = resolve_task_project::execute(command.id.clone(), pool).await?;
-    task_closure::close(
+    let completed_at = clock.now()?;
+    if let Some(identity) = identity.as_ref()
+        && let MutationStart::Existing(replay) =
+            mutation_request::start(pool, identity, MutationOperation::Complete, &command.id)
+                .await?
+    {
+        return match replay.state {
+            MutationRequestState::Completed => Ok(replay.result_task_id),
+            MutationRequestState::Pending => Err(identity.incomplete().into()),
+        };
+    }
+    let result = task_closure::close(
         &TaskClosure {
             action: ClosedTaskAction::Done,
             id: &command.id,
-            completed_at: clock.now()?,
+            completed_at,
             report: command.report.as_ref(),
             commits: command.commits.as_ref(),
             review: command.review,
+            expected_revision: command.expected_revision.as_ref(),
         },
         store,
         &project,
+    );
+    let effects = match result {
+        Ok(effects) => effects,
+        Err(error) => {
+            if let Some(identity) = identity.as_ref()
+                && close_failed_before_mutation(&error)
+            {
+                mutation_request::discard(pool, identity, MutationOperation::Complete).await?;
+            }
+            return Err(error.into());
+        }
+    };
+    if let Some(identity) = identity.as_ref() {
+        mutation_request::complete(
+            pool,
+            identity,
+            MutationOperation::Complete,
+            Some("completed"),
+            effects.review_task.as_ref().map(|task| &task.id),
+        )
+        .await?;
+    }
+    Ok(effects.review_task.map(|task| task.id))
+}
+
+fn close_failed_before_mutation(error: &CloseTaskError) -> bool {
+    matches!(
+        error,
+        CloseTaskError::TaskNotFound { .. }
+            | CloseTaskError::UnknownProjectId { .. }
+            | CloseTaskError::Revision(_)
     )
-    .map_err(Into::into)
 }
 
 /// Reports failures shared by the done and cancel interactors.
@@ -54,11 +112,11 @@ mod tests {
         task::{TaskId, TaskStatus},
     };
 
-    use super::{
-        CloseTaskError, ClosedTaskAction, CompleteTask, CompleteTaskError, review_task_prompt,
-    };
+    use super::{CloseTaskError, CompleteTask, CompleteTaskError, review_task_prompt};
     use crate::{
-        ports::task_record::{IndexEntry, IndexEntryState, IndexEntryStore, TaskRecord},
+        ports::task_record::{
+            IndexEntry, IndexEntryState, IndexEntryStore, IndexSectionStore, TaskRecord,
+        },
         task::complete_task,
         testing::{FixedClock, InMemoryStore, project, task_record, task_timestamp},
     };
@@ -98,6 +156,9 @@ mod tests {
             report: None,
             commits: None,
             review: false,
+            expected_revision: None,
+            request_id: None,
+            request_fingerprint: None,
         }
     }
 
@@ -135,9 +196,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(out.action, ClosedTaskAction::Done);
-        assert_eq!(out.evicted_ids, vec![TaskId::try_new("FOO-0006").unwrap()]);
-        assert_eq!(out.futuro_renamed_project, None);
+        assert_eq!(out, None);
         assert_eq!(store.tasks("foo-bar")[0].status, TaskStatus::Done);
         let marked = store
             .entries("foo-bar")
@@ -199,7 +258,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(outcome.action, ClosedTaskAction::Done);
+        assert_eq!(outcome, None);
         assert_eq!(store.tasks("foo-bar")[0].status, TaskStatus::Done);
         assert!(store.entries("foo-bar").is_empty());
     }
@@ -224,7 +283,15 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(out.futuro_renamed_project, Some(foo().title));
+        assert_eq!(out, None);
+        assert_eq!(
+            IndexSectionStore::list_index_sections(&store, &foo())
+                .unwrap()
+                .iter()
+                .map(AsRef::as_ref)
+                .collect::<Vec<_>>(),
+            ["Future"]
+        );
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
@@ -252,8 +319,8 @@ mod tests {
             .await
             .unwrap();
 
-        let review = out.review_task.unwrap();
-        assert_eq!(review.id.as_ref(), "FOO-0002");
+        let review = out.unwrap();
+        assert_eq!(review.as_ref(), "FOO-0002");
         assert!(
             store
                 .entries("foo-bar")
@@ -290,7 +357,7 @@ mod tests {
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
-    async fn done_rejects_an_invalid_persisted_title_before_mutation(pool: sqlx::SqlitePool) {
+    async fn done_does_not_validate_an_unreturned_persisted_title(pool: sqlx::SqlitePool) {
         crate::testing::insert_project(
             &pool,
             "FOO",
@@ -309,15 +376,13 @@ mod tests {
             vec![entry("FOO-0001", IndexEntryState::Open, "General")],
         );
 
-        let error = complete_task::execute(&done_command("FOO-0001"), &store, &pool, &FixedClock)
-            .await
-            .unwrap_err();
+        let review_task =
+            complete_task::execute(&done_command("FOO-0001"), &store, &pool, &FixedClock)
+                .await
+                .unwrap();
 
-        assert!(matches!(
-            error,
-            CompleteTaskError::Close(CloseTaskError::InvalidTitle { .. })
-        ));
-        assert_eq!(store.tasks("foo-bar")[0].status, TaskStatus::Active);
+        assert_eq!(review_task, None);
+        assert_eq!(store.tasks("foo-bar")[0].status, TaskStatus::Done);
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]

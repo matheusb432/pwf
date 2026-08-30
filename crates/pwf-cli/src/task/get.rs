@@ -1,7 +1,7 @@
 use clap::Args;
 use pwf_client::{
+    pb::{GetTaskRequest, TaskReadFormat, get_task_response},
     task::TaskClient,
-    v1::{GetTaskRequest, TaskReadFormat, get_task_response},
 };
 
 use super::Identifier;

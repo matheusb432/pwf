@@ -1,12 +1,12 @@
 use clap::Args;
 use pwf_client::{
     confirmation::{Confirmation, ConfirmationPrompt, ConfirmedRequestError},
-    task::TaskClient,
-    v1::{
+    pb::{
         Agent, AgentAvailability, BlockedByResolutionKind, BlockedByStatus, DispatchMode,
-        DispatchSessionOutcome, LaunchDirectives, PlanSessionIntent, PlanSessionRequest,
-        SessionEffort, SessionWarning, TaskStatus, session_warning,
+        DispatchSessionStart, LaunchDirectives, PlanSessionRequest, SessionEffort, SessionWarning,
+        TaskStatus, dispatched_session, session_warning,
     },
+    task::TaskClient,
 };
 use pwf_models::{
     session::{PushedPrompt, SessionTaskIds},
@@ -109,14 +109,6 @@ struct ExecutionArguments {
 }
 
 impl ExecutionArguments {
-    fn intent(&self) -> PlanSessionIntent {
-        if self.dry_run {
-            PlanSessionIntent::DryRun
-        } else {
-            PlanSessionIntent::Dispatch
-        }
-    }
-
     fn mode(&self) -> DispatchMode {
         if self.inline {
             DispatchMode::Inline
@@ -193,18 +185,17 @@ pub(super) async fn run(
         console.confirmation_mode(arguments.confirmation.assume_yes)?
     };
 
-    let request = PlanSessionRequest {
-        task_ids: task_ids.iter().map(ToString::to_string).collect(),
-        intent: arguments.execution.intent() as i32,
-        pushed_prompt: arguments.pushed_prompt.as_ref().map(ToString::to_string),
-        mode: arguments.execution.mode() as i32,
-        directives: Some(arguments.launch.directives()),
-        agent: agent as i32,
-        model_override: arguments.model.clone(),
-        effort: SessionEffort::from(arguments.effort) as i32,
-        environment: process_environment(),
-    };
     if arguments.execution.dry_run {
+        let request = PlanSessionRequest {
+            task_ids: task_ids.iter().map(ToString::to_string).collect(),
+            pushed_prompt: arguments.pushed_prompt.as_ref().map(ToString::to_string),
+            mode: arguments.execution.mode() as i32,
+            directives: Some(arguments.launch.directives()),
+            agent: agent as i32,
+            model_override: arguments.model.clone(),
+            effort: SessionEffort::from(arguments.effort) as i32,
+            environment: process_environment(),
+        };
         let dry_run = client
             .plan_session(request)
             .await
@@ -220,6 +211,17 @@ pub(super) async fn run(
         console,
         mode: confirmation_mode,
     };
+    let session_identity = task_ids.identity();
+    let request = DispatchSessionStart {
+        task_ids: task_ids.iter().map(ToString::to_string).collect(),
+        pushed_prompt: arguments.pushed_prompt.as_ref().map(ToString::to_string),
+        mode: arguments.execution.mode() as i32,
+        directives: Some(arguments.launch.directives()),
+        agent: agent as i32,
+        model_override: arguments.model.clone(),
+        effort: SessionEffort::from(arguments.effort) as i32,
+        environment: process_environment(),
+    };
     let outcome = match client.dispatch_session(request, prompt).await {
         Ok(outcome) => outcome,
         Err(ConfirmedRequestError::Operation(status)) => {
@@ -229,16 +231,13 @@ pub(super) async fn run(
             return Err(prompt_error("session dispatch", source));
         }
     };
-    if DispatchSessionOutcome::try_from(outcome.outcome).ok()
-        == Some(DispatchSessionOutcome::InlineLaunch)
-    {
-        let launch = outcome.inline_launch.as_ref().ok_or_else(|| {
-            anyhow::anyhow!("pwf-server returned an inline dispatch without a launch")
-        })?;
-        return execute_inline(launch);
+    if let Some(dispatched_session::Outcome::InlineLaunch(launch)) = outcome.outcome.as_ref() {
+        return execute_inline(launch, &session_identity);
     }
     render_dispatch(
         &outcome,
+        &session_identity,
+        agent,
         console.color_with(match arguments.color {
             ColorChoice::Auto => None,
             ColorChoice::Always => Some(true),
@@ -285,7 +284,7 @@ impl ConfirmationPrompt for SessionPrompt {
     }
 }
 
-fn render_probe(probe: pwf_client::v1::AgentProbe) {
+fn render_probe(probe: pwf_client::pb::AgentProbe) {
     if AgentAvailability::try_from(probe.availability).ok() != Some(AgentAvailability::Available) {
         let binary = match Agent::try_from(probe.agent).ok() {
             Some(Agent::Claude) => "claude",
@@ -369,7 +368,10 @@ fn status_name(value: Option<i32>) -> &'static str {
 }
 
 #[cfg(unix)]
-fn execute_inline(launch: &pwf_client::v1::InlineLaunch) -> anyhow::Result<String> {
+fn execute_inline(
+    launch: &pwf_client::pb::InlineLaunch,
+    _session_identity: &str,
+) -> anyhow::Result<String> {
     use std::os::unix::process::CommandExt as _;
 
     let (program, arguments) = launch
@@ -384,7 +386,10 @@ fn execute_inline(launch: &pwf_client::v1::InlineLaunch) -> anyhow::Result<Strin
 }
 
 #[cfg(not(unix))]
-fn execute_inline(launch: &pwf_client::v1::InlineLaunch) -> anyhow::Result<String> {
+fn execute_inline(
+    launch: &pwf_client::pb::InlineLaunch,
+    session_identity: &str,
+) -> anyhow::Result<String> {
     let (program, arguments) = launch
         .argv
         .split_first()
@@ -396,12 +401,12 @@ fn execute_inline(launch: &pwf_client::v1::InlineLaunch) -> anyhow::Result<Strin
     if !status.success() {
         return Err(anyhow::anyhow!("inline agent session exited with {status}"));
     }
-    Ok(format!("# session {}: ran inline\n", launch.session_name))
+    Ok(format!("# session {session_identity}: ran inline\n"))
 }
 
 #[cfg(test)]
 mod tests {
-    use pwf_client::v1::{
+    use pwf_client::pb::{
         BlockedByIssue, BlockedByResolutionKind, BlockedByStatus, SessionWarning, TaskStatus,
         session_warning,
     };

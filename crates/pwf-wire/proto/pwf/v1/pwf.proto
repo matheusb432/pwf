@@ -291,6 +291,7 @@ message CreateTaskRequest {
   optional EffortTier effort = 6;
   repeated string tags = 7;
   optional PriorityTier priority = 8;
+  string request_id = 9;
 }
 
 message CancelTaskRequest {
@@ -298,6 +299,8 @@ message CancelTaskRequest {
   string report = 2;
   repeated string commits = 3;
   bool review = 4;
+  optional string expected_revision = 5;
+  string request_id = 6;
 }
 
 message CompleteTaskRequest {
@@ -305,6 +308,8 @@ message CompleteTaskRequest {
   optional string report = 2;
   repeated string commits = 3;
   bool review = 4;
+  optional string expected_revision = 5;
+  string request_id = 6;
 }
 
 message StringValues { repeated string values = 1; }
@@ -357,6 +362,8 @@ message UpdateTaskRequest {
   EffortEdit effort = 4;
   StringCollectionEdit tags = 5;
   PriorityEdit priority = 6;
+  optional string expected_revision = 7;
+  string request_id = 8;
 }
 
 enum TaskReadFormat {
@@ -421,81 +428,17 @@ message ListTasksRequest {
   optional TaskStatusFilter status = 7;
   ListDetail detail = 8;
   optional PriorityTier priority = 9;
+  uint32 page_size = 10;
+  optional string page_token = 11;
 }
 
-message DeleteTaskStart { string id = 1; }
-message ReopenTaskStart { string id = 1; }
+message CreateTaskResponse { string id = 1; }
 
-message CreatedTask {
-  string id = 1;
-  string project = 2;
-  string title = 3;
-  string note_path = 4;
-  optional string created_section = 5;
-}
+message CancelTaskResponse { optional string review_task_id = 1; }
 
-message CreateTaskResponse { CreatedTask task = 1; }
+message CompleteTaskResponse { optional string review_task_id = 1; }
 
-message CreateTaskFailureDetails {
-  string project = 1;
-  optional string created_section = 2;
-}
-
-message UpdatedTask {
-  string id = 1;
-  string project = 2;
-  string title = 3;
-}
-
-message UpdateTaskResponse { UpdatedTask task = 1; }
-
-message ClosedTask {
-  string id = 1;
-  string project = 2;
-  string title = 3;
-  repeated string evicted_ids = 4;
-  optional string futuro_renamed_project = 5;
-  CreatedTask review_task = 6;
-}
-
-message CancelTaskResponse { ClosedTask task = 1; }
-
-message CompleteTaskResponse { ClosedTask task = 1; }
-
-message ReopenedTask {
-  string id = 1;
-  string project = 2;
-}
-
-message AlreadyActiveTask {
-  string id = 1;
-  string project = 2;
-}
-
-message AbortedTaskOperation { string id = 1; }
-
-message ReopenTaskResult {
-  oneof outcome {
-    ReopenedTask reopened = 1;
-    AlreadyActiveTask already_active = 2;
-    AbortedTaskOperation aborted = 3;
-  }
-}
-
-message DeletedTask {
-  string id = 1;
-  string project = 2;
-  string title = 3;
-  string deleted_path = 4;
-  optional string unlinked = 5;
-}
-
-message DeleteTaskResult {
-  oneof outcome {
-    DeletedTask deleted = 1;
-    AbortedTaskOperation aborted = 2;
-  }
-}
+message UpdateTaskResponse {}
 
 enum TaskStatus {
   TASK_STATUS_UNSPECIFIED = 0;
@@ -521,10 +464,11 @@ message TaskData {
 }
 
 message GetTaskResponse {
+  string revision = 1;
   oneof value {
-    string markdown = 1;
-    string path = 2;
-    TaskData data = 3;
+    string markdown = 2;
+    string path = 3;
+    TaskData data = 4;
   }
 }
 
@@ -598,6 +542,12 @@ message ListTasksResponse {
   TaskStatusFilter status_filter = 5;
   ListLayout layout = 6;
   ListDetail detail = 7;
+  optional string next_page_token = 8;
+}
+
+message DeleteTaskStart {
+  string id = 1;
+  string request_id = 2;
 }
 
 message DeleteTaskConfirmation {
@@ -618,6 +568,18 @@ message ReopenTaskConfirmation {
 
 message ConfirmationDecision { bool confirmed = 1; }
 
+message DeleteTaskPreflight { DeleteTaskConfirmation confirmation = 1; }
+
+message DeletedTask {}
+message AbortedTaskOperation {}
+
+message DeleteTaskResult {
+  oneof outcome {
+    DeletedTask deleted = 1;
+    AbortedTaskOperation aborted = 2;
+  }
+}
+
 message DeleteTaskRequest {
   oneof value {
     DeleteTaskStart start = 1;
@@ -627,8 +589,26 @@ message DeleteTaskRequest {
 
 message DeleteTaskResponse {
   oneof value {
-    DeleteTaskConfirmation preflight = 1;
+    DeleteTaskPreflight preflight = 1;
     DeleteTaskResult result = 2;
+  }
+}
+
+message ReopenTaskStart {
+  string id = 1;
+  string request_id = 2;
+}
+
+message ReopenTaskPreflight { ReopenTaskConfirmation confirmation = 1; }
+
+message ReopenedTask {}
+message AlreadyActiveTask {}
+
+message ReopenTaskResult {
+  oneof outcome {
+    ReopenedTask reopened = 1;
+    AlreadyActiveTask already_active = 2;
+    AbortedTaskOperation aborted = 3;
   }
 }
 
@@ -641,7 +621,7 @@ message ReopenTaskRequest {
 
 message ReopenTaskResponse {
   oneof value {
-    ReopenTaskConfirmation preflight = 1;
+    ReopenTaskPreflight preflight = 1;
     ReopenTaskResult result = 2;
   }
 }
@@ -667,12 +647,6 @@ enum SessionEffort {
   SESSION_EFFORT_MAX = 5;
 }
 
-enum PlanSessionIntent {
-  PLAN_SESSION_INTENT_UNSPECIFIED = 0;
-  PLAN_SESSION_INTENT_DRY_RUN = 1;
-  PLAN_SESSION_INTENT_DISPATCH = 2;
-}
-
 message LaunchDirectives {
   bool worktree = 1;
   bool autonomous = 2;
@@ -680,14 +654,13 @@ message LaunchDirectives {
 
 message PlanSessionRequest {
   repeated string task_ids = 1;
-  PlanSessionIntent intent = 2;
-  optional string pushed_prompt = 3;
-  DispatchMode mode = 4;
-  LaunchDirectives directives = 5;
-  Agent agent = 6;
-  optional string model_override = 7;
-  SessionEffort effort = 8;
-  map<string, string> environment = 9;
+  optional string pushed_prompt = 2;
+  DispatchMode mode = 3;
+  LaunchDirectives directives = 4;
+  Agent agent = 5;
+  optional string model_override = 6;
+  SessionEffort effort = 7;
+  map<string, string> environment = 8;
 }
 
 message AgentLaunch {
@@ -750,39 +723,40 @@ message SessionDispatchPreflight {
   repeated SessionWarning warnings = 3;
 }
 
-message InlineLaunch {
+message DispatchSessionStart {
   repeated string task_ids = 1;
-  repeated string argv = 2;
-  string working_directory = 3;
-  string session_name = 4;
+  optional string pushed_prompt = 2;
+  DispatchMode mode = 3;
+  LaunchDirectives directives = 4;
+  Agent agent = 5;
+  optional string model_override = 6;
+  SessionEffort effort = 7;
+  map<string, string> environment = 8;
+}
+
+message AbortedSession {}
+
+message InlineLaunch {
+  repeated string argv = 1;
+  string working_directory = 2;
 }
 
 message WindowOpened {
-  repeated string task_ids = 1;
-  string session = 2;
-  Agent agent = 3;
-  string project_path = 4;
-  string window = 5;
-}
-
-enum DispatchSessionOutcome {
-  DISPATCH_SESSION_OUTCOME_UNSPECIFIED = 0;
-  DISPATCH_SESSION_OUTCOME_ABORTED = 1;
-  DISPATCH_SESSION_OUTCOME_INLINE_LAUNCH = 2;
-  DISPATCH_SESSION_OUTCOME_WINDOW_OPENED = 3;
+  string session = 1;
+  string window = 2;
 }
 
 message DispatchedSession {
-  DispatchSessionOutcome outcome = 1;
-  repeated string task_ids = 2;
-  InlineLaunch inline_launch = 3;
-  WindowOpened window_opened = 4;
-  string session_name = 5;
+  oneof outcome {
+    AbortedSession aborted = 1;
+    InlineLaunch inline_launch = 2;
+    WindowOpened window_opened = 3;
+  }
 }
 
 message DispatchSessionRequest {
   oneof value {
-    PlanSessionRequest start = 1;
+    DispatchSessionStart start = 1;
     ConfirmationDecision decision = 2;
   }
 }

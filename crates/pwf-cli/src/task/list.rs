@@ -2,11 +2,11 @@ use std::num::NonZeroUsize;
 
 use clap::Args;
 use pwf_client::{
-    task::TaskClient,
-    v1::{
+    pb::{
         EffortTier, ListDetail, ListScope, ListTasksRequest, OrderDirection, OrderField, OrderSpec,
         PriorityTier,
     },
+    task::TaskClient,
 };
 use pwf_models::{
     project::ProjectSelector,
@@ -15,6 +15,8 @@ use pwf_models::{
 
 use super::{EffortChoice, PriorityChoice, SectionChoice, StatusChoice, render::render_list};
 use crate::console::Console;
+
+const TASK_LIST_PAGE_SIZE: u32 = 256;
 
 #[derive(Args, Debug)]
 pub struct Arguments {
@@ -61,39 +63,57 @@ pub(super) async fn run(
     console: Console,
     client: &TaskClient,
 ) -> anyhow::Result<String> {
-    let result = client
-        .list_tasks(ListTasksRequest {
-            project_selector: arguments.project.as_ref().map(ToString::to_string),
-            scope: list_scope(arguments),
-            number: arguments
-                .number
-                .and_then(NonZeroUsize::new)
-                .map(|value| value.get() as u64),
-            effort: arguments.effort.map(|value| match value {
-                EffortChoice::Low => EffortTier::Low as i32,
-                EffortChoice::Medium => EffortTier::Medium as i32,
-                EffortChoice::High => EffortTier::High as i32,
-                EffortChoice::Highest => EffortTier::Highest as i32,
-            }),
-            tags: TaskTags::from_inputs(&arguments.tag)
-                .map(|tags| tags.iter().map(ToString::to_string).collect())
-                .unwrap_or_default(),
-            order: arguments.order,
-            status: arguments.status.map(|status| status.filter() as i32),
-            detail: if arguments.long {
-                ListDetail::Detailed as i32
-            } else {
-                ListDetail::Summary as i32
-            },
-            priority: arguments.priority.map(|value| match value {
-                PriorityChoice::Low => PriorityTier::Low as i32,
-                PriorityChoice::Medium => PriorityTier::Medium as i32,
-                PriorityChoice::High => PriorityTier::High as i32,
-                PriorityChoice::Highest => PriorityTier::Highest as i32,
-            }),
-        })
+    let mut request = ListTasksRequest {
+        project_selector: arguments.project.as_ref().map(ToString::to_string),
+        scope: list_scope(arguments),
+        number: arguments
+            .number
+            .and_then(NonZeroUsize::new)
+            .map(|value| value.get() as u64),
+        effort: arguments.effort.map(|value| match value {
+            EffortChoice::Low => EffortTier::Low as i32,
+            EffortChoice::Medium => EffortTier::Medium as i32,
+            EffortChoice::High => EffortTier::High as i32,
+            EffortChoice::Highest => EffortTier::Highest as i32,
+        }),
+        tags: TaskTags::from_inputs(&arguments.tag)
+            .map(|tags| tags.iter().map(ToString::to_string).collect())
+            .unwrap_or_default(),
+        order: arguments.order,
+        status: arguments.status.map(|status| status.filter() as i32),
+        detail: if arguments.long {
+            ListDetail::Detailed as i32
+        } else {
+            ListDetail::Summary as i32
+        },
+        priority: arguments.priority.map(|value| match value {
+            PriorityChoice::Low => PriorityTier::Low as i32,
+            PriorityChoice::Medium => PriorityTier::Medium as i32,
+            PriorityChoice::High => PriorityTier::High as i32,
+            PriorityChoice::Highest => PriorityTier::Highest as i32,
+        }),
+        page_size: TASK_LIST_PAGE_SIZE,
+        page_token: None,
+    };
+    let mut result = client
+        .list_tasks(request.clone())
         .await
         .map_err(crate::rpc_error)?;
+    let mut seen_tokens = std::collections::HashSet::new();
+    while let Some(token) = result.next_page_token.take() {
+        if !seen_tokens.insert(token.clone()) {
+            return Err(anyhow::anyhow!(
+                "pwf-server repeated a task-list continuation token"
+            ));
+        }
+        request.page_token = Some(token);
+        let mut page = client
+            .list_tasks(request.clone())
+            .await
+            .map_err(crate::rpc_error)?;
+        result.tasks.append(&mut page.tasks);
+        result.next_page_token = page.next_page_token;
+    }
     let location = result.project_task_path.as_ref().map_or_else(
         || "managed project task paths".to_string(),
         ToString::to_string,

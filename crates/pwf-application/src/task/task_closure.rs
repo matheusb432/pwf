@@ -4,10 +4,10 @@ use pwf_models::{
     project::ProjectId,
     task::{
         CommitRanges, TaskId, TaskPrompt, TaskReport, TaskSection, TaskStatus, TaskTimestamp,
-        TaskTitle, TaskTitleError,
+        TaskTitleError,
     },
 };
-use pwf_wire::task::{AddTaskDiagnostics, AddedTask, ClosedTask, ClosedTaskAction};
+use pwf_wire::task::{AddTaskDiagnostics, ClosedTaskAction};
 
 use crate::{
     ports::task_record::{
@@ -16,7 +16,7 @@ use crate::{
     },
     task::{
         add_task::AddTaskError,
-        created_task_output, infer_task_title,
+        infer_task_title,
         note_body::append_report,
         task_body_region,
         task_creation::{self, TaskCreation},
@@ -38,6 +38,8 @@ pub enum CloseTaskError {
         #[source]
         source: TaskTitleError,
     },
+    #[error(transparent)]
+    Revision(#[from] super::TaskRevisionConflict),
     #[error(transparent)]
     WriteStore(anyhow::Error),
     #[error("{0}")]
@@ -352,6 +354,12 @@ pub(in crate::task) struct TaskClosure<'a> {
     pub(in crate::task) report: Option<&'a TaskReport>,
     pub(in crate::task) commits: Option<&'a CommitRanges>,
     pub(in crate::task) review: bool,
+    pub(in crate::task) expected_revision: Option<&'a pwf_wire::task::TaskRevision>,
+}
+
+/// Carries the review task identifier needed by the mutation response.
+pub(in crate::task) struct ClosedTaskEffects {
+    pub(in crate::task) review_task: Option<task_creation::CreatedTask>,
 }
 
 /// Closes a task through the flow shared by done and cancel.
@@ -362,7 +370,7 @@ pub(in crate::task) fn close(
     command: &TaskClosure<'_>,
     store: &(impl TaskStore + IndexEntryStore + IndexSectionStore),
     project: &pwf_models::project::Project,
-) -> Result<ClosedTask, CloseTaskError> {
+) -> Result<ClosedTaskEffects, CloseTaskError> {
     let TaskClosure {
         action,
         id,
@@ -370,6 +378,7 @@ pub(in crate::task) fn close(
         report,
         commits,
         review,
+        expected_revision,
     } = *command;
     let task_identifier = id.clone();
     if &project.id != task_identifier.project_id() {
@@ -383,17 +392,12 @@ pub(in crate::task) fn close(
         .ok_or_else(|| CloseTaskError::TaskNotFound {
             id: task_identifier.clone(),
         })?;
+    super::ensure_task_revision(expected_revision, &record)?;
     if record.status != TaskStatus::Active {
         return Err(CloseTaskError::TaskNotFound {
             id: task_identifier,
         });
     }
-    let title = TaskTitle::try_new(record.title.clone()).map_err(|source| {
-        CloseTaskError::InvalidTitle {
-            id: task_identifier.clone(),
-            source,
-        }
-    })?;
     let mut patch = TaskPatch {
         status: Some(close_status(action)),
         completed_at: NullablePatch::Set(completed_at),
@@ -409,26 +413,15 @@ pub(in crate::task) fn close(
     TaskStore::update(store, project, &task_identifier, patch)
         .map_err(|error| CloseTaskError::WriteStore(anyhow::Error::new(error)))?;
 
-    let (evicted_ids, futuro_renamed) =
-        if matches!(record.materialization, Materialization::NoteFile) {
-            rotate_done_queue(store, project, &task_identifier, completed_at)?
-        } else {
-            (Vec::new(), false)
-        };
+    if matches!(record.materialization, Materialization::NoteFile) {
+        rotate_done_queue(store, project, &task_identifier, completed_at)?;
+    }
 
     let review_task = review
         .then(|| spawn_review(store, project, &task_identifier, completed_at, commits))
         .transpose()?;
 
-    Ok(ClosedTask {
-        id: task_identifier,
-        project: project.title.clone(),
-        title,
-        action,
-        evicted_ids,
-        futuro_renamed_project: futuro_renamed.then(|| project.title.clone()),
-        review_task,
-    })
+    Ok(ClosedTaskEffects { review_task })
 }
 
 fn close_status(action: ClosedTaskAction) -> TaskStatus {
@@ -444,7 +437,7 @@ fn rotate_done_queue(
     project: &pwf_models::project::Project,
     id: &TaskId,
     completed_at: TaskTimestamp,
-) -> Result<(Vec<TaskId>, bool), CloseTaskError> {
+) -> Result<(), CloseTaskError> {
     let mut entries = IndexEntryStore::list_index_entries(store, project)
         .map_err(|error| CloseTaskError::WriteStore(anyhow::Error::new(error)))?;
     let tasks = TaskStore::list(store, project)
@@ -473,7 +466,7 @@ fn rotate_done_queue(
         IndexEntryStore::delete_index_entry(store, project, evicted)
             .map_err(|error| CloseTaskError::WriteStore(anyhow::Error::new(error)))?;
     }
-    Ok((decisions.evicted_ids, decisions.normalize_futuro_header))
+    Ok(())
 }
 
 /// Renames every `## Futuro` header to `## Future` through the section port.
@@ -496,7 +489,7 @@ fn spawn_review(
     reviewed: &TaskId,
     completed_at: TaskTimestamp,
     commits: Option<&CommitRanges>,
-) -> Result<AddedTask, CloseTaskError> {
+) -> Result<task_creation::CreatedTask, CloseTaskError> {
     let prompt = review_task_prompt(reviewed, commits);
     let review_title = infer_task_title(&prompt)
         .map_err(AddTaskError::from)
@@ -507,7 +500,7 @@ fn spawn_review(
             source: anyhow::Error::new(source),
         }))
     })?;
-    let created = task_creation::create(
+    task_creation::create(
         TaskCreation {
             project,
             id: &id,
@@ -532,8 +525,7 @@ fn spawn_review(
             },
             source,
         }))
-    })?;
-    Ok(created_task_output(project, created))
+    })
 }
 
 pub(in crate::task) fn review_task_prompt(

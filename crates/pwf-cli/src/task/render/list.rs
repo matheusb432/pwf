@@ -1,6 +1,6 @@
 use std::fmt::Write;
 
-use pwf_client::v1::{
+use pwf_client::pb::{
     BlockedByResolutionKind, BlockedByStatus, EffortTier, ListDetail, ListLayout,
     ListTasksResponse, PriorityTier, TaskIssue, TaskIssueKind, TaskStatus, TaskStatusFilter,
     TaskView,
@@ -310,7 +310,7 @@ fn task_status_name(status: TaskStatus) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use pwf_client::v1::{BlockedByIssue, TaskLocation};
+    use pwf_client::pb::{BlockedByIssue, TaskLocation};
 
     use super::*;
 
@@ -468,6 +468,7 @@ mod tests {
             status_filter: TaskStatusFilter::Active as i32,
             layout: ListLayout::Flat as i32,
             detail: ListDetail::Summary as i32,
+            next_page_token: None,
         };
         let output = render_list(&result, "notes", false);
         assert!(
@@ -486,6 +487,7 @@ mod tests {
             status_filter: TaskStatusFilter::Active as i32,
             layout: ListLayout::Flat as i32,
             detail: ListDetail::Detailed as i32,
+            next_page_token: None,
         };
         let output = render_list(&result, "notes", false);
         assert!(output.contains("  status: active\n"), "{output}");

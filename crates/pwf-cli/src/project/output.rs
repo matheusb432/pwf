@@ -1,5 +1,5 @@
 use anyhow::Context as _;
-use pwf_client::v1::{
+use pwf_client::pb::{
     AddProjectResponse, GetProjectResponse, PauseProjectResponse, Project, RenameProjectResponse,
     ResumeProjectResponse,
 };

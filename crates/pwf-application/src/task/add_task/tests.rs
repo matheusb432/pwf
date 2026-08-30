@@ -40,6 +40,8 @@ fn command() -> AddTask {
         effort: None,
         priority: None,
         tags: None,
+        request_id: None,
+        request_fingerprint: None,
     }
 }
 
@@ -51,10 +53,7 @@ async fn add_inserts_record_and_open_index_entry(pool: sqlx::SqlitePool) {
         .await
         .unwrap();
 
-    assert_eq!(added.id.as_ref(), "FOO-0001");
-    assert_eq!(added.project.as_ref(), "foo");
-    assert_eq!(added.title.as_ref(), "ship it");
-    assert_eq!(added.created_section, None);
+    assert_eq!(added.as_ref(), "FOO-0001");
     let entries = store.entries("foo");
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].id.as_ref(), "FOO-0001");
@@ -76,7 +75,7 @@ async fn add_forwards_an_explicit_task_title(pool: sqlx::SqlitePool) {
         .await
         .unwrap();
 
-    assert_eq!(added.title.as_ref(), "fix  metadata");
+    assert_eq!(added.as_ref(), "FOO-0001");
     assert_eq!(store.tasks("foo")[0].title, "fix  metadata");
 }
 
@@ -90,7 +89,7 @@ async fn add_inferred_prompt_title_is_normalized_once(pool: sqlx::SqlitePool) {
         .await
         .unwrap();
 
-    assert_eq!(added.title.as_ref(), "fix  metadata");
+    assert_eq!(added.as_ref(), "FOO-0001");
     assert_eq!(store.tasks("foo")[0].title, "fix  metadata");
 }
 
@@ -108,7 +107,7 @@ async fn add_uses_the_clock_timestamp(pool: sqlx::SqlitePool) {
 }
 
 #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
-async fn add_reports_created_section_only_when_region_absent(pool: sqlx::SqlitePool) {
+async fn add_persists_the_requested_index_section(pool: sqlx::SqlitePool) {
     let store = registered_store(&pool).await;
 
     let mut command = command();
@@ -117,8 +116,9 @@ async fn add_reports_created_section_only_when_region_absent(pool: sqlx::SqliteP
         .await
         .unwrap();
 
+    assert_eq!(added.as_ref(), "FOO-0001");
     assert_eq!(
-        added.created_section.as_ref().map(AsRef::as_ref),
+        store.entries("foo")[0].section.as_ref().map(AsRef::as_ref),
         Some("Human")
     );
 }
@@ -142,26 +142,11 @@ async fn structured_add_renders_lane_values_without_shorthand_parsing(pool: sqlx
         .await
         .unwrap();
 
-    assert_eq!(added.title.as_ref(), "machine prompt");
+    assert_eq!(added.as_ref(), "FOO-0001");
     assert_eq!(
         store.tasks("foo")[0].body,
         "## Goals\n\n- keep /d literal\n\n## Context\n\n- known context"
     );
-}
-
-#[sqlx::test(migrator = "crate::testing::MIGRATOR")]
-async fn add_does_not_report_created_section_for_existing_empty_region(pool: sqlx::SqlitePool) {
-    let store = registered_store(&pool)
-        .await
-        .with_sections("foo", &["Human"]);
-
-    let mut command = command();
-    command.index_section = IndexSection::Human;
-    let added = add_task::execute(&command, &store, &pool, &FixedClock)
-        .await
-        .unwrap();
-
-    assert_eq!(added.created_section, None);
 }
 
 #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
@@ -203,7 +188,7 @@ async fn add_accepts_a_blocker_from_a_paused_project(pool: sqlx::SqlitePool) {
         .await
         .unwrap();
 
-    assert_eq!(added.id.as_ref(), "FOO-0001");
+    assert_eq!(added.as_ref(), "FOO-0001");
 }
 
 #[sqlx::test(migrator = "crate::testing::MIGRATOR")]

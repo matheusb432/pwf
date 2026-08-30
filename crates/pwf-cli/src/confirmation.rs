@@ -231,11 +231,11 @@ fn confirmation_dialog(confirmation: &Confirmation) -> ConfirmationDialog {
 }
 
 fn task_status(value: i32) -> &'static str {
-    match pwf_client::v1::TaskStatus::try_from(value).ok() {
-        Some(pwf_client::v1::TaskStatus::Active) => "active",
-        Some(pwf_client::v1::TaskStatus::Done) => "done",
-        Some(pwf_client::v1::TaskStatus::Cancelled) => "cancelled",
-        Some(pwf_client::v1::TaskStatus::Unspecified) | None => "unspecified",
+    match pwf_client::pb::TaskStatus::try_from(value).ok() {
+        Some(pwf_client::pb::TaskStatus::Active) => "active",
+        Some(pwf_client::pb::TaskStatus::Done) => "done",
+        Some(pwf_client::pb::TaskStatus::Cancelled) => "cancelled",
+        Some(pwf_client::pb::TaskStatus::Unspecified) | None => "unspecified",
     }
 }
 
@@ -296,7 +296,7 @@ impl Theme for ConfirmationTheme {
 
 #[cfg(test)]
 mod tests {
-    use pwf_client::v1::{
+    use pwf_client::pb::{
         DeleteNoteConfirmation, DeleteTaskConfirmation, ReopenTaskConfirmation, TaskStatus,
     };
 

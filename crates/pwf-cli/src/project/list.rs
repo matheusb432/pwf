@@ -1,7 +1,7 @@
 use clap::Args;
 use pwf_client::{
+    pb::{ListProjectsRequest, ProjectStatusFilter},
     project::ProjectClient,
-    v1::{ListProjectsRequest, ProjectStatusFilter},
 };
 
 use super::output;

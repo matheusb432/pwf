@@ -7,7 +7,7 @@ use clap::{ArgGroup, Args, Subcommand};
 use pwf_client::{
     confirmation::ConfirmedRequestError,
     note::NoteClient,
-    v1::{
+    pb::{
         AddNoteRequest, AddNoteResponse, DeleteNoteStart, DeletedNote, ListNotesRequest,
         ListNotesResponse, NoteListLimitKind, UpdateNoteRequest, UpdateNoteResponse,
         delete_note_result,
@@ -462,7 +462,7 @@ fn render_note_mutation(
 
 #[cfg(test)]
 mod tests {
-    use pwf_client::v1::{
+    use pwf_client::pb::{
         AddNoteResponse, DeletedNote, ListNotesResponse, ListedNote, UpdateNoteResponse,
     };
 

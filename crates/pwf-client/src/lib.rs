@@ -16,7 +16,7 @@ pub mod note;
 pub mod project;
 pub mod task;
 
-pub use pwf_wire::v1;
+pub use pwf_wire::pb;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(1);
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(5);

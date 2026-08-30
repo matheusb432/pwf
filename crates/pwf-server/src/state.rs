@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use anyhow::Context as _;
 use pwf_infra::{clock::LocalClock, obsidian::ObsidianStore, session::LocalProjectDirectoryClient};
 use pwf_models::project::HomeDirectory;
@@ -11,6 +13,7 @@ pub struct AppState {
     pub(crate) store: ObsidianStore,
     pub(crate) clock: LocalClock,
     pub(crate) project_directory: LocalProjectDirectoryClient,
+    pub(crate) task_mutations: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl AppState {
@@ -37,6 +40,7 @@ impl AppState {
             home,
             clock: LocalClock,
             project_directory: LocalProjectDirectoryClient,
+            task_mutations: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
 }

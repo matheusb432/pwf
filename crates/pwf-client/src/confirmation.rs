@@ -1,14 +1,14 @@
 use std::error::Error;
 
-use pwf_wire::v1;
+use pwf_wire::pb;
 use tonic::Status;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Confirmation {
-    DeleteNote(v1::DeleteNoteConfirmation),
-    DeleteTask(v1::DeleteTaskConfirmation),
-    ReopenTask(v1::ReopenTaskConfirmation),
-    DispatchSession(v1::SessionDispatchPreflight),
+    DeleteNote(pb::DeleteNoteConfirmation),
+    DeleteTask(pb::DeleteTaskConfirmation),
+    ReopenTask(pb::ReopenTaskConfirmation),
+    DispatchSession(pb::SessionDispatchPreflight),
 }
 
 pub trait ConfirmationPrompt: Send + Sync + 'static {

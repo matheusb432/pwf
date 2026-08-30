@@ -2,7 +2,7 @@ use pwf_models::{
     project::ProjectName,
     task::{CommitRanges, EffortTier, PriorityTier, TaskId, TaskPrompt, TaskTimestamp, TaskTitle},
 };
-use pwf_wire::task::{GetTask, TaskData, TaskRead, TaskReadFormat};
+use pwf_wire::task::{GetTask, TaskData, TaskRead, TaskReadFormat, TaskSnapshot};
 
 use crate::{
     ports::{
@@ -45,7 +45,7 @@ pub async fn execute(
     query: &GetTask,
     store: &(impl TaskStore + ProjectNoteStore),
     pool: &sqlx::SqlitePool,
-) -> Result<TaskRead, GetTaskError> {
+) -> Result<TaskSnapshot, GetTaskError> {
     let project = match get_active_project::execute(query.id.project_id().clone(), pool).await {
         Ok(project) => project,
         Err(GetProjectError::ProjectNotFound { .. }) => {
@@ -61,21 +61,23 @@ pub async fn execute(
         .ok_or_else(|| GetTaskError::TaskNotFound {
             id: query.id.clone(),
         })?;
-    match query.output {
-        TaskReadFormat::Path => Ok(TaskRead::Path(record.locator)),
+    let revision = super::task_revision(&record);
+    let value = match query.output {
+        TaskReadFormat::Path => TaskRead::Path(record.locator),
         TaskReadFormat::Markdown
             if matches!(record.materialization, Materialization::MissingNote { .. }) =>
         {
             store
                 .read_note_markdown(&record.locator)
                 .map(TaskRead::Markdown)
-                .map_err(|error| GetTaskError::ReadMarkdown(anyhow::Error::new(error)))
+                .map_err(|error| GetTaskError::ReadMarkdown(anyhow::Error::new(error)))?
         }
-        TaskReadFormat::Markdown => Ok(TaskRead::Markdown(record.source)),
+        TaskReadFormat::Markdown => TaskRead::Markdown(record.source),
         TaskReadFormat::Data => task_data(project.title, record)
             .map(Box::new)
-            .map(TaskRead::Data),
-    }
+            .map(TaskRead::Data)?,
+    };
+    Ok(TaskSnapshot { revision, value })
 }
 
 fn task_data(project: ProjectName, record: TaskRecord) -> Result<TaskData, GetTaskError> {
@@ -183,7 +185,11 @@ mod tests {
 
         let gotten = get_task::execute(&query, &store, &pool).await.unwrap();
 
-        assert_eq!(gotten, TaskRead::Markdown(FOO_0001_SOURCE.to_string()));
+        assert_eq!(
+            gotten.value,
+            TaskRead::Markdown(FOO_0001_SOURCE.to_string())
+        );
+        assert_eq!(gotten.revision.as_ref().len(), 64);
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
@@ -200,7 +206,7 @@ mod tests {
         let gotten = get_task::execute(&query, &store, &pool).await.unwrap();
 
         assert_eq!(
-            gotten,
+            gotten.value,
             TaskRead::Path(TaskNotePath::new("/notes/foo/FOO-0002.md".into()))
         );
     }
@@ -253,7 +259,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let task = match read {
+        let task = match read.value {
             TaskRead::Data(task) => Some(task),
             _ => None,
         };

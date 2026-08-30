@@ -2,13 +2,7 @@ use std::{future::Future, time::Duration};
 
 use anyhow::Context as _;
 use pwf_local_auth::CapabilityToken;
-use pwf_wire::{
-    FILE_DESCRIPTOR_SET,
-    v1::{
-        note_service_server::NoteServiceServer, project_service_server::ProjectServiceServer,
-        session_service_server::SessionServiceServer, task_service_server::TaskServiceServer,
-    },
-};
+use pwf_wire::{FILE_DESCRIPTOR_SET, pb};
 use tonic::{
     Request, Status,
     server::NamedService,
@@ -32,11 +26,47 @@ const MAX_RESPONSE_MESSAGE_SIZE: usize = 4 * 1024 * 1024;
 const AUTHORIZATION_METADATA_KEY: &str = "authorization";
 const AUTHORIZATION_SCHEME: &str = "Bearer ";
 const APPLICATION_SERVICE_NAMES: [&str; 4] = [
-    ProjectServiceServer::<ProjectGrpcService>::NAME,
-    NoteServiceServer::<NoteGrpcService>::NAME,
-    TaskServiceServer::<TaskGrpcService>::NAME,
-    SessionServiceServer::<SessionGrpcService>::NAME,
+    pb::project_service_server::ProjectServiceServer::<ProjectGrpcService>::NAME,
+    pb::note_service_server::NoteServiceServer::<NoteGrpcService>::NAME,
+    pb::task_service_server::TaskServiceServer::<TaskGrpcService>::NAME,
+    pb::session_service_server::SessionServiceServer::<SessionGrpcService>::NAME,
 ];
+
+macro_rules! bounded_service {
+    ($service:expr) => {
+        $service
+            .max_decoding_message_size(MAX_REQUEST_MESSAGE_SIZE)
+            .max_encoding_message_size(MAX_RESPONSE_MESSAGE_SIZE)
+    };
+}
+
+macro_rules! grpc_trace_layer {
+    () => {
+        TraceLayer::new_for_grpc()
+            .make_span_with(
+                DefaultMakeSpan::new()
+                    .level(tracing::Level::INFO)
+                    .include_headers(false),
+            )
+            .on_request(())
+            .on_response(
+                DefaultOnResponse::new()
+                    .level(tracing::Level::INFO)
+                    .latency_unit(LatencyUnit::Micros)
+                    .include_headers(false),
+            )
+            .on_eos(
+                DefaultOnEos::new()
+                    .level(tracing::Level::INFO)
+                    .latency_unit(LatencyUnit::Micros),
+            )
+            .on_failure(
+                DefaultOnFailure::new()
+                    .level(tracing::Level::WARN)
+                    .latency_unit(LatencyUnit::Micros),
+            )
+    };
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ServerState {
@@ -113,28 +143,26 @@ pub async fn serve(
     )
     .await;
 
-    let health_server = health_server
-        .max_decoding_message_size(MAX_REQUEST_MESSAGE_SIZE)
-        .max_encoding_message_size(MAX_RESPONSE_MESSAGE_SIZE);
-    let project_server = ProjectServiceServer::new(ProjectGrpcService::new(state.clone()))
-        .max_decoding_message_size(MAX_REQUEST_MESSAGE_SIZE)
-        .max_encoding_message_size(MAX_RESPONSE_MESSAGE_SIZE);
-    let note_server = NoteServiceServer::new(NoteGrpcService::new(state.clone()))
-        .max_decoding_message_size(MAX_REQUEST_MESSAGE_SIZE)
-        .max_encoding_message_size(MAX_RESPONSE_MESSAGE_SIZE);
-    let task_server = TaskServiceServer::new(TaskGrpcService::new(state.clone()))
-        .max_decoding_message_size(MAX_REQUEST_MESSAGE_SIZE)
-        .max_encoding_message_size(MAX_RESPONSE_MESSAGE_SIZE);
-    let session_server = SessionServiceServer::new(SessionGrpcService::new(state))
-        .max_decoding_message_size(MAX_REQUEST_MESSAGE_SIZE)
-        .max_encoding_message_size(MAX_RESPONSE_MESSAGE_SIZE);
-    let reflection_server = tonic_reflection::server::Builder::configure()
-        .register_encoded_file_descriptor_set(FILE_DESCRIPTOR_SET)
-        .register_encoded_file_descriptor_set(tonic_health::pb::FILE_DESCRIPTOR_SET)
-        .build_v1()
-        .context("building the gRPC reflection service")?
-        .max_decoding_message_size(MAX_REQUEST_MESSAGE_SIZE)
-        .max_encoding_message_size(MAX_RESPONSE_MESSAGE_SIZE);
+    let health_server = bounded_service!(health_server);
+    let project_server = bounded_service!(pb::project_service_server::ProjectServiceServer::new(
+        ProjectGrpcService::new(state.clone())
+    ));
+    let note_server = bounded_service!(pb::note_service_server::NoteServiceServer::new(
+        NoteGrpcService::new(state.clone())
+    ));
+    let task_server = bounded_service!(pb::task_service_server::TaskServiceServer::new(
+        TaskGrpcService::new(state.clone())
+    ));
+    let session_server = bounded_service!(pb::session_service_server::SessionServiceServer::new(
+        SessionGrpcService::new(state)
+    ));
+    let reflection_server = bounded_service!(
+        tonic_reflection::server::Builder::configure()
+            .register_encoded_file_descriptor_set(FILE_DESCRIPTOR_SET)
+            .register_encoded_file_descriptor_set(tonic_health::pb::FILE_DESCRIPTOR_SET)
+            .build_v1()
+            .context("building the gRPC reflection service")?
+    );
 
     let shutdown_lifecycle = lifecycle.clone();
     let (shutdown_started_sender, shutdown_started_receiver) = tokio::sync::oneshot::channel();
@@ -149,29 +177,7 @@ pub async fn serve(
         shutdown_lifecycle.publish(ServerState::NotServing);
         let _ = shutdown_started_sender.send(());
     };
-    let trace_layer = TraceLayer::new_for_grpc()
-        .make_span_with(
-            DefaultMakeSpan::new()
-                .level(tracing::Level::INFO)
-                .include_headers(false),
-        )
-        .on_request(())
-        .on_response(
-            DefaultOnResponse::new()
-                .level(tracing::Level::INFO)
-                .latency_unit(LatencyUnit::Micros)
-                .include_headers(false),
-        )
-        .on_eos(
-            DefaultOnEos::new()
-                .level(tracing::Level::INFO)
-                .latency_unit(LatencyUnit::Micros),
-        )
-        .on_failure(
-            DefaultOnFailure::new()
-                .level(tracing::Level::WARN)
-                .latency_unit(LatencyUnit::Micros),
-        );
+    let trace_layer = grpc_trace_layer!();
 
     lifecycle.publish(ServerState::Serving);
     let grpc_server = Server::builder()

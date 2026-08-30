@@ -1,10 +1,10 @@
 use clap::Args;
 use pwf_client::{
-    task::TaskClient,
-    v1::{
+    pb::{
         CreateTaskRequest, EffortTier, IndexSection, PriorityTier, StructuredTaskPrompt,
         create_task_request,
     },
+    task::TaskClient,
 };
 use pwf_models::{
     project::ProjectSelector,
@@ -14,9 +14,7 @@ use pwf_models::{
 use super::{
     EffortChoice, LaneFlagMode, PriorityChoice,
     blocked_by_input::{self, BlockedByInput},
-    render::{
-        TITLE_NORMALIZED_NOTICE, emit_created_section, emit_created_section_for_error, render_added,
-    },
+    render::{TITLE_NORMALIZED_NOTICE, render_added},
     task_lanes, task_title,
 };
 use crate::console::Console;
@@ -104,20 +102,17 @@ pub(super) async fn run(
                 PriorityChoice::High => PriorityTier::High as i32,
                 PriorityChoice::Highest => PriorityTier::Highest as i32,
             }),
+            request_id: String::new(),
         })
         .await;
     match result {
         Ok(added) => {
-            emit_created_section(&added);
             if title_normalized {
                 eprintln!("{TITLE_NORMALIZED_NOTICE}");
             }
-            Ok(render_added(&added, console.color()))
+            Ok(render_added(&added.id, console.color()))
         }
-        Err(error) => {
-            emit_created_section_for_error(&error);
-            Err(crate::rpc_error(error))
-        }
+        Err(error) => Err(crate::rpc_error(error)),
     }
 }
 

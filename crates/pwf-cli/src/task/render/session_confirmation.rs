@@ -1,4 +1,4 @@
-use pwf_client::v1::{Agent, DispatchConfirmation, DispatchMode, SessionEffort};
+use pwf_client::pb::{Agent, DispatchConfirmation, DispatchMode, SessionEffort};
 
 use super::{
     agent_name,
@@ -76,7 +76,7 @@ fn yes_no(enabled: bool) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use pwf_client::v1::LaunchDirectives;
+    use pwf_client::pb::LaunchDirectives;
 
     use super::*;
 

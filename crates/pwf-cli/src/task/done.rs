@@ -1,5 +1,5 @@
 use clap::Args;
-use pwf_client::{task::TaskClient, v1::CompleteTaskRequest};
+use pwf_client::{pb::CompleteTaskRequest, task::TaskClient};
 use pwf_models::task::TaskReport;
 
 use super::Identifier;
@@ -19,10 +19,7 @@ pub struct Arguments {
     pub(crate) review: bool,
 }
 
-use super::render::{
-    emit_complete_diagnostics, emit_created_section, emit_created_section_for_error,
-    render_completed,
-};
+use super::render::render_completed;
 
 pub(super) async fn run(arguments: &Arguments, client: &TaskClient) -> anyhow::Result<String> {
     let id = arguments
@@ -40,15 +37,13 @@ pub(super) async fn run(arguments: &Arguments, client: &TaskClient) -> anyhow::R
                 .map(|report| report.to_string()),
             commits: arguments.commits.clone(),
             review: arguments.review,
+            expected_revision: None,
+            request_id: String::new(),
         })
         .await
-        .map_err(|error| {
-            emit_created_section_for_error(&error);
-            crate::rpc_error(error)
-        })?;
-    if let Some(review) = output.review_task.as_ref() {
-        emit_created_section(review);
-    }
-    emit_complete_diagnostics(&output);
-    Ok(render_completed(&output))
+        .map_err(crate::rpc_error)?;
+    Ok(render_completed(
+        id.as_ref(),
+        output.review_task_id.as_deref(),
+    ))
 }

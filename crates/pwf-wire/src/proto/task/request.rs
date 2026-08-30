@@ -1,5 +1,6 @@
 //! Protobuf request mappings for task operations.
 
+use prost::Message;
 use pwf_models::{
     project::ProjectSelector,
     task::{
@@ -10,60 +11,103 @@ use pwf_models::{
 use tonic::Status;
 
 use super::super::{collection_edit, invalid, parse, required};
-use crate::{field_update::FieldUpdate, task, v1};
+use crate::{field_update::FieldUpdate, pb, task};
 
-pub fn create_task_request(request: v1::CreateTaskRequest) -> Result<task::AddTask, Status> {
-    let prompt = match required("prompt", request.prompt)? {
-        v1::create_task_request::Prompt::Shorthand(value) => {
+const TASK_COLLECTION_VALUES_MAX: usize = 64;
+const TASK_LANE_VALUES_MAX: usize = 128;
+
+pub fn create_task_request(request: pb::CreateTaskRequest) -> Result<task::AddTask, Status> {
+    ensure_count(
+        "blocked_by",
+        request.blocked_by.len(),
+        TASK_COLLECTION_VALUES_MAX,
+    )?;
+    ensure_count("tags", request.tags.len(), TASK_COLLECTION_VALUES_MAX)?;
+    if let Some(pb::create_task_request::Prompt::Structured(prompt)) = request.prompt.as_ref() {
+        ensure_lanes("prompt.lanes", prompt.lanes.as_ref(), 0)?;
+    }
+    let request_fingerprint = request_fingerprint(&request, |request| {
+        request.request_id.clear();
+    });
+    let pb::CreateTaskRequest {
+        project_selector,
+        prompt,
+        index_section,
+        blocked_by,
+        effort,
+        tags,
+        priority,
+        request_id: request_id_value,
+    } = request;
+    let request_id = request_id(request_id_value)?;
+    let prompt = match required("prompt", prompt)? {
+        pb::create_task_request::Prompt::Shorthand(value) => {
             task::AddTaskPrompt::shorthand(TaskPrompt::new(value))
                 .map_err(|error| invalid("prompt", error))?
         }
-        v1::create_task_request::Prompt::Structured(value) => {
+        pb::create_task_request::Prompt::Structured(value) => {
             let title =
                 TaskTitle::try_new(value.title).map_err(|error| invalid("prompt.title", error))?;
             task::AddTaskPrompt::structured(title, task_lanes(value.lanes.unwrap_or_default())?)
         }
     };
     Ok(task::AddTask {
-        project_selector: parse::<ProjectSelector>("project_selector", &request.project_selector)?,
+        project_selector: parse::<ProjectSelector>("project_selector", &project_selector)?,
         prompt,
-        index_section: match v1::IndexSection::try_from(request.index_section).ok() {
-            Some(v1::IndexSection::General) => IndexSection::General,
-            Some(v1::IndexSection::Human) => IndexSection::Human,
-            Some(v1::IndexSection::Unspecified) | None => {
+        index_section: match pb::IndexSection::try_from(index_section).ok() {
+            Some(pb::IndexSection::General) => IndexSection::General,
+            Some(pb::IndexSection::Human) => IndexSection::Human,
+            Some(pb::IndexSection::Unspecified) | None => {
                 return Err(invalid("index_section", "must be specified"));
             }
         },
-        blocked_by: blocked_by_values(request.blocked_by)?,
-        effort: request.effort.map(effort_tier).transpose()?,
-        tags: task_tag_values(request.tags)?,
-        priority: request.priority.map(priority_tier).transpose()?,
+        blocked_by: blocked_by_values(blocked_by)?,
+        effort: effort.map(effort_tier).transpose()?,
+        tags: task_tag_values(tags)?,
+        priority: priority.map(priority_tier).transpose()?,
+        request_id: Some(request_id),
+        request_fingerprint: Some(request_fingerprint),
     })
 }
 
-pub fn cancel_task_request(request: v1::CancelTaskRequest) -> Result<task::CancelTask, Status> {
-    let v1::CancelTaskRequest {
+pub fn cancel_task_request(request: pb::CancelTaskRequest) -> Result<task::CancelTask, Status> {
+    ensure_count("commits", request.commits.len(), TASK_COLLECTION_VALUES_MAX)?;
+    let request_fingerprint = request_fingerprint(&request, |request| {
+        request.request_id.clear();
+    });
+    let pb::CancelTaskRequest {
         id,
         report,
         commits,
         review,
+        expected_revision,
+        request_id: request_id_value,
     } = request;
     Ok(task::CancelTask {
         id: parse::<TaskId>("id", &id)?,
         report: parse::<TaskReport>("report", &report)?,
         commits: CommitRanges::from_inputs(&commits),
         review,
+        expected_revision: expected_revision.map(revision).transpose()?,
+        request_id: Some(request_id(request_id_value)?),
+        request_fingerprint: Some(request_fingerprint),
     })
 }
 
 pub fn complete_task_request(
-    request: v1::CompleteTaskRequest,
+    request: pb::CompleteTaskRequest,
 ) -> Result<task::CompleteTask, Status> {
-    let v1::CompleteTaskRequest {
+    ensure_count("commits", request.commits.len(), TASK_COLLECTION_VALUES_MAX)?;
+    let request_fingerprint = request_fingerprint(&request, |request| {
+        request.request_id.clear();
+    });
+    let pb::CompleteTaskRequest {
         id,
         report,
         commits,
         review,
+        expected_revision,
+        request_id: request_id_value,
     } = request;
     Ok(task::CompleteTask {
         id: parse::<TaskId>("id", &id)?,
@@ -73,32 +117,52 @@ pub fn complete_task_request(
             .transpose()?,
         commits: CommitRanges::from_inputs(&commits),
         review,
+        expected_revision: expected_revision.map(revision).transpose()?,
+        request_id: Some(request_id(request_id_value)?),
+        request_fingerprint: Some(request_fingerprint),
     })
 }
 
-pub fn update_task_request(request: v1::UpdateTaskRequest) -> Result<task::EditTask, Status> {
-    let content = request.content.map(task_content_edit).transpose()?;
+pub fn update_task_request(request: pb::UpdateTaskRequest) -> Result<task::EditTask, Status> {
+    ensure_update_bounds(&request)?;
+    let request_fingerprint = request_fingerprint(&request, |request| {
+        request.request_id.clear();
+    });
+    let pb::UpdateTaskRequest {
+        id,
+        content,
+        blocked_by,
+        effort,
+        tags,
+        priority,
+        expected_revision,
+        request_id: request_id_value,
+    } = request;
+    let content = content.map(task_content_edit).transpose()?;
     let edits = task::TaskEdits::try_new(
         content,
-        collection_edit(request.blocked_by, blocked_by_values)?,
-        effort_edit(request.effort)?,
-        collection_edit(request.tags, task_tag_values)?,
-        priority_edit(request.priority)?,
+        collection_edit(blocked_by, blocked_by_values)?,
+        effort_edit(effort)?,
+        collection_edit(tags, task_tag_values)?,
+        priority_edit(priority)?,
     )
     .map_err(|error| invalid("edits", error))?;
     Ok(task::EditTask {
-        id: parse::<TaskId>("id", &request.id)?,
+        id: parse::<TaskId>("id", &id)?,
         edits,
+        expected_revision: expected_revision.map(revision).transpose()?,
+        request_id: Some(request_id(request_id_value)?),
+        request_fingerprint: Some(request_fingerprint),
     })
 }
 
-pub fn get_task_request(request: v1::GetTaskRequest) -> Result<task::GetTask, Status> {
-    let v1::GetTaskRequest { id, output } = request;
-    let output = match v1::TaskReadFormat::try_from(output).ok() {
-        Some(v1::TaskReadFormat::Markdown) => task::TaskReadFormat::Markdown,
-        Some(v1::TaskReadFormat::Path) => task::TaskReadFormat::Path,
-        Some(v1::TaskReadFormat::Data) => task::TaskReadFormat::Data,
-        Some(v1::TaskReadFormat::Unspecified) | None => {
+pub fn get_task_request(request: pb::GetTaskRequest) -> Result<task::GetTask, Status> {
+    let pb::GetTaskRequest { id, output } = request;
+    let output = match pb::TaskReadFormat::try_from(output).ok() {
+        Some(pb::TaskReadFormat::Markdown) => task::TaskReadFormat::Markdown,
+        Some(pb::TaskReadFormat::Path) => task::TaskReadFormat::Path,
+        Some(pb::TaskReadFormat::Data) => task::TaskReadFormat::Data,
+        Some(pb::TaskReadFormat::Unspecified) | None => {
             return Err(invalid("output", "must be specified"));
         }
     };
@@ -108,20 +172,35 @@ pub fn get_task_request(request: v1::GetTaskRequest) -> Result<task::GetTask, St
     })
 }
 
-pub fn list_tasks_request(request: v1::ListTasksRequest) -> Result<task::ListTasks, Status> {
-    let scope = match v1::ListScope::try_from(request.scope).ok() {
-        Some(v1::ListScope::Default) => task::ListScope::Default,
-        Some(v1::ListScope::Human) => task::ListScope::Human,
-        Some(v1::ListScope::Future) => task::ListScope::Future,
-        Some(v1::ListScope::All) => task::ListScope::All,
-        Some(v1::ListScope::Unspecified) | None => {
+pub fn list_tasks_request(request: pb::ListTasksRequest) -> Result<task::ListTasks, Status> {
+    ensure_count("tags", request.tags.len(), TASK_COLLECTION_VALUES_MAX)?;
+    let page_size = if request.page_size == 0 {
+        task::TaskPageSize::DEFAULT
+    } else {
+        usize::try_from(request.page_size)
+            .map_err(|_| invalid("page_size", "must fit the platform integer size"))?
+    };
+    let page_size =
+        task::TaskPageSize::try_new(page_size).map_err(|error| invalid("page_size", error))?;
+    let page_token = request
+        .page_token
+        .as_deref()
+        .map(task::TaskPageToken::try_new)
+        .transpose()
+        .map_err(|error| invalid("page_token", error))?;
+    let scope = match pb::ListScope::try_from(request.scope).ok() {
+        Some(pb::ListScope::Default) => task::ListScope::Default,
+        Some(pb::ListScope::Human) => task::ListScope::Human,
+        Some(pb::ListScope::Future) => task::ListScope::Future,
+        Some(pb::ListScope::All) => task::ListScope::All,
+        Some(pb::ListScope::Unspecified) | None => {
             return Err(invalid("scope", "must be specified"));
         }
     };
-    let detail = match v1::ListDetail::try_from(request.detail).ok() {
-        Some(v1::ListDetail::Summary) => task::ListDetail::Summary,
-        Some(v1::ListDetail::Detailed) => task::ListDetail::Detailed,
-        Some(v1::ListDetail::Unspecified) | None => {
+    let detail = match pb::ListDetail::try_from(request.detail).ok() {
+        Some(pb::ListDetail::Summary) => task::ListDetail::Summary,
+        Some(pb::ListDetail::Detailed) => task::ListDetail::Detailed,
+        Some(pb::ListDetail::Unspecified) | None => {
             return Err(invalid("detail", "must be specified"));
         }
     };
@@ -149,22 +228,44 @@ pub fn list_tasks_request(request: v1::ListTasksRequest) -> Result<task::ListTas
         order: request.order.map(order_spec).transpose()?,
         status: request.status.map(status_filter).transpose()?,
         detail,
+        page_size: Some(page_size),
+        page_token,
     })
 }
 
-pub fn delete_task_start(start: v1::DeleteTaskStart) -> Result<TaskId, Status> {
-    let v1::DeleteTaskStart { id } = start;
-    parse("id", &id)
+pub fn delete_task_start(start: pb::DeleteTaskStart) -> Result<task::DeleteTask, Status> {
+    let request_fingerprint = request_fingerprint(&start, |start| {
+        start.request_id.clear();
+    });
+    let pb::DeleteTaskStart {
+        id,
+        request_id: request_id_value,
+    } = start;
+    Ok(task::DeleteTask {
+        id: parse("id", &id)?,
+        request_id: Some(request_id(request_id_value)?),
+        request_fingerprint: Some(request_fingerprint),
+    })
 }
 
-pub fn reopen_task_start(start: v1::ReopenTaskStart) -> Result<TaskId, Status> {
-    let v1::ReopenTaskStart { id } = start;
-    parse("id", &id)
+pub fn reopen_task_start(start: pb::ReopenTaskStart) -> Result<task::ReopenTask, Status> {
+    let request_fingerprint = request_fingerprint(&start, |start| {
+        start.request_id.clear();
+    });
+    let pb::ReopenTaskStart {
+        id,
+        request_id: request_id_value,
+    } = start;
+    Ok(task::ReopenTask {
+        id: parse("id", &id)?,
+        request_id: Some(request_id(request_id_value)?),
+        request_fingerprint: Some(request_fingerprint),
+    })
 }
 
-fn task_content_edit(edit: v1::TaskContentEdit) -> Result<task::EditTaskContent, Status> {
+fn task_content_edit(edit: pb::TaskContentEdit) -> Result<task::EditTaskContent, Status> {
     match required("content", edit.content)? {
-        v1::task_content_edit::Content::Structured(value) => {
+        pb::task_content_edit::Content::Structured(value) => {
             let title = value
                 .title
                 .map(TaskTitle::try_new)
@@ -179,7 +280,7 @@ fn task_content_edit(edit: v1::TaskContentEdit) -> Result<task::EditTaskContent,
             task::EditTaskContent::structured(title, task::TaskLaneEdits::new(additions, removals))
                 .map_err(|error| invalid("content", error))
         }
-        v1::task_content_edit::Content::Append(value) => {
+        pb::task_content_edit::Content::Append(value) => {
             let title = value
                 .title
                 .map(TaskTitle::try_new)
@@ -188,14 +289,14 @@ fn task_content_edit(edit: v1::TaskContentEdit) -> Result<task::EditTaskContent,
             task::EditTaskContent::append_shorthand(title, TaskPrompt::new(value.prompt))
                 .map_err(|error| invalid("content", error))
         }
-        v1::task_content_edit::Content::Replace(value) => {
+        pb::task_content_edit::Content::Replace(value) => {
             task::EditTaskContent::replace_shorthand(TaskPrompt::new(value))
                 .map_err(|error| invalid("content", error))
         }
     }
 }
 
-fn task_lanes(lanes: v1::TaskLanes) -> Result<task::TaskLanes, Status> {
+fn task_lanes(lanes: pb::TaskLanes) -> Result<task::TaskLanes, Status> {
     task::TaskLanes::try_new(
         lanes.goals,
         lanes.context,
@@ -206,39 +307,39 @@ fn task_lanes(lanes: v1::TaskLanes) -> Result<task::TaskLanes, Status> {
 }
 
 fn effort_tier(value: i32) -> Result<EffortTier, Status> {
-    match v1::EffortTier::try_from(value).ok() {
-        Some(v1::EffortTier::Low) => Ok(EffortTier::Low),
-        Some(v1::EffortTier::Medium) => Ok(EffortTier::Medium),
-        Some(v1::EffortTier::High) => Ok(EffortTier::High),
-        Some(v1::EffortTier::Highest) => Ok(EffortTier::Highest),
-        Some(v1::EffortTier::Unspecified) | None => Err(invalid("effort", "must be specified")),
+    match pb::EffortTier::try_from(value).ok() {
+        Some(pb::EffortTier::Low) => Ok(EffortTier::Low),
+        Some(pb::EffortTier::Medium) => Ok(EffortTier::Medium),
+        Some(pb::EffortTier::High) => Ok(EffortTier::High),
+        Some(pb::EffortTier::Highest) => Ok(EffortTier::Highest),
+        Some(pb::EffortTier::Unspecified) | None => Err(invalid("effort", "must be specified")),
     }
 }
 
 fn priority_tier(value: i32) -> Result<PriorityTier, Status> {
-    match v1::PriorityTier::try_from(value).ok() {
-        Some(v1::PriorityTier::Low) => Ok(PriorityTier::Low),
-        Some(v1::PriorityTier::Medium) => Ok(PriorityTier::Medium),
-        Some(v1::PriorityTier::High) => Ok(PriorityTier::High),
-        Some(v1::PriorityTier::Highest) => Ok(PriorityTier::Highest),
-        Some(v1::PriorityTier::Unspecified) | None => Err(invalid("priority", "must be specified")),
+    match pb::PriorityTier::try_from(value).ok() {
+        Some(pb::PriorityTier::Low) => Ok(PriorityTier::Low),
+        Some(pb::PriorityTier::Medium) => Ok(PriorityTier::Medium),
+        Some(pb::PriorityTier::High) => Ok(PriorityTier::High),
+        Some(pb::PriorityTier::Highest) => Ok(PriorityTier::Highest),
+        Some(pb::PriorityTier::Unspecified) | None => Err(invalid("priority", "must be specified")),
     }
 }
 
-fn order_spec(order: v1::OrderSpec) -> Result<task::OrderSpec, Status> {
+fn order_spec(order: pb::OrderSpec) -> Result<task::OrderSpec, Status> {
     Ok(task::OrderSpec {
-        field: match v1::OrderField::try_from(order.field).ok() {
-            Some(v1::OrderField::Created) => task::OrderField::Created,
-            Some(v1::OrderField::Id) => task::OrderField::Id,
-            Some(v1::OrderField::ProjectId) => task::OrderField::ProjectId,
-            Some(v1::OrderField::Unspecified) | None => {
+        field: match pb::OrderField::try_from(order.field).ok() {
+            Some(pb::OrderField::Created) => task::OrderField::Created,
+            Some(pb::OrderField::Id) => task::OrderField::Id,
+            Some(pb::OrderField::ProjectId) => task::OrderField::ProjectId,
+            Some(pb::OrderField::Unspecified) | None => {
                 return Err(invalid("order.field", "must be specified"));
             }
         },
-        direction: match v1::OrderDirection::try_from(order.direction).ok() {
-            Some(v1::OrderDirection::Asc) => task::OrderDirection::Asc,
-            Some(v1::OrderDirection::Desc) => task::OrderDirection::Desc,
-            Some(v1::OrderDirection::Unspecified) | None => {
+        direction: match pb::OrderDirection::try_from(order.direction).ok() {
+            Some(pb::OrderDirection::Asc) => task::OrderDirection::Asc,
+            Some(pb::OrderDirection::Desc) => task::OrderDirection::Desc,
+            Some(pb::OrderDirection::Unspecified) | None => {
                 return Err(invalid("order.direction", "must be specified"));
             }
         },
@@ -246,46 +347,46 @@ fn order_spec(order: v1::OrderSpec) -> Result<task::OrderSpec, Status> {
 }
 
 fn status_filter(value: i32) -> Result<task::StatusFilter, Status> {
-    match v1::TaskStatusFilter::try_from(value).ok() {
-        Some(v1::TaskStatusFilter::Active) => Ok(task::StatusFilter::Exact(TaskStatus::Active)),
-        Some(v1::TaskStatusFilter::Done) => Ok(task::StatusFilter::Exact(TaskStatus::Done)),
-        Some(v1::TaskStatusFilter::Cancelled) => {
+    match pb::TaskStatusFilter::try_from(value).ok() {
+        Some(pb::TaskStatusFilter::Active) => Ok(task::StatusFilter::Exact(TaskStatus::Active)),
+        Some(pb::TaskStatusFilter::Done) => Ok(task::StatusFilter::Exact(TaskStatus::Done)),
+        Some(pb::TaskStatusFilter::Cancelled) => {
             Ok(task::StatusFilter::Exact(TaskStatus::Cancelled))
         }
-        Some(v1::TaskStatusFilter::All) => Ok(task::StatusFilter::All),
-        Some(v1::TaskStatusFilter::Unspecified) | None => {
+        Some(pb::TaskStatusFilter::All) => Ok(task::StatusFilter::All),
+        Some(pb::TaskStatusFilter::Unspecified) | None => {
             Err(invalid("status", "must be specified"))
         }
     }
 }
 
-fn effort_edit(value: Option<v1::EffortEdit>) -> Result<FieldUpdate<EffortTier>, Status> {
+fn effort_edit(value: Option<pb::EffortEdit>) -> Result<FieldUpdate<EffortTier>, Status> {
     let Some(value) = value else {
         return Ok(FieldUpdate::Unchanged);
     };
     match required("effort.operation", value.operation)? {
-        v1::effort_edit::Operation::Set(value) => Ok(FieldUpdate::Update(effort_tier(value)?)),
-        v1::effort_edit::Operation::Clear(_) => Ok(FieldUpdate::Clear),
+        pb::effort_edit::Operation::Set(value) => Ok(FieldUpdate::Update(effort_tier(value)?)),
+        pb::effort_edit::Operation::Clear(_) => Ok(FieldUpdate::Clear),
     }
 }
 
-fn priority_edit(value: Option<v1::PriorityEdit>) -> Result<FieldUpdate<PriorityTier>, Status> {
+fn priority_edit(value: Option<pb::PriorityEdit>) -> Result<FieldUpdate<PriorityTier>, Status> {
     let Some(value) = value else {
         return Ok(FieldUpdate::Unchanged);
     };
     match required("priority.operation", value.operation)? {
-        v1::priority_edit::Operation::Set(value) => Ok(FieldUpdate::Update(priority_tier(value)?)),
-        v1::priority_edit::Operation::Clear(_) => Ok(FieldUpdate::Clear),
+        pb::priority_edit::Operation::Set(value) => Ok(FieldUpdate::Update(priority_tier(value)?)),
+        pb::priority_edit::Operation::Clear(_) => Ok(FieldUpdate::Clear),
     }
 }
 
 fn task_lane(value: i32) -> Result<task::TaskLane, Status> {
-    match v1::TaskLane::try_from(value).ok() {
-        Some(v1::TaskLane::Goal) => Ok(task::TaskLane::Goal),
-        Some(v1::TaskLane::Context) => Ok(task::TaskLane::Context),
-        Some(v1::TaskLane::Constraint) => Ok(task::TaskLane::Constraint),
-        Some(v1::TaskLane::DoneWhen) => Ok(task::TaskLane::DoneWhen),
-        Some(v1::TaskLane::Unspecified) | None => Err(invalid("lane", "must be specified")),
+    match pb::TaskLane::try_from(value).ok() {
+        Some(pb::TaskLane::Goal) => Ok(task::TaskLane::Goal),
+        Some(pb::TaskLane::Context) => Ok(task::TaskLane::Context),
+        Some(pb::TaskLane::Constraint) => Ok(task::TaskLane::Constraint),
+        Some(pb::TaskLane::DoneWhen) => Ok(task::TaskLane::DoneWhen),
+        Some(pb::TaskLane::Unspecified) | None => Err(invalid("lane", "must be specified")),
     }
 }
 
@@ -317,4 +418,83 @@ fn task_tag_values(values: Vec<String>) -> Result<Option<TaskTags>, Status> {
     TaskTags::try_new(values)
         .map(Some)
         .map_err(|error| invalid("tags", error))
+}
+
+fn request_id(value: String) -> Result<task::TaskRequestId, Status> {
+    task::TaskRequestId::try_new(value).map_err(|error| invalid("request_id", error))
+}
+
+fn revision(value: String) -> Result<task::TaskRevision, Status> {
+    task::TaskRevision::try_new(value).map_err(|error| invalid("expected_revision", error))
+}
+
+fn ensure_update_bounds(request: &pb::UpdateTaskRequest) -> Result<(), Status> {
+    if let Some(content) = request.content.as_ref()
+        && let Some(pb::task_content_edit::Content::Structured(edit)) = content.content.as_ref()
+    {
+        ensure_lanes(
+            "content.lanes",
+            edit.additions.as_ref(),
+            edit.removals.len(),
+        )?;
+    }
+    ensure_count(
+        "blocked_by",
+        collection_value_count(request.blocked_by.as_ref()),
+        TASK_COLLECTION_VALUES_MAX,
+    )?;
+    ensure_count(
+        "tags",
+        collection_value_count(request.tags.as_ref()),
+        TASK_COLLECTION_VALUES_MAX,
+    )
+}
+
+fn ensure_lanes(
+    field: &str,
+    lanes: Option<&pb::TaskLanes>,
+    additional: usize,
+) -> Result<(), Status> {
+    let count = lanes.map_or(0, |lanes| {
+        lanes
+            .goals
+            .len()
+            .saturating_add(lanes.context.len())
+            .saturating_add(lanes.constraints.len())
+            .saturating_add(lanes.done_when.len())
+    });
+    ensure_count(
+        field,
+        count.saturating_add(additional),
+        TASK_LANE_VALUES_MAX,
+    )
+}
+
+fn collection_value_count(edit: Option<&pb::StringCollectionEdit>) -> usize {
+    match edit.and_then(|edit| edit.operation.as_ref()) {
+        Some(
+            pb::string_collection_edit::Operation::Append(values)
+            | pb::string_collection_edit::Operation::Replace(values),
+        ) => values.values.len(),
+        Some(pb::string_collection_edit::Operation::Clear(_)) | None => 0,
+    }
+}
+
+fn ensure_count(field: &str, count: usize, max: usize) -> Result<(), Status> {
+    if count > max {
+        return Err(invalid(field, format!("may contain at most {max} values")));
+    }
+    Ok(())
+}
+
+fn request_fingerprint<T>(
+    request: &T,
+    strip_request_id: impl FnOnce(&mut T),
+) -> task::TaskRequestFingerprint
+where
+    T: Message + Clone,
+{
+    let mut request = request.clone();
+    strip_request_id(&mut request);
+    task::TaskRequestFingerprint::from_digest(*blake3::hash(&request.encode_to_vec()).as_bytes())
 }

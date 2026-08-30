@@ -1,7 +1,11 @@
 use pwf_models::task::{TaskId, TaskStatus, TaskTimestamp};
-use pwf_wire::{confirmation::ReopenTaskConfirmation, task::ReopenedTask};
+use pwf_wire::{
+    confirmation::ReopenTaskConfirmation,
+    task::{ReopenTask, ReopenTaskOutcome},
+};
 
 use super::{
+    mutation_request::{self, MutationOperation, MutationRequestState, MutationStart},
     note_body::remove_report,
     resolve_task_project::{self, ResolveTaskProjectError},
     task_body_region,
@@ -22,6 +26,10 @@ pub enum ReopenTaskError {
     #[error(transparent)]
     Confirmation(#[from] ConfirmationClientError),
     #[error(transparent)]
+    Revision(#[from] super::TaskRevisionConflict),
+    #[error(transparent)]
+    MutationRequest(#[from] mutation_request::MutationRequestError),
+    #[error(transparent)]
     WriteStore(anyhow::Error),
 }
 
@@ -31,55 +39,168 @@ pub enum ReopenTaskError {
 /// idempotent skip.
 #[cqrsy::command]
 pub async fn execute(
-    task_id: &TaskId,
+    command: &ReopenTask,
     store: &(impl TaskStore + IndexEntryStore),
     pool: &sqlx::SqlitePool,
     confirmation_client: &mut dyn ConfirmationClient<Confirmation = ReopenTaskConfirmation>,
-) -> Result<ReopenedTask, ReopenTaskError> {
-    let project = resolve_task_project::execute(task_id.clone(), pool).await?;
-    let task_identifier = task_id.clone();
-    let record = TaskStore::get(store, &project, &task_identifier)
-        .map_err(|error| ReopenTaskError::WriteStore(anyhow::Error::new(error)))?
-        .ok_or_else(|| ReopenTaskError::TaskNotFound {
-            id: task_identifier.clone(),
-        })?;
-
-    if record.status == TaskStatus::Active {
-        return Ok(ReopenedTask::AlreadyActive {
-            id: task_identifier,
-            project: project.title.clone(),
-        });
+) -> Result<ReopenTaskOutcome, ReopenTaskError> {
+    let identity = mutation_request::identity(
+        command.request_id.as_ref(),
+        command.request_fingerprint.as_ref(),
+    )?;
+    if let Some(identity) = identity.as_ref()
+        && let Some(replay) =
+            mutation_request::find(pool, identity, MutationOperation::Reopen).await?
+    {
+        return reopen_replay(&replay, identity);
     }
 
+    let prepared = prepare_reopen(&command.id, store, pool).await?;
+    let ReopenPreparation::Closed(prepared) = prepared else {
+        if let Some(identity) = identity.as_ref()
+            && let MutationStart::Existing(replay) =
+                mutation_request::start(pool, identity, MutationOperation::Reopen, &command.id)
+                    .await?
+        {
+            return reopen_replay(&replay, identity);
+        }
+        if let Some(identity) = identity.as_ref() {
+            mutation_request::complete(
+                pool,
+                identity,
+                MutationOperation::Reopen,
+                Some("already_active"),
+                None,
+            )
+            .await?;
+        }
+        return Ok(ReopenTaskOutcome::AlreadyActive);
+    };
+    let confirmed = confirmation_client.confirm(&prepared.confirmation).await?;
+    if confirmed {
+        validate_reopen(&prepared, store)?;
+    }
+    if let Some(identity) = identity.as_ref()
+        && let MutationStart::Existing(replay) =
+            mutation_request::start(pool, identity, MutationOperation::Reopen, &command.id).await?
+    {
+        return reopen_replay(&replay, identity);
+    }
+    if !confirmed {
+        if let Some(identity) = identity.as_ref() {
+            mutation_request::complete(
+                pool,
+                identity,
+                MutationOperation::Reopen,
+                Some("aborted"),
+                None,
+            )
+            .await?;
+        }
+        return Ok(ReopenTaskOutcome::Aborted);
+    }
+    if let Err(error) = validate_reopen(&prepared, store) {
+        if let Some(identity) = identity.as_ref() {
+            mutation_request::discard(pool, identity, MutationOperation::Reopen).await?;
+        }
+        return Err(error);
+    }
+    apply_reopen(*prepared, store)?;
+    if let Some(identity) = identity.as_ref() {
+        mutation_request::complete(
+            pool,
+            identity,
+            MutationOperation::Reopen,
+            Some("reopened"),
+            None,
+        )
+        .await?;
+    }
+    Ok(ReopenTaskOutcome::Reopened)
+}
+
+enum ReopenPreparation {
+    AlreadyActive,
+    Closed(Box<PreparedReopen>),
+}
+
+struct PreparedReopen {
+    project: pwf_models::project::Project,
+    task_id: TaskId,
+    body_without_report: String,
+    report: Option<String>,
+    confirmation: ReopenTaskConfirmation,
+}
+
+async fn prepare_reopen(
+    task_id: &TaskId,
+    store: &impl TaskStore,
+    pool: &sqlx::SqlitePool,
+) -> Result<ReopenPreparation, ReopenTaskError> {
+    let project = resolve_task_project::execute(task_id.clone(), pool).await?;
+    let record = TaskStore::get(store, &project, task_id)
+        .map_err(|error| ReopenTaskError::WriteStore(anyhow::Error::new(error)))?
+        .ok_or_else(|| ReopenTaskError::TaskNotFound {
+            id: task_id.clone(),
+        })?;
+    if record.status == TaskStatus::Active {
+        return Ok(ReopenPreparation::AlreadyActive);
+    }
     let (body_without_report, report) = remove_report(task_body_region(&record.body));
     let confirmation = ReopenTaskConfirmation {
-        task_identifier: task_identifier.clone(),
+        task_identifier: task_id.clone(),
         project: project.title.clone(),
         completion_date: record.completed_at.map(TaskTimestamp::date),
         commit_provenance: record.commits.clone(),
         report: report.clone(),
+        revision: super::task_revision(&record),
     };
-    if !confirmation_client.confirm(&confirmation).await? {
-        return Ok(ReopenedTask::Aborted {
-            id: task_identifier,
-        });
-    }
+    Ok(ReopenPreparation::Closed(Box::new(PreparedReopen {
+        project,
+        task_id: task_id.clone(),
+        body_without_report,
+        report,
+        confirmation,
+    })))
+}
+
+fn validate_reopen(
+    prepared: &PreparedReopen,
+    store: &impl TaskStore,
+) -> Result<(), ReopenTaskError> {
+    let current = TaskStore::get(store, &prepared.project, &prepared.task_id)
+        .map_err(|error| ReopenTaskError::WriteStore(anyhow::Error::new(error)))?
+        .ok_or_else(|| ReopenTaskError::TaskNotFound {
+            id: prepared.task_id.clone(),
+        })?;
+    super::ensure_task_revision(Some(&prepared.confirmation.revision), &current)?;
+    Ok(())
+}
+
+fn apply_reopen(
+    prepared: PreparedReopen,
+    store: &(impl TaskStore + IndexEntryStore),
+) -> Result<(), ReopenTaskError> {
+    let task_identifier = prepared.task_id;
 
     TaskStore::update(
         store,
-        &project,
+        &prepared.project,
         &task_identifier,
         TaskPatch {
             status: Some(TaskStatus::Active),
             completed_at: NullablePatch::Clear,
             commits: NullablePatch::Clear,
-            body: report.is_some().then_some(body_without_report),
+            body: prepared
+                .report
+                .is_some()
+                .then_some(prepared.body_without_report),
             ..TaskPatch::default()
         },
     )
     .map_err(|error| ReopenTaskError::WriteStore(anyhow::Error::new(error)))?;
 
-    let entries = IndexEntryStore::list_index_entries(store, &project)
+    let entries = IndexEntryStore::list_index_entries(store, &prepared.project)
         .map_err(|error| ReopenTaskError::WriteStore(anyhow::Error::new(error)))?;
     if entries
         .iter()
@@ -87,7 +208,7 @@ pub async fn execute(
     {
         IndexEntryStore::upsert_index_entry(
             store,
-            &project,
+            &prepared.project,
             IndexEntry {
                 id: task_identifier.clone(),
                 state: IndexEntryState::Open,
@@ -97,19 +218,38 @@ pub async fn execute(
         .map_err(|error| ReopenTaskError::WriteStore(anyhow::Error::new(error)))?;
     }
 
-    Ok(ReopenedTask::Reopened {
-        id: task_identifier,
-        project: project.title.clone(),
-    })
+    Ok(())
+}
+
+fn reopen_replay(
+    replay: &mutation_request::MutationRequestRecord,
+    identity: &mutation_request::MutationIdentity,
+) -> Result<ReopenTaskOutcome, ReopenTaskError> {
+    if replay.state == MutationRequestState::Pending {
+        return Err(identity.incomplete().into());
+    }
+    match replay.outcome.as_deref() {
+        Some("reopened") => Ok(ReopenTaskOutcome::Reopened),
+        Some("already_active") => Ok(ReopenTaskOutcome::AlreadyActive),
+        Some("aborted") => Ok(ReopenTaskOutcome::Aborted),
+        Some(_) | None => Err(mutation_request::MutationRequestError::Corrupt {
+            request_id: identity.request_id().to_string(),
+            reason: "reopen outcome is invalid",
+        }
+        .into()),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use pwf_models::{
-        project::{Project, ProjectName},
+        project::Project,
         task::{TaskId, TaskStatus},
     };
-    use pwf_wire::{confirmation::ReopenTaskConfirmation, task::ReopenedTask};
+    use pwf_wire::{
+        confirmation::ReopenTaskConfirmation,
+        task::{ReopenTask, ReopenTaskOutcome},
+    };
 
     use crate::{
         ports::{
@@ -194,8 +334,12 @@ mod tests {
         }
     }
 
-    fn task_id() -> TaskId {
-        "FOO-0001".parse().unwrap()
+    fn command(id: &str) -> ReopenTask {
+        ReopenTask {
+            id: id.parse().unwrap(),
+            request_id: None,
+            request_fingerprint: None,
+        }
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
@@ -217,21 +361,22 @@ mod tests {
         );
         let mut confirmation = TestConfirmation::accepting();
 
-        let out = reopen_task::execute(&task_id(), &store, &pool, &mut confirmation)
+        let out = reopen_task::execute(&command("FOO-0001"), &store, &pool, &mut confirmation)
             .await
             .unwrap();
 
-        assert!(matches!(out, ReopenedTask::Reopened { .. }));
-        assert_eq!(
-            confirmation.recorded(),
-            vec![ReopenTaskConfirmation {
-                task_identifier: "FOO-0001".parse().unwrap(),
-                project: ProjectName::try_new("foo-bar").unwrap(),
-                completion_date: Some(app_date("2026-01-02")),
-                commit_provenance: Some("a..b".to_string()),
-                report: Some("completed safely".to_string()),
-            }]
-        );
+        assert_eq!(out, ReopenTaskOutcome::Reopened);
+        let confirmations = confirmation.recorded();
+        assert_eq!(confirmations.len(), 1);
+        let Some(confirmation) = confirmations.first() else {
+            return;
+        };
+        assert_eq!(confirmation.task_identifier.as_ref(), "FOO-0001");
+        assert_eq!(confirmation.project.as_ref(), "foo-bar");
+        assert_eq!(confirmation.completion_date, Some(app_date("2026-01-02")));
+        assert_eq!(confirmation.commit_provenance.as_deref(), Some("a..b"));
+        assert_eq!(confirmation.report.as_deref(), Some("completed safely"));
+        assert_eq!(confirmation.revision.as_ref().len(), 64);
         assert_eq!(store.tasks("foo-bar")[0].status, TaskStatus::Active);
         assert_eq!(store.tasks("foo-bar")[0].completed_at, None);
         assert_eq!(store.tasks("foo-bar")[0].commits, None);
@@ -256,11 +401,11 @@ mod tests {
         let store = staged(TaskStatus::Done, Vec::new());
         let mut confirmation = TestConfirmation::accepting();
 
-        let out = reopen_task::execute(&task_id(), &store, &pool, &mut confirmation)
+        let out = reopen_task::execute(&command("FOO-0001"), &store, &pool, &mut confirmation)
             .await
             .unwrap();
 
-        assert!(matches!(out, ReopenedTask::Reopened { .. }));
+        assert_eq!(out, ReopenTaskOutcome::Reopened);
         assert_eq!(store.tasks("foo-bar")[0].status, TaskStatus::Active);
         assert!(store.entries("foo-bar").is_empty());
     }
@@ -279,11 +424,11 @@ mod tests {
         let store = staged(TaskStatus::Active, vec![entry(IndexEntryState::Open)]);
         let mut confirmation = TestConfirmation::accepting();
 
-        let out = reopen_task::execute(&task_id(), &store, &pool, &mut confirmation)
+        let out = reopen_task::execute(&command("FOO-0001"), &store, &pool, &mut confirmation)
             .await
             .unwrap();
 
-        assert!(matches!(out, ReopenedTask::AlreadyActive { .. }));
+        assert_eq!(out, ReopenTaskOutcome::AlreadyActive);
         assert!(confirmation.recorded().is_empty());
         assert_eq!(store.tasks("foo-bar")[0].commits.as_deref(), Some("a..b"));
     }
@@ -309,16 +454,11 @@ mod tests {
         let entries_before = store.entries("foo-bar");
         let mut confirmation = TestConfirmation::declining();
 
-        let outcome = reopen_task::execute(&task_id(), &store, &pool, &mut confirmation)
+        let outcome = reopen_task::execute(&command("FOO-0001"), &store, &pool, &mut confirmation)
             .await
             .unwrap();
 
-        assert_eq!(
-            outcome,
-            ReopenedTask::Aborted {
-                id: "FOO-0001".parse().unwrap(),
-            }
-        );
+        assert_eq!(outcome, ReopenTaskOutcome::Aborted);
         assert_eq!(store.tasks("foo-bar"), tasks_before);
         assert_eq!(store.entries("foo-bar"), entries_before);
     }
@@ -335,10 +475,9 @@ mod tests {
         )
         .await;
         let store = staged(TaskStatus::Done, Vec::new());
-        let task_id = "XYZ-0001".parse().unwrap();
         let mut confirmation = TestConfirmation::accepting();
 
-        let error = reopen_task::execute(&task_id, &store, &pool, &mut confirmation)
+        let error = reopen_task::execute(&command("XYZ-0001"), &store, &pool, &mut confirmation)
             .await
             .unwrap_err();
 

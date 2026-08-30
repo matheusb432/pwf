@@ -2,11 +2,11 @@ use std::fmt::Write;
 
 use anstyle::AnsiColor;
 use pwf_client::{
-    render_argv,
-    v1::{
-        Agent, DispatchMode, DispatchSessionOutcome, DispatchedSession, PlanSessionResponse,
-        SessionEffort,
+    pb::{
+        Agent, DispatchMode, DispatchedSession, PlanSessionResponse, SessionEffort,
+        dispatched_session,
     },
+    render_argv,
 };
 
 use super::agent_name;
@@ -14,38 +14,36 @@ use crate::render::paint;
 
 pub(in crate::task) fn render_dispatch(
     outcome: &DispatchedSession,
+    session_identity: &str,
+    agent: Agent,
     on: bool,
 ) -> anyhow::Result<String> {
-    let session_identity = &outcome.session_name;
-    match DispatchSessionOutcome::try_from(outcome.outcome).ok() {
-        Some(DispatchSessionOutcome::Aborted) => Ok(render_session_aborted(session_identity)),
-        Some(DispatchSessionOutcome::InlineLaunch) => {
+    match outcome.outcome.as_ref() {
+        Some(dispatched_session::Outcome::Aborted(_)) => {
+            Ok(render_session_aborted(session_identity))
+        }
+        Some(dispatched_session::Outcome::InlineLaunch(_)) => {
             Ok(format!("# session {session_identity}: ran inline\n"))
         }
-        Some(DispatchSessionOutcome::WindowOpened) => {
-            let opened = outcome.window_opened.as_ref().ok_or_else(|| {
-                anyhow::anyhow!("pwf-server returned a window dispatch without a target")
-            })?;
+        Some(dispatched_session::Outcome::WindowOpened(opened)) => {
             let line = paint(
                 &format!("session: {}  ·  window: {}", opened.session, opened.window),
                 AnsiColor::Green,
                 on,
             );
             let mut out = format!("# session {session_identity}: dispatched\n{line}\n");
-            let agent = Agent::try_from(opened.agent).unwrap_or(Agent::Unspecified);
             let _ = write!(
                 out,
-                "agent: {} · cwd: {}\n\
+                "agent: {}\n\
 outside tmux: tmux attach-session -t ={}\n\
 inside tmux: tmux switch-client -t ={}\n",
                 agent_name(agent),
-                opened.project_path,
                 opened.session,
                 opened.session,
             );
             Ok(out)
         }
-        Some(DispatchSessionOutcome::Unspecified) | None => Err(anyhow::anyhow!(
+        None => Err(anyhow::anyhow!(
             "pwf-server returned an invalid session outcome"
         )),
     }
@@ -136,26 +134,19 @@ fn title_agent_name(agent: Agent) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use pwf_client::v1::{AgentLaunch, InlineLaunch, SessionPlan, WindowOpened};
+    use pwf_client::pb::{AbortedSession, AgentLaunch, InlineLaunch, SessionPlan, WindowOpened};
 
     use super::*;
 
     #[test]
     fn success_renders_green_token_and_bold_session_window_plain() {
         let outcome = DispatchedSession {
-            outcome: DispatchSessionOutcome::WindowOpened as i32,
-            task_ids: vec!["AUX-0009".to_string()],
-            inline_launch: None,
-            window_opened: Some(WindowOpened {
-                task_ids: vec!["AUX-0009".to_string()],
+            outcome: Some(dispatched_session::Outcome::WindowOpened(WindowOpened {
                 session: "aux".to_string(),
-                agent: Agent::Claude as i32,
-                project_path: "/project".to_string(),
                 window: "AUX-0009".to_string(),
-            }),
-            session_name: "AUX-0009".to_string(),
+            })),
         };
-        let out = render_dispatch(&outcome, false).unwrap();
+        let out = render_dispatch(&outcome, "AUX-0009", Agent::Claude, false).unwrap();
         assert!(out.starts_with("# session AUX-0009: dispatched"));
         assert!(out.contains("**session: aux  ·  window: AUX-0009**"));
         assert!(out.contains("outside tmux: tmux attach-session -t =aux"));
@@ -170,20 +161,21 @@ mod tests {
             "# session FOO-0001: aborted\nnothing dispatched.\n"
         );
         let outcome = DispatchedSession {
-            outcome: DispatchSessionOutcome::InlineLaunch as i32,
-            task_ids: vec!["FOO-0001".to_string()],
-            inline_launch: Some(InlineLaunch {
-                task_ids: vec!["FOO-0001".to_string()],
+            outcome: Some(dispatched_session::Outcome::InlineLaunch(InlineLaunch {
                 argv: vec!["codex".to_string()],
                 working_directory: "/project".to_string(),
-                session_name: "FOO-0001".to_string(),
-            }),
-            window_opened: None,
-            session_name: "FOO-0001".to_string(),
+            })),
         };
         assert_eq!(
-            render_dispatch(&outcome, false).unwrap(),
+            render_dispatch(&outcome, "FOO-0001", Agent::Codex, false).unwrap(),
             "# session FOO-0001: ran inline\n"
+        );
+        let aborted = DispatchedSession {
+            outcome: Some(dispatched_session::Outcome::Aborted(AbortedSession {})),
+        };
+        assert_eq!(
+            render_dispatch(&aborted, "FOO-0001", Agent::Codex, false).unwrap(),
+            "# session FOO-0001: aborted\nnothing dispatched.\n"
         );
     }
 
@@ -223,20 +215,13 @@ mod tests {
     #[test]
     fn multi_task_dispatch_renders_the_compound_identity_and_window() {
         let outcome = DispatchedSession {
-            outcome: DispatchSessionOutcome::WindowOpened as i32,
-            task_ids: vec!["FOO-0023".to_string(), "FOO-0015".to_string()],
-            inline_launch: None,
-            window_opened: Some(WindowOpened {
-                task_ids: vec!["FOO-0023".to_string(), "FOO-0015".to_string()],
+            outcome: Some(dispatched_session::Outcome::WindowOpened(WindowOpened {
                 session: "foo".to_string(),
-                agent: Agent::Codex as i32,
-                project_path: "/project".to_string(),
                 window: "foo15,foo23".to_string(),
-            }),
-            session_name: "foo15,foo23".to_string(),
+            })),
         };
 
-        let out = render_dispatch(&outcome, false).unwrap();
+        let out = render_dispatch(&outcome, "foo15,foo23", Agent::Codex, false).unwrap();
 
         assert!(out.starts_with("# session foo15,foo23: dispatched"));
         assert!(out.contains("window: foo15,foo23"));

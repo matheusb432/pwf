@@ -10,39 +10,83 @@ use pwf_models::{
 use tonic::Status;
 
 use super::{invalid, parse, task};
-use crate::{task::session, v1};
+use crate::{pb, task::session};
 
 pub fn plan_session_request(
-    request: v1::PlanSessionRequest,
+    request: pb::PlanSessionRequest,
 ) -> Result<session::PlanSession, Status> {
-    let intent = match v1::PlanSessionIntent::try_from(request.intent).ok() {
-        Some(v1::PlanSessionIntent::DryRun) => session::PlanSessionIntent::DryRun,
-        Some(v1::PlanSessionIntent::Dispatch) => session::PlanSessionIntent::Dispatch,
-        Some(v1::PlanSessionIntent::Unspecified) | None => {
-            return Err(invalid("intent", "must be specified"));
+    session_request(request.into(), session::PlanSessionIntent::DryRun)
+}
+
+pub fn dispatch_session_request(
+    request: pb::DispatchSessionStart,
+) -> Result<session::PlanSession, Status> {
+    session_request(request.into(), session::PlanSessionIntent::Dispatch)
+}
+
+struct SessionRequest {
+    task_ids: Vec<String>,
+    pushed_prompt: Option<String>,
+    mode: i32,
+    directives: Option<pb::LaunchDirectives>,
+    agent: i32,
+    model_override: Option<String>,
+    effort: i32,
+}
+
+impl From<pb::PlanSessionRequest> for SessionRequest {
+    fn from(request: pb::PlanSessionRequest) -> Self {
+        Self {
+            task_ids: request.task_ids,
+            pushed_prompt: request.pushed_prompt,
+            mode: request.mode,
+            directives: request.directives,
+            agent: request.agent,
+            model_override: request.model_override,
+            effort: request.effort,
         }
-    };
-    let mode = match v1::DispatchMode::try_from(request.mode).ok() {
-        Some(v1::DispatchMode::Inline) => DispatchMode::Inline,
-        Some(v1::DispatchMode::Multiplexer) => DispatchMode::Multiplexer,
-        Some(v1::DispatchMode::Unspecified) | None => {
+    }
+}
+
+impl From<pb::DispatchSessionStart> for SessionRequest {
+    fn from(request: pb::DispatchSessionStart) -> Self {
+        Self {
+            task_ids: request.task_ids,
+            pushed_prompt: request.pushed_prompt,
+            mode: request.mode,
+            directives: request.directives,
+            agent: request.agent,
+            model_override: request.model_override,
+            effort: request.effort,
+        }
+    }
+}
+
+fn session_request(
+    request: SessionRequest,
+    intent: session::PlanSessionIntent,
+) -> Result<session::PlanSession, Status> {
+    let mode = match pb::DispatchMode::try_from(request.mode).ok() {
+        Some(pb::DispatchMode::Inline) => DispatchMode::Inline,
+        Some(pb::DispatchMode::Multiplexer) => DispatchMode::Multiplexer,
+        Some(pb::DispatchMode::Unspecified) | None => {
             return Err(invalid("mode", "must be specified"));
         }
     };
-    let agent = match v1::Agent::try_from(request.agent).ok() {
-        Some(v1::Agent::Claude) => Agent::Claude,
-        Some(v1::Agent::Codex) => Agent::Codex,
-        Some(v1::Agent::Unspecified) | None => {
+    let agent = match pb::Agent::try_from(request.agent).ok() {
+        Some(pb::Agent::Claude) => Agent::Claude,
+        Some(pb::Agent::Codex) => Agent::Codex,
+        Some(pb::Agent::Unspecified) | None => {
             return Err(invalid("agent", "must be specified"));
         }
     };
-    let effort = match v1::SessionEffort::try_from(request.effort).ok() {
-        Some(v1::SessionEffort::Low) => SessionEffort::Low,
-        Some(v1::SessionEffort::Medium) => SessionEffort::Medium,
-        Some(v1::SessionEffort::High) => SessionEffort::High,
-        Some(v1::SessionEffort::Xhigh) => SessionEffort::XHigh,
-        Some(v1::SessionEffort::Max) => SessionEffort::Max,
-        Some(v1::SessionEffort::Unspecified) | None => {
+    let effort = match pb::SessionEffort::try_from(request.effort).ok() {
+        Some(pb::SessionEffort::Low) => SessionEffort::Low,
+        Some(pb::SessionEffort::Medium) => SessionEffort::Medium,
+        Some(pb::SessionEffort::High) => SessionEffort::High,
+        Some(pb::SessionEffort::Xhigh) => SessionEffort::XHigh,
+        Some(pb::SessionEffort::Max) => SessionEffort::Max,
+        Some(pb::SessionEffort::Unspecified) | None => {
             return Err(invalid("effort", "must be specified"));
         }
     };
@@ -66,8 +110,8 @@ pub fn plan_session_request(
     })
 }
 
-pub fn plan_session_response(session: session::DryRunSession) -> v1::PlanSessionResponse {
-    v1::PlanSessionResponse {
+pub fn plan_session_response(session: session::DryRunSession) -> pb::PlanSessionResponse {
+    pb::PlanSessionResponse {
         plan: Some(session_plan(session.plan)),
         argv: session.argv,
         probe: Some(agent_probe(&session.probe)),
@@ -77,8 +121,8 @@ pub fn plan_session_response(session: session::DryRunSession) -> v1::PlanSession
 
 pub fn dispatch_session_preflight(
     session: &session::PreparedSessionDispatch,
-) -> v1::SessionDispatchPreflight {
-    v1::SessionDispatchPreflight {
+) -> pb::SessionDispatchPreflight {
+    pb::SessionDispatchPreflight {
         confirmation: Some(dispatch_confirmation(&session.confirmation)),
         probe: Some(agent_probe(&session.probe)),
         warnings: session
@@ -91,67 +135,36 @@ pub fn dispatch_session_preflight(
 }
 
 #[must_use]
-pub fn dispatch_session_result(session: session::DispatchedSession) -> v1::DispatchedSession {
-    match session {
-        session::DispatchedSession::Aborted { task_ids } => {
-            let session_name = task_ids.identity();
-            v1::DispatchedSession {
-                outcome: v1::DispatchSessionOutcome::Aborted as i32,
-                task_ids: task_id_values(&task_ids),
-                inline_launch: None,
-                window_opened: None,
-                session_name,
-            }
+pub fn dispatch_session_result(session: session::DispatchedSession) -> pb::DispatchedSession {
+    let outcome = match session {
+        session::DispatchedSession::Aborted { .. } => {
+            pb::dispatched_session::Outcome::Aborted(pb::AbortedSession {})
         }
         session::DispatchedSession::InlineLaunch {
-            task_ids,
             argv,
             working_directory,
-        } => {
-            let task_id_values = task_id_values(&task_ids);
-            let session_name = task_ids.identity();
-            v1::DispatchedSession {
-                outcome: v1::DispatchSessionOutcome::InlineLaunch as i32,
-                task_ids: task_id_values.clone(),
-                inline_launch: Some(v1::InlineLaunch {
-                    task_ids: task_id_values,
-                    argv,
-                    working_directory: working_directory.to_string(),
-                    session_name: session_name.clone(),
-                }),
-                window_opened: None,
-                session_name,
-            }
+            ..
+        } => pb::dispatched_session::Outcome::InlineLaunch(pb::InlineLaunch {
+            argv,
+            working_directory: working_directory.to_string(),
+        }),
+        session::DispatchedSession::WindowOpened { target, .. } => {
+            pb::dispatched_session::Outcome::WindowOpened(pb::WindowOpened {
+                session: target.multiplexer_session_name(),
+                window: target.window_name(),
+            })
         }
-        session::DispatchedSession::WindowOpened {
-            target,
-            agent,
-            project_path,
-        } => {
-            let task_id_values = task_id_values(target.task_ids());
-            let window_name = target.window_name();
-            v1::DispatchedSession {
-                outcome: v1::DispatchSessionOutcome::WindowOpened as i32,
-                task_ids: task_id_values.clone(),
-                inline_launch: None,
-                window_opened: Some(v1::WindowOpened {
-                    task_ids: task_id_values,
-                    session: target.multiplexer_session_name(),
-                    agent: agent_value(agent),
-                    project_path: project_path.to_string(),
-                    window: window_name.clone(),
-                }),
-                session_name: window_name,
-            }
-        }
+    };
+    pb::DispatchedSession {
+        outcome: Some(outcome),
     }
 }
 
-fn session_plan(plan: session::SessionPlan) -> v1::SessionPlan {
+fn session_plan(plan: session::SessionPlan) -> pb::SessionPlan {
     let session::SessionPlan { launch, mode } = plan;
     let session_name = launch.task_ids.identity();
-    v1::SessionPlan {
-        launch: Some(v1::AgentLaunch {
+    pb::SessionPlan {
+        launch: Some(pb::AgentLaunch {
             agent: agent_value(launch.agent),
             task_ids: task_id_values(&launch.task_ids),
             title: launch.title.to_string(),
@@ -165,14 +178,14 @@ fn session_plan(plan: session::SessionPlan) -> v1::SessionPlan {
     }
 }
 
-fn dispatch_confirmation(confirmation: &session::DispatchConfirmation) -> v1::DispatchConfirmation {
-    v1::DispatchConfirmation {
+fn dispatch_confirmation(confirmation: &session::DispatchConfirmation) -> pb::DispatchConfirmation {
+    pb::DispatchConfirmation {
         task_ids: task_id_values(&confirmation.task_ids),
         title: confirmation.title.to_string(),
         created: confirmation.created.as_ref().map(ToString::to_string),
         mode: dispatch_mode_value(confirmation.mode),
         agent: agent_value(confirmation.agent),
-        directives: Some(v1::LaunchDirectives {
+        directives: Some(pb::LaunchDirectives {
             worktree: confirmation.directives.worktree,
             autonomous: confirmation.directives.autonomous,
         }),
@@ -195,50 +208,50 @@ fn task_id_values(task_ids: &SessionTaskIds) -> Vec<String> {
     task_ids.iter().map(ToString::to_string).collect()
 }
 
-fn agent_probe(probe: &session::AgentProbe) -> v1::AgentProbe {
+fn agent_probe(probe: &session::AgentProbe) -> pb::AgentProbe {
     let availability = match probe.availability {
-        session::AgentAvailability::Missing => v1::AgentAvailability::Missing,
-        session::AgentAvailability::Available => v1::AgentAvailability::Available,
+        session::AgentAvailability::Missing => pb::AgentAvailability::Missing,
+        session::AgentAvailability::Available => pb::AgentAvailability::Available,
     };
-    v1::AgentProbe {
+    pb::AgentProbe {
         agent: agent_value(probe.agent),
         availability: availability as i32,
     }
 }
 
-fn session_warning(warning: session::SessionWarning) -> v1::SessionWarning {
+fn session_warning(warning: session::SessionWarning) -> pb::SessionWarning {
     let value = match warning {
         session::SessionWarning::BlockedBy(value) => {
-            v1::session_warning::Value::BlockedBy(task::blocked_by_status(value))
+            pb::session_warning::Value::BlockedBy(task::blocked_by_status(value))
         }
         session::SessionWarning::BlockedByMetadata(value) => {
-            v1::session_warning::Value::BlockedByMetadata(task::blocked_by_issue(value))
+            pb::session_warning::Value::BlockedByMetadata(task::blocked_by_issue(value))
         }
     };
-    v1::SessionWarning { value: Some(value) }
+    pb::SessionWarning { value: Some(value) }
 }
 
 fn agent_value(agent: Agent) -> i32 {
     match agent {
-        Agent::Claude => v1::Agent::Claude as i32,
-        Agent::Codex => v1::Agent::Codex as i32,
+        Agent::Claude => pb::Agent::Claude as i32,
+        Agent::Codex => pb::Agent::Codex as i32,
     }
 }
 
 fn dispatch_mode_value(mode: DispatchMode) -> i32 {
     match mode {
-        DispatchMode::Inline => v1::DispatchMode::Inline as i32,
-        DispatchMode::Multiplexer => v1::DispatchMode::Multiplexer as i32,
+        DispatchMode::Inline => pb::DispatchMode::Inline as i32,
+        DispatchMode::Multiplexer => pb::DispatchMode::Multiplexer as i32,
     }
 }
 
 fn effort_value(effort: SessionEffort) -> i32 {
     match effort {
-        SessionEffort::Low => v1::SessionEffort::Low as i32,
-        SessionEffort::Medium => v1::SessionEffort::Medium as i32,
-        SessionEffort::High => v1::SessionEffort::High as i32,
-        SessionEffort::XHigh => v1::SessionEffort::Xhigh as i32,
-        SessionEffort::Max => v1::SessionEffort::Max as i32,
+        SessionEffort::Low => pb::SessionEffort::Low as i32,
+        SessionEffort::Medium => pb::SessionEffort::Medium as i32,
+        SessionEffort::High => pb::SessionEffort::High as i32,
+        SessionEffort::XHigh => pb::SessionEffort::Xhigh as i32,
+        SessionEffort::Max => pb::SessionEffort::Max as i32,
     }
 }
 
@@ -248,16 +261,15 @@ mod tests {
 
     use super::*;
 
-    fn request(task_ids: &[&str]) -> v1::PlanSessionRequest {
-        v1::PlanSessionRequest {
+    fn request(task_ids: &[&str]) -> pb::PlanSessionRequest {
+        pb::PlanSessionRequest {
             task_ids: task_ids.iter().map(ToString::to_string).collect(),
-            intent: v1::PlanSessionIntent::DryRun as i32,
             pushed_prompt: None,
-            mode: v1::DispatchMode::Inline as i32,
-            directives: Some(v1::LaunchDirectives::default()),
-            agent: v1::Agent::Codex as i32,
+            mode: pb::DispatchMode::Inline as i32,
+            directives: Some(pb::LaunchDirectives::default()),
+            agent: pb::Agent::Codex as i32,
             model_override: None,
-            effort: v1::SessionEffort::High as i32,
+            effort: pb::SessionEffort::High as i32,
             environment: std::collections::HashMap::default(),
         }
     }

@@ -1,3 +1,4 @@
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use pwf_models::{
     project::Project,
     task::{EffortTier, PriorityTier, TaskId, TaskSection, TaskTags},
@@ -6,9 +7,10 @@ use pwf_wire::{
     project::{ProjectStatusFilter, ResolveProject},
     task::{
         ListDetail, ListLayout, ListScope, ListTasks, ListedTasks, OrderDirection, OrderField,
-        OrderSpec, StatusFilter, TaskView,
+        OrderSpec, StatusFilter, TaskPageSize, TaskPageToken, TaskView,
     },
 };
+use serde::{Deserialize, Serialize};
 
 use super::{blocked_by, tags, task_view};
 use crate::{
@@ -62,6 +64,10 @@ pub enum ListTasksError {
     ResolveProject(#[from] crate::project::resolve_project::ResolveProjectError),
     #[error(transparent)]
     QueryProject(anyhow::Error),
+    #[error("invalid page token: {reason}")]
+    InvalidPageToken { reason: &'static str },
+    #[error(transparent)]
+    EncodePageToken(anyhow::Error),
 }
 
 struct ResolvedListTasks {
@@ -74,6 +80,8 @@ struct ResolvedListTasks {
     order: OrderSpec,
     status_filter: StatusFilter,
     detail: ListDetail,
+    page_size: Option<TaskPageSize>,
+    page_token: Option<TaskPageToken>,
 }
 
 #[cqrsy::query]
@@ -138,7 +146,10 @@ pub async fn execute(
         sort_by_order(&mut tasks, query.order);
     }
 
-    let (mut tasks, hidden) = apply_cap(tasks, query.cap);
+    let (tasks, hidden) = apply_cap(tasks, query.cap);
+    let binding = page_binding(&query);
+    let (mut tasks, next_page_token) =
+        apply_page(tasks, query.page_size, query.page_token.as_ref(), &binding)?;
 
     if query.detail.includes_relationship_statuses() {
         populate_relationship_statuses(
@@ -157,6 +168,7 @@ pub async fn execute(
         status_filter: query.status_filter,
         layout: list_layout(query.scope),
         detail: query.detail,
+        next_page_token,
     })
 }
 
@@ -223,6 +235,178 @@ fn resolve_query(query: &ListTasks, project: Option<Project>) -> ResolvedListTas
         order,
         status_filter,
         detail: query.detail,
+        page_size: query.page_size,
+        page_token: query.page_token.clone(),
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct PageCursor {
+    version: u8,
+    binding: String,
+    after: String,
+}
+
+fn page_binding(query: &ResolvedListTasks) -> String {
+    let mut hasher = blake3::Hasher::new();
+    let project = query
+        .project
+        .as_ref()
+        .map_or("<all>", |project| project.id.as_ref());
+    super::revision_field(&mut hasher, "project", project);
+    super::revision_field(&mut hasher, "scope", list_scope_name(query.scope));
+    super::revision_field(
+        &mut hasher,
+        "cap",
+        &query
+            .cap
+            .map_or_else(|| "all".to_string(), |cap| cap.to_string()),
+    );
+    super::revision_optional_field(
+        &mut hasher,
+        "effort",
+        query.effort.as_ref().map(AsRef::as_ref),
+    );
+    super::revision_optional_field(
+        &mut hasher,
+        "priority",
+        query.priority.as_ref().map(AsRef::as_ref),
+    );
+    if let Some(tags) = &query.tags {
+        for tag in tags.iter() {
+            super::revision_field(&mut hasher, "tag", tag.as_ref());
+        }
+    }
+    super::revision_field(
+        &mut hasher,
+        "order_field",
+        order_field_name(query.order.field),
+    );
+    super::revision_field(
+        &mut hasher,
+        "order_direction",
+        order_direction_name(query.order.direction),
+    );
+    super::revision_field(
+        &mut hasher,
+        "status",
+        status_filter_name(query.status_filter),
+    );
+    super::revision_field(&mut hasher, "detail", list_detail_name(query.detail));
+    super::revision_field(
+        &mut hasher,
+        "page_size",
+        &query
+            .page_size
+            .map_or_else(|| "unpaged".to_string(), |size| size.get().to_string()),
+    );
+    hasher.finalize().to_hex().to_string()
+}
+
+fn apply_page(
+    tasks: Vec<TaskView>,
+    page_size: Option<TaskPageSize>,
+    page_token: Option<&TaskPageToken>,
+    binding: &str,
+) -> Result<(Vec<TaskView>, Option<TaskPageToken>), ListTasksError> {
+    let Some(page_size) = page_size else {
+        return Ok((tasks, None));
+    };
+    let start = page_token.map_or(Ok(0), |token| {
+        let cursor = decode_page_token(token)?;
+        if cursor.version != 1 {
+            return Err(ListTasksError::InvalidPageToken {
+                reason: "unsupported version",
+            });
+        }
+        if cursor.binding != binding {
+            return Err(ListTasksError::InvalidPageToken {
+                reason: "filters or ordering changed",
+            });
+        }
+        tasks
+            .iter()
+            .position(|task| task.id.as_ref() == cursor.after)
+            .map(|index| index + 1)
+            .ok_or(ListTasksError::InvalidPageToken {
+                reason: "cursor task is no longer present",
+            })
+    })?;
+    let end = start.saturating_add(page_size.get()).min(tasks.len());
+    let next_page_token = if end < tasks.len() {
+        tasks
+            .get(end - 1)
+            .map(|task| encode_page_token(binding, &task.id))
+            .transpose()?
+    } else {
+        None
+    };
+    Ok((
+        tasks.into_iter().skip(start).take(end - start).collect(),
+        next_page_token,
+    ))
+}
+
+fn encode_page_token(binding: &str, after: &TaskId) -> Result<TaskPageToken, ListTasksError> {
+    let payload = serde_json::to_vec(&PageCursor {
+        version: 1,
+        binding: binding.to_string(),
+        after: after.to_string(),
+    })
+    .map_err(|error| ListTasksError::EncodePageToken(anyhow::Error::new(error)))?;
+    TaskPageToken::try_new(URL_SAFE_NO_PAD.encode(payload))
+        .map_err(|error| ListTasksError::EncodePageToken(anyhow::Error::new(error)))
+}
+
+fn decode_page_token(token: &TaskPageToken) -> Result<PageCursor, ListTasksError> {
+    let payload =
+        URL_SAFE_NO_PAD
+            .decode(token.as_ref())
+            .map_err(|_| ListTasksError::InvalidPageToken {
+                reason: "malformed encoding",
+            })?;
+    serde_json::from_slice(&payload).map_err(|_| ListTasksError::InvalidPageToken {
+        reason: "malformed payload",
+    })
+}
+
+fn list_scope_name(scope: ListScope) -> &'static str {
+    match scope {
+        ListScope::Default => "default",
+        ListScope::Human => "human",
+        ListScope::Future => "future",
+        ListScope::All => "all",
+    }
+}
+
+fn order_field_name(field: OrderField) -> &'static str {
+    match field {
+        OrderField::Created => "created",
+        OrderField::Id => "id",
+        OrderField::ProjectId => "project_id",
+    }
+}
+
+fn order_direction_name(direction: OrderDirection) -> &'static str {
+    match direction {
+        OrderDirection::Asc => "asc",
+        OrderDirection::Desc => "desc",
+    }
+}
+
+fn status_filter_name(status: StatusFilter) -> &'static str {
+    match status {
+        StatusFilter::Exact(pwf_models::task::TaskStatus::Active) => "active",
+        StatusFilter::Exact(pwf_models::task::TaskStatus::Done) => "done",
+        StatusFilter::Exact(pwf_models::task::TaskStatus::Cancelled) => "cancelled",
+        StatusFilter::All => "all",
+    }
+}
+
+fn list_detail_name(detail: ListDetail) -> &'static str {
+    match detail {
+        ListDetail::Summary => "summary",
+        ListDetail::Detailed => "detailed",
     }
 }
 
@@ -379,7 +563,7 @@ mod tests {
     use pwf_wire::task::{
         BlockedByResolution, BlockedByStatus, ListDetail, ListLayout, ListScope, ListedTasks,
         OrderDirection, OrderField, OrderSpec, ProjectTaskPath, RawTaskTags, StatusFilter,
-        TaskIndexPath, TaskListLimit, TaskNotePath,
+        TaskIndexPath, TaskListLimit, TaskNotePath, TaskPageSize,
     };
 
     use super::{ListTasks, ListTasksError};
@@ -581,7 +765,68 @@ mod tests {
             order: None,
             status: None,
             detail: ListDetail::Summary,
+            page_size: None,
+            page_token: None,
         }
+    }
+
+    #[tokio::test]
+    async fn pagination_returns_stable_nonoverlapping_pages() -> Result<(), ListTasksError> {
+        let (store, registry) = foo_store(vec![
+            record("FOO-0003"),
+            record("FOO-0001"),
+            record("FOO-0002"),
+        ]);
+        let mut query = default_query();
+        query.order = Some(OrderSpec {
+            field: OrderField::Id,
+            direction: OrderDirection::Asc,
+        });
+        query.page_size = TaskPageSize::try_new(2).ok();
+
+        let first = run(&store, &registry, &query).await?;
+        assert_eq!(listed_ids(&first), ["FOO-0001", "FOO-0002"]);
+        let token = first
+            .next_page_token
+            .ok_or(ListTasksError::InvalidPageToken {
+                reason: "first page did not continue",
+            })?;
+
+        query.page_token = Some(token);
+        let second = run(&store, &registry, &query).await?;
+        assert_eq!(listed_ids(&second), ["FOO-0003"]);
+        assert_eq!(second.next_page_token, None);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn pagination_token_is_bound_to_the_resolved_query() {
+        let (store, registry) = foo_store(vec![
+            record("FOO-0001"),
+            record("FOO-0002"),
+            record("FOO-0003"),
+        ]);
+        let mut query = default_query();
+        query.order = Some(OrderSpec {
+            field: OrderField::Id,
+            direction: OrderDirection::Asc,
+        });
+        query.page_size = TaskPageSize::try_new(1).ok();
+        let first = run(&store, &registry, &query).await.unwrap();
+
+        query.page_token = first.next_page_token;
+        query.order = Some(OrderSpec {
+            field: OrderField::Id,
+            direction: OrderDirection::Desc,
+        });
+        let error = run(&store, &registry, &query).await.unwrap_err();
+
+        assert!(matches!(
+            error,
+            ListTasksError::InvalidPageToken {
+                reason: "filters or ordering changed"
+            }
+        ));
     }
 
     fn listed_ids(result: &ListedTasks) -> Vec<&str> {

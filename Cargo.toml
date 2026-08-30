@@ -12,6 +12,7 @@ anyhow = "1"
 allocation-counter = "0.8.1"
 anstyle = "1"
 base64 = "0.22.1"
+blake3 = "1.8.7"
 askama = { version = "0.16.0", default-features = false, features = ["derive", "std"] }
 assert_cmd = "2"
 cargo_metadata = "0.23.1"

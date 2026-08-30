@@ -1,7 +1,7 @@
 //! Converts normalized compatibility tokens into typed task leaves.
 
 use clap::Args;
-use pwf_client::v1::{OrderDirection, OrderField, OrderSpec};
+use pwf_client::pb::{OrderDirection, OrderField, OrderSpec};
 
 use super::{SectionChoice, StatusChoice, list};
 
@@ -83,7 +83,7 @@ fn list_arguments(
 
 #[cfg(test)]
 mod tests {
-    use pwf_client::v1::TaskStatusFilter;
+    use pwf_client::pb::TaskStatusFilter;
 
     use super::*;
 

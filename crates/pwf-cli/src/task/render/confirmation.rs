@@ -1,121 +1,50 @@
-//! Formats typed mutation confirmations at their owning leaf boundaries.
+//! Formats mutation confirmations from stable operation identifiers.
 
 use anstyle::AnsiColor;
-use pwf_client::v1::{CreatedTask, DeletedTask, UpdatedTask};
 
-use crate::render::render_confirmation;
+use crate::render::paint;
 
-pub(in crate::task) fn render_added(task: &CreatedTask, color_on: bool) -> String {
-    render_confirmation(
-        "Added pwf task",
-        AnsiColor::Green,
-        &task.id,
-        &added_headline(task),
-        &[format!("  file: {}", task.note_path)],
-        color_on,
-    )
+pub(in crate::task) fn render_added(task_id: &str, color_on: bool) -> String {
+    confirmation("Added pwf task", AnsiColor::Green, task_id, color_on)
 }
 
-pub(in crate::task) fn render_removed(task: &DeletedTask, color_on: bool) -> String {
-    render_confirmation(
-        "Removed pwf task",
-        AnsiColor::Red,
-        &task.id,
-        &format!("{} :: {}", task.project, task.title),
-        &[
-            format!("  deleted: {}", task.deleted_path),
-            format!(
-                "  unlinked: {}",
-                task.unlinked
-                    .as_ref()
-                    .map_or_else(String::new, ToString::to_string)
-            ),
-        ],
-        color_on,
-    )
+pub(in crate::task) fn render_removed(task_id: &str, color_on: bool) -> String {
+    confirmation("Removed pwf task", AnsiColor::Red, task_id, color_on)
 }
 
-pub(in crate::task) fn render_edited(task: &UpdatedTask, color_on: bool) -> String {
-    render_confirmation(
-        "Edited pwf task",
-        AnsiColor::Blue,
-        &task.id,
-        &format!("{} :: {}", task.project, task.title),
-        &[],
-        color_on,
-    )
+pub(in crate::task) fn render_edited(task_id: &str, color_on: bool) -> String {
+    confirmation("Edited pwf task", AnsiColor::Blue, task_id, color_on)
 }
 
-pub(super) fn render_review_task(task: &CreatedTask) -> String {
-    format!(
-        "ADDED PWF TASK [{}] {}\n  file: {}\n",
-        task.id,
-        added_headline(task),
-        task.note_path
-    )
+pub(super) fn render_review_task(task_id: &str) -> String {
+    format!("ADDED PWF TASK [{task_id}]\n")
 }
 
-fn added_headline(task: &CreatedTask) -> String {
-    format!("{} :: {}", task.project, task.title)
+fn confirmation(label: &str, color: AnsiColor, task_id: &str, color_on: bool) -> String {
+    format!("{label}: {}\n", paint(task_id, color, color_on))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn added_task() -> CreatedTask {
-        CreatedTask {
-            id: "FOO-0001".to_string(),
-            project: "foo".to_string(),
-            title: "sample task".to_string(),
-            note_path: "/x/FOO-0001.md".to_string(),
-            created_section: None,
-        }
-    }
-
     #[test]
-    fn added_plain_prefixes_label_with_no_leading_blank_line() {
+    fn confirmations_render_only_the_stable_task_identifier() {
         assert_eq!(
-            render_added(&added_task(), false),
-            "Added pwf task: **FOO-0001 foo :: sample task**\n  file: /x/FOO-0001.md\n"
+            render_added("FOO-0001", false),
+            "Added pwf task: **FOO-0001**\n"
         );
-    }
-
-    #[test]
-    fn review_task_preserves_the_existing_added_line() {
         assert_eq!(
-            render_review_task(&added_task()),
-            "ADDED PWF TASK [FOO-0001] foo :: sample task\n  file: /x/FOO-0001.md\n"
+            render_removed("FOO-0002", false),
+            "Removed pwf task: **FOO-0002**\n"
         );
-    }
-
-    #[test]
-    fn removed_plain_preserves_confirmation_shape() {
-        let task = DeletedTask {
-            id: "FOO-0002".to_string(),
-            project: "foo".to_string(),
-            title: "stale task".to_string(),
-            deleted_path: "/x.md".to_string(),
-            unlinked: Some("/x.md".to_string()),
-        };
-
         assert_eq!(
-            render_removed(&task, false),
-            "Removed pwf task: **FOO-0002 foo :: stale task**\n  deleted: /x.md\n  unlinked: /x.md\n"
+            render_edited("FOO-0003", false),
+            "Edited pwf task: **FOO-0003**\n"
         );
-    }
-
-    #[test]
-    fn edited_plain_uses_the_edit_verb() {
-        let task = UpdatedTask {
-            id: "FOO-0002".to_string(),
-            project: "foo".to_string(),
-            title: "edited task".to_string(),
-        };
-
         assert_eq!(
-            render_edited(&task, false),
-            "Edited pwf task: **FOO-0002 foo :: edited task**\n"
+            render_review_task("FOO-0004"),
+            "ADDED PWF TASK [FOO-0004]\n"
         );
     }
 }

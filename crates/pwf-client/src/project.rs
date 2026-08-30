@@ -1,4 +1,4 @@
-use pwf_wire::v1::{self, project_service_client::ProjectServiceClient};
+use pwf_wire::pb::{self, project_service_client::ProjectServiceClient};
 
 use crate::{AuthenticatedChannel, ClientError, RequestPolicy};
 
@@ -18,8 +18,8 @@ impl ProjectClient {
 
     pub async fn add_project(
         &self,
-        request: v1::AddProjectRequest,
-    ) -> Result<v1::AddProjectResponse, ClientError> {
+        request: pb::AddProjectRequest,
+    ) -> Result<pb::AddProjectResponse, ClientError> {
         self.client()
             .add_project(request)
             .await
@@ -29,8 +29,8 @@ impl ProjectClient {
 
     pub async fn get_project(
         &self,
-        request: v1::GetProjectRequest,
-    ) -> Result<v1::GetProjectResponse, ClientError> {
+        request: pb::GetProjectRequest,
+    ) -> Result<pb::GetProjectResponse, ClientError> {
         self.client()
             .get_project(request)
             .await
@@ -40,8 +40,8 @@ impl ProjectClient {
 
     pub async fn list_projects(
         &self,
-        request: v1::ListProjectsRequest,
-    ) -> Result<v1::ListProjectsResponse, ClientError> {
+        request: pb::ListProjectsRequest,
+    ) -> Result<pb::ListProjectsResponse, ClientError> {
         self.client()
             .list_projects(request)
             .await
@@ -51,8 +51,8 @@ impl ProjectClient {
 
     pub async fn pause_project(
         &self,
-        request: v1::PauseProjectRequest,
-    ) -> Result<v1::PauseProjectResponse, ClientError> {
+        request: pb::PauseProjectRequest,
+    ) -> Result<pb::PauseProjectResponse, ClientError> {
         self.client()
             .pause_project(request)
             .await
@@ -62,8 +62,8 @@ impl ProjectClient {
 
     pub async fn rename_project(
         &self,
-        request: v1::RenameProjectRequest,
-    ) -> Result<v1::RenameProjectResponse, ClientError> {
+        request: pb::RenameProjectRequest,
+    ) -> Result<pb::RenameProjectResponse, ClientError> {
         self.client()
             .rename_project(request)
             .await
@@ -73,8 +73,8 @@ impl ProjectClient {
 
     pub async fn resume_project(
         &self,
-        request: v1::ResumeProjectRequest,
-    ) -> Result<v1::ResumeProjectResponse, ClientError> {
+        request: pb::ResumeProjectRequest,
+    ) -> Result<pb::ResumeProjectResponse, ClientError> {
         self.client()
             .resume_project(request)
             .await
@@ -84,8 +84,8 @@ impl ProjectClient {
 
     pub async fn update_project(
         &self,
-        request: v1::UpdateProjectRequest,
-    ) -> Result<v1::UpdateProjectResponse, ClientError> {
+        request: pb::UpdateProjectRequest,
+    ) -> Result<pb::UpdateProjectResponse, ClientError> {
         self.client()
             .update_project(request)
             .await

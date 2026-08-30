@@ -88,18 +88,6 @@ impl InMemoryStore {
         self
     }
 
-    /// Stages index sections by raw H2 label.
-    pub fn with_sections(self, project: &str, labels: &[&str]) -> Self {
-        self.lock().sections.insert(
-            project_name(project),
-            labels
-                .iter()
-                .map(|label| TaskSection::try_new(*label).unwrap())
-                .collect(),
-        );
-        self
-    }
-
     pub fn tasks(&self, project: &str) -> Vec<TaskRecord> {
         self.lock()
             .tasks
