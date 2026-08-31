@@ -4,10 +4,11 @@ use pwf_models::{
     AppDate,
     note::{NoteId, NoteTitle},
     project::ProjectName,
+    revision::ContentRevision,
     task::{TaskId, TaskStatus, TaskTitle},
 };
 
-use super::task::{TaskNotePath, TaskRevision};
+use super::task::TaskNotePath;
 
 /// Identifies the project note deleted after confirmation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,7 +26,7 @@ pub struct RemoveTaskConfirmation {
     pub title: TaskTitle,
     pub status: TaskStatus,
     pub note_path: TaskNotePath,
-    pub revision: TaskRevision,
+    pub revision: ContentRevision,
 }
 
 /// Identifies the completion data discarded after confirmation.
@@ -36,5 +37,5 @@ pub struct ReopenTaskConfirmation {
     pub completion_date: Option<AppDate>,
     pub commit_provenance: Option<String>,
     pub report: Option<String>,
-    pub revision: TaskRevision,
+    pub revision: ContentRevision,
 }

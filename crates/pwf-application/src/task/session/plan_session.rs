@@ -14,7 +14,8 @@ use pwf_wire::{
         BlockedByIssue, BlockedByResolution, BlockedByStatus, TaskView,
         session::{
             AgentLaunch, DispatchConfirmation, DryRunSession, PlanSession, PlanSessionIntent,
-            PlannedSession, PreparedSessionDispatch, SessionPlan, SessionWarning,
+            PlannedSession, PreparedSessionDispatch, PreparedTaskRevision, SessionPlan,
+            SessionWarning,
         },
     },
 };
@@ -102,6 +103,7 @@ impl<A, P, S> SessionPlanningClients<A, P, S> {
 struct PlannedTask {
     view: TaskView,
     content: String,
+    revision: PreparedTaskRevision,
 }
 
 /// Plans active tasks without mutating their notes or dispatching an agent.
@@ -191,10 +193,12 @@ pub async fn execute(
 
     match command.intent {
         PlanSessionIntent::Dispatch => Ok(PlannedSession::Dispatch(PreparedSessionDispatch {
+            project: Box::new(project),
             plan,
             confirmation,
             probe,
             warnings,
+            task_revisions: tasks.iter().map(|task| task.revision.clone()).collect(),
         })),
         PlanSessionIntent::DryRun => {
             let provider_argv = clients.agent.preview(&plan.launch);
@@ -225,11 +229,16 @@ async fn plan_task(
     }
     let warnings = blocker_warnings(&found.record, store, pool).await;
     let content = load_task_content(&found.record, store)?;
+    let revision = PreparedTaskRevision {
+        task_id: found.record.id.clone(),
+        revision: found.record.revision.clone(),
+    };
     Ok((
         found.project,
         PlannedTask {
             view: found.task,
             content,
+            revision,
         },
         warnings,
     ))

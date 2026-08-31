@@ -8,12 +8,13 @@ use pwf_wire::task::{AddTaskDiagnostics, ClosedTaskAction};
 
 use crate::{
     ports::task_record::{
-        IndexEntry, IndexEntryState, IndexEntryStore, IndexSectionStore, Materialization, NewTask,
-        NullablePatch, TaskPatch, TaskStore,
+        ExpectedTaskRevision, IndexEntry, IndexEntryState, IndexEntryStore, IndexSectionStore,
+        Materialization, NewTask, NullablePatch, TaskMutationError, TaskMutationStore, TaskPatch,
+        TaskStore, TaskWrite,
     },
     task::{
         add_task::AddTaskError,
-        infer_task_title,
+        commit_task_writes, expected_task_revision, infer_task_title,
         lane_configuration::TaskPromptLanes,
         note_body::append_report,
         task_body_region,
@@ -34,6 +35,8 @@ pub enum CloseTaskError {
     Revision(#[from] super::TaskRevisionConflict),
     #[error(transparent)]
     WriteStore(anyhow::Error),
+    #[error(transparent)]
+    Mutation(#[from] TaskMutationError<anyhow::Error>),
     #[error("{0}")]
     ReviewTask(#[source] Box<AddTaskError>),
 }
@@ -346,7 +349,7 @@ pub(in crate::task) struct TaskClosure<'a> {
     pub(in crate::task) report: Option<&'a TaskReport>,
     pub(in crate::task) commits: Option<&'a CommitRanges>,
     pub(in crate::task) review_lanes: Option<&'a TaskPromptLanes>,
-    pub(in crate::task) expected_revision: Option<&'a pwf_wire::task::TaskRevision>,
+    pub(in crate::task) expected_revision: Option<&'a pwf_models::revision::ContentRevision>,
 }
 
 /// Carries the review task identifier needed by the mutation response.
@@ -360,7 +363,7 @@ pub(in crate::task) struct ClosedTaskEffects {
 /// because missing-note records have no file-backed queue entry.
 pub(in crate::task) fn close(
     command: &TaskClosure<'_>,
-    store: &(impl TaskStore + IndexEntryStore + IndexSectionStore),
+    store: &(impl TaskStore + IndexEntryStore + IndexSectionStore + TaskMutationStore),
     project: &pwf_models::project::Project,
 ) -> Result<ClosedTaskEffects, CloseTaskError> {
     let TaskClosure {
@@ -402,12 +405,18 @@ pub(in crate::task) fn close(
     if let Some(commits) = commits {
         patch.commits = NullablePatch::Set(commits.to_string());
     }
-    TaskStore::update(store, project, &task_identifier, patch)
-        .map_err(|error| CloseTaskError::WriteStore(anyhow::Error::new(error)))?;
-
+    let mut expected = vec![expected_task_revision(&record)];
+    let mut writes = vec![TaskWrite::Patch {
+        id: task_identifier.clone(),
+        patch,
+    }];
     if matches!(record.materialization, Materialization::NoteFile) {
-        rotate_done_queue(store, project, &task_identifier, completed_at)?;
+        let (queue_expected, queue_writes) =
+            queue_task_writes(store, project, &task_identifier, completed_at)?;
+        expected.extend(queue_expected);
+        writes.extend(queue_writes);
     }
+    commit_task_writes(store, project, expected, writes)?;
 
     let review_task = review_lanes
         .map(|lanes| {
@@ -433,12 +442,12 @@ fn close_status(action: ClosedTaskAction) -> TaskStatus {
 }
 
 /// Applies header normalization, the closed entry, and cap-based evictions to the index.
-fn rotate_done_queue(
+fn queue_task_writes(
     store: &(impl TaskStore + IndexEntryStore + IndexSectionStore),
     project: &pwf_models::project::Project,
     id: &TaskId,
     completed_at: TaskTimestamp,
-) -> Result<(), CloseTaskError> {
+) -> Result<(Vec<ExpectedTaskRevision>, Vec<TaskWrite>), CloseTaskError> {
     let mut entries = IndexEntryStore::list_index_entries(store, project)
         .map_err(|error| CloseTaskError::WriteStore(anyhow::Error::new(error)))?;
     let tasks = TaskStore::list(store, project)
@@ -448,40 +457,33 @@ fn rotate_done_queue(
         .map_err(|error| CloseTaskError::WriteStore(anyhow::Error::new(error)))?;
     let decisions = close_decisions(&entries, &sections, id, completed_at);
 
+    let mut writes = Vec::new();
     if decisions.normalize_futuro_header {
-        rename_futuro_headers(store, project, &sections)?;
+        for section in sections.iter().filter(|section| is_futuro_label(section)) {
+            writes.push(TaskWrite::RenameIndexSection {
+                current_label: section.clone(),
+                new_label: TaskSection::future(),
+            });
+        }
     }
-    if decisions.mark_target {
-        IndexEntryStore::upsert_index_entry(
-            store,
-            project,
-            IndexEntry {
-                id: id.clone(),
-                state: IndexEntryState::Done(Some(completed_at)),
-                section: None,
-            },
-        )
-        .map_err(|error| CloseTaskError::WriteStore(anyhow::Error::new(error)))?;
+    if decisions.mark_target && !decisions.evicted_ids.iter().any(|evicted| evicted == id) {
+        writes.push(TaskWrite::UpsertIndex(IndexEntry {
+            id: id.clone(),
+            state: IndexEntryState::Done(Some(completed_at)),
+            section: None,
+        }));
     }
     for evicted in &decisions.evicted_ids {
-        IndexEntryStore::delete_index_entry(store, project, evicted)
-            .map_err(|error| CloseTaskError::WriteStore(anyhow::Error::new(error)))?;
+        writes.push(TaskWrite::DeleteIndex(evicted.clone()));
     }
-    Ok(())
-}
-
-/// Renames every `## Futuro` header to `## Future` through the section port.
-fn rename_futuro_headers(
-    store: &impl IndexSectionStore,
-    project: &pwf_models::project::Project,
-    sections: &[TaskSection],
-) -> Result<(), CloseTaskError> {
-    let future = TaskSection::future();
-    for section in sections.iter().filter(|section| is_futuro_label(section)) {
-        IndexSectionStore::rename_index_section(store, project, section, &future)
-            .map_err(|error| CloseTaskError::WriteStore(anyhow::Error::new(error)))?;
-    }
-    Ok(())
+    let expected = decisions
+        .evicted_ids
+        .iter()
+        .filter(|evicted| *evicted != id)
+        .filter_map(|evicted| tasks.iter().find(|task| &task.id == evicted))
+        .map(expected_task_revision)
+        .collect();
+    Ok((expected, writes))
 }
 
 fn spawn_review(

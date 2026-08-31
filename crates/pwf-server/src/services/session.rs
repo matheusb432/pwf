@@ -2,7 +2,7 @@ use std::pin::Pin;
 
 use futures::Stream;
 use pwf_application::{
-    ports::confirmation::ConfirmationClientError,
+    ports::{confirmation::ConfirmationClientError, task_record::TaskMutationError},
     task::session::{
         dispatch_confirmed_session::{self, DispatchConfirmedSessionError},
         dispatch_session::DispatchSessionError,
@@ -96,7 +96,8 @@ impl pb::session_service_server::SessionService for SessionGrpcService {
                     Err(ConfirmationClientError::UnexpectedMessage)
                 }
             },
-        );
+        )
+        .with_mutation_lock(self.state.task_mutations.clone());
         let state = self.state.clone();
         let agent = AgentHarness::new(environment.clone());
         let session = TmuxHarness::new(environment);
@@ -181,7 +182,17 @@ fn dispatch_confirmed_status(error: DispatchConfirmedSessionError) -> Status {
         DispatchConfirmedSessionError::Plan(error) => plan_session_status(&error),
         DispatchConfirmedSessionError::Dispatch(error) => dispatch_session_status(&error),
         DispatchConfirmedSessionError::Confirmation(error) => confirmation_status(&error),
+        DispatchConfirmedSessionError::Mutation(error) => task_mutation_status(&error),
         DispatchConfirmedSessionError::DryRunPlan => Status::internal(error.to_string()),
+    }
+}
+
+fn task_mutation_status<E: std::fmt::Display>(error: &TaskMutationError<E>) -> Status {
+    match error {
+        TaskMutationError::StaleTask { .. } | TaskMutationError::SourceChanged => {
+            Status::aborted(error.to_string())
+        }
+        TaskMutationError::Store(_) => Status::internal(error.to_string()),
     }
 }
 

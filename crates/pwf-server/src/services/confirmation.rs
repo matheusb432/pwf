@@ -1,9 +1,9 @@
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use anyhow::Context as _;
 use futures::future::BoxFuture;
 use pwf_application::ports::confirmation::{ConfirmationClient, ConfirmationClientError};
-use tokio::sync::mpsc;
+use tokio::sync::{Mutex, OwnedMutexGuard, mpsc};
 use tonic::{Code, Status, Streaming};
 
 const CONFIRMATION_TIMEOUT: Duration = Duration::from_mins(30);
@@ -13,6 +13,8 @@ pub(super) struct GrpcConfirmationClient<Payload, ClientMessage, ServerMessage> 
     outbound: mpsc::Sender<Result<ServerMessage, Status>>,
     preflight: fn(&Payload) -> ServerMessage,
     decision: fn(ClientMessage) -> Result<bool, ConfirmationClientError>,
+    mutation_lock: Option<Arc<Mutex<()>>>,
+    mutation_guard: Option<OwnedMutexGuard<()>>,
 }
 
 impl<Payload, ClientMessage, ServerMessage>
@@ -29,7 +31,24 @@ impl<Payload, ClientMessage, ServerMessage>
             outbound,
             preflight,
             decision,
+            mutation_lock: None,
+            mutation_guard: None,
         }
+    }
+
+    pub(super) fn with_mutation_lock(mut self, mutation_lock: Arc<Mutex<()>>) -> Self {
+        self.mutation_lock = Some(mutation_lock);
+        self
+    }
+
+    async fn lock_mutations_after_confirmation(&mut self, confirmed: bool) {
+        if !confirmed {
+            return;
+        }
+        let Some(mutation_lock) = self.mutation_lock.clone() else {
+            return;
+        };
+        self.mutation_guard = Some(mutation_lock.lock_owned().await);
     }
 }
 
@@ -57,7 +76,9 @@ where
                 .map_err(|_| ConfirmationClientError::DecisionTimedOut)?
                 .context("failed to receive confirmation decision")?
                 .ok_or(ConfirmationClientError::InteractionClosed)?;
-            (self.decision)(message)
+            let confirmed = (self.decision)(message)?;
+            self.lock_mutations_after_confirmation(confirmed).await;
+            Ok(confirmed)
         })
     }
 }

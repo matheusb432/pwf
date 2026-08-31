@@ -3,6 +3,7 @@
 use prost::Message;
 use pwf_models::{
     project::ProjectSelector,
+    revision::ContentRevision,
     task::{
         BlockedBy, CommitRanges, EffortTier, IndexSection, PriorityTier, Tag, TaskId, TaskPrompt,
         TaskReport, TaskStatus, TaskTags, TaskTitle,
@@ -423,8 +424,8 @@ fn request_id(value: String) -> Result<task::TaskRequestId, Status> {
     task::TaskRequestId::try_new(value).map_err(|error| invalid("request_id", error))
 }
 
-fn revision(value: String) -> Result<task::TaskRevision, Status> {
-    task::TaskRevision::try_new(value).map_err(|error| invalid("expected_revision", error))
+fn revision(value: String) -> Result<ContentRevision, Status> {
+    ContentRevision::try_new(value).map_err(|error| invalid("expected_revision", error))
 }
 
 fn ensure_update_bounds(request: &pb::UpdateTaskRequest) -> Result<(), Status> {

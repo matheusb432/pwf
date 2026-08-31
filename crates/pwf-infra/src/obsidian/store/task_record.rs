@@ -6,6 +6,7 @@ use pwf_application::ports::task_record::{
 };
 use pwf_models::{
     project::Project,
+    revision::ContentRevision,
     task::{TaskId, TaskSection, TaskStatus, TaskTimestamp},
 };
 use pwf_wire::task::{RawTaskTags, TaskIndexPath, TaskNotePath};
@@ -13,17 +14,19 @@ use pwf_wire::task::{RawTaskTags, TaskIndexPath, TaskNotePath};
 use super::{
     ObsidianStore, ObsidianStoreError,
     add::NewNoteRequest,
-    fs::{line_start_index, open_task_file, path_str, save_task_file, write_index},
+    fs::{line_start_index, path_str},
     index_entry::{ParsedIndexLine, parse_index_lines},
 };
-use crate::obsidian::{
-    MarkdownFile, MarkdownFileError, done_queue,
-    note_frontmatter::{
-        parse_blocked_by, reopen_status, set_blocked_by, set_commits, set_completed_at, set_effort,
-        set_priority, set_status, set_tags,
+use crate::{
+    file_transaction::content_revision,
+    obsidian::{
+        MarkdownFile, MarkdownFileError, done_queue,
+        note_frontmatter::{
+            parse_blocked_by, reopen_status, set_blocked_by, set_commits, set_completed_at,
+            set_effort, set_priority, set_status, set_tags,
+        },
+        note_text::{replace_body, replace_title},
     },
-    note_text::{replace_body, replace_title},
-    trash::move_task_file_to_vault_trash,
 };
 
 /// Maps a task note to typed frontmatter fields while preserving its byte-exact source.
@@ -33,6 +36,7 @@ fn note_to_record(
     decoded_title: Option<&str>,
     source: String,
 ) -> Result<TaskRecord, ObsidianStoreError> {
+    let revision = content_revision(source.as_bytes());
     let file = MarkdownFile::from_source(path.to_path_buf(), source);
     let frontmatter = file.frontmatter_view().map_err(read_task_file_error)?;
     let field = |key: &str| {
@@ -104,6 +108,7 @@ fn note_to_record(
         locator: TaskNotePath::new(path.to_path_buf()),
         placement: None,
         materialization: Materialization::NoteFile,
+        revision,
     })
 }
 
@@ -118,6 +123,7 @@ fn missing_note_record(
     completed_at: Option<TaskTimestamp>,
     section: Option<TaskSection>,
     expected_path: &Path,
+    revision: ContentRevision,
 ) -> TaskRecord {
     TaskRecord {
         id,
@@ -138,6 +144,7 @@ fn missing_note_record(
         materialization: Materialization::MissingNote {
             expected: TaskNotePath::new(expected_path.to_path_buf()),
         },
+        revision,
     }
 }
 
@@ -148,7 +155,11 @@ fn expected_note_path(index_path: &Path, id: &TaskId) -> std::path::PathBuf {
         .join(format!("{id}.md"))
 }
 
-fn index_entry_to_record(index_path: &Path, line: &ParsedIndexLine) -> TaskRecord {
+fn index_entry_to_record(
+    index_path: &Path,
+    line: &ParsedIndexLine,
+    revision: ContentRevision,
+) -> TaskRecord {
     let (status, completed_at) = match &line.state {
         IndexEntryState::Open => (TaskStatus::Active, None),
         IndexEntryState::Done(date) => (TaskStatus::Done, *date),
@@ -161,6 +172,7 @@ fn index_entry_to_record(index_path: &Path, line: &ParsedIndexLine) -> TaskRecor
         completed_at,
         line.section.clone(),
         &expected,
+        revision,
     )
 }
 
@@ -193,10 +205,11 @@ fn get_task_record(
     let Some((index_path, text)) = store.validated_project_index(project)? else {
         return Ok(None);
     };
+    let revision = content_revision(text.as_bytes());
     Ok(parse_index_lines(&index_path, &text)?
         .into_iter()
         .find(|line| line.id == *id)
-        .map(|line| index_entry_to_record(&index_path, &line)))
+        .map(|line| index_entry_to_record(&index_path, &line, revision)))
 }
 
 fn apply_index_metadata(
@@ -231,18 +244,24 @@ fn list_task_records(
     let Some((index_path, text)) = store.validated_project_index(project)? else {
         return Ok(records);
     };
+    let revision = content_revision(text.as_bytes());
     for line in parse_index_lines(&index_path, &text)? {
-        merge_index_line(&mut records, &index_path, &line);
+        merge_index_line(&mut records, &index_path, &line, &revision);
     }
     Ok(records)
 }
 
-fn merge_index_line(records: &mut Vec<TaskRecord>, index_path: &Path, line: &ParsedIndexLine) {
+fn merge_index_line(
+    records: &mut Vec<TaskRecord>,
+    index_path: &Path,
+    line: &ParsedIndexLine,
+    revision: &ContentRevision,
+) {
     if let Some(record) = records.iter_mut().find(|record| record.id == line.id) {
         merge_existing_index_line(record, index_path, line);
         return;
     }
-    let mut record = index_entry_to_record(index_path, line);
+    let mut record = index_entry_to_record(index_path, line, revision.clone());
     record.placement = open_index_placement(index_path, line);
     records.push(record);
 }
@@ -294,33 +313,10 @@ impl ObsidianStore {
         note_to_record(note.id, &note.path, Some(note.title.as_ref()), note.content)
     }
 
-    fn update_task(
-        &self,
-        project: &Project,
-        id: &TaskId,
+    pub(super) fn apply_task_patch(
+        file: &mut MarkdownFile,
         patch: &TaskPatch,
     ) -> Result<(), ObsidianStoreError> {
-        if let Some(task) = self
-            .task_files_for_project(project)?
-            .into_iter()
-            .find(|task| task.id == *id)
-        {
-            return Self::patch_note_file(&task.path, patch);
-        }
-        let Some((index_path, text)) = self.validated_project_index(project)? else {
-            return Err(ObsidianStoreError::TaskNotFound { id: id.clone() });
-        };
-        let Some(line) = parse_index_lines(&index_path, &text)?
-            .into_iter()
-            .find(|line| line.id == *id)
-        else {
-            return Err(ObsidianStoreError::TaskNotFound { id: id.clone() });
-        };
-        Self::patch_index_entry(&index_path, &text, &line, patch)
-    }
-
-    fn patch_note_file(note_path: &Path, patch: &TaskPatch) -> Result<(), ObsidianStoreError> {
-        let mut file = open_task_file(note_path)?;
         if let Some(title) = &patch.title {
             let updated = replace_title(file.source(), title.as_ref());
             file.replace_source(updated);
@@ -332,106 +328,80 @@ impl ObsidianStore {
         // Apply commits first to keep it adjacent to completion metadata during a close.
         match &patch.commits {
             NullablePatch::Unchanged => {}
-            NullablePatch::Clear => set_commits(&mut file, None).map_err(write_task_file_error)?,
+            NullablePatch::Clear => set_commits(file, None).map_err(write_task_file_error)?,
             NullablePatch::Set(commits) => {
-                set_commits(&mut file, Some(commits)).map_err(write_task_file_error)?;
+                set_commits(file, Some(commits)).map_err(write_task_file_error)?;
             }
         }
         match patch.status {
             Some(TaskStatus::Active) => {
-                reopen_status(&mut file).map_err(write_task_file_error)?;
+                reopen_status(file).map_err(write_task_file_error)?;
             }
             Some(status) => {
                 let completed_at = match &patch.completed_at {
                     NullablePatch::Set(completed_at) => Some(completed_at),
                     NullablePatch::Unchanged | NullablePatch::Clear => None,
                 };
-                set_status(&mut file, status, completed_at).map_err(write_task_file_error)?;
+                set_status(file, status, completed_at).map_err(write_task_file_error)?;
             }
             None => match &patch.completed_at {
                 NullablePatch::Unchanged => {}
                 NullablePatch::Clear => {
-                    set_completed_at(&mut file, None).map_err(write_task_file_error)?;
+                    set_completed_at(file, None).map_err(write_task_file_error)?;
                 }
                 NullablePatch::Set(completed_at) => {
-                    set_completed_at(&mut file, Some(completed_at))
-                        .map_err(write_task_file_error)?;
+                    set_completed_at(file, Some(completed_at)).map_err(write_task_file_error)?;
                 }
             },
         }
         match &patch.blocked_by {
             NullablePatch::Unchanged => {}
             NullablePatch::Clear => {
-                set_blocked_by(&mut file, None).map_err(write_task_file_error)?;
+                set_blocked_by(file, None).map_err(write_task_file_error)?;
             }
             NullablePatch::Set(blocked_by) => {
-                set_blocked_by(&mut file, Some(blocked_by)).map_err(write_task_file_error)?;
+                set_blocked_by(file, Some(blocked_by)).map_err(write_task_file_error)?;
             }
         }
         match patch.effort {
             NullablePatch::Unchanged => {}
-            NullablePatch::Clear => set_effort(&mut file, None).map_err(write_task_file_error)?,
+            NullablePatch::Clear => set_effort(file, None).map_err(write_task_file_error)?,
             NullablePatch::Set(effort) => {
-                set_effort(&mut file, Some(effort)).map_err(write_task_file_error)?;
+                set_effort(file, Some(effort)).map_err(write_task_file_error)?;
             }
         }
         match patch.priority {
             NullablePatch::Unchanged => {}
-            NullablePatch::Clear => set_priority(&mut file, None).map_err(write_task_file_error)?,
+            NullablePatch::Clear => set_priority(file, None).map_err(write_task_file_error)?,
             NullablePatch::Set(priority) => {
-                set_priority(&mut file, Some(priority)).map_err(write_task_file_error)?;
+                set_priority(file, Some(priority)).map_err(write_task_file_error)?;
             }
         }
         match &patch.tags {
             NullablePatch::Unchanged => {}
-            NullablePatch::Clear => set_tags(&mut file, None).map_err(write_task_file_error)?,
+            NullablePatch::Clear => set_tags(file, None).map_err(write_task_file_error)?,
             NullablePatch::Set(tags) => {
-                set_tags(&mut file, Some(tags)).map_err(write_task_file_error)?;
+                set_tags(file, Some(tags)).map_err(write_task_file_error)?;
             }
         }
-        save_task_file(&file)
-    }
-
-    fn patch_index_entry(
-        index_path: &Path,
-        text: &str,
-        line: &ParsedIndexLine,
-        patch: &TaskPatch,
-    ) -> Result<(), ObsidianStoreError> {
-        patch_index_entry(index_path, text, line, patch)
-    }
-
-    fn delete_task(&self, project: &Project, id: &TaskId) -> Result<(), ObsidianStoreError> {
-        let Some(task) = self
-            .task_files_for_project(project)?
-            .into_iter()
-            .find(|task| task.id == *id)
-        else {
-            return Err(ObsidianStoreError::TaskNotFound { id: id.clone() });
-        };
-        move_task_file_to_vault_trash(&task.path)
+        Ok(())
     }
 }
 
-fn patch_index_entry(
+pub(super) fn patch_index_entry_text(
     index_path: &Path,
     text: &str,
     line: &ParsedIndexLine,
     patch: &TaskPatch,
-) -> Result<(), ObsidianStoreError> {
+) -> Result<String, ObsidianStoreError> {
     match patch.status {
         Some(TaskStatus::Active) => {
-            if let Some(updated) = done_queue::reopen_done_link(text, &line.id) {
-                write_index(index_path, &updated)?;
-            }
-            Ok(())
+            Ok(done_queue::reopen_done_link(text, &line.id).unwrap_or_else(|| text.to_string()))
         }
         Some(TaskStatus::Done | TaskStatus::Cancelled) => {
-            let updated =
-                close_index_entry_text(text, line.line_number.get(), &path_str(index_path))?;
-            write_index(index_path, &updated)
+            close_index_entry_text(text, line.line_number.get(), &path_str(index_path))
         }
-        None => Ok(()),
+        None => Ok(text.to_string()),
     }
 }
 
@@ -469,14 +439,6 @@ impl TaskStore for ObsidianStore {
         new: NewTask,
     ) -> Result<TaskRecord, Self::Error> {
         self.insert_task(project, id, &new)
-    }
-
-    fn update(&self, project: &Project, id: &TaskId, patch: TaskPatch) -> Result<(), Self::Error> {
-        self.update_task(project, id, &patch)
-    }
-
-    fn delete(&self, project: &Project, id: &TaskId) -> Result<(), Self::Error> {
-        self.delete_task(project, id)
     }
 }
 

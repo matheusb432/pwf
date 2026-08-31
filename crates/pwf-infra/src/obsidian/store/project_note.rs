@@ -9,10 +9,13 @@ use pwf_wire::{collection_edit::CollectionEdit, field_update::FieldUpdate};
 use serde::Deserialize;
 
 use super::{ObsidianStore, ObsidianStoreError, fs::read_task_file};
-use crate::obsidian::{
-    MarkdownFile,
-    index_text::{add_note_link, remove_note_link},
-    markdown_line,
+use crate::{
+    file_transaction::{FileSnapshot, FileTransaction, snapshot},
+    obsidian::{
+        MarkdownFile,
+        index_text::{add_note_link, remove_note_link},
+        markdown_line,
+    },
 };
 
 impl ProjectNoteStore for ObsidianStore {
@@ -88,21 +91,42 @@ impl ProjectNoteStore for ObsidianStore {
 
     fn delete_note(&self, project: &Project, id: &NoteId) -> Result<(), Self::Error> {
         let note_path = self.tasks_path(project)?.join(note_file_name(id));
-        if !note_path.exists() {
-            return Err(note_not_found(&project.title, id));
-        }
-        std::fs::remove_file(&note_path).map_err(|source| {
-            ObsidianStoreError::RemoveProjectNote {
+        let note =
+            snapshot(&note_path).map_err(|source| ObsidianStoreError::RemoveProjectNote {
                 id: id.to_string(),
-                source,
-            }
-        })?;
-
+                source: std::io::Error::other(source),
+            })?;
+        let FileSnapshot::Present(note) = note else {
+            return Err(note_not_found(&project.title, id));
+        };
         let index_path = self.project_index_path(project)?;
-        let index = MarkdownFile::open(&index_path)
-            .map(MarkdownFile::into_source)
-            .unwrap_or_default();
-        write_index(&index_path, &remove_note_link(&index, id.as_ref()))
+        let index =
+            snapshot(&index_path).map_err(|source| ObsidianStoreError::WriteProjectNoteIndex {
+                path: index_path.clone(),
+                source: std::io::Error::other(source),
+            })?;
+        let source = match &index {
+            FileSnapshot::Present(index) => {
+                String::from_utf8(index.bytes().to_vec()).unwrap_or_default()
+            }
+            FileSnapshot::Missing(_) => String::new(),
+        };
+        let mut transaction = FileTransaction::new();
+        transaction
+            .remove(note)
+            .and_then(|()| {
+                transaction.replace(
+                    index,
+                    remove_note_link(&source, id.as_ref())
+                        .into_bytes()
+                        .into_boxed_slice(),
+                )
+            })
+            .and_then(|()| transaction.commit())
+            .map_err(|source| ObsidianStoreError::RemoveProjectNote {
+                id: id.to_string(),
+                source: std::io::Error::other(source),
+            })
     }
     fn read_note_markdown(
         &self,
@@ -899,7 +923,7 @@ mod tests {
     }
 
     #[test]
-    fn delete_removes_the_note_before_an_index_write_failure() {
+    fn delete_preserves_the_note_when_the_index_cannot_be_read() {
         let directory = tempfile::tempdir().unwrap();
         let tasks_path = directory.path().join("tasks");
         fs::create_dir_all(&tasks_path).unwrap();
@@ -916,6 +940,6 @@ mod tests {
             .unwrap_err();
 
         assert_matches!(error, ObsidianStoreError::WriteProjectNoteIndex { .. });
-        assert!(!note_path.exists());
+        assert!(note_path.exists());
     }
 }

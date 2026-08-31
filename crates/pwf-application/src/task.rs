@@ -47,85 +47,10 @@ fn task_body_region(body: &str) -> &str {
     body.strip_prefix('\n').unwrap_or(body)
 }
 
-fn task_revision(record: &crate::ports::task_record::TaskRecord) -> pwf_wire::task::TaskRevision {
-    use crate::ports::task_record::{Materialization, StoredBlockedBy};
-
-    let mut hasher = blake3::Hasher::new();
-    revision_field(&mut hasher, "id", record.id.as_ref());
-    revision_field(&mut hasher, "title", &record.title);
-    revision_field(
-        &mut hasher,
-        "status",
-        match record.status {
-            pwf_models::task::TaskStatus::Active => "active",
-            pwf_models::task::TaskStatus::Done => "done",
-            pwf_models::task::TaskStatus::Cancelled => "cancelled",
-        },
-    );
-    revision_optional_field(
-        &mut hasher,
-        "created_at",
-        record.created_at.map(|value| value.to_string()).as_deref(),
-    );
-    revision_optional_field(
-        &mut hasher,
-        "completed_at",
-        record
-            .completed_at
-            .map(|value| value.to_string())
-            .as_deref(),
-    );
-    revision_optional_field(&mut hasher, "commits", record.commits.as_deref());
-    revision_optional_field(&mut hasher, "tags", record.tags.as_ref().map(AsRef::as_ref));
-    revision_optional_field(&mut hasher, "effort", record.effort.as_deref());
-    revision_optional_field(&mut hasher, "priority", record.priority.as_deref());
-    match &record.blocked_by {
-        StoredBlockedBy::Absent => revision_field(&mut hasher, "blocked_by", "absent"),
-        StoredBlockedBy::Valid(values) => {
-            revision_field(&mut hasher, "blocked_by", "valid");
-            for value in values.iter() {
-                revision_field(&mut hasher, "blocker", value.as_ref());
-            }
-        }
-        StoredBlockedBy::Malformed { raw, reason } => {
-            revision_field(&mut hasher, "blocked_by", "malformed");
-            revision_field(&mut hasher, "blocked_by_raw", raw);
-            revision_field(&mut hasher, "blocked_by_reason", reason);
-        }
-    }
-    revision_optional_field(
-        &mut hasher,
-        "section",
-        record.section.as_ref().map(AsRef::as_ref),
-    );
-    revision_field(&mut hasher, "body", &record.body);
-    revision_field(&mut hasher, "locator", &record.locator.to_string());
-    match &record.materialization {
-        Materialization::NoteFile => revision_field(&mut hasher, "materialization", "note"),
-        Materialization::MissingNote { expected } => {
-            revision_field(&mut hasher, "materialization", "missing");
-            revision_field(&mut hasher, "expected", &expected.to_string());
-        }
-    }
-    pwf_wire::task::TaskRevision::from_digest(*hasher.finalize().as_bytes())
-}
-
-fn revision_optional_field(hasher: &mut blake3::Hasher, name: &str, value: Option<&str>) {
-    match value {
-        Some(value) => revision_field(hasher, name, value),
-        None => revision_field(hasher, name, "<absent>"),
-    }
-}
-
-fn revision_field(hasher: &mut blake3::Hasher, name: &str, value: &str) {
-    hasher.update(&revision_length(name.len()));
-    hasher.update(name.as_bytes());
-    hasher.update(&revision_length(value.len()));
-    hasher.update(value.as_bytes());
-}
-
-fn revision_length(length: usize) -> [u8; 8] {
-    u64::try_from(length).unwrap_or(u64::MAX).to_le_bytes()
+fn task_revision(
+    record: &crate::ports::task_record::TaskRecord,
+) -> pwf_models::revision::ContentRevision {
+    record.revision.clone()
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -133,18 +58,18 @@ fn revision_length(length: usize) -> [u8; 8] {
     "task changed since it was read (expected revision {expected}, current revision {current})"
 )]
 pub struct TaskRevisionConflict {
-    expected: pwf_wire::task::TaskRevision,
-    current: pwf_wire::task::TaskRevision,
+    expected: pwf_models::revision::ContentRevision,
+    current: pwf_models::revision::ContentRevision,
 }
 
 fn ensure_task_revision(
-    expected: Option<&pwf_wire::task::TaskRevision>,
+    expected: Option<&pwf_models::revision::ContentRevision>,
     record: &crate::ports::task_record::TaskRecord,
 ) -> Result<(), TaskRevisionConflict> {
     let Some(expected) = expected else {
         return Ok(());
     };
-    let current = task_revision(record);
+    let current = record.revision.clone();
     if expected == &current {
         return Ok(());
     }
@@ -152,6 +77,28 @@ fn ensure_task_revision(
         expected: expected.clone(),
         current,
     })
+}
+
+fn expected_task_revision(
+    record: &crate::ports::task_record::TaskRecord,
+) -> crate::ports::task_record::ExpectedTaskRevision {
+    crate::ports::task_record::ExpectedTaskRevision {
+        id: record.id.clone(),
+        revision: record.revision.clone(),
+    }
+}
+
+fn commit_task_writes(
+    store: &impl crate::ports::task_record::TaskMutationStore,
+    project: &pwf_models::project::Project,
+    expected: Vec<crate::ports::task_record::ExpectedTaskRevision>,
+    writes: Vec<crate::ports::task_record::TaskWrite>,
+) -> Result<(), crate::ports::task_record::TaskMutationError<anyhow::Error>> {
+    let writes = crate::ports::task_record::TaskWriteSet::try_new(expected, writes)
+        .map_err(anyhow::Error::new)
+        .map_err(crate::ports::task_record::TaskMutationError::Store)?;
+    crate::ports::task_record::TaskMutationStore::commit_task_writes(store, project, writes)
+        .map_err(|error| error.map_store(anyhow::Error::new))
 }
 
 fn section_alias(label: &str) -> Option<&'static str> {

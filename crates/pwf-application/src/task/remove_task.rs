@@ -9,14 +9,17 @@ use pwf_wire::{
 };
 
 use super::{
-    blocked_by,
+    blocked_by, commit_task_writes,
     mutation_request::{self, MutationOperation, MutationRequestState, MutationStart},
     resolve_task_project::{self, ResolveTaskProjectError},
 };
 use crate::{
     ports::{
         confirmation::{ConfirmationClient, ConfirmationClientError},
-        task_record::{IndexEntryStore, Materialization, StoredBlockedBy, TaskRecord, TaskStore},
+        task_record::{
+            ExpectedTaskRevision, Materialization, StoredBlockedBy, TaskMutationError,
+            TaskMutationStore, TaskRecord, TaskStore, TaskWrite,
+        },
     },
     project::list_projects,
 };
@@ -60,6 +63,8 @@ pub enum RemoveTaskError {
     ReadDependents(#[source] anyhow::Error),
     #[error(transparent)]
     WriteStore(anyhow::Error),
+    #[error(transparent)]
+    Mutation(#[from] TaskMutationError<anyhow::Error>),
 }
 
 /// Deletes a task after unlinking its index entry.
@@ -68,7 +73,7 @@ pub enum RemoveTaskError {
 #[cqrsy::command]
 pub async fn execute(
     command: &DeleteTask,
-    store: &(impl TaskStore + IndexEntryStore),
+    store: &(impl TaskStore + TaskMutationStore),
     pool: &sqlx::SqlitePool,
     confirmation_client: &mut dyn ConfirmationClient<Confirmation = RemoveTaskConfirmation>,
 ) -> Result<DeleteTaskOutcome, RemoveTaskError> {
@@ -198,13 +203,23 @@ fn validate_target_revision(
 
 fn delete_prepared(
     prepared: &PreparedRemoval,
-    store: &(impl TaskStore + IndexEntryStore),
+    store: &impl TaskMutationStore,
 ) -> Result<(), RemoveTaskError> {
-    IndexEntryStore::delete_index_entry(store, &prepared.project, &prepared.task_id)
-        .map_err(|error| RemoveTaskError::WriteStore(anyhow::Error::new(error)))?;
-    TaskStore::delete(store, &prepared.project, &prepared.task_id)
-        .map_err(|error| RemoveTaskError::WriteStore(anyhow::Error::new(error)))?;
-    Ok(())
+    commit_task_writes(
+        store,
+        &prepared.project,
+        vec![ExpectedTaskRevision {
+            id: prepared.task_id.clone(),
+            revision: prepared.confirmation.revision.clone(),
+        }],
+        vec![
+            TaskWrite::DeleteIndex(prepared.task_id.clone()),
+            TaskWrite::MoveToTrash {
+                id: prepared.task_id.clone(),
+            },
+        ],
+    )
+    .map_err(Into::into)
 }
 
 async fn ensure_no_dependents(
@@ -379,6 +394,24 @@ mod tests {
         }
     }
 
+    struct EditThenAccept {
+        store: InMemoryStore,
+        project: pwf_models::project::Project,
+        id: TaskId,
+    }
+
+    impl ConfirmationClient for EditThenAccept {
+        type Confirmation = RemoveTaskConfirmation;
+
+        fn confirm<'a>(
+            &'a mut self,
+            _confirmation: &'a RemoveTaskConfirmation,
+        ) -> futures::future::BoxFuture<'a, Result<bool, ConfirmationClientError>> {
+            self.store.externally_edit_task(&self.project, &self.id);
+            Box::pin(futures::future::ready(Ok(true)))
+        }
+    }
+
     struct StaticInteraction {
         accepted: bool,
     }
@@ -408,6 +441,29 @@ mod tests {
             store.entries("foo").is_empty(),
             "index entry must be unlinked"
         );
+    }
+
+    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
+    async fn remove_rejects_a_task_edited_after_preflight_without_unlinking(
+        pool: sqlx::SqlitePool,
+    ) {
+        insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
+        let store = staged(TaskStatus::Active);
+        let id = task_id("FOO-0001");
+        let mut confirmation = EditThenAccept {
+            store: store.clone(),
+            project: project("FOO", "foo"),
+            id: id.clone(),
+        };
+
+        let error = run(&id, &store, &pool, &mut confirmation)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, RemoveTaskError::Revision(_)));
+        assert_eq!(store.tasks("foo").len(), 1);
+        assert!(store.tasks("foo")[0].source.ends_with("external edit\n"));
+        assert_eq!(store.entries("foo").len(), 1);
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]

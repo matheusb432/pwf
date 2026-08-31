@@ -5,6 +5,7 @@ use pwf_wire::{
 };
 
 use super::{
+    commit_task_writes,
     mutation_request::{self, MutationOperation, MutationRequestState, MutationStart},
     note_body::remove_report,
     resolve_task_project::{self, ResolveTaskProjectError},
@@ -13,7 +14,8 @@ use super::{
 use crate::ports::{
     confirmation::{ConfirmationClient, ConfirmationClientError},
     task_record::{
-        IndexEntry, IndexEntryState, IndexEntryStore, NullablePatch, TaskPatch, TaskStore,
+        ExpectedTaskRevision, IndexEntry, IndexEntryState, IndexEntryStore, NullablePatch,
+        TaskMutationError, TaskMutationStore, TaskPatch, TaskStore, TaskWrite,
     },
 };
 
@@ -31,6 +33,8 @@ pub enum ReopenTaskError {
     MutationRequest(#[from] mutation_request::MutationRequestError),
     #[error(transparent)]
     WriteStore(anyhow::Error),
+    #[error(transparent)]
+    Mutation(#[from] TaskMutationError<anyhow::Error>),
 }
 
 /// Reopens a closed task and restores an existing queue link.
@@ -40,7 +44,7 @@ pub enum ReopenTaskError {
 #[cqrsy::command]
 pub async fn execute(
     command: &ReopenTask,
-    store: &(impl TaskStore + IndexEntryStore),
+    store: &(impl TaskStore + IndexEntryStore + TaskMutationStore),
     pool: &sqlx::SqlitePool,
     confirmation_client: &mut dyn ConfirmationClient<Confirmation = ReopenTaskConfirmation>,
 ) -> Result<ReopenTaskOutcome, ReopenTaskError> {
@@ -179,15 +183,12 @@ fn validate_reopen(
 
 fn apply_reopen(
     prepared: PreparedReopen,
-    store: &(impl TaskStore + IndexEntryStore),
+    store: &(impl IndexEntryStore + TaskMutationStore),
 ) -> Result<(), ReopenTaskError> {
     let task_identifier = prepared.task_id;
-
-    TaskStore::update(
-        store,
-        &prepared.project,
-        &task_identifier,
-        TaskPatch {
+    let patch = TaskWrite::Patch {
+        id: task_identifier.clone(),
+        patch: TaskPatch {
             status: Some(TaskStatus::Active),
             completed_at: NullablePatch::Clear,
             commits: NullablePatch::Clear,
@@ -197,28 +198,31 @@ fn apply_reopen(
                 .then_some(prepared.body_without_report),
             ..TaskPatch::default()
         },
-    )
-    .map_err(|error| ReopenTaskError::WriteStore(anyhow::Error::new(error)))?;
+    };
 
     let entries = IndexEntryStore::list_index_entries(store, &prepared.project)
         .map_err(|error| ReopenTaskError::WriteStore(anyhow::Error::new(error)))?;
+    let mut writes = vec![patch];
     if entries
         .iter()
         .any(|entry| entry.id == task_identifier && matches!(entry.state, IndexEntryState::Done(_)))
     {
-        IndexEntryStore::upsert_index_entry(
-            store,
-            &prepared.project,
-            IndexEntry {
-                id: task_identifier.clone(),
-                state: IndexEntryState::Open,
-                section: None,
-            },
-        )
-        .map_err(|error| ReopenTaskError::WriteStore(anyhow::Error::new(error)))?;
+        writes.push(TaskWrite::UpsertIndex(IndexEntry {
+            id: task_identifier.clone(),
+            state: IndexEntryState::Open,
+            section: None,
+        }));
     }
-
-    Ok(())
+    commit_task_writes(
+        store,
+        &prepared.project,
+        vec![ExpectedTaskRevision {
+            id: task_identifier,
+            revision: prepared.confirmation.revision,
+        }],
+        writes,
+    )
+    .map_err(Into::into)
 }
 
 fn reopen_replay(
@@ -294,6 +298,24 @@ mod tests {
         ) -> futures::future::BoxFuture<'a, Result<bool, ConfirmationClientError>> {
             self.recorded.push(confirmation.clone());
             Box::pin(futures::future::ready(Ok(self.accepted)))
+        }
+    }
+
+    struct EditThenAccept {
+        store: InMemoryStore,
+        project: Project,
+        id: TaskId,
+    }
+
+    impl ConfirmationClient for EditThenAccept {
+        type Confirmation = ReopenTaskConfirmation;
+
+        fn confirm<'a>(
+            &'a mut self,
+            _confirmation: &'a ReopenTaskConfirmation,
+        ) -> futures::future::BoxFuture<'a, Result<bool, ConfirmationClientError>> {
+            self.store.externally_edit_task(&self.project, &self.id);
+            Box::pin(futures::future::ready(Ok(true)))
         }
     }
 
@@ -385,6 +407,39 @@ mod tests {
             "## Goals\n\n- ship the work"
         );
         assert_eq!(store.entries("foo-bar")[0].state, IndexEntryState::Open);
+    }
+
+    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
+    async fn reopen_rejects_a_task_edited_after_preflight_without_mutation(pool: sqlx::SqlitePool) {
+        crate::testing::insert_project(
+            &pool,
+            "FOO",
+            "foo-bar",
+            "/projects/foo",
+            "/tasks/foo",
+            false,
+        )
+        .await;
+        let done = IndexEntryState::Done(Some(task_timestamp("2026-01-02T12:34:56Z")));
+        let store = staged(TaskStatus::Done, vec![entry(done.clone())]);
+        let mut confirmation = EditThenAccept {
+            store: store.clone(),
+            project: foo(),
+            id: TaskId::try_new("FOO-0001").unwrap(),
+        };
+
+        let error = reopen_task::execute(&command("FOO-0001"), &store, &pool, &mut confirmation)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, super::ReopenTaskError::Revision(_)));
+        assert_eq!(store.tasks("foo-bar")[0].status, TaskStatus::Done);
+        assert!(
+            store.tasks("foo-bar")[0]
+                .source
+                .ends_with("external edit\n")
+        );
+        assert_eq!(store.entries("foo-bar"), vec![entry(done)]);
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]

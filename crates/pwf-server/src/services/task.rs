@@ -2,7 +2,7 @@ use std::pin::Pin;
 
 use futures::Stream;
 use pwf_application::{
-    ports::confirmation::ConfirmationClientError,
+    ports::{confirmation::ConfirmationClientError, task_record::TaskMutationError},
     task::{
         CloseTaskError, MutationRequestError, TaskPromptLanesError,
         add_task::{self, AddTaskError},
@@ -166,7 +166,8 @@ impl pb::task_service_server::TaskService for TaskGrpcService {
                     Err(ConfirmationClientError::UnexpectedMessage)
                 }
             },
-        );
+        )
+        .with_mutation_lock(self.state.task_mutations.clone());
         let state = self.state.clone();
         tokio::spawn(async move {
             let item = remove_task::execute(&command, &state.store, &state.pool, &mut confirmation)
@@ -205,7 +206,8 @@ impl pb::task_service_server::TaskService for TaskGrpcService {
                     Err(ConfirmationClientError::UnexpectedMessage)
                 }
             },
-        );
+        )
+        .with_mutation_lock(self.state.task_mutations.clone());
         let state = self.state.clone();
         tokio::spawn(async move {
             let item = reopen_task::execute(&command, &state.store, &state.pool, &mut confirmation)
@@ -287,6 +289,7 @@ fn close_task_status(error: CloseTaskError) -> Status {
             Status::not_found(message)
         }
         CloseTaskError::Revision(_) => Status::aborted(message),
+        CloseTaskError::Mutation(error) => task_mutation_status(&error),
         CloseTaskError::WriteStore(_) => Status::internal(message),
         CloseTaskError::ReviewTask(error) => create_task_status(*error),
     }
@@ -317,6 +320,7 @@ fn edit_task_status(error: &EditTaskError) -> Status {
     match error {
         EditTaskError::TaskNotFound { .. } => Status::not_found(message),
         EditTaskError::Revision(_) => Status::aborted(message),
+        EditTaskError::Mutation(error) => task_mutation_status(error),
         EditTaskError::MutationRequest(error) => mutation_request_status(error),
         EditTaskError::InvalidTitle(_) => Status::invalid_argument(message),
         EditTaskError::PromptLanes(error) => prompt_lanes_status(error),
@@ -359,6 +363,15 @@ fn mutation_request_status(error: &MutationRequestError) -> Status {
     }
 }
 
+fn task_mutation_status<E: std::fmt::Display>(error: &TaskMutationError<E>) -> Status {
+    match error {
+        TaskMutationError::StaleTask { .. } | TaskMutationError::SourceChanged => {
+            Status::aborted(error.to_string())
+        }
+        TaskMutationError::Store(_) => Status::internal(error.to_string()),
+    }
+}
+
 fn get_task_status(error: &GetTaskError) -> Status {
     match error {
         GetTaskError::TaskNotFound { .. } => Status::not_found(error.to_string()),
@@ -384,6 +397,7 @@ fn delete_task_status(error: RemoveTaskError) -> Status {
         RemoveTaskError::ResolveProject(error) => resolve_task_project_status(&error),
         RemoveTaskError::Confirmation(error) => confirmation_status(&error),
         RemoveTaskError::Revision(_) => Status::aborted(message),
+        RemoveTaskError::Mutation(error) => task_mutation_status(&error),
         RemoveTaskError::MutationRequest(error) => mutation_request_status(&error),
         RemoveTaskError::NoteMissing { .. } | RemoveTaskError::HasDependents { .. } => {
             Status::failed_precondition(message)
@@ -403,6 +417,7 @@ fn reopen_task_status(error: ReopenTaskError) -> Status {
         ReopenTaskError::ResolveProject(error) => resolve_task_project_status(&error),
         ReopenTaskError::Confirmation(error) => confirmation_status(&error),
         ReopenTaskError::Revision(_) => Status::aborted(error.to_string()),
+        ReopenTaskError::Mutation(error) => task_mutation_status(&error),
         ReopenTaskError::MutationRequest(error) => mutation_request_status(&error),
         ReopenTaskError::WriteStore(_) => Status::internal(error.to_string()),
     }

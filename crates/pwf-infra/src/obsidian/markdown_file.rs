@@ -9,6 +9,7 @@ use gray_matter::engine::{Engine as _, YAML};
 use serde::{Serialize, de::DeserializeOwned};
 
 use super::markdown_line;
+use crate::file_transaction::{FileSnapshot, FileTransaction, PresentFileSnapshot, snapshot};
 
 const UTF8_BYTE_ORDER_MARK: char = '\u{feff}';
 const FRONTMATTER_BYTE_COUNT_MAX: usize = 1024 * 1024;
@@ -18,16 +19,24 @@ const FRONTMATTER_BYTE_COUNT_MAX: usize = 1024 * 1024;
 pub struct MarkdownFile {
     path: PathBuf,
     source: String,
+    observed: Option<PresentFileSnapshot>,
 }
 
 impl MarkdownFile {
     /// Reads a Markdown file without normalizing its contents.
     pub fn open(path: impl Into<PathBuf>) -> Result<Self, MarkdownFileError> {
         let path = path.into();
-        match fs::read_to_string(&path) {
-            Ok(source) => Ok(Self { path, source }),
-            Err(source) => Err(MarkdownFileError::Read { path, source }),
-        }
+        let observed = snapshot(&path)
+            .map_err(|source| MarkdownFileError::Read {
+                path: path.clone(),
+                source: io::Error::other(source),
+            })?
+            .into_present()
+            .ok_or_else(|| MarkdownFileError::Read {
+                path: path.clone(),
+                source: io::Error::new(io::ErrorKind::NotFound, "file does not exist"),
+            })?;
+        Self::from_snapshot(observed)
     }
 
     /// Reads and deserializes YAML frontmatter without loading the Markdown body.
@@ -148,17 +157,57 @@ impl MarkdownFile {
 
     /// Atomically replaces the file through a temporary file in the destination directory.
     pub fn save(&self) -> Result<(), MarkdownFileError> {
-        write_text_atomic(&self.path, &self.source).map_err(|source| MarkdownFileError::Write {
-            path: self.path.clone(),
-            source,
-        })
+        let observed = self
+            .observed
+            .clone()
+            .ok_or_else(|| MarkdownFileError::Write {
+                path: self.path.clone(),
+                source: io::Error::other("Markdown source was not read from this file"),
+            })?;
+        let mut transaction = FileTransaction::new();
+        transaction
+            .replace(
+                FileSnapshot::Present(observed),
+                self.source.clone().into_bytes().into_boxed_slice(),
+            )
+            .and_then(|()| transaction.commit())
+            .map_err(|source| MarkdownFileError::Write {
+                path: self.path.clone(),
+                source: io::Error::other(source),
+            })
     }
 
     pub(super) fn from_source(path: impl Into<PathBuf>, source: String) -> Self {
         Self {
             path: path.into(),
             source,
+            observed: None,
         }
+    }
+
+    pub(crate) fn from_snapshot(observed: PresentFileSnapshot) -> Result<Self, MarkdownFileError> {
+        let path = observed.path().to_path_buf();
+        let source = String::from_utf8(observed.bytes().to_vec()).map_err(|source| {
+            MarkdownFileError::Read {
+                path: path.clone(),
+                source: io::Error::new(io::ErrorKind::InvalidData, source),
+            }
+        })?;
+        Ok(Self {
+            path,
+            source,
+            observed: Some(observed),
+        })
+    }
+
+    pub(crate) fn into_replacement(
+        self,
+    ) -> Result<(PresentFileSnapshot, Box<[u8]>), MarkdownFileError> {
+        let observed = self.observed.ok_or_else(|| MarkdownFileError::Write {
+            path: self.path,
+            source: io::Error::other("Markdown source was not read from this file"),
+        })?;
+        Ok((observed, self.source.into_bytes().into_boxed_slice()))
     }
 
     pub(super) fn into_source(self) -> String {
@@ -191,7 +240,19 @@ impl MarkdownFile {
         path: impl Into<PathBuf>,
         source: String,
     ) -> Result<(), MarkdownFileError> {
-        Self::from_source(path, source).save()
+        let path = path.into();
+        let observed = snapshot(&path).map_err(|source| MarkdownFileError::Write {
+            path: path.clone(),
+            source: io::Error::other(source),
+        })?;
+        let mut transaction = FileTransaction::new();
+        transaction
+            .replace(observed, source.into_bytes().into_boxed_slice())
+            .and_then(|()| transaction.commit())
+            .map_err(|source| MarkdownFileError::Write {
+                path,
+                source: io::Error::other(source),
+            })
     }
 
     pub(super) fn property_text(&self, name: &str) -> Result<Option<&str>, MarkdownFileError> {
@@ -880,14 +941,6 @@ fn add_frontmatter(source: &str, name: &str, value: &str) -> String {
         .strip_prefix(UTF8_BYTE_ORDER_MARK)
         .map_or(("", source), |body| ("\u{feff}", body));
     format!("{byte_order_mark}---{newline}{name}: {value}{newline}---{newline}{newline}{body}")
-}
-
-fn write_text_atomic(path: &Path, source: &str) -> io::Result<()> {
-    let temporary = prepare_temporary_file(path, source)?;
-    temporary
-        .persist(path)
-        .map(|_| ())
-        .map_err(|error| error.error)
 }
 
 fn write_text_atomic_new(path: &Path, source: &str) -> io::Result<()> {

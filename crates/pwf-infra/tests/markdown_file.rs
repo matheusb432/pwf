@@ -138,6 +138,24 @@ fn updates_one_property_without_rewriting_unrelated_bytes() {
 }
 
 #[test]
+fn save_rejects_a_file_changed_after_open() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("harbor.md");
+    fs::write(&path, "---\ntitle: Harbor\n---\n").unwrap();
+    let mut file = MarkdownFile::open(&path).unwrap();
+    file.set_property("title", &"Local edit").unwrap();
+    fs::write(&path, "---\ntitle: External edit\n---\n").unwrap();
+
+    let error = file.save().unwrap_err();
+
+    assert!(error.to_string().contains("file changed since it was read"));
+    assert_eq!(
+        fs::read_to_string(path).unwrap(),
+        "---\ntitle: External edit\n---\n"
+    );
+}
+
+#[test]
 fn create_new_refuses_to_replace_an_existing_file() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("harbor.md");

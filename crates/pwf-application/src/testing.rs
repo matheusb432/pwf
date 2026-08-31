@@ -14,6 +14,7 @@ use pwf_models::{
         Project, ProjectId, ProjectName, ProjectSource, ProjectSourceKind, ProjectSourceValue,
         ProjectTasks, ProjectTasksKind, ProjectTasksPath,
     },
+    revision::ContentRevision,
     task::{BlockedBy, TaskId, TaskSection, TaskStatus, TaskTags, TaskTimestamp},
 };
 use pwf_wire::task::RawTaskTags;
@@ -23,7 +24,8 @@ use crate::ports::{
     project_note::{NewProjectNote, ProjectNotePatch, ProjectNoteStore},
     task_record::{
         IndexEntry, IndexEntryStore, IndexSectionStore, Materialization, NewTask, NullablePatch,
-        StoredBlockedBy, TaskPatch, TaskRecord, TaskStore,
+        StoredBlockedBy, TaskMutationError, TaskMutationStore, TaskPatch, TaskRecord,
+        TaskRevisionState, TaskStore, TaskWrite, TaskWriteSet,
     },
 };
 
@@ -46,6 +48,7 @@ struct InMemoryState {
     project_note_creations: BTreeMap<ProjectName, Vec<AppDate>>,
     project_note_patches: BTreeMap<ProjectName, Vec<ProjectNotePatch>>,
     project_note_failures: Vec<ProjectNoteFailure>,
+    next_task_revision: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,6 +75,8 @@ pub enum InMemoryStoreError {
     TaskNoteMarkdownMissing { locator: String },
     #[error("task {id} already exists")]
     TaskAlreadyExists { id: TaskId },
+    #[error("task {id} does not exist")]
+    TaskNotFound { id: TaskId },
 }
 
 impl InMemoryStore {
@@ -102,6 +107,21 @@ impl InMemoryStore {
             .get(&project_name(project))
             .cloned()
             .unwrap_or_default()
+    }
+
+    pub(crate) fn externally_edit_task(&self, project: &Project, id: &TaskId) {
+        let mut state = self.lock();
+        let revision = next_task_revision(&mut state);
+        let record = state
+            .tasks
+            .entry(project.title.clone())
+            .or_default()
+            .iter_mut()
+            .find(|task| task.id == *id)
+            .unwrap();
+        record.source.push_str("\nexternal edit\n");
+        record.body.push_str("\nexternal edit\n");
+        record.revision = revision;
     }
 
     pub fn with_project_notes(self, project: &str, notes: Vec<ProjectNote>) -> Self {
@@ -192,6 +212,7 @@ pub(crate) fn task_record(id: &str) -> TaskRecord {
         locator: pwf_wire::task::TaskNotePath::new(format!("/mem/foo-bar/{id}.md").into()),
         placement: None,
         materialization: Materialization::NoteFile,
+        revision: ContentRevision::try_new("0".repeat(64)).unwrap(),
     }
 }
 
@@ -282,6 +303,7 @@ impl TaskStore for InMemoryStore {
         new: NewTask,
     ) -> Result<TaskRecord, Self::Error> {
         let mut state = self.lock();
+        let revision = next_task_revision(&mut state);
         let tasks = state.tasks.entry(project.title.clone()).or_default();
         if tasks.iter().any(|task| task.id == *id) {
             return Err(InMemoryStoreError::TaskAlreadyExists { id: id.clone() });
@@ -309,56 +331,170 @@ impl TaskStore for InMemoryStore {
             locator,
             placement: None,
             materialization: Materialization::NoteFile,
+            revision,
         };
         tasks.push(record.clone());
         Ok(record)
     }
+}
 
-    /// Applies an [`TaskPatch`] to the matching record's typed fields.
-    fn update(&self, project: &Project, id: &TaskId, patch: TaskPatch) -> Result<(), Self::Error> {
+impl TaskMutationStore for InMemoryStore {
+    type Error = InMemoryStoreError;
+
+    fn commit_task_writes(
+        &self,
+        project: &Project,
+        writes: TaskWriteSet,
+    ) -> Result<(), TaskMutationError<Self::Error>> {
         let mut state = self.lock();
-        let tasks = state.tasks.entry(project.title.clone()).or_default();
-        let record = tasks.iter_mut().find(|task| task.id == *id).unwrap();
-        if let Some(status) = patch.status {
-            record.status = status;
+        validate_task_revisions(&state, &project.title, writes.expected())?;
+
+        for write in writes.into_parts().1 {
+            apply_task_write(&mut state, &project.title, write)
+                .map_err(TaskMutationError::Store)?;
         }
-        apply_nullable_patch(&mut record.completed_at, patch.completed_at);
-        apply_nullable_patch(&mut record.commits, patch.commits);
-        if let Some(body) = patch.body {
-            record.body = body;
-        }
-        if let Some(title) = patch.title {
-            record.title = title.to_string();
-        }
-        match patch.blocked_by {
-            NullablePatch::Unchanged => {}
-            NullablePatch::Clear => {
-                record.blocked_by = crate::ports::task_record::StoredBlockedBy::Absent;
-            }
-            NullablePatch::Set(blocked_by) => {
-                record.blocked_by = crate::ports::task_record::StoredBlockedBy::Valid(blocked_by);
-            }
-        }
-        match patch.effort {
-            NullablePatch::Unchanged => {}
-            NullablePatch::Clear => record.effort = None,
-            NullablePatch::Set(effort) => record.effort = Some(effort.to_string()),
-        }
-        apply_nullable_patch(
-            &mut record.priority,
-            patch.priority.map(|priority| priority.to_string()),
-        );
-        apply_nullable_patch(&mut record.tags, patch.tags.map(|tags| render_tags(&tags)));
         Ok(())
     }
+}
 
-    fn delete(&self, project: &Project, id: &TaskId) -> Result<(), Self::Error> {
-        let mut state = self.lock();
-        let tasks = state.tasks.entry(project.title.clone()).or_default();
-        let before = tasks.len();
-        tasks.retain(|task| task.id != *id);
-        assert!(before > tasks.len(), "delete of unknown id {id:?}");
-        Ok(())
+fn apply_task_write(
+    state: &mut InMemoryState,
+    project: &ProjectName,
+    write: TaskWrite,
+) -> Result<(), InMemoryStoreError> {
+    match write {
+        TaskWrite::Patch { id, patch } => {
+            let revision = next_task_revision(state);
+            let record = state
+                .tasks
+                .entry(project.clone())
+                .or_default()
+                .iter_mut()
+                .find(|task| task.id == id)
+                .ok_or_else(|| InMemoryStoreError::TaskNotFound { id: id.clone() })?;
+            apply_task_patch(record, patch);
+            record.revision = revision;
+        }
+        TaskWrite::MoveToTrash { id } => {
+            let tasks = state.tasks.entry(project.clone()).or_default();
+            let before = tasks.len();
+            tasks.retain(|task| task.id != id);
+            if before == tasks.len() {
+                return Err(InMemoryStoreError::TaskNotFound { id });
+            }
+        }
+        TaskWrite::UpsertIndex(entry) => {
+            let entries = state.entries.entry(project.clone()).or_default();
+            if let Some(existing) = entries.iter_mut().find(|stored| stored.id == entry.id) {
+                *existing = entry;
+            } else {
+                entries.push(entry);
+            }
+            bump_index_backed_revisions(state, project);
+        }
+        TaskWrite::DeleteIndex(id) => {
+            state
+                .entries
+                .entry(project.clone())
+                .or_default()
+                .retain(|entry| entry.id != id);
+            bump_index_backed_revisions(state, project);
+        }
+        TaskWrite::RenameIndexSection {
+            current_label,
+            new_label,
+        } => {
+            rename_section(
+                state.sections.entry(project.clone()).or_default(),
+                &current_label,
+                &new_label,
+            );
+            rename_entry_sections(
+                state.entries.entry(project.clone()).or_default(),
+                &current_label,
+                &new_label,
+            );
+            bump_index_backed_revisions(state, project);
+        }
+    }
+    Ok(())
+}
+
+fn validate_task_revisions(
+    state: &InMemoryState,
+    project: &ProjectName,
+    expected: &[crate::ports::task_record::ExpectedTaskRevision],
+) -> Result<(), TaskMutationError<InMemoryStoreError>> {
+    for expectation in expected {
+        validate_task_revision(state, project, expectation)?;
+    }
+    Ok(())
+}
+
+fn validate_task_revision(
+    state: &InMemoryState,
+    project: &ProjectName,
+    expected: &crate::ports::task_record::ExpectedTaskRevision,
+) -> Result<(), TaskMutationError<InMemoryStoreError>> {
+    let current = state
+        .tasks
+        .get(project)
+        .and_then(|tasks| tasks.iter().find(|task| task.id == expected.id));
+    match current {
+        Some(record) if record.revision == expected.revision => Ok(()),
+        Some(record) => Err(TaskMutationError::StaleTask {
+            id: expected.id.clone(),
+            expected: expected.revision.clone(),
+            current: TaskRevisionState::Present(record.revision.clone()),
+        }),
+        None => Err(TaskMutationError::StaleTask {
+            id: expected.id.clone(),
+            expected: expected.revision.clone(),
+            current: TaskRevisionState::Missing,
+        }),
+    }
+}
+
+fn apply_task_patch(record: &mut TaskRecord, patch: TaskPatch) {
+    if let Some(status) = patch.status {
+        record.status = status;
+    }
+    apply_nullable_patch(&mut record.completed_at, patch.completed_at);
+    apply_nullable_patch(&mut record.commits, patch.commits);
+    if let Some(body) = patch.body {
+        record.body = body;
+    }
+    if let Some(title) = patch.title {
+        record.title = title.to_string();
+    }
+    match patch.blocked_by {
+        NullablePatch::Unchanged => {}
+        NullablePatch::Clear => record.blocked_by = StoredBlockedBy::Absent,
+        NullablePatch::Set(blocked_by) => record.blocked_by = StoredBlockedBy::Valid(blocked_by),
+    }
+    match patch.effort {
+        NullablePatch::Unchanged => {}
+        NullablePatch::Clear => record.effort = None,
+        NullablePatch::Set(effort) => record.effort = Some(effort.to_string()),
+    }
+    apply_nullable_patch(
+        &mut record.priority,
+        patch.priority.map(|priority| priority.to_string()),
+    );
+    apply_nullable_patch(&mut record.tags, patch.tags.map(|tags| render_tags(&tags)));
+}
+
+fn next_task_revision(state: &mut InMemoryState) -> ContentRevision {
+    state.next_task_revision = state.next_task_revision.saturating_add(1);
+    ContentRevision::try_new(format!("{:064x}", state.next_task_revision)).unwrap()
+}
+
+fn bump_index_backed_revisions(state: &mut InMemoryState, project: &ProjectName) {
+    let revision = next_task_revision(state);
+    for task in state.tasks.entry(project.clone()).or_default() {
+        if matches!(task.materialization, Materialization::MissingNote { .. }) {
+            task.revision.clone_from(&revision);
+        }
     }
 }
 
@@ -526,6 +662,7 @@ impl IndexEntryStore for InMemoryStore {
             .entry(project.title.clone())
             .or_default()
             .retain(|entry| entry.id != *id);
+        bump_index_backed_revisions(&mut state, &project.title);
         Ok(())
     }
 }
@@ -543,6 +680,7 @@ impl InMemoryStore {
             Some(existing) => *existing = entry,
             None => entries.push(entry),
         }
+        bump_index_backed_revisions(&mut state, &project.title);
     }
 }
 
@@ -604,6 +742,7 @@ impl IndexSectionStore for InMemoryStore {
         if let Some(entries) = state.entries.get_mut(&project.title) {
             rename_entry_sections(entries, current_label, new_label);
         }
+        bump_index_backed_revisions(&mut state, &project.title);
         Ok(())
     }
 }

@@ -13,7 +13,7 @@ use pwf_client::{
     pb::{
         self, Agent, DispatchMode, IndexSection, ProjectStatusFilter, SessionEffort,
         TaskReadFormat, delete_note_result, note_service_client::NoteServiceClient,
-        task_service_client::TaskServiceClient,
+        session_service_client::SessionServiceClient, task_service_client::TaskServiceClient,
     },
 };
 use pwf_local_auth::{
@@ -201,6 +201,80 @@ impl TestServer {
             Some(pb::delete_task_response::Value::Preflight(_))
         ));
         Ok((sender, stream))
+    }
+
+    async fn open_reopen_confirmation(
+        &self,
+        task_id: &str,
+    ) -> anyhow::Result<(
+        mpsc::Sender<pb::ReopenTaskRequest>,
+        tonic::Streaming<pb::ReopenTaskResponse>,
+    )> {
+        let (sender, receiver) = mpsc::channel(2);
+        sender
+            .send(pb::ReopenTaskRequest {
+                value: Some(pb::reopen_task_request::Value::Start(pb::ReopenTaskStart {
+                    id: task_id.to_string(),
+                    request_id: "transport-open-reopen".to_string(),
+                })),
+            })
+            .await?;
+        let mut stream = TaskServiceClient::new(self.channel().await?)
+            .reopen_task(authenticated(
+                Request::new(ReceiverStream::new(receiver)),
+                &self.token,
+            )?)
+            .await?
+            .into_inner();
+        let preflight = stream
+            .message()
+            .await?
+            .context("reopen preflight response is missing")?;
+        assert!(matches!(
+            preflight.value,
+            Some(pb::reopen_task_response::Value::Preflight(_))
+        ));
+        Ok((sender, stream))
+    }
+
+    async fn open_session_confirmation(
+        &self,
+        task_id: &str,
+    ) -> anyhow::Result<(
+        mpsc::Sender<pb::DispatchSessionRequest>,
+        tonic::Streaming<pb::DispatchSessionResponse>,
+    )> {
+        let (sender, receiver) = mpsc::channel(2);
+        sender
+            .send(pb::DispatchSessionRequest {
+                value: Some(pb::dispatch_session_request::Value::Start(session_request(
+                    task_id,
+                ))),
+            })
+            .await?;
+        let mut stream = SessionServiceClient::new(self.channel().await?)
+            .dispatch_session(authenticated(
+                Request::new(ReceiverStream::new(receiver)),
+                &self.token,
+            )?)
+            .await?
+            .into_inner();
+        let preflight = stream
+            .message()
+            .await?
+            .context("session preflight response is missing")?;
+        assert!(matches!(
+            preflight.value,
+            Some(pb::dispatch_session_response::Value::Preflight(_))
+        ));
+        Ok((sender, stream))
+    }
+
+    fn task_path(&self, task_id: &str) -> std::path::PathBuf {
+        self.root
+            .path()
+            .join("notes/foo-bar")
+            .join(format!("{task_id}.md"))
     }
 
     fn begin_shutdown(&mut self) -> anyhow::Result<()> {
@@ -1068,6 +1142,145 @@ async fn generated_client_preserves_reopen_confirmation_flow() -> anyhow::Result
         read.value,
         Some(get_task_response::Value::Path(_))
     ));
+
+    server.finish().await
+}
+
+#[tokio::test]
+async fn remove_wait_does_not_hold_the_writer_lock_and_accepting_stale_preflight_aborts()
+-> anyhow::Result<()> {
+    let server = TestServer::start(Duration::from_secs(2)).await?;
+    let task_id = server.add_project_and_task().await?;
+    let (sender, mut remove) = server.open_remove_confirmation(&task_id).await?;
+
+    tokio::time::timeout(
+        TEST_TIMEOUT,
+        server.client.task().update_task(priority_update(
+            &task_id,
+            Some(pb::priority_edit::Operation::Set(
+                pb::PriorityTier::Medium as i32,
+            )),
+        )),
+    )
+    .await??;
+    sender
+        .send(pb::DeleteTaskRequest {
+            value: Some(pb::delete_task_request::Value::Decision(
+                pb::ConfirmationDecision { confirmed: true },
+            )),
+        })
+        .await?;
+
+    let status = remove.message().await.unwrap_err();
+
+    assert_eq!(status.code(), Code::Aborted);
+    assert_eq!(
+        task_data(&server, &task_id).await?.priority,
+        Some(pb::PriorityTier::Medium as i32)
+    );
+    assert!(
+        !server
+            .root
+            .path()
+            .join("notes/.trash")
+            .join(format!("{task_id}.md"))
+            .exists()
+    );
+    assert!(
+        std::fs::read_to_string(server.root.path().join("notes/foo-bar/foo-bar.md"))?
+            .contains(&task_id)
+    );
+
+    server.finish().await
+}
+
+#[tokio::test]
+async fn reopen_wait_does_not_hold_the_writer_lock_and_accepting_stale_preflight_aborts()
+-> anyhow::Result<()> {
+    let server = TestServer::start(Duration::from_secs(2)).await?;
+    let task_id = server.add_project_and_task().await?;
+    server
+        .client
+        .task()
+        .complete_task(pb::CompleteTaskRequest {
+            id: task_id.clone(),
+            report: None,
+            commits: Vec::new(),
+            review: false,
+            expected_revision: None,
+            request_id: String::new(),
+        })
+        .await?;
+    let (sender, mut reopen) = server.open_reopen_confirmation(&task_id).await?;
+
+    let created = tokio::time::timeout(
+        TEST_TIMEOUT,
+        server.add_task("writer completed while reopen waited"),
+    )
+    .await??;
+    let task_path = server.task_path(&task_id);
+    let external = format!("{}\nexternal edit\n", std::fs::read_to_string(&task_path)?);
+    std::fs::write(&task_path, &external)?;
+    sender
+        .send(pb::ReopenTaskRequest {
+            value: Some(pb::reopen_task_request::Value::Decision(
+                pb::ConfirmationDecision { confirmed: true },
+            )),
+        })
+        .await?;
+
+    let status = reopen.message().await.unwrap_err();
+
+    assert_eq!(status.code(), Code::Aborted);
+    assert_eq!(std::fs::read_to_string(task_path)?, external);
+    assert!(
+        std::fs::read_to_string(server.root.path().join("notes/foo-bar/foo-bar.md"))?
+            .contains(&format!("- [x] [[{task_id}]]"))
+    );
+    server
+        .client
+        .task()
+        .get_task(pb::GetTaskRequest {
+            id: created,
+            output: TaskReadFormat::Path as i32,
+        })
+        .await?;
+
+    server.finish().await
+}
+
+#[tokio::test]
+async fn session_wait_does_not_hold_the_writer_lock_and_accepting_stale_preflight_aborts()
+-> anyhow::Result<()> {
+    let server = TestServer::start(Duration::from_secs(2)).await?;
+    let task_id = server.add_project_and_task().await?;
+    let (sender, mut session) = server.open_session_confirmation(&task_id).await?;
+
+    tokio::time::timeout(
+        TEST_TIMEOUT,
+        server.client.task().update_task(priority_update(
+            &task_id,
+            Some(pb::priority_edit::Operation::Set(
+                pb::PriorityTier::Medium as i32,
+            )),
+        )),
+    )
+    .await??;
+    sender
+        .send(pb::DispatchSessionRequest {
+            value: Some(pb::dispatch_session_request::Value::Decision(
+                pb::ConfirmationDecision { confirmed: true },
+            )),
+        })
+        .await?;
+
+    let status = session.message().await.unwrap_err();
+
+    assert_eq!(status.code(), Code::Aborted);
+    assert_eq!(
+        task_data(&server, &task_id).await?.priority,
+        Some(pb::PriorityTier::Medium as i32)
+    );
 
     server.finish().await
 }

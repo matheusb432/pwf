@@ -7,6 +7,7 @@ use std::{
 use pwf_models::{
     AppDate,
     project::{ProjectName, ProjectSelector, ProjectSourceValue},
+    revision::ContentRevision,
     task::{
         BlockedBy, CommitRanges, EffortTier, IndexSection, PriorityTier, TaskId, TaskPrompt,
         TaskReport, TaskSection, TaskStatus, TaskTags, TaskTitle,
@@ -239,7 +240,7 @@ pub struct CancelTask {
     pub report: TaskReport,
     pub commits: Option<CommitRanges>,
     pub review: bool,
-    pub expected_revision: Option<TaskRevision>,
+    pub expected_revision: Option<ContentRevision>,
     pub request_id: Option<TaskRequestId>,
     pub request_fingerprint: Option<TaskRequestFingerprint>,
 }
@@ -250,7 +251,7 @@ pub struct CompleteTask {
     pub report: Option<TaskReport>,
     pub commits: Option<CommitRanges>,
     pub review: bool,
-    pub expected_revision: Option<TaskRevision>,
+    pub expected_revision: Option<ContentRevision>,
     pub request_id: Option<TaskRequestId>,
     pub request_fingerprint: Option<TaskRequestFingerprint>,
 }
@@ -393,7 +394,7 @@ pub struct EmptyTaskEdits;
 pub struct EditTask {
     pub id: TaskId,
     pub edits: TaskEdits,
-    pub expected_revision: Option<TaskRevision>,
+    pub expected_revision: Option<ContentRevision>,
     pub request_id: Option<TaskRequestId>,
     pub request_fingerprint: Option<TaskRequestFingerprint>,
 }
@@ -464,7 +465,7 @@ pub struct TaskRequestFingerprint(Box<str>);
 impl TaskRequestFingerprint {
     #[must_use]
     pub fn from_digest(digest: [u8; 32]) -> Self {
-        Self(TaskRevision::from_digest(digest).0)
+        Self(digest_hex(digest).into_boxed_str())
     }
 }
 
@@ -480,53 +481,15 @@ impl fmt::Display for TaskRequestFingerprint {
     }
 }
 
-/// Identifies the semantic task state observed by a task read.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct TaskRevision(Box<str>);
-
-impl TaskRevision {
-    pub const LEN: usize = 64;
-
-    /// Validates a lowercase hexadecimal BLAKE3 task revision.
-    pub fn try_new(value: impl Into<String>) -> Result<Self, TaskRevisionError> {
-        let value = value.into();
-        if value.len() != Self::LEN
-            || !value
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
-        {
-            return Err(TaskRevisionError);
-        }
-        Ok(Self(value.into_boxed_str()))
+fn digest_hex(digest: [u8; 32]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut value = String::with_capacity(64);
+    for byte in digest {
+        value.push(char::from(HEX[usize::from(byte >> 4)]));
+        value.push(char::from(HEX[usize::from(byte & 0x0f)]));
     }
-
-    #[must_use]
-    pub fn from_digest(digest: [u8; 32]) -> Self {
-        const HEX: &[u8; 16] = b"0123456789abcdef";
-        let mut value = String::with_capacity(Self::LEN);
-        for byte in digest {
-            value.push(char::from(HEX[usize::from(byte >> 4)]));
-            value.push(char::from(HEX[usize::from(byte & 0x0f)]));
-        }
-        Self(value.into_boxed_str())
-    }
+    value
 }
-
-impl AsRef<str> for TaskRevision {
-    fn as_ref(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Display for TaskRevision {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("must be a 64-character lowercase hexadecimal value")]
-pub struct TaskRevisionError;
 
 /// Requests one task in a selected output representation.
 #[derive(Debug, Clone)]
@@ -802,7 +765,7 @@ pub enum TaskRead {
 /// Carries a selected task representation and its concurrency revision.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskSnapshot {
-    pub revision: TaskRevision,
+    pub revision: ContentRevision,
     pub value: TaskRead,
 }
 

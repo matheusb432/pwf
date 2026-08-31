@@ -253,47 +253,47 @@ fn page_binding(query: &ResolvedListTasks) -> String {
         .project
         .as_ref()
         .map_or("<all>", |project| project.id.as_ref());
-    super::revision_field(&mut hasher, "project", project);
-    super::revision_field(&mut hasher, "scope", list_scope_name(query.scope));
-    super::revision_field(
+    digest_field(&mut hasher, "project", project);
+    digest_field(&mut hasher, "scope", list_scope_name(query.scope));
+    digest_field(
         &mut hasher,
         "cap",
         &query
             .cap
             .map_or_else(|| "all".to_string(), |cap| cap.to_string()),
     );
-    super::revision_optional_field(
+    digest_optional_field(
         &mut hasher,
         "effort",
         query.effort.as_ref().map(AsRef::as_ref),
     );
-    super::revision_optional_field(
+    digest_optional_field(
         &mut hasher,
         "priority",
         query.priority.as_ref().map(AsRef::as_ref),
     );
     if let Some(tags) = &query.tags {
         for tag in tags.iter() {
-            super::revision_field(&mut hasher, "tag", tag.as_ref());
+            digest_field(&mut hasher, "tag", tag.as_ref());
         }
     }
-    super::revision_field(
+    digest_field(
         &mut hasher,
         "order_field",
         order_field_name(query.order.field),
     );
-    super::revision_field(
+    digest_field(
         &mut hasher,
         "order_direction",
         order_direction_name(query.order.direction),
     );
-    super::revision_field(
+    digest_field(
         &mut hasher,
         "status",
         status_filter_name(query.status_filter),
     );
-    super::revision_field(&mut hasher, "detail", list_detail_name(query.detail));
-    super::revision_field(
+    digest_field(&mut hasher, "detail", list_detail_name(query.detail));
+    digest_field(
         &mut hasher,
         "page_size",
         &query
@@ -301,6 +301,21 @@ fn page_binding(query: &ResolvedListTasks) -> String {
             .map_or_else(|| "unpaged".to_string(), |size| size.get().to_string()),
     );
     hasher.finalize().to_hex().to_string()
+}
+
+fn digest_optional_field(hasher: &mut blake3::Hasher, name: &str, value: Option<&str>) {
+    digest_field(hasher, name, value.unwrap_or("<absent>"));
+}
+
+fn digest_field(hasher: &mut blake3::Hasher, name: &str, value: &str) {
+    hasher.update(&digest_length(name.len()));
+    hasher.update(name.as_bytes());
+    hasher.update(&digest_length(value.len()));
+    hasher.update(value.as_bytes());
+}
+
+fn digest_length(length: usize) -> [u8; 8] {
+    u64::try_from(length).unwrap_or(u64::MAX).to_le_bytes()
 }
 
 fn apply_page(

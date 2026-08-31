@@ -12,7 +12,9 @@ use super::{
 };
 use crate::ports::{
     clock::Clock,
-    task_record::{IndexEntryStore, IndexSectionStore, TaskStore},
+    task_record::{
+        IndexEntryStore, IndexSectionStore, TaskMutationError, TaskMutationStore, TaskStore,
+    },
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -32,7 +34,7 @@ pub enum CompleteTaskError {
 #[cqrsy::command]
 pub async fn execute(
     command: &CompleteTask,
-    store: &(impl TaskStore + IndexEntryStore + IndexSectionStore),
+    store: &(impl TaskStore + IndexEntryStore + IndexSectionStore + TaskMutationStore),
     pool: &sqlx::SqlitePool,
     clock: &impl Clock,
 ) -> Result<Option<TaskId>, CompleteTaskError> {
@@ -109,6 +111,9 @@ fn close_failed_before_mutation(error: &CloseTaskError) -> bool {
         CloseTaskError::TaskNotFound { .. }
             | CloseTaskError::UnknownProjectId { .. }
             | CloseTaskError::Revision(_)
+            | CloseTaskError::Mutation(
+                TaskMutationError::StaleTask { .. } | TaskMutationError::SourceChanged
+            )
     )
 }
 

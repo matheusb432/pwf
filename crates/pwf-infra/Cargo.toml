@@ -22,6 +22,8 @@ harness = false
 
 [dependencies]
 anyhow = { workspace = true }
+atomic-write-file = { workspace = true }
+blake3 = { workspace = true }
 jiff = { workspace = true }
 lazy-regex = { workspace = true }
 directories = { workspace = true }

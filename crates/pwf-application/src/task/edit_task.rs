@@ -12,7 +12,7 @@ use pwf_wire::{
 use super::{
     TaskPromptTitleError,
     blocked_by::{self, BlockedByValidationError, validate_and_merge},
-    ensure_task_revision, infer_task_title,
+    commit_task_writes, ensure_task_revision, expected_task_revision, infer_task_title,
     lane_configuration::{TaskPromptLanes, TaskPromptLanesError},
     mutation_request::{self, MutationOperation, MutationRequestState, MutationStart},
     note_body::{EditLanesError, append_lanes, edit_lanes, render},
@@ -21,7 +21,8 @@ use super::{
 };
 use crate::{
     ports::task_record::{
-        Materialization, NullablePatch, StoredBlockedBy, TaskPatch, TaskRecord, TaskStore,
+        ExpectedTaskRevision, Materialization, NullablePatch, StoredBlockedBy, TaskMutationError,
+        TaskMutationStore, TaskPatch, TaskRecord, TaskStore, TaskWrite,
     },
     project::list_projects,
 };
@@ -30,6 +31,7 @@ struct PreparedTaskEdit {
     project: Project,
     id: TaskId,
     patch: TaskPatch,
+    expected: ExpectedTaskRevision,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -83,6 +85,8 @@ pub enum EditTaskError {
     #[error(transparent)]
     WriteStore(anyhow::Error),
     #[error(transparent)]
+    Mutation(#[from] TaskMutationError<anyhow::Error>),
+    #[error(transparent)]
     QueryProject(anyhow::Error),
 }
 
@@ -90,7 +94,7 @@ pub enum EditTaskError {
 #[cqrsy::command]
 pub async fn execute(
     command: EditTask,
-    store: &impl TaskStore,
+    store: &(impl TaskStore + TaskMutationStore),
     pool: &sqlx::SqlitePool,
 ) -> Result<(), EditTaskError> {
     update(command, store, pool).await
@@ -98,7 +102,7 @@ pub async fn execute(
 
 async fn update(
     command: EditTask,
-    store: &impl TaskStore,
+    store: &(impl TaskStore + TaskMutationStore),
     pool: &sqlx::SqlitePool,
 ) -> Result<(), EditTaskError> {
     let identity = mutation_request::identity(
@@ -211,6 +215,7 @@ fn prepare(
         project,
         id: command.id,
         patch,
+        expected: expected_task_revision(record),
     })
 }
 
@@ -335,10 +340,20 @@ fn merge_appended_tags(
     Ok(existing.merge(appended))
 }
 
-fn persist(prepared: PreparedTaskEdit, store: &impl TaskStore) -> Result<(), EditTaskError> {
-    store
-        .update(&prepared.project, &prepared.id, prepared.patch)
-        .map_err(|error| EditTaskError::WriteStore(anyhow::Error::new(error)))
+fn persist(
+    prepared: PreparedTaskEdit,
+    store: &impl TaskMutationStore,
+) -> Result<(), EditTaskError> {
+    commit_task_writes(
+        store,
+        &prepared.project,
+        vec![prepared.expected],
+        vec![TaskWrite::Patch {
+            id: prepared.id,
+            patch: prepared.patch,
+        }],
+    )
+    .map_err(Into::into)
 }
 
 fn map_lane_error(error: EditLanesError) -> EditTaskError {

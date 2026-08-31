@@ -198,7 +198,7 @@ fn render_entry_line(entry: &IndexEntry) -> String {
 }
 
 /// Rewrites matching H2 labels while preserving all other bytes and the trailing newline.
-fn rename_header_lines(content: &str, from: &str, to: &str) -> String {
+pub(super) fn rename_header_lines(content: &str, from: &str, to: &str) -> String {
     content
         .split('\n')
         .map(|line| {
@@ -220,6 +220,39 @@ fn replace_line(content: &str, line_number: usize, new_line: &str) -> String {
         .find(['\r', '\n'])
         .map_or(content.len(), |offset| start + offset);
     format!("{}{new_line}{}", &content[..start], &content[end..])
+}
+
+pub(super) fn upsert_index_entry_text(
+    index_path: &Path,
+    content: &str,
+    entry: &IndexEntry,
+) -> Result<(String, Option<TaskSection>), ObsidianStoreError> {
+    let new_line = render_entry_line(entry);
+    if let Some(existing) = parse_index_lines(index_path, content)?
+        .into_iter()
+        .find(|line| line.id == entry.id)
+    {
+        return Ok((
+            replace_line(content, existing.line_number.get(), &new_line),
+            None,
+        ));
+    }
+    Ok(match entry.section.as_ref().and_then(KnownSection::parse) {
+        Some(section) => {
+            let created_section = (!section_exists(content, section))
+                .then(|| entry.section.clone())
+                .flatten();
+            (
+                add_section_block(content, &format!("{new_line}\n"), section),
+                created_section,
+            )
+        }
+        None => (add_link_to_index(content, &new_line), None),
+    })
+}
+
+pub(super) fn delete_index_entry_text(content: &str, id: &TaskId) -> String {
+    remove_index_link(content, id.as_ref())
 }
 
 impl ObsidianStore {
@@ -262,27 +295,7 @@ impl ObsidianStore {
         } else {
             new_project_index_content(&identity)
         };
-        let new_line = render_entry_line(entry);
-        if let Some(existing) = parse_index_lines(&index_path, &content)?
-            .into_iter()
-            .find(|line| line.id == entry.id)
-        {
-            let updated = replace_line(&content, existing.line_number.get(), &new_line);
-            return write_index(&index_path, &updated);
-        }
-        let (updated, created_section) = match entry.section.as_ref().and_then(KnownSection::parse)
-        {
-            Some(section) => {
-                let created_section = (!section_exists(&content, section))
-                    .then(|| entry.section.clone())
-                    .flatten();
-                (
-                    add_section_block(&content, &format!("{new_line}\n"), section),
-                    created_section,
-                )
-            }
-            None => (add_link_to_index(&content, &new_line), None),
-        };
+        let (updated, created_section) = upsert_index_entry_text(&index_path, &content, entry)?;
         write_add_index_file(
             &index_path,
             &updated,
@@ -310,7 +323,7 @@ impl ObsidianStore {
         let Some((index_path, content)) = self.validated_project_index(project)? else {
             return Ok(());
         };
-        let updated = remove_index_link(&content, id.as_ref());
+        let updated = delete_index_entry_text(&content, id);
         if updated == content {
             return Ok(());
         }

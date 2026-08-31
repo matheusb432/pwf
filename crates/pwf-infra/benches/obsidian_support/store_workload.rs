@@ -1,7 +1,8 @@
 use std::{fmt::Write as _, fs, path::Path};
 
 use pwf_application::ports::task_record::{
-    NewTask, NullablePatch, TaskPatch, TaskRecord, TaskStore,
+    ExpectedTaskRevision, NewTask, NullablePatch, TaskMutationError, TaskMutationStore, TaskPatch,
+    TaskRecord, TaskStore, TaskWrite, TaskWriteSet,
 };
 use pwf_infra::obsidian::{ObsidianStore, ObsidianStoreError};
 use pwf_models::{
@@ -71,14 +72,33 @@ impl UpdateWorkload {
         }
     }
 
-    pub fn update(&mut self) -> Result<(), ObsidianStoreError> {
+    pub fn update(&mut self) -> Result<(), TaskMutationError<ObsidianStoreError>> {
         let patch = require_some(self.patch.take(), "taking the one-use benchmark patch");
-        TaskStore::update(
-            &self.read.store,
-            &self.read.project,
-            &self.read.selected_id,
-            patch,
+        let record = self
+            .read
+            .get()
+            .map_err(TaskMutationError::Store)?
+            .ok_or_else(|| {
+                TaskMutationError::Store(ObsidianStoreError::TaskNotFound {
+                    id: self.read.selected_id.clone(),
+                })
+            })?;
+        let writes = TaskWriteSet::try_new(
+            vec![ExpectedTaskRevision {
+                id: record.id.clone(),
+                revision: record.revision,
+            }],
+            vec![TaskWrite::Patch {
+                id: record.id,
+                patch,
+            }],
         )
+        .map_err(|source| {
+            TaskMutationError::Store(ObsidianStoreError::TaskMutationFilesystem {
+                source: std::io::Error::other(source),
+            })
+        })?;
+        TaskMutationStore::commit_task_writes(&self.read.store, &self.read.project, writes)
     }
 
     pub fn updated_record(&self) -> Result<TaskRecord, ObsidianStoreError> {

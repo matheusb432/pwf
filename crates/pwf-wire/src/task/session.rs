@@ -2,10 +2,13 @@
 
 use pwf_models::{
     AppDate,
+    project::Project,
+    revision::ContentRevision,
     session::{
         Agent, AgentModel, DispatchMode, LaunchDirectives, LaunchPrompt, PushedPrompt,
         SessionEffort, SessionTaskIds, SessionThreadTitle, SessionWorkingDirectory,
     },
+    task::TaskId,
 };
 
 use super::{BlockedByIssue, BlockedByStatus, TaskHeading};
@@ -68,10 +71,19 @@ pub struct DryRunSession {
 /// Contains a validated session dispatch ready for confirmation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PreparedSessionDispatch {
+    pub project: Box<Project>,
     pub plan: SessionPlan,
     pub confirmation: DispatchConfirmation,
     pub probe: AgentProbe,
     pub warnings: Vec<SessionWarning>,
+    pub task_revisions: Vec<PreparedTaskRevision>,
+}
+
+/// Retains one preflight task revision without exposing it in the transport response.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreparedTaskRevision {
+    pub task_id: TaskId,
+    pub revision: ContentRevision,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

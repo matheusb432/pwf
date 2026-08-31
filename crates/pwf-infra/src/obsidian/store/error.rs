@@ -253,26 +253,15 @@ pub enum ObsidianStoreError {
     TaskVaultNotFound { path: PathBuf },
     #[error("Task file path has no file name: {}", path.display())]
     TaskFileNameMissing { path: PathBuf },
-    #[error("Cannot create Obsidian trash directory {}: {source}", path.display())]
-    CreateTaskTrashDirectory {
-        path: PathBuf,
-        source: std::io::Error,
-    },
-    #[error("Cannot inspect Obsidian trash destination {}: {source}", path.display())]
-    InspectTaskTrashDestination {
-        path: PathBuf,
-        source: std::io::Error,
-    },
     #[error("Obsidian trash destination already exists: {}", path.display())]
     TaskTrashDestinationExists { path: PathBuf },
-    #[error("Cannot move task file from {} to Obsidian trash at {}: {source}", from.display(), to.display())]
-    MoveTaskFileToTrash {
-        from: PathBuf,
-        to: PathBuf,
-        source: std::io::Error,
-    },
     #[error("Task not found: {id}")]
     TaskNotFound { id: TaskId },
+    #[error("Cannot commit guarded task files: {source}")]
+    TaskMutationFilesystem {
+        #[source]
+        source: std::io::Error,
+    },
     #[error("Task ID sequence is exhausted for project {project_id}")]
     TaskIdSequenceExhausted { project_id: ProjectId },
     #[error("task ID {id} is already occupied at {}; retry the command", path.display())]

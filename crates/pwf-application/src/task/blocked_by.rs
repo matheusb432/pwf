@@ -250,7 +250,7 @@ mod tests {
 
     use super::{BlockedByValidationError, statuses, validate_and_merge};
     use crate::{
-        ports::task_record::{NewTask, TaskPatch, TaskRecord, TaskStore},
+        ports::task_record::{NewTask, TaskRecord, TaskStore},
         testing::{
             InMemoryStore, blocked_by, project, staged_missing_task, staged_task,
             stored_blocked_by, task_record,
@@ -285,19 +285,6 @@ mod tests {
             _id: &TaskId,
             _new: NewTask,
         ) -> Result<TaskRecord, Self::Error> {
-            Err(FailingStoreError)
-        }
-
-        fn update(
-            &self,
-            _project: &Project,
-            _id: &TaskId,
-            _patch: TaskPatch,
-        ) -> Result<(), Self::Error> {
-            Err(FailingStoreError)
-        }
-
-        fn delete(&self, _project: &Project, _id: &TaskId) -> Result<(), Self::Error> {
             Err(FailingStoreError)
         }
     }
