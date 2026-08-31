@@ -1,7 +1,7 @@
 use pwf_models::{
     AppDate,
     note::{
-        NoteContent, NoteDomain, NoteId, NoteSource, NoteTag, NoteTitle, NoteVerification, NoteWhy,
+        NoteContent, NoteDomain, NoteId, NoteSource, NoteTag, NoteTitle, NoteVerification,
         ProjectNote,
     },
     project::Project,
@@ -13,7 +13,6 @@ pub struct NewProjectNote {
     pub id: NoteId,
     pub title: NoteTitle,
     pub content: NoteContent,
-    pub why: Option<NoteWhy>,
     pub domain: Option<NoteDomain>,
     pub tags: Vec<NoteTag>,
     pub sources: Vec<NoteSource>,
@@ -25,7 +24,6 @@ pub struct NewProjectNote {
 pub struct ProjectNotePatch {
     pub title: Option<NoteTitle>,
     pub content: Option<NoteContent>,
-    pub why: FieldUpdate<NoteWhy>,
     pub domain: FieldUpdate<NoteDomain>,
     pub tags: CollectionEdit<Vec<NoteTag>>,
     pub sources: CollectionEdit<Vec<NoteSource>>,

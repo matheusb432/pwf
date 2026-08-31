@@ -4,7 +4,7 @@ use pwf_models::{
     AppDate,
     note::{
         NoteContent, NoteDomain, NoteId, NoteSelector, NoteSource, NoteTag, NoteTitle,
-        NoteVerification, NoteWhy,
+        NoteVerification,
     },
     project::{ProjectName, ProjectSelector},
 };
@@ -20,8 +20,6 @@ pub struct AddNote {
     pub title: NoteTitle,
     /// Supplies the note's Markdown body.
     pub content: NoteContent,
-    /// Explains the consequence when it adds useful context.
-    pub why: Option<NoteWhy>,
     /// Classifies the subject when known.
     pub domain: Option<NoteDomain>,
     /// Supplies discovery labels.
@@ -76,7 +74,6 @@ pub struct RemoveNote {
 pub struct NoteEdits {
     title: Option<NoteTitle>,
     content: Option<NoteContent>,
-    why: FieldUpdate<NoteWhy>,
     domain: FieldUpdate<NoteDomain>,
     tags: CollectionEdit<Vec<NoteTag>>,
     sources: CollectionEdit<Vec<NoteSource>>,
@@ -92,7 +89,6 @@ impl NoteEdits {
     pub fn try_new(
         title: Option<NoteTitle>,
         content: Option<NoteContent>,
-        why: FieldUpdate<NoteWhy>,
         domain: FieldUpdate<NoteDomain>,
         tags: CollectionEdit<Vec<NoteTag>>,
         sources: CollectionEdit<Vec<NoteSource>>,
@@ -100,7 +96,6 @@ impl NoteEdits {
     ) -> Result<Self, EmptyNoteEdits> {
         if title.is_none()
             && content.is_none()
-            && why.is_unchanged()
             && domain.is_unchanged()
             && tags.is_unchanged()
             && sources.is_unchanged()
@@ -111,7 +106,6 @@ impl NoteEdits {
         Ok(Self {
             title,
             content,
-            why,
             domain,
             tags,
             sources,
@@ -127,11 +121,6 @@ impl NoteEdits {
     #[must_use]
     pub fn content(&self) -> Option<&NoteContent> {
         self.content.as_ref()
-    }
-
-    #[must_use]
-    pub fn why(&self) -> &FieldUpdate<NoteWhy> {
-        &self.why
     }
 
     #[must_use]

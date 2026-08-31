@@ -187,9 +187,6 @@ fn note_content(project: &str, note: &NewProjectNote) -> String {
     source.push_str("---\n\n");
     let _ = writeln!(source, "# {}\n", note.title);
     let _ = writeln!(source, "{}", note.content);
-    if let Some(why) = &note.why {
-        let _ = write!(source, "\n## Why it matters\n\n{why}\n");
-    }
     if !note.sources.is_empty() {
         source.push_str("\n## Sources\n\n");
         for evidence in &note.sources {
@@ -222,7 +219,6 @@ fn apply_note_patch(
     let ProjectNotePatch {
         title,
         content,
-        why,
         domain,
         tags,
         sources,
@@ -238,23 +234,6 @@ fn apply_note_patch(
     if let Some(content) = content {
         source = replace_content(&source, body_start, content.as_ref());
     }
-    source = match why {
-        FieldUpdate::Unchanged => source,
-        FieldUpdate::Update(why) => edit_section(
-            &source,
-            body_start,
-            "## Why it matters",
-            Some(why.as_ref()),
-            Some("## Sources"),
-        ),
-        FieldUpdate::Clear => edit_section(
-            &source,
-            body_start,
-            "## Why it matters",
-            None,
-            Some("## Sources"),
-        ),
-    };
     if let Some(sources) = &resolved_sources {
         let rendered = sources
             .iter()
@@ -445,7 +424,7 @@ fn replace_content(source: &str, body_start: usize, content: &str) -> String {
     };
     let section_start = markdown_line::lines(source)
         .filter(|line| line.start >= title.end)
-        .find(|line| matches!(line.text.trim(), "## Why it matters" | "## Sources"))
+        .find(|line| line.text.trim() == "## Sources")
         .map_or(source.len(), |line| line.start);
     let newline = body_newline(source, body_start);
     let content = normalize_newlines(content, newline);
@@ -574,10 +553,7 @@ mod tests {
         NewProjectNote, ProjectNotePatch, ProjectNoteStore,
     };
     use pwf_models::{
-        note::{
-            NoteContent, NoteDomain, NoteId, NoteSource, NoteTag, NoteTitle, NoteVerification,
-            NoteWhy,
-        },
+        note::{NoteContent, NoteDomain, NoteId, NoteSource, NoteTag, NoteTitle, NoteVerification},
         project::{
             HomeDirectory, Project, ProjectId, ProjectName, ProjectSource, ProjectSourceKind,
             ProjectSourceValue, ProjectTasks, ProjectTasksKind, ProjectTasksPath,
@@ -628,9 +604,6 @@ mod tests {
             id: identifier(number),
             title: NoteTitle::try_new(title).unwrap(),
             content: NoteContent::try_new("A CLI flag needs a binary test only for an owned contract.\n\n- Preserve the process boundary.").unwrap(),
-            why: Some(
-                NoteWhy::try_new("This protects real process-boundary failures.").unwrap(),
-            ),
             domain: Some(NoteDomain::try_new("testing").unwrap()),
             tags: vec![
                 NoteTag::try_new("cli").unwrap(),
@@ -677,8 +650,6 @@ mod tests {
                 "# remember milk\n\n",
                 "A CLI flag needs a binary test only for an owned contract.\n\n",
                 "- Preserve the process boundary.\n\n",
-                "## Why it matters\n\n",
-                "This protects real process-boundary failures.\n\n",
                 "## Sources\n\n",
                 "- FOO-0001 sample evidence\n",
             )
@@ -746,7 +717,7 @@ mod tests {
             "---\r\n\r\n",
             "# old title\r\n\r\n",
             "Preserve this.\r\n\r\n",
-            "## Why it matters\r\n\r\n",
+            "## Supporting detail\r\n\r\n",
             "Keep every other byte.\r\n",
         );
         fs::write(tasks_path.join("FOO-NOTE-0001.md"), source).unwrap();
@@ -786,7 +757,6 @@ mod tests {
             ProjectNotePatch {
                 title: Some(NoteTitle::try_new("new title").unwrap()),
                 content: Some(NoteContent::try_new("New body.\n\n- Keep structure.").unwrap()),
-                why: FieldUpdate::Update(NoteWhy::try_new("New consequence.").unwrap()),
                 domain: FieldUpdate::Clear,
                 tags: CollectionEdit::Append(vec![
                     NoteTag::try_new("testing").unwrap(),
@@ -812,8 +782,6 @@ mod tests {
                 "\n# new title\n\n",
                 "New body.\n\n",
                 "- Keep structure.\n\n",
-                "## Why it matters\n\n",
-                "New consequence.\n\n",
                 "## Sources\n\n",
                 "- PWF-0180 implementation\n",
             )
@@ -839,7 +807,6 @@ mod tests {
             &project(&tasks_path),
             &identifier(1),
             ProjectNotePatch {
-                why: FieldUpdate::Clear,
                 domain: FieldUpdate::Clear,
                 tags: CollectionEdit::Clear,
                 sources: CollectionEdit::Clear,

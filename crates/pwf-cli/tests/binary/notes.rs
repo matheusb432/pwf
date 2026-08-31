@@ -13,7 +13,6 @@ fn note_help_exposes_explicit_add_and_edit_fields_and_retires_update() {
     for flag in [
         "--title <TITLE>",
         "--content <CONTENT>",
-        "--why <WHY>",
         "--domain <DOMAIN>",
         "--tag <TAG>",
         "--source <SOURCE>",
@@ -22,6 +21,7 @@ fn note_help_exposes_explicit_add_and_edit_fields_and_retires_update() {
     ] {
         assert!(stdout.contains(flag), "missing {flag}:\n{stdout}");
     }
+    assert!(!stdout.contains("--why"), "unexpected --why:\n{stdout}");
 
     let output = command().args(["note", "edit", "--help"]).output().unwrap();
     assert!(output.status.success());
@@ -29,8 +29,6 @@ fn note_help_exposes_explicit_add_and_edit_fields_and_retires_update() {
     for flag in [
         "--title <TITLE>",
         "--content <CONTENT>",
-        "--why <WHY>",
-        "--remove-why",
         "--domain <DOMAIN>",
         "--remove-domain",
         "--add-tag <TAG>",
@@ -42,6 +40,11 @@ fn note_help_exposes_explicit_add_and_edit_fields_and_retires_update() {
     ] {
         assert!(stdout.contains(flag), "missing {flag}:\n{stdout}");
     }
+    assert!(!stdout.contains("--why"), "unexpected --why:\n{stdout}");
+    assert!(
+        !stdout.contains("--remove-why"),
+        "unexpected --remove-why:\n{stdout}"
+    );
     assert!(!stdout.contains("--date"), "unexpected --date:\n{stdout}");
 
     command()

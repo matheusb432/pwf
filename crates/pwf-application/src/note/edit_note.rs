@@ -66,7 +66,6 @@ pub async fn execute(
     let patch = ProjectNotePatch {
         title: command.edits.title().cloned(),
         content: command.edits.content().cloned(),
-        why: command.edits.why().clone(),
         domain: command.edits.domain().clone(),
         tags: command.edits.tags().clone(),
         sources: command.edits.sources().clone(),
@@ -85,7 +84,7 @@ pub async fn execute(
 #[cfg(test)]
 mod tests {
     use pwf_models::note::{
-        NoteContent, NoteDomain, NoteId, NoteSource, NoteTag, NoteTitle, NoteVerification, NoteWhy,
+        NoteContent, NoteDomain, NoteId, NoteSource, NoteTag, NoteTitle, NoteVerification,
         ProjectNote,
     };
     use pwf_wire::{
@@ -112,7 +111,6 @@ mod tests {
         NoteEdits::try_new(
             title.map(|value| NoteTitle::try_new(value).unwrap()),
             Some(NoteContent::try_new("new content").unwrap()),
-            FieldUpdate::Update(NoteWhy::try_new("new reason").unwrap()),
             FieldUpdate::Clear,
             CollectionEdit::Append(vec![NoteTag::try_new("new-tag").unwrap()]),
             CollectionEdit::Replace(vec![NoteSource::try_new("new source").unwrap()]),
@@ -148,7 +146,6 @@ mod tests {
             vec![ProjectNotePatch {
                 title: None,
                 content: Some(NoteContent::try_new("new content").unwrap()),
-                why: FieldUpdate::Update(NoteWhy::try_new("new reason").unwrap()),
                 domain: FieldUpdate::<NoteDomain>::Clear,
                 tags: CollectionEdit::Append(vec![NoteTag::try_new("new-tag").unwrap()]),
                 sources: CollectionEdit::Replace(vec![NoteSource::try_new("new source").unwrap(),]),

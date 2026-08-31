@@ -25,14 +25,6 @@ pub struct NoteTitle(String);
 )]
 pub struct NoteContent(String);
 
-/// Stores a non-empty explanation of why a project note matters.
-#[nutype(
-    sanitize(trim),
-    validate(not_empty),
-    derive(Debug, Clone, PartialEq, Eq, AsRef, Display, FromStr)
-)]
-pub struct NoteWhy(String);
-
 /// Stores a non-empty project-note subject classification.
 #[nutype(
     sanitize(with = normalize_inline),

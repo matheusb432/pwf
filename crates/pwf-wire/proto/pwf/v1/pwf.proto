@@ -142,12 +142,11 @@ message AddNoteRequest {
   string project_selector = 1;
   string title = 2;
   string content = 3;
-  optional string why = 4;
-  optional string domain = 5;
-  repeated string tags = 6;
-  repeated string sources = 7;
-  optional string verified = 8;
-  optional string date = 9;
+  optional string domain = 4;
+  repeated string tags = 5;
+  repeated string sources = 6;
+  optional string verified = 7;
+  optional string date = 8;
 }
 
 enum NoteListLimitKind {
@@ -168,11 +167,10 @@ message UpdateNoteRequest {
   string selector = 2;
   optional string title = 3;
   optional string content = 4;
-  StringFieldUpdate why = 5;
-  StringFieldUpdate domain = 6;
-  StringCollectionEdit tags = 7;
-  StringCollectionEdit sources = 8;
-  StringFieldUpdate verified = 9;
+  StringFieldUpdate domain = 5;
+  StringCollectionEdit tags = 6;
+  StringCollectionEdit sources = 7;
+  StringFieldUpdate verified = 8;
 }
 
 message AddNoteResponse {

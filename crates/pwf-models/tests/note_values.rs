@@ -1,7 +1,7 @@
 use pwf_models::{
     note::{
         NOTE_TITLE_CHARACTER_LIMIT, NoteContent, NoteDomain, NoteSelector, NoteSource, NoteTag,
-        NoteTitle, NoteVerification, NoteWhy,
+        NoteTitle, NoteVerification,
     },
     project::ProjectId,
 };
@@ -25,12 +25,6 @@ fn note_content_and_metadata_construct_only_meaningful_values() {
         "first line\n\nsecond line"
     );
     assert_eq!(
-        NoteWhy::try_new("  preserve\nthis block  ")
-            .unwrap()
-            .as_ref(),
-        "preserve\nthis block"
-    );
-    assert_eq!(
         NoteDomain::try_new("  testing   strategy ")
             .unwrap()
             .as_ref(),
@@ -49,7 +43,6 @@ fn note_content_and_metadata_construct_only_meaningful_values() {
     );
 
     assert!(NoteContent::try_new(" \n ").is_err());
-    assert!(NoteWhy::try_new(" \n ").is_err());
     assert!(NoteDomain::try_new(" \n ").is_err());
     assert!(NoteTag::try_new(" \n ").is_err());
     assert!(NoteSource::try_new(" \n ").is_err());

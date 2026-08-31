@@ -52,8 +52,6 @@ fn note_lifecycle_is_observable_through_the_cli() -> anyhow::Result<()> {
             "CLI boundaries expose owned semantics",
             "--content",
             "Keep explicit values independent from shorthand parsing.",
-            "--why",
-            "Machine callers need presence semantics.",
             "--add-tag",
             "cli",
             "--add-source",

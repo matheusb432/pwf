@@ -4,7 +4,7 @@ use std::{fmt::Display, num::NonZeroUsize, str::FromStr};
 
 use pwf_models::{
     AppDate,
-    note::{NoteDomain, NoteSelector, NoteSource, NoteTag, NoteTitle, NoteVerification, NoteWhy},
+    note::{NoteDomain, NoteSelector, NoteSource, NoteTag, NoteTitle, NoteVerification},
 };
 use tonic::Status;
 
@@ -16,11 +16,6 @@ pub fn add_note_request(request: pb::AddNoteRequest) -> Result<note::AddNote, St
         project_selector: parse("project_selector", &request.project_selector)?,
         title: parse("title", &request.title)?,
         content: parse("content", &request.content)?,
-        why: request
-            .why
-            .as_deref()
-            .map(|value| parse::<NoteWhy>("why", value))
-            .transpose()?,
         domain: request
             .domain
             .as_deref()
@@ -72,7 +67,6 @@ pub fn update_note_request(request: pb::UpdateNoteRequest) -> Result<note::EditN
         selector,
         title,
         content,
-        why,
         domain,
         tags,
         sources,
@@ -87,7 +81,6 @@ pub fn update_note_request(request: pb::UpdateNoteRequest) -> Result<note::EditN
             .as_deref()
             .map(|value| parse("content", value))
             .transpose()?,
-        note_field_update("why", why)?,
         note_field_update("domain", domain)?,
         collection_edit(tags, note_tag_values)?,
         collection_edit(sources, note_source_values)?,
@@ -242,7 +235,6 @@ mod tests {
             selector: "1".to_string(),
             title: None,
             content: None,
-            why: None,
             domain: None,
             tags: None,
             sources: None,
@@ -254,9 +246,6 @@ mod tests {
     fn partial_edits_decode_explicit_presence_and_collection_operations() {
         let command = update_note_request(UpdateNoteRequest {
             content: Some("New content".to_string()),
-            why: Some(StringFieldUpdate {
-                operation: Some(string_field_update::Operation::Clear(ClearField {})),
-            }),
             tags: Some(StringCollectionEdit {
                 operation: Some(string_collection_edit::Operation::Append(StringValues {
                     values: vec!["rust".to_string()],
@@ -276,7 +265,6 @@ mod tests {
 
         assert!(command.edits.title().is_none());
         assert_eq!(command.edits.content().unwrap().as_ref(), "New content");
-        assert!(matches!(command.edits.why(), FieldUpdate::Clear));
         assert!(matches!(command.edits.domain(), FieldUpdate::Unchanged));
         assert!(matches!(
             command.edits.tags(),

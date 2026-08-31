@@ -17,7 +17,6 @@ use pwf_models::{
     AppDate,
     note::{
         NoteContent, NoteDomain, NoteSelector, NoteSource, NoteTag, NoteTitle, NoteVerification,
-        NoteWhy,
     },
     project::ProjectSelector,
 };
@@ -76,9 +75,6 @@ pub(crate) struct AddArguments {
     /// Markdown note content
     #[arg(long, requires = "title", conflicts_with = "note")]
     content: Option<NoteContent>,
-    /// Why the insight changes future judgment
-    #[arg(long)]
-    why: Option<NoteWhy>,
     /// Subject classification
     #[arg(long)]
     domain: Option<NoteDomain>,
@@ -118,8 +114,6 @@ pub(crate) struct RemoveArguments {
             "shorthand_title",
             "title",
             "content",
-            "why",
-            "remove_why",
             "domain",
             "remove_domain",
             "add_tag",
@@ -147,8 +141,6 @@ pub(crate) struct EditArguments {
     #[arg(long)]
     content: Option<NoteContent>,
     #[command(flatten)]
-    why: WhyEdits,
-    #[command(flatten)]
     domain: DomainEdits,
     #[command(flatten)]
     tags: TagEdits,
@@ -156,16 +148,6 @@ pub(crate) struct EditArguments {
     sources: SourceEdits,
     #[command(flatten)]
     verification: VerificationEdits,
-}
-
-#[derive(Args, Debug)]
-struct WhyEdits {
-    /// Replace why the insight matters
-    #[arg(long, conflicts_with = "remove_why")]
-    why: Option<NoteWhy>,
-    /// Remove why the insight matters
-    #[arg(long, conflicts_with = "why")]
-    remove_why: bool,
 }
 
 #[derive(Args, Debug)]
@@ -280,7 +262,6 @@ async fn add(
             project_selector: arguments.project.to_string(),
             title: title.to_string(),
             content: content.to_string(),
-            why: arguments.why.as_ref().map(ToString::to_string),
             domain: arguments.domain.as_ref().map(ToString::to_string),
             tags: arguments.tags.iter().map(ToString::to_string).collect(),
             sources: arguments.sources.iter().map(ToString::to_string).collect(),
@@ -349,10 +330,6 @@ async fn edit(
             selector: arguments.id.to_string(),
             title: title.map(|title| title.to_string()),
             content: arguments.content.as_ref().map(ToString::to_string),
-            why: string_field_edit(
-                arguments.why.why.as_ref().map(ToString::to_string),
-                arguments.why.remove_why,
-            ),
             domain: string_field_edit(
                 arguments.domain.domain.as_ref().map(ToString::to_string),
                 arguments.domain.remove_domain,
