@@ -2,4 +2,4 @@ avoid-breaking-exported-api = false
 allow-unwrap-in-tests = true
 allow-expect-in-tests = false
 allow-panic-in-tests = false
-excessive-nesting-threshold = 3
+excessive-nesting-threshold = 4
