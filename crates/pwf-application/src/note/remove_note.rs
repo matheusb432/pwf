@@ -13,7 +13,7 @@ use pwf_wire::{
 use crate::{
     ports::{
         confirmation::{ConfirmationClient, ConfirmationClientError},
-        project_note::ProjectNoteStore,
+        project_note::ProjectNotes,
     },
     project::resolve_project::{self, ResolveProjectError},
 };
@@ -42,7 +42,7 @@ pub enum RemoveNoteError {
 #[cqrsy::command]
 pub async fn execute(
     command: RemoveNote,
-    store: &impl ProjectNoteStore,
+    store: &impl ProjectNotes,
     pool: &sqlx::SqlitePool,
     confirmation_client: &mut dyn ConfirmationClient<Confirmation = RemoveNoteConfirmation>,
 ) -> Result<RemovedNoteOutcome, RemoveNoteError> {
@@ -105,7 +105,7 @@ mod tests {
     use crate::{
         note::remove_note,
         ports::confirmation::{ConfirmationClient, ConfirmationClientError},
-        testing::{InMemoryStore, ProjectNoteFailure, insert_project},
+        testing::{InMemoryStore, InMemoryStoreFailure, insert_project},
     };
 
     #[derive(Debug, thiserror::Error)]
@@ -196,7 +196,7 @@ mod tests {
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn missing_note_wins_over_adapter_delete_failure(pool: sqlx::SqlitePool) {
         insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
-        let store = InMemoryStore::default().with_failure(ProjectNoteFailure::Delete);
+        let store = InMemoryStore::default().with_failure(InMemoryStoreFailure::DeleteProjectNote);
         let mut confirmation = TestConfirmation::accepting();
 
         let error = remove_note::execute(

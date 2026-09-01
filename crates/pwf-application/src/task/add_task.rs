@@ -20,10 +20,7 @@ use super::{
 use crate::{
     ports::{
         clock::Clock,
-        task_record::{
-            IndexEntryStore, IndexSectionStore, Materialization, NewTask, StoredBlockedBy,
-            TaskRecord, TaskStore,
-        },
+        task_vault::{Materialization, NewTask, StoredBlockedBy, TaskRecord, TaskVault},
     },
     project::{
         list_projects,
@@ -90,7 +87,7 @@ pub enum AddTaskError {
 #[cqrsy::command]
 pub async fn execute(
     cmd: &AddTask,
-    store: &(impl TaskStore + IndexEntryStore + IndexSectionStore),
+    store: &impl TaskVault,
     pool: &sqlx::SqlitePool,
     clock: &impl Clock,
 ) -> Result<TaskId, AddTaskError> {
@@ -99,7 +96,7 @@ pub async fn execute(
 
 async fn add(
     cmd: &AddTask,
-    store: &(impl TaskStore + IndexEntryStore + IndexSectionStore),
+    store: &impl TaskVault,
     pool: &sqlx::SqlitePool,
     clock: &impl Clock,
 ) -> Result<TaskId, AddTaskError> {
@@ -128,7 +125,7 @@ async fn add(
     let id = match replay.as_ref() {
         Some(replay) => replay.task_id.clone(),
         None => store
-            .next_id(&project)
+            .next_task_id(&project)
             .map_err(|source| AddTaskError::AllocateTaskId {
                 project: project.title.clone(),
                 source: anyhow::Error::new(source),
@@ -159,10 +156,7 @@ async fn add(
     }
 
     let existing = if replay.is_some() {
-        TaskStore::get(store, &project, &id).map_err(|source| AddTaskError::ReadReservedTask {
-            id: id.clone(),
-            source: anyhow::Error::new(source),
-        })?
+        read_reserved_task(store, &project, &id)?
     } else {
         None
     };
@@ -203,6 +197,19 @@ async fn add(
         .await?;
     }
     Ok(id)
+}
+
+fn read_reserved_task(
+    store: &impl TaskVault,
+    project: &Project,
+    id: &TaskId,
+) -> Result<Option<TaskRecord>, AddTaskError> {
+    store
+        .get_task(project, id)
+        .map_err(|source| AddTaskError::ReadReservedTask {
+            id: id.clone(),
+            source: anyhow::Error::new(source),
+        })
 }
 
 fn write_error(project: &Project, source: CreateTaskError) -> AddTaskError {

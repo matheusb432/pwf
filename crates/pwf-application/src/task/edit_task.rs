@@ -20,9 +20,9 @@ use super::{
     tags, task_body_region,
 };
 use crate::{
-    ports::task_record::{
+    ports::task_vault::{
         ExpectedTaskRevision, Materialization, NullablePatch, StoredBlockedBy, TaskMutationError,
-        TaskMutationStore, TaskPatch, TaskRecord, TaskStore, TaskWrite,
+        TaskPatch, TaskRecord, TaskVault, TaskWrite,
     },
     project::list_projects,
 };
@@ -94,7 +94,7 @@ pub enum EditTaskError {
 #[cqrsy::command]
 pub async fn execute(
     command: EditTask,
-    store: &(impl TaskStore + TaskMutationStore),
+    store: &impl TaskVault,
     pool: &sqlx::SqlitePool,
 ) -> Result<(), EditTaskError> {
     update(command, store, pool).await
@@ -102,7 +102,7 @@ pub async fn execute(
 
 async fn update(
     command: EditTask,
-    store: &(impl TaskStore + TaskMutationStore),
+    store: &impl TaskVault,
     pool: &sqlx::SqlitePool,
 ) -> Result<(), EditTaskError> {
     let identity = mutation_request::identity(
@@ -122,7 +122,7 @@ async fn update(
         .await
         .map_err(|error| map_project_error(error, &command.id))?;
     let record = store
-        .get(&project, &command.id)
+        .get_task(&project, &command.id)
         .map_err(|error| EditTaskError::WriteStore(anyhow::Error::new(error)))?
         .ok_or_else(|| EditTaskError::TaskNotFound {
             id: command.id.clone(),
@@ -197,7 +197,7 @@ fn prepare(
     project: Project,
     record: &TaskRecord,
     projects: &[Project],
-    store: &impl TaskStore,
+    store: &impl TaskVault,
     content_patch: (Option<String>, Option<TaskTitle>),
 ) -> Result<PreparedTaskEdit, EditTaskError> {
     let blocked_by = resolve_blocked_by(command.edits.blocked_by(), record, store, projects)?;
@@ -244,7 +244,7 @@ fn prepare_content(
 fn resolve_blocked_by(
     edit: &CollectionEdit<BlockedBy>,
     record: &TaskRecord,
-    store: &impl TaskStore,
+    store: &impl TaskVault,
     projects: &[Project],
 ) -> Result<NullablePatch<BlockedBy>, EditTaskError> {
     let existing = match &record.blocked_by {
@@ -340,10 +340,7 @@ fn merge_appended_tags(
     Ok(existing.merge(appended))
 }
 
-fn persist(
-    prepared: PreparedTaskEdit,
-    store: &impl TaskMutationStore,
-) -> Result<(), EditTaskError> {
+fn persist(prepared: PreparedTaskEdit, store: &impl TaskVault) -> Result<(), EditTaskError> {
     commit_task_writes(
         store,
         &prepared.project,
@@ -376,7 +373,7 @@ mod tests {
 
     use super::EditTaskError;
     use crate::{
-        ports::task_record::{Materialization, TaskRecord},
+        ports::task_vault::{Materialization, TaskRecord},
         task::edit_task,
         testing::{InMemoryStore, insert_project, stored_blocked_by, task_record, task_timestamp},
     };

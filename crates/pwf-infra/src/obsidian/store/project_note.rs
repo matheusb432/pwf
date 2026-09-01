@@ -1,6 +1,6 @@
 use std::{fmt::Write as _, path::Path};
 
-use pwf_application::ports::project_note::{NewProjectNote, ProjectNotePatch, ProjectNoteStore};
+use pwf_application::ports::project_note::{NewProjectNote, ProjectNotePatch, ProjectNotes};
 use pwf_models::{
     note::{NoteId, NoteSource, NoteTag, NoteTitle, NoteTitleError, ProjectNote},
     project::{Project, ProjectId, ProjectName},
@@ -8,7 +8,7 @@ use pwf_models::{
 use pwf_wire::{collection_edit::CollectionEdit, field_update::FieldUpdate};
 use serde::Deserialize;
 
-use super::{ObsidianStore, ObsidianStoreError, fs::read_task_file};
+use super::{ObsidianStore, ObsidianStoreError};
 use crate::{
     file_transaction::{FileSnapshot, FileTransaction, snapshot},
     obsidian::{
@@ -18,7 +18,7 @@ use crate::{
     },
 };
 
-impl ProjectNoteStore for ObsidianStore {
+impl ProjectNotes for ObsidianStore {
     type Error = ObsidianStoreError;
 
     fn get_note(&self, project: &Project, id: &NoteId) -> Result<Option<ProjectNote>, Self::Error> {
@@ -127,12 +127,6 @@ impl ProjectNoteStore for ObsidianStore {
                 id: id.to_string(),
                 source: std::io::Error::other(source),
             })
-    }
-    fn read_note_markdown(
-        &self,
-        locator: &pwf_wire::task::TaskNotePath,
-    ) -> Result<String, Self::Error> {
-        read_task_file(locator.as_path())
     }
 }
 
@@ -573,9 +567,7 @@ fn write_index(path: &Path, source: &str) -> Result<(), ObsidianStoreError> {
 mod tests {
     use std::{assert_matches, fs, path::Path};
 
-    use pwf_application::ports::project_note::{
-        NewProjectNote, ProjectNotePatch, ProjectNoteStore,
-    };
+    use pwf_application::ports::project_note::{NewProjectNote, ProjectNotePatch, ProjectNotes};
     use pwf_models::{
         note::{NoteContent, NoteDomain, NoteId, NoteSource, NoteTag, NoteTitle, NoteVerification},
         project::{
@@ -650,12 +642,9 @@ mod tests {
         fs::write(&index_path, "- [ ] [[FOO-0001|task]]\n").unwrap();
         let store = store(&tasks_path);
 
-        let inserted = ProjectNoteStore::insert_note(
-            &store,
-            &project(&tasks_path),
-            new_note(1, "remember milk"),
-        )
-        .unwrap();
+        let inserted =
+            ProjectNotes::insert_note(&store, &project(&tasks_path), new_note(1, "remember milk"))
+                .unwrap();
 
         assert_eq!(inserted.id.as_ref(), "FOO-NOTE-0001");
         assert_eq!(inserted.title.as_ref(), "remember milk");
@@ -683,7 +672,7 @@ mod tests {
             "- [ ] [[FOO-0001|task]]\n\n### Notes\n\n- [[FOO-NOTE-0001]]\n"
         );
         assert_eq!(
-            ProjectNoteStore::list_notes(&store, &project(&tasks_path)).unwrap(),
+            ProjectNotes::list_notes(&store, &project(&tasks_path)).unwrap(),
             vec![inserted]
         );
     }
@@ -707,7 +696,7 @@ mod tests {
         let index_before = fs::read(&index_path).unwrap();
         let store = store(&tasks_path);
 
-        ProjectNoteStore::update_note(
+        ProjectNotes::update_note(
             &store,
             &project(&tasks_path),
             &identifier(1),
@@ -747,7 +736,7 @@ mod tests {
         fs::write(tasks_path.join("FOO-NOTE-0001.md"), source).unwrap();
         let store = store(&tasks_path);
 
-        ProjectNoteStore::update_note(
+        ProjectNotes::update_note(
             &store,
             &project(&tasks_path),
             &identifier(1),
@@ -771,10 +760,9 @@ mod tests {
         fs::create_dir_all(&tasks_path).unwrap();
         fs::write(tasks_path.join("foo.md"), "").unwrap();
         let store = store(&tasks_path);
-        ProjectNoteStore::insert_note(&store, &project(&tasks_path), new_note(1, "old title"))
-            .unwrap();
+        ProjectNotes::insert_note(&store, &project(&tasks_path), new_note(1, "old title")).unwrap();
 
-        ProjectNoteStore::update_note(
+        ProjectNotes::update_note(
             &store,
             &project(&tasks_path),
             &identifier(1),
@@ -819,14 +807,14 @@ mod tests {
         fs::create_dir_all(&tasks_path).unwrap();
         fs::write(tasks_path.join("foo.md"), "").unwrap();
         let store = store(&tasks_path);
-        ProjectNoteStore::insert_note(
+        ProjectNotes::insert_note(
             &store,
             &project(&tasks_path),
             new_note(1, "preserved title"),
         )
         .unwrap();
 
-        ProjectNoteStore::update_note(
+        ProjectNotes::update_note(
             &store,
             &project(&tasks_path),
             &identifier(1),
@@ -869,7 +857,7 @@ mod tests {
         let store = store(&tasks_path);
 
         let error =
-            ProjectNoteStore::get_note(&store, &project(&tasks_path), &identifier(1)).unwrap_err();
+            ProjectNotes::get_note(&store, &project(&tasks_path), &identifier(1)).unwrap_err();
 
         assert_matches!(
             error,
@@ -888,8 +876,8 @@ mod tests {
         fs::write(&index_path, index).unwrap();
         let store = store(&tasks_path);
 
-        let error = ProjectNoteStore::delete_note(&store, &project(&tasks_path), &identifier(1))
-            .unwrap_err();
+        let error =
+            ProjectNotes::delete_note(&store, &project(&tasks_path), &identifier(1)).unwrap_err();
 
         assert_matches!(
             error,
@@ -914,7 +902,7 @@ mod tests {
         .unwrap();
         let store = store(&tasks_path);
 
-        ProjectNoteStore::delete_note(&store, &project(&tasks_path), &identifier(1)).unwrap();
+        ProjectNotes::delete_note(&store, &project(&tasks_path), &identifier(1)).unwrap();
         assert!(!note_path.exists());
         assert_eq!(
             fs::read_to_string(index_path).unwrap(),
@@ -936,8 +924,8 @@ mod tests {
         fs::create_dir(tasks_path.join("foo.md")).unwrap();
         let store = store(&tasks_path);
 
-        let error = ProjectNoteStore::delete_note(&store, &project(&tasks_path), &identifier(1))
-            .unwrap_err();
+        let error =
+            ProjectNotes::delete_note(&store, &project(&tasks_path), &identifier(1)).unwrap_err();
 
         assert_matches!(error, ObsidianStoreError::WriteProjectNoteIndex { .. });
         assert!(note_path.exists());

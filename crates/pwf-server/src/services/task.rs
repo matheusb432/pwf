@@ -2,7 +2,7 @@ use std::pin::Pin;
 
 use futures::Stream;
 use pwf_application::{
-    ports::{confirmation::ConfirmationClientError, task_record::TaskMutationError},
+    ports::{confirmation::ConfirmationClientError, task_vault::TaskMutationError},
     task::{
         CloseTaskError, MutationRequestError, TaskPromptLanesError,
         add_task::{self, AddTaskError},

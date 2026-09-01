@@ -7,10 +7,9 @@ use pwf_models::{
 use pwf_wire::task::{AddTaskDiagnostics, ClosedTaskAction};
 
 use crate::{
-    ports::task_record::{
-        ExpectedTaskRevision, IndexEntry, IndexEntryState, IndexEntryStore, IndexSectionStore,
-        Materialization, NewTask, NullablePatch, TaskMutationError, TaskMutationStore, TaskPatch,
-        TaskStore, TaskWrite,
+    ports::task_vault::{
+        ExpectedTaskRevision, IndexEntry, IndexEntryState, Materialization, NewTask, NullablePatch,
+        TaskMutationError, TaskPatch, TaskVault, TaskWrite,
     },
     task::{
         add_task::AddTaskError,
@@ -47,7 +46,7 @@ mod queue {
     use pwf_models::task::{TaskId, TaskSection, TaskTimestamp};
 
     use crate::{
-        ports::task_record::{IndexEntry, IndexEntryState, TaskRecord},
+        ports::task_vault::{IndexEntry, IndexEntryState, TaskRecord},
         task::section_alias,
     };
 
@@ -363,7 +362,7 @@ pub(in crate::task) struct ClosedTaskEffects {
 /// because missing-note records have no file-backed queue entry.
 pub(in crate::task) fn close(
     command: &TaskClosure<'_>,
-    store: &(impl TaskStore + IndexEntryStore + IndexSectionStore + TaskMutationStore),
+    store: &impl TaskVault,
     project: &pwf_models::project::Project,
 ) -> Result<ClosedTaskEffects, CloseTaskError> {
     let TaskClosure {
@@ -382,7 +381,7 @@ pub(in crate::task) fn close(
             task_id: task_identifier,
         });
     }
-    let record = TaskStore::get(store, project, &task_identifier)
+    let record = TaskVault::get_task(store, project, &task_identifier)
         .map_err(|error| CloseTaskError::WriteStore(anyhow::Error::new(error)))?
         .ok_or_else(|| CloseTaskError::TaskNotFound {
             id: task_identifier.clone(),
@@ -443,17 +442,17 @@ fn close_status(action: ClosedTaskAction) -> TaskStatus {
 
 /// Applies header normalization, the closed entry, and cap-based evictions to the index.
 fn queue_task_writes(
-    store: &(impl TaskStore + IndexEntryStore + IndexSectionStore),
+    store: &impl TaskVault,
     project: &pwf_models::project::Project,
     id: &TaskId,
     completed_at: TaskTimestamp,
 ) -> Result<(Vec<ExpectedTaskRevision>, Vec<TaskWrite>), CloseTaskError> {
-    let mut entries = IndexEntryStore::list_index_entries(store, project)
+    let mut entries = TaskVault::list_index_entries(store, project)
         .map_err(|error| CloseTaskError::WriteStore(anyhow::Error::new(error)))?;
-    let tasks = TaskStore::list(store, project)
+    let tasks = TaskVault::list_tasks(store, project)
         .map_err(|error| CloseTaskError::WriteStore(anyhow::Error::new(error)))?;
     apply_task_completion_timestamps(&mut entries, &tasks);
-    let sections = IndexSectionStore::list_index_sections(store, project)
+    let sections = TaskVault::list_index_sections(store, project)
         .map_err(|error| CloseTaskError::WriteStore(anyhow::Error::new(error)))?;
     let decisions = close_decisions(&entries, &sections, id, completed_at);
 
@@ -487,7 +486,7 @@ fn queue_task_writes(
 }
 
 fn spawn_review(
-    store: &(impl TaskStore + IndexEntryStore + IndexSectionStore),
+    store: &impl TaskVault,
     project: &pwf_models::project::Project,
     reviewed: &TaskId,
     completed_at: TaskTimestamp,
@@ -498,7 +497,7 @@ fn spawn_review(
     let review_title = infer_task_title(&prompt, lanes)
         .map_err(AddTaskError::from)
         .map_err(|error| CloseTaskError::ReviewTask(Box::new(error)))?;
-    let id = store.next_id(project).map_err(|source| {
+    let id = store.next_task_id(project).map_err(|source| {
         CloseTaskError::ReviewTask(Box::new(AddTaskError::AllocateTaskId {
             project: project.title.clone(),
             source: anyhow::Error::new(source),

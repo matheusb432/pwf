@@ -16,9 +16,9 @@ use super::{
 use crate::{
     ports::{
         confirmation::{ConfirmationClient, ConfirmationClientError},
-        task_record::{
-            ExpectedTaskRevision, Materialization, StoredBlockedBy, TaskMutationError,
-            TaskMutationStore, TaskRecord, TaskStore, TaskWrite,
+        task_vault::{
+            ExpectedTaskRevision, Materialization, StoredBlockedBy, TaskMutationError, TaskRecord,
+            TaskVault, TaskWrite,
         },
     },
     project::list_projects,
@@ -73,7 +73,7 @@ pub enum RemoveTaskError {
 #[cqrsy::command]
 pub async fn execute(
     command: &DeleteTask,
-    store: &(impl TaskStore + TaskMutationStore),
+    store: &impl TaskVault,
     pool: &sqlx::SqlitePool,
     confirmation_client: &mut dyn ConfirmationClient<Confirmation = RemoveTaskConfirmation>,
 ) -> Result<DeleteTaskOutcome, RemoveTaskError> {
@@ -140,11 +140,11 @@ struct PreparedRemoval {
 
 async fn prepare_removal(
     task_id: &TaskId,
-    store: &impl TaskStore,
+    store: &impl TaskVault,
     pool: &sqlx::SqlitePool,
 ) -> Result<PreparedRemoval, RemoveTaskError> {
     let project = resolve_task_project::execute(task_id.clone(), pool).await?;
-    let record = TaskStore::get(store, &project, task_id)
+    let record = TaskVault::get_task(store, &project, task_id)
         .map_err(|error| RemoveTaskError::WriteStore(anyhow::Error::new(error)))?
         .ok_or_else(|| RemoveTaskError::TaskNotFound {
             id: task_id.clone(),
@@ -181,7 +181,7 @@ async fn prepare_removal(
 
 async fn validate_removal(
     prepared: &PreparedRemoval,
-    store: &impl TaskStore,
+    store: &impl TaskVault,
     pool: &sqlx::SqlitePool,
 ) -> Result<(), RemoveTaskError> {
     ensure_no_dependents(&prepared.task_id, store, pool).await?;
@@ -190,9 +190,9 @@ async fn validate_removal(
 
 fn validate_target_revision(
     prepared: &PreparedRemoval,
-    store: &impl TaskStore,
+    store: &impl TaskVault,
 ) -> Result<(), RemoveTaskError> {
-    let current = TaskStore::get(store, &prepared.project, &prepared.task_id)
+    let current = TaskVault::get_task(store, &prepared.project, &prepared.task_id)
         .map_err(|error| RemoveTaskError::WriteStore(anyhow::Error::new(error)))?
         .ok_or_else(|| RemoveTaskError::TaskNotFound {
             id: prepared.task_id.clone(),
@@ -203,7 +203,7 @@ fn validate_target_revision(
 
 fn delete_prepared(
     prepared: &PreparedRemoval,
-    store: &impl TaskMutationStore,
+    store: &impl TaskVault,
 ) -> Result<(), RemoveTaskError> {
     commit_task_writes(
         store,
@@ -224,7 +224,7 @@ fn delete_prepared(
 
 async fn ensure_no_dependents(
     task_id: &TaskId,
-    store: &impl TaskStore,
+    store: &impl TaskVault,
     pool: &sqlx::SqlitePool,
 ) -> Result<(), RemoveTaskError> {
     let dependents = find_dependents(task_id, store, pool).await?;
@@ -257,7 +257,7 @@ fn delete_replay(
 
 async fn find_dependents(
     target: &TaskId,
-    store: &impl TaskStore,
+    store: &impl TaskVault,
     pool: &sqlx::SqlitePool,
 ) -> Result<Vec<TaskId>, RemoveTaskError> {
     let projects = list_projects::execute(ProjectStatusFilter::IncludingPaused, pool)
@@ -274,11 +274,11 @@ async fn find_dependents(
 
 fn project_dependents(
     target: &TaskId,
-    store: &impl TaskStore,
+    store: &impl TaskVault,
     project: &Project,
 ) -> Result<Vec<TaskId>, RemoveTaskError> {
     let records = store
-        .list(project)
+        .list_tasks(project)
         .map_err(|error| RemoveTaskError::ReadDependents(anyhow::Error::new(error)))?;
     let candidates = records
         .into_iter()
@@ -315,9 +315,7 @@ mod tests {
     use crate::{
         ports::{
             confirmation::{ConfirmationClient, ConfirmationClientError},
-            task_record::{
-                IndexEntry, IndexEntryState, IndexEntryStore, Materialization, TaskRecord,
-            },
+            task_vault::{IndexEntry, IndexEntryState, Materialization, TaskRecord, TaskVault},
         },
         task::remove_task,
         testing::{
@@ -364,7 +362,7 @@ mod tests {
         let store = InMemoryStore::default()
             .with_project_id("foo", "FOO")
             .with_project("foo", vec![record("FOO-0001", status)]);
-        IndexEntryStore::upsert_index_entry(
+        TaskVault::upsert_index_entry(
             &store,
             &project("FOO", "foo"),
             IndexEntry {

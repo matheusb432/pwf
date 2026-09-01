@@ -7,7 +7,7 @@ use pwf_models::{
 use pwf_wire::task::TaskView;
 
 use crate::{
-    ports::task_record::{TaskRecord, TaskStore},
+    ports::task_vault::{TaskRecord, TaskVault},
     task::{
         resolve_task_project::{self, ResolveTaskProjectError},
         task_view,
@@ -37,7 +37,7 @@ pub(in crate::task) enum FindActiveTaskError {
 
 pub(in crate::task) async fn find(
     id: &TaskId,
-    store: &impl TaskStore,
+    store: &impl TaskVault,
     pool: &sqlx::SqlitePool,
 ) -> Result<FoundActiveTask, FindActiveTaskError> {
     let project = resolve_task_project::execute(id.clone(), pool).await?;
@@ -50,12 +50,12 @@ pub(in crate::task) async fn find(
 }
 
 fn find_active_task(
-    store: &impl TaskStore,
+    store: &impl TaskVault,
     project: &Project,
     task_id: &TaskId,
 ) -> Result<(TaskRecord, TaskView), FindActiveTaskError> {
     let records = store
-        .list(project)
+        .list_tasks(project)
         .map_err(|error| FindActiveTaskError::ReadStore(anyhow::Error::new(error)))?;
     let mut matched = records
         .into_iter()
@@ -87,7 +87,7 @@ mod tests {
 
     use super::{FindActiveTaskError, TaskView, find_active_task};
     use crate::{
-        ports::task_record::{IndexPlacement, TaskRecord},
+        ports::task_vault::{IndexPlacement, TaskRecord},
         testing::{InMemoryStore, project, task_record, task_timestamp},
     };
 

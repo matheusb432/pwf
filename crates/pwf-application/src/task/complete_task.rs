@@ -12,9 +12,7 @@ use super::{
 };
 use crate::ports::{
     clock::Clock,
-    task_record::{
-        IndexEntryStore, IndexSectionStore, TaskMutationError, TaskMutationStore, TaskStore,
-    },
+    task_vault::{TaskMutationError, TaskVault},
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -34,7 +32,7 @@ pub enum CompleteTaskError {
 #[cqrsy::command]
 pub async fn execute(
     command: &CompleteTask,
-    store: &(impl TaskStore + IndexEntryStore + IndexSectionStore + TaskMutationStore),
+    store: &impl TaskVault,
     pool: &sqlx::SqlitePool,
     clock: &impl Clock,
 ) -> Result<Option<TaskId>, CompleteTaskError> {
@@ -127,9 +125,7 @@ mod tests {
 
     use super::{CloseTaskError, CompleteTask, CompleteTaskError, review_task_prompt};
     use crate::{
-        ports::task_record::{
-            IndexEntry, IndexEntryState, IndexEntryStore, IndexSectionStore, TaskRecord,
-        },
+        ports::task_vault::{IndexEntry, IndexEntryState, TaskRecord, TaskVault},
         task::complete_task,
         testing::{FixedClock, InMemoryStore, project, task_record, task_timestamp},
     };
@@ -158,7 +154,7 @@ mod tests {
             .with_project_id("foo-bar", "FOO")
             .with_project("foo-bar", tasks);
         for entry in entries {
-            IndexEntryStore::upsert_index_entry(&store, &foo(), entry).unwrap();
+            TaskVault::upsert_index_entry(&store, &foo(), entry).unwrap();
         }
         store
     }
@@ -298,7 +294,7 @@ mod tests {
 
         assert_eq!(out, None);
         assert_eq!(
-            IndexSectionStore::list_index_sections(&store, &foo())
+            TaskVault::list_index_sections(&store, &foo())
                 .unwrap()
                 .iter()
                 .map(AsRef::as_ref)

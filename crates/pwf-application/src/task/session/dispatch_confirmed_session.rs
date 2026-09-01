@@ -13,9 +13,8 @@ use crate::ports::{
     agent::AgentClient,
     confirmation::{ConfirmationClient, ConfirmationClientError},
     project_directory::ProjectDirectoryClient,
-    project_note::ProjectNoteStore,
     session::SessionClient,
-    task_record::{ExpectedTaskRevision, TaskMutationError, TaskMutationStore, TaskStore},
+    task_vault::{ExpectedTaskRevision, TaskMutationError, TaskVault},
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -35,7 +34,7 @@ pub enum DispatchConfirmedSessionError {
 #[cqrsy::command]
 pub async fn execute(
     command: &PlanSession,
-    store: &(impl TaskStore + TaskMutationStore + ProjectNoteStore),
+    store: &impl TaskVault,
     pool: &sqlx::SqlitePool,
     home: &HomeDirectory,
     clients: &SessionPlanningClients<
@@ -96,7 +95,7 @@ mod tests {
             confirmation::{ConfirmationClient, ConfirmationClientError},
             project_directory::ProjectDirectoryClient,
             session::{SessionClient, SessionStart, SessionWindow},
-            task_record::TaskMutationError,
+            task_vault::TaskMutationError,
         },
         task::session::dispatch_confirmed_session,
         testing::{InMemoryStore, insert_project, project, task_record},

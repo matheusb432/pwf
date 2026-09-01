@@ -1,8 +1,8 @@
 use std::{fmt::Write as _, fs, path::Path};
 
-use pwf_application::ports::task_record::{
-    ExpectedTaskRevision, NewTask, NullablePatch, TaskMutationError, TaskMutationStore, TaskPatch,
-    TaskRecord, TaskStore, TaskWrite, TaskWriteSet,
+use pwf_application::ports::task_vault::{
+    ExpectedTaskRevision, NewTask, NullablePatch, TaskMutationError, TaskPatch, TaskRecord,
+    TaskVault, TaskWrite, TaskWriteSet,
 };
 use pwf_infra::obsidian::{ObsidianStore, ObsidianStoreError};
 use pwf_models::{
@@ -37,11 +37,11 @@ impl ReadWorkload {
     }
 
     pub fn get(&self) -> Result<Option<TaskRecord>, ObsidianStoreError> {
-        TaskStore::get(&self.store, &self.project, &self.selected_id)
+        TaskVault::get_task(&self.store, &self.project, &self.selected_id)
     }
 
     pub fn list(&self) -> Result<Vec<TaskRecord>, ObsidianStoreError> {
-        TaskStore::list(&self.store, &self.project)
+        TaskVault::list_tasks(&self.store, &self.project)
     }
 
     fn with_task_count(size: DocumentSize, task_count: usize) -> Self {
@@ -98,7 +98,7 @@ impl UpdateWorkload {
                 source: std::io::Error::other(source),
             })
         })?;
-        TaskMutationStore::commit_task_writes(&self.read.store, &self.read.project, writes)
+        TaskVault::commit_task_writes(&self.read.store, &self.read.project, writes)
     }
 
     pub fn updated_record(&self) -> Result<TaskRecord, ObsidianStoreError> {
@@ -154,7 +154,7 @@ impl InsertWorkload {
 
     pub fn insert(&mut self) -> Result<TaskRecord, ObsidianStoreError> {
         let new_task = require_some(self.new_task.take(), "taking the one-use benchmark task");
-        TaskStore::insert(&self.store, &self.project, &self.id, new_task)
+        TaskVault::insert_task(&self.store, &self.project, &self.id, new_task)
     }
 }
 

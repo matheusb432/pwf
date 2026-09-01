@@ -333,48 +333,28 @@ impl<E> TaskMutationError<E> {
     }
 }
 
-pub trait TaskStore: Clone + Send + Sync + 'static {
+/// Persists the task records and project-index state used by task interactors.
+pub trait TaskVault: Send + Sync + 'static {
     type Error: std::error::Error + Send + Sync + 'static;
 
-    fn get(&self, project: &Project, id: &TaskId) -> Result<Option<TaskRecord>, Self::Error>;
-    fn list(&self, project: &Project) -> Result<Vec<TaskRecord>, Self::Error>;
-    fn next_id(&self, project: &Project) -> Result<TaskId, Self::Error>;
-    fn insert(
+    fn get_task(&self, project: &Project, id: &TaskId) -> Result<Option<TaskRecord>, Self::Error>;
+    fn list_tasks(&self, project: &Project) -> Result<Vec<TaskRecord>, Self::Error>;
+    fn next_task_id(&self, project: &Project) -> Result<TaskId, Self::Error>;
+    fn insert_task(
         &self,
         project: &Project,
         id: &TaskId,
         new: NewTask,
     ) -> Result<TaskRecord, Self::Error>;
-}
-
-pub trait TaskMutationStore: Clone + Send + Sync + 'static {
-    type Error: std::error::Error + Send + Sync + 'static;
-
+    fn read_task_markdown(&self, locator: &TaskNotePath) -> Result<String, Self::Error>;
+    fn list_index_entries(&self, project: &Project) -> Result<Vec<IndexEntry>, Self::Error>;
+    fn list_index_sections(&self, project: &Project) -> Result<Vec<TaskSection>, Self::Error>;
+    fn upsert_index_entry(&self, project: &Project, entry: IndexEntry) -> Result<(), Self::Error>;
     fn commit_task_writes(
         &self,
         project: &Project,
         writes: TaskWriteSet,
     ) -> Result<(), TaskMutationError<Self::Error>>;
-}
-
-pub trait IndexEntryStore: Clone + Send + Sync + 'static {
-    type Error: std::error::Error + Send + Sync + 'static;
-
-    fn list_index_entries(&self, project: &Project) -> Result<Vec<IndexEntry>, Self::Error>;
-    fn upsert_index_entry(&self, project: &Project, entry: IndexEntry) -> Result<(), Self::Error>;
-    fn delete_index_entry(&self, project: &Project, id: &TaskId) -> Result<(), Self::Error>;
-}
-
-pub trait IndexSectionStore: Clone + Send + Sync + 'static {
-    type Error: std::error::Error + Send + Sync + 'static;
-
-    fn list_index_sections(&self, project: &Project) -> Result<Vec<TaskSection>, Self::Error>;
-    fn rename_index_section(
-        &self,
-        project: &Project,
-        current_label: &TaskSection,
-        new_label: &TaskSection,
-    ) -> Result<(), Self::Error>;
 }
 
 #[cfg(test)]

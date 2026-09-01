@@ -6,7 +6,7 @@ use pwf_models::{
     },
     project::Project,
 };
-use pwf_wire::{collection_edit::CollectionEdit, field_update::FieldUpdate, task::TaskNotePath};
+use pwf_wire::{collection_edit::CollectionEdit, field_update::FieldUpdate};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewProjectNote {
@@ -30,7 +30,8 @@ pub struct ProjectNotePatch {
     pub verified: FieldUpdate<NoteVerification>,
 }
 
-pub trait ProjectNoteStore: Clone + Send + Sync + 'static {
+/// Persists project notes independently of task-note storage.
+pub trait ProjectNotes: Send + Sync + 'static {
     type Error: std::error::Error + Send + Sync + 'static;
 
     fn get_note(&self, project: &Project, id: &NoteId) -> Result<Option<ProjectNote>, Self::Error>;
@@ -47,6 +48,4 @@ pub trait ProjectNoteStore: Clone + Send + Sync + 'static {
         patch: ProjectNotePatch,
     ) -> Result<(), Self::Error>;
     fn delete_note(&self, project: &Project, id: &NoteId) -> Result<(), Self::Error>;
-
-    fn read_note_markdown(&self, locator: &TaskNotePath) -> Result<String, Self::Error>;
 }

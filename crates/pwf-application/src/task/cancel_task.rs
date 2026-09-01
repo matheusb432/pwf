@@ -10,9 +10,7 @@ use super::{
 };
 use crate::ports::{
     clock::Clock,
-    task_record::{
-        IndexEntryStore, IndexSectionStore, TaskMutationError, TaskMutationStore, TaskStore,
-    },
+    task_vault::{TaskMutationError, TaskVault},
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -32,7 +30,7 @@ pub enum CancelTaskError {
 #[cqrsy::command]
 pub async fn execute(
     command: &CancelTask,
-    store: &(impl TaskStore + IndexEntryStore + IndexSectionStore + TaskMutationStore),
+    store: &impl TaskVault,
     pool: &sqlx::SqlitePool,
     clock: &impl Clock,
 ) -> Result<Option<TaskId>, CancelTaskError> {
@@ -120,7 +118,7 @@ mod tests {
 
     use super::CancelTask;
     use crate::{
-        ports::task_record::{IndexEntry, IndexEntryState, IndexEntryStore, TaskRecord},
+        ports::task_vault::{IndexEntry, IndexEntryState, TaskRecord, TaskVault},
         task::cancel_task,
         testing::{FixedClock, InMemoryStore, project, task_record, task_timestamp},
     };
@@ -133,7 +131,7 @@ mod tests {
         let store = InMemoryStore::default()
             .with_project_id("foo-bar", "FOO")
             .with_project("foo-bar", vec![record("FOO-0001")]);
-        IndexEntryStore::upsert_index_entry(
+        TaskVault::upsert_index_entry(
             &store,
             &project("FOO", "foo-bar"),
             IndexEntry {

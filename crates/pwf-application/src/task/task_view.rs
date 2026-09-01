@@ -16,7 +16,7 @@ use pwf_wire::task::{
 };
 
 use super::{normalize_section_label, note_body::is_placeholder_prompt};
-use crate::ports::task_record::{Materialization, StoredBlockedBy, TaskRecord};
+use crate::ports::task_vault::{Materialization, StoredBlockedBy, TaskRecord};
 
 /// Contains launchability flags and diagnostics derived from a task.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -203,7 +203,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        ports::task_record::{IndexPlacement, StoredBlockedBy},
+        ports::task_vault::{IndexPlacement, StoredBlockedBy},
         testing::task_record,
     };
 

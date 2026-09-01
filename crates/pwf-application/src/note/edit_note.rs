@@ -10,7 +10,7 @@ use pwf_wire::{
 };
 
 use crate::{
-    ports::project_note::{ProjectNotePatch, ProjectNoteStore},
+    ports::project_note::{ProjectNotePatch, ProjectNotes},
     project::resolve_project::{self, ResolveProjectError},
 };
 
@@ -36,7 +36,7 @@ pub enum EditNoteError {
 #[cqrsy::command]
 pub async fn execute(
     command: EditNote,
-    store: &impl ProjectNoteStore,
+    store: &impl ProjectNotes,
     pool: &sqlx::SqlitePool,
 ) -> Result<MutatedNote, EditNoteError> {
     let project = resolve_project::execute(

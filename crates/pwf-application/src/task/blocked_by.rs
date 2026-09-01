@@ -6,7 +6,7 @@ use pwf_models::{
 };
 use pwf_wire::task::{BlockedByResolution, BlockedByStatus};
 
-use crate::ports::task_record::{Materialization, StoredBlockedBy, TaskRecord, TaskStore};
+use crate::ports::task_vault::{Materialization, StoredBlockedBy, TaskRecord, TaskVault};
 
 #[derive(Debug, thiserror::Error)]
 pub(in crate::task) enum BlockedByValidationError {
@@ -49,7 +49,7 @@ pub(in crate::task) fn validate_and_merge(
     target: &TaskId,
     existing: Option<&BlockedBy>,
     blocked_by: &BlockedBy,
-    store: &impl TaskStore,
+    store: &impl TaskVault,
     projects: &[Project],
 ) -> Result<BlockedBy, BlockedByValidationError> {
     let merged = existing.map_or_else(|| blocked_by.clone(), |existing| existing.merge(blocked_by));
@@ -61,7 +61,7 @@ pub(in crate::task) fn validate(
     target: &TaskId,
     final_blockers: &BlockedBy,
     supplied: &BlockedBy,
-    store: &impl TaskStore,
+    store: &impl TaskVault,
     projects: &[Project],
 ) -> Result<(), BlockedByValidationError> {
     if final_blockers.iter().any(|blocker| blocker == target) {
@@ -77,7 +77,7 @@ pub(in crate::task) fn validate(
             unknown.push(identifier.clone());
             continue;
         };
-        let record = store.get(project, identifier).map_err(|source| {
+        let record = store.get_task(project, identifier).map_err(|source| {
             BlockedByValidationError::ReadStore {
                 id: identifier.clone(),
                 source: anyhow::Error::new(source),
@@ -109,7 +109,7 @@ enum VisitState {
 fn visit(
     id: &TaskId,
     target: &TaskId,
-    store: &impl TaskStore,
+    store: &impl TaskVault,
     projects: &[Project],
     states: &mut HashMap<TaskId, VisitState>,
     path: &mut Vec<TaskId>,
@@ -134,17 +134,16 @@ fn visit(
 
     states.insert(id.clone(), VisitState::Visiting);
     path.push(id.clone());
-    let record = match find_project(None, projects, id.project_id()) {
-        Some(project) => {
-            store
-                .get(project, id)
-                .map_err(|source| BlockedByValidationError::ReadStore {
+    let record =
+        match find_project(None, projects, id.project_id()) {
+            Some(project) => store.get_task(project, id).map_err(|source| {
+                BlockedByValidationError::ReadStore {
                     id: id.clone(),
                     source: anyhow::Error::new(source),
-                })?
-        }
-        None => None,
-    };
+                }
+            })?,
+            None => None,
+        };
     if let Some(record) = record {
         visit_record(record, target, store, projects, states, path)?;
     }
@@ -156,7 +155,7 @@ fn visit(
 fn visit_record(
     record: TaskRecord,
     target: &TaskId,
-    store: &impl TaskStore,
+    store: &impl TaskVault,
     projects: &[Project],
     states: &mut HashMap<TaskId, VisitState>,
     path: &mut Vec<TaskId>,
@@ -182,7 +181,7 @@ fn visit_record(
 
 pub(in crate::task) fn statuses(
     blocked_by: &BlockedBy,
-    store: &impl TaskStore,
+    store: &impl TaskVault,
     primary_project: Option<&Project>,
     projects: &[Project],
 ) -> Vec<BlockedByStatus> {
@@ -193,7 +192,7 @@ pub(in crate::task) fn statuses(
 }
 
 fn status(
-    store: &impl TaskStore,
+    store: &impl TaskVault,
     primary_project: Option<&Project>,
     projects: &[Project],
     id: &TaskId,
@@ -206,7 +205,7 @@ fn status(
     let Some(project) = find_project(primary_project, projects, id.project_id()) else {
         return missing();
     };
-    let task = match store.get(project, id) {
+    let task = match store.get_task(project, id) {
         Ok(task) => task,
         Err(source) => {
             return BlockedByStatus {
@@ -245,49 +244,16 @@ fn find_project<'project>(
 mod tests {
     use std::error::Error as _;
 
-    use pwf_models::{project::Project, task::TaskId};
     use pwf_wire::task::BlockedByResolution;
 
     use super::{BlockedByValidationError, statuses, validate_and_merge};
     use crate::{
-        ports::task_record::{NewTask, TaskRecord, TaskStore},
+        ports::task_vault::TaskRecord,
         testing::{
-            InMemoryStore, blocked_by, project, staged_missing_task, staged_task,
-            stored_blocked_by, task_record,
+            InMemoryStore, InMemoryStoreFailure, blocked_by, project, staged_missing_task,
+            staged_task, stored_blocked_by, task_record,
         },
     };
-
-    #[derive(Debug, Clone, Copy, thiserror::Error)]
-    #[error("vault read failed")]
-    struct FailingStoreError;
-
-    #[derive(Clone, Copy)]
-    struct FailingStore;
-
-    impl TaskStore for FailingStore {
-        type Error = FailingStoreError;
-
-        fn get(&self, _project: &Project, _id: &TaskId) -> Result<Option<TaskRecord>, Self::Error> {
-            Err(FailingStoreError)
-        }
-
-        fn list(&self, _project: &Project) -> Result<Vec<TaskRecord>, Self::Error> {
-            Err(FailingStoreError)
-        }
-
-        fn next_id(&self, _project: &Project) -> Result<TaskId, Self::Error> {
-            Err(FailingStoreError)
-        }
-
-        fn insert(
-            &self,
-            _project: &Project,
-            _id: &TaskId,
-            _new: NewTask,
-        ) -> Result<TaskRecord, Self::Error> {
-            Err(FailingStoreError)
-        }
-    }
 
     #[test]
     fn validator_parses_checks_existence_and_merges_first_seen_ids() {
@@ -337,7 +303,14 @@ mod tests {
         let target = "FOO-0002".parse().unwrap();
         let blockers = blocked_by(&["FOO-0002"]);
 
-        let error = super::validate(&target, &blockers, &blockers, &FailingStore, &[]).unwrap_err();
+        let error = super::validate(
+            &target,
+            &blockers,
+            &blockers,
+            &InMemoryStore::default(),
+            &[],
+        )
+        .unwrap_err();
 
         assert!(matches!(
             error,
@@ -375,12 +348,13 @@ mod tests {
     fn validator_preserves_store_read_failures() {
         let project = project("FOO", "foo");
         let target = "FOO-0002".parse().unwrap();
+        let store = InMemoryStore::default().with_failure(InMemoryStoreFailure::ReadTask);
 
         let error = validate_and_merge(
             &target,
             None,
             &blocked_by(&["FOO-0001"]),
-            &FailingStore,
+            &store,
             &[project],
         )
         .unwrap_err();
@@ -389,7 +363,10 @@ mod tests {
             error,
             BlockedByValidationError::ReadStore { ref id, .. } if id.as_ref() == "FOO-0001"
         ));
-        assert_eq!(error.source().unwrap().to_string(), "vault read failed");
+        assert_eq!(
+            error.source().unwrap().to_string(),
+            "injected in-memory store failure: task-read"
+        );
     }
 
     #[test]
@@ -417,13 +394,9 @@ mod tests {
     #[test]
     fn statuses_expose_store_read_failures_as_unavailable() {
         let project = project("FOO", "foo");
+        let store = InMemoryStore::default().with_failure(InMemoryStoreFailure::ReadTask);
 
-        let statuses = statuses(
-            &blocked_by(&["FOO-0001"]),
-            &FailingStore,
-            Some(&project),
-            &[],
-        );
+        let statuses = statuses(&blocked_by(&["FOO-0001"]), &store, Some(&project), &[]);
 
         assert!(matches!(
             statuses.as_slice(),
@@ -431,7 +404,8 @@ mod tests {
                 id,
                 resolution: BlockedByResolution::Unavailable { reason },
                 ..
-            }] if id.as_ref() == "FOO-0001" && reason == "vault read failed"
+            }] if id.as_ref() == "FOO-0001"
+                && reason == "injected in-memory store failure: task-read"
         ));
     }
 }

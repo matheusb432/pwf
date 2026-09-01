@@ -16,7 +16,7 @@ use super::{blocked_by, tags, task_view};
 use crate::{
     ports::{
         project_task_location::ProjectTaskLocationClient,
-        task_record::{TaskRecord, TaskStore},
+        task_vault::{TaskRecord, TaskVault},
     },
     project::{list_projects, resolve_project},
 };
@@ -87,7 +87,7 @@ struct ResolvedListTasks {
 #[cqrsy::query]
 pub async fn execute(
     query: &ListTasks,
-    store: &impl TaskStore,
+    store: &impl TaskVault,
     pool: &sqlx::SqlitePool,
     task_locations: &impl ProjectTaskLocationClient,
 ) -> Result<ListedTasks, ListTasksError> {
@@ -108,7 +108,7 @@ pub async fn execute(
         .as_ref()
         .map(|project| {
             store
-                .list(project)
+                .list_tasks(project)
                 .map_err(|error| ListTasksError::ReadStore(anyhow::Error::new(error)))
         })
         .transpose()?;
@@ -174,7 +174,7 @@ pub async fn execute(
 
 fn populate_relationship_statuses(
     tasks: &mut [TaskView],
-    store: &impl TaskStore,
+    store: &impl TaskVault,
     selected_project: Option<&Project>,
     projects: &[Project],
 ) {
@@ -428,7 +428,7 @@ fn list_detail_name(detail: ListDetail) -> &'static str {
 /// Reads and enriches listable lifecycle records from one project or every project in name order.
 fn collect_list_tasks(
     query: &ResolvedListTasks,
-    store: &impl TaskStore,
+    store: &impl TaskVault,
     projects: &[Project],
     selected_records: Option<&[TaskRecord]>,
 ) -> Result<Vec<TaskView>, ListTasksError> {
@@ -451,7 +451,7 @@ fn collect_list_tasks(
 
 fn collect_project_tasks(
     query: &ResolvedListTasks,
-    store: &impl TaskStore,
+    store: &impl TaskVault,
     project: &Project,
     selected_records: Option<&[TaskRecord]>,
 ) -> Result<Vec<TaskView>, ListTasksError> {
@@ -459,7 +459,7 @@ fn collect_project_tasks(
         selected_records.map_or_else(Vec::new, <[TaskRecord]>::to_vec)
     } else {
         store
-            .list(project)
+            .list_tasks(project)
             .map_err(|error| ListTasksError::ReadStore(anyhow::Error::new(error)))?
     };
     records
@@ -585,7 +585,7 @@ mod tests {
     use crate::{
         ports::{
             project_task_location::ProjectTaskLocationClient,
-            task_record::{IndexPlacement, Materialization, TaskRecord},
+            task_vault::{IndexPlacement, Materialization, TaskRecord},
         },
         task::list_tasks,
         testing::{

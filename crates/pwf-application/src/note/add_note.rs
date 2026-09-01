@@ -9,7 +9,7 @@ use pwf_wire::{
 use crate::{
     ports::{
         clock::Clock,
-        project_note::{NewProjectNote, ProjectNoteStore},
+        project_note::{NewProjectNote, ProjectNotes},
     },
     project::resolve_project::{self, ResolveProjectError},
 };
@@ -30,7 +30,7 @@ pub enum AddNoteError {
 #[cqrsy::command]
 pub async fn execute(
     command: AddNote,
-    store: &impl ProjectNoteStore,
+    store: &impl ProjectNotes,
     pool: &sqlx::SqlitePool,
     clock: &impl Clock,
 ) -> Result<MutatedNote, AddNoteError> {

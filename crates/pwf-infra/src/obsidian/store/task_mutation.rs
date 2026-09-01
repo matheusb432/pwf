@@ -4,9 +4,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use pwf_application::ports::task_record::{
-    ExpectedTaskRevision, IndexEntry, TaskMutationError, TaskMutationStore, TaskPatch,
-    TaskRevisionState, TaskWrite, TaskWriteSet,
+use pwf_application::ports::task_vault::{
+    ExpectedTaskRevision, IndexEntry, TaskMutationError, TaskPatch, TaskRevisionState, TaskWrite,
+    TaskWriteSet,
 };
 use pwf_models::{
     project::Project,
@@ -59,14 +59,12 @@ enum PendingChange {
     },
 }
 
-impl TaskMutationStore for ObsidianStore {
-    type Error = ObsidianStoreError;
-
-    fn commit_task_writes(
+impl ObsidianStore {
+    pub(super) fn commit_task_writes_impl(
         &self,
         project: &Project,
         writes: TaskWriteSet,
-    ) -> Result<(), TaskMutationError<Self::Error>> {
+    ) -> Result<(), TaskMutationError<ObsidianStoreError>> {
         let (expected, writes) = writes.into_parts();
         let mut mutation = TaskMutation::new(self, project)?;
         mutation.resolve_expectations(expected)?;

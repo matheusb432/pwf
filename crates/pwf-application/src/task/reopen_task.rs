@@ -13,9 +13,9 @@ use super::{
 };
 use crate::ports::{
     confirmation::{ConfirmationClient, ConfirmationClientError},
-    task_record::{
-        ExpectedTaskRevision, IndexEntry, IndexEntryState, IndexEntryStore, NullablePatch,
-        TaskMutationError, TaskMutationStore, TaskPatch, TaskStore, TaskWrite,
+    task_vault::{
+        ExpectedTaskRevision, IndexEntry, IndexEntryState, NullablePatch, TaskMutationError,
+        TaskPatch, TaskVault, TaskWrite,
     },
 };
 
@@ -44,7 +44,7 @@ pub enum ReopenTaskError {
 #[cqrsy::command]
 pub async fn execute(
     command: &ReopenTask,
-    store: &(impl TaskStore + IndexEntryStore + TaskMutationStore),
+    store: &impl TaskVault,
     pool: &sqlx::SqlitePool,
     confirmation_client: &mut dyn ConfirmationClient<Confirmation = ReopenTaskConfirmation>,
 ) -> Result<ReopenTaskOutcome, ReopenTaskError> {
@@ -138,11 +138,11 @@ struct PreparedReopen {
 
 async fn prepare_reopen(
     task_id: &TaskId,
-    store: &impl TaskStore,
+    store: &impl TaskVault,
     pool: &sqlx::SqlitePool,
 ) -> Result<ReopenPreparation, ReopenTaskError> {
     let project = resolve_task_project::execute(task_id.clone(), pool).await?;
-    let record = TaskStore::get(store, &project, task_id)
+    let record = TaskVault::get_task(store, &project, task_id)
         .map_err(|error| ReopenTaskError::WriteStore(anyhow::Error::new(error)))?
         .ok_or_else(|| ReopenTaskError::TaskNotFound {
             id: task_id.clone(),
@@ -170,9 +170,9 @@ async fn prepare_reopen(
 
 fn validate_reopen(
     prepared: &PreparedReopen,
-    store: &impl TaskStore,
+    store: &impl TaskVault,
 ) -> Result<(), ReopenTaskError> {
-    let current = TaskStore::get(store, &prepared.project, &prepared.task_id)
+    let current = TaskVault::get_task(store, &prepared.project, &prepared.task_id)
         .map_err(|error| ReopenTaskError::WriteStore(anyhow::Error::new(error)))?
         .ok_or_else(|| ReopenTaskError::TaskNotFound {
             id: prepared.task_id.clone(),
@@ -181,10 +181,7 @@ fn validate_reopen(
     Ok(())
 }
 
-fn apply_reopen(
-    prepared: PreparedReopen,
-    store: &(impl IndexEntryStore + TaskMutationStore),
-) -> Result<(), ReopenTaskError> {
+fn apply_reopen(prepared: PreparedReopen, store: &impl TaskVault) -> Result<(), ReopenTaskError> {
     let task_identifier = prepared.task_id;
     let patch = TaskWrite::Patch {
         id: task_identifier.clone(),
@@ -200,7 +197,7 @@ fn apply_reopen(
         },
     };
 
-    let entries = IndexEntryStore::list_index_entries(store, &prepared.project)
+    let entries = TaskVault::list_index_entries(store, &prepared.project)
         .map_err(|error| ReopenTaskError::WriteStore(anyhow::Error::new(error)))?;
     let mut writes = vec![patch];
     if entries
@@ -258,7 +255,7 @@ mod tests {
     use crate::{
         ports::{
             confirmation::{ConfirmationClient, ConfirmationClientError},
-            task_record::{IndexEntry, IndexEntryState, IndexEntryStore, TaskRecord},
+            task_vault::{IndexEntry, IndexEntryState, TaskRecord, TaskVault},
         },
         task::reopen_task,
         testing::{InMemoryStore, app_date, project, task_record, task_timestamp},
@@ -343,7 +340,7 @@ mod tests {
             .with_project_id("foo-bar", "FOO")
             .with_project("foo-bar", vec![record("FOO-0001", status)]);
         for entry in entries {
-            IndexEntryStore::upsert_index_entry(&store, &foo(), entry).unwrap();
+            TaskVault::upsert_index_entry(&store, &foo(), entry).unwrap();
         }
         store
     }

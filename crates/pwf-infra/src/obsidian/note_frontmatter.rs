@@ -1,6 +1,6 @@
 use std::fmt::Write as _;
 
-use pwf_application::ports::task_record::StoredBlockedBy;
+use pwf_application::ports::task_vault::StoredBlockedBy;
 use pwf_models::task::{
     BlockedBy, EffortTier, PriorityTier, TaskId, TaskStatus, TaskTags, TaskTimestamp, TaskTitle,
 };
@@ -240,7 +240,7 @@ fn tags_frontmatter_value(tags: &TaskTags) -> String {
 mod tests {
     use std::path::Path;
 
-    use pwf_application::ports::task_record::StoredBlockedBy;
+    use pwf_application::ports::task_vault::StoredBlockedBy;
     use pwf_models::task::{BlockedBy, TaskId, TaskStatus, TaskTimestamp, TaskTitle};
 
     use super::{

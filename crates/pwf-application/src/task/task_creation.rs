@@ -7,9 +7,7 @@ use pwf_models::{
 use pwf_wire::task::TaskNotePath;
 
 use super::normalize_section_label;
-use crate::ports::task_record::{
-    IndexEntry, IndexEntryState, IndexEntryStore, IndexSectionStore, NewTask, TaskStore,
-};
+use crate::ports::task_vault::{IndexEntry, IndexEntryState, NewTask, TaskVault};
 
 /// Reports the persistence phase that failed while creating a task.
 #[derive(Debug, thiserror::Error)]
@@ -59,17 +57,17 @@ pub(in crate::task) struct TaskCreation<'a> {
 /// Inserts a note record, then upserts its open index entry.
 pub(in crate::task) fn create(
     command: TaskCreation<'_>,
-    store: &(impl TaskStore + IndexEntryStore + IndexSectionStore),
+    store: &impl TaskVault,
 ) -> Result<CreatedTask, CreateTaskError> {
     let TaskCreation { project, id, new } = command;
     let target_section = new.section.clone();
     // Read sections before writing so an invalid index leaves no orphaned note.
-    let existing = IndexSectionStore::list_index_sections(store, project)
+    let existing = TaskVault::list_index_sections(store, project)
         .map_err(|error| CreateTaskError::ReadSections(anyhow::Error::new(error)))?;
     let created_section = new_section(target_section.as_ref(), &existing);
     let title = new.title.clone();
 
-    let record = TaskStore::insert(store, project, id, new)
+    let record = TaskVault::insert_task(store, project, id, new)
         .map_err(|error| CreateTaskError::InsertRecord(anyhow::Error::new(error)))?;
     let id = record.id.clone();
     upsert_index(store, project, &id, target_section, created_section.clone())?;
@@ -83,25 +81,25 @@ pub(in crate::task) fn create(
 
 /// Finishes a previously reserved creation whose note is already observable.
 pub(in crate::task) fn ensure_index(
-    store: &(impl IndexEntryStore + IndexSectionStore),
+    store: &impl TaskVault,
     project: &Project,
     id: &TaskId,
     section: Option<pwf_models::task::TaskSection>,
 ) -> Result<(), CreateTaskError> {
-    let existing = IndexSectionStore::list_index_sections(store, project)
+    let existing = TaskVault::list_index_sections(store, project)
         .map_err(|error| CreateTaskError::ReadSections(anyhow::Error::new(error)))?;
     let created_section = new_section(section.as_ref(), &existing);
     upsert_index(store, project, id, section, created_section)
 }
 
 fn upsert_index(
-    store: &impl IndexEntryStore,
+    store: &impl TaskVault,
     project: &Project,
     id: &TaskId,
     section: Option<pwf_models::task::TaskSection>,
     created_section: Option<TaskSection>,
 ) -> Result<(), CreateTaskError> {
-    IndexEntryStore::upsert_index_entry(
+    TaskVault::upsert_index_entry(
         store,
         project,
         IndexEntry {
@@ -141,7 +139,7 @@ mod tests {
 
     use super::{TaskCreation, create};
     use crate::{
-        ports::task_record::{IndexEntryState, NewTask},
+        ports::task_vault::{IndexEntryState, NewTask},
         testing::{InMemoryStore, project, task_timestamp},
     };
 

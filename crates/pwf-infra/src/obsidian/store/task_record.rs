@@ -1,8 +1,8 @@
 use std::{num::NonZeroUsize, path::Path};
 
-use pwf_application::ports::task_record::{
-    IndexEntryState, IndexPlacement, Materialization, NewTask, NullablePatch, TaskPatch,
-    TaskRecord, TaskStore,
+use pwf_application::ports::task_vault::{
+    IndexEntry, IndexEntryState, IndexPlacement, Materialization, NewTask, NullablePatch,
+    TaskMutationError, TaskPatch, TaskRecord, TaskVault, TaskWriteSet,
 };
 use pwf_models::{
     project::Project,
@@ -14,7 +14,7 @@ use pwf_wire::task::{RawTaskTags, TaskIndexPath, TaskNotePath};
 use super::{
     ObsidianStore, ObsidianStoreError,
     add::NewNoteRequest,
-    fs::{line_start_index, path_str},
+    fs::{line_start_index, path_str, read_task_file},
     index_entry::{ParsedIndexLine, parse_index_lines},
 };
 use crate::{
@@ -135,7 +135,7 @@ fn missing_note_record(
         tags: None,
         effort: None,
         priority: None,
-        blocked_by: pwf_application::ports::task_record::StoredBlockedBy::Absent,
+        blocked_by: pwf_application::ports::task_vault::StoredBlockedBy::Absent,
         section,
         body: String::new(),
         source: String::new(),
@@ -275,44 +275,6 @@ fn merge_existing_index_line(record: &mut TaskRecord, index_path: &Path, line: &
 }
 
 impl ObsidianStore {
-    fn get_task(
-        &self,
-        project: &Project,
-        id: &TaskId,
-    ) -> Result<Option<TaskRecord>, ObsidianStoreError> {
-        get_task_record(self, project, id)
-    }
-
-    /// Lists every note-backed and index-only task record.
-    ///
-    /// Open index entries contribute placement. Every index entry contributes its raw section; the
-    /// application owns lifecycle visibility, normalization, and launchability policy.
-    fn list_tasks(&self, project: &Project) -> Result<Vec<TaskRecord>, ObsidianStoreError> {
-        list_task_records(self, project)
-    }
-
-    fn insert_task(
-        &self,
-        project: &Project,
-        id: &TaskId,
-        new: &NewTask,
-    ) -> Result<TaskRecord, ObsidianStoreError> {
-        let note = self.write_new_note(
-            project,
-            &NewNoteRequest {
-                id,
-                body: &new.body,
-                title: &new.title,
-                created_at: &new.created_at,
-                blocked_by: new.blocked_by.as_ref(),
-                effort: new.effort,
-                priority: new.priority,
-                tags: new.tags.as_ref(),
-            },
-        )?;
-        note_to_record(note.id, &note.path, Some(note.title.as_ref()), note.content)
-    }
-
     pub(super) fn apply_task_patch(
         file: &mut MarkdownFile,
         patch: &TaskPatch,
@@ -417,28 +379,69 @@ fn write_task_file_error(source: MarkdownFileError) -> ObsidianStoreError {
     }
 }
 
-impl TaskStore for ObsidianStore {
+impl TaskVault for ObsidianStore {
     type Error = ObsidianStoreError;
 
-    fn get(&self, project: &Project, id: &TaskId) -> Result<Option<TaskRecord>, Self::Error> {
-        self.get_task(project, id)
+    fn get_task(&self, project: &Project, id: &TaskId) -> Result<Option<TaskRecord>, Self::Error> {
+        get_task_record(self, project, id)
     }
 
-    fn list(&self, project: &Project) -> Result<Vec<TaskRecord>, Self::Error> {
-        self.list_tasks(project)
+    /// Lists every note-backed and index-only task record.
+    ///
+    /// Open index entries contribute placement. Every index entry contributes its raw section; the
+    /// application owns lifecycle visibility, normalization, and launchability policy.
+    fn list_tasks(&self, project: &Project) -> Result<Vec<TaskRecord>, Self::Error> {
+        list_task_records(self, project)
     }
 
-    fn next_id(&self, project: &Project) -> Result<TaskId, Self::Error> {
-        self.next_task_id(project)
+    fn next_task_id(&self, project: &Project) -> Result<TaskId, Self::Error> {
+        ObsidianStore::next_task_id(self, project)
     }
 
-    fn insert(
+    fn insert_task(
         &self,
         project: &Project,
         id: &TaskId,
         new: NewTask,
     ) -> Result<TaskRecord, Self::Error> {
-        self.insert_task(project, id, &new)
+        let note = self.write_new_note(
+            project,
+            &NewNoteRequest {
+                id,
+                body: &new.body,
+                title: &new.title,
+                created_at: &new.created_at,
+                blocked_by: new.blocked_by.as_ref(),
+                effort: new.effort,
+                priority: new.priority,
+                tags: new.tags.as_ref(),
+            },
+        )?;
+        note_to_record(note.id, &note.path, Some(note.title.as_ref()), note.content)
+    }
+
+    fn read_task_markdown(&self, locator: &TaskNotePath) -> Result<String, Self::Error> {
+        read_task_file(locator.as_path())
+    }
+
+    fn list_index_entries(&self, project: &Project) -> Result<Vec<IndexEntry>, Self::Error> {
+        ObsidianStore::list_index_entries(self, project)
+    }
+
+    fn list_index_sections(&self, project: &Project) -> Result<Vec<TaskSection>, Self::Error> {
+        ObsidianStore::list_index_sections(self, project)
+    }
+
+    fn upsert_index_entry(&self, project: &Project, entry: IndexEntry) -> Result<(), Self::Error> {
+        ObsidianStore::upsert_index_entry(self, project, &entry)
+    }
+
+    fn commit_task_writes(
+        &self,
+        project: &Project,
+        writes: TaskWriteSet,
+    ) -> Result<(), TaskMutationError<Self::Error>> {
+        self.commit_task_writes_impl(project, writes)
     }
 }
 

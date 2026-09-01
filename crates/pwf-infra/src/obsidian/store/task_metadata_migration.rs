@@ -9,7 +9,7 @@ use pwf_application::ports::{
         TaskMetadataMigrationClient, TaskMetadataMigrationIssue, TaskMetadataMigrationMode,
         TaskMetadataMigrationReport,
     },
-    task_record::IndexEntryState,
+    task_vault::IndexEntryState,
 };
 use pwf_models::{
     AppDate,

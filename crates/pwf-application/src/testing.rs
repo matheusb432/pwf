@@ -2,7 +2,6 @@ mod database;
 
 use std::{
     collections::BTreeMap,
-    convert::Infallible,
     sync::{Arc, Mutex, MutexGuard},
 };
 
@@ -21,11 +20,10 @@ use pwf_wire::task::RawTaskTags;
 
 use crate::ports::{
     clock::Clock,
-    project_note::{NewProjectNote, ProjectNotePatch, ProjectNoteStore},
-    task_record::{
-        IndexEntry, IndexEntryStore, IndexSectionStore, Materialization, NewTask, NullablePatch,
-        StoredBlockedBy, TaskMutationError, TaskMutationStore, TaskPatch, TaskRecord,
-        TaskRevisionState, TaskStore, TaskWrite, TaskWriteSet,
+    project_note::{NewProjectNote, ProjectNotePatch, ProjectNotes},
+    task_vault::{
+        IndexEntry, Materialization, NewTask, NullablePatch, StoredBlockedBy, TaskMutationError,
+        TaskPatch, TaskRecord, TaskRevisionState, TaskVault, TaskWrite, TaskWriteSet,
     },
 };
 
@@ -47,15 +45,16 @@ struct InMemoryState {
     project_notes: BTreeMap<ProjectName, Vec<ProjectNote>>,
     project_note_creations: BTreeMap<ProjectName, Vec<AppDate>>,
     project_note_patches: BTreeMap<ProjectName, Vec<ProjectNotePatch>>,
-    project_note_failures: Vec<ProjectNoteFailure>,
+    failures: Vec<InMemoryStoreFailure>,
     next_task_revision: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ProjectNoteFailure {
-    Delete,
-    List,
-    Read,
+pub(crate) enum InMemoryStoreFailure {
+    DeleteProjectNote,
+    ListProjectNotes,
+    ReadTask,
+    ReadTaskMarkdown,
 }
 
 /// Provides thread-safe in-memory persistence for application tests.
@@ -155,8 +154,8 @@ impl InMemoryStore {
             .unwrap_or_default()
     }
 
-    pub(crate) fn with_failure(self, failure: ProjectNoteFailure) -> Self {
-        self.lock().project_note_failures.push(failure);
+    pub(crate) fn with_failure(self, failure: InMemoryStoreFailure) -> Self {
+        self.lock().failures.push(failure);
         self
     }
 
@@ -205,7 +204,7 @@ pub(crate) fn task_record(id: &str) -> TaskRecord {
         tags: None,
         effort: None,
         priority: None,
-        blocked_by: crate::ports::task_record::StoredBlockedBy::Absent,
+        blocked_by: crate::ports::task_vault::StoredBlockedBy::Absent,
         section: None,
         body: "\nbody\n".to_string(),
         source: "body".to_string(),
@@ -260,10 +259,19 @@ pub(crate) fn staged_missing_task() -> (InMemoryStore, Vec<Project>) {
     )
 }
 
-impl TaskStore for InMemoryStore {
+impl TaskVault for InMemoryStore {
     type Error = InMemoryStoreError;
 
-    fn get(&self, project: &Project, id: &TaskId) -> Result<Option<TaskRecord>, Self::Error> {
+    fn get_task(&self, project: &Project, id: &TaskId) -> Result<Option<TaskRecord>, Self::Error> {
+        if self
+            .lock()
+            .failures
+            .contains(&InMemoryStoreFailure::ReadTask)
+        {
+            return Err(InMemoryStoreError::Injected {
+                operation: "task-read",
+            });
+        }
         Ok(self
             .lock()
             .tasks
@@ -271,7 +279,7 @@ impl TaskStore for InMemoryStore {
             .and_then(|tasks| tasks.iter().find(|task| task.id == *id).cloned()))
     }
 
-    fn list(&self, project: &Project) -> Result<Vec<TaskRecord>, Self::Error> {
+    fn list_tasks(&self, project: &Project) -> Result<Vec<TaskRecord>, Self::Error> {
         Ok(self
             .lock()
             .tasks
@@ -280,7 +288,7 @@ impl TaskStore for InMemoryStore {
             .unwrap_or_default())
     }
 
-    fn next_id(&self, project: &Project) -> Result<TaskId, Self::Error> {
+    fn next_task_id(&self, project: &Project) -> Result<TaskId, Self::Error> {
         let state = self.lock();
         let project_id = state.project_ids.get(&project.title).cloned().unwrap();
         let next = state
@@ -296,7 +304,7 @@ impl TaskStore for InMemoryStore {
     }
 
     /// Materializes an active record at the exact prevalidated task ID.
-    fn insert(
+    fn insert_task(
         &self,
         project: &Project,
         id: &TaskId,
@@ -322,8 +330,8 @@ impl TaskStore for InMemoryStore {
             effort: new.effort.map(|effort| effort.to_string()),
             priority: new.priority.map(|priority| priority.to_string()),
             blocked_by: new.blocked_by.map_or(
-                crate::ports::task_record::StoredBlockedBy::Absent,
-                crate::ports::task_record::StoredBlockedBy::Valid,
+                crate::ports::task_vault::StoredBlockedBy::Absent,
+                crate::ports::task_vault::StoredBlockedBy::Valid,
             ),
             section: None,
             body: new.body.clone(),
@@ -336,16 +344,59 @@ impl TaskStore for InMemoryStore {
         tasks.push(record.clone());
         Ok(record)
     }
-}
 
-impl TaskMutationStore for InMemoryStore {
-    type Error = InMemoryStoreError;
+    fn read_task_markdown(
+        &self,
+        locator: &pwf_wire::task::TaskNotePath,
+    ) -> Result<String, Self::Error> {
+        if self
+            .lock()
+            .failures
+            .contains(&InMemoryStoreFailure::ReadTaskMarkdown)
+        {
+            return Err(InMemoryStoreError::Injected {
+                operation: "task-markdown-read",
+            });
+        }
+        self.lock()
+            .tasks
+            .values()
+            .flatten()
+            .find(|task| &task.locator == locator)
+            .map(|task| task.source.clone())
+            .ok_or_else(|| InMemoryStoreError::TaskNoteMarkdownMissing {
+                locator: locator.to_string(),
+            })
+    }
+
+    fn list_index_entries(&self, project: &Project) -> Result<Vec<IndexEntry>, Self::Error> {
+        Ok(self.index_entries(project))
+    }
+
+    fn list_index_sections(&self, project: &Project) -> Result<Vec<TaskSection>, Self::Error> {
+        Ok(self.index_sections(project))
+    }
+
+    fn upsert_index_entry(&self, project: &Project, entry: IndexEntry) -> Result<(), Self::Error> {
+        self.upsert(project, entry);
+        Ok(())
+    }
 
     fn commit_task_writes(
         &self,
         project: &Project,
         writes: TaskWriteSet,
     ) -> Result<(), TaskMutationError<Self::Error>> {
+        self.commit_task_writes_impl(project, writes)
+    }
+}
+
+impl InMemoryStore {
+    fn commit_task_writes_impl(
+        &self,
+        project: &Project,
+        writes: TaskWriteSet,
+    ) -> Result<(), TaskMutationError<InMemoryStoreError>> {
         let mut state = self.lock();
         validate_task_revisions(&state, &project.title, writes.expected())?;
 
@@ -423,7 +474,7 @@ fn apply_task_write(
 fn validate_task_revisions(
     state: &InMemoryState,
     project: &ProjectName,
-    expected: &[crate::ports::task_record::ExpectedTaskRevision],
+    expected: &[crate::ports::task_vault::ExpectedTaskRevision],
 ) -> Result<(), TaskMutationError<InMemoryStoreError>> {
     for expectation in expected {
         validate_task_revision(state, project, expectation)?;
@@ -434,7 +485,7 @@ fn validate_task_revisions(
 fn validate_task_revision(
     state: &InMemoryState,
     project: &ProjectName,
-    expected: &crate::ports::task_record::ExpectedTaskRevision,
+    expected: &crate::ports::task_vault::ExpectedTaskRevision,
 ) -> Result<(), TaskMutationError<InMemoryStoreError>> {
     let current = state
         .tasks
@@ -516,7 +567,7 @@ fn apply_nullable_patch<T>(target: &mut Option<T>, patch: NullablePatch<T>) {
     }
 }
 
-impl ProjectNoteStore for InMemoryStore {
+impl ProjectNotes for InMemoryStore {
     type Error = InMemoryStoreError;
 
     fn get_note(&self, project: &Project, id: &NoteId) -> Result<Option<ProjectNote>, Self::Error> {
@@ -530,8 +581,8 @@ impl ProjectNoteStore for InMemoryStore {
     fn list_notes(&self, project: &Project) -> Result<Vec<ProjectNote>, Self::Error> {
         if self
             .lock()
-            .project_note_failures
-            .contains(&ProjectNoteFailure::List)
+            .failures
+            .contains(&InMemoryStoreFailure::ListProjectNotes)
         {
             return Err(InMemoryStoreError::Injected {
                 operation: "project-note-list",
@@ -596,8 +647,8 @@ impl ProjectNoteStore for InMemoryStore {
     fn delete_note(&self, project: &Project, id: &NoteId) -> Result<(), Self::Error> {
         if self
             .lock()
-            .project_note_failures
-            .contains(&ProjectNoteFailure::Delete)
+            .failures
+            .contains(&InMemoryStoreFailure::DeleteProjectNote)
         {
             return Err(InMemoryStoreError::Injected {
                 operation: "project-note-delete",
@@ -613,57 +664,15 @@ impl ProjectNoteStore for InMemoryStore {
         assert!(count_before > notes.len(), "delete of unknown project note");
         Ok(())
     }
-    fn read_note_markdown(
-        &self,
-        locator: &pwf_wire::task::TaskNotePath,
-    ) -> Result<String, Self::Error> {
-        if self
-            .lock()
-            .project_note_failures
-            .contains(&ProjectNoteFailure::Read)
-        {
-            return Err(InMemoryStoreError::Injected {
-                operation: "project-note-read",
-            });
-        }
-        self.lock()
-            .tasks
-            .values()
-            .flatten()
-            .find(|task| &task.locator == locator)
-            .map(|task| task.source.clone())
-            .ok_or_else(|| InMemoryStoreError::TaskNoteMarkdownMissing {
-                locator: locator.to_string(),
-            })
-    }
 }
 
-impl IndexEntryStore for InMemoryStore {
-    type Error = Infallible;
-
-    fn list_index_entries(&self, project: &Project) -> Result<Vec<IndexEntry>, Self::Error> {
-        Ok(self
-            .lock()
+impl InMemoryStore {
+    fn index_entries(&self, project: &Project) -> Vec<IndexEntry> {
+        self.lock()
             .entries
             .get(&project.title)
             .cloned()
-            .unwrap_or_default())
-    }
-
-    fn upsert_index_entry(&self, project: &Project, entry: IndexEntry) -> Result<(), Self::Error> {
-        self.upsert(project, entry);
-        Ok(())
-    }
-
-    fn delete_index_entry(&self, project: &Project, id: &TaskId) -> Result<(), Self::Error> {
-        let mut state = self.lock();
-        state
-            .entries
-            .entry(project.title.clone())
-            .or_default()
-            .retain(|entry| entry.id != *id);
-        bump_index_backed_revisions(&mut state, &project.title);
-        Ok(())
+            .unwrap_or_default()
     }
 }
 
@@ -714,35 +723,14 @@ fn rename_entry_sections(
         .for_each(|entry| entry.section = Some(new_label.clone()));
 }
 
-impl IndexSectionStore for InMemoryStore {
-    type Error = InMemoryStoreError;
-
-    fn list_index_sections(&self, project: &Project) -> Result<Vec<TaskSection>, Self::Error> {
-        Ok(self
-            .lock()
+impl InMemoryStore {
+    fn index_sections(&self, project: &Project) -> Vec<TaskSection> {
+        self.lock()
             .sections
             .get(&project.title)
             .cloned()
             .unwrap_or_default()
             .into_iter()
-            .collect())
-    }
-
-    /// Renames a section and updates entries that referenced its old label.
-    fn rename_index_section(
-        &self,
-        project: &Project,
-        current_label: &TaskSection,
-        new_label: &TaskSection,
-    ) -> Result<(), Self::Error> {
-        let mut state = self.lock();
-        if let Some(sections) = state.sections.get_mut(&project.title) {
-            rename_section(sections, current_label, new_label);
-        }
-        if let Some(entries) = state.entries.get_mut(&project.title) {
-            rename_entry_sections(entries, current_label, new_label);
-        }
-        bump_index_backed_revisions(&mut state, &project.title);
-        Ok(())
+            .collect()
     }
 }

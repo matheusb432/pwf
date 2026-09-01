@@ -26,9 +26,8 @@ use crate::{
     ports::{
         agent::AgentClient,
         project_directory::ProjectDirectoryClient,
-        project_note::ProjectNoteStore,
         session::{AgentCommand, SessionClient, SessionStart, SessionWindow},
-        task_record::{Materialization, StoredBlockedBy, TaskRecord, TaskStore},
+        task_vault::{Materialization, StoredBlockedBy, TaskRecord, TaskVault},
     },
     project::{list_projects, runtime_path},
     task::{active_task, blocked_by},
@@ -110,7 +109,7 @@ struct PlannedTask {
 #[cqrsy::command]
 pub async fn execute(
     command: &PlanSession,
-    store: &(impl TaskStore + ProjectNoteStore),
+    store: &impl TaskVault,
     pool: &sqlx::SqlitePool,
     home: &HomeDirectory,
     clients: &SessionPlanningClients<
@@ -215,7 +214,7 @@ pub async fn execute(
 
 async fn plan_task(
     task_id: &TaskId,
-    store: &(impl TaskStore + ProjectNoteStore),
+    store: &impl TaskVault,
     pool: &sqlx::SqlitePool,
 ) -> Result<(Project, PlannedTask, Vec<SessionWarning>), PlanSessionError> {
     let found = active_task::find(task_id, store, pool)
@@ -246,7 +245,7 @@ async fn plan_task(
 
 async fn blocker_warnings(
     record: &TaskRecord,
-    store: &impl TaskStore,
+    store: &impl TaskVault,
     pool: &sqlx::SqlitePool,
 ) -> Vec<SessionWarning> {
     let blocked_by = match &record.blocked_by {
@@ -311,11 +310,11 @@ fn preview_dispatch_argv(
 
 fn load_task_content(
     record: &TaskRecord,
-    store: &impl ProjectNoteStore,
+    store: &impl TaskVault,
 ) -> Result<String, PlanSessionError> {
     if matches!(record.materialization, Materialization::MissingNote { .. }) {
         return store
-            .read_note_markdown(&record.locator)
+            .read_task_markdown(&record.locator)
             .map_err(|error| PlanSessionError::ReadTaskMarkdown(anyhow::Error::new(error)));
     }
     Ok(record.source.clone())
@@ -714,7 +713,7 @@ mod planned_model_tests {
             agent::{AgentClient, PreparedAgentLaunch},
             project_directory::ProjectDirectoryClient,
             session::{SessionClient, SessionStart, SessionWindow},
-            task_record::TaskRecord,
+            task_vault::TaskRecord,
         },
         task::session::plan_session,
         testing::{InMemoryStore, insert_project, task_record},
@@ -905,7 +904,7 @@ mod blocker_warning_tests {
 
     use super::blocker_warnings;
     use crate::{
-        ports::task_record::{StoredBlockedBy, TaskRecord},
+        ports::task_vault::{StoredBlockedBy, TaskRecord},
         testing::{InMemoryStore, insert_project, stored_blocked_by, task_record},
     };
 

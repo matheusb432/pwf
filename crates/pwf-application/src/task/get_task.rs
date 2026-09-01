@@ -5,10 +5,7 @@ use pwf_models::{
 use pwf_wire::task::{GetTask, TaskData, TaskRead, TaskReadFormat, TaskSnapshot};
 
 use crate::{
-    ports::{
-        project_note::ProjectNoteStore,
-        task_record::{Materialization, StoredBlockedBy, TaskRecord, TaskStore},
-    },
+    ports::task_vault::{Materialization, StoredBlockedBy, TaskRecord, TaskVault},
     project::{get_active_project, get_project::GetProjectError},
     task::tags,
 };
@@ -43,7 +40,7 @@ pub enum GetTaskError {
 #[cqrsy::query]
 pub async fn execute(
     query: &GetTask,
-    store: &(impl TaskStore + ProjectNoteStore),
+    store: &impl TaskVault,
     pool: &sqlx::SqlitePool,
 ) -> Result<TaskSnapshot, GetTaskError> {
     let project = match get_active_project::execute(query.id.project_id().clone(), pool).await {
@@ -56,7 +53,7 @@ pub async fn execute(
         Err(error) => return Err(GetTaskError::QueryProject(anyhow::Error::new(error))),
     };
     let record = store
-        .get(&project, &query.id)
+        .get_task(&project, &query.id)
         .map_err(|error| GetTaskError::ReadStore(anyhow::Error::new(error)))?
         .ok_or_else(|| GetTaskError::TaskNotFound {
             id: query.id.clone(),
@@ -68,7 +65,7 @@ pub async fn execute(
             if matches!(record.materialization, Materialization::MissingNote { .. }) =>
         {
             store
-                .read_note_markdown(&record.locator)
+                .read_task_markdown(&record.locator)
                 .map(TaskRead::Markdown)
                 .map_err(|error| GetTaskError::ReadMarkdown(anyhow::Error::new(error)))?
         }
@@ -166,10 +163,10 @@ mod tests {
 
     use super::{GetTask, GetTaskError, TaskId};
     use crate::{
-        ports::task_record::{StoredBlockedBy, TaskRecord},
+        ports::task_vault::{StoredBlockedBy, TaskRecord},
         task::get_task,
         testing::{
-            FOO_0001_SOURCE, InMemoryStore, ProjectNoteFailure, insert_project,
+            FOO_0001_SOURCE, InMemoryStore, InMemoryStoreFailure, insert_project,
             staged_missing_task, staged_task, stored_blocked_by, task_record, task_timestamp,
         },
     };
@@ -215,7 +212,7 @@ mod tests {
     async fn get_markdown_preserves_missing_note_source_error(pool: sqlx::SqlitePool) {
         insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
         let (store, _) = staged_missing_task();
-        let store = store.with_failure(ProjectNoteFailure::Read);
+        let store = store.with_failure(InMemoryStoreFailure::ReadTaskMarkdown);
         let query = GetTask {
             id: TaskId::try_new("FOO-0002").unwrap(),
             output: TaskReadFormat::Markdown,
@@ -225,7 +222,7 @@ mod tests {
 
         assert_eq!(
             error.to_string(),
-            "injected in-memory store failure: project-note-read"
+            "injected in-memory store failure: task-markdown-read"
         );
     }
 

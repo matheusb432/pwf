@@ -1,9 +1,7 @@
 use std::{collections::BTreeMap, num::NonZeroUsize, path::Path};
 
 use lazy_regex::{Regex, regex};
-use pwf_application::ports::task_record::{
-    IndexEntry, IndexEntryState, IndexEntryStore, IndexSectionStore,
-};
+use pwf_application::ports::task_vault::{IndexEntry, IndexEntryState};
 use pwf_models::{
     project::Project,
     task::{TaskId, TaskSection, TaskTimestamp},
@@ -11,7 +9,7 @@ use pwf_models::{
 
 use super::{
     ObsidianStore, ObsidianStoreError,
-    fs::{line_start_index, read_index, write_add_index_file, write_index},
+    fs::{line_start_index, read_index, write_add_index_file},
 };
 use crate::obsidian::{
     MarkdownFile,
@@ -256,7 +254,10 @@ pub(super) fn delete_index_entry_text(content: &str, id: &TaskId) -> String {
 }
 
 impl ObsidianStore {
-    fn list_index_entries(&self, project: &Project) -> Result<Vec<IndexEntry>, ObsidianStoreError> {
+    pub(super) fn list_index_entries(
+        &self,
+        project: &Project,
+    ) -> Result<Vec<IndexEntry>, ObsidianStoreError> {
         let Some((index_path, text)) = self.validated_project_index(project)? else {
             return Ok(Vec::new());
         };
@@ -274,7 +275,7 @@ impl ObsidianStore {
     ///
     /// A missing index is created from the identity template. Add failures retain the
     /// created-section diagnostic payload.
-    fn upsert_index_entry(
+    pub(super) fn upsert_index_entry(
         &self,
         project: &Project,
         entry: &IndexEntry,
@@ -304,66 +305,14 @@ impl ObsidianStore {
         )
     }
 
-    /// Renames an H2 section label in place without applying application policy.
-    fn rename_section_header(
+    pub(super) fn list_index_sections(
         &self,
         project: &Project,
-        from: &TaskSection,
-        to: &TaskSection,
-    ) -> Result<(), ObsidianStoreError> {
-        let index_path = self.project_index_path(project)?;
-        let content = read_index(&index_path)?;
-        write_index(
-            &index_path,
-            &rename_header_lines(&content, from.as_ref(), to.as_ref()),
-        )
-    }
-
-    fn delete_index_entry(&self, project: &Project, id: &TaskId) -> Result<(), ObsidianStoreError> {
-        let Some((index_path, content)) = self.validated_project_index(project)? else {
-            return Ok(());
-        };
-        let updated = delete_index_entry_text(&content, id);
-        if updated == content {
-            return Ok(());
-        }
-        write_index(&index_path, &updated)
-    }
-}
-
-impl IndexEntryStore for ObsidianStore {
-    type Error = ObsidianStoreError;
-
-    fn list_index_entries(&self, project: &Project) -> Result<Vec<IndexEntry>, Self::Error> {
-        ObsidianStore::list_index_entries(self, project)
-    }
-
-    fn upsert_index_entry(&self, project: &Project, entry: IndexEntry) -> Result<(), Self::Error> {
-        ObsidianStore::upsert_index_entry(self, project, &entry)
-    }
-
-    fn delete_index_entry(&self, project: &Project, id: &TaskId) -> Result<(), Self::Error> {
-        ObsidianStore::delete_index_entry(self, project, id)
-    }
-}
-
-impl IndexSectionStore for ObsidianStore {
-    type Error = ObsidianStoreError;
-
-    fn list_index_sections(&self, project: &Project) -> Result<Vec<TaskSection>, Self::Error> {
+    ) -> Result<Vec<TaskSection>, ObsidianStoreError> {
         let Some((index_path, text)) = self.validated_project_index(project)? else {
             return Ok(Vec::new());
         };
         parse_section_labels(&index_path, &text)
-    }
-
-    fn rename_index_section(
-        &self,
-        project: &Project,
-        current_label: &TaskSection,
-        new_label: &TaskSection,
-    ) -> Result<(), Self::Error> {
-        self.rename_section_header(project, current_label, new_label)
     }
 }
 
@@ -371,7 +320,7 @@ impl IndexSectionStore for ObsidianStore {
 mod tests {
     use std::{assert_matches, path::Path};
 
-    use pwf_application::ports::task_record::{IndexEntry, IndexEntryState};
+    use pwf_application::ports::task_vault::{IndexEntry, IndexEntryState};
     use pwf_models::task::{TaskId, TaskTimestamp};
 
     use super::{ObsidianStoreError, parse_index_lines, render_entry_line, replace_line};

@@ -2,7 +2,7 @@ use pwf_models::task::{IndexSection, TaskPrompt, TaskTimestamp, TaskTitle};
 use pwf_wire::task::{AddTask, AddTaskPrompt, TaskLanes};
 
 use crate::{
-    ports::task_record::IndexEntryState,
+    ports::task_vault::IndexEntryState,
     task::add_task::{self, AddTaskError},
     testing::{
         FixedClock, InMemoryStore, blocked_by, insert_project, stored_blocked_by, task_record,
@@ -227,7 +227,7 @@ async fn add_accepts_a_blocker_from_a_paused_project(pool: sqlx::SqlitePool) {
 #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
 async fn add_rejects_a_cycle_through_its_prospective_id_without_writing(pool: sqlx::SqlitePool) {
     insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
-    let origin = crate::ports::task_record::TaskRecord {
+    let origin = crate::ports::task_vault::TaskRecord {
         blocked_by: stored_blocked_by(&["FOO-0002"]),
         ..task_record("FOO-0001")
     };

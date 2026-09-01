@@ -6,7 +6,7 @@ use pwf_wire::{
 };
 
 use crate::{
-    ports::project_note::ProjectNoteStore,
+    ports::project_note::ProjectNotes,
     project::resolve_project::{self, ResolveProjectError},
 };
 
@@ -24,7 +24,7 @@ pub enum ListNotesError {
 #[cqrsy::query]
 pub async fn execute(
     query: ListNotes,
-    store: &impl ProjectNoteStore,
+    store: &impl ProjectNotes,
     pool: &sqlx::SqlitePool,
 ) -> Result<ListedNotes, ListNotesError> {
     let project = resolve_project::execute(

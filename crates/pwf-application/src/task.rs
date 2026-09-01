@@ -48,7 +48,7 @@ fn task_body_region(body: &str) -> &str {
 }
 
 fn task_revision(
-    record: &crate::ports::task_record::TaskRecord,
+    record: &crate::ports::task_vault::TaskRecord,
 ) -> pwf_models::revision::ContentRevision {
     record.revision.clone()
 }
@@ -64,7 +64,7 @@ pub struct TaskRevisionConflict {
 
 fn ensure_task_revision(
     expected: Option<&pwf_models::revision::ContentRevision>,
-    record: &crate::ports::task_record::TaskRecord,
+    record: &crate::ports::task_vault::TaskRecord,
 ) -> Result<(), TaskRevisionConflict> {
     let Some(expected) = expected else {
         return Ok(());
@@ -80,24 +80,24 @@ fn ensure_task_revision(
 }
 
 fn expected_task_revision(
-    record: &crate::ports::task_record::TaskRecord,
-) -> crate::ports::task_record::ExpectedTaskRevision {
-    crate::ports::task_record::ExpectedTaskRevision {
+    record: &crate::ports::task_vault::TaskRecord,
+) -> crate::ports::task_vault::ExpectedTaskRevision {
+    crate::ports::task_vault::ExpectedTaskRevision {
         id: record.id.clone(),
         revision: record.revision.clone(),
     }
 }
 
 fn commit_task_writes(
-    store: &impl crate::ports::task_record::TaskMutationStore,
+    store: &impl crate::ports::task_vault::TaskVault,
     project: &pwf_models::project::Project,
-    expected: Vec<crate::ports::task_record::ExpectedTaskRevision>,
-    writes: Vec<crate::ports::task_record::TaskWrite>,
-) -> Result<(), crate::ports::task_record::TaskMutationError<anyhow::Error>> {
-    let writes = crate::ports::task_record::TaskWriteSet::try_new(expected, writes)
+    expected: Vec<crate::ports::task_vault::ExpectedTaskRevision>,
+    writes: Vec<crate::ports::task_vault::TaskWrite>,
+) -> Result<(), crate::ports::task_vault::TaskMutationError<anyhow::Error>> {
+    let writes = crate::ports::task_vault::TaskWriteSet::try_new(expected, writes)
         .map_err(anyhow::Error::new)
-        .map_err(crate::ports::task_record::TaskMutationError::Store)?;
-    crate::ports::task_record::TaskMutationStore::commit_task_writes(store, project, writes)
+        .map_err(crate::ports::task_vault::TaskMutationError::Store)?;
+    crate::ports::task_vault::TaskVault::commit_task_writes(store, project, writes)
         .map_err(|error| error.map_store(anyhow::Error::new))
 }
 
