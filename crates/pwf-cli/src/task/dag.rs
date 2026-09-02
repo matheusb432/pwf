@@ -14,9 +14,13 @@ pub(super) fn render(task_dag: pwf_client::task::TaskDag, color_on: bool) -> Str
 }
 
 pub(super) fn benchmark_prepare(task_dag: pwf_client::task::TaskDag, color_on: bool) {
-    drop(std::hint::black_box(output::prepare(
-        task_dag, None, color_on,
-    )));
+    if color_on {
+        drop(std::hint::black_box(output::prepare_colored(
+            task_dag, None,
+        )));
+    } else {
+        drop(std::hint::black_box(output::prepare(task_dag, None)));
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, ValueEnum)]

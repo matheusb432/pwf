@@ -10,57 +10,54 @@ pub(super) fn render(
     node_field: Option<NodeFieldChoice>,
     color_on: bool,
 ) -> String {
-    let PreparedTaskDag {
-        graph,
-        colored_task_labels,
-    } = prepare(task_dag, node_field, color_on);
+    if color_on {
+        render_colored(task_dag, node_field)
+    } else {
+        render_plain(task_dag, node_field)
+    }
+}
 
+fn render_plain(task_dag: TaskDag, node_field: Option<NodeFieldChoice>) -> String {
+    render_graph(&prepare(task_dag, node_field))
+}
+
+fn render_colored(task_dag: TaskDag, node_field: Option<NodeFieldChoice>) -> String {
+    let (graph, coloring) = prepare_colored(task_dag, node_field);
+    coloring.apply(render_graph(&graph))
+}
+
+fn render_graph(graph: &Graph) -> String {
     let positions = mermaid_text::layout::layered::layout(
-        &graph,
+        graph,
         &mermaid_text::layout::layered::LayoutConfig::default(),
     )
     .positions;
     let subgraph_bounds =
-        mermaid_text::layout::subgraph::compute_subgraph_bounds(&graph, &positions);
-    let mut output = mermaid_text::render::render(&graph, &positions, &subgraph_bounds);
-    for (plain, colored) in colored_task_labels {
-        output = output.replacen(&plain, &colored, 1);
-    }
-    output
+        mermaid_text::layout::subgraph::compute_subgraph_bounds(graph, &positions);
+    mermaid_text::render::render(graph, &positions, &subgraph_bounds)
 }
 
-pub(super) struct PreparedTaskDag {
-    graph: Graph,
-    colored_task_labels: Vec<(String, String)>,
-}
-
-pub(super) fn prepare(
+pub(super) fn prepare_colored(
     task_dag: TaskDag,
     node_field: Option<NodeFieldChoice>,
-    color_on: bool,
-) -> PreparedTaskDag {
+) -> (Graph, TaskDagColoring) {
+    let coloring = TaskDagColoring::prepare(&task_dag, node_field);
+    let graph = prepare(task_dag, node_field);
+    (graph, coloring)
+}
+
+pub(super) fn prepare(task_dag: TaskDag, node_field: Option<NodeFieldChoice>) -> Graph {
     let (root_id, nodes, edges) = task_dag.into_parts();
     let task_dag_node_count = nodes.len();
     let mut graph = Graph::new(Direction::LeftToRight);
     graph.nodes.reserve(task_dag_node_count);
     graph.edges.reserve(edges.len());
-    let mut colored_task_labels = if color_on {
-        Vec::with_capacity(task_dag_node_count)
-    } else {
-        Vec::new()
-    };
     for (node_index, node) in nodes.into_iter().enumerate() {
         let (label, shape) = match node {
             TaskDagNode::Task { id, title, status } => {
                 let is_root = id == root_id;
                 let identifier = id.into_string();
-                let colored_identifier =
-                    color_on.then(|| render_domain_task_identifier(&identifier, status, true));
                 let label = task_label(identifier, status, &title, node_field);
-                if let Some(colored_identifier) = colored_identifier {
-                    let colored_label = task_label(colored_identifier, status, &title, node_field);
-                    colored_task_labels.push((label.clone(), colored_label));
-                }
                 (
                     label,
                     if is_root {
@@ -93,9 +90,33 @@ pub(super) fn prepare(
         ));
     }
 
-    PreparedTaskDag {
-        graph,
-        colored_task_labels,
+    graph
+}
+
+pub(super) struct TaskDagColoring {
+    task_labels: Vec<(String, String)>,
+}
+
+impl TaskDagColoring {
+    fn prepare(task_dag: &TaskDag, node_field: Option<NodeFieldChoice>) -> Self {
+        let mut task_labels = Vec::with_capacity(task_dag.nodes().len());
+        for node in task_dag.nodes() {
+            let TaskDagNode::Task { id, title, status } = node else {
+                continue;
+            };
+            let plain_label = task_label(id.to_string(), *status, title, node_field);
+            let colored_identifier = render_domain_task_identifier(id.as_ref(), *status, true);
+            let colored_label = task_label(colored_identifier, *status, title, node_field);
+            task_labels.push((plain_label, colored_label));
+        }
+        Self { task_labels }
+    }
+
+    fn apply(self, mut output: String) -> String {
+        for (plain_label, colored_label) in self.task_labels {
+            output = output.replacen(&plain_label, &colored_label, 1);
+        }
+        output
     }
 }
 
