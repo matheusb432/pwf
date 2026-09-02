@@ -68,5 +68,9 @@ pub(super) async fn run(
         })
         .await
         .map_err(crate::rpc_error)?;
-    output::render(&graph, arguments.node_field, console.color())
+    Ok(output::render(
+        &graph,
+        arguments.node_field,
+        console.color(),
+    ))
 }

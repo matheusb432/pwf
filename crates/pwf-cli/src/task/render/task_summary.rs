@@ -38,17 +38,66 @@ pub(in crate::task) fn render_task_identifier(
     status: TaskStatus,
     color_on: bool,
 ) -> String {
+    render_task_identifier_with_status(identifier, LifecycleStatus::from(status), color_on)
+}
+
+pub(in crate::task) fn render_domain_task_identifier(
+    identifier: &str,
+    status: pwf_models::task::TaskStatus,
+    color_on: bool,
+) -> String {
+    render_task_identifier_with_status(identifier, LifecycleStatus::from(status), color_on)
+}
+
+fn render_task_identifier_with_status(
+    identifier: &str,
+    status: LifecycleStatus,
+    color_on: bool,
+) -> String {
     if !color_on {
         return identifier.to_string();
     }
-    paint(identifier, task_status_color(status), true)
+    paint(identifier, lifecycle_status_color(status), true)
 }
 
 fn task_status_color(status: TaskStatus) -> anstyle::Color {
+    lifecycle_status_color(status.into())
+}
+
+fn lifecycle_status_color(status: LifecycleStatus) -> anstyle::Color {
     match status {
-        TaskStatus::Active => AnsiColor::Blue.into(),
-        TaskStatus::Done => AnsiColor::Green.into(),
-        TaskStatus::Cancelled => AnsiColor::Red.into(),
-        TaskStatus::Unspecified => AnsiColor::Yellow.into(),
+        LifecycleStatus::Active => AnsiColor::Blue.into(),
+        LifecycleStatus::Done => AnsiColor::Green.into(),
+        LifecycleStatus::Cancelled => AnsiColor::Red.into(),
+        LifecycleStatus::Unspecified => AnsiColor::Yellow.into(),
+    }
+}
+
+#[derive(Clone, Copy)]
+enum LifecycleStatus {
+    Active,
+    Done,
+    Cancelled,
+    Unspecified,
+}
+
+impl From<TaskStatus> for LifecycleStatus {
+    fn from(status: TaskStatus) -> Self {
+        match status {
+            TaskStatus::Active => Self::Active,
+            TaskStatus::Done => Self::Done,
+            TaskStatus::Cancelled => Self::Cancelled,
+            TaskStatus::Unspecified => Self::Unspecified,
+        }
+    }
+}
+
+impl From<pwf_models::task::TaskStatus> for LifecycleStatus {
+    fn from(status: pwf_models::task::TaskStatus) -> Self {
+        match status {
+            pwf_models::task::TaskStatus::Active => Self::Active,
+            pwf_models::task::TaskStatus::Done => Self::Done,
+            pwf_models::task::TaskStatus::Cancelled => Self::Cancelled,
+        }
     }
 }

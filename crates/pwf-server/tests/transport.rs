@@ -15,6 +15,7 @@ use pwf_client::{
         TaskReadFormat, delete_note_result, note_service_client::NoteServiceClient,
         session_service_client::SessionServiceClient, task_service_client::TaskServiceClient,
     },
+    task::{TaskDagEdge, TaskDagNode},
 };
 use pwf_local_auth::{
     CapabilityToken, LocalAuth, PublishedEndpoint, ServerEndpoint, ServerInstanceId,
@@ -479,19 +480,19 @@ async fn v1_get_task_dag_returns_typed_blocker_edges() -> anyhow::Result<()> {
         })
         .await?;
 
-    assert_eq!(graph.root_id, dependent.id);
+    assert_eq!(graph.root_id.as_ref(), dependent.id);
     assert_eq!(graph.nodes.len(), 2);
     assert!(matches!(
-        graph.nodes[0].value,
-        Some(pb::task_dag_node::Value::Task(ref task)) if task.id == "FOO-0002"
+        graph.nodes[0],
+        TaskDagNode::Task { ref id, .. } if id.as_ref() == "FOO-0002"
     ));
     assert!(matches!(
-        graph.nodes[1].value,
-        Some(pb::task_dag_node::Value::Task(ref task)) if task.id == "FOO-0001"
+        graph.nodes[1],
+        TaskDagNode::Task { ref id, .. } if id.as_ref() == "FOO-0001"
     ));
     assert_eq!(
         graph.edges,
-        [pb::TaskDagEdge {
+        [TaskDagEdge {
             blocker_node_index: 1,
             dependent_node_index: 0,
         }]
@@ -514,7 +515,7 @@ async fn v1_get_task_dag_rejects_unspecified_mode_and_zero_depth() -> anyhow::Re
         })
         .await
         .unwrap_err();
-    assert_eq!(rpc_status(unspecified_mode).code(), Code::InvalidArgument);
+    assert_eq!(rpc_status(unspecified_mode)?.code(), Code::InvalidArgument);
 
     let zero_depth = server
         .client
@@ -527,7 +528,7 @@ async fn v1_get_task_dag_rejects_unspecified_mode_and_zero_depth() -> anyhow::Re
         })
         .await
         .unwrap_err();
-    assert_eq!(rpc_status(zero_depth).code(), Code::InvalidArgument);
+    assert_eq!(rpc_status(zero_depth)?.code(), Code::InvalidArgument);
 
     server.finish().await
 }
@@ -570,7 +571,7 @@ async fn v1_request_ids_replay_mutations_without_duplicate_effects() -> anyhow::
         .create_task(conflicting)
         .await
         .unwrap_err();
-    assert_eq!(rpc_status(conflict).code(), Code::AlreadyExists);
+    assert_eq!(rpc_status(conflict)?.code(), Code::AlreadyExists);
 
     let append = pb::UpdateTaskRequest {
         id: first.id.clone(),
@@ -765,7 +766,7 @@ async fn v1_task_revisions_support_conditional_empty_updates() -> anyhow::Result
         })
         .await
         .unwrap_err();
-    assert_eq!(rpc_status(stale).code(), Code::Aborted);
+    assert_eq!(rpc_status(stale)?.code(), Code::Aborted);
 
     server.finish().await
 }
@@ -812,7 +813,7 @@ async fn v1_task_list_pages_are_bounded_and_query_bound() -> anyhow::Result<()> 
         direction: pb::OrderDirection::Desc as i32,
     });
     let changed = server.client.task().list_tasks(request).await.unwrap_err();
-    assert_eq!(rpc_status(changed).code(), Code::InvalidArgument);
+    assert_eq!(rpc_status(changed)?.code(), Code::InvalidArgument);
 
     let mut oversized = task_list_request(None, None);
     oversized.page_size = 257;
@@ -822,7 +823,7 @@ async fn v1_task_list_pages_are_bounded_and_query_bound() -> anyhow::Result<()> 
         .list_tasks(oversized)
         .await
         .unwrap_err();
-    assert_eq!(rpc_status(oversized).code(), Code::InvalidArgument);
+    assert_eq!(rpc_status(oversized)?.code(), Code::InvalidArgument);
 
     server.finish().await
 }
@@ -838,7 +839,7 @@ async fn task_priority_round_trips_through_supported_rpcs() -> anyhow::Result<()
         )
         .await
         .unwrap_err();
-    assert_eq!(rpc_status(invalid).code(), Code::InvalidArgument);
+    assert_eq!(rpc_status(invalid)?.code(), Code::InvalidArgument);
     let task_id = server
         .add_task_with_priority("priority transport task", Some(pb::PriorityTier::Highest))
         .await?;
@@ -850,7 +851,7 @@ async fn task_priority_round_trips_through_supported_rpcs() -> anyhow::Result<()
         .update_task(priority_update(&task_id, None))
         .await
         .unwrap_err();
-    assert_eq!(rpc_status(invalid).code(), Code::InvalidArgument);
+    assert_eq!(rpc_status(invalid)?.code(), Code::InvalidArgument);
 
     let invalid = server
         .client
@@ -858,7 +859,7 @@ async fn task_priority_round_trips_through_supported_rpcs() -> anyhow::Result<()
         .list_tasks(task_list_request(Some(100_001), None))
         .await
         .unwrap_err();
-    assert_eq!(rpc_status(invalid).code(), Code::InvalidArgument);
+    assert_eq!(rpc_status(invalid)?.code(), Code::InvalidArgument);
 
     let listed = server
         .client
@@ -913,7 +914,7 @@ async fn generated_client_maps_validation_and_not_found_statuses() -> anyhow::Re
         })
         .await
         .unwrap_err();
-    assert_eq!(rpc_status(invalid).code(), Code::InvalidArgument);
+    assert_eq!(rpc_status(invalid)?.code(), Code::InvalidArgument);
 
     let missing = server
         .client
@@ -924,7 +925,7 @@ async fn generated_client_maps_validation_and_not_found_statuses() -> anyhow::Re
         })
         .await
         .unwrap_err();
-    assert_eq!(rpc_status(missing).code(), Code::NotFound);
+    assert_eq!(rpc_status(missing)?.code(), Code::NotFound);
 
     let oversized_collection = server
         .client
@@ -944,7 +945,7 @@ async fn generated_client_maps_validation_and_not_found_statuses() -> anyhow::Re
         .await
         .unwrap_err();
     assert_eq!(
-        rpc_status(oversized_collection).code(),
+        rpc_status(oversized_collection)?.code(),
         Code::InvalidArgument
     );
 
@@ -994,7 +995,7 @@ async fn project_source_update_round_trips_through_the_generated_client() -> any
         })
         .await
         .unwrap_err();
-    assert_eq!(rpc_status(invalid).code(), Code::InvalidArgument);
+    assert_eq!(rpc_status(invalid)?.code(), Code::InvalidArgument);
 
     let missing = server
         .client
@@ -1009,7 +1010,7 @@ async fn project_source_update_round_trips_through_the_generated_client() -> any
         })
         .await
         .unwrap_err();
-    assert_eq!(rpc_status(missing).code(), Code::NotFound);
+    assert_eq!(rpc_status(missing)?.code(), Code::NotFound);
 
     server.finish().await
 }
@@ -1079,7 +1080,7 @@ async fn generated_client_preserves_delete_and_session_confirmation_flows() -> a
         })
         .await
         .unwrap_err();
-    assert_eq!(rpc_status(missing).code(), Code::NotFound);
+    assert_eq!(rpc_status(missing)?.code(), Code::NotFound);
 
     server.finish().await
 }
@@ -1525,9 +1526,12 @@ fn session_request(task_id: &str) -> pb::DispatchSessionStart {
     }
 }
 
-fn rpc_status(error: ClientError) -> Status {
-    let ClientError::Rpc(status) = error;
-    status
+fn rpc_status(error: ClientError) -> anyhow::Result<Status> {
+    match error {
+        ClientError::Rpc(status) => Ok(status),
+        ClientError::InvalidTaskDagResponse(error) => Err(anyhow::Error::new(error)
+            .context("expected an RPC status but received an invalid DAG response")),
+    }
 }
 
 fn authenticated<T>(

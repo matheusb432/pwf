@@ -1,6 +1,6 @@
 //! Protobuf response mappings for task operations.
 
-use pwf_models::task::{EffortTier, PriorityTier, TaskId, TaskStatus};
+use pwf_models::task::{EffortTier, PriorityTier, TaskId, TaskIdError, TaskStatus};
 
 use crate::{confirmation, pb, task};
 
@@ -102,6 +102,77 @@ pub fn get_task_dag_response(
     })
 }
 
+/// Decodes a Protobuf task-DAG response into its native representation.
+///
+/// # Errors
+///
+/// Returns [`DecodeGetTaskDagResponseError`] when a wire value cannot represent
+/// a native task ID, lifecycle status, node, or node index.
+pub fn decode_get_task_dag_response(
+    response: pb::GetTaskDagResponse,
+) -> Result<task::TaskDag, DecodeGetTaskDagResponseError> {
+    let root_id =
+        TaskId::try_new(response.root_id).map_err(DecodeGetTaskDagResponseError::RootTaskId)?;
+    let nodes = response
+        .nodes
+        .into_iter()
+        .enumerate()
+        .map(|(node_index, node)| decode_task_dag_node(node_index, node))
+        .collect::<Result<Vec<_>, _>>()?;
+    let edges = response
+        .edges
+        .into_iter()
+        .enumerate()
+        .map(|(edge_index, edge)| {
+            Ok(task::TaskDagEdge {
+                blocker_node_index: usize::try_from(edge.blocker_node_index).map_err(|source| {
+                    DecodeGetTaskDagResponseError::BlockerNodeIndex { edge_index, source }
+                })?,
+                dependent_node_index: usize::try_from(edge.dependent_node_index).map_err(
+                    |source| DecodeGetTaskDagResponseError::DependentNodeIndex {
+                        edge_index,
+                        source,
+                    },
+                )?,
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(task::TaskDag {
+        root_id,
+        nodes,
+        edges,
+    })
+}
+
+/// Reports a task-DAG wire value that cannot be represented natively.
+#[derive(Debug, thiserror::Error)]
+pub enum DecodeGetTaskDagResponseError {
+    #[error("task dependency graph has an invalid root task ID")]
+    RootTaskId(#[source] TaskIdError),
+    #[error("task dependency graph node {node_index} is empty")]
+    EmptyNode { node_index: usize },
+    #[error("task dependency graph node {node_index} has an invalid task ID")]
+    NodeTaskId {
+        node_index: usize,
+        #[source]
+        source: TaskIdError,
+    },
+    #[error("task dependency graph node {node_index} has invalid lifecycle status {value}")]
+    NodeTaskStatus { node_index: usize, value: i32 },
+    #[error("task dependency graph edge {edge_index} has an out-of-range blocker node index")]
+    BlockerNodeIndex {
+        edge_index: usize,
+        #[source]
+        source: std::num::TryFromIntError,
+    },
+    #[error("task dependency graph edge {edge_index} has an out-of-range dependent node index")]
+    DependentNodeIndex {
+        edge_index: usize,
+        #[source]
+        source: std::num::TryFromIntError,
+    },
+}
+
 /// Reports a native task-DAG index outside the Protobuf representation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("task dependency graph contains an out-of-range node index")]
@@ -127,6 +198,51 @@ fn task_dag_node(node: task::TaskDagNode) -> pb::TaskDagNode {
         }
     };
     pb::TaskDagNode { value: Some(value) }
+}
+
+fn decode_task_dag_node(
+    node_index: usize,
+    node: pb::TaskDagNode,
+) -> Result<task::TaskDagNode, DecodeGetTaskDagResponseError> {
+    let value = node
+        .value
+        .ok_or(DecodeGetTaskDagResponseError::EmptyNode { node_index })?;
+    match value {
+        pb::task_dag_node::Value::Task(node) => Ok(task::TaskDagNode::Task {
+            id: decode_task_dag_node_id(node_index, node.id)?,
+            title: node.title,
+            status: decode_task_dag_status(node_index, node.status)?,
+        }),
+        pb::task_dag_node::Value::Missing(node) => Ok(task::TaskDagNode::Missing {
+            id: decode_task_dag_node_id(node_index, node.id)?,
+        }),
+        pb::task_dag_node::Value::Unavailable(node) => Ok(task::TaskDagNode::Unavailable {
+            id: decode_task_dag_node_id(node_index, node.id)?,
+        }),
+        pb::task_dag_node::Value::DepthLimit(_) => Ok(task::TaskDagNode::DepthLimit),
+    }
+}
+
+fn decode_task_dag_node_id(
+    node_index: usize,
+    id: String,
+) -> Result<TaskId, DecodeGetTaskDagResponseError> {
+    TaskId::try_new(id)
+        .map_err(|source| DecodeGetTaskDagResponseError::NodeTaskId { node_index, source })
+}
+
+fn decode_task_dag_status(
+    node_index: usize,
+    value: i32,
+) -> Result<TaskStatus, DecodeGetTaskDagResponseError> {
+    match pb::TaskStatus::try_from(value) {
+        Ok(pb::TaskStatus::Active) => Ok(TaskStatus::Active),
+        Ok(pb::TaskStatus::Done) => Ok(TaskStatus::Done),
+        Ok(pb::TaskStatus::Cancelled) => Ok(TaskStatus::Cancelled),
+        Ok(pb::TaskStatus::Unspecified) | Err(_) => {
+            Err(DecodeGetTaskDagResponseError::NodeTaskStatus { node_index, value })
+        }
+    }
 }
 
 pub fn list_tasks_response(tasks: task::ListedTasks) -> pb::ListTasksResponse {
@@ -327,5 +443,128 @@ fn priority_tier_value(priority: PriorityTier) -> i32 {
         PriorityTier::Medium => pb::PriorityTier::Medium as i32,
         PriorityTier::High => pb::PriorityTier::High as i32,
         PriorityTier::Highest => pb::PriorityTier::Highest as i32,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use pwf_models::task::{TaskId, TaskStatus};
+
+    use super::{DecodeGetTaskDagResponseError, decode_get_task_dag_response};
+    use crate::{pb, task};
+
+    #[test]
+    fn task_dag_response_decodes_to_native_values() {
+        let task_dag = decode_get_task_dag_response(pb::GetTaskDagResponse {
+            root_id: "PWF-0001".to_string(),
+            nodes: vec![
+                task_node("PWF-0001", pb::TaskStatus::Active),
+                node(pb::task_dag_node::Value::Missing(pb::TaskDagMissingNode {
+                    id: "PWF-0002".to_string(),
+                })),
+                node(pb::task_dag_node::Value::Unavailable(
+                    pb::TaskDagUnavailableNode {
+                        id: "AUX-0001".to_string(),
+                    },
+                )),
+                node(pb::task_dag_node::Value::DepthLimit(
+                    pb::TaskDagDepthLimitNode {},
+                )),
+            ],
+            edges: vec![pb::TaskDagEdge {
+                blocker_node_index: 1,
+                dependent_node_index: 0,
+            }],
+        })
+        .unwrap();
+
+        assert_eq!(
+            task_dag,
+            task::TaskDag {
+                root_id: task_id("PWF-0001"),
+                nodes: vec![
+                    task::TaskDagNode::Task {
+                        id: task_id("PWF-0001"),
+                        title: "task PWF-0001".to_string(),
+                        status: TaskStatus::Active,
+                    },
+                    task::TaskDagNode::Missing {
+                        id: task_id("PWF-0002"),
+                    },
+                    task::TaskDagNode::Unavailable {
+                        id: task_id("AUX-0001"),
+                    },
+                    task::TaskDagNode::DepthLimit,
+                ],
+                edges: vec![task::TaskDagEdge {
+                    blocker_node_index: 1,
+                    dependent_node_index: 0,
+                }],
+            }
+        );
+    }
+
+    #[test]
+    fn task_dag_response_rejects_an_empty_node() {
+        let error = decode_get_task_dag_response(pb::GetTaskDagResponse {
+            root_id: "PWF-0001".to_string(),
+            nodes: vec![pb::TaskDagNode { value: None }],
+            edges: Vec::new(),
+        })
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            DecodeGetTaskDagResponseError::EmptyNode { node_index: 0 }
+        ));
+    }
+
+    #[test]
+    fn task_dag_response_rejects_an_invalid_task_id() {
+        let error = decode_get_task_dag_response(pb::GetTaskDagResponse {
+            root_id: "PWF-0001".to_string(),
+            nodes: vec![task_node("invalid", pb::TaskStatus::Active)],
+            edges: Vec::new(),
+        })
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            DecodeGetTaskDagResponseError::NodeTaskId { node_index: 0, .. }
+        ));
+    }
+
+    #[test]
+    fn task_dag_response_rejects_an_invalid_task_status() {
+        let error = decode_get_task_dag_response(pb::GetTaskDagResponse {
+            root_id: "PWF-0001".to_string(),
+            nodes: vec![task_node("PWF-0001", pb::TaskStatus::Unspecified)],
+            edges: Vec::new(),
+        })
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            DecodeGetTaskDagResponseError::NodeTaskStatus {
+                node_index: 0,
+                value: 0,
+            }
+        ));
+    }
+
+    fn node(value: pb::task_dag_node::Value) -> pb::TaskDagNode {
+        pb::TaskDagNode { value: Some(value) }
+    }
+
+    fn task_node(id: &str, status: pb::TaskStatus) -> pb::TaskDagNode {
+        node(pb::task_dag_node::Value::Task(pb::TaskDagTaskNode {
+            id: id.to_string(),
+            title: format!("task {id}"),
+            status: status as i32,
+        }))
+    }
+
+    fn task_id(value: &str) -> TaskId {
+        TaskId::try_new(value).unwrap()
     }
 }

@@ -1,4 +1,8 @@
-use pwf_wire::pb::{self, task_service_client::TaskServiceClient};
+pub use pwf_wire::task::{TaskDag, TaskDagEdge, TaskDagNode};
+use pwf_wire::{
+    pb::{self, task_service_client::TaskServiceClient},
+    proto::task::decode_get_task_dag_response,
+};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use uuid::Uuid;
@@ -86,12 +90,14 @@ impl TaskClient {
     pub async fn get_task_dag(
         &self,
         request: pb::GetTaskDagRequest,
-    ) -> Result<pb::GetTaskDagResponse, ClientError> {
-        self.client()
+    ) -> Result<TaskDag, ClientError> {
+        let response = self
+            .client()
             .get_task_dag(request)
             .await
             .map(tonic::Response::into_inner)
-            .map_err(Into::into)
+            .map_err(ClientError::from)?;
+        decode_get_task_dag_response(response).map_err(Into::into)
     }
 
     pub async fn list_tasks(
