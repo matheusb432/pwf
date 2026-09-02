@@ -1,4 +1,4 @@
-use clap::Args;
+use clap::{Args, FromArgMatches};
 use pwf_client::{
     confirmation::{Confirmation, ConfirmationPrompt, ConfirmedRequestError},
     pb::{
@@ -52,24 +52,98 @@ pub struct Arguments {
 }
 
 #[derive(Args, Debug)]
-pub(crate) struct SessionIdentifiers {
+struct SessionIdentifierArguments {
     /// Task IDs for one session, supplied as one comma-separated value
     #[arg(value_name = "IDS")]
-    positional: Option<SessionTaskIdsInput>,
+    task_ids_positional: Option<String>,
+    #[arg(value_name = "NUMBER", hide = true, requires = "task_ids_positional")]
+    task_id_number: Option<String>,
     /// Task IDs for one session, supplied as one comma-separated value
-    #[arg(long = "id", value_name = "IDS", conflicts_with = "positional")]
-    flag: Option<SessionTaskIdsInput>,
+    #[arg(
+        long = "id",
+        value_name = "IDS",
+        conflicts_with = "task_ids_positional"
+    )]
+    task_ids_flag: Option<SessionTaskIdsInput>,
+}
+
+#[derive(Debug)]
+pub(crate) struct SessionIdentifiers {
+    task_ids: Option<SessionTaskIdsInput>,
 }
 
 impl SessionIdentifiers {
     fn required(&self) -> anyhow::Result<SessionTaskIds> {
-        self.positional
+        self.task_ids
             .as_ref()
-            .or(self.flag.as_ref())
             .map(|input| input.0.clone())
             .ok_or_else(|| {
                 anyhow::anyhow!("--id or a positional task ID list is required for session.")
             })
+    }
+}
+
+impl TryFrom<SessionIdentifierArguments> for SessionIdentifiers {
+    type Error = clap::Error;
+
+    fn try_from(arguments: SessionIdentifierArguments) -> Result<Self, Self::Error> {
+        let task_ids_positional = match (arguments.task_ids_positional, arguments.task_id_number) {
+            (Some(task_ids), Some(number)) => Some(format!("{task_ids}-{number}")),
+            (Some(task_ids), None) => Some(task_ids),
+            (None, None) => None,
+            (None, Some(_)) => {
+                return Err(clap::Error::raw(
+                    clap::error::ErrorKind::MissingRequiredArgument,
+                    "a split task ID number requires its project code",
+                ));
+            }
+        }
+        .map(|task_ids| {
+            task_ids.parse::<SessionTaskIdsInput>().map_err(|error| {
+                clap::Error::raw(
+                    clap::error::ErrorKind::ValueValidation,
+                    format!("invalid value '{task_ids}' for '[IDS]': {error}"),
+                )
+            })
+        })
+        .transpose()?;
+
+        let task_ids = match (task_ids_positional, arguments.task_ids_flag) {
+            (Some(_), Some(_)) => {
+                return Err(clap::Error::raw(
+                    clap::error::ErrorKind::ArgumentConflict,
+                    "task IDs cannot be supplied by both position and --id",
+                ));
+            }
+            (Some(task_ids), None) | (None, Some(task_ids)) => Some(task_ids),
+            (None, None) => None,
+        };
+        Ok(Self { task_ids })
+    }
+}
+
+impl FromArgMatches for SessionIdentifiers {
+    fn from_arg_matches(matches: &clap::ArgMatches) -> Result<Self, clap::Error> {
+        SessionIdentifierArguments::from_arg_matches(matches)?.try_into()
+    }
+
+    fn update_from_arg_matches(&mut self, matches: &clap::ArgMatches) -> Result<(), clap::Error> {
+        *self = Self::from_arg_matches(matches)?;
+        Ok(())
+    }
+}
+
+impl Args for SessionIdentifiers {
+    fn group_id() -> Option<clap::Id> {
+        SessionIdentifierArguments::group_id()
+    }
+
+    fn augment_args(command: clap::Command) -> clap::Command {
+        SessionIdentifierArguments::augment_args(command)
+    }
+
+    fn augment_args_for_update(command: clap::Command) -> clap::Command {
+        SessionIdentifierArguments::augment_args_for_update(command)
     }
 }
 

@@ -1,4 +1,4 @@
-use clap::{Args, Subcommand};
+use clap::{Args, FromArgMatches, Subcommand};
 use pwf_client::{
     pb::{TaskLane, TaskLanes, TaskStatusFilter},
     task::{TaskClient, TaskDag},
@@ -37,22 +37,89 @@ pub fn benchmark_dag_render_prepare(task_dag: TaskDag, color_on: bool) {
     dag::benchmark_prepare(task_dag, color_on);
 }
 
-#[derive(Args, Debug, Default)]
-pub(crate) struct Identifier {
+#[derive(Args, Debug)]
+struct TaskIdentifierArguments {
     /// Task id (bare positional; `--id` also accepted). E.g. `PWF-0001`, `cfg57`.
     #[arg(value_name = "ID")]
-    positional: Option<TaskId>,
-    #[arg(long = "id", value_name = "ID", conflicts_with = "positional")]
-    flag: Option<TaskId>,
+    task_id_positional: Option<String>,
+    #[arg(value_name = "NUMBER", hide = true, requires = "task_id_positional")]
+    task_id_number: Option<String>,
+    #[arg(long = "id", value_name = "ID", conflicts_with = "task_id_positional")]
+    task_id_flag: Option<TaskId>,
+}
+
+#[derive(Debug)]
+pub(crate) struct Identifier {
+    task_id: Option<TaskId>,
 }
 
 impl Identifier {
     fn required<Error>(&self, error: Error) -> Result<TaskId, Error> {
-        self.positional
-            .as_ref()
-            .or(self.flag.as_ref())
-            .cloned()
-            .ok_or(error)
+        self.task_id.clone().ok_or(error)
+    }
+}
+
+impl TryFrom<TaskIdentifierArguments> for Identifier {
+    type Error = clap::Error;
+
+    fn try_from(arguments: TaskIdentifierArguments) -> Result<Self, Self::Error> {
+        let task_id_positional = match (arguments.task_id_positional, arguments.task_id_number) {
+            (Some(task_id), Some(number)) => Some(format!("{task_id}-{number}")),
+            (Some(task_id), None) => Some(task_id),
+            (None, None) => None,
+            (None, Some(_)) => {
+                return Err(clap::Error::raw(
+                    clap::error::ErrorKind::MissingRequiredArgument,
+                    "a split task ID number requires its project code",
+                ));
+            }
+        }
+        .map(|task_id| {
+            task_id.parse::<TaskId>().map_err(|error| {
+                clap::Error::raw(
+                    clap::error::ErrorKind::ValueValidation,
+                    format!("invalid value '{task_id}' for '[ID]': {error}"),
+                )
+            })
+        })
+        .transpose()?;
+
+        let task_id = match (task_id_positional, arguments.task_id_flag) {
+            (Some(_), Some(_)) => {
+                return Err(clap::Error::raw(
+                    clap::error::ErrorKind::ArgumentConflict,
+                    "a task ID cannot be supplied by both position and --id",
+                ));
+            }
+            (Some(task_id), None) | (None, Some(task_id)) => Some(task_id),
+            (None, None) => None,
+        };
+        Ok(Self { task_id })
+    }
+}
+
+impl FromArgMatches for Identifier {
+    fn from_arg_matches(matches: &clap::ArgMatches) -> Result<Self, clap::Error> {
+        TaskIdentifierArguments::from_arg_matches(matches)?.try_into()
+    }
+
+    fn update_from_arg_matches(&mut self, matches: &clap::ArgMatches) -> Result<(), clap::Error> {
+        *self = Self::from_arg_matches(matches)?;
+        Ok(())
+    }
+}
+
+impl Args for Identifier {
+    fn group_id() -> Option<clap::Id> {
+        TaskIdentifierArguments::group_id()
+    }
+
+    fn augment_args(command: clap::Command) -> clap::Command {
+        TaskIdentifierArguments::augment_args(command)
+    }
+
+    fn augment_args_for_update(command: clap::Command) -> clap::Command {
+        TaskIdentifierArguments::augment_args_for_update(command)
     }
 }
 

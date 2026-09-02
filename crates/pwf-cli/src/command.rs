@@ -1,10 +1,22 @@
 //! Defines root parsing and top-level command selection.
 
-use clap::{CommandFactory, Parser, Subcommand};
+use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand, error::ErrorKind};
 
 use crate::{note, project, task};
 
 /// Manages tasks and project notes across configured projects.
+#[derive(Debug)]
+pub struct Cli {
+    pub command: RootCommand,
+}
+
+#[derive(Debug)]
+pub enum RootCommand {
+    Project(project::Arguments),
+    Task(task::Command),
+    Note(note::Arguments),
+}
+
 #[derive(Parser, Debug)]
 #[command(
     name = "pwf",
@@ -14,38 +26,128 @@ use crate::{note, project, task};
     arg_required_else_help = true,
     styles = clap_cargo::style::CLAP_STYLING
 )]
-pub struct Cli {
+struct ParsedCli {
     #[command(subcommand)]
-    pub command: RootCommand,
+    command: ParsedRootCommand,
 }
 
 #[derive(Subcommand, Debug)]
-pub enum RootCommand {
+enum ParsedRootCommand {
     /// Manages registered projects.
     Project(project::Arguments),
     #[command(flatten)]
     Task(task::Command),
     /// Manages a project's study notes.
-    Note(note::Arguments),
+    Note(ParsedNoteArguments),
+    #[command(external_subcommand)]
+    Shorthand(Vec<String>),
 }
 
-/// Parses post-binary arguments after preserving the accepted normalization pass.
+#[derive(Args, Debug)]
+struct ParsedNoteArguments {
+    #[command(subcommand)]
+    command: ParsedNoteCommand,
+}
+
+#[derive(Subcommand, Debug)]
+enum ParsedNoteCommand {
+    #[command(flatten)]
+    Explicit(note::Command),
+    #[command(external_subcommand)]
+    ImplicitList(Vec<String>),
+}
+
+/// Parses post-binary arguments, including the nounless task and list shorthands.
 pub fn parse_argv(argv: Vec<String>) -> Result<Cli, clap::Error> {
-    let normalized = if argv
-        .first()
-        .is_some_and(|token| token.eq_ignore_ascii_case("project"))
-    {
-        argv
-    } else {
-        crate::preprocess::normalize(argv)
+    parse_normalized_argv(argv)
+}
+
+fn parse_normalized_argv(argv: Vec<String>) -> Result<Cli, clap::Error> {
+    let mut command = ParsedCli::command();
+    let matches =
+        command.try_get_matches_from_mut(std::iter::once("pwf".to_string()).chain(argv))?;
+    let parsed = ParsedCli::from_arg_matches(&matches).map_err(|error| {
+        let mut selected_command = selected_command(&command, &matches).clone();
+        error.format(&mut selected_command)
+    })?;
+    match parsed.command {
+        ParsedRootCommand::Project(arguments) => Ok(Cli {
+            command: RootCommand::Project(arguments),
+        }),
+        ParsedRootCommand::Task(command) => Ok(Cli {
+            command: RootCommand::Task(command),
+        }),
+        ParsedRootCommand::Note(arguments) => parse_note_arguments(arguments),
+        ParsedRootCommand::Shorthand(arguments) => parse_task_or_route(arguments),
+    }
+}
+
+fn selected_command<'a>(
+    command: &'a clap::Command,
+    matches: &clap::ArgMatches,
+) -> &'a clap::Command {
+    let Some((subcommand_name, subcommand_matches)) = matches.subcommand() else {
+        return command;
     };
-    Cli::try_parse_from(std::iter::once("pwf".to_string()).chain(normalized))
+    let Some(subcommand) = command.find_subcommand(subcommand_name) else {
+        return command;
+    };
+    selected_command(subcommand, subcommand_matches)
+}
+
+fn parse_note_arguments(arguments: ParsedNoteArguments) -> Result<Cli, clap::Error> {
+    match arguments.command {
+        ParsedNoteCommand::Explicit(command) => Ok(Cli {
+            command: RootCommand::Note(note::Arguments { command }),
+        }),
+        ParsedNoteCommand::ImplicitList(arguments) => parse_note_list(arguments),
+    }
+}
+
+fn parse_note_list(arguments: Vec<String>) -> Result<Cli, clap::Error> {
+    if matches!(
+        arguments.first().map(String::as_str),
+        Some("get" | "update")
+    ) {
+        return Err(invalid_note_subcommand(arguments));
+    }
+
+    let argv = ["note".to_string(), "list".to_string()]
+        .into_iter()
+        .chain(arguments)
+        .collect();
+    parse_normalized_argv(argv)
+}
+
+fn invalid_note_subcommand(arguments: Vec<String>) -> clap::Error {
+    let argv = std::iter::once("pwf".to_string()).chain(arguments);
+    let result = note::Arguments::augment_args(clap::Command::new("pwf").bin_name("pwf note"))
+        .try_get_matches_from(argv);
+    match result {
+        Err(error) => error,
+        Ok(_) => clap::Error::raw(ErrorKind::InvalidSubcommand, "invalid note subcommand"),
+    }
+}
+
+fn parse_task_or_route(arguments: Vec<String>) -> Result<Cli, clap::Error> {
+    let task_argv = std::iter::once("task".to_string())
+        .chain(arguments.iter().cloned())
+        .collect();
+    match parse_normalized_argv(task_argv) {
+        Err(error) if error.kind() == ErrorKind::InvalidSubcommand => {
+            let route_argv = std::iter::once("route".to_string())
+                .chain(arguments)
+                .collect();
+            parse_normalized_argv(route_argv)
+        }
+        result => result,
+    }
 }
 
 /// Renders help scoped to the project command.
 #[must_use]
 pub fn project_help() -> String {
-    let mut root = Cli::command();
+    let mut root = ParsedCli::command();
     let mut help = match root.find_subcommand("project") {
         Some(project) => {
             let mut project = project.clone().bin_name("pwf project");
