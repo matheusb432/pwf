@@ -9,3 +9,5 @@
 *.pdf binary
 *.zip binary
 *.gz binary
+/crates/pwf-cli/tests/fixtures/task_dag/*.stdout text eol=lf whitespace=-blank-at-eof
+/crates/pwf-cli/tests/fixtures/task_dag/*.stderr text eol=lf

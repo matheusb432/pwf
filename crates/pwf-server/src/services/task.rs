@@ -134,9 +134,7 @@ impl pb::task_service_server::TaskService for TaskGrpcService {
         let graph = get_task_dag::execute(&query, &self.state.store, &self.state.pool)
             .await
             .map_err(|error| get_task_dag_status(&error))?;
-        proto::task::get_task_dag_response(graph)
-            .map(Response::new)
-            .map_err(|error| Status::internal(error.to_string()))
+        Ok(Response::new(proto::task::get_task_dag_response(graph)))
     }
 
     async fn list_tasks(
@@ -408,7 +406,8 @@ fn get_task_dag_status(error: &GetTaskDagError) -> Status {
         }
         GetTaskDagError::ListProjects(_)
         | GetTaskDagError::ReadRoot { .. }
-        | GetTaskDagError::ListProjectTasks { .. } => Status::internal(message),
+        | GetTaskDagError::ListProjectTasks { .. }
+        | GetTaskDagError::InvalidGraph(_) => Status::internal(message),
     }
 }
 

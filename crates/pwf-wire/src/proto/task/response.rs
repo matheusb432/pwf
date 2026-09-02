@@ -77,29 +77,26 @@ pub fn get_task_response(task: task::TaskSnapshot) -> pb::GetTaskResponse {
 }
 
 /// Encodes a bounded native task DAG into its Protobuf response.
-///
-/// # Errors
-///
-/// Returns [`TaskDagResponseError`] when a native node index cannot fit the wire field.
-pub fn get_task_dag_response(
-    graph: task::TaskDag,
-) -> Result<pb::GetTaskDagResponse, TaskDagResponseError> {
-    Ok(pb::GetTaskDagResponse {
-        root_id: graph.root_id.to_string(),
-        nodes: graph.nodes.into_iter().map(task_dag_node).collect(),
-        edges: graph
-            .edges
+#[must_use]
+pub fn get_task_dag_response(graph: task::TaskDag) -> pb::GetTaskDagResponse {
+    let (root_id, nodes, edges) = graph.into_parts();
+    pb::GetTaskDagResponse {
+        root_id: root_id.to_string(),
+        nodes: nodes.into_iter().map(task_dag_node).collect(),
+        edges: edges
             .into_iter()
-            .map(|edge| {
-                Ok(pb::TaskDagEdge {
-                    blocker_node_index: u32::try_from(edge.blocker_node_index)
-                        .map_err(|_| TaskDagResponseError)?,
-                    dependent_node_index: u32::try_from(edge.dependent_node_index)
-                        .map_err(|_| TaskDagResponseError)?,
-                })
+            .map(|edge| pb::TaskDagEdge {
+                blocker_node_index: task_dag_node_index(edge.blocker_node_index),
+                dependent_node_index: task_dag_node_index(edge.dependent_node_index),
             })
-            .collect::<Result<Vec<_>, TaskDagResponseError>>()?,
-    })
+            .collect(),
+    }
+}
+
+#[allow(clippy::cast_possible_truncation)]
+fn task_dag_node_index(node_index: usize) -> u32 {
+    // TaskDag construction bounds every edge index below its 512-node cap.
+    node_index as u32
 }
 
 /// Decodes a Protobuf task-DAG response into its native representation.
@@ -118,7 +115,7 @@ pub fn decode_get_task_dag_response(
         .into_iter()
         .enumerate()
         .map(|(node_index, node)| decode_task_dag_node(node_index, node))
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Result<Vec<_>, DecodeGetTaskDagResponseError>>()?;
     let edges = response
         .edges
         .into_iter()
@@ -136,12 +133,8 @@ pub fn decode_get_task_dag_response(
                 )?,
             })
         })
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(task::TaskDag {
-        root_id,
-        nodes,
-        edges,
-    })
+        .collect::<Result<Vec<_>, DecodeGetTaskDagResponseError>>()?;
+    task::TaskDag::try_new(root_id, nodes, edges).map_err(Into::into)
 }
 
 /// Reports a task-DAG wire value that cannot be represented natively.
@@ -171,12 +164,9 @@ pub enum DecodeGetTaskDagResponseError {
         #[source]
         source: std::num::TryFromIntError,
     },
+    #[error(transparent)]
+    TaskDag(#[from] task::TaskDagError),
 }
-
-/// Reports a native task-DAG index outside the Protobuf representation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("task dependency graph contains an out-of-range node index")]
-pub struct TaskDagResponseError;
 
 fn task_dag_node(node: task::TaskDagNode) -> pb::TaskDagNode {
     let value = match node {
@@ -471,18 +461,28 @@ mod tests {
                     pb::TaskDagDepthLimitNode {},
                 )),
             ],
-            edges: vec![pb::TaskDagEdge {
-                blocker_node_index: 1,
-                dependent_node_index: 0,
-            }],
+            edges: vec![
+                pb::TaskDagEdge {
+                    blocker_node_index: 1,
+                    dependent_node_index: 0,
+                },
+                pb::TaskDagEdge {
+                    blocker_node_index: 2,
+                    dependent_node_index: 0,
+                },
+                pb::TaskDagEdge {
+                    blocker_node_index: 3,
+                    dependent_node_index: 0,
+                },
+            ],
         })
         .unwrap();
 
         assert_eq!(
             task_dag,
-            task::TaskDag {
-                root_id: task_id("PWF-0001"),
-                nodes: vec![
+            task::TaskDag::try_new(
+                task_id("PWF-0001"),
+                vec![
                     task::TaskDagNode::Task {
                         id: task_id("PWF-0001"),
                         title: "task PWF-0001".to_string(),
@@ -496,11 +496,22 @@ mod tests {
                     },
                     task::TaskDagNode::DepthLimit,
                 ],
-                edges: vec![task::TaskDagEdge {
-                    blocker_node_index: 1,
-                    dependent_node_index: 0,
-                }],
-            }
+                vec![
+                    task::TaskDagEdge {
+                        blocker_node_index: 1,
+                        dependent_node_index: 0,
+                    },
+                    task::TaskDagEdge {
+                        blocker_node_index: 2,
+                        dependent_node_index: 0,
+                    },
+                    task::TaskDagEdge {
+                        blocker_node_index: 3,
+                        dependent_node_index: 0,
+                    },
+                ],
+            )
+            .unwrap()
         );
     }
 

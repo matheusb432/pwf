@@ -2,7 +2,7 @@ use assert_cmd::prelude::OutputAssertExt as _;
 #[cfg(target_os = "linux")]
 use expectrl::Expect;
 
-use crate::support::{ManagedProject, assert_success, command, project_id, task_id, task_json};
+use crate::support::{ManagedProject, command, project_id, task_id, task_json};
 
 #[test]
 fn machine_add_maps_each_explicit_value_without_parsing_lane_markers() {
@@ -217,7 +217,52 @@ fn task_dag_rejects_zero_depth_before_connecting() {
 }
 
 #[test]
-fn task_dag_renders_compact_optional_status_colored_labels() {
+fn task_dag_renders_exact_compact_title_status_and_colored_output() {
+    let fixture = task_dag_render_fixture();
+
+    fixture
+        .database
+        .command()
+        .env("NO_COLOR", "1")
+        .args(["task", "dag", "FOO-0003"])
+        .assert()
+        .success()
+        .stdout(include_bytes!("../fixtures/task_dag/compact.stdout").as_slice())
+        .stderr(include_bytes!("../fixtures/task_dag/empty.stderr").as_slice());
+
+    fixture
+        .database
+        .command()
+        .env("NO_COLOR", "1")
+        .args(["task", "dag", "--with", "title", "FOO-0003"])
+        .assert()
+        .success()
+        .stdout(include_bytes!("../fixtures/task_dag/with_title.stdout").as_slice())
+        .stderr(include_bytes!("../fixtures/task_dag/empty.stderr").as_slice());
+
+    fixture
+        .database
+        .command()
+        .env("NO_COLOR", "1")
+        .args(["task", "dag", "FOO-0003", "--with", "status"])
+        .assert()
+        .success()
+        .stdout(include_bytes!("../fixtures/task_dag/with_status.stdout").as_slice())
+        .stderr(include_bytes!("../fixtures/task_dag/empty.stderr").as_slice());
+
+    fixture
+        .database
+        .command()
+        .env_remove("NO_COLOR")
+        .env("CLICOLOR_FORCE", "1")
+        .args(["task", "dag", "FOO-0003"])
+        .assert()
+        .success()
+        .stdout(include_bytes!("../fixtures/task_dag/colored.stdout").as_slice())
+        .stderr(include_bytes!("../fixtures/task_dag/empty.stderr").as_slice());
+}
+
+fn task_dag_render_fixture() -> ManagedProject {
     let fixture = ManagedProject::new(&project_id("FOO").unwrap(), "foo-bar").unwrap();
     fixture
         .database
@@ -247,79 +292,43 @@ fn task_dag_renders_compact_optional_status_colored_labels() {
             "add",
             "foo-bar",
             "--title",
+            "cancel obsolete renderer",
+            "--goal",
+            "preserve cancelled task output",
+        ])
+        .assert()
+        .success();
+    fixture
+        .database
+        .command()
+        .args([
+            "task",
+            "cancel",
+            "FOO-0002",
+            "--report",
+            "renderer no longer applies",
+        ])
+        .assert()
+        .success();
+    fixture
+        .database
+        .command()
+        .args([
+            "task",
+            "add",
+            "foo-bar",
+            "--title",
             "render graph view",
             "--goal",
             "show the dependency",
             "--blocked-by",
             "FOO-0001",
+            "--blocked-by",
+            "FOO-0002",
         ])
         .assert()
         .success();
-
-    let compact = fixture
-        .database
-        .command()
-        .args(["task", "dag", "FOO-0002"])
-        .output()
-        .unwrap();
-
-    assert_success(&compact, "render compact task DAG");
-    assert!(compact.stderr.is_empty());
-    let compact = String::from_utf8(compact.stdout).unwrap();
-    assert!(compact.contains("FOO-0001"));
-    assert!(compact.contains("FOO-0002"));
-    assert!(!compact.contains("prepare graph data"), "{compact}");
-    assert!(!compact.contains("render graph view"), "{compact}");
-    assert!(!compact.contains("[active]"), "{compact}");
-    assert!(!compact.contains("[done]"), "{compact}");
-    assert!(compact.contains('▸'));
-    assert!(compact.contains('┌'), "blocker must use a rectangular node");
-    assert!(compact.contains('╭'), "root must use a rounded node");
-
-    let with_title = fixture
-        .database
-        .command()
-        .args(["task", "dag", "--with", "title", "FOO-0002"])
-        .output()
-        .unwrap();
-    assert_success(&with_title, "render task DAG titles");
-    let with_title = String::from_utf8(with_title.stdout).unwrap();
-    assert!(with_title.contains("FOO-0001 prepare graph data"));
-    assert!(with_title.contains("FOO-0002 render graph view"));
-    assert!(!with_title.contains("[active]"), "{with_title}");
-    assert!(!with_title.contains("[done]"), "{with_title}");
-
-    let with_status = fixture
-        .database
-        .command()
-        .args(["task", "dag", "FOO-0002", "--with", "status"])
-        .output()
-        .unwrap();
-    assert_success(&with_status, "render task DAG statuses");
-    let with_status = String::from_utf8(with_status.stdout).unwrap();
-    assert!(with_status.contains("FOO-0001 [done]"));
-    assert!(with_status.contains("FOO-0002 [active]"));
-    assert!(!with_status.contains("prepare graph data"), "{with_status}");
-    assert!(!with_status.contains("render graph view"), "{with_status}");
-
-    let colored = fixture
-        .database
-        .command()
-        .env_remove("NO_COLOR")
-        .env("CLICOLOR_FORCE", "1")
-        .args(["task", "dag", "FOO-0002"])
-        .output()
-        .unwrap();
-    assert_success(&colored, "render colored task DAG");
-    let colored = String::from_utf8(colored.stdout).unwrap();
-    assert!(
-        colored.contains("\u{1b}[32mFOO-0001\u{1b}[0m"),
-        "{colored:?}"
-    );
-    assert!(
-        colored.contains("\u{1b}[34mFOO-0002\u{1b}[0m"),
-        "{colored:?}"
-    );
+    fixture
 }
 
 #[test]

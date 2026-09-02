@@ -1,7 +1,7 @@
 use clap::{Args, Subcommand};
 use pwf_client::{
     pb::{TaskLane, TaskLanes, TaskStatusFilter},
-    task::TaskClient,
+    task::{TaskClient, TaskDag},
 };
 use pwf_models::{
     session::Agent,
@@ -23,6 +23,19 @@ mod render;
 mod reopen;
 pub mod route;
 pub mod session;
+
+/// Renders the default task-DAG view for the Criterion benchmark.
+#[doc(hidden)]
+#[must_use]
+pub fn benchmark_dag_render(task_dag: &TaskDag, color_on: bool) -> String {
+    dag::render(task_dag, color_on)
+}
+
+/// Prepares the default task-DAG view for allocation measurement.
+#[doc(hidden)]
+pub fn benchmark_dag_render_prepare(task_dag: &TaskDag, color_on: bool) {
+    dag::benchmark_prepare(task_dag, color_on);
+}
 
 #[derive(Args, Debug, Default)]
 pub(crate) struct Identifier {

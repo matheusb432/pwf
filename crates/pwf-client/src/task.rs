@@ -1,4 +1,4 @@
-pub use pwf_wire::task::{TaskDag, TaskDagEdge, TaskDagNode};
+pub use pwf_wire::task::{TaskDag, TaskDagEdge, TaskDagError, TaskDagNode};
 use pwf_wire::{
     pb::{self, task_service_client::TaskServiceClient},
     proto::task::decode_get_task_dag_response,

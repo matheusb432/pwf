@@ -9,6 +9,16 @@ use crate::console::Console;
 
 mod output;
 
+pub(super) fn render(task_dag: &pwf_client::task::TaskDag, color_on: bool) -> String {
+    output::render(task_dag, None, color_on)
+}
+
+pub(super) fn benchmark_prepare(task_dag: &pwf_client::task::TaskDag, color_on: bool) {
+    drop(std::hint::black_box(output::prepare(
+        task_dag, None, color_on,
+    )));
+}
+
 #[derive(Debug, Clone, Copy, Default, ValueEnum)]
 enum ModeChoice {
     #[default]

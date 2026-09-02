@@ -127,6 +127,7 @@ bench-dag-render update="--baseline local" quick="":
 [arg("update", long="update", value="--update", help="Compare and replace the local baselines")]
 [group('performance')]
 bench-allocations update="":
+    cargo run --quiet --locked --release -p pwf-cli --example dag_render_allocations -- {{ update }}
     cargo run --quiet --locked --release -p pwf-infra --example obsidian_store_allocations -- {{ update }}
     cargo run --quiet --locked --release -p pwf-infra --example obsidian_markdown_file_allocations -- {{ update }}
     cargo run --quiet --locked --release -p pwf-infra --example obsidian_frontmatter_read_allocations -- {{ update }}

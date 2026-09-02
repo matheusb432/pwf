@@ -10,12 +10,49 @@ pub(super) fn render(
     node_field: Option<NodeFieldChoice>,
     color_on: bool,
 ) -> String {
+    let PreparedTaskDag {
+        graph,
+        colored_task_labels,
+    } = prepare(task_dag, node_field, color_on);
+
+    let positions = mermaid_text::layout::layered::layout(
+        &graph,
+        &mermaid_text::layout::layered::LayoutConfig::default(),
+    )
+    .positions;
+    let subgraph_bounds =
+        mermaid_text::layout::subgraph::compute_subgraph_bounds(&graph, &positions);
+    let mut output = mermaid_text::render::render(&graph, &positions, &subgraph_bounds);
+    for (plain, colored) in colored_task_labels {
+        output = output.replacen(&plain, &colored, 1);
+    }
+    output
+}
+
+pub(super) struct PreparedTaskDag {
+    graph: Graph,
+    colored_task_labels: Vec<(String, String)>,
+}
+
+pub(super) fn prepare(
+    task_dag: &TaskDag,
+    node_field: Option<NodeFieldChoice>,
+    color_on: bool,
+) -> PreparedTaskDag {
+    let task_dag_nodes = task_dag.nodes().iter().enumerate();
+    let task_dag_node_count = task_dag_nodes.len();
     let mut graph = Graph::new(Direction::LeftToRight);
-    let mut colored_task_labels = Vec::new();
-    for (node_index, node) in task_dag.nodes.iter().enumerate() {
+    graph.nodes.reserve(task_dag_node_count);
+    graph.edges.reserve(task_dag.edges().len());
+    let mut colored_task_labels = if color_on {
+        Vec::with_capacity(task_dag_node_count)
+    } else {
+        Vec::new()
+    };
+    for (node_index, node) in task_dag_nodes {
         let (label, shape) = match node {
             TaskDagNode::Task { id, title, status } => {
-                let is_root = id == &task_dag.root_id;
+                let is_root = id == task_dag.root_id();
                 let label = task_label(id.as_ref(), *status, title, node_field);
                 if color_on {
                     let colored_identifier =
@@ -43,7 +80,7 @@ pub(super) fn render(
             .push(Node::new(node_key(node_index), label, shape));
     }
 
-    for edge in &task_dag.edges {
+    for edge in task_dag.edges() {
         graph.edges.push(Edge::new(
             node_key(edge.blocker_node_index),
             node_key(edge.dependent_node_index),
@@ -51,18 +88,10 @@ pub(super) fn render(
         ));
     }
 
-    let positions = mermaid_text::layout::layered::layout(
-        &graph,
-        &mermaid_text::layout::layered::LayoutConfig::default(),
-    )
-    .positions;
-    let subgraph_bounds =
-        mermaid_text::layout::subgraph::compute_subgraph_bounds(&graph, &positions);
-    let mut output = mermaid_text::render::render(&graph, &positions, &subgraph_bounds);
-    for (plain, colored) in colored_task_labels {
-        output = output.replacen(&plain, &colored, 1);
+    PreparedTaskDag {
+        graph,
+        colored_task_labels,
     }
-    output
 }
 
 fn task_label(
@@ -91,9 +120,9 @@ mod tests {
     #[test]
     fn root_is_rounded_and_blocker_is_rectangular() {
         let output = super::render(
-            &TaskDag {
-                root_id: task_id("FOO-0002"),
-                nodes: vec![
+            &task_dag(
+                "FOO-0002",
+                vec![
                     TaskDagNode::Task {
                         id: task_id("FOO-0002"),
                         title: "render graph view".to_string(),
@@ -105,11 +134,11 @@ mod tests {
                         status: TaskStatus::Done,
                     },
                 ],
-                edges: vec![TaskDagEdge {
+                vec![TaskDagEdge {
                     blocker_node_index: 1,
                     dependent_node_index: 0,
                 }],
-            },
+            ),
             Some(super::NodeFieldChoice::Status),
             false,
         );
@@ -126,15 +155,15 @@ mod tests {
     #[test]
     fn isolated_task_renders_without_an_empty_graph_message() {
         let output = super::render(
-            &TaskDag {
-                root_id: task_id("FOO-0001"),
-                nodes: vec![TaskDagNode::Task {
+            &task_dag(
+                "FOO-0001",
+                vec![TaskDagNode::Task {
                     id: task_id("FOO-0001"),
                     title: "standalone task".to_string(),
                     status: TaskStatus::Active,
                 }],
-                edges: Vec::new(),
-            },
+                Vec::new(),
+            ),
             None,
             false,
         );
@@ -148,9 +177,9 @@ mod tests {
     #[test]
     fn missing_and_unavailable_nodes_explain_the_terminal_reference() {
         let output = super::render(
-            &TaskDag {
-                root_id: task_id("FOO-0001"),
-                nodes: vec![
+            &task_dag(
+                "FOO-0001",
+                vec![
                     TaskDagNode::Task {
                         id: task_id("FOO-0001"),
                         title: "blocked root".to_string(),
@@ -163,7 +192,7 @@ mod tests {
                         id: task_id("AUX-0001"),
                     },
                 ],
-                edges: vec![
+                vec![
                     TaskDagEdge {
                         blocker_node_index: 1,
                         dependent_node_index: 0,
@@ -173,7 +202,7 @@ mod tests {
                         dependent_node_index: 0,
                     },
                 ],
-            },
+            ),
             None,
             false,
         );
@@ -185,15 +214,24 @@ mod tests {
     #[test]
     fn task_identifiers_use_lifecycle_colors_without_coloring_extra_fields() {
         let output = super::render(
-            &TaskDag {
-                root_id: task_id("FOO-0001"),
-                nodes: vec![
+            &task_dag(
+                "FOO-0001",
+                vec![
                     task_node("FOO-0001", TaskStatus::Active),
                     task_node("FOO-0002", TaskStatus::Done),
                     task_node("FOO-0003", TaskStatus::Cancelled),
                 ],
-                edges: Vec::new(),
-            },
+                vec![
+                    TaskDagEdge {
+                        blocker_node_index: 1,
+                        dependent_node_index: 0,
+                    },
+                    TaskDagEdge {
+                        blocker_node_index: 2,
+                        dependent_node_index: 0,
+                    },
+                ],
+            ),
             Some(super::NodeFieldChoice::Status),
             true,
         );
@@ -209,6 +247,10 @@ mod tests {
             title: "unused title".to_string(),
             status,
         }
+    }
+
+    fn task_dag(root_id: &str, nodes: Vec<TaskDagNode>, edges: Vec<TaskDagEdge>) -> TaskDag {
+        TaskDag::try_new(task_id(root_id), nodes, edges).unwrap()
     }
 
     fn task_id(value: &str) -> TaskId {

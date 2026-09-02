@@ -480,18 +480,18 @@ async fn v1_get_task_dag_returns_typed_blocker_edges() -> anyhow::Result<()> {
         })
         .await?;
 
-    assert_eq!(graph.root_id.as_ref(), dependent.id);
-    assert_eq!(graph.nodes.len(), 2);
+    assert_eq!(graph.root_id().as_ref(), dependent.id);
+    assert_eq!(graph.nodes().len(), 2);
     assert!(matches!(
-        graph.nodes[0],
+        graph.nodes()[0],
         TaskDagNode::Task { ref id, .. } if id.as_ref() == "FOO-0002"
     ));
     assert!(matches!(
-        graph.nodes[1],
+        graph.nodes()[1],
         TaskDagNode::Task { ref id, .. } if id.as_ref() == "FOO-0001"
     ));
     assert_eq!(
-        graph.edges,
+        graph.edges(),
         [TaskDagEdge {
             blocker_node_index: 1,
             dependent_node_index: 0,

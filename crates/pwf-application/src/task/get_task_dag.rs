@@ -6,7 +6,7 @@ use pwf_models::{
 };
 use pwf_wire::{
     project::ProjectStatusFilter,
-    task::{GetTaskDag, TaskDag, TaskDagEdge, TaskDagNode},
+    task::{GetTaskDag, TaskDag, TaskDagEdge, TaskDagError, TaskDagNode},
 };
 
 use crate::{
@@ -43,6 +43,8 @@ pub enum GetTaskDagError {
     NodeLimit { max: usize },
     #[error("task dependency graph exceeds the {max} edge limit")]
     EdgeLimit { max: usize },
+    #[error(transparent)]
+    InvalidGraph(#[from] TaskDagError),
 }
 
 /// Reads one bounded dependency DAG without mutating task or project state.
@@ -78,7 +80,7 @@ pub async fn execute(
     } else {
         None
     };
-    let mut traversal = Traversal::new(query, resolver, dependents, root);
+    let traversal = Traversal::new(query, resolver, dependents, root);
     traversal.run()
 }
 
@@ -197,14 +199,14 @@ impl<'a, Store: TaskVault> Traversal<'a, Store> {
         }
     }
 
-    fn run(&mut self) -> Result<TaskDag, GetTaskDagError> {
+    fn run(mut self) -> Result<TaskDag, GetTaskDagError> {
         if self.query.mode.includes_blocked_by() {
             self.traverse(Direction::BlockedBy)?;
         }
         if self.query.mode.includes_blocks() {
             self.traverse(Direction::Blocks)?;
         }
-        Ok(self.graph.finish())
+        self.graph.finish().map_err(Into::into)
     }
 
     fn traverse(&mut self, direction: Direction) -> Result<(), GetTaskDagError> {
@@ -374,12 +376,8 @@ impl GraphBuilder {
         }
     }
 
-    fn finish(&mut self) -> TaskDag {
-        TaskDag {
-            root_id: self.root_id.clone(),
-            nodes: std::mem::take(&mut self.nodes),
-            edges: std::mem::take(&mut self.edges),
-        }
+    fn finish(self) -> Result<TaskDag, TaskDagError> {
+        TaskDag::try_new(self.root_id, self.nodes, self.edges)
     }
 
     fn task_node_index(&self, id: &TaskId) -> usize {
@@ -539,10 +537,10 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(graph.root_id.as_ref(), "FOO-0003");
+        assert_eq!(graph.root_id().as_ref(), "FOO-0003");
         assert_eq!(
             graph
-                .nodes
+                .nodes()
                 .iter()
                 .map(|node| match node {
                     TaskDagNode::Task { id, .. }
@@ -554,7 +552,7 @@ mod tests {
             ["FOO-0003", "FOO-0002", "FOO-0001", "AUX-0001"]
         );
         assert_eq!(
-            graph.edges,
+            graph.edges(),
             [
                 TaskDagEdge {
                     blocker_node_index: 1,
@@ -615,7 +613,7 @@ mod tests {
 
         assert_eq!(
             graph
-                .nodes
+                .nodes()
                 .iter()
                 .filter_map(TaskDagNode::task_id)
                 .map(AsRef::as_ref)
@@ -623,7 +621,7 @@ mod tests {
             ["FOO-0001", "FOO-0004"]
         );
         assert_eq!(
-            graph.edges,
+            graph.edges(),
             [TaskDagEdge {
                 blocker_node_index: 0,
                 dependent_node_index: 1,
@@ -659,9 +657,9 @@ mod tests {
         .await
         .unwrap();
 
-        assert!(matches!(graph.nodes[2], TaskDagNode::DepthLimit));
+        assert!(matches!(graph.nodes()[2], TaskDagNode::DepthLimit));
         assert_eq!(
-            graph.edges,
+            graph.edges(),
             [
                 TaskDagEdge {
                     blocker_node_index: 1,
@@ -699,11 +697,11 @@ mod tests {
         .unwrap();
 
         assert!(matches!(
-            &graph.nodes[1],
+            &graph.nodes()[1],
             TaskDagNode::Missing { id } if id.as_ref() == "FOO-0002"
         ));
         assert_eq!(
-            graph.edges,
+            graph.edges(),
             [TaskDagEdge {
                 blocker_node_index: 1,
                 dependent_node_index: 0,
@@ -741,9 +739,9 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(graph.nodes.len(), 2);
+        assert_eq!(graph.nodes().len(), 2);
         assert!(matches!(
-            &graph.nodes[1],
+            &graph.nodes()[1],
             TaskDagNode::Task { id, .. } if id.as_ref() == "FOO-0002"
         ));
         pool.close().await;
@@ -783,7 +781,7 @@ mod tests {
 
         assert_eq!(
             graph
-                .nodes
+                .nodes()
                 .iter()
                 .filter_map(TaskDagNode::task_id)
                 .map(AsRef::as_ref)
