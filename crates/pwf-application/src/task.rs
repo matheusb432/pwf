@@ -5,6 +5,7 @@ pub mod cancel_task;
 pub mod complete_task;
 pub mod edit_task;
 pub mod get_task;
+pub mod get_task_dag;
 mod lane_configuration;
 pub mod list_tasks;
 pub mod migrate_task_metadata;

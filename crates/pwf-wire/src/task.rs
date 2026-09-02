@@ -1,6 +1,6 @@
 use std::{
     fmt,
-    num::NonZeroUsize,
+    num::{NonZeroU32, NonZeroUsize},
     path::{Path, PathBuf},
 };
 
@@ -498,6 +498,107 @@ pub struct GetTask {
     pub id: TaskId,
     /// Representation returned by the interactor.
     pub output: TaskReadFormat,
+}
+
+/// Requests one bounded dependency graph rooted at a task.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GetTaskDag {
+    pub id: TaskId,
+    pub depth: Option<TaskDagDepth>,
+    pub status: StatusFilter,
+    pub mode: TaskDagMode,
+}
+
+/// Selects the relationship direction traversed by a task DAG query.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskDagMode {
+    BlockedBy,
+    Blocks,
+    Full,
+}
+
+impl TaskDagMode {
+    #[must_use]
+    pub const fn includes_blocked_by(self) -> bool {
+        matches!(self, Self::BlockedBy | Self::Full)
+    }
+
+    #[must_use]
+    pub const fn includes_blocks(self) -> bool {
+        matches!(self, Self::Blocks | Self::Full)
+    }
+}
+
+/// Caps graph traversal by the number of edges from the selected task.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TaskDagDepth(NonZeroU32);
+
+impl TaskDagDepth {
+    /// Constructs a nonzero traversal depth.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TaskDagDepthError`] when `value` is zero.
+    pub fn try_new(value: u32) -> Result<Self, TaskDagDepthError> {
+        NonZeroU32::new(value).map(Self).ok_or(TaskDagDepthError)
+    }
+
+    #[must_use]
+    pub const fn get(self) -> u32 {
+        self.0.get()
+    }
+}
+
+/// Reports a zero task-DAG traversal depth.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("depth must be at least 1")]
+pub struct TaskDagDepthError;
+
+/// Carries a bounded task dependency graph.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskDag {
+    pub root_id: TaskId,
+    pub nodes: Vec<TaskDagNode>,
+    pub edges: Vec<TaskDagEdge>,
+}
+
+impl TaskDag {
+    pub const NODE_COUNT_MAX: usize = 512;
+    pub const EDGE_COUNT_MAX: usize = 2_048;
+}
+
+/// Describes one task or synthetic truncation point in a dependency graph.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TaskDagNode {
+    Task {
+        id: TaskId,
+        title: String,
+        status: TaskStatus,
+    },
+    Missing {
+        id: TaskId,
+    },
+    Unavailable {
+        id: TaskId,
+    },
+    DepthLimit,
+}
+
+impl TaskDagNode {
+    #[must_use]
+    pub fn task_id(&self) -> Option<&TaskId> {
+        match self {
+            Self::Task { id, .. } | Self::Missing { id } | Self::Unavailable { id } => Some(id),
+            Self::DepthLimit => None,
+        }
+    }
+}
+
+/// Connects two node indexes in blocker-to-dependent direction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct TaskDagEdge {
+    pub blocker_node_index: usize,
+    pub dependent_node_index: usize,
 }
 
 #[derive(Debug, Clone)]

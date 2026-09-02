@@ -173,6 +173,32 @@ pub fn get_task_request(request: pb::GetTaskRequest) -> Result<task::GetTask, St
     })
 }
 
+pub fn get_task_dag_request(request: pb::GetTaskDagRequest) -> Result<task::GetTaskDag, Status> {
+    let pb::GetTaskDagRequest {
+        id,
+        depth,
+        status,
+        mode,
+    } = request;
+    let mode = match pb::TaskDagMode::try_from(mode).ok() {
+        Some(pb::TaskDagMode::BlockedBy) => task::TaskDagMode::BlockedBy,
+        Some(pb::TaskDagMode::Blocks) => task::TaskDagMode::Blocks,
+        Some(pb::TaskDagMode::Full) => task::TaskDagMode::Full,
+        Some(pb::TaskDagMode::Unspecified) | None => {
+            return Err(invalid("mode", "must be specified"));
+        }
+    };
+    Ok(task::GetTaskDag {
+        id: parse::<TaskId>("id", &id)?,
+        depth: depth
+            .map(task::TaskDagDepth::try_new)
+            .transpose()
+            .map_err(|error| invalid("depth", error))?,
+        status: status_filter(status)?,
+        mode,
+    })
+}
+
 pub fn list_tasks_request(request: pb::ListTasksRequest) -> Result<task::ListTasks, Status> {
     ensure_count("tags", request.tags.len(), TASK_COLLECTION_VALUES_MAX)?;
     let page_size = if request.page_size == 0 {

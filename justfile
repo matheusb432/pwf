@@ -116,6 +116,13 @@ coverage *args:
 bench benchmark="all" case="" update="--baseline local" quick="":
     CRITERION_HOME="{{ justfile_directory() }}/.artifacts/benchmarks/criterion" cargo bench --locked {{ if benchmark == "all" { "--workspace --benches" } else if benchmark == "prompt-lanes" { "-p prompt-lanes --bench prompt_lanes" } else { "-p pwf-infra --bench " + replace(benchmark, "-", "_") } }} -- {{ if case == "" { "" } else { quote(case) + " --exact" } }} {{ update }} {{ quick }}
 
+# Compare task DAG rendering against its local Criterion baseline.
+[arg("update", long="update", value="--save-baseline local", help="Compare and replace the local baseline")]
+[arg("quick", long="quick", value="--quick", help="Stop once Criterion reaches statistical significance")]
+[group('performance')]
+bench-dag-render update="--baseline local" quick="":
+    CRITERION_HOME="{{ justfile_directory() }}/.artifacts/benchmarks/criterion" cargo bench --locked -p pwf-cli --bench dag_render -- {{ update }} {{ quick }}
+
 # Compare deterministic allocation reports against their local baselines.
 [arg("update", long="update", value="--update", help="Compare and replace the local baselines")]
 [group('performance')]

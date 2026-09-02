@@ -76,6 +76,59 @@ pub fn get_task_response(task: task::TaskSnapshot) -> pb::GetTaskResponse {
     }
 }
 
+/// Encodes a bounded native task DAG into its Protobuf response.
+///
+/// # Errors
+///
+/// Returns [`TaskDagResponseError`] when a native node index cannot fit the wire field.
+pub fn get_task_dag_response(
+    graph: task::TaskDag,
+) -> Result<pb::GetTaskDagResponse, TaskDagResponseError> {
+    Ok(pb::GetTaskDagResponse {
+        root_id: graph.root_id.to_string(),
+        nodes: graph.nodes.into_iter().map(task_dag_node).collect(),
+        edges: graph
+            .edges
+            .into_iter()
+            .map(|edge| {
+                Ok(pb::TaskDagEdge {
+                    blocker_node_index: u32::try_from(edge.blocker_node_index)
+                        .map_err(|_| TaskDagResponseError)?,
+                    dependent_node_index: u32::try_from(edge.dependent_node_index)
+                        .map_err(|_| TaskDagResponseError)?,
+                })
+            })
+            .collect::<Result<Vec<_>, TaskDagResponseError>>()?,
+    })
+}
+
+/// Reports a native task-DAG index outside the Protobuf representation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("task dependency graph contains an out-of-range node index")]
+pub struct TaskDagResponseError;
+
+fn task_dag_node(node: task::TaskDagNode) -> pb::TaskDagNode {
+    let value = match node {
+        task::TaskDagNode::Task { id, title, status } => {
+            pb::task_dag_node::Value::Task(pb::TaskDagTaskNode {
+                id: id.to_string(),
+                title,
+                status: task_status_value(status),
+            })
+        }
+        task::TaskDagNode::Missing { id } => {
+            pb::task_dag_node::Value::Missing(pb::TaskDagMissingNode { id: id.to_string() })
+        }
+        task::TaskDagNode::Unavailable { id } => {
+            pb::task_dag_node::Value::Unavailable(pb::TaskDagUnavailableNode { id: id.to_string() })
+        }
+        task::TaskDagNode::DepthLimit => {
+            pb::task_dag_node::Value::DepthLimit(pb::TaskDagDepthLimitNode {})
+        }
+    };
+    pb::TaskDagNode { value: Some(value) }
+}
+
 pub fn list_tasks_response(tasks: task::ListedTasks) -> pb::ListTasksResponse {
     let next_page_token = tasks.next_page_token.as_ref().map(ToString::to_string);
     let status_filter = match tasks.status_filter {

@@ -25,6 +25,7 @@ service TaskService {
   rpc CompleteTask(CompleteTaskRequest) returns (CompleteTaskResponse);
   rpc UpdateTask(UpdateTaskRequest) returns (UpdateTaskResponse);
   rpc GetTask(GetTaskRequest) returns (GetTaskResponse);
+  rpc GetTaskDag(GetTaskDagRequest) returns (GetTaskDagResponse);
   rpc ListTasks(ListTasksRequest) returns (ListTasksResponse);
   rpc DeleteTask(stream DeleteTaskRequest) returns (stream DeleteTaskResponse);
   rpc ReopenTask(stream ReopenTaskRequest) returns (stream ReopenTaskResponse);
@@ -376,6 +377,20 @@ message GetTaskRequest {
   TaskReadFormat output = 2;
 }
 
+enum TaskDagMode {
+  TASK_DAG_MODE_UNSPECIFIED = 0;
+  TASK_DAG_MODE_BLOCKED_BY = 1;
+  TASK_DAG_MODE_BLOCKS = 2;
+  TASK_DAG_MODE_FULL = 3;
+}
+
+message GetTaskDagRequest {
+  string id = 1;
+  optional uint32 depth = 2;
+  TaskStatusFilter status = 3;
+  TaskDagMode mode = 4;
+}
+
 enum ListScope {
   LIST_SCOPE_UNSPECIFIED = 0;
   LIST_SCOPE_DEFAULT = 1;
@@ -468,6 +483,36 @@ message GetTaskResponse {
     string path = 3;
     TaskData data = 4;
   }
+}
+
+message TaskDagTaskNode {
+  string id = 1;
+  string title = 2;
+  TaskStatus status = 3;
+}
+
+message TaskDagMissingNode { string id = 1; }
+message TaskDagUnavailableNode { string id = 1; }
+message TaskDagDepthLimitNode {}
+
+message TaskDagNode {
+  oneof value {
+    TaskDagTaskNode task = 1;
+    TaskDagMissingNode missing = 2;
+    TaskDagUnavailableNode unavailable = 3;
+    TaskDagDepthLimitNode depth_limit = 4;
+  }
+}
+
+message TaskDagEdge {
+  uint32 blocker_node_index = 1;
+  uint32 dependent_node_index = 2;
+}
+
+message GetTaskDagResponse {
+  string root_id = 1;
+  repeated TaskDagNode nodes = 2;
+  repeated TaskDagEdge edges = 3;
 }
 
 enum ListLayout {

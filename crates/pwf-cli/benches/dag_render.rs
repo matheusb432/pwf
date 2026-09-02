@@ -1,0 +1,261 @@
+use std::{hint::black_box, time::Duration};
+
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use mermaid_text::{Direction, Edge, Graph, Node, NodeShape, layout::layered::LayoutConfig};
+use pwf_client::pb::{
+    GetTaskDagResponse, TaskDagEdge, TaskDagNode, TaskDagTaskNode, TaskStatus, task_dag_node,
+};
+
+const FIXTURE_SCHEMA_VERSION: u32 = 1;
+const SAMPLE_SIZE: usize = 10;
+
+struct DagRenderFixture {
+    edge_count: usize,
+    graph: Graph,
+    name: &'static str,
+    node_count: usize,
+}
+
+impl DagRenderFixture {
+    fn new(
+        name: &'static str,
+        response: &GetTaskDagResponse,
+        node_count: usize,
+        edge_count: usize,
+    ) -> Self {
+        require_condition(
+            response.nodes.len() == node_count,
+            "fixture node count matches its manifest",
+        );
+        require_condition(
+            response.edges.len() == edge_count,
+            "fixture edge count matches its manifest",
+        );
+        validate_response(response);
+
+        let graph = graph_from_response(response);
+        validate_renderer(response, &graph, name);
+        Self {
+            edge_count,
+            graph,
+            name,
+            node_count,
+        }
+    }
+}
+
+fn dag_render(criterion: &mut Criterion) {
+    eprintln!("dag-render fixture_schema={FIXTURE_SCHEMA_VERSION}");
+
+    let mut group = criterion.benchmark_group("dag-render");
+    for fixture in fixtures() {
+        group.throughput(Throughput::Elements(require(
+            u64::try_from(fixture.node_count + fixture.edge_count),
+            "converting the fixture element count to u64",
+        )));
+        group.bench_with_input(
+            BenchmarkId::from_parameter(fixture.name),
+            &fixture,
+            |bencher, fixture| {
+                bencher.iter(|| black_box(render_low_level(black_box(&fixture.graph))));
+            },
+        );
+    }
+    group.finish();
+}
+
+fn fixtures() -> [DagRenderFixture; 3] {
+    [
+        DagRenderFixture::new("chain-8", &chain_response(8), 8, 7),
+        DagRenderFixture::new("layered-128-360", &layered_response(16, 8, 3), 128, 360),
+        DagRenderFixture::new("limit-512-2048", &limit_response(), 512, 2_048),
+    ]
+}
+
+fn chain_response(node_count: usize) -> GetTaskDagResponse {
+    let edges = (1..node_count)
+        .map(|dependent| edge(dependent - 1, dependent))
+        .collect();
+    response(node_count, node_count - 1, edges)
+}
+
+fn layered_response(
+    layer_count: usize,
+    nodes_per_layer: usize,
+    blockers_per_node: usize,
+) -> GetTaskDagResponse {
+    let mut edges = Vec::new();
+    for layer in 1..layer_count {
+        for dependent_offset in 0..nodes_per_layer {
+            let dependent = layer * nodes_per_layer + dependent_offset;
+            for blocker_offset in 0..blockers_per_node {
+                let blocker = (layer - 1) * nodes_per_layer
+                    + (dependent_offset + blocker_offset) % nodes_per_layer;
+                edges.push(edge(blocker, dependent));
+            }
+        }
+    }
+
+    response(
+        layer_count * nodes_per_layer,
+        layer_count * nodes_per_layer - 1,
+        edges,
+    )
+}
+
+fn limit_response() -> GetTaskDagResponse {
+    let mut response = layered_response(32, 16, 4);
+    for dependent_offset in 0..16 {
+        for blocker_offset in 0..4 {
+            let blocker = blocker_offset;
+            let dependent = 32 + dependent_offset;
+            response.edges.push(edge(blocker, dependent));
+        }
+    }
+    response
+}
+
+fn response(
+    node_count: usize,
+    root_node_index: usize,
+    edges: Vec<TaskDagEdge>,
+) -> GetTaskDagResponse {
+    GetTaskDagResponse {
+        root_id: task_id(root_node_index),
+        nodes: (0..node_count).map(task_node).collect(),
+        edges,
+    }
+}
+
+fn task_node(node_index: usize) -> TaskDagNode {
+    TaskDagNode {
+        value: Some(task_dag_node::Value::Task(TaskDagTaskNode {
+            id: task_id(node_index),
+            title: format!("benchmark task {node_index:04}"),
+            status: TaskStatus::Active as i32,
+        })),
+    }
+}
+
+fn edge(blocker_node_index: usize, dependent_node_index: usize) -> TaskDagEdge {
+    TaskDagEdge {
+        blocker_node_index: require(
+            u32::try_from(blocker_node_index),
+            "converting a fixture blocker index to u32",
+        ),
+        dependent_node_index: require(
+            u32::try_from(dependent_node_index),
+            "converting a fixture dependent index to u32",
+        ),
+    }
+}
+
+fn task_id(node_index: usize) -> String {
+    format!("PWF-{node_index:04}")
+}
+
+fn validate_response(response: &GetTaskDagResponse) {
+    require_condition(
+        task_ids(response).any(|id| id == response.root_id),
+        "fixture contains its root task",
+    );
+    for edge in &response.edges {
+        require_condition(
+            node_index(edge.blocker_node_index) < response.nodes.len(),
+            "fixture blocker index references a task",
+        );
+        require_condition(
+            node_index(edge.dependent_node_index) < response.nodes.len(),
+            "fixture dependent index references a task",
+        );
+    }
+}
+
+fn task_ids(response: &GetTaskDagResponse) -> impl Iterator<Item = &str> {
+    response.nodes.iter().map(|node| {
+        let Some(task_dag_node::Value::Task(task)) = node.value.as_ref() else {
+            eprintln!("benchmark setup failed: fixtures contain only task nodes");
+            std::process::exit(1);
+        };
+        task.id.as_str()
+    })
+}
+
+fn validate_renderer(response: &GetTaskDagResponse, graph: &Graph, fixture_name: &str) {
+    let rendered = render_low_level(graph);
+    for id in task_ids(response) {
+        require_condition(
+            rendered.contains(id),
+            &format!("low-level renderer output contains {id} in {fixture_name}"),
+        );
+    }
+}
+
+fn graph_from_response(response: &GetTaskDagResponse) -> Graph {
+    let mut graph = Graph::new(Direction::LeftToRight);
+    for (node_index, id) in task_ids(response).enumerate() {
+        let shape = if id == response.root_id {
+            NodeShape::Rounded
+        } else {
+            NodeShape::Rectangle
+        };
+        graph.nodes.push(Node::new(node_key(node_index), id, shape));
+    }
+    for edge in &response.edges {
+        graph.edges.push(Edge::new(
+            node_key(node_index(edge.blocker_node_index)),
+            node_key(node_index(edge.dependent_node_index)),
+            None,
+        ));
+    }
+    graph
+}
+
+fn render_low_level(graph: &Graph) -> String {
+    let positions =
+        mermaid_text::layout::layered::layout(graph, &LayoutConfig::default()).positions;
+    let subgraph_bounds =
+        mermaid_text::layout::subgraph::compute_subgraph_bounds(graph, &positions);
+    mermaid_text::render::render(graph, &positions, &subgraph_bounds)
+}
+
+fn node_key(node_index: usize) -> String {
+    format!("n{node_index}")
+}
+
+fn node_index(value: u32) -> usize {
+    require(
+        usize::try_from(value),
+        "converting a fixture node index to usize",
+    )
+}
+
+fn require<T, Error>(result: Result<T, Error>, context: &str) -> T
+where
+    Error: std::fmt::Display,
+{
+    match result {
+        Ok(value) => value,
+        Err(error) => {
+            eprintln!("benchmark setup failed while {context}: {error}");
+            std::process::exit(1);
+        }
+    }
+}
+
+fn require_condition(condition: bool, context: &str) {
+    if !condition {
+        eprintln!("benchmark setup failed: {context}");
+        std::process::exit(1);
+    }
+}
+
+criterion_group! {
+    name = benches;
+    config = Criterion::default()
+        .sample_size(SAMPLE_SIZE)
+        .warm_up_time(Duration::from_secs(1))
+        .measurement_time(Duration::from_secs(3));
+    targets = dag_render
+}
+criterion_main!(benches);

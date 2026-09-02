@@ -10,6 +10,7 @@ use pwf_application::{
         complete_task::{self, CompleteTaskError},
         edit_task::{self, EditTaskError},
         get_task::{self, GetTaskError},
+        get_task_dag::{self, GetTaskDagError},
         list_tasks::{self, ListTasksError},
         remove_task::{self, RemoveTaskError},
         reopen_task::{self, ReopenTaskError},
@@ -123,6 +124,19 @@ impl pb::task_service_server::TaskService for TaskGrpcService {
             .map(proto::task::get_task_response)
             .map(Response::new)
             .map_err(|error| get_task_status(&error))
+    }
+
+    async fn get_task_dag(
+        &self,
+        request: Request<pb::GetTaskDagRequest>,
+    ) -> Result<Response<pb::GetTaskDagResponse>, Status> {
+        let query = proto::task::get_task_dag_request(request.into_inner())?;
+        let graph = get_task_dag::execute(&query, &self.state.store, &self.state.pool)
+            .await
+            .map_err(|error| get_task_dag_status(&error))?;
+        proto::task::get_task_dag_response(graph)
+            .map(Response::new)
+            .map_err(|error| Status::internal(error.to_string()))
     }
 
     async fn list_tasks(
@@ -379,6 +393,22 @@ fn get_task_status(error: &GetTaskError) -> Status {
             Status::data_loss(error.to_string())
         }
         _ => Status::internal(error.to_string()),
+    }
+}
+
+fn get_task_dag_status(error: &GetTaskDagError) -> Status {
+    let message = error.to_string();
+    match error {
+        GetTaskDagError::UnknownProjectId { .. } | GetTaskDagError::TaskNotFound { .. } => {
+            Status::not_found(message)
+        }
+        GetTaskDagError::Cycle { .. } => Status::data_loss(message),
+        GetTaskDagError::NodeLimit { .. } | GetTaskDagError::EdgeLimit { .. } => {
+            Status::resource_exhausted(message)
+        }
+        GetTaskDagError::ListProjects(_)
+        | GetTaskDagError::ReadRoot { .. }
+        | GetTaskDagError::ListProjectTasks { .. } => Status::internal(message),
     }
 }
 

@@ -12,7 +12,7 @@ pub(super) use diagnostics::TITLE_NORMALIZED_NOTICE;
 pub(super) use list::render_list;
 pub(super) use session::{render_dispatch, render_dry_run};
 pub(super) use session_confirmation::render_session_confirmation;
-pub(super) use task_summary::{render_status, render_task_summary};
+pub(super) use task_summary::{render_status, render_task_identifier, render_task_summary};
 
 fn agent_name(agent: pwf_client::pb::Agent) -> &'static str {
     match agent {

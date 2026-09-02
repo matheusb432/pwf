@@ -440,6 +440,99 @@ async fn v1_create_task_returns_only_the_new_identifier() -> anyhow::Result<()> 
 }
 
 #[tokio::test]
+async fn v1_get_task_dag_returns_typed_blocker_edges() -> anyhow::Result<()> {
+    let server = TestServer::start(Duration::from_secs(2)).await?;
+    let blocker_id = server.add_project_and_task().await?;
+    let dependent = server
+        .client
+        .task()
+        .create_task(pb::CreateTaskRequest {
+            project_selector: "foo-bar".to_string(),
+            prompt: Some(pb::create_task_request::Prompt::Structured(
+                pb::StructuredTaskPrompt {
+                    title: "dependent task".to_string(),
+                    lanes: Some(pb::TaskLanes {
+                        goals: vec!["exercise the DAG endpoint".to_string()],
+                        context: Vec::new(),
+                        constraints: Vec::new(),
+                        done_when: Vec::new(),
+                    }),
+                },
+            )),
+            index_section: IndexSection::General as i32,
+            blocked_by: vec![blocker_id],
+            effort: None,
+            tags: Vec::new(),
+            priority: None,
+            request_id: "transport-create-dag-dependent".to_string(),
+        })
+        .await?;
+
+    let graph = server
+        .client
+        .task()
+        .get_task_dag(pb::GetTaskDagRequest {
+            id: dependent.id.clone(),
+            depth: None,
+            status: pb::TaskStatusFilter::All as i32,
+            mode: pb::TaskDagMode::BlockedBy as i32,
+        })
+        .await?;
+
+    assert_eq!(graph.root_id, dependent.id);
+    assert_eq!(graph.nodes.len(), 2);
+    assert!(matches!(
+        graph.nodes[0].value,
+        Some(pb::task_dag_node::Value::Task(ref task)) if task.id == "FOO-0002"
+    ));
+    assert!(matches!(
+        graph.nodes[1].value,
+        Some(pb::task_dag_node::Value::Task(ref task)) if task.id == "FOO-0001"
+    ));
+    assert_eq!(
+        graph.edges,
+        [pb::TaskDagEdge {
+            blocker_node_index: 1,
+            dependent_node_index: 0,
+        }]
+    );
+    server.finish().await
+}
+
+#[tokio::test]
+async fn v1_get_task_dag_rejects_unspecified_mode_and_zero_depth() -> anyhow::Result<()> {
+    let server = TestServer::start(Duration::from_secs(2)).await?;
+
+    let unspecified_mode = server
+        .client
+        .task()
+        .get_task_dag(pb::GetTaskDagRequest {
+            id: "FOO-0001".to_string(),
+            depth: None,
+            status: pb::TaskStatusFilter::All as i32,
+            mode: pb::TaskDagMode::Unspecified as i32,
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(rpc_status(unspecified_mode).code(), Code::InvalidArgument);
+
+    let zero_depth = server
+        .client
+        .task()
+        .get_task_dag(pb::GetTaskDagRequest {
+            id: "FOO-0001".to_string(),
+            depth: Some(0),
+            status: pb::TaskStatusFilter::All as i32,
+            mode: pb::TaskDagMode::BlockedBy as i32,
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(rpc_status(zero_depth).code(), Code::InvalidArgument);
+
+    server.finish().await
+}
+
+#[tokio::test]
 async fn v1_request_ids_replay_mutations_without_duplicate_effects() -> anyhow::Result<()> {
     let server = TestServer::start(Duration::from_secs(2)).await?;
     let original_id = server.add_project_and_task().await?;

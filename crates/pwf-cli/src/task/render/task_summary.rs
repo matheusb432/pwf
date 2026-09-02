@@ -1,7 +1,7 @@
 use anstyle::AnsiColor;
 use pwf_client::pb::TaskStatus;
 
-use crate::render::{ID_ORANGE, paint, render_summary};
+use crate::render::{paint, render_summary};
 
 pub(in crate::task) fn render_task_summary(
     identifier: &str,
@@ -13,11 +13,7 @@ pub(in crate::task) fn render_task_summary(
         return render_summary(identifier, title, color_on);
     };
     // Plain output is a raw-text contract; Markdown emphasis is reserved for ANSI rendering.
-    let identifier = if color_on {
-        paint(identifier, ID_ORANGE, true)
-    } else {
-        identifier.to_string()
-    };
+    let identifier = render_task_identifier(identifier, status, color_on);
     format!(
         "{identifier} [{}] :: {title}",
         render_status(status, color_on)
@@ -34,11 +30,25 @@ pub(in crate::task) fn render_status(status: TaskStatus, color_on: bool) -> Stri
     if !color_on {
         return text.to_string();
     }
-    let color: anstyle::Color = match status {
-        TaskStatus::Active => ID_ORANGE.into(),
+    paint(text, task_status_color(status), true)
+}
+
+pub(in crate::task) fn render_task_identifier(
+    identifier: &str,
+    status: TaskStatus,
+    color_on: bool,
+) -> String {
+    if !color_on {
+        return identifier.to_string();
+    }
+    paint(identifier, task_status_color(status), true)
+}
+
+fn task_status_color(status: TaskStatus) -> anstyle::Color {
+    match status {
+        TaskStatus::Active => AnsiColor::Blue.into(),
         TaskStatus::Done => AnsiColor::Green.into(),
         TaskStatus::Cancelled => AnsiColor::Red.into(),
         TaskStatus::Unspecified => AnsiColor::Yellow.into(),
-    };
-    paint(text, color, true)
+    }
 }

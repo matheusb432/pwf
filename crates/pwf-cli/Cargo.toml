@@ -24,6 +24,10 @@ name = "e2e"
 path = "tests/e2e.rs"
 test = false
 
+[[bench]]
+name = "dag_render"
+harness = false
+
 [dependencies]
 anyhow = { workspace = true }
 pwf-client = { workspace = true }
@@ -34,6 +38,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 dialoguer = { workspace = true }
 lazy-regex = { workspace = true }
+mermaid-text = { workspace = true }
 anstyle = { workspace = true }
 toml = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt"] }
@@ -41,6 +46,7 @@ walkdir = { workspace = true }
 
 [dev-dependencies]
 assert_cmd = { workspace = true }
+criterion = { workspace = true }
 tempfile = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]

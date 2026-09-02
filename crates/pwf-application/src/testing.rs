@@ -52,6 +52,7 @@ struct InMemoryState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum InMemoryStoreFailure {
     DeleteProjectNote,
+    ListTasks,
     ListProjectNotes,
     ReadTask,
     ReadTaskMarkdown,
@@ -280,6 +281,15 @@ impl TaskVault for InMemoryStore {
     }
 
     fn list_tasks(&self, project: &Project) -> Result<Vec<TaskRecord>, Self::Error> {
+        if self
+            .lock()
+            .failures
+            .contains(&InMemoryStoreFailure::ListTasks)
+        {
+            return Err(InMemoryStoreError::Injected {
+                operation: "task-list",
+            });
+        }
         Ok(self
             .lock()
             .tasks

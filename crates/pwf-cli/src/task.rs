@@ -13,6 +13,7 @@ use crate::console::Console;
 mod add;
 mod blocked_by_input;
 mod cancel;
+mod dag;
 mod done;
 mod edit;
 mod get;
@@ -209,6 +210,8 @@ enum TaskCommand {
     /// Get a task note's markdown
     #[command(alias = "g")]
     Get(get::Arguments),
+    /// Show a task's directed dependency graph
+    Dag(dag::Arguments),
     /// Delete a task note and remove its index link
     Remove(remove::Arguments),
 }
@@ -227,6 +230,7 @@ pub async fn run(
             TaskCommand::Reopen(arguments) => reopen::run(arguments, console, client).await?,
             TaskCommand::Edit(arguments) => edit::run(arguments, console, client).await?,
             TaskCommand::Get(arguments) => get::run(arguments, client).await?,
+            TaskCommand::Dag(arguments) => dag::run(arguments, console, client).await?,
             TaskCommand::Remove(arguments) => remove::run(arguments, console, client).await?,
         },
         Command::Session(arguments) => session::run(arguments, console, client).await?,

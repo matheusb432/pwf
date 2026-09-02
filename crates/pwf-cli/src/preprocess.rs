@@ -7,7 +7,7 @@
 /// Returns task verbs accepted with or without the canonical `task` noun.
 fn task_subcommands() -> &'static [&'static str] {
     &[
-        "add", "list", "ls", "done", "cancel", "reopen", "edit", "get", "g", "remove",
+        "add", "list", "ls", "done", "cancel", "reopen", "edit", "get", "g", "dag", "remove",
     ]
 }
 
@@ -48,6 +48,9 @@ fn is_value_flag(flag: &str) -> bool {
             | "--effort"
             | "--priority"
             | "--status"
+            | "--depth"
+            | "--mode"
+            | "--with"
             | "--model"
             | "--push-prompt"
     )
@@ -67,7 +70,7 @@ fn is_order_flag(tok: &str) -> bool {
 fn is_id_facing_verb(verb: &str) -> bool {
     matches!(
         verb,
-        "done" | "cancel" | "reopen" | "edit" | "get" | "g" | "session" | "remove"
+        "done" | "cancel" | "reopen" | "edit" | "get" | "g" | "dag" | "session" | "remove"
     )
 }
 

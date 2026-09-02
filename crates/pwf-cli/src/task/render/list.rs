@@ -365,6 +365,23 @@ mod tests {
     }
 
     #[test]
+    fn all_status_short_lines_color_identifiers_by_lifecycle() {
+        for (status, color) in [
+            (TaskStatus::Active, 34),
+            (TaskStatus::Done, 32),
+            (TaskStatus::Cancelled, 31),
+        ] {
+            let mut task = sample_task();
+            task.status = status as i32;
+            let output = render_task_for_filter(&task, TaskStatusFilter::All, false, true);
+            assert!(
+                output.contains(&format!("\u{1b}[{color}mFOO-0001\u{1b}[0m")),
+                "{output:?}"
+            );
+        }
+    }
+
+    #[test]
     fn exact_status_short_lines_keep_the_existing_shape() {
         let output = render_task_for_filter(&sample_task(), TaskStatusFilter::Active, false, false);
         assert_eq!(output, "FOO-0001 :: sample task");
