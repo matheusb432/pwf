@@ -144,7 +144,7 @@ fn task_ids(task_dag: &TaskDag) -> impl Iterator<Item = &TaskId> {
 
 pub fn validate_renderer(task_dag: &TaskDag, fixture_name: &str) {
     for color in DagRenderColor::ALL {
-        let rendered = pwf_cli::task::benchmark_dag_render(task_dag, color.color_on());
+        let rendered = pwf_cli::task::benchmark_dag_render(task_dag.clone(), color.color_on());
         for id in task_ids(task_dag) {
             require_condition(
                 rendered.contains(id.as_ref()),

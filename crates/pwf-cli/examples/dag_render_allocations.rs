@@ -38,5 +38,6 @@ fn measure_dag_render(
     task_dag: &pwf_client::task::TaskDag,
     color: DagRenderColor,
 ) -> AllocationInfo {
+    let task_dag = task_dag.clone();
     measure(|| pwf_cli::task::benchmark_dag_render_prepare(task_dag, color.color_on()))
 }

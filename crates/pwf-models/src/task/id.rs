@@ -54,6 +54,11 @@ impl TaskId {
     pub fn number(&self) -> u16 {
         self.number
     }
+
+    #[must_use]
+    pub fn into_string(self) -> String {
+        self.value
+    }
 }
 
 impl AsRef<str> for TaskId {

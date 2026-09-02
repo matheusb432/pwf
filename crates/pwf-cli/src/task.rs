@@ -27,13 +27,13 @@ pub mod session;
 /// Renders the default task-DAG view for the Criterion benchmark.
 #[doc(hidden)]
 #[must_use]
-pub fn benchmark_dag_render(task_dag: &TaskDag, color_on: bool) -> String {
+pub fn benchmark_dag_render(task_dag: TaskDag, color_on: bool) -> String {
     dag::render(task_dag, color_on)
 }
 
 /// Prepares the default task-DAG view for allocation measurement.
 #[doc(hidden)]
-pub fn benchmark_dag_render_prepare(task_dag: &TaskDag, color_on: bool) {
+pub fn benchmark_dag_render_prepare(task_dag: TaskDag, color_on: bool) {
     dag::benchmark_prepare(task_dag, color_on);
 }
 

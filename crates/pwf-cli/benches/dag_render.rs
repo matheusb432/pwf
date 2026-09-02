@@ -1,6 +1,8 @@
 use std::{hint::black_box, time::Duration};
 
-use criterion::{Bencher, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{
+    BatchSize, Bencher, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
+};
 
 #[path = "dag_render_support/fixture.rs"]
 mod fixture;
@@ -36,12 +38,16 @@ fn benchmark_fixture(
     bencher: &mut Bencher<'_>,
     (fixture, color): &(&DagRenderFixture, DagRenderColor),
 ) {
-    bencher.iter(|| {
-        black_box(pwf_cli::task::benchmark_dag_render(
-            black_box(&fixture.task_dag),
-            color.color_on(),
-        ))
-    });
+    bencher.iter_batched(
+        || fixture.task_dag.clone(),
+        |task_dag| {
+            black_box(pwf_cli::task::benchmark_dag_render(
+                black_box(task_dag),
+                color.color_on(),
+            ))
+        },
+        BatchSize::SmallInput,
+    );
 }
 
 criterion_group! {

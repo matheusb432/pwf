@@ -6,7 +6,7 @@ use super::NodeFieldChoice;
 use crate::task::render::render_domain_task_identifier;
 
 pub(super) fn render(
-    task_dag: &TaskDag,
+    task_dag: TaskDag,
     node_field: Option<NodeFieldChoice>,
     color_on: bool,
 ) -> String {
@@ -35,29 +35,30 @@ pub(super) struct PreparedTaskDag {
 }
 
 pub(super) fn prepare(
-    task_dag: &TaskDag,
+    task_dag: TaskDag,
     node_field: Option<NodeFieldChoice>,
     color_on: bool,
 ) -> PreparedTaskDag {
-    let task_dag_nodes = task_dag.nodes().iter().enumerate();
-    let task_dag_node_count = task_dag_nodes.len();
+    let (root_id, nodes, edges) = task_dag.into_parts();
+    let task_dag_node_count = nodes.len();
     let mut graph = Graph::new(Direction::LeftToRight);
     graph.nodes.reserve(task_dag_node_count);
-    graph.edges.reserve(task_dag.edges().len());
+    graph.edges.reserve(edges.len());
     let mut colored_task_labels = if color_on {
         Vec::with_capacity(task_dag_node_count)
     } else {
         Vec::new()
     };
-    for (node_index, node) in task_dag_nodes {
+    for (node_index, node) in nodes.into_iter().enumerate() {
         let (label, shape) = match node {
             TaskDagNode::Task { id, title, status } => {
-                let is_root = id == task_dag.root_id();
-                let label = task_label(id.as_ref(), *status, title, node_field);
-                if color_on {
-                    let colored_identifier =
-                        render_domain_task_identifier(id.as_ref(), *status, true);
-                    let colored_label = task_label(&colored_identifier, *status, title, node_field);
+                let is_root = id == root_id;
+                let identifier = id.into_string();
+                let colored_identifier =
+                    color_on.then(|| render_domain_task_identifier(&identifier, status, true));
+                let label = task_label(identifier, status, &title, node_field);
+                if let Some(colored_identifier) = colored_identifier {
+                    let colored_label = task_label(colored_identifier, status, &title, node_field);
                     colored_task_labels.push((label.clone(), colored_label));
                 }
                 (
@@ -69,10 +70,14 @@ pub(super) fn prepare(
                     },
                 )
             }
-            TaskDagNode::Missing { id } => (format!("{id} [missing]"), NodeShape::Rectangle),
-            TaskDagNode::Unavailable { id } => {
-                (format!("{id} [unavailable]"), NodeShape::Rectangle)
-            }
+            TaskDagNode::Missing { id } => (
+                annotated_label(id.into_string(), "missing"),
+                NodeShape::Rectangle,
+            ),
+            TaskDagNode::Unavailable { id } => (
+                annotated_label(id.into_string(), "unavailable"),
+                NodeShape::Rectangle,
+            ),
             TaskDagNode::DepthLimit => ("... [depth limit]".to_string(), NodeShape::Rectangle),
         };
         graph
@@ -80,7 +85,7 @@ pub(super) fn prepare(
             .push(Node::new(node_key(node_index), label, shape));
     }
 
-    for edge in task_dag.edges() {
+    for edge in edges {
         graph.edges.push(Edge::new(
             node_key(edge.blocker_node_index),
             node_key(edge.dependent_node_index),
@@ -95,17 +100,31 @@ pub(super) fn prepare(
 }
 
 fn task_label(
-    id: &str,
+    identifier: String,
     status: TaskStatus,
     title: &str,
     node_field: Option<NodeFieldChoice>,
 ) -> String {
     match node_field {
-        None => id.to_string(),
-        Some(NodeFieldChoice::Title) if title.is_empty() => id.to_string(),
-        Some(NodeFieldChoice::Title) => format!("{id} {title}"),
-        Some(NodeFieldChoice::Status) => format!("{id} [{}]", status.as_str()),
+        None => identifier,
+        Some(NodeFieldChoice::Title) if title.is_empty() => identifier,
+        Some(NodeFieldChoice::Title) => {
+            let mut label = identifier;
+            label.reserve(1 + title.len());
+            label.push(' ');
+            label.push_str(title);
+            label
+        }
+        Some(NodeFieldChoice::Status) => annotated_label(identifier, status.as_str()),
     }
+}
+
+fn annotated_label(mut label: String, annotation: &str) -> String {
+    label.reserve(3 + annotation.len());
+    label.push_str(" [");
+    label.push_str(annotation);
+    label.push(']');
+    label
 }
 
 fn node_key(node_index: impl std::fmt::Display) -> String {
@@ -120,7 +139,7 @@ mod tests {
     #[test]
     fn root_is_rounded_and_blocker_is_rectangular() {
         let output = super::render(
-            &task_dag(
+            task_dag(
                 "FOO-0002",
                 vec![
                     TaskDagNode::Task {
@@ -155,7 +174,7 @@ mod tests {
     #[test]
     fn isolated_task_renders_without_an_empty_graph_message() {
         let output = super::render(
-            &task_dag(
+            task_dag(
                 "FOO-0001",
                 vec![TaskDagNode::Task {
                     id: task_id("FOO-0001"),
@@ -177,7 +196,7 @@ mod tests {
     #[test]
     fn missing_and_unavailable_nodes_explain_the_terminal_reference() {
         let output = super::render(
-            &task_dag(
+            task_dag(
                 "FOO-0001",
                 vec![
                     TaskDagNode::Task {
@@ -214,7 +233,7 @@ mod tests {
     #[test]
     fn task_identifiers_use_lifecycle_colors_without_coloring_extra_fields() {
         let output = super::render(
-            &task_dag(
+            task_dag(
                 "FOO-0001",
                 vec![
                     task_node("FOO-0001", TaskStatus::Active),

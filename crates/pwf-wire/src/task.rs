@@ -614,7 +614,7 @@ impl TaskDag {
     }
 
     #[must_use]
-    pub(crate) fn into_parts(self) -> (TaskId, Vec<TaskDagNode>, Vec<TaskDagEdge>) {
+    pub fn into_parts(self) -> (TaskId, Vec<TaskDagNode>, Vec<TaskDagEdge>) {
         (self.root_id, self.nodes, self.edges)
     }
 }
