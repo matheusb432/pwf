@@ -1,6 +1,6 @@
 use pwf_models::{
     AppDate,
-    task::{IndexSection, PriorityTier, TaskPrompt, TaskSection, TaskTimestamp},
+    task::{PriorityTier, TaskPrompt, TaskSection, TaskTimestamp},
 };
 
 #[test]
@@ -59,19 +59,12 @@ fn task_prompt_preserves_authored_text() {
 
 #[test]
 fn task_section_is_non_empty_and_single_line() {
-    assert_eq!(TaskSection::try_new("  Human  ").unwrap().as_ref(), "Human");
-    assert!(TaskSection::try_new("  ").is_err());
-    assert!(TaskSection::try_new("Human\nFuture").is_err());
-}
+    let section = TaskSection::try_new("  Waiting on API  ").unwrap();
 
-#[test]
-fn index_section_maps_the_add_choice_to_a_task_section() {
-    assert_eq!(IndexSection::default(), IndexSection::General);
-    assert_eq!(IndexSection::default().task_section(), None);
-    assert_eq!(
-        IndexSection::Human.task_section().unwrap().as_ref(),
-        "Human"
-    );
+    assert_eq!(section.as_ref(), "Waiting on API");
+    assert_eq!(section.case_insensitive_key(), "waiting on api");
+    assert!(TaskSection::try_new("  ").is_err());
+    assert!(TaskSection::try_new("Waiting\nBlocked").is_err());
 }
 
 #[test]

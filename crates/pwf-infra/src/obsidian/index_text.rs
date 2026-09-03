@@ -1,5 +1,3 @@
-use pwf_models::task::TaskSection;
-
 use super::{markdown_line, task_link};
 
 const NOTES_HEADER: &str = "### Notes";
@@ -54,40 +52,6 @@ pub(super) fn remove_note_link(content: &str, id: &str) -> String {
     remove_index_link(content, id)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum KnownSection {
-    Future,
-    Human,
-    LowPrio,
-}
-
-impl KnownSection {
-    pub(super) fn parse(value: &TaskSection) -> Option<Self> {
-        match value.as_ref() {
-            "Future" => Some(Self::Future),
-            "Human" => Some(Self::Human),
-            "Low-prio" => Some(Self::LowPrio),
-            _ => None,
-        }
-    }
-
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Future => "Future",
-            Self::Human => "Human",
-            Self::LowPrio => "Low-prio",
-        }
-    }
-
-    fn read_headers(self) -> &'static [&'static str] {
-        match self {
-            Self::Future => &["## Future", "## Futuro"],
-            Self::Human => &["## Human"],
-            Self::LowPrio => &["## Low-prio", "## Low-priority"],
-        }
-    }
-}
-
 pub(super) fn add_link_to_index(content: &str, link: &str) -> String {
     let block = format!("{link}\n");
     let normal_end = [
@@ -131,49 +95,8 @@ fn find_line(content: &str, predicate: impl Fn(&str) -> bool) -> Option<usize> {
     .map(|line| line.start)
 }
 
-pub(super) fn section_exists(content: &str, section: KnownSection) -> bool {
-    find_section_index(content, section.read_headers()).is_some()
-}
-
 fn line_end_after(content: &str, idx: usize) -> usize {
     markdown_line::find(content, idx, |_| true).map_or(content.len(), |line| line.end)
-}
-
-fn skip_blank_lines(content: &str, idx: usize) -> usize {
-    markdown_line::find(content, idx, |line| !line.trim().is_empty())
-        .map_or(content.len(), |line| line.start)
-}
-
-fn insert_section_task(content: &str, insert_at: usize, block: &str) -> String {
-    let suffix_at = skip_blank_lines(content, insert_at);
-    let prefix = content[..insert_at].trim_end();
-    let suffix = &content[suffix_at..];
-    if suffix.is_empty() {
-        format!("{prefix}\n{block}")
-    } else {
-        format!("{prefix}\n{block}\n{suffix}")
-    }
-}
-
-pub(super) fn add_section_block(content: &str, block: &str, section: KnownSection) -> String {
-    if let Some(idx) = find_section_index(content, section.read_headers()) {
-        return insert_section_task(content, line_end_after(content, idx), block);
-    }
-
-    let header = format!("## {}", section.as_str());
-    if section == KnownSection::Future {
-        let prefix = content.trim_end();
-        return format!("{prefix}\n\n{header}\n\n{block}");
-    }
-
-    if let Some(future_idx) = find_section_index(content, KnownSection::Future.read_headers()) {
-        let prefix = content[..future_idx].trim_end();
-        let suffix = &content[future_idx..];
-        return format!("{prefix}\n\n{header}\n\n{block}{suffix}");
-    }
-
-    let prefix = content.trim_end();
-    format!("{prefix}\n\n{header}\n\n{block}")
 }
 
 #[cfg(test)]
@@ -182,8 +105,8 @@ mod tests {
 
     #[test]
     fn find_section_index_is_case_insensitive() {
-        let content = "- [ ] [[X-0001|a]]\n\n## low-prio\n- [ ] [[X-0002|f]]\n";
-        assert!(find_section_index(content, &["## Low-prio"]).is_some());
+        let content = "- [ ] [[X-0001|a]]\n\n## waiting on api\n- [ ] [[X-0002|f]]\n";
+        assert!(find_section_index(content, &["## Waiting on API"]).is_some());
     }
 
     #[test]

@@ -101,14 +101,8 @@ pub async fn execute(
     }
     if !confirmed {
         if let Some(identity) = identity.as_ref() {
-            mutation_request::complete(
-                pool,
-                identity,
-                MutationOperation::Delete,
-                Some("aborted"),
-                None,
-            )
-            .await?;
+            mutation_request::complete(pool, identity, MutationOperation::Delete, Some("aborted"))
+                .await?;
         }
         return Ok(DeleteTaskOutcome::Aborted);
     }
@@ -120,14 +114,8 @@ pub async fn execute(
     }
     delete_prepared(&prepared, store)?;
     if let Some(identity) = identity.as_ref() {
-        mutation_request::complete(
-            pool,
-            identity,
-            MutationOperation::Delete,
-            Some("deleted"),
-            None,
-        )
-        .await?;
+        mutation_request::complete(pool, identity, MutationOperation::Delete, Some("deleted"))
+            .await?;
     }
     Ok(DeleteTaskOutcome::Deleted)
 }

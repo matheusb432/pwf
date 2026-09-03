@@ -1,11 +1,8 @@
-use pwf_models::task::{TaskId, TaskTimestampError};
+use pwf_models::task::TaskTimestampError;
 use pwf_wire::task::{ClosedTaskAction, CompleteTask};
 
-#[cfg(test)]
-use super::task_closure::review_task_prompt;
 use super::{
-    CloseTaskError, TaskPromptLanesError,
-    lane_configuration::TaskPromptLanes,
+    CloseTaskError,
     mutation_request::{self, MutationOperation, MutationRequestState, MutationStart},
     resolve_task_project::{self, ResolveTaskProjectError},
     task_closure::{self, TaskClosure},
@@ -25,8 +22,6 @@ pub enum CompleteTaskError {
     Clock(#[from] TaskTimestampError),
     #[error(transparent)]
     MutationRequest(#[from] mutation_request::MutationRequestError),
-    #[error(transparent)]
-    PromptLanes(#[from] TaskPromptLanesError),
 }
 
 #[cqrsy::command]
@@ -35,7 +30,7 @@ pub async fn execute(
     store: &impl TaskVault,
     pool: &sqlx::SqlitePool,
     clock: &impl Clock,
-) -> Result<Option<TaskId>, CompleteTaskError> {
+) -> Result<(), CompleteTaskError> {
     let identity = mutation_request::identity(
         command.request_id.as_ref(),
         command.request_fingerprint.as_ref(),
@@ -45,16 +40,11 @@ pub async fn execute(
             mutation_request::find(pool, identity, MutationOperation::Complete).await?
     {
         return match replay.state {
-            MutationRequestState::Completed => Ok(replay.result_task_id),
+            MutationRequestState::Completed => Ok(()),
             MutationRequestState::Pending => Err(identity.incomplete().into()),
         };
     }
     let project = resolve_task_project::execute(command.id.clone(), pool).await?;
-    let review_lanes = if command.review {
-        Some(TaskPromptLanes::load(pool).await?)
-    } else {
-        None
-    };
     let completed_at = clock.now()?;
     if let Some(identity) = identity.as_ref()
         && let MutationStart::Existing(replay) =
@@ -62,7 +52,7 @@ pub async fn execute(
                 .await?
     {
         return match replay.state {
-            MutationRequestState::Completed => Ok(replay.result_task_id),
+            MutationRequestState::Completed => Ok(()),
             MutationRequestState::Pending => Err(identity.incomplete().into()),
         };
     }
@@ -73,14 +63,13 @@ pub async fn execute(
             completed_at,
             report: command.report.as_ref(),
             commits: command.commits.as_ref(),
-            review_lanes: review_lanes.as_ref(),
             expected_revision: command.expected_revision.as_ref(),
         },
         store,
         &project,
     );
-    let effects = match result {
-        Ok(effects) => effects,
+    match result {
+        Ok(()) => {}
         Err(error) => {
             if let Some(identity) = identity.as_ref()
                 && close_failed_before_mutation(&error)
@@ -89,18 +78,17 @@ pub async fn execute(
             }
             return Err(error.into());
         }
-    };
+    }
     if let Some(identity) = identity.as_ref() {
         mutation_request::complete(
             pool,
             identity,
             MutationOperation::Complete,
             Some("completed"),
-            effects.review_task.as_ref().map(|task| &task.id),
         )
         .await?;
     }
-    Ok(effects.review_task.map(|task| task.id))
+    Ok(())
 }
 
 fn close_failed_before_mutation(error: &CloseTaskError) -> bool {
@@ -123,7 +111,7 @@ mod tests {
         task::{TaskId, TaskStatus},
     };
 
-    use super::{CloseTaskError, CompleteTask, CompleteTaskError, review_task_prompt};
+    use super::{CloseTaskError, CompleteTask, CompleteTaskError};
     use crate::{
         ports::task_vault::{IndexEntry, IndexEntryState, TaskRecord, TaskVault},
         task::complete_task,
@@ -164,7 +152,6 @@ mod tests {
             id: id.parse().unwrap(),
             report: None,
             commits: None,
-            review: false,
             expected_revision: None,
             request_id: None,
             request_fingerprint: None,
@@ -191,21 +178,16 @@ mod tests {
                     completed_at: Some(task_timestamp(format!("2026-01-{:02}T00:00:00Z", 7 - n))),
                     ..record(&format!("FOO-{n:04}"), TaskStatus::Done)
                 });
-                entry(
-                    &format!("FOO-{n:04}"),
-                    IndexEntryState::Done(None),
-                    "General",
-                )
+                entry(&format!("FOO-{n:04}"), IndexEntryState::Done(None), "")
             })
             .collect();
-        entries.push(entry("FOO-0007", IndexEntryState::Open, "General"));
+        entries.push(entry("FOO-0007", IndexEntryState::Open, ""));
         let store = staged(tasks, entries);
 
-        let out = complete_task::execute(&done_command("FOO-0007"), &store, &pool, &FixedClock)
+        complete_task::execute(&done_command("FOO-0007"), &store, &pool, &FixedClock)
             .await
             .unwrap();
 
-        assert_eq!(out, None);
         assert_eq!(store.tasks("foo-bar")[0].status, TaskStatus::Done);
         let marked = store
             .entries("foo-bar")
@@ -238,7 +220,7 @@ mod tests {
         .await;
         let store = staged(
             vec![record("FOO-0001", TaskStatus::Active)],
-            vec![entry("FOO-0001", IndexEntryState::Open, "General")],
+            vec![entry("FOO-0001", IndexEntryState::Open, "")],
         );
         complete_task::execute(&done_command("FOO-0001"), &store, &pool, &FixedClock)
             .await
@@ -263,93 +245,12 @@ mod tests {
         .await;
         let store = staged(vec![record("FOO-0001", TaskStatus::Active)], Vec::new());
 
-        let outcome = complete_task::execute(&done_command("FOO-0001"), &store, &pool, &FixedClock)
+        complete_task::execute(&done_command("FOO-0001"), &store, &pool, &FixedClock)
             .await
             .unwrap();
 
-        assert_eq!(outcome, None);
         assert_eq!(store.tasks("foo-bar")[0].status, TaskStatus::Done);
         assert!(store.entries("foo-bar").is_empty());
-    }
-
-    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
-    async fn done_normalizes_futuro_header_entries(pool: sqlx::SqlitePool) {
-        crate::testing::insert_project(
-            &pool,
-            "FOO",
-            "foo-bar",
-            "/projects/foo",
-            "/tasks/foo",
-            false,
-        )
-        .await;
-        let store = staged(
-            vec![record("FOO-0001", TaskStatus::Active)],
-            vec![entry("FOO-0001", IndexEntryState::Open, "Futuro")],
-        );
-
-        let out = complete_task::execute(&done_command("FOO-0001"), &store, &pool, &FixedClock)
-            .await
-            .unwrap();
-
-        assert_eq!(out, None);
-        assert_eq!(
-            TaskVault::list_index_sections(&store, &foo())
-                .unwrap()
-                .iter()
-                .map(AsRef::as_ref)
-                .collect::<Vec<_>>(),
-            ["Future"]
-        );
-    }
-
-    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
-    async fn done_review_inserts_review_task_and_open_entry(pool: sqlx::SqlitePool) {
-        crate::testing::insert_project(
-            &pool,
-            "FOO",
-            "foo-bar",
-            "/projects/foo",
-            "/tasks/foo",
-            false,
-        )
-        .await;
-        sqlx::query(
-            "UPDATE task_prompt_lanes SET marker = '/o', header = 'Objectives' WHERE lane = 'goals'",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-        let store = staged(
-            vec![record("FOO-0001", TaskStatus::Active)],
-            vec![entry("FOO-0001", IndexEntryState::Open, "General")],
-        );
-        let cmd = CompleteTask {
-            review: true,
-            commits: "a..b".parse().ok(),
-            ..done_command("FOO-0001")
-        };
-
-        let out = complete_task::execute(&cmd, &store, &pool, &FixedClock)
-            .await
-            .unwrap();
-
-        let review = out.unwrap();
-        assert_eq!(review.as_ref(), "FOO-0002");
-        assert!(
-            store
-                .entries("foo-bar")
-                .iter()
-                .any(|e| e.id == TaskId::try_new("FOO-0002").unwrap()
-                    && e.state == IndexEntryState::Open),
-            "review task must get an open index entry"
-        );
-        let review_task = store
-            .tasks("foo-bar")
-            .into_iter()
-            .find(|task| task.id.as_ref() == "FOO-0002")
-            .unwrap();
-        assert_eq!(review_task.body, "## Objectives\n");
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
@@ -394,15 +295,13 @@ mod tests {
         };
         let store = staged(
             vec![invalid],
-            vec![entry("FOO-0001", IndexEntryState::Open, "General")],
+            vec![entry("FOO-0001", IndexEntryState::Open, "")],
         );
 
-        let review_task =
-            complete_task::execute(&done_command("FOO-0001"), &store, &pool, &FixedClock)
-                .await
-                .unwrap();
+        complete_task::execute(&done_command("FOO-0001"), &store, &pool, &FixedClock)
+            .await
+            .unwrap();
 
-        assert_eq!(review_task, None);
         assert_eq!(store.tasks("foo-bar")[0].status, TaskStatus::Done);
     }
 
@@ -426,19 +325,6 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "Unknown project ID `XYZ` for task XYZ-0001"
-        );
-    }
-
-    #[test]
-    fn review_prompt_mentions_only_supplied_commits() {
-        let commits = "a..b".parse().unwrap();
-        assert_eq!(
-            review_task_prompt(&"FOO-0001".parse().unwrap(), Some(&commits)).as_ref(),
-            "review FOO-0001, commits: a..b"
-        );
-        assert_eq!(
-            review_task_prompt(&"FOO-0001".parse().unwrap(), None).as_ref(),
-            "review FOO-0001"
         );
     }
 }

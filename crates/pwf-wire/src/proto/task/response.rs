@@ -15,17 +15,13 @@ pub fn update_task_response() -> pb::UpdateTaskResponse {
 }
 
 #[must_use]
-pub fn cancel_task_response(review_task_id: Option<TaskId>) -> pb::CancelTaskResponse {
-    pb::CancelTaskResponse {
-        review_task_id: review_task_id.map(|id| id.to_string()),
-    }
+pub fn cancel_task_response() -> pb::CancelTaskResponse {
+    pb::CancelTaskResponse {}
 }
 
 #[must_use]
-pub fn complete_task_response(review_task_id: Option<TaskId>) -> pb::CompleteTaskResponse {
-    pb::CompleteTaskResponse {
-        review_task_id: review_task_id.map(|id| id.to_string()),
-    }
+pub fn complete_task_response() -> pb::CompleteTaskResponse {
+    pb::CompleteTaskResponse {}
 }
 
 #[must_use]

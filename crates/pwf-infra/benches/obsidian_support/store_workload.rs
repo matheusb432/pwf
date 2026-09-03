@@ -143,7 +143,6 @@ impl InsertWorkload {
                     "constructing benchmark task title",
                 ),
                 created_at: task_timestamp(),
-                section: None,
                 blocked_by: Some(blocked_by()),
                 effort: Some(EffortTier::Medium),
                 priority: None,

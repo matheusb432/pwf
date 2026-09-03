@@ -3,17 +3,17 @@ use std::num::NonZeroUsize;
 use clap::Args;
 use pwf_client::{
     pb::{
-        EffortTier, ListDetail, ListScope, ListTasksRequest, OrderDirection, OrderField, OrderSpec,
-        PriorityTier,
+        AllTaskSections, EffortTier, ListDetail, ListTasksRequest, OrderDirection, OrderField,
+        OrderSpec, PriorityTier, list_tasks_request,
     },
     task::TaskClient,
 };
 use pwf_models::{
     project::ProjectSelector,
-    task::{TagInput, TaskTags},
+    task::{TagInput, TaskSection, TaskTags},
 };
 
-use super::{EffortChoice, PriorityChoice, SectionChoice, StatusChoice, render::render_list};
+use super::{EffortChoice, PriorityChoice, StatusChoice, render::render_list};
 use crate::console::Console;
 
 const TASK_LIST_PAGE_SIZE: u32 = 256;
@@ -26,9 +26,9 @@ pub struct Arguments {
     /// Long form with per-task metadata.
     #[arg(long)]
     pub(crate) long: bool,
-    /// Show only this scoped section.
-    #[arg(long, value_enum, conflicts_with = "all")]
-    pub(crate) section: Option<SectionChoice>,
+    /// Show only the section whose `##` header matches this text, ignoring case.
+    #[arg(long, value_name = "HEADER", conflicts_with = "all")]
+    pub(crate) section: Option<TaskSection>,
     /// List everything: every section, every lifecycle status, no task cap.
     /// An explicit `--status` or `-n` overrides the widened default.
     #[arg(long)]
@@ -121,15 +121,14 @@ pub(super) async fn run(
     Ok(render_list(&result, &location, console.color()))
 }
 
-fn list_scope(arguments: &Arguments) -> i32 {
+fn list_scope(arguments: &Arguments) -> Option<list_tasks_request::Scope> {
     if arguments.all {
-        return ListScope::All as i32;
+        return Some(list_tasks_request::Scope::All(AllTaskSections {}));
     }
-    match arguments.section {
-        Some(SectionChoice::Future) => ListScope::Future as i32,
-        Some(SectionChoice::Human) => ListScope::Human as i32,
-        None => ListScope::Default as i32,
-    }
+    arguments
+        .section
+        .as_ref()
+        .map(|section| list_tasks_request::Scope::Section(section.to_string()))
 }
 
 /// Parses a `field[:direction]` sort key, using field-specific direction defaults.

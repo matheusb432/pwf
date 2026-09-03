@@ -159,14 +159,8 @@ async fn update(
     }
     persist(prepared, store)?;
     if let Some(identity) = identity.as_ref() {
-        mutation_request::complete(
-            pool,
-            identity,
-            MutationOperation::Update,
-            Some("updated"),
-            None,
-        )
-        .await?;
+        mutation_request::complete(pool, identity, MutationOperation::Update, Some("updated"))
+            .await?;
     }
     Ok(())
 }

@@ -10,8 +10,8 @@ use pwf_models::{
     project::{ProjectName, ProjectSelector, ProjectSourceValue},
     revision::ContentRevision,
     task::{
-        BlockedBy, CommitRanges, EffortTier, IndexSection, PriorityTier, TaskId, TaskPrompt,
-        TaskReport, TaskSection, TaskStatus, TaskTags, TaskTitle,
+        BlockedBy, CommitRanges, EffortTier, PriorityTier, TaskId, TaskPrompt, TaskReport,
+        TaskSection, TaskStatus, TaskTags, TaskTitle,
     },
 };
 
@@ -219,8 +219,6 @@ pub struct AddTask {
     pub project_selector: ProjectSelector,
     /// Shorthand or structured task prompt.
     pub prompt: AddTaskPrompt,
-    /// Selects the task's index placement.
-    pub index_section: IndexSection,
     /// Task IDs in the `blocked_by` relationship.
     pub blocked_by: Option<BlockedBy>,
     /// Optional effort tier.
@@ -240,7 +238,6 @@ pub struct CancelTask {
     pub id: TaskId,
     pub report: TaskReport,
     pub commits: Option<CommitRanges>,
-    pub review: bool,
     pub expected_revision: Option<ContentRevision>,
     pub request_id: Option<TaskRequestId>,
     pub request_fingerprint: Option<TaskRequestFingerprint>,
@@ -251,7 +248,6 @@ pub struct CompleteTask {
     pub id: TaskId,
     pub report: Option<TaskReport>,
     pub commits: Option<CommitRanges>,
-    pub review: bool,
     pub expected_revision: Option<ContentRevision>,
     pub request_id: Option<TaskRequestId>,
     pub request_fingerprint: Option<TaskRequestFingerprint>,
@@ -980,13 +976,6 @@ impl fmt::Display for ProjectTaskPath {
     }
 }
 
-/// Carries task-add diagnostics that remain observable after a store failure.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AddTaskDiagnostics {
-    pub project: ProjectName,
-    pub created_section: Option<TaskSection>,
-}
-
 /// Selects the lifecycle transition performed while closing a task.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClosedTaskAction {
@@ -1084,12 +1073,11 @@ impl Default for StatusFilter {
 }
 
 /// Selects the task-index region included by a list request.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum ListScope {
     #[default]
     Default,
-    Human,
-    Future,
+    Section(TaskSection),
     All,
 }
 

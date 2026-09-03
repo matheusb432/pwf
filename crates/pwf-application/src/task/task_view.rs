@@ -15,7 +15,7 @@ use pwf_wire::task::{
     TaskNotePath, TaskView,
 };
 
-use super::{normalize_section_label, note_body::is_placeholder_prompt};
+use super::note_body::is_placeholder_prompt;
 use crate::ports::task_vault::{Materialization, StoredBlockedBy, TaskRecord};
 
 /// Contains launchability flags and diagnostics derived from a task.
@@ -113,8 +113,8 @@ impl EnrichedTask {
 
 /// Projects a persisted task into the fields consumed by list and session.
 ///
-/// Missing notes add an issue, empty titles fall back to the task ID, and section labels are
-/// normalized for display.
+/// Missing notes add an issue, empty titles fall back to the task ID, and section labels retain
+/// their index spelling.
 pub(in crate::task) fn enrich(
     task: &TaskRecord,
     project_path: &ProjectSourceValue,
@@ -187,7 +187,7 @@ pub(in crate::task) fn enrich(
         project_path: project_path.clone(),
         location,
         launch: flags.launch,
-        section: task.section.as_ref().map(normalize_section_label),
+        section: task.section.clone(),
         blocked_by,
         blocked_by_issues,
         effort,
@@ -303,7 +303,7 @@ mod tests {
     }
 
     #[test]
-    fn section_label_is_normalized() {
+    fn section_label_retains_its_index_spelling() {
         let mut rec = record("body");
         rec.section = Some("Futuro".parse().unwrap());
         assert_eq!(
@@ -312,7 +312,7 @@ mod tests {
                 .section
                 .as_ref()
                 .map(AsRef::as_ref),
-            Some("Future")
+            Some("Futuro")
         );
     }
 

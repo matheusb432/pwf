@@ -11,8 +11,8 @@ use pwf_client::{
     ClientError, PwfClient,
     confirmation::{Confirmation, ConfirmationPrompt},
     pb::{
-        self, Agent, DispatchMode, IndexSection, ProjectStatusFilter, SessionEffort,
-        TaskReadFormat, delete_note_result, note_service_client::NoteServiceClient,
+        self, Agent, DispatchMode, ProjectStatusFilter, SessionEffort, TaskReadFormat,
+        delete_note_result, note_service_client::NoteServiceClient,
         session_service_client::SessionServiceClient, task_service_client::TaskServiceClient,
     },
     task::{TaskDagEdge, TaskDagNode},
@@ -151,7 +151,6 @@ impl TestServer {
                         }),
                     },
                 )),
-                index_section: IndexSection::General as i32,
                 blocked_by: Vec::new(),
                 effort: None,
                 tags: Vec::new(),
@@ -371,7 +370,7 @@ fn task_list_request(
 ) -> pb::ListTasksRequest {
     pb::ListTasksRequest {
         project_selector: Some("foo-bar".to_string()),
-        scope: pb::ListScope::All as i32,
+        scope: Some(pb::list_tasks_request::Scope::All(pb::AllTaskSections {})),
         number,
         effort: None,
         tags: Vec::new(),
@@ -419,7 +418,6 @@ async fn v1_create_task_returns_only_the_new_identifier() -> anyhow::Result<()> 
                         }),
                     },
                 )),
-                index_section: IndexSection::General as i32,
                 blocked_by: Vec::new(),
                 effort: None,
                 tags: Vec::new(),
@@ -460,7 +458,6 @@ async fn v1_get_task_dag_returns_typed_blocker_edges() -> anyhow::Result<()> {
                     }),
                 },
             )),
-            index_section: IndexSection::General as i32,
             blocked_by: vec![blocker_id],
             effort: None,
             tags: Vec::new(),
@@ -550,7 +547,6 @@ async fn v1_request_ids_replay_mutations_without_duplicate_effects() -> anyhow::
                 }),
             },
         )),
-        index_section: IndexSection::General as i32,
         blocked_by: Vec::new(),
         effort: None,
         tags: Vec::new(),
@@ -609,20 +605,18 @@ async fn v1_request_ids_replay_mutations_without_duplicate_effects() -> anyhow::
         id: original_id,
         report: None,
         commits: Vec::new(),
-        review: true,
         expected_revision: None,
         request_id: "transport-replay-complete".to_string(),
     };
     let completed = server.client.task().complete_task(complete.clone()).await?;
     let completed_replay = server.client.task().complete_task(complete).await?;
-    assert_eq!(completed.review_task_id.as_deref(), Some("FOO-0003"));
     assert_eq!(completed_replay, completed);
 
     let mut list = task_list_request(None, None);
     list.status = Some(pb::TaskStatusFilter::All as i32);
     list.page_size = 256;
     let listed = server.client.task().list_tasks(list).await?;
-    assert_eq!(listed.tasks.len(), 3, "replays must not create extra tasks");
+    assert_eq!(listed.tasks.len(), 2, "replays must not create extra tasks");
 
     server.finish().await
 }
@@ -666,7 +660,6 @@ async fn v1_confirmed_mutation_replays_skip_the_second_prompt() -> anyhow::Resul
             id: task_id.clone(),
             report: None,
             commits: Vec::new(),
-            review: false,
             expected_revision: None,
             request_id: "transport-close-before-reopen-replay".to_string(),
         })
@@ -935,7 +928,6 @@ async fn generated_client_maps_validation_and_not_found_statuses() -> anyhow::Re
             prompt: Some(pb::create_task_request::Prompt::Shorthand(
                 "bounded collection".to_string(),
             )),
-            index_section: IndexSection::General as i32,
             blocked_by: Vec::new(),
             effort: None,
             tags: (0..65).map(|index| format!("tag-{index}")).collect(),
@@ -1182,7 +1174,6 @@ async fn generated_client_preserves_reopen_confirmation_flow() -> anyhow::Result
             id: task_id.clone(),
             report: None,
             commits: vec!["a..b".to_string()],
-            review: false,
             expected_revision: None,
             request_id: String::new(),
         })
@@ -1300,7 +1291,6 @@ async fn reopen_wait_does_not_hold_the_writer_lock_and_accepting_stale_preflight
             id: task_id.clone(),
             report: None,
             commits: Vec::new(),
-            review: false,
             expected_revision: None,
             request_id: String::new(),
         })

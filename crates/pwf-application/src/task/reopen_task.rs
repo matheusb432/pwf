@@ -74,7 +74,6 @@ pub async fn execute(
                 identity,
                 MutationOperation::Reopen,
                 Some("already_active"),
-                None,
             )
             .await?;
         }
@@ -92,14 +91,8 @@ pub async fn execute(
     }
     if !confirmed {
         if let Some(identity) = identity.as_ref() {
-            mutation_request::complete(
-                pool,
-                identity,
-                MutationOperation::Reopen,
-                Some("aborted"),
-                None,
-            )
-            .await?;
+            mutation_request::complete(pool, identity, MutationOperation::Reopen, Some("aborted"))
+                .await?;
         }
         return Ok(ReopenTaskOutcome::Aborted);
     }
@@ -111,14 +104,8 @@ pub async fn execute(
     }
     apply_reopen(*prepared, store)?;
     if let Some(identity) = identity.as_ref() {
-        mutation_request::complete(
-            pool,
-            identity,
-            MutationOperation::Reopen,
-            Some("reopened"),
-            None,
-        )
-        .await?;
+        mutation_request::complete(pool, identity, MutationOperation::Reopen, Some("reopened"))
+            .await?;
     }
     Ok(ReopenTaskOutcome::Reopened)
 }

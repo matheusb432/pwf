@@ -428,10 +428,6 @@ impl TaskVault for ObsidianStore {
         ObsidianStore::list_index_entries(self, project)
     }
 
-    fn list_index_sections(&self, project: &Project) -> Result<Vec<TaskSection>, Self::Error> {
-        ObsidianStore::list_index_sections(self, project)
-    }
-
     fn upsert_index_entry(&self, project: &Project, entry: IndexEntry) -> Result<(), Self::Error> {
         ObsidianStore::upsert_index_entry(self, project, &entry)
     }

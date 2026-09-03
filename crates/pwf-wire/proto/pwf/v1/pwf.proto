@@ -257,12 +257,6 @@ message StructuredTaskPrompt {
   TaskLanes lanes = 2;
 }
 
-enum IndexSection {
-  INDEX_SECTION_UNSPECIFIED = 0;
-  INDEX_SECTION_GENERAL = 1;
-  INDEX_SECTION_HUMAN = 2;
-}
-
 enum EffortTier {
   EFFORT_TIER_UNSPECIFIED = 0;
   EFFORT_TIER_LOW = 1;
@@ -280,12 +274,13 @@ enum PriorityTier {
 }
 
 message CreateTaskRequest {
+  reserved 4;
+  reserved "index_section";
   string project_selector = 1;
   oneof prompt {
     string shorthand = 2;
     StructuredTaskPrompt structured = 3;
   }
-  IndexSection index_section = 4;
   repeated string blocked_by = 5;
   optional EffortTier effort = 6;
   repeated string tags = 7;
@@ -294,19 +289,21 @@ message CreateTaskRequest {
 }
 
 message CancelTaskRequest {
+  reserved 4;
+  reserved "review";
   string id = 1;
   string report = 2;
   repeated string commits = 3;
-  bool review = 4;
   optional string expected_revision = 5;
   string request_id = 6;
 }
 
 message CompleteTaskRequest {
+  reserved 4;
+  reserved "review";
   string id = 1;
   optional string report = 2;
   repeated string commits = 3;
-  bool review = 4;
   optional string expected_revision = 5;
   string request_id = 6;
 }
@@ -391,14 +388,6 @@ message GetTaskDagRequest {
   TaskDagMode mode = 4;
 }
 
-enum ListScope {
-  LIST_SCOPE_UNSPECIFIED = 0;
-  LIST_SCOPE_DEFAULT = 1;
-  LIST_SCOPE_HUMAN = 2;
-  LIST_SCOPE_FUTURE = 3;
-  LIST_SCOPE_ALL = 4;
-}
-
 enum ListDetail {
   LIST_DETAIL_UNSPECIFIED = 0;
   LIST_DETAIL_SUMMARY = 1;
@@ -431,9 +420,14 @@ message OrderSpec {
   OrderDirection direction = 2;
 }
 
+message AllTaskSections {}
+
 message ListTasksRequest {
   optional string project_selector = 1;
-  ListScope scope = 2;
+  oneof scope {
+    string section = 2;
+    AllTaskSections all = 12;
+  }
   optional uint64 number = 3;
   optional EffortTier effort = 4;
   repeated string tags = 5;
@@ -447,9 +441,15 @@ message ListTasksRequest {
 
 message CreateTaskResponse { string id = 1; }
 
-message CancelTaskResponse { optional string review_task_id = 1; }
+message CancelTaskResponse {
+  reserved 1;
+  reserved "review_task_id";
+}
 
-message CompleteTaskResponse { optional string review_task_id = 1; }
+message CompleteTaskResponse {
+  reserved 1;
+  reserved "review_task_id";
+}
 
 message UpdateTaskResponse {}
 

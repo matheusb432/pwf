@@ -14,7 +14,7 @@ use pwf_models::{
         ProjectTasks, ProjectTasksKind, ProjectTasksPath,
     },
     revision::ContentRevision,
-    task::{BlockedBy, TaskId, TaskSection, TaskStatus, TaskTags, TaskTimestamp},
+    task::{BlockedBy, TaskId, TaskStatus, TaskTags, TaskTimestamp},
 };
 use pwf_wire::task::RawTaskTags;
 
@@ -40,7 +40,6 @@ impl Clock for FixedClock {
 struct InMemoryState {
     tasks: BTreeMap<ProjectName, Vec<TaskRecord>>,
     entries: BTreeMap<ProjectName, Vec<IndexEntry>>,
-    sections: BTreeMap<ProjectName, Vec<TaskSection>>,
     project_ids: BTreeMap<ProjectName, ProjectId>,
     project_notes: BTreeMap<ProjectName, Vec<ProjectNote>>,
     project_note_creations: BTreeMap<ProjectName, Vec<AppDate>>,
@@ -383,10 +382,6 @@ impl TaskVault for InMemoryStore {
         Ok(self.index_entries(project))
     }
 
-    fn list_index_sections(&self, project: &Project) -> Result<Vec<TaskSection>, Self::Error> {
-        Ok(self.index_sections(project))
-    }
-
     fn upsert_index_entry(&self, project: &Project, entry: IndexEntry) -> Result<(), Self::Error> {
         self.upsert(project, entry);
         Ok(())
@@ -459,22 +454,6 @@ fn apply_task_write(
                 .entry(project.clone())
                 .or_default()
                 .retain(|entry| entry.id != id);
-            bump_index_backed_revisions(state, project);
-        }
-        TaskWrite::RenameIndexSection {
-            current_label,
-            new_label,
-        } => {
-            rename_section(
-                state.sections.entry(project.clone()).or_default(),
-                &current_label,
-                &new_label,
-            );
-            rename_entry_sections(
-                state.entries.entry(project.clone()).or_default(),
-                &current_label,
-                &new_label,
-            );
             bump_index_backed_revisions(state, project);
         }
     }
@@ -687,60 +666,14 @@ impl InMemoryStore {
 }
 
 impl InMemoryStore {
-    /// Replaces or appends an entry and creates its section when needed.
+    /// Replaces or appends an index entry.
     fn upsert(&self, project: &Project, entry: IndexEntry) {
         let mut state = self.lock();
-        if let Some(section) = entry.section.as_ref() {
-            let sections = state.sections.entry(project.title.clone()).or_default();
-            push_unseen_section(sections, section);
-        }
         let entries = state.entries.entry(project.title.clone()).or_default();
         match entries.iter_mut().find(|existing| existing.id == entry.id) {
             Some(existing) => *existing = entry,
             None => entries.push(entry),
         }
         bump_index_backed_revisions(&mut state, &project.title);
-    }
-}
-
-fn push_unseen_section(sections: &mut Vec<TaskSection>, section: &TaskSection) {
-    if !sections.contains(section) {
-        sections.push(section.clone());
-    }
-}
-
-fn rename_section(
-    sections: &mut [TaskSection],
-    current_label: &TaskSection,
-    new_label: &TaskSection,
-) {
-    if let Some(existing) = sections
-        .iter_mut()
-        .find(|section| *section == current_label)
-    {
-        *existing = new_label.clone();
-    }
-}
-
-fn rename_entry_sections(
-    entries: &mut [IndexEntry],
-    current_label: &TaskSection,
-    new_label: &TaskSection,
-) {
-    entries
-        .iter_mut()
-        .filter(|entry| entry.section.as_ref() == Some(current_label))
-        .for_each(|entry| entry.section = Some(new_label.clone()));
-}
-
-impl InMemoryStore {
-    fn index_sections(&self, project: &Project) -> Vec<TaskSection> {
-        self.lock()
-            .sections
-            .get(&project.title)
-            .cloned()
-            .unwrap_or_default()
-            .into_iter()
-            .collect()
     }
 }

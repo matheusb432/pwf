@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use pwf_models::{
     note::NoteTitleError,
     project::{ProjectId, ProjectName},
-    task::{ParseTaskStatusError, TaskId, TaskSection, TaskSectionError, TaskTimestampError},
+    task::{ParseTaskStatusError, TaskId, TaskSectionError, TaskTimestampError},
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -244,11 +244,7 @@ pub enum ObsidianStoreError {
     #[error("Failed to write task file: {source}")]
     AddWriteTaskFile { source: std::io::Error },
     #[error("Failed to write index file: {source}")]
-    AddWriteIndexFile {
-        source: std::io::Error,
-        project: String,
-        created_section: Option<TaskSection>,
-    },
+    AddWriteIndexFile { source: std::io::Error },
     #[error("Cannot locate the Obsidian vault containing task file {}", path.display())]
     TaskVaultNotFound { path: PathBuf },
     #[error("Task file path has no file name: {}", path.display())]
@@ -268,18 +264,4 @@ pub enum ObsidianStoreError {
     TaskIdOccupied { id: TaskId, path: PathBuf },
     #[error("Expected open task marker at {note}:{line}. The note may have changed.")]
     ExpectedOpenTaskMarker { note: String, line: usize },
-}
-
-impl ObsidianStoreError {
-    #[must_use]
-    pub fn created_section_diagnostic(&self) -> Option<(&str, &TaskSection)> {
-        match self {
-            Self::AddWriteIndexFile {
-                project,
-                created_section: Some(section),
-                ..
-            } => Some((project.as_str(), section)),
-            _ => None,
-        }
-    }
 }

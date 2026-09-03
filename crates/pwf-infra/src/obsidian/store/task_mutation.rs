@@ -8,16 +8,11 @@ use pwf_application::ports::task_vault::{
     ExpectedTaskRevision, IndexEntry, TaskMutationError, TaskPatch, TaskRevisionState, TaskWrite,
     TaskWriteSet,
 };
-use pwf_models::{
-    project::Project,
-    task::{TaskId, TaskSection},
-};
+use pwf_models::{project::Project, task::TaskId};
 
 use super::{
     ObsidianStore, ObsidianStoreError,
-    index_entry::{
-        delete_index_entry_text, parse_index_lines, rename_header_lines, upsert_index_entry_text,
-    },
+    index_entry::{delete_index_entry_text, parse_index_lines, upsert_index_entry_text},
     task_record::patch_index_entry_text,
 };
 use crate::{
@@ -157,10 +152,6 @@ impl<'a> TaskMutation<'a> {
             TaskWrite::MoveToTrash { id } => self.move_to_trash(&id),
             TaskWrite::UpsertIndex(entry) => self.upsert_index(&entry),
             TaskWrite::DeleteIndex(id) => self.delete_index(&id),
-            TaskWrite::RenameIndexSection {
-                current_label,
-                new_label,
-            } => self.rename_index_section(&current_label, &new_label),
         }
     }
 
@@ -223,9 +214,8 @@ impl<'a> TaskMutation<'a> {
         entry: &IndexEntry,
     ) -> Result<(), TaskMutationError<ObsidianStoreError>> {
         let document = index_document(self.store, self.project, &mut self.index)?;
-        let (updated, _) =
-            upsert_index_entry_text(document.snapshot.path(), &document.source, entry)
-                .map_err(TaskMutationError::Store)?;
+        let updated = upsert_index_entry_text(document.snapshot.path(), &document.source, entry)
+            .map_err(TaskMutationError::Store)?;
         update_index(document, updated, &mut self.changes);
         Ok(())
     }
@@ -233,19 +223,6 @@ impl<'a> TaskMutation<'a> {
     fn delete_index(&mut self, id: &TaskId) -> Result<(), TaskMutationError<ObsidianStoreError>> {
         let document = index_document(self.store, self.project, &mut self.index)?;
         let updated = delete_index_entry_text(&document.source, id);
-        update_index(document, updated, &mut self.changes);
-        Ok(())
-    }
-
-    fn rename_index_section(
-        &mut self,
-        current_label: &TaskSection,
-        new_label: &TaskSection,
-    ) -> Result<(), TaskMutationError<ObsidianStoreError>> {
-        let document = index_document(self.store, self.project, &mut self.index)?;
-        require_present_index(document)?;
-        let updated =
-            rename_header_lines(&document.source, current_label.as_ref(), new_label.as_ref());
         update_index(document, updated, &mut self.changes);
         Ok(())
     }
@@ -298,17 +275,6 @@ fn missing_snapshot(
             },
         )),
     }
-}
-
-fn require_present_index(
-    document: &IndexDocument,
-) -> Result<(), TaskMutationError<ObsidianStoreError>> {
-    if matches!(document.snapshot, FileSnapshot::Present(_)) {
-        return Ok(());
-    }
-    Err(TaskMutationError::Store(ObsidianStoreError::ReadIndex {
-        source: io::Error::new(io::ErrorKind::NotFound, "index does not exist"),
-    }))
 }
 
 fn commit_file_transaction(

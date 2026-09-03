@@ -381,7 +381,6 @@ fn write_note(
 /// Writes a note and then its open index entry through the adapter ports.
 fn generic_add(store: &ObsidianStore, new: NewTask) -> Result<TaskRecord, ObsidianStoreError> {
     let project = foo_project(store);
-    let section = new.section.clone();
     let record = insert_next(store, &project, new)?;
     let id = record.id.clone();
     TaskVault::upsert_index_entry(
@@ -390,7 +389,7 @@ fn generic_add(store: &ObsidianStore, new: NewTask) -> Result<TaskRecord, Obsidi
         IndexEntry {
             id,
             state: IndexEntryState::Open,
-            section,
+            section: None,
         },
     )?;
     Ok(record)
@@ -405,12 +404,11 @@ fn insert_next(
     TaskVault::insert_task(store, project, &id, new)
 }
 
-fn new_task(body: &str, title: &str, section: Option<&str>) -> NewTask {
+fn new_task(body: &str, title: &str) -> NewTask {
     NewTask {
         body: body.to_string(),
         title: TaskTitle::try_new(title).unwrap(),
         created_at: task_timestamp("2026-07-07T12:34:56Z"),
-        section: section.map(task_section),
         blocked_by: None,
         effort: None,
         priority: None,
@@ -432,11 +430,7 @@ fn generic_add_creates_note_and_links_index() {
             ),
             effort: Some(EffortTier::Medium),
             priority: Some(PriorityTier::Highest),
-            ..new_task(
-                "## Goals\n\n## Done When\n\n- tests pass",
-                "ship adapter",
-                Some("Human"),
-            )
+            ..new_task("## Goals\n\n## Done When\n\n- tests pass", "ship adapter")
         },
     )
     .unwrap();
@@ -459,7 +453,7 @@ fn generic_add_creates_note_and_links_index() {
     let index = std::fs::read_to_string(notes_dir.join("foo/foo.md")).unwrap();
     assert_eq!(
         index,
-        "---\nid: foo\ntitle: foo\n---\n\n## Human\n\n- [ ] [[FOO-0001]]\n"
+        "---\nid: foo\ntitle: foo\n---\n\n- [ ] [[FOO-0001]]\n"
     );
 }
 
@@ -473,14 +467,14 @@ fn generic_add_writes_tags_and_omits_absent_tags() {
         &store,
         NewTask {
             tags: Some(tags),
-            ..new_task("tagged task", "tagged task", None)
+            ..new_task("tagged task", "tagged task")
         },
     )
     .unwrap();
     let note = std::fs::read_to_string(tagged.locator.as_path()).unwrap();
     assert!(note.contains("tags: [sqlite, csharp_export]\n"), "{note}");
 
-    let untagged = generic_add(&store, new_task("untagged task", "untagged task", None)).unwrap();
+    let untagged = generic_add(&store, new_task("untagged task", "untagged task")).unwrap();
     let note = std::fs::read_to_string(untagged.locator.as_path()).unwrap();
     assert!(!note.contains("tags:"), "{note}");
 }
@@ -497,7 +491,7 @@ fn generic_insert_rejects_unreadable_existing_index_before_writing_a_note() {
     let err = insert_next(
         &store,
         &project,
-        new_task("Ship the adapter /d tests pass", "ship adapter", None),
+        new_task("Ship the adapter /d tests pass", "ship adapter"),
     )
     .unwrap_err();
 
@@ -522,7 +516,7 @@ fn generic_insert_rejects_mismatched_project_index_identity() {
     let store = store_with_index_identity(&notes_dir.join("foo"));
     let project = foo_project(&store);
 
-    let error = insert_next(&store, &project, new_task("task", "task", None)).unwrap_err();
+    let error = insert_next(&store, &project, new_task("task", "task")).unwrap_err();
 
     assert_matches!(
         error,
@@ -554,7 +548,7 @@ fn generic_insert_allocates_after_greatest_frontmatter_id() {
     let store = store_with_index_identity(&notes_dir.join("foo"));
     let project = foo_project(&store);
 
-    let record = insert_next(&store, &project, new_task("next task", "next task", None)).unwrap();
+    let record = insert_next(&store, &project, new_task("next task", "next task")).unwrap();
 
     assert_eq!(record.id, TaskId::try_new("FOO-0010").unwrap());
 }
@@ -582,8 +576,7 @@ fn generic_insert_reports_exhausted_task_id_sequence() {
     let store = store_with_index_identity(&project_dir);
     let project = foo_project(&store);
 
-    let error =
-        insert_next(&store, &project, new_task("next task", "next task", None)).unwrap_err();
+    let error = insert_next(&store, &project, new_task("next task", "next task")).unwrap_err();
 
     assert_matches!(
         error,
@@ -1523,7 +1516,6 @@ fn insert_allocates_next_id_without_index_write() {
             body: "wire up the new thing".to_string(),
             title: TaskTitle::try_new("wire up the new thing").unwrap(),
             created_at: task_timestamp("2026-07-15T12:34:56Z"),
-            section: None,
             blocked_by: None,
             effort: None,
             priority: None,
@@ -1565,7 +1557,7 @@ fn exact_insert_rejects_an_id_occupied_after_allocation_without_replacing_it() {
         &store,
         &project,
         &id,
-        new_task("replacement", "replacement", None),
+        new_task("replacement", "replacement"),
     )
     .unwrap_err();
 
@@ -1781,89 +1773,10 @@ fn list_tasks_returns_note_history_when_index_is_missing() {
     assert!(records[0].placement.is_none());
 }
 
-#[test]
-fn index_sections_list_raw_h2_labels_in_document_order() {
-    let temp = tempfile::tempdir().unwrap();
-    let notes_dir = temp.path().join("notes");
-    let project_dir = notes_dir.join("foo");
-    std::fs::create_dir_all(&project_dir).unwrap();
-    std::fs::write(
-        project_dir.join("foo.md"),
-        concat!(
-            "---\nid: foo\ntitle: foo\n---\n\n",
-            "- [ ] [[FOO-0001|alias]]\n\n",
-            "## Human\n- [ ] [[FOO-0002|h]]\n\n",
-            "## Futuro\n\n",
-            "## Low-prio\n\n",
-            "### Notes\n- [[FOO-NOTE-0001]]\n",
-        ),
-    )
-    .unwrap();
-    let store = store_for_tasks(&notes_dir.join("foo"));
-    let project = foo_project(&store);
-
-    let sections = TaskVault::list_index_sections(&store, &project).unwrap();
-
-    // RAW labels in document order; H3 regions (### Notes) are not sections.
-    assert_eq!(
-        sections,
-        ["Human", "Futuro", "Low-prio"].map(task_section).to_vec()
-    );
-}
-
-#[test]
-fn index_sections_list_empty_when_index_missing() {
-    let temp = tempfile::tempdir().unwrap();
-    let notes_dir = temp.path().join("notes");
-    std::fs::create_dir_all(notes_dir.join("foo")).unwrap();
-    let store = store_for_tasks(&notes_dir.join("foo"));
-    let project = foo_project(&store);
-
-    let sections = TaskVault::list_index_sections(&store, &project).unwrap();
-
-    assert!(sections.is_empty());
-}
-
-#[test]
-fn index_section_update_renames_header_in_place() {
-    let temp = tempfile::tempdir().unwrap();
-    let notes_dir = temp.path().join("notes");
-    let project_dir = notes_dir.join("foo");
-    std::fs::create_dir_all(&project_dir).unwrap();
-    std::fs::write(
-        project_dir.join("foo.md"),
-        "---\nid: foo\ntitle: foo\n---\n\n## Futuro\n\n- [ ] [[FOO-0001]]\n",
-    )
-    .unwrap();
-    let store = store_for_tasks(&notes_dir.join("foo"));
-    let project = foo_project(&store);
-    let id = TaskId::try_new("FOO-0001").unwrap();
-    let record = TaskVault::get_task(&store, &project, &id).unwrap().unwrap();
-    let writes = TaskWriteSet::try_new(
-        vec![ExpectedTaskRevision {
-            id,
-            revision: record.revision,
-        }],
-        vec![TaskWrite::RenameIndexSection {
-            current_label: task_section("Futuro"),
-            new_label: TaskSection::future(),
-        }],
-    )
-    .unwrap();
-
-    TaskVault::commit_task_writes(&store, &project, writes).unwrap();
-
-    assert_eq!(
-        std::fs::read_to_string(project_dir.join("foo.md")).unwrap(),
-        "---\nid: foo\ntitle: foo\n---\n\n## Future\n\n- [ ] [[FOO-0001]]\n"
-    );
-}
-
 /// Captures one add scenario and its expected byte-exact index.
 struct AddParityScenario {
     name: &'static str,
     initial_index: Option<&'static str>,
-    section: Option<&'static str>,
     expected_index: &'static str,
 }
 
@@ -1872,57 +1785,18 @@ fn add_parity_scenarios() -> Vec<AddParityScenario> {
         AddParityScenario {
             name: "general section with existing anchor",
             initial_index: Some("---\nid: foo\ntitle: foo\n---\n\n- [ ] [[FOO-0001|tray gui]]\n"),
-            section: None,
             expected_index: "---\nid: foo\ntitle: foo\n---\n\n- [ ] [[FOO-0002]]\n- [ ] [[FOO-0001|tray gui]]\n",
-        },
-        AddParityScenario {
-            name: "human section created before existing future",
-            initial_index: Some(
-                "---\nid: foo\ntitle: foo\n---\n\n- [ ] [[FOO-0001|tray gui]]\n\n## Future\n\n- [ ] [[FOO-0009|later]]\n",
-            ),
-            section: Some("Human"),
-            expected_index: "---\nid: foo\ntitle: foo\n---\n\n- [ ] [[FOO-0001|tray gui]]\n\n## Human\n\n- [ ] [[FOO-0002]]\n## Future\n\n- [ ] [[FOO-0009|later]]\n",
-        },
-        AddParityScenario {
-            name: "existing empty human header is not re-created",
-            initial_index: Some(
-                "---\nid: foo\ntitle: foo\n---\n\n- [ ] [[FOO-0001|tray gui]]\n\n## Human\n",
-            ),
-            section: Some("Human"),
-            expected_index: "---\nid: foo\ntitle: foo\n---\n\n- [ ] [[FOO-0001|tray gui]]\n\n## Human\n- [ ] [[FOO-0002]]\n",
-        },
-        AddParityScenario {
-            name: "future lands under legacy futuro alias header",
-            initial_index: Some(
-                "---\nid: foo\ntitle: foo\n---\n\n## Futuro\n\n- [ ] [[FOO-0009|later]]\n",
-            ),
-            section: Some("Future"),
-            expected_index: "---\nid: foo\ntitle: foo\n---\n\n## Futuro\n- [ ] [[FOO-0002]]\n\n- [ ] [[FOO-0009|later]]\n",
-        },
-        AddParityScenario {
-            name: "low-prio section created at end",
-            initial_index: Some("---\nid: foo\ntitle: foo\n---\n\n- [ ] [[FOO-0001|tray gui]]\n"),
-            section: Some("Low-prio"),
-            expected_index: "---\nid: foo\ntitle: foo\n---\n\n- [ ] [[FOO-0001|tray gui]]\n\n## Low-prio\n\n- [ ] [[FOO-0002]]\n",
         },
         AddParityScenario {
             name: "fresh vault creates identity template",
             initial_index: None,
-            section: None,
             expected_index: "---\nid: foo\ntitle: foo\n---\n\n- [ ] [[FOO-0002]]\n",
-        },
-        AddParityScenario {
-            name: "fresh vault with section creates template and section",
-            initial_index: None,
-            section: Some("Human"),
-            expected_index: "---\nid: foo\ntitle: foo\n---\n\n## Human\n\n- [ ] [[FOO-0002]]\n",
         },
         AddParityScenario {
             name: "general add stays above trailing notes block",
             initial_index: Some(
                 "---\nid: foo\ntitle: foo\n---\n\n- [ ] [[FOO-0001|tray gui]]\n\n### Notes\n- [[FOO-NOTE-0001]]\n",
             ),
-            section: None,
             expected_index: "---\nid: foo\ntitle: foo\n---\n\n- [ ] [[FOO-0002]]\n- [ ] [[FOO-0001|tray gui]]\n\n### Notes\n- [[FOO-NOTE-0001]]\n",
         },
     ]
@@ -1965,7 +1839,6 @@ fn generic_insert_and_upsert_preserve_index_placement_bytes() {
                 body: "do the thing".to_string(),
                 title: TaskTitle::try_new("ship it").unwrap(),
                 created_at: task_timestamp("2026-07-07T12:34:56Z"),
-                section: scenario.section.map(task_section),
                 blocked_by: None,
                 effort: None,
                 priority: None,
@@ -1986,7 +1859,7 @@ fn generic_insert_and_upsert_preserve_index_placement_bytes() {
             IndexEntry {
                 id,
                 state: IndexEntryState::Open,
-                section: scenario.section.map(task_section),
+                section: None,
             },
         )
         .unwrap();

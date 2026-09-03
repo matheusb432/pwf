@@ -74,7 +74,6 @@ pub(super) struct MutationRequestRecord {
     pub(super) task_id: TaskId,
     pub(super) state: MutationRequestState,
     pub(super) outcome: Option<String>,
-    pub(super) result_task_id: Option<TaskId>,
 }
 
 #[derive(Debug, Clone)]
@@ -107,18 +106,8 @@ pub(super) async fn find(
     identity: &MutationIdentity,
     operation: MutationOperation,
 ) -> Result<Option<MutationRequestRecord>, MutationRequestError> {
-    let row = sqlx::query_as::<
-        _,
-        (
-            String,
-            String,
-            String,
-            String,
-            Option<String>,
-            Option<String>,
-        ),
-    >(
-        "SELECT operation, fingerprint, task_id, state, outcome, result_task_id
+    let row = sqlx::query_as::<_, (String, String, String, String, Option<String>)>(
+        "SELECT operation, fingerprint, task_id, state, outcome
          FROM task_mutation_requests
          WHERE request_id = ?",
     )
@@ -166,16 +155,14 @@ pub(super) async fn complete(
     identity: &MutationIdentity,
     operation: MutationOperation,
     outcome: Option<&str>,
-    result_task_id: Option<&TaskId>,
 ) -> Result<(), MutationRequestError> {
     let updated = sqlx::query(
         "UPDATE task_mutation_requests
-         SET state = 'completed', outcome = ?, result_task_id = ?,
+         SET state = 'completed', outcome = ?,
              completed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
          WHERE request_id = ? AND operation = ? AND fingerprint = ? AND state = 'pending'",
     )
     .bind(outcome)
-    .bind(result_task_id.map(AsRef::as_ref))
     .bind(identity.request_id.as_ref())
     .bind(operation.as_str())
     .bind(identity.fingerprint.as_ref())
@@ -212,16 +199,9 @@ pub(super) async fn discard(
 fn decode_record(
     identity: &MutationIdentity,
     operation: MutationOperation,
-    row: (
-        String,
-        String,
-        String,
-        String,
-        Option<String>,
-        Option<String>,
-    ),
+    row: (String, String, String, String, Option<String>),
 ) -> Result<MutationRequestRecord, MutationRequestError> {
-    let (stored_operation, stored_fingerprint, task_id, state, outcome, result_task_id) = row;
+    let (stored_operation, stored_fingerprint, task_id, state, outcome) = row;
     if stored_operation != operation.as_str() || stored_fingerprint != identity.fingerprint.as_ref()
     {
         return Err(MutationRequestError::Conflict {
@@ -242,18 +222,10 @@ fn decode_record(
             });
         }
     };
-    let result_task_id = result_task_id
-        .map(TaskId::try_new)
-        .transpose()
-        .map_err(|_| MutationRequestError::Corrupt {
-            request_id: identity.request_id.to_string(),
-            reason: "result_task_id is invalid",
-        })?;
     Ok(MutationRequestRecord {
         task_id,
         state,
         outcome,
-        result_task_id,
     })
 }
 
@@ -274,7 +246,6 @@ mod tests {
     async fn completed_request_replays_its_minimal_result(pool: sqlx::SqlitePool) {
         let identity = identity(1);
         let task_id = TaskId::try_new("FOO-0001").unwrap();
-        let review_id = TaskId::try_new("FOO-0002").unwrap();
 
         assert!(matches!(
             start(&pool, &identity, MutationOperation::Complete, &task_id)
@@ -287,7 +258,6 @@ mod tests {
             &identity,
             MutationOperation::Complete,
             Some("completed"),
-            Some(&review_id),
         )
         .await
         .unwrap();
@@ -298,7 +268,6 @@ mod tests {
             .unwrap();
         assert_eq!(replay.state, MutationRequestState::Completed);
         assert_eq!(replay.outcome.as_deref(), Some("completed"));
-        assert_eq!(replay.result_task_id, Some(review_id));
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]

@@ -23,23 +23,14 @@ impl TaskSection {
     }
 
     #[must_use]
-    pub fn human() -> Self {
-        Self("Human".to_string())
-    }
-
-    #[must_use]
-    pub fn future() -> Self {
-        Self("Future".to_string())
-    }
-
-    #[must_use]
-    pub fn low_priority() -> Self {
-        Self("Low-prio".to_string())
-    }
-
-    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    /// Returns the case-insensitive identity used by task-list filters and groups.
+    #[must_use]
+    pub fn case_insensitive_key(&self) -> String {
+        self.0.to_lowercase()
     }
 }
 
@@ -70,22 +61,4 @@ pub enum TaskSectionError {
     Empty,
     #[error("task section must be a single line")]
     Multiline,
-}
-
-/// Selects the index placement for a newly created task.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum IndexSection {
-    #[default]
-    General,
-    Human,
-}
-
-impl IndexSection {
-    #[must_use]
-    pub fn task_section(self) -> Option<TaskSection> {
-        match self {
-            Self::General => None,
-            Self::Human => Some(TaskSection::human()),
-        }
-    }
 }

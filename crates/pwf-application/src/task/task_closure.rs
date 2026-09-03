@@ -2,22 +2,17 @@
 
 use pwf_models::{
     project::ProjectId,
-    task::{CommitRanges, TaskId, TaskPrompt, TaskReport, TaskSection, TaskStatus, TaskTimestamp},
+    task::{CommitRanges, TaskId, TaskReport, TaskStatus, TaskTimestamp},
 };
-use pwf_wire::task::{AddTaskDiagnostics, ClosedTaskAction};
+use pwf_wire::task::ClosedTaskAction;
 
 use crate::{
     ports::task_vault::{
-        ExpectedTaskRevision, IndexEntry, IndexEntryState, Materialization, NewTask, NullablePatch,
+        ExpectedTaskRevision, IndexEntry, IndexEntryState, Materialization, NullablePatch,
         TaskMutationError, TaskPatch, TaskVault, TaskWrite,
     },
     task::{
-        add_task::AddTaskError,
-        commit_task_writes, expected_task_revision, infer_task_title,
-        lane_configuration::TaskPromptLanes,
-        note_body::append_report,
-        task_body_region,
-        task_creation::{self, TaskCreation},
+        commit_task_writes, expected_task_revision, note_body::append_report, task_body_region,
     },
 };
 
@@ -36,26 +31,19 @@ pub enum CloseTaskError {
     WriteStore(anyhow::Error),
     #[error(transparent)]
     Mutation(#[from] TaskMutationError<anyhow::Error>),
-    #[error("{0}")]
-    ReviewTask(#[source] Box<AddTaskError>),
 }
 
 mod queue {
     use std::collections::BTreeMap;
 
-    use pwf_models::task::{TaskId, TaskSection, TaskTimestamp};
+    use pwf_models::task::{TaskId, TaskTimestamp};
 
-    use crate::{
-        ports::task_vault::{IndexEntry, IndexEntryState, TaskRecord},
-        task::section_alias,
-    };
+    use crate::ports::task_vault::{IndexEntry, IndexEntryState, TaskRecord};
 
-    const SECTION_CAPS: &[(&str, usize)] =
-        &[("General", 6), ("Low-prio", 3), ("Future", 3), ("Human", 3)];
+    const UNSECTIONED_CLOSED_TASKS_MAX: usize = 6;
 
     pub(super) struct CloseDecisions {
         pub(super) evicted_ids: Vec<TaskId>,
-        pub(super) normalize_futuro_header: bool,
         pub(super) mark_target: bool,
     }
 
@@ -89,47 +77,38 @@ mod queue {
 
     pub(super) fn close_decisions(
         entries: &[IndexEntry],
-        sections: &[TaskSection],
         id: &TaskId,
         completed_at: TaskTimestamp,
     ) -> CloseDecisions {
-        let normalize_futuro_header = sections.iter().any(is_futuro_label);
-
         let Some(target) = entries
             .iter()
             .find(|entry| &entry.id == id && entry.state == IndexEntryState::Open)
         else {
             return CloseDecisions {
                 evicted_ids: Vec::new(),
-                normalize_futuro_header,
                 mark_target: false,
             };
         };
 
         CloseDecisions {
-            evicted_ids: evict_beyond_cap(entries, target.section.as_ref(), id, completed_at),
-            normalize_futuro_header,
+            evicted_ids: if target.section.is_none() {
+                evict_beyond_cap(entries, id, completed_at)
+            } else {
+                Vec::new()
+            },
             mark_target: true,
         }
     }
 
     fn evict_beyond_cap(
         entries: &[IndexEntry],
-        target_section: Option<&TaskSection>,
         id: &TaskId,
         completed_at: TaskTimestamp,
     ) -> Vec<TaskId> {
-        let target_section = normalize_section(target_section);
-        let Some(cap) = section_cap(&target_section) else {
-            return Vec::new();
-        };
-
         let mut done: Vec<(Option<TaskTimestamp>, &TaskId)> = entries
             .iter()
             .filter_map(|entry| match &entry.state {
-                IndexEntryState::Done(entry_completed)
-                    if normalize_section(entry.section.as_ref()) == target_section =>
-                {
+                IndexEntryState::Done(entry_completed) if entry.section.is_none() => {
                     Some((*entry_completed, &entry.id))
                 }
                 IndexEntryState::Open | IndexEntryState::Done(_) => None,
@@ -137,37 +116,16 @@ mod queue {
             .collect();
         done.push((Some(completed_at), id));
 
-        if done.len() <= cap {
+        if done.len() <= UNSECTIONED_CLOSED_TASKS_MAX {
             return Vec::new();
         }
 
-        let evict_count = done.len() - cap;
+        let evict_count = done.len() - UNSECTIONED_CLOSED_TASKS_MAX;
         done.sort_by(|left, right| left.0.cmp(&right.0).then(left.1.cmp(right.1)));
         done.into_iter()
             .take(evict_count)
             .map(|(_, evicted_id)| evicted_id.clone())
             .collect()
-    }
-
-    pub(super) fn is_futuro_label(label: &TaskSection) -> bool {
-        label.as_ref().eq_ignore_ascii_case("futuro")
-    }
-
-    fn section_cap(normalized_section: &str) -> Option<usize> {
-        SECTION_CAPS
-            .iter()
-            .find(|(name, _)| *name == normalized_section)
-            .map(|(_, cap)| *cap)
-    }
-
-    fn normalize_section(label: Option<&TaskSection>) -> String {
-        let Some(label) = label else {
-            return "General".to_string();
-        };
-        if label.as_ref() == "General" {
-            return "General".to_string();
-        }
-        section_alias(label.as_ref()).map_or_else(|| label.as_ref().to_lowercase(), str::to_string)
     }
 
     #[cfg(test)]
@@ -213,7 +171,6 @@ mod queue {
 
             let decisions = close_decisions(
                 &entries,
-                &[],
                 &id("FOO-0007"),
                 task_timestamp("2026-07-07T12:34:56Z"),
             );
@@ -225,17 +182,19 @@ mod queue {
         #[test]
         fn tied_completion_timestamps_break_by_ascending_id() {
             let entries = vec![
-                done("FOO-0002", "2026-01-01T00:00:00Z", "Human"),
-                done("FOO-0001", "2026-01-01T00:00:00Z", "Human"),
-                done("FOO-0003", "2026-01-02T00:00:00Z", "Human"),
-                open("FOO-0004", "Human"),
+                done("FOO-0002", "2026-01-01T00:00:00Z", ""),
+                done("FOO-0001", "2026-01-01T00:00:00Z", ""),
+                done("FOO-0003", "2026-01-02T00:00:00Z", ""),
+                done("FOO-0004", "2026-01-03T00:00:00Z", ""),
+                done("FOO-0005", "2026-01-04T00:00:00Z", ""),
+                done("FOO-0006", "2026-01-05T00:00:00Z", ""),
+                open("FOO-0007", ""),
             ];
 
             let decisions = close_decisions(
                 &entries,
-                &[],
-                &id("FOO-0004"),
-                task_timestamp("2026-01-03T12:34:56Z"),
+                &id("FOO-0007"),
+                task_timestamp("2026-01-06T12:34:56Z"),
             );
 
             assert_eq!(decisions.evicted_ids, vec![id("FOO-0001")]);
@@ -244,17 +203,19 @@ mod queue {
         #[test]
         fn missing_completion_timestamp_sorts_before_any_timestamped_entry() {
             let entries = vec![
-                done("FOO-0001", "", "Human"),
-                done("FOO-0002", "2026-01-01T00:00:00Z", "Human"),
-                done("FOO-0003", "2026-01-02T00:00:00Z", "Human"),
-                open("FOO-0004", "Human"),
+                done("FOO-0001", "", ""),
+                done("FOO-0002", "2026-01-01T00:00:00Z", ""),
+                done("FOO-0003", "2026-01-02T00:00:00Z", ""),
+                done("FOO-0004", "2026-01-03T00:00:00Z", ""),
+                done("FOO-0005", "2026-01-04T00:00:00Z", ""),
+                done("FOO-0006", "2026-01-05T00:00:00Z", ""),
+                open("FOO-0007", ""),
             ];
 
             let decisions = close_decisions(
                 &entries,
-                &[],
-                &id("FOO-0004"),
-                task_timestamp("2026-01-03T12:34:56Z"),
+                &id("FOO-0007"),
+                task_timestamp("2026-01-06T12:34:56Z"),
             );
 
             assert_eq!(decisions.evicted_ids, vec![id("FOO-0001")]);
@@ -269,91 +230,23 @@ mod queue {
 
             let decisions = close_decisions(
                 &entries,
-                &[],
                 &id("FOO-0010"),
                 task_timestamp("2026-07-07T12:34:56Z"),
             );
 
             assert!(decisions.evicted_ids.is_empty());
         }
-
-        #[test]
-        fn raw_section_label_aliases_before_cap_lookup() {
-            let mut entries: Vec<IndexEntry> = (1..=3)
-                .map(|number| numbered_done(number, "futuro"))
-                .collect();
-            entries.push(open("FOO-0004", "Futuro"));
-
-            let decisions = close_decisions(
-                &entries,
-                &[],
-                &id("FOO-0004"),
-                task_timestamp("2026-07-07T12:34:56Z"),
-            );
-
-            assert_eq!(decisions.evicted_ids, vec![id("FOO-0001")]);
-        }
-
-        #[test]
-        fn futuro_header_normalizes_when_target_entry_is_missing() {
-            let sections = ["Futuro".parse().unwrap()];
-
-            let decisions = close_decisions(
-                &[],
-                &sections,
-                &id("FOO-0001"),
-                task_timestamp("2026-07-07T12:34:56Z"),
-            );
-
-            assert!(decisions.normalize_futuro_header);
-            assert!(!decisions.mark_target);
-            assert!(decisions.evicted_ids.is_empty());
-        }
-
-        #[test]
-        fn futuro_header_check_is_case_insensitive_and_trims_whitespace() {
-            let sections = ["  FUTURO  ".parse().unwrap()];
-
-            let decisions = close_decisions(
-                &[],
-                &sections,
-                &id("FOO-0001"),
-                task_timestamp("2026-07-07T12:34:56Z"),
-            );
-
-            assert!(decisions.normalize_futuro_header);
-        }
-
-        #[test]
-        fn unrelated_headers_do_not_normalize() {
-            let sections = [TaskSection::human(), TaskSection::future()];
-
-            let decisions = close_decisions(
-                &[],
-                &sections,
-                &id("FOO-0001"),
-                task_timestamp("2026-07-07T12:34:56Z"),
-            );
-
-            assert!(!decisions.normalize_futuro_header);
-        }
     }
 }
 
-use queue::{apply_task_completion_timestamps, close_decisions, is_futuro_label};
+use queue::{apply_task_completion_timestamps, close_decisions};
 pub(in crate::task) struct TaskClosure<'a> {
     pub(in crate::task) action: ClosedTaskAction,
     pub(in crate::task) id: &'a TaskId,
     pub(in crate::task) completed_at: TaskTimestamp,
     pub(in crate::task) report: Option<&'a TaskReport>,
     pub(in crate::task) commits: Option<&'a CommitRanges>,
-    pub(in crate::task) review_lanes: Option<&'a TaskPromptLanes>,
     pub(in crate::task) expected_revision: Option<&'a pwf_models::revision::ContentRevision>,
-}
-
-/// Carries the review task identifier needed by the mutation response.
-pub(in crate::task) struct ClosedTaskEffects {
-    pub(in crate::task) review_task: Option<task_creation::CreatedTask>,
 }
 
 /// Closes a task through the flow shared by done and cancel.
@@ -364,14 +257,13 @@ pub(in crate::task) fn close(
     command: &TaskClosure<'_>,
     store: &impl TaskVault,
     project: &pwf_models::project::Project,
-) -> Result<ClosedTaskEffects, CloseTaskError> {
+) -> Result<(), CloseTaskError> {
     let TaskClosure {
         action,
         id,
         completed_at,
         report,
         commits,
-        review_lanes,
         expected_revision,
     } = *command;
     let task_identifier = id.clone();
@@ -417,20 +309,7 @@ pub(in crate::task) fn close(
     }
     commit_task_writes(store, project, expected, writes)?;
 
-    let review_task = review_lanes
-        .map(|lanes| {
-            spawn_review(
-                store,
-                project,
-                &task_identifier,
-                completed_at,
-                commits,
-                lanes,
-            )
-        })
-        .transpose()?;
-
-    Ok(ClosedTaskEffects { review_task })
+    Ok(())
 }
 
 fn close_status(action: ClosedTaskAction) -> TaskStatus {
@@ -440,7 +319,7 @@ fn close_status(action: ClosedTaskAction) -> TaskStatus {
     }
 }
 
-/// Applies header normalization, the closed entry, and cap-based evictions to the index.
+/// Applies the closed entry and unsectioned queue evictions to the index.
 fn queue_task_writes(
     store: &impl TaskVault,
     project: &pwf_models::project::Project,
@@ -452,19 +331,9 @@ fn queue_task_writes(
     let tasks = TaskVault::list_tasks(store, project)
         .map_err(|error| CloseTaskError::WriteStore(anyhow::Error::new(error)))?;
     apply_task_completion_timestamps(&mut entries, &tasks);
-    let sections = TaskVault::list_index_sections(store, project)
-        .map_err(|error| CloseTaskError::WriteStore(anyhow::Error::new(error)))?;
-    let decisions = close_decisions(&entries, &sections, id, completed_at);
+    let decisions = close_decisions(&entries, id, completed_at);
 
     let mut writes = Vec::new();
-    if decisions.normalize_futuro_header {
-        for section in sections.iter().filter(|section| is_futuro_label(section)) {
-            writes.push(TaskWrite::RenameIndexSection {
-                current_label: section.clone(),
-                new_label: TaskSection::future(),
-            });
-        }
-    }
     if decisions.mark_target && !decisions.evicted_ids.iter().any(|evicted| evicted == id) {
         writes.push(TaskWrite::UpsertIndex(IndexEntry {
             id: id.clone(),
@@ -483,60 +352,4 @@ fn queue_task_writes(
         .map(expected_task_revision)
         .collect();
     Ok((expected, writes))
-}
-
-fn spawn_review(
-    store: &impl TaskVault,
-    project: &pwf_models::project::Project,
-    reviewed: &TaskId,
-    completed_at: TaskTimestamp,
-    commits: Option<&CommitRanges>,
-    lanes: &TaskPromptLanes,
-) -> Result<task_creation::CreatedTask, CloseTaskError> {
-    let prompt = review_task_prompt(reviewed, commits);
-    let review_title = infer_task_title(&prompt, lanes)
-        .map_err(AddTaskError::from)
-        .map_err(|error| CloseTaskError::ReviewTask(Box::new(error)))?;
-    let id = store.next_task_id(project).map_err(|source| {
-        CloseTaskError::ReviewTask(Box::new(AddTaskError::AllocateTaskId {
-            project: project.title.clone(),
-            source: anyhow::Error::new(source),
-        }))
-    })?;
-    task_creation::create(
-        TaskCreation {
-            project,
-            id: &id,
-            new: NewTask {
-                title: review_title,
-                body: super::note_body::render(&prompt, lanes),
-                created_at: completed_at,
-                section: Some(TaskSection::human()),
-                blocked_by: None,
-                effort: None,
-                priority: None,
-                tags: None,
-            },
-        },
-        store,
-    )
-    .map_err(|source| {
-        CloseTaskError::ReviewTask(Box::new(AddTaskError::WriteStore {
-            diagnostics: AddTaskDiagnostics {
-                project: project.title.clone(),
-                created_section: source.created_section().map(|(_, section)| section.clone()),
-            },
-            source,
-        }))
-    })
-}
-
-pub(in crate::task) fn review_task_prompt(
-    reviewed_id: &TaskId,
-    commits: Option<&CommitRanges>,
-) -> TaskPrompt {
-    TaskPrompt::new(match commits {
-        Some(commits) => format!("review {reviewed_id}, commits: {commits}"),
-        None => format!("review {reviewed_id}"),
-    })
 }

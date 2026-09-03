@@ -16,10 +16,6 @@ pub(in crate::task) fn render_edited(task_id: &str, color_on: bool) -> String {
     confirmation("Edited pwf task", AnsiColor::Blue, task_id, color_on)
 }
 
-pub(super) fn render_review_task(task_id: &str) -> String {
-    format!("ADDED PWF TASK [{task_id}]\n")
-}
-
 fn confirmation(label: &str, color: AnsiColor, task_id: &str, color_on: bool) -> String {
     format!("{label}: {}\n", paint(task_id, color, color_on))
 }
@@ -41,10 +37,6 @@ mod tests {
         assert_eq!(
             render_edited("FOO-0003", false),
             "Edited pwf task: **FOO-0003**\n"
-        );
-        assert_eq!(
-            render_review_task("FOO-0004"),
-            "ADDED PWF TASK [FOO-0004]\n"
         );
     }
 }

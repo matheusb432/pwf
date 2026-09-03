@@ -134,13 +134,13 @@ pub async fn execute(
         .map_err(|source| ListTasksError::ReadProjectTaskPath(anyhow::Error::new(source)))?;
     let mut tasks = collect_list_tasks(&query, store, &task_projects, selected_records.as_deref())?;
 
-    tasks.retain(|task| scope_includes(query.scope, task.section.as_ref()));
+    tasks.retain(|task| scope_includes(&query.scope, task.section.as_ref()));
     tasks.retain(|task| effort_matches(task, query.effort));
     tasks.retain(|task| priority_matches(task, query.priority));
 
     tasks = retain_matching_tags(tasks, query.tags.as_ref())?;
 
-    if list_layout(query.scope) == ListLayout::BySection {
+    if list_layout(&query.scope) == ListLayout::BySection {
         sort_by_group_then_order(&mut tasks, query.order);
     } else {
         sort_by_order(&mut tasks, query.order);
@@ -166,7 +166,7 @@ pub async fn execute(
         project: query.project.map(|project| project.title),
         project_task_path,
         status_filter: query.status_filter,
-        layout: list_layout(query.scope),
+        layout: list_layout(&query.scope),
         detail: query.detail,
         next_page_token,
     })
@@ -213,7 +213,7 @@ fn retain_matching_tags(
 }
 
 fn resolve_query(query: &ListTasks, project: Option<Project>) -> ResolvedListTasks {
-    let scope = query.scope;
+    let scope = query.scope.clone();
     let cap = query
         .number
         .map(pwf_wire::task::TaskListLimit::get)
@@ -254,7 +254,8 @@ fn page_binding(query: &ResolvedListTasks) -> String {
         .as_ref()
         .map_or("<all>", |project| project.id.as_ref());
     digest_field(&mut hasher, "project", project);
-    digest_field(&mut hasher, "scope", list_scope_name(query.scope));
+    let scope_name = list_scope_name(&query.scope);
+    digest_field(&mut hasher, "scope", &scope_name);
     digest_field(
         &mut hasher,
         "cap",
@@ -385,12 +386,11 @@ fn decode_page_token(token: &TaskPageToken) -> Result<PageCursor, ListTasksError
     })
 }
 
-fn list_scope_name(scope: ListScope) -> &'static str {
+fn list_scope_name(scope: &ListScope) -> String {
     match scope {
-        ListScope::Default => "default",
-        ListScope::Human => "human",
-        ListScope::Future => "future",
-        ListScope::All => "all",
+        ListScope::Default => "default".to_string(),
+        ListScope::Section(section) => format!("section:{}", section.case_insensitive_key()),
+        ListScope::All => "all".to_string(),
     }
 }
 
@@ -473,30 +473,21 @@ fn collect_project_tasks(
         .collect()
 }
 
-fn scope_includes(scope: ListScope, section: Option<&TaskSection>) -> bool {
+fn scope_includes(scope: &ListScope, section: Option<&TaskSection>) -> bool {
     match scope {
         ListScope::Default => section.is_none(),
-        ListScope::Human => section.is_some_and(|section| section.as_ref() == "Human"),
-        ListScope::Future => section.is_some_and(|section| section.as_ref() == "Future"),
+        ListScope::Section(expected) => section.is_some_and(|section| {
+            section.case_insensitive_key() == expected.case_insensitive_key()
+        }),
         ListScope::All => true,
     }
 }
 
-fn list_layout(scope: ListScope) -> ListLayout {
+fn list_layout(scope: &ListScope) -> ListLayout {
     if matches!(scope, ListScope::All) {
         ListLayout::BySection
     } else {
         ListLayout::Flat
-    }
-}
-
-fn section_group_rank(section: Option<&TaskSection>) -> u8 {
-    match section.map(AsRef::as_ref) {
-        None => 0,
-        Some("Low-prio") => 1,
-        Some("Human") => 2,
-        Some("Future") => 3,
-        Some(_) => 4,
     }
 }
 
@@ -546,10 +537,12 @@ fn sort_by_order(tasks: &mut [TaskView], order: OrderSpec) {
 }
 
 fn sort_by_group_then_order(tasks: &mut [TaskView], order: OrderSpec) {
-    tasks.sort_by(|a, b| {
-        section_group_rank(a.section.as_ref())
-            .cmp(&section_group_rank(b.section.as_ref()))
-            .then_with(|| task_order_cmp(order, a, b))
+    sort_by_order(tasks, order);
+    tasks.sort_by_cached_key(|task| {
+        task.section.as_ref().map_or_else(
+            || (false, String::new()),
+            |section| (true, section.case_insensitive_key()),
+        )
     });
 }
 
@@ -1100,12 +1093,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn default_scope_hides_human_future_and_low_prio_sections() {
+    async fn default_scope_hides_every_sectioned_task() {
         let (store, registry) = foo_store(vec![
             record("FOO-0004"),
-            sectioned("FOO-0003", "Human"),
-            sectioned("FOO-0002", "Future"),
-            sectioned("FOO-0001", "Low-prio"),
+            sectioned("FOO-0003", "Blocked"),
+            sectioned("FOO-0002", "Waiting on API"),
+            sectioned("FOO-0001", "Someday"),
         ]);
 
         let got = run(&store, &registry, &default_query()).await.unwrap();
@@ -1114,29 +1107,36 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn raw_section_label_is_normalized_before_scoping() {
-        let (store, registry) = foo_store(vec![sectioned("FOO-0001", "Futuro")]);
+    async fn section_scope_matches_the_complete_header_case_insensitively() {
+        let (store, registry) = foo_store(vec![
+            sectioned("FOO-0002", "Waiting on API"),
+            sectioned("FOO-0001", "Waiting"),
+        ]);
 
         let got = run(
             &store,
             &registry,
             &ListTasks {
-                scope: ListScope::Future,
+                scope: ListScope::Section("waiting ON api".parse().unwrap()),
                 ..default_query()
             },
         )
         .await
         .unwrap();
 
-        assert_eq!(listed_ids(&got), ["FOO-0001"]);
+        assert_eq!(listed_ids(&got), ["FOO-0002"]);
+        assert_eq!(
+            got.tasks[0].section.as_ref().map(AsRef::as_ref),
+            Some("Waiting on API")
+        );
     }
 
     #[tokio::test]
-    async fn all_scope_groups_by_section_rank() {
+    async fn all_scope_groups_unsectioned_then_alphabetical_dynamic_sections() {
         let (store, registry) = foo_store(vec![
-            sectioned("FOO-0004", "Future"),
-            sectioned("FOO-0003", "Human"),
-            sectioned("FOO-0002", "Low-prio"),
+            sectioned("FOO-0004", "Zulu"),
+            sectioned("FOO-0003", "alpha"),
+            sectioned("FOO-0002", "ALPHA"),
             record("FOO-0001"),
         ]);
 
@@ -1153,23 +1153,23 @@ mod tests {
 
         assert_eq!(
             listed_ids(&got),
-            ["FOO-0001", "FOO-0002", "FOO-0003", "FOO-0004"]
+            ["FOO-0001", "FOO-0003", "FOO-0002", "FOO-0004"]
         );
     }
 
     #[tokio::test]
-    async fn human_scope_shows_only_human_items() {
+    async fn section_scope_shows_only_the_requested_section() {
         let (store, registry) = foo_store(vec![
             record("FOO-0003"),
-            sectioned("FOO-0002", "Human"),
-            sectioned("FOO-0001", "Future"),
+            sectioned("FOO-0002", "Blocked"),
+            sectioned("FOO-0001", "Someday"),
         ]);
 
         let got = run(
             &store,
             &registry,
             &ListTasks {
-                scope: ListScope::Human,
+                scope: ListScope::Section("Blocked".parse().unwrap()),
                 ..default_query()
             },
         )
@@ -1303,7 +1303,7 @@ mod tests {
     async fn scope_and_effort_filters_exclude_corrupt_tags_before_parsing() {
         let (store, registry) = foo_store(vec![
             TaskRecord {
-                section: Some("Human".parse().unwrap()),
+                section: Some("Excluded".parse().unwrap()),
                 ..tagged_task("FOO-0003", "corrupt")
             },
             TaskRecord {

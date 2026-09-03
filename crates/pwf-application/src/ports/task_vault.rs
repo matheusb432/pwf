@@ -84,7 +84,6 @@ pub struct NewTask {
     pub body: String,
     pub title: TaskTitle,
     pub created_at: TaskTimestamp,
-    pub section: Option<TaskSection>,
     pub blocked_by: Option<BlockedBy>,
     pub effort: Option<EffortTier>,
     pub priority: Option<PriorityTier>,
@@ -130,7 +129,7 @@ pub struct TaskPatch {
 pub struct IndexEntry {
     pub id: TaskId,
     pub state: IndexEntryState,
-    /// Retains the raw stored label; the application owns normalization.
+    /// Retains the raw stored H2 label.
     pub section: Option<TaskSection>,
 }
 
@@ -151,27 +150,17 @@ pub struct ExpectedTaskRevision {
 /// Describes one task-specific persistence change without exposing filesystem mechanics.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TaskWrite {
-    Patch {
-        id: TaskId,
-        patch: TaskPatch,
-    },
-    MoveToTrash {
-        id: TaskId,
-    },
+    Patch { id: TaskId, patch: TaskPatch },
+    MoveToTrash { id: TaskId },
     UpsertIndex(IndexEntry),
     DeleteIndex(TaskId),
-    RenameIndexSection {
-        current_label: TaskSection,
-        new_label: TaskSection,
-    },
 }
 
 impl TaskWrite {
-    fn task_id(&self) -> Option<&TaskId> {
+    fn task_id(&self) -> &TaskId {
         match self {
-            Self::Patch { id, .. } | Self::MoveToTrash { id } | Self::DeleteIndex(id) => Some(id),
-            Self::UpsertIndex(entry) => Some(&entry.id),
-            Self::RenameIndexSection { .. } => None,
+            Self::Patch { id, .. } | Self::MoveToTrash { id } | Self::DeleteIndex(id) => id,
+            Self::UpsertIndex(entry) => &entry.id,
         }
     }
 }
@@ -243,9 +232,7 @@ fn validate_write_expectation(
     write: &TaskWrite,
     expected_ids: &BTreeSet<TaskId>,
 ) -> Result<(), TaskWriteSetError> {
-    let Some(id) = write.task_id() else {
-        return Ok(());
-    };
+    let id = write.task_id();
     if expected_ids.contains(id) {
         return Ok(());
     }
@@ -261,7 +248,6 @@ fn validate_unique_write(
         TaskWrite::Patch { id, .. } | TaskWrite::MoveToTrash { id } => Some((task_mutations, id)),
         TaskWrite::UpsertIndex(entry) => Some((index_mutations, &entry.id)),
         TaskWrite::DeleteIndex(id) => Some((index_mutations, id)),
-        TaskWrite::RenameIndexSection { .. } => None,
     };
     let Some((targets, id)) = target else {
         return Ok(());
@@ -348,7 +334,6 @@ pub trait TaskVault: Send + Sync + 'static {
     ) -> Result<TaskRecord, Self::Error>;
     fn read_task_markdown(&self, locator: &TaskNotePath) -> Result<String, Self::Error>;
     fn list_index_entries(&self, project: &Project) -> Result<Vec<IndexEntry>, Self::Error>;
-    fn list_index_sections(&self, project: &Project) -> Result<Vec<TaskSection>, Self::Error>;
     fn upsert_index_entry(&self, project: &Project, entry: IndexEntry) -> Result<(), Self::Error>;
     fn commit_task_writes(
         &self,

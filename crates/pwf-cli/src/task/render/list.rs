@@ -53,45 +53,6 @@ pub(in crate::task) fn render_list(result: &ListTasksResponse, location: &str, o
     out
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RenderGroup {
-    Default,
-    LowPrio,
-    Human,
-    Future,
-    Other,
-}
-
-impl RenderGroup {
-    fn from_section(section: Option<&str>) -> Self {
-        match section {
-            None => Self::Default,
-            Some("Low-prio") => Self::LowPrio,
-            Some("Human") => Self::Human,
-            Some("Future") => Self::Future,
-            Some(_) => Self::Other,
-        }
-    }
-
-    fn title(self) -> Option<&'static str> {
-        match self {
-            Self::Default => None,
-            Self::LowPrio => Some("Low-prio"),
-            Self::Human => Some("Human"),
-            Self::Future => Some("Future"),
-            Self::Other => Some("Other"),
-        }
-    }
-}
-
-const RENDER_GROUPS: [RenderGroup; 5] = [
-    RenderGroup::Default,
-    RenderGroup::LowPrio,
-    RenderGroup::Human,
-    RenderGroup::Future,
-    RenderGroup::Other,
-];
-
 fn render_grouped_list(
     out: &mut String,
     tasks: &[TaskView],
@@ -99,33 +60,27 @@ fn render_grouped_list(
     long: bool,
     on: bool,
 ) {
-    let mut rendered_any = false;
-    for group in RENDER_GROUPS {
-        let group_tasks: Vec<&TaskView> = tasks
+    let mut group_start = 0;
+    while group_start < tasks.len() {
+        let section = tasks[group_start].section.as_deref();
+        let section_key = section.map(str::to_lowercase);
+        let group_end = tasks[group_start + 1..]
             .iter()
-            .filter(|task| RenderGroup::from_section(task.section.as_deref()) == group)
-            .collect();
-        if group_tasks.is_empty() {
-            continue;
-        }
-        if rendered_any {
+            .position(|task| task.section.as_deref().map(str::to_lowercase) != section_key)
+            .map_or(tasks.len(), |offset| group_start + offset + 1);
+
+        if group_start > 0 {
             out.push_str("\n\n");
         }
-        if let Some(title) = group.title() {
+        if let Some(title) = section {
             out.push_str(title);
             out.push('\n');
         }
-        for (idx, task) in group_tasks.iter().enumerate() {
-            render_list_task(
-                out,
-                task,
-                status_filter,
-                long,
-                idx + 1 == group_tasks.len(),
-                on,
-            );
+        let group = &tasks[group_start..group_end];
+        for (index, task) in group.iter().enumerate() {
+            render_list_task(out, task, status_filter, long, index + 1 == group.len(), on);
         }
-        rendered_any = true;
+        group_start = group_end;
     }
 }
 
@@ -385,6 +340,36 @@ mod tests {
     fn exact_status_short_lines_keep_the_existing_shape() {
         let output = render_task_for_filter(&sample_task(), TaskStatusFilter::Active, false, false);
         assert_eq!(output, "FOO-0001 :: sample task");
+    }
+
+    #[test]
+    fn grouped_list_renders_real_section_names_and_merges_case_insensitively() {
+        let mut unsectioned = sample_task();
+        unsectioned.id = "FOO-0001".to_string();
+        let mut blocked = sample_task();
+        blocked.id = "FOO-0002".to_string();
+        blocked.section = Some("Blocked".to_string());
+        let mut blocked_case_variant = sample_task();
+        blocked_case_variant.id = "AUX-0001".to_string();
+        blocked_case_variant.section = Some("blocked".to_string());
+        let mut someday = sample_task();
+        someday.id = "FOO-0003".to_string();
+        someday.section = Some("Someday".to_string());
+        let result = ListTasksResponse {
+            tasks: vec![unsectioned, blocked, blocked_case_variant, someday],
+            hidden: 0,
+            project: None,
+            project_task_path: None,
+            status_filter: TaskStatusFilter::Active as i32,
+            layout: ListLayout::BySection as i32,
+            detail: ListDetail::Summary as i32,
+            next_page_token: None,
+        };
+
+        assert_eq!(
+            render_list(&result, "notes", false),
+            "FOO-0001 :: sample task\n\nBlocked\nFOO-0002 :: sample task\nAUX-0001 :: sample task\n\nSomeday\nFOO-0003 :: sample task"
+        );
     }
 
     #[test]

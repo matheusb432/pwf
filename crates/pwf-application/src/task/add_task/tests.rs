@@ -1,4 +1,4 @@
-use pwf_models::task::{IndexSection, TaskPrompt, TaskTimestamp, TaskTitle};
+use pwf_models::task::{TaskPrompt, TaskTimestamp, TaskTitle};
 use pwf_wire::task::{AddTask, AddTaskPrompt, TaskLanes};
 
 use crate::{
@@ -35,7 +35,6 @@ fn command() -> AddTask {
             )
             .unwrap(),
         ),
-        index_section: IndexSection::default(),
         blocked_by: None,
         effort: None,
         priority: None,
@@ -136,23 +135,6 @@ async fn add_uses_the_clock_timestamp(pool: sqlx::SqlitePool) {
     assert_eq!(
         store.tasks("foo")[0].created_at,
         Some(task_timestamp("2026-07-26T12:34:56Z"))
-    );
-}
-
-#[sqlx::test(migrator = "crate::testing::MIGRATOR")]
-async fn add_persists_the_requested_index_section(pool: sqlx::SqlitePool) {
-    let store = registered_store(&pool).await;
-
-    let mut command = command();
-    command.index_section = IndexSection::Human;
-    let added = add_task::execute(&command, &store, &pool, &FixedClock)
-        .await
-        .unwrap();
-
-    assert_eq!(added.as_ref(), "FOO-0001");
-    assert_eq!(
-        store.entries("foo")[0].section.as_ref().map(AsRef::as_ref),
-        Some("Human")
     );
 }
 

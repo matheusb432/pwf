@@ -1,7 +1,5 @@
 use std::path::Path;
 
-use pwf_models::task::TaskSection;
-
 use super::ObsidianStoreError;
 use crate::obsidian::MarkdownFile;
 
@@ -67,17 +65,10 @@ pub(super) fn write_add_task_file(path: &Path, content: &str) -> Result<(), Obsi
         })
 }
 
-pub(super) fn write_add_index_file(
-    path: &Path,
-    content: &str,
-    project: &str,
-    created_section: Option<&TaskSection>,
-) -> Result<(), ObsidianStoreError> {
+pub(super) fn write_add_index_file(path: &Path, content: &str) -> Result<(), ObsidianStoreError> {
     MarkdownFile::write_rendered(path.to_path_buf(), content.to_string()).map_err(|source| {
         ObsidianStoreError::AddWriteIndexFile {
             source: source.into_io_error(),
-            project: project.to_string(),
-            created_section: created_section.cloned(),
         }
     })
 }

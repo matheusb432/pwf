@@ -4,7 +4,7 @@ use pwf_models::{
 };
 use pwf_wire::{
     project::{ProjectStatusFilter, ResolveProject},
-    task::{AddTask, AddTaskDiagnostics, AddTaskPromptKind},
+    task::{AddTask, AddTaskPromptKind},
 };
 
 pub use super::task_creation::CreateTaskError;
@@ -75,12 +75,8 @@ pub enum AddTaskError {
     MutationRequest(#[from] mutation_request::MutationRequestError),
     #[error("cannot read the task creation time: {0}")]
     Clock(#[from] TaskTimestampError),
-    #[error("{source}")]
-    WriteStore {
-        diagnostics: AddTaskDiagnostics,
-        #[source]
-        source: CreateTaskError,
-    },
+    #[error(transparent)]
+    WriteStore(#[from] CreateTaskError),
 }
 
 /// Creates a task record and its open index entry for a mapped project.
@@ -164,8 +160,7 @@ async fn add(
         if !created_record_matches(&record, &prepared, blocked_by.as_ref(), cmd) {
             return Err(AddTaskError::ReservedTaskChanged { id });
         }
-        task_creation::ensure_index(store, &project, &id, cmd.index_section.task_section())
-            .map_err(|source| write_error(&project, source))?;
+        task_creation::ensure_index(store, &project, &id)?;
     } else {
         task_creation::create(
             TaskCreation {
@@ -175,7 +170,6 @@ async fn add(
                     body: prepared.body,
                     title: prepared.title,
                     created_at: clock.now()?,
-                    section: cmd.index_section.task_section(),
                     blocked_by,
                     effort: cmd.effort,
                     priority: cmd.priority,
@@ -183,18 +177,11 @@ async fn add(
                 },
             },
             store,
-        )
-        .map_err(|source| write_error(&project, source))?;
+        )?;
     }
     if let Some(identity) = identity.as_ref() {
-        mutation_request::complete(
-            pool,
-            identity,
-            MutationOperation::Create,
-            Some("created"),
-            None,
-        )
-        .await?;
+        mutation_request::complete(pool, identity, MutationOperation::Create, Some("created"))
+            .await?;
     }
     Ok(id)
 }
@@ -210,17 +197,6 @@ fn read_reserved_task(
             id: id.clone(),
             source: anyhow::Error::new(source),
         })
-}
-
-fn write_error(project: &Project, source: CreateTaskError) -> AddTaskError {
-    let created_section = source.created_section().map(|(_, section)| section.clone());
-    AddTaskError::WriteStore {
-        diagnostics: AddTaskDiagnostics {
-            project: project.title.clone(),
-            created_section,
-        },
-        source,
-    }
 }
 
 fn created_record_matches(

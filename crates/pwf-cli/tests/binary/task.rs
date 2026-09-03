@@ -154,6 +154,7 @@ fn task_help_exposes_only_the_supported_add_and_edit_contract() {
     ] {
         assert!(add_help.contains(flag), "missing {flag}:\n{add_help}");
     }
+    assert!(!add_help.contains("--human"), "{add_help}");
 
     let edit = command().args(["task", "edit", "--help"]).output().unwrap();
     assert!(edit.status.success());
@@ -185,6 +186,17 @@ fn task_help_exposes_only_the_supported_add_and_edit_contract() {
         list_help.contains("--priority"),
         "missing --priority:\n{list_help}"
     );
+    assert!(list_help.contains("--section <HEADER>"), "{list_help}");
+
+    for command_name in ["done", "cancel"] {
+        let output = command()
+            .args(["task", command_name, "--help"])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let help = String::from_utf8(output.stdout).unwrap();
+        assert!(!help.contains("--review"), "{help}");
+    }
 
     let dag = command().args(["task", "dag", "--help"]).output().unwrap();
     assert!(dag.status.success());
@@ -202,6 +214,41 @@ fn task_help_exposes_only_the_supported_add_and_edit_contract() {
             "missing {contract}:\n{dag_help}"
         );
     }
+}
+
+#[test]
+fn removed_section_workflow_flags_are_rejected_by_the_parser() {
+    for arguments in [
+        vec!["task", "add", "foo", "ship it", "--human"],
+        vec!["task", "done", "FOO-0001", "--review"],
+        vec![
+            "task", "cancel", "FOO-0001", "--report", "obsolete", "--review",
+        ],
+    ] {
+        let output = command().args(&arguments).output().unwrap();
+
+        assert!(!output.status.success(), "{arguments:?}");
+        assert!(output.stdout.is_empty(), "{arguments:?}");
+        assert!(
+            String::from_utf8(output.stderr)
+                .unwrap()
+                .contains("unexpected argument"),
+            "{arguments:?}"
+        );
+    }
+}
+
+#[test]
+fn task_list_rejects_section_with_all_before_connecting() {
+    let output = command()
+        .args(["task", "list", "--section", "Waiting on API", "--all"])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("cannot be used with '--all'"), "{stderr}");
 }
 
 #[test]

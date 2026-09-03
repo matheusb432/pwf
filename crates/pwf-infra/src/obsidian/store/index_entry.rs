@@ -16,9 +16,7 @@ use crate::obsidian::{
     identity::{
         new_project_index_content, parse_project_index_identity, validate_project_index_identity,
     },
-    index_text::{
-        KnownSection, add_link_to_index, add_section_block, remove_index_link, section_exists,
-    },
+    index_text::{add_link_to_index, remove_index_link},
 };
 
 fn header_regex() -> &'static Regex {
@@ -162,52 +160,11 @@ fn reject_duplicate_task_ids(
     Ok(())
 }
 
-/// Returns raw H2 labels in document order using the entry parser's header rules.
-pub(super) fn parse_section_labels(
-    index_path: &Path,
-    text: &str,
-) -> Result<Vec<TaskSection>, ObsidianStoreError> {
-    text.split('\n')
-        .enumerate()
-        .filter_map(|(index, raw)| {
-            let line = raw.strip_suffix('\r').unwrap_or(raw);
-            header_regex()
-                .captures(line)
-                .map(|header| (index + 1, header["label"].trim().to_string()))
-        })
-        .map(|(line, value)| {
-            TaskSection::try_new(&value).map_err(|source| {
-                ObsidianStoreError::InvalidProjectIndexSection {
-                    path: index_path.to_path_buf(),
-                    line,
-                    value,
-                    source,
-                }
-            })
-        })
-        .collect()
-}
-
 fn render_entry_line(entry: &IndexEntry) -> String {
     match &entry.state {
         IndexEntryState::Open => format!("- [ ] [[{}]]", entry.id.as_ref()),
         IndexEntryState::Done(_) => format!("- [x] [[{}]]", entry.id.as_ref()),
     }
-}
-
-/// Rewrites matching H2 labels while preserving all other bytes and the trailing newline.
-pub(super) fn rename_header_lines(content: &str, from: &str, to: &str) -> String {
-    content
-        .split('\n')
-        .map(|line| {
-            let stripped = line.strip_suffix('\r').unwrap_or(line);
-            match header_regex().captures(stripped) {
-                Some(header) if header["label"].trim() == from => format!("## {to}"),
-                _ => line.to_string(),
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 fn replace_line(content: &str, line_number: usize, new_line: &str) -> String {
@@ -224,29 +181,15 @@ pub(super) fn upsert_index_entry_text(
     index_path: &Path,
     content: &str,
     entry: &IndexEntry,
-) -> Result<(String, Option<TaskSection>), ObsidianStoreError> {
+) -> Result<String, ObsidianStoreError> {
     let new_line = render_entry_line(entry);
     if let Some(existing) = parse_index_lines(index_path, content)?
         .into_iter()
         .find(|line| line.id == entry.id)
     {
-        return Ok((
-            replace_line(content, existing.line_number.get(), &new_line),
-            None,
-        ));
+        return Ok(replace_line(content, existing.line_number.get(), &new_line));
     }
-    Ok(match entry.section.as_ref().and_then(KnownSection::parse) {
-        Some(section) => {
-            let created_section = (!section_exists(content, section))
-                .then(|| entry.section.clone())
-                .flatten();
-            (
-                add_section_block(content, &format!("{new_line}\n"), section),
-                created_section,
-            )
-        }
-        None => (add_link_to_index(content, &new_line), None),
-    })
+    Ok(add_link_to_index(content, &new_line))
 }
 
 pub(super) fn delete_index_entry_text(content: &str, id: &TaskId) -> String {
@@ -271,10 +214,9 @@ impl ObsidianStore {
             .collect())
     }
 
-    /// Replaces an existing entry or inserts it through section placement rules.
+    /// Replaces an existing entry in place or inserts a missing entry before the first H2.
     ///
-    /// A missing index is created from the identity template. Add failures retain the
-    /// created-section diagnostic payload.
+    /// A missing index is created from the identity template.
     pub(super) fn upsert_index_entry(
         &self,
         project: &Project,
@@ -296,23 +238,8 @@ impl ObsidianStore {
         } else {
             new_project_index_content(&identity)
         };
-        let (updated, created_section) = upsert_index_entry_text(&index_path, &content, entry)?;
-        write_add_index_file(
-            &index_path,
-            &updated,
-            project.title.as_ref(),
-            created_section.as_ref(),
-        )
-    }
-
-    pub(super) fn list_index_sections(
-        &self,
-        project: &Project,
-    ) -> Result<Vec<TaskSection>, ObsidianStoreError> {
-        let Some((index_path, text)) = self.validated_project_index(project)? else {
-            return Ok(Vec::new());
-        };
-        parse_section_labels(&index_path, &text)
+        let updated = upsert_index_entry_text(&index_path, &content, entry)?;
+        write_add_index_file(&index_path, &updated)
     }
 }
 

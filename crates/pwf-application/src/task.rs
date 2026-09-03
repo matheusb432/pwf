@@ -101,37 +101,3 @@ fn commit_task_writes(
     crate::ports::task_vault::TaskVault::commit_task_writes(store, project, writes)
         .map_err(|error| error.map_store(anyhow::Error::new))
 }
-
-fn section_alias(label: &str) -> Option<&'static str> {
-    match label.trim().to_ascii_lowercase().as_str() {
-        "future" | "futuro" => Some("Future"),
-        "human" => Some("Human"),
-        "low-prio" | "low-priority" => Some("Low-prio"),
-        _ => None,
-    }
-}
-
-fn normalize_section_label(label: &pwf_models::task::TaskSection) -> pwf_models::task::TaskSection {
-    match section_alias(label.as_ref()) {
-        Some("Future") => pwf_models::task::TaskSection::future(),
-        Some("Human") => pwf_models::task::TaskSection::human(),
-        Some("Low-prio") => pwf_models::task::TaskSection::low_priority(),
-        Some(_) | None => label.clone(),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{normalize_section_label, section_alias};
-
-    #[test]
-    fn section_aliases_map_only_known_labels() {
-        assert_eq!(section_alias(" Futuro "), Some("Future"));
-        assert_eq!(section_alias("future"), Some("Future"));
-        assert_eq!(section_alias("HUMAN"), Some("Human"));
-        assert_eq!(section_alias("low-priority"), Some("Low-prio"));
-        assert_eq!(section_alias("Someday"), None);
-        let someday = " SomeDay ".parse().unwrap();
-        assert_eq!(normalize_section_label(&someday).as_ref(), "SomeDay");
-    }
-}

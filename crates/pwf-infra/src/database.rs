@@ -127,25 +127,26 @@ mod tests {
     const MIGRATION_VERSION_0003: i64 = 20_260_806_000_000;
     const MIGRATION_VERSION_0004: i64 = 20_260_830_000_000;
     const MIGRATION_VERSION_0005: i64 = 20_260_831_001_753;
+    const MIGRATION_VERSION_0006: i64 = 20_260_903_000_000;
 
     #[tokio::test]
-    async fn migration_0004_to_current_preserves_state_and_creates_prompt_lane_defaults() {
+    async fn migration_0005_to_current_preserves_state_and_removes_review_results() {
         let directory = tempfile::tempdir().unwrap();
         let pool = build_migration_pool(&directory.path().join("pwf.sqlite3"))
             .await
             .unwrap();
         migrations::MIGRATOR
-            .run_to(MIGRATION_VERSION_0004, &pool)
+            .run_to(MIGRATION_VERSION_0005, &pool)
             .await
             .unwrap();
 
-        let project_source_id = insert_migration_0004_fixture(&pool).await;
+        let project_source_id = insert_migration_0005_fixture(&pool).await;
 
         let readiness_error = check_database_ready(&pool).await.unwrap_err();
         assert!(
             readiness_error
                 .to_string()
-                .contains("SQLx migration 20260831001753 is pending")
+                .contains("SQLx migration 20260903000000 is pending")
         );
 
         migrate_database(&pool).await.unwrap();
@@ -154,7 +155,7 @@ mod tests {
         assert_current_migration_integrity(&pool).await;
     }
 
-    async fn insert_migration_0004_fixture(pool: &SqlitePool) -> i64 {
+    async fn insert_migration_0005_fixture(pool: &SqlitePool) -> i64 {
         let project_source_id = sqlx::query(
                 "INSERT INTO project_sources (kind, value, created_at) VALUES ('directory', '/work/foo', '2026-07-25T12:00:00.000Z')",
             )
@@ -178,15 +179,17 @@ mod tests {
                 task_id,
                 state,
                 outcome,
+                result_task_id,
                 created_at,
                 completed_at
             ) VALUES (
                 'migration-fixture',
-                'update',
+                'complete',
                 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
                 'FOO-0001',
                 'completed',
-                'updated',
+                'completed',
+                'FOO-0002',
                 '2026-08-30T12:00:00.000Z',
                 '2026-08-30T12:00:01.000Z'
             )",
@@ -248,6 +251,7 @@ mod tests {
                 MIGRATION_VERSION_0003,
                 MIGRATION_VERSION_0004,
                 MIGRATION_VERSION_0005,
+                MIGRATION_VERSION_0006,
             ]
         );
         let request_table_exists: bool = sqlx::query_scalar(
@@ -257,21 +261,7 @@ mod tests {
         .await
         .unwrap();
         assert!(request_table_exists);
-        let preserved_request: (String, String, String) = sqlx::query_as(
-            "SELECT request_id, task_id, outcome FROM task_mutation_requests
-             WHERE request_id = 'migration-fixture'",
-        )
-        .fetch_one(pool)
-        .await
-        .unwrap();
-        assert_eq!(
-            preserved_request,
-            (
-                "migration-fixture".to_string(),
-                "FOO-0001".to_string(),
-                "updated".to_string(),
-            )
-        );
+        assert_task_mutation_request_migrated(pool).await;
         let prompt_lanes = sqlx::query_as::<_, (String, String, String)>(
             "SELECT lane, marker, header FROM task_prompt_lanes ORDER BY CASE lane
                 WHEN 'goals' THEN 0
@@ -318,5 +308,31 @@ mod tests {
                 .is_err()
         );
         check_database_ready(pool).await.unwrap();
+    }
+
+    async fn assert_task_mutation_request_migrated(pool: &SqlitePool) {
+        let preserved_request: (String, String, String, String) = sqlx::query_as(
+            "SELECT request_id, operation, task_id, outcome FROM task_mutation_requests
+             WHERE request_id = 'migration-fixture'",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            preserved_request,
+            (
+                "migration-fixture".to_string(),
+                "complete".to_string(),
+                "FOO-0001".to_string(),
+                "completed".to_string(),
+            )
+        );
+        let request_columns = sqlx::query_scalar::<_, String>(
+            "SELECT name FROM pragma_table_info('task_mutation_requests') ORDER BY cid",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap();
+        assert!(!request_columns.iter().any(|name| name == "result_task_id"));
     }
 }

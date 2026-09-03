@@ -16,7 +16,7 @@ pub use effort::{EffortTier, EffortTierError};
 pub use id::{TaskId, TaskIdError};
 pub use priority::{PriorityTier, PriorityTierError};
 pub use prompt::TaskPrompt;
-pub use section::{IndexSection, TaskSection, TaskSectionError};
+pub use section::{TaskSection, TaskSectionError};
 pub use status::{ParseTaskStatusError, TaskStatus};
 pub use tag::{EmptyTaskTagsError, InvalidTagError, Tag, TagInput, TagInputError, TaskTags};
 pub use timestamp::{TaskTimestamp, TaskTimestampError};

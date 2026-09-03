@@ -14,9 +14,6 @@ pub struct Arguments {
     /// Commit range(s) to record as provenance (repeat or comma-separate).
     #[arg(long)]
     pub(crate) commits: Vec<String>,
-    /// Also spawn a `## Human` review task.
-    #[arg(long)]
-    pub(crate) review: bool,
 }
 
 pub(super) async fn run(arguments: &Arguments, client: &TaskClient) -> anyhow::Result<String> {
@@ -33,16 +30,12 @@ pub(super) async fn run(arguments: &Arguments, client: &TaskClient) -> anyhow::R
         id: id.to_string(),
         report: report.to_string(),
         commits: arguments.commits.clone(),
-        review: arguments.review,
         expected_revision: None,
         request_id: String::new(),
     };
-    let output = client
+    client
         .cancel_task(command)
         .await
         .map_err(crate::rpc_error)?;
-    Ok(render_cancelled(
-        id.as_ref(),
-        output.review_task_id.as_deref(),
-    ))
+    Ok(render_cancelled(id.as_ref()))
 }

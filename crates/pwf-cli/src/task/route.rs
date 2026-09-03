@@ -2,8 +2,9 @@
 
 use clap::Args;
 use pwf_client::pb::{OrderDirection, OrderField, OrderSpec};
+use pwf_models::task::TaskSection;
 
-use super::{SectionChoice, StatusChoice, list};
+use super::{StatusChoice, list};
 
 #[derive(Args, Debug)]
 pub struct Arguments {
@@ -12,9 +13,9 @@ pub struct Arguments {
     /// Long form with per-task metadata.
     #[arg(long)]
     pub(crate) long: bool,
-    /// Show only this scoped section.
-    #[arg(long, value_enum, conflicts_with = "all")]
-    pub(crate) section: Option<SectionChoice>,
+    /// Show only the section whose `##` header matches this text, ignoring case.
+    #[arg(long, value_name = "HEADER", conflicts_with = "all")]
+    pub(crate) section: Option<TaskSection>,
     /// List everything: every section, every lifecycle status, no task cap.
     /// An explicit `--status` or `-n` overrides the widened default.
     #[arg(long)]
@@ -67,7 +68,7 @@ fn list_arguments(
     list::Arguments {
         project,
         long: arguments.long,
-        section: arguments.section,
+        section: arguments.section.clone(),
         all: arguments.all,
         number: arguments.number,
         effort: None,
@@ -91,7 +92,7 @@ mod tests {
         Arguments {
             words: words.iter().map(|word| (*word).to_string()).collect(),
             long: true,
-            section: Some(SectionChoice::Future),
+            section: Some("Waiting".parse().unwrap()),
             all: false,
             number: Some(3),
             status: Some(StatusChoice::All),
@@ -109,7 +110,7 @@ mod tests {
 
         assert_eq!(list.project.as_ref().map(AsRef::as_ref), Some("foo"));
         assert!(list.long);
-        assert!(matches!(list.section, Some(SectionChoice::Future)));
+        assert_eq!(list.section.as_ref().map(AsRef::as_ref), Some("Waiting"));
         assert!(!list.all);
         assert_eq!(list.number, Some(3));
         assert_eq!(

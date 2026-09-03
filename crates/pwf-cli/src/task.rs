@@ -141,12 +141,6 @@ impl From<AgentChoice> for Agent {
 }
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
-pub(crate) enum SectionChoice {
-    Future,
-    Human,
-}
-
-#[derive(Debug, Clone, Copy, clap::ValueEnum)]
 pub(crate) enum StatusChoice {
     Active,
     Done,

@@ -1,9 +1,6 @@
 use clap::Args;
 use pwf_client::{
-    pb::{
-        CreateTaskRequest, EffortTier, IndexSection, PriorityTier, StructuredTaskPrompt,
-        create_task_request,
-    },
+    pb::{CreateTaskRequest, EffortTier, PriorityTier, StructuredTaskPrompt, create_task_request},
     task::TaskClient,
 };
 use pwf_models::{
@@ -45,9 +42,6 @@ pub struct Arguments {
     /// Done When. repeat for several. Requires `--title`
     #[arg(long, requires = "title", conflicts_with = "prompt")]
     pub(crate) done_when: Vec<String>,
-    /// File the task under `## Human` index section
-    #[arg(long)]
-    pub(crate) human: bool,
     /// Blocked-by task ID or [[ID]]; repeat or comma-separate for several
     #[arg(long)]
     pub(crate) blocked_by: Vec<BlockedByInput>,
@@ -79,11 +73,6 @@ pub(super) async fn run(
         .create_task(CreateTaskRequest {
             project_selector: project_selector.to_string(),
             prompt: Some(prompt),
-            index_section: if arguments.human {
-                IndexSection::Human as i32
-            } else {
-                IndexSection::General as i32
-            },
             blocked_by: blocked_by_input::collect(&arguments.blocked_by)
                 .map(|values| values.iter().map(ToString::to_string).collect())
                 .unwrap_or_default(),

@@ -78,7 +78,7 @@ impl pb::task_service_server::TaskService for TaskGrpcService {
             &self.state.clock,
         )
         .await
-        .map(proto::task::cancel_task_response)
+        .map(|()| proto::task::cancel_task_response())
         .map(Response::new)
         .map_err(cancel_task_status)
     }
@@ -96,7 +96,7 @@ impl pb::task_service_server::TaskService for TaskGrpcService {
             &self.state.clock,
         )
         .await
-        .map(proto::task::complete_task_response)
+        .map(|()| proto::task::complete_task_response())
         .map(Response::new)
         .map_err(complete_task_status)
     }
@@ -303,7 +303,6 @@ fn close_task_status(error: CloseTaskError) -> Status {
         CloseTaskError::Revision(_) => Status::aborted(message),
         CloseTaskError::Mutation(error) => task_mutation_status(&error),
         CloseTaskError::WriteStore(_) => Status::internal(message),
-        CloseTaskError::ReviewTask(error) => create_task_status(*error),
     }
 }
 
@@ -313,7 +312,6 @@ fn cancel_task_status(error: CancelTaskError) -> Status {
         CancelTaskError::Close(error) => close_task_status(error),
         CancelTaskError::Clock(_) => Status::internal(error.to_string()),
         CancelTaskError::MutationRequest(error) => mutation_request_status(&error),
-        CancelTaskError::PromptLanes(error) => prompt_lanes_status(&error),
     }
 }
 
@@ -323,7 +321,6 @@ fn complete_task_status(error: CompleteTaskError) -> Status {
         CompleteTaskError::Close(error) => close_task_status(error),
         CompleteTaskError::Clock(_) => Status::internal(error.to_string()),
         CompleteTaskError::MutationRequest(error) => mutation_request_status(&error),
-        CompleteTaskError::PromptLanes(error) => prompt_lanes_status(&error),
     }
 }
 

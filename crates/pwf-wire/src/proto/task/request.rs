@@ -5,8 +5,8 @@ use pwf_models::{
     project::ProjectSelector,
     revision::ContentRevision,
     task::{
-        BlockedBy, CommitRanges, EffortTier, IndexSection, PriorityTier, Tag, TaskId, TaskPrompt,
-        TaskReport, TaskStatus, TaskTags, TaskTitle,
+        BlockedBy, CommitRanges, EffortTier, PriorityTier, Tag, TaskId, TaskPrompt, TaskReport,
+        TaskSection, TaskStatus, TaskTags, TaskTitle,
     },
 };
 use tonic::Status;
@@ -33,7 +33,6 @@ pub fn create_task_request(request: pb::CreateTaskRequest) -> Result<task::AddTa
     let pb::CreateTaskRequest {
         project_selector,
         prompt,
-        index_section,
         blocked_by,
         effort,
         tags,
@@ -55,13 +54,6 @@ pub fn create_task_request(request: pb::CreateTaskRequest) -> Result<task::AddTa
     Ok(task::AddTask {
         project_selector: parse::<ProjectSelector>("project_selector", &project_selector)?,
         prompt,
-        index_section: match pb::IndexSection::try_from(index_section).ok() {
-            Some(pb::IndexSection::General) => IndexSection::General,
-            Some(pb::IndexSection::Human) => IndexSection::Human,
-            Some(pb::IndexSection::Unspecified) | None => {
-                return Err(invalid("index_section", "must be specified"));
-            }
-        },
         blocked_by: blocked_by_values(blocked_by)?,
         effort: effort.map(effort_tier).transpose()?,
         tags: task_tag_values(tags)?,
@@ -80,7 +72,6 @@ pub fn cancel_task_request(request: pb::CancelTaskRequest) -> Result<task::Cance
         id,
         report,
         commits,
-        review,
         expected_revision,
         request_id: request_id_value,
     } = request;
@@ -88,7 +79,6 @@ pub fn cancel_task_request(request: pb::CancelTaskRequest) -> Result<task::Cance
         id: parse::<TaskId>("id", &id)?,
         report: parse::<TaskReport>("report", &report)?,
         commits: CommitRanges::from_inputs(&commits),
-        review,
         expected_revision: expected_revision.map(revision).transpose()?,
         request_id: Some(request_id(request_id_value)?),
         request_fingerprint: Some(request_fingerprint),
@@ -106,7 +96,6 @@ pub fn complete_task_request(
         id,
         report,
         commits,
-        review,
         expected_revision,
         request_id: request_id_value,
     } = request;
@@ -117,7 +106,6 @@ pub fn complete_task_request(
             .map(|value| parse::<TaskReport>("report", value))
             .transpose()?,
         commits: CommitRanges::from_inputs(&commits),
-        review,
         expected_revision: expected_revision.map(revision).transpose()?,
         request_id: Some(request_id(request_id_value)?),
         request_fingerprint: Some(request_fingerprint),
@@ -215,14 +203,12 @@ pub fn list_tasks_request(request: pb::ListTasksRequest) -> Result<task::ListTas
         .map(task::TaskPageToken::try_new)
         .transpose()
         .map_err(|error| invalid("page_token", error))?;
-    let scope = match pb::ListScope::try_from(request.scope).ok() {
-        Some(pb::ListScope::Default) => task::ListScope::Default,
-        Some(pb::ListScope::Human) => task::ListScope::Human,
-        Some(pb::ListScope::Future) => task::ListScope::Future,
-        Some(pb::ListScope::All) => task::ListScope::All,
-        Some(pb::ListScope::Unspecified) | None => {
-            return Err(invalid("scope", "must be specified"));
-        }
+    let scope = match request.scope {
+        Some(pb::list_tasks_request::Scope::Section(section)) => task::ListScope::Section(
+            TaskSection::try_new(section).map_err(|error| invalid("section", error))?,
+        ),
+        Some(pb::list_tasks_request::Scope::All(_)) => task::ListScope::All,
+        None => task::ListScope::Default,
     };
     let detail = match pb::ListDetail::try_from(request.detail).ok() {
         Some(pb::ListDetail::Summary) => task::ListDetail::Summary,
