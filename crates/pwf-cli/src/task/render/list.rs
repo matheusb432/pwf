@@ -157,7 +157,7 @@ fn render_list_task(
         &task.id,
         &task.heading,
         task_status,
-        status_filter == TaskStatusFilter::All,
+        status_filter == TaskStatusFilter::All && !on,
         task_status_colors,
         on,
     );
@@ -393,7 +393,7 @@ mod tests {
     }
 
     #[test]
-    fn configured_lifecycle_colors_apply_to_identifiers_and_status_tags() {
+    fn configured_lifecycle_colors_apply_to_identifiers_without_status_tags() {
         let colors = TaskStatusColors::new(
             Some(RgbColor::new(1, 2, 3)),
             Some(RgbColor::new(4, 5, 6)),
@@ -424,7 +424,7 @@ mod tests {
             );
 
             assert!(output.contains(&format!("{prefix}FOO-0001\u{1b}[0m")));
-            assert!(output.contains(&format!("{prefix}{}\u{1b}[0m]", task_status_name(status))));
+            assert!(!output.contains(task_status_name(status)));
         }
     }
 
