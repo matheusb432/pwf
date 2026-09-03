@@ -1,0 +1,4 @@
+[colors]
+active = "#FF5C00"
+done = "#008000"
+cancelled = "#ff0000"

@@ -11,6 +11,8 @@
 
 .artifacts/
 
+/config/config.toml
+
 /secrets/
 
 *.env
