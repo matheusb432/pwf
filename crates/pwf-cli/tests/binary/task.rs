@@ -83,6 +83,67 @@ fn list_priority_filters_and_renders_the_selected_tier() {
 }
 
 #[test]
+fn configured_active_color_is_consistent_across_list_routes() {
+    let fixture = ManagedProject::new(&project_id("FOO").unwrap(), "foo-bar").unwrap();
+    fixture
+        .database
+        .command()
+        .args([
+            "add",
+            "foo-bar",
+            "--title",
+            "orange task",
+            "--goal",
+            "render the configured color",
+        ])
+        .assert()
+        .success();
+    fixture
+        .database
+        .write_user_config("[colors]\nactive = \"#ff8700\"\n")
+        .unwrap();
+
+    for arguments in [
+        ["foo-bar"].as_slice(),
+        ["list", "--project", "foo-bar", "--all"].as_slice(),
+    ] {
+        let output = fixture
+            .database
+            .command()
+            .env_remove("NO_COLOR")
+            .env("CLICOLOR_FORCE", "1")
+            .args(arguments)
+            .output()
+            .unwrap();
+
+        assert!(output.status.success(), "{arguments:?}");
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(
+            stdout.contains("\u{1b}[38;2;255;135;0mFOO-0001\u{1b}[0m"),
+            "{arguments:?}: {stdout:?}"
+        );
+    }
+}
+
+#[test]
+fn task_command_reports_invalid_user_config_with_its_path_and_cause() {
+    let fixture = ManagedProject::new(&project_id("FOO").unwrap(), "foo-bar").unwrap();
+    fixture
+        .database
+        .write_user_config("[colors]\nactive = \"#fff\"\n")
+        .unwrap();
+
+    let output = fixture.database.command().arg("foo-bar").output().unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains(".config/pwf/config.toml"), "{stderr}");
+    assert!(stderr.contains("`colors.active` is invalid"), "{stderr}");
+    assert!(stderr.contains("#RRGGBB"), "{stderr}");
+}
+
+#[test]
 fn root_edit_replaces_lane_collections_with_explicit_remove_then_add_actions() {
     let fixture = ManagedProject::new(&project_id("FOO").unwrap(), "foo-bar").unwrap();
     fixture

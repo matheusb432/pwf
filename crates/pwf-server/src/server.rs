@@ -16,7 +16,10 @@ use tower_http::{
 
 use crate::{
     AppState,
-    services::{NoteGrpcService, ProjectGrpcService, SessionGrpcService, TaskGrpcService},
+    services::{
+        NoteGrpcService, ProjectGrpcService, SessionGrpcService, SettingsGrpcService,
+        TaskGrpcService,
+    },
 };
 
 const MAX_CONCURRENT_REQUESTS_PER_CONNECTION: usize = 16;
@@ -25,11 +28,12 @@ const MAX_REQUEST_MESSAGE_SIZE: usize = 64 * 1024;
 const MAX_RESPONSE_MESSAGE_SIZE: usize = 4 * 1024 * 1024;
 const AUTHORIZATION_METADATA_KEY: &str = "authorization";
 const AUTHORIZATION_SCHEME: &str = "Bearer ";
-const APPLICATION_SERVICE_NAMES: [&str; 4] = [
+const APPLICATION_SERVICE_NAMES: [&str; 5] = [
     pb::project_service_server::ProjectServiceServer::<ProjectGrpcService>::NAME,
     pb::note_service_server::NoteServiceServer::<NoteGrpcService>::NAME,
     pb::task_service_server::TaskServiceServer::<TaskGrpcService>::NAME,
     pb::session_service_server::SessionServiceServer::<SessionGrpcService>::NAME,
+    pb::settings_service_server::SettingsServiceServer::<SettingsGrpcService>::NAME,
 ];
 
 macro_rules! bounded_service {
@@ -154,8 +158,11 @@ pub async fn serve(
         TaskGrpcService::new(state.clone())
     ));
     let session_server = bounded_service!(pb::session_service_server::SessionServiceServer::new(
-        SessionGrpcService::new(state)
+        SessionGrpcService::new(state.clone())
     ));
+    let settings_server = bounded_service!(
+        pb::settings_service_server::SettingsServiceServer::new(SettingsGrpcService::new(state))
+    );
     let reflection_server = bounded_service!(
         tonic_reflection::server::Builder::configure()
             .register_encoded_file_descriptor_set(FILE_DESCRIPTOR_SET)
@@ -192,6 +199,7 @@ pub async fn serve(
         .add_service(note_server)
         .add_service(task_server)
         .add_service(session_server)
+        .add_service(settings_server)
         .serve_with_incoming_shutdown(incoming, shutdown);
     tokio::pin!(grpc_server);
 

@@ -15,6 +15,7 @@ use tonic_health::pb::{HealthCheckRequest, health_client::HealthClient};
 pub mod confirmation;
 pub mod note;
 pub mod project;
+pub mod settings;
 pub mod task;
 
 pub use pwf_wire::pb;
@@ -100,6 +101,11 @@ impl PwfClient {
     #[must_use]
     pub fn task(&self) -> task::TaskClient {
         task::TaskClient::new(self.channel.clone(), self.request_policy.clone())
+    }
+
+    #[must_use]
+    pub fn settings(&self) -> settings::SettingsClient {
+        settings::SettingsClient::new(self.channel.clone(), self.request_policy.clone())
     }
 
     #[must_use]

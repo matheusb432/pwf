@@ -9,6 +9,7 @@ use crate::{collection_edit::CollectionEdit, pb};
 pub mod note;
 pub mod project;
 pub mod session;
+pub mod settings;
 pub mod task;
 
 fn invalid(field: &str, reason: impl Display) -> Status {

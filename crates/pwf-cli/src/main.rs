@@ -1,4 +1,4 @@
-use pwf_cli::{command, note, project, task};
+use pwf_cli::{command, note, project, settings, task};
 use pwf_client::PwfClient;
 
 #[tokio::main(flavor = "current_thread")]
@@ -35,10 +35,12 @@ async fn run(parsed: command::Cli) -> anyhow::Result<String> {
             project::run(arguments, &project_client).await
         }
         command::RootCommand::Task(command) => {
+            let user_settings = settings::load(&client.settings()).await?;
             let task_client = client.task();
             task::run(
                 &command,
                 pwf_cli::console::Console::from_terminal(),
+                user_settings.task_status_colors(),
                 &task_client,
             )
             .await

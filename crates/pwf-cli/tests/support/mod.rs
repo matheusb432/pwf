@@ -66,6 +66,13 @@ impl DatabaseFixture {
         migrator_command(&self.path, &self.home)
     }
 
+    pub fn write_user_config(&self, source: &str) -> anyhow::Result<()> {
+        let path = self.home.join(".config").join("pwf").join("config.toml");
+        fs::create_dir_all(path.parent().context("user config path has no parent")?)?;
+        fs::write(path, source)?;
+        Ok(())
+    }
+
     pub fn add_directory_project(
         &self,
         project_id: &ProjectId,
@@ -178,6 +185,7 @@ fn configure_command(command: &mut Command, database_path: &Path, home: &Path, d
     command
         .env("PWF_DATABASE_PATH", database_path)
         .env("PWF_DATA_DIR", data_root)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
         .env("HOME", home)
         .env("USERPROFILE", home);
 }

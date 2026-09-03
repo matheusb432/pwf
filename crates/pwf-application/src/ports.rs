@@ -8,3 +8,4 @@ pub mod project_task_location;
 pub mod session;
 pub mod task_metadata_migration;
 pub mod task_vault;
+pub mod user_settings;

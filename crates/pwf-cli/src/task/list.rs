@@ -10,6 +10,7 @@ use pwf_client::{
 };
 use pwf_models::{
     project::ProjectSelector,
+    settings::TaskStatusColors,
     task::{TagInput, TaskSection, TaskTags},
 };
 
@@ -61,6 +62,7 @@ pub struct Arguments {
 pub(super) async fn run(
     arguments: &Arguments,
     console: Console,
+    task_status_colors: TaskStatusColors,
     client: &TaskClient,
 ) -> anyhow::Result<String> {
     let mut request = ListTasksRequest {
@@ -118,7 +120,12 @@ pub(super) async fn run(
         || "managed project task paths".to_string(),
         ToString::to_string,
     );
-    Ok(render_list(&result, &location, console.color()))
+    Ok(render_list(
+        &result,
+        &location,
+        task_status_colors,
+        console.color(),
+    ))
 }
 
 fn list_scope(arguments: &Arguments) -> Option<list_tasks_request::Scope> {

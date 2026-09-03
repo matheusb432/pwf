@@ -5,10 +5,16 @@ use pwf_client::pb::{
     ListTasksResponse, PriorityTier, TaskIssue, TaskIssueKind, TaskStatus, TaskStatusFilter,
     TaskView,
 };
+use pwf_models::settings::TaskStatusColors;
 
 use super::{render_status, render_task_summary};
 
-pub(in crate::task) fn render_list(result: &ListTasksResponse, location: &str, on: bool) -> String {
+pub(in crate::task) fn render_list(
+    result: &ListTasksResponse,
+    location: &str,
+    task_status_colors: TaskStatusColors,
+    on: bool,
+) -> String {
     let detail = ListDetail::try_from(result.detail).unwrap_or(ListDetail::Unspecified);
     let status_filter =
         TaskStatusFilter::try_from(result.status_filter).unwrap_or(TaskStatusFilter::Unspecified);
@@ -33,11 +39,26 @@ pub(in crate::task) fn render_list(result: &ListTasksResponse, location: &str, o
     let mut out = String::new();
     let layout = ListLayout::try_from(result.layout).unwrap_or(ListLayout::Unspecified);
     if layout == ListLayout::BySection {
-        render_grouped_list(&mut out, &result.tasks, status_filter, long, on);
+        render_grouped_list(
+            &mut out,
+            &result.tasks,
+            status_filter,
+            long,
+            task_status_colors,
+            on,
+        );
     } else {
         let last_idx = result.tasks.len() - 1;
         for (idx, task) in result.tasks.iter().enumerate() {
-            render_list_task(&mut out, task, status_filter, long, idx == last_idx, on);
+            render_list_task(
+                &mut out,
+                task,
+                status_filter,
+                long,
+                idx == last_idx,
+                task_status_colors,
+                on,
+            );
         }
     }
     if result.hidden > 0 {
@@ -58,6 +79,7 @@ fn render_grouped_list(
     tasks: &[TaskView],
     status_filter: TaskStatusFilter,
     long: bool,
+    task_status_colors: TaskStatusColors,
     on: bool,
 ) {
     let mut group_start = 0;
@@ -78,7 +100,15 @@ fn render_grouped_list(
         }
         let group = &tasks[group_start..group_end];
         for (index, task) in group.iter().enumerate() {
-            render_list_task(out, task, status_filter, long, index + 1 == group.len(), on);
+            render_list_task(
+                out,
+                task,
+                status_filter,
+                long,
+                index + 1 == group.len(),
+                task_status_colors,
+                on,
+            );
         }
         group_start = group_end;
     }
@@ -119,15 +149,18 @@ fn render_list_task(
     status_filter: TaskStatusFilter,
     long: bool,
     last: bool,
+    task_status_colors: TaskStatusColors,
     on: bool,
 ) {
     let task_status = TaskStatus::try_from(task.status).unwrap_or(TaskStatus::Unspecified);
-    let status = if status_filter == TaskStatusFilter::All {
-        Some(task_status)
-    } else {
-        None
-    };
-    let summary = render_task_summary(&task.id, &task.heading, status, on);
+    let summary = render_task_summary(
+        &task.id,
+        &task.heading,
+        task_status,
+        status_filter == TaskStatusFilter::All,
+        task_status_colors,
+        on,
+    );
     let formatted = if last && !long {
         summary
     } else {
@@ -138,7 +171,11 @@ fn render_list_task(
         return;
     }
 
-    let _ = writeln!(out, "  status: {}", render_status(task_status, on));
+    let _ = writeln!(
+        out,
+        "  status: {}",
+        render_status(task_status, task_status_colors, on)
+    );
     if task_status == TaskStatus::Active {
         let relationship_warning = !task.blocked_by_issues.is_empty()
             || task.blocked_by_statuses.iter().any(blocked_by_is_warning);
@@ -266,6 +303,7 @@ fn task_status_name(status: TaskStatus) -> &'static str {
 #[cfg(test)]
 mod tests {
     use pwf_client::pb::{BlockedByIssue, TaskLocation};
+    use pwf_models::settings::RgbColor;
 
     use super::*;
 
@@ -300,7 +338,15 @@ mod tests {
         on: bool,
     ) -> String {
         let mut output = String::new();
-        render_list_task(&mut output, task, status_filter, long, true, on);
+        render_list_task(
+            &mut output,
+            task,
+            status_filter,
+            long,
+            true,
+            TaskStatusColors::default(),
+            on,
+        );
         output
     }
 
@@ -337,6 +383,52 @@ mod tests {
     }
 
     #[test]
+    fn exact_active_status_short_line_uses_the_default_active_color() {
+        let output = render_task_for_filter(&sample_task(), TaskStatusFilter::Active, false, true);
+
+        assert_eq!(
+            output,
+            "\u{1b}[1m\u{1b}[34mFOO-0001\u{1b}[0m :: sample task"
+        );
+    }
+
+    #[test]
+    fn configured_lifecycle_colors_apply_to_identifiers_and_status_tags() {
+        let colors = TaskStatusColors::new(
+            Some(RgbColor::new(1, 2, 3)),
+            Some(RgbColor::new(4, 5, 6)),
+            Some(RgbColor::new(7, 8, 9)),
+        );
+        for (status, color) in [
+            (TaskStatus::Active, RgbColor::new(1, 2, 3)),
+            (TaskStatus::Done, RgbColor::new(4, 5, 6)),
+            (TaskStatus::Cancelled, RgbColor::new(7, 8, 9)),
+        ] {
+            let mut task = sample_task();
+            task.status = status as i32;
+            let mut output = String::new();
+            render_list_task(
+                &mut output,
+                &task,
+                TaskStatusFilter::All,
+                false,
+                true,
+                colors,
+                true,
+            );
+            let prefix = format!(
+                "\u{1b}[38;2;{};{};{}m",
+                color.red(),
+                color.green(),
+                color.blue()
+            );
+
+            assert!(output.contains(&format!("{prefix}FOO-0001\u{1b}[0m")));
+            assert!(output.contains(&format!("{prefix}{}\u{1b}[0m]", task_status_name(status))));
+        }
+    }
+
+    #[test]
     fn exact_status_short_lines_keep_the_existing_shape() {
         let output = render_task_for_filter(&sample_task(), TaskStatusFilter::Active, false, false);
         assert_eq!(output, "FOO-0001 :: sample task");
@@ -367,7 +459,7 @@ mod tests {
         };
 
         assert_eq!(
-            render_list(&result, "notes", false),
+            render_list(&result, "notes", TaskStatusColors::default(), false),
             "FOO-0001 :: sample task\n\nBlocked\nFOO-0002 :: sample task\nAUX-0001 :: sample task\n\nSomeday\nFOO-0003 :: sample task"
         );
     }
@@ -472,7 +564,7 @@ mod tests {
             detail: ListDetail::Summary as i32,
             next_page_token: None,
         };
-        let output = render_list(&result, "notes", false);
+        let output = render_list(&result, "notes", TaskStatusColors::default(), false);
         assert!(
             output.ends_with("\n... and 2 more; use '--all' to list everything"),
             "got: {output}"
@@ -491,7 +583,7 @@ mod tests {
             detail: ListDetail::Detailed as i32,
             next_page_token: None,
         };
-        let output = render_list(&result, "notes", false);
+        let output = render_list(&result, "notes", TaskStatusColors::default(), false);
         assert!(output.contains("  status: active\n"), "{output}");
         assert!(output.contains("  project_path: /project\n"), "{output}");
     }

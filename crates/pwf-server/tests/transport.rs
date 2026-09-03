@@ -13,10 +13,12 @@ use pwf_client::{
     pb::{
         self, Agent, DispatchMode, ProjectStatusFilter, SessionEffort, TaskReadFormat,
         delete_note_result, note_service_client::NoteServiceClient,
-        session_service_client::SessionServiceClient, task_service_client::TaskServiceClient,
+        session_service_client::SessionServiceClient,
+        settings_service_client::SettingsServiceClient, task_service_client::TaskServiceClient,
     },
     task::{TaskDagEdge, TaskDagNode},
 };
+use pwf_infra::user_settings::TomlSettingsStore;
 use pwf_local_auth::{
     CapabilityToken, LocalAuth, PublishedEndpoint, ServerEndpoint, ServerInstanceId,
 };
@@ -48,6 +50,65 @@ struct TestServer {
     _published: PublishedEndpoint,
 }
 
+#[tokio::test]
+async fn v1_get_user_settings_returns_validated_task_status_colors() -> anyhow::Result<()> {
+    let server = TestServer::start(TEST_TIMEOUT).await?;
+    std::fs::write(
+        server.root.path().join("config.toml"),
+        "[colors]\nactive = \"#ff8700\"\n",
+    )?;
+
+    let response = SettingsServiceClient::new(server.channel().await?)
+        .get_user_settings(authenticated(
+            Request::new(pb::GetUserSettingsRequest {}),
+            &server.token,
+        )?)
+        .await?
+        .into_inner();
+    let colors = response
+        .task_status_colors
+        .context("settings response is missing task status colors")?;
+
+    assert_eq!(
+        colors.active,
+        Some(pb::RgbColor {
+            red: 255,
+            green: 135,
+            blue: 0,
+        })
+    );
+    assert_eq!(colors.done, None);
+    assert_eq!(colors.cancelled, None);
+    Ok(())
+}
+
+#[tokio::test]
+async fn v1_get_user_settings_rejects_invalid_config_with_its_path_and_cause() -> anyhow::Result<()>
+{
+    let server = TestServer::start(TEST_TIMEOUT).await?;
+    let config_path = server.root.path().join("config.toml");
+    std::fs::write(&config_path, "[colors]\nactive = \"#fff\"\n")?;
+
+    let status = SettingsServiceClient::new(server.channel().await?)
+        .get_user_settings(authenticated(
+            Request::new(pb::GetUserSettingsRequest {}),
+            &server.token,
+        )?)
+        .await
+        .unwrap_err();
+
+    assert_eq!(status.code(), Code::FailedPrecondition);
+    assert!(
+        status
+            .message()
+            .contains(&config_path.display().to_string()),
+        "{status}"
+    );
+    assert!(status.message().contains("`colors.active` is invalid"));
+    assert!(status.message().contains("#RRGGBB"));
+    Ok(())
+}
+
 impl TestServer {
     async fn start(shutdown_grace_period: Duration) -> anyhow::Result<Self> {
         let root = tempfile::tempdir()?;
@@ -58,7 +119,11 @@ impl TestServer {
         let pool = pwf_infra::database::build_pool(&database_path).await?;
         let home_path = root.path().join("home");
         std::fs::create_dir_all(&home_path)?;
-        let state = AppState::new(pool, HomeDirectory::new(home_path));
+        let state = AppState::new(
+            pool,
+            HomeDirectory::new(home_path),
+            TomlSettingsStore::new(Some(root.path().join("config.toml"))),
+        );
 
         let auth = LocalAuth::from_data_root(root.path().join("auth"))?;
         let token = auth.load_or_create_server_token()?;
@@ -1430,6 +1495,7 @@ async fn health_and_reflection_require_authentication_and_requests_are_bounded()
             "pwf.v1.NoteService".to_string(),
             "pwf.v1.ProjectService".to_string(),
             "pwf.v1.SessionService".to_string(),
+            "pwf.v1.SettingsService".to_string(),
             "pwf.v1.TaskService".to_string(),
         ])
     );

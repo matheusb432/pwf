@@ -7,6 +7,7 @@ mod edit;
 pub mod note;
 pub mod project;
 mod render;
+pub mod settings;
 pub mod task;
 
 pub(crate) fn rpc_error(error: pwf_client::ClientError) -> anyhow::Error {

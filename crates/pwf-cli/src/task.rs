@@ -5,6 +5,7 @@ use pwf_client::{
 };
 use pwf_models::{
     session::Agent,
+    settings::TaskStatusColors,
     task::{EffortTier, TaskId, TaskTitle},
 };
 
@@ -293,24 +294,29 @@ enum TaskCommand {
 pub async fn run(
     command: &Command,
     console: Console,
+    task_status_colors: TaskStatusColors,
     client: &TaskClient,
 ) -> anyhow::Result<String> {
     let output = match command {
         Command::Task(arguments) => match &arguments.command {
             TaskCommand::Add(arguments) => add::run(arguments, console, client).await?,
-            TaskCommand::List(arguments) => list::run(arguments, console, client).await?,
+            TaskCommand::List(arguments) => {
+                list::run(arguments, console, task_status_colors, client).await?
+            }
             TaskCommand::Done(arguments) => done::run(arguments, client).await?,
             TaskCommand::Cancel(arguments) => cancel::run(arguments, client).await?,
             TaskCommand::Reopen(arguments) => reopen::run(arguments, console, client).await?,
             TaskCommand::Edit(arguments) => edit::run(arguments, console, client).await?,
             TaskCommand::Get(arguments) => get::run(arguments, client).await?,
-            TaskCommand::Dag(arguments) => dag::run(arguments, console, client).await?,
+            TaskCommand::Dag(arguments) => {
+                dag::run(arguments, console, task_status_colors, client).await?
+            }
             TaskCommand::Remove(arguments) => remove::run(arguments, console, client).await?,
         },
         Command::Session(arguments) => session::run(arguments, console, client).await?,
         Command::Route(arguments) => match route::resolve(arguments) {
             route::ResolvedCommand::List(arguments) => {
-                list::run(&arguments, console, client).await?
+                list::run(&arguments, console, task_status_colors, client).await?
             }
             route::ResolvedCommand::RejectUnsupportedTaskCreation => {
                 return Err(anyhow::anyhow!("Use: pwf task add <project> \"<prompt>\""));

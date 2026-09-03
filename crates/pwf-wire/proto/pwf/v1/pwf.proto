@@ -36,6 +36,28 @@ service SessionService {
   rpc DispatchSession(stream DispatchSessionRequest) returns (stream DispatchSessionResponse);
 }
 
+service SettingsService {
+  rpc GetUserSettings(GetUserSettingsRequest) returns (GetUserSettingsResponse);
+}
+
+message GetUserSettingsRequest {}
+
+message RgbColor {
+  uint32 red = 1;
+  uint32 green = 2;
+  uint32 blue = 3;
+}
+
+message TaskStatusColors {
+  RgbColor active = 1;
+  RgbColor done = 2;
+  RgbColor cancelled = 3;
+}
+
+message GetUserSettingsResponse {
+  TaskStatusColors task_status_colors = 1;
+}
+
 enum ProjectStatusFilter {
   PROJECT_STATUS_FILTER_UNSPECIFIED = 0;
   PROJECT_STATUS_FILTER_ACTIVE_ONLY = 1;

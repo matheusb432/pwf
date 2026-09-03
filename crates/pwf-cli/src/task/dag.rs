@@ -3,6 +3,7 @@ use pwf_client::{
     pb::{GetTaskDagRequest, TaskDagMode},
     task::TaskClient,
 };
+use pwf_models::settings::TaskStatusColors;
 
 use super::{Identifier, StatusChoice};
 use crate::console::Console;
@@ -10,13 +11,15 @@ use crate::console::Console;
 mod output;
 
 pub(super) fn render(task_dag: pwf_client::task::TaskDag, color_on: bool) -> String {
-    output::render(task_dag, None, color_on)
+    output::render(task_dag, None, TaskStatusColors::default(), color_on)
 }
 
 pub(super) fn benchmark_prepare(task_dag: pwf_client::task::TaskDag, color_on: bool) {
     if color_on {
         drop(std::hint::black_box(output::prepare_colored(
-            task_dag, None,
+            task_dag,
+            None,
+            TaskStatusColors::default(),
         )));
     } else {
         drop(std::hint::black_box(output::prepare(task_dag, None)));
@@ -68,6 +71,7 @@ pub struct Arguments {
 pub(super) async fn run(
     arguments: &Arguments,
     console: Console,
+    task_status_colors: TaskStatusColors,
     client: &TaskClient,
 ) -> anyhow::Result<String> {
     let id = arguments
@@ -82,5 +86,10 @@ pub(super) async fn run(
         })
         .await
         .map_err(crate::rpc_error)?;
-    Ok(output::render(graph, arguments.node_field, console.color()))
+    Ok(output::render(
+        graph,
+        arguments.node_field,
+        task_status_colors,
+        console.color(),
+    ))
 }
