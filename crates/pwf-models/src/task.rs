@@ -2,6 +2,7 @@ mod blocked_by;
 mod completion;
 mod effort;
 mod id;
+pub mod order;
 mod priority;
 mod prompt;
 mod section;

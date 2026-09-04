@@ -530,3 +530,130 @@ fn remove_prompt_identifies_closed_status_before_deletion() {
         .assert()
         .failure();
 }
+
+#[test]
+fn configured_list_order_and_priority_apply_to_every_list_spelling() -> anyhow::Result<()> {
+    let fixture = ManagedProject::new(&project_id("FOO")?, "foo-bar")?;
+    for (title, priority, effort) in [
+        ("zeta", Some("low"), Some("high")),
+        ("alpha", Some("highest"), Some("low")),
+        ("beta", None, None),
+    ] {
+        let mut arguments = vec![
+            "add",
+            "foo-bar",
+            "--title",
+            title,
+            "--goal",
+            "exercise list ordering",
+        ];
+        if let Some(priority) = priority {
+            arguments.extend(["--priority", priority]);
+        }
+        if let Some(effort) = effort {
+            arguments.extend(["--effort", effort]);
+        }
+        fixture
+            .database
+            .command()
+            .args(arguments)
+            .assert()
+            .success();
+    }
+    fixture
+        .database
+        .write_user_config("default_priority = \"highest\"\ndefault_sort_order = \"priority\"\n")?;
+    for prefix in [
+        vec!["task", "list", "--project", "foo-bar"],
+        vec!["list", "--project", "foo-bar"],
+        vec!["foo-bar"],
+    ] {
+        let output = fixture.database.command().args(&prefix).output()?;
+        assert!(output.status.success());
+        assert!(output.stderr.is_empty());
+        assert_list_ids(
+            &String::from_utf8(output.stdout)?,
+            &["FOO-0003", "FOO-0002", "FOO-0001"],
+        );
+        let output = fixture
+            .database
+            .command()
+            .args(prefix)
+            .args(["--order", "title"])
+            .output()?;
+        assert!(output.status.success());
+        assert_list_ids(
+            &String::from_utf8(output.stdout)?,
+            &["FOO-0002", "FOO-0003", "FOO-0001"],
+        );
+    }
+    for (order, expected) in [
+        ("priority:asc", ["FOO-0001", "FOO-0003", "FOO-0002"]),
+        ("effort", ["FOO-0002", "FOO-0001", "FOO-0003"]),
+        ("effort:desc", ["FOO-0001", "FOO-0002", "FOO-0003"]),
+        ("title:desc", ["FOO-0001", "FOO-0003", "FOO-0002"]),
+    ] {
+        let output = fixture
+            .database
+            .command()
+            .args(["list", "--project", "foo-bar", "--order", order])
+            .output()?;
+        assert!(output.status.success());
+        assert_list_ids(&String::from_utf8(output.stdout)?, &expected);
+    }
+    let listed = fixture
+        .database
+        .command()
+        .args([
+            "list",
+            "--project",
+            "foo-bar",
+            "--long",
+            "--priority",
+            "highest",
+        ])
+        .output()?;
+    assert!(listed.status.success());
+    let stdout = String::from_utf8(listed.stdout)?;
+    assert_list_ids(&stdout, &["FOO-0003", "FOO-0002"]);
+    assert_eq!(stdout.matches("priority: highest").count(), 2);
+    assert!(task_json(&fixture.database, &task_id("FOO-0003")?)?["priority"].is_null());
+
+    fixture.database.write_user_config("")?;
+    let output = fixture.database.command().args(["foo-bar"]).output()?;
+    assert!(output.status.success());
+    assert_list_ids(
+        &String::from_utf8(output.stdout)?,
+        &["FOO-0003", "FOO-0002", "FOO-0001"],
+    );
+    Ok(())
+}
+
+fn assert_list_ids(output: &str, expected: &[&str]) {
+    let actual: Vec<_> = output
+        .lines()
+        .filter_map(|line| {
+            line.split_whitespace()
+                .next()
+                .filter(|word| word.starts_with("FOO-"))
+        })
+        .collect();
+    assert_eq!(actual, expected, "{output}");
+}
+
+#[test]
+fn list_order_help_and_invalid_values_are_cli_contracts() {
+    let output = command().args(["task", "list", "--help"]).output().unwrap();
+    assert!(output.status.success());
+    let help = String::from_utf8(output.stdout).unwrap();
+    for word in ["priority", "effort", "title", "default_sort_order"] {
+        assert!(help.contains(word), "{help}");
+    }
+    for value in ["priority:up", "effort:", "title:asc:desc"] {
+        command()
+            .args(["list", "--order", value])
+            .assert()
+            .failure()
+            .stdout("");
+    }
+}

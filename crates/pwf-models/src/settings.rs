@@ -1,5 +1,7 @@
 use std::str::FromStr;
 
+use crate::task::{PriorityTier, order::OrderSpec};
+
 /// An RGB color parsed from the user-settings `#RRGGBB` representation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RgbColor {
@@ -103,20 +105,50 @@ impl TaskStatusColors {
 }
 
 /// Immutable, validated user settings used by application operations.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct UserSettings {
     task_status_colors: TaskStatusColors,
+    default_priority: PriorityTier,
+    default_sort_order: OrderSpec,
 }
 
 impl UserSettings {
     #[must_use]
-    pub const fn new(task_status_colors: TaskStatusColors) -> Self {
-        Self { task_status_colors }
+    pub const fn new(
+        task_status_colors: TaskStatusColors,
+        default_priority: PriorityTier,
+        default_sort_order: OrderSpec,
+    ) -> Self {
+        Self {
+            task_status_colors,
+            default_priority,
+            default_sort_order,
+        }
     }
 
     #[must_use]
     pub const fn task_status_colors(self) -> TaskStatusColors {
         self.task_status_colors
+    }
+
+    #[must_use]
+    pub const fn default_priority(self) -> PriorityTier {
+        self.default_priority
+    }
+
+    #[must_use]
+    pub const fn default_sort_order(self) -> OrderSpec {
+        self.default_sort_order
+    }
+}
+
+impl Default for UserSettings {
+    fn default() -> Self {
+        Self::new(
+            TaskStatusColors::default(),
+            PriorityTier::Medium,
+            OrderSpec::default(),
+        )
     }
 }
 
@@ -146,7 +178,11 @@ mod tests {
     fn user_settings_preserve_optional_task_status_color_overrides() {
         let active = RgbColor::from_str("#ff8700").unwrap();
         let colors = TaskStatusColors::new(Some(active), None, None);
-        let settings = UserSettings::new(colors);
+        let settings = UserSettings::new(
+            colors,
+            crate::task::PriorityTier::Medium,
+            crate::task::order::OrderSpec::default(),
+        );
 
         assert_eq!(settings.task_status_colors().active(), Some(active));
         assert_eq!(settings.task_status_colors().done(), None);

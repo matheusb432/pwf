@@ -98,6 +98,124 @@ async fn v1_get_user_settings_rejects_invalid_config_with_its_path_and_cause() -
     Ok(())
 }
 
+#[tokio::test]
+async fn list_defaults_apply_to_rpc_filters_order_and_pagination() -> anyhow::Result<()> {
+    let server = TestServer::start(TEST_TIMEOUT).await?;
+    let absent = server.add_project_and_task().await?;
+    let low = server
+        .add_task_with_priority("alpha", Some(pb::PriorityTier::Low))
+        .await?;
+    let highest = server
+        .add_task_with_priority("zeta", Some(pb::PriorityTier::Highest))
+        .await?;
+    let config_path = server.root.path().join("config.toml");
+    std::fs::write(
+        &config_path,
+        "default_priority = \"highest\"\ndefault_sort_order = \"priority\"\n",
+    )?;
+    let settings = server.client.settings().get_user_settings().await?;
+    assert_eq!(settings.default_priority, pb::PriorityTier::Highest as i32);
+    assert_eq!(
+        settings.default_sort_order,
+        Some(pb::OrderSpec {
+            field: pb::OrderField::Priority as i32,
+            direction: pb::OrderDirection::Desc as i32,
+        })
+    );
+    let mut request = task_list_request(None, Some(pb::PriorityTier::Highest));
+    request.page_size = 1;
+    let first = server.client.task().list_tasks(request.clone()).await?;
+    assert_eq!(first.tasks[0].id, highest);
+    request.page_token = first.next_page_token;
+    assert!(request.page_token.is_some());
+    let second = server.client.task().list_tasks(request.clone()).await?;
+    assert_eq!(second.tasks[0].id, absent);
+    assert_eq!(
+        second.tasks[0].priority,
+        Some(pb::PriorityTier::Highest as i32)
+    );
+    assert_eq!(second.next_page_token, None);
+    assert_eq!(task_data(&server, &absent).await?.priority, None);
+
+    std::fs::write(
+        &config_path,
+        "default_priority = \"low\"\ndefault_sort_order = \"priority\"\n",
+    )?;
+    let changed = server.client.task().list_tasks(request).await.unwrap_err();
+    assert_eq!(rpc_status(changed)?.code(), Code::InvalidArgument);
+    let fresh = server
+        .client
+        .task()
+        .list_tasks(task_list_request(None, Some(pb::PriorityTier::Highest)))
+        .await?;
+    assert_eq!(fresh.tasks.len(), 1);
+    assert_eq!(fresh.tasks[0].id, highest);
+
+    for (field, expected) in [
+        (
+            pb::OrderField::Title,
+            vec![low.clone(), absent.clone(), highest.clone()],
+        ),
+        (
+            pb::OrderField::Priority,
+            vec![low.clone(), absent.clone(), highest.clone()],
+        ),
+        (
+            pb::OrderField::Effort,
+            vec![highest.clone(), low.clone(), absent.clone()],
+        ),
+    ] {
+        let mut request = task_list_request(None, None);
+        request.order = Some(pb::OrderSpec {
+            field: field as i32,
+            direction: pb::OrderDirection::Asc as i32,
+        });
+        let response = server.client.task().list_tasks(request).await?;
+        assert_eq!(
+            response
+                .tasks
+                .into_iter()
+                .map(|task| task.id)
+                .collect::<Vec<_>>(),
+            expected
+        );
+    }
+    server.finish().await
+}
+
+#[tokio::test]
+async fn list_rejects_invalid_sort_fields_directions_and_configuration() -> anyhow::Result<()> {
+    let server = TestServer::start(TEST_TIMEOUT).await?;
+    server.add_project_and_task().await?;
+    let config_path = server.root.path().join("config.toml");
+    for order in [
+        pb::OrderSpec {
+            field: 999,
+            direction: 1,
+        },
+        pb::OrderSpec {
+            field: 1,
+            direction: 999,
+        },
+    ] {
+        let mut request = task_list_request(None, None);
+        request.order = Some(order);
+        let error = server.client.task().list_tasks(request).await.unwrap_err();
+        assert_eq!(rpc_status(error)?.code(), Code::InvalidArgument);
+    }
+    std::fs::write(&config_path, "default_sort_order = \"wrong\"\n")?;
+    let invalid = server
+        .client
+        .task()
+        .list_tasks(task_list_request(None, None))
+        .await
+        .unwrap_err();
+    let invalid = rpc_status(invalid)?;
+    assert_eq!(invalid.code(), Code::FailedPrecondition);
+    assert!(invalid.message().contains("default_sort_order"));
+    server.finish().await
+}
+
 impl TestServer {
     async fn add_project_and_task(&self) -> anyhow::Result<String> {
         let project_path = self.root.path().join("project");

@@ -3,7 +3,7 @@ use std::{fmt, str::FromStr};
 use thiserror::Error;
 
 /// Classifies a task's scheduling priority.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum PriorityTier {
     Low,
     Medium,

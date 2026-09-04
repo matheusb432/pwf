@@ -31,6 +31,12 @@ impl ListTasksRpcWorkload {
         workload: &WorkloadSpec,
     ) -> anyhow::Result<Self> {
         let server = TestServer::start(SERVER_SHUTDOWN_GRACE_PERIOD).await?;
+        if let Some(order) = workload.order() {
+            std::fs::write(
+                server.root.path().join("config.toml"),
+                format!("default_sort_order = \"{order}\"\n"),
+            )?;
+        }
         let prepared = prepare(
             server.root.path(),
             workload,

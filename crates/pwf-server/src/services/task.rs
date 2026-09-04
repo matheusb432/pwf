@@ -148,6 +148,7 @@ impl pb::task_service_server::TaskService for TaskGrpcService {
             &self.state.pool,
             &self.state.store,
             &self.state.task_list_snapshots,
+            &self.state.user_settings,
         )
         .await
         .map(proto::task::list_tasks_response)
@@ -412,6 +413,11 @@ fn get_task_dag_status(error: &GetTaskDagError) -> Status {
 fn list_tasks_status(error: ListTasksError) -> Status {
     match error {
         ListTasksError::ResolveProject(error) => resolve_project_status(&error),
+        ListTasksError::Settings(
+            pwf_application::ports::user_settings::UserSettingsLoadError::InvalidConfiguration(
+                error,
+            ),
+        ) => Status::failed_precondition(error.to_string()),
         ListTasksError::InvalidPageToken { .. } => Status::invalid_argument(error.to_string()),
         error => Status::internal(error.to_string()),
     }

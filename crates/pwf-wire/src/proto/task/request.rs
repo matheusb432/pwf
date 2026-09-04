@@ -7,6 +7,7 @@ use pwf_models::{
     task::{
         BlockedBy, CommitRanges, EffortTier, PriorityTier, Tag, TaskId, TaskPrompt, TaskReport,
         TaskSection, TaskStatus, TaskTags, TaskTitle,
+        order::{OrderDirection, OrderField, OrderSpec},
     },
 };
 use tonic::Status;
@@ -338,19 +339,22 @@ fn priority_tier(value: i32) -> Result<PriorityTier, Status> {
     }
 }
 
-fn order_spec(order: pb::OrderSpec) -> Result<task::OrderSpec, Status> {
-    Ok(task::OrderSpec {
+fn order_spec(order: pb::OrderSpec) -> Result<OrderSpec, Status> {
+    Ok(OrderSpec {
         field: match pb::OrderField::try_from(order.field).ok() {
-            Some(pb::OrderField::Created) => task::OrderField::Created,
-            Some(pb::OrderField::Id) => task::OrderField::Id,
-            Some(pb::OrderField::ProjectId) => task::OrderField::ProjectId,
+            Some(pb::OrderField::Created) => OrderField::Created,
+            Some(pb::OrderField::Id) => OrderField::Id,
+            Some(pb::OrderField::ProjectId) => OrderField::ProjectId,
+            Some(pb::OrderField::Priority) => OrderField::Priority,
+            Some(pb::OrderField::Effort) => OrderField::Effort,
+            Some(pb::OrderField::Title) => OrderField::Title,
             Some(pb::OrderField::Unspecified) | None => {
                 return Err(invalid("order.field", "must be specified"));
             }
         },
         direction: match pb::OrderDirection::try_from(order.direction).ok() {
-            Some(pb::OrderDirection::Asc) => task::OrderDirection::Asc,
-            Some(pb::OrderDirection::Desc) => task::OrderDirection::Desc,
+            Some(pb::OrderDirection::Asc) => OrderDirection::Asc,
+            Some(pb::OrderDirection::Desc) => OrderDirection::Desc,
             Some(pb::OrderDirection::Unspecified) | None => {
                 return Err(invalid("order.direction", "must be specified"));
             }

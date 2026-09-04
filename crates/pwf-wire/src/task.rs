@@ -11,7 +11,7 @@ use pwf_models::{
     revision::ContentRevision,
     task::{
         BlockedBy, CommitRanges, EffortTier, PriorityTier, TaskId, TaskPrompt, TaskReport,
-        TaskSection, TaskStatus, TaskTags, TaskTitle,
+        TaskSection, TaskStatus, TaskTags, TaskTitle, order::OrderSpec,
     },
 };
 
@@ -1102,37 +1102,6 @@ pub enum ListLayout {
     #[default]
     Flat,
     BySection,
-}
-
-/// Selects the primary list ordering field.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OrderField {
-    Created,
-    Id,
-    ProjectId,
-}
-
-/// Selects ascending or descending list ordering.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OrderDirection {
-    Asc,
-    Desc,
-}
-
-/// Combines the list ordering field and direction.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct OrderSpec {
-    pub field: OrderField,
-    pub direction: OrderDirection,
-}
-
-impl Default for OrderSpec {
-    fn default() -> Self {
-        Self {
-            field: OrderField::Created,
-            direction: OrderDirection::Desc,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

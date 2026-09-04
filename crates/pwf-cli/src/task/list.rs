@@ -47,10 +47,11 @@ pub struct Arguments {
     /// match.
     #[arg(long, allow_hyphen_values = true)]
     pub(crate) tag: Vec<TagInput>,
-    /// Sort key `field[:direction]`: field created|id|project-id, direction
-    /// asc|desc [default: created:desc, flat across every listed project].
-    /// `project-id` defaults to asc and groups by project, newest id first
-    /// within each project.
+    /// Sort key `field[:direction]`: created|id|project-id|priority|effort|title,
+    /// direction asc|desc. Overrides `default_sort_order` in config.toml (default: id).
+    /// Bare created/id/priority sort descending; project-id/effort/title ascending.
+    /// Missing effort sorts last. --all sorts within section groups.
+    /// project-id groups projects, newest ID first within each project.
     #[arg(short = 'o', long, value_name = "FIELD[:DIR]", value_parser = parse_order)]
     pub(crate) order: Option<OrderSpec>,
     /// Filter by one lifecycle status, or include every lifecycle status
@@ -139,32 +140,25 @@ fn list_scope(arguments: &Arguments) -> Option<list_tasks_request::Scope> {
 }
 
 /// Parses a `field[:direction]` sort key, using field-specific direction defaults.
-fn parse_order(value: &str) -> Result<OrderSpec, String> {
-    const USAGE: &str =
-        "use field[:direction] with field created|id|project-id and direction asc|desc";
-    let (field_token, direction_token) = match value.split_once(':') {
-        Some((field, direction)) => (field, Some(direction)),
-        None => (value, None),
-    };
-    let field = match field_token {
-        "created" => OrderField::Created,
-        "id" => OrderField::Id,
-        "project-id" => OrderField::ProjectId,
-        _ => return Err(USAGE.to_string()),
-    };
-    let direction = match direction_token {
-        None => match field {
-            OrderField::Created | OrderField::Id => OrderDirection::Desc,
-            OrderField::ProjectId => OrderDirection::Asc,
-            OrderField::Unspecified => return Err(USAGE.to_string()),
-        },
-        Some("asc") => OrderDirection::Asc,
-        Some("desc") => OrderDirection::Desc,
-        Some(_) => return Err(USAGE.to_string()),
-    };
+pub(super) fn parse_order(
+    value: &str,
+) -> Result<OrderSpec, pwf_models::task::order::OrderSpecError> {
+    use pwf_models::task::order;
+
+    let order: order::OrderSpec = value.parse()?;
     Ok(OrderSpec {
-        field: field as i32,
-        direction: direction as i32,
+        field: match order.field {
+            order::OrderField::Created => OrderField::Created,
+            order::OrderField::Id => OrderField::Id,
+            order::OrderField::ProjectId => OrderField::ProjectId,
+            order::OrderField::Priority => OrderField::Priority,
+            order::OrderField::Effort => OrderField::Effort,
+            order::OrderField::Title => OrderField::Title,
+        } as i32,
+        direction: match order.direction {
+            order::OrderDirection::Asc => OrderDirection::Asc,
+            order::OrderDirection::Desc => OrderDirection::Desc,
+        } as i32,
     })
 }
 

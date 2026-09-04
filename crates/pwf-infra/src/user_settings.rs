@@ -5,13 +5,21 @@ use std::{path::PathBuf, str::FromStr as _};
 use pwf_application::ports::user_settings::{
     UserSettingsConfigurationError, UserSettingsLoadError, UserSettingsReader,
 };
-use pwf_models::settings::{RgbColor, RgbColorError, TaskStatusColors, UserSettings};
+use pwf_models::{
+    settings::{RgbColor, RgbColorError, TaskStatusColors, UserSettings},
+    task::{
+        PriorityTier, PriorityTierError,
+        order::{OrderSpec, OrderSpecError},
+    },
+};
 use serde::Deserialize;
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 struct UserSettingsDocument {
     colors: TaskStatusColorsDocument,
+    default_priority: Option<String>,
+    default_sort_order: Option<String>,
 }
 
 impl UserSettingsDocument {
@@ -21,11 +29,27 @@ impl UserSettingsDocument {
     }
 
     fn into_settings(self) -> Result<UserSettings, UserSettingsDocumentError> {
-        Ok(UserSettings::new(TaskStatusColors::new(
-            configured_color("colors.active", self.colors.active)?,
-            configured_color("colors.done", self.colors.done)?,
-            configured_color("colors.cancelled", self.colors.cancelled)?,
-        )))
+        let default_priority = self
+            .default_priority
+            .map(|value| value.parse::<PriorityTier>())
+            .transpose()
+            .map_err(UserSettingsDocumentError::Priority)?
+            .unwrap_or(PriorityTier::Medium);
+        let default_sort_order = self
+            .default_sort_order
+            .map(|value| value.parse::<OrderSpec>())
+            .transpose()
+            .map_err(UserSettingsDocumentError::Order)?
+            .unwrap_or_default();
+        Ok(UserSettings::new(
+            TaskStatusColors::new(
+                configured_color("colors.active", self.colors.active)?,
+                configured_color("colors.done", self.colors.done)?,
+                configured_color("colors.cancelled", self.colors.cancelled)?,
+            ),
+            default_priority,
+            default_sort_order,
+        ))
     }
 }
 
@@ -51,6 +75,10 @@ fn configured_color(
 
 #[derive(Debug, thiserror::Error)]
 enum UserSettingsDocumentError {
+    #[error("`default_priority` is invalid: {0}")]
+    Priority(#[source] PriorityTierError),
+    #[error("`default_sort_order` is invalid: {0}")]
+    Order(#[source] OrderSpecError),
     #[error("user settings are not UTF-8: {0}")]
     Encoding(#[from] std::string::FromUtf8Error),
     #[error("user settings TOML schema is invalid: {0}")]
@@ -118,6 +146,33 @@ mod tests {
     use super::TomlSettingsStore;
 
     #[test]
+    fn list_settings_accept_every_cli_sort_field_and_direction() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.toml");
+        let store = TomlSettingsStore::new(Some(path.clone()));
+        for field in ["id", "created", "project-id", "priority", "effort", "title"] {
+            for suffix in ["", ":asc", ":desc"] {
+                fs::write(
+                    &path,
+                    format!(
+                        "default_priority = \"high\"\ndefault_sort_order = \"{field}{suffix}\"\n"
+                    ),
+                )
+                .unwrap();
+                let settings = store.load().unwrap();
+                assert_eq!(
+                    settings.default_priority(),
+                    pwf_models::task::PriorityTier::High
+                );
+                assert_eq!(
+                    settings.default_sort_order(),
+                    format!("{field}{suffix}").parse().unwrap()
+                );
+            }
+        }
+    }
+
+    #[test]
     fn partial_document_overrides_only_the_configured_status_color() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("config.toml");
@@ -149,6 +204,11 @@ mod tests {
 
         for source in [
             "unknown = true\n",
+            "default_priority = \"urgent\"\n",
+            "default_priority = 3\n",
+            "default_sort_order = \"title:sideways\"\n",
+            "default_sort_order = \"title:asc:desc\"\n",
+            "default_sort_order = false\n",
             "[colors]\nunknown = \"#ffffff\"\n",
             "[colors]\nactive = \"#fff\"\n",
             "[colors]\nactive = 42\n",

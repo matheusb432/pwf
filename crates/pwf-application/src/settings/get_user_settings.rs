@@ -40,11 +40,11 @@ mod tests {
 
     #[test]
     fn query_returns_the_complete_validated_settings_snapshot() {
-        let settings = UserSettings::new(TaskStatusColors::new(
-            Some(RgbColor::new(255, 135, 0)),
-            None,
-            None,
-        ));
+        let settings = UserSettings::new(
+            TaskStatusColors::new(Some(RgbColor::new(255, 135, 0)), None, None),
+            pwf_models::task::PriorityTier::Medium,
+            pwf_models::task::order::OrderSpec::default(),
+        );
         let reader = FixedUserSettingsReader(settings);
 
         assert_eq!(

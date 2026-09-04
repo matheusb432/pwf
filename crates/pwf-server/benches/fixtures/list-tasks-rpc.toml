@@ -12,3 +12,24 @@ name = "all-pages-1024-tasks"
 operation = "all-pages"
 project_count = 8
 task_count_per_project = 128
+
+[[workloads]]
+name = "priority-mixed-1024-tasks"
+operation = "all-pages"
+project_count = 8
+task_count_per_project = 128
+order = "priority"
+
+[[workloads]]
+name = "effort-mixed-1024-tasks"
+operation = "all-pages"
+project_count = 8
+task_count_per_project = 128
+order = "effort"
+
+[[workloads]]
+name = "title-mixed-1024-tasks"
+operation = "all-pages"
+project_count = 8
+task_count_per_project = 128
+order = "title"

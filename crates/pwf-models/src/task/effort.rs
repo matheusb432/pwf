@@ -3,7 +3,7 @@ use std::{fmt, str::FromStr};
 use thiserror::Error;
 
 /// Classifies the effort required to complete a task.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum EffortTier {
     Low,
     Medium,

@@ -1,7 +1,7 @@
 //! Converts normalized compatibility tokens into typed task leaves.
 
 use clap::Args;
-use pwf_client::pb::{OrderDirection, OrderField, OrderSpec};
+use pwf_client::pb::OrderSpec;
 use pwf_models::task::TaskSection;
 
 use super::{StatusChoice, list};
@@ -23,6 +23,9 @@ pub struct Arguments {
     /// Cap to N listed tasks, N >= 1 [default: 10, or unlimited under `--all`].
     #[arg(short = 'n', long, value_name = "N", value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..=100_000))]
     pub(crate) number: Option<usize>,
+    /// Sort key field[:direction], overriding `default_sort_order` in config.toml.
+    #[arg(short = 'o', long, value_name = "FIELD[:DIR]", value_parser = list::parse_order)]
+    pub(crate) order: Option<OrderSpec>,
     /// Filter by one lifecycle status, or include every lifecycle status
     /// [default: active, or all under `--all`].
     #[arg(long, value_enum)]
@@ -74,10 +77,7 @@ fn list_arguments(
         effort: None,
         priority: None,
         tag: Vec::new(),
-        order: Some(OrderSpec {
-            field: OrderField::ProjectId as i32,
-            direction: OrderDirection::Asc as i32,
-        }),
+        order: arguments.order,
         status: arguments.status,
     }
 }
@@ -95,6 +95,7 @@ mod tests {
             section: Some("Waiting".parse().unwrap()),
             all: false,
             number: Some(3),
+            order: None,
             status: Some(StatusChoice::All),
         }
     }
@@ -113,13 +114,7 @@ mod tests {
         assert_eq!(list.section.as_ref().map(AsRef::as_ref), Some("Waiting"));
         assert!(!list.all);
         assert_eq!(list.number, Some(3));
-        assert_eq!(
-            list.order,
-            Some(OrderSpec {
-                field: OrderField::ProjectId as i32,
-                direction: OrderDirection::Asc as i32,
-            })
-        );
+        assert_eq!(list.order, None);
         assert_eq!(list.status.unwrap().filter(), TaskStatusFilter::All);
     }
 

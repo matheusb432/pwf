@@ -3,14 +3,18 @@ mod snapshots;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use pwf_models::{
     project::Project,
-    task::{EffortTier, PriorityTier, TaskId, TaskSection, TaskTags},
+    settings::UserSettings,
+    task::{
+        EffortTier, PriorityTier, TaskId, TaskSection, TaskTags,
+        order::{OrderDirection, OrderField, OrderSpec},
+    },
 };
 use pwf_wire::{
     pagination::CursorPage,
     project::{ProjectStatusFilter, ResolveProject},
     task::{
-        ListDetail, ListLayout, ListScope, ListTasks, ListedTask, ListedTasks, OrderDirection,
-        OrderField, OrderSpec, StatusFilter, TaskPageSize, TaskPageToken,
+        ListDetail, ListLayout, ListScope, ListTasks, ListedTask, ListedTasks, StatusFilter,
+        TaskPageSize, TaskPageToken,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -18,7 +22,11 @@ pub use snapshots::ListTasksSnapshots;
 
 use super::{blocked_by, tags, task_view};
 use crate::{
-    ports::{project_task_location::ProjectTaskLocationClient, task_vault::TaskVault},
+    ports::{
+        project_task_location::ProjectTaskLocationClient,
+        task_vault::TaskVault,
+        user_settings::{UserSettingsLoadError, UserSettingsReader},
+    },
     project::{list_projects, resolve_project},
 };
 
@@ -49,6 +57,8 @@ impl From<tags::ParseTagsError> for TagParseError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ListTasksError {
+    #[error(transparent)]
+    Settings(#[from] UserSettingsLoadError),
     #[error("task read failed: {0}")]
     ReadStore(#[source] anyhow::Error),
     #[error("managed project task path read failed: {0}")]
@@ -81,6 +91,7 @@ struct ResolvedListTasks {
     priority: Option<PriorityTier>,
     tags: Option<TaskTags>,
     order: OrderSpec,
+    default_priority: PriorityTier,
     status_filter: StatusFilter,
     detail: ListDetail,
     page_size: Option<TaskPageSize>,
@@ -101,6 +112,7 @@ pub async fn execute(
     pool: &sqlx::SqlitePool,
     task_locations: &impl ProjectTaskLocationClient,
     snapshots: &ListTasksSnapshots,
+    settings_reader: &impl UserSettingsReader,
 ) -> Result<ListedTasks, ListTasksError> {
     let selected = match query.project_selector.as_ref() {
         Some(selector) => Some(
@@ -115,7 +127,8 @@ pub async fn execute(
         ),
         None => None,
     };
-    let query = resolve_query(query, selected);
+    let settings = settings_reader.load()?;
+    let query = resolve_query(query, selected, settings);
     let binding = page_binding(&query);
     let cursor = query
         .page_token
@@ -201,6 +214,9 @@ fn materialize_tasks(
     projects: &[Project],
 ) -> Result<Vec<ListedTask>, ListTasksError> {
     let mut tasks = collect_list_tasks(query, store, projects)?;
+    for task in &mut tasks {
+        task.priority = Some(task.priority.unwrap_or(query.default_priority));
+    }
     tasks.retain(|task| {
         scope_includes(&query.scope, task.section.as_ref())
             && effort_matches(task, query.effort)
@@ -258,13 +274,17 @@ fn retain_matching_tags(
     Ok(matched)
 }
 
-fn resolve_query(query: &ListTasks, project: Option<Project>) -> ResolvedListTasks {
+fn resolve_query(
+    query: &ListTasks,
+    project: Option<Project>,
+    settings: UserSettings,
+) -> ResolvedListTasks {
     let scope = query.scope.clone();
     let cap = query
         .number
         .map(pwf_wire::task::TaskListLimit::get)
         .or((scope != ListScope::All).then_some(10));
-    let order = query.order.unwrap_or_default();
+    let order = query.order.unwrap_or(settings.default_sort_order());
     let status_filter = query.status.unwrap_or(if scope == ListScope::All {
         StatusFilter::All
     } else {
@@ -279,6 +299,7 @@ fn resolve_query(query: &ListTasks, project: Option<Project>) -> ResolvedListTas
         priority: query.priority,
         tags: query.tags.clone(),
         order,
+        default_priority: settings.default_priority(),
         status_filter,
         detail: query.detail,
         page_size: query.page_size,
@@ -332,6 +353,11 @@ fn page_binding(query: &ResolvedListTasks) -> String {
         "effort",
         query.effort.as_ref().map(AsRef::as_ref),
     );
+    digest_field(
+        &mut hasher,
+        "default_priority",
+        query.default_priority.as_ref(),
+    );
     digest_optional_field(
         &mut hasher,
         "priority",
@@ -342,15 +368,11 @@ fn page_binding(query: &ResolvedListTasks) -> String {
             digest_field(&mut hasher, "tag", tag.as_ref());
         }
     }
-    digest_field(
-        &mut hasher,
-        "order_field",
-        order_field_name(query.order.field),
-    );
+    digest_field(&mut hasher, "order_field", query.order.field.as_ref());
     digest_field(
         &mut hasher,
         "order_direction",
-        order_direction_name(query.order.direction),
+        query.order.direction.as_ref(),
     );
     digest_field(
         &mut hasher,
@@ -469,21 +491,6 @@ fn list_scope_name(scope: &ListScope) -> String {
     }
 }
 
-fn order_field_name(field: OrderField) -> &'static str {
-    match field {
-        OrderField::Created => "created",
-        OrderField::Id => "id",
-        OrderField::ProjectId => "project_id",
-    }
-}
-
-fn order_direction_name(direction: OrderDirection) -> &'static str {
-    match direction {
-        OrderDirection::Asc => "asc",
-        OrderDirection::Desc => "desc",
-    }
-}
-
 fn status_filter_name(status: StatusFilter) -> &'static str {
     match status {
         StatusFilter::Exact(pwf_models::task::TaskStatus::Active) => "active",
@@ -596,6 +603,21 @@ fn task_order_cmp(order: OrderSpec, a: &ListedTask, b: &ListedTask) -> std::cmp:
                 OrderDirection::Desc => ascending.reverse(),
             }
         }
+        OrderField::Priority => directed_cmp(order.direction, a.priority.cmp(&b.priority))
+            .then_with(|| id_desc_cmp(a, b)),
+        OrderField::Title => {
+            directed_cmp(order.direction, a.heading.as_ref().cmp(b.heading.as_ref()))
+                .then_with(|| id_desc_cmp(a, b))
+        }
+        OrderField::Effort => {
+            let effort = match (a.effort, b.effort) {
+                (Some(a), Some(b)) => directed_cmp(order.direction, a.cmp(&b)),
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, None) => std::cmp::Ordering::Equal,
+            };
+            effort.then_with(|| id_desc_cmp(a, b))
+        }
         OrderField::ProjectId => {
             let project_cmp = match order.direction {
                 OrderDirection::Asc => a.project.cmp(&b.project),
@@ -605,6 +627,19 @@ fn task_order_cmp(order: OrderSpec, a: &ListedTask, b: &ListedTask) -> std::cmp:
                 .then_with(|| b.id.number().cmp(&a.id.number()))
                 .then_with(|| b.id.cmp(&a.id))
         }
+    }
+}
+
+fn id_desc_cmp(a: &ListedTask, b: &ListedTask) -> std::cmp::Ordering {
+    b.id.number()
+        .cmp(&a.id.number())
+        .then_with(|| b.id.cmp(&a.id))
+}
+
+fn directed_cmp(direction: OrderDirection, ascending: std::cmp::Ordering) -> std::cmp::Ordering {
+    match direction {
+        OrderDirection::Asc => ascending,
+        OrderDirection::Desc => ascending.reverse(),
     }
 }
 
@@ -661,12 +696,16 @@ mod tests {
 
     use pwf_models::{
         project::{Project, ProjectName},
-        task::{EffortTier, PriorityTier, TaskId, TaskStatus, TaskTags},
+        settings::UserSettings,
+        task::{
+            EffortTier, PriorityTier, TaskId, TaskStatus, TaskTags,
+            order::{OrderDirection, OrderField, OrderSpec},
+        },
     };
     use pwf_wire::task::{
         BlockedByResolution, BlockedByStatus, ListDetail, ListLayout, ListScope, ListedTasks,
-        OrderDirection, OrderField, OrderSpec, ProjectTaskPath, RawTaskTags, StatusFilter,
-        TaskIndexPath, TaskListLimit, TaskNotePath, TaskPageSize,
+        ProjectTaskPath, RawTaskTags, StatusFilter, TaskIndexPath, TaskListLimit, TaskNotePath,
+        TaskPageSize,
     };
 
     use super::{ListTasks, ListTasksError};
@@ -674,6 +713,7 @@ mod tests {
         ports::{
             project_task_location::ProjectTaskLocationClient,
             task_vault::{IndexPlacement, Materialization, TaskRecord},
+            user_settings::{UserSettingsLoadError, UserSettingsReader},
         },
         task::list_tasks,
         testing::{
@@ -681,6 +721,15 @@ mod tests {
             task_timestamp,
         },
     };
+
+    #[derive(Clone, Default)]
+    struct FixedSettings(UserSettings);
+
+    impl UserSettingsReader for FixedSettings {
+        fn load(&self) -> Result<UserSettings, UserSettingsLoadError> {
+            Ok(self.0)
+        }
+    }
 
     impl ProjectTaskLocationClient for InMemoryStore {
         type Error = Infallible;
@@ -789,6 +838,7 @@ mod tests {
             &pool,
             &store,
             &list_tasks::ListTasksSnapshots::default(),
+            &FixedSettings::default(),
         )
         .await
         .unwrap();
@@ -840,7 +890,15 @@ mod tests {
             )
             .await;
         }
-        list_tasks::execute(query, store, &pool, store, snapshots).await
+        list_tasks::execute(
+            query,
+            store,
+            &pool,
+            store,
+            snapshots,
+            &FixedSettings::default(),
+        )
+        .await
     }
 
     fn sectioned(id: &str, section: &str) -> TaskRecord {
@@ -1542,7 +1600,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn created_desc_is_default_and_flat_across_projects() {
+    async fn id_desc_is_default_and_flat_across_projects() {
         let (store, registry) = store_and_registry(&[
             in_project("foo", dated_task("FOO-0001", "2026-01-01")),
             in_project("companion-project", dated_task("AUX-0001", "2026-03-01")),
@@ -1550,7 +1608,7 @@ mod tests {
 
         let got = run(&store, &registry, &default_query()).await.unwrap();
 
-        assert_eq!(listed_ids(&got), ["AUX-0001", "FOO-0001"]);
+        assert_eq!(listed_ids(&got), ["FOO-0001", "AUX-0001"]);
     }
 
     #[tokio::test]
@@ -1688,5 +1746,95 @@ mod tests {
             got.project_task_path,
             Some(ProjectTaskPath::new("/tasks/foo".into()))
         );
+    }
+
+    #[tokio::test]
+    async fn new_sorts_use_tier_order_title_text_and_descending_id_ties() {
+        let records = [
+            ("FOO-0001", "Beta", Some("high"), Some("high")),
+            ("FOO-0002", "alpha", Some("highest"), Some("low")),
+            ("FOO-0003", "Alpha", None, None),
+            ("FOO-0004", "zeta", Some("low"), Some("highest")),
+            ("FOO-0005", "beta", Some("high"), Some("medium")),
+            ("FOO-0006", "omega", Some("medium"), None),
+        ]
+        .into_iter()
+        .map(|(id, title, priority, effort)| TaskRecord {
+            title: title.to_string(),
+            priority: priority.map(str::to_string),
+            effort: effort.map(str::to_string),
+            ..record(id)
+        })
+        .collect();
+        let (store, registry) = foo_store(records);
+        for (order, numbers) in [
+            ("priority", [2, 5, 1, 6, 3, 4]),
+            ("priority:asc", [4, 6, 3, 5, 1, 2]),
+            ("effort", [2, 5, 1, 4, 6, 3]),
+            ("effort:desc", [4, 1, 5, 2, 6, 3]),
+            ("title", [3, 2, 5, 1, 6, 4]),
+            ("title:desc", [4, 6, 5, 1, 3, 2]),
+        ] {
+            let result = run(
+                &store,
+                &registry,
+                &ListTasks {
+                    order: Some(order.parse().unwrap()),
+                    ..default_query()
+                },
+            )
+            .await
+            .unwrap();
+            let expected: Vec<_> = numbers.map(|number| format!("FOO-{number:04}")).into();
+            assert_eq!(listed_ids(&result), expected, "{order}");
+        }
+        let result = run(
+            &store,
+            &registry,
+            &ListTasks {
+                priority: Some(PriorityTier::Medium),
+                ..default_query()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(listed_ids(&result), ["FOO-0006", "FOO-0003"]);
+        assert!(
+            result
+                .tasks
+                .iter()
+                .all(|task| task.priority == Some(PriorityTier::Medium))
+        );
+    }
+
+    #[tokio::test]
+    async fn all_keeps_sections_before_priority_and_cap() {
+        let (store, registry) = foo_store(vec![
+            TaskRecord {
+                priority: Some("low".to_string()),
+                ..sectioned("FOO-0001", "alpha")
+            },
+            TaskRecord {
+                priority: Some("highest".to_string()),
+                ..sectioned("FOO-0002", "zeta")
+            },
+            TaskRecord {
+                priority: Some("high".to_string()),
+                ..sectioned("FOO-0003", "alpha")
+            },
+        ]);
+        let mut query = ListTasks {
+            scope: ListScope::All,
+            order: Some("priority".parse().unwrap()),
+            ..default_query()
+        };
+        assert_eq!(
+            listed_ids(&run(&store, &registry, &query).await.unwrap()),
+            ["FOO-0003", "FOO-0001", "FOO-0002"]
+        );
+        query.number = TaskListLimit::try_new(1).ok();
+        let capped = run(&store, &registry, &query).await.unwrap();
+        assert_eq!(listed_ids(&capped), ["FOO-0003"]);
+        assert_eq!(capped.hidden, 2);
     }
 }

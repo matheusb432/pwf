@@ -56,6 +56,8 @@ message TaskStatusColors {
 
 message GetUserSettingsResponse {
   TaskStatusColors task_status_colors = 1;
+  PriorityTier default_priority = 2;
+  OrderSpec default_sort_order = 3;
 }
 
 enum ProjectStatusFilter {
@@ -429,6 +431,9 @@ enum OrderField {
   ORDER_FIELD_CREATED = 1;
   ORDER_FIELD_ID = 2;
   ORDER_FIELD_PROJECT_ID = 3;
+  ORDER_FIELD_PRIORITY = 4;
+  ORDER_FIELD_EFFORT = 5;
+  ORDER_FIELD_TITLE = 6;
 }
 
 enum OrderDirection {

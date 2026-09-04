@@ -9,7 +9,7 @@ use std::{
 use anyhow::{Context as _, ensure};
 use pwf_models::{
     project::{ProjectId, ProjectName},
-    task::{TaskId, TaskStatus},
+    task::{TaskId, TaskStatus, order::OrderSpec},
 };
 use pwf_wire::task::{TaskListLimit, TaskPageSize};
 use serde::Deserialize;
@@ -40,6 +40,7 @@ struct RawWorkloadSpec {
     operation: WorkloadOperation,
     project_count: usize,
     task_count_per_project: usize,
+    order: Option<String>,
 }
 
 pub struct FixtureManifest {
@@ -104,9 +105,14 @@ pub struct WorkloadSpec {
     project_count: NonZeroUsize,
     task_count_per_project: NonZeroUsize,
     task_count_total: usize,
+    order: Option<OrderSpec>,
 }
 
 impl WorkloadSpec {
+    pub const fn order(&self) -> Option<OrderSpec> {
+        self.order
+    }
+
     pub fn name(&self) -> &str {
         &self.name
     }
@@ -166,6 +172,7 @@ impl TryFrom<RawWorkloadSpec> for WorkloadSpec {
         }
 
         Ok(Self {
+            order: raw.order.map(|order| order.parse()).transpose()?,
             name: raw.name,
             project_count,
             task_count_per_project,
@@ -201,7 +208,7 @@ pub fn prepare(
             root,
             &vault_path,
             project_index,
-            workload.task_count_per_project(),
+            workload,
             task_body_line_count,
             &mut task_ids_expected,
         )?;
@@ -224,10 +231,11 @@ fn prepare_project(
     root: &Path,
     vault_path: &Path,
     project_index: usize,
-    task_count: usize,
+    workload: &WorkloadSpec,
     task_body_line_count: usize,
     task_ids_expected: &mut BTreeSet<String>,
 ) -> anyhow::Result<PreparedProject> {
+    let task_count = workload.task_count_per_project();
     let id = project_id(project_index)?;
     let title = ProjectName::try_new(format!("benchmark-project-{project_index:02}"))?;
     let source_path = root.join("projects").join(title.as_ref());
@@ -256,10 +264,11 @@ fn prepare_project(
             index_source,
             "- [{checkbox}] [[{task_id}|benchmark task {task_number:04}]]"
         );
-        fs::write(
-            tasks_path.join(format!("{task_id}.md")),
-            task_source(&task_id, &title, task_number, status, task_body_line_count),
-        )?;
+        let mut source = task_source(&task_id, &title, task_number, status, task_body_line_count);
+        if workload.order().is_some() {
+            source = mixed_task_source(&source, task_number, task_count);
+        }
+        fs::write(tasks_path.join(format!("{task_id}.md")), source)?;
         ensure!(
             task_ids_expected.insert(task_id.into_string()),
             "fixture generated a duplicate task ID"
@@ -338,4 +347,28 @@ fn valid_workload_name(name: &str) -> bool {
         && name
             .bytes()
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+}
+
+fn mixed_task_source(source: &str, task_number: usize, task_count: usize) -> String {
+    let priority = match task_number % 5 {
+        0 => "",
+        1 => "priority: low\n",
+        2 => "priority: medium\n",
+        3 => "priority: high\n",
+        _ => "priority: highest\n",
+    };
+    let effort = match (task_number / 5) % 5 {
+        0 => "",
+        1 => "effort: low\n",
+        2 => "effort: medium\n",
+        3 => "effort: high\n",
+        _ => "effort: highest\n",
+    };
+    source
+        .replace("priority: high\n", priority)
+        .replace("effort: medium\n", effort)
+        .replace(
+            &format!("title: benchmark task {task_number:04}"),
+            &format!("title: varied task {:04}", task_number * 17 % task_count),
+        )
 }

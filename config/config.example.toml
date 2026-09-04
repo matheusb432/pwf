@@ -1,3 +1,7 @@
+default_priority = "medium" # low | medium | high | highest
+# Accepts field[:asc|desc]. Bare created/id/priority descend; project-id/effort/title ascend.
+default_sort_order = "id" # created | id | project-id | priority | effort | title
+
 [colors]
 active = "#FF5C00"
 done = "#008000"
