@@ -6,6 +6,7 @@ use pwf_models::{
     task::{EffortTier, PriorityTier, TaskId, TaskSection, TaskTags},
 };
 use pwf_wire::{
+    pagination::CursorPage,
     project::{ProjectStatusFilter, ResolveProject},
     task::{
         ListDetail, ListLayout, ListScope, ListTasks, ListedTask, ListedTasks, OrderDirection,
@@ -86,6 +87,13 @@ struct ResolvedListTasks {
     page_token: Option<TaskPageToken>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct TaskListPage {
+    page: CursorPage<ListedTask, TaskPageToken>,
+    /// Tasks excluded by the list cap before pagination.
+    hidden: usize,
+}
+
 #[cqrsy::query]
 pub async fn execute(
     query: &ListTasks,
@@ -130,12 +138,12 @@ pub async fn execute(
         .map(|project| task_locations.project_task_path(project))
         .transpose()
         .map_err(|source| ListTasksError::ReadProjectTaskPath(anyhow::Error::new(source)))?;
-    let (mut tasks, hidden, next_page_token) =
+    let mut result =
         collect_page(&query, cursor.as_ref(), &binding, store, pool, snapshots).await?;
 
     if query.detail.includes_relationship_statuses() {
         populate_relationship_statuses(
-            &mut tasks,
+            &mut result.page.items,
             store,
             query.project.as_ref(),
             &relationship_projects,
@@ -143,14 +151,14 @@ pub async fn execute(
     }
 
     Ok(ListedTasks {
-        tasks,
-        hidden,
+        tasks: result.page.items,
+        hidden: result.hidden,
         project: query.project.map(|project| project.title),
         project_task_path,
         status_filter: query.status_filter,
         layout: list_layout(&query.scope),
         detail: query.detail,
-        next_page_token,
+        next_page_token: result.page.next_key,
     })
 }
 
@@ -161,7 +169,7 @@ async fn collect_page(
     store: &impl TaskVault,
     pool: &sqlx::SqlitePool,
     snapshots: &ListTasksSnapshots,
-) -> Result<(Vec<ListedTask>, usize, Option<TaskPageToken>), ListTasksError> {
+) -> Result<TaskListPage, ListTasksError> {
     if let Some(cursor) = cursor.filter(|cursor| cursor.snapshot.is_some()) {
         return snapshots.page(cursor, query.page_size);
     }
@@ -177,13 +185,13 @@ async fn collect_page(
     if cursor.is_none() {
         snapshots.first_page(tasks, hidden, query.page_size, binding)
     } else {
-        let (tasks, token) = apply_page(
+        let page = apply_page(
             tasks,
             query.page_size,
             cursor.map(|cursor| &cursor.after),
             binding,
         )?;
-        Ok((tasks, hidden, token))
+        Ok(TaskListPage { page, hidden })
     }
 }
 
@@ -380,9 +388,12 @@ fn apply_page(
     page_size: Option<TaskPageSize>,
     after: Option<&TaskId>,
     binding: &str,
-) -> Result<(Vec<ListedTask>, Option<TaskPageToken>), ListTasksError> {
+) -> Result<CursorPage<ListedTask, TaskPageToken>, ListTasksError> {
     let Some(page_size) = page_size else {
-        return Ok((tasks, None));
+        return Ok(CursorPage {
+            items: tasks,
+            next_key: None,
+        });
     };
     let start = after.map_or(Ok(0), |after| {
         tasks
@@ -402,10 +413,10 @@ fn apply_page(
     } else {
         None
     };
-    Ok((
-        tasks.into_iter().skip(start).take(end - start).collect(),
-        next_page_token,
-    ))
+    Ok(CursorPage {
+        items: tasks.into_iter().skip(start).take(end - start).collect(),
+        next_key: next_page_token,
+    })
 }
 
 fn encode_page_token(

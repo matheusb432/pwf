@@ -6,10 +6,13 @@ use std::{
     time::{Duration, Instant},
 };
 
-use pwf_wire::task::{BlockedByIssue, TaskIssue};
+use pwf_wire::{
+    pagination::CursorPage,
+    task::{BlockedByIssue, TaskIssue},
+};
 
 use super::{
-    ListTasksError, ListedTask, PageCursor, TaskPageSize, TaskPageToken, apply_page,
+    ListTasksError, ListedTask, PageCursor, TaskListPage, TaskPageSize, apply_page,
     encode_page_token,
 };
 
@@ -46,14 +49,20 @@ impl ListTasksSnapshots {
         hidden: usize,
         page_size: Option<TaskPageSize>,
         binding: &str,
-    ) -> Result<(Vec<ListedTask>, usize, Option<TaskPageToken>), ListTasksError> {
+    ) -> Result<TaskListPage, ListTasksError> {
         let Some(page_size) = page_size.filter(|size| tasks.len() > size.get()) else {
-            return Ok((tasks, hidden, None));
+            return Ok(TaskListPage {
+                page: CursorPage {
+                    items: tasks,
+                    next_key: None,
+                },
+                hidden,
+            });
         };
         let bytes = snapshot_bytes(&tasks);
         if bytes > SNAPSHOT_BYTES_MAX {
-            let (tasks, token) = apply_page(tasks, Some(page_size), None, binding)?;
-            return Ok((tasks, hidden, token));
+            let page = apply_page(tasks, Some(page_size), None, binding)?;
+            return Ok(TaskListPage { page, hidden });
         }
         let mut state = self
             .state
@@ -86,7 +95,7 @@ impl ListTasksSnapshots {
         &self,
         cursor: &PageCursor,
         page_size: Option<TaskPageSize>,
-    ) -> Result<(Vec<ListedTask>, usize, Option<TaskPageToken>), ListTasksError> {
+    ) -> Result<TaskListPage, ListTasksError> {
         let mut state = self
             .state
             .lock()
@@ -127,11 +136,7 @@ impl SnapshotState {
 }
 
 impl Snapshot {
-    fn page(
-        &self,
-        start: usize,
-        page_size: TaskPageSize,
-    ) -> Result<(Vec<ListedTask>, usize, Option<TaskPageToken>), ListTasksError> {
+    fn page(&self, start: usize, page_size: TaskPageSize) -> Result<TaskListPage, ListTasksError> {
         let end = start.saturating_add(page_size.get()).min(self.tasks.len());
         let token = if end < self.tasks.len() {
             Some(encode_page_token(
@@ -142,7 +147,13 @@ impl Snapshot {
         } else {
             None
         };
-        Ok((self.tasks[start..end].to_vec(), self.hidden, token))
+        Ok(TaskListPage {
+            page: CursorPage {
+                items: self.tasks[start..end].to_vec(),
+                next_key: token,
+            },
+            hidden: self.hidden,
+        })
     }
 }
 
@@ -217,10 +228,10 @@ mod tests {
     }
 
     fn first_cursor(snapshots: &ListTasksSnapshots, tasks: Vec<ListedTask>) -> PageCursor {
-        let (_, _, token) = snapshots
+        let result = snapshots
             .first_page(tasks, 7, Some(TaskPageSize::try_new(1).unwrap()), "query")
             .unwrap();
-        super::super::decode_page_token(&token.unwrap()).unwrap()
+        super::super::decode_page_token(&result.page.next_key.unwrap()).unwrap()
     }
 
     #[test]
@@ -229,9 +240,9 @@ mod tests {
         let cursor = first_cursor(&snapshots, tasks());
         let size = Some(TaskPageSize::try_new(1).unwrap());
         let first = snapshots.page(&cursor, size).unwrap();
-        assert_eq!(first.0[0].id.as_ref(), "FOO-0002");
-        assert_eq!(first.1, 7);
-        assert_eq!(first.2, None);
+        assert_eq!(first.page.items[0].id.as_ref(), "FOO-0002");
+        assert_eq!(first.hidden, 7);
+        assert_eq!(first.page.next_key, None);
         assert_eq!(snapshots.page(&cursor, size).unwrap(), first);
     }
 
