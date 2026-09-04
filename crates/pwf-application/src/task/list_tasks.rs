@@ -1,3 +1,5 @@
+mod snapshots;
+
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use pwf_models::{
     project::Project,
@@ -6,18 +8,16 @@ use pwf_models::{
 use pwf_wire::{
     project::{ProjectStatusFilter, ResolveProject},
     task::{
-        ListDetail, ListLayout, ListScope, ListTasks, ListedTasks, OrderDirection, OrderField,
-        OrderSpec, StatusFilter, TaskPageSize, TaskPageToken, TaskView,
+        ListDetail, ListLayout, ListScope, ListTasks, ListedTask, ListedTasks, OrderDirection,
+        OrderField, OrderSpec, StatusFilter, TaskPageSize, TaskPageToken,
     },
 };
 use serde::{Deserialize, Serialize};
+pub use snapshots::ListTasksSnapshots;
 
 use super::{blocked_by, tags, task_view};
 use crate::{
-    ports::{
-        project_task_location::ProjectTaskLocationClient,
-        task_vault::{TaskRecord, TaskVault},
-    },
+    ports::{project_task_location::ProjectTaskLocationClient, task_vault::TaskVault},
     project::{list_projects, resolve_project},
 };
 
@@ -68,6 +68,8 @@ pub enum ListTasksError {
     InvalidPageToken { reason: &'static str },
     #[error(transparent)]
     EncodePageToken(anyhow::Error),
+    #[error("task-list snapshot storage is unavailable")]
+    SnapshotUnavailable,
 }
 
 struct ResolvedListTasks {
@@ -90,6 +92,7 @@ pub async fn execute(
     store: &impl TaskVault,
     pool: &sqlx::SqlitePool,
     task_locations: &impl ProjectTaskLocationClient,
+    snapshots: &ListTasksSnapshots,
 ) -> Result<ListedTasks, ListTasksError> {
     let selected = match query.project_selector.as_ref() {
         Some(selector) => Some(
@@ -104,20 +107,16 @@ pub async fn execute(
         ),
         None => None,
     };
-    let selected_records = selected
+    let query = resolve_query(query, selected);
+    let binding = page_binding(&query);
+    let cursor = query
+        .page_token
         .as_ref()
-        .map(|project| {
-            store
-                .list_tasks(project)
-                .map_err(|error| ListTasksError::ReadStore(anyhow::Error::new(error)))
-        })
+        .map(decode_page_token)
         .transpose()?;
-    let task_projects = match selected.as_ref() {
-        Some(_) => Vec::new(),
-        None => list_projects::execute(ProjectStatusFilter::ActiveOnly, pool)
-            .await
-            .map_err(|error| ListTasksError::QueryProject(anyhow::Error::new(error)))?,
-    };
+    if let Some(cursor) = &cursor {
+        validate_page_cursor(cursor, &binding)?;
+    }
     let relationship_projects = if query.detail.includes_relationship_statuses() {
         list_projects::execute(ProjectStatusFilter::IncludingPaused, pool)
             .await
@@ -125,31 +124,14 @@ pub async fn execute(
     } else {
         Vec::new()
     };
-    let query = resolve_query(query, selected);
     let project_task_path = query
         .project
         .as_ref()
         .map(|project| task_locations.project_task_path(project))
         .transpose()
         .map_err(|source| ListTasksError::ReadProjectTaskPath(anyhow::Error::new(source)))?;
-    let mut tasks = collect_list_tasks(&query, store, &task_projects, selected_records.as_deref())?;
-
-    tasks.retain(|task| scope_includes(&query.scope, task.section.as_ref()));
-    tasks.retain(|task| effort_matches(task, query.effort));
-    tasks.retain(|task| priority_matches(task, query.priority));
-
-    tasks = retain_matching_tags(tasks, query.tags.as_ref())?;
-
-    if list_layout(&query.scope) == ListLayout::BySection {
-        sort_by_group_then_order(&mut tasks, query.order);
-    } else {
-        sort_by_order(&mut tasks, query.order);
-    }
-
-    let (tasks, hidden) = apply_cap(tasks, query.cap);
-    let binding = page_binding(&query);
-    let (mut tasks, next_page_token) =
-        apply_page(tasks, query.page_size, query.page_token.as_ref(), &binding)?;
+    let (mut tasks, hidden, next_page_token) =
+        collect_page(&query, cursor.as_ref(), &binding, store, pool, snapshots).await?;
 
     if query.detail.includes_relationship_statuses() {
         populate_relationship_statuses(
@@ -172,23 +154,79 @@ pub async fn execute(
     })
 }
 
+async fn collect_page(
+    query: &ResolvedListTasks,
+    cursor: Option<&PageCursor>,
+    binding: &str,
+    store: &impl TaskVault,
+    pool: &sqlx::SqlitePool,
+    snapshots: &ListTasksSnapshots,
+) -> Result<(Vec<ListedTask>, usize, Option<TaskPageToken>), ListTasksError> {
+    if let Some(cursor) = cursor.filter(|cursor| cursor.snapshot.is_some()) {
+        return snapshots.page(cursor, query.page_size);
+    }
+    let projects = if query.project.is_some() {
+        Vec::new()
+    } else {
+        list_projects::execute(ProjectStatusFilter::ActiveOnly, pool)
+            .await
+            .map_err(|error| ListTasksError::QueryProject(anyhow::Error::new(error)))?
+    };
+    let tasks = materialize_tasks(query, store, &projects)?;
+    let (tasks, hidden) = apply_cap(tasks, query.cap);
+    if cursor.is_none() {
+        snapshots.first_page(tasks, hidden, query.page_size, binding)
+    } else {
+        let (tasks, token) = apply_page(
+            tasks,
+            query.page_size,
+            cursor.map(|cursor| &cursor.after),
+            binding,
+        )?;
+        Ok((tasks, hidden, token))
+    }
+}
+
+fn materialize_tasks(
+    query: &ResolvedListTasks,
+    store: &impl TaskVault,
+    projects: &[Project],
+) -> Result<Vec<ListedTask>, ListTasksError> {
+    let mut tasks = collect_list_tasks(query, store, projects)?;
+    tasks.retain(|task| {
+        scope_includes(&query.scope, task.section.as_ref())
+            && effort_matches(task, query.effort)
+            && priority_matches(task, query.priority)
+    });
+    tasks = retain_matching_tags(tasks, query.tags.as_ref())?;
+    if list_layout(&query.scope) == ListLayout::BySection {
+        sort_by_group_then_order(&mut tasks, query.order);
+    } else {
+        sort_by_order(&mut tasks, query.order);
+    }
+    Ok(tasks)
+}
+
 fn populate_relationship_statuses(
-    tasks: &mut [TaskView],
+    tasks: &mut [ListedTask],
     store: &impl TaskVault,
     selected_project: Option<&Project>,
     projects: &[Project],
 ) {
     for task in tasks {
-        task.blocked_by_statuses = task.blocked_by.as_ref().map_or_else(Vec::new, |value| {
+        let Some(details) = task.details.as_mut() else {
+            continue;
+        };
+        details.blocked_by_statuses = details.blocked_by.as_ref().map_or_else(Vec::new, |value| {
             blocked_by::statuses(value, store, selected_project, projects)
         });
     }
 }
 
 fn retain_matching_tags(
-    tasks: Vec<TaskView>,
+    tasks: Vec<ListedTask>,
     requested: Option<&TaskTags>,
-) -> Result<Vec<TaskView>, ListTasksError> {
+) -> Result<Vec<ListedTask>, ListTasksError> {
     let Some(requested) = requested else {
         return Ok(tasks);
     };
@@ -240,11 +278,29 @@ fn resolve_query(query: &ListTasks, project: Option<Project>) -> ResolvedListTas
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug)]
 struct PageCursor {
+    binding: String,
+    after: TaskId,
+    snapshot: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct EncodedPageCursor {
     version: u8,
     binding: String,
     after: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    snapshot: Option<String>,
+}
+
+fn validate_page_cursor(cursor: &PageCursor, binding: &str) -> Result<(), ListTasksError> {
+    if cursor.binding != binding {
+        return Err(ListTasksError::InvalidPageToken {
+            reason: "filters or ordering changed",
+        });
+    }
+    Ok(())
 }
 
 fn page_binding(query: &ResolvedListTasks) -> String {
@@ -320,29 +376,18 @@ fn digest_length(length: usize) -> [u8; 8] {
 }
 
 fn apply_page(
-    tasks: Vec<TaskView>,
+    tasks: Vec<ListedTask>,
     page_size: Option<TaskPageSize>,
-    page_token: Option<&TaskPageToken>,
+    after: Option<&TaskId>,
     binding: &str,
-) -> Result<(Vec<TaskView>, Option<TaskPageToken>), ListTasksError> {
+) -> Result<(Vec<ListedTask>, Option<TaskPageToken>), ListTasksError> {
     let Some(page_size) = page_size else {
         return Ok((tasks, None));
     };
-    let start = page_token.map_or(Ok(0), |token| {
-        let cursor = decode_page_token(token)?;
-        if cursor.version != 1 {
-            return Err(ListTasksError::InvalidPageToken {
-                reason: "unsupported version",
-            });
-        }
-        if cursor.binding != binding {
-            return Err(ListTasksError::InvalidPageToken {
-                reason: "filters or ordering changed",
-            });
-        }
+    let start = after.map_or(Ok(0), |after| {
         tasks
             .iter()
-            .position(|task| task.id.as_ref() == cursor.after)
+            .position(|task| task.id == *after)
             .map(|index| index + 1)
             .ok_or(ListTasksError::InvalidPageToken {
                 reason: "cursor task is no longer present",
@@ -352,7 +397,7 @@ fn apply_page(
     let next_page_token = if end < tasks.len() {
         tasks
             .get(end - 1)
-            .map(|task| encode_page_token(binding, &task.id))
+            .map(|task| encode_page_token(binding, &task.id, None))
             .transpose()?
     } else {
         None
@@ -363,11 +408,16 @@ fn apply_page(
     ))
 }
 
-fn encode_page_token(binding: &str, after: &TaskId) -> Result<TaskPageToken, ListTasksError> {
-    let payload = serde_json::to_vec(&PageCursor {
-        version: 1,
+fn encode_page_token(
+    binding: &str,
+    after: &TaskId,
+    snapshot: Option<&str>,
+) -> Result<TaskPageToken, ListTasksError> {
+    let payload = serde_json::to_vec(&EncodedPageCursor {
+        version: if snapshot.is_some() { 2 } else { 1 },
         binding: binding.to_string(),
         after: after.to_string(),
+        snapshot: snapshot.map(str::to_string),
     })
     .map_err(|error| ListTasksError::EncodePageToken(anyhow::Error::new(error)))?;
     TaskPageToken::try_new(URL_SAFE_NO_PAD.encode(payload))
@@ -381,8 +431,22 @@ fn decode_page_token(token: &TaskPageToken) -> Result<PageCursor, ListTasksError
             .map_err(|_| ListTasksError::InvalidPageToken {
                 reason: "malformed encoding",
             })?;
-    serde_json::from_slice(&payload).map_err(|_| ListTasksError::InvalidPageToken {
-        reason: "malformed payload",
+    let cursor: EncodedPageCursor =
+        serde_json::from_slice(&payload).map_err(|_| ListTasksError::InvalidPageToken {
+            reason: "malformed payload",
+        })?;
+    if !matches!((cursor.version, &cursor.snapshot), (1, None) | (2, Some(_))) {
+        return Err(ListTasksError::InvalidPageToken {
+            reason: "unsupported version",
+        });
+    }
+    let after = TaskId::try_new(cursor.after).map_err(|_| ListTasksError::InvalidPageToken {
+        reason: "invalid cursor task",
+    })?;
+    Ok(PageCursor {
+        binding: cursor.binding,
+        after,
+        snapshot: cursor.snapshot,
     })
 }
 
@@ -430,8 +494,7 @@ fn collect_list_tasks(
     query: &ResolvedListTasks,
     store: &impl TaskVault,
     projects: &[Project],
-    selected_records: Option<&[TaskRecord]>,
-) -> Result<Vec<TaskView>, ListTasksError> {
+) -> Result<Vec<ListedTask>, ListTasksError> {
     let scan = query
         .project
         .as_ref()
@@ -439,12 +502,7 @@ fn collect_list_tasks(
 
     let mut tasks = Vec::new();
     for project in scan {
-        tasks.extend(collect_project_tasks(
-            query,
-            store,
-            project,
-            selected_records,
-        )?);
+        tasks.extend(collect_project_tasks(query, store, project)?);
     }
     Ok(tasks)
 }
@@ -453,22 +511,29 @@ fn collect_project_tasks(
     query: &ResolvedListTasks,
     store: &impl TaskVault,
     project: &Project,
-    selected_records: Option<&[TaskRecord]>,
-) -> Result<Vec<TaskView>, ListTasksError> {
-    let records = if query.project.is_some() {
-        selected_records.map_or_else(Vec::new, <[TaskRecord]>::to_vec)
-    } else {
-        store
-            .list_tasks(project)
+) -> Result<Vec<ListedTask>, ListTasksError> {
+    if query.detail == ListDetail::Summary {
+        return store
+            .list_task_summaries(project)
             .map_err(|error| ListTasksError::ReadStore(anyhow::Error::new(error)))?
-    };
+            .into_iter()
+            .filter(|record| query.status_filter.includes(record.status))
+            .map(|record| {
+                task_view::summarize(record, project.title.clone())
+                    .map_err(|error| ListTasksError::InvalidTaskView(anyhow::Error::new(error)))
+            })
+            .collect();
+    }
+    let records = store
+        .list_tasks(project)
+        .map_err(|error| ListTasksError::ReadStore(anyhow::Error::new(error)))?;
     records
         .into_iter()
         .filter(|record| query.status_filter.includes(record.status))
         .map(|record| {
             task_view::enrich(&record, project.source.value())
                 .map_err(|error| ListTasksError::InvalidTaskView(anyhow::Error::new(error)))
-                .map(|task| task.into_task_view(project.title.clone()))
+                .map(|task| task.into_task_view(project.title.clone()).into())
         })
         .collect()
 }
@@ -491,17 +556,17 @@ fn list_layout(scope: &ListScope) -> ListLayout {
     }
 }
 
-fn effort_matches(task: &TaskView, wanted: Option<EffortTier>) -> bool {
+fn effort_matches(task: &ListedTask, wanted: Option<EffortTier>) -> bool {
     let Some(wanted) = wanted else { return true };
     task.effort == Some(wanted)
 }
 
-fn priority_matches(task: &TaskView, wanted: Option<PriorityTier>) -> bool {
+fn priority_matches(task: &ListedTask, wanted: Option<PriorityTier>) -> bool {
     let Some(wanted) = wanted else { return true };
     task.priority == Some(wanted)
 }
 
-fn task_order_cmp(order: OrderSpec, a: &TaskView, b: &TaskView) -> std::cmp::Ordering {
+fn task_order_cmp(order: OrderSpec, a: &ListedTask, b: &ListedTask) -> std::cmp::Ordering {
     match order.field {
         OrderField::Created => {
             let ascending = a.created.cmp(&b.created).then_with(|| a.id.cmp(&b.id));
@@ -532,21 +597,40 @@ fn task_order_cmp(order: OrderSpec, a: &TaskView, b: &TaskView) -> std::cmp::Ord
     }
 }
 
-fn sort_by_order(tasks: &mut [TaskView], order: OrderSpec) {
+fn sort_by_order(tasks: &mut [ListedTask], order: OrderSpec) {
     tasks.sort_by(|a, b| task_order_cmp(order, a, b));
 }
 
-fn sort_by_group_then_order(tasks: &mut [TaskView], order: OrderSpec) {
-    sort_by_order(tasks, order);
-    tasks.sort_by_cached_key(|task| {
-        task.section.as_ref().map_or_else(
-            || (false, String::new()),
-            |section| (true, section.case_insensitive_key()),
-        )
+fn sort_by_group_then_order(tasks: &mut [ListedTask], order: OrderSpec) {
+    let mut decorated: Vec<_> = tasks
+        .iter()
+        .enumerate()
+        .map(|(index, task)| {
+            (
+                task.section.as_ref().map(TaskSection::case_insensitive_key),
+                index,
+            )
+        })
+        .collect();
+    decorated.sort_by(|(section_a, index_a), (section_b, index_b)| {
+        section_a
+            .cmp(section_b)
+            .then_with(|| task_order_cmp(order, &tasks[*index_a], &tasks[*index_b]))
     });
+    let mut destinations = vec![0; tasks.len()];
+    for (destination, (_, source)) in decorated.into_iter().enumerate() {
+        destinations[source] = destination;
+    }
+    for index in 0..tasks.len() {
+        while destinations[index] != index {
+            let destination = destinations[index];
+            tasks.swap(index, destination);
+            destinations.swap(index, destination);
+        }
+    }
 }
 
-fn apply_cap(tasks: Vec<TaskView>, cap: Option<usize>) -> (Vec<TaskView>, usize) {
+fn apply_cap(tasks: Vec<ListedTask>, cap: Option<usize>) -> (Vec<ListedTask>, usize) {
     let Some(cap) = cap else {
         return (tasks, 0);
     };
@@ -688,12 +772,22 @@ mod tests {
             ..default_query()
         };
 
-        let result = list_tasks::execute(&query, &store, &pool, &store)
-            .await
-            .unwrap();
+        let result = list_tasks::execute(
+            &query,
+            &store,
+            &pool,
+            &store,
+            &list_tasks::ListTasksSnapshots::default(),
+        )
+        .await
+        .unwrap();
 
         assert_eq!(
-            result.tasks[0].blocked_by_statuses,
+            result.tasks[0]
+                .details
+                .as_ref()
+                .unwrap()
+                .blocked_by_statuses,
             [BlockedByStatus {
                 id: TaskId::try_new("AUX-0014").unwrap(),
                 title: Some("AUX-0014".to_string()),
@@ -706,6 +800,21 @@ mod tests {
         store: &InMemoryStore,
         registry: &[Project],
         query: &ListTasks,
+    ) -> Result<ListedTasks, ListTasksError> {
+        run_with_snapshots(
+            store,
+            registry,
+            query,
+            &list_tasks::ListTasksSnapshots::default(),
+        )
+        .await
+    }
+
+    async fn run_with_snapshots(
+        store: &InMemoryStore,
+        registry: &[Project],
+        query: &ListTasks,
+        snapshots: &list_tasks::ListTasksSnapshots,
     ) -> Result<ListedTasks, ListTasksError> {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
         MIGRATOR.run(&pool).await.unwrap();
@@ -720,7 +829,7 @@ mod tests {
             )
             .await;
         }
-        list_tasks::execute(query, store, &pool, store).await
+        list_tasks::execute(query, store, &pool, store, snapshots).await
     }
 
     fn sectioned(id: &str, section: &str) -> TaskRecord {
@@ -780,6 +889,7 @@ mod tests {
 
     #[tokio::test]
     async fn pagination_returns_stable_nonoverlapping_pages() -> Result<(), ListTasksError> {
+        let snapshots = list_tasks::ListTasksSnapshots::default();
         let (store, registry) = foo_store(vec![
             record("FOO-0003"),
             record("FOO-0001"),
@@ -792,7 +902,7 @@ mod tests {
         });
         query.page_size = TaskPageSize::try_new(2).ok();
 
-        let first = run(&store, &registry, &query).await?;
+        let first = run_with_snapshots(&store, &registry, &query, &snapshots).await?;
         assert_eq!(listed_ids(&first), ["FOO-0001", "FOO-0002"]);
         let token = first
             .next_page_token
@@ -801,7 +911,7 @@ mod tests {
             })?;
 
         query.page_token = Some(token);
-        let second = run(&store, &registry, &query).await?;
+        let second = run_with_snapshots(&store, &registry, &query, &snapshots).await?;
         assert_eq!(listed_ids(&second), ["FOO-0003"]);
         assert_eq!(second.next_page_token, None);
         Ok(())
@@ -839,6 +949,71 @@ mod tests {
 
     fn listed_ids(result: &ListedTasks) -> Vec<&str> {
         result.tasks.iter().map(|task| task.id.as_ref()).collect()
+    }
+
+    #[test]
+    fn grouped_sort_preserves_every_order_and_case_insensitive_section() {
+        let records = [
+            record("FOO-0003"),
+            sectioned("FOO-0001", "alpha"),
+            sectioned("AUX-0005", "Beta"),
+            sectioned("AUX-0002", "ALPHA"),
+            record("AUX-0004"),
+            sectioned("FOO-0006", "beta"),
+        ];
+        let tasks: Vec<_> = records
+            .into_iter()
+            .map(|record| {
+                let name = if record.id.as_ref().starts_with("FOO") {
+                    "foo"
+                } else {
+                    "aux"
+                };
+                crate::task::task_view::summarize(
+                    record.into(),
+                    ProjectName::try_new(name).unwrap(),
+                )
+                .unwrap()
+            })
+            .collect();
+        for (field, direction) in [
+            (OrderField::Created, OrderDirection::Asc),
+            (OrderField::Created, OrderDirection::Desc),
+            (OrderField::Id, OrderDirection::Asc),
+            (OrderField::Id, OrderDirection::Desc),
+            (OrderField::ProjectId, OrderDirection::Asc),
+            (OrderField::ProjectId, OrderDirection::Desc),
+        ] {
+            let order = OrderSpec { field, direction };
+            let mut expected = tasks.clone();
+            super::sort_by_order(&mut expected, order);
+            expected.sort_by_cached_key(|task| {
+                task.section
+                    .as_ref()
+                    .map(pwf_models::task::TaskSection::case_insensitive_key)
+            });
+            let mut actual = tasks.clone();
+            super::sort_by_group_then_order(&mut actual, order);
+            assert_eq!(actual, expected);
+        }
+    }
+
+    #[test]
+    fn cursor_decoding_rejects_invalid_versions_and_task_ids() {
+        use base64::Engine as _;
+        for payload in [
+            r#"{"version":1,"binding":"query","after":"FOO-0001","snapshot":"id"}"#,
+            r#"{"version":2,"binding":"query","after":"FOO-0001"}"#,
+            r#"{"version":1,"binding":"query","after":"invalid"}"#,
+        ] {
+            let token =
+                pwf_wire::task::TaskPageToken::try_new(super::URL_SAFE_NO_PAD.encode(payload))
+                    .unwrap();
+            assert!(matches!(
+                super::decode_page_token(&token),
+                Err(ListTasksError::InvalidPageToken { .. })
+            ));
+        }
     }
 
     async fn assert_filter_ids(
@@ -888,7 +1063,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            got.tasks[0].blocked_by_statuses,
+            got.tasks[0].details.as_ref().unwrap().blocked_by_statuses,
             [
                 BlockedByStatus {
                     id: TaskId::try_new("AUX-0014").unwrap(),
@@ -941,7 +1116,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            got.tasks[0].blocked_by_statuses,
+            got.tasks[0].details.as_ref().unwrap().blocked_by_statuses,
             [BlockedByStatus {
                 id: TaskId::try_new("AUX-0014").unwrap(),
                 title: None,

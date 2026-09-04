@@ -358,39 +358,43 @@ pub(super) fn task_data(task: task::TaskData) -> pb::TaskData {
     }
 }
 
-fn task_view(task: task::TaskView) -> pb::TaskView {
-    pb::TaskView {
+fn task_view(task: task::ListedTask) -> pb::TaskView {
+    let mut view = pb::TaskView {
         id: task.id.to_string(),
         project: task.project.to_string(),
         status: task_status_value(task.status),
         heading: task.heading.to_string(),
-        prompt: task.prompt.to_string(),
-        project_path: task.project_path.to_string(),
-        location: Some(pb::TaskLocation {
-            index_path: task.location.index_path().to_string(),
-            line: task.location.line().get() as u64,
-        }),
-        launch_issues: task.launch.issues().iter().map(task_issue).collect(),
         section: task.section.map(|section| section.to_string()),
-        blocked_by: task
-            .blocked_by
-            .map(|blocked_by| blocked_by.iter().map(ToString::to_string).collect())
-            .unwrap_or_default(),
-        blocked_by_statuses: task
-            .blocked_by_statuses
-            .into_iter()
-            .map(blocked_by_status)
-            .collect(),
-        blocked_by_issues: task
-            .blocked_by_issues
-            .into_iter()
-            .map(blocked_by_issue)
-            .collect(),
         effort: task.effort.map(effort_tier_value),
         raw_tags: task.tags.map(|tags| tags.to_string()),
         created: task.created.map(|date| date.to_string()),
         priority: task.priority.map(priority_tier_value),
+        ..Default::default()
+    };
+    if let Some(details) = task.details {
+        view.prompt = details.prompt.to_string();
+        view.project_path = details.project_path.to_string();
+        view.location = Some(pb::TaskLocation {
+            index_path: details.location.index_path().to_string(),
+            line: details.location.line().get() as u64,
+        });
+        view.launch_issues = details.launch.issues().iter().map(task_issue).collect();
+        view.blocked_by = details
+            .blocked_by
+            .map(|blockers| blockers.iter().map(ToString::to_string).collect())
+            .unwrap_or_default();
+        view.blocked_by_statuses = details
+            .blocked_by_statuses
+            .into_iter()
+            .map(blocked_by_status)
+            .collect();
+        view.blocked_by_issues = details
+            .blocked_by_issues
+            .into_iter()
+            .map(blocked_by_issue)
+            .collect();
     }
+    view
 }
 
 fn task_issue(issue: &task::TaskIssue) -> pb::TaskIssue {

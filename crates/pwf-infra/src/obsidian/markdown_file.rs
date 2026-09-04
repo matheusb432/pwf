@@ -23,6 +23,19 @@ pub struct MarkdownFile {
 }
 
 impl MarkdownFile {
+    pub(super) fn read_source(path: &Path) -> Result<Self, MarkdownFileError> {
+        let source = fs::read_to_string(path).map_err(|source| MarkdownFileError::Read {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        Ok(Self::from_source(path, source))
+    }
+
+    pub(super) fn read_frontmatter_file(path: &Path) -> Result<Self, MarkdownFileError> {
+        read_frontmatter_source(path)
+            .map(|source| Self::from_source(path, source.unwrap_or_default()))
+    }
+
     /// Reads a Markdown file without normalizing its contents.
     pub fn open(path: impl Into<PathBuf>) -> Result<Self, MarkdownFileError> {
         let path = path.into();

@@ -147,6 +147,7 @@ impl pb::task_service_server::TaskService for TaskGrpcService {
             &self.state.store,
             &self.state.pool,
             &self.state.store,
+            &self.state.task_list_snapshots,
         )
         .await
         .map(proto::task::list_tasks_response)

@@ -86,9 +86,51 @@ fn list_returns_empty_when_project_directory_is_missing() {
     let project = foo_project(&store);
 
     let records = TaskVault::list_tasks(&store, &project).unwrap();
+    assert_eq!(
+        TaskVault::list_task_summaries(&store, &project).unwrap(),
+        records
+            .iter()
+            .cloned()
+            .map(pwf_application::ports::task_vault::TaskSummaryRecord::from)
+            .collect::<Vec<_>>()
+    );
 
     assert!(records.is_empty());
     assert!(!tasks_path.exists());
+}
+
+#[test]
+fn summaries_read_frontmatter_without_decoding_the_body() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = store_with_index_identity(directory.path());
+    let mut source = b"---\nid: FOO-0001\ntitle: 'quoted: title'\nstatus: active\n---\n".to_vec();
+    source.extend([0xff; 8192]);
+    std::fs::write(directory.path().join("descriptive-name.md"), source).unwrap();
+    let project = foo_project(&store);
+    let summaries = TaskVault::list_task_summaries(&store, &project).unwrap();
+    assert_eq!(summaries[0].id.as_ref(), "FOO-0001");
+    assert_eq!(summaries[0].title, "quoted: title");
+    assert!(TaskVault::list_tasks(&store, &project).is_err());
+}
+
+#[test]
+fn both_list_projections_reject_duplicate_frontmatter_ids() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = store_with_index_identity(directory.path());
+    for name in ["first.md", "second.md"] {
+        std::fs::write(
+            directory.path().join(name),
+            "---\nid: FOO-0001\ntitle: duplicate\n---\nbody\n",
+        )
+        .unwrap();
+    }
+    let project = foo_project(&store);
+    for error in [
+        TaskVault::list_tasks(&store, &project).unwrap_err(),
+        TaskVault::list_task_summaries(&store, &project).unwrap_err(),
+    ] {
+        assert_matches!(error, ObsidianStoreError::DuplicateTaskId { id, paths } if id.as_ref() == "FOO-0001" && paths.len() == 2);
+    }
 }
 
 #[test]
@@ -120,6 +162,14 @@ fn list_ignores_markdown_without_task_id() {
     let project = foo_project(&store);
 
     let records = TaskVault::list_tasks(&store, &project).unwrap();
+    assert_eq!(
+        TaskVault::list_task_summaries(&store, &project).unwrap(),
+        records
+            .iter()
+            .cloned()
+            .map(pwf_application::ports::task_vault::TaskSummaryRecord::from)
+            .collect::<Vec<_>>()
+    );
 
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].id, TaskId::try_new("FOO-0001").unwrap());
@@ -1608,6 +1658,14 @@ fn generic_list_records_carry_open_placement_without_hiding_unlinked_notes() {
 
     let project = foo_project(&store);
     let records = TaskVault::list_tasks(&store, &project).unwrap();
+    assert_eq!(
+        TaskVault::list_task_summaries(&store, &project).unwrap(),
+        records
+            .iter()
+            .cloned()
+            .map(pwf_application::ports::task_vault::TaskSummaryRecord::from)
+            .collect::<Vec<_>>()
+    );
 
     assert_eq!(records.len(), 2);
     let record = records
@@ -1709,6 +1767,14 @@ fn list_tasks_returns_note_history_and_index_only_records() {
     let project = foo_project(&store);
 
     let records = TaskVault::list_tasks(&store, &project).unwrap();
+    assert_eq!(
+        TaskVault::list_task_summaries(&store, &project).unwrap(),
+        records
+            .iter()
+            .cloned()
+            .map(pwf_application::ports::task_vault::TaskSummaryRecord::from)
+            .collect::<Vec<_>>()
+    );
     let mut ids: Vec<String> = records.iter().map(|record| record.id.to_string()).collect();
     ids.sort();
 
@@ -1767,6 +1833,14 @@ fn list_tasks_returns_note_history_when_index_is_missing() {
     let project = foo_project(&store);
 
     let records = TaskVault::list_tasks(&store, &project).unwrap();
+    assert_eq!(
+        TaskVault::list_task_summaries(&store, &project).unwrap(),
+        records
+            .iter()
+            .cloned()
+            .map(pwf_application::ports::task_vault::TaskSummaryRecord::from)
+            .collect::<Vec<_>>()
+    );
 
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].status, TaskStatus::Done);

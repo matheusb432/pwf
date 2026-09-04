@@ -1325,10 +1325,59 @@ pub struct TaskView {
     pub created: Option<AppDate>,
 }
 
-/// Describes one resolved and capped task listing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListedTask {
+    pub id: TaskId,
+    pub project: ProjectName,
+    pub status: TaskStatus,
+    pub heading: TaskHeading,
+    pub section: Option<TaskSection>,
+    pub effort: Option<EffortTier>,
+    pub priority: Option<PriorityTier>,
+    pub tags: Option<RawTaskTags>,
+    pub created: Option<AppDate>,
+    pub details: Option<ListedTaskDetails>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListedTaskDetails {
+    pub prompt: TaskPrompt,
+    pub project_path: ProjectSourceValue,
+    pub location: TaskLocation,
+    pub launch: TaskLaunch,
+    pub blocked_by: Option<BlockedBy>,
+    pub blocked_by_statuses: Vec<BlockedByStatus>,
+    pub blocked_by_issues: Vec<BlockedByIssue>,
+}
+
+impl From<TaskView> for ListedTask {
+    fn from(task: TaskView) -> Self {
+        Self {
+            id: task.id,
+            project: task.project,
+            status: task.status,
+            heading: task.heading,
+            section: task.section,
+            effort: task.effort,
+            priority: task.priority,
+            tags: task.tags,
+            created: task.created,
+            details: Some(ListedTaskDetails {
+                prompt: task.prompt,
+                project_path: task.project_path,
+                location: task.location,
+                launch: task.launch,
+                blocked_by: task.blocked_by,
+                blocked_by_statuses: task.blocked_by_statuses,
+                blocked_by_issues: task.blocked_by_issues,
+            }),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListedTasks {
-    pub tasks: Vec<TaskView>,
+    pub tasks: Vec<ListedTask>,
     pub hidden: usize,
     pub project: Option<ProjectName>,
     pub project_task_path: Option<ProjectTaskPath>,

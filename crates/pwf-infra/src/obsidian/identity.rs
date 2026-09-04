@@ -6,7 +6,7 @@ use pwf_models::{
 };
 use serde::Deserialize;
 
-use super::{MarkdownFile, ObsidianStoreError};
+use super::{FrontmatterView, MarkdownFile, MarkdownFileError, ObsidianStoreError};
 
 /// Contains a task note discovered by frontmatter identity.
 pub struct TaskNoteIdentity {
@@ -22,6 +22,41 @@ pub fn inspect_project_task_notes(
     index_path: &Path,
     expected_identity: &ProjectIndexIdentity,
 ) -> Result<Vec<TaskNoteIdentity>, ObsidianStoreError> {
+    map_project_task_notes(
+        project_dir,
+        index_path,
+        expected_identity,
+        MarkdownFile::read_source,
+        |id, title, _, _| Ok((id, title)),
+    )
+    .map(|notes| {
+        notes
+            .into_iter()
+            .map(|((id, title), file)| {
+                let (path, markdown) = file.into_parts();
+                TaskNoteIdentity {
+                    id,
+                    path,
+                    markdown,
+                    title,
+                }
+            })
+            .collect()
+    })
+}
+
+pub(super) fn map_project_task_notes<T>(
+    project_dir: &Path,
+    index_path: &Path,
+    expected_identity: &ProjectIndexIdentity,
+    read: fn(&Path) -> Result<MarkdownFile, MarkdownFileError>,
+    map: impl Fn(
+        TaskId,
+        Option<String>,
+        &MarkdownFile,
+        &FrontmatterView<'_>,
+    ) -> Result<T, ObsidianStoreError>,
+) -> Result<Vec<(T, MarkdownFile)>, ObsidianStoreError> {
     if index_path.exists() {
         let index_file =
             MarkdownFile::open(index_path).map_err(|source| ObsidianStoreError::ReadIndex {
@@ -42,34 +77,29 @@ pub fn inspect_project_task_notes(
         {
             continue;
         }
-        let file = MarkdownFile::open(path).map_err(|source| ObsidianStoreError::ReadTaskFile {
+        let file = read(&path).map_err(|source| ObsidianStoreError::ReadTaskFile {
             source: source.into_io_error(),
         })?;
-        let Some((id, title)) = parse_task_metadata_if_task(&file)? else {
+        let Some(frontmatter) = task_frontmatter(&file)? else {
             continue;
         };
-        let (path, markdown) = file.into_parts();
-        tasks.push(TaskNoteIdentity {
-            id,
-            path,
-            markdown,
-            title,
-        });
+        let Some((id, title)) = parse_task_metadata(&path, &frontmatter)? else {
+            continue;
+        };
+        let record = map(id.clone(), title, &file, &frontmatter);
+        drop(frontmatter);
+        tasks.push((id, path, record.map(|metadata| (metadata, file))));
     }
-    tasks.sort_by(|left, right| {
-        left.id
-            .cmp(&right.id)
-            .then_with(|| left.path.cmp(&right.path))
-    });
+    tasks.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
     for pair in tasks.windows(2) {
-        if pair[0].id == pair[1].id {
+        if pair[0].0 == pair[1].0 {
             return Err(ObsidianStoreError::DuplicateTaskId {
-                id: pair[0].id.clone(),
-                paths: vec![pair[0].path.clone(), pair[1].path.clone()],
+                id: pair[0].0.clone(),
+                paths: vec![pair[0].1.clone(), pair[1].1.clone()],
             });
         }
     }
-    Ok(tasks)
+    tasks.into_iter().map(|(_, _, record)| record).collect()
 }
 
 #[derive(Deserialize)]
@@ -89,17 +119,27 @@ struct ProjectIndexFrontmatter {
 pub(super) fn parse_task_metadata_if_task(
     file: &MarkdownFile,
 ) -> Result<Option<(TaskId, Option<String>)>, ObsidianStoreError> {
-    let path = file.path();
-    let Some(frontmatter) =
-        file.frontmatter_view()
-            .map_err(|source| ObsidianStoreError::FrontmatterParse {
-                path: path.to_path_buf(),
-                property: "id",
-                source,
-            })?
-    else {
-        return Ok(None);
-    };
+    task_frontmatter(file)?
+        .map(|frontmatter| parse_task_metadata(file.path(), &frontmatter))
+        .transpose()
+        .map(Option::flatten)
+}
+
+fn task_frontmatter(
+    file: &MarkdownFile,
+) -> Result<Option<FrontmatterView<'_>>, ObsidianStoreError> {
+    file.frontmatter_view()
+        .map_err(|source| ObsidianStoreError::FrontmatterParse {
+            path: file.path().to_path_buf(),
+            property: "id",
+            source,
+        })
+}
+
+fn parse_task_metadata(
+    path: &Path,
+    frontmatter: &FrontmatterView<'_>,
+) -> Result<Option<(TaskId, Option<String>)>, ObsidianStoreError> {
     let Some(raw_id) =
         frontmatter
             .get("id")

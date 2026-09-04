@@ -18,6 +18,7 @@ pub struct AppState {
     pub(crate) project_directory: LocalProjectDirectoryClient,
     pub(crate) user_settings: TomlSettingsStore,
     pub(crate) task_mutations: Arc<tokio::sync::Mutex<()>>,
+    pub(crate) task_list_snapshots: Arc<pwf_application::task::list_tasks::ListTasksSnapshots>,
 }
 
 impl AppState {
@@ -46,6 +47,7 @@ impl AppState {
             project_directory: LocalProjectDirectoryClient,
             user_settings,
             task_mutations: Arc::new(tokio::sync::Mutex::new(())),
+            task_list_snapshots: Arc::default(),
         }
     }
 }

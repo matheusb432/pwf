@@ -761,6 +761,8 @@ async fn v1_task_list_pages_are_bounded_and_query_bound() -> anyhow::Result<()> 
     );
     let token = first.next_page_token.context("first page must continue")?;
 
+    server.add_task("added between task-list pages").await?;
+
     request.page_token = Some(token.clone());
     let second = server.client.task().list_tasks(request.clone()).await?;
     assert_eq!(
@@ -772,6 +774,14 @@ async fn v1_task_list_pages_are_bounded_and_query_bound() -> anyhow::Result<()> 
         ["FOO-0003"]
     );
     assert_eq!(second.next_page_token, None);
+    let replay = server.client.task().list_tasks(request.clone()).await?;
+    assert_eq!(replay, second);
+    let fresh = server
+        .client
+        .task()
+        .list_tasks(task_list_request(None, None))
+        .await?;
+    assert_eq!(fresh.tasks.len(), 4);
 
     request.page_token = Some(token);
     request.order = Some(pb::OrderSpec {
@@ -791,6 +801,45 @@ async fn v1_task_list_pages_are_bounded_and_query_bound() -> anyhow::Result<()> 
         .unwrap_err();
     assert_eq!(rpc_status(oversized)?.code(), Code::InvalidArgument);
 
+    server.finish().await
+}
+
+#[tokio::test]
+async fn task_list_summary_omits_detailed_payload() -> anyhow::Result<()> {
+    let server = TestServer::start(Duration::from_secs(2)).await?;
+    server.add_project_and_task().await?;
+    let mut request = task_list_request(None, None);
+    let detailed = server.client.task().list_tasks(request.clone()).await?;
+    request.detail = pb::ListDetail::Summary as i32;
+    let summary = server.client.task().list_tasks(request).await?;
+    let mut expected = detailed.tasks;
+    for task in &mut expected {
+        task.prompt.clear();
+        task.project_path.clear();
+        task.location = None;
+        task.launch_issues.clear();
+        task.blocked_by.clear();
+        task.blocked_by_statuses.clear();
+        task.blocked_by_issues.clear();
+    }
+    assert_eq!(summary.tasks, expected);
+    server.finish().await
+}
+
+#[tokio::test]
+async fn task_list_evicted_snapshot_returns_invalid_argument() -> anyhow::Result<()> {
+    let server = TestServer::start(Duration::from_secs(2)).await?;
+    server.add_project_and_task().await?;
+    server.add_task("second task").await?;
+    let mut request = task_list_request(None, None);
+    request.page_size = 1;
+    let first = server.client.task().list_tasks(request.clone()).await?;
+    for _ in 0..16 {
+        server.client.task().list_tasks(request.clone()).await?;
+    }
+    request.page_token = first.next_page_token;
+    let error = server.client.task().list_tasks(request).await.unwrap_err();
+    assert_eq!(rpc_status(error)?.code(), Code::InvalidArgument);
     server.finish().await
 }
 

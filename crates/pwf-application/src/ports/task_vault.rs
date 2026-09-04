@@ -78,7 +78,33 @@ pub struct TaskRecord {
     pub revision: ContentRevision,
 }
 
-/// The shape used to insert a new [`TaskRecord`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskSummaryRecord {
+    pub id: TaskId,
+    pub title: String,
+    pub status: TaskStatus,
+    pub created_at: Option<TaskTimestamp>,
+    pub tags: Option<RawTaskTags>,
+    pub effort: Option<String>,
+    pub priority: Option<String>,
+    pub section: Option<TaskSection>,
+}
+
+impl From<TaskRecord> for TaskSummaryRecord {
+    fn from(record: TaskRecord) -> Self {
+        Self {
+            id: record.id,
+            title: record.title,
+            status: record.status,
+            created_at: record.created_at,
+            tags: record.tags,
+            effort: record.effort,
+            priority: record.priority,
+            section: record.section,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewTask {
     pub body: String,
@@ -325,6 +351,14 @@ pub trait TaskVault: Send + Sync + 'static {
 
     fn get_task(&self, project: &Project, id: &TaskId) -> Result<Option<TaskRecord>, Self::Error>;
     fn list_tasks(&self, project: &Project) -> Result<Vec<TaskRecord>, Self::Error>;
+
+    fn list_task_summaries(
+        &self,
+        project: &Project,
+    ) -> Result<Vec<TaskSummaryRecord>, Self::Error> {
+        self.list_tasks(project)
+            .map(|records| records.into_iter().map(TaskSummaryRecord::from).collect())
+    }
     fn next_task_id(&self, project: &Project) -> Result<TaskId, Self::Error>;
     fn insert_task(
         &self,

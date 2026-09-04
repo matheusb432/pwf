@@ -16,7 +16,7 @@ use pwf_wire::task::{
 };
 
 use super::note_body::is_placeholder_prompt;
-use crate::ports::task_vault::{Materialization, StoredBlockedBy, TaskRecord};
+use crate::ports::task_vault::{Materialization, StoredBlockedBy, TaskRecord, TaskSummaryRecord};
 
 /// Contains launchability flags and diagnostics derived from a task.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -125,16 +125,7 @@ pub(in crate::task) fn enrich(
         Materialization::MissingNote { expected } => Some(expected),
     };
     let flags = derive_flags(&prompt, missing_note);
-    let heading = if task.title.trim().is_empty() {
-        TaskHeading::Identifier(task.id.clone())
-    } else {
-        TaskHeading::Title(TaskTitle::try_new(&task.title).map_err(|source| {
-            TaskViewError::Title {
-                id: task.id.clone(),
-                source,
-            }
-        })?)
-    };
+    let heading = task_heading(&task.id, &task.title)?;
     let (index_path, line) = task.placement.as_ref().map_or_else(
         || {
             (
@@ -145,28 +136,8 @@ pub(in crate::task) fn enrich(
         |placement| (placement.index_path.clone(), placement.line),
     );
     let location = TaskLocation::new(index_path, line);
-    let effort = task
-        .effort
-        .as_deref()
-        .map(str::trim)
-        .map(str::parse)
-        .transpose()
-        .map_err(|source| TaskViewError::Effort {
-            id: task.id.clone(),
-            value: task.effort.clone().unwrap_or_default(),
-            source,
-        })?;
-    let priority = task
-        .priority
-        .as_deref()
-        .map(str::trim)
-        .map(str::parse)
-        .transpose()
-        .map_err(|source| TaskViewError::Priority {
-            id: task.id.clone(),
-            value: task.priority.clone().unwrap_or_default(),
-            source,
-        })?;
+    let effort = task_effort(&task.id, task.effort.as_deref())?;
+    let priority = task_priority(&task.id, task.priority.as_deref())?;
     let (blocked_by, blocked_by_issues) = match &task.blocked_by {
         StoredBlockedBy::Absent => (None, Vec::new()),
         StoredBlockedBy::Valid(blocked_by) => (Some(blocked_by.clone()), Vec::new()),
@@ -195,6 +166,64 @@ pub(in crate::task) fn enrich(
         tags: task.tags.clone(),
         created: task.created_at.map(TaskTimestamp::date),
     })
+}
+
+pub(in crate::task) fn summarize(
+    task: TaskSummaryRecord,
+    project: ProjectName,
+) -> Result<pwf_wire::task::ListedTask, TaskViewError> {
+    let heading = task_heading(&task.id, &task.title)?;
+    let effort = task_effort(&task.id, task.effort.as_deref())?;
+    let priority = task_priority(&task.id, task.priority.as_deref())?;
+    Ok(pwf_wire::task::ListedTask {
+        id: task.id,
+        project,
+        status: task.status,
+        heading,
+        section: task.section,
+        effort,
+        priority,
+        tags: task.tags,
+        created: task.created_at.map(TaskTimestamp::date),
+        details: None,
+    })
+}
+
+fn task_heading(id: &TaskId, title: &str) -> Result<TaskHeading, TaskViewError> {
+    if title.trim().is_empty() {
+        Ok(TaskHeading::Identifier(id.clone()))
+    } else {
+        TaskTitle::try_new(title)
+            .map(TaskHeading::Title)
+            .map_err(|source| TaskViewError::Title {
+                id: id.clone(),
+                source,
+            })
+    }
+}
+
+fn task_effort(id: &TaskId, value: Option<&str>) -> Result<Option<EffortTier>, TaskViewError> {
+    value
+        .map(str::trim)
+        .map(str::parse)
+        .transpose()
+        .map_err(|source| TaskViewError::Effort {
+            id: id.clone(),
+            value: value.unwrap_or_default().to_string(),
+            source,
+        })
+}
+
+fn task_priority(id: &TaskId, value: Option<&str>) -> Result<Option<PriorityTier>, TaskViewError> {
+    value
+        .map(str::trim)
+        .map(str::parse)
+        .transpose()
+        .map_err(|source| TaskViewError::Priority {
+            id: id.clone(),
+            value: value.unwrap_or_default().to_string(),
+            source,
+        })
 }
 
 #[cfg(test)]

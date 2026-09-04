@@ -1,8 +1,8 @@
-use std::{num::NonZeroUsize, path::Path};
+use std::{collections::HashMap, num::NonZeroUsize, path::Path};
 
 use pwf_application::ports::task_vault::{
     IndexEntry, IndexEntryState, IndexPlacement, Materialization, NewTask, NullablePatch,
-    TaskMutationError, TaskPatch, TaskRecord, TaskVault, TaskWriteSet,
+    TaskMutationError, TaskPatch, TaskRecord, TaskSummaryRecord, TaskVault, TaskWriteSet,
 };
 use pwf_models::{
     project::Project,
@@ -20,7 +20,7 @@ use super::{
 use crate::{
     file_transaction::content_revision,
     obsidian::{
-        MarkdownFile, MarkdownFileError, done_queue,
+        FrontmatterView, MarkdownFile, MarkdownFileError, done_queue,
         note_frontmatter::{
             parse_blocked_by, reopen_status, set_blocked_by, set_commits, set_completed_at,
             set_effort, set_priority, set_status, set_tags,
@@ -29,87 +29,145 @@ use crate::{
     },
 };
 
-/// Maps a task note to typed frontmatter fields while preserving its byte-exact source.
-fn note_to_record(
-    id: TaskId,
+fn note_field(
+    frontmatter: &FrontmatterView<'_>,
+    key: &str,
+) -> Result<Option<String>, ObsidianStoreError> {
+    frontmatter
+        .get(key)
+        .map(|value| {
+            value
+                .filter(|value| !value.trim().is_empty())
+                .map(str::to_string)
+        })
+        .map_err(read_task_file_error)
+}
+
+fn note_timestamp(
+    frontmatter: &FrontmatterView<'_>,
     path: &Path,
-    decoded_title: Option<&str>,
-    source: String,
-) -> Result<TaskRecord, ObsidianStoreError> {
-    let revision = content_revision(source.as_bytes());
-    let file = MarkdownFile::from_source(path.to_path_buf(), source);
-    let frontmatter = file.frontmatter_view().map_err(read_task_file_error)?;
-    let field = |key: &str| {
-        frontmatter
-            .as_ref()
-            .map_or(Ok(None), |frontmatter| frontmatter.get(key))
-            .map(|value| {
-                value
-                    .filter(|value| !value.trim().is_empty())
-                    .map(str::to_string)
-            })
-            .map_err(read_task_file_error)
-    };
-    let status = field("status")?
-        .as_deref()
-        .map_or(Ok(TaskStatus::Active), |value| {
+    property: &'static str,
+) -> Result<Option<TaskTimestamp>, ObsidianStoreError> {
+    note_field(frontmatter, property)?
+        .map(|value| {
             value
                 .parse()
-                .map_err(|source| ObsidianStoreError::InvalidTaskStatus {
+                .map_err(|source| ObsidianStoreError::InvalidTaskTimestamp {
                     path: path.to_path_buf(),
-                    value: value.to_string(),
+                    property,
+                    value,
                     source,
                 })
-        })?;
-    let title = decoded_title
-        .filter(|title| !title.trim().is_empty())
-        .map(str::to_string)
-        .or(field("title")?)
-        .unwrap_or_default();
-    // Preserve raw tags so unfiltered reads do not fail on invalid tag syntax.
-    let tags = field("tags")?.map(RawTaskTags::new);
-    let timestamp = |property: &'static str| -> Result<Option<TaskTimestamp>, ObsidianStoreError> {
-        field(property)?
-            .map(|value| {
+        })
+        .transpose()
+}
+
+fn note_metadata(
+    id: TaskId,
+    decoded_title: Option<String>,
+    file: &MarkdownFile,
+    frontmatter: &FrontmatterView<'_>,
+) -> Result<(TaskSummaryRecord, Option<TaskTimestamp>), ObsidianStoreError> {
+    let path = file.path();
+    let status =
+        note_field(frontmatter, "status")?
+            .as_deref()
+            .map_or(Ok(TaskStatus::Active), |value| {
                 value
                     .parse()
-                    .map_err(|source| ObsidianStoreError::InvalidTaskTimestamp {
+                    .map_err(|source| ObsidianStoreError::InvalidTaskStatus {
                         path: path.to_path_buf(),
-                        property,
-                        value,
+                        value: value.to_string(),
                         source,
                     })
-            })
-            .transpose()
-    };
-    let created_at = timestamp("created_at")?;
-    let completed_at = timestamp("completed_at")?;
-    let commits = field("commits")?;
-    let effort = field("effort")?;
-    let priority = field("priority")?;
-    let blocked_by = parse_blocked_by(frontmatter.as_ref());
-    drop(frontmatter);
-    let body = file.body().to_string();
-    let source = file.into_source();
-    Ok(TaskRecord {
-        id,
-        title,
-        status,
-        created_at,
+            })?;
+    let title = decoded_title
+        .filter(|title| !title.trim().is_empty())
+        .or(note_field(frontmatter, "title")?)
+        .unwrap_or_default();
+    let created_at = note_timestamp(frontmatter, path, "created_at")?;
+    let completed_at = note_timestamp(frontmatter, path, "completed_at")?;
+    Ok((
+        TaskSummaryRecord {
+            id,
+            title,
+            status,
+            created_at,
+            tags: note_field(frontmatter, "tags")?.map(RawTaskTags::new),
+            effort: note_field(frontmatter, "effort")?,
+            priority: note_field(frontmatter, "priority")?,
+            section: None,
+        },
         completed_at,
-        commits,
-        tags,
-        effort,
-        priority,
-        blocked_by,
-        section: None,
-        body,
-        source,
-        locator: TaskNotePath::new(path.to_path_buf()),
-        placement: None,
-        materialization: Materialization::NoteFile,
-        revision,
+    ))
+}
+
+struct TaskNoteMetadata {
+    summary: TaskSummaryRecord,
+    completed_at: Option<TaskTimestamp>,
+    commits: Option<String>,
+    blocked_by: pwf_application::ports::task_vault::StoredBlockedBy,
+}
+
+fn task_note_metadata(
+    id: TaskId,
+    decoded_title: Option<String>,
+    file: &MarkdownFile,
+    frontmatter: &FrontmatterView<'_>,
+) -> Result<TaskNoteMetadata, ObsidianStoreError> {
+    let (summary, completed_at) = note_metadata(id, decoded_title, file, frontmatter)?;
+    Ok(TaskNoteMetadata {
+        summary,
+        completed_at,
+        commits: note_field(frontmatter, "commits")?,
+        blocked_by: parse_blocked_by(Some(frontmatter)),
     })
+}
+
+impl TaskNoteMetadata {
+    fn into_record(self, file: MarkdownFile) -> TaskRecord {
+        let body = file.body().to_string();
+        let revision = content_revision(file.source().as_bytes());
+        let (path, source) = file.into_parts();
+        TaskRecord {
+            id: self.summary.id,
+            title: self.summary.title,
+            status: self.summary.status,
+            created_at: self.summary.created_at,
+            completed_at: self.completed_at,
+            commits: self.commits,
+            tags: self.summary.tags,
+            effort: self.summary.effort,
+            priority: self.summary.priority,
+            blocked_by: self.blocked_by,
+            section: None,
+            body,
+            source,
+            locator: TaskNotePath::new(path),
+            placement: None,
+            materialization: Materialization::NoteFile,
+            revision,
+        }
+    }
+}
+
+fn record_from_source(
+    id: TaskId,
+    path: &Path,
+    title: Option<String>,
+    source: String,
+) -> Result<TaskRecord, ObsidianStoreError> {
+    let file = MarkdownFile::from_source(path, source);
+    let frontmatter = file
+        .frontmatter_view()
+        .map_err(read_task_file_error)?
+        .ok_or_else(|| ObsidianStoreError::MissingFrontmatter {
+            path: path.to_path_buf(),
+            property: "id",
+        })?;
+    let metadata = task_note_metadata(id, title, &file, &frontmatter)?;
+    drop(frontmatter);
+    Ok(metadata.into_record(file))
 }
 
 /// Materializes an index link whose note file is missing.
@@ -198,7 +256,7 @@ fn get_task_record(
         .into_iter()
         .find(|task| task.id == *id);
     if let Some(task) = task {
-        let mut record = note_to_record(task.id, &task.path, task.title.as_deref(), task.markdown)?;
+        let mut record = record_from_source(task.id, &task.path, task.title, task.markdown)?;
         apply_index_metadata(store, project, id, &mut record)?;
         return Ok(Some(record));
     }
@@ -236,41 +294,103 @@ fn list_task_records(
     store: &ObsidianStore,
     project: &Project,
 ) -> Result<Vec<TaskRecord>, ObsidianStoreError> {
-    let tasks = store.task_files_for_project(project)?;
-    let mut records: Vec<TaskRecord> = tasks
+    let mut records: Vec<_> = store
+        .map_task_notes(project, MarkdownFile::read_source, task_note_metadata)?
         .into_iter()
-        .map(|task| note_to_record(task.id, &task.path, task.title.as_deref(), task.markdown))
-        .collect::<Result<_, _>>()?;
+        .map(|(metadata, file)| metadata.into_record(file))
+        .collect();
     let Some((index_path, text)) = store.validated_project_index(project)? else {
         return Ok(records);
     };
     let revision = content_revision(text.as_bytes());
+    let mut slots: HashMap<TaskId, usize> = records
+        .iter()
+        .enumerate()
+        .map(|(slot, record)| (record.id.clone(), slot))
+        .collect();
     for line in parse_index_lines(&index_path, &text)? {
-        merge_index_line(&mut records, &index_path, &line, &revision);
+        merge_index_line(&mut records, &mut slots, &index_path, &line, &revision);
     }
     Ok(records)
 }
 
+fn list_task_summaries(
+    store: &ObsidianStore,
+    project: &Project,
+) -> Result<Vec<TaskSummaryRecord>, ObsidianStoreError> {
+    let mut records: Vec<_> = store
+        .map_task_notes(
+            project,
+            MarkdownFile::read_frontmatter_file,
+            |id, title, file, frontmatter| {
+                note_metadata(id, title, file, frontmatter).map(|(summary, _)| summary)
+            },
+        )?
+        .into_iter()
+        .map(|(summary, _)| summary)
+        .collect();
+    let Some((index_path, text)) = store.validated_project_index(project)? else {
+        return Ok(records);
+    };
+    let mut slots: HashMap<TaskId, usize> = records
+        .iter()
+        .enumerate()
+        .map(|(slot, record)| (record.id.clone(), slot))
+        .collect();
+    for line in parse_index_lines(&index_path, &text)? {
+        if let Some(&slot) = slots.get(&line.id) {
+            let record = &mut records[slot];
+            merge_index_heading(&mut record.title, &mut record.section, &line);
+        } else {
+            slots.insert(line.id.clone(), records.len());
+            records.push(TaskSummaryRecord {
+                id: line.id,
+                title: line.alias.unwrap_or_default(),
+                status: match line.state {
+                    IndexEntryState::Open => TaskStatus::Active,
+                    IndexEntryState::Done(_) => TaskStatus::Done,
+                },
+                created_at: None,
+                tags: None,
+                effort: None,
+                priority: None,
+                section: line.section,
+            });
+        }
+    }
+    Ok(records)
+}
+
+fn merge_index_heading(
+    title: &mut String,
+    section: &mut Option<TaskSection>,
+    line: &ParsedIndexLine,
+) {
+    if title.trim().is_empty() {
+        *title = line.alias.clone().unwrap_or_default();
+    }
+    section.clone_from(&line.section);
+}
+
 fn merge_index_line(
     records: &mut Vec<TaskRecord>,
+    slots: &mut HashMap<TaskId, usize>,
     index_path: &Path,
     line: &ParsedIndexLine,
     revision: &ContentRevision,
 ) {
-    if let Some(record) = records.iter_mut().find(|record| record.id == line.id) {
-        merge_existing_index_line(record, index_path, line);
+    if let Some(&slot) = slots.get(&line.id) {
+        merge_existing_index_line(&mut records[slot], index_path, line);
         return;
     }
     let mut record = index_entry_to_record(index_path, line, revision.clone());
     record.placement = open_index_placement(index_path, line);
+    slots.insert(record.id.clone(), records.len());
     records.push(record);
 }
 
 fn merge_existing_index_line(record: &mut TaskRecord, index_path: &Path, line: &ParsedIndexLine) {
-    if record.title.trim().is_empty() {
-        record.title = line.alias.clone().unwrap_or_default();
-    }
-    record.section.clone_from(&line.section);
+    merge_index_heading(&mut record.title, &mut record.section, line);
     record.placement = open_index_placement(index_path, line);
 }
 
@@ -390,6 +510,13 @@ impl TaskVault for ObsidianStore {
     ///
     /// Open index entries contribute placement. Every index entry contributes its raw section; the
     /// application owns lifecycle visibility, normalization, and launchability policy.
+    fn list_task_summaries(
+        &self,
+        project: &Project,
+    ) -> Result<Vec<TaskSummaryRecord>, Self::Error> {
+        list_task_summaries(self, project)
+    }
+
     fn list_tasks(&self, project: &Project) -> Result<Vec<TaskRecord>, Self::Error> {
         list_task_records(self, project)
     }
@@ -417,7 +544,12 @@ impl TaskVault for ObsidianStore {
                 tags: new.tags.as_ref(),
             },
         )?;
-        note_to_record(note.id, &note.path, Some(note.title.as_ref()), note.content)
+        record_from_source(
+            note.id,
+            &note.path,
+            Some(note.title.to_string()),
+            note.content,
+        )
     }
 
     fn read_task_markdown(&self, locator: &TaskNotePath) -> Result<String, Self::Error> {
