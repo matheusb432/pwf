@@ -1,0 +1,14 @@
+schema_version = 1
+task_body_line_count = 8
+
+[[workloads]]
+name = "single-rpc-256-tasks"
+operation = "single-rpc"
+project_count = 8
+task_count_per_project = 32
+
+[[workloads]]
+name = "all-pages-1024-tasks"
+operation = "all-pages"
+project_count = 8
+task_count_per_project = 128

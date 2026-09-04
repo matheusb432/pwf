@@ -1,14 +1,13 @@
 use std::{
     collections::BTreeSet,
     convert::Infallible,
-    net::Ipv4Addr,
     sync::{Arc, Mutex},
     time::Duration,
 };
 
 use anyhow::Context as _;
 use pwf_client::{
-    ClientError, PwfClient,
+    ClientError,
     confirmation::{Confirmation, ConfirmationPrompt},
     pb::{
         self, Agent, DispatchMode, ProjectStatusFilter, SessionEffort, TaskReadFormat,
@@ -18,14 +17,10 @@ use pwf_client::{
     },
     task::{TaskDagEdge, TaskDagNode},
 };
-use pwf_infra::user_settings::TomlSettingsStore;
-use pwf_local_auth::{
-    CapabilityToken, LocalAuth, PublishedEndpoint, ServerEndpoint, ServerInstanceId,
-};
-use pwf_models::project::HomeDirectory;
-use pwf_server::{AppState, ServerLifecycle, ServerState, serve};
+use pwf_local_auth::CapabilityToken;
+use pwf_server::ServerState;
 use pwf_wire::pb::{delete_task_result, dispatched_session, get_task_response, reopen_task_result};
-use tokio::sync::{mpsc, oneshot, watch};
+use tokio::sync::mpsc;
 use tokio_stream::{StreamExt as _, wrappers::ReceiverStream};
 use tonic::{Code, Request, Status, transport::Channel};
 use tonic_health::{
@@ -37,18 +32,12 @@ use tonic_reflection::pb::v1::{
     server_reflection_request::MessageRequest, server_reflection_response::MessageResponse,
 };
 
-const TEST_TIMEOUT: Duration = Duration::from_secs(5);
+#[path = "support/server.rs"]
+mod server;
 
-struct TestServer {
-    root: tempfile::TempDir,
-    token: CapabilityToken,
-    endpoint: ServerEndpoint,
-    client: PwfClient,
-    shutdown: Option<oneshot::Sender<()>>,
-    lifecycle: watch::Receiver<ServerState>,
-    task: Option<tokio::task::JoinHandle<anyhow::Result<()>>>,
-    _published: PublishedEndpoint,
-}
+use server::TestServer;
+
+const TEST_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[tokio::test]
 async fn v1_get_user_settings_returns_validated_task_status_colors() -> anyhow::Result<()> {
@@ -110,54 +99,6 @@ async fn v1_get_user_settings_rejects_invalid_config_with_its_path_and_cause() -
 }
 
 impl TestServer {
-    async fn start(shutdown_grace_period: Duration) -> anyhow::Result<Self> {
-        let root = tempfile::tempdir()?;
-        let database_path = root.path().join("pwf.sqlite3");
-        let migration_pool = pwf_infra::database::build_migration_pool(&database_path).await?;
-        pwf_infra::database::migrate_database(&migration_pool).await?;
-        migration_pool.close().await;
-        let pool = pwf_infra::database::build_pool(&database_path).await?;
-        let home_path = root.path().join("home");
-        std::fs::create_dir_all(&home_path)?;
-        let state = AppState::new(
-            pool,
-            HomeDirectory::new(home_path),
-            TomlSettingsStore::new(Some(root.path().join("config.toml"))),
-        );
-
-        let auth = LocalAuth::from_data_root(root.path().join("auth"))?;
-        let token = auth.load_or_create_server_token()?;
-        let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
-        let endpoint =
-            ServerEndpoint::try_new(listener.local_addr()?, ServerInstanceId::generate())?;
-        let published = auth.publish_endpoint(endpoint.clone())?;
-        let (shutdown_sender, shutdown_receiver) = oneshot::channel();
-        let (lifecycle_handle, mut lifecycle) = ServerLifecycle::channel();
-        let task = tokio::spawn(serve(
-            listener,
-            async move {
-                let _ = shutdown_receiver.await;
-            },
-            shutdown_grace_period,
-            token.clone(),
-            state,
-            lifecycle_handle,
-        ));
-        wait_for_state(&mut lifecycle, ServerState::Serving).await?;
-        let client = PwfClient::connect(&auth).await?;
-
-        Ok(Self {
-            root,
-            token,
-            endpoint,
-            client,
-            shutdown: Some(shutdown_sender),
-            lifecycle,
-            task: Some(task),
-            _published: published,
-        })
-    }
-
     async fn add_project_and_task(&self) -> anyhow::Result<String> {
         let project_path = self.root.path().join("project");
         let vault_path = self.root.path().join("notes");
@@ -224,14 +165,6 @@ impl TestServer {
             })
             .await?;
         Ok(task.id)
-    }
-
-    async fn channel(&self) -> anyhow::Result<Channel> {
-        Ok(
-            tonic::transport::Endpoint::from_shared(format!("http://{}", self.endpoint.address()))?
-                .connect()
-                .await?,
-        )
     }
 
     async fn open_remove_confirmation(
@@ -340,31 +273,6 @@ impl TestServer {
             .path()
             .join("notes/foo-bar")
             .join(format!("{task_id}.md"))
-    }
-
-    fn begin_shutdown(&mut self) -> anyhow::Result<()> {
-        let shutdown = self
-            .shutdown
-            .take()
-            .context("server shutdown sender is missing")?;
-        shutdown
-            .send(())
-            .map_err(|()| anyhow::anyhow!("server shutdown receiver is closed"))
-    }
-
-    async fn wait_for(&mut self, state: ServerState) -> anyhow::Result<()> {
-        wait_for_state(&mut self.lifecycle, state).await
-    }
-
-    async fn finish(mut self) -> anyhow::Result<()> {
-        if self.shutdown.is_some() {
-            self.begin_shutdown()?;
-        }
-        let task = self.task.take().context("server task is missing")?;
-        let outcome = tokio::time::timeout(TEST_TIMEOUT, task).await?;
-        outcome??;
-        assert_eq!(*self.lifecycle.borrow(), ServerState::Stopped);
-        Ok(())
     }
 }
 
@@ -1623,24 +1531,4 @@ async fn reflection_response(
         .context("reflection response stream is empty")??
         .message_response
         .context("reflection response message is missing")
-}
-
-async fn wait_for_state(
-    lifecycle: &mut watch::Receiver<ServerState>,
-    expected: ServerState,
-) -> anyhow::Result<()> {
-    tokio::time::timeout(TEST_TIMEOUT, observe_state(lifecycle, expected)).await??;
-    Ok(())
-}
-
-async fn observe_state(
-    lifecycle: &mut watch::Receiver<ServerState>,
-    expected: ServerState,
-) -> anyhow::Result<()> {
-    loop {
-        if *lifecycle.borrow_and_update() == expected {
-            return Ok(());
-        }
-        lifecycle.changed().await?;
-    }
 }

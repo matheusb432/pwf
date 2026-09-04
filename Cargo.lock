@@ -640,6 +640,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tinytemplate",
+ "tokio",
  "walkdir",
 ]
 
@@ -2289,6 +2290,7 @@ name = "pwf-server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "criterion",
  "directories",
  "futures",
  "prost",
@@ -2299,12 +2301,14 @@ dependencies = [
  "pwf-models",
  "pwf-wire",
  "rolling-file",
+ "serde",
  "serde_json",
  "shell-words",
  "sqlx",
  "tempfile",
  "tokio",
  "tokio-stream",
+ "toml 1.1.3+spec-1.1.0",
  "tonic",
  "tonic-health",
  "tonic-reflection",
