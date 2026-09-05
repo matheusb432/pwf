@@ -46,8 +46,6 @@ impl DatabaseFixture {
             .context("database fixture path has no parent")?
             .join("home");
         fs::create_dir_all(&home)?;
-        let output = migrator_command(&path, &home).output()?;
-        assert_success(&output, "migrate test database");
         let server = ServerProcess::start(&path, &home)?;
         Ok(Self { server, path, home })
     }
@@ -60,10 +58,6 @@ impl DatabaseFixture {
         let mut command = command();
         configure_command(&mut command, &self.path, home, &self.server.data_root);
         command
-    }
-
-    pub fn migrator_command(&self) -> Command {
-        migrator_command(&self.path, &self.home)
     }
 
     pub fn write_user_config(&self, source: &str) -> anyhow::Result<()> {
@@ -92,15 +86,6 @@ impl DatabaseFixture {
             .assert()
             .success();
     }
-}
-
-fn migrator_command(database_path: &Path, home: &Path) -> Command {
-    let mut command = Command::new(binary_path("pwf-migrator"));
-    command
-        .env("PWF_DATABASE_PATH", database_path)
-        .env("HOME", home)
-        .env("USERPROFILE", home);
-    command
 }
 
 struct ServerProcess {
@@ -184,7 +169,7 @@ impl Drop for ServerProcess {
 fn configure_command(command: &mut Command, database_path: &Path, home: &Path, data_root: &Path) {
     command
         .env("PWF_DATABASE_PATH", database_path)
-        .env("PWF_DATA_DIR", data_root)
+        .env("PWF_RUNTIME_DIR", data_root)
         .env("XDG_CONFIG_HOME", home.join(".config"))
         .env("HOME", home)
         .env("USERPROFILE", home);

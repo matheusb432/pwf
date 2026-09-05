@@ -116,15 +116,6 @@ struct ProjectIndexFrontmatter {
     title: Option<String>,
 }
 
-pub(super) fn parse_task_metadata_if_task(
-    file: &MarkdownFile,
-) -> Result<Option<(TaskId, Option<String>)>, ObsidianStoreError> {
-    task_frontmatter(file)?
-        .map(|frontmatter| parse_task_metadata(file.path(), &frontmatter))
-        .transpose()
-        .map(Option::flatten)
-}
-
 fn task_frontmatter(
     file: &MarkdownFile,
 ) -> Result<Option<FrontmatterView<'_>>, ObsidianStoreError> {
@@ -260,7 +251,7 @@ mod tests {
     use pwf_models::project::{ProjectId, ProjectIndexIdentity, ProjectName};
 
     use super::{
-        parse_project_index_identity, parse_task_metadata_if_task, project_index_frontmatter_id,
+        parse_project_index_identity, parse_task_metadata, project_index_frontmatter_id,
         validate_project_index_identity,
     };
     use crate::obsidian::ObsidianStoreError;
@@ -271,7 +262,9 @@ mod tests {
         let markdown = "---\nid: FOO-0001\nstatus: active\n---\n\nbody\n";
         let file = crate::obsidian::MarkdownFile::from_source(path, markdown.to_string());
 
-        let (id, _) = parse_task_metadata_if_task(&file).unwrap().unwrap();
+        let (id, _) = parse_task_metadata(path, &file.frontmatter_view().unwrap().unwrap())
+            .unwrap()
+            .unwrap();
 
         assert_eq!(id.as_ref(), "FOO-0001");
     }

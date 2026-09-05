@@ -1,11 +1,9 @@
-use std::{net::Ipv4Addr, time::Duration};
+use std::time::Duration;
 
 use anyhow::{Context as _, ensure};
 use pwf_client::PwfClient;
 use pwf_infra::user_settings::TomlSettingsStore;
-use pwf_local_auth::{
-    CapabilityToken, LocalAuth, PublishedEndpoint, ServerEndpoint, ServerInstanceId,
-};
+use pwf_local_transport::{LocalEndpoint, LocalListener};
 use pwf_models::project::HomeDirectory;
 use pwf_server::{AppState, ServerLifecycle, ServerState, serve};
 use tokio::sync::{oneshot, watch};
@@ -15,22 +13,18 @@ const SERVER_OBSERVATION_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub(crate) struct TestServer {
     pub(crate) root: tempfile::TempDir,
-    pub(crate) token: CapabilityToken,
-    endpoint: ServerEndpoint,
+    endpoint: LocalEndpoint,
     pub(crate) client: PwfClient,
     shutdown: Option<oneshot::Sender<()>>,
     lifecycle: watch::Receiver<ServerState>,
     task: Option<tokio::task::JoinHandle<anyhow::Result<()>>>,
-    _published: PublishedEndpoint,
 }
 
 impl TestServer {
     pub(crate) async fn start(shutdown_grace_period: Duration) -> anyhow::Result<Self> {
         let root = tempfile::tempdir()?;
         let database_path = root.path().join("pwf.sqlite3");
-        let migration_pool = pwf_infra::database::build_migration_pool(&database_path).await?;
-        pwf_infra::database::migrate_database(&migration_pool).await?;
-        migration_pool.close().await;
+        pwf_migrator::run(&database_path).await?;
         let pool = pwf_infra::database::build_pool(&database_path).await?;
         let home_path = root.path().join("home");
         std::fs::create_dir_all(&home_path)?;
@@ -40,12 +34,8 @@ impl TestServer {
             TomlSettingsStore::new(Some(root.path().join("config.toml"))),
         );
 
-        let auth = LocalAuth::from_data_root(root.path().join("auth"))?;
-        let token = auth.load_or_create_server_token()?;
-        let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
-        let endpoint =
-            ServerEndpoint::try_new(listener.local_addr()?, ServerInstanceId::generate())?;
-        let published = auth.publish_endpoint(endpoint.clone())?;
+        let endpoint = LocalEndpoint::from_root(root.path())?;
+        let listener = LocalListener::bind(&endpoint, Duration::from_millis(250)).await?;
         let (shutdown_sender, shutdown_receiver) = oneshot::channel();
         let (lifecycle_handle, mut lifecycle) = ServerLifecycle::channel();
         let task = tokio::spawn(serve(
@@ -54,31 +44,27 @@ impl TestServer {
                 let _ = shutdown_receiver.await;
             },
             shutdown_grace_period,
-            token.clone(),
             state,
             lifecycle_handle,
         ));
         wait_for_state(&mut lifecycle, ServerState::Serving).await?;
-        let client = PwfClient::connect(&auth).await?;
+        let client = PwfClient::connect(&endpoint).await?;
 
         Ok(Self {
             root,
-            token,
             endpoint,
             client,
             shutdown: Some(shutdown_sender),
             lifecycle,
             task: Some(task),
-            _published: published,
         })
     }
 
     pub(crate) async fn channel(&self) -> anyhow::Result<Channel> {
-        Ok(
-            tonic::transport::Endpoint::from_shared(format!("http://{}", self.endpoint.address()))?
-                .connect()
-                .await?,
-        )
+        Ok(self
+            .endpoint
+            .connect(SERVER_OBSERVATION_TIMEOUT, SERVER_OBSERVATION_TIMEOUT)
+            .await?)
     }
 
     pub(crate) fn begin_shutdown(&mut self) -> anyhow::Result<()> {

@@ -16,6 +16,7 @@ askama = { version = "0.16.0", default-features = false, features = ["derive", "
 atomic-write-file = "0.3.1"
 assert_cmd = "2"
 cargo_metadata = "0.23.1"
+hyper-util = { version = "0.1.20", default-features = false }
 jiff = "0.2.35"
 clap = { version = "4", features = ["derive"] }
 clap-cargo = "0.18.3"
@@ -25,7 +26,6 @@ directories = "6.0.0"
 dialoguer = { version = "0.12.0", default-features = false }
 expectrl = "0.9.0"
 futures = { version = "0.3.34", default-features = false, features = ["std"] }
-getrandom = "0.4.3"
 gray_matter = { version = "0.3.2", default-features = false, features = ["yaml"] }
 lazy-regex = "3.6.1"
 libc = "0.2.186"
@@ -42,11 +42,11 @@ prompt-lanes = { path = "shared/prompt-lanes" }
 pwf-application = { path = "crates/pwf-application" }
 pwf-client = { path = "crates/pwf-client" }
 pwf-infra = { path = "crates/pwf-infra" }
-pwf-local-auth = { path = "crates/pwf-local-auth" }
+pwf-migrator = { path = "crates/pwf-migrator" }
+pwf-local-transport = { path = "crates/pwf-local-transport" }
 pwf-models = { path = "crates/pwf-models" }
 pwf-wire = { path = "crates/pwf-wire" }
 rolling-file = "0.2.0"
-secrecy = "0.10.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 service-manager = { version = "0.11.0", default-features = false }
@@ -68,6 +68,7 @@ tonic-health = "0.14.6"
 tonic-prost = "0.14.6"
 tonic-prost-build = "0.14.6"
 tonic-reflection = "0.14.6"
+tower = { version = "0.5.3", default-features = false }
 tower-http = { version = "0.7.0", default-features = false, features = ["trace"] }
 tracing = "0.1.44"
 tracing-appender = "0.2.5"
@@ -76,9 +77,9 @@ tracing-subscriber = { version = "0.3.23", default-features = false, features = 
     "fmt",
     "json",
 ] }
-subtle = { version = "2.6.1", default-features = false }
 uuid = { version = "1", features = ["v4"] }
 walkdir = "2"
+windows-sys = "0.61.2"
 [workspace.lints.clippy]
 all = { level = "warn", priority = -2 }
 pedantic = { level = "warn", priority = -2 }

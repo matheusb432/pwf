@@ -1,6 +1,6 @@
 use pwf_wire::pb::{self, project_service_client::ProjectServiceClient};
 
-use crate::{AuthenticatedChannel, ClientError, RequestPolicy};
+use crate::{ClientError, PolicyChannel, RequestPolicy};
 
 #[derive(Clone)]
 pub struct ProjectClient {
@@ -93,8 +93,8 @@ impl ProjectClient {
             .map_err(Into::into)
     }
 
-    fn client(&self) -> ProjectServiceClient<AuthenticatedChannel> {
-        ProjectServiceClient::with_interceptor(self.channel.clone(), self.request_policy.clone())
+    fn client(&self) -> ProjectServiceClient<PolicyChannel> {
+        ProjectServiceClient::with_interceptor(self.channel.clone(), self.request_policy)
             .max_encoding_message_size(super::MAX_REQUEST_MESSAGE_SIZE)
             .max_decoding_message_size(super::MAX_RESPONSE_MESSAGE_SIZE)
     }

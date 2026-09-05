@@ -239,8 +239,6 @@ pub enum ObsidianStoreError {
     ReadIndex { source: std::io::Error },
     #[error("Cannot write task file: {source}")]
     WriteTaskFile { source: std::io::Error },
-    #[error("Cannot write index: {source}")]
-    WriteIndex { source: std::io::Error },
     #[error("Failed to write task file: {source}")]
     AddWriteTaskFile { source: std::io::Error },
     #[error("Failed to write index file: {source}")]

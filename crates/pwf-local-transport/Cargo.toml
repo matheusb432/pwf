@@ -1,0 +1,31 @@
+[package]
+name = "pwf-local-transport"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["net", "time"] }
+tonic = { workspace = true, features = ["transport"] }
+
+[target.'cfg(unix)'.dependencies]
+directories = { workspace = true }
+libc = { workspace = true }
+tokio-stream = { workspace = true, features = ["net"] }
+
+[target.'cfg(windows)'.dependencies]
+blake3 = { workspace = true }
+futures = { workspace = true }
+hyper-util = { workspace = true, features = ["tokio"] }
+tower = { workspace = true, features = ["util"] }
+windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Threading"] }
+
+[dev-dependencies]
+tonic = { workspace = true, features = ["router"] }
+tonic-health = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt", "io-util"] }
+
+[lints]
+workspace = true

@@ -1,15 +1,18 @@
-use std::{
-    env, fs,
-    path::{Path, PathBuf},
-    process::Command,
-};
+#[cfg(unix)]
+use std::{env, fs, path::Path};
+use std::{path::PathBuf, process::Command};
 
-use anyhow::{Context, Result};
+#[cfg(unix)]
+use anyhow::Context as _;
+use anyhow::Result;
 use clap::Args;
 
 use crate::{paths, process};
 
+#[cfg(unix)]
 mod server_service;
+#[cfg(windows)]
+mod windows;
 
 #[derive(Args)]
 pub(crate) struct UpdateArgs {
@@ -21,6 +24,7 @@ pub(crate) struct UpdateArgs {
     force: bool,
 }
 
+#[cfg(unix)]
 #[derive(Debug, PartialEq, Eq)]
 enum Placed {
     Installed,
@@ -56,6 +60,7 @@ fn place_binary(source: &Path, destination: &Path) -> Result<Placed> {
     })
 }
 
+#[cfg(unix)]
 fn path_export_line(dir: &Path, path_var: &str, rc_contents: &str) -> Option<String> {
     let dir_str = dir.to_string_lossy();
     let on_path = env::split_paths(path_var).any(|e| e == dir);
@@ -65,16 +70,14 @@ fn path_export_line(dir: &Path, path_var: &str, rc_contents: &str) -> Option<Str
     Some(format!("\nexport PATH=\"{dir_str}:$PATH\"\n"))
 }
 
+#[cfg(unix)]
 fn bin_name() -> &'static str {
-    if cfg!(windows) { "pwf.exe" } else { "pwf" }
+    "pwf"
 }
 
+#[cfg(unix)]
 fn server_bin_name() -> &'static str {
-    if cfg!(windows) {
-        "pwf-server.exe"
-    } else {
-        "pwf-server"
-    }
+    "pwf-server"
 }
 
 fn release_bin(name: &str) -> PathBuf {
@@ -84,10 +87,7 @@ fn release_bin(name: &str) -> PathBuf {
 pub(crate) fn install() -> Result<()> {
     #[cfg(windows)]
     {
-        return process::run(
-            "scoop install",
-            Command::new("scoop").args(["install", "pwf.json"]),
-        );
+        windows::place(false)
     }
     #[cfg(unix)]
     {
@@ -101,23 +101,7 @@ pub(crate) fn update(args: &UpdateArgs) -> Result<()> {
     }
     #[cfg(windows)]
     {
-        process::run(
-            "cargo build",
-            Command::new("cargo").args(["build", "--release"]),
-        )?;
-        let dest = dirs_scoop_pwf()?;
-        if args.dry {
-            eprintln!(
-                "DRY-RUN: would copy {} -> {}",
-                release_bin(bin_name()).display(),
-                dest.display()
-            );
-        } else {
-            std::fs::copy(release_bin(bin_name()), &dest)
-                .with_context(|| format!("copying to {}", dest.display()))?;
-            eprintln!("refreshed global pwf binary -> {}", dest.display());
-        }
-        return Ok(());
+        windows::place(args.dry)
     }
     #[cfg(unix)]
     {
@@ -194,7 +178,7 @@ fn wire_path(dir: &Path) -> Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
@@ -262,15 +246,4 @@ mod tests {
         let line = path_export_line(dir, "/usr/bin", "").unwrap();
         assert!(line.contains("/home/u/.local/bin:$PATH"));
     }
-}
-
-#[cfg(windows)]
-fn dirs_scoop_pwf() -> Result<PathBuf> {
-    let home = env::var_os("USERPROFILE").context("USERPROFILE is not set")?;
-    Ok(PathBuf::from(home)
-        .join("scoop")
-        .join("apps")
-        .join("pwf")
-        .join("current")
-        .join("pwf.exe"))
 }

@@ -3,4 +3,4 @@ migrations-dir = "./migrations"
 
 [migrate.defaults]
 migration-type = "simple"
-migration-versioning = "timestamp"
+migration-versioning = "sequential"

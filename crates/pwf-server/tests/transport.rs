@@ -17,7 +17,6 @@ use pwf_client::{
     },
     task::{TaskDagEdge, TaskDagNode},
 };
-use pwf_local_auth::CapabilityToken;
 use pwf_server::ServerState;
 use pwf_wire::pb::{delete_task_result, dispatched_session, get_task_response, reopen_task_result};
 use tokio::sync::mpsc;
@@ -48,10 +47,7 @@ async fn v1_get_user_settings_returns_validated_task_status_colors() -> anyhow::
     )?;
 
     let response = SettingsServiceClient::new(server.channel().await?)
-        .get_user_settings(authenticated(
-            Request::new(pb::GetUserSettingsRequest {}),
-            &server.token,
-        )?)
+        .get_user_settings(Request::new(pb::GetUserSettingsRequest {}))
         .await?
         .into_inner();
     let colors = response
@@ -79,10 +75,7 @@ async fn v1_get_user_settings_rejects_invalid_config_with_its_path_and_cause() -
     std::fs::write(&config_path, "[colors]\nactive = \"#fff\"\n")?;
 
     let status = SettingsServiceClient::new(server.channel().await?)
-        .get_user_settings(authenticated(
-            Request::new(pb::GetUserSettingsRequest {}),
-            &server.token,
-        )?)
+        .get_user_settings(Request::new(pb::GetUserSettingsRequest {}))
         .await
         .unwrap_err();
 
@@ -302,10 +295,7 @@ impl TestServer {
             })
             .await?;
         let mut stream = TaskServiceClient::new(self.channel().await?)
-            .delete_task(authenticated(
-                Request::new(ReceiverStream::new(receiver)),
-                &self.token,
-            )?)
+            .delete_task(Request::new(ReceiverStream::new(receiver)))
             .await?
             .into_inner();
         let preflight = stream
@@ -336,10 +326,7 @@ impl TestServer {
             })
             .await?;
         let mut stream = TaskServiceClient::new(self.channel().await?)
-            .reopen_task(authenticated(
-                Request::new(ReceiverStream::new(receiver)),
-                &self.token,
-            )?)
+            .reopen_task(Request::new(ReceiverStream::new(receiver)))
             .await?
             .into_inner();
         let preflight = stream
@@ -369,10 +356,7 @@ impl TestServer {
             })
             .await?;
         let mut stream = SessionServiceClient::new(self.channel().await?)
-            .dispatch_session(authenticated(
-                Request::new(ReceiverStream::new(receiver)),
-                &self.token,
-            )?)
+            .dispatch_session(Request::new(ReceiverStream::new(receiver)))
             .await?
             .into_inner();
         let preflight = stream
@@ -495,28 +479,25 @@ async fn v1_create_task_returns_only_the_new_identifier() -> anyhow::Result<()> 
     server.add_project_and_task().await?;
 
     let response = pb::task_service_client::TaskServiceClient::new(server.channel().await?)
-        .create_task(authenticated(
-            Request::new(pb::CreateTaskRequest {
-                project_selector: "foo-bar".to_string(),
-                prompt: Some(pb::create_task_request::Prompt::Structured(
-                    pb::StructuredTaskPrompt {
-                        title: "minimal response".to_string(),
-                        lanes: Some(pb::TaskLanes {
-                            goals: vec!["return only the task ID".to_string()],
-                            context: Vec::new(),
-                            constraints: Vec::new(),
-                            done_when: Vec::new(),
-                        }),
-                    },
-                )),
-                blocked_by: Vec::new(),
-                effort: None,
-                tags: Vec::new(),
-                priority: None,
-                request_id: "transport-create-minimal-response".to_string(),
-            }),
-            &server.token,
-        )?)
+        .create_task(Request::new(pb::CreateTaskRequest {
+            project_selector: "foo-bar".to_string(),
+            prompt: Some(pb::create_task_request::Prompt::Structured(
+                pb::StructuredTaskPrompt {
+                    title: "minimal response".to_string(),
+                    lanes: Some(pb::TaskLanes {
+                        goals: vec!["return only the task ID".to_string()],
+                        context: Vec::new(),
+                        constraints: Vec::new(),
+                        done_when: Vec::new(),
+                    }),
+                },
+            )),
+            blocked_by: Vec::new(),
+            effort: None,
+            tags: Vec::new(),
+            priority: None,
+            request_id: "transport-create-minimal-response".to_string(),
+        }))
         .await?
         .into_inner();
 
@@ -1534,26 +1515,21 @@ async fn closing_confirmation_stream_before_decision_cancels_without_removing_ta
 }
 
 #[tokio::test]
-async fn health_and_reflection_require_authentication_and_requests_are_bounded()
--> anyhow::Result<()> {
+async fn health_and_reflection_use_local_ipc_and_requests_are_bounded() -> anyhow::Result<()> {
     let server = TestServer::start(Duration::from_secs(2)).await?;
     server.add_project_and_task().await?;
     let channel = server.channel().await?;
 
-    let unauthenticated = HealthClient::new(channel.clone())
+    let healthy = HealthClient::new(channel.clone())
         .check(HealthCheckRequest {
             service: String::new(),
         })
-        .await
-        .unwrap_err();
-    assert_eq!(unauthenticated.code(), Code::Unauthenticated);
+        .await?
+        .into_inner();
+    assert_eq!(healthy.status, ServingStatus::Serving as i32);
 
-    let response = reflection_response(
-        &channel,
-        &server.token,
-        MessageRequest::ListServices(String::new()),
-    )
-    .await?;
+    let response =
+        reflection_response(&channel, MessageRequest::ListServices(String::new())).await?;
     let MessageResponse::ListServicesResponse(services) = response else {
         anyhow::bail!("reflection returned the wrong service-list response kind");
     };
@@ -1577,7 +1553,6 @@ async fn health_and_reflection_require_authentication_and_requests_are_bounded()
 
     let response = reflection_response(
         &channel,
-        &server.token,
         MessageRequest::FileContainingSymbol("pwf.v1.ProjectService".to_string()),
     )
     .await?;
@@ -1592,19 +1567,16 @@ async fn health_and_reflection_require_authentication_and_requests_are_bounded()
     );
 
     let oversized = NoteServiceClient::new(channel)
-        .add_note(authenticated(
-            Request::new(pb::AddNoteRequest {
-                project_selector: "foo-bar".to_string(),
-                title: "oversized".to_string(),
-                content: "x".repeat(70 * 1024),
-                domain: None,
-                tags: Vec::new(),
-                sources: Vec::new(),
-                verified: None,
-                date: None,
-            }),
-            &server.token,
-        )?)
+        .add_note(Request::new(pb::AddNoteRequest {
+            project_selector: "foo-bar".to_string(),
+            title: "oversized".to_string(),
+            content: "x".repeat(70 * 1024),
+            domain: None,
+            tags: Vec::new(),
+            sources: Vec::new(),
+            verified: None,
+            date: None,
+        }))
         .await
         .unwrap_err();
     assert_eq!(oversized.code(), Code::OutOfRange);
@@ -1619,12 +1591,9 @@ async fn shutdown_publishes_not_serving_and_bounds_an_unanswered_stream() -> any
     let channel = server.channel().await?;
 
     let mut health = HealthClient::new(channel.clone())
-        .watch(authenticated(
-            Request::new(HealthCheckRequest {
-                service: String::new(),
-            }),
-            &server.token,
-        )?)
+        .watch(Request::new(HealthCheckRequest {
+            service: String::new(),
+        }))
         .await
         .unwrap()
         .into_inner();
@@ -1665,29 +1634,14 @@ fn rpc_status(error: ClientError) -> anyhow::Result<Status> {
     }
 }
 
-fn authenticated<T>(
-    mut request: Request<T>,
-    token: &CapabilityToken,
-) -> anyhow::Result<Request<T>> {
-    let authorization = format!("Bearer {}", token.expose_secret()).parse()?;
-    request
-        .metadata_mut()
-        .insert("authorization", authorization);
-    Ok(request)
-}
-
 async fn reflection_response(
     channel: &Channel,
-    token: &CapabilityToken,
     message_request: MessageRequest,
 ) -> anyhow::Result<MessageResponse> {
-    let request = authenticated(
-        Request::new(tokio_stream::once(ServerReflectionRequest {
-            host: String::new(),
-            message_request: Some(message_request),
-        })),
-        token,
-    )?;
+    let request = Request::new(tokio_stream::once(ServerReflectionRequest {
+        host: String::new(),
+        message_request: Some(message_request),
+    }));
     let mut reflection = ServerReflectionClient::new(channel.clone())
         .server_reflection_info(request)
         .await?

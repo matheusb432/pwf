@@ -5,7 +5,7 @@ edition.workspace = true
 publish.workspace = true
 
 [dependencies]
-pwf-local-auth = { workspace = true }
+pwf-local-transport = { workspace = true }
 pwf-wire = { workspace = true }
 shell-words = { workspace = true }
 thiserror = { workspace = true }

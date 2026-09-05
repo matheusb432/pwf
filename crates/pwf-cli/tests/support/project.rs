@@ -149,7 +149,7 @@ pub fn run_server_with_database(database_path: &Path) -> std::io::Result<Output>
     let root = database_path.parent().unwrap_or(database_path);
     Command::new(super::binary_path("pwf-server"))
         .env("PWF_DATABASE_PATH", database_path)
-        .env("PWF_DATA_DIR", root.join("server-data"))
+        .env("PWF_RUNTIME_DIR", root.join("server-data"))
         .env("XDG_STATE_HOME", root.join("state"))
         .env("XDG_DATA_HOME", root.join("data"))
         .env("HOME", root.join("home"))

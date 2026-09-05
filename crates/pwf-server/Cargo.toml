@@ -15,7 +15,8 @@ futures = { workspace = true }
 prost = { workspace = true }
 pwf-application = { workspace = true }
 pwf-infra = { workspace = true }
-pwf-local-auth = { workspace = true }
+pwf-migrator = { workspace = true }
+pwf-local-transport = { workspace = true }
 pwf-models = { workspace = true }
 pwf-wire = { workspace = true }
 rolling-file = { workspace = true }

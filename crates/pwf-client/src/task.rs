@@ -8,7 +8,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use uuid::Uuid;
 
 use crate::{
-    AuthenticatedChannel, ClientError, RequestPolicy,
+    ClientError, PolicyChannel, RequestPolicy,
     confirmation::{Confirmation, ConfirmationPrompt, ConfirmedRequestError, protocol},
 };
 
@@ -300,18 +300,16 @@ impl TaskClient {
         }
     }
 
-    fn client(&self) -> TaskServiceClient<AuthenticatedChannel> {
-        TaskServiceClient::with_interceptor(self.channel.clone(), self.request_policy.clone())
+    fn client(&self) -> TaskServiceClient<PolicyChannel> {
+        TaskServiceClient::with_interceptor(self.channel.clone(), self.request_policy)
             .max_encoding_message_size(super::MAX_REQUEST_MESSAGE_SIZE)
             .max_decoding_message_size(super::MAX_RESPONSE_MESSAGE_SIZE)
     }
 
-    fn session_client(
-        &self,
-    ) -> pb::session_service_client::SessionServiceClient<AuthenticatedChannel> {
+    fn session_client(&self) -> pb::session_service_client::SessionServiceClient<PolicyChannel> {
         pb::session_service_client::SessionServiceClient::with_interceptor(
             self.channel.clone(),
-            self.request_policy.clone(),
+            self.request_policy,
         )
         .max_encoding_message_size(super::MAX_REQUEST_MESSAGE_SIZE)
         .max_decoding_message_size(super::MAX_RESPONSE_MESSAGE_SIZE)

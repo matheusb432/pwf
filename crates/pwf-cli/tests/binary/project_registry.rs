@@ -30,12 +30,19 @@ fn server_database_open_failure_is_reported_only_as_a_diagnostic() {
 }
 
 #[test]
-fn server_unmigrated_database_reports_the_migrator_remedy() {
+fn server_bootstraps_and_reopens_a_fresh_database() {
     let directory = tempfile::tempdir().unwrap();
-    let database_path = directory.path().join("projects.sqlite3");
-    let output = run_server_with_database(&database_path).unwrap();
-
-    assert_failure(output, &["database schema is not ready", "pwf-migrator"]).unwrap();
+    let path = directory.path().join("projects.sqlite3");
+    for _ in 0..2 {
+        let fixture = crate::support::DatabaseFixture::new(path.clone()).unwrap();
+        let output = fixture.command().args(["project", "ls"]).output().unwrap();
+        crate::support::assert_success(&output, "list fresh database");
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap(),
+            serde_json::json!([])
+        );
+    }
+    assert!(path.is_file());
 }
 
 #[test]

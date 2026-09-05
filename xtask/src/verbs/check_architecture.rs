@@ -12,7 +12,7 @@ struct EdgePolicy {
     reason: &'static str,
 }
 
-const EDGE_POLICIES: [EdgePolicy; 10] = [
+const EDGE_POLICIES: [EdgePolicy; 11] = [
     EdgePolicy {
         from: "pwf-models",
         label: "models stay independent",
@@ -43,7 +43,7 @@ const EDGE_POLICIES: [EdgePolicy; 10] = [
             "pwf-client",
             "pwf-infra",
             "pwf-cli",
-            "pwf-local-auth",
+            "pwf-local-transport",
             "pwf-migrator",
             "pwf-server",
             "xtask",
@@ -57,7 +57,7 @@ const EDGE_POLICIES: [EdgePolicy; 10] = [
             "pwf-client",
             "pwf-infra",
             "pwf-cli",
-            "pwf-local-auth",
+            "pwf-local-transport",
             "pwf-migrator",
             "pwf-server",
             "xtask",
@@ -70,7 +70,7 @@ const EDGE_POLICIES: [EdgePolicy; 10] = [
         forbidden: &[
             "pwf-client",
             "pwf-cli",
-            "pwf-local-auth",
+            "pwf-local-transport",
             "pwf-migrator",
             "pwf-server",
             "xtask",
@@ -102,7 +102,8 @@ const EDGE_POLICIES: [EdgePolicy; 10] = [
             "prompt-lanes",
             "pwf-application",
             "pwf-infra",
-            "pwf-local-auth",
+            "pwf-migrator",
+            "pwf-local-transport",
             "pwf-server",
             "pwf-wire",
             "sqlx",
@@ -110,8 +111,8 @@ const EDGE_POLICIES: [EdgePolicy; 10] = [
         reason: "the CLI must not own prompt syntax, application policy, or persistence",
     },
     EdgePolicy {
-        from: "pwf-local-auth",
-        label: "local auth stays process-neutral",
+        from: "pwf-local-transport",
+        label: "local transport stays process-neutral",
         forbidden: &[
             "prompt-lanes",
             "pwf-application",
@@ -124,18 +125,24 @@ const EDGE_POLICIES: [EdgePolicy; 10] = [
             "pwf-wire",
             "xtask",
         ],
-        reason: "local endpoint and capability storage must not depend on product layers",
+        reason: "local IPC must not depend on product layers",
+    },
+    EdgePolicy {
+        from: "pwf-migrator",
+        label: "migrator composes database infrastructure",
+        forbidden: &[
+            "pwf-server",
+            "pwf-client",
+            "pwf-cli",
+            "pwf-local-transport",
+            "xtask",
+        ],
+        reason: "startup migrations must remain independent of IPC and process roots",
     },
     EdgePolicy {
         from: "pwf-server",
         label: "server stays a process root",
-        forbidden: &[
-            "prompt-lanes",
-            "pwf-cli",
-            "pwf-client",
-            "pwf-migrator",
-            "xtask",
-        ],
+        forbidden: &["prompt-lanes", "pwf-cli", "pwf-client", "xtask"],
         reason: "the server composes application and infrastructure without depending on frontends",
     },
     EdgePolicy {
@@ -326,7 +333,7 @@ mod tests {
                 (
                     "pwf-client",
                     "pwf-client",
-                    "[dependencies]\npwf-wire = { path = \"../pwf-wire\" }\npwf-local-auth = { path = \"../pwf-local-auth\" }\n",
+                    "[dependencies]\npwf-wire = { path = \"../pwf-wire\" }\npwf-local-transport = { path = \"../pwf-local-transport\" }\n",
                 ),
                 (
                     "pwf-cli",
@@ -338,7 +345,17 @@ mod tests {
                     "pwf-infra",
                     "[dependencies]\npwf-application = { path = \"../pwf-application\" }\npwf-models = { path = \"../pwf-models\" }\npwf-wire = { path = \"../pwf-wire\" }\n",
                 ),
-                ("pwf-local-auth", "pwf-local-auth", ""),
+                (
+                    "pwf-server",
+                    "pwf-server",
+                    "[dependencies]\npwf-migrator = { path = \"../pwf-migrator\" }\n",
+                ),
+                (
+                    "pwf-migrator",
+                    "pwf-migrator",
+                    "[dependencies]\npwf-infra = { path = \"../pwf-infra\" }\n",
+                ),
+                ("pwf-local-transport", "pwf-local-transport", ""),
                 ("prompt-lanes", "prompt-lanes", ""),
             ],
         );

@@ -8,7 +8,6 @@ pub mod get_task;
 pub mod get_task_dag;
 mod lane_configuration;
 pub mod list_tasks;
-pub mod migrate_task_metadata;
 mod mutation_request;
 mod note_body;
 pub mod remove_task;

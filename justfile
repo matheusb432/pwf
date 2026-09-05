@@ -5,10 +5,10 @@ set positional-arguments
 _default:
     @just --list --unsorted
 
-# Build the release binary.
+# Build the release CLI and bundled server.
 [group('build')]
 build:
-    cargo build --release -p pwf-cli
+    cargo build --release -p pwf-cli -p pwf-server
 
 # First-time setup of the global pwf binary.
 [group('build')]
@@ -51,10 +51,6 @@ lint:
 prepare *args:
     mise exec cargo:sqlx-cli -- cargo run --quiet -p xtask -- prepare {{ args }}
 
-# Apply or check persistence migrations through the dedicated process.
-migrate *args:
-    cargo run --quiet -p pwf-migrator -- {{ args }}
-
 # Run the complete read-only formatting and lint gate.
 [group('quality')]
 check:
@@ -81,7 +77,7 @@ test *args:
 
 [private]
 _test-process-build:
-    @cargo build --release -p pwf-cli -p pwf-migrator -p pwf-server
+    @cargo build --release -p pwf-cli -p pwf-server
 
 # Run CLI binary integration contracts against release process binaries.
 [group('quality')]

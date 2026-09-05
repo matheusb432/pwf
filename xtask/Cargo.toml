@@ -15,8 +15,10 @@ clap = { workspace = true }
 clap-cargo = { workspace = true }
 percent-encoding = { workspace = true }
 process-wrap = { workspace = true }
-service-manager = { workspace = true }
 tempfile = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+service-manager = { workspace = true }
 
 [lints]
 workspace = true

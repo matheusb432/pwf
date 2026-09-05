@@ -1,14 +1,9 @@
 use std::{future::Future, time::Duration};
 
 use anyhow::Context as _;
-use pwf_local_auth::CapabilityToken;
+use pwf_local_transport::LocalListener;
 use pwf_wire::{FILE_DESCRIPTOR_SET, pb};
-use tonic::{
-    Request, Status,
-    server::NamedService,
-    service::{Interceptor, InterceptorLayer},
-    transport::{Server, server::TcpIncoming},
-};
+use tonic::{server::NamedService, transport::Server};
 use tower_http::{
     LatencyUnit,
     trace::{DefaultMakeSpan, DefaultOnEos, DefaultOnFailure, DefaultOnResponse, TraceLayer},
@@ -26,8 +21,6 @@ const MAX_CONCURRENT_REQUESTS_PER_CONNECTION: usize = 16;
 const MAX_REQUEST_DURATION: Duration = Duration::from_mins(30);
 const MAX_REQUEST_MESSAGE_SIZE: usize = 64 * 1024;
 const MAX_RESPONSE_MESSAGE_SIZE: usize = 4 * 1024 * 1024;
-const AUTHORIZATION_METADATA_KEY: &str = "authorization";
-const AUTHORIZATION_SCHEME: &str = "Bearer ";
 const APPLICATION_SERVICE_NAMES: [&str; 5] = [
     pb::project_service_server::ProjectServiceServer::<ProjectGrpcService>::NAME,
     pb::note_service_server::NoteServiceServer::<NoteGrpcService>::NAME,
@@ -104,41 +97,14 @@ impl ServerLifecycle {
     }
 }
 
-#[derive(Clone)]
-struct Authentication {
-    capability: CapabilityToken,
-}
-
-impl std::fmt::Debug for Authentication {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("Authentication(REDACTED)")
-    }
-}
-
-impl Interceptor for Authentication {
-    fn call(&mut self, request: Request<()>) -> Result<Request<()>, Status> {
-        let authenticated = request
-            .metadata()
-            .get(AUTHORIZATION_METADATA_KEY)
-            .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.strip_prefix(AUTHORIZATION_SCHEME))
-            .is_some_and(|candidate| self.capability.authenticates(candidate));
-        if !authenticated {
-            return Err(Status::unauthenticated("authentication required"));
-        }
-        Ok(request)
-    }
-}
-
 pub async fn serve(
-    listener: tokio::net::TcpListener,
+    listener: LocalListener,
     shutdown: impl Future<Output = ()> + Send + 'static,
     shutdown_grace_period: Duration,
-    capability: CapabilityToken,
     state: AppState,
     lifecycle: ServerLifecycle,
 ) -> anyhow::Result<()> {
-    let incoming = TcpIncoming::from(listener).with_nodelay(Some(true));
+    let (incoming, _ownership) = listener.into_parts();
     let (health_reporter, health_server) = tonic_health::server::health_reporter();
     publish_health(
         &health_reporter,
@@ -192,7 +158,6 @@ pub async fn serve(
         .concurrency_limit_per_connection(MAX_CONCURRENT_REQUESTS_PER_CONNECTION)
         .load_shed(true)
         .timeout(MAX_REQUEST_DURATION)
-        .layer(InterceptorLayer::new(Authentication { capability }))
         .add_service(health_server)
         .add_service(reflection_server)
         .add_service(project_server)

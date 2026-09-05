@@ -29,14 +29,6 @@ pub(super) fn open_task_file(path: &Path) -> Result<MarkdownFile, ObsidianStoreE
     })
 }
 
-pub(super) fn write_index(path: &Path, content: &str) -> Result<(), ObsidianStoreError> {
-    MarkdownFile::write_rendered(path.to_path_buf(), content.to_string()).map_err(|source| {
-        ObsidianStoreError::WriteIndex {
-            source: source.into_io_error(),
-        }
-    })
-}
-
 pub(super) fn line_start_index(content: &str, line_number: usize) -> Option<usize> {
     if line_number == 0 {
         return None;
