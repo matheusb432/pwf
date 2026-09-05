@@ -3,6 +3,6 @@ default_priority = "medium" # low | medium | high | highest
 default_sort_order = "id" # created | id | project-id | priority | effort | title
 
 [colors]
-active = "#FF5C00"
+active = "#40E0D0"
 done = "#008000"
 cancelled = "#ff0000"
