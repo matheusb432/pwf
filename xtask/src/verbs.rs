@@ -2,6 +2,8 @@ pub(crate) mod check_architecture;
 pub(crate) mod install;
 pub(crate) mod prepare;
 pub(crate) mod ship;
+#[cfg(target_os = "linux")]
+pub(crate) mod test_windows;
 
 #[derive(Clone, Copy)]
 pub(crate) struct Verb(&'static str);

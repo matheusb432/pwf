@@ -18,6 +18,9 @@ pub(crate) struct Cli {
 
 #[derive(Subcommand)]
 pub(crate) enum Command {
+    /// Cross-build and smoke-test Windows binaries in an existing dockur VM.
+    #[cfg(target_os = "linux")]
+    TestWindows(crate::verbs::test_windows::Arguments),
     /// Refresh the committed `SQLx` checked-query cache, or verify it with `--check`.
     #[command(name = Verb::PREPARE.as_str())]
     Prepare {
@@ -28,7 +31,7 @@ pub(crate) enum Command {
     /// Run the release preflight and build the release binary.
     #[command(name = Verb::SHIP.as_str())]
     Ship(ShipArguments),
-    /// First-time setup of the global pwf binary (`~/.local/bin/pwf` on Unix; Scoop on Windows).
+    /// Install both executables and the native user service or Windows sign-in task.
     #[command(name = Verb::INSTALL.as_str())]
     Install,
     /// Rebuild + refresh the installed binary. `--dry` previews; `-f`/`--force` skips the full

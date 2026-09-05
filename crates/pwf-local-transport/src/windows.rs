@@ -209,11 +209,21 @@ mod tests {
             assert_eq!(&bytes, b"pwf");
         }
         drop(incoming);
-        assert!(
-            LocalListener::bind(&endpoint, Duration::from_secs(1))
-                .await
-                .is_ok()
-        );
+        // Mio releases cancelled overlapped I/O handles when the runtime processes completions.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+        let mut rebound = LocalListener::bind(&endpoint, Duration::from_secs(1)).await;
+        while rebound
+            .as_ref()
+            .is_err_and(|error| error.kind() == io::ErrorKind::PermissionDenied)
+        {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "pipe handles did not close"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            rebound = LocalListener::bind(&endpoint, Duration::from_secs(1)).await;
+        }
+        rebound.unwrap();
     }
 
     #[tokio::test]

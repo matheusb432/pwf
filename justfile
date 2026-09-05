@@ -89,6 +89,11 @@ test-binary *args: _test-process-build
 test-e2e *args: _test-process-build
     @cargo nextest run --profile process -p pwf-cli --test e2e "$@"
 
+# Cross-build and run Windows smoke tests in the existing dockur VM (Linux host).
+[group('quality')]
+test-windows *args:
+    @cargo run --quiet -p xtask -- test-windows "$@"
+
 # Run workspace, process, architecture, and syntax test gates.
 [group('quality')]
 test-all: _test-process-build

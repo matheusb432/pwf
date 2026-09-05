@@ -18,6 +18,8 @@ fn main() {
 fn run(command: cli::Command) -> Result<()> {
     use cli::Command;
     match command {
+        #[cfg(target_os = "linux")]
+        Command::TestWindows(arguments) => verbs::test_windows::run(&arguments),
         Command::Prepare { check } => verbs::prepare::run(check),
         Command::Ship(arguments) => verbs::ship::run(&arguments),
         Command::Install => verbs::install::install(),
