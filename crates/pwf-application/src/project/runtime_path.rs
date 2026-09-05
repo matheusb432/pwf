@@ -350,7 +350,7 @@ mod host {
         }
 
         fn identity(&self) -> RuntimePathIdentity {
-            let mut identity = match self.root {
+            let mut identity: Vec<u16> = match self.root {
                 PathRoot::Relative => "relative:".encode_utf16().collect(),
                 PathRoot::Unix => "unix:/".encode_utf16().collect(),
                 PathRoot::Drive(drive) => {
