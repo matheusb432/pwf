@@ -125,13 +125,13 @@ coverage *args:
     @cargo clean --target-dir target/llvm-cov-target
 
 # Compare Criterion benchmarks against the local baseline. Use --update to replace it.
-[arg("benchmark", help="Benchmark target or all", pattern="all|prompt-lanes|obsidian-frontmatter-read|obsidian-markdown-file|obsidian-store-io|list-tasks-rpc")]
+[arg("benchmark", help="Benchmark target or all", pattern="all|marker-sections|obsidian-frontmatter-read|obsidian-markdown-file|obsidian-store-io|list-tasks-rpc")]
 [arg("case", help="Exact Criterion benchmark case")]
 [arg("update", long="update", value="--save-baseline local", help="Compare and replace the local baseline")]
 [arg("quick", long="quick", value="--quick", help="Stop once Criterion reaches statistical significance")]
 [group('performance')]
 bench benchmark="all" case="" update="--baseline local" quick="":
-    CRITERION_HOME="{{ justfile_directory() }}/.artifacts/benchmarks/criterion" cargo bench --locked {{ if benchmark == "all" { "--workspace --benches" } else if benchmark == "prompt-lanes" { "-p prompt-lanes --bench prompt_lanes" } else if benchmark == "list-tasks-rpc" { "-p pwf-server --bench list_tasks_rpc" } else { "-p pwf-infra --bench " + replace(benchmark, "-", "_") } }} -- {{ if case == "" { "" } else { quote(case) + " --exact" } }} {{ update }} {{ quick }}
+    CRITERION_HOME="{{ justfile_directory() }}/.artifacts/benchmarks/criterion" cargo bench --locked {{ if benchmark == "all" { "--workspace --benches" } else if benchmark == "marker-sections" { "-p marker-sections --bench marker_sections" } else if benchmark == "list-tasks-rpc" { "-p pwf-server --bench list_tasks_rpc" } else { "-p pwf-infra --bench " + replace(benchmark, "-", "_") } }} -- {{ if case == "" { "" } else { quote(case) + " --exact" } }} {{ update }} {{ quick }}
 
 # Compare task DAG rendering against its local Criterion baseline.
 [arg("update", long="update", value="--save-baseline local", help="Compare and replace the local baseline")]

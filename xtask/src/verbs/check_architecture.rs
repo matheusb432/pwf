@@ -29,7 +29,7 @@ const EDGE_POLICIES: [EdgePolicy; 11] = [
             "pwf-cli",
             "pwf-migrator",
             "pwf-server",
-            "prompt-lanes",
+            "marker-sections",
             "xtask",
         ],
         reason: "models must not depend on wire formats, persistence, use cases, or process roots",
@@ -38,7 +38,7 @@ const EDGE_POLICIES: [EdgePolicy; 11] = [
         from: "pwf-wire",
         label: "wire stays process-neutral",
         forbidden: &[
-            "prompt-lanes",
+            "marker-sections",
             "pwf-application",
             "pwf-client",
             "pwf-infra",
@@ -82,7 +82,7 @@ const EDGE_POLICIES: [EdgePolicy; 11] = [
         label: "client stays transport-only",
         forbidden: &[
             "directories",
-            "prompt-lanes",
+            "marker-sections",
             "pwf-application",
             "pwf-cli",
             "pwf-infra",
@@ -99,7 +99,7 @@ const EDGE_POLICIES: [EdgePolicy; 11] = [
         label: "cli stays a frontend",
         forbidden: &[
             "directories",
-            "prompt-lanes",
+            "marker-sections",
             "pwf-application",
             "pwf-infra",
             "pwf-migrator",
@@ -114,7 +114,7 @@ const EDGE_POLICIES: [EdgePolicy; 11] = [
         from: "pwf-local-transport",
         label: "local transport stays process-neutral",
         forbidden: &[
-            "prompt-lanes",
+            "marker-sections",
             "pwf-application",
             "pwf-cli",
             "pwf-client",
@@ -142,12 +142,12 @@ const EDGE_POLICIES: [EdgePolicy; 11] = [
     EdgePolicy {
         from: "pwf-server",
         label: "server stays a process root",
-        forbidden: &["prompt-lanes", "pwf-cli", "pwf-client", "xtask"],
+        forbidden: &["marker-sections", "pwf-cli", "pwf-client", "xtask"],
         reason: "the server composes application and infrastructure without depending on frontends",
     },
     EdgePolicy {
-        from: "prompt-lanes",
-        label: "prompt lanes stays reusable",
+        from: "marker-sections",
+        label: "marker sections stays reusable",
         forbidden: &[
             "pwf-models",
             "pwf-wire",
@@ -158,7 +158,7 @@ const EDGE_POLICIES: [EdgePolicy; 11] = [
             "pwf-migrator",
             "pwf-server",
         ],
-        reason: "shared lane syntax must remain independent of PWF product crates",
+        reason: "shared marker syntax must remain independent of PWF product crates",
     },
     EdgePolicy {
         from: "xtask",
@@ -173,7 +173,7 @@ const EDGE_POLICIES: [EdgePolicy; 11] = [
             "pwf-cli",
             "pwf-migrator",
             "pwf-server",
-            "prompt-lanes",
+            "marker-sections",
         ],
         reason: "repository automation must not become a product dependency boundary",
     },
@@ -259,7 +259,7 @@ mod tests {
                 (
                     "pwf-wire",
                     "pwf-wire",
-                    "[dependencies]\npwf-infra = { path = \"../pwf-infra\" }\nprompt-lanes = { path = \"../prompt-lanes\" }\n",
+                    "[dependencies]\npwf-infra = { path = \"../pwf-infra\" }\nmarker-sections = { path = \"../marker-sections\" }\n",
                 ),
                 (
                     "pwf-client",
@@ -269,7 +269,7 @@ mod tests {
                 (
                     "pwf-cli",
                     "pwf-cli",
-                    "[dependencies]\npwf-application = { path = \"../pwf-application\" }\nprompt-lanes = { path = \"../prompt-lanes\" }\n",
+                    "[dependencies]\npwf-application = { path = \"../pwf-application\" }\nmarker-sections = { path = \"../marker-sections\" }\n",
                 ),
                 (
                     "pwf-infra",
@@ -277,7 +277,7 @@ mod tests {
                     "[dependencies]\npwf-migrator = { path = \"../pwf-migrator\" }\n",
                 ),
                 ("pwf-migrator", "pwf-migrator", ""),
-                ("prompt-lanes", "prompt-lanes", ""),
+                ("marker-sections", "marker-sections", ""),
                 ("serde", "serde", ""),
                 ("sqlx", "sqlx", ""),
             ],
@@ -289,7 +289,7 @@ mod tests {
                 "pwf-application/Cargo.toml: [application stays independent of adapters] \
                  pwf-application -> pwf-infra: infrastructure belongs behind application-owned \
                  boundaries",
-                "pwf-cli/Cargo.toml: [cli stays a frontend] pwf-cli -> prompt-lanes: the CLI must \
+                "pwf-cli/Cargo.toml: [cli stays a frontend] pwf-cli -> marker-sections: the CLI must \
                  not own prompt syntax, application policy, or persistence",
                 "pwf-cli/Cargo.toml: [cli stays a frontend] pwf-cli -> pwf-application: the CLI \
                  must not own prompt syntax, application policy, or persistence",
@@ -302,7 +302,7 @@ mod tests {
                 "pwf-models/Cargo.toml: [models stay independent] pwf-models -> serde: models must not \
                  depend on wire formats, persistence, use cases, or process roots",
                 "pwf-wire/Cargo.toml: [wire stays process-neutral] pwf-wire -> \
-                 prompt-lanes: wire contracts must not depend on prompt syntax, use cases, adapters, \
+                 marker-sections: wire contracts must not depend on prompt syntax, use cases, adapters, \
                  or process roots",
                 "pwf-wire/Cargo.toml: [wire stays process-neutral] pwf-wire -> pwf-infra: wire \
                  contracts must not depend on prompt syntax, use cases, adapters, or process roots",
@@ -324,7 +324,7 @@ mod tests {
                 (
                     "pwf-application",
                     "pwf-application",
-                    "[dependencies]\npwf-models = { path = \"../pwf-models\" }\npwf-wire = { path = \"../pwf-wire\" }\nprompt-lanes = { path = \"../prompt-lanes\" }\n",
+                    "[dependencies]\npwf-models = { path = \"../pwf-models\" }\npwf-wire = { path = \"../pwf-wire\" }\nmarker-sections = { path = \"../marker-sections\" }\n",
                 ),
                 (
                     "pwf-wire",
@@ -357,7 +357,7 @@ mod tests {
                     "[dependencies]\npwf-infra = { path = \"../pwf-infra\" }\n",
                 ),
                 ("pwf-local-transport", "pwf-local-transport", ""),
-                ("prompt-lanes", "prompt-lanes", ""),
+                ("marker-sections", "marker-sections", ""),
             ],
         );
 

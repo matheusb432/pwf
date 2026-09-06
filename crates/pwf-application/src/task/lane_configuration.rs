@@ -1,4 +1,4 @@
-use prompt_lanes::{
+use marker_sections::{
     Adapter as _, LaneConfiguration, LaneConfigurationError, LaneDefinition, LaneDefinitionError,
     MarkdownAdapter, ParsedPrompt,
 };
@@ -81,7 +81,7 @@ impl TaskPromptLanes {
     }
 
     pub(super) fn parse(&self, prompt: &str) -> ParsedPrompt<TASK_LANE_COUNT> {
-        prompt_lanes::parse(prompt, &self.configuration)
+        marker_sections::parse(prompt, &self.configuration)
     }
 
     pub(super) fn render(&self, parsed: &ParsedPrompt<TASK_LANE_COUNT>) -> String {

@@ -1,7 +1,7 @@
 use std::{hint::black_box, time::Duration};
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use prompt_lanes::{
+use marker_sections::{
     Adapter as _, LaneConfiguration, LaneDefinition, MarkdownAdapter, ParsedPrompt, parse,
 };
 
@@ -9,7 +9,7 @@ const SAMPLE_SIZE: usize = 20;
 const PLAIN_PROMPT: &str = "refactor the prompt lane parser without changing its output";
 const STRUCTURED_PROMPT: &str = "refactor prompt lanes / preserve authored goals / keep marker order stable /c parsing currently allocates token and bullet buffers /n retain the public ParsedPrompt contract /n preserve whitespace normalization /d parser and renderer tests remain green /d benchmarks show the cost of each stage";
 
-fn prompt_lanes(criterion: &mut Criterion) {
+fn marker_sections(criterion: &mut Criterion) {
     let configuration = configuration();
     let dense_prompt = dense_prompt();
     let cases = [
@@ -28,7 +28,7 @@ fn benchmark_parse(
     configuration: &LaneConfiguration<4>,
     cases: &[PromptCase<'_>],
 ) {
-    let mut group = criterion.benchmark_group("prompt-lanes/parse");
+    let mut group = criterion.benchmark_group("marker-sections/parse");
     for case in cases {
         group.throughput(Throughput::Bytes(case.prompt.len() as u64));
         group.bench_with_input(
@@ -54,7 +54,7 @@ fn benchmark_render_markdown(
             prompt: parse(case.prompt, configuration),
         })
         .collect::<Vec<_>>();
-    let mut group = criterion.benchmark_group("prompt-lanes/render-markdown");
+    let mut group = criterion.benchmark_group("marker-sections/render-markdown");
     for case in &parsed {
         let adapter = MarkdownAdapter::new(configuration);
         let rendered_bytes = adapter.render(&case.prompt).len() as u64;
@@ -75,7 +75,7 @@ fn benchmark_parse_and_render(
     configuration: &LaneConfiguration<4>,
     cases: &[PromptCase<'_>],
 ) {
-    let mut group = criterion.benchmark_group("prompt-lanes/parse-and-render");
+    let mut group = criterion.benchmark_group("marker-sections/parse-and-render");
     for case in cases {
         benchmark_parse_and_render_case(&mut group, configuration, case);
     }
@@ -116,19 +116,19 @@ fn configuration() -> LaneConfiguration<4> {
 }
 
 fn require_lane(
-    result: Result<LaneDefinition, prompt_lanes::LaneDefinitionError>,
+    result: Result<LaneDefinition, marker_sections::LaneDefinitionError>,
 ) -> LaneDefinition {
     result.unwrap_or_else(|error| benchmark_configuration_error(&error))
 }
 
 fn require_configuration(
-    result: Result<LaneConfiguration<4>, prompt_lanes::LaneConfigurationError>,
+    result: Result<LaneConfiguration<4>, marker_sections::LaneConfigurationError>,
 ) -> LaneConfiguration<4> {
     result.unwrap_or_else(|error| benchmark_configuration_error(&error))
 }
 
 fn benchmark_configuration_error(error: &dyn std::fmt::Display) -> ! {
-    eprintln!("invalid prompt-lanes benchmark configuration: {error}");
+    eprintln!("invalid marker-sections benchmark configuration: {error}");
     std::process::exit(1)
 }
 
@@ -171,6 +171,6 @@ criterion_group! {
         .sample_size(SAMPLE_SIZE)
         .warm_up_time(Duration::from_secs(1))
         .measurement_time(Duration::from_secs(2));
-    targets = prompt_lanes
+    targets = marker_sections
 }
 criterion_main!(benches);

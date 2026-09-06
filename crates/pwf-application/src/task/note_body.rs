@@ -1,7 +1,7 @@
 //! Applies prompt, lane, and report transforms to task note bodies.
 
 use lazy_regex::{Regex, regex};
-use prompt_lanes::ParsedPrompt;
+use marker_sections::ParsedPrompt;
 use pwf_models::task::TaskPrompt;
 use pwf_wire::task::{TaskLane, TaskLaneEdits, TaskLanes};
 
