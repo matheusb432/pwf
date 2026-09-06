@@ -9,7 +9,6 @@ repository = "https://github.com/matheusb432/pwf"
 readme = "README.md"
 edition = "2024"
 license = "MIT"
-license-file = "LICENSE"
 publish = ["crates-io"]
 
 [workspace.dependencies]
