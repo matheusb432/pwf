@@ -10,6 +10,8 @@ mod project_edit;
 mod project_registry;
 #[path = "binary/project_rename.rs"]
 mod project_rename;
+#[path = "binary/server.rs"]
+mod server;
 #[path = "binary/session_confirmation.rs"]
 mod session_confirmation;
 #[path = "binary/session_dispatch.rs"]

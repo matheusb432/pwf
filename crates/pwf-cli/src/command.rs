@@ -12,6 +12,7 @@ pub struct Cli {
 
 #[derive(Debug)]
 pub enum RootCommand {
+    Server(crate::server::Arguments),
     Project(project::Arguments),
     Task(task::Command),
     Note(note::Arguments),
@@ -33,6 +34,8 @@ struct ParsedCli {
 
 #[derive(Subcommand, Debug)]
 enum ParsedRootCommand {
+    /// Manage the local background server and login startup.
+    Server(crate::server::Arguments),
     /// Manages registered projects.
     Project(project::Arguments),
     #[command(flatten)]
@@ -71,6 +74,9 @@ fn parse_normalized_argv(argv: Vec<String>) -> Result<Cli, clap::Error> {
         error.format(&mut selected_command)
     })?;
     match parsed.command {
+        ParsedRootCommand::Server(arguments) => Ok(Cli {
+            command: RootCommand::Server(arguments),
+        }),
         ParsedRootCommand::Project(arguments) => Ok(Cli {
             command: RootCommand::Project(arguments),
         }),

@@ -8,7 +8,7 @@ pub async fn run() {
     match dispatch(parsed).await {
         Ok(output) => print_output(&output),
         Err(error) => {
-            eprintln!("Error: {error}");
+            eprintln!("Error: {error:#}");
             std::process::exit(1);
         }
     }
@@ -21,6 +21,9 @@ fn print_output(output: &str) {
 }
 
 async fn dispatch(parsed: command::Cli) -> anyhow::Result<String> {
+    if let command::RootCommand::Server(arguments) = parsed.command {
+        return crate::server::run(arguments).await;
+    }
     if matches!(
         &parsed.command,
         command::RootCommand::Project(arguments) if arguments.command.is_none()
@@ -30,6 +33,7 @@ async fn dispatch(parsed: command::Cli) -> anyhow::Result<String> {
 
     let client = PwfClient::connect_local().await?;
     match parsed.command {
+        command::RootCommand::Server(arguments) => crate::server::run(arguments).await,
         command::RootCommand::Project(arguments) => {
             let project_client = client.project();
             project::run(arguments, &project_client).await

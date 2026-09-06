@@ -12,8 +12,8 @@ build:
 
 # First-time setup of the global pwf binary.
 [group('build')]
-install:
-    cargo run --quiet -p xtask -- install
+install *args:
+    cargo run --quiet -p xtask -- install {{ args }}
 
 # Converge the Ubuntu development environment and install pwf.
 [group('build')]
@@ -73,7 +73,7 @@ release-order:
 [group('build')]
 package *args:
     just release-order
-    cargo package --workspace --exclude xtask --locked --registry crates-io {{ args }}
+    cargo run --quiet -p xtask -- package {{ args }}
 
 # Apply machine-applicable fixes and reformat.
 [group('quality')]

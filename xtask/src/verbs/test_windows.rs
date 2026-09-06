@@ -19,6 +19,7 @@ const TARGET: &str = "x86_64-pc-windows-msvc";
 const BOOTSTRAP: &str = include_str!("test_windows/bootstrap.ps1");
 const SMOKE: &str = include_str!("test_windows/smoke.ps1");
 const MONITOR: &str = include_str!("test_windows/monitor.py");
+const DESKTOP: &str = include_str!("test_windows/desktop.py");
 
 #[derive(Args)]
 pub(crate) struct Arguments {
@@ -163,6 +164,8 @@ fn prepare_bundle(root: &Path, bundle: &Path, report: &Path) -> Result<()> {
     }
     fs::create_dir(bundle.join("output"))?;
     fs::set_permissions(bundle.join("output"), fs::Permissions::from_mode(0o777))?;
+    fs::create_dir(bundle.join("connection"))?;
+    fs::set_permissions(bundle.join("connection"), fs::Permissions::from_mode(0o777))?;
     Ok(())
 }
 
@@ -179,6 +182,14 @@ fn execute_guest(arguments: &Arguments, bundle: &Path, run_id: &str, report: &Pa
         run_id,
     ]);
     process::run_bounded("Windows desktop launch", monitor, Duration::from_mins(6))?;
+    let mut desktop = Command::new("xvfb-run");
+    desktop.args(["--auto-servernum", "python3", "-c", DESKTOP]);
+    desktop.arg(bundle).arg(&arguments.container).arg(report);
+    let desktop_result = process::run_bounded(
+        "temporary Windows desktop session",
+        desktop,
+        Duration::from_mins(8),
+    );
     let deadline = Instant::now() + Duration::from_mins(6);
     let complete = bundle.join("output/complete.json");
     while !complete.is_file() {
@@ -192,6 +203,7 @@ fn execute_guest(arguments: &Arguments, bundle: &Path, run_id: &str, report: &Pa
         thread::sleep(Duration::from_millis(500));
     }
     copy_output(bundle, report)?;
+    desktop_result?;
     let bytes = fs::read(&complete)?;
     let result: Value =
         serde_json::from_slice(bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&bytes))?;

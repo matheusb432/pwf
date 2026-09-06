@@ -9,6 +9,10 @@ $root = Join-Path $env:ProgramData ('pwf-smoke-' + $suffix)
 $output = Join-Path $Bundle 'output'
 $user = $null
 $worker = $null
+$remoteSessionId = $null
+$controllerSessionId = (Get-Process -Id $PID).SessionId
+$desktopDisconnected = $false
+$credentialsPath = Join-Path $Bundle 'connection\login.json'
 $result = @{ run_id = $runId; passed = $false }
 
 try {
@@ -18,10 +22,29 @@ try {
     $password = 'Pwf!9' + [Guid]::NewGuid().ToString('N')
     $user = New-LocalUser -Name $userName -Password (ConvertTo-SecureString $password -AsPlainText -Force) -AccountNeverExpires -PasswordNeverExpires
     Add-LocalGroupMember -SID 'S-1-5-32-545' -Member $user
+    Add-LocalGroupMember -SID 'S-1-5-32-555' -Member $user
     $acl = Get-Acl -LiteralPath $root
     $rule = [Security.AccessControl.FileSystemAccessRule]::new($user.SID, 'Modify', 'ContainerInherit, ObjectInherit', 'None', 'Allow')
     $acl.AddAccessRule($rule)
     Set-Acl -LiteralPath $root -AclObject $acl
+    # Interactive-token tasks need a signed-in user, beyond a RunAs process.
+    @{ username = $userName; password = $password; domain = $env:COMPUTERNAME } |
+        ConvertTo-Json | Set-Content -Encoding UTF8 ($credentialsPath + '.tmp')
+    Move-Item ($credentialsPath + '.tmp') $credentialsPath
+    & tsdiscon.exe $controllerSessionId
+    if ($LASTEXITCODE -ne 0) { throw 'Could not disconnect the controller desktop for the test user' }
+    $desktopDisconnected = $true
+    $elapsed = [Diagnostics.Stopwatch]::StartNew()
+    while ($null -eq $remoteSessionId) {
+        $sessions = & cmd.exe /c "quser.exe $userName 2>nul"
+        foreach ($line in $sessions) {
+            if ($line -match ('^\s*>?\s*' + [Regex]::Escape($userName) + '\s+(?:\S+\s+)?(\d+)\s')) {
+                $remoteSessionId = [int]$Matches[1]
+            }
+        }
+        if ($elapsed.Elapsed.TotalSeconds -ge 90) { throw 'Temporary user did not sign in within 90 seconds' }
+        Start-Sleep -Milliseconds 500
+    }
     $program = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
     $arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + (Join-Path $root 'smoke.ps1') + '" -Root "' + $root + '" -RunId "' + $runId + '"'
     $credential = [Management.Automation.PSCredential]::new("$env:COMPUTERNAME\$userName", (ConvertTo-SecureString $password -AsPlainText -Force))
@@ -41,6 +64,7 @@ try {
 } finally {
     $cleanupErrors = [System.Collections.Generic.List[string]]::new()
     $cleanupActions = @(
+        { Remove-Item $credentialsPath, ($credentialsPath + '.tmp') -Force -ErrorAction SilentlyContinue },
         {
             if ($worker) {
                 if (-not $worker.HasExited -and -not $worker.WaitForExit(5000)) { $worker.Kill() }
@@ -56,6 +80,15 @@ try {
         }
         },
         { if (Test-Path (Join-Path $root 'output')) { Copy-Item (Join-Path $root 'output\*') $output -Recurse -Force } },
+        {
+            if ($null -ne $remoteSessionId) {
+                & logoff.exe $remoteSessionId
+            }
+            if ($desktopDisconnected) {
+                & tscon.exe $controllerSessionId /dest:console
+                if ($LASTEXITCODE -ne 0) { throw 'Could not restore the original desktop session' }
+            }
+        },
         {
         if ($user) {
             $elapsed = [Diagnostics.Stopwatch]::StartNew()

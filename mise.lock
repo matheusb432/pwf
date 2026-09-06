@@ -9,6 +9,11 @@ checksum = "sha256:611f9e5e76f2611ecea1a35dd3468ceedf600641a11224b80341d79c6ee7b
 url = "https://github.com/ast-grep/ast-grep/releases/download/0.44.1/app-x86_64-unknown-linux-gnu.zip"
 url_api = "https://api.github.com/repos/ast-grep/ast-grep/releases/assets/466366790"
 
+[tools.ast-grep."platforms.macos-arm64"]
+checksum = "sha256:0a2fef273b0ff1238b8307add911714f92021d25b919fa3ec9b6b2e046bb29cf"
+url = "https://github.com/ast-grep/ast-grep/releases/download/0.44.1/app-aarch64-apple-darwin.zip"
+url_api = "https://api.github.com/repos/ast-grep/ast-grep/releases/assets/466368358"
+
 [[tools.buf]]
 version = "1.72.0"
 backend = "aqua:bufbuild/buf"
@@ -17,6 +22,12 @@ backend = "aqua:bufbuild/buf"
 checksum = "sha256:a9c6186cf6fcf062b247345e1b7b12c26f580c1b2a4bbf4d3fe080abf85ceee8"
 url = "https://github.com/bufbuild/buf/releases/download/v1.72.0/buf-Linux-x86_64.tar.gz"
 url_api = "https://api.github.com/repos/bufbuild/buf/releases/assets/480772583"
+provenance = "minisign"
+
+[tools.buf."platforms.macos-arm64"]
+checksum = "sha256:be040ae0ca381103dfda68a36738695c4db3e48de8e91412acdc3d991f39b91e"
+url = "https://github.com/bufbuild/buf/releases/download/v1.72.0/buf-Darwin-arm64.tar.gz"
+url_api = "https://api.github.com/repos/bufbuild/buf/releases/assets/480772487"
 provenance = "minisign"
 
 [[tools.cargo-binstall]]
@@ -29,6 +40,12 @@ url = "https://github.com/cargo-bins/cargo-binstall/releases/download/v1.21.1/ca
 url_api = "https://api.github.com/repos/cargo-bins/cargo-binstall/releases/assets/489425174"
 provenance = "github-attestations"
 
+[tools.cargo-binstall."platforms.macos-arm64"]
+checksum = "sha256:bd03935f1a6d652647f6d42a2cd39396a55094ffddc65bed0debebfe32feea43"
+url = "https://github.com/cargo-bins/cargo-binstall/releases/download/v1.21.1/cargo-binstall-aarch64-apple-darwin.zip"
+url_api = "https://api.github.com/repos/cargo-bins/cargo-binstall/releases/assets/489425460"
+provenance = "github-attestations"
+
 [[tools."cargo:cargo-llvm-cov"]]
 version = "0.8.7"
 backend = "cargo:cargo-llvm-cov"
@@ -36,6 +53,26 @@ backend = "cargo:cargo-llvm-cov"
 [[tools."cargo:cargo-nextest"]]
 version = "0.9.143"
 backend = "cargo:cargo-nextest"
+
+[[tools."cargo:sqlx-cli"]]
+version = "0.9.0"
+backend = "cargo:sqlx-cli"
+
+[[tools."cargo:sqlx-cli"]]
+version = "0.9.0"
+backend = "cargo:sqlx-cli"
+
+[tools."cargo:sqlx-cli".options]
+default-features = "false"
+features = "sqlite sqlx-toml"
+
+[[tools."cargo:sqlx-cli"]]
+version = "0.9.0"
+backend = "cargo:sqlx-cli"
+
+[tools."cargo:sqlx-cli".options]
+default-features = "false"
+features = "rustls postgres sqlite sqlx-toml"
 
 [[tools.just]]
 version = "1.56.0"
@@ -46,6 +83,11 @@ checksum = "sha256:fa2a8ec1015d9df5330941ade12437488fc40d33f9c9f8cd4eb70a26de11b
 url = "https://github.com/casey/just/releases/download/1.56.0/just-1.56.0-x86_64-unknown-linux-musl.tar.gz"
 url_api = "https://api.github.com/repos/casey/just/releases/assets/472074624"
 
+[tools.just."platforms.macos-arm64"]
+checksum = "sha256:f35798d4bcdc4db020eef7d2853ad98bbfb97a4d29ee695ba042f18e7fedcc11"
+url = "https://github.com/casey/just/releases/download/1.56.0/just-1.56.0-aarch64-apple-darwin.tar.gz"
+url_api = "https://api.github.com/repos/casey/just/releases/assets/472074635"
+
 [[tools.protoc]]
 version = "35.1"
 backend = "aqua:protocolbuffers/protobuf/protoc"
@@ -55,8 +97,13 @@ checksum = "sha256:6930ebf62bd4ea607b98fff052596c6ee564b9835b4ce172c75a3f53ae9d9
 url = "https://github.com/protocolbuffers/protobuf/releases/download/v35.1/protoc-35.1-linux-x86_64.zip"
 url_api = "https://api.github.com/repos/protocolbuffers/protobuf/releases/assets/445060247"
 
+[tools.protoc."platforms.macos-arm64"]
+checksum = "sha256:193289af0470c6a1aada357d4fba0bbf8d78bfaac8b5e42ca30af2ef75583de2"
+url = "https://github.com/protocolbuffers/protobuf/releases/download/v35.1/protoc-35.1-osx-aarch_64.zip"
+url_api = "https://api.github.com/repos/protocolbuffers/protobuf/releases/assets/445060249"
+
 [[tools.rust]]
-version = "stable"
+version = "1.98.1"
 backend = "core:rust"
 
 [tools.rust.options]

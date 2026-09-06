@@ -22,8 +22,7 @@ tempfile = { workspace = true }
 
 tonic-prost-build = { workspace = true }
 
-[target.'cfg(unix)'.dependencies]
-service-manager = { workspace = true }
+toml = { workspace = true }
 
 [lints]
 workspace = true

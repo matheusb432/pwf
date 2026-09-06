@@ -20,6 +20,7 @@ path = "src/bin/pwf-server.rs"
 
 [dependencies]
 anyhow = { workspace = true }
+clap = { workspace = true }
 pwf-cli = { workspace = true }
 pwf-server = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

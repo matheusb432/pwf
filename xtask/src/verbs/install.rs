@@ -1,249 +1,161 @@
-#[cfg(unix)]
-use std::{env, fs, path::Path};
-use std::{path::PathBuf, process::Command};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
-#[cfg(unix)]
-use anyhow::Context as _;
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use clap::Args;
 
 use crate::{paths, process};
 
-#[cfg(unix)]
-mod server_service;
-#[cfg(windows)]
-mod windows;
+#[derive(Args, Default)]
+pub(crate) struct InstallArgs {
+    /// Cargo installation root, overriding `CARGO_INSTALL_ROOT` and `install.root`.
+    #[arg(long)]
+    root: Option<PathBuf>,
+}
 
 #[derive(Args)]
 pub(crate) struct UpdateArgs {
-    /// Preview the installed binary change without touching the system.
+    #[command(flatten)]
+    install: InstallArgs,
+    /// Preview the ordered installation steps without changing the system.
     #[arg(long, visible_alias = "dry-run")]
     dry: bool,
-    /// Skip the full check preflight (still builds + refreshes the binary).
+    /// Skip the full check preflight.
     #[arg(short = 'f', long)]
     force: bool,
 }
 
-#[cfg(unix)]
-#[derive(Debug, PartialEq, Eq)]
-enum Placed {
-    Installed,
-    Updated,
-    Unchanged,
+pub(crate) fn install(arguments: &InstallArgs) -> Result<()> {
+    place(arguments, false)
 }
 
-#[cfg(unix)]
-fn place_binary(source: &Path, destination: &Path) -> Result<Placed> {
-    if let Some(parent) = destination.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let destination_metadata = destination.symlink_metadata();
-    if destination_metadata
-        .as_ref()
-        .is_ok_and(|metadata| metadata.file_type().is_file())
-        && fs::read(source)? == fs::read(destination)?
-    {
-        return Ok(Placed::Unchanged);
-    }
-
-    let temporary = destination.with_file_name(format!(".pwf.{}.xtask-tmp", std::process::id()));
-    fs::copy(source, &temporary)?;
-    if let Err(error) = fs::rename(&temporary, destination) {
-        let _ = fs::remove_file(&temporary);
-        return Err(error.into());
-    }
-
-    Ok(if destination_metadata.is_ok() {
-        Placed::Updated
-    } else {
-        Placed::Installed
-    })
-}
-
-#[cfg(unix)]
-fn path_export_line(dir: &Path, path_var: &str, rc_contents: &str) -> Option<String> {
-    let dir_str = dir.to_string_lossy();
-    let on_path = env::split_paths(path_var).any(|e| e == dir);
-    if on_path || rc_contents.contains(dir_str.as_ref()) {
-        return None;
-    }
-    Some(format!("\nexport PATH=\"{dir_str}:$PATH\"\n"))
-}
-
-#[cfg(unix)]
-fn bin_name() -> &'static str {
-    "pwf"
-}
-
-#[cfg(unix)]
-fn server_bin_name() -> &'static str {
-    "pwf-server"
-}
-
-fn release_bin(name: &str) -> PathBuf {
-    paths::repo_root().join("target").join("release").join(name)
-}
-
-pub(crate) fn install() -> Result<()> {
-    #[cfg(windows)]
-    {
-        windows::place(false)
-    }
-    #[cfg(unix)]
-    {
-        place_unix(false)
-    }
-}
-
-pub(crate) fn update(args: &UpdateArgs) -> Result<()> {
-    if !args.force {
+pub(crate) fn update(arguments: &UpdateArgs) -> Result<()> {
+    if !arguments.dry && !arguments.force {
         process::run("quality check", Command::new("just").arg("check"))?;
     }
-    #[cfg(windows)]
-    {
-        windows::place(args.dry)
-    }
-    #[cfg(unix)]
-    {
-        place_unix(args.dry)
-    }
+    place(&arguments.install, arguments.dry)
 }
 
-#[cfg(unix)]
-fn place_unix(dry: bool) -> Result<()> {
-    let cli_source = release_bin(bin_name());
-    let server_source = release_bin(server_bin_name());
-    let directory = install_directory()?;
-    let cli_destination = directory.join(bin_name());
-    let server_destination = directory.join(server_bin_name());
+fn place(arguments: &InstallArgs, dry: bool) -> Result<()> {
+    let package = paths::repo_root().join("crates/pwf-app");
+    let root = install_root(arguments.root.as_deref(), &package)?;
+    let cli = root
+        .join("bin")
+        .join(format!("pwf{}", env::consts::EXE_SUFFIX));
     if dry {
-        eprintln!(
-            "DRY-RUN: would copy {} -> {}",
-            cli_source.display(),
-            cli_destination.display()
-        );
-        eprintln!(
-            "DRY-RUN: would copy {} -> {} and refresh its user service",
-            server_source.display(),
-            server_destination.display()
-        );
+        eprintln!("DRY-RUN: install pwf into {}", root.display());
+        eprintln!("DRY-RUN: {} server stop", cli.display());
+        eprintln!("DRY-RUN: install pwf-server into {}", root.display());
+        eprintln!("DRY-RUN: {} server install", cli.display());
         return Ok(());
     }
+    install_binary(&package, &root, "pwf")?;
     process::run(
-        "cargo build",
-        Command::new("cargo").args(["build", "--release", "-p", "pwf-app"]),
+        "stop installed server",
+        Command::new(&cli).args(["server", "stop"]),
     )?;
-    let service = server_service::prepare(&server_destination)?;
-    let cli_placed = place_binary(&cli_source, &cli_destination)?;
-    eprintln!("pwf binary {cli_placed:?} -> {}", cli_destination.display());
-    if let Some(service) = service.as_ref()
-        && service.unregister_if_installed()?
+    install_binary(&package, &root, "pwf-server").with_context(|| {
+        format!(
+            "server remains stopped - after fixing installation, run {} server start",
+            cli.display()
+        )
+    })?;
+    process::run(
+        "register and start installed server",
+        Command::new(&cli).args(["server", "install"]),
+    )
+}
+
+fn install_binary(package: &Path, root: &Path, binary: &str) -> Result<()> {
+    process::run(
+        "Cargo binary installation",
+        Command::new("cargo")
+            .args(["install", "--locked", "--force", "--path"])
+            .arg(package)
+            .args(["--root"])
+            .arg(root)
+            .args(["--bin", binary, "--target-dir"])
+            .arg(paths::repo_root().join("target")),
+    )
+}
+
+fn install_root(explicit: Option<&Path>, package: &Path) -> Result<PathBuf> {
+    let cwd = env::current_dir()?;
+    if let Some(root) = explicit {
+        return Ok(cwd.join(root));
+    }
+    if let Some(root) = env::var_os("CARGO_INSTALL_ROOT") {
+        return Ok(cwd.join(root));
+    }
+    let cargo_home = cargo_home(&cwd)?;
+    for directory in package
+        .ancestors()
+        .map(|path| path.join(".cargo"))
+        .chain(std::iter::once(cargo_home.clone()))
     {
-        eprintln!("stopped and unregistered the existing pwf-server user service");
+        if let Some(root) = configured_root(&directory)? {
+            return Ok(root);
+        }
     }
-    let server_placed = place_binary(&server_source, &server_destination)?;
-    eprintln!(
-        "pwf-server binary {server_placed:?} -> {}",
-        server_destination.display()
-    );
-    if let Some(service) = service {
-        service.install_and_start()?;
-        eprintln!("pwf-server user service installed and started");
-    }
-    wire_path(&directory)?;
-    Ok(())
+    Ok(cargo_home)
 }
 
-#[cfg(unix)]
-fn install_directory() -> Result<PathBuf> {
-    let home = env::var_os("HOME").context("HOME is not set")?;
-    Ok(PathBuf::from(home).join(".local").join("bin"))
-}
-
-#[cfg(unix)]
-fn wire_path(dir: &Path) -> Result<()> {
-    let path_var = env::var("PATH").unwrap_or_default();
-    let rc = PathBuf::from(env::var_os("HOME").context("HOME is not set")?).join(".zshrc");
-    let rc_contents = fs::read_to_string(&rc).unwrap_or_default();
-    if let Some(line) = path_export_line(dir, &path_var, &rc_contents) {
-        use std::io::Write;
-        let mut f = fs::OpenOptions::new().create(true).append(true).open(&rc)?;
-        f.write_all(line.as_bytes())?;
-        eprintln!(
-            "added {} to PATH in {} (open a new shell)",
-            dir.display(),
-            rc.display()
-        );
+fn cargo_home(cwd: &Path) -> Result<PathBuf> {
+    if let Some(home) = env::var_os("CARGO_HOME") {
+        return Ok(cwd.join(home));
     }
-    Ok(())
+    #[cfg(windows)]
+    let variable = "USERPROFILE";
+    #[cfg(not(windows))]
+    let variable = "HOME";
+    Ok(
+        PathBuf::from(env::var_os(variable).with_context(|| format!("{variable} is not set"))?)
+            .join(".cargo"),
+    )
 }
 
-#[cfg(all(test, unix))]
+fn configured_root(directory: &Path) -> Result<Option<PathBuf>> {
+    let legacy = directory.join("config");
+    let path = if legacy.is_file() {
+        legacy
+    } else {
+        directory.join("config.toml")
+    };
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let config: toml::Value = toml::from_str(&fs::read_to_string(&path)?)
+        .with_context(|| format!("reading {}", path.display()))?;
+    let Some(root) = config.get("install").and_then(|value| value.get("root")) else {
+        return Ok(None);
+    };
+    let root = root
+        .as_str()
+        .context("Cargo install.root must be a path string")?;
+    Ok(Some(
+        directory
+            .parent()
+            .context("Cargo config directory has no parent")?
+            .join(root),
+    ))
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
-    #[cfg(unix)]
     #[test]
-    fn binary_install_replaces_a_target_symlink_with_a_copy() {
-        let dir = tempfile::tempdir().unwrap();
-        let source = dir.path().join("pwf-bin");
-        fs::write(&source, b"v1").unwrap();
-        let destination = dir.path().join("bin").join("pwf");
-        fs::create_dir_all(destination.parent().unwrap()).unwrap();
-        std::os::unix::fs::symlink(&source, &destination).unwrap();
-
+    fn cargo_config_root_resolves_from_its_config_parent() {
+        let root = tempfile::tempdir().unwrap();
+        let config = root.path().join(".cargo");
+        fs::create_dir(&config).unwrap();
+        fs::write(config.join("config.toml"), "[install]\nroot = 'tools'\n").unwrap();
         assert_eq!(
-            place_binary(&source, &destination).unwrap(),
-            Placed::Updated
+            configured_root(&config).unwrap(),
+            Some(root.path().join("tools"))
         );
-        assert!(
-            !destination
-                .symlink_metadata()
-                .unwrap()
-                .file_type()
-                .is_symlink()
-        );
-        assert_eq!(fs::read(destination).unwrap(), b"v1");
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn binary_install_is_idempotent_and_updates_changed_bytes() {
-        let dir = tempfile::tempdir().unwrap();
-        let source = dir.path().join("pwf-bin");
-        let destination = dir.path().join("bin").join("pwf");
-        fs::write(&source, b"v1").unwrap();
-
-        assert_eq!(
-            place_binary(&source, &destination).unwrap(),
-            Placed::Installed
-        );
-        assert_eq!(
-            place_binary(&source, &destination).unwrap(),
-            Placed::Unchanged
-        );
-
-        fs::write(&source, b"v2").unwrap();
-        assert_eq!(
-            place_binary(&source, &destination).unwrap(),
-            Placed::Updated
-        );
-        assert_eq!(fs::read(destination).unwrap(), b"v2");
-    }
-
-    #[test]
-    fn path_export_skips_when_already_present() {
-        let dir = Path::new("/home/u/.local/bin");
-        assert!(path_export_line(dir, "/usr/bin:/home/u/.local/bin", "").is_none());
-        assert!(
-            path_export_line(dir, "/usr/bin", "export PATH=\"/home/u/.local/bin:$PATH\"").is_none()
-        );
-    }
-
-    #[test]
-    fn path_export_emits_when_absent() {
-        let dir = Path::new("/home/u/.local/bin");
-        let line = path_export_line(dir, "/usr/bin", "").unwrap();
-        assert!(line.contains("/home/u/.local/bin:$PATH"));
     }
 }

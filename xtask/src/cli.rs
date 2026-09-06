@@ -2,7 +2,11 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
-use crate::verbs::{Verb, install::UpdateArgs, ship::ShipArguments};
+use crate::verbs::{
+    Verb,
+    install::{InstallArgs, UpdateArgs},
+    ship::ShipArguments,
+};
 
 /// pwf's embedded dev/release automation (xtask). Never installed; run via `cargo run -p xtask`.
 #[derive(Parser)]
@@ -18,6 +22,11 @@ pub(crate) struct Cli {
 
 #[derive(Subcommand)]
 pub(crate) enum Command {
+    /// Build the registry packages with fresh staged dependency sources.
+    Package {
+        #[arg(long)]
+        allow_dirty: bool,
+    },
     /// Check coordinated release versions and print publication commands without running them.
     ReleaseOrder,
     /// Regenerate Protobuf bindings and descriptors, or check for drift.
@@ -40,7 +49,7 @@ pub(crate) enum Command {
     Ship(ShipArguments),
     /// Install both executables and the native user service or Windows sign-in task.
     #[command(name = Verb::INSTALL.as_str())]
-    Install,
+    Install(InstallArgs),
     /// Rebuild + refresh the installed binary. `--dry` previews; `-f`/`--force` skips the full
     /// check preflight.
     #[command(name = Verb::UPDATE.as_str())]

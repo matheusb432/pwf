@@ -1,0 +1,47 @@
+name: macos
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@v4
+        with:
+          version: 2026.7.18
+      - name: Check and test
+        run: |
+          just check
+          just build
+          just test-all
+          just package
+      - name: Install and exercise the launch agent
+        env:
+          PWF_RUNTIME_DIR: ${{ runner.temp }}/pwf-runtime
+          PWF_DATABASE_PATH: ${{ runner.temp }}/pwf.sqlite3
+          CARGO_INSTALL_ROOT: ${{ runner.temp }}/pwf-install
+        run: |
+          just install
+          "$CARGO_INSTALL_ROOT/bin/pwf" server status
+          "$CARGO_INSTALL_ROOT/bin/pwf" project ls
+          "$CARGO_INSTALL_ROOT/bin/pwf" server stop
+          "$CARGO_INSTALL_ROOT/bin/pwf" server start
+          "$CARGO_INSTALL_ROOT/bin/pwf" server restart
+          "$CARGO_INSTALL_ROOT/bin/pwf" project ls
+          "$CARGO_INSTALL_ROOT/bin/pwf" server uninstall
+          test -f "$PWF_DATABASE_PATH"
+      - name: Clean up the launch agent
+        if: always()
+        run: |
+          if test -x "$RUNNER_TEMP/pwf-install/bin/pwf"; then
+            "$RUNNER_TEMP/pwf-install/bin/pwf" server uninstall
+          fi

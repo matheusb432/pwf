@@ -164,6 +164,7 @@ const EDGE_POLICIES: [EdgePolicy; 11] = [
         from: "xtask",
         label: "xtask stays outside the product graph",
         forbidden: &[
+            "pwf-app",
             "pwf-models",
             "pwf-wire",
             "pwf-application",
