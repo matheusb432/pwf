@@ -131,7 +131,7 @@ fn place_unix(dry: bool) -> Result<()> {
     }
     process::run(
         "cargo build",
-        Command::new("cargo").args(["build", "--release", "-p", "pwf-cli", "-p", "pwf-server"]),
+        Command::new("cargo").args(["build", "--release", "-p", "pwf-app"]),
     )?;
     let service = server_service::prepare(&server_destination)?;
     let cli_placed = place_binary(&cli_source, &cli_destination)?;

@@ -1,6 +1,8 @@
 //! Exposes pwf command parsing and shared CLI support.
 
 pub mod command;
+mod entrypoint;
+pub use entrypoint::run;
 mod confirmation;
 pub mod console;
 mod edit;

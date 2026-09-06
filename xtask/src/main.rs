@@ -18,6 +18,8 @@ fn main() {
 fn run(command: cli::Command) -> Result<()> {
     use cli::Command;
     match command {
+        Command::ReleaseOrder => verbs::release_order::run(),
+        Command::Proto { check } => verbs::proto::run(check),
         #[cfg(target_os = "linux")]
         Command::TestWindows(arguments) => verbs::test_windows::run(&arguments),
         Command::Prepare { check } => verbs::prepare::run(check),

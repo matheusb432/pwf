@@ -1,0 +1,28 @@
+[package]
+name = "pwf-app"
+version.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+license-file.workspace = true
+repository.workspace = true
+readme.workspace = true
+publish.workspace = true
+description = "Pending work and project notes, with a local background server"
+
+[[bin]]
+name = "pwf"
+path = "src/bin/pwf.rs"
+
+[[bin]]
+name = "pwf-server"
+path = "src/bin/pwf-server.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+pwf-cli = { workspace = true }
+pwf-server = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true

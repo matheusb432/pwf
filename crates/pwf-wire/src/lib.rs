@@ -19,8 +19,8 @@ pub mod task;
     clippy::trivially_copy_pass_by_ref
 )]
 pub mod pb {
-    tonic::include_proto!("pwf.v1");
+    include!("generated/pwf.v1.rs");
 }
 
 /// Encoded descriptors used by standard gRPC reflection.
-pub const FILE_DESCRIPTOR_SET: &[u8] = tonic::include_file_descriptor_set!("pwf_descriptor");
+pub const FILE_DESCRIPTOR_SET: &[u8] = include_bytes!("generated/pwf_descriptor.bin");

@@ -1,6 +1,8 @@
 pub(crate) mod check_architecture;
 pub(crate) mod install;
 pub(crate) mod prepare;
+pub(crate) mod proto;
+pub(crate) mod release_order;
 pub(crate) mod ship;
 #[cfg(target_os = "linux")]
 pub(crate) mod test_windows;

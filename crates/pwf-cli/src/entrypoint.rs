@@ -1,11 +1,11 @@
-use pwf_cli::{command, note, project, settings, task};
 use pwf_client::PwfClient;
 
-#[tokio::main(flavor = "current_thread")]
-async fn main() {
+use crate::{command, note, project, settings, task};
+
+pub async fn run() {
     let parsed = command::parse_argv(std::env::args().skip(1).collect())
         .unwrap_or_else(|error| error.exit());
-    match run(parsed).await {
+    match dispatch(parsed).await {
         Ok(output) => print_output(&output),
         Err(error) => {
             eprintln!("Error: {error}");
@@ -20,7 +20,7 @@ fn print_output(output: &str) {
     }
 }
 
-async fn run(parsed: command::Cli) -> anyhow::Result<String> {
+async fn dispatch(parsed: command::Cli) -> anyhow::Result<String> {
     if matches!(
         &parsed.command,
         command::RootCommand::Project(arguments) if arguments.command.is_none()
@@ -39,7 +39,7 @@ async fn run(parsed: command::Cli) -> anyhow::Result<String> {
             let task_client = client.task();
             task::run(
                 &command,
-                pwf_cli::console::Console::from_terminal(),
+                crate::console::Console::from_terminal(),
                 user_settings.task_status_colors(),
                 &task_client,
             )
@@ -49,7 +49,7 @@ async fn run(parsed: command::Cli) -> anyhow::Result<String> {
             let note_client = client.note();
             note::run(
                 &arguments,
-                pwf_cli::console::Console::from_terminal(),
+                crate::console::Console::from_terminal(),
                 &note_client,
             )
             .await

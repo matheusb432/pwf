@@ -27,7 +27,7 @@ pub(super) fn place(dry: bool) -> Result<()> {
     }
     process::run(
         "cargo build",
-        Command::new("cargo").args(["build", "--release", "-p", "pwf-cli", "-p", "pwf-server"]),
+        Command::new("cargo").args(["build", "--release", "-p", "pwf-app"]),
     )?;
     fs::create_dir_all(&directory)?;
     configure_server("Stop", &server)?;

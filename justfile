@@ -8,7 +8,7 @@ _default:
 # Build the release CLI and bundled server.
 [group('build')]
 build:
-    cargo build --release -p pwf-cli -p pwf-server
+    cargo build --release -p pwf-app
 
 # First-time setup of the global pwf binary.
 [group('build')]
@@ -55,9 +55,25 @@ prepare *args:
 [group('quality')]
 check:
     just fmt-check
+    just proto --check
     just lint
     ast-grep scan
     just prepare --check
+
+# Regenerate Protobuf Rust and descriptors, or verify with --check.
+proto *args:
+    cargo run --quiet -p xtask -- proto {{ args }}
+
+# Check release versions and print ordered publication commands without running them.
+[group('build')]
+release-order:
+    cargo run --quiet -p xtask -- release-order
+
+# Build and verify the registry packages locally without uploading.
+[group('build')]
+package *args:
+    just release-order
+    cargo package --workspace --exclude xtask --locked --registry crates-io {{ args }}
 
 # Apply machine-applicable fixes and reformat.
 [group('quality')]
@@ -77,7 +93,7 @@ test *args:
 
 [private]
 _test-process-build:
-    @cargo build --release -p pwf-cli -p pwf-server
+    @cargo build --release -p pwf-app
 
 # Run CLI binary integration contracts against release process binaries.
 [group('quality')]

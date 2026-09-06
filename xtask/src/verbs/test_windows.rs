@@ -93,9 +93,7 @@ fn prepare_bundle(root: &Path, bundle: &Path, report: &Path) -> Result<()> {
         "--target",
         TARGET,
         "-p",
-        "pwf-cli",
-        "-p",
-        "pwf-server",
+        "pwf-app",
     ]);
     build
         .stdout(File::create(report.join("release-build.stdout.txt"))?)

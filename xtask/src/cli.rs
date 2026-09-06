@@ -18,6 +18,13 @@ pub(crate) struct Cli {
 
 #[derive(Subcommand)]
 pub(crate) enum Command {
+    /// Check coordinated release versions and print publication commands without running them.
+    ReleaseOrder,
+    /// Regenerate Protobuf bindings and descriptors, or check for drift.
+    Proto {
+        #[arg(long)]
+        check: bool,
+    },
     /// Cross-build and smoke-test Windows binaries in an existing dockur VM.
     #[cfg(target_os = "linux")]
     TestWindows(crate::verbs::test_windows::Arguments),

@@ -1,16 +1,15 @@
 [package]
 name = "pwf-cli"
-version = "0.1.0"
+version.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+readme.workspace = true
 edition.workspace = true
 license.workspace = true
 license-file.workspace = true
 publish.workspace = true
 description = "Manages tasks and project notes across configured projects."
 autotests = false
-
-[[bin]]
-name = "pwf"
-path = "src/main.rs"
 
 [lib]
 name = "pwf_cli"

@@ -1,6 +1,10 @@
 [package]
+description = "Task, project and note operations for pwf"
 name = "pwf-application"
-version = "0.1.0"
+version.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+readme.workspace = true
 edition.workspace = true
 license.workspace = true
 license-file.workspace = true

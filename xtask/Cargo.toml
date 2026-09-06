@@ -4,7 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 license-file.workspace = true
-publish.workspace = true
+publish = false
 
 [[bin]]
 name = "xtask"
@@ -19,6 +19,8 @@ percent-encoding = { workspace = true }
 process-wrap = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }
+
+tonic-prost-build = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 service-manager = { workspace = true }
