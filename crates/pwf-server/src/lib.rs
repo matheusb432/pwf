@@ -1,6 +1,7 @@
 //! Local IPC gRPC process root for PWF.
 
 mod observability;
+mod release;
 mod server;
 mod services;
 mod state;

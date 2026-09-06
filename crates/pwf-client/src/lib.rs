@@ -14,6 +14,7 @@ use tonic_health::pb::{HealthCheckRequest, health_client::HealthClient};
 pub mod confirmation;
 pub mod note;
 pub mod project;
+mod release;
 pub mod settings;
 pub mod task;
 
@@ -25,7 +26,7 @@ const OPERATION_TIMEOUT: Duration = Duration::from_mins(30);
 const MAX_REQUEST_MESSAGE_SIZE: usize = 64 * 1024;
 const MAX_RESPONSE_MESSAGE_SIZE: usize = 4 * 1024 * 1024;
 
-pub(crate) type PolicyChannel = InterceptedService<Channel, RequestPolicy>;
+pub(crate) type PolicyChannel = InterceptedService<release::ReleaseChannel, RequestPolicy>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConnectError {
@@ -33,8 +34,6 @@ pub enum ConnectError {
     LocalEndpoint(#[from] std::io::Error),
     #[error(transparent)]
     Transport(#[from] pwf_local_transport::ConnectError),
-    #[error("local pwf-server health check failed")]
-    Health(#[source] Status),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -59,28 +58,38 @@ pub struct PwfClient {
     endpoint: LocalEndpoint,
 }
 
+#[derive(Debug)]
+pub struct ServerHealth {
+    pub serving: bool,
+    pub version: Option<String>,
+}
+
 impl PwfClient {
-    /// Connects to the OS-protected local server and checks its readiness.
+    /// Connects to the OS-protected local server without a health RPC.
     pub async fn connect_local() -> Result<Self, ConnectError> {
         Self::connect(&LocalEndpoint::from_environment()?).await
     }
 
     pub async fn connect(endpoint: &LocalEndpoint) -> Result<Self, ConnectError> {
         let channel = endpoint.connect(CONNECT_TIMEOUT, OPERATION_TIMEOUT).await?;
-        let client = Self {
+        Ok(Self {
             channel,
             request_policy: RequestPolicy,
             endpoint: endpoint.clone(),
-        };
-        client
-            .check_health_inner()
-            .await
-            .map_err(ConnectError::Health)?;
-        Ok(client)
+        })
     }
 
     pub async fn check_health(&self) -> Result<(), ClientError> {
-        self.check_health_inner().await.map_err(ClientError::from)
+        let health = self.health().await?;
+        if !health.serving {
+            return Err(Status::unavailable("pwf-server is not serving").into());
+        }
+        if health.version.as_deref() != Some(env!("CARGO_PKG_VERSION")) {
+            return Err(
+                Status::failed_precondition("pwf-server version differs from the client").into(),
+            );
+        }
+        Ok(())
     }
 
     #[must_use]
@@ -108,7 +117,7 @@ impl PwfClient {
         &self.endpoint
     }
 
-    async fn check_health_inner(&self) -> Result<(), Status> {
+    pub async fn health(&self) -> Result<ServerHealth, ClientError> {
         let mut client = HealthClient::with_interceptor(self.channel.clone(), self.request_policy)
             .max_encoding_message_size(MAX_REQUEST_MESSAGE_SIZE)
             .max_decoding_message_size(MAX_RESPONSE_MESSAGE_SIZE);
@@ -116,11 +125,16 @@ impl PwfClient {
             service: String::new(),
         });
         request.set_timeout(HEALTH_TIMEOUT);
-        let response = client.check(request).await?.into_inner();
-        if response.status != tonic_health::ServingStatus::Serving as i32 {
-            return Err(Status::unavailable("pwf-server is not serving"));
-        }
-        Ok(())
+        let response = client.check(request).await?;
+        let version = response
+            .metadata()
+            .get("pwf-server-version")
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
+        Ok(ServerHealth {
+            serving: response.into_inner().status == tonic_health::ServingStatus::Serving as i32,
+            version,
+        })
     }
 }
 
@@ -129,6 +143,10 @@ pub(crate) struct RequestPolicy;
 
 impl Interceptor for RequestPolicy {
     fn call(&mut self, mut request: Request<()>) -> Result<Request<()>, Status> {
+        request.metadata_mut().insert(
+            "pwf-client-version",
+            tonic::metadata::MetadataValue::from_static(env!("CARGO_PKG_VERSION")),
+        );
         if request.metadata().get("grpc-timeout").is_none() {
             request.set_timeout(OPERATION_TIMEOUT);
         }

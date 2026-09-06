@@ -119,3 +119,19 @@ async fn observe_state(
         lifecycle.changed().await?;
     }
 }
+
+#[derive(Clone, Copy)]
+pub(crate) struct ReleaseRequest;
+
+impl tonic::service::Interceptor for ReleaseRequest {
+    fn call(
+        &mut self,
+        mut request: tonic::Request<()>,
+    ) -> Result<tonic::Request<()>, tonic::Status> {
+        request.metadata_mut().insert(
+            "pwf-client-version",
+            tonic::metadata::MetadataValue::from_static(env!("CARGO_PKG_VERSION")),
+        );
+        Ok(request)
+    }
+}

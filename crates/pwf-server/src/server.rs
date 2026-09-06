@@ -155,6 +155,7 @@ pub async fn serve(
     lifecycle.publish(ServerState::Serving);
     let grpc_server = Server::builder()
         .layer(trace_layer)
+        .layer(crate::release::ReleaseLayer)
         .concurrency_limit_per_connection(MAX_CONCURRENT_REQUESTS_PER_CONNECTION)
         .load_shed(true)
         .timeout(MAX_REQUEST_DURATION)

@@ -39,6 +39,92 @@ use server::TestServer;
 const TEST_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[tokio::test]
+async fn connecting_does_not_require_a_health_rpc() -> anyhow::Result<()> {
+    use pwf_local_transport::{LocalEndpoint, LocalListener};
+    let directory = tempfile::tempdir()?;
+    let endpoint = LocalEndpoint::from_root(directory.path())?;
+    let listener = LocalListener::bind(&endpoint, TEST_TIMEOUT).await?;
+    let (incoming, _ownership) = listener.into_parts();
+    let (reporter, health) = tonic_health::server::health_reporter();
+    reporter
+        .set_service_status("", ServingStatus::NotServing)
+        .await;
+    let (shutdown, stopped) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(
+        tonic::transport::Server::builder()
+            .add_service(health)
+            .serve_with_incoming_shutdown(incoming, async {
+                let _ = stopped.await;
+            }),
+    );
+    let client = pwf_client::PwfClient::connect(&endpoint).await?;
+    assert!(!client.health().await?.serving);
+    let error = client
+        .project()
+        .list_projects(pb::ListProjectsRequest::default())
+        .await
+        .unwrap_err();
+    assert_eq!(rpc_status(error)?.code(), Code::Unimplemented);
+    let _ = shutdown.send(());
+    tokio::time::timeout(TEST_TIMEOUT, server).await???;
+    Ok(())
+}
+
+#[tokio::test]
+async fn release_metadata_rejects_unmatched_mutations_before_execution() -> anyhow::Result<()> {
+    let server = TestServer::start(TEST_TIMEOUT).await?;
+    server.add_project_and_task().await?;
+    for version in [None, Some("999.0.0")] {
+        let mut request = Request::new(pb::AddNoteRequest {
+            project_selector: "foo-bar".into(),
+            title: "must not be created".into(),
+            content: "rejected before mutation".into(),
+            ..Default::default()
+        });
+        if let Some(version) = version {
+            request
+                .metadata_mut()
+                .insert("pwf-client-version", version.parse()?);
+        }
+        let status = NoteServiceClient::new(server.channel().await?)
+            .add_note(request)
+            .await
+            .unwrap_err();
+        assert_eq!(status.code(), Code::FailedPrecondition);
+        assert_eq!(
+            status
+                .metadata()
+                .get("pwf-server-version")
+                .context("missing server version")?,
+            env!("CARGO_PKG_VERSION")
+        );
+    }
+    let notes = server
+        .client
+        .note()
+        .list_notes(pb::ListNotesRequest {
+            project_selector: "foo-bar".into(),
+            limit_kind: pb::NoteListLimitKind::Unlimited as i32,
+            limit: 0,
+        })
+        .await?;
+    assert!(notes.notes.is_empty());
+    let healthy = HealthClient::new(server.channel().await?)
+        .check(HealthCheckRequest {
+            service: String::new(),
+        })
+        .await?;
+    assert_eq!(
+        healthy
+            .metadata()
+            .get("pwf-server-version")
+            .context("health has no server version")?,
+        env!("CARGO_PKG_VERSION")
+    );
+    server.finish().await
+}
+
+#[tokio::test]
 async fn v1_get_user_settings_returns_validated_task_status_colors() -> anyhow::Result<()> {
     let server = TestServer::start(TEST_TIMEOUT).await?;
     std::fs::write(
@@ -46,10 +132,18 @@ async fn v1_get_user_settings_returns_validated_task_status_colors() -> anyhow::
         "[colors]\nactive = \"#ff8700\"\n",
     )?;
 
-    let response = SettingsServiceClient::new(server.channel().await?)
-        .get_user_settings(Request::new(pb::GetUserSettingsRequest {}))
-        .await?
-        .into_inner();
+    let response =
+        SettingsServiceClient::with_interceptor(server.channel().await?, server::ReleaseRequest)
+            .get_user_settings(Request::new(pb::GetUserSettingsRequest {}))
+            .await?;
+    assert_eq!(
+        response
+            .metadata()
+            .get("pwf-server-version")
+            .context("missing response version")?,
+        env!("CARGO_PKG_VERSION")
+    );
+    let response = response.into_inner();
     let colors = response
         .task_status_colors
         .context("settings response is missing task status colors")?;
@@ -74,10 +168,11 @@ async fn v1_get_user_settings_rejects_invalid_config_with_its_path_and_cause() -
     let config_path = server.root.path().join("config.toml");
     std::fs::write(&config_path, "[colors]\nactive = \"#fff\"\n")?;
 
-    let status = SettingsServiceClient::new(server.channel().await?)
-        .get_user_settings(Request::new(pb::GetUserSettingsRequest {}))
-        .await
-        .unwrap_err();
+    let status =
+        SettingsServiceClient::with_interceptor(server.channel().await?, server::ReleaseRequest)
+            .get_user_settings(Request::new(pb::GetUserSettingsRequest {}))
+            .await
+            .unwrap_err();
 
     assert_eq!(status.code(), Code::FailedPrecondition);
     assert!(
@@ -294,10 +389,18 @@ impl TestServer {
                 })),
             })
             .await?;
-        let mut stream = TaskServiceClient::new(self.channel().await?)
-            .delete_task(Request::new(ReceiverStream::new(receiver)))
-            .await?
-            .into_inner();
+        let response =
+            TaskServiceClient::with_interceptor(self.channel().await?, server::ReleaseRequest)
+                .delete_task(Request::new(ReceiverStream::new(receiver)))
+                .await?;
+        assert_eq!(
+            response
+                .metadata()
+                .get("pwf-server-version")
+                .context("missing streaming version")?,
+            env!("CARGO_PKG_VERSION")
+        );
+        let mut stream = response.into_inner();
         let preflight = stream
             .message()
             .await?
@@ -325,10 +428,11 @@ impl TestServer {
                 })),
             })
             .await?;
-        let mut stream = TaskServiceClient::new(self.channel().await?)
-            .reopen_task(Request::new(ReceiverStream::new(receiver)))
-            .await?
-            .into_inner();
+        let mut stream =
+            TaskServiceClient::with_interceptor(self.channel().await?, server::ReleaseRequest)
+                .reopen_task(Request::new(ReceiverStream::new(receiver)))
+                .await?
+                .into_inner();
         let preflight = stream
             .message()
             .await?
@@ -355,10 +459,11 @@ impl TestServer {
                 ))),
             })
             .await?;
-        let mut stream = SessionServiceClient::new(self.channel().await?)
-            .dispatch_session(Request::new(ReceiverStream::new(receiver)))
-            .await?
-            .into_inner();
+        let mut stream =
+            SessionServiceClient::with_interceptor(self.channel().await?, server::ReleaseRequest)
+                .dispatch_session(Request::new(ReceiverStream::new(receiver)))
+                .await?
+                .into_inner();
         let preflight = stream
             .message()
             .await?
@@ -478,28 +583,31 @@ async fn v1_create_task_returns_only_the_new_identifier() -> anyhow::Result<()> 
     let server = TestServer::start(Duration::from_secs(2)).await?;
     server.add_project_and_task().await?;
 
-    let response = pb::task_service_client::TaskServiceClient::new(server.channel().await?)
-        .create_task(Request::new(pb::CreateTaskRequest {
-            project_selector: "foo-bar".to_string(),
-            prompt: Some(pb::create_task_request::Prompt::Structured(
-                pb::StructuredTaskPrompt {
-                    title: "minimal response".to_string(),
-                    lanes: Some(pb::TaskLanes {
-                        goals: vec!["return only the task ID".to_string()],
-                        context: Vec::new(),
-                        constraints: Vec::new(),
-                        done_when: Vec::new(),
-                    }),
-                },
-            )),
-            blocked_by: Vec::new(),
-            effort: None,
-            tags: Vec::new(),
-            priority: None,
-            request_id: "transport-create-minimal-response".to_string(),
-        }))
-        .await?
-        .into_inner();
+    let response = pb::task_service_client::TaskServiceClient::with_interceptor(
+        server.channel().await?,
+        server::ReleaseRequest,
+    )
+    .create_task(Request::new(pb::CreateTaskRequest {
+        project_selector: "foo-bar".to_string(),
+        prompt: Some(pb::create_task_request::Prompt::Structured(
+            pb::StructuredTaskPrompt {
+                title: "minimal response".to_string(),
+                lanes: Some(pb::TaskLanes {
+                    goals: vec!["return only the task ID".to_string()],
+                    context: Vec::new(),
+                    constraints: Vec::new(),
+                    done_when: Vec::new(),
+                }),
+            },
+        )),
+        blocked_by: Vec::new(),
+        effort: None,
+        tags: Vec::new(),
+        priority: None,
+        request_id: "transport-create-minimal-response".to_string(),
+    }))
+    .await?
+    .into_inner();
 
     assert_eq!(
         response,
@@ -1566,7 +1674,7 @@ async fn health_and_reflection_use_local_ipc_and_requests_are_bounded() -> anyho
             .any(|descriptor| !descriptor.is_empty())
     );
 
-    let oversized = NoteServiceClient::new(channel)
+    let oversized = NoteServiceClient::with_interceptor(channel, server::ReleaseRequest)
         .add_note(Request::new(pb::AddNoteRequest {
             project_selector: "foo-bar".to_string(),
             title: "oversized".to_string(),
@@ -1638,14 +1746,24 @@ async fn reflection_response(
     channel: &Channel,
     message_request: MessageRequest,
 ) -> anyhow::Result<MessageResponse> {
-    let request = Request::new(tokio_stream::once(ServerReflectionRequest {
+    let mut request = Request::new(tokio_stream::once(ServerReflectionRequest {
         host: String::new(),
         message_request: Some(message_request),
     }));
-    let mut reflection = ServerReflectionClient::new(channel.clone())
+    request
+        .metadata_mut()
+        .insert("pwf-client-version", "999.0.0".parse()?);
+    let response = ServerReflectionClient::new(channel.clone())
         .server_reflection_info(request)
-        .await?
-        .into_inner();
+        .await?;
+    assert_eq!(
+        response
+            .metadata()
+            .get("pwf-server-version")
+            .context("missing response version")?,
+        env!("CARGO_PKG_VERSION")
+    );
+    let mut reflection = response.into_inner();
     reflection
         .next()
         .await

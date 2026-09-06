@@ -115,8 +115,11 @@ impl NoteClient {
     }
 
     fn client(&self) -> NoteServiceClient<PolicyChannel> {
-        NoteServiceClient::with_interceptor(self.channel.clone(), self.request_policy)
-            .max_encoding_message_size(super::MAX_REQUEST_MESSAGE_SIZE)
-            .max_decoding_message_size(super::MAX_RESPONSE_MESSAGE_SIZE)
+        NoteServiceClient::with_interceptor(
+            crate::release::ReleaseChannel(self.channel.clone()),
+            self.request_policy,
+        )
+        .max_encoding_message_size(super::MAX_REQUEST_MESSAGE_SIZE)
+        .max_decoding_message_size(super::MAX_RESPONSE_MESSAGE_SIZE)
     }
 }
