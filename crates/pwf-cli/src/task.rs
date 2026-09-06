@@ -254,7 +254,7 @@ fn normalize_lanes(values: &[String], flag: &str) -> anyhow::Result<Vec<String>>
 pub enum Command {
     /// Manages pwf tasks
     Task(TaskArguments),
-    /// Dispatch an agent session into a project's cwd, via tmux session or inline
+    /// Dispatch an agent session into a project's cwd
     Session(session::Arguments),
     /// Internal word router behind bare `pwf <words...>`
     #[command(hide = true)]

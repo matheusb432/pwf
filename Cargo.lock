@@ -2289,7 +2289,6 @@ dependencies = [
  "rolling-file",
  "serde",
  "serde_json",
- "shell-words",
  "sqlx",
  "tempfile",
  "tokio",

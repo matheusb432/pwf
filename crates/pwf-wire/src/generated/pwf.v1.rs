@@ -951,23 +951,12 @@ pub mod reopen_task_response {
         Result(super::ReopenTaskResult),
     }
 }
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct LaunchDirectives {
-    #[prost(bool, tag = "1")]
-    pub worktree: bool,
-    #[prost(bool, tag = "2")]
-    pub autonomous: bool,
-}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct PlanSessionRequest {
     #[prost(string, repeated, tag = "1")]
     pub task_ids: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     #[prost(string, optional, tag = "2")]
     pub pushed_prompt: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(enumeration = "DispatchMode", tag = "3")]
-    pub mode: i32,
-    #[prost(message, optional, tag = "4")]
-    pub directives: ::core::option::Option<LaunchDirectives>,
     #[prost(enumeration = "Agent", tag = "5")]
     pub agent: i32,
     #[prost(string, optional, tag = "6")]
@@ -1003,8 +992,6 @@ pub struct AgentLaunch {
 pub struct SessionPlan {
     #[prost(message, optional, tag = "1")]
     pub launch: ::core::option::Option<AgentLaunch>,
-    #[prost(enumeration = "DispatchMode", tag = "2")]
-    pub mode: i32,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct AgentProbe {
@@ -1047,12 +1034,8 @@ pub struct DispatchConfirmation {
     pub title: ::prost::alloc::string::String,
     #[prost(string, optional, tag = "3")]
     pub created: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(enumeration = "DispatchMode", tag = "4")]
-    pub mode: i32,
     #[prost(enumeration = "Agent", tag = "5")]
     pub agent: i32,
-    #[prost(message, optional, tag = "6")]
-    pub directives: ::core::option::Option<LaunchDirectives>,
     #[prost(bool, tag = "7")]
     pub has_pushed_prompt: bool,
     #[prost(string, optional, tag = "8")]
@@ -1077,10 +1060,6 @@ pub struct DispatchSessionStart {
     pub task_ids: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     #[prost(string, optional, tag = "2")]
     pub pushed_prompt: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(enumeration = "DispatchMode", tag = "3")]
-    pub mode: i32,
-    #[prost(message, optional, tag = "4")]
-    pub directives: ::core::option::Option<LaunchDirectives>,
     #[prost(enumeration = "Agent", tag = "5")]
     pub agent: i32,
     #[prost(string, optional, tag = "6")]
@@ -1103,15 +1082,8 @@ pub struct InlineLaunch {
     pub working_directory: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct WindowOpened {
-    #[prost(string, tag = "1")]
-    pub session: ::prost::alloc::string::String,
-    #[prost(string, tag = "2")]
-    pub window: ::prost::alloc::string::String,
-}
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct DispatchedSession {
-    #[prost(oneof = "dispatched_session::Outcome", tags = "1, 2, 3")]
+    #[prost(oneof = "dispatched_session::Outcome", tags = "1, 2")]
     pub outcome: ::core::option::Option<dispatched_session::Outcome>,
 }
 /// Nested message and enum types in `DispatchedSession`.
@@ -1122,8 +1094,6 @@ pub mod dispatched_session {
         Aborted(super::AbortedSession),
         #[prost(message, tag = "2")]
         InlineLaunch(super::InlineLaunch),
-        #[prost(message, tag = "3")]
-        WindowOpened(super::WindowOpened),
     }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1667,35 +1637,6 @@ impl Agent {
             "AGENT_UNSPECIFIED" => Some(Self::Unspecified),
             "AGENT_CLAUDE" => Some(Self::Claude),
             "AGENT_CODEX" => Some(Self::Codex),
-            _ => None,
-        }
-    }
-}
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
-#[repr(i32)]
-pub enum DispatchMode {
-    Unspecified = 0,
-    Inline = 1,
-    Multiplexer = 2,
-}
-impl DispatchMode {
-    /// String value of the enum field names used in the ProtoBuf definition.
-    ///
-    /// The values are not transformed in any way and thus are considered stable
-    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
-    pub fn as_str_name(&self) -> &'static str {
-        match self {
-            Self::Unspecified => "DISPATCH_MODE_UNSPECIFIED",
-            Self::Inline => "DISPATCH_MODE_INLINE",
-            Self::Multiplexer => "DISPATCH_MODE_MULTIPLEXER",
-        }
-    }
-    /// Creates an enum from field names used in the ProtoBuf definition.
-    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
-        match value {
-            "DISPATCH_MODE_UNSPECIFIED" => Some(Self::Unspecified),
-            "DISPATCH_MODE_INLINE" => Some(Self::Inline),
-            "DISPATCH_MODE_MULTIPLEXER" => Some(Self::Multiplexer),
             _ => None,
         }
     }

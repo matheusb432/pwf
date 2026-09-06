@@ -13,7 +13,6 @@ use crate::ports::{
     agent::AgentClient,
     confirmation::{ConfirmationClient, ConfirmationClientError},
     project_directory::ProjectDirectoryClient,
-    session::SessionClient,
     task_vault::{ExpectedTaskRevision, TaskMutationError, TaskVault},
 };
 
@@ -37,11 +36,7 @@ pub async fn execute(
     store: &impl TaskVault,
     pool: &sqlx::SqlitePool,
     home: &HomeDirectory,
-    clients: &SessionPlanningClients<
-        impl AgentClient,
-        impl ProjectDirectoryClient,
-        impl SessionClient,
-    >,
+    clients: &SessionPlanningClients<impl AgentClient, impl ProjectDirectoryClient>,
     confirmation: &mut dyn ConfirmationClient<Confirmation = PreparedSessionDispatch>,
 ) -> Result<DispatchedSession, DispatchConfirmedSessionError> {
     let prepared = match plan_session::execute(command, store, pool, home, clients).await? {
@@ -62,7 +57,7 @@ pub async fn execute(
         })
         .collect();
     crate::task::commit_task_writes(store, &prepared.project, expected, Vec::new())?;
-    dispatch_session::execute(prepared, &clients.agent, &clients.session).map_err(Into::into)
+    dispatch_session::execute(prepared, &clients.agent).map_err(Into::into)
 }
 
 #[cfg(test)]
@@ -77,10 +72,7 @@ mod tests {
 
     use pwf_models::{
         project::{HomeDirectory, Project},
-        session::{
-            Agent, AgentModel, DispatchMode, LaunchDirectives, SessionEffort, SessionTaskIds,
-            SessionWorkingDirectory,
-        },
+        session::{Agent, AgentModel, SessionEffort, SessionTaskIds, SessionWorkingDirectory},
         task::TaskId,
     };
     use pwf_wire::task::session::{
@@ -94,7 +86,6 @@ mod tests {
             agent::{AgentClient, PreparedAgentLaunch},
             confirmation::{ConfirmationClient, ConfirmationClientError},
             project_directory::ProjectDirectoryClient,
-            session::{SessionClient, SessionStart, SessionWindow},
             task_vault::TaskMutationError,
         },
         task::session::dispatch_confirmed_session,
@@ -137,33 +128,6 @@ mod tests {
         }
     }
 
-    #[derive(Clone, Copy)]
-    struct InlineSession;
-
-    impl SessionClient for InlineSession {
-        type Error = Infallible;
-
-        fn available(&self) -> bool {
-            false
-        }
-
-        fn session_exists(&self, _: &str) -> Result<bool, Self::Error> {
-            Ok(false)
-        }
-
-        fn preview_start(&self, _: &SessionStart<'_>) -> Vec<String> {
-            Vec::new()
-        }
-
-        fn preview_window(&self, _: &SessionWindow<'_>) -> Vec<String> {
-            Vec::new()
-        }
-
-        fn open_window(&self, _: &SessionWindow<'_>) -> Result<(), Self::Error> {
-            Ok(())
-        }
-    }
-
     struct EditThenAccept {
         store: InMemoryStore,
         project: Project,
@@ -192,8 +156,6 @@ mod tests {
             .unwrap(),
             intent: PlanSessionIntent::Dispatch,
             pushed_prompt: None,
-            mode: DispatchMode::Inline,
-            directives: LaunchDirectives::default(),
             agent: Agent::Codex,
             model_override: AgentModel::from(None),
             effort: SessionEffort::Max,
@@ -216,7 +178,6 @@ mod tests {
                 preparations: preparations.clone(),
             },
             ExistingProjectDirectory,
-            InlineSession,
         );
         let mut confirmation = EditThenAccept {
             store: store.clone(),

@@ -10,6 +10,8 @@ use crate::support::{SessionFixture, task_id, task_json};
 fn session_dispatches_multiple_tasks_without_persisting_ephemeral_context() {
     let fixture = SessionFixture::new().unwrap();
     fixture.add_task("do the other thing");
+    fixture.install_claude().unwrap();
+    let claude_log_path = fixture.directory().join("claude.log");
     let first_id = task_id("FOO-0001").unwrap();
     let second_id = task_id("FOO-0002").unwrap();
     let first_before = task_json(&fixture.database, &first_id).unwrap();
@@ -29,12 +31,11 @@ fn session_dispatches_multiple_tasks_without_persisting_ephemeral_context() {
             "one more thing in the moment",
         ])
         .env("PATH", &fixture.child_path)
-        .env("TMUX_STUB_LOG", &fixture.tmux_log_path)
+        .env("CLAUDE_STUB_LOG", &claude_log_path)
         .assert()
         .success();
 
-    let dispatch = fs::read_to_string(&fixture.tmux_log_path).unwrap();
-    assert!(dispatch.contains("-n foo1,foo2"), "{dispatch:?}");
+    let dispatch = fs::read_to_string(&claude_log_path).unwrap();
     assert!(
         dispatch.contains("one more thing in the moment"),
         "{dispatch:?}"

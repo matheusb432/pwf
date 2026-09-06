@@ -12,7 +12,6 @@ pub struct SessionFixture {
     pub database: DatabaseFixture,
     directory: TempDir,
     pub child_path: String,
-    pub tmux_log_path: PathBuf,
 }
 
 impl SessionFixture {
@@ -41,21 +40,16 @@ impl SessionFixture {
 
         let binary_directory = directory.path().join("bin");
         fs::create_dir_all(&binary_directory)?;
-        for name in ["tmux", "codex"] {
-            install_fixture(&binary_directory, name)?;
-        }
+        install_fixture(&binary_directory, "codex")?;
         let child_path = format!(
             "{}:{}",
             binary_directory.to_string_lossy(),
             std::env::var("PATH").unwrap_or_default()
         );
-        let tmux_log_path = directory.path().join("tmux.log");
-
         Ok(Self {
             database,
             directory,
             child_path,
-            tmux_log_path,
         })
     }
 

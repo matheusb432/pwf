@@ -2,9 +2,9 @@ use clap::{Args, FromArgMatches};
 use pwf_client::{
     confirmation::{Confirmation, ConfirmationPrompt, ConfirmedRequestError},
     pb::{
-        Agent, AgentAvailability, BlockedByResolutionKind, BlockedByStatus, DispatchMode,
-        DispatchSessionStart, LaunchDirectives, PlanSessionRequest, SessionEffort, SessionWarning,
-        TaskStatus, dispatched_session, session_warning,
+        Agent, AgentAvailability, BlockedByResolutionKind, BlockedByStatus, DispatchSessionStart,
+        PlanSessionRequest, SessionEffort, SessionWarning, TaskStatus, dispatched_session,
+        session_warning,
     },
     task::TaskClient,
 };
@@ -26,15 +26,11 @@ use crate::{
 pub struct Arguments {
     #[command(flatten)]
     pub(crate) identifiers: SessionIdentifiers,
-    /// Color policy for the dispatch output
-    #[arg(long, value_enum, default_value_t = ColorChoice::Auto)]
-    pub(crate) color: ColorChoice,
     #[command(flatten)]
     confirmation: ConfirmationArguments,
-    #[command(flatten)]
-    execution: ExecutionArguments,
-    #[command(flatten)]
-    launch: LaunchDirectiveArguments,
+    /// Show the exact launch command without editing the task or starting anything
+    #[arg(long, visible_alias = "dry")]
+    pub(crate) dry_run: bool,
     /// Which agent to dispatch
     #[arg(long = "agent", value_enum, default_value_t = AgentChoice::default())]
     pub(crate) agent: AgentChoice,
@@ -172,54 +168,6 @@ struct ConfirmationArguments {
     assume_yes: bool,
 }
 
-#[derive(Args, Debug)]
-struct ExecutionArguments {
-    /// Run the agent inline in the current terminal
-    #[arg(long = "inline", short = 'i')]
-    inline: bool,
-    /// Show the exact launch command without editing the task or starting anything
-    #[arg(long, visible_alias = "dry")]
-    dry_run: bool,
-}
-
-impl ExecutionArguments {
-    fn mode(&self) -> DispatchMode {
-        if self.inline {
-            DispatchMode::Inline
-        } else {
-            DispatchMode::Multiplexer
-        }
-    }
-}
-
-#[derive(Args, Debug)]
-struct LaunchDirectiveArguments {
-    /// Instructs the agent to work in a git worktree named after the session identity
-    #[arg(long = "worktree", short = 'w')]
-    worktree: bool,
-    /// Append an autonomy directive so the agent runs without prompting the user (for
-    /// unattended dispatch)
-    #[arg(long = "auto")]
-    autonomous: bool,
-}
-
-impl LaunchDirectiveArguments {
-    fn directives(&self) -> LaunchDirectives {
-        LaunchDirectives {
-            worktree: self.worktree,
-            autonomous: self.autonomous,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
-pub enum ColorChoice {
-    #[default]
-    Auto,
-    Always,
-    Never,
-}
-
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
 pub(crate) enum SessionEffortChoice {
     Low,
@@ -253,18 +201,16 @@ pub(super) async fn run(
         AgentChoice::Codex => Agent::Codex,
     };
     let task_ids = arguments.identifiers.required()?;
-    let confirmation_mode = if arguments.execution.dry_run {
+    let confirmation_mode = if arguments.dry_run {
         ConfirmationMode::AssumeYes
     } else {
         console.confirmation_mode(arguments.confirmation.assume_yes)?
     };
 
-    if arguments.execution.dry_run {
+    if arguments.dry_run {
         let request = PlanSessionRequest {
             task_ids: task_ids.iter().map(ToString::to_string).collect(),
             pushed_prompt: arguments.pushed_prompt.as_ref().map(ToString::to_string),
-            mode: arguments.execution.mode() as i32,
-            directives: Some(arguments.launch.directives()),
             agent: agent as i32,
             model_override: arguments.model.clone(),
             effort: SessionEffort::from(arguments.effort) as i32,
@@ -289,8 +235,6 @@ pub(super) async fn run(
     let request = DispatchSessionStart {
         task_ids: task_ids.iter().map(ToString::to_string).collect(),
         pushed_prompt: arguments.pushed_prompt.as_ref().map(ToString::to_string),
-        mode: arguments.execution.mode() as i32,
-        directives: Some(arguments.launch.directives()),
         agent: agent as i32,
         model_override: arguments.model.clone(),
         effort: SessionEffort::from(arguments.effort) as i32,
@@ -308,16 +252,7 @@ pub(super) async fn run(
     if let Some(dispatched_session::Outcome::InlineLaunch(launch)) = outcome.outcome.as_ref() {
         return execute_inline(launch, &session_identity);
     }
-    render_dispatch(
-        &outcome,
-        &session_identity,
-        agent,
-        console.color_with(match arguments.color {
-            ColorChoice::Auto => None,
-            ColorChoice::Always => Some(true),
-            ColorChoice::Never => Some(false),
-        }),
-    )
+    render_dispatch(&outcome, &session_identity)
 }
 
 fn process_environment() -> std::collections::HashMap<String, String> {
@@ -345,9 +280,7 @@ impl ConfirmationPrompt for SessionPrompt {
         let Some(confirmation) = &preflight.confirmation else {
             return Ok(false);
         };
-        if DispatchMode::try_from(confirmation.mode).ok() == Some(DispatchMode::Inline) {
-            eprintln!("running {} inline...", confirmation.session_name);
-        }
+        eprintln!("running {} inline...", confirmation.session_name);
         match self.mode {
             ConfirmationMode::AssumeYes => Ok(true),
             ConfirmationMode::Prompt => self

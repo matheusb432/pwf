@@ -68,12 +68,6 @@ impl Console {
     pub(crate) fn color(self) -> bool {
         self.color_forced.unwrap_or(self.stdout_terminal)
     }
-
-    /// Styling with an explicit request; forcing environment variables still win.
-    pub(crate) fn color_with(self, requested: Option<bool>) -> bool {
-        self.color_forced
-            .unwrap_or_else(|| requested.unwrap_or(self.stdout_terminal))
-    }
 }
 
 #[cfg(test)]
@@ -96,14 +90,5 @@ mod tests {
                 .contains("--yes")
         );
         assert!(!console.color());
-        assert!(!console.color_with(None));
-    }
-
-    #[test]
-    fn color_with_honors_explicit_request_without_forcing_env() {
-        let console = Console::plain();
-
-        assert!(console.color_with(Some(true)));
-        assert!(!console.color_with(Some(false)));
     }
 }

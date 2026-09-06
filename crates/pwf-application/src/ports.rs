@@ -5,6 +5,5 @@ pub mod project_directory;
 pub mod project_note;
 pub mod project_task_files;
 pub mod project_task_location;
-pub mod session;
 pub mod task_vault;
 pub mod user_settings;

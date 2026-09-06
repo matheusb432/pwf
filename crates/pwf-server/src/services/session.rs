@@ -9,7 +9,7 @@ use pwf_application::{
         plan_session::{self, PlanSessionError, SessionPlanningClients},
     },
 };
-use pwf_infra::session::{AgentHarness, ProcessEnvironment, TmuxHarness};
+use pwf_infra::session::{AgentHarness, ProcessEnvironment};
 use pwf_wire::{
     pb, proto,
     task::session::{PlannedSession, PreparedSessionDispatch},
@@ -48,8 +48,7 @@ impl pb::session_service_server::SessionService for SessionGrpcService {
         let environment = process_environment(&mut request)?;
         let command = proto::session::plan_session_request(request)?;
         let agent = AgentHarness::new(environment.clone());
-        let session = TmuxHarness::new(environment);
-        let clients = SessionPlanningClients::new(agent, self.state.project_directory, session);
+        let clients = SessionPlanningClients::new(agent, self.state.project_directory);
         let planned = plan_session::execute(
             &command,
             &self.state.store,
@@ -100,9 +99,8 @@ impl pb::session_service_server::SessionService for SessionGrpcService {
         .with_mutation_lock(self.state.task_mutations.clone());
         let state = self.state.clone();
         let agent = AgentHarness::new(environment.clone());
-        let session = TmuxHarness::new(environment);
         tokio::spawn(async move {
-            let clients = SessionPlanningClients::new(agent, state.project_directory, session);
+            let clients = SessionPlanningClients::new(agent, state.project_directory);
             let result = dispatch_confirmed_session::execute(
                 &command,
                 &state.store,
@@ -197,30 +195,14 @@ fn task_mutation_status<E: std::fmt::Display>(error: &TaskMutationError<E>) -> S
 }
 
 fn plan_session_status(error: &PlanSessionError) -> Status {
-    let message = match error {
-        PlanSessionError::MultiplexerSessionMissing {
-            session,
-            start_command_argv,
-        } => format!(
-            "tmux session '{session}' does not exist.\nStart it with:\n{}",
-            start_command_argv
-                .iter()
-                .map(|argument| shell_words::quote(argument))
-                .collect::<Vec<_>>()
-                .join(" ")
-        ),
-        _ => error.to_string(),
-    };
+    let message = error.to_string();
     match error {
         PlanSessionError::NotLaunchable { .. }
         | PlanSessionError::ProjectPathMissing { .. }
-        | PlanSessionError::MultiplexerNotFound
-        | PlanSessionError::MultiplexerSessionMissing { .. }
         | PlanSessionError::InvalidProjectPath { .. }
         | PlanSessionError::EmptyAgentCommand => Status::failed_precondition(message),
         PlanSessionError::FindTask(_)
         | PlanSessionError::ReadTaskMarkdown(_)
-        | PlanSessionError::MultiplexerSessionCheck { .. }
         | PlanSessionError::RenderThreadTitle(_) => Status::internal(message),
     }
 }
@@ -228,7 +210,6 @@ fn plan_session_status(error: &PlanSessionError) -> Status {
 fn dispatch_session_status(error: &DispatchSessionError) -> Status {
     let message = error.to_string();
     match error {
-        DispatchSessionError::WindowOpen { .. } => Status::unavailable(message),
         DispatchSessionError::EmptyAgentCommand => Status::failed_precondition(message),
         DispatchSessionError::AgentPreparation { .. }
         | DispatchSessionError::NamedThreadBackend { .. } => Status::internal(message),

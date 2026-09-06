@@ -3,9 +3,7 @@
 use askama::Template;
 use pwf_models::{
     project::{HomeDirectory, Project, ProjectId, ProjectSourceValue},
-    session::{
-        LaunchPrompt, PushedPrompt, SessionTaskIds, SessionThreadTitle, SessionWorkingDirectory,
-    },
+    session::{LaunchPrompt, PushedPrompt, SessionThreadTitle, SessionWorkingDirectory},
     task::TaskId,
 };
 use pwf_wire::{
@@ -21,12 +19,11 @@ use pwf_wire::{
 };
 use thiserror::Error;
 
-use super::{Agent, DispatchMode, LaunchDirectives, SessionEffort};
+use super::{Agent, SessionEffort};
 use crate::{
     ports::{
         agent::AgentClient,
         project_directory::ProjectDirectoryClient,
-        session::{AgentCommand, SessionClient, SessionStart, SessionWindow},
         task_vault::{Materialization, StoredBlockedBy, TaskRecord, TaskVault},
     },
     project::{list_projects, runtime_path},
@@ -49,19 +46,6 @@ pub enum PlanSessionError {
         project_id: ProjectId,
         path: SessionWorkingDirectory,
     },
-    #[error("Session multiplexer is unavailable; cannot dispatch a pwf session.")]
-    MultiplexerNotFound,
-    #[error("Checking multiplexer session '{session}' failed: {source}")]
-    MultiplexerSessionCheck {
-        session: String,
-        #[source]
-        source: anyhow::Error,
-    },
-    #[error("Multiplexer session '{session}' does not exist")]
-    MultiplexerSessionMissing {
-        session: String,
-        start_command_argv: Vec<String>,
-    },
     #[error("Failed to render session title: {0}")]
     RenderThreadTitle(#[source] askama::Error),
     #[error("Invalid path for project '{project_id}': {source}")]
@@ -82,19 +66,17 @@ pub enum SessionProjectPathError {
     NonUnicode,
 }
 
-pub struct SessionPlanningClients<A, P, S> {
+pub struct SessionPlanningClients<A, P> {
     pub(crate) agent: A,
     pub(crate) project_directory: P,
-    pub(crate) session: S,
 }
 
-impl<A, P, S> SessionPlanningClients<A, P, S> {
+impl<A, P> SessionPlanningClients<A, P> {
     #[must_use]
-    pub const fn new(agent: A, project_directory: P, session: S) -> Self {
+    pub const fn new(agent: A, project_directory: P) -> Self {
         Self {
             agent,
             project_directory,
-            session,
         }
     }
 }
@@ -112,11 +94,7 @@ pub async fn execute(
     store: &impl TaskVault,
     pool: &sqlx::SqlitePool,
     home: &HomeDirectory,
-    clients: &SessionPlanningClients<
-        impl AgentClient,
-        impl ProjectDirectoryClient,
-        impl SessionClient,
-    >,
+    clients: &SessionPlanningClients<impl AgentClient, impl ProjectDirectoryClient>,
 ) -> Result<PlannedSession, PlanSessionError> {
     let probe = clients.agent.probe(command.agent);
     let (project, first_task, mut warnings) =
@@ -128,7 +106,6 @@ pub async fn execute(
             thread_title(
                 &first_task.view,
                 command.task_ids.first(),
-                command.directives,
                 command.agent,
                 command.effort,
             )
@@ -163,28 +140,22 @@ pub async fn execute(
             project_path: project_path.clone(),
             prompt: LaunchPrompt::new(launch_prompt(
                 &task_contents,
-                &command.task_ids,
                 command.pushed_prompt.as_ref(),
-                command.directives,
             )),
             model: model.clone(),
             effort: command.effort,
         },
-        mode: command.mode,
     };
     validate_project_path(
         &clients.project_directory,
         &project_id,
         &plan.launch.project_path,
     )?;
-    validate_multiplexer(command, &plan, &clients.session)?;
     let confirmation = DispatchConfirmation {
         task_ids: command.task_ids.clone(),
         title: first_title,
         created: first_created,
-        mode: command.mode,
         agent: command.agent,
-        directives: command.directives,
         has_pushed_prompt: command.pushed_prompt.is_some(),
         model,
         effort: command.effort,
@@ -201,7 +172,7 @@ pub async fn execute(
         })),
         PlanSessionIntent::DryRun => {
             let provider_argv = clients.agent.preview(&plan.launch);
-            let argv = preview_dispatch_argv(provider_argv, &plan, &clients.session)?;
+            let argv = preview_dispatch_argv(provider_argv)?;
             Ok(PlannedSession::DryRun(DryRunSession {
                 plan,
                 argv,
@@ -281,31 +252,11 @@ async fn blocker_warnings(
         .collect()
 }
 
-fn preview_dispatch_argv(
-    provider_argv: Vec<String>,
-    plan: &SessionPlan,
-    session_client: &impl SessionClient,
-) -> Result<Vec<String>, PlanSessionError> {
-    match plan.mode {
-        DispatchMode::Inline => {
-            AgentCommand::try_new(&provider_argv)
-                .map_err(|_| PlanSessionError::EmptyAgentCommand)?;
-            Ok(provider_argv)
-        }
-        DispatchMode::Multiplexer => {
-            let target = plan.target();
-            let session_name = target.multiplexer_session_name();
-            let window_name = target.window_name();
-            let agent_command = AgentCommand::try_new(&provider_argv)
-                .map_err(|_| PlanSessionError::EmptyAgentCommand)?;
-            Ok(session_client.preview_window(&SessionWindow {
-                session_name: &session_name,
-                working_directory: &plan.launch.project_path,
-                window_name: &window_name,
-                agent_command,
-            }))
-        }
+fn preview_dispatch_argv(provider_argv: Vec<String>) -> Result<Vec<String>, PlanSessionError> {
+    if provider_argv.is_empty() {
+        return Err(PlanSessionError::EmptyAgentCommand);
     }
+    Ok(provider_argv)
 }
 
 fn load_task_content(
@@ -354,117 +305,27 @@ fn validate_project_path(
     })
 }
 
-fn validate_multiplexer(
-    command: &PlanSession,
-    plan: &SessionPlan,
-    session_client: &impl SessionClient,
-) -> Result<(), PlanSessionError> {
-    if !matches!(command.intent, PlanSessionIntent::Dispatch)
-        || command.mode != DispatchMode::Multiplexer
-    {
-        return Ok(());
-    }
-    if !session_client.available() {
-        return Err(PlanSessionError::MultiplexerNotFound);
-    }
-    let session_name = plan.target().multiplexer_session_name();
-    let session_exists = session_client
-        .session_exists(&session_name)
-        .map_err(|source| PlanSessionError::MultiplexerSessionCheck {
-            session: session_name.clone(),
-            source: anyhow::Error::new(source),
-        })?;
-    if session_exists {
-        return Ok(());
-    }
-    let start = SessionStart {
-        session_name: &session_name,
-        working_directory: &plan.launch.project_path,
-    };
-    let start_command_argv = session_client.preview_start(&start);
-    Err(PlanSessionError::MultiplexerSessionMissing {
-        session: session_name,
-        start_command_argv,
-    })
-}
-
-/// Autonomy directive inserted by `--auto`.
-const AUTONOMY_DIRECTIVE: &str = "You MUST execute this autonomously. Do not prompt the user for questions. But if something seems critical and needs user decision, STOP execution and clarify";
 const SESSION_CONTEXT_OPEN: &str = "<pwf_session_context>\n";
 const SESSION_CONTEXT_CLOSE: &str = "\n</pwf_session_context>";
 const PWF_TASK_OPEN: &str = "<pwf_task>\n";
 const PWF_TASK_CLOSE: &str = "</pwf_task>";
-const WORKTREE_DIRECTIVE_PREFIX: &str = "Workspace: before doing anything else, use a git-worktrees skill to create a git worktree here named `";
-const WORKTREE_DIRECTIVE_SUFFIX: &str =
-    "` (the worktree name is this task's id), and do all of this task's work inside that worktree.";
-const COMPOUND_WORKTREE_DIRECTIVE_SUFFIX: &str = "` (the worktree name is this session's sorted task identity), and do all of these tasks' work inside that worktree.";
 
-fn worktree_directive_suffix(task_ids: &SessionTaskIds) -> &'static str {
-    if task_ids.is_singleton() {
-        WORKTREE_DIRECTIVE_SUFFIX
-    } else {
-        COMPOUND_WORKTREE_DIRECTIVE_SUFFIX
-    }
-}
-
-fn session_context_rendered_len(
-    task_ids: &SessionTaskIds,
-    pushed_prompt: Option<&PushedPrompt>,
-    directives: LaunchDirectives,
-) -> usize {
-    let content_count = usize::from(pushed_prompt.is_some())
-        + usize::from(directives.autonomous)
-        + usize::from(directives.worktree);
-    if content_count == 0 {
+fn session_context_rendered_len(pushed_prompt: Option<&PushedPrompt>) -> usize {
+    let Some(pushed_prompt) = pushed_prompt else {
         return 0;
-    }
+    };
 
-    let worktree_name = task_ids.identity();
-    let worktree_suffix = worktree_directive_suffix(task_ids);
-    SESSION_CONTEXT_OPEN.len()
-        + SESSION_CONTEXT_CLOSE.len()
-        + pushed_prompt.map_or(0, |prompt| prompt.as_ref().len())
-        + usize::from(directives.autonomous) * AUTONOMY_DIRECTIVE.len()
-        + usize::from(directives.worktree)
-            * (WORKTREE_DIRECTIVE_PREFIX.len() + worktree_name.len() + worktree_suffix.len())
-        + (content_count - 1) * 2
+    SESSION_CONTEXT_OPEN.len() + SESSION_CONTEXT_CLOSE.len() + pushed_prompt.as_ref().len()
 }
 
-fn write_session_context(
-    output: &mut String,
-    task_ids: &SessionTaskIds,
-    pushed_prompt: Option<&PushedPrompt>,
-    directives: LaunchDirectives,
-) {
-    if pushed_prompt.is_none() && !directives.autonomous && !directives.worktree {
+fn write_session_context(output: &mut String, pushed_prompt: Option<&PushedPrompt>) {
+    let Some(pushed_prompt) = pushed_prompt else {
         return;
-    }
+    };
 
     output.push_str(SESSION_CONTEXT_OPEN);
-    let mut has_content = false;
-    if let Some(pushed_prompt) = pushed_prompt {
-        write_context_separator(output, &mut has_content);
-        output.push_str(pushed_prompt.as_ref());
-    }
-    if directives.autonomous {
-        write_context_separator(output, &mut has_content);
-        output.push_str(AUTONOMY_DIRECTIVE);
-    }
-    if directives.worktree {
-        write_context_separator(output, &mut has_content);
-        output.push_str(WORKTREE_DIRECTIVE_PREFIX);
-        output.push_str(&task_ids.identity());
-        output.push_str(worktree_directive_suffix(task_ids));
-    }
+    output.push_str(pushed_prompt.as_ref());
     output.push_str(SESSION_CONTEXT_CLOSE);
-}
-
-fn write_context_separator(output: &mut String, has_content: &mut bool) {
-    if *has_content {
-        output.push_str("\n\n");
-    } else {
-        *has_content = true;
-    }
 }
 
 #[derive(Template)]
@@ -479,15 +340,12 @@ struct ThreadTitleTemplate<'a> {
     task_title: &'a str,
     project: &'a str,
     effort: SessionEffort,
-    autonomous: bool,
-    worktree: bool,
     agent: &'static str,
 }
 
 fn thread_title(
     task: &TaskView,
     task_id: &TaskId,
-    directives: LaunchDirectives,
     agent: Agent,
     effort: SessionEffort,
 ) -> Result<String, askama::Error> {
@@ -497,8 +355,6 @@ fn thread_title(
         task_title: task.heading.as_ref(),
         project: task.project.as_ref(),
         effort,
-        autonomous: directives.autonomous,
-        worktree: directives.worktree,
         agent: match agent {
             Agent::Claude => "claude",
             Agent::Codex => "codex",
@@ -516,13 +372,8 @@ fn task_id_brief(task_id: &TaskId) -> String {
     )
 }
 
-fn launch_prompt(
-    task_contents: &[&str],
-    task_ids: &SessionTaskIds,
-    pushed_prompt: Option<&PushedPrompt>,
-    directives: LaunchDirectives,
-) -> String {
-    let session_context_len = session_context_rendered_len(task_ids, pushed_prompt, directives);
+fn launch_prompt(task_contents: &[&str], pushed_prompt: Option<&PushedPrompt>) -> String {
+    let session_context_len = session_context_rendered_len(pushed_prompt);
     let separator_len = usize::from(session_context_len > 0) * 2;
     let tasks_len = task_contents
         .iter()
@@ -536,7 +387,7 @@ fn launch_prompt(
         + task_contents.len().saturating_sub(1) * 2;
     let prompt_len = session_context_len + separator_len + tasks_len;
     let mut prompt = String::with_capacity(prompt_len);
-    write_session_context(&mut prompt, task_ids, pushed_prompt, directives);
+    write_session_context(&mut prompt, pushed_prompt);
     if session_context_len > 0 {
         prompt.push_str("\n\n");
     }
@@ -563,48 +414,28 @@ mod tests {
 
     use pwf_models::{
         project::{HomeDirectory, ProjectId, ProjectSourceValue},
-        session::{PushedPrompt, SessionTaskIds},
-        task::TaskId,
+        session::PushedPrompt,
     };
 
     use super::{launch_prompt, resolve_project_path};
-    use crate::task::session::LaunchDirectives;
 
     #[test]
     fn launch_prompt_wraps_the_task_without_rendering_an_empty_session_context() {
-        let task_id = TaskId::try_new("FOO-0001").unwrap();
-
         assert_eq!(
-            launch_prompt(
-                &["task content"],
-                &SessionTaskIds::try_new([task_id]).unwrap(),
-                None,
-                LaunchDirectives::default(),
-            ),
+            launch_prompt(&["task content"], None),
             "<pwf_task>\ntask content\n</pwf_task>"
         );
     }
 
     #[test]
     fn launch_prompt_orders_all_session_context_content_before_the_task() {
-        let task_id = TaskId::try_new("FOO-0001").unwrap();
         let pushed_prompt = PushedPrompt::try_new("extra context").unwrap();
 
         assert_eq!(
-            launch_prompt(
-                &["task content"],
-                &SessionTaskIds::try_new([task_id]).unwrap(),
-                Some(&pushed_prompt),
-                LaunchDirectives {
-                    autonomous: true,
-                    worktree: true,
-                },
-            ),
+            launch_prompt(&["task content"], Some(&pushed_prompt)),
             concat!(
                 "<pwf_session_context>\n",
-                "extra context\n\n",
-                "You MUST execute this autonomously. Do not prompt the user for questions. But if something seems critical and needs user decision, STOP execution and clarify\n\n",
-                "Workspace: before doing anything else, use a git-worktrees skill to create a git worktree here named `FOO-0001` (the worktree name is this task's id), and do all of this task's work inside that worktree.\n",
+                "extra context\n",
                 "</pwf_session_context>\n\n",
                 "<pwf_task>\n",
                 "task content\n",
@@ -615,32 +446,18 @@ mod tests {
 
     #[test]
     fn task_wrapper_preserves_an_existing_trailing_newline_without_adding_a_blank_line() {
-        let task_id = TaskId::try_new("FOO-0001").unwrap();
-
         assert_eq!(
-            launch_prompt(
-                &["task content\n"],
-                &SessionTaskIds::try_new([task_id]).unwrap(),
-                None,
-                LaunchDirectives::default()
-            ),
+            launch_prompt(&["task content\n"], None),
             "<pwf_task>\ntask content\n</pwf_task>"
         );
     }
 
     #[test]
     fn launch_prompt_wraps_multiple_tasks_in_supplied_order_after_one_context() {
-        let task_ids =
-            SessionTaskIds::try_new(["foo23".parse().unwrap(), "foo15".parse().unwrap()]).unwrap();
         let pushed_prompt = PushedPrompt::try_new("shared context").unwrap();
 
         assert_eq!(
-            launch_prompt(
-                &["task twenty-three", "task fifteen"],
-                &task_ids,
-                Some(&pushed_prompt),
-                LaunchDirectives::default(),
-            ),
+            launch_prompt(&["task twenty-three", "task fifteen"], Some(&pushed_prompt),),
             concat!(
                 "<pwf_session_context>\n",
                 "shared context\n",
@@ -697,10 +514,7 @@ mod planned_model_tests {
 
     use pwf_models::{
         project::HomeDirectory,
-        session::{
-            Agent, AgentModel, DispatchMode, LaunchDirectives, SessionEffort, SessionTaskIds,
-            SessionWorkingDirectory,
-        },
+        session::{Agent, AgentModel, SessionEffort, SessionTaskIds, SessionWorkingDirectory},
         task::EffortTier,
     };
     use pwf_wire::task::session::{
@@ -712,7 +526,6 @@ mod planned_model_tests {
         ports::{
             agent::{AgentClient, PreparedAgentLaunch},
             project_directory::ProjectDirectoryClient,
-            session::{SessionClient, SessionStart, SessionWindow},
             task_vault::TaskRecord,
         },
         task::session::plan_session,
@@ -752,40 +565,11 @@ mod planned_model_tests {
         }
     }
 
-    #[derive(Clone, Copy)]
-    struct UnusedSessionClient;
-
-    impl SessionClient for UnusedSessionClient {
-        type Error = Infallible;
-
-        fn available(&self) -> bool {
-            false
-        }
-
-        fn session_exists(&self, _: &str) -> Result<bool, Self::Error> {
-            Ok(false)
-        }
-
-        fn preview_start(&self, _: &SessionStart<'_>) -> Vec<String> {
-            Vec::new()
-        }
-
-        fn preview_window(&self, _: &SessionWindow<'_>) -> Vec<String> {
-            Vec::new()
-        }
-
-        fn open_window(&self, _: &SessionWindow<'_>) -> Result<(), Self::Error> {
-            Ok(())
-        }
-    }
-
     fn command(model_override: Option<&str>) -> PlanSession {
         PlanSession {
             task_ids: SessionTaskIds::try_new(["FOO-0001".parse().unwrap()]).unwrap(),
             intent: PlanSessionIntent::DryRun,
             pushed_prompt: None,
-            mode: DispatchMode::Inline,
-            directives: LaunchDirectives::default(),
             agent: Agent::Claude,
             model_override: AgentModel::from(model_override.map(str::to_string)),
             effort: SessionEffort::Max,
@@ -796,7 +580,7 @@ mod planned_model_tests {
         command: &PlanSession,
         store: &InMemoryStore,
         pool: &sqlx::SqlitePool,
-        clients: &SessionPlanningClients<AgentStub, ExistingProjectDirectory, UnusedSessionClient>,
+        clients: &SessionPlanningClients<AgentStub, ExistingProjectDirectory>,
     ) -> anyhow::Result<(AgentModel, SessionEffort)> {
         let planned = plan_session::execute(
             command,
@@ -823,8 +607,7 @@ mod planned_model_tests {
             ..task_record("FOO-0001")
         };
         let store = InMemoryStore::default().with_project("foo", vec![record]);
-        let clients =
-            SessionPlanningClients::new(AgentStub, ExistingProjectDirectory, UnusedSessionClient);
+        let clients = SessionPlanningClients::new(AgentStub, ExistingProjectDirectory);
 
         let (default_model, effort) = planned_model(&command(None), &store, &pool, &clients)
             .await
@@ -855,8 +638,7 @@ mod planned_model_tests {
             ..task_record("FOO-0002")
         };
         let store = InMemoryStore::default().with_project("foo", vec![first, second]);
-        let clients =
-            SessionPlanningClients::new(AgentStub, ExistingProjectDirectory, UnusedSessionClient);
+        let clients = SessionPlanningClients::new(AgentStub, ExistingProjectDirectory);
         let mut command = command(None);
         command.task_ids =
             SessionTaskIds::try_new(["FOO-0002".parse().unwrap(), "FOO-0001".parse().unwrap()])

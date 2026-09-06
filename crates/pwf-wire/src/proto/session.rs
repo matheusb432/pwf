@@ -1,10 +1,7 @@
 //! Explicit protobuf mappings for session operations.
 
 use pwf_models::{
-    session::{
-        Agent, AgentModel, DispatchMode, LaunchDirectives, PushedPrompt, SessionEffort,
-        SessionTaskIds,
-    },
+    session::{Agent, AgentModel, PushedPrompt, SessionEffort, SessionTaskIds},
     task::TaskId,
 };
 use tonic::Status;
@@ -27,8 +24,6 @@ pub fn dispatch_session_request(
 struct SessionRequest {
     task_ids: Vec<String>,
     pushed_prompt: Option<String>,
-    mode: i32,
-    directives: Option<pb::LaunchDirectives>,
     agent: i32,
     model_override: Option<String>,
     effort: i32,
@@ -39,8 +34,6 @@ impl From<pb::PlanSessionRequest> for SessionRequest {
         Self {
             task_ids: request.task_ids,
             pushed_prompt: request.pushed_prompt,
-            mode: request.mode,
-            directives: request.directives,
             agent: request.agent,
             model_override: request.model_override,
             effort: request.effort,
@@ -53,8 +46,6 @@ impl From<pb::DispatchSessionStart> for SessionRequest {
         Self {
             task_ids: request.task_ids,
             pushed_prompt: request.pushed_prompt,
-            mode: request.mode,
-            directives: request.directives,
             agent: request.agent,
             model_override: request.model_override,
             effort: request.effort,
@@ -66,13 +57,6 @@ fn session_request(
     request: SessionRequest,
     intent: session::PlanSessionIntent,
 ) -> Result<session::PlanSession, Status> {
-    let mode = match pb::DispatchMode::try_from(request.mode).ok() {
-        Some(pb::DispatchMode::Inline) => DispatchMode::Inline,
-        Some(pb::DispatchMode::Multiplexer) => DispatchMode::Multiplexer,
-        Some(pb::DispatchMode::Unspecified) | None => {
-            return Err(invalid("mode", "must be specified"));
-        }
-    };
     let agent = match pb::Agent::try_from(request.agent).ok() {
         Some(pb::Agent::Claude) => Agent::Claude,
         Some(pb::Agent::Codex) => Agent::Codex,
@@ -90,7 +74,6 @@ fn session_request(
             return Err(invalid("effort", "must be specified"));
         }
     };
-    let directives = request.directives.unwrap_or_default();
     Ok(session::PlanSession {
         task_ids: request_task_ids(&request.task_ids)?,
         intent,
@@ -99,11 +82,6 @@ fn session_request(
             .map(PushedPrompt::try_new)
             .transpose()
             .map_err(|error| invalid("pushed_prompt", error))?,
-        mode,
-        directives: LaunchDirectives {
-            worktree: directives.worktree,
-            autonomous: directives.autonomous,
-        },
         agent,
         model_override: AgentModel::from(request.model_override),
         effort,
@@ -148,12 +126,6 @@ pub fn dispatch_session_result(session: session::DispatchedSession) -> pb::Dispa
             argv,
             working_directory: working_directory.to_string(),
         }),
-        session::DispatchedSession::WindowOpened { target, .. } => {
-            pb::dispatched_session::Outcome::WindowOpened(pb::WindowOpened {
-                session: target.multiplexer_session_name(),
-                window: target.window_name(),
-            })
-        }
     };
     pb::DispatchedSession {
         outcome: Some(outcome),
@@ -161,7 +133,7 @@ pub fn dispatch_session_result(session: session::DispatchedSession) -> pb::Dispa
 }
 
 fn session_plan(plan: session::SessionPlan) -> pb::SessionPlan {
-    let session::SessionPlan { launch, mode } = plan;
+    let session::SessionPlan { launch } = plan;
     let session_name = launch.task_ids.identity();
     pb::SessionPlan {
         launch: Some(pb::AgentLaunch {
@@ -174,7 +146,6 @@ fn session_plan(plan: session::SessionPlan) -> pb::SessionPlan {
             effort: effort_value(launch.effort),
             session_name,
         }),
-        mode: dispatch_mode_value(mode),
     }
 }
 
@@ -183,12 +154,7 @@ fn dispatch_confirmation(confirmation: &session::DispatchConfirmation) -> pb::Di
         task_ids: task_id_values(&confirmation.task_ids),
         title: confirmation.title.to_string(),
         created: confirmation.created.as_ref().map(ToString::to_string),
-        mode: dispatch_mode_value(confirmation.mode),
         agent: agent_value(confirmation.agent),
-        directives: Some(pb::LaunchDirectives {
-            worktree: confirmation.directives.worktree,
-            autonomous: confirmation.directives.autonomous,
-        }),
         has_pushed_prompt: confirmation.has_pushed_prompt,
         model: confirmation.model.as_deref().map(str::to_string),
         effort: effort_value(confirmation.effort),
@@ -238,13 +204,6 @@ fn agent_value(agent: Agent) -> i32 {
     }
 }
 
-fn dispatch_mode_value(mode: DispatchMode) -> i32 {
-    match mode {
-        DispatchMode::Inline => pb::DispatchMode::Inline as i32,
-        DispatchMode::Multiplexer => pb::DispatchMode::Multiplexer as i32,
-    }
-}
-
 fn effort_value(effort: SessionEffort) -> i32 {
     match effort {
         SessionEffort::Low => pb::SessionEffort::Low as i32,
@@ -265,8 +224,6 @@ mod tests {
         pb::PlanSessionRequest {
             task_ids: task_ids.iter().map(ToString::to_string).collect(),
             pushed_prompt: None,
-            mode: pb::DispatchMode::Inline as i32,
-            directives: Some(pb::LaunchDirectives::default()),
             agent: pb::Agent::Codex as i32,
             model_override: None,
             effort: pb::SessionEffort::High as i32,

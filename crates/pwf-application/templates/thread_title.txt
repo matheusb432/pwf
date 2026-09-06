@@ -1,2 +1,2 @@
-{# Available variables: task_id, task_id_brief, task_title, project, effort, autonomous, worktree, agent. -#}
+{# Available variables: task_id, task_id_brief, task_title, project, effort, agent. -#}
 {{ task_id_brief }} :: {{ task_title -}}

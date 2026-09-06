@@ -25,7 +25,6 @@ pwf-local-transport = { workspace = true }
 pwf-models = { workspace = true }
 pwf-wire = { workspace = true }
 rolling-file = { workspace = true }
-shell-words = { workspace = true }
 sqlx = { workspace = true }
 tokio = { workspace = true, features = [
     "macros",

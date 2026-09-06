@@ -3,21 +3,10 @@
 use pwf_wire::task::session::{DispatchedSession, PreparedSessionDispatch, SessionPlan};
 use thiserror::Error;
 
-use super::DispatchMode;
-use crate::ports::{
-    agent::{AgentClient, PreparedAgentLaunch},
-    session::{AgentCommand, SessionClient, SessionWindow},
-};
+use crate::ports::agent::{AgentClient, PreparedAgentLaunch};
 
 #[derive(Debug, Error)]
 pub enum DispatchSessionError {
-    #[error("Failed to open multiplexer window '{window}' in session '{session}': {source}")]
-    WindowOpen {
-        session: String,
-        window: String,
-        #[source]
-        source: anyhow::Error,
-    },
     #[error(transparent)]
     AgentPreparation { source: anyhow::Error },
     #[error(
@@ -36,7 +25,6 @@ pub enum DispatchSessionError {
 pub fn execute(
     prepared: PreparedSessionDispatch,
     agent_client: &impl AgentClient,
-    session_client: &impl SessionClient,
 ) -> Result<DispatchedSession, DispatchSessionError> {
     let PreparedSessionDispatch { plan, .. } = prepared;
 
@@ -46,13 +34,11 @@ pub fn execute(
         }
     })?;
     match prepared {
-        PreparedAgentLaunch::Process { arguments } => {
-            dispatch_host(&arguments, &plan, session_client)
-        }
+        PreparedAgentLaunch::Process { arguments } => dispatch_inline(&arguments, &plan),
         PreparedAgentLaunch::NamedThread {
             arguments,
             thread_id,
-        } => dispatch_host(&arguments, &plan, session_client).map_err(|source| {
+        } => dispatch_inline(&arguments, &plan).map_err(|source| {
             DispatchSessionError::NamedThreadBackend {
                 thread_id,
                 source: Box::new(source),
@@ -61,51 +47,17 @@ pub fn execute(
     }
 }
 
-fn dispatch_host(
+fn dispatch_inline(
     argv: &[String],
     plan: &SessionPlan,
-    session_client: &impl SessionClient,
 ) -> Result<DispatchedSession, DispatchSessionError> {
-    match plan.mode {
-        DispatchMode::Inline => {
-            AgentCommand::try_new(argv).map_err(|_| DispatchSessionError::EmptyAgentCommand)?;
-            Ok(DispatchedSession::InlineLaunch {
-                task_ids: plan.launch.task_ids.clone(),
-                argv: argv.to_vec(),
-                working_directory: plan.launch.project_path.clone(),
-            })
-        }
-        DispatchMode::Multiplexer => dispatch_multiplexer(argv, plan, session_client),
+    if argv.is_empty() {
+        return Err(DispatchSessionError::EmptyAgentCommand);
     }
-}
-
-fn dispatch_multiplexer(
-    argv: &[String],
-    plan: &SessionPlan,
-    session_client: &impl SessionClient,
-) -> Result<DispatchedSession, DispatchSessionError> {
-    let target = plan.target();
-    let session_name = target.multiplexer_session_name();
-    let window_name = target.window_name();
-    let agent_command =
-        AgentCommand::try_new(argv).map_err(|_| DispatchSessionError::EmptyAgentCommand)?;
-    let window = SessionWindow {
-        session_name: &session_name,
-        working_directory: &plan.launch.project_path,
-        window_name: &window_name,
-        agent_command,
-    };
-    session_client
-        .open_window(&window)
-        .map_err(|source| DispatchSessionError::WindowOpen {
-            session: session_name,
-            window: window_name,
-            source: anyhow::Error::new(source),
-        })?;
-    Ok(DispatchedSession::WindowOpened {
-        target,
-        agent: plan.launch.agent,
-        project_path: plan.launch.project_path.clone(),
+    Ok(DispatchedSession::InlineLaunch {
+        task_ids: plan.launch.task_ids.clone(),
+        argv: argv.to_vec(),
+        working_directory: plan.launch.project_path.clone(),
     })
 }
 

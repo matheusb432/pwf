@@ -157,20 +157,6 @@ pub enum Agent {
     Codex,
 }
 
-/// Selects where an agent runs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DispatchMode {
-    Inline,
-    Multiplexer,
-}
-
-/// Selects optional launch-prompt directives.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct LaunchDirectives {
-    pub worktree: bool,
-    pub autonomous: bool,
-}
-
 /// Selects the reasoning effort for one agent session.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum SessionEffort {

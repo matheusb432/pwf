@@ -702,12 +702,6 @@ enum Agent {
   AGENT_CODEX = 2;
 }
 
-enum DispatchMode {
-  DISPATCH_MODE_UNSPECIFIED = 0;
-  DISPATCH_MODE_INLINE = 1;
-  DISPATCH_MODE_MULTIPLEXER = 2;
-}
-
 enum SessionEffort {
   SESSION_EFFORT_UNSPECIFIED = 0;
   SESSION_EFFORT_LOW = 1;
@@ -717,16 +711,9 @@ enum SessionEffort {
   SESSION_EFFORT_MAX = 5;
 }
 
-message LaunchDirectives {
-  bool worktree = 1;
-  bool autonomous = 2;
-}
-
 message PlanSessionRequest {
   repeated string task_ids = 1;
   optional string pushed_prompt = 2;
-  DispatchMode mode = 3;
-  LaunchDirectives directives = 4;
   Agent agent = 5;
   optional string model_override = 6;
   SessionEffort effort = 7;
@@ -746,7 +733,6 @@ message AgentLaunch {
 
 message SessionPlan {
   AgentLaunch launch = 1;
-  DispatchMode mode = 2;
 }
 
 enum AgentAvailability {
@@ -778,9 +764,7 @@ message DispatchConfirmation {
   repeated string task_ids = 1;
   string title = 2;
   optional string created = 3;
-  DispatchMode mode = 4;
   Agent agent = 5;
-  LaunchDirectives directives = 6;
   bool has_pushed_prompt = 7;
   optional string model = 8;
   SessionEffort effort = 9;
@@ -796,8 +780,6 @@ message SessionDispatchPreflight {
 message DispatchSessionStart {
   repeated string task_ids = 1;
   optional string pushed_prompt = 2;
-  DispatchMode mode = 3;
-  LaunchDirectives directives = 4;
   Agent agent = 5;
   optional string model_override = 6;
   SessionEffort effort = 7;
@@ -811,16 +793,10 @@ message InlineLaunch {
   string working_directory = 2;
 }
 
-message WindowOpened {
-  string session = 1;
-  string window = 2;
-}
-
 message DispatchedSession {
   oneof outcome {
     AbortedSession aborted = 1;
     InlineLaunch inline_launch = 2;
-    WindowOpened window_opened = 3;
   }
 }
 

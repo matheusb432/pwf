@@ -10,9 +10,8 @@ use pwf_client::{
     ClientError,
     confirmation::{Confirmation, ConfirmationPrompt},
     pb::{
-        self, Agent, DispatchMode, ProjectStatusFilter, SessionEffort, TaskReadFormat,
-        delete_note_result, note_service_client::NoteServiceClient,
-        session_service_client::SessionServiceClient,
+        self, Agent, ProjectStatusFilter, SessionEffort, TaskReadFormat, delete_note_result,
+        note_service_client::NoteServiceClient, session_service_client::SessionServiceClient,
         settings_service_client::SettingsServiceClient, task_service_client::TaskServiceClient,
     },
     task::{TaskDagEdge, TaskDagNode},
@@ -1725,8 +1724,6 @@ fn session_request(task_id: &str) -> pb::DispatchSessionStart {
     pb::DispatchSessionStart {
         task_ids: vec![task_id.to_string()],
         pushed_prompt: None,
-        mode: DispatchMode::Inline as i32,
-        directives: Some(pb::LaunchDirectives::default()),
         agent: Agent::Codex as i32,
         model_override: None,
         effort: SessionEffort::High as i32,

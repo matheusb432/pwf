@@ -1,7 +1,5 @@
 #![cfg(unix)]
 
-use std::fs;
-
 use assert_cmd::prelude::OutputAssertExt as _;
 #[cfg(target_os = "linux")]
 use expectrl::Expect;
@@ -28,7 +26,6 @@ fn declined_pushed_prompt_leaves_the_task_unchanged_and_does_not_dispatch() {
             "declined context",
         ])
         .env("PATH", &fixture.child_path)
-        .env("TMUX_STUB_LOG", &fixture.tmux_log_path)
         .env("NO_COLOR", "1");
 
     let mut session = expectrl::Session::spawn(command).unwrap();
@@ -50,8 +47,6 @@ fn declined_pushed_prompt_leaves_the_task_unchanged_and_does_not_dispatch() {
         task_json(&fixture.database, &task_id("FOO-0001").unwrap()).unwrap(),
         task_before
     );
-    let tmux_log = fs::read_to_string(&fixture.tmux_log_path).unwrap();
-    assert!(!tmux_log.contains("new-window"));
 }
 
 #[test]
@@ -64,7 +59,6 @@ fn session_requires_yes_without_a_terminal_and_does_not_dispatch() {
         .command()
         .args(["session", "FOO-0001", "--agent", "claude"])
         .env("PATH", &fixture.child_path)
-        .env("TMUX_STUB_LOG", &fixture.tmux_log_path)
         .output()
         .unwrap();
 
@@ -77,12 +71,10 @@ fn session_requires_yes_without_a_terminal_and_does_not_dispatch() {
         task_json(&fixture.database, &task_id("FOO-0001").unwrap()).unwrap(),
         task_before
     );
-    let tmux_log = fs::read_to_string(&fixture.tmux_log_path).unwrap_or_default();
-    assert!(!tmux_log.contains("new-window"));
 }
 
 #[test]
-fn session_help_exposes_only_the_ephemeral_prompt_prefix() {
+fn session_help_exposes_the_current_execution_options() {
     let assertion = command().args(["session", "--help"]).assert().success();
     let stdout = String::from_utf8(assertion.get_output().stdout.clone()).unwrap();
 

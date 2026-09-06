@@ -7,148 +7,6 @@ use assert_cmd::prelude::OutputAssertExt as _;
 use crate::support::{SessionFixture, task_id, task_json};
 
 #[test]
-fn detached_dispatch_targets_the_existing_tmux_session() {
-    let fixture = SessionFixture::new().unwrap();
-
-    fixture
-        .database
-        .command()
-        .args(["session", "--id", "FOO-0001", "--agent", "claude", "--yes"])
-        .env("PATH", &fixture.child_path)
-        .env("TMUX_STUB_LOG", &fixture.tmux_log_path)
-        .assert()
-        .success();
-
-    let invocations = fs::read_to_string(&fixture.tmux_log_path).unwrap();
-    assert!(invocations.contains("-V\0"), "{invocations:?}");
-    assert!(
-        invocations.contains("has-session -t =foo\0"),
-        "{invocations:?}"
-    );
-    assert!(
-        invocations.contains("new-window -d -t =foo: -c "),
-        "{invocations:?}"
-    );
-    assert!(
-        invocations.contains(" -n FOO-0001 -- claude "),
-        "{invocations:?}"
-    );
-    assert!(!invocations.contains("new-session"), "{invocations:?}");
-    assert!(!invocations.contains("switch-client"), "{invocations:?}");
-    assert!(!invocations.contains("attach-session"), "{invocations:?}");
-}
-
-#[test]
-fn multi_task_dispatch_uses_one_sorted_window_and_preserves_prompt_order() {
-    let fixture = SessionFixture::new().unwrap();
-    fixture.add_task("do the other thing");
-
-    let assertion = fixture
-        .database
-        .command()
-        .args(["session", "foo2,foo1", "--agent", "claude", "--yes"])
-        .env("PATH", &fixture.child_path)
-        .env("TMUX_STUB_LOG", &fixture.tmux_log_path)
-        .assert()
-        .success();
-
-    let stdout = String::from_utf8(assertion.get_output().stdout.clone()).unwrap();
-    assert!(
-        stdout.starts_with("# session foo1,foo2: dispatched"),
-        "{stdout}"
-    );
-    let invocations = fs::read_to_string(&fixture.tmux_log_path).unwrap();
-    assert!(
-        invocations.contains("new-window -d -t =foo: -c "),
-        "{invocations:?}"
-    );
-    assert!(
-        invocations.contains(" -n foo1,foo2 -- claude --name foo1,foo2 "),
-        "{invocations:?}"
-    );
-    let second_task = invocations.find("do the other thing").unwrap();
-    let first_task = invocations.find("do the thing").unwrap();
-    assert!(second_task < first_task, "{invocations:?}");
-    assert_eq!(invocations.matches("<pwf_task>").count(), 2);
-}
-
-#[test]
-fn missing_tmux_session_reports_the_start_command_without_mutation() {
-    let fixture = SessionFixture::new().unwrap();
-    let project_path = fixture.directory().join("project");
-
-    let assertion = fixture
-        .database
-        .command()
-        .args(["session", "--id", "FOO-0001", "--agent", "claude", "--yes"])
-        .env("PATH", &fixture.child_path)
-        .env("TMUX_STUB_LOG", &fixture.tmux_log_path)
-        .env("TMUX_STUB_SESSION_EXISTS", "0")
-        .assert()
-        .failure();
-
-    let stderr = String::from_utf8(assertion.get_output().stderr.clone()).unwrap();
-    assert!(
-        stderr.contains("tmux session 'foo' does not exist"),
-        "{stderr}"
-    );
-    assert!(
-        stderr.contains(&format!(
-            "tmux new-session -d -s foo -c {}",
-            project_path.display()
-        )),
-        "{stderr}"
-    );
-    assert_eq!(
-        fs::read_to_string(&fixture.tmux_log_path).unwrap(),
-        "-V\0has-session -t =foo\0"
-    );
-}
-
-#[test]
-fn invalid_task_in_a_multi_task_session_aborts_before_tmux_dispatch() {
-    let fixture = SessionFixture::new().unwrap();
-
-    let assertion = fixture
-        .database
-        .command()
-        .args(["session", "foo1,foo999", "--agent", "claude", "--yes"])
-        .env("PATH", &fixture.child_path)
-        .env("TMUX_STUB_LOG", &fixture.tmux_log_path)
-        .assert()
-        .failure();
-
-    let stderr = String::from_utf8(assertion.get_output().stderr.clone()).unwrap();
-    assert!(
-        stderr.contains("Active task not found: FOO-0999"),
-        "{stderr}"
-    );
-    let invocations = fs::read_to_string(&fixture.tmux_log_path).unwrap_or_default();
-    assert!(!invocations.contains("new-window"), "{invocations:?}");
-}
-
-#[test]
-fn tmux_window_failure_reaches_the_process_exit_status() {
-    let fixture = SessionFixture::new().unwrap();
-
-    fixture
-        .database
-        .command()
-        .args(["session", "--id", "FOO-0001", "--agent", "claude", "--yes"])
-        .env("PATH", &fixture.child_path)
-        .env("TMUX_STUB_LOG", &fixture.tmux_log_path)
-        .env("TMUX_STUB_NEW_WINDOW_EXIT_CODE", "17")
-        .assert()
-        .failure();
-
-    assert!(
-        fs::read_to_string(&fixture.tmux_log_path)
-            .unwrap()
-            .contains("new-window")
-    );
-}
-
-#[test]
 fn codex_dry_run_forwards_max_reasoning_effort() {
     let fixture = SessionFixture::new().unwrap();
     let task_before = task_json(&fixture.database, &task_id("FOO-0001").unwrap()).unwrap();
@@ -164,7 +22,6 @@ fn codex_dry_run_forwards_max_reasoning_effort() {
             "foo1",
             "--agent",
             "codex",
-            "--inline",
             "--dry",
             "--effort",
             "max",
@@ -174,7 +31,6 @@ fn codex_dry_run_forwards_max_reasoning_effort() {
         .env("PATH", &fixture.child_path)
         .env("CODEX_STUB_APP_SERVER_LOG", &app_server_log_path)
         .env("CODEX_STUB_RESUME_LOG", &resume_log_path)
-        .env("TMUX_STUB_LOG", &fixture.tmux_log_path)
         .assert()
         .success();
 
@@ -194,11 +50,10 @@ fn codex_dry_run_forwards_max_reasoning_effort() {
     );
     assert!(!app_server_log_path.exists());
     assert!(!resume_log_path.exists());
-    assert!(!fixture.tmux_log_path.exists());
 }
 
 #[test]
-fn inline_dispatch_forwards_the_explicit_model_to_the_concrete_claude_process() {
+fn default_dispatch_forwards_the_explicit_model_to_the_concrete_claude_process() {
     let fixture = SessionFixture::new().unwrap();
     fixture.install_claude().unwrap();
     let claude_log_path = fixture.directory().join("claude.log");
@@ -212,7 +67,6 @@ fn inline_dispatch_forwards_the_explicit_model_to_the_concrete_claude_process() 
             "FOO-0001",
             "--agent",
             "claude",
-            "--inline",
             "--yes",
             "--model",
             "manual-model",
@@ -220,7 +74,6 @@ fn inline_dispatch_forwards_the_explicit_model_to_the_concrete_claude_process() 
         .env("PATH", &fixture.child_path)
         .env("CLAUDE_STUB_EXIT_CODE", "23")
         .env("CLAUDE_STUB_LOG", &claude_log_path)
-        .env("TMUX_STUB_LOG", &fixture.tmux_log_path)
         .assert()
         .code(23);
 
@@ -247,5 +100,4 @@ fn inline_dispatch_forwards_the_explicit_model_to_the_concrete_claude_process() 
     assert!(entries[8].starts_with("arg=<pwf_task>\n"));
     assert!(entries[8].contains("do the thing"));
     assert!(entries[8].ends_with("\n</pwf_task>"));
-    assert!(!fixture.tmux_log_path.exists());
 }
