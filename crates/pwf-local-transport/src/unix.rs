@@ -156,7 +156,10 @@ mod tests {
 
     #[tokio::test]
     async fn listener_rejects_non_socket_and_symlink() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = tempfile::Builder::new()
+            .permissions(std::fs::Permissions::from_mode(0o700))
+            .tempdir()
+            .unwrap();
         let endpoint = LocalEndpoint::from_root(directory.path()).unwrap();
         std::fs::write(endpoint.path(), "keep").unwrap();
         assert!(

@@ -1,5 +1,5 @@
 [package]
-name = "marker-sections"
+name = "pwf-marker-sections"
 version.workspace = true
 rust-version.workspace = true
 repository.workspace = true
@@ -16,7 +16,7 @@ thiserror = { workspace = true }
 criterion = { workspace = true }
 
 [[bench]]
-name = "marker_sections"
+name = "pwf_marker_sections"
 harness = false
 
 [lints]

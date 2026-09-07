@@ -14,8 +14,36 @@ $controllerSessionId = (Get-Process -Id $PID).SessionId
 $desktopDisconnected = $false
 $credentialsPath = Join-Path $Bundle 'connection\login.json'
 $result = @{ run_id = $runId; passed = $false }
+$exclusionsBefore = @()
+$exclusionsAdded = [System.Collections.Generic.List[string]]::new()
+$defender = @{ temporary_exclusions = @(); exclusions_restored = $false }
 
 try {
+    $exclusionsBefore = @((Get-MpPreference).ExclusionPath | Where-Object { $_ })
+    $status = Get-MpComputerStatus
+    $defender.signature_version = $status.AntivirusSignatureVersion
+    $defender.real_time_protection_enabled = $status.RealTimeProtectionEnabled
+    $detections = @(Get-MpThreatDetection | Where-Object { ($_.Resources -join '\n') -match 'pwf-server\.exe' } |
+        Select-Object ThreatID, InitialDetectionTime, ActionSuccess, Resources)
+    ConvertTo-Json -InputObject $detections -Depth 6 | Set-Content -Encoding UTF8 (Join-Path $output 'defender-detections.json')
+    $threatIds = @($detections | Select-Object -ExpandProperty ThreatID -Unique)
+    if ($threatIds.Count -gt 0) {
+        Get-MpThreatCatalog -ThreatID $threatIds | Select-Object ThreatID, ThreatName |
+            ConvertTo-Json | Set-Content -Encoding UTF8 (Join-Path $output 'defender-threats.json')
+    }
+    # Exclude both copies before Defender can inspect a locally built executable during transfer.
+    foreach ($file in Get-ChildItem -LiteralPath $Bundle -Filter '*.exe' -File) {
+        foreach ($path in @($file.FullName, (Join-Path $root $file.Name))) {
+            if ($exclusionsBefore -notcontains $path) {
+                $exclusionsAdded.Add($path)
+                Add-MpPreference -ExclusionPath $path
+            }
+        }
+    }
+    $activeExclusions = @((Get-MpPreference).ExclusionPath)
+    foreach ($path in $exclusionsAdded) {
+        if ($activeExclusions -notcontains $path) { throw "Defender did not apply the temporary exclusion: $path" }
+    }
     $null = New-Item -ItemType Directory -Path $root
     Get-ChildItem -LiteralPath $Bundle -File | Copy-Item -Destination $root
     $null = New-Item -ItemType Directory -Path (Join-Path $root 'output')
@@ -103,7 +131,21 @@ try {
         }
         },
         { if ($user) { Remove-LocalUser -SID $user.SID } },
-        { if (Test-Path $root) { Remove-Item -LiteralPath $root -Recurse -Force } }
+        { if (Test-Path $root) { Remove-Item -LiteralPath $root -Recurse -Force } },
+        {
+            foreach ($path in $exclusionsAdded) {
+                try { Remove-MpPreference -ExclusionPath $path }
+                catch { $cleanupErrors.Add($_.ToString()) }
+            }
+            $remaining = @((Get-MpPreference).ExclusionPath)
+            foreach ($path in $exclusionsAdded) {
+                if ($remaining -contains $path) { throw "Defender retained a temporary exclusion: $path" }
+            }
+            foreach ($path in $exclusionsBefore) {
+                if ($remaining -notcontains $path) { throw 'A pre-existing Defender exclusion was removed' }
+            }
+            $defender.exclusions_restored = $true
+        }
     )
     foreach ($cleanup in $cleanupActions) {
         try { & $cleanup } catch { $cleanupErrors.Add($_.ToString()) }
@@ -111,6 +153,9 @@ try {
     if ($cleanupErrors.Count -gt 0) {
         $result = @{ run_id = $runId; passed = $false; cleanup_errors = $cleanupErrors; test_result = $result; user_name = $userName; directory = $root }
     }
+    $defender.temporary_exclusions = $exclusionsAdded.ToArray()
+    $result = [pscustomobject]$result
+    $result | Add-Member -NotePropertyName defender -NotePropertyValue $defender
     $result | ConvertTo-Json -Depth 10 | Set-Content -Encoding UTF8 (Join-Path $output 'complete.tmp')
     Move-Item (Join-Path $output 'complete.tmp') (Join-Path $output 'complete.json')
 }

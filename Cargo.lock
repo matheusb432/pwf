@@ -1656,14 +1656,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "953f07c43838f8e6f9758cab68bf5bed85465e7587ebe0b823f1bcd81978ad3a"
 
 [[package]]
-name = "marker-sections"
-version = "0.1.0"
-dependencies = [
- "criterion",
- "thiserror",
-]
-
-[[package]]
 name = "matchers"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2151,8 +2143,8 @@ dependencies = [
  "cqrsy",
  "futures",
  "lazy-regex",
- "marker-sections",
  "nutype",
+ "pwf-marker-sections",
  "pwf-models",
  "pwf-wire",
  "serde",
@@ -2248,6 +2240,14 @@ dependencies = [
  "tonic-health",
  "tower",
  "windows-sys",
+]
+
+[[package]]
+name = "pwf-marker-sections"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "thiserror",
 ]
 
 [[package]]

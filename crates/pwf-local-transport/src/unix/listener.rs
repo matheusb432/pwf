@@ -253,6 +253,13 @@ mod tests {
 
     const TEST_PROBE_TIMEOUT: Duration = Duration::from_millis(250);
 
+    fn socket_directory() -> tempfile::TempDir {
+        tempfile::Builder::new()
+            .permissions(std::fs::Permissions::from_mode(0o700))
+            .tempdir()
+            .unwrap()
+    }
+
     fn endpoint(path: &Path) -> LocalEndpoint {
         LocalEndpoint::from_root(path.parent().unwrap()).unwrap()
     }
@@ -266,7 +273,7 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_a_socket_owned_by_a_live_server() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = socket_directory();
         let path = directory.path().join("pwf.sock");
         let _live_listener = private_socket(&path);
 
@@ -280,7 +287,7 @@ mod tests {
 
     #[tokio::test]
     async fn removes_a_stale_socket_before_binding() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = socket_directory();
         let path = directory.path().join("pwf.sock");
         drop(private_socket(&path));
 
@@ -298,7 +305,7 @@ mod tests {
 
     #[test]
     fn stale_recheck_preserves_a_replacement_socket() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = socket_directory();
         let path = directory.path().join("pwf.sock");
         drop(private_socket(&path));
         let stale_identity = inspect_existing_socket(&path).unwrap().identity;
@@ -313,7 +320,7 @@ mod tests {
 
     #[tokio::test]
     async fn cleanup_preserves_a_replacement_socket() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = socket_directory();
         let path = directory.path().join("pwf.sock");
         let bound = LocalListener::bind(&endpoint(&path), TEST_PROBE_TIMEOUT)
             .await
@@ -330,7 +337,7 @@ mod tests {
     async fn ambiguous_probe_preserves_the_socket() {
         use std::os::fd::AsRawFd as _;
 
-        let directory = tempfile::tempdir().unwrap();
+        let directory = socket_directory();
         let path = directory.path().join("pwf.sock");
         let listener = private_socket(&path);
         // SAFETY: the owned descriptor names a listening Unix socket.

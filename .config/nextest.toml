@@ -6,4 +6,5 @@ success-output = "never"
 
 [profile.process]
 inherits = "default"
+fail-fast = false
 global-timeout = "1h"

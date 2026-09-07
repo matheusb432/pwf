@@ -30,7 +30,12 @@ fn binary_path(name: &str) -> PathBuf {
 }
 
 pub fn command() -> Command {
-    Command::new(binary_path("pwf"))
+    let mut command = Command::new(binary_path("pwf"));
+    command
+        .env("NO_COLOR", "1")
+        .env_remove("CLICOLOR_FORCE")
+        .env_remove("FORCE_COLOR");
+    command
 }
 
 pub struct DatabaseFixture {
@@ -60,11 +65,18 @@ impl DatabaseFixture {
         command
     }
 
-    pub fn write_user_config(&self, source: &str) -> anyhow::Result<()> {
-        let path = self.home.join(".config").join("pwf").join("config.toml");
+    pub fn command_with_color(&self) -> Command {
+        let mut command = self.command();
+        command.env_remove("NO_COLOR").env("CLICOLOR_FORCE", "1");
+        command
+    }
+
+    #[cfg(unix)]
+    pub fn write_user_config(&self, source: &str) -> anyhow::Result<PathBuf> {
+        let path = config_directory(&self.home).join("pwf").join("config.toml");
         fs::create_dir_all(path.parent().context("user config path has no parent")?)?;
-        fs::write(path, source)?;
-        Ok(())
+        fs::write(&path, source)?;
+        Ok(path)
     }
 
     pub fn add_directory_project(
@@ -170,9 +182,19 @@ fn configure_command(command: &mut Command, database_path: &Path, home: &Path, d
     command
         .env("PWF_DATABASE_PATH", database_path)
         .env("PWF_RUNTIME_DIR", data_root)
-        .env("XDG_CONFIG_HOME", home.join(".config"))
         .env("HOME", home)
         .env("USERPROFILE", home);
+    #[cfg(unix)]
+    command.env("XDG_CONFIG_HOME", config_directory(home));
+}
+
+#[cfg(unix)]
+fn config_directory(home: &Path) -> PathBuf {
+    #[cfg(target_os = "macos")]
+    let relative = "Library/Application Support";
+    #[cfg(not(target_os = "macos"))]
+    let relative = ".config";
+    home.join(relative)
 }
 
 pub struct ManagedProject {

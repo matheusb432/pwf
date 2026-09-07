@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/*", "shared/marker-sections", "xtask"]
+members = ["crates/*", "shared/pwf-marker-sections", "xtask"]
 resolver = "3"
 
 [workspace.package]
@@ -43,7 +43,7 @@ process-wrap = { version = "9.1.0", default-features = false, features = [
     "std",
 ] }
 prost = "0.14.4"
-marker-sections = { path = "shared/marker-sections", version = "=0.1.0" }
+pwf-marker-sections = { path = "shared/pwf-marker-sections", version = "=0.1.0" }
 pwf-application = { path = "crates/pwf-application", version = "=0.1.0" }
 pwf-cli = { path = "crates/pwf-cli", version = "=0.1.0" }
 pwf-server = { path = "crates/pwf-server", version = "=0.1.0" }

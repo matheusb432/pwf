@@ -34,7 +34,7 @@ impl TestServer {
             TomlSettingsStore::new(Some(root.path().join("config.toml"))),
         );
 
-        let endpoint = LocalEndpoint::from_root(root.path())?;
+        let endpoint = LocalEndpoint::from_root(root.path().join("runtime"))?;
         let listener = LocalListener::bind(&endpoint, Duration::from_millis(250)).await?;
         let (shutdown_sender, shutdown_receiver) = oneshot::channel();
         let (lifecycle_handle, mut lifecycle) = ServerLifecycle::channel();

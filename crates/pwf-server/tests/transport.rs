@@ -41,7 +41,7 @@ const TEST_TIMEOUT: Duration = Duration::from_secs(5);
 async fn connecting_does_not_require_a_health_rpc() -> anyhow::Result<()> {
     use pwf_local_transport::{LocalEndpoint, LocalListener};
     let directory = tempfile::tempdir()?;
-    let endpoint = LocalEndpoint::from_root(directory.path())?;
+    let endpoint = LocalEndpoint::from_root(directory.path().join("runtime"))?;
     let listener = LocalListener::bind(&endpoint, TEST_TIMEOUT).await?;
     let (incoming, _ownership) = listener.into_parts();
     let (reporter, health) = tonic_health::server::health_reporter();

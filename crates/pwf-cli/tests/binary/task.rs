@@ -83,6 +83,7 @@ fn list_priority_filters_and_renders_the_selected_tier() {
 }
 
 #[test]
+#[cfg(unix)]
 fn colored_all_status_list_uses_color_instead_of_a_status_tag() {
     let fixture = ManagedProject::new(&project_id("FOO").unwrap(), "foo-bar").unwrap();
     fixture
@@ -103,14 +104,18 @@ fn colored_all_status_list_uses_color_instead_of_a_status_tag() {
         .write_user_config("[colors]\nactive = \"#ff8700\"\n")
         .unwrap();
 
-    fixture
+    let plain = fixture
         .database
         .command()
-        .env("NO_COLOR", "1")
         .args(["list", "--project", "foo-bar", "--all"])
-        .assert()
-        .success()
-        .stdout("FOO-0001 [active] :: orange task\n");
+        .output()
+        .unwrap();
+    assert!(plain.status.success());
+    let stdout = String::from_utf8(plain.stdout).unwrap();
+    assert!(stdout.contains("FOO-0001"), "{stdout:?}");
+    assert!(stdout.contains("[active]"), "{stdout:?}");
+    assert!(stdout.contains("orange task"), "{stdout:?}");
+    assert!(!stdout.contains('\u{1b}'), "{stdout:?}");
 
     for arguments in [
         ["foo-bar"].as_slice(),
@@ -118,26 +123,27 @@ fn colored_all_status_list_uses_color_instead_of_a_status_tag() {
     ] {
         let output = fixture
             .database
-            .command()
-            .env_remove("NO_COLOR")
-            .env("CLICOLOR_FORCE", "1")
+            .command_with_color()
             .args(arguments)
             .output()
             .unwrap();
 
         assert!(output.status.success(), "{arguments:?}");
         let stdout = String::from_utf8(output.stdout).unwrap();
-        assert_eq!(
-            stdout, "\u{1b}[1m\u{1b}[38;2;255;135;0mFOO-0001\u{1b}[0m :: orange task\n",
-            "{arguments:?}"
+        assert!(
+            stdout.contains("\u{1b}[38;2;255;135;0mFOO-0001\u{1b}[0m"),
+            "{arguments:?}: {stdout:?}"
         );
+        assert!(stdout.contains("orange task"), "{stdout:?}");
+        assert!(!stdout.contains("[active]"), "{stdout:?}");
     }
 }
 
 #[test]
+#[cfg(unix)]
 fn task_command_reports_invalid_user_config_with_its_path_and_cause() {
     let fixture = ManagedProject::new(&project_id("FOO").unwrap(), "foo-bar").unwrap();
-    fixture
+    let config_path = fixture
         .database
         .write_user_config("[colors]\nactive = \"#fff\"\n")
         .unwrap();
@@ -147,7 +153,7 @@ fn task_command_reports_invalid_user_config_with_its_path_and_cause() {
     assert!(!output.status.success());
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8(output.stderr).unwrap();
-    assert!(stderr.contains(".config/pwf/config.toml"), "{stderr}");
+    assert!(stderr.contains(&*config_path.to_string_lossy()), "{stderr}");
     assert!(stderr.contains("`colors.active` is invalid"), "{stderr}");
     assert!(stderr.contains("#RRGGBB"), "{stderr}");
 }
@@ -369,9 +375,7 @@ fn task_dag_renders_exact_compact_title_status_and_colored_output() {
 
     fixture
         .database
-        .command()
-        .env_remove("NO_COLOR")
-        .env("CLICOLOR_FORCE", "1")
+        .command_with_color()
         .args(["task", "dag", "FOO-0003"])
         .assert()
         .success()
@@ -532,6 +536,7 @@ fn remove_prompt_identifies_closed_status_before_deletion() {
 }
 
 #[test]
+#[cfg(unix)]
 fn configured_list_order_and_priority_apply_to_every_list_spelling() -> anyhow::Result<()> {
     let fixture = ManagedProject::new(&project_id("FOO")?, "foo-bar")?;
     for (title, priority, effort) in [

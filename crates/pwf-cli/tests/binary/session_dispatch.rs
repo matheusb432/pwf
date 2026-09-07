@@ -84,7 +84,11 @@ fn default_dispatch_forwards_the_explicit_model_to_the_concrete_claude_process()
         .filter(|entry| !entry.is_empty())
         .map(|entry| String::from_utf8(entry.to_vec()).unwrap())
         .collect::<Vec<_>>();
-    assert_eq!(entries[0], format!("cwd={}", project_path.display()));
+    let working_directory = std::path::Path::new(entries[0].strip_prefix("cwd=").unwrap());
+    assert_eq!(
+        working_directory.canonicalize().unwrap(),
+        project_path.canonicalize().unwrap()
+    );
     assert_eq!(
         entries[1..8],
         [

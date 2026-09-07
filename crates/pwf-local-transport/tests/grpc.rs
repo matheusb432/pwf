@@ -11,7 +11,7 @@ async fn tonic_serves_multiple_clients_over_the_native_transport()
 
 async fn multiple_clients() -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
-    let endpoint = LocalEndpoint::from_root(root.path())?;
+    let endpoint = LocalEndpoint::from_root(root.path().join("runtime"))?;
     let listener = LocalListener::bind(&endpoint, Duration::from_millis(100)).await?;
     let (reporter, health) = tonic_health::server::health_reporter();
     reporter
