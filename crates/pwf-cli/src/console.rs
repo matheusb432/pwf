@@ -2,10 +2,6 @@
 
 use crate::confirmation::{ConfirmationAnswer, ConfirmationDialog, ConfirmationMode};
 
-/// Terminal capabilities resolved at the binary edge.
-///
-/// Engine code receives this value instead of sniffing process TTY or color
-/// environment state, so in-process callers stay deterministic.
 #[derive(Clone, Copy, Debug)]
 pub struct Console {
     interactive: bool,

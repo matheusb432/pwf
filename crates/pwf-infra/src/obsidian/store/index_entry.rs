@@ -45,9 +45,7 @@ pub(super) struct ParsedIndexLine {
 }
 
 /// Parses task checkbox lines with their raw enclosing H2 labels.
-///
-/// This representation mapping rejects duplicate task identities and applies no cap, eviction, or
-/// normalization policy.
+/// Rejects duplicate task IDs.
 pub(super) fn parse_index_lines(
     index_path: &Path,
     text: &str,

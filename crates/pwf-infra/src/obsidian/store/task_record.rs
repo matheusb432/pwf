@@ -170,10 +170,6 @@ fn record_from_source(
     Ok(metadata.into_record(file))
 }
 
-/// Materializes an index link whose note file is missing.
-///
-/// Body and source are empty. `locator` is the expected note path, and `MissingNote` carries its
-/// platform display form for diagnostics.
 fn missing_note_record(
     id: TaskId,
     title: String,
