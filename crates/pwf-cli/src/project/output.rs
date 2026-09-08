@@ -9,10 +9,11 @@ use serde::Serialize;
 pub(super) struct ProjectOutput {
     id: String,
     title: String,
-    source: ProjectSourceOutput,
+    source: Option<ProjectSourceOutput>,
     tasks: ProjectTasksOutput,
     created_at: String,
     is_paused: bool,
+    obsidian_vault: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -90,6 +91,7 @@ impl From<Project> for ProjectOutput {
             project.tasks_path,
             project.created_at,
             project.is_paused,
+            project.obsidian_vault,
         )
     }
 }
@@ -103,6 +105,7 @@ impl From<AddProjectResponse> for ProjectOutput {
             response.tasks_path,
             response.created_at,
             response.is_paused,
+            response.obsidian_vault,
         )
     }
 }
@@ -116,6 +119,7 @@ impl From<GetProjectResponse> for ProjectOutput {
             response.tasks_path,
             response.created_at,
             response.is_paused,
+            response.obsidian_vault,
         )
     }
 }
@@ -129,6 +133,7 @@ impl From<RenameProjectResponse> for ProjectOutput {
             response.tasks_path,
             response.created_at,
             response.is_paused,
+            response.obsidian_vault,
         )
     }
 }
@@ -137,24 +142,26 @@ impl ProjectOutput {
     fn new(
         id: String,
         title: String,
-        source_value: String,
+        source_value: Option<String>,
         tasks_path: String,
         created_at: String,
         is_paused: bool,
+        obsidian_vault: Option<String>,
     ) -> Self {
         Self {
             id,
             title,
-            source: ProjectSourceOutput {
+            source: source_value.map(|value| ProjectSourceOutput {
                 kind: ProjectSourceKindOutput::Directory,
-                value: source_value,
-            },
+                value,
+            }),
             tasks: ProjectTasksOutput {
                 kind: ProjectTasksKindOutput::Directory,
                 path: tasks_path,
             },
             created_at,
             is_paused,
+            obsidian_vault,
         }
     }
 }

@@ -183,6 +183,31 @@ pub struct ProjectSourceKindError;
 )]
 pub struct ProjectSourceValue(String);
 
+#[nutype(
+    validate(with = validate_tasks_relative_path, error = ProjectTasksRelativePathError),
+    derive(Debug, Clone, PartialEq, Eq, AsRef, Display, FromStr)
+)]
+pub struct ProjectTasksRelativePath(String);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+#[error("tasks path must be a nonempty relative folder path without `.` or `..` components")]
+pub struct ProjectTasksRelativePathError;
+
+fn validate_tasks_relative_path(raw: &str) -> Result<(), ProjectTasksRelativePathError> {
+    if !raw.trim().is_empty()
+        && raw
+            .split(['/', '\\'])
+            .all(|part| !part.is_empty() && !matches!(part, "." | ".."))
+        && std::path::Path::new(raw)
+            .components()
+            .all(|part| matches!(part, std::path::Component::Normal(_)))
+    {
+        Ok(())
+    } else {
+        Err(ProjectTasksRelativePathError)
+    }
+}
+
 /// Locates a managed project's source.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectSource {
@@ -273,6 +298,14 @@ impl ProjectTasks {
     }
 }
 
+/// Registered Obsidian vault root, resolved against the server home directory.
+#[nutype(
+    sanitize(trim),
+    validate(predicate = is_not_blank),
+    derive(Debug, Clone, PartialEq, Eq, AsRef, Display, FromStr)
+)]
+pub struct ObsidianVault(String);
+
 /// Describes one managed project.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Project {
@@ -281,9 +314,10 @@ pub struct Project {
     /// Project title.
     pub title: ProjectName,
     /// Project source location.
-    pub source: ProjectSource,
+    pub source: Option<ProjectSource>,
     /// Task location.
     pub tasks: ProjectTasks,
+    pub obsidian_vault: Option<ObsidianVault>,
     /// RFC 3339 UTC creation timestamp.
     pub created_at: ProjectCreatedAt,
     /// Reports whether the project is paused.
@@ -328,6 +362,23 @@ fn is_not_blank(raw: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tasks_relative_path_rejects_roots_and_traversal() {
+        for path in [
+            "",
+            "/tasks",
+            "..",
+            "../tasks",
+            "tasks/../other",
+            "./tasks",
+            "tasks/./other",
+            "tasks//other",
+        ] {
+            assert!(ProjectTasksRelativePath::try_new(path).is_err(), "{path}");
+        }
+        assert!(ProjectTasksRelativePath::try_new("some/path/foo").is_ok());
+    }
 
     #[test]
     fn project_id_parses_two_to_four_ascii_letters() {

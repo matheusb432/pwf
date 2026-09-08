@@ -5,33 +5,57 @@ use pwf_models::task::{EffortTier, PriorityTier, TaskId, TaskIdError, TaskStatus
 use crate::{confirmation, pb, task};
 
 #[must_use]
-pub fn create_task_response(id: &TaskId) -> pb::CreateTaskResponse {
-    pb::CreateTaskResponse { id: id.to_string() }
+pub fn create_task_response(result: task::TaskMutationResult<TaskId>) -> pb::CreateTaskResponse {
+    pb::CreateTaskResponse {
+        id: result.outcome.to_string(),
+        task: result.task.map(task_mutation_summary),
+    }
 }
 
 #[must_use]
-pub fn update_task_response() -> pb::UpdateTaskResponse {
-    pb::UpdateTaskResponse {}
+pub fn update_task_response(result: task::TaskMutationResult<()>) -> pb::UpdateTaskResponse {
+    pb::UpdateTaskResponse {
+        task: result.task.map(task_mutation_summary),
+    }
 }
 
 #[must_use]
-pub fn cancel_task_response() -> pb::CancelTaskResponse {
-    pb::CancelTaskResponse {}
+pub fn cancel_task_response(result: task::TaskMutationResult<()>) -> pb::CancelTaskResponse {
+    pb::CancelTaskResponse {
+        task: result.task.map(task_mutation_summary),
+    }
 }
 
 #[must_use]
-pub fn complete_task_response() -> pb::CompleteTaskResponse {
-    pb::CompleteTaskResponse {}
+pub fn complete_task_response(result: task::TaskMutationResult<()>) -> pb::CompleteTaskResponse {
+    pb::CompleteTaskResponse {
+        task: result.task.map(task_mutation_summary),
+    }
+}
+
+fn task_mutation_summary(task: task::TaskMutationSummary) -> pb::TaskMutationSummary {
+    pb::TaskMutationSummary {
+        id: task.id.to_string(),
+        title: task.title,
+        status: match task.status {
+            TaskStatus::Active => pb::TaskStatus::Active,
+            TaskStatus::Done => pb::TaskStatus::Done,
+            TaskStatus::Cancelled => pb::TaskStatus::Cancelled,
+        } as i32,
+    }
 }
 
 #[must_use]
-pub fn reopen_task_result(outcome: task::ReopenTaskOutcome) -> pb::ReopenTaskResult {
-    let outcome = match outcome {
+pub fn reopen_task_result(
+    result: task::TaskMutationResult<task::ReopenTaskOutcome>,
+) -> pb::ReopenTaskResult {
+    let task = result.task.map(task_mutation_summary);
+    let outcome = match result.outcome {
         task::ReopenTaskOutcome::Reopened => {
-            pb::reopen_task_result::Outcome::Reopened(pb::ReopenedTask {})
+            pb::reopen_task_result::Outcome::Reopened(pb::ReopenedTask { task })
         }
         task::ReopenTaskOutcome::AlreadyActive => {
-            pb::reopen_task_result::Outcome::AlreadyActive(pb::AlreadyActiveTask {})
+            pb::reopen_task_result::Outcome::AlreadyActive(pb::AlreadyActiveTask { task })
         }
         task::ReopenTaskOutcome::Aborted => {
             pb::reopen_task_result::Outcome::Aborted(pb::AbortedTaskOperation {})
@@ -43,10 +67,14 @@ pub fn reopen_task_result(outcome: task::ReopenTaskOutcome) -> pb::ReopenTaskRes
 }
 
 #[must_use]
-pub fn delete_task_result(outcome: task::DeleteTaskOutcome) -> pb::DeleteTaskResult {
-    let outcome = match outcome {
+pub fn delete_task_result(
+    result: task::TaskMutationResult<task::DeleteTaskOutcome>,
+) -> pb::DeleteTaskResult {
+    let outcome = match result.outcome {
         task::DeleteTaskOutcome::Deleted => {
-            pb::delete_task_result::Outcome::Deleted(pb::DeletedTask {})
+            pb::delete_task_result::Outcome::Deleted(pb::DeletedTask {
+                task: result.task.map(task_mutation_summary),
+            })
         }
         task::DeleteTaskOutcome::Aborted => {
             pb::delete_task_result::Outcome::Aborted(pb::AbortedTaskOperation {})
@@ -287,6 +315,16 @@ pub fn delete_task_confirmation(
         title: confirmation.title.to_string(),
         status: task_status_value(confirmation.status),
         note_path: confirmation.note_path.to_string(),
+        obsidian_vault: match &confirmation.deletion {
+            crate::confirmation::TaskDeletion::HardDelete => None,
+            crate::confirmation::TaskDeletion::MoveToTrash { obsidian_vault } => {
+                Some(obsidian_vault.to_string_lossy().into_owned())
+            }
+        },
+        trash_folder: confirmation
+            .deletion
+            .trash_folder()
+            .map(|path| path.to_string_lossy().into_owned()),
     }
 }
 
@@ -373,7 +411,7 @@ fn task_view(task: task::ListedTask) -> pb::TaskView {
     };
     if let Some(details) = task.details {
         view.prompt = details.prompt.to_string();
-        view.project_path = details.project_path.to_string();
+        view.project_path = details.project_path.map(|path| path.to_string());
         view.location = Some(pb::TaskLocation {
             index_path: details.location.index_path().to_string(),
             line: details.location.line().get() as u64,

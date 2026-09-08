@@ -37,17 +37,29 @@ impl FromStr for DirectoryPayload {
             .map_err(|error| format!("project add JSON is invalid: {error}"))?;
         let id = parse_project_id(&payload.id)?;
         let title = parse_project_title(&payload.title)?;
-        let source_value = parse_project_source(&payload.source.value)?;
+        let source_value = payload
+            .source
+            .map(|source| parse_project_source(&source.value))
+            .transpose()?;
         let TasksPayload::Directory { path } = payload.tasks;
         let tasks_path = parse_project_tasks(&path)?;
 
         Ok(Self(ProjectFields {
             id: id.to_string(),
             title: title.to_string(),
-            source_kind: "directory".to_string(),
-            source_value: source_value.to_string(),
+            source_kind: source_value.as_ref().map(|_| "directory".to_string()),
+            source_value: source_value.map(|value| value.to_string()),
             tasks_kind: "directory".to_string(),
             tasks_path: tasks_path.to_string(),
+            obsidian_vault: payload
+                .obsidian_vault
+                .map(|value| {
+                    value
+                        .parse::<pwf_models::project::ObsidianVault>()
+                        .map(|value| value.to_string())
+                        .map_err(|error| error.to_string())
+                })
+                .transpose()?,
         }))
     }
 }
@@ -70,8 +82,9 @@ pub(super) async fn run(arguments: Arguments, client: &ProjectClient) -> anyhow:
 struct AddPayload {
     id: String,
     title: String,
-    source: SourcePayload,
+    source: Option<SourcePayload>,
     tasks: TasksPayload,
+    obsidian_vault: Option<String>,
 }
 
 #[derive(Deserialize)]

@@ -1,5 +1,5 @@
 use pwf_models::task::TaskTimestampError;
-use pwf_wire::task::{CancelTask, ClosedTaskAction};
+use pwf_wire::task::{CancelTask, ClosedTaskAction, TaskMutationResult};
 
 use super::{
     CloseTaskError,
@@ -30,7 +30,7 @@ pub async fn execute(
     store: &impl TaskVault,
     pool: &sqlx::SqlitePool,
     clock: &impl Clock,
-) -> Result<(), CancelTaskError> {
+) -> Result<TaskMutationResult<()>, CancelTaskError> {
     let identity = mutation_request::identity(
         command.request_id.as_ref(),
         command.request_fingerprint.as_ref(),
@@ -40,7 +40,10 @@ pub async fn execute(
             mutation_request::find(pool, identity, MutationOperation::Cancel).await?
     {
         return match replay.state {
-            MutationRequestState::Completed => Ok(()),
+            MutationRequestState::Completed => Ok(TaskMutationResult {
+                outcome: (),
+                task: replay.task,
+            }),
             MutationRequestState::Pending => Err(identity.incomplete().into()),
         };
     }
@@ -51,7 +54,10 @@ pub async fn execute(
             mutation_request::start(pool, identity, MutationOperation::Cancel, &command.id).await?
     {
         return match replay.state {
-            MutationRequestState::Completed => Ok(()),
+            MutationRequestState::Completed => Ok(TaskMutationResult {
+                outcome: (),
+                task: replay.task,
+            }),
             MutationRequestState::Pending => Err(identity.incomplete().into()),
         };
     }
@@ -67,8 +73,8 @@ pub async fn execute(
         store,
         &project,
     );
-    match result {
-        Ok(()) => {}
+    let summary = match result {
+        Ok(summary) => summary,
         Err(error) => {
             if let Some(identity) = identity.as_ref()
                 && close_failed_before_mutation(&error)
@@ -77,12 +83,21 @@ pub async fn execute(
             }
             return Err(error.into());
         }
-    }
+    };
     if let Some(identity) = identity.as_ref() {
-        mutation_request::complete(pool, identity, MutationOperation::Cancel, Some("cancelled"))
-            .await?;
+        mutation_request::complete_with_task(
+            pool,
+            identity,
+            MutationOperation::Cancel,
+            "cancelled",
+            &summary,
+        )
+        .await?;
     }
-    Ok(())
+    Ok(TaskMutationResult {
+        outcome: (),
+        task: Some(summary),
+    })
 }
 
 fn close_failed_before_mutation(error: &CloseTaskError) -> bool {

@@ -35,24 +35,31 @@ pub async fn execute(
         .map_err(|error| unexpected("starting project creation transaction", error))?;
     let existing = other_task_locations(&mut transaction, &fields.id).await?;
     task_location::reject_collision(&fields.id, fields.tasks.path(), existing, home)?;
-    let source_id = source_record::get_or_insert(&mut transaction, &fields.source)
-        .await
-        .map_err(|error| unexpected("resolving project source", error))?;
+    let source_id = match &fields.source {
+        Some(source) => Some(
+            source_record::get_or_insert(&mut transaction, source)
+                .await
+                .map_err(|error| unexpected("resolving project source", error))?,
+        ),
+        None => None,
+    };
 
     let id = fields.id.as_ref();
     let title = fields.title.as_ref();
     let tasks_kind = fields.tasks.kind().to_string();
     let tasks_path = fields.tasks.path().as_ref();
+    let obsidian_vault = fields.obsidian_vault.as_ref().map(AsRef::as_ref);
     let insert_result = sqlx::query!(
         r#"
-        INSERT INTO projects (id, project_source_id, title, tasks_kind, tasks_path)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO projects (id, project_source_id, title, tasks_kind, tasks_path, obsidian_vault)
+        VALUES (?, ?, ?, ?, ?, ?)
         "#,
         id,
         source_id,
         title,
         tasks_kind,
         tasks_path,
+        obsidian_vault,
     )
     .execute(&mut *transaction)
     .await;
@@ -66,14 +73,15 @@ pub async fn execute(
         SELECT
             projects.id AS "id!",
             projects.title AS "title!",
-            project_sources.kind AS "source_kind!",
-            project_sources.value AS "source_value!",
+            project_sources.kind AS "source_kind?",
+            project_sources.value AS "source_value?",
             projects.tasks_kind AS "tasks_kind!",
             projects.tasks_path AS "tasks_path!",
+            projects.obsidian_vault AS "obsidian_vault?",
             projects.created_at AS "created_at!",
             (projects.paused_at IS NOT NULL) AS "is_paused!: bool"
         FROM projects
-        JOIN project_sources ON project_sources.id = projects.project_source_id
+        LEFT JOIN project_sources ON project_sources.id = projects.project_source_id
         WHERE projects.id = ?
         "#,
         id,
@@ -182,12 +190,13 @@ mod tests {
         tasks_path: &str,
     ) -> ProjectFields {
         ProjectFields {
+            obsidian_vault: None,
             id: project_id.parse().unwrap(),
             title: ProjectName::try_new(title).unwrap(),
-            source: ProjectSource::new(
+            source: Some(ProjectSource::new(
                 ProjectSourceKind::Directory,
                 ProjectSourceValue::try_new(source_value).unwrap(),
-            ),
+            )),
             tasks: ProjectTasks::new(
                 ProjectTasksKind::Directory,
                 ProjectTasksPath::try_new(tasks_path).unwrap(),

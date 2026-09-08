@@ -5,13 +5,14 @@ use pwf_client::{
 };
 use pwf_models::{
     project::ProjectSelector,
+    settings::TaskStatusColors,
     task::{TagInput, TaskTags},
 };
 
 use super::{
     EffortChoice, LaneFlagMode, PriorityChoice,
     blocked_by_input::{self, BlockedByInput},
-    render::{TITLE_NORMALIZED_NOTICE, render_added},
+    render::{TITLE_NORMALIZED_NOTICE, TaskMutationAction, render_mutation},
     task_lanes, task_title,
 };
 use crate::console::Console;
@@ -60,6 +61,7 @@ pub struct Arguments {
 pub(super) async fn run(
     arguments: &Arguments,
     console: Console,
+    task_status_colors: TaskStatusColors,
     client: &TaskClient,
 ) -> anyhow::Result<String> {
     let project_selector = arguments
@@ -99,7 +101,13 @@ pub(super) async fn run(
             if title_normalized {
                 eprintln!("{TITLE_NORMALIZED_NOTICE}");
             }
-            Ok(render_added(&added.id, console.color()))
+            render_mutation(
+                TaskMutationAction::Added,
+                &added.id,
+                added.task.as_ref(),
+                task_status_colors,
+                console.color(),
+            )
         }
         Err(error) => Err(crate::rpc_error(error)),
     }

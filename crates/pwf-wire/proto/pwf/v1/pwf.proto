@@ -3,6 +3,7 @@ syntax = "proto3";
 package pwf.v1;
 
 service ProjectService {
+  rpc AddVaultProject(AddVaultProjectRequest) returns (AddVaultProjectResponse);
   rpc AddProject(AddProjectRequest) returns (AddProjectResponse);
   rpc GetProject(GetProjectRequest) returns (GetProjectResponse);
   rpc ListProjects(ListProjectsRequest) returns (ListProjectsResponse);
@@ -69,10 +70,11 @@ enum ProjectStatusFilter {
 message ProjectFields {
   string id = 1;
   string title = 2;
-  string source_kind = 3;
-  string source_value = 4;
+  optional string source_kind = 3;
+  optional string source_value = 4;
   string tasks_kind = 5;
   string tasks_path = 6;
+  optional string obsidian_vault = 7;
 }
 
 message ClearField {}
@@ -87,25 +89,37 @@ message StringFieldUpdate {
 message Project {
   string id = 1;
   string title = 2;
-  string source_kind = 3;
-  string source_value = 4;
+  optional string source_kind = 3;
+  optional string source_value = 4;
   string tasks_kind = 5;
   string tasks_path = 6;
   string created_at = 7;
   bool is_paused = 8;
+  optional string obsidian_vault = 9;
 }
+
+message AddVaultProjectRequest {
+  string vault_path = 1;
+  string id = 2;
+  string tasks_path = 3;
+  optional string title = 4;
+  optional string source_path = 5;
+}
+
+message AddVaultProjectResponse { string id = 1; }
 
 message AddProjectRequest { ProjectFields fields = 1; }
 
 message AddProjectResponse {
   string id = 1;
   string title = 2;
-  string source_kind = 3;
-  string source_value = 4;
+  optional string source_kind = 3;
+  optional string source_value = 4;
   string tasks_kind = 5;
   string tasks_path = 6;
   string created_at = 7;
   bool is_paused = 8;
+  optional string obsidian_vault = 9;
 }
 
 message GetProjectRequest {
@@ -116,12 +130,13 @@ message GetProjectRequest {
 message GetProjectResponse {
   string id = 1;
   string title = 2;
-  string source_kind = 3;
-  string source_value = 4;
+  optional string source_kind = 3;
+  optional string source_value = 4;
   string tasks_kind = 5;
   string tasks_path = 6;
   string created_at = 7;
   bool is_paused = 8;
+  optional string obsidian_vault = 9;
 }
 
 message ListProjectsRequest { ProjectStatusFilter status = 1; }
@@ -141,12 +156,13 @@ message RenameProjectRequest {
 message RenameProjectResponse {
   string id = 1;
   string title = 2;
-  string source_kind = 3;
-  string source_value = 4;
+  optional string source_kind = 3;
+  optional string source_value = 4;
   string tasks_kind = 5;
   string tasks_path = 6;
   string created_at = 7;
   bool is_paused = 8;
+  optional string obsidian_vault = 9;
 }
 
 message ResumeProjectRequest { string id = 1; }
@@ -159,6 +175,7 @@ message ResumeProjectResponse {
 message UpdateProjectRequest {
   string id = 1;
   StringFieldUpdate source_value = 2;
+  StringFieldUpdate obsidian_vault = 3;
 }
 
 message UpdateProjectResponse {}
@@ -466,19 +483,30 @@ message ListTasksRequest {
   optional string page_token = 11;
 }
 
-message CreateTaskResponse { string id = 1; }
+message TaskMutationSummary {
+  string id = 1;
+  string title = 2;
+  TaskStatus status = 3;
+}
+
+message CreateTaskResponse {
+  string id = 1;
+  TaskMutationSummary task = 2;
+}
 
 message CancelTaskResponse {
   reserved 1;
   reserved "review_task_id";
+  TaskMutationSummary task = 2;
 }
 
 message CompleteTaskResponse {
   reserved 1;
   reserved "review_task_id";
+  TaskMutationSummary task = 2;
 }
 
-message UpdateTaskResponse {}
+message UpdateTaskResponse { TaskMutationSummary task = 1; }
 
 enum TaskStatus {
   TASK_STATUS_UNSPECIFIED = 0;
@@ -591,7 +619,7 @@ message TaskView {
   TaskStatus status = 3;
   string heading = 4;
   string prompt = 5;
-  string project_path = 6;
+  optional string project_path = 6;
   TaskLocation location = 7;
   repeated TaskIssue launch_issues = 8;
   optional string section = 9;
@@ -626,6 +654,8 @@ message DeleteTaskConfirmation {
   string title = 3;
   TaskStatus status = 4;
   string note_path = 5;
+  optional string obsidian_vault = 6;
+  optional string trash_folder = 7;
 }
 
 message ReopenTaskConfirmation {
@@ -640,7 +670,7 @@ message ConfirmationDecision { bool confirmed = 1; }
 
 message DeleteTaskPreflight { DeleteTaskConfirmation confirmation = 1; }
 
-message DeletedTask {}
+message DeletedTask { TaskMutationSummary task = 1; }
 message AbortedTaskOperation {}
 
 message DeleteTaskResult {
@@ -671,8 +701,8 @@ message ReopenTaskStart {
 
 message ReopenTaskPreflight { ReopenTaskConfirmation confirmation = 1; }
 
-message ReopenedTask {}
-message AlreadyActiveTask {}
+message ReopenedTask { TaskMutationSummary task = 1; }
+message AlreadyActiveTask { TaskMutationSummary task = 1; }
 
 message ReopenTaskResult {
   oneof outcome {

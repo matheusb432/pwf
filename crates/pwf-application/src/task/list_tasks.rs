@@ -549,9 +549,15 @@ fn collect_project_tasks(
         .into_iter()
         .filter(|record| query.status_filter.includes(record.status))
         .map(|record| {
-            task_view::enrich(&record, project.source.value())
-                .map_err(|error| ListTasksError::InvalidTaskView(anyhow::Error::new(error)))
-                .map(|task| task.into_task_view(project.title.clone()).into())
+            task_view::enrich(
+                &record,
+                project
+                    .source
+                    .as_ref()
+                    .map(pwf_models::project::ProjectSource::value),
+            )
+            .map_err(|error| ListTasksError::InvalidTaskView(anyhow::Error::new(error)))
+            .map(|task| task.into_task_view(project.title.clone()).into())
         })
         .collect()
 }
@@ -884,7 +890,7 @@ mod tests {
                 &pool,
                 project.id.as_ref(),
                 project.title.as_ref(),
-                project.source.value().as_ref(),
+                project.source.as_ref().unwrap().value().as_ref(),
                 project.tasks.path().as_ref(),
                 project.is_paused,
             )

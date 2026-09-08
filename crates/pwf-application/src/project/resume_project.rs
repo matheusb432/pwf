@@ -76,14 +76,15 @@ pub async fn execute(
         SELECT
             projects.id AS "id!",
             projects.title AS "title!",
-            project_sources.kind AS "source_kind!",
-            project_sources.value AS "source_value!",
+            project_sources.kind AS "source_kind?",
+            project_sources.value AS "source_value?",
             projects.tasks_kind AS "tasks_kind!",
             projects.tasks_path AS "tasks_path!",
+            projects.obsidian_vault AS "obsidian_vault?",
             projects.created_at AS "created_at!",
             (projects.paused_at IS NOT NULL) AS "is_paused!: bool"
         FROM projects
-        JOIN project_sources ON project_sources.id = projects.project_source_id
+        LEFT JOIN project_sources ON project_sources.id = projects.project_source_id
         WHERE projects.id = ?
         "#,
         id,

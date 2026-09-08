@@ -1,8 +1,12 @@
 use clap::Args;
 use pwf_client::{pb::CancelTaskRequest, task::TaskClient};
-use pwf_models::task::TaskReport;
+use pwf_models::{settings::TaskStatusColors, task::TaskReport};
 
-use super::{Identifier, render::render_cancelled};
+use super::{
+    Identifier,
+    render::{TaskMutationAction, render_mutation},
+};
+use crate::console::Console;
 
 #[derive(Args, Debug)]
 pub struct Arguments {
@@ -16,7 +20,12 @@ pub struct Arguments {
     pub(crate) commits: Vec<String>,
 }
 
-pub(super) async fn run(arguments: &Arguments, client: &TaskClient) -> anyhow::Result<String> {
+pub(super) async fn run(
+    arguments: &Arguments,
+    console: Console,
+    task_status_colors: TaskStatusColors,
+    client: &TaskClient,
+) -> anyhow::Result<String> {
     let id = arguments
         .identifier
         .required(anyhow::anyhow!("--id is required for cancel."))?;
@@ -33,9 +42,15 @@ pub(super) async fn run(arguments: &Arguments, client: &TaskClient) -> anyhow::R
         expected_revision: None,
         request_id: String::new(),
     };
-    client
+    let result = client
         .cancel_task(command)
         .await
         .map_err(crate::rpc_error)?;
-    Ok(render_cancelled(id.as_ref()))
+    render_mutation(
+        TaskMutationAction::Cancelled,
+        id.as_ref(),
+        result.task.as_ref(),
+        task_status_colors,
+        console.color(),
+    )
 }

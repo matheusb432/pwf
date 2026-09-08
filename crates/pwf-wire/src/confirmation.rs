@@ -26,7 +26,24 @@ pub struct RemoveTaskConfirmation {
     pub title: TaskTitle,
     pub status: TaskStatus,
     pub note_path: TaskNotePath,
+    pub deletion: TaskDeletion,
     pub revision: ContentRevision,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TaskDeletion {
+    HardDelete,
+    MoveToTrash { obsidian_vault: std::path::PathBuf },
+}
+
+impl TaskDeletion {
+    #[must_use]
+    pub fn trash_folder(&self) -> Option<std::path::PathBuf> {
+        match self {
+            Self::HardDelete => None,
+            Self::MoveToTrash { obsidian_vault } => Some(obsidian_vault.join(".trash")),
+        }
+    }
 }
 
 /// Identifies the completion data discarded after confirmation.

@@ -140,8 +140,8 @@ pub(crate) enum FileTransactionError {
         #[source]
         source: io::Error,
     },
-    #[error("failed to create destination directory {path}")]
-    CreateDestinationDirectory {
+    #[error("destination directory does not exist or is not a directory: {path}")]
+    DestinationDirectory {
         path: PathBuf,
         #[source]
         source: io::Error,
@@ -281,6 +281,14 @@ impl FileTransaction {
     pub(crate) fn commit(self) -> Result<(), FileTransactionError> {
         let prepared = prepare_changes(self.changes)?;
         validate_observations(&self.observations)?;
+        for change in &prepared {
+            if let PreparedFileChange::Rename {
+                destination_path, ..
+            } = change
+            {
+                validate_destination_parent(destination_path)?;
+            }
+        }
         for change in prepared {
             change.commit()?;
         }
@@ -353,7 +361,6 @@ fn commit_rename(
     source_path: PathBuf,
     destination_path: PathBuf,
 ) -> Result<(), FileTransactionError> {
-    create_destination_parent(&destination_path)?;
     fs::rename(&source_path, &destination_path).map_err(|source| FileTransactionError::Rename {
         source_path,
         destination_path,
@@ -361,17 +368,22 @@ fn commit_rename(
     })
 }
 
-fn create_destination_parent(destination_path: &Path) -> Result<(), FileTransactionError> {
+fn validate_destination_parent(destination_path: &Path) -> Result<(), FileTransactionError> {
     let Some(parent) = destination_path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
     else {
         return Ok(());
     };
-    fs::create_dir_all(parent).map_err(|source| FileTransactionError::CreateDestinationDirectory {
-        path: parent.to_path_buf(),
-        source,
-    })
+    match fs::metadata(parent) {
+        Ok(metadata) if metadata.is_dir() => Ok(()),
+        result => Err(FileTransactionError::DestinationDirectory {
+            path: parent.to_path_buf(),
+            source: result.err().unwrap_or_else(|| {
+                io::Error::new(io::ErrorKind::NotADirectory, "expected directory")
+            }),
+        }),
+    }
 }
 
 fn prepare_changes(

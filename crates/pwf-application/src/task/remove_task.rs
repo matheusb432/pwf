@@ -5,7 +5,7 @@ use pwf_models::{
 use pwf_wire::{
     confirmation::RemoveTaskConfirmation,
     project::ProjectStatusFilter,
-    task::{DeleteTask, DeleteTaskOutcome, TaskNotePath},
+    task::{DeleteTask, DeleteTaskOutcome, TaskMutationResult, TaskMutationSummary, TaskNotePath},
 };
 
 use super::{
@@ -26,6 +26,8 @@ use crate::{
 
 #[derive(Debug, thiserror::Error)]
 pub enum RemoveTaskError {
+    #[error("project deletion configuration changed after confirmation; retry removal")]
+    DeletionChanged,
     #[error("Task not found: {id}")]
     TaskNotFound { id: TaskId },
     #[error(transparent)]
@@ -67,16 +69,14 @@ pub enum RemoveTaskError {
     Mutation(#[from] TaskMutationError<anyhow::Error>),
 }
 
-/// Deletes a task after unlinking its index entry.
-///
-/// An unlink failure leaves the note untouched.
+/// Confirms the deletion destination before removing the note and index entry.
 #[cqrsy::command]
 pub async fn execute(
     command: &DeleteTask,
     store: &impl TaskVault,
     pool: &sqlx::SqlitePool,
     confirmation_client: &mut dyn ConfirmationClient<Confirmation = RemoveTaskConfirmation>,
-) -> Result<DeleteTaskOutcome, RemoveTaskError> {
+) -> Result<TaskMutationResult<DeleteTaskOutcome>, RemoveTaskError> {
     let identity = mutation_request::identity(
         command.request_id.as_ref(),
         command.request_fingerprint.as_ref(),
@@ -104,7 +104,10 @@ pub async fn execute(
             mutation_request::complete(pool, identity, MutationOperation::Delete, Some("aborted"))
                 .await?;
         }
-        return Ok(DeleteTaskOutcome::Aborted);
+        return Ok(TaskMutationResult {
+            outcome: DeleteTaskOutcome::Aborted,
+            task: None,
+        });
     }
     if let Err(error) = validate_target_revision(&prepared, store) {
         if let Some(identity) = identity.as_ref() {
@@ -112,12 +115,26 @@ pub async fn execute(
         }
         return Err(error);
     }
+    let summary = TaskMutationSummary {
+        id: prepared.task_id.clone(),
+        title: prepared.confirmation.title.to_string(),
+        status: prepared.confirmation.status,
+    };
     delete_prepared(&prepared, store)?;
     if let Some(identity) = identity.as_ref() {
-        mutation_request::complete(pool, identity, MutationOperation::Delete, Some("deleted"))
-            .await?;
+        mutation_request::complete_with_task(
+            pool,
+            identity,
+            MutationOperation::Delete,
+            "deleted",
+            &summary,
+        )
+        .await?;
     }
-    Ok(DeleteTaskOutcome::Deleted)
+    Ok(TaskMutationResult {
+        outcome: DeleteTaskOutcome::Deleted,
+        task: Some(summary),
+    })
 }
 
 struct PreparedRemoval {
@@ -152,7 +169,11 @@ async fn prepare_removal(
         }
     })?;
     ensure_no_dependents(task_id, store, pool).await?;
+    let deletion = store
+        .task_deletion(&project)
+        .map_err(|error| RemoveTaskError::WriteStore(anyhow::Error::new(error)))?;
     let confirmation = RemoveTaskConfirmation {
+        deletion,
         task_identifier: task_id.clone(),
         project: project.title.clone(),
         title: title.clone(),
@@ -172,6 +193,13 @@ async fn validate_removal(
     store: &impl TaskVault,
     pool: &sqlx::SqlitePool,
 ) -> Result<(), RemoveTaskError> {
+    let project = resolve_task_project::execute(prepared.task_id.clone(), pool).await?;
+    if project.obsidian_vault != prepared.project.obsidian_vault {
+        return Err(RemoveTaskError::DeletionChanged);
+    }
+    store
+        .task_deletion(&project)
+        .map_err(|error| RemoveTaskError::WriteStore(anyhow::Error::new(error)))?;
     ensure_no_dependents(&prepared.task_id, store, pool).await?;
     validate_target_revision(prepared, store)
 }
@@ -201,10 +229,11 @@ fn delete_prepared(
             revision: prepared.confirmation.revision.clone(),
         }],
         vec![
-            TaskWrite::DeleteIndex(prepared.task_id.clone()),
-            TaskWrite::MoveToTrash {
+            TaskWrite::DeleteNote {
+                deletion: prepared.confirmation.deletion.clone(),
                 id: prepared.task_id.clone(),
             },
+            TaskWrite::DeleteIndex(prepared.task_id.clone()),
         ],
     )
     .map_err(Into::into)
@@ -228,13 +257,19 @@ async fn ensure_no_dependents(
 fn delete_replay(
     replay: &mutation_request::MutationRequestRecord,
     identity: &mutation_request::MutationIdentity,
-) -> Result<DeleteTaskOutcome, RemoveTaskError> {
+) -> Result<TaskMutationResult<DeleteTaskOutcome>, RemoveTaskError> {
     if replay.state == MutationRequestState::Pending {
         return Err(identity.incomplete().into());
     }
     match replay.outcome.as_deref() {
-        Some("deleted") => Ok(DeleteTaskOutcome::Deleted),
-        Some("aborted") => Ok(DeleteTaskOutcome::Aborted),
+        Some("deleted") => Ok(TaskMutationResult {
+            outcome: DeleteTaskOutcome::Deleted,
+            task: replay.task.clone(),
+        }),
+        Some("aborted") => Ok(TaskMutationResult {
+            outcome: DeleteTaskOutcome::Aborted,
+            task: None,
+        }),
         Some(_) | None => Err(mutation_request::MutationRequestError::Corrupt {
             request_id: identity.request_id().to_string(),
             reason: "delete outcome is invalid",
@@ -296,7 +331,7 @@ mod tests {
     use pwf_models::task::{TaskId, TaskStatus};
     use pwf_wire::{
         confirmation::RemoveTaskConfirmation,
-        task::{DeleteTask, DeleteTaskOutcome, TaskNotePath},
+        task::{DeleteTask, DeleteTaskOutcome, TaskMutationResult, TaskNotePath},
     };
 
     use super::RemoveTaskError;
@@ -316,7 +351,7 @@ mod tests {
         store: &InMemoryStore,
         pool: &sqlx::SqlitePool,
         confirmation: &mut dyn ConfirmationClient<Confirmation = RemoveTaskConfirmation>,
-    ) -> Result<DeleteTaskOutcome, RemoveTaskError> {
+    ) -> Result<TaskMutationResult<DeleteTaskOutcome>, RemoveTaskError> {
         remove_task::execute(
             &DeleteTask {
                 id: task_id.clone(),
@@ -413,6 +448,51 @@ mod tests {
         }
     }
 
+    struct ChangeVaultThenAccept {
+        pool: sqlx::SqlitePool,
+    }
+
+    impl ConfirmationClient for ChangeVaultThenAccept {
+        type Confirmation = RemoveTaskConfirmation;
+
+        fn confirm<'a>(
+            &'a mut self,
+            confirmation: &'a RemoveTaskConfirmation,
+        ) -> futures::future::BoxFuture<'a, Result<bool, ConfirmationClientError>> {
+            assert_eq!(
+                confirmation.deletion,
+                pwf_wire::confirmation::TaskDeletion::HardDelete
+            );
+            Box::pin(async move {
+                sqlx::query(
+                    "UPDATE projects SET obsidian_vault = '/different/vault' WHERE id = 'FOO'",
+                )
+                .execute(&self.pool)
+                .await
+                .unwrap();
+                Ok(true)
+            })
+        }
+    }
+
+    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
+    async fn changed_vault_after_confirmation_preserves_the_task_and_index(pool: sqlx::SqlitePool) {
+        insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
+        let store = staged(TaskStatus::Active);
+        let before = store.tasks("foo");
+        let error = run(
+            &task_id("FOO-0001"),
+            &store,
+            &pool,
+            &mut ChangeVaultThenAccept { pool: pool.clone() },
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(error, RemoveTaskError::DeletionChanged));
+        assert_eq!(store.tasks("foo"), before);
+        assert_eq!(store.entries("foo").len(), 1);
+    }
+
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn remove_deletes_record_and_index_entry(pool: sqlx::SqlitePool) {
         insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
@@ -421,7 +501,7 @@ mod tests {
         let outcome = run(&task_id("FOO-0001"), &store, &pool, &mut Accepted)
             .await
             .unwrap();
-        assert_eq!(outcome, DeleteTaskOutcome::Deleted);
+        assert_eq!(outcome.outcome, DeleteTaskOutcome::Deleted);
         assert!(store.tasks("foo").is_empty(), "record must be deleted");
         assert!(
             store.entries("foo").is_empty(),
@@ -529,7 +609,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(outcome, DeleteTaskOutcome::Deleted);
+        assert_eq!(outcome.outcome, DeleteTaskOutcome::Deleted);
         assert!(store.tasks("foo").is_empty());
         assert!(store.entries("foo").is_empty());
     }
@@ -544,7 +624,7 @@ mod tests {
                 .await
                 .unwrap();
 
-            assert_eq!(outcome, DeleteTaskOutcome::Deleted);
+            assert_eq!(outcome.outcome, DeleteTaskOutcome::Deleted);
             assert!(store.tasks("foo").is_empty(), "{status} record retained");
             assert!(store.entries("foo").is_empty(), "{status} index retained");
         }
@@ -626,7 +706,7 @@ mod tests {
             )
             .await
             .unwrap();
-            assert_eq!(outcome, DeleteTaskOutcome::Deleted);
+            assert_eq!(outcome.outcome, DeleteTaskOutcome::Deleted);
             assert!(store.tasks("foo").is_empty());
             assert!(store.entries("foo").is_empty());
         }
@@ -645,7 +725,7 @@ mod tests {
             .await
             .unwrap();
 
-            assert_eq!(outcome, DeleteTaskOutcome::Aborted);
+            assert_eq!(outcome.outcome, DeleteTaskOutcome::Aborted);
             assert_eq!(store.tasks("foo").len(), 1);
             assert_eq!(store.entries("foo").len(), 1);
         }

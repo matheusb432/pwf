@@ -72,7 +72,7 @@ mod tests {
 
     use pwf_models::{
         project::{HomeDirectory, Project},
-        session::{Agent, AgentModel, SessionEffort, SessionTaskIds, SessionWorkingDirectory},
+        session::{Agent, AgentModel, SessionEffort, SessionTaskIds},
         task::TaskId,
     };
     use pwf_wire::task::session::{
@@ -123,7 +123,11 @@ mod tests {
     struct ExistingProjectDirectory;
 
     impl ProjectDirectoryClient for ExistingProjectDirectory {
-        fn is_directory(&self, _: &SessionWorkingDirectory) -> bool {
+        fn canonicalize(&self, path: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
+            Ok(path.to_path_buf())
+        }
+
+        fn is_directory(&self, _: &std::path::Path) -> bool {
             true
         }
     }

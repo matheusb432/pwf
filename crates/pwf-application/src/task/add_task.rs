@@ -4,7 +4,7 @@ use pwf_models::{
 };
 use pwf_wire::{
     project::{ProjectStatusFilter, ResolveProject},
-    task::{AddTask, AddTaskPromptKind},
+    task::{AddTask, AddTaskPromptKind, TaskMutationResult, TaskMutationSummary},
 };
 
 pub use super::task_creation::CreateTaskError;
@@ -86,7 +86,7 @@ pub async fn execute(
     store: &impl TaskVault,
     pool: &sqlx::SqlitePool,
     clock: &impl Clock,
-) -> Result<TaskId, AddTaskError> {
+) -> Result<TaskMutationResult<TaskId>, AddTaskError> {
     add(cmd, store, pool, clock).await
 }
 
@@ -95,7 +95,7 @@ async fn add(
     store: &impl TaskVault,
     pool: &sqlx::SqlitePool,
     clock: &impl Clock,
-) -> Result<TaskId, AddTaskError> {
+) -> Result<TaskMutationResult<TaskId>, AddTaskError> {
     let identity =
         mutation_request::identity(cmd.request_id.as_ref(), cmd.request_fingerprint.as_ref())?;
     let replay = match identity.as_ref() {
@@ -106,7 +106,10 @@ async fn add(
         .as_ref()
         .filter(|replay| replay.state == MutationRequestState::Completed)
     {
-        return Ok(replay.task_id.clone());
+        return Ok(TaskMutationResult {
+            outcome: replay.task_id.clone(),
+            task: replay.task.clone(),
+        });
     }
     let project = resolve_project::execute(
         ResolveProject {
@@ -128,29 +131,26 @@ async fn add(
             })?,
     };
 
-    let blocked_by = match cmd.blocked_by.as_ref() {
-        Some(blocked_by) => {
-            let projects = list_projects::execute(ProjectStatusFilter::IncludingPaused, pool)
-                .await
-                .map_err(|error| AddTaskError::QueryProject(anyhow::Error::new(error)))?;
-            Some(
-                blocked_by::validate_and_merge(&id, None, blocked_by, store, &projects)
-                    .map_err(map_blocked_by_error)?,
-            )
-        }
-        None => None,
-    };
+    let blocked_by = resolve_blocked_by(&id, cmd, store, pool).await?;
     if replay.is_none()
         && let Some(identity) = identity.as_ref()
         && let MutationStart::Existing(existing) =
             mutation_request::start(pool, identity, MutationOperation::Create, &id).await?
     {
         return match existing.state {
-            MutationRequestState::Completed => Ok(existing.task_id),
+            MutationRequestState::Completed => Ok(TaskMutationResult {
+                outcome: existing.task_id,
+                task: existing.task,
+            }),
             MutationRequestState::Pending => Err(identity.incomplete().into()),
         };
     }
 
+    let summary = TaskMutationSummary {
+        id: id.clone(),
+        title: prepared.title.to_string(),
+        status: pwf_models::task::TaskStatus::Active,
+    };
     let existing = if replay.is_some() {
         read_reserved_task(store, &project, &id)?
     } else {
@@ -180,10 +180,36 @@ async fn add(
         )?;
     }
     if let Some(identity) = identity.as_ref() {
-        mutation_request::complete(pool, identity, MutationOperation::Create, Some("created"))
-            .await?;
+        mutation_request::complete_with_task(
+            pool,
+            identity,
+            MutationOperation::Create,
+            "created",
+            &summary,
+        )
+        .await?;
     }
-    Ok(id)
+    Ok(TaskMutationResult {
+        outcome: id,
+        task: Some(summary),
+    })
+}
+
+async fn resolve_blocked_by(
+    id: &TaskId,
+    command: &AddTask,
+    store: &impl TaskVault,
+    pool: &sqlx::SqlitePool,
+) -> Result<Option<pwf_models::task::BlockedBy>, AddTaskError> {
+    let Some(blockers) = command.blocked_by.as_ref() else {
+        return Ok(None);
+    };
+    let projects = list_projects::execute(ProjectStatusFilter::IncludingPaused, pool)
+        .await
+        .map_err(|error| AddTaskError::QueryProject(anyhow::Error::new(error)))?;
+    blocked_by::validate_and_merge(id, None, blockers, store, &projects)
+        .map(Some)
+        .map_err(map_blocked_by_error)
 }
 
 fn read_reserved_task(

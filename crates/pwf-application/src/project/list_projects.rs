@@ -27,14 +27,15 @@ pub async fn execute(
             SELECT
                 projects.id AS "id!",
                 projects.title AS "title!",
-                project_sources.kind AS "source_kind!",
-                project_sources.value AS "source_value!",
+                project_sources.kind AS "source_kind?",
+                project_sources.value AS "source_value?",
                 projects.tasks_kind AS "tasks_kind!",
                 projects.tasks_path AS "tasks_path!",
+                projects.obsidian_vault AS "obsidian_vault?",
                 projects.created_at AS "created_at!",
                 (projects.paused_at IS NOT NULL) AS "is_paused!: bool"
             FROM projects
-            JOIN project_sources ON project_sources.id = projects.project_source_id
+            LEFT JOIN project_sources ON project_sources.id = projects.project_source_id
             ORDER BY projects.title ASC
             "#,
         )
@@ -48,14 +49,15 @@ pub async fn execute(
             SELECT
                 active_projects.id AS "id!",
                 active_projects.title AS "title!",
-                project_sources.kind AS "source_kind!",
-                project_sources.value AS "source_value!",
+                project_sources.kind AS "source_kind?",
+                project_sources.value AS "source_value?",
                 active_projects.tasks_kind AS "tasks_kind!",
                 active_projects.tasks_path AS "tasks_path!",
+                active_projects.obsidian_vault AS "obsidian_vault?",
                 active_projects.created_at AS "created_at!",
                 false AS "is_paused!: bool"
             FROM active_projects
-            JOIN project_sources ON project_sources.id = active_projects.project_source_id
+            LEFT JOIN project_sources ON project_sources.id = active_projects.project_source_id
             ORDER BY active_projects.title ASC
             "#,
         )

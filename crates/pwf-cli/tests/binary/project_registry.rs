@@ -61,3 +61,100 @@ fn invalid_runtime_task_path_is_not_persisted() {
     .unwrap();
     assert_failure(fixture.run(&["project", "get", "FOO"]).unwrap(), &["FOO"]).unwrap();
 }
+
+#[test]
+fn add_vault_uses_current_directory_and_source_less_projects_support_tasks() {
+    use crate::support::{DatabaseFixture, success_json};
+
+    let root = tempfile::tempdir().unwrap();
+    let vault = root.path().join("vault");
+    std::fs::create_dir_all(vault.join(".obsidian")).unwrap();
+    let fixture = DatabaseFixture::new(root.path().join("pwf.sqlite3")).unwrap();
+    let created = success_json(
+        fixture
+            .command()
+            .current_dir(&vault)
+            .args([
+                "project",
+                "add-vault",
+                "--id",
+                "foo",
+                "--tasks-path",
+                "tasks/foo",
+            ])
+            .output()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(created, serde_json::json!({"id": "FOO"}));
+    let project = success_json(
+        fixture
+            .command()
+            .args(["project", "get", "foo"])
+            .output()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(project["title"], "foo");
+    assert!(project["source"].is_null());
+    let added = fixture
+        .command()
+        .args([
+            "task",
+            "add",
+            "foo",
+            "--title",
+            "sample",
+            "--goal",
+            "verify a vault project",
+        ])
+        .output()
+        .unwrap();
+    crate::support::assert_success(&added, "add task without a source");
+    let listed = fixture
+        .command()
+        .args(["task", "list", "--project", "foo", "--long"])
+        .output()
+        .unwrap();
+    crate::support::assert_success(&listed, "list tasks without a source");
+    assert!(
+        String::from_utf8(listed.stdout)
+            .unwrap()
+            .contains("project_path: none")
+    );
+    assert_failure(
+        fixture
+            .command()
+            .args(["session", "foo1", "--dry-run"])
+            .output()
+            .unwrap(),
+        &["has no source path", "pwf project edit FOO --source"],
+    )
+    .unwrap();
+    let edited = fixture
+        .command()
+        .args(["project", "edit", "foo", "--source"])
+        .arg(root.path())
+        .output()
+        .unwrap();
+    crate::support::assert_success(&edited, "set source");
+    let sourced = success_json(
+        fixture
+            .command()
+            .args(["project", "get", "foo"])
+            .output()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(sourced["source"]["value"], root.path().to_str().unwrap());
+    let cleared = fixture
+        .command()
+        .args(["project", "edit", "foo", "--clear-source"])
+        .output()
+        .unwrap();
+    crate::support::assert_success(&cleared, "clear source");
+    let projects =
+        success_json(fixture.command().args(["project", "ls"]).output().unwrap()).unwrap();
+    assert_eq!(projects.as_array().unwrap().len(), 1);
+    assert!(projects[0]["source"].is_null());
+}

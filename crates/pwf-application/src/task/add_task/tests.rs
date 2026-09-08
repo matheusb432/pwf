@@ -52,7 +52,7 @@ async fn add_inserts_record_and_open_index_entry(pool: sqlx::SqlitePool) {
         .await
         .unwrap();
 
-    assert_eq!(added.as_ref(), "FOO-0001");
+    assert_eq!(added.outcome.as_ref(), "FOO-0001");
     let entries = store.entries("foo");
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].id.as_ref(), "FOO-0001");
@@ -74,7 +74,7 @@ async fn add_forwards_an_explicit_task_title(pool: sqlx::SqlitePool) {
         .await
         .unwrap();
 
-    assert_eq!(added.as_ref(), "FOO-0001");
+    assert_eq!(added.outcome.as_ref(), "FOO-0001");
     assert_eq!(store.tasks("foo")[0].title, "fix  metadata");
 }
 
@@ -88,7 +88,7 @@ async fn add_inferred_prompt_title_is_normalized_once(pool: sqlx::SqlitePool) {
         .await
         .unwrap();
 
-    assert_eq!(added.as_ref(), "FOO-0001");
+    assert_eq!(added.outcome.as_ref(), "FOO-0001");
     assert_eq!(store.tasks("foo")[0].title, "fix  metadata");
 }
 
@@ -157,7 +157,7 @@ async fn structured_add_renders_lane_values_without_shorthand_parsing(pool: sqlx
         .await
         .unwrap();
 
-    assert_eq!(added.as_ref(), "FOO-0001");
+    assert_eq!(added.outcome.as_ref(), "FOO-0001");
     assert_eq!(
         store.tasks("foo")[0].body,
         "## Goals\n\n- keep /d literal\n\n## Context\n\n- known context"
@@ -203,7 +203,7 @@ async fn add_accepts_a_blocker_from_a_paused_project(pool: sqlx::SqlitePool) {
         .await
         .unwrap();
 
-    assert_eq!(added.as_ref(), "FOO-0001");
+    assert_eq!(added.outcome.as_ref(), "FOO-0001");
 }
 
 #[sqlx::test(migrator = "crate::testing::MIGRATOR")]

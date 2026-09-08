@@ -596,12 +596,13 @@ mod tests {
 
     fn project(tasks_path: &Path) -> Project {
         Project {
+            obsidian_vault: None,
             id: ProjectId::try_new("FOO").unwrap(),
             title: ProjectName::try_new("foo").unwrap(),
-            source: ProjectSource::new(
+            source: Some(ProjectSource::new(
                 ProjectSourceKind::Directory,
                 ProjectSourceValue::try_new("/projects/foo").unwrap(),
-            ),
+            )),
             tasks: ProjectTasks::new(
                 ProjectTasksKind::Directory,
                 ProjectTasksPath::try_new(tasks_path.to_string_lossy()).unwrap(),

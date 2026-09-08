@@ -180,13 +180,26 @@ fn confirmation_dialog(confirmation: &Confirmation) -> ConfirmationDialog {
         ),
         Confirmation::DeleteTask(confirmation) => ConfirmationDialog::new(
             "Confirm task removal",
-            vec![
-                Detail::new("Task", &confirmation.task_id),
-                Detail::new("Title", &confirmation.title),
-                Detail::new("Status", task_status(confirmation.status)),
-                Detail::new("Project", &confirmation.project),
-                Detail::new("Note", &confirmation.note_path),
-            ],
+            {
+                let mut details = vec![
+                    Detail::new("Task", &confirmation.task_id),
+                    Detail::new("Title", &confirmation.title),
+                    Detail::new("Status", task_status(confirmation.status)),
+                    Detail::new("Project", &confirmation.project),
+                    Detail::new("Note", &confirmation.note_path),
+                ];
+                if let Some(vault) = &confirmation.obsidian_vault {
+                    details.push(Detail::new("Obsidian vault", vault));
+                }
+                details.push(Detail::new(
+                    "Deletion",
+                    confirmation.trash_folder.as_ref().map_or_else(
+                        || "hard delete".to_string(),
+                        |folder| format!("moves to {folder}"),
+                    ),
+                ));
+                details
+            },
             "Remove this task?",
             ConfirmationDefault::No,
             ConfirmationTone::Destructive,
@@ -329,6 +342,8 @@ mod tests {
     #[test]
     fn removal_confirmation_renders_aligned_task_details() {
         let confirmation = Confirmation::DeleteTask(DeleteTaskConfirmation {
+            obsidian_vault: None,
+            trash_folder: None,
             task_id: "FOO-0001".to_string(),
             project: "foo".to_string(),
             title: "stale task".to_string(),
@@ -338,7 +353,7 @@ mod tests {
 
         assert_eq!(
             confirmation_dialog(&confirmation).render(false),
-            "Confirm task removal\n\n  Task     FOO-0001\n  Title    stale task\n  Status   active\n  Project  foo\n  Note     /notes/foo/FOO-0001.md"
+            "Confirm task removal\n\n  Task      FOO-0001\n  Title     stale task\n  Status    active\n  Project   foo\n  Note      /notes/foo/FOO-0001.md\n  Deletion  hard delete"
         );
     }
 

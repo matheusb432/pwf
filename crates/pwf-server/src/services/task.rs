@@ -60,7 +60,7 @@ impl pb::task_service_server::TaskService for TaskGrpcService {
             &self.state.clock,
         )
         .await
-        .map(|id| proto::task::create_task_response(&id))
+        .map(proto::task::create_task_response)
         .map(Response::new)
         .map_err(create_task_status)
     }
@@ -78,7 +78,7 @@ impl pb::task_service_server::TaskService for TaskGrpcService {
             &self.state.clock,
         )
         .await
-        .map(|()| proto::task::cancel_task_response())
+        .map(proto::task::cancel_task_response)
         .map(Response::new)
         .map_err(cancel_task_status)
     }
@@ -96,7 +96,7 @@ impl pb::task_service_server::TaskService for TaskGrpcService {
             &self.state.clock,
         )
         .await
-        .map(|()| proto::task::complete_task_response())
+        .map(proto::task::complete_task_response)
         .map(Response::new)
         .map_err(complete_task_status)
     }
@@ -109,7 +109,7 @@ impl pb::task_service_server::TaskService for TaskGrpcService {
         let _mutation_guard = self.state.task_mutations.lock().await;
         edit_task::execute(command, &self.state.store, &self.state.pool)
             .await
-            .map(|()| proto::task::update_task_response())
+            .map(proto::task::update_task_response)
             .map(Response::new)
             .map_err(|error| edit_task_status(&error))
     }
@@ -429,7 +429,7 @@ fn delete_task_status(error: RemoveTaskError) -> Status {
         RemoveTaskError::TaskNotFound { .. } => Status::not_found(message),
         RemoveTaskError::ResolveProject(error) => resolve_task_project_status(&error),
         RemoveTaskError::Confirmation(error) => confirmation_status(&error),
-        RemoveTaskError::Revision(_) => Status::aborted(message),
+        RemoveTaskError::Revision(_) | RemoveTaskError::DeletionChanged => Status::aborted(message),
         RemoveTaskError::Mutation(error) => task_mutation_status(&error),
         RemoveTaskError::MutationRequest(error) => mutation_request_status(&error),
         RemoveTaskError::NoteMissing { .. } | RemoveTaskError::HasDependents { .. } => {

@@ -7,12 +7,15 @@ use pwf_client::{
     },
     task::TaskClient,
 };
-use pwf_models::task::{TagInput, TaskTags, TaskTitle};
+use pwf_models::{
+    settings::TaskStatusColors,
+    task::{TagInput, TaskTags, TaskTitle},
+};
 
 use super::{
     EffortChoice, Identifier, LaneFlagMode, PriorityChoice,
     blocked_by_input::{self, BlockedByInput},
-    render::{TITLE_NORMALIZED_NOTICE, render_edited},
+    render::{TITLE_NORMALIZED_NOTICE, TaskMutationAction, render_mutation},
     task_lanes, task_title,
 };
 use crate::{console::Console, edit::string_collection_edit};
@@ -241,6 +244,7 @@ impl PriorityEdit {
 pub(super) async fn run(
     arguments: &Arguments,
     console: Console,
+    task_status_colors: TaskStatusColors,
     client: &TaskClient,
 ) -> anyhow::Result<String> {
     let id = arguments
@@ -275,14 +279,20 @@ pub(super) async fn run(
             "nothing to edit; pass at least one edit flag."
         ));
     }
-    client
+    let result = client
         .update_task(request)
         .await
         .map_err(crate::rpc_error)?;
     if title_normalized {
         eprintln!("{TITLE_NORMALIZED_NOTICE}");
     }
-    Ok(render_edited(id.as_ref(), console.color()))
+    render_mutation(
+        TaskMutationAction::Edited,
+        id.as_ref(),
+        result.task.as_ref(),
+        task_status_colors,
+        console.color(),
+    )
 }
 
 fn content_edit(

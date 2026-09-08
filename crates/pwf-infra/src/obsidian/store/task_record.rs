@@ -498,6 +498,22 @@ fn write_task_file_error(source: MarkdownFileError) -> ObsidianStoreError {
 impl TaskVault for ObsidianStore {
     type Error = ObsidianStoreError;
 
+    fn task_deletion(
+        &self,
+        project: &Project,
+    ) -> Result<pwf_wire::confirmation::TaskDeletion, Self::Error> {
+        let Some(vault) = project.obsidian_vault.as_ref() else {
+            return Ok(pwf_wire::confirmation::TaskDeletion::HardDelete);
+        };
+        let resolved = pwf_application::project::runtime_path::resolve(vault.as_ref(), &self.home)
+            .map_err(|source| ObsidianStoreError::TaskVaultPath { source })?;
+        let deletion = pwf_wire::confirmation::TaskDeletion::MoveToTrash {
+            obsidian_vault: resolved.path().to_path_buf(),
+        };
+        super::super::trash::require_trash_directory(&resolved.path().join(".trash"))?;
+        Ok(deletion)
+    }
+
     fn get_task(&self, project: &Project, id: &TaskId) -> Result<Option<TaskRecord>, Self::Error> {
         get_task_record(self, project, id)
     }

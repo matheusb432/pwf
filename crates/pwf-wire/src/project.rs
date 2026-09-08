@@ -20,13 +20,14 @@ pub struct RenameProject {
     pub fields: ProjectFields,
 }
 
-/// Requests one managed-project source update.
+/// Requests changes to a managed project's source or Obsidian vault.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpdateProject {
     /// Project ID.
     pub id: ProjectId,
     /// Replacement source location.
-    pub source: ProjectSource,
+    pub source: crate::field_update::FieldUpdate<ProjectSource>,
+    pub obsidian_vault: crate::field_update::FieldUpdate<pwf_models::project::ObsidianVault>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,6 +66,16 @@ pub struct ProjectStateChange {
 pub struct ProjectFields {
     pub id: ProjectId,
     pub title: ProjectName,
-    pub source: ProjectSource,
+    pub source: Option<ProjectSource>,
     pub tasks: ProjectTasks,
+    pub obsidian_vault: Option<pwf_models::project::ObsidianVault>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AddVaultProject {
+    pub vault_path: pwf_models::project::ObsidianVault,
+    pub id: ProjectId,
+    pub tasks_path: pwf_models::project::ProjectTasksRelativePath,
+    pub title: Option<ProjectName>,
+    pub source_path: Option<pwf_models::project::ProjectSourceValue>,
 }

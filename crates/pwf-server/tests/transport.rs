@@ -321,10 +321,11 @@ impl TestServer {
             .project()
             .add_project(pb::AddProjectRequest {
                 fields: Some(pb::ProjectFields {
+                    obsidian_vault: None,
                     id: "FOO".to_string(),
                     title: "foo-bar".to_string(),
-                    source_kind: "directory".to_string(),
-                    source_value: project_path.to_string_lossy().into_owned(),
+                    source_kind: Some("directory".to_string()),
+                    source_value: Some(project_path.to_string_lossy().into_owned()),
                     tasks_kind: "directory".to_string(),
                     tasks_path: tasks_path.to_string_lossy().into_owned(),
                 }),
@@ -578,7 +579,7 @@ async fn task_data(server: &TestServer, task_id: &str) -> anyhow::Result<Box<pb:
 }
 
 #[tokio::test]
-async fn v1_create_task_returns_only_the_new_identifier() -> anyhow::Result<()> {
+async fn v1_create_task_returns_the_committed_task_summary() -> anyhow::Result<()> {
     let server = TestServer::start(Duration::from_secs(2)).await?;
     server.add_project_and_task().await?;
 
@@ -590,9 +591,9 @@ async fn v1_create_task_returns_only_the_new_identifier() -> anyhow::Result<()> 
         project_selector: "foo-bar".to_string(),
         prompt: Some(pb::create_task_request::Prompt::Structured(
             pb::StructuredTaskPrompt {
-                title: "minimal response".to_string(),
+                title: "task summary".to_string(),
                 lanes: Some(pb::TaskLanes {
-                    goals: vec!["return only the task ID".to_string()],
+                    goals: vec!["return the committed task summary".to_string()],
                     context: Vec::new(),
                     constraints: Vec::new(),
                     done_when: Vec::new(),
@@ -603,7 +604,7 @@ async fn v1_create_task_returns_only_the_new_identifier() -> anyhow::Result<()> 
         effort: None,
         tags: Vec::new(),
         priority: None,
-        request_id: "transport-create-minimal-response".to_string(),
+        request_id: "transport-create-task-summary".to_string(),
     }))
     .await?
     .into_inner();
@@ -611,7 +612,12 @@ async fn v1_create_task_returns_only_the_new_identifier() -> anyhow::Result<()> 
     assert_eq!(
         response,
         pb::CreateTaskResponse {
-            id: "FOO-0002".to_string()
+            id: "FOO-0002".to_string(),
+            task: Some(pb::TaskMutationSummary {
+                id: "FOO-0002".to_string(),
+                title: "task summary".to_string(),
+                status: pb::TaskStatus::Active as i32,
+            }),
         }
     );
     server.finish().await
@@ -736,7 +742,7 @@ async fn v1_request_ids_replay_mutations_without_duplicate_effects() -> anyhow::
     let first = server.client.task().create_task(create.clone()).await?;
     let replayed = server.client.task().create_task(create.clone()).await?;
     assert_eq!(first.id, "FOO-0002");
-    assert_eq!(replayed.id, first.id);
+    assert_eq!(replayed, first);
 
     let mut conflicting = create;
     conflicting.tags = vec!["changed".to_string()];
@@ -830,6 +836,13 @@ async fn v1_confirmed_mutation_replays_skip_the_second_prompt() -> anyhow::Resul
         deleted_replay.outcome,
         Some(delete_task_result::Outcome::Deleted(_))
     ));
+    assert_eq!(deleted_replay, deleted);
+    let Some(delete_task_result::Outcome::Deleted(result)) = deleted.outcome else {
+        anyhow::bail!("delete result is missing");
+    };
+    let summary = result.task.unwrap();
+    assert_eq!(summary.title, "delete replay target");
+    assert_eq!(summary.status, pb::TaskStatus::Active as i32);
     assert!(delete_replay_prompt.seen().is_empty());
 
     server
@@ -868,6 +881,7 @@ async fn v1_confirmed_mutation_replays_skip_the_second_prompt() -> anyhow::Resul
         reopened_replay.outcome,
         Some(reopen_task_result::Outcome::Reopened(_))
     ));
+    assert_eq!(reopened_replay, reopened);
     assert!(reopen_replay_prompt.seen().is_empty());
 
     server.finish().await
@@ -905,7 +919,10 @@ async fn v1_task_revisions_support_conditional_empty_updates() -> anyhow::Result
             request_id: "transport-conditional-update".to_string(),
         })
         .await?;
-    assert_eq!(response, pb::UpdateTaskResponse {});
+    assert_eq!(
+        response.task.as_ref().map(|task| task.id.as_str()),
+        Some(task_id.as_str())
+    );
 
     let updated = server
         .client
@@ -1021,7 +1038,7 @@ async fn task_list_summary_omits_detailed_payload() -> anyhow::Result<()> {
     let mut expected = detailed.tasks;
     for task in &mut expected {
         task.prompt.clear();
-        task.project_path.clear();
+        task.project_path = None;
         task.location = None;
         task.launch_issues.clear();
         task.blocked_by.clear();
@@ -1179,6 +1196,7 @@ async fn project_source_update_round_trips_through_the_generated_client() -> any
     let source_value = server.root.path().join("updated-project");
     let source_value = source_value.to_string_lossy().into_owned();
     let request = pb::UpdateProjectRequest {
+        obsidian_vault: None,
         id: "FOO".to_string(),
         source_value: Some(pb::StringFieldUpdate {
             operation: Some(pb::string_field_update::Operation::Update(
@@ -1202,25 +1220,35 @@ async fn project_source_update_round_trips_through_the_generated_client() -> any
             status: ProjectStatusFilter::IncludingPaused as i32,
         })
         .await?;
-    assert_eq!(project.source_value, source_value);
+    assert_eq!(project.source_value, Some(source_value));
 
-    let invalid = server
+    server
         .client
         .project()
         .update_project(pb::UpdateProjectRequest {
+            obsidian_vault: None,
             id: "FOO".to_string(),
             source_value: Some(pb::StringFieldUpdate {
                 operation: Some(pb::string_field_update::Operation::Clear(pb::ClearField {})),
             }),
         })
-        .await
-        .unwrap_err();
-    assert_eq!(rpc_status(invalid)?.code(), Code::InvalidArgument);
+        .await?;
+    let cleared = server
+        .client
+        .project()
+        .get_project(pb::GetProjectRequest {
+            id: "FOO".to_string(),
+            status: ProjectStatusFilter::IncludingPaused as i32,
+        })
+        .await?;
+    assert_eq!(cleared.source_kind, None);
+    assert_eq!(cleared.source_value, None);
 
     let missing = server
         .client
         .project()
         .update_project(pb::UpdateProjectRequest {
+            obsidian_vault: None,
             id: "MISS".to_string(),
             source_value: Some(pb::StringFieldUpdate {
                 operation: Some(pb::string_field_update::Operation::Update(
@@ -1232,6 +1260,98 @@ async fn project_source_update_round_trips_through_the_generated_client() -> any
         .unwrap_err();
     assert_eq!(rpc_status(missing)?.code(), Code::NotFound);
 
+    server.finish().await
+}
+
+struct VaultPrompt {
+    vault: String,
+}
+impl ConfirmationPrompt for VaultPrompt {
+    type Error = std::io::Error;
+    fn confirm(&self, confirmation: &Confirmation) -> Result<bool, Self::Error> {
+        let Confirmation::DeleteTask(confirmation) = confirmation else {
+            return Err(std::io::Error::other("expected delete preflight"));
+        };
+        assert_eq!(
+            confirmation.obsidian_vault.as_deref(),
+            Some(self.vault.as_str())
+        );
+        assert_eq!(
+            confirmation.trash_folder.as_deref(),
+            Some(
+                std::path::Path::new(&self.vault)
+                    .join(".trash")
+                    .to_string_lossy()
+                    .as_ref()
+            )
+        );
+        Ok(false)
+    }
+}
+
+#[tokio::test]
+async fn registered_vault_round_trips_and_drives_delete_preflight() -> anyhow::Result<()> {
+    let server = TestServer::start(TEST_TIMEOUT).await?;
+    let task_id = server.add_project_and_task().await?;
+    let vault = server.root.path().join("registered-vault");
+    std::fs::create_dir_all(vault.join(".trash"))?;
+    let vault = vault.to_string_lossy().into_owned();
+    server
+        .client
+        .project()
+        .update_project(pb::UpdateProjectRequest {
+            id: "FOO".into(),
+            source_value: None,
+            obsidian_vault: Some(pb::StringFieldUpdate {
+                operation: Some(pb::string_field_update::Operation::Update(vault.clone())),
+            }),
+        })
+        .await?;
+    let project = server
+        .client
+        .project()
+        .get_project(pb::GetProjectRequest {
+            id: "FOO".into(),
+            status: ProjectStatusFilter::IncludingPaused as i32,
+        })
+        .await?;
+    assert_eq!(project.obsidian_vault.as_deref(), Some(vault.as_str()));
+    let result = server
+        .client
+        .task()
+        .delete_task(
+            pb::DeleteTaskStart {
+                id: task_id,
+                request_id: String::new(),
+            },
+            VaultPrompt { vault },
+        )
+        .await?;
+    assert!(matches!(
+        result.outcome,
+        Some(delete_task_result::Outcome::Aborted(_))
+    ));
+    server
+        .client
+        .project()
+        .update_project(pb::UpdateProjectRequest {
+            id: "FOO".into(),
+            source_value: None,
+            obsidian_vault: Some(pb::StringFieldUpdate {
+                operation: Some(pb::string_field_update::Operation::Clear(pb::ClearField {})),
+            }),
+        })
+        .await?;
+    let cleared = server
+        .client
+        .project()
+        .get_project(pb::GetProjectRequest {
+            id: "FOO".into(),
+            status: ProjectStatusFilter::IncludingPaused as i32,
+        })
+        .await?;
+    assert_eq!(cleared.obsidian_vault, None);
+    assert_eq!(cleared.source_value, project.source_value);
     server.finish().await
 }
 
@@ -1767,4 +1887,71 @@ async fn reflection_response(
         .context("reflection response stream is empty")??
         .message_response
         .context("reflection response message is missing")
+}
+
+#[tokio::test]
+async fn add_vault_project_resolves_defaults_and_preserves_add_project_errors() -> anyhow::Result<()>
+{
+    let server = TestServer::start(TEST_TIMEOUT).await?;
+    let vault = server.root.path().join("vault");
+    std::fs::create_dir_all(vault.join(".obsidian"))?;
+    let request = pb::AddVaultProjectRequest {
+        vault_path: vault.to_string_lossy().into_owned(),
+        id: "FOO".to_string(),
+        tasks_path: "some/path/foo".to_string(),
+        title: None,
+        source_path: None,
+    };
+    let created = server
+        .client
+        .project()
+        .add_vault_project(request.clone())
+        .await?;
+    assert_eq!(created.id, "FOO");
+    let project = server
+        .client
+        .project()
+        .get_project(pb::GetProjectRequest {
+            id: created.id,
+            status: ProjectStatusFilter::ActiveOnly as i32,
+        })
+        .await?;
+    assert_eq!(project.title, "foo");
+    assert_eq!(project.source_value, None);
+    assert_eq!(project.source_kind, None);
+    assert!(
+        project
+            .tasks_path
+            .ends_with(&std::path::Path::new("some/path/foo").display().to_string())
+    );
+    assert!(project.obsidian_vault.is_some());
+    assert!(!vault.join("some/path/foo").exists());
+    assert!(!vault.join(".trash").exists());
+    let duplicate = server
+        .client
+        .project()
+        .add_vault_project(request.clone())
+        .await
+        .unwrap_err();
+    assert_eq!(rpc_status(duplicate)?.code(), Code::AlreadyExists);
+    let malformed = server
+        .client
+        .project()
+        .add_vault_project(pb::AddVaultProjectRequest {
+            tasks_path: "../escape".to_string(),
+            ..request.clone()
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(rpc_status(malformed)?.code(), Code::InvalidArgument);
+    std::fs::remove_dir(vault.join(".obsidian"))?;
+    std::fs::write(vault.join(".obsidian"), "")?;
+    let invalid = server
+        .client
+        .project()
+        .add_vault_project(request)
+        .await
+        .unwrap_err();
+    assert_eq!(rpc_status(invalid)?.code(), Code::FailedPrecondition);
+    server.finish().await
 }

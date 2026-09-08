@@ -1,5 +1,5 @@
 use pwf_models::task::TaskTimestampError;
-use pwf_wire::task::{ClosedTaskAction, CompleteTask};
+use pwf_wire::task::{ClosedTaskAction, CompleteTask, TaskMutationResult};
 
 use super::{
     CloseTaskError,
@@ -30,7 +30,7 @@ pub async fn execute(
     store: &impl TaskVault,
     pool: &sqlx::SqlitePool,
     clock: &impl Clock,
-) -> Result<(), CompleteTaskError> {
+) -> Result<TaskMutationResult<()>, CompleteTaskError> {
     let identity = mutation_request::identity(
         command.request_id.as_ref(),
         command.request_fingerprint.as_ref(),
@@ -40,7 +40,10 @@ pub async fn execute(
             mutation_request::find(pool, identity, MutationOperation::Complete).await?
     {
         return match replay.state {
-            MutationRequestState::Completed => Ok(()),
+            MutationRequestState::Completed => Ok(TaskMutationResult {
+                outcome: (),
+                task: replay.task,
+            }),
             MutationRequestState::Pending => Err(identity.incomplete().into()),
         };
     }
@@ -52,7 +55,10 @@ pub async fn execute(
                 .await?
     {
         return match replay.state {
-            MutationRequestState::Completed => Ok(()),
+            MutationRequestState::Completed => Ok(TaskMutationResult {
+                outcome: (),
+                task: replay.task,
+            }),
             MutationRequestState::Pending => Err(identity.incomplete().into()),
         };
     }
@@ -68,8 +74,8 @@ pub async fn execute(
         store,
         &project,
     );
-    match result {
-        Ok(()) => {}
+    let summary = match result {
+        Ok(summary) => summary,
         Err(error) => {
             if let Some(identity) = identity.as_ref()
                 && close_failed_before_mutation(&error)
@@ -78,17 +84,21 @@ pub async fn execute(
             }
             return Err(error.into());
         }
-    }
+    };
     if let Some(identity) = identity.as_ref() {
-        mutation_request::complete(
+        mutation_request::complete_with_task(
             pool,
             identity,
             MutationOperation::Complete,
-            Some("completed"),
+            "completed",
+            &summary,
         )
         .await?;
     }
-    Ok(())
+    Ok(TaskMutationResult {
+        outcome: (),
+        task: Some(summary),
+    })
 }
 
 fn close_failed_before_mutation(error: &CloseTaskError) -> bool {

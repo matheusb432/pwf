@@ -299,19 +299,31 @@ pub async fn run(
 ) -> anyhow::Result<String> {
     let output = match command {
         Command::Task(arguments) => match &arguments.command {
-            TaskCommand::Add(arguments) => add::run(arguments, console, client).await?,
+            TaskCommand::Add(arguments) => {
+                add::run(arguments, console, task_status_colors, client).await?
+            }
             TaskCommand::List(arguments) => {
                 list::run(arguments, console, task_status_colors, client).await?
             }
-            TaskCommand::Done(arguments) => done::run(arguments, client).await?,
-            TaskCommand::Cancel(arguments) => cancel::run(arguments, client).await?,
-            TaskCommand::Reopen(arguments) => reopen::run(arguments, console, client).await?,
-            TaskCommand::Edit(arguments) => edit::run(arguments, console, client).await?,
+            TaskCommand::Done(arguments) => {
+                done::run(arguments, console, task_status_colors, client).await?
+            }
+            TaskCommand::Cancel(arguments) => {
+                cancel::run(arguments, console, task_status_colors, client).await?
+            }
+            TaskCommand::Reopen(arguments) => {
+                reopen::run(arguments, console, task_status_colors, client).await?
+            }
+            TaskCommand::Edit(arguments) => {
+                edit::run(arguments, console, task_status_colors, client).await?
+            }
             TaskCommand::Get(arguments) => get::run(arguments, client).await?,
             TaskCommand::Dag(arguments) => {
                 dag::run(arguments, console, task_status_colors, client).await?
             }
-            TaskCommand::Remove(arguments) => remove::run(arguments, console, client).await?,
+            TaskCommand::Remove(arguments) => {
+                remove::run(arguments, console, task_status_colors, client).await?
+            }
         },
         Command::Session(arguments) => session::run(arguments, console, client).await?,
         Command::Route(arguments) => match route::resolve(arguments) {

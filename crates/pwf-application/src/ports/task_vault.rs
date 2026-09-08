@@ -176,8 +176,14 @@ pub struct ExpectedTaskRevision {
 /// Describes one task-specific persistence change without exposing filesystem mechanics.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TaskWrite {
-    Patch { id: TaskId, patch: TaskPatch },
-    MoveToTrash { id: TaskId },
+    Patch {
+        id: TaskId,
+        patch: TaskPatch,
+    },
+    DeleteNote {
+        id: TaskId,
+        deletion: pwf_wire::confirmation::TaskDeletion,
+    },
     UpsertIndex(IndexEntry),
     DeleteIndex(TaskId),
 }
@@ -185,7 +191,7 @@ pub enum TaskWrite {
 impl TaskWrite {
     fn task_id(&self) -> &TaskId {
         match self {
-            Self::Patch { id, .. } | Self::MoveToTrash { id } | Self::DeleteIndex(id) => id,
+            Self::Patch { id, .. } | Self::DeleteNote { id, .. } | Self::DeleteIndex(id) => id,
             Self::UpsertIndex(entry) => &entry.id,
         }
     }
@@ -271,7 +277,9 @@ fn validate_unique_write(
     index_mutations: &mut BTreeSet<TaskId>,
 ) -> Result<(), TaskWriteSetError> {
     let target = match write {
-        TaskWrite::Patch { id, .. } | TaskWrite::MoveToTrash { id } => Some((task_mutations, id)),
+        TaskWrite::Patch { id, .. } | TaskWrite::DeleteNote { id, .. } => {
+            Some((task_mutations, id))
+        }
         TaskWrite::UpsertIndex(entry) => Some((index_mutations, &entry.id)),
         TaskWrite::DeleteIndex(id) => Some((index_mutations, id)),
     };
@@ -349,6 +357,12 @@ impl<E> TaskMutationError<E> {
 pub trait TaskVault: Send + Sync + 'static {
     type Error: std::error::Error + Send + Sync + 'static;
 
+    /// Resolves the configured deletion destination and checks that its trash folder exists.
+    fn task_deletion(
+        &self,
+        project: &Project,
+    ) -> Result<pwf_wire::confirmation::TaskDeletion, Self::Error>;
+
     fn get_task(&self, project: &Project, id: &TaskId) -> Result<Option<TaskRecord>, Self::Error>;
     fn list_tasks(&self, project: &Project) -> Result<Vec<TaskRecord>, Self::Error>;
 
@@ -419,7 +433,10 @@ mod tests {
                     id: id("FOO-0001"),
                     patch: TaskPatch::default(),
                 },
-                TaskWrite::MoveToTrash { id: id("FOO-0001") },
+                TaskWrite::DeleteNote {
+                    id: id("FOO-0001"),
+                    deletion: pwf_wire::confirmation::TaskDeletion::HardDelete,
+                },
             ],
         )
         .unwrap_err();

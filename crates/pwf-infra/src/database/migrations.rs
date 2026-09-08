@@ -128,13 +128,134 @@ mod tests {
                 .fetch_all(&pool)
                 .await
                 .unwrap();
-        assert_eq!(versions, [0]);
+        assert_eq!(
+            versions,
+            MIGRATOR
+                .iter()
+                .map(|migration| migration.version)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn summary_migration_preserves_legacy_receipts_and_checks_summary_pairs() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let initial = sqlx::migrate::Migrator {
+            migrations: std::borrow::Cow::Owned(MIGRATOR.iter().take(1).cloned().collect()),
+            ..sqlx::migrate::Migrator::DEFAULT
+        };
+        initial.run(&pool).await.unwrap();
+        sqlx::query("INSERT INTO task_mutation_requests (request_id, operation, fingerprint, task_id, state, outcome, completed_at) VALUES ('legacy-delete', 'delete', ?, 'FOO-0001', 'completed', 'deleted', '2026-09-07T00:00:00Z')")
+            .bind("a".repeat(64)).execute(&pool).await.unwrap();
+        migrate_database(&pool).await.unwrap();
+        let receipt: (String, Option<String>, Option<String>) = sqlx::query_as(
+            "SELECT outcome, task_title, task_status FROM task_mutation_requests WHERE request_id = 'legacy-delete'"
+        ).fetch_one(&pool).await.unwrap();
+        assert_eq!(receipt, ("deleted".into(), None, None));
+        for statement in [
+            "UPDATE task_mutation_requests SET task_title = 'only title'",
+            "UPDATE task_mutation_requests SET task_status = 'done'",
+            "UPDATE task_mutation_requests SET task_title = 'task', task_status = 'invalid'",
+        ] {
+            assert!(
+                sqlx::query(statement).execute(&pool).await.is_err(),
+                "{statement}"
+            );
+        }
+        sqlx::query("UPDATE task_mutation_requests SET task_title = 'deleted task', task_status = 'cancelled'").execute(&pool).await.unwrap();
+        check_database_ready(&pool).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn vault_migration_preserves_projects_and_adds_nullable_configuration() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let previous = sqlx::migrate::Migrator {
+            migrations: std::borrow::Cow::Owned(MIGRATOR.iter().take(2).cloned().collect()),
+            ..sqlx::migrate::Migrator::DEFAULT
+        };
+        previous.run(&pool).await.unwrap();
+        sqlx::query("INSERT INTO project_sources (kind, value) VALUES ('directory', '/work/foo')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO projects (id, project_source_id, title, tasks_kind, tasks_path) VALUES ('FOO', 1, 'foo', 'directory', '/notes/foo')").execute(&pool).await.unwrap();
+        migrate_database(&pool).await.unwrap();
+        let project: (String, Option<String>) = sqlx::query_as(
+            "SELECT tasks_path, obsidian_vault FROM active_projects WHERE id = 'FOO'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(project, ("/notes/foo".into(), None));
+        assert!(
+            sqlx::query("UPDATE projects SET obsidian_vault = ' '")
+                .execute(&pool)
+                .await
+                .is_err()
+        );
+        sqlx::query("UPDATE projects SET obsidian_vault = '~/notes'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let vault: String =
+            sqlx::query_scalar("SELECT obsidian_vault FROM active_projects WHERE id = 'FOO'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(vault, "~/notes");
+    }
+
+    #[tokio::test]
+    async fn nullable_source_migration_preserves_project_configuration() {
+        type Row = (
+            String,
+            Option<i64>,
+            String,
+            String,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+        );
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let previous = sqlx::migrate::Migrator {
+            migrations: std::borrow::Cow::Owned(MIGRATOR.iter().take(3).cloned().collect()),
+            ..sqlx::migrate::Migrator::DEFAULT
+        };
+        previous.run(&pool).await.unwrap();
+        sqlx::query("INSERT INTO project_sources (kind, value) VALUES ('directory', '/work/foo')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO projects (id, project_source_id, title, tasks_kind, tasks_path, created_at, paused_at, obsidian_vault) VALUES ('FOO', 1, 'foo', 'directory', '/notes/foo', '2026-09-07T00:00:00Z', '2026-09-07T01:00:00Z', '/notes')").execute(&pool).await.unwrap();
+        let query = "SELECT id, project_source_id, title, tasks_kind, tasks_path, created_at, paused_at, obsidian_vault FROM projects";
+        let before: Row = sqlx::query_as(query).fetch_one(&pool).await.unwrap();
+        migrate_database(&pool).await.unwrap();
+        let after: Row = sqlx::query_as(query).fetch_one(&pool).await.unwrap();
+        assert_eq!(after, before);
+        sqlx::query("UPDATE projects SET project_source_id = NULL, paused_at = NULL")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let source: Option<i64> =
+            sqlx::query_scalar("SELECT project_source_id FROM active_projects")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(source, None);
+        assert!(
+            sqlx::query("UPDATE projects SET project_source_id = 999")
+                .execute(&pool)
+                .await
+                .is_err()
+        );
+        pool.close().await;
     }
 
     #[tokio::test]
     async fn invalid_ledger_is_rejected_without_repair() {
         for statement in [
-            "UPDATE _sqlx_migrations SET version = 99",
+            "UPDATE _sqlx_migrations SET version = 99 WHERE version = 0",
             "UPDATE _sqlx_migrations SET success = false",
             "UPDATE _sqlx_migrations SET checksum = X'00'",
             "UPDATE _sqlx_migrations SET description = 'changed'",
@@ -171,7 +292,11 @@ mod tests {
 
     #[tokio::test]
     async fn failed_bootstrap_rolls_back_schema_and_ledger() {
-        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
         sqlx::query("CREATE TABLE projects (marker TEXT)")
             .execute(&pool)
             .await

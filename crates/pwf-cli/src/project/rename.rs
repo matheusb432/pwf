@@ -22,18 +22,33 @@ pub struct Arguments {
     pub title: ProjectName,
     /// Replacement project source directory.
     #[arg(long, value_parser = parse_project_source)]
-    pub source: ProjectSourceValue,
+    pub source: Option<ProjectSourceValue>,
     /// Replacement task directory.
     #[arg(long, value_parser = parse_project_tasks)]
     pub tasks: ProjectTasksPath,
 }
 
 pub(super) async fn run(arguments: Arguments, client: &ProjectClient) -> anyhow::Result<String> {
+    let current = client
+        .get_project(pwf_client::pb::GetProjectRequest {
+            id: arguments.current_id.to_string(),
+            status: pwf_client::pb::ProjectStatusFilter::IncludingPaused as i32,
+        })
+        .await
+        .map_err(crate::rpc_error)?;
     let fields = ProjectFields {
+        obsidian_vault: current.obsidian_vault,
         id: arguments.destination_id.to_string(),
         title: arguments.title.to_string(),
-        source_kind: "directory".to_string(),
-        source_value: arguments.source.to_string(),
+        source_kind: arguments
+            .source
+            .as_ref()
+            .map(|_| "directory".to_string())
+            .or(current.source_kind),
+        source_value: arguments
+            .source
+            .map(|source| source.to_string())
+            .or(current.source_value),
         tasks_kind: "directory".to_string(),
         tasks_path: arguments.tasks.to_string(),
     };

@@ -6,7 +6,10 @@ use pwf_wire::{
     collection_edit::CollectionEdit,
     field_update::FieldUpdate,
     project::ProjectStatusFilter,
-    task::{EditTask, EditTaskContent, EditTaskContentKind, RawTaskTags, TaskNotePath},
+    task::{
+        EditTask, EditTaskContent, EditTaskContentKind, RawTaskTags, TaskMutationResult,
+        TaskMutationSummary, TaskNotePath,
+    },
 };
 
 use super::{
@@ -96,7 +99,7 @@ pub async fn execute(
     command: EditTask,
     store: &impl TaskVault,
     pool: &sqlx::SqlitePool,
-) -> Result<(), EditTaskError> {
+) -> Result<TaskMutationResult<()>, EditTaskError> {
     update(command, store, pool).await
 }
 
@@ -104,7 +107,7 @@ async fn update(
     command: EditTask,
     store: &impl TaskVault,
     pool: &sqlx::SqlitePool,
-) -> Result<(), EditTaskError> {
+) -> Result<TaskMutationResult<()>, EditTaskError> {
     let identity = mutation_request::identity(
         command.request_id.as_ref(),
         command.request_fingerprint.as_ref(),
@@ -114,7 +117,10 @@ async fn update(
             mutation_request::find(pool, identity, MutationOperation::Update).await?
     {
         return match replay.state {
-            MutationRequestState::Completed => Ok(()),
+            MutationRequestState::Completed => Ok(TaskMutationResult {
+                outcome: (),
+                task: replay.task,
+            }),
             MutationRequestState::Pending => Err(identity.incomplete().into()),
         };
     }
@@ -153,16 +159,37 @@ async fn update(
             mutation_request::start(pool, identity, MutationOperation::Update, &prepared.id).await?
     {
         return match replay.state {
-            MutationRequestState::Completed => Ok(()),
+            MutationRequestState::Completed => Ok(TaskMutationResult {
+                outcome: (),
+                task: replay.task,
+            }),
             MutationRequestState::Pending => Err(identity.incomplete().into()),
         };
     }
+    let summary = TaskMutationSummary {
+        id: prepared.id.clone(),
+        title: prepared
+            .patch
+            .title
+            .as_ref()
+            .map_or_else(|| record.title.clone(), ToString::to_string),
+        status: record.status,
+    };
     persist(prepared, store)?;
     if let Some(identity) = identity.as_ref() {
-        mutation_request::complete(pool, identity, MutationOperation::Update, Some("updated"))
-            .await?;
+        mutation_request::complete_with_task(
+            pool,
+            identity,
+            MutationOperation::Update,
+            "updated",
+            &summary,
+        )
+        .await?;
     }
-    Ok(())
+    Ok(TaskMutationResult {
+        outcome: (),
+        task: Some(summary),
+    })
 }
 
 fn map_project_error(error: ResolveTaskProjectError, id: &TaskId) -> EditTaskError {
@@ -429,7 +456,9 @@ mod tests {
         store: &InMemoryStore,
         pool: &sqlx::SqlitePool,
     ) -> Result<(), EditTaskError> {
-        edit_task::execute(command, store, pool).await
+        edit_task::execute(command, store, pool)
+            .await
+            .map(|result| result.outcome)
     }
 
     async fn register_project(pool: &sqlx::SqlitePool) {

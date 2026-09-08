@@ -16,6 +16,17 @@ impl ProjectClient {
         }
     }
 
+    pub async fn add_vault_project(
+        &self,
+        request: pb::AddVaultProjectRequest,
+    ) -> Result<pb::AddVaultProjectResponse, ClientError> {
+        self.client()
+            .add_vault_project(request)
+            .await
+            .map(tonic::Response::into_inner)
+            .map_err(Into::into)
+    }
+
     pub async fn add_project(
         &self,
         request: pb::AddProjectRequest,

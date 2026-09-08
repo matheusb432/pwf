@@ -1,7 +1,7 @@
 use std::error::Error;
 
 use pwf_models::project::ProjectId;
-use pwf_wire::project::UpdateProject;
+use pwf_wire::{field_update::FieldUpdate, project::UpdateProject};
 
 use super::source_record;
 
@@ -17,7 +17,7 @@ pub enum UpdateProjectError {
     },
 }
 
-/// Updates one managed project's source.
+/// Updates a managed project's source or Obsidian vault configuration.
 #[cqrsy::command]
 pub async fn execute(
     command: UpdateProject,
@@ -27,13 +27,30 @@ pub async fn execute(
         .begin_with("BEGIN IMMEDIATE")
         .await
         .map_err(|error| unexpected("starting project update transaction", error))?;
-    let source_id = source_record::get_or_insert(&mut transaction, &command.source)
-        .await
-        .map_err(|error| unexpected("resolving project source", error))?;
+    let (update_source, source_id) = match &command.source {
+        FieldUpdate::Update(source) => (
+            true,
+            Some(
+                source_record::get_or_insert(&mut transaction, source)
+                    .await
+                    .map_err(|error| unexpected("resolving project source", error))?,
+            ),
+        ),
+        FieldUpdate::Clear => (true, None),
+        FieldUpdate::Unchanged => (false, None),
+    };
     let project_id = command.id.as_ref();
+    let (update_vault, obsidian_vault) = match &command.obsidian_vault {
+        pwf_wire::field_update::FieldUpdate::Unchanged => (false, None),
+        pwf_wire::field_update::FieldUpdate::Clear => (true, None),
+        pwf_wire::field_update::FieldUpdate::Update(value) => (true, Some(value.as_ref())),
+    };
     let update = sqlx::query!(
-        "UPDATE projects SET project_source_id = ? WHERE id = ?",
+        "UPDATE projects SET project_source_id = CASE WHEN ? THEN ? ELSE project_source_id END, obsidian_vault = CASE WHEN ? THEN ? ELSE obsidian_vault END WHERE id = ?",
+        update_source,
         source_id,
+        update_vault,
+        obsidian_vault,
         project_id,
     )
     .execute(&mut *transaction)
@@ -85,11 +102,12 @@ mod tests {
 
     fn update(project_id: &str, source_value: &str) -> UpdateProject {
         UpdateProject {
+            obsidian_vault: pwf_wire::field_update::FieldUpdate::Unchanged,
             id: project_id.parse().unwrap(),
-            source: ProjectSource::new(
+            source: pwf_wire::field_update::FieldUpdate::Update(ProjectSource::new(
                 ProjectSourceKind::Directory,
                 ProjectSourceValue::try_new(source_value).unwrap(),
-            ),
+            )),
         }
     }
 
@@ -114,7 +132,7 @@ mod tests {
                 projects.tasks_path,
                 projects.paused_at IS NOT NULL
             FROM projects
-            JOIN project_sources ON project_sources.id = projects.project_source_id
+            LEFT JOIN project_sources ON project_sources.id = projects.project_source_id
             WHERE projects.id = 'FOO'
             ",
         )

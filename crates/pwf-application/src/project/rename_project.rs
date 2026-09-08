@@ -155,9 +155,14 @@ async fn rename_registry(
         existing,
         home,
     )?;
-    let source_id = source_record::get_or_insert(&mut transaction, &command.fields.source)
-        .await
-        .map_err(|error| unexpected("resolving destination project source", error))?;
+    let source_id = match &command.fields.source {
+        Some(source) => Some(
+            source_record::get_or_insert(&mut transaction, source)
+                .await
+                .map_err(|error| unexpected("resolving destination project source", error))?,
+        ),
+        None => None,
+    };
     replace_project_row(&mut transaction, &command, source_id).await?;
 
     let row = sqlx::query_as!(
@@ -166,14 +171,15 @@ async fn rename_registry(
         SELECT
             projects.id AS "id!",
             projects.title AS "title!",
-            project_sources.kind AS "source_kind!",
-            project_sources.value AS "source_value!",
+            project_sources.kind AS "source_kind?",
+            project_sources.value AS "source_value?",
             projects.tasks_kind AS "tasks_kind!",
             projects.tasks_path AS "tasks_path!",
+            projects.obsidian_vault AS "obsidian_vault?",
             projects.created_at AS "created_at!",
             (projects.paused_at IS NOT NULL) AS "is_paused!: bool"
         FROM projects
-        JOIN project_sources ON project_sources.id = projects.project_source_id
+        LEFT JOIN project_sources ON project_sources.id = projects.project_source_id
         WHERE projects.id = ?
         "#,
         destination_id,
@@ -193,13 +199,14 @@ async fn rename_registry(
 async fn replace_project_row(
     transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     command: &RenameProject,
-    source_id: i64,
+    source_id: Option<i64>,
 ) -> Result<(), RenameProjectError> {
     let current_id = command.current_id.as_ref();
     let destination_id = command.fields.id.as_ref();
     let destination_title = command.fields.title.as_ref();
     let tasks_kind = command.fields.tasks.kind().to_string();
     let tasks_path = command.fields.tasks.path().as_ref();
+    let obsidian_vault = command.fields.obsidian_vault.as_ref().map(AsRef::as_ref);
     let update = sqlx::query!(
         r#"
         UPDATE projects
@@ -208,7 +215,8 @@ async fn replace_project_row(
             project_source_id = ?,
             title = ?,
             tasks_kind = ?,
-            tasks_path = ?
+            tasks_path = ?,
+            obsidian_vault = ?
         WHERE id = ?
         "#,
         destination_id,
@@ -216,6 +224,7 @@ async fn replace_project_row(
         destination_title,
         tasks_kind,
         tasks_path,
+        obsidian_vault,
         current_id,
     )
     .execute(&mut **transaction)
@@ -267,6 +276,7 @@ fn project_fields(project: &Project) -> ProjectFields {
         title: project.title.clone(),
         source: project.source.clone(),
         tasks: project.tasks.clone(),
+        obsidian_vault: project.obsidian_vault.clone(),
     }
 }
 
@@ -282,14 +292,15 @@ async fn validate_identity(
         SELECT
             projects.id AS "id!",
             projects.title AS "title!",
-            project_sources.kind AS "source_kind!",
-            project_sources.value AS "source_value!",
+            project_sources.kind AS "source_kind?",
+            project_sources.value AS "source_value?",
             projects.tasks_kind AS "tasks_kind!",
             projects.tasks_path AS "tasks_path!",
+            projects.obsidian_vault AS "obsidian_vault?",
             projects.created_at AS "created_at!",
             (projects.paused_at IS NOT NULL) AS "is_paused!: bool"
         FROM projects
-        JOIN project_sources ON project_sources.id = projects.project_source_id
+        LEFT JOIN project_sources ON project_sources.id = projects.project_source_id
         WHERE projects.id = ?
         "#,
         current_id,
@@ -443,12 +454,13 @@ mod tests {
 
     fn fields(project_id: ProjectId, title: &str, source: &str, tasks: &str) -> ProjectFields {
         ProjectFields {
+            obsidian_vault: None,
             id: project_id,
             title: ProjectName::try_new(title).unwrap(),
-            source: ProjectSource::new(
+            source: Some(ProjectSource::new(
                 ProjectSourceKind::Directory,
                 ProjectSourceValue::try_new(source).unwrap(),
-            ),
+            )),
             tasks: ProjectTasks::new(
                 ProjectTasksKind::Directory,
                 ProjectTasksPath::try_new(tasks).unwrap(),
@@ -491,7 +503,10 @@ mod tests {
 
         assert_eq!(renamed.id.as_ref(), "NEW");
         assert_eq!(renamed.title.as_ref(), "renamed-app");
-        assert_eq!(renamed.source.value().as_ref(), "/self/renamed-app");
+        assert_eq!(
+            renamed.source.as_ref().unwrap().value().as_ref(),
+            "/self/renamed-app"
+        );
         assert_eq!(
             renamed.tasks.path().as_ref(),
             "/project-notes/self/renamed-app"

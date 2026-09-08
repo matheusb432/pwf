@@ -243,10 +243,17 @@ pub enum ObsidianStoreError {
     AddWriteTaskFile { source: std::io::Error },
     #[error("Failed to write index file: {source}")]
     AddWriteIndexFile { source: std::io::Error },
-    #[error("Cannot locate the Obsidian vault containing task file {}", path.display())]
-    TaskVaultNotFound { path: PathBuf },
     #[error("Task file path has no file name: {}", path.display())]
     TaskFileNameMissing { path: PathBuf },
+    #[error("task deletion destination does not match the registered project vault")]
+    TaskDeletionChanged,
+    #[error("invalid registered Obsidian vault path: {source}")]
+    TaskVaultPath {
+        #[source]
+        source: pwf_application::project::runtime_path::RuntimePathError,
+    },
+    #[error("Obsidian trash folder must exist and be a directory: {}", path.display())]
+    TaskTrashDirectory { path: PathBuf },
     #[error("Obsidian trash destination already exists: {}", path.display())]
     TaskTrashDestinationExists { path: PathBuf },
     #[error("Task not found: {id}")]

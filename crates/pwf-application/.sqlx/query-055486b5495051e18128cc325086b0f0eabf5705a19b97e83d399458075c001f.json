@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        UPDATE projects\n        SET\n            id = ?,\n            project_source_id = ?,\n            title = ?,\n            tasks_kind = ?,\n            tasks_path = ?,\n            obsidian_vault = ?\n        WHERE id = ?\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "055486b5495051e18128cc325086b0f0eabf5705a19b97e83d399458075c001f"
+}

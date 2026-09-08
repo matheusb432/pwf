@@ -118,10 +118,11 @@ async fn register_projects(server: &TestServer, prepared: &PreparedFixture) -> a
         let response = client
             .add_project(pb::AddProjectRequest {
                 fields: Some(pb::ProjectFields {
+                    obsidian_vault: None,
                     id: project.id.to_string(),
                     title: project.title.to_string(),
-                    source_kind: "directory".to_string(),
-                    source_value: project.source_path.to_string_lossy().into_owned(),
+                    source_kind: Some("directory".to_string()),
+                    source_value: Some(project.source_path.to_string_lossy().into_owned()),
                     tasks_kind: "directory".to_string(),
                     tasks_path: project.tasks_path.to_string_lossy().into_owned(),
                 }),

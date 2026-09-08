@@ -41,6 +41,10 @@ pub enum PlanSessionError {
         id: TaskId,
         launch: pwf_wire::task::TaskLaunch,
     },
+    #[error(
+        "project '{project_id}' has no source path; set one with `pwf project edit {project_id} --source <path>` before starting a session"
+    )]
+    ProjectSourceMissing { project_id: ProjectId },
     #[error("Project path for '{project_id}' does not exist: {path}")]
     ProjectPathMissing {
         project_id: ProjectId,
@@ -96,7 +100,6 @@ pub async fn execute(
     home: &HomeDirectory,
     clients: &SessionPlanningClients<impl AgentClient, impl ProjectDirectoryClient>,
 ) -> Result<PlannedSession, PlanSessionError> {
-    let probe = clients.agent.probe(command.agent);
     let (project, first_task, mut warnings) =
         plan_task(command.task_ids.first(), store, pool).await?;
     let first_title = first_task.view.heading.clone();
@@ -123,7 +126,14 @@ pub async fn execute(
     }
 
     let project_id = project.id.clone();
-    let project_path = resolve_project_path(project.source.value(), &project_id, home)?;
+    let source = project
+        .source
+        .as_ref()
+        .ok_or_else(|| PlanSessionError::ProjectSourceMissing {
+            project_id: project_id.clone(),
+        })?;
+    let project_path = resolve_project_path(source.value(), &project_id, home)?;
+    let probe = clients.agent.probe(command.agent);
     let task_contents = tasks
         .iter()
         .map(|task| task.content.as_str())
@@ -296,7 +306,7 @@ fn validate_project_path(
     project_id: &ProjectId,
     project_path: &SessionWorkingDirectory,
 ) -> Result<(), PlanSessionError> {
-    if project_directory.is_directory(project_path) {
+    if project_directory.is_directory(std::path::Path::new(project_path.as_ref())) {
         return Ok(());
     }
     Err(PlanSessionError::ProjectPathMissing {
@@ -514,7 +524,7 @@ mod planned_model_tests {
 
     use pwf_models::{
         project::HomeDirectory,
-        session::{Agent, AgentModel, SessionEffort, SessionTaskIds, SessionWorkingDirectory},
+        session::{Agent, AgentModel, SessionEffort, SessionTaskIds},
         task::EffortTier,
     };
     use pwf_wire::task::session::{
@@ -560,7 +570,11 @@ mod planned_model_tests {
     struct ExistingProjectDirectory;
 
     impl ProjectDirectoryClient for ExistingProjectDirectory {
-        fn is_directory(&self, _: &SessionWorkingDirectory) -> bool {
+        fn canonicalize(&self, path: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
+            Ok(path.to_path_buf())
+        }
+
+        fn is_directory(&self, _: &std::path::Path) -> bool {
             true
         }
     }

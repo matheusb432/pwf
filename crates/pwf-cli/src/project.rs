@@ -5,6 +5,7 @@ use pwf_client::project::ProjectClient;
 use pwf_models::project::{ProjectId, ProjectName, ProjectSourceValue, ProjectTasksPath};
 
 pub mod add;
+pub mod add_vault;
 pub mod edit;
 pub mod get;
 pub mod list;
@@ -28,6 +29,8 @@ pub enum Command {
     Get(get::Arguments),
     /// Adds one registered project.
     Add(add::Arguments),
+    /// registers a project in an obsidian vault.
+    AddVault(add_vault::Arguments),
     /// Edits one registered project's source.
     Edit(edit::Arguments),
     /// Pauses one registered project.
@@ -46,6 +49,7 @@ pub async fn run(arguments: Arguments, client: &ProjectClient) -> anyhow::Result
     let output = match command {
         Command::List(arguments) => list::run(arguments, client).await?,
         Command::Get(arguments) => get::run(arguments, client).await?,
+        Command::AddVault(arguments) => add_vault::run(arguments, client).await?,
         Command::Add(arguments) => add::run(arguments, client).await?,
         Command::Edit(arguments) => edit::run(arguments, client).await?,
         Command::Pause(arguments) => pause::run(arguments, client).await?,

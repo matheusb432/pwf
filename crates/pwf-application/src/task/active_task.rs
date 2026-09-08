@@ -70,8 +70,14 @@ fn find_active_task(
             id: task_id.clone(),
         });
     }
-    let task =
-        task_view::enrich(&record, project.source.value())?.into_task_view(project.title.clone());
+    let task = task_view::enrich(
+        &record,
+        project
+            .source
+            .as_ref()
+            .map(pwf_models::project::ProjectSource::value),
+    )?
+    .into_task_view(project.title.clone());
     Ok((record, task))
 }
 
@@ -123,7 +129,7 @@ mod tests {
 
         assert_eq!(task.id.as_ref(), "FOO-0001");
         assert_eq!(task.project.as_ref(), "foo");
-        assert_eq!(task.project_path.as_ref(), "/work/foo");
+        assert_eq!(task.project_path.as_ref().unwrap().as_ref(), "/work/foo");
         assert_eq!(task.prompt.as_ref(), "do the thing");
         assert!(task.launch.is_ready());
     }

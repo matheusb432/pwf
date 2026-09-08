@@ -993,6 +993,21 @@ impl ClosedTaskAction {
     }
 }
 
+/// Captures the task fields returned by a committed mutation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskMutationSummary {
+    pub id: TaskId,
+    pub title: String,
+    pub status: TaskStatus,
+}
+
+/// Older durable receipts retain their result without a task summary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskMutationResult<T> {
+    pub outcome: T,
+    pub task: Option<TaskMutationSummary>,
+}
+
 /// Reports whether a confirmed task deletion proceeded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeleteTaskOutcome {
@@ -1281,7 +1296,7 @@ pub struct TaskView {
     pub status: TaskStatus,
     pub heading: TaskHeading,
     pub prompt: TaskPrompt,
-    pub project_path: ProjectSourceValue,
+    pub project_path: Option<ProjectSourceValue>,
     pub location: TaskLocation,
     pub launch: TaskLaunch,
     pub section: Option<TaskSection>,
@@ -1311,7 +1326,7 @@ pub struct ListedTask {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListedTaskDetails {
     pub prompt: TaskPrompt,
-    pub project_path: ProjectSourceValue,
+    pub project_path: Option<ProjectSourceValue>,
     pub location: TaskLocation,
     pub launch: TaskLaunch,
     pub blocked_by: Option<BlockedBy>,

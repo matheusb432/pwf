@@ -48,6 +48,9 @@ enum PendingChange {
         contents: Box<[u8]>,
     },
     ReplaceIndex,
+    RemoveNote {
+        current: PresentFileSnapshot,
+    },
     Rename {
         source: PresentFileSnapshot,
         destination: MissingFileSnapshot,
@@ -149,7 +152,7 @@ impl<'a> TaskMutation<'a> {
     ) -> Result<(), TaskMutationError<ObsidianStoreError>> {
         match write {
             TaskWrite::Patch { id, patch } => self.patch(&id, &patch),
-            TaskWrite::MoveToTrash { id } => self.move_to_trash(&id),
+            TaskWrite::DeleteNote { id, deletion } => self.delete_note(&id, &deletion),
             TaskWrite::UpsertIndex(entry) => self.upsert_index(&entry),
             TaskWrite::DeleteIndex(id) => self.delete_index(&id),
         }
@@ -197,15 +200,34 @@ impl<'a> TaskMutation<'a> {
         Ok(())
     }
 
-    fn move_to_trash(&mut self, id: &TaskId) -> Result<(), TaskMutationError<ObsidianStoreError>> {
+    fn delete_note(
+        &mut self,
+        id: &TaskId,
+        deletion: &pwf_wire::confirmation::TaskDeletion,
+    ) -> Result<(), TaskMutationError<ObsidianStoreError>> {
+        let configured =
+            pwf_application::ports::task_vault::TaskVault::task_deletion(self.store, self.project)
+                .map_err(TaskMutationError::Store)?;
+        if &configured != deletion {
+            return Err(TaskMutationError::Store(
+                ObsidianStoreError::TaskDeletionChanged,
+            ));
+        }
         let source = note_backing(&self.backings, id)?;
-        let destination_path =
-            task_file_trash_destination(source.path()).map_err(TaskMutationError::Store)?;
-        let destination = missing_snapshot(&destination_path)?;
-        self.changes.push(PendingChange::Rename {
-            source,
-            destination,
-        });
+        match deletion.trash_folder() {
+            None => self
+                .changes
+                .push(PendingChange::RemoveNote { current: source }),
+            Some(trash_folder) => {
+                let destination_path = task_file_trash_destination(source.path(), &trash_folder)
+                    .map_err(TaskMutationError::Store)?;
+                let destination = missing_snapshot(&destination_path)?;
+                self.changes.push(PendingChange::Rename {
+                    source,
+                    destination,
+                });
+            }
+        }
         Ok(())
     }
 
@@ -330,6 +352,7 @@ fn add_pending_change(
     expected_by_path: &BTreeMap<PathBuf, ExpectedTaskRevision>,
 ) -> Result<(), TaskMutationError<ObsidianStoreError>> {
     match change {
+        PendingChange::RemoveNote { current } => transaction.remove(current),
         PendingChange::ReplaceNote { current, contents } => {
             transaction.replace(FileSnapshot::Present(current), contents)
         }

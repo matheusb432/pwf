@@ -195,7 +195,11 @@ fn render_list_task(
         }
     }
 
-    let _ = writeln!(out, "  project_path: {}", task.project_path);
+    let _ = writeln!(
+        out,
+        "  project_path: {}",
+        task.project_path.as_deref().unwrap_or("none")
+    );
     if let Some(location) = &task.location {
         let _ = writeln!(out, "  note: {}:{}", location.index_path, location.line);
     } else {
@@ -314,7 +318,7 @@ mod tests {
             status: TaskStatus::Active as i32,
             heading: "sample task".to_string(),
             prompt: String::new(),
-            project_path: "/project".to_string(),
+            project_path: Some("/project".to_string()),
             location: Some(TaskLocation {
                 index_path: "foo.md".to_string(),
                 line: 1,

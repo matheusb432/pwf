@@ -1,7 +1,7 @@
 //! Durable retry identity for task mutations.
 
 use pwf_models::task::TaskId;
-use pwf_wire::task::{TaskRequestFingerprint, TaskRequestId};
+use pwf_wire::task::{TaskMutationSummary, TaskRequestFingerprint, TaskRequestId};
 
 #[derive(Debug, Clone)]
 pub(super) struct MutationIdentity {
@@ -74,6 +74,7 @@ pub(super) struct MutationRequestRecord {
     pub(super) task_id: TaskId,
     pub(super) state: MutationRequestState,
     pub(super) outcome: Option<String>,
+    pub(super) task: Option<TaskMutationSummary>,
 }
 
 #[derive(Debug, Clone)]
@@ -106,8 +107,8 @@ pub(super) async fn find(
     identity: &MutationIdentity,
     operation: MutationOperation,
 ) -> Result<Option<MutationRequestRecord>, MutationRequestError> {
-    let row = sqlx::query_as::<_, (String, String, String, String, Option<String>)>(
-        "SELECT operation, fingerprint, task_id, state, outcome
+    let row = sqlx::query_as::<_, StoredMutationRequest>(
+        "SELECT operation, fingerprint, task_id, state, outcome, task_title, task_status
          FROM task_mutation_requests
          WHERE request_id = ?",
     )
@@ -150,19 +151,52 @@ pub(super) async fn start(
     Ok(MutationStart::Existing(record))
 }
 
+#[derive(sqlx::FromRow)]
+struct StoredMutationRequest {
+    operation: String,
+    fingerprint: String,
+    task_id: String,
+    state: String,
+    outcome: Option<String>,
+    task_title: Option<String>,
+    task_status: Option<String>,
+}
+
+pub(super) async fn complete_with_task(
+    pool: &sqlx::SqlitePool,
+    identity: &MutationIdentity,
+    operation: MutationOperation,
+    outcome: &str,
+    task: &TaskMutationSummary,
+) -> Result<(), MutationRequestError> {
+    complete_outcome(pool, identity, operation, Some(outcome), Some(task)).await
+}
+
 pub(super) async fn complete(
     pool: &sqlx::SqlitePool,
     identity: &MutationIdentity,
     operation: MutationOperation,
     outcome: Option<&str>,
 ) -> Result<(), MutationRequestError> {
+    complete_outcome(pool, identity, operation, outcome, None).await
+}
+
+async fn complete_outcome(
+    pool: &sqlx::SqlitePool,
+    identity: &MutationIdentity,
+    operation: MutationOperation,
+    outcome: Option<&str>,
+    task: Option<&TaskMutationSummary>,
+) -> Result<(), MutationRequestError> {
     let updated = sqlx::query(
         "UPDATE task_mutation_requests
-         SET state = 'completed', outcome = ?,
+         SET state = 'completed', outcome = ?, task_title = ?, task_status = ?,
              completed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
          WHERE request_id = ? AND operation = ? AND fingerprint = ? AND state = 'pending'",
     )
     .bind(outcome)
+    .bind(task.map(|task| task.title.as_str()))
+    .bind(task.map(|task| task.status.as_str()))
     .bind(identity.request_id.as_ref())
     .bind(operation.as_str())
     .bind(identity.fingerprint.as_ref())
@@ -199,9 +233,17 @@ pub(super) async fn discard(
 fn decode_record(
     identity: &MutationIdentity,
     operation: MutationOperation,
-    row: (String, String, String, String, Option<String>),
+    row: StoredMutationRequest,
 ) -> Result<MutationRequestRecord, MutationRequestError> {
-    let (stored_operation, stored_fingerprint, task_id, state, outcome) = row;
+    let StoredMutationRequest {
+        operation: stored_operation,
+        fingerprint: stored_fingerprint,
+        task_id,
+        state,
+        outcome,
+        task_title,
+        task_status,
+    } = row;
     if stored_operation != operation.as_str() || stored_fingerprint != identity.fingerprint.as_ref()
     {
         return Err(MutationRequestError::Conflict {
@@ -222,16 +264,39 @@ fn decode_record(
             });
         }
     };
+    let task = decode_summary(task_title, task_status, &task_id, identity)?;
     Ok(MutationRequestRecord {
         task_id,
         state,
         outcome,
+        task,
     })
+}
+
+fn decode_summary(
+    title: Option<String>,
+    status: Option<String>,
+    task_id: &TaskId,
+    identity: &MutationIdentity,
+) -> Result<Option<TaskMutationSummary>, MutationRequestError> {
+    let corrupt = || MutationRequestError::Corrupt {
+        request_id: identity.request_id.to_string(),
+        reason: "task summary is invalid",
+    };
+    match (title, status) {
+        (None, None) => Ok(None),
+        (Some(title), Some(status)) => Ok(Some(TaskMutationSummary {
+            id: task_id.clone(),
+            title,
+            status: status.parse().map_err(|_| corrupt())?,
+        })),
+        _ => Err(corrupt()),
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use pwf_wire::task::{TaskRequestFingerprint, TaskRequestId};
+    use pwf_wire::task::{TaskMutationSummary, TaskRequestFingerprint, TaskRequestId};
 
     use super::*;
 
@@ -268,6 +333,35 @@ mod tests {
             .unwrap();
         assert_eq!(replay.state, MutationRequestState::Completed);
         assert_eq!(replay.outcome.as_deref(), Some("completed"));
+        assert!(replay.task.is_none(), "legacy receipts have no summary");
+    }
+
+    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
+    async fn completed_request_preserves_the_mutated_task_summary(pool: sqlx::SqlitePool) {
+        let identity = identity(1);
+        let task = TaskMutationSummary {
+            id: "FOO-0001".parse().unwrap(),
+            title: "deleted task".into(),
+            status: pwf_models::task::TaskStatus::Cancelled,
+        };
+        start(&pool, &identity, MutationOperation::Delete, &task.id)
+            .await
+            .unwrap();
+        complete_with_task(
+            &pool,
+            &identity,
+            MutationOperation::Delete,
+            "deleted",
+            &task,
+        )
+        .await
+        .unwrap();
+        let replay = find(&pool, &identity, MutationOperation::Delete)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(replay.outcome.as_deref(), Some("deleted"));
+        assert_eq!(replay.task, Some(task));
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]

@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "\n        SELECT\n            projects.id AS \"id!\",\n            projects.title AS \"title!\",\n            project_sources.kind AS \"source_kind!\",\n            project_sources.value AS \"source_value!\",\n            projects.tasks_kind AS \"tasks_kind!\",\n            projects.tasks_path AS \"tasks_path!\",\n            projects.created_at AS \"created_at!\",\n            (projects.paused_at IS NOT NULL) AS \"is_paused!: bool\"\n        FROM projects\n        JOIN project_sources ON project_sources.id = projects.project_source_id\n        WHERE projects.id = ?\n        ",
+  "query": "\n            SELECT\n                active_projects.id AS \"id!\",\n                active_projects.title AS \"title!\",\n                project_sources.kind AS \"source_kind?\",\n                project_sources.value AS \"source_value?\",\n                active_projects.tasks_kind AS \"tasks_kind!\",\n                active_projects.tasks_path AS \"tasks_path!\",\n                active_projects.obsidian_vault AS \"obsidian_vault?\",\n                active_projects.created_at AS \"created_at!\",\n                false AS \"is_paused!: bool\"\n            FROM active_projects\n            LEFT JOIN project_sources ON project_sources.id = active_projects.project_source_id\n            ORDER BY active_projects.title ASC\n            ",
   "describe": {
     "columns": [
       {
@@ -26,7 +26,7 @@
         }
       },
       {
-        "name": "source_kind!",
+        "name": "source_kind?",
         "ordinal": 2,
         "type_info": "Text",
         "origin": {
@@ -37,7 +37,7 @@
         }
       },
       {
-        "name": "source_value!",
+        "name": "source_value?",
         "ordinal": 3,
         "type_info": "Text",
         "origin": {
@@ -70,8 +70,19 @@
         }
       },
       {
-        "name": "created_at!",
+        "name": "obsidian_vault?",
         "ordinal": 6,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "projects",
+            "name": "obsidian_vault"
+          }
+        }
+      },
+      {
+        "name": "created_at!",
+        "ordinal": 7,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -82,24 +93,25 @@
       },
       {
         "name": "is_paused!: bool",
-        "ordinal": 7,
+        "ordinal": 8,
         "type_info": "Integer",
         "origin": "Expression"
       }
     ],
     "parameters": {
-      "Right": 1
+      "Right": 0
     },
     "nullable": [
       false,
       false,
+      true,
+      true,
       false,
       false,
-      false,
-      false,
+      true,
       false,
       false
     ]
   },
-  "hash": "9bf7e42055d351a20307db7b5398604827b4893e1d32e77c2170364b2b4bebbd"
+  "hash": "0014e99fe1c73b7cf9c7d9753b8ac12f96c063fd933e4f44556077c880e2b352"
 }

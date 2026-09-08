@@ -4,7 +4,7 @@ use pwf_models::{
     project::ProjectId,
     task::{CommitRanges, TaskId, TaskReport, TaskStatus, TaskTimestamp},
 };
-use pwf_wire::task::ClosedTaskAction;
+use pwf_wire::task::{ClosedTaskAction, TaskMutationSummary};
 
 use crate::{
     ports::task_vault::{
@@ -257,7 +257,7 @@ pub(in crate::task) fn close(
     command: &TaskClosure<'_>,
     store: &impl TaskVault,
     project: &pwf_models::project::Project,
-) -> Result<(), CloseTaskError> {
+) -> Result<TaskMutationSummary, CloseTaskError> {
     let TaskClosure {
         action,
         id,
@@ -309,7 +309,11 @@ pub(in crate::task) fn close(
     }
     commit_task_writes(store, project, expected, writes)?;
 
-    Ok(())
+    Ok(TaskMutationSummary {
+        id: task_identifier,
+        title: record.title,
+        status: close_status(action),
+    })
 }
 
 fn close_status(action: ClosedTaskAction) -> TaskStatus {

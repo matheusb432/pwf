@@ -1,8 +1,9 @@
 use clap::Args;
 use pwf_client::{pb::CompleteTaskRequest, task::TaskClient};
-use pwf_models::task::TaskReport;
+use pwf_models::{settings::TaskStatusColors, task::TaskReport};
 
 use super::Identifier;
+use crate::console::Console;
 
 #[derive(Args, Debug)]
 pub struct Arguments {
@@ -16,13 +17,18 @@ pub struct Arguments {
     pub(crate) commits: Vec<String>,
 }
 
-use super::render::render_completed;
+use super::render::{TaskMutationAction, render_mutation};
 
-pub(super) async fn run(arguments: &Arguments, client: &TaskClient) -> anyhow::Result<String> {
+pub(super) async fn run(
+    arguments: &Arguments,
+    console: Console,
+    task_status_colors: TaskStatusColors,
+    client: &TaskClient,
+) -> anyhow::Result<String> {
     let id = arguments
         .identifier
         .required(anyhow::anyhow!("--id is required for done."))?;
-    client
+    let result = client
         .complete_task(CompleteTaskRequest {
             id: id.to_string(),
             report: arguments
@@ -38,5 +44,11 @@ pub(super) async fn run(arguments: &Arguments, client: &TaskClient) -> anyhow::R
         })
         .await
         .map_err(crate::rpc_error)?;
-    Ok(render_completed(id.as_ref()))
+    render_mutation(
+        TaskMutationAction::Done,
+        id.as_ref(),
+        result.task.as_ref(),
+        task_status_colors,
+        console.color(),
+    )
 }

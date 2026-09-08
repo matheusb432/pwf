@@ -4,6 +4,7 @@ use pwf_client::{
     pb::{DeleteTaskStart, delete_task_result},
     task::TaskClient,
 };
+use pwf_models::settings::TaskStatusColors;
 
 use super::Identifier;
 
@@ -16,7 +17,7 @@ pub struct Arguments {
     pub(crate) assume_yes: bool,
 }
 
-use super::render::render_removed;
+use super::render::{TaskMutationAction, render_mutation};
 use crate::{
     confirmation::{CliConfirmationClient, prompt_error},
     console::Console,
@@ -25,6 +26,7 @@ use crate::{
 pub(super) async fn run(
     arguments: &Arguments,
     console: Console,
+    task_status_colors: TaskStatusColors,
     client: &TaskClient,
 ) -> anyhow::Result<String> {
     let id = arguments
@@ -53,11 +55,15 @@ pub(super) async fn run(
     };
 
     match outcome.outcome.as_ref() {
-        Some(delete_task_result::Outcome::Deleted(_)) => {
-            Ok(render_removed(id.as_ref(), console.color()))
-        }
+        Some(delete_task_result::Outcome::Deleted(deleted)) => render_mutation(
+            TaskMutationAction::Removed,
+            id.as_ref(),
+            deleted.task.as_ref(),
+            task_status_colors,
+            console.color(),
+        ),
         Some(delete_task_result::Outcome::Aborted(_)) => {
-            Ok(format!("# remove {id}: aborted\nnothing deleted.\n"))
+            Ok(format!("# remove {id}: aborted\nnothing deleted."))
         }
         None => Err(anyhow::anyhow!(
             "pwf-server returned an invalid removal outcome"

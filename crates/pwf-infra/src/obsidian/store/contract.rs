@@ -32,12 +32,13 @@ fn task_section(raw: &str) -> TaskSection {
 
 fn project(id: &str, title: &str, tasks_path: &Path) -> Project {
     Project {
+        obsidian_vault: None,
         id: ProjectId::try_new(id.to_ascii_uppercase()).unwrap(),
         title: ProjectName::try_new(title).unwrap(),
-        source: ProjectSource::new(
+        source: Some(ProjectSource::new(
             ProjectSourceKind::Directory,
             ProjectSourceValue::try_new(format!("/projects/{title}")).unwrap(),
-        ),
+        )),
         tasks: ProjectTasks::new(
             ProjectTasksKind::Directory,
             ProjectTasksPath::try_new(path_str(tasks_path)).unwrap(),
@@ -817,7 +818,7 @@ fn generic_delete_moves_note_to_vault_trash_and_unlinks_index() {
     let notes_dir = temp.path().join("notes");
     let project_dir = notes_dir.join("foo");
     std::fs::create_dir_all(&project_dir).unwrap();
-    std::fs::create_dir(notes_dir.join(".obsidian")).unwrap();
+    std::fs::create_dir(notes_dir.join(".trash")).unwrap();
     std::fs::write(project_dir.join("foo.md"), "- [ ] [[FOO-0001]]\n").unwrap();
     let task_path = project_dir.join("FOO-0001.md");
     write_note(
@@ -830,7 +831,9 @@ fn generic_delete_moves_note_to_vault_trash_and_unlinks_index() {
         "remove me",
     );
     let store = store_with_index_identity(&notes_dir.join("foo"));
-    let project = foo_project(&store);
+    let mut project = foo_project(&store);
+    project.obsidian_vault =
+        Some(pwf_models::project::ObsidianVault::try_new(path_str(&notes_dir)).unwrap());
     let id = TaskId::try_new("FOO-0001").unwrap();
 
     commit_for_task(
@@ -839,7 +842,12 @@ fn generic_delete_moves_note_to_vault_trash_and_unlinks_index() {
         &id,
         vec![
             TaskWrite::DeleteIndex(id.clone()),
-            TaskWrite::MoveToTrash { id: id.clone() },
+            TaskWrite::DeleteNote {
+                id: id.clone(),
+                deletion: pwf_wire::confirmation::TaskDeletion::MoveToTrash {
+                    obsidian_vault: notes_dir.clone(),
+                },
+            },
         ],
     );
 
@@ -852,6 +860,51 @@ fn generic_delete_moves_note_to_vault_trash_and_unlinks_index() {
         std::fs::read_to_string(project_dir.join("foo.md")).unwrap(),
         "---\nid: foo\ntitle: foo\n---\n"
     );
+}
+
+#[test]
+fn repeated_deletion_preserves_each_note_in_numbered_trash_files() {
+    let temp = tempfile::tempdir().unwrap();
+    let notes_dir = temp.path().join("notes");
+    let project_dir = notes_dir.join("foo");
+    let store = store_with_index_identity(&project_dir);
+    std::fs::create_dir_all(notes_dir.join(".trash")).unwrap();
+    let mut project = foo_project(&store);
+    project.obsidian_vault =
+        Some(pwf_models::project::ObsidianVault::try_new(path_str(&notes_dir)).unwrap());
+    let id = TaskId::try_new("FOO-0001").unwrap();
+    let task_path = project_dir.join("FOO-0001.md");
+    let mut saved = Vec::new();
+
+    for name in ["FOO-0001.md", "FOO-0001 (1).md", "FOO-0001 (2).md"] {
+        generic_add(&store, new_task(name, "reused task ID")).unwrap();
+        let contents = std::fs::read(&task_path).unwrap();
+        commit_for_task(
+            &store,
+            &project,
+            &id,
+            vec![
+                TaskWrite::DeleteIndex(id.clone()),
+                TaskWrite::DeleteNote {
+                    id: id.clone(),
+                    deletion: pwf_wire::confirmation::TaskDeletion::MoveToTrash {
+                        obsidian_vault: notes_dir.clone(),
+                    },
+                },
+            ],
+        );
+        saved.push((notes_dir.join(".trash").join(name), contents));
+        assert!(!task_path.exists());
+        assert!(TaskVault::list_tasks(&store, &project).unwrap().is_empty());
+        assert!(
+            !std::fs::read_to_string(project_dir.join("foo.md"))
+                .unwrap()
+                .contains("FOO-0001")
+        );
+        for (path, expected) in &saved {
+            assert_eq!(&std::fs::read(path).unwrap(), expected);
+        }
+    }
 }
 
 #[test]
@@ -1084,7 +1137,12 @@ fn stale_delete_preserves_the_external_edit_index_and_trash_state() {
         }],
         vec![
             TaskWrite::DeleteIndex(id.clone()),
-            TaskWrite::MoveToTrash { id },
+            TaskWrite::DeleteNote {
+                id,
+                deletion: pwf_wire::confirmation::TaskDeletion::MoveToTrash {
+                    obsidian_vault: vault.clone(),
+                },
+            },
         ],
     )
     .unwrap();
@@ -1974,5 +2032,120 @@ fn upsert_creates_missing_index_from_identity_template() {
     assert_eq!(
         std::fs::read_to_string(notes_dir.join("foo/foo.md")).unwrap(),
         "---\nid: foo\ntitle: foo\n---\n\n- [ ] [[FOO-0001]]\n"
+    );
+}
+
+#[test]
+fn missing_registered_trash_preserves_the_note_and_index() {
+    for occupied_by_file in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let store = store_with_index_identity(&root.path().join("tasks"));
+        let mut project = foo_project(&store);
+        let vault = root.path().join("separate-vault");
+        std::fs::create_dir(&vault).unwrap();
+        project.obsidian_vault =
+            Some(pwf_models::project::ObsidianVault::try_new(path_str(&vault)).unwrap());
+        let record = generic_add(&store, new_task("keep me", "original bytes")).unwrap();
+        let note = record.locator.as_path();
+        let index = store.home.as_path().join("foo.md");
+        let note_before = std::fs::read(note).unwrap();
+        let index_before = std::fs::read(&index).unwrap();
+        if occupied_by_file {
+            std::fs::write(vault.join(".trash"), "not a folder").unwrap();
+        }
+        assert!(TaskVault::task_deletion(&store, &project).is_err());
+        let writes = TaskWriteSet::try_new(
+            vec![ExpectedTaskRevision {
+                id: record.id.clone(),
+                revision: record.revision,
+            }],
+            vec![
+                TaskWrite::DeleteIndex(record.id.clone()),
+                TaskWrite::DeleteNote {
+                    id: record.id,
+                    deletion: pwf_wire::confirmation::TaskDeletion::MoveToTrash {
+                        obsidian_vault: vault.clone(),
+                    },
+                },
+            ],
+        )
+        .unwrap();
+        assert!(TaskVault::commit_task_writes(&store, &project, writes).is_err());
+        assert_eq!(std::fs::read(note).unwrap(), note_before);
+        assert_eq!(std::fs::read(index).unwrap(), index_before);
+        assert!(!vault.join(".trash").is_dir());
+    }
+}
+
+#[test]
+fn trash_removed_after_preflight_preserves_the_note_and_index() {
+    let root = tempfile::tempdir().unwrap();
+    let store = store_with_index_identity(&root.path().join("tasks"));
+    let mut project = foo_project(&store);
+    let vault = root.path().join("separate-vault");
+    std::fs::create_dir_all(vault.join(".trash")).unwrap();
+    project.obsidian_vault =
+        Some(pwf_models::project::ObsidianVault::try_new(path_str(&vault)).unwrap());
+    let record = generic_add(&store, new_task("keep me", "original bytes")).unwrap();
+    let index = store.home.as_path().join("foo.md");
+    let index_before = std::fs::read(&index).unwrap();
+    let deletion = TaskVault::task_deletion(&store, &project).unwrap();
+    std::fs::remove_dir(vault.join(".trash")).unwrap();
+    let writes = TaskWriteSet::try_new(
+        vec![ExpectedTaskRevision {
+            id: record.id.clone(),
+            revision: record.revision.clone(),
+        }],
+        vec![
+            TaskWrite::DeleteIndex(record.id.clone()),
+            TaskWrite::DeleteNote {
+                id: record.id.clone(),
+                deletion,
+            },
+        ],
+    )
+    .unwrap();
+    assert!(TaskVault::commit_task_writes(&store, &project, writes).is_err());
+    assert_eq!(
+        std::fs::read_to_string(record.locator.as_path()).unwrap(),
+        record.source
+    );
+    assert_eq!(std::fs::read(index).unwrap(), index_before);
+    assert!(!vault.join(".trash").exists());
+}
+
+#[test]
+fn unregistered_project_hard_deletes_even_under_an_obsidian_vault() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir(root.path().join(".obsidian")).unwrap();
+    std::fs::create_dir(root.path().join(".trash")).unwrap();
+    let store = store_with_index_identity(&root.path().join("tasks"));
+    let project = foo_project(&store);
+    let record = generic_add(&store, new_task("remove me", "original bytes")).unwrap();
+    let deletion = TaskVault::task_deletion(&store, &project).unwrap();
+    assert_eq!(deletion, pwf_wire::confirmation::TaskDeletion::HardDelete);
+    commit_for_task(
+        &store,
+        &project,
+        &record.id,
+        vec![
+            TaskWrite::DeleteNote {
+                id: record.id.clone(),
+                deletion,
+            },
+            TaskWrite::DeleteIndex(record.id.clone()),
+        ],
+    );
+    assert!(!record.locator.as_path().exists());
+    assert!(
+        TaskVault::list_index_entries(&store, &project)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        std::fs::read_dir(root.path().join(".trash"))
+            .unwrap()
+            .count(),
+        0
     );
 }

@@ -218,6 +218,7 @@ fn project_index_source(task_count: usize) -> String {
 fn project(tasks_path: &Path) -> Project {
     let tasks_path = tasks_path.to_string_lossy().into_owned();
     Project {
+        obsidian_vault: None,
         id: require(
             ProjectId::try_new("PWF"),
             "constructing benchmark project ID",
@@ -226,13 +227,13 @@ fn project(tasks_path: &Path) -> Project {
             ProjectName::try_new("pwf"),
             "constructing benchmark project name",
         ),
-        source: ProjectSource::new(
+        source: Some(ProjectSource::new(
             ProjectSourceKind::Directory,
             require(
                 ProjectSourceValue::try_new("/projects/pwf"),
                 "constructing benchmark project source",
             ),
-        ),
+        )),
         tasks: ProjectTasks::new(
             ProjectTasksKind::Directory,
             require(

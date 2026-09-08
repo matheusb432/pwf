@@ -1,6 +1,7 @@
 use pwf_application::project::{
     TaskLocationError,
     add_project::{self, AddProjectError},
+    add_vault_project::{self, AddVaultProjectError},
     get_project::{self, GetProjectError},
     list_projects::{self, ListProjectsError},
     pause_project::{self, PauseProjectError},
@@ -30,6 +31,31 @@ impl ProjectGrpcService {
 
 #[tonic::async_trait]
 impl ProjectService for ProjectGrpcService {
+    async fn add_vault_project(
+        &self,
+        request: Request<pb::AddVaultProjectRequest>,
+    ) -> Result<Response<pb::AddVaultProjectResponse>, Status> {
+        let command = proto::project::add_vault_project_request(request.into_inner())?;
+        add_vault_project::execute(
+            command,
+            &self.state.pool,
+            &self.state.home,
+            &self.state.project_directory,
+        )
+        .await
+        .map(proto::project::add_vault_project_response)
+        .map(Response::new)
+        .map_err(|error| match error {
+            AddVaultProjectError::AddProject(error) => add_project_status(error),
+            AddVaultProjectError::ResolveVault { .. } | AddVaultProjectError::NotVault { .. } => {
+                Status::failed_precondition(error.to_string())
+            }
+            AddVaultProjectError::RelativeVault { .. }
+            | AddVaultProjectError::NonUnicode { .. }
+            | AddVaultProjectError::Title(_) => Status::invalid_argument(error.to_string()),
+        })
+    }
+
     async fn add_project(
         &self,
         request: Request<pb::AddProjectRequest>,

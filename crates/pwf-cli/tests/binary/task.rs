@@ -518,6 +518,8 @@ fn remove_prompt_identifies_closed_status_before_deletion() {
     session.expect("completed work").unwrap();
     session.expect("Status").unwrap();
     session.expect("done").unwrap();
+    session.expect("Deletion").unwrap();
+    session.expect("hard delete").unwrap();
     session.expect("(y/n)").unwrap();
     session.expect("no").unwrap();
     session.send("y").unwrap();
@@ -660,5 +662,120 @@ fn list_order_help_and_invalid_values_are_cli_contracts() {
             .assert()
             .failure()
             .stdout("");
+    }
+}
+
+#[test]
+fn task_mutations_print_one_summary_line() {
+    let fixture = ManagedProject::new(&project_id("FOO").unwrap(), "foo-bar").unwrap();
+    for (args, expected) in [
+        (
+            vec![
+                "task",
+                "add",
+                "foo-bar",
+                "--title",
+                "first title",
+                "--goal",
+                "exercise confirmations",
+            ],
+            "Added task: FOO-0001 :: first title\n",
+        ),
+        (
+            vec!["task", "edit", "FOO-0001", "--title", "edited title"],
+            "Edited task: FOO-0001 :: edited title\n",
+        ),
+        (
+            vec!["task", "done", "FOO-0001"],
+            "Done task: FOO-0001 :: edited title\n",
+        ),
+        (
+            vec!["task", "reopen", "FOO-0001", "--yes"],
+            "Reopened task: FOO-0001 :: edited title\n",
+        ),
+        (
+            vec!["task", "reopen", "FOO-0001", "--yes"],
+            "Skipped task: FOO-0001 :: edited title\n",
+        ),
+        (
+            vec!["task", "cancel", "FOO-0001", "--report", "no longer needed"],
+            "Cancelled task: FOO-0001 :: edited title\n",
+        ),
+        (
+            vec!["task", "remove", "FOO-0001", "--yes"],
+            "Removed task: FOO-0001 :: edited title\n",
+        ),
+    ] {
+        fixture
+            .database
+            .command()
+            .args(&args)
+            .assert()
+            .success()
+            .stdout(expected);
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn task_mutations_use_configured_lifecycle_colors() {
+    let fixture = ManagedProject::new(&project_id("FOO").unwrap(), "foo-bar").unwrap();
+    fixture
+        .database
+        .write_user_config(
+            "[colors]\nactive = \"#010203\"\ndone = \"#040506\"\ncancelled = \"#070809\"\n",
+        )
+        .unwrap();
+    for (args, verb, color) in [
+        (
+            vec![
+                "task",
+                "add",
+                "foo-bar",
+                "--title",
+                "colored task",
+                "--goal",
+                "exercise confirmations",
+            ],
+            "Added",
+            "1;2;3",
+        ),
+        (
+            vec![
+                "task",
+                "edit",
+                "FOO-0001",
+                "--add-goal",
+                "preserve the title",
+            ],
+            "Edited",
+            "1;2;3",
+        ),
+        (vec!["task", "done", "FOO-0001"], "Done", "4;5;6"),
+        (
+            vec!["task", "reopen", "FOO-0001", "--yes"],
+            "Reopened",
+            "1;2;3",
+        ),
+        (
+            vec!["task", "cancel", "FOO-0001", "--report", "no longer needed"],
+            "Cancelled",
+            "7;8;9",
+        ),
+        (
+            vec!["task", "remove", "FOO-0001", "--yes"],
+            "Removed",
+            "7;8;9",
+        ),
+    ] {
+        let expected =
+            format!("{verb} task: \x1b[1m\x1b[38;2;{color}mFOO-0001\x1b[0m :: colored task\n");
+        fixture
+            .database
+            .command_with_color()
+            .args(&args)
+            .assert()
+            .success()
+            .stdout(expected);
     }
 }

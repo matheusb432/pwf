@@ -34,14 +34,16 @@ pub struct ProjectFields {
     pub id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub title: ::prost::alloc::string::String,
-    #[prost(string, tag = "3")]
-    pub source_kind: ::prost::alloc::string::String,
-    #[prost(string, tag = "4")]
-    pub source_value: ::prost::alloc::string::String,
+    #[prost(string, optional, tag = "3")]
+    pub source_kind: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "4")]
+    pub source_value: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, tag = "5")]
     pub tasks_kind: ::prost::alloc::string::String,
     #[prost(string, tag = "6")]
     pub tasks_path: ::prost::alloc::string::String,
+    #[prost(string, optional, tag = "7")]
+    pub obsidian_vault: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ClearField {}
@@ -66,10 +68,10 @@ pub struct Project {
     pub id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub title: ::prost::alloc::string::String,
-    #[prost(string, tag = "3")]
-    pub source_kind: ::prost::alloc::string::String,
-    #[prost(string, tag = "4")]
-    pub source_value: ::prost::alloc::string::String,
+    #[prost(string, optional, tag = "3")]
+    pub source_kind: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "4")]
+    pub source_value: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, tag = "5")]
     pub tasks_kind: ::prost::alloc::string::String,
     #[prost(string, tag = "6")]
@@ -78,6 +80,26 @@ pub struct Project {
     pub created_at: ::prost::alloc::string::String,
     #[prost(bool, tag = "8")]
     pub is_paused: bool,
+    #[prost(string, optional, tag = "9")]
+    pub obsidian_vault: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct AddVaultProjectRequest {
+    #[prost(string, tag = "1")]
+    pub vault_path: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub id: ::prost::alloc::string::String,
+    #[prost(string, tag = "3")]
+    pub tasks_path: ::prost::alloc::string::String,
+    #[prost(string, optional, tag = "4")]
+    pub title: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "5")]
+    pub source_path: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct AddVaultProjectResponse {
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct AddProjectRequest {
@@ -90,10 +112,10 @@ pub struct AddProjectResponse {
     pub id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub title: ::prost::alloc::string::String,
-    #[prost(string, tag = "3")]
-    pub source_kind: ::prost::alloc::string::String,
-    #[prost(string, tag = "4")]
-    pub source_value: ::prost::alloc::string::String,
+    #[prost(string, optional, tag = "3")]
+    pub source_kind: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "4")]
+    pub source_value: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, tag = "5")]
     pub tasks_kind: ::prost::alloc::string::String,
     #[prost(string, tag = "6")]
@@ -102,6 +124,8 @@ pub struct AddProjectResponse {
     pub created_at: ::prost::alloc::string::String,
     #[prost(bool, tag = "8")]
     pub is_paused: bool,
+    #[prost(string, optional, tag = "9")]
+    pub obsidian_vault: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct GetProjectRequest {
@@ -116,10 +140,10 @@ pub struct GetProjectResponse {
     pub id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub title: ::prost::alloc::string::String,
-    #[prost(string, tag = "3")]
-    pub source_kind: ::prost::alloc::string::String,
-    #[prost(string, tag = "4")]
-    pub source_value: ::prost::alloc::string::String,
+    #[prost(string, optional, tag = "3")]
+    pub source_kind: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "4")]
+    pub source_value: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, tag = "5")]
     pub tasks_kind: ::prost::alloc::string::String,
     #[prost(string, tag = "6")]
@@ -128,6 +152,8 @@ pub struct GetProjectResponse {
     pub created_at: ::prost::alloc::string::String,
     #[prost(bool, tag = "8")]
     pub is_paused: bool,
+    #[prost(string, optional, tag = "9")]
+    pub obsidian_vault: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ListProjectsRequest {
@@ -164,10 +190,10 @@ pub struct RenameProjectResponse {
     pub id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub title: ::prost::alloc::string::String,
-    #[prost(string, tag = "3")]
-    pub source_kind: ::prost::alloc::string::String,
-    #[prost(string, tag = "4")]
-    pub source_value: ::prost::alloc::string::String,
+    #[prost(string, optional, tag = "3")]
+    pub source_kind: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "4")]
+    pub source_value: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, tag = "5")]
     pub tasks_kind: ::prost::alloc::string::String,
     #[prost(string, tag = "6")]
@@ -176,6 +202,8 @@ pub struct RenameProjectResponse {
     pub created_at: ::prost::alloc::string::String,
     #[prost(bool, tag = "8")]
     pub is_paused: bool,
+    #[prost(string, optional, tag = "9")]
+    pub obsidian_vault: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ResumeProjectRequest {
@@ -195,6 +223,8 @@ pub struct UpdateProjectRequest {
     pub id: ::prost::alloc::string::String,
     #[prost(message, optional, tag = "2")]
     pub source_value: ::core::option::Option<StringFieldUpdate>,
+    #[prost(message, optional, tag = "3")]
+    pub obsidian_vault: ::core::option::Option<StringFieldUpdate>,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct UpdateProjectResponse {}
@@ -592,16 +622,36 @@ pub mod list_tasks_request {
     }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct TaskMutationSummary {
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub title: ::prost::alloc::string::String,
+    #[prost(enumeration = "TaskStatus", tag = "3")]
+    pub status: i32,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CreateTaskResponse {
     #[prost(string, tag = "1")]
     pub id: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "2")]
+    pub task: ::core::option::Option<TaskMutationSummary>,
 }
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct CancelTaskResponse {}
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct CompleteTaskResponse {}
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct UpdateTaskResponse {}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CancelTaskResponse {
+    #[prost(message, optional, tag = "2")]
+    pub task: ::core::option::Option<TaskMutationSummary>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CompleteTaskResponse {
+    #[prost(message, optional, tag = "2")]
+    pub task: ::core::option::Option<TaskMutationSummary>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct UpdateTaskResponse {
+    #[prost(message, optional, tag = "1")]
+    pub task: ::core::option::Option<TaskMutationSummary>,
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct TaskData {
     #[prost(string, tag = "1")]
@@ -754,8 +804,8 @@ pub struct TaskView {
     pub heading: ::prost::alloc::string::String,
     #[prost(string, tag = "5")]
     pub prompt: ::prost::alloc::string::String,
-    #[prost(string, tag = "6")]
-    pub project_path: ::prost::alloc::string::String,
+    #[prost(string, optional, tag = "6")]
+    pub project_path: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(message, optional, tag = "7")]
     pub location: ::core::option::Option<TaskLocation>,
     #[prost(message, repeated, tag = "8")]
@@ -815,6 +865,10 @@ pub struct DeleteTaskConfirmation {
     pub status: i32,
     #[prost(string, tag = "5")]
     pub note_path: ::prost::alloc::string::String,
+    #[prost(string, optional, tag = "6")]
+    pub obsidian_vault: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "7")]
+    pub trash_folder: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ReopenTaskConfirmation {
@@ -839,18 +893,21 @@ pub struct DeleteTaskPreflight {
     #[prost(message, optional, tag = "1")]
     pub confirmation: ::core::option::Option<DeleteTaskConfirmation>,
 }
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct DeletedTask {}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DeletedTask {
+    #[prost(message, optional, tag = "1")]
+    pub task: ::core::option::Option<TaskMutationSummary>,
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct AbortedTaskOperation {}
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct DeleteTaskResult {
     #[prost(oneof = "delete_task_result::Outcome", tags = "1, 2")]
     pub outcome: ::core::option::Option<delete_task_result::Outcome>,
 }
 /// Nested message and enum types in `DeleteTaskResult`.
 pub mod delete_task_result {
-    #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Oneof)]
+    #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
     pub enum Outcome {
         #[prost(message, tag = "1")]
         Deleted(super::DeletedTask),
@@ -900,18 +957,24 @@ pub struct ReopenTaskPreflight {
     #[prost(message, optional, tag = "1")]
     pub confirmation: ::core::option::Option<ReopenTaskConfirmation>,
 }
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct ReopenedTask {}
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct AlreadyActiveTask {}
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ReopenedTask {
+    #[prost(message, optional, tag = "1")]
+    pub task: ::core::option::Option<TaskMutationSummary>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct AlreadyActiveTask {
+    #[prost(message, optional, tag = "1")]
+    pub task: ::core::option::Option<TaskMutationSummary>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ReopenTaskResult {
     #[prost(oneof = "reopen_task_result::Outcome", tags = "1, 2, 3")]
     pub outcome: ::core::option::Option<reopen_task_result::Outcome>,
 }
 /// Nested message and enum types in `ReopenTaskResult`.
 pub mod reopen_task_result {
-    #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Oneof)]
+    #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
     pub enum Outcome {
         #[prost(message, tag = "1")]
         Reopened(super::ReopenedTask),
@@ -1788,6 +1851,30 @@ pub mod project_service_client {
             self.inner = self.inner.max_encoding_message_size(limit);
             self
         }
+        pub async fn add_vault_project(
+            &mut self,
+            request: impl tonic::IntoRequest<super::AddVaultProjectRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::AddVaultProjectResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/pwf.v1.ProjectService/AddVaultProject",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("pwf.v1.ProjectService", "AddVaultProject"));
+            self.inner.unary(req, path, codec).await
+        }
         pub async fn add_project(
             &mut self,
             request: impl tonic::IntoRequest<super::AddProjectRequest>,
@@ -1971,6 +2058,13 @@ pub mod project_service_server {
     /// Generated trait containing gRPC methods that should be implemented for use with ProjectServiceServer.
     #[async_trait]
     pub trait ProjectService: std::marker::Send + std::marker::Sync + 'static {
+        async fn add_vault_project(
+            &self,
+            request: tonic::Request<super::AddVaultProjectRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::AddVaultProjectResponse>,
+            tonic::Status,
+        >;
         async fn add_project(
             &self,
             request: tonic::Request<super::AddProjectRequest>,
@@ -2097,6 +2191,52 @@ pub mod project_service_server {
         }
         fn call(&mut self, req: http::Request<B>) -> Self::Future {
             match req.uri().path() {
+                "/pwf.v1.ProjectService/AddVaultProject" => {
+                    #[allow(non_camel_case_types)]
+                    struct AddVaultProjectSvc<T: ProjectService>(pub Arc<T>);
+                    impl<
+                        T: ProjectService,
+                    > tonic::server::UnaryService<super::AddVaultProjectRequest>
+                    for AddVaultProjectSvc<T> {
+                        type Response = super::AddVaultProjectResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::AddVaultProjectRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ProjectService>::add_vault_project(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = AddVaultProjectSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
                 "/pwf.v1.ProjectService/AddProject" => {
                     #[allow(non_camel_case_types)]
                     struct AddProjectSvc<T: ProjectService>(pub Arc<T>);

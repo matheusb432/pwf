@@ -1,4 +1,3 @@
-mod close;
 mod confirmation;
 mod diagnostics;
 mod list;
@@ -6,8 +5,7 @@ mod session;
 mod session_confirmation;
 mod task_summary;
 
-pub(super) use close::{render_cancelled, render_completed, render_reopened};
-pub(super) use confirmation::{render_added, render_edited, render_removed};
+pub(super) use confirmation::{TaskMutationAction, render_mutation};
 pub(super) use diagnostics::TITLE_NORMALIZED_NOTICE;
 pub(super) use list::render_list;
 pub(super) use session::{render_dispatch, render_dry_run};

@@ -170,12 +170,13 @@ fn project_name(project: &str) -> ProjectName {
 
 pub(crate) fn project(project_id: &str, title: &str) -> Project {
     Project {
+        obsidian_vault: None,
         id: project_id.parse().unwrap(),
         title: project_name(title),
-        source: ProjectSource::new(
+        source: Some(ProjectSource::new(
             ProjectSourceKind::Directory,
             ProjectSourceValue::try_new(format!("/work/{title}")).unwrap(),
-        ),
+        )),
         tasks: ProjectTasks::new(
             ProjectTasksKind::Directory,
             ProjectTasksPath::try_new(format!("/tasks/{title}")).unwrap(),
@@ -261,6 +262,18 @@ pub(crate) fn staged_missing_task() -> (InMemoryStore, Vec<Project>) {
 
 impl TaskVault for InMemoryStore {
     type Error = InMemoryStoreError;
+
+    fn task_deletion(
+        &self,
+        project: &Project,
+    ) -> Result<pwf_wire::confirmation::TaskDeletion, Self::Error> {
+        Ok(project.obsidian_vault.as_ref().map_or(
+            pwf_wire::confirmation::TaskDeletion::HardDelete,
+            |vault| pwf_wire::confirmation::TaskDeletion::MoveToTrash {
+                obsidian_vault: vault.as_ref().into(),
+            },
+        ))
+    }
 
     fn get_task(&self, project: &Project, id: &TaskId) -> Result<Option<TaskRecord>, Self::Error> {
         if self
@@ -431,7 +444,7 @@ fn apply_task_write(
             apply_task_patch(record, patch);
             record.revision = revision;
         }
-        TaskWrite::MoveToTrash { id } => {
+        TaskWrite::DeleteNote { id, .. } => {
             let tasks = state.tasks.entry(project.clone()).or_default();
             let before = tasks.len();
             tasks.retain(|task| task.id != id);

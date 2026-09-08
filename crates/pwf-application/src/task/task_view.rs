@@ -74,7 +74,7 @@ pub(in crate::task) struct EnrichedTask {
     pub(in crate::task) status: TaskStatus,
     pub(in crate::task) heading: TaskHeading,
     pub(in crate::task) prompt: TaskPrompt,
-    pub(in crate::task) project_path: ProjectSourceValue,
+    pub(in crate::task) project_path: Option<ProjectSourceValue>,
     pub(in crate::task) location: TaskLocation,
     pub(in crate::task) launch: TaskLaunch,
     pub(in crate::task) section: Option<TaskSection>,
@@ -117,7 +117,7 @@ impl EnrichedTask {
 /// their index spelling.
 pub(in crate::task) fn enrich(
     task: &TaskRecord,
-    project_path: &ProjectSourceValue,
+    project_path: Option<&ProjectSourceValue>,
 ) -> Result<EnrichedTask, TaskViewError> {
     let prompt = TaskPrompt::new(task.body.trim());
     let missing_note = match &task.materialization {
@@ -155,7 +155,7 @@ pub(in crate::task) fn enrich(
         status: task.status,
         heading,
         prompt,
-        project_path: project_path.clone(),
+        project_path: project_path.cloned(),
         location,
         launch: flags.launch,
         section: task.section.clone(),
@@ -255,17 +255,17 @@ mod tests {
 
     #[test]
     fn launchable_when_project_path_is_present_and_prompt_is_real() {
-        let enriched = enrich(&record("add startup toggle"), &project_path()).unwrap();
+        let enriched = enrich(&record("add startup toggle"), Some(&project_path())).unwrap();
         assert!(enriched.launch.is_ready());
         assert!(!enriched.launch.needs_prompt());
         assert!(enriched.launch.issues().is_empty());
         assert_eq!(enriched.prompt.as_ref(), "add startup toggle");
-        assert_eq!(enriched.project_path.as_ref(), "/project");
+        assert_eq!(enriched.project_path.as_ref().unwrap().as_ref(), "/project");
     }
 
     #[test]
     fn note_and_line_render_the_index_placement_not_the_note_file() {
-        let enriched = enrich(&record("body"), &project_path()).unwrap();
+        let enriched = enrich(&record("body"), Some(&project_path())).unwrap();
         assert_eq!(
             enriched.location.index_path().as_path(),
             std::path::Path::new("/notes/foo/foo.md")
@@ -275,7 +275,7 @@ mod tests {
 
     #[test]
     fn placeholder_prompt_is_not_launchable() {
-        let enriched = enrich(&record("TODO"), &project_path()).unwrap();
+        let enriched = enrich(&record("TODO"), Some(&project_path())).unwrap();
         assert!(!enriched.launch.is_ready());
         assert!(enriched.launch.needs_prompt());
         assert_eq!(enriched.launch.issues(), [TaskIssue::PlaceholderPrompt]);
@@ -288,7 +288,7 @@ mod tests {
             expected: TaskNotePath::new("/notes/foo/FOO-0001.md".into()),
         };
 
-        let enriched = enrich(&rec, &project_path()).unwrap();
+        let enriched = enrich(&rec, Some(&project_path())).unwrap();
 
         assert!(!enriched.launch.is_ready());
         assert!(enriched.launch.needs_prompt());
@@ -312,7 +312,7 @@ mod tests {
             reason: "expected a sequence".to_string(),
         };
 
-        let enriched = enrich(&rec, &project_path()).unwrap();
+        let enriched = enrich(&rec, Some(&project_path())).unwrap();
 
         assert!(enriched.launch.is_ready());
         assert!(matches!(
@@ -326,7 +326,10 @@ mod tests {
         let mut rec = record("body");
         rec.title = "  ".to_string();
         assert_eq!(
-            enrich(&rec, &project_path()).unwrap().heading.as_ref(),
+            enrich(&rec, Some(&project_path()))
+                .unwrap()
+                .heading
+                .as_ref(),
             "FOO-0001"
         );
     }
@@ -336,7 +339,7 @@ mod tests {
         let mut rec = record("body");
         rec.section = Some("Futuro".parse().unwrap());
         assert_eq!(
-            enrich(&rec, &project_path())
+            enrich(&rec, Some(&project_path()))
                 .unwrap()
                 .section
                 .as_ref()
@@ -366,7 +369,7 @@ mod tests {
         rec.effort = Some("extreme".to_string());
 
         assert!(matches!(
-            enrich(&rec, &project_path()),
+            enrich(&rec, Some(&project_path())),
             Err(TaskViewError::Effort { ref value, .. }) if value == "extreme"
         ));
     }
@@ -377,7 +380,7 @@ mod tests {
         rec.priority = Some("urgent".to_string());
 
         assert!(matches!(
-            enrich(&rec, &project_path()),
+            enrich(&rec, Some(&project_path())),
             Err(TaskViewError::Priority { ref value, .. }) if value == "urgent"
         ));
     }
@@ -387,7 +390,7 @@ mod tests {
         let mut rec = record("body");
         rec.title = "x".repeat(201);
 
-        let error = enrich(&rec, &project_path()).unwrap_err();
+        let error = enrich(&rec, Some(&project_path())).unwrap_err();
 
         assert!(matches!(error, TaskViewError::Title { .. }));
     }

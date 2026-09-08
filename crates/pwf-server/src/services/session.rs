@@ -198,6 +198,7 @@ fn plan_session_status(error: &PlanSessionError) -> Status {
     let message = error.to_string();
     match error {
         PlanSessionError::NotLaunchable { .. }
+        | PlanSessionError::ProjectSourceMissing { .. }
         | PlanSessionError::ProjectPathMissing { .. }
         | PlanSessionError::InvalidProjectPath { .. }
         | PlanSessionError::EmptyAgentCommand => Status::failed_precondition(message),

@@ -1,5 +1,5 @@
-use pwf_models::session::SessionWorkingDirectory;
-
 pub trait ProjectDirectoryClient: Clone + Send + Sync + 'static {
-    fn is_directory(&self, path: &SessionWorkingDirectory) -> bool;
+    fn canonicalize(&self, path: &std::path::Path) -> std::io::Result<std::path::PathBuf>;
+
+    fn is_directory(&self, path: &std::path::Path) -> bool;
 }

@@ -124,7 +124,11 @@ pub fn assert_project(
         "created_at should be a UTC timestamp: {project}"
     );
     assert_eq!(project["is_paused"], is_paused);
-    assert_eq!(project.as_object().map(serde_json::Map::len), Some(6));
+    assert_eq!(
+        project.get("obsidian_vault"),
+        Some(&serde_json::Value::Null)
+    );
+    assert_eq!(project.as_object().map(serde_json::Map::len), Some(7));
 }
 
 pub fn assert_failure(output: Output, identifying_fragments: &[&str]) -> anyhow::Result<()> {
