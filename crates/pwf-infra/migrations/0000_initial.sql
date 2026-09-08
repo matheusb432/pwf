@@ -11,12 +11,13 @@ CREATE TABLE projects (
         length(id) BETWEEN 2 AND 4
         AND id NOT GLOB '*[^A-Z]*'
     ),
-    project_source_id  INTEGER NOT NULL REFERENCES project_sources(id),
+    project_source_id  INTEGER REFERENCES project_sources(id),
     title              TEXT NOT NULL COLLATE NOCASE UNIQUE,
     tasks_kind         TEXT NOT NULL CHECK (tasks_kind IN ('directory')),
     tasks_path         TEXT NOT NULL,
     created_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     paused_at          TEXT,
+    obsidian_vault     TEXT CHECK (obsidian_vault IS NULL OR length(trim(obsidian_vault)) > 0),
     UNIQUE (tasks_kind, tasks_path)
 ) STRICT;
 
@@ -42,6 +43,12 @@ CREATE TABLE task_mutation_requests (
     outcome      TEXT,
     created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     completed_at TEXT,
+    task_title   TEXT,
+    task_status  TEXT CHECK (
+        (task_title IS NULL AND task_status IS NULL)
+        OR (task_title IS NOT NULL AND task_status IS NOT NULL
+            AND task_status IN ('active', 'done', 'cancelled'))
+    ),
     CHECK (
         (
             state = 'pending'
@@ -99,6 +106,7 @@ SELECT
     title,
     tasks_kind,
     tasks_path,
-    created_at
+    created_at,
+    obsidian_vault
 FROM projects
 WHERE paused_at IS NULL;

@@ -138,7 +138,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn initial_schema_enforces_project_identity_and_prompt_lane_constraints() {
+    async fn initial_schema_enforces_current_constraints() {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
         migrate_database(&pool).await.unwrap();
         sqlx::query("INSERT INTO project_sources (kind, value) VALUES ('directory', '/work/foo')")
@@ -159,6 +159,37 @@ mod tests {
                 .await
                 .is_err()
         );
+        sqlx::query("UPDATE projects SET project_source_id = NULL, obsidian_vault = '/notes'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(
+            sqlx::query("UPDATE projects SET obsidian_vault = ' '")
+                .execute(&pool)
+                .await
+                .is_err()
+        );
+        sqlx::query("INSERT INTO task_mutation_requests (request_id, operation, fingerprint, task_id) VALUES ('request', 'create', ?, 'FOO-0001')")
+            .bind("a".repeat(64))
+            .execute(&pool)
+            .await
+            .unwrap();
+        for statement in [
+            "UPDATE task_mutation_requests SET task_title = 'only title'",
+            "UPDATE task_mutation_requests SET task_status = 'done'",
+            "UPDATE task_mutation_requests SET task_title = 'task', task_status = 'invalid'",
+        ] {
+            assert!(
+                sqlx::query(statement).execute(&pool).await.is_err(),
+                "{statement}"
+            );
+        }
+        sqlx::query(
+            "UPDATE task_mutation_requests SET task_title = 'task', task_status = 'active'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
         assert!(
             sqlx::query("UPDATE task_prompt_lanes SET marker = 'goal' WHERE lane = 'goals'")
                 .execute(&pool)
