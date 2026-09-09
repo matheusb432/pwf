@@ -2,7 +2,12 @@
 
 use clap::{Args, Subcommand};
 use pwf_client::project::ProjectClient;
-use pwf_models::project::{ProjectId, ProjectName, ProjectSourceValue, ProjectTasksPath};
+use pwf_models::{
+    project::{ProjectId, ProjectName, ProjectSourceValue, ProjectTasksPath},
+    settings::ProjectStatusColors,
+};
+
+use crate::console::Console;
 
 pub mod add;
 pub mod add_vault;
@@ -23,7 +28,7 @@ pub struct Arguments {
 #[derive(Subcommand, Debug)]
 pub enum Command {
     /// Lists registered projects in ascending title order.
-    #[command(name = "ls")]
+    #[command(name = "list", visible_alias = "ls")]
     List(list::Arguments),
     /// Gets one registered project.
     Get(get::Arguments),
@@ -41,13 +46,18 @@ pub enum Command {
     Resume(resume::Arguments),
 }
 
-pub async fn run(arguments: Arguments, client: &ProjectClient) -> anyhow::Result<String> {
+pub async fn run(
+    arguments: Arguments,
+    console: Console,
+    colors: ProjectStatusColors,
+    client: &ProjectClient,
+) -> anyhow::Result<String> {
     let Some(command) = arguments.command else {
         return Ok(crate::command::project_help());
     };
 
     let output = match command {
-        Command::List(arguments) => list::run(arguments, client).await?,
+        Command::List(arguments) => list::run(arguments, console, colors, client).await?,
         Command::Get(arguments) => get::run(arguments, client).await?,
         Command::AddVault(arguments) => add_vault::run(arguments, client).await?,
         Command::Add(arguments) => add::run(arguments, client).await?,

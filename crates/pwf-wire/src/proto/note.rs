@@ -9,7 +9,7 @@ use pwf_models::{
 use tonic::Status;
 
 use super::{collection_edit, invalid, parse, required};
-use crate::{confirmation, field_update::FieldUpdate, note, pb};
+use crate::{confirmation, note, patch_field::PatchField, pb};
 
 pub fn add_note_request(request: pb::AddNoteRequest) -> Result<note::AddNote, Status> {
     Ok(note::AddNote {
@@ -76,15 +76,17 @@ pub fn update_note_request(request: pb::UpdateNoteRequest) -> Result<note::EditN
         title
             .as_deref()
             .map(|value| parse::<NoteTitle>("title", value))
-            .transpose()?,
+            .transpose()?
+            .into(),
         content
             .as_deref()
             .map(|value| parse("content", value))
-            .transpose()?,
-        note_field_update("domain", domain)?,
+            .transpose()?
+            .into(),
+        note_patch_field("domain", domain)?,
         collection_edit(tags, note_tag_values)?,
         collection_edit(sources, note_source_values)?,
-        note_field_update("verified", verified)?,
+        note_patch_field("verified", verified)?,
     )
     .map_err(|error| invalid("edits", error))?;
     Ok(note::EditNote {
@@ -118,6 +120,7 @@ pub fn list_notes_response(notes: note::ListedNotes) -> pb::ListNotesResponse {
             .notes
             .into_iter()
             .map(|note| pb::ListedNote {
+                is_verified: note.is_verified(),
                 id: note.id.to_string(),
                 title: note.title.to_string(),
             })
@@ -167,22 +170,20 @@ pub fn delete_note_result(outcome: note::RemovedNoteOutcome) -> pb::DeleteNoteRe
     }
 }
 
-fn note_field_update<T>(
+fn note_patch_field<T>(
     field: &str,
-    update: Option<pb::StringFieldUpdate>,
-) -> Result<FieldUpdate<T>, Status>
+    update: Option<pb::StringPatchField>,
+) -> Result<PatchField<T>, Status>
 where
     T: FromStr,
     T::Err: Display,
 {
     let Some(update) = update else {
-        return Ok(FieldUpdate::Unchanged);
+        return Ok(PatchField::NoAction);
     };
     match required(field, update.operation)? {
-        pb::string_field_update::Operation::Update(value) => {
-            parse(field, &value).map(FieldUpdate::Update)
-        }
-        pb::string_field_update::Operation::Clear(_) => Ok(FieldUpdate::Clear),
+        pb::string_patch_field::Operation::Set(value) => parse(field, &value).map(PatchField::Set),
+        pb::string_patch_field::Operation::Clear(_) => Ok(PatchField::Clear),
     }
 }
 
@@ -222,11 +223,12 @@ mod tests {
     use super::update_note_request;
     use crate::{
         collection_edit::CollectionEdit,
-        field_update::FieldUpdate,
+        patch_field::PatchField,
         pb::{
-            ClearField, StringCollectionEdit, StringFieldUpdate, StringValues, UpdateNoteRequest,
-            string_collection_edit, string_field_update,
+            ClearField, StringCollectionEdit, StringPatchField, StringValues, UpdateNoteRequest,
+            string_collection_edit, string_patch_field,
         },
+        set_field::SetField,
     };
 
     fn request() -> UpdateNoteRequest {
@@ -254,18 +256,19 @@ mod tests {
             sources: Some(StringCollectionEdit {
                 operation: Some(string_collection_edit::Operation::Clear(ClearField {})),
             }),
-            verified: Some(StringFieldUpdate {
-                operation: Some(string_field_update::Operation::Update(
-                    "2026-08-30".to_string(),
-                )),
+            verified: Some(StringPatchField {
+                operation: Some(string_patch_field::Operation::Set("2026-08-30".to_string())),
             }),
             ..request()
         })
         .unwrap();
 
-        assert!(command.edits.title().is_none());
-        assert_eq!(command.edits.content().unwrap().as_ref(), "New content");
-        assert!(matches!(command.edits.domain(), FieldUpdate::Unchanged));
+        assert!(matches!(command.edits.title(), SetField::NoAction));
+        assert!(matches!(
+            command.edits.content(),
+            SetField::Set(value) if value.as_ref() == "New content"
+        ));
+        assert!(matches!(command.edits.domain(), PatchField::NoAction));
         assert!(matches!(
             command.edits.tags(),
             CollectionEdit::Append(values) if values[0].as_ref() == "rust"
@@ -273,7 +276,7 @@ mod tests {
         assert!(matches!(command.edits.sources(), CollectionEdit::Clear));
         assert!(matches!(
             command.edits.verified(),
-            FieldUpdate::Update(value) if value.as_ref() == "2026-08-30"
+            PatchField::Set(value) if value.as_ref() == "2026-08-30"
         ));
     }
 

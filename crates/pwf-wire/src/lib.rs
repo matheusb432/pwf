@@ -2,11 +2,12 @@
 
 pub mod collection_edit;
 pub mod confirmation;
-pub mod field_update;
 pub mod note;
 pub mod pagination;
+pub mod patch_field;
 pub mod project;
 pub mod proto;
+pub mod set_field;
 pub mod task;
 
 #[allow(

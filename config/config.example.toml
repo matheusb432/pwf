@@ -2,7 +2,15 @@ default_priority = "medium" # low | medium | high | highest
 # Accepts field[:asc|desc]. Bare created/id/priority descend; project-id/effort/title ascend.
 default_sort_order = "id" # created | id | project-id | priority | effort | title
 
-[colors]
-active = "#40E0D0"
-done = "#008000"
-cancelled = "#ff0000"
+[colors.task]
+active = "#6495ED"
+done = "#A3E635"
+cancelled = "#FF6B8A"
+
+[colors.project]
+active = "#6495ED"
+paused = "#FF6B8A"
+
+[colors.note]
+active = "#6495ED"
+verified = "#A3E635"

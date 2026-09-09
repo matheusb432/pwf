@@ -19,13 +19,14 @@ use pwf_models::{
         NoteContent, NoteDomain, NoteSelector, NoteSource, NoteTag, NoteTitle, NoteVerification,
     },
     project::ProjectSelector,
+    settings::NoteStatusColors,
 };
 
 use crate::{
     confirmation::{CliConfirmationClient, prompt_error},
     console::Console,
     edit::{string_collection_edit, string_field_edit},
-    render::{render_confirmation, render_summary},
+    render::{render_confirmation, render_summary, rgb_color},
 };
 
 #[derive(Args, Debug)]
@@ -213,10 +214,11 @@ impl FromStr for PositionalNote {
 pub async fn run(
     arguments: &Arguments,
     console: Console,
+    colors: NoteStatusColors,
     client: &NoteClient,
 ) -> anyhow::Result<String> {
     match &arguments.command {
-        Command::List(arguments) => list(arguments, console, client).await,
+        Command::List(arguments) => list(arguments, console, colors, client).await,
         Command::Add(arguments) => add(arguments, console, client).await,
         Command::Remove(arguments) => remove(arguments, console, client).await,
         Command::Edit(arguments) => edit(arguments, console, client).await,
@@ -226,6 +228,7 @@ pub async fn run(
 async fn list(
     arguments: &ListArguments,
     console: Console,
+    colors: NoteStatusColors,
     client: &NoteClient,
 ) -> anyhow::Result<String> {
     client
@@ -240,7 +243,7 @@ async fn list(
         })
         .await
         .map_err(crate::rpc_error)
-        .map(|result| render_listed(&result, console.color()))
+        .map(|result| render_listed(&result, colors, console.color()))
 }
 
 async fn add(
@@ -366,14 +369,21 @@ async fn edit(
         .map(|result| render_edited(&result, console.color()))
 }
 
-fn render_listed(result: &ListNotesResponse, color_on: bool) -> String {
+fn render_listed(result: &ListNotesResponse, colors: NoteStatusColors, color_on: bool) -> String {
     if result.notes.is_empty() {
         return format!("No notes for {}.\n", result.project);
     }
     let mut output = result
         .notes
         .iter()
-        .map(|note| render_summary(&note.id, &note.title, color_on))
+        .map(|note| {
+            let color = if note.is_verified {
+                colors.verified()
+            } else {
+                colors.active()
+            };
+            render_summary(&note.id, &note.title, rgb_color(color), color_on)
+        })
         .collect::<Vec<_>>()
         .join("\n");
     if result.hidden > 0 {
@@ -443,7 +453,10 @@ mod tests {
         AddNoteResponse, DeletedNote, ListNotesResponse, ListedNote, UpdateNoteResponse,
     };
 
-    use super::{PositionalNote, render_added, render_edited, render_listed, render_removed};
+    use super::{
+        NoteStatusColors, PositionalNote, render_added, render_edited, render_listed,
+        render_removed,
+    };
 
     fn identifier(number: u32) -> String {
         format!("FOO-NOTE-{number:04}")
@@ -495,6 +508,7 @@ mod tests {
                     notes: Vec::new(),
                     hidden: 0,
                 },
+                NoteStatusColors::default(),
                 false,
             ),
             "No notes for foo.\n"
@@ -505,16 +519,19 @@ mod tests {
                     project: "foo".to_string(),
                     notes: vec![
                         ListedNote {
+                            is_verified: false,
                             id: identifier(2),
                             title: "second".to_string(),
                         },
                         ListedNote {
+                            is_verified: false,
                             id: identifier(1),
                             title: "first".to_string(),
                         },
                     ],
                     hidden: 3,
                 },
+                NoteStatusColors::default(),
                 false,
             ),
             "FOO-NOTE-0002 :: second\nFOO-NOTE-0001 :: first\n... and 3 more; run 'pwf note <proj> ls -n 0' to show all"

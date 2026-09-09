@@ -12,6 +12,9 @@ mod render;
 pub mod server;
 pub mod settings;
 pub mod task;
+#[cfg(test)]
+#[path = "../tests/support/style.rs"]
+mod test_style;
 
 pub(crate) fn rpc_error(error: pwf_client::ClientError) -> anyhow::Error {
     match error {

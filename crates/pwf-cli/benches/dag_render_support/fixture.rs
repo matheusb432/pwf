@@ -155,7 +155,7 @@ pub fn validate_renderer(task_dag: &TaskDag, fixture_name: &str) {
             );
         }
         require_condition(
-            rendered.contains("\u{1b}[") == color.color_on(),
+            rendered.contains(&anstyle::Style::new().bold().to_string()) == color.color_on(),
             &format!(
                 "renderer output matches the requested color mode in {fixture_name}/{}",
                 color.name()

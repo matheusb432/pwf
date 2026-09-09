@@ -93,7 +93,7 @@ pub async fn execute(
 mod tests {
     use futures::future::BoxFuture;
     use pwf_models::{
-        note::{NoteId, NoteTitle, ProjectNote},
+        note::{NoteId, NoteTitle},
         project::{ProjectId, ProjectName},
     };
     use pwf_wire::{
@@ -105,7 +105,7 @@ mod tests {
     use crate::{
         note::remove_note,
         ports::confirmation::{ConfirmationClient, ConfirmationClientError},
-        testing::{InMemoryStore, InMemoryStoreFailure, insert_project},
+        testing::{InMemoryStore, InMemoryStoreFailure, insert_project, project_note},
     };
 
     #[derive(Debug, thiserror::Error)]
@@ -146,13 +146,6 @@ mod tests {
         }
     }
 
-    fn note() -> ProjectNote {
-        ProjectNote {
-            id: NoteId::try_new("FOO-NOTE-0007").unwrap(),
-            title: NoteTitle::try_new("remember milk").unwrap(),
-        }
-    }
-
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn full_prefixless_and_bare_identifiers_resolve(pool: sqlx::SqlitePool) {
         insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
@@ -162,7 +155,8 @@ mod tests {
             "note-0007",
             "7",
         ] {
-            let store = InMemoryStore::default().with_project_notes("foo", vec![note()]);
+            let store = InMemoryStore::default()
+                .with_project_notes("foo", vec![project_note(7, "remember milk")]);
             let mut confirmation = TestConfirmation::accepting();
 
             let removed = remove_note::execute(
@@ -251,7 +245,8 @@ mod tests {
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn decline_preserves_the_note(pool: sqlx::SqlitePool) {
         insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
-        let store = InMemoryStore::default().with_project_notes("foo", vec![note()]);
+        let store = InMemoryStore::default()
+            .with_project_notes("foo", vec![project_note(7, "remember milk")]);
         let mut confirmation = TestConfirmation::declining();
 
         let outcome = remove_note::execute(
@@ -267,7 +262,10 @@ mod tests {
         .unwrap();
 
         assert!(matches!(outcome, RemovedNoteOutcome::Aborted { .. }));
-        assert_eq!(store.project_notes("foo"), vec![note()]);
+        assert_eq!(
+            store.project_notes("foo"),
+            vec![project_note(7, "remember milk")]
+        );
     }
 
     #[test]

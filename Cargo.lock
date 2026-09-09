@@ -2123,7 +2123,7 @@ dependencies = [
 
 [[package]]
 name = "pwf-app"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -2134,7 +2134,7 @@ dependencies = [
 
 [[package]]
 name = "pwf-application"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "askama",
@@ -2156,7 +2156,7 @@ dependencies = [
 
 [[package]]
 name = "pwf-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "allocation-counter",
  "anstyle",
@@ -2183,7 +2183,7 @@ dependencies = [
 
 [[package]]
 name = "pwf-client"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "pwf-local-transport",
  "pwf-wire",
@@ -2199,7 +2199,7 @@ dependencies = [
 
 [[package]]
 name = "pwf-infra"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "allocation-counter",
  "anyhow",
@@ -2225,7 +2225,7 @@ dependencies = [
 
 [[package]]
 name = "pwf-local-transport"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "blake3",
  "directories",
@@ -2244,7 +2244,7 @@ dependencies = [
 
 [[package]]
 name = "pwf-marker-sections"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "criterion",
  "thiserror",
@@ -2252,7 +2252,7 @@ dependencies = [
 
 [[package]]
 name = "pwf-migrator"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "pwf-infra",
@@ -2263,7 +2263,7 @@ dependencies = [
 
 [[package]]
 name = "pwf-models"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "jiff",
  "nutype",
@@ -2272,7 +2272,7 @@ dependencies = [
 
 [[package]]
 name = "pwf-server"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "criterion",
@@ -2306,7 +2306,7 @@ dependencies = [
 
 [[package]]
 name = "pwf-wire"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "blake3",
  "prost",

@@ -6,7 +6,8 @@ register a project with `pwf project add-vault`:
 pwf project add-vault ~/notes --id app --tasks-path projects/my-app --source-path ~/code/my-app
 ```
 
-the vault root must contain a `.obsidian` folder.
+> [!IMPORTANT]
+> the vault root must contain a `.obsidian` folder.
 `--tasks-path` selects a relative folder inside the vault. `projects/my-app` gives the project the title `my-app`.
 
 from the vault root, the path can be omitted:
@@ -25,6 +26,7 @@ use `pwf project edit app --clear-source` to remove the source directory.
 
 ## task removal
 
-projects registered with `add-vault` store the vault root path in `projects.obsidian_vault`.
-removing a task moves its note to that vault's `.trash` folder. the folder must already exist; if it is missing, removal fails before changing the task.
-when a filename is taken, the next available numbered name is used, such as `APP-0001 (1).md`.
+> [!CAUTION]
+> projects registered with `add-vault` store the vault root path in `projects.obsidian_vault`.
+> removing a task moves its note to that vault's `.trash` folder. the folder must already exist; if it is missing, removal fails before changing the task.
+> when a filename is taken, the next available numbered name is used, such as `APP-0001 (1).md`.

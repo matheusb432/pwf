@@ -171,6 +171,8 @@ mod tests {
         task::{TaskId, TaskStatus},
     };
 
+    use crate::test_style::color_rgb;
+
     #[test]
     fn root_is_rounded_and_blocker_is_rectangular() {
         let output = super::render(
@@ -294,9 +296,12 @@ mod tests {
             true,
         );
 
-        assert!(output.contains("\u{1b}[34mFOO-0001\u{1b}[0m [active]"));
-        assert!(output.contains("\u{1b}[32mFOO-0002\u{1b}[0m [done]"));
-        assert!(output.contains("\u{1b}[31mFOO-0003\u{1b}[0m [cancelled]"));
+        let blue = color_rgb(100, 149, 237);
+        assert!(output.contains(&format!("{blue}FOO-0001{blue:#} [active]")));
+        let green = color_rgb(163, 230, 53);
+        assert!(output.contains(&format!("{green}FOO-0002{green:#} [done]")));
+        let red = color_rgb(255, 107, 138);
+        assert!(output.contains(&format!("{red}FOO-0003{red:#} [cancelled]")));
     }
 
     #[test]
@@ -329,9 +334,12 @@ mod tests {
             true,
         );
 
-        assert!(output.contains("\u{1b}[38;2;1;2;3mFOO-0001\u{1b}[0m [active]"));
-        assert!(output.contains("\u{1b}[38;2;4;5;6mFOO-0002\u{1b}[0m [done]"));
-        assert!(output.contains("\u{1b}[38;2;7;8;9mFOO-0003\u{1b}[0m [cancelled]"));
+        let active = color_rgb(1, 2, 3);
+        assert!(output.contains(&format!("{active}FOO-0001{active:#} [active]")));
+        let done = color_rgb(4, 5, 6);
+        assert!(output.contains(&format!("{done}FOO-0002{done:#} [done]")));
+        let cancelled = color_rgb(7, 8, 9);
+        assert!(output.contains(&format!("{cancelled}FOO-0003{cancelled:#} [cancelled]")));
     }
 
     fn task_node(id: &str, status: TaskStatus) -> TaskDagNode {

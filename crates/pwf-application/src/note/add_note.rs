@@ -90,25 +90,18 @@ pub async fn execute(
 mod tests {
     use pwf_models::{
         AppDate,
-        note::{NoteContent, NoteId, NoteTitle, ProjectNote},
+        note::{NoteContent, NoteTitle},
     };
 
     use super::{AddNote, AddNoteError};
     use crate::{
         note::add_note,
-        testing::{FixedClock, InMemoryStore, insert_project},
+        testing::{FixedClock, InMemoryStore, insert_project, project_note},
     };
 
     #[derive(Debug, thiserror::Error)]
     #[error("sentinel store failure")]
     struct SentinelStoreError;
-
-    fn note(number: u32, title: &str) -> ProjectNote {
-        ProjectNote {
-            id: NoteId::try_new(format!("FOO-NOTE-{number:04}")).unwrap(),
-            title: NoteTitle::try_new(title).unwrap(),
-        }
-    }
 
     fn command(project_selector: &str) -> AddNote {
         AddNote {
@@ -129,7 +122,11 @@ mod tests {
         for project_selector in ["foo", "FOO"] {
             let store = InMemoryStore::default().with_project_notes(
                 "foo",
-                vec![note(2, "two"), note(9, "nine"), note(4, "four")],
+                vec![
+                    project_note(2, "two"),
+                    project_note(9, "nine"),
+                    project_note(4, "four"),
+                ],
             );
 
             let added = add_note::execute(command(project_selector), &store, &pool, &FixedClock)
@@ -180,7 +177,8 @@ mod tests {
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn exhausted_four_digit_suffix_is_reported_without_inserting(pool: sqlx::SqlitePool) {
         insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
-        let store = InMemoryStore::default().with_project_notes("foo", vec![note(9_999, "last")]);
+        let store =
+            InMemoryStore::default().with_project_notes("foo", vec![project_note(9_999, "last")]);
 
         let error = add_note::execute(command("foo"), &store, &pool, &FixedClock)
             .await
@@ -190,7 +188,10 @@ mod tests {
             error,
             AddNoteError::IdentifierExhausted { ref project } if project.as_ref() == "foo"
         ));
-        assert_eq!(store.project_notes("foo"), vec![note(9_999, "last")]);
+        assert_eq!(
+            store.project_notes("foo"),
+            vec![project_note(9_999, "last")]
+        );
     }
 
     #[test]

@@ -15,7 +15,7 @@ use pwf_models::{
     },
 };
 
-use crate::{collection_edit::CollectionEdit, field_update::FieldUpdate};
+use crate::{collection_edit::CollectionEdit, patch_field::PatchField, set_field::SetField};
 
 pub mod session;
 
@@ -256,11 +256,11 @@ pub struct CompleteTask {
 #[derive(Debug, Clone)]
 pub enum EditTaskContentKind {
     Structured {
-        title: Option<TaskTitle>,
+        title: SetField<TaskTitle>,
         lanes: TaskLaneEdits,
     },
     AppendShorthand {
-        title: Option<TaskTitle>,
+        title: SetField<TaskTitle>,
         prompt: TaskPrompt,
     },
     ReplaceShorthand {
@@ -275,10 +275,10 @@ pub struct EditTaskContent(EditTaskContentKind);
 impl EditTaskContent {
     /// Creates an explicit title or lane edit.
     pub fn structured(
-        title: Option<TaskTitle>,
+        title: SetField<TaskTitle>,
         lanes: TaskLaneEdits,
     ) -> Result<Self, EditTaskContentError> {
-        if title.is_none() && lanes.is_empty() {
+        if title.is_unchanged() && lanes.is_empty() {
             return Err(EditTaskContentError::EmptyStructured);
         }
         Ok(Self(EditTaskContentKind::Structured { title, lanes }))
@@ -286,7 +286,7 @@ impl EditTaskContent {
 
     /// Creates a non-empty shorthand append.
     pub fn append_shorthand(
-        title: Option<TaskTitle>,
+        title: SetField<TaskTitle>,
         prompt: TaskPrompt,
     ) -> Result<Self, EditTaskContentError> {
         if prompt.as_ref().trim().is_empty() {
@@ -319,11 +319,11 @@ pub enum EditTaskContentError {
 /// Carries at least one requested task change.
 #[derive(Debug, Clone)]
 pub struct TaskEdits {
-    content: Option<EditTaskContent>,
+    content: SetField<EditTaskContent>,
     blocked_by: CollectionEdit<BlockedBy>,
-    effort: FieldUpdate<EffortTier>,
+    effort: PatchField<EffortTier>,
     tags: CollectionEdit<TaskTags>,
-    priority: FieldUpdate<PriorityTier>,
+    priority: PatchField<PriorityTier>,
 }
 
 impl TaskEdits {
@@ -333,13 +333,13 @@ impl TaskEdits {
     ///
     /// Returns [`EmptyTaskEdits`] when every field is unchanged.
     pub fn try_new(
-        content: Option<EditTaskContent>,
+        content: SetField<EditTaskContent>,
         blocked_by: CollectionEdit<BlockedBy>,
-        effort: FieldUpdate<EffortTier>,
+        effort: PatchField<EffortTier>,
         tags: CollectionEdit<TaskTags>,
-        priority: FieldUpdate<PriorityTier>,
+        priority: PatchField<PriorityTier>,
     ) -> Result<Self, EmptyTaskEdits> {
-        if content.is_none()
+        if content.is_unchanged()
             && blocked_by.is_unchanged()
             && effort.is_unchanged()
             && tags.is_unchanged()
@@ -357,8 +357,8 @@ impl TaskEdits {
     }
 
     #[must_use]
-    pub fn content(&self) -> Option<&EditTaskContent> {
-        self.content.as_ref()
+    pub fn content(&self) -> &SetField<EditTaskContent> {
+        &self.content
     }
 
     #[must_use]
@@ -367,7 +367,7 @@ impl TaskEdits {
     }
 
     #[must_use]
-    pub fn effort(&self) -> &FieldUpdate<EffortTier> {
+    pub fn effort(&self) -> &PatchField<EffortTier> {
         &self.effort
     }
 
@@ -377,7 +377,7 @@ impl TaskEdits {
     }
 
     #[must_use]
-    pub fn priority(&self) -> &FieldUpdate<PriorityTier> {
+    pub fn priority(&self) -> &PatchField<PriorityTier> {
         &self.priority
     }
 }
@@ -1379,7 +1379,7 @@ mod tests {
         AddTaskPrompt, EditTaskContent, EditTaskContentError, EmptyTaskEdits, TaskDag, TaskDagEdge,
         TaskDagError, TaskDagNode, TaskEdits, TaskLaneEdits, TaskLaneValueError, TaskLanes,
     };
-    use crate::{collection_edit::CollectionEdit, field_update::FieldUpdate};
+    use crate::{collection_edit::CollectionEdit, patch_field::PatchField, set_field::SetField};
 
     #[test]
     fn lanes_trim_outer_whitespace_and_preserve_literal_markers() {
@@ -1419,19 +1419,19 @@ mod tests {
     #[test]
     fn edit_contracts_reject_empty_shapes() {
         assert!(matches!(
-            EditTaskContent::structured(None, TaskLaneEdits::default()),
+            EditTaskContent::structured(SetField::NoAction, TaskLaneEdits::default()),
             Err(EditTaskContentError::EmptyStructured)
         ));
         assert!(matches!(
-            EditTaskContent::append_shorthand(None, TaskPrompt::new(" \n\t ")),
+            EditTaskContent::append_shorthand(SetField::NoAction, TaskPrompt::new(" \n\t ")),
             Err(EditTaskContentError::EmptyAppend)
         ));
         let error = TaskEdits::try_new(
-            None,
+            SetField::NoAction,
             CollectionEdit::Unchanged,
-            FieldUpdate::Unchanged,
+            PatchField::NoAction,
             CollectionEdit::Unchanged,
-            FieldUpdate::Unchanged,
+            PatchField::NoAction,
         )
         .unwrap_err();
         assert_eq!(error, EmptyTaskEdits);

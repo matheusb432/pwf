@@ -13,7 +13,17 @@ use crate::pb;
 #[must_use]
 pub fn get_user_settings_response(settings: UserSettings) -> pb::GetUserSettingsResponse {
     let colors = settings.task_status_colors();
+    let project_colors = settings.project_status_colors();
+    let note_colors = settings.note_status_colors();
     pb::GetUserSettingsResponse {
+        project_status_colors: Some(pb::ProjectStatusColors {
+            active: Some(rgb_color(project_colors.active())),
+            paused: Some(rgb_color(project_colors.paused())),
+        }),
+        note_status_colors: Some(pb::NoteStatusColors {
+            active: Some(rgb_color(note_colors.active())),
+            verified: Some(rgb_color(note_colors.verified())),
+        }),
         default_priority: match settings.default_priority() {
             PriorityTier::Low => pb::PriorityTier::Low,
             PriorityTier::Medium => pb::PriorityTier::Medium,
@@ -22,9 +32,9 @@ pub fn get_user_settings_response(settings: UserSettings) -> pb::GetUserSettings
         } as i32,
         default_sort_order: Some(order_spec(settings.default_sort_order())),
         task_status_colors: Some(pb::TaskStatusColors {
-            active: colors.active().map(rgb_color),
-            done: colors.done().map(rgb_color),
-            cancelled: colors.cancelled().map(rgb_color),
+            active: Some(rgb_color(colors.active())),
+            done: Some(rgb_color(colors.done())),
+            cancelled: Some(rgb_color(colors.cancelled())),
         }),
     }
 }

@@ -21,7 +21,12 @@ pub fn execute(
 
 #[cfg(test)]
 mod tests {
-    use pwf_models::settings::{RgbColor, TaskStatusColors, UserSettings};
+    use pwf_models::{
+        settings::{
+            NoteStatusColors, ProjectStatusColors, RgbColor, TaskStatusColors, UserSettings,
+        },
+        task::{PriorityTier, order::OrderSpec},
+    };
 
     use super::{GetUserSettings, GetUserSettingsError};
     use crate::{
@@ -42,8 +47,10 @@ mod tests {
     fn query_returns_the_complete_validated_settings_snapshot() {
         let settings = UserSettings::new(
             TaskStatusColors::new(Some(RgbColor::new(255, 135, 0)), None, None),
-            pwf_models::task::PriorityTier::Medium,
-            pwf_models::task::order::OrderSpec::default(),
+            ProjectStatusColors::default(),
+            NoteStatusColors::default(),
+            PriorityTier::Medium,
+            OrderSpec::default(),
         );
         let reader = FixedUserSettingsReader(settings);
 

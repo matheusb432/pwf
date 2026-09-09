@@ -6,7 +6,7 @@ use pwf_models::{
     },
     project::Project,
 };
-use pwf_wire::{collection_edit::CollectionEdit, field_update::FieldUpdate};
+use pwf_wire::{collection_edit::CollectionEdit, patch_field::PatchField, set_field::SetField};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewProjectNote {
@@ -22,12 +22,12 @@ pub struct NewProjectNote {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ProjectNotePatch {
-    pub title: Option<NoteTitle>,
-    pub content: Option<NoteContent>,
-    pub domain: FieldUpdate<NoteDomain>,
+    pub title: SetField<NoteTitle>,
+    pub content: SetField<NoteContent>,
+    pub domain: PatchField<NoteDomain>,
     pub tags: CollectionEdit<Vec<NoteTag>>,
     pub sources: CollectionEdit<Vec<NoteSource>>,
-    pub verified: FieldUpdate<NoteVerification>,
+    pub verified: PatchField<NoteVerification>,
 }
 
 /// Persists project notes independently of task-note storage.

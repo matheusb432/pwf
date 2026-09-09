@@ -1,7 +1,7 @@
 use std::error::Error;
 
 use pwf_models::project::ProjectId;
-use pwf_wire::{field_update::FieldUpdate, project::UpdateProject};
+use pwf_wire::{patch_field::PatchField, project::UpdateProject};
 
 use super::source_record;
 
@@ -28,7 +28,7 @@ pub async fn execute(
         .await
         .map_err(|error| unexpected("starting project update transaction", error))?;
     let (update_source, source_id) = match &command.source {
-        FieldUpdate::Update(source) => (
+        PatchField::Set(source) => (
             true,
             Some(
                 source_record::get_or_insert(&mut transaction, source)
@@ -36,14 +36,14 @@ pub async fn execute(
                     .map_err(|error| unexpected("resolving project source", error))?,
             ),
         ),
-        FieldUpdate::Clear => (true, None),
-        FieldUpdate::Unchanged => (false, None),
+        PatchField::Clear => (true, None),
+        PatchField::NoAction => (false, None),
     };
     let project_id = command.id.as_ref();
     let (update_vault, obsidian_vault) = match &command.obsidian_vault {
-        pwf_wire::field_update::FieldUpdate::Unchanged => (false, None),
-        pwf_wire::field_update::FieldUpdate::Clear => (true, None),
-        pwf_wire::field_update::FieldUpdate::Update(value) => (true, Some(value.as_ref())),
+        pwf_wire::patch_field::PatchField::NoAction => (false, None),
+        pwf_wire::patch_field::PatchField::Clear => (true, None),
+        pwf_wire::patch_field::PatchField::Set(value) => (true, Some(value.as_ref())),
     };
     let update = sqlx::query!(
         "UPDATE projects SET project_source_id = CASE WHEN ? THEN ? ELSE project_source_id END, obsidian_vault = CASE WHEN ? THEN ? ELSE obsidian_vault END WHERE id = ?",
@@ -102,9 +102,9 @@ mod tests {
 
     fn update(project_id: &str, source_value: &str) -> UpdateProject {
         UpdateProject {
-            obsidian_vault: pwf_wire::field_update::FieldUpdate::Unchanged,
+            obsidian_vault: pwf_wire::patch_field::PatchField::NoAction,
             id: project_id.parse().unwrap(),
-            source: pwf_wire::field_update::FieldUpdate::Update(ProjectSource::new(
+            source: pwf_wire::patch_field::PatchField::Set(ProjectSource::new(
                 ProjectSourceKind::Directory,
                 ProjectSourceValue::try_new(source_value).unwrap(),
             )),

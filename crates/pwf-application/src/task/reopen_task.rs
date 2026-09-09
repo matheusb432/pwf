@@ -1,6 +1,7 @@
 use pwf_models::task::{TaskId, TaskStatus, TaskTimestamp};
 use pwf_wire::{
     confirmation::ReopenTaskConfirmation,
+    set_field::SetField,
     task::{ReopenTask, ReopenTaskOutcome, TaskMutationResult, TaskMutationSummary},
 };
 
@@ -199,13 +200,14 @@ fn apply_reopen(prepared: PreparedReopen, store: &impl TaskVault) -> Result<(), 
     let patch = TaskWrite::Patch {
         id: task_identifier.clone(),
         patch: TaskPatch {
-            status: Some(TaskStatus::Active),
+            status: SetField::Set(TaskStatus::Active),
             completed_at: NullablePatch::Clear,
             commits: NullablePatch::Clear,
             body: prepared
                 .report
                 .is_some()
-                .then_some(prepared.body_without_report),
+                .then_some(prepared.body_without_report)
+                .into(),
             ..TaskPatch::default()
         },
     };

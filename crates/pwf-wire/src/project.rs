@@ -26,8 +26,8 @@ pub struct UpdateProject {
     /// Project ID.
     pub id: ProjectId,
     /// Replacement source location.
-    pub source: crate::field_update::FieldUpdate<ProjectSource>,
-    pub obsidian_vault: crate::field_update::FieldUpdate<pwf_models::project::ObsidianVault>,
+    pub source: crate::patch_field::PatchField<ProjectSource>,
+    pub obsidian_vault: crate::patch_field::PatchField<pwf_models::project::ObsidianVault>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

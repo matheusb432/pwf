@@ -1,6 +1,7 @@
 use pwf_client::PwfClient;
+use pwf_models::settings::{NoteStatusColors, ProjectStatusColors};
 
-use crate::{command, note, project, settings, task};
+use crate::{command, console::Console, note, project, settings, task};
 
 pub async fn run() {
     let parsed = command::parse_argv(std::env::args().skip(1).collect())
@@ -36,14 +37,22 @@ async fn dispatch(parsed: command::Cli) -> anyhow::Result<String> {
         command::RootCommand::Server(arguments) => crate::server::run(arguments).await,
         command::RootCommand::Project(arguments) => {
             let project_client = client.project();
-            project::run(arguments, &project_client).await
+            let colors = if matches!(&arguments.command, Some(project::Command::List(arguments)) if !arguments.json)
+            {
+                settings::load(&client.settings())
+                    .await?
+                    .project_status_colors()
+            } else {
+                ProjectStatusColors::default()
+            };
+            project::run(arguments, Console::from_terminal(), colors, &project_client).await
         }
         command::RootCommand::Task(command) => {
             let user_settings = settings::load(&client.settings()).await?;
             let task_client = client.task();
             task::run(
                 &command,
-                crate::console::Console::from_terminal(),
+                Console::from_terminal(),
                 user_settings.task_status_colors(),
                 &task_client,
             )
@@ -51,12 +60,14 @@ async fn dispatch(parsed: command::Cli) -> anyhow::Result<String> {
         }
         command::RootCommand::Note(arguments) => {
             let note_client = client.note();
-            note::run(
-                &arguments,
-                crate::console::Console::from_terminal(),
-                &note_client,
-            )
-            .await
+            let colors = if matches!(&arguments.command, note::Command::List(_)) {
+                settings::load(&client.settings())
+                    .await?
+                    .note_status_colors()
+            } else {
+                NoteStatusColors::default()
+            };
+            note::run(&arguments, Console::from_terminal(), colors, &note_client).await
         }
     }
 }

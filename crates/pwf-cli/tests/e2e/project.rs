@@ -51,7 +51,7 @@ fn project_registry_lifecycle_is_observable_across_processes() {
         true
     );
 
-    let projects = success_json(fixture.run(&["project", "ls"]).unwrap()).unwrap();
+    let projects = success_json(fixture.run(&["project", "ls", "--json"]).unwrap()).unwrap();
     let projects = projects.as_array().unwrap();
     assert_eq!(projects.len(), 2);
     assert_project(

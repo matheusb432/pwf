@@ -1,6 +1,6 @@
 use pwf_client::pb::{
-    ClearField, StringCollectionEdit, StringFieldUpdate, StringValues, string_collection_edit,
-    string_field_update,
+    ClearField, StringCollectionEdit, StringPatchField, StringValues, string_collection_edit,
+    string_patch_field,
 };
 
 pub(crate) fn string_collection_edit(
@@ -28,16 +28,16 @@ pub(crate) fn string_collection_edit(
 pub(crate) fn string_field_edit(
     value: Option<String>,
     remove_existing: bool,
-) -> Option<StringFieldUpdate> {
+) -> Option<StringPatchField> {
     value.map_or_else(
         || {
-            remove_existing.then_some(StringFieldUpdate {
-                operation: Some(string_field_update::Operation::Clear(ClearField {})),
+            remove_existing.then_some(StringPatchField {
+                operation: Some(string_patch_field::Operation::Clear(ClearField {})),
             })
         },
         |value| {
-            Some(StringFieldUpdate {
-                operation: Some(string_field_update::Operation::Update(value)),
+            Some(StringPatchField {
+                operation: Some(string_patch_field::Operation::Set(value)),
             })
         },
     )
@@ -77,11 +77,11 @@ mod tests {
             string_field_edit(Some("value".to_string()), false)
                 .unwrap()
                 .operation,
-            Some(pb::string_field_update::Operation::Update(_))
+            Some(pb::string_patch_field::Operation::Set(_))
         ));
         assert!(matches!(
             string_field_edit(None, true).unwrap().operation,
-            Some(pb::string_field_update::Operation::Clear(_))
+            Some(pb::string_patch_field::Operation::Clear(_))
         ));
         assert!(string_field_edit(None, false).is_none());
     }

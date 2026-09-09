@@ -2,7 +2,51 @@ use assert_cmd::prelude::OutputAssertExt as _;
 #[cfg(target_os = "linux")]
 use expectrl::Expect;
 
+#[cfg(unix)]
+use crate::support::{CommandTestExt, style::color_rgb};
 use crate::support::{ManagedProject, command, project_id};
+
+#[test]
+#[cfg(unix)]
+fn note_list_colors_follow_verification_and_custom_settings() {
+    let fixture = ManagedProject::new(&project_id("FOO").unwrap(), "foo").unwrap();
+    fixture
+        .database
+        .command()
+        .args(["note", "add", "foo", "sample / evidence"])
+        .assert()
+        .success();
+    let configured = "[colors.note]\nactive = \"#010203\"\nverified = \"#040506\"\n";
+    for (config, edit, color) in [
+        ("", None, color_rgb(100, 149, 237)),
+        ("", Some("--verified"), color_rgb(163, 230, 53)),
+        ("", Some("--remove-verified"), color_rgb(100, 149, 237)),
+        (configured, None, color_rgb(1, 2, 3)),
+        (configured, Some("--verified"), color_rgb(4, 5, 6)),
+        (configured, Some("--remove-verified"), color_rgb(1, 2, 3)),
+    ] {
+        fixture.database.write_user_config(config).unwrap();
+        if let Some(flag) = edit {
+            let mut command = fixture.database.command();
+            command.args(["note", "edit", "foo", "1", flag]);
+            if flag == "--verified" {
+                command.arg("2026-09-08");
+            }
+            command.assert().success();
+        }
+        let output = fixture
+            .database
+            .command_args(&["note", "list", "foo"])
+            .color()
+            .success_stdout();
+        assert_eq!(output, format!("{color}FOO-NOTE-0001{color:#} :: sample\n"));
+        let output = fixture
+            .database
+            .command_args(&["note", "list", "foo"])
+            .success_stdout();
+        assert_eq!(output, "FOO-NOTE-0001 :: sample\n");
+    }
+}
 
 #[test]
 fn note_help_exposes_explicit_add_and_edit_fields_and_retires_update() {

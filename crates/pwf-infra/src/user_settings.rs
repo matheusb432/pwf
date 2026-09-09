@@ -6,7 +6,10 @@ use pwf_application::ports::user_settings::{
     UserSettingsConfigurationError, UserSettingsLoadError, UserSettingsReader,
 };
 use pwf_models::{
-    settings::{RgbColor, RgbColorError, TaskStatusColors, UserSettings},
+    settings::{
+        NoteStatusColors, ProjectStatusColors, RgbColor, RgbColorError, TaskStatusColors,
+        UserSettings,
+    },
     task::{
         PriorityTier, PriorityTierError,
         order::{OrderSpec, OrderSpecError},
@@ -17,7 +20,7 @@ use serde::Deserialize;
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 struct UserSettingsDocument {
-    colors: TaskStatusColorsDocument,
+    colors: ColorsDocument,
     default_priority: Option<String>,
     default_sort_order: Option<String>,
 }
@@ -43,14 +46,44 @@ impl UserSettingsDocument {
             .unwrap_or_default();
         Ok(UserSettings::new(
             TaskStatusColors::new(
-                configured_color("colors.active", self.colors.active)?,
-                configured_color("colors.done", self.colors.done)?,
-                configured_color("colors.cancelled", self.colors.cancelled)?,
+                configured_color("colors.task.active", self.colors.task.active)?,
+                configured_color("colors.task.done", self.colors.task.done)?,
+                configured_color("colors.task.cancelled", self.colors.task.cancelled)?,
+            ),
+            ProjectStatusColors::new(
+                configured_color("colors.project.active", self.colors.project.active)?,
+                configured_color("colors.project.paused", self.colors.project.paused)?,
+            ),
+            NoteStatusColors::new(
+                configured_color("colors.note.active", self.colors.note.active)?,
+                configured_color("colors.note.verified", self.colors.note.verified)?,
             ),
             default_priority,
             default_sort_order,
         ))
     }
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct ColorsDocument {
+    task: TaskStatusColorsDocument,
+    project: ProjectStatusColorsDocument,
+    note: NoteStatusColorsDocument,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct ProjectStatusColorsDocument {
+    active: Option<String>,
+    paused: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct NoteStatusColorsDocument {
+    active: Option<String>,
+    verified: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -176,14 +209,50 @@ mod tests {
     fn partial_document_overrides_only_the_configured_status_color() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("config.toml");
-        fs::write(&path, "[colors]\nactive = \"#ff8700\"\n").unwrap();
+        fs::write(&path, "[colors.task]\nactive = \"#ff8700\"\n").unwrap();
         let store = TomlSettingsStore::new(Some(path));
 
         let colors = store.load().unwrap().task_status_colors();
 
-        assert_eq!(colors.active(), Some(RgbColor::new(255, 135, 0)));
-        assert_eq!(colors.done(), None);
-        assert_eq!(colors.cancelled(), None);
+        assert_eq!(colors.active(), RgbColor::new(255, 135, 0));
+        assert_eq!(colors.done(), RgbColor::new(163, 230, 53));
+        assert_eq!(colors.cancelled(), RgbColor::new(255, 107, 138));
+    }
+
+    #[test]
+    fn scoped_colors_override_each_object_independently() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.toml");
+        fs::write(
+            &path,
+            concat!(
+                "[colors.task]\nactive = \"#010203\"\n",
+                "[colors.project]\nactive = \"#040506\"\npaused = \"#070809\"\n",
+                "[colors.note]\nactive = \"#0a0b0c\"\nverified = \"#0d0e0f\"\n",
+            ),
+        )
+        .unwrap();
+        let settings = TomlSettingsStore::new(Some(path)).load().unwrap();
+        assert_eq!(
+            settings.task_status_colors().active(),
+            RgbColor::new(1, 2, 3)
+        );
+        assert_eq!(
+            settings.project_status_colors().active(),
+            RgbColor::new(4, 5, 6)
+        );
+        assert_eq!(
+            settings.project_status_colors().paused(),
+            RgbColor::new(7, 8, 9)
+        );
+        assert_eq!(
+            settings.note_status_colors().active(),
+            RgbColor::new(10, 11, 12)
+        );
+        assert_eq!(
+            settings.note_status_colors().verified(),
+            RgbColor::new(13, 14, 15)
+        );
     }
 
     #[test]
@@ -194,6 +263,16 @@ mod tests {
 
         assert_eq!(store.load().unwrap(), UserSettings::default());
         assert!(!path.exists());
+
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        for document in [
+            "",
+            "[colors]\n",
+            "[colors.task]\n[colors.project]\n[colors.note]\n",
+        ] {
+            fs::write(&path, document).unwrap();
+            assert_eq!(store.load().unwrap(), UserSettings::default());
+        }
     }
 
     #[test]
@@ -209,9 +288,14 @@ mod tests {
             "default_sort_order = \"title:sideways\"\n",
             "default_sort_order = \"title:asc:desc\"\n",
             "default_sort_order = false\n",
-            "[colors]\nunknown = \"#ffffff\"\n",
-            "[colors]\nactive = \"#fff\"\n",
-            "[colors]\nactive = 42\n",
+            "[colors.task]\nunknown = \"#ffffff\"\n",
+            "[colors.task]\nactive = \"#fff\"\n",
+            "[colors.task]\nactive = 42\n",
+            "[colors]\nactive = \"#ffffff\"\n",
+            "[colors.project]\npaused = \"#gg0000\"\n",
+            "[colors.project]\ndone = \"#ffffff\"\n",
+            "[colors.note]\nverified = 42\n",
+            "[colors.note]\narchived = \"#ffffff\"\n",
         ] {
             fs::write(&path, source).unwrap();
             let error = store.load().unwrap_err();
@@ -231,16 +315,16 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("config.toml");
         let store = TomlSettingsStore::new(Some(path.clone()));
-        fs::write(&path, "[colors]\nactive = \"#010203\"\n").unwrap();
+        fs::write(&path, "[colors.task]\nactive = \"#010203\"\n").unwrap();
         assert_eq!(
             store.load().unwrap().task_status_colors().active(),
-            Some(RgbColor::new(1, 2, 3))
+            RgbColor::new(1, 2, 3)
         );
 
-        fs::write(&path, "[colors]\nactive = \"#040506\"\n").unwrap();
+        fs::write(&path, "[colors.task]\nactive = \"#040506\"\n").unwrap();
         assert_eq!(
             store.load().unwrap().task_status_colors().active(),
-            Some(RgbColor::new(4, 5, 6))
+            RgbColor::new(4, 5, 6)
         );
     }
 }

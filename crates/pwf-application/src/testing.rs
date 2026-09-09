@@ -8,7 +8,7 @@ use std::{
 pub(crate) use database::{MIGRATOR, insert_project};
 use pwf_models::{
     AppDate,
-    note::{NoteId, ProjectNote},
+    note::{NoteId, NoteTitle, ProjectNote},
     project::{
         Project, ProjectId, ProjectName, ProjectSource, ProjectSourceKind, ProjectSourceValue,
         ProjectTasks, ProjectTasksKind, ProjectTasksPath,
@@ -26,6 +26,14 @@ use crate::ports::{
         TaskPatch, TaskRecord, TaskRevisionState, TaskVault, TaskWrite, TaskWriteSet,
     },
 };
+
+pub(crate) fn project_note(number: u32, title: impl AsRef<str>) -> ProjectNote {
+    ProjectNote {
+        id: NoteId::try_new(format!("FOO-NOTE-{number:04}")).unwrap(),
+        title: NoteTitle::try_new(title.as_ref()).unwrap(),
+        verified: None,
+    }
+}
 
 #[derive(Clone)]
 pub(crate) struct FixedClock;
@@ -509,17 +517,14 @@ fn validate_task_revision(
 }
 
 fn apply_task_patch(record: &mut TaskRecord, patch: TaskPatch) {
-    if let Some(status) = patch.status {
-        record.status = status;
-    }
+    patch.status.apply(&mut record.status);
     apply_nullable_patch(&mut record.completed_at, patch.completed_at);
     apply_nullable_patch(&mut record.commits, patch.commits);
-    if let Some(body) = patch.body {
-        record.body = body;
-    }
-    if let Some(title) = patch.title {
-        record.title = title.to_string();
-    }
+    patch.body.apply(&mut record.body);
+    patch
+        .title
+        .map(|title| title.to_string())
+        .apply(&mut record.title);
     match patch.blocked_by {
         NullablePatch::Unchanged => {}
         NullablePatch::Clear => record.blocked_by = StoredBlockedBy::Absent,
@@ -604,6 +609,7 @@ impl ProjectNotes for InMemoryStore {
         new: NewProjectNote,
     ) -> Result<ProjectNote, Self::Error> {
         let record = ProjectNote {
+            verified: new.verified,
             id: new.id,
             title: new.title,
         };
@@ -640,9 +646,8 @@ impl ProjectNotes for InMemoryStore {
             .iter_mut()
             .find(|note| note.id == *id)
             .unwrap();
-        if let Some(title) = patch.title {
-            note.title = title;
-        }
+        drop(patch.verified.apply(&mut note.verified));
+        patch.title.apply(&mut note.title);
         Ok(())
     }
 

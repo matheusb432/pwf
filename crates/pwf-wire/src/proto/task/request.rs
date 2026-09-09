@@ -13,7 +13,7 @@ use pwf_models::{
 use tonic::Status;
 
 use super::super::{collection_edit, invalid, parse, required};
-use crate::{field_update::FieldUpdate, pb, task};
+use crate::{patch_field::PatchField, pb, task};
 
 const TASK_COLLECTION_VALUES_MAX: usize = 64;
 const TASK_LANE_VALUES_MAX: usize = 128;
@@ -128,7 +128,7 @@ pub fn update_task_request(request: pb::UpdateTaskRequest) -> Result<task::EditT
         expected_revision,
         request_id: request_id_value,
     } = request;
-    let content = content.map(task_content_edit).transpose()?;
+    let content = content.map(task_content_edit).transpose()?.into();
     let edits = task::TaskEdits::try_new(
         content,
         collection_edit(blocked_by, blocked_by_values)?,
@@ -284,7 +284,8 @@ fn task_content_edit(edit: pb::TaskContentEdit) -> Result<task::EditTaskContent,
                 .title
                 .map(TaskTitle::try_new)
                 .transpose()
-                .map_err(|error| invalid("content.title", error))?;
+                .map_err(|error| invalid("content.title", error))?
+                .into();
             let additions = task_lanes(value.additions.unwrap_or_default())?;
             let removals = value
                 .removals
@@ -299,7 +300,8 @@ fn task_content_edit(edit: pb::TaskContentEdit) -> Result<task::EditTaskContent,
                 .title
                 .map(TaskTitle::try_new)
                 .transpose()
-                .map_err(|error| invalid("content.title", error))?;
+                .map_err(|error| invalid("content.title", error))?
+                .into();
             task::EditTaskContent::append_shorthand(title, TaskPrompt::new(value.prompt))
                 .map_err(|error| invalid("content", error))
         }
@@ -376,23 +378,23 @@ fn status_filter(value: i32) -> Result<task::StatusFilter, Status> {
     }
 }
 
-fn effort_edit(value: Option<pb::EffortEdit>) -> Result<FieldUpdate<EffortTier>, Status> {
+fn effort_edit(value: Option<pb::EffortEdit>) -> Result<PatchField<EffortTier>, Status> {
     let Some(value) = value else {
-        return Ok(FieldUpdate::Unchanged);
+        return Ok(PatchField::NoAction);
     };
     match required("effort.operation", value.operation)? {
-        pb::effort_edit::Operation::Set(value) => Ok(FieldUpdate::Update(effort_tier(value)?)),
-        pb::effort_edit::Operation::Clear(_) => Ok(FieldUpdate::Clear),
+        pb::effort_edit::Operation::Set(value) => Ok(PatchField::Set(effort_tier(value)?)),
+        pb::effort_edit::Operation::Clear(_) => Ok(PatchField::Clear),
     }
 }
 
-fn priority_edit(value: Option<pb::PriorityEdit>) -> Result<FieldUpdate<PriorityTier>, Status> {
+fn priority_edit(value: Option<pb::PriorityEdit>) -> Result<PatchField<PriorityTier>, Status> {
     let Some(value) = value else {
-        return Ok(FieldUpdate::Unchanged);
+        return Ok(PatchField::NoAction);
     };
     match required("priority.operation", value.operation)? {
-        pb::priority_edit::Operation::Set(value) => Ok(FieldUpdate::Update(priority_tier(value)?)),
-        pb::priority_edit::Operation::Clear(_) => Ok(FieldUpdate::Clear),
+        pb::priority_edit::Operation::Set(value) => Ok(PatchField::Set(priority_tier(value)?)),
+        pb::priority_edit::Operation::Clear(_) => Ok(PatchField::Clear),
     }
 }
 

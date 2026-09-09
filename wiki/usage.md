@@ -10,7 +10,9 @@ pwf project add-vault ~/notes --id app --tasks-path projects/my-app --source-pat
 omit the vault path to use the current directory. omit `--source-path` for a project without agent sessions.
 
 pending work, which are basically tasks, are .md files structured with goals, context, constraints and a done when section.
-> [!info] On structure
+> [!NOTE]
+> **On structure**
+>
 > the 'goals/context/constraint/done' idea comes from [OpenAI's best practices](https://learn.chatgpt.com/guides/best-practices) when prompting
 > agents, but I've found it's a simple and general enough pattern that I've come to use to any task I do, either manually or with an AI assistant.
 
@@ -66,7 +68,8 @@ you can link tasks with `--blocked-by` and see their dependencies with `pwf task
 
 ## Sessions
 
-sessions require a source directory. set one with `pwf project edit app --source ~/code/my-app`.
+> [!IMPORTANT]
+> sessions require a source directory. set one with `pwf project edit app --source ~/code/my-app`.
 
 pwf supports a very simple way to start an agent session with a task's content appended to it, serving as it's initial prompt:
 
@@ -75,11 +78,12 @@ pwf session app1 --dry-run # recommend running it prior to the actual dispatch
 pwf session app1
 ```
 
-sessions need the selected agent installed. They run in the current terminal.
-Use `--agent claude` to select Claude. task and note commands work offline.
-
-to reinforce, `pwf` itself **does not** make any network requests, and even this command is still offline.
-so this should work with a local model wired up in the codex harness, as expected.
+> [!NOTE]
+> sessions need the selected agent installed. They run in the current terminal.
+> Use `--agent claude` to select Claude. task and note commands work offline.
+>
+> to reinforce, `pwf` itself **does not** make any network requests, and even this command is still offline.
+> so this should work with a local model wired up in the codex harness, as expected.
 
 see [obsidian](obsidian.md) for vault registration and task removal.
 

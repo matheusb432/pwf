@@ -55,10 +55,22 @@ message TaskStatusColors {
   RgbColor cancelled = 3;
 }
 
+message ProjectStatusColors {
+  RgbColor active = 1;
+  RgbColor paused = 2;
+}
+
+message NoteStatusColors {
+  RgbColor active = 1;
+  RgbColor verified = 2;
+}
+
 message GetUserSettingsResponse {
   TaskStatusColors task_status_colors = 1;
   PriorityTier default_priority = 2;
   OrderSpec default_sort_order = 3;
+  ProjectStatusColors project_status_colors = 4;
+  NoteStatusColors note_status_colors = 5;
 }
 
 enum ProjectStatusFilter {
@@ -79,9 +91,9 @@ message ProjectFields {
 
 message ClearField {}
 
-message StringFieldUpdate {
+message StringPatchField {
   oneof operation {
-    string update = 1;
+    string set = 1;
     ClearField clear = 2;
   }
 }
@@ -174,8 +186,8 @@ message ResumeProjectResponse {
 
 message UpdateProjectRequest {
   string id = 1;
-  StringFieldUpdate source_value = 2;
-  StringFieldUpdate obsidian_vault = 3;
+  StringPatchField source_value = 2;
+  StringPatchField obsidian_vault = 3;
 }
 
 message UpdateProjectResponse {}
@@ -207,12 +219,14 @@ message ListNotesRequest {
 message UpdateNoteRequest {
   string project_selector = 1;
   string selector = 2;
+  // Omitted leaves the title unchanged; a supplied value sets it and must be nonempty.
   optional string title = 3;
+  // Omitted leaves the content unchanged; a supplied value sets it and must be nonempty.
   optional string content = 4;
-  StringFieldUpdate domain = 5;
+  StringPatchField domain = 5;
   StringCollectionEdit tags = 6;
   StringCollectionEdit sources = 7;
-  StringFieldUpdate verified = 8;
+  StringPatchField verified = 8;
 }
 
 message AddNoteResponse {
@@ -224,6 +238,7 @@ message AddNoteResponse {
 message ListedNote {
   string id = 1;
   string title = 2;
+  bool is_verified = 3;
 }
 
 message ListNotesResponse {
@@ -374,12 +389,14 @@ message PriorityEdit {
 }
 
 message StructuredTaskEdit {
+  // Omitted leaves the title unchanged; a supplied value sets it and must be nonempty.
   optional string title = 1;
   TaskLanes additions = 2;
   repeated TaskLane removals = 3;
 }
 
 message AppendTaskPrompt {
+  // Omitted leaves the title unchanged; a supplied value sets it and must be nonempty.
   optional string title = 1;
   string prompt = 2;
 }
@@ -394,6 +411,7 @@ message TaskContentEdit {
 
 message UpdateTaskRequest {
   string id = 1;
+  // Omitted leaves content unchanged; a supplied value applies the selected edit.
   TaskContentEdit content = 2;
   StringCollectionEdit blocked_by = 3;
   EffortEdit effort = 4;

@@ -6,7 +6,7 @@ lockfile = true
 locked = true
 
 [tools]
-rust = { version = "1.98.1", profile = "minimal", components = [
+rust = { version = "stable", profile = "minimal", components = [
   "clippy",
   "rustfmt",
 ] }

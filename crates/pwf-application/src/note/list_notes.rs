@@ -1,7 +1,7 @@
 //! Lists one managed project's notes.
 
 use pwf_wire::{
-    note::{ListNotes, ListedNotes, NoteListLimit, NoteSummary},
+    note::{ListNotes, ListedNotes, NoteListLimit},
     project::{ProjectStatusFilter, ResolveProject},
 };
 
@@ -41,14 +41,7 @@ pub async fn execute(
     notes.sort_by_key(|note| std::cmp::Reverse(note.id.number()));
     let shown = shown_count(query.limit, notes.len());
     let hidden = notes.len() - shown;
-    let notes = notes
-        .into_iter()
-        .take(shown)
-        .map(|note| NoteSummary {
-            id: note.id,
-            title: note.title,
-        })
-        .collect();
+    let notes = notes.into_iter().take(shown).collect();
     Ok(ListedNotes {
         project: project.title.clone(),
         notes,
@@ -66,25 +59,17 @@ fn shown_count(limit: NoteListLimit, available: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use pwf_models::note::{NoteId, NoteTitle, ProjectNote};
     use pwf_wire::note::ListedNotes;
 
     use super::{ListNotes, ListNotesError};
     use crate::{
         note::list_notes,
-        testing::{InMemoryStore, insert_project},
+        testing::{InMemoryStore, insert_project, project_note},
     };
 
     #[derive(Debug, thiserror::Error)]
     #[error("sentinel store failure")]
     struct SentinelStoreError;
-
-    fn note(number: u32) -> ProjectNote {
-        ProjectNote {
-            id: NoteId::try_new(format!("FOO-NOTE-{number:04}")).unwrap(),
-            title: NoteTitle::try_new(format!("note {number}")).unwrap(),
-        }
-    }
 
     fn identifiers(result: &ListedNotes) -> Vec<&str> {
         result.notes.iter().map(|note| note.id.as_ref()).collect()
@@ -97,7 +82,7 @@ mod tests {
             "foo",
             [1, 12, 5, 3, 11, 8, 2, 10, 7, 4, 9, 6]
                 .into_iter()
-                .map(note)
+                .map(|number| project_note(number, format!("note {number}")))
                 .collect(),
         );
 
@@ -134,7 +119,12 @@ mod tests {
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn zero_is_unlimited_and_explicit_cap_reports_hidden_count(pool: sqlx::SqlitePool) {
         insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
-        let store = InMemoryStore::default().with_project_notes("foo", (1..=4).map(note).collect());
+        let store = InMemoryStore::default().with_project_notes(
+            "foo",
+            (1..=4)
+                .map(|number| project_note(number, format!("note {number}")))
+                .collect(),
+        );
 
         let unlimited = list_notes::execute(
             ListNotes {

@@ -1,5 +1,7 @@
 # pwf
 
+[![crates.io version](https://img.shields.io/crates/v/pwf-app.svg)](https://crates.io/crates/pwf-app)
+
 CLI app to track pending work and study notes from your projects with as little effort as possible.
 
 This runs locally and is offline only, and at the moment I don't plan on adding an adapter/plugin to support integration with a cloud service.
@@ -26,7 +28,7 @@ Though I recommend using obsidian to get the most of the files' format and the w
 
 ## References
 
-- [installation and updates](wiki/installation-and-update.md)
-- [usage](wiki/usage.md)
-- [obsidian integration](wiki/obsidian.md)
-- [design](wiki/design.md)
+- [installation and updates](https://github.com/matheusb432/pwf/blob/main/wiki/installation-and-update.md)
+- [usage](https://github.com/matheusb432/pwf/blob/main/wiki/usage.md)
+- [obsidian integration](https://github.com/matheusb432/pwf/blob/main/wiki/obsidian.md)
+- [design](https://github.com/matheusb432/pwf/blob/main/wiki/design.md)

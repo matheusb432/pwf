@@ -4,12 +4,12 @@ use pwf_models::{
     AppDate,
     note::{
         NoteContent, NoteDomain, NoteId, NoteSelector, NoteSource, NoteTag, NoteTitle,
-        NoteVerification,
+        NoteVerification, ProjectNote,
     },
     project::{ProjectName, ProjectSelector},
 };
 
-use crate::{collection_edit::CollectionEdit, field_update::FieldUpdate};
+use crate::{collection_edit::CollectionEdit, patch_field::PatchField, set_field::SetField};
 
 /// Requests creation of one project note.
 #[derive(Debug, Clone)]
@@ -72,12 +72,12 @@ pub struct RemoveNote {
 /// Carries at least one requested note change.
 #[derive(Debug, Clone)]
 pub struct NoteEdits {
-    title: Option<NoteTitle>,
-    content: Option<NoteContent>,
-    domain: FieldUpdate<NoteDomain>,
+    title: SetField<NoteTitle>,
+    content: SetField<NoteContent>,
+    domain: PatchField<NoteDomain>,
     tags: CollectionEdit<Vec<NoteTag>>,
     sources: CollectionEdit<Vec<NoteSource>>,
-    verified: FieldUpdate<NoteVerification>,
+    verified: PatchField<NoteVerification>,
 }
 
 impl NoteEdits {
@@ -87,15 +87,15 @@ impl NoteEdits {
     ///
     /// Returns [`EmptyNoteEdits`] when every field is unchanged.
     pub fn try_new(
-        title: Option<NoteTitle>,
-        content: Option<NoteContent>,
-        domain: FieldUpdate<NoteDomain>,
+        title: SetField<NoteTitle>,
+        content: SetField<NoteContent>,
+        domain: PatchField<NoteDomain>,
         tags: CollectionEdit<Vec<NoteTag>>,
         sources: CollectionEdit<Vec<NoteSource>>,
-        verified: FieldUpdate<NoteVerification>,
+        verified: PatchField<NoteVerification>,
     ) -> Result<Self, EmptyNoteEdits> {
-        if title.is_none()
-            && content.is_none()
+        if title.is_unchanged()
+            && content.is_unchanged()
             && domain.is_unchanged()
             && tags.is_unchanged()
             && sources.is_unchanged()
@@ -114,17 +114,17 @@ impl NoteEdits {
     }
 
     #[must_use]
-    pub fn title(&self) -> Option<&NoteTitle> {
-        self.title.as_ref()
+    pub fn title(&self) -> &SetField<NoteTitle> {
+        &self.title
     }
 
     #[must_use]
-    pub fn content(&self) -> Option<&NoteContent> {
-        self.content.as_ref()
+    pub fn content(&self) -> &SetField<NoteContent> {
+        &self.content
     }
 
     #[must_use]
-    pub fn domain(&self) -> &FieldUpdate<NoteDomain> {
+    pub fn domain(&self) -> &PatchField<NoteDomain> {
         &self.domain
     }
 
@@ -139,7 +139,7 @@ impl NoteEdits {
     }
 
     #[must_use]
-    pub fn verified(&self) -> &FieldUpdate<NoteVerification> {
+    pub fn verified(&self) -> &PatchField<NoteVerification> {
         &self.verified
     }
 }
@@ -158,13 +158,6 @@ pub struct EditNote {
     pub selector: NoteSelector,
     /// Selects explicit changes while preserving every omitted field.
     pub edits: NoteEdits,
-}
-
-/// Identifies and names one project note.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NoteSummary {
-    pub id: NoteId,
-    pub title: NoteTitle,
 }
 
 /// Identifies one note mutation for frontend feedback.
@@ -186,6 +179,6 @@ pub enum RemovedNoteOutcome {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListedNotes {
     pub project: ProjectName,
-    pub notes: Vec<NoteSummary>,
+    pub notes: Vec<ProjectNote>,
     pub hidden: usize,
 }

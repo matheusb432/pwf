@@ -9,7 +9,10 @@ use pwf_models::{
     revision::ContentRevision,
     task::{TaskId, TaskSection, TaskStatus, TaskTimestamp},
 };
-use pwf_wire::task::{RawTaskTags, TaskIndexPath, TaskNotePath};
+use pwf_wire::{
+    set_field::SetField,
+    task::{RawTaskTags, TaskIndexPath, TaskNotePath},
+};
 
 use super::{
     ObsidianStore, ObsidianStoreError,
@@ -395,11 +398,11 @@ impl ObsidianStore {
         file: &mut MarkdownFile,
         patch: &TaskPatch,
     ) -> Result<(), ObsidianStoreError> {
-        if let Some(title) = &patch.title {
+        if let SetField::Set(title) = patch.title.as_ref() {
             let updated = replace_title(file.source(), title.as_ref());
             file.replace_source(updated);
         }
-        if let Some(body) = &patch.body {
+        if let SetField::Set(body) = patch.body.as_ref() {
             let updated = replace_body(file.source(), body);
             file.replace_source(updated);
         }
@@ -411,18 +414,18 @@ impl ObsidianStore {
                 set_commits(file, Some(commits)).map_err(write_task_file_error)?;
             }
         }
-        match patch.status {
-            Some(TaskStatus::Active) => {
+        match patch.status.as_ref() {
+            SetField::Set(TaskStatus::Active) => {
                 reopen_status(file).map_err(write_task_file_error)?;
             }
-            Some(status) => {
+            SetField::Set(status) => {
                 let completed_at = match &patch.completed_at {
                     NullablePatch::Set(completed_at) => Some(completed_at),
                     NullablePatch::Unchanged | NullablePatch::Clear => None,
                 };
-                set_status(file, status, completed_at).map_err(write_task_file_error)?;
+                set_status(file, *status, completed_at).map_err(write_task_file_error)?;
             }
-            None => match &patch.completed_at {
+            SetField::NoAction => match &patch.completed_at {
                 NullablePatch::Unchanged => {}
                 NullablePatch::Clear => {
                     set_completed_at(file, None).map_err(write_task_file_error)?;
@@ -472,14 +475,14 @@ pub(super) fn patch_index_entry_text(
     line: &ParsedIndexLine,
     patch: &TaskPatch,
 ) -> Result<String, ObsidianStoreError> {
-    match patch.status {
-        Some(TaskStatus::Active) => {
+    match patch.status.as_ref() {
+        SetField::Set(TaskStatus::Active) => {
             Ok(done_queue::reopen_done_link(text, &line.id).unwrap_or_else(|| text.to_string()))
         }
-        Some(TaskStatus::Done | TaskStatus::Cancelled) => {
+        SetField::Set(TaskStatus::Done | TaskStatus::Cancelled) => {
             close_index_entry_text(text, line.line_number.get(), &path_str(index_path))
         }
-        None => Ok(text.to_string()),
+        SetField::NoAction => Ok(text.to_string()),
     }
 }
 

@@ -4,7 +4,10 @@ use pwf_models::{
     project::ProjectId,
     task::{CommitRanges, TaskId, TaskReport, TaskStatus, TaskTimestamp},
 };
-use pwf_wire::task::{ClosedTaskAction, TaskMutationSummary};
+use pwf_wire::{
+    set_field::SetField,
+    task::{ClosedTaskAction, TaskMutationSummary},
+};
 
 use crate::{
     ports::task_vault::{
@@ -285,13 +288,13 @@ pub(in crate::task) fn close(
         });
     }
     let mut patch = TaskPatch {
-        status: Some(close_status(action)),
+        status: SetField::Set(close_status(action)),
         completed_at: NullablePatch::Set(completed_at),
         ..TaskPatch::default()
     };
     if let Some(report) = report {
         let body = append_report(task_body_region(&record.body), report.as_ref());
-        patch.body = Some(body);
+        patch.body = SetField::Set(body);
     }
     if let Some(commits) = commits {
         patch.commits = NullablePatch::Set(commits.to_string());

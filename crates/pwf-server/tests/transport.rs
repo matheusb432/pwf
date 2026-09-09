@@ -124,11 +124,11 @@ async fn release_metadata_rejects_unmatched_mutations_before_execution() -> anyh
 }
 
 #[tokio::test]
-async fn v1_get_user_settings_returns_validated_task_status_colors() -> anyhow::Result<()> {
+async fn v1_get_user_settings_returns_validated_scoped_colors() -> anyhow::Result<()> {
     let server = TestServer::start(TEST_TIMEOUT).await?;
     std::fs::write(
         server.root.path().join("config.toml"),
-        "[colors]\nactive = \"#ff8700\"\n",
+        "[colors.task]\nactive = \"#ff8700\"\n[colors.project]\npaused = \"#010203\"\n[colors.note]\nverified = \"#040506\"\n",
     )?;
 
     let response =
@@ -155,9 +155,45 @@ async fn v1_get_user_settings_returns_validated_task_status_colors() -> anyhow::
             blue: 0,
         })
     );
-    assert_eq!(colors.done, None);
-    assert_eq!(colors.cancelled, None);
-    Ok(())
+    assert_eq!(
+        colors.done,
+        Some(pb::RgbColor {
+            red: 163,
+            green: 230,
+            blue: 53
+        })
+    );
+    assert_eq!(
+        colors.cancelled,
+        Some(pb::RgbColor {
+            red: 255,
+            green: 107,
+            blue: 138
+        })
+    );
+    assert_eq!(
+        response
+            .project_status_colors
+            .context("missing project colors")?
+            .paused,
+        Some(pb::RgbColor {
+            red: 1,
+            green: 2,
+            blue: 3
+        })
+    );
+    assert_eq!(
+        response
+            .note_status_colors
+            .context("missing note colors")?
+            .verified,
+        Some(pb::RgbColor {
+            red: 4,
+            green: 5,
+            blue: 6
+        })
+    );
+    server.finish().await
 }
 
 #[tokio::test]
@@ -165,7 +201,7 @@ async fn v1_get_user_settings_rejects_invalid_config_with_its_path_and_cause() -
 {
     let server = TestServer::start(TEST_TIMEOUT).await?;
     let config_path = server.root.path().join("config.toml");
-    std::fs::write(&config_path, "[colors]\nactive = \"#fff\"\n")?;
+    std::fs::write(&config_path, "[colors.task]\nactive = \"#fff\"\n")?;
 
     let status =
         SettingsServiceClient::with_interceptor(server.channel().await?, server::ReleaseRequest)
@@ -180,7 +216,7 @@ async fn v1_get_user_settings_rejects_invalid_config_with_its_path_and_cause() -
             .contains(&config_path.display().to_string()),
         "{status}"
     );
-    assert!(status.message().contains("`colors.active` is invalid"));
+    assert!(status.message().contains("`colors.task.active` is invalid"));
     assert!(status.message().contains("#RRGGBB"));
     Ok(())
 }
@@ -1198,10 +1234,8 @@ async fn project_source_update_round_trips_through_the_generated_client() -> any
     let request = pb::UpdateProjectRequest {
         obsidian_vault: None,
         id: "FOO".to_string(),
-        source_value: Some(pb::StringFieldUpdate {
-            operation: Some(pb::string_field_update::Operation::Update(
-                source_value.clone(),
-            )),
+        source_value: Some(pb::StringPatchField {
+            operation: Some(pb::string_patch_field::Operation::Set(source_value.clone())),
         }),
     };
 
@@ -1228,8 +1262,8 @@ async fn project_source_update_round_trips_through_the_generated_client() -> any
         .update_project(pb::UpdateProjectRequest {
             obsidian_vault: None,
             id: "FOO".to_string(),
-            source_value: Some(pb::StringFieldUpdate {
-                operation: Some(pb::string_field_update::Operation::Clear(pb::ClearField {})),
+            source_value: Some(pb::StringPatchField {
+                operation: Some(pb::string_patch_field::Operation::Clear(pb::ClearField {})),
             }),
         })
         .await?;
@@ -1250,8 +1284,8 @@ async fn project_source_update_round_trips_through_the_generated_client() -> any
         .update_project(pb::UpdateProjectRequest {
             obsidian_vault: None,
             id: "MISS".to_string(),
-            source_value: Some(pb::StringFieldUpdate {
-                operation: Some(pb::string_field_update::Operation::Update(
+            source_value: Some(pb::StringPatchField {
+                operation: Some(pb::string_patch_field::Operation::Set(
                     "/work/missing".to_string(),
                 )),
             }),
@@ -1302,8 +1336,8 @@ async fn registered_vault_round_trips_and_drives_delete_preflight() -> anyhow::R
         .update_project(pb::UpdateProjectRequest {
             id: "FOO".into(),
             source_value: None,
-            obsidian_vault: Some(pb::StringFieldUpdate {
-                operation: Some(pb::string_field_update::Operation::Update(vault.clone())),
+            obsidian_vault: Some(pb::StringPatchField {
+                operation: Some(pb::string_patch_field::Operation::Set(vault.clone())),
             }),
         })
         .await?;
@@ -1337,8 +1371,8 @@ async fn registered_vault_round_trips_and_drives_delete_preflight() -> anyhow::R
         .update_project(pb::UpdateProjectRequest {
             id: "FOO".into(),
             source_value: None,
-            obsidian_vault: Some(pb::StringFieldUpdate {
-                operation: Some(pb::string_field_update::Operation::Clear(pb::ClearField {})),
+            obsidian_vault: Some(pb::StringPatchField {
+                operation: Some(pb::string_patch_field::Operation::Clear(pb::ClearField {})),
             }),
         })
         .await?;
@@ -1439,7 +1473,7 @@ async fn generated_client_preserves_note_removal_confirmation_flow() -> anyhow::
             domain: None,
             tags: Vec::new(),
             sources: Vec::new(),
-            verified: None,
+            verified: Some("2026-09-08".to_string()),
             date: None,
         })
         .await?;
@@ -1474,6 +1508,7 @@ async fn generated_client_preserves_note_removal_confirmation_flow() -> anyhow::
         })
         .await?;
     assert_eq!(listed.notes.len(), 1);
+    assert!(listed.notes[0].is_verified);
 
     let accept_prompt = RecordingPrompt::new(true);
     let deleted = server

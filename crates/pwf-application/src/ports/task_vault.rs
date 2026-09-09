@@ -8,7 +8,10 @@ use pwf_models::{
         TaskTimestamp, TaskTitle,
     },
 };
-use pwf_wire::task::{RawTaskTags, TaskIndexPath, TaskNotePath};
+use pwf_wire::{
+    set_field::SetField,
+    task::{RawTaskTags, TaskIndexPath, TaskNotePath},
+};
 
 /// Represents the optional `blocked_by` property after infrastructure parsing.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -139,11 +142,11 @@ impl<T> NullablePatch<T> {
 /// The shape used to patch an existing [`TaskRecord`].
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TaskPatch {
-    pub status: Option<TaskStatus>,
+    pub status: SetField<TaskStatus>,
     pub completed_at: NullablePatch<TaskTimestamp>,
     pub commits: NullablePatch<String>,
-    pub body: Option<String>,
-    pub title: Option<TaskTitle>,
+    pub body: SetField<String>,
+    pub title: SetField<TaskTitle>,
     pub blocked_by: NullablePatch<BlockedBy>,
     pub effort: NullablePatch<EffortTier>,
     pub priority: NullablePatch<PriorityTier>,

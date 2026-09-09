@@ -20,6 +20,20 @@ pub struct TaskStatusColors {
     pub cancelled: ::core::option::Option<RgbColor>,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ProjectStatusColors {
+    #[prost(message, optional, tag = "1")]
+    pub active: ::core::option::Option<RgbColor>,
+    #[prost(message, optional, tag = "2")]
+    pub paused: ::core::option::Option<RgbColor>,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct NoteStatusColors {
+    #[prost(message, optional, tag = "1")]
+    pub active: ::core::option::Option<RgbColor>,
+    #[prost(message, optional, tag = "2")]
+    pub verified: ::core::option::Option<RgbColor>,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct GetUserSettingsResponse {
     #[prost(message, optional, tag = "1")]
     pub task_status_colors: ::core::option::Option<TaskStatusColors>,
@@ -27,6 +41,10 @@ pub struct GetUserSettingsResponse {
     pub default_priority: i32,
     #[prost(message, optional, tag = "3")]
     pub default_sort_order: ::core::option::Option<OrderSpec>,
+    #[prost(message, optional, tag = "4")]
+    pub project_status_colors: ::core::option::Option<ProjectStatusColors>,
+    #[prost(message, optional, tag = "5")]
+    pub note_status_colors: ::core::option::Option<NoteStatusColors>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ProjectFields {
@@ -48,16 +66,16 @@ pub struct ProjectFields {
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ClearField {}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct StringFieldUpdate {
-    #[prost(oneof = "string_field_update::Operation", tags = "1, 2")]
-    pub operation: ::core::option::Option<string_field_update::Operation>,
+pub struct StringPatchField {
+    #[prost(oneof = "string_patch_field::Operation", tags = "1, 2")]
+    pub operation: ::core::option::Option<string_patch_field::Operation>,
 }
-/// Nested message and enum types in `StringFieldUpdate`.
-pub mod string_field_update {
+/// Nested message and enum types in `StringPatchField`.
+pub mod string_patch_field {
     #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
     pub enum Operation {
         #[prost(string, tag = "1")]
-        Update(::prost::alloc::string::String),
+        Set(::prost::alloc::string::String),
         #[prost(message, tag = "2")]
         Clear(super::ClearField),
     }
@@ -222,9 +240,9 @@ pub struct UpdateProjectRequest {
     #[prost(string, tag = "1")]
     pub id: ::prost::alloc::string::String,
     #[prost(message, optional, tag = "2")]
-    pub source_value: ::core::option::Option<StringFieldUpdate>,
+    pub source_value: ::core::option::Option<StringPatchField>,
     #[prost(message, optional, tag = "3")]
-    pub obsidian_vault: ::core::option::Option<StringFieldUpdate>,
+    pub obsidian_vault: ::core::option::Option<StringPatchField>,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct UpdateProjectResponse {}
@@ -262,18 +280,20 @@ pub struct UpdateNoteRequest {
     pub project_selector: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub selector: ::prost::alloc::string::String,
+    /// Omitted leaves the title unchanged; a supplied value sets it and must be nonempty.
     #[prost(string, optional, tag = "3")]
     pub title: ::core::option::Option<::prost::alloc::string::String>,
+    /// Omitted leaves the content unchanged; a supplied value sets it and must be nonempty.
     #[prost(string, optional, tag = "4")]
     pub content: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(message, optional, tag = "5")]
-    pub domain: ::core::option::Option<StringFieldUpdate>,
+    pub domain: ::core::option::Option<StringPatchField>,
     #[prost(message, optional, tag = "6")]
     pub tags: ::core::option::Option<StringCollectionEdit>,
     #[prost(message, optional, tag = "7")]
     pub sources: ::core::option::Option<StringCollectionEdit>,
     #[prost(message, optional, tag = "8")]
-    pub verified: ::core::option::Option<StringFieldUpdate>,
+    pub verified: ::core::option::Option<StringPatchField>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct AddNoteResponse {
@@ -290,6 +310,8 @@ pub struct ListedNote {
     pub id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub title: ::prost::alloc::string::String,
+    #[prost(bool, tag = "3")]
+    pub is_verified: bool,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ListNotesResponse {
@@ -509,6 +531,7 @@ pub mod priority_edit {
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct StructuredTaskEdit {
+    /// Omitted leaves the title unchanged; a supplied value sets it and must be nonempty.
     #[prost(string, optional, tag = "1")]
     pub title: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(message, optional, tag = "2")]
@@ -518,6 +541,7 @@ pub struct StructuredTaskEdit {
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct AppendTaskPrompt {
+    /// Omitted leaves the title unchanged; a supplied value sets it and must be nonempty.
     #[prost(string, optional, tag = "1")]
     pub title: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, tag = "2")]
@@ -544,6 +568,7 @@ pub mod task_content_edit {
 pub struct UpdateTaskRequest {
     #[prost(string, tag = "1")]
     pub id: ::prost::alloc::string::String,
+    /// Omitted leaves content unchanged; a supplied value applies the selected edit.
     #[prost(message, optional, tag = "2")]
     pub content: ::core::option::Option<TaskContentEdit>,
     #[prost(message, optional, tag = "3")]

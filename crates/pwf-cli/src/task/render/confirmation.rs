@@ -61,6 +61,7 @@ mod tests {
     use pwf_models::settings::RgbColor;
 
     use super::*;
+    use crate::test_style::color_rgb;
 
     #[test]
     fn legacy_receipts_report_success_without_inventing_title_or_status() {
@@ -84,43 +85,48 @@ mod tests {
             Some(RgbColor::new(4, 5, 6)),
             Some(RgbColor::new(7, 8, 9)),
         );
-        for (action, status, label, rgb) in [
+        for (action, status, label, style) in [
             (
                 TaskMutationAction::Added,
                 TaskStatus::Active,
                 "Added",
-                "1;2;3",
+                color_rgb(1, 2, 3),
             ),
             (
                 TaskMutationAction::Edited,
                 TaskStatus::Active,
                 "Edited",
-                "1;2;3",
+                color_rgb(1, 2, 3),
             ),
-            (TaskMutationAction::Done, TaskStatus::Done, "Done", "4;5;6"),
+            (
+                TaskMutationAction::Done,
+                TaskStatus::Done,
+                "Done",
+                color_rgb(4, 5, 6),
+            ),
             (
                 TaskMutationAction::Cancelled,
                 TaskStatus::Cancelled,
                 "Cancelled",
-                "7;8;9",
+                color_rgb(7, 8, 9),
             ),
             (
                 TaskMutationAction::Reopened,
                 TaskStatus::Active,
                 "Reopened",
-                "1;2;3",
+                color_rgb(1, 2, 3),
             ),
             (
                 TaskMutationAction::Removed,
                 TaskStatus::Done,
                 "Removed",
-                "4;5;6",
+                color_rgb(4, 5, 6),
             ),
             (
                 TaskMutationAction::Skipped,
                 TaskStatus::Active,
                 "Skipped",
-                "1;2;3",
+                color_rgb(1, 2, 3),
             ),
         ] {
             let task = TaskMutationSummary {
@@ -140,7 +146,7 @@ mod tests {
             .unwrap();
             assert_eq!(
                 colored,
-                format!("Edited task: \x1b[1m\x1b[38;2;{rgb}mFOO-0001\x1b[0m :: sample task")
+                format!("Edited task: {style}FOO-0001{style:#} :: sample task")
             );
         }
     }

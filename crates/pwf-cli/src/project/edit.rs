@@ -1,6 +1,6 @@
 use clap::Args;
 use pwf_client::{
-    pb::{StringFieldUpdate, UpdateProjectRequest, string_field_update},
+    pb::{StringPatchField, UpdateProjectRequest, string_patch_field},
     project::ProjectClient,
 };
 use pwf_models::project::{ProjectId, ProjectSourceValue};
@@ -33,24 +33,24 @@ pub(super) async fn run(arguments: Arguments, client: &ProjectClient) -> anyhow:
             id: arguments.id.to_string(),
             source_value: arguments
                 .source
-                .map(|value| StringFieldUpdate {
-                    operation: Some(string_field_update::Operation::Update(value.to_string())),
+                .map(|value| StringPatchField {
+                    operation: Some(string_patch_field::Operation::Set(value.to_string())),
                 })
                 .or_else(|| {
-                    arguments.clear_source.then_some(StringFieldUpdate {
-                        operation: Some(string_field_update::Operation::Clear(
+                    arguments.clear_source.then_some(StringPatchField {
+                        operation: Some(string_patch_field::Operation::Clear(
                             pwf_client::pb::ClearField {},
                         )),
                     })
                 }),
             obsidian_vault: arguments
                 .obsidian_vault
-                .map(|value| StringFieldUpdate {
-                    operation: Some(string_field_update::Operation::Update(value.to_string())),
+                .map(|value| StringPatchField {
+                    operation: Some(string_patch_field::Operation::Set(value.to_string())),
                 })
                 .or_else(|| {
-                    arguments.clear_obsidian_vault.then_some(StringFieldUpdate {
-                        operation: Some(string_field_update::Operation::Clear(
+                    arguments.clear_obsidian_vault.then_some(StringPatchField {
+                        operation: Some(string_patch_field::Operation::Clear(
                             pwf_client::pb::ClearField {},
                         )),
                     })

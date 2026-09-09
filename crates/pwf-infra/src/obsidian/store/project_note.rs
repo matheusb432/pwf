@@ -2,11 +2,12 @@ use std::{fmt::Write as _, path::Path};
 
 use pwf_application::ports::project_note::{NewProjectNote, ProjectNotePatch, ProjectNotes};
 use pwf_models::{
-    note::{NoteId, NoteSource, NoteTag, NoteTitle, NoteTitleError, ProjectNote},
+    note::{NoteId, NoteSource, NoteTag, NoteTitle, NoteTitleError, NoteVerification, ProjectNote},
     project::{Project, ProjectId, ProjectName},
 };
-use pwf_wire::{collection_edit::CollectionEdit, field_update::FieldUpdate};
+use pwf_wire::{collection_edit::CollectionEdit, patch_field::PatchField, set_field::SetField};
 use serde::Deserialize;
+use serde_json::Value;
 
 use super::{ObsidianStore, ObsidianStoreError};
 use crate::{
@@ -60,6 +61,7 @@ impl ProjectNotes for ObsidianStore {
             .unwrap_or_default();
         write_index(&index_path, &add_note_link(&index, new.id.as_ref()))?;
         Ok(ProjectNote {
+            verified: new.verified,
             id: new.id,
             title: new.title,
         })
@@ -178,12 +180,38 @@ fn title_of(file: &MarkdownFile) -> Result<NoteTitle, NoteTitleError> {
     NoteTitle::try_new(title)
 }
 
+#[derive(Default, Deserialize)]
+struct StoredVerification {
+    #[serde(default)]
+    verified: Value,
+}
+
 fn project_note(id: NoteId, file: &MarkdownFile) -> Result<ProjectNote, ObsidianStoreError> {
     let title = title_of(file).map_err(|source| ObsidianStoreError::InvalidProjectNoteTitle {
         id: id.to_string(),
         source,
     })?;
-    Ok(ProjectNote { id, title })
+    let metadata = file
+        .frontmatter::<StoredVerification>()
+        .map_err(|source| ObsidianStoreError::FrontmatterParse {
+            path: file.path().to_path_buf(),
+            property: "verified",
+            source,
+        })?
+        .unwrap_or_default();
+    let verified = match metadata.verified {
+        Value::Null => None,
+        Value::String(value) => Some(value),
+        Value::Array(value) if value.is_empty() => None,
+        Value::Object(value) if value.is_empty() => None,
+        value => Some(value.to_string()),
+    }
+    .and_then(|value| NoteVerification::try_new(value).ok());
+    Ok(ProjectNote {
+        id,
+        title,
+        verified,
+    })
 }
 
 fn note_content(project: &str, note: &NewProjectNote) -> String {
@@ -246,10 +274,10 @@ fn apply_note_patch(
     let resolved_sources = resolve_collection(sources, || stored_sources(file, id))?;
     let body_start = file.source().len() - file.body().len();
     let mut source = file.source().to_string();
-    if let Some(title) = title {
+    if let SetField::Set(title) = title {
         source = replace_title(&source, body_start, &title);
     }
-    if let Some(content) = content {
+    if let SetField::Set(content) = content {
         source = replace_content(&source, body_start, content.as_ref());
     }
     if let Some(sources) = &resolved_sources {
@@ -267,10 +295,10 @@ fn apply_note_patch(
         );
     }
     file.replace_source(source);
-    apply_field_update(file, id, "domain", domain)?;
+    apply_patch_field(file, id, "domain", domain)?;
     apply_collection_update(file, id, "tags", resolved_tags)?;
     apply_collection_update(file, id, "sources", resolved_sources)?;
-    apply_field_update(file, id, "verified", verified)?;
+    apply_patch_field(file, id, "verified", verified)?;
     Ok(())
 }
 
@@ -368,18 +396,18 @@ fn stored_sources(file: &MarkdownFile, id: &NoteId) -> Result<Vec<NoteSource>, O
         .collect()
 }
 
-fn apply_field_update<T: ToString>(
+fn apply_patch_field<T: ToString>(
     file: &mut MarkdownFile,
     id: &NoteId,
     property: &str,
-    update: FieldUpdate<T>,
+    update: PatchField<T>,
 ) -> Result<(), ObsidianStoreError> {
     match update {
-        FieldUpdate::Unchanged => Ok(()),
-        FieldUpdate::Update(value) => file
+        PatchField::NoAction => Ok(()),
+        PatchField::Set(value) => file
             .set_property(property, &value.to_string())
             .map_err(|source| project_note_edit_error(id, source)),
-        FieldUpdate::Clear => file
+        PatchField::Clear => file
             .remove_property(property)
             .map(|_| ())
             .map_err(|source| project_note_edit_error(id, source)),
@@ -575,7 +603,7 @@ mod tests {
             ProjectSourceValue, ProjectTasks, ProjectTasksKind, ProjectTasksPath,
         },
     };
-    use pwf_wire::{collection_edit::CollectionEdit, field_update::FieldUpdate};
+    use pwf_wire::{collection_edit::CollectionEdit, patch_field::PatchField, set_field::SetField};
 
     use super::super::{ObsidianStore, ObsidianStoreError};
     use crate::obsidian::MarkdownFile;
@@ -679,6 +707,38 @@ mod tests {
     }
 
     #[test]
+    fn listing_uses_any_nonempty_verified_frontmatter_data() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = store(directory.path());
+        for (value, expected) in [
+            ("", None),
+            ("verified:\n", None),
+            ("verified: null\n", None),
+            ("verified: ''\n", None),
+            ("verified: []\n", None),
+            ("verified: {}\n", None),
+            ("verified: 2026-09-08\n", Some("2026-09-08")),
+            ("verified: false\n", Some("false")),
+            ("verified: 0\n", Some("0")),
+            ("verified:\n  by: matheus\n", Some(r#"{"by":"matheus"}"#)),
+            ("verified:\n  - checked\n", Some(r#"["checked"]"#)),
+        ] {
+            fs::write(
+                directory.path().join("FOO-NOTE-0001.md"),
+                format!("---\ntype: note\n{value}---\n# sample\n"),
+            )
+            .unwrap();
+            let notes = ProjectNotes::list_notes(&store, &project(directory.path())).unwrap();
+            assert_eq!(
+                notes[0].verified.as_ref().map(AsRef::as_ref),
+                expected,
+                "{value}"
+            );
+            assert_eq!(notes[0].is_verified(), expected.is_some(), "{value}");
+        }
+    }
+
+    #[test]
     fn update_preserves_frontmatter_and_does_not_mutate_the_index() {
         let directory = tempfile::tempdir().unwrap();
         let tasks_path = directory.path().join("tasks");
@@ -702,7 +762,7 @@ mod tests {
             &project(&tasks_path),
             &identifier(1),
             ProjectNotePatch {
-                title: Some(NoteTitle::try_new("new message").unwrap()),
+                title: SetField::Set(NoteTitle::try_new("new message").unwrap()),
                 ..ProjectNotePatch::default()
             },
         )
@@ -742,7 +802,7 @@ mod tests {
             &project(&tasks_path),
             &identifier(1),
             ProjectNotePatch {
-                title: Some(NoteTitle::try_new("new title").unwrap()),
+                title: SetField::Set(NoteTitle::try_new("new title").unwrap()),
                 ..ProjectNotePatch::default()
             },
         )
@@ -768,9 +828,11 @@ mod tests {
             &project(&tasks_path),
             &identifier(1),
             ProjectNotePatch {
-                title: Some(NoteTitle::try_new("new title").unwrap()),
-                content: Some(NoteContent::try_new("New body.\n\n- Keep structure.").unwrap()),
-                domain: FieldUpdate::Clear,
+                title: SetField::Set(NoteTitle::try_new("new title").unwrap()),
+                content: SetField::Set(
+                    NoteContent::try_new("New body.\n\n- Keep structure.").unwrap(),
+                ),
+                domain: PatchField::Clear,
                 tags: CollectionEdit::Append(vec![
                     NoteTag::try_new("testing").unwrap(),
                     NoteTag::try_new("rust").unwrap(),
@@ -778,7 +840,7 @@ mod tests {
                 sources: CollectionEdit::Replace(vec![
                     NoteSource::try_new("PWF-0180 implementation").unwrap(),
                 ]),
-                verified: FieldUpdate::Clear,
+                verified: PatchField::Clear,
             },
         )
         .unwrap();
@@ -820,10 +882,10 @@ mod tests {
             &project(&tasks_path),
             &identifier(1),
             ProjectNotePatch {
-                domain: FieldUpdate::Clear,
+                domain: PatchField::Clear,
                 tags: CollectionEdit::Clear,
                 sources: CollectionEdit::Clear,
-                verified: FieldUpdate::Clear,
+                verified: PatchField::Clear,
                 ..ProjectNotePatch::default()
             },
         )

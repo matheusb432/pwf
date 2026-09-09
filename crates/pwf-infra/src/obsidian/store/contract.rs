@@ -15,7 +15,10 @@ use pwf_models::{
         TaskTimestamp, TaskTitle,
     },
 };
-use pwf_wire::task::{TaskIndexPath, TaskNotePath};
+use pwf_wire::{
+    set_field::SetField,
+    task::{TaskIndexPath, TaskNotePath},
+};
 
 use super::{ObsidianStore, ObsidianStoreError, fs::path_str};
 use crate::file_transaction::content_revision;
@@ -1013,7 +1016,7 @@ fn stale_note_patch_preserves_the_external_edit_and_index() {
         vec![TaskWrite::Patch {
             id,
             patch: TaskPatch {
-                title: Some(TaskTitle::try_new("local edit").unwrap()),
+                title: SetField::Set(TaskTitle::try_new("local edit").unwrap()),
                 ..TaskPatch::default()
             },
         }],
@@ -1055,7 +1058,7 @@ fn unrelated_index_edit_stales_an_index_backed_task() {
         vec![TaskWrite::Patch {
             id,
             patch: TaskPatch {
-                status: Some(TaskStatus::Done),
+                status: SetField::Set(TaskStatus::Done),
                 ..TaskPatch::default()
             },
         }],
@@ -1086,7 +1089,7 @@ fn note_only_patch_does_not_require_the_project_index() {
         vec![TaskWrite::Patch {
             id,
             patch: TaskPatch {
-                title: Some(TaskTitle::try_new("updated without index").unwrap()),
+                title: SetField::Set(TaskTitle::try_new("updated without index").unwrap()),
                 ..TaskPatch::default()
             },
         }],
@@ -1573,7 +1576,7 @@ fn patch_status_done_closes_index_entry_without_a_date_stamp() {
     let project = foo_project(&store);
     let id = TaskId::try_new("FOO-0002").unwrap();
     let patch = TaskPatch {
-        status: Some(TaskStatus::Done),
+        status: SetField::Set(TaskStatus::Done),
         completed_at: NullablePatch::Set(task_timestamp("2026-07-15T12:34:56Z")),
         ..Default::default()
     };

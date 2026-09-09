@@ -4,8 +4,9 @@ use pwf_models::{
 };
 use pwf_wire::{
     collection_edit::CollectionEdit,
-    field_update::FieldUpdate,
+    patch_field::PatchField,
     project::ProjectStatusFilter,
+    set_field::SetField,
     task::{
         EditTask, EditTaskContent, EditTaskContentKind, RawTaskTags, TaskMutationResult,
         TaskMutationSummary, TaskNotePath,
@@ -147,11 +148,11 @@ async fn update(
 
     let projects = resolve_blocked_by_projects(&command, pool).await?;
     let content_patch = match command.edits.content() {
-        Some(content) => {
+        SetField::Set(content) => {
             let lane_configuration = TaskPromptLanes::load(pool).await?;
             prepare_content(content, &record, &lane_configuration)?
         }
-        None => (None, None),
+        SetField::NoAction => (SetField::NoAction, SetField::NoAction),
     };
     let prepared = prepare(command, project, &record, &projects, store, content_patch)?;
     if let Some(identity) = identity.as_ref()
@@ -168,11 +169,10 @@ async fn update(
     }
     let summary = TaskMutationSummary {
         id: prepared.id.clone(),
-        title: prepared
-            .patch
-            .title
-            .as_ref()
-            .map_or_else(|| record.title.clone(), ToString::to_string),
+        title: match prepared.patch.title.as_ref() {
+            SetField::NoAction => record.title.clone(),
+            SetField::Set(title) => title.to_string(),
+        },
         status: record.status,
     };
     persist(prepared, store)?;
@@ -219,7 +219,7 @@ fn prepare(
     record: &TaskRecord,
     projects: &[Project],
     store: &impl TaskVault,
-    content_patch: (Option<String>, Option<TaskTitle>),
+    content_patch: (SetField<String>, SetField<TaskTitle>),
 ) -> Result<PreparedTaskEdit, EditTaskError> {
     let blocked_by = resolve_blocked_by(command.edits.blocked_by(), record, store, projects)?;
     let (body, title) = content_patch;
@@ -244,20 +244,25 @@ fn prepare_content(
     content: &EditTaskContent,
     record: &TaskRecord,
     lane_configuration: &TaskPromptLanes,
-) -> Result<(Option<String>, Option<TaskTitle>), EditTaskError> {
+) -> Result<(SetField<String>, SetField<TaskTitle>), EditTaskError> {
     let current_body = task_body_region(&record.body);
     match content.kind() {
         EditTaskContentKind::Structured { title, lanes } => Ok((
-            edit_lanes(current_body, lanes, lane_configuration).map_err(map_lane_error)?,
+            edit_lanes(current_body, lanes, lane_configuration)
+                .map_err(map_lane_error)?
+                .into(),
             title.clone(),
         )),
         EditTaskContentKind::AppendShorthand { title, prompt } => Ok((
-            Some(append_lanes(current_body, prompt, lane_configuration)),
+            SetField::Set(append_lanes(current_body, prompt, lane_configuration)),
             title.clone(),
         )),
         EditTaskContentKind::ReplaceShorthand { prompt } => {
             let title = infer_task_title(prompt, lane_configuration)?;
-            Ok((Some(render(prompt, lane_configuration)), Some(title)))
+            Ok((
+                SetField::Set(render(prompt, lane_configuration)),
+                SetField::Set(title),
+            ))
         }
     }
 }
@@ -320,11 +325,11 @@ fn map_blocked_by_error(error: BlockedByValidationError) -> EditTaskError {
     }
 }
 
-fn resolve_value<T: Copy>(edit: &FieldUpdate<T>) -> NullablePatch<T> {
+fn resolve_value<T: Copy>(edit: &PatchField<T>) -> NullablePatch<T> {
     match edit {
-        FieldUpdate::Unchanged => NullablePatch::Unchanged,
-        FieldUpdate::Update(value) => NullablePatch::Set(*value),
-        FieldUpdate::Clear => NullablePatch::Clear,
+        PatchField::NoAction => NullablePatch::Unchanged,
+        PatchField::Set(value) => NullablePatch::Set(*value),
+        PatchField::Clear => NullablePatch::Clear,
     }
 }
 
@@ -385,7 +390,8 @@ mod tests {
     use pwf_models::task::{BlockedBy, EffortTier, TaskPrompt, TaskStatus, TaskTags, TaskTitle};
     use pwf_wire::{
         collection_edit::CollectionEdit,
-        field_update::FieldUpdate,
+        patch_field::PatchField,
+        set_field::SetField,
         task::{
             EditTask, EditTaskContent, RawTaskTags, TaskEdits, TaskLane, TaskLaneEdits, TaskLanes,
             TaskNotePath,
@@ -418,14 +424,14 @@ mod tests {
 
     fn edit(
         id: &str,
-        content: Option<EditTaskContent>,
+        content: SetField<EditTaskContent>,
         blocked_by: CollectionEdit<BlockedBy>,
-        effort: FieldUpdate<EffortTier>,
+        effort: PatchField<EffortTier>,
         tags: CollectionEdit<TaskTags>,
     ) -> EditTask {
         EditTask {
             id: id.parse().unwrap(),
-            edits: TaskEdits::try_new(content, blocked_by, effort, tags, FieldUpdate::Unchanged)
+            edits: TaskEdits::try_new(content, blocked_by, effort, tags, PatchField::NoAction)
                 .unwrap(),
             expected_revision: None,
             request_id: None,
@@ -436,9 +442,9 @@ mod tests {
     fn content_edit(id: &str, content: EditTaskContent) -> EditTask {
         edit(
             id,
-            Some(content),
+            SetField::Set(content),
             CollectionEdit::Unchanged,
-            FieldUpdate::Unchanged,
+            PatchField::NoAction,
             CollectionEdit::Unchanged,
         )
     }
@@ -475,8 +481,11 @@ mod tests {
         )]);
         let command = content_edit(
             "FOO-0001",
-            EditTaskContent::structured(Some(title("new title")), TaskLaneEdits::default())
-                .unwrap(),
+            EditTaskContent::structured(
+                SetField::Set(title("new title")),
+                TaskLaneEdits::default(),
+            )
+            .unwrap(),
         );
 
         let error = run(command, &store, &pool).await.unwrap_err();
@@ -591,7 +600,7 @@ mod tests {
         let command = content_edit(
             "FOO-0001",
             EditTaskContent::structured(
-                None,
+                SetField::NoAction,
                 TaskLaneEdits::new(
                     additions,
                     [TaskLane::Goal, TaskLane::Context, TaskLane::DoneWhen],
@@ -616,7 +625,7 @@ mod tests {
         let command = content_edit(
             "FOO-0001",
             EditTaskContent::structured(
-                None,
+                SetField::NoAction,
                 TaskLaneEdits::new(TaskLanes::default(), [TaskLane::Goal]),
             )
             .unwrap(),
@@ -642,7 +651,7 @@ mod tests {
         let command = content_edit(
             "FOO-0001",
             EditTaskContent::append_shorthand(
-                Some(title("renamed")),
+                SetField::Set(title("renamed")),
                 TaskPrompt::new("additional /c context"),
             )
             .unwrap(),
@@ -670,9 +679,9 @@ mod tests {
         let store = staged(vec![record("FOO-0001", TaskStatus::Done, "body"), target]);
         let command = edit(
             "FOO-0002",
-            None,
+            SetField::NoAction,
             CollectionEdit::Replace(crate::testing::blocked_by(&["FOO-0001"])),
-            FieldUpdate::Update(EffortTier::High),
+            PatchField::Set(EffortTier::High),
             CollectionEdit::Replace(tags("new-tag")),
         );
 
@@ -712,9 +721,9 @@ mod tests {
         let before = store.tasks("foo-bar");
         let command = edit(
             "FOO-0003",
-            None,
+            SetField::NoAction,
             CollectionEdit::Append(crate::testing::blocked_by(&["FOO-0001"])),
-            FieldUpdate::Unchanged,
+            PatchField::NoAction,
             CollectionEdit::Unchanged,
         );
 
@@ -742,9 +751,9 @@ mod tests {
         }]);
         let command = edit(
             "FOO-0001",
-            None,
+            SetField::NoAction,
             CollectionEdit::Unchanged,
-            FieldUpdate::Clear,
+            PatchField::Clear,
             CollectionEdit::Unchanged,
         );
 
@@ -762,9 +771,9 @@ mod tests {
         }]);
         let command = edit(
             "FOO-0001",
-            None,
+            SetField::NoAction,
             CollectionEdit::Unchanged,
-            FieldUpdate::Update(EffortTier::High),
+            PatchField::Set(EffortTier::High),
             CollectionEdit::Unchanged,
         );
 
@@ -786,9 +795,9 @@ mod tests {
         }]);
         let command = edit(
             "FOO-0001",
-            None,
+            SetField::NoAction,
             CollectionEdit::Unchanged,
-            FieldUpdate::Update(EffortTier::High),
+            PatchField::Set(EffortTier::High),
             CollectionEdit::Unchanged,
         );
 

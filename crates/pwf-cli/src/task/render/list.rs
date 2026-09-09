@@ -310,6 +310,7 @@ mod tests {
     use pwf_models::settings::RgbColor;
 
     use super::*;
+    use crate::test_style::{assert_plain, color_rgb};
 
     fn sample_task() -> TaskView {
         TaskView {
@@ -365,22 +366,22 @@ mod tests {
             task.status = status as i32;
             let output = render_task_for_filter(&task, TaskStatusFilter::All, false, false);
             assert_eq!(output, expected);
-            assert!(!output.contains('\u{1b}'), "{output}");
+            assert_plain(&output);
         }
     }
 
     #[test]
     fn all_status_short_lines_color_identifiers_by_lifecycle() {
         for (status, color) in [
-            (TaskStatus::Active, 34),
-            (TaskStatus::Done, 32),
-            (TaskStatus::Cancelled, 31),
+            (TaskStatus::Active, color_rgb(100, 149, 237)),
+            (TaskStatus::Done, color_rgb(163, 230, 53)),
+            (TaskStatus::Cancelled, color_rgb(255, 107, 138)),
         ] {
             let mut task = sample_task();
             task.status = status as i32;
             let output = render_task_for_filter(&task, TaskStatusFilter::All, false, true);
             assert!(
-                output.contains(&format!("\u{1b}[{color}mFOO-0001\u{1b}[0m")),
+                output.contains(&format!("{color}FOO-0001{color:#}")),
                 "{output:?}"
             );
         }
@@ -392,7 +393,10 @@ mod tests {
 
         assert_eq!(
             output,
-            "\u{1b}[1m\u{1b}[34mFOO-0001\u{1b}[0m :: sample task"
+            format!(
+                "{blue}FOO-0001{blue:#} :: sample task",
+                blue = color_rgb(100, 149, 237)
+            )
         );
     }
 
@@ -420,14 +424,8 @@ mod tests {
                 colors,
                 true,
             );
-            let prefix = format!(
-                "\u{1b}[38;2;{};{};{}m",
-                color.red(),
-                color.green(),
-                color.blue()
-            );
-
-            assert!(output.contains(&format!("{prefix}FOO-0001\u{1b}[0m")));
+            let style = color_rgb(color.red(), color.green(), color.blue());
+            assert!(output.contains(&format!("{style}FOO-0001{style:#}")));
             assert!(!output.contains(task_status_name(status)));
         }
     }

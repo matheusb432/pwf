@@ -2,7 +2,11 @@ use assert_cmd::prelude::OutputAssertExt as _;
 #[cfg(target_os = "linux")]
 use expectrl::Expect;
 
-use crate::support::{ManagedProject, command, project_id, task_id, task_json};
+use crate::support::{
+    CommandTestExt, ManagedProject, command, project_id,
+    style::{assert_plain, color_rgb},
+    task_id, task_json,
+};
 
 #[test]
 fn machine_add_maps_each_explicit_value_without_parsing_lane_markers() {
@@ -101,7 +105,7 @@ fn colored_all_status_list_uses_color_instead_of_a_status_tag() {
         .success();
     fixture
         .database
-        .write_user_config("[colors]\nactive = \"#ff8700\"\n")
+        .write_user_config("[colors.task]\nactive = \"#ff8700\"\n")
         .unwrap();
 
     let plain = fixture
@@ -115,7 +119,7 @@ fn colored_all_status_list_uses_color_instead_of_a_status_tag() {
     assert!(stdout.contains("FOO-0001"), "{stdout:?}");
     assert!(stdout.contains("[active]"), "{stdout:?}");
     assert!(stdout.contains("orange task"), "{stdout:?}");
-    assert!(!stdout.contains('\u{1b}'), "{stdout:?}");
+    assert_plain(&stdout);
 
     for arguments in [
         ["foo-bar"].as_slice(),
@@ -123,7 +127,8 @@ fn colored_all_status_list_uses_color_instead_of_a_status_tag() {
     ] {
         let output = fixture
             .database
-            .command_with_color()
+            .command()
+            .color()
             .args(arguments)
             .output()
             .unwrap();
@@ -131,7 +136,10 @@ fn colored_all_status_list_uses_color_instead_of_a_status_tag() {
         assert!(output.status.success(), "{arguments:?}");
         let stdout = String::from_utf8(output.stdout).unwrap();
         assert!(
-            stdout.contains("\u{1b}[38;2;255;135;0mFOO-0001\u{1b}[0m"),
+            stdout.contains(&format!(
+                "{orange}FOO-0001{orange:#}",
+                orange = color_rgb(255, 135, 0)
+            )),
             "{arguments:?}: {stdout:?}"
         );
         assert!(stdout.contains("orange task"), "{stdout:?}");
@@ -145,7 +153,7 @@ fn task_command_reports_invalid_user_config_with_its_path_and_cause() {
     let fixture = ManagedProject::new(&project_id("FOO").unwrap(), "foo-bar").unwrap();
     let config_path = fixture
         .database
-        .write_user_config("[colors]\nactive = \"#fff\"\n")
+        .write_user_config("[colors.task]\nactive = \"#fff\"\n")
         .unwrap();
 
     let output = fixture.database.command().arg("foo-bar").output().unwrap();
@@ -154,7 +162,10 @@ fn task_command_reports_invalid_user_config_with_its_path_and_cause() {
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stderr.contains(&*config_path.to_string_lossy()), "{stderr}");
-    assert!(stderr.contains("`colors.active` is invalid"), "{stderr}");
+    assert!(
+        stderr.contains("`colors.task.active` is invalid"),
+        "{stderr}"
+    );
     assert!(stderr.contains("#RRGGBB"), "{stderr}");
 }
 
@@ -375,11 +386,17 @@ fn task_dag_renders_exact_compact_title_status_and_colored_output() {
 
     fixture
         .database
-        .command_with_color()
+        .command()
+        .color()
         .args(["task", "dag", "FOO-0003"])
         .assert()
         .success()
-        .stdout(include_bytes!("../fixtures/task_dag/colored.stdout").as_slice())
+        .stdout(format!(
+            include_str!("../fixtures/task_dag/colored.stdout"),
+            blue = color_rgb(100, 149, 237),
+            green = color_rgb(163, 230, 53),
+            red = color_rgb(255, 107, 138)
+        ))
         .stderr(include_bytes!("../fixtures/task_dag/empty.stderr").as_slice());
 }
 
@@ -723,7 +740,7 @@ fn task_mutations_use_configured_lifecycle_colors() {
     fixture
         .database
         .write_user_config(
-            "[colors]\nactive = \"#010203\"\ndone = \"#040506\"\ncancelled = \"#070809\"\n",
+            "[colors.task]\nactive = \"#010203\"\ndone = \"#040506\"\ncancelled = \"#070809\"\n",
         )
         .unwrap();
     for (args, verb, color) in [
@@ -738,7 +755,7 @@ fn task_mutations_use_configured_lifecycle_colors() {
                 "exercise confirmations",
             ],
             "Added",
-            "1;2;3",
+            color_rgb(1, 2, 3),
         ),
         (
             vec![
@@ -749,30 +766,30 @@ fn task_mutations_use_configured_lifecycle_colors() {
                 "preserve the title",
             ],
             "Edited",
-            "1;2;3",
+            color_rgb(1, 2, 3),
         ),
-        (vec!["task", "done", "FOO-0001"], "Done", "4;5;6"),
+        (vec!["task", "done", "FOO-0001"], "Done", color_rgb(4, 5, 6)),
         (
             vec!["task", "reopen", "FOO-0001", "--yes"],
             "Reopened",
-            "1;2;3",
+            color_rgb(1, 2, 3),
         ),
         (
             vec!["task", "cancel", "FOO-0001", "--report", "no longer needed"],
             "Cancelled",
-            "7;8;9",
+            color_rgb(7, 8, 9),
         ),
         (
             vec!["task", "remove", "FOO-0001", "--yes"],
             "Removed",
-            "7;8;9",
+            color_rgb(7, 8, 9),
         ),
     ] {
-        let expected =
-            format!("{verb} task: \x1b[1m\x1b[38;2;{color}mFOO-0001\x1b[0m :: colored task\n");
+        let expected = format!("{verb} task: {color}FOO-0001{color:#} :: colored task\n");
         fixture
             .database
-            .command_with_color()
+            .command()
+            .color()
             .args(&args)
             .assert()
             .success()

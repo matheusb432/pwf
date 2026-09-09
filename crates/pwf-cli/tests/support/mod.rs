@@ -1,6 +1,9 @@
+mod process;
 mod project;
+pub use process::CommandTestExt;
 #[cfg(unix)]
 mod session;
+pub mod style;
 
 use std::{
     fs,
@@ -65,9 +68,9 @@ impl DatabaseFixture {
         command
     }
 
-    pub fn command_with_color(&self) -> Command {
+    pub fn command_args(&self, arguments: &[&str]) -> Command {
         let mut command = self.command();
-        command.env_remove("NO_COLOR").env("CLICOLOR_FORCE", "1");
+        command.args(arguments);
         command
     }
 

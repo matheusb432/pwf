@@ -60,10 +60,18 @@ pub struct NoteVerification(String);
 /// Describes one project note.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectNote {
+    pub verified: Option<NoteVerification>,
     /// Identifies the note within its project.
     pub id: NoteId,
     /// Names the note.
     pub title: NoteTitle,
+}
+
+impl ProjectNote {
+    #[must_use]
+    pub const fn is_verified(&self) -> bool {
+        self.verified.is_some()
+    }
 }
 
 /// Stores a `{PROJECT_ID}-NOTE-NNNN` identifier.

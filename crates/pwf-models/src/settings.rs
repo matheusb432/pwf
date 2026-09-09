@@ -66,12 +66,22 @@ fn hexadecimal_digit(value: u8) -> Option<u8> {
 #[error("must use `#RRGGBB` with six hexadecimal digits")]
 pub struct RgbColorError;
 
-/// Optional RGB overrides for task lifecycle colors.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+const COLOR_CORNFLOWER_BLUE: RgbColor = RgbColor::new(100, 149, 237);
+const COLOR_PINK_RED: RgbColor = RgbColor::new(255, 107, 138);
+const COLOR_LIME_GREEN: RgbColor = RgbColor::new(163, 230, 53);
+
+const fn resolve_color(value: Option<RgbColor>, default: RgbColor) -> RgbColor {
+    match value {
+        Some(color) => color,
+        None => default,
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TaskStatusColors {
-    active: Option<RgbColor>,
-    done: Option<RgbColor>,
-    cancelled: Option<RgbColor>,
+    active: RgbColor,
+    done: RgbColor,
+    cancelled: RgbColor,
 }
 
 impl TaskStatusColors {
@@ -82,25 +92,95 @@ impl TaskStatusColors {
         cancelled: Option<RgbColor>,
     ) -> Self {
         Self {
-            active,
-            done,
-            cancelled,
+            active: resolve_color(active, COLOR_CORNFLOWER_BLUE),
+            done: resolve_color(done, COLOR_LIME_GREEN),
+            cancelled: resolve_color(cancelled, COLOR_PINK_RED),
         }
     }
 
     #[must_use]
-    pub const fn active(self) -> Option<RgbColor> {
+    pub const fn active(self) -> RgbColor {
         self.active
     }
 
     #[must_use]
-    pub const fn done(self) -> Option<RgbColor> {
+    pub const fn done(self) -> RgbColor {
         self.done
     }
 
     #[must_use]
-    pub const fn cancelled(self) -> Option<RgbColor> {
+    pub const fn cancelled(self) -> RgbColor {
         self.cancelled
+    }
+}
+
+impl Default for TaskStatusColors {
+    fn default() -> Self {
+        Self::new(None, None, None)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ProjectStatusColors {
+    active: RgbColor,
+    paused: RgbColor,
+}
+
+impl ProjectStatusColors {
+    #[must_use]
+    pub const fn new(active: Option<RgbColor>, paused: Option<RgbColor>) -> Self {
+        Self {
+            active: resolve_color(active, COLOR_CORNFLOWER_BLUE),
+            paused: resolve_color(paused, COLOR_PINK_RED),
+        }
+    }
+
+    #[must_use]
+    pub const fn active(self) -> RgbColor {
+        self.active
+    }
+
+    #[must_use]
+    pub const fn paused(self) -> RgbColor {
+        self.paused
+    }
+}
+
+impl Default for ProjectStatusColors {
+    fn default() -> Self {
+        Self::new(None, None)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NoteStatusColors {
+    active: RgbColor,
+    verified: RgbColor,
+}
+
+impl NoteStatusColors {
+    #[must_use]
+    pub const fn new(active: Option<RgbColor>, verified: Option<RgbColor>) -> Self {
+        Self {
+            active: resolve_color(active, COLOR_CORNFLOWER_BLUE),
+            verified: resolve_color(verified, COLOR_LIME_GREEN),
+        }
+    }
+
+    #[must_use]
+    pub const fn active(self) -> RgbColor {
+        self.active
+    }
+
+    #[must_use]
+    pub const fn verified(self) -> RgbColor {
+        self.verified
+    }
+}
+
+impl Default for NoteStatusColors {
+    fn default() -> Self {
+        Self::new(None, None)
     }
 }
 
@@ -108,6 +188,8 @@ impl TaskStatusColors {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct UserSettings {
     task_status_colors: TaskStatusColors,
+    project_status_colors: ProjectStatusColors,
+    note_status_colors: NoteStatusColors,
     default_priority: PriorityTier,
     default_sort_order: OrderSpec,
 }
@@ -116,11 +198,15 @@ impl UserSettings {
     #[must_use]
     pub const fn new(
         task_status_colors: TaskStatusColors,
+        project_status_colors: ProjectStatusColors,
+        note_status_colors: NoteStatusColors,
         default_priority: PriorityTier,
         default_sort_order: OrderSpec,
     ) -> Self {
         Self {
             task_status_colors,
+            project_status_colors,
+            note_status_colors,
             default_priority,
             default_sort_order,
         }
@@ -129,6 +215,16 @@ impl UserSettings {
     #[must_use]
     pub const fn task_status_colors(self) -> TaskStatusColors {
         self.task_status_colors
+    }
+
+    #[must_use]
+    pub const fn project_status_colors(self) -> ProjectStatusColors {
+        self.project_status_colors
+    }
+
+    #[must_use]
+    pub const fn note_status_colors(self) -> NoteStatusColors {
+        self.note_status_colors
     }
 
     #[must_use]
@@ -146,6 +242,8 @@ impl Default for UserSettings {
     fn default() -> Self {
         Self::new(
             TaskStatusColors::default(),
+            ProjectStatusColors::default(),
+            NoteStatusColors::default(),
             PriorityTier::Medium,
             OrderSpec::default(),
         )
@@ -156,7 +254,8 @@ impl Default for UserSettings {
 mod tests {
     use std::str::FromStr as _;
 
-    use super::{RgbColor, TaskStatusColors, UserSettings};
+    use super::{NoteStatusColors, ProjectStatusColors, RgbColor, TaskStatusColors, UserSettings};
+    use crate::task::{PriorityTier, order::OrderSpec};
 
     #[test]
     fn rgb_color_accepts_exact_six_digit_hexadecimal_values() {
@@ -175,20 +274,37 @@ mod tests {
     }
 
     #[test]
-    fn user_settings_preserve_optional_task_status_color_overrides() {
+    fn user_settings_resolve_missing_colors_at_construction() {
         let active = RgbColor::from_str("#ff8700").unwrap();
         let colors = TaskStatusColors::new(Some(active), None, None);
         let settings = UserSettings::new(
             colors,
-            crate::task::PriorityTier::Medium,
-            crate::task::order::OrderSpec::default(),
+            ProjectStatusColors::default(),
+            NoteStatusColors::default(),
+            PriorityTier::Medium,
+            OrderSpec::default(),
         );
 
-        assert_eq!(settings.task_status_colors().active(), Some(active));
-        assert_eq!(settings.task_status_colors().done(), None);
-        assert_eq!(settings.task_status_colors().cancelled(), None);
+        assert_eq!(settings.task_status_colors().active(), active);
+        assert_eq!(
+            settings.task_status_colors().done(),
+            RgbColor::new(163, 230, 53)
+        );
+        assert_eq!(
+            settings.task_status_colors().cancelled(),
+            RgbColor::new(255, 107, 138)
+        );
 
         let defaults = UserSettings::default();
-        assert_eq!(defaults.task_status_colors(), TaskStatusColors::default());
+        let blue = RgbColor::new(100, 149, 237);
+        let green = RgbColor::new(163, 230, 53);
+        let red = RgbColor::new(255, 107, 138);
+        assert_eq!(defaults.task_status_colors().active(), blue);
+        assert_eq!(defaults.task_status_colors().done(), green);
+        assert_eq!(defaults.task_status_colors().cancelled(), red);
+        assert_eq!(defaults.project_status_colors().active(), blue);
+        assert_eq!(defaults.project_status_colors().paused(), red);
+        assert_eq!(defaults.note_status_colors().active(), blue);
+        assert_eq!(defaults.note_status_colors().verified(), green);
     }
 }

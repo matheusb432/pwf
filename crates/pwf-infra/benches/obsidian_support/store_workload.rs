@@ -12,6 +12,7 @@ use pwf_models::{
     },
     task::{BlockedBy, EffortTier, Tag, TaskId, TaskStatus, TaskTags, TaskTimestamp, TaskTitle},
 };
+use pwf_wire::set_field::SetField;
 use tempfile::TempDir;
 
 use super::{
@@ -251,11 +252,11 @@ fn project(tasks_path: &Path) -> Project {
 
 fn update_patch() -> TaskPatch {
     TaskPatch {
-        status: Some(TaskStatus::Done),
+        status: SetField::Set(TaskStatus::Done),
         completed_at: NullablePatch::Set(task_timestamp()),
         commits: NullablePatch::Set("abc123..def456".to_string()),
-        body: None,
-        title: None,
+        body: SetField::NoAction,
+        title: SetField::NoAction,
         blocked_by: NullablePatch::Set(blocked_by()),
         effort: NullablePatch::Set(EffortTier::High),
         priority: NullablePatch::Unchanged,

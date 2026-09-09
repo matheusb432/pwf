@@ -7,7 +7,7 @@ use pwf_models::project::{
 use tonic::Status;
 
 use super::{invalid, parse, required};
-use crate::{field_update::FieldUpdate, pb, project};
+use crate::{patch_field::PatchField, pb, project};
 
 pub fn add_project_request(
     request: pb::AddProjectRequest,
@@ -79,24 +79,24 @@ pub fn update_project_request(
     request: pb::UpdateProjectRequest,
 ) -> Result<project::UpdateProject, Status> {
     let source_value = match source_value_update(request.source_value)? {
-        FieldUpdate::Update(source_value) => FieldUpdate::Update(ProjectSource::new(
+        PatchField::Set(source_value) => PatchField::Set(ProjectSource::new(
             ProjectSourceKind::Directory,
             source_value,
         )),
-        FieldUpdate::Clear => FieldUpdate::Clear,
-        FieldUpdate::Unchanged => FieldUpdate::Unchanged,
+        PatchField::Clear => PatchField::Clear,
+        PatchField::NoAction => PatchField::NoAction,
     };
     let obsidian_vault = match request.obsidian_vault {
-        None => FieldUpdate::Unchanged,
+        None => PatchField::NoAction,
         Some(update) => match required("obsidian_vault.operation", update.operation)? {
-            pb::string_field_update::Operation::Clear(_) => FieldUpdate::Clear,
-            pb::string_field_update::Operation::Update(value) => FieldUpdate::Update(
+            pb::string_patch_field::Operation::Clear(_) => PatchField::Clear,
+            pb::string_patch_field::Operation::Set(value) => PatchField::Set(
                 pwf_models::project::ObsidianVault::try_new(value)
                     .map_err(|error| invalid("obsidian_vault", error))?,
             ),
         },
     };
-    if source_value.is_unchanged() && matches!(obsidian_vault, FieldUpdate::Unchanged) {
+    if source_value.is_unchanged() && matches!(obsidian_vault, PatchField::NoAction) {
         return Err(invalid("project", "at least one update is required"));
     }
     Ok(project::UpdateProject {
@@ -245,16 +245,16 @@ fn project_fields(fields: pb::ProjectFields) -> Result<project::ProjectFields, S
 }
 
 fn source_value_update(
-    update: Option<pb::StringFieldUpdate>,
-) -> Result<FieldUpdate<ProjectSourceValue>, Status> {
+    update: Option<pb::StringPatchField>,
+) -> Result<PatchField<ProjectSourceValue>, Status> {
     let Some(update) = update else {
-        return Ok(FieldUpdate::Unchanged);
+        return Ok(PatchField::NoAction);
     };
     match required("source_value.operation", update.operation)? {
-        pb::string_field_update::Operation::Update(value) => ProjectSourceValue::try_new(value)
-            .map(FieldUpdate::Update)
+        pb::string_patch_field::Operation::Set(value) => ProjectSourceValue::try_new(value)
+            .map(PatchField::Set)
             .map_err(|_| invalid("source_value", "must not be blank")),
-        pb::string_field_update::Operation::Clear(_) => Ok(FieldUpdate::Clear),
+        pb::string_patch_field::Operation::Clear(_) => Ok(PatchField::Clear),
     }
 }
 
@@ -297,31 +297,29 @@ fn project_status_filter(value: i32) -> Result<project::ProjectStatusFilter, Sta
 mod tests {
     use tonic::Code;
 
-    use crate::pb::{StringFieldUpdate, UpdateProjectRequest, string_field_update};
+    use crate::pb::{StringPatchField, UpdateProjectRequest, string_patch_field};
 
     #[test]
     fn update_project_request_requires_one_valid_source_update() {
         let command = super::update_project_request(UpdateProjectRequest {
             obsidian_vault: None,
             id: "foo".to_string(),
-            source_value: Some(StringFieldUpdate {
-                operation: Some(string_field_update::Operation::Update(
-                    "/work/new".to_string(),
-                )),
+            source_value: Some(StringPatchField {
+                operation: Some(string_patch_field::Operation::Set("/work/new".to_string())),
             }),
         })
         .unwrap();
 
         assert_eq!(command.id.as_ref(), "FOO");
         assert!(
-            matches!(command.source, crate::field_update::FieldUpdate::Update(value) if value.value().as_ref() == "/work/new")
+            matches!(command.source, crate::patch_field::PatchField::Set(value) if value.value().as_ref() == "/work/new")
         );
 
         for source_value in [
             None,
-            Some(StringFieldUpdate { operation: None }),
-            Some(StringFieldUpdate {
-                operation: Some(string_field_update::Operation::Update(" ".to_string())),
+            Some(StringPatchField { operation: None }),
+            Some(StringPatchField {
+                operation: Some(string_patch_field::Operation::Set(" ".to_string())),
             }),
         ] {
             let error = super::update_project_request(UpdateProjectRequest {

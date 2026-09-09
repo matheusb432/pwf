@@ -62,15 +62,16 @@ pub async fn execute(
             id: id.clone(),
             project: project.title.clone(),
         })?;
-    let title = command.edits.title().cloned().unwrap_or(existing.title);
     let patch = ProjectNotePatch {
-        title: command.edits.title().cloned(),
-        content: command.edits.content().cloned(),
+        title: command.edits.title().clone(),
+        content: command.edits.content().clone(),
         domain: command.edits.domain().clone(),
         tags: command.edits.tags().clone(),
         sources: command.edits.sources().clone(),
         verified: command.edits.verified().clone(),
     };
+    let mut title = existing.title;
+    patch.title.clone().apply(&mut title);
     store
         .update_note(&project, &id, patch)
         .map_err(|error| EditNoteError::Store(anyhow::Error::new(error)))?;
@@ -84,37 +85,30 @@ pub async fn execute(
 #[cfg(test)]
 mod tests {
     use pwf_models::note::{
-        NoteContent, NoteDomain, NoteId, NoteSource, NoteTag, NoteTitle, NoteVerification,
-        ProjectNote,
+        NoteContent, NoteDomain, NoteSource, NoteTag, NoteTitle, NoteVerification,
     };
     use pwf_wire::{
         collection_edit::CollectionEdit,
-        field_update::FieldUpdate,
         note::{EditNote, NoteEdits},
+        patch_field::PatchField,
+        set_field::SetField,
     };
 
     use super::EditNoteError;
     use crate::{
         note::edit_note,
         ports::project_note::ProjectNotePatch,
-        testing::{InMemoryStore, insert_project},
+        testing::{InMemoryStore, insert_project, project_note},
     };
 
-    fn note() -> ProjectNote {
-        ProjectNote {
-            id: NoteId::try_new("FOO-NOTE-0007").unwrap(),
-            title: NoteTitle::try_new("old message").unwrap(),
-        }
-    }
-
-    fn edits(title: Option<&str>) -> NoteEdits {
+    fn edits(title: SetField<&str>) -> NoteEdits {
         NoteEdits::try_new(
             title.map(|value| NoteTitle::try_new(value).unwrap()),
-            Some(NoteContent::try_new("new content").unwrap()),
-            FieldUpdate::Clear,
+            SetField::Set(NoteContent::try_new("new content").unwrap()),
+            PatchField::Clear,
             CollectionEdit::Append(vec![NoteTag::try_new("new-tag").unwrap()]),
             CollectionEdit::Replace(vec![NoteSource::try_new("new source").unwrap()]),
-            FieldUpdate::Update(NoteVerification::try_new("2026-08-30").unwrap()),
+            PatchField::Set(NoteVerification::try_new("2026-08-30").unwrap()),
         )
         .unwrap()
     }
@@ -124,13 +118,14 @@ mod tests {
         pool: sqlx::SqlitePool,
     ) {
         insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
-        let store = InMemoryStore::default().with_project_notes("foo", vec![note()]);
+        let store = InMemoryStore::default()
+            .with_project_notes("foo", vec![project_note(7, "old message")]);
 
         let edited = edit_note::execute(
             EditNote {
                 project_selector: "foo".parse().unwrap(),
                 selector: "7".parse().unwrap(),
-                edits: edits(None),
+                edits: edits(SetField::NoAction),
             },
             &store,
             &pool,
@@ -144,12 +139,12 @@ mod tests {
         assert_eq!(
             store.project_note_patches("foo"),
             vec![ProjectNotePatch {
-                title: None,
-                content: Some(NoteContent::try_new("new content").unwrap()),
-                domain: FieldUpdate::<NoteDomain>::Clear,
+                title: SetField::NoAction,
+                content: SetField::Set(NoteContent::try_new("new content").unwrap()),
+                domain: PatchField::<NoteDomain>::Clear,
                 tags: CollectionEdit::Append(vec![NoteTag::try_new("new-tag").unwrap()]),
                 sources: CollectionEdit::Replace(vec![NoteSource::try_new("new source").unwrap(),]),
-                verified: FieldUpdate::Update(NoteVerification::try_new("2026-08-30").unwrap(),),
+                verified: PatchField::Set(NoteVerification::try_new("2026-08-30").unwrap(),),
             }]
         );
     }
@@ -158,13 +153,14 @@ mod tests {
     async fn full_prefixless_and_bare_identifiers_resolve(pool: sqlx::SqlitePool) {
         insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
         for identifier in ["FOO-NOTE-0007", "foo-note-0007", "note-0007", "7"] {
-            let store = InMemoryStore::default().with_project_notes("foo", vec![note()]);
+            let store = InMemoryStore::default()
+                .with_project_notes("foo", vec![project_note(7, "old message")]);
 
             let edited = edit_note::execute(
                 EditNote {
                     project_selector: "foo".parse().unwrap(),
                     selector: identifier.parse().unwrap(),
-                    edits: edits(Some("new message")),
+                    edits: edits(SetField::Set("new message")),
                 },
                 &store,
                 &pool,
@@ -186,7 +182,7 @@ mod tests {
             EditNote {
                 project_selector: "foo".parse().unwrap(),
                 selector: "7".parse().unwrap(),
-                edits: edits(Some("new message")),
+                edits: edits(SetField::Set("new message")),
             },
             &store,
             &pool,
