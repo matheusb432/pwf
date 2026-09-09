@@ -24,10 +24,6 @@ impl CommitRanges {
     }
 }
 
-#[expect(
-    clippy::needless_pass_by_value,
-    reason = "nutype string sanitizers receive owned values"
-)]
 fn normalize_commit_ranges(value: String) -> String {
     let mut ranges = Vec::new();
     for range in value
@@ -38,6 +34,14 @@ fn normalize_commit_ranges(value: String) -> String {
         if !ranges.contains(&range) {
             ranges.push(range);
         }
+    }
+    let normalized = ranges.iter().enumerate().flat_map(|(index, range)| {
+        (if index == 0 { "" } else { ", " })
+            .bytes()
+            .chain(range.bytes())
+    });
+    if normalized.eq(value.bytes()) {
+        return value;
     }
     ranges.join(", ")
 }

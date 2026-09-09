@@ -6,13 +6,12 @@ use pwf_models::{
 };
 use pwf_wire::{
     project::ProjectStatusFilter,
-    task::{GetTaskDag, TaskDag, TaskDagEdge, TaskDagError, TaskDagNode},
+    task::{
+        GetTaskDag, Materialization, TaskDag, TaskDagEdge, TaskDagError, TaskDagNode, TaskRecord,
+    },
 };
 
-use crate::{
-    ports::task_vault::{Materialization, TaskRecord, TaskVault},
-    project::list_projects,
-};
+use crate::{ports::task_vault::TaskVault, project::list_projects};
 
 #[derive(Debug, thiserror::Error)]
 pub enum GetTaskDagError {
@@ -64,7 +63,7 @@ pub async fn execute(
         }
     })?;
     let root = store
-        .get_task(root_project, &query.id)
+        .get_task_record(root_project, &query.id)
         .map_err(|source| GetTaskDagError::ReadRoot {
             id: query.id.clone(),
             source: anyhow::Error::new(source),
@@ -112,7 +111,7 @@ impl<'a, Store: TaskVault> Resolver<'a, Store> {
         }
         let resolved =
             find_project(self.projects, id.project_id()).map_or(ResolvedTask::Missing, |project| {
-                match self.store.get_task(project, id) {
+                match self.store.get_task_record(project, id) {
                     Ok(Some(record))
                         if matches!(record.materialization, Materialization::NoteFile) =>
                     {
@@ -483,11 +482,11 @@ fn format_path(path: &[TaskId]) -> String {
 mod tests {
     use pwf_models::task::{BlockedBy, TaskId, TaskStatus};
     use pwf_wire::task::{
-        GetTaskDag, StatusFilter, TaskDagDepth, TaskDagEdge, TaskDagMode, TaskDagNode,
+        GetTaskDag, StatusFilter, StoredBlockedBy, TaskDagDepth, TaskDagEdge, TaskDagMode,
+        TaskDagNode,
     };
 
     use crate::{
-        ports::task_vault::StoredBlockedBy,
         task::get_task_dag,
         testing::{
             InMemoryStore, InMemoryStoreFailure, MIGRATOR, insert_project, stored_blocked_by,
@@ -502,21 +501,21 @@ mod tests {
         insert_project(&pool, "FOO", "foo", "/work/foo", "/tasks/foo", false).await;
         insert_project(&pool, "AUX", "aux", "/work/aux", "/tasks/aux", true).await;
 
-        let root = crate::ports::task_vault::TaskRecord {
+        let root = pwf_wire::task::TaskRecord {
             title: "ship graph view".to_string(),
             blocked_by: stored_blocked_by(&["FOO-0002", "AUX-0001"]),
             ..task_record("FOO-0003")
         };
-        let direct = crate::ports::task_vault::TaskRecord {
+        let direct = pwf_wire::task::TaskRecord {
             title: "prepare graph data".to_string(),
             blocked_by: stored_blocked_by(&["FOO-0001"]),
             ..task_record("FOO-0002")
         };
-        let ancestor = crate::ports::task_vault::TaskRecord {
+        let ancestor = pwf_wire::task::TaskRecord {
             title: "adopt blocked by".to_string(),
             ..task_record("FOO-0001")
         };
-        let paused_project_ancestor = crate::ports::task_vault::TaskRecord {
+        let paused_project_ancestor = pwf_wire::task::TaskRecord {
             title: "supply shared contract".to_string(),
             ..task_record("AUX-0001")
         };
@@ -574,23 +573,23 @@ mod tests {
     #[sqlx::test(migrator = "MIGRATOR")]
     async fn status_filter_keeps_the_root_and_stops_at_hidden_dependents(pool: sqlx::SqlitePool) {
         insert_project(&pool, "FOO", "foo", "/work/foo", "/tasks/foo", false).await;
-        let root = crate::ports::task_vault::TaskRecord {
+        let root = pwf_wire::task::TaskRecord {
             title: "completed foundation".to_string(),
             status: TaskStatus::Done,
             ..task_record("FOO-0001")
         };
-        let hidden = crate::ports::task_vault::TaskRecord {
+        let hidden = pwf_wire::task::TaskRecord {
             title: "completed bridge".to_string(),
             status: TaskStatus::Done,
             blocked_by: stored_blocked_by(&["FOO-0001"]),
             ..task_record("FOO-0002")
         };
-        let hidden_descendant = crate::ports::task_vault::TaskRecord {
+        let hidden_descendant = pwf_wire::task::TaskRecord {
             title: "active behind hidden bridge".to_string(),
             blocked_by: stored_blocked_by(&["FOO-0002"]),
             ..task_record("FOO-0003")
         };
-        let visible = crate::ports::task_vault::TaskRecord {
+        let visible = pwf_wire::task::TaskRecord {
             title: "active direct dependent".to_string(),
             blocked_by: stored_blocked_by(&["FOO-0001"]),
             ..task_record("FOO-0004")
@@ -633,11 +632,11 @@ mod tests {
     #[sqlx::test(migrator = "MIGRATOR")]
     async fn depth_limit_marks_a_hidden_upstream_layer(pool: sqlx::SqlitePool) {
         insert_project(&pool, "FOO", "foo", "/work/foo", "/tasks/foo", false).await;
-        let root = crate::ports::task_vault::TaskRecord {
+        let root = pwf_wire::task::TaskRecord {
             blocked_by: stored_blocked_by(&["FOO-0002"]),
             ..task_record("FOO-0003")
         };
-        let direct = crate::ports::task_vault::TaskRecord {
+        let direct = pwf_wire::task::TaskRecord {
             blocked_by: stored_blocked_by(&["FOO-0001"]),
             ..task_record("FOO-0002")
         };
@@ -677,7 +676,7 @@ mod tests {
     #[sqlx::test(migrator = "MIGRATOR")]
     async fn missing_blocker_is_a_terminal_diagnostic_node(pool: sqlx::SqlitePool) {
         insert_project(&pool, "FOO", "foo", "/work/foo", "/tasks/foo", false).await;
-        let root = crate::ports::task_vault::TaskRecord {
+        let root = pwf_wire::task::TaskRecord {
             blocked_by: stored_blocked_by(&["FOO-0002"]),
             ..task_record("FOO-0001")
         };
@@ -713,11 +712,11 @@ mod tests {
     #[sqlx::test(migrator = "MIGRATOR")]
     async fn malformed_blocked_by_keeps_the_task_and_stops_its_branch(pool: sqlx::SqlitePool) {
         insert_project(&pool, "FOO", "foo", "/work/foo", "/tasks/foo", false).await;
-        let root = crate::ports::task_vault::TaskRecord {
+        let root = pwf_wire::task::TaskRecord {
             blocked_by: stored_blocked_by(&["FOO-0002"]),
             ..task_record("FOO-0001")
         };
-        let malformed = crate::ports::task_vault::TaskRecord {
+        let malformed = pwf_wire::task::TaskRecord {
             blocked_by: StoredBlockedBy::Malformed {
                 raw: "[[FOO-0003]]".to_string(),
                 reason: "expected a YAML sequence".to_string(),
@@ -751,15 +750,15 @@ mod tests {
     async fn full_mode_does_not_switch_directions_at_surrounding_nodes(pool: sqlx::SqlitePool) {
         insert_project(&pool, "FOO", "foo", "/work/foo", "/tasks/foo", false).await;
         let blocker = task_record("FOO-0001");
-        let root = crate::ports::task_vault::TaskRecord {
+        let root = pwf_wire::task::TaskRecord {
             blocked_by: stored_blocked_by(&["FOO-0001"]),
             ..task_record("FOO-0002")
         };
-        let blocker_sibling = crate::ports::task_vault::TaskRecord {
+        let blocker_sibling = pwf_wire::task::TaskRecord {
             blocked_by: stored_blocked_by(&["FOO-0001"]),
             ..task_record("FOO-0003")
         };
-        let dependent = crate::ports::task_vault::TaskRecord {
+        let dependent = pwf_wire::task::TaskRecord {
             blocked_by: stored_blocked_by(&["FOO-0002"]),
             ..task_record("FOO-0004")
         };
@@ -794,11 +793,11 @@ mod tests {
     #[sqlx::test(migrator = "MIGRATOR")]
     async fn reachable_cycle_is_rejected(pool: sqlx::SqlitePool) {
         insert_project(&pool, "FOO", "foo", "/work/foo", "/tasks/foo", false).await;
-        let first = crate::ports::task_vault::TaskRecord {
+        let first = pwf_wire::task::TaskRecord {
             blocked_by: stored_blocked_by(&["FOO-0002"]),
             ..task_record("FOO-0001")
         };
-        let second = crate::ports::task_vault::TaskRecord {
+        let second = pwf_wire::task::TaskRecord {
             blocked_by: stored_blocked_by(&["FOO-0001"]),
             ..task_record("FOO-0002")
         };
@@ -854,7 +853,7 @@ mod tests {
         let blockers = (2..=513)
             .map(|number| TaskId::try_new(format!("FOO-{number:04}")).unwrap())
             .collect::<Vec<_>>();
-        let root = crate::ports::task_vault::TaskRecord {
+        let root = pwf_wire::task::TaskRecord {
             blocked_by: StoredBlockedBy::Valid(BlockedBy::try_new(blockers).unwrap()),
             ..task_record("FOO-0001")
         };

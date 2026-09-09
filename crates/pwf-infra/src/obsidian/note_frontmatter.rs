@@ -1,9 +1,9 @@
 use std::fmt::Write as _;
 
-use pwf_application::ports::task_vault::StoredBlockedBy;
 use pwf_models::task::{
     BlockedBy, EffortTier, PriorityTier, TaskId, TaskStatus, TaskTags, TaskTimestamp, TaskTitle,
 };
+use pwf_wire::task::StoredBlockedBy;
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -240,8 +240,8 @@ fn tags_frontmatter_value(tags: &TaskTags) -> String {
 mod tests {
     use std::path::Path;
 
-    use pwf_application::ports::task_vault::StoredBlockedBy;
     use pwf_models::task::{BlockedBy, TaskId, TaskStatus, TaskTimestamp, TaskTitle};
+    use pwf_wire::task::StoredBlockedBy;
 
     use super::{
         NewTaskFields, new_task_content, parse_blocked_by, reopen_status, set_blocked_by,

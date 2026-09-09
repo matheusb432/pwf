@@ -1,13 +1,10 @@
 //! Lists one managed project's notes.
 
-use pwf_wire::{
-    note::{ListNotes, ListedNotes, NoteListLimit},
-    project::{ProjectStatusFilter, ResolveProject},
-};
+use pwf_wire::note::{ListNotes, ListedNotes, NoteListLimit};
 
 use crate::{
     ports::project_note::ProjectNotes,
-    project::resolve_project::{self, ResolveProjectError},
+    project::{get_active_project, get_project::GetProjectError},
 };
 
 const DEFAULT_NOTE_COUNT: usize = 10;
@@ -15,7 +12,7 @@ const DEFAULT_NOTE_COUNT: usize = 10;
 #[derive(Debug, thiserror::Error)]
 pub enum ListNotesError {
     #[error(transparent)]
-    ResolveProject(#[from] ResolveProjectError),
+    GetProject(#[from] GetProjectError),
     #[error(transparent)]
     Store(anyhow::Error),
 }
@@ -27,14 +24,7 @@ pub async fn execute(
     store: &impl ProjectNotes,
     pool: &sqlx::SqlitePool,
 ) -> Result<ListedNotes, ListNotesError> {
-    let project = resolve_project::execute(
-        ResolveProject {
-            selector: query.project_selector,
-            status: ProjectStatusFilter::ActiveOnly,
-        },
-        pool,
-    )
-    .await?;
+    let project = get_active_project::execute(query.project_id, pool).await?;
     let mut notes = store
         .list_notes(&project)
         .map_err(|error| ListNotesError::Store(anyhow::Error::new(error)))?;
@@ -88,7 +78,7 @@ mod tests {
 
         let result = list_notes::execute(
             ListNotes {
-                project_selector: "FOO".parse().unwrap(),
+                project_id: "FOO".parse().unwrap(),
                 limit: None.into(),
             },
             &store,
@@ -128,7 +118,7 @@ mod tests {
 
         let unlimited = list_notes::execute(
             ListNotes {
-                project_selector: "foo".parse().unwrap(),
+                project_id: "foo".parse().unwrap(),
                 limit: Some(0).into(),
             },
             &store,
@@ -138,7 +128,7 @@ mod tests {
         .unwrap();
         let capped = list_notes::execute(
             ListNotes {
-                project_selector: "foo".parse().unwrap(),
+                project_id: "foo".parse().unwrap(),
                 limit: Some(2).into(),
             },
             &store,
@@ -168,7 +158,7 @@ mod tests {
         assert_eq!(error.to_string(), "sentinel store failure");
         let source = match error {
             ListNotesError::Store(source) => Some(source),
-            ListNotesError::ResolveProject(_) => None,
+            ListNotesError::GetProject(_) => None,
         };
         assert!(source.is_some());
         let source = source.unwrap();

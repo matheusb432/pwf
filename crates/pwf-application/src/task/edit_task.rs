@@ -5,30 +5,26 @@ use pwf_models::{
 use pwf_wire::{
     collection_edit::CollectionEdit,
     patch_field::PatchField,
-    project::ProjectStatusFilter,
     set_field::SetField,
     task::{
-        EditTask, EditTaskContent, EditTaskContentKind, RawTaskTags, TaskMutationResult,
-        TaskMutationSummary, TaskNotePath,
+        EditTask, EditTaskContent, EditTaskContentKind, Materialization, RawTaskTags,
+        StoredBlockedBy, TaskMutationResult, TaskMutationSummary, TaskNotePath, TaskRecord,
     },
 };
 
 use super::{
     TaskPromptTitleError,
-    blocked_by::{self, BlockedByValidationError, validate_and_merge},
+    blocked_by::{self, BlockedByValidationError},
     commit_task_writes, ensure_task_revision, expected_task_revision, infer_task_title,
     lane_configuration::{TaskPromptLanes, TaskPromptLanesError},
     mutation_request::{self, MutationOperation, MutationRequestState, MutationStart},
     note_body::{EditLanesError, append_lanes, edit_lanes, render},
+    read_task_dependencies::{self, ReadTaskDependencies, ReadTaskDependenciesError},
     resolve_task_project::{self, ResolveTaskProjectError},
-    tags, task_body_region,
+    task_body_region,
 };
-use crate::{
-    ports::task_vault::{
-        ExpectedTaskRevision, Materialization, NullablePatch, StoredBlockedBy, TaskMutationError,
-        TaskPatch, TaskRecord, TaskVault, TaskWrite,
-    },
-    project::list_projects,
+use crate::ports::task_vault::{
+    ExpectedTaskRevision, NullablePatch, TaskMutationError, TaskPatch, TaskVault, TaskWrite,
 };
 
 struct PreparedTaskEdit {
@@ -96,15 +92,11 @@ pub enum EditTaskError {
 
 /// Applies content and metadata edits to one active task.
 #[cqrsy::command]
+#[expect(
+    clippy::too_many_lines,
+    reason = "keep receipt handling, dependency reads, and writes visible in the owning interactor"
+)]
 pub async fn execute(
-    command: EditTask,
-    store: &impl TaskVault,
-    pool: &sqlx::SqlitePool,
-) -> Result<TaskMutationResult<()>, EditTaskError> {
-    update(command, store, pool).await
-}
-
-async fn update(
     command: EditTask,
     store: &impl TaskVault,
     pool: &sqlx::SqlitePool,
@@ -129,7 +121,7 @@ async fn update(
         .await
         .map_err(|error| map_project_error(error, &command.id))?;
     let record = store
-        .get_task(&project, &command.id)
+        .get_task_record(&project, &command.id)
         .map_err(|error| EditTaskError::WriteStore(anyhow::Error::new(error)))?
         .ok_or_else(|| EditTaskError::TaskNotFound {
             id: command.id.clone(),
@@ -146,7 +138,28 @@ async fn update(
         });
     }
 
-    let projects = resolve_blocked_by_projects(&command, pool).await?;
+    let blocked_by = resolve_blocked_by(command.edits.blocked_by(), &record)?;
+    if let (NullablePatch::Set(blockers), Some(supplied)) =
+        (&blocked_by, command.edits.blocked_by().addition())
+    {
+        let dependencies = read_task_dependencies::execute(
+            ReadTaskDependencies {
+                target: &command.id,
+                blockers,
+            },
+            store,
+            pool,
+        )
+        .await
+        .map_err(|error| match error {
+            ReadTaskDependenciesError::ReadStore { id, source } => {
+                EditTaskError::ReadBlockedBy { id, source }
+            }
+            ReadTaskDependenciesError::QueryProject(source) => EditTaskError::QueryProject(source),
+        })?;
+        blocked_by::validate(&command.id, blockers, supplied, &dependencies)
+            .map_err(map_blocked_by_error)?;
+    }
     let content_patch = match command.edits.content() {
         SetField::Set(content) => {
             let lane_configuration = TaskPromptLanes::load(pool).await?;
@@ -154,7 +167,7 @@ async fn update(
         }
         SetField::NoAction => (SetField::NoAction, SetField::NoAction),
     };
-    let prepared = prepare(command, project, &record, &projects, store, content_patch)?;
+    let prepared = prepare(command, project, &record, blocked_by, content_patch)?;
     if let Some(identity) = identity.as_ref()
         && let MutationStart::Existing(replay) =
             mutation_request::start(pool, identity, MutationOperation::Update, &prepared.id).await?
@@ -201,27 +214,13 @@ fn map_project_error(error: ResolveTaskProjectError, id: &TaskId) -> EditTaskErr
     }
 }
 
-async fn resolve_blocked_by_projects(
-    command: &EditTask,
-    pool: &sqlx::SqlitePool,
-) -> Result<Vec<Project>, EditTaskError> {
-    if command.edits.blocked_by().addition().is_none() {
-        return Ok(Vec::new());
-    }
-    list_projects::execute(ProjectStatusFilter::IncludingPaused, pool)
-        .await
-        .map_err(|error| EditTaskError::QueryProject(anyhow::Error::new(error)))
-}
-
 fn prepare(
     command: EditTask,
     project: Project,
     record: &TaskRecord,
-    projects: &[Project],
-    store: &impl TaskVault,
+    blocked_by: NullablePatch<BlockedBy>,
     content_patch: (SetField<String>, SetField<TaskTitle>),
 ) -> Result<PreparedTaskEdit, EditTaskError> {
-    let blocked_by = resolve_blocked_by(command.edits.blocked_by(), record, store, projects)?;
     let (body, title) = content_patch;
     let patch = TaskPatch {
         body,
@@ -270,8 +269,6 @@ fn prepare_content(
 fn resolve_blocked_by(
     edit: &CollectionEdit<BlockedBy>,
     record: &TaskRecord,
-    store: &impl TaskVault,
-    projects: &[Project],
 ) -> Result<NullablePatch<BlockedBy>, EditTaskError> {
     let existing = match &record.blocked_by {
         StoredBlockedBy::Absent => None,
@@ -288,25 +285,16 @@ fn resolve_blocked_by(
     match edit {
         CollectionEdit::Unchanged => Ok(NullablePatch::Unchanged),
         CollectionEdit::Clear => Ok(NullablePatch::Clear),
-        CollectionEdit::Append(added) => {
-            validate_and_merge(&record.id, existing, added, store, projects)
-                .map(NullablePatch::Set)
-                .map_err(map_blocked_by_error)
-        }
-        CollectionEdit::Replace(added) => {
-            validate_and_merge(&record.id, None, added, store, projects)
-                .map(NullablePatch::Set)
-                .map_err(map_blocked_by_error)
-        }
+        CollectionEdit::Append(added) => Ok(NullablePatch::Set(
+            existing.map_or_else(|| added.clone(), |existing| existing.merge(added)),
+        )),
+        CollectionEdit::Replace(added) => Ok(NullablePatch::Set(added.clone())),
     }
 }
 
 fn map_blocked_by_error(error: BlockedByValidationError) -> EditTaskError {
     match error {
         BlockedByValidationError::UnknownIds { ids } => EditTaskError::UnknownBlockedByIds { ids },
-        BlockedByValidationError::ReadStore { id, source } => {
-            EditTaskError::ReadBlockedBy { id, source }
-        }
         BlockedByValidationError::SelfDependency { target, blocker } => {
             EditTaskError::SelfBlockedBy { target, blocker }
         }
@@ -357,12 +345,13 @@ fn merge_appended_tags(
     existing: &RawTaskTags,
     appended: &TaskTags,
 ) -> Result<TaskTags, EditTaskError> {
-    let existing = tags::parse_frontmatter(existing).map_err(|error| {
-        EditTaskError::InvalidTagsFrontmatter {
-            id: id.clone(),
-            raw: error.raw().to_string(),
-        }
-    })?;
+    let existing =
+        pwf_models::task::TaskTags::parse_frontmatter(existing.as_ref()).map_err(|error| {
+            EditTaskError::InvalidTagsFrontmatter {
+                id: id.clone(),
+                raw: error.raw().to_string(),
+            }
+        })?;
     Ok(existing.merge(appended))
 }
 
@@ -393,14 +382,13 @@ mod tests {
         patch_field::PatchField,
         set_field::SetField,
         task::{
-            EditTask, EditTaskContent, RawTaskTags, TaskEdits, TaskLane, TaskLaneEdits, TaskLanes,
-            TaskNotePath,
+            EditTask, EditTaskContent, Materialization, RawTaskTags, TaskEdits, TaskLane,
+            TaskLaneEdits, TaskLanes, TaskNotePath, TaskRecord,
         },
     };
 
     use super::EditTaskError;
     use crate::{
-        ports::task_vault::{Materialization, TaskRecord},
         task::edit_task,
         testing::{InMemoryStore, insert_project, stored_blocked_by, task_record, task_timestamp},
     };
@@ -665,6 +653,31 @@ mod tests {
             edited.body,
             "## Goals\n\n- old\n- additional\n\n## Context\n\n- context\n"
         );
+    }
+
+    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
+    async fn replacing_malformed_tags_does_not_require_unrelated_metadata_to_parse(
+        pool: sqlx::SqlitePool,
+    ) {
+        register_project(&pool).await;
+        let target = TaskRecord {
+            tags: Some(RawTaskTags::new("broken tags")),
+            effort: Some("extreme".to_string()),
+            ..record("FOO-0001", TaskStatus::Active, "authored body")
+        };
+        let store = staged(vec![target]);
+        let command = edit(
+            "FOO-0001",
+            SetField::NoAction,
+            CollectionEdit::Unchanged,
+            PatchField::NoAction,
+            CollectionEdit::Replace(tags("rust")),
+        );
+        run(command, &store, &pool).await.unwrap();
+        let records = store.tasks("foo-bar");
+        assert_eq!(records[0].tags.as_ref().map(AsRef::as_ref), Some("[rust]"));
+        assert_eq!(records[0].effort.as_deref(), Some("extreme"));
+        assert_eq!(records[0].body, "authored body");
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]

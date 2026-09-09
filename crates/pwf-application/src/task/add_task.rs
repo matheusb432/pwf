@@ -1,10 +1,7 @@
-use pwf_models::{
-    project::Project,
-    task::{TaskId, TaskTimestampError, TaskTitle},
-};
-use pwf_wire::{
-    project::{ProjectStatusFilter, ResolveProject},
-    task::{AddTask, AddTaskPromptKind, TaskMutationResult, TaskMutationSummary},
+use pwf_models::task::{TaskId, TaskTimestampError, TaskTitle};
+use pwf_wire::task::{
+    AddTask, AddTaskPrompt, AddTaskPromptKind, Materialization, StoredBlockedBy,
+    TaskMutationResult, TaskMutationSummary, TaskRecord,
 };
 
 pub use super::task_creation::CreateTaskError;
@@ -15,23 +12,21 @@ use super::{
     lane_configuration::{TaskPromptLanes, TaskPromptLanesError},
     mutation_request::{self, MutationOperation, MutationRequestState, MutationStart},
     note_body::{render, render_lanes},
+    read_task_dependencies::{self, ReadTaskDependencies, ReadTaskDependenciesError},
     task_creation::{self, TaskCreation},
 };
 use crate::{
     ports::{
         clock::Clock,
-        task_vault::{Materialization, NewTask, StoredBlockedBy, TaskRecord, TaskVault},
+        task_vault::{NewTask, TaskVault},
     },
-    project::{
-        list_projects,
-        resolve_project::{self, ResolveProjectError},
-    },
+    project::{get_active_project, get_project::GetProjectError},
 };
 
 #[derive(Debug, thiserror::Error)]
 pub enum AddTaskError {
     #[error(transparent)]
-    ProjectResolution(#[from] ResolveProjectError),
+    GetProject(#[from] GetProjectError),
     #[error(transparent)]
     QueryProject(anyhow::Error),
     #[error("cannot determine the next task ID for {project}: {source}")]
@@ -81,48 +76,43 @@ pub enum AddTaskError {
 
 /// Creates a task record and its open index entry for a mapped project.
 #[cqrsy::command]
+#[expect(
+    clippy::too_many_lines,
+    reason = "keep receipt handling, dependency reads, and writes visible in the owning interactor"
+)]
 pub async fn execute(
-    cmd: &AddTask,
+    command: AddTask,
     store: &impl TaskVault,
     pool: &sqlx::SqlitePool,
     clock: &impl Clock,
 ) -> Result<TaskMutationResult<TaskId>, AddTaskError> {
-    add(cmd, store, pool, clock).await
-}
-
-async fn add(
-    cmd: &AddTask,
-    store: &impl TaskVault,
-    pool: &sqlx::SqlitePool,
-    clock: &impl Clock,
-) -> Result<TaskMutationResult<TaskId>, AddTaskError> {
-    let identity =
-        mutation_request::identity(cmd.request_id.as_ref(), cmd.request_fingerprint.as_ref())?;
-    let replay = match identity.as_ref() {
+    let AddTask {
+        project_id,
+        prompt,
+        blocked_by,
+        effort,
+        priority,
+        tags,
+        request_id,
+        request_fingerprint,
+    } = command;
+    let identity = mutation_request::identity(request_id.as_ref(), request_fingerprint.as_ref())?;
+    let mut replay = match identity.as_ref() {
         Some(identity) => mutation_request::find(pool, identity, MutationOperation::Create).await?,
         None => None,
     };
-    if let Some(replay) = replay
-        .as_ref()
-        .filter(|replay| replay.state == MutationRequestState::Completed)
-    {
+    if let Some(replay) = replay.take_if(|replay| replay.state == MutationRequestState::Completed) {
         return Ok(TaskMutationResult {
-            outcome: replay.task_id.clone(),
-            task: replay.task.clone(),
+            outcome: replay.task_id,
+            task: replay.task,
         });
     }
-    let project = resolve_project::execute(
-        ResolveProject {
-            selector: cmd.project_selector.clone(),
-            status: ProjectStatusFilter::ActiveOnly,
-        },
-        pool,
-    )
-    .await?;
+    let project = get_active_project::execute(&project_id, pool).await?;
     let lane_configuration = TaskPromptLanes::load(pool).await?;
-    let prepared = prepare_source(cmd, &project, &lane_configuration)?;
-    let id = match replay.as_ref() {
-        Some(replay) => replay.task_id.clone(),
+    let (title, body) = prepare_source(prompt, &lane_configuration)?;
+    let replay_pending = replay.is_some();
+    let id = match replay {
+        Some(replay) => replay.task_id,
         None => store
             .next_task_id(&project)
             .map_err(|source| AddTaskError::AllocateTaskId {
@@ -131,8 +121,26 @@ async fn add(
             })?,
     };
 
-    let blocked_by = resolve_blocked_by(&id, cmd, store, pool).await?;
-    if replay.is_none()
+    if let Some(blockers) = blocked_by.as_ref() {
+        let dependencies = read_task_dependencies::execute(
+            ReadTaskDependencies {
+                target: &id,
+                blockers,
+            },
+            store,
+            pool,
+        )
+        .await
+        .map_err(|error| match error {
+            ReadTaskDependenciesError::ReadStore { id, source } => {
+                AddTaskError::ReadBlockedBy { id, source }
+            }
+            ReadTaskDependenciesError::QueryProject(source) => AddTaskError::QueryProject(source),
+        })?;
+        blocked_by::validate(&id, blockers, blockers, &dependencies)
+            .map_err(map_blocked_by_error)?;
+    }
+    if !replay_pending
         && let Some(identity) = identity.as_ref()
         && let MutationStart::Existing(existing) =
             mutation_request::start(pool, identity, MutationOperation::Create, &id).await?
@@ -145,35 +153,47 @@ async fn add(
             MutationRequestState::Pending => Err(identity.incomplete().into()),
         };
     }
-
     let summary = TaskMutationSummary {
         id: id.clone(),
-        title: prepared.title.to_string(),
+        title: title.to_string(),
         status: pwf_models::task::TaskStatus::Active,
     };
-    let existing = if replay.is_some() {
-        read_reserved_task(store, &project, &id)?
+    let existing = if replay_pending {
+        store
+            .get_task_record(&project, &id)
+            .map_err(|source| AddTaskError::ReadReservedTask {
+                id: id.clone(),
+                source: anyhow::Error::new(source),
+            })?
     } else {
         None
     };
     if let Some(record) = existing {
-        if !created_record_matches(&record, &prepared, blocked_by.as_ref(), cmd) {
+        if !created_record_matches(
+            &record,
+            &title,
+            &body,
+            blocked_by.as_ref(),
+            effort,
+            priority,
+            tags.as_ref(),
+        ) {
             return Err(AddTaskError::ReservedTaskChanged { id });
         }
         task_creation::ensure_index(store, &project, &id)?;
     } else {
         task_creation::create(
             TaskCreation {
-                project: &prepared.project,
+                project: &project,
                 id: &id,
                 new: NewTask {
-                    body: prepared.body,
-                    title: prepared.title,
+                    body,
+                    title,
                     created_at: clock.now()?,
                     blocked_by,
-                    effort: cmd.effort,
-                    priority: cmd.priority,
-                    tags: cmd.tags.clone(),
+                    effort,
+                    priority,
+                    tags,
                 },
             },
             store,
@@ -195,41 +215,14 @@ async fn add(
     })
 }
 
-async fn resolve_blocked_by(
-    id: &TaskId,
-    command: &AddTask,
-    store: &impl TaskVault,
-    pool: &sqlx::SqlitePool,
-) -> Result<Option<pwf_models::task::BlockedBy>, AddTaskError> {
-    let Some(blockers) = command.blocked_by.as_ref() else {
-        return Ok(None);
-    };
-    let projects = list_projects::execute(ProjectStatusFilter::IncludingPaused, pool)
-        .await
-        .map_err(|error| AddTaskError::QueryProject(anyhow::Error::new(error)))?;
-    blocked_by::validate_and_merge(id, None, blockers, store, &projects)
-        .map(Some)
-        .map_err(map_blocked_by_error)
-}
-
-fn read_reserved_task(
-    store: &impl TaskVault,
-    project: &Project,
-    id: &TaskId,
-) -> Result<Option<TaskRecord>, AddTaskError> {
-    store
-        .get_task(project, id)
-        .map_err(|source| AddTaskError::ReadReservedTask {
-            id: id.clone(),
-            source: anyhow::Error::new(source),
-        })
-}
-
 fn created_record_matches(
     record: &TaskRecord,
-    prepared: &PreparedAdd,
+    title: &TaskTitle,
+    body: &str,
     blocked_by: Option<&pwf_models::task::BlockedBy>,
-    command: &AddTask,
+    effort: Option<pwf_models::task::EffortTier>,
+    priority: Option<pwf_models::task::PriorityTier>,
+    tags: Option<&pwf_models::task::TaskTags>,
 ) -> bool {
     let stored_blocked_by = match &record.blocked_by {
         StoredBlockedBy::Absent => None,
@@ -239,24 +232,21 @@ fn created_record_matches(
     let stored_tags = record
         .tags
         .as_ref()
-        .map(super::tags::parse_frontmatter)
+        .map(|raw| pwf_models::task::TaskTags::parse_frontmatter(raw.as_ref()))
         .transpose();
     record.status == pwf_models::task::TaskStatus::Active
         && matches!(record.materialization, Materialization::NoteFile)
-        && record.title == prepared.title.as_ref()
-        && record.body == prepared.body
+        && record.title == title.as_ref()
+        && record.body == body
         && stored_blocked_by == blocked_by
-        && record.effort.as_deref() == command.effort.as_ref().map(AsRef::as_ref)
-        && record.priority.as_deref() == command.priority.as_ref().map(AsRef::as_ref)
-        && stored_tags.is_ok_and(|tags| tags.as_ref() == command.tags.as_ref())
+        && record.effort.as_deref() == effort.as_ref().map(AsRef::as_ref)
+        && record.priority.as_deref() == priority.as_ref().map(AsRef::as_ref)
+        && stored_tags.is_ok_and(|stored| stored.as_ref() == tags)
 }
 
 fn map_blocked_by_error(error: BlockedByValidationError) -> AddTaskError {
     match error {
         BlockedByValidationError::UnknownIds { ids } => AddTaskError::UnknownBlockedByIds { ids },
-        BlockedByValidationError::ReadStore { id, source } => {
-            AddTaskError::ReadBlockedBy { id, source }
-        }
         BlockedByValidationError::SelfDependency { target, blocker } => {
             AddTaskError::SelfBlockedBy { target, blocker }
         }
@@ -275,32 +265,19 @@ fn map_blocked_by_error(error: BlockedByValidationError) -> AddTaskError {
     }
 }
 
-struct PreparedAdd {
-    project: Project,
-    title: TaskTitle,
-    body: String,
-}
-
 fn prepare_source(
-    command: &AddTask,
-    selected_project: &Project,
+    prompt: AddTaskPrompt,
     lane_configuration: &TaskPromptLanes,
-) -> Result<PreparedAdd, AddTaskError> {
-    let project = selected_project.clone();
-    let (title, body) = match command.prompt.kind() {
-        AddTaskPromptKind::Shorthand(prompt) => (
-            infer_task_title(prompt, lane_configuration)?,
-            render(prompt, lane_configuration),
-        ),
+) -> Result<(TaskTitle, String), AddTaskError> {
+    match prompt.into_kind() {
+        AddTaskPromptKind::Shorthand(prompt) => Ok((
+            infer_task_title(&prompt, lane_configuration)?,
+            render(&prompt, lane_configuration),
+        )),
         AddTaskPromptKind::Structured { title, lanes } => {
-            (title.clone(), render_lanes(lanes, lane_configuration))
+            Ok((title, render_lanes(&lanes, lane_configuration)))
         }
-    };
-    Ok(PreparedAdd {
-        project,
-        title,
-        body,
-    })
+    }
 }
 
 #[cfg(test)]

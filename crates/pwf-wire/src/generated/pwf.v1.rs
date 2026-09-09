@@ -249,7 +249,7 @@ pub struct UpdateProjectResponse {}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct AddNoteRequest {
     #[prost(string, tag = "1")]
-    pub project_selector: ::prost::alloc::string::String,
+    pub project_id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub title: ::prost::alloc::string::String,
     #[prost(string, tag = "3")]
@@ -268,7 +268,7 @@ pub struct AddNoteRequest {
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ListNotesRequest {
     #[prost(string, tag = "1")]
-    pub project_selector: ::prost::alloc::string::String,
+    pub project_id: ::prost::alloc::string::String,
     #[prost(enumeration = "NoteListLimitKind", tag = "2")]
     pub limit_kind: i32,
     #[prost(uint64, tag = "3")]
@@ -277,7 +277,7 @@ pub struct ListNotesRequest {
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct UpdateNoteRequest {
     #[prost(string, tag = "1")]
-    pub project_selector: ::prost::alloc::string::String,
+    pub project_id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub selector: ::prost::alloc::string::String,
     /// Omitted leaves the title unchanged; a supplied value sets it and must be nonempty.
@@ -334,7 +334,7 @@ pub struct UpdateNoteResponse {
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct DeleteNoteStart {
     #[prost(string, tag = "1")]
-    pub project_selector: ::prost::alloc::string::String,
+    pub project_id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub selector: ::prost::alloc::string::String,
 }
@@ -427,7 +427,7 @@ pub struct StructuredTaskPrompt {
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CreateTaskRequest {
     #[prost(string, tag = "1")]
-    pub project_selector: ::prost::alloc::string::String,
+    pub project_id: ::prost::alloc::string::String,
     #[prost(string, repeated, tag = "5")]
     pub blocked_by: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     #[prost(enumeration = "EffortTier", optional, tag = "6")]
@@ -588,8 +588,11 @@ pub struct UpdateTaskRequest {
 pub struct GetTaskRequest {
     #[prost(string, tag = "1")]
     pub id: ::prost::alloc::string::String,
-    #[prost(enumeration = "TaskReadFormat", tag = "2")]
-    pub output: i32,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct GetTaskRecordRequest {
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct GetTaskDagRequest {
@@ -614,7 +617,7 @@ pub struct AllTaskSections {}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ListTasksRequest {
     #[prost(string, optional, tag = "1")]
-    pub project_selector: ::core::option::Option<::prost::alloc::string::String>,
+    pub project_id: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(uint64, optional, tag = "3")]
     pub number: ::core::option::Option<u64>,
     #[prost(enumeration = "EffortTier", optional, tag = "4")]
@@ -677,53 +680,125 @@ pub struct UpdateTaskResponse {
     #[prost(message, optional, tag = "1")]
     pub task: ::core::option::Option<TaskMutationSummary>,
 }
+/// A record retains raw metadata even when a consumer cannot interpret it.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct TaskData {
+pub struct TaskRecord {
     #[prost(string, tag = "1")]
     pub id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
-    pub project: ::prost::alloc::string::String,
-    #[prost(string, tag = "3")]
     pub title: ::prost::alloc::string::String,
-    #[prost(enumeration = "TaskStatus", tag = "4")]
+    #[prost(enumeration = "TaskStatus", tag = "3")]
     pub status: i32,
+    #[prost(string, optional, tag = "4")]
+    pub created_at: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, optional, tag = "5")]
-    pub created: ::core::option::Option<::prost::alloc::string::String>,
+    pub completed_at: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, optional, tag = "6")]
-    pub completed: ::core::option::Option<::prost::alloc::string::String>,
+    pub commits: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "7")]
+    pub tags: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "8")]
+    pub effort: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "9")]
+    pub priority: ::core::option::Option<::prost::alloc::string::String>,
+    /// Omitted means the property is absent.
+    #[prost(message, optional, tag = "10")]
+    pub blocked_by: ::core::option::Option<StoredTaskBlockedBy>,
+    #[prost(string, optional, tag = "11")]
+    pub section: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, tag = "12")]
+    pub body: ::prost::alloc::string::String,
+    #[prost(string, tag = "13")]
+    pub source: ::prost::alloc::string::String,
+    #[prost(string, tag = "14")]
+    pub locator: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "15")]
+    pub placement: ::core::option::Option<TaskIndexPlacement>,
+    #[prost(string, tag = "16")]
+    pub revision: ::prost::alloc::string::String,
+    #[prost(oneof = "task_record::Materialization", tags = "17, 18")]
+    pub materialization: ::core::option::Option<task_record::Materialization>,
+}
+/// Nested message and enum types in `TaskRecord`.
+pub mod task_record {
+    #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum Materialization {
+        #[prost(message, tag = "17")]
+        NoteFile(super::TaskNoteFile),
+        #[prost(string, tag = "18")]
+        MissingNote(::prost::alloc::string::String),
+    }
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct TaskNoteFile {}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct TaskIndexPlacement {
+    #[prost(string, tag = "1")]
+    pub index_path: ::prost::alloc::string::String,
+    #[prost(uint64, tag = "2")]
+    pub line: u64,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct StoredTaskBlockedBy {
+    #[prost(oneof = "stored_task_blocked_by::Value", tags = "1, 2")]
+    pub value: ::core::option::Option<stored_task_blocked_by::Value>,
+}
+/// Nested message and enum types in `StoredTaskBlockedBy`.
+pub mod stored_task_blocked_by {
+    #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum Value {
+        /// A nonempty collection of canonical task IDs.
+        #[prost(message, tag = "1")]
+        Valid(super::StringValues),
+        #[prost(message, tag = "2")]
+        Malformed(super::MalformedTaskBlockedBy),
+    }
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct MalformedTaskBlockedBy {
+    #[prost(string, tag = "1")]
+    pub raw: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub reason: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct GetTaskResponse {
+    #[prost(message, optional, tag = "6")]
+    pub task: ::core::option::Option<Task>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct GetTaskRecordResponse {
+    #[prost(message, optional, tag = "1")]
+    pub record: ::core::option::Option<TaskRecord>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct Task {
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub title: ::prost::alloc::string::String,
+    #[prost(enumeration = "TaskStatus", tag = "3")]
+    pub status: i32,
+    #[prost(string, tag = "4")]
+    pub prompt: ::prost::alloc::string::String,
+    #[prost(string, optional, tag = "5")]
+    pub created_at: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "6")]
+    pub completed_at: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, optional, tag = "7")]
     pub commits: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, repeated, tag = "8")]
     pub tags: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     #[prost(enumeration = "EffortTier", optional, tag = "9")]
     pub effort: ::core::option::Option<i32>,
-    #[prost(string, repeated, tag = "10")]
-    pub blocked_by: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    #[prost(string, optional, tag = "11")]
-    pub section: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(string, tag = "12")]
-    pub prompt: ::prost::alloc::string::String,
-    #[prost(enumeration = "PriorityTier", optional, tag = "13")]
+    #[prost(enumeration = "PriorityTier", optional, tag = "10")]
     pub priority: ::core::option::Option<i32>,
-}
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct GetTaskResponse {
-    #[prost(string, tag = "1")]
+    #[prost(string, repeated, tag = "11")]
+    pub blocked_by: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "12")]
+    pub section: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, tag = "13")]
     pub revision: ::prost::alloc::string::String,
-    #[prost(oneof = "get_task_response::Value", tags = "2, 3, 4")]
-    pub value: ::core::option::Option<get_task_response::Value>,
-}
-/// Nested message and enum types in `GetTaskResponse`.
-pub mod get_task_response {
-    #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
-    pub enum Value {
-        #[prost(string, tag = "2")]
-        Markdown(::prost::alloc::string::String),
-        #[prost(string, tag = "3")]
-        Path(::prost::alloc::string::String),
-        #[prost(message, tag = "4")]
-        Data(::prost::alloc::boxed::Box<super::TaskData>),
-    }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct TaskDagTaskNode {
@@ -818,7 +893,7 @@ pub struct TaskLocation {
     pub line: u64,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct TaskView {
+pub struct ListedTask {
     #[prost(string, tag = "1")]
     pub id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
@@ -855,7 +930,7 @@ pub struct TaskView {
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ListTasksResponse {
     #[prost(message, repeated, tag = "1")]
-    pub tasks: ::prost::alloc::vec::Vec<TaskView>,
+    pub tasks: ::prost::alloc::vec::Vec<ListedTask>,
     #[prost(uint64, tag = "2")]
     pub hidden: u64,
     #[prost(string, optional, tag = "3")]
@@ -1376,38 +1451,6 @@ impl PriorityTier {
             "PRIORITY_TIER_MEDIUM" => Some(Self::Medium),
             "PRIORITY_TIER_HIGH" => Some(Self::High),
             "PRIORITY_TIER_HIGHEST" => Some(Self::Highest),
-            _ => None,
-        }
-    }
-}
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
-#[repr(i32)]
-pub enum TaskReadFormat {
-    Unspecified = 0,
-    Markdown = 1,
-    Path = 2,
-    Data = 3,
-}
-impl TaskReadFormat {
-    /// String value of the enum field names used in the ProtoBuf definition.
-    ///
-    /// The values are not transformed in any way and thus are considered stable
-    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
-    pub fn as_str_name(&self) -> &'static str {
-        match self {
-            Self::Unspecified => "TASK_READ_FORMAT_UNSPECIFIED",
-            Self::Markdown => "TASK_READ_FORMAT_MARKDOWN",
-            Self::Path => "TASK_READ_FORMAT_PATH",
-            Self::Data => "TASK_READ_FORMAT_DATA",
-        }
-    }
-    /// Creates an enum from field names used in the ProtoBuf definition.
-    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
-        match value {
-            "TASK_READ_FORMAT_UNSPECIFIED" => Some(Self::Unspecified),
-            "TASK_READ_FORMAT_MARKDOWN" => Some(Self::Markdown),
-            "TASK_READ_FORMAT_PATH" => Some(Self::Path),
-            "TASK_READ_FORMAT_DATA" => Some(Self::Data),
             _ => None,
         }
     }
@@ -3336,6 +3379,30 @@ pub mod task_service_client {
                 .insert(GrpcMethod::new("pwf.v1.TaskService", "GetTask"));
             self.inner.unary(req, path, codec).await
         }
+        pub async fn get_task_record(
+            &mut self,
+            request: impl tonic::IntoRequest<super::GetTaskRecordRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetTaskRecordResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/pwf.v1.TaskService/GetTaskRecord",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("pwf.v1.TaskService", "GetTaskRecord"));
+            self.inner.unary(req, path, codec).await
+        }
         pub async fn get_task_dag(
             &mut self,
             request: impl tonic::IntoRequest<super::GetTaskDagRequest>,
@@ -3479,6 +3546,13 @@ pub mod task_service_server {
             &self,
             request: tonic::Request<super::GetTaskRequest>,
         ) -> std::result::Result<tonic::Response<super::GetTaskResponse>, tonic::Status>;
+        async fn get_task_record(
+            &self,
+            request: tonic::Request<super::GetTaskRecordRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetTaskRecordResponse>,
+            tonic::Status,
+        >;
         async fn get_task_dag(
             &self,
             request: tonic::Request<super::GetTaskDagRequest>,
@@ -3800,6 +3874,51 @@ pub mod task_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = GetTaskSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/pwf.v1.TaskService/GetTaskRecord" => {
+                    #[allow(non_camel_case_types)]
+                    struct GetTaskRecordSvc<T: TaskService>(pub Arc<T>);
+                    impl<
+                        T: TaskService,
+                    > tonic::server::UnaryService<super::GetTaskRecordRequest>
+                    for GetTaskRecordSvc<T> {
+                        type Response = super::GetTaskRecordResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::GetTaskRecordRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as TaskService>::get_task_record(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = GetTaskRecordSvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

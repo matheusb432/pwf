@@ -77,12 +77,27 @@ impl FromStr for TaskId {
     type Err = TaskIdError;
 
     fn from_str(raw: &str) -> Result<Self, Self::Err> {
-        Self::try_new(map_task_id(raw))
+        Self::try_from(raw.to_string())
     }
 }
 
-fn map_task_id(raw: &str) -> String {
-    let trimmed = raw.trim().to_ascii_uppercase();
+impl TryFrom<String> for TaskId {
+    type Error = TaskIdError;
+
+    fn try_from(raw: String) -> Result<Self, Self::Error> {
+        match Self::try_new(raw) {
+            Ok(id) => Ok(id),
+            Err(TaskIdError { value }) => Self::try_new(map_task_id(value)),
+        }
+    }
+}
+
+fn map_task_id(mut trimmed: String) -> String {
+    let start = trimmed.len() - trimmed.trim_start().len();
+    let end = start + trimmed.trim().len();
+    trimmed.truncate(end);
+    trimmed.drain(..start);
+    trimmed.make_ascii_uppercase();
     let Some(digit_start) = trimmed.find(|character: char| character.is_ascii_digit()) else {
         return trimmed;
     };

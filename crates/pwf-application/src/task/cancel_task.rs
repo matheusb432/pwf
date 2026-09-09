@@ -115,10 +115,11 @@ fn close_failed_before_mutation(error: &CloseTaskError) -> bool {
 #[cfg(test)]
 mod tests {
     use pwf_models::task::{TaskId, TaskStatus};
+    use pwf_wire::task::TaskRecord;
 
     use super::CancelTask;
     use crate::{
-        ports::task_vault::{IndexEntry, IndexEntryState, TaskRecord, TaskVault},
+        ports::task_vault::{IndexEntry, IndexEntryState, TaskVault},
         task::cancel_task,
         testing::{FixedClock, InMemoryStore, project, task_record, task_timestamp},
     };

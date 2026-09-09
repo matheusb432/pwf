@@ -6,18 +6,19 @@ pub mod complete_task;
 pub mod edit_task;
 pub mod get_task;
 pub mod get_task_dag;
+pub mod get_task_record;
 mod lane_configuration;
 pub mod list_tasks;
 mod mutation_request;
 mod note_body;
+mod read_task_dependencies;
 pub mod remove_task;
 pub mod reopen_task;
 pub mod resolve_task_project;
 pub mod session;
-mod tags;
 mod task_closure;
 mod task_creation;
-mod task_view;
+mod task_projection;
 
 pub use lane_configuration::TaskPromptLanesError;
 pub use mutation_request::MutationRequestError;
@@ -47,9 +48,7 @@ fn task_body_region(body: &str) -> &str {
     body.strip_prefix('\n').unwrap_or(body)
 }
 
-fn task_revision(
-    record: &crate::ports::task_vault::TaskRecord,
-) -> pwf_models::revision::ContentRevision {
+fn task_revision(record: &pwf_wire::task::TaskRecord) -> pwf_models::revision::ContentRevision {
     record.revision.clone()
 }
 
@@ -64,7 +63,7 @@ pub struct TaskRevisionConflict {
 
 fn ensure_task_revision(
     expected: Option<&pwf_models::revision::ContentRevision>,
-    record: &crate::ports::task_vault::TaskRecord,
+    record: &pwf_wire::task::TaskRecord,
 ) -> Result<(), TaskRevisionConflict> {
     let Some(expected) = expected else {
         return Ok(());
@@ -80,7 +79,7 @@ fn ensure_task_revision(
 }
 
 fn expected_task_revision(
-    record: &crate::ports::task_vault::TaskRecord,
+    record: &pwf_wire::task::TaskRecord,
 ) -> crate::ports::task_vault::ExpectedTaskRevision {
     crate::ports::task_vault::ExpectedTaskRevision {
         id: record.id.clone(),

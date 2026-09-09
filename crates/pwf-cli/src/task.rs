@@ -1,6 +1,7 @@
 use clap::{Args, FromArgMatches, Subcommand};
 use pwf_client::{
     pb::{TaskLane, TaskLanes, TaskStatusFilter},
+    project::ProjectClient,
     task::{TaskClient, TaskDag},
 };
 use pwf_models::{
@@ -296,14 +297,15 @@ pub async fn run(
     console: Console,
     task_status_colors: TaskStatusColors,
     client: &TaskClient,
+    projects: &ProjectClient,
 ) -> anyhow::Result<String> {
     let output = match command {
         Command::Task(arguments) => match &arguments.command {
             TaskCommand::Add(arguments) => {
-                add::run(arguments, console, task_status_colors, client).await?
+                add::run(arguments, console, task_status_colors, client, projects).await?
             }
             TaskCommand::List(arguments) => {
-                list::run(arguments, console, task_status_colors, client).await?
+                list::run(arguments, console, task_status_colors, client, projects).await?
             }
             TaskCommand::Done(arguments) => {
                 done::run(arguments, console, task_status_colors, client).await?
@@ -317,7 +319,7 @@ pub async fn run(
             TaskCommand::Edit(arguments) => {
                 edit::run(arguments, console, task_status_colors, client).await?
             }
-            TaskCommand::Get(arguments) => get::run(arguments, client).await?,
+            TaskCommand::Get(arguments) => get::run(arguments, client, projects).await?,
             TaskCommand::Dag(arguments) => {
                 dag::run(arguments, console, task_status_colors, client).await?
             }
@@ -328,7 +330,7 @@ pub async fn run(
         Command::Session(arguments) => session::run(arguments, console, client).await?,
         Command::Route(arguments) => match route::resolve(arguments) {
             route::ResolvedCommand::List(arguments) => {
-                list::run(&arguments, console, task_status_colors, client).await?
+                list::run(&arguments, console, task_status_colors, client, projects).await?
             }
             route::ResolvedCommand::RejectUnsupportedTaskCreation => {
                 return Err(anyhow::anyhow!("Use: pwf task add <project> \"<prompt>\""));

@@ -1,23 +1,37 @@
 use std::{
-    collections::BTreeSet,
     fmt,
-    num::{NonZeroU32, NonZeroUsize},
     path::{Path, PathBuf},
 };
 
 use pwf_models::{
-    AppDate,
-    project::{ProjectName, ProjectSelector, ProjectSourceValue},
+    project::ProjectId,
     revision::ContentRevision,
     task::{
         BlockedBy, CommitRanges, EffortTier, PriorityTier, TaskId, TaskPrompt, TaskReport,
-        TaskSection, TaskStatus, TaskTags, TaskTitle, order::OrderSpec,
+        TaskStatus, TaskTags, TaskTitle,
     },
 };
 
 use crate::{collection_edit::CollectionEdit, patch_field::PatchField, set_field::SetField};
 
+mod dag;
+pub use dag::{
+    GetTaskDag, TaskDag, TaskDagDepth, TaskDagDepthError, TaskDagEdge, TaskDagError, TaskDagMode,
+    TaskDagNode,
+};
+mod list;
 pub mod session;
+pub use list::{
+    BlockedByIssue, BlockedByResolution, BlockedByStatus, ListDetail, ListLayout, ListScope,
+    ListTasks, ListedTask, ListedTaskDetails, ListedTasks, StatusFilter, TaskHeading, TaskIssue,
+    TaskLaunch, TaskListLimit, TaskListLimitError, TaskLocation, TaskPageSize, TaskPageSizeError,
+    TaskPageToken, TaskPageTokenError,
+};
+mod record;
+pub use pwf_models::task::Task;
+pub use record::{
+    IndexPlacement, Materialization, RawTaskTags, StoredBlockedBy, TaskRecord, TaskRecordError,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskLane {
@@ -177,14 +191,14 @@ fn push_unseen_lane(lanes: &mut Vec<TaskLane>, lane: TaskLane) {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum AddTaskPromptKind {
     Shorthand(TaskPrompt),
     Structured { title: TaskTitle, lanes: TaskLanes },
 }
 
 /// Carries one structurally valid shorthand or structured add prompt.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct AddTaskPrompt(AddTaskPromptKind);
 
 impl AddTaskPrompt {
@@ -205,6 +219,11 @@ impl AddTaskPrompt {
     pub fn kind(&self) -> &AddTaskPromptKind {
         &self.0
     }
+
+    #[must_use]
+    pub fn into_kind(self) -> AddTaskPromptKind {
+        self.0
+    }
 }
 
 /// Reports a shorthand add prompt without authored content.
@@ -213,10 +232,10 @@ impl AddTaskPrompt {
 pub struct EmptyShorthandPrompt;
 
 /// Requests creation of one task.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct AddTask {
-    /// Managed project name or project ID.
-    pub project_selector: ProjectSelector,
+    /// Destination project ID.
+    pub project_id: ProjectId,
     /// Shorthand or structured task prompt.
     pub prompt: AddTaskPrompt,
     /// Task IDs in the `blocked_by` relationship.
@@ -231,6 +250,22 @@ pub struct AddTask {
     pub request_id: Option<TaskRequestId>,
     /// Stable fingerprint of the validated transport request without its retry identity.
     pub request_fingerprint: Option<TaskRequestFingerprint>,
+}
+
+impl AddTask {
+    #[must_use]
+    pub fn new(project_id: impl Into<ProjectId>, prompt: AddTaskPrompt) -> Self {
+        Self {
+            project_id: project_id.into(),
+            prompt,
+            blocked_by: None,
+            effort: None,
+            tags: None,
+            priority: None,
+            request_id: None,
+            request_fingerprint: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -488,413 +523,6 @@ fn digest_hex(digest: [u8; 32]) -> String {
     value
 }
 
-/// Requests one task in a selected output representation.
-#[derive(Debug, Clone)]
-pub struct GetTask {
-    /// Task ID.
-    pub id: TaskId,
-    /// Representation returned by the interactor.
-    pub output: TaskReadFormat,
-}
-
-/// Requests one bounded dependency graph rooted at a task.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GetTaskDag {
-    pub id: TaskId,
-    pub depth: Option<TaskDagDepth>,
-    pub status: StatusFilter,
-    pub mode: TaskDagMode,
-}
-
-/// Selects the relationship direction traversed by a task DAG query.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TaskDagMode {
-    BlockedBy,
-    Blocks,
-    Full,
-}
-
-impl TaskDagMode {
-    #[must_use]
-    pub const fn includes_blocked_by(self) -> bool {
-        matches!(self, Self::BlockedBy | Self::Full)
-    }
-
-    #[must_use]
-    pub const fn includes_blocks(self) -> bool {
-        matches!(self, Self::Blocks | Self::Full)
-    }
-}
-
-/// Caps graph traversal by the number of edges from the selected task.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TaskDagDepth(NonZeroU32);
-
-impl TaskDagDepth {
-    /// Constructs a nonzero traversal depth.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TaskDagDepthError`] when `value` is zero.
-    pub fn try_new(value: u32) -> Result<Self, TaskDagDepthError> {
-        NonZeroU32::new(value).map(Self).ok_or(TaskDagDepthError)
-    }
-
-    #[must_use]
-    pub const fn get(self) -> u32 {
-        self.0.get()
-    }
-}
-
-/// Reports a zero task-DAG traversal depth.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("depth must be at least 1")]
-pub struct TaskDagDepthError;
-
-/// Carries a bounded task dependency graph.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TaskDag {
-    root_id: TaskId,
-    nodes: Vec<TaskDagNode>,
-    edges: Vec<TaskDagEdge>,
-}
-
-impl TaskDag {
-    pub const NODE_COUNT_MAX: usize = 512;
-    pub const EDGE_COUNT_MAX: usize = 2_048;
-
-    /// Constructs a bounded, rooted acyclic task graph.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TaskDagError`] when the root, nodes, or edges do not form a valid task DAG.
-    pub fn try_new(
-        root_id: TaskId,
-        nodes: Vec<TaskDagNode>,
-        edges: Vec<TaskDagEdge>,
-    ) -> Result<Self, TaskDagError> {
-        if nodes.len() > Self::NODE_COUNT_MAX {
-            return Err(TaskDagError::NodeLimit {
-                max: Self::NODE_COUNT_MAX,
-            });
-        }
-        if edges.len() > Self::EDGE_COUNT_MAX {
-            return Err(TaskDagError::EdgeLimit {
-                max: Self::EDGE_COUNT_MAX,
-            });
-        }
-
-        let root_node_index = validate_task_dag_nodes(&root_id, &nodes)?;
-        validate_task_dag_edges(root_node_index, nodes.len(), &edges)?;
-
-        Ok(Self {
-            root_id,
-            nodes,
-            edges,
-        })
-    }
-
-    #[must_use]
-    pub fn root_id(&self) -> &TaskId {
-        &self.root_id
-    }
-
-    #[must_use]
-    pub fn nodes(&self) -> &[TaskDagNode] {
-        &self.nodes
-    }
-
-    #[must_use]
-    pub fn edges(&self) -> &[TaskDagEdge] {
-        &self.edges
-    }
-
-    #[must_use]
-    pub fn into_parts(self) -> (TaskId, Vec<TaskDagNode>, Vec<TaskDagEdge>) {
-        (self.root_id, self.nodes, self.edges)
-    }
-}
-
-/// Reports values that do not form a bounded, rooted acyclic task graph.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum TaskDagError {
-    #[error("task dependency graph exceeds the {max} node limit")]
-    NodeLimit { max: usize },
-    #[error("task dependency graph exceeds the {max} edge limit")]
-    EdgeLimit { max: usize },
-    #[error("task dependency graph root {id} is not a task node")]
-    RootTaskMissing { id: TaskId },
-    #[error("task dependency graph repeats task node {id}")]
-    DuplicateTaskNode { id: TaskId },
-    #[error(
-        "task dependency graph edge {edge_index} references blocker node {node_index}, but the graph contains {node_count} nodes"
-    )]
-    BlockerNodeIndex {
-        edge_index: usize,
-        node_index: usize,
-        node_count: usize,
-    },
-    #[error(
-        "task dependency graph edge {edge_index} references dependent node {node_index}, but the graph contains {node_count} nodes"
-    )]
-    DependentNodeIndex {
-        edge_index: usize,
-        node_index: usize,
-        node_count: usize,
-    },
-    #[error("task dependency graph repeats edge {edge:?}")]
-    DuplicateEdge { edge: TaskDagEdge },
-    #[error("task dependency graph contains a cycle")]
-    Cycle,
-    #[error("task dependency graph node {node_index} is disconnected from the root")]
-    DisconnectedNode { node_index: usize },
-}
-
-fn validate_task_dag_nodes(root_id: &TaskId, nodes: &[TaskDagNode]) -> Result<usize, TaskDagError> {
-    let mut task_ids = BTreeSet::new();
-    let mut root_node_index = None;
-    for (node_index, node) in nodes.iter().enumerate() {
-        let Some(id) = node.task_id() else {
-            continue;
-        };
-        if !task_ids.insert(id) {
-            return Err(TaskDagError::DuplicateTaskNode { id: id.clone() });
-        }
-        if matches!(node, TaskDagNode::Task { .. }) && id == root_id {
-            root_node_index = Some(node_index);
-        }
-    }
-    root_node_index.ok_or_else(|| TaskDagError::RootTaskMissing {
-        id: root_id.clone(),
-    })
-}
-
-fn validate_task_dag_edges(
-    root_node_index: usize,
-    node_count: usize,
-    edges: &[TaskDagEdge],
-) -> Result<(), TaskDagError> {
-    let mut unique_edges = BTreeSet::new();
-    let mut dependent_counts = vec![0_usize; node_count];
-    let mut dependents = vec![Vec::new(); node_count];
-    let mut adjacent_nodes = vec![Vec::new(); node_count];
-
-    for (edge_index, edge) in edges.iter().copied().enumerate() {
-        if edge.blocker_node_index >= node_count {
-            return Err(TaskDagError::BlockerNodeIndex {
-                edge_index,
-                node_index: edge.blocker_node_index,
-                node_count,
-            });
-        }
-        if edge.dependent_node_index >= node_count {
-            return Err(TaskDagError::DependentNodeIndex {
-                edge_index,
-                node_index: edge.dependent_node_index,
-                node_count,
-            });
-        }
-        if !unique_edges.insert(edge) {
-            return Err(TaskDagError::DuplicateEdge { edge });
-        }
-
-        dependent_counts[edge.dependent_node_index] += 1;
-        dependents[edge.blocker_node_index].push(edge.dependent_node_index);
-        adjacent_nodes[edge.blocker_node_index].push(edge.dependent_node_index);
-        adjacent_nodes[edge.dependent_node_index].push(edge.blocker_node_index);
-    }
-
-    validate_task_dag_acyclic(&dependents, dependent_counts)?;
-    validate_task_dag_connected(root_node_index, &adjacent_nodes)
-}
-
-fn validate_task_dag_acyclic(
-    dependents: &[Vec<usize>],
-    mut dependent_counts: Vec<usize>,
-) -> Result<(), TaskDagError> {
-    let mut unblocked_nodes = dependent_counts
-        .iter()
-        .enumerate()
-        .filter_map(|(node_index, count)| (*count == 0).then_some(node_index))
-        .collect::<Vec<_>>();
-    let mut visited_node_count = 0;
-    while let Some(node_index) = unblocked_nodes.pop() {
-        visited_node_count += 1;
-        for dependent_node_index in &dependents[node_index] {
-            dependent_counts[*dependent_node_index] -= 1;
-            if dependent_counts[*dependent_node_index] == 0 {
-                unblocked_nodes.push(*dependent_node_index);
-            }
-        }
-    }
-    if visited_node_count == dependents.len() {
-        Ok(())
-    } else {
-        Err(TaskDagError::Cycle)
-    }
-}
-
-fn validate_task_dag_connected(
-    root_node_index: usize,
-    adjacent_nodes: &[Vec<usize>],
-) -> Result<(), TaskDagError> {
-    let mut visited_nodes = vec![false; adjacent_nodes.len()];
-    let mut pending_nodes = vec![root_node_index];
-    while let Some(node_index) = pending_nodes.pop() {
-        if visited_nodes[node_index] {
-            continue;
-        }
-        visited_nodes[node_index] = true;
-        pending_nodes.extend(adjacent_nodes[node_index].iter().copied());
-    }
-    match visited_nodes.iter().position(|visited| !visited) {
-        Some(node_index) => Err(TaskDagError::DisconnectedNode { node_index }),
-        None => Ok(()),
-    }
-}
-
-/// Describes one task or synthetic truncation point in a dependency graph.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TaskDagNode {
-    Task {
-        id: TaskId,
-        title: String,
-        status: TaskStatus,
-    },
-    Missing {
-        id: TaskId,
-    },
-    Unavailable {
-        id: TaskId,
-    },
-    DepthLimit,
-}
-
-impl TaskDagNode {
-    #[must_use]
-    pub fn task_id(&self) -> Option<&TaskId> {
-        match self {
-            Self::Task { id, .. } | Self::Missing { id } | Self::Unavailable { id } => Some(id),
-            Self::DepthLimit => None,
-        }
-    }
-}
-
-/// Connects two node indexes in blocker-to-dependent direction.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct TaskDagEdge {
-    pub blocker_node_index: usize,
-    pub dependent_node_index: usize,
-}
-
-#[derive(Debug, Clone)]
-pub struct ListTasks {
-    pub project_selector: Option<ProjectSelector>,
-    pub scope: ListScope,
-    /// Explicit task cap. Omission uses the mode-specific default.
-    pub number: Option<TaskListLimit>,
-    pub effort: Option<EffortTier>,
-    pub priority: Option<PriorityTier>,
-    pub tags: Option<TaskTags>,
-    pub order: Option<OrderSpec>,
-    /// Explicit lifecycle filter. Omission uses the mode-specific default.
-    pub status: Option<StatusFilter>,
-    pub detail: ListDetail,
-    pub page_size: Option<TaskPageSize>,
-    pub page_token: Option<TaskPageToken>,
-}
-
-/// Caps one task-list response before transport message limits apply.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TaskListLimit(NonZeroUsize);
-
-impl TaskListLimit {
-    pub const MAX: usize = 100_000;
-
-    /// Constructs a nonzero task-list limit within the supported response cap.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TaskListLimitError`] when `value` is zero or exceeds [`Self::MAX`].
-    pub fn try_new(value: usize) -> Result<Self, TaskListLimitError> {
-        NonZeroUsize::new(value)
-            .filter(|value| value.get() <= Self::MAX)
-            .map(Self)
-            .ok_or(TaskListLimitError { value })
-    }
-
-    #[must_use]
-    pub const fn get(self) -> usize {
-        self.0.get()
-    }
-}
-
-/// Reports a task-list limit outside the supported response cap.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("{value} must be between 1 and {}", TaskListLimit::MAX)]
-pub struct TaskListLimitError {
-    value: usize,
-}
-
-/// Caps one page of task-list results.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TaskPageSize(NonZeroUsize);
-
-impl TaskPageSize {
-    pub const DEFAULT: usize = 100;
-    pub const MAX: usize = 256;
-
-    pub fn try_new(value: usize) -> Result<Self, TaskPageSizeError> {
-        NonZeroUsize::new(value)
-            .filter(|value| value.get() <= Self::MAX)
-            .map(Self)
-            .ok_or(TaskPageSizeError { value })
-    }
-
-    #[must_use]
-    pub const fn get(self) -> usize {
-        self.0.get()
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("{value} must be between 1 and {}", TaskPageSize::MAX)]
-pub struct TaskPageSizeError {
-    value: usize,
-}
-
-/// Carries one opaque bounded task-list continuation token.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TaskPageToken(Box<str>);
-
-impl TaskPageToken {
-    pub const MAX_LEN: usize = 2_048;
-
-    pub fn try_new(value: impl Into<String>) -> Result<Self, TaskPageTokenError> {
-        let value = value.into();
-        if value.is_empty() || value.len() > Self::MAX_LEN {
-            return Err(TaskPageTokenError);
-        }
-        Ok(Self(value.into_boxed_str()))
-    }
-}
-
-impl AsRef<str> for TaskPageToken {
-    fn as_ref(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Display for TaskPageToken {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("must contain between 1 and {} characters", TaskPageToken::MAX_LEN)]
-pub struct TaskPageTokenError;
-
 /// Identifies a task note's filesystem path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskNotePath(PathBuf);
@@ -913,6 +541,14 @@ impl TaskNotePath {
     #[must_use]
     pub fn into_path_buf(self) -> PathBuf {
         self.0
+    }
+
+    #[must_use]
+    pub fn into_display_string(self) -> String {
+        self.0
+            .into_os_string()
+            .into_string()
+            .unwrap_or_else(|path| path.to_string_lossy().into_owned())
     }
 }
 
@@ -940,6 +576,14 @@ impl TaskIndexPath {
     #[must_use]
     pub fn into_path_buf(self) -> PathBuf {
         self.0
+    }
+
+    #[must_use]
+    pub fn into_display_string(self) -> String {
+        self.0
+            .into_os_string()
+            .into_string()
+            .unwrap_or_else(|path| path.to_string_lossy().into_owned())
     }
 }
 
@@ -1023,361 +667,13 @@ pub enum ReopenTaskOutcome {
     Aborted,
 }
 
-/// Selects the representation returned by a task read.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TaskReadFormat {
-    Markdown,
-    Path,
-    Data,
-}
-
-/// Contains one task's semantic data.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TaskData {
-    pub id: TaskId,
-    pub project: ProjectName,
-    pub title: TaskTitle,
-    pub status: TaskStatus,
-    pub created: Option<AppDate>,
-    pub completed: Option<AppDate>,
-    pub commits: Option<CommitRanges>,
-    pub tags: Option<TaskTags>,
-    pub effort: Option<EffortTier>,
-    pub priority: Option<PriorityTier>,
-    pub blocked_by: Option<BlockedBy>,
-    pub section: Option<TaskSection>,
-    pub prompt: TaskPrompt,
-}
-
-/// Carries one task in its requested representation.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TaskRead {
-    Markdown(String),
-    Path(TaskNotePath),
-    Data(Box<TaskData>),
-}
-
-/// Carries a selected task representation and its concurrency revision.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TaskSnapshot {
-    pub revision: ContentRevision,
-    pub value: TaskRead,
-}
-
-/// Selects one lifecycle status or includes every lifecycle status.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StatusFilter {
-    Exact(TaskStatus),
-    All,
-}
-
-impl StatusFilter {
-    #[must_use]
-    pub fn includes(self, status: TaskStatus) -> bool {
-        match self {
-            Self::Exact(expected) => expected == status,
-            Self::All => true,
-        }
-    }
-}
-
-impl Default for StatusFilter {
-    fn default() -> Self {
-        Self::Exact(TaskStatus::Active)
-    }
-}
-
-/// Selects the task-index region included by a list request.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub enum ListScope {
-    #[default]
-    Default,
-    Section(TaskSection),
-    All,
-}
-
-/// Selects summary or metadata-rich task-list output.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum ListDetail {
-    #[default]
-    Summary,
-    Detailed,
-}
-
-impl ListDetail {
-    #[must_use]
-    pub const fn includes_relationship_statuses(self) -> bool {
-        matches!(self, Self::Detailed)
-    }
-}
-
-/// Selects the presentation implied by a resolved list scope.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum ListLayout {
-    #[default]
-    Flat,
-    BySection,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BlockedByStatus {
-    pub id: TaskId,
-    pub title: Option<String>,
-    pub resolution: BlockedByResolution,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BlockedByResolution {
-    Found(TaskStatus),
-    Missing,
-    Unavailable { reason: String },
-}
-
-impl BlockedByResolution {
-    #[must_use]
-    pub fn is_warning(&self) -> bool {
-        !matches!(self, Self::Found(TaskStatus::Done))
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BlockedByIssue {
-    Malformed {
-        path: TaskNotePath,
-        raw: String,
-        reason: String,
-    },
-}
-
-impl fmt::Display for BlockedByIssue {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Malformed { path, raw, reason } => write!(
-                formatter,
-                "Malformed blocked_by metadata {raw:?} in {path}: {reason}"
-            ),
-        }
-    }
-}
-
-/// Preserves authored task-tags frontmatter until a use case requires validation.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RawTaskTags(String);
-
-impl RawTaskTags {
-    #[must_use]
-    pub fn new(raw: impl Into<String>) -> Self {
-        Self(raw.into())
-    }
-}
-
-impl AsRef<str> for RawTaskTags {
-    fn as_ref(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Display for RawTaskTags {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
-    }
-}
-
-/// Names a task with its authored title or its identifier fallback.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TaskHeading {
-    Title(TaskTitle),
-    Identifier(TaskId),
-}
-
-impl AsRef<str> for TaskHeading {
-    fn as_ref(&self) -> &str {
-        match self {
-            Self::Title(title) => title.as_ref(),
-            Self::Identifier(id) => id.as_ref(),
-        }
-    }
-}
-
-impl fmt::Display for TaskHeading {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(self.as_ref())
-    }
-}
-
-/// Describes one condition preventing task launch.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TaskIssue {
-    MissingNote { path: TaskNotePath },
-    PlaceholderPrompt,
-}
-
-impl fmt::Display for TaskIssue {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::MissingNote { path } => {
-                write!(formatter, "Task note missing: {path}")
-            }
-            Self::PlaceholderPrompt => formatter
-                .write_str("Prompt is a placeholder; define a real prompt before launching."),
-        }
-    }
-}
-
-/// Carries the derived launch state without duplicating readiness flags.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TaskLaunch {
-    issues: Vec<TaskIssue>,
-}
-
-impl TaskLaunch {
-    #[must_use]
-    pub fn from_issues(issues: Vec<TaskIssue>) -> Self {
-        Self { issues }
-    }
-
-    #[must_use]
-    pub fn is_ready(&self) -> bool {
-        self.issues.is_empty()
-    }
-
-    #[must_use]
-    pub fn needs_prompt(&self) -> bool {
-        self.issues.contains(&TaskIssue::PlaceholderPrompt)
-    }
-
-    #[must_use]
-    pub fn issues(&self) -> &[TaskIssue] {
-        &self.issues
-    }
-}
-
-impl fmt::Display for TaskLaunch {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut issues = self.issues.iter();
-        if let Some(first) = issues.next() {
-            write!(formatter, "{first}")?;
-        }
-        for issue in issues {
-            write!(formatter, "; {issue}")?;
-        }
-        Ok(())
-    }
-}
-
-/// Locates a task's index entry for display.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TaskLocation {
-    index_path: TaskIndexPath,
-    line: NonZeroUsize,
-}
-
-impl TaskLocation {
-    #[must_use]
-    pub fn new(index_path: TaskIndexPath, line: NonZeroUsize) -> Self {
-        Self { index_path, line }
-    }
-
-    #[must_use]
-    pub fn index_path(&self) -> &TaskIndexPath {
-        &self.index_path
-    }
-
-    #[must_use]
-    pub fn line(&self) -> NonZeroUsize {
-        self.line
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TaskView {
-    pub id: TaskId,
-    pub project: ProjectName,
-    pub status: TaskStatus,
-    pub heading: TaskHeading,
-    pub prompt: TaskPrompt,
-    pub project_path: Option<ProjectSourceValue>,
-    pub location: TaskLocation,
-    pub launch: TaskLaunch,
-    pub section: Option<TaskSection>,
-    pub blocked_by: Option<BlockedBy>,
-    pub blocked_by_statuses: Vec<BlockedByStatus>,
-    pub blocked_by_issues: Vec<BlockedByIssue>,
-    pub effort: Option<EffortTier>,
-    pub priority: Option<PriorityTier>,
-    pub tags: Option<RawTaskTags>,
-    pub created: Option<AppDate>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ListedTask {
-    pub id: TaskId,
-    pub project: ProjectName,
-    pub status: TaskStatus,
-    pub heading: TaskHeading,
-    pub section: Option<TaskSection>,
-    pub effort: Option<EffortTier>,
-    pub priority: Option<PriorityTier>,
-    pub tags: Option<RawTaskTags>,
-    pub created: Option<AppDate>,
-    pub details: Option<ListedTaskDetails>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ListedTaskDetails {
-    pub prompt: TaskPrompt,
-    pub project_path: Option<ProjectSourceValue>,
-    pub location: TaskLocation,
-    pub launch: TaskLaunch,
-    pub blocked_by: Option<BlockedBy>,
-    pub blocked_by_statuses: Vec<BlockedByStatus>,
-    pub blocked_by_issues: Vec<BlockedByIssue>,
-}
-
-impl From<TaskView> for ListedTask {
-    fn from(task: TaskView) -> Self {
-        Self {
-            id: task.id,
-            project: task.project,
-            status: task.status,
-            heading: task.heading,
-            section: task.section,
-            effort: task.effort,
-            priority: task.priority,
-            tags: task.tags,
-            created: task.created,
-            details: Some(ListedTaskDetails {
-                prompt: task.prompt,
-                project_path: task.project_path,
-                location: task.location,
-                launch: task.launch,
-                blocked_by: task.blocked_by,
-                blocked_by_statuses: task.blocked_by_statuses,
-                blocked_by_issues: task.blocked_by_issues,
-            }),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ListedTasks {
-    pub tasks: Vec<ListedTask>,
-    pub hidden: usize,
-    pub project: Option<ProjectName>,
-    pub project_task_path: Option<ProjectTaskPath>,
-    pub status_filter: StatusFilter,
-    pub layout: ListLayout,
-    pub detail: ListDetail,
-    pub next_page_token: Option<TaskPageToken>,
-}
-
 #[cfg(test)]
 mod tests {
-    use pwf_models::task::{TaskId, TaskPrompt, TaskStatus};
+    use pwf_models::task::TaskPrompt;
 
     use super::{
-        AddTaskPrompt, EditTaskContent, EditTaskContentError, EmptyTaskEdits, TaskDag, TaskDagEdge,
-        TaskDagError, TaskDagNode, TaskEdits, TaskLaneEdits, TaskLaneValueError, TaskLanes,
+        AddTaskPrompt, EditTaskContent, EditTaskContentError, EmptyTaskEdits, TaskEdits,
+        TaskLaneEdits, TaskLaneValueError, TaskLanes,
     };
     use crate::{collection_edit::CollectionEdit, patch_field::PatchField, set_field::SetField};
 
@@ -1417,6 +713,19 @@ mod tests {
     }
 
     #[test]
+    fn add_prompt_into_kind_preserves_authored_content() {
+        let prompt = AddTaskPrompt::shorthand(TaskPrompt::new("task /g keep text")).unwrap();
+        assert!(
+            matches!(prompt.into_kind(), super::AddTaskPromptKind::Shorthand(prompt) if prompt.as_ref() == "task /g keep text")
+        );
+        let title = pwf_models::task::TaskTitle::try_new("typed task").unwrap();
+        let prompt = AddTaskPrompt::structured(title, TaskLanes::default());
+        assert!(
+            matches!(prompt.into_kind(), super::AddTaskPromptKind::Structured { title, lanes } if title.as_ref() == "typed task" && lanes.is_empty())
+        );
+    }
+
+    #[test]
     fn edit_contracts_reject_empty_shapes() {
         assert!(matches!(
             EditTaskContent::structured(SetField::NoAction, TaskLaneEdits::default()),
@@ -1435,165 +744,5 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(error, EmptyTaskEdits);
-    }
-
-    #[test]
-    fn task_dag_rejects_a_root_without_a_task_node() {
-        let root_id = task_id("PWF-0001");
-
-        let error = TaskDag::try_new(
-            root_id.clone(),
-            vec![TaskDagNode::Missing {
-                id: root_id.clone(),
-            }],
-            Vec::new(),
-        )
-        .unwrap_err();
-
-        assert_eq!(error, TaskDagError::RootTaskMissing { id: root_id });
-    }
-
-    #[test]
-    fn task_dag_rejects_collection_limits() {
-        let root_id = task_id("PWF-0001");
-        let node_limit_error = TaskDag::try_new(
-            root_id.clone(),
-            vec![TaskDagNode::DepthLimit; TaskDag::NODE_COUNT_MAX + 1],
-            Vec::new(),
-        )
-        .unwrap_err();
-        let edge_limit_error = TaskDag::try_new(
-            root_id.clone(),
-            vec![task_dag_node(&root_id)],
-            vec![
-                TaskDagEdge {
-                    blocker_node_index: 0,
-                    dependent_node_index: 0,
-                };
-                TaskDag::EDGE_COUNT_MAX + 1
-            ],
-        )
-        .unwrap_err();
-
-        assert_eq!(
-            node_limit_error,
-            TaskDagError::NodeLimit {
-                max: TaskDag::NODE_COUNT_MAX,
-            }
-        );
-        assert_eq!(
-            edge_limit_error,
-            TaskDagError::EdgeLimit {
-                max: TaskDag::EDGE_COUNT_MAX,
-            }
-        );
-    }
-
-    #[test]
-    fn task_dag_rejects_duplicate_task_nodes() {
-        let root_id = task_id("PWF-0001");
-
-        let error = TaskDag::try_new(
-            root_id.clone(),
-            vec![task_dag_node(&root_id), task_dag_node(&root_id)],
-            Vec::new(),
-        )
-        .unwrap_err();
-
-        assert_eq!(error, TaskDagError::DuplicateTaskNode { id: root_id });
-    }
-
-    #[test]
-    fn task_dag_rejects_an_edge_outside_its_node_collection() {
-        let root_id = task_id("PWF-0001");
-
-        let error = TaskDag::try_new(
-            root_id.clone(),
-            vec![task_dag_node(&root_id)],
-            vec![TaskDagEdge {
-                blocker_node_index: 1,
-                dependent_node_index: 0,
-            }],
-        )
-        .unwrap_err();
-
-        assert_eq!(
-            error,
-            TaskDagError::BlockerNodeIndex {
-                edge_index: 0,
-                node_index: 1,
-                node_count: 1,
-            }
-        );
-    }
-
-    #[test]
-    fn task_dag_rejects_duplicate_edges() {
-        let root_id = task_id("PWF-0001");
-        let blocker_id = task_id("PWF-0002");
-        let edge = TaskDagEdge {
-            blocker_node_index: 1,
-            dependent_node_index: 0,
-        };
-
-        let error = TaskDag::try_new(
-            root_id.clone(),
-            vec![task_dag_node(&root_id), task_dag_node(&blocker_id)],
-            vec![edge, edge],
-        )
-        .unwrap_err();
-
-        assert_eq!(error, TaskDagError::DuplicateEdge { edge });
-    }
-
-    #[test]
-    fn task_dag_rejects_cycles() {
-        let root_id = task_id("PWF-0001");
-        let blocker_id = task_id("PWF-0002");
-
-        let error = TaskDag::try_new(
-            root_id.clone(),
-            vec![task_dag_node(&root_id), task_dag_node(&blocker_id)],
-            vec![
-                TaskDagEdge {
-                    blocker_node_index: 1,
-                    dependent_node_index: 0,
-                },
-                TaskDagEdge {
-                    blocker_node_index: 0,
-                    dependent_node_index: 1,
-                },
-            ],
-        )
-        .unwrap_err();
-
-        assert_eq!(error, TaskDagError::Cycle);
-    }
-
-    #[test]
-    fn task_dag_rejects_nodes_disconnected_from_the_root() {
-        let root_id = task_id("PWF-0001");
-        let unrelated_id = task_id("PWF-0002");
-
-        let error = TaskDag::try_new(
-            root_id.clone(),
-            vec![task_dag_node(&root_id), task_dag_node(&unrelated_id)],
-            Vec::new(),
-        )
-        .unwrap_err();
-
-        assert_eq!(error, TaskDagError::DisconnectedNode { node_index: 1 });
-    }
-
-    fn task_dag_node(id: &TaskId) -> TaskDagNode {
-        TaskDagNode::Task {
-            id: id.clone(),
-            title: String::new(),
-            status: TaskStatus::Active,
-        }
-    }
-
-    fn task_id(value: &str) -> TaskId {
-        TaskId::try_new(value).unwrap()
     }
 }

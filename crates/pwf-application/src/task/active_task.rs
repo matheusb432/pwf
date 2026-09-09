@@ -1,16 +1,16 @@
-//! Resolves one active task with its persisted record and launch view.
+//! Resolves one active record and its display heading.
 
 use pwf_models::{
     project::Project,
     task::{TaskId, TaskStatus},
 };
-use pwf_wire::task::TaskView;
+use pwf_wire::task::{TaskHeading, TaskRecord};
 
 use crate::{
-    ports::task_vault::{TaskRecord, TaskVault},
+    ports::task_vault::TaskVault,
     task::{
         resolve_task_project::{self, ResolveTaskProjectError},
-        task_view,
+        task_projection,
     },
 };
 
@@ -18,7 +18,7 @@ use crate::{
 pub(in crate::task) struct FoundActiveTask {
     pub(in crate::task) project: Project,
     pub(in crate::task) record: TaskRecord,
-    pub(in crate::task) task: TaskView,
+    pub(in crate::task) heading: TaskHeading,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -32,7 +32,7 @@ pub(in crate::task) enum FindActiveTaskError {
     #[error(transparent)]
     ReadStore(anyhow::Error),
     #[error(transparent)]
-    InvalidTaskView(#[from] task_view::TaskViewError),
+    InvalidTaskProjection(#[from] task_projection::TaskProjectionError),
 }
 
 pub(in crate::task) async fn find(
@@ -41,11 +41,11 @@ pub(in crate::task) async fn find(
     pool: &sqlx::SqlitePool,
 ) -> Result<FoundActiveTask, FindActiveTaskError> {
     let project = resolve_task_project::execute(id.clone(), pool).await?;
-    let (record, task) = find_active_task(store, &project, id)?;
+    let (record, heading) = find_active_task(store, &project, id)?;
     Ok(FoundActiveTask {
         project,
         record,
-        task,
+        heading,
     })
 }
 
@@ -53,7 +53,7 @@ fn find_active_task(
     store: &impl TaskVault,
     project: &Project,
     task_id: &TaskId,
-) -> Result<(TaskRecord, TaskView), FindActiveTaskError> {
+) -> Result<(TaskRecord, TaskHeading), FindActiveTaskError> {
     let records = store
         .list_tasks(project)
         .map_err(|error| FindActiveTaskError::ReadStore(anyhow::Error::new(error)))?;
@@ -70,15 +70,10 @@ fn find_active_task(
             id: task_id.clone(),
         });
     }
-    let task = task_view::enrich(
-        &record,
-        project
-            .source
-            .as_ref()
-            .map(pwf_models::project::ProjectSource::value),
-    )?
-    .into_task_view(project.title.clone());
-    Ok((record, task))
+    let heading = task_projection::task_heading(&record.id, &record.title)?;
+    task_projection::task_effort(&record.id, record.effort.as_deref())?;
+    task_projection::task_priority(&record.id, record.priority.as_deref())?;
+    Ok((record, heading))
 }
 
 #[cfg(test)]
@@ -89,13 +84,10 @@ mod tests {
         project::Project,
         task::{TaskId, TaskStatus},
     };
-    use pwf_wire::task::{TaskIndexPath, TaskNotePath};
+    use pwf_wire::task::{IndexPlacement, TaskIndexPath, TaskNotePath, TaskRecord};
 
-    use super::{FindActiveTaskError, TaskView, find_active_task};
-    use crate::{
-        ports::task_vault::{IndexPlacement, TaskRecord},
-        testing::{InMemoryStore, project, task_record, task_timestamp},
-    };
+    use super::{FindActiveTaskError, find_active_task};
+    use crate::testing::{InMemoryStore, project, task_record, task_timestamp};
 
     fn record(id: &str) -> TaskRecord {
         TaskRecord {
@@ -116,22 +108,19 @@ mod tests {
         store: &InMemoryStore,
         project: &Project,
         id: &str,
-    ) -> Result<TaskView, FindActiveTaskError> {
-        find_active_task(store, project, &TaskId::try_new(id).unwrap()).map(|(_, task)| task)
+    ) -> Result<TaskRecord, FindActiveTaskError> {
+        find_active_task(store, project, &TaskId::try_new(id).unwrap()).map(|(record, _)| record)
     }
 
     #[test]
-    fn finds_open_item_enriched_with_launchability() {
+    fn finds_open_record_with_its_authored_body() {
         let store = InMemoryStore::default().with_project("foo", vec![record("FOO-0001")]);
         let project = project("FOO", "foo");
 
         let task = find(&store, &project, "FOO-0001").unwrap();
 
         assert_eq!(task.id.as_ref(), "FOO-0001");
-        assert_eq!(task.project.as_ref(), "foo");
-        assert_eq!(task.project_path.as_ref().unwrap().as_ref(), "/work/foo");
-        assert_eq!(task.prompt.as_ref(), "do the thing");
-        assert!(task.launch.is_ready());
+        assert_eq!(task.body, "do the thing");
     }
 
     #[test]

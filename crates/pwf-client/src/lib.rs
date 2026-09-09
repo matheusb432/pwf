@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use pwf_local_transport::LocalEndpoint;
-pub use pwf_wire::proto::task::DecodeGetTaskDagResponseError;
+pub use pwf_wire::proto::task::{DecodeGetTaskDagResponseError, DecodeGetTaskResponseError};
 use tonic::{
     Request, Status,
     service::{Interceptor, interceptor::InterceptedService},
@@ -38,6 +38,8 @@ pub enum ConnectError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ClientError {
+    #[error("pwf-server returned an invalid task: {0}")]
+    InvalidTaskResponse(#[from] DecodeGetTaskResponseError),
     #[error("pwf-server request failed: {0}")]
     Rpc(#[from] Status),
     #[error("pwf-server returned an invalid task dependency graph: {0}")]

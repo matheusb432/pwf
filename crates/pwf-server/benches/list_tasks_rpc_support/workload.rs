@@ -21,7 +21,7 @@ pub struct ListTasksRpcWorkload {
 }
 
 pub struct ListTasksRpcMeasurement {
-    tasks: Vec<pb::TaskView>,
+    tasks: Vec<pb::ListedTask>,
     page_count: usize,
 }
 
@@ -141,7 +141,7 @@ async fn register_projects(server: &TestServer, prepared: &PreparedFixture) -> a
 
 fn list_tasks_request() -> anyhow::Result<ListTasksRequest> {
     Ok(ListTasksRequest {
-        project_selector: None,
+        project_id: None,
         scope: Some(list_tasks_request::Scope::All(AllTaskSections {})),
         number: None,
         effort: None,

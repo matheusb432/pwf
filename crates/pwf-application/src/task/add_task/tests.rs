@@ -23,9 +23,10 @@ async fn registered_store(pool: &sqlx::SqlitePool) -> InMemoryStore {
 }
 
 fn command() -> AddTask {
-    AddTask {
-        project_selector: "foo".parse().unwrap(),
-        prompt: AddTaskPrompt::structured(
+    let source_id = "FOO-0001".parse::<pwf_models::task::TaskId>().unwrap();
+    AddTask::new(
+        source_id.project_id(),
+        AddTaskPrompt::structured(
             task_title("ship it"),
             TaskLanes::try_new(
                 vec!["do the thing".to_string()],
@@ -35,20 +36,14 @@ fn command() -> AddTask {
             )
             .unwrap(),
         ),
-        blocked_by: None,
-        effort: None,
-        priority: None,
-        tags: None,
-        request_id: None,
-        request_fingerprint: None,
-    }
+    )
 }
 
 #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
 async fn add_inserts_record_and_open_index_entry(pool: sqlx::SqlitePool) {
     let store = registered_store(&pool).await;
 
-    let added = add_task::execute(&command(), &store, &pool, &FixedClock)
+    let added = add_task::execute(command(), &store, &pool, &FixedClock)
         .await
         .unwrap();
 
@@ -70,7 +65,7 @@ async fn add_forwards_an_explicit_task_title(pool: sqlx::SqlitePool) {
     let mut command = command();
     command.prompt = AddTaskPrompt::structured(task_title("fix # metadata"), TaskLanes::default());
 
-    let added = add_task::execute(&command, &store, &pool, &FixedClock)
+    let added = add_task::execute(command, &store, &pool, &FixedClock)
         .await
         .unwrap();
 
@@ -84,7 +79,7 @@ async fn add_inferred_prompt_title_is_normalized_once(pool: sqlx::SqlitePool) {
     let mut command = command();
     command.prompt = AddTaskPrompt::shorthand(TaskPrompt::new("fix # metadata")).unwrap();
 
-    let added = add_task::execute(&command, &store, &pool, &FixedClock)
+    let added = add_task::execute(command, &store, &pool, &FixedClock)
         .await
         .unwrap();
 
@@ -113,7 +108,7 @@ async fn shorthand_add_uses_runtime_markers_and_headers(pool: sqlx::SqlitePool) 
     ))
     .unwrap();
 
-    add_task::execute(&command, &store, &pool, &FixedClock)
+    add_task::execute(command, &store, &pool, &FixedClock)
         .await
         .unwrap();
 
@@ -128,7 +123,7 @@ async fn shorthand_add_uses_runtime_markers_and_headers(pool: sqlx::SqlitePool) 
 #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
 async fn add_uses_the_clock_timestamp(pool: sqlx::SqlitePool) {
     let store = registered_store(&pool).await;
-    add_task::execute(&command(), &store, &pool, &FixedClock)
+    add_task::execute(command(), &store, &pool, &FixedClock)
         .await
         .unwrap();
 
@@ -153,7 +148,7 @@ async fn structured_add_renders_lane_values_without_shorthand_parsing(pool: sqlx
         .unwrap(),
     );
 
-    let added = add_task::execute(&command, &store, &pool, &FixedClock)
+    let added = add_task::execute(command, &store, &pool, &FixedClock)
         .await
         .unwrap();
 
@@ -170,7 +165,7 @@ async fn add_reports_a_blocked_by_id_from_an_unknown_project(pool: sqlx::SqliteP
     let mut command = command();
     command.blocked_by = Some(blocked_by(&["MISS-0001"]));
 
-    let error = add_task::execute(&command, &store, &pool, &FixedClock)
+    let error = add_task::execute(command, &store, &pool, &FixedClock)
         .await
         .unwrap_err();
 
@@ -199,7 +194,7 @@ async fn add_accepts_a_blocker_from_a_paused_project(pool: sqlx::SqlitePool) {
     let mut command = command();
     command.blocked_by = Some(blocked_by(&["PAU-0001"]));
 
-    let added = add_task::execute(&command, &store, &pool, &FixedClock)
+    let added = add_task::execute(command, &store, &pool, &FixedClock)
         .await
         .unwrap();
 
@@ -209,7 +204,7 @@ async fn add_accepts_a_blocker_from_a_paused_project(pool: sqlx::SqlitePool) {
 #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
 async fn add_rejects_a_cycle_through_its_prospective_id_without_writing(pool: sqlx::SqlitePool) {
     insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
-    let origin = crate::ports::task_vault::TaskRecord {
+    let origin = pwf_wire::task::TaskRecord {
         blocked_by: stored_blocked_by(&["FOO-0002"]),
         ..task_record("FOO-0001")
     };
@@ -219,7 +214,7 @@ async fn add_rejects_a_cycle_through_its_prospective_id_without_writing(pool: sq
     let mut command = command();
     command.blocked_by = Some(blocked_by(&["FOO-0001"]));
 
-    let error = add_task::execute(&command, &store, &pool, &FixedClock)
+    let error = add_task::execute(command, &store, &pool, &FixedClock)
         .await
         .unwrap_err();
 
@@ -235,4 +230,29 @@ async fn add_rejects_a_cycle_through_its_prospective_id_without_writing(pool: sq
     ));
     assert_eq!(store.tasks("foo").len(), 1);
     assert!(store.entries("foo").is_empty());
+}
+
+#[sqlx::test(migrator = "crate::testing::MIGRATOR")]
+async fn add_uses_project_id_even_when_another_project_has_that_title(pool: sqlx::SqlitePool) {
+    insert_project(
+        &pool,
+        "FOO",
+        "original",
+        "/projects/original",
+        "/tasks/original",
+        false,
+    )
+    .await;
+    insert_project(&pool, "ALT", "foo", "/projects/foo", "/tasks/foo", false).await;
+    let store = InMemoryStore::default()
+        .with_project_id("original", "FOO")
+        .with_project_id("foo", "ALT");
+
+    let added = add_task::execute(command(), &store, &pool, &FixedClock)
+        .await
+        .unwrap();
+
+    assert_eq!(added.outcome.as_ref(), "FOO-0001");
+    assert_eq!(store.tasks("original").len(), 1);
+    assert!(store.tasks("foo").is_empty());
 }

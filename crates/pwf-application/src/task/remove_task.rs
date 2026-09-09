@@ -5,7 +5,10 @@ use pwf_models::{
 use pwf_wire::{
     confirmation::RemoveTaskConfirmation,
     project::ProjectStatusFilter,
-    task::{DeleteTask, DeleteTaskOutcome, TaskMutationResult, TaskMutationSummary, TaskNotePath},
+    task::{
+        DeleteTask, DeleteTaskOutcome, Materialization, StoredBlockedBy, TaskMutationResult,
+        TaskMutationSummary, TaskNotePath, TaskRecord,
+    },
 };
 
 use super::{
@@ -16,10 +19,7 @@ use super::{
 use crate::{
     ports::{
         confirmation::{ConfirmationClient, ConfirmationClientError},
-        task_vault::{
-            ExpectedTaskRevision, Materialization, StoredBlockedBy, TaskMutationError, TaskRecord,
-            TaskVault, TaskWrite,
-        },
+        task_vault::{ExpectedTaskRevision, TaskMutationError, TaskVault, TaskWrite},
     },
     project::list_projects,
 };
@@ -149,7 +149,7 @@ async fn prepare_removal(
     pool: &sqlx::SqlitePool,
 ) -> Result<PreparedRemoval, RemoveTaskError> {
     let project = resolve_task_project::execute(task_id.clone(), pool).await?;
-    let record = TaskVault::get_task(store, &project, task_id)
+    let record = TaskVault::get_task_record(store, &project, task_id)
         .map_err(|error| RemoveTaskError::WriteStore(anyhow::Error::new(error)))?
         .ok_or_else(|| RemoveTaskError::TaskNotFound {
             id: task_id.clone(),
@@ -208,7 +208,7 @@ fn validate_target_revision(
     prepared: &PreparedRemoval,
     store: &impl TaskVault,
 ) -> Result<(), RemoveTaskError> {
-    let current = TaskVault::get_task(store, &prepared.project, &prepared.task_id)
+    let current = TaskVault::get_task_record(store, &prepared.project, &prepared.task_id)
         .map_err(|error| RemoveTaskError::WriteStore(anyhow::Error::new(error)))?
         .ok_or_else(|| RemoveTaskError::TaskNotFound {
             id: prepared.task_id.clone(),
@@ -331,14 +331,17 @@ mod tests {
     use pwf_models::task::{TaskId, TaskStatus};
     use pwf_wire::{
         confirmation::RemoveTaskConfirmation,
-        task::{DeleteTask, DeleteTaskOutcome, TaskMutationResult, TaskNotePath},
+        task::{
+            DeleteTask, DeleteTaskOutcome, Materialization, TaskMutationResult, TaskNotePath,
+            TaskRecord,
+        },
     };
 
     use super::RemoveTaskError;
     use crate::{
         ports::{
             confirmation::{ConfirmationClient, ConfirmationClientError},
-            task_vault::{IndexEntry, IndexEntryState, Materialization, TaskRecord, TaskVault},
+            task_vault::{IndexEntry, IndexEntryState, TaskVault},
         },
         task::remove_task,
         testing::{

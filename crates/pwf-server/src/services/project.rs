@@ -6,7 +6,6 @@ use pwf_application::project::{
     list_projects::{self, ListProjectsError},
     pause_project::{self, PauseProjectError},
     rename_project::{self, RenameProjectError},
-    resolve_project::ResolveProjectError,
     resume_project::{self, ResumeProjectError},
     update_project::{self, UpdateProjectError},
 };
@@ -146,13 +145,6 @@ impl ProjectService for ProjectGrpcService {
     }
 }
 
-pub(super) fn resolve_project_status(error: &ResolveProjectError) -> Status {
-    match error {
-        ResolveProjectError::Unknown { .. } => Status::not_found(error.to_string()),
-        ResolveProjectError::Unexpected { .. } => Status::internal(error.to_string()),
-    }
-}
-
 fn task_location_status(error: &TaskLocationError) -> Status {
     Status::failed_precondition(error.to_string())
 }
@@ -168,7 +160,7 @@ fn add_project_status(error: AddProjectError) -> Status {
     }
 }
 
-fn get_project_status(error: &GetProjectError) -> Status {
+pub(super) fn get_project_status(error: &GetProjectError) -> Status {
     match error {
         GetProjectError::ProjectNotFound { .. } => Status::not_found(error.to_string()),
         GetProjectError::Unexpected { .. } => Status::internal(error.to_string()),

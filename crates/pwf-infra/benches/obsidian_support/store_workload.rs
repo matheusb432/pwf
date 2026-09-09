@@ -1,8 +1,8 @@
 use std::{fmt::Write as _, fs, path::Path};
 
 use pwf_application::ports::task_vault::{
-    ExpectedTaskRevision, NewTask, NullablePatch, TaskMutationError, TaskPatch, TaskRecord,
-    TaskVault, TaskWrite, TaskWriteSet,
+    ExpectedTaskRevision, NewTask, NullablePatch, TaskMutationError, TaskPatch, TaskVault,
+    TaskWrite, TaskWriteSet,
 };
 use pwf_infra::obsidian::{ObsidianStore, ObsidianStoreError};
 use pwf_models::{
@@ -12,7 +12,7 @@ use pwf_models::{
     },
     task::{BlockedBy, EffortTier, Tag, TaskId, TaskStatus, TaskTags, TaskTimestamp, TaskTitle},
 };
-use pwf_wire::set_field::SetField;
+use pwf_wire::{set_field::SetField, task::TaskRecord};
 use tempfile::TempDir;
 
 use super::{
@@ -38,7 +38,7 @@ impl ReadWorkload {
     }
 
     pub fn get(&self) -> Result<Option<TaskRecord>, ObsidianStoreError> {
-        TaskVault::get_task(&self.store, &self.project, &self.selected_id)
+        TaskVault::get_task_record(&self.store, &self.project, &self.selected_id)
     }
 
     pub fn list(&self) -> Result<Vec<TaskRecord>, ObsidianStoreError> {

@@ -1,6 +1,9 @@
 use clap::Args;
 use pwf_client::{
-    pb::{GetTaskRequest, TaskReadFormat, get_task_response},
+    pb::{
+        GetProjectRequest, GetTaskRecordRequest, GetTaskRequest, ProjectStatusFilter, task_record,
+    },
+    project::ProjectClient,
     task::TaskClient,
 };
 
@@ -20,30 +23,48 @@ pub struct Arguments {
     pub(crate) json: bool,
 }
 
-/// Returns the complete Markdown for a task regardless of status;
-/// `--path` returns the note path instead.
-pub(super) async fn run(arguments: &Arguments, client: &TaskClient) -> anyhow::Result<String> {
+pub(super) async fn run(
+    arguments: &Arguments,
+    client: &TaskClient,
+    projects: &ProjectClient,
+) -> anyhow::Result<String> {
     let id = arguments
         .identifier
         .required(anyhow::anyhow!("--id is required for get."))?;
-    let output = if arguments.path {
-        TaskReadFormat::Path
-    } else if arguments.json {
-        TaskReadFormat::Data
-    } else {
-        TaskReadFormat::Markdown
-    };
-    let gotten = client
-        .get_task(GetTaskRequest {
-            id: id.to_string(),
-            output: output as i32,
+    if arguments.json {
+        let task = client
+            .get_task(GetTaskRequest {
+                id: id.into_string(),
+            })
+            .await
+            .map_err(crate::rpc_error)?;
+        let project = projects
+            .get_project(GetProjectRequest {
+                id: task.id.project_id().to_string(),
+                status: ProjectStatusFilter::ActiveOnly as i32,
+            })
+            .await
+            .map_err(crate::rpc_error)?;
+        return output::json(&task, project.title);
+    }
+    let record = client
+        .get_task_record(GetTaskRecordRequest {
+            id: id.into_string(),
         })
         .await
-        .map_err(crate::rpc_error)?;
-    match gotten.value {
-        Some(get_task_response::Value::Markdown(markdown)) => Ok(markdown),
-        Some(get_task_response::Value::Path(path)) => Ok(path),
-        Some(get_task_response::Value::Data(task)) => output::json(*task).map_err(Into::into),
-        None => Err(anyhow::anyhow!("pwf-server returned an empty task read")),
+        .map_err(crate::rpc_error)?
+        .record
+        .ok_or_else(|| anyhow::anyhow!("pwf-server returned an empty task record"))?;
+    if arguments.path {
+        return Ok(record.locator);
+    }
+    match record.materialization {
+        Some(task_record::Materialization::NoteFile(_)) => Ok(record.source),
+        Some(task_record::Materialization::MissingNote(path)) => {
+            Err(anyhow::anyhow!("task {} has no note at {path}", record.id))
+        }
+        None => Err(anyhow::anyhow!(
+            "pwf-server returned an empty task materialization state"
+        )),
     }
 }

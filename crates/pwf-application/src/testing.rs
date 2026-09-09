@@ -16,14 +16,14 @@ use pwf_models::{
     revision::ContentRevision,
     task::{BlockedBy, TaskId, TaskStatus, TaskTags, TaskTimestamp},
 };
-use pwf_wire::task::RawTaskTags;
+use pwf_wire::task::{Materialization, RawTaskTags, StoredBlockedBy, TaskRecord};
 
 use crate::ports::{
     clock::Clock,
     project_note::{NewProjectNote, ProjectNotePatch, ProjectNotes},
     task_vault::{
-        IndexEntry, Materialization, NewTask, NullablePatch, StoredBlockedBy, TaskMutationError,
-        TaskPatch, TaskRecord, TaskRevisionState, TaskVault, TaskWrite, TaskWriteSet,
+        IndexEntry, NewTask, NullablePatch, TaskMutationError, TaskPatch, TaskRevisionState,
+        TaskVault, TaskWrite, TaskWriteSet,
     },
 };
 
@@ -54,6 +54,7 @@ struct InMemoryState {
     project_note_patches: BTreeMap<ProjectName, Vec<ProjectNotePatch>>,
     failures: Vec<InMemoryStoreFailure>,
     next_task_revision: u64,
+    dependency_reads: Vec<TaskId>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,6 +63,7 @@ pub(crate) enum InMemoryStoreFailure {
     ListTasks,
     ListProjectNotes,
     ReadTask,
+    ReadTaskRecord,
     ReadTaskMarkdown,
 }
 
@@ -98,6 +100,10 @@ impl InMemoryStore {
             .project_ids
             .insert(project_name(project), project_id.parse().unwrap());
         self
+    }
+
+    pub(crate) fn dependency_reads(&self) -> Vec<TaskId> {
+        self.lock().dependency_reads.clone()
     }
 
     pub fn tasks(&self, project: &str) -> Vec<TaskRecord> {
@@ -213,7 +219,7 @@ pub(crate) fn task_record(id: &str) -> TaskRecord {
         tags: None,
         effort: None,
         priority: None,
-        blocked_by: crate::ports::task_vault::StoredBlockedBy::Absent,
+        blocked_by: pwf_wire::task::StoredBlockedBy::Absent,
         section: None,
         body: "\nbody\n".to_string(),
         source: "body".to_string(),
@@ -283,12 +289,17 @@ impl TaskVault for InMemoryStore {
         ))
     }
 
-    fn get_task(&self, project: &Project, id: &TaskId) -> Result<Option<TaskRecord>, Self::Error> {
-        if self
-            .lock()
-            .failures
-            .contains(&InMemoryStoreFailure::ReadTask)
-        {
+    fn get_task_record(
+        &self,
+        project: &Project,
+        id: &TaskId,
+    ) -> Result<Option<TaskRecord>, Self::Error> {
+        if self.lock().failures.iter().any(|failure| {
+            matches!(
+                failure,
+                InMemoryStoreFailure::ReadTask | InMemoryStoreFailure::ReadTaskRecord
+            )
+        }) {
             return Err(InMemoryStoreError::Injected {
                 operation: "task-read",
             });
@@ -298,6 +309,29 @@ impl TaskVault for InMemoryStore {
             .tasks
             .get(&project.title)
             .and_then(|tasks| tasks.iter().find(|task| task.id == *id).cloned()))
+    }
+
+    fn get_task_dependencies(
+        &self,
+        project: &Project,
+        id: &TaskId,
+    ) -> Result<Option<crate::ports::task_vault::TaskDependencyRecord>, Self::Error> {
+        let mut state = self.lock();
+        state.dependency_reads.push(id.clone());
+        if state.failures.contains(&InMemoryStoreFailure::ReadTask) {
+            return Err(InMemoryStoreError::Injected {
+                operation: "task-read",
+            });
+        }
+        Ok(state
+            .tasks
+            .get(&project.title)
+            .and_then(|tasks| tasks.iter().find(|task| task.id == *id))
+            .filter(|task| matches!(task.materialization, Materialization::NoteFile))
+            .map(|task| crate::ports::task_vault::TaskDependencyRecord {
+                blocked_by: task.blocked_by.clone(),
+                locator: task.locator.clone(),
+            }))
     }
 
     fn list_tasks(&self, project: &Project) -> Result<Vec<TaskRecord>, Self::Error> {
@@ -360,8 +394,8 @@ impl TaskVault for InMemoryStore {
             effort: new.effort.map(|effort| effort.to_string()),
             priority: new.priority.map(|priority| priority.to_string()),
             blocked_by: new.blocked_by.map_or(
-                crate::ports::task_vault::StoredBlockedBy::Absent,
-                crate::ports::task_vault::StoredBlockedBy::Valid,
+                pwf_wire::task::StoredBlockedBy::Absent,
+                pwf_wire::task::StoredBlockedBy::Valid,
             ),
             section: None,
             body: new.body.clone(),

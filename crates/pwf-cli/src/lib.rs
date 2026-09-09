@@ -19,6 +19,7 @@ mod test_style;
 pub(crate) fn rpc_error(error: pwf_client::ClientError) -> anyhow::Error {
     match error {
         pwf_client::ClientError::Rpc(status) => anyhow::anyhow!(status.message().to_string()),
+        pwf_client::ClientError::InvalidTaskResponse(error) => anyhow::Error::new(error),
         pwf_client::ClientError::InvalidTaskDagResponse(error) => anyhow::Error::new(error),
     }
 }

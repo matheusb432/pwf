@@ -55,6 +55,7 @@ async fn dispatch(parsed: command::Cli) -> anyhow::Result<String> {
                 Console::from_terminal(),
                 user_settings.task_status_colors(),
                 &task_client,
+                &client.project(),
             )
             .await
         }
@@ -67,7 +68,14 @@ async fn dispatch(parsed: command::Cli) -> anyhow::Result<String> {
             } else {
                 NoteStatusColors::default()
             };
-            note::run(&arguments, Console::from_terminal(), colors, &note_client).await
+            note::run(
+                &arguments,
+                Console::from_terminal(),
+                colors,
+                &note_client,
+                &client.project(),
+            )
+            .await
         }
     }
 }

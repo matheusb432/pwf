@@ -8,13 +8,9 @@ use super::{
 
 /// Reads one active managed project.
 #[cqrsy::query]
-pub async fn execute(id: ProjectId, pool: &sqlx::SqlitePool) -> Result<Project, GetProjectError> {
-    get_project::execute(
-        GetProject {
-            id,
-            status: ProjectStatusFilter::ActiveOnly,
-        },
-        pool,
-    )
-    .await
+pub async fn execute(
+    id: impl Into<ProjectId>,
+    pool: &sqlx::SqlitePool,
+) -> Result<Project, GetProjectError> {
+    get_project::execute(GetProject::new(id, ProjectStatusFilter::ActiveOnly), pool).await
 }

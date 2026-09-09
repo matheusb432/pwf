@@ -65,9 +65,18 @@ pub(super) async fn run(
     console: Console,
     task_status_colors: TaskStatusColors,
     client: &TaskClient,
+    projects: &pwf_client::project::ProjectClient,
 ) -> anyhow::Result<String> {
+    let project_id = match arguments.project.as_ref() {
+        Some(selector) => Some(
+            crate::project::resolve_project_id(selector, projects)
+                .await?
+                .to_string(),
+        ),
+        None => None,
+    };
     let mut request = ListTasksRequest {
-        project_selector: arguments.project.as_ref().map(ToString::to_string),
+        project_id,
         scope: list_scope(arguments),
         number: arguments
             .number

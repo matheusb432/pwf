@@ -127,7 +127,7 @@ fn task_frontmatter(
         })
 }
 
-fn parse_task_metadata(
+pub(super) fn parse_task_metadata(
     path: &Path,
     frontmatter: &FrontmatterView<'_>,
 ) -> Result<Option<(TaskId, Option<String>)>, ObsidianStoreError> {

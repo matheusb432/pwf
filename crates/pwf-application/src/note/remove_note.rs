@@ -7,7 +7,6 @@ use pwf_models::{
 use pwf_wire::{
     confirmation::RemoveNoteConfirmation,
     note::{MutatedNote, RemoveNote, RemovedNoteOutcome},
-    project::{ProjectStatusFilter, ResolveProject},
 };
 
 use crate::{
@@ -15,13 +14,13 @@ use crate::{
         confirmation::{ConfirmationClient, ConfirmationClientError},
         project_note::ProjectNotes,
     },
-    project::resolve_project::{self, ResolveProjectError},
+    project::{get_active_project, get_project::GetProjectError},
 };
 
 #[derive(Debug, thiserror::Error)]
 pub enum RemoveNoteError {
     #[error(transparent)]
-    ResolveProject(#[from] ResolveProjectError),
+    GetProject(#[from] GetProjectError),
     #[error("Note id '{selector}' does not belong to project {project_id}.")]
     ProjectMismatch {
         selector: NoteSelector,
@@ -46,14 +45,7 @@ pub async fn execute(
     pool: &sqlx::SqlitePool,
     confirmation_client: &mut dyn ConfirmationClient<Confirmation = RemoveNoteConfirmation>,
 ) -> Result<RemovedNoteOutcome, RemoveNoteError> {
-    let project = resolve_project::execute(
-        ResolveProject {
-            selector: command.project_selector,
-            status: ProjectStatusFilter::ActiveOnly,
-        },
-        pool,
-    )
-    .await?;
+    let project = get_active_project::execute(command.project_id, pool).await?;
     let id =
         command
             .selector
@@ -161,7 +153,7 @@ mod tests {
 
             let removed = remove_note::execute(
                 RemoveNote {
-                    project_selector: "FOO".parse().unwrap(),
+                    project_id: "FOO".parse().unwrap(),
                     selector: identifier.parse().unwrap(),
                 },
                 &store,
@@ -195,7 +187,7 @@ mod tests {
 
         let error = remove_note::execute(
             RemoveNote {
-                project_selector: "foo".parse().unwrap(),
+                project_id: "foo".parse().unwrap(),
                 selector: "1".parse().unwrap(),
             },
             &store,
@@ -222,7 +214,7 @@ mod tests {
 
         let error = remove_note::execute(
             RemoveNote {
-                project_selector: "foo".parse().unwrap(),
+                project_id: "foo".parse().unwrap(),
                 selector: "BAR-NOTE-0001".parse().unwrap(),
             },
             &store,
@@ -251,7 +243,7 @@ mod tests {
 
         let outcome = remove_note::execute(
             RemoveNote {
-                project_selector: "foo".parse().unwrap(),
+                project_id: "foo".parse().unwrap(),
                 selector: "7".parse().unwrap(),
             },
             &store,

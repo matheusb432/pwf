@@ -150,7 +150,7 @@ async fn prepare_reopen(
     pool: &sqlx::SqlitePool,
 ) -> Result<ReopenPreparation, ReopenTaskError> {
     let project = resolve_task_project::execute(task_id.clone(), pool).await?;
-    let record = TaskVault::get_task(store, &project, task_id)
+    let record = TaskVault::get_task_record(store, &project, task_id)
         .map_err(|error| ReopenTaskError::WriteStore(anyhow::Error::new(error)))?
         .ok_or_else(|| ReopenTaskError::TaskNotFound {
             id: task_id.clone(),
@@ -186,7 +186,7 @@ fn validate_reopen(
     prepared: &PreparedReopen,
     store: &impl TaskVault,
 ) -> Result<(), ReopenTaskError> {
-    let current = TaskVault::get_task(store, &prepared.project, &prepared.task_id)
+    let current = TaskVault::get_task_record(store, &prepared.project, &prepared.task_id)
         .map_err(|error| ReopenTaskError::WriteStore(anyhow::Error::new(error)))?
         .ok_or_else(|| ReopenTaskError::TaskNotFound {
             id: prepared.task_id.clone(),
@@ -273,13 +273,13 @@ mod tests {
     };
     use pwf_wire::{
         confirmation::ReopenTaskConfirmation,
-        task::{ReopenTask, ReopenTaskOutcome},
+        task::{ReopenTask, ReopenTaskOutcome, TaskRecord},
     };
 
     use crate::{
         ports::{
             confirmation::{ConfirmationClient, ConfirmationClientError},
-            task_vault::{IndexEntry, IndexEntryState, TaskRecord, TaskVault},
+            task_vault::{IndexEntry, IndexEntryState, TaskVault},
         },
         task::reopen_task,
         testing::{InMemoryStore, app_date, project, task_record, task_timestamp},

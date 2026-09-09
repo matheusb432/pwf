@@ -1,6 +1,4 @@
-use pwf_models::project::{
-    Project, ProjectId, ProjectName, ProjectSelector, ProjectSource, ProjectTasks,
-};
+use pwf_models::project::{Project, ProjectId, ProjectName, ProjectSource, ProjectTasks};
 
 /// Requests one managed project by project ID.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -9,6 +7,16 @@ pub struct GetProject {
     pub id: ProjectId,
     /// Project statuses eligible for the lookup.
     pub status: ProjectStatusFilter,
+}
+
+impl GetProject {
+    #[must_use]
+    pub fn new(id: impl Into<ProjectId>, status: ProjectStatusFilter) -> Self {
+        Self {
+            id: id.into(),
+            status,
+        }
+    }
 }
 
 /// Requests replacement of one managed project's identity and locations.
@@ -28,12 +36,6 @@ pub struct UpdateProject {
     /// Replacement source location.
     pub source: crate::patch_field::PatchField<ProjectSource>,
     pub obsidian_vault: crate::patch_field::PatchField<pwf_models::project::ObsidianVault>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ResolveProject {
-    pub selector: ProjectSelector,
-    pub status: ProjectStatusFilter,
 }
 
 /// Selects whether paused projects are eligible for a request.

@@ -63,6 +63,7 @@ pub(super) async fn run(
     console: Console,
     task_status_colors: TaskStatusColors,
     client: &TaskClient,
+    projects: &pwf_client::project::ProjectClient,
 ) -> anyhow::Result<String> {
     let project_selector = arguments
         .project
@@ -71,9 +72,10 @@ pub(super) async fn run(
             "Use shorthand: pwf task add <project> \"<prompt>\"\nOr machine mode: pwf task add <project> --title <title> [lane flags]"
         ))?;
     let (prompt, title_normalized) = request_prompt(arguments)?;
+    let project_id = crate::project::resolve_project_id(&project_selector, projects).await?;
     let result = client
         .create_task(CreateTaskRequest {
-            project_selector: project_selector.to_string(),
+            project_id: project_id.to_string(),
             prompt: Some(prompt),
             blocked_by: blocked_by_input::collect(&arguments.blocked_by)
                 .map(|values| values.iter().map(ToString::to_string).collect())

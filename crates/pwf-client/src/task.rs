@@ -1,4 +1,4 @@
-pub use pwf_wire::task::{TaskDag, TaskDagEdge, TaskDagError, TaskDagNode};
+pub use pwf_wire::task::{Task, TaskDag, TaskDagEdge, TaskDagError, TaskDagNode};
 use pwf_wire::{
     pb::{self, task_service_client::TaskServiceClient},
     proto::task::decode_get_task_dag_response,
@@ -76,12 +76,22 @@ impl TaskClient {
             .map_err(ClientError::from)
     }
 
-    pub async fn get_task(
-        &self,
-        request: pb::GetTaskRequest,
-    ) -> Result<pb::GetTaskResponse, ClientError> {
-        self.client()
+    pub async fn get_task(&self, request: pb::GetTaskRequest) -> Result<Task, ClientError> {
+        let response = self
+            .client()
             .get_task(request)
+            .await
+            .map(tonic::Response::into_inner)
+            .map_err(ClientError::from)?;
+        Task::try_from(response).map_err(Into::into)
+    }
+
+    pub async fn get_task_record(
+        &self,
+        request: pb::GetTaskRecordRequest,
+    ) -> Result<pb::GetTaskRecordResponse, ClientError> {
+        self.client()
+            .get_task_record(request)
             .await
             .map(tonic::Response::into_inner)
             .map_err(Into::into)

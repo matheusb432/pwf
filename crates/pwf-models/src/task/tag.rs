@@ -10,6 +10,14 @@ impl TryFrom<&str> for Tag {
     type Error = InvalidTagError;
 
     fn try_from(raw: &str) -> Result<Self, Self::Error> {
+        Self::try_from(raw.to_string())
+    }
+}
+
+impl TryFrom<String> for Tag {
+    type Error = InvalidTagError;
+
+    fn try_from(raw: String) -> Result<Self, Self::Error> {
         let valid_chars = raw
             .chars()
             .all(|ch| ch.is_ascii_alphanumeric() || ch == '_');
@@ -18,11 +26,16 @@ impl TryFrom<&str> for Tag {
         let is_lowercase = !raw.chars().any(|ch| ch.is_ascii_uppercase());
         if raw.is_empty() || !valid_chars || !valid_separators || !has_alphanumeric || !is_lowercase
         {
-            return Err(InvalidTagError {
-                raw: raw.to_string(),
-            });
+            return Err(InvalidTagError { raw });
         }
-        Ok(Self(raw.to_string()))
+        Ok(Self(raw))
+    }
+}
+
+impl Tag {
+    #[must_use]
+    pub fn into_string(self) -> String {
+        self.0
     }
 }
 
@@ -63,10 +76,9 @@ impl FromStr for TagInput {
         let mut tags = Vec::new();
         for raw in segments {
             let normalized = raw.trim().to_ascii_lowercase().replace('-', "_");
-            let tag =
-                Tag::try_from(normalized.as_str()).map_err(|_| TagInputError::InvalidTag {
-                    raw: raw.to_string(),
-                })?;
+            let tag = Tag::try_from(normalized).map_err(|_| TagInputError::InvalidTag {
+                raw: raw.to_string(),
+            })?;
             push_unseen_tag(&mut tags, tag);
         }
         TaskTags::try_new(tags)
@@ -82,6 +94,33 @@ impl FromStr for TagInput {
 pub struct TaskTags(Vec<Tag>);
 
 impl TaskTags {
+    /// Parses the persisted inline tag sequence.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an empty sequence, malformed brackets, or invalid tags.
+    pub fn parse_frontmatter(raw: &str) -> Result<Self, ParseTaskTagsError> {
+        let trimmed = raw.trim();
+        let Some(inner) = trimmed
+            .strip_prefix('[')
+            .and_then(|value| value.strip_suffix(']'))
+        else {
+            return Err(ParseTaskTagsError::InvalidFrontmatter {
+                raw: raw.to_string(),
+            });
+        };
+        if inner.trim().is_empty() {
+            return Err(ParseTaskTagsError::MissingTag {
+                raw: raw.to_string(),
+            });
+        }
+        let input = inner.parse::<TagInput>().map_err(|error| match error {
+            TagInputError::MissingTag { raw } => ParseTaskTagsError::MissingTag { raw },
+            TagInputError::InvalidTag { raw } => ParseTaskTagsError::InvalidTag { raw },
+        })?;
+        Ok(input.0)
+    }
+
     /// Combines parsed tag arguments, returning `None` when no arguments were supplied.
     #[must_use]
     pub fn from_inputs(inputs: &[TagInput]) -> Option<Self> {
@@ -163,9 +202,40 @@ impl TagInputError {
 #[error("tags cannot be empty")]
 pub struct EmptyTaskTagsError;
 
+#[must_use]
+#[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
+pub enum ParseTaskTagsError {
+    #[error("missing tag value: {raw:?}")]
+    MissingTag { raw: String },
+    #[error("invalid tag value: {raw:?}")]
+    InvalidTag { raw: String },
+    #[error("invalid tags frontmatter: {raw:?}")]
+    InvalidFrontmatter { raw: String },
+}
+
+impl ParseTaskTagsError {
+    #[must_use]
+    pub fn raw(&self) -> &str {
+        match self {
+            Self::MissingTag { raw }
+            | Self::InvalidTag { raw }
+            | Self::InvalidFrontmatter { raw } => raw,
+        }
+    }
+}
+
+impl IntoIterator for TaskTags {
+    type Item = Tag;
+    type IntoIter = std::vec::IntoIter<Tag>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Tag, TagInput, TagInputError, TaskTags};
+    use super::{ParseTaskTagsError, Tag, TagInput, TagInputError, TaskTags};
 
     fn values(tags: &TaskTags) -> Vec<&str> {
         tags.iter().map(AsRef::as_ref).collect()
@@ -238,5 +308,19 @@ mod tests {
         for raw in ["SQLite", "csharp-export", " sqlite", "_sqlite", "c#"] {
             assert!(Tag::try_from(raw).is_err(), "input: {raw:?}");
         }
+    }
+
+    #[test]
+    fn frontmatter_requires_an_inline_array_and_reuses_tag_validation() {
+        let tags = TaskTags::parse_frontmatter("[SQLite, csharp-export]").unwrap();
+        assert_eq!(
+            tags.iter().map(AsRef::as_ref).collect::<Vec<_>>(),
+            ["sqlite", "csharp_export"]
+        );
+        assert!(matches!(
+            TaskTags::parse_frontmatter("sqlite"),
+            Err(ParseTaskTagsError::InvalidFrontmatter { .. })
+        ));
+        assert!(TaskTags::parse_frontmatter("[]").is_err());
     }
 }

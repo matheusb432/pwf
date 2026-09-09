@@ -2,8 +2,8 @@ use std::fmt::Write;
 
 use pwf_client::pb::{
     BlockedByResolutionKind, BlockedByStatus, EffortTier, ListDetail, ListLayout,
-    ListTasksResponse, PriorityTier, TaskIssue, TaskIssueKind, TaskStatus, TaskStatusFilter,
-    TaskView,
+    ListTasksResponse, ListedTask, PriorityTier, TaskIssue, TaskIssueKind, TaskStatus,
+    TaskStatusFilter,
 };
 use pwf_models::settings::TaskStatusColors;
 
@@ -76,7 +76,7 @@ pub(in crate::task) fn render_list(
 
 fn render_grouped_list(
     out: &mut String,
-    tasks: &[TaskView],
+    tasks: &[ListedTask],
     status_filter: TaskStatusFilter,
     long: bool,
     task_status_colors: TaskStatusColors,
@@ -145,7 +145,7 @@ fn blocked_by_status_summary(statuses: &[BlockedByStatus]) -> String {
 
 fn render_list_task(
     out: &mut String,
-    task: &TaskView,
+    task: &ListedTask,
     status_filter: TaskStatusFilter,
     long: bool,
     last: bool,
@@ -312,8 +312,8 @@ mod tests {
     use super::*;
     use crate::test_style::{assert_plain, color_rgb};
 
-    fn sample_task() -> TaskView {
-        TaskView {
+    fn sample_task() -> ListedTask {
+        ListedTask {
             id: "FOO-0001".to_string(),
             project: "foo".to_string(),
             status: TaskStatus::Active as i32,
@@ -337,7 +337,7 @@ mod tests {
     }
 
     fn render_task_for_filter(
-        task: &TaskView,
+        task: &ListedTask,
         status_filter: TaskStatusFilter,
         long: bool,
         on: bool,

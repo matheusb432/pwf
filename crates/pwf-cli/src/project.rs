@@ -17,7 +17,10 @@ pub mod list;
 mod output;
 pub mod pause;
 pub mod rename;
+mod resolve;
 pub mod resume;
+
+pub(crate) use resolve::resolve_project_id;
 
 #[derive(Args, Debug)]
 pub struct Arguments {

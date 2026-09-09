@@ -69,11 +69,17 @@ pub struct ProjectCreatedAt(String);
 )]
 pub struct ProjectId(String);
 
+impl From<&ProjectId> for ProjectId {
+    fn from(id: &ProjectId) -> Self {
+        id.clone()
+    }
+}
+
 /// Selects a managed project by its configured name or ID.
 ///
 /// The original spelling is retained for name lookup and diagnostics. When the
 /// value is also a valid project ID, resolution can fall back to that ID after
-/// checking for an exact name match.
+/// checking for a case-insensitive name match.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ProjectSelector {
     value: String,

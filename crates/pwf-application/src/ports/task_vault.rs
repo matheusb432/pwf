@@ -1,4 +1,4 @@
-use std::{collections::BTreeSet, num::NonZeroUsize};
+use std::collections::BTreeSet;
 
 use pwf_models::{
     project::Project,
@@ -10,76 +10,8 @@ use pwf_models::{
 };
 use pwf_wire::{
     set_field::SetField,
-    task::{RawTaskTags, TaskIndexPath, TaskNotePath},
+    task::{RawTaskTags, StoredBlockedBy, TaskNotePath, TaskRecord},
 };
-
-/// Represents the optional `blocked_by` property after infrastructure parsing.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub enum StoredBlockedBy {
-    #[default]
-    Absent,
-    Valid(BlockedBy),
-    Malformed {
-        raw: String,
-        reason: String,
-    },
-}
-
-impl StoredBlockedBy {
-    #[must_use]
-    pub fn valid(&self) -> Option<&BlockedBy> {
-        match self {
-            Self::Valid(blocked_by) => Some(blocked_by),
-            Self::Absent | Self::Malformed { .. } => None,
-        }
-    }
-}
-
-/// Locates a record's open link by index display path and one-based line number.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct IndexPlacement {
-    pub index_path: TaskIndexPath,
-    pub line: NonZeroUsize,
-}
-
-/// How the vault materializes a record.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Materialization {
-    NoteFile,
-    /// An index link without a note file; `expected` is the platform-formatted diagnostic path.
-    MissingNote {
-        expected: TaskNotePath,
-    },
-}
-
-/// Carries one raw task persistence record between application interactors and adapters.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TaskRecord {
-    pub id: TaskId,
-    pub title: String,
-    pub status: TaskStatus,
-    pub created_at: Option<TaskTimestamp>,
-    pub completed_at: Option<TaskTimestamp>,
-    pub commits: Option<String>,
-    /// Preserves raw `tags:` frontmatter for lazy validation by tag-filtered reads.
-    pub tags: Option<RawTaskTags>,
-    pub effort: Option<String>,
-    pub priority: Option<String>,
-    /// Carries typed or malformed `blocked_by` metadata for boundary-specific handling.
-    pub blocked_by: StoredBlockedBy,
-    pub section: Option<TaskSection>,
-    /// Preserves the note body below frontmatter verbatim.
-    pub body: String,
-    /// Preserves the raw note source byte-for-byte for `pwf task get`.
-    pub source: String,
-    /// Stores the display path; writes relocate the record by scope and id.
-    pub locator: TaskNotePath,
-    /// Identifies the open index link used to read this record, when present.
-    pub placement: Option<IndexPlacement>,
-    pub materialization: Materialization,
-    /// Opaque revision of the exact persisted file bytes backing this record.
-    pub revision: ContentRevision,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskSummaryRecord {
@@ -106,6 +38,12 @@ impl From<TaskRecord> for TaskSummaryRecord {
             section: record.section,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskDependencyRecord {
+    pub blocked_by: StoredBlockedBy,
+    pub locator: TaskNotePath,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -366,7 +304,18 @@ pub trait TaskVault: Send + Sync + 'static {
         project: &Project,
     ) -> Result<pwf_wire::confirmation::TaskDeletion, Self::Error>;
 
-    fn get_task(&self, project: &Project, id: &TaskId) -> Result<Option<TaskRecord>, Self::Error>;
+    fn get_task_record(
+        &self,
+        project: &Project,
+        id: &TaskId,
+    ) -> Result<Option<TaskRecord>, Self::Error>;
+    /// Reads dependency metadata from a materialized note without loading its body or index entry.
+    fn get_task_dependencies(
+        &self,
+        project: &Project,
+        id: &TaskId,
+    ) -> Result<Option<TaskDependencyRecord>, Self::Error>;
+
     fn list_tasks(&self, project: &Project) -> Result<Vec<TaskRecord>, Self::Error>;
 
     fn list_task_summaries(

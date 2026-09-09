@@ -4,20 +4,17 @@ use pwf_models::{
     note::NoteSelector,
     project::{ProjectId, ProjectName},
 };
-use pwf_wire::{
-    note::{EditNote, MutatedNote},
-    project::{ProjectStatusFilter, ResolveProject},
-};
+use pwf_wire::note::{EditNote, MutatedNote};
 
 use crate::{
     ports::project_note::{ProjectNotePatch, ProjectNotes},
-    project::resolve_project::{self, ResolveProjectError},
+    project::{get_active_project, get_project::GetProjectError},
 };
 
 #[derive(Debug, thiserror::Error)]
 pub enum EditNoteError {
     #[error(transparent)]
-    ResolveProject(#[from] ResolveProjectError),
+    GetProject(#[from] GetProjectError),
     #[error("Note id '{selector}' does not belong to project {project_id}.")]
     ProjectMismatch {
         selector: NoteSelector,
@@ -39,14 +36,7 @@ pub async fn execute(
     store: &impl ProjectNotes,
     pool: &sqlx::SqlitePool,
 ) -> Result<MutatedNote, EditNoteError> {
-    let project = resolve_project::execute(
-        ResolveProject {
-            selector: command.project_selector,
-            status: ProjectStatusFilter::ActiveOnly,
-        },
-        pool,
-    )
-    .await?;
+    let project = get_active_project::execute(command.project_id, pool).await?;
     let id =
         command
             .selector
@@ -123,7 +113,7 @@ mod tests {
 
         let edited = edit_note::execute(
             EditNote {
-                project_selector: "foo".parse().unwrap(),
+                project_id: "foo".parse().unwrap(),
                 selector: "7".parse().unwrap(),
                 edits: edits(SetField::NoAction),
             },
@@ -158,7 +148,7 @@ mod tests {
 
             let edited = edit_note::execute(
                 EditNote {
-                    project_selector: "foo".parse().unwrap(),
+                    project_id: "foo".parse().unwrap(),
                     selector: identifier.parse().unwrap(),
                     edits: edits(SetField::Set("new message")),
                 },
@@ -180,7 +170,7 @@ mod tests {
 
         let error = edit_note::execute(
             EditNote {
-                project_selector: "foo".parse().unwrap(),
+                project_id: "foo".parse().unwrap(),
                 selector: "7".parse().unwrap(),
                 edits: edits(SetField::Set("new message")),
             },

@@ -11,6 +11,7 @@ use pwf_application::{
         edit_task::{self, EditTaskError},
         get_task::{self, GetTaskError},
         get_task_dag::{self, GetTaskDagError},
+        get_task_record::{self, GetTaskRecordError},
         list_tasks::{self, ListTasksError},
         remove_task::{self, RemoveTaskError},
         reopen_task::{self, ReopenTaskError},
@@ -27,7 +28,7 @@ use tonic::{Request, Response, Status, Streaming};
 
 use super::{
     confirmation::{GrpcConfirmationClient, confirmation_status},
-    project::resolve_project_status,
+    project::get_project_status,
 };
 use crate::AppState;
 
@@ -54,7 +55,7 @@ impl pb::task_service_server::TaskService for TaskGrpcService {
         let command = proto::task::create_task_request(request.into_inner())?;
         let _mutation_guard = self.state.task_mutations.lock().await;
         add_task::execute(
-            &command,
+            command,
             &self.state.store,
             &self.state.pool,
             &self.state.clock,
@@ -118,12 +119,24 @@ impl pb::task_service_server::TaskService for TaskGrpcService {
         &self,
         request: Request<pb::GetTaskRequest>,
     ) -> Result<Response<pb::GetTaskResponse>, Status> {
-        let query = proto::task::get_task_request(request.into_inner())?;
+        let query = request.into_inner().try_into()?;
         get_task::execute(&query, &self.state.store, &self.state.pool)
             .await
-            .map(proto::task::get_task_response)
+            .map(Into::into)
             .map(Response::new)
             .map_err(|error| get_task_status(&error))
+    }
+
+    async fn get_task_record(
+        &self,
+        request: Request<pb::GetTaskRecordRequest>,
+    ) -> Result<Response<pb::GetTaskRecordResponse>, Status> {
+        let id = request.into_inner().try_into()?;
+        get_task_record::execute(&id, &self.state.store, &self.state.pool)
+            .await
+            .map(Into::into)
+            .map(Response::new)
+            .map_err(|error| get_task_record_status(&error))
     }
 
     async fn get_task_dag(
@@ -270,7 +283,7 @@ async fn next_reopen_start(
 fn create_task_status(error: AddTaskError) -> Status {
     let message = error.to_string();
     match error {
-        AddTaskError::ProjectResolution(error) => resolve_project_status(&error),
+        AddTaskError::GetProject(error) => get_project_status(&error),
         AddTaskError::UnknownBlockedByIds { .. }
         | AddTaskError::SelfBlockedBy { .. }
         | AddTaskError::BlockedByCycle { .. } => Status::failed_precondition(message),
@@ -385,11 +398,20 @@ fn task_mutation_status<E: std::fmt::Display>(error: &TaskMutationError<E>) -> S
 
 fn get_task_status(error: &GetTaskError) -> Status {
     match error {
-        GetTaskError::TaskNotFound { .. } => Status::not_found(error.to_string()),
-        GetTaskError::InvalidTaskData { .. } | GetTaskError::MalformedBlockedBy { .. } => {
-            Status::data_loss(error.to_string())
+        GetTaskError::Read(error) => get_task_record_status(error),
+        GetTaskError::Parse(pwf_wire::task::TaskRecordError::MissingNote { .. }) => {
+            Status::failed_precondition(error.to_string())
         }
-        _ => Status::internal(error.to_string()),
+        GetTaskError::Parse(_) => Status::data_loss(error.to_string()),
+    }
+}
+
+fn get_task_record_status(error: &GetTaskRecordError) -> Status {
+    match error {
+        GetTaskRecordError::TaskNotFound { .. } => Status::not_found(error.to_string()),
+        GetTaskRecordError::ReadStore(_) | GetTaskRecordError::QueryProject(_) => {
+            Status::internal(error.to_string())
+        }
     }
 }
 
@@ -412,7 +434,7 @@ fn get_task_dag_status(error: &GetTaskDagError) -> Status {
 
 fn list_tasks_status(error: ListTasksError) -> Status {
     match error {
-        ListTasksError::ResolveProject(error) => resolve_project_status(&error),
+        ListTasksError::GetProject(error) => get_project_status(&error),
         ListTasksError::Settings(
             pwf_application::ports::user_settings::UserSettingsLoadError::InvalidConfiguration(
                 error,

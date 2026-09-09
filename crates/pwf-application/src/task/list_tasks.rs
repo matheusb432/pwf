@@ -11,7 +11,7 @@ use pwf_models::{
 };
 use pwf_wire::{
     pagination::CursorPage,
-    project::{ProjectStatusFilter, ResolveProject},
+    project::ProjectStatusFilter,
     task::{
         ListDetail, ListLayout, ListScope, ListTasks, ListedTask, ListedTasks, StatusFilter,
         TaskPageSize, TaskPageToken,
@@ -20,14 +20,14 @@ use pwf_wire::{
 use serde::{Deserialize, Serialize};
 pub use snapshots::ListTasksSnapshots;
 
-use super::{blocked_by, tags, task_view};
+use super::{blocked_by, task_projection};
 use crate::{
     ports::{
         project_task_location::ProjectTaskLocationClient,
         task_vault::TaskVault,
         user_settings::{UserSettingsLoadError, UserSettingsReader},
     },
-    project::{list_projects, resolve_project},
+    project::{get_active_project, list_projects},
 };
 
 /// Retains invalid requested or persisted tag text for list diagnostics.
@@ -36,7 +36,7 @@ use crate::{
 pub struct TagParseError {
     raw: String,
     #[source]
-    source: tags::ParseTagsError,
+    source: pwf_models::task::ParseTaskTagsError,
 }
 
 impl TagParseError {
@@ -46,8 +46,8 @@ impl TagParseError {
     }
 }
 
-impl From<tags::ParseTagsError> for TagParseError {
-    fn from(error: tags::ParseTagsError) -> Self {
+impl From<pwf_models::task::ParseTaskTagsError> for TagParseError {
+    fn from(error: pwf_models::task::ParseTaskTagsError) -> Self {
         Self {
             raw: error.raw().to_string(),
             source: error,
@@ -70,9 +70,9 @@ pub enum ListTasksError {
         source: TagParseError,
     },
     #[error(transparent)]
-    InvalidTaskView(anyhow::Error),
+    InvalidTaskProjection(anyhow::Error),
     #[error(transparent)]
-    ResolveProject(#[from] crate::project::resolve_project::ResolveProjectError),
+    GetProject(#[from] crate::project::get_project::GetProjectError),
     #[error(transparent)]
     QueryProject(anyhow::Error),
     #[error("invalid page token: {reason}")]
@@ -114,17 +114,8 @@ pub async fn execute(
     snapshots: &ListTasksSnapshots,
     settings_reader: &impl UserSettingsReader,
 ) -> Result<ListedTasks, ListTasksError> {
-    let selected = match query.project_selector.as_ref() {
-        Some(selector) => Some(
-            resolve_project::execute(
-                ResolveProject {
-                    selector: selector.clone(),
-                    status: ProjectStatusFilter::ActiveOnly,
-                },
-                pool,
-            )
-            .await?,
-        ),
+    let selected = match query.project_id.as_ref() {
+        Some(id) => Some(get_active_project::execute(id, pool).await?),
         None => None,
     };
     let settings = settings_reader.load()?;
@@ -260,9 +251,11 @@ fn retain_matching_tags(
             continue;
         };
         let stored =
-            tags::parse_frontmatter(raw).map_err(|source| ListTasksError::InvalidTags {
-                id: task.id.clone(),
-                source: source.into(),
+            pwf_models::task::TaskTags::parse_frontmatter(raw.as_ref()).map_err(|source| {
+                ListTasksError::InvalidTags {
+                    id: task.id.clone(),
+                    source: source.into(),
+                }
             })?;
         if requested
             .iter()
@@ -537,8 +530,9 @@ fn collect_project_tasks(
             .into_iter()
             .filter(|record| query.status_filter.includes(record.status))
             .map(|record| {
-                task_view::summarize(record, project.title.clone())
-                    .map_err(|error| ListTasksError::InvalidTaskView(anyhow::Error::new(error)))
+                task_projection::summarize(record, project.title.clone()).map_err(|error| {
+                    ListTasksError::InvalidTaskProjection(anyhow::Error::new(error))
+                })
             })
             .collect();
     }
@@ -549,15 +543,15 @@ fn collect_project_tasks(
         .into_iter()
         .filter(|record| query.status_filter.includes(record.status))
         .map(|record| {
-            task_view::enrich(
+            task_projection::detailed(
                 &record,
+                project.title.clone(),
                 project
                     .source
                     .as_ref()
                     .map(pwf_models::project::ProjectSource::value),
             )
-            .map_err(|error| ListTasksError::InvalidTaskView(anyhow::Error::new(error)))
-            .map(|task| task.into_task_view(project.title.clone()).into())
+            .map_err(|error| ListTasksError::InvalidTaskProjection(anyhow::Error::new(error)))
         })
         .collect()
 }
@@ -709,16 +703,15 @@ mod tests {
         },
     };
     use pwf_wire::task::{
-        BlockedByResolution, BlockedByStatus, ListDetail, ListLayout, ListScope, ListedTasks,
-        ProjectTaskPath, RawTaskTags, StatusFilter, TaskIndexPath, TaskListLimit, TaskNotePath,
-        TaskPageSize,
+        BlockedByResolution, BlockedByStatus, IndexPlacement, ListDetail, ListLayout, ListScope,
+        ListedTasks, Materialization, ProjectTaskPath, RawTaskTags, StatusFilter, TaskIndexPath,
+        TaskListLimit, TaskNotePath, TaskPageSize, TaskRecord,
     };
 
     use super::{ListTasks, ListTasksError};
     use crate::{
         ports::{
             project_task_location::ProjectTaskLocationClient,
-            task_vault::{IndexPlacement, Materialization, TaskRecord},
             user_settings::{UserSettingsLoadError, UserSettingsReader},
         },
         task::list_tasks,
@@ -833,7 +826,7 @@ mod tests {
             .with_project("foo", vec![dependent])
             .with_project("companion-project", vec![blocking_task]);
         let query = ListTasks {
-            project_selector: Some("foo".parse().unwrap()),
+            project_id: Some("foo".parse().unwrap()),
             detail: ListDetail::Detailed,
             ..default_query()
         };
@@ -948,7 +941,7 @@ mod tests {
 
     fn default_query() -> ListTasks {
         ListTasks {
-            project_selector: None,
+            project_id: None,
             scope: ListScope::Default,
             number: TaskListLimit::try_new(100_000).ok(),
             effort: None,
@@ -1044,7 +1037,7 @@ mod tests {
                 } else {
                     "aux"
                 };
-                crate::task::task_view::summarize(
+                crate::task::task_projection::summarize(
                     record.into(),
                     ProjectName::try_new(name).unwrap(),
                 )
@@ -1129,7 +1122,7 @@ mod tests {
             &store,
             &blocked_by_registry(),
             &ListTasks {
-                project_selector: Some("foo".parse().unwrap()),
+                project_id: Some("foo".parse().unwrap()),
                 detail: ListDetail::Detailed,
                 ..default_query()
             },
@@ -1182,7 +1175,7 @@ mod tests {
             &store,
             &blocked_by_registry(),
             &ListTasks {
-                project_selector: Some("foo".parse().unwrap()),
+                project_id: Some("foo".parse().unwrap()),
                 detail: ListDetail::Detailed,
                 ..default_query()
             },
@@ -1496,7 +1489,10 @@ mod tests {
 
         let error = run(&store, &registry, &default_query()).await.unwrap_err();
 
-        assert!(matches!(error, ListTasksError::InvalidTaskView { .. }));
+        assert!(matches!(
+            error,
+            ListTasksError::InvalidTaskProjection { .. }
+        ));
         assert!(error.to_string().contains("invalid effort value \"3\""));
     }
 
@@ -1739,7 +1735,7 @@ mod tests {
             &store,
             &registry,
             &ListTasks {
-                project_selector: Some("foo".parse().unwrap()),
+                project_id: Some("foo".parse().unwrap()),
                 ..default_query()
             },
         )

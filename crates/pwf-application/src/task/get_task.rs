@@ -1,343 +1,122 @@
-use pwf_models::{
-    project::ProjectName,
-    task::{CommitRanges, EffortTier, PriorityTier, TaskId, TaskPrompt, TaskTimestamp, TaskTitle},
-};
-use pwf_wire::task::{GetTask, TaskData, TaskRead, TaskReadFormat, TaskSnapshot};
+use pwf_models::task::{Task, TaskId};
+use pwf_wire::task::TaskRecordError;
 
-use crate::{
-    ports::task_vault::{Materialization, StoredBlockedBy, TaskRecord, TaskVault},
-    project::{get_active_project, get_project::GetProjectError},
-    task::tags,
-};
+use super::get_task_record::{self, GetTaskRecordError};
+use crate::ports::task_vault::TaskVault;
 
 #[derive(Debug, thiserror::Error)]
-#[non_exhaustive]
 pub enum GetTaskError {
-    #[error("Task not found: {id}")]
-    TaskNotFound { id: TaskId },
     #[error(transparent)]
-    ReadStore(anyhow::Error),
+    Read(#[from] GetTaskRecordError),
     #[error(transparent)]
-    ReadMarkdown(anyhow::Error),
-    #[error(transparent)]
-    QueryProject(anyhow::Error),
-    #[error("Invalid task {field}: {source}")]
-    InvalidTaskData {
-        field: &'static str,
-        #[source]
-        source: anyhow::Error,
-    },
-    #[error("task {id} at {path} has malformed blocked_by metadata {raw:?}: {reason}")]
-    MalformedBlockedBy {
-        id: TaskId,
-        path: Box<pwf_wire::task::TaskNotePath>,
-        raw: Box<str>,
-        reason: Box<str>,
-    },
+    Parse(#[from] TaskRecordError),
 }
 
-/// Returns a task's selected representation.
 #[cqrsy::query]
 pub async fn execute(
-    query: &GetTask,
+    id: &TaskId,
     store: &impl TaskVault,
     pool: &sqlx::SqlitePool,
-) -> Result<TaskSnapshot, GetTaskError> {
-    let project = match get_active_project::execute(query.id.project_id().clone(), pool).await {
-        Ok(project) => project,
-        Err(GetProjectError::ProjectNotFound { .. }) => {
-            return Err(GetTaskError::TaskNotFound {
-                id: query.id.clone(),
-            });
-        }
-        Err(error) => return Err(GetTaskError::QueryProject(anyhow::Error::new(error))),
-    };
-    let record = store
-        .get_task(&project, &query.id)
-        .map_err(|error| GetTaskError::ReadStore(anyhow::Error::new(error)))?
-        .ok_or_else(|| GetTaskError::TaskNotFound {
-            id: query.id.clone(),
-        })?;
-    let revision = super::task_revision(&record);
-    let value = match query.output {
-        TaskReadFormat::Path => TaskRead::Path(record.locator),
-        TaskReadFormat::Markdown
-            if matches!(record.materialization, Materialization::MissingNote { .. }) =>
-        {
-            store
-                .read_task_markdown(&record.locator)
-                .map(TaskRead::Markdown)
-                .map_err(|error| GetTaskError::ReadMarkdown(anyhow::Error::new(error)))?
-        }
-        TaskReadFormat::Markdown => TaskRead::Markdown(record.source),
-        TaskReadFormat::Data => task_data(project.title, record)
-            .map(Box::new)
-            .map(TaskRead::Data)?,
-    };
-    Ok(TaskSnapshot { revision, value })
-}
-
-fn task_data(project: ProjectName, record: TaskRecord) -> Result<TaskData, GetTaskError> {
-    let title =
-        TaskTitle::try_new(record.title).map_err(|error| invalid_task_data("title", error))?;
-    let tags = record
-        .tags
-        .as_ref()
-        .map(tags::parse_frontmatter)
-        .transpose()
-        .map_err(|error| invalid_task_data("tags", error))?;
-    let effort = record.effort.as_deref().map(parse_effort).transpose()?;
-    let priority = record.priority.as_deref().map(parse_priority).transpose()?;
-    let blocked_by = match &record.blocked_by {
-        StoredBlockedBy::Absent => None,
-        StoredBlockedBy::Valid(blocked_by) => Some(blocked_by.clone()),
-        StoredBlockedBy::Malformed { raw, reason } => {
-            return Err(GetTaskError::MalformedBlockedBy {
-                id: record.id.clone(),
-                path: Box::new(record.locator.clone()),
-                raw: raw.clone().into_boxed_str(),
-                reason: reason.clone().into_boxed_str(),
-            });
-        }
-    };
-    let commits = record
-        .commits
-        .map(|value| CommitRanges::try_new(unquote_scalar(&value).to_string()))
-        .transpose()
-        .map_err(|error| invalid_task_data("commits", error))?;
-    Ok(TaskData {
-        id: record.id,
-        project,
-        title,
-        status: record.status,
-        created: record.created_at.map(TaskTimestamp::date),
-        completed: record.completed_at.map(TaskTimestamp::date),
-        commits,
-        tags,
-        effort,
-        priority,
-        blocked_by,
-        section: record.section,
-        prompt: TaskPrompt::new(record.body.trim()),
-    })
-}
-
-fn unquote_scalar(raw: &str) -> &str {
-    raw.strip_prefix('"')
-        .and_then(|value| value.strip_suffix('"'))
-        .or_else(|| {
-            raw.strip_prefix('\'')
-                .and_then(|value| value.strip_suffix('\''))
-        })
-        .unwrap_or(raw)
-}
-
-fn parse_effort(raw: &str) -> Result<EffortTier, GetTaskError> {
-    raw.trim()
-        .parse()
-        .map_err(|error| invalid_task_data("effort", error))
-}
-
-fn parse_priority(raw: &str) -> Result<PriorityTier, GetTaskError> {
-    raw.trim()
-        .parse()
-        .map_err(|error| invalid_task_data("priority", error))
-}
-
-fn invalid_task_data(
-    field: &'static str,
-    source: impl std::error::Error + Send + Sync + 'static,
-) -> GetTaskError {
-    GetTaskError::InvalidTaskData {
-        field,
-        source: anyhow::Error::new(source),
-    }
+) -> Result<Task, GetTaskError> {
+    get_task_record::execute(id, store, pool)
+        .await?
+        .into_task()
+        .map_err(Into::into)
 }
 
 #[cfg(test)]
 mod tests {
-    use std::error::Error as _;
+    use pwf_models::task::{EffortTier, PriorityTier, TaskTags};
+    use pwf_wire::task::{RawTaskTags, StoredBlockedBy};
 
-    use pwf_models::task::TaskStatus;
-    use pwf_wire::task::{RawTaskTags, TaskNotePath, TaskRead, TaskReadFormat};
-
-    use super::{GetTask, GetTaskError, TaskId};
     use crate::{
-        ports::task_vault::{StoredBlockedBy, TaskRecord},
-        task::get_task,
-        testing::{
-            FOO_0001_SOURCE, InMemoryStore, InMemoryStoreFailure, insert_project,
-            staged_missing_task, staged_task, stored_blocked_by, task_record, task_timestamp,
-        },
+        task::{get_task, get_task_record},
+        testing::{InMemoryStore, insert_project, staged_missing_task, task_record},
     };
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
-    async fn get_streams_source_verbatim(pool: sqlx::SqlitePool) {
+    async fn get_task_returns_parsed_values_without_changing_the_body(pool: sqlx::SqlitePool) {
         insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
-        let (store, _) = staged_task();
-        let query = GetTask {
-            id: TaskId::try_new("FOO-0001").unwrap(),
-            output: TaskReadFormat::Markdown,
-        };
-
-        let gotten = get_task::execute(&query, &store, &pool).await.unwrap();
-
-        assert_eq!(
-            gotten.value,
-            TaskRead::Markdown(FOO_0001_SOURCE.to_string())
-        );
-        assert_eq!(gotten.revision.as_ref().len(), 64);
-    }
-
-    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
-    async fn get_path_returns_missing_note_locator_without_reading_markdown(
-        pool: sqlx::SqlitePool,
-    ) {
-        insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
-        let (store, _) = staged_missing_task();
-        let query = GetTask {
-            id: TaskId::try_new("FOO-0002").unwrap(),
-            output: TaskReadFormat::Path,
-        };
-
-        let gotten = get_task::execute(&query, &store, &pool).await.unwrap();
-
-        assert_eq!(
-            gotten.value,
-            TaskRead::Path(TaskNotePath::new("/notes/foo/FOO-0002.md".into()))
-        );
-    }
-
-    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
-    async fn get_markdown_preserves_missing_note_source_error(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
-        let (store, _) = staged_missing_task();
-        let store = store.with_failure(InMemoryStoreFailure::ReadTaskMarkdown);
-        let query = GetTask {
-            id: TaskId::try_new("FOO-0002").unwrap(),
-            output: TaskReadFormat::Markdown,
-        };
-
-        let error = get_task::execute(&query, &store, &pool).await.unwrap_err();
-
-        assert_eq!(
-            error.to_string(),
-            "injected in-memory store failure: task-markdown-read"
-        );
-    }
-
-    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
-    async fn data_read_validates_and_types_persisted_task_fields(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
-        let store = InMemoryStore::default().with_project(
-            "foo",
-            vec![TaskRecord {
-                title: "Typed task".to_string(),
-                status: TaskStatus::Done,
-                completed_at: Some(task_timestamp("2026-08-12T12:34:56Z")),
-                commits: Some("'a..b, c..d'".to_string()),
-                tags: Some(RawTaskTags::new("[rust, sqlite]")),
-                effort: Some(" high ".to_string()),
-                priority: Some(" highest ".to_string()),
-                blocked_by: stored_blocked_by(&["AUX-0014"]),
-                section: Some("Human".parse().unwrap()),
-                body: "\n  authored body  \n".to_string(),
-                ..task_record("FOO-0001")
-            }],
-        );
-
-        let read = get_task::execute(
-            &GetTask {
-                id: "FOO-0001".parse().unwrap(),
-                output: TaskReadFormat::Data,
-            },
-            &store,
-            &pool,
-        )
-        .await
-        .unwrap();
-        let task = match read.value {
-            TaskRead::Data(task) => Some(task),
-            _ => None,
-        };
-        assert!(task.is_some());
-        let task = task.unwrap();
-
+        let mut record = task_record("FOO-0001");
+        record.title = "Typed task".to_string();
+        record.body = "\n  exact authored body  \n".to_string();
+        record.tags = Some(RawTaskTags::new("[Rust, SQLite]"));
+        record.effort = Some(" high ".to_string());
+        record.priority = Some("highest".to_string());
+        record.commits = Some("'a..b, a..b, c..d'".to_string());
+        record.created_at = Some("2026-07-26T12:34:56Z".parse().unwrap());
+        let store = InMemoryStore::default().with_project("foo", vec![record.clone()]);
+        let task = get_task::execute(&record.id, &store, &pool).await.unwrap();
         assert_eq!(task.title.as_ref(), "typed task");
-        assert_eq!(task.commits.as_ref().map(AsRef::as_ref), Some("a..b, c..d"));
-        assert_eq!(task.effort.as_ref().map(AsRef::as_ref), Some("high"));
-        assert_eq!(task.priority.as_ref().map(AsRef::as_ref), Some("highest"));
+        assert_eq!(task.prompt.as_ref(), record.body);
         assert_eq!(
-            task.blocked_by
-                .as_ref()
-                .map(|blocked| blocked.iter().map(AsRef::as_ref).collect::<Vec<_>>()),
-            Some(vec!["AUX-0014"])
+            task.tags.as_ref(),
+            Some(&TaskTags::parse_frontmatter("[rust, sqlite]").unwrap())
         );
-        assert_eq!(task.prompt.as_ref(), "authored body");
+        assert_eq!(task.effort, Some(EffortTier::High));
+        assert_eq!(task.priority, Some(PriorityTier::Highest));
+        assert_eq!(task.commits.as_ref().unwrap().as_ref(), "a..b, c..d");
+        assert_eq!(task.created_at, record.created_at);
+        assert_eq!(task.revision, record.revision);
     }
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
-    async fn data_read_reports_an_invalid_persisted_title(pool: sqlx::SqlitePool) {
-        insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
-        let store = InMemoryStore::default().with_project(
-            "foo",
-            vec![TaskRecord {
-                title: "x".repeat(201),
-                ..task_record("FOO-0001")
-            }],
-        );
-
-        let error = get_task::execute(
-            &GetTask {
-                id: "FOO-0001".parse().unwrap(),
-                output: TaskReadFormat::Data,
-            },
-            &store,
-            &pool,
-        )
-        .await
-        .unwrap_err();
-
-        assert!(matches!(
-            &error,
-            GetTaskError::InvalidTaskData { field: "title", .. }
-        ));
-        assert!(error.source().is_some());
-    }
-
-    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
-    async fn data_read_reports_malformed_blocked_by_with_task_path_and_raw_value(
+    async fn get_task_rejects_malformed_metadata_while_raw_lookup_preserves_it(
         pool: sqlx::SqlitePool,
     ) {
         insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
-        let store = InMemoryStore::default().with_project(
-            "foo",
-            vec![TaskRecord {
-                blocked_by: StoredBlockedBy::Malformed {
-                    raw: "\"[[AUX-0001]]\"".to_string(),
-                    reason: "expected a sequence".to_string(),
-                },
-                ..task_record("FOO-0001")
-            }],
-        );
+        for field in [
+            "title",
+            "tags",
+            "effort",
+            "priority",
+            "commits",
+            "blocked_by",
+        ] {
+            let mut record = task_record("FOO-0001");
+            match field {
+                "title" => record.title = "x".repeat(201),
+                "tags" => record.tags = Some(RawTaskTags::new("[]")),
+                "effort" => record.effort = Some("extreme".to_string()),
+                "priority" => record.priority = Some("urgent".to_string()),
+                "commits" => record.commits = Some("''".to_string()),
+                "blocked_by" => {
+                    record.blocked_by = StoredBlockedBy::Malformed {
+                        raw: "bad links".to_string(),
+                        reason: "expected a sequence".to_string(),
+                    }
+                }
+                _ => {}
+            }
+            let store = InMemoryStore::default().with_project("foo", vec![record.clone()]);
+            assert_eq!(
+                get_task_record::execute(&record.id, &store, &pool)
+                    .await
+                    .unwrap(),
+                record
+            );
+            let error = get_task::execute(&record.id, &store, &pool)
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(field), "{error}");
+            assert!(
+                error.contains(record.locator.to_string().as_str()),
+                "{error}"
+            );
+        }
+    }
 
-        let error = get_task::execute(
-            &GetTask {
-                id: "FOO-0001".parse().unwrap(),
-                output: TaskReadFormat::Data,
-            },
-            &store,
-            &pool,
-        )
-        .await
-        .unwrap_err();
-
+    #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
+    async fn get_task_rejects_an_index_only_record(pool: sqlx::SqlitePool) {
+        insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
+        let (store, _) = staged_missing_task();
+        let error = get_task::execute(&"FOO-0002".parse().unwrap(), &store, &pool)
+            .await
+            .unwrap_err();
         assert!(matches!(
             error,
-            GetTaskError::MalformedBlockedBy { ref id, ref path, ref raw, .. }
-                if id.as_ref() == "FOO-0001"
-                    && path.as_path() == std::path::Path::new("/mem/foo-bar/FOO-0001.md")
-                    && raw.as_ref() == "\"[[AUX-0001]]\""
+            super::GetTaskError::Parse(pwf_wire::task::TaskRecordError::MissingNote { .. })
         ));
     }
 }

@@ -7,7 +7,7 @@ use crate::{confirmation, pb, task};
 #[must_use]
 pub fn create_task_response(result: task::TaskMutationResult<TaskId>) -> pb::CreateTaskResponse {
     pb::CreateTaskResponse {
-        id: result.outcome.to_string(),
+        id: result.outcome.into_string(),
         task: result.task.map(task_mutation_summary),
     }
 }
@@ -35,7 +35,7 @@ pub fn complete_task_response(result: task::TaskMutationResult<()>) -> pb::Compl
 
 fn task_mutation_summary(task: task::TaskMutationSummary) -> pb::TaskMutationSummary {
     pb::TaskMutationSummary {
-        id: task.id.to_string(),
+        id: task.id.into_string(),
         title: task.title,
         status: match task.status {
             TaskStatus::Active => pb::TaskStatus::Active,
@@ -85,18 +85,56 @@ pub fn delete_task_result(
     }
 }
 
-#[must_use]
-pub fn get_task_response(task: task::TaskSnapshot) -> pb::GetTaskResponse {
-    let value = match task.value {
-        task::TaskRead::Markdown(value) => pb::get_task_response::Value::Markdown(value),
-        task::TaskRead::Path(value) => pb::get_task_response::Value::Path(value.to_string()),
-        task::TaskRead::Data(value) => {
-            pb::get_task_response::Value::Data(Box::new(task_data(*value)))
+impl From<task::TaskRecord> for pb::GetTaskRecordResponse {
+    fn from(record: task::TaskRecord) -> Self {
+        let blocked_by = match record.blocked_by {
+            task::StoredBlockedBy::Absent => None,
+            task::StoredBlockedBy::Valid(ids) => {
+                Some(pb::stored_task_blocked_by::Value::Valid(pb::StringValues {
+                    values: ids.into_iter().map(TaskId::into_string).collect(),
+                }))
+            }
+            task::StoredBlockedBy::Malformed { raw, reason } => {
+                Some(pb::stored_task_blocked_by::Value::Malformed(
+                    pb::MalformedTaskBlockedBy { raw, reason },
+                ))
+            }
         }
-    };
-    pb::GetTaskResponse {
-        revision: task.revision.to_string(),
-        value: Some(value),
+        .map(|value| pb::StoredTaskBlockedBy { value: Some(value) });
+        let materialization = match record.materialization {
+            task::Materialization::NoteFile => {
+                pb::task_record::Materialization::NoteFile(pb::TaskNoteFile {})
+            }
+            task::Materialization::MissingNote { expected } => {
+                pb::task_record::Materialization::MissingNote(expected.into_display_string())
+            }
+        };
+        pb::GetTaskRecordResponse {
+            record: Some(pb::TaskRecord {
+                id: record.id.into_string(),
+                title: record.title,
+                status: task_status_value(record.status),
+                created_at: record.created_at.map(|value| value.to_string()),
+                completed_at: record.completed_at.map(|value| value.to_string()),
+                commits: record.commits,
+                tags: record.tags.map(task::RawTaskTags::into_string),
+                effort: record.effort,
+                priority: record.priority,
+                blocked_by,
+                section: record
+                    .section
+                    .map(pwf_models::task::TaskSection::into_string),
+                body: record.body,
+                source: record.source,
+                locator: record.locator.into_display_string(),
+                placement: record.placement.map(|value| pb::TaskIndexPlacement {
+                    index_path: value.index_path.into_display_string(),
+                    line: value.line.get() as u64,
+                }),
+                revision: record.revision.into_inner(),
+                materialization: Some(materialization),
+            }),
+        }
     }
 }
 
@@ -276,7 +314,7 @@ pub fn list_tasks_response(tasks: task::ListedTasks) -> pb::ListTasksResponse {
         task::ListDetail::Detailed => pb::ListDetail::Detailed,
     };
     pb::ListTasksResponse {
-        tasks: tasks.tasks.into_iter().map(task_view).collect(),
+        tasks: tasks.tasks.into_iter().map(listed_task).collect(),
         hidden: tasks.hidden as u64,
         project: tasks.project.map(|project| project.to_string()),
         project_task_path: tasks.project_task_path.map(|path| path.to_string()),
@@ -372,33 +410,9 @@ pub(crate) fn blocked_by_issue(issue: task::BlockedByIssue) -> pb::BlockedByIssu
     }
 }
 
-pub(super) fn task_data(task: task::TaskData) -> pb::TaskData {
-    pb::TaskData {
-        id: task.id.to_string(),
-        project: task.project.to_string(),
-        title: task.title.to_string(),
-        status: task_status_value(task.status),
-        created: task.created.map(|date| date.to_string()),
-        completed: task.completed.map(|date| date.to_string()),
-        commits: task.commits.map(|commits| commits.to_string()),
-        tags: task
-            .tags
-            .map(|tags| tags.iter().map(ToString::to_string).collect())
-            .unwrap_or_default(),
-        effort: task.effort.map(effort_tier_value),
-        blocked_by: task
-            .blocked_by
-            .map(|blocked_by| blocked_by.iter().map(ToString::to_string).collect())
-            .unwrap_or_default(),
-        section: task.section.map(|section| section.to_string()),
-        prompt: task.prompt.to_string(),
-        priority: task.priority.map(priority_tier_value),
-    }
-}
-
-fn task_view(task: task::ListedTask) -> pb::TaskView {
-    let mut view = pb::TaskView {
-        id: task.id.to_string(),
+fn listed_task(task: task::ListedTask) -> pb::ListedTask {
+    let mut view = pb::ListedTask {
+        id: task.id.into_string(),
         project: task.project.to_string(),
         status: task_status_value(task.status),
         heading: task.heading.to_string(),
@@ -448,7 +462,7 @@ fn task_issue(issue: &task::TaskIssue) -> pb::TaskIssue {
     }
 }
 
-fn task_status_value(status: TaskStatus) -> i32 {
+pub(super) fn task_status_value(status: TaskStatus) -> i32 {
     match status {
         TaskStatus::Active => pb::TaskStatus::Active as i32,
         TaskStatus::Done => pb::TaskStatus::Done as i32,
@@ -456,7 +470,7 @@ fn task_status_value(status: TaskStatus) -> i32 {
     }
 }
 
-fn effort_tier_value(effort: EffortTier) -> i32 {
+pub(super) fn effort_tier_value(effort: EffortTier) -> i32 {
     match effort {
         EffortTier::Low => pb::EffortTier::Low as i32,
         EffortTier::Medium => pb::EffortTier::Medium as i32,
@@ -465,7 +479,7 @@ fn effort_tier_value(effort: EffortTier) -> i32 {
     }
 }
 
-fn priority_tier_value(priority: PriorityTier) -> i32 {
+pub(super) fn priority_tier_value(priority: PriorityTier) -> i32 {
     match priority {
         PriorityTier::Low => pb::PriorityTier::Low as i32,
         PriorityTier::Medium => pb::PriorityTier::Medium as i32,

@@ -8,7 +8,7 @@ const YAML_UNSAFE_LEADING_CHARACTERS: [char; 16] = [
 
 /// Stores a task title.
 #[nutype(
-    sanitize(lowercase, with = normalize_task_title),
+    sanitize(with = normalize_task_title),
     validate(len_char_max = TASK_TITLE_CHARACTER_LIMIT),
     derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, AsRef, Display),
     default = DEFAULT_TASK_TITLE,
@@ -16,6 +16,15 @@ const YAML_UNSAFE_LEADING_CHARACTERS: [char; 16] = [
 pub struct TaskTitle(String);
 
 fn normalize_task_title(mut title: String) -> String {
+    if title
+        .chars()
+        .any(|character| !character.to_lowercase().eq(std::iter::once(character)))
+    {
+        title = title.to_lowercase();
+    }
+    if task_title_is_normalized(&title) {
+        return title;
+    }
     let mut collapsed = String::with_capacity(title.len());
     let mut needs_separator = false;
     for character in title.drain(..) {
@@ -36,6 +45,26 @@ fn normalize_task_title(mut title: String) -> String {
     } else {
         safe
     }
+}
+
+fn task_title_is_normalized(title: &str) -> bool {
+    if title.is_empty() || strip_unsafe_leading_characters(title) != title || title.ends_with(' ') {
+        return false;
+    }
+    let mut previous_space = false;
+    let mut characters = title.chars().peekable();
+    while let Some(character) = characters.next() {
+        if character.is_whitespace() && (character != ' ' || previous_space) {
+            return false;
+        }
+        if (character == '#' && previous_space)
+            || (character == ':' && characters.peek().is_none_or(|next| *next == ' '))
+        {
+            return false;
+        }
+        previous_space = character == ' ';
+    }
+    true
 }
 
 fn yaml_plain_scalar(title: &str) -> String {

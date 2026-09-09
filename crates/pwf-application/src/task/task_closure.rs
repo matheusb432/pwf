@@ -6,13 +6,13 @@ use pwf_models::{
 };
 use pwf_wire::{
     set_field::SetField,
-    task::{ClosedTaskAction, TaskMutationSummary},
+    task::{ClosedTaskAction, Materialization, TaskMutationSummary},
 };
 
 use crate::{
     ports::task_vault::{
-        ExpectedTaskRevision, IndexEntry, IndexEntryState, Materialization, NullablePatch,
-        TaskMutationError, TaskPatch, TaskVault, TaskWrite,
+        ExpectedTaskRevision, IndexEntry, IndexEntryState, NullablePatch, TaskMutationError,
+        TaskPatch, TaskVault, TaskWrite,
     },
     task::{
         commit_task_writes, expected_task_revision, note_body::append_report, task_body_region,
@@ -40,8 +40,9 @@ mod queue {
     use std::collections::BTreeMap;
 
     use pwf_models::task::{TaskId, TaskTimestamp};
+    use pwf_wire::task::TaskRecord;
 
-    use crate::ports::task_vault::{IndexEntry, IndexEntryState, TaskRecord};
+    use crate::ports::task_vault::{IndexEntry, IndexEntryState};
 
     const UNSECTIONED_CLOSED_TASKS_MAX: usize = 6;
 
@@ -276,7 +277,7 @@ pub(in crate::task) fn close(
             task_id: task_identifier,
         });
     }
-    let record = TaskVault::get_task(store, project, &task_identifier)
+    let record = TaskVault::get_task_record(store, project, &task_identifier)
         .map_err(|error| CloseTaskError::WriteStore(anyhow::Error::new(error)))?
         .ok_or_else(|| CloseTaskError::TaskNotFound {
             id: task_identifier.clone(),

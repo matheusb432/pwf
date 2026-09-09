@@ -1,23 +1,20 @@
 //! Adds one note to a managed project.
 
 use pwf_models::{note::NoteId, project::ProjectName, task::TaskTimestampError};
-use pwf_wire::{
-    note::{AddNote, MutatedNote},
-    project::{ProjectStatusFilter, ResolveProject},
-};
+use pwf_wire::note::{AddNote, MutatedNote};
 
 use crate::{
     ports::{
         clock::Clock,
         project_note::{NewProjectNote, ProjectNotes},
     },
-    project::resolve_project::{self, ResolveProjectError},
+    project::{get_active_project, get_project::GetProjectError},
 };
 
 #[derive(Debug, thiserror::Error)]
 pub enum AddNoteError {
     #[error(transparent)]
-    ResolveProject(#[from] ResolveProjectError),
+    GetProject(#[from] GetProjectError),
     #[error("Project '{project}' has no available four-digit note identifiers.")]
     IdentifierExhausted { project: ProjectName },
     #[error(transparent)]
@@ -34,14 +31,7 @@ pub async fn execute(
     pool: &sqlx::SqlitePool,
     clock: &impl Clock,
 ) -> Result<MutatedNote, AddNoteError> {
-    let project = resolve_project::execute(
-        ResolveProject {
-            selector: command.project_selector,
-            status: ProjectStatusFilter::ActiveOnly,
-        },
-        pool,
-    )
-    .await?;
+    let project = get_active_project::execute(command.project_id, pool).await?;
     let notes = store
         .list_notes(&project)
         .map_err(|error| AddNoteError::Store(anyhow::Error::new(error)))?;
@@ -103,9 +93,9 @@ mod tests {
     #[error("sentinel store failure")]
     struct SentinelStoreError;
 
-    fn command(project_selector: &str) -> AddNote {
+    fn command(project_id: &str) -> AddNote {
         AddNote {
-            project_selector: project_selector.parse().unwrap(),
+            project_id: project_id.parse().unwrap(),
             title: NoteTitle::try_new(" remember milk ").unwrap(),
             content: NoteContent::try_new(" buy milk before the store closes ").unwrap(),
             domain: None,
@@ -119,7 +109,7 @@ mod tests {
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn maximum_suffix_allocates_the_next_identifier(pool: sqlx::SqlitePool) {
         insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
-        for project_selector in ["foo", "FOO"] {
+        for project_id in ["foo", "FOO"] {
             let store = InMemoryStore::default().with_project_notes(
                 "foo",
                 vec![
@@ -129,7 +119,7 @@ mod tests {
                 ],
             );
 
-            let added = add_note::execute(command(project_selector), &store, &pool, &FixedClock)
+            let added = add_note::execute(command(project_id), &store, &pool, &FixedClock)
                 .await
                 .unwrap();
 

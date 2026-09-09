@@ -120,10 +120,11 @@ mod tests {
         project::Project,
         task::{TaskId, TaskStatus},
     };
+    use pwf_wire::task::TaskRecord;
 
     use super::{CloseTaskError, CompleteTask, CompleteTaskError};
     use crate::{
-        ports::task_vault::{IndexEntry, IndexEntryState, TaskRecord, TaskVault},
+        ports::task_vault::{IndexEntry, IndexEntryState, TaskVault},
         task::complete_task,
         testing::{FixedClock, InMemoryStore, project, task_record, task_timestamp},
     };

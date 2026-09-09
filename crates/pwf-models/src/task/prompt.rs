@@ -6,6 +6,11 @@ pub struct TaskPrompt(String);
 
 impl TaskPrompt {
     #[must_use]
+    pub fn into_string(self) -> String {
+        self.0
+    }
+
+    #[must_use]
     pub fn new(raw: impl Into<String>) -> Self {
         Self(raw.into())
     }

@@ -31,7 +31,6 @@ pub mod get_project;
 pub mod list_projects;
 pub mod pause_project;
 pub mod rename_project;
-pub mod resolve_project;
 pub mod resume_project;
 pub mod runtime_path;
 mod source_record;

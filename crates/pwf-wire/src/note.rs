@@ -6,7 +6,7 @@ use pwf_models::{
         NoteContent, NoteDomain, NoteId, NoteSelector, NoteSource, NoteTag, NoteTitle,
         NoteVerification, ProjectNote,
     },
-    project::{ProjectName, ProjectSelector},
+    project::{ProjectId, ProjectName},
 };
 
 use crate::{collection_edit::CollectionEdit, patch_field::PatchField, set_field::SetField};
@@ -14,8 +14,8 @@ use crate::{collection_edit::CollectionEdit, patch_field::PatchField, set_field:
 /// Requests creation of one project note.
 #[derive(Debug, Clone)]
 pub struct AddNote {
-    /// Project's name or id.
-    pub project_selector: ProjectSelector,
+    /// Project ID.
+    pub project_id: ProjectId,
     /// Names the note.
     pub title: NoteTitle,
     /// Supplies the note's Markdown body.
@@ -35,8 +35,8 @@ pub struct AddNote {
 /// Requests one project's notes in newest-first order.
 #[derive(Debug, Clone)]
 pub struct ListNotes {
-    /// Selects the managed project by name or id code.
-    pub project_selector: ProjectSelector,
+    /// Project ID.
+    pub project_id: ProjectId,
     /// Caps returned notes.
     pub limit: NoteListLimit,
 }
@@ -63,8 +63,8 @@ impl From<Option<usize>> for NoteListLimit {
 /// Requests deletion of one project note.
 #[derive(Debug, Clone)]
 pub struct RemoveNote {
-    /// Selects the managed project by name or id code.
-    pub project_selector: ProjectSelector,
+    /// Project ID.
+    pub project_id: ProjectId,
     /// Selects the note by full id, `NOTE-NNNN`, or bare numeric suffix.
     pub selector: NoteSelector,
 }
@@ -152,8 +152,8 @@ pub struct EmptyNoteEdits;
 /// Requests a partial edit of one project note.
 #[derive(Debug, Clone)]
 pub struct EditNote {
-    /// Selects the managed project by name or id code.
-    pub project_selector: ProjectSelector,
+    /// Project ID.
+    pub project_id: ProjectId,
     /// Selects the note by full id, `NOTE-NNNN`, or bare numeric suffix.
     pub selector: NoteSelector,
     /// Selects explicit changes while preserving every omitted field.

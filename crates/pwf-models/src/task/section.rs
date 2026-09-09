@@ -5,13 +5,18 @@ use std::{fmt, str::FromStr};
 pub struct TaskSection(String);
 
 impl TaskSection {
+    #[must_use]
+    pub fn into_string(self) -> String {
+        self.0
+    }
+
     /// Constructs a section label after trimming outer whitespace.
     ///
     /// # Errors
     ///
     /// Returns [`TaskSectionError`] when the label is blank or contains a line break.
     pub fn try_new(raw: impl Into<String>) -> Result<Self, TaskSectionError> {
-        let raw = raw.into();
+        let mut raw = raw.into();
         if raw.contains(['\n', '\r']) {
             return Err(TaskSectionError::Multiline);
         }
@@ -19,7 +24,11 @@ impl TaskSection {
         if label.is_empty() {
             return Err(TaskSectionError::Empty);
         }
-        Ok(Self(label.to_string()))
+        let start = raw.len() - raw.trim_start().len();
+        let end = start + label.len();
+        raw.truncate(end);
+        raw.drain(..start);
+        Ok(Self(raw))
     }
 
     #[must_use]

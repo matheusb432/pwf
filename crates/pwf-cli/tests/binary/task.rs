@@ -796,3 +796,167 @@ fn task_mutations_use_configured_lifecycle_colors() {
             .stdout(expected);
     }
 }
+
+#[test]
+fn project_selectors_match_titles_before_ids_and_exclude_paused_projects() {
+    let fixture = ManagedProject::new(&project_id("FOO").unwrap(), "alt").unwrap();
+    let other = tempfile::tempdir().unwrap();
+    let tasks = other.path().join("tasks");
+    std::fs::create_dir_all(&tasks).unwrap();
+    std::fs::write(tasks.join("other.md"), "---\nid: alt\ntitle: other\n---\n").unwrap();
+    fixture.database.add_directory_project(
+        &project_id("ALT").unwrap(),
+        "other",
+        other.path(),
+        &tasks,
+    );
+
+    for selector in ["ALT", "foo"] {
+        let output = fixture
+            .database
+            .command_args(&[
+                "task",
+                "add",
+                selector,
+                "--title",
+                "selected task",
+                "--goal",
+                "use the selected project",
+            ])
+            .success_stdout();
+        assert!(output.contains("FOO-"), "{output}");
+    }
+    let listed = fixture
+        .database
+        .command_args(&["task", "list", "--project", "ALT"])
+        .success_stdout();
+    assert!(listed.contains("FOO-0001"));
+    assert!(listed.contains("FOO-0002"));
+
+    fixture
+        .database
+        .command_args(&["project", "pause", "FOO"])
+        .success_json();
+    let output = fixture
+        .database
+        .command_args(&[
+            "task",
+            "add",
+            "ALT",
+            "--title",
+            "fallback task",
+            "--goal",
+            "use the active ID match",
+        ])
+        .success_stdout();
+    assert!(output.contains("ALT-0001"), "{output}");
+    let error = fixture
+        .database
+        .command_args(&["task", "list", "--project", "foo"])
+        .output()
+        .unwrap();
+    assert!(!error.status.success());
+    assert!(error.stdout.is_empty());
+    let diagnostic = String::from_utf8(error.stderr).unwrap();
+    assert!(diagnostic.contains("Unknown managed project identifier: foo"));
+    assert!(diagnostic.contains("Managed project identifiers: other"));
+}
+
+#[test]
+fn get_formats_the_same_record_as_markdown_path_or_json() {
+    let fixture = ManagedProject::new(&project_id("FOO").unwrap(), "foo-bar").unwrap();
+    fixture
+        .database
+        .command_args(&[
+            "task",
+            "add",
+            "foo-bar",
+            "--title",
+            "format task",
+            "--goal",
+            "render in the CLI",
+        ])
+        .success_stdout();
+    let path = fixture
+        .database
+        .command_args(&["task", "get", "FOO-0001", "--path"])
+        .success_stdout();
+    let path = std::path::Path::new(path.trim());
+    let source = "---\nid: FOO-0001\ntitle: Format Task\nstatus: done\ncreated_at: 2026-07-26T12:34:56Z\ncompleted_at: 2026-08-12T12:34:56Z\neffort: high\npriority: highest\ntags: [rust, sqlite]\n---\n\n  authored body  \n";
+    std::fs::write(path, source).unwrap();
+    assert_eq!(
+        fixture
+            .database
+            .command_args(&["task", "get", "FOO-0001"])
+            .success_stdout(),
+        format!("{source}\n")
+    );
+    let json = fixture
+        .database
+        .command_args(&["task", "get", "FOO-0001", "--json"])
+        .success_json();
+    assert_eq!(json["project"], "foo-bar");
+    assert_eq!(json["title"], "format task");
+    assert_eq!(json["created"], "2026-07-26");
+    assert_eq!(json["completed"], "2026-08-12");
+    assert_eq!(json["effort"], "high");
+    assert_eq!(json["priority"], "highest");
+    assert_eq!(json["tags"], serde_json::json!(["rust", "sqlite"]));
+    assert_eq!(json["prompt"], "authored body");
+
+    let malformed = source.replace("effort: high", "effort: extreme");
+    std::fs::write(path, &malformed).unwrap();
+    assert_eq!(
+        fixture
+            .database
+            .command_args(&["task", "get", "FOO-0001"])
+            .success_stdout(),
+        format!("{malformed}\n")
+    );
+    let rejected = fixture
+        .database
+        .command_args(&["task", "get", "FOO-0001", "--json"])
+        .output()
+        .unwrap();
+    assert!(!rejected.status.success());
+    assert!(rejected.stdout.is_empty());
+    assert!(
+        String::from_utf8(rejected.stderr)
+            .unwrap()
+            .contains("Invalid task effort")
+    );
+
+    std::fs::remove_file(path).unwrap();
+    assert_eq!(
+        fixture
+            .database
+            .command_args(&["task", "get", "FOO-0001", "--path"])
+            .success_stdout()
+            .trim(),
+        path.to_str().unwrap()
+    );
+    let json_missing = fixture
+        .database
+        .command_args(&["task", "get", "FOO-0001", "--json"])
+        .output()
+        .unwrap();
+    assert!(!json_missing.status.success());
+    assert!(json_missing.stdout.is_empty());
+    assert!(
+        String::from_utf8(json_missing.stderr)
+            .unwrap()
+            .contains("has no note")
+    );
+    let missing = fixture
+        .database
+        .command_args(&["task", "get", "FOO-0001"])
+        .output()
+        .unwrap();
+    assert!(!missing.status.success());
+    assert!(missing.stdout.is_empty());
+    assert!(
+        String::from_utf8(missing.stderr)
+            .unwrap()
+            .contains("has no note")
+    );
+}

@@ -1,8 +1,8 @@
 use std::{collections::HashMap, num::NonZeroUsize, path::Path};
 
 use pwf_application::ports::task_vault::{
-    IndexEntry, IndexEntryState, IndexPlacement, Materialization, NewTask, NullablePatch,
-    TaskMutationError, TaskPatch, TaskRecord, TaskSummaryRecord, TaskVault, TaskWriteSet,
+    IndexEntry, IndexEntryState, NewTask, NullablePatch, TaskDependencyRecord, TaskMutationError,
+    TaskPatch, TaskSummaryRecord, TaskVault, TaskWriteSet,
 };
 use pwf_models::{
     project::Project,
@@ -11,7 +11,7 @@ use pwf_models::{
 };
 use pwf_wire::{
     set_field::SetField,
-    task::{RawTaskTags, TaskIndexPath, TaskNotePath},
+    task::{IndexPlacement, Materialization, RawTaskTags, TaskIndexPath, TaskNotePath, TaskRecord},
 };
 
 use super::{
@@ -109,7 +109,7 @@ struct TaskNoteMetadata {
     summary: TaskSummaryRecord,
     completed_at: Option<TaskTimestamp>,
     commits: Option<String>,
-    blocked_by: pwf_application::ports::task_vault::StoredBlockedBy,
+    blocked_by: pwf_wire::task::StoredBlockedBy,
 }
 
 fn task_note_metadata(
@@ -192,7 +192,7 @@ fn missing_note_record(
         tags: None,
         effort: None,
         priority: None,
-        blocked_by: pwf_application::ports::task_vault::StoredBlockedBy::Absent,
+        blocked_by: pwf_wire::task::StoredBlockedBy::Absent,
         section,
         body: String::new(),
         source: String::new(),
@@ -251,11 +251,29 @@ fn get_task_record(
     id: &TaskId,
 ) -> Result<Option<TaskRecord>, ObsidianStoreError> {
     let task = store
-        .task_files_for_project(project)?
+        .map_task_notes(
+            project,
+            MarkdownFile::read_frontmatter_file,
+            |id, _, _, _| Ok(id),
+        )?
         .into_iter()
-        .find(|task| task.id == *id);
-    if let Some(task) = task {
-        let mut record = record_from_source(task.id, &task.path, task.title, task.markdown)?;
+        .find(|(candidate, _)| candidate == id);
+    if let Some((_, file)) = task {
+        let file = MarkdownFile::read_source(file.path()).map_err(read_task_file_error)?;
+        let Some(frontmatter) = file.frontmatter_view().map_err(read_task_file_error)? else {
+            return Ok(None);
+        };
+        let Some((current_id, title)) =
+            crate::obsidian::identity::parse_task_metadata(file.path(), &frontmatter)?
+        else {
+            return Ok(None);
+        };
+        if current_id != *id {
+            return Ok(None);
+        }
+        let metadata = task_note_metadata(current_id, title, &file, &frontmatter)?;
+        drop(frontmatter);
+        let mut record = metadata.into_record(file);
         apply_index_metadata(store, project, id, &mut record)?;
         return Ok(Some(record));
     }
@@ -517,8 +535,31 @@ impl TaskVault for ObsidianStore {
         Ok(deletion)
     }
 
-    fn get_task(&self, project: &Project, id: &TaskId) -> Result<Option<TaskRecord>, Self::Error> {
+    fn get_task_record(
+        &self,
+        project: &Project,
+        id: &TaskId,
+    ) -> Result<Option<TaskRecord>, Self::Error> {
         get_task_record(self, project, id)
+    }
+
+    fn get_task_dependencies(
+        &self,
+        project: &Project,
+        id: &TaskId,
+    ) -> Result<Option<TaskDependencyRecord>, Self::Error> {
+        let notes = self.map_task_notes(
+            project,
+            MarkdownFile::read_frontmatter_file,
+            |candidate, _, file, frontmatter| {
+                let dependency = (candidate == *id).then(|| TaskDependencyRecord {
+                    blocked_by: parse_blocked_by(Some(frontmatter)),
+                    locator: TaskNotePath::new(file.path().to_path_buf()),
+                });
+                Ok(dependency)
+            },
+        )?;
+        Ok(notes.into_iter().find_map(|(dependency, _)| dependency))
     }
 
     /// Lists every note-backed and index-only task record.

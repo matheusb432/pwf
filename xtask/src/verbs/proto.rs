@@ -10,7 +10,6 @@ pub(crate) fn run(check: bool) -> Result<()> {
     let temporary = tempfile::tempdir()?;
     tonic_prost_build::configure()
         .build_transport(false)
-        .boxed(".pwf.v1.GetTaskResponse.value.data")
         .out_dir(temporary.path())
         .file_descriptor_set_path(temporary.path().join("pwf_descriptor.bin"))
         .compile_protos(

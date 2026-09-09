@@ -9,7 +9,8 @@ use pwf_models::{
 use pwf_wire::{
     project::ProjectStatusFilter,
     task::{
-        BlockedByIssue, BlockedByResolution, BlockedByStatus, TaskView,
+        BlockedByIssue, BlockedByResolution, BlockedByStatus, Materialization, StoredBlockedBy,
+        TaskHeading, TaskRecord,
         session::{
             AgentLaunch, DispatchConfirmation, DryRunSession, PlanSession, PlanSessionIntent,
             PlannedSession, PreparedSessionDispatch, PreparedTaskRevision, SessionPlan,
@@ -21,11 +22,7 @@ use thiserror::Error;
 
 use super::{Agent, SessionEffort};
 use crate::{
-    ports::{
-        agent::AgentClient,
-        project_directory::ProjectDirectoryClient,
-        task_vault::{Materialization, StoredBlockedBy, TaskRecord, TaskVault},
-    },
+    ports::{agent::AgentClient, project_directory::ProjectDirectoryClient, task_vault::TaskVault},
     project::{list_projects, runtime_path},
     task::{active_task, blocked_by},
 };
@@ -86,7 +83,8 @@ impl<A, P> SessionPlanningClients<A, P> {
 }
 
 struct PlannedTask {
-    view: TaskView,
+    heading: TaskHeading,
+    created: Option<pwf_models::AppDate>,
     content: String,
     revision: PreparedTaskRevision,
 }
@@ -102,12 +100,13 @@ pub async fn execute(
 ) -> Result<PlannedSession, PlanSessionError> {
     let (project, first_task, mut warnings) =
         plan_task(command.task_ids.first(), store, pool).await?;
-    let first_title = first_task.view.heading.clone();
-    let first_created = first_task.view.created;
+    let first_title = first_task.heading.clone();
+    let first_created = first_task.created;
     let singleton_thread_title = if command.task_ids.is_singleton() {
         Some(
             thread_title(
-                &first_task.view,
+                &first_task.heading,
+                &project.title,
                 command.task_ids.first(),
                 command.agent,
                 command.effort,
@@ -201,10 +200,18 @@ async fn plan_task(
     let found = active_task::find(task_id, store, pool)
         .await
         .map_err(|error| PlanSessionError::FindTask(anyhow::Error::new(error)))?;
-    if !found.task.launch.is_ready() {
+    let missing_note = match &found.record.materialization {
+        Materialization::NoteFile => None,
+        Materialization::MissingNote { expected } => Some(expected),
+    };
+    let launch = crate::task::task_projection::derive_flags(
+        &pwf_models::task::TaskPrompt::new(found.record.body.trim()),
+        missing_note,
+    );
+    if !launch.is_ready() {
         return Err(PlanSessionError::NotLaunchable {
             id: task_id.clone(),
-            launch: found.task.launch,
+            launch,
         });
     }
     let warnings = blocker_warnings(&found.record, store, pool).await;
@@ -216,7 +223,11 @@ async fn plan_task(
     Ok((
         found.project,
         PlannedTask {
-            view: found.task,
+            heading: found.heading,
+            created: found
+                .record
+                .created_at
+                .map(pwf_models::task::TaskTimestamp::date),
             content,
             revision,
         },
@@ -354,7 +365,8 @@ struct ThreadTitleTemplate<'a> {
 }
 
 fn thread_title(
-    task: &TaskView,
+    heading: &TaskHeading,
+    project: &pwf_models::project::ProjectName,
     task_id: &TaskId,
     agent: Agent,
     effort: SessionEffort,
@@ -362,8 +374,8 @@ fn thread_title(
     ThreadTitleTemplate {
         task_id,
         task_id_brief: task_id_brief(task_id),
-        task_title: task.heading.as_ref(),
-        project: task.project.as_ref(),
+        task_title: heading.as_ref(),
+        project: project.as_ref(),
         effort,
         agent: match agent {
             Agent::Claude => "claude",
@@ -527,8 +539,12 @@ mod planned_model_tests {
         session::{Agent, AgentModel, SessionEffort, SessionTaskIds},
         task::EffortTier,
     };
-    use pwf_wire::task::session::{
-        AgentAvailability, AgentLaunch, AgentProbe, PlanSession, PlanSessionIntent, PlannedSession,
+    use pwf_wire::task::{
+        TaskRecord,
+        session::{
+            AgentAvailability, AgentLaunch, AgentProbe, PlanSession, PlanSessionIntent,
+            PlannedSession,
+        },
     };
 
     use super::SessionPlanningClients;
@@ -536,7 +552,6 @@ mod planned_model_tests {
         ports::{
             agent::{AgentClient, PreparedAgentLaunch},
             project_directory::ProjectDirectoryClient,
-            task_vault::TaskRecord,
         },
         task::session::plan_session,
         testing::{InMemoryStore, insert_project, task_record},
@@ -695,14 +710,12 @@ mod planned_model_tests {
 mod blocker_warning_tests {
     use pwf_models::task::TaskStatus;
     use pwf_wire::task::{
-        BlockedByIssue, BlockedByResolution, BlockedByStatus, session::SessionWarning,
+        BlockedByIssue, BlockedByResolution, BlockedByStatus, StoredBlockedBy, TaskRecord,
+        session::SessionWarning,
     };
 
     use super::blocker_warnings;
-    use crate::{
-        ports::task_vault::{StoredBlockedBy, TaskRecord},
-        testing::{InMemoryStore, insert_project, stored_blocked_by, task_record},
-    };
+    use crate::testing::{InMemoryStore, insert_project, stored_blocked_by, task_record};
 
     #[sqlx::test(migrator = "crate::testing::MIGRATOR")]
     async fn direct_blocker_warnings_include_unresolved_missing_and_malformed_data(

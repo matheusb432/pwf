@@ -10,14 +10,14 @@ use pwf_client::{
     ClientError,
     confirmation::{Confirmation, ConfirmationPrompt},
     pb::{
-        self, Agent, ProjectStatusFilter, SessionEffort, TaskReadFormat, delete_note_result,
+        self, Agent, ProjectStatusFilter, SessionEffort, delete_note_result,
         note_service_client::NoteServiceClient, session_service_client::SessionServiceClient,
         settings_service_client::SettingsServiceClient, task_service_client::TaskServiceClient,
     },
     task::{TaskDagEdge, TaskDagNode},
 };
 use pwf_server::ServerState;
-use pwf_wire::pb::{delete_task_result, dispatched_session, get_task_response, reopen_task_result};
+use pwf_wire::pb::{delete_task_result, dispatched_session, reopen_task_result};
 use tokio::sync::mpsc;
 use tokio_stream::{StreamExt as _, wrappers::ReceiverStream};
 use tonic::{Code, Request, Status, transport::Channel};
@@ -75,7 +75,7 @@ async fn release_metadata_rejects_unmatched_mutations_before_execution() -> anyh
     server.add_project_and_task().await?;
     for version in [None, Some("999.0.0")] {
         let mut request = Request::new(pb::AddNoteRequest {
-            project_selector: "foo-bar".into(),
+            project_id: "FOO".into(),
             title: "must not be created".into(),
             content: "rejected before mutation".into(),
             ..Default::default()
@@ -102,7 +102,7 @@ async fn release_metadata_rejects_unmatched_mutations_before_execution() -> anyh
         .client
         .note()
         .list_notes(pb::ListNotesRequest {
-            project_selector: "foo-bar".into(),
+            project_id: "FOO".into(),
             limit_kind: pb::NoteListLimitKind::Unlimited as i32,
             limit: 0,
         })
@@ -258,7 +258,7 @@ async fn list_defaults_apply_to_rpc_filters_order_and_pagination() -> anyhow::Re
         Some(pb::PriorityTier::Highest as i32)
     );
     assert_eq!(second.next_page_token, None);
-    assert_eq!(task_data(&server, &absent).await?.priority, None);
+    assert_eq!(task_record(&server, &absent).await?.priority, None);
 
     std::fs::write(
         &config_path,
@@ -387,7 +387,7 @@ impl TestServer {
             .client
             .task()
             .create_task(pb::CreateTaskRequest {
-                project_selector: "foo-bar".to_string(),
+                project_id: "FOO".to_string(),
                 prompt: Some(pb::create_task_request::Prompt::Structured(
                     pb::StructuredTaskPrompt {
                         title: title.to_string(),
@@ -585,7 +585,7 @@ fn task_list_request(
     priority: Option<pb::PriorityTier>,
 ) -> pb::ListTasksRequest {
     pb::ListTasksRequest {
-        project_selector: Some("foo-bar".to_string()),
+        project_id: Some("FOO".to_string()),
         scope: Some(pb::list_tasks_request::Scope::All(pb::AllTaskSections {})),
         number,
         effort: None,
@@ -599,17 +599,16 @@ fn task_list_request(
     }
 }
 
-async fn task_data(server: &TestServer, task_id: &str) -> anyhow::Result<Box<pb::TaskData>> {
+async fn task_record(server: &TestServer, task_id: &str) -> anyhow::Result<pb::TaskRecord> {
     let read = server
         .client
         .task()
-        .get_task(pb::GetTaskRequest {
+        .get_task_record(pb::GetTaskRecordRequest {
             id: task_id.to_string(),
-            output: TaskReadFormat::Data as i32,
         })
         .await?;
-    let Some(get_task_response::Value::Data(data)) = read.value else {
-        anyhow::bail!("task data response is missing");
+    let Some(data) = read.record else {
+        anyhow::bail!("task record response is missing");
     };
     Ok(data)
 }
@@ -624,7 +623,7 @@ async fn v1_create_task_returns_the_committed_task_summary() -> anyhow::Result<(
         server::ReleaseRequest,
     )
     .create_task(Request::new(pb::CreateTaskRequest {
-        project_selector: "foo-bar".to_string(),
+        project_id: "FOO".to_string(),
         prompt: Some(pb::create_task_request::Prompt::Structured(
             pb::StructuredTaskPrompt {
                 title: "task summary".to_string(),
@@ -667,7 +666,7 @@ async fn v1_get_task_dag_returns_typed_blocker_edges() -> anyhow::Result<()> {
         .client
         .task()
         .create_task(pb::CreateTaskRequest {
-            project_selector: "foo-bar".to_string(),
+            project_id: "FOO".to_string(),
             prompt: Some(pb::create_task_request::Prompt::Structured(
                 pb::StructuredTaskPrompt {
                     title: "dependent task".to_string(),
@@ -756,7 +755,7 @@ async fn v1_request_ids_replay_mutations_without_duplicate_effects() -> anyhow::
     let server = TestServer::start(Duration::from_secs(2)).await?;
     let original_id = server.add_project_and_task().await?;
     let create = pb::CreateTaskRequest {
-        project_selector: "foo-bar".to_string(),
+        project_id: "FOO".to_string(),
         prompt: Some(pb::create_task_request::Prompt::Structured(
             pb::StructuredTaskPrompt {
                 title: "replayable task".to_string(),
@@ -812,15 +811,12 @@ async fn v1_request_ids_replay_mutations_without_duplicate_effects() -> anyhow::
     let markdown = server
         .client
         .task()
-        .get_task(pb::GetTaskRequest {
-            id: first.id,
-            output: TaskReadFormat::Markdown as i32,
-        })
+        .get_task_record(pb::GetTaskRecordRequest { id: first.id })
         .await?;
-    let Some(get_task_response::Value::Markdown(markdown)) = markdown.value else {
+    let Some(markdown) = markdown.record else {
         anyhow::bail!("replayed task markdown response is missing");
     };
-    assert_eq!(markdown.matches("replayed context").count(), 1);
+    assert_eq!(markdown.source.matches("replayed context").count(), 1);
 
     let complete = pb::CompleteTaskRequest {
         id: original_id,
@@ -930,11 +926,11 @@ async fn v1_task_revisions_support_conditional_empty_updates() -> anyhow::Result
     let first = server
         .client
         .task()
-        .get_task(pb::GetTaskRequest {
+        .get_task_record(pb::GetTaskRecordRequest {
             id: task_id.clone(),
-            output: TaskReadFormat::Data as i32,
         })
         .await?;
+    let first = first.record.context("missing task record")?;
     assert_eq!(first.revision.len(), 64);
 
     let response = server
@@ -963,16 +959,13 @@ async fn v1_task_revisions_support_conditional_empty_updates() -> anyhow::Result
     let updated = server
         .client
         .task()
-        .get_task(pb::GetTaskRequest {
+        .get_task_record(pb::GetTaskRecordRequest {
             id: task_id.clone(),
-            output: TaskReadFormat::Data as i32,
         })
         .await?;
-    assert_ne!(updated.revision, first.revision);
-    let Some(get_task_response::Value::Data(data)) = updated.value else {
-        anyhow::bail!("updated task data response is missing");
-    };
-    assert_eq!(data.priority, Some(pb::PriorityTier::High as i32));
+    let data = updated.record.context("missing updated task record")?;
+    assert_ne!(data.revision, first.revision);
+    assert_eq!(data.priority, Some("high".to_string()));
 
     let stale = server
         .client
@@ -1157,8 +1150,8 @@ async fn task_priority_round_trips_through_supported_rpcs() -> anyhow::Result<()
             )),
         ))
         .await?;
-    let data = task_data(&server, &task_id).await?;
-    assert_eq!(data.priority, Some(pb::PriorityTier::Medium as i32));
+    let data = task_record(&server, &task_id).await?;
+    assert_eq!(data.priority, Some("medium".to_string()));
 
     server
         .client
@@ -1168,7 +1161,7 @@ async fn task_priority_round_trips_through_supported_rpcs() -> anyhow::Result<()
             Some(pb::priority_edit::Operation::Clear(pb::ClearField {})),
         ))
         .await?;
-    let data = task_data(&server, &task_id).await?;
+    let data = task_record(&server, &task_id).await?;
     assert_eq!(data.priority, None);
 
     server.finish().await
@@ -1205,7 +1198,7 @@ async fn generated_client_maps_validation_and_not_found_statuses() -> anyhow::Re
         .client
         .task()
         .create_task(pb::CreateTaskRequest {
-            project_selector: "foo-bar".to_string(),
+            project_id: "FOO".to_string(),
             prompt: Some(pb::create_task_request::Prompt::Shorthand(
                 "bounded collection".to_string(),
             )),
@@ -1448,10 +1441,7 @@ async fn generated_client_preserves_delete_and_session_confirmation_flows() -> a
     let missing = server
         .client
         .task()
-        .get_task(pb::GetTaskRequest {
-            id: second_task_id,
-            output: TaskReadFormat::Path as i32,
-        })
+        .get_task_record(pb::GetTaskRecordRequest { id: second_task_id })
         .await
         .unwrap_err();
     assert_eq!(rpc_status(missing)?.code(), Code::NotFound);
@@ -1467,7 +1457,7 @@ async fn generated_client_preserves_note_removal_confirmation_flow() -> anyhow::
         .client
         .note()
         .add_note(pb::AddNoteRequest {
-            project_selector: "foo-bar".to_string(),
+            project_id: "FOO".to_string(),
             title: "transport note".to_string(),
             content: "Exercise note confirmation over the real transport.".to_string(),
             domain: None,
@@ -1485,7 +1475,7 @@ async fn generated_client_preserves_note_removal_confirmation_flow() -> anyhow::
         .note()
         .delete_note(
             pb::DeleteNoteStart {
-                project_selector: "foo-bar".to_string(),
+                project_id: "FOO".to_string(),
                 selector: "1".to_string(),
             },
             decline_prompt.clone(),
@@ -1502,7 +1492,7 @@ async fn generated_client_preserves_note_removal_confirmation_flow() -> anyhow::
         .client
         .note()
         .list_notes(pb::ListNotesRequest {
-            project_selector: "foo-bar".to_string(),
+            project_id: "FOO".to_string(),
             limit_kind: pb::NoteListLimitKind::Default as i32,
             limit: 0,
         })
@@ -1516,7 +1506,7 @@ async fn generated_client_preserves_note_removal_confirmation_flow() -> anyhow::
         .note()
         .delete_note(
             pb::DeleteNoteStart {
-                project_selector: "foo-bar".to_string(),
+                project_id: "FOO".to_string(),
                 selector: "1".to_string(),
             },
             accept_prompt.clone(),
@@ -1535,7 +1525,7 @@ async fn generated_client_preserves_note_removal_confirmation_flow() -> anyhow::
         .client
         .note()
         .list_notes(pb::ListNotesRequest {
-            project_selector: "foo-bar".to_string(),
+            project_id: "FOO".to_string(),
             limit_kind: pb::NoteListLimitKind::Default as i32,
             limit: 0,
         })
@@ -1600,16 +1590,10 @@ async fn generated_client_preserves_reopen_confirmation_flow() -> anyhow::Result
     let read = server
         .client
         .task()
-        .get_task(pb::GetTaskRequest {
-            id: task_id,
-            output: TaskReadFormat::Path as i32,
-        })
+        .get_task_record(pb::GetTaskRecordRequest { id: task_id })
         .await
         .unwrap();
-    assert!(matches!(
-        read.value,
-        Some(get_task_response::Value::Path(_))
-    ));
+    assert!(read.record.is_some());
 
     server.finish().await
 }
@@ -1643,8 +1627,8 @@ async fn remove_wait_does_not_hold_the_writer_lock_and_accepting_stale_preflight
 
     assert_eq!(status.code(), Code::Aborted);
     assert_eq!(
-        task_data(&server, &task_id).await?.priority,
-        Some(pb::PriorityTier::Medium as i32)
+        task_record(&server, &task_id).await?.priority,
+        Some("medium".to_string())
     );
     assert!(
         !server
@@ -1707,10 +1691,7 @@ async fn reopen_wait_does_not_hold_the_writer_lock_and_accepting_stale_preflight
     server
         .client
         .task()
-        .get_task(pb::GetTaskRequest {
-            id: created,
-            output: TaskReadFormat::Path as i32,
-        })
+        .get_task_record(pb::GetTaskRecordRequest { id: created })
         .await?;
 
     server.finish().await
@@ -1745,8 +1726,8 @@ async fn session_wait_does_not_hold_the_writer_lock_and_accepting_stale_prefligh
 
     assert_eq!(status.code(), Code::Aborted);
     assert_eq!(
-        task_data(&server, &task_id).await?.priority,
-        Some(pb::PriorityTier::Medium as i32)
+        task_record(&server, &task_id).await?.priority,
+        Some("medium".to_string())
     );
 
     server.finish().await
@@ -1766,10 +1747,7 @@ async fn closing_confirmation_stream_before_decision_cancels_without_removing_ta
     server
         .client
         .task()
-        .get_task(pb::GetTaskRequest {
-            id: task_id,
-            output: TaskReadFormat::Path as i32,
-        })
+        .get_task_record(pb::GetTaskRecordRequest { id: task_id })
         .await
         .unwrap();
 
@@ -1830,7 +1808,7 @@ async fn health_and_reflection_use_local_ipc_and_requests_are_bounded() -> anyho
 
     let oversized = NoteServiceClient::with_interceptor(channel, server::ReleaseRequest)
         .add_note(Request::new(pb::AddNoteRequest {
-            project_selector: "foo-bar".to_string(),
+            project_id: "FOO".to_string(),
             title: "oversized".to_string(),
             content: "x".repeat(70 * 1024),
             domain: None,
@@ -1889,6 +1867,8 @@ fn session_request(task_id: &str) -> pb::DispatchSessionStart {
 fn rpc_status(error: ClientError) -> anyhow::Result<Status> {
     match error {
         ClientError::Rpc(status) => Ok(status),
+        ClientError::InvalidTaskResponse(error) => Err(anyhow::Error::new(error)
+            .context("expected an RPC status but received an invalid task response")),
         ClientError::InvalidTaskDagResponse(error) => Err(anyhow::Error::new(error)
             .context("expected an RPC status but received an invalid DAG response")),
     }
@@ -1988,5 +1968,195 @@ async fn add_vault_project_resolves_defaults_and_preserves_add_project_errors() 
         .await
         .unwrap_err();
     assert_eq!(rpc_status(invalid)?.code(), Code::FailedPrecondition);
+    server.finish().await
+}
+
+#[tokio::test]
+async fn project_operations_require_ids_and_report_missing_projects() -> anyhow::Result<()> {
+    let server = TestServer::start(TEST_TIMEOUT).await?;
+    server.add_project_and_task().await?;
+    for (project_id, expected) in [("foo-bar", Code::InvalidArgument), ("MISS", Code::NotFound)] {
+        let error = server
+            .client
+            .task()
+            .create_task(pb::CreateTaskRequest {
+                project_id: project_id.to_string(),
+                prompt: Some(pb::create_task_request::Prompt::Structured(
+                    pb::StructuredTaskPrompt {
+                        title: "rejected task".to_string(),
+                        lanes: Some(pb::TaskLanes {
+                            goals: vec!["require an ID".to_string()],
+                            ..Default::default()
+                        }),
+                    },
+                )),
+                ..Default::default()
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(rpc_status(error)?.code(), expected);
+        let error = server
+            .client
+            .task()
+            .list_tasks(pb::ListTasksRequest {
+                project_id: Some(project_id.to_string()),
+                ..task_list_request(None, None)
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(rpc_status(error)?.code(), expected);
+        let error = server
+            .client
+            .note()
+            .add_note(pb::AddNoteRequest {
+                project_id: project_id.to_string(),
+                title: "rejected note".to_string(),
+                content: "require an ID".to_string(),
+                ..Default::default()
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(rpc_status(error)?.code(), expected);
+        let error = server
+            .client
+            .note()
+            .list_notes(pb::ListNotesRequest {
+                project_id: project_id.to_string(),
+                limit_kind: pb::NoteListLimitKind::Default as i32,
+                limit: 0,
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(rpc_status(error)?.code(), expected);
+        let error = server
+            .client
+            .note()
+            .update_note(pb::UpdateNoteRequest {
+                project_id: project_id.to_string(),
+                selector: "1".to_string(),
+                title: Some("rejected edit".to_string()),
+                ..Default::default()
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(rpc_status(error)?.code(), expected);
+        let prompt = RecordingPrompt::new(false);
+        let error = server
+            .client
+            .note()
+            .delete_note(
+                pb::DeleteNoteStart {
+                    project_id: project_id.to_string(),
+                    selector: "1".to_string(),
+                },
+                prompt.clone(),
+            )
+            .await
+            .unwrap_err();
+        match error {
+            pwf_client::confirmation::ConfirmedRequestError::Operation(status) => {
+                assert_eq!(status.code(), expected);
+            }
+            pwf_client::confirmation::ConfirmedRequestError::Prompt(error) => match error {},
+        }
+        assert!(prompt.seen().is_empty());
+    }
+    assert_eq!(server.add_task("next task").await?, "FOO-0002");
+    server.finish().await
+}
+
+#[tokio::test]
+async fn get_task_returns_raw_metadata_source_and_missing_note_state() -> anyhow::Result<()> {
+    let server = TestServer::start(TEST_TIMEOUT).await?;
+    let id = server.add_project_and_task().await?;
+    let path = server.root.path().join("notes/foo-bar/FOO-0001.md");
+    let source = "---\nid: FOO-0001\ntitle: raw task\nstatus: active\ncreated_at: 2026-07-26T12:34:56Z\neffort: extreme\npriority: urgent\nblocked_by: bad links\n---\n\n  authored body  \n";
+    std::fs::write(&path, source)?;
+    let record = task_record(&server, &id).await?;
+    assert_eq!(record.source, source);
+    assert_eq!(record.effort.as_deref(), Some("extreme"));
+    assert_eq!(record.priority.as_deref(), Some("urgent"));
+    assert_eq!(record.created_at.as_deref(), Some("2026-07-26T12:34:56Z"));
+    assert!(matches!(
+        record.materialization,
+        Some(pb::task_record::Materialization::NoteFile(_))
+    ));
+    assert!(
+        matches!(record.blocked_by.and_then(|state| state.value), Some(pb::stored_task_blocked_by::Value::Malformed(value)) if value.raw.contains("bad links"))
+    );
+    assert_eq!(task_record(&server, &id).await?.revision, record.revision);
+
+    std::fs::remove_file(&path)?;
+    let missing = task_record(&server, &id).await?;
+    assert_eq!(missing.id, id);
+    assert_eq!(missing.locator, path.to_string_lossy());
+    assert!(missing.source.is_empty());
+    assert!(
+        matches!(missing.materialization, Some(pb::task_record::Materialization::MissingNote(expected)) if expected == path.to_string_lossy())
+    );
+    assert_ne!(missing.revision, record.revision);
+    server.finish().await
+}
+
+#[tokio::test]
+async fn get_task_returns_domain_values_and_classifies_invalid_records() -> anyhow::Result<()> {
+    let server = TestServer::start(TEST_TIMEOUT).await?;
+    let id = server.add_project_and_task().await?;
+    let path = server.root.path().join("notes/foo-bar/FOO-0001.md");
+    let source = "---\nid: FOO-0001\ntitle: Typed Task\nstatus: active\ncreated_at: 2026-07-26T12:34:56Z\neffort: high\npriority: highest\ntags: [rust, sqlite]\n---\n\n  authored body  \n";
+    std::fs::write(&path, source)?;
+    let task = server
+        .client
+        .task()
+        .get_task(pb::GetTaskRequest { id: id.clone() })
+        .await?;
+    assert_eq!(task.title.as_ref(), "typed task");
+    assert_eq!(task.effort, Some(pwf_models::task::EffortTier::High));
+    assert_eq!(task.priority, Some(pwf_models::task::PriorityTier::Highest));
+    assert_eq!(task.created_at.unwrap().to_string(), "2026-07-26T12:34:56Z");
+    assert_eq!(
+        task.revision.as_ref(),
+        task_record(&server, &id).await?.revision
+    );
+
+    std::fs::write(&path, source.replace("effort: high", "effort: extreme"))?;
+    let error = server
+        .client
+        .task()
+        .get_task(pb::GetTaskRequest { id: id.clone() })
+        .await
+        .unwrap_err();
+    assert_eq!(rpc_status(error)?.code(), Code::DataLoss);
+    assert_eq!(
+        task_record(&server, &id).await?.effort.as_deref(),
+        Some("extreme")
+    );
+
+    std::fs::remove_file(&path)?;
+    let error = server
+        .client
+        .task()
+        .get_task(pb::GetTaskRequest { id })
+        .await
+        .unwrap_err();
+    assert_eq!(rpc_status(error)?.code(), Code::FailedPrecondition);
+    for id in ["FOO-9999", "MISS-0001"] {
+        let error = server
+            .client
+            .task()
+            .get_task(pb::GetTaskRequest { id: id.to_string() })
+            .await
+            .unwrap_err();
+        assert_eq!(rpc_status(error)?.code(), Code::NotFound);
+    }
+    let error = server
+        .client
+        .task()
+        .get_task(pb::GetTaskRequest {
+            id: "invalid".to_string(),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(rpc_status(error)?.code(), Code::InvalidArgument);
     server.finish().await
 }

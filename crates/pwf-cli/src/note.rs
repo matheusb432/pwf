@@ -12,6 +12,7 @@ use pwf_client::{
         ListNotesResponse, NoteListLimitKind, UpdateNoteRequest, UpdateNoteResponse,
         delete_note_result,
     },
+    project::ProjectClient,
 };
 use pwf_models::{
     AppDate,
@@ -216,12 +217,13 @@ pub async fn run(
     console: Console,
     colors: NoteStatusColors,
     client: &NoteClient,
+    projects: &ProjectClient,
 ) -> anyhow::Result<String> {
     match &arguments.command {
-        Command::List(arguments) => list(arguments, console, colors, client).await,
-        Command::Add(arguments) => add(arguments, console, client).await,
-        Command::Remove(arguments) => remove(arguments, console, client).await,
-        Command::Edit(arguments) => edit(arguments, console, client).await,
+        Command::List(arguments) => list(arguments, console, colors, client, projects).await,
+        Command::Add(arguments) => add(arguments, console, client, projects).await,
+        Command::Remove(arguments) => remove(arguments, console, client, projects).await,
+        Command::Edit(arguments) => edit(arguments, console, client, projects).await,
     }
 }
 
@@ -230,10 +232,13 @@ async fn list(
     console: Console,
     colors: NoteStatusColors,
     client: &NoteClient,
+    projects: &ProjectClient,
 ) -> anyhow::Result<String> {
     client
         .list_notes(ListNotesRequest {
-            project_selector: arguments.project.to_string(),
+            project_id: crate::project::resolve_project_id(&arguments.project, projects)
+                .await?
+                .to_string(),
             limit_kind: match arguments.number {
                 None => NoteListLimitKind::Default as i32,
                 Some(0) => NoteListLimitKind::Unlimited as i32,
@@ -250,6 +255,7 @@ async fn add(
     arguments: &AddArguments,
     console: Console,
     client: &NoteClient,
+    projects: &ProjectClient,
 ) -> anyhow::Result<String> {
     let (title, content) = match (&arguments.note, &arguments.title, &arguments.content) {
         (Some(note), None, None) => (note.title.clone(), note.content.clone()),
@@ -262,7 +268,9 @@ async fn add(
     };
     client
         .add_note(AddNoteRequest {
-            project_selector: arguments.project.to_string(),
+            project_id: crate::project::resolve_project_id(&arguments.project, projects)
+                .await?
+                .to_string(),
             title: title.to_string(),
             content: content.to_string(),
             domain: arguments.domain.as_ref().map(ToString::to_string),
@@ -280,13 +288,16 @@ async fn remove(
     arguments: &RemoveArguments,
     console: Console,
     client: &NoteClient,
+    projects: &ProjectClient,
 ) -> anyhow::Result<String> {
     let confirmation_mode = console.confirmation_mode(arguments.assume_yes)?;
     let confirmation_client = CliConfirmationClient::new(console, confirmation_mode);
     let outcome = match client
         .delete_note(
             DeleteNoteStart {
-                project_selector: arguments.project.to_string(),
+                project_id: crate::project::resolve_project_id(&arguments.project, projects)
+                    .await?
+                    .to_string(),
                 selector: arguments.id.to_string(),
             },
             confirmation_client,
@@ -318,6 +329,7 @@ async fn edit(
     arguments: &EditArguments,
     console: Console,
     client: &NoteClient,
+    projects: &ProjectClient,
 ) -> anyhow::Result<String> {
     let title = if arguments.shorthand_title.is_empty() {
         arguments.title.clone()
@@ -329,7 +341,9 @@ async fn edit(
     };
     client
         .update_note(UpdateNoteRequest {
-            project_selector: arguments.project.to_string(),
+            project_id: crate::project::resolve_project_id(&arguments.project, projects)
+                .await?
+                .to_string(),
             selector: arguments.id.to_string(),
             title: title.map(|title| title.to_string()),
             content: arguments.content.as_ref().map(ToString::to_string),

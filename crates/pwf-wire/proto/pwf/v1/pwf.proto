@@ -26,6 +26,7 @@ service TaskService {
   rpc CompleteTask(CompleteTaskRequest) returns (CompleteTaskResponse);
   rpc UpdateTask(UpdateTaskRequest) returns (UpdateTaskResponse);
   rpc GetTask(GetTaskRequest) returns (GetTaskResponse);
+  rpc GetTaskRecord(GetTaskRecordRequest) returns (GetTaskRecordResponse);
   rpc GetTaskDag(GetTaskDagRequest) returns (GetTaskDagResponse);
   rpc ListTasks(ListTasksRequest) returns (ListTasksResponse);
   rpc DeleteTask(stream DeleteTaskRequest) returns (stream DeleteTaskResponse);
@@ -193,7 +194,7 @@ message UpdateProjectRequest {
 message UpdateProjectResponse {}
 
 message AddNoteRequest {
-  string project_selector = 1;
+  string project_id = 1;
   string title = 2;
   string content = 3;
   optional string domain = 4;
@@ -211,13 +212,13 @@ enum NoteListLimitKind {
 }
 
 message ListNotesRequest {
-  string project_selector = 1;
+  string project_id = 1;
   NoteListLimitKind limit_kind = 2;
   uint64 limit = 3;
 }
 
 message UpdateNoteRequest {
-  string project_selector = 1;
+  string project_id = 1;
   string selector = 2;
   // Omitted leaves the title unchanged; a supplied value sets it and must be nonempty.
   optional string title = 3;
@@ -254,7 +255,7 @@ message UpdateNoteResponse {
 }
 
 message DeleteNoteStart {
-  string project_selector = 1;
+  string project_id = 1;
   string selector = 2;
 }
 
@@ -332,7 +333,7 @@ enum PriorityTier {
 message CreateTaskRequest {
   reserved 4;
   reserved "index_section";
-  string project_selector = 1;
+  string project_id = 1;
   oneof prompt {
     string shorthand = 2;
     StructuredTaskPrompt structured = 3;
@@ -421,17 +422,13 @@ message UpdateTaskRequest {
   string request_id = 8;
 }
 
-enum TaskReadFormat {
-  TASK_READ_FORMAT_UNSPECIFIED = 0;
-  TASK_READ_FORMAT_MARKDOWN = 1;
-  TASK_READ_FORMAT_PATH = 2;
-  TASK_READ_FORMAT_DATA = 3;
+message GetTaskRequest {
+  reserved 2;
+  reserved "output";
+  string id = 1;
 }
 
-message GetTaskRequest {
-  string id = 1;
-  TaskReadFormat output = 2;
-}
+message GetTaskRecordRequest { string id = 1; }
 
 enum TaskDagMode {
   TASK_DAG_MODE_UNSPECIFIED = 0;
@@ -485,7 +482,7 @@ message OrderSpec {
 message AllTaskSections {}
 
 message ListTasksRequest {
-  optional string project_selector = 1;
+  optional string project_id = 1;
   oneof scope {
     string section = 2;
     AllTaskSections all = 12;
@@ -533,29 +530,74 @@ enum TaskStatus {
   TASK_STATUS_CANCELLED = 3;
 }
 
-message TaskData {
+// A record retains raw metadata even when a consumer cannot interpret it.
+message TaskRecord {
   string id = 1;
-  string project = 2;
-  string title = 3;
-  TaskStatus status = 4;
-  optional string created = 5;
-  optional string completed = 6;
-  optional string commits = 7;
-  repeated string tags = 8;
-  optional EffortTier effort = 9;
-  repeated string blocked_by = 10;
+  string title = 2;
+  TaskStatus status = 3;
+  optional string created_at = 4;
+  optional string completed_at = 5;
+  optional string commits = 6;
+  optional string tags = 7;
+  optional string effort = 8;
+  optional string priority = 9;
+  // Omitted means the property is absent.
+  StoredTaskBlockedBy blocked_by = 10;
   optional string section = 11;
-  string prompt = 12;
-  optional PriorityTier priority = 13;
+  string body = 12;
+  string source = 13;
+  string locator = 14;
+  TaskIndexPlacement placement = 15;
+  string revision = 16;
+  oneof materialization {
+    TaskNoteFile note_file = 17;
+    string missing_note = 18;
+  }
+}
+
+message TaskNoteFile {}
+
+message TaskIndexPlacement {
+  string index_path = 1;
+  uint64 line = 2;
+}
+
+message StoredTaskBlockedBy {
+  oneof value {
+    // A nonempty collection of canonical task IDs.
+    StringValues valid = 1;
+    MalformedTaskBlockedBy malformed = 2;
+  }
+}
+
+message MalformedTaskBlockedBy {
+  string raw = 1;
+  string reason = 2;
 }
 
 message GetTaskResponse {
-  string revision = 1;
-  oneof value {
-    string markdown = 2;
-    string path = 3;
-    TaskData data = 4;
-  }
+  reserved 1, 2, 3, 4;
+  reserved "revision", "markdown", "path", "data";
+  reserved 5;
+  Task task = 6;
+}
+
+message GetTaskRecordResponse { TaskRecord record = 1; }
+
+message Task {
+  string id = 1;
+  string title = 2;
+  TaskStatus status = 3;
+  string prompt = 4;
+  optional string created_at = 5;
+  optional string completed_at = 6;
+  optional string commits = 7;
+  repeated string tags = 8;
+  optional EffortTier effort = 9;
+  optional PriorityTier priority = 10;
+  repeated string blocked_by = 11;
+  optional string section = 12;
+  string revision = 13;
 }
 
 message TaskDagTaskNode {
@@ -631,7 +673,7 @@ message TaskLocation {
   uint64 line = 2;
 }
 
-message TaskView {
+message ListedTask {
   string id = 1;
   string project = 2;
   TaskStatus status = 3;
@@ -651,7 +693,7 @@ message TaskView {
 }
 
 message ListTasksResponse {
-  repeated TaskView tasks = 1;
+  repeated ListedTask tasks = 1;
   uint64 hidden = 2;
   optional string project = 3;
   optional string project_task_path = 4;

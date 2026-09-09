@@ -2,7 +2,7 @@
 
 use prost::Message;
 use pwf_models::{
-    project::ProjectSelector,
+    project::ProjectId,
     revision::ContentRevision,
     task::{
         BlockedBy, CommitRanges, EffortTier, PriorityTier, Tag, TaskId, TaskPrompt, TaskReport,
@@ -18,7 +18,7 @@ use crate::{patch_field::PatchField, pb, task};
 const TASK_COLLECTION_VALUES_MAX: usize = 64;
 const TASK_LANE_VALUES_MAX: usize = 128;
 
-pub fn create_task_request(request: pb::CreateTaskRequest) -> Result<task::AddTask, Status> {
+pub fn create_task_request(mut request: pb::CreateTaskRequest) -> Result<task::AddTask, Status> {
     ensure_count(
         "blocked_by",
         request.blocked_by.len(),
@@ -28,17 +28,18 @@ pub fn create_task_request(request: pb::CreateTaskRequest) -> Result<task::AddTa
     if let Some(pb::create_task_request::Prompt::Structured(prompt)) = request.prompt.as_ref() {
         ensure_lanes("prompt.lanes", prompt.lanes.as_ref(), 0)?;
     }
-    let request_fingerprint = request_fingerprint(&request, |request| {
-        request.request_id.clear();
-    });
+    let request_id_value = std::mem::take(&mut request.request_id);
+    let request_fingerprint = task::TaskRequestFingerprint::from_digest(
+        *blake3::hash(&request.encode_to_vec()).as_bytes(),
+    );
     let pb::CreateTaskRequest {
-        project_selector,
+        project_id,
         prompt,
         blocked_by,
         effort,
         tags,
         priority,
-        request_id: request_id_value,
+        request_id: _,
     } = request;
     let request_id = request_id(request_id_value)?;
     let prompt = match required("prompt", prompt)? {
@@ -53,7 +54,7 @@ pub fn create_task_request(request: pb::CreateTaskRequest) -> Result<task::AddTa
         }
     };
     Ok(task::AddTask {
-        project_selector: parse::<ProjectSelector>("project_selector", &project_selector)?,
+        project_id: ProjectId::try_new(project_id).map_err(|error| invalid("project_id", error))?,
         prompt,
         blocked_by: blocked_by_values(blocked_by)?,
         effort: effort.map(effort_tier).transpose()?,
@@ -146,20 +147,20 @@ pub fn update_task_request(request: pb::UpdateTaskRequest) -> Result<task::EditT
     })
 }
 
-pub fn get_task_request(request: pb::GetTaskRequest) -> Result<task::GetTask, Status> {
-    let pb::GetTaskRequest { id, output } = request;
-    let output = match pb::TaskReadFormat::try_from(output).ok() {
-        Some(pb::TaskReadFormat::Markdown) => task::TaskReadFormat::Markdown,
-        Some(pb::TaskReadFormat::Path) => task::TaskReadFormat::Path,
-        Some(pb::TaskReadFormat::Data) => task::TaskReadFormat::Data,
-        Some(pb::TaskReadFormat::Unspecified) | None => {
-            return Err(invalid("output", "must be specified"));
-        }
-    };
-    Ok(task::GetTask {
-        id: parse::<TaskId>("id", &id)?,
-        output,
-    })
+impl TryFrom<pb::GetTaskRequest> for TaskId {
+    type Error = Status;
+
+    fn try_from(request: pb::GetTaskRequest) -> Result<Self, Self::Error> {
+        request.id.try_into().map_err(|error| invalid("id", error))
+    }
+}
+
+impl TryFrom<pb::GetTaskRecordRequest> for TaskId {
+    type Error = Status;
+
+    fn try_from(request: pb::GetTaskRecordRequest) -> Result<Self, Self::Error> {
+        request.id.try_into().map_err(|error| invalid("id", error))
+    }
 }
 
 pub fn get_task_dag_request(request: pb::GetTaskDagRequest) -> Result<task::GetTaskDag, Status> {
@@ -219,10 +220,10 @@ pub fn list_tasks_request(request: pb::ListTasksRequest) -> Result<task::ListTas
         }
     };
     Ok(task::ListTasks {
-        project_selector: request
-            .project_selector
+        project_id: request
+            .project_id
             .as_deref()
-            .map(|value| parse::<ProjectSelector>("project_selector", value))
+            .map(|value| parse::<ProjectId>("project_id", value))
             .transpose()?,
         scope,
         number: request
@@ -415,7 +416,9 @@ fn blocked_by_values(values: Vec<String>) -> Result<Option<BlockedBy>, Status> {
     let values = values
         .into_iter()
         .enumerate()
-        .map(|(index, value)| parse::<TaskId>(&format!("blocked_by[{index}]"), &value))
+        .map(|(index, value)| {
+            TaskId::try_from(value).map_err(|error| invalid(&format!("blocked_by[{index}]"), error))
+        })
         .collect::<Result<Vec<_>, _>>()?;
     BlockedBy::try_new(values)
         .map(Some)
@@ -430,7 +433,7 @@ fn task_tag_values(values: Vec<String>) -> Result<Option<TaskTags>, Status> {
         .into_iter()
         .enumerate()
         .map(|(index, value)| {
-            Tag::try_from(value.as_str()).map_err(|error| invalid(&format!("tags[{index}]"), error))
+            Tag::try_from(value).map_err(|error| invalid(&format!("tags[{index}]"), error))
         })
         .collect::<Result<Vec<_>, _>>()?;
     TaskTags::try_new(values)
@@ -515,4 +518,54 @@ where
     let mut request = request.clone();
     strip_request_id(&mut request);
     task::TaskRequestFingerprint::from_digest(*blake3::hash(&request.encode_to_vec()).as_bytes())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn task_read_requests_consume_ids_and_preserve_shorthand() {
+        let id = "FOO-0001".to_string();
+        let pointer = id.as_ptr();
+        let parsed = TaskId::try_from(pb::GetTaskRequest { id }).unwrap();
+        assert_eq!(parsed.as_ref().as_ptr(), pointer);
+        let id = parsed.into_string();
+        let parsed = TaskId::try_from(pb::GetTaskRecordRequest { id }).unwrap();
+        assert_eq!(parsed.as_ref().as_ptr(), pointer);
+        for raw in ["foo1", " FOO-1 ", "foo-0001"] {
+            assert_eq!(
+                TaskId::try_from(pb::GetTaskRequest {
+                    id: raw.to_string()
+                })
+                .unwrap(),
+                parsed
+            );
+            assert_eq!(
+                TaskId::try_from(pb::GetTaskRecordRequest {
+                    id: raw.to_string()
+                })
+                .unwrap(),
+                parsed
+            );
+        }
+        for raw in ["", "   ", "invalid", "FOO-10000"] {
+            assert_eq!(
+                TaskId::try_from(pb::GetTaskRequest {
+                    id: raw.to_string()
+                })
+                .unwrap_err()
+                .code(),
+                tonic::Code::InvalidArgument
+            );
+            assert_eq!(
+                TaskId::try_from(pb::GetTaskRecordRequest {
+                    id: raw.to_string()
+                })
+                .unwrap_err()
+                .code(),
+                tonic::Code::InvalidArgument
+            );
+        }
+    }
 }

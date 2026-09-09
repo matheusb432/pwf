@@ -13,7 +13,7 @@ use crate::{confirmation, note, patch_field::PatchField, pb};
 
 pub fn add_note_request(request: pb::AddNoteRequest) -> Result<note::AddNote, Status> {
     Ok(note::AddNote {
-        project_selector: parse("project_selector", &request.project_selector)?,
+        project_id: parse("project_id", &request.project_id)?,
         title: parse("title", &request.title)?,
         content: parse("content", &request.content)?,
         domain: request
@@ -38,7 +38,7 @@ pub fn add_note_request(request: pb::AddNoteRequest) -> Result<note::AddNote, St
 
 pub fn list_notes_request(request: pb::ListNotesRequest) -> Result<note::ListNotes, Status> {
     let pb::ListNotesRequest {
-        project_selector,
+        project_id,
         limit_kind,
         limit,
     } = request;
@@ -56,14 +56,14 @@ pub fn list_notes_request(request: pb::ListNotesRequest) -> Result<note::ListNot
         }
     };
     Ok(note::ListNotes {
-        project_selector: parse("project_selector", &project_selector)?,
+        project_id: parse("project_id", &project_id)?,
         limit,
     })
 }
 
 pub fn update_note_request(request: pb::UpdateNoteRequest) -> Result<note::EditNote, Status> {
     let pb::UpdateNoteRequest {
-        project_selector,
+        project_id,
         selector,
         title,
         content,
@@ -90,7 +90,7 @@ pub fn update_note_request(request: pb::UpdateNoteRequest) -> Result<note::EditN
     )
     .map_err(|error| invalid("edits", error))?;
     Ok(note::EditNote {
-        project_selector: parse("project_selector", &project_selector)?,
+        project_id: parse("project_id", &project_id)?,
         selector: parse::<NoteSelector>("selector", &selector)?,
         edits,
     })
@@ -98,7 +98,7 @@ pub fn update_note_request(request: pb::UpdateNoteRequest) -> Result<note::EditN
 
 pub fn delete_note_start(start: &pb::DeleteNoteStart) -> Result<note::RemoveNote, Status> {
     Ok(note::RemoveNote {
-        project_selector: parse("project_selector", &start.project_selector)?,
+        project_id: parse("project_id", &start.project_id)?,
         selector: parse("selector", &start.selector)?,
     })
 }
@@ -233,7 +233,7 @@ mod tests {
 
     fn request() -> UpdateNoteRequest {
         UpdateNoteRequest {
-            project_selector: "foo".to_string(),
+            project_id: "foo".to_string(),
             selector: "1".to_string(),
             title: None,
             content: None,

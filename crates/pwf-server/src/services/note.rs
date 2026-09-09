@@ -21,7 +21,7 @@ use tonic::{Request, Response, Status, Streaming};
 
 use super::{
     confirmation::{GrpcConfirmationClient, confirmation_status},
-    project::resolve_project_status,
+    project::get_project_status,
 };
 use crate::AppState;
 
@@ -139,7 +139,7 @@ async fn next_delete_note_start(
 
 fn add_note_status(error: AddNoteError) -> Status {
     match error {
-        AddNoteError::ResolveProject(error) => resolve_project_status(&error),
+        AddNoteError::GetProject(error) => get_project_status(&error),
         AddNoteError::IdentifierExhausted { .. } => Status::resource_exhausted(error.to_string()),
         AddNoteError::Store(_) | AddNoteError::Clock(_) => Status::internal(error.to_string()),
     }
@@ -147,14 +147,14 @@ fn add_note_status(error: AddNoteError) -> Status {
 
 fn list_notes_status(error: ListNotesError) -> Status {
     match error {
-        ListNotesError::ResolveProject(error) => resolve_project_status(&error),
+        ListNotesError::GetProject(error) => get_project_status(&error),
         ListNotesError::Store(_) => Status::internal(error.to_string()),
     }
 }
 
 fn remove_note_status(error: RemoveNoteError) -> Status {
     match error {
-        RemoveNoteError::ResolveProject(error) => resolve_project_status(&error),
+        RemoveNoteError::GetProject(error) => get_project_status(&error),
         RemoveNoteError::ProjectMismatch { .. } => Status::failed_precondition(error.to_string()),
         RemoveNoteError::NoSuchNote { .. } => Status::not_found(error.to_string()),
         RemoveNoteError::Confirmation(error) => confirmation_status(&error),
@@ -164,7 +164,7 @@ fn remove_note_status(error: RemoveNoteError) -> Status {
 
 fn edit_note_status(error: EditNoteError) -> Status {
     match error {
-        EditNoteError::ResolveProject(error) => resolve_project_status(&error),
+        EditNoteError::GetProject(error) => get_project_status(&error),
         EditNoteError::ProjectMismatch { .. } => Status::failed_precondition(error.to_string()),
         EditNoteError::NoSuchNote { .. } => Status::not_found(error.to_string()),
         EditNoteError::Store(_) => Status::internal(error.to_string()),

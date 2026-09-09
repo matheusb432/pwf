@@ -55,6 +55,15 @@ fn push_unseen_identifier(identifiers: &mut Vec<TaskId>, identifier: TaskId) {
 #[error("blocked_by cannot be empty")]
 pub struct EmptyBlockedByError;
 
+impl IntoIterator for BlockedBy {
+    type Item = TaskId;
+    type IntoIter = std::vec::IntoIter<TaskId>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

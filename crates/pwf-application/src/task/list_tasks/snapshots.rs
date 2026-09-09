@@ -215,13 +215,15 @@ mod tests {
     use pwf_wire::task::RawTaskTags;
 
     use super::*;
-    use crate::{ports::task_vault::TaskSummaryRecord, task::task_view, testing::task_record};
+    use crate::{
+        ports::task_vault::TaskSummaryRecord, task::task_projection, testing::task_record,
+    };
 
     fn tasks() -> Vec<ListedTask> {
         ["FOO-0001", "FOO-0002"]
             .into_iter()
             .map(|id| {
-                task_view::summarize(
+                task_projection::summarize(
                     TaskSummaryRecord::from(task_record(id)),
                     pwf_models::project::ProjectName::try_new("foo").unwrap(),
                 )
