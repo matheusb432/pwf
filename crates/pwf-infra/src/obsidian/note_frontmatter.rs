@@ -1,5 +1,6 @@
 use std::fmt::Write as _;
 
+use pwf_application::ports::task_vault::NewTaskBody;
 use pwf_models::task::{
     BlockedBy, EffortTier, PriorityTier, TaskId, TaskStatus, TaskTags, TaskTimestamp, TaskTitle,
 };
@@ -20,7 +21,7 @@ pub(super) struct NewTaskFields<'a> {
     pub id: &'a TaskId,
     pub title: &'a TaskTitle,
     pub project: &'a str,
-    pub body: &'a str,
+    pub body: &'a NewTaskBody,
     pub created_at: &'a TaskTimestamp,
     pub blocked_by: Option<&'a BlockedBy>,
     pub effort: Option<EffortTier>,
@@ -52,9 +53,15 @@ pub(super) fn new_task_content(fields: NewTaskFields<'_>) -> String {
     if let Some(tags) = fields.tags {
         let _ = writeln!(out, "tags: {}", tags_frontmatter_value(tags));
     }
-    out.push_str("---\n\n");
-    out.push_str(fields.body.trim_end());
-    out.push('\n');
+    out.push_str("---\n");
+    match fields.body {
+        NewTaskBody::Rendered(body) => {
+            out.push('\n');
+            out.push_str(body.trim_end());
+            out.push('\n');
+        }
+        NewTaskBody::Verbatim(body) => out.push_str(body.as_ref()),
+    }
     out
 }
 
@@ -290,7 +297,7 @@ mod tests {
             id: &id,
             title: &title,
             project: "foo",
-            body: "body",
+            body: &pwf_application::ports::task_vault::NewTaskBody::Rendered("body".into()),
             created_at: &created_at,
             blocked_by: Some(&blockers),
             effort: None,

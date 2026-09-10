@@ -259,15 +259,4 @@ mod tests {
             Err(BlockedByValidationError::MalformedMetadata { .. })
         ));
     }
-
-    #[test]
-    fn statuses_expose_store_read_failures_as_unavailable() {
-        use crate::testing::{InMemoryStore, InMemoryStoreFailure, project};
-        let project = project("FOO", "foo");
-        let store = InMemoryStore::default().with_failure(InMemoryStoreFailure::ReadTask);
-        let statuses = statuses(&blocked_by(&["FOO-0001"]), &store, Some(&project), &[]);
-        assert!(matches!(statuses.as_slice(), [BlockedByStatus {
-            id, resolution: BlockedByResolution::Unavailable { reason }, ..
-        }] if id.as_ref() == "FOO-0001" && reason == "injected in-memory store failure: task-read"));
-    }
 }

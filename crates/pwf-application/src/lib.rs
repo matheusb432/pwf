@@ -5,4 +5,5 @@ pub mod settings;
 pub mod task;
 
 #[cfg(test)]
+#[path = "../tests/support/fixtures.rs"]
 mod testing;

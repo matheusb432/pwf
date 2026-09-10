@@ -4,7 +4,7 @@ use pwf_models::{
     project::Project,
     revision::ContentRevision,
     task::{
-        BlockedBy, EffortTier, PriorityTier, TaskId, TaskSection, TaskStatus, TaskTags,
+        BlockedBy, EffortTier, PriorityTier, TaskId, TaskPrompt, TaskSection, TaskStatus, TaskTags,
         TaskTimestamp, TaskTitle,
     },
 };
@@ -46,9 +46,40 @@ pub struct TaskDependencyRecord {
     pub locator: TaskNotePath,
 }
 
+/// Rendered content receives note framing; verbatim bodies retain every byte.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NewTaskBody {
+    Rendered(String),
+    Verbatim(TaskPrompt),
+}
+
+impl AsRef<str> for NewTaskBody {
+    fn as_ref(&self) -> &str {
+        match self {
+            Self::Rendered(body) => body,
+            Self::Verbatim(body) => body.as_ref(),
+        }
+    }
+}
+
+impl From<String> for NewTaskBody {
+    fn from(body: String) -> Self {
+        Self::Rendered(body)
+    }
+}
+
+impl From<NewTaskBody> for String {
+    fn from(body: NewTaskBody) -> Self {
+        match body {
+            NewTaskBody::Rendered(body) => body,
+            NewTaskBody::Verbatim(body) => body.into_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewTask {
-    pub body: String,
+    pub body: NewTaskBody,
     pub title: TaskTitle,
     pub created_at: TaskTimestamp,
     pub blocked_by: Option<BlockedBy>,

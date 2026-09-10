@@ -15,6 +15,7 @@ use crate::console::Console;
 mod add;
 mod blocked_by_input;
 mod cancel;
+mod clone;
 mod dag;
 mod done;
 mod edit;
@@ -272,6 +273,8 @@ pub struct TaskArguments {
 enum TaskCommand {
     /// Add a pwf task with shorthand prompt text or explicit args
     Add(add::Arguments),
+    /// Copy a task into a new active task, optionally in another project.
+    Clone(clone::Arguments),
     /// List tasks. `--all` lists everything
     #[command(alias = "ls")]
     List(list::Arguments),
@@ -303,6 +306,9 @@ pub async fn run(
         Command::Task(arguments) => match &arguments.command {
             TaskCommand::Add(arguments) => {
                 add::run(arguments, console, task_status_colors, client, projects).await?
+            }
+            TaskCommand::Clone(arguments) => {
+                clone::run(arguments, console, task_status_colors, client, projects).await?
             }
             TaskCommand::List(arguments) => {
                 list::run(arguments, console, task_status_colors, client, projects).await?

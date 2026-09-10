@@ -138,7 +138,7 @@ impl InsertWorkload {
             project,
             id: task_id(1),
             new_task: Some(NewTask {
-                body: document_body(size),
+                body: document_body(size).into(),
                 title: require(
                     TaskTitle::try_new("inserted benchmark task"),
                     "constructing benchmark task title",

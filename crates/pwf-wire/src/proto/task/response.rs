@@ -4,6 +4,15 @@ use pwf_models::task::{EffortTier, PriorityTier, TaskId, TaskIdError, TaskStatus
 
 use crate::{confirmation, pb, task};
 
+impl From<task::TaskMutationResult<TaskId>> for pb::CloneTaskResponse {
+    fn from(result: task::TaskMutationResult<TaskId>) -> Self {
+        Self {
+            id: result.outcome.into_string(),
+            task: result.task.map(task_mutation_summary),
+        }
+    }
+}
+
 #[must_use]
 pub fn create_task_response(result: task::TaskMutationResult<TaskId>) -> pb::CreateTaskResponse {
     pb::CreateTaskResponse {

@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use pwf_application::ports::task_vault::NewTaskBody;
 use pwf_models::{
     project::Project,
     task::{BlockedBy, EffortTier, PriorityTier, TaskId, TaskTags, TaskTimestamp, TaskTitle},
@@ -11,7 +12,7 @@ use crate::obsidian::note_frontmatter::{NewTaskFields, new_task_content};
 /// Contains note-file fields independently of index linking.
 pub(super) struct NewNoteRequest<'a> {
     pub id: &'a TaskId,
-    pub body: &'a str,
+    pub body: &'a NewTaskBody,
     pub title: &'a TaskTitle,
     pub created_at: &'a TaskTimestamp,
     pub blocked_by: Option<&'a BlockedBy>,

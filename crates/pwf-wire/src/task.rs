@@ -192,44 +192,32 @@ fn push_unseen_lane(lanes: &mut Vec<TaskLane>, lane: TaskLane) {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum AddTaskPromptKind {
-    Shorthand(TaskPrompt),
+pub enum AddTaskPrompt {
+    Shorthand(String),
     Structured { title: TaskTitle, lanes: TaskLanes },
+    Body { title: TaskTitle, body: TaskPrompt },
 }
-
-/// Carries one structurally valid shorthand or structured add prompt.
-#[derive(Debug, PartialEq, Eq)]
-pub struct AddTaskPrompt(AddTaskPromptKind);
 
 impl AddTaskPrompt {
-    /// Creates a non-empty shorthand prompt.
-    pub fn shorthand(prompt: TaskPrompt) -> Result<Self, EmptyShorthandPrompt> {
-        if prompt.as_ref().trim().is_empty() {
-            return Err(EmptyShorthandPrompt);
-        }
-        Ok(Self(AddTaskPromptKind::Shorthand(prompt)))
+    #[must_use]
+    pub fn from_shorthand(raw: impl Into<String>) -> Self {
+        let mut raw = raw.into();
+        let start = raw.len() - raw.trim_start().len();
+        raw.truncate(start + raw.trim().len());
+        raw.drain(..start);
+        Self::Shorthand(raw)
     }
 
     #[must_use]
-    pub fn structured(title: TaskTitle, lanes: TaskLanes) -> Self {
-        Self(AddTaskPromptKind::Structured { title, lanes })
+    pub fn from_structured(title: TaskTitle, lanes: TaskLanes) -> Self {
+        Self::Structured { title, lanes }
     }
 
     #[must_use]
-    pub fn kind(&self) -> &AddTaskPromptKind {
-        &self.0
-    }
-
-    #[must_use]
-    pub fn into_kind(self) -> AddTaskPromptKind {
-        self.0
+    pub fn from_body(title: TaskTitle, body: TaskPrompt) -> Self {
+        Self::Body { title, body }
     }
 }
-
-/// Reports a shorthand add prompt without authored content.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("task shorthand prompt cannot be empty")]
-pub struct EmptyShorthandPrompt;
 
 /// Requests creation of one task.
 #[derive(Debug)]
@@ -250,6 +238,29 @@ pub struct AddTask {
     pub request_id: Option<TaskRequestId>,
     /// Stable fingerprint of the validated transport request without its retry identity.
     pub request_fingerprint: Option<TaskRequestFingerprint>,
+}
+
+/// Copies task content and metadata into a new active task.
+#[derive(Debug, Clone)]
+pub struct CloneTask {
+    /// Source task ID.
+    pub id: TaskId,
+    /// Destination project, defaulting to the source task's project.
+    pub project_id: ClonedTaskProjectId,
+    pub request_id: Option<TaskRequestId>,
+    pub request_fingerprint: Option<TaskRequestFingerprint>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ClonedTaskProjectId {
+    SameAsTask,
+    Id(ProjectId),
+}
+impl ClonedTaskProjectId {
+    #[must_use]
+    pub fn new(value: impl Into<Option<ProjectId>>) -> Self {
+        value.into().map_or(Self::SameAsTask, Self::Id)
+    }
 }
 
 impl AddTask {
@@ -296,10 +307,10 @@ pub enum EditTaskContentKind {
     },
     AppendShorthand {
         title: SetField<TaskTitle>,
-        prompt: TaskPrompt,
+        prompt: String,
     },
     ReplaceShorthand {
-        prompt: TaskPrompt,
+        prompt: String,
     },
 }
 
@@ -322,9 +333,9 @@ impl EditTaskContent {
     /// Creates a non-empty shorthand append.
     pub fn append_shorthand(
         title: SetField<TaskTitle>,
-        prompt: TaskPrompt,
+        prompt: String,
     ) -> Result<Self, EditTaskContentError> {
-        if prompt.as_ref().trim().is_empty() {
+        if prompt.trim().is_empty() {
             return Err(EditTaskContentError::EmptyAppend);
         }
         Ok(Self(EditTaskContentKind::AppendShorthand { title, prompt }))
@@ -332,7 +343,7 @@ impl EditTaskContent {
 
     /// Creates a shorthand replacement for application parsing with the runtime lane syntax.
     #[must_use]
-    pub fn replace_shorthand(prompt: TaskPrompt) -> Self {
+    pub fn replace_shorthand(prompt: String) -> Self {
         Self(EditTaskContentKind::ReplaceShorthand { prompt })
     }
 
@@ -669,8 +680,6 @@ pub enum ReopenTaskOutcome {
 
 #[cfg(test)]
 mod tests {
-    use pwf_models::task::TaskPrompt;
-
     use super::{
         AddTaskPrompt, EditTaskContent, EditTaskContentError, EmptyTaskEdits, TaskEdits,
         TaskLaneEdits, TaskLaneValueError, TaskLanes,
@@ -708,20 +717,32 @@ mod tests {
     }
 
     #[test]
-    fn add_prompt_rejects_blank_shorthand() {
-        assert!(AddTaskPrompt::shorthand(TaskPrompt::new(" \n\t ")).is_err());
+    fn shorthand_trims_outer_whitespace_and_accepts_empty_input() {
+        for (raw, expected) in [
+            (" \n\t ", ""),
+            ("  title only  ", "title only"),
+            (
+                "\u{2003}título /g keep  spacing\n  ",
+                "título /g keep  spacing",
+            ),
+        ] {
+            let prompt: AddTaskPrompt = AddTaskPrompt::from_shorthand(raw);
+            assert!(
+                matches!(prompt, super::AddTaskPrompt::Shorthand(prompt) if prompt == expected)
+            );
+        }
     }
 
     #[test]
-    fn add_prompt_into_kind_preserves_authored_content() {
-        let prompt = AddTaskPrompt::shorthand(TaskPrompt::new("task /g keep text")).unwrap();
+    fn add_prompt_variants_preserve_authored_content() {
+        let prompt = AddTaskPrompt::from_shorthand("task /g keep text");
         assert!(
-            matches!(prompt.into_kind(), super::AddTaskPromptKind::Shorthand(prompt) if prompt.as_ref() == "task /g keep text")
+            matches!(prompt, super::AddTaskPrompt::Shorthand(prompt) if prompt == "task /g keep text")
         );
         let title = pwf_models::task::TaskTitle::try_new("typed task").unwrap();
-        let prompt = AddTaskPrompt::structured(title, TaskLanes::default());
+        let prompt = AddTaskPrompt::from_structured(title, TaskLanes::default());
         assert!(
-            matches!(prompt.into_kind(), super::AddTaskPromptKind::Structured { title, lanes } if title.as_ref() == "typed task" && lanes.is_empty())
+            matches!(prompt, super::AddTaskPrompt::Structured { title, lanes } if title.as_ref() == "typed task" && lanes.is_empty())
         );
     }
 
@@ -732,7 +753,7 @@ mod tests {
             Err(EditTaskContentError::EmptyStructured)
         ));
         assert!(matches!(
-            EditTaskContent::append_shorthand(SetField::NoAction, TaskPrompt::new(" \n\t ")),
+            EditTaskContent::append_shorthand(SetField::NoAction, " \n\t ".into()),
             Err(EditTaskContentError::EmptyAppend)
         ));
         let error = TaskEdits::try_new(

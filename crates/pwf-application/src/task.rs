@@ -2,6 +2,7 @@ mod active_task;
 pub mod add_task;
 mod blocked_by;
 pub mod cancel_task;
+pub mod clone_task;
 pub mod complete_task;
 pub mod edit_task;
 pub mod get_task;
@@ -34,10 +35,10 @@ pub enum TaskPromptTitleError {
 }
 
 fn infer_task_title(
-    prompt: &pwf_models::task::TaskPrompt,
+    prompt: &str,
     lanes: &lane_configuration::TaskPromptLanes,
 ) -> Result<pwf_models::task::TaskTitle, TaskPromptTitleError> {
-    let (title, _) = lanes.parse(prompt.as_ref()).into_parts();
+    let (title, _) = lanes.parse(prompt).into_parts();
     if title.is_empty() {
         return Err(TaskPromptTitleError::Missing);
     }

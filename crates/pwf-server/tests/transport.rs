@@ -2160,3 +2160,112 @@ async fn get_task_returns_domain_values_and_classifies_invalid_records() -> anyh
     assert_eq!(rpc_status(error)?.code(), Code::InvalidArgument);
     server.finish().await
 }
+
+#[tokio::test]
+async fn clone_copies_into_an_explicit_project_and_replays_after_source_removal()
+-> anyhow::Result<()> {
+    let server = TestServer::start(TEST_TIMEOUT).await?;
+    let source_id = server.add_project_and_task().await?;
+    let destination = server.root.path().join("destination");
+    std::fs::create_dir_all(&destination)?;
+    server
+        .client
+        .project()
+        .add_project(pb::AddProjectRequest {
+            fields: Some(pb::ProjectFields {
+                id: "ALT".into(),
+                title: "destination".into(),
+                tasks_kind: "directory".into(),
+                tasks_path: destination.to_string_lossy().into_owned(),
+                ..Default::default()
+            }),
+        })
+        .await?;
+    server
+        .client
+        .task()
+        .complete_task(pb::CompleteTaskRequest {
+            id: source_id.clone(),
+            commits: vec!["abc..def".into()],
+            ..Default::default()
+        })
+        .await?;
+    let source_path = server.root.path().join("notes/foo-bar/FOO-0001.md");
+    let note = std::fs::read_to_string(&source_path)?;
+    let (metadata, _) = note
+        .split_once("\n---\n")
+        .context("fixture frontmatter missing")?;
+    std::fs::write(
+        &source_path,
+        format!("{metadata}\n---\n  literal /g text\r\n\r\nend  "),
+    )?;
+    let source = server
+        .client
+        .task()
+        .get_task(pb::GetTaskRequest {
+            id: source_id.clone(),
+        })
+        .await?;
+    let request = pb::CloneTaskRequest {
+        id: source_id.clone(),
+        project_id: Some("ALT".into()),
+        request_id: "clone-replay".into(),
+    };
+    let response = server.client.task().clone_task(request.clone()).await?;
+    assert_eq!(response.id, "ALT-0001");
+    let cloned = server
+        .client
+        .task()
+        .get_task(pb::GetTaskRequest {
+            id: response.id.clone(),
+        })
+        .await?;
+    assert_eq!(cloned.title, source.title);
+    assert_eq!(cloned.prompt, source.prompt);
+    assert_eq!(cloned.status, pwf_models::task::TaskStatus::Active);
+    assert!(cloned.completed_at.is_none());
+    assert!(cloned.commits.is_none());
+    std::fs::remove_file(server.root.path().join("notes/foo-bar/FOO-0001.md"))?;
+    let replayed = server.client.task().clone_task(request.clone()).await?;
+    assert_eq!(replayed, response);
+    let error = server
+        .client
+        .task()
+        .clone_task(pb::CloneTaskRequest {
+            project_id: None,
+            ..request
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(rpc_status(error)?.code(), Code::AlreadyExists);
+    server.finish().await
+}
+
+#[tokio::test]
+async fn clone_reports_invalid_input_and_missing_sources() -> anyhow::Result<()> {
+    let server = TestServer::start(TEST_TIMEOUT).await?;
+    server.add_project_and_task().await?;
+    for (id, project_id, code) in [
+        ("invalid", None, Code::InvalidArgument),
+        (
+            "FOO-0001",
+            Some("project-name".into()),
+            Code::InvalidArgument,
+        ),
+        ("FOO-9999", None, Code::NotFound),
+        ("FOO-0001", Some("MISS".into()), Code::NotFound),
+    ] {
+        let error = server
+            .client
+            .task()
+            .clone_task(pb::CloneTaskRequest {
+                id: id.into(),
+                project_id,
+                ..Default::default()
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(rpc_status(error)?.code(), code);
+    }
+    server.finish().await
+}

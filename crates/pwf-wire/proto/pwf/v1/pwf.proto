@@ -22,6 +22,7 @@ service NoteService {
 
 service TaskService {
   rpc CreateTask(CreateTaskRequest) returns (CreateTaskResponse);
+  rpc CloneTask(CloneTaskRequest) returns (CloneTaskResponse);
   rpc CancelTask(CancelTaskRequest) returns (CancelTaskResponse);
   rpc CompleteTask(CompleteTaskRequest) returns (CompleteTaskResponse);
   rpc UpdateTask(UpdateTaskRequest) returns (UpdateTaskResponse);
@@ -345,6 +346,15 @@ message CreateTaskRequest {
   string request_id = 9;
 }
 
+// Creates an active task with the source title, body, tags, tiers, and blockers.
+// Lifecycle timestamps and commits belong to the new task and are not copied.
+message CloneTaskRequest {
+  string id = 1;
+  // Omission uses the source task's project.
+  optional string project_id = 2;
+  string request_id = 3;
+}
+
 message CancelTaskRequest {
   reserved 4;
   reserved "review";
@@ -505,6 +515,11 @@ message TaskMutationSummary {
 }
 
 message CreateTaskResponse {
+  string id = 1;
+  TaskMutationSummary task = 2;
+}
+
+message CloneTaskResponse {
   string id = 1;
   TaskMutationSummary task = 2;
 }

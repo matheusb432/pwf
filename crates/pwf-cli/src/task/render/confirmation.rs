@@ -6,6 +6,7 @@ use super::render_task_summary;
 #[derive(Clone, Copy)]
 pub(in crate::task) enum TaskMutationAction {
     Added,
+    Cloned,
     Edited,
     Done,
     Cancelled,
@@ -18,6 +19,7 @@ impl TaskMutationAction {
     fn past_tense(self) -> &'static str {
         match self {
             Self::Added => "Added",
+            Self::Cloned => "Cloned",
             Self::Edited => "Edited",
             Self::Done => "Done",
             Self::Cancelled => "Cancelled",

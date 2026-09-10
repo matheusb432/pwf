@@ -1,11 +1,17 @@
-mod database;
-
 use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex, MutexGuard},
 };
 
-pub(crate) use database::{MIGRATOR, insert_project};
+use pwf_application::ports::{
+    clock::Clock,
+    project_directory::ProjectDirectoryClient,
+    project_note::{NewProjectNote, ProjectNotePatch, ProjectNotes},
+    task_vault::{
+        IndexEntry, NewTask, NullablePatch, TaskMutationError, TaskPatch, TaskRevisionState,
+        TaskVault, TaskWrite, TaskWriteSet,
+    },
+};
 use pwf_models::{
     AppDate,
     note::{NoteId, NoteTitle, ProjectNote},
@@ -14,18 +20,15 @@ use pwf_models::{
         ProjectTasks, ProjectTasksKind, ProjectTasksPath,
     },
     revision::ContentRevision,
-    task::{BlockedBy, TaskId, TaskStatus, TaskTags, TaskTimestamp},
+    task::{TaskId, TaskStatus, TaskTags, TaskTimestamp},
 };
 use pwf_wire::task::{Materialization, RawTaskTags, StoredBlockedBy, TaskRecord};
 
-use crate::ports::{
-    clock::Clock,
-    project_note::{NewProjectNote, ProjectNotePatch, ProjectNotes},
-    task_vault::{
-        IndexEntry, NewTask, NullablePatch, TaskMutationError, TaskPatch, TaskRevisionState,
-        TaskVault, TaskWrite, TaskWriteSet,
-    },
-};
+mod database;
+mod fixtures;
+
+pub(crate) use database::{MIGRATOR, insert_project};
+pub(crate) use fixtures::{blocked_by, stored_blocked_by, task_record, task_timestamp};
 
 pub(crate) fn project_note(number: u32, title: impl AsRef<str>) -> ProjectNote {
     ProjectNote {
@@ -204,40 +207,6 @@ pub(crate) fn app_date(raw: impl AsRef<str>) -> AppDate {
     raw.as_ref().parse().unwrap()
 }
 
-pub(crate) fn task_timestamp(raw: impl AsRef<str>) -> TaskTimestamp {
-    raw.as_ref().parse().unwrap()
-}
-
-pub(crate) fn task_record(id: &str) -> TaskRecord {
-    TaskRecord {
-        id: TaskId::try_new(id).unwrap(),
-        title: "tray gui".to_string(),
-        status: TaskStatus::Active,
-        created_at: Some(task_timestamp("2026-01-01T00:00:00Z")),
-        completed_at: None,
-        commits: None,
-        tags: None,
-        effort: None,
-        priority: None,
-        blocked_by: pwf_wire::task::StoredBlockedBy::Absent,
-        section: None,
-        body: "\nbody\n".to_string(),
-        source: "body".to_string(),
-        locator: pwf_wire::task::TaskNotePath::new(format!("/mem/foo-bar/{id}.md").into()),
-        placement: None,
-        materialization: Materialization::NoteFile,
-        revision: ContentRevision::try_new("0".repeat(64)).unwrap(),
-    }
-}
-
-pub(crate) fn blocked_by(ids: &[&str]) -> BlockedBy {
-    BlockedBy::try_new(ids.iter().map(|id| id.parse().unwrap())).unwrap()
-}
-
-pub(crate) fn stored_blocked_by(ids: &[&str]) -> StoredBlockedBy {
-    StoredBlockedBy::Valid(blocked_by(ids))
-}
-
 pub(crate) const FOO_0001_SOURCE: &str = "---\nid: FOO-0001\nstatus: active\ntitle: do the thing\nproject: foo\ncreated_at: 2026-06-20T00:00:00Z\n---\n\n## Goals\n- do the thing\n";
 
 pub(crate) fn staged_task() -> (InMemoryStore, Vec<Project>) {
@@ -315,7 +284,7 @@ impl TaskVault for InMemoryStore {
         &self,
         project: &Project,
         id: &TaskId,
-    ) -> Result<Option<crate::ports::task_vault::TaskDependencyRecord>, Self::Error> {
+    ) -> Result<Option<pwf_application::ports::task_vault::TaskDependencyRecord>, Self::Error> {
         let mut state = self.lock();
         state.dependency_reads.push(id.clone());
         if state.failures.contains(&InMemoryStoreFailure::ReadTask) {
@@ -328,10 +297,12 @@ impl TaskVault for InMemoryStore {
             .get(&project.title)
             .and_then(|tasks| tasks.iter().find(|task| task.id == *id))
             .filter(|task| matches!(task.materialization, Materialization::NoteFile))
-            .map(|task| crate::ports::task_vault::TaskDependencyRecord {
-                blocked_by: task.blocked_by.clone(),
-                locator: task.locator.clone(),
-            }))
+            .map(
+                |task| pwf_application::ports::task_vault::TaskDependencyRecord {
+                    blocked_by: task.blocked_by.clone(),
+                    locator: task.locator.clone(),
+                },
+            ))
     }
 
     fn list_tasks(&self, project: &Project) -> Result<Vec<TaskRecord>, Self::Error> {
@@ -398,8 +369,8 @@ impl TaskVault for InMemoryStore {
                 pwf_wire::task::StoredBlockedBy::Valid,
             ),
             section: None,
-            body: new.body.clone(),
-            source: new.body,
+            body: new.body.as_ref().to_owned(),
+            source: new.body.into(),
             locator,
             placement: None,
             materialization: Materialization::NoteFile,
@@ -518,7 +489,7 @@ fn apply_task_write(
 fn validate_task_revisions(
     state: &InMemoryState,
     project: &ProjectName,
-    expected: &[crate::ports::task_vault::ExpectedTaskRevision],
+    expected: &[pwf_application::ports::task_vault::ExpectedTaskRevision],
 ) -> Result<(), TaskMutationError<InMemoryStoreError>> {
     for expectation in expected {
         validate_task_revision(state, project, expectation)?;
@@ -529,7 +500,7 @@ fn validate_task_revisions(
 fn validate_task_revision(
     state: &InMemoryState,
     project: &ProjectName,
-    expected: &crate::ports::task_vault::ExpectedTaskRevision,
+    expected: &pwf_application::ports::task_vault::ExpectedTaskRevision,
 ) -> Result<(), TaskMutationError<InMemoryStoreError>> {
     let current = state
         .tasks
@@ -727,5 +698,18 @@ impl InMemoryStore {
             None => entries.push(entry),
         }
         bump_index_backed_revisions(&mut state, &project.title);
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct ExistingProjectDirectory;
+
+impl ProjectDirectoryClient for ExistingProjectDirectory {
+    fn canonicalize(&self, path: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
+        Ok(path.to_path_buf())
+    }
+
+    fn is_directory(&self, _: &std::path::Path) -> bool {
+        true
     }
 }

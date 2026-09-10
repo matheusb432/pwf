@@ -461,7 +461,7 @@ fn insert_next(
 
 fn new_task(body: &str, title: &str) -> NewTask {
     NewTask {
-        body: body.to_string(),
+        body: body.to_string().into(),
         title: TaskTitle::try_new(title).unwrap(),
         created_at: task_timestamp("2026-07-07T12:34:56Z"),
         blocked_by: None,
@@ -1637,7 +1637,7 @@ fn insert_allocates_next_id_without_index_write() {
         &store,
         &project,
         NewTask {
-            body: "wire up the new thing".to_string(),
+            body: "wire up the new thing".to_string().into(),
             title: TaskTitle::try_new("wire up the new thing").unwrap(),
             created_at: task_timestamp("2026-07-15T12:34:56Z"),
             blocked_by: None,
@@ -1984,7 +1984,7 @@ fn generic_insert_and_upsert_preserve_index_placement_bytes() {
             &store,
             &project,
             NewTask {
-                body: "do the thing".to_string(),
+                body: "do the thing".to_string().into(),
                 title: TaskTitle::try_new("ship it").unwrap(),
                 created_at: task_timestamp("2026-07-07T12:34:56Z"),
                 blocked_by: None,

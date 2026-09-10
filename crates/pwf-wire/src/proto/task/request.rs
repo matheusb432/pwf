@@ -5,8 +5,8 @@ use pwf_models::{
     project::ProjectId,
     revision::ContentRevision,
     task::{
-        BlockedBy, CommitRanges, EffortTier, PriorityTier, Tag, TaskId, TaskPrompt, TaskReport,
-        TaskSection, TaskStatus, TaskTags, TaskTitle,
+        BlockedBy, CommitRanges, EffortTier, PriorityTier, Tag, TaskId, TaskReport, TaskSection,
+        TaskStatus, TaskTags, TaskTitle,
         order::{OrderDirection, OrderField, OrderSpec},
     },
 };
@@ -44,13 +44,15 @@ pub fn create_task_request(mut request: pb::CreateTaskRequest) -> Result<task::A
     let request_id = request_id(request_id_value)?;
     let prompt = match required("prompt", prompt)? {
         pb::create_task_request::Prompt::Shorthand(value) => {
-            task::AddTaskPrompt::shorthand(TaskPrompt::new(value))
-                .map_err(|error| invalid("prompt", error))?
+            task::AddTaskPrompt::from_shorthand(value)
         }
         pb::create_task_request::Prompt::Structured(value) => {
             let title =
                 TaskTitle::try_new(value.title).map_err(|error| invalid("prompt.title", error))?;
-            task::AddTaskPrompt::structured(title, task_lanes(value.lanes.unwrap_or_default())?)
+            task::AddTaskPrompt::from_structured(
+                title,
+                task_lanes(value.lanes.unwrap_or_default())?,
+            )
         }
     };
     Ok(task::AddTask {
@@ -63,6 +65,29 @@ pub fn create_task_request(mut request: pb::CreateTaskRequest) -> Result<task::A
         request_id: Some(request_id),
         request_fingerprint: Some(request_fingerprint),
     })
+}
+
+impl TryFrom<pb::CloneTaskRequest> for task::CloneTask {
+    type Error = Status;
+
+    fn try_from(mut request: pb::CloneTaskRequest) -> Result<Self, Self::Error> {
+        let request_id_value = std::mem::take(&mut request.request_id);
+        let fingerprint = task::TaskRequestFingerprint::from_digest(blake3::derive_key(
+            "pwf.v1.TaskService.CloneTask",
+            &request.encode_to_vec(),
+        ));
+        Ok(Self {
+            id: TaskId::try_new(request.id).map_err(|error| invalid("id", error))?,
+            project_id: task::ClonedTaskProjectId::new(
+                request
+                    .project_id
+                    .map(|id| ProjectId::try_new(id).map_err(|error| invalid("project_id", error)))
+                    .transpose()?,
+            ),
+            request_id: Some(request_id(request_id_value)?),
+            request_fingerprint: Some(fingerprint),
+        })
+    }
 }
 
 pub fn cancel_task_request(request: pb::CancelTaskRequest) -> Result<task::CancelTask, Status> {
@@ -303,12 +328,12 @@ fn task_content_edit(edit: pb::TaskContentEdit) -> Result<task::EditTaskContent,
                 .transpose()
                 .map_err(|error| invalid("content.title", error))?
                 .into();
-            task::EditTaskContent::append_shorthand(title, TaskPrompt::new(value.prompt))
+            task::EditTaskContent::append_shorthand(title, value.prompt)
                 .map_err(|error| invalid("content", error))
         }
-        pb::task_content_edit::Content::Replace(value) => Ok(
-            task::EditTaskContent::replace_shorthand(TaskPrompt::new(value)),
-        ),
+        pb::task_content_edit::Content::Replace(value) => {
+            Ok(task::EditTaskContent::replace_shorthand(value))
+        }
     }
 }
 

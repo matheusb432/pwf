@@ -26,7 +26,7 @@ enum PromptClassification {
 }
 
 #[must_use]
-pub(in crate::task) fn render(prompt: &TaskPrompt, lanes: &TaskPromptLanes) -> String {
+pub(in crate::task) fn render(prompt: &str, lanes: &TaskPromptLanes) -> String {
     match prompt_classification(prompt) {
         PromptClassification::Placeholder | PromptClassification::AuthoredVerbatimLegacy => {
             prompt.to_string()
@@ -56,13 +56,12 @@ pub(in crate::task) fn render_lanes(
 #[must_use]
 pub(in crate::task) fn is_placeholder_prompt(prompt: &TaskPrompt) -> bool {
     matches!(
-        prompt_classification(prompt),
+        prompt_classification(prompt.as_ref()),
         PromptClassification::Placeholder
     )
 }
 
-fn prompt_classification(prompt: &TaskPrompt) -> PromptClassification {
-    let prompt = prompt.as_ref();
+fn prompt_classification(prompt: &str) -> PromptClassification {
     if prompt.trim().is_empty() || placeholder_prompt_regex().is_match(prompt) {
         return PromptClassification::Placeholder;
     }
@@ -92,10 +91,10 @@ fn starts_with_todo_word_boundary_ascii(text: &str) -> bool {
 #[must_use]
 pub(in crate::task) fn append_lanes(
     body: &str,
-    prompt: &TaskPrompt,
+    prompt: &str,
     configuration: &TaskPromptLanes,
 ) -> String {
-    let prompt = prompt.as_ref().trim();
+    let prompt = prompt.trim();
     debug_assert!(!prompt.is_empty(), "task append prompts are validated");
     let (title, mut sections) = configuration.parse(prompt).into_parts();
     if !title.is_empty() {
@@ -374,7 +373,7 @@ mod tests {
     const S: &str = "\n\n";
 
     fn render(raw: &str) -> String {
-        super::render(&TaskPrompt::new(raw), &TaskPromptLanes::default_fixture())
+        super::render(raw, &TaskPromptLanes::default_fixture())
     }
 
     fn is_placeholder_prompt(raw: &str) -> bool {
@@ -382,11 +381,7 @@ mod tests {
     }
 
     fn append_lanes(body: &str, raw: &str) -> String {
-        super::append_lanes(
-            body,
-            &TaskPrompt::new(raw),
-            &TaskPromptLanes::default_fixture(),
-        )
+        super::append_lanes(body, raw, &TaskPromptLanes::default_fixture())
     }
 
     #[test]

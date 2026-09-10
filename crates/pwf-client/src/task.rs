@@ -40,6 +40,18 @@ impl TaskClient {
             .map_err(ClientError::from)
     }
 
+    pub async fn clone_task(
+        &self,
+        mut request: pb::CloneTaskRequest,
+    ) -> Result<pb::CloneTaskResponse, ClientError> {
+        ensure_request_id(&mut request.request_id);
+        self.client()
+            .clone_task(request)
+            .await
+            .map(tonic::Response::into_inner)
+            .map_err(ClientError::from)
+    }
+
     pub async fn cancel_task(
         &self,
         mut request: pb::CancelTaskRequest,

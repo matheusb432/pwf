@@ -243,6 +243,15 @@ fn task_help_exposes_only_the_supported_add_and_edit_contract() {
     }
     assert!(!add_help.contains("--human"), "{add_help}");
 
+    let clone = command()
+        .args(["task", "clone", "--help"])
+        .output()
+        .unwrap();
+    assert!(clone.status.success());
+    let clone_help = String::from_utf8(clone.stdout).unwrap();
+    assert!(clone_help.contains("--project <PROJECT>"), "{clone_help}");
+    assert!(clone_help.contains("--id <ID>"), "{clone_help}");
+
     let edit = command().args(["task", "edit", "--help"]).output().unwrap();
     assert!(edit.status.success());
     let edit_help = String::from_utf8(edit.stdout).unwrap();
@@ -958,5 +967,70 @@ fn get_formats_the_same_record_as_markdown_path_or_json() {
         String::from_utf8(missing.stderr)
             .unwrap()
             .contains("has no note")
+    );
+}
+
+#[test]
+fn clone_routes_project_selectors_and_preserves_authored_content() {
+    let fixture = ManagedProject::new(&project_id("FOO").unwrap(), "foo-bar").unwrap();
+    fixture
+        .database
+        .command()
+        .args(["add", "foo-bar", "blocker"])
+        .assert()
+        .success();
+    fixture
+        .database
+        .command()
+        .args([
+            "task",
+            "add",
+            "foo-bar",
+            "--title",
+            "original task",
+            "--goal",
+            "keep /d literal",
+            "--tag",
+            "rust",
+            "--effort",
+            "high",
+            "--priority",
+            "low",
+            "--blocked-by",
+            "FOO-0001",
+        ])
+        .assert()
+        .success();
+    let original = task_json(&fixture.database, &task_id("FOO-0002").unwrap()).unwrap();
+    for arguments in [
+        vec!["task", "clone", "foo2"],
+        vec!["clone", "--id", "FOO-0002", "--project", "FOO-BAR"],
+    ] {
+        let output = fixture.database.command().args(arguments).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let output = String::from_utf8(output.stdout).unwrap();
+        assert!(output.starts_with("Cloned task: FOO-000"), "{output}");
+        assert_eq!(output.lines().count(), 1);
+    }
+    for id in ["FOO-0003", "FOO-0004"] {
+        let cloned = task_json(&fixture.database, &task_id(id).unwrap()).unwrap();
+        for field in [
+            "title",
+            "prompt",
+            "tags",
+            "effort",
+            "priority",
+            "blocked_by",
+        ] {
+            assert_eq!(cloned[field], original[field], "{id}: {field}");
+        }
+    }
+    assert_eq!(
+        task_json(&fixture.database, &task_id("FOO-0002").unwrap()).unwrap(),
+        original
     );
 }

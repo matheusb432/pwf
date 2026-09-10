@@ -7,6 +7,7 @@ use pwf_application::{
         CloseTaskError, MutationRequestError, TaskPromptLanesError,
         add_task::{self, AddTaskError},
         cancel_task::{self, CancelTaskError},
+        clone_task::{self, CloneTaskError},
         complete_task::{self, CompleteTaskError},
         edit_task::{self, EditTaskError},
         get_task::{self, GetTaskError},
@@ -64,6 +65,27 @@ impl pb::task_service_server::TaskService for TaskGrpcService {
         .map(proto::task::create_task_response)
         .map(Response::new)
         .map_err(create_task_status)
+    }
+
+    async fn clone_task(
+        &self,
+        request: Request<pb::CloneTaskRequest>,
+    ) -> Result<Response<pb::CloneTaskResponse>, Status> {
+        let command = request.into_inner().try_into()?;
+        let _mutation_guard = self.state.task_mutations.lock().await;
+        clone_task::execute(
+            command,
+            &self.state.store,
+            &self.state.pool,
+            &self.state.clock,
+        )
+        .await
+        .map(Into::into)
+        .map(Response::new)
+        .map_err(|error| match error {
+            CloneTaskError::GetTask(error) => get_task_status(&error),
+            CloneTaskError::AddTask(error) => create_task_status(error),
+        })
     }
 
     async fn cancel_task(

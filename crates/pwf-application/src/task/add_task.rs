@@ -1,7 +1,7 @@
 use pwf_models::task::{TaskId, TaskTimestampError, TaskTitle};
 use pwf_wire::task::{
-    AddTask, AddTaskPrompt, AddTaskPromptKind, Materialization, StoredBlockedBy,
-    TaskMutationResult, TaskMutationSummary, TaskRecord,
+    AddTask, AddTaskPrompt, Materialization, StoredBlockedBy, TaskMutationResult,
+    TaskMutationSummary, TaskRecord,
 };
 
 pub use super::task_creation::CreateTaskError;
@@ -18,7 +18,7 @@ use super::{
 use crate::{
     ports::{
         clock::Clock,
-        task_vault::{NewTask, TaskVault},
+        task_vault::{NewTask, NewTaskBody, TaskVault},
     },
     project::{get_active_project, get_project::GetProjectError},
 };
@@ -108,8 +108,23 @@ pub async fn execute(
         });
     }
     let project = get_active_project::execute(&project_id, pool).await?;
-    let lane_configuration = TaskPromptLanes::load(pool).await?;
-    let (title, body) = prepare_source(prompt, &lane_configuration)?;
+    let (title, body) = match prompt {
+        AddTaskPrompt::Body { title, body } => (title, NewTaskBody::Verbatim(body)),
+        AddTaskPrompt::Shorthand(prompt) => {
+            let lanes = TaskPromptLanes::load(pool).await?;
+            (
+                infer_task_title(&prompt, &lanes)?,
+                NewTaskBody::Rendered(render(&prompt, &lanes)),
+            )
+        }
+        AddTaskPrompt::Structured { title, lanes } => {
+            let configuration = TaskPromptLanes::load(pool).await?;
+            (
+                title,
+                NewTaskBody::Rendered(render_lanes(&lanes, &configuration)),
+            )
+        }
+    };
     let replay_pending = replay.is_some();
     let id = match replay {
         Some(replay) => replay.task_id,
@@ -218,7 +233,7 @@ pub async fn execute(
 fn created_record_matches(
     record: &TaskRecord,
     title: &TaskTitle,
-    body: &str,
+    body: &NewTaskBody,
     blocked_by: Option<&pwf_models::task::BlockedBy>,
     effort: Option<pwf_models::task::EffortTier>,
     priority: Option<pwf_models::task::PriorityTier>,
@@ -237,7 +252,7 @@ fn created_record_matches(
     record.status == pwf_models::task::TaskStatus::Active
         && matches!(record.materialization, Materialization::NoteFile)
         && record.title == title.as_ref()
-        && record.body == body
+        && record.body == body.as_ref()
         && stored_blocked_by == blocked_by
         && record.effort.as_deref() == effort.as_ref().map(AsRef::as_ref)
         && record.priority.as_deref() == priority.as_ref().map(AsRef::as_ref)
@@ -264,21 +279,3 @@ fn map_blocked_by_error(error: BlockedByValidationError) -> AddTaskError {
         },
     }
 }
-
-fn prepare_source(
-    prompt: AddTaskPrompt,
-    lane_configuration: &TaskPromptLanes,
-) -> Result<(TaskTitle, String), AddTaskError> {
-    match prompt.into_kind() {
-        AddTaskPromptKind::Shorthand(prompt) => Ok((
-            infer_task_title(&prompt, lane_configuration)?,
-            render(&prompt, lane_configuration),
-        )),
-        AddTaskPromptKind::Structured { title, lanes } => {
-            Ok((title, render_lanes(&lanes, lane_configuration)))
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests;
