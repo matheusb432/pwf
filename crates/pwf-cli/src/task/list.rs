@@ -24,6 +24,22 @@ pub struct Arguments {
     /// Limit to one project.
     #[arg(long)]
     pub(crate) project: Option<ProjectSelector>,
+    #[command(flatten)]
+    pub(super) options: Options,
+    /// Show only tasks tagged with this exact effort/complexity tier.
+    #[arg(long, value_enum)]
+    pub(crate) effort: Option<EffortChoice>,
+    /// Show only tasks with this scheduling priority.
+    #[arg(long, value_enum)]
+    pub(crate) priority: Option<PriorityChoice>,
+    /// Discovery tag filter; repeat or comma-separate for several. Every requested tag must
+    /// match.
+    #[arg(long, allow_hyphen_values = true)]
+    pub(crate) tag: Vec<TagInput>,
+}
+
+#[derive(Args, Debug, Clone)]
+pub(super) struct Options {
     /// Long form with per-task metadata.
     #[arg(long)]
     pub(crate) long: bool,
@@ -37,16 +53,6 @@ pub struct Arguments {
     /// Cap to N listed tasks, N >= 1 [default: 10, or unlimited under `--all`].
     #[arg(short = 'n', long, value_name = "N", value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..=100_000))]
     pub(crate) number: Option<usize>,
-    /// Show only tasks tagged with this exact effort/complexity tier.
-    #[arg(long, value_enum)]
-    pub(crate) effort: Option<EffortChoice>,
-    /// Show only tasks with this scheduling priority.
-    #[arg(long, value_enum)]
-    pub(crate) priority: Option<PriorityChoice>,
-    /// Discovery tag filter; repeat or comma-separate for several. Every requested tag must
-    /// match.
-    #[arg(long, allow_hyphen_values = true)]
-    pub(crate) tag: Vec<TagInput>,
     /// Sort key `field[:direction]`: created|id|project-id|priority|effort|title,
     /// direction asc|desc. Overrides `default_sort_order` in config.toml (default: id).
     /// Bare created/id/priority sort descending; project-id/effort/title ascending.
@@ -67,6 +73,7 @@ pub(super) async fn run(
     client: &TaskClient,
     projects: &pwf_client::project::ProjectClient,
 ) -> anyhow::Result<String> {
+    let options = &arguments.options;
     let project_id = match arguments.project.as_ref() {
         Some(selector) => Some(
             crate::project::resolve_project_id(selector, projects)
@@ -77,8 +84,8 @@ pub(super) async fn run(
     };
     let mut request = ListTasksRequest {
         project_id,
-        scope: list_scope(arguments),
-        number: arguments
+        scope: list_scope(options),
+        number: options
             .number
             .and_then(NonZeroUsize::new)
             .map(|value| value.get() as u64),
@@ -91,9 +98,9 @@ pub(super) async fn run(
         tags: TaskTags::from_inputs(&arguments.tag)
             .map(|tags| tags.iter().map(ToString::to_string).collect())
             .unwrap_or_default(),
-        order: arguments.order,
-        status: arguments.status.map(|status| status.filter() as i32),
-        detail: if arguments.long {
+        order: options.order,
+        status: options.status.map(|status| status.filter() as i32),
+        detail: if options.long {
             ListDetail::Detailed as i32
         } else {
             ListDetail::Summary as i32
@@ -138,11 +145,11 @@ pub(super) async fn run(
     ))
 }
 
-fn list_scope(arguments: &Arguments) -> Option<list_tasks_request::Scope> {
-    if arguments.all {
+fn list_scope(options: &Options) -> Option<list_tasks_request::Scope> {
+    if options.all {
         return Some(list_tasks_request::Scope::All(AllTaskSections {}));
     }
-    arguments
+    options
         .section
         .as_ref()
         .map(|section| list_tasks_request::Scope::Section(section.to_string()))

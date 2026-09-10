@@ -27,8 +27,6 @@ pub use title::{TaskTitle, TaskTitleError};
 
 use crate::revision::ContentRevision;
 
-/// A persisted task with parsed metadata. Launch readiness and graph validity are operation
-/// concerns.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Task {
     pub id: TaskId,

@@ -25,9 +25,7 @@ pub(super) async fn run(
     task_status_colors: TaskStatusColors,
     client: &TaskClient,
 ) -> anyhow::Result<String> {
-    let id = arguments
-        .identifier
-        .required(anyhow::anyhow!("--id is required for done."))?;
+    let id = arguments.identifier.id();
     let result = client
         .complete_task(CompleteTaskRequest {
             id: id.to_string(),

@@ -7,23 +7,25 @@ use pwf_models::project::{ProjectId, ProjectSourceValue};
 
 use super::{parse_project_id, parse_project_source};
 
+const UPDATES: &str = "project_updates";
+
 #[derive(Args, Debug)]
-#[command(group(clap::ArgGroup::new("updates").args(["source", "clear_source", "obsidian_vault", "clear_obsidian_vault"]).required(true).multiple(true)))]
+#[command(group(clap::ArgGroup::new(UPDATES).required(true).multiple(true)))]
 pub struct Arguments {
     /// Project ID.
     #[arg(value_parser = parse_project_id)]
     pub id: ProjectId,
     /// Replacement project source directory.
-    #[arg(long, value_parser = parse_project_source, conflicts_with = "clear_source")]
+    #[arg(long, value_parser = parse_project_source, group = UPDATES, conflicts_with = "clear_source")]
     pub source: Option<ProjectSourceValue>,
     /// remove the source directory; sessions will be unavailable.
-    #[arg(long)]
+    #[arg(long, group = UPDATES)]
     pub clear_source: bool,
     /// Obsidian vault root whose existing .trash receives removed tasks.
-    #[arg(long, conflicts_with = "clear_obsidian_vault")]
+    #[arg(long, group = UPDATES, conflicts_with = "clear_obsidian_vault")]
     pub obsidian_vault: Option<pwf_models::project::ObsidianVault>,
     /// Permanently delete removed tasks instead of moving them to an Obsidian trash folder.
-    #[arg(long)]
+    #[arg(long, group = UPDATES)]
     pub clear_obsidian_vault: bool,
 }
 

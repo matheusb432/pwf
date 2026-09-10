@@ -26,9 +26,7 @@ pub(super) async fn run(
     task_status_colors: TaskStatusColors,
     client: &TaskClient,
 ) -> anyhow::Result<String> {
-    let id = arguments
-        .identifier
-        .required(anyhow::anyhow!("--id is required for cancel."))?;
+    let id = arguments.identifier.id();
     let report = arguments
         .report
         .as_deref()

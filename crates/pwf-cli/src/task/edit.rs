@@ -20,72 +20,24 @@ use super::{
 };
 use crate::{console::Console, edit::string_collection_edit};
 
+const EDIT: &str = "task_edit";
+const LANES: &str = "task_lane_edits";
+const LANE_GROUPS: [&str; 2] = [EDIT, LANES];
+
 #[derive(Args, Debug)]
-#[command(group(
-    ArgGroup::new("edit")
-        .required(true)
-        .multiple(true)
-        .args([
-            "prompt",
-            "title",
-            "append",
-            "add_goal",
-            "remove_goals",
-            "add_context",
-            "remove_contexts",
-            "add_constraint",
-            "remove_constraints",
-            "add_done_when",
-            "remove_done_whens",
-            "add_blocked_by",
-            "remove_blocked_by",
-            "add_tag",
-            "remove_tags",
-            "effort",
-            "remove_effort",
-            "priority",
-            "remove_priority",
-        ])
-))]
+#[command(group(ArgGroup::new(EDIT).required(true).multiple(true)))]
+#[command(group(ArgGroup::new(LANES).multiple(true).conflicts_with_all(["prompt", "append"])))]
 pub struct Arguments {
     #[command(flatten)]
     pub(crate) identifier: Identifier,
     /// Replace the title and every prompt lane using shorthand lane syntax.
-    #[arg(
-        long,
-        conflicts_with_all = [
-            "title",
-            "append",
-            "add_goal",
-            "remove_goals",
-            "add_context",
-            "remove_contexts",
-            "add_constraint",
-            "remove_constraints",
-            "add_done_when",
-            "remove_done_whens"
-        ]
-    )]
+    #[arg(long, group = EDIT, conflicts_with_all = ["title", "append"])]
     pub(crate) prompt: Option<String>,
     /// Replace the title. The normalized title cannot exceed 200 characters.
-    #[arg(long, conflicts_with = "prompt")]
+    #[arg(long, group = EDIT)]
     pub(crate) title: Option<String>,
     /// Append shorthand lane content without changing the title.
-    #[arg(
-        short = 'a',
-        long,
-        conflicts_with_all = [
-            "prompt",
-            "add_goal",
-            "remove_goals",
-            "add_context",
-            "remove_contexts",
-            "add_constraint",
-            "remove_constraints",
-            "add_done_when",
-            "remove_done_whens"
-        ]
-    )]
+    #[arg(short = 'a', long, group = EDIT)]
     pub(crate) append: Option<String>,
     #[command(flatten)]
     goals: GoalEdits,
@@ -108,50 +60,50 @@ pub struct Arguments {
 #[derive(Args, Debug)]
 struct GoalEdits {
     /// Append a Goal bullet; repeat for several.
-    #[arg(long, conflicts_with_all = ["prompt", "append"])]
+    #[arg(long, groups = LANE_GROUPS)]
     add_goal: Vec<String>,
     /// Remove every Goal before applying `--add-goal` values.
-    #[arg(long, conflicts_with_all = ["prompt", "append"])]
+    #[arg(long, groups = LANE_GROUPS)]
     remove_goals: bool,
 }
 
 #[derive(Args, Debug)]
 struct ContextEdits {
     /// Append a Context bullet; repeat for several.
-    #[arg(long, conflicts_with_all = ["prompt", "append"])]
+    #[arg(long, groups = LANE_GROUPS)]
     add_context: Vec<String>,
     /// Remove every Context before applying `--add-context` values.
-    #[arg(long, conflicts_with_all = ["prompt", "append"])]
+    #[arg(long, groups = LANE_GROUPS)]
     remove_contexts: bool,
 }
 
 #[derive(Args, Debug)]
 struct ConstraintEdits {
     /// Append a Constraint bullet; repeat for several.
-    #[arg(long, conflicts_with_all = ["prompt", "append"])]
+    #[arg(long, groups = LANE_GROUPS)]
     add_constraint: Vec<String>,
     /// Remove every Constraint before applying `--add-constraint` values.
-    #[arg(long, conflicts_with_all = ["prompt", "append"])]
+    #[arg(long, groups = LANE_GROUPS)]
     remove_constraints: bool,
 }
 
 #[derive(Args, Debug)]
 struct DoneWhenEdits {
     /// Append a Done When bullet; repeat for several.
-    #[arg(long, conflicts_with_all = ["prompt", "append"])]
+    #[arg(long, groups = LANE_GROUPS)]
     add_done_when: Vec<String>,
     /// Remove every Done When before applying `--add-done-when` values.
-    #[arg(long, conflicts_with_all = ["prompt", "append"])]
+    #[arg(long, groups = LANE_GROUPS)]
     remove_done_whens: bool,
 }
 
 #[derive(Args, Debug)]
 struct BlockedByEdits {
     /// Append a blocked-by task ID or [[ID]]; repeat or comma-separate for several.
-    #[arg(long)]
+    #[arg(long, group = EDIT)]
     add_blocked_by: Vec<BlockedByInput>,
     /// Remove every blocked-by task before applying `--add-blocked-by` values.
-    #[arg(long)]
+    #[arg(long, group = EDIT)]
     remove_blocked_by: bool,
 }
 
@@ -169,10 +121,10 @@ impl BlockedByEdits {
 #[derive(Args, Debug)]
 struct TagEdits {
     /// Append a discovery tag; repeat or comma-separate for several.
-    #[arg(long, allow_hyphen_values = true)]
+    #[arg(long, group = EDIT, allow_hyphen_values = true)]
     add_tag: Vec<TagInput>,
     /// Remove every tag before applying `--add-tag` values.
-    #[arg(long)]
+    #[arg(long, group = EDIT)]
     remove_tags: bool,
 }
 
@@ -188,12 +140,13 @@ impl TagEdits {
 }
 
 #[derive(Args, Debug)]
+#[group(multiple = false)]
 struct EffortEdit {
     /// Replace the effort tier.
-    #[arg(long, value_enum, conflicts_with = "remove_effort")]
+    #[arg(long, value_enum, group = EDIT)]
     effort: Option<EffortChoice>,
     /// Remove the effort tier.
-    #[arg(long, conflicts_with = "effort")]
+    #[arg(long, group = EDIT)]
     remove_effort: bool,
 }
 
@@ -215,12 +168,13 @@ impl EffortEdit {
 }
 
 #[derive(Args, Debug)]
+#[group(multiple = false)]
 struct PriorityEdit {
     /// Replace the priority tier.
-    #[arg(long, value_enum, conflicts_with = "remove_priority")]
+    #[arg(long, value_enum, group = EDIT)]
     priority: Option<PriorityChoice>,
     /// Remove the priority tier.
-    #[arg(long, conflicts_with = "priority")]
+    #[arg(long, group = EDIT)]
     remove_priority: bool,
 }
 
@@ -247,9 +201,7 @@ pub(super) async fn run(
     task_status_colors: TaskStatusColors,
     client: &TaskClient,
 ) -> anyhow::Result<String> {
-    let id = arguments
-        .identifier
-        .required(anyhow::anyhow!("--id is required for edit."))?;
+    let id = arguments.identifier.id();
     let (title, title_normalized) = arguments
         .title
         .as_deref()
@@ -269,16 +221,6 @@ pub(super) async fn run(
         expected_revision: None,
         request_id: String::new(),
     };
-    if request.content.is_none()
-        && request.blocked_by.is_none()
-        && request.effort.is_none()
-        && request.tags.is_none()
-        && request.priority.is_none()
-    {
-        return Err(anyhow::anyhow!(
-            "nothing to edit; pass at least one edit flag."
-        ));
-    }
     let result = client
         .update_task(request)
         .await

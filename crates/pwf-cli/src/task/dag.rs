@@ -74,9 +74,7 @@ pub(super) async fn run(
     task_status_colors: TaskStatusColors,
     client: &TaskClient,
 ) -> anyhow::Result<String> {
-    let id = arguments
-        .identifier
-        .required(anyhow::anyhow!("--id is required for dag."))?;
+    let id = arguments.identifier.id();
     let graph = client
         .get_task_dag(GetTaskDagRequest {
             id: id.to_string(),

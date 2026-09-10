@@ -479,7 +479,7 @@ fn task_dag_render_fixture() -> ManagedProject {
 }
 
 #[test]
-fn shorthand_and_machine_lane_inputs_conflict_before_mutation() {
+fn invalid_argument_combinations_fail_before_mutation() {
     let fixture = ManagedProject::new(&project_id("FOO").unwrap(), "foo-bar").unwrap();
     fixture
         .database
@@ -489,19 +489,75 @@ fn shorthand_and_machine_lane_inputs_conflict_before_mutation() {
         .success();
     let before = task_json(&fixture.database, &task_id("FOO-0001").unwrap()).unwrap();
 
-    fixture
-        .database
-        .command()
-        .args([
+    for arguments in [
+        vec![
             "edit",
             "FOO-0001",
             "--prompt",
-            "replacement / replacement goal",
+            "replacement / goal",
             "--add-goal",
-            "ambiguous goal",
-        ])
-        .assert()
-        .failure();
+            "ambiguous",
+        ],
+        vec![
+            "edit",
+            "FOO-0001",
+            "--append",
+            "more / goal",
+            "--remove-goals",
+        ],
+        vec!["edit", "FOO-0001", "--effort", "high", "--remove-effort"],
+        vec![
+            "edit",
+            "FOO-0001",
+            "--priority",
+            "high",
+            "--remove-priority",
+        ],
+        vec!["edit", "FOO-0001"],
+        vec!["task", "clone"],
+        vec!["task", "get"],
+        vec!["task", "add", "--title", "missing project"],
+        vec!["add", "foo-bar", "shorthand", "--title", "explicit"],
+        vec!["add", "foo-bar", "--goal", "missing title"],
+        vec!["note", "edit", "foo-bar", "1"],
+        vec![
+            "note",
+            "edit",
+            "foo-bar",
+            "1",
+            "--domain",
+            "docs",
+            "--remove-domain",
+        ],
+        vec!["note", "add", "foo-bar", "--title", "missing content"],
+        vec![
+            "note",
+            "add",
+            "foo-bar",
+            "title / body",
+            "--title",
+            "explicit",
+            "--content",
+            "body",
+        ],
+        vec!["project", "edit", "FOO"],
+        vec![
+            "project",
+            "edit",
+            "FOO",
+            "--source",
+            "/tmp",
+            "--clear-source",
+        ],
+    ] {
+        fixture
+            .database
+            .command()
+            .args(arguments)
+            .assert()
+            .failure()
+            .code(2);
+    }
 
     assert_eq!(
         task_json(&fixture.database, &task_id("FOO-0001").unwrap()).unwrap(),

@@ -65,18 +65,10 @@ pub(crate) struct AddArguments {
     #[arg(value_name = "PROJECT")]
     project: ProjectSelector,
     /// Title and Markdown content separated by ` / `
-    #[arg(
-        value_name = "NOTE",
-        required_unless_present_any = ["title", "content"],
-        conflicts_with_all = ["title", "content"]
-    )]
+    #[arg(value_name = "NOTE", required_unless_present = "structured_note")]
     note: Option<PositionalNote>,
-    /// Note title
-    #[arg(long, requires = "content", conflicts_with = "note")]
-    title: Option<NoteTitle>,
-    /// Markdown note content
-    #[arg(long, requires = "title", conflicts_with = "note")]
-    content: Option<NoteContent>,
+    #[command(flatten)]
+    structured: StructuredNote,
     /// Subject classification
     #[arg(long)]
     domain: Option<NoteDomain>,
@@ -95,6 +87,17 @@ pub(crate) struct AddArguments {
 }
 
 #[derive(Args, Debug)]
+#[group(id = "structured_note", requires_all = ["title", "content"], conflicts_with = "note")]
+struct StructuredNote {
+    /// Note title
+    #[arg(long)]
+    title: Option<NoteTitle>,
+    /// Markdown note content
+    #[arg(long)]
+    content: Option<NoteContent>,
+}
+
+#[derive(Args, Debug)]
 pub(crate) struct RemoveArguments {
     /// Managed project name or id
     #[arg(value_name = "PROJECT")]
@@ -107,25 +110,10 @@ pub(crate) struct RemoveArguments {
     assume_yes: bool,
 }
 
+const NOTE_EDITS: &str = "note_edits";
+
 #[derive(Args, Debug)]
-#[command(group(
-    ArgGroup::new("edit")
-        .required(true)
-        .multiple(true)
-        .args([
-            "shorthand_title",
-            "title",
-            "content",
-            "domain",
-            "remove_domain",
-            "add_tag",
-            "remove_tags",
-            "add_source",
-            "remove_sources",
-            "verified",
-            "remove_verified",
-        ])
-))]
+#[command(group(ArgGroup::new(NOTE_EDITS).required(true).multiple(true)))]
 pub(crate) struct EditArguments {
     /// Managed project name or id
     #[arg(value_name = "PROJECT")]
@@ -134,13 +122,13 @@ pub(crate) struct EditArguments {
     #[arg(value_name = "ID")]
     id: NoteSelector,
     /// Replacement title words; shorthand alternative to `--title`
-    #[arg(value_name = "TITLE", num_args = 1.., conflicts_with = "title")]
+    #[arg(value_name = "TITLE", num_args = 1.., group = NOTE_EDITS, conflicts_with = "title")]
     shorthand_title: Vec<String>,
     /// Replace the title
-    #[arg(long, conflicts_with = "shorthand_title")]
+    #[arg(long, group = NOTE_EDITS)]
     title: Option<NoteTitle>,
     /// Replace the Markdown content
-    #[arg(long)]
+    #[arg(long, group = NOTE_EDITS)]
     content: Option<NoteContent>,
     #[command(flatten)]
     domain: DomainEdits,
@@ -153,42 +141,44 @@ pub(crate) struct EditArguments {
 }
 
 #[derive(Args, Debug)]
+#[group(multiple = false)]
 struct DomainEdits {
     /// Replace the subject classification
-    #[arg(long, conflicts_with = "remove_domain")]
+    #[arg(long, group = NOTE_EDITS)]
     domain: Option<NoteDomain>,
     /// Remove the subject classification
-    #[arg(long, conflicts_with = "domain")]
+    #[arg(long, group = NOTE_EDITS)]
     remove_domain: bool,
 }
 
 #[derive(Args, Debug)]
 struct TagEdits {
     /// Append a discovery tag; repeat for several
-    #[arg(long, value_name = "TAG")]
+    #[arg(long, value_name = "TAG", group = NOTE_EDITS)]
     add_tag: Vec<NoteTag>,
     /// Remove every tag before applying `--add-tag` values
-    #[arg(long)]
+    #[arg(long, group = NOTE_EDITS)]
     remove_tags: bool,
 }
 
 #[derive(Args, Debug)]
 struct SourceEdits {
     /// Append a supporting source; repeat for several
-    #[arg(long, value_name = "SOURCE")]
+    #[arg(long, value_name = "SOURCE", group = NOTE_EDITS)]
     add_source: Vec<NoteSource>,
     /// Remove every source before applying `--add-source` values
-    #[arg(long)]
+    #[arg(long, group = NOTE_EDITS)]
     remove_sources: bool,
 }
 
 #[derive(Args, Debug)]
+#[group(multiple = false)]
 struct VerificationEdits {
     /// Replace the verification date or marker
-    #[arg(long, conflicts_with = "remove_verified")]
+    #[arg(long, group = NOTE_EDITS)]
     verified: Option<NoteVerification>,
     /// Remove the verification date or marker
-    #[arg(long, conflicts_with = "verified")]
+    #[arg(long, group = NOTE_EDITS)]
     remove_verified: bool,
 }
 
@@ -257,7 +247,11 @@ async fn add(
     client: &NoteClient,
     projects: &ProjectClient,
 ) -> anyhow::Result<String> {
-    let (title, content) = match (&arguments.note, &arguments.title, &arguments.content) {
+    let (title, content) = match (
+        &arguments.note,
+        &arguments.structured.title,
+        &arguments.structured.content,
+    ) {
         (Some(note), None, None) => (note.title.clone(), note.content.clone()),
         (None, Some(title), Some(content)) => (title.clone(), content.clone()),
         _ => {

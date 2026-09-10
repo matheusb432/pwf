@@ -21,28 +21,12 @@ use crate::console::Console;
 pub struct Arguments {
     /// Project's name or id
     #[arg(value_name = "PROJECT")]
-    pub(crate) project: Option<ProjectSelector>,
+    pub(crate) project: ProjectSelector,
     /// Task's prompt's shorthand, using lanes. Conflicts with section-specific args.
-    #[arg(
-        value_name = "PROMPT",
-        conflicts_with_all = ["title", "goal", "context", "constraint", "done_when"]
-    )]
+    #[arg(value_name = "PROMPT")]
     pub(crate) prompt: Vec<String>,
-    /// Task's title
-    #[arg(long, required_unless_present = "prompt", conflicts_with = "prompt")]
-    pub(crate) title: Option<String>,
-    /// Goal. repeat for several. Requires `--title`
-    #[arg(long, requires = "title", conflicts_with = "prompt")]
-    pub(crate) goal: Vec<String>,
-    /// Context. repeat for several. Requires `--title`
-    #[arg(long, requires = "title", conflicts_with = "prompt")]
-    pub(crate) context: Vec<String>,
-    /// Constraint. repeat for several. Requires `--title`
-    #[arg(long, requires = "title", conflicts_with = "prompt")]
-    pub(crate) constraint: Vec<String>,
-    /// Done When. repeat for several. Requires `--title`
-    #[arg(long, requires = "title", conflicts_with = "prompt")]
-    pub(crate) done_when: Vec<String>,
+    #[command(flatten)]
+    structured: StructuredPrompt,
     /// Blocked-by task ID or [[ID]]; repeat or comma-separate for several
     #[arg(long)]
     pub(crate) blocked_by: Vec<BlockedByInput>,
@@ -58,6 +42,30 @@ pub struct Arguments {
     pub(crate) priority: Option<PriorityChoice>,
 }
 
+#[derive(Args, Debug)]
+#[group(
+    id = "structured_prompt",
+    conflicts_with = "prompt",
+    requires = "title"
+)]
+struct StructuredPrompt {
+    /// Task's title
+    #[arg(long, required_unless_present = "prompt")]
+    pub(crate) title: Option<String>,
+    /// Goal. repeat for several. Requires `--title`
+    #[arg(long)]
+    pub(crate) goal: Vec<String>,
+    /// Context. repeat for several. Requires `--title`
+    #[arg(long)]
+    pub(crate) context: Vec<String>,
+    /// Constraint. repeat for several. Requires `--title`
+    #[arg(long)]
+    pub(crate) constraint: Vec<String>,
+    /// Done When. repeat for several. Requires `--title`
+    #[arg(long)]
+    pub(crate) done_when: Vec<String>,
+}
+
 pub(super) async fn run(
     arguments: &Arguments,
     console: Console,
@@ -65,14 +73,8 @@ pub(super) async fn run(
     client: &TaskClient,
     projects: &pwf_client::project::ProjectClient,
 ) -> anyhow::Result<String> {
-    let project_selector = arguments
-        .project
-        .clone()
-        .ok_or_else(|| anyhow::anyhow!(
-            "Use shorthand: pwf task add <project> \"<prompt>\"\nOr machine mode: pwf task add <project> --title <title> [lane flags]"
-        ))?;
     let (prompt, title_normalized) = request_prompt(arguments)?;
-    let project_id = crate::project::resolve_project_id(&project_selector, projects).await?;
+    let project_id = crate::project::resolve_project_id(&arguments.project, projects).await?;
     let result = client
         .create_task(CreateTaskRequest {
             project_id: project_id.to_string(),
@@ -116,13 +118,13 @@ pub(super) async fn run(
 }
 
 fn request_prompt(arguments: &Arguments) -> anyhow::Result<(create_task_request::Prompt, bool)> {
-    if let Some(title) = arguments.title.as_deref() {
+    if let Some(title) = arguments.structured.title.as_deref() {
         let (title, normalized) = task_title(title)?;
         let lanes = task_lanes(
-            &arguments.goal,
-            &arguments.context,
-            &arguments.constraint,
-            &arguments.done_when,
+            &arguments.structured.goal,
+            &arguments.structured.context,
+            &arguments.structured.constraint,
+            &arguments.structured.done_when,
             LaneFlagMode::Add,
         )?;
         return Ok((

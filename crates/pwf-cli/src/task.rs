@@ -41,6 +41,7 @@ pub fn benchmark_dag_render_prepare(task_dag: TaskDag, color_on: bool) {
 }
 
 #[derive(Args, Debug)]
+#[group(required = true)]
 struct TaskIdentifierArguments {
     /// Task id (bare positional; `--id` also accepted). E.g. `PWF-0001`, `cfg57`.
     #[arg(value_name = "ID")]
@@ -53,12 +54,12 @@ struct TaskIdentifierArguments {
 
 #[derive(Debug)]
 pub(crate) struct Identifier {
-    task_id: Option<TaskId>,
+    task_id: TaskId,
 }
 
 impl Identifier {
-    fn required<Error>(&self, error: Error) -> Result<TaskId, Error> {
-        self.task_id.clone().ok_or(error)
+    fn id(&self) -> &TaskId {
+        &self.task_id
     }
 }
 
@@ -94,8 +95,13 @@ impl TryFrom<TaskIdentifierArguments> for Identifier {
                     "a task ID cannot be supplied by both position and --id",
                 ));
             }
-            (Some(task_id), None) | (None, Some(task_id)) => Some(task_id),
-            (None, None) => None,
+            (Some(task_id), None) | (None, Some(task_id)) => task_id,
+            (None, None) => {
+                return Err(clap::Error::raw(
+                    clap::error::ErrorKind::MissingRequiredArgument,
+                    "a task ID is required",
+                ));
+            }
         };
         Ok(Self { task_id })
     }

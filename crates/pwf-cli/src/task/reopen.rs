@@ -25,9 +25,7 @@ pub(super) async fn run(
     task_status_colors: TaskStatusColors,
     client: &TaskClient,
 ) -> anyhow::Result<String> {
-    let id = arguments
-        .identifier
-        .required(anyhow::anyhow!("--id is required for reopen."))?;
+    let id = arguments.identifier.id();
     let confirmation_mode = console.confirmation_mode(arguments.assume_yes)?;
     let confirmation_client = CliConfirmationClient::new(console, confirmation_mode);
     let outcome = match client

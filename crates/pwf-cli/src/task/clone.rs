@@ -24,9 +24,7 @@ pub(super) async fn run(
     client: &TaskClient,
     projects: &ProjectClient,
 ) -> anyhow::Result<String> {
-    let id = arguments.identifier.required(anyhow::anyhow!(
-        "Use pwf task clone <id> [--project <project>]."
-    ))?;
+    let id = arguments.identifier.id();
     let project_id = match arguments.project.as_ref() {
         Some(selector) => Some(
             crate::project::resolve_project_id(selector, projects)

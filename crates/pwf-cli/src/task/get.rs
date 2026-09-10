@@ -28,14 +28,10 @@ pub(super) async fn run(
     client: &TaskClient,
     projects: &ProjectClient,
 ) -> anyhow::Result<String> {
-    let id = arguments
-        .identifier
-        .required(anyhow::anyhow!("--id is required for get."))?;
+    let id = arguments.identifier.id();
     if arguments.json {
         let task = client
-            .get_task(GetTaskRequest {
-                id: id.into_string(),
-            })
+            .get_task(GetTaskRequest { id: id.to_string() })
             .await
             .map_err(crate::rpc_error)?;
         let project = projects
@@ -48,9 +44,7 @@ pub(super) async fn run(
         return output::json(&task, project.title);
     }
     let record = client
-        .get_task_record(GetTaskRecordRequest {
-            id: id.into_string(),
-        })
+        .get_task_record(GetTaskRecordRequest { id: id.to_string() })
         .await
         .map_err(crate::rpc_error)?
         .record

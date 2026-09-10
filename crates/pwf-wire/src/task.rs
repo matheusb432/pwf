@@ -234,9 +234,7 @@ pub struct AddTask {
     pub tags: Option<TaskTags>,
     /// Optional scheduling priority.
     pub priority: Option<PriorityTier>,
-    /// Retry identity supplied by API clients that can replay creation.
     pub request_id: Option<TaskRequestId>,
-    /// Stable fingerprint of the validated transport request without its retry identity.
     pub request_fingerprint: Option<TaskRequestFingerprint>,
 }
 

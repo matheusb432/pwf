@@ -66,17 +66,6 @@ pwf task get app1
 
 you can link tasks with `--blocked-by` and see their dependencies with `pwf task dag app1`.
 
-Clone a task into a new active task:
-
-```bash
-pwf task clone app1
-pwf task clone app1 --project another-project
-```
-
-The destination defaults to the source project. `--project` accepts a project name or ID.
-The clone keeps the title, exact body, tags, effort, priority, and blockers. It gets a new ID and
-creation timestamp, with no completion timestamp or commits. The source task stays unchanged.
-
 ## Sessions
 
 > [!IMPORTANT]
