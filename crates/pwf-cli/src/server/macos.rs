@@ -8,6 +8,7 @@ use plist::{Dictionary, Value};
 use tokio::time::{Duration, Instant, sleep};
 
 use super::{State, absolute_environment, checked, environment, output, process};
+use crate::command::SERVER_INSTALL_COMMAND;
 
 pub(super) struct Registration {
     path: PathBuf,
@@ -51,11 +52,62 @@ impl Registration {
         if self.process_id().await?.is_some() {
             return Ok(State::Running);
         }
+        let response =
+            output(process::Command::new("launchctl").args(["print", &self.label()])).await?;
+        if response.status.success()
+            && String::from_utf8_lossy(&response.stdout)
+                .lines()
+                .any(|line| {
+                    line.trim()
+                        .strip_prefix("last exit code = ")
+                        .is_some_and(|code| code != "0")
+                })
+        {
+            return Ok(State::Failed);
+        }
         Ok(if self.path.is_file() {
             State::Stopped
         } else {
             State::NotInstalled
         })
+    }
+
+    #[allow(clippy::unused_async, clippy::unused_async_trait_impl)]
+    pub(super) async fn diagnostic_command(&self) -> anyhow::Result<process::Command> {
+        let plist = Value::from_file(&self.path)?;
+        let values = plist
+            .as_dictionary()
+            .context("invalid launch agent plist")?;
+        let program = values
+            .get("ProgramArguments")
+            .and_then(Value::as_array)
+            .and_then(|args| args.first())
+            .and_then(Value::as_string)
+            .context("launch agent has no executable")?;
+        let mut command = process::Command::new(program);
+        for name in super::ENVIRONMENT_NAMES {
+            command.env_remove(name);
+        }
+        if let Some(environment) = values
+            .get("EnvironmentVariables")
+            .and_then(Value::as_dictionary)
+        {
+            for (name, value) in environment {
+                if super::ENVIRONMENT_NAMES.contains(&name.as_str()) {
+                    command.env(
+                        name,
+                        value
+                            .as_string()
+                            .context("invalid launch environment value")?,
+                    );
+                }
+            }
+        }
+        Ok(command)
+    }
+
+    pub(super) async fn failure_detail(&self) -> anyhow::Result<String> {
+        checked(process::Command::new("launchctl").args(["print", &self.label()])).await
     }
 
     pub(super) async fn stop(&self) -> anyhow::Result<()> {
@@ -91,9 +143,10 @@ impl Registration {
         values.insert("Label".into(), Value::String("pwf-server".into()));
         values.insert(
             "ProgramArguments".into(),
-            Value::Array(vec![Value::String(
-                server.to_str().context("server path is not UTF-8")?.into(),
-            )]),
+            Value::Array(vec![
+                Value::String(server.to_str().context("server path is not UTF-8")?.into()),
+                Value::String("--managed".into()),
+            ]),
         );
         values.insert("RunAtLoad".into(), Value::Boolean(true));
         let mut keep_alive = Dictionary::new();
@@ -123,7 +176,7 @@ impl Registration {
     pub(super) async fn start(&self) -> anyhow::Result<()> {
         ensure!(
             self.path.is_file(),
-            "pwf-server is not installed - run pwf server install"
+            "pwf-server is not installed - run {SERVER_INSTALL_COMMAND}"
         );
         let loaded = output(process::Command::new("launchctl").args(["print", &self.label()]))
             .await?

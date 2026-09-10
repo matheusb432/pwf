@@ -60,6 +60,10 @@ impl Console {
         dialog.interact(self.color_forced.unwrap_or(self.stderr_terminal))
     }
 
+    pub(crate) fn error_color(self) -> bool {
+        self.color_forced.unwrap_or(self.stderr_terminal)
+    }
+
     /// Whether auto-detected stdout styling is enabled.
     pub(crate) fn color(self) -> bool {
         self.color_forced.unwrap_or(self.stdout_terminal)

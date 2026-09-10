@@ -1,62 +1,115 @@
 #![cfg(unix)]
 
-use std::{fs, os::unix::fs::PermissionsExt as _, process::Command};
+use std::{
+    fs,
+    os::unix::fs::PermissionsExt as _,
+    process::{Command, Output},
+};
 
 #[test]
-fn installs_cli_before_stopping_and_replacing_server() {
-    let root = tempfile::tempdir().unwrap();
+fn stages_and_checks_both_binaries_before_stopping_service() {
+    let (root, output) = run_install("").unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(root.path().join("trace")).unwrap(),
+        "stage binaries\npwf server install --check\npwf server stop\nplace binaries\npwf server install\n"
+    );
+}
+
+#[test]
+fn incompatible_update_preserves_installed_binaries_and_service() {
+    let (root, output) = run_install("preflight").unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("preflight failed"));
+    assert_eq!(
+        fs::read_to_string(root.path().join("trace")).unwrap(),
+        "stage binaries\npwf server install --check\n"
+    );
+    assert_original_binaries(root.path()).unwrap();
+}
+
+#[test]
+fn failed_binary_placement_restores_previous_pair() {
+    let (root, output) = run_install("placement").unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("previous binaries restored"));
+    assert_eq!(
+        fs::read_to_string(root.path().join("trace")).unwrap(),
+        "stage binaries\npwf server install --check\npwf server stop\nplace binaries\n"
+    );
+    assert_original_binaries(root.path()).unwrap();
+}
+
+fn assert_original_binaries(root: &std::path::Path) -> anyhow::Result<()> {
+    assert_eq!(
+        fs::read_to_string(root.join("cargo root/bin/pwf"))?,
+        "original CLI"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("cargo root/bin/pwf-server"))?,
+        "original server"
+    );
+    Ok(())
+}
+
+fn run_install(failure: &str) -> anyhow::Result<(tempfile::TempDir, Output)> {
+    let root = tempfile::tempdir()?;
     let tools = root.path().join("tools");
-    fs::create_dir(&tools).unwrap();
+    fs::create_dir(&tools)?;
     let cargo = tools.join("cargo");
     fs::write(
         &cargo,
         r#"#!/bin/bash
 set -eu
+binaries=()
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --bin) binary="$2"; shift 2 ;;
+    --bin) binaries+=("$2"); shift 2 ;;
     --root) destination="$2"; shift 2 ;;
     *) shift ;;
   esac
 done
-printf 'install %s\n' "$binary" >> "$INSTALL_TRACE"
+test "${binaries[*]}" = 'pwf pwf-server'
+if [ "$destination" = "$PWF_TEST_ROOT" ]; then
+  echo 'place binaries' >> "$INSTALL_TRACE"
+  if [ "$INSTALL_FAILURE" = placement ]; then echo partial > "$destination/bin/pwf"; exit 1; fi
+else
+  echo 'stage binaries' >> "$INSTALL_TRACE"
+fi
 mkdir -p "$destination/bin"
-if [ "$binary" = pwf ]; then
-  cat > "$destination/bin/pwf" <<'CLI'
+cat > "$destination/bin/pwf" <<'CLI'
 #!/bin/bash
 set -eu
 printf 'pwf %s\n' "$*" >> "$INSTALL_TRACE"
-if [ "$2" = install ]; then test -f "$PWF_TEST_ROOT/bin/pwf-server"; fi
-CLI
-  chmod +x "$destination/bin/pwf"
-else
-  touch "$destination/bin/pwf-server"
+test -f "$(dirname "$0")/pwf-server"
+if [ "$*" = 'server install --check' ] && [ "$INSTALL_FAILURE" = preflight ]; then
+  echo 'SQLx migration 0 checksum does not match' >&2
+  exit 1
 fi
+CLI
+chmod +x "$destination/bin/pwf"
+touch "$destination/bin/pwf-server"
 "#,
-    )
-    .unwrap();
-    fs::set_permissions(&cargo, fs::Permissions::from_mode(0o755)).unwrap();
+    )?;
+    fs::set_permissions(&cargo, fs::Permissions::from_mode(0o755))?;
     let install = root.path().join("cargo root");
-    let trace = root.path().join("trace");
-    let path = std::env::join_paths(
-        std::iter::once(tools).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
-    )
-    .unwrap();
-    let result = Command::new(env!("CARGO_BIN_EXE_xtask"))
-        .args(["install", "--root"])
+    fs::create_dir_all(install.join("bin"))?;
+    fs::write(install.join("bin/pwf"), "original CLI")?;
+    fs::write(install.join("bin/pwf-server"), "original server")?;
+    let path = std::env::join_paths(std::iter::once(tools).chain(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    )))?;
+    let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["update", "--force", "--root"])
         .arg(&install)
         .env("PATH", path)
-        .env("INSTALL_TRACE", &trace)
+        .env("INSTALL_TRACE", root.path().join("trace"))
         .env("PWF_TEST_ROOT", &install)
-        .output()
-        .unwrap();
-    assert!(
-        result.status.success(),
-        "{}",
-        String::from_utf8_lossy(&result.stderr)
-    );
-    assert_eq!(
-        fs::read_to_string(trace).unwrap(),
-        "install pwf\npwf server stop\ninstall pwf-server\npwf server install\n"
-    );
+        .env("INSTALL_FAILURE", failure)
+        .output()?;
+    Ok((root, output))
 }

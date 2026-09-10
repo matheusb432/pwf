@@ -18,7 +18,11 @@ mod release;
 pub mod settings;
 pub mod task;
 
-pub use pwf_wire::pb;
+pub use pwf_wire::{doctor, pb};
+
+pub fn local_endpoint_path() -> Result<std::path::PathBuf, ConnectError> {
+    Ok(LocalEndpoint::from_environment()?.path().to_path_buf())
+}
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(1);
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(5);

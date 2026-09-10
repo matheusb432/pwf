@@ -15,6 +15,18 @@ use tokio::{
     time::{sleep, timeout},
 };
 
+use crate::{
+    command::{
+        DOCTOR_COMMAND, SERVER_INSTALL_COMMAND, SERVER_RESTART_COMMAND, SERVER_START_COMMAND,
+        SERVER_STATUS_COMMAND,
+    },
+    console::Console,
+};
+
+mod diagnostics;
+pub(crate) use diagnostics::diagnose;
+use diagnostics::preflight;
+
 #[cfg(target_os = "linux")]
 #[path = "server/linux.rs"]
 mod native;
@@ -38,16 +50,25 @@ pub struct Arguments {
 #[derive(Subcommand, Debug)]
 enum Command {
     /// Register login startup, start the sibling server and wait until ready.
-    Install,
+    #[command(name = SERVER_INSTALL_COMMAND.name())]
+    Install {
+        /// Check the sibling server and database without changing registration or stopping the
+        /// service.
+        #[arg(long)]
+        check: bool,
+    },
     /// Stop and remove startup registration, retaining binaries, database and notes.
     Uninstall,
     /// Start the registered server and wait until ready.
+    #[command(name = SERVER_START_COMMAND.name())]
     Start,
     /// Stop the registered server and wait until it exits.
     Stop,
     /// Stop, then start the registered server and wait until ready.
+    #[command(name = SERVER_RESTART_COMMAND.name())]
     Restart,
     /// Show startup registration, health and client/server versions.
+    #[command(name = SERVER_STATUS_COMMAND.name())]
     Status,
 }
 
@@ -56,12 +77,15 @@ enum State {
     NotInstalled,
     Stopped,
     Running,
+    Failed,
+    #[cfg(target_os = "linux")]
+    Starting,
 }
 
-pub async fn run(arguments: Arguments) -> anyhow::Result<String> {
+pub async fn run(arguments: Arguments, console: Console) -> anyhow::Result<String> {
     let registration = native::Registration::discover().await?;
     match arguments.command {
-        Command::Install => {
+        Command::Install { check } => {
             let cli = std::env::current_exe()?.canonicalize()?;
             let server = cli.with_file_name(format!("pwf-server{}", std::env::consts::EXE_SUFFIX));
             ensure!(
@@ -69,17 +93,14 @@ pub async fn run(arguments: Arguments) -> anyhow::Result<String> {
                 "missing sibling {} - install pwf-app with both binaries first",
                 server.display()
             );
-            let version = checked(process::Command::new(&server).arg("--version")).await?;
-            ensure!(
-                version.trim() == concat!("pwf-server ", env!("CARGO_PKG_VERSION")),
-                "{} does not match pwf {}",
-                server.display(),
-                env!("CARGO_PKG_VERSION")
-            );
+            preflight(&mut process::Command::new(&server), console.error_color()).await?;
+            if check {
+                return Ok("pwf-server installation preflight passed".into());
+            }
             registration.stop().await?;
             registration.install(&server).await?;
             registration.start().await?;
-            wait_ready().await?;
+            wait_ready(&registration, console).await?;
             report_shadowing(&cli);
             Ok(format!(
                 "pwf-server {} installed and ready\nexecutable: {}",
@@ -92,20 +113,22 @@ pub async fn run(arguments: Arguments) -> anyhow::Result<String> {
             registration.uninstall().await?;
             Ok("pwf-server uninstalled".into())
         }
-        Command::Start => {
+        command @ (Command::Start | Command::Restart) => {
+            preflight(
+                &mut registration.diagnostic_command().await?,
+                console.error_color(),
+            )
+            .await?;
+            if matches!(command, Command::Restart) {
+                registration.stop().await?;
+            }
             registration.start().await?;
-            wait_ready().await?;
+            wait_ready(&registration, console).await?;
             Ok("pwf-server ready".into())
         }
         Command::Stop => {
             registration.stop().await?;
             Ok("pwf-server stopped".into())
-        }
-        Command::Restart => {
-            registration.stop().await?;
-            registration.start().await?;
-            wait_ready().await?;
-            Ok("pwf-server ready".into())
         }
         Command::Status => {
             let state = registration.status().await?;
@@ -129,18 +152,35 @@ pub async fn run(arguments: Arguments) -> anyhow::Result<String> {
                 State::NotInstalled => "not installed",
                 State::Stopped => "stopped",
                 State::Running => "running",
+                State::Failed => "failed",
+                #[cfg(target_os = "linux")]
+                State::Starting => "starting",
             };
             Ok(format!(
-                "service: {state}\nhealth: {health}\nclient version: {}\nserver version: {version}",
-                env!("CARGO_PKG_VERSION")
+                "service: {state}\nhealth: {health}\nclient version: {}\nserver version: {version}{}",
+                env!("CARGO_PKG_VERSION"),
+                if health == "unavailable" {
+                    format!("\nRun `{DOCTOR_COMMAND}` for the cause and recovery action.")
+                } else {
+                    String::new()
+                }
             ))
         }
     }
 }
 
-async fn wait_ready() -> anyhow::Result<()> {
+async fn wait_ready(registration: &native::Registration, console: Console) -> anyhow::Result<()> {
     timeout(READINESS_TIMEOUT, async {
         loop {
+            let state = registration.status().await?;
+            if matches!(state, State::Failed | State::Stopped) {
+                let mut command = registration.diagnostic_command().await?;
+                preflight(&mut command, console.error_color()).await?;
+            }
+            if state == State::Failed {
+                let detail = registration.failure_detail().await?;
+                bail!("pwf-server failed during startup: {}\nRun `{DOCTOR_COMMAND}` for recovery actions.", detail.trim());
+            }
             let Ok(client) = PwfClient::connect_local().await else {
                 sleep(Duration::from_millis(100)).await;
                 continue;
@@ -149,17 +189,20 @@ async fn wait_ready() -> anyhow::Result<()> {
                 sleep(Duration::from_millis(100)).await;
                 continue;
             };
-            ensure!(health.version.as_deref() == Some(env!("CARGO_PKG_VERSION")), "running server version {} differs from pwf {} - inspect pwf server status and reinstall the service", health.version.as_deref().unwrap_or("unknown"), env!("CARGO_PKG_VERSION"));
+            ensure!(health.version.as_deref() == Some(env!("CARGO_PKG_VERSION")), "running server version {} differs from pwf {} - inspect {SERVER_STATUS_COMMAND} and reinstall the service", health.version.as_deref().unwrap_or("unknown"), env!("CARGO_PKG_VERSION"));
             if health.serving { return Ok(()); }
             sleep(Duration::from_millis(100)).await;
         }
-    }).await.context("pwf-server did not become ready within 15 seconds - inspect pwf server status and the native service logs")?
+    }).await.with_context(|| format!("pwf-server did not become ready within 15 seconds - run `{DOCTOR_COMMAND}` for the cause and recovery action"))?
 }
 
 #[cfg(target_os = "linux")]
 async fn wait_stopped(registration: &native::Registration) -> anyhow::Result<()> {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(12);
-    while registration.status().await? == State::Running {
+    while matches!(
+        registration.status().await?,
+        State::Running | State::Starting
+    ) {
         ensure!(
             tokio::time::Instant::now() < deadline,
             "pwf-server did not stop within 12 seconds"
@@ -227,21 +270,23 @@ fn absolute_environment(name: &str) -> anyhow::Result<PathBuf> {
     Ok(path)
 }
 
+const ENVIRONMENT_NAMES: [&str; 5] = [
+    "PWF_DATABASE_PATH",
+    "PWF_RUNTIME_DIR",
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
+    "XDG_STATE_HOME",
+];
+
 fn environment() -> Vec<(String, String)> {
-    [
-        "PWF_DATABASE_PATH",
-        "PWF_RUNTIME_DIR",
-        "XDG_CONFIG_HOME",
-        "XDG_DATA_HOME",
-        "XDG_STATE_HOME",
-    ]
-    .into_iter()
-    .filter_map(|name| {
-        std::env::var(name)
-            .ok()
-            .map(|value| (name.to_owned(), value))
-    })
-    .collect()
+    ENVIRONMENT_NAMES
+        .into_iter()
+        .filter_map(|name| {
+            std::env::var(name)
+                .ok()
+                .map(|value| (name.to_owned(), value))
+        })
+        .collect()
 }
 
 fn report_shadowing(cli: &Path) {

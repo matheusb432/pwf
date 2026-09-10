@@ -11,7 +11,9 @@ use sqlx::{
 
 mod migrations;
 
-pub use migrations::{check_database_ready, migrate_database};
+pub use migrations::{
+    MigrationCompatibility, check_database_compatible, check_database_ready, migrate_database,
+};
 
 const DATABASE_CONNECTIONS_MAX: u32 = 4;
 const DATABASE_MIGRATION_CONNECTIONS_MAX: u32 = 1;
@@ -46,6 +48,11 @@ pub async fn build_migration_pool(path: &Path) -> anyhow::Result<SqlitePool> {
 
 /// Opens an existing database without creating files or permitting writes.
 pub async fn build_read_only_pool(path: &Path) -> anyhow::Result<SqlitePool> {
+    anyhow::ensure!(
+        !path.is_dir(),
+        "unable to open database file: {} is a directory",
+        path.display()
+    );
     let options = connect_options(path).read_only(true);
     SqlitePoolOptions::new()
         .max_connections(DATABASE_MIGRATION_CONNECTIONS_MAX)

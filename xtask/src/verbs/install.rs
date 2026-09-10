@@ -46,38 +46,85 @@ fn place(arguments: &InstallArgs, dry: bool) -> Result<()> {
         .join("bin")
         .join(format!("pwf{}", env::consts::EXE_SUFFIX));
     if dry {
-        eprintln!("DRY-RUN: install pwf into {}", root.display());
-        eprintln!("DRY-RUN: {} server stop", cli.display());
-        eprintln!("DRY-RUN: install pwf-server into {}", root.display());
+        eprintln!("DRY-RUN: stage pwf and pwf-server in a temporary Cargo install root");
+        eprintln!(
+            "DRY-RUN: staged pwf server install --check (read-only database compatibility check)"
+        );
+        eprintln!("DRY-RUN: staged pwf server stop");
+        eprintln!(
+            "DRY-RUN: install both staged builds into {}",
+            root.display()
+        );
         eprintln!("DRY-RUN: {} server install", cli.display());
         return Ok(());
     }
-    install_binary(&package, &root, "pwf")?;
+    stage_and_install(&package, &root, Path::new("cargo"))
+}
+
+fn stage_and_install(package: &Path, root: &Path, cargo: &Path) -> Result<()> {
+    let staging = tempfile::tempdir().context("creating binary staging directory")?;
+    install_binaries(package, staging.path(), cargo)?;
+    let name = format!("pwf{}", env::consts::EXE_SUFFIX);
+    let staged_cli = staging.path().join("bin").join(&name);
+    let cli = root.join("bin").join(&name);
+    process::run(
+        "check replacement server before stopping the service",
+        Command::new(&staged_cli).args(["server", "install", "--check"]),
+    )
+    .context("update preflight failed; installed binaries and service were not changed")?;
+    let backups = tempfile::tempdir().context("creating binary rollback directory")?;
+    for binary in ["pwf", "pwf-server"] {
+        let name = format!("{binary}{}", env::consts::EXE_SUFFIX);
+        let installed = root.join("bin").join(&name);
+        if installed.is_file() {
+            fs::copy(&installed, backups.path().join(&name))?;
+        }
+    }
     process::run(
         "stop installed server",
-        Command::new(&cli).args(["server", "stop"]),
+        Command::new(&staged_cli).args(["server", "stop"]),
     )?;
-    install_binary(&package, &root, "pwf-server").with_context(|| {
-        format!(
-            "server remains stopped - after fixing installation, run {} server start",
-            cli.display()
-        )
-    })?;
+    if let Err(error) = install_binaries(package, root, cargo) {
+        restore_binaries(root, backups.path())?;
+        return Err(error).context("binary installation failed; previous binaries restored. The server is stopped; run pwf server start after resolving the installation failure");
+    }
     process::run(
         "register and start installed server",
         Command::new(&cli).args(["server", "install"]),
     )
+    .context(
+        "installed server did not become ready; run pwf doctor for the cause and recovery action",
+    )
 }
 
-fn install_binary(package: &Path, root: &Path, binary: &str) -> Result<()> {
+fn restore_binaries(root: &Path, backups: &Path) -> Result<()> {
+    for binary in ["pwf", "pwf-server"] {
+        let name = format!("{binary}{}", env::consts::EXE_SUFFIX);
+        let backup = backups.join(&name);
+        let installed = root.join("bin").join(&name);
+        if backup.is_file() {
+            fs::copy(&backup, &installed).with_context(|| {
+                format!(
+                    "restoring {} after failed installation",
+                    installed.display()
+                )
+            })?;
+        } else if installed.is_file() {
+            fs::remove_file(&installed)?;
+        }
+    }
+    Ok(())
+}
+
+fn install_binaries(package: &Path, root: &Path, cargo: &Path) -> Result<()> {
     process::run(
         "Cargo binary installation",
-        Command::new("cargo")
+        Command::new(cargo)
             .args(["install", "--locked", "--force", "--path"])
             .arg(package)
             .args(["--root"])
             .arg(root)
-            .args(["--bin", binary, "--target-dir"])
+            .args(["--bin", "pwf", "--bin", "pwf-server", "--target-dir"])
             .arg(paths::repo_root().join("target")),
     )
 }

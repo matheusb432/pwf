@@ -16,6 +16,7 @@ path = "src/lib.rs"
 [dependencies]
 blake3 = { workspace = true }
 prost = { workspace = true }
+serde = { workspace = true }
 pwf-models = { workspace = true }
 thiserror = { workspace = true }
 tonic = { workspace = true }

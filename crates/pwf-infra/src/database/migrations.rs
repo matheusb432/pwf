@@ -16,6 +16,12 @@ struct MigrationRecord {
     checksum: Vec<u8>,
 }
 
+#[derive(Debug)]
+pub enum MigrationCompatibility {
+    Compatible { pending: usize },
+    Incompatible { reason: String },
+}
+
 pub async fn migrate_database(pool: &SqlitePool) -> anyhow::Result<()> {
     tokio::time::timeout(DATABASE_MIGRATION_WAIT_MAX, async {
         // SQLx's SQLite migration lock is a no-op; acquire the writer before reading the ledger.
@@ -39,14 +45,31 @@ pub async fn migrate_database(pool: &SqlitePool) -> anyhow::Result<()> {
 }
 
 pub async fn check_database_ready(pool: &SqlitePool) -> anyhow::Result<()> {
-    let applied = read_migrations(&mut *pool.acquire().await?).await?;
-    let expected = expected_migrations();
-    validate_prefix(&expected, &applied)?;
+    let pending = match check_database_compatible(pool).await? {
+        MigrationCompatibility::Compatible { pending } => pending,
+        MigrationCompatibility::Incompatible { reason } => anyhow::bail!(reason),
+    };
     ensure!(
-        applied.len() == expected.len(),
+        pending == 0,
         "database schema is not ready: migrations are pending"
     );
     Ok(())
+}
+
+/// Inspects ledger compatibility without applying migrations; I/O failures remain errors.
+pub async fn check_database_compatible(
+    pool: &SqlitePool,
+) -> anyhow::Result<MigrationCompatibility> {
+    let applied = read_migrations(&mut *pool.acquire().await?).await?;
+    let expected = expected_migrations();
+    Ok(match validate_prefix(&expected, &applied) {
+        Ok(()) => MigrationCompatibility::Compatible {
+            pending: expected.len() - applied.len(),
+        },
+        Err(error) => MigrationCompatibility::Incompatible {
+            reason: error.to_string(),
+        },
+    })
 }
 
 async fn read_migrations(

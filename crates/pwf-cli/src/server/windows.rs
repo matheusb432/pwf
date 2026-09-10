@@ -4,6 +4,7 @@ use anyhow::{Context as _, bail};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 
 use super::{State, checked, environment, process};
+use crate::command::SERVER_INSTALL_COMMAND;
 
 const SCRIPT: &str = include_str!("windows.ps1");
 
@@ -37,6 +38,10 @@ impl Registration {
             ])
             .env("PWF_SERVER_ACTION", action)
             .env(
+                "PWF_SERVER_INSTALL_COMMAND",
+                SERVER_INSTALL_COMMAND.to_string(),
+            )
+            .env(
                 "PWF_SERVER_ENVIRONMENT",
                 serde_json::to_string(&environment())?,
             );
@@ -53,8 +58,29 @@ impl Registration {
             "running" => Ok(State::Running),
             "stopped" => Ok(State::Stopped),
             "not installed" => Ok(State::NotInstalled),
+            "failed" => Ok(State::Failed),
             other => bail!("unknown pwf-server task state: {other}"),
         }
+    }
+
+    pub(super) async fn diagnostic_command(&self) -> anyhow::Result<process::Command> {
+        let configuration: serde_json::Value =
+            serde_json::from_str(&self.invoke("Configuration", None).await?)?;
+        let program = configuration["program"].as_str().with_context(|| {
+            format!("scheduled task has no diagnostic executable; run `{SERVER_INSTALL_COMMAND}`")
+        })?;
+        let mut command = process::Command::new(program);
+        for name in super::ENVIRONMENT_NAMES {
+            command.env_remove(name);
+        }
+        let environment: Vec<(String, String)> =
+            serde_json::from_value(configuration["environment"].clone())?;
+        command.envs(environment);
+        Ok(command)
+    }
+
+    pub(super) async fn failure_detail(&self) -> anyhow::Result<String> {
+        self.invoke("Failure", None).await
     }
 
     pub(super) async fn stop(&self) -> anyhow::Result<()> {

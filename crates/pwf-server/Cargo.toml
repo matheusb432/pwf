@@ -25,7 +25,9 @@ pwf-local-transport = { workspace = true }
 pwf-models = { workspace = true }
 pwf-wire = { workspace = true }
 rolling-file = { workspace = true }
+serde_json = { workspace = true }
 sqlx = { workspace = true }
+thiserror = { workspace = true }
 tokio = { workspace = true, features = [
     "macros",
     "net",
@@ -48,7 +50,6 @@ tracing-subscriber = { workspace = true }
 criterion = { workspace = true, features = ["async_tokio"] }
 pwf-client = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true }
 tempfile = { workspace = true }
 toml = { workspace = true }
 

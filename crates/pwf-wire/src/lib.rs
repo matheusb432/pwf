@@ -2,6 +2,7 @@
 
 pub mod collection_edit;
 pub mod confirmation;
+pub mod doctor;
 pub mod note;
 pub mod pagination;
 pub mod patch_field;
