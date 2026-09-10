@@ -126,9 +126,10 @@ pub async fn serve(
     let session_server = bounded_service!(pb::session_service_server::SessionServiceServer::new(
         SessionGrpcService::new(state.clone())
     ));
-    let settings_server = bounded_service!(
-        pb::settings_service_server::SettingsServiceServer::new(SettingsGrpcService::new(state))
-    );
+    let settings_server =
+        bounded_service!(pb::settings_service_server::SettingsServiceServer::new(
+            SettingsGrpcService::new(state.clone())
+        ));
     let reflection_server = bounded_service!(
         tonic_reflection::server::Builder::configure()
             .register_encoded_file_descriptor_set(FILE_DESCRIPTOR_SET)
@@ -138,9 +139,17 @@ pub async fn serve(
     );
 
     let shutdown_lifecycle = lifecycle.clone();
+    let (snapshot_shutdown, snapshot_shutdown_receiver) = tokio::sync::watch::channel(false);
+    let snapshot_worker = tokio::spawn(crate::project_snapshots::run(
+        state,
+        crate::project_snapshots::REFRESH_INTERVAL,
+        snapshot_shutdown_receiver,
+    ));
+    let shutdown_snapshots = snapshot_shutdown.clone();
     let (shutdown_started_sender, shutdown_started_receiver) = tokio::sync::oneshot::channel();
     let shutdown = async move {
         shutdown.await;
+        shutdown_snapshots.send_replace(true);
         publish_health(
             &health_reporter,
             &APPLICATION_SERVICE_NAMES,
@@ -172,18 +181,22 @@ pub async fn serve(
     let result = tokio::select! {
         result = &mut grpc_server => result,
         _ = shutdown_started_receiver => {
-            let Ok(result) = tokio::time::timeout(shutdown_grace_period, &mut grpc_server).await else {
+            if let Ok(result) = tokio::time::timeout(shutdown_grace_period, &mut grpc_server).await {
+                result
+            } else {
                 tracing::warn!(
                     shutdown_grace_period = ?shutdown_grace_period,
                     "gRPC connections exceeded the shutdown grace period"
                 );
-                lifecycle.publish(ServerState::Stopped);
-                return Ok(());
-            };
-            result
+                Ok(())
+            }
         }
     };
 
+    snapshot_shutdown.send_replace(true);
+    if let Err(error) = snapshot_worker.await {
+        tracing::error!(%error, "joining project snapshot worker during shutdown");
+    }
     lifecycle.publish(ServerState::Stopped);
     result.context("gRPC server failure")
 }

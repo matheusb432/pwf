@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "\n            SELECT\n                projects.id AS \"id!\",\n                projects.title AS \"title!\",\n                project_sources.kind AS \"source_kind?\",\n                project_sources.value AS \"source_value?\",\n                projects.tasks_kind AS \"tasks_kind!\",\n                projects.tasks_path AS \"tasks_path!\",\n                projects.obsidian_vault AS \"obsidian_vault?\",\n                projects.created_at AS \"created_at!\",\n                (projects.paused_at IS NOT NULL) AS \"is_paused!: bool\"\n            FROM projects\n            LEFT JOIN project_sources ON project_sources.id = projects.project_source_id\n            WHERE projects.id = ? AND (? OR projects.paused_at IS NULL)",
+  "query": "\n            SELECT\n                projects.id AS \"id!\",\n                projects.title AS \"title!\",\n                project_sources.kind AS \"source_kind?\",\n                project_sources.value AS \"source_value?\",\n                projects.tasks_kind AS \"tasks_kind!\",\n                projects.tasks_path AS \"tasks_path!\",\n                projects.obsidian_vault AS \"obsidian_vault?\",\n                projects.snapshot_enabled AS \"snapshot_enabled!: bool\",\n                projects.created_at AS \"created_at!\",\n                (projects.paused_at IS NOT NULL) AS \"is_paused!: bool\"\n            FROM projects\n            LEFT JOIN project_sources ON project_sources.id = projects.project_source_id\n            WHERE projects.id IN (SELECT value FROM json_each(?)) ORDER BY projects.id ASC",
   "describe": {
     "columns": [
       {
@@ -81,8 +81,19 @@
         }
       },
       {
-        "name": "created_at!",
+        "name": "snapshot_enabled!: bool",
         "ordinal": 7,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "projects",
+            "name": "snapshot_enabled"
+          }
+        }
+      },
+      {
+        "name": "created_at!",
+        "ordinal": 8,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -93,13 +104,13 @@
       },
       {
         "name": "is_paused!: bool",
-        "ordinal": 8,
+        "ordinal": 9,
         "type_info": "Integer",
         "origin": "Expression"
       }
     ],
     "parameters": {
-      "Right": 2
+      "Right": 1
     },
     "nullable": [
       false,
@@ -110,8 +121,9 @@
       false,
       true,
       false,
+      false,
       false
     ]
   },
-  "hash": "75008e1b777a565a0023e18f60973229134f94c1cfd025876992bfb1a46a4b18"
+  "hash": "d945ef3b5f9e49deb309b3a7ce2017cdfc3a34a440ea22bc502627e55e73d64d"
 }

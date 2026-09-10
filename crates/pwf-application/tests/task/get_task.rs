@@ -2,7 +2,7 @@ use pwf_application::task::{get_task, get_task_record};
 use pwf_models::task::{EffortTier, PriorityTier, TaskTags};
 use pwf_wire::task::{RawTaskTags, StoredBlockedBy};
 
-use crate::support::{InMemoryStore, insert_project, staged_missing_task, task_record};
+use crate::support::{InMemoryStore, insert_project, task_record};
 
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]
 async fn get_task_returns_parsed_values_without_changing_the_body(pool: sqlx::SqlitePool) {
@@ -73,17 +73,4 @@ async fn get_task_rejects_malformed_metadata_while_raw_lookup_preserves_it(pool:
             "{error}"
         );
     }
-}
-
-#[sqlx::test(migrator = "crate::support::MIGRATOR")]
-async fn get_task_rejects_an_index_only_record(pool: sqlx::SqlitePool) {
-    insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
-    let (store, _) = staged_missing_task();
-    let error = get_task::execute(&"FOO-0002".parse().unwrap(), &store, &pool)
-        .await
-        .unwrap_err();
-    assert!(matches!(
-        error,
-        get_task::GetTaskError::Parse(pwf_wire::task::TaskRecordError::MissingNote { .. })
-    ));
 }

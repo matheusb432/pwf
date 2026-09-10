@@ -4,7 +4,7 @@ use pwf_models::{
     project::{Project, ProjectId},
     task::{BlockedBy, TaskId},
 };
-use pwf_wire::task::{BlockedByResolution, BlockedByStatus, Materialization, StoredBlockedBy};
+use pwf_wire::task::{BlockedByResolution, BlockedByStatus, StoredBlockedBy};
 
 use crate::ports::task_vault::{TaskDependencyRecord, TaskVault};
 
@@ -151,9 +151,6 @@ fn status(
     let Some(task) = task else {
         return missing();
     };
-    if matches!(task.materialization, Materialization::MissingNote { .. }) {
-        return missing();
-    }
     BlockedByStatus {
         id: id.clone(),
         title: (!task.title.trim().is_empty()).then_some(task.title),

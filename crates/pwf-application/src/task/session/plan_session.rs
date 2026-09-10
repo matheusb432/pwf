@@ -7,8 +7,7 @@ use pwf_models::{
     task::TaskId,
 };
 use pwf_wire::task::{
-    BlockedByIssue, BlockedByResolution, BlockedByStatus, Materialization, StoredBlockedBy,
-    TaskHeading, TaskRecord,
+    BlockedByIssue, BlockedByResolution, BlockedByStatus, StoredBlockedBy, TaskHeading, TaskRecord,
     session::{
         AgentLaunch, DispatchConfirmation, DryRunSession, PlanSession, PlanSessionIntent,
         PlannedSession, PreparedSessionDispatch, PreparedTaskRevision, SessionPlan, SessionWarning,
@@ -27,8 +26,6 @@ use crate::{
 pub enum PlanSessionError {
     #[error(transparent)]
     FindTask(anyhow::Error),
-    #[error(transparent)]
-    ReadTaskMarkdown(anyhow::Error),
     #[error("Task '{id}' is not launchable: {launch}")]
     NotLaunchable {
         id: TaskId,
@@ -196,14 +193,9 @@ async fn plan_task(
     let found = active_task::find(task_id, store, pool)
         .await
         .map_err(|error| PlanSessionError::FindTask(anyhow::Error::new(error)))?;
-    let missing_note = match &found.record.materialization {
-        Materialization::NoteFile => None,
-        Materialization::MissingNote { expected } => Some(expected),
-    };
-    let launch = crate::task::task_projection::derive_flags(
-        &pwf_models::task::TaskPrompt::new(found.record.body.trim()),
-        missing_note,
-    );
+    let launch = crate::task::task_projection::derive_flags(&pwf_models::task::TaskPrompt::new(
+        found.record.body.trim(),
+    ));
     if !launch.is_ready() {
         return Err(PlanSessionError::NotLaunchable {
             id: task_id.clone(),
@@ -211,7 +203,7 @@ async fn plan_task(
         });
     }
     let warnings = blocker_warnings(&found.record, store, pool).await;
-    let content = load_task_content(&found.record, store)?;
+    let content = found.record.source.clone();
     let revision = PreparedTaskRevision {
         task_id: found.record.id.clone(),
         revision: found.record.revision.clone(),
@@ -278,18 +270,6 @@ fn preview_dispatch_argv(provider_argv: Vec<String>) -> Result<Vec<String>, Plan
         return Err(PlanSessionError::EmptyAgentCommand);
     }
     Ok(provider_argv)
-}
-
-fn load_task_content(
-    record: &TaskRecord,
-    store: &impl TaskVault,
-) -> Result<String, PlanSessionError> {
-    if matches!(record.materialization, Materialization::MissingNote { .. }) {
-        return store
-            .read_task_markdown(&record.locator)
-            .map_err(|error| PlanSessionError::ReadTaskMarkdown(anyhow::Error::new(error)));
-    }
-    Ok(record.source.clone())
 }
 
 fn resolve_project_path(

@@ -3,15 +3,15 @@ use std::num::NonZeroUsize;
 use clap::Args;
 use pwf_client::{
     pb::{
-        AllTaskSections, EffortTier, ListDetail, ListTasksRequest, OrderDirection, OrderField,
-        OrderSpec, PriorityTier, list_tasks_request,
+        EffortTier, ListDetail, ListTasksRequest, OrderDirection, OrderField, OrderSpec,
+        PriorityTier,
     },
     task::TaskClient,
 };
 use pwf_models::{
     project::ProjectSelector,
     settings::TaskStatusColors,
-    task::{TagInput, TaskSection, TaskTags},
+    task::{TagInput, TaskTags},
 };
 
 use super::{EffortChoice, PriorityChoice, StatusChoice, render::render_list};
@@ -43,10 +43,7 @@ pub(super) struct Options {
     /// Long form with per-task metadata.
     #[arg(long)]
     pub(crate) long: bool,
-    /// Show only the section whose `##` header matches this text, ignoring case.
-    #[arg(long, value_name = "HEADER", conflicts_with = "all")]
-    pub(crate) section: Option<TaskSection>,
-    /// List everything: every section, every lifecycle status, no task cap.
+    /// List every lifecycle status with no task cap.
     /// An explicit `--status` or `-n` overrides the widened default.
     #[arg(long)]
     pub(crate) all: bool,
@@ -56,7 +53,7 @@ pub(super) struct Options {
     /// Sort key `field[:direction]`: created|id|project-id|priority|effort|title,
     /// direction asc|desc. Overrides `default_sort_order` in config.toml (default: id).
     /// Bare created/id/priority sort descending; project-id/effort/title ascending.
-    /// Missing effort sorts last. --all sorts within section groups.
+    /// Missing effort sorts last.
     /// project-id groups projects, newest ID first within each project.
     #[arg(short = 'o', long, value_name = "FIELD[:DIR]", value_parser = parse_order)]
     pub(crate) order: Option<OrderSpec>,
@@ -84,7 +81,7 @@ pub(super) async fn run(
     };
     let mut request = ListTasksRequest {
         project_id,
-        scope: list_scope(options),
+        all: options.all,
         number: options
             .number
             .and_then(NonZeroUsize::new)
@@ -143,16 +140,6 @@ pub(super) async fn run(
         task_status_colors,
         console.color(),
     ))
-}
-
-fn list_scope(options: &Options) -> Option<list_tasks_request::Scope> {
-    if options.all {
-        return Some(list_tasks_request::Scope::All(AllTaskSections {}));
-    }
-    options
-        .section
-        .as_ref()
-        .map(|section| list_tasks_request::Scope::Section(section.to_string()))
 }
 
 /// Parses a `field[:direction]` sort key, using field-specific direction defaults.

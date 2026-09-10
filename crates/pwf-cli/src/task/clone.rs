@@ -37,7 +37,6 @@ pub(super) async fn run(
         .clone_task(CloneTaskRequest {
             id: id.to_string(),
             project_id,
-            request_id: String::new(),
         })
         .await
         .map_err(crate::rpc_error)?;

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        INSERT INTO projects (id, project_source_id, title, tasks_kind, tasks_path, obsidian_vault, snapshot_enabled)\n        VALUES (?, ?, ?, ?, ?, ?, ?)\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "d1936bbe27e90019068a462159f3377d4ebba93293db72ee8d621f041c56e234"
+}

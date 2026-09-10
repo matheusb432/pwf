@@ -43,7 +43,7 @@ pub(crate) enum Command {
     List(ListArguments),
     /// Add a study note from `<title> / <content>` or explicit fields
     Add(Box<AddArguments>),
-    /// Delete a note and strip its index link
+    /// Delete a project note
     Remove(RemoveArguments),
     /// Edit selected note fields while preserving every omitted field
     Edit(Box<EditArguments>),

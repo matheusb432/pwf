@@ -4,6 +4,8 @@ use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, 
 
 #[path = "obsidian_support/fixture.rs"]
 mod fixture;
+#[path = "obsidian_support/snapshot_workload.rs"]
+mod snapshot_workload;
 #[path = "obsidian_support/store_fixture.rs"]
 mod store_fixture;
 #[path = "obsidian_support/store_workload.rs"]
@@ -80,6 +82,20 @@ fn obsidian_store_io(criterion: &mut Criterion) {
         );
     }
     insert_group.finish();
+
+    let workload = snapshot_workload::SnapshotWorkload::new();
+    fixture::require(workload.refresh(), "priming snapshot refresh");
+    workload.validate();
+    let mut snapshot_group =
+        criterion.benchmark_group("obsidian-store-io/refresh-project-snapshot");
+    snapshot_group.throughput(Throughput::Elements(snapshot_workload::TASK_COUNT as u64));
+    snapshot_group.bench_function("1000-tasks-100-notes", |bencher| {
+        bencher.iter(|| {
+            fixture::require(black_box(workload.refresh()), "refreshing project snapshot");
+        });
+    });
+    snapshot_group.finish();
+    workload.validate();
 }
 
 criterion_group! {

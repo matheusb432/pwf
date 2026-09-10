@@ -6,9 +6,7 @@ use pwf_models::{
 };
 use pwf_wire::{
     project::{GetProject, ProjectStatusFilter},
-    task::{
-        GetTaskDag, Materialization, TaskDag, TaskDagEdge, TaskDagError, TaskDagNode, TaskRecord,
-    },
+    task::{GetTaskDag, TaskDag, TaskDagEdge, TaskDagError, TaskDagNode, TaskRecord},
 };
 
 use crate::{
@@ -79,7 +77,6 @@ pub async fn execute(
             id: query.id.clone(),
             source: anyhow::Error::new(source),
         })?
-        .filter(|record| matches!(record.materialization, Materialization::NoteFile))
         .ok_or_else(|| GetTaskDagError::TaskNotFound {
             id: query.id.clone(),
         })?;
@@ -147,12 +144,8 @@ impl<'a, Store: TaskVault> Resolver<'a, Store> {
             .and_then(Option::as_ref)
             .map_or(ResolvedTask::Missing, |project| {
                 match self.store.get_task_record(project, id) {
-                    Ok(Some(record))
-                        if matches!(record.materialization, Materialization::NoteFile) =>
-                    {
-                        ResolvedTask::Found(Box::new(record))
-                    }
-                    Ok(Some(_) | None) => ResolvedTask::Missing,
+                    Ok(Some(record)) => ResolvedTask::Found(Box::new(record)),
+                    Ok(None) => ResolvedTask::Missing,
                     Err(_) => ResolvedTask::Unavailable,
                 }
             });
@@ -202,10 +195,7 @@ impl<'a, Store: TaskVault> Resolver<'a, Store> {
 
     fn cache_scanned_record(&mut self, record: TaskRecord) {
         let id = record.id.clone();
-        let resolved = match &record.materialization {
-            Materialization::NoteFile => ResolvedTask::Found(Box::new(record)),
-            Materialization::MissingNote { .. } => ResolvedTask::Missing,
-        };
+        let resolved = ResolvedTask::Found(Box::new(record));
         self.tasks.insert(id, resolved);
     }
 }

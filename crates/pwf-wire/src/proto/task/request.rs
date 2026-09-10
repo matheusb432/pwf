@@ -1,12 +1,11 @@
 //! Protobuf request mappings for task operations.
 
-use prost::Message;
 use pwf_models::{
     project::ProjectId,
     revision::ContentRevision,
     task::{
-        BlockedBy, CommitRanges, EffortTier, PriorityTier, Tag, TaskId, TaskReport, TaskSection,
-        TaskStatus, TaskTags, TaskTitle,
+        BlockedBy, CommitRanges, EffortTier, PriorityTier, Tag, TaskId, TaskReport, TaskStatus,
+        TaskTags, TaskTitle,
         order::{OrderDirection, OrderField, OrderSpec},
     },
 };
@@ -18,7 +17,7 @@ use crate::{patch_field::PatchField, pb, task};
 const TASK_COLLECTION_VALUES_MAX: usize = 64;
 const TASK_LANE_VALUES_MAX: usize = 128;
 
-pub fn create_task_request(mut request: pb::CreateTaskRequest) -> Result<task::AddTask, Status> {
+pub fn create_task_request(request: pb::CreateTaskRequest) -> Result<task::AddTask, Status> {
     ensure_count(
         "blocked_by",
         request.blocked_by.len(),
@@ -28,10 +27,7 @@ pub fn create_task_request(mut request: pb::CreateTaskRequest) -> Result<task::A
     if let Some(pb::create_task_request::Prompt::Structured(prompt)) = request.prompt.as_ref() {
         ensure_lanes("prompt.lanes", prompt.lanes.as_ref(), 0)?;
     }
-    let request_id_value = std::mem::take(&mut request.request_id);
-    let request_fingerprint = task::TaskRequestFingerprint::from_digest(
-        *blake3::hash(&request.encode_to_vec()).as_bytes(),
-    );
+
     let pb::CreateTaskRequest {
         project_id,
         prompt,
@@ -39,9 +35,8 @@ pub fn create_task_request(mut request: pb::CreateTaskRequest) -> Result<task::A
         effort,
         tags,
         priority,
-        request_id: _,
     } = request;
-    let request_id = request_id(request_id_value)?;
+
     let prompt = match required("prompt", prompt)? {
         pb::create_task_request::Prompt::Shorthand(value) => {
             task::AddTaskPrompt::from_shorthand(value)
@@ -62,20 +57,13 @@ pub fn create_task_request(mut request: pb::CreateTaskRequest) -> Result<task::A
         effort: effort.map(effort_tier).transpose()?,
         tags: task_tag_values(tags)?,
         priority: priority.map(priority_tier).transpose()?,
-        request_id: Some(request_id),
-        request_fingerprint: Some(request_fingerprint),
     })
 }
 
 impl TryFrom<pb::CloneTaskRequest> for task::CloneTask {
     type Error = Status;
 
-    fn try_from(mut request: pb::CloneTaskRequest) -> Result<Self, Self::Error> {
-        let request_id_value = std::mem::take(&mut request.request_id);
-        let fingerprint = task::TaskRequestFingerprint::from_digest(blake3::derive_key(
-            "pwf.v1.TaskService.CloneTask",
-            &request.encode_to_vec(),
-        ));
+    fn try_from(request: pb::CloneTaskRequest) -> Result<Self, Self::Error> {
         Ok(Self {
             id: TaskId::try_new(request.id).map_err(|error| invalid("id", error))?,
             project_id: task::ClonedTaskProjectId::new(
@@ -84,31 +72,23 @@ impl TryFrom<pb::CloneTaskRequest> for task::CloneTask {
                     .map(|id| ProjectId::try_new(id).map_err(|error| invalid("project_id", error)))
                     .transpose()?,
             ),
-            request_id: Some(request_id(request_id_value)?),
-            request_fingerprint: Some(fingerprint),
         })
     }
 }
 
 pub fn cancel_task_request(request: pb::CancelTaskRequest) -> Result<task::CancelTask, Status> {
     ensure_count("commits", request.commits.len(), TASK_COLLECTION_VALUES_MAX)?;
-    let request_fingerprint = request_fingerprint(&request, |request| {
-        request.request_id.clear();
-    });
     let pb::CancelTaskRequest {
         id,
         report,
         commits,
         expected_revision,
-        request_id: request_id_value,
     } = request;
     Ok(task::CancelTask {
         id: parse::<TaskId>("id", &id)?,
         report: parse::<TaskReport>("report", &report)?,
         commits: CommitRanges::from_inputs(&commits),
         expected_revision: expected_revision.map(revision).transpose()?,
-        request_id: Some(request_id(request_id_value)?),
-        request_fingerprint: Some(request_fingerprint),
     })
 }
 
@@ -116,15 +96,11 @@ pub fn complete_task_request(
     request: pb::CompleteTaskRequest,
 ) -> Result<task::CompleteTask, Status> {
     ensure_count("commits", request.commits.len(), TASK_COLLECTION_VALUES_MAX)?;
-    let request_fingerprint = request_fingerprint(&request, |request| {
-        request.request_id.clear();
-    });
     let pb::CompleteTaskRequest {
         id,
         report,
         commits,
         expected_revision,
-        request_id: request_id_value,
     } = request;
     Ok(task::CompleteTask {
         id: parse::<TaskId>("id", &id)?,
@@ -134,16 +110,11 @@ pub fn complete_task_request(
             .transpose()?,
         commits: CommitRanges::from_inputs(&commits),
         expected_revision: expected_revision.map(revision).transpose()?,
-        request_id: Some(request_id(request_id_value)?),
-        request_fingerprint: Some(request_fingerprint),
     })
 }
 
 pub fn update_task_request(request: pb::UpdateTaskRequest) -> Result<task::EditTask, Status> {
     ensure_update_bounds(&request)?;
-    let request_fingerprint = request_fingerprint(&request, |request| {
-        request.request_id.clear();
-    });
     let pb::UpdateTaskRequest {
         id,
         content,
@@ -152,7 +123,6 @@ pub fn update_task_request(request: pb::UpdateTaskRequest) -> Result<task::EditT
         tags,
         priority,
         expected_revision,
-        request_id: request_id_value,
     } = request;
     let content = content.map(task_content_edit).transpose()?.into();
     let edits = task::TaskEdits::try_new(
@@ -167,8 +137,6 @@ pub fn update_task_request(request: pb::UpdateTaskRequest) -> Result<task::EditT
         id: parse::<TaskId>("id", &id)?,
         edits,
         expected_revision: expected_revision.map(revision).transpose()?,
-        request_id: Some(request_id(request_id_value)?),
-        request_fingerprint: Some(request_fingerprint),
     })
 }
 
@@ -230,13 +198,7 @@ pub fn list_tasks_request(request: pb::ListTasksRequest) -> Result<task::ListTas
         .map(task::TaskPageToken::try_new)
         .transpose()
         .map_err(|error| invalid("page_token", error))?;
-    let scope = match request.scope {
-        Some(pb::list_tasks_request::Scope::Section(section)) => task::ListScope::Section(
-            TaskSection::try_new(section).map_err(|error| invalid("section", error))?,
-        ),
-        Some(pb::list_tasks_request::Scope::All(_)) => task::ListScope::All,
-        None => task::ListScope::Default,
-    };
+
     let detail = match pb::ListDetail::try_from(request.detail).ok() {
         Some(pb::ListDetail::Summary) => task::ListDetail::Summary,
         Some(pb::ListDetail::Detailed) => task::ListDetail::Detailed,
@@ -250,7 +212,7 @@ pub fn list_tasks_request(request: pb::ListTasksRequest) -> Result<task::ListTas
             .as_deref()
             .map(|value| parse::<ProjectId>("project_id", value))
             .transpose()?,
-        scope,
+        all: request.all,
         number: request
             .number
             .map(|value| {
@@ -274,32 +236,16 @@ pub fn list_tasks_request(request: pb::ListTasksRequest) -> Result<task::ListTas
 }
 
 pub fn delete_task_start(start: pb::DeleteTaskStart) -> Result<task::DeleteTask, Status> {
-    let request_fingerprint = request_fingerprint(&start, |start| {
-        start.request_id.clear();
-    });
-    let pb::DeleteTaskStart {
-        id,
-        request_id: request_id_value,
-    } = start;
+    let pb::DeleteTaskStart { id } = start;
     Ok(task::DeleteTask {
         id: parse("id", &id)?,
-        request_id: Some(request_id(request_id_value)?),
-        request_fingerprint: Some(request_fingerprint),
     })
 }
 
 pub fn reopen_task_start(start: pb::ReopenTaskStart) -> Result<task::ReopenTask, Status> {
-    let request_fingerprint = request_fingerprint(&start, |start| {
-        start.request_id.clear();
-    });
-    let pb::ReopenTaskStart {
-        id,
-        request_id: request_id_value,
-    } = start;
+    let pb::ReopenTaskStart { id } = start;
     Ok(task::ReopenTask {
         id: parse("id", &id)?,
-        request_id: Some(request_id(request_id_value)?),
-        request_fingerprint: Some(request_fingerprint),
     })
 }
 
@@ -466,10 +412,6 @@ fn task_tag_values(values: Vec<String>) -> Result<Option<TaskTags>, Status> {
         .map_err(|error| invalid("tags", error))
 }
 
-fn request_id(value: String) -> Result<task::TaskRequestId, Status> {
-    task::TaskRequestId::try_new(value).map_err(|error| invalid("request_id", error))
-}
-
 fn revision(value: String) -> Result<ContentRevision, Status> {
     ContentRevision::try_new(value).map_err(|error| invalid("expected_revision", error))
 }
@@ -531,18 +473,6 @@ fn ensure_count(field: &str, count: usize, max: usize) -> Result<(), Status> {
         return Err(invalid(field, format!("may contain at most {max} values")));
     }
     Ok(())
-}
-
-fn request_fingerprint<T>(
-    request: &T,
-    strip_request_id: impl FnOnce(&mut T),
-) -> task::TaskRequestFingerprint
-where
-    T: Message + Clone,
-{
-    let mut request = request.clone();
-    strip_request_id(&mut request);
-    task::TaskRequestFingerprint::from_digest(*blake3::hash(&request.encode_to_vec()).as_bytes())
 }
 
 #[cfg(test)]

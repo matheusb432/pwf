@@ -14,6 +14,7 @@ pub(super) struct ProjectOutput {
     created_at: String,
     is_paused: bool,
     obsidian_vault: Option<String>,
+    snapshot_enabled: bool,
 }
 
 #[derive(Serialize)]
@@ -84,84 +85,84 @@ fn render(value: &impl Serialize) -> Result<String, serde_json::Error> {
 
 impl From<Project> for ProjectOutput {
     fn from(project: Project) -> Self {
-        Self::new(
-            project.id,
-            project.title,
-            project.source_value,
-            project.tasks_path,
-            project.created_at,
-            project.is_paused,
-            project.obsidian_vault,
-        )
-    }
-}
-
-impl From<AddProjectResponse> for ProjectOutput {
-    fn from(response: AddProjectResponse) -> Self {
-        Self::new(
-            response.id,
-            response.title,
-            response.source_value,
-            response.tasks_path,
-            response.created_at,
-            response.is_paused,
-            response.obsidian_vault,
-        )
-    }
-}
-
-impl From<GetProjectResponse> for ProjectOutput {
-    fn from(response: GetProjectResponse) -> Self {
-        Self::new(
-            response.id,
-            response.title,
-            response.source_value,
-            response.tasks_path,
-            response.created_at,
-            response.is_paused,
-            response.obsidian_vault,
-        )
-    }
-}
-
-impl From<RenameProjectResponse> for ProjectOutput {
-    fn from(response: RenameProjectResponse) -> Self {
-        Self::new(
-            response.id,
-            response.title,
-            response.source_value,
-            response.tasks_path,
-            response.created_at,
-            response.is_paused,
-            response.obsidian_vault,
-        )
-    }
-}
-
-impl ProjectOutput {
-    fn new(
-        id: String,
-        title: String,
-        source_value: Option<String>,
-        tasks_path: String,
-        created_at: String,
-        is_paused: bool,
-        obsidian_vault: Option<String>,
-    ) -> Self {
         Self {
-            id,
-            title,
-            source: source_value.map(|value| ProjectSourceOutput {
+            id: project.id,
+            title: project.title,
+            source: project.source_value.map(|value| ProjectSourceOutput {
                 kind: ProjectSourceKindOutput::Directory,
                 value,
             }),
             tasks: ProjectTasksOutput {
                 kind: ProjectTasksKindOutput::Directory,
-                path: tasks_path,
+                path: project.tasks_path,
             },
-            created_at,
-            is_paused,
-            obsidian_vault,
+            created_at: project.created_at,
+            is_paused: project.is_paused,
+            obsidian_vault: project.obsidian_vault,
+            snapshot_enabled: project.snapshot_enabled,
+        }
+    }
+}
+
+impl From<AddProjectResponse> for ProjectOutput {
+    fn from(response: AddProjectResponse) -> Self {
+        Self {
+            id: response.id,
+            title: response.title,
+            source: response.source_value.map(|value| ProjectSourceOutput {
+                kind: ProjectSourceKindOutput::Directory,
+                value,
+            }),
+            tasks: ProjectTasksOutput {
+                kind: ProjectTasksKindOutput::Directory,
+                path: response.tasks_path,
+            },
+            created_at: response.created_at,
+            is_paused: response.is_paused,
+            obsidian_vault: response.obsidian_vault,
+            snapshot_enabled: response.snapshot_enabled,
+        }
+    }
+}
+
+impl From<GetProjectResponse> for ProjectOutput {
+    fn from(response: GetProjectResponse) -> Self {
+        Self {
+            id: response.id,
+            title: response.title,
+            source: response.source_value.map(|value| ProjectSourceOutput {
+                kind: ProjectSourceKindOutput::Directory,
+                value,
+            }),
+            tasks: ProjectTasksOutput {
+                kind: ProjectTasksKindOutput::Directory,
+                path: response.tasks_path,
+            },
+            created_at: response.created_at,
+            is_paused: response.is_paused,
+            obsidian_vault: response.obsidian_vault,
+            snapshot_enabled: response.snapshot_enabled,
+        }
+    }
+}
+
+impl From<RenameProjectResponse> for ProjectOutput {
+    fn from(response: RenameProjectResponse) -> Self {
+        Self {
+            id: response.id,
+            title: response.title,
+            source: response.source_value.map(|value| ProjectSourceOutput {
+                kind: ProjectSourceKindOutput::Directory,
+                value,
+            }),
+            tasks: ProjectTasksOutput {
+                kind: ProjectTasksKindOutput::Directory,
+                path: response.tasks_path,
+            },
+            created_at: response.created_at,
+            is_paused: response.is_paused,
+            obsidian_vault: response.obsidian_vault,
+            snapshot_enabled: response.snapshot_enabled,
         }
     }
 }

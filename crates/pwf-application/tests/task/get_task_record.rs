@@ -1,10 +1,7 @@
 use pwf_application::task::{get_task_record, get_task_record::GetTaskRecordError};
-use pwf_wire::task::{Materialization, StoredBlockedBy, TaskRecord};
+use pwf_wire::task::{StoredBlockedBy, TaskRecord};
 
-use crate::support::{
-    FOO_0001_SOURCE, InMemoryStore, InMemoryStoreFailure, insert_project, staged_missing_task,
-    staged_task, task_record,
-};
+use crate::support::{FOO_0001_SOURCE, InMemoryStore, insert_project, staged_task, task_record};
 
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]
 async fn retrieval_preserves_malformed_metadata(pool: sqlx::SqlitePool) {
@@ -35,25 +32,6 @@ async fn retrieval_preserves_source_and_revision(pool: sqlx::SqlitePool) {
         .unwrap();
     assert_eq!(record.source, FOO_0001_SOURCE);
     assert_eq!(record.revision.as_ref().len(), 64);
-}
-
-#[sqlx::test(migrator = "crate::support::MIGRATOR")]
-async fn retrieval_returns_an_index_only_record_without_a_second_read(pool: sqlx::SqlitePool) {
-    insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
-    let (store, _) = staged_missing_task();
-    let store = store.with_failure(InMemoryStoreFailure::ReadTaskMarkdown);
-    let record = get_task_record::execute(&"FOO-0002".parse().unwrap(), &store, &pool)
-        .await
-        .unwrap();
-    assert!(matches!(
-        record.materialization,
-        Materialization::MissingNote { .. }
-    ));
-    assert_eq!(
-        record.locator.as_path(),
-        std::path::Path::new("/notes/foo/FOO-0002.md")
-    );
-    assert!(record.source.is_empty());
 }
 
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]

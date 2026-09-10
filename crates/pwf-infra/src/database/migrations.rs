@@ -146,6 +146,13 @@ mod tests {
         migrate_database(&pool).await.unwrap();
         migrate_database(&pool).await.unwrap();
         check_database_ready(&pool).await.unwrap();
+        let receipts_exist: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE name = 'task_mutation_requests')",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(!receipts_exist);
         let versions =
             sqlx::query_scalar::<_, i64>("SELECT version FROM _sqlx_migrations ORDER BY version")
                 .fetch_all(&pool)
@@ -158,6 +165,23 @@ mod tests {
                 .map(|migration| migration.version)
                 .collect::<Vec<_>>()
         );
+    }
+
+    #[tokio::test]
+    async fn initial_schema_is_a_compatible_pending_upgrade() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        MIGRATOR.run_to(0, &pool).await.unwrap();
+
+        assert!(matches!(
+            check_database_compatible(&pool).await.unwrap(),
+            MigrationCompatibility::Compatible { pending: 1 }
+        ));
+        assert!(check_database_ready(&pool).await.is_err());
+        let versions = read_migrations(&mut pool.acquire().await.unwrap())
+            .await
+            .unwrap();
+        assert_eq!(versions.len(), 1);
+        assert_eq!(versions[0].version, 0);
     }
 
     #[tokio::test]

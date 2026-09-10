@@ -27,12 +27,16 @@ pub struct Arguments {
     /// Permanently delete removed tasks instead of moving them to an Obsidian trash folder.
     #[arg(long, group = UPDATES)]
     pub clear_obsidian_vault: bool,
+    /// Enable or disable the generated pwf-index.md task snapshot.
+    #[arg(long, group = UPDATES, action = clap::ArgAction::Set)]
+    pub snapshot_enabled: Option<bool>,
 }
 
 pub(super) async fn run(arguments: Arguments, client: &ProjectClient) -> anyhow::Result<String> {
     client
         .update_project(UpdateProjectRequest {
             id: arguments.id.to_string(),
+            snapshot_enabled: arguments.snapshot_enabled,
             source_value: arguments
                 .source
                 .map(|value| StringPatchField {

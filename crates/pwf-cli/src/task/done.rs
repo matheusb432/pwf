@@ -38,7 +38,6 @@ pub(super) async fn run(
                 .map(|report| report.to_string()),
             commits: arguments.commits.clone(),
             expected_revision: None,
-            request_id: String::new(),
         })
         .await
         .map_err(crate::rpc_error)?;

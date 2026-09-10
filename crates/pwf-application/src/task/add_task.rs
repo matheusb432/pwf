@@ -1,19 +1,13 @@
-use pwf_models::task::{TaskId, TaskTimestampError, TaskTitle};
-use pwf_wire::task::{
-    AddTask, AddTaskPrompt, Materialization, StoredBlockedBy, TaskMutationResult,
-    TaskMutationSummary, TaskRecord,
-};
+use pwf_models::task::{TaskId, TaskTimestampError};
+use pwf_wire::task::{AddTask, AddTaskPrompt, TaskMutationResult, TaskMutationSummary};
 
-pub use super::task_creation::CreateTaskError;
 use super::{
     TaskPromptTitleError,
     blocked_by::{self, BlockedByValidationError},
     infer_task_title,
     lane_configuration::{TaskPromptLanes, TaskPromptLanesError},
-    mutation_request::{self, MutationOperation, MutationRequestState, MutationStart},
     note_body::{render, render_lanes},
     read_task_dependencies::{self, ReadTaskDependencies, ReadTaskDependenciesError},
-    task_creation::{self, TaskCreation},
 };
 use crate::{
     ports::{
@@ -58,28 +52,13 @@ pub enum AddTaskError {
     InvalidTitle(#[from] TaskPromptTitleError),
     #[error(transparent)]
     PromptLanes(#[from] TaskPromptLanesError),
-    #[error("reserved task {id} no longer matches its create request")]
-    ReservedTaskChanged { id: TaskId },
-    #[error("cannot inspect reserved task {id}: {source}")]
-    ReadReservedTask {
-        id: TaskId,
-        #[source]
-        source: anyhow::Error,
-    },
-    #[error(transparent)]
-    MutationRequest(#[from] mutation_request::MutationRequestError),
     #[error("cannot read the task creation time: {0}")]
     Clock(#[from] TaskTimestampError),
     #[error(transparent)]
-    WriteStore(#[from] CreateTaskError),
+    WriteStore(anyhow::Error),
 }
 
-/// Creates a task record and its open index entry for a mapped project.
 #[cqrsy::command]
-#[expect(
-    clippy::too_many_lines,
-    reason = "keep receipt handling, dependency reads, and writes visible in the owning interactor"
-)]
 pub async fn execute(
     command: AddTask,
     store: &impl TaskVault,
@@ -93,20 +72,7 @@ pub async fn execute(
         effort,
         priority,
         tags,
-        request_id,
-        request_fingerprint,
     } = command;
-    let identity = mutation_request::identity(request_id.as_ref(), request_fingerprint.as_ref())?;
-    let mut replay = match identity.as_ref() {
-        Some(identity) => mutation_request::find(pool, identity, MutationOperation::Create).await?,
-        None => None,
-    };
-    if let Some(replay) = replay.take_if(|replay| replay.state == MutationRequestState::Completed) {
-        return Ok(TaskMutationResult {
-            outcome: replay.task_id,
-            task: replay.task,
-        });
-    }
     let project = get_active_project::execute(&project_id, pool).await?;
     let (title, body) = match prompt {
         AddTaskPrompt::Body { title, body } => (title, NewTaskBody::Verbatim(body)),
@@ -125,16 +91,12 @@ pub async fn execute(
             )
         }
     };
-    let replay_pending = replay.is_some();
-    let id = match replay {
-        Some(replay) => replay.task_id,
-        None => store
-            .next_task_id(&project)
-            .map_err(|source| AddTaskError::AllocateTaskId {
-                project: project.title.clone(),
-                source: anyhow::Error::new(source),
-            })?,
-    };
+    let id = store
+        .next_task_id(&project)
+        .map_err(|source| AddTaskError::AllocateTaskId {
+            project: project.title.clone(),
+            source: anyhow::Error::new(source),
+        })?;
 
     if let Some(blockers) = blocked_by.as_ref() {
         let dependencies = read_task_dependencies::execute(
@@ -155,108 +117,30 @@ pub async fn execute(
         blocked_by::validate(&id, blockers, blockers, &dependencies)
             .map_err(map_blocked_by_error)?;
     }
-    if !replay_pending
-        && let Some(identity) = identity.as_ref()
-        && let MutationStart::Existing(existing) =
-            mutation_request::start(pool, identity, MutationOperation::Create, &id).await?
-    {
-        return match existing.state {
-            MutationRequestState::Completed => Ok(TaskMutationResult {
-                outcome: existing.task_id,
-                task: existing.task,
-            }),
-            MutationRequestState::Pending => Err(identity.incomplete().into()),
-        };
-    }
     let summary = TaskMutationSummary {
         id: id.clone(),
         title: title.to_string(),
         status: pwf_models::task::TaskStatus::Active,
     };
-    let existing = if replay_pending {
-        store
-            .get_task_record(&project, &id)
-            .map_err(|source| AddTaskError::ReadReservedTask {
-                id: id.clone(),
-                source: anyhow::Error::new(source),
-            })?
-    } else {
-        None
-    };
-    if let Some(record) = existing {
-        if !created_record_matches(
-            &record,
-            &title,
-            &body,
-            blocked_by.as_ref(),
-            effort,
-            priority,
-            tags.as_ref(),
-        ) {
-            return Err(AddTaskError::ReservedTaskChanged { id });
-        }
-        task_creation::ensure_index(store, &project, &id)?;
-    } else {
-        task_creation::create(
-            TaskCreation {
-                project: &project,
-                id: &id,
-                new: NewTask {
-                    body,
-                    title,
-                    created_at: clock.now()?,
-                    blocked_by,
-                    effort,
-                    priority,
-                    tags,
-                },
+    store
+        .insert_task(
+            &project,
+            &id,
+            NewTask {
+                body,
+                title,
+                created_at: clock.now()?,
+                blocked_by,
+                effort,
+                priority,
+                tags,
             },
-            store,
-        )?;
-    }
-    if let Some(identity) = identity.as_ref() {
-        mutation_request::complete_with_task(
-            pool,
-            identity,
-            MutationOperation::Create,
-            "created",
-            &summary,
         )
-        .await?;
-    }
+        .map_err(|source| AddTaskError::WriteStore(anyhow::Error::new(source)))?;
     Ok(TaskMutationResult {
         outcome: id,
         task: Some(summary),
     })
-}
-
-fn created_record_matches(
-    record: &TaskRecord,
-    title: &TaskTitle,
-    body: &NewTaskBody,
-    blocked_by: Option<&pwf_models::task::BlockedBy>,
-    effort: Option<pwf_models::task::EffortTier>,
-    priority: Option<pwf_models::task::PriorityTier>,
-    tags: Option<&pwf_models::task::TaskTags>,
-) -> bool {
-    let stored_blocked_by = match &record.blocked_by {
-        StoredBlockedBy::Absent => None,
-        StoredBlockedBy::Valid(value) => Some(value),
-        StoredBlockedBy::Malformed { .. } => return false,
-    };
-    let stored_tags = record
-        .tags
-        .as_ref()
-        .map(|raw| pwf_models::task::TaskTags::parse_frontmatter(raw.as_ref()))
-        .transpose();
-    record.status == pwf_models::task::TaskStatus::Active
-        && matches!(record.materialization, Materialization::NoteFile)
-        && record.title == title.as_ref()
-        && record.body == body.as_ref()
-        && stored_blocked_by == blocked_by
-        && record.effort.as_deref() == effort.as_ref().map(AsRef::as_ref)
-        && record.priority.as_deref() == priority.as_ref().map(AsRef::as_ref)
-        && stored_tags.is_ok_and(|stored| stored.as_ref() == tags)
 }
 
 fn map_blocked_by_error(error: BlockedByValidationError) -> AddTaskError {

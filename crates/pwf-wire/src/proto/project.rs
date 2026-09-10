@@ -7,7 +7,7 @@ use pwf_models::project::{
 use tonic::Status;
 
 use super::{invalid, parse, required};
-use crate::{patch_field::PatchField, pb, project};
+use crate::{patch_field::PatchField, pb, project, set_field::SetField};
 
 pub fn add_project_request(
     request: pb::AddProjectRequest,
@@ -115,13 +115,18 @@ pub fn update_project_request(
             ),
         },
     };
-    if source_value.is_unchanged() && matches!(obsidian_vault, PatchField::NoAction) {
+    let snapshot_enabled = SetField::from(request.snapshot_enabled);
+    if source_value.is_unchanged()
+        && matches!(obsidian_vault, PatchField::NoAction)
+        && snapshot_enabled.is_unchanged()
+    {
         return Err(invalid("project", "at least one update is required"));
     }
     Ok(project::UpdateProject {
         id: parse("id", &request.id)?,
         source: source_value,
         obsidian_vault,
+        snapshot_enabled,
     })
 }
 
@@ -135,6 +140,7 @@ pub fn add_project_response(project: Project) -> pb::AddProjectResponse {
         created_at,
         is_paused,
         obsidian_vault,
+        snapshot_enabled,
     } = project;
     pb::AddProjectResponse {
         id: id.to_string(),
@@ -146,6 +152,7 @@ pub fn add_project_response(project: Project) -> pb::AddProjectResponse {
         created_at: created_at.to_string(),
         is_paused,
         obsidian_vault: obsidian_vault.map(|value| value.to_string()),
+        snapshot_enabled,
     }
 }
 
@@ -159,6 +166,7 @@ pub fn get_project_response(project: Project) -> pb::GetProjectResponse {
         created_at,
         is_paused,
         obsidian_vault,
+        snapshot_enabled,
     } = project;
     pb::GetProjectResponse {
         id: id.to_string(),
@@ -170,6 +178,7 @@ pub fn get_project_response(project: Project) -> pb::GetProjectResponse {
         created_at: created_at.to_string(),
         is_paused,
         obsidian_vault: obsidian_vault.map(|value| value.to_string()),
+        snapshot_enabled,
     }
 }
 
@@ -197,6 +206,7 @@ pub fn rename_project_response(project: Project) -> pb::RenameProjectResponse {
         created_at,
         is_paused,
         obsidian_vault,
+        snapshot_enabled,
     } = project;
     pb::RenameProjectResponse {
         id: id.to_string(),
@@ -208,6 +218,7 @@ pub fn rename_project_response(project: Project) -> pb::RenameProjectResponse {
         created_at: created_at.to_string(),
         is_paused,
         obsidian_vault: obsidian_vault.map(|value| value.to_string()),
+        snapshot_enabled,
     }
 }
 
@@ -243,6 +254,7 @@ fn project_fields(fields: pb::ProjectFields) -> Result<project::ProjectFields, S
     let tasks_kind = ProjectTasksKind::try_from(fields.tasks_kind.as_str())
         .map_err(|error| invalid("fields.tasks_kind", error))?;
     Ok(project::ProjectFields {
+        snapshot_enabled: fields.snapshot_enabled,
         id: ProjectId::try_new(fields.id)
             .map_err(|_| invalid("fields.id", "expected two to four ASCII letters"))?,
         title: ProjectName::try_new(fields.title)
@@ -286,6 +298,7 @@ fn project_message(project: Project) -> pb::Project {
         created_at,
         is_paused,
         obsidian_vault,
+        snapshot_enabled,
     } = project;
     pb::Project {
         id: id.to_string(),
@@ -297,6 +310,7 @@ fn project_message(project: Project) -> pb::Project {
         created_at: created_at.to_string(),
         is_paused,
         obsidian_vault: obsidian_vault.map(|value| value.to_string()),
+        snapshot_enabled,
     }
 }
 
@@ -322,6 +336,7 @@ mod tests {
     fn update_project_request_requires_one_valid_source_update() {
         let command = super::update_project_request(UpdateProjectRequest {
             obsidian_vault: None,
+            snapshot_enabled: None,
             id: "foo".to_string(),
             source_value: Some(StringPatchField {
                 operation: Some(string_patch_field::Operation::Set("/work/new".to_string())),
@@ -330,6 +345,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(command.id.as_ref(), "FOO");
+        assert_eq!(command.snapshot_enabled, super::SetField::NoAction);
         assert!(
             matches!(command.source, crate::patch_field::PatchField::Set(value) if value.value().as_ref() == "/work/new")
         );
@@ -343,12 +359,30 @@ mod tests {
         ] {
             let error = super::update_project_request(UpdateProjectRequest {
                 obsidian_vault: None,
+                snapshot_enabled: None,
                 id: "FOO".to_string(),
                 source_value,
             })
             .unwrap_err();
 
             assert_eq!(error.code(), Code::InvalidArgument);
+        }
+    }
+
+    #[test]
+    fn update_project_request_accepts_each_snapshot_choice_without_other_updates() {
+        for enabled in [false, true] {
+            let command = super::update_project_request(UpdateProjectRequest {
+                id: "FOO".to_string(),
+                source_value: None,
+                obsidian_vault: None,
+                snapshot_enabled: Some(enabled),
+            })
+            .unwrap();
+
+            assert_eq!(command.snapshot_enabled, super::SetField::Set(enabled));
+            assert_eq!(command.source, super::PatchField::NoAction);
+            assert_eq!(command.obsidian_vault, super::PatchField::NoAction);
         }
     }
 }

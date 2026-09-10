@@ -1,8 +1,8 @@
-use std::{assert_matches, fmt::Write as _, num::NonZeroUsize, path::Path};
+use std::{assert_matches, fmt::Write as _, path::Path};
 
 use pwf_application::ports::task_vault::{
-    ExpectedTaskRevision, IndexEntry, IndexEntryState, NewTask, NullablePatch, TaskMutationError,
-    TaskPatch, TaskVault, TaskWrite, TaskWriteSet,
+    ExpectedTaskRevision, NewTask, NullablePatch, TaskMutationError, TaskPatch, TaskVault,
+    TaskWrite, TaskWriteSet,
 };
 use pwf_models::{
     project::{
@@ -10,27 +10,25 @@ use pwf_models::{
         ProjectSourceValue, ProjectTasks, ProjectTasksKind, ProjectTasksPath,
     },
     task::{
-        BlockedBy, EffortTier, PriorityTier, Tag, TaskId, TaskSection, TaskStatus, TaskTags,
-        TaskTimestamp, TaskTitle,
+        BlockedBy, EffortTier, PriorityTier, Tag, TaskId, TaskStatus, TaskTags, TaskTimestamp,
+        TaskTitle,
     },
 };
 use pwf_wire::{
     set_field::SetField,
-    task::{
-        IndexPlacement, Materialization, StoredBlockedBy, TaskIndexPath, TaskNotePath, TaskRecord,
-    },
+    task::{StoredBlockedBy, TaskRecord},
 };
 
-use super::{ObsidianStore, ObsidianStoreError, fs::path_str};
+use super::{ObsidianStore, ObsidianStoreError};
 use crate::file_transaction::content_revision;
 
 const S: &str = "\n\n";
 
-fn task_timestamp(raw: &str) -> TaskTimestamp {
-    raw.parse().unwrap()
+fn path_str(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
 }
 
-fn task_section(raw: &str) -> TaskSection {
+fn task_timestamp(raw: &str) -> TaskTimestamp {
     raw.parse().unwrap()
 }
 
@@ -49,11 +47,38 @@ fn project(id: &str, title: &str, tasks_path: &Path) -> Project {
         ),
         created_at: "2026-07-25T00:00:00.000Z".parse().unwrap(),
         is_paused: false,
+        snapshot_enabled: false,
     }
 }
 
 fn foo_project(store: &ObsidianStore) -> Project {
     project("FOO", "foo", store.home.as_path())
+}
+
+#[test]
+fn task_records_ignore_project_page_contents() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = store_with_index_identity(directory.path());
+    let project = foo_project(&store);
+    std::fs::write(
+        directory.path().join("FOO-0001.md"),
+        "---\nid: FOO-0001\ntitle: Task\nstatus: active\n---\n\nDo work\n",
+    )
+    .unwrap();
+    for page in [
+        "---\nid: foo\ntitle: foo\n---\n\n## Later\n- [x] [[FOO-0001]]\n- [ ] [[FOO-0002]]\n",
+        "---\ninvalid: [\n---\n",
+    ] {
+        std::fs::write(directory.path().join("foo.md"), page).unwrap();
+        let records = TaskVault::list_tasks(&store, &project).unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].status, TaskStatus::Active);
+        assert!(
+            TaskVault::get_task_record(&store, &project, &TaskId::try_new("FOO-0002").unwrap())
+                .unwrap()
+                .is_none()
+        );
+    }
 }
 
 #[test]
@@ -181,29 +206,6 @@ fn list_ignores_markdown_without_task_id() {
 }
 
 #[test]
-fn explicit_index_path_uses_the_project_title_inside_tasks_path() {
-    let temporary_directory = tempfile::tempdir().unwrap();
-    let tasks_path = temporary_directory.path().join("records");
-    std::fs::create_dir_all(&tasks_path).unwrap();
-    let index_path = tasks_path.join("sample-project.md");
-    std::fs::write(
-        &index_path,
-        "---\nid: smp\ntitle: sample-project\n---\n\n- [ ] [[SMP-0001]]\n",
-    )
-    .unwrap();
-    let store = ObsidianStore::new(HomeDirectory::new(tasks_path.clone()));
-    let project_name = project("SMP", "sample-project", &tasks_path);
-
-    let records = TaskVault::list_tasks(&store, &project_name).unwrap();
-
-    assert_eq!(records.len(), 1);
-    assert_eq!(
-        records[0].placement.as_ref().unwrap().index_path.as_path(),
-        index_path
-    );
-}
-
-#[test]
 fn explicit_projects_support_unrelated_task_parents() {
     let temporary_directory = tempfile::tempdir().unwrap();
     let first_tasks = temporary_directory.path().join("one/tasks-a");
@@ -216,6 +218,11 @@ fn explicit_projects_support_unrelated_task_parents() {
         std::fs::write(
             tasks_path.join(format!("{title}.md")),
             format!("---\nid: {id}\ntitle: {title}\n---\n\n- [ ] [[{task_id}]]\n"),
+        )
+        .unwrap();
+        std::fs::write(
+            tasks_path.join(format!("{task_id}.md")),
+            format!("---\nid: {task_id}\ntitle: Task\n---\nbody\n"),
         )
         .unwrap();
     }
@@ -231,58 +238,6 @@ fn explicit_projects_support_unrelated_task_parents() {
         let records = TaskVault::list_tasks(&store, &project_name).unwrap();
         assert_eq!(records[0].id.as_ref(), expected_id);
     }
-}
-
-#[test]
-fn explicit_index_validation_uses_the_supplied_identity() {
-    let temporary_directory = tempfile::tempdir().unwrap();
-    let tasks_path = temporary_directory.path().join("tasks");
-    std::fs::create_dir_all(&tasks_path).unwrap();
-    std::fs::write(
-        tasks_path.join("foo.md"),
-        "---\nid: old\ntitle: foo\n---\n\n",
-    )
-    .unwrap();
-    let store = ObsidianStore::new(HomeDirectory::new(tasks_path.clone()));
-    let project_name = project("NEW", "foo", &tasks_path);
-
-    let error = TaskVault::list_tasks(&store, &project_name).unwrap_err();
-
-    assert_matches!(
-        error,
-        ObsidianStoreError::ProjectIndexIdentityMismatch {
-            ref expected_id,
-            ..
-        } if expected_id.as_ref() == "NEW"
-    );
-}
-
-#[test]
-fn generic_list_rejects_project_index_without_identity_frontmatter() {
-    let temp = tempfile::tempdir().unwrap();
-    let notes_dir = temp.path().join("notes");
-    let project_dir = notes_dir.join("foo");
-    std::fs::create_dir_all(&project_dir).unwrap();
-    std::fs::write(project_dir.join("foo.md"), "- [ ] [[FOO-0001]]\n").unwrap();
-    write_note(
-        &project_dir.join("FOO-0001.md"),
-        "task",
-        "2026-07-12",
-        None,
-        None,
-        None,
-        "body",
-    );
-    let store = store_for_tasks(&notes_dir.join("foo"));
-
-    let project = foo_project(&store);
-    let error = TaskVault::list_tasks(&store, &project).unwrap_err();
-
-    assert_matches!(
-        error,
-        ObsidianStoreError::MissingFrontmatter { property, .. }
-            if property == "id/title"
-    );
 }
 
 #[test]
@@ -433,21 +388,8 @@ fn write_note(
     std::fs::write(path, note).unwrap();
 }
 
-/// Writes a note and then its open index entry through the adapter ports.
 fn generic_add(store: &ObsidianStore, new: NewTask) -> Result<TaskRecord, ObsidianStoreError> {
-    let project = foo_project(store);
-    let record = insert_next(store, &project, new)?;
-    let id = record.id.clone();
-    TaskVault::upsert_index_entry(
-        store,
-        &project,
-        IndexEntry {
-            id,
-            state: IndexEntryState::Open,
-            section: None,
-        },
-    )?;
-    Ok(record)
+    insert_next(store, &foo_project(store), new)
 }
 
 fn insert_next(
@@ -472,7 +414,7 @@ fn new_task(body: &str, title: &str) -> NewTask {
 }
 
 #[test]
-fn generic_add_creates_note_and_links_index() {
+fn generic_add_creates_note_and_preserves_project_page() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
     let store = store_with_index_identity(&notes_dir.join("foo"));
@@ -506,10 +448,7 @@ fn generic_add_creates_note_and_links_index() {
     let expected_body = format!("## Goals{S}## Done When{S}- tests pass");
     assert!(note.contains(&expected_body), "{note}");
     let index = std::fs::read_to_string(notes_dir.join("foo/foo.md")).unwrap();
-    assert_eq!(
-        index,
-        "---\nid: foo\ntitle: foo\n---\n\n- [ ] [[FOO-0001]]\n"
-    );
+    assert_eq!(index, "---\nid: foo\ntitle: foo\n---\n\n");
 }
 
 #[test]
@@ -532,51 +471,6 @@ fn generic_add_writes_tags_and_omits_absent_tags() {
     let untagged = generic_add(&store, new_task("untagged task", "untagged task")).unwrap();
     let note = std::fs::read_to_string(untagged.locator.as_path()).unwrap();
     assert!(!note.contains("tags:"), "{note}");
-}
-
-#[test]
-fn generic_insert_rejects_unreadable_existing_index_before_writing_a_note() {
-    let temp = tempfile::tempdir().unwrap();
-    let notes_dir = temp.path().join("notes");
-    let project_dir = notes_dir.join("foo");
-    std::fs::create_dir_all(project_dir.join("foo.md")).unwrap();
-    let store = store_with_index_identity(&project_dir);
-    let project = foo_project(&store);
-
-    let err = insert_next(
-        &store,
-        &project,
-        new_task("Ship the adapter /d tests pass", "ship adapter"),
-    )
-    .unwrap_err();
-
-    assert!(err.to_string().starts_with("Cannot read index: "));
-    assert!(
-        !project_dir.join("FOO-0001.md").exists(),
-        "the failed insert must not leave a note behind"
-    );
-}
-
-#[test]
-fn generic_insert_rejects_mismatched_project_index_identity() {
-    let temp = tempfile::tempdir().unwrap();
-    let notes_dir = temp.path().join("notes");
-    let project_dir = notes_dir.join("foo");
-    std::fs::create_dir_all(&project_dir).unwrap();
-    std::fs::write(
-        project_dir.join("foo.md"),
-        "---\nid: smp\ntitle: sample-project\n---\n\n# wrong\n",
-    )
-    .unwrap();
-    let store = store_with_index_identity(&notes_dir.join("foo"));
-    let project = foo_project(&store);
-
-    let error = insert_next(&store, &project, new_task("task", "task")).unwrap_err();
-
-    assert_matches!(
-        error,
-        ObsidianStoreError::ProjectIndexIdentityMismatch { .. }
-    );
 }
 
 #[test]
@@ -819,7 +713,7 @@ fn generic_update_clears_tags_on_crlf_frontmatter() {
 }
 
 #[test]
-fn generic_delete_moves_note_to_vault_trash_and_unlinks_index() {
+fn generic_delete_moves_note_to_vault_trash_and_preserves_project_page() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
     let project_dir = notes_dir.join("foo");
@@ -846,15 +740,12 @@ fn generic_delete_moves_note_to_vault_trash_and_unlinks_index() {
         &store,
         &project,
         &id,
-        vec![
-            TaskWrite::DeleteIndex(id.clone()),
-            TaskWrite::DeleteNote {
-                id: id.clone(),
-                deletion: pwf_wire::confirmation::TaskDeletion::MoveToTrash {
-                    obsidian_vault: notes_dir.clone(),
-                },
+        vec![TaskWrite::DeleteNote {
+            id: id.clone(),
+            deletion: pwf_wire::confirmation::TaskDeletion::MoveToTrash {
+                obsidian_vault: notes_dir.clone(),
             },
-        ],
+        }],
     );
 
     assert!(!task_path.exists());
@@ -864,7 +755,7 @@ fn generic_delete_moves_note_to_vault_trash_and_unlinks_index() {
     );
     assert_eq!(
         std::fs::read_to_string(project_dir.join("foo.md")).unwrap(),
-        "---\nid: foo\ntitle: foo\n---\n"
+        "---\nid: foo\ntitle: foo\n---\n\n- [ ] [[FOO-0001]]\n"
     );
 }
 
@@ -889,15 +780,12 @@ fn repeated_deletion_preserves_each_note_in_numbered_trash_files() {
             &store,
             &project,
             &id,
-            vec![
-                TaskWrite::DeleteIndex(id.clone()),
-                TaskWrite::DeleteNote {
-                    id: id.clone(),
-                    deletion: pwf_wire::confirmation::TaskDeletion::MoveToTrash {
-                        obsidian_vault: notes_dir.clone(),
-                    },
+            vec![TaskWrite::DeleteNote {
+                id: id.clone(),
+                deletion: pwf_wire::confirmation::TaskDeletion::MoveToTrash {
+                    obsidian_vault: notes_dir.clone(),
                 },
-            ],
+            }],
         );
         saved.push((notes_dir.join(".trash").join(name), contents));
         assert!(!task_path.exists());
@@ -927,78 +815,6 @@ fn note_backed_record_revision_hashes_the_complete_persisted_note() {
         record.revision,
         content_revision(&std::fs::read(&staged.task_path).unwrap())
     );
-}
-
-#[test]
-fn missing_note_record_revision_hashes_the_complete_project_index() {
-    let temp = tempfile::tempdir().unwrap();
-    let project_dir = temp.path().join("foo");
-    std::fs::create_dir_all(&project_dir).unwrap();
-    let index_path = project_dir.join("foo.md");
-    std::fs::write(
-        &index_path,
-        "---\nid: foo\ntitle: foo\n---\n\n- [ ] [[FOO-0001|missing]]\n<!-- retained -->\n",
-    )
-    .unwrap();
-    let store = store_for_tasks(&project_dir);
-    let project = foo_project(&store);
-    let id = TaskId::try_new("FOO-0001").unwrap();
-
-    let record = TaskVault::get_task_record(&store, &project, &id)
-        .unwrap()
-        .unwrap();
-
-    assert_eq!(
-        record.revision,
-        content_revision(&std::fs::read(index_path).unwrap())
-    );
-}
-
-#[test]
-fn index_backed_task_writes_share_one_index_snapshot_and_replacement() {
-    let temp = tempfile::tempdir().unwrap();
-    let project_dir = temp.path().join("foo");
-    std::fs::create_dir_all(&project_dir).unwrap();
-    let index_path = project_dir.join("foo.md");
-    std::fs::write(
-        &index_path,
-        "---\nid: foo\ntitle: foo\n---\n\n- [ ] [[FOO-0001|first]]\n- [ ] [[FOO-0002|second]]\n",
-    )
-    .unwrap();
-    let store = store_for_tasks(&project_dir);
-    let project = foo_project(&store);
-    let first_id = TaskId::try_new("FOO-0001").unwrap();
-    let second_id = TaskId::try_new("FOO-0002").unwrap();
-    let first = TaskVault::get_task_record(&store, &project, &first_id)
-        .unwrap()
-        .unwrap();
-    let second = TaskVault::get_task_record(&store, &project, &second_id)
-        .unwrap()
-        .unwrap();
-    let writes = TaskWriteSet::try_new(
-        vec![
-            ExpectedTaskRevision {
-                id: first_id.clone(),
-                revision: first.revision,
-            },
-            ExpectedTaskRevision {
-                id: second_id.clone(),
-                revision: second.revision,
-            },
-        ],
-        vec![
-            TaskWrite::DeleteIndex(first_id),
-            TaskWrite::DeleteIndex(second_id),
-        ],
-    )
-    .unwrap();
-
-    TaskVault::commit_task_writes(&store, &project, writes).unwrap();
-
-    let updated = std::fs::read_to_string(index_path).unwrap();
-    assert!(!updated.contains("FOO-0001"));
-    assert!(!updated.contains("FOO-0002"));
-    assert!(updated.contains("id: foo"));
 }
 
 #[test]
@@ -1033,49 +849,6 @@ fn stale_note_patch_preserves_the_external_edit_and_index() {
     assert!(matches!(error, TaskMutationError::StaleTask { .. }));
     assert_eq!(std::fs::read_to_string(staged.task_path).unwrap(), external);
     assert_eq!(std::fs::read(index_path).unwrap(), index_before);
-}
-
-#[test]
-fn unrelated_index_edit_stales_an_index_backed_task() {
-    let temp = tempfile::tempdir().unwrap();
-    let project_dir = temp.path().join("foo");
-    std::fs::create_dir_all(&project_dir).unwrap();
-    let index_path = project_dir.join("foo.md");
-    std::fs::write(
-        &index_path,
-        "---\nid: foo\ntitle: foo\n---\n\n- [ ] [[FOO-0001|missing]]\n- [ ] [[FOO-0002|other]]\n",
-    )
-    .unwrap();
-    let store = store_for_tasks(&project_dir);
-    let project = foo_project(&store);
-    let id = TaskId::try_new("FOO-0001").unwrap();
-    let record = TaskVault::get_task_record(&store, &project, &id)
-        .unwrap()
-        .unwrap();
-    let external = format!(
-        "{}<!-- unrelated edit -->\n",
-        std::fs::read_to_string(&index_path).unwrap()
-    );
-    std::fs::write(&index_path, &external).unwrap();
-    let writes = TaskWriteSet::try_new(
-        vec![ExpectedTaskRevision {
-            id: id.clone(),
-            revision: record.revision,
-        }],
-        vec![TaskWrite::Patch {
-            id,
-            patch: TaskPatch {
-                status: SetField::Set(TaskStatus::Done),
-                ..TaskPatch::default()
-            },
-        }],
-    )
-    .unwrap();
-
-    let error = TaskVault::commit_task_writes(&store, &project, writes).unwrap_err();
-
-    assert!(matches!(error, TaskMutationError::StaleTask { .. }));
-    assert_eq!(std::fs::read_to_string(index_path).unwrap(), external);
 }
 
 #[test]
@@ -1147,15 +920,12 @@ fn stale_delete_preserves_the_external_edit_index_and_trash_state() {
             id: id.clone(),
             revision: record.revision,
         }],
-        vec![
-            TaskWrite::DeleteIndex(id.clone()),
-            TaskWrite::DeleteNote {
-                id,
-                deletion: pwf_wire::confirmation::TaskDeletion::MoveToTrash {
-                    obsidian_vault: vault.clone(),
-                },
+        vec![TaskWrite::DeleteNote {
+            id,
+            deletion: pwf_wire::confirmation::TaskDeletion::MoveToTrash {
+                obsidian_vault: vault.clone(),
             },
-        ],
+        }],
     )
     .unwrap();
 
@@ -1245,7 +1015,12 @@ fn get_finds_closed_note_still_in_project_dir() {
 }
 
 fn store_with_index_identity(tasks_path: &Path) -> ObsidianStore {
-    ensure_test_index_identity(&tasks_path.join("foo.md"), "foo", "foo");
+    std::fs::create_dir_all(tasks_path).unwrap();
+    let page = tasks_path.join("foo.md");
+    if !page.exists() {
+        std::fs::write(&page, "---\nid: foo\ntitle: foo\n---\n\n").unwrap();
+    }
+    ensure_test_index_identity(&page, "foo", "foo");
     store_for_tasks(tasks_path)
 }
 
@@ -1372,7 +1147,6 @@ fn task_record_roundtrips_file_model_note() {
         .unwrap();
 
     assert_eq!(record.id, id);
-    assert_eq!(record.materialization, Materialization::NoteFile);
     assert_eq!(record.title, "ship the adapter");
     assert_eq!(record.status, TaskStatus::Active);
     assert_eq!(
@@ -1393,7 +1167,6 @@ fn task_record_roundtrips_file_model_note() {
         record.tags.as_ref().map(AsRef::as_ref),
         Some("[sqlite, godot]")
     );
-    assert_eq!(record.section, None);
     assert_eq!(record.body, "\nship the adapter body\n");
     assert_eq!(record.locator.as_path(), note_path);
     assert_eq!(record.source, source);
@@ -1491,128 +1264,6 @@ fn task_record_rejects_an_invalid_status() {
 }
 
 #[test]
-fn task_record_materializes_index_entry_without_a_note() {
-    let temp = tempfile::tempdir().unwrap();
-    let notes_dir = temp.path().join("notes");
-    let project_dir = notes_dir.join("foo");
-    std::fs::create_dir_all(&project_dir).unwrap();
-    let index_path = project_dir.join("foo.md");
-    std::fs::write(
-        &index_path,
-        "---\nid: foo\ntitle: foo\n---\n\n- [ ] [[FOO-0002|handle it]]\n",
-    )
-    .unwrap();
-    let store = store_for_tasks(&notes_dir.join("foo"));
-
-    let project = foo_project(&store);
-    let id = TaskId::try_new("FOO-0002").unwrap();
-    let record = TaskVault::get_task_record(&store, &project, &id)
-        .unwrap()
-        .unwrap();
-
-    let expected_note = project_dir.join("FOO-0002.md");
-    assert_eq!(record.id, id);
-    assert_eq!(record.title, "handle it");
-    assert_eq!(record.status, TaskStatus::Active);
-    assert_eq!(record.created_at, None);
-    assert_eq!(record.completed_at, None);
-    assert_eq!(record.section, None);
-    assert_eq!(record.locator.as_path(), expected_note);
-    assert_eq!(record.source, "");
-    assert_eq!(record.body, "");
-    assert_eq!(
-        record.materialization,
-        Materialization::MissingNote {
-            expected: TaskNotePath::new(expected_note)
-        }
-    );
-}
-
-#[test]
-fn index_entries_parse_open_done_and_raw_futuro_section() {
-    let temp = tempfile::tempdir().unwrap();
-    let notes_dir = temp.path().join("notes");
-    let project_dir = notes_dir.join("foo");
-    std::fs::create_dir_all(&project_dir).unwrap();
-    std::fs::write(
-        project_dir.join("foo.md"),
-        concat!(
-            "---\nid: foo\ntitle: foo\n---\n\n",
-            "- [ ] [[FOO-0001]]\n",
-            "- [x] [[FOO-0002]] \u{2705} 2026-07-02\n",
-            "\n## Futuro\n",
-            "- [ ] [[FOO-0003]]\n",
-        ),
-    )
-    .unwrap();
-    let store = store_for_tasks(&notes_dir.join("foo"));
-
-    let project = foo_project(&store);
-    let entries = TaskVault::list_index_entries(&store, &project).unwrap();
-
-    assert_eq!(
-        entries,
-        vec![
-            IndexEntry {
-                id: TaskId::try_new("FOO-0001").unwrap(),
-                state: IndexEntryState::Open,
-                section: None,
-            },
-            IndexEntry {
-                id: TaskId::try_new("FOO-0002").unwrap(),
-                state: IndexEntryState::Done(Some(task_timestamp("2026-07-02T00:00:00Z",))),
-                section: None,
-            },
-            IndexEntry {
-                id: TaskId::try_new("FOO-0003").unwrap(),
-                state: IndexEntryState::Open,
-                section: Some(task_section("Futuro")),
-            },
-        ]
-    );
-}
-
-#[test]
-fn patch_status_done_closes_index_entry_without_a_date_stamp() {
-    let temp = tempfile::tempdir().unwrap();
-    let notes_dir = temp.path().join("notes");
-    let project_dir = notes_dir.join("foo");
-    std::fs::create_dir_all(&project_dir).unwrap();
-    let index_path = project_dir.join("foo.md");
-    std::fs::write(
-        &index_path,
-        "---\nid: foo\ntitle: foo\n---\n\n- [ ] [[FOO-0002|handle it]]\n",
-    )
-    .unwrap();
-    let store = store_for_tasks(&notes_dir.join("foo"));
-
-    let project = foo_project(&store);
-    let id = TaskId::try_new("FOO-0002").unwrap();
-    let patch = TaskPatch {
-        status: SetField::Set(TaskStatus::Done),
-        completed_at: NullablePatch::Set(task_timestamp("2026-07-15T12:34:56Z")),
-        ..Default::default()
-    };
-
-    commit_for_task(
-        &store,
-        &project,
-        &id,
-        vec![TaskWrite::Patch {
-            id: id.clone(),
-            patch,
-        }],
-    );
-
-    let index = std::fs::read_to_string(&index_path).unwrap();
-    assert!(
-        index.contains("- [x] [[FOO-0002|handle it]]"),
-        "checkbox not flipped; got:\n{index}"
-    );
-    assert!(!index.contains('\u{2705}'), "date stamp retained:\n{index}");
-}
-
-#[test]
 fn insert_allocates_next_id_without_index_write() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
@@ -1693,119 +1344,8 @@ fn exact_insert_rejects_an_id_occupied_after_allocation_without_replacing_it() {
     assert_eq!(std::fs::read_to_string(path).unwrap(), before);
 }
 
-/// Verifies that open index links contribute placement without owning list membership.
 #[test]
-fn generic_list_records_carry_open_placement_without_hiding_unlinked_notes() {
-    let temp = tempfile::tempdir().unwrap();
-    let notes_dir = temp.path().join("notes");
-    let project_dir = notes_dir.join("foo");
-    std::fs::create_dir_all(&project_dir).unwrap();
-    let index_path = project_dir.join("foo.md");
-    std::fs::write(
-        &index_path,
-        concat!(
-            "---\nid: foo\ntitle: foo\n---\n\n",
-            "## Futuro\n",
-            "- [ ] [[FOO-0001|linked]]\n",
-        ),
-    )
-    .unwrap();
-    write_note(
-        &project_dir.join("FOO-0001.md"),
-        "linked",
-        "2026-07-01",
-        None,
-        None,
-        None,
-        "body",
-    );
-    write_note(
-        &project_dir.join("FOO-0002.md"),
-        "unlinked",
-        "2026-07-01",
-        None,
-        None,
-        None,
-        "body",
-    );
-    let store = store_for_tasks(&notes_dir.join("foo"));
-
-    let project = foo_project(&store);
-    let records = TaskVault::list_tasks(&store, &project).unwrap();
-    assert_eq!(
-        TaskVault::list_task_summaries(&store, &project).unwrap(),
-        records
-            .iter()
-            .cloned()
-            .map(pwf_application::ports::task_vault::TaskSummaryRecord::from)
-            .collect::<Vec<_>>()
-    );
-
-    assert_eq!(records.len(), 2);
-    let record = records
-        .iter()
-        .find(|record| record.id.as_ref() == "FOO-0001")
-        .unwrap();
-    assert_eq!(record.id, TaskId::try_new("FOO-0001").unwrap());
-    assert_eq!(
-        record.placement,
-        Some(IndexPlacement {
-            index_path: TaskIndexPath::new(index_path.clone()),
-            line: NonZeroUsize::new(7).unwrap(),
-        })
-    );
-    assert_eq!(record.section.as_ref().map(AsRef::as_ref), Some("Futuro"));
-    let unlinked = records
-        .iter()
-        .find(|record| record.id.as_ref() == "FOO-0002")
-        .unwrap();
-    assert!(unlinked.placement.is_none());
-    assert_eq!(unlinked.section, None);
-}
-
-#[test]
-fn generic_list_rejects_duplicate_project_index_task_ids() {
-    let temp = tempfile::tempdir().unwrap();
-    let notes_dir = temp.path().join("notes");
-    let project_dir = notes_dir.join("foo");
-    std::fs::create_dir_all(&project_dir).unwrap();
-    let index_path = project_dir.join("foo.md");
-    std::fs::write(
-        &index_path,
-        concat!(
-            "---\nid: foo\ntitle: foo\n---\n\n",
-            "- [ ] [[FOO-0001|first]]\n",
-            "## Human\n",
-            "- [ ] [[FOO-0001|duplicate]]\n",
-        ),
-    )
-    .unwrap();
-    write_note(
-        &project_dir.join("FOO-0001.md"),
-        "task",
-        "2026-07-18",
-        None,
-        None,
-        None,
-        "body",
-    );
-    let store = store_for_tasks(&notes_dir.join("foo"));
-    let project = foo_project(&store);
-
-    let error = TaskVault::list_tasks(&store, &project).unwrap_err();
-
-    assert_matches!(
-        error,
-        ObsidianStoreError::ProjectIndexTaskIdDuplicate {
-            path,
-            id,
-            lines,
-        } if path == index_path && id.as_ref() == "FOO-0001" && lines == [6, 8]
-    );
-}
-
-#[test]
-fn list_tasks_returns_note_history_and_index_only_records() {
+fn list_tasks_returns_note_history_and_ignores_missing_notes() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
     let project_dir = notes_dir.join("foo");
@@ -1854,9 +1394,7 @@ fn list_tasks_returns_note_history_and_index_only_records() {
 
     assert_eq!(
         ids,
-        [
-            "FOO-0001", "FOO-0002", "FOO-0003", "FOO-0004", "FOO-0005", "FOO-0006",
-        ]
+        ["FOO-0001", "FOO-0002", "FOO-0003", "FOO-0004", "FOO-0005",]
     );
     let record = |id: &str| {
         records
@@ -1864,30 +1402,12 @@ fn list_tasks_returns_note_history_and_index_only_records() {
             .find(|record| record.id.as_ref() == id)
             .unwrap()
     };
-    assert_eq!(
-        record("FOO-0001").placement,
-        Some(IndexPlacement {
-            index_path: TaskIndexPath::new(index_path.clone()),
-            line: NonZeroUsize::new(6).unwrap(),
-        })
-    );
+    assert_eq!(record("FOO-0001").status, TaskStatus::Active);
     assert_eq!(record("FOO-0002").status, TaskStatus::Done);
-    assert_eq!(
-        record("FOO-0002").section.as_ref().map(AsRef::as_ref),
-        Some("Human")
-    );
-    assert!(record("FOO-0002").placement.is_none());
     assert_eq!(record("FOO-0003").status, TaskStatus::Cancelled);
     assert_eq!(record("FOO-0004").status, TaskStatus::Done);
-    assert!(record("FOO-0004").placement.is_none());
     assert_eq!(record("FOO-0005").status, TaskStatus::Active);
-    assert!(record("FOO-0005").placement.is_none());
-    let missing_done = record("FOO-0006");
-    assert_eq!(missing_done.status, TaskStatus::Done);
-    assert_matches!(
-        &missing_done.materialization,
-        Materialization::MissingNote { .. }
-    );
+    assert!(get_record(&store, "FOO-0006").is_none());
 }
 
 #[test]
@@ -1918,137 +1438,6 @@ fn list_tasks_returns_note_history_when_index_is_missing() {
 
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].status, TaskStatus::Done);
-    assert!(records[0].placement.is_none());
-}
-
-/// Captures one add scenario and its expected byte-exact index.
-struct AddParityScenario {
-    name: &'static str,
-    initial_index: Option<&'static str>,
-    expected_index: &'static str,
-}
-
-fn add_parity_scenarios() -> Vec<AddParityScenario> {
-    vec![
-        AddParityScenario {
-            name: "general section with existing anchor",
-            initial_index: Some("---\nid: foo\ntitle: foo\n---\n\n- [ ] [[FOO-0001|tray gui]]\n"),
-            expected_index: "---\nid: foo\ntitle: foo\n---\n\n- [ ] [[FOO-0002]]\n- [ ] [[FOO-0001|tray gui]]\n",
-        },
-        AddParityScenario {
-            name: "fresh vault creates identity template",
-            initial_index: None,
-            expected_index: "---\nid: foo\ntitle: foo\n---\n\n- [ ] [[FOO-0002]]\n",
-        },
-        AddParityScenario {
-            name: "general add stays above trailing notes block",
-            initial_index: Some(
-                "---\nid: foo\ntitle: foo\n---\n\n- [ ] [[FOO-0001|tray gui]]\n\n### Notes\n- [[FOO-NOTE-0001]]\n",
-            ),
-            expected_index: "---\nid: foo\ntitle: foo\n---\n\n- [ ] [[FOO-0002]]\n- [ ] [[FOO-0001|tray gui]]\n\n### Notes\n- [[FOO-NOTE-0001]]\n",
-        },
-    ]
-}
-
-fn stage_add_parity_vault(
-    initial_index: Option<&str>,
-) -> (tempfile::TempDir, ObsidianStore, std::path::PathBuf) {
-    let temp = tempfile::tempdir().unwrap();
-    let notes_dir = temp.path().join("notes");
-    let project_dir = notes_dir.join("foo");
-    std::fs::create_dir_all(&project_dir).unwrap();
-    write_note(
-        &project_dir.join("FOO-0001.md"),
-        "tray gui",
-        "2026-01-01",
-        None,
-        None,
-        None,
-        "add toggle",
-    );
-    if let Some(index) = initial_index {
-        std::fs::write(project_dir.join("foo.md"), index).unwrap();
-    }
-    let store = store_for_tasks(&notes_dir.join("foo"));
-    (temp, store, project_dir)
-}
-
-/// Verifies byte-exact section placement, H3 safety, link format, and fresh-index creation.
-#[test]
-fn generic_insert_and_upsert_preserve_index_placement_bytes() {
-    for scenario in add_parity_scenarios() {
-        let (_guard, store, project_dir) = stage_add_parity_vault(scenario.initial_index);
-        let project = foo_project(&store);
-
-        let record = insert_next(
-            &store,
-            &project,
-            NewTask {
-                body: "do the thing".to_string().into(),
-                title: TaskTitle::try_new("ship it").unwrap(),
-                created_at: task_timestamp("2026-07-07T12:34:56Z"),
-                blocked_by: None,
-                effort: None,
-                priority: None,
-                tags: None,
-            },
-        )
-        .unwrap();
-        let id = record.id.clone();
-        assert_eq!(
-            id.as_ref(),
-            "FOO-0002",
-            "allocated id for `{}`",
-            scenario.name
-        );
-        TaskVault::upsert_index_entry(
-            &store,
-            &project,
-            IndexEntry {
-                id,
-                state: IndexEntryState::Open,
-                section: None,
-            },
-        )
-        .unwrap();
-
-        assert_eq!(
-            std::fs::read_to_string(project_dir.join("foo.md")).unwrap(),
-            scenario.expected_index,
-            "index bytes for scenario `{}`",
-            scenario.name
-        );
-        assert!(
-            project_dir.join("FOO-0002.md").exists(),
-            "note file for scenario `{}`",
-            scenario.name
-        );
-    }
-}
-
-#[test]
-fn upsert_creates_missing_index_from_identity_template() {
-    let temp = tempfile::tempdir().unwrap();
-    let notes_dir = temp.path().join("notes");
-    std::fs::create_dir_all(notes_dir.join("foo")).unwrap();
-    let store = store_for_tasks(&notes_dir.join("foo"));
-    let project = foo_project(&store);
-
-    TaskVault::upsert_index_entry(
-        &store,
-        &project,
-        IndexEntry {
-            id: TaskId::try_new("FOO-0001").unwrap(),
-            state: IndexEntryState::Open,
-            section: None,
-        },
-    )
-    .unwrap();
-
-    assert_eq!(
-        std::fs::read_to_string(notes_dir.join("foo/foo.md")).unwrap(),
-        "---\nid: foo\ntitle: foo\n---\n\n- [ ] [[FOO-0001]]\n"
-    );
 }
 
 #[test]
@@ -2075,15 +1464,12 @@ fn missing_registered_trash_preserves_the_note_and_index() {
                 id: record.id.clone(),
                 revision: record.revision,
             }],
-            vec![
-                TaskWrite::DeleteIndex(record.id.clone()),
-                TaskWrite::DeleteNote {
-                    id: record.id,
-                    deletion: pwf_wire::confirmation::TaskDeletion::MoveToTrash {
-                        obsidian_vault: vault.clone(),
-                    },
+            vec![TaskWrite::DeleteNote {
+                id: record.id,
+                deletion: pwf_wire::confirmation::TaskDeletion::MoveToTrash {
+                    obsidian_vault: vault.clone(),
                 },
-            ],
+            }],
         )
         .unwrap();
         assert!(TaskVault::commit_task_writes(&store, &project, writes).is_err());
@@ -2112,13 +1498,10 @@ fn trash_removed_after_preflight_preserves_the_note_and_index() {
             id: record.id.clone(),
             revision: record.revision.clone(),
         }],
-        vec![
-            TaskWrite::DeleteIndex(record.id.clone()),
-            TaskWrite::DeleteNote {
-                id: record.id.clone(),
-                deletion,
-            },
-        ],
+        vec![TaskWrite::DeleteNote {
+            id: record.id.clone(),
+            deletion,
+        }],
     )
     .unwrap();
     assert!(TaskVault::commit_task_writes(&store, &project, writes).is_err());
@@ -2144,20 +1527,13 @@ fn unregistered_project_hard_deletes_even_under_an_obsidian_vault() {
         &store,
         &project,
         &record.id,
-        vec![
-            TaskWrite::DeleteNote {
-                id: record.id.clone(),
-                deletion,
-            },
-            TaskWrite::DeleteIndex(record.id.clone()),
-        ],
+        vec![TaskWrite::DeleteNote {
+            id: record.id.clone(),
+            deletion,
+        }],
     );
     assert!(!record.locator.as_path().exists());
-    assert!(
-        TaskVault::list_index_entries(&store, &project)
-            .unwrap()
-            .is_empty()
-    );
+    assert!(TaskVault::list_tasks(&store, &project).unwrap().is_empty());
     assert_eq!(
         std::fs::read_dir(root.path().join(".trash"))
             .unwrap()
@@ -2206,4 +1582,135 @@ fn single_task_read_does_not_load_other_task_bodies() {
     let record = get_record(&store, "FOO-0001").unwrap();
     assert_eq!(record.title, "selected");
     assert!(record.body.contains("selected body"));
+}
+
+#[test]
+fn task_crud_ignores_authored_and_generated_page_contents() {
+    for page in [
+        &b"---\nid: FOO-9999\nstatus: broken\n---\n## Later\n- [x] [[FOO-0001]]\n- [ ] [[FOO-0002]]\n- [ ] [[FOO-0002]]\n"[..],
+        &b"---\ninvalid: [\n---\n"[..],
+        &b"\xff\xfe"[..],
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let store = store_for_tasks(directory.path());
+        let project = foo_project(&store);
+        for name in ["foo.md", "pwf-index.md"] {
+            std::fs::write(directory.path().join(name), page).unwrap();
+        }
+        let record = insert_next(&store, &project, new_task("body", "Task")).unwrap();
+        assert_eq!(record.id.as_ref(), "FOO-0001");
+        assert_eq!(get_record(&store, "FOO-0001").unwrap(), record);
+        assert_eq!(TaskVault::list_tasks(&store, &project).unwrap(), std::slice::from_ref(&record));
+        assert_eq!(TaskVault::list_task_summaries(&store, &project).unwrap().len(), 1);
+        assert!(TaskVault::get_task_dependencies(&store, &project, &record.id).unwrap().is_some());
+        assert!(get_record(&store, "FOO-0002").is_none());
+        assert!(get_record(&store, "FOO-9999").is_none());
+        for status in [TaskStatus::Done, TaskStatus::Cancelled, TaskStatus::Active] {
+            commit_for_task(&store, &project, &record.id, vec![TaskWrite::Patch {
+                id: record.id.clone(),
+                patch: TaskPatch { status: SetField::Set(status), ..TaskPatch::default() },
+            }]);
+            assert_eq!(get_record(&store, "FOO-0001").unwrap().status, status);
+        }
+        commit_for_task(&store, &project, &record.id, vec![TaskWrite::DeleteNote {
+            id: record.id.clone(),
+            deletion: pwf_wire::confirmation::TaskDeletion::HardDelete,
+        }]);
+        assert!(TaskVault::list_tasks(&store, &project).unwrap().is_empty());
+        assert!(get_record(&store, "FOO-0001").is_none());
+        for name in ["foo.md", "pwf-index.md"] {
+            assert_eq!(std::fs::read(directory.path().join(name)).unwrap(), page);
+        }
+    }
+}
+
+#[test]
+fn task_crud_does_not_create_or_read_project_pages() {
+    for unreadable_pages in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let store = store_for_tasks(directory.path());
+        let project = foo_project(&store);
+        if unreadable_pages {
+            for name in ["foo.md", "pwf-index.md"] {
+                std::fs::create_dir(directory.path().join(name)).unwrap();
+            }
+        }
+        let record = insert_next(&store, &project, new_task("body", "Task")).unwrap();
+        commit_for_task(
+            &store,
+            &project,
+            &record.id,
+            vec![TaskWrite::Patch {
+                id: record.id.clone(),
+                patch: TaskPatch {
+                    title: SetField::Set(TaskTitle::try_new("Edited").unwrap()),
+                    ..TaskPatch::default()
+                },
+            }],
+        );
+        assert_eq!(get_record(&store, "FOO-0001").unwrap().title, "edited");
+        commit_for_task(
+            &store,
+            &project,
+            &record.id,
+            vec![TaskWrite::DeleteNote {
+                id: record.id.clone(),
+                deletion: pwf_wire::confirmation::TaskDeletion::HardDelete,
+            }],
+        );
+        for name in ["foo.md", "pwf-index.md"] {
+            let path = directory.path().join(name);
+            assert_eq!(path.exists(), unreadable_pages);
+            assert_eq!(path.is_dir(), unreadable_pages);
+        }
+    }
+}
+
+#[test]
+fn exact_insert_rejects_an_existing_frontmatter_id_at_a_descriptive_path() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = store_for_tasks(directory.path());
+    let path = directory.path().join("descriptive.md");
+    let source = "---\nid: FOO-0001\ntitle: Existing\n---\nbody\n";
+    std::fs::write(&path, source).unwrap();
+    let error = TaskVault::insert_task(
+        &store,
+        &foo_project(&store),
+        &"FOO-0001".parse().unwrap(),
+        new_task("new", "New"),
+    )
+    .unwrap_err();
+    assert_matches!(error, ObsidianStoreError::TaskIdOccupied { path: occupied, .. } if occupied == path);
+    assert_eq!(std::fs::read_to_string(path).unwrap(), source);
+    assert!(!directory.path().join("FOO-0001.md").exists());
+}
+
+#[test]
+fn guarded_batch_rejects_a_stale_note_before_changing_any_note() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = store_for_tasks(directory.path());
+    let project = foo_project(&store);
+    let first = insert_next(&store, &project, new_task("first", "First")).unwrap();
+    let second = insert_next(&store, &project, new_task("second", "Second")).unwrap();
+    let writes = TaskWriteSet::try_new(
+        [&first, &second]
+            .map(|record| ExpectedTaskRevision {
+                id: record.id.clone(),
+                revision: record.revision.clone(),
+            })
+            .to_vec(),
+        [&first, &second]
+            .map(|record| TaskWrite::DeleteNote {
+                id: record.id.clone(),
+                deletion: pwf_wire::confirmation::TaskDeletion::HardDelete,
+            })
+            .to_vec(),
+    )
+    .unwrap();
+    let external = format!("{}external edit\n", second.source);
+    std::fs::write(second.locator.as_path(), &external).unwrap();
+    let error = TaskVault::commit_task_writes(&store, &project, writes).unwrap_err();
+    assert_matches!(error, TaskMutationError::StaleTask { id, .. } if id == second.id);
+    assert_eq!(get_record(&store, "FOO-0001").unwrap().source, first.source);
+    assert_eq!(get_record(&store, "FOO-0002").unwrap().source, external);
 }

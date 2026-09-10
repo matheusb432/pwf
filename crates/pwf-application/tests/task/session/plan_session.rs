@@ -284,7 +284,6 @@ async fn planning_accepts_unlinked_active_tasks_with_their_authored_content(
 ) {
     insert_project(&pool, "FOO", "foo", "/work/foo", "/tasks/foo", false).await;
     let record = TaskRecord {
-        placement: None,
         source: "authored task content".into(),
         ..task_record("FOO-0001")
     };

@@ -2,6 +2,7 @@
 
 pub mod doctor;
 mod observability;
+mod project_snapshots;
 mod release;
 mod server;
 mod services;

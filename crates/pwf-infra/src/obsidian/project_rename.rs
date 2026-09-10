@@ -7,10 +7,10 @@ use std::{
 use pwf_application::ports::project_task_files::{
     ProjectTaskFilesClient, ProjectTaskFilesRenameCommit, StagedProjectTaskFilesRename,
 };
-use pwf_models::project::ProjectIndexIdentity;
+use pwf_models::project::ProjectIdentity;
 use walkdir::{DirEntry, WalkDir};
 
-use super::{MarkdownFile, ObsidianStoreError, identity::project_index_frontmatter_id};
+use super::{MarkdownFile, ObsidianStoreError, PROJECT_SNAPSHOT_FILE_NAME};
 
 const DIRECTORY_DEPTH_MAX: usize = 64;
 const ENTRY_COUNT_MAX: usize = 100_000;
@@ -35,8 +35,8 @@ impl ProjectTaskFilesClient for ObsidianProjectTaskFilesClient {
         &self,
         source: &Path,
         destination: &Path,
-        current: &ProjectIndexIdentity,
-        next: &ProjectIndexIdentity,
+        current: &ProjectIdentity,
+        next: &ProjectIdentity,
     ) -> Result<Self::StagedRename, Self::Error> {
         stage(source, destination, current, next)
     }
@@ -46,8 +46,8 @@ impl ProjectTaskFilesClient for ObsidianProjectTaskFilesClient {
 fn stage(
     source: &Path,
     destination: &Path,
-    current: &ProjectIndexIdentity,
-    next: &ProjectIndexIdentity,
+    current: &ProjectIdentity,
+    next: &ProjectIdentity,
 ) -> Result<StagedProjectRename, ObsidianStoreError> {
     reject_existing_destination(destination)?;
     let source_name =
@@ -185,8 +185,8 @@ fn rollback_failed_install(
 
 fn copy_and_rewrite(
     staged: &StagedProjectRename,
-    current: &ProjectIndexIdentity,
-    next: &ProjectIndexIdentity,
+    current: &ProjectIdentity,
+    next: &ProjectIdentity,
 ) -> Result<(), ObsidianStoreError> {
     copy_source(staged)?;
     rewrite_markdown(&staged.staging_directory, current, next)
@@ -257,8 +257,8 @@ fn copy_source_entry(
 
 fn rewrite_markdown(
     staging_directory: &Path,
-    current: &ProjectIndexIdentity,
-    next: &ProjectIndexIdentity,
+    current: &ProjectIdentity,
+    next: &ProjectIdentity,
 ) -> Result<(), ObsidianStoreError> {
     let mut markdown_paths = Vec::new();
     for (index, entry) in WalkDir::new(staging_directory)
@@ -293,7 +293,11 @@ fn rewrite_markdown(
         }
     }
     for path in markdown_paths {
-        rewrite_markdown_file(&path, current, next)?;
+        if path != staging_directory.join(format!("{}.md", current.title()))
+            && path != staging_directory.join(PROJECT_SNAPSHOT_FILE_NAME)
+        {
+            rewrite_markdown_file(&path, current, next)?;
+        }
     }
     for (source, destination) in renames {
         fs::rename(&source, &destination).map_err(|source_error| {
@@ -309,8 +313,8 @@ fn rewrite_markdown(
 
 fn plan_markdown_rename(
     path: &Path,
-    current: &ProjectIndexIdentity,
-    next: &ProjectIndexIdentity,
+    current: &ProjectIdentity,
+    next: &ProjectIdentity,
 ) -> Result<Option<(PathBuf, PathBuf)>, ObsidianStoreError> {
     let Some(name) = renamed_markdown_name(path, current, next) else {
         return Ok(None);
@@ -324,8 +328,8 @@ fn plan_markdown_rename(
 
 fn rewrite_markdown_file(
     path: &Path,
-    current: &ProjectIndexIdentity,
-    next: &ProjectIndexIdentity,
+    current: &ProjectIdentity,
+    next: &ProjectIdentity,
 ) -> Result<(), ObsidianStoreError> {
     let mut file = MarkdownFile::open(path).map_err(|source| {
         let source = source.into_io_error();
@@ -354,8 +358,8 @@ fn rewrite_markdown_file(
 
 fn rewrite_markdown_text(
     markdown: &str,
-    current: &ProjectIndexIdentity,
-    next: &ProjectIndexIdentity,
+    current: &ProjectIdentity,
+    next: &ProjectIdentity,
 ) -> String {
     let markers = MarkdownRewriteMarkers::new(current, next);
     let mut state = MarkdownRewriteState::default();
@@ -383,10 +387,6 @@ struct MarkdownRewriteState {
 }
 
 struct MarkdownRewriteMarkers {
-    current_index_id: String,
-    next_index_id: String,
-    current_title: String,
-    next_title: String,
     current_project: String,
     next_project: String,
     current_task_id: String,
@@ -396,12 +396,8 @@ struct MarkdownRewriteMarkers {
 }
 
 impl MarkdownRewriteMarkers {
-    fn new(current: &ProjectIndexIdentity, next: &ProjectIndexIdentity) -> Self {
+    fn new(current: &ProjectIdentity, next: &ProjectIdentity) -> Self {
         Self {
-            current_index_id: format!("id: {}", project_index_frontmatter_id(current)),
-            next_index_id: format!("id: {}", project_index_frontmatter_id(next)),
-            current_title: format!("title: {}", current.title()),
-            next_title: format!("title: {}", next.title()),
             current_project: format!("project: {}", current.title()),
             next_project: format!("project: {}", next.title()),
             current_task_id: format!("id: {}-", current.id()),
@@ -439,12 +435,6 @@ fn update_frontmatter_state(state: &mut MarkdownRewriteState) {
 }
 
 fn rewrite_frontmatter_line(body: &str, markers: &MarkdownRewriteMarkers) -> String {
-    if body == markers.current_index_id {
-        return markers.next_index_id.clone();
-    }
-    if body == markers.current_title {
-        return markers.next_title.clone();
-    }
     if body == markers.current_project {
         return markers.next_project.clone();
     }
@@ -456,8 +446,8 @@ fn rewrite_frontmatter_line(body: &str, markers: &MarkdownRewriteMarkers) -> Str
 
 fn renamed_markdown_name(
     path: &Path,
-    current: &ProjectIndexIdentity,
-    next: &ProjectIndexIdentity,
+    current: &ProjectIdentity,
+    next: &ProjectIdentity,
 ) -> Option<OsString> {
     let file_name = path.file_name()?;
     let current_index = format!("{}.md", current.title());
@@ -514,12 +504,12 @@ fn reject_existing(
 mod tests {
     use std::{assert_matches, fs, io, path::Path};
 
-    use pwf_models::project::{ProjectId, ProjectIndexIdentity, ProjectName};
+    use pwf_models::project::{ProjectId, ProjectIdentity, ProjectName};
 
     use super::*;
 
-    fn identity(id: &str, title: &str) -> ProjectIndexIdentity {
-        ProjectIndexIdentity::new(
+    fn identity(id: &str, title: &str) -> ProjectIdentity {
+        ProjectIdentity::new(
             ProjectId::try_new(id).unwrap(),
             ProjectName::try_new(title).unwrap(),
         )
@@ -565,7 +555,7 @@ mod tests {
         assert!(!staged.staging_directory.join("OLD-0079.md").exists());
         assert_eq!(
             fs::read_to_string(staged.staging_directory.join("renamed-app.md")).unwrap(),
-            "---\nid: new\ntitle: renamed-app\n---\n\n# Pending\n- [ ] [[NEW-0079]]\n- [x] [[NEW-NOTE-0001]]\n"
+            "---\nid: old\ntitle: sample-app\n---\n\n# Pending\n- [ ] [[OLD-0079]]\n- [x] [[OLD-NOTE-0001]]\n"
         );
         assert_eq!(
             fs::read_to_string(staged.staging_directory.join("NEW-0079.md")).unwrap(),
@@ -637,5 +627,29 @@ mod tests {
         assert!(!source.exists());
         assert!(destination.join("NEW-0079.md").is_file());
         assert!(backup.join("OLD-0079.md").is_file());
+    }
+
+    #[test]
+    fn rename_preserves_authored_page_bytes_without_validating_frontmatter() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("sample-app");
+        let destination = directory.path().join("renamed-app");
+        write_fixture(&source);
+        let page = b"---\ninvalid: [\n---\n[[OLD-0079]]\n\xff";
+        fs::write(source.join("sample-app.md"), page).unwrap();
+        fs::write(source.join("pwf-index.md"), b"\xff").unwrap();
+        let staged = ObsidianProjectTaskFilesClient
+            .stage_project_rename(
+                &source,
+                &destination,
+                &identity("OLD", "sample-app"),
+                &identity("NEW", "renamed-app"),
+            )
+            .unwrap();
+        staged.commit().unwrap();
+        assert_eq!(fs::read(destination.join("renamed-app.md")).unwrap(), page);
+        assert_eq!(fs::read(destination.join("pwf-index.md")).unwrap(), b"\xff");
+        assert!(destination.join("NEW-0079.md").is_file());
+        assert!(!destination.join("sample-app.md").exists());
     }
 }

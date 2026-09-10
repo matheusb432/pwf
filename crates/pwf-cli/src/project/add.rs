@@ -45,6 +45,7 @@ impl FromStr for DirectoryPayload {
         let tasks_path = parse_project_tasks(&path)?;
 
         Ok(Self(ProjectFields {
+            snapshot_enabled: payload.snapshot_enabled,
             id: id.to_string(),
             title: title.to_string(),
             source_kind: source_value.as_ref().map(|_| "directory".to_string()),
@@ -85,6 +86,8 @@ struct AddPayload {
     source: Option<SourcePayload>,
     tasks: TasksPayload,
     obsidian_vault: Option<String>,
+    #[serde(default)]
+    snapshot_enabled: bool,
 }
 
 #[derive(Deserialize)]

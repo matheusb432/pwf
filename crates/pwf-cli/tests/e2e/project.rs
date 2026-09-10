@@ -133,6 +133,7 @@ fn project_rename_updates_registry_and_task_identity() {
         false,
     );
     assert_eq!(renamed["created_at"], created["created_at"]);
+    assert_eq!(renamed["snapshot_enabled"], created["snapshot_enabled"]);
     assert_eq!(
         success_json(fixture.run(&["project", "get", "NEW"]).unwrap()).unwrap(),
         renamed

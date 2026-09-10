@@ -5,8 +5,8 @@ use pwf_wire::{
     patch_field::PatchField,
     set_field::SetField,
     task::{
-        EditTask, EditTaskContent, Materialization, RawTaskTags, TaskEdits, TaskLane,
-        TaskLaneEdits, TaskLanes, TaskNotePath, TaskRecord,
+        EditTask, EditTaskContent, RawTaskTags, TaskEdits, TaskLane, TaskLaneEdits, TaskLanes,
+        TaskRecord,
     },
 };
 
@@ -42,8 +42,6 @@ fn edit(
         id: id.parse().unwrap(),
         edits: TaskEdits::try_new(content, blocked_by, effort, tags, PatchField::NoAction).unwrap(),
         expected_revision: None,
-        request_id: None,
-        request_fingerprint: None,
     }
 }
 
@@ -411,16 +409,9 @@ async fn metadata_edit_does_not_validate_an_unreturned_persisted_title(pool: sql
 }
 
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]
-async fn edit_rejects_an_index_only_task_instead_of_reporting_false_success(
-    pool: sqlx::SqlitePool,
-) {
+async fn edit_rejects_a_missing_task_note(pool: sqlx::SqlitePool) {
     register_project(&pool).await;
-    let store = staged(vec![TaskRecord {
-        materialization: Materialization::MissingNote {
-            expected: TaskNotePath::new("/notes/foo/FOO-0001.md".into()),
-        },
-        ..record("FOO-0001", TaskStatus::Active, "")
-    }]);
+    let store = staged(Vec::new());
     let command = edit(
         "FOO-0001",
         SetField::NoAction,
@@ -433,8 +424,7 @@ async fn edit_rejects_an_index_only_task_instead_of_reporting_false_success(
 
     assert!(matches!(
         error,
-        EditTaskError::NoteMissing { ref path }
-            if path.as_path() == std::path::Path::new("/notes/foo/FOO-0001.md")
+        EditTaskError::TaskNotFound { ref id } if id.as_ref() == "FOO-0001"
     ));
-    assert_eq!(store.tasks("foo-bar")[0].effort, None);
+    assert!(store.tasks("foo-bar").is_empty());
 }

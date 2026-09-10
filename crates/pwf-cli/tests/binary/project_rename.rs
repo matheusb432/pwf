@@ -18,7 +18,7 @@ fn rename_commit_failure_rolls_back_and_allows_retry() {
     write_project_rename_fixture(&tasks).unwrap();
     let source_project_id = project_id("OLD").unwrap();
     let destination_project_id = project_id("NEW").unwrap();
-    let created = fixture
+    fixture
         .add_with_home(
             &source_project_id,
             "sample-app",
@@ -27,6 +27,12 @@ fn rename_commit_failure_rolls_back_and_allows_retry() {
             &home,
         )
         .unwrap();
+    let enabled = fixture
+        .run(&["project", "edit", "OLD", "--snapshot-enabled", "true"])
+        .unwrap();
+    assert!(enabled.status.success());
+    let created = success_json(fixture.run(&["project", "get", "OLD"]).unwrap()).unwrap();
+    assert_eq!(created["snapshot_enabled"], true);
     let rename_arguments = [
         "project",
         "rename",
@@ -54,6 +60,7 @@ fn rename_commit_failure_rolls_back_and_allows_retry() {
 
     fs::create_dir_all(destination_tasks.parent().unwrap()).unwrap();
     let retried = success_json(fixture.run_with_home(&rename_arguments, &home).unwrap()).unwrap();
+    assert_eq!(retried["snapshot_enabled"], true);
 
     assert_project(
         &retried,

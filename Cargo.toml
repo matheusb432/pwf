@@ -83,7 +83,6 @@ tracing-subscriber = { version = "0.3.23", default-features = false, features = 
     "fmt",
     "json",
 ] }
-uuid = { version = "1", features = ["v4"] }
 walkdir = "2"
 windows-sys = "0.61.2"
 [workspace.lints.clippy]

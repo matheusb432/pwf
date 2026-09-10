@@ -126,15 +126,15 @@ impl FromStr for ProjectSelector {
 #[error("project selector cannot be blank")]
 pub struct ProjectSelectorError;
 
-/// Identifies one configured project's index independently of its filename.
+/// Pairs a project's ID and title for renaming its files.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProjectIndexIdentity {
+pub struct ProjectIdentity {
     id: ProjectId,
     title: ProjectName,
 }
 
-impl ProjectIndexIdentity {
-    /// Creates a project index identity.
+impl ProjectIdentity {
+    /// Creates a project identity.
     #[must_use]
     pub fn new(id: ProjectId, title: ProjectName) -> Self {
         Self { id, title }
@@ -146,7 +146,7 @@ impl ProjectIndexIdentity {
         &self.id
     }
 
-    /// Returns the configured project name stored as the index title.
+    /// Returns the configured project name.
     #[must_use]
     pub fn title(&self) -> &ProjectName {
         &self.title
@@ -324,6 +324,7 @@ pub struct Project {
     /// Task location.
     pub tasks: ProjectTasks,
     pub obsidian_vault: Option<ObsidianVault>,
+    pub snapshot_enabled: bool,
     /// RFC 3339 UTC creation timestamp.
     pub created_at: ProjectCreatedAt,
     /// Reports whether the project is paused.

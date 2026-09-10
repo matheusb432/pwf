@@ -2,11 +2,9 @@ mod add;
 #[cfg(test)]
 mod contract;
 mod error;
-mod fs;
-mod index_entry;
 mod lookup;
 mod project_note;
-mod read;
+mod project_snapshot;
 mod task_mutation;
 mod task_record;
 
@@ -14,7 +12,7 @@ use std::path::PathBuf;
 
 pub use error::ObsidianStoreError;
 use pwf_application::ports::project_task_location::ProjectTaskLocationClient;
-use pwf_models::project::{HomeDirectory, Project, ProjectIndexIdentity};
+use pwf_models::project::{HomeDirectory, Project};
 use pwf_wire::task::ProjectTaskPath;
 
 #[derive(Clone)]
@@ -37,14 +35,10 @@ impl ObsidianStore {
             })
     }
 
-    fn project_index_path(&self, project: &Project) -> Result<PathBuf, ObsidianStoreError> {
+    fn project_page_path(&self, project: &Project) -> Result<PathBuf, ObsidianStoreError> {
         Ok(self
             .tasks_path(project)?
             .join(format!("{}.md", project.title)))
-    }
-
-    fn project_identity(project: &Project) -> ProjectIndexIdentity {
-        ProjectIndexIdentity::new(project.id.clone(), project.title.clone())
     }
 }
 

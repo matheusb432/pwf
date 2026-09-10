@@ -1,14 +1,14 @@
-use std::{fmt, num::NonZeroUsize};
+use std::fmt;
 
 use pwf_models::{
     revision::ContentRevision,
     task::{
-        BlockedBy, CommitRanges, EffortTier, PriorityTier, Task, TaskId, TaskPrompt, TaskSection,
-        TaskStatus, TaskTags, TaskTimestamp, TaskTitle,
+        BlockedBy, CommitRanges, EffortTier, PriorityTier, Task, TaskId, TaskPrompt, TaskStatus,
+        TaskTags, TaskTimestamp, TaskTitle,
     },
 };
 
-use super::{TaskIndexPath, TaskNotePath};
+use super::TaskNotePath;
 
 /// Represents the optional `blocked_by` property after infrastructure parsing.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -32,23 +32,6 @@ impl StoredBlockedBy {
     }
 }
 
-/// Locates a record's open link by index display path and one-based line number.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct IndexPlacement {
-    pub index_path: TaskIndexPath,
-    pub line: NonZeroUsize,
-}
-
-/// How the vault materializes a record.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Materialization {
-    NoteFile,
-    /// An index link without a note file; `expected` is the platform-formatted diagnostic path.
-    MissingNote {
-        expected: TaskNotePath,
-    },
-}
-
 /// Carries a task record with raw metadata and its backing revision.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskRecord {
@@ -64,16 +47,12 @@ pub struct TaskRecord {
     pub priority: Option<String>,
     /// Carries typed or malformed `blocked_by` metadata for boundary-specific handling.
     pub blocked_by: StoredBlockedBy,
-    pub section: Option<TaskSection>,
     /// Preserves the note body below frontmatter verbatim.
     pub body: String,
     /// Preserves the raw note source byte-for-byte for `pwf task get`.
     pub source: String,
     /// Stores the display path; writes relocate the record by scope and id.
     pub locator: TaskNotePath,
-    /// Identifies the open index link used to read this record, when present.
-    pub placement: Option<IndexPlacement>,
-    pub materialization: Materialization,
     /// Opaque revision of the exact persisted file bytes backing this record.
     pub revision: ContentRevision,
 }
@@ -108,8 +87,6 @@ impl fmt::Display for RawTaskTags {
 
 #[derive(Debug, thiserror::Error)]
 pub enum TaskRecordError {
-    #[error("task {id} has no note at {path}")]
-    MissingNote { id: TaskId, path: TaskNotePath },
     #[error("Invalid task {field} for {id} at {path}: {source}")]
     Metadata {
         id: TaskId,
@@ -129,12 +106,6 @@ pub enum TaskRecordError {
 
 impl TaskRecord {
     pub fn into_task(self) -> Result<Task, TaskRecordError> {
-        if let Materialization::MissingNote { expected } = self.materialization {
-            return Err(TaskRecordError::MissingNote {
-                id: self.id,
-                path: expected,
-            });
-        }
         let invalid =
             |field, source: Box<dyn std::error::Error + Send + Sync>| TaskRecordError::Metadata {
                 id: self.id.clone(),
@@ -191,7 +162,6 @@ impl TaskRecord {
             effort,
             priority,
             blocked_by,
-            section: self.section,
             revision: self.revision,
         })
     }

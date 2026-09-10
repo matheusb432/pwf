@@ -1,7 +1,5 @@
 //! Projects stored task metadata and derives launch diagnostics.
 
-use std::num::NonZeroUsize;
-
 use pwf_models::{
     project::{ProjectName, ProjectSourceValue},
     task::{
@@ -10,23 +8,17 @@ use pwf_models::{
     },
 };
 use pwf_wire::task::{
-    BlockedByIssue, ListedTask, ListedTaskDetails, Materialization, StoredBlockedBy, TaskHeading,
-    TaskIndexPath, TaskIssue, TaskLaunch, TaskLocation, TaskNotePath, TaskRecord,
+    BlockedByIssue, ListedTask, ListedTaskDetails, StoredBlockedBy, TaskHeading, TaskIssue,
+    TaskLaunch, TaskRecord,
 };
 
 use super::note_body::is_placeholder_prompt;
 use crate::ports::task_vault::TaskSummaryRecord;
 
-/// Derives missing-note and placeholder diagnostics.
+/// Derives placeholder diagnostics.
 #[must_use]
-pub(in crate::task) fn derive_flags(
-    prompt: &TaskPrompt,
-    missing_note: Option<&TaskNotePath>,
-) -> TaskLaunch {
+pub(in crate::task) fn derive_flags(prompt: &TaskPrompt) -> TaskLaunch {
     let mut issues = Vec::new();
-    if let Some(path) = missing_note {
-        issues.push(TaskIssue::MissingNote { path: path.clone() });
-    }
     if is_placeholder_prompt(prompt) {
         issues.push(TaskIssue::PlaceholderPrompt);
     }
@@ -59,30 +51,15 @@ pub(in crate::task) enum TaskProjectionError {
 
 /// Projects a stored task into a detailed list entry.
 ///
-/// Missing notes add an issue, empty titles fall back to the task ID, and section labels retain
-/// their index spelling.
+/// Empty titles fall back to the task ID.
 pub(in crate::task) fn detailed(
     task: &TaskRecord,
     project: ProjectName,
     project_path: Option<&ProjectSourceValue>,
 ) -> Result<ListedTask, TaskProjectionError> {
     let prompt = TaskPrompt::new(task.body.trim());
-    let missing_note = match &task.materialization {
-        Materialization::NoteFile => None,
-        Materialization::MissingNote { expected } => Some(expected),
-    };
-    let flags = derive_flags(&prompt, missing_note);
+    let flags = derive_flags(&prompt);
     let heading = task_heading(&task.id, &task.title)?;
-    let (index_path, line) = task.placement.as_ref().map_or_else(
-        || {
-            (
-                TaskIndexPath::new(task.locator.as_path().to_path_buf()),
-                NonZeroUsize::MIN,
-            )
-        },
-        |placement| (placement.index_path.clone(), placement.line),
-    );
-    let location = TaskLocation::new(index_path, line);
     let effort = task_effort(&task.id, task.effort.as_deref())?;
     let priority = task_priority(&task.id, task.priority.as_deref())?;
     let (blocked_by, blocked_by_issues) = match &task.blocked_by {
@@ -102,7 +79,6 @@ pub(in crate::task) fn detailed(
         project,
         status: task.status,
         heading,
-        section: task.section.clone(),
         effort,
         priority,
         tags: task.tags.clone(),
@@ -110,7 +86,7 @@ pub(in crate::task) fn detailed(
         details: Some(ListedTaskDetails {
             prompt,
             project_path: project_path.cloned(),
-            location,
+            note_path: task.locator.clone(),
             launch: flags,
             blocked_by,
             blocked_by_statuses: Vec::new(),
@@ -131,7 +107,6 @@ pub(in crate::task) fn summarize(
         project,
         status: task.status,
         heading,
-        section: task.section,
         effort,
         priority,
         tags: task.tags,
@@ -186,7 +161,7 @@ pub(super) fn task_priority(
 #[cfg(test)]
 mod tests {
     use pwf_models::project::ProjectSourceValue;
-    use pwf_wire::task::{IndexPlacement, StoredBlockedBy};
+    use pwf_wire::task::{StoredBlockedBy, TaskNotePath};
 
     use super::*;
     use crate::testing::task_record;
@@ -196,10 +171,6 @@ mod tests {
             body: body.to_string(),
             source: String::new(),
             locator: TaskNotePath::new("/notes/foo/FOO-0001.md".into()),
-            placement: Some(IndexPlacement {
-                index_path: TaskIndexPath::new("/notes/foo/foo.md".into()),
-                line: NonZeroUsize::new(7).unwrap(),
-            }),
             ..task_record("FOO-0001")
         }
     }
@@ -245,7 +216,7 @@ mod tests {
     }
 
     #[test]
-    fn note_and_line_render_the_index_placement_not_the_note_file() {
+    fn detailed_task_points_to_its_note_file() {
         let enriched = detailed(
             &record("body"),
             ProjectName::try_new("foo").unwrap(),
@@ -253,16 +224,9 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            enriched
-                .details
-                .as_ref()
-                .unwrap()
-                .location
-                .index_path()
-                .as_path(),
-            std::path::Path::new("/notes/foo/foo.md")
+            enriched.details.as_ref().unwrap().note_path.as_path(),
+            std::path::Path::new("/notes/foo/FOO-0001.md")
         );
-        assert_eq!(enriched.details.as_ref().unwrap().location.line().get(), 7);
     }
 
     #[test]
@@ -279,34 +243,6 @@ mod tests {
             enriched.details.as_ref().unwrap().launch.issues(),
             [TaskIssue::PlaceholderPrompt]
         );
-    }
-
-    #[test]
-    fn missing_note_wikilink_needs_attention_with_missing_note_issue() {
-        let mut rec = record("");
-        rec.materialization = Materialization::MissingNote {
-            expected: TaskNotePath::new("/notes/foo/FOO-0001.md".into()),
-        };
-
-        let enriched = detailed(
-            &rec,
-            ProjectName::try_new("foo").unwrap(),
-            Some(&project_path()),
-        )
-        .unwrap();
-
-        assert!(!enriched.details.as_ref().unwrap().launch.is_ready());
-        assert!(enriched.details.as_ref().unwrap().launch.needs_prompt());
-        assert_eq!(
-            enriched.details.as_ref().unwrap().launch.issues(),
-            [
-                TaskIssue::MissingNote {
-                    path: TaskNotePath::new("/notes/foo/FOO-0001.md".into()),
-                },
-                TaskIssue::PlaceholderPrompt,
-            ]
-        );
-        assert_eq!(enriched.details.as_ref().unwrap().prompt.as_ref(), "");
     }
 
     #[test]
@@ -345,39 +281,6 @@ mod tests {
             .heading
             .as_ref(),
             "FOO-0001"
-        );
-    }
-
-    #[test]
-    fn section_label_retains_its_index_spelling() {
-        let mut rec = record("body");
-        rec.section = Some("Futuro".parse().unwrap());
-        assert_eq!(
-            detailed(
-                &rec,
-                ProjectName::try_new("foo").unwrap(),
-                Some(&project_path())
-            )
-            .unwrap()
-            .section
-            .as_ref()
-            .map(AsRef::as_ref),
-            Some("Futuro")
-        );
-    }
-
-    #[test]
-    fn derive_flags_orders_missing_note_before_placeholder() {
-        let missing = TaskNotePath::new("/notes/foo/FOO-0009.md".into());
-        let flags = derive_flags(&TaskPrompt::default(), Some(&missing));
-        assert_eq!(
-            flags.issues(),
-            [
-                TaskIssue::MissingNote {
-                    path: TaskNotePath::new("/notes/foo/FOO-0009.md".into()),
-                },
-                TaskIssue::PlaceholderPrompt,
-            ]
         );
     }
 

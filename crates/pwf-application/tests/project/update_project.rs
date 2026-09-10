@@ -9,6 +9,7 @@ use crate::support::insert_project;
 fn update(project_id: &str, source_value: &str) -> UpdateProject {
     UpdateProject {
         obsidian_vault: pwf_wire::patch_field::PatchField::NoAction,
+        snapshot_enabled: pwf_wire::set_field::SetField::NoAction,
         id: project_id.parse().unwrap(),
         source: pwf_wire::patch_field::PatchField::Set(ProjectSource::new(
             ProjectSourceKind::Directory,

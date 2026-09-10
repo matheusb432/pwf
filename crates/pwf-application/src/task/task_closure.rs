@@ -6,14 +6,11 @@ use pwf_models::{
 };
 use pwf_wire::{
     set_field::SetField,
-    task::{ClosedTaskAction, Materialization, TaskMutationSummary},
+    task::{ClosedTaskAction, TaskMutationSummary},
 };
 
 use crate::{
-    ports::task_vault::{
-        ExpectedTaskRevision, IndexEntry, IndexEntryState, NullablePatch, TaskMutationError,
-        TaskPatch, TaskVault, TaskWrite,
-    },
+    ports::task_vault::{NullablePatch, TaskMutationError, TaskPatch, TaskVault, TaskWrite},
     task::{
         commit_task_writes, expected_task_revision, note_body::append_report, task_body_region,
     },
@@ -36,214 +33,6 @@ pub enum CloseTaskError {
     Mutation(#[from] TaskMutationError<anyhow::Error>),
 }
 
-mod queue {
-    use std::collections::BTreeMap;
-
-    use pwf_models::task::{TaskId, TaskTimestamp};
-    use pwf_wire::task::TaskRecord;
-
-    use crate::ports::task_vault::{IndexEntry, IndexEntryState};
-
-    const UNSECTIONED_CLOSED_TASKS_MAX: usize = 6;
-
-    pub(super) struct CloseDecisions {
-        pub(super) evicted_ids: Vec<TaskId>,
-        pub(super) mark_target: bool,
-    }
-
-    pub(super) fn apply_task_completion_timestamps(
-        entries: &mut [IndexEntry],
-        tasks: &[TaskRecord],
-    ) {
-        let timestamps = tasks
-            .iter()
-            .filter_map(|task| {
-                task.completed_at
-                    .map(|completed_at| (task.id.clone(), completed_at))
-            })
-            .collect::<BTreeMap<_, _>>();
-        for entry in entries {
-            entry.state = completion_state(&entry.state, timestamps.get(&entry.id));
-        }
-    }
-
-    fn completion_state(
-        state: &IndexEntryState,
-        completed_at: Option<&TaskTimestamp>,
-    ) -> IndexEntryState {
-        match (state, completed_at) {
-            (IndexEntryState::Done(_), Some(completed_at)) => {
-                IndexEntryState::Done(Some(*completed_at))
-            }
-            (state, _) => state.clone(),
-        }
-    }
-
-    pub(super) fn close_decisions(
-        entries: &[IndexEntry],
-        id: &TaskId,
-        completed_at: TaskTimestamp,
-    ) -> CloseDecisions {
-        let Some(target) = entries
-            .iter()
-            .find(|entry| &entry.id == id && entry.state == IndexEntryState::Open)
-        else {
-            return CloseDecisions {
-                evicted_ids: Vec::new(),
-                mark_target: false,
-            };
-        };
-
-        CloseDecisions {
-            evicted_ids: if target.section.is_none() {
-                evict_beyond_cap(entries, id, completed_at)
-            } else {
-                Vec::new()
-            },
-            mark_target: true,
-        }
-    }
-
-    fn evict_beyond_cap(
-        entries: &[IndexEntry],
-        id: &TaskId,
-        completed_at: TaskTimestamp,
-    ) -> Vec<TaskId> {
-        let mut done: Vec<(Option<TaskTimestamp>, &TaskId)> = entries
-            .iter()
-            .filter_map(|entry| match &entry.state {
-                IndexEntryState::Done(entry_completed) if entry.section.is_none() => {
-                    Some((*entry_completed, &entry.id))
-                }
-                IndexEntryState::Open | IndexEntryState::Done(_) => None,
-            })
-            .collect();
-        done.push((Some(completed_at), id));
-
-        if done.len() <= UNSECTIONED_CLOSED_TASKS_MAX {
-            return Vec::new();
-        }
-
-        let evict_count = done.len() - UNSECTIONED_CLOSED_TASKS_MAX;
-        done.sort_by(|left, right| left.0.cmp(&right.0).then(left.1.cmp(right.1)));
-        done.into_iter()
-            .take(evict_count)
-            .map(|(_, evicted_id)| evicted_id.clone())
-            .collect()
-    }
-
-    #[cfg(test)]
-    mod tests {
-        use super::*;
-        use crate::testing::task_timestamp;
-
-        fn id(raw: &str) -> TaskId {
-            TaskId::try_new(raw).unwrap()
-        }
-
-        fn done(raw_id: &str, completed_at: &str, section: &str) -> IndexEntry {
-            IndexEntry {
-                id: id(raw_id),
-                state: IndexEntryState::Done(
-                    (!completed_at.is_empty()).then(|| task_timestamp(completed_at)),
-                ),
-                section: (!section.is_empty()).then(|| section.parse().unwrap()),
-            }
-        }
-
-        fn numbered_done(number: u16, section: &str) -> IndexEntry {
-            done(
-                &format!("FOO-{number:04}"),
-                &format!("2026-01-{number:02}T00:00:00Z"),
-                section,
-            )
-        }
-
-        fn open(raw_id: &str, section: &str) -> IndexEntry {
-            IndexEntry {
-                id: id(raw_id),
-                state: IndexEntryState::Open,
-                section: (!section.is_empty()).then(|| section.parse().unwrap()),
-            }
-        }
-
-        #[test]
-        fn cap_boundary_evicts_single_oldest_beyond_cap() {
-            let mut entries: Vec<IndexEntry> =
-                (1..=6).map(|number| numbered_done(number, "")).collect();
-            entries.push(open("FOO-0007", ""));
-
-            let decisions = close_decisions(
-                &entries,
-                &id("FOO-0007"),
-                task_timestamp("2026-07-07T12:34:56Z"),
-            );
-
-            assert_eq!(decisions.evicted_ids, vec![id("FOO-0001")]);
-            assert!(decisions.mark_target);
-        }
-
-        #[test]
-        fn tied_completion_timestamps_break_by_ascending_id() {
-            let entries = vec![
-                done("FOO-0002", "2026-01-01T00:00:00Z", ""),
-                done("FOO-0001", "2026-01-01T00:00:00Z", ""),
-                done("FOO-0003", "2026-01-02T00:00:00Z", ""),
-                done("FOO-0004", "2026-01-03T00:00:00Z", ""),
-                done("FOO-0005", "2026-01-04T00:00:00Z", ""),
-                done("FOO-0006", "2026-01-05T00:00:00Z", ""),
-                open("FOO-0007", ""),
-            ];
-
-            let decisions = close_decisions(
-                &entries,
-                &id("FOO-0007"),
-                task_timestamp("2026-01-06T12:34:56Z"),
-            );
-
-            assert_eq!(decisions.evicted_ids, vec![id("FOO-0001")]);
-        }
-
-        #[test]
-        fn missing_completion_timestamp_sorts_before_any_timestamped_entry() {
-            let entries = vec![
-                done("FOO-0001", "", ""),
-                done("FOO-0002", "2026-01-01T00:00:00Z", ""),
-                done("FOO-0003", "2026-01-02T00:00:00Z", ""),
-                done("FOO-0004", "2026-01-03T00:00:00Z", ""),
-                done("FOO-0005", "2026-01-04T00:00:00Z", ""),
-                done("FOO-0006", "2026-01-05T00:00:00Z", ""),
-                open("FOO-0007", ""),
-            ];
-
-            let decisions = close_decisions(
-                &entries,
-                &id("FOO-0007"),
-                task_timestamp("2026-01-06T12:34:56Z"),
-            );
-
-            assert_eq!(decisions.evicted_ids, vec![id("FOO-0001")]);
-        }
-
-        #[test]
-        fn section_without_a_cap_evicts_nothing() {
-            let mut entries: Vec<IndexEntry> = (1..=9)
-                .map(|number| numbered_done(number, "Someday"))
-                .collect();
-            entries.push(open("FOO-0010", "Someday"));
-
-            let decisions = close_decisions(
-                &entries,
-                &id("FOO-0010"),
-                task_timestamp("2026-07-07T12:34:56Z"),
-            );
-
-            assert!(decisions.evicted_ids.is_empty());
-        }
-    }
-}
-
-use queue::{apply_task_completion_timestamps, close_decisions};
 pub(in crate::task) struct TaskClosure<'a> {
     pub(in crate::task) action: ClosedTaskAction,
     pub(in crate::task) id: &'a TaskId,
@@ -253,10 +42,6 @@ pub(in crate::task) struct TaskClosure<'a> {
     pub(in crate::task) expected_revision: Option<&'a pwf_models::revision::ContentRevision>,
 }
 
-/// Closes a task through the flow shared by done and cancel.
-///
-/// One patch applies report and status fields. Only note-backed records rotate the queue,
-/// because missing-note records have no file-backed queue entry.
 pub(in crate::task) fn close(
     command: &TaskClosure<'_>,
     store: &impl TaskVault,
@@ -300,18 +85,15 @@ pub(in crate::task) fn close(
     if let Some(commits) = commits {
         patch.commits = NullablePatch::Set(commits.to_string());
     }
-    let mut expected = vec![expected_task_revision(&record)];
-    let mut writes = vec![TaskWrite::Patch {
-        id: task_identifier.clone(),
-        patch,
-    }];
-    if matches!(record.materialization, Materialization::NoteFile) {
-        let (queue_expected, queue_writes) =
-            queue_task_writes(store, project, &task_identifier, completed_at)?;
-        expected.extend(queue_expected);
-        writes.extend(queue_writes);
-    }
-    commit_task_writes(store, project, expected, writes)?;
+    commit_task_writes(
+        store,
+        project,
+        vec![expected_task_revision(&record)],
+        vec![TaskWrite::Patch {
+            id: task_identifier.clone(),
+            patch,
+        }],
+    )?;
 
     Ok(TaskMutationSummary {
         id: task_identifier,
@@ -325,39 +107,4 @@ fn close_status(action: ClosedTaskAction) -> TaskStatus {
         ClosedTaskAction::Done => TaskStatus::Done,
         ClosedTaskAction::Cancelled => TaskStatus::Cancelled,
     }
-}
-
-/// Applies the closed entry and unsectioned queue evictions to the index.
-fn queue_task_writes(
-    store: &impl TaskVault,
-    project: &pwf_models::project::Project,
-    id: &TaskId,
-    completed_at: TaskTimestamp,
-) -> Result<(Vec<ExpectedTaskRevision>, Vec<TaskWrite>), CloseTaskError> {
-    let mut entries = TaskVault::list_index_entries(store, project)
-        .map_err(|error| CloseTaskError::WriteStore(anyhow::Error::new(error)))?;
-    let tasks = TaskVault::list_tasks(store, project)
-        .map_err(|error| CloseTaskError::WriteStore(anyhow::Error::new(error)))?;
-    apply_task_completion_timestamps(&mut entries, &tasks);
-    let decisions = close_decisions(&entries, id, completed_at);
-
-    let mut writes = Vec::new();
-    if decisions.mark_target && !decisions.evicted_ids.iter().any(|evicted| evicted == id) {
-        writes.push(TaskWrite::UpsertIndex(IndexEntry {
-            id: id.clone(),
-            state: IndexEntryState::Done(Some(completed_at)),
-            section: None,
-        }));
-    }
-    for evicted in &decisions.evicted_ids {
-        writes.push(TaskWrite::DeleteIndex(evicted.clone()));
-    }
-    let expected = decisions
-        .evicted_ids
-        .iter()
-        .filter(|evicted| *evicted != id)
-        .filter_map(|evicted| tasks.iter().find(|task| &task.id == evicted))
-        .map(expected_task_revision)
-        .collect();
-    Ok((expected, writes))
 }

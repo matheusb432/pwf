@@ -11,8 +11,6 @@ async fn staged(pool: &sqlx::SqlitePool, source: TaskRecord) -> (InMemoryStore, 
     let command = CloneTask {
         id: source.id.clone(),
         project_id: ClonedTaskProjectId::SameAsTask,
-        request_id: None,
-        request_fingerprint: None,
     };
     let store = InMemoryStore::default()
         .with_project_id("foo", "FOO")
@@ -67,5 +65,4 @@ async fn clone_rejects_an_invalid_source_without_writing(pool: sqlx::SqlitePool)
         }))
     ));
     assert_eq!(store.tasks("foo"), [source]);
-    assert!(store.entries("foo").is_empty());
 }

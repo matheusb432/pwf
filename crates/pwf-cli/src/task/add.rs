@@ -97,7 +97,6 @@ pub(super) async fn run(
                 PriorityChoice::High => PriorityTier::High as i32,
                 PriorityChoice::Highest => PriorityTier::Highest as i32,
             }),
-            request_id: String::new(),
         })
         .await;
     match result {

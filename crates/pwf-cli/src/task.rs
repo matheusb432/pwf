@@ -284,9 +284,9 @@ enum TaskCommand {
     /// List tasks. `--all` lists everything
     #[command(alias = "ls")]
     List(list::Arguments),
-    /// Mark a task done in place, keeping a capped done-queue
+    /// Mark a task done in its note
     Done(done::Arguments),
-    /// Mark a task cancelled in place, keeping the same capped queue as done
+    /// Mark a task cancelled in its note
     Cancel(cancel::Arguments),
     /// Reopen a closed task after confirming deletion of its completion data
     Reopen(reopen::Arguments),
@@ -297,7 +297,7 @@ enum TaskCommand {
     Get(get::Arguments),
     /// Show a task's directed dependency graph
     Dag(dag::Arguments),
-    /// Delete a task note and remove its index link
+    /// Delete a task note
     Remove(remove::Arguments),
 }
 

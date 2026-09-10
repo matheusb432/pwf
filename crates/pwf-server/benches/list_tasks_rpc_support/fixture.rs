@@ -243,27 +243,9 @@ fn prepare_project(
     fs::create_dir_all(&source_path)?;
     fs::create_dir_all(&tasks_path)?;
 
-    let mut index_source = format!(
-        "---\nid: {}\ntitle: {title}\n---\n\n# Tasks\n",
-        id.as_ref().to_ascii_lowercase()
-    );
-    let task_count_per_section = task_count.div_ceil(4);
     for task_number in 1..=task_count {
         let task_id = TaskId::try_new(format!("{id}-{task_number:04}"))?;
         let status = task_status(task_number);
-        if (task_number - 1).is_multiple_of(task_count_per_section) {
-            let section_number = (task_number - 1) / task_count_per_section + 1;
-            let _ = writeln!(index_source, "\n## Queue {section_number}");
-        }
-        let checkbox = if status == TaskStatus::Active {
-            " "
-        } else {
-            "x"
-        };
-        let _ = writeln!(
-            index_source,
-            "- [{checkbox}] [[{task_id}|benchmark task {task_number:04}]]"
-        );
         let mut source = task_source(&task_id, &title, task_number, status, task_body_line_count);
         if workload.order().is_some() {
             source = mixed_task_source(&source, task_number, task_count);
@@ -274,7 +256,6 @@ fn prepare_project(
             "fixture generated a duplicate task ID"
         );
     }
-    fs::write(tasks_path.join(format!("{title}.md")), index_source)?;
 
     Ok(PreparedProject {
         id,

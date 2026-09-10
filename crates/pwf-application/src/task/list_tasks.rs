@@ -5,7 +5,7 @@ use pwf_models::{
     project::Project,
     settings::UserSettings,
     task::{
-        EffortTier, PriorityTier, TaskId, TaskSection, TaskTags,
+        EffortTier, PriorityTier, TaskId, TaskTags,
         order::{OrderDirection, OrderField, OrderSpec},
     },
 };
@@ -13,8 +13,7 @@ use pwf_wire::{
     pagination::CursorPage,
     project::ProjectStatusFilter,
     task::{
-        ListDetail, ListLayout, ListScope, ListTasks, ListedTask, ListedTasks, StatusFilter,
-        TaskPageSize, TaskPageToken,
+        ListDetail, ListTasks, ListedTask, ListedTasks, StatusFilter, TaskPageSize, TaskPageToken,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -85,7 +84,7 @@ pub enum ListTasksError {
 
 struct ResolvedListTasks {
     project: Option<Project>,
-    scope: ListScope,
+    all: bool,
     cap: Option<usize>,
     effort: Option<EffortTier>,
     priority: Option<PriorityTier>,
@@ -170,7 +169,6 @@ pub async fn execute(
         project: query.project.map(|project| project.title),
         project_task_path,
         status_filter: query.status_filter,
-        layout: list_layout(&query.scope),
         detail: query.detail,
         next_page_token: result.page.next_key,
     })
@@ -219,16 +217,10 @@ fn materialize_tasks(
         task.priority = Some(task.priority.unwrap_or(query.default_priority));
     }
     tasks.retain(|task| {
-        scope_includes(&query.scope, task.section.as_ref())
-            && effort_matches(task, query.effort)
-            && priority_matches(task, query.priority)
+        effort_matches(task, query.effort) && priority_matches(task, query.priority)
     });
     tasks = retain_matching_tags(tasks, query.tags.as_ref())?;
-    if list_layout(&query.scope) == ListLayout::BySection {
-        sort_by_group_then_order(&mut tasks, query.order);
-    } else {
-        sort_by_order(&mut tasks, query.order);
-    }
+    sort_by_order(&mut tasks, query.order);
     Ok(tasks)
 }
 
@@ -282,13 +274,13 @@ fn resolve_query(
     project: Option<Project>,
     settings: UserSettings,
 ) -> ResolvedListTasks {
-    let scope = query.scope.clone();
+    let all = query.all;
     let cap = query
         .number
         .map(pwf_wire::task::TaskListLimit::get)
-        .or((scope != ListScope::All).then_some(10));
+        .or((!all).then_some(10));
     let order = query.order.unwrap_or(settings.default_sort_order());
-    let status_filter = query.status.unwrap_or(if scope == ListScope::All {
+    let status_filter = query.status.unwrap_or(if all {
         StatusFilter::All
     } else {
         StatusFilter::default()
@@ -296,7 +288,7 @@ fn resolve_query(
 
     ResolvedListTasks {
         project,
-        scope,
+        all,
         cap,
         effort: query.effort,
         priority: query.priority,
@@ -342,8 +334,7 @@ fn page_binding(query: &ResolvedListTasks) -> String {
         .as_ref()
         .map_or("<all>", |project| project.id.as_ref());
     digest_field(&mut hasher, "project", project);
-    let scope_name = list_scope_name(&query.scope);
-    digest_field(&mut hasher, "scope", &scope_name);
+    digest_field(&mut hasher, "all", if query.all { "true" } else { "false" });
     digest_field(
         &mut hasher,
         "cap",
@@ -486,14 +477,6 @@ fn decode_page_token(token: &TaskPageToken) -> Result<PageCursor, ListTasksError
     })
 }
 
-fn list_scope_name(scope: &ListScope) -> String {
-    match scope {
-        ListScope::Default => "default".to_string(),
-        ListScope::Section(section) => format!("section:{}", section.case_insensitive_key()),
-        ListScope::All => "all".to_string(),
-    }
-}
-
 fn status_filter_name(status: StatusFilter) -> &'static str {
     match status {
         StatusFilter::Exact(pwf_models::task::TaskStatus::Active) => "active",
@@ -564,24 +547,6 @@ fn collect_project_tasks(
             .map_err(|error| ListTasksError::InvalidTaskProjection(anyhow::Error::new(error)))
         })
         .collect()
-}
-
-fn scope_includes(scope: &ListScope, section: Option<&TaskSection>) -> bool {
-    match scope {
-        ListScope::Default => section.is_none(),
-        ListScope::Section(expected) => section.is_some_and(|section| {
-            section.case_insensitive_key() == expected.case_insensitive_key()
-        }),
-        ListScope::All => true,
-    }
-}
-
-fn list_layout(scope: &ListScope) -> ListLayout {
-    if matches!(scope, ListScope::All) {
-        ListLayout::BySection
-    } else {
-        ListLayout::Flat
-    }
 }
 
 fn effort_matches(task: &ListedTask, wanted: Option<EffortTier>) -> bool {
@@ -657,35 +622,6 @@ fn sort_by_order(tasks: &mut [ListedTask], order: OrderSpec) {
     tasks.sort_by(|a, b| task_order_cmp(order, a, b));
 }
 
-fn sort_by_group_then_order(tasks: &mut [ListedTask], order: OrderSpec) {
-    let mut decorated: Vec<_> = tasks
-        .iter()
-        .enumerate()
-        .map(|(index, task)| {
-            (
-                task.section.as_ref().map(TaskSection::case_insensitive_key),
-                index,
-            )
-        })
-        .collect();
-    decorated.sort_by(|(section_a, index_a), (section_b, index_b)| {
-        section_a
-            .cmp(section_b)
-            .then_with(|| task_order_cmp(order, &tasks[*index_a], &tasks[*index_b]))
-    });
-    let mut destinations = vec![0; tasks.len()];
-    for (destination, (_, source)) in decorated.into_iter().enumerate() {
-        destinations[source] = destination;
-    }
-    for index in 0..tasks.len() {
-        while destinations[index] != index {
-            let destination = destinations[index];
-            tasks.swap(index, destination);
-            destinations.swap(index, destination);
-        }
-    }
-}
-
 fn apply_cap(tasks: Vec<ListedTask>, cap: Option<usize>) -> (Vec<ListedTask>, usize) {
     let Some(cap) = cap else {
         return (tasks, 0);
@@ -702,64 +638,8 @@ fn apply_cap(tasks: Vec<ListedTask>, cap: Option<usize>) -> (Vec<ListedTask>, us
 
 #[cfg(test)]
 mod tests {
-    use pwf_models::project::ProjectName;
-    use pwf_wire::task::TaskRecord;
 
     use super::*;
-    use crate::testing::task_record;
-    fn sectioned(id: &str, section: &str) -> TaskRecord {
-        TaskRecord {
-            section: Some(section.parse().unwrap()),
-            ..task_record(id)
-        }
-    }
-    #[test]
-    fn grouped_sort_preserves_every_order_and_case_insensitive_section() {
-        let records = [
-            task_record("FOO-0003"),
-            sectioned("FOO-0001", "alpha"),
-            sectioned("AUX-0005", "Beta"),
-            sectioned("AUX-0002", "ALPHA"),
-            task_record("AUX-0004"),
-            sectioned("FOO-0006", "beta"),
-        ];
-        let tasks: Vec<_> = records
-            .into_iter()
-            .map(|record| {
-                let name = if record.id.as_ref().starts_with("FOO") {
-                    "foo"
-                } else {
-                    "aux"
-                };
-                crate::task::task_projection::summarize(
-                    record.into(),
-                    ProjectName::try_new(name).unwrap(),
-                )
-                .unwrap()
-            })
-            .collect();
-        for (field, direction) in [
-            (OrderField::Created, OrderDirection::Asc),
-            (OrderField::Created, OrderDirection::Desc),
-            (OrderField::Id, OrderDirection::Asc),
-            (OrderField::Id, OrderDirection::Desc),
-            (OrderField::ProjectId, OrderDirection::Asc),
-            (OrderField::ProjectId, OrderDirection::Desc),
-        ] {
-            let order = OrderSpec { field, direction };
-            let mut expected = tasks.clone();
-            super::sort_by_order(&mut expected, order);
-            expected.sort_by_cached_key(|task| {
-                task.section
-                    .as_ref()
-                    .map(pwf_models::task::TaskSection::case_insensitive_key)
-            });
-            let mut actual = tasks.clone();
-            super::sort_by_group_then_order(&mut actual, order);
-            assert_eq!(actual, expected);
-        }
-    }
-
     #[test]
     fn cursor_decoding_rejects_invalid_versions_and_task_ids() {
         use base64::Engine as _;

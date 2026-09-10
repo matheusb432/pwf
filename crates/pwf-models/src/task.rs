@@ -5,7 +5,6 @@ mod id;
 pub mod order;
 mod priority;
 mod prompt;
-mod section;
 mod status;
 mod tag;
 mod timestamp;
@@ -17,7 +16,6 @@ pub use effort::{EffortTier, EffortTierError};
 pub use id::{TaskId, TaskIdError};
 pub use priority::{PriorityTier, PriorityTierError};
 pub use prompt::TaskPrompt;
-pub use section::{TaskSection, TaskSectionError};
 pub use status::{ParseTaskStatusError, TaskStatus};
 pub use tag::{
     EmptyTaskTagsError, InvalidTagError, ParseTaskTagsError, Tag, TagInput, TagInputError, TaskTags,
@@ -40,6 +38,5 @@ pub struct Task {
     pub effort: Option<EffortTier>,
     pub priority: Option<PriorityTier>,
     pub blocked_by: Option<BlockedBy>,
-    pub section: Option<TaskSection>,
     pub revision: ContentRevision,
 }

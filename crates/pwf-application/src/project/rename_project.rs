@@ -1,7 +1,7 @@
 use std::{error::Error, path::PathBuf};
 
 use pwf_models::project::{
-    HomeDirectory, ProjectId, ProjectIndexIdentity, ProjectName, ProjectTasks, ProjectTasksPath,
+    HomeDirectory, ProjectId, ProjectIdentity, ProjectName, ProjectTasks, ProjectTasksPath,
 };
 use pwf_wire::project::{GetProject, ProjectFields, ProjectStatusFilter, RenameProject};
 
@@ -81,9 +81,9 @@ pub async fn execute(
     .map_err(get_project_error)?;
     let source_tasks = resolve_tasks_path(&current.id, &current.tasks, home)?;
     let destination_tasks = resolve_tasks_path(&command.fields.id, &command.fields.tasks, home)?;
-    let current_identity = ProjectIndexIdentity::new(current.id.clone(), current.title.clone());
+    let current_identity = ProjectIdentity::new(current.id.clone(), current.title.clone());
     let next_identity =
-        ProjectIndexIdentity::new(command.fields.id.clone(), command.fields.title.clone());
+        ProjectIdentity::new(command.fields.id.clone(), command.fields.title.clone());
     let staged = task_files
         .stage_project_rename(
             &source_tasks,
@@ -259,6 +259,7 @@ fn project_fields(project: &Project) -> ProjectFields {
         source: project.source.clone(),
         tasks: project.tasks.clone(),
         obsidian_vault: project.obsidian_vault.clone(),
+        snapshot_enabled: project.snapshot_enabled,
     }
 }
 

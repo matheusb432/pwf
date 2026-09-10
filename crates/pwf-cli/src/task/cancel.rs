@@ -38,7 +38,6 @@ pub(super) async fn run(
         report: report.to_string(),
         commits: arguments.commits.clone(),
         expected_revision: None,
-        request_id: String::new(),
     };
     let result = client
         .cancel_task(command)

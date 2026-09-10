@@ -2,7 +2,7 @@ use std::{collections::BTreeSet, time::Duration};
 
 use anyhow::{Context as _, ensure};
 use pwf_client::{
-    pb::{self, AllTaskSections, ListDetail, ListTasksRequest, list_tasks_request},
+    pb::{self, ListDetail, ListTasksRequest},
     task::TaskClient,
 };
 use pwf_wire::task::TaskPageSize;
@@ -119,6 +119,7 @@ async fn register_projects(server: &TestServer, prepared: &PreparedFixture) -> a
             .add_project(pb::AddProjectRequest {
                 fields: Some(pb::ProjectFields {
                     obsidian_vault: None,
+                    snapshot_enabled: false,
                     id: project.id.to_string(),
                     title: project.title.to_string(),
                     source_kind: Some("directory".to_string()),
@@ -142,7 +143,7 @@ async fn register_projects(server: &TestServer, prepared: &PreparedFixture) -> a
 fn list_tasks_request() -> anyhow::Result<ListTasksRequest> {
     Ok(ListTasksRequest {
         project_id: None,
-        scope: Some(list_tasks_request::Scope::All(AllTaskSections {})),
+        all: true,
         number: None,
         effort: None,
         tags: Vec::new(),

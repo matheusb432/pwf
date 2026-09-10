@@ -357,6 +357,7 @@ impl TestServer {
             .project()
             .add_project(pb::AddProjectRequest {
                 fields: Some(pb::ProjectFields {
+                    snapshot_enabled: false,
                     obsidian_vault: None,
                     id: "FOO".to_string(),
                     title: "foo-bar".to_string(),
@@ -403,7 +404,6 @@ impl TestServer {
                 effort: None,
                 tags: Vec::new(),
                 priority: priority.map(|priority| priority as i32),
-                request_id: String::new(),
             })
             .await?;
         Ok(task.id)
@@ -421,7 +421,6 @@ impl TestServer {
             .send(pb::DeleteTaskRequest {
                 value: Some(pb::delete_task_request::Value::Start(pb::DeleteTaskStart {
                     id: task_id.to_string(),
-                    request_id: "transport-open-remove".to_string(),
                 })),
             })
             .await?;
@@ -460,7 +459,6 @@ impl TestServer {
             .send(pb::ReopenTaskRequest {
                 value: Some(pb::reopen_task_request::Value::Start(pb::ReopenTaskStart {
                     id: task_id.to_string(),
-                    request_id: "transport-open-reopen".to_string(),
                 })),
             })
             .await?;
@@ -576,7 +574,6 @@ fn priority_update(
         tags: None,
         priority: Some(pb::PriorityEdit { operation }),
         expected_revision: None,
-        request_id: String::new(),
     }
 }
 
@@ -586,7 +583,7 @@ fn task_list_request(
 ) -> pb::ListTasksRequest {
     pb::ListTasksRequest {
         project_id: Some("FOO".to_string()),
-        scope: Some(pb::list_tasks_request::Scope::All(pb::AllTaskSections {})),
+        all: true,
         number,
         effort: None,
         tags: Vec::new(),
@@ -639,7 +636,6 @@ async fn v1_create_task_returns_the_committed_task_summary() -> anyhow::Result<(
         effort: None,
         tags: Vec::new(),
         priority: None,
-        request_id: "transport-create-task-summary".to_string(),
     }))
     .await?
     .into_inner();
@@ -682,7 +678,6 @@ async fn v1_get_task_dag_returns_typed_blocker_edges() -> anyhow::Result<()> {
             effort: None,
             tags: Vec::new(),
             priority: None,
-            request_id: "transport-create-dag-dependent".to_string(),
         })
         .await?;
 
@@ -751,16 +746,16 @@ async fn v1_get_task_dag_rejects_unspecified_mode_and_zero_depth() -> anyhow::Re
 }
 
 #[tokio::test]
-async fn v1_request_ids_replay_mutations_without_duplicate_effects() -> anyhow::Result<()> {
+async fn v1_repeated_requests_apply_each_create_and_append() -> anyhow::Result<()> {
     let server = TestServer::start(Duration::from_secs(2)).await?;
     let original_id = server.add_project_and_task().await?;
     let create = pb::CreateTaskRequest {
         project_id: "FOO".to_string(),
         prompt: Some(pb::create_task_request::Prompt::Structured(
             pb::StructuredTaskPrompt {
-                title: "replayable task".to_string(),
+                title: "repeated task".to_string(),
                 lanes: Some(pb::TaskLanes {
-                    goals: vec!["exercise durable request identity".to_string()],
+                    goals: vec!["exercise independent mutations".to_string()],
                     context: Vec::new(),
                     constraints: Vec::new(),
                     done_when: Vec::new(),
@@ -771,23 +766,18 @@ async fn v1_request_ids_replay_mutations_without_duplicate_effects() -> anyhow::
         effort: None,
         tags: Vec::new(),
         priority: None,
-        request_id: "transport-replay-create".to_string(),
     };
 
     let first = server.client.task().create_task(create.clone()).await?;
-    let replayed = server.client.task().create_task(create.clone()).await?;
+    let repeated = server.client.task().create_task(create.clone()).await?;
     assert_eq!(first.id, "FOO-0002");
-    assert_eq!(replayed, first);
+    assert_eq!(repeated.id, "FOO-0003");
+    assert_ne!(repeated.id, first.id);
 
-    let mut conflicting = create;
-    conflicting.tags = vec!["changed".to_string()];
-    let conflict = server
-        .client
-        .task()
-        .create_task(conflicting)
-        .await
-        .unwrap_err();
-    assert_eq!(rpc_status(conflict)?.code(), Code::AlreadyExists);
+    let mut changed = create;
+    changed.tags = vec!["changed".to_string()];
+    let changed = server.client.task().create_task(changed).await?;
+    assert_eq!(changed.id, "FOO-0004");
 
     let append = pb::UpdateTaskRequest {
         id: first.id.clone(),
@@ -795,7 +785,7 @@ async fn v1_request_ids_replay_mutations_without_duplicate_effects() -> anyhow::
             content: Some(pb::task_content_edit::Content::Append(
                 pb::AppendTaskPrompt {
                     title: None,
-                    prompt: "additional /c replayed context".to_string(),
+                    prompt: "additional /c repeated context".to_string(),
                 },
             )),
         }),
@@ -804,7 +794,6 @@ async fn v1_request_ids_replay_mutations_without_duplicate_effects() -> anyhow::
         tags: None,
         priority: None,
         expected_revision: None,
-        request_id: "transport-replay-update".to_string(),
     };
     server.client.task().update_task(append.clone()).await?;
     server.client.task().update_task(append).await?;
@@ -814,108 +803,131 @@ async fn v1_request_ids_replay_mutations_without_duplicate_effects() -> anyhow::
         .get_task_record(pb::GetTaskRecordRequest { id: first.id })
         .await?;
     let Some(markdown) = markdown.record else {
-        anyhow::bail!("replayed task markdown response is missing");
+        anyhow::bail!("updated task markdown response is missing");
     };
-    assert_eq!(markdown.source.matches("replayed context").count(), 1);
+    assert_eq!(markdown.source.matches("repeated context").count(), 2);
 
     let complete = pb::CompleteTaskRequest {
         id: original_id,
         report: None,
         commits: Vec::new(),
         expected_revision: None,
-        request_id: "transport-replay-complete".to_string(),
     };
     let completed = server.client.task().complete_task(complete.clone()).await?;
-    let completed_replay = server.client.task().complete_task(complete).await?;
-    assert_eq!(completed_replay, completed);
+    assert_eq!(
+        completed
+            .task
+            .context("completion summary is missing")?
+            .status,
+        pb::TaskStatus::Done as i32
+    );
+    let error = server
+        .client
+        .task()
+        .complete_task(complete)
+        .await
+        .unwrap_err();
+    assert_eq!(rpc_status(error)?.code(), Code::NotFound);
 
     let mut list = task_list_request(None, None);
     list.status = Some(pb::TaskStatusFilter::All as i32);
     list.page_size = 256;
     let listed = server.client.task().list_tasks(list).await?;
-    assert_eq!(listed.tasks.len(), 2, "replays must not create extra tasks");
+    assert_eq!(listed.tasks.len(), 4);
 
     server.finish().await
 }
 
 #[tokio::test]
-async fn v1_confirmed_mutation_replays_skip_the_second_prompt() -> anyhow::Result<()> {
+async fn v1_repeated_confirmed_requests_observe_current_task_state() -> anyhow::Result<()> {
     let server = TestServer::start(Duration::from_secs(2)).await?;
     let task_id = server.add_project_and_task().await?;
-    let deleted_id = server.add_task("delete replay target").await?;
+    let deleted_id = server.add_task("delete target").await?;
     let delete = pb::DeleteTaskStart {
-        id: deleted_id,
-        request_id: "transport-replay-delete".to_string(),
+        id: deleted_id.clone(),
     };
+    let prompt = RecordingPrompt::new(true);
     let deleted = server
         .client
         .task()
-        .delete_task(delete.clone(), RecordingPrompt::new(true))
-        .await
-        .unwrap();
-    assert!(matches!(
-        deleted.outcome,
-        Some(delete_task_result::Outcome::Deleted(_))
-    ));
-    let delete_replay_prompt = RecordingPrompt::new(false);
-    let deleted_replay = server
-        .client
-        .task()
-        .delete_task(delete, delete_replay_prompt.clone())
-        .await
-        .unwrap();
-    assert!(matches!(
-        deleted_replay.outcome,
-        Some(delete_task_result::Outcome::Deleted(_))
-    ));
-    assert_eq!(deleted_replay, deleted);
+        .delete_task(delete.clone(), prompt.clone())
+        .await?;
     let Some(delete_task_result::Outcome::Deleted(result)) = deleted.outcome else {
         anyhow::bail!("delete result is missing");
     };
-    let summary = result.task.unwrap();
-    assert_eq!(summary.title, "delete replay target");
+    let summary = result.task.context("delete summary is missing")?;
+    assert_eq!(summary.title, "delete target");
     assert_eq!(summary.status, pb::TaskStatus::Active as i32);
-    assert!(delete_replay_prompt.seen().is_empty());
-
-    server
+    assert_eq!(prompt.seen(), ["remove"]);
+    let prompt = RecordingPrompt::new(true);
+    let error = server
         .client
         .task()
-        .complete_task(pb::CompleteTaskRequest {
-            id: task_id.clone(),
-            report: None,
-            commits: Vec::new(),
-            expected_revision: None,
-            request_id: "transport-close-before-reopen-replay".to_string(),
-        })
-        .await?;
-    let reopen = pb::ReopenTaskStart {
-        id: task_id,
-        request_id: "transport-replay-reopen".to_string(),
+        .delete_task(delete, prompt.clone())
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        pwf_client::confirmation::ConfirmedRequestError::Operation(status)
+            if status.code() == Code::NotFound
+    ));
+    assert!(prompt.seen().is_empty());
+    assert!(!server.task_path(&deleted_id).exists());
+    let error = server
+        .client
+        .task()
+        .get_task_record(pb::GetTaskRecordRequest { id: deleted_id })
+        .await
+        .unwrap_err();
+    assert_eq!(rpc_status(error)?.code(), Code::NotFound);
+
+    let complete = pb::CompleteTaskRequest {
+        id: task_id.clone(),
+        ..Default::default()
     };
+    server.client.task().complete_task(complete.clone()).await?;
+    let reopen = pb::ReopenTaskStart {
+        id: task_id.clone(),
+    };
+    let prompt = RecordingPrompt::new(true);
     let reopened = server
         .client
         .task()
-        .reopen_task(reopen.clone(), RecordingPrompt::new(true))
-        .await
-        .unwrap();
+        .reopen_task(reopen.clone(), prompt.clone())
+        .await?;
     assert!(matches!(
         reopened.outcome,
         Some(reopen_task_result::Outcome::Reopened(_))
     ));
-    let reopen_replay_prompt = RecordingPrompt::new(false);
-    let reopened_replay = server
+    assert_eq!(prompt.seen(), ["reopen"]);
+    let prompt = RecordingPrompt::new(false);
+    let active = server
         .client
         .task()
-        .reopen_task(reopen, reopen_replay_prompt.clone())
-        .await
-        .unwrap();
+        .reopen_task(reopen.clone(), prompt.clone())
+        .await?;
     assert!(matches!(
-        reopened_replay.outcome,
-        Some(reopen_task_result::Outcome::Reopened(_))
+        active.outcome,
+        Some(reopen_task_result::Outcome::AlreadyActive(_))
     ));
-    assert_eq!(reopened_replay, reopened);
-    assert!(reopen_replay_prompt.seen().is_empty());
+    assert!(prompt.seen().is_empty());
 
+    server.client.task().complete_task(complete).await?;
+    let prompt = RecordingPrompt::new(false);
+    let declined = server
+        .client
+        .task()
+        .reopen_task(reopen, prompt.clone())
+        .await?;
+    assert!(matches!(
+        declined.outcome,
+        Some(reopen_task_result::Outcome::Aborted(_))
+    ));
+    assert_eq!(prompt.seen(), ["reopen"]);
+    assert_eq!(
+        task_record(&server, &task_id).await?.status,
+        pb::TaskStatus::Done as i32
+    );
     server.finish().await
 }
 
@@ -948,7 +960,6 @@ async fn v1_task_revisions_support_conditional_empty_updates() -> anyhow::Result
                 )),
             }),
             expected_revision: Some(first.revision.clone()),
-            request_id: "transport-conditional-update".to_string(),
         })
         .await?;
     assert_eq!(
@@ -980,7 +991,6 @@ async fn v1_task_revisions_support_conditional_empty_updates() -> anyhow::Result
             tags: None,
             priority: None,
             expected_revision: Some(first.revision),
-            request_id: "transport-stale-update".to_string(),
         })
         .await
         .unwrap_err();
@@ -1068,7 +1078,7 @@ async fn task_list_summary_omits_detailed_payload() -> anyhow::Result<()> {
     for task in &mut expected {
         task.prompt.clear();
         task.project_path = None;
-        task.location = None;
+        task.note_path.clear();
         task.launch_issues.clear();
         task.blocked_by.clear();
         task.blocked_by_statuses.clear();
@@ -1206,7 +1216,6 @@ async fn generated_client_maps_validation_and_not_found_statuses() -> anyhow::Re
             effort: None,
             tags: (0..65).map(|index| format!("tag-{index}")).collect(),
             priority: None,
-            request_id: String::new(),
         })
         .await
         .unwrap_err();
@@ -1225,6 +1234,7 @@ async fn project_source_update_round_trips_through_the_generated_client() -> any
     let source_value = server.root.path().join("updated-project");
     let source_value = source_value.to_string_lossy().into_owned();
     let request = pb::UpdateProjectRequest {
+        snapshot_enabled: None,
         obsidian_vault: None,
         id: "FOO".to_string(),
         source_value: Some(pb::StringPatchField {
@@ -1253,6 +1263,7 @@ async fn project_source_update_round_trips_through_the_generated_client() -> any
         .client
         .project()
         .update_project(pb::UpdateProjectRequest {
+            snapshot_enabled: None,
             obsidian_vault: None,
             id: "FOO".to_string(),
             source_value: Some(pb::StringPatchField {
@@ -1275,6 +1286,7 @@ async fn project_source_update_round_trips_through_the_generated_client() -> any
         .client
         .project()
         .update_project(pb::UpdateProjectRequest {
+            snapshot_enabled: None,
             obsidian_vault: None,
             id: "MISS".to_string(),
             source_value: Some(pb::StringPatchField {
@@ -1327,6 +1339,7 @@ async fn registered_vault_round_trips_and_drives_delete_preflight() -> anyhow::R
         .client
         .project()
         .update_project(pb::UpdateProjectRequest {
+            snapshot_enabled: None,
             id: "FOO".into(),
             source_value: None,
             obsidian_vault: Some(pb::StringPatchField {
@@ -1346,13 +1359,7 @@ async fn registered_vault_round_trips_and_drives_delete_preflight() -> anyhow::R
     let result = server
         .client
         .task()
-        .delete_task(
-            pb::DeleteTaskStart {
-                id: task_id,
-                request_id: String::new(),
-            },
-            VaultPrompt { vault },
-        )
+        .delete_task(pb::DeleteTaskStart { id: task_id }, VaultPrompt { vault })
         .await?;
     assert!(matches!(
         result.outcome,
@@ -1362,6 +1369,7 @@ async fn registered_vault_round_trips_and_drives_delete_preflight() -> anyhow::R
         .client
         .project()
         .update_project(pb::UpdateProjectRequest {
+            snapshot_enabled: None,
             id: "FOO".into(),
             source_value: None,
             obsidian_vault: Some(pb::StringPatchField {
@@ -1395,7 +1403,6 @@ async fn generated_client_preserves_delete_and_session_confirmation_flows() -> a
         .delete_task(
             pb::DeleteTaskStart {
                 id: task_id.clone(),
-                request_id: String::new(),
             },
             remove_prompt.clone(),
         )
@@ -1428,7 +1435,6 @@ async fn generated_client_preserves_delete_and_session_confirmation_flows() -> a
         .delete_task(
             pb::DeleteTaskStart {
                 id: second_task_id.clone(),
-                request_id: String::new(),
             },
             RecordingPrompt::new(true),
         )
@@ -1548,7 +1554,6 @@ async fn generated_client_preserves_reopen_confirmation_flow() -> anyhow::Result
             report: None,
             commits: vec!["a..b".to_string()],
             expected_revision: None,
-            request_id: String::new(),
         })
         .await
         .unwrap();
@@ -1559,7 +1564,6 @@ async fn generated_client_preserves_reopen_confirmation_flow() -> anyhow::Result
         .reopen_task(
             pb::ReopenTaskStart {
                 id: task_id.clone(),
-                request_id: String::new(),
             },
             reopen_prompt.clone(),
         )
@@ -1577,7 +1581,6 @@ async fn generated_client_preserves_reopen_confirmation_flow() -> anyhow::Result
         .reopen_task(
             pb::ReopenTaskStart {
                 id: task_id.clone(),
-                request_id: String::new(),
             },
             RecordingPrompt::new(true),
         )
@@ -1638,9 +1641,9 @@ async fn remove_wait_does_not_hold_the_writer_lock_and_accepting_stale_preflight
             .join(format!("{task_id}.md"))
             .exists()
     );
-    assert!(
-        std::fs::read_to_string(server.root.path().join("notes/foo-bar/foo-bar.md"))?
-            .contains(&task_id)
+    assert_eq!(
+        std::fs::read_to_string(server.root.path().join("notes/foo-bar/foo-bar.md"))?,
+        "---\nid: foo\ntitle: foo-bar\n---\n"
     );
 
     server.finish().await
@@ -1659,7 +1662,6 @@ async fn reopen_wait_does_not_hold_the_writer_lock_and_accepting_stale_preflight
             report: None,
             commits: Vec::new(),
             expected_revision: None,
-            request_id: String::new(),
         })
         .await?;
     let (sender, mut reopen) = server.open_reopen_confirmation(&task_id).await?;
@@ -1684,9 +1686,9 @@ async fn reopen_wait_does_not_hold_the_writer_lock_and_accepting_stale_preflight
 
     assert_eq!(status.code(), Code::Aborted);
     assert_eq!(std::fs::read_to_string(task_path)?, external);
-    assert!(
-        std::fs::read_to_string(server.root.path().join("notes/foo-bar/foo-bar.md"))?
-            .contains(&format!("- [x] [[{task_id}]]"))
+    assert_eq!(
+        std::fs::read_to_string(server.root.path().join("notes/foo-bar/foo-bar.md"))?,
+        "---\nid: foo\ntitle: foo-bar\n---\n"
     );
     server
         .client
@@ -2066,7 +2068,8 @@ async fn project_operations_require_ids_and_report_missing_projects() -> anyhow:
 }
 
 #[tokio::test]
-async fn get_task_returns_raw_metadata_source_and_missing_note_state() -> anyhow::Result<()> {
+async fn get_task_record_preserves_raw_metadata_and_deleted_notes_are_not_found()
+-> anyhow::Result<()> {
     let server = TestServer::start(TEST_TIMEOUT).await?;
     let id = server.add_project_and_task().await?;
     let path = server.root.path().join("notes/foo-bar/FOO-0001.md");
@@ -2077,24 +2080,20 @@ async fn get_task_returns_raw_metadata_source_and_missing_note_state() -> anyhow
     assert_eq!(record.effort.as_deref(), Some("extreme"));
     assert_eq!(record.priority.as_deref(), Some("urgent"));
     assert_eq!(record.created_at.as_deref(), Some("2026-07-26T12:34:56Z"));
-    assert!(matches!(
-        record.materialization,
-        Some(pb::task_record::Materialization::NoteFile(_))
-    ));
+    assert_eq!(record.locator, path.to_string_lossy());
     assert!(
         matches!(record.blocked_by.and_then(|state| state.value), Some(pb::stored_task_blocked_by::Value::Malformed(value)) if value.raw.contains("bad links"))
     );
     assert_eq!(task_record(&server, &id).await?.revision, record.revision);
 
     std::fs::remove_file(&path)?;
-    let missing = task_record(&server, &id).await?;
-    assert_eq!(missing.id, id);
-    assert_eq!(missing.locator, path.to_string_lossy());
-    assert!(missing.source.is_empty());
-    assert!(
-        matches!(missing.materialization, Some(pb::task_record::Materialization::MissingNote(expected)) if expected == path.to_string_lossy())
-    );
-    assert_ne!(missing.revision, record.revision);
+    let error = server
+        .client
+        .task()
+        .get_task_record(pb::GetTaskRecordRequest { id })
+        .await
+        .unwrap_err();
+    assert_eq!(rpc_status(error)?.code(), Code::NotFound);
     server.finish().await
 }
 
@@ -2139,7 +2138,7 @@ async fn get_task_returns_domain_values_and_classifies_invalid_records() -> anyh
         .get_task(pb::GetTaskRequest { id })
         .await
         .unwrap_err();
-    assert_eq!(rpc_status(error)?.code(), Code::FailedPrecondition);
+    assert_eq!(rpc_status(error)?.code(), Code::NotFound);
     for id in ["FOO-9999", "MISS-0001"] {
         let error = server
             .client
@@ -2162,7 +2161,7 @@ async fn get_task_returns_domain_values_and_classifies_invalid_records() -> anyh
 }
 
 #[tokio::test]
-async fn clone_copies_into_an_explicit_project_and_replays_after_source_removal()
+async fn clone_copies_into_an_explicit_project_and_requires_an_existing_source()
 -> anyhow::Result<()> {
     let server = TestServer::start(TEST_TIMEOUT).await?;
     let source_id = server.add_project_and_task().await?;
@@ -2173,6 +2172,7 @@ async fn clone_copies_into_an_explicit_project_and_replays_after_source_removal(
         .project()
         .add_project(pb::AddProjectRequest {
             fields: Some(pb::ProjectFields {
+                snapshot_enabled: false,
                 id: "ALT".into(),
                 title: "destination".into(),
                 tasks_kind: "directory".into(),
@@ -2209,7 +2209,6 @@ async fn clone_copies_into_an_explicit_project_and_replays_after_source_removal(
     let request = pb::CloneTaskRequest {
         id: source_id.clone(),
         project_id: Some("ALT".into()),
-        request_id: "clone-replay".into(),
     };
     let response = server.client.task().clone_task(request.clone()).await?;
     assert_eq!(response.id, "ALT-0001");
@@ -2225,19 +2224,11 @@ async fn clone_copies_into_an_explicit_project_and_replays_after_source_removal(
     assert_eq!(cloned.status, pwf_models::task::TaskStatus::Active);
     assert!(cloned.completed_at.is_none());
     assert!(cloned.commits.is_none());
-    std::fs::remove_file(server.root.path().join("notes/foo-bar/FOO-0001.md"))?;
-    let replayed = server.client.task().clone_task(request.clone()).await?;
-    assert_eq!(replayed, response);
-    let error = server
-        .client
-        .task()
-        .clone_task(pb::CloneTaskRequest {
-            project_id: None,
-            ..request
-        })
-        .await
-        .unwrap_err();
-    assert_eq!(rpc_status(error)?.code(), Code::AlreadyExists);
+    let repeated = server.client.task().clone_task(request.clone()).await?;
+    assert_eq!(repeated.id, "ALT-0002");
+    std::fs::remove_file(&source_path)?;
+    let error = server.client.task().clone_task(request).await.unwrap_err();
+    assert_eq!(rpc_status(error)?.code(), Code::NotFound);
     server.finish().await
 }
 
@@ -2261,7 +2252,6 @@ async fn clone_reports_invalid_input_and_missing_sources() -> anyhow::Result<()>
             .clone_task(pb::CloneTaskRequest {
                 id: id.into(),
                 project_id,
-                ..Default::default()
             })
             .await
             .unwrap_err();
@@ -2336,4 +2326,257 @@ async fn project_resolution_returns_one_id_and_classifies_invalid_and_missing_se
         .await?;
     assert_eq!(response.into_inner().id, "FOO");
     server.finish().await
+}
+
+#[tokio::test]
+async fn task_and_note_crud_ignore_missing_arbitrary_and_malformed_project_pages()
+-> anyhow::Result<()> {
+    for page_source in [
+        None,
+        Some("# Personal project page\n\n## Someday\n- [ ] [[FOO-9999]]\n- [[FOO-NOTE-9999]]\n"),
+        Some("---\nid: [broken\n---\n\n## Broken task links\n- [ ] [[FOO-9999]]\n"),
+    ] {
+        let server = TestServer::start(TEST_TIMEOUT).await?;
+        let original_id = server.add_project_and_task().await?;
+        let directory = server.root.path().join("notes/foo-bar");
+        let page = directory.join("foo-bar.md");
+        match page_source {
+            Some(source) => std::fs::write(&page, source)?,
+            None => std::fs::remove_file(&page)?,
+        }
+
+        exercise_task_note_crud(&server, &original_id).await?;
+        exercise_project_note_crud(&server, &directory).await?;
+
+        match page_source {
+            Some(source) => assert_eq!(std::fs::read(&page)?, source.as_bytes()),
+            None => assert!(!page.exists()),
+        }
+        server.finish().await?;
+    }
+    Ok(())
+}
+
+async fn exercise_task_note_crud(server: &TestServer, original_id: &str) -> anyhow::Result<()> {
+    let client = server.client.task();
+    let id = server.add_task("independent task note").await?;
+    assert_eq!(id, "FOO-0002");
+    let task = client
+        .get_task(pb::GetTaskRequest { id: id.clone() })
+        .await?;
+    assert_eq!(task.title.as_ref(), "independent task note");
+    client
+        .update_task(priority_update(
+            &id,
+            Some(pb::priority_edit::Operation::Set(
+                pb::PriorityTier::Highest as i32,
+            )),
+        ))
+        .await?;
+    let record = task_record(server, &id).await?;
+    assert_eq!(record.priority.as_deref(), Some("highest"));
+    assert_eq!(record.locator, server.task_path(&id).to_string_lossy());
+    let list = client.list_tasks(task_list_request(None, None)).await?;
+    assert_eq!(
+        list.tasks
+            .iter()
+            .map(|task| task.id.as_str())
+            .collect::<Vec<_>>(),
+        ["FOO-0002", "FOO-0001"]
+    );
+    assert_eq!(
+        list.tasks[0].note_path,
+        server.task_path(&id).to_string_lossy()
+    );
+
+    client
+        .complete_task(pb::CompleteTaskRequest {
+            id: id.clone(),
+            ..Default::default()
+        })
+        .await?;
+    assert_eq!(
+        task_record(server, &id).await?.status,
+        pb::TaskStatus::Done as i32
+    );
+    let reopened = client
+        .reopen_task(
+            pb::ReopenTaskStart { id: id.clone() },
+            RecordingPrompt::new(true),
+        )
+        .await?;
+    assert!(matches!(
+        reopened.outcome,
+        Some(reopen_task_result::Outcome::Reopened(_))
+    ));
+    client
+        .cancel_task(pb::CancelTaskRequest {
+            id: id.clone(),
+            report: "obsolete work".into(),
+            ..Default::default()
+        })
+        .await?;
+    assert_eq!(
+        task_record(server, &id).await?.status,
+        pb::TaskStatus::Cancelled as i32
+    );
+    let deleted = client
+        .delete_task(
+            pb::DeleteTaskStart { id: id.clone() },
+            RecordingPrompt::new(true),
+        )
+        .await?;
+    assert!(matches!(
+        deleted.outcome,
+        Some(delete_task_result::Outcome::Deleted(_))
+    ));
+    assert!(!server.task_path(&id).exists());
+    let missing = client
+        .get_task_record(pb::GetTaskRecordRequest { id })
+        .await
+        .err()
+        .context("deleted task unexpectedly remained available")?;
+    assert_eq!(rpc_status(missing)?.code(), Code::NotFound);
+    let list = client.list_tasks(task_list_request(None, None)).await?;
+    assert_eq!(
+        list.tasks
+            .iter()
+            .map(|task| task.id.as_str())
+            .collect::<Vec<_>>(),
+        [original_id]
+    );
+    Ok(())
+}
+
+async fn exercise_project_note_crud(
+    server: &TestServer,
+    directory: &std::path::Path,
+) -> anyhow::Result<()> {
+    let client = server.client.note();
+    let note = client
+        .add_note(pb::AddNoteRequest {
+            project_id: "FOO".into(),
+            title: "independent project note".into(),
+            content: "authored evidence".into(),
+            ..Default::default()
+        })
+        .await?;
+    assert_eq!(note.id, "FOO-NOTE-0001");
+    client
+        .update_note(pb::UpdateNoteRequest {
+            project_id: "FOO".into(),
+            selector: "1".into(),
+            title: Some("revised project note".into()),
+            content: Some("revised evidence".into()),
+            ..Default::default()
+        })
+        .await?;
+    let list_request = pb::ListNotesRequest {
+        project_id: "FOO".into(),
+        limit_kind: pb::NoteListLimitKind::Default as i32,
+        limit: 0,
+    };
+    let notes = client.list_notes(list_request.clone()).await?;
+    assert_eq!(notes.notes.len(), 1);
+    assert_eq!(notes.notes[0].id, note.id);
+    assert_eq!(notes.notes[0].title, "revised project note");
+    let note_path = directory.join(format!("{}.md", note.id));
+    assert!(std::fs::read_to_string(&note_path)?.contains("revised evidence"));
+    let deleted = client
+        .delete_note(
+            pb::DeleteNoteStart {
+                project_id: "FOO".into(),
+                selector: "1".into(),
+            },
+            RecordingPrompt::new(true),
+        )
+        .await?;
+    assert!(matches!(
+        deleted.outcome,
+        Some(delete_note_result::Outcome::Deleted(_))
+    ));
+    assert!(!note_path.exists());
+    assert!(client.list_notes(list_request).await?.notes.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn serve_refreshes_snapshots_at_startup_and_joins_shutdown() -> anyhow::Result<()> {
+    use pwf_infra::user_settings::TomlSettingsStore;
+    use pwf_local_transport::{LocalEndpoint, LocalListener};
+    use pwf_models::project::HomeDirectory;
+    use pwf_server::{AppState, ServerLifecycle, serve};
+
+    let root = tempfile::tempdir()?;
+    let database = root.path().join("pwf.sqlite3");
+    pwf_migrator::run(&database).await?;
+    let pool = pwf_infra::database::build_pool(&database).await?;
+    let directory = root.path().join("foo");
+    std::fs::create_dir_all(&directory)?;
+    sqlx::query(
+        "INSERT INTO projects (id, title, tasks_kind, tasks_path, snapshot_enabled) VALUES ('FOO', 'foo', 'directory', ?, 1)",
+    )
+    .bind(directory.to_str().context("project path is not Unicode")?)
+    .execute(&pool)
+    .await?;
+    std::fs::write(
+        directory.join("FOO-0001.md"),
+        "---\nid: FOO-0001\nstatus: active\ntitle: startup task\n---\n\nGenerate a startup snapshot.\n",
+    )?;
+    std::fs::write(directory.join("FOO-NOTE-0001.md"), "# Startup evidence\n")?;
+    let snapshot = directory.join("pwf-index.md");
+    assert!(!snapshot.exists());
+
+    let state = AppState::new(
+        pool,
+        HomeDirectory::new(root.path().to_path_buf()),
+        TomlSettingsStore::new(Some(root.path().join("config.toml"))),
+    );
+    let endpoint = LocalEndpoint::from_root(root.path().join("runtime"))?;
+    let listener = LocalListener::bind(&endpoint, Duration::from_millis(250)).await?;
+    let (shutdown, stopped) = tokio::sync::oneshot::channel();
+    let (lifecycle, mut states) = ServerLifecycle::channel();
+    let server = tokio::spawn(serve(
+        listener,
+        async move {
+            let _ = stopped.await;
+        },
+        Duration::from_secs(1),
+        state,
+        lifecycle,
+    ));
+    let observed = tokio::time::timeout(
+        Duration::from_secs(2),
+        wait_for_startup_snapshot(&mut states, &snapshot),
+    )
+    .await;
+
+    shutdown
+        .send(())
+        .map_err(|()| anyhow::anyhow!("server shutdown receiver is closed"))?;
+    tokio::time::timeout(Duration::from_secs(2), server)
+        .await
+        .context("waiting for serve and its snapshot worker to stop")???;
+    assert_eq!(*states.borrow(), ServerState::Stopped);
+    let source = observed.context("startup snapshot was not generated within two seconds")??;
+    assert_eq!(std::fs::read_to_string(snapshot)?, source);
+    Ok(())
+}
+
+async fn wait_for_startup_snapshot(
+    states: &mut tokio::sync::watch::Receiver<ServerState>,
+    snapshot: &std::path::Path,
+) -> anyhow::Result<String> {
+    states
+        .wait_for(|state| *state == ServerState::Serving)
+        .await?;
+    loop {
+        if let Ok(source) = std::fs::read_to_string(snapshot)
+            && source.contains("[[FOO-0001]]")
+            && source.contains("[[FOO-NOTE-0001]]")
+        {
+            return Ok(source);
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
 }

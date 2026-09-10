@@ -8,8 +8,8 @@ use pwf_application::ports::{
     project_directory::ProjectDirectoryClient,
     project_note::{NewProjectNote, ProjectNotePatch, ProjectNotes},
     task_vault::{
-        IndexEntry, NewTask, NullablePatch, TaskMutationError, TaskPatch, TaskRevisionState,
-        TaskVault, TaskWrite, TaskWriteSet,
+        NewTask, NullablePatch, TaskMutationError, TaskPatch, TaskRevisionState, TaskVault,
+        TaskWrite, TaskWriteSet,
     },
 };
 use pwf_models::{
@@ -22,7 +22,7 @@ use pwf_models::{
     revision::ContentRevision,
     task::{TaskId, TaskStatus, TaskTags, TaskTimestamp},
 };
-use pwf_wire::task::{Materialization, RawTaskTags, StoredBlockedBy, TaskRecord};
+use pwf_wire::task::{RawTaskTags, StoredBlockedBy, TaskRecord};
 
 mod database;
 mod fixtures;
@@ -50,7 +50,6 @@ impl Clock for FixedClock {
 #[derive(Debug, Default)]
 struct InMemoryState {
     tasks: BTreeMap<ProjectName, Vec<TaskRecord>>,
-    entries: BTreeMap<ProjectName, Vec<IndexEntry>>,
     project_ids: BTreeMap<ProjectName, ProjectId>,
     project_notes: BTreeMap<ProjectName, Vec<ProjectNote>>,
     project_note_creations: BTreeMap<ProjectName, Vec<AppDate>>,
@@ -67,7 +66,6 @@ pub(crate) enum InMemoryStoreFailure {
     ListProjectNotes,
     ReadTask,
     ReadTaskRecord,
-    ReadTaskMarkdown,
 }
 
 /// Provides thread-safe in-memory persistence for application tests.
@@ -83,8 +81,6 @@ pub struct InMemoryStore {
 pub enum InMemoryStoreError {
     #[error("injected in-memory store failure: {operation}")]
     Injected { operation: &'static str },
-    #[error("task note Markdown is not staged: {locator}")]
-    TaskNoteMarkdownMissing { locator: String },
     #[error("task {id} already exists")]
     TaskAlreadyExists { id: TaskId },
     #[error("task {id} does not exist")]
@@ -112,14 +108,6 @@ impl InMemoryStore {
     pub fn tasks(&self, project: &str) -> Vec<TaskRecord> {
         self.lock()
             .tasks
-            .get(&project_name(project))
-            .cloned()
-            .unwrap_or_default()
-    }
-
-    pub fn entries(&self, project: &str) -> Vec<IndexEntry> {
-        self.lock()
-            .entries
             .get(&project_name(project))
             .cloned()
             .unwrap_or_default()
@@ -200,6 +188,7 @@ pub(crate) fn project(project_id: &str, title: &str) -> Project {
         ),
         created_at: "2026-07-25T00:00:00.000Z".parse().unwrap(),
         is_paused: false,
+        snapshot_enabled: false,
     }
 }
 
@@ -217,25 +206,6 @@ pub(crate) fn staged_task() -> (InMemoryStore, Vec<Project>) {
         source: FOO_0001_SOURCE.to_string(),
         locator: pwf_wire::task::TaskNotePath::new("/notes/foo/FOO-0001.md".into()),
         ..task_record("FOO-0001")
-    };
-    (
-        InMemoryStore::default().with_project("foo", vec![record]),
-        vec![project("FOO", "foo")],
-    )
-}
-
-pub(crate) fn staged_missing_task() -> (InMemoryStore, Vec<Project>) {
-    let expected = "/notes/foo/FOO-0002.md".to_string();
-    let record = TaskRecord {
-        title: "ghost".to_string(),
-        created_at: None,
-        body: String::new(),
-        source: String::new(),
-        locator: pwf_wire::task::TaskNotePath::new(expected.clone().into()),
-        materialization: Materialization::MissingNote {
-            expected: pwf_wire::task::TaskNotePath::new(expected.into()),
-        },
-        ..task_record("FOO-0002")
     };
     (
         InMemoryStore::default().with_project("foo", vec![record]),
@@ -296,7 +266,6 @@ impl TaskVault for InMemoryStore {
             .tasks
             .get(&project.title)
             .and_then(|tasks| tasks.iter().find(|task| task.id == *id))
-            .filter(|task| matches!(task.materialization, Materialization::NoteFile))
             .map(
                 |task| pwf_application::ports::task_vault::TaskDependencyRecord {
                     blocked_by: task.blocked_by.clone(),
@@ -368,49 +337,13 @@ impl TaskVault for InMemoryStore {
                 pwf_wire::task::StoredBlockedBy::Absent,
                 pwf_wire::task::StoredBlockedBy::Valid,
             ),
-            section: None,
             body: new.body.as_ref().to_owned(),
             source: new.body.into(),
             locator,
-            placement: None,
-            materialization: Materialization::NoteFile,
             revision,
         };
         tasks.push(record.clone());
         Ok(record)
-    }
-
-    fn read_task_markdown(
-        &self,
-        locator: &pwf_wire::task::TaskNotePath,
-    ) -> Result<String, Self::Error> {
-        if self
-            .lock()
-            .failures
-            .contains(&InMemoryStoreFailure::ReadTaskMarkdown)
-        {
-            return Err(InMemoryStoreError::Injected {
-                operation: "task-markdown-read",
-            });
-        }
-        self.lock()
-            .tasks
-            .values()
-            .flatten()
-            .find(|task| &task.locator == locator)
-            .map(|task| task.source.clone())
-            .ok_or_else(|| InMemoryStoreError::TaskNoteMarkdownMissing {
-                locator: locator.to_string(),
-            })
-    }
-
-    fn list_index_entries(&self, project: &Project) -> Result<Vec<IndexEntry>, Self::Error> {
-        Ok(self.index_entries(project))
-    }
-
-    fn upsert_index_entry(&self, project: &Project, entry: IndexEntry) -> Result<(), Self::Error> {
-        self.upsert(project, entry);
-        Ok(())
     }
 
     fn commit_task_writes(
@@ -464,23 +397,6 @@ fn apply_task_write(
             if before == tasks.len() {
                 return Err(InMemoryStoreError::TaskNotFound { id });
             }
-        }
-        TaskWrite::UpsertIndex(entry) => {
-            let entries = state.entries.entry(project.clone()).or_default();
-            if let Some(existing) = entries.iter_mut().find(|stored| stored.id == entry.id) {
-                *existing = entry;
-            } else {
-                entries.push(entry);
-            }
-            bump_index_backed_revisions(state, project);
-        }
-        TaskWrite::DeleteIndex(id) => {
-            state
-                .entries
-                .entry(project.clone())
-                .or_default()
-                .retain(|entry| entry.id != id);
-            bump_index_backed_revisions(state, project);
         }
     }
     Ok(())
@@ -550,15 +466,6 @@ fn apply_task_patch(record: &mut TaskRecord, patch: TaskPatch) {
 fn next_task_revision(state: &mut InMemoryState) -> ContentRevision {
     state.next_task_revision = state.next_task_revision.saturating_add(1);
     ContentRevision::try_new(format!("{:064x}", state.next_task_revision)).unwrap()
-}
-
-fn bump_index_backed_revisions(state: &mut InMemoryState, project: &ProjectName) {
-    let revision = next_task_revision(state);
-    for task in state.tasks.entry(project.clone()).or_default() {
-        if matches!(task.materialization, Materialization::MissingNote { .. }) {
-            task.revision.clone_from(&revision);
-        }
-    }
 }
 
 fn render_tags(tags: &TaskTags) -> RawTaskTags {
@@ -675,29 +582,6 @@ impl ProjectNotes for InMemoryStore {
         notes.retain(|note| note.id != *id);
         assert!(count_before > notes.len(), "delete of unknown project note");
         Ok(())
-    }
-}
-
-impl InMemoryStore {
-    fn index_entries(&self, project: &Project) -> Vec<IndexEntry> {
-        self.lock()
-            .entries
-            .get(&project.title)
-            .cloned()
-            .unwrap_or_default()
-    }
-}
-
-impl InMemoryStore {
-    /// Replaces or appends an index entry.
-    fn upsert(&self, project: &Project, entry: IndexEntry) {
-        let mut state = self.lock();
-        let entries = state.entries.entry(project.title.clone()).or_default();
-        match entries.iter_mut().find(|existing| existing.id == entry.id) {
-            Some(existing) => *existing = entry,
-            None => entries.push(entry),
-        }
-        bump_index_backed_revisions(&mut state, &project.title);
     }
 }
 

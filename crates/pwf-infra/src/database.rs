@@ -145,7 +145,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn initial_schema_enforces_current_constraints() {
+    async fn migrated_schema_enforces_current_constraints() {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
         migrate_database(&pool).await.unwrap();
         sqlx::query("INSERT INTO project_sources (kind, value) VALUES ('directory', '/work/foo')")
@@ -176,27 +176,35 @@ mod tests {
                 .await
                 .is_err()
         );
-        sqlx::query("INSERT INTO task_mutation_requests (request_id, operation, fingerprint, task_id) VALUES ('request', 'create', ?, 'FOO-0001')")
-            .bind("a".repeat(64))
-            .execute(&pool)
+        let snapshot_enabled: bool = sqlx::query_scalar("SELECT snapshot_enabled FROM projects")
+            .fetch_one(&pool)
             .await
             .unwrap();
+        assert!(!snapshot_enabled);
         for statement in [
-            "UPDATE task_mutation_requests SET task_title = 'only title'",
-            "UPDATE task_mutation_requests SET task_status = 'done'",
-            "UPDATE task_mutation_requests SET task_title = 'task', task_status = 'invalid'",
+            "UPDATE projects SET snapshot_enabled = -1",
+            "UPDATE projects SET snapshot_enabled = 2",
+            "UPDATE projects SET snapshot_enabled = NULL",
+            "UPDATE projects SET snapshot_enabled = 'true'",
+            "UPDATE projects SET snapshot_enabled = 0.5",
         ] {
             assert!(
                 sqlx::query(statement).execute(&pool).await.is_err(),
                 "{statement}"
             );
         }
-        sqlx::query(
-            "UPDATE task_mutation_requests SET task_title = 'task', task_status = 'active'",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
+        for enabled in [true, false] {
+            sqlx::query("UPDATE projects SET snapshot_enabled = ?")
+                .bind(enabled)
+                .execute(&pool)
+                .await
+                .unwrap();
+            let stored: bool = sqlx::query_scalar("SELECT snapshot_enabled FROM projects")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            assert_eq!(stored, enabled);
+        }
         assert!(
             sqlx::query("UPDATE task_prompt_lanes SET marker = 'goal' WHERE lane = 'goals'")
                 .execute(&pool)

@@ -1,6 +1,6 @@
 use pwf_models::{
     AppDate,
-    task::{PriorityTier, TaskPrompt, TaskSection, TaskTimestamp},
+    task::{PriorityTier, TaskPrompt, TaskTimestamp},
 };
 
 #[test]
@@ -55,16 +55,6 @@ fn task_prompt_preserves_authored_text() {
     let prompt = TaskPrompt::new("  ship it /c preserve spacing  ");
 
     assert_eq!(prompt.as_ref(), "  ship it /c preserve spacing  ");
-}
-
-#[test]
-fn task_section_is_non_empty_and_single_line() {
-    let section = TaskSection::try_new("  Waiting on API  ").unwrap();
-
-    assert_eq!(section.as_ref(), "Waiting on API");
-    assert_eq!(section.case_insensitive_key(), "waiting on api");
-    assert!(TaskSection::try_new("  ").is_err());
-    assert!(TaskSection::try_new("Waiting\nBlocked").is_err());
 }
 
 #[test]

@@ -1,8 +1,6 @@
 use clap::Args;
 use pwf_client::{
-    pb::{
-        GetProjectRequest, GetTaskRecordRequest, GetTaskRequest, ProjectStatusFilter, task_record,
-    },
+    pb::{GetProjectRequest, GetTaskRecordRequest, GetTaskRequest, ProjectStatusFilter},
     project::ProjectClient,
     task::TaskClient,
 };
@@ -52,13 +50,5 @@ pub(super) async fn run(
     if arguments.path {
         return Ok(record.locator);
     }
-    match record.materialization {
-        Some(task_record::Materialization::NoteFile(_)) => Ok(record.source),
-        Some(task_record::Materialization::MissingNote(path)) => {
-            Err(anyhow::anyhow!("task {} has no note at {path}", record.id))
-        }
-        None => Err(anyhow::anyhow!(
-            "pwf-server returned an empty task materialization state"
-        )),
-    }
+    Ok(record.source)
 }

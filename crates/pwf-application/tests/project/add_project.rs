@@ -10,6 +10,7 @@ use crate::support::insert_project;
 fn project(project_id: &str, title: &str, source_value: &str, tasks_path: &str) -> ProjectFields {
     ProjectFields {
         obsidian_vault: None,
+        snapshot_enabled: false,
         id: project_id.parse().unwrap(),
         title: ProjectName::try_new(title).unwrap(),
         source: Some(ProjectSource::new(

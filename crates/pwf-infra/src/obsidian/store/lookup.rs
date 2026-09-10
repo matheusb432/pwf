@@ -19,16 +19,13 @@ impl ObsidianStore {
         ) -> Result<T, ObsidianStoreError>,
     ) -> Result<Vec<(T, MarkdownFile)>, ObsidianStoreError> {
         let directory = self.tasks_path(project)?;
-        if !directory.exists() {
+        if !directory
+            .try_exists()
+            .map_err(|source| ObsidianStoreError::ReadTaskFile { source })?
+        {
             return Ok(Vec::new());
         }
-        map_project_task_notes(
-            &directory,
-            &self.project_index_path(project)?,
-            &Self::project_identity(project),
-            read,
-            map,
-        )
+        map_project_task_notes(&directory, &self.project_page_path(project)?, read, map)
     }
 
     pub(super) fn task_files_for_project(
@@ -36,12 +33,14 @@ impl ObsidianStore {
         project: &Project,
     ) -> Result<Vec<TaskNoteIdentity>, ObsidianStoreError> {
         let project_dir = self.tasks_path(project)?;
-        let index_path = self.project_index_path(project)?;
-        if !project_dir.exists() {
+        let project_page_path = self.project_page_path(project)?;
+        if !project_dir
+            .try_exists()
+            .map_err(|source| ObsidianStoreError::ReadTaskFile { source })?
+        {
             return Ok(Vec::new());
         }
-        let identity = Self::project_identity(project);
-        inspect_project_task_notes(&project_dir, &index_path, &identity)
+        inspect_project_task_notes(&project_dir, &project_page_path)
     }
 
     pub(super) fn next_task_id(&self, project: &Project) -> Result<TaskId, ObsidianStoreError> {

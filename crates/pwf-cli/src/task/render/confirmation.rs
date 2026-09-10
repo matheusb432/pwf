@@ -66,7 +66,7 @@ mod tests {
     use crate::test_style::color_rgb;
 
     #[test]
-    fn legacy_receipts_report_success_without_inventing_title_or_status() {
+    fn absent_summary_uses_the_confirmed_task_identifier() {
         assert_eq!(
             render_mutation(
                 TaskMutationAction::Removed,

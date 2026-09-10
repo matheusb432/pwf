@@ -35,7 +35,7 @@ pub struct RenameProject {
     pub fields: ProjectFields,
 }
 
-/// Requests changes to a managed project's source or Obsidian vault.
+/// Requests changes to a managed project's configuration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpdateProject {
     /// Project ID.
@@ -43,6 +43,7 @@ pub struct UpdateProject {
     /// Replacement source location.
     pub source: crate::patch_field::PatchField<ProjectSource>,
     pub obsidian_vault: crate::patch_field::PatchField<pwf_models::project::ObsidianVault>,
+    pub snapshot_enabled: crate::set_field::SetField<bool>,
 }
 
 /// Selects whether paused projects are eligible for a request.
@@ -78,6 +79,7 @@ pub struct ProjectFields {
     pub source: Option<ProjectSource>,
     pub tasks: ProjectTasks,
     pub obsidian_vault: Option<pwf_models::project::ObsidianVault>,
+    pub snapshot_enabled: bool,
 }
 
 #[derive(Debug, Clone)]

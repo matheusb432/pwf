@@ -1,15 +1,12 @@
 use std::{
     collections::{VecDeque, hash_map::RandomState},
     hash::BuildHasher as _,
-    mem::{size_of, size_of_val},
+    mem::size_of_val,
     sync::Mutex,
     time::{Duration, Instant},
 };
 
-use pwf_wire::{
-    pagination::CursorPage,
-    task::{BlockedByIssue, TaskIssue},
-};
+use pwf_wire::{pagination::CursorPage, task::BlockedByIssue};
 
 use super::{
     ListTasksError, ListedTask, PageCursor, TaskListPage, TaskPageSize, apply_page,
@@ -166,7 +163,6 @@ fn task_bytes(task: &ListedTask) -> usize {
         task.id.as_ref(),
         task.project.as_ref(),
         task.heading.as_ref(),
-        task.section.as_ref().map_or("", AsRef::as_ref),
         task.tags.as_ref().map_or("", AsRef::as_ref),
     ];
     let fields_bytes = fields.iter().map(|field| field.len()).sum::<usize>();
@@ -179,7 +175,7 @@ fn details_bytes(task: &pwf_wire::task::ListedTaskDetails) -> usize {
             .project_path
             .as_ref()
             .map_or(0, |path| path.as_ref().len())
-        + task.location.index_path().as_path().as_os_str().len();
+        + task.note_path.as_path().as_os_str().len();
     let blockers_bytes = task.blocked_by.as_ref().map_or(0, |blockers| {
         blockers
             .iter()
@@ -195,18 +191,7 @@ fn details_bytes(task: &pwf_wire::task::ListedTaskDetails) -> usize {
             }
         })
         .sum::<usize>();
-    let launch_bytes = task
-        .launch
-        .issues()
-        .iter()
-        .map(|issue| {
-            size_of::<TaskIssue>()
-                + match issue {
-                    TaskIssue::MissingNote { path } => path.as_path().as_os_str().len(),
-                    TaskIssue::PlaceholderPrompt => 0,
-                }
-        })
-        .sum::<usize>();
+    let launch_bytes = size_of_val(task.launch.issues());
     fields_bytes + blockers_bytes + issues_bytes + launch_bytes
 }
 

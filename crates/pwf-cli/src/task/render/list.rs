@@ -1,9 +1,8 @@
 use std::fmt::Write;
 
 use pwf_client::pb::{
-    BlockedByResolutionKind, BlockedByStatus, EffortTier, ListDetail, ListLayout,
-    ListTasksResponse, ListedTask, PriorityTier, TaskIssue, TaskIssueKind, TaskStatus,
-    TaskStatusFilter,
+    BlockedByResolutionKind, BlockedByStatus, EffortTier, ListDetail, ListTasksResponse,
+    ListedTask, PriorityTier, TaskIssue, TaskIssueKind, TaskStatus, TaskStatusFilter,
 };
 use pwf_models::settings::TaskStatusColors;
 
@@ -37,29 +36,17 @@ pub(in crate::task) fn render_list(
     }
 
     let mut out = String::new();
-    let layout = ListLayout::try_from(result.layout).unwrap_or(ListLayout::Unspecified);
-    if layout == ListLayout::BySection {
-        render_grouped_list(
+    let last_idx = result.tasks.len() - 1;
+    for (idx, task) in result.tasks.iter().enumerate() {
+        render_list_task(
             &mut out,
-            &result.tasks,
+            task,
             status_filter,
             long,
+            idx == last_idx,
             task_status_colors,
             on,
         );
-    } else {
-        let last_idx = result.tasks.len() - 1;
-        for (idx, task) in result.tasks.iter().enumerate() {
-            render_list_task(
-                &mut out,
-                task,
-                status_filter,
-                long,
-                idx == last_idx,
-                task_status_colors,
-                on,
-            );
-        }
     }
     if result.hidden > 0 {
         if !out.ends_with('\n') {
@@ -72,46 +59,6 @@ pub(in crate::task) fn render_list(
         );
     }
     out
-}
-
-fn render_grouped_list(
-    out: &mut String,
-    tasks: &[ListedTask],
-    status_filter: TaskStatusFilter,
-    long: bool,
-    task_status_colors: TaskStatusColors,
-    on: bool,
-) {
-    let mut group_start = 0;
-    while group_start < tasks.len() {
-        let section = tasks[group_start].section.as_deref();
-        let section_key = section.map(str::to_lowercase);
-        let group_end = tasks[group_start + 1..]
-            .iter()
-            .position(|task| task.section.as_deref().map(str::to_lowercase) != section_key)
-            .map_or(tasks.len(), |offset| group_start + offset + 1);
-
-        if group_start > 0 {
-            out.push_str("\n\n");
-        }
-        if let Some(title) = section {
-            out.push_str(title);
-            out.push('\n');
-        }
-        let group = &tasks[group_start..group_end];
-        for (index, task) in group.iter().enumerate() {
-            render_list_task(
-                out,
-                task,
-                status_filter,
-                long,
-                index + 1 == group.len(),
-                task_status_colors,
-                on,
-            );
-        }
-        group_start = group_end;
-    }
 }
 
 fn blocked_by_status_summary(statuses: &[BlockedByStatus]) -> String {
@@ -200,10 +147,10 @@ fn render_list_task(
         "  project_path: {}",
         task.project_path.as_deref().unwrap_or("none")
     );
-    if let Some(location) = &task.location {
-        let _ = writeln!(out, "  note: {}:{}", location.index_path, location.line);
-    } else {
+    if task.note_path.is_empty() {
         out.push_str("  note: (unavailable)\n");
+    } else {
+        let _ = writeln!(out, "  note: {}", task.note_path);
     }
     let prompt = task.prompt.replace("\r\n", " / ").replace('\n', " / ");
     let _ = writeln!(out, "  prompt: {prompt}");
@@ -238,17 +185,10 @@ fn render_list_task(
     }
     if task_status == TaskStatus::Active {
         for issue in &task.launch_issues {
-            let _ = writeln!(out, "  issue: {}", launch_issue(issue));
+            let _ = writeln!(out, "  issue: {}", launch_issue(*issue));
         }
         if !task.launch_issues.is_empty() {
-            let index_path = task
-                .location
-                .as_ref()
-                .map_or("the task index", |location| location.index_path.as_str());
-            let _ = writeln!(
-                out,
-                "  fix: edit {index_path} or update the managed project record"
-            );
+            let _ = writeln!(out, "  fix: edit {}", task.note_path);
         }
     }
 }
@@ -262,16 +202,12 @@ fn blocked_by_is_warning(blocked_by: &BlockedByStatus) -> bool {
             != Some(TaskStatus::Done)
 }
 
-fn launch_issue(issue: &TaskIssue) -> String {
+fn launch_issue(issue: TaskIssue) -> &'static str {
     match TaskIssueKind::try_from(issue.kind).ok() {
-        Some(TaskIssueKind::MissingNote) => format!(
-            "Task note missing: {}",
-            issue.path.as_deref().unwrap_or("(unknown)")
-        ),
         Some(TaskIssueKind::PlaceholderPrompt) => {
-            "Prompt is a placeholder; define a real prompt before launching.".to_string()
+            "Prompt is a placeholder; define a real prompt before launching."
         }
-        Some(TaskIssueKind::Unspecified) | None => "Invalid launch issue from server.".to_string(),
+        Some(TaskIssueKind::Unspecified) | None => "Invalid launch issue from server.",
     }
 }
 
@@ -306,7 +242,7 @@ fn task_status_name(status: TaskStatus) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use pwf_client::pb::{BlockedByIssue, TaskLocation};
+    use pwf_client::pb::BlockedByIssue;
     use pwf_models::settings::RgbColor;
 
     use super::*;
@@ -320,12 +256,9 @@ mod tests {
             heading: "sample task".to_string(),
             prompt: String::new(),
             project_path: Some("/project".to_string()),
-            location: Some(TaskLocation {
-                index_path: "foo.md".to_string(),
-                line: 1,
-            }),
+            note_path: "FOO-0001.md".to_string(),
             launch_issues: Vec::new(),
-            section: None,
+
             blocked_by: Vec::new(),
             blocked_by_statuses: Vec::new(),
             blocked_by_issues: Vec::new(),
@@ -437,36 +370,6 @@ mod tests {
     }
 
     #[test]
-    fn grouped_list_renders_real_section_names_and_merges_case_insensitively() {
-        let mut unsectioned = sample_task();
-        unsectioned.id = "FOO-0001".to_string();
-        let mut blocked = sample_task();
-        blocked.id = "FOO-0002".to_string();
-        blocked.section = Some("Blocked".to_string());
-        let mut blocked_case_variant = sample_task();
-        blocked_case_variant.id = "AUX-0001".to_string();
-        blocked_case_variant.section = Some("blocked".to_string());
-        let mut someday = sample_task();
-        someday.id = "FOO-0003".to_string();
-        someday.section = Some("Someday".to_string());
-        let result = ListTasksResponse {
-            tasks: vec![unsectioned, blocked, blocked_case_variant, someday],
-            hidden: 0,
-            project: None,
-            project_task_path: None,
-            status_filter: TaskStatusFilter::Active as i32,
-            layout: ListLayout::BySection as i32,
-            detail: ListDetail::Summary as i32,
-            next_page_token: None,
-        };
-
-        assert_eq!(
-            render_list(&result, "notes", TaskStatusColors::default(), false),
-            "FOO-0001 :: sample task\n\nBlocked\nFOO-0002 :: sample task\nAUX-0001 :: sample task\n\nSomeday\nFOO-0003 :: sample task"
-        );
-    }
-
-    #[test]
     fn long_form_separates_lifecycle_from_active_launch_readiness() {
         let output = render_task_for_filter(&sample_task(), TaskStatusFilter::Active, true, false);
         assert!(output.contains("  status: active\n"), "{output}");
@@ -480,7 +383,6 @@ mod tests {
         task.status = TaskStatus::Done as i32;
         task.launch_issues = vec![TaskIssue {
             kind: TaskIssueKind::PlaceholderPrompt as i32,
-            path: None,
         }];
         let output = render_task_for_filter(&task, TaskStatusFilter::Done, true, false);
         assert!(output.contains("  status: done\n"), "{output}");
@@ -562,7 +464,7 @@ mod tests {
             project: None,
             project_task_path: None,
             status_filter: TaskStatusFilter::Active as i32,
-            layout: ListLayout::Flat as i32,
+
             detail: ListDetail::Summary as i32,
             next_page_token: None,
         };
@@ -581,7 +483,7 @@ mod tests {
             project: None,
             project_task_path: None,
             status_filter: TaskStatusFilter::Active as i32,
-            layout: ListLayout::Flat as i32,
+
             detail: ListDetail::Detailed as i32,
             next_page_token: None,
         };

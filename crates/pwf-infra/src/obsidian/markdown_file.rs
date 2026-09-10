@@ -223,10 +223,6 @@ impl MarkdownFile {
         Ok((observed, self.source.into_bytes().into_boxed_slice()))
     }
 
-    pub(super) fn into_source(self) -> String {
-        self.source
-    }
-
     pub(super) fn into_parts(self) -> (PathBuf, String) {
         (self.path, self.source)
     }
@@ -247,25 +243,6 @@ impl MarkdownFile {
             }
         })?;
         Ok(file)
-    }
-
-    pub(super) fn write_rendered(
-        path: impl Into<PathBuf>,
-        source: String,
-    ) -> Result<(), MarkdownFileError> {
-        let path = path.into();
-        let observed = snapshot(&path).map_err(|source| MarkdownFileError::Write {
-            path: path.clone(),
-            source: io::Error::other(source),
-        })?;
-        let mut transaction = FileTransaction::new();
-        transaction
-            .replace(observed, source.into_bytes().into_boxed_slice())
-            .and_then(|()| transaction.commit())
-            .map_err(|source| MarkdownFileError::Write {
-                path,
-                source: io::Error::other(source),
-            })
     }
 
     pub(super) fn property_text(&self, name: &str) -> Result<Option<&str>, MarkdownFileError> {

@@ -11,6 +11,7 @@ pub(in crate::project) struct ProjectRow {
     pub(in crate::project) tasks_kind: String,
     pub(in crate::project) tasks_path: String,
     pub(in crate::project) obsidian_vault: Option<String>,
+    pub(in crate::project) snapshot_enabled: bool,
     pub(in crate::project) created_at: String,
     pub(in crate::project) is_paused: bool,
 }
@@ -38,6 +39,7 @@ macro_rules! project_query {
                 projects.tasks_kind AS "tasks_kind!",
                 projects.tasks_path AS "tasks_path!",
                 projects.obsidian_vault AS "obsidian_vault?",
+                projects.snapshot_enabled AS "snapshot_enabled!: bool",
                 projects.created_at AS "created_at!",
                 (projects.paused_at IS NOT NULL) AS "is_paused!: bool"
             FROM projects
@@ -55,6 +57,7 @@ pub mod get_project;
 pub mod get_projects;
 pub mod list_projects;
 pub mod pause_project;
+pub mod refresh_project_snapshot;
 pub mod rename_project;
 pub mod resolve_project;
 pub mod resume_project;
@@ -115,6 +118,7 @@ fn project_from_row(row: ProjectRow) -> Result<Project, ProjectRowError> {
             .transpose()?,
         created_at,
         is_paused: row.is_paused,
+        snapshot_enabled: row.snapshot_enabled,
     })
 }
 
@@ -143,6 +147,7 @@ mod tests {
     fn invalid_persisted_project_values_retain_the_model_error() {
         let error = project_from_row(ProjectRow {
             obsidian_vault: None,
+            snapshot_enabled: false,
             id: "FOO".to_string(),
             title: "x".repeat(201),
             source_kind: Some("directory".to_string()),

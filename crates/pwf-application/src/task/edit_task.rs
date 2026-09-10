@@ -7,8 +7,8 @@ use pwf_wire::{
     patch_field::PatchField,
     set_field::SetField,
     task::{
-        EditTask, EditTaskContent, EditTaskContentKind, Materialization, RawTaskTags,
-        StoredBlockedBy, TaskMutationResult, TaskMutationSummary, TaskNotePath, TaskRecord,
+        EditTask, EditTaskContent, EditTaskContentKind, RawTaskTags, StoredBlockedBy,
+        TaskMutationResult, TaskMutationSummary, TaskRecord,
     },
 };
 
@@ -17,7 +17,6 @@ use super::{
     blocked_by::{self, BlockedByValidationError},
     commit_task_writes, ensure_task_revision, expected_task_revision, infer_task_title,
     lane_configuration::{TaskPromptLanes, TaskPromptLanesError},
-    mutation_request::{self, MutationOperation, MutationRequestState, MutationStart},
     note_body::{EditLanesError, append_lanes, edit_lanes, render},
     read_task_dependencies::{self, ReadTaskDependencies, ReadTaskDependenciesError},
     resolve_task_project::{self, ResolveTaskProjectError},
@@ -40,8 +39,6 @@ pub enum EditTaskError {
     TaskNotFound { id: TaskId },
     #[error("cannot edit closed task {id}; run `pwf task reopen {id}` first.")]
     ClosedTask { id: TaskId },
-    #[error("Task note missing: {path}")]
-    NoteMissing { path: TaskNotePath },
     #[error("task {id} has an invalid persisted title: {source}")]
     InvalidPersistedTitle {
         id: TaskId,
@@ -50,8 +47,6 @@ pub enum EditTaskError {
     },
     #[error(transparent)]
     Revision(#[from] super::TaskRevisionConflict),
-    #[error(transparent)]
-    MutationRequest(#[from] mutation_request::MutationRequestError),
     #[error(transparent)]
     InvalidTitle(#[from] TaskPromptTitleError),
     #[error(transparent)]
@@ -92,31 +87,11 @@ pub enum EditTaskError {
 
 /// Applies content and metadata edits to one active task.
 #[cqrsy::command]
-#[expect(
-    clippy::too_many_lines,
-    reason = "keep receipt handling, dependency reads, and writes visible in the owning interactor"
-)]
 pub async fn execute(
     command: EditTask,
     store: &impl TaskVault,
     pool: &sqlx::SqlitePool,
 ) -> Result<TaskMutationResult<()>, EditTaskError> {
-    let identity = mutation_request::identity(
-        command.request_id.as_ref(),
-        command.request_fingerprint.as_ref(),
-    )?;
-    if let Some(identity) = identity.as_ref()
-        && let Some(replay) =
-            mutation_request::find(pool, identity, MutationOperation::Update).await?
-    {
-        return match replay.state {
-            MutationRequestState::Completed => Ok(TaskMutationResult {
-                outcome: (),
-                task: replay.task,
-            }),
-            MutationRequestState::Pending => Err(identity.incomplete().into()),
-        };
-    }
     let project = resolve_task_project::execute(command.id.clone(), pool)
         .await
         .map_err(|error| map_project_error(error, &command.id))?;
@@ -132,12 +107,6 @@ pub async fn execute(
             id: command.id.clone(),
         });
     }
-    if let Materialization::MissingNote { expected } = &record.materialization {
-        return Err(EditTaskError::NoteMissing {
-            path: expected.clone(),
-        });
-    }
-
     let blocked_by = resolve_blocked_by(command.edits.blocked_by(), &record)?;
     if let (NullablePatch::Set(blockers), Some(supplied)) =
         (&blocked_by, command.edits.blocked_by().addition())
@@ -168,18 +137,6 @@ pub async fn execute(
         SetField::NoAction => (SetField::NoAction, SetField::NoAction),
     };
     let prepared = prepare(command, project, &record, blocked_by, content_patch)?;
-    if let Some(identity) = identity.as_ref()
-        && let MutationStart::Existing(replay) =
-            mutation_request::start(pool, identity, MutationOperation::Update, &prepared.id).await?
-    {
-        return match replay.state {
-            MutationRequestState::Completed => Ok(TaskMutationResult {
-                outcome: (),
-                task: replay.task,
-            }),
-            MutationRequestState::Pending => Err(identity.incomplete().into()),
-        };
-    }
     let summary = TaskMutationSummary {
         id: prepared.id.clone(),
         title: match prepared.patch.title.as_ref() {
@@ -189,16 +146,6 @@ pub async fn execute(
         status: record.status,
     };
     persist(prepared, store)?;
-    if let Some(identity) = identity.as_ref() {
-        mutation_request::complete_with_task(
-            pool,
-            identity,
-            MutationOperation::Update,
-            "updated",
-            &summary,
-        )
-        .await?;
-    }
     Ok(TaskMutationResult {
         outcome: (),
         task: Some(summary),

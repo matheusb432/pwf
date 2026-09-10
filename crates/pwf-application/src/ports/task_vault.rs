@@ -4,7 +4,7 @@ use pwf_models::{
     project::Project,
     revision::ContentRevision,
     task::{
-        BlockedBy, EffortTier, PriorityTier, TaskId, TaskPrompt, TaskSection, TaskStatus, TaskTags,
+        BlockedBy, EffortTier, PriorityTier, TaskId, TaskPrompt, TaskStatus, TaskTags,
         TaskTimestamp, TaskTitle,
     },
 };
@@ -22,7 +22,6 @@ pub struct TaskSummaryRecord {
     pub tags: Option<RawTaskTags>,
     pub effort: Option<String>,
     pub priority: Option<String>,
-    pub section: Option<TaskSection>,
 }
 
 impl From<TaskRecord> for TaskSummaryRecord {
@@ -35,7 +34,6 @@ impl From<TaskRecord> for TaskSummaryRecord {
             tags: record.tags,
             effort: record.effort,
             priority: record.priority,
-            section: record.section,
         }
     }
 }
@@ -122,22 +120,6 @@ pub struct TaskPatch {
     pub tags: NullablePatch<TaskTags>,
 }
 
-/// A project index's per-task entry, tracking open/done state and section.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct IndexEntry {
-    pub id: TaskId,
-    pub state: IndexEntryState,
-    /// Retains the raw stored H2 label.
-    pub section: Option<TaskSection>,
-}
-
-/// Records whether an index entry is open or completed at a known instant.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum IndexEntryState {
-    Open,
-    Done(Option<TaskTimestamp>),
-}
-
 /// Binds one task identity to the persisted revision used by an operation's read phase.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExpectedTaskRevision {
@@ -156,15 +138,12 @@ pub enum TaskWrite {
         id: TaskId,
         deletion: pwf_wire::confirmation::TaskDeletion,
     },
-    UpsertIndex(IndexEntry),
-    DeleteIndex(TaskId),
 }
 
 impl TaskWrite {
     fn task_id(&self) -> &TaskId {
         match self {
-            Self::Patch { id, .. } | Self::DeleteNote { id, .. } | Self::DeleteIndex(id) => id,
-            Self::UpsertIndex(entry) => &entry.id,
+            Self::Patch { id, .. } | Self::DeleteNote { id, .. } => id,
         }
     }
 }
@@ -186,10 +165,9 @@ impl TaskWriteSet {
         }
         let expected_ids = validate_expectations(&expected)?;
         let mut task_mutations = BTreeSet::new();
-        let mut index_mutations = BTreeSet::new();
         for write in &writes {
             validate_write_expectation(write, &expected_ids)?;
-            validate_unique_write(write, &mut task_mutations, &mut index_mutations)?;
+            validate_unique_write(write, &mut task_mutations)?;
         }
         Ok(Self { expected, writes })
     }
@@ -246,19 +224,9 @@ fn validate_write_expectation(
 fn validate_unique_write(
     write: &TaskWrite,
     task_mutations: &mut BTreeSet<TaskId>,
-    index_mutations: &mut BTreeSet<TaskId>,
 ) -> Result<(), TaskWriteSetError> {
-    let target = match write {
-        TaskWrite::Patch { id, .. } | TaskWrite::DeleteNote { id, .. } => {
-            Some((task_mutations, id))
-        }
-        TaskWrite::UpsertIndex(entry) => Some((index_mutations, &entry.id)),
-        TaskWrite::DeleteIndex(id) => Some((index_mutations, id)),
-    };
-    let Some((targets, id)) = target else {
-        return Ok(());
-    };
-    if targets.insert(id.clone()) {
+    let id = write.task_id();
+    if task_mutations.insert(id.clone()) {
         return Ok(());
     }
     Err(TaskWriteSetError::ConflictingWrite { id: id.clone() })
@@ -325,7 +293,7 @@ impl<E> TaskMutationError<E> {
     }
 }
 
-/// Persists the task records and project-index state used by task interactors.
+/// Persists task notes and applies writes guarded by their revisions.
 pub trait TaskVault: Send + Sync + 'static {
     type Error: std::error::Error + Send + Sync + 'static;
 
@@ -340,7 +308,7 @@ pub trait TaskVault: Send + Sync + 'static {
         project: &Project,
         id: &TaskId,
     ) -> Result<Option<TaskRecord>, Self::Error>;
-    /// Reads dependency metadata from a materialized note without loading its body or index entry.
+    /// Reads dependency metadata without loading the task body.
     fn get_task_dependencies(
         &self,
         project: &Project,
@@ -363,9 +331,6 @@ pub trait TaskVault: Send + Sync + 'static {
         id: &TaskId,
         new: NewTask,
     ) -> Result<TaskRecord, Self::Error>;
-    fn read_task_markdown(&self, locator: &TaskNotePath) -> Result<String, Self::Error>;
-    fn list_index_entries(&self, project: &Project) -> Result<Vec<IndexEntry>, Self::Error>;
-    fn upsert_index_entry(&self, project: &Project, entry: IndexEntry) -> Result<(), Self::Error>;
     fn commit_task_writes(
         &self,
         project: &Project,

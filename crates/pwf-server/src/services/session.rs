@@ -202,9 +202,9 @@ fn plan_session_status(error: &PlanSessionError) -> Status {
         | PlanSessionError::ProjectPathMissing { .. }
         | PlanSessionError::InvalidProjectPath { .. }
         | PlanSessionError::EmptyAgentCommand => Status::failed_precondition(message),
-        PlanSessionError::FindTask(_)
-        | PlanSessionError::ReadTaskMarkdown(_)
-        | PlanSessionError::RenderThreadTitle(_) => Status::internal(message),
+        PlanSessionError::FindTask(_) | PlanSessionError::RenderThreadTitle(_) => {
+            Status::internal(message)
+        }
     }
 }
 

@@ -4,7 +4,7 @@ use pwf_models::{
     revision::ContentRevision,
     task::{
         BlockedBy, CommitRanges, EffortTier, PriorityTier, Tag, Task, TaskId, TaskPrompt,
-        TaskSection, TaskStatus, TaskTags, TaskTimestamp, TaskTitle,
+        TaskStatus, TaskTags, TaskTimestamp, TaskTitle,
     },
 };
 
@@ -39,7 +39,6 @@ impl From<Task> for pb::Task {
                 .blocked_by
                 .map(|ids| ids.into_iter().map(TaskId::into_string).collect())
                 .unwrap_or_default(),
-            section: task.section.map(TaskSection::into_string),
             revision: task.revision.into_inner(),
         }
     }
@@ -158,10 +157,6 @@ impl TryFrom<pb::Task> for Task {
             effort,
             priority,
             blocked_by,
-            section: value
-                .section
-                .map(|raw| TaskSection::try_new(raw).map_err(|error| invalid("section", error)))
-                .transpose()?,
             revision: ContentRevision::try_new(value.revision)
                 .map_err(|error| invalid("revision", error))?,
         })
@@ -203,7 +198,6 @@ mod tests {
                 effort: Some(pb::EffortTier::High as i32),
                 priority: Some(pb::PriorityTier::Highest as i32),
                 blocked_by: vec!["AUX-0014".to_string()],
-                section: Some("Human".to_string()),
                 revision: "a".repeat(64),
             }),
         }
@@ -220,7 +214,6 @@ mod tests {
             wire.commits.as_ref().unwrap().as_ptr(),
             wire.tags[0].as_ptr(),
             wire.blocked_by[0].as_ptr(),
-            wire.section.as_ref().unwrap().as_ptr(),
             wire.revision.as_ptr(),
         ];
         let task = Task::try_from(response).unwrap();
@@ -235,7 +228,6 @@ mod tests {
                 wire.commits.as_ref().unwrap().as_ptr(),
                 wire.tags[0].as_ptr(),
                 wire.blocked_by[0].as_ptr(),
-                wire.section.as_ref().unwrap().as_ptr(),
                 wire.revision.as_ptr()
             ]
         );

@@ -69,7 +69,6 @@ mod tests {
             words: words.iter().map(|word| (*word).to_string()).collect(),
             options: list::Options {
                 long: true,
-                section: Some("Waiting".parse().unwrap()),
                 all: false,
                 number: Some(3),
                 order: None,
@@ -89,10 +88,6 @@ mod tests {
 
         assert_eq!(list.project.as_ref().map(AsRef::as_ref), Some("foo"));
         assert!(list.options.long);
-        assert_eq!(
-            list.options.section.as_ref().map(AsRef::as_ref),
-            Some("Waiting")
-        );
         assert!(!list.options.all);
         assert_eq!(list.options.number, Some(3));
         assert_eq!(list.options.order, None);

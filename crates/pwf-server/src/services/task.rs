@@ -4,7 +4,7 @@ use futures::Stream;
 use pwf_application::{
     ports::{confirmation::ConfirmationClientError, task_vault::TaskMutationError},
     task::{
-        CloseTaskError, MutationRequestError, TaskPromptLanesError,
+        CloseTaskError, TaskPromptLanesError,
         add_task::{self, AddTaskError},
         cancel_task::{self, CancelTaskError},
         clone_task::{self, CloneTaskError},
@@ -311,13 +311,10 @@ fn create_task_status(error: AddTaskError) -> Status {
         | AddTaskError::BlockedByCycle { .. } => Status::failed_precondition(message),
         AddTaskError::InvalidTitle(_) => Status::invalid_argument(message),
         AddTaskError::PromptLanes(error) => prompt_lanes_status(&error),
-        AddTaskError::MalformedBlockedBy { .. } | AddTaskError::ReservedTaskChanged { .. } => {
-            Status::data_loss(message)
-        }
-        AddTaskError::MutationRequest(error) => mutation_request_status(&error),
+        AddTaskError::MalformedBlockedBy { .. } => Status::data_loss(message),
+
         AddTaskError::WriteStore { .. }
         | AddTaskError::ReadBlockedBy { .. }
-        | AddTaskError::ReadReservedTask { .. }
         | AddTaskError::QueryProject(_)
         | AddTaskError::AllocateTaskId { .. }
         | AddTaskError::Clock(_) => Status::internal(message),
@@ -348,7 +345,6 @@ fn cancel_task_status(error: CancelTaskError) -> Status {
         CancelTaskError::ResolveProject(error) => resolve_task_project_status(&error),
         CancelTaskError::Close(error) => close_task_status(error),
         CancelTaskError::Clock(_) => Status::internal(error.to_string()),
-        CancelTaskError::MutationRequest(error) => mutation_request_status(&error),
     }
 }
 
@@ -357,7 +353,6 @@ fn complete_task_status(error: CompleteTaskError) -> Status {
         CompleteTaskError::ResolveProject(error) => resolve_task_project_status(&error),
         CompleteTaskError::Close(error) => close_task_status(error),
         CompleteTaskError::Clock(_) => Status::internal(error.to_string()),
-        CompleteTaskError::MutationRequest(error) => mutation_request_status(&error),
     }
 }
 
@@ -367,11 +362,10 @@ fn edit_task_status(error: &EditTaskError) -> Status {
         EditTaskError::TaskNotFound { .. } => Status::not_found(message),
         EditTaskError::Revision(_) => Status::aborted(message),
         EditTaskError::Mutation(error) => task_mutation_status(error),
-        EditTaskError::MutationRequest(error) => mutation_request_status(error),
+
         EditTaskError::InvalidTitle(_) => Status::invalid_argument(message),
         EditTaskError::PromptLanes(error) => prompt_lanes_status(error),
         EditTaskError::ClosedTask { .. }
-        | EditTaskError::NoteMissing { .. }
         | EditTaskError::InvalidPersistedTitle { .. }
         | EditTaskError::UnknownBlockedByIds { .. }
         | EditTaskError::SelfBlockedBy { .. }
@@ -398,17 +392,6 @@ fn prompt_lanes_status(error: &TaskPromptLanesError) -> Status {
     }
 }
 
-fn mutation_request_status(error: &MutationRequestError) -> Status {
-    match error {
-        MutationRequestError::Conflict { .. } => Status::already_exists(error.to_string()),
-        MutationRequestError::Incomplete { .. } => Status::aborted(error.to_string()),
-        MutationRequestError::Corrupt { .. } => Status::data_loss(error.to_string()),
-        MutationRequestError::InvalidIdentity { .. } | MutationRequestError::Database(_) => {
-            Status::internal(error.to_string())
-        }
-    }
-}
-
 fn task_mutation_status<E: std::fmt::Display>(error: &TaskMutationError<E>) -> Status {
     match error {
         TaskMutationError::StaleTask { .. } | TaskMutationError::SourceChanged => {
@@ -421,9 +404,6 @@ fn task_mutation_status<E: std::fmt::Display>(error: &TaskMutationError<E>) -> S
 fn get_task_status(error: &GetTaskError) -> Status {
     match error {
         GetTaskError::Read(error) => get_task_record_status(error),
-        GetTaskError::Parse(pwf_wire::task::TaskRecordError::MissingNote { .. }) => {
-            Status::failed_precondition(error.to_string())
-        }
         GetTaskError::Parse(_) => Status::data_loss(error.to_string()),
     }
 }
@@ -475,10 +455,8 @@ fn delete_task_status(error: RemoveTaskError) -> Status {
         RemoveTaskError::Confirmation(error) => confirmation_status(&error),
         RemoveTaskError::Revision(_) | RemoveTaskError::DeletionChanged => Status::aborted(message),
         RemoveTaskError::Mutation(error) => task_mutation_status(&error),
-        RemoveTaskError::MutationRequest(error) => mutation_request_status(&error),
-        RemoveTaskError::NoteMissing { .. } | RemoveTaskError::HasDependents { .. } => {
-            Status::failed_precondition(message)
-        }
+
+        RemoveTaskError::HasDependents { .. } => Status::failed_precondition(message),
         RemoveTaskError::InvalidTitle { .. } | RemoveTaskError::MalformedBlockedBy { .. } => {
             Status::data_loss(message)
         }
@@ -495,7 +473,7 @@ fn reopen_task_status(error: ReopenTaskError) -> Status {
         ReopenTaskError::Confirmation(error) => confirmation_status(&error),
         ReopenTaskError::Revision(_) => Status::aborted(error.to_string()),
         ReopenTaskError::Mutation(error) => task_mutation_status(&error),
-        ReopenTaskError::MutationRequest(error) => mutation_request_status(&error),
+
         ReopenTaskError::WriteStore(_) => Status::internal(error.to_string()),
     }
 }

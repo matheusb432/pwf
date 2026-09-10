@@ -1,4 +1,7 @@
-use std::{fmt::Write as _, path::Path};
+use std::{
+    fmt::Write as _,
+    path::{Path, PathBuf},
+};
 
 use pwf_application::ports::project_note::{NewProjectNote, ProjectNotePatch, ProjectNotes};
 use pwf_models::{
@@ -12,18 +15,14 @@ use serde_json::Value;
 use super::{ObsidianStore, ObsidianStoreError};
 use crate::{
     file_transaction::{FileSnapshot, FileTransaction, snapshot},
-    obsidian::{
-        MarkdownFile,
-        index_text::{add_note_link, remove_note_link},
-        markdown_line,
-    },
+    obsidian::{MarkdownFile, markdown_line},
 };
 
 impl ProjectNotes for ObsidianStore {
     type Error = ObsidianStoreError;
 
     fn get_note(&self, project: &Project, id: &NoteId) -> Result<Option<ProjectNote>, Self::Error> {
-        let path = self.tasks_path(project)?.join(note_file_name(id));
+        let path = self.project_note_path(project, id)?;
         if !path.exists() {
             return Ok(None);
         }
@@ -37,7 +36,11 @@ impl ProjectNotes for ObsidianStore {
 
     fn list_notes(&self, project: &Project) -> Result<Vec<ProjectNote>, Self::Error> {
         let project_directory = self.tasks_path(project)?;
-        list_notes(&project_directory, &project.id)
+        list_notes(
+            &project_directory,
+            &self.project_page_path(project)?,
+            &project.id,
+        )
     }
 
     fn insert_note(
@@ -45,8 +48,7 @@ impl ProjectNotes for ObsidianStore {
         project: &Project,
         new: NewProjectNote,
     ) -> Result<ProjectNote, Self::Error> {
-        let project_directory = self.tasks_path(project)?;
-        let note_path = project_directory.join(note_file_name(&new.id));
+        let note_path = self.project_note_path(project, &new.id)?;
         let source = note_content(project.title.as_ref(), &new);
         MarkdownFile::create_rendered_new(note_path, source).map_err(|source| {
             ObsidianStoreError::WriteProjectNote {
@@ -55,11 +57,6 @@ impl ProjectNotes for ObsidianStore {
             }
         })?;
 
-        let index_path = self.project_index_path(project)?;
-        let index = MarkdownFile::open(&index_path)
-            .map(MarkdownFile::into_source)
-            .unwrap_or_default();
-        write_index(&index_path, &add_note_link(&index, new.id.as_ref()))?;
         Ok(ProjectNote {
             verified: new.verified,
             id: new.id,
@@ -73,7 +70,7 @@ impl ProjectNotes for ObsidianStore {
         id: &NoteId,
         patch: ProjectNotePatch,
     ) -> Result<(), Self::Error> {
-        let note_path = self.tasks_path(project)?.join(note_file_name(id));
+        let note_path = self.project_note_path(project, id)?;
         if !note_path.exists() {
             return Err(note_not_found(&project.title, id));
         }
@@ -92,7 +89,7 @@ impl ProjectNotes for ObsidianStore {
     }
 
     fn delete_note(&self, project: &Project, id: &NoteId) -> Result<(), Self::Error> {
-        let note_path = self.tasks_path(project)?.join(note_file_name(id));
+        let note_path = self.project_note_path(project, id)?;
         let note =
             snapshot(&note_path).map_err(|source| ObsidianStoreError::RemoveProjectNote {
                 id: id.to_string(),
@@ -101,29 +98,9 @@ impl ProjectNotes for ObsidianStore {
         let FileSnapshot::Present(note) = note else {
             return Err(note_not_found(&project.title, id));
         };
-        let index_path = self.project_index_path(project)?;
-        let index =
-            snapshot(&index_path).map_err(|source| ObsidianStoreError::WriteProjectNoteIndex {
-                path: index_path.clone(),
-                source: std::io::Error::other(source),
-            })?;
-        let source = match &index {
-            FileSnapshot::Present(index) => {
-                String::from_utf8(index.bytes().to_vec()).unwrap_or_default()
-            }
-            FileSnapshot::Missing(_) => String::new(),
-        };
         let mut transaction = FileTransaction::new();
         transaction
             .remove(note)
-            .and_then(|()| {
-                transaction.replace(
-                    index,
-                    remove_note_link(&source, id.as_ref())
-                        .into_bytes()
-                        .into_boxed_slice(),
-                )
-            })
             .and_then(|()| transaction.commit())
             .map_err(|source| ObsidianStoreError::RemoveProjectNote {
                 id: id.to_string(),
@@ -132,18 +109,45 @@ impl ProjectNotes for ObsidianStore {
     }
 }
 
+impl ObsidianStore {
+    fn project_note_path(
+        &self,
+        project: &Project,
+        id: &NoteId,
+    ) -> Result<PathBuf, ObsidianStoreError> {
+        let path = self.tasks_path(project)?.join(note_file_name(id));
+        if path == self.project_page_path(project)? {
+            return Err(ObsidianStoreError::ProjectPagePathReserved { path });
+        }
+        Ok(path)
+    }
+}
+
 fn list_notes(
     project_directory: &Path,
+    project_page_path: &Path,
     project_id: &ProjectId,
 ) -> Result<Vec<ProjectNote>, ObsidianStoreError> {
     let mut notes = Vec::new();
-    for entry in std::fs::read_dir(project_directory)
-        .into_iter()
-        .flatten()
-        .flatten()
-    {
+    let entries = match std::fs::read_dir(project_directory) {
+        Ok(entries) => entries,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(notes),
+        Err(source) => {
+            return Err(ObsidianStoreError::ReadProjectNoteDirectory {
+                path: project_directory.to_path_buf(),
+                source,
+            });
+        }
+    };
+    for entry in entries {
+        let entry = entry.map_err(|source| ObsidianStoreError::ReadProjectNoteDirectory {
+            path: project_directory.to_path_buf(),
+            source,
+        })?;
         let path = entry.path();
-        if path.extension().and_then(|extension| extension.to_str()) != Some("md") {
+        if path == project_page_path
+            || path.extension().and_then(|extension| extension.to_str()) != Some("md")
+        {
             continue;
         }
         let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
@@ -582,15 +586,6 @@ fn note_not_found(project: &ProjectName, id: &NoteId) -> ObsidianStoreError {
     }
 }
 
-fn write_index(path: &Path, source: &str) -> Result<(), ObsidianStoreError> {
-    MarkdownFile::write_rendered(path.to_path_buf(), source.to_string()).map_err(|source| {
-        ObsidianStoreError::WriteProjectNoteIndex {
-            path: path.to_path_buf(),
-            source: source.into_io_error(),
-        }
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use std::{assert_matches, fs, path::Path};
@@ -637,6 +632,7 @@ mod tests {
             ),
             created_at: "2026-07-25T00:00:00.000Z".parse().unwrap(),
             is_paused: false,
+            snapshot_enabled: false,
         }
     }
 
@@ -663,7 +659,7 @@ mod tests {
     }
 
     #[test]
-    fn insert_and_list_round_trip_the_note_representation_and_index_link() {
+    fn insert_and_list_round_trip_the_note_representation_and_preserve_project_page() {
         let directory = tempfile::tempdir().unwrap();
         let tasks_path = directory.path().join("tasks");
         fs::create_dir_all(&tasks_path).unwrap();
@@ -698,7 +694,7 @@ mod tests {
         );
         assert_eq!(
             fs::read_to_string(&index_path).unwrap(),
-            "- [ ] [[FOO-0001|task]]\n\n### Notes\n\n- [[FOO-NOTE-0001]]\n"
+            "- [ ] [[FOO-0001|task]]\n"
         );
         assert_eq!(
             ProjectNotes::list_notes(&store, &project(&tasks_path)).unwrap(),
@@ -951,7 +947,7 @@ mod tests {
     }
 
     #[test]
-    fn delete_removes_non_utf8_note_and_preserves_other_index_content() {
+    fn delete_removes_non_utf8_note_and_preserves_project_page() {
         let directory = tempfile::tempdir().unwrap();
         let tasks_path = directory.path().join("tasks");
         fs::create_dir_all(&tasks_path).unwrap();
@@ -969,12 +965,12 @@ mod tests {
         assert!(!note_path.exists());
         assert_eq!(
             fs::read_to_string(index_path).unwrap(),
-            "- [ ] [[FOO-0001]]\n\n### Notes\n"
+            "- [ ] [[FOO-0001]]\n\n### Notes\n\n- [[FOO-NOTE-0001]]\n"
         );
     }
 
     #[test]
-    fn delete_preserves_the_note_when_the_index_cannot_be_read() {
+    fn delete_succeeds_when_the_project_page_cannot_be_read() {
         let directory = tempfile::tempdir().unwrap();
         let tasks_path = directory.path().join("tasks");
         fs::create_dir_all(&tasks_path).unwrap();
@@ -987,10 +983,142 @@ mod tests {
         fs::create_dir(tasks_path.join("foo.md")).unwrap();
         let store = store(&tasks_path);
 
-        let error =
-            ProjectNotes::delete_note(&store, &project(&tasks_path), &identifier(1)).unwrap_err();
+        ProjectNotes::delete_note(&store, &project(&tasks_path), &identifier(1)).unwrap();
 
-        assert_matches!(error, ObsidianStoreError::WriteProjectNoteIndex { .. });
-        assert!(note_path.exists());
+        assert!(!note_path.exists());
+        assert!(tasks_path.join("foo.md").is_dir());
+    }
+
+    #[test]
+    fn note_crud_preserves_authored_and_generated_pages() {
+        for page in [
+            &b"---\nid: FOO-9999\n---\n### Notes\n- [[FOO-NOTE-0001]]\n"[..],
+            &b"---\ninvalid: [\n---\n"[..],
+            &b"\xff\xfe"[..],
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let store = store(directory.path());
+            let project = project(directory.path());
+            for name in ["foo.md", "pwf-index.md"] {
+                fs::write(directory.path().join(name), page).unwrap();
+            }
+            let note =
+                ProjectNotes::insert_note(&store, &project, new_note(1, "Original")).unwrap();
+            assert_eq!(
+                ProjectNotes::get_note(&store, &project, &note.id).unwrap(),
+                Some(note.clone())
+            );
+            assert_eq!(
+                ProjectNotes::list_notes(&store, &project).unwrap(),
+                std::slice::from_ref(&note)
+            );
+            ProjectNotes::update_note(
+                &store,
+                &project,
+                &note.id,
+                ProjectNotePatch {
+                    title: SetField::Set(NoteTitle::try_new("Edited").unwrap()),
+                    ..ProjectNotePatch::default()
+                },
+            )
+            .unwrap();
+            assert_eq!(
+                ProjectNotes::get_note(&store, &project, &note.id)
+                    .unwrap()
+                    .unwrap()
+                    .title
+                    .as_ref(),
+                "Edited"
+            );
+            ProjectNotes::delete_note(&store, &project, &note.id).unwrap();
+            assert!(
+                ProjectNotes::list_notes(&store, &project)
+                    .unwrap()
+                    .is_empty()
+            );
+            assert!(
+                ProjectNotes::get_note(&store, &project, &note.id)
+                    .unwrap()
+                    .is_none()
+            );
+            for name in ["foo.md", "pwf-index.md"] {
+                assert_eq!(fs::read(directory.path().join(name)).unwrap(), page);
+            }
+        }
+    }
+
+    #[test]
+    fn note_crud_does_not_create_or_read_project_pages() {
+        for unreadable_pages in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let store = store(directory.path());
+            let project = project(directory.path());
+            if unreadable_pages {
+                fs::create_dir(directory.path().join("foo.md")).unwrap();
+                fs::create_dir(directory.path().join("pwf-index.md")).unwrap();
+            }
+            let note =
+                ProjectNotes::insert_note(&store, &project, new_note(1, "Original")).unwrap();
+            ProjectNotes::update_note(
+                &store,
+                &project,
+                &note.id,
+                ProjectNotePatch {
+                    title: SetField::Set(NoteTitle::try_new("Edited").unwrap()),
+                    ..ProjectNotePatch::default()
+                },
+            )
+            .unwrap();
+            assert_eq!(
+                ProjectNotes::get_note(&store, &project, &note.id)
+                    .unwrap()
+                    .unwrap()
+                    .title
+                    .as_ref(),
+                "Edited"
+            );
+            ProjectNotes::delete_note(&store, &project, &note.id).unwrap();
+            for name in ["foo.md", "pwf-index.md"] {
+                let path = directory.path().join(name);
+                assert_eq!(path.exists(), unreadable_pages);
+                assert_eq!(path.is_dir(), unreadable_pages);
+            }
+        }
+    }
+
+    #[test]
+    fn list_notes_reports_an_unreadable_directory_and_preserves_existing_snapshot() {
+        let directory = tempfile::tempdir().unwrap();
+        let tasks_path = directory.path().join("tasks");
+        fs::create_dir(&tasks_path).unwrap();
+        let snapshot = "- [ ] [[FOO-0001]]\n\n### Notes\n\n- [[FOO-NOTE-0001]]\n";
+        fs::write(tasks_path.join("pwf-index.md"), snapshot).unwrap();
+        let store = store(&tasks_path);
+        let project = project(&tasks_path);
+        let retained = directory.path().join("retained");
+        fs::rename(&tasks_path, &retained).unwrap();
+        fs::write(&tasks_path, "not a directory").unwrap();
+
+        let error = ProjectNotes::list_notes(&store, &project).unwrap_err();
+
+        assert_matches!(error, ObsidianStoreError::ReadProjectNoteDirectory { path, .. } if path == tasks_path);
+        assert_eq!(
+            fs::read_to_string(retained.join("pwf-index.md")).unwrap(),
+            snapshot
+        );
+        assert_eq!(fs::read_to_string(&tasks_path).unwrap(), "not a directory");
+    }
+
+    #[test]
+    fn list_notes_returns_empty_for_a_missing_directory() {
+        let directory = tempfile::tempdir().unwrap();
+        let tasks_path = directory.path().join("missing");
+        let store = store(&tasks_path);
+        assert!(
+            ProjectNotes::list_notes(&store, &project(&tasks_path))
+                .unwrap()
+                .is_empty()
+        );
+        assert!(!tasks_path.exists());
     }
 }

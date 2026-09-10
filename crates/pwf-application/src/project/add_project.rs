@@ -49,10 +49,11 @@ pub async fn execute(
     let tasks_kind = fields.tasks.kind().to_string();
     let tasks_path = fields.tasks.path().as_ref();
     let obsidian_vault = fields.obsidian_vault.as_ref().map(AsRef::as_ref);
+    let snapshot_enabled = fields.snapshot_enabled;
     let insert_result = sqlx::query!(
         r#"
-        INSERT INTO projects (id, project_source_id, title, tasks_kind, tasks_path, obsidian_vault)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO projects (id, project_source_id, title, tasks_kind, tasks_path, obsidian_vault, snapshot_enabled)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         "#,
         id,
         source_id,
@@ -60,6 +61,7 @@ pub async fn execute(
         tasks_kind,
         tasks_path,
         obsidian_vault,
+        snapshot_enabled,
     )
     .execute(&mut *transaction)
     .await;

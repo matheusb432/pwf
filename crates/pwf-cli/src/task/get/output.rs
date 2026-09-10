@@ -14,7 +14,6 @@ struct TaskOutput<'a> {
     effort: Option<&'a str>,
     priority: Option<&'a str>,
     blocked_by: Option<Vec<&'a str>>,
-    section: Option<&'a str>,
     prompt: &'a str,
 }
 
@@ -37,7 +36,6 @@ pub(super) fn json(task: &Task, project: String) -> anyhow::Result<String> {
             .blocked_by
             .as_ref()
             .map(|ids| ids.iter().map(AsRef::as_ref).collect()),
-        section: task.section.as_ref().map(AsRef::as_ref),
         prompt: task.prompt.as_ref().trim(),
     };
     serde_json::to_string_pretty(&output).map_err(Into::into)
@@ -66,7 +64,6 @@ mod tests {
             effort: Some("high".parse().unwrap()),
             priority: Some("highest".parse().unwrap()),
             blocked_by: Some(BlockedBy::try_new(["AUX-0014".parse().unwrap()]).unwrap()),
-            section: Some("Human".parse().unwrap()),
             revision: ContentRevision::try_new("a".repeat(64)).unwrap(),
         };
         let value: serde_json::Value =
@@ -77,7 +74,7 @@ mod tests {
                 "id": "FOO-0001", "project": "foo", "title": "typed task", "status": "done",
                 "created": "2026-07-26", "completed": "2026-08-12", "commits": "a..b, c..d",
                 "tags": ["rust", "sqlite"], "effort": "high", "priority": "highest",
-                "blocked_by": ["AUX-0014"], "section": "Human", "prompt": "authored body"
+                "blocked_by": ["AUX-0014"], "prompt": "authored body"
             })
         );
     }

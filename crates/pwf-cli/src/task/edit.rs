@@ -219,7 +219,6 @@ pub(super) async fn run(
         tags: arguments.tags.edit(),
         priority: arguments.priority.edit(),
         expected_revision: None,
-        request_id: String::new(),
     };
     let result = client
         .update_task(request)

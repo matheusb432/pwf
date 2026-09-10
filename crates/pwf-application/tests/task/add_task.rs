@@ -1,12 +1,9 @@
-use pwf_application::{
-    ports::task_vault::IndexEntryState,
-    task::{
-        MutationRequestError, TaskPromptLanesError, TaskPromptTitleError,
-        add_task::{self, AddTaskError},
-    },
+use pwf_application::task::{
+    TaskPromptLanesError, TaskPromptTitleError,
+    add_task::{self, AddTaskError},
 };
-use pwf_models::task::TaskTitle;
-use pwf_wire::task::{AddTask, AddTaskPrompt, TaskLanes, TaskRequestFingerprint, TaskRequestId};
+use pwf_models::task::{TaskStatus, TaskTitle};
+use pwf_wire::task::{AddTask, AddTaskPrompt, TaskLanes, TaskMutationSummary};
 
 use crate::support::{
     FixedClock, InMemoryStore, InMemoryStoreFailure, blocked_by, insert_project, stored_blocked_by,
@@ -40,7 +37,7 @@ fn command() -> AddTask {
 }
 
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]
-async fn add_inserts_record_and_open_index_entry(pool: sqlx::SqlitePool) {
+async fn add_inserts_task_note_and_returns_its_summary(pool: sqlx::SqlitePool) {
     let store = registered_store(&pool).await;
 
     let added = add_task::execute(command(), &store, &pool, &FixedClock)
@@ -48,11 +45,14 @@ async fn add_inserts_record_and_open_index_entry(pool: sqlx::SqlitePool) {
         .unwrap();
 
     assert_eq!(added.outcome.as_ref(), "FOO-0001");
-    let entries = store.entries("foo");
-    assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].id.as_ref(), "FOO-0001");
-    assert_eq!(entries[0].state, IndexEntryState::Open);
-    assert_eq!(entries[0].section, None);
+    assert_eq!(
+        added.task,
+        Some(TaskMutationSummary {
+            id: added.outcome.clone(),
+            title: "ship it".into(),
+            status: TaskStatus::Active,
+        })
+    );
     assert_eq!(store.tasks("foo")[0].id, added.outcome);
     assert_eq!(store.tasks("foo").len(), 1);
     assert_eq!(
@@ -220,7 +220,6 @@ async fn add_rejects_a_cycle_through_its_prospective_id_without_writing(pool: sq
                 == ["FOO-0002", "FOO-0001", "FOO-0002"]
     ));
     assert_eq!(store.tasks("foo").len(), 1);
-    assert!(store.entries("foo").is_empty());
 }
 
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]
@@ -282,14 +281,11 @@ async fn reads_only_reachable_dependencies_once_including_paused_projects(pool: 
         ["AUX-0001", "FOO-0001", "FOO-0002"]
     );
     assert_eq!(store.tasks("foo").len(), 3);
-    assert!(store.entries("foo").is_empty());
 }
 
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]
-async fn missing_projects_and_index_only_tasks_do_not_supply_dependencies(pool: sqlx::SqlitePool) {
-    registered_store(&pool).await;
-    let (store, _) = crate::support::staged_missing_task();
-    let store = store.with_project_id("foo", "FOO");
+async fn missing_projects_and_task_notes_do_not_supply_dependencies(pool: sqlx::SqlitePool) {
+    let store = registered_store(&pool).await;
     let mut command = command();
     command.blocked_by = Some(blocked_by(&["FOO-0002", "AUX-0001"]));
     let error = add_task::execute(command, &store, &pool, &FixedClock)
@@ -371,23 +367,16 @@ async fn shorthand_still_requires_a_title(pool: sqlx::SqlitePool) {
 }
 
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]
-async fn request_id_reuse_with_different_input_conflicts(pool: sqlx::SqlitePool) {
+async fn repeated_creation_allocates_distinct_task_notes(pool: sqlx::SqlitePool) {
     let store = registered_store(&pool).await;
-    let mut first = command();
-    first.request_id = Some(TaskRequestId::try_new("request-1").unwrap());
-    first.request_fingerprint = Some(TaskRequestFingerprint::from_digest([1; 32]));
-    add_task::execute(first, &store, &pool, &FixedClock)
+    let first = add_task::execute(command(), &store, &pool, &FixedClock)
         .await
         .unwrap();
-    let mut changed = command();
-    changed.request_id = Some(TaskRequestId::try_new("request-1").unwrap());
-    changed.request_fingerprint = Some(TaskRequestFingerprint::from_digest([2; 32]));
-    let error = add_task::execute(changed, &store, &pool, &FixedClock)
+    let second = add_task::execute(command(), &store, &pool, &FixedClock)
         .await
-        .unwrap_err();
-    assert!(matches!(
-        error,
-        AddTaskError::MutationRequest(MutationRequestError::Conflict { .. })
-    ));
-    assert_eq!(store.tasks("foo").len(), 1);
+        .unwrap();
+
+    assert_eq!(first.outcome.as_ref(), "FOO-0001");
+    assert_eq!(second.outcome.as_ref(), "FOO-0002");
+    assert_eq!(store.tasks("foo").len(), 2);
 }

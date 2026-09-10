@@ -247,6 +247,7 @@ fn project(tasks_path: &Path) -> Project {
             "constructing benchmark project timestamp",
         ),
         is_paused: false,
+        snapshot_enabled: false,
     }
 }
 

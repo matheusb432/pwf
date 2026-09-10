@@ -38,6 +38,7 @@ pub(super) async fn run(arguments: Arguments, client: &ProjectClient) -> anyhow:
         .map_err(crate::rpc_error)?;
     let fields = ProjectFields {
         obsidian_vault: current.obsidian_vault,
+        snapshot_enabled: current.snapshot_enabled,
         id: arguments.destination_id.to_string(),
         title: arguments.title.to_string(),
         source_kind: arguments

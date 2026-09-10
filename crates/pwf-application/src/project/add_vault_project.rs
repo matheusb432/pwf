@@ -76,6 +76,7 @@ pub async fn execute(
             path: vault.clone(),
         })?;
     let fields = ProjectFields {
+        snapshot_enabled: false,
         id: command.id,
         title,
         source: command

@@ -3,7 +3,7 @@ use assert_cmd::prelude::OutputAssertExt as _;
 use expectrl::Expect;
 
 use crate::support::{
-    CommandTestExt, ManagedProject, command, project_id,
+    CommandTestExt, ManagedProject, ProjectFixture, command, project_id,
     style::{assert_plain, color_rgb},
     task_id, task_json,
 };
@@ -282,7 +282,8 @@ fn task_help_exposes_only_the_supported_add_and_edit_contract() {
         list_help.contains("--priority"),
         "missing --priority:\n{list_help}"
     );
-    assert!(list_help.contains("--section <HEADER>"), "{list_help}");
+    assert!(!list_help.contains("--section"), "{list_help}");
+    assert!(list_help.contains("--all"), "{list_help}");
 
     for command_name in ["done", "cancel"] {
         let output = command()
@@ -335,16 +336,21 @@ fn removed_section_workflow_flags_are_rejected_by_the_parser() {
 }
 
 #[test]
-fn task_list_rejects_section_with_all_before_connecting() {
-    let output = command()
-        .args(["task", "list", "--section", "Waiting on API", "--all"])
-        .output()
-        .unwrap();
-
-    assert!(!output.status.success());
-    assert!(output.stdout.is_empty());
-    let stderr = String::from_utf8(output.stderr).unwrap();
-    assert!(stderr.contains("cannot be used with '--all'"), "{stderr}");
+fn task_list_rejects_section_before_connecting() {
+    for arguments in [
+        vec!["task", "list", "--section", "Waiting on API"],
+        vec!["task", "list", "--section", "Waiting on API", "--all"],
+        vec!["list", "--section", "Waiting on API"],
+    ] {
+        let output = command().args(&arguments).output().unwrap();
+        assert_eq!(output.status.code(), Some(2), "{arguments:?}");
+        assert!(output.stdout.is_empty());
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(
+            stderr.contains("unexpected argument '--section'"),
+            "{stderr}"
+        );
+    }
 }
 
 #[test]
@@ -992,38 +998,25 @@ fn get_formats_the_same_record_as_markdown_path_or_json() {
     );
 
     std::fs::remove_file(path).unwrap();
-    assert_eq!(
-        fixture
+    for arguments in [
+        vec!["task", "get", "FOO-0001", "--path"],
+        vec!["task", "get", "FOO-0001", "--json"],
+        vec!["task", "get", "FOO-0001"],
+    ] {
+        let missing = fixture
             .database
-            .command_args(&["task", "get", "FOO-0001", "--path"])
-            .success_stdout()
-            .trim(),
-        path.to_str().unwrap()
-    );
-    let json_missing = fixture
-        .database
-        .command_args(&["task", "get", "FOO-0001", "--json"])
-        .output()
-        .unwrap();
-    assert!(!json_missing.status.success());
-    assert!(json_missing.stdout.is_empty());
-    assert!(
-        String::from_utf8(json_missing.stderr)
-            .unwrap()
-            .contains("has no note")
-    );
-    let missing = fixture
-        .database
-        .command_args(&["task", "get", "FOO-0001"])
-        .output()
-        .unwrap();
-    assert!(!missing.status.success());
-    assert!(missing.stdout.is_empty());
-    assert!(
-        String::from_utf8(missing.stderr)
-            .unwrap()
-            .contains("has no note")
-    );
+            .command()
+            .args(&arguments)
+            .output()
+            .unwrap();
+        assert!(!missing.status.success(), "{arguments:?}");
+        assert!(missing.stdout.is_empty());
+        let stderr = String::from_utf8(missing.stderr).unwrap();
+        assert!(
+            stderr.contains("Task not found: FOO-0001"),
+            "{arguments:?}: {stderr}"
+        );
+    }
 }
 
 #[test]
@@ -1089,4 +1082,191 @@ fn clone_routes_project_selectors_and_preserves_authored_content() {
         task_json(&fixture.database, &task_id("FOO-0002").unwrap()).unwrap(),
         original
     );
+}
+
+#[test]
+fn task_and_note_crud_preserve_missing_arbitrary_and_malformed_project_pages() -> anyhow::Result<()>
+{
+    for page_source in [
+        None,
+        Some("# Project notes\n\n## Someday\n- [ ] [[FOO-9999]]\n- [[FOO-NOTE-9999]]\n"),
+        Some("---\nid: [broken\n---\n\n- [ ] [[FOO-9999]]\n"),
+    ] {
+        let directory = tempfile::tempdir()?;
+        let project = directory.path().join("project");
+        let tasks = directory.path().join("tasks");
+        std::fs::create_dir_all(&project)?;
+        std::fs::create_dir_all(&tasks)?;
+        let page = tasks.join("foo.md");
+        if let Some(source) = page_source {
+            std::fs::write(&page, source)?;
+        }
+        let fixture = ProjectFixture::new()?;
+        fixture.add(
+            &project_id("FOO")?,
+            "foo",
+            project.to_str().unwrap(),
+            tasks.to_str().unwrap(),
+        )?;
+        let run = |arguments: &[&str]| -> anyhow::Result<String> {
+            let output = fixture.run(arguments)?;
+            assert!(
+                output.status.success(),
+                "{arguments:?}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(
+                output.stderr.is_empty(),
+                "{arguments:?}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            Ok(String::from_utf8(output.stdout)?)
+        };
+
+        for id in ["FOO-0001", "FOO-0002"] {
+            let added = run(&[
+                "task",
+                "add",
+                "foo",
+                "--title",
+                "repeated input",
+                "--goal",
+                "persist each task note",
+            ])?;
+            assert!(added.contains(id), "{added}");
+            assert!(tasks.join(format!("{id}.md")).exists());
+        }
+        run(&[
+            "task",
+            "edit",
+            "FOO-0001",
+            "--title",
+            "revised task",
+            "--priority",
+            "highest",
+        ])?;
+        let task: serde_json::Value =
+            serde_json::from_str(&run(&["task", "get", "FOO-0001", "--json"])?)?;
+        assert_eq!(task["title"], "revised task");
+        assert_eq!(task["priority"], "highest");
+        let listed = run(&["task", "list", "--all", "--order", "id:asc"])?;
+        assert_list_ids(&listed, &["FOO-0001", "FOO-0002"]);
+        assert!(!listed.contains("Someday"), "{listed}");
+        run(&["task", "done", "FOO-0001", "--report", "finished"])?;
+        let task: serde_json::Value =
+            serde_json::from_str(&run(&["task", "get", "FOO-0001", "--json"])?)?;
+        assert_eq!(task["status"], "done");
+        run(&["task", "reopen", "FOO-0001", "--yes"])?;
+        run(&["task", "cancel", "FOO-0001", "--report", "obsolete"])?;
+        let task: serde_json::Value =
+            serde_json::from_str(&run(&["task", "get", "FOO-0001", "--json"])?)?;
+        assert_eq!(task["status"], "cancelled");
+        run(&["task", "remove", "FOO-0001", "--yes"])?;
+        assert!(!tasks.join("FOO-0001.md").exists());
+        let missing = fixture.run(&["task", "get", "FOO-0001"])?;
+        assert!(!missing.status.success());
+        assert!(missing.stdout.is_empty());
+        assert!(String::from_utf8(missing.stderr)?.contains("FOO-0001"));
+        let listed = run(&["task", "list", "--all"])?;
+        assert!(!listed.contains("FOO-0001"), "{listed}");
+        assert!(listed.contains("FOO-0002"), "{listed}");
+
+        exercise_project_note_crud(&run, &tasks)?;
+
+        match page_source {
+            Some(source) => assert_eq!(std::fs::read(&page)?, source.as_bytes()),
+            None => assert!(!page.exists()),
+        }
+    }
+    Ok(())
+}
+
+fn exercise_project_note_crud(
+    run: &impl Fn(&[&str]) -> anyhow::Result<String>,
+    tasks: &std::path::Path,
+) -> anyhow::Result<()> {
+    let added = run(&[
+        "note",
+        "add",
+        "foo",
+        "--title",
+        "project evidence",
+        "--content",
+        "authored evidence",
+    ])?;
+    assert!(added.contains("FOO-NOTE-0001"), "{added}");
+    run(&[
+        "note",
+        "edit",
+        "foo",
+        "1",
+        "--title",
+        "revised evidence",
+        "--content",
+        "new evidence",
+    ])?;
+    let listed = run(&["note", "list", "foo"])?;
+    assert_eq!(listed, "FOO-NOTE-0001 :: revised evidence\n");
+    assert!(std::fs::read_to_string(tasks.join("FOO-NOTE-0001.md"))?.contains("new evidence"));
+    run(&["note", "remove", "foo", "1", "--yes"])?;
+    assert!(!tasks.join("FOO-NOTE-0001.md").exists());
+    assert!(!run(&["note", "list", "foo"])?.contains("FOO-NOTE-0001"));
+    Ok(())
+}
+
+#[test]
+fn task_list_all_widens_status_and_cap_without_grouping_project_page_sections() -> anyhow::Result<()>
+{
+    let directory = tempfile::tempdir()?;
+    let tasks = directory.path().join("tasks");
+    std::fs::create_dir_all(&tasks)?;
+    let page = "# Project page\n\n## Alpha\n- [ ] [[FOO-0001]]\n\n## Zulu\n- [x] [[FOO-0014]]\n";
+    std::fs::write(tasks.join("foo.md"), page)?;
+    for number in 1..=14 {
+        let id = format!("FOO-{number:04}");
+        let status = match number {
+            13 => "done",
+            14 => "cancelled",
+            _ => "active",
+        };
+        std::fs::write(
+            tasks.join(format!("{id}.md")),
+            format!(
+                "---\nid: {id}\nstatus: {status}\ntitle: task {number}\nproject: foo\n---\n\n## Goals\n\n- list the actual task note\n"
+            ),
+        )?;
+    }
+    let fixture = ProjectFixture::new()?;
+    fixture.add(
+        &project_id("FOO")?,
+        "foo",
+        directory.path().to_str().unwrap(),
+        tasks.to_str().unwrap(),
+    )?;
+    let ordered = [
+        "FOO-0014", "FOO-0013", "FOO-0012", "FOO-0011", "FOO-0010", "FOO-0009", "FOO-0008",
+        "FOO-0007", "FOO-0006", "FOO-0005", "FOO-0004", "FOO-0003", "FOO-0002", "FOO-0001",
+    ];
+    for (options, expected) in [
+        (vec![], &ordered[2..12]),
+        (vec!["--all"], ordered.as_slice()),
+        (vec!["--all", "--status", "active"], &ordered[2..]),
+        (vec!["--all", "-n", "2"], &ordered[..2]),
+    ] {
+        let mut arguments = vec!["task", "list", "--project", "foo", "--order", "id:desc"];
+        arguments.extend(options);
+        let output = fixture.run(&arguments)?;
+        assert!(
+            output.status.success(),
+            "{arguments:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output.stderr.is_empty());
+        let output = String::from_utf8(output.stdout)?;
+        assert_list_ids(&output, expected);
+        assert!(!output.contains("Alpha"), "{output}");
+        assert!(!output.contains("Zulu"), "{output}");
+    }
+    assert_eq!(std::fs::read_to_string(tasks.join("foo.md"))?, page);
+    Ok(())
 }

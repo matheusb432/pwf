@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use pwf_models::project::ProjectIndexIdentity;
+use pwf_models::project::ProjectIdentity;
 
 /// Reports the filesystem state after staged project task files commit.
 #[derive(Debug)]
@@ -43,7 +43,7 @@ pub trait ProjectTaskFilesClient: Clone + Send + Sync + 'static {
         &self,
         source: &Path,
         destination: &Path,
-        current: &ProjectIndexIdentity,
-        next: &ProjectIndexIdentity,
+        current: &ProjectIdentity,
+        next: &ProjectIdentity,
     ) -> Result<Self::StagedRename, Self::Error>;
 }

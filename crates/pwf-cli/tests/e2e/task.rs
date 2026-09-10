@@ -9,13 +9,13 @@ fn write_task_note(path: &Path, id: &str, project: &str, title: &str) -> std::io
     fs::write(
         path,
         format!(
-            "---\nid: {id}\nstatus: active\ntitle: {title}\nproject: {project}\ncreated_at: 2026-09-03T12:00:00Z\n---\n\n## Goals\n\n- exercise section listing\n"
+            "---\nid: {id}\nstatus: active\ntitle: {title}\nproject: {project}\ncreated_at: 2026-09-03T12:00:00Z\n---\n\n## Goals\n\n- exercise flat listing\n"
         ),
     )
 }
 
 #[test]
-fn task_list_filters_and_globally_groups_arbitrary_h2_sections() -> anyhow::Result<()> {
+fn task_list_orders_notes_globally_and_ignores_project_page_sections() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let fixture = ProjectFixture::new()?;
     let alpha_tasks = directory.path().join("tasks/alpha");
@@ -72,16 +72,7 @@ fn task_list_filters_and_globally_groups_arbitrary_h2_sections() -> anyhow::Resu
         String::from_utf8_lossy(&all.stderr)
     );
     let all = String::from_utf8(all.stdout)?;
-    let ordered_fragments = [
-        "AAA-0001",
-        "Blocked\n",
-        "BBB-0002",
-        "Waiting on API\n",
-        "AAA-0003",
-        "BBB-0001",
-        "Zulu\n",
-        "AAA-0002",
-    ];
+    let ordered_fragments = ["AAA-0003", "AAA-0002", "AAA-0001", "BBB-0002", "BBB-0001"];
     let mut previous = 0;
     for fragment in ordered_fragments {
         let Some(offset) = all[previous..].find(fragment) else {
@@ -90,28 +81,26 @@ fn task_list_filters_and_globally_groups_arbitrary_h2_sections() -> anyhow::Resu
         let index = previous + offset;
         previous = index + fragment.len();
     }
-    assert!(!all.contains("Other\n"), "{all}");
-    assert_eq!(all.matches("Waiting on API\n").count(), 1, "{all}");
-
-    let filtered = fixture.run(&[
-        "task",
-        "list",
-        "--section",
-        "WAITING ON API",
-        "--order",
-        "project-id",
-    ])?;
+    for heading in ["Other\n", "Blocked\n", "Waiting on API\n", "Zulu\n"] {
+        assert!(!all.contains(heading), "{all}");
+    }
+    let default = fixture.run(&["task", "list", "--order", "project-id"])?;
     assert!(
-        filtered.status.success(),
+        default.status.success(),
         "{}",
-        String::from_utf8_lossy(&filtered.stderr)
+        String::from_utf8_lossy(&default.stderr)
     );
-    let filtered = String::from_utf8(filtered.stdout)?;
-    assert!(filtered.contains("AAA-0003"), "{filtered}");
-    assert!(filtered.contains("BBB-0001"), "{filtered}");
-    assert!(!filtered.contains("AAA-0001"), "{filtered}");
-    assert!(!filtered.contains("AAA-0002"), "{filtered}");
-    assert!(!filtered.contains("BBB-0002"), "{filtered}");
+    let default = String::from_utf8(default.stdout)?;
+    for id in ordered_fragments {
+        assert!(default.contains(id), "{default}");
+    }
+    assert_eq!(
+        all.lines()
+            .filter(|line| line.contains("AAA-") || line.contains("BBB-"))
+            .count(),
+        5,
+        "{all}"
+    );
     Ok(())
 }
 

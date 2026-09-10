@@ -4,12 +4,12 @@ use pwf_models::{
     AppDate,
     project::{ProjectId, ProjectName, ProjectSourceValue},
     task::{
-        BlockedBy, EffortTier, PriorityTier, TaskId, TaskPrompt, TaskSection, TaskStatus, TaskTags,
-        TaskTitle, order::OrderSpec,
+        BlockedBy, EffortTier, PriorityTier, TaskId, TaskPrompt, TaskStatus, TaskTags, TaskTitle,
+        order::OrderSpec,
     },
 };
 
-use super::{ProjectTaskPath, RawTaskTags, TaskIndexPath, TaskNotePath};
+use super::{ProjectTaskPath, RawTaskTags, TaskNotePath};
 
 /// Selects one lifecycle status or includes every lifecycle status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,15 +34,6 @@ impl Default for StatusFilter {
     }
 }
 
-/// Selects the task-index region included by a list request.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub enum ListScope {
-    #[default]
-    Default,
-    Section(TaskSection),
-    All,
-}
-
 /// Selects summary or metadata-rich task-list output.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ListDetail {
@@ -56,14 +47,6 @@ impl ListDetail {
     pub const fn includes_relationship_statuses(self) -> bool {
         matches!(self, Self::Detailed)
     }
-}
-
-/// Selects the presentation implied by a resolved list scope.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum ListLayout {
-    #[default]
-    Flat,
-    BySection,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -132,16 +115,12 @@ impl fmt::Display for TaskHeading {
 /// Describes one condition preventing task launch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TaskIssue {
-    MissingNote { path: TaskNotePath },
     PlaceholderPrompt,
 }
 
 impl fmt::Display for TaskIssue {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::MissingNote { path } => {
-                write!(formatter, "Task note missing: {path}")
-            }
             Self::PlaceholderPrompt => formatter
                 .write_str("Prompt is a placeholder; define a real prompt before launching."),
         }
@@ -189,37 +168,12 @@ impl fmt::Display for TaskLaunch {
     }
 }
 
-/// Locates a task's index entry for display.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TaskLocation {
-    index_path: TaskIndexPath,
-    line: NonZeroUsize,
-}
-
-impl TaskLocation {
-    #[must_use]
-    pub fn new(index_path: TaskIndexPath, line: NonZeroUsize) -> Self {
-        Self { index_path, line }
-    }
-
-    #[must_use]
-    pub fn index_path(&self) -> &TaskIndexPath {
-        &self.index_path
-    }
-
-    #[must_use]
-    pub fn line(&self) -> NonZeroUsize {
-        self.line
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListedTask {
     pub id: TaskId,
     pub project: ProjectName,
     pub status: TaskStatus,
     pub heading: TaskHeading,
-    pub section: Option<TaskSection>,
     pub effort: Option<EffortTier>,
     pub priority: Option<PriorityTier>,
     pub tags: Option<RawTaskTags>,
@@ -231,7 +185,7 @@ pub struct ListedTask {
 pub struct ListedTaskDetails {
     pub prompt: TaskPrompt,
     pub project_path: Option<ProjectSourceValue>,
-    pub location: TaskLocation,
+    pub note_path: TaskNotePath,
     pub launch: TaskLaunch,
     pub blocked_by: Option<BlockedBy>,
     pub blocked_by_statuses: Vec<BlockedByStatus>,
@@ -245,7 +199,6 @@ pub struct ListedTasks {
     pub project: Option<ProjectName>,
     pub project_task_path: Option<ProjectTaskPath>,
     pub status_filter: StatusFilter,
-    pub layout: ListLayout,
     pub detail: ListDetail,
     pub next_page_token: Option<TaskPageToken>,
 }
@@ -253,7 +206,7 @@ pub struct ListedTasks {
 #[derive(Debug, Clone)]
 pub struct ListTasks {
     pub project_id: Option<ProjectId>,
-    pub scope: ListScope,
+    pub all: bool,
     /// Explicit task cap. Omission uses the mode-specific default.
     pub number: Option<TaskListLimit>,
     pub effort: Option<EffortTier>,

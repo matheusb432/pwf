@@ -1,31 +1,20 @@
-use pwf_application::{
-    ports::task_vault::{IndexEntry, IndexEntryState, TaskVault},
-    task::cancel_task,
-};
-use pwf_models::task::{TaskId, TaskStatus};
+use pwf_application::task::cancel_task;
+use pwf_models::task::TaskStatus;
 use pwf_wire::task::{CancelTask, TaskRecord};
 
-use crate::support::{FixedClock, InMemoryStore, project, task_record, task_timestamp};
+use crate::support::{
+    FixedClock, InMemoryStore, InMemoryStoreFailure, task_record, task_timestamp,
+};
 
 fn record(id: &str) -> TaskRecord {
     task_record(id)
 }
 
 fn staged() -> InMemoryStore {
-    let store = InMemoryStore::default()
+    InMemoryStore::default()
         .with_project_id("foo-bar", "FOO")
-        .with_project("foo-bar", vec![record("FOO-0001")]);
-    TaskVault::upsert_index_entry(
-        &store,
-        &project("FOO", "foo-bar"),
-        IndexEntry {
-            id: TaskId::try_new("FOO-0001").unwrap(),
-            state: IndexEntryState::Open,
-            section: None,
-        },
-    )
-    .unwrap();
-    store
+        .with_project("foo-bar", vec![record("FOO-0001")])
+        .with_failure(InMemoryStoreFailure::ListTasks)
 }
 
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]
@@ -45,8 +34,6 @@ async fn cancel_marks_item_cancelled(pool: sqlx::SqlitePool) {
         report: "obsoleted".parse().unwrap(),
         commits: "a..b, c..d".parse().ok(),
         expected_revision: None,
-        request_id: None,
-        request_fingerprint: None,
     };
 
     cancel_task::execute(&command, &store, &pool, &FixedClock)
@@ -81,8 +68,6 @@ async fn cancel_uses_the_clock_timestamp(pool: sqlx::SqlitePool) {
         report: "obsoleted".parse().unwrap(),
         commits: None,
         expected_revision: None,
-        request_id: None,
-        request_fingerprint: None,
     };
 
     cancel_task::execute(&command, &store, &pool, &FixedClock)
@@ -111,8 +96,6 @@ async fn cancel_reports_an_unknown_project_id(pool: sqlx::SqlitePool) {
         report: "obsolete".parse().unwrap(),
         commits: None,
         expected_revision: None,
-        request_id: None,
-        request_fingerprint: None,
     };
 
     let error = cancel_task::execute(&command, &staged(), &pool, &FixedClock)

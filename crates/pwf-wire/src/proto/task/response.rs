@@ -110,14 +110,6 @@ impl From<task::TaskRecord> for pb::GetTaskRecordResponse {
             }
         }
         .map(|value| pb::StoredTaskBlockedBy { value: Some(value) });
-        let materialization = match record.materialization {
-            task::Materialization::NoteFile => {
-                pb::task_record::Materialization::NoteFile(pb::TaskNoteFile {})
-            }
-            task::Materialization::MissingNote { expected } => {
-                pb::task_record::Materialization::MissingNote(expected.into_display_string())
-            }
-        };
         pb::GetTaskRecordResponse {
             record: Some(pb::TaskRecord {
                 id: record.id.into_string(),
@@ -130,18 +122,10 @@ impl From<task::TaskRecord> for pb::GetTaskRecordResponse {
                 effort: record.effort,
                 priority: record.priority,
                 blocked_by,
-                section: record
-                    .section
-                    .map(pwf_models::task::TaskSection::into_string),
                 body: record.body,
                 source: record.source,
                 locator: record.locator.into_display_string(),
-                placement: record.placement.map(|value| pb::TaskIndexPlacement {
-                    index_path: value.index_path.into_display_string(),
-                    line: value.line.get() as u64,
-                }),
                 revision: record.revision.into_inner(),
-                materialization: Some(materialization),
             }),
         }
     }
@@ -314,10 +298,6 @@ pub fn list_tasks_response(tasks: task::ListedTasks) -> pb::ListTasksResponse {
         task::StatusFilter::Exact(TaskStatus::Cancelled) => pb::TaskStatusFilter::Cancelled,
         task::StatusFilter::All => pb::TaskStatusFilter::All,
     };
-    let layout = match tasks.layout {
-        task::ListLayout::Flat => pb::ListLayout::Flat,
-        task::ListLayout::BySection => pb::ListLayout::BySection,
-    };
     let detail = match tasks.detail {
         task::ListDetail::Summary => pb::ListDetail::Summary,
         task::ListDetail::Detailed => pb::ListDetail::Detailed,
@@ -328,7 +308,6 @@ pub fn list_tasks_response(tasks: task::ListedTasks) -> pb::ListTasksResponse {
         project: tasks.project.map(|project| project.to_string()),
         project_task_path: tasks.project_task_path.map(|path| path.to_string()),
         status_filter: status_filter as i32,
-        layout: layout as i32,
         detail: detail as i32,
         next_page_token,
     }
@@ -425,7 +404,6 @@ fn listed_task(task: task::ListedTask) -> pb::ListedTask {
         project: task.project.to_string(),
         status: task_status_value(task.status),
         heading: task.heading.to_string(),
-        section: task.section.map(|section| section.to_string()),
         effort: task.effort.map(effort_tier_value),
         raw_tags: task.tags.map(|tags| tags.to_string()),
         created: task.created.map(|date| date.to_string()),
@@ -435,10 +413,7 @@ fn listed_task(task: task::ListedTask) -> pb::ListedTask {
     if let Some(details) = task.details {
         view.prompt = details.prompt.to_string();
         view.project_path = details.project_path.map(|path| path.to_string());
-        view.location = Some(pb::TaskLocation {
-            index_path: details.location.index_path().to_string(),
-            line: details.location.line().get() as u64,
-        });
+        view.note_path = details.note_path.into_display_string();
         view.launch_issues = details.launch.issues().iter().map(task_issue).collect();
         view.blocked_by = details
             .blocked_by
@@ -460,13 +435,8 @@ fn listed_task(task: task::ListedTask) -> pb::ListedTask {
 
 fn task_issue(issue: &task::TaskIssue) -> pb::TaskIssue {
     match issue {
-        task::TaskIssue::MissingNote { path } => pb::TaskIssue {
-            kind: pb::TaskIssueKind::MissingNote as i32,
-            path: Some(path.to_string()),
-        },
         task::TaskIssue::PlaceholderPrompt => pb::TaskIssue {
             kind: pb::TaskIssueKind::PlaceholderPrompt as i32,
-            path: None,
         },
     }
 }

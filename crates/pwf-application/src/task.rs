@@ -10,7 +10,6 @@ pub mod get_task_dag;
 pub mod get_task_record;
 mod lane_configuration;
 pub mod list_tasks;
-mod mutation_request;
 mod note_body;
 mod read_task_dependencies;
 pub mod remove_task;
@@ -18,11 +17,9 @@ pub mod reopen_task;
 pub mod resolve_task_project;
 pub mod session;
 mod task_closure;
-mod task_creation;
 mod task_projection;
 
 pub use lane_configuration::TaskPromptLanesError;
-pub use mutation_request::MutationRequestError;
 pub use task_closure::CloseTaskError;
 
 /// Reports a shorthand prompt without a usable leading task title.

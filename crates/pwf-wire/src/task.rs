@@ -22,16 +22,14 @@ pub use dag::{
 mod list;
 pub mod session;
 pub use list::{
-    BlockedByIssue, BlockedByResolution, BlockedByStatus, ListDetail, ListLayout, ListScope,
-    ListTasks, ListedTask, ListedTaskDetails, ListedTasks, StatusFilter, TaskHeading, TaskIssue,
-    TaskLaunch, TaskListLimit, TaskListLimitError, TaskLocation, TaskPageSize, TaskPageSizeError,
-    TaskPageToken, TaskPageTokenError,
+    BlockedByIssue, BlockedByResolution, BlockedByStatus, ListDetail, ListTasks, ListedTask,
+    ListedTaskDetails, ListedTasks, StatusFilter, TaskHeading, TaskIssue, TaskLaunch,
+    TaskListLimit, TaskListLimitError, TaskPageSize, TaskPageSizeError, TaskPageToken,
+    TaskPageTokenError,
 };
 mod record;
 pub use pwf_models::task::Task;
-pub use record::{
-    IndexPlacement, Materialization, RawTaskTags, StoredBlockedBy, TaskRecord, TaskRecordError,
-};
+pub use record::{RawTaskTags, StoredBlockedBy, TaskRecord, TaskRecordError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskLane {
@@ -234,8 +232,6 @@ pub struct AddTask {
     pub tags: Option<TaskTags>,
     /// Optional scheduling priority.
     pub priority: Option<PriorityTier>,
-    pub request_id: Option<TaskRequestId>,
-    pub request_fingerprint: Option<TaskRequestFingerprint>,
 }
 
 /// Copies task content and metadata into a new active task.
@@ -245,8 +241,6 @@ pub struct CloneTask {
     pub id: TaskId,
     /// Destination project, defaulting to the source task's project.
     pub project_id: ClonedTaskProjectId,
-    pub request_id: Option<TaskRequestId>,
-    pub request_fingerprint: Option<TaskRequestFingerprint>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -271,8 +265,6 @@ impl AddTask {
             effort: None,
             tags: None,
             priority: None,
-            request_id: None,
-            request_fingerprint: None,
         }
     }
 }
@@ -283,8 +275,6 @@ pub struct CancelTask {
     pub report: TaskReport,
     pub commits: Option<CommitRanges>,
     pub expected_revision: Option<ContentRevision>,
-    pub request_id: Option<TaskRequestId>,
-    pub request_fingerprint: Option<TaskRequestFingerprint>,
 }
 
 #[derive(Debug, Clone)]
@@ -293,8 +283,6 @@ pub struct CompleteTask {
     pub report: Option<TaskReport>,
     pub commits: Option<CommitRanges>,
     pub expected_revision: Option<ContentRevision>,
-    pub request_id: Option<TaskRequestId>,
-    pub request_fingerprint: Option<TaskRequestFingerprint>,
 }
 
 #[derive(Debug, Clone)]
@@ -436,100 +424,18 @@ pub struct EditTask {
     pub id: TaskId,
     pub edits: TaskEdits,
     pub expected_revision: Option<ContentRevision>,
-    pub request_id: Option<TaskRequestId>,
-    pub request_fingerprint: Option<TaskRequestFingerprint>,
 }
 
-/// Requests one replayable confirmed task deletion.
+/// Requests one confirmed task deletion.
 #[derive(Debug, Clone)]
 pub struct DeleteTask {
     pub id: TaskId,
-    pub request_id: Option<TaskRequestId>,
-    pub request_fingerprint: Option<TaskRequestFingerprint>,
 }
 
-/// Requests one replayable confirmed task reopen.
+/// Requests one confirmed task reopen.
 #[derive(Debug, Clone)]
 pub struct ReopenTask {
     pub id: TaskId,
-    pub request_id: Option<TaskRequestId>,
-    pub request_fingerprint: Option<TaskRequestFingerprint>,
-}
-
-/// Identifies one replayable task mutation request.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct TaskRequestId(Box<str>);
-
-impl TaskRequestId {
-    pub const MAX_LEN: usize = 64;
-
-    /// Validates a bounded request identifier safe for durable storage.
-    pub fn try_new(value: impl Into<String>) -> Result<Self, TaskRequestIdError> {
-        let value = value.into();
-        if value.is_empty() || value.len() > Self::MAX_LEN {
-            return Err(TaskRequestIdError::Length);
-        }
-        if !value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
-        {
-            return Err(TaskRequestIdError::Character);
-        }
-        Ok(Self(value.into_boxed_str()))
-    }
-}
-
-impl AsRef<str> for TaskRequestId {
-    fn as_ref(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Display for TaskRequestId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum TaskRequestIdError {
-    #[error("must contain between 1 and {} characters", TaskRequestId::MAX_LEN)]
-    Length,
-    #[error("contains an unsupported character")]
-    Character,
-}
-
-/// Identifies the exact mutation input bound to one request ID.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct TaskRequestFingerprint(Box<str>);
-
-impl TaskRequestFingerprint {
-    #[must_use]
-    pub fn from_digest(digest: [u8; 32]) -> Self {
-        Self(digest_hex(digest).into_boxed_str())
-    }
-}
-
-impl AsRef<str> for TaskRequestFingerprint {
-    fn as_ref(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Display for TaskRequestFingerprint {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
-    }
-}
-
-fn digest_hex(digest: [u8; 32]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut value = String::with_capacity(64);
-    for byte in digest {
-        value.push(char::from(HEX[usize::from(byte >> 4)]));
-        value.push(char::from(HEX[usize::from(byte & 0x0f)]));
-    }
-    value
 }
 
 /// Identifies a task note's filesystem path.
@@ -562,41 +468,6 @@ impl TaskNotePath {
 }
 
 impl fmt::Display for TaskNotePath {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{}", self.0.display())
-    }
-}
-
-/// Identifies a task index's filesystem path.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TaskIndexPath(PathBuf);
-
-impl TaskIndexPath {
-    #[must_use]
-    pub fn new(path: PathBuf) -> Self {
-        Self(path)
-    }
-
-    #[must_use]
-    pub fn as_path(&self) -> &Path {
-        &self.0
-    }
-
-    #[must_use]
-    pub fn into_path_buf(self) -> PathBuf {
-        self.0
-    }
-
-    #[must_use]
-    pub fn into_display_string(self) -> String {
-        self.0
-            .into_os_string()
-            .into_string()
-            .unwrap_or_else(|path| path.to_string_lossy().into_owned())
-    }
-}
-
-impl fmt::Display for TaskIndexPath {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "{}", self.0.display())
     }
@@ -654,7 +525,7 @@ pub struct TaskMutationSummary {
     pub status: TaskStatus,
 }
 
-/// Older durable receipts retain their result without a task summary.
+/// Aborted confirmations return no task summary.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskMutationResult<T> {
     pub outcome: T,

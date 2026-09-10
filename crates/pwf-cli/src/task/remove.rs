@@ -34,13 +34,7 @@ pub(super) async fn run(
 
     let confirmation_client = CliConfirmationClient::new(console, confirmation_mode);
     let outcome = match client
-        .delete_task(
-            DeleteTaskStart {
-                id: id.to_string(),
-                request_id: String::new(),
-            },
-            confirmation_client,
-        )
+        .delete_task(DeleteTaskStart { id: id.to_string() }, confirmation_client)
         .await
     {
         Ok(outcome) => outcome,

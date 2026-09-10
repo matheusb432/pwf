@@ -5,7 +5,6 @@ use pwf_wire::{
 };
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
-use uuid::Uuid;
 
 use crate::{
     ClientError, PolicyChannel, RequestPolicy,
@@ -30,9 +29,8 @@ impl TaskClient {
 
     pub async fn create_task(
         &self,
-        mut request: pb::CreateTaskRequest,
+        request: pb::CreateTaskRequest,
     ) -> Result<pb::CreateTaskResponse, ClientError> {
-        ensure_request_id(&mut request.request_id);
         self.client()
             .create_task(request)
             .await
@@ -42,9 +40,8 @@ impl TaskClient {
 
     pub async fn clone_task(
         &self,
-        mut request: pb::CloneTaskRequest,
+        request: pb::CloneTaskRequest,
     ) -> Result<pb::CloneTaskResponse, ClientError> {
-        ensure_request_id(&mut request.request_id);
         self.client()
             .clone_task(request)
             .await
@@ -54,9 +51,8 @@ impl TaskClient {
 
     pub async fn cancel_task(
         &self,
-        mut request: pb::CancelTaskRequest,
+        request: pb::CancelTaskRequest,
     ) -> Result<pb::CancelTaskResponse, ClientError> {
-        ensure_request_id(&mut request.request_id);
         self.client()
             .cancel_task(request)
             .await
@@ -66,9 +62,8 @@ impl TaskClient {
 
     pub async fn complete_task(
         &self,
-        mut request: pb::CompleteTaskRequest,
+        request: pb::CompleteTaskRequest,
     ) -> Result<pb::CompleteTaskResponse, ClientError> {
-        ensure_request_id(&mut request.request_id);
         self.client()
             .complete_task(request)
             .await
@@ -78,9 +73,8 @@ impl TaskClient {
 
     pub async fn update_task(
         &self,
-        mut request: pb::UpdateTaskRequest,
+        request: pb::UpdateTaskRequest,
     ) -> Result<pb::UpdateTaskResponse, ClientError> {
-        ensure_request_id(&mut request.request_id);
         self.client()
             .update_task(request)
             .await
@@ -146,13 +140,12 @@ impl TaskClient {
 
     pub async fn delete_task<Prompt>(
         &self,
-        mut request: pb::DeleteTaskStart,
+        request: pb::DeleteTaskStart,
         prompt: Prompt,
     ) -> Result<pb::DeleteTaskResult, ConfirmedRequestError<Prompt::Error>>
     where
         Prompt: ConfirmationPrompt,
     {
-        ensure_request_id(&mut request.request_id);
         let (sender, receiver) = mpsc::channel(STREAM_BUFFER);
         sender
             .send(pb::DeleteTaskRequest {
@@ -206,13 +199,12 @@ impl TaskClient {
 
     pub async fn reopen_task<Prompt>(
         &self,
-        mut request: pb::ReopenTaskStart,
+        request: pb::ReopenTaskStart,
         prompt: Prompt,
     ) -> Result<pb::ReopenTaskResult, ConfirmedRequestError<Prompt::Error>>
     where
         Prompt: ConfirmationPrompt,
     {
-        ensure_request_id(&mut request.request_id);
         let (sender, receiver) = mpsc::channel(STREAM_BUFFER);
         sender
             .send(pb::ReopenTaskRequest {
@@ -338,11 +330,5 @@ impl TaskClient {
         )
         .max_encoding_message_size(super::MAX_REQUEST_MESSAGE_SIZE)
         .max_decoding_message_size(super::MAX_RESPONSE_MESSAGE_SIZE)
-    }
-}
-
-fn ensure_request_id(request_id: &mut String) {
-    if request_id.is_empty() {
-        *request_id = Uuid::new_v4().to_string();
     }
 }

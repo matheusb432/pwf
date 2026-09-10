@@ -21,6 +21,7 @@ fn project_list_defaults_to_rows_and_preserves_json_through_both_names() {
         assert_eq!(json[0]["id"], "PWF");
         assert_eq!(json[0]["title"], "pwf");
         assert_eq!(json[0]["is_paused"], false);
+        assert_eq!(json[0]["snapshot_enabled"], false);
         assert!(json[0].get("tasks").is_some());
     }
 }
@@ -142,6 +143,7 @@ fn add_vault_uses_current_directory_and_source_less_projects_support_tasks() {
         .command_args(&["project", "get", "foo"])
         .success_json();
     assert_eq!(project["title"], "foo");
+    assert_eq!(project["snapshot_enabled"], false);
     assert!(project["source"].is_null());
     fixture
         .command_args(&[
@@ -182,4 +184,36 @@ fn add_vault_uses_current_directory_and_source_less_projects_support_tasks() {
         .success_json();
     assert_eq!(projects.as_array().unwrap().len(), 1);
     assert!(projects[0]["source"].is_null());
+}
+
+#[test]
+fn project_add_json_defaults_snapshots_off_and_accepts_each_boolean_choice() {
+    for enabled in [None, Some(false), Some(true)] {
+        let fixture = ProjectFixture::new().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let mut payload = serde_json::json!({
+            "id": "FOO",
+            "title": "foo",
+            "tasks": { "kind": "directory", "path": root.path().join("tasks") },
+        });
+        if let Some(enabled) = enabled {
+            payload["snapshot_enabled"] = enabled.into();
+        }
+        let created = crate::support::success_json(
+            fixture
+                .run(&[
+                    "project",
+                    "add",
+                    "--kind",
+                    "directory",
+                    &payload.to_string(),
+                ])
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(created["snapshot_enabled"], enabled.unwrap_or(false));
+        let fetched =
+            crate::support::success_json(fixture.run(&["project", "get", "FOO"]).unwrap()).unwrap();
+        assert_eq!(fetched, created);
+    }
 }

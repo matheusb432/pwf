@@ -90,6 +90,7 @@ message ProjectFields {
   string tasks_kind = 5;
   string tasks_path = 6;
   optional string obsidian_vault = 7;
+  bool snapshot_enabled = 8;
 }
 
 message ClearField {}
@@ -111,6 +112,7 @@ message Project {
   string created_at = 7;
   bool is_paused = 8;
   optional string obsidian_vault = 9;
+  bool snapshot_enabled = 10;
 }
 
 message AddVaultProjectRequest {
@@ -135,6 +137,7 @@ message AddProjectResponse {
   string created_at = 7;
   bool is_paused = 8;
   optional string obsidian_vault = 9;
+  bool snapshot_enabled = 10;
 }
 
 message GetProjectRequest {
@@ -152,6 +155,7 @@ message GetProjectResponse {
   string created_at = 7;
   bool is_paused = 8;
   optional string obsidian_vault = 9;
+  bool snapshot_enabled = 10;
 }
 
 // Resolves an exact case-insensitive title before trying the normalized project ID.
@@ -186,6 +190,7 @@ message RenameProjectResponse {
   string created_at = 7;
   bool is_paused = 8;
   optional string obsidian_vault = 9;
+  bool snapshot_enabled = 10;
 }
 
 message ResumeProjectRequest { string id = 1; }
@@ -199,6 +204,8 @@ message UpdateProjectRequest {
   string id = 1;
   StringPatchField source_value = 2;
   StringPatchField obsidian_vault = 3;
+  // Omitted leaves snapshot generation unchanged.
+  optional bool snapshot_enabled = 4;
 }
 
 message UpdateProjectResponse {}
@@ -352,7 +359,8 @@ message CreateTaskRequest {
   optional EffortTier effort = 6;
   repeated string tags = 7;
   optional PriorityTier priority = 8;
-  string request_id = 9;
+  reserved 9;
+  reserved "request_id";
 }
 
 // Creates an active task with the source title, body, tags, tiers, and blockers.
@@ -361,7 +369,8 @@ message CloneTaskRequest {
   string id = 1;
   // Omission uses the source task's project.
   optional string project_id = 2;
-  string request_id = 3;
+  reserved 3;
+  reserved "request_id";
 }
 
 message CancelTaskRequest {
@@ -371,7 +380,8 @@ message CancelTaskRequest {
   string report = 2;
   repeated string commits = 3;
   optional string expected_revision = 5;
-  string request_id = 6;
+  reserved 6;
+  reserved "request_id";
 }
 
 message CompleteTaskRequest {
@@ -381,7 +391,8 @@ message CompleteTaskRequest {
   optional string report = 2;
   repeated string commits = 3;
   optional string expected_revision = 5;
-  string request_id = 6;
+  reserved 6;
+  reserved "request_id";
 }
 
 message StringValues { repeated string values = 1; }
@@ -438,7 +449,8 @@ message UpdateTaskRequest {
   StringCollectionEdit tags = 5;
   PriorityEdit priority = 6;
   optional string expected_revision = 7;
-  string request_id = 8;
+  reserved 8;
+  reserved "request_id";
 }
 
 message GetTaskRequest {
@@ -498,14 +510,11 @@ message OrderSpec {
   OrderDirection direction = 2;
 }
 
-message AllTaskSections {}
-
 message ListTasksRequest {
   optional string project_id = 1;
-  oneof scope {
-    string section = 2;
-    AllTaskSections all = 12;
-  }
+  reserved 2, 12;
+  reserved "section";
+  bool all = 13;
   optional uint64 number = 3;
   optional EffortTier effort = 4;
   repeated string tags = 5;
@@ -567,23 +576,14 @@ message TaskRecord {
   optional string priority = 9;
   // Omitted means the property is absent.
   StoredTaskBlockedBy blocked_by = 10;
-  optional string section = 11;
+  reserved 11;
+  reserved "section";
   string body = 12;
   string source = 13;
   string locator = 14;
-  TaskIndexPlacement placement = 15;
+  reserved 15, 17, 18;
+  reserved "placement", "note_file", "missing_note";
   string revision = 16;
-  oneof materialization {
-    TaskNoteFile note_file = 17;
-    string missing_note = 18;
-  }
-}
-
-message TaskNoteFile {}
-
-message TaskIndexPlacement {
-  string index_path = 1;
-  uint64 line = 2;
 }
 
 message StoredTaskBlockedBy {
@@ -620,7 +620,8 @@ message Task {
   optional EffortTier effort = 9;
   optional PriorityTier priority = 10;
   repeated string blocked_by = 11;
-  optional string section = 12;
+  reserved 12;
+  reserved "section";
   string revision = 13;
 }
 
@@ -654,12 +655,6 @@ message GetTaskDagResponse {
   repeated TaskDagEdge edges = 3;
 }
 
-enum ListLayout {
-  LIST_LAYOUT_UNSPECIFIED = 0;
-  LIST_LAYOUT_FLAT = 1;
-  LIST_LAYOUT_BY_SECTION = 2;
-}
-
 enum BlockedByResolutionKind {
   BLOCKED_BY_RESOLUTION_KIND_UNSPECIFIED = 0;
   BLOCKED_BY_RESOLUTION_KIND_FOUND = 1;
@@ -683,18 +678,15 @@ message BlockedByIssue {
 
 enum TaskIssueKind {
   TASK_ISSUE_KIND_UNSPECIFIED = 0;
-  TASK_ISSUE_KIND_MISSING_NOTE = 1;
+  reserved 1;
+  reserved "TASK_ISSUE_KIND_MISSING_NOTE";
   TASK_ISSUE_KIND_PLACEHOLDER_PROMPT = 2;
 }
 
 message TaskIssue {
   TaskIssueKind kind = 1;
-  optional string path = 2;
-}
-
-message TaskLocation {
-  string index_path = 1;
-  uint64 line = 2;
+  reserved 2;
+  reserved "path";
 }
 
 message ListedTask {
@@ -704,9 +696,12 @@ message ListedTask {
   string heading = 4;
   string prompt = 5;
   optional string project_path = 6;
-  TaskLocation location = 7;
+  reserved 7;
+  reserved "location";
+  string note_path = 17;
   repeated TaskIssue launch_issues = 8;
-  optional string section = 9;
+  reserved 9;
+  reserved "section";
   repeated string blocked_by = 10;
   repeated BlockedByStatus blocked_by_statuses = 11;
   repeated BlockedByIssue blocked_by_issues = 12;
@@ -722,14 +717,16 @@ message ListTasksResponse {
   optional string project = 3;
   optional string project_task_path = 4;
   TaskStatusFilter status_filter = 5;
-  ListLayout layout = 6;
+  reserved 6;
+  reserved "layout";
   ListDetail detail = 7;
   optional string next_page_token = 8;
 }
 
 message DeleteTaskStart {
   string id = 1;
-  string request_id = 2;
+  reserved 2;
+  reserved "request_id";
 }
 
 message DeleteTaskConfirmation {
@@ -780,7 +777,8 @@ message DeleteTaskResponse {
 
 message ReopenTaskStart {
   string id = 1;
-  string request_id = 2;
+  reserved 2;
+  reserved "request_id";
 }
 
 message ReopenTaskPreflight { ReopenTaskConfirmation confirmation = 1; }

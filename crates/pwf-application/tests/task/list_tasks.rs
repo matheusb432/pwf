@@ -1,4 +1,4 @@
-use std::{convert::Infallible, num::NonZeroUsize};
+use std::convert::Infallible;
 
 use pwf_application::{
     ports::{
@@ -16,9 +16,8 @@ use pwf_models::{
     },
 };
 use pwf_wire::task::{
-    BlockedByResolution, BlockedByStatus, IndexPlacement, ListDetail, ListLayout, ListScope,
-    ListTasks, ListedTasks, Materialization, ProjectTaskPath, RawTaskTags, StatusFilter,
-    TaskIndexPath, TaskListLimit, TaskNotePath, TaskPageSize, TaskRecord,
+    BlockedByResolution, BlockedByStatus, ListDetail, ListTasks, ListedTasks, ProjectTaskPath,
+    RawTaskTags, StatusFilter, TaskListLimit, TaskNotePath, TaskPageSize, TaskRecord,
 };
 
 use crate::support::{
@@ -51,10 +50,6 @@ fn record(id: &str) -> TaskRecord {
         created_at: Some(task_timestamp("2026-07-07T12:34:56Z")),
         source: String::new(),
         locator: TaskNotePath::new(format!("/notes/foo/{id}.md").into()),
-        placement: Some(IndexPlacement {
-            index_path: TaskIndexPath::new("/notes/foo/foo.md".into()),
-            line: NonZeroUsize::MIN,
-        }),
         ..task_record(id)
     }
 }
@@ -206,13 +201,6 @@ async fn run_with_snapshots(
     .await
 }
 
-fn sectioned(id: &str, section: &str) -> TaskRecord {
-    TaskRecord {
-        section: Some(section.parse().unwrap()),
-        ..record(id)
-    }
-}
-
 fn effort_task(id: &str, effort: &str) -> TaskRecord {
     TaskRecord {
         effort: Some(effort.to_string()),
@@ -248,7 +236,7 @@ fn dated_task(id: &str, created_date: &str) -> TaskRecord {
 fn default_query() -> ListTasks {
     ListTasks {
         project_id: None,
-        scope: ListScope::Default,
+        all: false,
         number: TaskListLimit::try_new(100_000).ok(),
         effort: None,
         priority: None,
@@ -394,23 +382,14 @@ async fn long_list_projects_done_active_and_missing_blocked_by_statuses() {
 }
 
 #[tokio::test]
-async fn long_list_treats_indexed_blocked_by_without_note_as_missing() {
+async fn long_list_reports_absent_blocker_notes_as_missing() {
     let dependent = TaskRecord {
         blocked_by: stored_blocked_by(&["AUX-0014"]),
         ..record("FOO-0001")
     };
-    let missing_note = TaskRecord {
-        source: String::new(),
-        body: String::new(),
-        placement: None,
-        materialization: Materialization::MissingNote {
-            expected: TaskNotePath::new("/notes/companion-project/AUX-0014.md".into()),
-        },
-        ..record("AUX-0014")
-    };
     let store = InMemoryStore::default()
         .with_project("foo", vec![dependent])
-        .with_project("companion-project", vec![missing_note]);
+        .with_project("companion-project", vec![]);
 
     let got = run(
         &store,
@@ -471,12 +450,10 @@ async fn status_filter_defaults_to_active_and_includes_exact_or_all() {
 async fn list_status_filter_selects_exact_statuses_and_all() {
     let done = TaskRecord {
         status: TaskStatus::Done,
-        placement: None,
         ..record("FOO-0002")
     };
     let cancelled = TaskRecord {
         status: TaskStatus::Cancelled,
-        placement: None,
         ..record("FOO-0003")
     };
     let (store, registry) = foo_store(vec![record("FOO-0001"), done, cancelled]);
@@ -517,12 +494,8 @@ async fn list_status_filter_selects_exact_statuses_and_all() {
 }
 
 #[tokio::test]
-async fn unindexed_active_task_is_included_in_active_and_all_lists() {
-    let unindexed = TaskRecord {
-        placement: None,
-        ..record("FOO-0002")
-    };
-    let (store, registry) = foo_store(vec![record("FOO-0001"), unindexed]);
+async fn note_backed_active_tasks_are_included_in_active_and_all_lists() {
+    let (store, registry) = foo_store(vec![record("FOO-0001"), record("FOO-0002")]);
 
     assert_filter_ids(
         &store,
@@ -548,13 +521,11 @@ async fn status_filter_applies_before_cap_and_hidden_count() {
     };
     let done_newer = TaskRecord {
         status: TaskStatus::Done,
-        placement: None,
         created_at: Some(task_timestamp("2026-07-08T12:34:56Z")),
         ..record("FOO-0002")
     };
     let done_older = TaskRecord {
         status: TaskStatus::Done,
-        placement: None,
         created_at: Some(task_timestamp("2026-07-07T12:34:56Z")),
         ..record("FOO-0001")
     };
@@ -574,93 +545,6 @@ async fn status_filter_applies_before_cap_and_hidden_count() {
 
     assert_eq!(listed_ids(&got), ["FOO-0002"]);
     assert_eq!(got.hidden, 1);
-}
-
-#[tokio::test]
-async fn default_scope_hides_every_sectioned_task() {
-    let (store, registry) = foo_store(vec![
-        record("FOO-0004"),
-        sectioned("FOO-0003", "Blocked"),
-        sectioned("FOO-0002", "Waiting on API"),
-        sectioned("FOO-0001", "Someday"),
-    ]);
-
-    let got = run(&store, &registry, &default_query()).await.unwrap();
-
-    assert_eq!(listed_ids(&got), ["FOO-0004"]);
-}
-
-#[tokio::test]
-async fn section_scope_matches_the_complete_header_case_insensitively() {
-    let (store, registry) = foo_store(vec![
-        sectioned("FOO-0002", "Waiting on API"),
-        sectioned("FOO-0001", "Waiting"),
-    ]);
-
-    let got = run(
-        &store,
-        &registry,
-        &ListTasks {
-            scope: ListScope::Section("waiting ON api".parse().unwrap()),
-            ..default_query()
-        },
-    )
-    .await
-    .unwrap();
-
-    assert_eq!(listed_ids(&got), ["FOO-0002"]);
-    assert_eq!(
-        got.tasks[0].section.as_ref().map(AsRef::as_ref),
-        Some("Waiting on API")
-    );
-}
-
-#[tokio::test]
-async fn all_scope_groups_unsectioned_then_alphabetical_dynamic_sections() {
-    let (store, registry) = foo_store(vec![
-        sectioned("FOO-0004", "Zulu"),
-        sectioned("FOO-0003", "alpha"),
-        sectioned("FOO-0002", "ALPHA"),
-        record("FOO-0001"),
-    ]);
-
-    let got = run(
-        &store,
-        &registry,
-        &ListTasks {
-            scope: ListScope::All,
-            ..default_query()
-        },
-    )
-    .await
-    .unwrap();
-
-    assert_eq!(
-        listed_ids(&got),
-        ["FOO-0001", "FOO-0003", "FOO-0002", "FOO-0004"]
-    );
-}
-
-#[tokio::test]
-async fn section_scope_shows_only_the_requested_section() {
-    let (store, registry) = foo_store(vec![
-        record("FOO-0003"),
-        sectioned("FOO-0002", "Blocked"),
-        sectioned("FOO-0001", "Someday"),
-    ]);
-
-    let got = run(
-        &store,
-        &registry,
-        &ListTasks {
-            scope: ListScope::Section("Blocked".parse().unwrap()),
-            ..default_query()
-        },
-    )
-    .await
-    .unwrap();
-
-    assert_eq!(listed_ids(&got), ["FOO-0002"]);
 }
 
 #[tokio::test]
@@ -787,10 +671,10 @@ async fn corrupt_tags_fail_only_when_a_tag_filter_is_requested() {
 }
 
 #[tokio::test]
-async fn scope_and_effort_filters_exclude_corrupt_tags_before_parsing() {
+async fn status_and_effort_filters_exclude_corrupt_tags_before_parsing() {
     let (store, registry) = foo_store(vec![
         TaskRecord {
-            section: Some("Excluded".parse().unwrap()),
+            status: TaskStatus::Done,
             ..tagged_task("FOO-0003", "corrupt")
         },
         TaskRecord {
@@ -929,24 +813,33 @@ async fn project_id_order_groups_projects_and_orders_ids_descending() {
 }
 
 #[tokio::test]
-async fn all_uncaps_and_default_scope_uses_the_default_cap() {
-    let (store, registry) = foo_store((1..=12).map(|n| record(&format!("FOO-{n:04}"))).collect());
+async fn all_widens_status_and_uncaps_while_default_lists_active_tasks() {
+    let mut records: Vec<_> = (1..=12).map(|n| record(&format!("FOO-{n:04}"))).collect();
+    records.push(TaskRecord {
+        status: TaskStatus::Done,
+        ..record("FOO-0013")
+    });
+    records.push(TaskRecord {
+        status: TaskStatus::Cancelled,
+        ..record("FOO-0014")
+    });
+    let (store, registry) = foo_store(records);
 
     let all = run(
         &store,
         &registry,
         &ListTasks {
-            scope: ListScope::All,
+            all: true,
             number: None,
             ..default_query()
         },
     )
     .await
     .unwrap();
-    assert_eq!(all.tasks.len(), 12);
+    assert_eq!(all.tasks.len(), 14);
+    assert_eq!(&listed_ids(&all)[..2], ["FOO-0014", "FOO-0013"]);
     assert_eq!(all.hidden, 0);
     assert_eq!(all.status_filter, StatusFilter::All);
-    assert_eq!(all.layout, ListLayout::BySection);
 
     let capped = run(
         &store,
@@ -961,7 +854,6 @@ async fn all_uncaps_and_default_scope_uses_the_default_cap() {
     assert_eq!(capped.tasks.len(), 10);
     assert_eq!(capped.hidden, 2);
     assert_eq!(capped.status_filter, StatusFilter::default());
-    assert_eq!(capped.layout, ListLayout::Flat);
 }
 
 #[tokio::test]
@@ -1050,33 +942,33 @@ async fn new_sorts_use_tier_order_title_text_and_descending_id_ties() {
 }
 
 #[tokio::test]
-async fn all_keeps_sections_before_priority_and_cap() {
+async fn all_orders_globally_by_priority_before_applying_an_explicit_cap() {
     let (store, registry) = foo_store(vec![
         TaskRecord {
             priority: Some("low".to_string()),
-            ..sectioned("FOO-0001", "alpha")
+            ..record("FOO-0001")
         },
         TaskRecord {
             priority: Some("highest".to_string()),
-            ..sectioned("FOO-0002", "zeta")
+            ..record("FOO-0002")
         },
         TaskRecord {
             priority: Some("high".to_string()),
-            ..sectioned("FOO-0003", "alpha")
+            ..record("FOO-0003")
         },
     ]);
     let mut query = ListTasks {
-        scope: ListScope::All,
+        all: true,
         order: Some("priority".parse().unwrap()),
         ..default_query()
     };
     assert_eq!(
         listed_ids(&run(&store, &registry, &query).await.unwrap()),
-        ["FOO-0003", "FOO-0001", "FOO-0002"]
+        ["FOO-0002", "FOO-0003", "FOO-0001"]
     );
     query.number = TaskListLimit::try_new(1).ok();
     let capped = run(&store, &registry, &query).await.unwrap();
-    assert_eq!(listed_ids(&capped), ["FOO-0003"]);
+    assert_eq!(listed_ids(&capped), ["FOO-0002"]);
     assert_eq!(capped.hidden, 2);
 }
 

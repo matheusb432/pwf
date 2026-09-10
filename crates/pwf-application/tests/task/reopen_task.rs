@@ -1,8 +1,5 @@
 use pwf_application::{
-    ports::{
-        confirmation::{ConfirmationClient, ConfirmationClientError},
-        task_vault::{IndexEntry, IndexEntryState, TaskVault},
-    },
+    ports::confirmation::{ConfirmationClient, ConfirmationClientError},
     task::reopen_task,
 };
 use pwf_models::{
@@ -90,34 +87,20 @@ fn foo() -> Project {
     project("FOO", "foo-bar")
 }
 
-fn staged(status: TaskStatus, entries: Vec<IndexEntry>) -> InMemoryStore {
-    let store = InMemoryStore::default()
+fn staged(status: TaskStatus) -> InMemoryStore {
+    InMemoryStore::default()
         .with_project_id("foo-bar", "FOO")
-        .with_project("foo-bar", vec![record("FOO-0001", status)]);
-    for entry in entries {
-        TaskVault::upsert_index_entry(&store, &foo(), entry).unwrap();
-    }
-    store
-}
-
-fn entry(state: IndexEntryState) -> IndexEntry {
-    IndexEntry {
-        id: TaskId::try_new("FOO-0001").unwrap(),
-        state,
-        section: None,
-    }
+        .with_project("foo-bar", vec![record("FOO-0001", status)])
 }
 
 fn command(id: &str) -> ReopenTask {
     ReopenTask {
         id: id.parse().unwrap(),
-        request_id: None,
-        request_fingerprint: None,
     }
 }
 
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]
-async fn reopen_restores_done_entry(pool: sqlx::SqlitePool) {
+async fn reopen_clears_the_note_completion_metadata(pool: sqlx::SqlitePool) {
     crate::support::insert_project(
         &pool,
         "FOO",
@@ -127,12 +110,7 @@ async fn reopen_restores_done_entry(pool: sqlx::SqlitePool) {
         false,
     )
     .await;
-    let store = staged(
-        TaskStatus::Done,
-        vec![entry(IndexEntryState::Done(Some(task_timestamp(
-            "2026-01-02T12:34:56Z",
-        ))))],
-    );
+    let store = staged(TaskStatus::Done);
     let mut confirmation = TestConfirmation::accepting();
 
     let out = reopen_task::execute(&command("FOO-0001"), &store, &pool, &mut confirmation)
@@ -158,7 +136,6 @@ async fn reopen_restores_done_entry(pool: sqlx::SqlitePool) {
         store.tasks("foo-bar")[0].body,
         "## Goals\n\n- ship the work"
     );
-    assert_eq!(store.entries("foo-bar")[0].state, IndexEntryState::Open);
 }
 
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]
@@ -172,8 +149,7 @@ async fn reopen_rejects_a_task_edited_after_preflight_without_mutation(pool: sql
         false,
     )
     .await;
-    let done = IndexEntryState::Done(Some(task_timestamp("2026-01-02T12:34:56Z")));
-    let store = staged(TaskStatus::Done, vec![entry(done.clone())]);
+    let store = staged(TaskStatus::Done);
     let mut confirmation = EditThenAccept {
         store: store.clone(),
         project: foo(),
@@ -191,11 +167,10 @@ async fn reopen_rejects_a_task_edited_after_preflight_without_mutation(pool: sql
             .source
             .ends_with("external edit\n")
     );
-    assert_eq!(store.entries("foo-bar"), vec![entry(done)]);
 }
 
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]
-async fn reopen_preserves_absent_index_entry(pool: sqlx::SqlitePool) {
+async fn reopen_accepts_a_cancelled_task_note(pool: sqlx::SqlitePool) {
     crate::support::insert_project(
         &pool,
         "FOO",
@@ -205,7 +180,7 @@ async fn reopen_preserves_absent_index_entry(pool: sqlx::SqlitePool) {
         false,
     )
     .await;
-    let store = staged(TaskStatus::Done, Vec::new());
+    let store = staged(TaskStatus::Cancelled);
     let mut confirmation = TestConfirmation::accepting();
 
     let out = reopen_task::execute(&command("FOO-0001"), &store, &pool, &mut confirmation)
@@ -214,7 +189,6 @@ async fn reopen_preserves_absent_index_entry(pool: sqlx::SqlitePool) {
 
     assert_eq!(out.outcome, ReopenTaskOutcome::Reopened);
     assert_eq!(store.tasks("foo-bar")[0].status, TaskStatus::Active);
-    assert!(store.entries("foo-bar").is_empty());
 }
 
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]
@@ -228,7 +202,7 @@ async fn reopen_already_active_is_idempotent_skip(pool: sqlx::SqlitePool) {
         false,
     )
     .await;
-    let store = staged(TaskStatus::Active, vec![entry(IndexEntryState::Open)]);
+    let store = staged(TaskStatus::Active);
     let mut confirmation = TestConfirmation::accepting();
 
     let out = reopen_task::execute(&command("FOO-0001"), &store, &pool, &mut confirmation)
@@ -251,14 +225,8 @@ async fn declined_reopen_preserves_every_completion_artifact(pool: sqlx::SqliteP
         false,
     )
     .await;
-    let store = staged(
-        TaskStatus::Done,
-        vec![entry(IndexEntryState::Done(Some(task_timestamp(
-            "2026-01-02T12:34:56Z",
-        ))))],
-    );
+    let store = staged(TaskStatus::Done);
     let tasks_before = store.tasks("foo-bar");
-    let entries_before = store.entries("foo-bar");
     let mut confirmation = TestConfirmation::declining();
 
     let outcome = reopen_task::execute(&command("FOO-0001"), &store, &pool, &mut confirmation)
@@ -266,8 +234,8 @@ async fn declined_reopen_preserves_every_completion_artifact(pool: sqlx::SqliteP
         .unwrap();
 
     assert_eq!(outcome.outcome, ReopenTaskOutcome::Aborted);
+    assert!(outcome.task.is_none());
     assert_eq!(store.tasks("foo-bar"), tasks_before);
-    assert_eq!(store.entries("foo-bar"), entries_before);
 }
 
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]
@@ -281,7 +249,7 @@ async fn reopen_reports_an_unknown_project_id(pool: sqlx::SqlitePool) {
         false,
     )
     .await;
-    let store = staged(TaskStatus::Done, Vec::new());
+    let store = staged(TaskStatus::Done);
     let mut confirmation = TestConfirmation::accepting();
 
     let error = reopen_task::execute(&command("XYZ-0001"), &store, &pool, &mut confirmation)

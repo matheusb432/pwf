@@ -1,7 +1,7 @@
 use std::error::Error;
 
 use pwf_models::project::ProjectId;
-use pwf_wire::{patch_field::PatchField, project::UpdateProject};
+use pwf_wire::{patch_field::PatchField, project::UpdateProject, set_field::SetField};
 
 use super::source_record;
 
@@ -17,7 +17,7 @@ pub enum UpdateProjectError {
     },
 }
 
-/// Updates a managed project's source or Obsidian vault configuration.
+/// Updates a managed project's configuration, preserving omitted fields.
 #[cqrsy::command]
 pub async fn execute(
     command: UpdateProject,
@@ -45,12 +45,17 @@ pub async fn execute(
         pwf_wire::patch_field::PatchField::Clear => (true, None),
         pwf_wire::patch_field::PatchField::Set(value) => (true, Some(value.as_ref())),
     };
+    let snapshot_enabled = match command.snapshot_enabled {
+        SetField::NoAction => None,
+        SetField::Set(value) => Some(value),
+    };
     let update = sqlx::query!(
-        "UPDATE projects SET project_source_id = CASE WHEN ? THEN ? ELSE project_source_id END, obsidian_vault = CASE WHEN ? THEN ? ELSE obsidian_vault END WHERE id = ?",
+        "UPDATE projects SET project_source_id = CASE WHEN ? THEN ? ELSE project_source_id END, obsidian_vault = CASE WHEN ? THEN ? ELSE obsidian_vault END, snapshot_enabled = COALESCE(?, snapshot_enabled) WHERE id = ?",
         update_source,
         source_id,
         update_vault,
         obsidian_vault,
+        snapshot_enabled,
         project_id,
     )
     .execute(&mut *transaction)

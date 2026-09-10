@@ -2,12 +2,19 @@ use std::path::PathBuf;
 
 use pwf_models::{
     note::NoteTitleError,
-    project::{ProjectId, ProjectName},
-    task::{ParseTaskStatusError, TaskId, TaskSectionError, TaskTimestampError},
+    project::ProjectId,
+    task::{ParseTaskStatusError, TaskId, TaskTimestampError},
 };
 
 #[derive(Debug, thiserror::Error)]
 pub enum ObsidianStoreError {
+    #[error("The authored project page is reserved: {}", path.display())]
+    ProjectPagePathReserved { path: PathBuf },
+    #[error("Cannot write project snapshot {}: {source}", path.display())]
+    WriteProjectSnapshot {
+        path: PathBuf,
+        source: std::io::Error,
+    },
     #[error("Project rename destination already exists: {}", path.display())]
     ProjectRenameDestinationExists { path: PathBuf },
     #[error("Project rename staging directory already exists: {}", path.display())]
@@ -107,14 +114,17 @@ pub enum ObsidianStoreError {
     },
     #[error("Cannot read note {id}: {source}")]
     ReadProjectNote { id: String, source: std::io::Error },
+    #[error("Cannot read project notes directory {}: {source}", path.display())]
+    ReadProjectNoteDirectory {
+        path: PathBuf,
+        source: std::io::Error,
+    },
     #[error("Invalid note {id} title: {source}")]
     InvalidProjectNoteTitle {
         id: String,
         #[source]
         source: NoteTitleError,
     },
-    #[error("Cannot inspect note {id}: {source}")]
-    InspectProjectNote { id: String, source: std::io::Error },
     #[error("Cannot write note {id}: {source}")]
     WriteProjectNote { id: String, source: std::io::Error },
     #[error("Cannot edit note {id}: {source}")]
@@ -141,11 +151,6 @@ pub enum ObsidianStoreError {
     RemoveProjectNote { id: String, source: std::io::Error },
     #[error("No such note {id} in {project}.")]
     ProjectNoteNotFound { id: String, project: String },
-    #[error("Cannot write index: {source}")]
-    WriteProjectNoteIndex {
-        path: PathBuf,
-        source: std::io::Error,
-    },
     #[error("Cannot parse frontmatter property `{property}` in {}: {source}", path.display())]
     FrontmatterParse {
         path: PathBuf,
@@ -176,53 +181,6 @@ pub enum ObsidianStoreError {
     },
     #[error("More than one task has frontmatter id {id}: {}", paths.iter().map(|path| path.display().to_string()).collect::<Vec<_>>().join(", "))]
     DuplicateTaskId { id: TaskId, paths: Vec<PathBuf> },
-    #[error("Project index task id {id} is duplicated in {} at lines {}", path.display(), lines.iter().map(usize::to_string).collect::<Vec<_>>().join(", "))]
-    ProjectIndexTaskIdDuplicate {
-        path: PathBuf,
-        id: TaskId,
-        lines: Vec<usize>,
-    },
-    #[error("Invalid project-index completion date {value:?} in {} at line {line}: {source}", path.display())]
-    InvalidProjectIndexDate {
-        path: PathBuf,
-        line: usize,
-        value: String,
-        #[source]
-        source: TaskTimestampError,
-    },
-    #[error("Invalid project-index section {value:?} in {} at line {line}: {source}", path.display())]
-    InvalidProjectIndexSection {
-        path: PathBuf,
-        line: usize,
-        value: String,
-        #[source]
-        source: TaskSectionError,
-    },
-    #[error("Missing project-index frontmatter property `{property}` in {}", path.display())]
-    MissingProjectIndexProperty {
-        path: PathBuf,
-        property: &'static str,
-    },
-    #[error(
-        "Invalid project-index frontmatter property `{property}` {value:?} in {}",
-        path.display()
-    )]
-    InvalidProjectIndexProperty {
-        path: PathBuf,
-        property: &'static str,
-        value: String,
-    },
-    #[error(
-        "Project-index identity mismatch in {}: found id={actual_id}, title={actual_title}; expected id={expected_id}, title={expected_title}",
-        path.display()
-    )]
-    ProjectIndexIdentityMismatch {
-        path: PathBuf,
-        actual_id: ProjectId,
-        actual_title: ProjectName,
-        expected_id: ProjectId,
-        expected_title: ProjectName,
-    },
     #[error("Invalid task path for project '{project}': {source}")]
     InvalidProjectTaskPath {
         project: String,
@@ -231,18 +189,12 @@ pub enum ObsidianStoreError {
     },
     #[error("Cannot create project dir: {source}")]
     CreateProjectDir { source: std::io::Error },
-    #[error("Cannot create index dir: {source}")]
-    CreateIndexDir { source: std::io::Error },
     #[error("Cannot read task file: {source}")]
     ReadTaskFile { source: std::io::Error },
-    #[error("Cannot read index: {source}")]
-    ReadIndex { source: std::io::Error },
     #[error("Cannot write task file: {source}")]
     WriteTaskFile { source: std::io::Error },
     #[error("Failed to write task file: {source}")]
     AddWriteTaskFile { source: std::io::Error },
-    #[error("Failed to write index file: {source}")]
-    AddWriteIndexFile { source: std::io::Error },
     #[error("Task file path has no file name: {}", path.display())]
     TaskFileNameMissing { path: PathBuf },
     #[error("task deletion destination does not match the registered project vault")]
@@ -267,6 +219,4 @@ pub enum ObsidianStoreError {
     TaskIdSequenceExhausted { project_id: ProjectId },
     #[error("task ID {id} is already occupied at {}; retry the command", path.display())]
     TaskIdOccupied { id: TaskId, path: PathBuf },
-    #[error("Expected open task marker at {note}:{line}. The note may have changed.")]
-    ExpectedOpenTaskMarker { note: String, line: usize },
 }

@@ -7,7 +7,6 @@ use pwf_wire::{
 
 use super::{
     commit_task_writes,
-    mutation_request::{self, MutationOperation, MutationRequestState, MutationStart},
     note_body::remove_report,
     resolve_task_project::{self, ResolveTaskProjectError},
     task_body_region,
@@ -15,8 +14,7 @@ use super::{
 use crate::ports::{
     confirmation::{ConfirmationClient, ConfirmationClientError},
     task_vault::{
-        ExpectedTaskRevision, IndexEntry, IndexEntryState, NullablePatch, TaskMutationError,
-        TaskPatch, TaskVault, TaskWrite,
+        ExpectedTaskRevision, NullablePatch, TaskMutationError, TaskPatch, TaskVault, TaskWrite,
     },
 };
 
@@ -31,14 +29,12 @@ pub enum ReopenTaskError {
     #[error(transparent)]
     Revision(#[from] super::TaskRevisionConflict),
     #[error(transparent)]
-    MutationRequest(#[from] mutation_request::MutationRequestError),
-    #[error(transparent)]
     WriteStore(anyhow::Error),
     #[error(transparent)]
     Mutation(#[from] TaskMutationError<anyhow::Error>),
 }
 
-/// Reopens a closed task and restores an existing queue link.
+/// Reopens a closed task note.
 ///
 /// The update clears completion metadata and its appended report. An active task returns an
 /// idempotent skip.
@@ -49,81 +45,24 @@ pub async fn execute(
     pool: &sqlx::SqlitePool,
     confirmation_client: &mut dyn ConfirmationClient<Confirmation = ReopenTaskConfirmation>,
 ) -> Result<TaskMutationResult<ReopenTaskOutcome>, ReopenTaskError> {
-    let identity = mutation_request::identity(
-        command.request_id.as_ref(),
-        command.request_fingerprint.as_ref(),
-    )?;
-    if let Some(identity) = identity.as_ref()
-        && let Some(replay) =
-            mutation_request::find(pool, identity, MutationOperation::Reopen).await?
-    {
-        return reopen_replay(&replay, identity);
-    }
-
     let prepared = match prepare_reopen(&command.id, store, pool).await? {
         ReopenPreparation::Closed(prepared) => prepared,
         ReopenPreparation::AlreadyActive(summary) => {
-            if let Some(identity) = identity.as_ref()
-                && let MutationStart::Existing(replay) =
-                    mutation_request::start(pool, identity, MutationOperation::Reopen, &command.id)
-                        .await?
-            {
-                return reopen_replay(&replay, identity);
-            }
-            if let Some(identity) = identity.as_ref() {
-                mutation_request::complete_with_task(
-                    pool,
-                    identity,
-                    MutationOperation::Reopen,
-                    "already_active",
-                    &summary,
-                )
-                .await?;
-            }
             return Ok(TaskMutationResult {
                 outcome: ReopenTaskOutcome::AlreadyActive,
                 task: Some(summary),
             });
         }
     };
-    let confirmed = confirmation_client.confirm(&prepared.confirmation).await?;
-    if confirmed {
-        validate_reopen(&prepared, store)?;
-    }
-    if let Some(identity) = identity.as_ref()
-        && let MutationStart::Existing(replay) =
-            mutation_request::start(pool, identity, MutationOperation::Reopen, &command.id).await?
-    {
-        return reopen_replay(&replay, identity);
-    }
-    if !confirmed {
-        if let Some(identity) = identity.as_ref() {
-            mutation_request::complete(pool, identity, MutationOperation::Reopen, Some("aborted"))
-                .await?;
-        }
+    if !confirmation_client.confirm(&prepared.confirmation).await? {
         return Ok(TaskMutationResult {
             outcome: ReopenTaskOutcome::Aborted,
             task: None,
         });
     }
-    if let Err(error) = validate_reopen(&prepared, store) {
-        if let Some(identity) = identity.as_ref() {
-            mutation_request::discard(pool, identity, MutationOperation::Reopen).await?;
-        }
-        return Err(error);
-    }
+    validate_reopen(&prepared, store)?;
     let summary = prepared.summary.clone();
     apply_reopen(*prepared, store)?;
-    if let Some(identity) = identity.as_ref() {
-        mutation_request::complete_with_task(
-            pool,
-            identity,
-            MutationOperation::Reopen,
-            "reopened",
-            &summary,
-        )
-        .await?;
-    }
     Ok(TaskMutationResult {
         outcome: ReopenTaskOutcome::Reopened,
         task: Some(summary),
@@ -212,19 +151,6 @@ fn apply_reopen(prepared: PreparedReopen, store: &impl TaskVault) -> Result<(), 
         },
     };
 
-    let entries = TaskVault::list_index_entries(store, &prepared.project)
-        .map_err(|error| ReopenTaskError::WriteStore(anyhow::Error::new(error)))?;
-    let mut writes = vec![patch];
-    if entries
-        .iter()
-        .any(|entry| entry.id == task_identifier && matches!(entry.state, IndexEntryState::Done(_)))
-    {
-        writes.push(TaskWrite::UpsertIndex(IndexEntry {
-            id: task_identifier.clone(),
-            state: IndexEntryState::Open,
-            section: None,
-        }));
-    }
     commit_task_writes(
         store,
         &prepared.project,
@@ -232,35 +158,7 @@ fn apply_reopen(prepared: PreparedReopen, store: &impl TaskVault) -> Result<(), 
             id: task_identifier,
             revision: prepared.confirmation.revision,
         }],
-        writes,
+        vec![patch],
     )
     .map_err(Into::into)
-}
-
-fn reopen_replay(
-    replay: &mutation_request::MutationRequestRecord,
-    identity: &mutation_request::MutationIdentity,
-) -> Result<TaskMutationResult<ReopenTaskOutcome>, ReopenTaskError> {
-    if replay.state == MutationRequestState::Pending {
-        return Err(identity.incomplete().into());
-    }
-    match replay.outcome.as_deref() {
-        Some("reopened") => Ok(TaskMutationResult {
-            outcome: ReopenTaskOutcome::Reopened,
-            task: replay.task.clone(),
-        }),
-        Some("already_active") => Ok(TaskMutationResult {
-            outcome: ReopenTaskOutcome::AlreadyActive,
-            task: replay.task.clone(),
-        }),
-        Some("aborted") => Ok(TaskMutationResult {
-            outcome: ReopenTaskOutcome::Aborted,
-            task: None,
-        }),
-        Some(_) | None => Err(mutation_request::MutationRequestError::Corrupt {
-            request_id: identity.request_id().to_string(),
-            reason: "reopen outcome is invalid",
-        }
-        .into()),
-    }
 }

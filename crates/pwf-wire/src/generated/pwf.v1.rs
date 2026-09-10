@@ -62,6 +62,8 @@ pub struct ProjectFields {
     pub tasks_path: ::prost::alloc::string::String,
     #[prost(string, optional, tag = "7")]
     pub obsidian_vault: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(bool, tag = "8")]
+    pub snapshot_enabled: bool,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ClearField {}
@@ -100,6 +102,8 @@ pub struct Project {
     pub is_paused: bool,
     #[prost(string, optional, tag = "9")]
     pub obsidian_vault: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(bool, tag = "10")]
+    pub snapshot_enabled: bool,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct AddVaultProjectRequest {
@@ -144,6 +148,8 @@ pub struct AddProjectResponse {
     pub is_paused: bool,
     #[prost(string, optional, tag = "9")]
     pub obsidian_vault: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(bool, tag = "10")]
+    pub snapshot_enabled: bool,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct GetProjectRequest {
@@ -172,6 +178,8 @@ pub struct GetProjectResponse {
     pub is_paused: bool,
     #[prost(string, optional, tag = "9")]
     pub obsidian_vault: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(bool, tag = "10")]
+    pub snapshot_enabled: bool,
 }
 /// Resolves an exact case-insensitive title before trying the normalized project ID.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -235,6 +243,8 @@ pub struct RenameProjectResponse {
     pub is_paused: bool,
     #[prost(string, optional, tag = "9")]
     pub obsidian_vault: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(bool, tag = "10")]
+    pub snapshot_enabled: bool,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ResumeProjectRequest {
@@ -256,6 +266,9 @@ pub struct UpdateProjectRequest {
     pub source_value: ::core::option::Option<StringPatchField>,
     #[prost(message, optional, tag = "3")]
     pub obsidian_vault: ::core::option::Option<StringPatchField>,
+    /// Omitted leaves snapshot generation unchanged.
+    #[prost(bool, optional, tag = "4")]
+    pub snapshot_enabled: ::core::option::Option<bool>,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct UpdateProjectResponse {}
@@ -449,8 +462,6 @@ pub struct CreateTaskRequest {
     pub tags: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     #[prost(enumeration = "PriorityTier", optional, tag = "8")]
     pub priority: ::core::option::Option<i32>,
-    #[prost(string, tag = "9")]
-    pub request_id: ::prost::alloc::string::String,
     #[prost(oneof = "create_task_request::Prompt", tags = "2, 3")]
     pub prompt: ::core::option::Option<create_task_request::Prompt>,
 }
@@ -473,8 +484,6 @@ pub struct CloneTaskRequest {
     /// Omission uses the source task's project.
     #[prost(string, optional, tag = "2")]
     pub project_id: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(string, tag = "3")]
-    pub request_id: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CancelTaskRequest {
@@ -486,8 +495,6 @@ pub struct CancelTaskRequest {
     pub commits: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     #[prost(string, optional, tag = "5")]
     pub expected_revision: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(string, tag = "6")]
-    pub request_id: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CompleteTaskRequest {
@@ -499,8 +506,6 @@ pub struct CompleteTaskRequest {
     pub commits: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     #[prost(string, optional, tag = "5")]
     pub expected_revision: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(string, tag = "6")]
-    pub request_id: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct StringValues {
@@ -606,8 +611,6 @@ pub struct UpdateTaskRequest {
     pub priority: ::core::option::Option<PriorityEdit>,
     #[prost(string, optional, tag = "7")]
     pub expected_revision: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(string, tag = "8")]
-    pub request_id: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct GetTaskRequest {
@@ -637,12 +640,12 @@ pub struct OrderSpec {
     #[prost(enumeration = "OrderDirection", tag = "2")]
     pub direction: i32,
 }
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct AllTaskSections {}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ListTasksRequest {
     #[prost(string, optional, tag = "1")]
     pub project_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(bool, tag = "13")]
+    pub all: bool,
     #[prost(uint64, optional, tag = "3")]
     pub number: ::core::option::Option<u64>,
     #[prost(enumeration = "EffortTier", optional, tag = "4")]
@@ -661,18 +664,6 @@ pub struct ListTasksRequest {
     pub page_size: u32,
     #[prost(string, optional, tag = "11")]
     pub page_token: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(oneof = "list_tasks_request::Scope", tags = "2, 12")]
-    pub scope: ::core::option::Option<list_tasks_request::Scope>,
-}
-/// Nested message and enum types in `ListTasksRequest`.
-pub mod list_tasks_request {
-    #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
-    pub enum Scope {
-        #[prost(string, tag = "2")]
-        Section(::prost::alloc::string::String),
-        #[prost(message, tag = "12")]
-        All(super::AllTaskSections),
-    }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct TaskMutationSummary {
@@ -736,39 +727,14 @@ pub struct TaskRecord {
     /// Omitted means the property is absent.
     #[prost(message, optional, tag = "10")]
     pub blocked_by: ::core::option::Option<StoredTaskBlockedBy>,
-    #[prost(string, optional, tag = "11")]
-    pub section: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, tag = "12")]
     pub body: ::prost::alloc::string::String,
     #[prost(string, tag = "13")]
     pub source: ::prost::alloc::string::String,
     #[prost(string, tag = "14")]
     pub locator: ::prost::alloc::string::String,
-    #[prost(message, optional, tag = "15")]
-    pub placement: ::core::option::Option<TaskIndexPlacement>,
     #[prost(string, tag = "16")]
     pub revision: ::prost::alloc::string::String,
-    #[prost(oneof = "task_record::Materialization", tags = "17, 18")]
-    pub materialization: ::core::option::Option<task_record::Materialization>,
-}
-/// Nested message and enum types in `TaskRecord`.
-pub mod task_record {
-    #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
-    pub enum Materialization {
-        #[prost(message, tag = "17")]
-        NoteFile(super::TaskNoteFile),
-        #[prost(string, tag = "18")]
-        MissingNote(::prost::alloc::string::String),
-    }
-}
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct TaskNoteFile {}
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct TaskIndexPlacement {
-    #[prost(string, tag = "1")]
-    pub index_path: ::prost::alloc::string::String,
-    #[prost(uint64, tag = "2")]
-    pub line: u64,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct StoredTaskBlockedBy {
@@ -827,8 +793,6 @@ pub struct Task {
     pub priority: ::core::option::Option<i32>,
     #[prost(string, repeated, tag = "11")]
     pub blocked_by: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    #[prost(string, optional, tag = "12")]
-    pub section: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, tag = "13")]
     pub revision: ::prost::alloc::string::String,
 }
@@ -910,19 +874,10 @@ pub struct BlockedByIssue {
     #[prost(string, tag = "3")]
     pub reason: ::prost::alloc::string::String,
 }
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct TaskIssue {
     #[prost(enumeration = "TaskIssueKind", tag = "1")]
     pub kind: i32,
-    #[prost(string, optional, tag = "2")]
-    pub path: ::core::option::Option<::prost::alloc::string::String>,
-}
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct TaskLocation {
-    #[prost(string, tag = "1")]
-    pub index_path: ::prost::alloc::string::String,
-    #[prost(uint64, tag = "2")]
-    pub line: u64,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ListedTask {
@@ -938,12 +893,10 @@ pub struct ListedTask {
     pub prompt: ::prost::alloc::string::String,
     #[prost(string, optional, tag = "6")]
     pub project_path: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(message, optional, tag = "7")]
-    pub location: ::core::option::Option<TaskLocation>,
+    #[prost(string, tag = "17")]
+    pub note_path: ::prost::alloc::string::String,
     #[prost(message, repeated, tag = "8")]
     pub launch_issues: ::prost::alloc::vec::Vec<TaskIssue>,
-    #[prost(string, optional, tag = "9")]
-    pub section: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, repeated, tag = "10")]
     pub blocked_by: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     #[prost(message, repeated, tag = "11")]
@@ -971,8 +924,6 @@ pub struct ListTasksResponse {
     pub project_task_path: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(enumeration = "TaskStatusFilter", tag = "5")]
     pub status_filter: i32,
-    #[prost(enumeration = "ListLayout", tag = "6")]
-    pub layout: i32,
     #[prost(enumeration = "ListDetail", tag = "7")]
     pub detail: i32,
     #[prost(string, optional, tag = "8")]
@@ -982,8 +933,6 @@ pub struct ListTasksResponse {
 pub struct DeleteTaskStart {
     #[prost(string, tag = "1")]
     pub id: ::prost::alloc::string::String,
-    #[prost(string, tag = "2")]
-    pub request_id: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct DeleteTaskConfirmation {
@@ -1081,8 +1030,6 @@ pub mod delete_task_response {
 pub struct ReopenTaskStart {
     #[prost(string, tag = "1")]
     pub id: ::prost::alloc::string::String,
-    #[prost(string, tag = "2")]
-    pub request_id: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ReopenTaskPreflight {
@@ -1687,35 +1634,6 @@ impl TaskStatus {
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
-pub enum ListLayout {
-    Unspecified = 0,
-    Flat = 1,
-    BySection = 2,
-}
-impl ListLayout {
-    /// String value of the enum field names used in the ProtoBuf definition.
-    ///
-    /// The values are not transformed in any way and thus are considered stable
-    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
-    pub fn as_str_name(&self) -> &'static str {
-        match self {
-            Self::Unspecified => "LIST_LAYOUT_UNSPECIFIED",
-            Self::Flat => "LIST_LAYOUT_FLAT",
-            Self::BySection => "LIST_LAYOUT_BY_SECTION",
-        }
-    }
-    /// Creates an enum from field names used in the ProtoBuf definition.
-    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
-        match value {
-            "LIST_LAYOUT_UNSPECIFIED" => Some(Self::Unspecified),
-            "LIST_LAYOUT_FLAT" => Some(Self::Flat),
-            "LIST_LAYOUT_BY_SECTION" => Some(Self::BySection),
-            _ => None,
-        }
-    }
-}
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
-#[repr(i32)]
 pub enum BlockedByResolutionKind {
     Unspecified = 0,
     Found = 1,
@@ -1750,7 +1668,6 @@ impl BlockedByResolutionKind {
 #[repr(i32)]
 pub enum TaskIssueKind {
     Unspecified = 0,
-    MissingNote = 1,
     PlaceholderPrompt = 2,
 }
 impl TaskIssueKind {
@@ -1761,7 +1678,6 @@ impl TaskIssueKind {
     pub fn as_str_name(&self) -> &'static str {
         match self {
             Self::Unspecified => "TASK_ISSUE_KIND_UNSPECIFIED",
-            Self::MissingNote => "TASK_ISSUE_KIND_MISSING_NOTE",
             Self::PlaceholderPrompt => "TASK_ISSUE_KIND_PLACEHOLDER_PROMPT",
         }
     }
@@ -1769,7 +1685,6 @@ impl TaskIssueKind {
     pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
         match value {
             "TASK_ISSUE_KIND_UNSPECIFIED" => Some(Self::Unspecified),
-            "TASK_ISSUE_KIND_MISSING_NOTE" => Some(Self::MissingNote),
             "TASK_ISSUE_KIND_PLACEHOLDER_PROMPT" => Some(Self::PlaceholderPrompt),
             _ => None,
         }

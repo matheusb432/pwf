@@ -10,7 +10,7 @@ use pwf_application::{
     },
 };
 use pwf_models::project::{
-    HomeDirectory, ProjectId, ProjectIndexIdentity, ProjectName, ProjectSource, ProjectSourceKind,
+    HomeDirectory, ProjectId, ProjectIdentity, ProjectName, ProjectSource, ProjectSourceKind,
     ProjectSourceValue, ProjectTasks, ProjectTasksKind, ProjectTasksPath,
 };
 use pwf_wire::project::{ProjectFields, RenameProject};
@@ -33,8 +33,8 @@ impl ProjectTaskFilesClient for TaskFilesClient {
         &self,
         _source: &Path,
         _destination: &Path,
-        _current: &ProjectIndexIdentity,
-        _next: &ProjectIndexIdentity,
+        _current: &ProjectIdentity,
+        _next: &ProjectIdentity,
     ) -> Result<Self::StagedRename, Self::Error> {
         match self {
             Self::Available => Ok(StagedTaskFiles),
@@ -61,6 +61,7 @@ impl StagedProjectTaskFilesRename for StagedTaskFiles {
 fn fields(project_id: ProjectId, title: &str, source: &str, tasks: &str) -> ProjectFields {
     ProjectFields {
         obsidian_vault: None,
+        snapshot_enabled: false,
         id: project_id,
         title: ProjectName::try_new(title).unwrap(),
         source: Some(ProjectSource::new(

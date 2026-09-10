@@ -128,7 +128,8 @@ pub fn assert_project(
         project.get("obsidian_vault"),
         Some(&serde_json::Value::Null)
     );
-    assert_eq!(project.as_object().map(serde_json::Map::len), Some(7));
+    assert!(project["snapshot_enabled"].is_boolean());
+    assert_eq!(project.as_object().map(serde_json::Map::len), Some(8));
 }
 
 pub fn assert_failure(output: Output, identifying_fragments: &[&str]) -> anyhow::Result<()> {

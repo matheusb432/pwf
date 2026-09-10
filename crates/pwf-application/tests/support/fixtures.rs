@@ -2,7 +2,7 @@ use pwf_models::{
     revision::ContentRevision,
     task::{BlockedBy, TaskId, TaskStatus, TaskTimestamp},
 };
-use pwf_wire::task::{Materialization, StoredBlockedBy, TaskRecord};
+use pwf_wire::task::{StoredBlockedBy, TaskRecord};
 
 pub(crate) fn task_timestamp(raw: impl AsRef<str>) -> TaskTimestamp {
     raw.as_ref().parse().unwrap()
@@ -20,12 +20,9 @@ pub(crate) fn task_record(id: &str) -> TaskRecord {
         effort: None,
         priority: None,
         blocked_by: pwf_wire::task::StoredBlockedBy::Absent,
-        section: None,
         body: "\nbody\n".to_string(),
         source: "body".to_string(),
         locator: pwf_wire::task::TaskNotePath::new(format!("/mem/foo-bar/{id}.md").into()),
-        placement: None,
-        materialization: Materialization::NoteFile,
         revision: ContentRevision::try_new("0".repeat(64)).unwrap(),
     }
 }

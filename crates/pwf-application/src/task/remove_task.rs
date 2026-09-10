@@ -6,14 +6,13 @@ use pwf_wire::{
     confirmation::RemoveTaskConfirmation,
     project::ProjectStatusFilter,
     task::{
-        DeleteTask, DeleteTaskOutcome, Materialization, StoredBlockedBy, TaskMutationResult,
-        TaskMutationSummary, TaskNotePath, TaskRecord,
+        DeleteTask, DeleteTaskOutcome, StoredBlockedBy, TaskMutationResult, TaskMutationSummary,
+        TaskNotePath, TaskRecord,
     },
 };
 
 use super::{
     blocked_by, commit_task_writes,
-    mutation_request::{self, MutationOperation, MutationRequestState, MutationStart},
     resolve_task_project::{self, ResolveTaskProjectError},
 };
 use crate::{
@@ -34,12 +33,8 @@ pub enum RemoveTaskError {
     ResolveProject(#[from] ResolveTaskProjectError),
     #[error(transparent)]
     Confirmation(#[from] ConfirmationClientError),
-    #[error("Task note missing: {path}")]
-    NoteMissing { path: TaskNotePath },
     #[error(transparent)]
     Revision(#[from] super::TaskRevisionConflict),
-    #[error(transparent)]
-    MutationRequest(#[from] mutation_request::MutationRequestError),
     #[error("task {id} has an invalid persisted title: {source}")]
     InvalidTitle {
         id: TaskId,
@@ -69,7 +64,7 @@ pub enum RemoveTaskError {
     Mutation(#[from] TaskMutationError<anyhow::Error>),
 }
 
-/// Confirms the deletion destination before removing the note and index entry.
+/// Confirms the deletion destination before removing the task note.
 #[cqrsy::command]
 pub async fn execute(
     command: &DeleteTask,
@@ -77,60 +72,20 @@ pub async fn execute(
     pool: &sqlx::SqlitePool,
     confirmation_client: &mut dyn ConfirmationClient<Confirmation = RemoveTaskConfirmation>,
 ) -> Result<TaskMutationResult<DeleteTaskOutcome>, RemoveTaskError> {
-    let identity = mutation_request::identity(
-        command.request_id.as_ref(),
-        command.request_fingerprint.as_ref(),
-    )?;
-    if let Some(identity) = identity.as_ref()
-        && let Some(replay) =
-            mutation_request::find(pool, identity, MutationOperation::Delete).await?
-    {
-        return delete_replay(&replay, identity);
-    }
-
     let prepared = prepare_removal(&command.id, store, pool).await?;
-    let confirmed = confirmation_client.confirm(&prepared.confirmation).await?;
-    if confirmed {
-        validate_removal(&prepared, store, pool).await?;
-    }
-    if let Some(identity) = identity.as_ref()
-        && let MutationStart::Existing(replay) =
-            mutation_request::start(pool, identity, MutationOperation::Delete, &command.id).await?
-    {
-        return delete_replay(&replay, identity);
-    }
-    if !confirmed {
-        if let Some(identity) = identity.as_ref() {
-            mutation_request::complete(pool, identity, MutationOperation::Delete, Some("aborted"))
-                .await?;
-        }
+    if !confirmation_client.confirm(&prepared.confirmation).await? {
         return Ok(TaskMutationResult {
             outcome: DeleteTaskOutcome::Aborted,
             task: None,
         });
     }
-    if let Err(error) = validate_target_revision(&prepared, store) {
-        if let Some(identity) = identity.as_ref() {
-            mutation_request::discard(pool, identity, MutationOperation::Delete).await?;
-        }
-        return Err(error);
-    }
+    validate_removal(&prepared, store, pool).await?;
     let summary = TaskMutationSummary {
         id: prepared.task_id.clone(),
         title: prepared.confirmation.title.to_string(),
         status: prepared.confirmation.status,
     };
     delete_prepared(&prepared, store)?;
-    if let Some(identity) = identity.as_ref() {
-        mutation_request::complete_with_task(
-            pool,
-            identity,
-            MutationOperation::Delete,
-            "deleted",
-            &summary,
-        )
-        .await?;
-    }
     Ok(TaskMutationResult {
         outcome: DeleteTaskOutcome::Deleted,
         task: Some(summary),
@@ -154,14 +109,6 @@ async fn prepare_removal(
         .ok_or_else(|| RemoveTaskError::TaskNotFound {
             id: task_id.clone(),
         })?;
-    let note_path = match &record.materialization {
-        Materialization::NoteFile => record.locator.clone(),
-        Materialization::MissingNote { expected } => {
-            return Err(RemoveTaskError::NoteMissing {
-                path: expected.clone(),
-            });
-        }
-    };
     let title = TaskTitle::try_new(record.title.clone()).map_err(|source| {
         RemoveTaskError::InvalidTitle {
             id: task_id.clone(),
@@ -178,7 +125,7 @@ async fn prepare_removal(
         project: project.title.clone(),
         title: title.clone(),
         status: record.status,
-        note_path: note_path.clone(),
+        note_path: record.locator.clone(),
         revision: super::task_revision(&record),
     };
     Ok(PreparedRemoval {
@@ -228,13 +175,10 @@ fn delete_prepared(
             id: prepared.task_id.clone(),
             revision: prepared.confirmation.revision.clone(),
         }],
-        vec![
-            TaskWrite::DeleteNote {
-                deletion: prepared.confirmation.deletion.clone(),
-                id: prepared.task_id.clone(),
-            },
-            TaskWrite::DeleteIndex(prepared.task_id.clone()),
-        ],
+        vec![TaskWrite::DeleteNote {
+            deletion: prepared.confirmation.deletion.clone(),
+            id: prepared.task_id.clone(),
+        }],
     )
     .map_err(Into::into)
 }
@@ -252,30 +196,6 @@ async fn ensure_no_dependents(
         });
     }
     Ok(())
-}
-
-fn delete_replay(
-    replay: &mutation_request::MutationRequestRecord,
-    identity: &mutation_request::MutationIdentity,
-) -> Result<TaskMutationResult<DeleteTaskOutcome>, RemoveTaskError> {
-    if replay.state == MutationRequestState::Pending {
-        return Err(identity.incomplete().into());
-    }
-    match replay.outcome.as_deref() {
-        Some("deleted") => Ok(TaskMutationResult {
-            outcome: DeleteTaskOutcome::Deleted,
-            task: replay.task.clone(),
-        }),
-        Some("aborted") => Ok(TaskMutationResult {
-            outcome: DeleteTaskOutcome::Aborted,
-            task: None,
-        }),
-        Some(_) | None => Err(mutation_request::MutationRequestError::Corrupt {
-            request_id: identity.request_id().to_string(),
-            reason: "delete outcome is invalid",
-        }
-        .into()),
-    }
 }
 
 async fn find_dependents(

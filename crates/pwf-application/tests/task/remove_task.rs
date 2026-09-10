@@ -1,17 +1,11 @@
 use pwf_application::{
-    ports::{
-        confirmation::{ConfirmationClient, ConfirmationClientError},
-        task_vault::{IndexEntry, IndexEntryState, TaskVault},
-    },
+    ports::confirmation::{ConfirmationClient, ConfirmationClientError},
     task::{remove_task, remove_task::RemoveTaskError},
 };
 use pwf_models::task::{TaskId, TaskStatus};
 use pwf_wire::{
     confirmation::RemoveTaskConfirmation,
-    task::{
-        DeleteTask, DeleteTaskOutcome, Materialization, TaskMutationResult, TaskNotePath,
-        TaskRecord,
-    },
+    task::{DeleteTask, DeleteTaskOutcome, TaskMutationResult, TaskNotePath, TaskRecord},
 };
 
 use crate::support::{
@@ -27,8 +21,6 @@ async fn run(
     remove_task::execute(
         &DeleteTask {
             id: task_id.clone(),
-            request_id: None,
-            request_fingerprint: None,
         },
         store,
         pool,
@@ -48,26 +40,9 @@ fn record(id: &str, status: TaskStatus) -> TaskRecord {
 }
 
 fn staged(status: TaskStatus) -> InMemoryStore {
-    let index_state = match status {
-        TaskStatus::Active => IndexEntryState::Open,
-        TaskStatus::Done | TaskStatus::Cancelled => {
-            IndexEntryState::Done(Some(task_timestamp("2026-07-02T12:34:56Z")))
-        }
-    };
-    let store = InMemoryStore::default()
+    InMemoryStore::default()
         .with_project_id("foo", "FOO")
-        .with_project("foo", vec![record("FOO-0001", status)]);
-    TaskVault::upsert_index_entry(
-        &store,
-        &project("FOO", "foo"),
-        IndexEntry {
-            id: TaskId::try_new("FOO-0001").unwrap(),
-            state: index_state,
-            section: None,
-        },
-    )
-    .unwrap();
-    store
+        .with_project("foo", vec![record("FOO-0001", status)])
 }
 
 fn task_id(id: &str) -> TaskId {
@@ -146,7 +121,7 @@ impl ConfirmationClient for ChangeVaultThenAccept {
 }
 
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]
-async fn changed_vault_after_confirmation_preserves_the_task_and_index(pool: sqlx::SqlitePool) {
+async fn changed_vault_after_confirmation_preserves_the_task(pool: sqlx::SqlitePool) {
     insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
     let store = staged(TaskStatus::Active);
     let before = store.tasks("foo");
@@ -160,11 +135,10 @@ async fn changed_vault_after_confirmation_preserves_the_task_and_index(pool: sql
     .unwrap_err();
     assert!(matches!(error, RemoveTaskError::DeletionChanged));
     assert_eq!(store.tasks("foo"), before);
-    assert_eq!(store.entries("foo").len(), 1);
 }
 
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]
-async fn remove_deletes_record_and_index_entry(pool: sqlx::SqlitePool) {
+async fn remove_deletes_the_task_note(pool: sqlx::SqlitePool) {
     insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
     let store = staged(TaskStatus::Active);
 
@@ -173,10 +147,6 @@ async fn remove_deletes_record_and_index_entry(pool: sqlx::SqlitePool) {
         .unwrap();
     assert_eq!(outcome.outcome, DeleteTaskOutcome::Deleted);
     assert!(store.tasks("foo").is_empty(), "record must be deleted");
-    assert!(
-        store.entries("foo").is_empty(),
-        "index entry must be unlinked"
-    );
 }
 
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]
@@ -197,7 +167,6 @@ async fn remove_rejects_a_task_edited_after_preflight_without_unlinking(pool: sq
     assert!(matches!(error, RemoveTaskError::Revision(_)));
     assert_eq!(store.tasks("foo").len(), 1);
     assert!(store.tasks("foo")[0].source.ends_with("external edit\n"));
-    assert_eq!(store.entries("foo").len(), 1);
 }
 
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]
@@ -242,7 +211,6 @@ async fn remove_reports_all_dependents_including_paused_projects_without_mutatin
                     == ["AUX-0002", "FOO-0003"]
     ));
     assert_eq!(store.tasks("foo"), before);
-    assert_eq!(store.entries("foo").len(), 1);
 }
 
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]
@@ -267,22 +235,6 @@ async fn remove_rejects_an_invalid_persisted_title_before_mutation(pool: sqlx::S
 }
 
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]
-async fn remove_deletes_an_unindexed_task(pool: sqlx::SqlitePool) {
-    insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
-    let store = InMemoryStore::default()
-        .with_project_id("foo", "FOO")
-        .with_project("foo", vec![record("FOO-0001", TaskStatus::Active)]);
-
-    let outcome = run(&task_id("FOO-0001"), &store, &pool, &mut Accepted)
-        .await
-        .unwrap();
-
-    assert_eq!(outcome.outcome, DeleteTaskOutcome::Deleted);
-    assert!(store.tasks("foo").is_empty());
-    assert!(store.entries("foo").is_empty());
-}
-
-#[sqlx::test(migrator = "crate::support::MIGRATOR")]
 async fn remove_deletes_closed_items(pool: sqlx::SqlitePool) {
     insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
     for status in [TaskStatus::Done, TaskStatus::Cancelled] {
@@ -294,7 +246,6 @@ async fn remove_deletes_closed_items(pool: sqlx::SqlitePool) {
 
         assert_eq!(outcome.outcome, DeleteTaskOutcome::Deleted);
         assert!(store.tasks("foo").is_empty(), "{status} record retained");
-        assert!(store.entries("foo").is_empty(), "{status} index retained");
     }
 }
 
@@ -328,41 +279,13 @@ async fn remove_reports_an_unknown_project_id(pool: sqlx::SqlitePool) {
     );
 }
 
-#[sqlx::test(migrator = "crate::support::MIGRATOR")]
-async fn remove_rejects_missing_note_wikilink_with_its_path(pool: sqlx::SqlitePool) {
-    insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
-    let ghost = TaskRecord {
-        materialization: Materialization::MissingNote {
-            expected: TaskNotePath::new("/notes/foo/FOO-0001.md".into()),
-        },
-        ..record("FOO-0001", TaskStatus::Active)
-    };
-    let store = InMemoryStore::default()
-        .with_project_id("foo", "FOO")
-        .with_project("foo", vec![ghost]);
-
-    let error = run(&task_id("FOO-0001"), &store, &pool, &mut Accepted)
-        .await
-        .unwrap_err();
-
-    assert!(matches!(
-        error,
-        RemoveTaskError::NoteMissing { ref path }
-            if path.as_path() == std::path::Path::new("/notes/foo/FOO-0001.md")
-    ));
-    assert_eq!(
-        error.to_string(),
-        "Task note missing: /notes/foo/FOO-0001.md"
-    );
-}
-
 mod confirmed_removal {
     use pwf_wire::task::DeleteTaskOutcome;
 
     use super::*;
 
     #[sqlx::test(migrator = "crate::support::MIGRATOR")]
-    async fn remove_deletes_record_and_index_entry_after_confirmation(pool: sqlx::SqlitePool) {
+    async fn remove_deletes_the_task_note_after_confirmation(pool: sqlx::SqlitePool) {
         insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
         let store = staged(TaskStatus::Active);
 
@@ -376,7 +299,6 @@ mod confirmed_removal {
         .unwrap();
         assert_eq!(outcome.outcome, DeleteTaskOutcome::Deleted);
         assert!(store.tasks("foo").is_empty());
-        assert!(store.entries("foo").is_empty());
     }
 
     #[sqlx::test(migrator = "crate::support::MIGRATOR")]
@@ -394,36 +316,35 @@ mod confirmed_removal {
         .unwrap();
 
         assert_eq!(outcome.outcome, DeleteTaskOutcome::Aborted);
+        assert!(outcome.task.is_none());
         assert_eq!(store.tasks("foo").len(), 1);
-        assert_eq!(store.entries("foo").len(), 1);
     }
 }
 
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]
-async fn completed_request_preserves_the_mutated_task_summary(pool: sqlx::SqlitePool) {
-    use pwf_wire::task::{TaskMutationSummary, TaskRequestFingerprint, TaskRequestId};
+async fn removal_returns_the_task_summary_and_reports_missing_on_repeat(pool: sqlx::SqlitePool) {
+    use pwf_wire::task::TaskMutationSummary;
     insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
     let store = staged(TaskStatus::Cancelled);
     let command = DeleteTask {
         id: task_id("FOO-0001"),
-        request_id: Some(TaskRequestId::try_new("request-1").unwrap()),
-        request_fingerprint: Some(TaskRequestFingerprint::from_digest([1; 32])),
     };
-    let first = remove_task::execute(&command, &store, &pool, &mut Accepted)
+    let removed = remove_task::execute(&command, &store, &pool, &mut Accepted)
         .await
         .unwrap();
-    let replay = remove_task::execute(&command, &store, &pool, &mut Accepted)
-        .await
-        .unwrap();
-    assert_eq!(replay, first);
-    assert_eq!(replay.outcome, DeleteTaskOutcome::Deleted);
+    assert_eq!(removed.outcome, DeleteTaskOutcome::Deleted);
     assert_eq!(
-        replay.task,
+        removed.task,
         Some(TaskMutationSummary {
-            id: command.id,
+            id: command.id.clone(),
             title: "stale task".into(),
-            status: TaskStatus::Cancelled
+            status: TaskStatus::Cancelled,
         })
     );
     assert!(store.tasks("foo").is_empty());
+
+    let error = remove_task::execute(&command, &store, &pool, &mut Accepted)
+        .await
+        .unwrap_err();
+    assert!(matches!(error, RemoveTaskError::TaskNotFound { id } if id == command.id));
 }
