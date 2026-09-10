@@ -3,8 +3,6 @@ use std::error::Error;
 use pwf_models::project::ProjectId;
 use pwf_wire::project::ProjectStateChange;
 
-use super::ProjectRow;
-
 #[derive(Debug, thiserror::Error)]
 pub enum PauseProjectError {
     #[error("project not found: {id}")]
@@ -39,29 +37,11 @@ pub async fn execute(
     .execute(&mut *transaction)
     .await
     .map_err(|error| unexpected("pausing project", error))?;
-    let row = sqlx::query_as!(
-        ProjectRow,
-        r#"
-        SELECT
-            projects.id AS "id!",
-            projects.title AS "title!",
-            project_sources.kind AS "source_kind?",
-            project_sources.value AS "source_value?",
-            projects.tasks_kind AS "tasks_kind!",
-            projects.tasks_path AS "tasks_path!",
-            projects.obsidian_vault AS "obsidian_vault?",
-            projects.created_at AS "created_at!",
-            (projects.paused_at IS NOT NULL) AS "is_paused!: bool"
-        FROM projects
-        LEFT JOIN project_sources ON project_sources.id = projects.project_source_id
-        WHERE projects.id = ?
-        "#,
-        id,
-    )
-    .fetch_optional(&mut *transaction)
-    .await
-    .map_err(|error| unexpected("reading paused project", error))?
-    .ok_or(PauseProjectError::ProjectNotFound { id: project_id })?;
+    let row = project_query!("WHERE projects.id = ?", id)
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(|error| unexpected("reading paused project", error))?
+        .ok_or(PauseProjectError::ProjectNotFound { id: project_id })?;
     let project = super::project_from_row(row)
         .map_err(|error| unexpected("converting paused project", error))?;
     transaction

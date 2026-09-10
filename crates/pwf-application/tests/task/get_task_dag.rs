@@ -10,6 +10,7 @@ use crate::support::{
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn blocked_by_mode_traverses_cross_project_ancestors_in_stored_order(pool: sqlx::SqlitePool) {
+    crate::support::insert_unrelated_invalid_project(&pool).await;
     insert_project(&pool, "FOO", "foo", "/work/foo", "/tasks/foo", false).await;
     insert_project(&pool, "AUX", "aux", "/work/aux", "/tasks/aux", true).await;
 

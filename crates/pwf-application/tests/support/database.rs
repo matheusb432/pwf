@@ -44,3 +44,19 @@ pub(crate) async fn insert_project(
     .await
     .unwrap();
 }
+
+pub(crate) async fn insert_unrelated_invalid_project(pool: &SqlitePool) {
+    insert_project(
+        pool,
+        "BAD",
+        "invalid-unrelated",
+        "/work/bad",
+        "/tasks/bad",
+        false,
+    )
+    .await;
+    sqlx::query("UPDATE projects SET created_at = 'invalid' WHERE id = 'BAD'")
+        .execute(pool)
+        .await
+        .unwrap();
+}

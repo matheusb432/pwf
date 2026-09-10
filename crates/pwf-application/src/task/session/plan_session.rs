@@ -6,16 +6,12 @@ use pwf_models::{
     session::{LaunchPrompt, PushedPrompt, SessionThreadTitle, SessionWorkingDirectory},
     task::TaskId,
 };
-use pwf_wire::{
-    project::ProjectStatusFilter,
-    task::{
-        BlockedByIssue, BlockedByResolution, BlockedByStatus, Materialization, StoredBlockedBy,
-        TaskHeading, TaskRecord,
-        session::{
-            AgentLaunch, DispatchConfirmation, DryRunSession, PlanSession, PlanSessionIntent,
-            PlannedSession, PreparedSessionDispatch, PreparedTaskRevision, SessionPlan,
-            SessionWarning,
-        },
+use pwf_wire::task::{
+    BlockedByIssue, BlockedByResolution, BlockedByStatus, Materialization, StoredBlockedBy,
+    TaskHeading, TaskRecord,
+    session::{
+        AgentLaunch, DispatchConfirmation, DryRunSession, PlanSession, PlanSessionIntent,
+        PlannedSession, PreparedSessionDispatch, PreparedTaskRevision, SessionPlan, SessionWarning,
     },
 };
 use thiserror::Error;
@@ -23,7 +19,7 @@ use thiserror::Error;
 use super::{Agent, SessionEffort};
 use crate::{
     ports::{agent::AgentClient, project_directory::ProjectDirectoryClient, task_vault::TaskVault},
-    project::{list_projects, runtime_path},
+    project::{get_projects, runtime_path},
     task::{active_task, blocked_by},
 };
 
@@ -253,7 +249,11 @@ async fn blocker_warnings(
         }
         StoredBlockedBy::Valid(blocked_by) => blocked_by,
     };
-    let statuses = match list_projects::execute(ProjectStatusFilter::IncludingPaused, pool).await {
+    let project_ids = blocked_by
+        .iter()
+        .map(|id| id.project_id().clone())
+        .collect();
+    let statuses = match get_projects::execute(&project_ids, pool).await {
         Ok(projects) => blocked_by::statuses(blocked_by, store, None, &projects),
         Err(error) => blocked_by
             .iter()

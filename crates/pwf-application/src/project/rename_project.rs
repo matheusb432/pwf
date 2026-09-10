@@ -6,7 +6,7 @@ use pwf_models::project::{
 use pwf_wire::project::{GetProject, ProjectFields, ProjectStatusFilter, RenameProject};
 
 use super::{
-    Project, ProjectRow, TaskLocationError,
+    Project, TaskLocationError,
     get_project::{self, GetProjectError},
     runtime_path, source_record, task_location,
 };
@@ -165,28 +165,10 @@ async fn rename_registry(
     };
     replace_project_row(&mut transaction, &command, source_id).await?;
 
-    let row = sqlx::query_as!(
-        ProjectRow,
-        r#"
-        SELECT
-            projects.id AS "id!",
-            projects.title AS "title!",
-            project_sources.kind AS "source_kind?",
-            project_sources.value AS "source_value?",
-            projects.tasks_kind AS "tasks_kind!",
-            projects.tasks_path AS "tasks_path!",
-            projects.obsidian_vault AS "obsidian_vault?",
-            projects.created_at AS "created_at!",
-            (projects.paused_at IS NOT NULL) AS "is_paused!: bool"
-        FROM projects
-        LEFT JOIN project_sources ON project_sources.id = projects.project_source_id
-        WHERE projects.id = ?
-        "#,
-        destination_id,
-    )
-    .fetch_one(&mut *transaction)
-    .await
-    .map_err(|error| unexpected("reading renamed project", error))?;
+    let row = project_query!("WHERE projects.id = ?", destination_id)
+        .fetch_one(&mut *transaction)
+        .await
+        .map_err(|error| unexpected("reading renamed project", error))?;
     let project = super::project_from_row(row)
         .map_err(|error| unexpected("converting renamed project", error))?;
     transaction
@@ -286,28 +268,10 @@ async fn validate_identity(
     expected_current: &Project,
 ) -> Result<(), RenameProjectError> {
     let current_id = command.current_id.as_ref();
-    let current_row = sqlx::query_as!(
-        ProjectRow,
-        r#"
-        SELECT
-            projects.id AS "id!",
-            projects.title AS "title!",
-            project_sources.kind AS "source_kind?",
-            project_sources.value AS "source_value?",
-            projects.tasks_kind AS "tasks_kind!",
-            projects.tasks_path AS "tasks_path!",
-            projects.obsidian_vault AS "obsidian_vault?",
-            projects.created_at AS "created_at!",
-            (projects.paused_at IS NOT NULL) AS "is_paused!: bool"
-        FROM projects
-        LEFT JOIN project_sources ON project_sources.id = projects.project_source_id
-        WHERE projects.id = ?
-        "#,
-        current_id,
-    )
-    .fetch_optional(&mut **transaction)
-    .await
-    .map_err(|error| unexpected("reading source project", error))?;
+    let current_row = project_query!("WHERE projects.id = ?", current_id)
+        .fetch_optional(&mut **transaction)
+        .await
+        .map_err(|error| unexpected("reading source project", error))?;
     let Some(current_row) = current_row else {
         return Err(RenameProjectError::SourceProjectNotFound {
             id: command.current_id.clone(),

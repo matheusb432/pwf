@@ -24,13 +24,39 @@ pub(in crate::project) struct ProjectRowError {
     pub(in crate::project) source: anyhow::Error,
 }
 
+// SQLx checks the complete literal query after this macro expands.
+macro_rules! project_query {
+    ($suffix:literal $(, $argument:expr)* $(,)?) => {
+        ::sqlx::query_as!(
+            $crate::project::ProjectRow,
+            r#"
+            SELECT
+                projects.id AS "id!",
+                projects.title AS "title!",
+                project_sources.kind AS "source_kind?",
+                project_sources.value AS "source_value?",
+                projects.tasks_kind AS "tasks_kind!",
+                projects.tasks_path AS "tasks_path!",
+                projects.obsidian_vault AS "obsidian_vault?",
+                projects.created_at AS "created_at!",
+                (projects.paused_at IS NOT NULL) AS "is_paused!: bool"
+            FROM projects
+            LEFT JOIN project_sources ON project_sources.id = projects.project_source_id
+            "# + $suffix,
+            $($argument),*
+        )
+    };
+}
+
 pub mod add_project;
 pub mod add_vault_project;
 pub mod get_active_project;
 pub mod get_project;
+pub mod get_projects;
 pub mod list_projects;
 pub mod pause_project;
 pub mod rename_project;
+pub mod resolve_project;
 pub mod resume_project;
 pub mod runtime_path;
 mod source_record;

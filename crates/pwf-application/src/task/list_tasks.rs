@@ -27,7 +27,7 @@ use crate::{
         task_vault::TaskVault,
         user_settings::{UserSettingsLoadError, UserSettingsReader},
     },
-    project::{get_active_project, list_projects},
+    project::{get_active_project, get_projects, list_projects},
 };
 
 /// Retains invalid requested or persisted tag text for list diagnostics.
@@ -129,13 +129,6 @@ pub async fn execute(
     if let Some(cursor) = &cursor {
         validate_page_cursor(cursor, &binding)?;
     }
-    let relationship_projects = if query.detail.includes_relationship_statuses() {
-        list_projects::execute(ProjectStatusFilter::IncludingPaused, pool)
-            .await
-            .map_err(|error| ListTasksError::QueryProject(anyhow::Error::new(error)))?
-    } else {
-        Vec::new()
-    };
     let project_task_path = query
         .project
         .as_ref()
@@ -146,6 +139,23 @@ pub async fn execute(
         collect_page(&query, cursor.as_ref(), &binding, store, pool, snapshots).await?;
 
     if query.detail.includes_relationship_statuses() {
+        let project_ids = result
+            .page
+            .items
+            .iter()
+            .filter_map(|task| task.details.as_ref()?.blocked_by.as_ref())
+            .flat_map(|blockers| blockers.iter().map(TaskId::project_id))
+            .filter(|id| {
+                query
+                    .project
+                    .as_ref()
+                    .is_none_or(|project| &project.id != *id)
+            })
+            .cloned()
+            .collect();
+        let relationship_projects = get_projects::execute(&project_ids, pool)
+            .await
+            .map_err(|error| ListTasksError::QueryProject(anyhow::Error::new(error)))?;
         populate_relationship_statuses(
             &mut result.page.items,
             store,

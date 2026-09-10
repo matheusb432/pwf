@@ -50,6 +50,25 @@ pub fn get_project_request(request: pb::GetProjectRequest) -> Result<project::Ge
     })
 }
 
+impl TryFrom<pb::ResolveProjectRequest> for project::ResolveProject {
+    type Error = Status;
+
+    fn try_from(request: pb::ResolveProjectRequest) -> Result<Self, Self::Error> {
+        Ok(Self {
+            selector: parse("selector", &request.selector)?,
+            status: project_status_filter(request.status)?,
+        })
+    }
+}
+
+impl From<ProjectId> for pb::ResolveProjectResponse {
+    fn from(id: ProjectId) -> Self {
+        Self {
+            id: id.into_inner(),
+        }
+    }
+}
+
 pub fn list_projects_request(
     request: pb::ListProjectsRequest,
 ) -> Result<project::ProjectStatusFilter, Status> {

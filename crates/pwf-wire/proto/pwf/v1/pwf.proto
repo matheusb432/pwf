@@ -6,6 +6,7 @@ service ProjectService {
   rpc AddVaultProject(AddVaultProjectRequest) returns (AddVaultProjectResponse);
   rpc AddProject(AddProjectRequest) returns (AddProjectResponse);
   rpc GetProject(GetProjectRequest) returns (GetProjectResponse);
+  rpc ResolveProject(ResolveProjectRequest) returns (ResolveProjectResponse);
   rpc ListProjects(ListProjectsRequest) returns (ListProjectsResponse);
   rpc PauseProject(PauseProjectRequest) returns (PauseProjectResponse);
   rpc RenameProject(RenameProjectRequest) returns (RenameProjectResponse);
@@ -152,6 +153,14 @@ message GetProjectResponse {
   bool is_paused = 8;
   optional string obsidian_vault = 9;
 }
+
+// Resolves an exact case-insensitive title before trying the normalized project ID.
+message ResolveProjectRequest {
+  string selector = 1;
+  ProjectStatusFilter status = 2;
+}
+
+message ResolveProjectResponse { string id = 1; }
 
 message ListProjectsRequest { ProjectStatusFilter status = 1; }
 message ListProjectsResponse { repeated Project projects = 1; }

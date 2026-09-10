@@ -3,7 +3,7 @@ use std::error::Error;
 use pwf_models::project::ProjectId;
 use pwf_wire::project::GetProject;
 
-use super::{Project, ProjectRow};
+use super::Project;
 
 #[derive(Debug, thiserror::Error)]
 pub enum GetProjectError {
@@ -25,24 +25,8 @@ pub async fn execute(
 ) -> Result<Project, GetProjectError> {
     let id = query.id.as_ref();
     let includes_paused = query.status.includes_paused();
-    let row = sqlx::query_as!(
-        ProjectRow,
-        r#"
-        SELECT
-            projects.id AS "id!",
-            projects.title AS "title!",
-            project_sources.kind AS "source_kind?",
-            project_sources.value AS "source_value?",
-            projects.tasks_kind AS "tasks_kind!",
-            projects.tasks_path AS "tasks_path!",
-            projects.obsidian_vault AS "obsidian_vault?",
-            projects.created_at AS "created_at!",
-            (projects.paused_at IS NOT NULL) AS "is_paused!: bool"
-        FROM projects
-        LEFT JOIN project_sources ON project_sources.id = projects.project_source_id
-        WHERE projects.id = ?
-          AND (? OR projects.paused_at IS NULL)
-        "#,
+    let row = project_query!(
+        "WHERE projects.id = ? AND (? OR projects.paused_at IS NULL)",
         id,
         includes_paused,
     )

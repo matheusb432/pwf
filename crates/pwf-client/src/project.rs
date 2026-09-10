@@ -49,6 +49,17 @@ impl ProjectClient {
             .map_err(Into::into)
     }
 
+    pub async fn resolve_project(
+        &self,
+        request: pb::ResolveProjectRequest,
+    ) -> Result<pb::ResolveProjectResponse, ClientError> {
+        self.client()
+            .resolve_project(request)
+            .await
+            .map(tonic::Response::into_inner)
+            .map_err(Into::into)
+    }
+
     pub async fn list_projects(
         &self,
         request: pb::ListProjectsRequest,

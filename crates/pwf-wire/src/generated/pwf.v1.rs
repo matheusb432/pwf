@@ -173,6 +173,19 @@ pub struct GetProjectResponse {
     #[prost(string, optional, tag = "9")]
     pub obsidian_vault: ::core::option::Option<::prost::alloc::string::String>,
 }
+/// Resolves an exact case-insensitive title before trying the normalized project ID.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ResolveProjectRequest {
+    #[prost(string, tag = "1")]
+    pub selector: ::prost::alloc::string::String,
+    #[prost(enumeration = "ProjectStatusFilter", tag = "2")]
+    pub status: i32,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ResolveProjectResponse {
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ListProjectsRequest {
     #[prost(enumeration = "ProjectStatusFilter", tag = "1")]
@@ -2010,6 +2023,30 @@ pub mod project_service_client {
                 .insert(GrpcMethod::new("pwf.v1.ProjectService", "GetProject"));
             self.inner.unary(req, path, codec).await
         }
+        pub async fn resolve_project(
+            &mut self,
+            request: impl tonic::IntoRequest<super::ResolveProjectRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ResolveProjectResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/pwf.v1.ProjectService/ResolveProject",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("pwf.v1.ProjectService", "ResolveProject"));
+            self.inner.unary(req, path, codec).await
+        }
         pub async fn list_projects(
             &mut self,
             request: impl tonic::IntoRequest<super::ListProjectsRequest>,
@@ -2164,6 +2201,13 @@ pub mod project_service_server {
             request: tonic::Request<super::GetProjectRequest>,
         ) -> std::result::Result<
             tonic::Response<super::GetProjectResponse>,
+            tonic::Status,
+        >;
+        async fn resolve_project(
+            &self,
+            request: tonic::Request<super::ResolveProjectRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ResolveProjectResponse>,
             tonic::Status,
         >;
         async fn list_projects(
@@ -2399,6 +2443,52 @@ pub mod project_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = GetProjectSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/pwf.v1.ProjectService/ResolveProject" => {
+                    #[allow(non_camel_case_types)]
+                    struct ResolveProjectSvc<T: ProjectService>(pub Arc<T>);
+                    impl<
+                        T: ProjectService,
+                    > tonic::server::UnaryService<super::ResolveProjectRequest>
+                    for ResolveProjectSvc<T> {
+                        type Response = super::ResolveProjectResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ResolveProjectRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ProjectService>::resolve_project(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = ResolveProjectSvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

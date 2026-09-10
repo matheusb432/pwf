@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT id AS \"id!\" FROM (\n            SELECT id, 0 AS precedence FROM projects\n            WHERE title = ? AND (? OR paused_at IS NULL)\n            UNION ALL\n            SELECT id, 1 AS precedence FROM projects\n            WHERE id = ? AND (? OR paused_at IS NULL)\n        )\n        ORDER BY precedence\n        LIMIT 1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "projects",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "8e2e04a6b9558bde198bb3c00f710cdd33f886ea07a1461242cd503b8be1e17e"
+}

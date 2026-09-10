@@ -166,6 +166,7 @@ async fn planning_uses_one_compound_identity_and_keeps_task_prompt_order(
 async fn direct_blocker_warnings_include_unresolved_missing_and_malformed_data(
     pool: sqlx::SqlitePool,
 ) {
+    crate::support::insert_unrelated_invalid_project(&pool).await;
     insert_project(&pool, "FOO", "foo", "/work/foo", "/tasks/foo", false).await;
     let clients = SessionPlanningClients::new(AgentStub, ExistingProjectDirectory);
     insert_project(

@@ -447,7 +447,7 @@ fn get_task_dag_status(error: &GetTaskDagError) -> Status {
         GetTaskDagError::NodeLimit { .. } | GetTaskDagError::EdgeLimit { .. } => {
             Status::resource_exhausted(message)
         }
-        GetTaskDagError::ListProjects(_)
+        GetTaskDagError::QueryProject(_)
         | GetTaskDagError::ReadRoot { .. }
         | GetTaskDagError::ListProjectTasks { .. }
         | GetTaskDagError::InvalidGraph(_) => Status::internal(message),

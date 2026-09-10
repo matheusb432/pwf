@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "\n        SELECT\n            projects.id AS \"id!\",\n            projects.title AS \"title!\",\n            project_sources.kind AS \"source_kind?\",\n            project_sources.value AS \"source_value?\",\n            projects.tasks_kind AS \"tasks_kind!\",\n            projects.tasks_path AS \"tasks_path!\",\n            projects.obsidian_vault AS \"obsidian_vault?\",\n            projects.created_at AS \"created_at!\",\n            (projects.paused_at IS NOT NULL) AS \"is_paused!: bool\"\n        FROM projects\n        LEFT JOIN project_sources ON project_sources.id = projects.project_source_id\n        WHERE projects.id = ?\n        ",
+  "query": "\n            SELECT\n                projects.id AS \"id!\",\n                projects.title AS \"title!\",\n                project_sources.kind AS \"source_kind?\",\n                project_sources.value AS \"source_value?\",\n                projects.tasks_kind AS \"tasks_kind!\",\n                projects.tasks_path AS \"tasks_path!\",\n                projects.obsidian_vault AS \"obsidian_vault?\",\n                projects.created_at AS \"created_at!\",\n                (projects.paused_at IS NOT NULL) AS \"is_paused!: bool\"\n            FROM projects\n            LEFT JOIN project_sources ON project_sources.id = projects.project_source_id\n            WHERE (? OR projects.paused_at IS NULL) ORDER BY projects.title ASC",
   "describe": {
     "columns": [
       {
@@ -113,5 +113,5 @@
       false
     ]
   },
-  "hash": "ee27e95ec026d9610ee0a8ba87bb99216ea306cb65265667dff1fd44b30dfe35"
+  "hash": "26b6d440845cd787452e409a3b9c7c183209f246fe09722686e6a8027c8ea92a"
 }

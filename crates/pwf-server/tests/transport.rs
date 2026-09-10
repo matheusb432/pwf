@@ -2269,3 +2269,71 @@ async fn clone_reports_invalid_input_and_missing_sources() -> anyhow::Result<()>
     }
     server.finish().await
 }
+
+#[tokio::test]
+async fn project_resolution_returns_one_id_and_classifies_invalid_and_missing_selectors()
+-> anyhow::Result<()> {
+    let server = TestServer::start(TEST_TIMEOUT).await?;
+    server.add_project_and_task().await?;
+    let mut client = pb::project_service_client::ProjectServiceClient::with_interceptor(
+        server.channel().await?,
+        server::ReleaseRequest,
+    );
+    for selector in ["foo", "FOO", " Foo ", "FOO-BAR"] {
+        let response = client
+            .resolve_project(pb::ResolveProjectRequest {
+                selector: selector.into(),
+                status: ProjectStatusFilter::ActiveOnly as i32,
+            })
+            .await?;
+        assert_eq!(response.into_inner().id, "FOO");
+    }
+    for (selector, status, expected) in [
+        (
+            " ",
+            ProjectStatusFilter::ActiveOnly as i32,
+            Code::InvalidArgument,
+        ),
+        (
+            "foo",
+            ProjectStatusFilter::Unspecified as i32,
+            Code::InvalidArgument,
+        ),
+        ("foo", 999, Code::InvalidArgument),
+        (
+            "missing",
+            ProjectStatusFilter::ActiveOnly as i32,
+            Code::NotFound,
+        ),
+    ] {
+        let error = client
+            .resolve_project(pb::ResolveProjectRequest {
+                selector: selector.into(),
+                status,
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(error.code(), expected);
+    }
+    server
+        .client
+        .project()
+        .pause_project(pb::PauseProjectRequest { id: "FOO".into() })
+        .await?;
+    let error = client
+        .resolve_project(pb::ResolveProjectRequest {
+            selector: "foo".into(),
+            status: ProjectStatusFilter::ActiveOnly as i32,
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(error.code(), Code::NotFound);
+    let response = client
+        .resolve_project(pb::ResolveProjectRequest {
+            selector: "foo".into(),
+            status: ProjectStatusFilter::IncludingPaused as i32,
+        })
+        .await?;
+    assert_eq!(response.into_inner().id, "FOO");
+    server.finish().await
+}

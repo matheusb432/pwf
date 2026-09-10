@@ -19,6 +19,13 @@ impl GetProject {
     }
 }
 
+/// Resolves a case-insensitive title before a project ID among eligible projects.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolveProject {
+    pub selector: pwf_models::project::ProjectSelector,
+    pub status: ProjectStatusFilter,
+}
+
 /// Requests replacement of one managed project's identity and locations.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenameProject {

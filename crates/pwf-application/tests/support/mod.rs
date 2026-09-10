@@ -27,7 +27,7 @@ use pwf_wire::task::{Materialization, RawTaskTags, StoredBlockedBy, TaskRecord};
 mod database;
 mod fixtures;
 
-pub(crate) use database::{MIGRATOR, insert_project};
+pub(crate) use database::{MIGRATOR, insert_project, insert_unrelated_invalid_project};
 pub(crate) use fixtures::{blocked_by, stored_blocked_by, task_record, task_timestamp};
 
 pub(crate) fn project_note(number: u32, title: impl AsRef<str>) -> ProjectNote {

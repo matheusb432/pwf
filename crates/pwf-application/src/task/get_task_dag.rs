@@ -5,13 +5,19 @@ use pwf_models::{
     task::TaskId,
 };
 use pwf_wire::{
-    project::ProjectStatusFilter,
+    project::{GetProject, ProjectStatusFilter},
     task::{
         GetTaskDag, Materialization, TaskDag, TaskDagEdge, TaskDagError, TaskDagNode, TaskRecord,
     },
 };
 
-use crate::{ports::task_vault::TaskVault, project::list_projects};
+use crate::{
+    ports::task_vault::TaskVault,
+    project::{
+        get_project::{self, GetProjectError},
+        list_projects,
+    },
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum GetTaskDagError {
@@ -22,8 +28,8 @@ pub enum GetTaskDagError {
     },
     #[error("task {id} was not found")]
     TaskNotFound { id: TaskId },
-    #[error("listing managed projects: {0}")]
-    ListProjects(#[source] anyhow::Error),
+    #[error("reading managed projects: {0}")]
+    QueryProject(#[source] anyhow::Error),
     #[error("reading root task {id}: {source}")]
     ReadRoot {
         id: TaskId,
@@ -53,17 +59,22 @@ pub async fn execute(
     store: &impl TaskVault,
     pool: &sqlx::SqlitePool,
 ) -> Result<TaskDag, GetTaskDagError> {
-    let projects = list_projects::execute(ProjectStatusFilter::IncludingPaused, pool)
-        .await
-        .map_err(|error| GetTaskDagError::ListProjects(anyhow::Error::new(error)))?;
-    let root_project = find_project(&projects, query.id.project_id()).ok_or_else(|| {
-        GetTaskDagError::UnknownProjectId {
+    let root_project = get_project::execute(
+        GetProject::new(query.id.project_id(), ProjectStatusFilter::IncludingPaused),
+        pool,
+    )
+    .await
+    .map_err(|error| match error {
+        GetProjectError::ProjectNotFound { .. } => GetTaskDagError::UnknownProjectId {
             task_id: query.id.clone(),
             project_id: query.id.project_id().clone(),
+        },
+        error @ GetProjectError::Unexpected { .. } => {
+            GetTaskDagError::QueryProject(anyhow::Error::new(error))
         }
     })?;
     let root = store
-        .get_task_record(root_project, &query.id)
+        .get_task_record(&root_project, &query.id)
         .map_err(|source| GetTaskDagError::ReadRoot {
             id: query.id.clone(),
             source: anyhow::Error::new(source),
@@ -73,14 +84,14 @@ pub async fn execute(
             id: query.id.clone(),
         })?;
 
-    let mut resolver = Resolver::new(store, &projects, root.clone());
+    let mut resolver = Resolver::new(store, pool, root_project, root.clone());
     let dependents = if query.mode.includes_blocks() {
-        Some(resolver.gather_dependents()?)
+        Some(resolver.gather_dependents().await?)
     } else {
         None
     };
     let traversal = Traversal::new(query, resolver, dependents, root);
-    traversal.run()
+    traversal.run().await
 }
 
 #[derive(Debug, Clone)]
@@ -92,25 +103,49 @@ enum ResolvedTask {
 
 struct Resolver<'a, Store> {
     store: &'a Store,
-    projects: &'a [Project],
+    pool: &'a sqlx::SqlitePool,
+    projects: BTreeMap<ProjectId, Option<Project>>,
     tasks: BTreeMap<TaskId, ResolvedTask>,
 }
 
 impl<'a, Store: TaskVault> Resolver<'a, Store> {
-    fn new(store: &'a Store, projects: &'a [Project], root: TaskRecord) -> Self {
+    fn new(
+        store: &'a Store,
+        pool: &'a sqlx::SqlitePool,
+        project: Project,
+        root: TaskRecord,
+    ) -> Self {
         Self {
             store,
-            projects,
+            pool,
+            projects: BTreeMap::from([(project.id.clone(), Some(project))]),
             tasks: BTreeMap::from([(root.id.clone(), ResolvedTask::Found(Box::new(root)))]),
         }
     }
 
-    fn resolve(&mut self, id: &TaskId) -> ResolvedTask {
+    async fn resolve(&mut self, id: &TaskId) -> Result<ResolvedTask, GetTaskDagError> {
         if let Some(task) = self.tasks.get(id) {
-            return task.clone();
+            return Ok(task.clone());
         }
-        let resolved =
-            find_project(self.projects, id.project_id()).map_or(ResolvedTask::Missing, |project| {
+        let project_id = id.project_id();
+        if !self.projects.contains_key(project_id) {
+            let project = match get_project::execute(
+                GetProject::new(project_id, ProjectStatusFilter::IncludingPaused),
+                self.pool,
+            )
+            .await
+            {
+                Ok(project) => Some(project),
+                Err(GetProjectError::ProjectNotFound { .. }) => None,
+                Err(error) => return Err(GetTaskDagError::QueryProject(anyhow::Error::new(error))),
+            };
+            self.projects.insert(project_id.clone(), project);
+        }
+        let resolved = self
+            .projects
+            .get(project_id)
+            .and_then(Option::as_ref)
+            .map_or(ResolvedTask::Missing, |project| {
                 match self.store.get_task_record(project, id) {
                     Ok(Some(record))
                         if matches!(record.materialization, Materialization::NoteFile) =>
@@ -122,22 +157,27 @@ impl<'a, Store: TaskVault> Resolver<'a, Store> {
                 }
             });
         self.tasks.insert(id.clone(), resolved.clone());
-        resolved
+        Ok(resolved)
     }
 
-    fn gather_dependents(&mut self) -> Result<BTreeMap<TaskId, Vec<TaskId>>, GetTaskDagError> {
-        for project in self.projects {
-            let records = self.store.list_tasks(project).map_err(|source| {
+    async fn gather_dependents(
+        &mut self,
+    ) -> Result<BTreeMap<TaskId, Vec<TaskId>>, GetTaskDagError> {
+        let projects = list_projects::execute(ProjectStatusFilter::IncludingPaused, self.pool)
+            .await
+            .map_err(|error| GetTaskDagError::QueryProject(anyhow::Error::new(error)))?;
+        for project in projects {
+            let records = self.store.list_tasks(&project).map_err(|source| {
                 GetTaskDagError::ListProjectTasks {
                     project: project.id.clone(),
                     source: anyhow::Error::new(source),
                 }
             })?;
+            self.projects.insert(project.id.clone(), Some(project));
             for record in records {
                 self.cache_scanned_record(record);
             }
         }
-
         let mut dependents = BTreeMap::<TaskId, Vec<TaskId>>::new();
         for task in self.tasks.values() {
             let ResolvedTask::Found(record) = task else {
@@ -198,23 +238,24 @@ impl<'a, Store: TaskVault> Traversal<'a, Store> {
         }
     }
 
-    fn run(mut self) -> Result<TaskDag, GetTaskDagError> {
+    async fn run(mut self) -> Result<TaskDag, GetTaskDagError> {
         if self.query.mode.includes_blocked_by() {
-            self.traverse(Direction::BlockedBy)?;
+            self.traverse(Direction::BlockedBy).await?;
         }
         if self.query.mode.includes_blocks() {
-            self.traverse(Direction::Blocks)?;
+            self.traverse(Direction::Blocks).await?;
         }
         self.graph.finish().map_err(Into::into)
     }
 
-    fn traverse(&mut self, direction: Direction) -> Result<(), GetTaskDagError> {
+    async fn traverse(&mut self, direction: Direction) -> Result<(), GetTaskDagError> {
         let mut states = BTreeMap::new();
         let mut path = Vec::new();
         self.visit(self.query.id.clone(), 0, direction, &mut states, &mut path)
+            .await
     }
 
-    fn visit(
+    async fn visit(
         &mut self,
         id: TaskId,
         depth: u32,
@@ -231,18 +272,13 @@ impl<'a, Store: TaskVault> Traversal<'a, Store> {
         path.push(id.clone());
 
         let current_node_index = self.graph.task_node_index(&id);
-        let adjacent = self.adjacent(&id, direction);
+        let adjacent = self.adjacent(&id, direction).await?;
         if self.query.depth.is_some_and(|limit| depth >= limit.get()) {
-            self.mark_depth_limit(&adjacent, direction, current_node_index)?;
+            self.mark_depth_limit(&adjacent, direction, current_node_index)
+                .await?;
         } else {
-            self.visit_adjacent_nodes(
-                adjacent,
-                depth,
-                direction,
-                current_node_index,
-                states,
-                path,
-            )?;
+            self.visit_adjacent_nodes(adjacent, depth, direction, current_node_index, states, path)
+                .await?;
         }
 
         path.pop();
@@ -250,13 +286,13 @@ impl<'a, Store: TaskVault> Traversal<'a, Store> {
         Ok(())
     }
 
-    fn mark_depth_limit(
+    async fn mark_depth_limit(
         &mut self,
         adjacent: &[TaskId],
         direction: Direction,
         current_node_index: usize,
     ) -> Result<(), GetTaskDagError> {
-        if !self.has_visible(adjacent) {
+        if !self.has_visible(adjacent).await? {
             return Ok(());
         }
         let marker_node_index = self.graph.add_depth_limit()?;
@@ -264,7 +300,7 @@ impl<'a, Store: TaskVault> Traversal<'a, Store> {
             .add_directional_edge(direction, current_node_index, marker_node_index)
     }
 
-    fn visit_adjacent_nodes(
+    async fn visit_adjacent_nodes(
         &mut self,
         adjacent: Vec<TaskId>,
         depth: u32,
@@ -281,12 +317,13 @@ impl<'a, Store: TaskVault> Traversal<'a, Store> {
                 current_node_index,
                 states,
                 path,
-            )?;
+            )
+            .await?;
         }
         Ok(())
     }
 
-    fn visit_adjacent_node(
+    async fn visit_adjacent_node(
         &mut self,
         adjacent_id: TaskId,
         depth: u32,
@@ -295,7 +332,7 @@ impl<'a, Store: TaskVault> Traversal<'a, Store> {
         states: &mut BTreeMap<TaskId, VisitState>,
         path: &mut Vec<TaskId>,
     ) -> Result<(), GetTaskDagError> {
-        let resolved = self.resolver.resolve(&adjacent_id);
+        let resolved = self.resolver.resolve(&adjacent_id).await?;
         let traversable = matches!(resolved, ResolvedTask::Found(_));
         let Some(adjacent_node_index) = self.add_visible_node(&adjacent_id, resolved)? else {
             return Ok(());
@@ -303,14 +340,18 @@ impl<'a, Store: TaskVault> Traversal<'a, Store> {
         self.graph
             .add_directional_edge(direction, current_node_index, adjacent_node_index)?;
         if traversable {
-            self.visit(adjacent_id, depth + 1, direction, states, path)?;
+            Box::pin(self.visit(adjacent_id, depth + 1, direction, states, path)).await?;
         }
         Ok(())
     }
 
-    fn adjacent(&mut self, id: &TaskId, direction: Direction) -> Vec<TaskId> {
-        match direction {
-            Direction::BlockedBy => match self.resolver.resolve(id) {
+    async fn adjacent(
+        &mut self,
+        id: &TaskId,
+        direction: Direction,
+    ) -> Result<Vec<TaskId>, GetTaskDagError> {
+        Ok(match direction {
+            Direction::BlockedBy => match self.resolver.resolve(id).await? {
                 ResolvedTask::Found(record) => record
                     .blocked_by
                     .valid()
@@ -324,14 +365,20 @@ impl<'a, Store: TaskVault> Traversal<'a, Store> {
                 .and_then(|dependents| dependents.get(id))
                 .cloned()
                 .unwrap_or_default(),
-        }
+        })
     }
 
-    fn has_visible(&mut self, adjacent: &[TaskId]) -> bool {
-        adjacent.iter().any(|id| match self.resolver.resolve(id) {
-            ResolvedTask::Found(record) => self.query.status.includes(record.status),
-            ResolvedTask::Missing | ResolvedTask::Unavailable => true,
-        })
+    async fn has_visible(&mut self, adjacent: &[TaskId]) -> Result<bool, GetTaskDagError> {
+        for id in adjacent {
+            let visible = match self.resolver.resolve(id).await? {
+                ResolvedTask::Found(record) => self.query.status.includes(record.status),
+                ResolvedTask::Missing | ResolvedTask::Unavailable => true,
+            };
+            if visible {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     fn add_visible_node(
@@ -455,13 +502,6 @@ fn task_node(record: TaskRecord) -> TaskDagNode {
         title: record.title,
         status: record.status,
     }
-}
-
-fn find_project<'project>(
-    projects: &'project [Project],
-    project_id: &ProjectId,
-) -> Option<&'project Project> {
-    projects.iter().find(|project| &project.id == project_id)
 }
 
 fn cycle_error(path: &[TaskId], repeated: &TaskId) -> GetTaskDagError {

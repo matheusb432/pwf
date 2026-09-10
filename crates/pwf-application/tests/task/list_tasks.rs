@@ -99,6 +99,7 @@ fn blocked_by_registry() -> Vec<Project> {
 
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]
 async fn selected_long_list_resolves_blockers_from_paused_projects(pool: sqlx::SqlitePool) {
+    crate::support::insert_unrelated_invalid_project(&pool).await;
     insert_project(&pool, "FOO", "foo", "/work/foo", "/tasks/foo", false).await;
     insert_project(
         &pool,
@@ -1107,4 +1108,50 @@ async fn statuses_expose_store_read_failures_as_unavailable() {
     assert!(matches!(statuses.as_slice(), [BlockedByStatus {
         id, resolution: BlockedByResolution::Unavailable { reason }, ..
     }] if id.as_ref() == "FOO-0001" && reason == "injected in-memory store failure: task-read"));
+}
+
+#[sqlx::test(migrator = "crate::support::MIGRATOR")]
+async fn detailed_page_reads_only_its_referenced_projects(pool: sqlx::SqlitePool) {
+    insert_project(&pool, "FOO", "foo", "/work/foo", "/tasks/foo", false).await;
+    crate::support::insert_unrelated_invalid_project(&pool).await;
+    let store = InMemoryStore::default().with_project(
+        "foo",
+        vec![
+            record("FOO-0001"),
+            TaskRecord {
+                blocked_by: stored_blocked_by(&["BAD-0001"]),
+                ..record("FOO-0002")
+            },
+        ],
+    );
+    let mut query = ListTasks {
+        project_id: Some("FOO".parse().unwrap()),
+        detail: ListDetail::Detailed,
+        order: Some("id:asc".parse().unwrap()),
+        page_size: Some(pwf_wire::task::TaskPageSize::try_new(1).unwrap()),
+        ..default_query()
+    };
+    let snapshots = list_tasks::ListTasksSnapshots::default();
+    let first = list_tasks::execute(
+        &query,
+        &store,
+        &pool,
+        &store,
+        &snapshots,
+        &FixedSettings::default(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(listed_ids(&first), ["FOO-0001"]);
+    query.page_token = Some(first.next_page_token.unwrap());
+    let second = list_tasks::execute(
+        &query,
+        &store,
+        &pool,
+        &store,
+        &snapshots,
+        &FixedSettings::default(),
+    )
+    .await;
+    assert!(matches!(second, Err(ListTasksError::QueryProject(_))));
 }

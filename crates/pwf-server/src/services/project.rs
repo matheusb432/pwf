@@ -6,6 +6,7 @@ use pwf_application::project::{
     list_projects::{self, ListProjectsError},
     pause_project::{self, PauseProjectError},
     rename_project::{self, RenameProjectError},
+    resolve_project::{self, ResolveProjectError},
     resume_project::{self, ResumeProjectError},
     update_project::{self, UpdateProjectError},
 };
@@ -77,6 +78,25 @@ impl ProjectService for ProjectGrpcService {
             .map(proto::project::get_project_response)
             .map(Response::new)
             .map_err(|error| get_project_status(&error))
+    }
+
+    async fn resolve_project(
+        &self,
+        request: Request<pb::ResolveProjectRequest>,
+    ) -> Result<Response<pb::ResolveProjectResponse>, Status> {
+        let query = request.into_inner().try_into()?;
+        resolve_project::execute(query, &self.state.pool)
+            .await
+            .map(Into::into)
+            .map(Response::new)
+            .map_err(|error| match error {
+                ResolveProjectError::ProjectNotFound { .. } => Status::not_found(error.to_string()),
+                ResolveProjectError::InvalidProjectId(_) => Status::data_loss(error.to_string()),
+                ResolveProjectError::Database(_) => {
+                    tracing::error!(error = ?error, "project resolution failed");
+                    Status::internal("resolving managed project failed")
+                }
+            })
     }
 
     async fn list_projects(

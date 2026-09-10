@@ -4,8 +4,10 @@ mod support;
 mod project {
     mod add_project;
     mod get_project;
+    mod get_projects;
     mod list_projects;
     mod rename_project;
+    mod resolve_project;
     mod resume_project;
     mod update_project;
 }
