@@ -1,32 +1,25 @@
-# obsidian
+# Obsidian
 
-register a project with `pwf project add-vault`:
-
-```bash
-pwf project add-vault ~/notes --id app --tasks-path projects/my-app --source-path ~/code/my-app
-```
+Register the vault through [`pwf project add-vault`](projects.md).
 
 > [!IMPORTANT]
-> the vault root must contain a `.obsidian` folder.
-`--tasks-path` selects a relative folder inside the vault. `projects/my-app` gives the project the title `my-app`.
+> The vault root must contain a `.obsidian` folder.
 
-from the vault root, the path can be omitted:
+PWF stores task and study-note Markdown in the configured task directory. You can edit these files with Obsidian or any text editor.
 
-```bash
-pwf project add-vault --id app --tasks-path projects/my-app
-```
-
-`--source-path` is optional. without it, tasks and notes work, but `pwf session` fails until a source directory is set:
-
-```bash
-pwf project edit app --source ~/code/my-app
-```
-
-use `pwf project edit app --clear-source` to remove the source directory.
-
-## task removal
+## Task removal
 
 > [!CAUTION]
-> projects registered with `add-vault` store the vault root path in `projects.obsidian_vault`.
-> removing a task moves its note to that vault's `.trash` folder. the folder must already exist; if it is missing, removal fails before changing the task.
-> when a filename is taken, the next available numbered name is used, such as `APP-0001 (1).md`.
+> Removing a task from a vault project moves its note to the vault's `.trash` folder. The folder must already exist. When a filename is taken, PWF uses the next numbered name, such as `APP-0001 (1).md`.
+
+## Generated index
+
+Enable an index when you want one page with links to every task and study note:
+
+```bash
+pwf project edit app --snapshot-enabled true
+```
+
+The server writes `pwf-index.md` on startup and refreshes it about once a minute. Manual edits to this file are replaced on a later refresh. Disabling snapshots leaves the last generated file in place.
+
+The authored `<project title>.md` page remains available for your own content. Task and note commands leave it unchanged.

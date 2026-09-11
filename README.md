@@ -1,4 +1,4 @@
-# pwf
+# pwf-app
 
 [![crates.io version](https://img.shields.io/crates/v/pwf-app.svg)](https://crates.io/crates/pwf-app)
 
@@ -16,19 +16,13 @@ Register a project with an obsidian vault:
 pwf project add-vault ~/my-vault --id app --tasks-path tasks --source-path ~/code/my-app
 ```
 
-### Without Obsidian
-
-An obsidian vault is optional, you can use:
-
-```bash
-pwf project add <json>
-```
-
-Though I recommend using obsidian to get the most of the files' format and the wikilinks that link tasks with the `blocked_by` feature.
-
 ## References
 
-- [installation and updates](https://github.com/matheusb432/pwf/blob/main/wiki/installation-and-update.md)
-- [usage](https://github.com/matheusb432/pwf/blob/main/wiki/usage.md)
-- [obsidian integration](https://github.com/matheusb432/pwf/blob/main/wiki/obsidian.md)
-- [design](https://github.com/matheusb432/pwf/blob/main/wiki/design.md)
+- [Installation and updates](https://github.com/matheusb432/pwf/blob/main/wiki/installation-and-update.md)
+- [Projects](https://github.com/matheusb432/pwf/blob/main/wiki/projects.md)
+- [Tasks](https://github.com/matheusb432/pwf/blob/main/wiki/tasks.md)
+- [Notes](https://github.com/matheusb432/pwf/blob/main/wiki/notes.md)
+- [Sessions](https://github.com/matheusb432/pwf/blob/main/wiki/session.md)
+- [Obsidian integration](https://github.com/matheusb432/pwf/blob/main/wiki/obsidian.md)
+- [Troubleshooting](https://github.com/matheusb432/pwf/blob/main/wiki/troubleshooting.md)
+- [Design](https://github.com/matheusb432/pwf/blob/main/wiki/design.md)
