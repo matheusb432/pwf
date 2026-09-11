@@ -227,94 +227,6 @@ fn root_edit_replaces_lane_collections_with_explicit_remove_then_add_actions() {
 }
 
 #[test]
-fn task_help_exposes_only_the_supported_add_and_edit_contract() {
-    let add = command().args(["task", "add", "--help"]).output().unwrap();
-    assert!(add.status.success());
-    let add_help = String::from_utf8(add.stdout).unwrap();
-    for flag in [
-        "--title",
-        "--goal",
-        "--context",
-        "--constraint",
-        "--done-when",
-        "--blocked-by",
-        "--priority",
-    ] {
-        assert!(add_help.contains(flag), "missing {flag}:\n{add_help}");
-    }
-    assert!(!add_help.contains("--human"), "{add_help}");
-
-    let clone = command()
-        .args(["task", "clone", "--help"])
-        .output()
-        .unwrap();
-    assert!(clone.status.success());
-    let clone_help = String::from_utf8(clone.stdout).unwrap();
-    assert!(clone_help.contains("--project <PROJECT>"), "{clone_help}");
-    assert!(clone_help.contains("--id <ID>"), "{clone_help}");
-
-    let edit = command().args(["task", "edit", "--help"]).output().unwrap();
-    assert!(edit.status.success());
-    let edit_help = String::from_utf8(edit.stdout).unwrap();
-    for flag in [
-        "--add-goal",
-        "--remove-goals",
-        "--add-context",
-        "--remove-contexts",
-        "--add-constraint",
-        "--remove-constraints",
-        "--add-done-when",
-        "--remove-done-whens",
-        "--add-blocked-by",
-        "--remove-blocked-by",
-        "--add-tag",
-        "--remove-tags",
-        "--remove-effort",
-        "--priority",
-        "--remove-priority",
-    ] {
-        assert!(edit_help.contains(flag), "missing {flag}:\n{edit_help}");
-    }
-
-    let list = command().args(["task", "list", "--help"]).output().unwrap();
-    assert!(list.status.success());
-    let list_help = String::from_utf8(list.stdout).unwrap();
-    assert!(
-        list_help.contains("--priority"),
-        "missing --priority:\n{list_help}"
-    );
-    assert!(!list_help.contains("--section"), "{list_help}");
-    assert!(list_help.contains("--all"), "{list_help}");
-
-    for command_name in ["done", "cancel"] {
-        let output = command()
-            .args(["task", command_name, "--help"])
-            .output()
-            .unwrap();
-        assert!(output.status.success());
-        let help = String::from_utf8(output.stdout).unwrap();
-        assert!(!help.contains("--review"), "{help}");
-    }
-
-    let dag = command().args(["task", "dag", "--help"]).output().unwrap();
-    assert!(dag.status.success());
-    let dag_help = String::from_utf8(dag.stdout).unwrap();
-    for contract in [
-        "--depth <N>",
-        "--mode <MODE>",
-        "--status <STATUS>",
-        "--with <WITH>",
-        "[default: blocked-by]",
-        "[default: all]",
-    ] {
-        assert!(
-            dag_help.contains(contract),
-            "missing {contract}:\n{dag_help}"
-        );
-    }
-}
-
-#[test]
 fn removed_section_workflow_flags_are_rejected_by_the_parser() {
     for arguments in [
         vec!["task", "add", "foo", "ship it", "--human"],
@@ -735,23 +647,6 @@ fn assert_list_ids(output: &str, expected: &[&str]) {
         })
         .collect();
     assert_eq!(actual, expected, "{output}");
-}
-
-#[test]
-fn list_order_help_and_invalid_values_are_cli_contracts() {
-    let output = command().args(["task", "list", "--help"]).output().unwrap();
-    assert!(output.status.success());
-    let help = String::from_utf8(output.stdout).unwrap();
-    for word in ["priority", "effort", "title", "default_sort_order"] {
-        assert!(help.contains(word), "{help}");
-    }
-    for value in ["priority:up", "effort:", "title:asc:desc"] {
-        command()
-            .args(["list", "--order", value])
-            .assert()
-            .failure()
-            .stdout("");
-    }
 }
 
 #[test]

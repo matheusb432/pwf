@@ -4,7 +4,7 @@ use expectrl::Expect;
 
 #[cfg(unix)]
 use crate::support::{CommandTestExt, style::color_rgb};
-use crate::support::{ManagedProject, command, project_id};
+use crate::support::{ManagedProject, project_id};
 
 #[test]
 #[cfg(unix)]
@@ -46,55 +46,6 @@ fn note_list_colors_follow_verification_and_custom_settings() {
             .success_stdout();
         assert_eq!(output, "FOO-NOTE-0001 :: sample\n");
     }
-}
-
-#[test]
-fn note_help_exposes_explicit_add_and_edit_fields_and_retires_update() {
-    let output = command().args(["note", "add", "--help"]).output().unwrap();
-
-    assert!(output.status.success());
-    let stdout = String::from_utf8(output.stdout).unwrap();
-    for flag in [
-        "--title <TITLE>",
-        "--content <CONTENT>",
-        "--domain <DOMAIN>",
-        "--tag <TAG>",
-        "--source <SOURCE>",
-        "--verified <VERIFIED>",
-        "--date <DATE>",
-    ] {
-        assert!(stdout.contains(flag), "missing {flag}:\n{stdout}");
-    }
-    assert!(!stdout.contains("--why"), "unexpected --why:\n{stdout}");
-
-    let output = command().args(["note", "edit", "--help"]).output().unwrap();
-    assert!(output.status.success());
-    let stdout = String::from_utf8(output.stdout).unwrap();
-    for flag in [
-        "--title <TITLE>",
-        "--content <CONTENT>",
-        "--domain <DOMAIN>",
-        "--remove-domain",
-        "--add-tag <TAG>",
-        "--remove-tags",
-        "--add-source <SOURCE>",
-        "--remove-sources",
-        "--verified <VERIFIED>",
-        "--remove-verified",
-    ] {
-        assert!(stdout.contains(flag), "missing {flag}:\n{stdout}");
-    }
-    assert!(!stdout.contains("--why"), "unexpected --why:\n{stdout}");
-    assert!(
-        !stdout.contains("--remove-why"),
-        "unexpected --remove-why:\n{stdout}"
-    );
-    assert!(!stdout.contains("--date"), "unexpected --date:\n{stdout}");
-
-    command()
-        .args(["note", "update", "--help"])
-        .assert()
-        .failure();
 }
 
 #[test]

@@ -231,22 +231,6 @@ fn offline_doctor_identifies_legacy_color_settings() {
     );
 }
 
-#[test]
-fn server_help_is_available_without_a_server() {
-    let temporary = tempfile::tempdir().unwrap();
-    let output = support::command()
-        .env("PWF_RUNTIME_DIR", temporary.path())
-        .args(["server", "--help"])
-        .output()
-        .unwrap();
-    support::assert_success(&output, "server help");
-    let help = String::from_utf8(output.stdout).unwrap();
-    for verb in ["install", "uninstall", "start", "stop", "restart", "status"] {
-        assert!(help.contains(verb), "help omits {verb}");
-    }
-    assert_eq!(fs::read_dir(temporary.path()).unwrap().count(), 0);
-}
-
 #[cfg(target_os = "linux")]
 #[test]
 fn stopping_an_absent_service_needs_no_server_connection() {

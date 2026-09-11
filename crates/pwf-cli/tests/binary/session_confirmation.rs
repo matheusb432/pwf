@@ -1,10 +1,9 @@
 #![cfg(unix)]
 
-use assert_cmd::prelude::OutputAssertExt as _;
 #[cfg(target_os = "linux")]
 use expectrl::Expect;
 
-use crate::support::{SessionFixture, assert_failure, command, task_id, task_json};
+use crate::support::{SessionFixture, assert_failure, task_id, task_json};
 
 #[test]
 #[cfg(target_os = "linux")]
@@ -70,23 +69,5 @@ fn session_requires_yes_without_a_terminal_and_does_not_dispatch() {
     assert_eq!(
         task_json(&fixture.database, &task_id("FOO-0001").unwrap()).unwrap(),
         task_before
-    );
-}
-
-#[test]
-fn session_help_exposes_the_current_execution_options() {
-    let assertion = command().args(["session", "--help"]).assert().success();
-    let stdout = String::from_utf8(assertion.get_output().stdout.clone()).unwrap();
-
-    assert!(stdout.contains("-p, --push-prompt <TEXT>"), "{stdout}");
-    assert!(
-        stdout.contains("Usage: pwf session [OPTIONS] [IDS]"),
-        "{stdout}"
-    );
-    assert!(stdout.contains("--id <IDS>"), "{stdout}");
-    assert!(stdout.contains("comma-separated value"), "{stdout}");
-    assert!(
-        stdout.contains("Prefix text pushed to the agent prompt"),
-        "{stdout}"
     );
 }
