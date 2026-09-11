@@ -110,13 +110,13 @@ async fn prompt_replaces_title_and_every_lane(pool: sqlx::SqlitePool) {
     )]);
     let command = content_edit(
         "FOO-0001",
-        EditTaskContent::replace_shorthand("New Title / new goal /d complete".into()),
+        EditTaskContent::replace_shorthand("New: Title; #123 / new goal /d complete".into()),
     );
 
     run(command, &store, &pool).await.unwrap();
 
     let edited = &store.tasks("foo-bar")[0];
-    assert_eq!(edited.title, "new title");
+    assert_eq!(edited.title, "New: Title; #123");
     assert_eq!(
         edited.body,
         "## Goals\n\n- new goal\n\n## Done When\n\n- complete"
@@ -151,7 +151,7 @@ async fn prompt_replacement_uses_runtime_markers_and_headers(pool: sqlx::SqliteP
     run(command, &store, &pool).await.unwrap();
 
     let edited = &store.tasks("foo-bar")[0];
-    assert_eq!(edited.title, "new title");
+    assert_eq!(edited.title, "New Title");
     assert_eq!(
         edited.body,
         "## Objectives\n\n- new objective\n\n## Verification\n\n- tests pass"

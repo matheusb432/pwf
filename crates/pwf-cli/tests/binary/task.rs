@@ -20,7 +20,7 @@ fn machine_add_maps_each_explicit_value_without_parsing_lane_markers() {
             "add",
             "foo-bar",
             "--title",
-            "ship parser",
+            "Web: UI fixes; keep #123 and \"quotes\"",
             "--goal",
             "preserve the authored goal",
             "--goal",
@@ -33,10 +33,11 @@ fn machine_add_maps_each_explicit_value_without_parsing_lane_markers() {
             "both input modes are covered",
         ])
         .assert()
-        .success();
+        .success()
+        .stderr("");
 
     let task = task_json(&fixture.database, &task_id("FOO-0001").unwrap()).unwrap();
-    assert_eq!(task["title"], "ship parser");
+    assert_eq!(task["title"], "Web: UI fixes; keep #123 and \"quotes\"");
     assert_eq!(
         task["prompt"],
         "## Goals\n\n- preserve the authored goal\n- keep /d as literal text\n\n## Context\n\n- the machine supplies independent values\n\n## Constraints\n\n- preserve shorthand mode\n\n## Done When\n\n- both input modes are covered"
@@ -200,7 +201,7 @@ fn root_edit_replaces_lane_collections_with_explicit_remove_then_add_actions() {
             "edit",
             "FOO-0001",
             "--title",
-            "edited task",
+            "[WIP]: Edited task; keep #456",
             "--remove-goals",
             "--add-goal",
             "new goal /c stays literal",
@@ -218,7 +219,7 @@ fn root_edit_replaces_lane_collections_with_explicit_remove_then_add_actions() {
         .success();
 
     let task = task_json(&fixture.database, &task_id("FOO-0001").unwrap()).unwrap();
-    assert_eq!(task["title"], "edited task");
+    assert_eq!(task["title"], "[WIP]: Edited task; keep #456");
     assert_eq!(
         task["prompt"],
         "## Goals\n\n- new goal /c stays literal\n\n## Context\n\n- new context\n\n## Constraints\n\n- new constraint\n\n## Done When\n\n- new outcome"
@@ -967,7 +968,7 @@ fn get_formats_the_same_record_as_markdown_path_or_json() {
         .command_args(&["task", "get", "FOO-0001", "--json"])
         .success_json();
     assert_eq!(json["project"], "foo-bar");
-    assert_eq!(json["title"], "format task");
+    assert_eq!(json["title"], "Format Task");
     assert_eq!(json["created"], "2026-07-26");
     assert_eq!(json["completed"], "2026-08-12");
     assert_eq!(json["effort"], "high");

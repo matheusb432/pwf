@@ -22,7 +22,7 @@ use crate::{
             parse_blocked_by, reopen_status, set_blocked_by, set_commits, set_completed_at,
             set_effort, set_priority, set_status, set_tags,
         },
-        note_text::{replace_body, replace_title},
+        note_text::replace_body,
     },
 };
 
@@ -230,8 +230,8 @@ impl ObsidianStore {
         patch: &TaskPatch,
     ) -> Result<(), ObsidianStoreError> {
         if let SetField::Set(title) = patch.title.as_ref() {
-            let updated = replace_title(file.source(), title.as_ref());
-            file.replace_source(updated);
+            file.set_property("title", title.as_ref())
+                .map_err(write_task_file_error)?;
         }
         if let SetField::Set(body) = patch.body.as_ref() {
             let updated = replace_body(file.source(), body);

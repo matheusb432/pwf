@@ -34,8 +34,12 @@ pub(super) fn new_task_content(fields: NewTaskFields<'_>) -> String {
     out.push_str("---\n");
     let _ = writeln!(out, "id: {}", fields.id);
     let _ = writeln!(out, "status: {}", TaskStatus::Active);
-    let _ = writeln!(out, "title: {}", fields.title);
-    let _ = writeln!(out, "project: {}", fields.project);
+    let _ = writeln!(out, "title: {}", Value::String(fields.title.to_string()));
+    let _ = writeln!(
+        out,
+        "project: {}",
+        Value::String(fields.project.to_string())
+    );
     let _ = writeln!(out, "created_at: {}", fields.created_at);
     if let Some(blocked_by) = fields.blocked_by {
         let _ = writeln!(

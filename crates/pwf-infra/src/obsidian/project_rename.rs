@@ -388,6 +388,7 @@ struct MarkdownRewriteState {
 
 struct MarkdownRewriteMarkers {
     current_project: String,
+    current_project_quoted: String,
     next_project: String,
     current_task_id: String,
     next_task_id: String,
@@ -399,7 +400,14 @@ impl MarkdownRewriteMarkers {
     fn new(current: &ProjectIdentity, next: &ProjectIdentity) -> Self {
         Self {
             current_project: format!("project: {}", current.title()),
-            next_project: format!("project: {}", next.title()),
+            current_project_quoted: format!(
+                "project: {}",
+                serde_json::Value::String(current.title().to_string())
+            ),
+            next_project: format!(
+                "project: {}",
+                serde_json::Value::String(next.title().to_string())
+            ),
             current_task_id: format!("id: {}-", current.id()),
             next_task_id: format!("id: {}-", next.id()),
             current_link: format!("[[{}-", current.id()),
@@ -435,7 +443,7 @@ fn update_frontmatter_state(state: &mut MarkdownRewriteState) {
 }
 
 fn rewrite_frontmatter_line(body: &str, markers: &MarkdownRewriteMarkers) -> String {
-    if body == markers.current_project {
+    if body == markers.current_project || body == markers.current_project_quoted {
         return markers.next_project.clone();
     }
     if body.starts_with(&markers.current_task_id) {
@@ -559,14 +567,51 @@ mod tests {
         );
         assert_eq!(
             fs::read_to_string(staged.staging_directory.join("NEW-0079.md")).unwrap(),
-            "---\nid: NEW-0079\nproject: renamed-app\nstatus: active\ncreated: 2026-07-01T12:00:00Z\n---\n\nKeep this body and bare OLD-0079 text unchanged.\n"
+            "---\nid: NEW-0079\nproject: \"renamed-app\"\nstatus: active\ncreated: 2026-07-01T12:00:00Z\n---\n\nKeep this body and bare OLD-0079 text unchanged.\n"
         );
         assert_eq!(
             fs::read_to_string(staged.staging_directory.join("NEW-NOTE-0001.md")).unwrap(),
-            "---\nid: NEW-NOTE-0001\nproject: renamed-app\nstatus: done\ncreated: 2026-06-01T12:00:00Z\ncompleted: 2026-06-02T12:00:00Z\n---\n\nCompleted body stays byte-for-byte.\n"
+            "---\nid: NEW-NOTE-0001\nproject: \"renamed-app\"\nstatus: done\ncreated: 2026-06-01T12:00:00Z\ncompleted: 2026-06-02T12:00:00Z\n---\n\nCompleted body stays byte-for-byte.\n"
         );
         assert!(source.is_dir());
         assert!(!destination.exists());
+    }
+
+    #[test]
+    fn rename_preserves_quoted_project_metadata() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("old");
+        let destination = directory.path().join("new");
+        fs::create_dir(&source).unwrap();
+        fs::write(
+            source.join("OLD-0001.md"),
+            concat!(
+                "---\n",
+                "id: OLD-0001\n",
+                "project: \"Web: UI; #123\"\n",
+                "title: \"Keep: the title\"\n",
+                "---\n\n",
+                "project: Web: UI; #123\n",
+            ),
+        )
+        .unwrap();
+
+        ObsidianProjectTaskFilesClient
+            .stage_project_rename(
+                &source,
+                &destination,
+                &identity("OLD", "Web: UI; #123"),
+                &identity("NEW", "API: \"next\"; #456"),
+            )
+            .unwrap()
+            .commit()
+            .unwrap();
+
+        let file = MarkdownFile::open(destination.join("NEW-0001.md")).unwrap();
+        let metadata = file.frontmatter::<serde_json::Value>().unwrap().unwrap();
+        assert_eq!(metadata["project"], "API: \"next\"; #456");
+        assert_eq!(metadata["title"], "Keep: the title");
+        assert_eq!(file.body(), "\nproject: Web: UI; #123\n");
     }
 
     #[test]

@@ -71,7 +71,7 @@ mod tests {
         assert_eq!(
             value,
             serde_json::json!({
-                "id": "FOO-0001", "project": "foo", "title": "typed task", "status": "done",
+                "id": "FOO-0001", "project": "foo", "title": "Typed task", "status": "done",
                 "created": "2026-07-26", "completed": "2026-08-12", "commits": "a..b, c..d",
                 "tags": ["rust", "sqlite"], "effort": "high", "priority": "highest",
                 "blocked_by": ["AUX-0014"], "prompt": "authored body"

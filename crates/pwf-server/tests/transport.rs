@@ -2105,14 +2105,14 @@ async fn get_task_returns_domain_values_and_classifies_invalid_records() -> anyh
     let server = TestServer::start(TEST_TIMEOUT).await?;
     let id = server.add_project_and_task().await?;
     let path = server.root.path().join("notes/foo-bar/FOO-0001.md");
-    let source = "---\nid: FOO-0001\ntitle: Typed Task\nstatus: active\ncreated_at: 2026-07-26T12:34:56Z\neffort: high\npriority: highest\ntags: [rust, sqlite]\n---\n\n  authored body  \n";
+    let source = "---\nid: FOO-0001\ntitle: \"Typed: Task; #123\"\nstatus: active\ncreated_at: 2026-07-26T12:34:56Z\neffort: high\npriority: highest\ntags: [rust, sqlite]\n---\n\n  authored body  \n";
     std::fs::write(&path, source)?;
     let task = server
         .client
         .task()
         .get_task(pb::GetTaskRequest { id: id.clone() })
         .await?;
-    assert_eq!(task.title.as_ref(), "typed task");
+    assert_eq!(task.title.as_ref(), "Typed: Task; #123");
     assert_eq!(task.effort, Some(pwf_models::task::EffortTier::High));
     assert_eq!(task.priority, Some(pwf_models::task::PriorityTier::Highest));
     assert_eq!(

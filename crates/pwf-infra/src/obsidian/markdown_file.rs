@@ -908,6 +908,7 @@ fn property_range(frontmatter: &str, first: markdown_line::MarkdownLine<'_>) -> 
         .is_some_and(|(_, value)| value.trim().is_empty() || value.trim().starts_with(['|', '>']));
     let end = markdown_line::lines(&frontmatter[first.end..])
         .take_while(|line| property_continues(has_block_value, line.text))
+        .filter(|line| !line.text.trim().is_empty() && !line.text.starts_with('#'))
         .map(|line| first.end + line.content_end)
         .last()
         .unwrap_or(first.content_end);

@@ -199,9 +199,8 @@ fn task_title(raw: &str) -> anyhow::Result<(TaskTitle, bool)> {
     if raw.trim().is_empty() {
         return Err(anyhow::anyhow!("--title cannot be empty."));
     }
-    let comparison = raw.trim().to_lowercase();
     let title = TaskTitle::try_new(raw).map_err(|error| anyhow::anyhow!(error.to_string()))?;
-    let normalized = title.as_ref() != comparison;
+    let normalized = title.as_ref() != raw.trim();
     Ok((title, normalized))
 }
 
@@ -357,15 +356,16 @@ mod tests {
     use super::{LaneFlagMode, task_lanes, task_title};
 
     #[test]
-    fn task_title_reports_metadata_normalization_only() {
+    fn task_title_reports_whitespace_normalization_only() {
         for (raw, expected, normalized) in [
-            ("  Fix The THING  ", "fix the thing", false),
+            ("  Fix The THING  ", "Fix The THING", false),
             ("time is 3:30pm", "time is 3:30pm", false),
             (
                 "fix parser: handle colons",
-                "fix parser; handle colons",
-                true,
+                "fix parser: handle colons",
+                false,
             ),
+            ("Fix\n  #123; Parser", "Fix #123; Parser", true),
         ] {
             let (title, was_normalized) = task_title(raw).unwrap();
             assert_eq!(title.as_ref(), expected);

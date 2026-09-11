@@ -581,8 +581,12 @@ fn task_order_cmp(order: OrderSpec, a: &ListedTask, b: &ListedTask) -> std::cmp:
         OrderField::Priority => directed_cmp(order.direction, a.priority.cmp(&b.priority))
             .then_with(|| id_desc_cmp(a, b)),
         OrderField::Title => {
-            directed_cmp(order.direction, a.heading.as_ref().cmp(b.heading.as_ref()))
-                .then_with(|| id_desc_cmp(a, b))
+            let ascending = a
+                .heading
+                .as_ref()
+                .to_lowercase()
+                .cmp(&b.heading.as_ref().to_lowercase());
+            directed_cmp(order.direction, ascending).then_with(|| id_desc_cmp(a, b))
         }
         OrderField::Effort => {
             let effort = match (a.effort, b.effort) {

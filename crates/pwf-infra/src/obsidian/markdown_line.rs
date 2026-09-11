@@ -34,16 +34,6 @@ pub(super) fn lines(source: &str) -> impl Iterator<Item = MarkdownLine<'_>> {
     })
 }
 
-pub(super) fn find(
-    source: &str,
-    start: usize,
-    predicate: impl Fn(&str) -> bool,
-) -> Option<MarkdownLine<'_>> {
-    lines(source)
-        .filter(|line| line.start >= start)
-        .find(|line| predicate(line.content))
-}
-
 #[cfg(test)]
 mod tests {
     use super::lines;

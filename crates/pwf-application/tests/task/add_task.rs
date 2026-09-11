@@ -73,7 +73,7 @@ async fn add_forwards_an_explicit_task_title(pool: sqlx::SqlitePool) {
         .unwrap();
 
     assert_eq!(added.outcome.as_ref(), "FOO-0001");
-    assert_eq!(store.tasks("foo")[0].title, "fix  metadata");
+    assert_eq!(store.tasks("foo")[0].title, "fix # metadata");
     assert_eq!(store.tasks("foo")[0].body, "## Goals\n");
 }
 
@@ -81,14 +81,17 @@ async fn add_forwards_an_explicit_task_title(pool: sqlx::SqlitePool) {
 async fn shorthand_add_accepts_only_a_title_and_normalizes_it_once(pool: sqlx::SqlitePool) {
     let store = registered_store(&pool).await;
     let mut command = command();
-    command.prompt = AddTaskPrompt::from_shorthand("  fix # metadata  ");
+    command.prompt = AddTaskPrompt::from_shorthand("  Web: Fix # metadata; keep case  ");
 
     let added = add_task::execute(command, &store, &pool, &FixedClock)
         .await
         .unwrap();
 
     assert_eq!(added.outcome.as_ref(), "FOO-0001");
-    assert_eq!(store.tasks("foo")[0].title, "fix  metadata");
+    assert_eq!(
+        store.tasks("foo")[0].title,
+        "Web: Fix # metadata; keep case"
+    );
     assert_eq!(store.tasks("foo")[0].body, "## Goals\n");
 }
 

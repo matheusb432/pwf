@@ -440,7 +440,7 @@ fn generic_add_creates_note_and_preserves_project_page() {
         "{note}"
     );
     assert!(note.contains("status: active"), "{note}");
-    assert!(note.contains("title: ship adapter"), "{note}");
+    assert!(note.contains("title: \"ship adapter\""), "{note}");
     assert!(
         note.contains("created_at: 2026-07-07T09:34:56-03:00"),
         "{note}"
@@ -452,6 +452,126 @@ fn generic_add_creates_note_and_preserves_project_page() {
     assert!(note.contains(&expected_body), "{note}");
     let index = std::fs::read_to_string(notes_dir.join("foo/foo.md")).unwrap();
     assert_eq!(index, "---\nid: foo\ntitle: foo\n---\n\n");
+}
+
+#[test]
+fn task_titles_round_trip_through_create_edit_and_list() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = store_with_index_identity(directory.path());
+    let project = foo_project(&store);
+    let editable = generic_add(&store, new_task("keep this body", "original title")).unwrap();
+
+    for title in [
+        "web: UI fixes and improvements; keep #123",
+        "trailing colon:",
+        ":::",
+        "# leading hash",
+        "[WIP] fix",
+        "{key: value}",
+        "- list item",
+        "? question",
+        "&anchor",
+        "*alias",
+        "!tag",
+        "| literal",
+        "> folded",
+        "@mention",
+        "`code`",
+        "null",
+        "true",
+        "1234",
+        r#""Quoted": C:\Temp\new #42; user's fix"#,
+        "Unicode: ação; 日本語",
+    ] {
+        let created = generic_add(&store, new_task("created body", title)).unwrap();
+        assert_eq!(created.title, title);
+        assert_eq!(
+            get_record(&store, created.id.as_ref()).unwrap().title,
+            title
+        );
+
+        commit_for_task(
+            &store,
+            &project,
+            &editable.id,
+            vec![TaskWrite::Patch {
+                id: editable.id.clone(),
+                patch: TaskPatch {
+                    title: SetField::Set(TaskTitle::try_new(title).unwrap()),
+                    ..TaskPatch::default()
+                },
+            }],
+        );
+        let edited = get_record(&store, editable.id.as_ref()).unwrap();
+        assert_eq!(edited.title, title);
+        assert_eq!(edited.body, editable.body);
+        let summaries = TaskVault::list_task_summaries(&store, &project).unwrap();
+        assert_eq!(
+            summaries
+                .iter()
+                .find(|task| task.id == editable.id)
+                .unwrap()
+                .title,
+            title
+        );
+    }
+}
+
+#[test]
+fn task_title_edit_replaces_block_scalars_and_preserves_unrelated_bytes() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = store_for_tasks(directory.path());
+    let project = foo_project(&store);
+    let id = TaskId::try_new("FOO-0001").unwrap();
+    let path = directory.path().join("FOO-0001.md");
+    let source = concat!(
+        "\u{feff}---\r\n",
+        "id: FOO-0001\r\n",
+        "title: >-\r\n",
+        "  Old title\r\n",
+        "  on two lines\r\n",
+        "# retained metadata comment\r\n",
+        "custom: 'Keep: this'\r\n",
+        "---\r\n\r\n",
+        "title: body text\r\n",
+    );
+    std::fs::write(&path, source).unwrap();
+
+    commit_for_task(
+        &store,
+        &project,
+        &id,
+        vec![TaskWrite::Patch {
+            id: id.clone(),
+            patch: TaskPatch {
+                title: SetField::Set(TaskTitle::try_new("New: #123; done").unwrap()),
+                ..TaskPatch::default()
+            },
+        }],
+    );
+
+    assert_eq!(
+        std::fs::read_to_string(path).unwrap(),
+        source.replace(
+            "title: >-\r\n  Old title\r\n  on two lines\r\n",
+            "title: \"New: #123; done\"\r\n"
+        ),
+    );
+    assert_eq!(
+        get_record(&store, id.as_ref()).unwrap().title,
+        "New: #123; done"
+    );
+}
+
+#[test]
+fn task_creation_quotes_project_metadata() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = store_for_tasks(directory.path());
+    let project = project("FOO", "web: UI; #123", directory.path());
+    let created = insert_next(&store, &project, new_task("body", "task")).unwrap();
+    let file = crate::obsidian::MarkdownFile::open(created.locator.as_path()).unwrap();
+    let metadata = file.frontmatter::<serde_json::Value>().unwrap().unwrap();
+    assert_eq!(metadata["project"], "web: UI; #123");
 }
 
 #[test]
@@ -884,7 +1004,7 @@ fn note_only_patch_does_not_require_the_project_index() {
     assert!(
         std::fs::read_to_string(staged.task_path)
             .unwrap()
-            .contains("title: updated without index")
+            .contains("title: \"updated without index\"")
     );
     assert!(!index_path.exists());
 }
@@ -1651,7 +1771,7 @@ fn task_crud_does_not_create_or_read_project_pages() {
                 },
             }],
         );
-        assert_eq!(get_record(&store, "FOO-0001").unwrap().title, "edited");
+        assert_eq!(get_record(&store, "FOO-0001").unwrap().title, "Edited");
         commit_for_task(
             &store,
             &project,

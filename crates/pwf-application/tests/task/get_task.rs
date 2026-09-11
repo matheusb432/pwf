@@ -17,7 +17,7 @@ async fn get_task_returns_parsed_values_without_changing_the_body(pool: sqlx::Sq
     record.created_at = Some("2026-07-26T12:34:56Z".parse().unwrap());
     let store = InMemoryStore::default().with_project("foo", vec![record.clone()]);
     let task = get_task::execute(&record.id, &store, &pool).await.unwrap();
-    assert_eq!(task.title.as_ref(), "typed task");
+    assert_eq!(task.title.as_ref(), "Typed task");
     assert_eq!(task.prompt.as_ref(), record.body);
     assert_eq!(
         task.tags.as_ref(),

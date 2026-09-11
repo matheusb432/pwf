@@ -1,18 +1,5 @@
 use super::markdown_line;
 
-/// Replaces the raw `title:` frontmatter line.
-pub(super) fn replace_title(content: &str, title: &str) -> String {
-    let Some(line) = markdown_line::find(content, 0, |line| line.starts_with("title:")) else {
-        return content.to_string();
-    };
-    let text_end = line.start + line.text.len();
-    format!(
-        "{}title: {title}{}",
-        &content[..line.start],
-        &content[text_end..]
-    )
-}
-
 /// Replaces the body while preserving frontmatter.
 ///
 /// A note without a closing fence is treated as body-only.
@@ -38,16 +25,15 @@ fn is_frontmatter_fence(line: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{replace_body, replace_title};
+    use super::replace_body;
 
     #[test]
-    fn replacements_preserve_the_unedited_note_region() {
+    fn body_replacement_preserves_frontmatter() {
         let source = "---\nid: FOO-0001\nstatus: active\ntitle: old\n---\n\nold body\n";
-        let titled = replace_title(source, "new title");
 
         assert_eq!(
-            replace_body(&titled, "new body"),
-            "---\nid: FOO-0001\nstatus: active\ntitle: new title\n---\n\nnew body\n"
+            replace_body(source, "new body"),
+            "---\nid: FOO-0001\nstatus: active\ntitle: old\n---\n\nnew body\n"
         );
     }
 

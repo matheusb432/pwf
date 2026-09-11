@@ -220,7 +220,7 @@ fn project_note(id: NoteId, file: &MarkdownFile) -> Result<ProjectNote, Obsidian
 
 fn note_content(project: &str, note: &NewProjectNote) -> String {
     let mut source = String::from("---\ntype: note\n");
-    let _ = writeln!(source, "project: {project}");
+    let _ = writeln!(source, "project: {}", yaml_string(project));
     let _ = writeln!(source, "created: {}", note.created);
     if let Some(domain) = &note.domain {
         let _ = writeln!(source, "domain: {}", yaml_string(domain.as_ref()));
@@ -678,7 +678,7 @@ mod tests {
             concat!(
                 "---\n",
                 "type: note\n",
-                "project: foo\n",
+                "project: \"foo\"\n",
                 "created: 2026-07-26\n",
                 "domain: \"testing\"\n",
                 "tags: [\"cli\", \"testing\"]\n",
@@ -700,6 +700,22 @@ mod tests {
             ProjectNotes::list_notes(&store, &project(&tasks_path)).unwrap(),
             vec![inserted]
         );
+    }
+
+    #[test]
+    fn note_creation_preserves_project_metadata() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = store(directory.path());
+        let mut project = project(directory.path());
+        project.title = ProjectName::try_new("Web: UI; #123").unwrap();
+
+        ProjectNotes::insert_note(&store, &project, new_note(1, "Remember: #123; done")).unwrap();
+
+        let file = MarkdownFile::open(directory.path().join("FOO-NOTE-0001.md")).unwrap();
+        let metadata = file.frontmatter::<serde_json::Value>().unwrap().unwrap();
+        assert_eq!(metadata["project"], "Web: UI; #123");
+        let notes = ProjectNotes::list_notes(&store, &project).unwrap();
+        assert_eq!(notes[0].title.as_ref(), "Remember: #123; done");
     }
 
     #[test]
