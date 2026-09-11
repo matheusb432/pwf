@@ -5,10 +5,13 @@ use clap::Args;
 use pwf_client::{pb::AddVaultProjectRequest, project::ProjectClient};
 use pwf_models::project::{ProjectId, ProjectName, ProjectTasksRelativePath};
 
-use super::{parse_project_id, parse_project_title};
+use super::{output, parse_project_id, parse_project_title};
 
 #[derive(Args, Debug)]
 pub struct Arguments {
+    /// Outputs the result as JSON.
+    #[arg(long)]
+    pub json: bool,
     /// vault root; defaults to the current directory.
     #[arg(value_name = "PATH", default_value = ".")]
     pub path: PathBuf,
@@ -26,7 +29,12 @@ pub struct Arguments {
     pub source_path: Option<PathBuf>,
 }
 
-pub(super) async fn run(arguments: Arguments, client: &ProjectClient) -> anyhow::Result<String> {
+pub(super) async fn run(
+    arguments: Arguments,
+    console: crate::console::Console,
+    colors: pwf_models::settings::ProjectStatusColors,
+    client: &ProjectClient,
+) -> anyhow::Result<String> {
     let response = client
         .add_vault_project(AddVaultProjectRequest {
             vault_path: request_path(&arguments.path)?,
@@ -41,7 +49,23 @@ pub(super) async fn run(arguments: Arguments, client: &ProjectClient) -> anyhow:
         })
         .await
         .map_err(crate::rpc_error)?;
-    serde_json::to_string_pretty(&serde_json::json!({ "id": response.id })).map_err(Into::into)
+    if arguments.json {
+        serde_json::to_string_pretty(&serde_json::json!({ "id": response.id })).map_err(Into::into)
+    } else {
+        let project = client
+            .get_project(pwf_client::pb::GetProjectRequest {
+                id: response.id,
+                status: pwf_client::pb::ProjectStatusFilter::IncludingPaused as i32,
+            })
+            .await
+            .map_err(crate::rpc_error)?;
+        Ok(output::render_mutation(
+            output::ProjectMutationAction::Added,
+            project,
+            colors,
+            console.color(),
+        ))
+    }
 }
 
 fn request_path(path: &Path) -> anyhow::Result<String> {

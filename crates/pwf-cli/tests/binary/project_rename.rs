@@ -36,6 +36,7 @@ fn rename_commit_failure_rolls_back_and_allows_retry() {
     let rename_arguments = [
         "project",
         "rename",
+        "--json",
         "OLD",
         destination_project_id.as_ref(),
         "--title",

@@ -13,6 +13,9 @@ use super::{
 
 #[derive(Args, Debug)]
 pub struct Arguments {
+    /// Outputs the result as JSON.
+    #[arg(long)]
+    pub json: bool,
     /// Project source kind.
     #[arg(long, value_enum)]
     pub kind: SourceKind,
@@ -65,7 +68,12 @@ impl FromStr for DirectoryPayload {
     }
 }
 
-pub(super) async fn run(arguments: Arguments, client: &ProjectClient) -> anyhow::Result<String> {
+pub(super) async fn run(
+    arguments: Arguments,
+    console: crate::console::Console,
+    colors: pwf_models::settings::ProjectStatusColors,
+    client: &ProjectClient,
+) -> anyhow::Result<String> {
     match arguments.kind {
         SourceKind::Directory => {
             let project = client
@@ -74,7 +82,16 @@ pub(super) async fn run(arguments: Arguments, client: &ProjectClient) -> anyhow:
                 })
                 .await
                 .map_err(crate::rpc_error)?;
-            output::render_response(project)
+            if arguments.json {
+                output::render_response(project)
+            } else {
+                Ok(output::render_mutation(
+                    output::ProjectMutationAction::Added,
+                    project,
+                    colors,
+                    console.color(),
+                ))
+            }
         }
     }
 }

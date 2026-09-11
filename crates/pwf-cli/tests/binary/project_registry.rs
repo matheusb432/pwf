@@ -6,6 +6,167 @@ use crate::support::{
 };
 
 #[test]
+fn project_mutations_confirm_the_result_and_preserve_json() {
+    let root = tempfile::tempdir().unwrap();
+    let fixture = DatabaseFixture::new(root.path().join("projects.sqlite3")).unwrap();
+    let tasks = root.path().join("tasks");
+    std::fs::create_dir_all(&tasks).unwrap();
+    let payload = serde_json::json!({
+        "id": "FOO", "title": "sample project",
+        "tasks": { "kind": "directory", "path": tasks },
+    })
+    .to_string();
+    assert_eq!(
+        fixture
+            .command_args(&["project", "add", "--kind", "directory", &payload])
+            .success_stdout(),
+        "Added project: FOO :: sample project\n"
+    );
+    for (verb, label) in [
+        ("pause", "Paused"),
+        ("pause", "Already paused"),
+        ("resume", "Resumed"),
+        ("resume", "Already active"),
+    ] {
+        assert_eq!(
+            fixture
+                .command_args(&["project", verb, "FOO"])
+                .success_stdout(),
+            format!("{label} project: FOO :: sample project\n")
+        );
+    }
+    let edited = fixture
+        .command_args(&[
+            "project",
+            "edit",
+            "FOO",
+            "--snapshot-enabled",
+            "true",
+            "--json",
+        ])
+        .success_json();
+    assert_eq!(
+        edited,
+        fixture
+            .command_args(&["project", "get", "FOO"])
+            .success_json()
+    );
+    let paused = fixture
+        .command_args(&["project", "pause", "FOO", "--json"])
+        .success_json();
+    assert_eq!(paused["changed"], true);
+    assert_eq!(paused["project"]["is_paused"], true);
+    assert_eq!(
+        fixture
+            .command_args(&["project", "pause", "FOO", "--json"])
+            .success_json()["changed"],
+        false
+    );
+    assert_eq!(
+        fixture
+            .command_args(&[
+                "project",
+                "rename",
+                "FOO",
+                "BAR",
+                "--title",
+                "renamed project",
+                "--tasks",
+                root.path().join("renamed-tasks").to_str().unwrap()
+            ])
+            .success_stdout(),
+        "Renamed project: BAR :: renamed project\n"
+    );
+    assert_failure(
+        fixture
+            .command_args(&["project", "edit", "MISS", "--snapshot-enabled", "true"])
+            .output()
+            .unwrap(),
+        &["MISS"],
+    )
+    .unwrap();
+    let vault = root.path().join("vault");
+    std::fs::create_dir_all(vault.join(".obsidian")).unwrap();
+    assert_eq!(
+        fixture
+            .command_args(&[
+                "project",
+                "add-vault",
+                "--id",
+                "BAZ",
+                "--tasks-path",
+                "tasks/vault-project"
+            ])
+            .current_dir(vault)
+            .success_stdout(),
+        "Added project: BAZ :: vault-project\n"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn project_confirmations_color_only_identifiers_and_respect_no_color() {
+    let fixture = ManagedProject::new(&project_id("PWF").unwrap(), "pwf").unwrap();
+    fixture
+        .database
+        .write_user_config("[colors.project]\nactive = \"#010203\"\npaused = \"#040506\"\n")
+        .unwrap();
+    for (arguments, label, color) in [
+        (
+            vec!["project", "edit", "PWF", "--snapshot-enabled", "true"],
+            "Edited",
+            color_rgb(1, 2, 3),
+        ),
+        (
+            vec!["project", "pause", "PWF"],
+            "Paused",
+            color_rgb(4, 5, 6),
+        ),
+        (
+            vec!["project", "edit", "PWF", "--snapshot-enabled", "false"],
+            "Edited",
+            color_rgb(4, 5, 6),
+        ),
+        (
+            vec!["project", "resume", "PWF"],
+            "Resumed",
+            color_rgb(1, 2, 3),
+        ),
+    ] {
+        assert_eq!(
+            fixture
+                .database
+                .command_args(&arguments)
+                .color()
+                .success_stdout(),
+            format!("{label} project: {color}PWF{color:#} :: pwf\n")
+        );
+    }
+    assert_eq!(
+        fixture
+            .database
+            .command_args(&["project", "edit", "PWF", "--snapshot-enabled", "true"])
+            .color()
+            .env("NO_COLOR", "1")
+            .success_stdout(),
+        "Edited project: PWF :: pwf\n"
+    );
+    let edited = fixture
+        .database
+        .command_args(&[
+            "project",
+            "edit",
+            "PWF",
+            "--snapshot-enabled",
+            "false",
+            "--json",
+        ])
+        .color()
+        .success_json();
+    assert_eq!(edited["snapshot_enabled"], false);
+}
+
+#[test]
 fn project_list_defaults_to_rows_and_preserves_json_through_both_names() {
     let fixture = ManagedProject::new(&project_id("PWF").unwrap(), "pwf").unwrap();
     for name in ["list", "ls"] {
@@ -40,7 +201,7 @@ fn project_list_colors_only_identifiers_by_project_state() {
         fixture.database.write_user_config(config).unwrap();
         fixture
             .database
-            .command_args(&["project", state, "PWF"])
+            .command_args(&["project", state, "PWF", "--json"])
             .success_json();
         let output = fixture
             .database
@@ -113,7 +274,7 @@ fn invalid_runtime_task_path_is_not_persisted() {
 
     assert_failure(
         fixture
-            .run(&["project", "add", "--kind", "directory", &payload])
+            .run(&["project", "add", "--json", "--kind", "directory", &payload])
             .unwrap(),
         &["FOO", task_path],
     )
@@ -131,6 +292,7 @@ fn add_vault_uses_current_directory_and_source_less_projects_support_tasks() {
         .command_args(&[
             "project",
             "add-vault",
+            "--json",
             "--id",
             "foo",
             "--tasks-path",
@@ -204,6 +366,7 @@ fn project_add_json_defaults_snapshots_off_and_accepts_each_boolean_choice() {
                 .run(&[
                     "project",
                     "add",
+                    "--json",
                     "--kind",
                     "directory",
                     &payload.to_string(),

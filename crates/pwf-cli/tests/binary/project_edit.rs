@@ -39,7 +39,7 @@ fn project_snapshot_edit_requires_a_boolean_and_preserves_omitted_values() {
                     if enabled { "true" } else { "false" },
                 ])
                 .success_stdout(),
-            ""
+            "Edited project: FOO :: foo\n"
         );
         let mut expected = before.clone();
         expected["snapshot_enabled"] = enabled.into();

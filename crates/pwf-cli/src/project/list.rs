@@ -6,11 +6,7 @@ use pwf_client::{
 use pwf_models::settings::ProjectStatusColors;
 
 use super::output;
-use crate::{
-    console::Console,
-    render::{render_summary, rgb_color},
-    rpc_error,
-};
+use crate::{console::Console, rpc_error};
 
 #[derive(Args, Debug)]
 pub struct Arguments {
@@ -38,15 +34,11 @@ pub(super) async fn run(
             .projects
             .iter()
             .map(|project| {
-                let color = if project.is_paused {
-                    colors.paused()
-                } else {
-                    colors.active()
-                };
-                render_summary(
+                output::render_project_summary(
                     &project.id,
                     &project.title,
-                    rgb_color(color),
+                    project.is_paused,
+                    colors,
                     console.color(),
                 )
             })

@@ -11,6 +11,9 @@ use super::{
 
 #[derive(Args, Debug)]
 pub struct Arguments {
+    /// Outputs the result as JSON.
+    #[arg(long)]
+    pub json: bool,
     /// Existing project ID.
     #[arg(value_parser = parse_project_id)]
     pub current_id: ProjectId,
@@ -28,7 +31,12 @@ pub struct Arguments {
     pub tasks: ProjectTasksPath,
 }
 
-pub(super) async fn run(arguments: Arguments, client: &ProjectClient) -> anyhow::Result<String> {
+pub(super) async fn run(
+    arguments: Arguments,
+    console: crate::console::Console,
+    colors: pwf_models::settings::ProjectStatusColors,
+    client: &ProjectClient,
+) -> anyhow::Result<String> {
     let current = client
         .get_project(pwf_client::pb::GetProjectRequest {
             id: arguments.current_id.to_string(),
@@ -60,5 +68,14 @@ pub(super) async fn run(arguments: Arguments, client: &ProjectClient) -> anyhow:
         })
         .await
         .map_err(crate::rpc_error)?;
-    output::render_response(renamed)
+    if arguments.json {
+        output::render_response(renamed)
+    } else {
+        Ok(output::render_mutation(
+            output::ProjectMutationAction::Renamed,
+            renamed,
+            colors,
+            console.color(),
+        ))
+    }
 }

@@ -46,6 +46,7 @@ impl ProjectFixture {
         success_json(self.run(&[
             "project",
             "add",
+            "--json",
             "--kind",
             "directory",
             &add_payload(project_id, title, project_path, tasks_path),
@@ -64,6 +65,7 @@ impl ProjectFixture {
             &[
                 "project",
                 "add",
+                "--json",
                 "--kind",
                 "directory",
                 &add_payload(project_id, title, project_path, tasks_path),

@@ -47,19 +47,16 @@ pub(super) struct Options {
     /// An explicit `--status` or `-n` overrides the widened default.
     #[arg(long)]
     pub(crate) all: bool,
-    /// Cap to N listed tasks, N >= 1 [default: 10, or unlimited under `--all`].
+    /// Cap to N listed tasks. [default: 10, or unlimited under `--all`].
     #[arg(short = 'n', long, value_name = "N", value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..=100_000))]
     pub(crate) number: Option<usize>,
     /// Sort key `field[:direction]`: created|id|project-id|priority|effort|title,
-    /// direction asc|desc. Overrides `default_sort_order` in config.toml (default: id).
-    /// Bare created/id/priority sort descending; project-id/effort/title ascending.
-    /// Missing effort sorts last.
-    /// project-id groups projects, newest ID first within each project.
+    /// direction asc|desc.
     #[arg(short = 'o', long, value_name = "FIELD[:DIR]", value_parser = parse_order)]
     pub(crate) order: Option<OrderSpec>,
     /// Filter by one lifecycle status, or include every lifecycle status
     /// [default: active, or all under `--all`].
-    #[arg(long, value_enum)]
+    #[arg(short = 's', long, value_enum)]
     pub(crate) status: Option<StatusChoice>,
 }
 

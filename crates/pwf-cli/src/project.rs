@@ -62,12 +62,12 @@ pub async fn run(
     let output = match command {
         Command::List(arguments) => list::run(arguments, console, colors, client).await?,
         Command::Get(arguments) => get::run(arguments, client).await?,
-        Command::AddVault(arguments) => add_vault::run(arguments, client).await?,
-        Command::Add(arguments) => add::run(arguments, client).await?,
-        Command::Edit(arguments) => edit::run(arguments, client).await?,
-        Command::Pause(arguments) => pause::run(arguments, client).await?,
-        Command::Rename(arguments) => rename::run(arguments, client).await?,
-        Command::Resume(arguments) => resume::run(arguments, client).await?,
+        Command::AddVault(arguments) => add_vault::run(arguments, console, colors, client).await?,
+        Command::Add(arguments) => add::run(arguments, console, colors, client).await?,
+        Command::Edit(arguments) => edit::run(arguments, console, colors, client).await?,
+        Command::Pause(arguments) => pause::run(arguments, console, colors, client).await?,
+        Command::Rename(arguments) => rename::run(arguments, console, colors, client).await?,
+        Command::Resume(arguments) => resume::run(arguments, console, colors, client).await?,
     };
     Ok(output)
 }

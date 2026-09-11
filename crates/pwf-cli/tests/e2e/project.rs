@@ -35,7 +35,10 @@ fn project_registry_lifecycle_is_observable_across_processes() {
         .run(&["project", "edit", "foo", "--source", "/work/foo-updated"])
         .unwrap();
     assert_success(&edited, "edit project source");
-    assert!(edited.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8(edited.stdout).unwrap(),
+        "Edited project: FOO :: foo-bar\n"
+    );
     assert!(edited.stderr.is_empty());
     let foo = success_json(fixture.run(&["project", "get", "foo"]).unwrap()).unwrap();
     assert_project(
@@ -47,7 +50,7 @@ fn project_registry_lifecycle_is_observable_across_processes() {
         false,
     );
     assert_eq!(
-        success_json(fixture.run(&["project", "pause", "bar"]).unwrap()).unwrap()["changed"],
+        success_json(fixture.run(&["project", "pause", "bar", "--json"]).unwrap()).unwrap()["changed"],
         true
     );
 
@@ -72,7 +75,12 @@ fn project_registry_lifecycle_is_observable_across_processes() {
     );
 
     assert_eq!(
-        success_json(fixture.run(&["project", "resume", "bar"]).unwrap()).unwrap()["changed"],
+        success_json(
+            fixture
+                .run(&["project", "resume", "bar", "--json"])
+                .unwrap()
+        )
+        .unwrap()["changed"],
         true
     );
     assert_eq!(
@@ -109,6 +117,7 @@ fn project_rename_updates_registry_and_task_identity() {
                 &[
                     "project",
                     "rename",
+                    "--json",
                     "OLD",
                     "NEW",
                     "--title",

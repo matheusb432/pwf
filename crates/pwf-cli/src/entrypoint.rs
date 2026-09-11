@@ -40,8 +40,17 @@ async fn dispatch(parsed: command::Cli, console: Console) -> anyhow::Result<(Str
         command::RootCommand::Project(arguments) => {
             let client = connect().await?;
             let project_client = client.project();
-            let colors = if matches!(&arguments.command, Some(project::Command::List(arguments)) if !arguments.json)
-            {
+            let human_output = match &arguments.command {
+                Some(project::Command::List(arguments)) => !arguments.json,
+                Some(project::Command::Add(arguments)) => !arguments.json,
+                Some(project::Command::AddVault(arguments)) => !arguments.json,
+                Some(project::Command::Edit(arguments)) => !arguments.json,
+                Some(project::Command::Pause(arguments)) => !arguments.json,
+                Some(project::Command::Rename(arguments)) => !arguments.json,
+                Some(project::Command::Resume(arguments)) => !arguments.json,
+                Some(project::Command::Get(_)) | None => false,
+            };
+            let colors = if human_output {
                 settings::load(&client.settings())
                     .await?
                     .project_status_colors()

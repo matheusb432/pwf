@@ -906,7 +906,7 @@ fn project_selectors_match_titles_before_ids_and_exclude_paused_projects() {
 
     fixture
         .database
-        .command_args(&["project", "pause", "FOO"])
+        .command_args(&["project", "pause", "FOO", "--json"])
         .success_json();
     let output = fixture
         .database

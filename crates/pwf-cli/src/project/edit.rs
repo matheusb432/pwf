@@ -5,13 +5,16 @@ use pwf_client::{
 };
 use pwf_models::project::{ProjectId, ProjectSourceValue};
 
-use super::{parse_project_id, parse_project_source};
+use super::{output, parse_project_id, parse_project_source};
 
 const UPDATES: &str = "project_updates";
 
 #[derive(Args, Debug)]
 #[command(group(clap::ArgGroup::new(UPDATES).required(true).multiple(true)))]
 pub struct Arguments {
+    /// Outputs the result as JSON.
+    #[arg(long)]
+    pub json: bool,
     /// Project ID.
     #[arg(value_parser = parse_project_id)]
     pub id: ProjectId,
@@ -32,7 +35,12 @@ pub struct Arguments {
     pub snapshot_enabled: Option<bool>,
 }
 
-pub(super) async fn run(arguments: Arguments, client: &ProjectClient) -> anyhow::Result<String> {
+pub(super) async fn run(
+    arguments: Arguments,
+    console: crate::console::Console,
+    colors: pwf_models::settings::ProjectStatusColors,
+    client: &ProjectClient,
+) -> anyhow::Result<String> {
     client
         .update_project(UpdateProjectRequest {
             id: arguments.id.to_string(),
@@ -64,5 +72,21 @@ pub(super) async fn run(arguments: Arguments, client: &ProjectClient) -> anyhow:
         })
         .await
         .map_err(crate::rpc_error)?;
-    Ok(String::new())
+    let project = client
+        .get_project(pwf_client::pb::GetProjectRequest {
+            id: arguments.id.to_string(),
+            status: pwf_client::pb::ProjectStatusFilter::IncludingPaused as i32,
+        })
+        .await
+        .map_err(crate::rpc_error)?;
+    if arguments.json {
+        output::render_response(project)
+    } else {
+        Ok(output::render_mutation(
+            output::ProjectMutationAction::Edited,
+            project,
+            colors,
+            console.color(),
+        ))
+    }
 }

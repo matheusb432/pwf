@@ -5,6 +5,58 @@ use pwf_client::pb::{
 };
 use serde::Serialize;
 
+#[derive(Clone, Copy)]
+pub(super) enum ProjectMutationAction {
+    Added,
+    Edited,
+    Renamed,
+    Paused,
+    Resumed,
+    AlreadyPaused,
+    AlreadyActive,
+}
+
+pub(super) fn render_mutation(
+    action: ProjectMutationAction,
+    project: impl Into<ProjectOutput>,
+    colors: pwf_models::settings::ProjectStatusColors,
+    color_on: bool,
+) -> String {
+    let label = match action {
+        ProjectMutationAction::Added => "Added",
+        ProjectMutationAction::Edited => "Edited",
+        ProjectMutationAction::Renamed => "Renamed",
+        ProjectMutationAction::Paused => "Paused",
+        ProjectMutationAction::Resumed => "Resumed",
+        ProjectMutationAction::AlreadyPaused => "Already paused",
+        ProjectMutationAction::AlreadyActive => "Already active",
+    };
+    let project = project.into();
+    let summary = render_project_summary(
+        &project.id,
+        &project.title,
+        project.is_paused,
+        colors,
+        color_on,
+    );
+    format!("{label} project: {summary}")
+}
+
+pub(super) fn render_project_summary(
+    id: &str,
+    title: &str,
+    is_paused: bool,
+    colors: pwf_models::settings::ProjectStatusColors,
+    color_on: bool,
+) -> String {
+    let color = if is_paused {
+        colors.paused()
+    } else {
+        colors.active()
+    };
+    crate::render::render_summary(id, title, crate::render::rgb_color(color), color_on)
+}
+
 #[derive(Serialize)]
 pub(super) struct ProjectOutput {
     id: String,
