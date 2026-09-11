@@ -2079,7 +2079,10 @@ async fn get_task_record_preserves_raw_metadata_and_deleted_notes_are_not_found(
     assert_eq!(record.source, source);
     assert_eq!(record.effort.as_deref(), Some("extreme"));
     assert_eq!(record.priority.as_deref(), Some("urgent"));
-    assert_eq!(record.created_at.as_deref(), Some("2026-07-26T12:34:56Z"));
+    assert_eq!(
+        record.created_at.as_deref(),
+        Some("2026-07-26T12:34:56+00:00")
+    );
     assert_eq!(record.locator, path.to_string_lossy());
     assert!(
         matches!(record.blocked_by.and_then(|state| state.value), Some(pb::stored_task_blocked_by::Value::Malformed(value)) if value.raw.contains("bad links"))
@@ -2112,7 +2115,10 @@ async fn get_task_returns_domain_values_and_classifies_invalid_records() -> anyh
     assert_eq!(task.title.as_ref(), "typed task");
     assert_eq!(task.effort, Some(pwf_models::task::EffortTier::High));
     assert_eq!(task.priority, Some(pwf_models::task::PriorityTier::Highest));
-    assert_eq!(task.created_at.unwrap().to_string(), "2026-07-26T12:34:56Z");
+    assert_eq!(
+        task.created_at.unwrap().to_string(),
+        "2026-07-26T12:34:56+00:00"
+    );
     assert_eq!(
         task.revision.as_ref(),
         task_record(&server, &id).await?.revision

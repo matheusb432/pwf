@@ -57,7 +57,7 @@ async fn add_inserts_task_note_and_returns_its_summary(pool: sqlx::SqlitePool) {
     assert_eq!(store.tasks("foo").len(), 1);
     assert_eq!(
         store.tasks("foo")[0].created_at,
-        Some(task_timestamp("2026-07-26T12:34:56Z"))
+        Some(task_timestamp("2026-07-26T09:34:56-03:00"))
     );
 }
 

@@ -43,7 +43,7 @@ async fn cancel_marks_item_cancelled(pool: sqlx::SqlitePool) {
     assert_eq!(store.tasks("foo-bar")[0].status, TaskStatus::Cancelled);
     assert_eq!(
         store.tasks("foo-bar")[0].completed_at,
-        Some(task_timestamp("2026-07-26T12:34:56Z"))
+        Some(task_timestamp("2026-07-26T09:34:56-03:00"))
     );
     assert_eq!(
         store.tasks("foo-bar")[0].commits.as_deref(),
@@ -76,7 +76,7 @@ async fn cancel_uses_the_clock_timestamp(pool: sqlx::SqlitePool) {
 
     assert_eq!(
         store.tasks("foo-bar")[0].completed_at,
-        Some(task_timestamp("2026-07-26T12:34:56Z"))
+        Some(task_timestamp("2026-07-26T09:34:56-03:00"))
     );
 }
 

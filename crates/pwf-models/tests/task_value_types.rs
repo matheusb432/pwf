@@ -16,14 +16,31 @@ fn app_date_accepts_only_canonical_civil_dates() {
 }
 
 #[test]
-fn task_timestamp_accepts_only_utc_second_precision() {
-    let timestamp = "2026-08-29T18:42:07Z".parse::<TaskTimestamp>().unwrap();
+fn task_timestamp_accepts_canonical_second_precision_offsets() {
+    let timestamp = "2026-08-29T23:42:07-03:00"
+        .parse::<TaskTimestamp>()
+        .unwrap();
 
-    assert_eq!(timestamp.to_string(), "2026-08-29T18:42:07Z");
+    assert_eq!(timestamp.to_string(), "2026-08-29T23:42:07-03:00");
     assert_eq!(timestamp.date(), "2026-08-29".parse::<AppDate>().unwrap());
+    assert_eq!(
+        "2026-08-30T02:42:07Z"
+            .parse::<TaskTimestamp>()
+            .unwrap()
+            .to_string(),
+        "2026-08-30T02:42:07+00:00"
+    );
+    assert_eq!(
+        "2026-08-30T02:42:07+00:00"
+            .parse::<TaskTimestamp>()
+            .unwrap()
+            .to_string(),
+        "2026-08-30T02:42:07+00:00"
+    );
     assert!("2026-08-29T18:42:07.123Z".parse::<TaskTimestamp>().is_err());
+    assert!("2026-08-29T18:42:07-03".parse::<TaskTimestamp>().is_err());
     assert!(
-        "2026-08-29T18:42:07+00:00"
+        "2026-08-29T18:42:07+05:30:15"
             .parse::<TaskTimestamp>()
             .is_err()
     );
@@ -32,7 +49,7 @@ fn task_timestamp_accepts_only_utc_second_precision() {
 }
 
 #[test]
-fn task_timestamp_converts_dates_and_truncates_external_instants() {
+fn task_timestamp_constructors_truncate_instants_and_retain_offsets() {
     let date = "2026-08-29".parse::<AppDate>().unwrap();
     let timestamp = "2026-08-29T18:42:07.987654321Z"
         .parse::<jiff::Timestamp>()
@@ -40,13 +57,19 @@ fn task_timestamp_converts_dates_and_truncates_external_instants() {
 
     assert_eq!(
         TaskTimestamp::at_midnight_utc(date).unwrap().to_string(),
-        "2026-08-29T00:00:00Z"
+        "2026-08-29T00:00:00+00:00"
     );
     assert_eq!(
         TaskTimestamp::from_timestamp(timestamp)
             .unwrap()
             .to_string(),
-        "2026-08-29T18:42:07Z"
+        "2026-08-29T18:42:07+00:00"
+    );
+    assert_eq!(
+        TaskTimestamp::from_timestamp_at_offset(timestamp, jiff::tz::offset(-3))
+            .unwrap()
+            .to_string(),
+        "2026-08-29T15:42:07-03:00"
     );
 }
 

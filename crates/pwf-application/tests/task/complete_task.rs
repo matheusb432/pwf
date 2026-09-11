@@ -59,7 +59,7 @@ async fn done_changes_only_the_target_without_listing_other_notes(pool: sqlx::Sq
     assert_eq!(tasks[7].status, TaskStatus::Done);
     assert_eq!(
         tasks[7].completed_at,
-        Some(task_timestamp("2026-07-26T12:34:56Z"))
+        Some(task_timestamp("2026-07-26T09:34:56-03:00"))
     );
     assert_eq!(result.task.unwrap().id.as_ref(), "FOO-0008");
 }
@@ -82,7 +82,7 @@ async fn done_uses_the_clock_timestamp(pool: sqlx::SqlitePool) {
 
     assert_eq!(
         store.tasks("foo-bar")[0].completed_at,
-        Some(task_timestamp("2026-07-26T12:34:56Z"))
+        Some(task_timestamp("2026-07-26T09:34:56-03:00"))
     );
 }
 

@@ -380,7 +380,7 @@ mod tests {
 
         assert_eq!(
             file.source(),
-            "---\nid: FOO-0001\nstatus: done\ncompleted_at: 2026-07-29T12:34:56Z\ntitle: task\n---\n\nbody\n"
+            "---\nid: FOO-0001\nstatus: done\ncompleted_at: 2026-07-29T12:34:56+00:00\ntitle: task\n---\n\nbody\n"
         );
     }
 

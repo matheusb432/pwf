@@ -405,7 +405,7 @@ fn new_task(body: &str, title: &str) -> NewTask {
     NewTask {
         body: body.to_string().into(),
         title: TaskTitle::try_new(title).unwrap(),
-        created_at: task_timestamp("2026-07-07T12:34:56Z"),
+        created_at: task_timestamp("2026-07-07T09:34:56-03:00"),
         blocked_by: None,
         effort: None,
         priority: None,
@@ -441,7 +441,10 @@ fn generic_add_creates_note_and_preserves_project_page() {
     );
     assert!(note.contains("status: active"), "{note}");
     assert!(note.contains("title: ship adapter"), "{note}");
-    assert!(note.contains("created_at: 2026-07-07T12:34:56Z"), "{note}");
+    assert!(
+        note.contains("created_at: 2026-07-07T09:34:56-03:00"),
+        "{note}"
+    );
     assert!(note.contains("blocked_by: [\"[[FOO-0001]]\"]"), "{note}");
     assert!(note.contains("effort: medium"), "{note}");
     assert!(note.contains("priority: highest"), "{note}");

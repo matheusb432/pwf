@@ -43,7 +43,7 @@ pub(crate) struct FixedClock;
 
 impl Clock for FixedClock {
     fn now(&self) -> Result<TaskTimestamp, pwf_models::task::TaskTimestampError> {
-        "2026-07-26T12:34:56Z".parse()
+        "2026-07-26T09:34:56-03:00".parse()
     }
 }
 
