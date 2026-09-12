@@ -11,7 +11,7 @@ use pwf_models::{
         UserSettings,
     },
     task::{
-        PriorityTier, PriorityTierError,
+        PriorityTier, PriorityTierError, TaskListLimit, TaskListLimitError,
         order::{OrderSpec, OrderSpecError},
     },
 };
@@ -21,8 +21,10 @@ use serde::Deserialize;
 #[serde(default, deny_unknown_fields)]
 struct UserSettingsDocument {
     colors: ColorsDocument,
+    default_list_page_size: Option<usize>,
     default_priority: Option<String>,
     default_sort_order: Option<String>,
+    datetime_format: Option<String>,
 }
 
 impl UserSettingsDocument {
@@ -32,6 +34,12 @@ impl UserSettingsDocument {
     }
 
     fn into_settings(self) -> Result<UserSettings, UserSettingsDocumentError> {
+        let default_list_page_size = self
+            .default_list_page_size
+            .map(TaskListLimit::try_new)
+            .transpose()
+            .map_err(UserSettingsDocumentError::ListPageSize)?
+            .unwrap_or_default();
         let default_priority = self
             .default_priority
             .map(|value| value.parse::<PriorityTier>())
@@ -43,6 +51,12 @@ impl UserSettingsDocument {
             .map(|value| value.parse::<OrderSpec>())
             .transpose()
             .map_err(UserSettingsDocumentError::Order)?
+            .unwrap_or_default();
+        let datetime_format = self
+            .datetime_format
+            .map(|value| value.parse::<pwf_models::settings::DateTimeFormat>())
+            .transpose()
+            .map_err(UserSettingsDocumentError::DateTimeFormat)?
             .unwrap_or_default();
         Ok(UserSettings::new(
             TaskStatusColors::new(
@@ -61,7 +75,9 @@ impl UserSettingsDocument {
             ),
             default_priority,
             default_sort_order,
-        ))
+        )
+        .with_datetime_format(datetime_format)
+        .with_default_list_page_size(default_list_page_size))
     }
 }
 
@@ -110,6 +126,10 @@ fn configured_color(
 
 #[derive(Debug, thiserror::Error)]
 enum UserSettingsDocumentError {
+    #[error("`default_list_page_size` is invalid: {0}")]
+    ListPageSize(#[source] TaskListLimitError),
+    #[error(transparent)]
+    DateTimeFormat(pwf_models::settings::DateTimeFormatError),
     #[error("`default_priority` is invalid: {0}")]
     Priority(#[source] PriorityTierError),
     #[error("`default_sort_order` is invalid: {0}")]
@@ -179,6 +199,18 @@ mod tests {
     use pwf_models::settings::{RgbColor, UserSettings};
 
     use super::TomlSettingsStore;
+
+    #[test]
+    fn list_page_size_accepts_supported_limits_and_reloads() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.toml");
+        let store = TomlSettingsStore::new(Some(path.clone()));
+        assert_eq!(store.load().unwrap().default_list_page_size().get(), 10);
+        for size in [1, 20, 300, 100_000] {
+            fs::write(&path, format!("default_list_page_size = {size}\n")).unwrap();
+            assert_eq!(store.load().unwrap().default_list_page_size().get(), size);
+        }
+    }
 
     #[test]
     fn list_settings_accept_every_cli_sort_field_and_direction() {
@@ -301,8 +333,17 @@ mod tests {
 
         for source in [
             "unknown = true\n",
+            "default_list_page_size = 0\n",
+            "default_list_page_size = -1\n",
+            "default_list_page_size = 100001\n",
+            "default_list_page_size = 1.5\n",
+            "default_list_page_size = \"20\"\n",
+            "default_list_page_size = false\n",
             "default_priority = \"urgent\"\n",
             "default_priority = 3\n",
+            "datetime_format = \"%J\"\n",
+            "datetime_format = \"\"\n",
+            "datetime_format = 3\n",
             "default_sort_order = \"title:sideways\"\n",
             "default_sort_order = \"title:asc:desc\"\n",
             "default_sort_order = false\n",

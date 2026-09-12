@@ -1,6 +1,9 @@
 use std::str::FromStr;
 
-use crate::task::{PriorityTier, order::OrderSpec};
+mod datetime;
+pub use datetime::{DateTimeFormat, DateTimeFormatError};
+
+use crate::task::{PriorityTier, TaskListLimit, order::OrderSpec};
 
 /// An RGB color parsed from the user-settings `#RRGGBB` representation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -194,18 +197,20 @@ impl Default for NoteStatusColors {
 }
 
 /// Immutable, validated user settings used by application operations.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UserSettings {
     task_status_colors: TaskStatusColors,
     project_status_colors: ProjectStatusColors,
     note_status_colors: NoteStatusColors,
     default_priority: PriorityTier,
     default_sort_order: OrderSpec,
+    datetime_format: DateTimeFormat,
+    default_list_page_size: TaskListLimit,
 }
 
 impl UserSettings {
     #[must_use]
-    pub const fn new(
+    pub fn new(
         task_status_colors: TaskStatusColors,
         project_status_colors: ProjectStatusColors,
         note_status_colors: NoteStatusColors,
@@ -218,31 +223,55 @@ impl UserSettings {
             note_status_colors,
             default_priority,
             default_sort_order,
+            datetime_format: DateTimeFormat::default(),
+            default_list_page_size: TaskListLimit::default(),
         }
     }
 
     #[must_use]
-    pub const fn task_status_colors(self) -> TaskStatusColors {
+    pub const fn with_default_list_page_size(mut self, size: TaskListLimit) -> Self {
+        self.default_list_page_size = size;
+        self
+    }
+
+    #[must_use]
+    pub const fn default_list_page_size(&self) -> TaskListLimit {
+        self.default_list_page_size
+    }
+
+    #[must_use]
+    pub fn with_datetime_format(mut self, format: DateTimeFormat) -> Self {
+        self.datetime_format = format;
+        self
+    }
+
+    #[must_use]
+    pub const fn datetime_format(&self) -> &DateTimeFormat {
+        &self.datetime_format
+    }
+
+    #[must_use]
+    pub const fn task_status_colors(&self) -> TaskStatusColors {
         self.task_status_colors
     }
 
     #[must_use]
-    pub const fn project_status_colors(self) -> ProjectStatusColors {
+    pub const fn project_status_colors(&self) -> ProjectStatusColors {
         self.project_status_colors
     }
 
     #[must_use]
-    pub const fn note_status_colors(self) -> NoteStatusColors {
+    pub const fn note_status_colors(&self) -> NoteStatusColors {
         self.note_status_colors
     }
 
     #[must_use]
-    pub const fn default_priority(self) -> PriorityTier {
+    pub const fn default_priority(&self) -> PriorityTier {
         self.default_priority
     }
 
     #[must_use]
-    pub const fn default_sort_order(self) -> OrderSpec {
+    pub const fn default_sort_order(&self) -> OrderSpec {
         self.default_sort_order
     }
 }

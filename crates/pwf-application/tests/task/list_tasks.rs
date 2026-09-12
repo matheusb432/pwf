@@ -17,7 +17,7 @@ use pwf_models::{
 };
 use pwf_wire::task::{
     BlockedByResolution, BlockedByStatus, ListDetail, ListTasks, ListedTasks, ProjectTaskPath,
-    RawTaskTags, StatusFilter, TaskListLimit, TaskNotePath, TaskPageSize, TaskRecord,
+    RawTaskTags, StatusFilter, TaskFilePath, TaskListLimit, TaskPageSize, TaskRecord,
 };
 
 use crate::support::{
@@ -30,7 +30,7 @@ struct FixedSettings(UserSettings);
 
 impl UserSettingsReader for FixedSettings {
     fn load(&self) -> Result<UserSettings, UserSettingsLoadError> {
-        Ok(self.0)
+        Ok(self.0.clone())
     }
 }
 
@@ -49,7 +49,7 @@ fn record(id: &str) -> TaskRecord {
         title: id.to_string(),
         created_at: Some(task_timestamp("2026-07-07T12:34:56Z")),
         source: String::new(),
-        locator: TaskNotePath::new(format!("/notes/foo/{id}.md").into()),
+        locator: TaskFilePath::new(format!("/notes/foo/{id}.md").into()),
         ..task_record(id)
     }
 }

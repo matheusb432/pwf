@@ -23,12 +23,11 @@ mod list;
 pub mod session;
 pub use list::{
     BlockedByIssue, BlockedByResolution, BlockedByStatus, ListDetail, ListTasks, ListedTask,
-    ListedTaskDetails, ListedTasks, StatusFilter, TaskHeading, TaskIssue, TaskLaunch,
-    TaskListLimit, TaskListLimitError, TaskPageSize, TaskPageSizeError, TaskPageToken,
-    TaskPageTokenError,
+    ListedTaskDetails, ListedTasks, StatusFilter, TaskHeading, TaskIssue, TaskLaunch, TaskPageSize,
+    TaskPageSizeError, TaskPageToken, TaskPageTokenError,
 };
 mod record;
-pub use pwf_models::task::Task;
+pub use pwf_models::task::{Task, TaskListLimit, TaskListLimitError};
 pub use record::{RawTaskTags, StoredBlockedBy, TaskRecord, TaskRecordError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -444,11 +443,11 @@ pub enum BacklogTaskOutcome {
     AlreadyBacklogged,
 }
 
-/// Identifies a task note's filesystem path.
+/// Identifies a task file's filesystem path.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TaskNotePath(PathBuf);
+pub struct TaskFilePath(PathBuf);
 
-impl TaskNotePath {
+impl TaskFilePath {
     #[must_use]
     pub fn new(path: PathBuf) -> Self {
         Self(path)
@@ -473,7 +472,7 @@ impl TaskNotePath {
     }
 }
 
-impl fmt::Display for TaskNotePath {
+impl fmt::Display for TaskFilePath {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "{}", self.0.display())
     }

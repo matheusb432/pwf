@@ -45,9 +45,10 @@ impl ObsidianStore {
         for write in writes {
             self.prepare_task_write(project, &notes, &mut transaction, write)?;
         }
-        transaction
-            .commit()
-            .map_err(|error| map_file_error(error, &expected_by_path))
+        let directory = self.tasks_path(project).map_err(TaskMutationError::Store)?;
+        let result = transaction.commit();
+        self.invalidate_task_index(&directory);
+        result.map_err(|error| map_file_error(error, &expected_by_path))
     }
 
     fn prepare_task_write(

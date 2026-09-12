@@ -73,7 +73,7 @@ fn list_priority_filters_and_renders_the_selected_tier() {
             "--project",
             "foo-bar",
             "--all",
-            "--long",
+            "--long=rich",
             "--priority",
             "highest",
         ])
@@ -84,7 +84,7 @@ fn list_priority_filters_and_renders_the_selected_tier() {
     let output = String::from_utf8(listed.stdout).unwrap();
     assert!(output.contains("FOO-0002"), "{output}");
     assert!(!output.contains("FOO-0001"), "{output}");
-    assert!(output.contains("priority: highest"), "{output}");
+    assert!(output.contains("Priority  highest"), "{output}");
 }
 
 #[test]
@@ -533,9 +533,72 @@ fn remove_prompt_identifies_closed_status_before_deletion() {
     fixture
         .database
         .command()
-        .args(["get", "FOO-0001", "--json"])
+        .args(["get", "FOO-0001", "--long=json"])
         .assert()
         .failure();
+}
+
+#[test]
+#[cfg(unix)]
+fn configured_list_page_size_applies_to_every_list_spelling() -> anyhow::Result<()> {
+    let fixture = ManagedProject::new(&project_id("FOO")?, "foo-bar")?;
+    for title in ["first", "second", "third"] {
+        fixture
+            .database
+            .command()
+            .args([
+                "add",
+                "foo-bar",
+                "--title",
+                title,
+                "--goal",
+                "exercise list limits",
+            ])
+            .assert()
+            .success();
+    }
+    fixture
+        .database
+        .write_user_config("default_list_page_size = 2\n")?;
+    for prefix in [
+        vec!["task", "list", "--project", "foo-bar"],
+        vec!["list", "--project", "foo-bar"],
+        vec!["foo-bar"],
+    ] {
+        for (options, expected) in [
+            (vec![], vec!["FOO-0003", "FOO-0002"]),
+            (vec!["--number", "1"], vec!["FOO-0003"]),
+            (vec!["--all"], vec!["FOO-0003", "FOO-0002", "FOO-0001"]),
+            (vec!["--all", "-n", "1"], vec!["FOO-0003"]),
+        ] {
+            let output = fixture
+                .database
+                .command()
+                .args(&prefix)
+                .args(options)
+                .output()?;
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(output.stderr.is_empty());
+            assert_list_ids(&String::from_utf8(output.stdout)?, &expected);
+        }
+    }
+    fixture
+        .database
+        .write_user_config("default_list_page_size = 1\n")?;
+    let output = fixture
+        .database
+        .command()
+        .args(["foo-bar", "--long=json"])
+        .output()?;
+    assert!(output.status.success());
+    let tasks: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0]["id"], "FOO-0003");
+    Ok(())
 }
 
 #[test]
@@ -616,7 +679,7 @@ fn configured_list_order_and_priority_apply_to_every_list_spelling() -> anyhow::
             "list",
             "--project",
             "foo-bar",
-            "--long",
+            "--long=rich",
             "--priority",
             "highest",
         ])
@@ -624,7 +687,7 @@ fn configured_list_order_and_priority_apply_to_every_list_spelling() -> anyhow::
     assert!(listed.status.success());
     let stdout = String::from_utf8(listed.stdout)?;
     assert_list_ids(&stdout, &["FOO-0003", "FOO-0002"]);
-    assert_eq!(stdout.matches("priority: highest").count(), 2);
+    assert_eq!(stdout.matches("Priority  highest").count(), 2);
     assert!(task_json(&fixture.database, &task_id("FOO-0003")?)?["priority"].is_null());
 
     fixture.database.write_user_config("")?;
@@ -869,7 +932,7 @@ fn get_formats_the_same_record_as_markdown_path_or_json() {
     );
     let json = fixture
         .database
-        .command_args(&["task", "get", "FOO-0001", "--json"])
+        .command_args(&["task", "get", "FOO-0001", "--long=json"])
         .success_json();
     assert_eq!(json["project"], "foo-bar");
     assert_eq!(json["title"], "Format Task");
@@ -891,7 +954,7 @@ fn get_formats_the_same_record_as_markdown_path_or_json() {
     );
     let rejected = fixture
         .database
-        .command_args(&["task", "get", "FOO-0001", "--json"])
+        .command_args(&["task", "get", "FOO-0001", "--long=json"])
         .output()
         .unwrap();
     assert!(!rejected.status.success());
@@ -905,7 +968,7 @@ fn get_formats_the_same_record_as_markdown_path_or_json() {
     std::fs::remove_file(path).unwrap();
     for arguments in [
         vec!["task", "get", "FOO-0001", "--path"],
-        vec!["task", "get", "FOO-0001", "--json"],
+        vec!["task", "get", "FOO-0001", "--long=json"],
         vec!["task", "get", "FOO-0001"],
     ] {
         let missing = fixture
@@ -1035,7 +1098,7 @@ fn task_and_note_crud_preserve_missing_arbitrary_and_malformed_snapshots() -> an
                 "--title",
                 "repeated input",
                 "--goal",
-                "persist each task note",
+                "persist each task file",
             ])?;
             assert!(added.contains(id), "{added}");
             assert!(tasks.join(format!("{id}.md")).exists());
@@ -1050,7 +1113,7 @@ fn task_and_note_crud_preserve_missing_arbitrary_and_malformed_snapshots() -> an
             "highest",
         ])?;
         let task: serde_json::Value =
-            serde_json::from_str(&run(&["task", "get", "FOO-0001", "--json"])?)?;
+            serde_json::from_str(&run(&["task", "get", "FOO-0001", "--long=json"])?)?;
         assert_eq!(task["title"], "revised task");
         assert_eq!(task["priority"], "highest");
         let listed = run(&["task", "list", "--all", "--order", "id:asc"])?;
@@ -1058,12 +1121,12 @@ fn task_and_note_crud_preserve_missing_arbitrary_and_malformed_snapshots() -> an
         assert!(!listed.contains("Someday"), "{listed}");
         run(&["task", "done", "FOO-0001", "--report", "finished"])?;
         let task: serde_json::Value =
-            serde_json::from_str(&run(&["task", "get", "FOO-0001", "--json"])?)?;
+            serde_json::from_str(&run(&["task", "get", "FOO-0001", "--long=json"])?)?;
         assert_eq!(task["status"], "done");
         run(&["task", "activate", "FOO-0001", "--yes"])?;
         run(&["task", "cancel", "FOO-0001", "--report", "obsolete"])?;
         let task: serde_json::Value =
-            serde_json::from_str(&run(&["task", "get", "FOO-0001", "--json"])?)?;
+            serde_json::from_str(&run(&["task", "get", "FOO-0001", "--long=json"])?)?;
         assert_eq!(task["status"], "cancelled");
         run(&["task", "remove", "FOO-0001", "--yes"])?;
         assert!(!tasks.join("FOO-0001.md").exists());
@@ -1136,7 +1199,7 @@ fn task_list_all_widens_status_and_cap_without_grouping_snapshot_sections() -> a
         std::fs::write(
             tasks.join(format!("{id}.md")),
             format!(
-                "---\nid: {id}\nstatus: {status}\ntitle: task {number}\nproject: foo\n---\n\n## Goals\n\n- list the actual task note\n"
+                "---\nid: {id}\nstatus: {status}\ntitle: task {number}\nproject: foo\n---\n\n## Goals\n\n- list the actual task file\n"
             ),
         )?;
     }
@@ -1351,4 +1414,244 @@ fn closed_task_activation_requires_confirmation_before_removing_data() {
     assert!(output.stdout.is_empty());
     assert!(String::from_utf8(output.stderr).unwrap().contains("--yes"));
     assert_eq!(task_json(&fixture.database, &id).unwrap(), closed);
+}
+
+#[test]
+fn task_content_formats_preserve_markdown_and_share_rich_output() {
+    let fixture = ManagedProject::new(&project_id("FOO").unwrap(), "foo-bar").unwrap();
+    fixture
+        .database
+        .command_args(&["add", "foo-bar", "sample"])
+        .success_stdout();
+    let path = fixture
+        .database
+        .command_args(&["get", "FOO-0001", "--path"])
+        .success_stdout();
+    let path = path.trim();
+    let source = "---\nid: FOO-0001\ntitle: Format Task\nstatus: active\ncreated_at: 2026-09-12T01:38:00-03:00\neffort: high\npriority: highest\n---\n\n## Goals\n\n- preserve **Markdown**\n  - nested item\n\n```rust\nlet x = 1;\n```\n";
+    std::fs::write(path, source).unwrap();
+    let get = fixture
+        .database
+        .command_args(&["get", "FOO-0001", "--long=rich"])
+        .success_stdout();
+    let list = fixture
+        .database
+        .command_args(&["list", "--project", "foo-bar", "--long=rich"])
+        .success_stdout();
+    assert_eq!(get, list);
+    assert!(
+        get.starts_with(&format!("FOO-0001 :: Format Task\n\n  Path      {path}\n")),
+        "{get}"
+    );
+    assert!(
+        get.contains("  Priority  highest\n  Effort    high\n  Created   12/09/2026 01:38\n\n"),
+        "{get}"
+    );
+    assert!(
+        get.contains("## Goals\n\n- preserve **Markdown**\n  - nested item\n"),
+        "{get}"
+    );
+    for arguments in [
+        vec!["get", "FOO-0001"],
+        vec!["get", "FOO-0001", "--long=md"],
+        vec!["list", "--project", "foo-bar", "--long"],
+        vec!["list", "--project", "foo-bar", "--long=md"],
+    ] {
+        let output = fixture
+            .database
+            .command_args(&arguments)
+            .color()
+            .success_stdout();
+        assert_eq!(output, format!("{source}\n"), "{arguments:?}");
+    }
+    let single = fixture
+        .database
+        .command_args(&["get", "FOO-0001", "--long=json"])
+        .success_json();
+    let listed = fixture
+        .database
+        .command_args(&["list", "--project", "foo-bar", "--long=json"])
+        .success_json();
+    assert_eq!(listed, serde_json::json!([single]));
+    fixture
+        .database
+        .write_user_config("datetime_format = \"%Y-%m-%d %H:%M %:z\"\n")
+        .unwrap();
+    let output = fixture
+        .database
+        .command_args(&["get", "FOO-0001", "--long=rich"])
+        .success_stdout();
+    assert!(output.contains("2026-09-12 01:38 -03:00"), "{output}");
+}
+
+#[test]
+fn task_content_format_parser_rejects_removed_and_conflicting_flags() {
+    for arguments in [
+        vec!["get", "FOO-0001", "--json"],
+        vec!["list", "--json"],
+        vec!["get", "FOO-0001", "--long=invalid"],
+        vec!["list", "--long=invalid"],
+        vec!["get", "FOO-0001", "--path", "--long=md"],
+    ] {
+        let output = command().args(&arguments).output().unwrap();
+        assert_eq!(output.status.code(), Some(2), "{arguments:?}");
+        assert!(output.stdout.is_empty());
+    }
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn task_content_terminal_defaults_and_explicit_markdown_ignore_color_selection() {
+    let project_name = format!("{}project", "readable-terminal-output-".repeat(4));
+    let fixture = ManagedProject::new(&project_id("FOO").unwrap(), &project_name).unwrap();
+    fixture
+        .database
+        .command_args(&["add", &project_name, "sample"])
+        .success_stdout();
+    let path = fixture
+        .database
+        .command_args(&["get", "FOO-0001", "--path"])
+        .success_stdout();
+    fixture
+        .database
+        .write_user_config("[colors.task]\nactive = \"#010203\"\n")
+        .unwrap();
+    for arguments in [
+        vec!["get", "FOO-0001"],
+        vec!["get", "FOO-0001", "--long"],
+        vec!["list", "--project", &project_name, "--long"],
+    ] {
+        for color in [false, true] {
+            let mut command = fixture.database.command_args(&arguments);
+            if color {
+                command.env_remove("NO_COLOR");
+            }
+            let mut session = expectrl::Session::spawn(command).unwrap();
+            let (columns, _) = session.get_process().get_window_size().unwrap();
+            session.set_expect_timeout(Some(std::time::Duration::from_secs(10)));
+            let capture = session.expect(expectrl::Eof).unwrap();
+            let output = String::from_utf8_lossy(capture.get(0).unwrap()).replace("\r\n", "\n");
+            if color {
+                let style = color_rgb(1, 2, 3);
+                assert!(
+                    output.starts_with(&format!("{style}FOO-0001{style:#} :: sample\n\n")),
+                    "{output:?}"
+                );
+                let label = anstyle::Style::new()
+                    .bold()
+                    .fg_color(Some(anstyle::AnsiColor::Cyan.into()));
+                assert!(
+                    ["Path    ", "Priority", "Created "]
+                        .into_iter()
+                        .all(|field| output.contains(&format!("  {label}{field}{label:#}  "))),
+                    "{output:?}"
+                );
+            } else {
+                assert!(
+                    output.starts_with("FOO-0001 :: sample\n\n  Path      "),
+                    "{output:?}"
+                );
+                assert_plain(&output);
+            }
+            let plain = dialoguer::console::strip_ansi_codes(&output);
+            let metadata = plain.split("\n\n").nth(1).unwrap();
+            assert!(
+                metadata
+                    .lines()
+                    .all(|line| line.len() <= usize::from(columns))
+            );
+            let (wrapped_path, _) = metadata.split_once("\n  Priority").unwrap();
+            let (first, rest) = wrapped_path.split_once('\n').unwrap();
+            let mut unwrapped_path = first.strip_prefix("  Path      ").unwrap().to_string();
+            for line in rest.lines() {
+                unwrapped_path.push_str(line.strip_prefix("            ").unwrap());
+            }
+            assert_eq!(unwrapped_path, path.trim());
+            assert!(matches!(
+                session.get_process().wait().unwrap(),
+                expectrl::process::unix::WaitStatus::Exited(_, 0)
+            ));
+        }
+    }
+    for arguments in [
+        vec!["get", "FOO-0001", "--long=md"],
+        vec!["list", "--project", &project_name, "--long=md"],
+    ] {
+        let mut command = fixture.database.command_args(&arguments);
+        command.color();
+        let mut session = expectrl::Session::spawn(command).unwrap();
+        session.set_expect_timeout(Some(std::time::Duration::from_secs(10)));
+        let capture = session.expect(expectrl::Eof).unwrap();
+        let output = String::from_utf8_lossy(capture.get(0).unwrap()).replace("\r\n", "\n");
+        assert!(output.starts_with("---\nid: FOO-0001\n"), "{output:?}");
+        assert_plain(&output);
+        assert!(matches!(
+            session.get_process().wait().unwrap(),
+            expectrl::process::unix::WaitStatus::Exited(_, 0)
+        ));
+    }
+}
+
+#[test]
+fn task_content_lists_keep_machine_formats_clean_and_preserve_file_bytes() {
+    let fixture = ManagedProject::new(&project_id("FOO").unwrap(), "foo-bar").unwrap();
+    let empty = fixture
+        .database
+        .command_args(&["list", "--project", "foo-bar", "--long=json"])
+        .success_json();
+    assert_eq!(empty, serde_json::json!([]));
+    for title in ["first", "second"] {
+        fixture
+            .database
+            .command_args(&["add", "foo-bar", title])
+            .success_stdout();
+    }
+    let path = fixture
+        .database
+        .command_args(&["get", "FOO-0001", "--path"])
+        .success_stdout();
+    let source = "\u{feff}---\r\nid: FOO-0001\r\ntitle: first\r\nstatus: active\r\ncustom: retained\r\n---\r\n\r\n  authored body  \r\n";
+    std::fs::write(path.trim(), source).unwrap();
+    let markdown = fixture
+        .database
+        .command_args(&[
+            "list",
+            "--project",
+            "foo-bar",
+            "--long=md",
+            "--order=id:asc",
+            "-n",
+            "1",
+        ])
+        .color()
+        .success_stdout();
+    assert_eq!(markdown, format!("{source}\n"));
+    let array = fixture
+        .database
+        .command_args(&["list", "--project", "foo-bar", "--long=json", "-n", "1"])
+        .color()
+        .success_json();
+    assert_eq!(array.as_array().unwrap().len(), 1);
+    let rich = fixture
+        .database
+        .command_args(&["get", "FOO-0001", "--long=rich"])
+        .success_stdout();
+    assert!(rich.contains("\n\n  authored body  \r\n"), "{rich:?}");
+    assert!(!rich.contains("1970"));
+    fixture
+        .database
+        .write_user_config("datetime_format = \"%J\"\n")
+        .unwrap();
+    let rejected = fixture
+        .database
+        .command_args(&["get", "FOO-0001"])
+        .output()
+        .unwrap();
+    assert!(!rejected.status.success());
+    assert!(rejected.stdout.is_empty());
+    let stderr = String::from_utf8(rejected.stderr).unwrap();
+    assert!(
+        stderr.contains("config.toml") && stderr.contains("datetime_format"),
+        "{stderr}"
+    );
 }

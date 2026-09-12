@@ -15,7 +15,7 @@ struct FixedUserSettingsReader(UserSettings);
 
 impl UserSettingsReader for FixedUserSettingsReader {
     fn load(&self) -> Result<UserSettings, UserSettingsLoadError> {
-        Ok(self.0)
+        Ok(self.0.clone())
     }
 }
 
@@ -28,7 +28,7 @@ fn query_returns_the_complete_validated_settings_snapshot() {
         PriorityTier::Medium,
         OrderSpec::default(),
     );
-    let reader = FixedUserSettingsReader(settings);
+    let reader = FixedUserSettingsReader(settings.clone());
 
     assert_eq!(
         get_user_settings::execute(GetUserSettings, &reader).unwrap(),

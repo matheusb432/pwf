@@ -118,7 +118,7 @@ pub async fn execute(
         None => None,
     };
     let settings = settings_reader.load()?;
-    let query = resolve_query(query, selected, settings);
+    let query = resolve_query(query, selected, &settings);
     let binding = page_binding(&query);
     let cursor = query
         .page_token
@@ -272,13 +272,13 @@ fn retain_matching_tags(
 fn resolve_query(
     query: &ListTasks,
     project: Option<Project>,
-    settings: UserSettings,
+    settings: &UserSettings,
 ) -> ResolvedListTasks {
     let all = query.all;
     let cap = query
         .number
         .map(pwf_wire::task::TaskListLimit::get)
-        .or((!all).then_some(10));
+        .or((!all).then_some(settings.default_list_page_size().get()));
     let order = query.order.unwrap_or(settings.default_sort_order());
     let status_filter = query.status.unwrap_or(if all {
         StatusFilter::All

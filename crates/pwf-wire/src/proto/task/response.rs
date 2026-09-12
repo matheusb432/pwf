@@ -362,7 +362,7 @@ pub fn delete_task_confirmation(
         project: confirmation.project.to_string(),
         title: confirmation.title.to_string(),
         status: task_status_value(confirmation.status),
-        note_path: confirmation.note_path.to_string(),
+        file_path: confirmation.file_path.to_string(),
         obsidian_vault: match &confirmation.deletion {
             crate::confirmation::TaskDeletion::HardDelete => None,
             crate::confirmation::TaskDeletion::MoveToTrash { obsidian_vault } => {
@@ -433,9 +433,13 @@ fn listed_task(task: task::ListedTask) -> pb::ListedTask {
         ..Default::default()
     };
     if let Some(details) = task.details {
+        view.source = Some(details.source);
+        view.created_at = details.created_at.map(|value| value.to_string());
+        view.completed_at = details.completed_at.map(|value| value.to_string());
+        view.commits = details.commits;
         view.prompt = details.prompt.to_string();
         view.project_path = details.project_path.map(|path| path.to_string());
-        view.note_path = details.note_path.into_display_string();
+        view.file_path = details.file_path.into_display_string();
         view.launch_issues = details.launch.issues().iter().map(task_issue).collect();
         view.blocked_by = details
             .blocked_by

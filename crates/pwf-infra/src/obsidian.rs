@@ -5,6 +5,7 @@ mod note_frontmatter;
 mod note_text;
 mod project_rename;
 mod store;
+mod task_index;
 mod trash;
 
 use std::path::{Path, PathBuf};

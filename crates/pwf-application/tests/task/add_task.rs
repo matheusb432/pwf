@@ -37,7 +37,7 @@ fn command() -> AddTask {
 }
 
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]
-async fn add_inserts_task_note_and_returns_its_summary(pool: sqlx::SqlitePool) {
+async fn add_inserts_task_file_and_returns_its_summary(pool: sqlx::SqlitePool) {
     let store = registered_store(&pool).await;
 
     let added = add_task::execute(command(), &store, &pool, &FixedClock)
@@ -287,7 +287,7 @@ async fn reads_only_reachable_dependencies_once_including_paused_projects(pool: 
 }
 
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]
-async fn missing_projects_and_task_notes_do_not_supply_dependencies(pool: sqlx::SqlitePool) {
+async fn missing_projects_and_task_files_do_not_supply_dependencies(pool: sqlx::SqlitePool) {
     let store = registered_store(&pool).await;
     let mut command = command();
     command.blocked_by = Some(blocked_by(&["FOO-0002", "AUX-0001"]));
@@ -370,7 +370,7 @@ async fn shorthand_still_requires_a_title(pool: sqlx::SqlitePool) {
 }
 
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]
-async fn repeated_creation_allocates_distinct_task_notes(pool: sqlx::SqlitePool) {
+async fn repeated_creation_allocates_distinct_task_files(pool: sqlx::SqlitePool) {
     let store = registered_store(&pool).await;
     let first = add_task::execute(command(), &store, &pool, &FixedClock)
         .await

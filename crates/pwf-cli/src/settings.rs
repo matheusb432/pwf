@@ -5,7 +5,7 @@ use pwf_client::{pb, settings::SettingsClient};
 use pwf_models::{
     settings::{NoteStatusColors, ProjectStatusColors, RgbColor, TaskStatusColors, UserSettings},
     task::{
-        PriorityTier,
+        PriorityTier, TaskListLimit,
         order::{OrderDirection, OrderField, OrderSpec},
     },
 };
@@ -55,7 +55,11 @@ fn decode(response: pb::GetUserSettingsResponse) -> anyhow::Result<UserSettings>
         ),
         default_priority,
         default_sort_order,
-    ))
+    )
+    .with_datetime_format(response.datetime_format.try_into()?)
+    .with_default_list_page_size(TaskListLimit::try_new(usize::try_from(
+        response.default_list_page_size,
+    )?)?))
 }
 
 fn decode_order(order: pb::OrderSpec) -> anyhow::Result<OrderSpec> {
@@ -146,6 +150,10 @@ mod tests {
                     blue: 53,
                 }),
             }),
+            datetime_format: pwf_models::settings::DateTimeFormat::default()
+                .as_ref()
+                .to_string(),
+            default_list_page_size: 10,
             default_priority: pb::PriorityTier::Medium as i32,
             default_sort_order: Some(pb::OrderSpec {
                 field: pb::OrderField::Id as i32,
@@ -157,6 +165,17 @@ mod tests {
     #[test]
     fn settings_response_validates_list_defaults() {
         assert_eq!(decode(valid_response()).unwrap(), UserSettings::default());
+        let mut response = valid_response();
+        response.default_list_page_size = 20;
+        assert_eq!(decode(response).unwrap().default_list_page_size().get(), 20);
+        for size in [0, 100_001, u64::MAX] {
+            let mut response = valid_response();
+            response.default_list_page_size = size;
+            assert!(decode(response).is_err());
+        }
+        let mut response = valid_response();
+        response.datetime_format = "%J".to_string();
+        assert!(decode(response).is_err());
         let mut response = valid_response();
         response.default_priority = 999;
         assert!(decode(response).is_err());

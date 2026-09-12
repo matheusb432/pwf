@@ -1233,7 +1233,7 @@ fn task_record_roundtrips_file_model_note() {
     let project_dir = notes_dir.join("foo");
     std::fs::create_dir_all(&project_dir).unwrap();
     std::fs::write(project_dir.join("foo.md"), "- [ ] [[FOO-0001]]\n").unwrap();
-    let note_path = project_dir.join("FOO-0001.md");
+    let file_path = project_dir.join("FOO-0001.md");
     let source = concat!(
         "---\n",
         "id: FOO-0001\n",
@@ -1250,7 +1250,7 @@ fn task_record_roundtrips_file_model_note() {
         "\n",
         "ship the adapter body\n",
     );
-    std::fs::write(&note_path, source).unwrap();
+    std::fs::write(&file_path, source).unwrap();
     let store = store_with_index_identity(&notes_dir.join("foo"));
 
     let project = foo_project(&store);
@@ -1281,7 +1281,7 @@ fn task_record_roundtrips_file_model_note() {
         Some("[sqlite, godot]")
     );
     assert_eq!(record.body, "\nship the adapter body\n");
-    assert_eq!(record.locator.as_path(), note_path);
+    assert_eq!(record.locator.as_path(), file_path);
     assert_eq!(record.source, source);
 }
 
@@ -1292,9 +1292,9 @@ fn task_record_preserves_malformed_blocked_by_without_failing_the_read() {
     let project_dir = notes_dir.join("foo");
     std::fs::create_dir_all(&project_dir).unwrap();
     std::fs::write(project_dir.join("foo.md"), "- [ ] [[FOO-0001]]\n").unwrap();
-    let note_path = project_dir.join("FOO-0001.md");
+    let file_path = project_dir.join("FOO-0001.md");
     write_note(
-        &note_path,
+        &file_path,
         "malformed dependency",
         "2026-07-01",
         Some("\"[[AUX-0001]]\""),
@@ -1320,9 +1320,9 @@ fn task_record_rejects_an_invalid_created_at_timestamp() {
     let project_dir = notes_dir.join("foo");
     std::fs::create_dir_all(&project_dir).unwrap();
     std::fs::write(project_dir.join("foo.md"), "- [ ] [[FOO-0001]]\n").unwrap();
-    let note_path = project_dir.join("FOO-0001.md");
+    let file_path = project_dir.join("FOO-0001.md");
     write_note(
-        &note_path,
+        &file_path,
         "invalid date",
         "2026-02-30",
         None,
@@ -1343,7 +1343,7 @@ fn task_record_rejects_an_invalid_created_at_timestamp() {
             property: "created_at",
             ref value,
             ..
-        } if path == note_path && value == "2026-02-30T00:00:00Z"
+        } if path == file_path && value == "2026-02-30T00:00:00Z"
     );
 }
 
@@ -1354,9 +1354,9 @@ fn task_record_rejects_an_invalid_status() {
     let project_dir = notes_dir.join("foo");
     std::fs::create_dir_all(&project_dir).unwrap();
     std::fs::write(project_dir.join("foo.md"), "- [ ] [[FOO-0001]]\n").unwrap();
-    let note_path = project_dir.join("FOO-0001.md");
+    let file_path = project_dir.join("FOO-0001.md");
     std::fs::write(
-        &note_path,
+        &file_path,
         "---\nid: FOO-0001\nstatus: paused\ntitle: invalid status\n---\n\nbody\n",
     )
     .unwrap();
@@ -1372,7 +1372,7 @@ fn task_record_rejects_an_invalid_status() {
             path,
             ref value,
             ..
-        } if path == note_path && value == "paused"
+        } if path == file_path && value == "paused"
     );
 }
 
@@ -1695,6 +1695,93 @@ fn single_task_read_does_not_load_other_task_bodies() {
     let record = get_record(&store, "FOO-0001").unwrap();
     assert_eq!(record.title, "selected");
     assert!(record.body.contains("selected body"));
+}
+
+#[test]
+fn watched_lookup_keeps_unrelated_summary_errors_out_of_single_task_reads() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("selected.md"),
+        "---\nid: FOO-0001\ntitle: selected\n---\nbody",
+    )
+    .unwrap();
+    std::fs::write(
+        directory.path().join("other.md"),
+        "---\nid: FOO-0002\nstatus: invalid\n---\nbody",
+    )
+    .unwrap();
+    let store =
+        ObsidianStore::with_watched_tasks(HomeDirectory::new(directory.path().to_path_buf()));
+    let project = foo_project(&store);
+    assert_eq!(get_record(&store, "FOO-0001").unwrap().title, "selected");
+    for _ in 0..2 {
+        assert!(matches!(
+            TaskVault::list_task_summaries(&store, &project),
+            Err(ObsidianStoreError::InvalidTaskStatus { .. })
+        ));
+    }
+}
+
+#[test]
+fn watched_mutation_preflight_observes_an_external_duplicate_immediately() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("selected.md");
+    let source = "---\nid: FOO-0001\ntitle: selected\n---\nbody";
+    std::fs::write(&path, source).unwrap();
+    let store =
+        ObsidianStore::with_watched_tasks(HomeDirectory::new(directory.path().to_path_buf()));
+    let project = foo_project(&store);
+    let record = get_record(&store, "FOO-0001").unwrap();
+    std::fs::copy(&path, directory.path().join("duplicate.md")).unwrap();
+    let writes = TaskWriteSet::try_new(
+        vec![ExpectedTaskRevision {
+            id: record.id.clone(),
+            revision: record.revision,
+        }],
+        vec![TaskWrite::Patch {
+            id: record.id,
+            patch: TaskPatch {
+                title: SetField::Set(TaskTitle::try_new("edited").unwrap()),
+                ..TaskPatch::default()
+            },
+        }],
+    )
+    .unwrap();
+    assert!(matches!(
+        TaskVault::commit_task_writes(&store, &project, writes),
+        Err(TaskMutationError::Store(
+            ObsidianStoreError::DuplicateTaskId { .. }
+        ))
+    ));
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), source);
+}
+
+#[test]
+fn task_allocation_and_mutation_do_not_decode_unrelated_bodies() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = store_for_tasks(directory.path());
+    let project = foo_project(&store);
+    std::fs::write(
+        directory.path().join("other.md"),
+        b"---\nid: FOO-0001\n---\n\xff",
+    )
+    .unwrap();
+    let id = TaskVault::next_task_id(&store, &project).unwrap();
+    assert_eq!(id.as_ref(), "FOO-0002");
+    TaskVault::insert_task(&store, &project, &id, new_task("body", "selected")).unwrap();
+    commit_for_task(
+        &store,
+        &project,
+        &id,
+        vec![TaskWrite::Patch {
+            id: id.clone(),
+            patch: TaskPatch {
+                title: SetField::Set(TaskTitle::try_new("edited").unwrap()),
+                ..TaskPatch::default()
+            },
+        }],
+    );
+    assert_eq!(get_record(&store, "FOO-0002").unwrap().title, "edited");
 }
 
 #[test]

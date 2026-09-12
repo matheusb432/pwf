@@ -6,8 +6,8 @@ use pwf_wire::{
     confirmation::RemoveTaskConfirmation,
     project::ProjectStatusFilter,
     task::{
-        DeleteTask, DeleteTaskOutcome, StoredBlockedBy, TaskMutationResult, TaskMutationSummary,
-        TaskNotePath, TaskRecord,
+        DeleteTask, DeleteTaskOutcome, StoredBlockedBy, TaskFilePath, TaskMutationResult,
+        TaskMutationSummary, TaskRecord,
     },
 };
 
@@ -52,7 +52,7 @@ pub enum RemoveTaskError {
     #[error("task {task} at {path} has malformed blocked_by metadata {raw:?}: {reason}")]
     MalformedBlockedBy {
         task: TaskId,
-        path: Box<TaskNotePath>,
+        path: Box<TaskFilePath>,
         raw: Box<str>,
         reason: Box<str>,
     },
@@ -64,7 +64,7 @@ pub enum RemoveTaskError {
     Mutation(#[from] TaskMutationError<anyhow::Error>),
 }
 
-/// Confirms the deletion destination before removing the task note.
+/// Confirms the deletion destination before removing the task file.
 #[cqrsy::command]
 pub async fn execute(
     command: &DeleteTask,
@@ -125,7 +125,7 @@ async fn prepare_removal(
         project: project.title.clone(),
         title: title.clone(),
         status: record.status,
-        note_path: record.locator.clone(),
+        file_path: record.locator.clone(),
         revision: super::task_revision(&record),
     };
     Ok(PreparedRemoval {

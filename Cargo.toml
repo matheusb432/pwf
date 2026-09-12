@@ -36,6 +36,7 @@ lazy-regex = "3.6.1"
 libc = "0.2.186"
 mermaid-text = "0.57.0"
 nutype = "0.7.0"
+notify = "8.2.0"
 percent-encoding = "2.3.2"
 process-wrap = { version = "9.1.0", default-features = false, features = [
     "job-object",

@@ -6,9 +6,10 @@ use pwf_wire::{
 };
 
 use super::{
-    commit_task_writes, expected_task_revision,
+    commit_task_writes,
+    content::remove_report,
+    expected_task_revision,
     get_task_record::{self, GetTaskRecordError, LoadedTaskRecord},
-    note_body::remove_report,
     task_body_region,
 };
 use crate::ports::{

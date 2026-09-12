@@ -6,7 +6,7 @@ use pwf_client::{
 };
 use pwf_models::{
     session::Agent,
-    settings::TaskStatusColors,
+    settings::UserSettings,
     task::{EffortTier, TaskId, TaskTitle},
 };
 
@@ -286,9 +286,9 @@ enum TaskCommand {
     /// List tasks. `--all` lists everything
     #[command(alias = "ls")]
     List(list::Arguments),
-    /// Mark a task done in its note
+    /// Mark a task done in its file
     Done(done::Arguments),
-    /// Mark a task cancelled in its note
+    /// Mark a task cancelled in its file
     Cancel(cancel::Arguments),
     /// Defer an active task to backlog, hiding it from default lists
     Backlog(backlog::Arguments),
@@ -296,22 +296,23 @@ enum TaskCommand {
     Activate(activate::Arguments),
     /// Edit an active or backlogged task's prompt body, title, blocked-by tasks, tags, or effort
     Edit(Box<edit::Arguments>),
-    /// Get a task note's markdown
+    /// Show a task's full content
     #[command(alias = "g")]
     Get(get::Arguments),
     /// Show a task's directed dependency graph
     Dag(dag::Arguments),
-    /// Delete a task note
+    /// Delete a task file
     Remove(remove::Arguments),
 }
 
 pub async fn run(
     command: &Command,
     console: Console,
-    task_status_colors: TaskStatusColors,
+    settings: &UserSettings,
     client: &TaskClient,
     projects: &ProjectClient,
 ) -> anyhow::Result<String> {
+    let task_status_colors = settings.task_status_colors();
     let output = match command {
         Command::Task(arguments) => match &arguments.command {
             TaskCommand::Add(arguments) => {
@@ -321,7 +322,7 @@ pub async fn run(
                 clone::run(arguments, console, task_status_colors, client, projects).await?
             }
             TaskCommand::List(arguments) => {
-                list::run(arguments, console, task_status_colors, client, projects).await?
+                list::run(arguments, console, settings, client, projects).await?
             }
             TaskCommand::Done(arguments) => {
                 done::run(arguments, console, task_status_colors, client).await?
@@ -338,7 +339,9 @@ pub async fn run(
             TaskCommand::Edit(arguments) => {
                 edit::run(arguments, console, task_status_colors, client).await?
             }
-            TaskCommand::Get(arguments) => get::run(arguments, client, projects).await?,
+            TaskCommand::Get(arguments) => {
+                get::run(arguments, console, settings, client, projects).await?
+            }
             TaskCommand::Dag(arguments) => {
                 dag::run(arguments, console, task_status_colors, client).await?
             }
@@ -349,7 +352,7 @@ pub async fn run(
         Command::Session(arguments) => session::run(arguments, console, client).await?,
         Command::Route(arguments) => match route::resolve(arguments) {
             route::ResolvedCommand::List(arguments) => {
-                list::run(&arguments, console, task_status_colors, client, projects).await?
+                list::run(&arguments, console, settings, client, projects).await?
             }
             route::ResolvedCommand::RejectUnsupportedTaskCreation => {
                 return Err(anyhow::anyhow!("Use: pwf task add <project> \"<prompt>\""));
@@ -357,6 +360,45 @@ pub async fn run(
         },
     };
     Ok(output)
+}
+
+#[derive(clap::ValueEnum, Clone, Copy, Debug, Eq, PartialEq)]
+enum ContentFormat {
+    Rich,
+    Md,
+    Json,
+}
+
+impl ContentFormat {
+    fn for_console(console: Console) -> Self {
+        if console.stdout_terminal() {
+            Self::Rich
+        } else {
+            Self::Md
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ContentSelection {
+    Automatic,
+    Format(ContentFormat),
+}
+
+impl ContentSelection {
+    fn parse(value: &str) -> Result<Self, String> {
+        if value.is_empty() {
+            return Ok(Self::Automatic);
+        }
+        <ContentFormat as clap::ValueEnum>::from_str(value, false).map(Self::Format)
+    }
+
+    fn resolve(self, console: Console) -> ContentFormat {
+        match self {
+            Self::Automatic => ContentFormat::for_console(console),
+            Self::Format(format) => format,
+        }
+    }
 }
 
 #[cfg(test)]

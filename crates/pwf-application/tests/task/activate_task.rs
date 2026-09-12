@@ -176,7 +176,7 @@ async fn activate_rejects_a_task_edited_after_preflight_without_mutation(pool: s
 }
 
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]
-async fn activate_accepts_a_cancelled_task_note(pool: sqlx::SqlitePool) {
+async fn activate_accepts_a_cancelled_task_file(pool: sqlx::SqlitePool) {
     crate::support::insert_project(
         &pool,
         "FOO",

@@ -8,7 +8,7 @@ mod project_snapshot;
 mod task_mutation;
 mod task_record;
 
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 pub use error::ObsidianStoreError;
 use pwf_application::ports::project_task_location::ProjectTaskLocationClient;
@@ -18,12 +18,32 @@ use pwf_wire::task::ProjectTaskPath;
 #[derive(Clone)]
 pub struct ObsidianStore {
     home: HomeDirectory,
+    task_index: Option<Arc<super::task_index::TaskIndex>>,
 }
 
 impl ObsidianStore {
     #[must_use]
     pub fn new(home: HomeDirectory) -> Self {
-        Self { home }
+        Self {
+            home,
+            task_index: None,
+        }
+    }
+
+    /// Reuses task summaries and locations between filesystem notifications within a bounded memory
+    /// budget. Server writes invalidate immediately; external edits have a short refresh delay.
+    #[must_use]
+    pub fn with_watched_tasks(home: HomeDirectory) -> Self {
+        Self {
+            home,
+            task_index: Some(Arc::new(super::task_index::TaskIndex::new())),
+        }
+    }
+
+    fn invalidate_task_index(&self, directory: &std::path::Path) {
+        if let Some(index) = &self.task_index {
+            index.invalidate(directory);
+        }
     }
 
     fn tasks_path(&self, project: &Project) -> Result<PathBuf, ObsidianStoreError> {

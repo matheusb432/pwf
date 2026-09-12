@@ -170,12 +170,14 @@ fn task_bytes(task: &ListedTask) -> usize {
 }
 
 fn details_bytes(task: &pwf_wire::task::ListedTaskDetails) -> usize {
-    let fields_bytes = task.prompt.as_ref().len()
+    let fields_bytes = task.source.len()
+        + task.commits.as_ref().map_or(0, String::len)
+        + task.prompt.as_ref().len()
         + task
             .project_path
             .as_ref()
             .map_or(0, |path| path.as_ref().len())
-        + task.note_path.as_path().as_os_str().len();
+        + task.file_path.as_path().as_os_str().len();
     let blockers_bytes = task.blocked_by.as_ref().map_or(0, |blockers| {
         blockers
             .iter()

@@ -1,12 +1,12 @@
 use std::fmt::Write;
 
 use pwf_client::pb::{
-    BlockedByResolutionKind, BlockedByStatus, EffortTier, ListDetail, ListTasksResponse,
-    ListedTask, PriorityTier, TaskIssue, TaskIssueKind, TaskStatus, TaskStatusFilter,
+    BlockedByResolutionKind, BlockedByStatus, ListTasksResponse, ListedTask, TaskIssue,
+    TaskIssueKind, TaskStatus, TaskStatusFilter,
 };
 use pwf_models::settings::TaskStatusColors;
 
-use super::{render_status, render_task_summary};
+use super::render_task_summary;
 
 pub(in crate::task) fn render_list(
     result: &ListTasksResponse,
@@ -14,10 +14,8 @@ pub(in crate::task) fn render_list(
     task_status_colors: TaskStatusColors,
     on: bool,
 ) -> String {
-    let detail = ListDetail::try_from(result.detail).unwrap_or(ListDetail::Unspecified);
     let status_filter =
         TaskStatusFilter::try_from(result.status_filter).unwrap_or(TaskStatusFilter::Unspecified);
-    let long = detail == ListDetail::Detailed;
     if result.tasks.is_empty() {
         return match status_filter {
             TaskStatusFilter::Active => {
@@ -45,7 +43,6 @@ pub(in crate::task) fn render_list(
             &mut out,
             task,
             status_filter,
-            long,
             idx == last_idx,
             task_status_colors,
             on,
@@ -64,7 +61,7 @@ pub(in crate::task) fn render_list(
     out
 }
 
-fn blocked_by_status_summary(statuses: &[BlockedByStatus]) -> String {
+pub(super) fn blocked_by_status_summary(statuses: &[BlockedByStatus]) -> String {
     statuses
         .iter()
         .map(|blocked_by| {
@@ -97,103 +94,46 @@ fn render_list_task(
     out: &mut String,
     task: &ListedTask,
     status_filter: TaskStatusFilter,
-    long: bool,
     last: bool,
     task_status_colors: TaskStatusColors,
     on: bool,
 ) {
-    let task_status = TaskStatus::try_from(task.status).unwrap_or(TaskStatus::Unspecified);
-    let summary = render_task_summary(
+    let status = TaskStatus::try_from(task.status).unwrap_or(TaskStatus::Unspecified);
+    out.push_str(&render_task_summary(
         &task.id,
         &task.heading,
-        task_status,
+        status,
         status_filter == TaskStatusFilter::All && !on,
         task_status_colors,
         on,
-    );
-    let formatted = if last && !long {
-        summary
-    } else {
-        format!("{summary}\n")
-    };
-    out.push_str(&formatted);
-    if !long {
-        return;
+    ));
+    if !last {
+        out.push('\n');
     }
+}
 
-    let _ = writeln!(
-        out,
-        "  status: {}",
-        render_status(task_status, task_status_colors, on)
-    );
-    if task_status == TaskStatus::Active {
-        let relationship_warning = !task.blocked_by_issues.is_empty()
-            || task.blocked_by_statuses.iter().any(blocked_by_is_warning);
-        let launch_ready = task.launch_issues.is_empty();
-        let launch = if launch_ready && relationship_warning {
-            "READY WITH WARNINGS"
-        } else if launch_ready {
-            "READY"
-        } else {
-            "NEEDS ATTENTION"
-        };
-        let _ = writeln!(out, "  launch: {launch}");
-        if task.launch_issues.iter().any(|issue| {
-            TaskIssueKind::try_from(issue.kind).ok() == Some(TaskIssueKind::PlaceholderPrompt)
-        }) {
-            out.push_str("  launch: NEEDS PROMPT\n");
-        }
-    }
-
-    let _ = writeln!(
-        out,
-        "  project_path: {}",
-        task.project_path.as_deref().unwrap_or("none")
-    );
-    if task.note_path.is_empty() {
-        out.push_str("  note: (unavailable)\n");
-    } else {
-        let _ = writeln!(out, "  note: {}", task.note_path);
-    }
-    let prompt = task.prompt.replace("\r\n", " / ").replace('\n', " / ");
-    let _ = writeln!(out, "  prompt: {prompt}");
-    if !task.blocked_by_statuses.is_empty() {
-        let _ = writeln!(
-            out,
-            "  blocked_by: {}",
-            blocked_by_status_summary(&task.blocked_by_statuses)
-        );
-    }
-    if let Some(effort) = task
-        .effort
-        .and_then(|effort| EffortTier::try_from(effort).ok())
-    {
-        let _ = writeln!(out, "  effort: {}", effort_name(effort));
-    }
-    if let Some(priority) = task
-        .priority
-        .and_then(|priority| PriorityTier::try_from(priority).ok())
-    {
-        let _ = writeln!(out, "  priority: {}", priority_name(priority));
-    }
-    if let Some(tags) = &task.raw_tags {
-        let _ = writeln!(out, "  tags: {tags}");
-    }
+pub(super) fn diagnostics(task: &ListedTask) -> String {
+    let mut output = String::new();
     for issue in &task.blocked_by_issues {
         let _ = writeln!(
-            out,
-            "  issue: Malformed blocked_by metadata {:?} in {}: {}",
+            output,
+            "Issue: Malformed blocked_by metadata {:?} in {}: {}",
             issue.raw, issue.path, issue.reason
         );
     }
-    if task_status == TaskStatus::Active {
-        for issue in &task.launch_issues {
-            let _ = writeln!(out, "  issue: {}", launch_issue(*issue));
-        }
+    if TaskStatus::try_from(task.status).ok() == Some(TaskStatus::Active) {
         if !task.launch_issues.is_empty() {
-            let _ = writeln!(out, "  fix: edit {}", task.note_path);
+            for issue in &task.launch_issues {
+                let _ = writeln!(output, "Issue: {}", launch_issue(*issue));
+            }
+            let _ = writeln!(output, "Fix: edit {}", task.file_path);
+        } else if !task.blocked_by_issues.is_empty()
+            || task.blocked_by_statuses.iter().any(blocked_by_is_warning)
+        {
+            output.push_str("Launch: READY WITH WARNINGS\n");
         }
     }
+    output
 }
 
 fn blocked_by_is_warning(blocked_by: &BlockedByStatus) -> bool {
@@ -214,26 +154,6 @@ fn launch_issue(issue: TaskIssue) -> &'static str {
     }
 }
 
-fn effort_name(effort: EffortTier) -> &'static str {
-    match effort {
-        EffortTier::Low => "low",
-        EffortTier::Medium => "medium",
-        EffortTier::High => "high",
-        EffortTier::Highest => "highest",
-        EffortTier::Unspecified => "unspecified",
-    }
-}
-
-fn priority_name(priority: PriorityTier) -> &'static str {
-    match priority {
-        PriorityTier::Low => "low",
-        PriorityTier::Medium => "medium",
-        PriorityTier::High => "high",
-        PriorityTier::Highest => "highest",
-        PriorityTier::Unspecified => "unspecified",
-    }
-}
-
 fn task_status_name(status: TaskStatus) -> &'static str {
     match status {
         TaskStatus::Active => "active",
@@ -246,7 +166,6 @@ fn task_status_name(status: TaskStatus) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use pwf_client::pb::BlockedByIssue;
     use pwf_models::settings::RgbColor;
 
     use super::*;
@@ -260,7 +179,7 @@ mod tests {
             heading: "sample task".to_string(),
             prompt: String::new(),
             project_path: Some("/project".to_string()),
-            note_path: "FOO-0001.md".to_string(),
+            file_path: "FOO-0001.md".to_string(),
             launch_issues: Vec::new(),
 
             blocked_by: Vec::new(),
@@ -270,13 +189,13 @@ mod tests {
             raw_tags: None,
             created: None,
             priority: None,
+            ..Default::default()
         }
     }
 
     fn render_task_for_filter(
         task: &ListedTask,
         status_filter: TaskStatusFilter,
-        long: bool,
         on: bool,
     ) -> String {
         let mut output = String::new();
@@ -284,7 +203,6 @@ mod tests {
             &mut output,
             task,
             status_filter,
-            long,
             true,
             TaskStatusColors::default(),
             on,
@@ -302,7 +220,7 @@ mod tests {
         ] {
             let mut task = sample_task();
             task.status = status as i32;
-            let output = render_task_for_filter(&task, TaskStatusFilter::All, false, false);
+            let output = render_task_for_filter(&task, TaskStatusFilter::All, false);
             assert_eq!(output, expected);
             assert_plain(&output);
         }
@@ -318,7 +236,7 @@ mod tests {
         ] {
             let mut task = sample_task();
             task.status = status as i32;
-            let output = render_task_for_filter(&task, TaskStatusFilter::All, false, true);
+            let output = render_task_for_filter(&task, TaskStatusFilter::All, true);
             assert!(
                 output.contains(&format!("{color}FOO-0001{color:#}")),
                 "{output:?}"
@@ -328,7 +246,7 @@ mod tests {
 
     #[test]
     fn exact_active_status_short_line_uses_the_default_active_color() {
-        let output = render_task_for_filter(&sample_task(), TaskStatusFilter::Active, false, true);
+        let output = render_task_for_filter(&sample_task(), TaskStatusFilter::Active, true);
 
         assert_eq!(
             output,
@@ -360,7 +278,6 @@ mod tests {
                 &mut output,
                 &task,
                 TaskStatusFilter::All,
-                false,
                 true,
                 colors,
                 true,
@@ -373,130 +290,43 @@ mod tests {
 
     #[test]
     fn exact_status_short_lines_keep_the_existing_shape() {
-        let output = render_task_for_filter(&sample_task(), TaskStatusFilter::Active, false, false);
+        let output = render_task_for_filter(&sample_task(), TaskStatusFilter::Active, false);
         assert_eq!(output, "FOO-0001 :: sample task");
     }
-
     #[test]
-    fn long_form_separates_lifecycle_from_active_launch_readiness() {
-        let output = render_task_for_filter(&sample_task(), TaskStatusFilter::Active, true, false);
-        assert!(output.contains("  status: active\n"), "{output}");
-        assert!(output.contains("  launch: READY\n"), "{output}");
-        assert!(output.contains("  project_path: /project\n"), "{output}");
+    fn rich_diagnostics_keep_lineage_and_report_malformed_relationships() {
+        let mut task = sample_task();
+        task.blocked_by_statuses = vec![BlockedByStatus {
+            id: "AUX-0014".to_string(),
+            resolution: BlockedByResolutionKind::Found as i32,
+            status: Some(TaskStatus::Done as i32),
+            ..Default::default()
+        }];
+        assert_eq!(
+            blocked_by_status_summary(&task.blocked_by_statuses),
+            "AUX-0014 (done)"
+        );
+        assert!(diagnostics(&task).is_empty());
+        task.blocked_by_statuses[0].status = Some(TaskStatus::Active as i32);
+        assert!(diagnostics(&task).contains("READY WITH WARNINGS"));
+        task.blocked_by_issues.push(pwf_client::pb::BlockedByIssue {
+            raw: "bad links".to_string(),
+            path: task.file_path.clone(),
+            reason: "expected wikilinks".to_string(),
+        });
+        assert!(diagnostics(&task).contains("Malformed blocked_by metadata"));
     }
 
     #[test]
-    fn closed_long_form_omits_active_launch_diagnostics() {
+    fn launch_diagnostics_apply_only_to_active_tasks() {
         let mut task = sample_task();
-        task.status = TaskStatus::Done as i32;
-        task.launch_issues = vec![TaskIssue {
+        task.launch_issues.push(TaskIssue {
             kind: TaskIssueKind::PlaceholderPrompt as i32,
-        }];
-        let output = render_task_for_filter(&task, TaskStatusFilter::Done, true, false);
-        assert!(output.contains("  status: done\n"), "{output}");
-        assert!(!output.contains("launch:"), "{output}");
-        assert!(!output.contains("issue:"), "{output}");
-        assert!(!output.contains("fix:"), "{output}");
-    }
-
-    #[test]
-    fn long_form_formats_typed_blocked_by_statuses() {
-        let mut task = sample_task();
-        task.blocked_by_statuses = vec![
-            BlockedByStatus {
-                id: "AUX-0014".to_string(),
-                title: None,
-                resolution: BlockedByResolutionKind::Found as i32,
-                status: Some(TaskStatus::Done as i32),
-                reason: None,
-            },
-            BlockedByStatus {
-                id: "AUX-0015".to_string(),
-                title: None,
-                resolution: BlockedByResolutionKind::Found as i32,
-                status: Some(TaskStatus::Active as i32),
-                reason: None,
-            },
-            BlockedByStatus {
-                id: "AUX-9999".to_string(),
-                title: None,
-                resolution: BlockedByResolutionKind::Missing as i32,
-                status: None,
-                reason: None,
-            },
-            BlockedByStatus {
-                id: "ALT-0001".to_string(),
-                title: None,
-                resolution: BlockedByResolutionKind::Unavailable as i32,
-                status: None,
-                reason: Some("vault read failed".to_string()),
-            },
-        ];
-        let output = render_task_for_filter(&task, TaskStatusFilter::Active, true, false);
-        assert!(
-            output.contains(
-                "  blocked_by: AUX-0014 (done), AUX-0015 (active), AUX-9999 (missing), ALT-0001 (unavailable: vault read failed)\n"
-            ),
-            "{output}"
-        );
-        assert!(
-            output.contains("  launch: READY WITH WARNINGS\n"),
-            "{output}"
-        );
-    }
-
-    #[test]
-    fn long_form_reports_malformed_blocked_by_without_making_the_task_unlaunchable() {
-        let mut task = sample_task();
-        task.blocked_by_issues = vec![BlockedByIssue {
-            path: "/tasks/FOO-0064.md".to_string(),
-            raw: "\"[[AUX-0001]]\"".to_string(),
-            reason: "expected a sequence".to_string(),
-        }];
-        let output = render_task_for_filter(&task, TaskStatusFilter::Active, true, false);
-        assert!(
-            output.contains("  launch: READY WITH WARNINGS\n"),
-            "{output}"
-        );
-        assert!(
-            output.contains("  issue: Malformed blocked_by metadata"),
-            "{output}"
-        );
-    }
-
-    #[test]
-    fn list_footer_mentions_hidden_count_and_escape_hatch() {
-        let result = ListTasksResponse {
-            tasks: vec![sample_task()],
-            hidden: 2,
-            project: None,
-            project_task_path: None,
-            status_filter: TaskStatusFilter::Active as i32,
-
-            detail: ListDetail::Summary as i32,
-            next_page_token: None,
-        };
-        let output = render_list(&result, "notes", TaskStatusColors::default(), false);
-        assert!(
-            output.ends_with("\n... and 2 more; use '--all' to list everything"),
-            "got: {output}"
-        );
-    }
-
-    #[test]
-    fn listed_detail_selects_metadata_rendering_without_a_second_flag() {
-        let result = ListTasksResponse {
-            tasks: vec![sample_task()],
-            hidden: 0,
-            project: None,
-            project_task_path: None,
-            status_filter: TaskStatusFilter::Active as i32,
-
-            detail: ListDetail::Detailed as i32,
-            next_page_token: None,
-        };
-        let output = render_list(&result, "notes", TaskStatusColors::default(), false);
-        assert!(output.contains("  status: active\n"), "{output}");
-        assert!(output.contains("  project_path: /project\n"), "{output}");
+        });
+        let output = diagnostics(&task);
+        assert!(output.contains("Prompt is a placeholder"));
+        assert!(output.contains("Fix: edit FOO-0001.md"));
+        task.status = TaskStatus::Done as i32;
+        assert!(diagnostics(&task).is_empty());
     }
 }

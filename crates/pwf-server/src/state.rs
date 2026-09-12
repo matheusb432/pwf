@@ -40,7 +40,7 @@ impl AppState {
     #[must_use]
     pub fn new(pool: SqlitePool, home: HomeDirectory, user_settings: TomlSettingsStore) -> Self {
         Self {
-            store: ObsidianStore::new(home.clone()),
+            store: ObsidianStore::with_watched_tasks(home.clone()),
             pool,
             home,
             clock: LocalClock,

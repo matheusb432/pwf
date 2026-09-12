@@ -1,4 +1,4 @@
-//! Applies prompt, lane, and report transforms to task note bodies.
+//! Applies prompt, lane, and report transforms to task file bodies.
 
 use lazy_regex::{Regex, regex};
 use pwf_marker_sections::ParsedPrompt;
@@ -393,7 +393,7 @@ mod tests {
     }
 
     #[test]
-    fn note_body_renders_marker_first_prompt_without_body_leakage() {
+    fn content_renders_marker_first_prompt_without_body_leakage() {
         assert_eq!(
             render("/c context"),
             format!("## Goals\n{S}## Context{S}- context")
@@ -401,13 +401,13 @@ mod tests {
     }
 
     #[test]
-    fn note_body_wraps_a_normal_prompt() {
+    fn content_wraps_a_normal_prompt() {
         assert_eq!(render("add startup toggle"), "## Goals\n");
         assert_eq!(render("a / b"), format!("## Goals{S}- b"));
     }
 
     #[test]
-    fn note_body_renders_one_bullet_per_slash_lane() {
+    fn content_renders_one_bullet_per_slash_lane() {
         assert_eq!(
             render("create engine feature to add update task / make it idempotent"),
             format!("## Goals{S}- make it idempotent")
@@ -415,12 +415,12 @@ mod tests {
     }
 
     #[test]
-    fn note_body_preserves_ampersands_as_text() {
+    fn content_preserves_ampersands_as_text() {
         assert_eq!(render("a & b"), "## Goals\n");
     }
 
     #[test]
-    fn note_body_keeps_placeholder_raw_so_it_stays_detectable() {
+    fn content_keeps_placeholder_raw_so_it_stays_detectable() {
         assert_eq!(render("TODO"), "TODO");
         assert!(is_placeholder_prompt(&render("TODO")));
         assert!(is_placeholder_prompt(&render("tbd")));

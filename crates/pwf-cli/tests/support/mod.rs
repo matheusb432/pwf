@@ -241,7 +241,7 @@ pub fn task_id(raw: &str) -> anyhow::Result<TaskId> {
 pub fn task_json(database: &DatabaseFixture, task_id: &TaskId) -> anyhow::Result<Value> {
     let output = database
         .command()
-        .args(["task", "get", task_id.as_ref(), "--json"])
+        .args(["task", "get", task_id.as_ref(), "--long=json"])
         .output()?;
     assert_success(&output, &format!("get {task_id}"));
     Ok(serde_json::from_slice(&output.stdout)?)

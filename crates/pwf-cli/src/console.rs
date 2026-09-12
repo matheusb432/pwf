@@ -1,6 +1,9 @@
 //! Resolves terminal capabilities once at the process edge.
 
-use crate::confirmation::{ConfirmationAnswer, ConfirmationDialog, ConfirmationMode};
+use crate::{
+    confirmation::{self, ConfirmationAnswer, ConfirmationMode},
+    render::ConfirmationDialog,
+};
 
 #[derive(Clone, Copy, Debug)]
 pub struct Console {
@@ -8,6 +11,7 @@ pub struct Console {
     color_forced: Option<bool>,
     stderr_terminal: bool,
     stdout_terminal: bool,
+    stdout_columns: Option<usize>,
 }
 
 impl Console {
@@ -24,11 +28,14 @@ impl Console {
             None
         };
         let stderr_terminal = std::io::stderr().is_terminal();
+        let stdout_terminal = std::io::stdout().is_terminal();
         Self {
             interactive: std::io::stdin().is_terminal() && stderr_terminal,
             color_forced,
             stderr_terminal,
-            stdout_terminal: std::io::stdout().is_terminal(),
+            stdout_terminal,
+            stdout_columns: stdout_terminal
+                .then(|| usize::from(dialoguer::console::Term::stdout().size().1)),
         }
     }
 
@@ -40,6 +47,7 @@ impl Console {
             color_forced: None,
             stderr_terminal: false,
             stdout_terminal: false,
+            stdout_columns: None,
         }
     }
 
@@ -63,11 +71,19 @@ impl Console {
             )
             .into());
         }
-        dialog.interact(self.color_forced.unwrap_or(self.stderr_terminal))
+        confirmation::interact(dialog, self.color_forced.unwrap_or(self.stderr_terminal))
     }
 
     pub(crate) fn error_color(self) -> bool {
         self.color_forced.unwrap_or(self.stderr_terminal)
+    }
+
+    pub(crate) const fn stdout_terminal(self) -> bool {
+        self.stdout_terminal
+    }
+
+    pub(crate) const fn stdout_columns(self) -> Option<usize> {
+        self.stdout_columns
     }
 
     /// Whether auto-detected stdout styling is enabled.

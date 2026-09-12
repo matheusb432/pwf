@@ -30,7 +30,7 @@ pub struct ProjectNotePatch {
     pub verified: PatchField<NoteVerification>,
 }
 
-/// Persists project notes independently of task-note storage.
+/// Persists project notes independently of task-file storage.
 pub trait ProjectNotes: Send + Sync + 'static {
     type Error: std::error::Error + Send + Sync + 'static;
 

@@ -10,7 +10,7 @@ use pwf_models::{
 };
 use pwf_wire::{
     set_field::SetField,
-    task::{RawTaskTags, StoredBlockedBy, TaskNotePath, TaskRecord},
+    task::{RawTaskTags, StoredBlockedBy, TaskFilePath, TaskRecord},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,10 +41,10 @@ impl From<TaskRecord> for TaskSummaryRecord {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskDependencyRecord {
     pub blocked_by: StoredBlockedBy,
-    pub locator: TaskNotePath,
+    pub locator: TaskFilePath,
 }
 
-/// Rendered content receives note framing; verbatim bodies retain every byte.
+/// Rendered content receives file framing; verbatim bodies retain every byte.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NewTaskBody {
     Rendered(String),
@@ -293,7 +293,7 @@ impl<E> TaskMutationError<E> {
     }
 }
 
-/// Persists task notes and applies writes guarded by their revisions.
+/// Persists task files and applies writes guarded by their revisions.
 pub trait TaskVault: Send + Sync + 'static {
     type Error: std::error::Error + Send + Sync + 'static;
 

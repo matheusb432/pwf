@@ -30,7 +30,7 @@ impl SettingsService for SettingsGrpcService {
         let store = self.state.user_settings.clone();
         run_blocking(move || get_user_settings::execute(GetUserSettings, &store))
             .await?
-            .map(proto::settings::get_user_settings_response)
+            .map(|settings| proto::settings::get_user_settings_response(&settings))
             .map(Response::new)
             .map_err(get_user_settings_status)
     }

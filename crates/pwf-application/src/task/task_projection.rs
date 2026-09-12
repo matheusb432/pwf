@@ -12,7 +12,7 @@ use pwf_wire::task::{
     TaskLaunch, TaskRecord,
 };
 
-use super::note_body::is_placeholder_prompt;
+use super::content::is_placeholder_prompt;
 use crate::ports::task_vault::TaskSummaryRecord;
 
 /// Derives placeholder diagnostics.
@@ -57,7 +57,7 @@ pub(in crate::task) fn detailed(
     project: ProjectName,
     project_path: Option<&ProjectSourceValue>,
 ) -> Result<ListedTask, TaskProjectionError> {
-    let prompt = TaskPrompt::new(task.body.trim());
+    let prompt = TaskPrompt::new(&task.body);
     let flags = derive_flags(&prompt);
     let heading = task_heading(&task.id, &task.title)?;
     let effort = task_effort(&task.id, task.effort.as_deref())?;
@@ -84,9 +84,13 @@ pub(in crate::task) fn detailed(
         tags: task.tags.clone(),
         created: task.created_at.map(TaskTimestamp::date),
         details: Some(ListedTaskDetails {
+            source: task.source.clone(),
+            created_at: task.created_at,
+            completed_at: task.completed_at,
+            commits: task.commits.clone(),
             prompt,
             project_path: project_path.cloned(),
-            note_path: task.locator.clone(),
+            file_path: task.locator.clone(),
             launch: flags,
             blocked_by,
             blocked_by_statuses: Vec::new(),
@@ -161,7 +165,7 @@ pub(super) fn task_priority(
 #[cfg(test)]
 mod tests {
     use pwf_models::project::ProjectSourceValue;
-    use pwf_wire::task::{StoredBlockedBy, TaskNotePath};
+    use pwf_wire::task::{StoredBlockedBy, TaskFilePath};
 
     use super::*;
     use crate::testing::task_record;
@@ -170,7 +174,7 @@ mod tests {
         TaskRecord {
             body: body.to_string(),
             source: String::new(),
-            locator: TaskNotePath::new("/notes/foo/FOO-0001.md".into()),
+            locator: TaskFilePath::new("/notes/foo/FOO-0001.md".into()),
             ..task_record("FOO-0001")
         }
     }
@@ -224,7 +228,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            enriched.details.as_ref().unwrap().note_path.as_path(),
+            enriched.details.as_ref().unwrap().file_path.as_path(),
             std::path::Path::new("/notes/foo/FOO-0001.md")
         );
     }

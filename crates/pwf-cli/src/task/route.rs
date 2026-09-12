@@ -68,7 +68,7 @@ mod tests {
         Arguments {
             words: words.iter().map(|word| (*word).to_string()).collect(),
             options: list::Options {
-                long: true,
+                long: Some(crate::task::ContentSelection::Automatic),
                 all: false,
                 number: Some(3),
                 order: None,
@@ -87,7 +87,10 @@ mod tests {
         let list = list.unwrap();
 
         assert_eq!(list.project.as_ref().map(AsRef::as_ref), Some("foo"));
-        assert!(list.options.long);
+        assert_eq!(
+            list.options.long,
+            Some(crate::task::ContentSelection::Automatic)
+        );
         assert!(!list.options.all);
         assert_eq!(list.options.number, Some(3));
         assert_eq!(list.options.order, None);

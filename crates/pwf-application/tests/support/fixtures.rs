@@ -22,7 +22,7 @@ pub(crate) fn task_record(id: &str) -> TaskRecord {
         blocked_by: pwf_wire::task::StoredBlockedBy::Absent,
         body: "\nbody\n".to_string(),
         source: "body".to_string(),
-        locator: pwf_wire::task::TaskNotePath::new(format!("/mem/foo-bar/{id}.md").into()),
+        locator: pwf_wire::task::TaskFilePath::new(format!("/mem/foo-bar/{id}.md").into()),
         revision: ContentRevision::try_new("0".repeat(64)).unwrap(),
     }
 }

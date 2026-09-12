@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use pwf_application::ports::task_vault::TaskSummaryRecord;
 use pwf_models::task::TaskId;
 use serde::Deserialize;
 
@@ -8,32 +9,36 @@ use super::{
     project_snapshot_backup_path, project_snapshot_path,
 };
 
-/// Contains a task note's discovered identity and path.
-pub(super) struct TaskNoteIdentity {
+/// Contains a task file's discovered identity and path.
+pub(super) struct TaskFileIdentity {
     pub(super) id: TaskId,
     pub(super) path: PathBuf,
 }
 
-/// Inventories one project directory without deriving task identity from filenames.
-pub(super) fn inspect_project_task_notes(
-    project_dir: &Path,
-) -> Result<Vec<TaskNoteIdentity>, ObsidianStoreError> {
-    map_project_task_notes(project_dir, MarkdownFile::read_source, |id, _, _, _| Ok(id)).map(
-        |notes| {
-            notes
-                .into_iter()
-                .map(|(id, file)| TaskNoteIdentity {
-                    id,
-                    path: file.path().to_path_buf(),
-                })
-                .collect()
-        },
-    )
+pub(super) struct TaskFile {
+    pub(super) id: TaskId,
+    pub(super) path: PathBuf,
+    pub(super) summary: Option<TaskSummaryRecord>,
 }
 
-pub(super) fn map_project_task_notes<T>(
+#[derive(Clone, Copy)]
+pub(super) enum TaskRead {
+    Frontmatter,
+    Source,
+}
+
+impl TaskRead {
+    fn read(self, path: &Path) -> Result<MarkdownFile, MarkdownFileError> {
+        match self {
+            Self::Frontmatter => MarkdownFile::read_frontmatter_file(path),
+            Self::Source => MarkdownFile::read_source(path),
+        }
+    }
+}
+
+pub(super) fn map_project_task_files<T>(
     project_dir: &Path,
-    read: fn(&Path) -> Result<MarkdownFile, MarkdownFileError>,
+    read: TaskRead,
     map: impl Fn(
         TaskId,
         Option<String>,
@@ -59,9 +64,11 @@ pub(super) fn map_project_task_notes<T>(
         {
             continue;
         }
-        let file = read(&path).map_err(|source| ObsidianStoreError::ReadTaskFile {
-            source: source.into_io_error(),
-        })?;
+        let file = read
+            .read(&path)
+            .map_err(|source| ObsidianStoreError::ReadTaskFile {
+                source: source.into_io_error(),
+            })?;
         let Some(frontmatter) = task_frontmatter(&file)? else {
             continue;
         };

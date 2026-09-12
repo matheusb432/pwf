@@ -11,11 +11,13 @@ use pwf_models::{
 use crate::pb;
 
 #[must_use]
-pub fn get_user_settings_response(settings: UserSettings) -> pb::GetUserSettingsResponse {
+pub fn get_user_settings_response(settings: &UserSettings) -> pb::GetUserSettingsResponse {
     let colors = settings.task_status_colors();
     let project_colors = settings.project_status_colors();
     let note_colors = settings.note_status_colors();
     pb::GetUserSettingsResponse {
+        datetime_format: settings.datetime_format().as_ref().to_string(),
+        default_list_page_size: settings.default_list_page_size().get() as u64,
         project_status_colors: Some(pb::ProjectStatusColors {
             active: Some(rgb_color(project_colors.active())),
             paused: Some(rgb_color(project_colors.paused())),

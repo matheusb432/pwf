@@ -10,7 +10,7 @@ use pwf_models::{
 };
 use pwf_wire::{
     set_field::SetField,
-    task::{RawTaskTags, TaskNotePath, TaskRecord},
+    task::{RawTaskTags, TaskFilePath, TaskRecord},
 };
 
 use super::{ObsidianStore, ObsidianStoreError, add::NewNoteRequest};
@@ -18,6 +18,7 @@ use crate::{
     file_transaction::content_revision,
     obsidian::{
         FrontmatterView, MarkdownFile, MarkdownFileError,
+        identity::{TaskRead, parse_task_metadata},
         note_frontmatter::{
             activate_status, parse_blocked_by, set_blocked_by, set_commits, set_completed_at,
             set_effort, set_priority, set_status, set_tags,
@@ -26,7 +27,7 @@ use crate::{
     },
 };
 
-fn note_field(
+fn frontmatter_field(
     frontmatter: &FrontmatterView<'_>,
     key: &str,
 ) -> Result<Option<String>, ObsidianStoreError> {
@@ -40,12 +41,12 @@ fn note_field(
         .map_err(read_task_file_error)
 }
 
-fn note_timestamp(
+fn task_timestamp(
     frontmatter: &FrontmatterView<'_>,
     path: &Path,
     property: &'static str,
 ) -> Result<Option<TaskTimestamp>, ObsidianStoreError> {
-    note_field(frontmatter, property)?
+    frontmatter_field(frontmatter, property)?
         .map(|value| {
             value
                 .parse()
@@ -59,68 +60,68 @@ fn note_timestamp(
         .transpose()
 }
 
-fn note_metadata(
+pub(super) fn task_summary_metadata(
     id: TaskId,
     decoded_title: Option<String>,
     file: &MarkdownFile,
     frontmatter: &FrontmatterView<'_>,
 ) -> Result<(TaskSummaryRecord, Option<TaskTimestamp>), ObsidianStoreError> {
     let path = file.path();
-    let status =
-        note_field(frontmatter, "status")?
-            .as_deref()
-            .map_or(Ok(TaskStatus::Active), |value| {
-                value
-                    .parse()
-                    .map_err(|source| ObsidianStoreError::InvalidTaskStatus {
-                        path: path.to_path_buf(),
-                        value: value.to_string(),
-                        source,
-                    })
-            })?;
+    let status = frontmatter_field(frontmatter, "status")?
+        .as_deref()
+        .map_or(Ok(TaskStatus::Active), |value| {
+            value
+                .parse()
+                .map_err(|source| ObsidianStoreError::InvalidTaskStatus {
+                    path: path.to_path_buf(),
+                    value: value.to_string(),
+                    source,
+                })
+        })?;
     let title = decoded_title
         .filter(|title| !title.trim().is_empty())
-        .or(note_field(frontmatter, "title")?)
+        .or(frontmatter_field(frontmatter, "title")?)
         .unwrap_or_default();
-    let created_at = note_timestamp(frontmatter, path, "created_at")?;
-    let completed_at = note_timestamp(frontmatter, path, "completed_at")?;
+    let created_at = task_timestamp(frontmatter, path, "created_at")?;
+    let completed_at = task_timestamp(frontmatter, path, "completed_at")?;
     Ok((
         TaskSummaryRecord {
             id,
             title,
             status,
             created_at,
-            tags: note_field(frontmatter, "tags")?.map(RawTaskTags::new),
-            effort: note_field(frontmatter, "effort")?,
-            priority: note_field(frontmatter, "priority")?,
+            tags: frontmatter_field(frontmatter, "tags")?
+                .map(|raw| RawTaskTags::new(raw.into_boxed_str().into_string())),
+            effort: frontmatter_field(frontmatter, "effort")?,
+            priority: frontmatter_field(frontmatter, "priority")?,
         },
         completed_at,
     ))
 }
 
-struct TaskNoteMetadata {
+struct TaskFileMetadata {
     summary: TaskSummaryRecord,
     completed_at: Option<TaskTimestamp>,
     commits: Option<String>,
     blocked_by: pwf_wire::task::StoredBlockedBy,
 }
 
-fn task_note_metadata(
+fn task_file_metadata(
     id: TaskId,
     decoded_title: Option<String>,
     file: &MarkdownFile,
     frontmatter: &FrontmatterView<'_>,
-) -> Result<TaskNoteMetadata, ObsidianStoreError> {
-    let (summary, completed_at) = note_metadata(id, decoded_title, file, frontmatter)?;
-    Ok(TaskNoteMetadata {
+) -> Result<TaskFileMetadata, ObsidianStoreError> {
+    let (summary, completed_at) = task_summary_metadata(id, decoded_title, file, frontmatter)?;
+    Ok(TaskFileMetadata {
         summary,
         completed_at,
-        commits: note_field(frontmatter, "commits")?,
+        commits: frontmatter_field(frontmatter, "commits")?,
         blocked_by: parse_blocked_by(Some(frontmatter)),
     })
 }
 
-impl TaskNoteMetadata {
+impl TaskFileMetadata {
     fn into_record(self, file: MarkdownFile) -> TaskRecord {
         let body = file.body().to_string();
         let revision = content_revision(file.source().as_bytes());
@@ -138,7 +139,7 @@ impl TaskNoteMetadata {
             blocked_by: self.blocked_by,
             body,
             source,
-            locator: TaskNotePath::new(path),
+            locator: TaskFilePath::new(path),
             revision,
         }
     }
@@ -158,7 +159,7 @@ fn record_from_source(
             path: path.to_path_buf(),
             property: "id",
         })?;
-    let metadata = task_note_metadata(id, title, &file, &frontmatter)?;
+    let metadata = task_file_metadata(id, title, &file, &frontmatter)?;
     drop(frontmatter);
     Ok(metadata.into_record(file))
 }
@@ -168,28 +169,27 @@ fn get_task_record(
     project: &Project,
     id: &TaskId,
 ) -> Result<Option<TaskRecord>, ObsidianStoreError> {
-    let task = store
-        .map_task_notes(
-            project,
-            MarkdownFile::read_frontmatter_file,
-            |id, _, _, _| Ok(id),
-        )?
-        .into_iter()
-        .find(|(candidate, _)| candidate == id);
-    if let Some((_, file)) = task {
-        let file = MarkdownFile::read_source(file.path()).map_err(read_task_file_error)?;
+    let task = store.task_file_for_project(project, id)?;
+    if let Some(task) = task {
+        let file = match MarkdownFile::read_source(&task.path) {
+            Ok(file) => file,
+            Err(MarkdownFileError::Read { source, .. })
+                if source.kind() == std::io::ErrorKind::NotFound =>
+            {
+                return Ok(None);
+            }
+            Err(error) => return Err(read_task_file_error(error)),
+        };
         let Some(frontmatter) = file.frontmatter_view().map_err(read_task_file_error)? else {
             return Ok(None);
         };
-        let Some((current_id, title)) =
-            crate::obsidian::identity::parse_task_metadata(file.path(), &frontmatter)?
-        else {
+        let Some((current_id, title)) = parse_task_metadata(file.path(), &frontmatter)? else {
             return Ok(None);
         };
         if current_id != *id {
             return Ok(None);
         }
-        let metadata = task_note_metadata(current_id, title, &file, &frontmatter)?;
+        let metadata = task_file_metadata(current_id, title, &file, &frontmatter)?;
         drop(frontmatter);
         return Ok(Some(metadata.into_record(file)));
     }
@@ -201,7 +201,7 @@ fn list_task_records(
     project: &Project,
 ) -> Result<Vec<TaskRecord>, ObsidianStoreError> {
     Ok(store
-        .map_task_notes(project, MarkdownFile::read_source, task_note_metadata)?
+        .map_task_files(project, TaskRead::Source, task_file_metadata)?
         .into_iter()
         .map(|(metadata, file)| metadata.into_record(file))
         .collect())
@@ -211,12 +211,25 @@ fn list_task_summaries(
     store: &ObsidianStore,
     project: &Project,
 ) -> Result<Vec<TaskSummaryRecord>, ObsidianStoreError> {
+    let directory = store.tasks_path(project)?;
+    if !directory
+        .try_exists()
+        .map_err(|source| ObsidianStoreError::ReadTaskFile { source })?
+    {
+        store.invalidate_task_index(&directory);
+        return Ok(Vec::new());
+    }
+    if let Some(notes) = store.task_files_indexed(&directory)?
+        && let Some(summaries) = notes.iter().map(|note| note.summary.clone()).collect()
+    {
+        return Ok(summaries);
+    }
     Ok(store
-        .map_task_notes(
+        .map_task_files(
             project,
-            MarkdownFile::read_frontmatter_file,
+            TaskRead::Frontmatter,
             |id, title, file, frontmatter| {
-                note_metadata(id, title, file, frontmatter).map(|(summary, _)| summary)
+                task_summary_metadata(id, title, file, frontmatter).map(|(summary, _)| summary)
             },
         )?
         .into_iter()
@@ -344,15 +357,14 @@ impl TaskVault for ObsidianStore {
         project: &Project,
         id: &TaskId,
     ) -> Result<Option<TaskDependencyRecord>, Self::Error> {
-        let notes = self.map_task_notes(
+        let notes = self.map_task_files(
             project,
-            MarkdownFile::read_frontmatter_file,
+            TaskRead::Frontmatter,
             |candidate, _, file, frontmatter| {
-                let dependency = (candidate == *id).then(|| TaskDependencyRecord {
+                Ok((candidate == *id).then(|| TaskDependencyRecord {
                     blocked_by: parse_blocked_by(Some(frontmatter)),
-                    locator: TaskNotePath::new(file.path().to_path_buf()),
-                });
-                Ok(dependency)
+                    locator: TaskFilePath::new(file.path().to_path_buf()),
+                }))
             },
         )?;
         Ok(notes.into_iter().find_map(|(dependency, _)| dependency))

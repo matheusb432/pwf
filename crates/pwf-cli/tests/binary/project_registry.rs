@@ -319,9 +319,13 @@ fn add_vault_uses_current_directory_and_source_less_projects_support_tasks() {
         ])
         .success_stdout();
     let listed = fixture
-        .command_args(&["task", "list", "--project", "foo", "--long"])
+        .command_args(&["task", "list", "--project", "foo", "--long=rich"])
         .success_stdout();
-    assert!(listed.contains("project_path: none"));
+    assert!(listed.contains(&format!(
+        "Path      {}",
+        vault.join("tasks/foo/FOO-0001.md").display()
+    )));
+    assert!(listed.contains("## Goals\n\n- verify a vault project"));
     assert_failure(
         fixture
             .command_args(&["session", "foo1", "--dry-run"])

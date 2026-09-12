@@ -76,6 +76,8 @@ message GetUserSettingsResponse {
   OrderSpec default_sort_order = 3;
   ProjectStatusColors project_status_colors = 4;
   NoteStatusColors note_status_colors = 5;
+  string datetime_format = 6;
+  uint64 default_list_page_size = 7;
 }
 
 enum ProjectStatusFilter {
@@ -717,7 +719,7 @@ message ListedTask {
   optional string project_path = 6;
   reserved 7;
   reserved "location";
-  string note_path = 17;
+  string file_path = 17;
   repeated TaskIssue launch_issues = 8;
   reserved 9;
   reserved "section";
@@ -728,6 +730,11 @@ message ListedTask {
   optional string raw_tags = 14;
   optional string created = 15;
   optional PriorityTier priority = 16;
+  // Exact file contents, present only for detailed reads.
+  optional string source = 18;
+  optional string created_at = 19;
+  optional string completed_at = 20;
+  optional string commits = 21;
 }
 
 message ListTasksResponse {
@@ -753,7 +760,7 @@ message DeleteTaskConfirmation {
   string project = 2;
   string title = 3;
   TaskStatus status = 4;
-  string note_path = 5;
+  string file_path = 5;
   optional string obsidian_vault = 6;
   optional string trash_folder = 7;
 }

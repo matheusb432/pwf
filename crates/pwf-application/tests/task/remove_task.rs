@@ -5,7 +5,7 @@ use pwf_application::{
 use pwf_models::task::{TaskId, TaskStatus};
 use pwf_wire::{
     confirmation::RemoveTaskConfirmation,
-    task::{DeleteTask, DeleteTaskOutcome, TaskMutationResult, TaskNotePath, TaskRecord},
+    task::{DeleteTask, DeleteTaskOutcome, TaskFilePath, TaskMutationResult, TaskRecord},
 };
 
 use crate::support::{
@@ -34,7 +34,7 @@ fn record(id: &str, status: TaskStatus) -> TaskRecord {
         title: "stale task".to_string(),
         status,
         created_at: Some(task_timestamp("2026-07-01T12:34:56Z")),
-        locator: TaskNotePath::new(format!("/notes/foo/{id}.md").into()),
+        locator: TaskFilePath::new(format!("/notes/foo/{id}.md").into()),
         ..task_record(id)
     }
 }
@@ -138,7 +138,7 @@ async fn changed_vault_after_confirmation_preserves_the_task(pool: sqlx::SqliteP
 }
 
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]
-async fn remove_deletes_the_task_note(pool: sqlx::SqlitePool) {
+async fn remove_deletes_the_task_file(pool: sqlx::SqlitePool) {
     insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
     let store = staged(TaskStatus::Active);
 
@@ -285,7 +285,7 @@ mod confirmed_removal {
     use super::*;
 
     #[sqlx::test(migrator = "crate::support::MIGRATOR")]
-    async fn remove_deletes_the_task_note_after_confirmation(pool: sqlx::SqlitePool) {
+    async fn remove_deletes_the_task_file_after_confirmation(pool: sqlx::SqlitePool) {
         insert_project(&pool, "FOO", "foo", "/projects/foo", "/tasks/foo", false).await;
         let store = staged(TaskStatus::Active);
 

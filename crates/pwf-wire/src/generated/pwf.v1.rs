@@ -35,7 +35,7 @@ pub struct NoteStatusColors {
     #[prost(message, optional, tag = "2")]
     pub verified: ::core::option::Option<RgbColor>,
 }
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct GetUserSettingsResponse {
     #[prost(message, optional, tag = "1")]
     pub task_status_colors: ::core::option::Option<TaskStatusColors>,
@@ -47,6 +47,10 @@ pub struct GetUserSettingsResponse {
     pub project_status_colors: ::core::option::Option<ProjectStatusColors>,
     #[prost(message, optional, tag = "5")]
     pub note_status_colors: ::core::option::Option<NoteStatusColors>,
+    #[prost(string, tag = "6")]
+    pub datetime_format: ::prost::alloc::string::String,
+    #[prost(uint64, tag = "7")]
+    pub default_list_page_size: u64,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ProjectFields {
@@ -927,7 +931,7 @@ pub struct ListedTask {
     #[prost(string, optional, tag = "6")]
     pub project_path: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, tag = "17")]
-    pub note_path: ::prost::alloc::string::String,
+    pub file_path: ::prost::alloc::string::String,
     #[prost(message, repeated, tag = "8")]
     pub launch_issues: ::prost::alloc::vec::Vec<TaskIssue>,
     #[prost(string, repeated, tag = "10")]
@@ -944,6 +948,15 @@ pub struct ListedTask {
     pub created: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(enumeration = "PriorityTier", optional, tag = "16")]
     pub priority: ::core::option::Option<i32>,
+    /// Exact file contents, present only for detailed reads.
+    #[prost(string, optional, tag = "18")]
+    pub source: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "19")]
+    pub created_at: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "20")]
+    pub completed_at: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "21")]
+    pub commits: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ListTasksResponse {
@@ -978,7 +991,7 @@ pub struct DeleteTaskConfirmation {
     #[prost(enumeration = "TaskStatus", tag = "4")]
     pub status: i32,
     #[prost(string, tag = "5")]
-    pub note_path: ::prost::alloc::string::String,
+    pub file_path: ::prost::alloc::string::String,
     #[prost(string, optional, tag = "6")]
     pub obsidian_vault: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, optional, tag = "7")]

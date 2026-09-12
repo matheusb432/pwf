@@ -1,3 +1,5 @@
+datetime_format = "%d/%m/%Y %H:%M" # strftime; task timestamps retain their stored offset
+default_list_page_size = 10 # 1..100000; --number overrides, --all removes the default cap
 default_priority = "medium" # low | medium | high | highest
 # Accepts field[:asc|desc]. Bare created/id/priority descend; project-id/effort/title ascend.
 default_sort_order = "id" # created | id | project-id | priority | effort | title

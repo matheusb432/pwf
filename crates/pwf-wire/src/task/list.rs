@@ -4,12 +4,12 @@ use pwf_models::{
     AppDate,
     project::{ProjectId, ProjectName, ProjectSourceValue},
     task::{
-        BlockedBy, EffortTier, PriorityTier, TaskId, TaskPrompt, TaskStatus, TaskTags, TaskTitle,
-        order::OrderSpec,
+        BlockedBy, EffortTier, PriorityTier, TaskId, TaskListLimit, TaskPrompt, TaskStatus,
+        TaskTags, TaskTimestamp, TaskTitle, order::OrderSpec,
     },
 };
 
-use super::{ProjectTaskPath, RawTaskTags, TaskNotePath};
+use super::{ProjectTaskPath, RawTaskTags, TaskFilePath};
 
 /// Selects one lifecycle status or includes every lifecycle status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,7 +73,7 @@ impl BlockedByResolution {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BlockedByIssue {
     Malformed {
-        path: TaskNotePath,
+        path: TaskFilePath,
         raw: String,
         reason: String,
     },
@@ -183,9 +183,13 @@ pub struct ListedTask {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListedTaskDetails {
+    pub source: String,
+    pub created_at: Option<TaskTimestamp>,
+    pub completed_at: Option<TaskTimestamp>,
+    pub commits: Option<String>,
     pub prompt: TaskPrompt,
     pub project_path: Option<ProjectSourceValue>,
-    pub note_path: TaskNotePath,
+    pub file_path: TaskFilePath,
     pub launch: TaskLaunch,
     pub blocked_by: Option<BlockedBy>,
     pub blocked_by_statuses: Vec<BlockedByStatus>,
@@ -218,38 +222,6 @@ pub struct ListTasks {
     pub detail: ListDetail,
     pub page_size: Option<TaskPageSize>,
     pub page_token: Option<TaskPageToken>,
-}
-
-/// Caps one task-list response before transport message limits apply.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TaskListLimit(NonZeroUsize);
-
-impl TaskListLimit {
-    pub const MAX: usize = 100_000;
-
-    /// Constructs a nonzero task-list limit within the supported response cap.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TaskListLimitError`] when `value` is zero or exceeds [`Self::MAX`].
-    pub fn try_new(value: usize) -> Result<Self, TaskListLimitError> {
-        NonZeroUsize::new(value)
-            .filter(|value| value.get() <= Self::MAX)
-            .map(Self)
-            .ok_or(TaskListLimitError { value })
-    }
-
-    #[must_use]
-    pub const fn get(self) -> usize {
-        self.0.get()
-    }
-}
-
-/// Reports a task-list limit outside the supported response cap.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("{value} must be between 1 and {}", TaskListLimit::MAX)]
-pub struct TaskListLimitError {
-    value: usize,
 }
 
 /// Caps one page of task-list results.

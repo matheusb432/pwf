@@ -1,16 +1,16 @@
 use pwf_models::{project::Project, task::TaskId};
 
-use super::{ObsidianStore, ObsidianStoreError};
+use super::{ObsidianStore, ObsidianStoreError, task_record::task_summary_metadata};
 use crate::obsidian::{
-    FrontmatterView, MarkdownFile, MarkdownFileError,
-    identity::{TaskNoteIdentity, inspect_project_task_notes, map_project_task_notes},
+    FrontmatterView, MarkdownFile,
+    identity::{TaskFile, TaskFileIdentity, TaskRead, map_project_task_files},
 };
 
 impl ObsidianStore {
-    pub(super) fn map_task_notes<T>(
+    pub(super) fn map_task_files<T>(
         &self,
         project: &Project,
-        read: fn(&std::path::Path) -> Result<MarkdownFile, MarkdownFileError>,
+        read: TaskRead,
         map: impl Fn(
             TaskId,
             Option<String>,
@@ -23,23 +23,85 @@ impl ObsidianStore {
             .try_exists()
             .map_err(|source| ObsidianStoreError::ReadTaskFile { source })?
         {
+            self.invalidate_task_index(&directory);
             return Ok(Vec::new());
         }
-        map_project_task_notes(&directory, read, map)
+        map_project_task_files(&directory, read, map)
+    }
+
+    pub(super) fn task_files_indexed(
+        &self,
+        directory: &std::path::Path,
+    ) -> Result<Option<std::sync::Arc<[TaskFile]>>, ObsidianStoreError> {
+        let Some(index) = &self.task_index else {
+            return Ok(None);
+        };
+        index
+            .read(directory, || {
+                map_project_task_files(
+                    directory,
+                    TaskRead::Frontmatter,
+                    |id, title, file, frontmatter| {
+                        // A bad summary must not prevent looking up an unrelated task by identity.
+                        // Summary reads retry uncached so the original parse error stays
+                        // authoritative.
+                        let summary = task_summary_metadata(id.clone(), title, file, frontmatter)
+                            .ok()
+                            .map(|(summary, _)| summary);
+                        Ok((id, summary))
+                    },
+                )
+                .map(|notes| {
+                    notes
+                        .into_iter()
+                        .map(|((id, summary), file)| TaskFile {
+                            id,
+                            path: file.into_parts().0,
+                            summary,
+                        })
+                        .collect()
+                })
+            })
+            .map(Some)
+    }
+
+    pub(super) fn task_file_for_project(
+        &self,
+        project: &Project,
+        id: &TaskId,
+    ) -> Result<Option<TaskFileIdentity>, ObsidianStoreError> {
+        let directory = self.tasks_path(project)?;
+        if !directory
+            .try_exists()
+            .map_err(|source| ObsidianStoreError::ReadTaskFile { source })?
+        {
+            self.invalidate_task_index(&directory);
+            return Ok(None);
+        }
+        if let Some(notes) = self.task_files_indexed(&directory)? {
+            return Ok(notes
+                .binary_search_by(|note| note.id.cmp(id))
+                .ok()
+                .map(|position| TaskFileIdentity {
+                    id: notes[position].id.clone(),
+                    path: notes[position].path.clone(),
+                }));
+        }
+        self.task_files_for_project(project)
+            .map(|notes| notes.into_iter().find(|note| &note.id == id))
     }
 
     pub(super) fn task_files_for_project(
         &self,
         project: &Project,
-    ) -> Result<Vec<TaskNoteIdentity>, ObsidianStoreError> {
-        let project_dir = self.tasks_path(project)?;
-        if !project_dir
-            .try_exists()
-            .map_err(|source| ObsidianStoreError::ReadTaskFile { source })?
-        {
-            return Ok(Vec::new());
-        }
-        inspect_project_task_notes(&project_dir)
+    ) -> Result<Vec<TaskFileIdentity>, ObsidianStoreError> {
+        self.map_task_files(project, TaskRead::Frontmatter, |id, _, file, _| {
+            Ok(TaskFileIdentity {
+                id,
+                path: file.path().to_path_buf(),
+            })
+        })
+        .map(|notes| notes.into_iter().map(|(identity, _)| identity).collect())
     }
 
     pub(super) fn next_task_id(&self, project: &Project) -> Result<TaskId, ObsidianStoreError> {

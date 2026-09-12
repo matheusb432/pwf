@@ -8,7 +8,7 @@ use pwf_models::{
     task::{TaskId, TaskStatus, TaskTitle},
 };
 
-use super::task::TaskNotePath;
+use super::task::TaskFilePath;
 
 /// Identifies the project note deleted after confirmation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18,14 +18,14 @@ pub struct RemoveNoteConfirmation {
     pub title: NoteTitle,
 }
 
-/// Identifies the task and note deleted after confirmation.
+/// Identifies the task and file deleted after confirmation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoveTaskConfirmation {
     pub task_identifier: TaskId,
     pub project: ProjectName,
     pub title: TaskTitle,
     pub status: TaskStatus,
-    pub note_path: TaskNotePath,
+    pub file_path: TaskFilePath,
     pub deletion: TaskDeletion,
     pub revision: ContentRevision,
 }

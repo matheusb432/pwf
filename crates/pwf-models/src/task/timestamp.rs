@@ -35,6 +35,14 @@ impl TaskTimestamp {
         Ok(Self { timestamp, offset })
     }
 
+    /// Formats the instant at its stored numeric offset using strftime syntax.
+    pub(crate) fn format(self, pattern: &str) -> Result<String, jiff::Error> {
+        jiff::fmt::strtime::format(
+            pattern,
+            &self.timestamp.to_zoned(self.offset.to_time_zone()),
+        )
+    }
+
     /// Creates midnight UTC on an application date.
     pub fn at_midnight_utc(date: AppDate) -> Result<Self, TaskTimestampError> {
         format!("{date}T00:00:00Z").parse()

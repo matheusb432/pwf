@@ -409,7 +409,7 @@ async fn metadata_edit_does_not_validate_an_unreturned_persisted_title(pool: sql
 }
 
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]
-async fn edit_rejects_a_missing_task_note(pool: sqlx::SqlitePool) {
+async fn edit_rejects_a_missing_task_file(pool: sqlx::SqlitePool) {
     register_project(&pool).await;
     let store = staged(Vec::new());
     let command = edit(

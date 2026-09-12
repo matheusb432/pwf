@@ -204,7 +204,7 @@ pub(crate) fn staged_task() -> (InMemoryStore, Vec<Project>) {
         created_at: Some(task_timestamp("2026-06-20T00:00:00Z")),
         body: "\n## Goals\n- do the thing\n".to_string(),
         source: FOO_0001_SOURCE.to_string(),
-        locator: pwf_wire::task::TaskNotePath::new("/notes/foo/FOO-0001.md".into()),
+        locator: pwf_wire::task::TaskFilePath::new("/notes/foo/FOO-0001.md".into()),
         ..task_record("FOO-0001")
     };
     (
@@ -320,7 +320,7 @@ impl TaskVault for InMemoryStore {
         if tasks.iter().any(|task| task.id == *id) {
             return Err(InMemoryStoreError::TaskAlreadyExists { id: id.clone() });
         }
-        let locator = pwf_wire::task::TaskNotePath::new(
+        let locator = pwf_wire::task::TaskFilePath::new(
             format!("/mem/{}/{}.md", project.title.as_ref(), id.as_ref()).into(),
         );
         let record = TaskRecord {

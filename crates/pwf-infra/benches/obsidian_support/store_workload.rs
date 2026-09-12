@@ -200,7 +200,7 @@ fn write_vault(tasks_path: &Path, size: DocumentSize, task_count: usize) {
                 tasks_path.join(format!("PWF-{task_number:04}.md")),
                 task_source(task_number, size),
             ),
-            "writing benchmark task note",
+            "writing benchmark task file",
         );
     }
 }

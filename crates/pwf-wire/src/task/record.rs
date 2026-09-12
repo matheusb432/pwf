@@ -8,7 +8,7 @@ use pwf_models::{
     },
 };
 
-use super::TaskNotePath;
+use super::TaskFilePath;
 
 /// Represents the optional `blocked_by` property after infrastructure parsing.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -47,12 +47,12 @@ pub struct TaskRecord {
     pub priority: Option<String>,
     /// Carries typed or malformed `blocked_by` metadata for boundary-specific handling.
     pub blocked_by: StoredBlockedBy,
-    /// Preserves the note body below frontmatter verbatim.
+    /// Preserves the file body below frontmatter verbatim.
     pub body: String,
-    /// Preserves the raw note source byte-for-byte for `pwf task get`.
+    /// Preserves the raw file source byte-for-byte for `pwf task get`.
     pub source: String,
     /// Stores the display path; writes relocate the record by scope and id.
-    pub locator: TaskNotePath,
+    pub locator: TaskFilePath,
     /// Opaque revision of the exact persisted file bytes backing this record.
     pub revision: ContentRevision,
 }
@@ -90,7 +90,7 @@ pub enum TaskRecordError {
     #[error("Invalid task {field} for {id} at {path}: {source}")]
     Metadata {
         id: TaskId,
-        path: TaskNotePath,
+        path: TaskFilePath,
         field: &'static str,
         #[source]
         source: Box<dyn std::error::Error + Send + Sync>,
@@ -98,7 +98,7 @@ pub enum TaskRecordError {
     #[error("task {id} at {path} has malformed blocked_by metadata {raw:?}: {reason}")]
     BlockedBy {
         id: TaskId,
-        path: TaskNotePath,
+        path: TaskFilePath,
         raw: Box<str>,
         reason: Box<str>,
     },

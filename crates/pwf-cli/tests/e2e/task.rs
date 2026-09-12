@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 
 use crate::support::{ManagedProject, ProjectFixture, project_id, task_id, task_json};
 
-fn write_task_note(path: &Path, id: &str, project: &str, title: &str) -> std::io::Result<()> {
+fn write_task_file(path: &Path, id: &str, project: &str, title: &str) -> std::io::Result<()> {
     fs::write(
         path,
         format!(
@@ -50,7 +50,7 @@ fn task_list_orders_notes_globally_and_ignores_snapshot_sections() -> anyhow::Re
         (&beta_tasks, "BBB-0001", "beta", "waiting beta"),
         (&beta_tasks, "BBB-0002", "beta", "blocked task"),
     ] {
-        write_task_note(&directory.join(format!("{id}.md")), id, project, title)?;
+        write_task_file(&directory.join(format!("{id}.md")), id, project, title)?;
     }
     fixture.add(
         &project_id("AAA")?,

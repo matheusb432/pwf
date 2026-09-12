@@ -128,7 +128,7 @@ async fn v1_get_user_settings_returns_validated_scoped_colors() -> anyhow::Resul
     let server = TestServer::start(TEST_TIMEOUT).await?;
     std::fs::write(
         server.root.path().join("config.toml"),
-        "[colors.task]\nactive = \"#ff8700\"\n[colors.project]\npaused = \"#010203\"\n[colors.note]\nverified = \"#040506\"\n",
+        "default_list_page_size = 20\ndatetime_format = \"%Y-%m-%d %H:%M %:z\"\n[colors.task]\nactive = \"#ff8700\"\n[colors.project]\npaused = \"#010203\"\n[colors.note]\nverified = \"#040506\"\n",
     )?;
 
     let response =
@@ -143,6 +143,8 @@ async fn v1_get_user_settings_returns_validated_scoped_colors() -> anyhow::Resul
         env!("CARGO_PKG_VERSION")
     );
     let response = response.into_inner();
+    assert_eq!(response.datetime_format, "%Y-%m-%d %H:%M %:z");
+    assert_eq!(response.default_list_page_size, 20);
     let colors = response
         .task_status_colors
         .context("settings response is missing task status colors")?;
@@ -1010,6 +1012,41 @@ async fn v1_task_revisions_support_conditional_empty_updates() -> anyhow::Result
 }
 
 #[tokio::test]
+async fn v1_task_list_cursor_binds_the_configured_default_cap() -> anyhow::Result<()> {
+    let server = TestServer::start(TEST_TIMEOUT).await?;
+    server.add_project_and_task().await?;
+    server.add_task("second transport task").await?;
+    server.add_task("third transport task").await?;
+    let config_path = server.root.path().join("config.toml");
+    std::fs::write(&config_path, "default_list_page_size = 2\n")?;
+    let mut request = task_list_request(None, None);
+    request.all = false;
+    request.page_size = 1;
+    let first = server.client.task().list_tasks(request.clone()).await?;
+    assert_eq!(first.tasks.len(), 1);
+    assert_eq!(first.hidden, 1);
+    request.page_token = Some(first.next_page_token.context("first page must continue")?);
+    let second = server.client.task().list_tasks(request.clone()).await?;
+    assert_eq!(second.tasks.len(), 1);
+    assert_eq!(second.next_page_token, None);
+
+    std::fs::write(&config_path, "default_list_page_size = 3\n")?;
+    let error = server
+        .client
+        .task()
+        .list_tasks(request.clone())
+        .await
+        .unwrap_err();
+    assert_eq!(rpc_status(error)?.code(), Code::InvalidArgument);
+    request.page_token = None;
+    request.page_size = 0;
+    let fresh = server.client.task().list_tasks(request).await?;
+    assert_eq!(fresh.tasks.len(), 3);
+    assert_eq!(fresh.hidden, 0);
+    server.finish().await
+}
+
+#[tokio::test]
 async fn v1_task_list_pages_are_bounded_and_query_bound() -> anyhow::Result<()> {
     let server = TestServer::start(Duration::from_secs(2)).await?;
     server.add_project_and_task().await?;
@@ -1084,17 +1121,100 @@ async fn task_list_summary_omits_detailed_payload() -> anyhow::Result<()> {
     let detailed = server.client.task().list_tasks(request.clone()).await?;
     request.detail = pb::ListDetail::Summary as i32;
     let summary = server.client.task().list_tasks(request).await?;
+    let record = task_record(&server, &detailed.tasks[0].id).await?;
+    assert_eq!(
+        detailed.tasks[0].source.as_deref(),
+        Some(record.source.as_str())
+    );
+    assert_eq!(detailed.tasks[0].created_at, record.created_at);
+    assert_eq!(detailed.tasks[0].prompt, record.body);
     let mut expected = detailed.tasks;
     for task in &mut expected {
+        task.source = None;
+        task.created_at = None;
+        task.completed_at = None;
+        task.commits = None;
         task.prompt.clear();
         task.project_path = None;
-        task.note_path.clear();
+        task.file_path.clear();
         task.launch_issues.clear();
         task.blocked_by.clear();
         task.blocked_by_statuses.clear();
         task.blocked_by_issues.clear();
     }
     assert_eq!(summary.tasks, expected);
+    server.finish().await
+}
+
+#[tokio::test]
+async fn task_index_observes_server_writes_and_refreshes_external_edits() -> anyhow::Result<()> {
+    let server = TestServer::start(Duration::from_secs(2)).await?;
+    let id = server.add_project_and_task().await?;
+    let mut request = task_list_request(None, None);
+    request.detail = pb::ListDetail::Summary as i32;
+    let first = server.client.task().list_tasks(request.clone()).await?;
+    assert_eq!(first.tasks.len(), 1);
+    server
+        .client
+        .task()
+        .update_task(pb::UpdateTaskRequest {
+            id: id.clone(),
+            content: Some(pb::TaskContentEdit {
+                content: Some(pb::task_content_edit::Content::Structured(
+                    pb::StructuredTaskEdit {
+                        title: Some("server title".into()),
+                        ..Default::default()
+                    },
+                )),
+            }),
+            ..Default::default()
+        })
+        .await?;
+    let updated = server.client.task().list_tasks(request.clone()).await?;
+    assert_eq!(updated.tasks[0].heading, "server title");
+    let added_id = server.add_task("another task").await?;
+    let added = server.client.task().list_tasks(request.clone()).await?;
+    assert!(added.tasks.iter().any(|task| task.id == added_id));
+    let path = server.task_path(&id);
+    let modified = std::fs::metadata(&path)?.modified()?;
+    std::fs::write(
+        &path,
+        format!("---\nid: {id}\ntitle: external title\nstatus: backlog\n---\nexternal body"),
+    )?;
+    std::fs::File::options()
+        .write(true)
+        .open(&path)?
+        .set_modified(modified)?;
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while server
+            .client
+            .task()
+            .list_tasks(request.clone())
+            .await?
+            .tasks
+            .iter()
+            .any(|task| task.id == id)
+        {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        Ok::<(), anyhow::Error>(())
+    })
+    .await??;
+    let task = server
+        .client
+        .task()
+        .get_task(pb::GetTaskRequest { id: id.clone() })
+        .await?;
+    assert_eq!(task.title.as_ref(), "external title");
+    assert_eq!(task.status, pwf_models::task::TaskStatus::Backlog);
+    std::fs::remove_file(path)?;
+    let error = server
+        .client
+        .task()
+        .get_task(pb::GetTaskRequest { id })
+        .await
+        .unwrap_err();
+    assert_eq!(rpc_status(error)?.code(), Code::NotFound);
     server.finish().await
 }
 
@@ -2493,7 +2613,7 @@ async fn task_and_note_crud_ignore_missing_arbitrary_and_malformed_snapshots() -
             None => std::fs::remove_file(&page)?,
         }
 
-        exercise_task_note_crud(&server, &original_id).await?;
+        exercise_task_file_crud(&server, &original_id).await?;
         exercise_project_note_crud(&server, &directory).await?;
 
         match page_source {
@@ -2505,14 +2625,14 @@ async fn task_and_note_crud_ignore_missing_arbitrary_and_malformed_snapshots() -
     Ok(())
 }
 
-async fn exercise_task_note_crud(server: &TestServer, original_id: &str) -> anyhow::Result<()> {
+async fn exercise_task_file_crud(server: &TestServer, original_id: &str) -> anyhow::Result<()> {
     let client = server.client.task();
-    let id = server.add_task("independent task note").await?;
+    let id = server.add_task("independent task file").await?;
     assert_eq!(id, "FOO-0002");
     let task = client
         .get_task(pb::GetTaskRequest { id: id.clone() })
         .await?;
-    assert_eq!(task.title.as_ref(), "independent task note");
+    assert_eq!(task.title.as_ref(), "independent task file");
     client
         .update_task(priority_update(
             &id,
@@ -2533,7 +2653,7 @@ async fn exercise_task_note_crud(server: &TestServer, original_id: &str) -> anyh
         ["FOO-0002", "FOO-0001"]
     );
     assert_eq!(
-        list.tasks[0].note_path,
+        list.tasks[0].file_path,
         server.task_path(&id).to_string_lossy()
     );
 
@@ -2628,8 +2748,8 @@ async fn exercise_project_note_crud(
     assert_eq!(notes.notes.len(), 1);
     assert_eq!(notes.notes[0].id, note.id);
     assert_eq!(notes.notes[0].title, "revised project note");
-    let note_path = directory.join(format!("{}.md", note.id));
-    assert!(std::fs::read_to_string(&note_path)?.contains("revised evidence"));
+    let file_path = directory.join(format!("{}.md", note.id));
+    assert!(std::fs::read_to_string(&file_path)?.contains("revised evidence"));
     let deleted = client
         .delete_note(
             pb::DeleteNoteStart {
@@ -2643,7 +2763,7 @@ async fn exercise_project_note_crud(
         deleted.outcome,
         Some(delete_note_result::Outcome::Deleted(_))
     ));
-    assert!(!note_path.exists());
+    assert!(!file_path.exists());
     assert!(client.list_notes(list_request).await?.notes.is_empty());
     Ok(())
 }

@@ -66,7 +66,7 @@ async fn dispatch(parsed: command::Cli, console: Console) -> anyhow::Result<(Str
             task::run(
                 &command,
                 console,
-                user_settings.task_status_colors(),
+                &user_settings,
                 &task_client,
                 &client.project(),
             )

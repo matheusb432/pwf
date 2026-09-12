@@ -15,9 +15,10 @@ use pwf_wire::{
 use super::{
     TaskPromptTitleError,
     blocked_by::{self, BlockedByValidationError},
-    commit_task_writes, ensure_task_revision, expected_task_revision, infer_task_title,
+    commit_task_writes,
+    content::{EditLanesError, append_lanes, edit_lanes, render},
+    ensure_task_revision, expected_task_revision, infer_task_title,
     lane_configuration::{TaskPromptLanes, TaskPromptLanesError},
-    note_body::{EditLanesError, append_lanes, edit_lanes, render},
     read_task_dependencies::{self, ReadTaskDependencies, ReadTaskDependenciesError},
     resolve_task_project::{self, ResolveTaskProjectError},
     task_body_region,
@@ -56,7 +57,7 @@ pub enum EditTaskError {
     #[error("task {id} at {path} has malformed blocked_by metadata {raw:?}: {reason}")]
     MalformedBlockedBy {
         id: TaskId,
-        path: Box<pwf_wire::task::TaskNotePath>,
+        path: Box<pwf_wire::task::TaskFilePath>,
         raw: Box<str>,
         reason: Box<str>,
     },

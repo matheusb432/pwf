@@ -19,7 +19,7 @@ pub(in crate::task) enum BlockedByValidationError {
     #[error("task {task} at {path} has malformed blocked_by metadata {raw:?}: {reason}")]
     MalformedMetadata {
         task: TaskId,
-        path: Box<pwf_wire::task::TaskNotePath>,
+        path: Box<pwf_wire::task::TaskFilePath>,
         raw: Box<str>,
         reason: Box<str>,
     },
@@ -185,7 +185,7 @@ mod tests {
                         } else {
                             stored_blocked_by(blockers)
                         },
-                        locator: pwf_wire::task::TaskNotePath::new(
+                        locator: pwf_wire::task::TaskFilePath::new(
                             format!("/tasks/{id}.md").into(),
                         ),
                     },

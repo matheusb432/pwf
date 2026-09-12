@@ -23,7 +23,7 @@ pub(super) struct NewNoteRequest<'a> {
     pub tags: Option<&'a TaskTags>,
 }
 
-/// Contains a written task note's identity, path, title, and exact bytes.
+/// Contains a written task file's identity, path, title, and exact bytes.
 pub(super) struct WrittenNote {
     pub id: TaskId,
     pub path: PathBuf,
@@ -50,18 +50,13 @@ impl ObsidianStore {
             return Err(ObsidianStoreError::ProjectSnapshotPathReserved { path });
         }
         if let Some(task) = self
-            .map_task_notes(
-                project,
-                MarkdownFile::read_frontmatter_file,
-                |id, _, file, _| Ok((id, file.path().to_path_buf())),
-            )?
+            .task_files_for_project(project)?
             .into_iter()
-            .map(|(task, _)| task)
-            .find(|(id, _)| id == request.id)
+            .find(|task| &task.id == request.id)
         {
             return Err(ObsidianStoreError::TaskIdOccupied {
-                id: task.0,
-                path: task.1,
+                id: task.id,
+                path: task.path,
             });
         }
         let content = new_task_content(NewTaskFields {
@@ -75,7 +70,9 @@ impl ObsidianStore {
             priority: request.priority,
             tags: request.tags,
         });
-        MarkdownFile::create_rendered_new(&path, content.clone()).map_err(|source| {
+        let result = MarkdownFile::create_rendered_new(&path, content.clone());
+        self.invalidate_task_index(&dir);
+        result.map_err(|source| {
             map_add_task_error(
                 ObsidianStoreError::AddWriteTaskFile {
                     source: source.into_io_error(),

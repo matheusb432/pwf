@@ -10,11 +10,14 @@ use pwf_client::{
 };
 use pwf_models::{
     project::ProjectSelector,
-    settings::TaskStatusColors,
+    settings::UserSettings,
     task::{TagInput, TaskTags},
 };
 
-use super::{EffortChoice, PriorityChoice, StatusChoice, render::render_list};
+use super::{
+    ContentFormat, ContentSelection, EffortChoice, PriorityChoice, StatusChoice,
+    render::render_list,
+};
 use crate::console::Console;
 
 const TASK_LIST_PAGE_SIZE: u32 = 256;
@@ -40,14 +43,15 @@ pub struct Arguments {
 
 #[derive(Args, Debug, Clone)]
 pub(super) struct Options {
-    /// Long form with per-task metadata.
-    #[arg(long)]
-    pub(crate) long: bool,
+    /// Full content: rich on terminals, md when redirected; choose rich, md, or json explicitly.
+    #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = "", value_parser = ContentSelection::parse, value_name = "rich|md|json")]
+    pub(crate) long: Option<ContentSelection>,
     /// List every lifecycle status with no task cap.
     /// An explicit `--status` or `-n` overrides the widened default.
     #[arg(long)]
     pub(crate) all: bool,
-    /// Cap to N listed tasks. [default: 10, or unlimited under `--all`].
+    /// Cap to N listed tasks. [default: `default_list_page_size` setting (10), unlimited under
+    /// `--all`].
     #[arg(short = 'n', long, value_name = "N", value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..=100_000))]
     pub(crate) number: Option<usize>,
     /// Sort key `field[:direction]`: created|id|project-id|priority|effort|title,
@@ -63,7 +67,7 @@ pub(super) struct Options {
 pub(super) async fn run(
     arguments: &Arguments,
     console: Console,
-    task_status_colors: TaskStatusColors,
+    settings: &UserSettings,
     client: &TaskClient,
     projects: &pwf_client::project::ProjectClient,
 ) -> anyhow::Result<String> {
@@ -94,7 +98,7 @@ pub(super) async fn run(
             .unwrap_or_default(),
         order: options.order,
         status: options.status.map(|status| status.filter() as i32),
-        detail: if options.long {
+        detail: if options.long.is_some() {
             ListDetail::Detailed as i32
         } else {
             ListDetail::Summary as i32
@@ -131,10 +135,35 @@ pub(super) async fn run(
         || "managed project task paths".to_string(),
         ToString::to_string,
     );
+    let format = options.long.map(|selection| selection.resolve(console));
+    match format {
+        Some(ContentFormat::Json) => return super::render::content::json_list(&result.tasks),
+        Some(ContentFormat::Md) => {
+            let sources = result
+                .tasks
+                .iter()
+                .map(|task| {
+                    task.source.as_deref().ok_or_else(|| {
+                        anyhow::anyhow!("pwf-server omitted the task file for {}", task.id)
+                    })
+                })
+                .collect::<anyhow::Result<Vec<_>>>()?;
+            return Ok(sources.join("\n"));
+        }
+        Some(ContentFormat::Rich) => {
+            return super::render::content::rich_list(
+                &result,
+                settings,
+                console.color(),
+                console.stdout_columns(),
+            );
+        }
+        None => {}
+    }
     Ok(render_list(
         &result,
         &location,
-        task_status_colors,
+        settings.task_status_colors(),
         console.color(),
     ))
 }

@@ -11,9 +11,7 @@ use pwf_wire::{
 
 use crate::{
     ports::task_vault::{NullablePatch, TaskMutationError, TaskPatch, TaskVault, TaskWrite},
-    task::{
-        commit_task_writes, expected_task_revision, note_body::append_report, task_body_region,
-    },
+    task::{commit_task_writes, content::append_report, expected_task_revision, task_body_region},
 };
 
 #[derive(Debug, thiserror::Error)]
