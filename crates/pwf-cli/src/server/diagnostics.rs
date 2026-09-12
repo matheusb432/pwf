@@ -2,10 +2,10 @@ use anyhow::{Context as _, ensure};
 use pwf_client::doctor::{Check, CheckStatus, DoctorReport};
 
 use super::{State, native, output, process};
+#[cfg(target_os = "linux")]
+use crate::command::DOCTOR_COMMAND;
 use crate::{
-    command::{
-        DOCTOR_COMMAND, SERVER_DOCTOR_COMMAND, SERVER_INSTALL_COMMAND, SERVER_START_COMMAND,
-    },
+    command::{SERVER_DOCTOR_COMMAND, SERVER_INSTALL_COMMAND, SERVER_START_COMMAND},
     doctor::render_report,
 };
 

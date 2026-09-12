@@ -92,15 +92,16 @@ impl Registration {
             .get("EnvironmentVariables")
             .and_then(Value::as_dictionary)
         {
-            for (name, value) in environment {
-                if super::ENVIRONMENT_NAMES.contains(&name.as_str()) {
-                    command.env(
-                        name,
-                        value
-                            .as_string()
-                            .context("invalid launch environment value")?,
-                    );
-                }
+            for (name, value) in environment
+                .iter()
+                .filter(|(name, _)| super::ENVIRONMENT_NAMES.contains(&name.as_str()))
+            {
+                command.env(
+                    name,
+                    value
+                        .as_string()
+                        .context("invalid launch environment value")?,
+                );
             }
         }
         Ok(command)
