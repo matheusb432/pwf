@@ -13,7 +13,7 @@ pub mod get_task_dag;
 pub mod get_task_record;
 mod lane_configuration;
 pub mod list_tasks;
-mod read_task_dependencies;
+pub mod read_task_dependencies;
 pub mod remove_task;
 pub mod resolve_task_project;
 pub mod session;

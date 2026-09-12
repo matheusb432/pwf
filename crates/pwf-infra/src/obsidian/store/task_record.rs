@@ -1,8 +1,8 @@
-use std::path::Path;
+use std::{collections::HashMap, path::Path, sync::Arc};
 
 use pwf_application::ports::task_vault::{
-    NewTask, NullablePatch, TaskDependencyRecord, TaskMutationError, TaskPatch, TaskSummaryRecord,
-    TaskVault, TaskWriteSet,
+    NewTask, NullablePatch, TaskDependencyRecord, TaskGraphRecord, TaskMutationError, TaskPatch,
+    TaskSummaryRecord, TaskVault, TaskWriteSet,
 };
 use pwf_models::{
     project::Project,
@@ -18,7 +18,7 @@ use crate::{
     file_transaction::content_revision,
     obsidian::{
         FrontmatterView, MarkdownFile, MarkdownFileError,
-        identity::{TaskRead, parse_task_metadata},
+        identity::{TaskFile, TaskGraphFiles, TaskRead, parse_task_metadata},
         note_frontmatter::{
             activate_status, parse_blocked_by, set_blocked_by, set_commits, set_completed_at,
             set_effort, set_priority, set_status, set_tags,
@@ -60,14 +60,25 @@ fn task_timestamp(
         .transpose()
 }
 
-pub(super) fn task_summary_metadata(
-    id: TaskId,
+pub(super) fn task_graph_metadata(
     decoded_title: Option<String>,
     file: &MarkdownFile,
     frontmatter: &FrontmatterView<'_>,
-) -> Result<(TaskSummaryRecord, Option<TaskTimestamp>), ObsidianStoreError> {
-    let path = file.path();
-    let status = frontmatter_field(frontmatter, "status")?
+) -> Result<TaskGraphRecord, ObsidianStoreError> {
+    let status = task_status(file.path(), frontmatter)?;
+    let title = task_title(decoded_title, frontmatter)?;
+    Ok(TaskGraphRecord {
+        title,
+        status,
+        blocked_by: parse_blocked_by(Some(frontmatter)),
+    })
+}
+
+fn task_status(
+    path: &Path,
+    frontmatter: &FrontmatterView<'_>,
+) -> Result<TaskStatus, ObsidianStoreError> {
+    frontmatter_field(frontmatter, "status")?
         .as_deref()
         .map_or(Ok(TaskStatus::Active), |value| {
             value
@@ -77,11 +88,28 @@ pub(super) fn task_summary_metadata(
                     value: value.to_string(),
                     source,
                 })
-        })?;
-    let title = decoded_title
+        })
+}
+
+fn task_title(
+    decoded_title: Option<String>,
+    frontmatter: &FrontmatterView<'_>,
+) -> Result<String, ObsidianStoreError> {
+    Ok(decoded_title
         .filter(|title| !title.trim().is_empty())
         .or(frontmatter_field(frontmatter, "title")?)
-        .unwrap_or_default();
+        .unwrap_or_default())
+}
+
+pub(super) fn task_summary_metadata(
+    id: TaskId,
+    decoded_title: Option<String>,
+    file: &MarkdownFile,
+    frontmatter: &FrontmatterView<'_>,
+) -> Result<(TaskSummaryRecord, Option<TaskTimestamp>), ObsidianStoreError> {
+    let path = file.path();
+    let status = task_status(path, frontmatter)?;
+    let title = task_title(decoded_title, frontmatter)?;
     let created_at = task_timestamp(frontmatter, path, "created_at")?;
     let completed_at = task_timestamp(frontmatter, path, "completed_at")?;
     Ok((
@@ -220,7 +248,10 @@ fn list_task_summaries(
         return Ok(Vec::new());
     }
     if let Some(notes) = store.task_files_indexed(&directory)?
-        && let Some(summaries) = notes.iter().map(|note| note.summary.clone()).collect()
+        && let Some(summaries) = notes
+            .iter()
+            .map(|note| note.summary.as_deref().cloned())
+            .collect()
     {
         return Ok(summaries);
     }
@@ -327,6 +358,7 @@ fn write_task_file_error(source: MarkdownFileError) -> ObsidianStoreError {
 
 impl TaskVault for ObsidianStore {
     type Error = ObsidianStoreError;
+    type GraphSnapshot = TaskGraphFiles;
 
     fn task_deletion(
         &self,
@@ -352,22 +384,63 @@ impl TaskVault for ObsidianStore {
         get_task_record(self, project, id)
     }
 
-    fn get_task_dependencies(
+    fn list_task_dependencies(
         &self,
         project: &Project,
-        id: &TaskId,
-    ) -> Result<Option<TaskDependencyRecord>, Self::Error> {
+    ) -> Result<HashMap<TaskId, TaskDependencyRecord>, Self::Error> {
         let notes = self.map_task_files(
             project,
             TaskRead::Frontmatter,
-            |candidate, _, file, frontmatter| {
-                Ok((candidate == *id).then(|| TaskDependencyRecord {
-                    blocked_by: parse_blocked_by(Some(frontmatter)),
-                    locator: TaskFilePath::new(file.path().to_path_buf()),
-                }))
+            |id, _, file, frontmatter| {
+                Ok((
+                    id,
+                    TaskDependencyRecord {
+                        blocked_by: parse_blocked_by(Some(frontmatter)),
+                        locator: TaskFilePath::new(file.path().to_path_buf()),
+                    },
+                ))
             },
         )?;
-        Ok(notes.into_iter().find_map(|(dependency, _)| dependency))
+        Ok(notes
+            .into_iter()
+            .map(|(dependency, _)| dependency)
+            .collect())
+    }
+
+    fn list_task_graph_records(
+        &self,
+        project: &Project,
+    ) -> Result<Self::GraphSnapshot, Self::Error> {
+        let directory = self.tasks_path(project)?;
+        if !directory
+            .try_exists()
+            .map_err(|source| ObsidianStoreError::ReadTaskFile { source })?
+        {
+            self.invalidate_task_index(&directory);
+            return Ok(TaskGraphFiles {
+                files: Arc::from([]),
+            });
+        }
+        if let Some(files) = self.task_files_indexed(&directory)? {
+            return Ok(TaskGraphFiles { files });
+        }
+        let notes = self.map_task_files(
+            project,
+            TaskRead::Frontmatter,
+            |id, title, file, frontmatter| {
+                Ok(TaskFile {
+                    id,
+                    path: file.path().to_path_buf(),
+                    summary: None,
+                    graph: task_graph_metadata(title, file, frontmatter)
+                        .map(Arc::new)
+                        .map_err(Arc::new),
+                })
+            },
+        )?;
+        Ok(TaskGraphFiles {
+            files: notes.into_iter().map(|(record, _)| record).collect(),
+        })
     }
 
     fn list_task_summaries(

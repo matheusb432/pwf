@@ -1,6 +1,9 @@
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
-use pwf_application::ports::task_vault::TaskSummaryRecord;
+use pwf_application::ports::task_vault::{TaskGraphRecord, TaskGraphSnapshot, TaskSummaryRecord};
 use pwf_models::task::TaskId;
 use serde::Deserialize;
 
@@ -8,6 +11,16 @@ use super::{
     FrontmatterView, MarkdownFile, MarkdownFileError, ObsidianStoreError,
     project_snapshot_backup_path, project_snapshot_path,
 };
+
+#[cfg(test)]
+thread_local! {
+    static TASK_DIRECTORY_SCAN_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(super) fn task_directory_scan_count() -> usize {
+    TASK_DIRECTORY_SCAN_COUNT.get()
+}
 
 /// Contains a task file's discovered identity and path.
 pub(super) struct TaskFileIdentity {
@@ -18,7 +31,29 @@ pub(super) struct TaskFileIdentity {
 pub(super) struct TaskFile {
     pub(super) id: TaskId,
     pub(super) path: PathBuf,
-    pub(super) summary: Option<TaskSummaryRecord>,
+    pub(super) summary: Option<Box<TaskSummaryRecord>>,
+    pub(super) graph: Result<Arc<TaskGraphRecord>, Arc<ObsidianStoreError>>,
+}
+
+pub struct TaskGraphFiles {
+    pub(super) files: Arc<[TaskFile]>,
+}
+
+impl TaskGraphSnapshot for TaskGraphFiles {
+    type Error = ObsidianStoreError;
+
+    fn get(&self, id: &TaskId) -> Option<&Result<Arc<TaskGraphRecord>, Arc<Self::Error>>> {
+        self.files
+            .binary_search_by(|file| file.id.cmp(id))
+            .ok()
+            .map(|position| &self.files[position].graph)
+    }
+
+    fn iter(
+        &self,
+    ) -> impl Iterator<Item = (&TaskId, &Result<Arc<TaskGraphRecord>, Arc<Self::Error>>)> {
+        self.files.iter().map(|file| (&file.id, &file.graph))
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -46,6 +81,8 @@ pub(super) fn map_project_task_files<T>(
         &FrontmatterView<'_>,
     ) -> Result<T, ObsidianStoreError>,
 ) -> Result<Vec<(T, MarkdownFile)>, ObsidianStoreError> {
+    #[cfg(test)]
+    TASK_DIRECTORY_SCAN_COUNT.set(TASK_DIRECTORY_SCAN_COUNT.get() + 1);
     let mut tasks = Vec::new();
     let excluded_paths = [
         project_snapshot_path(project_dir),

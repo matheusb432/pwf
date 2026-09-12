@@ -34,7 +34,7 @@ pub async fn execute(
     store: &impl TaskVault,
     pool: &sqlx::SqlitePool,
 ) -> Result<HashMap<TaskId, TaskDependencyRecord>, ReadTaskDependenciesError> {
-    let mut projects = HashMap::<ProjectId, _>::new();
+    let mut projects = HashMap::<ProjectId, HashMap<TaskId, TaskDependencyRecord>>::new();
     let mut records = HashMap::new();
     let mut visited = HashSet::new();
     let mut pending = query.blockers.iter().cloned().collect::<Vec<_>>();
@@ -62,17 +62,19 @@ pub async fn execute(
                     )));
                 }
             };
-            projects.insert(project_id.clone(), project);
+            let snapshot = project
+                .map(|project| store.list_task_dependencies(&project))
+                .transpose()
+                .map_err(|source| ReadTaskDependenciesError::ReadStore {
+                    id: id.clone(),
+                    source: anyhow::Error::new(source),
+                })?
+                .unwrap_or_default();
+            projects.insert(project_id.clone(), snapshot);
         }
-        let Some(project) = projects.get(project_id).and_then(Option::as_ref) else {
-            continue;
-        };
-        let record = store
-            .get_task_dependencies(project, &id)
-            .map_err(|source| ReadTaskDependenciesError::ReadStore {
-                id: id.clone(),
-                source: anyhow::Error::new(source),
-            })?;
+        let record = projects
+            .get_mut(project_id)
+            .and_then(|records| records.remove(&id));
         if let Some(record) = record {
             if let Some(blockers) = record.blocked_by.valid() {
                 pending.extend(blockers.iter().filter(|id| !visited.contains(*id)).cloned());

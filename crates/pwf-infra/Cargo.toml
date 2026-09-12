@@ -25,6 +25,10 @@ harness = false
 name = "obsidian_store_io"
 harness = false
 
+[[bench]]
+name = "dag_traversal"
+harness = false
+
 [dependencies]
 anyhow = { workspace = true }
 atomic-write-file = { workspace = true }

@@ -4,7 +4,7 @@ use super::TaskId;
 
 /// Stores a non-empty, ordered blocked-by relationship.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BlockedBy(Vec<TaskId>);
+pub struct BlockedBy(Box<[TaskId]>);
 
 impl BlockedBy {
     /// Creates a deduplicated blocked-by relationship in first-seen order.
@@ -28,11 +28,11 @@ impl BlockedBy {
     /// Appends unseen task IDs while preserving first-seen order.
     #[must_use]
     pub fn merge(&self, appended: &Self) -> Self {
-        let mut merged = self.0.clone();
+        let mut merged = self.0.to_vec();
         for identifier in appended.iter() {
             push_unseen_identifier(&mut merged, identifier.clone());
         }
-        Self(merged)
+        Self(merged.into_boxed_slice())
     }
 
     fn from_first_and_rest(first: TaskId, identifiers: impl IntoIterator<Item = TaskId>) -> Self {
@@ -40,7 +40,7 @@ impl BlockedBy {
         for identifier in identifiers {
             push_unseen_identifier(&mut unique, identifier);
         }
-        Self(unique)
+        Self(unique.into_boxed_slice())
     }
 }
 
@@ -60,7 +60,7 @@ impl IntoIterator for BlockedBy {
     type IntoIter = std::vec::IntoIter<TaskId>;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.0.into_iter()
+        self.0.into_vec().into_iter()
     }
 }
 

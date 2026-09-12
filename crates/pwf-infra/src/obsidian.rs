@@ -10,6 +10,7 @@ mod trash;
 
 use std::path::{Path, PathBuf};
 
+pub use identity::TaskGraphFiles;
 pub use markdown_file::{
     FrontmatterParseError, FrontmatterSerializeError, FrontmatterView, MarkdownFile,
     MarkdownFileError,

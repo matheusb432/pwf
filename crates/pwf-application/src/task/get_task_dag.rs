@@ -1,16 +1,16 @@
-use std::collections::{BTreeMap, BTreeSet};
-
-use pwf_models::{
-    project::{Project, ProjectId},
-    task::TaskId,
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
 };
+
+use pwf_models::{project::ProjectId, task::TaskId};
 use pwf_wire::{
     project::{GetProject, ProjectStatusFilter},
-    task::{GetTaskDag, TaskDag, TaskDagEdge, TaskDagError, TaskDagNode, TaskRecord},
+    task::{GetTaskDag, TaskDag, TaskDagEdge, TaskDagError, TaskDagNode},
 };
 
 use crate::{
-    ports::task_vault::TaskVault,
+    ports::task_vault::{TaskGraphRecord, TaskGraphSnapshot, TaskVault},
     project::{
         get_project::{self, GetProjectError},
         list_projects,
@@ -71,86 +71,95 @@ pub async fn execute(
             GetTaskDagError::QueryProject(anyhow::Error::new(error))
         }
     })?;
-    let root = store
-        .get_task_record(&root_project, &query.id)
+    let records = store
+        .list_task_graph_records(&root_project)
         .map_err(|source| GetTaskDagError::ReadRoot {
             id: query.id.clone(),
             source: anyhow::Error::new(source),
-        })?
+        })?;
+    let root = records
+        .get(&query.id)
         .ok_or_else(|| GetTaskDagError::TaskNotFound {
             id: query.id.clone(),
-        })?;
+        })?
+        .as_ref()
+        .map_err(|source| GetTaskDagError::ReadRoot {
+            id: query.id.clone(),
+            source: anyhow::Error::new(Arc::clone(source)),
+        })?
+        .clone();
 
-    let mut resolver = Resolver::new(store, pool, root_project, root.clone());
+    let mut resolver = Resolver {
+        store,
+        pool,
+        projects: BTreeMap::new(),
+    };
+    resolver
+        .projects
+        .insert(root_project.id, ProjectRead::Loaded(records));
     let dependents = if query.mode.includes_blocks() {
         Some(resolver.gather_dependents().await?)
     } else {
         None
     };
-    let traversal = Traversal::new(query, resolver, dependents, root);
+    let traversal = Traversal::new(query, resolver, dependents, &root);
     traversal.run().await
 }
 
 #[derive(Debug, Clone)]
 enum ResolvedTask {
-    Found(Box<TaskRecord>),
+    Found(Arc<TaskGraphRecord>),
     Missing,
     Unavailable,
 }
 
-struct Resolver<'a, Store> {
-    store: &'a Store,
-    pool: &'a sqlx::SqlitePool,
-    projects: BTreeMap<ProjectId, Option<Project>>,
-    tasks: BTreeMap<TaskId, ResolvedTask>,
+enum ProjectRead<Snapshot> {
+    Loaded(Snapshot),
+    Missing,
+    Unavailable,
 }
 
-impl<'a, Store: TaskVault> Resolver<'a, Store> {
-    fn new(
-        store: &'a Store,
-        pool: &'a sqlx::SqlitePool,
-        project: Project,
-        root: TaskRecord,
-    ) -> Self {
-        Self {
-            store,
-            pool,
-            projects: BTreeMap::from([(project.id.clone(), Some(project))]),
-            tasks: BTreeMap::from([(root.id.clone(), ResolvedTask::Found(Box::new(root)))]),
-        }
-    }
+struct Resolver<'a, Store: TaskVault> {
+    store: &'a Store,
+    pool: &'a sqlx::SqlitePool,
+    projects: BTreeMap<ProjectId, ProjectRead<Store::GraphSnapshot>>,
+}
 
+impl<Store: TaskVault> Resolver<'_, Store> {
     async fn resolve(&mut self, id: &TaskId) -> Result<ResolvedTask, GetTaskDagError> {
-        if let Some(task) = self.tasks.get(id) {
-            return Ok(task.clone());
-        }
         let project_id = id.project_id();
         if !self.projects.contains_key(project_id) {
-            let project = match get_project::execute(
+            match get_project::execute(
                 GetProject::new(project_id, ProjectStatusFilter::IncludingPaused),
                 self.pool,
             )
             .await
             {
-                Ok(project) => Some(project),
-                Err(GetProjectError::ProjectNotFound { .. }) => None,
-                Err(error) => return Err(GetTaskDagError::QueryProject(anyhow::Error::new(error))),
-            };
-            self.projects.insert(project_id.clone(), project);
-        }
-        let resolved = self
-            .projects
-            .get(project_id)
-            .and_then(Option::as_ref)
-            .map_or(ResolvedTask::Missing, |project| {
-                match self.store.get_task_record(project, id) {
-                    Ok(Some(record)) => ResolvedTask::Found(Box::new(record)),
-                    Ok(None) => ResolvedTask::Missing,
-                    Err(_) => ResolvedTask::Unavailable,
+                Ok(project) => match self.store.list_task_graph_records(&project) {
+                    Ok(snapshot) => {
+                        self.projects
+                            .insert(project.id, ProjectRead::Loaded(snapshot));
+                    }
+                    Err(_) => {
+                        self.projects.insert(project.id, ProjectRead::Unavailable);
+                    }
+                },
+                Err(GetProjectError::ProjectNotFound { .. }) => {
+                    self.projects
+                        .insert(project_id.clone(), ProjectRead::Missing);
                 }
-            });
-        self.tasks.insert(id.clone(), resolved.clone());
-        Ok(resolved)
+                Err(error) => return Err(GetTaskDagError::QueryProject(anyhow::Error::new(error))),
+            }
+        }
+        Ok(match self.projects.get(project_id) {
+            Some(ProjectRead::Loaded(tasks)) => match tasks.get(id) {
+                Some(Ok(record)) => ResolvedTask::Found(Arc::clone(record)),
+                Some(Err(_)) => ResolvedTask::Unavailable,
+                None => ResolvedTask::Missing,
+            },
+            Some(ProjectRead::Unavailable) => ResolvedTask::Unavailable,
+            _ => ResolvedTask::Missing,
+        })
     }
 
     async fn gather_dependents(
@@ -160,22 +169,37 @@ impl<'a, Store: TaskVault> Resolver<'a, Store> {
             .await
             .map_err(|error| GetTaskDagError::QueryProject(anyhow::Error::new(error)))?;
         for project in projects {
-            let records = self.store.list_tasks(&project).map_err(|source| {
-                GetTaskDagError::ListProjectTasks {
+            if self.projects.contains_key(&project.id) {
+                continue;
+            }
+            let records = self
+                .store
+                .list_task_graph_records(&project)
+                .map_err(|source| GetTaskDagError::ListProjectTasks {
                     project: project.id.clone(),
                     source: anyhow::Error::new(source),
-                }
-            })?;
-            self.projects.insert(project.id.clone(), Some(project));
-            for record in records {
-                self.cache_scanned_record(record);
-            }
+                })?;
+            self.projects
+                .insert(project.id, ProjectRead::Loaded(records));
         }
         let mut dependents = BTreeMap::<TaskId, Vec<TaskId>>::new();
-        for task in self.tasks.values() {
-            let ResolvedTask::Found(record) = task else {
-                continue;
-            };
+        let tasks = self
+            .projects
+            .iter()
+            .filter_map(|(project, read)| match read {
+                ProjectRead::Loaded(tasks) => Some((project, tasks)),
+                _ => None,
+            })
+            .flat_map(|(project, tasks)| {
+                tasks.iter().map(move |(id, record)| (project, id, record))
+            });
+        for (project, id, task) in tasks {
+            let record = task
+                .as_ref()
+                .map_err(|source| GetTaskDagError::ListProjectTasks {
+                    project: project.clone(),
+                    source: anyhow::Error::new(Arc::clone(source)),
+                })?;
             let Some(blocked_by) = record.blocked_by.valid() else {
                 continue;
             };
@@ -183,7 +207,7 @@ impl<'a, Store: TaskVault> Resolver<'a, Store> {
                 dependents
                     .entry(blocker.clone())
                     .or_default()
-                    .push(record.id.clone());
+                    .push(id.clone());
             }
         }
         for tasks in dependents.values_mut() {
@@ -191,12 +215,6 @@ impl<'a, Store: TaskVault> Resolver<'a, Store> {
             tasks.dedup();
         }
         Ok(dependents)
-    }
-
-    fn cache_scanned_record(&mut self, record: TaskRecord) {
-        let id = record.id.clone();
-        let resolved = ResolvedTask::Found(Box::new(record));
-        self.tasks.insert(id, resolved);
     }
 }
 
@@ -206,7 +224,7 @@ enum VisitState {
     Complete,
 }
 
-struct Traversal<'a, Store> {
+struct Traversal<'a, Store: TaskVault> {
     query: &'a GetTaskDag,
     resolver: Resolver<'a, Store>,
     dependents: Option<BTreeMap<TaskId, Vec<TaskId>>>,
@@ -218,7 +236,7 @@ impl<'a, Store: TaskVault> Traversal<'a, Store> {
         query: &'a GetTaskDag,
         resolver: Resolver<'a, Store>,
         dependents: Option<BTreeMap<TaskId, Vec<TaskId>>>,
-        root: TaskRecord,
+        root: &TaskGraphRecord,
     ) -> Self {
         Self {
             query,
@@ -378,7 +396,7 @@ impl<'a, Store: TaskVault> Traversal<'a, Store> {
     ) -> Result<Option<usize>, GetTaskDagError> {
         match resolved {
             ResolvedTask::Found(record) if self.query.status.includes(record.status) => {
-                self.graph.add_task(*record).map(Some)
+                self.graph.add_task(id.clone(), &record).map(Some)
             }
             ResolvedTask::Found(_) => Ok(None),
             ResolvedTask::Missing => self.graph.add_missing(id.clone()).map(Some),
@@ -402,10 +420,10 @@ struct GraphBuilder {
 }
 
 impl GraphBuilder {
-    fn new(root_id: TaskId, root: TaskRecord) -> Self {
+    fn new(root_id: TaskId, root: &TaskGraphRecord) -> Self {
         Self {
             root_id: root_id.clone(),
-            nodes: vec![task_node(root)],
+            nodes: vec![task_node(root_id.clone(), root)],
             task_node_indexes: BTreeMap::from([(root_id, 0)]),
             edges: Vec::new(),
             unique_edges: BTreeSet::new(),
@@ -420,8 +438,8 @@ impl GraphBuilder {
         self.task_node_indexes[id]
     }
 
-    fn add_task(&mut self, task: TaskRecord) -> Result<usize, GetTaskDagError> {
-        self.add_task_node(task.id.clone(), task_node(task))
+    fn add_task(&mut self, id: TaskId, task: &TaskGraphRecord) -> Result<usize, GetTaskDagError> {
+        self.add_task_node(id.clone(), task_node(id, task))
     }
 
     fn add_missing(&mut self, id: TaskId) -> Result<usize, GetTaskDagError> {
@@ -486,10 +504,10 @@ impl GraphBuilder {
     }
 }
 
-fn task_node(record: TaskRecord) -> TaskDagNode {
+fn task_node(id: TaskId, record: &TaskGraphRecord) -> TaskDagNode {
     TaskDagNode::Task {
-        id: record.id,
-        title: record.title,
+        id,
+        title: record.title.clone(),
         status: record.status,
     }
 }

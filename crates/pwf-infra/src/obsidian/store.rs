@@ -1,6 +1,8 @@
 mod add;
 #[cfg(test)]
 mod contract;
+#[cfg(test)]
+mod dependency_contract;
 mod error;
 mod lookup;
 mod project_note;
@@ -30,8 +32,9 @@ impl ObsidianStore {
         }
     }
 
-    /// Reuses task summaries and locations between filesystem notifications within a bounded memory
-    /// budget. Server writes invalidate immediately; external edits have a short refresh delay.
+    /// Reuses task summaries, dependencies, and locations between filesystem notifications within a
+    /// bounded memory budget. Server writes invalidate immediately; external edits have a short
+    /// refresh delay.
     #[must_use]
     pub fn with_watched_tasks(home: HomeDirectory) -> Self {
         Self {

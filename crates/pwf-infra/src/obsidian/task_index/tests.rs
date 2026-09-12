@@ -1,7 +1,7 @@
 use std::{cell::Cell, fs, io, panic::AssertUnwindSafe};
 
 use notify::event::{DataChange, Flag, MetadataKind, RenameMode};
-use pwf_application::ports::task_vault::TaskSummaryRecord;
+use pwf_application::ports::task_vault::{TaskGraphRecord, TaskSummaryRecord};
 use pwf_models::task::{TaskId, TaskStatus};
 use pwf_wire::task::RawTaskTags;
 
@@ -18,7 +18,12 @@ fn task(directory: &Path, number: u16, title_bytes: usize) -> TaskFile {
     let id = TaskId::try_new(raw_id.as_str()).unwrap();
     TaskFile {
         path: directory.join(format!("{id}.md")).as_path().to_path_buf(),
-        summary: Some(TaskSummaryRecord {
+        graph: Ok(Arc::new(TaskGraphRecord {
+            title: String::new(),
+            status: TaskStatus::Active,
+            blocked_by: pwf_wire::task::StoredBlockedBy::Absent,
+        })),
+        summary: Some(Box::new(TaskSummaryRecord {
             id: id.clone(),
             title: "x".repeat(title_bytes).into_boxed_str().into_string(),
             status: TaskStatus::Active,
@@ -26,7 +31,7 @@ fn task(directory: &Path, number: u16, title_bytes: usize) -> TaskFile {
             effort: None,
             priority: None,
             tags: None,
-        }),
+        })),
         id,
     }
 }
@@ -363,6 +368,53 @@ fn identities_without_parsed_summaries_remain_cacheable() {
     assert!(second[0].summary.is_none());
     assert_eq!(second[0].id.as_ref(), "FOO-0001");
     assert_eq!(second[0].path, directory.join("FOO-0001.md"));
+}
+
+#[test]
+fn graph_dependencies_and_diagnostics_count_toward_the_cache_budget() {
+    use pwf_models::task::BlockedBy;
+    use pwf_wire::task::StoredBlockedBy;
+
+    let root = tempfile::tempdir().unwrap();
+    let directory = directory(root.path(), "tasks");
+    let blockers =
+        BlockedBy::try_new((1..=9999).map(|number| format!("FOO-{number:04}").parse().unwrap()))
+            .unwrap();
+    for blocked_by in [
+        StoredBlockedBy::Valid(blockers),
+        StoredBlockedBy::Malformed {
+            raw: "x".repeat(INDEX_BYTES_MAX),
+            reason: "invalid".to_string(),
+        },
+    ] {
+        let index = TaskIndex::new();
+        let fresh = index
+            .read(&directory, || {
+                let mut note = task(&directory, 1, INDEX_BYTES_MAX / 2);
+                Arc::make_mut(note.graph.as_mut().unwrap()).blocked_by = blocked_by;
+                Ok(vec![note])
+            })
+            .unwrap();
+        assert_eq!(fresh.len(), 1);
+        let state = index.state.lock().unwrap();
+        assert!(state.entries.is_empty());
+        assert!(state.watches.is_empty());
+    }
+    let index = TaskIndex::new();
+    let fresh = index
+        .read(&directory, || {
+            let mut note = task(&directory, 1, 0);
+            let value = "x".repeat(INDEX_BYTES_MAX / 2);
+            note.graph = Err(Arc::new(ObsidianStoreError::InvalidTaskStatus {
+                path: directory.join("FOO-0001.md"),
+                source: value.parse::<TaskStatus>().unwrap_err(),
+                value,
+            }));
+            Ok(vec![note])
+        })
+        .unwrap();
+    assert!(fresh[0].graph.is_err());
+    assert!(index.state.lock().unwrap().entries.is_empty());
 }
 
 #[test]

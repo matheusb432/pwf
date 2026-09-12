@@ -1662,13 +1662,10 @@ fn dependency_reads_ignore_bodies_and_unrelated_semantic_metadata() {
     std::fs::write(path.join("FOO-0001.md"), b"---\nid: FOO-0001\nstatus: invalid\ncreated_at: invalid\nblocked_by: [\"[[FOO-0002]]\"]\n---\n\xff").unwrap();
     std::fs::write(path.join("FOO-0002.md"), b"---\nid: FOO-0002\n---\n\xff").unwrap();
     let store = store_for_tasks(path);
-    let dependencies = TaskVault::get_task_dependencies(
-        &store,
-        &foo_project(&store),
-        &"FOO-0001".parse().unwrap(),
-    )
-    .unwrap()
-    .unwrap();
+    let dependencies = TaskVault::list_task_dependencies(&store, &foo_project(&store))
+        .unwrap()
+        .remove(&"FOO-0001".parse().unwrap())
+        .unwrap();
     assert_eq!(
         dependencies
             .blocked_by
@@ -1757,6 +1754,55 @@ fn watched_mutation_preflight_observes_an_external_duplicate_immediately() {
 }
 
 #[test]
+fn own_dependency_writes_refresh_both_list_and_graph_snapshots_immediately() {
+    use pwf_application::ports::task_vault::TaskGraphSnapshot;
+
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("selected.md"),
+        "---\nid: FOO-0001\ntitle: before\nblocked_by: [\"[[FOO-0002]]\"]\n---\nbody",
+    )
+    .unwrap();
+    let store =
+        ObsidianStore::with_watched_tasks(HomeDirectory::new(directory.path().to_path_buf()));
+    let project = foo_project(&store);
+    let id = "FOO-0001".parse().unwrap();
+    let before = store.list_task_graph_records(&project).unwrap();
+    commit_for_task(
+        &store,
+        &project,
+        &id,
+        vec![TaskWrite::Patch {
+            id: id.clone(),
+            patch: TaskPatch {
+                title: SetField::Set(TaskTitle::try_new("after").unwrap()),
+                blocked_by: NullablePatch::Clear,
+                ..TaskPatch::default()
+            },
+        }],
+    );
+    let after = store.list_task_graph_records(&project).unwrap();
+    let record = after.get(&id).unwrap().as_ref().unwrap();
+    assert_eq!(record.title, "after");
+    assert!(matches!(record.blocked_by, StoredBlockedBy::Absent));
+    assert_eq!(
+        store.list_task_summaries(&project).unwrap()[0].title,
+        "after"
+    );
+    assert_eq!(before.get(&id).unwrap().as_ref().unwrap().title, "before");
+    assert!(
+        before
+            .get(&id)
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .blocked_by
+            .valid()
+            .is_some()
+    );
+}
+
+#[test]
 fn task_allocation_and_mutation_do_not_decode_unrelated_bodies() {
     let directory = tempfile::tempdir().unwrap();
     let store = store_for_tasks(directory.path());
@@ -1801,7 +1847,7 @@ fn task_crud_ignores_generated_snapshot_contents() {
         assert_eq!(get_record(&store, "FOO-0001").unwrap(), record);
         assert_eq!(TaskVault::list_tasks(&store, &project).unwrap(), std::slice::from_ref(&record));
         assert_eq!(TaskVault::list_task_summaries(&store, &project).unwrap().len(), 1);
-        assert!(TaskVault::get_task_dependencies(&store, &project, &record.id).unwrap().is_some());
+        assert!(TaskVault::list_task_dependencies(&store, &project).unwrap().contains_key(&record.id));
         assert!(get_record(&store, "FOO-0002").is_none());
         assert!(get_record(&store, "FOO-9999").is_none());
         for status in [TaskStatus::Done, TaskStatus::Cancelled, TaskStatus::Active] {

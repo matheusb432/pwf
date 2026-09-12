@@ -251,7 +251,7 @@ async fn add_uses_project_id_even_when_another_project_has_that_title(pool: sqlx
 }
 
 #[sqlx::test(migrator = "crate::support::MIGRATOR")]
-async fn reads_only_reachable_dependencies_once_including_paused_projects(pool: sqlx::SqlitePool) {
+async fn snapshots_only_reached_projects_once_including_paused_projects(pool: sqlx::SqlitePool) {
     insert_project(&pool, "FOO", "foo", "/work/foo", "/tasks/foo", false).await;
     insert_project(&pool, "AUX", "aux", "/work/aux", "/tasks/aux", true).await;
     insert_project(&pool, "BAD", "bad", "/work/bad", "/tasks/bad", false).await;
@@ -281,7 +281,7 @@ async fn reads_only_reachable_dependencies_once_including_paused_projects(pool: 
     reads.sort();
     assert_eq!(
         reads.iter().map(AsRef::as_ref).collect::<Vec<_>>(),
-        ["AUX-0001", "FOO-0001", "FOO-0002"]
+        ["AUX", "FOO"]
     );
     assert_eq!(store.tasks("foo").len(), 3);
 }

@@ -4,9 +4,7 @@ use pwf_wire::task::{
     GetTaskDag, StatusFilter, StoredBlockedBy, TaskDagDepth, TaskDagEdge, TaskDagMode, TaskDagNode,
 };
 
-use crate::support::{
-    InMemoryStore, InMemoryStoreFailure, MIGRATOR, insert_project, stored_blocked_by, task_record,
-};
+use crate::support::{InMemoryStore, MIGRATOR, insert_project, stored_blocked_by, task_record};
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn blocked_by_mode_traverses_cross_project_ancestors_in_stored_order(pool: sqlx::SqlitePool) {
@@ -51,6 +49,14 @@ async fn blocked_by_mode_traverses_cross_project_ancestors_in_stored_order(pool:
 
     assert_eq!(graph.root_id().as_ref(), "FOO-0003");
     assert_eq!(
+        store
+            .graph_reads()
+            .iter()
+            .map(AsRef::as_ref)
+            .collect::<Vec<_>>(),
+        ["FOO", "AUX"]
+    );
+    assert_eq!(
         graph
             .nodes()
             .iter()
@@ -79,6 +85,47 @@ async fn blocked_by_mode_traverses_cross_project_ancestors_in_stored_order(pool:
                 dependent_node_index: 0,
             },
         ]
+    );
+    pool.close().await;
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn failed_project_scan_is_reused_for_every_reference_only_within_the_request(
+    pool: sqlx::SqlitePool,
+) {
+    insert_project(&pool, "FOO", "foo", "/work/foo", "/tasks/foo", false).await;
+    insert_project(&pool, "AUX", "aux", "/work/aux", "/tasks/aux", false).await;
+    let root = pwf_wire::task::TaskRecord {
+        blocked_by: stored_blocked_by(&["AUX-0001", "AUX-0002"]),
+        ..task_record("FOO-0001")
+    };
+    let store = InMemoryStore::default()
+        .with_project("foo", vec![root])
+        .with_graph_failure("AUX");
+    let query = GetTaskDag {
+        id: "FOO-0001".parse().unwrap(),
+        depth: None,
+        status: StatusFilter::All,
+        mode: TaskDagMode::BlockedBy,
+    };
+    for _ in 0..2 {
+        let graph = get_task_dag::execute(&query, &store, &pool).await.unwrap();
+        assert_eq!(
+            graph
+                .nodes()
+                .iter()
+                .filter(|node| matches!(node, TaskDagNode::Unavailable { .. }))
+                .count(),
+            2
+        );
+    }
+    assert_eq!(
+        store
+            .graph_reads()
+            .iter()
+            .map(AsRef::as_ref)
+            .collect::<Vec<_>>(),
+        ["FOO", "AUX", "FOO", "AUX"]
     );
     pool.close().await;
 }
@@ -336,9 +383,10 @@ async fn reachable_cycle_is_rejected(pool: sqlx::SqlitePool) {
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn blocks_mode_fails_when_a_project_cannot_be_scanned(pool: sqlx::SqlitePool) {
     insert_project(&pool, "FOO", "foo", "/work/foo", "/tasks/foo", false).await;
+    insert_project(&pool, "BAD", "bad", "/work/bad", "/tasks/bad", false).await;
     let store = InMemoryStore::default()
         .with_project("foo", vec![task_record("FOO-0001")])
-        .with_failure(InMemoryStoreFailure::ListTasks);
+        .with_graph_failure("BAD");
 
     let error = get_task_dag::execute(
         &GetTaskDag {

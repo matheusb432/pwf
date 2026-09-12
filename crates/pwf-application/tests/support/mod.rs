@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet, HashMap},
     sync::{Arc, Mutex, MutexGuard},
 };
 
@@ -8,8 +8,8 @@ use pwf_application::ports::{
     project_directory::ProjectDirectoryClient,
     project_note::{NewProjectNote, ProjectNotePatch, ProjectNotes},
     task_vault::{
-        NewTask, NullablePatch, TaskMutationError, TaskPatch, TaskRevisionState, TaskVault,
-        TaskWrite, TaskWriteSet,
+        NewTask, NullablePatch, TaskDependencyRecord, TaskGraphRecord, TaskGraphSnapshot,
+        TaskMutationError, TaskPatch, TaskRevisionState, TaskVault, TaskWrite, TaskWriteSet,
     },
 };
 use pwf_models::{
@@ -56,7 +56,9 @@ struct InMemoryState {
     project_note_patches: BTreeMap<ProjectName, Vec<ProjectNotePatch>>,
     failures: Vec<InMemoryStoreFailure>,
     next_task_revision: u64,
-    dependency_reads: Vec<TaskId>,
+    dependency_reads: Vec<ProjectId>,
+    graph_reads: Vec<ProjectId>,
+    graph_failures: BTreeSet<ProjectId>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,8 +103,17 @@ impl InMemoryStore {
         self
     }
 
-    pub(crate) fn dependency_reads(&self) -> Vec<TaskId> {
+    pub(crate) fn dependency_reads(&self) -> Vec<ProjectId> {
         self.lock().dependency_reads.clone()
+    }
+
+    pub(crate) fn graph_reads(&self) -> Vec<ProjectId> {
+        self.lock().graph_reads.clone()
+    }
+
+    pub(crate) fn with_graph_failure(self, project: &str) -> Self {
+        self.lock().graph_failures.insert(project.parse().unwrap());
+        self
     }
 
     pub fn tasks(&self, project: &str) -> Vec<TaskRecord> {
@@ -213,8 +224,27 @@ pub(crate) fn staged_task() -> (InMemoryStore, Vec<Project>) {
     )
 }
 
+pub struct InMemoryGraphSnapshot {
+    records: BTreeMap<TaskId, Result<Arc<TaskGraphRecord>, Arc<InMemoryStoreError>>>,
+}
+
+impl TaskGraphSnapshot for InMemoryGraphSnapshot {
+    type Error = InMemoryStoreError;
+
+    fn get(&self, id: &TaskId) -> Option<&Result<Arc<TaskGraphRecord>, Arc<Self::Error>>> {
+        self.records.get(id)
+    }
+
+    fn iter(
+        &self,
+    ) -> impl Iterator<Item = (&TaskId, &Result<Arc<TaskGraphRecord>, Arc<Self::Error>>)> {
+        self.records.iter()
+    }
+}
+
 impl TaskVault for InMemoryStore {
     type Error = InMemoryStoreError;
+    type GraphSnapshot = InMemoryGraphSnapshot;
 
     fn task_deletion(
         &self,
@@ -250,13 +280,12 @@ impl TaskVault for InMemoryStore {
             .and_then(|tasks| tasks.iter().find(|task| task.id == *id).cloned()))
     }
 
-    fn get_task_dependencies(
+    fn list_task_dependencies(
         &self,
         project: &Project,
-        id: &TaskId,
-    ) -> Result<Option<pwf_application::ports::task_vault::TaskDependencyRecord>, Self::Error> {
+    ) -> Result<HashMap<TaskId, TaskDependencyRecord>, Self::Error> {
         let mut state = self.lock();
-        state.dependency_reads.push(id.clone());
+        state.dependency_reads.push(project.id.clone());
         if state.failures.contains(&InMemoryStoreFailure::ReadTask) {
             return Err(InMemoryStoreError::Injected {
                 operation: "task-read",
@@ -265,13 +294,49 @@ impl TaskVault for InMemoryStore {
         Ok(state
             .tasks
             .get(&project.title)
-            .and_then(|tasks| tasks.iter().find(|task| task.id == *id))
-            .map(
-                |task| pwf_application::ports::task_vault::TaskDependencyRecord {
-                    blocked_by: task.blocked_by.clone(),
-                    locator: task.locator.clone(),
-                },
-            ))
+            .into_iter()
+            .flatten()
+            .map(|task| {
+                (
+                    task.id.clone(),
+                    TaskDependencyRecord {
+                        blocked_by: task.blocked_by.clone(),
+                        locator: task.locator.clone(),
+                    },
+                )
+            })
+            .collect())
+    }
+
+    fn list_task_graph_records(
+        &self,
+        project: &Project,
+    ) -> Result<Self::GraphSnapshot, Self::Error> {
+        let mut state = self.lock();
+        state.graph_reads.push(project.id.clone());
+        if state.graph_failures.contains(&project.id) {
+            return Err(InMemoryStoreError::Injected {
+                operation: "graph-read",
+            });
+        }
+        Ok(InMemoryGraphSnapshot {
+            records: state
+                .tasks
+                .get(&project.title)
+                .into_iter()
+                .flatten()
+                .map(|task| {
+                    (
+                        task.id.clone(),
+                        Ok(Arc::new(TaskGraphRecord {
+                            title: task.title.clone(),
+                            status: task.status,
+                            blocked_by: task.blocked_by.clone(),
+                        })),
+                    )
+                })
+                .collect(),
+        })
     }
 
     fn list_tasks(&self, project: &Project) -> Result<Vec<TaskRecord>, Self::Error> {

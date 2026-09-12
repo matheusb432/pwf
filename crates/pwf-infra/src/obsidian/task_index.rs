@@ -355,8 +355,10 @@ fn entry_bytes(directory: &Path, notes: &[TaskFile]) -> usize {
                 note.path.as_os_str().len(),
                 note.id.as_ref().len(),
                 note.id.project_id().as_ref().len(),
+                graph_bytes(&note.graph),
                 note.summary.as_ref().map_or(0, |summary| {
                     [
+                        size_of::<pwf_application::ports::task_vault::TaskSummaryRecord>(),
                         summary.id.as_ref().len(),
                         summary.id.project_id().as_ref().len(),
                         summary.title.capacity(),
@@ -372,6 +374,44 @@ fn entry_bytes(directory: &Path, notes: &[TaskFile]) -> usize {
             .fold(bytes, usize::saturating_add)
         },
     )
+}
+
+fn graph_bytes(
+    graph: &Result<
+        Arc<pwf_application::ports::task_vault::TaskGraphRecord>,
+        Arc<ObsidianStoreError>,
+    >,
+) -> usize {
+    use pwf_wire::task::StoredBlockedBy;
+
+    match graph {
+        Ok(graph) => (size_of::<pwf_application::ports::task_vault::TaskGraphRecord>()
+            + size_of::<[usize; 2]>())
+        .saturating_add(graph.title.capacity())
+        .saturating_add(match &graph.blocked_by {
+            StoredBlockedBy::Absent => 0,
+            StoredBlockedBy::Valid(blockers) => blockers.iter().fold(0_usize, |bytes, id| {
+                bytes
+                    .saturating_add(size_of::<pwf_models::task::TaskId>())
+                    .saturating_add(id.as_ref().len())
+                    .saturating_add(id.project_id().as_ref().len())
+            }),
+            StoredBlockedBy::Malformed { raw, reason } => {
+                raw.capacity().saturating_add(reason.capacity())
+            }
+        }),
+        Err(error) => match error.as_ref() {
+            ObsidianStoreError::InvalidTaskStatus { path, value, .. } => {
+                size_of::<ObsidianStoreError>()
+                    + size_of::<[usize; 2]>()
+                    + path.as_os_str().len()
+                    + value.capacity()
+                    + value.len()
+            }
+            // Opaque I/O errors may retain arbitrary data; return the snapshot without caching it.
+            _ => usize::MAX,
+        },
+    }
 }
 
 fn generated_snapshot(path: &Path) -> bool {

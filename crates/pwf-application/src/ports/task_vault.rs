@@ -1,4 +1,7 @@
-use std::collections::BTreeSet;
+use std::{
+    collections::{BTreeSet, HashMap},
+    sync::Arc,
+};
 
 use pwf_models::{
     project::Project,
@@ -42,6 +45,25 @@ impl From<TaskRecord> for TaskSummaryRecord {
 pub struct TaskDependencyRecord {
     pub blocked_by: StoredBlockedBy,
     pub locator: TaskFilePath,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskGraphRecord {
+    pub title: String,
+    pub status: TaskStatus,
+    pub blocked_by: StoredBlockedBy,
+}
+
+/// An immutable project view with indexed lookup and borrowed records.
+/// Implementations can share storage with other metadata readers across requests.
+pub trait TaskGraphSnapshot: Send + Sync {
+    type Error: std::error::Error + Send + Sync + 'static;
+
+    fn get(&self, id: &TaskId) -> Option<&Result<Arc<TaskGraphRecord>, Arc<Self::Error>>>;
+
+    fn iter(
+        &self,
+    ) -> impl Iterator<Item = (&TaskId, &Result<Arc<TaskGraphRecord>, Arc<Self::Error>>)>;
 }
 
 /// Rendered content receives file framing; verbatim bodies retain every byte.
@@ -296,6 +318,7 @@ impl<E> TaskMutationError<E> {
 /// Persists task files and applies writes guarded by their revisions.
 pub trait TaskVault: Send + Sync + 'static {
     type Error: std::error::Error + Send + Sync + 'static;
+    type GraphSnapshot: TaskGraphSnapshot<Error = Self::Error>;
 
     /// Resolves the configured deletion destination and checks that its trash folder exists.
     fn task_deletion(
@@ -308,12 +331,18 @@ pub trait TaskVault: Send + Sync + 'static {
         project: &Project,
         id: &TaskId,
     ) -> Result<Option<TaskRecord>, Self::Error>;
-    /// Reads dependency metadata without loading the task body.
-    fn get_task_dependencies(
+    /// Captures current identity and dependency metadata in one project scan without task bodies.
+    fn list_task_dependencies(
         &self,
         project: &Project,
-        id: &TaskId,
-    ) -> Result<Option<TaskDependencyRecord>, Self::Error>;
+    ) -> Result<HashMap<TaskId, TaskDependencyRecord>, Self::Error>;
+
+    /// Shares graph metadata under the adapter's list-cache freshness policy.
+    /// Directory discovery errors reject the snapshot; unrelated bodies and timestamps are ignored.
+    fn list_task_graph_records(
+        &self,
+        project: &Project,
+    ) -> Result<Self::GraphSnapshot, Self::Error>;
 
     fn list_tasks(&self, project: &Project) -> Result<Vec<TaskRecord>, Self::Error>;
 

@@ -125,7 +125,7 @@ coverage *args:
     @cargo clean --target-dir target/llvm-cov-target
 
 # Compare Criterion benchmarks against the local baseline. Use --update to replace it.
-[arg("benchmark", help="Benchmark target or all", pattern="all|pwf-marker-sections|obsidian-frontmatter-read|obsidian-markdown-file|obsidian-store-io|list-tasks-rpc")]
+[arg("benchmark", help="Benchmark target or all", pattern="all|pwf-marker-sections|obsidian-frontmatter-read|obsidian-markdown-file|obsidian-store-io|list-tasks-rpc|dag-traversal")]
 [arg("case", help="Exact Criterion benchmark case")]
 [arg("update", long="update", value="--save-baseline local", help="Compare and replace the local baseline")]
 [arg("quick", long="quick", value="--quick", help="Stop once Criterion reaches statistical significance")]

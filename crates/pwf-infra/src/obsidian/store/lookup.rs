@@ -1,9 +1,16 @@
+use std::sync::Arc;
+
+use pwf_application::ports::task_vault::TaskGraphRecord;
 use pwf_models::{project::Project, task::TaskId};
 
-use super::{ObsidianStore, ObsidianStoreError, task_record::task_summary_metadata};
+use super::{
+    ObsidianStore, ObsidianStoreError,
+    task_record::{task_graph_metadata, task_summary_metadata},
+};
 use crate::obsidian::{
     FrontmatterView, MarkdownFile,
     identity::{TaskFile, TaskFileIdentity, TaskRead, map_project_task_files},
+    note_frontmatter::parse_blocked_by,
 };
 
 impl ObsidianStore {
@@ -42,25 +49,10 @@ impl ObsidianStore {
                     directory,
                     TaskRead::Frontmatter,
                     |id, title, file, frontmatter| {
-                        // A bad summary must not prevent looking up an unrelated task by identity.
-                        // Summary reads retry uncached so the original parse error stays
-                        // authoritative.
-                        let summary = task_summary_metadata(id.clone(), title, file, frontmatter)
-                            .ok()
-                            .map(|(summary, _)| summary);
-                        Ok((id, summary))
+                        Ok(task_file_metadata(id, title, file, frontmatter))
                     },
                 )
-                .map(|notes| {
-                    notes
-                        .into_iter()
-                        .map(|((id, summary), file)| TaskFile {
-                            id,
-                            path: file.into_parts().0,
-                            summary,
-                        })
-                        .collect()
-                })
+                .map(|notes| notes.into_iter().map(|(note, _)| note).collect())
             })
             .map(Some)
     }
@@ -121,5 +113,36 @@ impl ObsidianStore {
                 project_id: project.id.clone(),
             }
         })
+    }
+}
+
+fn task_file_metadata(
+    id: TaskId,
+    title: Option<String>,
+    file: &MarkdownFile,
+    frontmatter: &FrontmatterView<'_>,
+) -> TaskFile {
+    // Summary errors must not poison identity or graph reads.
+    let summary = task_summary_metadata(id.clone(), title.clone(), file, frontmatter)
+        .ok()
+        .map(|(summary, _)| summary);
+    let graph = summary
+        .as_ref()
+        .map_or_else(
+            || task_graph_metadata(title, file, frontmatter).map_err(Arc::new),
+            |summary| {
+                Ok(TaskGraphRecord {
+                    title: summary.title.clone(),
+                    status: summary.status,
+                    blocked_by: parse_blocked_by(Some(frontmatter)),
+                })
+            },
+        )
+        .map(Arc::new);
+    TaskFile {
+        id,
+        path: file.path().to_path_buf(),
+        summary: summary.map(Box::new),
+        graph,
     }
 }
