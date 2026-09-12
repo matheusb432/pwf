@@ -18,6 +18,8 @@ pub struct TaskStatusColors {
     pub done: ::core::option::Option<RgbColor>,
     #[prost(message, optional, tag = "3")]
     pub cancelled: ::core::option::Option<RgbColor>,
+    #[prost(message, optional, tag = "4")]
+    pub backlog: ::core::option::Option<RgbColor>,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ProjectStatusColors {
@@ -496,6 +498,12 @@ pub struct CancelTaskRequest {
     #[prost(string, optional, tag = "5")]
     pub expected_revision: ::core::option::Option<::prost::alloc::string::String>,
 }
+/// Defers an active task without closing it. Repeating this on backlog is a no-op.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct BacklogTaskRequest {
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CompleteTaskRequest {
     #[prost(string, tag = "1")]
@@ -702,6 +710,31 @@ pub struct CompleteTaskResponse {
 pub struct UpdateTaskResponse {
     #[prost(message, optional, tag = "1")]
     pub task: ::core::option::Option<TaskMutationSummary>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct BackloggedTask {
+    #[prost(message, optional, tag = "1")]
+    pub task: ::core::option::Option<TaskMutationSummary>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct AlreadyBackloggedTask {
+    #[prost(message, optional, tag = "1")]
+    pub task: ::core::option::Option<TaskMutationSummary>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct BacklogTaskResponse {
+    #[prost(oneof = "backlog_task_response::Outcome", tags = "1, 2")]
+    pub outcome: ::core::option::Option<backlog_task_response::Outcome>,
+}
+/// Nested message and enum types in `BacklogTaskResponse`.
+pub mod backlog_task_response {
+    #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum Outcome {
+        #[prost(message, tag = "1")]
+        Backlogged(super::BackloggedTask),
+        #[prost(message, tag = "2")]
+        AlreadyBacklogged(super::AlreadyBackloggedTask),
+    }
 }
 /// A record retains raw metadata even when a consumer cannot interpret it.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -952,7 +985,7 @@ pub struct DeleteTaskConfirmation {
     pub trash_folder: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct ReopenTaskConfirmation {
+pub struct ActivateTaskConfirmation {
     #[prost(string, tag = "1")]
     pub task_id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
@@ -1027,17 +1060,17 @@ pub mod delete_task_response {
     }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct ReopenTaskStart {
+pub struct ActivateTaskStart {
     #[prost(string, tag = "1")]
     pub id: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct ReopenTaskPreflight {
+pub struct ActivateTaskPreflight {
     #[prost(message, optional, tag = "1")]
-    pub confirmation: ::core::option::Option<ReopenTaskConfirmation>,
+    pub confirmation: ::core::option::Option<ActivateTaskConfirmation>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct ReopenedTask {
+pub struct ActivatedTask {
     #[prost(message, optional, tag = "1")]
     pub task: ::core::option::Option<TaskMutationSummary>,
 }
@@ -1047,16 +1080,16 @@ pub struct AlreadyActiveTask {
     pub task: ::core::option::Option<TaskMutationSummary>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct ReopenTaskResult {
-    #[prost(oneof = "reopen_task_result::Outcome", tags = "1, 2, 3")]
-    pub outcome: ::core::option::Option<reopen_task_result::Outcome>,
+pub struct ActivateTaskResult {
+    #[prost(oneof = "activate_task_result::Outcome", tags = "1, 2, 3")]
+    pub outcome: ::core::option::Option<activate_task_result::Outcome>,
 }
-/// Nested message and enum types in `ReopenTaskResult`.
-pub mod reopen_task_result {
+/// Nested message and enum types in `ActivateTaskResult`.
+pub mod activate_task_result {
     #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
     pub enum Outcome {
         #[prost(message, tag = "1")]
-        Reopened(super::ReopenedTask),
+        Activated(super::ActivatedTask),
         #[prost(message, tag = "2")]
         AlreadyActive(super::AlreadyActiveTask),
         #[prost(message, tag = "3")]
@@ -1064,33 +1097,33 @@ pub mod reopen_task_result {
     }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct ReopenTaskRequest {
-    #[prost(oneof = "reopen_task_request::Value", tags = "1, 2")]
-    pub value: ::core::option::Option<reopen_task_request::Value>,
+pub struct ActivateTaskRequest {
+    #[prost(oneof = "activate_task_request::Value", tags = "1, 2")]
+    pub value: ::core::option::Option<activate_task_request::Value>,
 }
-/// Nested message and enum types in `ReopenTaskRequest`.
-pub mod reopen_task_request {
+/// Nested message and enum types in `ActivateTaskRequest`.
+pub mod activate_task_request {
     #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
     pub enum Value {
         #[prost(message, tag = "1")]
-        Start(super::ReopenTaskStart),
+        Start(super::ActivateTaskStart),
         #[prost(message, tag = "2")]
         Decision(super::ConfirmationDecision),
     }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct ReopenTaskResponse {
-    #[prost(oneof = "reopen_task_response::Value", tags = "1, 2")]
-    pub value: ::core::option::Option<reopen_task_response::Value>,
+pub struct ActivateTaskResponse {
+    #[prost(oneof = "activate_task_response::Value", tags = "1, 2")]
+    pub value: ::core::option::Option<activate_task_response::Value>,
 }
-/// Nested message and enum types in `ReopenTaskResponse`.
-pub mod reopen_task_response {
+/// Nested message and enum types in `ActivateTaskResponse`.
+pub mod activate_task_response {
     #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
     pub enum Value {
         #[prost(message, tag = "1")]
-        Preflight(super::ReopenTaskPreflight),
+        Preflight(super::ActivateTaskPreflight),
         #[prost(message, tag = "2")]
-        Result(super::ReopenTaskResult),
+        Result(super::ActivateTaskResult),
     }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1503,6 +1536,7 @@ pub enum TaskStatusFilter {
     Done = 2,
     Cancelled = 3,
     All = 4,
+    Backlog = 5,
 }
 impl TaskStatusFilter {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -1516,6 +1550,7 @@ impl TaskStatusFilter {
             Self::Done => "TASK_STATUS_FILTER_DONE",
             Self::Cancelled => "TASK_STATUS_FILTER_CANCELLED",
             Self::All => "TASK_STATUS_FILTER_ALL",
+            Self::Backlog => "TASK_STATUS_FILTER_BACKLOG",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -1526,6 +1561,7 @@ impl TaskStatusFilter {
             "TASK_STATUS_FILTER_DONE" => Some(Self::Done),
             "TASK_STATUS_FILTER_CANCELLED" => Some(Self::Cancelled),
             "TASK_STATUS_FILTER_ALL" => Some(Self::All),
+            "TASK_STATUS_FILTER_BACKLOG" => Some(Self::Backlog),
             _ => None,
         }
     }
@@ -1607,6 +1643,7 @@ pub enum TaskStatus {
     Active = 1,
     Done = 2,
     Cancelled = 3,
+    Backlog = 4,
 }
 impl TaskStatus {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -1619,6 +1656,7 @@ impl TaskStatus {
             Self::Active => "TASK_STATUS_ACTIVE",
             Self::Done => "TASK_STATUS_DONE",
             Self::Cancelled => "TASK_STATUS_CANCELLED",
+            Self::Backlog => "TASK_STATUS_BACKLOG",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -1628,6 +1666,7 @@ impl TaskStatus {
             "TASK_STATUS_ACTIVE" => Some(Self::Active),
             "TASK_STATUS_DONE" => Some(Self::Done),
             "TASK_STATUS_CANCELLED" => Some(Self::Cancelled),
+            "TASK_STATUS_BACKLOG" => Some(Self::Backlog),
             _ => None,
         }
     }
@@ -3355,6 +3394,30 @@ pub mod task_service_client {
                 .insert(GrpcMethod::new("pwf.v1.TaskService", "CancelTask"));
             self.inner.unary(req, path, codec).await
         }
+        pub async fn backlog_task(
+            &mut self,
+            request: impl tonic::IntoRequest<super::BacklogTaskRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::BacklogTaskResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/pwf.v1.TaskService/BacklogTask",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("pwf.v1.TaskService", "BacklogTask"));
+            self.inner.unary(req, path, codec).await
+        }
         pub async fn complete_task(
             &mut self,
             request: impl tonic::IntoRequest<super::CompleteTaskRequest>,
@@ -3523,11 +3586,13 @@ pub mod task_service_client {
                 .insert(GrpcMethod::new("pwf.v1.TaskService", "DeleteTask"));
             self.inner.streaming(req, path, codec).await
         }
-        pub async fn reopen_task(
+        pub async fn activate_task(
             &mut self,
-            request: impl tonic::IntoStreamingRequest<Message = super::ReopenTaskRequest>,
+            request: impl tonic::IntoStreamingRequest<
+                Message = super::ActivateTaskRequest,
+            >,
         ) -> std::result::Result<
-            tonic::Response<tonic::codec::Streaming<super::ReopenTaskResponse>>,
+            tonic::Response<tonic::codec::Streaming<super::ActivateTaskResponse>>,
             tonic::Status,
         > {
             self.inner
@@ -3540,11 +3605,11 @@ pub mod task_service_client {
                 })?;
             let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
-                "/pwf.v1.TaskService/ReopenTask",
+                "/pwf.v1.TaskService/ActivateTask",
             );
             let mut req = request.into_streaming_request();
             req.extensions_mut()
-                .insert(GrpcMethod::new("pwf.v1.TaskService", "ReopenTask"));
+                .insert(GrpcMethod::new("pwf.v1.TaskService", "ActivateTask"));
             self.inner.streaming(req, path, codec).await
         }
     }
@@ -3581,6 +3646,13 @@ pub mod task_service_server {
             request: tonic::Request<super::CancelTaskRequest>,
         ) -> std::result::Result<
             tonic::Response<super::CancelTaskResponse>,
+            tonic::Status,
+        >;
+        async fn backlog_task(
+            &self,
+            request: tonic::Request<super::BacklogTaskRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::BacklogTaskResponse>,
             tonic::Status,
         >;
         async fn complete_task(
@@ -3632,16 +3704,19 @@ pub mod task_service_server {
             &self,
             request: tonic::Request<tonic::Streaming<super::DeleteTaskRequest>>,
         ) -> std::result::Result<tonic::Response<Self::DeleteTaskStream>, tonic::Status>;
-        /// Server streaming response type for the ReopenTask method.
-        type ReopenTaskStream: tonic::codegen::tokio_stream::Stream<
-                Item = std::result::Result<super::ReopenTaskResponse, tonic::Status>,
+        /// Server streaming response type for the ActivateTask method.
+        type ActivateTaskStream: tonic::codegen::tokio_stream::Stream<
+                Item = std::result::Result<super::ActivateTaskResponse, tonic::Status>,
             >
             + std::marker::Send
             + 'static;
-        async fn reopen_task(
+        async fn activate_task(
             &self,
-            request: tonic::Request<tonic::Streaming<super::ReopenTaskRequest>>,
-        ) -> std::result::Result<tonic::Response<Self::ReopenTaskStream>, tonic::Status>;
+            request: tonic::Request<tonic::Streaming<super::ActivateTaskRequest>>,
+        ) -> std::result::Result<
+            tonic::Response<Self::ActivateTaskStream>,
+            tonic::Status,
+        >;
     }
     #[derive(Debug)]
     pub struct TaskServiceServer<T> {
@@ -3839,6 +3914,51 @@ pub mod task_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = CancelTaskSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/pwf.v1.TaskService/BacklogTask" => {
+                    #[allow(non_camel_case_types)]
+                    struct BacklogTaskSvc<T: TaskService>(pub Arc<T>);
+                    impl<
+                        T: TaskService,
+                    > tonic::server::UnaryService<super::BacklogTaskRequest>
+                    for BacklogTaskSvc<T> {
+                        type Response = super::BacklogTaskResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::BacklogTaskRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as TaskService>::backlog_task(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = BacklogTaskSvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
@@ -4172,15 +4292,15 @@ pub mod task_service_server {
                     };
                     Box::pin(fut)
                 }
-                "/pwf.v1.TaskService/ReopenTask" => {
+                "/pwf.v1.TaskService/ActivateTask" => {
                     #[allow(non_camel_case_types)]
-                    struct ReopenTaskSvc<T: TaskService>(pub Arc<T>);
+                    struct ActivateTaskSvc<T: TaskService>(pub Arc<T>);
                     impl<
                         T: TaskService,
-                    > tonic::server::StreamingService<super::ReopenTaskRequest>
-                    for ReopenTaskSvc<T> {
-                        type Response = super::ReopenTaskResponse;
-                        type ResponseStream = T::ReopenTaskStream;
+                    > tonic::server::StreamingService<super::ActivateTaskRequest>
+                    for ActivateTaskSvc<T> {
+                        type Response = super::ActivateTaskResponse;
+                        type ResponseStream = T::ActivateTaskStream;
                         type Future = BoxFuture<
                             tonic::Response<Self::ResponseStream>,
                             tonic::Status,
@@ -4188,12 +4308,12 @@ pub mod task_service_server {
                         fn call(
                             &mut self,
                             request: tonic::Request<
-                                tonic::Streaming<super::ReopenTaskRequest>,
+                                tonic::Streaming<super::ActivateTaskRequest>,
                             >,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as TaskService>::reopen_task(&inner, request).await
+                                <T as TaskService>::activate_task(&inner, request).await
                             };
                             Box::pin(fut)
                         }
@@ -4204,7 +4324,7 @@ pub mod task_service_server {
                     let max_encoding_message_size = self.max_encoding_message_size;
                     let inner = self.inner.clone();
                     let fut = async move {
-                        let method = ReopenTaskSvc(inner);
+                        let method = ActivateTaskSvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

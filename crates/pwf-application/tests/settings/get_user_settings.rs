@@ -22,7 +22,7 @@ impl UserSettingsReader for FixedUserSettingsReader {
 #[test]
 fn query_returns_the_complete_validated_settings_snapshot() {
     let settings = UserSettings::new(
-        TaskStatusColors::new(Some(RgbColor::new(255, 135, 0)), None, None),
+        TaskStatusColors::new(Some(RgbColor::new(255, 135, 0)), None, None, None),
         ProjectStatusColors::default(),
         NoteStatusColors::default(),
         PriorityTier::Medium,

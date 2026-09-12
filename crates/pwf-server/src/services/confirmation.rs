@@ -41,10 +41,7 @@ impl<Payload, ClientMessage, ServerMessage>
         self
     }
 
-    async fn lock_mutations_after_confirmation(&mut self, confirmed: bool) {
-        if !confirmed {
-            return;
-        }
+    pub(super) async fn lock_mutations(&mut self) {
         let Some(mutation_lock) = self.mutation_lock.clone() else {
             return;
         };
@@ -66,6 +63,7 @@ where
         confirmation: &'a Payload,
     ) -> BoxFuture<'a, Result<bool, ConfirmationClientError>> {
         Box::pin(async move {
+            self.mutation_guard.take();
             let preflight = (self.preflight)(confirmation);
             self.outbound
                 .send(Ok(preflight))
@@ -77,7 +75,9 @@ where
                 .context("failed to receive confirmation decision")?
                 .ok_or(ConfirmationClientError::InteractionClosed)?;
             let confirmed = (self.decision)(message)?;
-            self.lock_mutations_after_confirmation(confirmed).await;
+            if confirmed {
+                self.lock_mutations().await;
+            }
             Ok(confirmed)
         })
     }

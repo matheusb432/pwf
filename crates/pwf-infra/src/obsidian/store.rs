@@ -35,10 +35,12 @@ impl ObsidianStore {
             })
     }
 
-    fn project_page_path(&self, project: &Project) -> Result<PathBuf, ObsidianStoreError> {
-        Ok(self
-            .tasks_path(project)?
-            .join(format!("{}.md", project.title)))
+    fn project_snapshot_path(
+        &self,
+        project: &Project,
+    ) -> Result<Option<PathBuf>, ObsidianStoreError> {
+        self.tasks_path(project)
+            .map(|directory| super::project_snapshot_path(&directory))
     }
 }
 

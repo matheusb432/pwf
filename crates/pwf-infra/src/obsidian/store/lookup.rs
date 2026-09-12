@@ -2,8 +2,8 @@ use pwf_models::{project::Project, task::TaskId};
 
 use super::{ObsidianStore, ObsidianStoreError};
 use crate::obsidian::{
-    FrontmatterView, MarkdownFile, MarkdownFileError, TaskNoteIdentity,
-    identity::{inspect_project_task_notes, map_project_task_notes},
+    FrontmatterView, MarkdownFile, MarkdownFileError,
+    identity::{TaskNoteIdentity, inspect_project_task_notes, map_project_task_notes},
 };
 
 impl ObsidianStore {
@@ -25,7 +25,7 @@ impl ObsidianStore {
         {
             return Ok(Vec::new());
         }
-        map_project_task_notes(&directory, &self.project_page_path(project)?, read, map)
+        map_project_task_notes(&directory, read, map)
     }
 
     pub(super) fn task_files_for_project(
@@ -33,14 +33,13 @@ impl ObsidianStore {
         project: &Project,
     ) -> Result<Vec<TaskNoteIdentity>, ObsidianStoreError> {
         let project_dir = self.tasks_path(project)?;
-        let project_page_path = self.project_page_path(project)?;
         if !project_dir
             .try_exists()
             .map_err(|source| ObsidianStoreError::ReadTaskFile { source })?
         {
             return Ok(Vec::new());
         }
-        inspect_project_task_notes(&project_dir, &project_page_path)
+        inspect_project_task_notes(&project_dir)
     }
 
     pub(super) fn next_task_id(&self, project: &Project) -> Result<TaskId, ObsidianStoreError> {

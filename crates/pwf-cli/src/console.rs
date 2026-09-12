@@ -57,6 +57,12 @@ impl Console {
         self,
         dialog: &ConfirmationDialog,
     ) -> dialoguer::Result<ConfirmationAnswer> {
+        if !self.interactive {
+            return Err(std::io::Error::other(
+                "interactive confirmation requires a terminal; rerun with --yes",
+            )
+            .into());
+        }
         dialog.interact(self.color_forced.unwrap_or(self.stderr_terminal))
     }
 

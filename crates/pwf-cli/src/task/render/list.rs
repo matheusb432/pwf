@@ -23,6 +23,9 @@ pub(in crate::task) fn render_list(
             TaskStatusFilter::Active => {
                 format!("No active task prompts found in {location}.\n")
             }
+            TaskStatusFilter::Backlog => {
+                format!("No task prompts with status backlog found in {location}.\n")
+            }
             TaskStatusFilter::Done => {
                 format!("No task prompts with status done found in {location}.\n")
             }
@@ -235,6 +238,7 @@ fn task_status_name(status: TaskStatus) -> &'static str {
     match status {
         TaskStatus::Active => "active",
         TaskStatus::Done => "done",
+        TaskStatus::Backlog => "backlog",
         TaskStatus::Cancelled => "cancelled",
         TaskStatus::Unspecified => "unspecified",
     }
@@ -293,6 +297,7 @@ mod tests {
         for (status, expected) in [
             (TaskStatus::Active, "FOO-0001 [active] :: sample task"),
             (TaskStatus::Done, "FOO-0001 [done] :: sample task"),
+            (TaskStatus::Backlog, "FOO-0001 [backlog] :: sample task"),
             (TaskStatus::Cancelled, "FOO-0001 [cancelled] :: sample task"),
         ] {
             let mut task = sample_task();
@@ -308,6 +313,7 @@ mod tests {
         for (status, color) in [
             (TaskStatus::Active, color_rgb(100, 149, 237)),
             (TaskStatus::Done, color_rgb(163, 230, 53)),
+            (TaskStatus::Backlog, color_rgb(234, 179, 8)),
             (TaskStatus::Cancelled, color_rgb(255, 107, 138)),
         ] {
             let mut task = sample_task();
@@ -339,11 +345,13 @@ mod tests {
             Some(RgbColor::new(1, 2, 3)),
             Some(RgbColor::new(4, 5, 6)),
             Some(RgbColor::new(7, 8, 9)),
+            Some(RgbColor::new(10, 11, 12)),
         );
         for (status, color) in [
             (TaskStatus::Active, RgbColor::new(1, 2, 3)),
             (TaskStatus::Done, RgbColor::new(4, 5, 6)),
             (TaskStatus::Cancelled, RgbColor::new(7, 8, 9)),
+            (TaskStatus::Backlog, RgbColor::new(10, 11, 12)),
         ] {
             let mut task = sample_task();
             task.status = status as i32;

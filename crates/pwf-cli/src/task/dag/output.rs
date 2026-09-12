@@ -330,6 +330,7 @@ mod tests {
                 Some(RgbColor::new(1, 2, 3)),
                 Some(RgbColor::new(4, 5, 6)),
                 Some(RgbColor::new(7, 8, 9)),
+                None,
             ),
             true,
         );

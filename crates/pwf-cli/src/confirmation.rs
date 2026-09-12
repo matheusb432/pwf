@@ -204,8 +204,8 @@ fn confirmation_dialog(confirmation: &Confirmation) -> ConfirmationDialog {
             ConfirmationDefault::No,
             ConfirmationTone::Destructive,
         ),
-        Confirmation::ReopenTask(confirmation) => ConfirmationDialog::new(
-            "Reopen task and delete completion data",
+        Confirmation::ActivateTask(confirmation) => ConfirmationDialog::new(
+            "Activate task and delete completion data",
             vec![
                 Detail::new("Task", &confirmation.task_id),
                 Detail::new("Project", &confirmation.project),
@@ -216,7 +216,7 @@ fn confirmation_dialog(confirmation: &Confirmation) -> ConfirmationDialog {
                 Detail::new("Commits", optional_text(confirmation.commits.as_deref())),
                 Detail::new("Report", optional_text(confirmation.report.as_deref())),
             ],
-            "Delete this completion data and reopen the task?",
+            "Delete this completion data and activate the task?",
             ConfirmationDefault::No,
             ConfirmationTone::Destructive,
         ),
@@ -247,6 +247,7 @@ fn task_status(value: i32) -> &'static str {
     match pwf_client::pb::TaskStatus::try_from(value).ok() {
         Some(pwf_client::pb::TaskStatus::Active) => "active",
         Some(pwf_client::pb::TaskStatus::Done) => "done",
+        Some(pwf_client::pb::TaskStatus::Backlog) => "backlog",
         Some(pwf_client::pb::TaskStatus::Cancelled) => "cancelled",
         Some(pwf_client::pb::TaskStatus::Unspecified) | None => "unspecified",
     }
@@ -310,7 +311,7 @@ impl Theme for ConfirmationTheme {
 #[cfg(test)]
 mod tests {
     use pwf_client::pb::{
-        DeleteNoteConfirmation, DeleteTaskConfirmation, ReopenTaskConfirmation, TaskStatus,
+        ActivateTaskConfirmation, DeleteNoteConfirmation, DeleteTaskConfirmation, TaskStatus,
     };
 
     use super::*;
@@ -375,8 +376,8 @@ mod tests {
     }
 
     #[test]
-    fn reopen_confirmation_emphasizes_every_deleted_artifact() {
-        let confirmation = Confirmation::ReopenTask(ReopenTaskConfirmation {
+    fn activate_confirmation_emphasizes_every_deleted_artifact() {
+        let confirmation = Confirmation::ActivateTask(ActivateTaskConfirmation {
             task_id: "FOO-0001".to_string(),
             project: "foo".to_string(),
             completion_date: Some("2026-08-17".to_string()),
@@ -386,7 +387,7 @@ mod tests {
 
         assert_eq!(
             confirmation_dialog(&confirmation).render(false),
-            "Reopen task and delete completion data\n\n  Task       FOO-0001\n  Project    foo\n  Completed  2026-08-17\n  Commits    abc..def\n  Report     validated the release"
+            "Activate task and delete completion data\n\n  Task       FOO-0001\n  Project    foo\n  Completed  2026-08-17\n  Commits    abc..def\n  Report     validated the release"
         );
     }
 }

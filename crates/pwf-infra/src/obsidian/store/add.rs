@@ -43,8 +43,11 @@ impl ObsidianStore {
                 .map_err(|source| ObsidianStoreError::CreateProjectDir { source })?;
         }
         let path = dir.join(format!("{}.md", request.id));
-        if path == self.project_page_path(project)? {
-            return Err(ObsidianStoreError::ProjectPagePathReserved { path });
+        if self
+            .project_snapshot_path(project)?
+            .is_some_and(|snapshot_path| path == snapshot_path)
+        {
+            return Err(ObsidianStoreError::ProjectSnapshotPathReserved { path });
         }
         if let Some(task) = self
             .map_task_notes(

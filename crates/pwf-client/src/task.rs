@@ -60,6 +60,17 @@ impl TaskClient {
             .map_err(ClientError::from)
     }
 
+    pub async fn backlog_task(
+        &self,
+        request: pb::BacklogTaskRequest,
+    ) -> Result<pb::BacklogTaskResponse, ClientError> {
+        self.client()
+            .backlog_task(request)
+            .await
+            .map(tonic::Response::into_inner)
+            .map_err(ClientError::from)
+    }
+
     pub async fn complete_task(
         &self,
         request: pb::CompleteTaskRequest,
@@ -197,24 +208,24 @@ impl TaskClient {
         }
     }
 
-    pub async fn reopen_task<Prompt>(
+    pub async fn activate_task<Prompt>(
         &self,
-        request: pb::ReopenTaskStart,
+        request: pb::ActivateTaskStart,
         prompt: Prompt,
-    ) -> Result<pb::ReopenTaskResult, ConfirmedRequestError<Prompt::Error>>
+    ) -> Result<pb::ActivateTaskResult, ConfirmedRequestError<Prompt::Error>>
     where
         Prompt: ConfirmationPrompt,
     {
         let (sender, receiver) = mpsc::channel(STREAM_BUFFER);
         sender
-            .send(pb::ReopenTaskRequest {
-                value: Some(pb::reopen_task_request::Value::Start(request)),
+            .send(pb::ActivateTaskRequest {
+                value: Some(pb::activate_task_request::Value::Start(request)),
             })
             .await
-            .map_err(|_| protocol("reopen request stream closed"))?;
+            .map_err(|_| protocol("activate request stream closed"))?;
         let mut stream = self
             .client()
-            .reopen_task(ReceiverStream::new(receiver))
+            .activate_task(ReceiverStream::new(receiver))
             .await
             .map_err(ConfirmedRequestError::Operation)?
             .into_inner();
@@ -222,37 +233,39 @@ impl TaskClient {
             .message()
             .await
             .map_err(ConfirmedRequestError::Operation)?
-            .ok_or_else(|| protocol("reopen response stream closed before result"))?;
+            .ok_or_else(|| protocol("activate response stream closed before result"))?;
         match first.value {
-            Some(pb::reopen_task_response::Value::Preflight(preflight)) => {
+            Some(pb::activate_task_response::Value::Preflight(preflight)) => {
                 let confirmation = preflight
                     .confirmation
-                    .ok_or_else(|| protocol("reopen preflight is missing its confirmation"))?;
+                    .ok_or_else(|| protocol("activate preflight is missing its confirmation"))?;
                 let confirmed = prompt
-                    .confirm(&Confirmation::ReopenTask(confirmation))
+                    .confirm(&Confirmation::ActivateTask(confirmation))
                     .map_err(ConfirmedRequestError::Prompt)?;
                 sender
-                    .send(pb::ReopenTaskRequest {
-                        value: Some(pb::reopen_task_request::Value::Decision(
+                    .send(pb::ActivateTaskRequest {
+                        value: Some(pb::activate_task_request::Value::Decision(
                             pb::ConfirmationDecision { confirmed },
                         )),
                     })
                     .await
-                    .map_err(|_| protocol("reopen decision stream closed"))?;
+                    .map_err(|_| protocol("activate decision stream closed"))?;
                 let result = stream
                     .message()
                     .await
                     .map_err(ConfirmedRequestError::Operation)?
-                    .ok_or_else(|| protocol("reopen response stream closed before result"))?;
+                    .ok_or_else(|| protocol("activate response stream closed before result"))?;
                 match result.value {
-                    Some(pb::reopen_task_response::Value::Result(result)) => Ok(result),
-                    Some(pb::reopen_task_response::Value::Preflight(_)) | None => Err(protocol(
-                        "reopen response stream returned an invalid result",
+                    Some(pb::activate_task_response::Value::Result(result)) => Ok(result),
+                    Some(pb::activate_task_response::Value::Preflight(_)) | None => Err(protocol(
+                        "activate response stream returned an invalid result",
                     )),
                 }
             }
-            Some(pb::reopen_task_response::Value::Result(result)) => Ok(result),
-            None => Err(protocol("reopen response stream returned an empty message")),
+            Some(pb::activate_task_response::Value::Result(result)) => Ok(result),
+            None => Err(protocol(
+                "activate response stream returned an empty message",
+            )),
         }
     }
 

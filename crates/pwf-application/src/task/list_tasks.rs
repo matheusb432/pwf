@@ -479,9 +479,7 @@ fn decode_page_token(token: &TaskPageToken) -> Result<PageCursor, ListTasksError
 
 fn status_filter_name(status: StatusFilter) -> &'static str {
     match status {
-        StatusFilter::Exact(pwf_models::task::TaskStatus::Active) => "active",
-        StatusFilter::Exact(pwf_models::task::TaskStatus::Done) => "done",
-        StatusFilter::Exact(pwf_models::task::TaskStatus::Cancelled) => "cancelled",
+        StatusFilter::Exact(status) => status.as_str(),
         StatusFilter::All => "all",
     }
 }

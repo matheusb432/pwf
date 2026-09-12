@@ -56,29 +56,32 @@ fn foo_project(store: &ObsidianStore) -> Project {
 }
 
 #[test]
-fn task_records_ignore_project_page_contents() {
+fn task_records_ignore_snapshot_and_legacy_backup_contents() {
     let directory = tempfile::tempdir().unwrap();
-    let store = store_with_index_identity(directory.path());
+    let tasks_path = directory.path().join("my-project");
+    std::fs::create_dir(&tasks_path).unwrap();
+    let store = store_for_tasks(&tasks_path);
     let project = foo_project(&store);
     std::fs::write(
-        directory.path().join("FOO-0001.md"),
+        tasks_path.join("FOO-0001.md"),
         "---\nid: FOO-0001\ntitle: Task\nstatus: active\n---\n\nDo work\n",
     )
     .unwrap();
-    for page in [
-        "---\nid: foo\ntitle: foo\n---\n\n## Later\n- [x] [[FOO-0001]]\n- [ ] [[FOO-0002]]\n",
-        "---\ninvalid: [\n---\n",
-    ] {
-        std::fs::write(directory.path().join("foo.md"), page).unwrap();
-        let records = TaskVault::list_tasks(&store, &project).unwrap();
-        assert_eq!(records.len(), 1);
-        assert_eq!(records[0].status, TaskStatus::Active);
-        assert!(
-            TaskVault::get_task_record(&store, &project, &TaskId::try_new("FOO-0002").unwrap())
-                .unwrap()
-                .is_none()
-        );
-    }
+    std::fs::write(
+        tasks_path.join("my-project.md"),
+        "---\nid: FOO-9999\ntitle: Edited snapshot\nstatus: active\n---\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tasks_path.join("my-project.backup.md"),
+        "---\nid: foo\ntitle: Legacy project page\n---\n",
+    )
+    .unwrap();
+
+    let records = TaskVault::list_tasks(&store, &project).unwrap();
+
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].id.as_ref(), "FOO-0001");
 }
 
 #[test]
@@ -86,11 +89,6 @@ fn explicit_task_path_is_the_complete_project_directory() {
     let temporary_directory = tempfile::tempdir().unwrap();
     let tasks_path = temporary_directory.path().join("custom/tasks");
     std::fs::create_dir_all(&tasks_path).unwrap();
-    std::fs::write(
-        tasks_path.join("foo.md"),
-        "---\nid: foo\ntitle: foo\n---\n\n- [ ] [[FOO-0001]]\n",
-    )
-    .unwrap();
     write_note(
         &tasks_path.join("FOO-0001.md"),
         "exact path",
@@ -210,16 +208,8 @@ fn explicit_projects_support_unrelated_task_parents() {
     let temporary_directory = tempfile::tempdir().unwrap();
     let first_tasks = temporary_directory.path().join("one/tasks-a");
     let second_tasks = temporary_directory.path().join("elsewhere/tasks-b");
-    for (tasks_path, id, title, task_id) in [
-        (&first_tasks, "aaa", "alpha", "AAA-0001"),
-        (&second_tasks, "bbb", "beta", "BBB-0001"),
-    ] {
+    for (tasks_path, task_id) in [(&first_tasks, "AAA-0001"), (&second_tasks, "BBB-0001")] {
         std::fs::create_dir_all(tasks_path).unwrap();
-        std::fs::write(
-            tasks_path.join(format!("{title}.md")),
-            format!("---\nid: {id}\ntitle: {title}\n---\n\n- [ ] [[{task_id}]]\n"),
-        )
-        .unwrap();
         std::fs::write(
             tasks_path.join(format!("{task_id}.md")),
             format!("---\nid: {task_id}\ntitle: Task\n---\nbody\n"),
@@ -414,7 +404,7 @@ fn new_task(body: &str, title: &str) -> NewTask {
 }
 
 #[test]
-fn generic_add_creates_note_and_preserves_project_page() {
+fn generic_add_creates_note_and_preserves_snapshot() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
     let store = store_with_index_identity(&notes_dir.join("foo"));
@@ -836,7 +826,7 @@ fn generic_update_clears_tags_on_crlf_frontmatter() {
 }
 
 #[test]
-fn generic_delete_moves_note_to_vault_trash_and_preserves_project_page() {
+fn generic_delete_moves_note_to_vault_trash_and_preserves_snapshot() {
     let temp = tempfile::tempdir().unwrap();
     let notes_dir = temp.path().join("notes");
     let project_dir = notes_dir.join("foo");
@@ -1139,7 +1129,7 @@ fn get_finds_closed_note_still_in_project_dir() {
 
 fn store_with_index_identity(tasks_path: &Path) -> ObsidianStore {
     std::fs::create_dir_all(tasks_path).unwrap();
-    let page = tasks_path.join("foo.md");
+    let page = crate::obsidian::project_snapshot_path(tasks_path).unwrap();
     if !page.exists() {
         std::fs::write(&page, "---\nid: foo\ntitle: foo\n---\n\n").unwrap();
     }
@@ -1575,7 +1565,7 @@ fn missing_registered_trash_preserves_the_note_and_index() {
             Some(pwf_models::project::ObsidianVault::try_new(path_str(&vault)).unwrap());
         let record = generic_add(&store, new_task("keep me", "original bytes")).unwrap();
         let note = record.locator.as_path();
-        let index = store.home.as_path().join("foo.md");
+        let index = crate::obsidian::project_snapshot_path(store.home.as_path()).unwrap();
         let note_before = std::fs::read(note).unwrap();
         let index_before = std::fs::read(&index).unwrap();
         if occupied_by_file {
@@ -1612,7 +1602,7 @@ fn trash_removed_after_preflight_preserves_the_note_and_index() {
     project.obsidian_vault =
         Some(pwf_models::project::ObsidianVault::try_new(path_str(&vault)).unwrap());
     let record = generic_add(&store, new_task("keep me", "original bytes")).unwrap();
-    let index = store.home.as_path().join("foo.md");
+    let index = crate::obsidian::project_snapshot_path(store.home.as_path()).unwrap();
     let index_before = std::fs::read(&index).unwrap();
     let deletion = TaskVault::task_deletion(&store, &project).unwrap();
     std::fs::remove_dir(vault.join(".trash")).unwrap();
@@ -1708,7 +1698,7 @@ fn single_task_read_does_not_load_other_task_bodies() {
 }
 
 #[test]
-fn task_crud_ignores_authored_and_generated_page_contents() {
+fn task_crud_ignores_generated_snapshot_contents() {
     for page in [
         &b"---\nid: FOO-9999\nstatus: broken\n---\n## Later\n- [x] [[FOO-0001]]\n- [ ] [[FOO-0002]]\n- [ ] [[FOO-0002]]\n"[..],
         &b"---\ninvalid: [\n---\n"[..],
@@ -1717,9 +1707,8 @@ fn task_crud_ignores_authored_and_generated_page_contents() {
         let directory = tempfile::tempdir().unwrap();
         let store = store_for_tasks(directory.path());
         let project = foo_project(&store);
-        for name in ["foo.md", "pwf-index.md"] {
-            std::fs::write(directory.path().join(name), page).unwrap();
-        }
+        let snapshot = crate::obsidian::project_snapshot_path(directory.path()).unwrap();
+        std::fs::write(&snapshot, page).unwrap();
         let record = insert_next(&store, &project, new_task("body", "Task")).unwrap();
         assert_eq!(record.id.as_ref(), "FOO-0001");
         assert_eq!(get_record(&store, "FOO-0001").unwrap(), record);
@@ -1741,22 +1730,19 @@ fn task_crud_ignores_authored_and_generated_page_contents() {
         }]);
         assert!(TaskVault::list_tasks(&store, &project).unwrap().is_empty());
         assert!(get_record(&store, "FOO-0001").is_none());
-        for name in ["foo.md", "pwf-index.md"] {
-            assert_eq!(std::fs::read(directory.path().join(name)).unwrap(), page);
-        }
+        assert_eq!(std::fs::read(snapshot).unwrap(), page);
     }
 }
 
 #[test]
-fn task_crud_does_not_create_or_read_project_pages() {
-    for unreadable_pages in [false, true] {
+fn task_crud_does_not_create_or_read_the_generated_snapshot() {
+    for unreadable_snapshot in [false, true] {
         let directory = tempfile::tempdir().unwrap();
         let store = store_for_tasks(directory.path());
         let project = foo_project(&store);
-        if unreadable_pages {
-            for name in ["foo.md", "pwf-index.md"] {
-                std::fs::create_dir(directory.path().join(name)).unwrap();
-            }
+        let snapshot = crate::obsidian::project_snapshot_path(directory.path()).unwrap();
+        if unreadable_snapshot {
+            std::fs::create_dir(&snapshot).unwrap();
         }
         let record = insert_next(&store, &project, new_task("body", "Task")).unwrap();
         commit_for_task(
@@ -1781,11 +1767,8 @@ fn task_crud_does_not_create_or_read_project_pages() {
                 deletion: pwf_wire::confirmation::TaskDeletion::HardDelete,
             }],
         );
-        for name in ["foo.md", "pwf-index.md"] {
-            let path = directory.path().join(name);
-            assert_eq!(path.exists(), unreadable_pages);
-            assert_eq!(path.is_dir(), unreadable_pages);
-        }
+        assert_eq!(snapshot.exists(), unreadable_snapshot);
+        assert_eq!(snapshot.is_dir(), unreadable_snapshot);
     }
 }
 

@@ -246,7 +246,7 @@ fn server_database_open_failure_is_reported_only_as_a_diagnostic() {
 }
 
 #[test]
-fn server_bootstraps_and_reopens_a_fresh_database() {
+fn server_bootstraps_and_activates_a_fresh_database() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("projects.sqlite3");
     for _ in 0..2 {

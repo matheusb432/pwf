@@ -78,6 +78,7 @@ impl TryFrom<pb::Task> for Task {
         let status = match pb::TaskStatus::try_from(value.status).ok() {
             Some(pb::TaskStatus::Active) => TaskStatus::Active,
             Some(pb::TaskStatus::Done) => TaskStatus::Done,
+            Some(pb::TaskStatus::Backlog) => TaskStatus::Backlog,
             Some(pb::TaskStatus::Cancelled) => TaskStatus::Cancelled,
             _ => {
                 return Err(DecodeGetTaskResponseError::Enum {

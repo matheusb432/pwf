@@ -48,11 +48,10 @@ impl TaskDeletion {
 
 /// Identifies the completion data discarded after confirmation.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReopenTaskConfirmation {
+pub struct ActivateTaskConfirmation {
     pub task_identifier: TaskId,
     pub project: ProjectName,
     pub completion_date: Option<AppDate>,
     pub commit_provenance: Option<String>,
     pub report: Option<String>,
-    pub revision: ContentRevision,
 }

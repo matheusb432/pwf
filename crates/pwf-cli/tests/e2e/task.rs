@@ -15,7 +15,7 @@ fn write_task_note(path: &Path, id: &str, project: &str, title: &str) -> std::io
 }
 
 #[test]
-fn task_list_orders_notes_globally_and_ignores_project_page_sections() -> anyhow::Result<()> {
+fn task_list_orders_notes_globally_and_ignores_snapshot_sections() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let fixture = ProjectFixture::new()?;
     let alpha_tasks = directory.path().join("tasks/alpha");
@@ -202,11 +202,11 @@ fn task_lifecycle_is_observable_through_json() {
     fixture
         .database
         .command()
-        .args(["reopen", "FOO-0002", "--yes"])
+        .args(["activate", "FOO-0002", "--yes"])
         .assert()
         .success();
-    let reopened = task_json(&fixture.database, &task_id("FOO-0002").unwrap()).unwrap();
-    assert_eq!(reopened["status"], "active");
-    assert_eq!(reopened["completed"], Value::Null);
-    assert_eq!(reopened["commits"], Value::Null);
+    let activated = task_json(&fixture.database, &task_id("FOO-0002").unwrap()).unwrap();
+    assert_eq!(activated["status"], "active");
+    assert_eq!(activated["completed"], Value::Null);
+    assert_eq!(activated["commits"], Value::Null);
 }

@@ -74,9 +74,6 @@ pub(super) fn set_status(
     status: TaskStatus,
     completed_at: Option<&TaskTimestamp>,
 ) -> Result<(), MarkdownFileError> {
-    if file.property_text("status")?.is_none() {
-        return Ok(());
-    }
     file.set_property_rendered("status", Some(status.as_str()), &[])?;
     let completed_at = completed_at.map(ToString::to_string);
     file.set_property_rendered("completed_at", completed_at.as_deref(), &["status"])?;
@@ -84,7 +81,7 @@ pub(super) fn set_status(
     Ok(())
 }
 
-pub(super) fn reopen_status(file: &mut MarkdownFile) -> Result<(), MarkdownFileError> {
+pub(super) fn activate_status(file: &mut MarkdownFile) -> Result<(), MarkdownFileError> {
     if file.property_text("status")?.is_some() {
         file.set_property_rendered("status", Some("active"), &[])?;
     }
@@ -255,7 +252,7 @@ mod tests {
     use pwf_wire::task::StoredBlockedBy;
 
     use super::{
-        NewTaskFields, new_task_content, parse_blocked_by, reopen_status, set_blocked_by,
+        NewTaskFields, activate_status, new_task_content, parse_blocked_by, set_blocked_by,
         set_status,
     };
     use crate::obsidian::MarkdownFile;
@@ -389,16 +386,25 @@ mod tests {
     }
 
     #[test]
-    fn reopen_removes_every_completion_property() {
+    fn activate_removes_every_completion_property() {
         let mut file = file(
             "---\nid: FOO-0001\nstatus: done\ncompleted: 2026-07-28\ncompleted_at: 2026-07-29T12:34:56Z\ntitle: task\n---\n\nbody\n",
         );
 
-        reopen_status(&mut file).unwrap();
+        activate_status(&mut file).unwrap();
 
         assert_eq!(
             file.source(),
             "---\nid: FOO-0001\nstatus: active\ntitle: task\n---\n\nbody\n"
         );
+    }
+
+    #[test]
+    fn backlog_inserts_status_into_a_legacy_active_note_without_changing_its_body() {
+        let mut file = file("---\nid: FOO-0001\ntitle: task\n---\n\nbody\n");
+        set_status(&mut file, TaskStatus::Backlog, None).unwrap();
+        assert_eq!(file.property_text("status").unwrap(), Some("backlog"));
+        assert!(file.source().ends_with("---\n\nbody\n"));
+        assert_eq!(file.property_text("completed_at").unwrap(), None);
     }
 }

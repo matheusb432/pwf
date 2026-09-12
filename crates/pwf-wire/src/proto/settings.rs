@@ -35,6 +35,7 @@ pub fn get_user_settings_response(settings: UserSettings) -> pb::GetUserSettings
             active: Some(rgb_color(colors.active())),
             done: Some(rgb_color(colors.done())),
             cancelled: Some(rgb_color(colors.cancelled())),
+            backlog: Some(rgb_color(colors.backlog())),
         }),
     }
 }

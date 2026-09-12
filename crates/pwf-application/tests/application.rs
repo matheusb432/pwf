@@ -21,7 +21,9 @@ mod settings {
     mod get_user_settings;
 }
 mod task {
+    mod activate_task;
     mod add_task;
+    mod backlog_task;
     mod cancel_task;
     mod clone_task;
     mod complete_task;
@@ -31,7 +33,6 @@ mod task {
     mod get_task_record;
     mod list_tasks;
     mod remove_task;
-    mod reopen_task;
     mod session {
         mod dispatch_confirmed_session;
         mod plan_session;

@@ -43,6 +43,7 @@ fn decode(response: pb::GetUserSettingsResponse) -> anyhow::Result<UserSettings>
             Some(decode_color("active", colors.active)?),
             Some(decode_color("done", colors.done)?),
             Some(decode_color("cancelled", colors.cancelled)?),
+            Some(decode_color("backlog", colors.backlog)?),
         ),
         ProjectStatusColors::new(
             Some(decode_color("project.active", project_colors.active)?),
@@ -114,6 +115,11 @@ mod tests {
                     red: 255,
                     green: 107,
                     blue: 138,
+                }),
+                backlog: Some(pb::RgbColor {
+                    red: 234,
+                    green: 179,
+                    blue: 8,
                 }),
             }),
             project_status_colors: Some(pb::ProjectStatusColors {
@@ -195,6 +201,7 @@ mod tests {
                 }),
                 done: None,
                 cancelled: None,
+                backlog: None,
             }),
             ..valid_response()
         })

@@ -674,12 +674,12 @@ fn task_mutations_print_one_summary_line() {
             "Done task: FOO-0001 :: edited title\n",
         ),
         (
-            vec!["task", "reopen", "FOO-0001", "--yes"],
-            "Reopened task: FOO-0001 :: edited title\n",
+            vec!["task", "activate", "FOO-0001", "--yes"],
+            "Activated task: FOO-0001 :: edited title\n",
         ),
         (
-            vec!["task", "reopen", "FOO-0001", "--yes"],
-            "Skipped task: FOO-0001 :: edited title\n",
+            vec!["task", "activate", "FOO-0001", "--yes"],
+            "Already active task: FOO-0001 :: edited title\n",
         ),
         (
             vec!["task", "cancel", "FOO-0001", "--report", "no longer needed"],
@@ -707,7 +707,7 @@ fn task_mutations_use_configured_lifecycle_colors() {
     fixture
         .database
         .write_user_config(
-            "[colors.task]\nactive = \"#010203\"\ndone = \"#040506\"\ncancelled = \"#070809\"\n",
+            "[colors.task]\nactive = \"#010203\"\ndone = \"#040506\"\ncancelled = \"#070809\"\nbacklog = \"#0a0b0c\"\n",
         )
         .unwrap();
     for (args, verb, color) in [
@@ -735,10 +735,20 @@ fn task_mutations_use_configured_lifecycle_colors() {
             "Edited",
             color_rgb(1, 2, 3),
         ),
+        (
+            vec!["task", "backlog", "FOO-0001"],
+            "Backlogged",
+            color_rgb(10, 11, 12),
+        ),
+        (
+            vec!["task", "activate", "FOO-0001"],
+            "Activated",
+            color_rgb(1, 2, 3),
+        ),
         (vec!["task", "done", "FOO-0001"], "Done", color_rgb(4, 5, 6)),
         (
-            vec!["task", "reopen", "FOO-0001", "--yes"],
-            "Reopened",
+            vec!["task", "activate", "FOO-0001", "--yes"],
+            "Activated",
             color_rgb(1, 2, 3),
         ),
         (
@@ -770,7 +780,6 @@ fn project_selectors_match_titles_before_ids_and_exclude_paused_projects() {
     let other = tempfile::tempdir().unwrap();
     let tasks = other.path().join("tasks");
     std::fs::create_dir_all(&tasks).unwrap();
-    std::fs::write(tasks.join("other.md"), "---\nid: alt\ntitle: other\n---\n").unwrap();
     fixture.database.add_directory_project(
         &project_id("ALT").unwrap(),
         "other",
@@ -981,8 +990,7 @@ fn clone_routes_project_selectors_and_preserves_authored_content() {
 }
 
 #[test]
-fn task_and_note_crud_preserve_missing_arbitrary_and_malformed_project_pages() -> anyhow::Result<()>
-{
+fn task_and_note_crud_preserve_missing_arbitrary_and_malformed_snapshots() -> anyhow::Result<()> {
     for page_source in [
         None,
         Some("# Project notes\n\n## Someday\n- [ ] [[FOO-9999]]\n- [[FOO-NOTE-9999]]\n"),
@@ -993,7 +1001,7 @@ fn task_and_note_crud_preserve_missing_arbitrary_and_malformed_project_pages() -
         let tasks = directory.path().join("tasks");
         std::fs::create_dir_all(&project)?;
         std::fs::create_dir_all(&tasks)?;
-        let page = tasks.join("foo.md");
+        let page = tasks.join("tasks.md");
         if let Some(source) = page_source {
             std::fs::write(&page, source)?;
         }
@@ -1052,7 +1060,7 @@ fn task_and_note_crud_preserve_missing_arbitrary_and_malformed_project_pages() -
         let task: serde_json::Value =
             serde_json::from_str(&run(&["task", "get", "FOO-0001", "--json"])?)?;
         assert_eq!(task["status"], "done");
-        run(&["task", "reopen", "FOO-0001", "--yes"])?;
+        run(&["task", "activate", "FOO-0001", "--yes"])?;
         run(&["task", "cancel", "FOO-0001", "--report", "obsolete"])?;
         let task: serde_json::Value =
             serde_json::from_str(&run(&["task", "get", "FOO-0001", "--json"])?)?;
@@ -1111,13 +1119,13 @@ fn exercise_project_note_crud(
 }
 
 #[test]
-fn task_list_all_widens_status_and_cap_without_grouping_project_page_sections() -> anyhow::Result<()>
-{
+fn task_list_all_widens_status_and_cap_without_grouping_snapshot_sections() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let tasks = directory.path().join("tasks");
     std::fs::create_dir_all(&tasks)?;
-    let page = "# Project page\n\n## Alpha\n- [ ] [[FOO-0001]]\n\n## Zulu\n- [x] [[FOO-0014]]\n";
-    std::fs::write(tasks.join("foo.md"), page)?;
+    let page =
+        "# Generated snapshot\n\n## Alpha\n- [ ] [[FOO-0001]]\n\n## Zulu\n- [x] [[FOO-0014]]\n";
+    std::fs::write(tasks.join("tasks.md"), page)?;
     for number in 1..=14 {
         let id = format!("FOO-{number:04}");
         let status = match number {
@@ -1163,6 +1171,184 @@ fn task_list_all_widens_status_and_cap_without_grouping_project_page_sections() 
         assert!(!output.contains("Alpha"), "{output}");
         assert!(!output.contains("Zulu"), "{output}");
     }
-    assert_eq!(std::fs::read_to_string(tasks.join("foo.md"))?, page);
+    assert_eq!(std::fs::read_to_string(tasks.join("tasks.md"))?, page);
     Ok(())
+}
+
+#[test]
+fn backlog_is_hidden_by_default_and_retains_its_color_when_edited() {
+    let fixture = ManagedProject::new(&project_id("FOO").unwrap(), "foo-bar").unwrap();
+    fixture
+        .database
+        .command()
+        .args([
+            "task",
+            "add",
+            "foo-bar",
+            "--title",
+            "deferred work",
+            "--goal",
+            "do this later",
+        ])
+        .assert()
+        .success();
+    let id = task_id("FOO-0001").unwrap();
+    let created = task_json(&fixture.database, &id).unwrap();
+    let gold = color_rgb(234, 179, 8);
+    fixture
+        .database
+        .command()
+        .color()
+        .args(["task", "backlog", "--id", "foo1"])
+        .assert()
+        .success()
+        .stderr("")
+        .stdout(format!(
+            "Backlogged task: {gold}FOO-0001{gold:#} :: deferred work\n"
+        ));
+    let backlogged = task_json(&fixture.database, &id).unwrap();
+    assert_eq!(backlogged["status"], "backlog");
+    assert_eq!(backlogged["created_at"], created["created_at"]);
+    assert_eq!(backlogged["completed_at"], serde_json::Value::Null);
+    fixture
+        .database
+        .command()
+        .args(["task", "backlog", "FOO-0001"])
+        .assert()
+        .success()
+        .stdout("Already backlogged task: FOO-0001 :: deferred work\n");
+    assert_eq!(task_json(&fixture.database, &id).unwrap(), backlogged);
+
+    for args in [
+        vec!["task", "list", "--project", "foo-bar"],
+        vec!["list", "--project", "foo-bar"],
+        vec!["foo-bar"],
+    ] {
+        let output = fixture.database.command().args(&args).output().unwrap();
+        assert!(output.status.success(), "{args:?}: {output:?}");
+        assert!(
+            !String::from_utf8(output.stdout)
+                .unwrap()
+                .contains("FOO-0001")
+        );
+        for filter in [vec!["--status", "backlog"], vec!["--all"]] {
+            let output = fixture
+                .database
+                .command()
+                .args(&args)
+                .args(&filter)
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{args:?} {filter:?}: {output:?}");
+            let stdout = String::from_utf8(output.stdout).unwrap();
+            assert!(stdout.contains("FOO-0001"), "{stdout}");
+            assert_plain(&stdout);
+        }
+    }
+    fixture
+        .database
+        .command()
+        .color()
+        .args(["task", "edit", "FOO-0001", "--title", "ready later"])
+        .assert()
+        .success()
+        .stdout(format!(
+            "Edited task: {gold}FOO-0001{gold:#} :: ready later\n"
+        ));
+    let dag = fixture
+        .database
+        .command()
+        .color()
+        .args(["task", "dag", "FOO-0001", "--status", "backlog"])
+        .output()
+        .unwrap();
+    assert!(dag.status.success(), "{dag:?}");
+    assert!(
+        String::from_utf8(dag.stdout)
+            .unwrap()
+            .contains(&format!("{gold}FOO-0001{gold:#}"))
+    );
+}
+
+#[test]
+fn activate_from_backlog_and_already_active_need_no_confirmation() {
+    let fixture = ManagedProject::new(&project_id("FOO").unwrap(), "foo-bar").unwrap();
+    fixture
+        .database
+        .command()
+        .args([
+            "task",
+            "add",
+            "foo-bar",
+            "--title",
+            "ready later",
+            "--goal",
+            "work later",
+        ])
+        .assert()
+        .success();
+    fixture
+        .database
+        .command()
+        .args(["task", "backlog", "FOO-0001"])
+        .assert()
+        .success();
+    let id = task_id("FOO-0001").unwrap();
+    fixture
+        .database
+        .command()
+        .args(["task", "activate", "foo1"])
+        .assert()
+        .success()
+        .stderr("")
+        .stdout("Activated task: FOO-0001 :: ready later\n");
+    let active = task_json(&fixture.database, &id).unwrap();
+    assert_eq!(active["status"], "active");
+    fixture
+        .database
+        .command()
+        .args(["task", "activate", "FOO-0001"])
+        .assert()
+        .success()
+        .stderr("")
+        .stdout("Already active task: FOO-0001 :: ready later\n");
+    assert_eq!(task_json(&fixture.database, &id).unwrap(), active);
+    fixture
+        .database
+        .command()
+        .args(["task", "reopen", "FOO-0001"])
+        .assert()
+        .failure();
+    assert_eq!(task_json(&fixture.database, &id).unwrap(), active);
+}
+
+#[test]
+fn closed_task_activation_requires_confirmation_before_removing_data() {
+    let fixture = ManagedProject::new(&project_id("FOO").unwrap(), "foo-bar").unwrap();
+    fixture
+        .database
+        .command()
+        .args([
+            "task", "add", "foo-bar", "--title", "finished", "--goal", "ship",
+        ])
+        .assert()
+        .success();
+    fixture
+        .database
+        .command()
+        .args(["task", "done", "FOO-0001", "--report", "verified"])
+        .assert()
+        .success();
+    let id = task_id("FOO-0001").unwrap();
+    let closed = task_json(&fixture.database, &id).unwrap();
+    let output = fixture
+        .database
+        .command()
+        .args(["task", "activate", "FOO-0001"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8(output.stderr).unwrap().contains("--yes"));
+    assert_eq!(task_json(&fixture.database, &id).unwrap(), closed);
 }

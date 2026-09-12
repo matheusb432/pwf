@@ -17,7 +17,7 @@ use pwf_client::{
     task::{TaskDagEdge, TaskDagNode},
 };
 use pwf_server::ServerState;
-use pwf_wire::pb::{delete_task_result, dispatched_session, reopen_task_result};
+use pwf_wire::pb::{activate_task_result, delete_task_result, dispatched_session};
 use tokio::sync::mpsc;
 use tokio_stream::{StreamExt as _, wrappers::ReceiverStream};
 use tonic::{Code, Request, Status, transport::Channel};
@@ -161,6 +161,14 @@ async fn v1_get_user_settings_returns_validated_scoped_colors() -> anyhow::Resul
             red: 163,
             green: 230,
             blue: 53
+        })
+    );
+    assert_eq!(
+        colors.backlog,
+        Some(pb::RgbColor {
+            red: 234,
+            green: 179,
+            blue: 8
         })
     );
     assert_eq!(
@@ -447,33 +455,35 @@ impl TestServer {
         Ok((sender, stream))
     }
 
-    async fn open_reopen_confirmation(
+    async fn open_activate_confirmation(
         &self,
         task_id: &str,
     ) -> anyhow::Result<(
-        mpsc::Sender<pb::ReopenTaskRequest>,
-        tonic::Streaming<pb::ReopenTaskResponse>,
+        mpsc::Sender<pb::ActivateTaskRequest>,
+        tonic::Streaming<pb::ActivateTaskResponse>,
     )> {
         let (sender, receiver) = mpsc::channel(2);
         sender
-            .send(pb::ReopenTaskRequest {
-                value: Some(pb::reopen_task_request::Value::Start(pb::ReopenTaskStart {
-                    id: task_id.to_string(),
-                })),
+            .send(pb::ActivateTaskRequest {
+                value: Some(pb::activate_task_request::Value::Start(
+                    pb::ActivateTaskStart {
+                        id: task_id.to_string(),
+                    },
+                )),
             })
             .await?;
         let mut stream =
             TaskServiceClient::with_interceptor(self.channel().await?, server::ReleaseRequest)
-                .reopen_task(Request::new(ReceiverStream::new(receiver)))
+                .activate_task(Request::new(ReceiverStream::new(receiver)))
                 .await?
                 .into_inner();
         let preflight = stream
             .message()
             .await?
-            .context("reopen preflight response is missing")?;
+            .context("activate preflight response is missing")?;
         assert!(matches!(
             preflight.value,
-            Some(pb::reopen_task_response::Value::Preflight(_))
+            Some(pb::activate_task_response::Value::Preflight(_))
         ));
         Ok((sender, stream))
     }
@@ -543,7 +553,7 @@ impl ConfirmationPrompt for RecordingPrompt {
         let operation = match confirmation {
             Confirmation::DeleteNote(_) => "note-remove",
             Confirmation::DeleteTask(_) => "remove",
-            Confirmation::ReopenTask(_) => "reopen",
+            Confirmation::ActivateTask(_) => "activate",
             Confirmation::DispatchSession(_) => "session",
         };
         with_seen(&self.seen, |seen| seen.push(operation));
@@ -886,29 +896,29 @@ async fn v1_repeated_confirmed_requests_observe_current_task_state() -> anyhow::
         ..Default::default()
     };
     server.client.task().complete_task(complete.clone()).await?;
-    let reopen = pb::ReopenTaskStart {
+    let activate = pb::ActivateTaskStart {
         id: task_id.clone(),
     };
     let prompt = RecordingPrompt::new(true);
-    let reopened = server
+    let activated = server
         .client
         .task()
-        .reopen_task(reopen.clone(), prompt.clone())
+        .activate_task(activate.clone(), prompt.clone())
         .await?;
     assert!(matches!(
-        reopened.outcome,
-        Some(reopen_task_result::Outcome::Reopened(_))
+        activated.outcome,
+        Some(activate_task_result::Outcome::Activated(_))
     ));
-    assert_eq!(prompt.seen(), ["reopen"]);
+    assert_eq!(prompt.seen(), ["activate"]);
     let prompt = RecordingPrompt::new(false);
     let active = server
         .client
         .task()
-        .reopen_task(reopen.clone(), prompt.clone())
+        .activate_task(activate.clone(), prompt.clone())
         .await?;
     assert!(matches!(
         active.outcome,
-        Some(reopen_task_result::Outcome::AlreadyActive(_))
+        Some(activate_task_result::Outcome::AlreadyActive(_))
     ));
     assert!(prompt.seen().is_empty());
 
@@ -917,13 +927,13 @@ async fn v1_repeated_confirmed_requests_observe_current_task_state() -> anyhow::
     let declined = server
         .client
         .task()
-        .reopen_task(reopen, prompt.clone())
+        .activate_task(activate, prompt.clone())
         .await?;
     assert!(matches!(
         declined.outcome,
-        Some(reopen_task_result::Outcome::Aborted(_))
+        Some(activate_task_result::Outcome::Aborted(_))
     ));
-    assert_eq!(prompt.seen(), ["reopen"]);
+    assert_eq!(prompt.seen(), ["activate"]);
     assert_eq!(
         task_record(&server, &task_id).await?.status,
         pb::TaskStatus::Done as i32
@@ -1282,6 +1292,33 @@ async fn project_source_update_round_trips_through_the_generated_client() -> any
     assert_eq!(cleared.source_kind, None);
     assert_eq!(cleared.source_value, None);
 
+    for id in ["FOO", "MISS"] {
+        let result = server
+            .client
+            .project()
+            .update_project(pb::UpdateProjectRequest {
+                id: id.to_string(),
+                snapshot_enabled: Some(true),
+                ..Default::default()
+            })
+            .await;
+        if id == "MISS" {
+            assert_eq!(rpc_status(result.unwrap_err())?.code(), Code::NotFound);
+        } else {
+            result?;
+            let updated = server
+                .client
+                .project()
+                .get_project(pb::GetProjectRequest {
+                    id: id.to_string(),
+                    status: ProjectStatusFilter::IncludingPaused as i32,
+                })
+                .await?;
+            assert!(updated.snapshot_enabled);
+            assert_eq!(updated.source_value, None);
+        }
+    }
+
     let missing = server
         .client
         .project()
@@ -1542,7 +1579,112 @@ async fn generated_client_preserves_note_removal_confirmation_flow() -> anyhow::
 }
 
 #[tokio::test]
-async fn generated_client_preserves_reopen_confirmation_flow() -> anyhow::Result<()> {
+async fn generated_client_backlogs_tasks_and_activates_without_a_prompt() -> anyhow::Result<()> {
+    let server = TestServer::start(TEST_TIMEOUT).await?;
+    let id = server.add_project_and_task().await?;
+    let mut client =
+        TaskServiceClient::with_interceptor(server.channel().await?, server::ReleaseRequest);
+    let original = task_record(&server, &id).await?;
+    let response = client
+        .backlog_task(pb::BacklogTaskRequest { id: id.clone() })
+        .await?
+        .into_inner();
+    let Some(pb::backlog_task_response::Outcome::Backlogged(result)) = response.outcome else {
+        anyhow::bail!("backlog outcome is missing");
+    };
+    assert_eq!(
+        result.task.context("missing summary")?.status,
+        pb::TaskStatus::Backlog as i32
+    );
+    let backlogged = task_record(&server, &id).await?;
+    assert_eq!(backlogged.body, original.body);
+    assert_eq!(backlogged.created_at, original.created_at);
+    assert_eq!(backlogged.completed_at, None);
+    assert_eq!(
+        server
+            .client
+            .task()
+            .get_task(pb::GetTaskRequest { id: id.clone() })
+            .await?
+            .status
+            .as_str(),
+        "backlog"
+    );
+    let repeated = client
+        .backlog_task(pb::BacklogTaskRequest { id: id.clone() })
+        .await?
+        .into_inner();
+    assert!(matches!(
+        repeated.outcome,
+        Some(pb::backlog_task_response::Outcome::AlreadyBacklogged(_))
+    ));
+    assert_eq!(
+        task_record(&server, &id).await?.revision,
+        backlogged.revision
+    );
+
+    for (filter, count) in [
+        (None, 0),
+        (Some(pb::TaskStatusFilter::Backlog), 1),
+        (Some(pb::TaskStatusFilter::All), 1),
+    ] {
+        let listed = client
+            .list_tasks(pb::ListTasksRequest {
+                status: filter.map(|status| status as i32),
+                detail: pb::ListDetail::Summary as i32,
+                ..Default::default()
+            })
+            .await?
+            .into_inner();
+        assert_eq!(listed.tasks.len(), count);
+    }
+    for (invalid_id, code) in [
+        ("invalid", Code::InvalidArgument),
+        ("FOO-9999", Code::NotFound),
+        ("XYZ-0001", Code::NotFound),
+    ] {
+        let error = client
+            .backlog_task(pb::BacklogTaskRequest {
+                id: invalid_id.to_string(),
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(error.code(), code);
+    }
+    let prompt = RecordingPrompt::new(false);
+    let result = server
+        .client
+        .task()
+        .activate_task(pb::ActivateTaskStart { id: id.clone() }, prompt.clone())
+        .await?;
+    assert!(matches!(
+        result.outcome,
+        Some(activate_task_result::Outcome::Activated(_))
+    ));
+    assert!(prompt.seen().is_empty());
+    assert_eq!(
+        task_record(&server, &id).await?.status,
+        pb::TaskStatus::Active as i32
+    );
+
+    client
+        .complete_task(pb::CompleteTaskRequest {
+            id: id.clone(),
+            ..Default::default()
+        })
+        .await?;
+    let closed = task_record(&server, &id).await?;
+    let error = client
+        .backlog_task(pb::BacklogTaskRequest { id: id.clone() })
+        .await
+        .unwrap_err();
+    assert_eq!(error.code(), Code::FailedPrecondition);
+    assert_eq!(task_record(&server, &id).await?, closed);
+    server.finish().await
+}
+
+#[tokio::test]
+async fn generated_client_preserves_activate_confirmation_flow() -> anyhow::Result<()> {
     let server = TestServer::start(Duration::from_secs(2)).await?;
     let task_id = server.add_project_and_task().await?;
 
@@ -1557,29 +1699,29 @@ async fn generated_client_preserves_reopen_confirmation_flow() -> anyhow::Result
         })
         .await
         .unwrap();
-    let reopen_prompt = RecordingPrompt::new(false);
+    let activate_prompt = RecordingPrompt::new(false);
     let declined = server
         .client
         .task()
-        .reopen_task(
-            pb::ReopenTaskStart {
+        .activate_task(
+            pb::ActivateTaskStart {
                 id: task_id.clone(),
             },
-            reopen_prompt.clone(),
+            activate_prompt.clone(),
         )
         .await
         .unwrap();
     assert!(matches!(
         declined.outcome,
-        Some(reopen_task_result::Outcome::Aborted(_))
+        Some(activate_task_result::Outcome::Aborted(_))
     ));
-    assert_eq!(reopen_prompt.seen(), ["reopen"]);
+    assert_eq!(activate_prompt.seen(), ["activate"]);
 
-    let reopened = server
+    let activated = server
         .client
         .task()
-        .reopen_task(
-            pb::ReopenTaskStart {
+        .activate_task(
+            pb::ActivateTaskStart {
                 id: task_id.clone(),
             },
             RecordingPrompt::new(true),
@@ -1587,8 +1729,8 @@ async fn generated_client_preserves_reopen_confirmation_flow() -> anyhow::Result
         .await
         .unwrap();
     assert!(matches!(
-        reopened.outcome,
-        Some(reopen_task_result::Outcome::Reopened(_))
+        activated.outcome,
+        Some(activate_task_result::Outcome::Activated(_))
     ));
     let read = server
         .client
@@ -1650,7 +1792,7 @@ async fn remove_wait_does_not_hold_the_writer_lock_and_accepting_stale_preflight
 }
 
 #[tokio::test]
-async fn reopen_wait_does_not_hold_the_writer_lock_and_accepting_stale_preflight_aborts()
+async fn activate_wait_does_not_hold_the_writer_lock_and_accepting_stale_preflight_aborts()
 -> anyhow::Result<()> {
     let server = TestServer::start(Duration::from_secs(2)).await?;
     let task_id = server.add_project_and_task().await?;
@@ -1664,25 +1806,25 @@ async fn reopen_wait_does_not_hold_the_writer_lock_and_accepting_stale_preflight
             expected_revision: None,
         })
         .await?;
-    let (sender, mut reopen) = server.open_reopen_confirmation(&task_id).await?;
+    let (sender, mut activate) = server.open_activate_confirmation(&task_id).await?;
 
     let created = tokio::time::timeout(
         TEST_TIMEOUT,
-        server.add_task("writer completed while reopen waited"),
+        server.add_task("writer completed while activate waited"),
     )
     .await??;
     let task_path = server.task_path(&task_id);
     let external = format!("{}\nexternal edit\n", std::fs::read_to_string(&task_path)?);
     std::fs::write(&task_path, &external)?;
     sender
-        .send(pb::ReopenTaskRequest {
-            value: Some(pb::reopen_task_request::Value::Decision(
+        .send(pb::ActivateTaskRequest {
+            value: Some(pb::activate_task_request::Value::Decision(
                 pb::ConfirmationDecision { confirmed: true },
             )),
         })
         .await?;
 
-    let status = reopen.message().await.unwrap_err();
+    let status = activate.message().await.unwrap_err();
 
     assert_eq!(status.code(), Code::Aborted);
     assert_eq!(std::fs::read_to_string(task_path)?, external);
@@ -2335,11 +2477,11 @@ async fn project_resolution_returns_one_id_and_classifies_invalid_and_missing_se
 }
 
 #[tokio::test]
-async fn task_and_note_crud_ignore_missing_arbitrary_and_malformed_project_pages()
--> anyhow::Result<()> {
+async fn task_and_note_crud_ignore_missing_arbitrary_and_malformed_snapshots() -> anyhow::Result<()>
+{
     for page_source in [
         None,
-        Some("# Personal project page\n\n## Someday\n- [ ] [[FOO-9999]]\n- [[FOO-NOTE-9999]]\n"),
+        Some("# Edited snapshot\n\n## Someday\n- [ ] [[FOO-9999]]\n- [[FOO-NOTE-9999]]\n"),
         Some("---\nid: [broken\n---\n\n## Broken task links\n- [ ] [[FOO-9999]]\n"),
     ] {
         let server = TestServer::start(TEST_TIMEOUT).await?;
@@ -2405,15 +2547,15 @@ async fn exercise_task_note_crud(server: &TestServer, original_id: &str) -> anyh
         task_record(server, &id).await?.status,
         pb::TaskStatus::Done as i32
     );
-    let reopened = client
-        .reopen_task(
-            pb::ReopenTaskStart { id: id.clone() },
+    let activated = client
+        .activate_task(
+            pb::ActivateTaskStart { id: id.clone() },
             RecordingPrompt::new(true),
         )
         .await?;
     assert!(matches!(
-        reopened.outcome,
-        Some(reopen_task_result::Outcome::Reopened(_))
+        activated.outcome,
+        Some(activate_task_result::Outcome::Activated(_))
     ));
     client
         .cancel_task(pb::CancelTaskRequest {
@@ -2530,7 +2672,7 @@ async fn serve_refreshes_snapshots_at_startup_and_joins_shutdown() -> anyhow::Re
         "---\nid: FOO-0001\nstatus: active\ntitle: startup task\n---\n\nGenerate a startup snapshot.\n",
     )?;
     std::fs::write(directory.join("FOO-NOTE-0001.md"), "# Startup evidence\n")?;
-    let snapshot = directory.join("pwf-index.md");
+    let snapshot = directory.join("foo.md");
     assert!(!snapshot.exists());
 
     let state = AppState::new(

@@ -3,46 +3,36 @@ use std::path::{Path, PathBuf};
 use pwf_models::task::TaskId;
 use serde::Deserialize;
 
-use super::{FrontmatterView, MarkdownFile, MarkdownFileError, ObsidianStoreError};
+use super::{
+    FrontmatterView, MarkdownFile, MarkdownFileError, ObsidianStoreError,
+    project_snapshot_backup_path, project_snapshot_path,
+};
 
-/// Contains a task note discovered by frontmatter identity.
-pub struct TaskNoteIdentity {
-    pub id: TaskId,
-    pub path: PathBuf,
-    pub markdown: String,
-    pub title: Option<String>,
+/// Contains a task note's discovered identity and path.
+pub(super) struct TaskNoteIdentity {
+    pub(super) id: TaskId,
+    pub(super) path: PathBuf,
 }
 
 /// Inventories one project directory without deriving task identity from filenames.
-pub fn inspect_project_task_notes(
+pub(super) fn inspect_project_task_notes(
     project_dir: &Path,
-    project_page_path: &Path,
 ) -> Result<Vec<TaskNoteIdentity>, ObsidianStoreError> {
-    map_project_task_notes(
-        project_dir,
-        project_page_path,
-        MarkdownFile::read_source,
-        |id, title, _, _| Ok((id, title)),
-    )
-    .map(|notes| {
-        notes
-            .into_iter()
-            .map(|((id, title), file)| {
-                let (path, markdown) = file.into_parts();
-                TaskNoteIdentity {
+    map_project_task_notes(project_dir, MarkdownFile::read_source, |id, _, _, _| Ok(id)).map(
+        |notes| {
+            notes
+                .into_iter()
+                .map(|(id, file)| TaskNoteIdentity {
                     id,
-                    path,
-                    markdown,
-                    title,
-                }
-            })
-            .collect()
-    })
+                    path: file.path().to_path_buf(),
+                })
+                .collect()
+        },
+    )
 }
 
 pub(super) fn map_project_task_notes<T>(
     project_dir: &Path,
-    project_page_path: &Path,
     read: fn(&Path) -> Result<MarkdownFile, MarkdownFileError>,
     map: impl Fn(
         TaskId,
@@ -52,15 +42,19 @@ pub(super) fn map_project_task_notes<T>(
     ) -> Result<T, ObsidianStoreError>,
 ) -> Result<Vec<(T, MarkdownFile)>, ObsidianStoreError> {
     let mut tasks = Vec::new();
+    let excluded_paths = [
+        project_snapshot_path(project_dir),
+        project_snapshot_backup_path(project_dir),
+    ];
     for entry in std::fs::read_dir(project_dir)
         .map_err(|source| ObsidianStoreError::ReadTaskFile { source })?
     {
         let entry = entry.map_err(|source| ObsidianStoreError::ReadTaskFile { source })?;
         let path = entry.path();
-        if path == project_page_path
-            || path
-                .file_name()
-                .is_some_and(|name| name == super::PROJECT_SNAPSHOT_FILE_NAME)
+        if excluded_paths
+            .iter()
+            .flatten()
+            .any(|excluded| path == *excluded)
             || path.extension().and_then(|extension| extension.to_str()) != Some("md")
         {
             continue;

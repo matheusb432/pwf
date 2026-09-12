@@ -8,7 +8,7 @@ use pwf_models::{note::ProjectNote, project::Project, task::TaskStatus};
 use super::{ObsidianStore, ObsidianStoreError};
 use crate::{
     file_transaction::{FileTransaction, snapshot},
-    obsidian::PROJECT_SNAPSHOT_FILE_NAME,
+    obsidian::project_snapshot_path,
 };
 
 impl ProjectSnapshotWriter for ObsidianStore {
@@ -21,10 +21,11 @@ impl ProjectSnapshotWriter for ObsidianStore {
         notes: &[ProjectNote],
     ) -> Result<(), Self::Error> {
         let directory = self.tasks_path(project)?;
-        let path = directory.join(PROJECT_SNAPSHOT_FILE_NAME);
-        if path == self.project_page_path(project)? {
-            return Err(ObsidianStoreError::ProjectPagePathReserved { path });
-        }
+        let path = project_snapshot_path(&directory).ok_or_else(|| {
+            ObsidianStoreError::ProjectSnapshotDirectoryNameMissing {
+                path: directory.clone(),
+            }
+        })?;
         std::fs::create_dir_all(&directory)
             .map_err(|source| ObsidianStoreError::CreateProjectDir { source })?;
         let mut transaction = FileTransaction::new();
@@ -53,7 +54,7 @@ fn render_snapshot(tasks: &[TaskSummaryRecord], notes: &[ProjectNote]) -> String
     let mut source = String::new();
     for task in tasks {
         let checkbox = match task.status {
-            TaskStatus::Active => ' ',
+            TaskStatus::Active | TaskStatus::Backlog => ' ',
             TaskStatus::Done | TaskStatus::Cancelled => 'x',
         };
         let _ = writeln!(source, "- [{checkbox}] [[{}]]", task.id);
@@ -119,20 +120,23 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_writes_sorted_checkboxes_and_note_links_without_changing_authored_files() {
+    fn snapshot_writes_sorted_checkboxes_and_note_links_without_changing_other_files() {
         let directory = tempfile::tempdir().unwrap();
+        let tasks_path = directory.path().join("my-project");
+        fs::create_dir(&tasks_path).unwrap();
         let store = ObsidianStore::new(HomeDirectory::new(directory.path().to_path_buf()));
-        let project = project(directory.path());
+        let project = project(&tasks_path);
         let page = b"---\ninvalid: [\n---\nAuthored content\n\xff";
-        fs::write(directory.path().join("foo.md"), page).unwrap();
+        fs::write(tasks_path.join("personal.md"), page).unwrap();
         let task = "---\nid: FOO-0001\nstatus: active\n---\nTask body\n";
-        fs::write(directory.path().join("FOO-0001.md"), task).unwrap();
+        fs::write(tasks_path.join("FOO-0001.md"), task).unwrap();
         let note_body = "# Authored note\n";
-        fs::write(directory.path().join("FOO-NOTE-0001.md"), note_body).unwrap();
+        fs::write(tasks_path.join("FOO-NOTE-0001.md"), note_body).unwrap();
         let tasks = [
             summary("FOO-0002", TaskStatus::Done),
             summary("FOO-0001", TaskStatus::Active),
             summary("FOO-0003", TaskStatus::Cancelled),
+            summary("FOO-0004", TaskStatus::Backlog),
         ];
         let notes = [
             note("FOO-NOTE-0001"),
@@ -143,21 +147,21 @@ mod tests {
             .write_project_snapshot(&project, &tasks, &notes)
             .unwrap();
         assert_eq!(
-            fs::read_to_string(directory.path().join("pwf-index.md")).unwrap(),
-            "- [x] [[FOO-0003]]\n- [x] [[FOO-0002]]\n- [ ] [[FOO-0001]]\n\n### Notes\n\n- [[FOO-NOTE-0003]]\n- [[FOO-NOTE-0002]]\n- [[FOO-NOTE-0001]]\n"
+            fs::read_to_string(tasks_path.join("my-project.md")).unwrap(),
+            "- [ ] [[FOO-0004]]\n- [x] [[FOO-0003]]\n- [x] [[FOO-0002]]\n- [ ] [[FOO-0001]]\n\n### Notes\n\n- [[FOO-NOTE-0003]]\n- [[FOO-NOTE-0002]]\n- [[FOO-NOTE-0001]]\n"
         );
         store.write_project_snapshot(&project, &[], &[]).unwrap();
         assert_eq!(
-            fs::read_to_string(directory.path().join("pwf-index.md")).unwrap(),
+            fs::read_to_string(tasks_path.join("my-project.md")).unwrap(),
             "### Notes\n\n"
         );
-        assert_eq!(fs::read(directory.path().join("foo.md")).unwrap(), page);
+        assert_eq!(fs::read(tasks_path.join("personal.md")).unwrap(), page);
         assert_eq!(
-            fs::read_to_string(directory.path().join("FOO-0001.md")).unwrap(),
+            fs::read_to_string(tasks_path.join("FOO-0001.md")).unwrap(),
             task
         );
         assert_eq!(
-            fs::read_to_string(directory.path().join("FOO-NOTE-0001.md")).unwrap(),
+            fs::read_to_string(tasks_path.join("FOO-NOTE-0001.md")).unwrap(),
             note_body
         );
     }
@@ -165,32 +169,35 @@ mod tests {
     #[test]
     fn snapshot_creates_only_generated_page_in_a_missing_project_directory() {
         let directory = tempfile::tempdir().unwrap();
-        let tasks = directory.path().join("tasks");
+        let tasks = directory.path().join("my-project");
         let store = ObsidianStore::new(HomeDirectory::new(directory.path().to_path_buf()));
         store
             .write_project_snapshot(&project(&tasks), &[], &[])
             .unwrap();
         assert_eq!(
-            fs::read_to_string(tasks.join("pwf-index.md")).unwrap(),
+            fs::read_to_string(tasks.join("my-project.md")).unwrap(),
             "### Notes\n\n"
         );
         assert!(!tasks.join("foo.md").exists());
+        assert!(!tasks.join("pwf-index.md").exists());
     }
 
     #[test]
-    fn snapshot_failure_preserves_authored_page_tasks_and_notes() {
+    fn snapshot_failure_preserves_other_files_tasks_and_notes() {
         let directory = tempfile::tempdir().unwrap();
+        let tasks_path = directory.path().join("my-project");
+        fs::create_dir(&tasks_path).unwrap();
         let store = ObsidianStore::new(HomeDirectory::new(directory.path().to_path_buf()));
-        let project = project(directory.path());
+        let project = project(&tasks_path);
         let authored = [
-            ("foo.md", "# My page\n"),
+            ("personal.md", "# My page\n"),
             ("FOO-0001.md", "---\nid: FOO-0001\n---\nTask body\n"),
             ("FOO-NOTE-0001.md", "# My note\n"),
         ];
         for (name, source) in authored {
-            fs::write(directory.path().join(name), source).unwrap();
+            fs::write(tasks_path.join(name), source).unwrap();
         }
-        fs::create_dir(directory.path().join("pwf-index.md")).unwrap();
+        fs::create_dir(tasks_path.join("my-project.md")).unwrap();
         let error = store
             .write_project_snapshot(
                 &project,
@@ -200,62 +207,43 @@ mod tests {
             .unwrap_err();
         assert_matches!(error, ObsidianStoreError::WriteProjectSnapshot { .. });
         for (name, source) in authored {
-            assert_eq!(
-                fs::read_to_string(directory.path().join(name)).unwrap(),
-                source
-            );
+            assert_eq!(fs::read_to_string(tasks_path.join(name)).unwrap(), source);
         }
-        assert!(directory.path().join("pwf-index.md").is_dir());
-        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 4);
+        assert!(tasks_path.join("my-project.md").is_dir());
+        assert_eq!(fs::read_dir(&tasks_path).unwrap().count(), 4);
     }
 
     #[test]
-    fn snapshot_rejects_a_filename_reserved_for_the_authored_page() {
+    fn failed_note_read_leaves_the_previous_snapshot_and_other_files_unchanged() {
         let directory = tempfile::tempdir().unwrap();
+        let tasks_path = directory.path().join("my-project");
+        fs::create_dir(&tasks_path).unwrap();
         let store = ObsidianStore::new(HomeDirectory::new(directory.path().to_path_buf()));
-        let mut project = project(directory.path());
-        project.title = ProjectName::try_new("pwf-index").unwrap();
-        let page = b"# Authored project page\n";
-        fs::write(directory.path().join("pwf-index.md"), page).unwrap();
-        assert_matches!(
-            store.write_project_snapshot(&project, &[], &[]),
-            Err(ObsidianStoreError::ProjectPagePathReserved { .. })
-        );
-        assert_eq!(
-            fs::read(directory.path().join("pwf-index.md")).unwrap(),
-            page
-        );
-    }
-
-    #[test]
-    fn failed_note_read_leaves_the_previous_snapshot_and_authored_page_unchanged() {
-        let directory = tempfile::tempdir().unwrap();
-        let store = ObsidianStore::new(HomeDirectory::new(directory.path().to_path_buf()));
-        let project = project(directory.path());
+        let project = project(&tasks_path);
         fs::write(
-            directory.path().join("FOO-0001.md"),
+            tasks_path.join("FOO-0001.md"),
             "---\nid: FOO-0001\ntitle: Task\n---\nBody\n",
         )
         .unwrap();
         fs::write(
-            directory.path().join("FOO-NOTE-0001.md"),
+            tasks_path.join("FOO-NOTE-0001.md"),
             "---\ntype: note\n---\n",
         )
         .unwrap();
         let previous = "- [ ] [[FOO-0001]]\n\n### Notes\n\n- [[FOO-NOTE-0001]]\n";
-        let page = "# Authored page\n";
-        fs::write(directory.path().join("pwf-index.md"), previous).unwrap();
-        fs::write(directory.path().join("foo.md"), page).unwrap();
+        let page = "# Unrelated page\n";
+        fs::write(tasks_path.join("my-project.md"), previous).unwrap();
+        fs::write(tasks_path.join("personal.md"), page).unwrap();
 
         let result = refresh_project_snapshot::execute(&project, &store, &store, &store);
 
         assert_matches!(result, Err(pwf_application::project::refresh_project_snapshot::RefreshProjectSnapshotError::ReadNotes(_)));
         assert_eq!(
-            fs::read_to_string(directory.path().join("pwf-index.md")).unwrap(),
+            fs::read_to_string(tasks_path.join("my-project.md")).unwrap(),
             previous
         );
         assert_eq!(
-            fs::read_to_string(directory.path().join("foo.md")).unwrap(),
+            fs::read_to_string(tasks_path.join("personal.md")).unwrap(),
             page
         );
     }

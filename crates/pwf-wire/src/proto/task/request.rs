@@ -17,6 +17,14 @@ use crate::{patch_field::PatchField, pb, task};
 const TASK_COLLECTION_VALUES_MAX: usize = 64;
 const TASK_LANE_VALUES_MAX: usize = 128;
 
+impl TryFrom<pb::BacklogTaskRequest> for TaskId {
+    type Error = Status;
+
+    fn try_from(request: pb::BacklogTaskRequest) -> Result<Self, Self::Error> {
+        parse("id", &request.id)
+    }
+}
+
 pub fn create_task_request(request: pb::CreateTaskRequest) -> Result<task::AddTask, Status> {
     ensure_count(
         "blocked_by",
@@ -242,9 +250,9 @@ pub fn delete_task_start(start: pb::DeleteTaskStart) -> Result<task::DeleteTask,
     })
 }
 
-pub fn reopen_task_start(start: pb::ReopenTaskStart) -> Result<task::ReopenTask, Status> {
-    let pb::ReopenTaskStart { id } = start;
-    Ok(task::ReopenTask {
+pub fn activate_task_start(start: pb::ActivateTaskStart) -> Result<task::ActivateTask, Status> {
+    let pb::ActivateTaskStart { id } = start;
+    Ok(task::ActivateTask {
         id: parse("id", &id)?,
     })
 }
@@ -340,6 +348,7 @@ fn status_filter(value: i32) -> Result<task::StatusFilter, Status> {
     match pb::TaskStatusFilter::try_from(value).ok() {
         Some(pb::TaskStatusFilter::Active) => Ok(task::StatusFilter::Exact(TaskStatus::Active)),
         Some(pb::TaskStatusFilter::Done) => Ok(task::StatusFilter::Exact(TaskStatus::Done)),
+        Some(pb::TaskStatusFilter::Backlog) => Ok(task::StatusFilter::Exact(TaskStatus::Backlog)),
         Some(pb::TaskStatusFilter::Cancelled) => {
             Ok(task::StatusFilter::Exact(TaskStatus::Cancelled))
         }

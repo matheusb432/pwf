@@ -1,5 +1,7 @@
+pub mod activate_task;
 mod active_task;
 pub mod add_task;
+pub mod backlog_task;
 mod blocked_by;
 pub mod cancel_task;
 pub mod clone_task;
@@ -13,7 +15,6 @@ pub mod list_tasks;
 mod note_body;
 mod read_task_dependencies;
 pub mod remove_task;
-pub mod reopen_task;
 pub mod resolve_task_project;
 pub mod session;
 mod task_closure;

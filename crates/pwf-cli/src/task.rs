@@ -12,7 +12,9 @@ use pwf_models::{
 
 use crate::console::Console;
 
+mod activate;
 mod add;
+mod backlog;
 mod blocked_by_input;
 mod cancel;
 mod clone;
@@ -23,7 +25,6 @@ mod get;
 mod list;
 mod remove;
 mod render;
-mod reopen;
 pub mod route;
 pub mod session;
 
@@ -152,6 +153,7 @@ impl From<AgentChoice> for Agent {
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
 pub(crate) enum StatusChoice {
     Active,
+    Backlog,
     Done,
     Cancelled,
     All,
@@ -188,6 +190,7 @@ impl StatusChoice {
     fn filter(self) -> TaskStatusFilter {
         match self {
             Self::Active => TaskStatusFilter::Active,
+            Self::Backlog => TaskStatusFilter::Backlog,
             Self::Done => TaskStatusFilter::Done,
             Self::Cancelled => TaskStatusFilter::Cancelled,
             Self::All => TaskStatusFilter::All,
@@ -287,9 +290,11 @@ enum TaskCommand {
     Done(done::Arguments),
     /// Mark a task cancelled in its note
     Cancel(cancel::Arguments),
-    /// Reopen a closed task after confirming deletion of its completion data
-    Reopen(reopen::Arguments),
-    /// Edit an active task's prompt body, title, blocked-by tasks, tags, or effort
+    /// Defer an active task to backlog, hiding it from default lists
+    Backlog(backlog::Arguments),
+    /// Activate a task; closed tasks require confirmation to clear completion data
+    Activate(activate::Arguments),
+    /// Edit an active or backlogged task's prompt body, title, blocked-by tasks, tags, or effort
     Edit(Box<edit::Arguments>),
     /// Get a task note's markdown
     #[command(alias = "g")]
@@ -324,8 +329,11 @@ pub async fn run(
             TaskCommand::Cancel(arguments) => {
                 cancel::run(arguments, console, task_status_colors, client).await?
             }
-            TaskCommand::Reopen(arguments) => {
-                reopen::run(arguments, console, task_status_colors, client).await?
+            TaskCommand::Activate(arguments) => {
+                activate::run(arguments, console, task_status_colors, client).await?
+            }
+            TaskCommand::Backlog(arguments) => {
+                backlog::run(arguments, console, task_status_colors, client).await?
             }
             TaskCommand::Edit(arguments) => {
                 edit::run(arguments, console, task_status_colors, client).await?

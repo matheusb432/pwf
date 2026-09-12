@@ -5,7 +5,9 @@ use pwf_application::{
     ports::{confirmation::ConfirmationClientError, task_vault::TaskMutationError},
     task::{
         CloseTaskError, TaskPromptLanesError,
+        activate_task::{self, ActivateTaskError},
         add_task::{self, AddTaskError},
+        backlog_task::{self, BacklogTaskError},
         cancel_task::{self, CancelTaskError},
         clone_task::{self, CloneTaskError},
         complete_task::{self, CompleteTaskError},
@@ -15,12 +17,11 @@ use pwf_application::{
         get_task_record::{self, GetTaskRecordError},
         list_tasks::{self, ListTasksError},
         remove_task::{self, RemoveTaskError},
-        reopen_task::{self, ReopenTaskError},
         resolve_task_project::ResolveTaskProjectError,
     },
 };
 use pwf_wire::{
-    confirmation::{RemoveTaskConfirmation, ReopenTaskConfirmation},
+    confirmation::{ActivateTaskConfirmation, RemoveTaskConfirmation},
     pb, proto,
 };
 use tokio::sync::mpsc;
@@ -104,6 +105,19 @@ impl pb::task_service_server::TaskService for TaskGrpcService {
         .map(proto::task::cancel_task_response)
         .map(Response::new)
         .map_err(cancel_task_status)
+    }
+
+    async fn backlog_task(
+        &self,
+        request: Request<pb::BacklogTaskRequest>,
+    ) -> Result<Response<pb::BacklogTaskResponse>, Status> {
+        let command = request.into_inner().try_into()?;
+        let _mutation_guard = self.state.task_mutations.lock().await;
+        backlog_task::execute(&command, &self.state.store, &self.state.pool)
+            .await
+            .map(Into::into)
+            .map(Response::new)
+            .map_err(backlog_task_status)
     }
 
     async fn complete_task(
@@ -231,27 +245,29 @@ impl pb::task_service_server::TaskService for TaskGrpcService {
         Ok(Response::new(Box::pin(ReceiverStream::new(receiver))))
     }
 
-    type ReopenTaskStream = ResponseStream<pb::ReopenTaskResponse>;
+    type ActivateTaskStream = ResponseStream<pb::ActivateTaskResponse>;
 
-    async fn reopen_task(
+    async fn activate_task(
         &self,
-        request: Request<Streaming<pb::ReopenTaskRequest>>,
-    ) -> Result<Response<Self::ReopenTaskStream>, Status> {
+        request: Request<Streaming<pb::ActivateTaskRequest>>,
+    ) -> Result<Response<Self::ActivateTaskStream>, Status> {
         let mut inbound = request.into_inner();
-        let start = next_reopen_start(&mut inbound).await?;
-        let command = proto::task::reopen_task_start(start)?;
+        let start = next_activate_start(&mut inbound).await?;
+        let command = proto::task::activate_task_start(start)?;
         let (outbound, receiver) = mpsc::channel(STREAM_BUFFER);
         let mut confirmation = GrpcConfirmationClient::new(
             inbound,
             outbound.clone(),
-            |confirmation: &ReopenTaskConfirmation| pb::ReopenTaskResponse {
-                value: Some(pb::reopen_task_response::Value::Preflight(
-                    proto::task::reopen_task_preflight(confirmation),
+            |confirmation: &ActivateTaskConfirmation| pb::ActivateTaskResponse {
+                value: Some(pb::activate_task_response::Value::Preflight(
+                    proto::task::activate_task_preflight(confirmation),
                 )),
             },
             |message| match message.value {
-                Some(pb::reopen_task_request::Value::Decision(decision)) => Ok(decision.confirmed),
-                Some(pb::reopen_task_request::Value::Start(_)) | None => {
+                Some(pb::activate_task_request::Value::Decision(decision)) => {
+                    Ok(decision.confirmed)
+                }
+                Some(pb::activate_task_request::Value::Start(_)) | None => {
                     Err(ConfirmationClientError::UnexpectedMessage)
                 }
             },
@@ -259,13 +275,15 @@ impl pb::task_service_server::TaskService for TaskGrpcService {
         .with_mutation_lock(self.state.task_mutations.clone());
         let state = self.state.clone();
         tokio::spawn(async move {
-            let item = reopen_task::execute(&command, &state.store, &state.pool, &mut confirmation)
-                .await
-                .map(proto::task::reopen_task_result)
-                .map(|result| pb::ReopenTaskResponse {
-                    value: Some(pb::reopen_task_response::Value::Result(result)),
-                })
-                .map_err(reopen_task_status);
+            confirmation.lock_mutations().await;
+            let item =
+                activate_task::execute(&command, &state.store, &state.pool, &mut confirmation)
+                    .await
+                    .map(proto::task::activate_task_result)
+                    .map(|result| pb::ActivateTaskResponse {
+                        value: Some(pb::activate_task_response::Value::Result(result)),
+                    })
+                    .map_err(activate_task_status);
             let _ = outbound.send(item).await;
         });
         Ok(Response::new(Box::pin(ReceiverStream::new(receiver))))
@@ -287,18 +305,18 @@ async fn next_delete_start(
     }
 }
 
-async fn next_reopen_start(
-    inbound: &mut Streaming<pb::ReopenTaskRequest>,
-) -> Result<pb::ReopenTaskStart, Status> {
+async fn next_activate_start(
+    inbound: &mut Streaming<pb::ActivateTaskRequest>,
+) -> Result<pb::ActivateTaskStart, Status> {
     let message = inbound
         .message()
         .await?
-        .ok_or_else(|| Status::invalid_argument("reopen stream requires a start message"))?;
+        .ok_or_else(|| Status::invalid_argument("activate stream requires a start message"))?;
     match message.value {
-        Some(pb::reopen_task_request::Value::Start(start)) => Ok(start),
-        Some(pb::reopen_task_request::Value::Decision(_)) | None => Err(Status::invalid_argument(
-            "reopen stream must start with start",
-        )),
+        Some(pb::activate_task_request::Value::Start(start)) => Ok(start),
+        Some(pb::activate_task_request::Value::Decision(_)) | None => Err(
+            Status::invalid_argument("activate stream must start with start"),
+        ),
     }
 }
 
@@ -466,14 +484,18 @@ fn delete_task_status(error: RemoveTaskError) -> Status {
     }
 }
 
-fn reopen_task_status(error: ReopenTaskError) -> Status {
+fn backlog_task_status(error: BacklogTaskError) -> Status {
     match error {
-        ReopenTaskError::TaskNotFound { .. } => Status::not_found(error.to_string()),
-        ReopenTaskError::ResolveProject(error) => resolve_task_project_status(&error),
-        ReopenTaskError::Confirmation(error) => confirmation_status(&error),
-        ReopenTaskError::Revision(_) => Status::aborted(error.to_string()),
-        ReopenTaskError::Mutation(error) => task_mutation_status(&error),
+        BacklogTaskError::ClosedTask { .. } => Status::failed_precondition(error.to_string()),
+        BacklogTaskError::Read(error) => get_task_record_status(&error),
+        BacklogTaskError::Mutation(error) => task_mutation_status(&error),
+    }
+}
 
-        ReopenTaskError::WriteStore(_) => Status::internal(error.to_string()),
+fn activate_task_status(error: ActivateTaskError) -> Status {
+    match error {
+        ActivateTaskError::Read(error) => get_task_record_status(&error),
+        ActivateTaskError::Confirmation(error) => confirmation_status(&error),
+        ActivateTaskError::Mutation(error) => task_mutation_status(&error),
     }
 }

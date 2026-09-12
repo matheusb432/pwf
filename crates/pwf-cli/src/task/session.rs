@@ -369,6 +369,7 @@ fn status_name(value: Option<i32>) -> &'static str {
     match value.and_then(|value| TaskStatus::try_from(value).ok()) {
         Some(TaskStatus::Active) => "active",
         Some(TaskStatus::Done) => "done",
+        Some(TaskStatus::Backlog) => "backlog",
         Some(TaskStatus::Cancelled) => "cancelled",
         Some(TaskStatus::Unspecified) | None => "unspecified",
     }

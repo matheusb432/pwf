@@ -30,7 +30,7 @@ pub struct Arguments {
     /// Permanently delete removed tasks instead of moving them to an Obsidian trash folder.
     #[arg(long, group = UPDATES)]
     pub clear_obsidian_vault: bool,
-    /// Enable or disable the generated pwf-index.md task snapshot.
+    /// Enable or disable the task snapshot named after its project folder.
     #[arg(long, group = UPDATES, action = clap::ArgAction::Set)]
     pub snapshot_enabled: Option<bool>,
 }

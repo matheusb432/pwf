@@ -10,7 +10,9 @@ use pwf_application::ports::project_task_files::{
 use pwf_models::project::ProjectIdentity;
 use walkdir::{DirEntry, WalkDir};
 
-use super::{MarkdownFile, ObsidianStoreError, PROJECT_SNAPSHOT_FILE_NAME};
+use super::{
+    MarkdownFile, ObsidianStoreError, project_snapshot_backup_path, project_snapshot_path,
+};
 
 const DIRECTORY_DEPTH_MAX: usize = 64;
 const ENTRY_COUNT_MAX: usize = 100_000;
@@ -189,7 +191,38 @@ fn copy_and_rewrite(
     next: &ProjectIdentity,
 ) -> Result<(), ObsidianStoreError> {
     copy_source(staged)?;
-    rewrite_markdown(&staged.staging_directory, current, next)
+    let snapshot_renames = [
+        project_file_rename(staged, project_snapshot_path)?,
+        project_file_rename(staged, project_snapshot_backup_path)?,
+    ];
+    rewrite_markdown(&staged.staging_directory, current, next, &snapshot_renames)
+}
+
+fn project_file_rename(
+    staged: &StagedProjectRename,
+    project_file_path: fn(&Path) -> Option<PathBuf>,
+) -> Result<(OsString, OsString), ObsidianStoreError> {
+    let current_path = project_file_path(&staged.source).ok_or_else(|| {
+        ObsidianStoreError::ProjectSnapshotDirectoryNameMissing {
+            path: staged.source.clone(),
+        }
+    })?;
+    let next_path = project_file_path(&staged.destination).ok_or_else(|| {
+        ObsidianStoreError::ProjectSnapshotDirectoryNameMissing {
+            path: staged.destination.clone(),
+        }
+    })?;
+    let current_name = current_path.file_name().ok_or_else(|| {
+        ObsidianStoreError::ProjectSnapshotDirectoryNameMissing {
+            path: staged.source.clone(),
+        }
+    })?;
+    let next_name = next_path.file_name().ok_or_else(|| {
+        ObsidianStoreError::ProjectSnapshotDirectoryNameMissing {
+            path: staged.destination.clone(),
+        }
+    })?;
+    Ok((current_name.to_os_string(), next_name.to_os_string()))
 }
 
 fn copy_source(staged: &StagedProjectRename) -> Result<(), ObsidianStoreError> {
@@ -259,6 +292,7 @@ fn rewrite_markdown(
     staging_directory: &Path,
     current: &ProjectIdentity,
     next: &ProjectIdentity,
+    project_file_renames: &[(OsString, OsString)],
 ) -> Result<(), ObsidianStoreError> {
     let mut markdown_paths = Vec::new();
     for (index, entry) in WalkDir::new(staging_directory)
@@ -288,13 +322,14 @@ fn rewrite_markdown(
 
     let mut renames = Vec::new();
     for path in &markdown_paths {
-        if let Some(rename) = plan_markdown_rename(path, current, next)? {
+        if let Some(rename) = plan_markdown_rename(path, current, next, project_file_renames)? {
             renames.push(rename);
         }
     }
     for path in markdown_paths {
-        if path != staging_directory.join(format!("{}.md", current.title()))
-            && path != staging_directory.join(PROJECT_SNAPSHOT_FILE_NAME)
+        if !project_file_renames
+            .iter()
+            .any(|(current_name, _)| path == staging_directory.join(current_name))
         {
             rewrite_markdown_file(&path, current, next)?;
         }
@@ -315,8 +350,9 @@ fn plan_markdown_rename(
     path: &Path,
     current: &ProjectIdentity,
     next: &ProjectIdentity,
+    project_file_renames: &[(OsString, OsString)],
 ) -> Result<Option<(PathBuf, PathBuf)>, ObsidianStoreError> {
-    let Some(name) = renamed_markdown_name(path, current, next) else {
+    let Some(name) = renamed_markdown_name(path, current, next, project_file_renames) else {
         return Ok(None);
     };
     let destination = path.with_file_name(name);
@@ -456,11 +492,14 @@ fn renamed_markdown_name(
     path: &Path,
     current: &ProjectIdentity,
     next: &ProjectIdentity,
+    project_file_renames: &[(OsString, OsString)],
 ) -> Option<OsString> {
     let file_name = path.file_name()?;
-    let current_index = format!("{}.md", current.title());
-    if file_name == OsStr::new(&current_index) {
-        return Some(OsString::from(format!("{}.md", next.title())));
+    if let Some((_, next_name)) = project_file_renames
+        .iter()
+        .find(|(current_name, _)| file_name == current_name)
+    {
+        return Some(next_name.clone());
     }
     let file_name = file_name.to_str()?;
     let current_prefix = format!("{}-", current.id());
@@ -675,26 +714,39 @@ mod tests {
     }
 
     #[test]
-    fn rename_preserves_authored_page_bytes_without_validating_frontmatter() {
+    fn rename_moves_the_generated_snapshot_with_the_project_directory_name() {
         let directory = tempfile::tempdir().unwrap();
         let source = directory.path().join("sample-app");
         let destination = directory.path().join("renamed-app");
-        write_fixture(&source);
-        let page = b"---\ninvalid: [\n---\n[[OLD-0079]]\n\xff";
-        fs::write(source.join("sample-app.md"), page).unwrap();
-        fs::write(source.join("pwf-index.md"), b"\xff").unwrap();
+        fs::create_dir(&source).unwrap();
+        let snapshot = b"\xff";
+        let snapshot_backup = b"\xfe";
+        fs::write(source.join("sample-app.md"), snapshot).unwrap();
+        fs::write(source.join("sample-app.backup.md"), snapshot_backup).unwrap();
+        fs::write(
+            source.join("OLD-0079.md"),
+            "---\nid: OLD-0079\nproject: old-title\n---\n",
+        )
+        .unwrap();
         let staged = ObsidianProjectTaskFilesClient
             .stage_project_rename(
                 &source,
                 &destination,
-                &identity("OLD", "sample-app"),
-                &identity("NEW", "renamed-app"),
+                &identity("OLD", "old-title"),
+                &identity("NEW", "new-title"),
             )
             .unwrap();
         staged.commit().unwrap();
-        assert_eq!(fs::read(destination.join("renamed-app.md")).unwrap(), page);
-        assert_eq!(fs::read(destination.join("pwf-index.md")).unwrap(), b"\xff");
+        assert_eq!(
+            fs::read(destination.join("renamed-app.md")).unwrap(),
+            snapshot
+        );
+        assert_eq!(
+            fs::read(destination.join("renamed-app.backup.md")).unwrap(),
+            snapshot_backup
+        );
         assert!(destination.join("NEW-0079.md").is_file());
         assert!(!destination.join("sample-app.md").exists());
+        assert!(!destination.join("sample-app.backup.md").exists());
     }
 }

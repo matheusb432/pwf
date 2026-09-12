@@ -69,6 +69,7 @@ pub struct RgbColorError;
 const COLOR_CORNFLOWER_BLUE: RgbColor = RgbColor::new(100, 149, 237);
 const COLOR_PINK_RED: RgbColor = RgbColor::new(255, 107, 138);
 const COLOR_LIME_GREEN: RgbColor = RgbColor::new(163, 230, 53);
+const COLOR_GOLDEN_YELLOW: RgbColor = RgbColor::new(234, 179, 8);
 
 const fn resolve_color(value: Option<RgbColor>, default: RgbColor) -> RgbColor {
     match value {
@@ -82,6 +83,7 @@ pub struct TaskStatusColors {
     active: RgbColor,
     done: RgbColor,
     cancelled: RgbColor,
+    backlog: RgbColor,
 }
 
 impl TaskStatusColors {
@@ -90,11 +92,13 @@ impl TaskStatusColors {
         active: Option<RgbColor>,
         done: Option<RgbColor>,
         cancelled: Option<RgbColor>,
+        backlog: Option<RgbColor>,
     ) -> Self {
         Self {
             active: resolve_color(active, COLOR_CORNFLOWER_BLUE),
             done: resolve_color(done, COLOR_LIME_GREEN),
             cancelled: resolve_color(cancelled, COLOR_PINK_RED),
+            backlog: resolve_color(backlog, COLOR_GOLDEN_YELLOW),
         }
     }
 
@@ -112,11 +116,16 @@ impl TaskStatusColors {
     pub const fn cancelled(self) -> RgbColor {
         self.cancelled
     }
+
+    #[must_use]
+    pub const fn backlog(self) -> RgbColor {
+        self.backlog
+    }
 }
 
 impl Default for TaskStatusColors {
     fn default() -> Self {
-        Self::new(None, None, None)
+        Self::new(None, None, None, None)
     }
 }
 
@@ -276,7 +285,7 @@ mod tests {
     #[test]
     fn user_settings_resolve_missing_colors_at_construction() {
         let active = RgbColor::from_str("#ff8700").unwrap();
-        let colors = TaskStatusColors::new(Some(active), None, None);
+        let colors = TaskStatusColors::new(Some(active), None, None, None);
         let settings = UserSettings::new(
             colors,
             ProjectStatusColors::default(),
@@ -302,6 +311,10 @@ mod tests {
         assert_eq!(defaults.task_status_colors().active(), blue);
         assert_eq!(defaults.task_status_colors().done(), green);
         assert_eq!(defaults.task_status_colors().cancelled(), red);
+        assert_eq!(
+            defaults.task_status_colors().backlog(),
+            RgbColor::new(234, 179, 8)
+        );
         assert_eq!(defaults.project_status_colors().active(), blue);
         assert_eq!(defaults.project_status_colors().paused(), red);
         assert_eq!(defaults.note_status_colors().active(), blue);

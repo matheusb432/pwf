@@ -6,6 +6,7 @@ default_sort_order = "id" # created | id | project-id | priority | effort | titl
 active = "#6495ED"
 done = "#A3E635"
 cancelled = "#FF6B8A"
+backlog = "#EAB308"
 
 [colors.project]
 active = "#6495ED"

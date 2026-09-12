@@ -23,27 +23,50 @@ pub async fn execute(
     command: UpdateProject,
     pool: &sqlx::SqlitePool,
 ) -> Result<(), UpdateProjectError> {
-    let mut transaction = pool
-        .begin_with("BEGIN IMMEDIATE")
-        .await
-        .map_err(|error| unexpected("starting project update transaction", error))?;
-    let (update_source, source_id) = match &command.source {
-        PatchField::Set(source) => (
-            true,
-            Some(
-                source_record::get_or_insert(&mut transaction, source)
+    if let PatchField::Set(source) = &command.source {
+        let mut transaction = pool
+            .begin_with("BEGIN IMMEDIATE")
+            .await
+            .map_err(|error| unexpected("starting project update transaction", error))?;
+        let source_id = source_record::get_or_insert(&mut transaction, source)
+            .await
+            .map_err(|error| unexpected("resolving project source", error))?;
+        match execute_update(command, Some(source_id), &mut transaction).await {
+            Err(error @ UpdateProjectError::ProjectNotFound { .. }) => {
+                transaction
+                    .rollback()
                     .await
-                    .map_err(|error| unexpected("resolving project source", error))?,
-            ),
-        ),
-        PatchField::Clear => (true, None),
-        PatchField::NoAction => (false, None),
-    };
+                    .map_err(|error| unexpected("rolling back missing project update", error))?;
+                Err(error)
+            }
+            result => {
+                result?;
+                transaction
+                    .commit()
+                    .await
+                    .map_err(|error| unexpected("committing project update", error))
+            }
+        }
+    } else {
+        let mut connection = pool
+            .acquire()
+            .await
+            .map_err(|error| unexpected("acquiring project update connection", error))?;
+        execute_update(command, None, &mut connection).await
+    }
+}
+
+async fn execute_update(
+    command: UpdateProject,
+    source_id: Option<i64>,
+    connection: &mut sqlx::SqliteConnection,
+) -> Result<(), UpdateProjectError> {
+    let update_source = !matches!(command.source, PatchField::NoAction);
     let project_id = command.id.as_ref();
     let (update_vault, obsidian_vault) = match &command.obsidian_vault {
-        pwf_wire::patch_field::PatchField::NoAction => (false, None),
-        pwf_wire::patch_field::PatchField::Clear => (true, None),
-        pwf_wire::patch_field::PatchField::Set(value) => (true, Some(value.as_ref())),
+        PatchField::NoAction => (false, None),
+        PatchField::Clear => (true, None),
+        PatchField::Set(value) => (true, Some(value.as_ref())),
     };
     let snapshot_enabled = match command.snapshot_enabled {
         SetField::NoAction => None,
@@ -58,31 +81,19 @@ pub async fn execute(
         snapshot_enabled,
         project_id,
     )
-    .execute(&mut *transaction)
+    .execute(connection)
     .await
     .map_err(|error| unexpected("updating project", error))?;
     match update.rows_affected() {
-        1 => {}
-        0 => {
-            transaction
-                .rollback()
-                .await
-                .map_err(|error| unexpected("rolling back missing project update", error))?;
-            return Err(UpdateProjectError::ProjectNotFound { id: command.id });
-        }
-        count => {
-            return Err(unexpected(
-                "updating project",
-                std::io::Error::other(format!(
-                    "project update changed {count} rows; expected exactly one"
-                )),
-            ));
-        }
+        1 => Ok(()),
+        0 => Err(UpdateProjectError::ProjectNotFound { id: command.id }),
+        count => Err(unexpected(
+            "updating project",
+            std::io::Error::other(format!(
+                "project update changed {count} rows; expected exactly one"
+            )),
+        )),
     }
-    transaction
-        .commit()
-        .await
-        .map_err(|error| unexpected("committing project update", error))
 }
 
 fn unexpected(

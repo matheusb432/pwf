@@ -432,10 +432,16 @@ pub struct DeleteTask {
     pub id: TaskId,
 }
 
-/// Requests one confirmed task reopen.
+/// Requests activation, confirming removal of completion data only for closed tasks.
 #[derive(Debug, Clone)]
-pub struct ReopenTask {
+pub struct ActivateTask {
     pub id: TaskId,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BacklogTaskOutcome {
+    Backlogged,
+    AlreadyBacklogged,
 }
 
 /// Identifies a task note's filesystem path.
@@ -539,10 +545,10 @@ pub enum DeleteTaskOutcome {
     Aborted,
 }
 
-/// Reports the state reached by a task-reopening request.
+/// Reports the result of task activation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReopenTaskOutcome {
-    Reopened,
+pub enum ActivateTaskOutcome {
+    Activated,
     AlreadyActive,
     Aborted,
 }

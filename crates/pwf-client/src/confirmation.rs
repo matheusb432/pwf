@@ -7,7 +7,7 @@ use tonic::Status;
 pub enum Confirmation {
     DeleteNote(pb::DeleteNoteConfirmation),
     DeleteTask(pb::DeleteTaskConfirmation),
-    ReopenTask(pb::ReopenTaskConfirmation),
+    ActivateTask(pb::ActivateTaskConfirmation),
     DispatchSession(pb::SessionDispatchPreflight),
 }
 

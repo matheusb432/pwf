@@ -31,6 +31,7 @@ pub(in crate::task) fn render_status(
     let text = match status {
         pb::TaskStatus::Active => "active",
         pb::TaskStatus::Done => "done",
+        pb::TaskStatus::Backlog => "backlog",
         pb::TaskStatus::Cancelled => "cancelled",
         pb::TaskStatus::Unspecified => "unspecified",
     };
@@ -92,6 +93,7 @@ fn lifecycle_status_color(status: LifecycleStatus, task_status_colors: TaskStatu
     match status {
         LifecycleStatus::Active => rgb_color(task_status_colors.active()).into(),
         LifecycleStatus::Done => rgb_color(task_status_colors.done()).into(),
+        LifecycleStatus::Backlog => rgb_color(task_status_colors.backlog()).into(),
         LifecycleStatus::Cancelled => rgb_color(task_status_colors.cancelled()).into(),
         LifecycleStatus::Unspecified => AnsiColor::Yellow.into(),
     }
@@ -101,6 +103,7 @@ fn lifecycle_status_color(status: LifecycleStatus, task_status_colors: TaskStatu
 enum LifecycleStatus {
     Active,
     Done,
+    Backlog,
     Cancelled,
     Unspecified,
 }
@@ -110,6 +113,7 @@ impl From<pb::TaskStatus> for LifecycleStatus {
         match status {
             pb::TaskStatus::Active => Self::Active,
             pb::TaskStatus::Done => Self::Done,
+            pb::TaskStatus::Backlog => Self::Backlog,
             pb::TaskStatus::Cancelled => Self::Cancelled,
             pb::TaskStatus::Unspecified => Self::Unspecified,
         }
@@ -121,6 +125,7 @@ impl From<TaskStatus> for LifecycleStatus {
         match status {
             TaskStatus::Active => Self::Active,
             TaskStatus::Done => Self::Done,
+            TaskStatus::Backlog => Self::Backlog,
             TaskStatus::Cancelled => Self::Cancelled,
         }
     }

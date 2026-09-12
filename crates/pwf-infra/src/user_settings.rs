@@ -49,6 +49,7 @@ impl UserSettingsDocument {
                 configured_color("colors.task.active", self.colors.task.active)?,
                 configured_color("colors.task.done", self.colors.task.done)?,
                 configured_color("colors.task.cancelled", self.colors.task.cancelled)?,
+                configured_color("colors.task.backlog", self.colors.task.backlog)?,
             ),
             ProjectStatusColors::new(
                 configured_color("colors.project.active", self.colors.project.active)?,
@@ -92,6 +93,7 @@ struct TaskStatusColorsDocument {
     active: Option<String>,
     done: Option<String>,
     cancelled: Option<String>,
+    backlog: Option<String>,
 }
 
 fn configured_color(
@@ -217,6 +219,22 @@ mod tests {
         assert_eq!(colors.active(), RgbColor::new(255, 135, 0));
         assert_eq!(colors.done(), RgbColor::new(163, 230, 53));
         assert_eq!(colors.cancelled(), RgbColor::new(255, 107, 138));
+        assert_eq!(colors.backlog(), RgbColor::new(234, 179, 8));
+    }
+
+    #[test]
+    fn backlog_color_accepts_an_override_and_rejects_invalid_values() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.toml");
+        let store = TomlSettingsStore::new(Some(path.clone()));
+        fs::write(&path, "[colors.task]\nbacklog = \"#102030\"\n").unwrap();
+        assert_eq!(
+            store.load().unwrap().task_status_colors().backlog(),
+            RgbColor::new(16, 32, 48)
+        );
+        fs::write(&path, "[colors.task]\nbacklog = \"gold\"\n").unwrap();
+        let error = store.load().unwrap_err();
+        assert!(error.to_string().contains("colors.task.backlog"));
     }
 
     #[test]
@@ -226,7 +244,7 @@ mod tests {
         fs::write(
             &path,
             concat!(
-                "[colors.task]\nactive = \"#010203\"\n",
+                "[colors.task]\nactive = \"#010203\"\nbacklog = \"#101112\"\n",
                 "[colors.project]\nactive = \"#040506\"\npaused = \"#070809\"\n",
                 "[colors.note]\nactive = \"#0a0b0c\"\nverified = \"#0d0e0f\"\n",
             ),

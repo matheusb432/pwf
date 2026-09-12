@@ -19,7 +19,7 @@ use crate::{
     obsidian::{
         FrontmatterView, MarkdownFile, MarkdownFileError,
         note_frontmatter::{
-            parse_blocked_by, reopen_status, set_blocked_by, set_commits, set_completed_at,
+            activate_status, parse_blocked_by, set_blocked_by, set_commits, set_completed_at,
             set_effort, set_priority, set_status, set_tags,
         },
         note_text::replace_body,
@@ -247,7 +247,7 @@ impl ObsidianStore {
         }
         match patch.status.as_ref() {
             SetField::Set(TaskStatus::Active) => {
-                reopen_status(file).map_err(write_task_file_error)?;
+                activate_status(file).map_err(write_task_file_error)?;
             }
             SetField::Set(status) => {
                 let completed_at = match &patch.completed_at {

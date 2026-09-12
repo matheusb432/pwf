@@ -10,22 +10,26 @@ pub(in crate::task) enum TaskMutationAction {
     Edited,
     Done,
     Cancelled,
-    Reopened,
+    Activated,
+    Backlogged,
+    AlreadyActive,
+    AlreadyBacklogged,
     Removed,
-    Skipped,
 }
 
 impl TaskMutationAction {
-    fn past_tense(self) -> &'static str {
+    fn label(self) -> &'static str {
         match self {
             Self::Added => "Added",
             Self::Cloned => "Cloned",
             Self::Edited => "Edited",
             Self::Done => "Done",
             Self::Cancelled => "Cancelled",
-            Self::Reopened => "Reopened",
+            Self::Activated => "Activated",
+            Self::Backlogged => "Backlogged",
+            Self::AlreadyActive => "Already active",
+            Self::AlreadyBacklogged => "Already backlogged",
             Self::Removed => "Removed",
-            Self::Skipped => "Skipped",
         }
     }
 }
@@ -40,7 +44,7 @@ pub(in crate::task) fn render_mutation(
     let Some(task) = task else {
         return Ok(format!(
             "{} task: {task_id} :: [title unavailable]",
-            action.past_tense()
+            action.label()
         ));
     };
     let status = TaskStatus::try_from(task.status)
@@ -55,7 +59,7 @@ pub(in crate::task) fn render_mutation(
         task_status_colors,
         color_on,
     );
-    Ok(format!("{} task: {summary}", action.past_tense()))
+    Ok(format!("{} task: {summary}", action.label()))
 }
 
 #[cfg(test)]
@@ -86,8 +90,21 @@ mod tests {
             Some(RgbColor::new(1, 2, 3)),
             Some(RgbColor::new(4, 5, 6)),
             Some(RgbColor::new(7, 8, 9)),
+            Some(RgbColor::new(10, 11, 12)),
         );
         for (action, status, label, style) in [
+            (
+                TaskMutationAction::Backlogged,
+                TaskStatus::Backlog,
+                "Backlogged",
+                color_rgb(10, 11, 12),
+            ),
+            (
+                TaskMutationAction::AlreadyBacklogged,
+                TaskStatus::Backlog,
+                "Already backlogged",
+                color_rgb(10, 11, 12),
+            ),
             (
                 TaskMutationAction::Added,
                 TaskStatus::Active,
@@ -113,9 +130,9 @@ mod tests {
                 color_rgb(7, 8, 9),
             ),
             (
-                TaskMutationAction::Reopened,
+                TaskMutationAction::Activated,
                 TaskStatus::Active,
-                "Reopened",
+                "Activated",
                 color_rgb(1, 2, 3),
             ),
             (
@@ -125,9 +142,9 @@ mod tests {
                 color_rgb(4, 5, 6),
             ),
             (
-                TaskMutationAction::Skipped,
+                TaskMutationAction::AlreadyActive,
                 TaskStatus::Active,
-                "Skipped",
+                "Already active",
                 color_rgb(1, 2, 3),
             ),
         ] {
@@ -138,17 +155,10 @@ mod tests {
             };
             let plain = render_mutation(action, "FOO-0001", Some(&task), colors, false).unwrap();
             assert_eq!(plain, format!("{label} task: FOO-0001 :: sample task"));
-            let colored = render_mutation(
-                TaskMutationAction::Edited,
-                "FOO-0001",
-                Some(&task),
-                colors,
-                true,
-            )
-            .unwrap();
+            let colored = render_mutation(action, "FOO-0001", Some(&task), colors, true).unwrap();
             assert_eq!(
                 colored,
-                format!("Edited task: {style}FOO-0001{style:#} :: sample task")
+                format!("{label} task: {style}FOO-0001{style:#} :: sample task")
             );
         }
     }

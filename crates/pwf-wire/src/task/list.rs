@@ -310,3 +310,16 @@ impl fmt::Display for TaskPageToken {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("must contain between 1 and {} characters", TaskPageToken::MAX_LEN)]
 pub struct TaskPageTokenError;
+
+#[cfg(test)]
+mod tests {
+    use super::{BlockedByResolution, StatusFilter, TaskStatus};
+
+    #[test]
+    fn backlog_is_hidden_by_default_but_remains_an_unresolved_blocker() {
+        assert!(!StatusFilter::default().includes(TaskStatus::Backlog));
+        assert!(StatusFilter::Exact(TaskStatus::Backlog).includes(TaskStatus::Backlog));
+        assert!(StatusFilter::All.includes(TaskStatus::Backlog));
+        assert!(BlockedByResolution::Found(TaskStatus::Backlog).is_warning());
+    }
+}

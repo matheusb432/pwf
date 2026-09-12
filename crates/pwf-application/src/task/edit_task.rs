@@ -1,6 +1,6 @@
 use pwf_models::{
     project::Project,
-    task::{BlockedBy, TaskId, TaskStatus, TaskTags, TaskTitle, TaskTitleError},
+    task::{BlockedBy, TaskId, TaskTags, TaskTitle, TaskTitleError},
 };
 use pwf_wire::{
     collection_edit::CollectionEdit,
@@ -37,7 +37,7 @@ struct PreparedTaskEdit {
 pub enum EditTaskError {
     #[error("Task not found: {id}")]
     TaskNotFound { id: TaskId },
-    #[error("cannot edit closed task {id}; run `pwf task reopen {id}` first.")]
+    #[error("cannot edit closed task {id}; run `pwf task activate {id}` first.")]
     ClosedTask { id: TaskId },
     #[error("task {id} has an invalid persisted title: {source}")]
     InvalidPersistedTitle {
@@ -85,7 +85,7 @@ pub enum EditTaskError {
     QueryProject(anyhow::Error),
 }
 
-/// Applies content and metadata edits to one active task.
+/// Applies content and metadata edits to one active or backlogged task.
 #[cqrsy::command]
 pub async fn execute(
     command: EditTask,
@@ -102,7 +102,7 @@ pub async fn execute(
             id: command.id.clone(),
         })?;
     ensure_task_revision(command.expected_revision.as_ref(), &record)?;
-    if record.status != TaskStatus::Active {
+    if record.status.is_closed() {
         return Err(EditTaskError::ClosedTask {
             id: command.id.clone(),
         });

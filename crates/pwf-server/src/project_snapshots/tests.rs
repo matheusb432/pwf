@@ -15,7 +15,6 @@ use crate::AppState;
 const REFRESH_INTERVAL_TEST: Duration = Duration::from_millis(20);
 const OBSERVATION_TIMEOUT: Duration = Duration::from_secs(3);
 const POLL_INTERVAL: Duration = Duration::from_millis(5);
-const PROJECT_SNAPSHOT_FILE_NAME: &str = "pwf-index.md";
 
 #[tokio::test]
 async fn startup_skips_disabled_projects_and_observes_opt_in_and_paused_projects()
@@ -33,11 +32,11 @@ async fn startup_skips_disabled_projects_and_observes_opt_in_and_paused_projects
     let (shutdown, receiver) = watch::channel(false);
     let worker = tokio::spawn(super::run(state.clone(), REFRESH_INTERVAL_TEST, receiver));
 
-    await_snapshot(&paused.join(PROJECT_SNAPSHOT_FILE_NAME), |source| {
+    await_snapshot(&paused.join("PAU.md"), |source| {
         source.contains("[[PAU-0001]]")
     })
     .await?;
-    let disabled_snapshot = disabled.join(PROJECT_SNAPSHOT_FILE_NAME);
+    let disabled_snapshot = disabled.join("OFF.md");
     assert!(!disabled_snapshot.exists());
 
     sqlx::query("UPDATE projects SET snapshot_enabled = 1 WHERE id = 'OFF'")
@@ -49,7 +48,7 @@ async fn startup_skips_disabled_projects_and_observes_opt_in_and_paused_projects
     sqlx::query("UPDATE projects SET snapshot_enabled = 0 WHERE id = 'OFF'")
         .execute(&state.pool)
         .await?;
-    let paused_snapshot = paused.join(PROJECT_SNAPSHOT_FILE_NAME);
+    let paused_snapshot = paused.join("PAU.md");
     write_task(&paused, "PAU-0002", "active")?;
     await_snapshot(&paused_snapshot, |source| source.contains("[[PAU-0002]]")).await?;
     assert_eq!(fs::read(&disabled_snapshot)?, previous_snapshot);
@@ -79,7 +78,7 @@ async fn periodic_refresh_observes_external_task_and_note_changes_until_shutdown
         .await?;
     let (shutdown, receiver) = watch::channel(false);
     let worker = tokio::spawn(super::run(state.clone(), REFRESH_INTERVAL_TEST, receiver));
-    let snapshot = directory.join(PROJECT_SNAPSHOT_FILE_NAME);
+    let snapshot = directory.join("EXT.md");
     await_snapshot(&snapshot, |source| {
         source.contains("[ ] [[EXT-0001]]") && source.contains("[[EXT-NOTE-0001]]")
     })
@@ -128,8 +127,8 @@ async fn project_failure_preserves_previous_snapshot_and_other_projects_keep_ref
         .await?;
     let (shutdown, receiver) = watch::channel(false);
     let worker = tokio::spawn(super::run(state.clone(), REFRESH_INTERVAL_TEST, receiver));
-    let broken_snapshot = broken.join(PROJECT_SNAPSHOT_FILE_NAME);
-    let healthy_snapshot = healthy.join(PROJECT_SNAPSHOT_FILE_NAME);
+    let broken_snapshot = broken.join("BAD.md");
+    let healthy_snapshot = healthy.join("GOOD.md");
     await_snapshot(&healthy_snapshot, |source| source.contains("[[GOOD-0001]]")).await?;
     let previous_snapshot = fs::read(&broken_snapshot)?;
 

@@ -1,4 +1,4 @@
-use pwf_models::task::TaskId;
+use pwf_models::{project::Project, task::TaskId};
 use pwf_wire::task::TaskRecord;
 
 use crate::{
@@ -22,6 +22,19 @@ pub async fn execute(
     store: &impl TaskVault,
     pool: &sqlx::SqlitePool,
 ) -> Result<TaskRecord, GetTaskRecordError> {
+    load(id, store, pool).await.map(|loaded| loaded.record)
+}
+
+pub(super) struct LoadedTaskRecord {
+    pub(super) project: Project,
+    pub(super) record: TaskRecord,
+}
+
+pub(super) async fn load(
+    id: &TaskId,
+    store: &impl TaskVault,
+    pool: &sqlx::SqlitePool,
+) -> Result<LoadedTaskRecord, GetTaskRecordError> {
     let project = match get_active_project::execute(id.project_id(), pool).await {
         Ok(project) => project,
         Err(GetProjectError::ProjectNotFound { .. }) => {
@@ -29,8 +42,9 @@ pub async fn execute(
         }
         Err(error) => return Err(GetTaskRecordError::QueryProject(anyhow::Error::new(error))),
     };
-    store
+    let record = store
         .get_task_record(&project, id)
         .map_err(|error| GetTaskRecordError::ReadStore(anyhow::Error::new(error)))?
-        .ok_or_else(|| GetTaskRecordError::TaskNotFound { id: id.clone() })
+        .ok_or_else(|| GetTaskRecordError::TaskNotFound { id: id.clone() })?;
+    Ok(LoadedTaskRecord { project, record })
 }

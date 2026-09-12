@@ -423,7 +423,11 @@ async fn list_filters_active_only() {
         status: TaskStatus::Cancelled,
         ..record("FOO-0003")
     };
-    let (store, registry) = foo_store(vec![record("FOO-0001"), done, cancelled]);
+    let backlog = TaskRecord {
+        status: TaskStatus::Backlog,
+        ..record("FOO-0004")
+    };
+    let (store, registry) = foo_store(vec![record("FOO-0001"), done, cancelled, backlog]);
 
     let got = run(&store, &registry, &default_query()).await.unwrap();
 
@@ -440,9 +444,14 @@ async fn status_filter_defaults_to_active_and_includes_exact_or_all() {
     assert!(done.includes(TaskStatus::Done));
     assert!(!done.includes(TaskStatus::Active));
     assert!(
-        [TaskStatus::Active, TaskStatus::Done, TaskStatus::Cancelled]
-            .into_iter()
-            .all(|status| StatusFilter::All.includes(status))
+        [
+            TaskStatus::Active,
+            TaskStatus::Backlog,
+            TaskStatus::Done,
+            TaskStatus::Cancelled
+        ]
+        .into_iter()
+        .all(|status| StatusFilter::All.includes(status))
     );
 }
 
@@ -456,7 +465,11 @@ async fn list_status_filter_selects_exact_statuses_and_all() {
         status: TaskStatus::Cancelled,
         ..record("FOO-0003")
     };
-    let (store, registry) = foo_store(vec![record("FOO-0001"), done, cancelled]);
+    let backlog = TaskRecord {
+        status: TaskStatus::Backlog,
+        ..record("FOO-0004")
+    };
+    let (store, registry) = foo_store(vec![record("FOO-0001"), done, cancelled, backlog]);
 
     assert_filter_ids(
         &store,
@@ -480,6 +493,14 @@ async fn list_status_filter_selects_exact_statuses_and_all() {
     )
     .await;
 
+    assert_filter_ids(
+        &store,
+        &registry,
+        StatusFilter::Exact(TaskStatus::Backlog),
+        &["FOO-0004"],
+    )
+    .await;
+
     let all = run(
         &store,
         &registry,
@@ -490,7 +511,10 @@ async fn list_status_filter_selects_exact_statuses_and_all() {
     )
     .await
     .unwrap();
-    assert_eq!(listed_ids(&all), ["FOO-0003", "FOO-0002", "FOO-0001"]);
+    assert_eq!(
+        listed_ids(&all),
+        ["FOO-0004", "FOO-0003", "FOO-0002", "FOO-0001"]
+    );
 }
 
 #[tokio::test]

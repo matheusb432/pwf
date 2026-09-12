@@ -15,7 +15,7 @@ use serde_json::Value;
 use super::{ObsidianStore, ObsidianStoreError};
 use crate::{
     file_transaction::{FileSnapshot, FileTransaction, snapshot},
-    obsidian::{MarkdownFile, markdown_line},
+    obsidian::{MarkdownFile, markdown_line, project_snapshot_path},
 };
 
 impl ProjectNotes for ObsidianStore {
@@ -38,7 +38,7 @@ impl ProjectNotes for ObsidianStore {
         let project_directory = self.tasks_path(project)?;
         list_notes(
             &project_directory,
-            &self.project_page_path(project)?,
+            project_snapshot_path(&project_directory).as_deref(),
             &project.id,
         )
     }
@@ -116,8 +116,11 @@ impl ObsidianStore {
         id: &NoteId,
     ) -> Result<PathBuf, ObsidianStoreError> {
         let path = self.tasks_path(project)?.join(note_file_name(id));
-        if path == self.project_page_path(project)? {
-            return Err(ObsidianStoreError::ProjectPagePathReserved { path });
+        if self
+            .project_snapshot_path(project)?
+            .is_some_and(|snapshot_path| path == snapshot_path)
+        {
+            return Err(ObsidianStoreError::ProjectSnapshotPathReserved { path });
         }
         Ok(path)
     }
@@ -125,7 +128,7 @@ impl ObsidianStore {
 
 fn list_notes(
     project_directory: &Path,
-    project_page_path: &Path,
+    project_snapshot_path: Option<&Path>,
     project_id: &ProjectId,
 ) -> Result<Vec<ProjectNote>, ObsidianStoreError> {
     let mut notes = Vec::new();
@@ -145,7 +148,7 @@ fn list_notes(
             source,
         })?;
         let path = entry.path();
-        if path == project_page_path
+        if project_snapshot_path.is_some_and(|snapshot_path| path == snapshot_path)
             || path.extension().and_then(|extension| extension.to_str()) != Some("md")
         {
             continue;
@@ -659,11 +662,11 @@ mod tests {
     }
 
     #[test]
-    fn insert_and_list_round_trip_the_note_representation_and_preserve_project_page() {
+    fn insert_and_list_round_trip_the_note_representation_and_preserve_snapshot() {
         let directory = tempfile::tempdir().unwrap();
         let tasks_path = directory.path().join("tasks");
         fs::create_dir_all(&tasks_path).unwrap();
-        let index_path = tasks_path.join("foo.md");
+        let index_path = tasks_path.join("tasks.md");
         fs::write(&index_path, "- [ ] [[FOO-0001|task]]\n").unwrap();
         let store = store(&tasks_path);
 
@@ -963,13 +966,13 @@ mod tests {
     }
 
     #[test]
-    fn delete_removes_non_utf8_note_and_preserves_project_page() {
+    fn delete_removes_non_utf8_note_and_preserves_snapshot() {
         let directory = tempfile::tempdir().unwrap();
         let tasks_path = directory.path().join("tasks");
         fs::create_dir_all(&tasks_path).unwrap();
         let note_path = tasks_path.join("FOO-NOTE-0001.md");
         fs::write(&note_path, [0xff, 0xfe]).unwrap();
-        let index_path = tasks_path.join("foo.md");
+        let index_path = tasks_path.join("tasks.md");
         fs::write(
             &index_path,
             "- [ ] [[FOO-0001]]\n\n### Notes\n\n- [[FOO-NOTE-0001]]\n",
@@ -986,7 +989,7 @@ mod tests {
     }
 
     #[test]
-    fn delete_succeeds_when_the_project_page_cannot_be_read() {
+    fn delete_succeeds_when_the_snapshot_cannot_be_read() {
         let directory = tempfile::tempdir().unwrap();
         let tasks_path = directory.path().join("tasks");
         fs::create_dir_all(&tasks_path).unwrap();
@@ -996,17 +999,17 @@ mod tests {
             "---\ntype: note\nproject: foo\ncreated: 2026-07-25\n---\n\nmessage\n",
         )
         .unwrap();
-        fs::create_dir(tasks_path.join("foo.md")).unwrap();
+        fs::create_dir(tasks_path.join("tasks.md")).unwrap();
         let store = store(&tasks_path);
 
         ProjectNotes::delete_note(&store, &project(&tasks_path), &identifier(1)).unwrap();
 
         assert!(!note_path.exists());
-        assert!(tasks_path.join("foo.md").is_dir());
+        assert!(tasks_path.join("tasks.md").is_dir());
     }
 
     #[test]
-    fn note_crud_preserves_authored_and_generated_pages() {
+    fn note_crud_preserves_generated_snapshot_contents() {
         for page in [
             &b"---\nid: FOO-9999\n---\n### Notes\n- [[FOO-NOTE-0001]]\n"[..],
             &b"---\ninvalid: [\n---\n"[..],
@@ -1015,9 +1018,8 @@ mod tests {
             let directory = tempfile::tempdir().unwrap();
             let store = store(directory.path());
             let project = project(directory.path());
-            for name in ["foo.md", "pwf-index.md"] {
-                fs::write(directory.path().join(name), page).unwrap();
-            }
+            let snapshot = crate::obsidian::project_snapshot_path(directory.path()).unwrap();
+            fs::write(&snapshot, page).unwrap();
             let note =
                 ProjectNotes::insert_note(&store, &project, new_note(1, "Original")).unwrap();
             assert_eq!(
@@ -1057,21 +1059,19 @@ mod tests {
                     .unwrap()
                     .is_none()
             );
-            for name in ["foo.md", "pwf-index.md"] {
-                assert_eq!(fs::read(directory.path().join(name)).unwrap(), page);
-            }
+            assert_eq!(fs::read(snapshot).unwrap(), page);
         }
     }
 
     #[test]
-    fn note_crud_does_not_create_or_read_project_pages() {
-        for unreadable_pages in [false, true] {
+    fn note_crud_does_not_create_or_read_the_generated_snapshot() {
+        for unreadable_snapshot in [false, true] {
             let directory = tempfile::tempdir().unwrap();
             let store = store(directory.path());
             let project = project(directory.path());
-            if unreadable_pages {
-                fs::create_dir(directory.path().join("foo.md")).unwrap();
-                fs::create_dir(directory.path().join("pwf-index.md")).unwrap();
+            let snapshot = crate::obsidian::project_snapshot_path(directory.path()).unwrap();
+            if unreadable_snapshot {
+                fs::create_dir(&snapshot).unwrap();
             }
             let note =
                 ProjectNotes::insert_note(&store, &project, new_note(1, "Original")).unwrap();
@@ -1094,11 +1094,8 @@ mod tests {
                 "Edited"
             );
             ProjectNotes::delete_note(&store, &project, &note.id).unwrap();
-            for name in ["foo.md", "pwf-index.md"] {
-                let path = directory.path().join(name);
-                assert_eq!(path.exists(), unreadable_pages);
-                assert_eq!(path.is_dir(), unreadable_pages);
-            }
+            assert_eq!(snapshot.exists(), unreadable_snapshot);
+            assert_eq!(snapshot.is_dir(), unreadable_snapshot);
         }
     }
 
@@ -1108,7 +1105,7 @@ mod tests {
         let tasks_path = directory.path().join("tasks");
         fs::create_dir(&tasks_path).unwrap();
         let snapshot = "- [ ] [[FOO-0001]]\n\n### Notes\n\n- [[FOO-NOTE-0001]]\n";
-        fs::write(tasks_path.join("pwf-index.md"), snapshot).unwrap();
+        fs::write(tasks_path.join("tasks.md"), snapshot).unwrap();
         let store = store(&tasks_path);
         let project = project(&tasks_path);
         let retained = directory.path().join("retained");
@@ -1119,7 +1116,7 @@ mod tests {
 
         assert_matches!(error, ObsidianStoreError::ReadProjectNoteDirectory { path, .. } if path == tasks_path);
         assert_eq!(
-            fs::read_to_string(retained.join("pwf-index.md")).unwrap(),
+            fs::read_to_string(retained.join("tasks.md")).unwrap(),
             snapshot
         );
         assert_eq!(fs::read_to_string(&tasks_path).unwrap(), "not a directory");

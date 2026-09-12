@@ -4,6 +4,25 @@ use pwf_models::task::{EffortTier, PriorityTier, TaskId, TaskIdError, TaskStatus
 
 use crate::{confirmation, pb, task};
 
+impl From<task::TaskMutationResult<task::BacklogTaskOutcome>> for pb::BacklogTaskResponse {
+    fn from(result: task::TaskMutationResult<task::BacklogTaskOutcome>) -> Self {
+        let task = result.task.map(task_mutation_summary);
+        let outcome = match result.outcome {
+            task::BacklogTaskOutcome::Backlogged => {
+                pb::backlog_task_response::Outcome::Backlogged(pb::BackloggedTask { task })
+            }
+            task::BacklogTaskOutcome::AlreadyBacklogged => {
+                pb::backlog_task_response::Outcome::AlreadyBacklogged(pb::AlreadyBackloggedTask {
+                    task,
+                })
+            }
+        };
+        Self {
+            outcome: Some(outcome),
+        }
+    }
+}
+
 impl From<task::TaskMutationResult<TaskId>> for pb::CloneTaskResponse {
     fn from(result: task::TaskMutationResult<TaskId>) -> Self {
         Self {
@@ -49,28 +68,29 @@ fn task_mutation_summary(task: task::TaskMutationSummary) -> pb::TaskMutationSum
         status: match task.status {
             TaskStatus::Active => pb::TaskStatus::Active,
             TaskStatus::Done => pb::TaskStatus::Done,
+            TaskStatus::Backlog => pb::TaskStatus::Backlog,
             TaskStatus::Cancelled => pb::TaskStatus::Cancelled,
         } as i32,
     }
 }
 
 #[must_use]
-pub fn reopen_task_result(
-    result: task::TaskMutationResult<task::ReopenTaskOutcome>,
-) -> pb::ReopenTaskResult {
+pub fn activate_task_result(
+    result: task::TaskMutationResult<task::ActivateTaskOutcome>,
+) -> pb::ActivateTaskResult {
     let task = result.task.map(task_mutation_summary);
     let outcome = match result.outcome {
-        task::ReopenTaskOutcome::Reopened => {
-            pb::reopen_task_result::Outcome::Reopened(pb::ReopenedTask { task })
+        task::ActivateTaskOutcome::Activated => {
+            pb::activate_task_result::Outcome::Activated(pb::ActivatedTask { task })
         }
-        task::ReopenTaskOutcome::AlreadyActive => {
-            pb::reopen_task_result::Outcome::AlreadyActive(pb::AlreadyActiveTask { task })
+        task::ActivateTaskOutcome::AlreadyActive => {
+            pb::activate_task_result::Outcome::AlreadyActive(pb::AlreadyActiveTask { task })
         }
-        task::ReopenTaskOutcome::Aborted => {
-            pb::reopen_task_result::Outcome::Aborted(pb::AbortedTaskOperation {})
+        task::ActivateTaskOutcome::Aborted => {
+            pb::activate_task_result::Outcome::Aborted(pb::AbortedTaskOperation {})
         }
     };
-    pb::ReopenTaskResult {
+    pb::ActivateTaskResult {
         outcome: Some(outcome),
     }
 }
@@ -283,6 +303,7 @@ fn decode_task_dag_status(
     match pb::TaskStatus::try_from(value) {
         Ok(pb::TaskStatus::Active) => Ok(TaskStatus::Active),
         Ok(pb::TaskStatus::Done) => Ok(TaskStatus::Done),
+        Ok(pb::TaskStatus::Backlog) => Ok(TaskStatus::Backlog),
         Ok(pb::TaskStatus::Cancelled) => Ok(TaskStatus::Cancelled),
         Ok(pb::TaskStatus::Unspecified) | Err(_) => {
             Err(DecodeGetTaskDagResponseError::NodeTaskStatus { node_index, value })
@@ -295,6 +316,7 @@ pub fn list_tasks_response(tasks: task::ListedTasks) -> pb::ListTasksResponse {
     let status_filter = match tasks.status_filter {
         task::StatusFilter::Exact(TaskStatus::Active) => pb::TaskStatusFilter::Active,
         task::StatusFilter::Exact(TaskStatus::Done) => pb::TaskStatusFilter::Done,
+        task::StatusFilter::Exact(TaskStatus::Backlog) => pb::TaskStatusFilter::Backlog,
         task::StatusFilter::Exact(TaskStatus::Cancelled) => pb::TaskStatusFilter::Cancelled,
         task::StatusFilter::All => pb::TaskStatusFilter::All,
     };
@@ -323,11 +345,11 @@ pub fn delete_task_preflight(
 }
 
 #[must_use]
-pub fn reopen_task_preflight(
-    confirmation: &confirmation::ReopenTaskConfirmation,
-) -> pb::ReopenTaskPreflight {
-    pb::ReopenTaskPreflight {
-        confirmation: Some(reopen_task_confirmation(confirmation)),
+pub fn activate_task_preflight(
+    confirmation: &confirmation::ActivateTaskConfirmation,
+) -> pb::ActivateTaskPreflight {
+    pb::ActivateTaskPreflight {
+        confirmation: Some(activate_task_confirmation(confirmation)),
     }
 }
 
@@ -355,10 +377,10 @@ pub fn delete_task_confirmation(
 }
 
 #[must_use]
-pub fn reopen_task_confirmation(
-    confirmation: &confirmation::ReopenTaskConfirmation,
-) -> pb::ReopenTaskConfirmation {
-    pb::ReopenTaskConfirmation {
+pub fn activate_task_confirmation(
+    confirmation: &confirmation::ActivateTaskConfirmation,
+) -> pb::ActivateTaskConfirmation {
+    pb::ActivateTaskConfirmation {
         task_id: confirmation.task_identifier.to_string(),
         project: confirmation.project.to_string(),
         completion_date: confirmation.completion_date.map(|date| date.to_string()),
@@ -445,6 +467,7 @@ pub(super) fn task_status_value(status: TaskStatus) -> i32 {
     match status {
         TaskStatus::Active => pb::TaskStatus::Active as i32,
         TaskStatus::Done => pb::TaskStatus::Done as i32,
+        TaskStatus::Backlog => pb::TaskStatus::Backlog as i32,
         TaskStatus::Cancelled => pb::TaskStatus::Cancelled as i32,
     }
 }

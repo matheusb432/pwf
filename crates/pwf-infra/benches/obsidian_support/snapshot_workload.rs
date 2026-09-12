@@ -12,7 +12,7 @@ use super::fixture::{DocumentSize, document_body, require, temporary_directory};
 
 pub const TASK_COUNT: usize = 1_000;
 const NOTE_COUNT: usize = 100;
-const AUTHORED_PAGE: &str = "# Project notes\n\nKeep this authored page unchanged.\n";
+const OTHER_PAGE: &str = "# Project notes\n\nKeep this unrelated page unchanged.\n";
 
 pub struct SnapshotWorkload {
     directory: TempDir,
@@ -64,7 +64,7 @@ impl SnapshotWorkload {
     pub fn validate(&self) {
         let path = self.directory.path().join("tasks");
         let generated = require(
-            fs::read_to_string(path.join("pwf-index.md")),
+            fs::read_to_string(path.join("tasks.md")),
             "reading generated snapshot",
         );
         assert_eq!(
@@ -94,9 +94,9 @@ impl SnapshotWorkload {
         assert_eq!(
             require(
                 fs::read_to_string(path.join("foo.md")),
-                "reading authored page"
+                "reading unrelated page"
             ),
-            AUTHORED_PAGE
+            OTHER_PAGE
         );
     }
 }
@@ -104,8 +104,8 @@ impl SnapshotWorkload {
 fn write_fixture(path: &Path) {
     require(fs::create_dir_all(path), "creating snapshot fixture");
     require(
-        fs::write(path.join("foo.md"), AUTHORED_PAGE),
-        "writing authored page",
+        fs::write(path.join("foo.md"), OTHER_PAGE),
+        "writing unrelated page",
     );
     let body = document_body(DocumentSize::Small).replace("PWF-0001", "FOO-0001");
     for number in 1..=TASK_COUNT {

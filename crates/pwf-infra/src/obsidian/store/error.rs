@@ -8,13 +8,15 @@ use pwf_models::{
 
 #[derive(Debug, thiserror::Error)]
 pub enum ObsidianStoreError {
-    #[error("The authored project page is reserved: {}", path.display())]
-    ProjectPagePathReserved { path: PathBuf },
+    #[error("The generated project snapshot path is reserved: {}", path.display())]
+    ProjectSnapshotPathReserved { path: PathBuf },
     #[error("Cannot write project snapshot {}: {source}", path.display())]
     WriteProjectSnapshot {
         path: PathBuf,
         source: std::io::Error,
     },
+    #[error("Project snapshot directory has no file name: {}", path.display())]
+    ProjectSnapshotDirectoryNameMissing { path: PathBuf },
     #[error("Project rename destination already exists: {}", path.display())]
     ProjectRenameDestinationExists { path: PathBuf },
     #[error("Project rename staging directory already exists: {}", path.display())]
